@@ -36,13 +36,13 @@ class MainWindow : public QMainWindow
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-    void paint(av::VideoFrame& frame)
+    void paint(av::VideoFrame&& frame)
     {
 
         // ... настройте avcpp и декодируйте кадр
 
         // Преобразование в QImage
-        QImage image(frame.width(), frame.height(), QImage::Format_RGB888);//Format_RGB888
+        QImage image(frame.width(), frame.height(), QImage::Format_RGB888);//Format_RGB32);//Format_RGB888
         uchar* buffer = image.bits();
         int linesize = image.bytesPerLine();
 
@@ -50,10 +50,21 @@ public:
         // Для упрощения, предположим, что frame->format == AV_PIX_FMT_BGR24
         // и что stride равен linesize
         uint8_t *data = frame.data();
-        for (int i = 0; i < frame.height(); ++i) {
 
+        int bits_per_pix_src = frame.pixelFormat().bitsPerPixel();
+        int bits_per_pix_dst = (linesize / frame.width()) * 8;
+
+        assert(bits_per_pix_src == bits_per_pix_dst);
+
+        for (int i = 0; i < frame.height(); ++i) {
+/*
             uchar *src_line = data + (i * frame.width());
             uchar *dst_line = buffer + i * linesize;
+            memcpy(dst_line, src_line, linesize);//frame.width() * 3);
+*/
+
+            uchar *src_line = data + (i * linesize);
+            uchar *dst_line = buffer + (i * linesize);
             memcpy(dst_line, src_line, linesize);//frame.width() * 3);
         }
 
@@ -130,8 +141,9 @@ int test0()
 
                 vdec.setCodec(codec);
                 vdec.setRefCountedFrames(true);
+                Codec cc{};
 
-                vdec.open({{"threads", "1"}}, Codec(), ec);
+                vdec.open({{"threads", "1"}}, cc, ec);
                 //vdec.open(ec);
                 if (ec) {
                     cerr << "Can't open codec\n";
@@ -146,6 +158,7 @@ int test0()
                     return 1;
                 }
 
+
                 if (pkt.streamIndex() != videoStream) {
                     continue;
                 }
@@ -154,6 +167,11 @@ int test0()
                 clog << "Read packet: " << ts << " / " << ts.seconds() << " / " << pkt.timeBase() << " / st: " << pkt.streamIndex() << endl;
 
                 VideoFrame frame = vdec.decode(pkt, ec);
+
+                if(frame.isNull() || !frame.isComplete())
+                    continue;
+
+                VideoRescaler rescaler(vdec.width(), vdec.height(), AV_PIX_FMT_RGB24);
 
                 count++;
                 //if (count > 100)
@@ -168,7 +186,9 @@ int test0()
                 }
 
                 ts = frame.pts();
-                paint(frame);
+                auto frame_rescaled = rescaler.rescale(frame);
+
+                paint(std::move(frame_rescaled));
                 clog << "  Frame: " << frame.width() << "x" << frame.height() << ", size=" << frame.size() << ", ts=" << ts << ", tm: " << ts.seconds() << ", tb: " << frame.timeBase() << ", ref=" << frame.isReferenced() << ":" << frame.refCount() << endl;
 
             }

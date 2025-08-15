@@ -96,7 +96,7 @@ public:
             QPainter painter(this);
             if (painter.isActive()) {
                 // painter активен, можно рисовать
-                QPixmap pixmap = QPixmap::fromImage(rapibu[i].img);
+                QPixmap pixmap = QPixmap::fromImage(rapibu[i].img, Qt::ColorOnly);
                 //painter.drawPixmap(0, 0, pixmap);
                 painter.drawPixmap(0, 0, std::min(pixmap.width(), width()), std::min(pixmap.height(), height()), pixmap);
             } else {
