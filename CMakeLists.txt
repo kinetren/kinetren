@@ -38,6 +38,7 @@ else()
     else()
         add_executable(kp-test
             ${PROJECT_SOURCES}
+            previewer.h previewer.cpp
         )
     endif()
 endif()
@@ -45,9 +46,11 @@ endif()
 target_link_libraries(kp-test PRIVATE Qt${QT_VERSION_MAJOR}::Widgets)
 
 find_package(avcpp REQUIRED PATHS /developer/kp/avcpp/avcpp-git/build/install/lib64/cmake/avcpp)
-target_link_libraries(kp-test PRIVATE
+target_link_libraries(kp-test PUBLIC
     avcpp::avcpp
 )
+target_include_directories(kp-test PUBLIC /developer/kp/avcpp/avcpp-git/build/install/include)
+target_include_directories(kp-test PUBLIC ${CMAKE_SOURCE_DIR})
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an

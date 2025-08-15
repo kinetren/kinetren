@@ -10,6 +10,12 @@
     <height>600</height>
    </rect>
   </property>
+  <property name="minimumSize">
+   <size>
+    <width>450</width>
+    <height>450</height>
+   </size>
+  </property>
   <property name="windowTitle">
    <string>MainWindow</string>
   </property>
@@ -42,7 +48,7 @@
        <property name="minimumSize">
         <size>
          <width>50</width>
-         <height>250</height>
+         <height>2000</height>
         </size>
        </property>
        <property name="orientation">
@@ -65,7 +71,7 @@
          <string notr="true">background: gray;</string>
         </property>
        </widget>
-       <widget class="QWidget" name="widget" native="true">
+       <widget class="Previewer" name="frame" native="true">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
           <horstretch>0</horstretch>
@@ -74,8 +80,8 @@
         </property>
         <property name="minimumSize">
          <size>
-          <width>20</width>
-          <height>20</height>
+          <width>2000</width>
+          <height>2000</height>
          </size>
         </property>
         <property name="styleSheet">
@@ -116,6 +122,13 @@
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>Previewer</class>
+   <extends>QWidget</extends>
+   <header>previewer.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>
