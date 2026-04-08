@@ -35,74 +35,60 @@ constexpr int kAudioSampleRate = 48000;
 constexpr int kAudioChannels = 2;
 constexpr int kAudioBlockMs = 20;
 constexpr int kAudioSamplesPerBlock = (kAudioSampleRate * kAudioBlockMs) / 1000;
-constexpr size_t kAudioRingSlots = 2048;
-constexpr int kAudioReplayHistoryBlocks = 50; // 1 second at 20ms blocks
+constexpr size_t kAudioRingSlots = 12; // 12 * 20ms = 240ms
 
 constexpr int kVideoFps = 30;
 constexpr int kVideoFrameMs = 1000 / kVideoFps;
-constexpr size_t kVideoRingSlots = 256;
-constexpr int kVideoReplayHistoryFrames = 30; // ~1 second at 30 fps
+constexpr size_t kVideoRingSlots = 7; // 7 * 33ms ~= 231ms
 }
 
 struct PlaybackPipeline::AudioRingBuffer {
     explicit AudioRingBuffer(size_t capacity)
-        : keys(capacity, -1)
-        , blocks(capacity)
+        : blocks(capacity, std::vector<int16_t>(kAudioSamplesPerBlock * kAudioChannels, 0))
     {
     }
 
     void setBlock(qint64 idx, const std::vector<int16_t> &samples)
     {
-        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(keys.size()));
+        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(blocks.size()));
         std::lock_guard<std::mutex> lock(mutex);
-        keys[slot] = idx;
         blocks[slot] = samples;
     }
 
     bool getBlock(qint64 idx, std::vector<int16_t> &samples) const
     {
-        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(keys.size()));
+        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(blocks.size()));
         std::lock_guard<std::mutex> lock(mutex);
-        if (keys[slot] != idx) {
-            return false;
-        }
         samples = blocks[slot];
-        return true;
+        return !samples.empty();
     }
 
     mutable std::mutex mutex;
-    std::vector<qint64> keys;
     std::vector<std::vector<int16_t>> blocks;
 };
 
 struct PlaybackPipeline::VideoRingBuffer {
     explicit VideoRingBuffer(size_t capacity)
-        : keys(capacity, -1)
-        , frames(capacity)
+        : frames(capacity)
     {
     }
 
     void setFrame(qint64 idx, const QImage &img)
     {
-        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(keys.size()));
+        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(frames.size()));
         std::lock_guard<std::mutex> lock(mutex);
-        keys[slot] = idx;
         frames[slot] = img;
     }
 
     bool getFrame(qint64 idx, QImage &img) const
     {
-        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(keys.size()));
+        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(frames.size()));
         std::lock_guard<std::mutex> lock(mutex);
-        if (keys[slot] != idx) {
-            return false;
-        }
         img = frames[slot];
-        return true;
+        return !img.isNull();
     }
 
     mutable std::mutex mutex;
-    std::vector<qint64> keys;
     std::vector<QImage> frames;
 };
 
@@ -333,10 +319,6 @@ void PlaybackPipeline::audioMixLoop()
     const int samplesPerBlock = kAudioSamplesPerBlock * kAudioChannels;
     const auto blockDuration = std::chrono::milliseconds(kAudioBlockMs);
     auto nextWake = std::chrono::steady_clock::now();
-    std::unordered_map<std::string, std::vector<int16_t>> lastGoodBlockByWorker;
-    std::vector<int16_t> lastMixedBlock(samplesPerBlock, 0);
-    std::deque<std::vector<int16_t>> recentMixedBlocks;
-    size_t replayBlockIndex = 0;
 
     while (running.load()) {
         if (!audioDevice) {
@@ -355,34 +337,14 @@ void PlaybackPipeline::audioMixLoop()
 
         std::vector<int32_t> mix(samplesPerBlock, 0);
         const qint64 blockMs = nextAudioBlock * kAudioBlockMs;
-        bool hadAnyActive = false;
-        bool hadAnyData = false;
         for (const auto &worker : workers) {
             if (blockMs < worker->clip.startMs || blockMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
             }
-            hadAnyActive = true;
             std::vector<int16_t> block;
-            bool ready = false;
-            for (int retry = 0; retry < 8; ++retry) {
-                ready = worker->ring->getBlock(nextAudioBlock, block);
-                if (ready) {
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-            if (ready && static_cast<int>(block.size()) >= samplesPerBlock) {
-                lastGoodBlockByWorker[worker->key] = block;
-                hadAnyData = true;
-            } else {
-                auto it = lastGoodBlockByWorker.find(worker->key);
-                if (it != lastGoodBlockByWorker.end() &&
-                    static_cast<int>(it->second.size()) >= samplesPerBlock) {
-                    block = it->second;
-                    hadAnyData = true;
-                } else {
-                    continue;
-                }
+            const bool ready = worker->ring->getBlock(nextAudioBlock, block);
+            if (!ready || static_cast<int>(block.size()) < samplesPerBlock) {
+                continue;
             }
             for (int i = 0; i < samplesPerBlock; ++i) {
                 mix[i] += block[i];
@@ -390,26 +352,11 @@ void PlaybackPipeline::audioMixLoop()
         }
 
         std::vector<int16_t> out(samplesPerBlock, 0);
-        if (hadAnyActive && !hadAnyData) {
-            if (!recentMixedBlocks.empty()) {
-                out = recentMixedBlocks[replayBlockIndex % recentMixedBlocks.size()];
-                ++replayBlockIndex;
-            } else {
-                out = lastMixedBlock;
-            }
-        } else {
-            for (int i = 0; i < samplesPerBlock; ++i) {
-                out[i] = static_cast<int16_t>(std::clamp<int32_t>(
-                    mix[i],
-                    std::numeric_limits<int16_t>::min(),
-                    std::numeric_limits<int16_t>::max()));
-            }
-            lastMixedBlock = out;
-            recentMixedBlocks.push_back(out);
-            if (static_cast<int>(recentMixedBlocks.size()) > kAudioReplayHistoryBlocks) {
-                recentMixedBlocks.pop_front();
-            }
-            replayBlockIndex = 0;
+        for (int i = 0; i < samplesPerBlock; ++i) {
+            out[i] = static_cast<int16_t>(std::clamp<int32_t>(
+                mix[i],
+                std::numeric_limits<int16_t>::min(),
+                std::numeric_limits<int16_t>::max()));
         }
 
         const char *pcm = reinterpret_cast<const char *>(out.data());
@@ -437,10 +384,6 @@ void PlaybackPipeline::videoComposeLoop()
 {
     const auto frameDuration = std::chrono::milliseconds(kVideoFrameMs);
     auto nextWake = std::chrono::steady_clock::now();
-    std::unordered_map<std::string, QImage> lastGoodFrameByWorker;
-    QImage lastComposedFrame;
-    std::deque<QImage> recentComposedFrames;
-    size_t replayFrameIndex = 0;
     while (running.load()) {
         std::vector<std::shared_ptr<VideoWorker>> workers;
         {
@@ -454,31 +397,14 @@ void PlaybackPipeline::videoComposeLoop()
         const qint64 frameMs = nextVideoFrame * kVideoFrameMs;
         QImage composed;
         bool hasAny = false;
-        bool hadAnyActive = false;
-        bool usedReplayFallback = false;
         for (const auto &worker : workers) {
             if (frameMs < worker->clip.startMs || frameMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
             }
-            hadAnyActive = true;
             QImage frame;
-            bool ready = false;
-            for (int retry = 0; retry < 5; ++retry) {
-                ready = worker->ring->getFrame(nextVideoFrame, frame);
-                if (ready) {
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-            if (ready && !frame.isNull()) {
-                lastGoodFrameByWorker[worker->key] = frame;
-            } else {
-                auto it = lastGoodFrameByWorker.find(worker->key);
-                if (it != lastGoodFrameByWorker.end() && !it->second.isNull()) {
-                    frame = it->second;
-                } else {
-                    continue;
-                }
+            const bool ready = worker->ring->getFrame(nextVideoFrame, frame);
+            if (!ready || frame.isNull()) {
+                continue;
             }
 
             if (!hasAny) {
@@ -491,26 +417,7 @@ void PlaybackPipeline::videoComposeLoop()
             p.drawImage(composed.rect(), frame);
         }
 
-        if (!hasAny && hadAnyActive && !lastComposedFrame.isNull()) {
-            if (!recentComposedFrames.empty()) {
-                composed = recentComposedFrames[replayFrameIndex % recentComposedFrames.size()];
-                ++replayFrameIndex;
-            } else {
-                composed = lastComposedFrame;
-            }
-            hasAny = true;
-            usedReplayFallback = true;
-        }
-
         if (hasAny && onVideoFrameReady) {
-            lastComposedFrame = composed;
-            if (!usedReplayFallback) {
-                recentComposedFrames.push_back(composed);
-                if (static_cast<int>(recentComposedFrames.size()) > kVideoReplayHistoryFrames) {
-                    recentComposedFrames.pop_front();
-                }
-                replayFrameIndex = 0;
-            }
             onVideoFrameReady(std::move(composed));
         }
 
