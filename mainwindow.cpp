@@ -628,10 +628,31 @@ void MainWindow::refreshPerformancePanel()
         return;
     }
     const auto stats = playbackPipeline->performanceSnapshot();
-    const quint64 cacheLookups = stats.draftCacheHits + stats.draftCacheMisses;
-    const double hitPct = (cacheLookups > 0)
-        ? (static_cast<double>(stats.draftCacheHits) * 100.0 / static_cast<double>(cacheLookups))
+    const quint64 resourceLookups = stats.resourceCacheHits + stats.resourceCacheMisses;
+    const double resourceHitPct = (resourceLookups > 0)
+        ? (static_cast<double>(stats.resourceCacheHits) * 100.0 / static_cast<double>(resourceLookups))
         : 0.0;
+    const quint64 finalLookups = stats.finalViewCacheHits + stats.finalViewCacheMisses;
+    const double finalHitPct = (finalLookups > 0)
+        ? (static_cast<double>(stats.finalViewCacheHits) * 100.0 / static_cast<double>(finalLookups))
+        : 0.0;
+    const quint64 audioLookups = stats.audioCacheHits + stats.audioCacheMisses;
+    const double audioHitPct = (audioLookups > 0)
+        ? (static_cast<double>(stats.audioCacheHits) * 100.0 / static_cast<double>(audioLookups))
+        : 0.0;
+    const quint64 avcppTotalCalls =
+        stats.avcppOpenCalls + stats.avcppPacketReads + stats.avcppVideoDecodeCalls + stats.avcppAudioDecodeCalls;
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    double avcppCallsPerSec = 0.0;
+    if (lastPerfSampleMs > 0 && nowMs > lastPerfSampleMs && avcppTotalCalls >= lastAvcppTotalCalls) {
+        const qint64 deltaMs = nowMs - lastPerfSampleMs;
+        const quint64 deltaCalls = avcppTotalCalls - lastAvcppTotalCalls;
+        avcppCallsPerSec = (deltaMs > 0) ? (static_cast<double>(deltaCalls) * 1000.0 / static_cast<double>(deltaMs)) : 0.0;
+    }
+    lastPerfSampleMs = nowMs;
+    lastAvcppTotalCalls = avcppTotalCalls;
+    const double aggregateHitPct = (resourceHitPct * 0.45) + (finalHitPct * 0.35) + (audioHitPct * 0.20);
+
     const auto mb = [](quint64 bytes) -> QString {
         return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 1) + "MB";
     };
@@ -639,23 +660,36 @@ void MainWindow::refreshPerformancePanel()
         QString("Compose FPS: %1 | Frames: %2")
             .arg(stats.composeFps, 0, 'f', 1)
             .arg(stats.composedFrames),
-        QString("Cache lookups: %1 | hits: %2 (%3%) | decoded: %4 | entries: %5 | evictions: %6")
-            .arg(cacheLookups)
-            .arg(stats.draftCacheHits)
-            .arg(hitPct, 0, 'f', 1)
-            .arg(stats.draftFramesDecoded)
-            .arg(stats.draftCacheEntries)
-            .arg(stats.draftCacheEvictions),
-        QString("Cache resolution: %1x%2 (%3) | used/limit: %4 / %5 (max %6)")
+        QString("Resource cache: %1/%2 (%3%) | Final view: %4/%5 (%6%) | Audio: %7/%8 (%9%)")
+            .arg(stats.resourceCacheHits)
+            .arg(resourceLookups)
+            .arg(resourceHitPct, 0, 'f', 1)
+            .arg(stats.finalViewCacheHits)
+            .arg(finalLookups)
+            .arg(finalHitPct, 0, 'f', 1)
+            .arg(stats.audioCacheHits)
+            .arg(audioLookups)
+            .arg(audioHitPct, 0, 'f', 1),
+        QString("Resource cache %1x%2 (%3) | decoded: %4 | entries: %5 | evictions: %6 | used/limit: %7 / %8")
             .arg(projectSettings.cacheResolution().width())
             .arg(projectSettings.cacheResolution().height())
             .arg(projectSettings.cacheQualityLabel())
-            .arg(mb(stats.draftCacheUsedBytes))
-            .arg(mb(stats.draftCacheLimitBytes))
-            .arg(mb(stats.draftCacheConfiguredMaxBytes)),
-        QString("Project: %1 FPS | %2x%3")
+            .arg(stats.draftFramesDecoded)
+            .arg(stats.resourceCacheEntries)
+            .arg(stats.resourceCacheEvictions)
+            .arg(mb(stats.resourceCacheUsedBytes))
+            .arg(mb(stats.resourceCacheLimitBytes)),
+        QString("Project: %1 FPS | %2x%3 | avcpp open:%4 read:%5 vdec:%6 adec:%7 | audio-cache entries:%8")
             .arg(projectSettings.fps)
             .arg(projectSettings.resolution.width())
-            .arg(projectSettings.resolution.height()));
+            .arg(projectSettings.resolution.height())
+            .arg(stats.avcppOpenCalls)
+            .arg(stats.avcppPacketReads)
+            .arg(stats.avcppVideoDecodeCalls)
+            .arg(stats.avcppAudioDecodeCalls)
+            .arg(stats.audioCacheEntries),
+        stats.composeFps,
+        aggregateHitPct,
+        avcppCallsPerSec);
 }
 

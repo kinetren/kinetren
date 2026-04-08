@@ -178,9 +178,73 @@ struct PlaybackPipeline::VideoWorker {
     std::shared_ptr<VideoRingBuffer> ring;
 };
 
+struct PlaybackPipeline::AudioBlockCache {
+    struct Entry {
+        std::vector<int16_t> samples;
+        std::list<std::string>::iterator lruIt;
+    };
+
+    struct Stats {
+        quint64 entries = 0;
+        quint64 hits = 0;
+        quint64 misses = 0;
+    };
+
+    bool get(const std::string &key, std::vector<int16_t> &samples)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto it = entries.find(key);
+        if (it == entries.end()) {
+            ++missCount;
+            return false;
+        }
+        lru.erase(it->second.lruIt);
+        lru.push_front(key);
+        it->second.lruIt = lru.begin();
+        samples = it->second.samples;
+        ++hitCount;
+        return true;
+    }
+
+    void put(const std::string &key, const std::vector<int16_t> &samples)
+    {
+        if (samples.empty()) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex);
+        auto existing = entries.find(key);
+        if (existing != entries.end()) {
+            lru.erase(existing->second.lruIt);
+            entries.erase(existing);
+        }
+        lru.push_front(key);
+        entries.emplace(key, Entry{samples, lru.begin()});
+        while (entries.size() > maxEntries && !lru.empty()) {
+            const std::string evictKey = lru.back();
+            lru.pop_back();
+            entries.erase(evictKey);
+        }
+    }
+
+    Stats stats() const
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return Stats{static_cast<quint64>(entries.size()), hitCount, missCount};
+    }
+
+    mutable std::mutex mutex;
+    std::unordered_map<std::string, Entry> entries;
+    std::list<std::string> lru;
+    size_t maxEntries = 24000;
+    quint64 hitCount = 0;
+    quint64 missCount = 0;
+};
+
 PlaybackPipeline::PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameReady)
     : onVideoFrameReady(std::move(onVideoFrameReady))
 {
+    audioBlockCache = std::make_unique<AudioBlockCache>();
+    finalViewCache.setConfiguredMaxBytes(512ULL * 1024ULL * 1024ULL);
 }
 
 PlaybackPipeline::~PlaybackPipeline()
@@ -303,13 +367,23 @@ PlaybackPipeline::PerformanceStats PlaybackPipeline::performanceSnapshot() const
     stats.composedFrames = composedFrames.load();
     stats.draftFramesDecoded = draftFramesDecoded.load();
     const auto cstats = frameCache.stats();
-    stats.draftCacheHits = cstats.hits;
-    stats.draftCacheMisses = cstats.misses;
-    stats.draftCacheEntries = cstats.entries;
-    stats.draftCacheUsedBytes = cstats.usedBytes;
-    stats.draftCacheLimitBytes = cstats.limitBytes;
-    stats.draftCacheConfiguredMaxBytes = cstats.configuredMaxBytes;
-    stats.draftCacheEvictions = cstats.evictions;
+    stats.resourceCacheHits = cstats.hits;
+    stats.resourceCacheMisses = cstats.misses;
+    stats.resourceCacheEntries = cstats.entries;
+    stats.resourceCacheUsedBytes = cstats.usedBytes;
+    stats.resourceCacheLimitBytes = cstats.limitBytes;
+    stats.resourceCacheConfiguredMaxBytes = cstats.configuredMaxBytes;
+    stats.resourceCacheEvictions = cstats.evictions;
+    stats.finalViewCacheHits = finalViewCacheHits.load();
+    stats.finalViewCacheMisses = finalViewCacheMisses.load();
+    const auto astats = audioBlockCache->stats();
+    stats.audioCacheHits = astats.hits;
+    stats.audioCacheMisses = astats.misses;
+    stats.audioCacheEntries = astats.entries;
+    stats.avcppOpenCalls = avcppOpenCalls.load();
+    stats.avcppPacketReads = avcppPacketReads.load();
+    stats.avcppVideoDecodeCalls = avcppVideoDecodeCalls.load();
+    stats.avcppAudioDecodeCalls = avcppAudioDecodeCalls.load();
     return stats;
 }
 
@@ -318,6 +392,26 @@ std::string PlaybackPipeline::clipKey(const Clip &clip)
     return (clip.sourcePath + "::" + QString::number(clip.startMs) + "::" +
             QString::number(clip.durationMs) + "::" + QString::number(clip.sourceInMs))
         .toStdString();
+}
+
+std::string PlaybackPipeline::finalViewKey(qint64 timelineMs, const std::vector<std::shared_ptr<VideoWorker>> &workers)
+{
+    QString key = QStringLiteral("final::%1").arg(timelineMs / kVideoFrameMs);
+    for (const auto &worker : workers) {
+        if (!worker) {
+            continue;
+        }
+        key += QStringLiteral("|%1@%2")
+                   .arg(QString::fromStdString(worker->key))
+                   .arg(std::max<qint64>(0, timelineMs - worker->playbackStartMs) / kVideoFrameMs);
+    }
+    return key.toStdString();
+}
+
+std::string PlaybackPipeline::audioBlockKey(const QString &sourcePath, qint64 sourceTimeMs)
+{
+    const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kAudioBlockMs) * kAudioBlockMs);
+    return (sourcePath + "::audio::" + QString::number(bucketMs)).toStdString();
 }
 
 void PlaybackPipeline::ensureAudioOutput()
@@ -486,7 +580,13 @@ void PlaybackPipeline::audioMixLoop()
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
             std::vector<int16_t> block;
-            const bool ready = worker->ring->getBlockExact(nextAudioBlock, block);
+            bool ready = worker->ring->getBlockExact(nextAudioBlock, block);
+            if (!ready) {
+                const qint64 startBlock = worker->timelineStartMs / kAudioBlockMs;
+                const qint64 sourceTimeMs =
+                    worker->startOffsetMs + std::max<qint64>(0, nextAudioBlock - startBlock) * kAudioBlockMs;
+                ready = audioBlockCache->get(audioBlockKey(worker->clip.sourcePath, sourceTimeMs), block);
+            }
             if (!ready || static_cast<int>(block.size()) < samplesPerBlock) {
                 continue;
             }
@@ -541,11 +641,49 @@ void PlaybackPipeline::videoComposeLoop()
                 workers.push_back(it.second);
             }
         }
+        std::sort(workers.begin(), workers.end(), [](const std::shared_ptr<VideoWorker> &a, const std::shared_ptr<VideoWorker> &b) {
+            if (!a || !b) {
+                return static_cast<bool>(a);
+            }
+            return a->key < b->key;
+        });
 
         const qint64 audioMasterMs = consumedAudioBlock.load() * kAudioBlockMs;
+        const std::string composedCacheKey = finalViewKey(audioMasterMs, workers);
         QImage composed;
         bool hasAny = false;
         int composeFrameDurationUs = 33333;
+        {
+            QImage cachedFinal;
+            if (finalViewCache.get(composedCacheKey, cachedFinal) && !cachedFinal.isNull()) {
+                ++finalViewCacheHits;
+                composed = cachedFinal;
+                hasAny = true;
+            } else {
+                ++finalViewCacheMisses;
+            }
+        }
+        if (hasAny) {
+            if (onVideoFrameReady) {
+                onVideoFrameReady(std::move(composed));
+                ++fpsWindowFrames;
+                composedFrames.fetch_add(1);
+            }
+            const auto now = std::chrono::steady_clock::now();
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - fpsWindowStart).count();
+            if (elapsed >= 1000) {
+                const double seconds = static_cast<double>(elapsed) / 1000.0;
+                composeFps.store((seconds > 0.0) ? (static_cast<double>(fpsWindowFrames) / seconds) : 0.0);
+                fpsWindowFrames = 0;
+                fpsWindowStart = now;
+            }
+            ++nextVideoFrame;
+            consumedVideoFrame.store(nextVideoFrame);
+            const int sleepUs = std::clamp(composeFrameDurationUs / 2, 4000, 16000);
+            nextWake += std::chrono::microseconds(sleepUs);
+            std::this_thread::sleep_until(nextWake);
+            continue;
+        }
         for (const auto &worker : workers) {
             if (audioMasterMs < worker->clip.startMs || audioMasterMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
@@ -602,6 +740,7 @@ void PlaybackPipeline::videoComposeLoop()
         }
 
         if (hasAny && onVideoFrameReady) {
+            finalViewCache.put(composedCacheKey, composed);
             onVideoFrameReady(std::move(composed));
             ++fpsWindowFrames;
             composedFrames.fetch_add(1);
@@ -628,8 +767,25 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 {
     using namespace av;
 
+    const qint64 startBlock = worker.timelineStartMs / kAudioBlockMs;
+    const qint64 clipEndMs = worker.clip.startMs + worker.clip.durationMs;
+    const qint64 clipEndBlock = (clipEndMs + kAudioBlockMs - 1) / kAudioBlockMs;
+    bool fullCached = true;
+    for (qint64 block = startBlock; block < clipEndBlock; ++block) {
+        std::vector<int16_t> cached;
+        const qint64 sourceTimeMs = worker.startOffsetMs + (block - startBlock) * kAudioBlockMs;
+        if (!audioBlockCache->get(audioBlockKey(worker.clip.sourcePath, sourceTimeMs), cached)) {
+            fullCached = false;
+            break;
+        }
+    }
+    if (fullCached && clipEndBlock > startBlock) {
+        return 0;
+    }
+
     std::error_code ec;
     FormatContext input;
+    avcppOpenCalls.fetch_add(1);
     input.openInput(worker.clip.sourcePath.toStdString(), ec);
     if (ec) {
         return 1;
@@ -674,7 +830,7 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 
     const int blockInterleaved = kAudioSamplesPerBlock * kAudioChannels;
     std::deque<int16_t> pending;
-    qint64 nextBlock = worker.timelineStartMs / kAudioBlockMs;
+    qint64 nextBlock = startBlock;
     bool started = false;
 
     const auto popToRing = [&](bool getAll) -> int {
@@ -709,6 +865,8 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
                     block[i] = pending.front();
                     pending.pop_front();
                 }
+                const qint64 sourceTimeMs = worker.startOffsetMs + (nextBlock - startBlock) * kAudioBlockMs;
+                audioBlockCache->put(audioBlockKey(worker.clip.sourcePath, sourceTimeMs), block);
                 worker.ring->setBlock(nextBlock, block);
                 worker.producedBlockIndex.store(nextBlock);
                 ++nextBlock;
@@ -718,6 +876,7 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
         Packet pkt = input.readPacket(ec);
+        avcppPacketReads.fetch_add(1);
         if (!pkt) {
             // End of stream or temporary no packet; stop decode loop and flush decoder.
             break;
@@ -730,6 +889,7 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
         if (pkt.streamIndex() != audioStream) {
             continue;
         }
+        avcppAudioDecodeCalls.fetch_add(1);
         AudioSamples samples = dec.decode(pkt, ec);
         if (ec) {
             return 1;
@@ -754,6 +914,7 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
     }
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
+        avcppAudioDecodeCalls.fetch_add(1);
         AudioSamples samples = dec.decode(Packet(), ec);
         if (ec) {
             ec.clear();
@@ -778,6 +939,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
 
     std::error_code ec;
     FormatContext input;
+    avcppOpenCalls.fetch_add(1);
     input.openInput(worker.clip.sourcePath.toStdString(), ec);
     if (ec) {
         return 1;
@@ -860,6 +1022,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
         Packet pkt = input.readPacket(ec);
+        avcppPacketReads.fetch_add(1);
         if (!pkt) {
             // End of stream or temporary no packet; stop decode loop and flush decoder.
             break;
@@ -872,6 +1035,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             continue;
         }
 
+        avcppVideoDecodeCalls.fetch_add(1);
         VideoFrame frame = dec.decode(pkt, ec);
         if (ec) {
             return 1;
@@ -928,6 +1092,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
     }
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
+        avcppVideoDecodeCalls.fetch_add(1);
         VideoFrame frame = dec.decode(Packet(), ec);
         if (ec) {
             ec.clear();
@@ -992,6 +1157,19 @@ QImage PlaybackPipeline::composeDraftFrameAt(qint64 tMs, const std::vector<Clip>
         return QImage();
     }
 
+    QString draftKey = QStringLiteral("final::draft::%1").arg(tMs / kVideoFrameMs);
+    for (const auto &clip : videoClips) {
+        draftKey += "|" + QString::fromStdString(clipKey(clip));
+    }
+    {
+        QImage cached;
+        if (finalViewCache.get(draftKey.toStdString(), cached) && !cached.isNull()) {
+            ++finalViewCacheHits;
+            return cached;
+        }
+        ++finalViewCacheMisses;
+    }
+
     QImage composed;
     bool hasAny = false;
     for (const auto &clip : videoClips) {
@@ -1012,7 +1190,11 @@ QImage PlaybackPipeline::composeDraftFrameAt(qint64 tMs, const std::vector<Clip>
         p.drawImage(composed.rect(), frame);
     }
 
-    return hasAny ? composed : QImage();
+    if (!hasAny) {
+        return QImage();
+    }
+    finalViewCache.put(draftKey.toStdString(), composed);
+    return composed;
 }
 
 QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeMs)
@@ -1032,6 +1214,7 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
 
     std::error_code ec;
     FormatContext input;
+    avcppOpenCalls.fetch_add(1);
     input.openInput(clip.sourcePath.toStdString(), ec);
     if (ec) {
         return QImage();
@@ -1081,12 +1264,14 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
     qint64 pickedMs = -1;
     for (int tries = 0; tries < 600; ++tries) {
         Packet pkt = input.readPacket(ec);
+        avcppPacketReads.fetch_add(1);
         if (ec || !pkt) {
             break;
         }
         if (pkt.streamIndex() != videoStream) {
             continue;
         }
+        avcppVideoDecodeCalls.fetch_add(1);
         VideoFrame frame = dec.decode(pkt, ec);
         if (ec || frame.isNull() || !frame.isComplete()) {
             ec.clear();

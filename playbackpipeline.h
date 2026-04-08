@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -36,14 +37,23 @@ public:
     struct PerformanceStats {
         double composeFps = 0.0;
         quint64 composedFrames = 0;
-        quint64 draftCacheHits = 0;
-        quint64 draftCacheMisses = 0;
+        quint64 resourceCacheHits = 0;
+        quint64 resourceCacheMisses = 0;
         quint64 draftFramesDecoded = 0;
-        quint64 draftCacheEntries = 0;
-        quint64 draftCacheUsedBytes = 0;
-        quint64 draftCacheLimitBytes = 0;
-        quint64 draftCacheConfiguredMaxBytes = 0;
-        quint64 draftCacheEvictions = 0;
+        quint64 resourceCacheEntries = 0;
+        quint64 resourceCacheUsedBytes = 0;
+        quint64 resourceCacheLimitBytes = 0;
+        quint64 resourceCacheConfiguredMaxBytes = 0;
+        quint64 resourceCacheEvictions = 0;
+        quint64 finalViewCacheHits = 0;
+        quint64 finalViewCacheMisses = 0;
+        quint64 audioCacheHits = 0;
+        quint64 audioCacheMisses = 0;
+        quint64 audioCacheEntries = 0;
+        quint64 avcppOpenCalls = 0;
+        quint64 avcppPacketReads = 0;
+        quint64 avcppVideoDecodeCalls = 0;
+        quint64 avcppAudioDecodeCalls = 0;
     };
 
     explicit PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameReady);
@@ -63,6 +73,7 @@ private:
     struct VideoRingBuffer;
     struct AudioWorker;
     struct VideoWorker;
+    struct AudioBlockCache;
 
     void ensureAudioOutput();
     void shutdownAudioOutput();
@@ -79,6 +90,8 @@ private:
     int decodeVideoWorker(VideoWorker &worker);
     QImage composeDraftFrameAt(qint64 timelineMs, const std::vector<Clip> &videoClips);
     QImage decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeMs);
+    static std::string finalViewKey(qint64 timelineMs, const std::vector<std::shared_ptr<VideoWorker>> &workers);
+    static std::string audioBlockKey(const QString &sourcePath, qint64 sourceTimeMs);
 
     static std::string clipKey(const Clip &clip);
 
@@ -112,9 +125,17 @@ private:
     ProjectSettings projectSettings;
     mutable std::mutex settingsMutex;
     FrameCache frameCache;
+    FrameCache finalViewCache;
+    std::unique_ptr<AudioBlockCache> audioBlockCache;
     std::atomic<double> composeFps{0.0};
     std::atomic<quint64> composedFrames{0};
     std::atomic<quint64> draftFramesDecoded{0};
+    std::atomic<quint64> finalViewCacheHits{0};
+    std::atomic<quint64> finalViewCacheMisses{0};
+    std::atomic<quint64> avcppOpenCalls{0};
+    std::atomic<quint64> avcppPacketReads{0};
+    std::atomic<quint64> avcppVideoDecodeCalls{0};
+    std::atomic<quint64> avcppAudioDecodeCalls{0};
 };
 
 #endif // PLAYBACKPIPELINE_H

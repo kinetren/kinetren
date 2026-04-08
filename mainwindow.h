@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QElapsedTimer>
 #include <QTimer>
+#include <QtGlobal>
 #include <memory>
 
 #include "projectsettings.h"
@@ -55,6 +56,8 @@ private:
     std::unique_ptr<PlaybackPipeline> playbackPipeline;
     ProjectSettings projectSettings;
     QTimer performanceTimer;
+    quint64 lastAvcppTotalCalls = 0;
+    qint64 lastPerfSampleMs = 0;
 
     Ui::MainWindow *ui;
 };

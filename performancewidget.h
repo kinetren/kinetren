@@ -4,8 +4,7 @@
 #include <QWidget>
 
 class QLabel;
-class PlaybackPipeline;
-class ProjectSettings;
+class MetricGraphWidget;
 
 class PerformanceWidget : public QWidget
 {
@@ -16,13 +15,19 @@ public:
     void setMetrics(const QString &composeFps,
                     const QString &cacheStats,
                     const QString &cacheResolution,
-                    const QString &projectInfo);
+                    const QString &projectInfo,
+                    double fpsValue,
+                    double cacheHitPct,
+                    double avcppCallsPerSecond);
 
 private:
     QLabel *composeFpsLabel = nullptr;
     QLabel *cacheStatsLabel = nullptr;
     QLabel *cacheResolutionLabel = nullptr;
     QLabel *projectInfoLabel = nullptr;
+    MetricGraphWidget *fpsGraph = nullptr;
+    MetricGraphWidget *cacheHitGraph = nullptr;
+    MetricGraphWidget *avcppGraph = nullptr;
 };
 
 #endif // PERFORMANCEWIDGET_H
