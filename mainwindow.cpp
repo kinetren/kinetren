@@ -10,10 +10,12 @@
 #include <QAudioOutput>
 #endif
 #include <QAudioFormat>
+#include <QByteArray>
 #include <QImage>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMetaObject>
+#include <QIODevice>
 #include <QPushButton>
 #include <QThreadPool>
 #include <QVBoxLayout>
@@ -21,9 +23,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <deque>
 #include <iostream>
+#include <limits>
 #include <thread>
 #include <system_error>
+#include <unordered_set>
 #include <utility>
 
 #include <avcpp/avutils.h>
@@ -34,6 +39,55 @@
 #include <avcpp/packet.h>
 #include <avcpp/audioresampler.h>
 #include <avcpp/videorescaler.h>
+
+namespace {
+constexpr int kAudioSampleRate = 48000;
+constexpr int kAudioChannels = 2;
+constexpr int kAudioBlockMs = 20;
+constexpr int kAudioSamplesPerBlock = (kAudioSampleRate * kAudioBlockMs) / 1000;
+constexpr size_t kAudioRingSlots = 256;
+
+}
+
+struct MainWindow::AudioRingBuffer {
+    explicit AudioRingBuffer(size_t capacity)
+        : blockKeys(capacity, -1)
+        , blocks(capacity)
+    {
+    }
+
+    void setBlock(qint64 blockIndex, const std::vector<int16_t> &samples)
+    {
+        const size_t slot = static_cast<size_t>(blockIndex % static_cast<qint64>(blockKeys.size()));
+        std::lock_guard<std::mutex> lock(mutex);
+        blockKeys[slot] = blockIndex;
+        blocks[slot] = samples;
+    }
+
+    bool getBlock(qint64 blockIndex, std::vector<int16_t> &samples) const
+    {
+        const size_t slot = static_cast<size_t>(blockIndex % static_cast<qint64>(blockKeys.size()));
+        std::lock_guard<std::mutex> lock(mutex);
+        if (blockKeys[slot] != blockIndex) {
+            return false;
+        }
+        samples = blocks[slot];
+        return true;
+    }
+
+    mutable std::mutex mutex;
+    std::vector<qint64> blockKeys;
+    std::vector<std::vector<int16_t>> blocks;
+};
+
+struct MainWindow::AudioTrackWorker {
+    QString sourcePath;
+    qint64 clipStartMs = 0;
+    qint64 clipDurationMs = 0;
+    int generation = 0;
+    std::shared_ptr<AudioRingBuffer> ring;
+    std::shared_ptr<std::atomic_bool> stopFlag;
+};
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -137,12 +191,14 @@ void MainWindow::syncTimelinePlayback()
     }
 
     const auto activeAudio = timelineEditor->activeAudioAt(timelineMs);
-    if (!activeAudio.empty()) {
-        const auto &clip = activeAudio.front();
-        startAudioPlayback(clip.sourcePath, clip.startMs, timelineMs);
-    } else {
+    if (activeAudio.empty()) {
         stopAudioPlayback();
+        return;
     }
+
+    ensureAudioPipelineStarted(timelineMs);
+    updateAudioWorkers(timelineMs);
+    mixAndOutputAudio(timelineMs);
 }
 
 void MainWindow::stopMediaPlayback()
@@ -156,8 +212,190 @@ void MainWindow::stopMediaPlayback()
 void MainWindow::stopAudioPlayback()
 {
     ++audioPlaybackGeneration;
+    {
+        std::lock_guard<std::mutex> lock(audioWorkersMutex);
+        for (auto &entry : audioWorkers) {
+            if (entry.second && entry.second->stopFlag) {
+                entry.second->stopFlag->store(true);
+            }
+        }
+        audioWorkers.clear();
+    }
     currentAudioPath.clear();
     currentAudioClipStartMs = -1;
+    shutdownAudioPipeline();
+}
+
+void MainWindow::ensureAudioPipelineStarted(qint64 timelineMs)
+{
+    if (audioSink && audioOutputDevice) {
+        return;
+    }
+
+    QAudioFormat format;
+    format.setSampleRate(kAudioSampleRate);
+    format.setChannelCount(kAudioChannels);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    format.setSampleFormat(QAudioFormat::Int16);
+    audioSink = new QAudioSink(QMediaDevices::defaultAudioOutput(), format, this);
+#else
+    format.setSampleSize(16);
+    format.setCodec("audio/pcm");
+    format.setByteOrder(QAudioFormat::LittleEndian);
+    format.setSampleType(QAudioFormat::SignedInt);
+    audioSink = new QAudioOutput(format, this);
+#endif
+    audioOutputDevice = audioSink->start();
+    nextAudioBlockIndex = timelineMs / kAudioBlockMs;
+}
+
+void MainWindow::shutdownAudioPipeline()
+{
+    if (audioSink) {
+        audioSink->stop();
+        delete audioSink;
+        audioSink = nullptr;
+    }
+    audioOutputDevice = nullptr;
+    nextAudioBlockIndex = 0;
+}
+
+QString MainWindow::audioWorkerKey(const QString &path, qint64 clipStartMs) const
+{
+    return QString("%1::%2").arg(path).arg(clipStartMs);
+}
+
+void MainWindow::startAudioWorker(const QString &path, qint64 clipStartMs, qint64 clipDurationMs, qint64 timelineMs)
+{
+    const QString key = audioWorkerKey(path, clipStartMs);
+    {
+        std::lock_guard<std::mutex> lock(audioWorkersMutex);
+        if (audioWorkers.find(key) != audioWorkers.end()) {
+            return;
+        }
+    }
+
+    auto worker = std::make_shared<AudioTrackWorker>();
+    worker->sourcePath = path;
+    worker->clipStartMs = clipStartMs;
+    worker->clipDurationMs = clipDurationMs;
+    worker->generation = audioPlaybackGeneration.load();
+    worker->ring = std::make_shared<AudioRingBuffer>(kAudioRingSlots);
+    worker->stopFlag = std::make_shared<std::atomic_bool>(false);
+
+    {
+        std::lock_guard<std::mutex> lock(audioWorkersMutex);
+        audioWorkers[key] = worker;
+    }
+
+    const qint64 startOffsetMs = std::max<qint64>(0, timelineMs - clipStartMs);
+    const qint64 baseBlockIndex = timelineMs / kAudioBlockMs;
+    const std::string pathUtf8 = path.toStdString();
+    auto ring = worker->ring;
+    auto stopFlag = worker->stopFlag;
+    const int generation = worker->generation;
+    QThreadPool::globalInstance()->start([this, pathUtf8, startOffsetMs, baseBlockIndex, generation, ring, stopFlag]() {
+        (void)decodeAudioToRing(pathUtf8, startOffsetMs, baseBlockIndex, generation, ring, stopFlag);
+    });
+}
+
+void MainWindow::updateAudioWorkers(qint64 timelineMs)
+{
+    if (!timelineEditor) {
+        return;
+    }
+
+    const auto active = timelineEditor->activeAudioAt(timelineMs);
+    std::unordered_set<QString> activeKeys;
+    for (const auto &clip : active) {
+        activeKeys.insert(audioWorkerKey(clip.sourcePath, clip.startMs));
+        startAudioWorker(clip.sourcePath, clip.startMs, clip.durationMs, timelineMs);
+    }
+
+    std::lock_guard<std::mutex> lock(audioWorkersMutex);
+    for (auto it = audioWorkers.begin(); it != audioWorkers.end();) {
+        if (activeKeys.find(it->first) != activeKeys.end()) {
+            ++it;
+            continue;
+        }
+        if (it->second && it->second->stopFlag) {
+            it->second->stopFlag->store(true);
+        }
+        it = audioWorkers.erase(it);
+    }
+}
+
+void MainWindow::mixAndOutputAudio(qint64 timelineMs)
+{
+    if (!timelineEditor || !audioOutputDevice) {
+        return;
+    }
+
+    const qint64 targetBlockIndex = timelineMs / kAudioBlockMs;
+    const int blockInterleavedSamples = kAudioSamplesPerBlock * kAudioChannels;
+    while (nextAudioBlockIndex <= targetBlockIndex) {
+        const qint64 blockTimeMs = nextAudioBlockIndex * kAudioBlockMs;
+        const auto active = timelineEditor->activeAudioAt(blockTimeMs);
+
+        std::vector<int32_t> mix(blockInterleavedSamples, 0);
+        for (const auto &clip : active) {
+            const QString key = audioWorkerKey(clip.sourcePath, clip.startMs);
+            std::shared_ptr<AudioTrackWorker> worker;
+            {
+                std::lock_guard<std::mutex> lock(audioWorkersMutex);
+                auto it = audioWorkers.find(key);
+                if (it != audioWorkers.end()) {
+                    worker = it->second;
+                }
+            }
+            if (!worker || !worker->ring) {
+                continue;
+            }
+
+            std::vector<int16_t> block;
+            bool hasData = false;
+            for (int retry = 0; retry < 6; ++retry) {
+                hasData = worker->ring->getBlock(nextAudioBlockIndex, block);
+                if (hasData) {
+                    break;
+                }
+                // Ring-buffer retry loop: wait briefly for delayed worker data.
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            if (!hasData || static_cast<int>(block.size()) < blockInterleavedSamples) {
+                continue;
+            }
+
+            for (int i = 0; i < blockInterleavedSamples; ++i) {
+                mix[i] += block[i];
+            }
+        }
+
+        std::vector<int16_t> out(blockInterleavedSamples, 0);
+        for (int i = 0; i < blockInterleavedSamples; ++i) {
+            out[i] = static_cast<int16_t>(std::clamp<int32_t>(
+                mix[i],
+                std::numeric_limits<int16_t>::min(),
+                std::numeric_limits<int16_t>::max()));
+        }
+
+        const char *pcm = reinterpret_cast<const char *>(out.data());
+        int totalBytes = static_cast<int>(out.size() * sizeof(int16_t));
+        int offset = 0;
+        while (offset < totalBytes) {
+            const qint64 written = audioOutputDevice->write(pcm + offset, totalBytes - offset);
+            if (written < 0) {
+                break;
+            }
+            if (written == 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            offset += static_cast<int>(written);
+        }
+
+        ++nextAudioBlockIndex;
+    }
 }
 
 void MainWindow::startVideoPlayback(const QString &path, qint64 clipStartMs, qint64 timelineMs)
@@ -181,27 +419,6 @@ void MainWindow::startVideoPlayback(const QString &path, qint64 clipStartMs, qin
 
     QThreadPool::globalInstance()->start([this, pathUtf8, startOffsetMs, generation]() {
         (void)decodeVideoFile(pathUtf8, startOffsetMs, generation);
-    });
-}
-
-void MainWindow::startAudioPlayback(const QString &path, qint64 clipStartMs, qint64 timelineMs)
-{
-    if (path.isEmpty()) {
-        stopAudioPlayback();
-        return;
-    }
-
-    if (path == currentAudioPath && clipStartMs == currentAudioClipStartMs) {
-        return;
-    }
-
-    const int generation = ++audioPlaybackGeneration;
-    currentAudioPath = path;
-    currentAudioClipStartMs = clipStartMs;
-    const qint64 startOffsetMs = std::max<qint64>(0, timelineMs - clipStartMs);
-    const std::string pathUtf8 = path.toStdString();
-    QThreadPool::globalInstance()->start([this, pathUtf8, startOffsetMs, generation]() {
-        (void)decodeAudioFile(pathUtf8, startOffsetMs, generation);
     });
 }
 
@@ -353,7 +570,12 @@ int MainWindow::decodeVideoFile(const std::string &uri, qint64 startOffsetMs, in
     return 0;
 }
 
-int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, int generation)
+int MainWindow::decodeAudioToRing(const std::string &uri,
+                                  qint64 startOffsetMs,
+                                  qint64 baseBlockIndex,
+                                  int generation,
+                                  const std::shared_ptr<AudioRingBuffer> &ring,
+                                  const std::shared_ptr<std::atomic_bool> &stopFlag)
 {
     using namespace av;
     using std::cerr;
@@ -403,57 +625,9 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
         return 1;
     }
 
-    int outSampleRate = 48000;
-    int outChannelCount = 2;
-    SampleFormat outSampleFormat = AV_SAMPLE_FMT_S16;
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    QAudioDevice outputDeviceInfo = QMediaDevices::defaultAudioOutput();
-    const QAudioFormat preferred = outputDeviceInfo.preferredFormat();
-    outSampleRate = preferred.sampleRate();
-    outChannelCount = preferred.channelCount();
-    switch (preferred.sampleFormat()) {
-    case QAudioFormat::Int32:
-        outSampleFormat = AV_SAMPLE_FMT_S32;
-        break;
-    case QAudioFormat::Float:
-        outSampleFormat = AV_SAMPLE_FMT_FLT;
-        break;
-    case QAudioFormat::Int16:
-    default:
-        outSampleFormat = AV_SAMPLE_FMT_S16;
-        break;
-    }
-#endif
-    outChannelCount = std::max(1, outChannelCount);
-    uint64_t outChannelLayout = AV_CH_LAYOUT_STEREO;
-    switch (outChannelCount) {
-    case 1:
-        outChannelLayout = AV_CH_LAYOUT_MONO;
-        break;
-    case 2:
-        outChannelLayout = AV_CH_LAYOUT_STEREO;
-        break;
-    case 3:
-        outChannelLayout = AV_CH_LAYOUT_2POINT1;
-        break;
-    case 4:
-        outChannelLayout = AV_CH_LAYOUT_QUAD;
-        break;
-    case 6:
-        outChannelLayout = AV_CH_LAYOUT_5POINT1;
-        break;
-    case 8:
-        outChannelLayout = AV_CH_LAYOUT_7POINT1;
-        break;
-    default:
-        outChannelLayout = AV_CH_LAYOUT_STEREO;
-        outChannelCount = 2;
-        break;
-    }
-
-    AudioResampler resampler(outChannelLayout,
-                             outSampleRate,
-                             outSampleFormat,
+    AudioResampler resampler(AV_CH_LAYOUT_STEREO,
+                             kAudioSampleRate,
+                             AV_SAMPLE_FMT_S16,
                              decoder.channelLayout(),
                              decoder.sampleRate(),
                              decoder.sampleFormat(),
@@ -463,57 +637,13 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
         return 1;
     }
 
-    int bytesPerSample = 2;
-    switch (static_cast<AVSampleFormat>(outSampleFormat)) {
-    case AV_SAMPLE_FMT_S32:
-    case AV_SAMPLE_FMT_FLT:
-        bytesPerSample = 4;
-        break;
-    case AV_SAMPLE_FMT_S16:
-    default:
-        bytesPerSample = 2;
-        break;
-    }
+    const int interleavedSamplesPerBlock = kAudioSamplesPerBlock * kAudioChannels;
+    qint64 nextBlockIndex = baseBlockIndex;
+    std::deque<int16_t> pending;
 
-    QAudioFormat audioFormat;
-    audioFormat.setSampleRate(outSampleRate);
-    audioFormat.setChannelCount(outChannelCount);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    switch (static_cast<AVSampleFormat>(outSampleFormat)) {
-    case AV_SAMPLE_FMT_S32:
-        audioFormat.setSampleFormat(QAudioFormat::Int32);
-        break;
-    case AV_SAMPLE_FMT_FLT:
-        audioFormat.setSampleFormat(QAudioFormat::Float);
-        break;
-    case AV_SAMPLE_FMT_S16:
-    default:
-        audioFormat.setSampleFormat(QAudioFormat::Int16);
-        break;
-    }
-    QAudioSink sink(outputDeviceInfo, audioFormat);
-#else
-    audioFormat.setSampleSize(bytesPerSample * 8);
-    audioFormat.setCodec("audio/pcm");
-    audioFormat.setByteOrder(QAudioFormat::LittleEndian);
-    audioFormat.setSampleType(static_cast<AVSampleFormat>(outSampleFormat) == AV_SAMPLE_FMT_FLT
-                                  ? QAudioFormat::Float
-                                  : QAudioFormat::SignedInt);
-    QAudioOutput sink(audioFormat);
-#endif
-    QIODevice *audioDevice = sink.start();
-    if (!audioDevice) {
-        cerr << "Can't start audio output\n";
-        return 1;
-    }
-    qint64 totalBytesWritten = 0;
-    bool firstAudioPtsSet = false;
-    double firstAudioPtsSeconds = 0.0;
-    const auto audioPlaybackStart = std::chrono::steady_clock::now();
-
-    const auto writeResampled = [&](bool getAll) -> int {
+    const auto pushResampledToRing = [&](bool getAll) -> int {
         while (true) {
-            AudioSamples out(outSampleFormat, 1024, outChannelLayout, outSampleRate);
+            AudioSamples out(AV_SAMPLE_FMT_S16, 1024, AV_CH_LAYOUT_STEREO, kAudioSampleRate);
             const bool hasFrame = resampler.pop(out, getAll, ec);
             if (ec) {
                 cerr << "Audio resampler pop error: " << ec << ", " << ec.message() << endl;
@@ -523,31 +653,29 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
                 return 0;
             }
 
-            const int bytesToWrite = out.samplesCount() * out.channelsCount() * bytesPerSample;
-            const char *pcm = reinterpret_cast<const char *>(out.data(0));
-            int offset = 0;
-            while (offset < bytesToWrite) {
-                if (generation != audioPlaybackGeneration.load()) {
+            const int samplesToAppend = out.samplesCount() * out.channelsCount();
+            const int16_t *pcm = reinterpret_cast<const int16_t *>(out.data(0));
+            for (int i = 0; i < samplesToAppend; ++i) {
+                pending.push_back(pcm[i]);
+            }
+
+            while (static_cast<int>(pending.size()) >= interleavedSamplesPerBlock) {
+                if (generation != audioPlaybackGeneration.load() || (stopFlag && stopFlag->load())) {
                     return 0;
                 }
-                const qint64 written = audioDevice->write(pcm + offset, bytesToWrite - offset);
-                if (written < 0) {
-                    cerr << "Audio device write error\n";
-                    return 1;
+                std::vector<int16_t> block(interleavedSamplesPerBlock);
+                for (int i = 0; i < interleavedSamplesPerBlock; ++i) {
+                    block[i] = pending.front();
+                    pending.pop_front();
                 }
-                if (written == 0) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                    continue;
-                }
-                offset += static_cast<int>(written);
-                totalBytesWritten += written;
+                ring->setBlock(nextBlockIndex++, block);
             }
         }
     };
 
     while (true) {
         Packet pkt = inputContext.readPacket(ec);
-        if (generation != audioPlaybackGeneration.load()) {
+        if (generation != audioPlaybackGeneration.load() || (stopFlag && stopFlag->load())) {
             return 0;
         }
         if (ec) {
@@ -577,18 +705,6 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
                 continue;
             }
 
-            const double samplePtsSeconds = samplePts.seconds();
-            if (!firstAudioPtsSet) {
-                firstAudioPtsSet = true;
-                firstAudioPtsSeconds = samplePtsSeconds;
-            }
-            const auto targetMs = static_cast<qint64>((samplePtsSeconds - firstAudioPtsSeconds) * 1000.0);
-            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                       std::chrono::steady_clock::now() - audioPlaybackStart)
-                                       .count();
-            if (targetMs > elapsedMs) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(targetMs - elapsedMs));
-            }
         }
 
         resampler.push(samples, ec);
@@ -597,7 +713,7 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
             return 1;
         }
 
-        const int writeResult = writeResampled(false);
+        const int writeResult = pushResampledToRing(false);
         if (writeResult != 0) {
             return writeResult;
         }
@@ -618,23 +734,25 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
             return 1;
         }
 
-        const int writeResult = writeResampled(false);
+        const int writeResult = pushResampledToRing(false);
         if (writeResult != 0) {
             return writeResult;
         }
     }
 
-    const int writeResult = writeResampled(true);
+    const int writeResult = pushResampledToRing(true);
     if (writeResult != 0) {
         return writeResult;
     }
 
-    const qint64 bytesPerSecond = static_cast<qint64>(outSampleRate) * outChannelCount * bytesPerSample;
-    if (bytesPerSecond > 0) {
-        const qint64 targetUsecs = (totalBytesWritten * 1000000LL) / bytesPerSecond;
-        while (generation == audioPlaybackGeneration.load() && sink.processedUSecs() < targetUsecs) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (!pending.empty()) {
+        std::vector<int16_t> tail(interleavedSamplesPerBlock, 0);
+        int i = 0;
+        while (!pending.empty() && i < interleavedSamplesPerBlock) {
+            tail[i++] = pending.front();
+            pending.pop_front();
         }
+        ring->setBlock(nextBlockIndex++, tail);
     }
 
     return 0;
