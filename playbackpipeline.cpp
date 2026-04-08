@@ -106,8 +106,9 @@ struct PlaybackPipeline::VideoWorker {
     std::string key;
     Clip clip;
     qint64 startOffsetMs = 0;
-    qint64 startFrameIndex = 0;
+    qint64 playbackStartMs = 0;
     std::atomic<int> frameDurationUs{33333};
+    std::atomic<qint64> consumedFrameIndex{0};
     int generation = 0;
     std::shared_ptr<std::atomic_bool> stopFlag;
     std::shared_ptr<VideoRingBuffer> ring;
@@ -304,7 +305,8 @@ void PlaybackPipeline::startVideoWorker(const Clip &clip, qint64 timelineNowMs)
     worker->key = clipKey(clip);
     worker->clip = clip;
     worker->startOffsetMs = std::max<qint64>(0, timelineNowMs - clip.startMs);
-    worker->startFrameIndex = consumedVideoFrame.load();
+    worker->playbackStartMs = clip.startMs + worker->startOffsetMs;
+    worker->consumedFrameIndex.store(0);
     worker->generation = generation.load();
     worker->stopFlag = std::make_shared<std::atomic_bool>(false);
     worker->ring = std::make_shared<VideoRingBuffer>(kVideoRingSlots);
@@ -400,17 +402,21 @@ void PlaybackPipeline::videoComposeLoop()
             }
         }
 
-        const qint64 frameMs = consumedAudioBlock.load() * kAudioBlockMs;
+        const qint64 audioMasterMs = consumedAudioBlock.load() * kAudioBlockMs;
         QImage composed;
         bool hasAny = false;
         int composeFrameDurationUs = 33333;
         for (const auto &worker : workers) {
-            if (frameMs < worker->clip.startMs || frameMs >= (worker->clip.startMs + worker->clip.durationMs)) {
+            if (audioMasterMs < worker->clip.startMs || audioMasterMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
             }
-            composeFrameDurationUs = std::max(composeFrameDurationUs, worker->frameDurationUs.load());
+            composeFrameDurationUs = std::min(composeFrameDurationUs, worker->frameDurationUs.load());
+            const qint64 elapsedMs = std::max<qint64>(0, audioMasterMs - worker->playbackStartMs);
+            const qint64 frameDurationUs = std::max(1, worker->frameDurationUs.load());
+            const qint64 targetFrame = (elapsedMs * 1000) / frameDurationUs;
+            worker->consumedFrameIndex.store(targetFrame);
             QImage frame;
-            const bool ready = worker->ring->getFrame(nextVideoFrame, frame);
+            const bool ready = worker->ring->getFrame(targetFrame, frame);
             if (!ready || frame.isNull()) {
                 continue;
             }
@@ -431,7 +437,8 @@ void PlaybackPipeline::videoComposeLoop()
 
         ++nextVideoFrame;
         consumedVideoFrame.store(nextVideoFrame);
-        nextWake += std::chrono::microseconds(composeFrameDurationUs);
+        const int sleepUs = std::clamp(composeFrameDurationUs / 2, 4000, 16000);
+        nextWake += std::chrono::microseconds(sleepUs);
         std::this_thread::sleep_until(nextWake);
     }
 }
@@ -632,7 +639,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
     worker.frameDurationUs.store(static_cast<int>(std::llround(1000000.0 / fps)));
 
     VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
-    qint64 nextFrameIndex = worker.startFrameIndex;
+    qint64 nextFrameIndex = 0;
     bool started = false;
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
@@ -677,7 +684,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
         while (worker.generation == generation.load() && !worker.stopFlag->load()) {
-            const qint64 timelineFrame = consumedVideoFrame.load();
+            const qint64 timelineFrame = worker.consumedFrameIndex.load();
             const qint64 maxAhead = static_cast<qint64>(kVideoRingSlots / 2);
             if (nextFrameIndex <= timelineFrame + maxAhead) {
                 break;
@@ -709,7 +716,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         }
 
         while (worker.generation == generation.load() && !worker.stopFlag->load()) {
-            const qint64 timelineFrame = consumedVideoFrame.load();
+            const qint64 timelineFrame = worker.consumedFrameIndex.load();
             const qint64 maxAhead = static_cast<qint64>(kVideoRingSlots / 2);
             if (nextFrameIndex <= timelineFrame + maxAhead) {
                 break;
