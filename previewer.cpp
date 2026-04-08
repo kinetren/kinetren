@@ -65,6 +65,7 @@ void Previewer::paintIt(QImage &&img)
 
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Writing);
     frameBuffer[bufferIndex].img = std::move(img);
+    frameBuffer[bufferIndex].serial = nextFrameSerial++;
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Ready);
 }
 
@@ -72,34 +73,34 @@ void Previewer::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
 
-    int bufferIndex = frameReadIndex % kFrameBufferCount;
-
-    bool shouldPaintPrevious = false;
-    const auto nowNs = std::chrono::high_resolution_clock::now().time_since_epoch().count();
-    if (lastPaintNs > 0) {
-        const auto diff = nowNs - lastPaintNs.load();
-        if (diff < 25'000'000) {
-            shouldPaintPrevious = true;
-        }
-    }
-
+    int bufferIndex = -1;
     if (pause) {
-        shouldPaintPrevious = true;
-    }
-
-    if (shouldPaintPrevious) {
-        if (previousPaintedIndex >= 0) {
-            bufferIndex = previousPaintedIndex;
-        } else {
-            previousPaintedIndex = 0;
-            frameReadIndex = 0;
-            bufferIndex = 0;
+        if (previousPaintedIndex < 0) {
+            return;
         }
+        bufferIndex = previousPaintedIndex;
     } else {
+        uint64_t bestSerial = 0;
+        for (int i = 0; i < kFrameBufferCount; ++i) {
+            if (frameBuffer[i].state != static_cast<int>(FrameState::Ready)) {
+                continue;
+            }
+            if (frameBuffer[i].serial >= bestSerial) {
+                bestSerial = frameBuffer[i].serial;
+                bufferIndex = i;
+            }
+        }
+        if (bufferIndex < 0) {
+            if (previousPaintedIndex >= 0) {
+                bufferIndex = previousPaintedIndex;
+            } else {
+                return;
+            }
+        }
         if (previousPaintedIndex >= 0 && previousPaintedIndex != bufferIndex) {
             frameBuffer[previousPaintedIndex].state = static_cast<int>(FrameState::Empty);
         }
-        lastPaintNs = nowNs;
+        lastPaintNs = std::chrono::high_resolution_clock::now().time_since_epoch().count();
     }
 
     const int frameState = frameBuffer[bufferIndex].state;
@@ -119,5 +120,5 @@ void Previewer::paintEvent(QPaintEvent *event)
 
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Painted);
     previousPaintedIndex = bufferIndex;
-    frameReadIndex = bufferIndex + 1;
+    frameReadIndex = (bufferIndex + 1) % kFrameBufferCount;
 }

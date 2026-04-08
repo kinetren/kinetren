@@ -26,6 +26,7 @@ class Previewer : public QWidget
 
     struct RPFrame {
         std::atomic_int state{static_cast<int>(FrameState::Empty)};
+        uint64_t serial = 0;
         QImage img;
     };
 
@@ -47,6 +48,7 @@ private:
     int previousPaintedIndex = -1;
     int paintTimer = -1;
     bool pause = false;
+    uint64_t nextFrameSerial = 1;
     std::atomic<uint64_t> lastPaintNs{0};
 };
 

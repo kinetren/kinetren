@@ -140,3 +140,4 @@ void MainWindow::stopMediaPlayback()
         playbackPipeline->stop();
     }
 }
+

@@ -91,21 +91,25 @@ struct PlaybackPipeline::VideoRingBuffer {
         readCursorFrameIndex = frameIndex;
     }
 
-    void setFrame(qint64 timeMs, const QImage &img)
+    bool setFrame(qint64 timeMs, const QImage &img)
     {
         std::lock_guard<std::mutex> lock(mutex);
         const qint64 frameIndex = std::max<qint64>(0, timeMs / kVideoFrameMs);
-        qint64 targetFrameIndex = std::max(frameIndex, readCursorFrameIndex);
-        const qint64 maxBufferedFrameIndex =
-            readCursorFrameIndex + static_cast<qint64>(frames.size()) - 1;
-        if (targetFrameIndex > maxBufferedFrameIndex) {
-            targetFrameIndex = maxBufferedFrameIndex;
+        const qint64 maxBufferedFrameIndex = readCursorFrameIndex + static_cast<qint64>(frames.size()) - 1;
+        if (frameIndex < readCursorFrameIndex || frameIndex > maxBufferedFrameIndex) {
+            // Ignore stale or too-far-ahead frames; producer wait logic will retry timing naturally.
+            return false;
         }
-        const size_t slot =
-            static_cast<size_t>(targetFrameIndex % static_cast<qint64>(frames.size()));
-        slotFrameIndices[slot] = targetFrameIndex;
+        const size_t slot = static_cast<size_t>(frameIndex % static_cast<qint64>(frames.size()));
+        const qint64 existingFrameIndex = slotFrameIndices[slot];
+        if (existingFrameIndex > frameIndex) {
+            // Avoid replacing a newer frame with an older one on wrap-around races.
+            return false;
+        }
+        slotFrameIndices[slot] = frameIndex;
         times[slot] = timeMs;
         frames[slot] = img;
+        return true;
     }
 
     bool getFrameAtOrBefore(qint64 timeMs, qint64 maxBackMs, qint64 &foundTimeMs, QImage &img) const
@@ -791,9 +795,10 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
-        worker.ring->setFrame(relTimeMs, img);
-        worker.producedTimeMs.store(relTimeMs);
-        lastPublishedTimeMs = relTimeMs;
+        if (worker.ring->setFrame(relTimeMs, img)) {
+            worker.producedTimeMs.store(relTimeMs);
+            lastPublishedTimeMs = relTimeMs;
+        }
     }
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
@@ -838,9 +843,10 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
-        worker.ring->setFrame(relTimeMs, img);
-        worker.producedTimeMs.store(relTimeMs);
-        lastPublishedTimeMs = relTimeMs;
+        if (worker.ring->setFrame(relTimeMs, img)) {
+            worker.producedTimeMs.store(relTimeMs);
+            lastPublishedTimeMs = relTimeMs;
+        }
     }
 
     return 0;
