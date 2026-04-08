@@ -18,6 +18,10 @@ set(PROJECT_SOURCES
         mainwindow.h
         previewer.cpp
         previewer.h
+        projectsettings.cpp
+        projectsettings.h
+        performancewidget.cpp
+        performancewidget.h
         timelineeditor.cpp
         timelineeditor.h
         sourceareawidget.cpp

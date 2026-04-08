@@ -6,6 +6,8 @@
 #include <QTimer>
 #include <memory>
 
+#include "projectsettings.h"
+
 QT_BEGIN_NAMESPACE
 namespace Ui {
 class MainWindow;
@@ -13,6 +15,7 @@ class MainWindow;
 QT_END_NAMESPACE
 
 class PlaybackPipeline;
+class PerformanceWidget;
 
 class MainWindow : public QMainWindow
 {
@@ -33,9 +36,12 @@ private:
     void stopMediaPlayback();
     void refreshTimelineScroll();
     void renderDraftProject();
+    void applyProjectSettings();
+    void refreshPerformancePanel();
 
     class SourceAreaWidget *sourceArea = nullptr;
     class TimelineEditor *timelineEditor = nullptr;
+    PerformanceWidget *performanceWidget = nullptr;
     class QToolButton *timelinePauseButton = nullptr;
     class QLabel *timelineOverlayLabel = nullptr;
     class QLabel *timelineGlobalTimeLabel = nullptr;
@@ -47,6 +53,8 @@ private:
     qint64 timelinePlayStartMs = 0;
     QElapsedTimer timelinePlaybackClock;
     std::unique_ptr<PlaybackPipeline> playbackPipeline;
+    ProjectSettings projectSettings;
+    QTimer performanceTimer;
 
     Ui::MainWindow *ui;
 };

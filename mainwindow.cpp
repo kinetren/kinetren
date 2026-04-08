@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
+#include "performancewidget.h"
 #include "playbackpipeline.h"
 #include "previewer.h"
 #include "sourceareawidget.h"
@@ -45,7 +46,10 @@ MainWindow::MainWindow(QWidget *parent)
                 },
                 Qt::QueuedConnection);
         });
-    playbackPipeline->setDraftPreviewEnabled(true);
+    applyProjectSettings();
+    performanceTimer.setInterval(500);
+    connect(&performanceTimer, &QTimer::timeout, this, &MainWindow::refreshPerformancePanel);
+    performanceTimer.start();
     syncTimelinePlayback();
 }
 
@@ -71,6 +75,8 @@ void MainWindow::setupTimelineEditorUi()
 
     sourceArea = new SourceAreaWidget(ui->widget_3);
     sourceLayout->addWidget(sourceArea, 1);
+    performanceWidget = new PerformanceWidget(ui->widget_3);
+    sourceLayout->addWidget(performanceWidget);
 
     auto *previewHost = new QWidget(ui->splitter);
     auto *previewLayout = new QVBoxLayout(previewHost);
@@ -84,15 +90,36 @@ void MainWindow::setupTimelineEditorUi()
     previewLayout->addWidget(ui->frame, 1);
 
     auto *previewControls = new QHBoxLayout();
-    auto *previewQualityLabel = new QLabel("Preview:", previewHost);
+    auto *previewQualityLabel = new QLabel("Cache quality:", previewHost);
     auto *previewQualityCombo = new QComboBox(previewHost);
-    previewQualityCombo->addItem("Draft (cached)");
-    previewQualityCombo->addItem("Full source");
+    previewQualityCombo->addItem("1/16");
+    previewQualityCombo->addItem("1/8");
+    previewQualityCombo->addItem("1/4");
+    previewQualityCombo->addItem("1/2");
+    previewQualityCombo->addItem("1/1 (src)");
+    previewQualityCombo->setCurrentIndex(2);
+    auto *fpsLabel = new QLabel("FPS:", previewHost);
+    auto *fpsCombo = new QComboBox(previewHost);
+    fpsCombo->addItem("24");
+    fpsCombo->addItem("25");
+    fpsCombo->addItem("30");
+    fpsCombo->addItem("60");
+    fpsCombo->setCurrentText(QString::number(projectSettings.fps));
+    auto *resolutionLabel = new QLabel("Resolution:", previewHost);
+    auto *resolutionCombo = new QComboBox(previewHost);
+    resolutionCombo->addItem("640x360");
+    resolutionCombo->addItem("1280x720");
+    resolutionCombo->addItem("1920x1080");
+    resolutionCombo->setCurrentText("1280x720");
     auto *smoothScaleCheck = new QCheckBox("Smooth scaling", previewHost);
     smoothScaleCheck->setChecked(true);
     auto *aaCheck = new QCheckBox("Antialiasing", previewHost);
     previewControls->addWidget(previewQualityLabel);
     previewControls->addWidget(previewQualityCombo);
+    previewControls->addWidget(fpsLabel);
+    previewControls->addWidget(fpsCombo);
+    previewControls->addWidget(resolutionLabel);
+    previewControls->addWidget(resolutionCombo);
     previewControls->addSpacing(10);
     previewControls->addWidget(smoothScaleCheck);
     previewControls->addWidget(aaCheck);
@@ -313,12 +340,52 @@ void MainWindow::setupTimelineEditorUi()
         }
     });
     connect(previewQualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-        if (playbackPipeline) {
-            playbackPipeline->setDraftPreviewEnabled(index == 0);
+        switch (index) {
+        case 0:
+            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Quarter16;
+            break;
+        case 1:
+            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Quarter8;
+            break;
+        case 2:
+            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Quarter4;
+            break;
+        case 3:
+            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Half;
+            break;
+        case 4:
+        default:
+            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Source;
+            break;
         }
+        applyProjectSettings();
         if (!timelinePlaying) {
             syncTimelinePlayback();
         }
+    });
+    connect(fpsCombo, &QComboBox::currentTextChanged, this, [this](const QString &text) {
+        bool ok = false;
+        const int fps = text.toInt(&ok);
+        if (!ok || fps <= 0) {
+            return;
+        }
+        projectSettings.fps = fps;
+        applyProjectSettings();
+    });
+    connect(resolutionCombo, &QComboBox::currentTextChanged, this, [this](const QString &text) {
+        const QStringList parts = text.split('x');
+        if (parts.size() != 2) {
+            return;
+        }
+        bool okW = false;
+        bool okH = false;
+        const int w = parts[0].toInt(&okW);
+        const int h = parts[1].toInt(&okH);
+        if (!okW || !okH || w <= 0 || h <= 0) {
+            return;
+        }
+        projectSettings.resolution = QSize(w, h);
+        applyProjectSettings();
     });
     connect(smoothScaleCheck, &QCheckBox::toggled, ui->frame, &Previewer::setSmoothScaling);
     connect(aaCheck, &QCheckBox::toggled, ui->frame, &Previewer::setAntialiasing);
@@ -379,6 +446,7 @@ void MainWindow::setupTimelineEditorUi()
     statusBar()->showMessage("Ready. Hover controls to see action hints.", 2500);
 
     refreshTimelineScroll();
+    refreshPerformancePanel();
 }
 
 void MainWindow::toggleTimelinePlayback()
@@ -522,7 +590,8 @@ void MainWindow::renderDraftProject()
     QDir().mkpath(outDir);
 
     int frameIndex = 0;
-    for (qint64 tMs = startMs; tMs < endMs; tMs += 33) {
+    const qint64 frameStepMs = std::max<qint64>(1, static_cast<qint64>(1000.0 / std::max(1, projectSettings.fps)));
+    for (qint64 tMs = startMs; tMs < endMs; tMs += frameStepMs) {
         const auto video = timelineEditor->activeVideoLayersAt(tMs);
         std::vector<PlaybackPipeline::Clip> vclips;
         vclips.reserve(video.size());
@@ -531,8 +600,10 @@ void MainWindow::renderDraftProject()
         }
         QImage frame = playbackPipeline->renderDraftFrame(tMs, vclips);
         if (frame.isNull()) {
-            frame = QImage(640, 360, QImage::Format_RGB888);
+            frame = QImage(projectSettings.resolution, QImage::Format_RGB888);
             frame.fill(Qt::black);
+        } else if (frame.size() != projectSettings.resolution) {
+            frame = frame.scaled(projectSettings.resolution, Qt::KeepAspectRatio, Qt::SmoothTransformation);
         }
         const QString outPath = QString("%1/frame-%2.jpg").arg(outDir, QString::number(frameIndex).rightJustified(6, '0'));
         frame.save(outPath, "JPG", 82);
@@ -542,5 +613,45 @@ void MainWindow::renderDraftProject()
     statusBar()->showMessage(
         QString("Draft render complete: %1 frames -> %2").arg(frameIndex).arg(outDir),
         9000);
+}
+
+void MainWindow::applyProjectSettings()
+{
+    if (!playbackPipeline) {
+        return;
+    }
+    playbackPipeline->setProjectSettings(projectSettings);
+    playbackPipeline->setDraftPreviewEnabled(projectSettings.cacheQuality != ProjectSettings::CacheQuality::Source);
+    refreshPerformancePanel();
+}
+
+void MainWindow::refreshPerformancePanel()
+{
+    if (!playbackPipeline || !performanceWidget) {
+        return;
+    }
+    const auto stats = playbackPipeline->performanceSnapshot();
+    const quint64 cacheLookups = stats.draftCacheHits + stats.draftCacheMisses;
+    const double hitPct = (cacheLookups > 0)
+        ? (static_cast<double>(stats.draftCacheHits) * 100.0 / static_cast<double>(cacheLookups))
+        : 0.0;
+    performanceWidget->setMetrics(
+        QString("Compose FPS: %1 | Frames: %2")
+            .arg(stats.composeFps, 0, 'f', 1)
+            .arg(stats.composedFrames),
+        QString("Cache lookups: %1 | hits: %2 (%3%) | decoded: %4 | entries: %5")
+            .arg(cacheLookups)
+            .arg(stats.draftCacheHits)
+            .arg(hitPct, 0, 'f', 1)
+            .arg(stats.draftFramesDecoded)
+            .arg(stats.draftCacheEntries),
+        QString("Cache resolution: %1x%2 (%3)")
+            .arg(projectSettings.cacheResolution().width())
+            .arg(projectSettings.cacheResolution().height())
+            .arg(projectSettings.cacheQualityLabel()),
+        QString("Project: %1 FPS | %2x%3")
+            .arg(projectSettings.fps)
+            .arg(projectSettings.resolution.width())
+            .arg(projectSettings.resolution.height()));
 }
 

@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QString>
 #include <QtGlobal>
+#include "projectsettings.h"
 
 #include <atomic>
 #include <cstdint>
@@ -31,6 +32,14 @@ public:
         qint64 durationMs = 0;
         qint64 sourceInMs = 0;
     };
+    struct PerformanceStats {
+        double composeFps = 0.0;
+        quint64 composedFrames = 0;
+        quint64 draftCacheHits = 0;
+        quint64 draftCacheMisses = 0;
+        quint64 draftFramesDecoded = 0;
+        quint64 draftCacheEntries = 0;
+    };
 
     explicit PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameReady);
     ~PlaybackPipeline();
@@ -41,6 +50,8 @@ public:
     qint64 playbackPositionMs() const;
     void setDraftPreviewEnabled(bool enabled);
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
+    void setProjectSettings(const ProjectSettings &settings);
+    PerformanceStats performanceSnapshot() const;
 
 private:
     struct AudioRingBuffer;
@@ -93,8 +104,15 @@ private:
     std::thread videoThread;
 
     std::atomic_bool draftPreviewEnabled{true};
-    std::mutex draftCacheMutex;
+    ProjectSettings projectSettings;
+    mutable std::mutex settingsMutex;
+    mutable std::mutex draftCacheMutex;
     std::unordered_map<std::string, QImage> draftFrameCache;
+    std::atomic<double> composeFps{0.0};
+    std::atomic<quint64> composedFrames{0};
+    std::atomic<quint64> draftCacheHits{0};
+    std::atomic<quint64> draftCacheMisses{0};
+    std::atomic<quint64> draftFramesDecoded{0};
 };
 
 #endif // PLAYBACKPIPELINE_H

@@ -44,8 +44,6 @@ constexpr int kVideoFrameMs = 1000 / kVideoFps;
 constexpr size_t kVideoRingSlots = 7; // 7 * 33ms ~= 231ms
 constexpr qint64 kVideoMaxAheadFrames = static_cast<qint64>(kVideoRingSlots - 2);
 constexpr int kDraftFrameBucketMs = 120;
-constexpr int kDraftMaxWidth = 640;
-constexpr int kDraftMaxHeight = 360;
 }
 
 struct PlaybackPipeline::AudioRingBuffer {
@@ -292,6 +290,27 @@ QImage PlaybackPipeline::renderDraftFrame(qint64 timelineMs, const std::vector<C
     return composeDraftFrameAt(timelineMs, videoClips);
 }
 
+void PlaybackPipeline::setProjectSettings(const ProjectSettings &settings)
+{
+    std::lock_guard<std::mutex> lock(settingsMutex);
+    projectSettings = settings;
+}
+
+PlaybackPipeline::PerformanceStats PlaybackPipeline::performanceSnapshot() const
+{
+    PerformanceStats stats;
+    stats.composeFps = composeFps.load();
+    stats.composedFrames = composedFrames.load();
+    stats.draftCacheHits = draftCacheHits.load();
+    stats.draftCacheMisses = draftCacheMisses.load();
+    stats.draftFramesDecoded = draftFramesDecoded.load();
+    {
+        std::lock_guard<std::mutex> lock(draftCacheMutex);
+        stats.draftCacheEntries = static_cast<quint64>(draftFrameCache.size());
+    }
+    return stats;
+}
+
 std::string PlaybackPipeline::clipKey(const Clip &clip)
 {
     return (clip.sourcePath + "::" + QString::number(clip.startMs) + "::" +
@@ -507,6 +526,8 @@ void PlaybackPipeline::audioMixLoop()
 void PlaybackPipeline::videoComposeLoop()
 {
     auto nextWake = std::chrono::steady_clock::now();
+    auto fpsWindowStart = nextWake;
+    quint64 fpsWindowFrames = 0;
     std::unordered_map<std::string, qint64> lastPresentedTimeByWorker;
     std::unordered_map<std::string, QImage> lastPresentedFrameByWorker;
     while (running.load()) {
@@ -576,6 +597,17 @@ void PlaybackPipeline::videoComposeLoop()
 
         if (hasAny && onVideoFrameReady) {
             onVideoFrameReady(std::move(composed));
+            ++fpsWindowFrames;
+            composedFrames.fetch_add(1);
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - fpsWindowStart).count();
+        if (elapsed >= 1000) {
+            const double seconds = static_cast<double>(elapsed) / 1000.0;
+            composeFps.store((seconds > 0.0) ? (static_cast<double>(fpsWindowFrames) / seconds) : 0.0);
+            fpsWindowFrames = 0;
+            fpsWindowStart = now;
         }
 
         ++nextVideoFrame;
@@ -842,7 +874,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
 
-        const qint64 relTimeMs = std::max<qint64>(0, frameMs - worker.startOffsetMs);
+        const qint64 relTimeMs = std::max<qint64>(0, frameMs - worker.clip.sourceInMs);
         if (relTimeMs < lastPublishedTimeMs) {
             // Never publish older timestamps (prevents backward flicker).
             continue;
@@ -890,7 +922,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
 
-        const qint64 relTimeMs = std::max<qint64>(0, frameMs - worker.startOffsetMs);
+        const qint64 relTimeMs = std::max<qint64>(0, frameMs - worker.clip.sourceInMs);
         if (relTimeMs < lastPublishedTimeMs) {
             continue;
         }
@@ -953,9 +985,11 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
         std::lock_guard<std::mutex> lock(draftCacheMutex);
         const auto it = draftFrameCache.find(cacheKey);
         if (it != draftFrameCache.end()) {
+            draftCacheHits.fetch_add(1);
             return it->second;
         }
     }
+    draftCacheMisses.fetch_add(1);
 
     std::error_code ec;
     FormatContext input;
@@ -1046,9 +1080,19 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
         return QImage();
     }
 
-    if (draftPreviewEnabled.load()) {
-        picked = picked.scaled(kDraftMaxWidth, kDraftMaxHeight, Qt::KeepAspectRatio, Qt::FastTransformation);
+    ProjectSettings settingsCopy;
+    {
+        std::lock_guard<std::mutex> lock(settingsMutex);
+        settingsCopy = projectSettings;
     }
+    const QSize cacheResolution = settingsCopy.cacheResolution();
+    if (cacheResolution.width() > 0 && cacheResolution.height() > 0 &&
+        (picked.width() != cacheResolution.width() || picked.height() != cacheResolution.height())) {
+        const Qt::TransformationMode mode =
+            draftPreviewEnabled.load() ? Qt::FastTransformation : Qt::SmoothTransformation;
+        picked = picked.scaled(cacheResolution, Qt::KeepAspectRatio, mode);
+    }
+    draftFramesDecoded.fetch_add(1);
     {
         std::lock_guard<std::mutex> lock(draftCacheMutex);
         if (draftFrameCache.size() > 220) {
