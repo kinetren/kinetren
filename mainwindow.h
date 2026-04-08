@@ -27,6 +27,7 @@ public:
 private:
     void setupTimelineEditorUi();
     void toggleTimelinePlayback();
+    void toggleTimelinePause();
     void onTimelineTick();
     void syncTimelinePlayback();
     void stopMediaPlayback();
@@ -34,13 +35,12 @@ private:
 
     class SourceAreaWidget *sourceArea = nullptr;
     class TimelineEditor *timelineEditor = nullptr;
-    class QPushButton *timelinePlayPauseButton = nullptr;
+    class QToolButton *timelinePauseButton = nullptr;
     class QLabel *timelineOverlayLabel = nullptr;
     class QScrollBar *timelineScrollBar = nullptr;
-    class QCheckBox *timelineLoopCheckBox = nullptr;
+    class QToolButton *timelineLoopButton = nullptr;
     QTimer timelineTimer;
     bool timelinePlaying = false;
-    qint64 timelineReturnCursorMs = 0;
     qint64 timelinePlayStartMs = 0;
     QElapsedTimer timelinePlaybackClock;
     std::unique_ptr<PlaybackPipeline> playbackPipeline;

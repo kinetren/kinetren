@@ -2,7 +2,10 @@
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QContextMenuEvent>
 #include <QFileInfo>
+#include <QImageReader>
+#include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
@@ -11,11 +14,16 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <cstring>
 #include <cstdlib>
 #include <system_error>
 
 #include <avcpp/avutils.h>
+#include <avcpp/codec.h>
+#include <avcpp/codeccontext.h>
 #include <avcpp/formatcontext.h>
+#include <avcpp/packet.h>
+#include <avcpp/videorescaler.h>
 
 namespace {
 constexpr qint64 kSnapThresholdMs = 250;
@@ -82,13 +90,7 @@ void TimelineEditor::addMarkerAtCursor()
 
 void TimelineEditor::addVideoTrack()
 {
-    int count = 0;
-    for (const auto &track : tracks) {
-        if (track.type == TrackType::Video) {
-            ++count;
-        }
-    }
-    tracks.push_back({TrackType::Video, QString("V%1").arg(count + 1)});
+    insertTrackAt(static_cast<int>(tracks.size()), TrackType::Video);
     setMinimumHeight(contentBottom() + bottomPadding());
     refreshTimelineRangeSignals();
     update();
@@ -96,13 +98,7 @@ void TimelineEditor::addVideoTrack()
 
 void TimelineEditor::addAudioTrack()
 {
-    int count = 0;
-    for (const auto &track : tracks) {
-        if (track.type == TrackType::Audio) {
-            ++count;
-        }
-    }
-    tracks.push_back({TrackType::Audio, QString("A%1").arg(count + 1)});
+    insertTrackAt(static_cast<int>(tracks.size()), TrackType::Audio);
     setMinimumHeight(contentBottom() + bottomPadding());
     refreshTimelineRangeSignals();
     update();
@@ -180,9 +176,24 @@ bool TimelineEditor::trimSelectedClipStartToCursor()
     if (newStart <= clip->startMs) {
         return false;
     }
-    clip->durationMs -= (newStart - clip->startMs);
+    const qint64 delta = newStart - clip->startMs;
+    clip->durationMs -= delta;
     clip->startMs = newStart;
     clip->sourceInMs = newSourceIn;
+    if (clip->linkedGroupId >= 0) {
+        for (int id : linkedClipIds(clip->id)) {
+            if (id == clip->id) {
+                continue;
+            }
+            ClipEvent *linked = findClipById(id);
+            if (!linked) {
+                continue;
+            }
+            linked->startMs += delta;
+            linked->sourceInMs = std::max<qint64>(0, linked->sourceInMs + delta);
+            linked->durationMs = std::max<qint64>(kMinClipDurationMs, linked->durationMs - delta);
+        }
+    }
     refreshTimelineRangeSignals();
     emitOverlayInfo();
     update();
@@ -202,7 +213,21 @@ bool TimelineEditor::trimSelectedClipEndToCursor()
     if (newEnd >= absoluteEnd) {
         return false;
     }
+    const qint64 oldDuration = clip->durationMs;
     clip->durationMs = newEnd - clip->startMs;
+    if (clip->linkedGroupId >= 0) {
+        const qint64 deltaDur = clip->durationMs - oldDuration;
+        for (int id : linkedClipIds(clip->id)) {
+            if (id == clip->id) {
+                continue;
+            }
+            ClipEvent *linked = findClipById(id);
+            if (!linked) {
+                continue;
+            }
+            linked->durationMs = std::max<qint64>(kMinClipDurationMs, linked->durationMs + deltaDur);
+        }
+    }
     refreshTimelineRangeSignals();
     emitOverlayInfo();
     update();
@@ -229,6 +254,57 @@ bool TimelineEditor::moveSelectedClipToAdjacentTrack(int direction)
         target += ((direction > 0) ? 1 : -1);
     }
     return false;
+}
+
+bool TimelineEditor::copySelectedToClipboard()
+{
+    clipboardClips.clear();
+    const ClipEvent *selected = findClipById(selectedClipId);
+    if (!selected) {
+        return false;
+    }
+    const auto ids = linkedClipIds(selectedClipId);
+    for (int id : ids) {
+        const ClipEvent *clip = findClipById(id);
+        if (clip) {
+            clipboardClips.push_back(*clip);
+        }
+    }
+    return !clipboardClips.empty();
+}
+
+bool TimelineEditor::pasteClipboardAtCursor()
+{
+    if (clipboardClips.empty()) {
+        return false;
+    }
+    qint64 sourceMinStart = clipboardClips.front().startMs;
+    for (const auto &clip : clipboardClips) {
+        sourceMinStart = std::min(sourceMinStart, clip.startMs);
+    }
+    int newGroup = -1;
+    if (clipboardClips.size() > 1) {
+        newGroup = nextLinkedGroupId++;
+    }
+    int firstNewId = -1;
+    for (const auto &src : clipboardClips) {
+        ClipEvent c = src;
+        c.id = nextClipId++;
+        c.startMs = cursorPositionMs + (src.startMs - sourceMinStart);
+        if (!isTrackIndexValid(c.trackIndex)) {
+            c.trackIndex = ensureDropTrackForType(c.mediaType, contentBottom() + 20);
+        }
+        c.linkedGroupId = (newGroup >= 0) ? newGroup : -1;
+        clips.push_back(c);
+        if (firstNewId < 0) {
+            firstNewId = c.id;
+        }
+    }
+    selectedClipId = firstNewId;
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    update();
+    return true;
 }
 
 void TimelineEditor::setLoopEnabled(bool enabled)
@@ -429,8 +505,29 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.setPen((clip.id == selectedClipId) ? QColor(255, 255, 255) : QColor(25, 25, 25));
         p.setBrush(clip.color);
         p.drawRoundedRect(r, 4, 4);
-        p.setPen(QColor(230, 230, 230));
-        p.drawText(r.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, QFileInfo(clip.sourcePath).fileName());
+
+        if (clip.mediaType == TrackType::Video) {
+            const QImage preview = cachedVideoPreview(clip.sourcePath);
+            if (!preview.isNull()) {
+                const int thumbW = std::max(28, r.height() * 16 / 9);
+                for (int x = r.left() + 2; x < r.right() - 2; x += thumbW) {
+                    const QRect thumbRect(x, r.top() + 2, std::min(thumbW, r.right() - x - 1), r.height() - 4);
+                    p.drawImage(thumbRect, preview);
+                }
+            }
+        } else {
+            const auto peaks = cachedAudioPeaks(clip.sourcePath);
+            if (!peaks.empty()) {
+                p.setPen(QColor(210, 225, 255, 220));
+                const int midY = r.center().y();
+                const int usable = std::max(1, r.width() - 6);
+                for (int x = 0; x < usable; ++x) {
+                    const int idx = static_cast<int>((static_cast<double>(x) / usable) * (peaks.size() - 1));
+                    const int amp = std::clamp(peaks[static_cast<size_t>(idx)], 1, (r.height() / 2) - 2);
+                    p.drawLine(r.left() + 3 + x, midY - amp, r.left() + 3 + x, midY + amp);
+                }
+            }
+        }
         if (clip.id == selectedClipId) {
             p.setPen(QColor(255, 255, 255));
             p.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
@@ -512,7 +609,17 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
     ClipEvent *clip = findClipById(dragClipId);
     if (dragMode == DragMode::MoveClip && clip) {
         const qint64 deltaMs = pointerMs - dragAnchorMs;
-        clip->startMs = std::max<qint64>(0, dragOriginalStartMs + deltaMs);
+        const qint64 baseStart = std::max<qint64>(0, dragOriginalStartMs + deltaMs);
+        const qint64 appliedDelta = baseStart - dragOriginalStartMs;
+        const auto groupedIds = linkedClipIds(clip->id);
+        for (int id : groupedIds) {
+            ClipEvent *linked = findClipById(id);
+            if (!linked) {
+                continue;
+            }
+            linked->startMs = std::max<qint64>(0, linked->startMs + appliedDelta);
+        }
+        dragOriginalStartMs = baseStart;
         const int targetTrack = trackIndexAtY(pos.y());
         if (targetTrack >= 0 && tracks[static_cast<size_t>(targetTrack)].type == clip->mediaType) {
             clip->trackIndex = targetTrack;
@@ -527,12 +634,42 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         clip->startMs = wantedStart;
         clip->sourceInMs = newSourceIn;
         clip->durationMs = originalEnd - wantedStart;
+        if (clip->linkedGroupId >= 0) {
+            const qint64 delta = wantedStart - dragOriginalStartMs;
+            for (const int id : linkedClipIds(clip->id)) {
+                if (id == clip->id) {
+                    continue;
+                }
+                ClipEvent *linked = findClipById(id);
+                if (!linked) {
+                    continue;
+                }
+                linked->startMs += delta;
+                linked->sourceInMs = std::max<qint64>(0, linked->sourceInMs + delta);
+                linked->durationMs = std::max<qint64>(kMinClipDurationMs, linked->durationMs - delta);
+            }
+            dragOriginalStartMs = wantedStart;
+        }
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::TrimEnd && clip) {
         const qint64 minEnd = dragOriginalStartMs + kMinClipDurationMs;
         const qint64 maxEnd = dragOriginalStartMs + std::max<qint64>(kMinClipDurationMs, clip->sourceDurationMs - clip->sourceInMs);
         const qint64 wantedEnd = std::clamp(pointerMs, minEnd, std::max(minEnd, maxEnd));
+        const qint64 oldDuration = clip->durationMs;
         clip->durationMs = wantedEnd - dragOriginalStartMs;
+        if (clip->linkedGroupId >= 0) {
+            const qint64 deltaDur = clip->durationMs - oldDuration;
+            for (const int id : linkedClipIds(clip->id)) {
+                if (id == clip->id) {
+                    continue;
+                }
+                ClipEvent *linked = findClipById(id);
+                if (!linked) {
+                    continue;
+                }
+                linked->durationMs = std::max<qint64>(kMinClipDurationMs, linked->durationMs + deltaDur);
+            }
+        }
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::RegionSelect) {
         setRegionBounds(regionAnchorMs, pointerMs);
@@ -547,6 +684,36 @@ void TimelineEditor::mouseReleaseEvent(QMouseEvent *event)
     dragClipId = -1;
     unsetCursor();
     QWidget::mouseReleaseEvent(event);
+}
+
+void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
+{
+    const int id = clipIdAt(event->pos());
+    if (id < 0) {
+        QWidget::contextMenuEvent(event);
+        return;
+    }
+    selectedClipId = id;
+    QMenu menu(this);
+    QAction *unlinkAction = nullptr;
+    const ClipEvent *clip = findClipById(id);
+    if (clip && clip->linkedGroupId >= 0) {
+        unlinkAction = menu.addAction("Unmagnet (Ungroup A/V)");
+    }
+    QAction *copyAction = menu.addAction("Copy");
+    QAction *splitAction = menu.addAction("Cut at Cursor (S)");
+    QAction *chosen = menu.exec(event->globalPos());
+    if (!chosen) {
+        return;
+    }
+    if (chosen == unlinkAction) {
+        unlinkClipGroup(id);
+    } else if (chosen == copyAction) {
+        copySelectedToClipboard();
+    } else if (chosen == splitAction) {
+        splitSelectedClipAtCursor();
+    }
+    update();
 }
 
 void TimelineEditor::dragEnterEvent(QDragEnterEvent *event)
@@ -571,12 +738,12 @@ void TimelineEditor::dropEvent(QDropEvent *event)
 {
     const QPoint pos = eventPos(event);
     const qint64 dropStartMs = snapTimeMs(xToTimeMs(pos.x()));
-    const int preferredTrack = trackIndexAtY(pos.y());
+    const int dropY = pos.y();
 
     if (event->mimeData()->hasUrls()) {
         for (const auto &url : event->mimeData()->urls()) {
             if (url.isLocalFile()) {
-                addClipFromDrop(url.toLocalFile(), dropStartMs, preferredTrack);
+                addClipFromDrop(url.toLocalFile(), dropStartMs, dropY);
             }
         }
         event->acceptProposedAction();
@@ -584,7 +751,7 @@ void TimelineEditor::dropEvent(QDropEvent *event)
     }
 
     if (event->mimeData()->hasText()) {
-        addClipFromDrop(event->mimeData()->text().trimmed(), dropStartMs, preferredTrack);
+        addClipFromDrop(event->mimeData()->text().trimmed(), dropStartMs, dropY);
         event->acceptProposedAction();
         return;
     }
@@ -670,6 +837,56 @@ int TimelineEditor::trackIndexAtY(int y) const
         }
     }
     return -1;
+}
+
+int TimelineEditor::insertTrackAt(int index, TrackType type)
+{
+    index = std::clamp(index, 0, static_cast<int>(tracks.size()));
+    for (auto &clip : clips) {
+        if (clip.trackIndex >= index) {
+            ++clip.trackIndex;
+        }
+    }
+    int sameTypeCount = 0;
+    for (const auto &track : tracks) {
+        if (track.type == type) {
+            ++sameTypeCount;
+        }
+    }
+    tracks.insert(tracks.begin() + index, TrackLane{type, QString("%1%2").arg(type == TrackType::Video ? "V" : "A").arg(sameTypeCount + 1)});
+    return index;
+}
+
+int TimelineEditor::ensureDropTrackForType(TrackType type, int dropY)
+{
+    const int direct = trackIndexAtY(dropY);
+    if (direct >= 0 && tracks[static_cast<size_t>(direct)].type == type) {
+        return direct;
+    }
+
+    for (int i = 0; i + 1 < static_cast<int>(tracks.size()); ++i) {
+        const int gapTop = trackTop(i) + trackHeight();
+        const int gapBottom = trackTop(i + 1);
+        if (dropY >= gapTop && dropY <= gapBottom) {
+            return insertTrackAt(i + 1, type);
+        }
+    }
+
+    if (tracks.empty()) {
+        return insertTrackAt(0, type);
+    }
+    if (dropY < trackTop(0)) {
+        return insertTrackAt(0, type);
+    }
+    if (dropY > contentBottom()) {
+        return insertTrackAt(static_cast<int>(tracks.size()), type);
+    }
+
+    const int fallback = maxTrackOfType(type);
+    if (fallback >= 0) {
+        return fallback;
+    }
+    return insertTrackAt(static_cast<int>(tracks.size()), type);
 }
 
 int TimelineEditor::maxTrackOfType(TrackType type) const
@@ -894,7 +1111,135 @@ QColor TimelineEditor::colorFromPath(const QString &path) const
     return QColor(r, g, b);
 }
 
-void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int preferredTrackIndex)
+QImage TimelineEditor::cachedVideoPreview(const QString &path)
+{
+    const auto it = previewCache.constFind(path);
+    if (it != previewCache.constEnd()) {
+        return it.value();
+    }
+
+    QImage img;
+    if (isImagePath(path)) {
+        img.load(path);
+    } else {
+        using namespace av;
+        std::error_code ec;
+        FormatContext input;
+        input.openInput(path.toStdString(), ec);
+        if (!ec) {
+            input.findStreamInfo(ec);
+        }
+        if (!ec) {
+            int videoStream = -1;
+            Stream stream;
+            for (size_t i = 0; i < input.streamsCount(); ++i) {
+                auto st = input.stream(i);
+                if (st.mediaType() == AVMEDIA_TYPE_VIDEO) {
+                    videoStream = static_cast<int>(i);
+                    stream = st;
+                    break;
+                }
+            }
+            if (!stream.isNull() && videoStream >= 0) {
+                VideoDecoderContext dec(stream);
+                Codec codec = findDecodingCodec(dec.raw()->codec_id);
+                dec.setCodec(codec);
+                dec.open(ec);
+                if (!ec) {
+                    VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
+                    for (int tries = 0; tries < 256; ++tries) {
+                        Packet pkt = input.readPacket(ec);
+                        if (ec || !pkt) {
+                            break;
+                        }
+                        if (pkt.streamIndex() != videoStream) {
+                            continue;
+                        }
+                        VideoFrame frame = dec.decode(pkt, ec);
+                        if (ec || frame.isNull() || !frame.isComplete()) {
+                            continue;
+                        }
+                        auto rgb = rescaler.rescale(frame);
+                        img = QImage(rgb.width(), rgb.height(), QImage::Format_RGB888);
+                        const int dstStride = img.bytesPerLine();
+                        const int srcStride = rgb.raw()->linesize[0];
+                        const int copyStride = std::min(dstStride, srcStride);
+                        auto *src = rgb.data();
+                        auto *dst = img.bits();
+                        for (int y = 0; y < rgb.height(); ++y) {
+                            std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        if (img.isNull()) {
+            QImageReader reader(path);
+            reader.setAutoTransform(true);
+            img = reader.read();
+        }
+    }
+    if (img.isNull()) {
+        img = QImage(160, 90, QImage::Format_RGB32);
+        img.fill(colorFromPath(path));
+    }
+    previewCache.insert(path, img.scaled(320, 180, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+    return previewCache.value(path);
+}
+
+std::vector<int> TimelineEditor::cachedAudioPeaks(const QString &path)
+{
+    const auto it = peaksCache.constFind(path);
+    if (it != peaksCache.constEnd()) {
+        return it.value();
+    }
+    std::vector<int> peaks;
+    peaks.reserve(256);
+    const uint base = qHash(path);
+    for (int i = 0; i < 256; ++i) {
+        const uint v = qHash(QString::number(i) + path) ^ (base >> (i % 11));
+        peaks.push_back(2 + static_cast<int>(v % 20));
+    }
+    peaksCache.insert(path, peaks);
+    return peaks;
+}
+
+std::vector<int> TimelineEditor::linkedClipIds(int clipId) const
+{
+    std::vector<int> ids;
+    const ClipEvent *clip = findClipById(clipId);
+    if (!clip) {
+        return ids;
+    }
+    if (clip->linkedGroupId < 0) {
+        ids.push_back(clipId);
+        return ids;
+    }
+    for (const auto &it : clips) {
+        if (it.linkedGroupId == clip->linkedGroupId) {
+            ids.push_back(it.id);
+        }
+    }
+    return ids;
+}
+
+void TimelineEditor::unlinkClipGroup(int clipId)
+{
+    const ClipEvent *clip = findClipById(clipId);
+    if (!clip || clip->linkedGroupId < 0) {
+        return;
+    }
+    const int groupId = clip->linkedGroupId;
+    for (auto &it : clips) {
+        if (it.linkedGroupId == groupId) {
+            it.linkedGroupId = -1;
+        }
+    }
+    update();
+}
+
+void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int dropY)
 {
     if (path.isEmpty()) {
         return;
@@ -904,23 +1249,12 @@ void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int pr
     const bool audio = hasAudioForPath(path);
     const bool video = hasVideoForPath(path);
     const int linkedGroup = (video && audio) ? nextLinkedGroupId++ : -1;
-    const auto pickTrack = [&](TrackType type) -> int {
-        if (isTrackIndexValid(preferredTrackIndex) && tracks[static_cast<size_t>(preferredTrackIndex)].type == type) {
-            return preferredTrackIndex;
-        }
-        int idx = maxTrackOfType(type);
-        if (idx >= 0) {
-            return idx;
-        }
-        return 0;
-    };
-
     if (video) {
         ClipEvent v;
         v.id = nextClipId++;
         v.linkedGroupId = linkedGroup;
         v.mediaType = TrackType::Video;
-        v.trackIndex = pickTrack(TrackType::Video);
+        v.trackIndex = ensureDropTrackForType(TrackType::Video, dropY);
         v.startMs = startMs;
         v.durationMs = durationMs;
         v.sourceInMs = 0;
@@ -936,7 +1270,7 @@ void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int pr
         a.id = nextClipId++;
         a.linkedGroupId = linkedGroup;
         a.mediaType = TrackType::Audio;
-        a.trackIndex = pickTrack(TrackType::Audio);
+        a.trackIndex = ensureDropTrackForType(TrackType::Audio, dropY);
         a.startMs = startMs;
         a.durationMs = durationMs;
         a.sourceInMs = 0;
@@ -957,7 +1291,7 @@ void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int pr
 
 void TimelineEditor::emitOverlayInfo()
 {
-    QString activeVideoName = "-";
+    int activeVideoCount = 0;
     int activeAudioCount = 0;
 
     for (const auto &clip : clips) {
@@ -967,7 +1301,7 @@ void TimelineEditor::emitOverlayInfo()
             continue;
         }
         if (clip.mediaType == TrackType::Video) {
-            activeVideoName = QFileInfo(clip.sourcePath).fileName();
+            ++activeVideoCount;
         } else {
             ++activeAudioCount;
         }
@@ -979,9 +1313,9 @@ void TimelineEditor::emitOverlayInfo()
                          .arg(regionStartMs / 1000.0, 0, 'f', 2)
                          .arg(regionEndMs / 1000.0, 0, 'f', 2);
     }
-    const QString text = QString("Overlay @ %1s | Video: %2 | Audio layers: %3 | %4")
+    const QString text = QString("Overlay @ %1s | Video layers: %2 | Audio layers: %3 | %4")
                              .arg(cursorPositionMs / 1000.0, 0, 'f', 2)
-                             .arg(activeVideoName)
+                             .arg(activeVideoCount)
                              .arg(activeAudioCount)
                              .arg(regionText + (loopRegionEnabled ? " (loop)" : ""));
     if (text != lastOverlayInfo) {

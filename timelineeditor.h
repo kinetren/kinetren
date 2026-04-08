@@ -5,6 +5,8 @@
 #include <QRect>
 #include <QColor>
 #include <QPoint>
+#include <QHash>
+#include <QImage>
 
 #include <optional>
 #include <vector>
@@ -32,6 +34,8 @@ public:
     bool trimSelectedClipStartToCursor();
     bool trimSelectedClipEndToCursor();
     bool moveSelectedClipToAdjacentTrack(int direction);
+    bool copySelectedToClipboard();
+    bool pasteClipboardAtCursor();
     void setLoopEnabled(bool enabled);
     bool loopEnabled() const;
     bool hasSelectionRegion() const;
@@ -61,6 +65,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -99,6 +104,7 @@ private:
 
     std::vector<TrackLane> tracks;
     std::vector<ClipEvent> clips;
+    std::vector<ClipEvent> clipboardClips;
     std::vector<qint64> markersMs;
     int nextClipId = 1;
     int nextLinkedGroupId = 1;
@@ -134,6 +140,8 @@ private:
     qint64 xToTimeMs(int x) const;
     int timeToX(qint64 timeMs) const;
     int trackIndexAtY(int y) const;
+    int insertTrackAt(int index, TrackType type);
+    int ensureDropTrackForType(TrackType type, int dropY);
     int maxTrackOfType(TrackType type) const;
     bool isTrackIndexValid(int trackIndex) const;
     QRect clipRect(const ClipEvent &clip) const;
@@ -154,9 +162,15 @@ private:
     bool hasVideoForPath(const QString &path) const;
     bool hasAudioForPath(const QString &path) const;
     QColor colorFromPath(const QString &path) const;
+    QImage cachedVideoPreview(const QString &path);
+    std::vector<int> cachedAudioPeaks(const QString &path);
+    void unlinkClipGroup(int clipId);
+    std::vector<int> linkedClipIds(int clipId) const;
 
-    void addClipFromDrop(const QString &path, qint64 startMs, int preferredTrackIndex);
+    void addClipFromDrop(const QString &path, qint64 startMs, int dropY);
     void emitOverlayInfo();
+    QHash<QString, QImage> previewCache;
+    QHash<QString, std::vector<int>> peaksCache;
 };
 
 #endif // TIMELINEEDITOR_H

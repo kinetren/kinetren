@@ -4,12 +4,14 @@
 #include "sourceareawidget.h"
 #include "timelineeditor.h"
 
-#include <QCheckBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMetaObject>
 #include <QPushButton>
+#include <QShortcut>
 #include <QScrollBar>
+#include <QStyle>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -61,26 +63,93 @@ void MainWindow::setupTimelineEditorUi()
     timelineLayout->setContentsMargins(6, 6, 6, 6);
     timelineLayout->setSpacing(6);
 
+    timelineEditor = new TimelineEditor(ui->widget_2);
+    timelineLayout->addWidget(timelineEditor, 1);
+    timelineScrollBar = new QScrollBar(Qt::Horizontal, ui->widget_2);
+    timelineLayout->addWidget(timelineScrollBar);
+
     auto *controlsLayout = new QHBoxLayout();
-    timelinePlayPauseButton = new QPushButton("Play/Pause", ui->widget_2);
-    auto *markerButton = new QPushButton("Add marker", ui->widget_2);
-    auto *addVideoTrackButton = new QPushButton("+ Video Track", ui->widget_2);
-    auto *addAudioTrackButton = new QPushButton("+ Audio Track", ui->widget_2);
-    auto *splitButton = new QPushButton("Split", ui->widget_2);
-    auto *trimStartButton = new QPushButton("Trim Start", ui->widget_2);
-    auto *trimEndButton = new QPushButton("Trim End", ui->widget_2);
-    auto *moveTrackUpButton = new QPushButton("Track Up", ui->widget_2);
-    auto *moveTrackDownButton = new QPushButton("Track Down", ui->widget_2);
-    auto *setRegionStartButton = new QPushButton("Set Region In", ui->widget_2);
-    auto *setRegionEndButton = new QPushButton("Set Region Out", ui->widget_2);
-    auto *clearRegionButton = new QPushButton("Clear Region", ui->widget_2);
-    timelineLoopCheckBox = new QCheckBox("Loop Region", ui->widget_2);
-    timelineOverlayLabel = new QLabel("Overlay @ 0.00s | Video: - | Audio layers: 0", ui->widget_2);
-    controlsLayout->addWidget(timelinePlayPauseButton);
+    ui->widget_2->setStyleSheet(
+        "QToolButton { background:#2b2b2b; border:1px solid #3d3d3d; border-radius:4px; }"
+        "QToolButton:hover { background:#3a3a3a; }"
+        "QToolButton:checked { background:#2f4f6f; border-color:#6a8db3; }");
+    timelinePauseButton = new QToolButton(ui->widget_2);
+    auto *markerButton = new QToolButton(ui->widget_2);
+    auto *addVideoTrackButton = new QToolButton(ui->widget_2);
+    auto *addAudioTrackButton = new QToolButton(ui->widget_2);
+    auto *splitButton = new QToolButton(ui->widget_2);
+    auto *copyButton = new QToolButton(ui->widget_2);
+    auto *pasteButton = new QToolButton(ui->widget_2);
+    auto *trimStartButton = new QToolButton(ui->widget_2);
+    auto *trimEndButton = new QToolButton(ui->widget_2);
+    auto *moveTrackUpButton = new QToolButton(ui->widget_2);
+    auto *moveTrackDownButton = new QToolButton(ui->widget_2);
+    auto *setRegionStartButton = new QToolButton(ui->widget_2);
+    auto *setRegionEndButton = new QToolButton(ui->widget_2);
+    auto *clearRegionButton = new QToolButton(ui->widget_2);
+    timelineLoopButton = new QToolButton(ui->widget_2);
+
+    timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+    timelinePauseButton->setToolTip("Play/Pause (Space)");
+    markerButton->setIcon(style()->standardIcon(QStyle::SP_DialogYesButton));
+    markerButton->setToolTip("Add marker");
+    addVideoTrackButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
+    addVideoTrackButton->setToolTip("Add video track");
+    addAudioTrackButton->setIcon(style()->standardIcon(QStyle::SP_DirIcon));
+    addAudioTrackButton->setToolTip("Add audio track");
+    splitButton->setIcon(style()->standardIcon(QStyle::SP_TitleBarShadeButton));
+    splitButton->setToolTip("Cut selected event (S)");
+    copyButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
+    copyButton->setToolTip("Copy selected (Ctrl+C)");
+    pasteButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogListView));
+    pasteButton->setToolTip("Paste at cursor (Ctrl+V)");
+    trimStartButton->setIcon(style()->standardIcon(QStyle::SP_ArrowBack));
+    trimStartButton->setToolTip("Trim start");
+    trimEndButton->setIcon(style()->standardIcon(QStyle::SP_ArrowForward));
+    trimEndButton->setToolTip("Trim end");
+    moveTrackUpButton->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
+    moveTrackUpButton->setToolTip("Move selected up");
+    moveTrackDownButton->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
+    moveTrackDownButton->setToolTip("Move selected down");
+    setRegionStartButton->setIcon(style()->standardIcon(QStyle::SP_MediaSeekBackward));
+    setRegionStartButton->setToolTip("Set region in");
+    setRegionEndButton->setIcon(style()->standardIcon(QStyle::SP_MediaSeekForward));
+    setRegionEndButton->setToolTip("Set region out");
+    clearRegionButton->setIcon(style()->standardIcon(QStyle::SP_DialogResetButton));
+    clearRegionButton->setToolTip("Clear region");
+    timelineLoopButton->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
+    timelineLoopButton->setToolTip("Loop region");
+    timelineLoopButton->setCheckable(true);
+
+    const auto configureToolButton = [](QToolButton *b) {
+        b->setIconSize(QSize(18, 18));
+        b->setAutoRaise(false);
+        b->setFixedSize(30, 28);
+    };
+    configureToolButton(timelinePauseButton);
+    configureToolButton(markerButton);
+    configureToolButton(addVideoTrackButton);
+    configureToolButton(addAudioTrackButton);
+    configureToolButton(splitButton);
+    configureToolButton(copyButton);
+    configureToolButton(pasteButton);
+    configureToolButton(trimStartButton);
+    configureToolButton(trimEndButton);
+    configureToolButton(moveTrackUpButton);
+    configureToolButton(moveTrackDownButton);
+    configureToolButton(setRegionStartButton);
+    configureToolButton(setRegionEndButton);
+    configureToolButton(clearRegionButton);
+    configureToolButton(timelineLoopButton);
+
+    timelineOverlayLabel = new QLabel("Overlay @ 0.00s | Video layers: 0 | Audio layers: 0", ui->widget_2);
+    controlsLayout->addWidget(timelinePauseButton);
     controlsLayout->addWidget(markerButton);
     controlsLayout->addWidget(addVideoTrackButton);
     controlsLayout->addWidget(addAudioTrackButton);
     controlsLayout->addWidget(splitButton);
+    controlsLayout->addWidget(copyButton);
+    controlsLayout->addWidget(pasteButton);
     controlsLayout->addWidget(trimStartButton);
     controlsLayout->addWidget(trimEndButton);
     controlsLayout->addWidget(moveTrackUpButton);
@@ -88,47 +157,44 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(setRegionStartButton);
     controlsLayout->addWidget(setRegionEndButton);
     controlsLayout->addWidget(clearRegionButton);
-    controlsLayout->addWidget(timelineLoopCheckBox);
+    controlsLayout->addWidget(timelineLoopButton);
     controlsLayout->addWidget(timelineOverlayLabel, 1);
     timelineLayout->addLayout(controlsLayout);
 
-    timelineEditor = new TimelineEditor(ui->widget_2);
-    timelineLayout->addWidget(timelineEditor, 1);
-    timelineScrollBar = new QScrollBar(Qt::Horizontal, ui->widget_2);
-    timelineLayout->addWidget(timelineScrollBar);
-
     timelineTimer.setInterval(40);
     connect(&timelineTimer, &QTimer::timeout, this, &MainWindow::onTimelineTick);
-    connect(timelinePlayPauseButton, &QPushButton::clicked, this, &MainWindow::toggleTimelinePlayback);
-    connect(markerButton, &QPushButton::clicked, timelineEditor, &TimelineEditor::addMarkerAtCursor);
-    connect(addVideoTrackButton, &QPushButton::clicked, timelineEditor, &TimelineEditor::addVideoTrack);
-    connect(addAudioTrackButton, &QPushButton::clicked, timelineEditor, &TimelineEditor::addAudioTrack);
-    connect(splitButton, &QPushButton::clicked, timelineEditor, &TimelineEditor::splitSelectedClipAtCursor);
-    connect(trimStartButton, &QPushButton::clicked, timelineEditor, &TimelineEditor::trimSelectedClipStartToCursor);
-    connect(trimEndButton, &QPushButton::clicked, timelineEditor, &TimelineEditor::trimSelectedClipEndToCursor);
-    connect(moveTrackUpButton, &QPushButton::clicked, [this]() {
+    connect(timelinePauseButton, &QToolButton::clicked, this, &MainWindow::toggleTimelinePause);
+    connect(markerButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addMarkerAtCursor);
+    connect(addVideoTrackButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addVideoTrack);
+    connect(addAudioTrackButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addAudioTrack);
+    connect(splitButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::splitSelectedClipAtCursor);
+    connect(trimStartButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::trimSelectedClipStartToCursor);
+    connect(trimEndButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::trimSelectedClipEndToCursor);
+    connect(moveTrackUpButton, &QToolButton::clicked, [this]() {
         if (timelineEditor) {
             timelineEditor->moveSelectedClipToAdjacentTrack(-1);
         }
     });
-    connect(moveTrackDownButton, &QPushButton::clicked, [this]() {
+    connect(moveTrackDownButton, &QToolButton::clicked, [this]() {
         if (timelineEditor) {
             timelineEditor->moveSelectedClipToAdjacentTrack(1);
         }
     });
-    connect(setRegionStartButton, &QPushButton::clicked, [this]() {
+    connect(setRegionStartButton, &QToolButton::clicked, [this]() {
         if (timelineEditor) {
             timelineEditor->setSelectionRegionFromCursor(true);
         }
     });
-    connect(setRegionEndButton, &QPushButton::clicked, [this]() {
+    connect(setRegionEndButton, &QToolButton::clicked, [this]() {
         if (timelineEditor) {
             timelineEditor->setSelectionRegionFromCursor(false);
         }
     });
-    connect(clearRegionButton, &QPushButton::clicked, timelineEditor, &TimelineEditor::clearSelectionRegion);
-    connect(timelineLoopCheckBox, &QCheckBox::toggled, timelineEditor, &TimelineEditor::setLoopEnabled);
-    connect(timelineEditor, &TimelineEditor::loopEnabledChanged, timelineLoopCheckBox, &QCheckBox::setChecked);
+    connect(clearRegionButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::clearSelectionRegion);
+    connect(copyButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::copySelectedToClipboard);
+    connect(pasteButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::pasteClipboardAtCursor);
+    connect(timelineLoopButton, &QToolButton::toggled, timelineEditor, &TimelineEditor::setLoopEnabled);
+    connect(timelineEditor, &TimelineEditor::loopEnabledChanged, timelineLoopButton, &QToolButton::setChecked);
     connect(timelineEditor, &TimelineEditor::overlayInfoChanged, timelineOverlayLabel, &QLabel::setText);
     connect(timelineEditor, &TimelineEditor::timelineRangeChanged, this, [this](qint64, qint64) {
         refreshTimelineScroll();
@@ -144,10 +210,37 @@ void MainWindow::setupTimelineEditorUi()
             timelineEditor->setViewStartMs(static_cast<qint64>(value));
         }
     });
+
+    auto *spaceShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
+    connect(spaceShortcut, &QShortcut::activated, this, &MainWindow::toggleTimelinePause);
+    auto *splitShortcut = new QShortcut(QKeySequence(Qt::Key_S), this);
+    connect(splitShortcut, &QShortcut::activated, [this]() {
+        if (timelineEditor) {
+            timelineEditor->splitSelectedClipAtCursor();
+        }
+    });
+    auto *copyShortcut = new QShortcut(QKeySequence::Copy, this);
+    connect(copyShortcut, &QShortcut::activated, [this]() {
+        if (timelineEditor) {
+            timelineEditor->copySelectedToClipboard();
+        }
+    });
+    auto *pasteShortcut = new QShortcut(QKeySequence::Paste, this);
+    connect(pasteShortcut, &QShortcut::activated, [this]() {
+        if (timelineEditor) {
+            timelineEditor->pasteClipboardAtCursor();
+        }
+    });
+
     refreshTimelineScroll();
 }
 
 void MainWindow::toggleTimelinePlayback()
+{
+    toggleTimelinePause();
+}
+
+void MainWindow::toggleTimelinePause()
 {
     if (!timelineEditor) {
         return;
@@ -155,8 +248,7 @@ void MainWindow::toggleTimelinePlayback()
 
     if (!timelinePlaying) {
         timelinePlaying = true;
-        timelineReturnCursorMs = timelineEditor->cursorMs();
-        timelinePlayPauseButton->setText("Stop (return)");
+        timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
         timelinePlayStartMs = timelineEditor->cursorMs();
         timelinePlaybackClock.restart();
         if (playbackPipeline) {
@@ -170,8 +262,7 @@ void MainWindow::toggleTimelinePlayback()
     timelinePlaying = false;
     timelineTimer.stop();
     stopMediaPlayback();
-    timelineEditor->setCursorMs(timelineReturnCursorMs);
-    timelinePlayPauseButton->setText("Play/Pause");
+    timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
 }
 
 void MainWindow::onTimelineTick()
