@@ -66,6 +66,8 @@ private:
     std::atomic_bool running{false};
     std::atomic_int generation{0};
     std::atomic<qint64> timelineMs{0};
+    std::atomic<qint64> consumedAudioBlock{0};
+    std::atomic<qint64> consumedVideoFrame{0};
 
     std::mutex audioMutex;
     std::unordered_map<std::string, std::shared_ptr<AudioWorker>> audioWorkers;

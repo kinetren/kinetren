@@ -128,6 +128,8 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     ensureAudioOutput();
     nextAudioBlock = startTimelineMs / kAudioBlockMs;
     nextVideoFrame = startTimelineMs / kVideoFrameMs;
+    consumedAudioBlock.store(nextAudioBlock);
+    consumedVideoFrame.store(nextVideoFrame);
 
     if (audioThread.joinable()) {
         audioThread.join();
@@ -375,6 +377,7 @@ void PlaybackPipeline::audioMixLoop()
         }
 
         ++nextAudioBlock;
+        consumedAudioBlock.store(nextAudioBlock);
         nextWake += blockDuration;
         std::this_thread::sleep_until(nextWake);
     }
@@ -422,6 +425,7 @@ void PlaybackPipeline::videoComposeLoop()
         }
 
         ++nextVideoFrame;
+        consumedVideoFrame.store(nextVideoFrame);
         nextWake += frameDuration;
         std::this_thread::sleep_until(nextWake);
     }
@@ -500,7 +504,7 @@ int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
                     return 0;
                 }
                 while (worker.generation == generation.load() && !worker.stopFlag->load()) {
-                    const qint64 timelineBlock = timelineMs.load() / kAudioBlockMs;
+                    const qint64 timelineBlock = consumedAudioBlock.load();
                     const qint64 maxAhead = static_cast<qint64>(kAudioRingSlots / 2);
                     if (nextBlock <= timelineBlock + maxAhead) {
                         break;
@@ -658,7 +662,7 @@ int PlaybackPipeline::decodeVideoWorker(const VideoWorker &worker)
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
         while (worker.generation == generation.load() && !worker.stopFlag->load()) {
-            const qint64 timelineFrame = timelineMs.load() / kVideoFrameMs;
+            const qint64 timelineFrame = consumedVideoFrame.load();
             const qint64 maxAhead = static_cast<qint64>(kVideoRingSlots / 2);
             if (nextFrameIndex <= timelineFrame + maxAhead) {
                 break;
@@ -690,7 +694,7 @@ int PlaybackPipeline::decodeVideoWorker(const VideoWorker &worker)
         }
 
         while (worker.generation == generation.load() && !worker.stopFlag->load()) {
-            const qint64 timelineFrame = timelineMs.load() / kVideoFrameMs;
+            const qint64 timelineFrame = consumedVideoFrame.load();
             const qint64 maxAhead = static_cast<qint64>(kVideoRingSlots / 2);
             if (nextFrameIndex <= timelineFrame + maxAhead) {
                 break;
