@@ -403,9 +403,53 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
         return 1;
     }
 
-    const int outSampleRate = 48000;
-    const uint64_t outChannelLayout = AV_CH_LAYOUT_STEREO;
-    const SampleFormat outSampleFormat = AV_SAMPLE_FMT_S16;
+    int outSampleRate = 48000;
+    int outChannelCount = 2;
+    SampleFormat outSampleFormat = AV_SAMPLE_FMT_S16;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    QAudioDevice outputDeviceInfo = QMediaDevices::defaultAudioOutput();
+    const QAudioFormat preferred = outputDeviceInfo.preferredFormat();
+    outSampleRate = preferred.sampleRate();
+    outChannelCount = preferred.channelCount();
+    switch (preferred.sampleFormat()) {
+    case QAudioFormat::Int32:
+        outSampleFormat = AV_SAMPLE_FMT_S32;
+        break;
+    case QAudioFormat::Float:
+        outSampleFormat = AV_SAMPLE_FMT_FLT;
+        break;
+    case QAudioFormat::Int16:
+    default:
+        outSampleFormat = AV_SAMPLE_FMT_S16;
+        break;
+    }
+#endif
+    outChannelCount = std::max(1, outChannelCount);
+    uint64_t outChannelLayout = AV_CH_LAYOUT_STEREO;
+    switch (outChannelCount) {
+    case 1:
+        outChannelLayout = AV_CH_LAYOUT_MONO;
+        break;
+    case 2:
+        outChannelLayout = AV_CH_LAYOUT_STEREO;
+        break;
+    case 3:
+        outChannelLayout = AV_CH_LAYOUT_2POINT1;
+        break;
+    case 4:
+        outChannelLayout = AV_CH_LAYOUT_QUAD;
+        break;
+    case 6:
+        outChannelLayout = AV_CH_LAYOUT_5POINT1;
+        break;
+    case 8:
+        outChannelLayout = AV_CH_LAYOUT_7POINT1;
+        break;
+    default:
+        outChannelLayout = AV_CH_LAYOUT_STEREO;
+        outChannelCount = 2;
+        break;
+    }
 
     AudioResampler resampler(outChannelLayout,
                              outSampleRate,
@@ -419,17 +463,42 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
         return 1;
     }
 
+    int bytesPerSample = 2;
+    switch (static_cast<AVSampleFormat>(outSampleFormat)) {
+    case AV_SAMPLE_FMT_S32:
+    case AV_SAMPLE_FMT_FLT:
+        bytesPerSample = 4;
+        break;
+    case AV_SAMPLE_FMT_S16:
+    default:
+        bytesPerSample = 2;
+        break;
+    }
+
     QAudioFormat audioFormat;
     audioFormat.setSampleRate(outSampleRate);
-    audioFormat.setChannelCount(2);
+    audioFormat.setChannelCount(outChannelCount);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    audioFormat.setSampleFormat(QAudioFormat::Int16);
-    QAudioSink sink(QMediaDevices::defaultAudioOutput(), audioFormat);
+    switch (static_cast<AVSampleFormat>(outSampleFormat)) {
+    case AV_SAMPLE_FMT_S32:
+        audioFormat.setSampleFormat(QAudioFormat::Int32);
+        break;
+    case AV_SAMPLE_FMT_FLT:
+        audioFormat.setSampleFormat(QAudioFormat::Float);
+        break;
+    case AV_SAMPLE_FMT_S16:
+    default:
+        audioFormat.setSampleFormat(QAudioFormat::Int16);
+        break;
+    }
+    QAudioSink sink(outputDeviceInfo, audioFormat);
 #else
-    audioFormat.setSampleSize(16);
+    audioFormat.setSampleSize(bytesPerSample * 8);
     audioFormat.setCodec("audio/pcm");
     audioFormat.setByteOrder(QAudioFormat::LittleEndian);
-    audioFormat.setSampleType(QAudioFormat::SignedInt);
+    audioFormat.setSampleType(static_cast<AVSampleFormat>(outSampleFormat) == AV_SAMPLE_FMT_FLT
+                                  ? QAudioFormat::Float
+                                  : QAudioFormat::SignedInt);
     QAudioOutput sink(audioFormat);
 #endif
     QIODevice *audioDevice = sink.start();
@@ -437,14 +506,56 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
         cerr << "Can't start audio output\n";
         return 1;
     }
+    qint64 totalBytesWritten = 0;
+    bool firstAudioPtsSet = false;
+    double firstAudioPtsSeconds = 0.0;
+    const auto audioPlaybackStart = std::chrono::steady_clock::now();
 
-    while (Packet pkt = inputContext.readPacket(ec)) {
+    const auto writeResampled = [&](bool getAll) -> int {
+        while (true) {
+            AudioSamples out(outSampleFormat, 1024, outChannelLayout, outSampleRate);
+            const bool hasFrame = resampler.pop(out, getAll, ec);
+            if (ec) {
+                cerr << "Audio resampler pop error: " << ec << ", " << ec.message() << endl;
+                return 1;
+            }
+            if (!hasFrame || !out) {
+                return 0;
+            }
+
+            const int bytesToWrite = out.samplesCount() * out.channelsCount() * bytesPerSample;
+            const char *pcm = reinterpret_cast<const char *>(out.data(0));
+            int offset = 0;
+            while (offset < bytesToWrite) {
+                if (generation != audioPlaybackGeneration.load()) {
+                    return 0;
+                }
+                const qint64 written = audioDevice->write(pcm + offset, bytesToWrite - offset);
+                if (written < 0) {
+                    cerr << "Audio device write error\n";
+                    return 1;
+                }
+                if (written == 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    continue;
+                }
+                offset += static_cast<int>(written);
+                totalBytesWritten += written;
+            }
+        }
+    };
+
+    while (true) {
+        Packet pkt = inputContext.readPacket(ec);
         if (generation != audioPlaybackGeneration.load()) {
             return 0;
         }
         if (ec) {
             clog << "Audio packet reading error: " << ec << ", " << ec.message() << endl;
             return 1;
+        }
+        if (!pkt) {
+            break;
         }
         if (pkt.streamIndex() != audioStream) {
             continue;
@@ -465,6 +576,19 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
             if (sampleMs < startOffsetMs) {
                 continue;
             }
+
+            const double samplePtsSeconds = samplePts.seconds();
+            if (!firstAudioPtsSet) {
+                firstAudioPtsSet = true;
+                firstAudioPtsSeconds = samplePtsSeconds;
+            }
+            const auto targetMs = static_cast<qint64>((samplePtsSeconds - firstAudioPtsSeconds) * 1000.0);
+            const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now() - audioPlaybackStart)
+                                       .count();
+            if (targetMs > elapsedMs) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(targetMs - elapsedMs));
+            }
         }
 
         resampler.push(samples, ec);
@@ -473,31 +597,43 @@ int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, in
             return 1;
         }
 
-        while (true) {
-            AudioSamples out(outSampleFormat, 1024, outChannelLayout, outSampleRate);
-            const bool hasFrame = resampler.pop(out, false, ec);
-            if (ec) {
-                cerr << "Audio resampler pop error: " << ec << ", " << ec.message() << endl;
-                return 1;
-            }
-            if (!hasFrame || !out) {
-                break;
-            }
+        const int writeResult = writeResampled(false);
+        if (writeResult != 0) {
+            return writeResult;
+        }
+    }
 
-            const int bytesToWrite = out.samplesCount() * out.channelsCount() * 2;
-            const char *pcm = reinterpret_cast<const char *>(out.data(0));
-            int offset = 0;
-            while (offset < bytesToWrite) {
-                if (generation != audioPlaybackGeneration.load()) {
-                    return 0;
-                }
-                const qint64 written = audioDevice->write(pcm + offset, bytesToWrite - offset);
-                if (written <= 0) {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                    continue;
-                }
-                offset += static_cast<int>(written);
-            }
+    while (true) {
+        AudioSamples samples = decoder.decode(Packet(), ec);
+        if (ec) {
+            cerr << "Audio flush decode error: " << ec << ", " << ec.message() << endl;
+            return 1;
+        }
+        if (!samples) {
+            break;
+        }
+        resampler.push(samples, ec);
+        if (ec) {
+            cerr << "Audio resampler push error: " << ec << ", " << ec.message() << endl;
+            return 1;
+        }
+
+        const int writeResult = writeResampled(false);
+        if (writeResult != 0) {
+            return writeResult;
+        }
+    }
+
+    const int writeResult = writeResampled(true);
+    if (writeResult != 0) {
+        return writeResult;
+    }
+
+    const qint64 bytesPerSecond = static_cast<qint64>(outSampleRate) * outChannelCount * bytesPerSample;
+    if (bytesPerSecond > 0) {
+        const qint64 targetUsecs = (totalBytesWritten * 1000000LL) / bytesPerSecond;
+        while (generation == audioPlaybackGeneration.load() && sink.processedUSecs() < targetUsecs) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
 
