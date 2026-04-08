@@ -4,7 +4,7 @@
 #include <QWidget>
 
 class QLabel;
-class MetricGraphWidget;
+class CombinedMetricGraphWidget;
 
 class PerformanceWidget : public QWidget
 {
@@ -25,9 +25,7 @@ private:
     QLabel *cacheStatsLabel = nullptr;
     QLabel *cacheResolutionLabel = nullptr;
     QLabel *projectInfoLabel = nullptr;
-    MetricGraphWidget *fpsGraph = nullptr;
-    MetricGraphWidget *cacheHitGraph = nullptr;
-    MetricGraphWidget *avcppGraph = nullptr;
+    CombinedMetricGraphWidget *combinedGraph = nullptr;
 };
 
 #endif // PERFORMANCEWIDGET_H

@@ -624,7 +624,7 @@ void MainWindow::applyProjectSettings()
 
 void MainWindow::refreshPerformancePanel()
 {
-    if (!playbackPipeline || !performanceWidget) {
+    if (!playbackPipeline || !performanceWidget || !timelineEditor) {
         return;
     }
     const auto stats = playbackPipeline->performanceSnapshot();
@@ -653,6 +653,31 @@ void MainWindow::refreshPerformancePanel()
     lastAvcppTotalCalls = avcppTotalCalls;
     const double aggregateHitPct = (resourceHitPct * 0.45) + (finalHitPct * 0.35) + (audioHitPct * 0.20);
 
+    QHash<QString, double> clipCoverage;
+    std::vector<PlaybackPipeline::Clip> videoRenderClips;
+    std::vector<PlaybackPipeline::Clip> audioRenderClips;
+    for (const auto &clip : timelineEditor->renderClips()) {
+        PlaybackPipeline::Clip c{clip.sourcePath, clip.startMs, clip.durationMs, clip.sourceInMs};
+        if (clip.isVideo) {
+            videoRenderClips.push_back(c);
+        }
+        if (clip.isAudio) {
+            audioRenderClips.push_back(c);
+        }
+    }
+    const auto videoCoverage = playbackPipeline->videoCacheCoverage(videoRenderClips);
+    const auto audioCoverage = playbackPipeline->audioCacheCoverage(audioRenderClips);
+    for (auto it = videoCoverage.constBegin(); it != videoCoverage.constEnd(); ++it) {
+        clipCoverage.insert(it.key(), it.value());
+    }
+    for (auto it = audioCoverage.constBegin(); it != audioCoverage.constEnd(); ++it) {
+        clipCoverage.insert(it.key(), std::max(clipCoverage.value(it.key(), 0.0), it.value()));
+    }
+    const qint64 viewStart = timelineEditor->viewStartMs();
+    const qint64 viewEnd = viewStart + timelineEditor->visibleDurationMs();
+    const double timelineCoverage = playbackPipeline->finalTimelineCoverage(viewStart, viewEnd);
+    timelineEditor->setCacheCoverage(clipCoverage, timelineCoverage);
+
     const auto mb = [](quint64 bytes) -> QString {
         return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 1) + "MB";
     };
@@ -670,7 +695,7 @@ void MainWindow::refreshPerformancePanel()
             .arg(stats.audioCacheHits)
             .arg(audioLookups)
             .arg(audioHitPct, 0, 'f', 1),
-        QString("Resource cache %1x%2 (%3) | decoded: %4 | entries: %5 | evictions: %6 | used/limit: %7 / %8")
+        QString("Resource cache %1x%2 (%3) | decoded: %4 | entries: %5 | evictions: %6 | used/limit: %7 / %8 (max %9)")
             .arg(projectSettings.cacheResolution().width())
             .arg(projectSettings.cacheResolution().height())
             .arg(projectSettings.cacheQualityLabel())
@@ -678,7 +703,8 @@ void MainWindow::refreshPerformancePanel()
             .arg(stats.resourceCacheEntries)
             .arg(stats.resourceCacheEvictions)
             .arg(mb(stats.resourceCacheUsedBytes))
-            .arg(mb(stats.resourceCacheLimitBytes)),
+            .arg(mb(stats.resourceCacheLimitBytes))
+            .arg(mb(stats.resourceCacheConfiguredMaxBytes)),
         QString("Project: %1 FPS | %2x%3 | avcpp open:%4 read:%5 vdec:%6 adec:%7 | audio-cache entries:%8")
             .arg(projectSettings.fps)
             .arg(projectSettings.resolution.width())

@@ -609,6 +609,13 @@ QString TimelineEditor::formatTimelineTime(qint64 timeMs) const
         .arg(frame, 2, 10, QChar('0'));
 }
 
+void TimelineEditor::setCacheCoverage(const QHash<QString, double> &clipCoverage, double timelineCoverage)
+{
+    cacheCoverageByClip = clipCoverage;
+    timelineCacheCoverageRatio = std::clamp(timelineCoverage, 0.0, 1.0);
+    update();
+}
+
 void TimelineEditor::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
@@ -619,6 +626,21 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
 
     const int paintBottom = height() - 4;
     const QRect rulerRect(timelineLeft(), rulerTop(), timelineRight() - timelineLeft(), rulerHeight());
+    const QRect timelineCacheBarRect(timelineLeft(), std::max(2, rulerTop() - 8), timelineRight() - timelineLeft(), 5);
+    p.fillRect(timelineCacheBarRect, QColor(35, 43, 53));
+    const int timelineCacheFillW = static_cast<int>(timelineCacheBarRect.width() * timelineCacheCoverageRatio);
+    if (timelineCacheFillW > 0) {
+        p.fillRect(QRect(timelineCacheBarRect.left(),
+                         timelineCacheBarRect.top(),
+                         timelineCacheFillW,
+                         timelineCacheBarRect.height()),
+                   QColor(90, 205, 255));
+    }
+    p.setPen(QColor(135, 165, 190));
+    p.drawRect(timelineCacheBarRect.adjusted(0, 0, -1, -1));
+    p.setPen(QColor(165, 190, 212));
+    p.drawText(timelineLeft() + 4, timelineCacheBarRect.bottom() - 1,
+               QString("cache %1%").arg(timelineCacheCoverageRatio * 100.0, 0, 'f', 0));
     p.fillRect(rulerRect, QColor(30, 30, 30));
     p.fillRect(QRect(0, rulerTop(), headerWidth(), rulerHeight()), QColor(26, 26, 26));
 
@@ -719,6 +741,20 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
             p.setPen(QColor(255, 255, 255));
             p.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
             p.drawLine(r.right() - 2, r.top() + 2, r.right() - 2, r.bottom() - 2);
+        }
+
+        const double clipCoverage = cacheCoverageByClip.value(clipCoverageKey(clip), 0.0);
+        const QRect barBg(r.left() + 3, r.bottom() - 7, std::max(6, r.width() - 6), 4);
+        p.fillRect(barBg, QColor(0, 0, 0, 110));
+        const int fillW = static_cast<int>(barBg.width() * std::clamp(clipCoverage, 0.0, 1.0));
+        if (fillW > 0) {
+            QColor barColor = QColor(224, 84, 84);
+            if (clipCoverage >= 0.85) {
+                barColor = QColor(64, 205, 112);
+            } else if (clipCoverage >= 0.45) {
+                barColor = QColor(234, 186, 72);
+            }
+            p.fillRect(QRect(barBg.left(), barBg.top(), fillW, barBg.height()), barColor);
         }
     }
 
@@ -1296,6 +1332,15 @@ bool TimelineEditor::shouldDrawClipLabel(const ClipEvent &clip) const
 {
     // Avoid duplicated names for normal magnetized A/V pairs.
     return !hasMatchingLinkedVideo(clip);
+}
+
+QString TimelineEditor::clipCoverageKey(const ClipEvent &clip) const
+{
+    return QStringLiteral("%1|%2|%3|%4")
+        .arg(clip.sourcePath)
+        .arg(clip.startMs)
+        .arg(clip.durationMs)
+        .arg(clip.sourceInMs);
 }
 
 bool TimelineEditor::isNearRegionStartBoundary(int x) const

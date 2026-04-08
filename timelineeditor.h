@@ -68,6 +68,7 @@ public:
     std::vector<ActiveClip> activeAudioAt(qint64 timeMs) const;
     std::vector<RenderClip> renderClips() const;
     QString formatTimelineTime(qint64 timeMs) const;
+    void setCacheCoverage(const QHash<QString, double> &clipCoverage, double timelineCoverage);
 
 signals:
     void cursorChanged(qint64 cursorMs);
@@ -180,6 +181,7 @@ private:
     bool isNearClipEndEdge(const ClipEvent &clip, int x) const;
     bool hasMatchingLinkedVideo(const ClipEvent &clip) const;
     bool shouldDrawClipLabel(const ClipEvent &clip) const;
+    QString clipCoverageKey(const ClipEvent &clip) const;
     bool isNearRegionStartBoundary(int x) const;
     bool isNearRegionEndBoundary(int x) const;
     qint64 contentVisibleMs() const;
@@ -205,6 +207,8 @@ private:
     void emitOverlayInfo();
     QHash<QString, QImage> previewCache;
     QHash<QString, std::vector<int>> peaksCache;
+    QHash<QString, double> cacheCoverageByClip;
+    double timelineCacheCoverageRatio = 0.0;
 };
 
 #endif // TIMELINEEDITOR_H

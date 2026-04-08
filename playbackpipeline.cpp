@@ -387,6 +387,87 @@ PlaybackPipeline::PerformanceStats PlaybackPipeline::performanceSnapshot() const
     return stats;
 }
 
+QHash<QString, double> PlaybackPipeline::videoCacheCoverage(const std::vector<Clip> &clips) const
+{
+    QHash<QString, double> coverage;
+    std::lock_guard<std::mutex> lock(coverageMutex);
+    for (const auto &clip : clips) {
+        const std::string source = clip.sourcePath.toStdString();
+        auto it = videoBucketsBySource.find(source);
+        if (it == videoBucketsBySource.end()) {
+            coverage.insert(coverageClipKey(clip), 0.0);
+            continue;
+        }
+        const qint64 start = clip.sourceInMs;
+        const qint64 end = clip.sourceInMs + std::max<qint64>(1, clip.durationMs);
+        int total = 0;
+        int hit = 0;
+        for (qint64 t = start; t < end; t += kDraftFrameBucketMs) {
+            ++total;
+            const qint64 bucket = (t / kDraftFrameBucketMs) * kDraftFrameBucketMs;
+            if (it->second.find(bucket) != it->second.end()) {
+                ++hit;
+            }
+        }
+        coverage.insert(coverageClipKey(clip), (total > 0) ? (static_cast<double>(hit) / static_cast<double>(total)) : 0.0);
+    }
+    return coverage;
+}
+
+QHash<QString, double> PlaybackPipeline::audioCacheCoverage(const std::vector<Clip> &clips) const
+{
+    QHash<QString, double> coverage;
+    std::lock_guard<std::mutex> lock(coverageMutex);
+    for (const auto &clip : clips) {
+        const std::string source = clip.sourcePath.toStdString();
+        auto it = audioBucketsBySource.find(source);
+        if (it == audioBucketsBySource.end()) {
+            coverage.insert(coverageClipKey(clip), 0.0);
+            continue;
+        }
+        const qint64 start = clip.sourceInMs;
+        const qint64 end = clip.sourceInMs + std::max<qint64>(1, clip.durationMs);
+        int total = 0;
+        int hit = 0;
+        for (qint64 t = start; t < end; t += kAudioBlockMs) {
+            ++total;
+            const qint64 bucket = (t / kAudioBlockMs) * kAudioBlockMs;
+            if (it->second.find(bucket) != it->second.end()) {
+                ++hit;
+            }
+        }
+        coverage.insert(coverageClipKey(clip), (total > 0) ? (static_cast<double>(hit) / static_cast<double>(total)) : 0.0);
+    }
+    return coverage;
+}
+
+double PlaybackPipeline::finalTimelineCoverage(qint64 startMs, qint64 endMs) const
+{
+    if (endMs <= startMs) {
+        return 0.0;
+    }
+    std::lock_guard<std::mutex> lock(coverageMutex);
+    int total = 0;
+    int hit = 0;
+    for (qint64 t = std::max<qint64>(0, startMs); t < endMs; t += kVideoFrameMs) {
+        ++total;
+        const qint64 frameIdx = t / kVideoFrameMs;
+        if (finalTimelineFrames.find(frameIdx) != finalTimelineFrames.end()) {
+            ++hit;
+        }
+    }
+    return (total > 0) ? (static_cast<double>(hit) / static_cast<double>(total)) : 0.0;
+}
+
+QString PlaybackPipeline::coverageClipKey(const Clip &clip)
+{
+    return QStringLiteral("%1|%2|%3|%4")
+        .arg(clip.sourcePath)
+        .arg(clip.startMs)
+        .arg(clip.durationMs)
+        .arg(clip.sourceInMs);
+}
+
 std::string PlaybackPipeline::clipKey(const Clip &clip)
 {
     return (clip.sourcePath + "::" + QString::number(clip.startMs) + "::" +
@@ -412,6 +493,30 @@ std::string PlaybackPipeline::audioBlockKey(const QString &sourcePath, qint64 so
 {
     const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kAudioBlockMs) * kAudioBlockMs);
     return (sourcePath + "::audio::" + QString::number(bucketMs)).toStdString();
+}
+
+std::string PlaybackPipeline::videoFrameKey(const QString &sourcePath, qint64 sourceTimeMs, bool draft)
+{
+    const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs);
+    return (sourcePath + "::" + QString::number(bucketMs) + "::" + (draft ? "draft" : "full")).toStdString();
+}
+
+void PlaybackPipeline::markResourceBucket(const QString &sourcePath, qint64 bucketMs)
+{
+    std::lock_guard<std::mutex> lock(coverageMutex);
+    videoBucketsBySource[sourcePath.toStdString()].insert(bucketMs);
+}
+
+void PlaybackPipeline::markAudioBucket(const QString &sourcePath, qint64 bucketMs)
+{
+    std::lock_guard<std::mutex> lock(coverageMutex);
+    audioBucketsBySource[sourcePath.toStdString()].insert(bucketMs);
+}
+
+void PlaybackPipeline::markFinalTimelineFrame(qint64 timelineMs)
+{
+    std::lock_guard<std::mutex> lock(coverageMutex);
+    finalTimelineFrames.insert(std::max<qint64>(0, timelineMs / kVideoFrameMs));
 }
 
 void PlaybackPipeline::ensureAudioOutput()
@@ -664,6 +769,7 @@ void PlaybackPipeline::videoComposeLoop()
             }
         }
         if (hasAny) {
+            markFinalTimelineFrame(audioMasterMs);
             if (onVideoFrameReady) {
                 onVideoFrameReady(std::move(composed));
                 ++fpsWindowFrames;
@@ -710,7 +816,8 @@ void PlaybackPipeline::videoComposeLoop()
 
             if (!ready || frame.isNull()) {
                 const qint64 sourceTimeMs = worker->clip.sourceInMs + targetTimeMs;
-                frame = decodeVideoFrameAt(worker->clip, sourceTimeMs);
+                const std::string cacheKey = videoFrameKey(worker->clip.sourcePath, sourceTimeMs, draftPreviewEnabled.load());
+                (void)frameCache.get(cacheKey, frame);
                 if (frame.isNull()) {
                     auto it = lastPresentedFrameByWorker.find(worker->key);
                     if (it == lastPresentedFrameByWorker.end() || it->second.isNull()) {
@@ -741,6 +848,7 @@ void PlaybackPipeline::videoComposeLoop()
 
         if (hasAny && onVideoFrameReady) {
             finalViewCache.put(composedCacheKey, composed);
+            markFinalTimelineFrame(audioMasterMs);
             onVideoFrameReady(std::move(composed));
             ++fpsWindowFrames;
             composedFrames.fetch_add(1);
@@ -867,6 +975,7 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
                 }
                 const qint64 sourceTimeMs = worker.startOffsetMs + (nextBlock - startBlock) * kAudioBlockMs;
                 audioBlockCache->put(audioBlockKey(worker.clip.sourcePath, sourceTimeMs), block);
+                markAudioBucket(worker.clip.sourcePath, std::max<qint64>(0, (sourceTimeMs / kAudioBlockMs) * kAudioBlockMs));
                 worker.ring->setBlock(nextBlock, block);
                 worker.producedBlockIndex.store(nextBlock);
                 ++nextBlock;
@@ -936,6 +1045,19 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
 {
     using namespace av;
+
+    const qint64 clipStartSourceMs = worker.startOffsetMs;
+    const qint64 clipEndSourceMs = worker.clip.sourceInMs + worker.clip.durationMs;
+    bool fullCached = true;
+    for (qint64 t = clipStartSourceMs; t < clipEndSourceMs; t += kDraftFrameBucketMs) {
+        if (!frameCache.contains(videoFrameKey(worker.clip.sourcePath, t, draftPreviewEnabled.load()))) {
+            fullCached = false;
+            break;
+        }
+    }
+    if (fullCached && clipEndSourceMs > clipStartSourceMs) {
+        return 0;
+    }
 
     std::error_code ec;
     FormatContext input;
@@ -1084,11 +1206,9 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         }
         const qint64 sourceTimeMs = worker.clip.sourceInMs + relTimeMs;
         const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs);
-        const std::string cacheKey =
-            (worker.clip.sourcePath + "::" + QString::number(bucketMs) + "::" +
-             (draftPreviewEnabled.load() ? "draft" : "full"))
-                .toStdString();
+        const std::string cacheKey = videoFrameKey(worker.clip.sourcePath, sourceTimeMs, draftPreviewEnabled.load());
         frameCache.put(cacheKey, img);
+        markResourceBucket(worker.clip.sourcePath, bucketMs);
     }
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
@@ -1141,11 +1261,9 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         }
         const qint64 sourceTimeMs = worker.clip.sourceInMs + relTimeMs;
         const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs);
-        const std::string cacheKey =
-            (worker.clip.sourcePath + "::" + QString::number(bucketMs) + "::" +
-             (draftPreviewEnabled.load() ? "draft" : "full"))
-                .toStdString();
+        const std::string cacheKey = videoFrameKey(worker.clip.sourcePath, sourceTimeMs, draftPreviewEnabled.load());
         frameCache.put(cacheKey, img);
+        markResourceBucket(worker.clip.sourcePath, bucketMs);
     }
 
     return 0;
@@ -1194,6 +1312,7 @@ QImage PlaybackPipeline::composeDraftFrameAt(qint64 tMs, const std::vector<Clip>
         return QImage();
     }
     finalViewCache.put(draftKey.toStdString(), composed);
+    markFinalTimelineFrame(tMs);
     return composed;
 }
 
@@ -1202,9 +1321,7 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
     using namespace av;
 
     const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs);
-    const std::string cacheKey =
-        (clip.sourcePath + "::" + QString::number(bucketMs) + "::" + (draftPreviewEnabled.load() ? "draft" : "full"))
-            .toStdString();
+    const std::string cacheKey = videoFrameKey(clip.sourcePath, sourceTimeMs, draftPreviewEnabled.load());
     {
         QImage cached;
         if (frameCache.get(cacheKey, cached)) {
@@ -1318,5 +1435,6 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
     }
     draftFramesDecoded.fetch_add(1);
     frameCache.put(cacheKey, picked);
+    markResourceBucket(clip.sourcePath, bucketMs);
     return picked;
 }

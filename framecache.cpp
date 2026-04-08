@@ -39,6 +39,21 @@ bool FrameCache::get(const std::string &key, QImage &outImage)
     return true;
 }
 
+bool FrameCache::contains(const std::string &key)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    auto it = entries.find(key);
+    if (it == entries.end()) {
+        ++missCount;
+        return false;
+    }
+    lru.erase(it->second.lruIt);
+    lru.push_front(key);
+    it->second.lruIt = lru.begin();
+    ++hitCount;
+    return true;
+}
+
 void FrameCache::put(const std::string &key, const QImage &image)
 {
     if (image.isNull()) {

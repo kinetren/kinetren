@@ -2,35 +2,30 @@
 
 #include <QLabel>
 #include <QPainter>
-#include <QPainterPath>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <deque>
 
-class MetricGraphWidget : public QWidget
+class CombinedMetricGraphWidget : public QWidget
 {
 public:
-    explicit MetricGraphWidget(const QString &title, bool lowerIsBetter, QWidget *parent = nullptr)
+    explicit CombinedMetricGraphWidget(QWidget *parent = nullptr)
         : QWidget(parent)
-        , title(title)
-        , lowerIsBetter(lowerIsBetter)
     {
-        setMinimumHeight(44);
+        setMinimumHeight(128);
     }
 
-    void setSample(double value)
+    void setSample(double fps, double cacheHitPct, double avcppCallsPerSecond)
     {
-        samples.push_back(value);
-        while (samples.size() > kMaxSamples) {
-            samples.pop_front();
+        fpsSamples.push_back(fps);
+        cacheSamples.push_back(cacheHitPct);
+        avcppSamples.push_back(avcppCallsPerSecond);
+        while (fpsSamples.size() > kMaxSamples) {
+            fpsSamples.pop_front();
+            cacheSamples.pop_front();
+            avcppSamples.pop_front();
         }
         update();
-    }
-
-    void setRange(double minValue, double maxValue)
-    {
-        rangeMin = minValue;
-        rangeMax = std::max(minValue + 0.01, maxValue);
     }
 
 protected:
@@ -42,69 +37,70 @@ protected:
         p.setPen(QColor(61, 68, 77));
         p.drawRect(rect().adjusted(0, 0, -1, -1));
 
-        const QRect graphRect = rect().adjusted(6, 16, -6, -6);
+        const QRect graphRect = rect().adjusted(8, 20, -8, -10);
         p.setPen(QColor(49, 56, 64));
         p.drawLine(graphRect.left(), graphRect.center().y(), graphRect.right(), graphRect.center().y());
+        p.drawLine(graphRect.left(), graphRect.top(), graphRect.right(), graphRect.top());
+        p.drawLine(graphRect.left(), graphRect.bottom(), graphRect.right(), graphRect.bottom());
 
-        if (samples.empty()) {
+        if (fpsSamples.empty()) {
             p.setPen(QColor(196, 205, 216));
-            p.drawText(rect().adjusted(6, 1, -6, -1), Qt::AlignLeft | Qt::AlignTop, title + ": -");
+            p.drawText(rect().adjusted(8, 1, -8, -1), Qt::AlignLeft | Qt::AlignTop, "Merged Metrics: -");
             return;
         }
 
-        const double current = samples.back();
-        QColor accent = QColor(75, 180, 92);
-        if (scoreFor(current) < 0.35) {
-            accent = QColor(225, 72, 72);
-        } else if (scoreFor(current) < 0.65) {
-            accent = QColor(225, 171, 56);
-        }
+        const double fpsNow = fpsSamples.back();
+        const double cacheNow = cacheSamples.back();
+        const double avcppNow = avcppSamples.back();
+        p.setPen(colorFor(fpsNow / 120.0, false));
+        p.drawText(rect().adjusted(8, 1, -8, -1), Qt::AlignLeft | Qt::AlignTop, QString("FPS %1").arg(fpsNow, 0, 'f', 1));
+        p.setPen(colorFor(cacheNow / 100.0, false));
+        p.drawText(rect().adjusted(100, 1, -8, -1), Qt::AlignLeft | Qt::AlignTop, QString("Cache %1%").arg(cacheNow, 0, 'f', 1));
+        p.setPen(colorFor(avcppNow / 5000.0, true));
+        p.drawText(rect().adjusted(220, 1, -8, -1), Qt::AlignLeft | Qt::AlignTop, QString("avcpp/s %1").arg(avcppNow, 0, 'f', 1));
 
-        p.setPen(accent);
-        p.drawText(rect().adjusted(6, 1, -6, -1),
-                   Qt::AlignLeft | Qt::AlignTop,
-                   QString("%1: %2").arg(title).arg(current, 0, 'f', 1));
-
-        if (samples.size() < 2) {
+        if (fpsSamples.size() < 2) {
             return;
         }
 
-        QPainterPath path;
-        for (size_t i = 0; i < samples.size(); ++i) {
-            const double xRatio = static_cast<double>(i) / static_cast<double>(samples.size() - 1);
-            const double yRatio = normalized(samples[i]);
-            const qreal x = graphRect.left() + xRatio * graphRect.width();
-            const qreal y = graphRect.bottom() - yRatio * graphRect.height();
-            if (i == 0) {
-                path.moveTo(x, y);
-            } else {
-                path.lineTo(x, y);
+        const auto drawSeries = [&](const std::deque<double> &series, double minV, double maxV, const QColor &lineColor) {
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(QPen(lineColor, 2));
+            for (size_t i = 1; i < series.size(); ++i) {
+                const double x1Ratio = static_cast<double>(i - 1) / static_cast<double>(series.size() - 1);
+                const double x2Ratio = static_cast<double>(i) / static_cast<double>(series.size() - 1);
+                const double y1Norm = std::clamp((series[i - 1] - minV) / std::max(0.01, maxV - minV), 0.0, 1.0);
+                const double y2Norm = std::clamp((series[i] - minV) / std::max(0.01, maxV - minV), 0.0, 1.0);
+                const qreal x1 = graphRect.left() + x1Ratio * graphRect.width();
+                const qreal x2 = graphRect.left() + x2Ratio * graphRect.width();
+                const qreal y1 = graphRect.bottom() - y1Norm * graphRect.height();
+                const qreal y2 = graphRect.bottom() - y2Norm * graphRect.height();
+                p.drawLine(QPointF(x1, y1), QPointF(x2, y2));
             }
-        }
-        p.setRenderHint(QPainter::Antialiasing, true);
-        p.setPen(QPen(accent, 2));
-        p.drawPath(path);
+        };
+
+        drawSeries(fpsSamples, 0.0, 120.0, QColor(78, 200, 110));
+        drawSeries(cacheSamples, 0.0, 100.0, QColor(74, 166, 255));
+        drawSeries(avcppSamples, 0.0, 5000.0, QColor(233, 154, 72));
     }
 
 private:
-    double normalized(double value) const
+    static QColor colorFor(double normalizedValue, bool lowerIsBetter)
     {
-        const double n = (value - rangeMin) / (rangeMax - rangeMin);
-        return std::clamp(n, 0.0, 1.0);
+        const double score = lowerIsBetter ? (1.0 - normalizedValue) : normalizedValue;
+        if (score < 0.35) {
+            return QColor(225, 72, 72);
+        }
+        if (score < 0.65) {
+            return QColor(225, 171, 56);
+        }
+        return QColor(75, 180, 92);
     }
 
-    double scoreFor(double value) const
-    {
-        const double n = normalized(value);
-        return lowerIsBetter ? (1.0 - n) : n;
-    }
-
-    static constexpr size_t kMaxSamples = 90;
-    QString title;
-    bool lowerIsBetter = false;
-    double rangeMin = 0.0;
-    double rangeMax = 100.0;
-    std::deque<double> samples;
+    static constexpr size_t kMaxSamples = 120;
+    std::deque<double> fpsSamples;
+    std::deque<double> cacheSamples;
+    std::deque<double> avcppSamples;
 };
 
 PerformanceWidget::PerformanceWidget(QWidget *parent)
@@ -120,21 +116,14 @@ PerformanceWidget::PerformanceWidget(QWidget *parent)
     cacheStatsLabel = new QLabel("Cache: -", this);
     cacheResolutionLabel = new QLabel("Cache Resolution: -", this);
     projectInfoLabel = new QLabel("Project: -", this);
-    fpsGraph = new MetricGraphWidget("Compose FPS", false, this);
-    cacheHitGraph = new MetricGraphWidget("Cache Hit %", false, this);
-    avcppGraph = new MetricGraphWidget("avcpp calls/s", true, this);
-    fpsGraph->setRange(0.0, 120.0);
-    cacheHitGraph->setRange(0.0, 100.0);
-    avcppGraph->setRange(0.0, 5000.0);
+    combinedGraph = new CombinedMetricGraphWidget(this);
 
     layout->addWidget(title);
     layout->addWidget(composeFpsLabel);
     layout->addWidget(cacheStatsLabel);
     layout->addWidget(cacheResolutionLabel);
     layout->addWidget(projectInfoLabel);
-    layout->addWidget(fpsGraph);
-    layout->addWidget(cacheHitGraph);
-    layout->addWidget(avcppGraph);
+    layout->addWidget(combinedGraph);
 }
 
 void PerformanceWidget::setMetrics(const QString &composeFps,
@@ -149,7 +138,5 @@ void PerformanceWidget::setMetrics(const QString &composeFps,
     cacheStatsLabel->setText(cacheStats);
     cacheResolutionLabel->setText(cacheResolution);
     projectInfoLabel->setText(projectInfo);
-    fpsGraph->setSample(fpsValue);
-    cacheHitGraph->setSample(cacheHitPct);
-    avcppGraph->setSample(avcppCallsPerSecond);
+    combinedGraph->setSample(fpsValue, cacheHitPct, avcppCallsPerSecond);
 }

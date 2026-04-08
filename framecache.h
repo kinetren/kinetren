@@ -26,6 +26,7 @@ public:
 
     void setConfiguredMaxBytes(quint64 bytes);
     bool get(const std::string &key, QImage &outImage);
+    bool contains(const std::string &key);
     void put(const std::string &key, const QImage &image);
     Stats stats() const;
 

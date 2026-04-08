@@ -2,6 +2,7 @@
 #define PLAYBACKPIPELINE_H
 
 #include <QImage>
+#include <QHash>
 #include <QString>
 #include <QtGlobal>
 #include "framecache.h"
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <thread>
 
@@ -67,6 +69,10 @@ public:
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
     void setProjectSettings(const ProjectSettings &settings);
     PerformanceStats performanceSnapshot() const;
+    QHash<QString, double> videoCacheCoverage(const std::vector<Clip> &clips) const;
+    QHash<QString, double> audioCacheCoverage(const std::vector<Clip> &clips) const;
+    double finalTimelineCoverage(qint64 startMs, qint64 endMs) const;
+    static QString coverageClipKey(const Clip &clip);
 
 private:
     struct AudioRingBuffer;
@@ -92,6 +98,10 @@ private:
     QImage decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeMs);
     static std::string finalViewKey(qint64 timelineMs, const std::vector<std::shared_ptr<VideoWorker>> &workers);
     static std::string audioBlockKey(const QString &sourcePath, qint64 sourceTimeMs);
+    static std::string videoFrameKey(const QString &sourcePath, qint64 sourceTimeMs, bool draft);
+    void markResourceBucket(const QString &sourcePath, qint64 bucketMs);
+    void markAudioBucket(const QString &sourcePath, qint64 bucketMs);
+    void markFinalTimelineFrame(qint64 timelineMs);
 
     static std::string clipKey(const Clip &clip);
 
@@ -136,6 +146,10 @@ private:
     std::atomic<quint64> avcppPacketReads{0};
     std::atomic<quint64> avcppVideoDecodeCalls{0};
     std::atomic<quint64> avcppAudioDecodeCalls{0};
+    mutable std::mutex coverageMutex;
+    std::unordered_map<std::string, std::unordered_set<qint64>> videoBucketsBySource;
+    std::unordered_map<std::string, std::unordered_set<qint64>> audioBucketsBySource;
+    std::unordered_set<qint64> finalTimelineFrames;
 };
 
 #endif // PLAYBACKPIPELINE_H
