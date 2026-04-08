@@ -357,6 +357,10 @@ void MainWindow::toggleTimelinePause()
     stoppedAtRegionEnd = false;
     timelineTimer.stop();
     stopMediaPlayback();
+    if (timelineEditor->hasSelectionRegion() &&
+        timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
+        timelineEditor->setCursorMs(timelineEditor->selectionRegionStartMs(), true);
+    }
     timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
 }
 
@@ -385,7 +389,10 @@ void MainWindow::onTimelineTick()
             playbackMs = timelineEditor->selectionRegionEndMs();
         }
     }
-    timelineEditor->setCursorMs(playbackMs, timelineEditor->hasSelectionRegion());
+    timelineEditor->setCursorMs(playbackMs, true);
+    if (timelineGlobalTimeLabel) {
+        timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(playbackMs));
+    }
     syncTimelinePlayback();
 }
 

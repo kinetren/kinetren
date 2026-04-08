@@ -188,6 +188,31 @@ PlaybackPipeline::~PlaybackPipeline()
 
 void PlaybackPipeline::start(qint64 startTimelineMs)
 {
+    // If playback is already running, stop existing mixer/composer threads first.
+    // Joining live threads from the UI thread would otherwise block loop restarts.
+    running.store(false);
+    ++generation;
+    if (audioThread.joinable()) {
+        audioThread.join();
+    }
+    if (videoThread.joinable()) {
+        videoThread.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(audioMutex);
+        for (auto &it : audioWorkers) {
+            it.second->stopFlag->store(true);
+        }
+        audioWorkers.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(videoMutex);
+        for (auto &it : videoWorkers) {
+            it.second->stopFlag->store(true);
+        }
+        videoWorkers.clear();
+    }
+
     timelineMs.store(startTimelineMs);
     ++generation;
     running.store(true);
@@ -197,12 +222,6 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     consumedAudioBlock.store(nextAudioBlock);
     consumedVideoFrame.store(nextVideoFrame);
 
-    if (audioThread.joinable()) {
-        audioThread.join();
-    }
-    if (videoThread.joinable()) {
-        videoThread.join();
-    }
     audioThread = std::thread([this]() {
         audioMixLoop();
     });
