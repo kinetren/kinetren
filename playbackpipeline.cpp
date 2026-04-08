@@ -301,13 +301,15 @@ PlaybackPipeline::PerformanceStats PlaybackPipeline::performanceSnapshot() const
     PerformanceStats stats;
     stats.composeFps = composeFps.load();
     stats.composedFrames = composedFrames.load();
-    stats.draftCacheHits = draftCacheHits.load();
-    stats.draftCacheMisses = draftCacheMisses.load();
     stats.draftFramesDecoded = draftFramesDecoded.load();
-    {
-        std::lock_guard<std::mutex> lock(draftCacheMutex);
-        stats.draftCacheEntries = static_cast<quint64>(draftFrameCache.size());
-    }
+    const auto cstats = frameCache.stats();
+    stats.draftCacheHits = cstats.hits;
+    stats.draftCacheMisses = cstats.misses;
+    stats.draftCacheEntries = cstats.entries;
+    stats.draftCacheUsedBytes = cstats.usedBytes;
+    stats.draftCacheLimitBytes = cstats.limitBytes;
+    stats.draftCacheConfiguredMaxBytes = cstats.configuredMaxBytes;
+    stats.draftCacheEvictions = cstats.evictions;
     return stats;
 }
 
@@ -569,11 +571,15 @@ void PlaybackPipeline::videoComposeLoop()
                 lastPresentedTimeByWorker.count(worker->key) ? lastPresentedTimeByWorker[worker->key] : -1;
 
             if (!ready || frame.isNull()) {
-                auto it = lastPresentedFrameByWorker.find(worker->key);
-                if (it == lastPresentedFrameByWorker.end() || it->second.isNull()) {
-                    continue;
+                const qint64 sourceTimeMs = worker->clip.sourceInMs + targetTimeMs;
+                frame = decodeVideoFrameAt(worker->clip, sourceTimeMs);
+                if (frame.isNull()) {
+                    auto it = lastPresentedFrameByWorker.find(worker->key);
+                    if (it == lastPresentedFrameByWorker.end() || it->second.isNull()) {
+                        continue;
+                    }
+                    frame = it->second;
                 }
-                frame = it->second;
             } else if (foundTimeMs < lastPresentedTime) {
                 auto it = lastPresentedFrameByWorker.find(worker->key);
                 if (it == lastPresentedFrameByWorker.end() || it->second.isNull()) {
@@ -891,6 +897,13 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             worker.producedTimeMs.store(relTimeMs);
             lastPublishedTimeMs = relTimeMs;
         }
+        const qint64 sourceTimeMs = worker.clip.sourceInMs + relTimeMs;
+        const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs);
+        const std::string cacheKey =
+            (worker.clip.sourcePath + "::" + QString::number(bucketMs) + "::" +
+             (draftPreviewEnabled.load() ? "draft" : "full"))
+                .toStdString();
+        frameCache.put(cacheKey, img);
     }
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
@@ -939,6 +952,13 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             worker.producedTimeMs.store(relTimeMs);
             lastPublishedTimeMs = relTimeMs;
         }
+        const qint64 sourceTimeMs = worker.clip.sourceInMs + relTimeMs;
+        const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs);
+        const std::string cacheKey =
+            (worker.clip.sourcePath + "::" + QString::number(bucketMs) + "::" +
+             (draftPreviewEnabled.load() ? "draft" : "full"))
+                .toStdString();
+        frameCache.put(cacheKey, img);
     }
 
     return 0;
@@ -982,14 +1002,11 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
         (clip.sourcePath + "::" + QString::number(bucketMs) + "::" + (draftPreviewEnabled.load() ? "draft" : "full"))
             .toStdString();
     {
-        std::lock_guard<std::mutex> lock(draftCacheMutex);
-        const auto it = draftFrameCache.find(cacheKey);
-        if (it != draftFrameCache.end()) {
-            draftCacheHits.fetch_add(1);
-            return it->second;
+        QImage cached;
+        if (frameCache.get(cacheKey, cached)) {
+            return cached;
         }
     }
-    draftCacheMisses.fetch_add(1);
 
     std::error_code ec;
     FormatContext input;
@@ -1093,12 +1110,6 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
         picked = picked.scaled(cacheResolution, Qt::KeepAspectRatio, mode);
     }
     draftFramesDecoded.fetch_add(1);
-    {
-        std::lock_guard<std::mutex> lock(draftCacheMutex);
-        if (draftFrameCache.size() > 220) {
-            draftFrameCache.clear();
-        }
-        draftFrameCache[cacheKey] = picked;
-    }
+    frameCache.put(cacheKey, picked);
     return picked;
 }

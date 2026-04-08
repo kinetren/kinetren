@@ -23,6 +23,15 @@ public:
         qint64 durationMs = 0;
         qint64 sourceInMs = 0;
     };
+    struct RenderClip {
+        QString sourcePath;
+        qint64 startMs = 0;
+        qint64 durationMs = 0;
+        qint64 sourceInMs = 0;
+        int trackIndex = 0;
+        bool isVideo = false;
+        bool isAudio = false;
+    };
 
     explicit TimelineEditor(QWidget *parent = nullptr);
 
@@ -57,6 +66,7 @@ public:
     std::optional<ActiveClip> activeVideoAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeVideoLayersAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeAudioAt(qint64 timeMs) const;
+    std::vector<RenderClip> renderClips() const;
     QString formatTimelineTime(qint64 timeMs) const;
 
 signals:

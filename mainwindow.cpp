@@ -2,6 +2,7 @@
 #include "./ui_mainwindow.h"
 #include "performancewidget.h"
 #include "playbackpipeline.h"
+#include "projectrenderer.h"
 #include "previewer.h"
 #include "sourceareawidget.h"
 #include "timelineeditor.h"
@@ -13,6 +14,7 @@
 #include <QGuiApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QFileDialog>
 #include <QMetaObject>
 #include <QPushButton>
 #include <QShortcut>
@@ -212,7 +214,7 @@ void MainWindow::setupTimelineEditorUi()
     clearRegionButton->setIcon(style()->standardIcon(QStyle::SP_DialogResetButton));
     clearRegionButton->setToolTip("Clear region");
     renderDraftButton->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
-    renderDraftButton->setToolTip("Render draft image sequence");
+    renderDraftButton->setToolTip("Render MP4 (video + audio)");
     timelineLoopButton->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
     timelineLoopButton->setToolTip("Loop region");
     timelineLoopButton->setCheckable(true);
@@ -585,34 +587,29 @@ void MainWindow::renderDraftProject()
         return;
     }
 
-    const QString outDir =
-        QDir::tempPath() + "/kp-draft-" + QDateTime::currentDateTime().toString("yyyyMMdd-hhmmss");
-    QDir().mkpath(outDir);
-
-    int frameIndex = 0;
-    const qint64 frameStepMs = std::max<qint64>(1, static_cast<qint64>(1000.0 / std::max(1, projectSettings.fps)));
-    for (qint64 tMs = startMs; tMs < endMs; tMs += frameStepMs) {
-        const auto video = timelineEditor->activeVideoLayersAt(tMs);
-        std::vector<PlaybackPipeline::Clip> vclips;
-        vclips.reserve(video.size());
-        for (const auto &c : video) {
-            vclips.push_back({c.sourcePath, c.startMs, c.durationMs, c.sourceInMs});
-        }
-        QImage frame = playbackPipeline->renderDraftFrame(tMs, vclips);
-        if (frame.isNull()) {
-            frame = QImage(projectSettings.resolution, QImage::Format_RGB888);
-            frame.fill(Qt::black);
-        } else if (frame.size() != projectSettings.resolution) {
-            frame = frame.scaled(projectSettings.resolution, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        }
-        const QString outPath = QString("%1/frame-%2.jpg").arg(outDir, QString::number(frameIndex).rightJustified(6, '0'));
-        frame.save(outPath, "JPG", 82);
-        ++frameIndex;
+    const QString defaultOut = QDir::homePath() + "/kp-render-" +
+        QDateTime::currentDateTime().toString("yyyyMMdd-hhmmss") + ".mp4";
+    const QString outPath = QFileDialog::getSaveFileName(
+        this,
+        "Render MP4",
+        defaultOut,
+        "MP4 Video (*.mp4)");
+    if (outPath.isEmpty()) {
+        return;
     }
 
-    statusBar()->showMessage(
-        QString("Draft render complete: %1 frames -> %2").arg(frameIndex).arg(outDir),
-        9000);
+    statusBar()->showMessage("Rendering MP4 (video + audio)...", 0);
+    const auto result = ProjectRenderer::renderMp4(
+        timelineEditor->renderClips(),
+        projectSettings,
+        startMs,
+        endMs,
+        outPath);
+    if (!result.ok) {
+        statusBar()->showMessage("Render failed: " + result.message, 12000);
+        return;
+    }
+    statusBar()->showMessage(result.message, 10000);
 }
 
 void MainWindow::applyProjectSettings()
@@ -635,20 +632,27 @@ void MainWindow::refreshPerformancePanel()
     const double hitPct = (cacheLookups > 0)
         ? (static_cast<double>(stats.draftCacheHits) * 100.0 / static_cast<double>(cacheLookups))
         : 0.0;
+    const auto mb = [](quint64 bytes) -> QString {
+        return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 1) + "MB";
+    };
     performanceWidget->setMetrics(
         QString("Compose FPS: %1 | Frames: %2")
             .arg(stats.composeFps, 0, 'f', 1)
             .arg(stats.composedFrames),
-        QString("Cache lookups: %1 | hits: %2 (%3%) | decoded: %4 | entries: %5")
+        QString("Cache lookups: %1 | hits: %2 (%3%) | decoded: %4 | entries: %5 | evictions: %6")
             .arg(cacheLookups)
             .arg(stats.draftCacheHits)
             .arg(hitPct, 0, 'f', 1)
             .arg(stats.draftFramesDecoded)
-            .arg(stats.draftCacheEntries),
-        QString("Cache resolution: %1x%2 (%3)")
+            .arg(stats.draftCacheEntries)
+            .arg(stats.draftCacheEvictions),
+        QString("Cache resolution: %1x%2 (%3) | used/limit: %4 / %5 (max %6)")
             .arg(projectSettings.cacheResolution().width())
             .arg(projectSettings.cacheResolution().height())
-            .arg(projectSettings.cacheQualityLabel()),
+            .arg(projectSettings.cacheQualityLabel())
+            .arg(mb(stats.draftCacheUsedBytes))
+            .arg(mb(stats.draftCacheLimitBytes))
+            .arg(mb(stats.draftCacheConfiguredMaxBytes)),
         QString("Project: %1 FPS | %2x%3")
             .arg(projectSettings.fps)
             .arg(projectSettings.resolution.width())

@@ -4,6 +4,7 @@
 #include <QImage>
 #include <QString>
 #include <QtGlobal>
+#include "framecache.h"
 #include "projectsettings.h"
 
 #include <atomic>
@@ -39,6 +40,10 @@ public:
         quint64 draftCacheMisses = 0;
         quint64 draftFramesDecoded = 0;
         quint64 draftCacheEntries = 0;
+        quint64 draftCacheUsedBytes = 0;
+        quint64 draftCacheLimitBytes = 0;
+        quint64 draftCacheConfiguredMaxBytes = 0;
+        quint64 draftCacheEvictions = 0;
     };
 
     explicit PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameReady);
@@ -106,12 +111,9 @@ private:
     std::atomic_bool draftPreviewEnabled{true};
     ProjectSettings projectSettings;
     mutable std::mutex settingsMutex;
-    mutable std::mutex draftCacheMutex;
-    std::unordered_map<std::string, QImage> draftFrameCache;
+    FrameCache frameCache;
     std::atomic<double> composeFps{0.0};
     std::atomic<quint64> composedFrames{0};
-    std::atomic<quint64> draftCacheHits{0};
-    std::atomic<quint64> draftCacheMisses{0};
     std::atomic<quint64> draftFramesDecoded{0};
 };
 

@@ -22,6 +22,10 @@ set(PROJECT_SOURCES
         projectsettings.h
         performancewidget.cpp
         performancewidget.h
+        framecache.cpp
+        framecache.h
+        projectrenderer.cpp
+        projectrenderer.h
         timelineeditor.cpp
         timelineeditor.h
         sourceareawidget.cpp

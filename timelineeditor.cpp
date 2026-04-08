@@ -571,6 +571,27 @@ std::vector<TimelineEditor::ActiveClip> TimelineEditor::activeAudioAt(qint64 tim
     return result;
 }
 
+std::vector<TimelineEditor::RenderClip> TimelineEditor::renderClips() const
+{
+    std::vector<RenderClip> result;
+    result.reserve(clips.size());
+    for (const auto &clip : clips) {
+        if (!isTrackIndexValid(clip.trackIndex)) {
+            continue;
+        }
+        RenderClip c;
+        c.sourcePath = clip.sourcePath;
+        c.startMs = clip.startMs;
+        c.durationMs = clip.durationMs;
+        c.sourceInMs = clip.sourceInMs;
+        c.trackIndex = clip.trackIndex;
+        c.isVideo = (clip.mediaType == TrackType::Video);
+        c.isAudio = (clip.mediaType == TrackType::Audio);
+        result.push_back(c);
+    }
+    return result;
+}
+
 QString TimelineEditor::formatTimelineTime(qint64 timeMs) const
 {
     const qint64 positive = std::max<qint64>(0, timeMs);
