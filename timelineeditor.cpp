@@ -11,11 +11,13 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QUrl>
+#include <QWheelEvent>
 #include <QtGlobal>
 
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
+#include <limits>
 #include <system_error>
 
 #include <avcpp/avutils.h>
@@ -26,9 +28,12 @@
 #include <avcpp/videorescaler.h>
 
 namespace {
-constexpr qint64 kSnapThresholdMs = 250;
+constexpr qint64 kSnapThresholdMs = 100;
 constexpr qint64 kMinClipDurationMs = 80;
 constexpr int kTrimHandlePx = 7;
+constexpr int kEdgeScrollZonePx = 26;
+constexpr qint64 kEdgeScrollStepMs = 80;
+constexpr int kPreviewFps = 30;
 
 QPoint eventPos(const QMouseEvent *event)
 {
@@ -65,7 +70,7 @@ qint64 TimelineEditor::cursorMs() const
     return cursorPositionMs;
 }
 
-void TimelineEditor::setCursorMs(qint64 valueMs)
+void TimelineEditor::setCursorMs(qint64 valueMs, bool ensureVisible)
 {
     const qint64 bounded = std::max<qint64>(0, valueMs);
     if (bounded == cursorPositionMs) {
@@ -73,7 +78,9 @@ void TimelineEditor::setCursorMs(qint64 valueMs)
     }
 
     cursorPositionMs = bounded;
-    ensureCursorVisible();
+    if (ensureVisible) {
+        ensureCursorVisible();
+    }
     emit cursorChanged(cursorPositionMs);
     emitOverlayInfo();
     refreshTimelineRangeSignals();
@@ -366,6 +373,79 @@ void TimelineEditor::clearSelectionRegion()
     update();
 }
 
+bool TimelineEditor::deleteSelectedClip()
+{
+    if (selectedClipId < 0) {
+        return false;
+    }
+
+    const auto ids = linkedClipIds(selectedClipId);
+    const size_t before = clips.size();
+    clips.erase(std::remove_if(clips.begin(), clips.end(), [&](const ClipEvent &clip) {
+                   return std::find(ids.begin(), ids.end(), clip.id) != ids.end();
+               }),
+               clips.end());
+    if (clips.size() == before) {
+        return false;
+    }
+    selectedClipId = -1;
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    update();
+    return true;
+}
+
+bool TimelineEditor::magnetizeSelectedClip()
+{
+    ClipEvent *selected = findClipById(selectedClipId);
+    if (!selected) {
+        return false;
+    }
+
+    ClipEvent *best = nullptr;
+    qint64 bestDistance = std::numeric_limits<qint64>::max();
+    for (auto &clip : clips) {
+        if (clip.id == selected->id) {
+            continue;
+        }
+        if (clip.mediaType == selected->mediaType) {
+            continue;
+        }
+        if (clip.sourcePath != selected->sourcePath) {
+            continue;
+        }
+        const qint64 d = std::llabs(clip.startMs - selected->startMs);
+        if (d < bestDistance) {
+            bestDistance = d;
+            best = &clip;
+        }
+    }
+    if (!best || bestDistance > kSnapThresholdMs * 2) {
+        return false;
+    }
+
+    const qint64 targetStart = snapTimeMs(selected->startMs);
+    best->startMs = targetStart;
+    selected->startMs = targetStart;
+    best->durationMs = selected->durationMs;
+    best->sourceInMs = selected->sourceInMs;
+
+    int group = selected->linkedGroupId;
+    if (group < 0 && best->linkedGroupId >= 0) {
+        group = best->linkedGroupId;
+    }
+    if (group < 0) {
+        group = nextLinkedGroupId++;
+    }
+    selected->linkedGroupId = group;
+    best->linkedGroupId = group;
+
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    update();
+    return true;
+}
+
 qint64 TimelineEditor::maxTimelineMs() const
 {
     return recomputeMaxTimelineMs();
@@ -395,6 +475,27 @@ void TimelineEditor::setViewStartMs(qint64 valueMs)
     timelineViewStartMs = bounded;
     emit viewStartChanged(timelineViewStartMs, maxViewStartMs());
     update();
+}
+
+void TimelineEditor::setZoomFactor(double value)
+{
+    const double bounded = std::clamp(value, 0.25, 8.0);
+    if (qFuzzyCompare(zoomLevel, bounded)) {
+        return;
+    }
+    const qint64 oldVisible = contentVisibleMs();
+    const qint64 oldCenter = timelineViewStartMs + (oldVisible / 2);
+    zoomLevel = bounded;
+    const qint64 newVisible = contentVisibleMs();
+    timelineViewStartMs = std::max<qint64>(0, oldCenter - (newVisible / 2));
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    update();
+}
+
+double TimelineEditor::zoomFactor() const
+{
+    return zoomLevel;
 }
 
 std::optional<TimelineEditor::ActiveClip> TimelineEditor::activeVideoAt(qint64 timeMs) const
@@ -444,6 +545,23 @@ std::vector<TimelineEditor::ActiveClip> TimelineEditor::activeAudioAt(qint64 tim
     return result;
 }
 
+QString TimelineEditor::formatTimelineTime(qint64 timeMs) const
+{
+    const qint64 positive = std::max<qint64>(0, timeMs);
+    const qint64 totalSeconds = positive / 1000;
+    const qint64 msPart = positive % 1000;
+    const qint64 hours = totalSeconds / 3600;
+    const qint64 minutes = (totalSeconds / 60) % 60;
+    const qint64 seconds = totalSeconds % 60;
+    const int frame = static_cast<int>((msPart * kPreviewFps) / 1000);
+    return QString("%1:%2:%3.%4 F%5")
+        .arg(hours, 2, 10, QChar('0'))
+        .arg(minutes, 2, 10, QChar('0'))
+        .arg(seconds, 2, 10, QChar('0'))
+        .arg(msPart, 3, 10, QChar('0'))
+        .arg(frame, 2, 10, QChar('0'));
+}
+
 void TimelineEditor::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
@@ -452,6 +570,7 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(rect(), QColor(18, 18, 18));
 
+    const int paintBottom = height() - 4;
     const QRect rulerRect(timelineLeft(), rulerTop(), timelineRight() - timelineLeft(), rulerHeight());
     p.fillRect(rulerRect, QColor(30, 30, 30));
     p.fillRect(QRect(0, rulerTop(), headerWidth(), rulerHeight()), QColor(26, 26, 26));
@@ -470,25 +589,35 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     for (qint64 t = std::max<qint64>(0, tickStart - 1000); t <= viewEndMs + 1000; t += 1000) {
         const int x = timeToX(t);
         p.setPen(QColor(70, 70, 70));
-        p.drawLine(x, rulerTop(), x, contentBottom());
+        p.drawLine(x, rulerTop(), x, paintBottom);
+        const qint64 ts = std::max<qint64>(0, t / 1000);
+        const qint64 hh = ts / 3600;
+        const qint64 mm = (ts / 60) % 60;
+        const qint64 ss = ts % 60;
         p.setPen(QColor(170, 170, 170));
-        p.drawText(x + 2, rulerTop() + 14, QString::number(t / 1000.0, 'f', 1));
+        p.drawText(x + 2, rulerTop() + 14, QString("%1:%2:%3")
+                                              .arg(hh, 2, 10, QChar('0'))
+                                              .arg(mm, 2, 10, QChar('0'))
+                                              .arg(ss, 2, 10, QChar('0')));
     }
+
+    p.setPen(QColor(205, 217, 235));
+    p.drawText(timelineLeft() + 6, rulerTop() + rulerHeight() - 5, formatTimelineTime(cursorPositionMs));
 
     if (hasRegionSelection && regionEndMs > regionStartMs) {
         const int x1 = timeToX(regionStartMs);
         const int x2 = timeToX(regionEndMs);
-        const QRect regionRect(std::min(x1, x2), rulerTop(), std::abs(x2 - x1), contentBottom() - rulerTop());
+        const QRect regionRect(std::min(x1, x2), rulerTop(), std::abs(x2 - x1), paintBottom - rulerTop());
         p.fillRect(regionRect, QColor(84, 124, 255, 42));
-        p.setPen(QColor(102, 152, 255));
-        p.drawLine(x1, rulerTop(), x1, contentBottom());
-        p.drawLine(x2, rulerTop(), x2, contentBottom());
+        p.setPen(QPen(QColor(102, 152, 255), 2));
+        p.drawLine(x1, rulerTop(), x1, paintBottom);
+        p.drawLine(x2, rulerTop(), x2, paintBottom);
     }
 
     for (qint64 marker : markersMs) {
         const int x = timeToX(marker);
         p.setPen(QColor(255, 195, 0));
-        p.drawLine(x, rulerTop(), x, contentBottom());
+        p.drawLine(x, rulerTop(), x, paintBottom);
         QPainterPath triangle;
         triangle.moveTo(x, rulerTop());
         triangle.lineTo(x - 5, rulerTop() + 8);
@@ -536,8 +665,10 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     }
 
     const int cursorX = timeToX(cursorPositionMs);
-    p.setPen(QPen(QColor(255, 80, 80), 2));
-    p.drawLine(cursorX, rulerTop(), cursorX, contentBottom());
+    p.setPen(QPen(QColor(255, 60, 60, 120), 6));
+    p.drawLine(cursorX, rulerTop(), cursorX, paintBottom);
+    p.setPen(QPen(QColor(255, 100, 100), 2));
+    p.drawLine(cursorX, rulerTop(), cursorX, paintBottom);
 
     if (loopRegionEnabled && hasRegionSelection && regionEndMs > regionStartMs) {
         p.setPen(QColor(120, 220, 120));
@@ -555,7 +686,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
     setFocus(Qt::MouseFocusReason);
 
     selectedClipId = clipIdAt(pos);
-    const qint64 pointerMs = snapTimeMs(xToTimeMs(pos.x()));
+    const qint64 pointerMs = xToTimeMs(pos.x());
     setCursorMs(pointerMs);
 
     dragMode = DragMode::None;
@@ -564,10 +695,24 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
         ClipEvent *clip = findClipById(selectedClipId);
         if (clip) {
             dragAnchorMs = pointerMs;
+            dragStartPointerMs = pointerMs;
+            dragLastPointerMs = pointerMs;
             dragOriginalStartMs = clip->startMs;
             dragOriginalTrackIndex = clip->trackIndex;
             trimOriginalDurationMs = clip->durationMs;
             trimOriginalSourceInMs = clip->sourceInMs;
+            dragInitialStarts.clear();
+            dragInitialDurations.clear();
+            dragInitialSourceIns.clear();
+            for (int id : linkedClipIds(clip->id)) {
+                ClipEvent *linked = findClipById(id);
+                if (!linked) {
+                    continue;
+                }
+                dragInitialStarts.insert(id, linked->startMs);
+                dragInitialDurations.insert(id, linked->durationMs);
+                dragInitialSourceIns.insert(id, linked->sourceInMs);
+            }
             if (isNearClipStartEdge(*clip, pos.x())) {
                 dragMode = DragMode::TrimStart;
             } else if (isNearClipEndEdge(*clip, pos.x())) {
@@ -578,7 +723,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
         }
     } else if (pos.y() >= rulerTop() && pos.y() <= contentBottom()) {
         dragMode = DragMode::RegionSelect;
-        regionAnchorMs = pointerMs;
+        regionAnchorMs = snapTimeMs(pointerMs);
         setRegionBounds(pointerMs, pointerMs);
     }
 
@@ -604,38 +749,46 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
-    const qint64 pointerMs = snapTimeMs(xToTimeMs(pos.x()));
-    setCursorMs(pointerMs);
+    const qint64 pointerMsRaw = adjustedDragPointerMs(pos);
+    const qint64 pointerMs = snapTimeMs(pointerMsRaw);
+    setCursorMs(pointerMsRaw);
     ClipEvent *clip = findClipById(dragClipId);
     if (dragMode == DragMode::MoveClip && clip) {
-        const qint64 deltaMs = pointerMs - dragAnchorMs;
-        const qint64 baseStart = std::max<qint64>(0, dragOriginalStartMs + deltaMs);
-        const qint64 appliedDelta = baseStart - dragOriginalStartMs;
-        const auto groupedIds = linkedClipIds(clip->id);
-        for (int id : groupedIds) {
-            ClipEvent *linked = findClipById(id);
+        qint64 desiredDelta = pointerMs - dragStartPointerMs;
+        qint64 minStart = std::numeric_limits<qint64>::max();
+        for (auto it = dragInitialStarts.constBegin(); it != dragInitialStarts.constEnd(); ++it) {
+            minStart = std::min(minStart, static_cast<qint64>(it.value()));
+        }
+        if (minStart == std::numeric_limits<qint64>::max()) {
+            minStart = 0;
+        }
+        desiredDelta = std::max<qint64>(desiredDelta, -minStart);
+        for (auto it = dragInitialStarts.constBegin(); it != dragInitialStarts.constEnd(); ++it) {
+            ClipEvent *linked = findClipById(it.key());
             if (!linked) {
                 continue;
             }
-            linked->startMs = std::max<qint64>(0, linked->startMs + appliedDelta);
+            linked->startMs = std::max<qint64>(0, static_cast<qint64>(it.value()) + desiredDelta);
         }
-        dragOriginalStartMs = baseStart;
         const int targetTrack = trackIndexAtY(pos.y());
         if (targetTrack >= 0 && tracks[static_cast<size_t>(targetTrack)].type == clip->mediaType) {
             clip->trackIndex = targetTrack;
         }
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::TrimStart && clip) {
-        const qint64 originalEnd = dragOriginalStartMs + trimOriginalDurationMs;
+        const qint64 originalStart = dragInitialStarts.value(clip->id, dragOriginalStartMs);
+        const qint64 originalDuration = dragInitialDurations.value(clip->id, trimOriginalDurationMs);
+        const qint64 originalSourceIn = dragInitialSourceIns.value(clip->id, trimOriginalSourceInMs);
+        const qint64 originalEnd = originalStart + originalDuration;
         const qint64 maxSourceIn = std::max<qint64>(0, clip->sourceDurationMs - kMinClipDurationMs);
-        qint64 wantedStart = std::clamp(pointerMs, dragOriginalStartMs, originalEnd - kMinClipDurationMs);
-        qint64 newSourceIn = std::clamp(trimOriginalSourceInMs + (wantedStart - dragOriginalStartMs), 0LL, maxSourceIn);
-        wantedStart = dragOriginalStartMs + (newSourceIn - trimOriginalSourceInMs);
+        qint64 wantedStart = std::clamp(pointerMs, originalStart, originalEnd - kMinClipDurationMs);
+        qint64 newSourceIn = std::clamp(originalSourceIn + (wantedStart - originalStart), 0LL, maxSourceIn);
+        wantedStart = originalStart + (newSourceIn - originalSourceIn);
         clip->startMs = wantedStart;
         clip->sourceInMs = newSourceIn;
         clip->durationMs = originalEnd - wantedStart;
         if (clip->linkedGroupId >= 0) {
-            const qint64 delta = wantedStart - dragOriginalStartMs;
+            const qint64 delta = wantedStart - originalStart;
             for (const int id : linkedClipIds(clip->id)) {
                 if (id == clip->id) {
                     continue;
@@ -644,19 +797,24 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
                 if (!linked) {
                     continue;
                 }
-                linked->startMs += delta;
-                linked->sourceInMs = std::max<qint64>(0, linked->sourceInMs + delta);
-                linked->durationMs = std::max<qint64>(kMinClipDurationMs, linked->durationMs - delta);
+                const qint64 linkedStart = dragInitialStarts.value(id, linked->startMs);
+                const qint64 linkedDuration = dragInitialDurations.value(id, linked->durationMs);
+                const qint64 linkedSourceIn = dragInitialSourceIns.value(id, linked->sourceInMs);
+                linked->startMs = linkedStart + delta;
+                linked->sourceInMs = std::max<qint64>(0, linkedSourceIn + delta);
+                linked->durationMs = std::max<qint64>(kMinClipDurationMs, linkedDuration - delta);
             }
-            dragOriginalStartMs = wantedStart;
         }
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::TrimEnd && clip) {
-        const qint64 minEnd = dragOriginalStartMs + kMinClipDurationMs;
-        const qint64 maxEnd = dragOriginalStartMs + std::max<qint64>(kMinClipDurationMs, clip->sourceDurationMs - clip->sourceInMs);
+        const qint64 originalStart = dragInitialStarts.value(clip->id, dragOriginalStartMs);
+        const qint64 originalDuration = dragInitialDurations.value(clip->id, trimOriginalDurationMs);
+        const qint64 originalSourceIn = dragInitialSourceIns.value(clip->id, trimOriginalSourceInMs);
+        const qint64 minEnd = originalStart + kMinClipDurationMs;
+        const qint64 maxEnd = originalStart + std::max<qint64>(kMinClipDurationMs, clip->sourceDurationMs - originalSourceIn);
         const qint64 wantedEnd = std::clamp(pointerMs, minEnd, std::max(minEnd, maxEnd));
-        const qint64 oldDuration = clip->durationMs;
-        clip->durationMs = wantedEnd - dragOriginalStartMs;
+        const qint64 oldDuration = originalDuration;
+        clip->durationMs = wantedEnd - originalStart;
         if (clip->linkedGroupId >= 0) {
             const qint64 deltaDur = clip->durationMs - oldDuration;
             for (const int id : linkedClipIds(clip->id)) {
@@ -667,12 +825,13 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
                 if (!linked) {
                     continue;
                 }
-                linked->durationMs = std::max<qint64>(kMinClipDurationMs, linked->durationMs + deltaDur);
+                const qint64 linkedDuration = dragInitialDurations.value(id, linked->durationMs);
+                linked->durationMs = std::max<qint64>(kMinClipDurationMs, linkedDuration + deltaDur);
             }
         }
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::RegionSelect) {
-        setRegionBounds(regionAnchorMs, pointerMs);
+        setRegionBounds(regionAnchorMs, snapTimeMs(pointerMsRaw));
     }
     emitOverlayInfo();
     update();
@@ -682,6 +841,9 @@ void TimelineEditor::mouseReleaseEvent(QMouseEvent *event)
 {
     dragMode = DragMode::None;
     dragClipId = -1;
+    dragInitialStarts.clear();
+    dragInitialDurations.clear();
+    dragInitialSourceIns.clear();
     unsetCursor();
     QWidget::mouseReleaseEvent(event);
 }
@@ -701,6 +863,8 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         unlinkAction = menu.addAction("Unmagnet (Ungroup A/V)");
     }
     QAction *copyAction = menu.addAction("Copy");
+    QAction *deleteAction = menu.addAction("Delete (Del)");
+    QAction *magnetizeAction = menu.addAction("Magnetize A/V");
     QAction *splitAction = menu.addAction("Cut at Cursor (S)");
     QAction *chosen = menu.exec(event->globalPos());
     if (!chosen) {
@@ -710,6 +874,10 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         unlinkClipGroup(id);
     } else if (chosen == copyAction) {
         copySelectedToClipboard();
+    } else if (chosen == deleteAction) {
+        deleteSelectedClip();
+    } else if (chosen == magnetizeAction) {
+        magnetizeSelectedClip();
     } else if (chosen == splitAction) {
         splitSelectedClipAtCursor();
     }
@@ -757,6 +925,29 @@ void TimelineEditor::dropEvent(QDropEvent *event)
     }
 
     QWidget::dropEvent(event);
+}
+
+void TimelineEditor::wheelEvent(QWheelEvent *event)
+{
+    if (event->modifiers().testFlag(Qt::ControlModifier)) {
+        const QPoint delta = event->angleDelta();
+        if (!delta.isNull()) {
+            const double factor = (delta.y() > 0 || delta.x() > 0) ? 1.12 : (1.0 / 1.12);
+            setZoomFactor(zoomLevel * factor);
+        }
+        event->accept();
+        return;
+    }
+
+    const QPoint delta = event->angleDelta();
+    const int dominant = (std::abs(delta.x()) > std::abs(delta.y())) ? delta.x() : delta.y();
+    if (dominant != 0) {
+        const qint64 shiftMs = static_cast<qint64>(-dominant * (contentVisibleMs() / 2400.0));
+        setViewStartMs(timelineViewStartMs + shiftMs);
+        event->accept();
+        return;
+    }
+    QWidget::wheelEvent(event);
 }
 
 int TimelineEditor::timelineLeft() const
@@ -814,7 +1005,7 @@ int TimelineEditor::bottomPadding() const
 
 double TimelineEditor::pixelsPerSecond() const
 {
-    return 90.0;
+    return 90.0 * zoomLevel;
 }
 
 qint64 TimelineEditor::xToTimeMs(int x) const
@@ -1045,6 +1236,26 @@ qint64 TimelineEditor::snapTimeMs(qint64 candidateMs) const
     }
 
     return std::max<qint64>(0, best);
+}
+
+qint64 TimelineEditor::adjustedDragPointerMs(const QPoint &pos, bool *scrolled)
+{
+    bool changed = false;
+    if (dragMode != DragMode::None) {
+        if (pos.x() < timelineLeft() + kEdgeScrollZonePx) {
+            const qint64 before = timelineViewStartMs;
+            setViewStartMs(timelineViewStartMs - kEdgeScrollStepMs);
+            changed = changed || (before != timelineViewStartMs);
+        } else if (pos.x() > timelineRight() - kEdgeScrollZonePx) {
+            const qint64 before = timelineViewStartMs;
+            setViewStartMs(timelineViewStartMs + kEdgeScrollStepMs);
+            changed = changed || (before != timelineViewStartMs);
+        }
+    }
+    if (scrolled) {
+        *scrolled = changed;
+    }
+    return xToTimeMs(pos.x());
 }
 
 qint64 TimelineEditor::defaultDurationForPath(const QString &path) const
@@ -1313,8 +1524,9 @@ void TimelineEditor::emitOverlayInfo()
                          .arg(regionStartMs / 1000.0, 0, 'f', 2)
                          .arg(regionEndMs / 1000.0, 0, 'f', 2);
     }
-    const QString text = QString("Overlay @ %1s | Video layers: %2 | Audio layers: %3 | %4")
-                             .arg(cursorPositionMs / 1000.0, 0, 'f', 2)
+    const QString text = QString("Time: %1 | Zoom: %2x | Video layers: %3 | Audio layers: %4 | %5")
+                             .arg(formatTimelineTime(cursorPositionMs))
+                             .arg(zoomLevel, 0, 'f', 2)
                              .arg(activeVideoCount)
                              .arg(activeAudioCount)
                              .arg(regionText + (loopRegionEnabled ? " (loop)" : ""));

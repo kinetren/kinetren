@@ -7,6 +7,7 @@
 #include <QPoint>
 #include <QHash>
 #include <QImage>
+#include <QWheelEvent>
 
 #include <optional>
 #include <vector>
@@ -26,7 +27,7 @@ public:
     explicit TimelineEditor(QWidget *parent = nullptr);
 
     qint64 cursorMs() const;
-    void setCursorMs(qint64 valueMs);
+    void setCursorMs(qint64 valueMs, bool ensureVisible = true);
     void addMarkerAtCursor();
     void addVideoTrack();
     void addAudioTrack();
@@ -43,14 +44,19 @@ public:
     qint64 selectionRegionEndMs() const;
     void setSelectionRegionFromCursor(bool setStart);
     void clearSelectionRegion();
+    bool deleteSelectedClip();
+    bool magnetizeSelectedClip();
     qint64 maxTimelineMs() const;
     qint64 visibleDurationMs() const;
     qint64 viewStartMs() const;
     qint64 maxViewStartMs() const;
     void setViewStartMs(qint64 valueMs);
+    void setZoomFactor(double value);
+    double zoomFactor() const;
     std::optional<ActiveClip> activeVideoAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeVideoLayersAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeAudioAt(qint64 timeMs) const;
+    QString formatTimelineTime(qint64 timeMs) const;
 
 signals:
     void cursorChanged(qint64 cursorMs);
@@ -69,6 +75,7 @@ protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
 
 private:
     enum class TrackType {
@@ -122,8 +129,14 @@ private:
     int dragOriginalTrackIndex = -1;
     qint64 trimOriginalDurationMs = 0;
     qint64 trimOriginalSourceInMs = 0;
+    qint64 dragLastPointerMs = 0;
+    qint64 dragStartPointerMs = 0;
+    QHash<int, qint64> dragInitialStarts;
+    QHash<int, qint64> dragInitialDurations;
+    QHash<int, qint64> dragInitialSourceIns;
     qint64 regionAnchorMs = 0;
     QString lastOverlayInfo;
+    double zoomLevel = 1.0;
 
     int timelineLeft() const;
     int timelineRight() const;
@@ -157,6 +170,7 @@ private:
     void ensureCursorVisible();
     void refreshTimelineRangeSignals();
     qint64 snapTimeMs(qint64 candidateMs) const;
+    qint64 adjustedDragPointerMs(const QPoint &pos, bool *scrolled = nullptr);
     qint64 defaultDurationForPath(const QString &path) const;
     bool isImagePath(const QString &path) const;
     bool hasVideoForPath(const QString &path) const;

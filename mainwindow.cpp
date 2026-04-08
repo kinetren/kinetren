@@ -13,6 +13,7 @@
 #include <QScreen>
 #include <QScrollBar>
 #include <QStyle>
+#include <QStatusBar>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -97,6 +98,8 @@ void MainWindow::setupTimelineEditorUi()
     auto *trimEndButton = new QToolButton(ui->widget_2);
     auto *moveTrackUpButton = new QToolButton(ui->widget_2);
     auto *moveTrackDownButton = new QToolButton(ui->widget_2);
+    auto *zoomOutButton = new QToolButton(ui->widget_2);
+    auto *zoomInButton = new QToolButton(ui->widget_2);
     auto *setRegionStartButton = new QToolButton(ui->widget_2);
     auto *setRegionEndButton = new QToolButton(ui->widget_2);
     auto *clearRegionButton = new QToolButton(ui->widget_2);
@@ -124,6 +127,10 @@ void MainWindow::setupTimelineEditorUi()
     moveTrackUpButton->setToolTip("Move selected up");
     moveTrackDownButton->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
     moveTrackDownButton->setToolTip("Move selected down");
+    zoomOutButton->setIcon(style()->standardIcon(QStyle::SP_ArrowLeft));
+    zoomOutButton->setToolTip("Zoom out timeline (Ctrl+Wheel)");
+    zoomInButton->setIcon(style()->standardIcon(QStyle::SP_ArrowRight));
+    zoomInButton->setToolTip("Zoom in timeline (Ctrl+Wheel)");
     setRegionStartButton->setIcon(style()->standardIcon(QStyle::SP_MediaSeekBackward));
     setRegionStartButton->setToolTip("Set region in");
     setRegionEndButton->setIcon(style()->standardIcon(QStyle::SP_MediaSeekForward));
@@ -156,6 +163,8 @@ void MainWindow::setupTimelineEditorUi()
     configureToolButton(trimEndButton);
     configureToolButton(moveTrackUpButton);
     configureToolButton(moveTrackDownButton);
+    configureToolButton(zoomOutButton);
+    configureToolButton(zoomInButton);
     configureToolButton(setRegionStartButton);
     configureToolButton(setRegionEndButton);
     configureToolButton(clearRegionButton);
@@ -173,6 +182,8 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(trimEndButton);
     controlsLayout->addWidget(moveTrackUpButton);
     controlsLayout->addWidget(moveTrackDownButton);
+    controlsLayout->addWidget(zoomOutButton);
+    controlsLayout->addWidget(zoomInButton);
     controlsLayout->addWidget(setRegionStartButton);
     controlsLayout->addWidget(setRegionEndButton);
     controlsLayout->addWidget(clearRegionButton);
@@ -180,7 +191,7 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(timelineOverlayLabel, 1);
     timelineLayout->addLayout(controlsLayout);
 
-    timelineTimer.setInterval(40);
+    timelineTimer.setInterval(16);
     connect(&timelineTimer, &QTimer::timeout, this, &MainWindow::onTimelineTick);
     connect(timelinePauseButton, &QToolButton::clicked, this, &MainWindow::toggleTimelinePause);
     connect(markerButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addMarkerAtCursor);
@@ -197,6 +208,16 @@ void MainWindow::setupTimelineEditorUi()
     connect(moveTrackDownButton, &QToolButton::clicked, [this]() {
         if (timelineEditor) {
             timelineEditor->moveSelectedClipToAdjacentTrack(1);
+        }
+    });
+    connect(zoomOutButton, &QToolButton::clicked, [this]() {
+        if (timelineEditor) {
+            timelineEditor->setZoomFactor(timelineEditor->zoomFactor() / 1.2);
+        }
+    });
+    connect(zoomInButton, &QToolButton::clicked, [this]() {
+        if (timelineEditor) {
+            timelineEditor->setZoomFactor(timelineEditor->zoomFactor() * 1.2);
         }
     });
     connect(setRegionStartButton, &QToolButton::clicked, [this]() {
@@ -250,6 +271,36 @@ void MainWindow::setupTimelineEditorUi()
             timelineEditor->pasteClipboardAtCursor();
         }
     });
+    auto *deleteShortcut = new QShortcut(QKeySequence::Delete, this);
+    connect(deleteShortcut, &QShortcut::activated, [this]() {
+        if (timelineEditor) {
+            timelineEditor->deleteSelectedClip();
+        }
+    });
+
+    const auto applyStatusTip = [](QToolButton *button) {
+        button->setStatusTip(button->toolTip());
+    };
+    applyStatusTip(timelinePauseButton);
+    applyStatusTip(markerButton);
+    applyStatusTip(addVideoTrackButton);
+    applyStatusTip(addAudioTrackButton);
+    applyStatusTip(splitButton);
+    applyStatusTip(copyButton);
+    applyStatusTip(pasteButton);
+    applyStatusTip(trimStartButton);
+    applyStatusTip(trimEndButton);
+    applyStatusTip(moveTrackUpButton);
+    applyStatusTip(moveTrackDownButton);
+    applyStatusTip(zoomOutButton);
+    applyStatusTip(zoomInButton);
+    applyStatusTip(setRegionStartButton);
+    applyStatusTip(setRegionEndButton);
+    applyStatusTip(clearRegionButton);
+    applyStatusTip(timelineLoopButton);
+    timelineEditor->setStatusTip("Timeline: drag events, wheel to scroll, Ctrl+wheel to zoom");
+    timelineScrollBar->setStatusTip("Timeline scrollbar");
+    statusBar()->showMessage("Ready. Hover controls to see action hints.", 2500);
 
     refreshTimelineScroll();
 }
@@ -293,17 +344,25 @@ void MainWindow::onTimelineTick()
     if (playbackPipeline) {
         playbackMs = std::max(playbackMs, playbackPipeline->playbackPositionMs());
     }
-    if (timelineEditor->loopEnabled() && timelineEditor->hasSelectionRegion() &&
+    if (timelineEditor->hasSelectionRegion() &&
         timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs() &&
         playbackMs >= timelineEditor->selectionRegionEndMs()) {
-        playbackMs = timelineEditor->selectionRegionStartMs();
-        timelinePlayStartMs = playbackMs;
-        timelinePlaybackClock.restart();
-        if (playbackPipeline) {
-            playbackPipeline->start(playbackMs);
+        if (timelineEditor->loopEnabled()) {
+            playbackMs = timelineEditor->selectionRegionStartMs();
+            timelinePlayStartMs = playbackMs;
+            timelinePlaybackClock.restart();
+            if (playbackPipeline) {
+                playbackPipeline->start(playbackMs);
+            }
+        } else {
+            timelinePlaying = false;
+            timelineTimer.stop();
+            stopMediaPlayback();
+            timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+            playbackMs = timelineEditor->selectionRegionEndMs();
         }
     }
-    timelineEditor->setCursorMs(playbackMs);
+    timelineEditor->setCursorMs(playbackMs, timelineEditor->hasSelectionRegion());
     syncTimelinePlayback();
 }
 
