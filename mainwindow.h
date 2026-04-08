@@ -37,9 +37,10 @@ private:
     void stopMediaPlayback();
     void stopAudioPlayback();
     void startVideoPlayback(const QString &path, qint64 clipStartMs, qint64 timelineMs);
-    void syncAudioPlayback(qint64 timelineMs);
+    void startAudioPlayback(const QString &path, qint64 clipStartMs, qint64 timelineMs);
 
     int decodeVideoFile(const std::string &uri, qint64 startOffsetMs, int generation);
+    int decodeAudioFile(const std::string &uri, qint64 startOffsetMs, int generation);
     void paintFrame(av::VideoFrame &&frame);
 
     class SourceAreaWidget *sourceArea = nullptr;
@@ -49,13 +50,10 @@ private:
     QTimer timelineTimer;
     bool timelinePlaying = false;
     qint64 timelineReturnCursorMs = 0;
-    std::atomic_int playbackGeneration{0};
+    std::atomic_int videoPlaybackGeneration{0};
+    std::atomic_int audioPlaybackGeneration{0};
     QString currentVideoPath;
     qint64 currentVideoClipStartMs = -1;
-    class QMediaPlayer *audioPlayer = nullptr;
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    class QAudioOutput *audioOutput = nullptr;
-#endif
     QString currentAudioPath;
     qint64 currentAudioClipStartMs = -1;
 

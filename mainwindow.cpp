@@ -4,16 +4,18 @@
 #include "timelineeditor.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#include <QAudioSink>
+#include <QMediaDevices>
+#else
 #include <QAudioOutput>
 #endif
+#include <QAudioFormat>
 #include <QImage>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QMediaPlayer>
 #include <QMetaObject>
 #include <QPushButton>
 #include <QThreadPool>
-#include <QUrl>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -30,6 +32,7 @@
 #include <avcpp/ffmpeg.h>
 #include <avcpp/formatcontext.h>
 #include <avcpp/packet.h>
+#include <avcpp/audioresampler.h>
 #include <avcpp/videorescaler.h>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -38,14 +41,6 @@ MainWindow::MainWindow(QWidget *parent)
 {
     ui->setupUi(this);
     setupTimelineEditorUi();
-    audioPlayer = new QMediaPlayer(this);
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    audioOutput = new QAudioOutput(this);
-    audioOutput->setVolume(0.8);
-    audioPlayer->setAudioOutput(audioOutput);
-#else
-    audioPlayer->setVolume(80);
-#endif
 }
 
 MainWindow::~MainWindow()
@@ -138,15 +133,21 @@ void MainWindow::syncTimelinePlayback()
     } else {
         currentVideoPath.clear();
         currentVideoClipStartMs = -1;
-        ++playbackGeneration;
+        ++videoPlaybackGeneration;
     }
 
-    syncAudioPlayback(timelineMs);
+    const auto activeAudio = timelineEditor->activeAudioAt(timelineMs);
+    if (!activeAudio.empty()) {
+        const auto &clip = activeAudio.front();
+        startAudioPlayback(clip.sourcePath, clip.startMs, timelineMs);
+    } else {
+        stopAudioPlayback();
+    }
 }
 
 void MainWindow::stopMediaPlayback()
 {
-    ++playbackGeneration;
+    ++videoPlaybackGeneration;
     currentVideoPath.clear();
     currentVideoClipStartMs = -1;
     stopAudioPlayback();
@@ -154,10 +155,7 @@ void MainWindow::stopMediaPlayback()
 
 void MainWindow::stopAudioPlayback()
 {
-    if (!audioPlayer) {
-        return;
-    }
-    audioPlayer->stop();
+    ++audioPlaybackGeneration;
     currentAudioPath.clear();
     currentAudioClipStartMs = -1;
 }
@@ -165,7 +163,7 @@ void MainWindow::stopAudioPlayback()
 void MainWindow::startVideoPlayback(const QString &path, qint64 clipStartMs, qint64 timelineMs)
 {
     if (path.isEmpty()) {
-        ++playbackGeneration;
+        ++videoPlaybackGeneration;
         currentVideoPath.clear();
         currentVideoClipStartMs = -1;
         return;
@@ -175,7 +173,7 @@ void MainWindow::startVideoPlayback(const QString &path, qint64 clipStartMs, qin
         return;
     }
 
-    const int generation = ++playbackGeneration;
+    const int generation = ++videoPlaybackGeneration;
     currentVideoPath = path;
     currentVideoClipStartMs = clipStartMs;
     const qint64 startOffsetMs = std::max<qint64>(0, timelineMs - clipStartMs);
@@ -186,34 +184,25 @@ void MainWindow::startVideoPlayback(const QString &path, qint64 clipStartMs, qin
     });
 }
 
-void MainWindow::syncAudioPlayback(qint64 timelineMs)
+void MainWindow::startAudioPlayback(const QString &path, qint64 clipStartMs, qint64 timelineMs)
 {
-    if (!timelineEditor || !audioPlayer) {
-        return;
-    }
-
-    const auto activeAudio = timelineEditor->activeAudioAt(timelineMs);
-    if (activeAudio.empty()) {
+    if (path.isEmpty()) {
         stopAudioPlayback();
         return;
     }
 
-    const auto &clip = activeAudio.front();
-    const qint64 sourceOffsetMs = std::max<qint64>(0, timelineMs - clip.startMs);
-    const bool changedSource = (clip.sourcePath != currentAudioPath) || (clip.startMs != currentAudioClipStartMs);
-    if (!changedSource) {
+    if (path == currentAudioPath && clipStartMs == currentAudioClipStartMs) {
         return;
     }
 
-    currentAudioPath = clip.sourcePath;
-    currentAudioClipStartMs = clip.startMs;
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    audioPlayer->setSource(QUrl::fromLocalFile(currentAudioPath));
-#else
-    audioPlayer->setMedia(QUrl::fromLocalFile(currentAudioPath));
-#endif
-    audioPlayer->setPosition(sourceOffsetMs);
-    audioPlayer->play();
+    const int generation = ++audioPlaybackGeneration;
+    currentAudioPath = path;
+    currentAudioClipStartMs = clipStartMs;
+    const qint64 startOffsetMs = std::max<qint64>(0, timelineMs - clipStartMs);
+    const std::string pathUtf8 = path.toStdString();
+    QThreadPool::globalInstance()->start([this, pathUtf8, startOffsetMs, generation]() {
+        (void)decodeAudioFile(pathUtf8, startOffsetMs, generation);
+    });
 }
 
 void MainWindow::paintFrame(av::VideoFrame &&frame)
@@ -302,7 +291,7 @@ int MainWindow::decodeVideoFile(const std::string &uri, qint64 startOffsetMs, in
     double firstPtsSeconds = 0.0;
 
     while (Packet pkt = inputContext.readPacket(ec)) {
-        if (generation != playbackGeneration.load()) {
+        if (generation != videoPlaybackGeneration.load()) {
             return 0;
         }
         if (ec) {
@@ -358,6 +347,157 @@ int MainWindow::decodeVideoFile(const std::string &uri, qint64 startOffsetMs, in
         }
         if (!frame) {
             break;
+        }
+    }
+
+    return 0;
+}
+
+int MainWindow::decodeAudioFile(const std::string &uri, qint64 startOffsetMs, int generation)
+{
+    using namespace av;
+    using std::cerr;
+    using std::clog;
+    using std::endl;
+
+    av::init();
+
+    int audioStream = -1;
+    AudioDecoderContext decoder;
+    Stream audioStreamInfo;
+    std::error_code ec;
+
+    FormatContext inputContext;
+    inputContext.openInput(uri, ec);
+    if (ec) {
+        cerr << "Can't open audio input\n";
+        return 1;
+    }
+
+    inputContext.findStreamInfo(ec);
+    if (ec) {
+        cerr << "Can't find streams: " << ec << ", " << ec.message() << endl;
+        return 1;
+    }
+
+    for (size_t i = 0; i < inputContext.streamsCount(); ++i) {
+        auto st = inputContext.stream(i);
+        if (st.mediaType() == AVMEDIA_TYPE_AUDIO) {
+            audioStream = static_cast<int>(i);
+            audioStreamInfo = st;
+            break;
+        }
+    }
+
+    if (audioStreamInfo.isNull()) {
+        cerr << "Audio stream not found\n";
+        return 1;
+    }
+
+    decoder = AudioDecoderContext(audioStreamInfo);
+    Codec codec = findDecodingCodec(decoder.raw()->codec_id);
+    decoder.setCodec(codec);
+    decoder.open(ec);
+    if (ec) {
+        cerr << "Can't open audio codec\n";
+        return 1;
+    }
+
+    const int outSampleRate = 48000;
+    const uint64_t outChannelLayout = AV_CH_LAYOUT_STEREO;
+    const SampleFormat outSampleFormat = AV_SAMPLE_FMT_S16;
+
+    AudioResampler resampler(outChannelLayout,
+                             outSampleRate,
+                             outSampleFormat,
+                             decoder.channelLayout(),
+                             decoder.sampleRate(),
+                             decoder.sampleFormat(),
+                             ec);
+    if (ec) {
+        cerr << "Can't init audio resampler\n";
+        return 1;
+    }
+
+    QAudioFormat audioFormat;
+    audioFormat.setSampleRate(outSampleRate);
+    audioFormat.setChannelCount(2);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    audioFormat.setSampleFormat(QAudioFormat::Int16);
+    QAudioSink sink(QMediaDevices::defaultAudioOutput(), audioFormat);
+#else
+    audioFormat.setSampleSize(16);
+    audioFormat.setCodec("audio/pcm");
+    audioFormat.setByteOrder(QAudioFormat::LittleEndian);
+    audioFormat.setSampleType(QAudioFormat::SignedInt);
+    QAudioOutput sink(audioFormat);
+#endif
+    QIODevice *audioDevice = sink.start();
+    if (!audioDevice) {
+        cerr << "Can't start audio output\n";
+        return 1;
+    }
+
+    while (Packet pkt = inputContext.readPacket(ec)) {
+        if (generation != audioPlaybackGeneration.load()) {
+            return 0;
+        }
+        if (ec) {
+            clog << "Audio packet reading error: " << ec << ", " << ec.message() << endl;
+            return 1;
+        }
+        if (pkt.streamIndex() != audioStream) {
+            continue;
+        }
+
+        AudioSamples samples = decoder.decode(pkt, ec);
+        if (ec) {
+            cerr << "Audio decode error: " << ec << ", " << ec.message() << endl;
+            return 1;
+        }
+        if (!samples) {
+            continue;
+        }
+
+        const auto samplePts = samples.pts();
+        if (!samplePts.isNoPts()) {
+            const qint64 sampleMs = static_cast<qint64>(samplePts.seconds() * 1000.0);
+            if (sampleMs < startOffsetMs) {
+                continue;
+            }
+        }
+
+        resampler.push(samples, ec);
+        if (ec) {
+            cerr << "Audio resampler push error: " << ec << ", " << ec.message() << endl;
+            return 1;
+        }
+
+        while (true) {
+            AudioSamples out(outSampleFormat, 1024, outChannelLayout, outSampleRate);
+            const bool hasFrame = resampler.pop(out, false, ec);
+            if (ec) {
+                cerr << "Audio resampler pop error: " << ec << ", " << ec.message() << endl;
+                return 1;
+            }
+            if (!hasFrame || !out) {
+                break;
+            }
+
+            const int bytesToWrite = out.samplesCount() * out.channelsCount() * 2;
+            const char *pcm = reinterpret_cast<const char *>(out.data(0));
+            int offset = 0;
+            while (offset < bytesToWrite) {
+                if (generation != audioPlaybackGeneration.load()) {
+                    return 0;
+                }
+                const qint64 written = audioDevice->write(pcm + offset, bytesToWrite - offset);
+                if (written <= 0) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    continue;
+                }
+                offset += static_cast<int>(written);
+            }
         }
     }
 
