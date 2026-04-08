@@ -47,12 +47,21 @@ void Previewer::mousePressEvent(QMouseEvent *event)
 
 void Previewer::paintIt(QImage &&img)
 {
-    const int bufferIndex = frameWriteIndex++ % kFrameBufferCount;
+    int bufferIndex = -1;
+    for (int i = 0; i < kFrameBufferCount; ++i) {
+        const int candidate = (frameWriteIndex + i) % kFrameBufferCount;
+        const int state = frameBuffer[candidate].state;
+        if (state == static_cast<int>(FrameState::Empty) || state == static_cast<int>(FrameState::Painted)) {
+            bufferIndex = candidate;
+            frameWriteIndex = candidate + 1;
+            break;
+        }
+    }
 
-    std::unique_lock lock(mutex);
-    frameReady.wait(lock, [this, bufferIndex]() {
-        return frameBuffer[bufferIndex].state == static_cast<int>(FrameState::Empty);
-    });
+    if (bufferIndex < 0) {
+        // UI is behind decode speed; drop this frame to keep the event loop responsive.
+        return;
+    }
 
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Writing);
     frameBuffer[bufferIndex].img = std::move(img);
@@ -111,6 +120,4 @@ void Previewer::paintEvent(QPaintEvent *event)
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Painted);
     previousPaintedIndex = bufferIndex;
     frameReadIndex = bufferIndex + 1;
-
-    frameReady.notify_one();
 }

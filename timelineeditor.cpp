@@ -68,6 +68,37 @@ void TimelineEditor::addMarkerAtCursor()
     update();
 }
 
+std::optional<TimelineEditor::ActiveClip> TimelineEditor::activeVideoAt(qint64 timeMs) const
+{
+    for (auto it = clips.rbegin(); it != clips.rend(); ++it) {
+        if (it->track != TrackType::Video) {
+            continue;
+        }
+        const bool active = timeMs >= it->startMs && timeMs < (it->startMs + it->durationMs);
+        if (!active) {
+            continue;
+        }
+        return ActiveClip{it->sourcePath, it->startMs, it->durationMs};
+    }
+    return std::nullopt;
+}
+
+std::vector<TimelineEditor::ActiveClip> TimelineEditor::activeAudioAt(qint64 timeMs) const
+{
+    std::vector<ActiveClip> result;
+    for (const auto &clip : clips) {
+        if (clip.track != TrackType::Audio) {
+            continue;
+        }
+        const bool active = timeMs >= clip.startMs && timeMs < (clip.startMs + clip.durationMs);
+        if (!active) {
+            continue;
+        }
+        result.push_back(ActiveClip{clip.sourcePath, clip.startMs, clip.durationMs});
+    }
+    return result;
+}
+
 void TimelineEditor::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);

@@ -9,8 +9,6 @@
 
 #include <array>
 #include <atomic>
-#include <condition_variable>
-#include <mutex>
 
 class Previewer : public QWidget
 {
@@ -50,9 +48,6 @@ private:
     int paintTimer = -1;
     bool pause = false;
     std::atomic<uint64_t> lastPaintNs{0};
-
-    std::mutex mutex;
-    std::condition_variable frameReady;
 };
 
 #endif // PREVIEWER_H

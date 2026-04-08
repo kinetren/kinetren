@@ -3,6 +3,7 @@
 
 #include <QWidget>
 
+#include <optional>
 #include <vector>
 
 class TimelineEditor : public QWidget
@@ -10,11 +11,19 @@ class TimelineEditor : public QWidget
     Q_OBJECT
 
 public:
+    struct ActiveClip {
+        QString sourcePath;
+        qint64 startMs = 0;
+        qint64 durationMs = 0;
+    };
+
     explicit TimelineEditor(QWidget *parent = nullptr);
 
     qint64 cursorMs() const;
     void setCursorMs(qint64 valueMs);
     void addMarkerAtCursor();
+    std::optional<ActiveClip> activeVideoAt(qint64 timeMs) const;
+    std::vector<ActiveClip> activeAudioAt(qint64 timeMs) const;
 
 signals:
     void cursorChanged(qint64 cursorMs);
