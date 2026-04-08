@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -105,6 +106,8 @@ struct PlaybackPipeline::VideoWorker {
     std::string key;
     Clip clip;
     qint64 startOffsetMs = 0;
+    qint64 startFrameIndex = 0;
+    std::atomic<int> frameDurationUs{33333};
     int generation = 0;
     std::shared_ptr<std::atomic_bool> stopFlag;
     std::shared_ptr<VideoRingBuffer> ring;
@@ -301,6 +304,7 @@ void PlaybackPipeline::startVideoWorker(const Clip &clip, qint64 timelineNowMs)
     worker->key = clipKey(clip);
     worker->clip = clip;
     worker->startOffsetMs = std::max<qint64>(0, timelineNowMs - clip.startMs);
+    worker->startFrameIndex = consumedVideoFrame.load();
     worker->generation = generation.load();
     worker->stopFlag = std::make_shared<std::atomic_bool>(false);
     worker->ring = std::make_shared<VideoRingBuffer>(kVideoRingSlots);
@@ -385,7 +389,6 @@ void PlaybackPipeline::audioMixLoop()
 
 void PlaybackPipeline::videoComposeLoop()
 {
-    const auto frameDuration = std::chrono::milliseconds(kVideoFrameMs);
     auto nextWake = std::chrono::steady_clock::now();
     while (running.load()) {
         std::vector<std::shared_ptr<VideoWorker>> workers;
@@ -397,13 +400,15 @@ void PlaybackPipeline::videoComposeLoop()
             }
         }
 
-        const qint64 frameMs = nextVideoFrame * kVideoFrameMs;
+        const qint64 frameMs = consumedAudioBlock.load() * kAudioBlockMs;
         QImage composed;
         bool hasAny = false;
+        int composeFrameDurationUs = 33333;
         for (const auto &worker : workers) {
             if (frameMs < worker->clip.startMs || frameMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
             }
+            composeFrameDurationUs = std::max(composeFrameDurationUs, worker->frameDurationUs.load());
             QImage frame;
             const bool ready = worker->ring->getFrame(nextVideoFrame, frame);
             if (!ready || frame.isNull()) {
@@ -426,7 +431,7 @@ void PlaybackPipeline::videoComposeLoop()
 
         ++nextVideoFrame;
         consumedVideoFrame.store(nextVideoFrame);
-        nextWake += frameDuration;
+        nextWake += std::chrono::microseconds(composeFrameDurationUs);
         std::this_thread::sleep_until(nextWake);
     }
 }
@@ -577,7 +582,7 @@ int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
     return 0;
 }
 
-int PlaybackPipeline::decodeVideoWorker(const VideoWorker &worker)
+int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
 {
     using namespace av;
 
@@ -616,8 +621,18 @@ int PlaybackPipeline::decodeVideoWorker(const VideoWorker &worker)
         return 1;
     }
 
+    const auto avgRate = stream.averageFrameRate();
+    double fps = avgRate.getDouble();
+    if (fps < 1.0) {
+        fps = stream.frameRate().getDouble();
+    }
+    if (fps < 1.0) {
+        fps = 30.0;
+    }
+    worker.frameDurationUs.store(static_cast<int>(std::llround(1000000.0 / fps)));
+
     VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
-    qint64 nextFrameIndex = (worker.clip.startMs + worker.startOffsetMs) / kVideoFrameMs;
+    qint64 nextFrameIndex = worker.startFrameIndex;
     bool started = false;
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {

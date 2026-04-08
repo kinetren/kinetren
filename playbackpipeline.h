@@ -56,7 +56,7 @@ private:
     void videoComposeLoop();
 
     int decodeAudioWorker(const AudioWorker &worker);
-    int decodeVideoWorker(const VideoWorker &worker);
+    int decodeVideoWorker(VideoWorker &worker);
 
     static std::string clipKey(const Clip &clip);
 
