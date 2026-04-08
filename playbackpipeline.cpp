@@ -837,6 +837,26 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
     VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
     qint64 lastPublishedTimeMs = -1;
     bool started = false;
+    const auto applyCacheQualityScale = [this](QImage &frame) {
+        if (frame.isNull()) {
+            return;
+        }
+        ProjectSettings settingsCopy;
+        {
+            std::lock_guard<std::mutex> lock(settingsMutex);
+            settingsCopy = projectSettings;
+        }
+        const QSize cacheResolution = settingsCopy.cacheResolution();
+        if (cacheResolution.width() <= 0 || cacheResolution.height() <= 0) {
+            return;
+        }
+        if (frame.width() == cacheResolution.width() && frame.height() == cacheResolution.height()) {
+            return;
+        }
+        const Qt::TransformationMode mode =
+            draftPreviewEnabled.load() ? Qt::FastTransformation : Qt::SmoothTransformation;
+        frame = frame.scaled(cacheResolution, Qt::KeepAspectRatio, mode);
+    };
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
         Packet pkt = input.readPacket(ec);
@@ -879,6 +899,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         for (int y = 0; y < rgb.height(); ++y) {
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
+        applyCacheQualityScale(img);
 
         const qint64 relTimeMs = std::max<qint64>(0, frameMs - worker.clip.sourceInMs);
         if (relTimeMs < lastPublishedTimeMs) {
@@ -934,6 +955,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         for (int y = 0; y < rgb.height(); ++y) {
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
+        applyCacheQualityScale(img);
 
         const qint64 relTimeMs = std::max<qint64>(0, frameMs - worker.clip.sourceInMs);
         if (relTimeMs < lastPublishedTimeMs) {
