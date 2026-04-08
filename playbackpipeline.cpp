@@ -736,6 +736,19 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
     }
     worker.frameDurationUs.store(static_cast<int>(std::llround(1000000.0 / fps)));
 
+    // Jump close to requested timeline position to avoid decoding from file start.
+    if (worker.startOffsetMs > 0 && input.seekable()) {
+        const qint64 seekMs = std::max<qint64>(0, worker.startOffsetMs - 1000);
+        input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
+                   static_cast<size_t>(videoStream),
+                   false,
+                   ec);
+        if (ec) {
+            // Keep playback functional even when a demuxer doesn't support stream seek well.
+            ec.clear();
+        }
+    }
+
     VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
     qint64 lastPublishedTimeMs = -1;
     bool started = false;
