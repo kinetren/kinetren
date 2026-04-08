@@ -1,12 +1,17 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
 #include "playbackpipeline.h"
+#include "previewer.h"
 #include "sourceareawidget.h"
 #include "timelineeditor.h"
 
 #include <QHBoxLayout>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QLabel>
 #include <QGuiApplication>
+#include <QDateTime>
+#include <QDir>
 #include <QMetaObject>
 #include <QPushButton>
 #include <QShortcut>
@@ -40,6 +45,8 @@ MainWindow::MainWindow(QWidget *parent)
                 },
                 Qt::QueuedConnection);
         });
+    playbackPipeline->setDraftPreviewEnabled(true);
+    syncTimelinePlayback();
 }
 
 MainWindow::~MainWindow()
@@ -64,6 +71,33 @@ void MainWindow::setupTimelineEditorUi()
 
     sourceArea = new SourceAreaWidget(ui->widget_3);
     sourceLayout->addWidget(sourceArea, 1);
+
+    auto *previewHost = new QWidget(ui->splitter);
+    auto *previewLayout = new QVBoxLayout(previewHost);
+    previewLayout->setContentsMargins(6, 6, 6, 6);
+    previewLayout->setSpacing(6);
+    const int previewIndex = ui->splitter->indexOf(ui->frame);
+    if (previewIndex >= 0) {
+        ui->splitter->replaceWidget(previewIndex, previewHost);
+        ui->frame->setParent(previewHost);
+    }
+    previewLayout->addWidget(ui->frame, 1);
+
+    auto *previewControls = new QHBoxLayout();
+    auto *previewQualityLabel = new QLabel("Preview:", previewHost);
+    auto *previewQualityCombo = new QComboBox(previewHost);
+    previewQualityCombo->addItem("Draft (cached)");
+    previewQualityCombo->addItem("Full source");
+    auto *smoothScaleCheck = new QCheckBox("Smooth scaling", previewHost);
+    smoothScaleCheck->setChecked(true);
+    auto *aaCheck = new QCheckBox("Antialiasing", previewHost);
+    previewControls->addWidget(previewQualityLabel);
+    previewControls->addWidget(previewQualityCombo);
+    previewControls->addSpacing(10);
+    previewControls->addWidget(smoothScaleCheck);
+    previewControls->addWidget(aaCheck);
+    previewControls->addStretch(1);
+    previewLayout->addLayout(previewControls);
 
     auto *timelineLayout = new QVBoxLayout(ui->widget_2);
     timelineLayout->setContentsMargins(6, 6, 6, 6);
@@ -115,6 +149,7 @@ void MainWindow::setupTimelineEditorUi()
     auto *setRegionStartButton = new QToolButton(ui->widget_2);
     auto *setRegionEndButton = new QToolButton(ui->widget_2);
     auto *clearRegionButton = new QToolButton(ui->widget_2);
+    auto *renderDraftButton = new QToolButton(ui->widget_2);
     timelineLoopButton = new QToolButton(ui->widget_2);
 
     timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
@@ -149,6 +184,8 @@ void MainWindow::setupTimelineEditorUi()
     setRegionEndButton->setToolTip("Set region out");
     clearRegionButton->setIcon(style()->standardIcon(QStyle::SP_DialogResetButton));
     clearRegionButton->setToolTip("Clear region");
+    renderDraftButton->setIcon(style()->standardIcon(QStyle::SP_DialogSaveButton));
+    renderDraftButton->setToolTip("Render draft image sequence");
     timelineLoopButton->setIcon(style()->standardIcon(QStyle::SP_BrowserReload));
     timelineLoopButton->setToolTip("Loop region");
     timelineLoopButton->setCheckable(true);
@@ -180,6 +217,7 @@ void MainWindow::setupTimelineEditorUi()
     configureToolButton(setRegionStartButton);
     configureToolButton(setRegionEndButton);
     configureToolButton(clearRegionButton);
+    configureToolButton(renderDraftButton);
     configureToolButton(timelineLoopButton);
 
     timelineOverlayLabel = new QLabel("Overlay @ 0.00s | Video layers: 0 | Audio layers: 0", ui->widget_2);
@@ -199,6 +237,7 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(setRegionStartButton);
     controlsLayout->addWidget(setRegionEndButton);
     controlsLayout->addWidget(clearRegionButton);
+    controlsLayout->addWidget(renderDraftButton);
     controlsLayout->addWidget(timelineLoopButton);
     controlsLayout->addWidget(timelineOverlayLabel, 1);
     timelineLayout->addLayout(controlsLayout);
@@ -244,6 +283,7 @@ void MainWindow::setupTimelineEditorUi()
         }
     });
     connect(clearRegionButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::clearSelectionRegion);
+    connect(renderDraftButton, &QToolButton::clicked, this, &MainWindow::renderDraftProject);
     connect(copyButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::copySelectedToClipboard);
     connect(pasteButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::pasteClipboardAtCursor);
     connect(timelineLoopButton, &QToolButton::toggled, timelineEditor, &TimelineEditor::setLoopEnabled);
@@ -254,9 +294,15 @@ void MainWindow::setupTimelineEditorUi()
         if (timelineGlobalTimeLabel && timelineEditor) {
             timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(t));
         }
+        if (!timelinePlaying) {
+            syncTimelinePlayback();
+        }
     });
     connect(timelineEditor, &TimelineEditor::timelineRangeChanged, this, [this](qint64, qint64) {
         refreshTimelineScroll();
+        if (!timelinePlaying) {
+            syncTimelinePlayback();
+        }
     });
     connect(timelineEditor, &TimelineEditor::viewStartChanged, this, [this](qint64, qint64) {
         refreshTimelineScroll();
@@ -266,6 +312,16 @@ void MainWindow::setupTimelineEditorUi()
             timelineEditor->setViewStartMs(static_cast<qint64>(value));
         }
     });
+    connect(previewQualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (playbackPipeline) {
+            playbackPipeline->setDraftPreviewEnabled(index == 0);
+        }
+        if (!timelinePlaying) {
+            syncTimelinePlayback();
+        }
+    });
+    connect(smoothScaleCheck, &QCheckBox::toggled, ui->frame, &Previewer::setSmoothScaling);
+    connect(aaCheck, &QCheckBox::toggled, ui->frame, &Previewer::setAntialiasing);
 
     auto *spaceShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
     connect(spaceShortcut, &QShortcut::activated, this, &MainWindow::toggleTimelinePause);
@@ -313,6 +369,7 @@ void MainWindow::setupTimelineEditorUi()
     applyStatusTip(setRegionStartButton);
     applyStatusTip(setRegionEndButton);
     applyStatusTip(clearRegionButton);
+    applyStatusTip(renderDraftButton);
     applyStatusTip(timelineLoopButton);
     timelineEditor->setStatusTip("Timeline: drag events, wheel to scroll, Ctrl+wheel to zoom");
     timelineScrollBar->setStatusTip("Timeline scrollbar");
@@ -441,5 +498,49 @@ void MainWindow::stopMediaPlayback()
     if (playbackPipeline) {
         playbackPipeline->stop();
     }
+}
+
+void MainWindow::renderDraftProject()
+{
+    if (!timelineEditor || !playbackPipeline) {
+        return;
+    }
+
+    const qint64 startMs = (timelineEditor->hasSelectionRegion() && timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs())
+        ? timelineEditor->selectionRegionStartMs()
+        : 0;
+    const qint64 endMs = (timelineEditor->hasSelectionRegion() && timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs())
+        ? timelineEditor->selectionRegionEndMs()
+        : timelineEditor->maxTimelineMs();
+    if (endMs <= startMs) {
+        statusBar()->showMessage("Draft render skipped: empty range.", 3500);
+        return;
+    }
+
+    const QString outDir =
+        QDir::tempPath() + "/kp-draft-" + QDateTime::currentDateTime().toString("yyyyMMdd-hhmmss");
+    QDir().mkpath(outDir);
+
+    int frameIndex = 0;
+    for (qint64 tMs = startMs; tMs < endMs; tMs += 33) {
+        const auto video = timelineEditor->activeVideoLayersAt(tMs);
+        std::vector<PlaybackPipeline::Clip> vclips;
+        vclips.reserve(video.size());
+        for (const auto &c : video) {
+            vclips.push_back({c.sourcePath, c.startMs, c.durationMs, c.sourceInMs});
+        }
+        QImage frame = playbackPipeline->renderDraftFrame(tMs, vclips);
+        if (frame.isNull()) {
+            frame = QImage(640, 360, QImage::Format_RGB888);
+            frame.fill(Qt::black);
+        }
+        const QString outPath = QString("%1/frame-%2.jpg").arg(outDir, QString::number(frameIndex).rightJustified(6, '0'));
+        frame.save(outPath, "JPG", 82);
+        ++frameIndex;
+    }
+
+    statusBar()->showMessage(
+        QString("Draft render complete: %1 frames -> %2").arg(frameIndex).arg(outDir),
+        9000);
 }
 

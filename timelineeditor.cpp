@@ -16,6 +16,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <limits>
@@ -658,7 +659,7 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.drawRoundedRect(r, 4, 4);
 
         if (clip.mediaType == TrackType::Video) {
-            const QImage preview = cachedVideoPreview(clip.sourcePath);
+            const QImage preview = cachedVideoPreview(clip.sourcePath, clip.sourceInMs);
             if (!preview.isNull()) {
                 const int thumbW = std::max(28, r.height() * 16 / 9);
                 for (int x = r.left() + 2; x < r.right() - 2; x += thumbW) {
@@ -1485,9 +1486,11 @@ QColor TimelineEditor::colorFromPath(const QString &path) const
     return QColor(r, g, b);
 }
 
-QImage TimelineEditor::cachedVideoPreview(const QString &path)
+QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs)
 {
-    const auto it = previewCache.constFind(path);
+    const qint64 bucketMs = std::max<qint64>(0, (sourceInMs / 120) * 120);
+    const QString cacheKey = QString("%1::%2").arg(path, QString::number(bucketMs));
+    const auto it = previewCache.constFind(cacheKey);
     if (it != previewCache.constEnd()) {
         return it.value();
     }
@@ -1520,6 +1523,16 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path)
                 dec.setCodec(codec);
                 dec.open(ec);
                 if (!ec) {
+                    const qint64 seekMs = std::max<qint64>(0, bucketMs - 700);
+                    if (input.seekable()) {
+                        input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
+                                   static_cast<size_t>(videoStream),
+                                   false,
+                                   ec);
+                        if (ec) {
+                            ec.clear();
+                        }
+                    }
                     VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
                     for (int tries = 0; tries < 256; ++tries) {
                         Packet pkt = input.readPacket(ec);
@@ -1531,6 +1544,14 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path)
                         }
                         VideoFrame frame = dec.decode(pkt, ec);
                         if (ec || frame.isNull() || !frame.isComplete()) {
+                            ec.clear();
+                            continue;
+                        }
+                        qint64 frameMs = 0;
+                        if (!frame.pts().isNoPts()) {
+                            frameMs = static_cast<qint64>(frame.pts().seconds() * 1000.0);
+                        }
+                        if (frameMs < bucketMs) {
                             continue;
                         }
                         auto rgb = rescaler.rescale(frame);
@@ -1558,8 +1579,8 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path)
         img = QImage(160, 90, QImage::Format_RGB32);
         img.fill(colorFromPath(path));
     }
-    previewCache.insert(path, img.scaled(320, 180, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
-    return previewCache.value(path);
+    previewCache.insert(cacheKey, img.scaled(320, 180, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+    return previewCache.value(cacheKey);
 }
 
 std::vector<int> TimelineEditor::cachedAudioPeaks(const QString &path)

@@ -35,6 +35,8 @@ public:
     ~Previewer() override;
 
     void paintIt(QImage &&img);
+    void setSmoothScaling(bool enabled);
+    void setAntialiasing(bool enabled);
 
 protected:
     void timerEvent(QTimerEvent *event) override;
@@ -48,6 +50,8 @@ private:
     int previousPaintedIndex = -1;
     int paintTimer = -1;
     bool pause = false;
+    bool smoothScaling = true;
+    bool antialiasing = false;
     uint64_t nextFrameSerial = 1;
     std::atomic<uint64_t> lastPaintNs{0};
 };

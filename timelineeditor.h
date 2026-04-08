@@ -186,7 +186,7 @@ private:
     bool hasVideoForPath(const QString &path) const;
     bool hasAudioForPath(const QString &path) const;
     QColor colorFromPath(const QString &path) const;
-    QImage cachedVideoPreview(const QString &path);
+    QImage cachedVideoPreview(const QString &path, qint64 sourceInMs);
     std::vector<int> cachedAudioPeaks(const QString &path);
     void unlinkClipGroup(int clipId);
     std::vector<int> linkedClipIds(int clipId) const;

@@ -32,6 +32,7 @@ private:
     void syncTimelinePlayback();
     void stopMediaPlayback();
     void refreshTimelineScroll();
+    void renderDraftProject();
 
     class SourceAreaWidget *sourceArea = nullptr;
     class TimelineEditor *timelineEditor = nullptr;

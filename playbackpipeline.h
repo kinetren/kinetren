@@ -39,6 +39,8 @@ public:
     void stop();
     void update(qint64 timelineMs, const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);
     qint64 playbackPositionMs() const;
+    void setDraftPreviewEnabled(bool enabled);
+    QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
 
 private:
     struct AudioRingBuffer;
@@ -59,6 +61,8 @@ private:
 
     int decodeAudioWorker(AudioWorker &worker);
     int decodeVideoWorker(VideoWorker &worker);
+    QImage composeDraftFrameAt(qint64 timelineMs, const std::vector<Clip> &videoClips);
+    QImage decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeMs);
 
     static std::string clipKey(const Clip &clip);
 
@@ -87,6 +91,10 @@ private:
 
     std::thread audioThread;
     std::thread videoThread;
+
+    std::atomic_bool draftPreviewEnabled{true};
+    std::mutex draftCacheMutex;
+    std::unordered_map<std::string, QImage> draftFrameCache;
 };
 
 #endif // PLAYBACKPIPELINE_H

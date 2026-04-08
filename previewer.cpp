@@ -69,6 +69,18 @@ void Previewer::paintIt(QImage &&img)
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Ready);
 }
 
+void Previewer::setSmoothScaling(bool enabled)
+{
+    smoothScaling = enabled;
+    update();
+}
+
+void Previewer::setAntialiasing(bool enabled)
+{
+    antialiasing = enabled;
+    update();
+}
+
 void Previewer::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
@@ -112,8 +124,13 @@ void Previewer::paintEvent(QPaintEvent *event)
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Painting);
     QPainter painter(this);
     if (painter.isActive()) {
+        painter.fillRect(rect(), Qt::black);
+        painter.setRenderHint(QPainter::Antialiasing, antialiasing);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, smoothScaling);
         QPixmap pixmap = QPixmap::fromImage(frameBuffer[bufferIndex].img, Qt::ColorOnly);
-        painter.drawPixmap(0, 0, width(), height(), pixmap);
+        if (!pixmap.isNull()) {
+            painter.drawPixmap(0, 0, width(), height(), pixmap);
+        }
     } else {
         qCritical() << "QPainter not active";
     }

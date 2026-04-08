@@ -43,6 +43,9 @@ constexpr int kVideoFps = 30;
 constexpr int kVideoFrameMs = 1000 / kVideoFps;
 constexpr size_t kVideoRingSlots = 7; // 7 * 33ms ~= 231ms
 constexpr qint64 kVideoMaxAheadFrames = static_cast<qint64>(kVideoRingSlots - 2);
+constexpr int kDraftFrameBucketMs = 120;
+constexpr int kDraftMaxWidth = 640;
+constexpr int kDraftMaxHeight = 360;
 }
 
 struct PlaybackPipeline::AudioRingBuffer {
@@ -157,6 +160,7 @@ struct PlaybackPipeline::AudioWorker {
     std::string key;
     Clip clip;
     qint64 startOffsetMs = 0;
+    qint64 timelineStartMs = 0;
     int generation = 0;
     std::atomic<qint64> producedBlockIndex{-1};
     std::shared_ptr<std::atomic_bool> stopFlag;
@@ -261,6 +265,9 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
 {
     timelineMs.store(tMs);
     if (!running.load()) {
+        if (onVideoFrameReady) {
+            onVideoFrameReady(composeDraftFrameAt(tMs, videoClips));
+        }
         return;
     }
     reconcileAudioWorkers(audioClips);
@@ -273,6 +280,16 @@ qint64 PlaybackPipeline::playbackPositionMs() const
         return timelineMs.load();
     }
     return consumedAudioBlock.load() * kAudioBlockMs;
+}
+
+void PlaybackPipeline::setDraftPreviewEnabled(bool enabled)
+{
+    draftPreviewEnabled.store(enabled);
+}
+
+QImage PlaybackPipeline::renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips)
+{
+    return composeDraftFrameAt(timelineMs, videoClips);
 }
 
 std::string PlaybackPipeline::clipKey(const Clip &clip)
@@ -374,7 +391,8 @@ void PlaybackPipeline::startAudioWorker(const Clip &clip, qint64 timelineNowMs)
     auto worker = std::make_shared<AudioWorker>();
     worker->key = clipKey(clip);
     worker->clip = clip;
-    worker->startOffsetMs = clip.sourceInMs + std::max<qint64>(0, timelineNowMs - clip.startMs);
+    worker->timelineStartMs = std::max<qint64>(clip.startMs, timelineNowMs);
+    worker->startOffsetMs = clip.sourceInMs + std::max<qint64>(0, worker->timelineStartMs - clip.startMs);
     worker->generation = generation.load();
     worker->stopFlag = std::make_shared<std::atomic_bool>(false);
     worker->ring = std::make_shared<AudioRingBuffer>(kAudioRingSlots);
@@ -396,7 +414,7 @@ void PlaybackPipeline::startVideoWorker(const Clip &clip, qint64 timelineNowMs)
     worker->key = clipKey(clip);
     worker->clip = clip;
     worker->startOffsetMs = clip.sourceInMs + std::max<qint64>(0, timelineNowMs - clip.startMs);
-    worker->playbackStartMs = clip.startMs + worker->startOffsetMs;
+    worker->playbackStartMs = clip.startMs;
     worker->consumedTimeMs.store(0);
     worker->generation = generation.load();
     worker->stopFlag = std::make_shared<std::atomic_bool>(false);
@@ -618,7 +636,7 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 
     const int blockInterleaved = kAudioSamplesPerBlock * kAudioChannels;
     std::deque<int16_t> pending;
-    qint64 nextBlock = (worker.clip.startMs + worker.startOffsetMs) / kAudioBlockMs;
+    qint64 nextBlock = worker.timelineStartMs / kAudioBlockMs;
     bool started = false;
 
     const auto popToRing = [&](bool getAll) -> int {
@@ -892,4 +910,151 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
     }
 
     return 0;
+}
+
+QImage PlaybackPipeline::composeDraftFrameAt(qint64 tMs, const std::vector<Clip> &videoClips)
+{
+    if (videoClips.empty()) {
+        return QImage();
+    }
+
+    QImage composed;
+    bool hasAny = false;
+    for (const auto &clip : videoClips) {
+        if (tMs < clip.startMs || tMs >= (clip.startMs + clip.durationMs)) {
+            continue;
+        }
+        const qint64 sourceTimeMs = clip.sourceInMs + (tMs - clip.startMs);
+        QImage frame = decodeVideoFrameAt(clip, sourceTimeMs);
+        if (frame.isNull()) {
+            continue;
+        }
+        if (!hasAny) {
+            composed = frame.convertToFormat(QImage::Format_RGB888);
+            hasAny = true;
+            continue;
+        }
+        QPainter p(&composed);
+        p.drawImage(composed.rect(), frame);
+    }
+
+    return hasAny ? composed : QImage();
+}
+
+QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeMs)
+{
+    using namespace av;
+
+    const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs);
+    const std::string cacheKey =
+        (clip.sourcePath + "::" + QString::number(bucketMs) + "::" + (draftPreviewEnabled.load() ? "draft" : "full"))
+            .toStdString();
+    {
+        std::lock_guard<std::mutex> lock(draftCacheMutex);
+        const auto it = draftFrameCache.find(cacheKey);
+        if (it != draftFrameCache.end()) {
+            return it->second;
+        }
+    }
+
+    std::error_code ec;
+    FormatContext input;
+    input.openInput(clip.sourcePath.toStdString(), ec);
+    if (ec) {
+        return QImage();
+    }
+    input.findStreamInfo(ec);
+    if (ec) {
+        return QImage();
+    }
+
+    int videoStream = -1;
+    Stream stream;
+    for (size_t i = 0; i < input.streamsCount(); ++i) {
+        auto st = input.stream(i);
+        if (st.mediaType() == AVMEDIA_TYPE_VIDEO) {
+            videoStream = static_cast<int>(i);
+            stream = st;
+            break;
+        }
+    }
+    if (stream.isNull() || videoStream < 0) {
+        return QImage();
+    }
+
+    VideoDecoderContext dec(stream);
+    Codec codec = findDecodingCodec(dec.raw()->codec_id);
+    dec.setCodec(codec);
+    dec.setRefCountedFrames(true);
+    Codec codecCtx{};
+    dec.open({{"threads", "1"}}, codecCtx, ec);
+    if (ec) {
+        return QImage();
+    }
+
+    const qint64 seekMs = std::max<qint64>(0, bucketMs - 700);
+    if (input.seekable()) {
+        input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
+                   static_cast<size_t>(videoStream),
+                   false,
+                   ec);
+        if (ec) {
+            ec.clear();
+        }
+    }
+
+    VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
+    QImage picked;
+    qint64 pickedMs = -1;
+    for (int tries = 0; tries < 600; ++tries) {
+        Packet pkt = input.readPacket(ec);
+        if (ec || !pkt) {
+            break;
+        }
+        if (pkt.streamIndex() != videoStream) {
+            continue;
+        }
+        VideoFrame frame = dec.decode(pkt, ec);
+        if (ec || frame.isNull() || !frame.isComplete()) {
+            ec.clear();
+            continue;
+        }
+        qint64 frameMs = 0;
+        if (!frame.pts().isNoPts()) {
+            frameMs = static_cast<qint64>(frame.pts().seconds() * 1000.0);
+        }
+        if (frameMs < bucketMs) {
+            continue;
+        }
+
+        auto rgb = rescaler.rescale(frame);
+        QImage img(rgb.width(), rgb.height(), QImage::Format_RGB888);
+        const int dstStride = img.bytesPerLine();
+        const int srcStride = rgb.raw()->linesize[0];
+        const int copyStride = std::min(dstStride, srcStride);
+        auto *src = rgb.data();
+        auto *dst = img.bits();
+        for (int y = 0; y < rgb.height(); ++y) {
+            std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
+        }
+        picked = img;
+        pickedMs = frameMs;
+        break;
+    }
+
+    if (picked.isNull() || pickedMs < 0) {
+        return QImage();
+    }
+
+    if (draftPreviewEnabled.load()) {
+        picked = picked.scaled(kDraftMaxWidth, kDraftMaxHeight, Qt::KeepAspectRatio, Qt::FastTransformation);
+    }
+    {
+        std::lock_guard<std::mutex> lock(draftCacheMutex);
+        if (draftFrameCache.size() > 220) {
+            draftFrameCache.clear();
+        }
+        draftFrameCache[cacheKey] = picked;
+    }
+    return picked;
 }
