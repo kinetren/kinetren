@@ -90,7 +90,7 @@ int test0()
         av::init();
         av::setFFmpegLoggingLevel(AV_LOG_DEBUG);
 
-        string uri {"/developer/kp/a.mp4"};
+        string uri {"/developer/kp/123.mp4"};
 
         ssize_t      videoStream = -1;
         VideoDecoderContext vdec;

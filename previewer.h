@@ -8,7 +8,8 @@
 #include <chrono>
 #include <thread>
 #include <QTimerEvent>
-
+#include <mutex>
+#include <condition_variable>
 
 const int rapibuf_cnt = 20;
 typedef struct
@@ -24,6 +25,10 @@ class Previewer : public QWidget
     int rapibu_p_next = 0;
     int rapibu_p_prev = -1;
     int paint_timer;
+    bool pause = false;
+    std::mutex m_mutex;
+    std::condition_variable m_frame_ready;
+
 public:
     explicit Previewer(QWidget *parent = nullptr)
         : QWidget{parent}
@@ -47,14 +52,21 @@ public:
             }
         }
     }
+    void mousePressEvent(QMouseEvent *event) override {
+        pause = !pause;
+    }
 
     void paintIt(QImage&& img)
     {
         auto i = (rapibu_i++)% rapibuf_cnt;
-        while (rapibu[i].has != 0)
+
+        std::unique_lock lock(m_mutex);
+        m_frame_ready.wait(lock, [this, i](){return rapibu[i].has == 0;});
+
+        /*while (rapibu[i].has != 0)
         {
             std::this_thread::sleep_for(std::chrono::milliseconds(24));
-        }
+        }*/
         rapibu[i].has = 1;
         rapibu[i].img = std::move(img);
         rapibu[i].has = 2;
@@ -74,6 +86,9 @@ public:
                 need_old = true;
 
         }
+
+        if (pause)
+            need_old = true;
 
         if (need_old)
         {
@@ -95,18 +110,20 @@ public:
         {
             QPainter painter(this);
             if (painter.isActive()) {
-                // painter активен, можно рисовать
                 QPixmap pixmap = QPixmap::fromImage(rapibu[i].img, Qt::ColorOnly);
                 //painter.drawPixmap(0, 0, pixmap);
-                painter.drawPixmap(0, 0, std::min(pixmap.width(), width()), std::min(pixmap.height(), height()), pixmap);
+                painter.drawPixmap(0, 0, width(), height(), pixmap);
+                // painter.drawPixmap(0, 0, std::min(pixmap.width(), width()), std::min(pixmap.height(), height()), pixmap);
             } else {
-                qDebug() << "QPainter не активен";
+                qCritical() << "QPainter not active";
             }
             painter.end();
         }
         rapibu[i].has = 4;
         rapibu_p_prev = i;
         rapibu_p_next = i + 1;
+
+        m_frame_ready.notify_one();
     }
 
 signals:

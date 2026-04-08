@@ -48,7 +48,7 @@
        <property name="minimumSize">
         <size>
          <width>50</width>
-         <height>2000</height>
+         <height>200</height>
         </size>
        </property>
        <property name="orientation">
@@ -80,8 +80,8 @@
         </property>
         <property name="minimumSize">
          <size>
-          <width>2000</width>
-          <height>2000</height>
+          <width>200</width>
+          <height>200</height>
          </size>
         </property>
         <property name="styleSheet">
