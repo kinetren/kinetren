@@ -78,27 +78,49 @@ struct PlaybackPipeline::AudioRingBuffer {
 
 struct PlaybackPipeline::VideoRingBuffer {
     explicit VideoRingBuffer(size_t capacity)
-        : times(capacity, -1)
+        : slotFrameIndices(capacity, -1)
+        , times(capacity, -1)
         , frames(capacity)
     {
     }
 
+    void setReadCursorTime(qint64 timeMs)
+    {
+        const qint64 frameIndex = std::max<qint64>(0, timeMs / kVideoFrameMs);
+        std::lock_guard<std::mutex> lock(mutex);
+        readCursorFrameIndex = frameIndex;
+    }
+
     void setFrame(qint64 timeMs, const QImage &img)
     {
-        const size_t slot = static_cast<size_t>(nextWriteIndex % static_cast<qint64>(frames.size()));
         std::lock_guard<std::mutex> lock(mutex);
-        ++nextWriteIndex;
+        const qint64 frameIndex = std::max<qint64>(0, timeMs / kVideoFrameMs);
+        qint64 targetFrameIndex = std::max(frameIndex, readCursorFrameIndex);
+        const qint64 maxBufferedFrameIndex =
+            readCursorFrameIndex + static_cast<qint64>(frames.size()) - 1;
+        if (targetFrameIndex > maxBufferedFrameIndex) {
+            targetFrameIndex = maxBufferedFrameIndex;
+        }
+        const size_t slot =
+            static_cast<size_t>(targetFrameIndex % static_cast<qint64>(frames.size()));
+        slotFrameIndices[slot] = targetFrameIndex;
         times[slot] = timeMs;
         frames[slot] = img;
     }
 
     bool getFrameAtOrBefore(qint64 timeMs, qint64 maxBackMs, qint64 &foundTimeMs, QImage &img) const
     {
+        const qint64 targetFrameIndex = std::max<qint64>(0, timeMs / kVideoFrameMs);
         const qint64 lower = std::max<qint64>(0, timeMs - maxBackMs);
         std::lock_guard<std::mutex> lock(mutex);
+        qint64 bestFrameIndex = -1;
         qint64 bestTime = -1;
         int bestIndex = -1;
-        for (size_t i = 0; i < times.size(); ++i) {
+        for (size_t i = 0; i < frames.size(); ++i) {
+            const qint64 slotFrameIndex = slotFrameIndices[i];
+            if (slotFrameIndex < 0 || slotFrameIndex > targetFrameIndex) {
+                continue;
+            }
             const qint64 t = times[i];
             if (t < lower || t > timeMs) {
                 continue;
@@ -106,7 +128,8 @@ struct PlaybackPipeline::VideoRingBuffer {
             if (frames[i].isNull()) {
                 continue;
             }
-            if (t > bestTime) {
+            if (slotFrameIndex > bestFrameIndex || (slotFrameIndex == bestFrameIndex && t > bestTime)) {
+                bestFrameIndex = slotFrameIndex;
                 bestTime = t;
                 bestIndex = static_cast<int>(i);
             }
@@ -120,7 +143,8 @@ struct PlaybackPipeline::VideoRingBuffer {
     }
 
     mutable std::mutex mutex;
-    qint64 nextWriteIndex = 0;
+    qint64 readCursorFrameIndex = 0;
+    std::vector<qint64> slotFrameIndices;
     std::vector<qint64> times;
     std::vector<QImage> frames;
 };
@@ -455,6 +479,7 @@ void PlaybackPipeline::videoComposeLoop()
             composeFrameDurationUs = std::min(composeFrameDurationUs, worker->frameDurationUs.load());
             const qint64 targetTimeMs = std::max<qint64>(0, audioMasterMs - worker->playbackStartMs);
             worker->consumedTimeMs.store(targetTimeMs);
+            worker->ring->setReadCursorTime(targetTimeMs);
             for (int wait = 0; wait < 8 && running.load(); ++wait) {
                 if (worker->producedTimeMs.load() >= targetTimeMs) {
                     break;
