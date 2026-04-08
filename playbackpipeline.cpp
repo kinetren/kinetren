@@ -139,22 +139,30 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     nextAudioBlock = startTimelineMs / kAudioBlockMs;
     nextVideoFrame = startTimelineMs / kVideoFrameMs;
 
-    if (!audioLoopRunning.exchange(true)) {
-        QThreadPool::globalInstance()->start([this]() {
-            audioMixLoop();
-        });
+    if (audioThread.joinable()) {
+        audioThread.join();
     }
-    if (!videoLoopRunning.exchange(true)) {
-        QThreadPool::globalInstance()->start([this]() {
-            videoComposeLoop();
-        });
+    if (videoThread.joinable()) {
+        videoThread.join();
     }
+    audioThread = std::thread([this]() {
+        audioMixLoop();
+    });
+    videoThread = std::thread([this]() {
+        videoComposeLoop();
+    });
 }
 
 void PlaybackPipeline::stop()
 {
     running.store(false);
     ++generation;
+    if (audioThread.joinable()) {
+        audioThread.join();
+    }
+    if (videoThread.joinable()) {
+        videoThread.join();
+    }
     {
         std::lock_guard<std::mutex> lock(audioMutex);
         for (auto &it : audioWorkers) {
@@ -385,7 +393,6 @@ void PlaybackPipeline::audioMixLoop()
         nextWake += blockDuration;
         std::this_thread::sleep_until(nextWake);
     }
-    audioLoopRunning.store(false);
 }
 
 void PlaybackPipeline::videoComposeLoop()
@@ -440,7 +447,6 @@ void PlaybackPipeline::videoComposeLoop()
         nextWake += frameDuration;
         std::this_thread::sleep_until(nextWake);
     }
-    videoLoopRunning.store(false);
 }
 
 int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
@@ -494,6 +500,7 @@ int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
     const int blockInterleaved = kAudioSamplesPerBlock * kAudioChannels;
     std::deque<int16_t> pending;
     qint64 nextBlock = (worker.clip.startMs + worker.startOffsetMs) / kAudioBlockMs;
+    bool started = false;
 
     const auto popToRing = [&](bool getAll) -> int {
         while (true) {
@@ -513,6 +520,14 @@ int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
             while (static_cast<int>(pending.size()) >= blockInterleaved) {
                 if (worker.stopFlag->load() || worker.generation != generation.load()) {
                     return 0;
+                }
+                while (worker.generation == generation.load() && !worker.stopFlag->load()) {
+                    const qint64 timelineBlock = timelineMs.load() / kAudioBlockMs;
+                    const qint64 maxAhead = static_cast<qint64>(kAudioRingSlots / 2);
+                    if (nextBlock <= timelineBlock + maxAhead) {
+                        break;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(2));
                 }
                 std::vector<int16_t> block(blockInterleaved);
                 for (int i = 0; i < blockInterleaved; ++i) {
@@ -544,10 +559,11 @@ int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
         }
         if (!samples.pts().isNoPts()) {
             const qint64 ptsMs = static_cast<qint64>(samples.pts().seconds() * 1000.0);
-            if (ptsMs < worker.startOffsetMs) {
+            if (!started && ptsMs < worker.startOffsetMs) {
                 continue;
             }
         }
+        started = true;
         resampler.push(samples, ec);
         if (ec) {
             return 1;
@@ -612,6 +628,8 @@ int PlaybackPipeline::decodeVideoWorker(const VideoWorker &worker)
     }
 
     VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
+    qint64 nextFrameIndex = (worker.clip.startMs + worker.startOffsetMs) / kVideoFrameMs;
+    bool started = false;
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
         Packet pkt = input.readPacket(ec);
@@ -637,11 +655,10 @@ int PlaybackPipeline::decodeVideoWorker(const VideoWorker &worker)
         if (!frame.pts().isNoPts()) {
             frameMs = static_cast<qint64>(frame.pts().seconds() * 1000.0);
         }
-        if (frameMs < worker.startOffsetMs) {
+        if (!started && frameMs < worker.startOffsetMs) {
             continue;
         }
-        const qint64 globalMs = worker.clip.startMs + frameMs;
-        const qint64 frameIdx = globalMs / kVideoFrameMs;
+        started = true;
 
         auto rgb = rescaler.rescale(frame);
         QImage img(rgb.width(), rgb.height(), QImage::Format_RGB888);
@@ -653,7 +670,15 @@ int PlaybackPipeline::decodeVideoWorker(const VideoWorker &worker)
         for (int y = 0; y < rgb.height(); ++y) {
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
-        worker.ring->setFrame(frameIdx, img);
+        while (worker.generation == generation.load() && !worker.stopFlag->load()) {
+            const qint64 timelineFrame = timelineMs.load() / kVideoFrameMs;
+            const qint64 maxAhead = static_cast<qint64>(kVideoRingSlots / 2);
+            if (nextFrameIndex <= timelineFrame + maxAhead) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        worker.ring->setFrame(nextFrameIndex++, img);
     }
 
     return 0;

@@ -13,6 +13,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <thread>
 
 class QIODevice;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -80,8 +81,8 @@ private:
     std::unordered_map<std::string, std::shared_ptr<VideoWorker>> videoWorkers;
     qint64 nextVideoFrame = 0;
 
-    std::atomic_bool audioLoopRunning{false};
-    std::atomic_bool videoLoopRunning{false};
+    std::thread audioThread;
+    std::thread videoThread;
 };
 
 #endif // PLAYBACKPIPELINE_H
