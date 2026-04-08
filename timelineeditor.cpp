@@ -83,6 +83,22 @@ std::optional<TimelineEditor::ActiveClip> TimelineEditor::activeVideoAt(qint64 t
     return std::nullopt;
 }
 
+std::vector<TimelineEditor::ActiveClip> TimelineEditor::activeVideoLayersAt(qint64 timeMs) const
+{
+    std::vector<ActiveClip> result;
+    for (const auto &clip : clips) {
+        if (clip.track != TrackType::Video) {
+            continue;
+        }
+        const bool active = timeMs >= clip.startMs && timeMs < (clip.startMs + clip.durationMs);
+        if (!active) {
+            continue;
+        }
+        result.push_back(ActiveClip{clip.sourcePath, clip.startMs, clip.durationMs});
+    }
+    return result;
+}
+
 std::vector<TimelineEditor::ActiveClip> TimelineEditor::activeAudioAt(qint64 timeMs) const
 {
     std::vector<ActiveClip> result;

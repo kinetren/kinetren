@@ -22,6 +22,8 @@ set(PROJECT_SOURCES
         timelineeditor.h
         sourceareawidget.cpp
         sourceareawidget.h
+        playbackpipeline.cpp
+        playbackpipeline.h
         mainwindow.ui
 )
 

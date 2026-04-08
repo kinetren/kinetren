@@ -23,6 +23,7 @@ public:
     void setCursorMs(qint64 valueMs);
     void addMarkerAtCursor();
     std::optional<ActiveClip> activeVideoAt(qint64 timeMs) const;
+    std::vector<ActiveClip> activeVideoLayersAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeAudioAt(qint64 timeMs) const;
 
 signals:
