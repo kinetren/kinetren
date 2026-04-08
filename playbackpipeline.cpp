@@ -37,15 +37,18 @@ constexpr int kAudioChannels = 2;
 constexpr int kAudioBlockMs = 20;
 constexpr int kAudioSamplesPerBlock = (kAudioSampleRate * kAudioBlockMs) / 1000;
 constexpr size_t kAudioRingSlots = 12; // 12 * 20ms = 240ms
+constexpr qint64 kAudioMaxAheadBlocks = static_cast<qint64>(kAudioRingSlots - 2);
 
 constexpr int kVideoFps = 30;
 constexpr int kVideoFrameMs = 1000 / kVideoFps;
 constexpr size_t kVideoRingSlots = 7; // 7 * 33ms ~= 231ms
+constexpr qint64 kVideoMaxAheadFrames = static_cast<qint64>(kVideoRingSlots - 2);
 }
 
 struct PlaybackPipeline::AudioRingBuffer {
     explicit AudioRingBuffer(size_t capacity)
-        : blocks(capacity, std::vector<int16_t>(kAudioSamplesPerBlock * kAudioChannels, 0))
+        : keys(capacity, -1)
+        , blocks(capacity, std::vector<int16_t>(kAudioSamplesPerBlock * kAudioChannels, 0))
     {
     }
 
@@ -53,57 +56,72 @@ struct PlaybackPipeline::AudioRingBuffer {
     {
         const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(blocks.size()));
         std::lock_guard<std::mutex> lock(mutex);
+        keys[slot] = idx;
         blocks[slot] = samples;
     }
 
-    bool getBlock(qint64 idx, std::vector<int16_t> &samples) const
+    bool getBlockExact(qint64 idx, std::vector<int16_t> &samples) const
     {
         const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(blocks.size()));
         std::lock_guard<std::mutex> lock(mutex);
+        if (keys[slot] != idx) {
+            return false;
+        }
         samples = blocks[slot];
         return !samples.empty();
     }
 
     mutable std::mutex mutex;
+    std::vector<qint64> keys;
     std::vector<std::vector<int16_t>> blocks;
 };
 
 struct PlaybackPipeline::VideoRingBuffer {
     explicit VideoRingBuffer(size_t capacity)
-        : keys(capacity, -1)
+        : times(capacity, -1)
         , frames(capacity)
     {
     }
 
-    void setFrame(qint64 idx, const QImage &img)
+    void setFrame(qint64 timeMs, const QImage &img)
     {
-        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(frames.size()));
+        const size_t slot = static_cast<size_t>(nextWriteIndex % static_cast<qint64>(frames.size()));
         std::lock_guard<std::mutex> lock(mutex);
-        keys[slot] = idx;
+        ++nextWriteIndex;
+        times[slot] = timeMs;
         frames[slot] = img;
     }
 
-    bool getFrameAtOrBefore(qint64 idx, qint64 maxBack, qint64 &foundIdx, QImage &img) const
+    bool getFrameAtOrBefore(qint64 timeMs, qint64 maxBackMs, qint64 &foundTimeMs, QImage &img) const
     {
-        const qint64 lower = std::max<qint64>(0, idx - maxBack);
+        const qint64 lower = std::max<qint64>(0, timeMs - maxBackMs);
         std::lock_guard<std::mutex> lock(mutex);
-        for (qint64 probe = idx; probe >= lower; --probe) {
-            const size_t slot = static_cast<size_t>(probe % static_cast<qint64>(frames.size()));
-            if (keys[slot] != probe) {
+        qint64 bestTime = -1;
+        int bestIndex = -1;
+        for (size_t i = 0; i < times.size(); ++i) {
+            const qint64 t = times[i];
+            if (t < lower || t > timeMs) {
                 continue;
             }
-            if (frames[slot].isNull()) {
+            if (frames[i].isNull()) {
                 continue;
             }
-            foundIdx = probe;
-            img = frames[slot];
-            return true;
+            if (t > bestTime) {
+                bestTime = t;
+                bestIndex = static_cast<int>(i);
+            }
         }
-        return false;
+        if (bestIndex < 0) {
+            return false;
+        }
+        foundTimeMs = bestTime;
+        img = frames[static_cast<size_t>(bestIndex)];
+        return true;
     }
 
     mutable std::mutex mutex;
-    std::vector<qint64> keys;
+    qint64 nextWriteIndex = 0;
+    std::vector<qint64> times;
     std::vector<QImage> frames;
 };
 
@@ -112,6 +130,7 @@ struct PlaybackPipeline::AudioWorker {
     Clip clip;
     qint64 startOffsetMs = 0;
     int generation = 0;
+    std::atomic<qint64> producedBlockIndex{-1};
     std::shared_ptr<std::atomic_bool> stopFlag;
     std::shared_ptr<AudioRingBuffer> ring;
 };
@@ -122,7 +141,8 @@ struct PlaybackPipeline::VideoWorker {
     qint64 startOffsetMs = 0;
     qint64 playbackStartMs = 0;
     std::atomic<int> frameDurationUs{33333};
-    std::atomic<qint64> consumedFrameIndex{0};
+    std::atomic<qint64> consumedTimeMs{0};
+    std::atomic<qint64> producedTimeMs{-1};
     int generation = 0;
     std::shared_ptr<std::atomic_bool> stopFlag;
     std::shared_ptr<VideoRingBuffer> ring;
@@ -320,7 +340,7 @@ void PlaybackPipeline::startVideoWorker(const Clip &clip, qint64 timelineNowMs)
     worker->clip = clip;
     worker->startOffsetMs = std::max<qint64>(0, timelineNowMs - clip.startMs);
     worker->playbackStartMs = clip.startMs + worker->startOffsetMs;
-    worker->consumedFrameIndex.store(0);
+    worker->consumedTimeMs.store(0);
     worker->generation = generation.load();
     worker->stopFlag = std::make_shared<std::atomic_bool>(false);
     worker->ring = std::make_shared<VideoRingBuffer>(kVideoRingSlots);
@@ -363,8 +383,14 @@ void PlaybackPipeline::audioMixLoop()
             if (blockMs < worker->clip.startMs || blockMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
             }
+            for (int wait = 0; wait < 6 && running.load(); ++wait) {
+                if (worker->producedBlockIndex.load() >= nextAudioBlock) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
             std::vector<int16_t> block;
-            const bool ready = worker->ring->getBlock(nextAudioBlock, block);
+            const bool ready = worker->ring->getBlockExact(nextAudioBlock, block);
             if (!ready || static_cast<int>(block.size()) < samplesPerBlock) {
                 continue;
             }
@@ -406,7 +432,7 @@ void PlaybackPipeline::audioMixLoop()
 void PlaybackPipeline::videoComposeLoop()
 {
     auto nextWake = std::chrono::steady_clock::now();
-    std::unordered_map<std::string, qint64> lastPresentedIndexByWorker;
+    std::unordered_map<std::string, qint64> lastPresentedTimeByWorker;
     std::unordered_map<std::string, QImage> lastPresentedFrameByWorker;
     while (running.load()) {
         std::vector<std::shared_ptr<VideoWorker>> workers;
@@ -427,36 +453,38 @@ void PlaybackPipeline::videoComposeLoop()
                 continue;
             }
             composeFrameDurationUs = std::min(composeFrameDurationUs, worker->frameDurationUs.load());
-            const qint64 elapsedMs = std::max<qint64>(0, audioMasterMs - worker->playbackStartMs);
-            const qint64 frameDurationUs = std::max(1, worker->frameDurationUs.load());
-            const qint64 targetFrame = (elapsedMs * 1000) / frameDurationUs;
-            worker->consumedFrameIndex.store(targetFrame);
+            const qint64 targetTimeMs = std::max<qint64>(0, audioMasterMs - worker->playbackStartMs);
+            worker->consumedTimeMs.store(targetTimeMs);
+            for (int wait = 0; wait < 8 && running.load(); ++wait) {
+                if (worker->producedTimeMs.load() >= targetTimeMs) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
             QImage frame;
-            qint64 foundIdx = -1;
+            qint64 foundTimeMs = -1;
             const bool ready = worker->ring->getFrameAtOrBefore(
-                targetFrame,
-                static_cast<qint64>(kVideoRingSlots - 1),
-                foundIdx,
+                targetTimeMs,
+                static_cast<qint64>(kVideoRingSlots * kVideoFrameMs),
+                foundTimeMs,
                 frame);
-            const auto lastIdxIt = lastPresentedIndexByWorker.find(worker->key);
-            const qint64 lastPresentedIdx =
-                (lastIdxIt == lastPresentedIndexByWorker.end()) ? -1 : lastIdxIt->second;
+            const qint64 lastPresentedTime =
+                lastPresentedTimeByWorker.count(worker->key) ? lastPresentedTimeByWorker[worker->key] : -1;
 
             if (!ready || frame.isNull()) {
-                auto lastFrameIt = lastPresentedFrameByWorker.find(worker->key);
-                if (lastFrameIt == lastPresentedFrameByWorker.end() || lastFrameIt->second.isNull()) {
+                auto it = lastPresentedFrameByWorker.find(worker->key);
+                if (it == lastPresentedFrameByWorker.end() || it->second.isNull()) {
                     continue;
                 }
-                frame = lastFrameIt->second;
-            } else if (foundIdx < lastPresentedIdx) {
-                // Never go backwards for a source; keep the last presented frame instead.
-                auto lastFrameIt = lastPresentedFrameByWorker.find(worker->key);
-                if (lastFrameIt == lastPresentedFrameByWorker.end() || lastFrameIt->second.isNull()) {
+                frame = it->second;
+            } else if (foundTimeMs < lastPresentedTime) {
+                auto it = lastPresentedFrameByWorker.find(worker->key);
+                if (it == lastPresentedFrameByWorker.end() || it->second.isNull()) {
                     continue;
                 }
-                frame = lastFrameIt->second;
+                frame = it->second;
             } else {
-                lastPresentedIndexByWorker[worker->key] = foundIdx;
+                lastPresentedTimeByWorker[worker->key] = foundTimeMs;
                 lastPresentedFrameByWorker[worker->key] = frame;
             }
 
@@ -482,7 +510,7 @@ void PlaybackPipeline::videoComposeLoop()
     }
 }
 
-int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
+int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 {
     using namespace av;
 
@@ -556,7 +584,7 @@ int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
                 }
                 while (worker.generation == generation.load() && !worker.stopFlag->load()) {
                     const qint64 timelineBlock = consumedAudioBlock.load();
-                    const qint64 maxAhead = static_cast<qint64>(kAudioRingSlots / 2);
+                    const qint64 maxAhead = kAudioMaxAheadBlocks;
                     if (nextBlock <= timelineBlock + maxAhead) {
                         break;
                     }
@@ -567,7 +595,9 @@ int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
                     block[i] = pending.front();
                     pending.pop_front();
                 }
-                worker.ring->setBlock(nextBlock++, block);
+                worker.ring->setBlock(nextBlock, block);
+                worker.producedBlockIndex.store(nextBlock);
+                ++nextBlock;
             }
         }
     };
@@ -678,7 +708,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
     worker.frameDurationUs.store(static_cast<int>(std::llround(1000000.0 / fps)));
 
     VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
-    qint64 nextFrameIndex = 0;
+    qint64 lastPublishedTimeMs = -1;
     bool started = false;
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
@@ -722,15 +752,23 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         for (int y = 0; y < rgb.height(); ++y) {
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
+
+        const qint64 relTimeMs = std::max<qint64>(0, frameMs - worker.startOffsetMs);
+        if (relTimeMs < lastPublishedTimeMs) {
+            // Never publish older timestamps (prevents backward flicker).
+            continue;
+        }
         while (worker.generation == generation.load() && !worker.stopFlag->load()) {
-            const qint64 timelineFrame = worker.consumedFrameIndex.load();
-            const qint64 maxAhead = static_cast<qint64>(kVideoRingSlots / 2);
-            if (nextFrameIndex <= timelineFrame + maxAhead) {
+            const qint64 consumedTimeMs = worker.consumedTimeMs.load();
+            const qint64 maxAheadMs = static_cast<qint64>(kVideoRingSlots * kVideoFrameMs - kVideoFrameMs);
+            if (relTimeMs <= consumedTimeMs + maxAheadMs) {
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
-        worker.ring->setFrame(nextFrameIndex++, img);
+        worker.ring->setFrame(relTimeMs, img);
+        worker.producedTimeMs.store(relTimeMs);
+        lastPublishedTimeMs = relTimeMs;
     }
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
@@ -741,6 +779,14 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         }
         if (!frame || frame.isNull() || !frame.isComplete()) {
             break;
+        }
+
+        qint64 frameMs = 0;
+        if (!frame.pts().isNoPts()) {
+            frameMs = static_cast<qint64>(frame.pts().seconds() * 1000.0);
+        }
+        if (frameMs < worker.startOffsetMs) {
+            continue;
         }
 
         auto rgb = rescaler.rescale(frame);
@@ -754,15 +800,22 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
 
+        const qint64 relTimeMs = std::max<qint64>(0, frameMs - worker.startOffsetMs);
+        if (relTimeMs < lastPublishedTimeMs) {
+            continue;
+        }
+
         while (worker.generation == generation.load() && !worker.stopFlag->load()) {
-            const qint64 timelineFrame = worker.consumedFrameIndex.load();
-            const qint64 maxAhead = static_cast<qint64>(kVideoRingSlots / 2);
-            if (nextFrameIndex <= timelineFrame + maxAhead) {
+            const qint64 consumedTimeMs = worker.consumedTimeMs.load();
+            const qint64 maxAheadMs = static_cast<qint64>(kVideoRingSlots * kVideoFrameMs - kVideoFrameMs);
+            if (relTimeMs <= consumedTimeMs + maxAheadMs) {
                 break;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
-        worker.ring->setFrame(nextFrameIndex++, img);
+        worker.ring->setFrame(relTimeMs, img);
+        worker.producedTimeMs.store(relTimeMs);
+        lastPublishedTimeMs = relTimeMs;
     }
 
     return 0;
