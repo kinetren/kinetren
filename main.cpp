@@ -8,6 +8,6 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
     MainWindow w;
     w.show();
-    QThreadPool::globalInstance()->start(std::bind(&MainWindow::test, &w));
+    QThreadPool::globalInstance()->start([&w]() { w.startPlayback(); });
     return a.exec();
 }

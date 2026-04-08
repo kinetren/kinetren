@@ -16,6 +16,8 @@ set(PROJECT_SOURCES
         main.cpp
         mainwindow.cpp
         mainwindow.h
+        previewer.cpp
+        previewer.h
         mainwindow.ui
 )
 
@@ -38,7 +40,6 @@ else()
     else()
         add_executable(kp-test
             ${PROJECT_SOURCES}
-            previewer.h previewer.cpp
         )
     endif()
 endif()
