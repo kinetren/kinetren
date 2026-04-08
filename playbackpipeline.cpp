@@ -35,11 +35,13 @@ constexpr int kAudioSampleRate = 48000;
 constexpr int kAudioChannels = 2;
 constexpr int kAudioBlockMs = 20;
 constexpr int kAudioSamplesPerBlock = (kAudioSampleRate * kAudioBlockMs) / 1000;
-constexpr size_t kAudioRingSlots = 512;
+constexpr size_t kAudioRingSlots = 2048;
+constexpr int kAudioReplayHistoryBlocks = 50; // 1 second at 20ms blocks
 
 constexpr int kVideoFps = 30;
 constexpr int kVideoFrameMs = 1000 / kVideoFps;
 constexpr size_t kVideoRingSlots = 256;
+constexpr int kVideoReplayHistoryFrames = 30; // ~1 second at 30 fps
 }
 
 struct PlaybackPipeline::AudioRingBuffer {
@@ -105,6 +107,7 @@ struct PlaybackPipeline::VideoRingBuffer {
 };
 
 struct PlaybackPipeline::AudioWorker {
+    std::string key;
     Clip clip;
     qint64 startOffsetMs = 0;
     int generation = 0;
@@ -113,6 +116,7 @@ struct PlaybackPipeline::AudioWorker {
 };
 
 struct PlaybackPipeline::VideoWorker {
+    std::string key;
     Clip clip;
     qint64 startOffsetMs = 0;
     int generation = 0;
@@ -285,13 +289,14 @@ void PlaybackPipeline::reconcileVideoWorkers(const std::vector<Clip> &clips)
 void PlaybackPipeline::startAudioWorker(const Clip &clip, qint64 timelineNowMs)
 {
     auto worker = std::make_shared<AudioWorker>();
+    worker->key = clipKey(clip);
     worker->clip = clip;
     worker->startOffsetMs = std::max<qint64>(0, timelineNowMs - clip.startMs);
     worker->generation = generation.load();
     worker->stopFlag = std::make_shared<std::atomic_bool>(false);
     worker->ring = std::make_shared<AudioRingBuffer>(kAudioRingSlots);
 
-    const auto key = clipKey(clip);
+    const auto key = worker->key;
     {
         std::lock_guard<std::mutex> lock(audioMutex);
         audioWorkers[key] = worker;
@@ -305,13 +310,14 @@ void PlaybackPipeline::startAudioWorker(const Clip &clip, qint64 timelineNowMs)
 void PlaybackPipeline::startVideoWorker(const Clip &clip, qint64 timelineNowMs)
 {
     auto worker = std::make_shared<VideoWorker>();
+    worker->key = clipKey(clip);
     worker->clip = clip;
     worker->startOffsetMs = std::max<qint64>(0, timelineNowMs - clip.startMs);
     worker->generation = generation.load();
     worker->stopFlag = std::make_shared<std::atomic_bool>(false);
     worker->ring = std::make_shared<VideoRingBuffer>(kVideoRingSlots);
 
-    const auto key = clipKey(clip);
+    const auto key = worker->key;
     {
         std::lock_guard<std::mutex> lock(videoMutex);
         videoWorkers[key] = worker;
@@ -327,6 +333,10 @@ void PlaybackPipeline::audioMixLoop()
     const int samplesPerBlock = kAudioSamplesPerBlock * kAudioChannels;
     const auto blockDuration = std::chrono::milliseconds(kAudioBlockMs);
     auto nextWake = std::chrono::steady_clock::now();
+    std::unordered_map<std::string, std::vector<int16_t>> lastGoodBlockByWorker;
+    std::vector<int16_t> lastMixedBlock(samplesPerBlock, 0);
+    std::deque<std::vector<int16_t>> recentMixedBlocks;
+    size_t replayBlockIndex = 0;
 
     while (running.load()) {
         if (!audioDevice) {
@@ -345,10 +355,13 @@ void PlaybackPipeline::audioMixLoop()
 
         std::vector<int32_t> mix(samplesPerBlock, 0);
         const qint64 blockMs = nextAudioBlock * kAudioBlockMs;
+        bool hadAnyActive = false;
+        bool hadAnyData = false;
         for (const auto &worker : workers) {
             if (blockMs < worker->clip.startMs || blockMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
             }
+            hadAnyActive = true;
             std::vector<int16_t> block;
             bool ready = false;
             for (int retry = 0; retry < 8; ++retry) {
@@ -358,8 +371,18 @@ void PlaybackPipeline::audioMixLoop()
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
-            if (!ready || static_cast<int>(block.size()) < samplesPerBlock) {
-                continue;
+            if (ready && static_cast<int>(block.size()) >= samplesPerBlock) {
+                lastGoodBlockByWorker[worker->key] = block;
+                hadAnyData = true;
+            } else {
+                auto it = lastGoodBlockByWorker.find(worker->key);
+                if (it != lastGoodBlockByWorker.end() &&
+                    static_cast<int>(it->second.size()) >= samplesPerBlock) {
+                    block = it->second;
+                    hadAnyData = true;
+                } else {
+                    continue;
+                }
             }
             for (int i = 0; i < samplesPerBlock; ++i) {
                 mix[i] += block[i];
@@ -367,11 +390,26 @@ void PlaybackPipeline::audioMixLoop()
         }
 
         std::vector<int16_t> out(samplesPerBlock, 0);
-        for (int i = 0; i < samplesPerBlock; ++i) {
-            out[i] = static_cast<int16_t>(std::clamp<int32_t>(
-                mix[i],
-                std::numeric_limits<int16_t>::min(),
-                std::numeric_limits<int16_t>::max()));
+        if (hadAnyActive && !hadAnyData) {
+            if (!recentMixedBlocks.empty()) {
+                out = recentMixedBlocks[replayBlockIndex % recentMixedBlocks.size()];
+                ++replayBlockIndex;
+            } else {
+                out = lastMixedBlock;
+            }
+        } else {
+            for (int i = 0; i < samplesPerBlock; ++i) {
+                out[i] = static_cast<int16_t>(std::clamp<int32_t>(
+                    mix[i],
+                    std::numeric_limits<int16_t>::min(),
+                    std::numeric_limits<int16_t>::max()));
+            }
+            lastMixedBlock = out;
+            recentMixedBlocks.push_back(out);
+            if (static_cast<int>(recentMixedBlocks.size()) > kAudioReplayHistoryBlocks) {
+                recentMixedBlocks.pop_front();
+            }
+            replayBlockIndex = 0;
         }
 
         const char *pcm = reinterpret_cast<const char *>(out.data());
@@ -399,6 +437,10 @@ void PlaybackPipeline::videoComposeLoop()
 {
     const auto frameDuration = std::chrono::milliseconds(kVideoFrameMs);
     auto nextWake = std::chrono::steady_clock::now();
+    std::unordered_map<std::string, QImage> lastGoodFrameByWorker;
+    QImage lastComposedFrame;
+    std::deque<QImage> recentComposedFrames;
+    size_t replayFrameIndex = 0;
     while (running.load()) {
         std::vector<std::shared_ptr<VideoWorker>> workers;
         {
@@ -412,10 +454,13 @@ void PlaybackPipeline::videoComposeLoop()
         const qint64 frameMs = nextVideoFrame * kVideoFrameMs;
         QImage composed;
         bool hasAny = false;
+        bool hadAnyActive = false;
+        bool usedReplayFallback = false;
         for (const auto &worker : workers) {
             if (frameMs < worker->clip.startMs || frameMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
             }
+            hadAnyActive = true;
             QImage frame;
             bool ready = false;
             for (int retry = 0; retry < 5; ++retry) {
@@ -425,8 +470,15 @@ void PlaybackPipeline::videoComposeLoop()
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
-            if (!ready || frame.isNull()) {
-                continue;
+            if (ready && !frame.isNull()) {
+                lastGoodFrameByWorker[worker->key] = frame;
+            } else {
+                auto it = lastGoodFrameByWorker.find(worker->key);
+                if (it != lastGoodFrameByWorker.end() && !it->second.isNull()) {
+                    frame = it->second;
+                } else {
+                    continue;
+                }
             }
 
             if (!hasAny) {
@@ -439,7 +491,26 @@ void PlaybackPipeline::videoComposeLoop()
             p.drawImage(composed.rect(), frame);
         }
 
+        if (!hasAny && hadAnyActive && !lastComposedFrame.isNull()) {
+            if (!recentComposedFrames.empty()) {
+                composed = recentComposedFrames[replayFrameIndex % recentComposedFrames.size()];
+                ++replayFrameIndex;
+            } else {
+                composed = lastComposedFrame;
+            }
+            hasAny = true;
+            usedReplayFallback = true;
+        }
+
         if (hasAny && onVideoFrameReady) {
+            lastComposedFrame = composed;
+            if (!usedReplayFallback) {
+                recentComposedFrames.push_back(composed);
+                if (static_cast<int>(recentComposedFrames.size()) > kVideoReplayHistoryFrames) {
+                    recentComposedFrames.pop_front();
+                }
+                replayFrameIndex = 0;
+            }
             onVideoFrameReady(std::move(composed));
         }
 
@@ -541,11 +612,14 @@ int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
         Packet pkt = input.readPacket(ec);
-        if (ec) {
-            return 1;
-        }
         if (!pkt) {
+            // End of stream or temporary no packet; stop decode loop and flush decoder.
             break;
+        }
+        if (ec) {
+            // Non-fatal packet read errors should not kill the track worker.
+            ec.clear();
+            continue;
         }
         if (pkt.streamIndex() != audioStream) {
             continue;
@@ -573,9 +647,13 @@ int PlaybackPipeline::decodeAudioWorker(const AudioWorker &worker)
         }
     }
 
-    while (true) {
+    while (!worker.stopFlag->load() && worker.generation == generation.load()) {
         AudioSamples samples = dec.decode(Packet(), ec);
-        if (ec || !samples) {
+        if (ec) {
+            ec.clear();
+            break;
+        }
+        if (!samples) {
             break;
         }
         resampler.push(samples, ec);
@@ -633,11 +711,13 @@ int PlaybackPipeline::decodeVideoWorker(const VideoWorker &worker)
 
     while (!worker.stopFlag->load() && worker.generation == generation.load()) {
         Packet pkt = input.readPacket(ec);
-        if (ec) {
-            return 1;
-        }
         if (!pkt) {
+            // End of stream or temporary no packet; stop decode loop and flush decoder.
             break;
+        }
+        if (ec) {
+            ec.clear();
+            continue;
         }
         if (pkt.streamIndex() != videoStream) {
             continue;
@@ -670,6 +750,38 @@ int PlaybackPipeline::decodeVideoWorker(const VideoWorker &worker)
         for (int y = 0; y < rgb.height(); ++y) {
             std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
         }
+        while (worker.generation == generation.load() && !worker.stopFlag->load()) {
+            const qint64 timelineFrame = timelineMs.load() / kVideoFrameMs;
+            const qint64 maxAhead = static_cast<qint64>(kVideoRingSlots / 2);
+            if (nextFrameIndex <= timelineFrame + maxAhead) {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        worker.ring->setFrame(nextFrameIndex++, img);
+    }
+
+    while (!worker.stopFlag->load() && worker.generation == generation.load()) {
+        VideoFrame frame = dec.decode(Packet(), ec);
+        if (ec) {
+            ec.clear();
+            break;
+        }
+        if (!frame || frame.isNull() || !frame.isComplete()) {
+            break;
+        }
+
+        auto rgb = rescaler.rescale(frame);
+        QImage img(rgb.width(), rgb.height(), QImage::Format_RGB888);
+        const int dstStride = img.bytesPerLine();
+        const int srcStride = rgb.raw()->linesize[0];
+        const int copyStride = std::min(dstStride, srcStride);
+        auto *src = rgb.data();
+        auto *dst = img.bits();
+        for (int y = 0; y < rgb.height(); ++y) {
+            std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
+        }
+
         while (worker.generation == generation.load() && !worker.stopFlag->load()) {
             const qint64 timelineFrame = timelineMs.load() / kVideoFrameMs;
             const qint64 maxAhead = static_cast<qint64>(kVideoRingSlots / 2);

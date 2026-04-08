@@ -12,6 +12,10 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <system_error>
+
+#include <avcpp/avutils.h>
+#include <avcpp/formatcontext.h>
 
 namespace {
 constexpr qint64 kSnapThresholdMs = 250;
@@ -334,7 +338,30 @@ qint64 TimelineEditor::snapTimeMs(qint64 candidateMs) const
 
 qint64 TimelineEditor::defaultDurationForPath(const QString &path) const
 {
-    return isImagePath(path) ? 3000 : 5000;
+    if (isImagePath(path)) {
+        return 3000;
+    }
+
+    using namespace av;
+    std::error_code ec;
+    FormatContext inputContext;
+    inputContext.openInput(path.toStdString(), ec);
+    if (ec) {
+        return 5000;
+    }
+    inputContext.findStreamInfo(ec);
+    if (ec) {
+        return 5000;
+    }
+
+    const auto duration = inputContext.duration();
+    if (!duration.isNoPts()) {
+        const qint64 durationMs = static_cast<qint64>(duration.seconds() * 1000.0);
+        if (durationMs > 0) {
+            return durationMs;
+        }
+    }
+    return 5000;
 }
 
 bool TimelineEditor::isImagePath(const QString &path) const
