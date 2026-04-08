@@ -2,6 +2,7 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <memory>
 
@@ -29,14 +30,19 @@ private:
     void onTimelineTick();
     void syncTimelinePlayback();
     void stopMediaPlayback();
+    void refreshTimelineScroll();
 
     class SourceAreaWidget *sourceArea = nullptr;
     class TimelineEditor *timelineEditor = nullptr;
     class QPushButton *timelinePlayPauseButton = nullptr;
     class QLabel *timelineOverlayLabel = nullptr;
+    class QScrollBar *timelineScrollBar = nullptr;
+    class QCheckBox *timelineLoopCheckBox = nullptr;
     QTimer timelineTimer;
     bool timelinePlaying = false;
     qint64 timelineReturnCursorMs = 0;
+    qint64 timelinePlayStartMs = 0;
+    QElapsedTimer timelinePlaybackClock;
     std::unique_ptr<PlaybackPipeline> playbackPipeline;
 
     Ui::MainWindow *ui;

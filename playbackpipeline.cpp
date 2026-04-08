@@ -248,9 +248,19 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
     reconcileVideoWorkers(videoClips);
 }
 
+qint64 PlaybackPipeline::playbackPositionMs() const
+{
+    if (!running.load()) {
+        return timelineMs.load();
+    }
+    return consumedAudioBlock.load() * kAudioBlockMs;
+}
+
 std::string PlaybackPipeline::clipKey(const Clip &clip)
 {
-    return (clip.sourcePath + "::" + QString::number(clip.startMs)).toStdString();
+    return (clip.sourcePath + "::" + QString::number(clip.startMs) + "::" +
+            QString::number(clip.durationMs) + "::" + QString::number(clip.sourceInMs))
+        .toStdString();
 }
 
 void PlaybackPipeline::ensureAudioOutput()
@@ -345,7 +355,7 @@ void PlaybackPipeline::startAudioWorker(const Clip &clip, qint64 timelineNowMs)
     auto worker = std::make_shared<AudioWorker>();
     worker->key = clipKey(clip);
     worker->clip = clip;
-    worker->startOffsetMs = std::max<qint64>(0, timelineNowMs - clip.startMs);
+    worker->startOffsetMs = clip.sourceInMs + std::max<qint64>(0, timelineNowMs - clip.startMs);
     worker->generation = generation.load();
     worker->stopFlag = std::make_shared<std::atomic_bool>(false);
     worker->ring = std::make_shared<AudioRingBuffer>(kAudioRingSlots);
@@ -366,7 +376,7 @@ void PlaybackPipeline::startVideoWorker(const Clip &clip, qint64 timelineNowMs)
     auto worker = std::make_shared<VideoWorker>();
     worker->key = clipKey(clip);
     worker->clip = clip;
-    worker->startOffsetMs = std::max<qint64>(0, timelineNowMs - clip.startMs);
+    worker->startOffsetMs = clip.sourceInMs + std::max<qint64>(0, timelineNowMs - clip.startMs);
     worker->playbackStartMs = clip.startMs + worker->startOffsetMs;
     worker->consumedTimeMs.store(0);
     worker->generation = generation.load();

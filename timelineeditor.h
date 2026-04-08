@@ -2,6 +2,9 @@
 #define TIMELINEEDITOR_H
 
 #include <QWidget>
+#include <QRect>
+#include <QColor>
+#include <QPoint>
 
 #include <optional>
 #include <vector>
@@ -15,6 +18,7 @@ public:
         QString sourcePath;
         qint64 startMs = 0;
         qint64 durationMs = 0;
+        qint64 sourceInMs = 0;
     };
 
     explicit TimelineEditor(QWidget *parent = nullptr);
@@ -22,6 +26,24 @@ public:
     qint64 cursorMs() const;
     void setCursorMs(qint64 valueMs);
     void addMarkerAtCursor();
+    void addVideoTrack();
+    void addAudioTrack();
+    bool splitSelectedClipAtCursor();
+    bool trimSelectedClipStartToCursor();
+    bool trimSelectedClipEndToCursor();
+    bool moveSelectedClipToAdjacentTrack(int direction);
+    void setLoopEnabled(bool enabled);
+    bool loopEnabled() const;
+    bool hasSelectionRegion() const;
+    qint64 selectionRegionStartMs() const;
+    qint64 selectionRegionEndMs() const;
+    void setSelectionRegionFromCursor(bool setStart);
+    void clearSelectionRegion();
+    qint64 maxTimelineMs() const;
+    qint64 visibleDurationMs() const;
+    qint64 viewStartMs() const;
+    qint64 maxViewStartMs() const;
+    void setViewStartMs(qint64 valueMs);
     std::optional<ActiveClip> activeVideoAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeVideoLayersAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeAudioAt(qint64 timeMs) const;
@@ -29,10 +51,16 @@ public:
 signals:
     void cursorChanged(qint64 cursorMs);
     void overlayInfoChanged(const QString &text);
+    void timelineRangeChanged(qint64 maxTimelineMs, qint64 visibleDurationMs);
+    void viewStartChanged(qint64 viewStartMs, qint64 maxViewStartMs);
+    void loopEnabledChanged(bool enabled);
+    void selectionRegionChanged(bool hasRegion, qint64 startMs, qint64 endMs);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -46,34 +74,80 @@ private:
     struct ClipEvent {
         int id = 0;
         int linkedGroupId = -1;
-        TrackType track = TrackType::Video;
+        TrackType mediaType = TrackType::Video;
+        int trackIndex = 0;
         qint64 startMs = 0;
         qint64 durationMs = 0;
+        qint64 sourceInMs = 0;
+        qint64 sourceDurationMs = 0;
         QString sourcePath;
         QColor color;
     };
 
+    struct TrackLane {
+        TrackType type = TrackType::Video;
+        QString name;
+    };
+
+    enum class DragMode {
+        None,
+        MoveClip,
+        TrimStart,
+        TrimEnd,
+        RegionSelect
+    };
+
+    std::vector<TrackLane> tracks;
     std::vector<ClipEvent> clips;
     std::vector<qint64> markersMs;
     int nextClipId = 1;
     int nextLinkedGroupId = 1;
     qint64 cursorPositionMs = 0;
     int selectedClipId = -1;
+    qint64 timelineViewStartMs = 0;
+    bool loopRegionEnabled = false;
+    bool hasRegionSelection = false;
+    qint64 regionStartMs = 0;
+    qint64 regionEndMs = 0;
+    DragMode dragMode = DragMode::None;
+    int dragClipId = -1;
+    qint64 dragAnchorMs = 0;
+    qint64 dragOriginalStartMs = 0;
+    int dragOriginalTrackIndex = -1;
+    qint64 trimOriginalDurationMs = 0;
+    qint64 trimOriginalSourceInMs = 0;
+    qint64 regionAnchorMs = 0;
     QString lastOverlayInfo;
 
     int timelineLeft() const;
     int timelineRight() const;
     int rulerTop() const;
     int rulerHeight() const;
-    int videoTrackTop() const;
-    int audioTrackTop() const;
     int trackHeight() const;
+    int trackGap() const;
+    int headerWidth() const;
+    int trackTop(int trackIndex) const;
+    int contentBottom() const;
     int bottomPadding() const;
     double pixelsPerSecond() const;
 
     qint64 xToTimeMs(int x) const;
     int timeToX(qint64 timeMs) const;
-    int trackAtY(int y) const;
+    int trackIndexAtY(int y) const;
+    int maxTrackOfType(TrackType type) const;
+    bool isTrackIndexValid(int trackIndex) const;
+    QRect clipRect(const ClipEvent &clip) const;
+    ClipEvent *findClipById(int id);
+    const ClipEvent *findClipById(int id) const;
+    int clipIdAt(const QPoint &pos) const;
+    bool isNearClipStartEdge(const ClipEvent &clip, int x) const;
+    bool isNearClipEndEdge(const ClipEvent &clip, int x) const;
+    qint64 contentVisibleMs() const;
+    qint64 recomputeMaxTimelineMs() const;
+    void setRegionBounds(qint64 startMs, qint64 endMs);
+    void emitRegionChanged();
+    void ensureCursorVisible();
+    void refreshTimelineRangeSignals();
     qint64 snapTimeMs(qint64 candidateMs) const;
     qint64 defaultDurationForPath(const QString &path) const;
     bool isImagePath(const QString &path) const;
@@ -81,7 +155,7 @@ private:
     bool hasAudioForPath(const QString &path) const;
     QColor colorFromPath(const QString &path) const;
 
-    void addClipFromDrop(const QString &path, qint64 startMs);
+    void addClipFromDrop(const QString &path, qint64 startMs, int preferredTrackIndex);
     void emitOverlayInfo();
 };
 

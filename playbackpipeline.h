@@ -29,6 +29,7 @@ public:
         QString sourcePath;
         qint64 startMs = 0;
         qint64 durationMs = 0;
+        qint64 sourceInMs = 0;
     };
 
     explicit PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameReady);
@@ -37,6 +38,7 @@ public:
     void start(qint64 timelineMs);
     void stop();
     void update(qint64 timelineMs, const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);
+    qint64 playbackPositionMs() const;
 
 private:
     struct AudioRingBuffer;
