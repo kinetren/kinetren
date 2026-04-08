@@ -389,7 +389,8 @@ void MainWindow::onTimelineTick()
             playbackMs = timelineEditor->selectionRegionEndMs();
         }
     }
-    timelineEditor->setCursorMs(playbackMs, true);
+    // Keep playhead moving but let users freely navigate the timeline view while playing.
+    timelineEditor->setCursorMs(playbackMs, false);
     if (timelineGlobalTimeLabel) {
         timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(playbackMs));
     }

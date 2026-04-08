@@ -37,6 +37,7 @@ constexpr qint64 kEdgeScrollStepMs = 80;
 constexpr int kPreviewFps = 30;
 constexpr int kRulerTargetTickPx = 130;
 constexpr int kCursorMagnetPx = 10;
+constexpr int kRegionBoundaryHandlePx = 8;
 
 QPoint eventPos(const QMouseEvent *event)
 {
@@ -678,10 +679,20 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
                 }
             }
         }
-        p.setPen(QColor(240, 240, 240));
-        const QString fileName = QFileInfo(clip.sourcePath).fileName();
-        const QString shownName = QFontMetrics(p.font()).elidedText(fileName, Qt::ElideMiddle, r.width() - 10);
-        p.drawText(r.adjusted(5, 4, -5, -4), Qt::AlignTop | Qt::AlignLeft, shownName);
+        if (shouldDrawClipLabel(clip)) {
+            const QString fileName = QFileInfo(clip.sourcePath).fileName();
+            const QFontMetrics fm(p.font());
+            const QString shownName = fm.elidedText(fileName, Qt::ElideMiddle, r.width() - 14);
+            const int textWidth = fm.horizontalAdvance(shownName);
+            const int textHeight = fm.height();
+            const QRect textRect(r.left() + 5, r.top() + 4, textWidth, textHeight);
+            const QRect bgRect = textRect.adjusted(-3, -2, 4, 2);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 150));
+            p.drawRoundedRect(bgRect, 3, 3);
+            p.setPen(QColor(240, 240, 240));
+            p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, shownName);
+        }
         if (clip.id == selectedClipId) {
             p.setPen(QColor(255, 255, 255));
             p.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
@@ -710,6 +721,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
     const QPoint pos = eventPos(event);
     setFocus(Qt::MouseFocusReason);
 
+    const bool inTimelineX = pos.x() >= timelineLeft() && pos.x() <= timelineRight();
     selectedClipId = clipIdAt(pos);
     const qint64 pointerMs = xToTimeMs(pos.x());
     setCursorMs(snapTimeMs(pointerMs));
@@ -746,9 +758,15 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
                 dragMode = DragMode::MoveClip;
             }
         }
-    } else if (pos.y() >= rulerTop() && pos.y() <= (rulerTop() + rulerHeight())) {
-        dragMode = DragMode::ScrubCursor;
-    } else if (pos.y() >= rulerTop() && pos.y() <= contentBottom()) {
+    } else if (inTimelineX && pos.y() >= rulerTop() && pos.y() <= (rulerTop() + rulerHeight())) {
+        if (hasRegionSelection && isNearRegionStartBoundary(pos.x())) {
+            dragMode = DragMode::MoveRegionStart;
+        } else if (hasRegionSelection && isNearRegionEndBoundary(pos.x())) {
+            dragMode = DragMode::MoveRegionEnd;
+        } else {
+            dragMode = DragMode::ScrubCursor;
+        }
+    } else if (inTimelineX && pos.y() >= (rulerTop() + rulerHeight()) && pos.y() <= (height() - bottomPadding())) {
         dragMode = DragMode::RegionSelect;
         regionAnchorMs = snapTimeMs(pointerMs);
         setRegionBounds(regionAnchorMs, regionAnchorMs);
@@ -803,6 +821,11 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
             } else {
                 setCursor(Qt::OpenHandCursor);
             }
+        } else if (pos.x() >= timelineLeft() && pos.x() <= timelineRight() &&
+                   pos.y() >= rulerTop() && pos.y() <= (rulerTop() + rulerHeight()) &&
+                   hasRegionSelection &&
+                   (isNearRegionStartBoundary(pos.x()) || isNearRegionEndBoundary(pos.x()))) {
+            setCursor(Qt::SizeHorCursor);
         } else {
             unsetCursor();
         }
@@ -893,6 +916,14 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
             }
         }
         refreshTimelineRangeSignals();
+    } else if (dragMode == DragMode::MoveRegionStart) {
+        if (hasRegionSelection) {
+            setRegionBounds(pointerMs, regionEndMs);
+        }
+    } else if (dragMode == DragMode::MoveRegionEnd) {
+        if (hasRegionSelection) {
+            setRegionBounds(regionStartMs, pointerMs);
+        }
     } else if (dragMode == DragMode::RegionSelect) {
         setRegionBounds(regionAnchorMs, pointerMs);
     }
@@ -1213,6 +1244,52 @@ bool TimelineEditor::isNearClipEndEdge(const ClipEvent &clip, int x) const
 {
     const QRect r = clipRect(clip);
     return std::abs(x - r.right()) <= kTrimHandlePx;
+}
+
+bool TimelineEditor::hasMatchingLinkedVideo(const ClipEvent &clip) const
+{
+    if (clip.linkedGroupId < 0 || clip.mediaType != TrackType::Audio) {
+        return false;
+    }
+    for (const auto &candidate : clips) {
+        if (candidate.id == clip.id || candidate.linkedGroupId != clip.linkedGroupId) {
+            continue;
+        }
+        if (candidate.mediaType != TrackType::Video) {
+            continue;
+        }
+        if (candidate.sourcePath != clip.sourcePath) {
+            continue;
+        }
+        if (candidate.startMs == clip.startMs &&
+            candidate.durationMs == clip.durationMs &&
+            candidate.sourceInMs == clip.sourceInMs) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TimelineEditor::shouldDrawClipLabel(const ClipEvent &clip) const
+{
+    // Avoid duplicated names for normal magnetized A/V pairs.
+    return !hasMatchingLinkedVideo(clip);
+}
+
+bool TimelineEditor::isNearRegionStartBoundary(int x) const
+{
+    if (!hasRegionSelection || regionEndMs <= regionStartMs) {
+        return false;
+    }
+    return std::abs(x - timeToX(regionStartMs)) <= kRegionBoundaryHandlePx;
+}
+
+bool TimelineEditor::isNearRegionEndBoundary(int x) const
+{
+    if (!hasRegionSelection || regionEndMs <= regionStartMs) {
+        return false;
+    }
+    return std::abs(x - timeToX(regionEndMs)) <= kRegionBoundaryHandlePx;
 }
 
 qint64 TimelineEditor::contentVisibleMs() const

@@ -109,7 +109,9 @@ private:
         MoveClip,
         TrimStart,
         TrimEnd,
-        RegionSelect
+        RegionSelect,
+        MoveRegionStart,
+        MoveRegionEnd
     };
 
     std::vector<TrackLane> tracks;
@@ -166,6 +168,10 @@ private:
     int clipIdAt(const QPoint &pos) const;
     bool isNearClipStartEdge(const ClipEvent &clip, int x) const;
     bool isNearClipEndEdge(const ClipEvent &clip, int x) const;
+    bool hasMatchingLinkedVideo(const ClipEvent &clip) const;
+    bool shouldDrawClipLabel(const ClipEvent &clip) const;
+    bool isNearRegionStartBoundary(int x) const;
+    bool isNearRegionEndBoundary(int x) const;
     qint64 contentVisibleMs() const;
     qint64 recomputeMaxTimelineMs() const;
     void setRegionBounds(qint64 startMs, qint64 endMs);
