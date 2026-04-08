@@ -170,8 +170,8 @@ bool TimelineEditor::trimSelectedClipStartToCursor()
     }
     qint64 newStart = std::clamp(cursorPositionMs, clip->startMs, clip->startMs + clip->durationMs - kMinClipDurationMs);
     const qint64 maxSourceIn = std::max<qint64>(0, clip->sourceDurationMs - kMinClipDurationMs);
-    const qint64 delta = newStart - clip->startMs;
-    const qint64 newSourceIn = std::clamp(clip->sourceInMs + delta, 0LL, maxSourceIn);
+    const qint64 sourceDelta = newStart - clip->startMs;
+    const qint64 newSourceIn = std::clamp(clip->sourceInMs + sourceDelta, 0LL, maxSourceIn);
     newStart = clip->startMs + (newSourceIn - clip->sourceInMs);
     if (newStart <= clip->startMs) {
         return false;

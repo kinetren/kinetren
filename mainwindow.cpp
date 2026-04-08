@@ -6,13 +6,17 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QGuiApplication>
 #include <QMetaObject>
 #include <QPushButton>
 #include <QShortcut>
+#include <QScreen>
 #include <QScrollBar>
 #include <QStyle>
 #include <QToolButton>
 #include <QVBoxLayout>
+
+#include <QtGlobal>
 
 #include <algorithm>
 #include <climits>
@@ -70,9 +74,18 @@ void MainWindow::setupTimelineEditorUi()
 
     auto *controlsLayout = new QHBoxLayout();
     ui->widget_2->setStyleSheet(
-        "QToolButton { background:#2b2b2b; border:1px solid #3d3d3d; border-radius:4px; }"
-        "QToolButton:hover { background:#3a3a3a; }"
-        "QToolButton:checked { background:#2f4f6f; border-color:#6a8db3; }");
+        "QWidget { background-color:#1b1d20; color:#cfd6df; }"
+        "QLabel { color:#cfd6df; background-color:transparent; }"
+        "QToolButton, QPushButton { background-color:#262a2f; color:#cfd6df; border:1px solid #343a42; border-radius:4px; padding:2px; }"
+        "QToolButton:hover, QPushButton:hover { background-color:#313740; border-color:#4b5563; }"
+        "QToolButton:pressed, QPushButton:pressed { background-color:#3a4350; }"
+        "QToolButton:checked, QPushButton:checked { background-color:#27435e; border-color:#5f89ad; }"
+        "QScrollBar:horizontal { background-color:#17191c; height:14px; margin:0; border:1px solid #2a2f35; }"
+        "QScrollBar::handle:horizontal { background-color:#3a4350; min-width:28px; border-radius:4px; }"
+        "QScrollBar::handle:horizontal:hover { background-color:#4a5666; }"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; background:transparent; }"
+        "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background-color:#1f2328; }"
+        "QToolTip { background-color:#22262b; color:#d7dee8; border:1px solid #3b4350; }");
     timelinePauseButton = new QToolButton(ui->widget_2);
     auto *markerButton = new QToolButton(ui->widget_2);
     auto *addVideoTrackButton = new QToolButton(ui->widget_2);
@@ -121,10 +134,16 @@ void MainWindow::setupTimelineEditorUi()
     timelineLoopButton->setToolTip("Loop region");
     timelineLoopButton->setCheckable(true);
 
-    const auto configureToolButton = [](QToolButton *b) {
-        b->setIconSize(QSize(18, 18));
+    const QScreen *screenRef = QGuiApplication::primaryScreen();
+    const qreal dpiScale = screenRef ? std::clamp(screenRef->logicalDotsPerInch() / 96.0, 1.0, 2.4) : 1.0;
+    const int buttonW = qRound(30.0 * dpiScale);
+    const int buttonH = qRound(28.0 * dpiScale);
+    const int iconPx = qRound(18.0 * dpiScale);
+
+    const auto configureToolButton = [iconPx, buttonW, buttonH](QToolButton *b) {
+        b->setIconSize(QSize(iconPx, iconPx));
         b->setAutoRaise(false);
-        b->setFixedSize(30, 28);
+        b->setFixedSize(buttonW, buttonH);
     };
     configureToolButton(timelinePauseButton);
     configureToolButton(markerButton);
