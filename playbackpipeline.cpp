@@ -70,7 +70,8 @@ struct PlaybackPipeline::AudioRingBuffer {
 
 struct PlaybackPipeline::VideoRingBuffer {
     explicit VideoRingBuffer(size_t capacity)
-        : frames(capacity)
+        : keys(capacity, -1)
+        , frames(capacity)
     {
     }
 
@@ -78,18 +79,31 @@ struct PlaybackPipeline::VideoRingBuffer {
     {
         const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(frames.size()));
         std::lock_guard<std::mutex> lock(mutex);
+        keys[slot] = idx;
         frames[slot] = img;
     }
 
-    bool getFrame(qint64 idx, QImage &img) const
+    bool getFrameAtOrBefore(qint64 idx, qint64 maxBack, qint64 &foundIdx, QImage &img) const
     {
-        const size_t slot = static_cast<size_t>(idx % static_cast<qint64>(frames.size()));
+        const qint64 lower = std::max<qint64>(0, idx - maxBack);
         std::lock_guard<std::mutex> lock(mutex);
-        img = frames[slot];
-        return !img.isNull();
+        for (qint64 probe = idx; probe >= lower; --probe) {
+            const size_t slot = static_cast<size_t>(probe % static_cast<qint64>(frames.size()));
+            if (keys[slot] != probe) {
+                continue;
+            }
+            if (frames[slot].isNull()) {
+                continue;
+            }
+            foundIdx = probe;
+            img = frames[slot];
+            return true;
+        }
+        return false;
     }
 
     mutable std::mutex mutex;
+    std::vector<qint64> keys;
     std::vector<QImage> frames;
 };
 
@@ -392,6 +406,8 @@ void PlaybackPipeline::audioMixLoop()
 void PlaybackPipeline::videoComposeLoop()
 {
     auto nextWake = std::chrono::steady_clock::now();
+    std::unordered_map<std::string, qint64> lastPresentedIndexByWorker;
+    std::unordered_map<std::string, QImage> lastPresentedFrameByWorker;
     while (running.load()) {
         std::vector<std::shared_ptr<VideoWorker>> workers;
         {
@@ -416,9 +432,32 @@ void PlaybackPipeline::videoComposeLoop()
             const qint64 targetFrame = (elapsedMs * 1000) / frameDurationUs;
             worker->consumedFrameIndex.store(targetFrame);
             QImage frame;
-            const bool ready = worker->ring->getFrame(targetFrame, frame);
+            qint64 foundIdx = -1;
+            const bool ready = worker->ring->getFrameAtOrBefore(
+                targetFrame,
+                static_cast<qint64>(kVideoRingSlots - 1),
+                foundIdx,
+                frame);
+            const auto lastIdxIt = lastPresentedIndexByWorker.find(worker->key);
+            const qint64 lastPresentedIdx =
+                (lastIdxIt == lastPresentedIndexByWorker.end()) ? -1 : lastIdxIt->second;
+
             if (!ready || frame.isNull()) {
-                continue;
+                auto lastFrameIt = lastPresentedFrameByWorker.find(worker->key);
+                if (lastFrameIt == lastPresentedFrameByWorker.end() || lastFrameIt->second.isNull()) {
+                    continue;
+                }
+                frame = lastFrameIt->second;
+            } else if (foundIdx < lastPresentedIdx) {
+                // Never go backwards for a source; keep the last presented frame instead.
+                auto lastFrameIt = lastPresentedFrameByWorker.find(worker->key);
+                if (lastFrameIt == lastPresentedFrameByWorker.end() || lastFrameIt->second.isNull()) {
+                    continue;
+                }
+                frame = lastFrameIt->second;
+            } else {
+                lastPresentedIndexByWorker[worker->key] = foundIdx;
+                lastPresentedFrameByWorker[worker->key] = frame;
             }
 
             if (!hasAny) {
