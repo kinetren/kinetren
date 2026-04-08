@@ -37,10 +37,12 @@ private:
     class TimelineEditor *timelineEditor = nullptr;
     class QToolButton *timelinePauseButton = nullptr;
     class QLabel *timelineOverlayLabel = nullptr;
+    class QLabel *timelineGlobalTimeLabel = nullptr;
     class QScrollBar *timelineScrollBar = nullptr;
     class QToolButton *timelineLoopButton = nullptr;
     QTimer timelineTimer;
     bool timelinePlaying = false;
+    bool stoppedAtRegionEnd = false;
     qint64 timelinePlayStartMs = 0;
     QElapsedTimer timelinePlaybackClock;
     std::unique_ptr<PlaybackPipeline> playbackPipeline;

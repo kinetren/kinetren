@@ -52,6 +52,7 @@ public:
     qint64 maxViewStartMs() const;
     void setViewStartMs(qint64 valueMs);
     void setZoomFactor(double value);
+    void setZoomFactor(double value, qint64 anchorTimeMs);
     double zoomFactor() const;
     std::optional<ActiveClip> activeVideoAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeVideoLayersAt(qint64 timeMs) const;
@@ -171,6 +172,7 @@ private:
     void refreshTimelineRangeSignals();
     qint64 snapTimeMs(qint64 candidateMs) const;
     qint64 adjustedDragPointerMs(const QPoint &pos, bool *scrolled = nullptr);
+    qint64 timelineTickStepMs() const;
     qint64 defaultDurationForPath(const QString &path) const;
     bool isImagePath(const QString &path) const;
     bool hasVideoForPath(const QString &path) const;

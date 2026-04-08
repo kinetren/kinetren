@@ -14,6 +14,7 @@
 #include <QScrollBar>
 #include <QStyle>
 #include <QStatusBar>
+#include <QSplitter>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -67,6 +68,17 @@ void MainWindow::setupTimelineEditorUi()
     auto *timelineLayout = new QVBoxLayout(ui->widget_2);
     timelineLayout->setContentsMargins(6, 6, 6, 6);
     timelineLayout->setSpacing(6);
+
+    auto *globalCounterWidget = new QWidget(ui->splitter_2);
+    globalCounterWidget->setMinimumHeight(28);
+    globalCounterWidget->setMaximumHeight(34);
+    auto *globalCounterLayout = new QHBoxLayout(globalCounterWidget);
+    globalCounterLayout->setContentsMargins(8, 4, 8, 4);
+    timelineGlobalTimeLabel = new QLabel("00:00:00.000 F00", globalCounterWidget);
+    timelineGlobalTimeLabel->setStyleSheet("font-weight:600; color:#d9e3ef;");
+    globalCounterLayout->addWidget(new QLabel("Timeline time:", globalCounterWidget));
+    globalCounterLayout->addWidget(timelineGlobalTimeLabel, 1);
+    ui->splitter_2->insertWidget(1, globalCounterWidget);
 
     timelineEditor = new TimelineEditor(ui->widget_2);
     timelineLayout->addWidget(timelineEditor, 1);
@@ -191,7 +203,8 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(timelineOverlayLabel, 1);
     timelineLayout->addLayout(controlsLayout);
 
-    timelineTimer.setInterval(16);
+    timelineTimer.setInterval(8);
+    timelineTimer.setTimerType(Qt::PreciseTimer);
     connect(&timelineTimer, &QTimer::timeout, this, &MainWindow::onTimelineTick);
     connect(timelinePauseButton, &QToolButton::clicked, this, &MainWindow::toggleTimelinePause);
     connect(markerButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addMarkerAtCursor);
@@ -236,13 +249,16 @@ void MainWindow::setupTimelineEditorUi()
     connect(timelineLoopButton, &QToolButton::toggled, timelineEditor, &TimelineEditor::setLoopEnabled);
     connect(timelineEditor, &TimelineEditor::loopEnabledChanged, timelineLoopButton, &QToolButton::setChecked);
     connect(timelineEditor, &TimelineEditor::overlayInfoChanged, timelineOverlayLabel, &QLabel::setText);
+    connect(timelineEditor, &TimelineEditor::cursorChanged, this, [this](qint64 t) {
+        refreshTimelineScroll();
+        if (timelineGlobalTimeLabel && timelineEditor) {
+            timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(t));
+        }
+    });
     connect(timelineEditor, &TimelineEditor::timelineRangeChanged, this, [this](qint64, qint64) {
         refreshTimelineScroll();
     });
     connect(timelineEditor, &TimelineEditor::viewStartChanged, this, [this](qint64, qint64) {
-        refreshTimelineScroll();
-    });
-    connect(timelineEditor, &TimelineEditor::cursorChanged, this, [this](qint64) {
         refreshTimelineScroll();
     });
     connect(timelineScrollBar, &QScrollBar::valueChanged, [this](int value) {
@@ -300,6 +316,9 @@ void MainWindow::setupTimelineEditorUi()
     applyStatusTip(timelineLoopButton);
     timelineEditor->setStatusTip("Timeline: drag events, wheel to scroll, Ctrl+wheel to zoom");
     timelineScrollBar->setStatusTip("Timeline scrollbar");
+    if (timelineGlobalTimeLabel && timelineEditor) {
+        timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(timelineEditor->cursorMs()));
+    }
     statusBar()->showMessage("Ready. Hover controls to see action hints.", 2500);
 
     refreshTimelineScroll();
@@ -317,7 +336,12 @@ void MainWindow::toggleTimelinePause()
     }
 
     if (!timelinePlaying) {
+        if (stoppedAtRegionEnd && timelineEditor->hasSelectionRegion() &&
+            timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
+            timelineEditor->setCursorMs(timelineEditor->selectionRegionStartMs(), true);
+        }
         timelinePlaying = true;
+        stoppedAtRegionEnd = false;
         timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
         timelinePlayStartMs = timelineEditor->cursorMs();
         timelinePlaybackClock.restart();
@@ -330,6 +354,7 @@ void MainWindow::toggleTimelinePause()
     }
 
     timelinePlaying = false;
+    stoppedAtRegionEnd = false;
     timelineTimer.stop();
     stopMediaPlayback();
     timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
@@ -341,9 +366,6 @@ void MainWindow::onTimelineTick()
         return;
     }
     qint64 playbackMs = timelinePlayStartMs + timelinePlaybackClock.elapsed();
-    if (playbackPipeline) {
-        playbackMs = std::max(playbackMs, playbackPipeline->playbackPositionMs());
-    }
     if (timelineEditor->hasSelectionRegion() &&
         timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs() &&
         playbackMs >= timelineEditor->selectionRegionEndMs()) {
@@ -356,6 +378,7 @@ void MainWindow::onTimelineTick()
             }
         } else {
             timelinePlaying = false;
+            stoppedAtRegionEnd = true;
             timelineTimer.stop();
             stopMediaPlayback();
             timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));

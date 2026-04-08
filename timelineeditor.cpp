@@ -10,6 +10,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QFontMetrics>
 #include <QUrl>
 #include <QWheelEvent>
 #include <QtGlobal>
@@ -34,6 +35,7 @@ constexpr int kTrimHandlePx = 7;
 constexpr int kEdgeScrollZonePx = 26;
 constexpr qint64 kEdgeScrollStepMs = 80;
 constexpr int kPreviewFps = 30;
+constexpr int kRulerTargetTickPx = 130;
 
 QPoint eventPos(const QMouseEvent *event)
 {
@@ -45,6 +47,15 @@ QPoint eventPos(const QMouseEvent *event)
 }
 
 QPoint eventPos(const QDropEvent *event)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    return event->position().toPoint();
+#else
+    return event->pos();
+#endif
+}
+
+QPoint eventPos(const QWheelEvent *event)
 {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     return event->position().toPoint();
@@ -135,6 +146,8 @@ bool TimelineEditor::splitSelectedClipAtCursor()
     }
 
     std::vector<ClipEvent> additions;
+    const int sourceGroupId = selected->linkedGroupId;
+    const int rightGroupId = (sourceGroupId >= 0) ? nextLinkedGroupId++ : -1;
     int newSelectedId = selectedClipId;
     for (int id : candidates) {
         ClipEvent *clip = findClipById(id);
@@ -151,6 +164,7 @@ bool TimelineEditor::splitSelectedClipAtCursor()
         right.startMs = cursorPositionMs;
         right.durationMs = clip->durationMs - splitOffset;
         right.sourceInMs = clip->sourceInMs + splitOffset;
+        right.linkedGroupId = rightGroupId;
         clip->durationMs = splitOffset;
         additions.push_back(right);
         if (id == selectedClipId) {
@@ -479,15 +493,24 @@ void TimelineEditor::setViewStartMs(qint64 valueMs)
 
 void TimelineEditor::setZoomFactor(double value)
 {
-    const double bounded = std::clamp(value, 0.25, 8.0);
+    setZoomFactor(value, cursorPositionMs);
+}
+
+void TimelineEditor::setZoomFactor(double value, qint64 anchorTimeMs)
+{
+    const double bounded = std::clamp(value, 0.01, 32.0);
     if (qFuzzyCompare(zoomLevel, bounded)) {
         return;
     }
     const qint64 oldVisible = contentVisibleMs();
-    const qint64 oldCenter = timelineViewStartMs + (oldVisible / 2);
+    const qint64 oldViewStart = timelineViewStartMs;
+    const qint64 anchor = std::max<qint64>(0, anchorTimeMs);
+    const double anchorRatio = (oldVisible > 0)
+        ? static_cast<double>(anchor - oldViewStart) / static_cast<double>(oldVisible)
+        : 0.5;
     zoomLevel = bounded;
     const qint64 newVisible = contentVisibleMs();
-    timelineViewStartMs = std::max<qint64>(0, oldCenter - (newVisible / 2));
+    timelineViewStartMs = std::max<qint64>(0, anchor - static_cast<qint64>(anchorRatio * newVisible));
     refreshTimelineRangeSignals();
     emitOverlayInfo();
     update();
@@ -585,24 +608,21 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     }
 
     const qint64 viewEndMs = timelineViewStartMs + contentVisibleMs();
-    const qint64 tickStart = (timelineViewStartMs / 1000) * 1000;
-    for (qint64 t = std::max<qint64>(0, tickStart - 1000); t <= viewEndMs + 1000; t += 1000) {
+    const qint64 tickStepMs = timelineTickStepMs();
+    const qint64 tickStart = (timelineViewStartMs / tickStepMs) * tickStepMs;
+    for (qint64 t = std::max<qint64>(0, tickStart - tickStepMs); t <= viewEndMs + tickStepMs; t += tickStepMs) {
         const int x = timeToX(t);
         p.setPen(QColor(70, 70, 70));
         p.drawLine(x, rulerTop(), x, paintBottom);
-        const qint64 ts = std::max<qint64>(0, t / 1000);
-        const qint64 hh = ts / 3600;
-        const qint64 mm = (ts / 60) % 60;
-        const qint64 ss = ts % 60;
         p.setPen(QColor(170, 170, 170));
-        p.drawText(x + 2, rulerTop() + 14, QString("%1:%2:%3")
-                                              .arg(hh, 2, 10, QChar('0'))
-                                              .arg(mm, 2, 10, QChar('0'))
-                                              .arg(ss, 2, 10, QChar('0')));
+        QString tickLabel = formatTimelineTime(t);
+        if (tickStepMs >= 1000 && tickStepMs < 60000) {
+            tickLabel = tickLabel.mid(3, 5);
+        } else if (tickStepMs >= 60000) {
+            tickLabel = tickLabel.left(8);
+        }
+        p.drawText(x + 2, rulerTop() + 14, tickLabel);
     }
-
-    p.setPen(QColor(205, 217, 235));
-    p.drawText(timelineLeft() + 6, rulerTop() + rulerHeight() - 5, formatTimelineTime(cursorPositionMs));
 
     if (hasRegionSelection && regionEndMs > regionStartMs) {
         const int x1 = timeToX(regionStartMs);
@@ -657,6 +677,10 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
                 }
             }
         }
+        p.setPen(QColor(240, 240, 240));
+        const QString fileName = QFileInfo(clip.sourcePath).fileName();
+        const QString shownName = QFontMetrics(p.font()).elidedText(fileName, Qt::ElideMiddle, r.width() - 10);
+        p.drawText(r.adjusted(5, 4, -5, -4), Qt::AlignTop | Qt::AlignLeft, shownName);
         if (clip.id == selectedClipId) {
             p.setPen(QColor(255, 255, 255));
             p.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
@@ -933,7 +957,10 @@ void TimelineEditor::wheelEvent(QWheelEvent *event)
         const QPoint delta = event->angleDelta();
         if (!delta.isNull()) {
             const double factor = (delta.y() > 0 || delta.x() > 0) ? 1.12 : (1.0 / 1.12);
-            setZoomFactor(zoomLevel * factor);
+            const QPoint pos = eventPos(event);
+            const bool onTimeline = pos.x() >= timelineLeft() && pos.x() <= timelineRight();
+            const qint64 anchor = onTimeline ? xToTimeMs(pos.x()) : cursorPositionMs;
+            setZoomFactor(zoomLevel * factor, anchor);
         }
         event->accept();
         return;
@@ -1256,6 +1283,22 @@ qint64 TimelineEditor::adjustedDragPointerMs(const QPoint &pos, bool *scrolled)
         *scrolled = changed;
     }
     return xToTimeMs(pos.x());
+}
+
+qint64 TimelineEditor::timelineTickStepMs() const
+{
+    const double desiredMs = (kRulerTargetTickPx / std::max(1.0, pixelsPerSecond())) * 1000.0;
+    static const qint64 steps[] = {
+        1, 2, 5, 10, 20, 50, 100, 200, 500,
+        1000, 2000, 5000, 10000, 15000, 30000,
+        60000, 120000, 300000, 600000, 1800000, 3600000
+    };
+    for (qint64 step : steps) {
+        if (step >= desiredMs) {
+            return step;
+        }
+    }
+    return steps[sizeof(steps) / sizeof(steps[0]) - 1];
 }
 
 qint64 TimelineEditor::defaultDurationForPath(const QString &path) const
