@@ -52,6 +52,7 @@ private:
     bool timelinePlaying = false;
     bool stoppedAtRegionEnd = false;
     qint64 timelinePlayStartMs = 0;
+    qint64 lastTimelineFrameIndex = -1;
     QElapsedTimer timelinePlaybackClock;
     std::unique_ptr<PlaybackPipeline> playbackPipeline;
     ProjectSettings projectSettings;

@@ -35,10 +35,18 @@ constexpr qint64 kMinClipDurationMs = 80;
 constexpr int kTrimHandlePx = 7;
 constexpr int kEdgeScrollZonePx = 26;
 constexpr qint64 kEdgeScrollStepMs = 80;
-constexpr int kPreviewFps = 30;
 constexpr int kRulerTargetTickPx = 130;
 constexpr int kCursorMagnetPx = 10;
 constexpr int kRegionBoundaryHandlePx = 8;
+const av::Rational kMillisecondsTimebase{1, 1000};
+
+qint64 timestampToMs(const av::Timestamp &ts)
+{
+    if (ts.isNoPts()) {
+        return -1;
+    }
+    return ts.timestamp(kMillisecondsTimebase);
+}
 
 QPoint eventPos(const QMouseEvent *event)
 {
@@ -600,13 +608,25 @@ QString TimelineEditor::formatTimelineTime(qint64 timeMs) const
     const qint64 hours = totalSeconds / 3600;
     const qint64 minutes = (totalSeconds / 60) % 60;
     const qint64 seconds = totalSeconds % 60;
-    const int frame = static_cast<int>((msPart * kPreviewFps) / 1000);
+    const int fps = std::max(1, timelineFps);
+    const int frame = static_cast<int>((msPart * fps) / 1000);
     return QString("%1:%2:%3.%4 F%5")
         .arg(hours, 2, 10, QChar('0'))
         .arg(minutes, 2, 10, QChar('0'))
         .arg(seconds, 2, 10, QChar('0'))
         .arg(msPart, 3, 10, QChar('0'))
         .arg(frame, 2, 10, QChar('0'));
+}
+
+void TimelineEditor::setTimelineFps(int fps)
+{
+    const int bounded = std::max(1, fps);
+    if (bounded == timelineFps) {
+        return;
+    }
+    timelineFps = bounded;
+    emitOverlayInfo();
+    update();
 }
 
 void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipSegments,
@@ -700,22 +720,30 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.drawRoundedRect(r, 4, 4);
 
         if (clip.mediaType == TrackType::Video) {
-            const QImage preview = cachedVideoPreview(clip.sourcePath, clip.sourceInMs);
-            if (!preview.isNull()) {
-                const int thumbW = std::max(28, r.height() * 16 / 9);
-                for (int x = r.left() + 2; x < r.right() - 2; x += thumbW) {
-                    const QRect thumbRect(x, r.top() + 2, std::min(thumbW, r.right() - x - 1), r.height() - 4);
+            const int thumbW = std::max(28, r.height() * 16 / 9);
+            const int innerLeft = r.left() + 2;
+            const int innerRight = r.right() - 2;
+            const int innerWidth = std::max(1, innerRight - innerLeft);
+            for (int x = innerLeft; x < innerRight; x += thumbW) {
+                const QRect thumbRect(x, r.top() + 2, std::min(thumbW, innerRight - x), r.height() - 4);
+                const int centerX = thumbRect.left() + (thumbRect.width() / 2);
+                const double rel = std::clamp(static_cast<double>(centerX - innerLeft) / innerWidth, 0.0, 1.0);
+                const qint64 sourceOffsetMs =
+                    static_cast<qint64>(std::llround(rel * std::max<qint64>(0, clip.durationMs - 1)));
+                const QImage preview = cachedVideoPreview(clip.sourcePath, clip.sourceInMs + sourceOffsetMs);
+                if (!preview.isNull()) {
                     p.drawImage(thumbRect, preview);
                 }
             }
         } else {
-            const auto peaks = cachedAudioPeaks(clip.sourcePath);
+            const int usable = std::max(1, r.width() - 6);
+            const auto peaks =
+                cachedAudioPeaks(clip.sourcePath, clip.sourceInMs, clip.durationMs, clip.sourceDurationMs, usable);
             if (!peaks.empty()) {
                 p.setPen(QColor(210, 225, 255, 220));
                 const int midY = r.center().y();
-                const int usable = std::max(1, r.width() - 6);
                 for (int x = 0; x < usable; ++x) {
-                    const int idx = static_cast<int>((static_cast<double>(x) / usable) * (peaks.size() - 1));
+                    const int idx = std::min<int>(x, static_cast<int>(peaks.size()) - 1);
                     const int amp = std::clamp(peaks[static_cast<size_t>(idx)], 1, (r.height() / 2) - 2);
                     p.drawLine(r.left() + 3 + x, midY - amp, r.left() + 3 + x, midY + amp);
                 }
@@ -1612,9 +1640,8 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
                             continue;
                         }
                         qint64 frameMs = 0;
-                        if (!frame.pts().isNoPts()) {
-                            frameMs = static_cast<qint64>(frame.pts().seconds() * 1000.0);
-                        }
+                        const qint64 decodedMs = timestampToMs(frame.pts());
+                        frameMs = (decodedMs >= 0) ? decodedMs : bucketMs;
                         if (frameMs < bucketMs) {
                             continue;
                         }
@@ -1647,21 +1674,50 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
     return previewCache.value(cacheKey);
 }
 
-std::vector<int> TimelineEditor::cachedAudioPeaks(const QString &path)
+std::vector<int> TimelineEditor::cachedAudioPeaks(const QString &path,
+                                                  qint64 sourceInMs,
+                                                  qint64 durationMs,
+                                                  qint64 sourceDurationMs,
+                                                  int sampleCount)
 {
+    if (sampleCount <= 0) {
+        return {};
+    }
+
     const auto it = peaksCache.constFind(path);
+    std::vector<int> basePeaks;
     if (it != peaksCache.constEnd()) {
-        return it.value();
+        basePeaks = it.value();
+    } else {
+        basePeaks.reserve(1024);
+        const uint base = qHash(path);
+        for (int i = 0; i < 1024; ++i) {
+            const uint v = qHash(QString::number(i) + path) ^ (base >> (i % 11));
+            basePeaks.push_back(2 + static_cast<int>(v % 20));
+        }
+        peaksCache.insert(path, basePeaks);
     }
-    std::vector<int> peaks;
-    peaks.reserve(256);
-    const uint base = qHash(path);
-    for (int i = 0; i < 256; ++i) {
-        const uint v = qHash(QString::number(i) + path) ^ (base >> (i % 11));
-        peaks.push_back(2 + static_cast<int>(v % 20));
+    if (basePeaks.empty()) {
+        return {};
     }
-    peaksCache.insert(path, peaks);
-    return peaks;
+
+    const qint64 safeDuration = std::max<qint64>(1, sourceDurationMs);
+    const double startRatio =
+        std::clamp(static_cast<double>(std::max<qint64>(0, sourceInMs)) / static_cast<double>(safeDuration), 0.0, 1.0);
+    const double endRatioRaw = static_cast<double>(std::max<qint64>(0, sourceInMs + std::max<qint64>(1, durationMs))) /
+                               static_cast<double>(safeDuration);
+    const double endRatio = std::clamp(std::max(endRatioRaw, startRatio + 0.0001), 0.0, 1.0);
+    const double span = std::max(0.0001, endRatio - startRatio);
+
+    std::vector<int> sliced;
+    sliced.reserve(static_cast<size_t>(sampleCount));
+    for (int i = 0; i < sampleCount; ++i) {
+        const double xRatio = (sampleCount == 1) ? 0.0 : (static_cast<double>(i) / (sampleCount - 1));
+        const double srcRatio = std::clamp(startRatio + (xRatio * span), 0.0, 1.0);
+        const int idx = std::clamp(static_cast<int>(srcRatio * (basePeaks.size() - 1)), 0, static_cast<int>(basePeaks.size()) - 1);
+        sliced.push_back(basePeaks[static_cast<size_t>(idx)]);
+    }
+    return sliced;
 }
 
 std::vector<int> TimelineEditor::linkedClipIds(int clipId) const

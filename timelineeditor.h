@@ -68,6 +68,7 @@ public:
     std::vector<ActiveClip> activeAudioAt(qint64 timeMs) const;
     std::vector<RenderClip> renderClips() const;
     QString formatTimelineTime(qint64 timeMs) const;
+    void setTimelineFps(int fps);
     void setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipSegments,
                           const QVector<QPair<double, double>> &timelineSegments);
 
@@ -154,6 +155,7 @@ private:
     qint64 regionAnchorMs = 0;
     QString lastOverlayInfo;
     double zoomLevel = 1.0;
+    int timelineFps = 30;
 
     int timelineLeft() const;
     int timelineRight() const;
@@ -200,7 +202,11 @@ private:
     bool hasAudioForPath(const QString &path) const;
     QColor colorFromPath(const QString &path) const;
     QImage cachedVideoPreview(const QString &path, qint64 sourceInMs);
-    std::vector<int> cachedAudioPeaks(const QString &path);
+    std::vector<int> cachedAudioPeaks(const QString &path,
+                                      qint64 sourceInMs,
+                                      qint64 durationMs,
+                                      qint64 sourceDurationMs,
+                                      int sampleCount);
     void unlinkClipGroup(int clipId);
     std::vector<int> linkedClipIds(int clipId) const;
 

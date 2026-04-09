@@ -32,6 +32,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cmath>
 #include <vector>
 
 MainWindow::MainWindow(QWidget *parent)
@@ -287,7 +288,7 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(timelineOverlayLabel, 1);
     timelineLayout->addLayout(controlsLayout);
 
-    timelineTimer.setInterval(8);
+    timelineTimer.setInterval(std::max(1, static_cast<int>(std::lround(1000.0 / std::max(1, projectSettings.fps)))));
     timelineTimer.setTimerType(Qt::PreciseTimer);
     connect(&timelineTimer, &QTimer::timeout, this, &MainWindow::onTimelineTick);
     connect(timelinePauseButton, &QToolButton::clicked, this, &MainWindow::toggleTimelinePause);
@@ -487,6 +488,7 @@ void MainWindow::toggleTimelinePause()
         stoppedAtRegionEnd = false;
         timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
         timelinePlayStartMs = timelineEditor->cursorMs();
+        lastTimelineFrameIndex = -1;
         timelinePlaybackClock.restart();
         if (playbackPipeline) {
             playbackPipeline->start(timelineEditor->cursorMs());
@@ -498,6 +500,7 @@ void MainWindow::toggleTimelinePause()
 
     timelinePlaying = false;
     stoppedAtRegionEnd = false;
+    lastTimelineFrameIndex = -1;
     timelineTimer.stop();
     stopMediaPlayback();
     if (timelineEditor->hasSelectionRegion() &&
@@ -512,13 +515,22 @@ void MainWindow::onTimelineTick()
     if (!timelineEditor || !timelinePlaying) {
         return;
     }
-    qint64 playbackMs = timelinePlayStartMs + timelinePlaybackClock.elapsed();
+    const int fps = std::max(1, projectSettings.fps);
+    const double frameDurationMs = 1000.0 / static_cast<double>(fps);
+    const qint64 elapsedMs = timelinePlaybackClock.elapsed();
+    const qint64 frameIndex = std::max<qint64>(0, static_cast<qint64>(std::floor(elapsedMs / frameDurationMs)));
+    if (frameIndex == lastTimelineFrameIndex) {
+        return;
+    }
+    lastTimelineFrameIndex = frameIndex;
+    qint64 playbackMs = timelinePlayStartMs + static_cast<qint64>(std::llround(static_cast<double>(frameIndex) * frameDurationMs));
     if (timelineEditor->hasSelectionRegion() &&
         timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs() &&
         playbackMs >= timelineEditor->selectionRegionEndMs()) {
         if (timelineEditor->loopEnabled()) {
             playbackMs = timelineEditor->selectionRegionStartMs();
             timelinePlayStartMs = playbackMs;
+            lastTimelineFrameIndex = -1;
             timelinePlaybackClock.restart();
             if (playbackPipeline) {
                 playbackPipeline->start(playbackMs);
@@ -526,6 +538,7 @@ void MainWindow::onTimelineTick()
         } else {
             timelinePlaying = false;
             stoppedAtRegionEnd = true;
+            lastTimelineFrameIndex = -1;
             timelineTimer.stop();
             stopMediaPlayback();
             timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
@@ -633,6 +646,11 @@ void MainWindow::applyProjectSettings()
     if (!playbackPipeline) {
         return;
     }
+    if (timelineEditor) {
+        timelineEditor->setTimelineFps(projectSettings.fps);
+    }
+    timelineTimer.setInterval(std::max(1, static_cast<int>(std::lround(1000.0 / std::max(1, projectSettings.fps)))));
+    lastTimelineFrameIndex = -1;
     playbackPipeline->setProjectSettings(projectSettings);
     playbackPipeline->setDraftPreviewEnabled(projectSettings.cacheQuality != ProjectSettings::CacheQuality::Source);
     refreshPerformancePanel();

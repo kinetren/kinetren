@@ -44,6 +44,15 @@ constexpr int kVideoFrameMs = 1000 / kVideoFps;
 constexpr size_t kVideoRingSlots = 7; // 7 * 33ms ~= 231ms
 constexpr qint64 kVideoMaxAheadFrames = static_cast<qint64>(kVideoRingSlots - 2);
 constexpr int kDraftFrameBucketMs = 120;
+const av::Rational kMillisecondsTimebase{1, 1000};
+
+qint64 timestampToMs(const av::Timestamp &ts)
+{
+    if (ts.isNoPts()) {
+        return -1;
+    }
+    return ts.timestamp(kMillisecondsTimebase);
+}
 }
 
 struct PlaybackPipeline::AudioRingBuffer {
@@ -1040,7 +1049,7 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
             continue;
         }
         if (!samples.pts().isNoPts()) {
-            const qint64 ptsMs = static_cast<qint64>(samples.pts().seconds() * 1000.0);
+            const qint64 ptsMs = timestampToMs(samples.pts());
             if (!started && ptsMs < worker.startOffsetMs) {
                 continue;
             }
@@ -1199,9 +1208,9 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             continue;
         }
 
-        qint64 frameMs = 0;
-        if (!frame.pts().isNoPts()) {
-            frameMs = static_cast<qint64>(frame.pts().seconds() * 1000.0);
+        qint64 frameMs = timestampToMs(frame.pts());
+        if (frameMs < 0) {
+            frameMs = (lastPublishedTimeMs >= 0) ? (lastPublishedTimeMs + kVideoFrameMs) : worker.startOffsetMs;
         }
         if (!started && frameMs < worker.startOffsetMs) {
             continue;
@@ -1255,9 +1264,9 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
             break;
         }
 
-        qint64 frameMs = 0;
-        if (!frame.pts().isNoPts()) {
-            frameMs = static_cast<qint64>(frame.pts().seconds() * 1000.0);
+        qint64 frameMs = timestampToMs(frame.pts());
+        if (frameMs < 0) {
+            frameMs = (lastPublishedTimeMs >= 0) ? (lastPublishedTimeMs + kVideoFrameMs) : worker.startOffsetMs;
         }
         if (frameMs < worker.startOffsetMs) {
             continue;
@@ -1427,9 +1436,9 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
             ec.clear();
             continue;
         }
-        qint64 frameMs = 0;
-        if (!frame.pts().isNoPts()) {
-            frameMs = static_cast<qint64>(frame.pts().seconds() * 1000.0);
+        qint64 frameMs = timestampToMs(frame.pts());
+        if (frameMs < 0) {
+            frameMs = bucketMs;
         }
         if (frameMs < bucketMs) {
             continue;
