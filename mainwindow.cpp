@@ -38,6 +38,8 @@
 
 namespace {
 constexpr int kTimelineUiTickMs = 8;
+constexpr qint64 kPlaybackSweepLookbehindMs = 32;
+constexpr qint64 kPlaybackSweepLookaheadMs = 350;
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -507,6 +509,7 @@ void MainWindow::toggleTimelinePause()
         stoppedAtRegionEnd = false;
         timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
         timelinePlayStartMs = timelineEditor->cursorMs();
+        lastPlaybackSyncMs = timelinePlayStartMs;
         lastTimelineFrameIndex = -1;
         timelinePlaybackClock.restart();
         if (playbackPipeline) {
@@ -519,6 +522,7 @@ void MainWindow::toggleTimelinePause()
 
     timelinePlaying = false;
     stoppedAtRegionEnd = false;
+    lastPlaybackSyncMs = -1;
     lastTimelineFrameIndex = -1;
     timelineTimer.stop();
     stopMediaPlayback();
@@ -542,6 +546,7 @@ void MainWindow::onTimelineTick()
         if (timelineEditor->loopEnabled()) {
             playbackMs = timelineEditor->selectionRegionStartMs();
             timelinePlayStartMs = playbackMs;
+            lastPlaybackSyncMs = playbackMs;
             lastTimelineFrameIndex = -1;
             timelinePlaybackClock.restart();
             if (playbackPipeline) {
@@ -550,6 +555,7 @@ void MainWindow::onTimelineTick()
         } else {
             timelinePlaying = false;
             stoppedAtRegionEnd = true;
+            lastPlaybackSyncMs = -1;
             lastTimelineFrameIndex = -1;
             timelineTimer.stop();
             stopMediaPlayback();
@@ -564,8 +570,9 @@ void MainWindow::onTimelineTick()
         timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(playbackMs));
     }
 
-    // Keep worker scheduling in sync on every UI tick so sub-frame events are not skipped.
-    syncTimelinePlayback();
+    const qint64 fromMs = (lastPlaybackSyncMs >= 0) ? lastPlaybackSyncMs : playbackMs;
+    syncTimelinePlaybackRange(fromMs, playbackMs);
+    lastPlaybackSyncMs = playbackMs;
 }
 
 void MainWindow::syncTimelinePlayback()
@@ -574,6 +581,18 @@ void MainWindow::syncTimelinePlayback()
         return;
     }
     const qint64 tMs = timelineEditor->cursorMs();
+    syncTimelinePlaybackRange(tMs, tMs);
+}
+
+void MainWindow::syncTimelinePlaybackRange(qint64 fromMs, qint64 toMs)
+{
+    if (!timelineEditor || !playbackPipeline) {
+        return;
+    }
+    const qint64 tMs = std::max<qint64>(0, toMs);
+    const qint64 a = std::max<qint64>(0, std::min(fromMs, toMs) - kPlaybackSweepLookbehindMs);
+    const qint64 b = std::max<qint64>(0, std::max(fromMs, toMs) + kPlaybackSweepLookaheadMs);
+    const qint64 windowEndExclusive = b + 1;
     const auto clips = timelineEditor->renderClips();
 
     std::vector<PlaybackPipeline::Clip> vclips;
@@ -581,6 +600,11 @@ void MainWindow::syncTimelinePlayback()
     vclips.reserve(clips.size());
     aclips.reserve(clips.size());
     for (const auto &c : clips) {
+        const qint64 clipEnd = c.startMs + c.durationMs;
+        const bool intersectsSweep = (c.startMs < windowEndExclusive) && (clipEnd > a);
+        if (!intersectsSweep) {
+            continue;
+        }
         const PlaybackPipeline::Clip clip{c.sourcePath, c.startMs, c.durationMs, c.sourceInMs};
         if (c.isVideo) {
             vclips.push_back(clip);
