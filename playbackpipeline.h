@@ -93,6 +93,7 @@ private:
 
     void audioMixLoop();
     void videoComposeLoop();
+    void pulseLoop();
 
     int decodeAudioWorker(AudioWorker &worker);
     int decodeVideoWorker(VideoWorker &worker);
@@ -113,6 +114,8 @@ private:
     std::atomic_bool running{false};
     std::atomic_int generation{0};
     std::atomic<qint64> timelineMs{0};
+    std::atomic<qint64> playbackStartTimelineMs{0};
+    std::atomic<qint64> pulseCounterMs{0};
     std::atomic<qint64> consumedAudioBlock{0};
     std::atomic<qint64> consumedVideoFrame{0};
     std::atomic<qint64> lastAudioReconcileMs{-1};
@@ -134,6 +137,7 @@ private:
 
     std::thread audioThread;
     std::thread videoThread;
+    std::thread pulseThread;
 
     std::atomic_bool draftPreviewEnabled{true};
     ProjectSettings projectSettings;

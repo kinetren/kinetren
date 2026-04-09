@@ -37,7 +37,7 @@
 #include <vector>
 
 namespace {
-constexpr int kTimelineUiTickMs = 8;
+constexpr int kTimelineUiTickMs = 4;
 }
 
 MainWindow::MainWindow(QWidget *parent)
@@ -506,9 +506,7 @@ void MainWindow::toggleTimelinePause()
         timelinePlaying = true;
         stoppedAtRegionEnd = false;
         timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
-        timelinePlayStartMs = timelineEditor->cursorMs();
         lastTimelineFrameIndex = -1;
-        timelinePlaybackClock.restart();
         if (playbackPipeline) {
             playbackPipeline->start(timelineEditor->cursorMs());
         }
@@ -535,15 +533,16 @@ void MainWindow::onTimelineTick()
         return;
     }
 
-    qint64 playbackMs = timelinePlayStartMs + timelinePlaybackClock.elapsed();
+    qint64 playbackMs = timelineEditor->cursorMs();
+    if (playbackPipeline) {
+        playbackMs = playbackPipeline->playbackPositionMs();
+    }
     if (timelineEditor->hasSelectionRegion() &&
         timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs() &&
         playbackMs >= timelineEditor->selectionRegionEndMs()) {
         if (timelineEditor->loopEnabled()) {
             playbackMs = timelineEditor->selectionRegionStartMs();
-            timelinePlayStartMs = playbackMs;
             lastTimelineFrameIndex = -1;
-            timelinePlaybackClock.restart();
             if (playbackPipeline) {
                 playbackPipeline->start(playbackMs);
             }

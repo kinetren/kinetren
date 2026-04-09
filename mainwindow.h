@@ -2,7 +2,6 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QElapsedTimer>
 #include <QTimer>
 #include <QtGlobal>
 #include <memory>
@@ -51,9 +50,7 @@ private:
     QTimer timelineTimer;
     bool timelinePlaying = false;
     bool stoppedAtRegionEnd = false;
-    qint64 timelinePlayStartMs = 0;
     qint64 lastTimelineFrameIndex = -1;
-    QElapsedTimer timelinePlaybackClock;
     std::unique_ptr<PlaybackPipeline> playbackPipeline;
     ProjectSettings projectSettings;
     QTimer performanceTimer;

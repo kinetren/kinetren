@@ -38,16 +38,16 @@ constexpr int kAudioChannels = 2;
 constexpr int kAudioBlockMs = 5;
 constexpr int kAudioSamplesPerBlock = (kAudioSampleRate * kAudioBlockMs) / 1000;
 constexpr size_t kAudioRingSlots = 48; // 48 * 5ms = 240ms
-constexpr qint64 kAudioMaxAheadBlocks = static_cast<qint64>(kAudioRingSlots - 2);
 
 constexpr int kVideoFps = 30;
 constexpr int kVideoFrameMs = 1000 / kVideoFps;
 constexpr size_t kVideoRingSlots = 7; // 7 * 33ms ~= 231ms
-constexpr qint64 kVideoMaxAheadFrames = static_cast<qint64>(kVideoRingSlots - 2);
 constexpr int kDraftFrameBucketMs = 120;
 constexpr int kStartupStallMaxMs = 400;
 constexpr qint64 kWorkerWindowLookbehindMs = 250;
-constexpr qint64 kWorkerWindowLookaheadMs = 2500;
+constexpr qint64 kWorkerWindowLookaheadMs = 5000;
+constexpr qint64 kCacheLookaheadMs = 5000;
+constexpr int kEnginePulseIntervalMs = 1;
 const av::Rational kMillisecondsTimebase{1, 1000};
 
 qint64 timestampToMs(const av::Timestamp &ts)
@@ -277,6 +277,9 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     if (videoThread.joinable()) {
         videoThread.join();
     }
+    if (pulseThread.joinable()) {
+        pulseThread.join();
+    }
     {
         std::lock_guard<std::mutex> lock(audioMutex);
         for (auto &it : audioWorkers) {
@@ -292,6 +295,8 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
         videoWorkers.clear();
     }
 
+    playbackStartTimelineMs.store(startTimelineMs);
+    pulseCounterMs.store(0);
     timelineMs.store(startTimelineMs);
     ++generation;
     running.store(true);
@@ -309,6 +314,9 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     videoThread = std::thread([this]() {
         videoComposeLoop();
     });
+    pulseThread = std::thread([this]() {
+        pulseLoop();
+    });
 }
 
 void PlaybackPipeline::stop()
@@ -322,6 +330,9 @@ void PlaybackPipeline::stop()
     }
     if (videoThread.joinable()) {
         videoThread.join();
+    }
+    if (pulseThread.joinable()) {
+        pulseThread.join();
     }
     {
         std::lock_guard<std::mutex> lock(audioMutex);
@@ -338,26 +349,30 @@ void PlaybackPipeline::stop()
         videoWorkers.clear();
     }
     shutdownAudioOutput();
+    pulseCounterMs.store(0);
 }
 
 void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips)
 {
-    timelineMs.store(tMs);
+    if (!running.load()) {
+        timelineMs.store(tMs);
+    }
     if (!running.load()) {
         if (onVideoFrameReady) {
             onVideoFrameReady(composeDraftFrameAt(tMs, videoClips));
         }
         return;
     }
+    const qint64 engineNowMs = playbackPositionMs();
     const qint64 prevAudioReconcileMs = lastAudioReconcileMs.load();
-    if (prevAudioReconcileMs < 0 || std::llabs(tMs - prevAudioReconcileMs) >= kAudioBlockMs) {
+    if (prevAudioReconcileMs < 0 || std::llabs(engineNowMs - prevAudioReconcileMs) >= kAudioBlockMs) {
         reconcileAudioWorkers(audioClips);
-        lastAudioReconcileMs.store(tMs);
+        lastAudioReconcileMs.store(engineNowMs);
     }
     const qint64 prevVideoReconcileMs = lastVideoReconcileMs.load();
-    if (prevVideoReconcileMs < 0 || std::llabs(tMs - prevVideoReconcileMs) >= 16) {
+    if (prevVideoReconcileMs < 0 || std::llabs(engineNowMs - prevVideoReconcileMs) >= 8) {
         reconcileVideoWorkers(videoClips);
-        lastVideoReconcileMs.store(tMs);
+        lastVideoReconcileMs.store(engineNowMs);
     }
 }
 
@@ -366,7 +381,27 @@ qint64 PlaybackPipeline::playbackPositionMs() const
     if (!running.load()) {
         return timelineMs.load();
     }
-    return consumedAudioBlock.load() * kAudioBlockMs;
+    return playbackStartTimelineMs.load() + pulseCounterMs.load();
+}
+
+void PlaybackPipeline::pulseLoop()
+{
+    auto startClock = std::chrono::steady_clock::now();
+    auto nextWake = startClock;
+    while (running.load()) {
+        const auto now = std::chrono::steady_clock::now();
+        const qint64 elapsedMs = std::max<qint64>(
+            0,
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - startClock).count());
+        pulseCounterMs.store(elapsedMs);
+        timelineMs.store(playbackStartTimelineMs.load() + elapsedMs);
+        nextWake += std::chrono::milliseconds(kEnginePulseIntervalMs);
+        const auto afterTick = std::chrono::steady_clock::now();
+        if (nextWake < afterTick) {
+            nextWake = afterTick;
+        }
+        std::this_thread::sleep_until(nextWake);
+    }
 }
 
 void PlaybackPipeline::setDraftPreviewEnabled(bool enabled)
@@ -738,6 +773,10 @@ void PlaybackPipeline::audioMixLoop()
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             continue;
         }
+        const qint64 pulseBlock = playbackPositionMs() / kAudioBlockMs;
+        if (nextAudioBlock + 1 < pulseBlock) {
+            nextAudioBlock = pulseBlock;
+        }
 
         std::vector<std::shared_ptr<AudioWorker>> workers;
         {
@@ -1083,7 +1122,7 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
                 }
                 while (worker.generation == generation.load() && !worker.stopFlag->load()) {
                     const qint64 timelineBlock = consumedAudioBlock.load();
-                    const qint64 maxAhead = kAudioMaxAheadBlocks;
+                    const qint64 maxAhead = std::max<qint64>(1, kCacheLookaheadMs / kAudioBlockMs);
                     if (nextBlock <= timelineBlock + maxAhead) {
                         break;
                     }
@@ -1321,7 +1360,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         }
         while (worker.generation == generation.load() && !worker.stopFlag->load()) {
             const qint64 consumedTimeMs = worker.consumedTimeMs.load();
-            const qint64 maxAheadMs = static_cast<qint64>(kVideoRingSlots * kVideoFrameMs - kVideoFrameMs);
+            const qint64 maxAheadMs = kCacheLookaheadMs;
             if (relTimeMs <= consumedTimeMs + maxAheadMs) {
                 break;
             }
@@ -1376,7 +1415,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
 
         while (worker.generation == generation.load() && !worker.stopFlag->load()) {
             const qint64 consumedTimeMs = worker.consumedTimeMs.load();
-            const qint64 maxAheadMs = static_cast<qint64>(kVideoRingSlots * kVideoFrameMs - kVideoFrameMs);
+            const qint64 maxAheadMs = kCacheLookaheadMs;
             if (relTimeMs <= consumedTimeMs + maxAheadMs) {
                 break;
             }
