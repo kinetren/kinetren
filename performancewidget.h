@@ -34,8 +34,6 @@ private:
     QLabel *projectInfoLabel = nullptr;
     MultiLineGraphWidget *qualityGraph = nullptr;
     MultiLineGraphWidget *activityGraph = nullptr;
-    QLabel *qualityLegendLabel = nullptr;
-    QLabel *activityLegendLabel = nullptr;
 };
 
 #endif // PERFORMANCEWIDGET_H
