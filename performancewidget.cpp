@@ -5,25 +5,30 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <deque>
+#include <vector>
 
-class CombinedMetricGraphWidget : public QWidget
+class MultiLineGraphWidget : public QWidget
 {
 public:
-    explicit CombinedMetricGraphWidget(QWidget *parent = nullptr)
+    explicit MultiLineGraphWidget(const QVector<QColor> &colors,
+                                  const QVector<double> &seriesMax,
+                                  QWidget *parent = nullptr)
         : QWidget(parent)
+        , colors(colors)
+        , seriesMax(seriesMax)
+        , series(static_cast<size_t>(colors.size()))
     {
-        setMinimumHeight(128);
+        setMinimumHeight(110);
     }
 
-    void setSample(double fps, double cacheHitPct, double avcppCallsPerSecond)
+    void addSample(const QVector<double> &values)
     {
-        fpsSamples.push_back(fps);
-        cacheSamples.push_back(cacheHitPct);
-        avcppSamples.push_back(avcppCallsPerSecond);
-        while (fpsSamples.size() > kMaxSamples) {
-            fpsSamples.pop_front();
-            cacheSamples.pop_front();
-            avcppSamples.pop_front();
+        const int count = std::min(values.size(), colors.size());
+        for (int i = 0; i < count; ++i) {
+            series[static_cast<size_t>(i)].push_back(values[i]);
+            while (series[static_cast<size_t>(i)].size() > kMaxSamples) {
+                series[static_cast<size_t>(i)].pop_front();
+            }
         }
         update();
     }
@@ -36,71 +41,39 @@ protected:
         p.fillRect(rect(), QColor(24, 27, 31));
         p.setPen(QColor(61, 68, 77));
         p.drawRect(rect().adjusted(0, 0, -1, -1));
-
-        const QRect graphRect = rect().adjusted(8, 20, -8, -10);
+        const QRect g = rect().adjusted(8, 8, -8, -8);
         p.setPen(QColor(49, 56, 64));
-        p.drawLine(graphRect.left(), graphRect.center().y(), graphRect.right(), graphRect.center().y());
-        p.drawLine(graphRect.left(), graphRect.top(), graphRect.right(), graphRect.top());
-        p.drawLine(graphRect.left(), graphRect.bottom(), graphRect.right(), graphRect.bottom());
+        p.drawLine(g.left(), g.top(), g.right(), g.top());
+        p.drawLine(g.left(), g.center().y(), g.right(), g.center().y());
+        p.drawLine(g.left(), g.bottom(), g.right(), g.bottom());
 
-        if (fpsSamples.empty()) {
-            p.setPen(QColor(196, 205, 216));
-            p.drawText(rect().adjusted(8, 1, -8, -1), Qt::AlignLeft | Qt::AlignTop, "Merged Metrics: -");
-            return;
-        }
-
-        const double fpsNow = fpsSamples.back();
-        const double cacheNow = cacheSamples.back();
-        const double avcppNow = avcppSamples.back();
-        p.setPen(colorFor(fpsNow / 120.0, false));
-        p.drawText(rect().adjusted(8, 1, -8, -1), Qt::AlignLeft | Qt::AlignTop, QString("FPS %1").arg(fpsNow, 0, 'f', 1));
-        p.setPen(colorFor(cacheNow / 100.0, false));
-        p.drawText(rect().adjusted(100, 1, -8, -1), Qt::AlignLeft | Qt::AlignTop, QString("Cache %1%").arg(cacheNow, 0, 'f', 1));
-        p.setPen(colorFor(avcppNow / 5000.0, true));
-        p.drawText(rect().adjusted(220, 1, -8, -1), Qt::AlignLeft | Qt::AlignTop, QString("avcpp/s %1").arg(avcppNow, 0, 'f', 1));
-
-        if (fpsSamples.size() < 2) {
-            return;
-        }
-
-        const auto drawSeries = [&](const std::deque<double> &series, double minV, double maxV, const QColor &lineColor) {
+        for (int si = 0; si < static_cast<int>(series.size()); ++si) {
+            const auto &samples = series[static_cast<size_t>(si)];
+            if (samples.size() < 2) {
+                continue;
+            }
+            const double maxV = std::max(0.01, seriesMax.value(si, 100.0));
             p.setRenderHint(QPainter::Antialiasing, true);
-            p.setPen(QPen(lineColor, 2));
-            for (size_t i = 1; i < series.size(); ++i) {
-                const double x1Ratio = static_cast<double>(i - 1) / static_cast<double>(series.size() - 1);
-                const double x2Ratio = static_cast<double>(i) / static_cast<double>(series.size() - 1);
-                const double y1Norm = std::clamp((series[i - 1] - minV) / std::max(0.01, maxV - minV), 0.0, 1.0);
-                const double y2Norm = std::clamp((series[i] - minV) / std::max(0.01, maxV - minV), 0.0, 1.0);
-                const qreal x1 = graphRect.left() + x1Ratio * graphRect.width();
-                const qreal x2 = graphRect.left() + x2Ratio * graphRect.width();
-                const qreal y1 = graphRect.bottom() - y1Norm * graphRect.height();
-                const qreal y2 = graphRect.bottom() - y2Norm * graphRect.height();
+            p.setPen(QPen(colors.value(si, QColor(150, 150, 150)), 2));
+            for (size_t i = 1; i < samples.size(); ++i) {
+                const double x1r = static_cast<double>(i - 1) / static_cast<double>(samples.size() - 1);
+                const double x2r = static_cast<double>(i) / static_cast<double>(samples.size() - 1);
+                const double y1r = std::clamp(samples[i - 1] / maxV, 0.0, 1.0);
+                const double y2r = std::clamp(samples[i] / maxV, 0.0, 1.0);
+                const qreal x1 = g.left() + x1r * g.width();
+                const qreal x2 = g.left() + x2r * g.width();
+                const qreal y1 = g.bottom() - y1r * g.height();
+                const qreal y2 = g.bottom() - y2r * g.height();
                 p.drawLine(QPointF(x1, y1), QPointF(x2, y2));
             }
-        };
-
-        drawSeries(fpsSamples, 0.0, 120.0, QColor(78, 200, 110));
-        drawSeries(cacheSamples, 0.0, 100.0, QColor(74, 166, 255));
-        drawSeries(avcppSamples, 0.0, 5000.0, QColor(233, 154, 72));
+        }
     }
 
 private:
-    static QColor colorFor(double normalizedValue, bool lowerIsBetter)
-    {
-        const double score = lowerIsBetter ? (1.0 - normalizedValue) : normalizedValue;
-        if (score < 0.35) {
-            return QColor(225, 72, 72);
-        }
-        if (score < 0.65) {
-            return QColor(225, 171, 56);
-        }
-        return QColor(75, 180, 92);
-    }
-
-    static constexpr size_t kMaxSamples = 120;
-    std::deque<double> fpsSamples;
-    std::deque<double> cacheSamples;
-    std::deque<double> avcppSamples;
+    static constexpr size_t kMaxSamples = 180;
+    QVector<QColor> colors;
+    QVector<double> seriesMax;
+    std::vector<std::deque<double>> series;
 };
 
 PerformanceWidget::PerformanceWidget(QWidget *parent)
@@ -116,14 +89,28 @@ PerformanceWidget::PerformanceWidget(QWidget *parent)
     cacheStatsLabel = new QLabel("Cache: -", this);
     cacheResolutionLabel = new QLabel("Cache Resolution: -", this);
     projectInfoLabel = new QLabel("Project: -", this);
-    combinedGraph = new CombinedMetricGraphWidget(this);
+    qualityLegendLabel = new QLabel("Quality graph: FPS | cache hit | final hit | audio hit", this);
+    qualityLegendLabel->setStyleSheet("color:#d0d8e2;");
+    activityLegendLabel = new QLabel("avcpp graph: total/s | open/s | read/s | vdec/s | adec/s", this);
+    activityLegendLabel->setStyleSheet("color:#d0d8e2;");
+    qualityGraph = new MultiLineGraphWidget(
+        {QColor(78, 200, 110), QColor(74, 166, 255), QColor(250, 190, 76), QColor(181, 132, 255)},
+        {120.0, 100.0, 100.0, 100.0},
+        this);
+    activityGraph = new MultiLineGraphWidget(
+        {QColor(255, 145, 80), QColor(255, 205, 105), QColor(244, 99, 99), QColor(95, 209, 155), QColor(130, 173, 255)},
+        {5000.0, 500.0, 5000.0, 1500.0, 1500.0},
+        this);
 
     layout->addWidget(title);
     layout->addWidget(composeFpsLabel);
     layout->addWidget(cacheStatsLabel);
     layout->addWidget(cacheResolutionLabel);
     layout->addWidget(projectInfoLabel);
-    layout->addWidget(combinedGraph);
+    layout->addWidget(qualityLegendLabel);
+    layout->addWidget(qualityGraph);
+    layout->addWidget(activityLegendLabel);
+    layout->addWidget(activityGraph);
 }
 
 void PerformanceWidget::setMetrics(const QString &composeFps,
@@ -132,11 +119,22 @@ void PerformanceWidget::setMetrics(const QString &composeFps,
                                    const QString &projectInfo,
                                    double fpsValue,
                                    double cacheHitPct,
-                                   double avcppCallsPerSecond)
+                                   double finalCacheHitPct,
+                                   double audioCacheHitPct,
+                                   double avcppCallsPerSecond,
+                                   double avcppOpenPerSec,
+                                   double avcppReadPerSec,
+                                   double avcppVideoDecodePerSec,
+                                   double avcppAudioDecodePerSec)
 {
     composeFpsLabel->setText(composeFps);
     cacheStatsLabel->setText(cacheStats);
     cacheResolutionLabel->setText(cacheResolution);
     projectInfoLabel->setText(projectInfo);
-    combinedGraph->setSample(fpsValue, cacheHitPct, avcppCallsPerSecond);
+    qualityGraph->addSample({fpsValue, cacheHitPct, finalCacheHitPct, audioCacheHitPct});
+    activityGraph->addSample({avcppCallsPerSecond,
+                              avcppOpenPerSec,
+                              avcppReadPerSec,
+                              avcppVideoDecodePerSec,
+                              avcppAudioDecodePerSec});
 }

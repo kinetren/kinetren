@@ -387,76 +387,109 @@ PlaybackPipeline::PerformanceStats PlaybackPipeline::performanceSnapshot() const
     return stats;
 }
 
-QHash<QString, double> PlaybackPipeline::videoCacheCoverage(const std::vector<Clip> &clips) const
+QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::videoCacheSegments(const std::vector<Clip> &clips) const
 {
-    QHash<QString, double> coverage;
+    QHash<QString, QVector<QPair<double, double>>> segmentsByClip;
     std::lock_guard<std::mutex> lock(coverageMutex);
     for (const auto &clip : clips) {
         const std::string source = clip.sourcePath.toStdString();
         auto it = videoBucketsBySource.find(source);
         if (it == videoBucketsBySource.end()) {
-            coverage.insert(coverageClipKey(clip), 0.0);
+            segmentsByClip.insert(coverageClipKey(clip), {});
             continue;
         }
         const qint64 start = clip.sourceInMs;
         const qint64 end = clip.sourceInMs + std::max<qint64>(1, clip.durationMs);
-        int total = 0;
-        int hit = 0;
+        QVector<QPair<double, double>> segments;
+        bool inRun = false;
+        qint64 runStart = start;
         for (qint64 t = start; t < end; t += kDraftFrameBucketMs) {
-            ++total;
             const qint64 bucket = (t / kDraftFrameBucketMs) * kDraftFrameBucketMs;
-            if (it->second.find(bucket) != it->second.end()) {
-                ++hit;
+            const bool hasBucket = (it->second.find(bucket) != it->second.end());
+            if (hasBucket && !inRun) {
+                inRun = true;
+                runStart = t;
+            } else if (!hasBucket && inRun) {
+                const double a = static_cast<double>(runStart - start) / static_cast<double>(std::max<qint64>(1, end - start));
+                const double b = static_cast<double>(t - start) / static_cast<double>(std::max<qint64>(1, end - start));
+                segments.push_back({std::clamp(a, 0.0, 1.0), std::clamp(b, 0.0, 1.0)});
+                inRun = false;
             }
         }
-        coverage.insert(coverageClipKey(clip), (total > 0) ? (static_cast<double>(hit) / static_cast<double>(total)) : 0.0);
+        if (inRun) {
+            const double a = static_cast<double>(runStart - start) / static_cast<double>(std::max<qint64>(1, end - start));
+            segments.push_back({std::clamp(a, 0.0, 1.0), 1.0});
+        }
+        segmentsByClip.insert(coverageClipKey(clip), segments);
     }
-    return coverage;
+    return segmentsByClip;
 }
 
-QHash<QString, double> PlaybackPipeline::audioCacheCoverage(const std::vector<Clip> &clips) const
+QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::audioCacheSegments(const std::vector<Clip> &clips) const
 {
-    QHash<QString, double> coverage;
+    QHash<QString, QVector<QPair<double, double>>> segmentsByClip;
     std::lock_guard<std::mutex> lock(coverageMutex);
     for (const auto &clip : clips) {
         const std::string source = clip.sourcePath.toStdString();
         auto it = audioBucketsBySource.find(source);
         if (it == audioBucketsBySource.end()) {
-            coverage.insert(coverageClipKey(clip), 0.0);
+            segmentsByClip.insert(coverageClipKey(clip), {});
             continue;
         }
         const qint64 start = clip.sourceInMs;
         const qint64 end = clip.sourceInMs + std::max<qint64>(1, clip.durationMs);
-        int total = 0;
-        int hit = 0;
+        QVector<QPair<double, double>> segments;
+        bool inRun = false;
+        qint64 runStart = start;
         for (qint64 t = start; t < end; t += kAudioBlockMs) {
-            ++total;
             const qint64 bucket = (t / kAudioBlockMs) * kAudioBlockMs;
-            if (it->second.find(bucket) != it->second.end()) {
-                ++hit;
+            const bool hasBucket = (it->second.find(bucket) != it->second.end());
+            if (hasBucket && !inRun) {
+                inRun = true;
+                runStart = t;
+            } else if (!hasBucket && inRun) {
+                const double a = static_cast<double>(runStart - start) / static_cast<double>(std::max<qint64>(1, end - start));
+                const double b = static_cast<double>(t - start) / static_cast<double>(std::max<qint64>(1, end - start));
+                segments.push_back({std::clamp(a, 0.0, 1.0), std::clamp(b, 0.0, 1.0)});
+                inRun = false;
             }
         }
-        coverage.insert(coverageClipKey(clip), (total > 0) ? (static_cast<double>(hit) / static_cast<double>(total)) : 0.0);
+        if (inRun) {
+            const double a = static_cast<double>(runStart - start) / static_cast<double>(std::max<qint64>(1, end - start));
+            segments.push_back({std::clamp(a, 0.0, 1.0), 1.0});
+        }
+        segmentsByClip.insert(coverageClipKey(clip), segments);
     }
-    return coverage;
+    return segmentsByClip;
 }
 
-double PlaybackPipeline::finalTimelineCoverage(qint64 startMs, qint64 endMs) const
+QVector<QPair<double, double>> PlaybackPipeline::finalTimelineSegments(qint64 startMs, qint64 endMs) const
 {
+    QVector<QPair<double, double>> segments;
     if (endMs <= startMs) {
-        return 0.0;
+        return segments;
     }
     std::lock_guard<std::mutex> lock(coverageMutex);
-    int total = 0;
-    int hit = 0;
+    bool inRun = false;
+    qint64 runStart = startMs;
     for (qint64 t = std::max<qint64>(0, startMs); t < endMs; t += kVideoFrameMs) {
-        ++total;
         const qint64 frameIdx = t / kVideoFrameMs;
-        if (finalTimelineFrames.find(frameIdx) != finalTimelineFrames.end()) {
-            ++hit;
+        const bool hasFrame = (finalTimelineFrames.find(frameIdx) != finalTimelineFrames.end());
+        if (hasFrame && !inRun) {
+            inRun = true;
+            runStart = t;
+        } else if (!hasFrame && inRun) {
+            const double a = static_cast<double>(runStart - startMs) / static_cast<double>(std::max<qint64>(1, endMs - startMs));
+            const double b = static_cast<double>(t - startMs) / static_cast<double>(std::max<qint64>(1, endMs - startMs));
+            segments.push_back({std::clamp(a, 0.0, 1.0), std::clamp(b, 0.0, 1.0)});
+            inRun = false;
         }
     }
-    return (total > 0) ? (static_cast<double>(hit) / static_cast<double>(total)) : 0.0;
+    if (inRun) {
+        const double a = static_cast<double>(runStart - startMs) / static_cast<double>(std::max<qint64>(1, endMs - startMs));
+        segments.push_back({std::clamp(a, 0.0, 1.0), 1.0});
+    }
+    return segments;
 }
 
 QString PlaybackPipeline::coverageClipKey(const Clip &clip)

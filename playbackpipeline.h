@@ -3,6 +3,8 @@
 
 #include <QImage>
 #include <QHash>
+#include <QPair>
+#include <QVector>
 #include <QString>
 #include <QtGlobal>
 #include "framecache.h"
@@ -69,9 +71,9 @@ public:
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
     void setProjectSettings(const ProjectSettings &settings);
     PerformanceStats performanceSnapshot() const;
-    QHash<QString, double> videoCacheCoverage(const std::vector<Clip> &clips) const;
-    QHash<QString, double> audioCacheCoverage(const std::vector<Clip> &clips) const;
-    double finalTimelineCoverage(qint64 startMs, qint64 endMs) const;
+    QHash<QString, QVector<QPair<double, double>>> videoCacheSegments(const std::vector<Clip> &clips) const;
+    QHash<QString, QVector<QPair<double, double>>> audioCacheSegments(const std::vector<Clip> &clips) const;
+    QVector<QPair<double, double>> finalTimelineSegments(qint64 startMs, qint64 endMs) const;
     static QString coverageClipKey(const Clip &clip);
 
 private:

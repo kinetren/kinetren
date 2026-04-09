@@ -68,7 +68,8 @@ public:
     std::vector<ActiveClip> activeAudioAt(qint64 timeMs) const;
     std::vector<RenderClip> renderClips() const;
     QString formatTimelineTime(qint64 timeMs) const;
-    void setCacheCoverage(const QHash<QString, double> &clipCoverage, double timelineCoverage);
+    void setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipSegments,
+                          const QVector<QPair<double, double>> &timelineSegments);
 
 signals:
     void cursorChanged(qint64 cursorMs);
@@ -207,8 +208,8 @@ private:
     void emitOverlayInfo();
     QHash<QString, QImage> previewCache;
     QHash<QString, std::vector<int>> peaksCache;
-    QHash<QString, double> cacheCoverageByClip;
-    double timelineCacheCoverageRatio = 0.0;
+    QHash<QString, QVector<QPair<double, double>>> cacheSegmentsByClip;
+    QVector<QPair<double, double>> timelineCacheSegments;
 };
 
 #endif // TIMELINEEDITOR_H

@@ -2,9 +2,10 @@
 #define PERFORMANCEWIDGET_H
 
 #include <QWidget>
+#include <QVector>
 
 class QLabel;
-class CombinedMetricGraphWidget;
+class MultiLineGraphWidget;
 
 class PerformanceWidget : public QWidget
 {
@@ -18,14 +19,23 @@ public:
                     const QString &projectInfo,
                     double fpsValue,
                     double cacheHitPct,
-                    double avcppCallsPerSecond);
+                    double finalCacheHitPct,
+                    double audioCacheHitPct,
+                    double avcppCallsPerSecond,
+                    double avcppOpenPerSec,
+                    double avcppReadPerSec,
+                    double avcppVideoDecodePerSec,
+                    double avcppAudioDecodePerSec);
 
 private:
     QLabel *composeFpsLabel = nullptr;
     QLabel *cacheStatsLabel = nullptr;
     QLabel *cacheResolutionLabel = nullptr;
     QLabel *projectInfoLabel = nullptr;
-    CombinedMetricGraphWidget *combinedGraph = nullptr;
+    MultiLineGraphWidget *qualityGraph = nullptr;
+    MultiLineGraphWidget *activityGraph = nullptr;
+    QLabel *qualityLegendLabel = nullptr;
+    QLabel *activityLegendLabel = nullptr;
 };
 
 #endif // PERFORMANCEWIDGET_H

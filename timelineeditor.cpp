@@ -609,10 +609,11 @@ QString TimelineEditor::formatTimelineTime(qint64 timeMs) const
         .arg(frame, 2, 10, QChar('0'));
 }
 
-void TimelineEditor::setCacheCoverage(const QHash<QString, double> &clipCoverage, double timelineCoverage)
+void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipSegments,
+                                      const QVector<QPair<double, double>> &timelineSegments)
 {
-    cacheCoverageByClip = clipCoverage;
-    timelineCacheCoverageRatio = std::clamp(timelineCoverage, 0.0, 1.0);
+    cacheSegmentsByClip = clipSegments;
+    timelineCacheSegments = timelineSegments;
     update();
 }
 
@@ -627,20 +628,17 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     const int paintBottom = height() - 4;
     const QRect rulerRect(timelineLeft(), rulerTop(), timelineRight() - timelineLeft(), rulerHeight());
     const QRect timelineCacheBarRect(timelineLeft(), std::max(2, rulerTop() - 8), timelineRight() - timelineLeft(), 5);
-    p.fillRect(timelineCacheBarRect, QColor(35, 43, 53));
-    const int timelineCacheFillW = static_cast<int>(timelineCacheBarRect.width() * timelineCacheCoverageRatio);
-    if (timelineCacheFillW > 0) {
-        p.fillRect(QRect(timelineCacheBarRect.left(),
-                         timelineCacheBarRect.top(),
-                         timelineCacheFillW,
-                         timelineCacheBarRect.height()),
-                   QColor(90, 205, 255));
+    for (const auto &segment : timelineCacheSegments) {
+        const double a = std::clamp(segment.first, 0.0, 1.0);
+        const double b = std::clamp(segment.second, 0.0, 1.0);
+        if (b <= a) {
+            continue;
+        }
+        const int x1 = timelineCacheBarRect.left() + static_cast<int>(a * timelineCacheBarRect.width());
+        const int x2 = timelineCacheBarRect.left() + static_cast<int>(b * timelineCacheBarRect.width());
+        p.fillRect(QRect(x1, timelineCacheBarRect.top(), std::max(1, x2 - x1), timelineCacheBarRect.height()),
+                   QColor(88, 198, 255));
     }
-    p.setPen(QColor(135, 165, 190));
-    p.drawRect(timelineCacheBarRect.adjusted(0, 0, -1, -1));
-    p.setPen(QColor(165, 190, 212));
-    p.drawText(timelineLeft() + 4, timelineCacheBarRect.bottom() - 1,
-               QString("cache %1%").arg(timelineCacheCoverageRatio * 100.0, 0, 'f', 0));
     p.fillRect(rulerRect, QColor(30, 30, 30));
     p.fillRect(QRect(0, rulerTop(), headerWidth(), rulerHeight()), QColor(26, 26, 26));
 
@@ -743,18 +741,18 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
             p.drawLine(r.right() - 2, r.top() + 2, r.right() - 2, r.bottom() - 2);
         }
 
-        const double clipCoverage = cacheCoverageByClip.value(clipCoverageKey(clip), 0.0);
-        const QRect barBg(r.left() + 3, r.bottom() - 7, std::max(6, r.width() - 6), 4);
-        p.fillRect(barBg, QColor(0, 0, 0, 110));
-        const int fillW = static_cast<int>(barBg.width() * std::clamp(clipCoverage, 0.0, 1.0));
-        if (fillW > 0) {
-            QColor barColor = QColor(224, 84, 84);
-            if (clipCoverage >= 0.85) {
-                barColor = QColor(64, 205, 112);
-            } else if (clipCoverage >= 0.45) {
-                barColor = QColor(234, 186, 72);
+        const auto segments = cacheSegmentsByClip.value(clipCoverageKey(clip));
+        const QRect barRect(r.left() + 3, r.top() - 6, std::max(6, r.width() - 6), 4);
+        const QColor barColor = (clip.mediaType == TrackType::Audio) ? QColor(114, 214, 255) : QColor(82, 226, 124);
+        for (const auto &segment : segments) {
+            const double a = std::clamp(segment.first, 0.0, 1.0);
+            const double b = std::clamp(segment.second, 0.0, 1.0);
+            if (b <= a) {
+                continue;
             }
-            p.fillRect(QRect(barBg.left(), barBg.top(), fillW, barBg.height()), barColor);
+            const int x1 = barRect.left() + static_cast<int>(a * barRect.width());
+            const int x2 = barRect.left() + static_cast<int>(b * barRect.width());
+            p.fillRect(QRect(x1, barRect.top(), std::max(1, x2 - x1), barRect.height()), barColor);
         }
     }
 

@@ -57,6 +57,10 @@ private:
     ProjectSettings projectSettings;
     QTimer performanceTimer;
     quint64 lastAvcppTotalCalls = 0;
+    quint64 lastAvcppOpenCalls = 0;
+    quint64 lastAvcppPacketReads = 0;
+    quint64 lastAvcppVideoDecodeCalls = 0;
+    quint64 lastAvcppAudioDecodeCalls = 0;
     qint64 lastPerfSampleMs = 0;
 
     Ui::MainWindow *ui;

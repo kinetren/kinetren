@@ -25,6 +25,8 @@
 #include <QSplitter>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QPair>
+#include <QVector>
 
 #include <QtGlobal>
 
@@ -644,16 +646,33 @@ void MainWindow::refreshPerformancePanel()
         stats.avcppOpenCalls + stats.avcppPacketReads + stats.avcppVideoDecodeCalls + stats.avcppAudioDecodeCalls;
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     double avcppCallsPerSec = 0.0;
+    double avcppOpenPerSec = 0.0;
+    double avcppReadPerSec = 0.0;
+    double avcppVideoDecodePerSec = 0.0;
+    double avcppAudioDecodePerSec = 0.0;
     if (lastPerfSampleMs > 0 && nowMs > lastPerfSampleMs && avcppTotalCalls >= lastAvcppTotalCalls) {
         const qint64 deltaMs = nowMs - lastPerfSampleMs;
         const quint64 deltaCalls = avcppTotalCalls - lastAvcppTotalCalls;
         avcppCallsPerSec = (deltaMs > 0) ? (static_cast<double>(deltaCalls) * 1000.0 / static_cast<double>(deltaMs)) : 0.0;
+        const auto perSec = [deltaMs](quint64 deltaValue) {
+            return (deltaMs > 0) ? (static_cast<double>(deltaValue) * 1000.0 / static_cast<double>(deltaMs)) : 0.0;
+        };
+        avcppOpenPerSec = perSec((stats.avcppOpenCalls >= lastAvcppOpenCalls) ? (stats.avcppOpenCalls - lastAvcppOpenCalls) : 0);
+        avcppReadPerSec = perSec((stats.avcppPacketReads >= lastAvcppPacketReads) ? (stats.avcppPacketReads - lastAvcppPacketReads) : 0);
+        avcppVideoDecodePerSec =
+            perSec((stats.avcppVideoDecodeCalls >= lastAvcppVideoDecodeCalls) ? (stats.avcppVideoDecodeCalls - lastAvcppVideoDecodeCalls) : 0);
+        avcppAudioDecodePerSec =
+            perSec((stats.avcppAudioDecodeCalls >= lastAvcppAudioDecodeCalls) ? (stats.avcppAudioDecodeCalls - lastAvcppAudioDecodeCalls) : 0);
     }
     lastPerfSampleMs = nowMs;
     lastAvcppTotalCalls = avcppTotalCalls;
+    lastAvcppOpenCalls = stats.avcppOpenCalls;
+    lastAvcppPacketReads = stats.avcppPacketReads;
+    lastAvcppVideoDecodeCalls = stats.avcppVideoDecodeCalls;
+    lastAvcppAudioDecodeCalls = stats.avcppAudioDecodeCalls;
     const double aggregateHitPct = (resourceHitPct * 0.45) + (finalHitPct * 0.35) + (audioHitPct * 0.20);
 
-    QHash<QString, double> clipCoverage;
+    QHash<QString, QVector<QPair<double, double>>> clipCoverage;
     std::vector<PlaybackPipeline::Clip> videoRenderClips;
     std::vector<PlaybackPipeline::Clip> audioRenderClips;
     for (const auto &clip : timelineEditor->renderClips()) {
@@ -665,18 +684,23 @@ void MainWindow::refreshPerformancePanel()
             audioRenderClips.push_back(c);
         }
     }
-    const auto videoCoverage = playbackPipeline->videoCacheCoverage(videoRenderClips);
-    const auto audioCoverage = playbackPipeline->audioCacheCoverage(audioRenderClips);
+    const auto videoCoverage = playbackPipeline->videoCacheSegments(videoRenderClips);
+    const auto audioCoverage = playbackPipeline->audioCacheSegments(audioRenderClips);
     for (auto it = videoCoverage.constBegin(); it != videoCoverage.constEnd(); ++it) {
         clipCoverage.insert(it.key(), it.value());
     }
     for (auto it = audioCoverage.constBegin(); it != audioCoverage.constEnd(); ++it) {
-        clipCoverage.insert(it.key(), std::max(clipCoverage.value(it.key(), 0.0), it.value()));
+        QVector<QPair<double, double>> merged = clipCoverage.value(it.key());
+        merged += it.value();
+        std::sort(merged.begin(), merged.end(), [](const QPair<double, double> &a, const QPair<double, double> &b) {
+            return a.first < b.first;
+        });
+        clipCoverage.insert(it.key(), merged);
     }
     const qint64 viewStart = timelineEditor->viewStartMs();
     const qint64 viewEnd = viewStart + timelineEditor->visibleDurationMs();
-    const double timelineCoverage = playbackPipeline->finalTimelineCoverage(viewStart, viewEnd);
-    timelineEditor->setCacheCoverage(clipCoverage, timelineCoverage);
+    const auto timelineSegments = playbackPipeline->finalTimelineSegments(viewStart, viewEnd);
+    timelineEditor->setCacheCoverage(clipCoverage, timelineSegments);
 
     const auto mb = [](quint64 bytes) -> QString {
         return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 1) + "MB";
@@ -716,6 +740,12 @@ void MainWindow::refreshPerformancePanel()
             .arg(stats.audioCacheEntries),
         stats.composeFps,
         aggregateHitPct,
-        avcppCallsPerSec);
+        finalHitPct,
+        audioHitPct,
+        avcppCallsPerSec,
+        avcppOpenPerSec,
+        avcppReadPerSec,
+        avcppVideoDecodePerSec,
+        avcppAudioDecodePerSec);
 }
 
