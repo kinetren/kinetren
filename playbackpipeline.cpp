@@ -47,7 +47,6 @@ constexpr int kStartupStallMaxMs = 400;
 constexpr qint64 kWorkerWindowLookbehindMs = 250;
 constexpr qint64 kWorkerWindowLookaheadMs = 5000;
 constexpr qint64 kCacheLookaheadMs = 5000;
-constexpr int kEnginePulseIntervalMs = 1;
 const av::Rational kMillisecondsTimebase{1, 1000};
 
 qint64 timestampToMs(const av::Timestamp &ts)
@@ -277,9 +276,6 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     if (videoThread.joinable()) {
         videoThread.join();
     }
-    if (pulseThread.joinable()) {
-        pulseThread.join();
-    }
     {
         std::lock_guard<std::mutex> lock(audioMutex);
         for (auto &it : audioWorkers) {
@@ -296,6 +292,10 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     }
 
     playbackStartTimelineMs.store(startTimelineMs);
+    const qint64 nowSteadyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now().time_since_epoch())
+                                   .count();
+    playbackStartSteadyMs.store(nowSteadyMs);
     pulseCounterMs.store(0);
     timelineMs.store(startTimelineMs);
     ++generation;
@@ -314,9 +314,6 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     videoThread = std::thread([this]() {
         videoComposeLoop();
     });
-    pulseThread = std::thread([this]() {
-        pulseLoop();
-    });
 }
 
 void PlaybackPipeline::stop()
@@ -330,9 +327,6 @@ void PlaybackPipeline::stop()
     }
     if (videoThread.joinable()) {
         videoThread.join();
-    }
-    if (pulseThread.joinable()) {
-        pulseThread.join();
     }
     {
         std::lock_guard<std::mutex> lock(audioMutex);
@@ -364,6 +358,7 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         return;
     }
     const qint64 engineNowMs = playbackPositionMs();
+    timelineMs.store(engineNowMs);
     const qint64 prevAudioReconcileMs = lastAudioReconcileMs.load();
     if (prevAudioReconcileMs < 0 || std::llabs(engineNowMs - prevAudioReconcileMs) >= kAudioBlockMs) {
         reconcileAudioWorkers(audioClips);
@@ -381,27 +376,12 @@ qint64 PlaybackPipeline::playbackPositionMs() const
     if (!running.load()) {
         return timelineMs.load();
     }
-    return playbackStartTimelineMs.load() + pulseCounterMs.load();
-}
-
-void PlaybackPipeline::pulseLoop()
-{
-    auto startClock = std::chrono::steady_clock::now();
-    auto nextWake = startClock;
-    while (running.load()) {
-        const auto now = std::chrono::steady_clock::now();
-        const qint64 elapsedMs = std::max<qint64>(
-            0,
-            std::chrono::duration_cast<std::chrono::milliseconds>(now - startClock).count());
-        pulseCounterMs.store(elapsedMs);
-        timelineMs.store(playbackStartTimelineMs.load() + elapsedMs);
-        nextWake += std::chrono::milliseconds(kEnginePulseIntervalMs);
-        const auto afterTick = std::chrono::steady_clock::now();
-        if (nextWake < afterTick) {
-            nextWake = afterTick;
-        }
-        std::this_thread::sleep_until(nextWake);
-    }
+    const qint64 startSteadyMs = playbackStartSteadyMs.load();
+    const qint64 nowSteadyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   std::chrono::steady_clock::now().time_since_epoch())
+                                   .count();
+    const qint64 elapsedMs = std::max<qint64>(0, nowSteadyMs - startSteadyMs);
+    return playbackStartTimelineMs.load() + elapsedMs;
 }
 
 void PlaybackPipeline::setDraftPreviewEnabled(bool enabled)
@@ -773,10 +753,6 @@ void PlaybackPipeline::audioMixLoop()
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             continue;
         }
-        const qint64 pulseBlock = playbackPositionMs() / kAudioBlockMs;
-        if (nextAudioBlock + 1 < pulseBlock) {
-            nextAudioBlock = pulseBlock;
-        }
 
         std::vector<std::shared_ptr<AudioWorker>> workers;
         {
@@ -862,8 +838,35 @@ void PlaybackPipeline::videoComposeLoop()
     auto fpsWindowStart = nextWake;
     quint64 fpsWindowFrames = 0;
     int startupStallMs = 0;
+    qint64 prefetchHeadMs = -1;
     std::unordered_map<std::string, qint64> lastPresentedTimeByWorker;
     std::unordered_map<std::string, QImage> lastPresentedFrameByWorker;
+    const auto runForwardPrefetch = [this, &prefetchHeadMs](qint64 nowMs, const std::vector<std::shared_ptr<VideoWorker>> &workers) {
+        std::vector<Clip> prefetchClips;
+        prefetchClips.reserve(workers.size());
+        for (const auto &worker : workers) {
+            if (!worker) {
+                continue;
+            }
+            prefetchClips.push_back(worker->clip);
+        }
+        if (prefetchClips.empty()) {
+            prefetchHeadMs = std::max<qint64>(prefetchHeadMs, nowMs + kVideoFrameMs);
+            return;
+        }
+        const qint64 windowEndMs = nowMs + kCacheLookaheadMs;
+        qint64 cursorMs = std::max<qint64>(nowMs + kVideoFrameMs, prefetchHeadMs);
+        if (cursorMs > windowEndMs) {
+            prefetchHeadMs = cursorMs;
+            return;
+        }
+        int budget = 3;
+        while (budget-- > 0 && cursorMs <= windowEndMs && running.load()) {
+            (void)composeDraftFrameAt(cursorMs, prefetchClips);
+            cursorMs += kVideoFrameMs;
+        }
+        prefetchHeadMs = cursorMs;
+    };
     while (running.load()) {
         std::vector<std::shared_ptr<VideoWorker>> workers;
         {
@@ -880,7 +883,7 @@ void PlaybackPipeline::videoComposeLoop()
             return a->key < b->key;
         });
 
-        const qint64 audioMasterMs = consumedAudioBlock.load() * kAudioBlockMs;
+        const qint64 audioMasterMs = playbackPositionMs();
         const std::string composedCacheKey = finalViewKey(audioMasterMs, workers);
         QImage composed;
         bool hasAny = false;
@@ -913,6 +916,7 @@ void PlaybackPipeline::videoComposeLoop()
             }
             ++nextVideoFrame;
             consumedVideoFrame.store(nextVideoFrame);
+            runForwardPrefetch(audioMasterMs, workers);
             const int sleepUs = std::clamp(composeFrameDurationUs / 2, 4000, 16000);
             nextWake += std::chrono::microseconds(sleepUs);
             std::this_thread::sleep_until(nextWake);
@@ -1007,6 +1011,7 @@ void PlaybackPipeline::videoComposeLoop()
 
         ++nextVideoFrame;
         consumedVideoFrame.store(nextVideoFrame);
+        runForwardPrefetch(audioMasterMs, workers);
         const int sleepUs = std::clamp(composeFrameDurationUs / 2, 4000, 16000);
         nextWake += std::chrono::microseconds(sleepUs);
         std::this_thread::sleep_until(nextWake);

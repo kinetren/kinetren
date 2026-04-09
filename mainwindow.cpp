@@ -37,7 +37,7 @@
 #include <vector>
 
 namespace {
-constexpr int kTimelineUiTickMs = 4;
+constexpr int kTimelineUiTickMs = 8;
 }
 
 MainWindow::MainWindow(QWidget *parent)
