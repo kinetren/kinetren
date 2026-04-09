@@ -4,6 +4,7 @@
 #include <QPainter>
 #include <QSizePolicy>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <algorithm>
 #include <deque>
 #include <vector>
@@ -28,7 +29,7 @@ public:
         for (int i = 0; i < adaptiveScale.size(); ++i) {
             adaptiveScale[i] = std::max(1.0, seriesMax.value(i, 100.0) * 0.25);
         }
-        setMinimumHeight(320);
+        setMinimumHeight(170);
         setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
@@ -64,46 +65,28 @@ protected:
         p.fillRect(rect(), QColor(24, 27, 31));
         p.setPen(QColor(61, 68, 77));
         p.drawRect(rect().adjusted(0, 0, -1, -1));
-        const int legendWidth = std::min(280, std::max(200, width() / 4));
-        const QRect legendRect(rect().left() + 8, rect().top() + 8, legendWidth - 16, rect().height() - 16);
-        const QRect g(legendRect.right() + 12, rect().top() + 20, rect().right() - 8 - (legendRect.right() + 12), rect().height() - 32);
+        const QRect g(rect().left() + 46, rect().top() + 22, rect().width() - 54, rect().height() - 34);
 
         p.setPen(QColor(210, 218, 228));
-        p.drawText(legendRect.adjusted(0, 0, 0, -legendRect.height() + 16), Qt::AlignLeft | Qt::AlignTop, title);
-        p.setPen(QColor(140, 150, 164));
-        p.drawText(legendRect.adjusted(0, 14, 0, -legendRect.height() + 30),
-                   Qt::AlignLeft | Qt::AlignTop,
-                   "Normalized (0-100%)");
+        p.drawText(QRect(rect().left() + 8, rect().top() + 4, rect().width() - 16, 16),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   title);
 
         p.setPen(QColor(49, 56, 64));
         p.drawLine(g.left(), g.top(), g.right(), g.top());
         p.drawLine(g.left(), g.center().y(), g.right(), g.center().y());
         p.drawLine(g.left(), g.bottom(), g.right(), g.bottom());
         p.setPen(QColor(116, 126, 140));
-        p.drawText(g.left() - 34, g.top() + 4, "100%");
-        p.drawText(g.left() - 30, g.center().y() + 4, "50%");
-        p.drawText(g.left() - 24, g.bottom() + 4, "0%");
+        p.drawText(g.left() - 36, g.top() + 4, "100%");
+        p.drawText(g.left() - 32, g.center().y() + 4, "50%");
+        p.drawText(g.left() - 26, g.bottom() + 4, "0%");
 
         for (int si = 0; si < static_cast<int>(series.size()); ++si) {
             const auto &samples = series[static_cast<size_t>(si)];
             const double maxV = std::max(0.01, adaptiveScale.value(si, seriesMax.value(si, 100.0)));
-            const double hardCap = std::max(0.01, seriesMax.value(si, 100.0));
             const QColor color = colors.value(si, QColor(150, 150, 150));
-            const QString name = names.value(si, QString("S%1").arg(si + 1));
             const double current = samples.empty() ? 0.0 : samples.back();
             const double currentPct = std::clamp((current / maxV) * 100.0, 0.0, 100.0);
-
-            const int rowY = legendRect.top() + 36 + si * 18;
-            p.setPen(Qt::NoPen);
-            p.setBrush(color);
-            p.drawRect(legendRect.left(), rowY + 4, 10, 10);
-            p.setPen(QColor(210, 218, 228));
-            p.drawText(legendRect.left() + 16,
-                       rowY + 13,
-                       QString("%1 %2 (%3%)")
-                           .arg(name)
-                           .arg(current, 0, 'f', 1)
-                           .arg(currentPct, 0, 'f', 0));
 
             if (samples.size() < 2) {
                 continue;
@@ -126,6 +109,8 @@ protected:
             p.setBrush(color);
             p.setPen(Qt::NoPen);
             p.drawEllipse(QPointF(markerX, markerY), 3.5, 3.5);
+            p.setPen(color);
+            p.drawText(g.right() - 64, static_cast<int>(markerY) - 2, QString::number(current, 'f', 1));
         }
     }
 
@@ -145,7 +130,7 @@ PerformanceWidget::PerformanceWidget(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(8);
-    setMinimumHeight(820);
+    setMinimumHeight(460);
 
     auto *title = new QLabel("Performance / Utility", this);
     title->setStyleSheet("font-weight:600; color:#d9e3ef;");
@@ -165,8 +150,12 @@ PerformanceWidget::PerformanceWidget(QWidget *parent)
         {QColor(255, 145, 80), QColor(255, 205, 105), QColor(244, 99, 99), QColor(95, 209, 155), QColor(130, 173, 255)},
         {5000.0, 500.0, 5000.0, 1500.0, 1500.0},
         this);
-    qualityGraph->setMinimumHeight(340);
-    activityGraph->setMinimumHeight(340);
+    qualityGraph->setMinimumHeight(170);
+    activityGraph->setMinimumHeight(170);
+    auto *qualityLegend = new QLabel("Legend: FPS(green), CacheHit(blue), FinalHit(gold), AudioHit(purple)", this);
+    qualityLegend->setStyleSheet("color:#c8d2df;");
+    auto *activityLegend = new QLabel("Legend: Total/s(orange), Open/s(yellow), Read/s(red), VDec/s(teal), ADec/s(blue)", this);
+    activityLegend->setStyleSheet("color:#c8d2df;");
 
     layout->addWidget(title);
     layout->addWidget(composeFpsLabel);
@@ -174,7 +163,9 @@ PerformanceWidget::PerformanceWidget(QWidget *parent)
     layout->addWidget(cacheResolutionLabel);
     layout->addWidget(projectInfoLabel);
     layout->addWidget(qualityGraph, 3);
+    layout->addWidget(qualityLegend);
     layout->addWidget(activityGraph, 3);
+    layout->addWidget(activityLegend);
 }
 
 void PerformanceWidget::setMetrics(const QString &composeFps,
