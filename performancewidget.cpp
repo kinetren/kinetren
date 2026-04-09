@@ -2,10 +2,12 @@
 
 #include <QLabel>
 #include <QPainter>
+#include <QSizePolicy>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <deque>
 #include <vector>
+#include <cmath>
 
 class MultiLineGraphWidget : public QWidget
 {
@@ -22,7 +24,12 @@ public:
         , seriesMax(seriesMax)
         , series(static_cast<size_t>(seriesColors.size()))
     {
-        setMinimumHeight(150);
+        adaptiveScale.resize(seriesColors.size());
+        for (int i = 0; i < adaptiveScale.size(); ++i) {
+            adaptiveScale[i] = std::max(1.0, seriesMax.value(i, 100.0) * 0.25);
+        }
+        setMinimumHeight(320);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     }
 
     void addSample(const QVector<double> &values)
@@ -33,6 +40,18 @@ public:
             while (series[static_cast<size_t>(i)].size() > kMaxSamples) {
                 series[static_cast<size_t>(i)].pop_front();
             }
+
+            const auto &samples = series[static_cast<size_t>(i)];
+            double recentMax = 0.0;
+            for (const double v : samples) {
+                recentMax = std::max(recentMax, v);
+            }
+            const double hardCap = std::max(1.0, seriesMax.value(i, 100.0));
+            const double floorScale = std::max(1.0, hardCap * 0.02);
+            const double targetScale = std::clamp(std::max(floorScale, recentMax * 1.25), floorScale, hardCap);
+            const double currentScale = adaptiveScale.value(i, floorScale);
+            const double alpha = (targetScale > currentScale) ? 0.35 : 0.08;
+            adaptiveScale[i] = currentScale + alpha * (targetScale - currentScale);
         }
         update();
     }
@@ -45,7 +64,7 @@ protected:
         p.fillRect(rect(), QColor(24, 27, 31));
         p.setPen(QColor(61, 68, 77));
         p.drawRect(rect().adjusted(0, 0, -1, -1));
-        const int legendWidth = std::min(320, std::max(220, width() / 3));
+        const int legendWidth = std::min(280, std::max(200, width() / 4));
         const QRect legendRect(rect().left() + 8, rect().top() + 8, legendWidth - 16, rect().height() - 16);
         const QRect g(legendRect.right() + 12, rect().top() + 20, rect().right() - 8 - (legendRect.right() + 12), rect().height() - 32);
 
@@ -67,23 +86,23 @@ protected:
 
         for (int si = 0; si < static_cast<int>(series.size()); ++si) {
             const auto &samples = series[static_cast<size_t>(si)];
-            const double maxV = std::max(0.01, seriesMax.value(si, 100.0));
+            const double maxV = std::max(0.01, adaptiveScale.value(si, seriesMax.value(si, 100.0)));
+            const double hardCap = std::max(0.01, seriesMax.value(si, 100.0));
             const QColor color = colors.value(si, QColor(150, 150, 150));
             const QString name = names.value(si, QString("S%1").arg(si + 1));
             const double current = samples.empty() ? 0.0 : samples.back();
             const double currentPct = std::clamp((current / maxV) * 100.0, 0.0, 100.0);
 
-            const int rowY = legendRect.top() + 36 + si * 20;
+            const int rowY = legendRect.top() + 36 + si * 18;
             p.setPen(Qt::NoPen);
             p.setBrush(color);
             p.drawRect(legendRect.left(), rowY + 4, 10, 10);
             p.setPen(QColor(210, 218, 228));
             p.drawText(legendRect.left() + 16,
                        rowY + 13,
-                       QString("%1: %2 / %3 (%4%)")
+                       QString("%1 %2 (%3%)")
                            .arg(name)
                            .arg(current, 0, 'f', 1)
-                           .arg(maxV, 0, 'f', 0)
                            .arg(currentPct, 0, 'f', 0));
 
             if (samples.size() < 2) {
@@ -116,6 +135,7 @@ private:
     QVector<QString> names;
     QVector<QColor> colors;
     QVector<double> seriesMax;
+    QVector<double> adaptiveScale;
     std::vector<std::deque<double>> series;
 };
 
@@ -124,7 +144,8 @@ PerformanceWidget::PerformanceWidget(QWidget *parent)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(3);
+    layout->setSpacing(8);
+    setMinimumHeight(820);
 
     auto *title = new QLabel("Performance / Utility", this);
     title->setStyleSheet("font-weight:600; color:#d9e3ef;");
@@ -144,14 +165,16 @@ PerformanceWidget::PerformanceWidget(QWidget *parent)
         {QColor(255, 145, 80), QColor(255, 205, 105), QColor(244, 99, 99), QColor(95, 209, 155), QColor(130, 173, 255)},
         {5000.0, 500.0, 5000.0, 1500.0, 1500.0},
         this);
+    qualityGraph->setMinimumHeight(340);
+    activityGraph->setMinimumHeight(340);
 
     layout->addWidget(title);
     layout->addWidget(composeFpsLabel);
     layout->addWidget(cacheStatsLabel);
     layout->addWidget(cacheResolutionLabel);
     layout->addWidget(projectInfoLabel);
-    layout->addWidget(qualityGraph);
-    layout->addWidget(activityGraph);
+    layout->addWidget(qualityGraph, 3);
+    layout->addWidget(activityGraph, 3);
 }
 
 void PerformanceWidget::setMetrics(const QString &composeFps,

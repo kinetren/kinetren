@@ -78,9 +78,15 @@ void MainWindow::setupTimelineEditorUi()
     sourceLayout->addWidget(sourceTitle);
 
     sourceArea = new SourceAreaWidget(ui->widget_3);
+    sourceArea->setMinimumHeight(110);
+    sourceArea->setMaximumHeight(220);
     sourceLayout->addWidget(sourceArea, 1);
     performanceWidget = new PerformanceWidget(ui->widget_3);
-    sourceLayout->addWidget(performanceWidget);
+    performanceWidget->setMinimumHeight(700);
+    sourceLayout->addWidget(performanceWidget, 4);
+    sourceLayout->setStretch(0, 0); // title
+    sourceLayout->setStretch(1, 1); // source list
+    sourceLayout->setStretch(2, 5); // performance panel
 
     auto *previewHost = new QWidget(ui->splitter);
     auto *previewLayout = new QVBoxLayout(previewHost);
@@ -144,6 +150,14 @@ void MainWindow::setupTimelineEditorUi()
     globalCounterLayout->addWidget(new QLabel("Timeline time:", globalCounterWidget));
     globalCounterLayout->addWidget(timelineGlobalTimeLabel, 1);
     ui->splitter_2->insertWidget(1, globalCounterWidget);
+    const int sourcePaneIndex = ui->splitter_2->indexOf(ui->widget_3);
+    if (sourcePaneIndex >= 0) {
+        ui->splitter_2->setStretchFactor(sourcePaneIndex, 3);
+    }
+    const int timelinePaneIndex = ui->splitter_2->indexOf(ui->widget_2);
+    if (timelinePaneIndex >= 0) {
+        ui->splitter_2->setStretchFactor(timelinePaneIndex, 2);
+    }
 
     timelineEditor = new TimelineEditor(ui->widget_2);
     timelineLayout->addWidget(timelineEditor, 1);
