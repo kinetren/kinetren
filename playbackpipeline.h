@@ -88,8 +88,8 @@ private:
 
     void reconcileAudioWorkers(const std::vector<Clip> &clips);
     void reconcileVideoWorkers(const std::vector<Clip> &clips);
-    void startAudioWorker(const Clip &clip, qint64 timelineMs);
-    void startVideoWorker(const Clip &clip, qint64 timelineMs);
+    void startAudioWorker(const Clip &clip);
+    void startVideoWorker(const Clip &clip);
 
     void audioMixLoop();
     void videoComposeLoop();
@@ -115,6 +115,8 @@ private:
     std::atomic<qint64> timelineMs{0};
     std::atomic<qint64> consumedAudioBlock{0};
     std::atomic<qint64> consumedVideoFrame{0};
+    std::atomic<qint64> lastAudioReconcileMs{-1};
+    std::atomic<qint64> lastVideoReconcileMs{-1};
 
     std::mutex audioMutex;
     std::unordered_map<std::string, std::shared_ptr<AudioWorker>> audioWorkers;

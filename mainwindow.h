@@ -34,7 +34,6 @@ private:
     void toggleTimelinePause();
     void onTimelineTick();
     void syncTimelinePlayback();
-    void syncTimelinePlaybackRange(qint64 fromMs, qint64 toMs);
     void stopMediaPlayback();
     void refreshTimelineScroll();
     void renderDraftProject();
@@ -53,7 +52,6 @@ private:
     bool timelinePlaying = false;
     bool stoppedAtRegionEnd = false;
     qint64 timelinePlayStartMs = 0;
-    qint64 lastPlaybackSyncMs = -1;
     qint64 lastTimelineFrameIndex = -1;
     QElapsedTimer timelinePlaybackClock;
     std::unique_ptr<PlaybackPipeline> playbackPipeline;

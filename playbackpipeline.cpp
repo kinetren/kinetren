@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -45,6 +46,8 @@ constexpr size_t kVideoRingSlots = 7; // 7 * 33ms ~= 231ms
 constexpr qint64 kVideoMaxAheadFrames = static_cast<qint64>(kVideoRingSlots - 2);
 constexpr int kDraftFrameBucketMs = 120;
 constexpr int kStartupStallMaxMs = 400;
+constexpr qint64 kWorkerWindowLookbehindMs = 250;
+constexpr qint64 kWorkerWindowLookaheadMs = 2500;
 const av::Rational kMillisecondsTimebase{1, 1000};
 
 qint64 timestampToMs(const av::Timestamp &ts)
@@ -297,6 +300,8 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     nextVideoFrame = startTimelineMs / kVideoFrameMs;
     consumedAudioBlock.store(nextAudioBlock);
     consumedVideoFrame.store(nextVideoFrame);
+    lastAudioReconcileMs.store(-1);
+    lastVideoReconcileMs.store(-1);
 
     audioThread = std::thread([this]() {
         audioMixLoop();
@@ -310,6 +315,8 @@ void PlaybackPipeline::stop()
 {
     running.store(false);
     ++generation;
+    lastAudioReconcileMs.store(-1);
+    lastVideoReconcileMs.store(-1);
     if (audioThread.joinable()) {
         audioThread.join();
     }
@@ -342,8 +349,16 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         }
         return;
     }
-    reconcileAudioWorkers(audioClips);
-    reconcileVideoWorkers(videoClips);
+    const qint64 prevAudioReconcileMs = lastAudioReconcileMs.load();
+    if (prevAudioReconcileMs < 0 || std::llabs(tMs - prevAudioReconcileMs) >= kAudioBlockMs) {
+        reconcileAudioWorkers(audioClips);
+        lastAudioReconcileMs.store(tMs);
+    }
+    const qint64 prevVideoReconcileMs = lastVideoReconcileMs.load();
+    if (prevVideoReconcileMs < 0 || std::llabs(tMs - prevVideoReconcileMs) >= 16) {
+        reconcileVideoWorkers(videoClips);
+        lastVideoReconcileMs.store(tMs);
+    }
 }
 
 qint64 PlaybackPipeline::playbackPositionMs() const
@@ -540,7 +555,10 @@ std::string PlaybackPipeline::audioBlockKey(const QString &sourcePath, qint64 so
 
 std::string PlaybackPipeline::videoFrameKey(const QString &sourcePath, qint64 sourceTimeMs, bool draft)
 {
-    const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs);
+    // Draft mode can use coarse cache buckets; realtime playback must stay fine-grained.
+    const qint64 bucketMs = draft
+        ? std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs)
+        : std::max<qint64>(0, sourceTimeMs);
     return (sourcePath + "::" + QString::number(bucketMs) + "::" + (draft ? "draft" : "full")).toStdString();
 }
 
@@ -596,8 +614,15 @@ void PlaybackPipeline::shutdownAudioOutput()
 void PlaybackPipeline::reconcileAudioWorkers(const std::vector<Clip> &clips)
 {
     const qint64 nowMs = timelineMs.load();
+    const qint64 windowStartMs = std::max<qint64>(0, nowMs - kWorkerWindowLookbehindMs);
+    const qint64 windowEndMs = nowMs + kWorkerWindowLookaheadMs;
     std::unordered_set<std::string> active;
     for (const auto &clip : clips) {
+        const qint64 clipEndMs = clip.startMs + clip.durationMs;
+        const bool intersectsWindow = (clip.startMs < windowEndMs) && (clipEndMs > windowStartMs);
+        if (!intersectsWindow) {
+            continue;
+        }
         const auto key = clipKey(clip);
         active.insert(key);
         bool exists = false;
@@ -606,7 +631,7 @@ void PlaybackPipeline::reconcileAudioWorkers(const std::vector<Clip> &clips)
             exists = (audioWorkers.find(key) != audioWorkers.end());
         }
         if (!exists) {
-            startAudioWorker(clip, nowMs);
+            startAudioWorker(clip);
         }
     }
 
@@ -624,8 +649,15 @@ void PlaybackPipeline::reconcileAudioWorkers(const std::vector<Clip> &clips)
 void PlaybackPipeline::reconcileVideoWorkers(const std::vector<Clip> &clips)
 {
     const qint64 nowMs = timelineMs.load();
+    const qint64 windowStartMs = std::max<qint64>(0, nowMs - kWorkerWindowLookbehindMs);
+    const qint64 windowEndMs = nowMs + kWorkerWindowLookaheadMs;
     std::unordered_set<std::string> active;
     for (const auto &clip : clips) {
+        const qint64 clipEndMs = clip.startMs + clip.durationMs;
+        const bool intersectsWindow = (clip.startMs < windowEndMs) && (clipEndMs > windowStartMs);
+        if (!intersectsWindow) {
+            continue;
+        }
         const auto key = clipKey(clip);
         active.insert(key);
         bool exists = false;
@@ -634,7 +666,7 @@ void PlaybackPipeline::reconcileVideoWorkers(const std::vector<Clip> &clips)
             exists = (videoWorkers.find(key) != videoWorkers.end());
         }
         if (!exists) {
-            startVideoWorker(clip, nowMs);
+            startVideoWorker(clip);
         }
     }
 
@@ -649,13 +681,13 @@ void PlaybackPipeline::reconcileVideoWorkers(const std::vector<Clip> &clips)
     }
 }
 
-void PlaybackPipeline::startAudioWorker(const Clip &clip, qint64 timelineNowMs)
+void PlaybackPipeline::startAudioWorker(const Clip &clip)
 {
     auto worker = std::make_shared<AudioWorker>();
     worker->key = clipKey(clip);
     worker->clip = clip;
-    worker->timelineStartMs = std::max<qint64>(clip.startMs, timelineNowMs);
-    worker->startOffsetMs = clip.sourceInMs + std::max<qint64>(0, worker->timelineStartMs - clip.startMs);
+    worker->timelineStartMs = clip.startMs;
+    worker->startOffsetMs = clip.sourceInMs;
     worker->generation = generation.load();
     worker->stopFlag = std::make_shared<std::atomic_bool>(false);
     worker->ring = std::make_shared<AudioRingBuffer>(kAudioRingSlots);
@@ -671,12 +703,12 @@ void PlaybackPipeline::startAudioWorker(const Clip &clip, qint64 timelineNowMs)
     });
 }
 
-void PlaybackPipeline::startVideoWorker(const Clip &clip, qint64 timelineNowMs)
+void PlaybackPipeline::startVideoWorker(const Clip &clip)
 {
     auto worker = std::make_shared<VideoWorker>();
     worker->key = clipKey(clip);
     worker->clip = clip;
-    worker->startOffsetMs = clip.sourceInMs + std::max<qint64>(0, timelineNowMs - clip.startMs);
+    worker->startOffsetMs = clip.sourceInMs;
     worker->playbackStartMs = clip.startMs;
     worker->consumedTimeMs.store(0);
     worker->generation = generation.load();
