@@ -351,11 +351,11 @@ void MainWindow::setupTimelineEditorUi()
     connect(timelineEditor, &TimelineEditor::loopEnabledChanged, timelineLoopButton, &QToolButton::setChecked);
     connect(timelineEditor, &TimelineEditor::overlayInfoChanged, timelineOverlayLabel, &QLabel::setText);
     connect(timelineEditor, &TimelineEditor::cursorChanged, this, [this](qint64 t) {
-        refreshTimelineScroll();
-        if (timelineGlobalTimeLabel && timelineEditor) {
-            timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(t));
-        }
         if (!timelinePlaying) {
+            refreshTimelineScroll();
+            if (timelineGlobalTimeLabel && timelineEditor) {
+                timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(t));
+            }
             syncTimelinePlayback();
         }
     });

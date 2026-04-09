@@ -104,10 +104,10 @@ void TimelineEditor::setCursorMs(qint64 valueMs, bool ensureVisible)
     cursorPositionMs = bounded;
     if (ensureVisible) {
         ensureCursorVisible();
+        emitOverlayInfo();
+        refreshTimelineRangeSignals();
     }
     emit cursorChanged(cursorPositionMs);
-    emitOverlayInfo();
-    refreshTimelineRangeSignals();
     update();
 }
 
