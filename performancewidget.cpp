@@ -58,6 +58,46 @@ public:
     }
 
 protected:
+    struct PinnedLegend {
+        qreal sourceY = 0.0;
+        qreal pinnedY = 0.0;
+        QString text;
+        QColor color;
+    };
+
+    static QVector<PinnedLegend> pinLegends(const QVector<PinnedLegend> &raw,
+                                            qreal top,
+                                            qreal bottom,
+                                            qreal minGap)
+    {
+        if (raw.isEmpty()) {
+            return {};
+        }
+
+        QVector<PinnedLegend> pinned = raw;
+        std::sort(pinned.begin(), pinned.end(), [](const PinnedLegend &a, const PinnedLegend &b) {
+            return a.sourceY < b.sourceY;
+        });
+
+        pinned[0].pinnedY = std::clamp(pinned[0].sourceY, top, bottom);
+        for (int i = 1; i < pinned.size(); ++i) {
+            const qreal desired = std::clamp(pinned[i].sourceY, top, bottom);
+            pinned[i].pinnedY = std::max(desired, pinned[i - 1].pinnedY + minGap);
+        }
+
+        if (pinned.back().pinnedY > bottom) {
+            pinned.back().pinnedY = bottom;
+            for (int i = pinned.size() - 2; i >= 0; --i) {
+                pinned[i].pinnedY = std::min(pinned[i].pinnedY, pinned[i + 1].pinnedY - minGap);
+            }
+            for (int i = 0; i < pinned.size(); ++i) {
+                pinned[i].pinnedY = std::clamp(pinned[i].pinnedY, top, bottom);
+            }
+        }
+
+        return pinned;
+    }
+
     void paintEvent(QPaintEvent *event) override
     {
         Q_UNUSED(event);
@@ -65,7 +105,12 @@ protected:
         p.fillRect(rect(), QColor(24, 27, 31));
         p.setPen(QColor(61, 68, 77));
         p.drawRect(rect().adjusted(0, 0, -1, -1));
-        const QRect g(rect().left() + 46, rect().top() + 22, rect().width() - 54, rect().height() - 34);
+        const int leftLegendWidth = 112;
+        const int axisLabelWidth = 36;
+        const int rightValueWidth = 76;
+        const int graphLeft = rect().left() + leftLegendWidth + axisLabelWidth + 12;
+        const int graphWidth = std::max(80, rect().width() - (leftLegendWidth + axisLabelWidth + rightValueWidth + 20));
+        const QRect g(graphLeft, rect().top() + 22, graphWidth, rect().height() - 34);
 
         p.setPen(QColor(210, 218, 228));
         p.drawText(QRect(rect().left() + 8, rect().top() + 4, rect().width() - 16, 16),
@@ -77,10 +122,12 @@ protected:
         p.drawLine(g.left(), g.center().y(), g.right(), g.center().y());
         p.drawLine(g.left(), g.bottom(), g.right(), g.bottom());
         p.setPen(QColor(116, 126, 140));
-        p.drawText(g.left() - 36, g.top() + 4, "100%");
-        p.drawText(g.left() - 32, g.center().y() + 4, "50%");
-        p.drawText(g.left() - 26, g.bottom() + 4, "0%");
+        p.drawText(QRect(g.left() - axisLabelWidth, g.top() - 7, axisLabelWidth - 4, 16), Qt::AlignRight | Qt::AlignVCenter, "100%");
+        p.drawText(QRect(g.left() - axisLabelWidth, g.center().y() - 7, axisLabelWidth - 4, 16), Qt::AlignRight | Qt::AlignVCenter, "50%");
+        p.drawText(QRect(g.left() - axisLabelWidth, g.bottom() - 7, axisLabelWidth - 4, 16), Qt::AlignRight | Qt::AlignVCenter, "0%");
 
+        QVector<PinnedLegend> legends;
+        legends.reserve(static_cast<int>(series.size()));
         for (int si = 0; si < static_cast<int>(series.size()); ++si) {
             const auto &samples = series[static_cast<size_t>(si)];
             const double maxV = std::max(0.01, adaptiveScale.value(si, seriesMax.value(si, 100.0)));
@@ -110,7 +157,39 @@ protected:
             p.setPen(Qt::NoPen);
             p.drawEllipse(QPointF(markerX, markerY), 3.5, 3.5);
             p.setPen(color);
-            p.drawText(g.right() - 64, static_cast<int>(markerY) - 2, QString::number(current, 'f', 1));
+            p.drawText(g.right() + 8, static_cast<int>(markerY) - 2, QString::number(current, 'f', 1));
+
+            const double startPct = std::clamp((samples.front() / maxV) * 100.0, 0.0, 100.0);
+            PinnedLegend legend;
+            legend.sourceY = g.bottom() - (startPct / 100.0) * g.height();
+            legend.pinnedY = legend.sourceY;
+            legend.color = color;
+            legend.text = names.value(si, QString("Series %1").arg(si + 1));
+            legends.push_back(legend);
+        }
+
+        const QVector<PinnedLegend> pinnedLegends = pinLegends(legends, g.top() + 8, g.bottom() - 8, 14.0);
+        const qreal legendLeftX = rect().left() + 8;
+        const qreal legendRightX = g.left() - axisLabelWidth - 10;
+        const qreal elbowX = g.left() - 6;
+        p.setRenderHint(QPainter::Antialiasing, true);
+        for (const PinnedLegend &legend : pinnedLegends) {
+            p.setPen(QPen(legend.color, 1.4));
+            p.drawLine(QPointF(legendRightX, legend.pinnedY), QPointF(elbowX, legend.pinnedY));
+            p.drawLine(QPointF(elbowX, legend.pinnedY), QPointF(g.left(), legend.sourceY));
+
+            p.setBrush(legend.color);
+            p.setPen(Qt::NoPen);
+            p.drawEllipse(QPointF(legendLeftX + 4, legend.pinnedY), 3.0, 3.0);
+
+            p.setPen(legend.color);
+            p.drawText(QRectF(legendLeftX + 12, legend.pinnedY - 8, std::max(20.0, legendRightX - legendLeftX - 14), 16),
+                       Qt::AlignLeft | Qt::AlignVCenter,
+                       legend.text);
+
+            p.setBrush(legend.color);
+            p.setPen(Qt::NoPen);
+            p.drawEllipse(QPointF(g.left(), legend.sourceY), 2.2, 2.2);
         }
     }
 
@@ -152,10 +231,6 @@ PerformanceWidget::PerformanceWidget(QWidget *parent)
         this);
     qualityGraph->setMinimumHeight(170);
     activityGraph->setMinimumHeight(170);
-    auto *qualityLegend = new QLabel("Legend: FPS(green), CacheHit(blue), FinalHit(gold), AudioHit(purple)", this);
-    qualityLegend->setStyleSheet("color:#c8d2df;");
-    auto *activityLegend = new QLabel("Legend: Total/s(orange), Open/s(yellow), Read/s(red), VDec/s(teal), ADec/s(blue)", this);
-    activityLegend->setStyleSheet("color:#c8d2df;");
 
     layout->addWidget(title);
     layout->addWidget(composeFpsLabel);
@@ -163,9 +238,7 @@ PerformanceWidget::PerformanceWidget(QWidget *parent)
     layout->addWidget(cacheResolutionLabel);
     layout->addWidget(projectInfoLabel);
     layout->addWidget(qualityGraph, 3);
-    layout->addWidget(qualityLegend);
     layout->addWidget(activityGraph, 3);
-    layout->addWidget(activityLegend);
 }
 
 void PerformanceWidget::setMetrics(const QString &composeFps,
