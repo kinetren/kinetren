@@ -34,9 +34,9 @@
 namespace {
 constexpr int kAudioSampleRate = 48000;
 constexpr int kAudioChannels = 2;
-constexpr int kAudioBlockMs = 20;
+constexpr int kAudioBlockMs = 1;
 constexpr int kAudioSamplesPerBlock = (kAudioSampleRate * kAudioBlockMs) / 1000;
-constexpr size_t kAudioRingSlots = 12; // 12 * 20ms = 240ms
+constexpr size_t kAudioRingSlots = 240; // 240 * 1ms = 240ms
 constexpr qint64 kAudioMaxAheadBlocks = static_cast<qint64>(kAudioRingSlots - 2);
 
 constexpr int kVideoFps = 30;
@@ -946,12 +946,6 @@ void PlaybackPipeline::videoComposeLoop()
 int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 {
     using namespace av;
-    ProjectSettings settingsCopy;
-    {
-        std::lock_guard<std::mutex> lock(settingsMutex);
-        settingsCopy = projectSettings;
-    }
-    const qint64 seekLookbackMs = std::max<qint64>(1, settingsCopy.effectiveDecodeSeekLookbackMs());
 
     const qint64 startBlock = worker.timelineStartMs / kAudioBlockMs;
     const qint64 clipEndMs = worker.clip.startMs + worker.clip.durationMs;
@@ -1018,18 +1012,6 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
     std::deque<int16_t> pending;
     qint64 nextBlock = startBlock;
     bool started = false;
-
-    // Seek close to requested position so startup is near sample-accurate.
-    if (worker.startOffsetMs > 0 && input.seekable()) {
-        const qint64 seekMs = std::max<qint64>(0, worker.startOffsetMs - seekLookbackMs);
-        input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
-                   static_cast<size_t>(audioStream),
-                   true,
-                   ec);
-        if (ec) {
-            ec.clear();
-        }
-    }
 
     const auto popToRing = [&](bool getAll) -> int {
         while (true) {
@@ -1135,12 +1117,6 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
 {
     using namespace av;
-    ProjectSettings settingsCopy;
-    {
-        std::lock_guard<std::mutex> lock(settingsMutex);
-        settingsCopy = projectSettings;
-    }
-    const qint64 seekLookbackMs = std::max<qint64>(1, settingsCopy.effectiveDecodeSeekLookbackMs());
 
     const qint64 clipStartSourceMs = worker.startOffsetMs;
     const qint64 clipEndSourceMs = worker.clip.sourceInMs + worker.clip.durationMs;
@@ -1200,19 +1176,6 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         fps = 30.0;
     }
     worker.frameDurationUs.store(static_cast<int>(std::llround(1000000.0 / fps)));
-
-    // Jump close to requested timeline position to avoid decoding from file start.
-    if (worker.startOffsetMs > 0 && input.seekable()) {
-        const qint64 seekMs = std::max<qint64>(0, worker.startOffsetMs - seekLookbackMs);
-        input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
-                   static_cast<size_t>(videoStream),
-                   true,
-                   ec);
-        if (ec) {
-            // Keep playback functional even when a demuxer doesn't support stream seek well.
-            ec.clear();
-        }
-    }
 
     VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
     qint64 lastPublishedTimeMs = -1;

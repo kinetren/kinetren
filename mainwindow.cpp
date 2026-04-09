@@ -535,11 +535,7 @@ void MainWindow::onTimelineTick()
         return;
     }
 
-    const int fps = std::max(1, projectSettings.fps);
-    const double frameDurationMs = 1000.0 / static_cast<double>(fps);
-    qint64 elapsedMs = timelinePlaybackClock.elapsed();
-    qint64 playbackMs = timelinePlayStartMs + elapsedMs;
-    bool forceFrameSync = false;
+    qint64 playbackMs = timelinePlayStartMs + timelinePlaybackClock.elapsed();
     if (timelineEditor->hasSelectionRegion() &&
         timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs() &&
         playbackMs >= timelineEditor->selectionRegionEndMs()) {
@@ -548,8 +544,6 @@ void MainWindow::onTimelineTick()
             timelinePlayStartMs = playbackMs;
             lastTimelineFrameIndex = -1;
             timelinePlaybackClock.restart();
-            elapsedMs = 0;
-            forceFrameSync = true;
             if (playbackPipeline) {
                 playbackPipeline->start(playbackMs);
             }
@@ -570,12 +564,8 @@ void MainWindow::onTimelineTick()
         timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(playbackMs));
     }
 
-    // Decode/mix only when the next frame boundary is reached.
-    const qint64 frameIndex = std::max<qint64>(0, static_cast<qint64>(std::floor(elapsedMs / frameDurationMs)));
-    if (forceFrameSync || frameIndex != lastTimelineFrameIndex) {
-        lastTimelineFrameIndex = frameIndex;
-        syncTimelinePlayback();
-    }
+    // Keep worker scheduling in sync on every UI tick so sub-frame events are not skipped.
+    syncTimelinePlayback();
 }
 
 void MainWindow::syncTimelinePlayback()
@@ -584,19 +574,20 @@ void MainWindow::syncTimelinePlayback()
         return;
     }
     const qint64 tMs = timelineEditor->cursorMs();
-    const auto video = timelineEditor->activeVideoLayersAt(tMs);
-    const auto audio = timelineEditor->activeAudioAt(tMs);
+    const auto clips = timelineEditor->renderClips();
 
     std::vector<PlaybackPipeline::Clip> vclips;
-    vclips.reserve(video.size());
-    for (const auto &c : video) {
-        vclips.push_back({c.sourcePath, c.startMs, c.durationMs, c.sourceInMs});
-    }
-
     std::vector<PlaybackPipeline::Clip> aclips;
-    aclips.reserve(audio.size());
-    for (const auto &c : audio) {
-        aclips.push_back({c.sourcePath, c.startMs, c.durationMs, c.sourceInMs});
+    vclips.reserve(clips.size());
+    aclips.reserve(clips.size());
+    for (const auto &c : clips) {
+        const PlaybackPipeline::Clip clip{c.sourcePath, c.startMs, c.durationMs, c.sourceInMs};
+        if (c.isVideo) {
+            vclips.push_back(clip);
+        }
+        if (c.isAudio) {
+            aclips.push_back(clip);
+        }
     }
 
     playbackPipeline->update(tMs, vclips, aclips);
