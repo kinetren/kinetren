@@ -385,6 +385,14 @@ void MainWindow::setupTimelineEditorUi()
     connect(timelineEditor, &TimelineEditor::viewStartChanged, this, [this](qint64, qint64) {
         refreshTimelineScroll();
     });
+    connect(timelineEditor, &TimelineEditor::timelineContentChanged, this, [this]() {
+        if (!playbackPipeline) {
+            return;
+        }
+        playbackPipeline->resetProjectCache();
+        syncTimelinePlayback();
+        refreshPerformancePanel();
+    });
     connect(timelineScrollBar, &QScrollBar::valueChanged, [this](int value) {
         if (timelineEditor) {
             timelineEditor->setViewStartMs(static_cast<qint64>(value));
@@ -649,11 +657,17 @@ void MainWindow::renderDraftProject()
 
     const QString defaultOut = QDir::homePath() + "/kp-render-" +
         QDateTime::currentDateTime().toString("yyyyMMdd-hhmmss") + ".mp4";
-    const QString outPath = QFileDialog::getSaveFileName(
-        this,
-        "Render MP4",
-        defaultOut,
-        "MP4 Video (*.mp4)");
+    QFileDialog saveDialog(this, "Render MP4", defaultOut, "MP4 Video (*.mp4)");
+    saveDialog.setAcceptMode(QFileDialog::AcceptSave);
+    saveDialog.setFileMode(QFileDialog::AnyFile);
+    saveDialog.setDefaultSuffix("mp4");
+    saveDialog.setOption(QFileDialog::DontUseNativeDialog, true);
+    saveDialog.selectFile(defaultOut);
+    if (saveDialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const QStringList selectedFiles = saveDialog.selectedFiles();
+    const QString outPath = selectedFiles.isEmpty() ? QString() : selectedFiles.first();
     if (outPath.isEmpty()) {
         return;
     }

@@ -33,6 +33,9 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
 
     struct InputClip {
         TimelineEditor::RenderClip clip;
+        qint64 timelineStartMs = 0;
+        qint64 sourceStartMs = 0;
+        qint64 durationMs = 0;
         int inputIndex = -1;
     };
 
@@ -47,24 +50,31 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
         if (clipEnd <= startMs || clip.startMs >= endMs) {
             continue;
         }
+        const qint64 effectiveStartMs = std::max(startMs, clip.startMs);
+        const qint64 effectiveEndMs = std::min(endMs, clipEnd);
+        const qint64 effectiveDurationMs = std::max<qint64>(0, effectiveEndMs - effectiveStartMs);
+        if (effectiveDurationMs <= 0) {
+            continue;
+        }
+        const qint64 sourceStartMs = clip.sourceInMs + (effectiveStartMs - clip.startMs);
         if (clip.isVideo) {
-            videoInputs.push_back({clip, nextInput++});
+            videoInputs.push_back(InputClip{clip, effectiveStartMs, sourceStartMs, effectiveDurationMs, nextInput++});
         }
         if (clip.isAudio) {
-            audioInputs.push_back({clip, nextInput++});
+            audioInputs.push_back(InputClip{clip, effectiveStartMs, sourceStartMs, effectiveDurationMs, nextInput++});
         }
     }
 
     QStringList args;
     args << "-y";
     for (const auto &v : videoInputs) {
-        args << "-ss" << secString(v.clip.sourceInMs);
-        args << "-t" << secString(v.clip.durationMs);
+        args << "-ss" << secString(v.sourceStartMs);
+        args << "-t" << secString(v.durationMs);
         args << "-i" << v.clip.sourcePath;
     }
     for (const auto &a : audioInputs) {
-        args << "-ss" << secString(a.clip.sourceInMs);
-        args << "-t" << secString(a.clip.durationMs);
+        args << "-ss" << secString(a.sourceStartMs);
+        args << "-t" << secString(a.durationMs);
         args << "-i" << a.clip.sourcePath;
     }
 
@@ -85,7 +95,7 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
 
     int videoNodeIdx = 0;
     for (const auto &v : videoInputs) {
-        const qint64 delayMs = std::max<qint64>(0, v.clip.startMs - startMs);
+        const qint64 delayMs = std::max<qint64>(0, v.timelineStartMs - startMs);
         const QString inLabel = QString("[%1:v]").arg(v.inputIndex);
         const QString scaled = QString("[v_scaled_%1]").arg(videoNodeIdx);
         const QString delayed = QString("[v_delay_%1]").arg(videoNodeIdx);
@@ -109,12 +119,12 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
 
     int audioNodeIdx = 0;
     for (const auto &a : audioInputs) {
-        const qint64 delayMs = std::max<qint64>(0, a.clip.startMs - startMs);
+        const qint64 delayMs = std::max<qint64>(0, a.timelineStartMs - startMs);
         const QString inLabel = QString("[%1:a]").arg(a.inputIndex);
         const QString out = QString("[a_%1]").arg(audioNodeIdx);
         filterLines << QString("%1atrim=0:%2,asetpts=PTS-STARTPTS,adelay=%3|%3%4")
                            .arg(inLabel)
-                           .arg(secString(a.clip.durationMs))
+                           .arg(secString(a.durationMs))
                            .arg(delayMs)
                            .arg(out);
         ++audioNodeIdx;

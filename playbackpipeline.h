@@ -70,6 +70,7 @@ public:
     void setDraftPreviewEnabled(bool enabled);
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
     void setProjectSettings(const ProjectSettings &settings);
+    void resetProjectCache();
     PerformanceStats performanceSnapshot() const;
     QHash<QString, QVector<QPair<double, double>>> videoCacheSegments(const std::vector<Clip> &clips) const;
     QHash<QString, QVector<QPair<double, double>>> audioCacheSegments(const std::vector<Clip> &clips) const;

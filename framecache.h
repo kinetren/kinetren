@@ -25,6 +25,7 @@ public:
     FrameCache();
 
     void setConfiguredMaxBytes(quint64 bytes);
+    void clear();
     bool get(const std::string &key, QImage &outImage);
     bool contains(const std::string &key);
     void put(const std::string &key, const QImage &image);

@@ -84,6 +84,7 @@ signals:
     void viewStartChanged(qint64 viewStartMs, qint64 maxViewStartMs);
     void loopEnabledChanged(bool enabled);
     void selectionRegionChanged(bool hasRegion, qint64 startMs, qint64 endMs);
+    void timelineContentChanged();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -154,6 +155,7 @@ private:
     qint64 trimOriginalSourceInMs = 0;
     qint64 dragLastPointerMs = 0;
     qint64 dragStartPointerMs = 0;
+    bool dragChangedTimelineContent = false;
     QHash<int, qint64> dragInitialStarts;
     QHash<int, qint64> dragInitialDurations;
     QHash<int, qint64> dragInitialSourceIns;

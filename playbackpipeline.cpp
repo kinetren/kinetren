@@ -244,6 +244,13 @@ struct PlaybackPipeline::AudioBlockCache {
         return Stats{static_cast<quint64>(entries.size()), hitCount, missCount};
     }
 
+    void clear()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        entries.clear();
+        lru.clear();
+    }
+
     mutable std::mutex mutex;
     std::unordered_map<std::string, Entry> entries;
     std::list<std::string> lru;
@@ -398,6 +405,27 @@ void PlaybackPipeline::setProjectSettings(const ProjectSettings &settings)
 {
     std::lock_guard<std::mutex> lock(settingsMutex);
     projectSettings = settings;
+}
+
+void PlaybackPipeline::resetProjectCache()
+{
+    const bool wasRunning = running.load();
+    const qint64 resumeMs = playbackPositionMs();
+    stop();
+    frameCache.clear();
+    finalViewCache.clear();
+    if (audioBlockCache) {
+        audioBlockCache->clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(coverageMutex);
+        videoBucketsBySource.clear();
+        audioBucketsBySource.clear();
+        finalTimelineFrames.clear();
+    }
+    if (wasRunning) {
+        start(resumeMs);
+    }
 }
 
 PlaybackPipeline::PerformanceStats PlaybackPipeline::performanceSnapshot() const

@@ -23,6 +23,14 @@ void FrameCache::setConfiguredMaxBytes(quint64 bytes)
     evictIfNeededLocked();
 }
 
+void FrameCache::clear()
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    entries.clear();
+    lru.clear();
+    usedBytes = 0;
+}
+
 bool FrameCache::get(const std::string &key, QImage &outImage)
 {
     std::lock_guard<std::mutex> lock(mutex);

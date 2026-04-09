@@ -126,6 +126,7 @@ void TimelineEditor::addVideoTrack()
     insertTrackAt(static_cast<int>(tracks.size()), TrackType::Video);
     setMinimumHeight(contentBottom() + bottomPadding());
     refreshTimelineRangeSignals();
+    emit timelineContentChanged();
     update();
 }
 
@@ -134,6 +135,7 @@ void TimelineEditor::addAudioTrack()
     insertTrackAt(static_cast<int>(tracks.size()), TrackType::Audio);
     setMinimumHeight(contentBottom() + bottomPadding());
     refreshTimelineRangeSignals();
+    emit timelineContentChanged();
     update();
 }
 
@@ -194,6 +196,7 @@ bool TimelineEditor::splitSelectedClipAtCursor()
     selectedClipId = newSelectedId;
     refreshTimelineRangeSignals();
     emitOverlayInfo();
+    emit timelineContentChanged();
     update();
     return true;
 }
@@ -232,6 +235,7 @@ bool TimelineEditor::trimSelectedClipStartToCursor()
     }
     refreshTimelineRangeSignals();
     emitOverlayInfo();
+    emit timelineContentChanged();
     update();
     return true;
 }
@@ -266,6 +270,7 @@ bool TimelineEditor::trimSelectedClipEndToCursor()
     }
     refreshTimelineRangeSignals();
     emitOverlayInfo();
+    emit timelineContentChanged();
     update();
     return true;
 }
@@ -284,6 +289,7 @@ bool TimelineEditor::moveSelectedClipToAdjacentTrack(int direction)
     while (isTrackIndexValid(target)) {
         if (tracks[static_cast<size_t>(target)].type == type) {
             clip->trackIndex = target;
+            emit timelineContentChanged();
             update();
             return true;
         }
@@ -339,6 +345,7 @@ bool TimelineEditor::pasteClipboardAtCursor()
     selectedClipId = firstNewId;
     refreshTimelineRangeSignals();
     emitOverlayInfo();
+    emit timelineContentChanged();
     update();
     return true;
 }
@@ -420,6 +427,7 @@ bool TimelineEditor::deleteSelectedClip()
     selectedClipId = -1;
     refreshTimelineRangeSignals();
     emitOverlayInfo();
+    emit timelineContentChanged();
     update();
     return true;
 }
@@ -471,6 +479,7 @@ bool TimelineEditor::magnetizeSelectedClip()
 
     refreshTimelineRangeSignals();
     emitOverlayInfo();
+    emit timelineContentChanged();
     update();
     return true;
 }
@@ -808,6 +817,7 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     emitRegionChanged();
     refreshTimelineRangeSignals();
     emitOverlayInfo();
+    emit timelineContentChanged();
     emit cursorChanged(cursorPositionMs);
     update();
     return true;
@@ -988,6 +998,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
 
     dragMode = DragMode::None;
     dragClipId = selectedClipId;
+    dragChangedTimelineContent = false;
     if (selectedClipId >= 0) {
         ClipEvent *clip = findClipById(selectedClipId);
         if (clip) {
@@ -1100,6 +1111,7 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
     if (dragMode == DragMode::ScrubCursor) {
         setCursorMs(pointerMs);
     } else if (dragMode == DragMode::MoveClip && clip) {
+        dragChangedTimelineContent = true;
         qint64 desiredDelta = pointerMs - dragStartPointerMs;
         qint64 minStart = std::numeric_limits<qint64>::max();
         for (auto it = dragInitialStarts.constBegin(); it != dragInitialStarts.constEnd(); ++it) {
@@ -1122,6 +1134,7 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         }
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::TrimStart && clip) {
+        dragChangedTimelineContent = true;
         const qint64 originalStart = dragInitialStarts.value(clip->id, dragOriginalStartMs);
         const qint64 originalDuration = dragInitialDurations.value(clip->id, trimOriginalDurationMs);
         const qint64 originalSourceIn = dragInitialSourceIns.value(clip->id, trimOriginalSourceInMs);
@@ -1153,6 +1166,7 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         }
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::TrimEnd && clip) {
+        dragChangedTimelineContent = true;
         const qint64 originalStart = dragInitialStarts.value(clip->id, dragOriginalStartMs);
         const qint64 originalDuration = dragInitialDurations.value(clip->id, trimOriginalDurationMs);
         const qint64 originalSourceIn = dragInitialSourceIns.value(clip->id, trimOriginalSourceInMs);
@@ -1198,6 +1212,10 @@ void TimelineEditor::mouseReleaseEvent(QMouseEvent *event)
     dragInitialStarts.clear();
     dragInitialDurations.clear();
     dragInitialSourceIns.clear();
+    if (dragChangedTimelineContent) {
+        dragChangedTimelineContent = false;
+        emit timelineContentChanged();
+    }
     unsetCursor();
     QWidget::mouseReleaseEvent(event);
 }
@@ -1959,6 +1977,7 @@ void TimelineEditor::unlinkClipGroup(int clipId)
             it.linkedGroupId = -1;
         }
     }
+    emit timelineContentChanged();
     update();
 }
 
@@ -2009,6 +2028,7 @@ void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int dr
     setCursorMs(startMs);
     emitOverlayInfo();
     refreshTimelineRangeSignals();
+    emit timelineContentChanged();
     update();
 }
 
