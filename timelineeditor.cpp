@@ -10,6 +10,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QFontMetrics>
 #include <QPointer>
 #include <QUrl>
@@ -637,6 +639,178 @@ void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double,
     cacheSegmentsByClip = clipSegments;
     timelineCacheSegments = timelineSegments;
     update();
+}
+
+QJsonObject TimelineEditor::toJson() const
+{
+    QJsonObject root;
+    root.insert("version", 1);
+    root.insert("nextClipId", nextClipId);
+    root.insert("nextLinkedGroupId", nextLinkedGroupId);
+    root.insert("cursorMs", static_cast<double>(cursorPositionMs));
+    root.insert("selectedClipId", selectedClipId);
+    root.insert("timelineViewStartMs", static_cast<double>(timelineViewStartMs));
+    root.insert("zoomLevel", zoomLevel);
+    root.insert("timelineFps", timelineFps);
+    root.insert("loopRegionEnabled", loopRegionEnabled);
+    root.insert("hasRegionSelection", hasRegionSelection);
+    root.insert("regionStartMs", static_cast<double>(regionStartMs));
+    root.insert("regionEndMs", static_cast<double>(regionEndMs));
+
+    QJsonArray tracksArray;
+    for (const auto &track : tracks) {
+        QJsonObject trackObject;
+        trackObject.insert("type", track.type == TrackType::Video ? "video" : "audio");
+        trackObject.insert("name", track.name);
+        tracksArray.push_back(trackObject);
+    }
+    root.insert("tracks", tracksArray);
+
+    QJsonArray clipsArray;
+    for (const auto &clip : clips) {
+        QJsonObject clipObject;
+        clipObject.insert("id", clip.id);
+        clipObject.insert("linkedGroupId", clip.linkedGroupId);
+        clipObject.insert("mediaType", clip.mediaType == TrackType::Video ? "video" : "audio");
+        clipObject.insert("trackIndex", clip.trackIndex);
+        clipObject.insert("startMs", static_cast<double>(clip.startMs));
+        clipObject.insert("durationMs", static_cast<double>(clip.durationMs));
+        clipObject.insert("sourceInMs", static_cast<double>(clip.sourceInMs));
+        clipObject.insert("sourceDurationMs", static_cast<double>(clip.sourceDurationMs));
+        clipObject.insert("sourcePath", clip.sourcePath);
+
+        QJsonObject colorObject;
+        colorObject.insert("r", clip.color.red());
+        colorObject.insert("g", clip.color.green());
+        colorObject.insert("b", clip.color.blue());
+        colorObject.insert("a", clip.color.alpha());
+        clipObject.insert("color", colorObject);
+
+        clipsArray.push_back(clipObject);
+    }
+    root.insert("clips", clipsArray);
+
+    QJsonArray markersArray;
+    for (qint64 marker : markersMs) {
+        markersArray.push_back(static_cast<double>(marker));
+    }
+    root.insert("markersMs", markersArray);
+
+    return root;
+}
+
+bool TimelineEditor::fromJson(const QJsonObject &root)
+{
+    if (root.isEmpty()) {
+        return false;
+    }
+
+    std::vector<TrackLane> loadedTracks;
+    const QJsonArray tracksArray = root.value("tracks").toArray();
+    loadedTracks.reserve(static_cast<size_t>(tracksArray.size()));
+    for (const auto &trackValue : tracksArray) {
+        const QJsonObject trackObject = trackValue.toObject();
+        const QString typeString = trackObject.value("type").toString();
+        TrackType type = TrackType::Video;
+        if (typeString == "audio") {
+            type = TrackType::Audio;
+        }
+        QString name = trackObject.value("name").toString();
+        if (name.isEmpty()) {
+            const int suffix = static_cast<int>(loadedTracks.size()) + 1;
+            name = QString("%1%2").arg(type == TrackType::Video ? "V" : "A").arg(suffix);
+        }
+        loadedTracks.push_back(TrackLane{type, name});
+    }
+    if (loadedTracks.empty()) {
+        loadedTracks.push_back(TrackLane{TrackType::Video, "V1"});
+        loadedTracks.push_back(TrackLane{TrackType::Audio, "A1"});
+    }
+
+    std::vector<ClipEvent> loadedClips;
+    const QJsonArray clipsArray = root.value("clips").toArray();
+    loadedClips.reserve(static_cast<size_t>(clipsArray.size()));
+    int maxClipId = 0;
+    int maxLinkedGroupId = 0;
+    for (const auto &clipValue : clipsArray) {
+        const QJsonObject clipObject = clipValue.toObject();
+        ClipEvent clip;
+        clip.id = clipObject.value("id").toInt();
+        clip.linkedGroupId = clipObject.value("linkedGroupId").toInt(-1);
+        clip.mediaType = (clipObject.value("mediaType").toString() == "audio") ? TrackType::Audio : TrackType::Video;
+        clip.trackIndex = clipObject.value("trackIndex").toInt(0);
+        clip.startMs = static_cast<qint64>(clipObject.value("startMs").toDouble(0.0));
+        clip.durationMs = static_cast<qint64>(clipObject.value("durationMs").toDouble(0.0));
+        clip.sourceInMs = static_cast<qint64>(clipObject.value("sourceInMs").toDouble(0.0));
+        clip.sourceDurationMs = static_cast<qint64>(clipObject.value("sourceDurationMs").toDouble(0.0));
+        clip.sourcePath = clipObject.value("sourcePath").toString();
+        const QJsonObject colorObject = clipObject.value("color").toObject();
+        clip.color = QColor(colorObject.value("r").toInt(140),
+                            colorObject.value("g").toInt(140),
+                            colorObject.value("b").toInt(140),
+                            colorObject.value("a").toInt(255));
+
+        if (clip.id <= 0 || clip.durationMs <= 0 || clip.trackIndex < 0 ||
+            clip.trackIndex >= static_cast<int>(loadedTracks.size()) || clip.sourcePath.isEmpty()) {
+            continue;
+        }
+        if (clip.sourceDurationMs <= 0) {
+            clip.sourceDurationMs = clip.durationMs;
+        }
+        clip.startMs = std::max<qint64>(0, clip.startMs);
+        clip.sourceInMs = std::max<qint64>(0, clip.sourceInMs);
+        loadedClips.push_back(clip);
+        maxClipId = std::max(maxClipId, clip.id);
+        maxLinkedGroupId = std::max(maxLinkedGroupId, clip.linkedGroupId);
+    }
+
+    std::vector<qint64> loadedMarkers;
+    const QJsonArray markersArray = root.value("markersMs").toArray();
+    loadedMarkers.reserve(static_cast<size_t>(markersArray.size()));
+    for (const auto &markerValue : markersArray) {
+        const qint64 marker = std::max<qint64>(0, static_cast<qint64>(markerValue.toDouble(0.0)));
+        loadedMarkers.push_back(marker);
+    }
+    std::sort(loadedMarkers.begin(), loadedMarkers.end());
+
+    tracks = std::move(loadedTracks);
+    clips = std::move(loadedClips);
+    markersMs = std::move(loadedMarkers);
+    clipboardClips.clear();
+    previewCache.clear();
+    pendingPreviewKeys.clear();
+    peaksCache.clear();
+    cacheSegmentsByClip.clear();
+    timelineCacheSegments.clear();
+
+    nextClipId = std::max(root.value("nextClipId").toInt(maxClipId + 1), maxClipId + 1);
+    nextLinkedGroupId = std::max(root.value("nextLinkedGroupId").toInt(maxLinkedGroupId + 1), maxLinkedGroupId + 1);
+    cursorPositionMs = std::max<qint64>(0, static_cast<qint64>(root.value("cursorMs").toDouble(0.0)));
+    selectedClipId = root.value("selectedClipId").toInt(-1);
+    timelineViewStartMs = std::max<qint64>(0, static_cast<qint64>(root.value("timelineViewStartMs").toDouble(0.0)));
+    zoomLevel = std::clamp(root.value("zoomLevel").toDouble(1.0), 0.01, 32.0);
+    timelineFps = std::max(1, root.value("timelineFps").toInt(30));
+    loopRegionEnabled = root.value("loopRegionEnabled").toBool(false);
+    hasRegionSelection = root.value("hasRegionSelection").toBool(false);
+    regionStartMs = std::max<qint64>(0, static_cast<qint64>(root.value("regionStartMs").toDouble(0.0)));
+    regionEndMs = std::max(regionStartMs, static_cast<qint64>(root.value("regionEndMs").toDouble(0.0)));
+
+    if (selectedClipId >= 0 && !findClipById(selectedClipId)) {
+        selectedClipId = -1;
+    }
+    if (!hasRegionSelection) {
+        regionStartMs = 0;
+        regionEndMs = 0;
+    }
+
+    setMinimumHeight(contentBottom() + bottomPadding());
+    emit loopEnabledChanged(loopRegionEnabled);
+    emitRegionChanged();
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    emit cursorChanged(cursorPositionMs);
+    update();
+    return true;
 }
 
 void TimelineEditor::paintEvent(QPaintEvent *event)

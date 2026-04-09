@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <QTimer>
 #include <QtGlobal>
+#include <QString>
 #include <memory>
 
 #include "projectsettings.h"
@@ -16,6 +17,7 @@ QT_END_NAMESPACE
 
 class PlaybackPipeline;
 class PerformanceWidget;
+class QCloseEvent;
 
 class MainWindow : public QMainWindow
 {
@@ -38,6 +40,13 @@ private:
     void renderDraftProject();
     void applyProjectSettings();
     void refreshPerformancePanel();
+    bool saveProjectToPath(const QString &path, bool silent = false);
+    bool loadProjectFromPath(const QString &path, bool silent = false);
+    QString defaultAutosaveProjectPath() const;
+    void loadLastProjectOnStartup();
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
 
     class SourceAreaWidget *sourceArea = nullptr;
     class TimelineEditor *timelineEditor = nullptr;
@@ -60,6 +69,8 @@ private:
     quint64 lastAvcppVideoDecodeCalls = 0;
     quint64 lastAvcppAudioDecodeCalls = 0;
     qint64 lastPerfSampleMs = 0;
+    QString currentProjectPath;
+    QTimer autosaveTimer;
 
     Ui::MainWindow *ui;
 };

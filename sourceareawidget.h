@@ -2,6 +2,7 @@
 #define SOURCEAREAWIDGET_H
 
 #include <QListWidget>
+#include <QStringList>
 
 class SourceAreaWidget : public QListWidget
 {
@@ -9,6 +10,8 @@ class SourceAreaWidget : public QListWidget
 
 public:
     explicit SourceAreaWidget(QWidget *parent = nullptr);
+    QStringList sourcePaths() const;
+    void setSourcePaths(const QStringList &paths);
 
 protected:
     void startDrag(Qt::DropActions supportedActions) override;

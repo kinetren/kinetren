@@ -13,6 +13,8 @@
 #include <optional>
 #include <vector>
 
+class QJsonObject;
+
 class TimelineEditor : public QWidget
 {
     Q_OBJECT
@@ -72,6 +74,8 @@ public:
     void setTimelineFps(int fps);
     void setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipSegments,
                           const QVector<QPair<double, double>> &timelineSegments);
+    QJsonObject toJson() const;
+    bool fromJson(const QJsonObject &root);
 
 signals:
     void cursorChanged(qint64 cursorMs);

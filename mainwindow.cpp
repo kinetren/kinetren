@@ -14,13 +14,21 @@
 #include <QGuiApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QSaveFile>
 #include <QMetaObject>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QPushButton>
 #include <QShortcut>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSettings>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QStyle>
 #include <QStatusBar>
 #include <QSplitter>
@@ -28,6 +36,7 @@
 #include <QVBoxLayout>
 #include <QPair>
 #include <QVector>
+#include <QCloseEvent>
 
 #include <QtGlobal>
 
@@ -61,10 +70,18 @@ MainWindow::MainWindow(QWidget *parent)
     connect(&performanceTimer, &QTimer::timeout, this, &MainWindow::refreshPerformancePanel);
     performanceTimer.start();
     syncTimelinePlayback();
+    currentProjectPath = defaultAutosaveProjectPath();
+    loadLastProjectOnStartup();
+    autosaveTimer.setInterval(4000);
+    connect(&autosaveTimer, &QTimer::timeout, this, [this]() {
+        saveProjectToPath(currentProjectPath, true);
+    });
+    autosaveTimer.start();
 }
 
 MainWindow::~MainWindow()
 {
+    saveProjectToPath(currentProjectPath, true);
     stopMediaPlayback();
     delete ui;
 }
@@ -793,5 +810,168 @@ void MainWindow::refreshPerformancePanel()
         avcppReadPerSec,
         avcppVideoDecodePerSec,
         avcppAudioDecodePerSec);
+}
+
+bool MainWindow::saveProjectToPath(const QString &path, bool silent)
+{
+    if (!timelineEditor || !sourceArea) {
+        return false;
+    }
+    if (path.isEmpty()) {
+        return false;
+    }
+
+    QFileInfo info(path);
+    QDir parent = info.dir();
+    if (!parent.exists()) {
+        parent.mkpath(".");
+    }
+
+    QJsonObject settingsObject;
+    settingsObject.insert("fps", projectSettings.fps);
+    settingsObject.insert("resolutionWidth", projectSettings.resolution.width());
+    settingsObject.insert("resolutionHeight", projectSettings.resolution.height());
+    settingsObject.insert("cacheQuality", static_cast<int>(projectSettings.cacheQuality));
+    settingsObject.insert("decodeSeekLookbackMs", projectSettings.decodeSeekLookbackMs);
+
+    QJsonArray sourcePathsArray;
+    const QStringList sourcePaths = sourceArea->sourcePaths();
+    for (const QString &sourcePath : sourcePaths) {
+        sourcePathsArray.push_back(sourcePath);
+    }
+
+    QJsonObject root;
+    root.insert("version", 1);
+    root.insert("savedAtUtc", QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    root.insert("projectSettings", settingsObject);
+    root.insert("sourcePaths", sourcePathsArray);
+    root.insert("timeline", timelineEditor->toJson());
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (!silent) {
+            statusBar()->showMessage("Autosave failed: can't open project file.", 6000);
+        }
+        return false;
+    }
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    if (!file.commit()) {
+        if (!silent) {
+            statusBar()->showMessage("Autosave failed: can't commit project file.", 6000);
+        }
+        return false;
+    }
+
+    currentProjectPath = path;
+    QSettings settings;
+    settings.setValue("project/lastPath", currentProjectPath);
+    if (!silent) {
+        statusBar()->showMessage("Project saved: " + currentProjectPath, 3000);
+    }
+    return true;
+}
+
+bool MainWindow::loadProjectFromPath(const QString &path, bool silent)
+{
+    if (path.isEmpty() || !timelineEditor || !sourceArea) {
+        return false;
+    }
+
+    QFile file(path);
+    if (!file.exists() || !file.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    if (!doc.isObject()) {
+        if (!silent) {
+            statusBar()->showMessage("Project load failed: invalid project format.", 6000);
+        }
+        return false;
+    }
+
+    const QJsonObject root = doc.object();
+    const QJsonObject settingsObject = root.value("projectSettings").toObject();
+    if (!settingsObject.isEmpty()) {
+        const int fps = settingsObject.value("fps").toInt(projectSettings.fps);
+        const int width = settingsObject.value("resolutionWidth").toInt(projectSettings.resolution.width());
+        const int height = settingsObject.value("resolutionHeight").toInt(projectSettings.resolution.height());
+        const int cacheQuality = settingsObject.value("cacheQuality").toInt(static_cast<int>(projectSettings.cacheQuality));
+        const int decodeSeekLookbackMs = settingsObject.value("decodeSeekLookbackMs").toInt(projectSettings.decodeSeekLookbackMs);
+
+        projectSettings.fps = std::max(1, fps);
+        projectSettings.resolution = QSize(std::max(1, width), std::max(1, height));
+        projectSettings.cacheQuality = static_cast<ProjectSettings::CacheQuality>(
+            std::clamp(cacheQuality,
+                       static_cast<int>(ProjectSettings::CacheQuality::Quarter16),
+                       static_cast<int>(ProjectSettings::CacheQuality::Source)));
+        projectSettings.decodeSeekLookbackMs = std::max(0, decodeSeekLookbackMs);
+    }
+
+    QStringList loadedSourcePaths;
+    const QJsonArray sourcePathsArray = root.value("sourcePaths").toArray();
+    for (const auto &value : sourcePathsArray) {
+        const QString pathValue = value.toString();
+        if (!pathValue.isEmpty()) {
+            loadedSourcePaths.push_back(pathValue);
+        }
+    }
+    sourceArea->setSourcePaths(loadedSourcePaths);
+
+    const QJsonObject timelineObject = root.value("timeline").toObject();
+    if (!timelineObject.isEmpty()) {
+        timelineEditor->fromJson(timelineObject);
+    }
+    applyProjectSettings();
+    refreshTimelineScroll();
+    syncTimelinePlayback();
+    refreshPerformancePanel();
+
+    currentProjectPath = path;
+    QSettings settings;
+    settings.setValue("project/lastPath", currentProjectPath);
+    if (!silent) {
+        statusBar()->showMessage("Project loaded: " + currentProjectPath, 3000);
+    }
+    return true;
+}
+
+QString MainWindow::defaultAutosaveProjectPath() const
+{
+    QString appDataDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (appDataDir.isEmpty()) {
+        appDataDir = QDir::homePath() + "/.kp-test";
+    }
+    QDir dir(appDataDir);
+    if (!dir.exists()) {
+        dir.mkpath(".");
+    }
+    return dir.filePath("autosave-project.kpproj.json");
+}
+
+void MainWindow::loadLastProjectOnStartup()
+{
+    QSettings settings;
+    const QString settingsPath = settings.value("project/lastPath").toString().trimmed();
+    const QString fallbackPath = defaultAutosaveProjectPath();
+    if (!settingsPath.isEmpty() && QFileInfo::exists(settingsPath)) {
+        if (loadProjectFromPath(settingsPath, true)) {
+            statusBar()->showMessage("Loaded last project: " + settingsPath, 4000);
+            return;
+        }
+    }
+    if (QFileInfo::exists(fallbackPath)) {
+        if (loadProjectFromPath(fallbackPath, true)) {
+            statusBar()->showMessage("Loaded autosaved project.", 4000);
+            return;
+        }
+    }
+    currentProjectPath = fallbackPath;
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    saveProjectToPath(currentProjectPath, true);
+    QMainWindow::closeEvent(event);
 }
 

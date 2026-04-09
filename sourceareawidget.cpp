@@ -22,6 +22,31 @@ SourceAreaWidget::SourceAreaWidget(QWidget *parent)
     addSourcePath("/developer/kp/music.wav");
 }
 
+QStringList SourceAreaWidget::sourcePaths() const
+{
+    QStringList paths;
+    paths.reserve(count());
+    for (int i = 0; i < count(); ++i) {
+        const auto *it = item(i);
+        if (!it) {
+            continue;
+        }
+        const QString path = it->data(Qt::UserRole).toString();
+        if (!path.isEmpty()) {
+            paths.push_back(path);
+        }
+    }
+    return paths;
+}
+
+void SourceAreaWidget::setSourcePaths(const QStringList &paths)
+{
+    clear();
+    for (const QString &path : paths) {
+        addSourcePath(path.trimmed());
+    }
+}
+
 void SourceAreaWidget::startDrag(Qt::DropActions supportedActions)
 {
     auto *item = currentItem();
