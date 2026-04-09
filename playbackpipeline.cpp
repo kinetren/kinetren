@@ -547,10 +547,10 @@ std::string PlaybackPipeline::finalViewKey(qint64 timelineMs, const std::vector<
     return key.toStdString();
 }
 
-std::string PlaybackPipeline::audioBlockKey(const QString &sourcePath, qint64 sourceTimeMs)
+std::string PlaybackPipeline::audioBlockKey(const std::string &clipWorkerKey, qint64 relativeBlockIndex)
 {
-    const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kAudioBlockMs) * kAudioBlockMs);
-    return (sourcePath + "::audio::" + QString::number(bucketMs)).toStdString();
+    const qint64 block = std::max<qint64>(0, relativeBlockIndex);
+    return clipWorkerKey + "::audio::blk::" + std::to_string(block);
 }
 
 std::string PlaybackPipeline::videoFrameKey(const QString &sourcePath, qint64 sourceTimeMs, bool draft)
@@ -767,9 +767,8 @@ void PlaybackPipeline::audioMixLoop()
             bool ready = worker->ring->getBlockExact(nextAudioBlock, block);
             if (!ready) {
                 const qint64 startBlock = worker->timelineStartMs / kAudioBlockMs;
-                const qint64 sourceTimeMs =
-                    worker->startOffsetMs + std::max<qint64>(0, nextAudioBlock - startBlock) * kAudioBlockMs;
-                ready = audioBlockCache->get(audioBlockKey(worker->clip.sourcePath, sourceTimeMs), block);
+                const qint64 relativeBlockIndex = std::max<qint64>(0, nextAudioBlock - startBlock);
+                ready = audioBlockCache->get(audioBlockKey(worker->key, relativeBlockIndex), block);
             }
             if (!ready || static_cast<int>(block.size()) < samplesPerBlock) {
                 continue;
@@ -991,8 +990,8 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
     bool fullCached = true;
     for (qint64 block = startBlock; block < clipEndBlock; ++block) {
         std::vector<int16_t> cached;
-        const qint64 sourceTimeMs = worker.startOffsetMs + (block - startBlock) * kAudioBlockMs;
-        if (!audioBlockCache->get(audioBlockKey(worker.clip.sourcePath, sourceTimeMs), cached)) {
+        const qint64 relativeBlockIndex = std::max<qint64>(0, block - startBlock);
+        if (!audioBlockCache->get(audioBlockKey(worker.key, relativeBlockIndex), cached)) {
             fullCached = false;
             break;
         }
@@ -1095,8 +1094,9 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
                     block[i] = pending.front();
                     pending.pop_front();
                 }
+                const qint64 relativeBlockIndex = std::max<qint64>(0, nextBlock - startBlock);
                 const qint64 sourceTimeMs = worker.startOffsetMs + (nextBlock - startBlock) * kAudioBlockMs;
-                audioBlockCache->put(audioBlockKey(worker.clip.sourcePath, sourceTimeMs), block);
+                audioBlockCache->put(audioBlockKey(worker.key, relativeBlockIndex), block);
                 markAudioBucket(worker.clip.sourcePath, std::max<qint64>(0, (sourceTimeMs / kAudioBlockMs) * kAudioBlockMs));
                 worker.ring->setBlock(nextBlock, block);
                 worker.producedBlockIndex.store(nextBlock);

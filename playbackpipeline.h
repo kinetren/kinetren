@@ -99,7 +99,7 @@ private:
     QImage composeDraftFrameAt(qint64 timelineMs, const std::vector<Clip> &videoClips);
     QImage decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeMs);
     static std::string finalViewKey(qint64 timelineMs, const std::vector<std::shared_ptr<VideoWorker>> &workers);
-    static std::string audioBlockKey(const QString &sourcePath, qint64 sourceTimeMs);
+    static std::string audioBlockKey(const std::string &clipWorkerKey, qint64 relativeBlockIndex);
     static std::string videoFrameKey(const QString &sourcePath, qint64 sourceTimeMs, bool draft);
     void markResourceBucket(const QString &sourcePath, qint64 bucketMs);
     void markAudioBucket(const QString &sourcePath, qint64 bucketMs);
