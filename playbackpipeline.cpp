@@ -44,6 +44,7 @@ constexpr int kVideoFrameMs = 1000 / kVideoFps;
 constexpr size_t kVideoRingSlots = 7; // 7 * 33ms ~= 231ms
 constexpr qint64 kVideoMaxAheadFrames = static_cast<qint64>(kVideoRingSlots - 2);
 constexpr int kDraftFrameBucketMs = 120;
+constexpr int kStartupStallMaxMs = 400;
 const av::Rational kMillisecondsTimebase{1, 1000};
 
 qint64 timestampToMs(const av::Timestamp &ts)
@@ -698,6 +699,7 @@ void PlaybackPipeline::audioMixLoop()
     const int samplesPerBlock = kAudioSamplesPerBlock * kAudioChannels;
     const auto blockDuration = std::chrono::milliseconds(kAudioBlockMs);
     auto nextWake = std::chrono::steady_clock::now();
+    int startupStallMs = 0;
 
     while (running.load()) {
         if (!audioDevice) {
@@ -716,10 +718,13 @@ void PlaybackPipeline::audioMixLoop()
 
         std::vector<int32_t> mix(samplesPerBlock, 0);
         const qint64 blockMs = nextAudioBlock * kAudioBlockMs;
+        bool hasActiveClip = false;
+        bool hasReadyClip = false;
         for (const auto &worker : workers) {
             if (blockMs < worker->clip.startMs || blockMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
             }
+            hasActiveClip = true;
             for (int wait = 0; wait < 6 && running.load(); ++wait) {
                 if (worker->producedBlockIndex.load() >= nextAudioBlock) {
                     break;
@@ -737,10 +742,19 @@ void PlaybackPipeline::audioMixLoop()
             if (!ready || static_cast<int>(block.size()) < samplesPerBlock) {
                 continue;
             }
+            hasReadyClip = true;
             for (int i = 0; i < samplesPerBlock; ++i) {
                 mix[i] += block[i];
             }
         }
+
+        // Do not advance timeline while decoder is still priming for this block.
+        if (hasActiveClip && !hasReadyClip && startupStallMs < kStartupStallMaxMs) {
+            ++startupStallMs;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        startupStallMs = 0;
 
         std::vector<int16_t> out(samplesPerBlock, 0);
         for (int i = 0; i < samplesPerBlock; ++i) {
@@ -777,6 +791,7 @@ void PlaybackPipeline::videoComposeLoop()
     auto nextWake = std::chrono::steady_clock::now();
     auto fpsWindowStart = nextWake;
     quint64 fpsWindowFrames = 0;
+    int startupStallMs = 0;
     std::unordered_map<std::string, qint64> lastPresentedTimeByWorker;
     std::unordered_map<std::string, QImage> lastPresentedFrameByWorker;
     while (running.load()) {
@@ -811,6 +826,7 @@ void PlaybackPipeline::videoComposeLoop()
             }
         }
         if (hasAny) {
+            startupStallMs = 0;
             markFinalTimelineFrame(audioMasterMs);
             if (onVideoFrameReady) {
                 onVideoFrameReady(std::move(composed));
@@ -832,10 +848,13 @@ void PlaybackPipeline::videoComposeLoop()
             std::this_thread::sleep_until(nextWake);
             continue;
         }
+        bool hasActiveClip = false;
+        bool hasReadyClip = false;
         for (const auto &worker : workers) {
             if (audioMasterMs < worker->clip.startMs || audioMasterMs >= (worker->clip.startMs + worker->clip.durationMs)) {
                 continue;
             }
+            hasActiveClip = true;
             composeFrameDurationUs = std::min(composeFrameDurationUs, worker->frameDurationUs.load());
             const qint64 targetTimeMs = std::max<qint64>(0, audioMasterMs - worker->playbackStartMs);
             worker->consumedTimeMs.store(targetTimeMs);
@@ -874,8 +893,12 @@ void PlaybackPipeline::videoComposeLoop()
                 }
                 frame = it->second;
             } else {
+                hasReadyClip = true;
                 lastPresentedTimeByWorker[worker->key] = foundTimeMs;
                 lastPresentedFrameByWorker[worker->key] = frame;
+            }
+            if (!frame.isNull()) {
+                hasReadyClip = true;
             }
 
             if (!hasAny) {
@@ -887,6 +910,13 @@ void PlaybackPipeline::videoComposeLoop()
             QPainter p(&composed);
             p.drawImage(composed.rect(), frame);
         }
+
+        if (!hasAny && hasActiveClip && !hasReadyClip && startupStallMs < kStartupStallMaxMs) {
+            ++startupStallMs;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        startupStallMs = 0;
 
         if (hasAny && onVideoFrameReady) {
             finalViewCache.put(composedCacheKey, composed);
@@ -916,6 +946,12 @@ void PlaybackPipeline::videoComposeLoop()
 int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 {
     using namespace av;
+    ProjectSettings settingsCopy;
+    {
+        std::lock_guard<std::mutex> lock(settingsMutex);
+        settingsCopy = projectSettings;
+    }
+    const qint64 seekLookbackMs = std::max<qint64>(1, settingsCopy.effectiveDecodeSeekLookbackMs());
 
     const qint64 startBlock = worker.timelineStartMs / kAudioBlockMs;
     const qint64 clipEndMs = worker.clip.startMs + worker.clip.durationMs;
@@ -982,6 +1018,18 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
     std::deque<int16_t> pending;
     qint64 nextBlock = startBlock;
     bool started = false;
+
+    // Seek close to requested position so startup is near sample-accurate.
+    if (worker.startOffsetMs > 0 && input.seekable()) {
+        const qint64 seekMs = std::max<qint64>(0, worker.startOffsetMs - seekLookbackMs);
+        input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
+                   static_cast<size_t>(audioStream),
+                   true,
+                   ec);
+        if (ec) {
+            ec.clear();
+        }
+    }
 
     const auto popToRing = [&](bool getAll) -> int {
         while (true) {
@@ -1158,7 +1206,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
         const qint64 seekMs = std::max<qint64>(0, worker.startOffsetMs - seekLookbackMs);
         input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
                    static_cast<size_t>(videoStream),
-                   false,
+                   true,
                    ec);
         if (ec) {
             // Keep playback functional even when a demuxer doesn't support stream seek well.
@@ -1423,7 +1471,7 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
     if (input.seekable()) {
         input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
                    static_cast<size_t>(videoStream),
-                   false,
+                   true,
                    ec);
         if (ec) {
             ec.clear();
