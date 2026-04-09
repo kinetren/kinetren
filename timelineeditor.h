@@ -7,6 +7,7 @@
 #include <QPoint>
 #include <QHash>
 #include <QImage>
+#include <QSet>
 #include <QWheelEvent>
 
 #include <optional>
@@ -202,6 +203,7 @@ private:
     bool hasAudioForPath(const QString &path) const;
     QColor colorFromPath(const QString &path) const;
     QImage cachedVideoPreview(const QString &path, qint64 sourceInMs);
+    QImage decodeVideoPreviewSync(const QString &path, qint64 bucketMs) const;
     std::vector<int> cachedAudioPeaks(const QString &path,
                                       qint64 sourceInMs,
                                       qint64 durationMs,
@@ -213,6 +215,7 @@ private:
     void addClipFromDrop(const QString &path, qint64 startMs, int dropY);
     void emitOverlayInfo();
     QHash<QString, QImage> previewCache;
+    QSet<QString> pendingPreviewKeys;
     QHash<QString, std::vector<int>> peaksCache;
     QHash<QString, QVector<QPair<double, double>>> cacheSegmentsByClip;
     QVector<QPair<double, double>> timelineCacheSegments;

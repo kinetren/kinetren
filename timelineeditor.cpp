@@ -11,8 +11,10 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QFontMetrics>
+#include <QPointer>
 #include <QUrl>
 #include <QWheelEvent>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
 
 #include <algorithm>
@@ -1587,6 +1589,40 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
         return it.value();
     }
 
+    if (pendingPreviewKeys.contains(cacheKey)) {
+        return QImage();
+    }
+    pendingPreviewKeys.insert(cacheKey);
+
+    QPointer<TimelineEditor> guard(this);
+    QtConcurrent::run([guard, path, bucketMs, cacheKey]() {
+        if (!guard) {
+            return;
+        }
+        QImage img = guard->decodeVideoPreviewSync(path, bucketMs);
+        const QImage scaled =
+            img.scaled(320, 180, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        if (!guard) {
+            return;
+        }
+        QMetaObject::invokeMethod(
+            guard.data(),
+            [guard, cacheKey, scaled]() {
+                if (!guard) {
+                    return;
+                }
+                guard->previewCache.insert(cacheKey, scaled);
+                guard->pendingPreviewKeys.remove(cacheKey);
+                guard->update();
+            },
+            Qt::QueuedConnection);
+    });
+
+    return QImage();
+}
+
+QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucketMs) const
+{
     QImage img;
     if (isImagePath(path)) {
         img.load(path);
@@ -1639,9 +1675,8 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
                             ec.clear();
                             continue;
                         }
-                        qint64 frameMs = 0;
                         const qint64 decodedMs = timestampToMs(frame.pts());
-                        frameMs = (decodedMs >= 0) ? decodedMs : bucketMs;
+                        const qint64 frameMs = (decodedMs >= 0) ? decodedMs : bucketMs;
                         if (frameMs < bucketMs) {
                             continue;
                         }
@@ -1670,8 +1705,7 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
         img = QImage(160, 90, QImage::Format_RGB32);
         img.fill(colorFromPath(path));
     }
-    previewCache.insert(cacheKey, img.scaled(320, 180, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
-    return previewCache.value(cacheKey);
+    return img;
 }
 
 std::vector<int> TimelineEditor::cachedAudioPeaks(const QString &path,

@@ -35,6 +35,10 @@
 #include <cmath>
 #include <vector>
 
+namespace {
+constexpr int kTimelineUiTickMs = 8;
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -288,7 +292,7 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(timelineOverlayLabel, 1);
     timelineLayout->addLayout(controlsLayout);
 
-    timelineTimer.setInterval(std::max(1, static_cast<int>(std::lround(1000.0 / std::max(1, projectSettings.fps)))));
+    timelineTimer.setInterval(kTimelineUiTickMs);
     timelineTimer.setTimerType(Qt::PreciseTimer);
     connect(&timelineTimer, &QTimer::timeout, this, &MainWindow::onTimelineTick);
     connect(timelinePauseButton, &QToolButton::clicked, this, &MainWindow::toggleTimelinePause);
@@ -515,15 +519,12 @@ void MainWindow::onTimelineTick()
     if (!timelineEditor || !timelinePlaying) {
         return;
     }
+
     const int fps = std::max(1, projectSettings.fps);
     const double frameDurationMs = 1000.0 / static_cast<double>(fps);
-    const qint64 elapsedMs = timelinePlaybackClock.elapsed();
-    const qint64 frameIndex = std::max<qint64>(0, static_cast<qint64>(std::floor(elapsedMs / frameDurationMs)));
-    if (frameIndex == lastTimelineFrameIndex) {
-        return;
-    }
-    lastTimelineFrameIndex = frameIndex;
-    qint64 playbackMs = timelinePlayStartMs + static_cast<qint64>(std::llround(static_cast<double>(frameIndex) * frameDurationMs));
+    qint64 elapsedMs = timelinePlaybackClock.elapsed();
+    qint64 playbackMs = timelinePlayStartMs + elapsedMs;
+    bool forceFrameSync = false;
     if (timelineEditor->hasSelectionRegion() &&
         timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs() &&
         playbackMs >= timelineEditor->selectionRegionEndMs()) {
@@ -532,6 +533,8 @@ void MainWindow::onTimelineTick()
             timelinePlayStartMs = playbackMs;
             lastTimelineFrameIndex = -1;
             timelinePlaybackClock.restart();
+            elapsedMs = 0;
+            forceFrameSync = true;
             if (playbackPipeline) {
                 playbackPipeline->start(playbackMs);
             }
@@ -545,12 +548,19 @@ void MainWindow::onTimelineTick()
             playbackMs = timelineEditor->selectionRegionEndMs();
         }
     }
+
     // Keep playhead moving but let users freely navigate the timeline view while playing.
     timelineEditor->setCursorMs(playbackMs, false);
     if (timelineGlobalTimeLabel) {
         timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(playbackMs));
     }
-    syncTimelinePlayback();
+
+    // Decode/mix only when the next frame boundary is reached.
+    const qint64 frameIndex = std::max<qint64>(0, static_cast<qint64>(std::floor(elapsedMs / frameDurationMs)));
+    if (forceFrameSync || frameIndex != lastTimelineFrameIndex) {
+        lastTimelineFrameIndex = frameIndex;
+        syncTimelinePlayback();
+    }
 }
 
 void MainWindow::syncTimelinePlayback()
@@ -649,7 +659,7 @@ void MainWindow::applyProjectSettings()
     if (timelineEditor) {
         timelineEditor->setTimelineFps(projectSettings.fps);
     }
-    timelineTimer.setInterval(std::max(1, static_cast<int>(std::lround(1000.0 / std::max(1, projectSettings.fps)))));
+    timelineTimer.setInterval(kTimelineUiTickMs);
     lastTimelineFrameIndex = -1;
     playbackPipeline->setProjectSettings(projectSettings);
     playbackPipeline->setDraftPreviewEnabled(projectSettings.cacheQuality != ProjectSettings::CacheQuality::Source);
