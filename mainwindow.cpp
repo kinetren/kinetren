@@ -20,6 +20,7 @@
 #include <QShortcut>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSpinBox>
 #include <QStyle>
 #include <QStatusBar>
 #include <QSplitter>
@@ -120,6 +121,14 @@ void MainWindow::setupTimelineEditorUi()
     fpsCombo->addItem("30");
     fpsCombo->addItem("60");
     fpsCombo->setCurrentText(QString::number(projectSettings.fps));
+    auto *seekLookbackLabel = new QLabel("Read step:", previewHost);
+    auto *seekLookbackSpin = new QSpinBox(previewHost);
+    seekLookbackSpin->setRange(0, 2000);
+    seekLookbackSpin->setSingleStep(1);
+    seekLookbackSpin->setSuffix(" ms");
+    seekLookbackSpin->setSpecialValueText("Auto (1 frame)");
+    seekLookbackSpin->setToolTip("How far back we seek before decoding. Auto = 1 frame at current FPS.");
+    seekLookbackSpin->setValue(std::max(0, projectSettings.decodeSeekLookbackMs));
     auto *resolutionLabel = new QLabel("Resolution:", previewHost);
     auto *resolutionCombo = new QComboBox(previewHost);
     resolutionCombo->addItem("640x360");
@@ -133,6 +142,8 @@ void MainWindow::setupTimelineEditorUi()
     previewControls->addWidget(previewQualityCombo);
     previewControls->addWidget(fpsLabel);
     previewControls->addWidget(fpsCombo);
+    previewControls->addWidget(seekLookbackLabel);
+    previewControls->addWidget(seekLookbackSpin);
     previewControls->addWidget(resolutionLabel);
     previewControls->addWidget(resolutionCombo);
     previewControls->addSpacing(10);
@@ -393,6 +404,10 @@ void MainWindow::setupTimelineEditorUi()
             return;
         }
         projectSettings.fps = fps;
+        applyProjectSettings();
+    });
+    connect(seekLookbackSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+        projectSettings.decodeSeekLookbackMs = std::max(0, value);
         applyProjectSettings();
     });
     connect(resolutionCombo, &QComboBox::currentTextChanged, this, [this](const QString &text) {

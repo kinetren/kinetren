@@ -1087,6 +1087,12 @@ int PlaybackPipeline::decodeAudioWorker(AudioWorker &worker)
 int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
 {
     using namespace av;
+    ProjectSettings settingsCopy;
+    {
+        std::lock_guard<std::mutex> lock(settingsMutex);
+        settingsCopy = projectSettings;
+    }
+    const qint64 seekLookbackMs = std::max<qint64>(1, settingsCopy.effectiveDecodeSeekLookbackMs());
 
     const qint64 clipStartSourceMs = worker.startOffsetMs;
     const qint64 clipEndSourceMs = worker.clip.sourceInMs + worker.clip.durationMs;
@@ -1149,7 +1155,7 @@ int PlaybackPipeline::decodeVideoWorker(VideoWorker &worker)
 
     // Jump close to requested timeline position to avoid decoding from file start.
     if (worker.startOffsetMs > 0 && input.seekable()) {
-        const qint64 seekMs = std::max<qint64>(0, worker.startOffsetMs - 1000);
+        const qint64 seekMs = std::max<qint64>(0, worker.startOffsetMs - seekLookbackMs);
         input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
                    static_cast<size_t>(videoStream),
                    false,
@@ -1361,6 +1367,12 @@ QImage PlaybackPipeline::composeDraftFrameAt(qint64 tMs, const std::vector<Clip>
 QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeMs)
 {
     using namespace av;
+    ProjectSettings settingsCopy;
+    {
+        std::lock_guard<std::mutex> lock(settingsMutex);
+        settingsCopy = projectSettings;
+    }
+    const qint64 seekLookbackMs = std::max<qint64>(1, settingsCopy.effectiveDecodeSeekLookbackMs());
 
     const qint64 bucketMs = std::max<qint64>(0, (sourceTimeMs / kDraftFrameBucketMs) * kDraftFrameBucketMs);
     const std::string cacheKey = videoFrameKey(clip.sourcePath, sourceTimeMs, draftPreviewEnabled.load());
@@ -1407,7 +1419,7 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
         return QImage();
     }
 
-    const qint64 seekMs = std::max<qint64>(0, bucketMs - 700);
+    const qint64 seekMs = std::max<qint64>(0, bucketMs - seekLookbackMs);
     if (input.seekable()) {
         input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
                    static_cast<size_t>(videoStream),
@@ -1463,11 +1475,6 @@ QImage PlaybackPipeline::decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeM
         return QImage();
     }
 
-    ProjectSettings settingsCopy;
-    {
-        std::lock_guard<std::mutex> lock(settingsMutex);
-        settingsCopy = projectSettings;
-    }
     const QSize cacheResolution = settingsCopy.cacheResolution();
     if (cacheResolution.width() > 0 && cacheResolution.height() > 0 &&
         (picked.width() != cacheResolution.width() || picked.height() != cacheResolution.height())) {

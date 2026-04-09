@@ -1,6 +1,7 @@
 #include "projectsettings.h"
 
 #include <algorithm>
+#include <cmath>
 
 double ProjectSettings::cacheScaleFactor() const
 {
@@ -41,4 +42,13 @@ QSize ProjectSettings::cacheResolution() const
     const double scale = cacheScaleFactor();
     return QSize(std::max(1, static_cast<int>(resolution.width() * scale)),
                  std::max(1, static_cast<int>(resolution.height() * scale)));
+}
+
+int ProjectSettings::effectiveDecodeSeekLookbackMs() const
+{
+    if (decodeSeekLookbackMs > 0) {
+        return decodeSeekLookbackMs;
+    }
+    const int safeFps = std::max(1, fps);
+    return std::max(1, static_cast<int>(std::lround(1000.0 / static_cast<double>(safeFps))));
 }
