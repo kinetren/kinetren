@@ -20,6 +20,7 @@ constexpr int kAudioSampleRate = 48000;
 constexpr int kAudioChannels = 2;
 constexpr qint64 kVideoCoverageBucketMs = 33;
 constexpr qint64 kAudioCoverageBucketMs = 20;
+constexpr qint64 kPrefetchAheadMs = 3000;
 
 burstcon::BurstIndex msToBurstIndexCeil(qint64 ms)
 {
@@ -37,7 +38,7 @@ PlaybackPipeline::PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameRe
     poolCfg.cacheConfig.maxAudioEntries = 96;
     poolCfg.cacheConfig.maxVideoEntries = 96;
     poolCfg.cacheConfig.maxVideoBytes = 192ULL * 1024ULL * 1024ULL;
-    poolCfg.cacheConfig.preloadEnabled = true;
+    poolCfg.cacheConfig.preloadEnabled = false;
     poolCfg.cacheConfig.preloadAheadTicks = burstcon::kBurstTimebaseHz;
     poolCfg.maxMediaInstances = 16;
     mediaPool = std::make_shared<burstcon::ConMediaPool>(poolCfg);
@@ -48,6 +49,7 @@ PlaybackPipeline::PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameRe
     root = trimmer;
     timer = std::make_unique<burstcon::MonotonicPlaybackTimer>(root);
     draftWorker = std::thread([this]() { draftWorkerLoop(); });
+    prefetchWorker = std::thread([this]() { prefetchWorkerLoop(); });
 }
 
 PlaybackPipeline::~PlaybackPipeline()
@@ -61,6 +63,15 @@ PlaybackPipeline::~PlaybackPipeline()
     draftCv.notify_all();
     if (draftWorker.joinable()) {
         draftWorker.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(prefetchMutex);
+        stopPrefetchWorker = true;
+        prefetchJobPending = false;
+    }
+    prefetchCv.notify_all();
+    if (prefetchWorker.joinable()) {
+        prefetchWorker.join();
     }
 }
 
@@ -102,6 +113,7 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     lastVideoRequestIndex.store(-1);
     lastAudioRequestIndex.store(-1);
     timer->start(burstcon::msToBurstIndex(startTimelineMs));
+    requestPrefetchAsync(startTimelineMs, startTimelineMs + kPrefetchAheadMs);
 }
 
 void PlaybackPipeline::stop()
@@ -137,6 +149,7 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         if (onVideoFrameReady) {
             requestDraftFrameAsync(tMs, videoClips);
         }
+        requestPrefetchAsync(tMs, tMs + kPrefetchAheadMs);
     }
 }
 
@@ -145,6 +158,9 @@ void PlaybackPipeline::setPlaybackMode(burstcon::PlaybackMode mode, qint64 regio
     std::lock_guard<std::mutex> lock(mutex);
     if (timer) {
         timer->setMode(mode, burstcon::msToBurstIndex(regionStartMs), burstcon::msToBurstIndex(regionEndMs));
+    }
+    if (mode == burstcon::PlaybackMode::Region || mode == burstcon::PlaybackMode::RegionLoop) {
+        requestPrefetchAsync(regionStartMs, std::min(regionEndMs, regionStartMs + kPrefetchAheadMs));
     }
 }
 
@@ -499,6 +515,78 @@ void PlaybackPipeline::draftWorkerLoop()
         }
         if (onVideoFrameReady) {
             onVideoFrameReady(std::move(frame));
+        }
+    }
+}
+
+void PlaybackPipeline::requestPrefetchAsync(qint64 startMs, qint64 endMs)
+{
+    if (endMs <= startMs) {
+        return;
+    }
+    PrefetchJob job;
+    job.startMs = std::max<qint64>(0, startMs);
+    job.endMs = std::max(job.startMs, endMs);
+    job.serial = latestPrefetchSerial.fetch_add(1) + 1;
+    {
+        std::lock_guard<std::mutex> lock(prefetchMutex);
+        pendingPrefetchJob = job;
+        prefetchJobPending = true;
+    }
+    prefetchCv.notify_one();
+}
+
+void PlaybackPipeline::prefetchWorkerLoop()
+{
+    while (true) {
+        PrefetchJob job;
+        std::shared_ptr<burstcon::IBurstcon> localRoot;
+        burstcon::BurstQuality quality;
+        {
+            std::unique_lock<std::mutex> lock(prefetchMutex);
+            prefetchCv.wait(lock, [this]() { return stopPrefetchWorker || prefetchJobPending; });
+            if (stopPrefetchWorker) {
+                return;
+            }
+            job = pendingPrefetchJob;
+            prefetchJobPending = false;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            localRoot = root;
+            const QSize q = projectSettings.cacheResolution();
+            quality = burstcon::BurstQuality{q.width(), q.height()};
+        }
+        if (!localRoot) {
+            continue;
+        }
+        for (qint64 tMs = job.startMs; tMs <= job.endMs; tMs += kVideoCoverageBucketMs) {
+            if (job.serial != latestPrefetchSerial.load()) {
+                break;
+            }
+            burstcon::BurstRequest req;
+            req.index = burstcon::msToBurstIndex(tMs);
+            req.quality = quality;
+            burstcon::VideoBurst vb;
+            if (localRoot->videoBurst(req, vb) && !vb.frame.isNull()) {
+                std::lock_guard<std::mutex> lock(coverageMutex);
+                const qint64 bucket = (tMs / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
+                videoCoverageBuckets.insert(bucket);
+                finalCoverageBuckets.insert(bucket);
+            }
+        }
+        for (qint64 tMs = job.startMs; tMs <= job.endMs; tMs += kAudioCoverageBucketMs) {
+            if (job.serial != latestPrefetchSerial.load()) {
+                break;
+            }
+            burstcon::BurstRequest req;
+            req.index = burstcon::msToBurstIndex(tMs);
+            burstcon::AudioBurst ab;
+            if (localRoot->audioBurst(req, ab)) {
+                std::lock_guard<std::mutex> lock(coverageMutex);
+                const qint64 bucket = (tMs / kAudioCoverageBucketMs) * kAudioCoverageBucketMs;
+                audioCoverageBuckets.insert(bucket);
+            }
         }
     }
 }

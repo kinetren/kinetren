@@ -73,6 +73,7 @@ public:
     std::vector<RenderClip> renderClips() const;
     QString formatTimelineTime(qint64 timeMs) const;
     void setTimelineFps(int fps);
+    bool isEditingTimelineContent() const;
     void setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipSegments,
                           const QVector<QPair<double, double>> &timelineSegments);
     QJsonObject toJson() const;

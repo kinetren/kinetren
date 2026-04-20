@@ -24,6 +24,7 @@ namespace {
 
 constexpr int kDefaultAudioSamplesPerBurst = 1024;
 const av::Rational kMillisecondsTimebase{1, 1000};
+constexpr BurstIndex kMediaPoolOriginBucketTicks = kBurstTimebaseHz * 3;
 
 std::atomic<uint64_t> gAvcppOpenCalls{0};
 std::atomic<uint64_t> gAvcppPacketReads{0};
@@ -53,6 +54,14 @@ uint64_t imageBytes(const QImage &img)
 #else
     return static_cast<uint64_t>(img.byteCount());
 #endif
+}
+
+BurstIndex normalizePoolDecodeOrigin(BurstIndex decodeOrigin)
+{
+    if (decodeOrigin < 0) {
+        return -1;
+    }
+    return (decodeOrigin / kMediaPoolOriginBucketTicks) * kMediaPoolOriginBucketTicks;
 }
 
 class AvcppMediaDecoderBackend : public IMediaDecoderBackend
@@ -891,8 +900,9 @@ std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path,
                                                  bool wantVideo,
                                                  bool wantAudio)
 {
+    const BurstIndex normalizedOrigin = normalizePoolDecodeOrigin(decodeOrigin);
     const std::string key = (forPreview ? "p:" : "m:") + path.toStdString() +
-        (skipFrames ? ":1" : ":0") + ":" + std::to_string(std::max<BurstIndex>(-1, decodeOrigin)) +
+        (skipFrames ? ":1" : ":0") + ":" + std::to_string(std::max<BurstIndex>(-1, normalizedOrigin)) +
         ":" + (wantVideo ? "v" : "-") + (wantAudio ? "a" : "-");
     std::lock_guard<std::mutex> lock(mutex);
     auto it = mediaByKey.find(key);
@@ -901,7 +911,7 @@ std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path,
         mediaLru.push_front(key);
         return it->second;
     }
-    auto created = createMedia(path, forPreview, skipFrames, decodeOrigin, wantVideo, wantAudio);
+    auto created = createMedia(path, forPreview, skipFrames, normalizedOrigin, wantVideo, wantAudio);
     mediaByKey[key] = created;
     mediaLru.push_front(key);
     while (mediaByKey.size() > config.maxMediaInstances && !mediaLru.empty()) {

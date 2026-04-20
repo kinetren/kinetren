@@ -376,7 +376,9 @@ void MainWindow::setupTimelineEditorUi()
             if (timelineGlobalTimeLabel && timelineEditor) {
                 timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(t));
             }
-            syncTimelinePlayback();
+            if (!timelineEditor->isEditingTimelineContent()) {
+                syncTimelinePlayback();
+            }
         }
     });
     connect(timelineEditor, &TimelineEditor::timelineRangeChanged, this, [this](qint64, qint64) {
@@ -392,7 +394,6 @@ void MainWindow::setupTimelineEditorUi()
         if (!playbackPipeline) {
             return;
         }
-        playbackPipeline->clearTimelineCoverage();
         syncTimelinePlayback();
         refreshPerformancePanel();
     });
@@ -826,7 +827,9 @@ void MainWindow::refreshPerformancePanel()
     const qint64 viewStart = timelineEditor->viewStartMs();
     const qint64 viewEnd = viewStart + timelineEditor->visibleDurationMs();
     const auto timelineSegments = playbackPipeline->finalTimelineSegments(viewStart, viewEnd);
-    timelineEditor->setCacheCoverage(clipCoverage, timelineSegments);
+    if (!timelineEditor->isEditingTimelineContent()) {
+        timelineEditor->setCacheCoverage(clipCoverage, timelineSegments);
+    }
 
     const auto mb = [](quint64 bytes) -> QString {
         return QString::number(static_cast<double>(bytes) / (1024.0 * 1024.0), 'f', 1) + "MB";

@@ -82,6 +82,11 @@ private:
         std::vector<Clip> videoClips;
         quint64 serial = 0;
     };
+    struct PrefetchJob {
+        qint64 startMs = 0;
+        qint64 endMs = 0;
+        quint64 serial = 0;
+    };
 
     void rebuildGraph(const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);
     static bool clipsEqual(const std::vector<Clip> &a, const std::vector<Clip> &b);
@@ -90,6 +95,8 @@ private:
     void pushAudioBurst(const burstcon::AudioBurst &burst);
     void requestDraftFrameAsync(qint64 tMs, const std::vector<Clip> &videoClips);
     void draftWorkerLoop();
+    void requestPrefetchAsync(qint64 startMs, qint64 endMs);
+    void prefetchWorkerLoop();
 
     std::function<void(QImage &&)> onVideoFrameReady;
     mutable std::mutex mutex;
@@ -103,6 +110,7 @@ private:
     std::atomic<qint64> lastPlaybackIndex{0};
     std::atomic_bool draftPreviewEnabled{true};
     std::atomic<quint64> latestDraftSerial{0};
+    std::atomic<quint64> latestPrefetchSerial{0};
     std::atomic<burstcon::BurstIndex> lastVideoRequestIndex{-1};
     std::atomic<burstcon::BurstIndex> lastAudioRequestIndex{-1};
     mutable std::mutex coverageMutex;
@@ -122,6 +130,12 @@ private:
     bool stopDraftWorker = false;
     bool draftJobPending = false;
     DraftJob pendingDraftJob;
+    std::mutex prefetchMutex;
+    std::condition_variable prefetchCv;
+    std::thread prefetchWorker;
+    bool stopPrefetchWorker = false;
+    bool prefetchJobPending = false;
+    PrefetchJob pendingPrefetchJob;
 
     QIODevice *audioDevice = nullptr;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)

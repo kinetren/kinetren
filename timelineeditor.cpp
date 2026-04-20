@@ -644,6 +644,13 @@ void TimelineEditor::setTimelineFps(int fps)
     update();
 }
 
+bool TimelineEditor::isEditingTimelineContent() const
+{
+    return dragMode == DragMode::MoveClip ||
+        dragMode == DragMode::TrimStart ||
+        dragMode == DragMode::TrimEnd;
+}
+
 void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipSegments,
                                       const QVector<QPair<double, double>> &timelineSegments)
 {
@@ -1109,7 +1116,6 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
 
     const qint64 pointerMsRaw = adjustedDragPointerMs(pos);
     const qint64 pointerMs = snapTimeMs(pointerMsRaw);
-    setCursorMs(pointerMs);
     ClipEvent *clip = findClipById(dragClipId);
     if (dragMode == DragMode::ScrubCursor) {
         setCursorMs(pointerMs);
@@ -1194,14 +1200,17 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         }
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::MoveRegionStart) {
+        setCursorMs(pointerMs);
         if (hasRegionSelection) {
             setRegionBounds(pointerMs, regionEndMs);
         }
     } else if (dragMode == DragMode::MoveRegionEnd) {
+        setCursorMs(pointerMs);
         if (hasRegionSelection) {
             setRegionBounds(regionStartMs, pointerMs);
         }
     } else if (dragMode == DragMode::RegionSelect) {
+        setCursorMs(pointerMs);
         setRegionBounds(regionAnchorMs, pointerMs);
     }
     emitOverlayInfo();
