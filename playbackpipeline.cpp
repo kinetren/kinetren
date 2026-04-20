@@ -18,6 +18,7 @@
 namespace {
 constexpr int kAudioSampleRate = 48000;
 constexpr int kAudioChannels = 2;
+constexpr int kDefaultAudioSamplesPerBurst = 1024;
 constexpr qint64 kVideoCoverageBucketMs = 33;
 constexpr qint64 kAudioCoverageBucketMs = 20;
 constexpr qint64 kPrefetchAheadMs = 3000;
@@ -95,11 +96,6 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
             onVideoFrameReady(QImage(burst.frame));
             composedFrames.fetch_add(1);
         }
-        const qint64 lastPrefetch = lastPrefetchAnchorMs.load();
-        if (lastPrefetch < 0 || (tMs - lastPrefetch) >= 1000) {
-            lastPrefetchAnchorMs.store(tMs);
-            requestPrefetchAsync(tMs, tMs + kPrefetchAheadMs);
-        }
     };
     callbacks.onAudio = [this](const burstcon::AudioBurst &burst) {
         const qint64 tMs = burstcon::burstIndexToMs(burst.index);
@@ -119,7 +115,7 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     lastAudioRequestIndex.store(-1);
     lastPrefetchAnchorMs.store(startTimelineMs);
     timer->start(burstcon::msToBurstIndex(startTimelineMs));
-    requestPrefetchAsync(startTimelineMs, startTimelineMs + kPrefetchAheadMs);
+    requestPrefetchAsync(startTimelineMs, startTimelineMs + kPrefetchAheadMs, true);
 }
 
 void PlaybackPipeline::stop()
@@ -156,7 +152,7 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         if (onVideoFrameReady) {
             requestDraftFrameAsync(tMs, videoClips);
         }
-        requestPrefetchAsync(tMs, tMs + kPrefetchAheadMs);
+        requestPrefetchAsync(tMs, tMs + kPrefetchAheadMs, true);
     }
 }
 
@@ -167,7 +163,9 @@ void PlaybackPipeline::setPlaybackMode(burstcon::PlaybackMode mode, qint64 regio
         timer->setMode(mode, burstcon::msToBurstIndex(regionStartMs), burstcon::msToBurstIndex(regionEndMs));
     }
     if (mode == burstcon::PlaybackMode::Region || mode == burstcon::PlaybackMode::RegionLoop) {
-        requestPrefetchAsync(regionStartMs, std::min(regionEndMs, regionStartMs + kPrefetchAheadMs));
+        if (!running.load()) {
+            requestPrefetchAsync(regionStartMs, std::min(regionEndMs, regionStartMs + kPrefetchAheadMs), true);
+        }
     }
 }
 
@@ -526,7 +524,7 @@ void PlaybackPipeline::draftWorkerLoop()
     }
 }
 
-void PlaybackPipeline::requestPrefetchAsync(qint64 startMs, qint64 endMs)
+void PlaybackPipeline::requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning)
 {
     if (endMs <= startMs) {
         return;
@@ -534,6 +532,7 @@ void PlaybackPipeline::requestPrefetchAsync(qint64 startMs, qint64 endMs)
     PrefetchJob job;
     job.startMs = std::max<qint64>(0, startMs);
     job.endMs = std::max(job.startMs, endMs);
+    job.allowWhileRunning = allowWhileRunning;
     job.serial = latestPrefetchSerial.fetch_add(1) + 1;
     lastPrefetchAnchorMs.store(job.startMs);
     {
@@ -550,6 +549,7 @@ void PlaybackPipeline::prefetchWorkerLoop()
         PrefetchJob job;
         std::shared_ptr<burstcon::IBurstcon> localRoot;
         burstcon::BurstQuality quality;
+        int fps = 30;
         {
             std::unique_lock<std::mutex> lock(prefetchMutex);
             prefetchCv.wait(lock, [this]() { return stopPrefetchWorker || prefetchJobPending; });
@@ -564,34 +564,48 @@ void PlaybackPipeline::prefetchWorkerLoop()
             localRoot = root;
             const QSize q = projectSettings.cacheResolution();
             quality = burstcon::BurstQuality{q.width(), q.height()};
+            fps = std::max(1, projectSettings.fps);
         }
         if (!localRoot) {
             continue;
         }
-        for (qint64 tMs = job.startMs; tMs <= job.endMs; tMs += kVideoCoverageBucketMs) {
+        if (!job.allowWhileRunning && running.load()) {
+            continue;
+        }
+        const burstcon::BurstIndex videoStep =
+            std::max<burstcon::BurstIndex>(1, burstcon::kBurstTimebaseHz / static_cast<burstcon::BurstIndex>(fps));
+        const burstcon::BurstIndex audioStep = std::max<burstcon::BurstIndex>(
+            1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kDefaultAudioSamplesPerBurst)) / kAudioSampleRate);
+        const burstcon::BurstIndex startIdx = burstcon::msToBurstIndex(job.startMs);
+        const burstcon::BurstIndex alignedStart = (startIdx / videoStep) * videoStep;
+        const burstcon::BurstIndex endIdx = msToBurstIndexCeil(job.endMs);
+        for (burstcon::BurstIndex idx = alignedStart; idx <= endIdx; idx += videoStep) {
             if (job.serial != latestPrefetchSerial.load()) {
                 break;
             }
             burstcon::BurstRequest req;
-            req.index = burstcon::msToBurstIndex(tMs);
+            req.index = idx;
             req.quality = quality;
             burstcon::VideoBurst vb;
             if (localRoot->videoBurst(req, vb) && !vb.frame.isNull()) {
                 std::lock_guard<std::mutex> lock(coverageMutex);
+                const qint64 tMs = burstcon::burstIndexToMs(idx);
                 const qint64 bucket = (tMs / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
                 videoCoverageBuckets.insert(bucket);
                 finalCoverageBuckets.insert(bucket);
             }
         }
-        for (qint64 tMs = job.startMs; tMs <= job.endMs; tMs += kAudioCoverageBucketMs) {
+        const burstcon::BurstIndex alignedAudioStart = (startIdx / audioStep) * audioStep;
+        for (burstcon::BurstIndex idx = alignedAudioStart; idx <= endIdx; idx += audioStep) {
             if (job.serial != latestPrefetchSerial.load()) {
                 break;
             }
             burstcon::BurstRequest req;
-            req.index = burstcon::msToBurstIndex(tMs);
+            req.index = idx;
             burstcon::AudioBurst ab;
             if (localRoot->audioBurst(req, ab)) {
                 std::lock_guard<std::mutex> lock(coverageMutex);
+                const qint64 tMs = burstcon::burstIndexToMs(idx);
                 const qint64 bucket = (tMs / kAudioCoverageBucketMs) * kAudioCoverageBucketMs;
                 audioCoverageBuckets.insert(bucket);
             }

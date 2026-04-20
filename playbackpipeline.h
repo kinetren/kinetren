@@ -86,6 +86,7 @@ private:
         qint64 startMs = 0;
         qint64 endMs = 0;
         quint64 serial = 0;
+        bool allowWhileRunning = true;
     };
 
     void rebuildGraph(const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);
@@ -95,7 +96,7 @@ private:
     void pushAudioBurst(const burstcon::AudioBurst &burst);
     void requestDraftFrameAsync(qint64 tMs, const std::vector<Clip> &videoClips);
     void draftWorkerLoop();
-    void requestPrefetchAsync(qint64 startMs, qint64 endMs);
+    void requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning);
     void prefetchWorkerLoop();
 
     std::function<void(QImage &&)> onVideoFrameReady;
