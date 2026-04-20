@@ -37,6 +37,7 @@
 #include <QVBoxLayout>
 #include <QPair>
 #include <QPointer>
+#include <QProgressDialog>
 #include <QVector>
 #include <QCloseEvent>
 
@@ -520,6 +521,40 @@ void MainWindow::setupTimelineEditorUi()
 
     refreshTimelineScroll();
     refreshPerformancePanel();
+    restoreUiState();
+}
+
+void MainWindow::saveUiState()
+{
+    QSettings settings;
+    settings.setValue("ui/geometry", saveGeometry());
+    if (ui->splitter) {
+        settings.setValue("ui/splitterHorizontal", ui->splitter->saveState());
+    }
+    if (ui->splitter_2) {
+        settings.setValue("ui/splitterVertical", ui->splitter_2->saveState());
+    }
+}
+
+void MainWindow::restoreUiState()
+{
+    QSettings settings;
+    const QByteArray geo = settings.value("ui/geometry").toByteArray();
+    if (!geo.isEmpty()) {
+        restoreGeometry(geo);
+    }
+    if (ui->splitter) {
+        const QByteArray st = settings.value("ui/splitterHorizontal").toByteArray();
+        if (!st.isEmpty()) {
+            ui->splitter->restoreState(st);
+        }
+    }
+    if (ui->splitter_2) {
+        const QByteArray st = settings.value("ui/splitterVertical").toByteArray();
+        if (!st.isEmpty()) {
+            ui->splitter_2->restoreState(st);
+        }
+    }
 }
 
 void MainWindow::toggleTimelinePlayback()
@@ -732,21 +767,91 @@ void MainWindow::renderDraftProject()
         return;
     }
 
-    statusBar()->showMessage("Rendering MP4 (video + audio)...", 0);
+    QPointer<QProgressDialog> progressDlg(new QProgressDialog(QString(), QString(), 0, 1000, this));
+    progressDlg->setWindowTitle("Rendering to MP4");
+    progressDlg->setWindowModality(Qt::WindowModal);
+    progressDlg->setMinimumDuration(0);
+    progressDlg->setAutoClose(false);
+    progressDlg->setAutoReset(false);
+    progressDlg->setCancelButton(nullptr);
+    progressDlg->setValue(0);
+    progressDlg->setLabelText("Starting...");
+    progressDlg->show();
+
     renderInProgress = true;
     const auto clips = timelineEditor->renderClips();
     const ProjectSettings settings = projectSettings;
     QPointer<MainWindow> guard(this);
-    std::thread([guard, clips, settings, startMs, endMs, outPath]() {
-        const auto result = ProjectRenderer::renderMp4(clips, settings, startMs, endMs, outPath);
+    QPointer<TimelineEditor> timelinePtr(timelineEditor);
+    std::thread([guard, timelinePtr, progressDlg, clips, settings, startMs, endMs, outPath]() {
+        const auto result = ProjectRenderer::renderMp4(
+            clips,
+            settings,
+            startMs,
+            endMs,
+            outPath,
+            [guard, timelinePtr, progressDlg](const ProjectRenderer::RenderProgress &p) {
+                if (!guard || !progressDlg || !timelinePtr) {
+                    return;
+                }
+                const ProjectRenderer::RenderProgress snapshot = p;
+                QMetaObject::invokeMethod(
+                    guard.data(),
+                    [guard, timelinePtr, progressDlg, snapshot]() {
+                        if (!guard || !progressDlg || !timelinePtr) {
+                            return;
+                        }
+                        int bar = 0;
+                        if (snapshot.phase == ProjectRenderer::RenderProgress::Phase::VideoFrames) {
+                            bar = (snapshot.done * 900) / std::max(1, snapshot.total);
+                        } else if (snapshot.phase == ProjectRenderer::RenderProgress::Phase::AudioPcm) {
+                            bar = 900 + (snapshot.done * 90) / std::max(1, snapshot.total);
+                        } else {
+                            bar = snapshot.done >= snapshot.total ? 1000 : 995;
+                        }
+                        progressDlg->setValue(std::min(1000, bar));
+                        QString stage;
+                        switch (snapshot.phase) {
+                        case ProjectRenderer::RenderProgress::Phase::VideoFrames:
+                            stage = "Video frames";
+                            break;
+                        case ProjectRenderer::RenderProgress::Phase::AudioPcm:
+                            stage = "Audio (PCM)";
+                            break;
+                        case ProjectRenderer::RenderProgress::Phase::Muxing:
+                            stage = "FFmpeg (mux)";
+                            break;
+                        }
+                        qint64 remainingMs = 0;
+                        if (snapshot.done > 0 && snapshot.done < snapshot.total) {
+                            remainingMs = (snapshot.elapsedMs * (snapshot.total - snapshot.done)) / snapshot.done;
+                        }
+                        const QString remStr =
+                            remainingMs > 0 ? timelinePtr->formatTimelineTime(remainingMs) : QString("—");
+                        const QString text =
+                            QString("%1: %2 / %3\nElapsed: %4  Remaining (est.): %5\nOutput length: %6")
+                                .arg(stage)
+                                .arg(snapshot.done)
+                                .arg(snapshot.total)
+                                .arg(timelinePtr->formatTimelineTime(snapshot.elapsedMs))
+                                .arg(remStr)
+                                .arg(timelinePtr->formatTimelineTime(snapshot.outputDurationMs));
+                        progressDlg->setLabelText(text);
+                    },
+                    Qt::QueuedConnection);
+            });
         if (!guard) {
             return;
         }
         QMetaObject::invokeMethod(
             guard.data(),
-            [guard, result]() {
+            [guard, progressDlg, result]() {
                 if (!guard) {
                     return;
+                }
+                if (progressDlg) {
+                    progressDlg->close();
+                    progressDlg->deleteLater();
                 }
                 guard->renderInProgress = false;
                 if (!result.ok) {
@@ -1077,6 +1182,7 @@ void MainWindow::loadLastProjectOnStartup()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    saveUiState();
     saveProjectToPath(currentProjectPath, true);
     QMainWindow::closeEvent(event);
 }

@@ -1,5 +1,6 @@
 #include "projectrenderer.h"
 
+#include <QElapsedTimer>
 #include <QFile>
 #include <QSaveFile>
 #include <QProcess>
@@ -9,6 +10,7 @@
 #include <QDateTime>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 
 #include "burstcon.h"
@@ -53,7 +55,8 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
                                                    const ProjectSettings &settings,
                                                    qint64 startMs,
                                                    qint64 endMs,
-                                                   const QString &outPath)
+                                                   const QString &outPath,
+                                                   const ProgressCallback &onProgress)
 {
     Result result;
     if (endMs <= startMs) {
@@ -151,6 +154,18 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
         1,
         static_cast<int>(std::ceil(static_cast<double>(totalMs) * static_cast<double>(settings.fps) / 1000.0)));
 
+    QElapsedTimer wallClock;
+    wallClock.start();
+    auto report = [&](RenderProgress p) {
+        p.elapsedMs = wallClock.elapsed();
+        p.outputDurationMs = totalMs;
+        if (onProgress) {
+            onProgress(p);
+        }
+    };
+
+    report(RenderProgress{RenderProgress::Phase::VideoFrames, 0, frameCount, wallClock.elapsed(), totalMs});
+
     std::vector<char> blackFrame(static_cast<size_t>(renderSize.width()) * static_cast<size_t>(renderSize.height()) * 3, 0);
     for (int frameIdx = 0; frameIdx < frameCount; ++frameIdx) {
         const double frameMsF = static_cast<double>(startMs) + (1000.0 * static_cast<double>(frameIdx) / static_cast<double>(settings.fps));
@@ -179,6 +194,9 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
             result.message = "Failed while writing temporary video stream.";
             return result;
         }
+        if (onProgress && (frameIdx % 8 == 0 || frameIdx + 1 == frameCount)) {
+            report(RenderProgress{RenderProgress::Phase::VideoFrames, frameIdx + 1, frameCount, wallClock.elapsed(), totalMs});
+        }
     }
 
     const burstcon::BurstIndex burstStep =
@@ -189,7 +207,17 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
     const qint64 totalSampleFrames = msToSampleFrames(totalMs);
     qint64 writtenSampleFrames = 0;
 
+    qint64 audioBurstTotal = 0;
+    for (burstcon::BurstIndex scan = firstIndex; scan < endIndex; scan += burstStep) {
+        ++audioBurstTotal;
+    }
+    audioBurstTotal = std::max<qint64>(1, audioBurstTotal);
+    const int audioTotalInt = static_cast<int>(std::min<qint64>(audioBurstTotal, INT_MAX));
+    report(RenderProgress{RenderProgress::Phase::AudioPcm, 0, audioTotalInt, wallClock.elapsed(), totalMs});
+
+    qint64 burstIter = 0;
     for (burstcon::BurstIndex idx = firstIndex; idx < endIndex && writtenSampleFrames < totalSampleFrames; idx += burstStep) {
+        ++burstIter;
         const burstcon::BurstIndex burstStart = idx;
         const burstcon::BurstIndex burstEnd = idx + burstStep;
         const burstcon::BurstIndex overlapStart = std::max(burstStart, startIndex);
@@ -235,6 +263,14 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
             return result;
         }
         writtenSampleFrames += keepFrames;
+        if (onProgress && (burstIter % 32 == 0 || burstIter == audioBurstTotal || writtenSampleFrames >= totalSampleFrames)) {
+            const int adone = static_cast<int>(std::min<qint64>(burstIter, audioBurstTotal));
+            report(RenderProgress{RenderProgress::Phase::AudioPcm, adone, audioTotalInt, wallClock.elapsed(), totalMs});
+        }
+    }
+
+    if (onProgress) {
+        report(RenderProgress{RenderProgress::Phase::AudioPcm, audioTotalInt, audioTotalInt, wallClock.elapsed(), totalMs});
     }
 
     if (writtenSampleFrames < totalSampleFrames) {
@@ -249,6 +285,8 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
 
     rawVideo.close();
     rawAudio.close();
+
+    report(RenderProgress{RenderProgress::Phase::Muxing, 0, 1, wallClock.elapsed(), totalMs});
 
     QStringList args;
     args << "-y";
@@ -307,6 +345,8 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
         }
         return result;
     }
+
+    report(RenderProgress{RenderProgress::Phase::Muxing, 1, 1, wallClock.elapsed(), totalMs});
 
     result.ok = true;
     result.message = QString("Render complete: %1").arg(outPath);

@@ -11,6 +11,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QBrush>
+#include <QLinearGradient>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QFontMetrics>
@@ -303,6 +305,32 @@ bool TimelineEditor::moveSelectedClipToAdjacentTrack(int direction)
 bool TimelineEditor::copySelectedToClipboard()
 {
     clipboardClips.clear();
+
+    if (hasRegionSelection && regionEndMs > regionStartMs) {
+        const qint64 rs = regionStartMs;
+        const qint64 re = regionEndMs;
+        for (const auto &clip : clips) {
+            const qint64 cEnd = clip.startMs + clip.durationMs;
+            if (cEnd <= rs || clip.startMs >= re) {
+                continue;
+            }
+            const qint64 t0 = std::max(rs, clip.startMs);
+            const qint64 t1 = std::min(re, cEnd);
+            const qint64 dur = t1 - t0;
+            if (dur < kMinClipDurationMs) {
+                continue;
+            }
+            ClipEvent c = clip;
+            c.startMs = t0 - rs;
+            c.durationMs = dur;
+            c.sourceInMs = clip.sourceInMs + (t0 - clip.startMs);
+            clipboardClips.push_back(c);
+        }
+        if (!clipboardClips.empty()) {
+            return true;
+        }
+    }
+
     const ClipEvent *selected = findClipById(selectedClipId);
     if (!selected) {
         return false;
@@ -326,11 +354,9 @@ bool TimelineEditor::pasteClipboardAtCursor()
     for (const auto &clip : clipboardClips) {
         sourceMinStart = std::min(sourceMinStart, clip.startMs);
     }
-    int newGroup = -1;
-    if (clipboardClips.size() > 1) {
-        newGroup = nextLinkedGroupId++;
-    }
+    QHash<int, int> oldGroupToNew;
     int firstNewId = -1;
+    qint64 pasteMaxEndMs = cursorPositionMs;
     for (const auto &src : clipboardClips) {
         ClipEvent c = src;
         c.id = nextClipId++;
@@ -338,13 +364,22 @@ bool TimelineEditor::pasteClipboardAtCursor()
         if (!isTrackIndexValid(c.trackIndex)) {
             c.trackIndex = ensureDropTrackForType(c.mediaType, contentBottom() + 20);
         }
-        c.linkedGroupId = (newGroup >= 0) ? newGroup : -1;
+        if (src.linkedGroupId >= 0) {
+            if (!oldGroupToNew.contains(src.linkedGroupId)) {
+                oldGroupToNew.insert(src.linkedGroupId, nextLinkedGroupId++);
+            }
+            c.linkedGroupId = oldGroupToNew.value(src.linkedGroupId);
+        } else {
+            c.linkedGroupId = -1;
+        }
         clips.push_back(c);
+        pasteMaxEndMs = std::max(pasteMaxEndMs, c.startMs + c.durationMs);
         if (firstNewId < 0) {
             firstNewId = c.id;
         }
     }
     selectedClipId = firstNewId;
+    setCursorMs(pasteMaxEndMs, true);
     refreshTimelineRangeSignals();
     emitOverlayInfo();
     emit timelineContentChanged();
@@ -866,6 +901,39 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.setPen(QColor(100, 100, 100));
         p.drawText(8, trackTop(i) + 24, tracks[static_cast<size_t>(i)].name);
     }
+
+    // Must match adjustedDragPointerMs(): x < timelineLeft()+K (includes track headers) and
+    // x > timelineRight()-K. Previous paint used only the inner timeline strip — wrong.
+    const int h = height();
+    const int leftZoneW = std::min(std::max(0, timelineLeft() + kEdgeScrollZonePx), width());
+    const int rightX0 = timelineRight() - kEdgeScrollZonePx + 1;
+    const int rightZoneW = (rightX0 < width() && rightX0 >= 0) ? (width() - rightX0) : 0;
+
+    const auto paintEdgeZone = [&](int x, int w, bool fadeFromLeft) {
+        if (w <= 0) {
+            return;
+        }
+        QLinearGradient g;
+        if (fadeFromLeft) {
+            g.setStart(x, 0);
+            g.setFinalStop(x + w, 0);
+            g.setColorAt(0.0, QColor(255, 175, 95, 26));
+            g.setColorAt(0.55, QColor(255, 175, 95, 10));
+            g.setColorAt(1.0, QColor(255, 175, 95, 0));
+        } else {
+            g.setStart(x + w, 0);
+            g.setFinalStop(x, 0);
+            g.setColorAt(0.0, QColor(255, 175, 95, 26));
+            g.setColorAt(0.55, QColor(255, 175, 95, 10));
+            g.setColorAt(1.0, QColor(255, 175, 95, 0));
+        }
+        p.fillRect(QRect(x, 0, w, h), QBrush(g));
+        p.setPen(QPen(QColor(255, 185, 105, 72), 1));
+        p.drawLine(x, 1, x + w - 1, 1);
+    };
+
+    paintEdgeZone(0, leftZoneW, true);
+    paintEdgeZone(rightX0, rightZoneW, false);
 
     const qint64 viewEndMs = timelineViewStartMs + contentVisibleMs();
     const qint64 tickStepMs = timelineTickStepMs();

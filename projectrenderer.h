@@ -2,6 +2,7 @@
 #define PROJECTRENDERER_H
 
 #include <QString>
+#include <functional>
 #include <vector>
 
 #include "projectsettings.h"
@@ -17,11 +18,27 @@ public:
         QString logPath;
     };
 
+    struct RenderProgress {
+        enum class Phase {
+            VideoFrames,
+            AudioPcm,
+            Muxing
+        };
+        Phase phase = Phase::VideoFrames;
+        int done = 0;
+        int total = 1;
+        qint64 elapsedMs = 0;
+        qint64 outputDurationMs = 0;
+    };
+
+    using ProgressCallback = std::function<void(const RenderProgress &)>;
+
     static Result renderMp4(const std::vector<TimelineEditor::RenderClip> &clips,
                             const ProjectSettings &settings,
                             qint64 startMs,
                             qint64 endMs,
-                            const QString &outPath);
+                            const QString &outPath,
+                            const ProgressCallback &onProgress = {});
 };
 
 #endif // PROJECTRENDERER_H

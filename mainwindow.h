@@ -48,6 +48,8 @@ private:
     bool loadProjectFromPath(const QString &path, bool silent = false);
     QString defaultAutosaveProjectPath() const;
     void loadLastProjectOnStartup();
+    void saveUiState();
+    void restoreUiState();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
