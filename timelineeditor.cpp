@@ -41,7 +41,6 @@ namespace {
 constexpr qint64 kSnapThresholdMs = 100;
 constexpr qint64 kMinClipDurationMs = 80;
 constexpr int kTrimHandlePx = 7;
-constexpr int kEdgeScrollZonePx = 26;
 constexpr qint64 kEdgeScrollStepMs = 80;
 constexpr int kRulerTargetTickPx = 130;
 constexpr int kCursorMagnetPx = 10;
@@ -902,12 +901,18 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.drawText(8, trackTop(i) + 24, tracks[static_cast<size_t>(i)].name);
     }
 
-    // Must match adjustedDragPointerMs(): x < timelineLeft()+K (includes track headers) and
-    // x > timelineRight()-K. Previous paint used only the inner timeline strip — wrong.
+    // Same geometry as ensureCursorVisible() / edgeScrollMarginMs(): first & last ~2/12 of the
+    // visible time range, mapped to x via timeToX (scales with zoom and 4K width).
     const int h = height();
-    const int leftZoneW = std::min(std::max(0, timelineLeft() + kEdgeScrollZonePx), width());
-    const int rightX0 = timelineRight() - kEdgeScrollZonePx + 1;
-    const int rightZoneW = (rightX0 < width() && rightX0 >= 0) ? (width() - rightX0) : 0;
+    const int tl = timelineLeft();
+    const int tr = timelineRight();
+    const qint64 visible = contentVisibleMs();
+    const qint64 margin = edgeScrollMarginMs();
+    const int xLeftEnd = std::clamp(timeToX(timelineViewStartMs + margin), tl, tr);
+    const int xRightStart = std::clamp(timeToX(timelineViewStartMs + visible - margin), tl, tr);
+    const int leftZoneW = std::max(0, xLeftEnd - tl);
+    const int rightX0 = xRightStart;
+    const int rightZoneW = std::max(0, tr - xRightStart);
 
     const auto paintEdgeZone = [&](int x, int w, bool fadeFromLeft) {
         if (w <= 0) {
@@ -917,25 +922,29 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         if (fadeFromLeft) {
             g.setStart(x, 0);
             g.setFinalStop(x + w, 0);
-            g.setColorAt(0.0, QColor(255, 175, 95, 26));
-            g.setColorAt(0.55, QColor(255, 175, 95, 10));
-            g.setColorAt(1.0, QColor(255, 175, 95, 0));
+            g.setColorAt(0.0, QColor(255, 178, 100, 34));
+            g.setColorAt(0.25, QColor(255, 178, 100, 22));
+            g.setColorAt(0.55, QColor(255, 178, 100, 12));
+            g.setColorAt(0.82, QColor(255, 178, 100, 4));
+            g.setColorAt(1.0, QColor(255, 178, 100, 0));
         } else {
             g.setStart(x + w, 0);
             g.setFinalStop(x, 0);
-            g.setColorAt(0.0, QColor(255, 175, 95, 26));
-            g.setColorAt(0.55, QColor(255, 175, 95, 10));
-            g.setColorAt(1.0, QColor(255, 175, 95, 0));
+            g.setColorAt(0.0, QColor(255, 178, 100, 34));
+            g.setColorAt(0.25, QColor(255, 178, 100, 22));
+            g.setColorAt(0.55, QColor(255, 178, 100, 12));
+            g.setColorAt(0.82, QColor(255, 178, 100, 4));
+            g.setColorAt(1.0, QColor(255, 178, 100, 0));
         }
         p.fillRect(QRect(x, 0, w, h), QBrush(g));
-        p.setPen(QPen(QColor(255, 185, 105, 72), 1));
+        p.setPen(QPen(QColor(255, 188, 110, 85), 1));
         p.drawLine(x, 1, x + w - 1, 1);
     };
 
-    paintEdgeZone(0, leftZoneW, true);
+    paintEdgeZone(tl, leftZoneW, true);
     paintEdgeZone(rightX0, rightZoneW, false);
 
-    const qint64 viewEndMs = timelineViewStartMs + contentVisibleMs();
+    const qint64 viewEndMs = timelineViewStartMs + visible;
     const qint64 tickStepMs = timelineTickStepMs();
     const qint64 tickStart = (timelineViewStartMs / tickStepMs) * tickStepMs;
     for (qint64 t = std::max<qint64>(0, tickStart - tickStepMs); t <= viewEndMs + tickStepMs; t += tickStepMs) {
@@ -1695,10 +1704,24 @@ void TimelineEditor::emitRegionChanged()
     emit selectionRegionChanged(hasRegionSelection, regionStartMs, regionEndMs);
 }
 
+qint64 TimelineEditor::edgeScrollMarginMs() const
+{
+    const qint64 visible = contentVisibleMs();
+    if (visible <= 1) {
+        return 1;
+    }
+    // ~2/12 of the visible window on each side (click-to-scroll uses this via ensureCursorVisible).
+    qint64 m = std::max<qint64>(visible * 2 / 12, 120);
+    if (m * 2 >= visible) {
+        return std::max<qint64>(1, visible / 2 - 1);
+    }
+    return m;
+}
+
 void TimelineEditor::ensureCursorVisible()
 {
     const qint64 visible = contentVisibleMs();
-    const qint64 margin = std::max<qint64>(visible / 7, 120);
+    const qint64 margin = edgeScrollMarginMs();
     qint64 targetViewStart = timelineViewStartMs;
     if (cursorPositionMs < (timelineViewStartMs + margin)) {
         targetViewStart = std::max<qint64>(0, cursorPositionMs - margin);
@@ -1756,11 +1779,19 @@ qint64 TimelineEditor::adjustedDragPointerMs(const QPoint &pos, bool *scrolled)
 {
     bool changed = false;
     if (dragMode != DragMode::None) {
-        if (pos.x() < timelineLeft() + kEdgeScrollZonePx) {
+        const int tl = timelineLeft();
+        const int tr = timelineRight();
+        const qint64 visible = contentVisibleMs();
+        const qint64 margin = edgeScrollMarginMs();
+        const int xLeftEnd = std::clamp(timeToX(timelineViewStartMs + margin), tl, tr);
+        const int xRightStart = std::clamp(timeToX(timelineViewStartMs + visible - margin), tl, tr);
+        const bool inLeftZone = pos.x() < tl || (pos.x() >= tl && pos.x() < xLeftEnd);
+        const bool inRightZone = pos.x() > xRightStart && pos.x() <= tr;
+        if (inLeftZone) {
             const qint64 before = timelineViewStartMs;
             setViewStartMs(timelineViewStartMs - kEdgeScrollStepMs);
             changed = changed || (before != timelineViewStartMs);
-        } else if (pos.x() > timelineRight() - kEdgeScrollZonePx) {
+        } else if (inRightZone) {
             const qint64 before = timelineViewStartMs;
             setViewStartMs(timelineViewStartMs + kEdgeScrollStepMs);
             changed = changed || (before != timelineViewStartMs);
