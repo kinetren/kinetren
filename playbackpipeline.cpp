@@ -95,6 +95,11 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
             onVideoFrameReady(QImage(burst.frame));
             composedFrames.fetch_add(1);
         }
+        const qint64 lastPrefetch = lastPrefetchAnchorMs.load();
+        if (lastPrefetch < 0 || (tMs - lastPrefetch) >= 1000) {
+            lastPrefetchAnchorMs.store(tMs);
+            requestPrefetchAsync(tMs, tMs + kPrefetchAheadMs);
+        }
     };
     callbacks.onAudio = [this](const burstcon::AudioBurst &burst) {
         const qint64 tMs = burstcon::burstIndexToMs(burst.index);
@@ -112,6 +117,7 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     }
     lastVideoRequestIndex.store(-1);
     lastAudioRequestIndex.store(-1);
+    lastPrefetchAnchorMs.store(startTimelineMs);
     timer->start(burstcon::msToBurstIndex(startTimelineMs));
     requestPrefetchAsync(startTimelineMs, startTimelineMs + kPrefetchAheadMs);
 }
@@ -127,6 +133,7 @@ void PlaybackPipeline::stop()
     shutdownAudioOutput();
     lastVideoRequestIndex.store(-1);
     lastAudioRequestIndex.store(-1);
+    lastPrefetchAnchorMs.store(-1);
 }
 
 bool PlaybackPipeline::isRunning() const
@@ -528,6 +535,7 @@ void PlaybackPipeline::requestPrefetchAsync(qint64 startMs, qint64 endMs)
     job.startMs = std::max<qint64>(0, startMs);
     job.endMs = std::max(job.startMs, endMs);
     job.serial = latestPrefetchSerial.fetch_add(1) + 1;
+    lastPrefetchAnchorMs.store(job.startMs);
     {
         std::lock_guard<std::mutex> lock(prefetchMutex);
         pendingPrefetchJob = job;

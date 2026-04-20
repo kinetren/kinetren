@@ -383,7 +383,7 @@ void MainWindow::setupTimelineEditorUi()
     });
     connect(timelineEditor, &TimelineEditor::timelineRangeChanged, this, [this](qint64, qint64) {
         refreshTimelineScroll();
-        if (!timelinePlaying) {
+        if (!timelinePlaying && !timelineEditor->isEditingTimelineContent()) {
             syncTimelinePlayback();
         }
     });

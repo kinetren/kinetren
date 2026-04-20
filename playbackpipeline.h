@@ -111,6 +111,7 @@ private:
     std::atomic_bool draftPreviewEnabled{true};
     std::atomic<quint64> latestDraftSerial{0};
     std::atomic<quint64> latestPrefetchSerial{0};
+    std::atomic<qint64> lastPrefetchAnchorMs{-1};
     std::atomic<burstcon::BurstIndex> lastVideoRequestIndex{-1};
     std::atomic<burstcon::BurstIndex> lastAudioRequestIndex{-1};
     mutable std::mutex coverageMutex;
