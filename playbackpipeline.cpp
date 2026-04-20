@@ -402,8 +402,19 @@ void PlaybackPipeline::rebuildGraph(const std::vector<Clip> &videoClips, const s
     }
 }
 
+void PlaybackPipeline::tearDownAudioLocked()
+{
+    if (audioSink) {
+        audioSink->stop();
+        delete audioSink;
+        audioSink = nullptr;
+    }
+    audioDevice = nullptr;
+}
+
 void PlaybackPipeline::ensureAudioOutput()
 {
+    std::lock_guard<std::mutex> lock(audioMutex);
     if (audioSink && audioDevice) {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         if (audioSink->state() != QAudio::StoppedState) {
@@ -415,11 +426,8 @@ void PlaybackPipeline::ensureAudioOutput()
         }
 #endif
     }
-    shutdownAudioOutput();
+    tearDownAudioLocked();
 
-    if (audioSink && audioDevice) {
-        return;
-    }
     QAudioFormat format;
     format.setSampleRate(kAudioSampleRate);
     format.setChannelCount(kAudioChannels);
@@ -442,19 +450,15 @@ void PlaybackPipeline::ensureAudioOutput()
 
 void PlaybackPipeline::shutdownAudioOutput()
 {
-    if (audioSink) {
-        audioSink->stop();
-        delete audioSink;
-        audioSink = nullptr;
-    }
-    audioDevice = nullptr;
+    std::lock_guard<std::mutex> lock(audioMutex);
+    tearDownAudioLocked();
 }
 
 void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
 {
-    if (!audioDevice || burst.samples.empty()) {
-        ensureAudioOutput();
-    }
+    // QAudioOutput/QAudioSink must be created and destroyed on the same thread (Qt object thread
+    // affinity). This callback runs on `MonotonicPlaybackTimer`'s thread — never (re)open audio here,
+    // or `stop()` on the GUI thread will delete a foreign-thread QObject and corrupt the heap.
     if (!audioDevice || burst.samples.empty()) {
         return;
     }
@@ -470,7 +474,6 @@ void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
     while (written < len && running.load()) {
         const qint64 w = audioDevice->write(bytes + written, len - written);
         if (w < 0) {
-            ensureAudioOutput();
             break;
         }
         if (w == 0) {

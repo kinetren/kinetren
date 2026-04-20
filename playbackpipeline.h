@@ -93,6 +93,7 @@ private:
     static bool clipsEqual(const std::vector<Clip> &a, const std::vector<Clip> &b);
     void ensureAudioOutput();
     void shutdownAudioOutput();
+    void tearDownAudioLocked();
     void pushAudioBurst(const burstcon::AudioBurst &burst);
     void requestDraftFrameAsync(qint64 tMs, const std::vector<Clip> &videoClips);
     void draftWorkerLoop();
@@ -139,6 +140,7 @@ private:
     bool prefetchJobPending = false;
     PrefetchJob pendingPrefetchJob;
 
+    mutable std::mutex audioMutex;
     QIODevice *audioDevice = nullptr;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QAudioSink *audioSink = nullptr;
