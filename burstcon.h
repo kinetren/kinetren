@@ -228,11 +228,17 @@ class ConMediaPool
 public:
     explicit ConMediaPool(const ConMediaPoolConfig &config = {});
 
-    std::shared_ptr<IBurstcon> acquire(const QString &path, bool forPreview, bool skipFrames);
+    std::shared_ptr<IBurstcon> acquire(const QString &path,
+                                       bool forPreview,
+                                       bool skipFrames,
+                                       BurstIndex decodeOrigin = -1);
     void invalidatePath(const QString &path);
 
 private:
-    std::shared_ptr<IBurstcon> createMedia(const QString &path, bool forPreview, bool skipFrames);
+    std::shared_ptr<IBurstcon> createMedia(const QString &path,
+                                          bool forPreview,
+                                          bool skipFrames,
+                                          BurstIndex decodeOrigin);
 
     ConMediaPoolConfig config;
     std::mutex mutex;

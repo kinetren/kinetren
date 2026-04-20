@@ -1848,7 +1848,7 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
             cfg.forcedPreviewQuality = burstcon::BurstQuality{320, 180};
             return std::make_shared<burstcon::ConMediaPool>(cfg);
         }();
-        auto media = previewPool->acquire(path, true, true);
+        auto media = previewPool->acquire(path, true, true, burstcon::msToBurstIndex(bucketMs));
         burstcon::BurstRequest req;
         req.index = burstcon::msToBurstIndex(bucketMs);
         req.quality = burstcon::BurstQuality{320, 180};

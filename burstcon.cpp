@@ -178,6 +178,7 @@ public:
             decodeOrigin = (decodeOriginRequest / videoFrameStep) * videoFrameStep;
         }
         decodeOrigin = std::clamp<BurstIndex>(decodeOrigin, 0, target);
+        const BurstIndex requestedDecodeOrigin = decodeOrigin;
         auto cached = videoFrameCache.find(target);
         if (cached != videoFrameCache.end() && !cached->second.isNull()) {
             out = makeVideoBurst(target, quality, cached->second);
@@ -190,79 +191,91 @@ public:
             target < videoCursorIndex ||
             (videoPrimedOrigin != decodeOrigin && videoFrameCache.find(target) == videoFrameCache.end());
         if (needReset) {
-            if (!seekVideoLocked(decodeOrigin)) {
+            const BurstIndex initialSeekOrigin = (!videoPrimed && decodeOrigin > 0) ? 0 : decodeOrigin;
+            if (!seekVideoLocked(initialSeekOrigin)) {
                 lastVideoFailedTarget = target;
                 lastVideoFailedOrigin = decodeOrigin;
                 ++videoFailureStreak;
                 return false;
             }
+            videoPrimedOrigin = decodeOrigin;
         }
 
-        std::error_code ec;
-        QImage picked;
-        BurstIndex pickedIndex = -1;
-        int skipCounter = 0;
-        for (int tries = 0; tries < 420; ++tries) {
-            Packet pkt = videoInput.readPacket(ec);
-            gAvcppPacketReads.fetch_add(1);
-            if (ec || !pkt) {
-                ec.clear();
-                break;
-            }
-            if (pkt.streamIndex() != videoStream) {
-                continue;
-            }
-            VideoFrame frame = videoDec->decode(pkt, ec);
-            gAvcppVideoDecodeCalls.fetch_add(1);
-            if (ec || frame.isNull() || !frame.isComplete()) {
-                ec.clear();
-                continue;
-            }
-            qint64 frameMs = timestampToMs(frame.pts());
-            if (frameMs < 0) {
-                frameMs = burstIndexToMs(target);
-            }
-            BurstIndex frameIndex = (msToBurstIndex(frameMs) / videoFrameStep) * videoFrameStep;
-            if ((skipFrames || localSkipFrames) && frameIndex < target && (++skipCounter % 2 == 1)) {
-                continue;
-            }
-            auto rgb = videoRescaler->rescale(frame);
-            QImage img(rgb.width(), rgb.height(), QImage::Format_RGB888);
-            const int dstStride = img.bytesPerLine();
-            const int srcStride = rgb.raw()->linesize[0];
-            const int copyStride = std::min(dstStride, srcStride);
-            auto *src = rgb.data();
-            auto *dst = img.bits();
-            for (int y = 0; y < rgb.height(); ++y) {
-                std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
-            }
-            videoFrameCache[frameIndex] = img;
-            videoFrameBytesUsed += imageBytes(img);
-            while (videoFrameCache.size() > 96 || videoFrameBytesUsed > (64ULL * 1024ULL * 1024ULL)) {
-                if (videoFrameCache.empty()) {
+        auto decodeForward = [&](QImage &picked, BurstIndex &pickedIndex) {
+            std::error_code ec;
+            int skipCounter = 0;
+            const BurstIndex cursorBase = std::max<BurstIndex>(-videoFrameStep, videoCursorIndex);
+            const BurstIndex framesNeeded =
+                std::max<BurstIndex>(1, ((target - cursorBase) / std::max<BurstIndex>(1, videoFrameStep)) + 2);
+            const int maxPackets = static_cast<int>(std::clamp<BurstIndex>(framesNeeded * 24, 420, 60000));
+            for (int tries = 0; tries < maxPackets; ++tries) {
+                Packet pkt = videoInput.readPacket(ec);
+                gAvcppPacketReads.fetch_add(1);
+                if (ec || !pkt) {
+                    ec.clear();
                     break;
                 }
-                const auto itOld = videoFrameCache.begin();
-                videoFrameBytesUsed -= std::min<uint64_t>(videoFrameBytesUsed, imageBytes(itOld->second));
-                videoFrameCache.erase(itOld);
+                if (pkt.streamIndex() != videoStream) {
+                    continue;
+                }
+                VideoFrame frame = videoDec->decode(pkt, ec);
+                gAvcppVideoDecodeCalls.fetch_add(1);
+                if (ec || frame.isNull() || !frame.isComplete()) {
+                    ec.clear();
+                    continue;
+                }
+                qint64 frameMs = timestampToMs(frame.pts());
+                if (frameMs < 0) {
+                    frameMs = burstIndexToMs(target);
+                }
+                BurstIndex frameIndex = (msToBurstIndex(frameMs) / videoFrameStep) * videoFrameStep;
+                if ((skipFrames || localSkipFrames) && frameIndex < target && (++skipCounter % 2 == 1)) {
+                    continue;
+                }
+                auto rgb = videoRescaler->rescale(frame);
+                QImage img(rgb.width(), rgb.height(), QImage::Format_RGB888);
+                const int dstStride = img.bytesPerLine();
+                const int srcStride = rgb.raw()->linesize[0];
+                const int copyStride = std::min(dstStride, srcStride);
+                auto *src = rgb.data();
+                auto *dst = img.bits();
+                for (int y = 0; y < rgb.height(); ++y) {
+                    std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
+                }
+                videoFrameCache[frameIndex] = img;
+                videoFrameBytesUsed += imageBytes(img);
+                while (videoFrameCache.size() > 96 || videoFrameBytesUsed > (64ULL * 1024ULL * 1024ULL)) {
+                    if (videoFrameCache.empty()) {
+                        break;
+                    }
+                    const auto itOld = videoFrameCache.begin();
+                    videoFrameBytesUsed -= std::min<uint64_t>(videoFrameBytesUsed, imageBytes(itOld->second));
+                    videoFrameCache.erase(itOld);
+                }
+                videoCursorIndex = frameIndex;
+                if (frameIndex >= target) {
+                    picked = img;
+                    pickedIndex = frameIndex;
+                    return;
+                }
             }
-            videoCursorIndex = frameIndex;
-            if (frameIndex >= target) {
-                picked = img;
-                pickedIndex = frameIndex;
-                break;
-            }
-        }
-        if (picked.isNull()) {
             auto near = videoFrameCache.lower_bound(target);
-            if (near != videoFrameCache.end()) {
+            if (picked.isNull() && near != videoFrameCache.end()) {
                 picked = near->second;
                 pickedIndex = near->first;
             }
+        };
+
+        QImage picked;
+        BurstIndex pickedIndex = -1;
+        decodeForward(picked, pickedIndex);
+        if (picked.isNull() && requestedDecodeOrigin > 0 && seekVideoLocked(0)) {
+            videoPrimedOrigin = requestedDecodeOrigin;
+            decodeForward(picked, pickedIndex);
         }
         if (picked.isNull()) {
             lastVideoFailedTarget = target;
-            lastVideoFailedOrigin = decodeOrigin;
+            lastVideoFailedOrigin = requestedDecodeOrigin;
             ++videoFailureStreak;
             return false;
         }
@@ -867,9 +880,13 @@ ConMediaPool::ConMediaPool(const ConMediaPoolConfig &config)
 {
 }
 
-std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path, bool forPreview, bool skipFrames)
+std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path,
+                                                 bool forPreview,
+                                                 bool skipFrames,
+                                                 BurstIndex decodeOrigin)
 {
-    const std::string key = (forPreview ? "p:" : "m:") + path.toStdString() + (skipFrames ? ":1" : ":0");
+    const std::string key = (forPreview ? "p:" : "m:") + path.toStdString() +
+        (skipFrames ? ":1" : ":0") + ":" + std::to_string(std::max<BurstIndex>(-1, decodeOrigin));
     std::lock_guard<std::mutex> lock(mutex);
     auto it = mediaByKey.find(key);
     if (it != mediaByKey.end()) {
@@ -877,7 +894,7 @@ std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path, bool forPr
         mediaLru.push_front(key);
         return it->second;
     }
-    auto created = createMedia(path, forPreview, skipFrames);
+    auto created = createMedia(path, forPreview, skipFrames, decodeOrigin);
     mediaByKey[key] = created;
     mediaLru.push_front(key);
     while (mediaByKey.size() > config.maxMediaInstances && !mediaLru.empty()) {
@@ -906,8 +923,12 @@ void ConMediaPool::invalidatePath(const QString &path)
     }
 }
 
-std::shared_ptr<IBurstcon> ConMediaPool::createMedia(const QString &path, bool forPreview, bool skipFrames)
+std::shared_ptr<IBurstcon> ConMediaPool::createMedia(const QString &path,
+                                                     bool forPreview,
+                                                     bool skipFrames,
+                                                     BurstIndex decodeOrigin)
 {
+    Q_UNUSED(decodeOrigin);
     auto backend = std::make_shared<AvcppMediaDecoderBackend>(skipFrames);
     std::shared_ptr<IBurstcon> media = std::make_shared<ConMedia>(path, backend);
     if (config.enableConMediaCache) {
@@ -933,7 +954,7 @@ void ConTrack::setEvents(const std::vector<ConTrackEvent> &events)
     for (const auto &event : events) {
         BoundEvent b;
         b.event = event;
-        b.media = mediaPool ? mediaPool->acquire(event.sourcePath, false, false) : nullptr;
+        b.media = mediaPool ? mediaPool->acquire(event.sourcePath, false, false, event.sourceIn) : nullptr;
         bound.push_back(b);
     }
     std::sort(bound.begin(), bound.end(), [](const BoundEvent &a, const BoundEvent &b) {
