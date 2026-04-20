@@ -189,6 +189,16 @@ void testConTrackPropagatesDecodeOrigin()
     assert(backend->lastAudioDecodeOrigin == 7);
 }
 
+void testConMediaPoolReusesMediaAcrossOrigins()
+{
+    ConMediaPoolConfig poolCfg;
+    poolCfg.enableConMediaCache = false;
+    auto pool = std::make_shared<ConMediaPool>(poolCfg);
+    auto a = pool->acquire("fake.mp4", false, false, 0, true, false);
+    auto b = pool->acquire("fake.mp4", false, false, 90000, true, false);
+    assert(a == b);
+}
+
 void testMonotonicPlaybackTimerAdvances()
 {
     auto upstream = std::make_shared<FakeBurstcon>();
@@ -215,6 +225,7 @@ int main(int argc, char **argv)
     testConMediaUsesBackend();
     testConTrackAndConTrimmerComposition();
     testConTrackPropagatesDecodeOrigin();
+    testConMediaPoolReusesMediaAcrossOrigins();
     testMonotonicPlaybackTimerAdvances();
     return 0;
 }

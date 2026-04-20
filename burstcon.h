@@ -102,6 +102,8 @@ struct BurstconMetrics {
     uint64_t cacheEntries = 0;
 };
 
+struct SharedMediaFile;
+
 class ConCache : public IBurstcon
 {
 public:
@@ -243,10 +245,12 @@ private:
                                           BurstIndex decodeOrigin,
                                           bool wantVideo,
                                           bool wantAudio);
+    std::shared_ptr<SharedMediaFile> acquireSharedMediaFile(const QString &path);
 
     ConMediaPoolConfig config;
     std::mutex mutex;
     std::unordered_map<std::string, std::shared_ptr<IBurstcon>> mediaByKey;
+    std::unordered_map<std::string, std::shared_ptr<SharedMediaFile>> sharedFilesByPath;
     std::list<std::string> mediaLru;
 };
 

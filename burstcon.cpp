@@ -24,7 +24,6 @@ namespace {
 
 constexpr int kDefaultAudioSamplesPerBurst = 1024;
 const av::Rational kMillisecondsTimebase{1, 1000};
-constexpr BurstIndex kMediaPoolOriginBucketTicks = kBurstTimebaseHz * 3;
 
 std::atomic<uint64_t> gAvcppOpenCalls{0};
 std::atomic<uint64_t> gAvcppPacketReads{0};
@@ -56,19 +55,172 @@ uint64_t imageBytes(const QImage &img)
 #endif
 }
 
-BurstIndex normalizePoolDecodeOrigin(BurstIndex decodeOrigin)
+qint64 packetTimestampToMs(const av::Packet &pkt)
 {
-    if (decodeOrigin < 0) {
-        return -1;
+    qint64 tsMs = timestampToMs(pkt.dts());
+    if (tsMs >= 0) {
+        return tsMs;
     }
-    return (decodeOrigin / kMediaPoolOriginBucketTicks) * kMediaPoolOriginBucketTicks;
+    return timestampToMs(pkt.pts());
 }
+
+struct PacketIndexEntry {
+    BurstIndex index = 0;
+    int64_t bytePos = -1;
+};
+
+PacketIndexEntry makePacketIndexEntry(const av::Packet &pkt)
+{
+    PacketIndexEntry entry;
+    entry.bytePos = pkt.raw() ? pkt.raw()->pos : -1;
+    const qint64 tsMs = packetTimestampToMs(pkt);
+    if (tsMs > 0) {
+        entry.index = msToBurstIndex(tsMs);
+    }
+    return entry;
+}
+
+void dedupePacketIndex(std::vector<PacketIndexEntry> &entries)
+{
+    std::sort(entries.begin(), entries.end(), [](const PacketIndexEntry &a, const PacketIndexEntry &b) {
+        if (a.index != b.index) {
+            return a.index < b.index;
+        }
+        return a.bytePos < b.bytePos;
+    });
+    entries.erase(std::unique(entries.begin(), entries.end(), [](const PacketIndexEntry &a, const PacketIndexEntry &b) {
+        return a.index == b.index && a.bytePos == b.bytePos;
+    }), entries.end());
+}
+
+} // namespace
+
+struct SharedMediaFile {
+    QString path;
+    std::mutex mutex;
+    bool indexed = false;
+    BurstOriginInfo origin;
+    int videoStream = -1;
+    int audioStream = -1;
+    BurstIndex videoFrameStep = std::max<BurstIndex>(1, kBurstTimebaseHz / 30);
+    std::vector<PacketIndexEntry> videoKeyframes;
+    std::vector<PacketIndexEntry> audioPackets;
+
+    void ensureIndexed()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (indexed) {
+            return;
+        }
+        using namespace av;
+        FormatContext input;
+        std::error_code ec;
+        gAvcppOpenCalls.fetch_add(1);
+        input.openInput(path.toStdString(), ec);
+        if (ec) {
+            return;
+        }
+        input.findStreamInfo(ec);
+        if (ec) {
+            return;
+        }
+        for (size_t i = 0; i < input.streamsCount(); ++i) {
+            auto st = input.stream(i);
+            if (videoStream < 0 && st.mediaType() == AVMEDIA_TYPE_VIDEO) {
+                videoStream = static_cast<int>(i);
+                const double fps = st.averageFrameRate().getDouble();
+                if (fps > 1.0) {
+                    videoFrameStep = std::max<BurstIndex>(1, static_cast<BurstIndex>(kBurstTimebaseHz / fps));
+                }
+                if (auto *codecpar = st.codecParameters().raw()) {
+                    origin.sourceVideoQuality = BurstQuality{codecpar->width, codecpar->height};
+                }
+            } else if (audioStream < 0 && st.mediaType() == AVMEDIA_TYPE_AUDIO) {
+                audioStream = static_cast<int>(i);
+                if (auto *codecpar = st.codecParameters().raw()) {
+                    origin.sourceAudioSampleRate = std::max(8000, codecpar->sample_rate);
+#if API_NEW_CHANNEL_LAYOUT
+                    origin.sourceAudioChannels = std::max(1, codecpar->ch_layout.nb_channels);
+#else
+                    origin.sourceAudioChannels = std::max(1, codecpar->channels);
+#endif
+                }
+            }
+        }
+        while (true) {
+            Packet pkt = input.readPacket(ec);
+            gAvcppPacketReads.fetch_add(1);
+            if (ec || !pkt) {
+                ec.clear();
+                break;
+            }
+            if (pkt.streamIndex() == videoStream && pkt.isKeyPacket()) {
+                PacketIndexEntry entry = makePacketIndexEntry(pkt);
+                if (entry.bytePos >= 0) {
+                    videoKeyframes.push_back(entry);
+                }
+            } else if (pkt.streamIndex() == audioStream) {
+                PacketIndexEntry entry = makePacketIndexEntry(pkt);
+                if (entry.bytePos >= 0) {
+                    audioPackets.push_back(entry);
+                }
+            }
+        }
+        if (videoKeyframes.empty()) {
+            videoKeyframes.push_back(PacketIndexEntry{0, 0});
+        }
+        if (audioPackets.empty()) {
+            audioPackets.push_back(PacketIndexEntry{0, 0});
+        }
+        dedupePacketIndex(videoKeyframes);
+        dedupePacketIndex(audioPackets);
+        indexed = true;
+    }
+
+    PacketIndexEntry videoStartFor(BurstIndex target) const
+    {
+        if (videoKeyframes.empty()) {
+            return PacketIndexEntry{0, 0};
+        }
+        auto it = std::upper_bound(videoKeyframes.begin(), videoKeyframes.end(), target,
+                                   [](BurstIndex value, const PacketIndexEntry &entry) {
+                                       return value < entry.index;
+                                   });
+        if (it == videoKeyframes.begin()) {
+            return *it;
+        }
+        --it;
+        return *it;
+    }
+
+    PacketIndexEntry audioStartFor(BurstIndex target) const
+    {
+        if (audioPackets.empty()) {
+            return PacketIndexEntry{0, 0};
+        }
+        auto it = std::upper_bound(audioPackets.begin(), audioPackets.end(), target,
+                                   [](BurstIndex value, const PacketIndexEntry &entry) {
+                                       return value < entry.index;
+                                   });
+        if (it == audioPackets.begin()) {
+            return *it;
+        }
+        --it;
+        return *it;
+    }
+};
+
+namespace {
 
 class AvcppMediaDecoderBackend : public IMediaDecoderBackend
 {
 public:
-    explicit AvcppMediaDecoderBackend(bool skipFrames, bool wantVideo, bool wantAudio)
-        : skipFrames(skipFrames)
+    explicit AvcppMediaDecoderBackend(std::shared_ptr<SharedMediaFile> sharedFile,
+                                      bool skipFrames,
+                                      bool wantVideo,
+                                      bool wantAudio)
+        : sharedFile(std::move(sharedFile))
+        , skipFrames(skipFrames)
         , wantVideo(wantVideo)
         , wantAudio(wantAudio)
     {
@@ -79,12 +231,16 @@ public:
         using namespace av;
         std::lock_guard<std::mutex> videoLock(videoMutex);
         std::lock_guard<std::mutex> audioLock(audioMutex);
+        if (sharedFile) {
+            sharedFile->path = path;
+            sharedFile->ensureIndexed();
+        }
         this->path = path;
-        origin = BurstOriginInfo{};
         loaded = false;
-        videoStream = -1;
-        audioStream = -1;
-        videoFrameStep = std::max<BurstIndex>(1, kBurstTimebaseHz / 30);
+        origin = sharedFile ? sharedFile->origin : BurstOriginInfo{};
+        videoStream = sharedFile ? sharedFile->videoStream : -1;
+        audioStream = sharedFile ? sharedFile->audioStream : -1;
+        videoFrameStep = sharedFile ? sharedFile->videoFrameStep : std::max<BurstIndex>(1, kBurstTimebaseHz / 30);
         videoCursorIndex = -1;
         audioCursorIndex = -1;
         videoFrameCache.clear();
@@ -95,53 +251,13 @@ public:
         audioDec.reset();
         videoRescaler.reset();
         audioResampler.reset();
-        probeInput.close();
         videoInput.close();
         audioInput.close();
+        videoPrimed = false;
+        audioPrimed = false;
 
         std::error_code ec;
-        gAvcppOpenCalls.fetch_add(1);
-        probeInput.openInput(path.toStdString(), ec);
-        if (ec) {
-            return false;
-        }
-        probeInput.findStreamInfo(ec);
-        if (ec) {
-            return false;
-        }
-        for (size_t i = 0; i < probeInput.streamsCount(); ++i) {
-            auto st = probeInput.stream(i);
-            if (wantVideo && videoStream < 0 && st.mediaType() == AVMEDIA_TYPE_VIDEO) {
-                videoStream = static_cast<int>(i);
-                const double fps = st.averageFrameRate().getDouble();
-                if (fps > 1.0) {
-                    videoFrameStep = std::max<BurstIndex>(1, static_cast<BurstIndex>(kBurstTimebaseHz / fps));
-                }
-                VideoDecoderContext dec(st);
-                Codec codec = findDecodingCodec(dec.raw()->codec_id);
-                dec.setCodec(codec);
-                dec.open(ec);
-                if (!ec) {
-                    origin.sourceVideoQuality = BurstQuality{dec.width(), dec.height()};
-                } else {
-                    ec.clear();
-                }
-            } else if (wantAudio && audioStream < 0 && st.mediaType() == AVMEDIA_TYPE_AUDIO) {
-                audioStream = static_cast<int>(i);
-                AudioDecoderContext dec(st);
-                Codec codec = findDecodingCodec(dec.raw()->codec_id);
-                dec.setCodec(codec);
-                dec.open(ec);
-                if (!ec) {
-                    origin.sourceAudioSampleRate = std::max(8000, dec.sampleRate());
-                    origin.sourceAudioChannels = std::max(1, dec.channels());
-                } else {
-                    ec.clear();
-                }
-            }
-        }
-
-        if (videoStream >= 0) {
+        if (wantVideo && videoStream >= 0) {
             gAvcppOpenCalls.fetch_add(1);
             videoInput.openInput(path.toStdString(), ec);
             if (ec) {
@@ -152,7 +268,7 @@ public:
                 return false;
             }
         }
-        if (audioStream >= 0) {
+        if (wantAudio && audioStream >= 0) {
             gAvcppOpenCalls.fetch_add(1);
             audioInput.openInput(path.toStdString(), ec);
             if (ec) {
@@ -475,17 +591,32 @@ private:
     {
         using namespace av;
         std::error_code ec;
+        BurstIndex seekIndex = std::max<BurstIndex>(0, origin);
         if (videoInput.seekable()) {
-            const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(origin));
-            videoInput.seek(Timestamp(std::chrono::milliseconds(seekMs)), static_cast<size_t>(videoStream), true, ec);
+            bool didByteSeek = false;
+            if (sharedFile) {
+                const PacketIndexEntry start = sharedFile->videoStartFor(seekIndex);
+                seekIndex = start.index;
+                if (start.bytePos >= 0) {
+                    videoInput.seek(start.bytePos, -1, AVSEEK_FLAG_BYTE, ec);
+                    didByteSeek = !ec;
+                }
+            }
             if (ec) {
                 ec.clear();
+            }
+            if (!didByteSeek) {
+                const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(seekIndex));
+                videoInput.seek(Timestamp(std::chrono::milliseconds(seekMs)), static_cast<size_t>(videoStream), true, ec);
+                if (ec) {
+                    ec.clear();
+                }
             }
         }
         if (!openVideoDecoderLocked()) {
             return false;
         }
-        videoCursorIndex = origin - videoFrameStep;
+        videoCursorIndex = seekIndex - videoFrameStep;
         videoPrimed = true;
         videoPrimedOrigin = origin;
         lastVideoFailedTarget = -1;
@@ -498,18 +629,33 @@ private:
     {
         using namespace av;
         std::error_code ec;
+        BurstIndex seekIndex = std::max<BurstIndex>(0, origin);
         if (audioInput.seekable()) {
-            const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(origin));
-            audioInput.seek(Timestamp(std::chrono::milliseconds(seekMs)), static_cast<size_t>(audioStream), true, ec);
+            bool didByteSeek = false;
+            if (sharedFile) {
+                const PacketIndexEntry start = sharedFile->audioStartFor(seekIndex);
+                seekIndex = start.index;
+                if (start.bytePos >= 0) {
+                    audioInput.seek(start.bytePos, -1, AVSEEK_FLAG_BYTE, ec);
+                    didByteSeek = !ec;
+                }
+            }
             if (ec) {
                 ec.clear();
+            }
+            if (!didByteSeek) {
+                const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(seekIndex));
+                audioInput.seek(Timestamp(std::chrono::milliseconds(seekMs)), static_cast<size_t>(audioStream), true, ec);
+                if (ec) {
+                    ec.clear();
+                }
             }
         }
         if (!openAudioDecoderLocked(audioOutRate, audioOutChannels, audioOutSamplesPerBurst)) {
             return false;
         }
         const BurstIndex step = std::max<BurstIndex>(1, (kBurstTimebaseHz * audioOutSamplesPerBurst) / audioOutRate);
-        audioCursorIndex = (origin / step) * step;
+        audioCursorIndex = (seekIndex / step) * step;
         audioPrimed = true;
         audioPrimedOrigin = (origin / step) * step;
         lastAudioFailedTarget = -1;
@@ -529,6 +675,7 @@ private:
     }
 
 private:
+    std::shared_ptr<SharedMediaFile> sharedFile;
     QString path;
     bool loaded = false;
     bool skipFrames = false;
@@ -536,7 +683,6 @@ private:
     bool wantAudio = true;
     mutable std::mutex videoMutex;
     mutable std::mutex audioMutex;
-    av::FormatContext probeInput;
     av::FormatContext videoInput;
     av::FormatContext audioInput;
     int videoStream = -1;
@@ -900,9 +1046,9 @@ std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path,
                                                  bool wantVideo,
                                                  bool wantAudio)
 {
-    const BurstIndex normalizedOrigin = normalizePoolDecodeOrigin(decodeOrigin);
+    Q_UNUSED(decodeOrigin);
     const std::string key = (forPreview ? "p:" : "m:") + path.toStdString() +
-        (skipFrames ? ":1" : ":0") + ":" + std::to_string(std::max<BurstIndex>(-1, normalizedOrigin)) +
+        (skipFrames ? ":1" : ":0") +
         ":" + (wantVideo ? "v" : "-") + (wantAudio ? "a" : "-");
     std::lock_guard<std::mutex> lock(mutex);
     auto it = mediaByKey.find(key);
@@ -911,7 +1057,7 @@ std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path,
         mediaLru.push_front(key);
         return it->second;
     }
-    auto created = createMedia(path, forPreview, skipFrames, normalizedOrigin, wantVideo, wantAudio);
+    auto created = createMedia(path, forPreview, skipFrames, -1, wantVideo, wantAudio);
     mediaByKey[key] = created;
     mediaLru.push_front(key);
     while (mediaByKey.size() > config.maxMediaInstances && !mediaLru.empty()) {
@@ -927,6 +1073,7 @@ void ConMediaPool::invalidatePath(const QString &path)
     std::lock_guard<std::mutex> lock(mutex);
     if (path.isEmpty()) {
         mediaByKey.clear();
+        sharedFilesByPath.clear();
         mediaLru.clear();
         return;
     }
@@ -934,6 +1081,13 @@ void ConMediaPool::invalidatePath(const QString &path)
         if (it->first.find(path.toStdString()) != std::string::npos) {
             mediaLru.remove(it->first);
             it = mediaByKey.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = sharedFilesByPath.begin(); it != sharedFilesByPath.end();) {
+        if (it->first.find(path.toStdString()) != std::string::npos) {
+            it = sharedFilesByPath.erase(it);
         } else {
             ++it;
         }
@@ -948,7 +1102,10 @@ std::shared_ptr<IBurstcon> ConMediaPool::createMedia(const QString &path,
                                                      bool wantAudio)
 {
     Q_UNUSED(decodeOrigin);
-    auto backend = std::make_shared<AvcppMediaDecoderBackend>(skipFrames, wantVideo, wantAudio);
+    auto backend = std::make_shared<AvcppMediaDecoderBackend>(acquireSharedMediaFile(path),
+                                                              skipFrames,
+                                                              wantVideo,
+                                                              wantAudio);
     std::shared_ptr<IBurstcon> media = std::make_shared<ConMedia>(path, backend);
     if (config.enableConMediaCache) {
         ConCacheConfig c = config.cacheConfig;
@@ -959,6 +1116,19 @@ std::shared_ptr<IBurstcon> ConMediaPool::createMedia(const QString &path,
         media = std::make_shared<ConCache>(media, c);
     }
     return media;
+}
+
+std::shared_ptr<SharedMediaFile> ConMediaPool::acquireSharedMediaFile(const QString &path)
+{
+    const std::string key = path.toStdString();
+    auto it = sharedFilesByPath.find(key);
+    if (it != sharedFilesByPath.end()) {
+        return it->second;
+    }
+    auto sharedFile = std::make_shared<SharedMediaFile>();
+    sharedFile->path = path;
+    sharedFilesByPath[key] = sharedFile;
+    return sharedFile;
 }
 
 ConTrack::ConTrack(std::shared_ptr<ConMediaPool> mediaPool)
