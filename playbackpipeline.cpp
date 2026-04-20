@@ -66,7 +66,6 @@ PlaybackPipeline::~PlaybackPipeline()
 
 void PlaybackPipeline::start(qint64 startTimelineMs)
 {
-    std::lock_guard<std::mutex> lock(mutex);
     running.store(true);
     latestDraftSerial.fetch_add(1);
     timelineMs.store(startTimelineMs);
@@ -95,8 +94,11 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
         pushAudioBurst(burst);
     };
     const QSize q = projectSettings.cacheResolution();
-    timer->setVideoRequestQuality(burstcon::BurstQuality{q.width(), q.height()});
-    timer->setCallbacks(callbacks);
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        timer->setVideoRequestQuality(burstcon::BurstQuality{q.width(), q.height()});
+        timer->setCallbacks(callbacks);
+    }
     lastVideoRequestIndex.store(-1);
     lastAudioRequestIndex.store(-1);
     timer->start(burstcon::msToBurstIndex(startTimelineMs));
@@ -104,11 +106,11 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
 
 void PlaybackPipeline::stop()
 {
-    std::lock_guard<std::mutex> lock(mutex);
     running.store(false);
     latestDraftSerial.fetch_add(1);
-    if (timer) {
-        timer->stop();
+    auto *localTimer = timer.get();
+    if (localTimer) {
+        localTimer->stop();
     }
     shutdownAudioOutput();
     lastVideoRequestIndex.store(-1);

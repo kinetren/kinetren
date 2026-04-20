@@ -231,14 +231,18 @@ public:
     std::shared_ptr<IBurstcon> acquire(const QString &path,
                                        bool forPreview,
                                        bool skipFrames,
-                                       BurstIndex decodeOrigin = -1);
+                                       BurstIndex decodeOrigin = -1,
+                                       bool wantVideo = true,
+                                       bool wantAudio = true);
     void invalidatePath(const QString &path);
 
 private:
     std::shared_ptr<IBurstcon> createMedia(const QString &path,
                                           bool forPreview,
                                           bool skipFrames,
-                                          BurstIndex decodeOrigin);
+                                          BurstIndex decodeOrigin,
+                                          bool wantVideo,
+                                          bool wantAudio);
 
     ConMediaPoolConfig config;
     std::mutex mutex;

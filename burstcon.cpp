@@ -58,8 +58,10 @@ uint64_t imageBytes(const QImage &img)
 class AvcppMediaDecoderBackend : public IMediaDecoderBackend
 {
 public:
-    explicit AvcppMediaDecoderBackend(bool skipFrames)
+    explicit AvcppMediaDecoderBackend(bool skipFrames, bool wantVideo, bool wantAudio)
         : skipFrames(skipFrames)
+        , wantVideo(wantVideo)
+        , wantAudio(wantAudio)
     {
     }
 
@@ -100,7 +102,7 @@ public:
         }
         for (size_t i = 0; i < probeInput.streamsCount(); ++i) {
             auto st = probeInput.stream(i);
-            if (videoStream < 0 && st.mediaType() == AVMEDIA_TYPE_VIDEO) {
+            if (wantVideo && videoStream < 0 && st.mediaType() == AVMEDIA_TYPE_VIDEO) {
                 videoStream = static_cast<int>(i);
                 const double fps = st.averageFrameRate().getDouble();
                 if (fps > 1.0) {
@@ -115,7 +117,7 @@ public:
                 } else {
                     ec.clear();
                 }
-            } else if (audioStream < 0 && st.mediaType() == AVMEDIA_TYPE_AUDIO) {
+            } else if (wantAudio && audioStream < 0 && st.mediaType() == AVMEDIA_TYPE_AUDIO) {
                 audioStream = static_cast<int>(i);
                 AudioDecoderContext dec(st);
                 Codec codec = findDecodingCodec(dec.raw()->codec_id);
@@ -521,6 +523,8 @@ private:
     QString path;
     bool loaded = false;
     bool skipFrames = false;
+    bool wantVideo = true;
+    bool wantAudio = true;
     mutable std::mutex videoMutex;
     mutable std::mutex audioMutex;
     av::FormatContext probeInput;
@@ -883,10 +887,13 @@ ConMediaPool::ConMediaPool(const ConMediaPoolConfig &config)
 std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path,
                                                  bool forPreview,
                                                  bool skipFrames,
-                                                 BurstIndex decodeOrigin)
+                                                 BurstIndex decodeOrigin,
+                                                 bool wantVideo,
+                                                 bool wantAudio)
 {
     const std::string key = (forPreview ? "p:" : "m:") + path.toStdString() +
-        (skipFrames ? ":1" : ":0") + ":" + std::to_string(std::max<BurstIndex>(-1, decodeOrigin));
+        (skipFrames ? ":1" : ":0") + ":" + std::to_string(std::max<BurstIndex>(-1, decodeOrigin)) +
+        ":" + (wantVideo ? "v" : "-") + (wantAudio ? "a" : "-");
     std::lock_guard<std::mutex> lock(mutex);
     auto it = mediaByKey.find(key);
     if (it != mediaByKey.end()) {
@@ -894,7 +901,7 @@ std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path,
         mediaLru.push_front(key);
         return it->second;
     }
-    auto created = createMedia(path, forPreview, skipFrames, decodeOrigin);
+    auto created = createMedia(path, forPreview, skipFrames, decodeOrigin, wantVideo, wantAudio);
     mediaByKey[key] = created;
     mediaLru.push_front(key);
     while (mediaByKey.size() > config.maxMediaInstances && !mediaLru.empty()) {
@@ -926,10 +933,12 @@ void ConMediaPool::invalidatePath(const QString &path)
 std::shared_ptr<IBurstcon> ConMediaPool::createMedia(const QString &path,
                                                      bool forPreview,
                                                      bool skipFrames,
-                                                     BurstIndex decodeOrigin)
+                                                     BurstIndex decodeOrigin,
+                                                     bool wantVideo,
+                                                     bool wantAudio)
 {
     Q_UNUSED(decodeOrigin);
-    auto backend = std::make_shared<AvcppMediaDecoderBackend>(skipFrames);
+    auto backend = std::make_shared<AvcppMediaDecoderBackend>(skipFrames, wantVideo, wantAudio);
     std::shared_ptr<IBurstcon> media = std::make_shared<ConMedia>(path, backend);
     if (config.enableConMediaCache) {
         ConCacheConfig c = config.cacheConfig;
@@ -954,7 +963,13 @@ void ConTrack::setEvents(const std::vector<ConTrackEvent> &events)
     for (const auto &event : events) {
         BoundEvent b;
         b.event = event;
-        b.media = mediaPool ? mediaPool->acquire(event.sourcePath, false, false, event.sourceIn) : nullptr;
+        b.media = mediaPool ? mediaPool->acquire(event.sourcePath,
+                                                 false,
+                                                 false,
+                                                 event.sourceIn,
+                                                 event.hasVideo,
+                                                 event.hasAudio)
+                            : nullptr;
         bound.push_back(b);
     }
     std::sort(bound.begin(), bound.end(), [](const BoundEvent &a, const BoundEvent &b) {
@@ -1308,11 +1323,6 @@ void MonotonicPlaybackTimer::runLoop()
                     localCallbacks.onAudio(ab);
                 }
                 lastAudioRequest = current;
-            }
-            const BurstIndex currentSecond = (current / kBurstTimebaseHz) * kBurstTimebaseHz;
-            if (currentSecond != lastPreloadSecond) {
-                preloadAhead(localSource, videoRequest.quality, currentSecond, videoStep, audioStep);
-                lastPreloadSecond = currentSecond;
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(3));

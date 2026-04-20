@@ -1835,6 +1835,7 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
     if (isImagePath(path)) {
         img.load(path);
     } else {
+        static constexpr qint64 kPreviewDecodeAnchorMs = 2000;
         static std::shared_ptr<burstcon::ConMediaPool> previewPool = []() {
             burstcon::ConMediaPoolConfig cfg;
             cfg.enableConMediaCache = true;
@@ -1848,10 +1849,17 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
             cfg.forcedPreviewQuality = burstcon::BurstQuality{320, 180};
             return std::make_shared<burstcon::ConMediaPool>(cfg);
         }();
-        auto media = previewPool->acquire(path, true, true, burstcon::msToBurstIndex(bucketMs));
+        const qint64 previewAnchorMs = std::max<qint64>(0, (bucketMs / kPreviewDecodeAnchorMs) * kPreviewDecodeAnchorMs);
+        auto media = previewPool->acquire(path,
+                                          true,
+                                          true,
+                                          burstcon::msToBurstIndex(previewAnchorMs),
+                                          true,
+                                          false);
         burstcon::BurstRequest req;
         req.index = burstcon::msToBurstIndex(bucketMs);
         req.quality = burstcon::BurstQuality{320, 180};
+        req.decodeOrigin = burstcon::msToBurstIndex(previewAnchorMs);
         burstcon::VideoBurst frame;
         if (media->videoBurst(req, frame) && !frame.frame.isNull()) {
             img = frame.frame;
