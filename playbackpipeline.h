@@ -1,26 +1,22 @@
 #ifndef PLAYBACKPIPELINE_H
 #define PLAYBACKPIPELINE_H
 
-#include <QImage>
 #include <QHash>
+#include <QImage>
 #include <QPair>
 #include <QVector>
-#include <QString>
-#include <QtGlobal>
-#include "framecache.h"
-#include "projectsettings.h"
 
 #include <atomic>
-#include <cstdint>
+#include <condition_variable>
 #include <functional>
-#include <list>
 #include <memory>
 #include <mutex>
-#include <string>
-#include <unordered_map>
+#include <thread>
 #include <unordered_set>
 #include <vector>
-#include <thread>
+
+#include "burstcon.h"
+#include "projectsettings.h"
 
 class QIODevice;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -65,12 +61,15 @@ public:
 
     void start(qint64 timelineMs);
     void stop();
+    bool isRunning() const;
     void update(qint64 timelineMs, const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);
+    void setPlaybackMode(burstcon::PlaybackMode mode, qint64 regionStartMs, qint64 regionEndMs);
     qint64 playbackPositionMs() const;
     void setDraftPreviewEnabled(bool enabled);
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
     void setProjectSettings(const ProjectSettings &settings);
     void resetProjectCache();
+    void clearTimelineCoverage();
     PerformanceStats performanceSnapshot() const;
     QHash<QString, QVector<QPair<double, double>>> videoCacheSegments(const std::vector<Clip> &clips) const;
     QHash<QString, QVector<QPair<double, double>>> audioCacheSegments(const std::vector<Clip> &clips) const;
@@ -78,86 +77,58 @@ public:
     static QString coverageClipKey(const Clip &clip);
 
 private:
-    struct AudioRingBuffer;
-    struct VideoRingBuffer;
-    struct AudioWorker;
-    struct VideoWorker;
-    struct AudioBlockCache;
+    struct DraftJob {
+        qint64 timelineMs = 0;
+        std::vector<Clip> videoClips;
+        quint64 serial = 0;
+    };
 
+    void rebuildGraph(const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);
+    static bool clipsEqual(const std::vector<Clip> &a, const std::vector<Clip> &b);
     void ensureAudioOutput();
     void shutdownAudioOutput();
+    void pushAudioBurst(const burstcon::AudioBurst &burst);
+    void requestDraftFrameAsync(qint64 tMs, const std::vector<Clip> &videoClips);
+    void draftWorkerLoop();
 
-    void reconcileAudioWorkers(const std::vector<Clip> &clips);
-    void reconcileVideoWorkers(const std::vector<Clip> &clips);
-    void startAudioWorker(const Clip &clip);
-    void startVideoWorker(const Clip &clip);
-
-    void audioMixLoop();
-    void videoComposeLoop();
-
-    int decodeAudioWorker(AudioWorker &worker);
-    int decodeVideoWorker(VideoWorker &worker);
-    QImage composeDraftFrameAt(qint64 timelineMs, const std::vector<Clip> &videoClips);
-    QImage decodeVideoFrameAt(const Clip &clip, qint64 sourceTimeMs);
-    static std::string finalViewKey(qint64 timelineMs, const std::vector<std::shared_ptr<VideoWorker>> &workers);
-    static std::string audioBlockKey(const std::string &clipWorkerKey, qint64 relativeBlockIndex);
-    static std::string videoFrameKey(const QString &sourcePath, qint64 sourceTimeMs, bool draft);
-    void markResourceBucket(const QString &sourcePath, qint64 bucketMs);
-    void markAudioBucket(const QString &sourcePath, qint64 bucketMs);
-    void markFinalTimelineFrame(qint64 timelineMs);
-
-    static std::string clipKey(const Clip &clip);
-
-private:
     std::function<void(QImage &&)> onVideoFrameReady;
-
+    mutable std::mutex mutex;
+    ProjectSettings projectSettings;
+    std::vector<Clip> lastVideoClips;
+    std::vector<Clip> lastAudioClips;
     std::atomic_bool running{false};
-    std::atomic_int generation{0};
     std::atomic<qint64> timelineMs{0};
-    std::atomic<qint64> playbackStartTimelineMs{0};
-    std::atomic<qint64> playbackStartSteadyMs{0};
-    std::atomic<qint64> pulseCounterMs{0};
-    std::atomic<qint64> consumedAudioBlock{0};
-    std::atomic<qint64> consumedVideoFrame{0};
-    std::atomic<qint64> lastAudioReconcileMs{-1};
-    std::atomic<qint64> lastVideoReconcileMs{-1};
+    std::atomic<double> composeFps{0.0};
+    std::atomic<quint64> composedFrames{0};
+    std::atomic<qint64> lastPlaybackIndex{0};
+    std::atomic_bool draftPreviewEnabled{true};
+    std::atomic<quint64> latestDraftSerial{0};
+    std::atomic<burstcon::BurstIndex> lastVideoRequestIndex{-1};
+    std::atomic<burstcon::BurstIndex> lastAudioRequestIndex{-1};
+    mutable std::mutex coverageMutex;
+    std::unordered_set<qint64> videoCoverageBuckets;
+    std::unordered_set<qint64> audioCoverageBuckets;
+    std::unordered_set<qint64> finalCoverageBuckets;
 
-    std::mutex audioMutex;
-    std::unordered_map<std::string, std::shared_ptr<AudioWorker>> audioWorkers;
-    qint64 nextAudioBlock = 0;
+    std::shared_ptr<burstcon::ConMediaPool> mediaPool;
+    std::shared_ptr<burstcon::ConTrack> videoTrack;
+    std::shared_ptr<burstcon::ConTrack> audioTrack;
+    std::shared_ptr<burstcon::ConTrimmer> trimmer;
+    std::shared_ptr<burstcon::IBurstcon> root;
+    std::unique_ptr<burstcon::MonotonicPlaybackTimer> timer;
+    std::mutex draftMutex;
+    std::condition_variable draftCv;
+    std::thread draftWorker;
+    bool stopDraftWorker = false;
+    bool draftJobPending = false;
+    DraftJob pendingDraftJob;
+
     QIODevice *audioDevice = nullptr;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QAudioSink *audioSink = nullptr;
 #else
     QAudioOutput *audioSink = nullptr;
 #endif
-
-    std::mutex videoMutex;
-    std::unordered_map<std::string, std::shared_ptr<VideoWorker>> videoWorkers;
-    qint64 nextVideoFrame = 0;
-
-    std::thread audioThread;
-    std::thread videoThread;
-
-    std::atomic_bool draftPreviewEnabled{true};
-    ProjectSettings projectSettings;
-    mutable std::mutex settingsMutex;
-    FrameCache frameCache;
-    FrameCache finalViewCache;
-    std::unique_ptr<AudioBlockCache> audioBlockCache;
-    std::atomic<double> composeFps{0.0};
-    std::atomic<quint64> composedFrames{0};
-    std::atomic<quint64> draftFramesDecoded{0};
-    std::atomic<quint64> finalViewCacheHits{0};
-    std::atomic<quint64> finalViewCacheMisses{0};
-    std::atomic<quint64> avcppOpenCalls{0};
-    std::atomic<quint64> avcppPacketReads{0};
-    std::atomic<quint64> avcppVideoDecodeCalls{0};
-    std::atomic<quint64> avcppAudioDecodeCalls{0};
-    mutable std::mutex coverageMutex;
-    std::unordered_map<std::string, std::unordered_set<qint64>> videoBucketsBySource;
-    std::unordered_map<std::string, std::unordered_set<qint64>> audioBucketsBySource;
-    std::unordered_set<qint64> finalTimelineFrames;
 };
 
 #endif // PLAYBACKPIPELINE_H

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(kp-test VERSION 0.1 LANGUAGES CXX)
+include(CTest)
 
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
@@ -30,6 +31,8 @@ set(PROJECT_SOURCES
         timelineeditor.h
         sourceareawidget.cpp
         sourceareawidget.h
+        burstcon.cpp
+        burstcon.h
         playbackpipeline.cpp
         playbackpipeline.h
         mainwindow.ui
@@ -64,10 +67,11 @@ target_link_libraries(kp-test PRIVATE
 )
 
 find_package(avcpp REQUIRED PATHS avcpp/avcpp-git/build/install/lib64/cmake/avcpp)
+set(AVCPP_INCLUDE_DIR avcpp/avcpp-git/build/install/include)
 target_link_libraries(kp-test PUBLIC
     avcpp::avcpp
 )
-target_include_directories(kp-test PUBLIC avcpp/avcpp-git/build/install/include)
+target_include_directories(kp-test PUBLIC ${AVCPP_INCLUDE_DIR})
 target_include_directories(kp-test PUBLIC ${CMAKE_SOURCE_DIR})
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
@@ -96,4 +100,20 @@ install(TARGETS kp-test
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(kp-test)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(kp-test-burstcon-tests
+        tests/burstcon_tests.cpp
+        burstcon.cpp
+        burstcon.h
+    )
+    target_link_libraries(kp-test-burstcon-tests PRIVATE
+        Qt${QT_VERSION_MAJOR}::Widgets
+        Qt${QT_VERSION_MAJOR}::Multimedia
+        avcpp::avcpp
+    )
+    target_include_directories(kp-test-burstcon-tests PUBLIC ${AVCPP_INCLUDE_DIR})
+    target_include_directories(kp-test-burstcon-tests PUBLIC ${CMAKE_SOURCE_DIR})
+    add_test(NAME kp-test-burstcon-tests COMMAND kp-test-burstcon-tests)
 endif()

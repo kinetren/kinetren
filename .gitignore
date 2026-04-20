@@ -1,6 +1,15 @@
 # This file is used to ignore files which are generated
 # ----------------------------------------------------------------------------
-
+kp-test
+kp-test-burstcon-tests
+*.cmake
+*.qtc_clangd
+*CMakeFiles/*
+*_autogen/*
+*.log
+CMakeCache*
+.qtc/*
+*.tcl
 *~
 *.autosave
 *.a

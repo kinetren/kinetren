@@ -7,6 +7,7 @@
 #include <QPoint>
 #include <QHash>
 #include <QImage>
+#include <QQueue>
 #include <QSet>
 #include <QWheelEvent>
 
@@ -221,6 +222,7 @@ private:
     void addClipFromDrop(const QString &path, qint64 startMs, int dropY);
     void emitOverlayInfo();
     QHash<QString, QImage> previewCache;
+    QQueue<QString> previewCacheOrder;
     QSet<QString> pendingPreviewKeys;
     QHash<QString, std::vector<int>> peaksCache;
     QHash<QString, QVector<QPair<double, double>>> cacheSegmentsByClip;

@@ -11,6 +11,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
+#include <QMessageBox>
 #include <QGuiApplication>
 #include <QDateTime>
 #include <QDir>
@@ -35,6 +36,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QPair>
+#include <QPointer>
 #include <QVector>
 #include <QCloseEvent>
 
@@ -43,6 +45,7 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -153,7 +156,7 @@ void MainWindow::setupTimelineEditorUi()
     resolutionCombo->addItem("1920x1080");
     resolutionCombo->setCurrentText("1280x720");
     auto *smoothScaleCheck = new QCheckBox("Smooth scaling", previewHost);
-    smoothScaleCheck->setChecked(true);
+    smoothScaleCheck->setChecked(false);
     auto *aaCheck = new QCheckBox("Antialiasing", previewHost);
     previewControls->addWidget(previewQualityLabel);
     previewControls->addWidget(previewQualityCombo);
@@ -389,7 +392,7 @@ void MainWindow::setupTimelineEditorUi()
         if (!playbackPipeline) {
             return;
         }
-        playbackPipeline->resetProjectCache();
+        playbackPipeline->clearTimelineCoverage();
         syncTimelinePlayback();
         refreshPerformancePanel();
     });
@@ -533,6 +536,18 @@ void MainWindow::toggleTimelinePause()
         timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
         lastTimelineFrameIndex = -1;
         if (playbackPipeline) {
+            if (timelineEditor->hasSelectionRegion() &&
+                timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
+                const auto mode = timelineEditor->loopEnabled()
+                    ? burstcon::PlaybackMode::RegionLoop
+                    : burstcon::PlaybackMode::Region;
+                playbackPipeline->setPlaybackMode(
+                    mode,
+                    timelineEditor->selectionRegionStartMs(),
+                    timelineEditor->selectionRegionEndMs());
+            } else {
+                playbackPipeline->setPlaybackMode(burstcon::PlaybackMode::Free, 0, 0);
+            }
             playbackPipeline->start(timelineEditor->cursorMs());
         }
         syncTimelinePlayback();
@@ -561,24 +576,12 @@ void MainWindow::onTimelineTick()
     qint64 playbackMs = timelineEditor->cursorMs();
     if (playbackPipeline) {
         playbackMs = playbackPipeline->playbackPositionMs();
-    }
-    if (timelineEditor->hasSelectionRegion() &&
-        timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs() &&
-        playbackMs >= timelineEditor->selectionRegionEndMs()) {
-        if (timelineEditor->loopEnabled()) {
-            playbackMs = timelineEditor->selectionRegionStartMs();
-            lastTimelineFrameIndex = -1;
-            if (playbackPipeline) {
-                playbackPipeline->start(playbackMs);
-            }
-        } else {
+        if (!playbackPipeline->isRunning()) {
             timelinePlaying = false;
-            stoppedAtRegionEnd = true;
-            lastTimelineFrameIndex = -1;
+            stoppedAtRegionEnd = timelineEditor->hasSelectionRegion() && !timelineEditor->loopEnabled();
             timelineTimer.stop();
             stopMediaPlayback();
             timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
-            playbackMs = timelineEditor->selectionRegionEndMs();
         }
     }
 
@@ -614,6 +617,18 @@ void MainWindow::syncTimelinePlayback()
     }
 
     playbackPipeline->update(tMs, vclips, aclips);
+    if (timelineEditor->hasSelectionRegion() &&
+        timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
+        const auto mode = timelineEditor->loopEnabled()
+            ? burstcon::PlaybackMode::RegionLoop
+            : burstcon::PlaybackMode::Region;
+        playbackPipeline->setPlaybackMode(
+            mode,
+            timelineEditor->selectionRegionStartMs(),
+            timelineEditor->selectionRegionEndMs());
+    } else {
+        playbackPipeline->setPlaybackMode(burstcon::PlaybackMode::Free, 0, 0);
+    }
 }
 
 void MainWindow::refreshTimelineScroll()
@@ -641,6 +656,10 @@ void MainWindow::stopMediaPlayback()
 void MainWindow::renderDraftProject()
 {
     if (!timelineEditor || !playbackPipeline) {
+        return;
+    }
+    if (renderInProgress) {
+        statusBar()->showMessage("Render already in progress.", 3000);
         return;
     }
 
@@ -673,17 +692,47 @@ void MainWindow::renderDraftProject()
     }
 
     statusBar()->showMessage("Rendering MP4 (video + audio)...", 0);
-    const auto result = ProjectRenderer::renderMp4(
-        timelineEditor->renderClips(),
-        projectSettings,
-        startMs,
-        endMs,
-        outPath);
-    if (!result.ok) {
-        statusBar()->showMessage("Render failed: " + result.message, 12000);
-        return;
-    }
-    statusBar()->showMessage(result.message, 10000);
+    renderInProgress = true;
+    const auto clips = timelineEditor->renderClips();
+    const ProjectSettings settings = projectSettings;
+    QPointer<MainWindow> guard(this);
+    std::thread([guard, clips, settings, startMs, endMs, outPath]() {
+        const auto result = ProjectRenderer::renderMp4(clips, settings, startMs, endMs, outPath);
+        if (!guard) {
+            return;
+        }
+        QMetaObject::invokeMethod(
+            guard.data(),
+            [guard, result]() {
+                if (!guard) {
+                    return;
+                }
+                guard->renderInProgress = false;
+                if (!result.ok) {
+                    QString brief = "Render failed: " + result.message;
+                    if (!result.logPath.isEmpty()) {
+                        brief += " (log: " + result.logPath + ")";
+                    }
+                    guard->statusBar()->showMessage(brief, 20000);
+                    QMessageBox msg(guard.data());
+                    msg.setIcon(QMessageBox::Critical);
+                    msg.setWindowTitle("Render Failed");
+                    msg.setText(result.message);
+                    QString details = result.details;
+                    if (!result.logPath.isEmpty()) {
+                        details += "\n\nSaved log: " + result.logPath;
+                    }
+                    if (details.isEmpty()) {
+                        details = "No additional details available.";
+                    }
+                    msg.setDetailedText(details);
+                    msg.exec();
+                    return;
+                }
+                guard->statusBar()->showMessage(result.message, 10000);
+            },
+            Qt::QueuedConnection);
+    }).detach();
 }
 
 void MainWindow::applyProjectSettings()

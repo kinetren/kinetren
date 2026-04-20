@@ -71,6 +71,7 @@ protected:
     qint64 lastPerfSampleMs = 0;
     QString currentProjectPath;
     QTimer autosaveTimer;
+    bool renderInProgress = false;
 
     Ui::MainWindow *ui;
 };

@@ -1,4 +1,5 @@
 #include "timelineeditor.h"
+#include "burstcon.h"
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -24,6 +25,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <limits>
+#include <memory>
 #include <system_error>
 
 #include <avcpp/avutils.h>
@@ -72,7 +74,7 @@ QPoint eventPos(const QDropEvent *event)
 
 QPoint eventPos(const QWheelEvent *event)
 {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
     return event->position().toPoint();
 #else
     return event->pos();
@@ -787,6 +789,7 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     markersMs = std::move(loadedMarkers);
     clipboardClips.clear();
     previewCache.clear();
+    previewCacheOrder.clear();
     pendingPreviewKeys.clear();
     peaksCache.clear();
     cacheSegmentsByClip.clear();
@@ -1748,7 +1751,7 @@ bool TimelineEditor::hasAudioForPath(const QString &path) const
     if (isImagePath(path)) {
         return false;
     }
-    if (ext == "mp3" || ext == "wav" || ext == "flac" || ext == "aac" || ext == "ogg") {
+    if (ext == "m4a" || ext == "mp3" || ext == "wav" || ext == "flac" || ext == "aac" || ext == "ogg") {
         return true;
     }
     return ext == "mp4" || ext == "mov" || ext == "mkv" || ext == "avi" || ext == "webm";
@@ -1774,7 +1777,7 @@ QColor TimelineEditor::colorFromPath(const QString &path) const
 
 QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs)
 {
-    const qint64 bucketMs = std::max<qint64>(0, (sourceInMs / 120) * 120);
+    const qint64 bucketMs = std::max<qint64>(0, (sourceInMs / 400) * 400);
     const QString cacheKey = QString("%1::%2").arg(path, QString::number(bucketMs));
     const auto it = previewCache.constFind(cacheKey);
     if (it != previewCache.constEnd()) {
@@ -1782,6 +1785,10 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
     }
 
     if (pendingPreviewKeys.contains(cacheKey)) {
+        return QImage();
+    }
+    // Prevent preview decoder flood while timeline is repainting rapidly.
+    if (pendingPreviewKeys.size() >= 12) {
         return QImage();
     }
     pendingPreviewKeys.insert(cacheKey);
@@ -1803,7 +1810,16 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
                 if (!guard) {
                     return;
                 }
+                static constexpr int kMaxPreviewCacheEntries = 384;
+                if (guard->previewCache.contains(cacheKey)) {
+                    guard->previewCacheOrder.removeAll(cacheKey);
+                }
                 guard->previewCache.insert(cacheKey, scaled);
+                guard->previewCacheOrder.enqueue(cacheKey);
+                while (guard->previewCacheOrder.size() > kMaxPreviewCacheEntries) {
+                    const QString evict = guard->previewCacheOrder.dequeue();
+                    guard->previewCache.remove(evict);
+                }
                 guard->pendingPreviewKeys.remove(cacheKey);
                 guard->update();
             },
@@ -1819,73 +1835,26 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
     if (isImagePath(path)) {
         img.load(path);
     } else {
-        using namespace av;
-        std::error_code ec;
-        FormatContext input;
-        input.openInput(path.toStdString(), ec);
-        if (!ec) {
-            input.findStreamInfo(ec);
-        }
-        if (!ec) {
-            int videoStream = -1;
-            Stream stream;
-            for (size_t i = 0; i < input.streamsCount(); ++i) {
-                auto st = input.stream(i);
-                if (st.mediaType() == AVMEDIA_TYPE_VIDEO) {
-                    videoStream = static_cast<int>(i);
-                    stream = st;
-                    break;
-                }
-            }
-            if (!stream.isNull() && videoStream >= 0) {
-                VideoDecoderContext dec(stream);
-                Codec codec = findDecodingCodec(dec.raw()->codec_id);
-                dec.setCodec(codec);
-                dec.open(ec);
-                if (!ec) {
-                    const qint64 seekMs = std::max<qint64>(0, bucketMs - 700);
-                    if (input.seekable()) {
-                        input.seek(Timestamp(std::chrono::milliseconds(seekMs)),
-                                   static_cast<size_t>(videoStream),
-                                   false,
-                                   ec);
-                        if (ec) {
-                            ec.clear();
-                        }
-                    }
-                    VideoRescaler rescaler(dec.width(), dec.height(), AV_PIX_FMT_RGB24);
-                    for (int tries = 0; tries < 256; ++tries) {
-                        Packet pkt = input.readPacket(ec);
-                        if (ec || !pkt) {
-                            break;
-                        }
-                        if (pkt.streamIndex() != videoStream) {
-                            continue;
-                        }
-                        VideoFrame frame = dec.decode(pkt, ec);
-                        if (ec || frame.isNull() || !frame.isComplete()) {
-                            ec.clear();
-                            continue;
-                        }
-                        const qint64 decodedMs = timestampToMs(frame.pts());
-                        const qint64 frameMs = (decodedMs >= 0) ? decodedMs : bucketMs;
-                        if (frameMs < bucketMs) {
-                            continue;
-                        }
-                        auto rgb = rescaler.rescale(frame);
-                        img = QImage(rgb.width(), rgb.height(), QImage::Format_RGB888);
-                        const int dstStride = img.bytesPerLine();
-                        const int srcStride = rgb.raw()->linesize[0];
-                        const int copyStride = std::min(dstStride, srcStride);
-                        auto *src = rgb.data();
-                        auto *dst = img.bits();
-                        for (int y = 0; y < rgb.height(); ++y) {
-                            std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
-                        }
-                        break;
-                    }
-                }
-            }
+        static std::shared_ptr<burstcon::ConMediaPool> previewPool = []() {
+            burstcon::ConMediaPoolConfig cfg;
+            cfg.enableConMediaCache = true;
+            cfg.cacheConfig.preloadEnabled = false;
+            cfg.cacheConfig.maxEntries = 96;
+            cfg.cacheConfig.maxAudioEntries = 24;
+            cfg.cacheConfig.maxVideoEntries = 72;
+            cfg.cacheConfig.maxVideoBytes = 64ULL * 1024ULL * 1024ULL;
+            cfg.maxMediaInstances = 8;
+            cfg.forcedPreviewQualityEnabled = true;
+            cfg.forcedPreviewQuality = burstcon::BurstQuality{320, 180};
+            return std::make_shared<burstcon::ConMediaPool>(cfg);
+        }();
+        auto media = previewPool->acquire(path, true, true);
+        burstcon::BurstRequest req;
+        req.index = burstcon::msToBurstIndex(bucketMs);
+        req.quality = burstcon::BurstQuality{320, 180};
+        burstcon::VideoBurst frame;
+        if (media->videoBurst(req, frame) && !frame.frame.isNull()) {
+            img = frame.frame;
         }
         if (img.isNull()) {
             QImageReader reader(path);

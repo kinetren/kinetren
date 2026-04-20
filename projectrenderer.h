@@ -13,6 +13,8 @@ public:
     struct Result {
         bool ok = false;
         QString message;
+        QString details;
+        QString logPath;
     };
 
     static Result renderMp4(const std::vector<TimelineEditor::RenderClip> &clips,

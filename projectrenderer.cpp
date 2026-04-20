@@ -1,17 +1,51 @@
 #include "projectrenderer.h"
 
-#include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QProcess>
 #include <QTemporaryDir>
-#include <QTemporaryFile>
+#include <QStandardPaths>
+#include <QDir>
+#include <QDateTime>
 
 #include <algorithm>
+#include <cmath>
+
+#include "burstcon.h"
 
 namespace {
-QString secString(qint64 ms)
+constexpr int kAudioSampleRate = 48000;
+constexpr int kAudioChannels = 2;
+constexpr int kAudioSamplesPerBurst = 1024;
+
+qint64 msToSampleFrames(qint64 ms)
 {
-    return QString::number(static_cast<double>(std::max<qint64>(0, ms)) / 1000.0, 'f', 6);
+    return (std::max<qint64>(0, ms) * kAudioSampleRate) / 1000;
+}
+
+qint64 ticksToSamplesRounded(burstcon::BurstIndex ticks)
+{
+    const burstcon::BurstIndex clamped = std::max<burstcon::BurstIndex>(0, ticks);
+    return static_cast<qint64>((clamped * kAudioSampleRate + (burstcon::kBurstTimebaseHz / 2)) / burstcon::kBurstTimebaseHz);
+}
+
+burstcon::BurstIndex msToBurstIndexCeil(qint64 ms)
+{
+    const qint64 safe = std::max<qint64>(1, ms);
+    return static_cast<burstcon::BurstIndex>((safe * burstcon::kBurstTimebaseHz + 999) / 1000);
+}
+
+QSize evenSize(const QSize &in)
+{
+    int w = std::max(2, in.width());
+    int h = std::max(2, in.height());
+    if ((w % 2) != 0) {
+        ++w;
+    }
+    if ((h % 2) != 0) {
+        ++h;
+    }
+    return QSize(w, h);
 }
 }
 
@@ -30,21 +64,22 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
         result.message = "Output path is empty.";
         return result;
     }
+    if (settings.fps <= 0) {
+        result.message = "Invalid FPS in project settings.";
+        return result;
+    }
+    const QSize renderSize = evenSize(settings.cacheResolution());
+    if (renderSize.width() <= 0 || renderSize.height() <= 0) {
+        result.message = "Invalid render resolution in project settings.";
+        return result;
+    }
 
-    struct InputClip {
-        TimelineEditor::RenderClip clip;
-        qint64 timelineStartMs = 0;
-        qint64 sourceStartMs = 0;
-        qint64 durationMs = 0;
-        int inputIndex = -1;
-    };
-
-    std::vector<InputClip> videoInputs;
-    std::vector<InputClip> audioInputs;
-    videoInputs.reserve(clips.size());
-    audioInputs.reserve(clips.size());
-
-    int nextInput = 0;
+    std::vector<burstcon::ConTrackEvent> videoEvents;
+    std::vector<burstcon::ConTrackEvent> audioEvents;
+    videoEvents.reserve(clips.size());
+    audioEvents.reserve(clips.size());
+    int videoZ = 0;
+    int audioZ = 0;
     for (const auto &clip : clips) {
         const qint64 clipEnd = clip.startMs + clip.durationMs;
         if (clipEnd <= startMs || clip.startMs >= endMs) {
@@ -56,117 +91,176 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
         if (effectiveDurationMs <= 0) {
             continue;
         }
-        const qint64 sourceStartMs = clip.sourceInMs + (effectiveStartMs - clip.startMs);
         if (clip.isVideo) {
-            videoInputs.push_back(InputClip{clip, effectiveStartMs, sourceStartMs, effectiveDurationMs, nextInput++});
+            burstcon::ConTrackEvent e;
+            e.sourcePath = clip.sourcePath;
+            e.start = burstcon::msToBurstIndex(effectiveStartMs);
+            e.duration = msToBurstIndexCeil(effectiveDurationMs);
+            e.sourceIn = burstcon::msToBurstIndex(clip.sourceInMs + (effectiveStartMs - clip.startMs));
+            e.hasVideo = true;
+            e.hasAudio = false;
+            e.zIndex = videoZ++;
+            videoEvents.push_back(e);
         }
         if (clip.isAudio) {
-            audioInputs.push_back(InputClip{clip, effectiveStartMs, sourceStartMs, effectiveDurationMs, nextInput++});
+            burstcon::ConTrackEvent e;
+            e.sourcePath = clip.sourcePath;
+            e.start = burstcon::msToBurstIndex(effectiveStartMs);
+            e.duration = msToBurstIndexCeil(effectiveDurationMs);
+            e.sourceIn = burstcon::msToBurstIndex(clip.sourceInMs + (effectiveStartMs - clip.startMs));
+            e.hasVideo = false;
+            e.hasAudio = true;
+            e.zIndex = audioZ++;
+            audioEvents.push_back(e);
         }
     }
 
-    QStringList args;
-    args << "-y";
-    for (const auto &v : videoInputs) {
-        args << "-ss" << secString(v.sourceStartMs);
-        args << "-t" << secString(v.durationMs);
-        args << "-i" << v.clip.sourcePath;
-    }
-    for (const auto &a : audioInputs) {
-        args << "-ss" << secString(a.sourceStartMs);
-        args << "-t" << secString(a.durationMs);
-        args << "-i" << a.clip.sourcePath;
-    }
-
-    QStringList filterLines;
-    const qint64 totalMs = endMs - startMs;
-    filterLines << QString("color=c=black:s=%1x%2:r=%3:d=%4[base0]")
-                       .arg(settings.resolution.width())
-                       .arg(settings.resolution.height())
-                       .arg(settings.fps)
-                       .arg(secString(totalMs));
-
-    std::sort(videoInputs.begin(), videoInputs.end(), [](const InputClip &lhs, const InputClip &rhs) {
-        if (lhs.clip.trackIndex != rhs.clip.trackIndex) {
-            return lhs.clip.trackIndex < rhs.clip.trackIndex;
-        }
-        return lhs.clip.startMs < rhs.clip.startMs;
-    });
-
-    int videoNodeIdx = 0;
-    for (const auto &v : videoInputs) {
-        const qint64 delayMs = std::max<qint64>(0, v.timelineStartMs - startMs);
-        const QString inLabel = QString("[%1:v]").arg(v.inputIndex);
-        const QString scaled = QString("[v_scaled_%1]").arg(videoNodeIdx);
-        const QString delayed = QString("[v_delay_%1]").arg(videoNodeIdx);
-        filterLines << QString("%1setpts=PTS-STARTPTS,scale=%2:%3:force_original_aspect_ratio=decrease,pad=%2:%3:(ow-iw)/2:(oh-ih)/2,format=yuv420p%4")
-                           .arg(inLabel)
-                           .arg(settings.resolution.width())
-                           .arg(settings.resolution.height())
-                           .arg(scaled);
-        filterLines << QString("%1setpts=PTS+%2/TB%3")
-                           .arg(scaled)
-                           .arg(delayMs)
-                           .arg(delayed);
-        const QString under = (videoNodeIdx == 0) ? "[base0]" : QString("[v_mix_%1]").arg(videoNodeIdx - 1);
-        const QString out = QString("[v_mix_%1]").arg(videoNodeIdx);
-        filterLines << QString("%1%2overlay=eof_action=pass:shortest=0%3")
-                           .arg(under)
-                           .arg(delayed)
-                           .arg(out);
-        ++videoNodeIdx;
-    }
-
-    int audioNodeIdx = 0;
-    for (const auto &a : audioInputs) {
-        const qint64 delayMs = std::max<qint64>(0, a.timelineStartMs - startMs);
-        const QString inLabel = QString("[%1:a]").arg(a.inputIndex);
-        const QString out = QString("[a_%1]").arg(audioNodeIdx);
-        filterLines << QString("%1atrim=0:%2,asetpts=PTS-STARTPTS,adelay=%3|%3%4")
-                           .arg(inLabel)
-                           .arg(secString(a.durationMs))
-                           .arg(delayMs)
-                           .arg(out);
-        ++audioNodeIdx;
-    }
-
-    const QString vOutLabel = (videoNodeIdx > 0) ? QString("[v_mix_%1]").arg(videoNodeIdx - 1) : QString("[base0]");
-    QString aOutLabel;
-    if (audioNodeIdx > 0) {
-        QString mixIns;
-        for (int i = 0; i < audioNodeIdx; ++i) {
-            mixIns += QString("[a_%1]").arg(i);
-        }
-        aOutLabel = "[a_out]";
-        filterLines << QString("%1amix=inputs=%2:normalize=0:dropout_transition=0%3")
-                           .arg(mixIns)
-                           .arg(audioNodeIdx)
-                           .arg(aOutLabel);
-    } else {
-        aOutLabel = "[a_silent]";
-        filterLines << QString("anullsrc=r=48000:cl=stereo,atrim=0:%1%2")
-                           .arg(secString(totalMs))
-                           .arg(aOutLabel);
-    }
+    burstcon::ConMediaPoolConfig poolCfg;
+    poolCfg.enableConMediaCache = true;
+    poolCfg.cacheConfig.maxEntries = 128;
+    poolCfg.cacheConfig.maxAudioEntries = 64;
+    poolCfg.cacheConfig.maxVideoEntries = 64;
+    poolCfg.cacheConfig.maxVideoBytes = 128ULL * 1024ULL * 1024ULL;
+    poolCfg.cacheConfig.preloadEnabled = false;
+    poolCfg.maxMediaInstances = 16;
+    auto mediaPool = std::make_shared<burstcon::ConMediaPool>(poolCfg);
+    auto videoTrack = std::make_shared<burstcon::ConTrack>(mediaPool);
+    auto audioTrack = std::make_shared<burstcon::ConTrack>(mediaPool);
+    videoTrack->setEvents(videoEvents);
+    audioTrack->setEvents(audioEvents);
+    auto trimmer = std::make_shared<burstcon::ConTrimmer>();
+    trimmer->setTracks({videoTrack, audioTrack});
 
     QTemporaryDir tmpDir;
     if (!tmpDir.isValid()) {
         result.message = "Cannot create temporary directory for renderer.";
         return result;
     }
-    const QString filterPath = tmpDir.path() + "/ffmpeg-filter.txt";
-    QFile filterFile(filterPath);
-    if (!filterFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        result.message = "Cannot create ffmpeg filter script.";
+    const QString rawVideoPath = tmpDir.path() + "/video.rgb24";
+    const QString rawAudioPath = tmpDir.path() + "/audio.s16le";
+    QFile rawVideo(rawVideoPath);
+    QFile rawAudio(rawAudioPath);
+    if (!rawVideo.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+        !rawAudio.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        result.message = "Cannot create temporary raw streams for renderer.";
         return result;
     }
-    filterFile.write(filterLines.join(";\n").toUtf8());
-    filterFile.close();
 
-    args << "-filter_complex_script" << filterPath;
-    args << "-map" << vOutLabel;
-    args << "-map" << aOutLabel;
+    const qint64 totalMs = endMs - startMs;
+    const int frameCount = std::max(
+        1,
+        static_cast<int>(std::ceil(static_cast<double>(totalMs) * static_cast<double>(settings.fps) / 1000.0)));
+
+    std::vector<char> blackFrame(static_cast<size_t>(renderSize.width()) * static_cast<size_t>(renderSize.height()) * 3, 0);
+    for (int frameIdx = 0; frameIdx < frameCount; ++frameIdx) {
+        const double frameMsF = static_cast<double>(startMs) + (1000.0 * static_cast<double>(frameIdx) / static_cast<double>(settings.fps));
+        const qint64 frameMs = static_cast<qint64>(frameMsF);
+        burstcon::BurstRequest req;
+        req.index = burstcon::msToBurstIndex(frameMs);
+        req.quality = burstcon::BurstQuality{renderSize.width(), renderSize.height()};
+        burstcon::VideoBurst vb;
+        if (!trimmer->videoBurst(req, vb) || vb.frame.isNull()) {
+            if (rawVideo.write(blackFrame.data(), static_cast<qint64>(blackFrame.size())) != static_cast<qint64>(blackFrame.size())) {
+                result.message = "Failed while writing temporary video stream.";
+                return result;
+            }
+            continue;
+        }
+        QImage rgb = vb.frame.convertToFormat(QImage::Format_RGB888);
+        if (rgb.size() != renderSize) {
+            rgb = rgb.scaled(renderSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+        const qint64 bytesPerFrame = static_cast<qint64>(renderSize.width()) * static_cast<qint64>(renderSize.height()) * 3;
+        if (rgb.sizeInBytes() < bytesPerFrame) {
+            result.message = "Preview video frame has unexpected format/size.";
+            return result;
+        }
+        if (rawVideo.write(reinterpret_cast<const char *>(rgb.constBits()), bytesPerFrame) != bytesPerFrame) {
+            result.message = "Failed while writing temporary video stream.";
+            return result;
+        }
+    }
+
+    const burstcon::BurstIndex burstStep =
+        std::max<burstcon::BurstIndex>(1, (burstcon::kBurstTimebaseHz * kAudioSamplesPerBurst) / kAudioSampleRate);
+    const burstcon::BurstIndex startIndex = burstcon::msToBurstIndex(startMs);
+    const burstcon::BurstIndex endIndex = burstcon::msToBurstIndex(endMs);
+    const burstcon::BurstIndex firstIndex = (startIndex / burstStep) * burstStep;
+    const qint64 totalSampleFrames = msToSampleFrames(totalMs);
+    qint64 writtenSampleFrames = 0;
+
+    for (burstcon::BurstIndex idx = firstIndex; idx < endIndex && writtenSampleFrames < totalSampleFrames; idx += burstStep) {
+        const burstcon::BurstIndex burstStart = idx;
+        const burstcon::BurstIndex burstEnd = idx + burstStep;
+        const burstcon::BurstIndex overlapStart = std::max(burstStart, startIndex);
+        const burstcon::BurstIndex overlapEnd = std::min(burstEnd, endIndex);
+        if (overlapEnd <= overlapStart) {
+            continue;
+        }
+
+        burstcon::BurstRequest req;
+        req.index = overlapStart;
+        burstcon::AudioBurst ab;
+        if (!trimmer->audioBurst(req, ab)) {
+            ab.index = idx;
+            ab.sampleRate = kAudioSampleRate;
+            ab.channels = kAudioChannels;
+            ab.samples.assign(static_cast<size_t>(kAudioSamplesPerBurst * kAudioChannels), 0);
+        }
+        const int channels = std::max(1, ab.channels);
+        const qint64 fullFrames = static_cast<qint64>(ab.samples.size()) / channels;
+        if (fullFrames <= 0) {
+            continue;
+        }
+
+        qint64 startFrameInBurst = ticksToSamplesRounded(overlapStart - burstStart);
+        qint64 keepFrames = ticksToSamplesRounded(overlapEnd - overlapStart);
+        startFrameInBurst = std::clamp<qint64>(startFrameInBurst, 0, fullFrames);
+        keepFrames = std::clamp<qint64>(keepFrames, 0, fullFrames - startFrameInBurst);
+        keepFrames = std::min<qint64>(keepFrames, totalSampleFrames - writtenSampleFrames);
+        if (keepFrames <= 0) {
+            continue;
+        }
+
+        const int64_t startSample = startFrameInBurst * channels;
+        const int64_t sampleCount = keepFrames * channels;
+        std::vector<int16_t> pcm(static_cast<size_t>(sampleCount), 0);
+        for (int64_t i = 0; i < sampleCount; ++i) {
+            const int32_t s = ab.samples[static_cast<size_t>(startSample + i)];
+            pcm[static_cast<size_t>(i)] = static_cast<int16_t>(std::clamp<int32_t>(s, -32768, 32767));
+        }
+        const qint64 bytesToWrite = static_cast<qint64>(pcm.size() * sizeof(int16_t));
+        if (rawAudio.write(reinterpret_cast<const char *>(pcm.data()), bytesToWrite) != bytesToWrite) {
+            result.message = "Failed while writing temporary audio stream.";
+            return result;
+        }
+        writtenSampleFrames += keepFrames;
+    }
+
+    if (writtenSampleFrames < totalSampleFrames) {
+        const qint64 missingFrames = totalSampleFrames - writtenSampleFrames;
+        std::vector<int16_t> silence(static_cast<size_t>(missingFrames * kAudioChannels), 0);
+        const qint64 bytesToWrite = static_cast<qint64>(silence.size() * sizeof(int16_t));
+        if (rawAudio.write(reinterpret_cast<const char *>(silence.data()), bytesToWrite) != bytesToWrite) {
+            result.message = "Failed while writing trailing silence.";
+            return result;
+        }
+    }
+
+    rawVideo.close();
+    rawAudio.close();
+
+    QStringList args;
+    args << "-y";
+    args << "-f" << "rawvideo";
+    args << "-pix_fmt" << "rgb24";
+    args << "-s" << QString("%1x%2").arg(renderSize.width()).arg(renderSize.height());
     args << "-r" << QString::number(settings.fps);
+    args << "-i" << rawVideoPath;
+    args << "-f" << "s16le";
+    args << "-ar" << QString::number(kAudioSampleRate);
+    args << "-ac" << QString::number(kAudioChannels);
+    args << "-i" << rawAudioPath;
     args << "-c:v" << "libx264";
     args << "-pix_fmt" << "yuv420p";
     args << "-preset" << "veryfast";
@@ -174,17 +268,43 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
     args << "-c:a" << "aac";
     args << "-b:a" << "192k";
     args << "-movflags" << "+faststart";
+    args << "-shortest";
     args << outPath;
 
     QProcess ffmpeg;
     ffmpeg.start("ffmpeg", args);
     if (!ffmpeg.waitForStarted(4000)) {
         result.message = "ffmpeg is not available in PATH.";
+        result.details = "Process failed to start within 4 seconds.";
         return result;
     }
     ffmpeg.waitForFinished(-1);
     if (ffmpeg.exitStatus() != QProcess::NormalExit || ffmpeg.exitCode() != 0) {
-        result.message = QString("ffmpeg failed: %1").arg(QString::fromUtf8(ffmpeg.readAllStandardError()));
+        const QString stderrText = QString::fromUtf8(ffmpeg.readAllStandardError());
+        const QString stdoutText = QString::fromUtf8(ffmpeg.readAllStandardOutput());
+        result.message = QString("ffmpeg failed (exit code %1)").arg(ffmpeg.exitCode());
+        result.details = QString("Command: ffmpeg %1\n\nSTDERR:\n%2\n\nSTDOUT:\n%3")
+                             .arg(args.join(' '))
+                             .arg(stderrText)
+                             .arg(stdoutText);
+
+        QString logDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        if (logDir.isEmpty()) {
+            logDir = QDir::homePath() + "/.kp-test";
+        }
+        QDir dir(logDir);
+        if (!dir.exists()) {
+            dir.mkpath(".");
+        }
+        const QString logPath = dir.filePath(
+            "render-error-" + QDateTime::currentDateTimeUtc().toString("yyyyMMdd-hhmmss") + ".log");
+        QSaveFile logFile(logPath);
+        if (logFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+            logFile.write(result.details.toUtf8());
+            if (logFile.commit()) {
+                result.logPath = logPath;
+            }
+        }
         return result;
     }
 
