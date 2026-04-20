@@ -35,6 +35,10 @@ private:
     void toggleTimelinePause();
     void onTimelineTick();
     void syncTimelinePlayback();
+    void schedulePlaybackSync();
+    void flushPlaybackSync();
+    void schedulePerformancePanelRefresh();
+    void flushPerformancePanelRefresh();
     void stopMediaPlayback();
     void refreshTimelineScroll();
     void renderDraftProject();
@@ -63,6 +67,8 @@ protected:
     std::unique_ptr<PlaybackPipeline> playbackPipeline;
     ProjectSettings projectSettings;
     QTimer performanceTimer;
+    QTimer playbackSyncDebounceTimer;
+    QTimer performanceRefreshDebounceTimer;
     quint64 lastAvcppTotalCalls = 0;
     quint64 lastAvcppOpenCalls = 0;
     quint64 lastAvcppPacketReads = 0;

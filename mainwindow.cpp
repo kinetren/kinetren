@@ -72,6 +72,12 @@ MainWindow::MainWindow(QWidget *parent)
     performanceTimer.setInterval(500);
     connect(&performanceTimer, &QTimer::timeout, this, &MainWindow::refreshPerformancePanel);
     performanceTimer.start();
+    playbackSyncDebounceTimer.setSingleShot(true);
+    playbackSyncDebounceTimer.setInterval(33);
+    connect(&playbackSyncDebounceTimer, &QTimer::timeout, this, &MainWindow::flushPlaybackSync);
+    performanceRefreshDebounceTimer.setSingleShot(true);
+    performanceRefreshDebounceTimer.setInterval(120);
+    connect(&performanceRefreshDebounceTimer, &QTimer::timeout, this, &MainWindow::flushPerformancePanelRefresh);
     syncTimelinePlayback();
     currentProjectPath = defaultAutosaveProjectPath();
     loadLastProjectOnStartup();
@@ -377,14 +383,14 @@ void MainWindow::setupTimelineEditorUi()
                 timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(t));
             }
             if (!timelineEditor->isEditingTimelineContent()) {
-                syncTimelinePlayback();
+                schedulePlaybackSync();
             }
         }
     });
     connect(timelineEditor, &TimelineEditor::timelineRangeChanged, this, [this](qint64, qint64) {
         refreshTimelineScroll();
         if (!timelinePlaying && !timelineEditor->isEditingTimelineContent()) {
-            syncTimelinePlayback();
+            schedulePlaybackSync();
         }
     });
     connect(timelineEditor, &TimelineEditor::viewStartChanged, this, [this](qint64, qint64) {
@@ -394,8 +400,8 @@ void MainWindow::setupTimelineEditorUi()
         if (!playbackPipeline) {
             return;
         }
-        syncTimelinePlayback();
-        refreshPerformancePanel();
+        schedulePlaybackSync();
+        schedulePerformancePanelRefresh();
     });
     connect(timelineScrollBar, &QScrollBar::valueChanged, [this](int value) {
         if (timelineEditor) {
@@ -536,6 +542,8 @@ void MainWindow::toggleTimelinePause()
         stoppedAtRegionEnd = false;
         timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
         lastTimelineFrameIndex = -1;
+        playbackSyncDebounceTimer.stop();
+        performanceRefreshDebounceTimer.stop();
         if (playbackPipeline) {
             if (timelineEditor->hasSelectionRegion() &&
                 timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
@@ -630,6 +638,38 @@ void MainWindow::syncTimelinePlayback()
     } else {
         playbackPipeline->setPlaybackMode(burstcon::PlaybackMode::Free, 0, 0);
     }
+}
+
+void MainWindow::schedulePlaybackSync()
+{
+    if (!playbackPipeline || !timelineEditor) {
+        return;
+    }
+    playbackSyncDebounceTimer.start();
+}
+
+void MainWindow::flushPlaybackSync()
+{
+    if (!playbackPipeline || !timelineEditor) {
+        return;
+    }
+    if (timelinePlaying) {
+        return;
+    }
+    syncTimelinePlayback();
+}
+
+void MainWindow::schedulePerformancePanelRefresh()
+{
+    if (!playbackPipeline || !performanceWidget || !timelineEditor) {
+        return;
+    }
+    performanceRefreshDebounceTimer.start();
+}
+
+void MainWindow::flushPerformancePanelRefresh()
+{
+    refreshPerformancePanel();
 }
 
 void MainWindow::refreshTimelineScroll()

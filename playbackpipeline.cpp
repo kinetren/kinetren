@@ -22,6 +22,22 @@ constexpr int kDefaultAudioSamplesPerBurst = 1024;
 constexpr qint64 kVideoCoverageBucketMs = 33;
 constexpr qint64 kAudioCoverageBucketMs = 20;
 constexpr qint64 kPrefetchAheadMs = 3000;
+constexpr qint64 kMaxCoverageProbeSteps = 40000;
+
+qint64 coverageTimeStepMs(qint64 spanMs, qint64 baseStepMs)
+{
+    const qint64 safeBase = std::max<qint64>(1, baseStepMs);
+    if (spanMs <= 0) {
+        return safeBase;
+    }
+    qint64 step = safeBase;
+    const qint64 buckets = spanMs / step;
+    if (buckets > kMaxCoverageProbeSteps) {
+        step = spanMs / kMaxCoverageProbeSteps;
+        step = std::max(step, safeBase);
+    }
+    return std::max<qint64>(1, step);
+}
 
 burstcon::BurstIndex msToBurstIndexCeil(qint64 ms)
 {
@@ -257,7 +273,8 @@ QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::videoCacheSegme
         const qint64 end = clip.startMs + std::max<qint64>(1, clip.durationMs);
         bool inRun = false;
         qint64 runStart = start;
-        for (qint64 t = start; t < end; t += kVideoCoverageBucketMs) {
+        const qint64 stepMs = coverageTimeStepMs(end - start, kVideoCoverageBucketMs);
+        for (qint64 t = start; t < end; t += stepMs) {
             const qint64 bucket = (t / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
             const bool hit = videoCoverageBuckets.find(bucket) != videoCoverageBuckets.end();
             if (hit && !inRun) {
@@ -289,7 +306,8 @@ QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::audioCacheSegme
         const qint64 end = clip.startMs + std::max<qint64>(1, clip.durationMs);
         bool inRun = false;
         qint64 runStart = start;
-        for (qint64 t = start; t < end; t += kAudioCoverageBucketMs) {
+        const qint64 stepMs = coverageTimeStepMs(end - start, kAudioCoverageBucketMs);
+        for (qint64 t = start; t < end; t += stepMs) {
             const qint64 bucket = (t / kAudioCoverageBucketMs) * kAudioCoverageBucketMs;
             const bool hit = audioCoverageBuckets.find(bucket) != audioCoverageBuckets.end();
             if (hit && !inRun) {
@@ -320,7 +338,8 @@ QVector<QPair<double, double>> PlaybackPipeline::finalTimelineSegments(qint64 st
     std::lock_guard<std::mutex> lock(coverageMutex);
     bool inRun = false;
     qint64 runStart = startMs;
-    for (qint64 t = startMs; t < endMs; t += kVideoCoverageBucketMs) {
+    const qint64 stepMs = coverageTimeStepMs(endMs - startMs, kVideoCoverageBucketMs);
+    for (qint64 t = startMs; t < endMs; t += stepMs) {
         const qint64 bucket = (t / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
         const bool hit = finalCoverageBuckets.find(bucket) != finalCoverageBuckets.end();
         if (hit && !inRun) {
@@ -512,6 +531,9 @@ void PlaybackPipeline::draftWorkerLoop()
             draftJobPending = false;
         }
         if (running.load() || !draftPreviewEnabled.load()) {
+            continue;
+        }
+        if (job.serial != latestDraftSerial.load()) {
             continue;
         }
         QImage frame = renderDraftFrame(job.timelineMs, job.videoClips);
