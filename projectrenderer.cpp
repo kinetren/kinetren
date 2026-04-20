@@ -2,10 +2,11 @@
 
 #include <QElapsedTimer>
 #include <QFile>
-#include <QSaveFile>
 #include <QProcess>
-#include <QTemporaryDir>
+#include <QSaveFile>
 #include <QStandardPaths>
+#include <QTemporaryDir>
+#include <QThread>
 #include <QDir>
 #include <QDateTime>
 
@@ -56,9 +57,27 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
                                                    qint64 startMs,
                                                    qint64 endMs,
                                                    const QString &outPath,
-                                                   const ProgressCallback &onProgress)
+                                                   const ProgressCallback &onProgress,
+                                                   std::atomic<bool> *cancelFlag,
+                                                   std::atomic<bool> *pauseFlag,
+                                                   const LogCallback &logLine)
 {
     Result result;
+    auto log = [&](const QString &s) {
+        if (logLine) {
+            logLine(s);
+        }
+    };
+    auto cancelled = [&]() -> bool { return cancelFlag && cancelFlag->load(); };
+    auto waitWhilePaused = [&]() -> bool {
+        while (pauseFlag && pauseFlag->load()) {
+            if (cancelled()) {
+                return false;
+            }
+            QThread::msleep(40);
+        }
+        return !cancelled();
+    };
     if (endMs <= startMs) {
         result.message = "Empty render range.";
         return result;
@@ -133,6 +152,7 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
     audioTrack->setEvents(audioEvents);
     auto trimmer = std::make_shared<burstcon::ConTrimmer>();
     trimmer->setTracks({videoTrack, audioTrack});
+    log(QStringLiteral("Events: video=%1 audio=%2").arg(videoEvents.size()).arg(audioEvents.size()));
 
     QTemporaryDir tmpDir;
     if (!tmpDir.isValid()) {
@@ -159,15 +179,43 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
     auto report = [&](RenderProgress p) {
         p.elapsedMs = wallClock.elapsed();
         p.outputDurationMs = totalMs;
+        const double elapsedSec = std::max(1e-6, static_cast<double>(p.elapsedMs) / 1000.0);
+        p.speedRealtimeFactor = p.processedOutputSeconds / elapsedSec;
         if (onProgress) {
             onProgress(p);
         }
     };
 
-    report(RenderProgress{RenderProgress::Phase::VideoFrames, 0, frameCount, wallClock.elapsed(), totalMs});
+    {
+        RenderProgress p;
+        p.phase = RenderProgress::Phase::VideoFrames;
+        p.done = 0;
+        p.total = frameCount;
+        p.outputDurationMs = totalMs;
+        p.processedOutputSeconds = 0;
+        report(p);
+    }
+    log(QStringLiteral("Video: %1×%2 @ %3 fps, %4 frames (~%5 s output)")
+            .arg(renderSize.width())
+            .arg(renderSize.height())
+            .arg(settings.fps)
+            .arg(frameCount)
+            .arg(static_cast<double>(totalMs) / 1000.0, 0, 'f', 2));
 
     std::vector<char> blackFrame(static_cast<size_t>(renderSize.width()) * static_cast<size_t>(renderSize.height()) * 3, 0);
     for (int frameIdx = 0; frameIdx < frameCount; ++frameIdx) {
+        if (!waitWhilePaused()) {
+            result.cancelled = true;
+            result.message = QStringLiteral("Cancelled.");
+            log(result.message);
+            return result;
+        }
+        if (cancelled()) {
+            result.cancelled = true;
+            result.message = QStringLiteral("Cancelled.");
+            log(result.message);
+            return result;
+        }
         const double frameMsF = static_cast<double>(startMs) + (1000.0 * static_cast<double>(frameIdx) / static_cast<double>(settings.fps));
         const qint64 frameMs = static_cast<qint64>(frameMsF);
         burstcon::BurstRequest req;
@@ -195,9 +243,16 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
             return result;
         }
         if (onProgress && (frameIdx % 8 == 0 || frameIdx + 1 == frameCount)) {
-            report(RenderProgress{RenderProgress::Phase::VideoFrames, frameIdx + 1, frameCount, wallClock.elapsed(), totalMs});
+            RenderProgress p;
+            p.phase = RenderProgress::Phase::VideoFrames;
+            p.done = frameIdx + 1;
+            p.total = frameCount;
+            p.outputDurationMs = totalMs;
+            p.processedOutputSeconds = static_cast<double>(frameIdx + 1) / static_cast<double>(settings.fps);
+            report(p);
         }
     }
+    log(QStringLiteral("Raw video stream closed."));
 
     const burstcon::BurstIndex burstStep =
         std::max<burstcon::BurstIndex>(1, (burstcon::kBurstTimebaseHz * kAudioSamplesPerBurst) / kAudioSampleRate);
@@ -213,10 +268,34 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
     }
     audioBurstTotal = std::max<qint64>(1, audioBurstTotal);
     const int audioTotalInt = static_cast<int>(std::min<qint64>(audioBurstTotal, INT_MAX));
-    report(RenderProgress{RenderProgress::Phase::AudioPcm, 0, audioTotalInt, wallClock.elapsed(), totalMs});
+    {
+        RenderProgress p;
+        p.phase = RenderProgress::Phase::AudioPcm;
+        p.done = 0;
+        p.total = audioTotalInt;
+        p.outputDurationMs = totalMs;
+        p.processedOutputSeconds = (totalMs / 1000.0) * 0.0;
+        report(p);
+    }
+    log(QStringLiteral("Writing PCM: %1 sample frames (~%2 s @ %3 Hz).")
+            .arg(totalSampleFrames)
+            .arg(static_cast<double>(totalSampleFrames) / static_cast<double>(kAudioSampleRate), 0, 'f', 2)
+            .arg(kAudioSampleRate));
 
     qint64 burstIter = 0;
     for (burstcon::BurstIndex idx = firstIndex; idx < endIndex && writtenSampleFrames < totalSampleFrames; idx += burstStep) {
+        if (!waitWhilePaused()) {
+            result.cancelled = true;
+            result.message = QStringLiteral("Cancelled.");
+            log(result.message);
+            return result;
+        }
+        if (cancelled()) {
+            result.cancelled = true;
+            result.message = QStringLiteral("Cancelled.");
+            log(result.message);
+            return result;
+        }
         ++burstIter;
         const burstcon::BurstIndex burstStart = idx;
         const burstcon::BurstIndex burstEnd = idx + burstStep;
@@ -265,12 +344,25 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
         writtenSampleFrames += keepFrames;
         if (onProgress && (burstIter % 32 == 0 || burstIter == audioBurstTotal || writtenSampleFrames >= totalSampleFrames)) {
             const int adone = static_cast<int>(std::min<qint64>(burstIter, audioBurstTotal));
-            report(RenderProgress{RenderProgress::Phase::AudioPcm, adone, audioTotalInt, wallClock.elapsed(), totalMs});
+            RenderProgress p;
+            p.phase = RenderProgress::Phase::AudioPcm;
+            p.done = adone;
+            p.total = audioTotalInt;
+            p.outputDurationMs = totalMs;
+            p.processedOutputSeconds =
+                (totalMs / 1000.0) * (static_cast<double>(writtenSampleFrames) / static_cast<double>(std::max<qint64>(1, totalSampleFrames)));
+            report(p);
         }
     }
 
     if (onProgress) {
-        report(RenderProgress{RenderProgress::Phase::AudioPcm, audioTotalInt, audioTotalInt, wallClock.elapsed(), totalMs});
+        RenderProgress p;
+        p.phase = RenderProgress::Phase::AudioPcm;
+        p.done = audioTotalInt;
+        p.total = audioTotalInt;
+        p.outputDurationMs = totalMs;
+        p.processedOutputSeconds = totalMs / 1000.0;
+        report(p);
     }
 
     if (writtenSampleFrames < totalSampleFrames) {
@@ -285,8 +377,17 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
 
     rawVideo.close();
     rawAudio.close();
+    log(QStringLiteral("Starting ffmpeg mux (libx264 + AAC)."));
 
-    report(RenderProgress{RenderProgress::Phase::Muxing, 0, 1, wallClock.elapsed(), totalMs});
+    {
+        RenderProgress p;
+        p.phase = RenderProgress::Phase::Muxing;
+        p.done = 0;
+        p.total = 1;
+        p.outputDurationMs = totalMs;
+        p.processedOutputSeconds = totalMs / 1000.0 * 0.98;
+        report(p);
+    }
 
     QStringList args;
     args << "-y";
@@ -309,14 +410,47 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
     args << "-shortest";
     args << outPath;
 
+    log(QStringLiteral("ffmpeg %1").arg(args.join(QLatin1Char(' '))));
+
     QProcess ffmpeg;
     ffmpeg.start("ffmpeg", args);
     if (!ffmpeg.waitForStarted(4000)) {
         result.message = "ffmpeg is not available in PATH.";
         result.details = "Process failed to start within 4 seconds.";
+        log(result.message + QLatin1Char(' ') + result.details);
         return result;
     }
-    ffmpeg.waitForFinished(-1);
+    while (!ffmpeg.waitForFinished(200)) {
+        if (!waitWhilePaused()) {
+            ffmpeg.kill();
+            ffmpeg.waitForFinished(8000);
+            result.cancelled = true;
+            result.message = QStringLiteral("Cancelled.");
+            log(QStringLiteral("ffmpeg killed (pause/cancel)."));
+            return result;
+        }
+        if (cancelled()) {
+            ffmpeg.kill();
+            ffmpeg.waitForFinished(8000);
+            result.cancelled = true;
+            result.message = QStringLiteral("Cancelled.");
+            log(QStringLiteral("ffmpeg killed."));
+            return result;
+        }
+        const QByteArray err = ffmpeg.readAllStandardError();
+        if (!err.isEmpty()) {
+            const QString chunk = QString::fromUtf8(err).trimmed();
+            if (!chunk.isEmpty()) {
+                log(chunk);
+            }
+        }
+    }
+    {
+        const QByteArray errTail = ffmpeg.readAllStandardError();
+        if (!errTail.isEmpty()) {
+            log(QString::fromUtf8(errTail).trimmed());
+        }
+    }
     if (ffmpeg.exitStatus() != QProcess::NormalExit || ffmpeg.exitCode() != 0) {
         const QString stderrText = QString::fromUtf8(ffmpeg.readAllStandardError());
         const QString stdoutText = QString::fromUtf8(ffmpeg.readAllStandardOutput());
@@ -343,12 +477,22 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
                 result.logPath = logPath;
             }
         }
+        log(result.message);
         return result;
     }
 
-    report(RenderProgress{RenderProgress::Phase::Muxing, 1, 1, wallClock.elapsed(), totalMs});
+    {
+        RenderProgress p;
+        p.phase = RenderProgress::Phase::Muxing;
+        p.done = 1;
+        p.total = 1;
+        p.outputDurationMs = totalMs;
+        p.processedOutputSeconds = totalMs / 1000.0;
+        report(p);
+    }
 
     result.ok = true;
     result.message = QString("Render complete: %1").arg(outPath);
+    log(result.message);
     return result;
 }

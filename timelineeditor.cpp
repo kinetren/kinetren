@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <unordered_set>
 #include <cstring>
 #include <cstdlib>
 #include <limits>
@@ -461,6 +462,123 @@ bool TimelineEditor::deleteSelectedClip()
         return false;
     }
     selectedClipId = -1;
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    emit timelineContentChanged();
+    update();
+    return true;
+}
+
+namespace {
+bool clipIntersectsOpenRange(qint64 c0, qint64 c1, qint64 rs, qint64 re)
+{
+    return c1 > rs && c0 < re;
+}
+}
+
+bool TimelineEditor::deleteClipsIntersectingRegion()
+{
+    if (!hasRegionSelection || regionEndMs <= regionStartMs) {
+        return false;
+    }
+    const qint64 rs = regionStartMs;
+    const qint64 re = regionEndMs;
+
+    std::unordered_set<int> removeIds;
+    for (const auto &c : clips) {
+        if (clipIntersectsOpenRange(c.startMs, c.startMs + c.durationMs, rs, re)) {
+            for (int id : linkedClipIds(c.id)) {
+                removeIds.insert(id);
+            }
+        }
+    }
+    if (removeIds.empty()) {
+        return false;
+    }
+
+    const bool clearedSelection = removeIds.count(selectedClipId) > 0;
+    clips.erase(std::remove_if(clips.begin(), clips.end(), [&](const ClipEvent &clip) {
+                     return removeIds.count(clip.id) > 0;
+                 }),
+                 clips.end());
+    if (clearedSelection) {
+        selectedClipId = -1;
+    }
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    emit timelineContentChanged();
+    update();
+    return true;
+}
+
+bool TimelineEditor::splitDeleteRegionInterior()
+{
+    if (!hasRegionSelection || regionEndMs <= regionStartMs) {
+        return false;
+    }
+    const qint64 rs = regionStartMs;
+    const qint64 re = regionEndMs;
+
+    std::vector<ClipEvent> additions;
+    std::unordered_set<int> removeIds;
+
+    for (const auto &orig : clips) {
+        const qint64 c0 = orig.startMs;
+        const qint64 c1 = c0 + orig.durationMs;
+        if (c1 <= rs || c0 >= re) {
+            continue;
+        }
+
+        removeIds.insert(orig.id);
+
+        if (c0 >= rs && c1 <= re) {
+            continue;
+        }
+
+        if (c0 < rs && c1 > rs) {
+            const qint64 leftDur = rs - c0;
+            if (leftDur >= kMinClipDurationMs) {
+                ClipEvent L = orig;
+                L.durationMs = leftDur;
+                L.sourceInMs = orig.sourceInMs;
+                additions.push_back(L);
+            }
+        }
+        if (c1 > re && re > c0) {
+            const qint64 rightDur = c1 - re;
+            if (rightDur >= kMinClipDurationMs) {
+                ClipEvent R = orig;
+                R.startMs = re;
+                R.durationMs = rightDur;
+                R.sourceInMs = orig.sourceInMs + (re - c0);
+                additions.push_back(R);
+            }
+        }
+    }
+
+    if (removeIds.empty()) {
+        return false;
+    }
+
+    const bool clearedSelection = removeIds.count(selectedClipId) > 0;
+    clips.erase(std::remove_if(clips.begin(), clips.end(), [&](const ClipEvent &clip) {
+                     return removeIds.count(clip.id) > 0;
+                 }),
+                 clips.end());
+
+    for (auto &c : additions) {
+        c.id = nextClipId++;
+        c.linkedGroupId = -1;
+    }
+
+    for (auto &c : additions) {
+        clips.push_back(c);
+    }
+
+    if (clearedSelection) {
+        selectedClipId = -1;
+    }
+
     refreshTimelineRangeSignals();
     emitOverlayInfo();
     emit timelineContentChanged();
@@ -1336,11 +1454,19 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
     } else if (chosen == copyAction) {
         copySelectedToClipboard();
     } else if (chosen == deleteAction) {
-        deleteSelectedClip();
+        if (hasRegionSelection && regionEndMs > regionStartMs) {
+            deleteClipsIntersectingRegion();
+        } else {
+            deleteSelectedClip();
+        }
     } else if (chosen == magnetizeAction) {
         magnetizeSelectedClip();
     } else if (chosen == splitAction) {
-        splitSelectedClipAtCursor();
+        if (hasRegionSelection && regionEndMs > regionStartMs) {
+            splitDeleteRegionInterior();
+        } else {
+            splitSelectedClipAtCursor();
+        }
     }
     update();
 }

@@ -58,6 +58,8 @@ public:
     void setSelectionRegionFromCursor(bool setStart);
     void clearSelectionRegion();
     bool deleteSelectedClip();
+    bool deleteClipsIntersectingRegion();
+    bool splitDeleteRegionInterior();
     bool magnetizeSelectedClip();
     qint64 maxTimelineMs() const;
     qint64 visibleDurationMs() const;

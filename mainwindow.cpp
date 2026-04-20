@@ -3,6 +3,7 @@
 #include "performancewidget.h"
 #include "playbackpipeline.h"
 #include "projectrenderer.h"
+#include "renderprogressdialog.h"
 #include "previewer.h"
 #include "sourceareawidget.h"
 #include "timelineeditor.h"
@@ -37,13 +38,13 @@
 #include <QVBoxLayout>
 #include <QPair>
 #include <QPointer>
-#include <QProgressDialog>
 #include <QVector>
 #include <QCloseEvent>
 
 #include <QtGlobal>
 
 #include <algorithm>
+#include <memory>
 #include <climits>
 #include <cmath>
 #include <thread>
@@ -468,7 +469,13 @@ void MainWindow::setupTimelineEditorUi()
     connect(spaceShortcut, &QShortcut::activated, this, &MainWindow::toggleTimelinePause);
     auto *splitShortcut = new QShortcut(QKeySequence(Qt::Key_S), this);
     connect(splitShortcut, &QShortcut::activated, [this]() {
-        if (timelineEditor) {
+        if (!timelineEditor) {
+            return;
+        }
+        if (timelineEditor->hasSelectionRegion() &&
+            timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
+            timelineEditor->splitDeleteRegionInterior();
+        } else {
             timelineEditor->splitSelectedClipAtCursor();
         }
     });
@@ -486,7 +493,25 @@ void MainWindow::setupTimelineEditorUi()
     });
     auto *deleteShortcut = new QShortcut(QKeySequence::Delete, this);
     connect(deleteShortcut, &QShortcut::activated, [this]() {
-        if (timelineEditor) {
+        if (!timelineEditor) {
+            return;
+        }
+        if (timelineEditor->hasSelectionRegion() &&
+            timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
+            timelineEditor->deleteClipsIntersectingRegion();
+        } else {
+            timelineEditor->deleteSelectedClip();
+        }
+    });
+    auto *backspaceShortcut = new QShortcut(QKeySequence(Qt::Key_Backspace), this);
+    connect(backspaceShortcut, &QShortcut::activated, [this]() {
+        if (!timelineEditor) {
+            return;
+        }
+        if (timelineEditor->hasSelectionRegion() &&
+            timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
+            timelineEditor->deleteClipsIntersectingRegion();
+        } else {
             timelineEditor->deleteSelectedClip();
         }
     });
@@ -767,38 +792,35 @@ void MainWindow::renderDraftProject()
         return;
     }
 
-    QPointer<QProgressDialog> progressDlg(new QProgressDialog(QString(), QString(), 0, 1000, this));
-    progressDlg->setWindowTitle("Rendering to MP4");
-    progressDlg->setWindowModality(Qt::WindowModal);
-    progressDlg->setMinimumDuration(0);
-    progressDlg->setAutoClose(false);
-    progressDlg->setAutoReset(false);
-    progressDlg->setCancelButton(nullptr);
-    progressDlg->setValue(0);
-    progressDlg->setLabelText("Starting...");
-    progressDlg->show();
+    QPointer<RenderProgressDialog> dlg(new RenderProgressDialog(this));
+    dlg->appendLog(tr("Output file: %1").arg(outPath));
+    dlg->setRunning(true);
+    dlg->show();
 
     renderInProgress = true;
     const auto clips = timelineEditor->renderClips();
     const ProjectSettings settings = projectSettings;
     QPointer<MainWindow> guard(this);
     QPointer<TimelineEditor> timelinePtr(timelineEditor);
-    std::thread([guard, timelinePtr, progressDlg, clips, settings, startMs, endMs, outPath]() {
+    const std::shared_ptr<std::atomic<bool>> cancelPtr = dlg->cancelFlag();
+    const std::shared_ptr<std::atomic<bool>> pausePtr = dlg->pauseFlag();
+
+    std::thread([guard, dlg, timelinePtr, clips, settings, startMs, endMs, outPath, cancelPtr, pausePtr]() {
         const auto result = ProjectRenderer::renderMp4(
             clips,
             settings,
             startMs,
             endMs,
             outPath,
-            [guard, timelinePtr, progressDlg](const ProjectRenderer::RenderProgress &p) {
-                if (!guard || !progressDlg || !timelinePtr) {
+            [guard, timelinePtr, dlg](const ProjectRenderer::RenderProgress &p) {
+                if (!guard || !dlg || !timelinePtr) {
                     return;
                 }
                 const ProjectRenderer::RenderProgress snapshot = p;
                 QMetaObject::invokeMethod(
                     guard.data(),
-                    [guard, timelinePtr, progressDlg, snapshot]() {
-                        if (!guard || !progressDlg || !timelinePtr) {
+                    [guard, timelinePtr, dlg, snapshot]() {
+                        if (!guard || !dlg || !timelinePtr) {
                             return;
                         }
                         int bar = 0;
@@ -809,17 +831,17 @@ void MainWindow::renderDraftProject()
                         } else {
                             bar = snapshot.done >= snapshot.total ? 1000 : 995;
                         }
-                        progressDlg->setValue(std::min(1000, bar));
+                        dlg->setProgress(std::min(1000, bar), 1000);
                         QString stage;
                         switch (snapshot.phase) {
                         case ProjectRenderer::RenderProgress::Phase::VideoFrames:
-                            stage = "Video frames";
+                            stage = QStringLiteral("Video");
                             break;
                         case ProjectRenderer::RenderProgress::Phase::AudioPcm:
-                            stage = "Audio (PCM)";
+                            stage = QStringLiteral("Audio (PCM)");
                             break;
                         case ProjectRenderer::RenderProgress::Phase::Muxing:
-                            stage = "FFmpeg (mux)";
+                            stage = QStringLiteral("ffmpeg mux");
                             break;
                         }
                         qint64 remainingMs = 0;
@@ -827,16 +849,39 @@ void MainWindow::renderDraftProject()
                             remainingMs = (snapshot.elapsedMs * (snapshot.total - snapshot.done)) / snapshot.done;
                         }
                         const QString remStr =
-                            remainingMs > 0 ? timelinePtr->formatTimelineTime(remainingMs) : QString("—");
-                        const QString text =
-                            QString("%1: %2 / %3\nElapsed: %4  Remaining (est.): %5\nOutput length: %6")
+                            remainingMs > 0 ? timelinePtr->formatTimelineTime(remainingMs) : QStringLiteral("—");
+                        const QString speedStr =
+                            snapshot.speedRealtimeFactor > 0.001
+                                ? QString::number(snapshot.speedRealtimeFactor, 'f', 2) + QStringLiteral("×")
+                                : QStringLiteral("—");
+                        const QString html =
+                            QStringLiteral("<p><b>%1</b> &nbsp; %2 / %3</p>"
+                                           "<p>Elapsed: %4 &nbsp; Remaining (est.): %5 &nbsp; "
+                                           "Output length: %6 &nbsp; <b>Speed: %7</b> realtime</p>")
                                 .arg(stage)
                                 .arg(snapshot.done)
                                 .arg(snapshot.total)
                                 .arg(timelinePtr->formatTimelineTime(snapshot.elapsedMs))
                                 .arg(remStr)
-                                .arg(timelinePtr->formatTimelineTime(snapshot.outputDurationMs));
-                        progressDlg->setLabelText(text);
+                                .arg(timelinePtr->formatTimelineTime(snapshot.outputDurationMs))
+                                .arg(speedStr);
+                        dlg->setStatusHtml(html);
+                    },
+                    Qt::QueuedConnection);
+            },
+            cancelPtr.get(),
+            pausePtr.get(),
+            [guard, dlg](const QString &line) {
+                if (!guard || !dlg) {
+                    return;
+                }
+                const QString copy = line;
+                QMetaObject::invokeMethod(
+                    guard.data(),
+                    [dlg, copy]() {
+                        if (dlg) {
+                            dlg->appendLog(copy);
+                        }
                     },
                     Qt::QueuedConnection);
             });
@@ -845,36 +890,35 @@ void MainWindow::renderDraftProject()
         }
         QMetaObject::invokeMethod(
             guard.data(),
-            [guard, progressDlg, result]() {
+            [guard, dlg, result]() {
                 if (!guard) {
                     return;
                 }
-                if (progressDlg) {
-                    progressDlg->close();
-                    progressDlg->deleteLater();
-                }
                 guard->renderInProgress = false;
-                if (!result.ok) {
-                    QString brief = "Render failed: " + result.message;
-                    if (!result.logPath.isEmpty()) {
-                        brief += " (log: " + result.logPath + ")";
-                    }
-                    guard->statusBar()->showMessage(brief, 20000);
-                    QMessageBox msg(guard.data());
-                    msg.setIcon(QMessageBox::Critical);
-                    msg.setWindowTitle("Render Failed");
-                    msg.setText(result.message);
-                    QString details = result.details;
-                    if (!result.logPath.isEmpty()) {
-                        details += "\n\nSaved log: " + result.logPath;
-                    }
-                    if (details.isEmpty()) {
-                        details = "No additional details available.";
-                    }
-                    msg.setDetailedText(details);
-                    msg.exec();
+                if (result.cancelled) {
+                    dlg->appendLog(result.message);
+                    dlg->setFinished(false, QString());
+                    guard->statusBar()->showMessage(result.message, 6000);
                     return;
                 }
+                if (!result.ok) {
+                    QString brief = QStringLiteral("Render failed: ") + result.message;
+                    if (!result.logPath.isEmpty()) {
+                        brief += QStringLiteral(" (log: ") + result.logPath + QStringLiteral(")");
+                    }
+                    guard->statusBar()->showMessage(brief, 20000);
+                    dlg->appendLog(QStringLiteral("---"));
+                    dlg->appendLog(result.message);
+                    if (!result.details.isEmpty()) {
+                        dlg->appendLog(result.details);
+                    }
+                    if (!result.logPath.isEmpty()) {
+                        dlg->appendLog(tr("Saved log: %1").arg(result.logPath));
+                    }
+                    dlg->setFinished(false, result.message);
+                    return;
+                }
+                dlg->setFinished(true, result.message);
                 guard->statusBar()->showMessage(result.message, 10000);
             },
             Qt::QueuedConnection);

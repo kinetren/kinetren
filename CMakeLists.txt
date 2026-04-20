@@ -27,6 +27,8 @@ set(PROJECT_SOURCES
         framecache.h
         projectrenderer.cpp
         projectrenderer.h
+        renderprogressdialog.cpp
+        renderprogressdialog.h
         timelineeditor.cpp
         timelineeditor.h
         sourceareawidget.cpp
