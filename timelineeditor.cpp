@@ -756,7 +756,16 @@ QString TimelineEditor::firstLocalPathFromMime(const QMimeData *mime)
         }
     }
     if (mime->hasText()) {
-        const QString t = mime->text().trimmed();
+        QString t = mime->text().trimmed();
+        if (t.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
+            const QUrl u = QUrl::fromUserInput(t);
+            if (u.isLocalFile()) {
+                const QString p = u.toLocalFile();
+                if (!p.isEmpty() && QFileInfo::exists(p)) {
+                    return p;
+                }
+            }
+        }
         if (!t.isEmpty() && QFileInfo::exists(t)) {
             return t;
         }

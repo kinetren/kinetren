@@ -26,10 +26,11 @@ public:
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
     void onBrowse();
-    void onApply();
+    void onPathEditChanged(const QString &text);
 
 private:
     void refreshUi();
@@ -46,7 +47,6 @@ private:
     QLabel *titleLabel = nullptr;
     QLineEdit *pathEdit = nullptr;
     QPushButton *browseButton = nullptr;
-    QPushButton *applyButton = nullptr;
 };
 
 class MorpherEditWindow : public QWidget
@@ -59,14 +59,15 @@ public:
 public slots:
     void reloadFromTimeline();
 
-private slots:
-    void onBrowse();
-    void onApplyReplace();
-    void onApplyOffset();
-
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
+private slots:
+    void onBrowse();
+    void onPathEditChanged(const QString &text);
+    void onDeltaSpinChanged(double value);
 
 private:
     void applyPath(const QString &path);
@@ -76,9 +77,7 @@ private:
     QLabel *targetsLabel = nullptr;
     QLineEdit *pathEdit = nullptr;
     QPushButton *browseButton = nullptr;
-    QPushButton *applyReplaceButton = nullptr;
     QDoubleSpinBox *deltaSpin = nullptr;
-    QPushButton *applyOffsetButton = nullptr;
 };
 
 class SourceOffsetPanel : public QWidget
@@ -93,7 +92,7 @@ public:
     void clearTarget();
 
 private slots:
-    void onApply();
+    void onOffsetSpinChanged(double value);
 
 private:
     void refreshUi();
@@ -108,7 +107,6 @@ private:
 
     QLabel *titleLabel = nullptr;
     QDoubleSpinBox *valueSpin = nullptr;
-    QPushButton *applyButton = nullptr;
 };
 
 #endif
