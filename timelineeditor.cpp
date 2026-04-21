@@ -4,7 +4,11 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QContextMenuEvent>
+#include <QKeyEvent>
+#include <QMimeData>
 #include <QFileInfo>
+#include <QInputDialog>
+#include <QMessageBox>
 #include <QImageReader>
 #include <QMenu>
 #include <QMimeData>
@@ -126,6 +130,7 @@ TimelineEditor::TimelineEditor(QWidget *parent)
 {
     setAcceptDrops(true);
     setMouseTracking(true);
+    setFocusPolicy(Qt::StrongFocus);
     tracks.push_back({TrackType::Video, "V1"});
     tracks.push_back({TrackType::Audio, "A1"});
     setMinimumHeight(260);
@@ -630,6 +635,177 @@ bool TimelineEditor::splitDeleteRegionInterior()
     emit timelineContentChanged();
     update();
     return true;
+}
+
+std::unordered_set<int> TimelineEditor::clipIdsIntersectingRegion(bool allTracks, int trackIndex) const
+{
+    std::unordered_set<int> out;
+    if (!hasRegionSelection || regionEndMs <= regionStartMs) {
+        return out;
+    }
+    const qint64 rs = regionStartMs;
+    const qint64 re = regionEndMs;
+    for (const auto &c : clips) {
+        if (!clipIntersectsOpenRange(c.startMs, c.startMs + c.durationMs, rs, re)) {
+            continue;
+        }
+        if (!allTracks && c.trackIndex != trackIndex) {
+            continue;
+        }
+        out.insert(c.id);
+    }
+    return out;
+}
+
+bool TimelineEditor::applyNewSourcePathToClip(ClipEvent &clip, const QString &path)
+{
+    if (path.isEmpty()) {
+        return false;
+    }
+    const qint64 newSourceDuration = defaultDurationForPath(path);
+    clip.sourcePath = path;
+    clip.sourceDurationMs = newSourceDuration;
+    clip.color = colorFromPath(path + QString(clip.mediaType == TrackType::Video ? ":v" : ":a"));
+    const qint64 maxIn = std::max<qint64>(0, newSourceDuration - kMinClipDurationMs);
+    clip.sourceInMs = std::clamp(clip.sourceInMs, 0LL, maxIn);
+    const qint64 maxClipDur = std::max<qint64>(kMinClipDurationMs, newSourceDuration - clip.sourceInMs);
+    clip.durationMs = std::min(clip.durationMs, maxClipDur);
+    return true;
+}
+
+void TimelineEditor::replaceSourceForLinkedClipGroup(int clipId, const QString &path)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+    for (int id : linkedClipIds(clipId)) {
+        ClipEvent *c = findClipById(id);
+        if (c) {
+            applyNewSourcePathToClip(*c, path);
+        }
+    }
+}
+
+void TimelineEditor::setSourceStartMsForLinkedClipGroup(int clipId, qint64 sourceInMs)
+{
+    for (int id : linkedClipIds(clipId)) {
+        ClipEvent *c = findClipById(id);
+        if (!c) {
+            continue;
+        }
+        const qint64 maxIn = std::max<qint64>(0, c->sourceDurationMs - c->durationMs);
+        c->sourceInMs = std::clamp(sourceInMs, 0LL, maxIn);
+    }
+}
+
+void TimelineEditor::replaceSourceForRegionClips(const QString &path, bool allTracks, int trackIndex)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+    const auto ids = clipIdsIntersectingRegion(allTracks, trackIndex);
+    if (ids.empty()) {
+        return;
+    }
+    for (int id : ids) {
+        ClipEvent *c = findClipById(id);
+        if (c) {
+            applyNewSourcePathToClip(*c, path);
+        }
+    }
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    emit timelineContentChanged();
+    update();
+}
+
+void TimelineEditor::shiftSourceStartForRegionClips(qint64 deltaMs, bool allTracks, int trackIndex)
+{
+    const auto ids = clipIdsIntersectingRegion(allTracks, trackIndex);
+    if (ids.empty()) {
+        return;
+    }
+    for (int id : ids) {
+        ClipEvent *c = findClipById(id);
+        if (!c) {
+            continue;
+        }
+        const qint64 maxIn = std::max<qint64>(0, c->sourceDurationMs - c->durationMs);
+        const qint64 next = c->sourceInMs + deltaMs;
+        c->sourceInMs = std::clamp(next, 0LL, maxIn);
+    }
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    emit timelineContentChanged();
+    update();
+}
+
+QString TimelineEditor::firstLocalPathFromMime(const QMimeData *mime)
+{
+    if (!mime) {
+        return {};
+    }
+    if (mime->hasUrls()) {
+        for (const QUrl &url : mime->urls()) {
+            if (url.isLocalFile()) {
+                const QString p = url.toLocalFile();
+                if (!p.isEmpty()) {
+                    return p;
+                }
+            }
+        }
+    }
+    if (mime->hasText()) {
+        const QString t = mime->text().trimmed();
+        if (!t.isEmpty() && QFileInfo::exists(t)) {
+            return t;
+        }
+    }
+    return {};
+}
+
+void TimelineEditor::clearPendingReplaceSource()
+{
+    if (pendingReplaceSource.kind == PendingReplaceSource::Kind::None) {
+        return;
+    }
+    pendingReplaceSource = {};
+    unsetCursor();
+    emitOverlayInfo();
+    update();
+}
+
+void TimelineEditor::beginPendingReplaceSourceSingleClip(int clipId)
+{
+    if (findClipById(clipId) == nullptr) {
+        return;
+    }
+    pendingReplaceSource.kind = PendingReplaceSource::Kind::SingleClip;
+    pendingReplaceSource.clipId = clipId;
+    pendingReplaceSource.regionAllTracks = false;
+    pendingReplaceSource.regionTrackIndex = -1;
+    setCursor(Qt::DragCopyCursor);
+    setFocus(Qt::OtherFocusReason);
+    emitOverlayInfo();
+    update();
+}
+
+void TimelineEditor::beginPendingReplaceSourceRegion(bool allTracks, int trackIndex)
+{
+    if (!allTracks && trackIndex < 0) {
+        QMessageBox::information(this,
+                                 tr("Region"),
+                                 tr("To use \"This track\", right-click on a clip or on a track row (not the ruler)."));
+        return;
+    }
+    pendingReplaceSource.kind = PendingReplaceSource::Kind::Region;
+    pendingReplaceSource.clipId = -1;
+    pendingReplaceSource.regionAllTracks = allTracks;
+    pendingReplaceSource.regionTrackIndex = trackIndex;
+    setCursor(Qt::DragCopyCursor);
+    setFocus(Qt::OtherFocusReason);
+    emitOverlayInfo();
+    update();
 }
 
 bool TimelineEditor::magnetizeSelectedClip()
@@ -1543,6 +1719,16 @@ void TimelineEditor::leaveEvent(QEvent *event)
     QWidget::leaveEvent(event);
 }
 
+void TimelineEditor::keyPressEvent(QKeyEvent *event)
+{
+    if (pendingReplaceSource.kind != PendingReplaceSource::Kind::None && event->key() == Qt::Key_Escape) {
+        clearPendingReplaceSource();
+        event->accept();
+        return;
+    }
+    QWidget::keyPressEvent(event);
+}
+
 void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
 {
     const int markerIdx = markerIndexAt(event->pos());
@@ -1560,10 +1746,58 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
     }
 
     const int id = clipIdAt(event->pos());
+    const int clickTrack = trackIndexAtY(event->pos().y());
+    const bool regionUseful = hasRegionSelection && regionEndMs > regionStartMs;
+
+    auto runRegionShift = [&](bool allTracks) {
+        if (!allTracks && clickTrack < 0) {
+            QMessageBox::information(this,
+                                     tr("Region"),
+                                     tr("To use \"This track\", right-click on a clip or on a track row (not the ruler)."));
+            return;
+        }
+        bool ok = false;
+        const double delta = QInputDialog::getDouble(this,
+                                                       tr("Shift source start"),
+                                                       tr("Delta (ms):"),
+                                                       0.0,
+                                                       -1.0e9,
+                                                       1.0e9,
+                                                       3,
+                                                       &ok);
+        if (ok) {
+            shiftSourceStartForRegionClips(static_cast<qint64>(std::llround(delta)), allTracks, clickTrack);
+        }
+    };
+
     if (id < 0) {
-        QWidget::contextMenuEvent(event);
+        if (!regionUseful) {
+            QWidget::contextMenuEvent(event);
+            return;
+        }
+        QMenu menu(this);
+        QMenu *repSub = menu.addMenu(tr("Region: Replace source"));
+        QAction *repThis = repSub->addAction(tr("This track"));
+        QAction *repAll = repSub->addAction(tr("All tracks"));
+        QMenu *shiftSub = menu.addMenu(tr("Region: Shift source start"));
+        QAction *shiftThis = shiftSub->addAction(tr("This track"));
+        QAction *shiftAll = shiftSub->addAction(tr("All tracks"));
+        QAction *chosen = menu.exec(event->globalPos());
+        if (!chosen) {
+            return;
+        }
+        if (chosen == repThis) {
+            beginPendingReplaceSourceRegion(false, clickTrack);
+        } else if (chosen == repAll) {
+            beginPendingReplaceSourceRegion(true, clickTrack);
+        } else if (chosen == shiftThis) {
+            runRegionShift(false);
+        } else if (chosen == shiftAll) {
+            runRegionShift(true);
+        }
         return;
     }
+
     selectedClipId = id;
     QMenu menu(this);
     QAction *unlinkAction = nullptr;
@@ -1575,6 +1809,22 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
     QAction *deleteAction = menu.addAction("Delete (Del)");
     QAction *magnetizeAction = menu.addAction("Magnetize A/V");
     QAction *splitAction = menu.addAction("Cut at Cursor (S)");
+    QAction *replaceSourceAction = menu.addAction(tr("Replace source (drop file here)"));
+    QAction *sourceStartAction = menu.addAction(tr("Source start (ms)…"));
+
+    QAction *regRepThis = nullptr;
+    QAction *regRepAll = nullptr;
+    QAction *regShiftThis = nullptr;
+    QAction *regShiftAll = nullptr;
+    if (regionUseful) {
+        QMenu *repSub = menu.addMenu(tr("Region: Replace source"));
+        regRepThis = repSub->addAction(tr("This track"));
+        regRepAll = repSub->addAction(tr("All tracks"));
+        QMenu *shiftSub = menu.addMenu(tr("Region: Shift source start"));
+        regShiftThis = shiftSub->addAction(tr("This track"));
+        regShiftAll = shiftSub->addAction(tr("All tracks"));
+    }
+
     QAction *chosen = menu.exec(event->globalPos());
     if (!chosen) {
         return;
@@ -1597,6 +1847,34 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         } else {
             splitSelectedClipAtCursor();
         }
+    } else if (chosen == replaceSourceAction) {
+        beginPendingReplaceSourceSingleClip(id);
+    } else if (chosen == sourceStartAction) {
+        if (clip) {
+            bool ok = false;
+            const double v = QInputDialog::getDouble(this,
+                                                     tr("Source start"),
+                                                     tr("Milliseconds:"),
+                                                     static_cast<double>(clip->sourceInMs),
+                                                     0.0,
+                                                     1.0e12,
+                                                     3,
+                                                     &ok);
+            if (ok) {
+                setSourceStartMsForLinkedClipGroup(id, static_cast<qint64>(std::llround(v)));
+                refreshTimelineRangeSignals();
+                emitOverlayInfo();
+                emit timelineContentChanged();
+            }
+        }
+    } else if (regRepThis && chosen == regRepThis) {
+        beginPendingReplaceSourceRegion(false, clickTrack);
+    } else if (regRepAll && chosen == regRepAll) {
+        beginPendingReplaceSourceRegion(true, clickTrack);
+    } else if (regShiftThis && chosen == regShiftThis) {
+        runRegionShift(false);
+    } else if (regShiftAll && chosen == regShiftAll) {
+        runRegionShift(true);
     }
     update();
 }
@@ -1621,6 +1899,29 @@ void TimelineEditor::dragMoveEvent(QDragMoveEvent *event)
 
 void TimelineEditor::dropEvent(QDropEvent *event)
 {
+    if (pendingReplaceSource.kind != PendingReplaceSource::Kind::None) {
+        const QString droppedPath = firstLocalPathFromMime(event->mimeData());
+        if (droppedPath.isEmpty()) {
+            event->ignore();
+            return;
+        }
+        const PendingReplaceSource job = pendingReplaceSource;
+        pendingReplaceSource = {};
+        unsetCursor();
+
+        if (job.kind == PendingReplaceSource::Kind::SingleClip) {
+            replaceSourceForLinkedClipGroup(job.clipId, droppedPath);
+            refreshTimelineRangeSignals();
+            emitOverlayInfo();
+            emit timelineContentChanged();
+            update();
+        } else if (job.kind == PendingReplaceSource::Kind::Region) {
+            replaceSourceForRegionClips(droppedPath, job.regionAllTracks, job.regionTrackIndex);
+        }
+        event->acceptProposedAction();
+        return;
+    }
+
     const QPoint pos = eventPos(event);
     const qint64 dropStartMs = snapTimeMs(xToTimeMs(pos.x()));
     const int dropY = pos.y();
@@ -2505,12 +2806,18 @@ void TimelineEditor::emitOverlayInfo()
                          .arg(regionStartMs / 1000.0, 0, 'f', 2)
                          .arg(regionEndMs / 1000.0, 0, 'f', 2);
     }
+    QString pendingText;
+    if (pendingReplaceSource.kind == PendingReplaceSource::Kind::SingleClip) {
+        pendingText = tr(" | Drop media here to replace source (Esc = cancel)");
+    } else if (pendingReplaceSource.kind == PendingReplaceSource::Kind::Region) {
+        pendingText = tr(" | Region: drop media to replace source (Esc = cancel)");
+    }
     const QString text = QString("Time: %1 | Zoom: %2x | Video layers: %3 | Audio layers: %4 | %5")
                              .arg(formatTimelineTime(cursorPositionMs))
                              .arg(zoomLevel, 0, 'f', 2)
                              .arg(activeVideoCount)
                              .arg(activeAudioCount)
-                             .arg(regionText + (loopRegionEnabled ? " (loop)" : ""));
+                             .arg(regionText + (loopRegionEnabled ? " (loop)" : "") + pendingText);
     if (text != lastOverlayInfo) {
         lastOverlayInfo = text;
         emit overlayInfoChanged(text);

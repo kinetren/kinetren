@@ -9,13 +9,16 @@
 #include <QImage>
 #include <QQueue>
 #include <QSet>
+#include <QKeyEvent>
 #include <QWheelEvent>
 #include <QEvent>
 
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
 class QJsonObject;
+class QMimeData;
 
 class TimelineEditor : public QWidget
 {
@@ -103,6 +106,7 @@ protected:
     void dropEvent(QDropEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void leaveEvent(QEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private:
     enum class TrackType {
@@ -173,6 +177,20 @@ private:
     double zoomLevel = 1.0;
     int timelineFps = 30;
 
+    struct PendingReplaceSource {
+        enum class Kind { None, SingleClip, Region };
+        Kind kind = Kind::None;
+        int clipId = -1;
+        bool regionAllTracks = false;
+        int regionTrackIndex = -1;
+    };
+    PendingReplaceSource pendingReplaceSource;
+
+    void beginPendingReplaceSourceSingleClip(int clipId);
+    void beginPendingReplaceSourceRegion(bool allTracks, int trackIndex);
+    void clearPendingReplaceSource();
+    static QString firstLocalPathFromMime(const QMimeData *mime);
+
     int timelineLeft() const;
     int timelineRight() const;
     int rulerTop() const;
@@ -232,6 +250,12 @@ private:
                                       int sampleCount);
     void unlinkClipGroup(int clipId);
     std::vector<int> linkedClipIds(int clipId) const;
+    std::unordered_set<int> clipIdsIntersectingRegion(bool allTracks, int trackIndex) const;
+    bool applyNewSourcePathToClip(ClipEvent &clip, const QString &path);
+    void replaceSourceForLinkedClipGroup(int clipId, const QString &path);
+    void setSourceStartMsForLinkedClipGroup(int clipId, qint64 sourceInMs);
+    void replaceSourceForRegionClips(const QString &path, bool allTracks, int trackIndex);
+    void shiftSourceStartForRegionClips(qint64 deltaMs, bool allTracks, int trackIndex);
 
     void addClipFromDrop(const QString &path, qint64 startMs, int dropY);
     void emitOverlayInfo();
