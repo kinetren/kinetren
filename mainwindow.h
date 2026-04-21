@@ -47,6 +47,7 @@ private:
     void flushPerformancePanelRefresh();
     void stopMediaPlayback();
     void refreshTimelineScroll();
+    void refreshTimelineVerticalScroll();
     void renderDraftProject();
     void applyProjectSettings();
     void refreshPerformancePanel();
@@ -71,6 +72,7 @@ protected:
     class QLabel *timelineOverlayLabel = nullptr;
     class QLabel *timelineGlobalTimeLabel = nullptr;
     class QScrollBar *timelineScrollBar = nullptr;
+    class QScrollBar *timelineScrollBarV = nullptr;
     class QToolButton *timelineLoopButton = nullptr;
     QTimer timelineTimer;
     bool timelinePlaying = false;

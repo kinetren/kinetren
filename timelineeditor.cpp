@@ -21,6 +21,7 @@
 #include <QPointer>
 #include <QUrl>
 #include <QWheelEvent>
+#include <QResizeEvent>
 #include <QEvent>
 #include <QHash>
 #include <QSet>
@@ -179,19 +180,17 @@ void TimelineEditor::addMarkerAtCursor()
 void TimelineEditor::addVideoTrack()
 {
     insertTrackAt(static_cast<int>(tracks.size()), TrackType::Video);
-    setMinimumHeight(contentBottom() + bottomPadding());
+    contentGeometryUpdated();
     refreshTimelineRangeSignals();
     emit timelineContentChanged();
-    update();
 }
 
 void TimelineEditor::addAudioTrack()
 {
     insertTrackAt(static_cast<int>(tracks.size()), TrackType::Audio);
-    setMinimumHeight(contentBottom() + bottomPadding());
+    contentGeometryUpdated();
     refreshTimelineRangeSignals();
     emit timelineContentChanged();
-    update();
 }
 
 bool TimelineEditor::splitSelectedClipAtCursor()
@@ -845,10 +844,9 @@ void TimelineEditor::commitPendingMorpherPlacement(int trackIdx, qint64 startMs)
     morpherEvents.push_back(m);
     const int placedId = morpherEvents.back().id;
     clearPendingMorpherPlacement();
-    setMinimumHeight(contentBottom() + bottomPadding());
+    contentGeometryUpdated();
     refreshTimelineRangeSignals();
     emit timelineContentChanged();
-    update();
     emit morpherEditWindowRequested(placedId);
 }
 
@@ -1035,10 +1033,9 @@ QString TimelineEditor::morpherTargetsDescription(int morpherEventId) const
 void TimelineEditor::addMorpherTrack()
 {
     insertTrackAt(static_cast<int>(tracks.size()), TrackType::Morpher);
-    setMinimumHeight(contentBottom() + bottomPadding());
+    contentGeometryUpdated();
     refreshTimelineRangeSignals();
     emit timelineContentChanged();
-    update();
 }
 
 void TimelineEditor::beginMorpherPlacementFromSelection()
@@ -1609,14 +1606,13 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
         regionEndMs = 0;
     }
 
-    setMinimumHeight(contentBottom() + bottomPadding());
+    contentGeometryUpdated();
     emit loopEnabledChanged(loopRegionEnabled);
     emitRegionChanged();
     refreshTimelineRangeSignals();
     emitOverlayInfo();
     emit timelineContentChanged();
     emit cursorChanged(cursorPositionMs);
-    update();
     return true;
 }
 
@@ -1628,7 +1624,11 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     p.setRenderHint(QPainter::Antialiasing, true);
     p.fillRect(rect(), QColor(18, 18, 18));
 
-    const int paintBottom = height() - 4;
+    const int paintBottom = verticalScrollPx + height() - 4;
+
+    p.save();
+    p.setClipRect(rect());
+    p.translate(0, -verticalScrollPx);
     const QRect rulerRect(timelineLeft(), rulerTop(), timelineRight() - timelineLeft(), rulerHeight());
     const QRect timelineCacheBarRect(timelineLeft(), std::max(2, rulerTop() - 8), timelineRight() - timelineLeft(), 5);
     for (const auto &segment : timelineCacheSegments) {
@@ -1786,6 +1786,7 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     }
 
     // Edge-scroll gradients on top of clips (hit zone still extends to the timeline edge on the right).
+    const int gradTop = verticalScrollPx;
     const int h = height();
     const int tl = timelineLeft();
     const int tr = timelineRight();
@@ -1812,28 +1813,28 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         }
         QLinearGradient g;
         if (fadeFromLeft) {
-            g.setStart(x, 0);
-            g.setFinalStop(x + w, 0);
+            g.setStart(x, gradTop);
+            g.setFinalStop(x + w, gradTop);
             g.setColorAt(0.0, QColor(255, 182, 104, static_cast<int>(56 * fillMul)));
             g.setColorAt(0.25, QColor(255, 178, 100, static_cast<int>(38 * fillMul)));
             g.setColorAt(0.55, QColor(255, 178, 100, static_cast<int>(22 * fillMul)));
             g.setColorAt(0.82, QColor(255, 178, 100, static_cast<int>(10 * fillMul)));
             g.setColorAt(1.0, QColor(255, 178, 100, 0));
         } else {
-            g.setStart(x + w, 0);
-            g.setFinalStop(x, 0);
+            g.setStart(x + w, gradTop);
+            g.setFinalStop(x, gradTop);
             g.setColorAt(0.0, QColor(255, 182, 104, static_cast<int>(56 * fillMul)));
             g.setColorAt(0.25, QColor(255, 178, 100, static_cast<int>(38 * fillMul)));
             g.setColorAt(0.55, QColor(255, 178, 100, static_cast<int>(22 * fillMul)));
             g.setColorAt(0.82, QColor(255, 178, 100, static_cast<int>(10 * fillMul)));
             g.setColorAt(1.0, QColor(255, 178, 100, 0));
         }
-        p.fillRect(QRect(x, 0, w, h), QBrush(g));
+        p.fillRect(QRect(x, gradTop, w, h), QBrush(g));
         const int hairAlpha = inScrollZone ? std::min(255, 28 + stripeAlpha / 2) : 18;
         p.setPen(QPen(QColor(255, 200, 128, hairAlpha), 1));
-        p.drawLine(x, 0, x + w - 1, 0);
+        p.drawLine(x, gradTop, x + w - 1, gradTop);
         p.setPen(QPen(QColor(255, 188, 110, stripeAlpha), 1));
-        p.drawLine(x, 1, x + w - 1, 1);
+        p.drawLine(x, gradTop + 1, x + w - 1, gradTop + 1);
     };
 
     paintEdgeZone(tl, leftZoneW, true);
@@ -1871,6 +1872,8 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.setPen(QColor(210, 210, 210));
         p.drawText(8, top + 23, name);
     }
+
+    p.restore();
 }
 
 void TimelineEditor::mousePressEvent(QMouseEvent *event)
@@ -1879,7 +1882,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
         QWidget::mousePressEvent(event);
         return;
     }
-    const QPoint pos = eventPos(event);
+    const QPoint pos = mapToTimelineContent(eventPos(event));
     setFocus(Qt::MouseFocusReason);
 
     if (pendingMorpherPlacement.active) {
@@ -1977,7 +1980,8 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
         } else {
             dragMode = DragMode::ScrubCursor;
         }
-    } else if (inTimelineX && pos.y() >= (rulerTop() + rulerHeight()) && pos.y() <= (height() - bottomPadding())) {
+    } else if (inTimelineX && pos.y() >= (rulerTop() + rulerHeight()) &&
+               pos.y() <= (verticalScrollPx + height() - bottomPadding())) {
         dragMode = DragMode::RegionSelect;
         regionAnchorMs = snapTimeMsForRegion(pointerMs);
         setRegionBounds(regionAnchorMs, regionAnchorMs);
@@ -1996,7 +2000,7 @@ void TimelineEditor::mouseDoubleClickEvent(QMouseEvent *event)
         event->accept();
         return;
     }
-    const QPoint pos = eventPos(event);
+    const QPoint pos = mapToTimelineContent(eventPos(event));
     const int morpherHit = morpherEventIdAt(pos);
     if (morpherHit >= 0) {
         selectedMorpherId = morpherHit;
@@ -2035,18 +2039,19 @@ void TimelineEditor::mouseDoubleClickEvent(QMouseEvent *event)
 
 void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
 {
-    const QPoint pos = eventPos(event);
-    if (lastHoverPos != pos) {
-        lastHoverPos = pos;
+    const QPoint wpos = eventPos(event);
+    if (lastHoverPos != wpos) {
+        lastHoverPos = wpos;
         int xle = timelineLeft();
         int xrs = timelineRight();
         edgeScrollZoneBounds(&xle, &xrs);
         const int tl = timelineLeft();
         const int tr = timelineRight();
-        if ((pos.x() >= tl && pos.x() < xle) || (pos.x() > xrs && pos.x() <= tr)) {
+        if ((wpos.x() >= tl && wpos.x() < xle) || (wpos.x() > xrs && wpos.x() <= tr)) {
             update();
         }
     }
+    const QPoint pos = mapToTimelineContent(wpos);
     if (!(event->buttons() & Qt::LeftButton) || dragMode == DragMode::None) {
         if (pendingMorpherPlacement.active) {
             const int trIdx = trackIndexAtY(pos.y());
@@ -2236,9 +2241,17 @@ void TimelineEditor::keyPressEvent(QKeyEvent *event)
     QWidget::keyPressEvent(event);
 }
 
+void TimelineEditor::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    clampVerticalScroll();
+    emit timelineViewLayoutChanged();
+}
+
 void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
 {
-    const int markerIdx = markerIndexAt(event->pos());
+    const QPoint menuPos = mapToTimelineContent(event->pos());
+    const int markerIdx = markerIndexAt(menuPos);
     if (markerIdx >= 0) {
         QMenu menu(this);
         QAction *deleteMarkerAction = menu.addAction("Delete marker");
@@ -2252,7 +2265,7 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         return;
     }
 
-    const int morpherHit = morpherEventIdAt(event->pos());
+    const int morpherHit = morpherEventIdAt(menuPos);
     if (morpherHit >= 0) {
         selectedMorpherId = morpherHit;
         selectedClipId = -1;
@@ -2272,8 +2285,8 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         return;
     }
 
-    const int id = clipIdAt(event->pos());
-    const int clickTrack = trackIndexAtY(event->pos().y());
+    const int id = clipIdAt(menuPos);
+    const int clickTrack = trackIndexAtY(menuPos.y());
     const bool regionUseful = hasRegionSelection && regionEndMs > regionStartMs;
 
     auto runRegionShift = [&](bool allTracks) {
@@ -2422,7 +2435,7 @@ void TimelineEditor::dragMoveEvent(QDragMoveEvent *event)
 void TimelineEditor::dropEvent(QDropEvent *event)
 {
     if (pendingMorpherPlacement.active) {
-        const QPoint pos = eventPos(event);
+        const QPoint pos = mapToTimelineContent(eventPos(event));
         int trackIdx = trackIndexAtY(pos.y());
         if (trackIdx < 0 || trackIdx >= static_cast<int>(tracks.size()) ||
             tracks[static_cast<size_t>(trackIdx)].type != TrackType::Morpher) {
@@ -2445,7 +2458,7 @@ void TimelineEditor::dropEvent(QDropEvent *event)
         return;
     }
 
-    const QPoint pos = eventPos(event);
+    const QPoint pos = mapToTimelineContent(eventPos(event));
     const qint64 dropStartMs = snapTimeMs(xToTimeMs(pos.x()));
     const int dropY = pos.y();
 
@@ -2501,7 +2514,7 @@ int TimelineEditor::timelineLeft() const
 
 int TimelineEditor::timelineRight() const
 {
-    return width() - 12;
+    return width() - 2;
 }
 
 int TimelineEditor::rulerTop() const
@@ -2545,6 +2558,50 @@ int TimelineEditor::contentBottom() const
 int TimelineEditor::bottomPadding() const
 {
     return 8;
+}
+
+QPoint TimelineEditor::mapToTimelineContent(const QPoint &widgetPos) const
+{
+    return QPoint(widgetPos.x(), widgetPos.y() + verticalScrollPx);
+}
+
+int TimelineEditor::timelineContentHeightPx() const
+{
+    return contentBottom() + bottomPadding();
+}
+
+int TimelineEditor::timelineVerticalScroll() const
+{
+    return verticalScrollPx;
+}
+
+void TimelineEditor::setTimelineVerticalScroll(int px)
+{
+    const int cap = std::max(0, timelineContentHeightPx() - height());
+    const int v = std::clamp(px, 0, cap);
+    if (v == verticalScrollPx) {
+        return;
+    }
+    verticalScrollPx = v;
+    emit timelineVerticalScrollChanged(v);
+    update();
+}
+
+void TimelineEditor::clampVerticalScroll()
+{
+    const int cap = std::max(0, timelineContentHeightPx() - height());
+    const int v = std::clamp(verticalScrollPx, 0, cap);
+    if (v != verticalScrollPx) {
+        verticalScrollPx = v;
+        emit timelineVerticalScrollChanged(v);
+    }
+}
+
+void TimelineEditor::contentGeometryUpdated()
+{
+    clampVerticalScroll();
+    emit timelineViewLayoutChanged();
+    update();
 }
 
 double TimelineEditor::pixelsPerSecond() const
@@ -2857,7 +2914,7 @@ double TimelineEditor::edgeScrollStrength(int mouseX, int tl, int tr, int xLeftE
 
 int TimelineEditor::markerIndexAt(const QPoint &pos) const
 {
-    const int rulerBottom = rulerTop() + 10;
+    const int rulerBottom = rulerTop() + rulerHeight();
     if (pos.y() < rulerTop() || pos.y() > rulerBottom) {
         return -1;
     }

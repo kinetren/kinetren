@@ -42,11 +42,14 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QSizePolicy>
 #include <QPair>
 #include <QPointer>
 #include <QVector>
 #include <QCloseEvent>
 #include <QIcon>
+#include <QGraphicsDropShadowEffect>
+#include <QResizeEvent>
 
 #include <QtGlobal>
 
@@ -58,8 +61,67 @@
 #include <vector>
 
 namespace {
+
 constexpr int kTimelineUiTickMs = 8;
-}
+constexpr int kTimelineVScrollPx = 14;
+
+/// Editor + vertical scrollbar + bottom tool strip overlaid on the editor (tracks stay visible underneath).
+class TimelineStackHost final : public QWidget
+{
+public:
+    explicit TimelineStackHost(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    }
+
+    void setLayers(QWidget *editor, QScrollBar *vsb, QWidget *chrome)
+    {
+        ed = editor;
+        vs = vsb;
+        chromeBar = chrome;
+        if (ed) {
+            ed->setParent(this);
+        }
+        if (vs) {
+            vs->setParent(this);
+            vs->setFixedWidth(kTimelineVScrollPx);
+        }
+        if (chromeBar) {
+            chromeBar->setParent(this);
+        }
+        relayoutChrome();
+    }
+
+protected:
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QWidget::resizeEvent(event);
+        relayoutChrome();
+    }
+
+private:
+    void relayoutChrome()
+    {
+        if (!ed || !vs || !chromeBar) {
+            return;
+        }
+        const int w = width();
+        const int h = height();
+        const int vsW = vs->width();
+        const int ch = std::max(chromeBar->minimumSizeHint().height(), chromeBar->sizeHint().height());
+        vs->setGeometry(w - vsW, 0, vsW, h);
+        ed->setGeometry(0, 0, w - vsW, h);
+        chromeBar->setGeometry(0, std::max(0, h - ch), w - vsW, ch);
+        chromeBar->raise();
+    }
+
+    QWidget *ed = nullptr;
+    QScrollBar *vs = nullptr;
+    QWidget *chromeBar = nullptr;
+};
+
+} // namespace
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -239,37 +301,31 @@ void MainWindow::setupTimelineEditorUi()
     previewLayout->addLayout(previewControls);
 
     auto *timelineLayout = new QVBoxLayout(ui->widget_2);
-    timelineLayout->setContentsMargins(pad, 0, pad, qMax(2, qRound(4.0 * dpiScale)));
+    timelineLayout->setContentsMargins(0, 0, pad, qMax(2, qRound(4.0 * dpiScale)));
     timelineLayout->setSpacing(qMax(2, qRound(3.0 * dpiScale)));
 
     auto *globalCounterWidget = new QWidget(ui->splitter_2);
     globalCounterWidget->setObjectName(QStringLiteral("TimelineTimeStrip"));
+    globalCounterWidget->setAttribute(Qt::WA_StyledBackground, true);
     globalCounterWidget->setMinimumHeight(qMax(28, qRound(26.0 * dpiScale)));
     globalCounterWidget->setMaximumHeight(qMax(40, qRound(52.0 * dpiScale)));
     auto *globalCounterLayout = new QHBoxLayout(globalCounterWidget);
-    globalCounterLayout->setContentsMargins(0, 0, 0, 0);
-    globalCounterLayout->setSpacing(qMax(6, qRound(8.0 * dpiScale)));
     {
-        const int pt = qMax(4, qRound(5.0 * dpiScale));
-        const int pr = pad;
-        const int pb = pt;
-        const int pl = padL;
-        globalCounterWidget->setStyleSheet(QStringLiteral(
-                                               "#TimelineTimeStrip {\n"
-                                               "  background-color:#1b1d20;\n"
-                                               "  color:#cfd6df;\n"
-                                               "  padding: %1px %2px %3px %4px;\n"
-                                               "  border-bottom:1px solid #343a42;\n"
-                                               "}\n"
-                                               "#TimelineTimeStrip QLabel { color:#cfd6df; background:transparent; }\n"
-                                               "#TimelineTimeStrip QLabel#TimelineGlobalTimeValue {\n"
-                                               "  font-weight:600; color:#d9e3ef;\n"
-                                               "}")
-                                           .arg(pt)
-                                           .arg(pr)
-                                           .arg(pb)
-                                           .arg(pl));
+        const int pv = qMax(4, qRound(5.0 * dpiScale));
+        const int stripLeft = qMax(10, qRound(14.0 * dpiScale));
+        globalCounterLayout->setContentsMargins(stripLeft, pv, pad, pv);
     }
+    globalCounterLayout->setSpacing(qMax(6, qRound(8.0 * dpiScale)));
+    globalCounterWidget->setStyleSheet(QStringLiteral(
+        "#TimelineTimeStrip {\n"
+        "  background-color:#1b1d20;\n"
+        "  color:#cfd6df;\n"
+        "  border-bottom:1px solid #343a42;\n"
+        "}\n"
+        "#TimelineTimeStrip QLabel { color:#cfd6df; background:transparent; }\n"
+        "#TimelineTimeStrip QLabel#TimelineGlobalTimeValue {\n"
+        "  font-weight:600; color:#d9e3ef;\n"
+        "}"));
     timelineGlobalTimeLabel = new QLabel("00:00:00.000 F00", globalCounterWidget);
     timelineGlobalTimeLabel->setObjectName(QStringLiteral("TimelineGlobalTimeValue"));
     globalCounterLayout->addWidget(new QLabel("Timeline time:", globalCounterWidget));
@@ -284,14 +340,23 @@ void MainWindow::setupTimelineEditorUi()
         ui->splitter_2->setStretchFactor(timelinePaneIndex, 2);
     }
 
-    timelineEditor = new TimelineEditor(ui->widget_2);
-    timelineLayout->addWidget(timelineEditor, 1);
+    auto *timelineStackHost = new TimelineStackHost(ui->widget_2);
+    timelineLayout->addWidget(timelineStackHost, 1);
+
+    timelineEditor = new TimelineEditor(timelineStackHost);
+    timelineScrollBarV = new QScrollBar(Qt::Vertical, timelineStackHost);
+    timelineScrollBarV->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    timelineScrollBarV->setFixedWidth(kTimelineVScrollPx);
+
+    auto *timelineChrome = new QWidget(timelineStackHost);
+    timelineChrome->setObjectName(QStringLiteral("TimelineToolChrome"));
+    timelineChrome->setAttribute(Qt::WA_TranslucentBackground, true);
+    auto *controlsLayout = new QHBoxLayout(timelineChrome);
+    controlsLayout->setContentsMargins(pad, 3, pad, 5);
+    controlsLayout->setSpacing(qMax(3, qRound(4.0 * dpiScale)));
+
     timelineScrollBar = new QScrollBar(Qt::Horizontal, ui->widget_2);
     timelineLayout->addWidget(timelineScrollBar);
-
-    auto *controlsLayout = new QHBoxLayout();
-    controlsLayout->setContentsMargins(padL, pad, pad, pad);
-    controlsLayout->setSpacing(qMax(3, qRound(4.0 * dpiScale)));
     ui->widget_2->setStyleSheet(
         "QWidget { background-color:#1b1d20; color:#cfd6df; }"
         "QLabel { color:#cfd6df; background-color:transparent; }"
@@ -304,27 +369,32 @@ void MainWindow::setupTimelineEditorUi()
         "QScrollBar::handle:horizontal:hover { background-color:#4a5666; }"
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; background:transparent; }"
         "QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background-color:#1f2328; }"
+        "QScrollBar:vertical { background-color:#17191c; width:14px; max-width:14px; min-width:14px; margin:0; border:1px solid #2a2f35; }"
+        "QScrollBar::handle:vertical { background-color:#3a4350; min-height:28px; border-radius:4px; }"
+        "QScrollBar::handle:vertical:hover { background-color:#4a5666; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; background:transparent; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background-color:#1f2328; }"
         "QToolTip { background-color:#22262b; color:#d7dee8; border:1px solid #3b4350; }");
-    timelinePauseButton = new QToolButton(ui->widget_2);
-    auto *markerButton = new QToolButton(ui->widget_2);
-    auto *addVideoTrackButton = new QToolButton(ui->widget_2);
-    auto *addAudioTrackButton = new QToolButton(ui->widget_2);
-    auto *addMorpherTrackButton = new QToolButton(ui->widget_2);
-    auto *placeMorpherButton = new QToolButton(ui->widget_2);
-    auto *splitButton = new QToolButton(ui->widget_2);
-    auto *copyButton = new QToolButton(ui->widget_2);
-    auto *pasteButton = new QToolButton(ui->widget_2);
-    auto *trimStartButton = new QToolButton(ui->widget_2);
-    auto *trimEndButton = new QToolButton(ui->widget_2);
-    auto *moveTrackUpButton = new QToolButton(ui->widget_2);
-    auto *moveTrackDownButton = new QToolButton(ui->widget_2);
-    auto *zoomOutButton = new QToolButton(ui->widget_2);
-    auto *zoomInButton = new QToolButton(ui->widget_2);
-    auto *setRegionStartButton = new QToolButton(ui->widget_2);
-    auto *setRegionEndButton = new QToolButton(ui->widget_2);
-    auto *clearRegionButton = new QToolButton(ui->widget_2);
-    auto *renderDraftButton = new QToolButton(ui->widget_2);
-    timelineLoopButton = new QToolButton(ui->widget_2);
+    timelinePauseButton = new QToolButton(timelineChrome);
+    auto *markerButton = new QToolButton(timelineChrome);
+    auto *addVideoTrackButton = new QToolButton(timelineChrome);
+    auto *addAudioTrackButton = new QToolButton(timelineChrome);
+    auto *addMorpherTrackButton = new QToolButton(timelineChrome);
+    auto *placeMorpherButton = new QToolButton(timelineChrome);
+    auto *splitButton = new QToolButton(timelineChrome);
+    auto *copyButton = new QToolButton(timelineChrome);
+    auto *pasteButton = new QToolButton(timelineChrome);
+    auto *trimStartButton = new QToolButton(timelineChrome);
+    auto *trimEndButton = new QToolButton(timelineChrome);
+    auto *moveTrackUpButton = new QToolButton(timelineChrome);
+    auto *moveTrackDownButton = new QToolButton(timelineChrome);
+    auto *zoomOutButton = new QToolButton(timelineChrome);
+    auto *zoomInButton = new QToolButton(timelineChrome);
+    auto *setRegionStartButton = new QToolButton(timelineChrome);
+    auto *setRegionEndButton = new QToolButton(timelineChrome);
+    auto *clearRegionButton = new QToolButton(timelineChrome);
+    auto *renderDraftButton = new QToolButton(timelineChrome);
+    timelineLoopButton = new QToolButton(timelineChrome);
 
     timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
     timelinePauseButton->setToolTip("Play/Pause (Space)");
@@ -400,7 +470,7 @@ void MainWindow::setupTimelineEditorUi()
     configureToolButton(renderDraftButton);
     configureToolButton(timelineLoopButton);
 
-    timelineOverlayLabel = new QLabel("Overlay @ 0.00s | Video layers: 0 | Audio layers: 0", ui->widget_2);
+    timelineOverlayLabel = new QLabel("Overlay @ 0.00s | Video layers: 0 | Audio layers: 0", timelineChrome);
     controlsLayout->addWidget(timelinePauseButton);
     controlsLayout->addWidget(markerButton);
     controlsLayout->addWidget(addVideoTrackButton);
@@ -422,7 +492,22 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(renderDraftButton);
     controlsLayout->addWidget(timelineLoopButton);
     controlsLayout->addWidget(timelineOverlayLabel, 1);
-    timelineLayout->addLayout(controlsLayout);
+
+    timelineChrome->setMinimumHeight(buttonH + qMax(8, qRound(10.0 * dpiScale)));
+    timelineChrome->setStyleSheet(QStringLiteral(
+        "QWidget#TimelineToolChrome {\n"
+        "  background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+        "    stop:0 rgba(27,29,32,238), stop:0.38 rgba(27,29,32,160), stop:0.72 rgba(27,29,32,75), stop:1 rgba(27,29,32,0));\n"
+        "  border-top: 1px solid #4a5563;\n"
+        "}\n"
+        "QWidget#TimelineToolChrome QLabel { color:#cfd6df; background:transparent; }"));
+    auto *chromeShadow = new QGraphicsDropShadowEffect(timelineChrome);
+    chromeShadow->setBlurRadius(28);
+    chromeShadow->setColor(QColor(0, 0, 0, 150));
+    chromeShadow->setOffset(0, 7);
+    timelineChrome->setGraphicsEffect(chromeShadow);
+
+    timelineStackHost->setLayers(timelineEditor, timelineScrollBarV, timelineChrome);
 
     timelineTimer.setInterval(kTimelineUiTickMs);
     timelineTimer.setTimerType(Qt::PreciseTimer);
@@ -495,6 +580,7 @@ void MainWindow::setupTimelineEditorUi()
     });
     connect(timelineEditor, &TimelineEditor::timelineContentChanged, this, [this]() {
         pruneMorpherWindows();
+        refreshTimelineVerticalScroll();
         if (!playbackPipeline) {
             return;
         }
@@ -601,6 +687,20 @@ void MainWindow::setupTimelineEditorUi()
         if (timelineEditor) {
             timelineEditor->setViewStartMs(static_cast<qint64>(value));
         }
+    });
+    connect(timelineScrollBarV, &QScrollBar::valueChanged, this, [this](int value) {
+        if (timelineEditor) {
+            timelineEditor->setTimelineVerticalScroll(value);
+        }
+    });
+    connect(timelineEditor, &TimelineEditor::timelineViewLayoutChanged, this, &MainWindow::refreshTimelineVerticalScroll);
+    connect(timelineEditor, &TimelineEditor::timelineVerticalScrollChanged, this, [this](int v) {
+        if (!timelineScrollBarV) {
+            return;
+        }
+        timelineScrollBarV->blockSignals(true);
+        timelineScrollBarV->setValue(v);
+        timelineScrollBarV->blockSignals(false);
     });
     connect(previewQualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
         switch (index) {
@@ -743,6 +843,7 @@ void MainWindow::setupTimelineEditorUi()
     statusBar()->showMessage("Ready. Hover controls to see action hints.", 2500);
 
     refreshTimelineScroll();
+    refreshTimelineVerticalScroll();
     refreshPerformancePanel();
     restoreUiState();
 }
@@ -943,6 +1044,27 @@ void MainWindow::refreshTimelineScroll()
     timelineScrollBar->setPageStep(static_cast<int>(std::min<qint64>(INT_MAX, page)));
     timelineScrollBar->setValue(static_cast<int>(std::min<qint64>(INT_MAX, timelineEditor->viewStartMs())));
     timelineScrollBar->blockSignals(false);
+}
+
+void MainWindow::refreshTimelineVerticalScroll()
+{
+    if (!timelineEditor || !timelineScrollBarV) {
+        return;
+    }
+    const int contentH = timelineEditor->timelineContentHeightPx();
+    const int viewH = timelineEditor->height();
+    const int maxScroll = std::max(0, contentH - viewH);
+    timelineScrollBarV->blockSignals(true);
+    timelineScrollBarV->setVisible(maxScroll > 0);
+    timelineScrollBarV->setRange(0, maxScroll);
+    timelineScrollBarV->setPageStep(std::max(1, viewH - 24));
+    timelineScrollBarV->setSingleStep(20);
+    const int clamped = std::clamp(timelineEditor->timelineVerticalScroll(), 0, maxScroll);
+    timelineScrollBarV->setValue(clamped);
+    timelineScrollBarV->blockSignals(false);
+    if (clamped != timelineEditor->timelineVerticalScroll()) {
+        timelineEditor->setTimelineVerticalScroll(clamped);
+    }
 }
 
 void MainWindow::stopMediaPlayback()

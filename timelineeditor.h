@@ -11,6 +11,7 @@
 #include <QSet>
 #include <QKeyEvent>
 #include <QWheelEvent>
+#include <QResizeEvent>
 #include <QEvent>
 
 #include <optional>
@@ -111,6 +112,10 @@ public:
     bool hasMorpherEvent(int morpherEventId) const;
     QString morpherTargetsDescription(int morpherEventId) const;
 
+    int timelineContentHeightPx() const;
+    int timelineVerticalScroll() const;
+    void setTimelineVerticalScroll(int px);
+
 signals:
     void cursorChanged(qint64 cursorMs);
     void overlayInfoChanged(const QString &text);
@@ -126,6 +131,8 @@ signals:
     void replaceSourcePanelRequestedForMorpher(int morpherEventId);
     void sourceOffsetPanelRequestedForMorpher(int morpherEventId);
     void morpherEditWindowRequested(int morpherEventId);
+    void timelineViewLayoutChanged();
+    void timelineVerticalScrollChanged(int px);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -140,6 +147,7 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
     void leaveEvent(QEvent *event) override;
     void keyPressEvent(QKeyEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     enum class TrackType {
@@ -224,6 +232,7 @@ private:
     QString lastOverlayInfo;
     double zoomLevel = 1.0;
     int timelineFps = 30;
+    int verticalScrollPx = 0;
 
     struct PendingMorpherPlacement {
         bool active = false;
@@ -252,6 +261,9 @@ private:
     int trackTop(int trackIndex) const;
     int contentBottom() const;
     int bottomPadding() const;
+    QPoint mapToTimelineContent(const QPoint &widgetPos) const;
+    void clampVerticalScroll();
+    void contentGeometryUpdated();
     double pixelsPerSecond() const;
 
     qint64 xToTimeMs(int x) const;
