@@ -19,6 +19,7 @@ QT_END_NAMESPACE
 class PlaybackPipeline;
 class PerformanceWidget;
 class QCloseEvent;
+class QEvent;
 class QDockWidget;
 class SourceReplacePanel;
 class SourceOffsetPanel;
@@ -59,6 +60,7 @@ private:
     void pruneMorpherWindows();
 
 protected:
+    void changeEvent(QEvent *event) override;
     void closeEvent(QCloseEvent *event) override;
 
     class SourceAreaWidget *sourceArea = nullptr;

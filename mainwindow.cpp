@@ -16,6 +16,7 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QMessageBox>
+#include <QCursor>
 #include <QGuiApplication>
 #include <QDateTime>
 #include <QDir>
@@ -37,6 +38,7 @@
 #include <QStyle>
 #include <QStatusBar>
 #include <QSplitter>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QPair>
@@ -1316,6 +1318,51 @@ QString MainWindow::defaultAutosaveProjectPath() const
     return dir.filePath("autosave-project.kpproj.json");
 }
 
+namespace {
+
+void placeMorpherWindowTitlebarUnderCursor(MorpherEditWindow *w)
+{
+    if (!w || !w->isVisible()) {
+        return;
+    }
+    QScreen *screen = QGuiApplication::screenAt(QCursor::pos());
+    if (!screen) {
+        screen = QGuiApplication::primaryScreen();
+    }
+    const QRect avail = screen->availableGeometry();
+
+    const QRect fr = w->frameGeometry();
+    const QRect gr = w->geometry();
+    int titleDepth = gr.top() - fr.top();
+    if (titleDepth <= 0) {
+        titleDepth = w->style()->pixelMetric(QStyle::PM_TitleBarHeight, nullptr, w);
+        titleDepth = std::max(titleDepth, 24);
+    }
+    const QPoint anchor(fr.left() + fr.width() / 2, fr.top() + titleDepth / 2);
+
+    const QPoint d = QCursor::pos() - anchor;
+    w->move(w->pos() + d);
+
+    QRect f = w->frameGeometry();
+    int dx = 0;
+    int dy = 0;
+    if (f.left() < avail.left()) {
+        dx = avail.left() - f.left();
+    } else if (f.right() > avail.right()) {
+        dx = avail.right() - f.right();
+    }
+    if (f.top() < avail.top()) {
+        dy = avail.top() - f.top();
+    } else if (f.bottom() > avail.bottom()) {
+        dy = avail.bottom() - f.bottom();
+    }
+    if (dx != 0 || dy != 0) {
+        w->move(w->pos() + QPoint(dx, dy));
+    }
+}
+
+} // namespace
+
 void MainWindow::openMorpherEditWindow(int morpherEventId)
 {
     if (!timelineEditor || morpherEventId < 0 || !timelineEditor->hasMorpherEvent(morpherEventId)) {
@@ -1333,6 +1380,12 @@ void MainWindow::openMorpherEditWindow(int morpherEventId)
         morpherEditWindows.remove(morpherEventId);
     });
     win->show();
+    QPointer<MorpherEditWindow> winGuard(win);
+    QTimer::singleShot(0, win, [winGuard]() {
+        if (winGuard) {
+            placeMorpherWindowTitlebarUnderCursor(winGuard.data());
+        }
+    });
 }
 
 void MainWindow::pruneMorpherWindows()
@@ -1368,6 +1421,19 @@ void MainWindow::loadLastProjectOnStartup()
         }
     }
     currentProjectPath = fallbackPath;
+}
+
+void MainWindow::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::WindowActivate) {
+        const QList<MorpherEditWindow *> morphers = morpherEditWindows.values();
+        for (MorpherEditWindow *w : morphers) {
+            if (w && w->isVisible() && !w->isMinimized()) {
+                w->raise();
+            }
+        }
+    }
+    QMainWindow::changeEvent(event);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)

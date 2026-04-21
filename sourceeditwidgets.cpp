@@ -24,6 +24,7 @@
 #include <QStyle>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QWindowStateChangeEvent>
 
 namespace {
 
@@ -72,7 +73,8 @@ MorpherEditWindow::MorpherEditWindow(TimelineEditor *timeline, int morpherEventI
     , morpherId(morpherEventId)
 {
     setObjectName(QStringLiteral("MorpherEditWindow"));
-    setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint | Qt::WindowMinimizeButtonHint |
+    // Qt::Tool: no separate taskbar entry (with a parent window); stays a utility window.
+    setWindowFlags(Qt::Tool | Qt::Window | Qt::WindowCloseButtonHint | Qt::WindowMinimizeButtonHint |
                    Qt::WindowMaximizeButtonHint);
     setAttribute(Qt::WA_DeleteOnClose, true);
     setMinimumSize(410, 275);
@@ -163,6 +165,28 @@ MorpherEditWindow::MorpherEditWindow(TimelineEditor *timeline, int morpherEventI
         connect(timeline, &TimelineEditor::timelineContentChanged, this, &MorpherEditWindow::reloadFromTimeline);
     }
     reloadFromTimeline();
+}
+
+void MorpherEditWindow::changeEvent(QEvent *event)
+{
+    switch (event->type()) {
+    case QEvent::WindowActivate:
+        if (isVisible() && !isMinimized()) {
+            raise();
+        }
+        break;
+    case QEvent::WindowStateChange: {
+        auto *e = static_cast<QWindowStateChangeEvent *>(event);
+        if ((e->oldState() & Qt::WindowMinimized) && !(windowState() & Qt::WindowMinimized)) {
+            raise();
+            activateWindow();
+        }
+        break;
+    }
+    default:
+        break;
+    }
+    QWidget::changeEvent(event);
 }
 
 void MorpherEditWindow::reloadFromTimeline()
