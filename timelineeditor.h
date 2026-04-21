@@ -288,6 +288,7 @@ private:
     qint64 adjustedDragPointerMs(const QPoint &pos, bool *scrolled = nullptr);
     qint64 timelineTickStepMs() const;
     qint64 defaultDurationForPath(const QString &path) const;
+    qint64 probeSourceDurationMsUncached(const QString &path) const;
     bool isImagePath(const QString &path) const;
     bool hasVideoForPath(const QString &path) const;
     bool hasAudioForPath(const QString &path) const;
@@ -316,6 +317,8 @@ private:
     QHash<QString, std::vector<int>> peaksCache;
     QHash<QString, QVector<QPair<double, double>>> cacheSegmentsByClip;
     QVector<QPair<double, double>> timelineCacheSegments;
+    /// Avoid probing the same path repeatedly (bulk replace, morpher preview paint).
+    mutable QHash<QString, qint64> sourceDurationProbeCache;
 };
 
 #endif // TIMELINEEDITOR_H

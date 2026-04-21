@@ -1575,6 +1575,7 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     previewCacheOrder.clear();
     pendingPreviewKeys.clear();
     peaksCache.clear();
+    sourceDurationProbeCache.clear();
     cacheSegmentsByClip.clear();
     timelineCacheSegments.clear();
 
@@ -3025,7 +3026,7 @@ qint64 TimelineEditor::timelineTickStepMs() const
     return steps[sizeof(steps) / sizeof(steps[0]) - 1];
 }
 
-qint64 TimelineEditor::defaultDurationForPath(const QString &path) const
+qint64 TimelineEditor::probeSourceDurationMsUncached(const QString &path) const
 {
     if (isImagePath(path)) {
         return 3000;
@@ -3051,6 +3052,20 @@ qint64 TimelineEditor::defaultDurationForPath(const QString &path) const
         }
     }
     return 5000;
+}
+
+qint64 TimelineEditor::defaultDurationForPath(const QString &path) const
+{
+    if (path.isEmpty()) {
+        return 5000;
+    }
+    const auto it = sourceDurationProbeCache.constFind(path);
+    if (it != sourceDurationProbeCache.constEnd()) {
+        return it.value();
+    }
+    const qint64 ms = probeSourceDurationMsUncached(path);
+    sourceDurationProbeCache.insert(path, ms);
+    return ms;
 }
 
 bool TimelineEditor::isImagePath(const QString &path) const
