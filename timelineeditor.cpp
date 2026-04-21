@@ -40,7 +40,8 @@
 
 namespace {
 constexpr qint64 kSnapThresholdMs = 100;
-constexpr qint64 kMinClipDurationMs = 80;
+// Allow near frame-accurate cuts (1 ms ≈ sub-frame at high zoom; copy/trim/split use this floor).
+constexpr qint64 kMinClipDurationMs = 1;
 constexpr int kTrimHandlePx = 7;
 constexpr qint64 kEdgeScrollStepMs = 80;
 constexpr int kRulerTargetTickPx = 130;
@@ -1244,7 +1245,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
         }
     } else if (inTimelineX && pos.y() >= (rulerTop() + rulerHeight()) && pos.y() <= (height() - bottomPadding())) {
         dragMode = DragMode::RegionSelect;
-        regionAnchorMs = snapTimeMs(pointerMs);
+        regionAnchorMs = snapTimeMsForRegion(pointerMs);
         setRegionBounds(regionAnchorMs, regionAnchorMs);
     }
 
@@ -1311,6 +1312,7 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
 
     const qint64 pointerMsRaw = adjustedDragPointerMs(pos);
     const qint64 pointerMs = snapTimeMs(pointerMsRaw);
+    const qint64 pointerMsRegion = snapTimeMsForRegion(pointerMsRaw);
     ClipEvent *clip = findClipById(dragClipId);
     if (dragMode == DragMode::ScrubCursor) {
         setCursorMs(pointerMs);
@@ -1395,18 +1397,18 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         }
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::MoveRegionStart) {
-        setCursorMs(pointerMs);
+        setCursorMs(pointerMsRegion);
         if (hasRegionSelection) {
-            setRegionBounds(pointerMs, regionEndMs);
+            setRegionBounds(pointerMsRegion, regionEndMs);
         }
     } else if (dragMode == DragMode::MoveRegionEnd) {
-        setCursorMs(pointerMs);
+        setCursorMs(pointerMsRegion);
         if (hasRegionSelection) {
-            setRegionBounds(regionStartMs, pointerMs);
+            setRegionBounds(regionStartMs, pointerMsRegion);
         }
     } else if (dragMode == DragMode::RegionSelect) {
-        setCursorMs(pointerMs);
-        setRegionBounds(regionAnchorMs, pointerMs);
+        setCursorMs(pointerMsRegion);
+        setRegionBounds(regionAnchorMs, pointerMsRegion);
     }
     emitOverlayInfo();
     update();
@@ -1877,6 +1879,36 @@ qint64 TimelineEditor::snapTimeMs(qint64 candidateMs) const
     qint64 best = candidateMs;
     const qint64 pxThresholdMs = static_cast<qint64>((kCursorMagnetPx / std::max(1.0, pixelsPerSecond())) * 1000.0);
     const qint64 dynamicThresholdMs = std::clamp<qint64>(pxThresholdMs, 12, kSnapThresholdMs);
+    qint64 bestDistance = dynamicThresholdMs + 1;
+    const auto consider = [&](qint64 v) {
+        const qint64 d = std::llabs(v - candidateMs);
+        if (d <= dynamicThresholdMs && d < bestDistance) {
+            bestDistance = d;
+            best = v;
+        }
+    };
+
+    for (const auto &clip : clips) {
+        consider(clip.startMs);
+        consider(clip.startMs + clip.durationMs);
+    }
+    for (qint64 marker : markersMs) {
+        consider(marker);
+    }
+    if (hasRegionSelection) {
+        consider(regionStartMs);
+        consider(regionEndMs);
+    }
+
+    return std::max<qint64>(0, best);
+}
+
+qint64 TimelineEditor::snapTimeMsForRegion(qint64 candidateMs) const
+{
+    qint64 best = candidateMs;
+    const qint64 pxThresholdMs =
+        static_cast<qint64>((kCursorMagnetPx / std::max(1.0, pixelsPerSecond())) * 1000.0);
+    const qint64 dynamicThresholdMs = std::clamp<qint64>(pxThresholdMs, 1, 8);
     qint64 bestDistance = dynamicThresholdMs + 1;
     const auto consider = [&](qint64 v) {
         const qint64 d = std::llabs(v - candidateMs);

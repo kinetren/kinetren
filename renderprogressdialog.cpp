@@ -15,7 +15,8 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
 {
     setWindowTitle("Render to MP4");
     setModal(true);
-    resize(560, 420);
+    resize(920, 640);
+    setMinimumSize(720, 520);
 
     m_cancelFlag = std::make_shared<std::atomic<bool>>(false);
     m_pauseFlag = std::make_shared<std::atomic<bool>>(false);
@@ -32,7 +33,7 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
     m_log = new QPlainTextEdit(this);
     m_log->setReadOnly(true);
     m_log->setMaximumBlockCount(800);
-    m_log->setFont(QFont(QStringLiteral("monospace"), 9));
+    m_log->setFont(QFont(QStringLiteral("monospace"), 10));
 
     m_pauseBtn = new QPushButton(tr("Pause"), this);
     m_cancelBtn = new QPushButton(tr("Cancel"), this);

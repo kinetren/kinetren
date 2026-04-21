@@ -206,6 +206,7 @@ private:
     qint64 edgeScrollMarginMs() const;
     void refreshTimelineRangeSignals();
     qint64 snapTimeMs(qint64 candidateMs) const;
+    qint64 snapTimeMsForRegion(qint64 candidateMs) const;
     qint64 adjustedDragPointerMs(const QPoint &pos, bool *scrolled = nullptr);
     qint64 timelineTickStepMs() const;
     qint64 defaultDurationForPath(const QString &path) const;
