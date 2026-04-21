@@ -33,6 +33,10 @@ set(PROJECT_SOURCES
         speedchartwidget.h
         timelineeditor.cpp
         timelineeditor.h
+        timeline_snowflake.cpp
+        timeline_snowflake.h
+        sourceeditwidgets.cpp
+        sourceeditwidgets.h
         sourceareawidget.cpp
         sourceareawidget.h
         burstcon.cpp

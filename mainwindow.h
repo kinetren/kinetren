@@ -18,6 +18,9 @@ QT_END_NAMESPACE
 class PlaybackPipeline;
 class PerformanceWidget;
 class QCloseEvent;
+class QDockWidget;
+class SourceReplacePanel;
+class SourceOffsetPanel;
 
 class MainWindow : public QMainWindow
 {
@@ -80,6 +83,11 @@ protected:
     QString currentProjectPath;
     QTimer autosaveTimer;
     bool renderInProgress = false;
+
+    SourceReplacePanel *sourceReplacePanel = nullptr;
+    SourceOffsetPanel *sourceOffsetPanel = nullptr;
+    QDockWidget *replaceSourceDock = nullptr;
+    QDockWidget *sourceOffsetDock = nullptr;
 
     Ui::MainWindow *ui;
 };

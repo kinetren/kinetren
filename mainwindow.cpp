@@ -7,6 +7,9 @@
 #include "previewer.h"
 #include "sourceareawidget.h"
 #include "timelineeditor.h"
+#include "sourceeditwidgets.h"
+
+#include <QDockWidget>
 
 #include <QHBoxLayout>
 #include <QCheckBox>
@@ -226,6 +229,8 @@ void MainWindow::setupTimelineEditorUi()
     auto *markerButton = new QToolButton(ui->widget_2);
     auto *addVideoTrackButton = new QToolButton(ui->widget_2);
     auto *addAudioTrackButton = new QToolButton(ui->widget_2);
+    auto *addMorpherTrackButton = new QToolButton(ui->widget_2);
+    auto *placeMorpherButton = new QToolButton(ui->widget_2);
     auto *splitButton = new QToolButton(ui->widget_2);
     auto *copyButton = new QToolButton(ui->widget_2);
     auto *pasteButton = new QToolButton(ui->widget_2);
@@ -249,6 +254,10 @@ void MainWindow::setupTimelineEditorUi()
     addVideoTrackButton->setToolTip("Add video track");
     addAudioTrackButton->setIcon(style()->standardIcon(QStyle::SP_DirIcon));
     addAudioTrackButton->setToolTip("Add audio track");
+    addMorpherTrackButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+    addMorpherTrackButton->setToolTip("Add morpher track");
+    placeMorpherButton->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
+    placeMorpherButton->setToolTip("Place morpher for selection (then drop on Morph track)");
     splitButton->setIcon(style()->standardIcon(QStyle::SP_TitleBarShadeButton));
     splitButton->setToolTip("Cut selected event (S)");
     copyButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
@@ -294,6 +303,8 @@ void MainWindow::setupTimelineEditorUi()
     configureToolButton(markerButton);
     configureToolButton(addVideoTrackButton);
     configureToolButton(addAudioTrackButton);
+    configureToolButton(addMorpherTrackButton);
+    configureToolButton(placeMorpherButton);
     configureToolButton(splitButton);
     configureToolButton(copyButton);
     configureToolButton(pasteButton);
@@ -314,6 +325,8 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(markerButton);
     controlsLayout->addWidget(addVideoTrackButton);
     controlsLayout->addWidget(addAudioTrackButton);
+    controlsLayout->addWidget(addMorpherTrackButton);
+    controlsLayout->addWidget(placeMorpherButton);
     controlsLayout->addWidget(splitButton);
     controlsLayout->addWidget(copyButton);
     controlsLayout->addWidget(pasteButton);
@@ -338,6 +351,8 @@ void MainWindow::setupTimelineEditorUi()
     connect(markerButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addMarkerAtCursor);
     connect(addVideoTrackButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addVideoTrack);
     connect(addAudioTrackButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addAudioTrack);
+    connect(addMorpherTrackButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addMorpherTrack);
+    connect(placeMorpherButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::beginMorpherPlacementFromSelection);
     connect(splitButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::splitSelectedClipAtCursor);
     connect(trimStartButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::trimSelectedClipStartToCursor);
     connect(trimEndButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::trimSelectedClipEndToCursor);
@@ -405,6 +420,74 @@ void MainWindow::setupTimelineEditorUi()
         schedulePlaybackSync();
         schedulePerformancePanelRefresh();
     });
+
+    sourceReplacePanel = new SourceReplacePanel(timelineEditor, this);
+    replaceSourceDock = new QDockWidget(tr("Replace source"), this);
+    replaceSourceDock->setObjectName(QStringLiteral("ReplaceSourceDock"));
+    replaceSourceDock->setWidget(sourceReplacePanel);
+    replaceSourceDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    addDockWidget(Qt::RightDockWidgetArea, replaceSourceDock);
+    replaceSourceDock->hide();
+
+    sourceOffsetPanel = new SourceOffsetPanel(timelineEditor, this);
+    sourceOffsetDock = new QDockWidget(tr("Source offset"), this);
+    sourceOffsetDock->setObjectName(QStringLiteral("SourceOffsetDock"));
+    sourceOffsetDock->setWidget(sourceOffsetPanel);
+    sourceOffsetDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    addDockWidget(Qt::RightDockWidgetArea, sourceOffsetDock);
+    sourceOffsetDock->hide();
+
+    const auto showReplaceDock = [this]() {
+        if (replaceSourceDock) {
+            replaceSourceDock->show();
+            replaceSourceDock->raise();
+        }
+    };
+    const auto showOffsetDock = [this]() {
+        if (sourceOffsetDock) {
+            sourceOffsetDock->show();
+            sourceOffsetDock->raise();
+        }
+    };
+    connect(timelineEditor, &TimelineEditor::replaceSourcePanelRequestedForClip, this, [showReplaceDock, this](int id) {
+        if (sourceReplacePanel) {
+            sourceReplacePanel->setClipTarget(id);
+        }
+        showReplaceDock();
+    });
+    connect(timelineEditor, &TimelineEditor::replaceSourcePanelRequestedForRegion, this,
+             [showReplaceDock, this](bool allTracks, int trackIndex) {
+                 if (sourceReplacePanel) {
+                     sourceReplacePanel->setRegionTarget(allTracks, trackIndex);
+                 }
+                 showReplaceDock();
+             });
+    connect(timelineEditor, &TimelineEditor::replaceSourcePanelRequestedForMorpher, this, [showReplaceDock, this](int id) {
+        if (sourceReplacePanel) {
+            sourceReplacePanel->setMorpherTarget(id);
+        }
+        showReplaceDock();
+    });
+    connect(timelineEditor, &TimelineEditor::sourceOffsetPanelRequestedForClip, this, [showOffsetDock, this](int id) {
+        if (sourceOffsetPanel) {
+            sourceOffsetPanel->setClipTarget(id);
+        }
+        showOffsetDock();
+    });
+    connect(timelineEditor, &TimelineEditor::sourceOffsetPanelRequestedForRegion, this,
+             [showOffsetDock, this](bool allTracks, int trackIndex) {
+                 if (sourceOffsetPanel) {
+                     sourceOffsetPanel->setRegionShiftTarget(allTracks, trackIndex);
+                 }
+                 showOffsetDock();
+             });
+    connect(timelineEditor, &TimelineEditor::sourceOffsetPanelRequestedForMorpher, this, [showOffsetDock, this](int id) {
+        if (sourceOffsetPanel) {
+            sourceOffsetPanel->setMorpherTarget(id);
+        }
+        showOffsetDock();
+    });
+
     connect(timelineScrollBar, &QScrollBar::valueChanged, [this](int value) {
         if (timelineEditor) {
             timelineEditor->setViewStartMs(static_cast<qint64>(value));
@@ -506,7 +589,7 @@ void MainWindow::setupTimelineEditorUi()
             timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
             timelineEditor->deleteClipsIntersectingRegion();
         } else {
-            timelineEditor->deleteSelectedClip();
+            timelineEditor->deleteCurrentSelection();
         }
     });
     auto *backspaceShortcut = new QShortcut(QKeySequence(Qt::Key_Backspace), this);
@@ -518,7 +601,7 @@ void MainWindow::setupTimelineEditorUi()
             timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
             timelineEditor->deleteClipsIntersectingRegion();
         } else {
-            timelineEditor->deleteSelectedClip();
+            timelineEditor->deleteCurrentSelection();
         }
     });
 

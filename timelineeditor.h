@@ -17,6 +17,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <QVector>
+
 class QJsonObject;
 class QMimeData;
 
@@ -85,6 +87,28 @@ public:
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject &root);
 
+    void applyReplaceSourceToClip(int clipId, const QString &path);
+    void applyReplaceSourceToRegion(const QString &path, bool allTracks, int trackIndex);
+    void applyAbsoluteSourceStartToClip(int clipId, qint64 sourceInMs);
+    void applyRegionSourceShift(qint64 deltaMs, bool allTracks, int trackIndex);
+
+    QString clipSourcePath(int clipId) const;
+    qint64 clipSourceInMs(int clipId) const;
+    static QString firstLocalPathFromMime(const QMimeData *mime);
+
+    void addMorpherTrack();
+    void beginMorpherPlacementFromSelection();
+    void bakeMorpherEvent(int morpherEventId);
+    void deleteMorpherEvent(int morpherEventId);
+    int selectedMorpherEventId() const;
+    QString morpherReplacePath(int morpherEventId) const;
+    void setMorpherReplacePath(int morpherEventId, const QString &path);
+    qint64 morpherSourceInDeltaMs(int morpherEventId) const;
+    void setMorpherSourceInDeltaMs(int morpherEventId, qint64 deltaMs);
+    qint64 morpherAbsoluteSourceInMs(int morpherEventId) const;
+    void setMorpherAbsoluteSourceInMs(int morpherEventId, qint64 ms); // pass -1 to clear
+    void deleteCurrentSelection();
+
 signals:
     void cursorChanged(qint64 cursorMs);
     void overlayInfoChanged(const QString &text);
@@ -93,6 +117,12 @@ signals:
     void loopEnabledChanged(bool enabled);
     void selectionRegionChanged(bool hasRegion, qint64 startMs, qint64 endMs);
     void timelineContentChanged();
+    void replaceSourcePanelRequestedForClip(int clipId);
+    void replaceSourcePanelRequestedForRegion(bool allTracks, int trackIndex);
+    void sourceOffsetPanelRequestedForClip(int clipId);
+    void sourceOffsetPanelRequestedForRegion(bool allTracks, int trackIndex);
+    void replaceSourcePanelRequestedForMorpher(int morpherEventId);
+    void sourceOffsetPanelRequestedForMorpher(int morpherEventId);
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -111,11 +141,13 @@ protected:
 private:
     enum class TrackType {
         Video,
-        Audio
+        Audio,
+        Morpher
     };
 
     struct ClipEvent {
         int id = 0;
+        quint64 snowflakeId = 0;
         int linkedGroupId = -1;
         TrackType mediaType = TrackType::Video;
         int trackIndex = 0;
@@ -132,6 +164,18 @@ private:
         QString name;
     };
 
+    struct MorpherEvent {
+        int id = 0;
+        quint64 morpherSnowflake = 0;
+        int trackIndex = 0;
+        qint64 startMs = 0;
+        qint64 durationMs = 1500;
+        QVector<quint64> targetClipSnowflakes;
+        QString newSourcePath;
+        qint64 sourceInDeltaMs = 0;
+        qint64 absoluteSourceInMs = -1;
+    };
+
     enum class DragMode {
         None,
         ScrubCursor,
@@ -146,12 +190,15 @@ private:
 
     std::vector<TrackLane> tracks;
     std::vector<ClipEvent> clips;
+    std::vector<MorpherEvent> morpherEvents;
     std::vector<ClipEvent> clipboardClips;
     std::vector<qint64> markersMs;
     int nextClipId = 1;
     int nextLinkedGroupId = 1;
+    int nextMorpherEventId = 1;
     qint64 cursorPositionMs = 0;
     int selectedClipId = -1;
+    int selectedMorpherId = -1;
     qint64 timelineViewStartMs = 0;
     bool loopRegionEnabled = false;
     bool hasRegionSelection = false;
@@ -177,19 +224,23 @@ private:
     double zoomLevel = 1.0;
     int timelineFps = 30;
 
-    struct PendingReplaceSource {
-        enum class Kind { None, SingleClip, Region };
-        Kind kind = Kind::None;
-        int clipId = -1;
-        bool regionAllTracks = false;
-        int regionTrackIndex = -1;
+    struct PendingMorpherPlacement {
+        bool active = false;
+        QVector<quint64> targetSnowflakes;
     };
-    PendingReplaceSource pendingReplaceSource;
+    PendingMorpherPlacement pendingMorpherPlacement;
 
-    void beginPendingReplaceSourceSingleClip(int clipId);
-    void beginPendingReplaceSourceRegion(bool allTracks, int trackIndex);
-    void clearPendingReplaceSource();
-    static QString firstLocalPathFromMime(const QMimeData *mime);
+    void clearPendingMorpherPlacement();
+
+    void ensureClipSnowflake(ClipEvent &clip);
+    ClipEvent effectiveClipForRender(const ClipEvent &base) const;
+    void applyMorpherPatchToClipCopy(ClipEvent &clip, const MorpherEvent &m) const;
+    ClipEvent *findClipBySnowflake(quint64 snowflake);
+    const ClipEvent *findClipBySnowflake(quint64 snowflake) const;
+    MorpherEvent *findMorpherById(int id);
+    const MorpherEvent *findMorpherById(int id) const;
+    QRect morpherEventRect(const MorpherEvent &m) const;
+    int morpherEventIdAt(const QPoint &pos) const;
 
     int timelineLeft() const;
     int timelineRight() const;
