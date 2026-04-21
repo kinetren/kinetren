@@ -115,6 +115,8 @@ public:
     int timelineContentHeightPx() const;
     int timelineVerticalScroll() const;
     void setTimelineVerticalScroll(int px);
+    /// Width of the left track-name column (align external chrome with the timeline).
+    int timelineTrackHeaderWidth() const { return headerWidth(); }
 
 signals:
     void cursorChanged(qint64 cursorMs);

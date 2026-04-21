@@ -64,6 +64,8 @@ namespace {
 
 constexpr int kTimelineUiTickMs = 8;
 constexpr int kTimelineVScrollPx = 14;
+/// Empty strip under the tool strip so the timeline shows through below the buttons.
+constexpr int kTimelineChromeBottomReveal = 12;
 
 /// Editor + vertical scrollbar + bottom tool strip overlaid on the editor (tracks stay visible underneath).
 class TimelineStackHost final : public QWidget
@@ -112,7 +114,8 @@ private:
         const int ch = std::max(chromeBar->minimumSizeHint().height(), chromeBar->sizeHint().height());
         vs->setGeometry(w - vsW, 0, vsW, h);
         ed->setGeometry(0, 0, w - vsW, h);
-        chromeBar->setGeometry(0, std::max(0, h - ch), w - vsW, ch);
+        const int chromeY = std::max(0, h - ch - kTimelineChromeBottomReveal);
+        chromeBar->setGeometry(0, chromeY, w - vsW, ch);
         chromeBar->raise();
     }
 
@@ -352,7 +355,8 @@ void MainWindow::setupTimelineEditorUi()
     timelineChrome->setObjectName(QStringLiteral("TimelineToolChrome"));
     timelineChrome->setAttribute(Qt::WA_TranslucentBackground, true);
     auto *controlsLayout = new QHBoxLayout(timelineChrome);
-    controlsLayout->setContentsMargins(pad, 3, pad, 5);
+    const int toolChromeLeft = timelineEditor->timelineTrackHeaderWidth() + qMax(6, qRound(8.0 * dpiScale));
+    controlsLayout->setContentsMargins(toolChromeLeft, 4, pad, 8);
     controlsLayout->setSpacing(qMax(3, qRound(4.0 * dpiScale)));
 
     timelineScrollBar = new QScrollBar(Qt::Horizontal, ui->widget_2);
@@ -493,7 +497,7 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(timelineLoopButton);
     controlsLayout->addWidget(timelineOverlayLabel, 1);
 
-    timelineChrome->setMinimumHeight(buttonH + qMax(8, qRound(10.0 * dpiScale)));
+    timelineChrome->setMinimumHeight(buttonH + qMax(12, qRound(14.0 * dpiScale)));
     timelineChrome->setStyleSheet(QStringLiteral(
         "QWidget#TimelineToolChrome {\n"
         "  background: qlineargradient(x1:0,y1:0,x2:0,y2:1,"

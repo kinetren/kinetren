@@ -59,7 +59,6 @@ constexpr double kEdgeScrollStepScale = 0.18;
 constexpr float kEdgeFillMulInactive = 0.45f;
 constexpr float kEdgeFillMulInnerBase = 0.74f;
 constexpr float kEdgeFillMulInnerRange = 0.26f;
-constexpr int kScrollGradRightInsetPx = 10;
 constexpr int kTrackLabelOverlapPx = 78;
 constexpr int kRulerTargetTickPx = 130;
 constexpr int kCursorMagnetPx = 10;
@@ -112,6 +111,42 @@ double edgeZoneHeatLinear(int mouseX, int tl, int tr, int xLeftEnd, int xRightSt
         const double span = static_cast<double>(std::max(1, leftW - 1));
         const double t = static_cast<double>(xLeftEnd - 1 - mouseX) / span;
         return std::clamp(t, 0.0, 1.0);
+    }
+    const int rightW = tr - xRightStart;
+    if (rightW > 0 && mouseX > xRightStart && mouseX <= tr) {
+        if (rightW <= 1) {
+            return 1.0;
+        }
+        const double span = static_cast<double>(std::max(1, rightW - 1));
+        const double t = static_cast<double>(mouseX - xRightStart - 1) / span;
+        return std::clamp(t, 0.0, 1.0);
+    }
+    return 0.0;
+}
+
+// Heat only for the left edge band (for painting); pointer past the left uses full heat like edgeScrollStrength.
+double edgeZoneHeatLeftOnly(int mouseX, int tl, int xLeftEnd)
+{
+    if (mouseX < tl) {
+        return 1.0;
+    }
+    const int leftW = xLeftEnd - tl;
+    if (leftW > 0 && mouseX >= tl && mouseX < xLeftEnd) {
+        if (leftW <= 1) {
+            return 1.0;
+        }
+        const double span = static_cast<double>(std::max(1, leftW - 1));
+        const double t = static_cast<double>(xLeftEnd - 1 - mouseX) / span;
+        return std::clamp(t, 0.0, 1.0);
+    }
+    return 0.0;
+}
+
+// Heat only for the right edge band.
+double edgeZoneHeatRightOnly(int mouseX, int xRightStart, int tr)
+{
+    if (mouseX > tr) {
+        return 1.0;
     }
     const int rightW = tr - xRightStart;
     if (rightW > 0 && mouseX > xRightStart && mouseX <= tr) {
@@ -1795,19 +1830,24 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     edgeScrollZoneBounds(&xLeftEnd, &xRightStart);
     const int leftZoneW = std::max(0, xLeftEnd - tl);
     const int rightX0 = xRightStart;
-    const int rightPaintEnd = std::max(tl, tr - kScrollGradRightInsetPx);
+    // Paint through the real timeline right edge so the gradient matches the scroll hit zone (no dead strip).
+    const int rightPaintEnd = tr;
     const int rightZoneW = std::max(0, rightPaintEnd - rightX0);
     const int mx = lastHoverPos.x();
-    const bool inScrollZone =
-        (mx >= tl && mx < xLeftEnd) || (mx > xRightStart && mx <= tr);
-    const double heat = edgeZoneHeatLinear(mx, tl, tr, xLeftEnd, xRightStart);
-    const float fillMul = inScrollZone
-        ? std::min(1.0f, kEdgeFillMulInnerBase + kEdgeFillMulInnerRange * static_cast<float>(heat))
+    const double heatL = edgeZoneHeatLeftOnly(mx, tl, xLeftEnd);
+    const double heatR = edgeZoneHeatRightOnly(mx, xRightStart, tr);
+    const float fillMulL = (heatL > 0.0)
+        ? std::min(1.0f, kEdgeFillMulInnerBase + kEdgeFillMulInnerRange * static_cast<float>(heatL))
         : kEdgeFillMulInactive;
-    const int stripeAlpha =
-        inScrollZone ? std::clamp(58 + static_cast<int>(128.0 * heat), 58, 210) : 36;
+    const float fillMulR = (heatR > 0.0)
+        ? std::min(1.0f, kEdgeFillMulInnerBase + kEdgeFillMulInnerRange * static_cast<float>(heatR))
+        : kEdgeFillMulInactive;
+    const int stripeAlphaL =
+        (heatL > 0.0) ? std::clamp(58 + static_cast<int>(128.0 * heatL), 58, 210) : 36;
+    const int stripeAlphaR =
+        (heatR > 0.0) ? std::clamp(58 + static_cast<int>(128.0 * heatR), 58, 210) : 36;
 
-    const auto paintEdgeZone = [&](int x, int w, bool fadeFromLeft) {
+    const auto paintEdgeZone = [&](int x, int w, bool fadeFromLeft, float fillMul, int stripeAlpha, bool hotThisSide) {
         if (w <= 0) {
             return;
         }
@@ -1830,15 +1870,15 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
             g.setColorAt(1.0, QColor(255, 178, 100, 0));
         }
         p.fillRect(QRect(x, gradTop, w, h), QBrush(g));
-        const int hairAlpha = inScrollZone ? std::min(255, 28 + stripeAlpha / 2) : 18;
+        const int hairAlpha = hotThisSide ? std::min(255, 28 + stripeAlpha / 2) : 18;
         p.setPen(QPen(QColor(255, 200, 128, hairAlpha), 1));
         p.drawLine(x, gradTop, x + w - 1, gradTop);
         p.setPen(QPen(QColor(255, 188, 110, stripeAlpha), 1));
         p.drawLine(x, gradTop + 1, x + w - 1, gradTop + 1);
     };
 
-    paintEdgeZone(tl, leftZoneW, true);
-    paintEdgeZone(rightX0, rightZoneW, false);
+    paintEdgeZone(tl, leftZoneW, true, fillMulL, stripeAlphaL, heatL > 0.0);
+    paintEdgeZone(rightX0, rightZoneW, false, fillMulR, stripeAlphaR, heatR > 0.0);
 
     for (qint64 marker : markersMs) {
         const int x = timeToX(marker);
