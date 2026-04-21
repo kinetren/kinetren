@@ -24,6 +24,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <unordered_set>
 #include <cstring>
@@ -44,8 +45,15 @@ constexpr qint64 kSnapThresholdMs = 100;
 // Allow near frame-accurate cuts (1 ms ≈ sub-frame at high zoom; copy/trim/split use this floor).
 constexpr qint64 kMinClipDurationMs = 1;
 constexpr int kTrimHandlePx = 7;
-constexpr qint64 kEdgeScrollMinStepMs = 6;
-constexpr qint64 kEdgeScrollMaxStepMs = 110;
+constexpr qint64 kEdgeScrollMinStepMs = 1;
+constexpr qint64 kEdgeScrollMaxStepMs = 42;
+/// How aggressively scroll speed ramps from inner zone (0) to screen edge (1). Higher = slower at first.
+constexpr double kEdgeScrollSpeedGamma = 4.15;
+/// Applied after gamma — each mousemove still scrolls; this keeps total speed controllable (was ~constant-feeling).
+constexpr double kEdgeScrollStepScale = 0.18;
+constexpr float kEdgeFillMulInactive = 0.45f;
+constexpr float kEdgeFillMulInnerBase = 0.74f;
+constexpr float kEdgeFillMulInnerRange = 0.26f;
 constexpr int kScrollGradRightInsetPx = 10;
 constexpr int kTrackLabelOverlapPx = 78;
 constexpr int kRulerTargetTickPx = 130;
@@ -86,6 +94,30 @@ QPoint eventPos(const QWheelEvent *event)
 #else
     return event->pos();
 #endif
+}
+
+// 0 at inner boundary of the scroll zone, 1 at the physical screen edge (linear along zone width).
+double edgeZoneHeatLinear(int mouseX, int tl, int tr, int xLeftEnd, int xRightStart)
+{
+    const int leftW = xLeftEnd - tl;
+    if (leftW > 0 && mouseX >= tl && mouseX < xLeftEnd) {
+        if (leftW <= 1) {
+            return 1.0;
+        }
+        const double span = static_cast<double>(std::max(1, leftW - 1));
+        const double t = static_cast<double>(xLeftEnd - 1 - mouseX) / span;
+        return std::clamp(t, 0.0, 1.0);
+    }
+    const int rightW = tr - xRightStart;
+    if (rightW > 0 && mouseX > xRightStart && mouseX <= tr) {
+        if (rightW <= 1) {
+            return 1.0;
+        }
+        const double span = static_cast<double>(std::max(1, rightW - 1));
+        const double t = static_cast<double>(mouseX - xRightStart - 1) / span;
+        return std::clamp(t, 0.0, 1.0);
+    }
+    return 0.0;
 }
 }
 
@@ -1136,7 +1168,14 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     const int rightPaintEnd = std::max(tl, tr - kScrollGradRightInsetPx);
     const int rightZoneW = std::max(0, rightPaintEnd - rightX0);
     const int mx = lastHoverPos.x();
-    const float edgeBoost = edgeGradientOpacityBoost(mx, tl, tr, xLeftEnd, xRightStart);
+    const bool inScrollZone =
+        (mx >= tl && mx < xLeftEnd) || (mx > xRightStart && mx <= tr);
+    const double heat = edgeZoneHeatLinear(mx, tl, tr, xLeftEnd, xRightStart);
+    const float fillMul = inScrollZone
+        ? std::min(1.0f, kEdgeFillMulInnerBase + kEdgeFillMulInnerRange * static_cast<float>(heat))
+        : kEdgeFillMulInactive;
+    const int stripeAlpha =
+        inScrollZone ? std::clamp(58 + static_cast<int>(128.0 * heat), 58, 210) : 36;
 
     const auto paintEdgeZone = [&](int x, int w, bool fadeFromLeft) {
         if (w <= 0) {
@@ -1146,22 +1185,25 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         if (fadeFromLeft) {
             g.setStart(x, 0);
             g.setFinalStop(x + w, 0);
-            g.setColorAt(0.0, QColor(255, 178, 100, static_cast<int>(34 * edgeBoost)));
-            g.setColorAt(0.25, QColor(255, 178, 100, static_cast<int>(22 * edgeBoost)));
-            g.setColorAt(0.55, QColor(255, 178, 100, static_cast<int>(12 * edgeBoost)));
-            g.setColorAt(0.82, QColor(255, 178, 100, static_cast<int>(4 * edgeBoost)));
+            g.setColorAt(0.0, QColor(255, 182, 104, static_cast<int>(56 * fillMul)));
+            g.setColorAt(0.25, QColor(255, 178, 100, static_cast<int>(38 * fillMul)));
+            g.setColorAt(0.55, QColor(255, 178, 100, static_cast<int>(22 * fillMul)));
+            g.setColorAt(0.82, QColor(255, 178, 100, static_cast<int>(10 * fillMul)));
             g.setColorAt(1.0, QColor(255, 178, 100, 0));
         } else {
             g.setStart(x + w, 0);
             g.setFinalStop(x, 0);
-            g.setColorAt(0.0, QColor(255, 178, 100, static_cast<int>(34 * edgeBoost)));
-            g.setColorAt(0.25, QColor(255, 178, 100, static_cast<int>(22 * edgeBoost)));
-            g.setColorAt(0.55, QColor(255, 178, 100, static_cast<int>(12 * edgeBoost)));
-            g.setColorAt(0.82, QColor(255, 178, 100, static_cast<int>(4 * edgeBoost)));
+            g.setColorAt(0.0, QColor(255, 182, 104, static_cast<int>(56 * fillMul)));
+            g.setColorAt(0.25, QColor(255, 178, 100, static_cast<int>(38 * fillMul)));
+            g.setColorAt(0.55, QColor(255, 178, 100, static_cast<int>(22 * fillMul)));
+            g.setColorAt(0.82, QColor(255, 178, 100, static_cast<int>(10 * fillMul)));
             g.setColorAt(1.0, QColor(255, 178, 100, 0));
         }
         p.fillRect(QRect(x, 0, w, h), QBrush(g));
-        p.setPen(QPen(QColor(255, 188, 110, static_cast<int>(85 * edgeBoost)), 1));
+        const int hairAlpha = inScrollZone ? std::min(255, 28 + stripeAlpha / 2) : 18;
+        p.setPen(QPen(QColor(255, 200, 128, hairAlpha), 1));
+        p.drawLine(x, 0, x + w - 1, 0);
+        p.setPen(QPen(QColor(255, 188, 110, stripeAlpha), 1));
         p.drawLine(x, 1, x + w - 1, 1);
     };
 
@@ -1923,51 +1965,19 @@ void TimelineEditor::edgeScrollZoneBounds(int *xLeftEnd, int *xRightStart) const
     }
 }
 
-float TimelineEditor::edgeGradientOpacityBoost(int mouseX, int tl, int tr, int xLeftEnd, int xRightStart) const
-{
-    const int leftW = std::max(0, xLeftEnd - tl);
-    if (leftW > 0 && mouseX >= tl && mouseX < xLeftEnd) {
-        const int sixth = std::max(1, leftW / 6);
-        const int distFromStart = mouseX - tl;
-        if (distFromStart < sixth) {
-            return 0.5f + 0.5f * (1.0f - static_cast<float>(distFromStart) / static_cast<float>(sixth));
-        }
-        return 0.5f;
-    }
-    const int rightW = std::max(0, tr - xRightStart);
-    if (rightW > 0 && mouseX > xRightStart && mouseX <= tr) {
-        const int sixth = std::max(1, rightW / 6);
-        const int distFromEnd = tr - mouseX;
-        if (distFromEnd < sixth) {
-            return 0.5f + 0.5f * (1.0f - static_cast<float>(distFromEnd) / static_cast<float>(sixth));
-        }
-        return 0.5f;
-    }
-    return 0.5f;
-}
-
 double TimelineEditor::edgeScrollStrength(int mouseX, int tl, int tr, int xLeftEnd, int xRightStart) const
 {
-    constexpr double kInnerCrawl = 0.04;
-    const int leftW = std::max(0, xLeftEnd - tl);
-    if (leftW > 0 && mouseX >= tl && mouseX < xLeftEnd) {
-        const int sixth = std::max(1, leftW / 6);
-        const int distFromStart = mouseX - tl;
-        if (distFromStart < sixth) {
-            return 1.0 - static_cast<double>(distFromStart) / static_cast<double>(sixth);
-        }
-        return kInnerCrawl;
+    // Pointer left of the timeline (still in "scroll left" band) must be full heat, not 0 — otherwise speed sticks at minimum.
+    double t = edgeZoneHeatLinear(mouseX, tl, tr, xLeftEnd, xRightStart);
+    if (mouseX < tl) {
+        t = 1.0;
+    } else if (mouseX > tr) {
+        t = 1.0;
     }
-    const int rightW = std::max(0, tr - xRightStart);
-    if (rightW > 0 && mouseX > xRightStart && mouseX <= tr) {
-        const int sixth = std::max(1, rightW / 6);
-        const int distFromEnd = tr - mouseX;
-        if (distFromEnd < sixth) {
-            return 1.0 - static_cast<double>(distFromEnd) / static_cast<double>(sixth);
-        }
-        return kInnerCrawl;
+    if (t <= 0.0) {
+        return 0.0;
     }
-    return 0.0;
+    return std::pow(t, kEdgeScrollSpeedGamma);
 }
 
 int TimelineEditor::markerIndexAt(const QPoint &pos) const
@@ -2085,20 +2095,24 @@ qint64 TimelineEditor::adjustedDragPointerMs(const QPoint &pos, bool *scrolled)
         int xRightStart = tr;
         edgeScrollZoneBounds(&xLeftEnd, &xRightStart);
         const bool inLeftZone = pos.x() < tl || (pos.x() >= tl && pos.x() < xLeftEnd);
-        const bool inRightZone = pos.x() > xRightStart && pos.x() <= tr;
+        const bool inRightZone = pos.x() > xRightStart;
         if (inLeftZone) {
             const double strength = edgeScrollStrength(pos.x(), tl, tr, xLeftEnd, xRightStart);
-            const qint64 step =
-                kEdgeScrollMinStepMs
-                + static_cast<qint64>((kEdgeScrollMaxStepMs - kEdgeScrollMinStepMs) * strength);
+            const double scaled =
+                (static_cast<double>(kEdgeScrollMinStepMs)
+                 + static_cast<double>(kEdgeScrollMaxStepMs - kEdgeScrollMinStepMs) * strength)
+                * kEdgeScrollStepScale;
+            const qint64 step = std::max<qint64>(1, static_cast<qint64>(std::llround(scaled)));
             const qint64 before = timelineViewStartMs;
             setViewStartMs(timelineViewStartMs - step);
             changed = changed || (before != timelineViewStartMs);
         } else if (inRightZone) {
             const double strength = edgeScrollStrength(pos.x(), tl, tr, xLeftEnd, xRightStart);
-            const qint64 step =
-                kEdgeScrollMinStepMs
-                + static_cast<qint64>((kEdgeScrollMaxStepMs - kEdgeScrollMinStepMs) * strength);
+            const double scaled =
+                (static_cast<double>(kEdgeScrollMinStepMs)
+                 + static_cast<double>(kEdgeScrollMaxStepMs - kEdgeScrollMinStepMs) * strength)
+                * kEdgeScrollStepScale;
+            const qint64 step = std::max<qint64>(1, static_cast<qint64>(std::llround(scaled)));
             const qint64 before = timelineViewStartMs;
             setViewStartMs(timelineViewStartMs + step);
             changed = changed || (before != timelineViewStartMs);
