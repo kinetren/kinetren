@@ -850,22 +850,13 @@ void MainWindow::renderDraftProject()
                         }
                         const QString remStr =
                             remainingMs > 0 ? timelinePtr->formatTimelineTime(remainingMs) : QStringLiteral("—");
-                        const QString speedStr =
-                            snapshot.speedRealtimeFactor > 0.001
-                                ? QString::number(snapshot.speedRealtimeFactor, 'f', 2) + QStringLiteral("×")
-                                : QStringLiteral("—");
-                        const QString html =
-                            QStringLiteral("<p><b>%1</b> &nbsp; %2 / %3</p>"
-                                           "<p>Elapsed: %4 &nbsp; Remaining (est.): %5 &nbsp; "
-                                           "Output length: %6 &nbsp; <b>Speed: %7</b> realtime</p>")
-                                .arg(stage)
-                                .arg(snapshot.done)
-                                .arg(snapshot.total)
-                                .arg(timelinePtr->formatTimelineTime(snapshot.elapsedMs))
-                                .arg(remStr)
-                                .arg(timelinePtr->formatTimelineTime(snapshot.outputDurationMs))
-                                .arg(speedStr);
-                        dlg->setStatusHtml(html);
+                        dlg->setProgressView(stage,
+                                             snapshot.done,
+                                             snapshot.total,
+                                             timelinePtr->formatTimelineTime(snapshot.elapsedMs),
+                                             remStr,
+                                             timelinePtr->formatTimelineTime(snapshot.outputDurationMs),
+                                             snapshot.speedRealtimeFactor);
                     },
                     Qt::QueuedConnection);
             },

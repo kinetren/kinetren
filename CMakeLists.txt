@@ -29,6 +29,8 @@ set(PROJECT_SOURCES
         projectrenderer.h
         renderprogressdialog.cpp
         renderprogressdialog.h
+        speedchartwidget.cpp
+        speedchartwidget.h
         timelineeditor.cpp
         timelineeditor.h
         sourceareawidget.cpp
