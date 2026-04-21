@@ -24,6 +24,7 @@
 #include <QUrl>
 #include <QWheelEvent>
 #include <QEvent>
+#include <QSet>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
 
@@ -779,6 +780,75 @@ void TimelineEditor::clearPendingMorpherPlacement()
     update();
 }
 
+QVector<quint64> TimelineEditor::collectMorpherTargetSnowflakes()
+{
+    QVector<quint64> out;
+    QSet<quint64> seen;
+
+    const auto addClipId = [&](int clipId) {
+        ClipEvent *c = findClipById(clipId);
+        if (!c || !isTrackIndexValid(c->trackIndex)) {
+            return;
+        }
+        if (tracks[static_cast<size_t>(c->trackIndex)].type == TrackType::Morpher) {
+            return;
+        }
+        ensureClipSnowflake(*c);
+        if (c->snowflakeId != 0 && !seen.contains(c->snowflakeId)) {
+            seen.insert(c->snowflakeId);
+            out.push_back(c->snowflakeId);
+        }
+    };
+
+    if (hasRegionSelection && regionEndMs > regionStartMs) {
+        const std::unordered_set<int> inRegion = clipIdsIntersectingRegion(true, 0);
+        std::unordered_set<int> expanded;
+        for (int id : inRegion) {
+            expanded.insert(id);
+            for (int lid : linkedClipIds(id)) {
+                expanded.insert(lid);
+            }
+        }
+        for (int id : expanded) {
+            addClipId(id);
+        }
+    }
+
+    if (out.isEmpty() && selectedClipId >= 0) {
+        for (int id : linkedClipIds(selectedClipId)) {
+            addClipId(id);
+        }
+    }
+
+    return out;
+}
+
+void TimelineEditor::commitPendingMorpherPlacement(int trackIdx, qint64 startMs)
+{
+    if (!pendingMorpherPlacement.active) {
+        return;
+    }
+    if (trackIdx < 0 || trackIdx >= static_cast<int>(tracks.size()) ||
+        tracks[static_cast<size_t>(trackIdx)].type != TrackType::Morpher) {
+        return;
+    }
+    MorpherEvent m;
+    m.id = nextMorpherEventId++;
+    m.morpherSnowflake = generateTimelineSnowflakeId();
+    m.trackIndex = trackIdx;
+    m.startMs = startMs;
+    m.durationMs = 1500;
+    m.targetClipSnowflakes = pendingMorpherPlacement.targetSnowflakes;
+    morpherEvents.push_back(m);
+    const int placedId = morpherEvents.back().id;
+    clearPendingMorpherPlacement();
+    setMinimumHeight(contentBottom() + bottomPadding());
+    refreshTimelineRangeSignals();
+    emit timelineContentChanged();
+    update();
+    emit morpherEditWindowRequested(placedId);
+}
+
 void TimelineEditor::ensureClipSnowflake(TimelineEditor::ClipEvent &clip)
 {
     if (clip.snowflakeId == 0) {
@@ -997,18 +1067,12 @@ void TimelineEditor::addMorpherTrack()
 
 void TimelineEditor::beginMorpherPlacementFromSelection()
 {
-    QVector<quint64> targets;
-    if (selectedClipId >= 0) {
-        for (int id : linkedClipIds(selectedClipId)) {
-            ClipEvent *c = findClipById(id);
-            if (c) {
-                ensureClipSnowflake(*c);
-                targets.push_back(c->snowflakeId);
-            }
-        }
-    }
+    const QVector<quint64> targets = collectMorpherTargetSnowflakes();
     if (targets.isEmpty()) {
-        QMessageBox::information(this, tr("Morpher"), tr("Select a timeline event first."));
+        QMessageBox::information(
+            this,
+            tr("Morpher"),
+            tr("Nothing to morph: mark a time region over clips, or select a clip on the timeline, then try again."));
         return;
     }
     bool hasMorpherLane = false;
@@ -1022,11 +1086,19 @@ void TimelineEditor::beginMorpherPlacementFromSelection()
         addMorpherTrack();
     }
     pendingMorpherPlacement.active = true;
-    pendingMorpherPlacement.targetSnowflakes = std::move(targets);
-    setCursor(Qt::DragCopyCursor);
+    pendingMorpherPlacement.targetSnowflakes = targets;
+    setCursor(Qt::PointingHandCursor);
     setFocus(Qt::OtherFocusReason);
     emitOverlayInfo();
     update();
+    QMessageBox::information(
+        this,
+        tr("Place morpher"),
+        tr("Locked %n clip target(s).\n\n"
+           "Click the purple Morph track at the time where the block should start (you can also drop a file onto that track).\n"
+           "Esc cancels.",
+           "",
+           targets.size()));
 }
 
 void TimelineEditor::bakeMorpherEvent(int morpherEventId)
@@ -1591,6 +1663,18 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.fillRect(QRect(0, trackTop(i), headerWidth(), trackHeight()), QColor(24, 24, 24));
     }
 
+    if (pendingMorpherPlacement.active) {
+        for (int i = 0; i < static_cast<int>(tracks.size()); ++i) {
+            if (tracks[static_cast<size_t>(i)].type != TrackType::Morpher) {
+                continue;
+            }
+            const QRect laneRect(timelineLeft(), trackTop(i), timelineRight() - timelineLeft(), trackHeight());
+            p.fillRect(laneRect, QColor(96, 200, 140, 52));
+            p.setPen(QPen(QColor(140, 235, 170, 200), 2));
+            p.drawRoundedRect(laneRect.adjusted(2, 2, -2, -2), 5, 5);
+        }
+    }
+
     const qint64 visible = contentVisibleMs();
     const qint64 viewEndMs = timelineViewStartMs + visible;
     const qint64 tickStepMs = timelineTickStepMs();
@@ -1804,6 +1888,27 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
     const QPoint pos = eventPos(event);
     setFocus(Qt::MouseFocusReason);
 
+    if (pendingMorpherPlacement.active) {
+        const int trIdx = trackIndexAtY(pos.y());
+        if (trIdx >= 0 && tracks[static_cast<size_t>(trIdx)].type == TrackType::Morpher) {
+            commitPendingMorpherPlacement(trIdx, snapTimeMs(xToTimeMs(pos.x())));
+            event->accept();
+            return;
+        }
+        const bool inTimelineX = pos.x() >= timelineLeft() && pos.x() <= timelineRight();
+        if (inTimelineX && pos.y() >= rulerTop() && pos.y() <= (rulerTop() + rulerHeight())) {
+            const qint64 pointerMs = snapTimeMs(xToTimeMs(pos.x()));
+            setCursorMs(pointerMs, false);
+            selectedClipId = -1;
+            selectedMorpherId = -1;
+            update();
+            event->accept();
+            return;
+        }
+        event->accept();
+        return;
+    }
+
     const int hitMarker = markerIndexAt(pos);
     if (hitMarker >= 0) {
         selectedClipId = -1;
@@ -1893,6 +1998,10 @@ void TimelineEditor::mouseDoubleClickEvent(QMouseEvent *event)
         QWidget::mouseDoubleClickEvent(event);
         return;
     }
+    if (pendingMorpherPlacement.active) {
+        event->accept();
+        return;
+    }
     const QPoint pos = eventPos(event);
     const int morpherHit = morpherEventIdAt(pos);
     if (morpherHit >= 0) {
@@ -1945,6 +2054,16 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         }
     }
     if (!(event->buttons() & Qt::LeftButton) || dragMode == DragMode::None) {
+        if (pendingMorpherPlacement.active) {
+            const int trIdx = trackIndexAtY(pos.y());
+            if (trIdx >= 0 && tracks[static_cast<size_t>(trIdx)].type == TrackType::Morpher) {
+                setCursor(Qt::PointingHandCursor);
+            } else {
+                setCursor(Qt::ArrowCursor);
+            }
+            QWidget::mouseMoveEvent(event);
+            return;
+        }
         const int hoverClip = clipIdAt(pos);
         if (hoverClip >= 0) {
             const ClipEvent *clip = findClipById(hoverClip);
@@ -2097,7 +2216,7 @@ void TimelineEditor::mouseReleaseEvent(QMouseEvent *event)
         emit timelineContentChanged();
     }
     if (pendingMorpherPlacement.active) {
-        setCursor(Qt::DragCopyCursor);
+        setCursor(Qt::PointingHandCursor);
     } else {
         unsetCursor();
     }
@@ -2185,8 +2304,14 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         QMenu *shiftSub = menu.addMenu(tr("Region: Shift source start"));
         QAction *shiftThis = shiftSub->addAction(tr("This track"));
         QAction *shiftAll = shiftSub->addAction(tr("All tracks"));
+        menu.addSeparator();
+        QAction *morphFromRegion = menu.addAction(tr("Add morpher (clips in region)…"));
         QAction *chosen = menu.exec(event->globalPos());
         if (!chosen) {
+            return;
+        }
+        if (chosen == morphFromRegion) {
+            beginMorpherPlacementFromSelection();
             return;
         }
         if (chosen == repThis) {
@@ -2221,6 +2346,7 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
     QAction *splitAction = menu.addAction("Cut at Cursor (S)");
     QAction *replaceSourceAction = menu.addAction(tr("Open replace source panel"));
     QAction *sourceStartAction = menu.addAction(tr("Open source offset panel"));
+    QAction *morphPlaceAction = menu.addAction(tr("Add morpher (freeze targets, place on Morph track)…"));
 
     QAction *regRepThis = nullptr;
     QAction *regRepAll = nullptr;
@@ -2261,6 +2387,8 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         emit replaceSourcePanelRequestedForClip(id);
     } else if (chosen == sourceStartAction) {
         emit sourceOffsetPanelRequestedForClip(id);
+    } else if (chosen == morphPlaceAction) {
+        beginMorpherPlacementFromSelection();
     } else if (regRepThis && chosen == regRepThis) {
         if (clickTrack < 0) {
             QMessageBox::information(this,
@@ -2318,21 +2446,7 @@ void TimelineEditor::dropEvent(QDropEvent *event)
                 return;
             }
         }
-        MorpherEvent m;
-        m.id = nextMorpherEventId++;
-        m.morpherSnowflake = generateTimelineSnowflakeId();
-        m.trackIndex = trackIdx;
-        m.startMs = snapTimeMs(xToTimeMs(pos.x()));
-        m.durationMs = 1500;
-        m.targetClipSnowflakes = pendingMorpherPlacement.targetSnowflakes;
-        morpherEvents.push_back(m);
-        const int placedId = morpherEvents.back().id;
-        clearPendingMorpherPlacement();
-        setMinimumHeight(contentBottom() + bottomPadding());
-        refreshTimelineRangeSignals();
-        emit timelineContentChanged();
-        update();
-        emit morpherEditWindowRequested(placedId);
+        commitPendingMorpherPlacement(trackIdx, snapTimeMs(xToTimeMs(pos.x())));
         event->acceptProposedAction();
         return;
     }
@@ -3253,7 +3367,7 @@ void TimelineEditor::emitOverlayInfo()
     }
     QString pendingText;
     if (pendingMorpherPlacement.active) {
-        pendingText = tr(" | Morpher: drop on a Morph track to place (Esc = cancel)");
+        pendingText = tr(" | Morpher: click purple Morph track to place (Esc = cancel)");
     }
     const QString text = QString("Time: %1 | Zoom: %2x | Video layers: %3 | Audio layers: %4 | %5")
                              .arg(formatTimelineTime(cursorPositionMs))

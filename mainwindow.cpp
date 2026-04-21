@@ -257,7 +257,9 @@ void MainWindow::setupTimelineEditorUi()
     addMorpherTrackButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     addMorpherTrackButton->setToolTip("Add morpher track");
     placeMorpherButton->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
-    placeMorpherButton->setToolTip("Place morpher for selection (then drop on Morph track)");
+    placeMorpherButton->setToolTip(
+        tr("Add morpher: uses clips in the time region (if drawn) or the selected clip + linked audio/video. "
+           "Then click the purple Morph track at the desired time (or drop a file there). Esc cancels."));
     splitButton->setIcon(style()->standardIcon(QStyle::SP_TitleBarShadeButton));
     splitButton->setToolTip("Cut selected event (S)");
     copyButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
@@ -447,17 +449,31 @@ void MainWindow::setupTimelineEditorUi()
         dock->setMinimumWidth(320);
         dock->setStyleSheet(
             QStringLiteral(
-                "QDockWidget { font-size: 13px; }\n"
+                "QDockWidget {\n"
+                "  font-size: 13px;\n"
+                "  color: #e6edf3;\n"
+                "}\n"
+                "QDockWidget > QWidget {\n"
+                "  background: #161b22;\n"
+                "}\n"
                 "QDockWidget::title {\n"
-                "  background: #2c3138;\n"
-                "  padding: 10px 12px;\n"
-                "  border-bottom: 2px solid #556070;\n"
+                "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,\n"
+                "    stop:0 #21262d, stop:1 #161b22);\n"
+                "  padding: 11px 14px;\n"
+                "  border-bottom: 1px solid #30363d;\n"
+                "  border-top-left-radius: 6px;\n"
+                "  border-top-right-radius: 6px;\n"
                 "  font-weight: 600;\n"
                 "}\n"
                 "QDockWidget::close-button, QDockWidget::float-button {\n"
-                "  width: 22px;\n"
-                "  height: 22px;\n"
-                "  margin: 2px;\n"
+                "  width: 24px;\n"
+                "  height: 24px;\n"
+                "  margin: 4px;\n"
+                "  border-radius: 5px;\n"
+                "  background: #30363d;\n"
+                "}\n"
+                "QDockWidget::close-button:hover, QDockWidget::float-button:hover {\n"
+                "  background: #484f58;\n"
                 "}\n"));
     };
     styleDockChrome(replaceSourceDock);

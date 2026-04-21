@@ -234,6 +234,8 @@ private:
     PendingMorpherPlacement pendingMorpherPlacement;
 
     void clearPendingMorpherPlacement();
+    QVector<quint64> collectMorpherTargetSnowflakes();
+    void commitPendingMorpherPlacement(int trackIndex, qint64 startMs);
 
     void ensureClipSnowflake(ClipEvent &clip);
     ClipEvent effectiveClipForRender(const ClipEvent &base) const;

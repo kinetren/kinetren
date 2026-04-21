@@ -19,43 +19,73 @@ MorpherEditWindow::MorpherEditWindow(TimelineEditor *timeline, int morpherEventI
     , timeline(timeline)
     , morpherId(morpherEventId)
 {
+    setObjectName(QStringLiteral("MorpherEditWindow"));
     setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint | Qt::WindowMinimizeButtonHint |
                    Qt::WindowMaximizeButtonHint);
     setAttribute(Qt::WA_DeleteOnClose, true);
-    setMinimumSize(420, 280);
-    resize(480, 320);
-    setWindowTitle(tr("Morpher editor — event %1").arg(morpherId));
+    setMinimumSize(440, 300);
+    resize(520, 360);
+    setWindowTitle(tr("Morpher — event %1").arg(morpherId));
     setAcceptDrops(true);
 
+    setStyleSheet(
+        QStringLiteral(
+            "#MorpherEditWindow { background: #0d1117; color: #e6edf3; }\n"
+            "QLabel { color: #c9d1d9; font-size: 13px; }\n"
+            "QLabel#MorpherSectionTitle { color: #f0f3f6; font-size: 12px; font-weight: 600; "
+            "  padding-bottom: 4px; }\n"
+            "QLabel#MorpherTargetsLabel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; "
+            "  padding: 12px; color: #8b949e; font-family: monospace; font-size: 12px; }\n"
+            "QLineEdit, QDoubleSpinBox {\n"
+            "  background: #161b22; color: #e6edf3; border: 1px solid #30363d; border-radius: 8px;\n"
+            "  padding: 9px 12px; min-height: 22px; font-size: 13px;\n"
+            "  selection-background-color: #1f6feb;\n"
+            "}\n"
+            "QLineEdit:focus, QDoubleSpinBox:focus { border: 1px solid #58a6ff; }\n"
+            "QPushButton {\n"
+            "  background: #21262d; color: #e6edf3; border: 1px solid #30363d; border-radius: 8px;\n"
+            "  padding: 9px 18px; min-height: 22px; font-size: 13px;\n"
+            "}\n"
+            "QPushButton:hover { background: #30363d; border-color: #484f58; }\n"
+            "QPushButton:pressed { background: #161b22; }\n"));
+
     auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(20, 18, 20, 18);
+    layout->setSpacing(12);
+
+    auto *targetsCaption = new QLabel(tr("Frozen targets"), this);
+    targetsCaption->setObjectName(QStringLiteral("MorpherSectionTitle"));
     targetsLabel = new QLabel(this);
+    targetsLabel->setObjectName(QStringLiteral("MorpherTargetsLabel"));
     targetsLabel->setWordWrap(true);
     targetsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
-    auto *repTitle = new QLabel(tr("Replace source (only frozen targets below)"), this);
-    repTitle->setStyleSheet(QStringLiteral("font-weight:600;"));
+    auto *repTitle = new QLabel(tr("Replace source"), this);
+    repTitle->setObjectName(QStringLiteral("MorpherSectionTitle"));
     pathEdit = new QLineEdit(this);
-    pathEdit->setPlaceholderText(tr("Drop media file or path"));
+    pathEdit->setPlaceholderText(tr("Path or drop media here"));
     browseButton = new QPushButton(tr("Browse…"), this);
     applyReplaceButton = new QPushButton(tr("Apply replace"), this);
     auto *repRow = new QHBoxLayout();
+    repRow->setSpacing(10);
     repRow->addWidget(pathEdit, 1);
     repRow->addWidget(browseButton);
 
-    auto *offTitle = new QLabel(tr("Source in delta (ms)"), this);
-    offTitle->setStyleSheet(QStringLiteral("font-weight:600;"));
+    auto *offTitle = new QLabel(tr("Source-in shift"), this);
+    offTitle->setObjectName(QStringLiteral("MorpherSectionTitle"));
     deltaSpin = new QDoubleSpinBox(this);
     deltaSpin->setRange(-1.0e12, 1.0e12);
     deltaSpin->setDecimals(3);
     deltaSpin->setSuffix(tr(" ms"));
     applyOffsetButton = new QPushButton(tr("Apply shift"), this);
 
+    layout->addWidget(targetsCaption);
     layout->addWidget(targetsLabel);
-    layout->addSpacing(8);
+    layout->addSpacing(4);
     layout->addWidget(repTitle);
     layout->addLayout(repRow);
     layout->addWidget(applyReplaceButton);
-    layout->addSpacing(8);
+    layout->addSpacing(4);
     layout->addWidget(offTitle);
     layout->addWidget(deltaSpin);
     layout->addWidget(applyOffsetButton);
