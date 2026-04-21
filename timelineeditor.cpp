@@ -19,6 +19,7 @@
 #include <QPointer>
 #include <QUrl>
 #include <QWheelEvent>
+#include <QEvent>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
 
@@ -43,7 +44,10 @@ constexpr qint64 kSnapThresholdMs = 100;
 // Allow near frame-accurate cuts (1 ms ≈ sub-frame at high zoom; copy/trim/split use this floor).
 constexpr qint64 kMinClipDurationMs = 1;
 constexpr int kTrimHandlePx = 7;
-constexpr qint64 kEdgeScrollStepMs = 80;
+constexpr qint64 kEdgeScrollMinStepMs = 6;
+constexpr qint64 kEdgeScrollMaxStepMs = 110;
+constexpr int kScrollGradRightInsetPx = 10;
+constexpr int kTrackLabelOverlapPx = 78;
 constexpr int kRulerTargetTickPx = 130;
 constexpr int kCursorMagnetPx = 10;
 constexpr int kRegionBoundaryHandlePx = 8;
@@ -1016,53 +1020,9 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         const QColor laneColor = (tracks[static_cast<size_t>(i)].type == TrackType::Video) ? QColor(36, 46, 58) : QColor(48, 38, 38);
         p.fillRect(laneRect, laneColor);
         p.fillRect(QRect(0, trackTop(i), headerWidth(), trackHeight()), QColor(24, 24, 24));
-        p.setPen(QColor(100, 100, 100));
-        p.drawText(8, trackTop(i) + 24, tracks[static_cast<size_t>(i)].name);
     }
 
-    // Same geometry as ensureCursorVisible() / edgeScrollMarginMs(): first & last ~2/12 of the
-    // visible time range, mapped to x via timeToX (scales with zoom and 4K width).
-    const int h = height();
-    const int tl = timelineLeft();
-    const int tr = timelineRight();
     const qint64 visible = contentVisibleMs();
-    const qint64 margin = edgeScrollMarginMs();
-    const int xLeftEnd = std::clamp(timeToX(timelineViewStartMs + margin), tl, tr);
-    const int xRightStart = std::clamp(timeToX(timelineViewStartMs + visible - margin), tl, tr);
-    const int leftZoneW = std::max(0, xLeftEnd - tl);
-    const int rightX0 = xRightStart;
-    const int rightZoneW = std::max(0, tr - xRightStart);
-
-    const auto paintEdgeZone = [&](int x, int w, bool fadeFromLeft) {
-        if (w <= 0) {
-            return;
-        }
-        QLinearGradient g;
-        if (fadeFromLeft) {
-            g.setStart(x, 0);
-            g.setFinalStop(x + w, 0);
-            g.setColorAt(0.0, QColor(255, 178, 100, 34));
-            g.setColorAt(0.25, QColor(255, 178, 100, 22));
-            g.setColorAt(0.55, QColor(255, 178, 100, 12));
-            g.setColorAt(0.82, QColor(255, 178, 100, 4));
-            g.setColorAt(1.0, QColor(255, 178, 100, 0));
-        } else {
-            g.setStart(x + w, 0);
-            g.setFinalStop(x, 0);
-            g.setColorAt(0.0, QColor(255, 178, 100, 34));
-            g.setColorAt(0.25, QColor(255, 178, 100, 22));
-            g.setColorAt(0.55, QColor(255, 178, 100, 12));
-            g.setColorAt(0.82, QColor(255, 178, 100, 4));
-            g.setColorAt(1.0, QColor(255, 178, 100, 0));
-        }
-        p.fillRect(QRect(x, 0, w, h), QBrush(g));
-        p.setPen(QPen(QColor(255, 188, 110, 85), 1));
-        p.drawLine(x, 1, x + w - 1, 1);
-    };
-
-    paintEdgeZone(tl, leftZoneW, true);
-    paintEdgeZone(rightX0, rightZoneW, false);
-
     const qint64 viewEndMs = timelineViewStartMs + visible;
     const qint64 tickStepMs = timelineTickStepMs();
     const qint64 tickStart = (timelineViewStartMs / tickStepMs) * tickStepMs;
@@ -1088,18 +1048,6 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.setPen(QPen(QColor(102, 152, 255), 2));
         p.drawLine(x1, rulerTop(), x1, paintBottom);
         p.drawLine(x2, rulerTop(), x2, paintBottom);
-    }
-
-    for (qint64 marker : markersMs) {
-        const int x = timeToX(marker);
-        p.setPen(QColor(255, 195, 0));
-        p.drawLine(x, rulerTop(), x, paintBottom);
-        QPainterPath triangle;
-        triangle.moveTo(x, rulerTop());
-        triangle.lineTo(x - 5, rulerTop() + 8);
-        triangle.lineTo(x + 5, rulerTop() + 8);
-        triangle.closeSubpath();
-        p.fillPath(triangle, QColor(255, 195, 0));
     }
 
     for (const auto &clip : clips) {
@@ -1176,15 +1124,81 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         }
     }
 
+    // Edge-scroll gradients on top of clips (hit zone still extends to the timeline edge on the right).
+    const int h = height();
+    const int tl = timelineLeft();
+    const int tr = timelineRight();
+    int xLeftEnd = tl;
+    int xRightStart = tr;
+    edgeScrollZoneBounds(&xLeftEnd, &xRightStart);
+    const int leftZoneW = std::max(0, xLeftEnd - tl);
+    const int rightX0 = xRightStart;
+    const int rightPaintEnd = std::max(tl, tr - kScrollGradRightInsetPx);
+    const int rightZoneW = std::max(0, rightPaintEnd - rightX0);
+    const int mx = lastHoverPos.x();
+    const float edgeBoost = edgeGradientOpacityBoost(mx, tl, tr, xLeftEnd, xRightStart);
+
+    const auto paintEdgeZone = [&](int x, int w, bool fadeFromLeft) {
+        if (w <= 0) {
+            return;
+        }
+        QLinearGradient g;
+        if (fadeFromLeft) {
+            g.setStart(x, 0);
+            g.setFinalStop(x + w, 0);
+            g.setColorAt(0.0, QColor(255, 178, 100, static_cast<int>(34 * edgeBoost)));
+            g.setColorAt(0.25, QColor(255, 178, 100, static_cast<int>(22 * edgeBoost)));
+            g.setColorAt(0.55, QColor(255, 178, 100, static_cast<int>(12 * edgeBoost)));
+            g.setColorAt(0.82, QColor(255, 178, 100, static_cast<int>(4 * edgeBoost)));
+            g.setColorAt(1.0, QColor(255, 178, 100, 0));
+        } else {
+            g.setStart(x + w, 0);
+            g.setFinalStop(x, 0);
+            g.setColorAt(0.0, QColor(255, 178, 100, static_cast<int>(34 * edgeBoost)));
+            g.setColorAt(0.25, QColor(255, 178, 100, static_cast<int>(22 * edgeBoost)));
+            g.setColorAt(0.55, QColor(255, 178, 100, static_cast<int>(12 * edgeBoost)));
+            g.setColorAt(0.82, QColor(255, 178, 100, static_cast<int>(4 * edgeBoost)));
+            g.setColorAt(1.0, QColor(255, 178, 100, 0));
+        }
+        p.fillRect(QRect(x, 0, w, h), QBrush(g));
+        p.setPen(QPen(QColor(255, 188, 110, static_cast<int>(85 * edgeBoost)), 1));
+        p.drawLine(x, 1, x + w - 1, 1);
+    };
+
+    paintEdgeZone(tl, leftZoneW, true);
+    paintEdgeZone(rightX0, rightZoneW, false);
+
+    for (qint64 marker : markersMs) {
+        const int x = timeToX(marker);
+        p.setPen(QColor(255, 195, 0));
+        p.drawLine(x, rulerTop(), x, paintBottom);
+        QPainterPath triangle;
+        triangle.moveTo(x, rulerTop());
+        triangle.lineTo(x - 5, rulerTop() + 8);
+        triangle.lineTo(x + 5, rulerTop() + 8);
+        triangle.closeSubpath();
+        p.fillPath(triangle, QColor(255, 195, 0));
+    }
+
     const int cursorX = timeToX(cursorPositionMs);
     p.setPen(QPen(QColor(255, 60, 60, 120), 6));
     p.drawLine(cursorX, rulerTop(), cursorX, paintBottom);
     p.setPen(QPen(QColor(255, 100, 100), 2));
     p.drawLine(cursorX, rulerTop(), cursorX, paintBottom);
 
-    if (loopRegionEnabled && hasRegionSelection && regionEndMs > regionStartMs) {
-        p.setPen(QColor(120, 220, 120));
-        p.drawText(timelineRight() - 90, rulerTop() + 15, "LOOP");
+    for (int i = 0; i < static_cast<int>(tracks.size()); ++i) {
+        const int top = trackTop(i);
+        const int labelRight = std::min(timelineLeft() + kTrackLabelOverlapPx, timelineRight() - 2);
+        QLinearGradient labelBg(0, 0, labelRight, 0);
+        labelBg.setColorAt(0.0, QColor(18, 18, 18, 252));
+        labelBg.setColorAt(0.45, QColor(18, 18, 18, 160));
+        labelBg.setColorAt(1.0, QColor(18, 18, 18, 0));
+        p.fillRect(QRect(0, top, labelRight, trackHeight()), labelBg);
+        const QString &name = tracks[static_cast<size_t>(i)].name;
+        p.setPen(QColor(0, 0, 0, 200));
+        p.drawText(9, top + 24, name);
+        p.setPen(QColor(210, 210, 210));
+        p.drawText(8, top + 23, name);
     }
 }
 
@@ -1197,12 +1211,25 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
     const QPoint pos = eventPos(event);
     setFocus(Qt::MouseFocusReason);
 
+    const int hitMarker = markerIndexAt(pos);
+    if (hitMarker >= 0) {
+        selectedClipId = -1;
+        dragMode = DragMode::MoveMarker;
+        dragMarkerIndex = hitMarker;
+        dragClipId = -1;
+        dragChangedTimelineContent = false;
+        setCursorMs(snapTimeMs(markersMs[static_cast<size_t>(hitMarker)]), false);
+        update();
+        return;
+    }
+
     const bool inTimelineX = pos.x() >= timelineLeft() && pos.x() <= timelineRight();
     selectedClipId = clipIdAt(pos);
     const qint64 pointerMs = xToTimeMs(pos.x());
     setCursorMs(snapTimeMs(pointerMs));
 
     dragMode = DragMode::None;
+    dragMarkerIndex = -1;
     dragClipId = selectedClipId;
     dragChangedTimelineContent = false;
     if (selectedClipId >= 0) {
@@ -1289,6 +1316,17 @@ void TimelineEditor::mouseDoubleClickEvent(QMouseEvent *event)
 void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
 {
     const QPoint pos = eventPos(event);
+    if (lastHoverPos != pos) {
+        lastHoverPos = pos;
+        int xle = timelineLeft();
+        int xrs = timelineRight();
+        edgeScrollZoneBounds(&xle, &xrs);
+        const int tl = timelineLeft();
+        const int tr = timelineRight();
+        if ((pos.x() >= tl && pos.x() < xle) || (pos.x() > xrs && pos.x() <= tr)) {
+            update();
+        }
+    }
     if (!(event->buttons() & Qt::LeftButton) || dragMode == DragMode::None) {
         const int hoverClip = clipIdAt(pos);
         if (hoverClip >= 0) {
@@ -1298,6 +1336,8 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
             } else {
                 setCursor(Qt::OpenHandCursor);
             }
+        } else if (markerIndexAt(pos) >= 0) {
+            setCursor(Qt::SizeHorCursor);
         } else if (pos.x() >= timelineLeft() && pos.x() <= timelineRight() &&
                    pos.y() >= rulerTop() && pos.y() <= (rulerTop() + rulerHeight()) &&
                    hasRegionSelection &&
@@ -1310,11 +1350,18 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         return;
     }
 
-    const qint64 pointerMsRaw = adjustedDragPointerMs(pos);
+    const qint64 pointerMsRaw =
+        (dragMode == DragMode::MoveMarker) ? xToTimeMs(pos.x()) : adjustedDragPointerMs(pos);
     const qint64 pointerMs = snapTimeMs(pointerMsRaw);
     const qint64 pointerMsRegion = snapTimeMsForRegion(pointerMsRaw);
     ClipEvent *clip = findClipById(dragClipId);
-    if (dragMode == DragMode::ScrubCursor) {
+    if (dragMode == DragMode::MoveMarker && dragMarkerIndex >= 0
+        && dragMarkerIndex < static_cast<int>(markersMs.size())) {
+        const qint64 t = std::max<qint64>(0, snapTimeMs(pointerMsRaw));
+        markersMs[static_cast<size_t>(dragMarkerIndex)] = t;
+        setCursorMs(t, false);
+        refreshTimelineRangeSignals();
+    } else if (dragMode == DragMode::ScrubCursor) {
         setCursorMs(pointerMs);
     } else if (dragMode == DragMode::MoveClip && clip) {
         dragChangedTimelineContent = true;
@@ -1416,8 +1463,15 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
 
 void TimelineEditor::mouseReleaseEvent(QMouseEvent *event)
 {
+    const DragMode finishedMode = dragMode;
     dragMode = DragMode::None;
     dragClipId = -1;
+    dragMarkerIndex = -1;
+    if (finishedMode == DragMode::MoveMarker) {
+        std::sort(markersMs.begin(), markersMs.end());
+        refreshTimelineRangeSignals();
+        emit timelineContentChanged();
+    }
     dragInitialStarts.clear();
     dragInitialDurations.clear();
     dragInitialSourceIns.clear();
@@ -1427,6 +1481,15 @@ void TimelineEditor::mouseReleaseEvent(QMouseEvent *event)
     }
     unsetCursor();
     QWidget::mouseReleaseEvent(event);
+}
+
+void TimelineEditor::leaveEvent(QEvent *event)
+{
+    if (lastHoverPos != QPoint(-1, -1)) {
+        lastHoverPos = QPoint(-1, -1);
+        update();
+    }
+    QWidget::leaveEvent(event);
 }
 
 void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
@@ -1846,6 +1909,85 @@ qint64 TimelineEditor::edgeScrollMarginMs() const
     return m;
 }
 
+void TimelineEditor::edgeScrollZoneBounds(int *xLeftEnd, int *xRightStart) const
+{
+    const int tl = timelineLeft();
+    const int tr = timelineRight();
+    const qint64 visible = contentVisibleMs();
+    const qint64 margin = edgeScrollMarginMs();
+    if (xLeftEnd) {
+        *xLeftEnd = std::clamp(timeToX(timelineViewStartMs + margin), tl, tr);
+    }
+    if (xRightStart) {
+        *xRightStart = std::clamp(timeToX(timelineViewStartMs + visible - margin), tl, tr);
+    }
+}
+
+float TimelineEditor::edgeGradientOpacityBoost(int mouseX, int tl, int tr, int xLeftEnd, int xRightStart) const
+{
+    const int leftW = std::max(0, xLeftEnd - tl);
+    if (leftW > 0 && mouseX >= tl && mouseX < xLeftEnd) {
+        const int sixth = std::max(1, leftW / 6);
+        const int distFromStart = mouseX - tl;
+        if (distFromStart < sixth) {
+            return 0.5f + 0.5f * (1.0f - static_cast<float>(distFromStart) / static_cast<float>(sixth));
+        }
+        return 0.5f;
+    }
+    const int rightW = std::max(0, tr - xRightStart);
+    if (rightW > 0 && mouseX > xRightStart && mouseX <= tr) {
+        const int sixth = std::max(1, rightW / 6);
+        const int distFromEnd = tr - mouseX;
+        if (distFromEnd < sixth) {
+            return 0.5f + 0.5f * (1.0f - static_cast<float>(distFromEnd) / static_cast<float>(sixth));
+        }
+        return 0.5f;
+    }
+    return 0.5f;
+}
+
+double TimelineEditor::edgeScrollStrength(int mouseX, int tl, int tr, int xLeftEnd, int xRightStart) const
+{
+    constexpr double kInnerCrawl = 0.04;
+    const int leftW = std::max(0, xLeftEnd - tl);
+    if (leftW > 0 && mouseX >= tl && mouseX < xLeftEnd) {
+        const int sixth = std::max(1, leftW / 6);
+        const int distFromStart = mouseX - tl;
+        if (distFromStart < sixth) {
+            return 1.0 - static_cast<double>(distFromStart) / static_cast<double>(sixth);
+        }
+        return kInnerCrawl;
+    }
+    const int rightW = std::max(0, tr - xRightStart);
+    if (rightW > 0 && mouseX > xRightStart && mouseX <= tr) {
+        const int sixth = std::max(1, rightW / 6);
+        const int distFromEnd = tr - mouseX;
+        if (distFromEnd < sixth) {
+            return 1.0 - static_cast<double>(distFromEnd) / static_cast<double>(sixth);
+        }
+        return kInnerCrawl;
+    }
+    return 0.0;
+}
+
+int TimelineEditor::markerIndexAt(const QPoint &pos) const
+{
+    const int rulerBottom = rulerTop() + 10;
+    if (pos.y() < rulerTop() || pos.y() > rulerBottom) {
+        return -1;
+    }
+    if (pos.x() < timelineLeft() || pos.x() > timelineRight()) {
+        return -1;
+    }
+    for (int i = 0; i < static_cast<int>(markersMs.size()); ++i) {
+        const int mx = timeToX(markersMs[static_cast<size_t>(i)]);
+        if (std::abs(pos.x() - mx) <= 7) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 void TimelineEditor::ensureCursorVisible()
 {
     const qint64 visible = contentVisibleMs();
@@ -1936,22 +2078,29 @@ qint64 TimelineEditor::snapTimeMsForRegion(qint64 candidateMs) const
 qint64 TimelineEditor::adjustedDragPointerMs(const QPoint &pos, bool *scrolled)
 {
     bool changed = false;
-    if (dragMode != DragMode::None) {
+    if (dragMode != DragMode::None && dragMode != DragMode::MoveMarker) {
         const int tl = timelineLeft();
         const int tr = timelineRight();
-        const qint64 visible = contentVisibleMs();
-        const qint64 margin = edgeScrollMarginMs();
-        const int xLeftEnd = std::clamp(timeToX(timelineViewStartMs + margin), tl, tr);
-        const int xRightStart = std::clamp(timeToX(timelineViewStartMs + visible - margin), tl, tr);
+        int xLeftEnd = tl;
+        int xRightStart = tr;
+        edgeScrollZoneBounds(&xLeftEnd, &xRightStart);
         const bool inLeftZone = pos.x() < tl || (pos.x() >= tl && pos.x() < xLeftEnd);
         const bool inRightZone = pos.x() > xRightStart && pos.x() <= tr;
         if (inLeftZone) {
+            const double strength = edgeScrollStrength(pos.x(), tl, tr, xLeftEnd, xRightStart);
+            const qint64 step =
+                kEdgeScrollMinStepMs
+                + static_cast<qint64>((kEdgeScrollMaxStepMs - kEdgeScrollMinStepMs) * strength);
             const qint64 before = timelineViewStartMs;
-            setViewStartMs(timelineViewStartMs - kEdgeScrollStepMs);
+            setViewStartMs(timelineViewStartMs - step);
             changed = changed || (before != timelineViewStartMs);
         } else if (inRightZone) {
+            const double strength = edgeScrollStrength(pos.x(), tl, tr, xLeftEnd, xRightStart);
+            const qint64 step =
+                kEdgeScrollMinStepMs
+                + static_cast<qint64>((kEdgeScrollMaxStepMs - kEdgeScrollMinStepMs) * strength);
             const qint64 before = timelineViewStartMs;
-            setViewStartMs(timelineViewStartMs + kEdgeScrollStepMs);
+            setViewStartMs(timelineViewStartMs + step);
             changed = changed || (before != timelineViewStartMs);
         }
     }

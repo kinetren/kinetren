@@ -467,6 +467,12 @@ void MainWindow::setupTimelineEditorUi()
 
     auto *spaceShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
     connect(spaceShortcut, &QShortcut::activated, this, &MainWindow::toggleTimelinePause);
+    auto *markerShortcut = new QShortcut(QKeySequence(Qt::Key_M), this);
+    connect(markerShortcut, &QShortcut::activated, [this]() {
+        if (timelineEditor) {
+            timelineEditor->addMarkerAtCursor();
+        }
+    });
     auto *splitShortcut = new QShortcut(QKeySequence(Qt::Key_S), this);
     connect(splitShortcut, &QShortcut::activated, [this]() {
         if (!timelineEditor) {

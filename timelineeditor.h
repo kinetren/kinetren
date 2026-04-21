@@ -10,6 +10,7 @@
 #include <QQueue>
 #include <QSet>
 #include <QWheelEvent>
+#include <QEvent>
 
 #include <optional>
 #include <vector>
@@ -101,6 +102,7 @@ protected:
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
+    void leaveEvent(QEvent *event) override;
 
 private:
     enum class TrackType {
@@ -134,7 +136,8 @@ private:
         TrimEnd,
         RegionSelect,
         MoveRegionStart,
-        MoveRegionEnd
+        MoveRegionEnd,
+        MoveMarker
     };
 
     std::vector<TrackLane> tracks;
@@ -164,6 +167,8 @@ private:
     QHash<int, qint64> dragInitialDurations;
     QHash<int, qint64> dragInitialSourceIns;
     qint64 regionAnchorMs = 0;
+    int dragMarkerIndex = -1;
+    QPoint lastHoverPos{-1, -1};
     QString lastOverlayInfo;
     double zoomLevel = 1.0;
     int timelineFps = 30;
@@ -204,6 +209,10 @@ private:
     void emitRegionChanged();
     void ensureCursorVisible();
     qint64 edgeScrollMarginMs() const;
+    void edgeScrollZoneBounds(int *xLeftEnd, int *xRightStart) const;
+    int markerIndexAt(const QPoint &pos) const;
+    float edgeGradientOpacityBoost(int mouseX, int tl, int tr, int xLeftEnd, int xRightStart) const;
+    double edgeScrollStrength(int mouseX, int tl, int tr, int xLeftEnd, int xRightStart) const;
     void refreshTimelineRangeSignals();
     qint64 snapTimeMs(qint64 candidateMs) const;
     qint64 snapTimeMsForRegion(qint64 candidateMs) const;
