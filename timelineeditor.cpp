@@ -1725,8 +1725,41 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     if (hasRegionSelection && regionEndMs > regionStartMs) {
         const int x1 = timeToX(regionStartMs);
         const int x2 = timeToX(regionEndMs);
-        const QRect regionRect(std::min(x1, x2), rulerTop(), std::abs(x2 - x1), paintBottom - rulerTop());
-        p.fillRect(regionRect, QColor(84, 124, 255, 42));
+        const int left = std::min(x1, x2);
+        const int right = std::max(x1, x2);
+        const int regionW = std::max(1, right - left);
+        const int top = rulerTop();
+        const int h = paintBottom - top;
+
+        constexpr int kRegionFadeMaxPx = 56;
+        constexpr int kRegionAlphaEdge = 58;
+        constexpr int kRegionAlphaCenter = 14;
+        const QColor baseBlue(84, 124, 255);
+
+        const int fadeW = std::min(kRegionFadeMaxPx, std::max(1, regionW / 2));
+        const int midLeft = left + fadeW;
+        const int midRight = right - fadeW;
+
+        if (regionW == 1) {
+            p.fillRect(QRect(left, top, 1, h),
+                       QColor(baseBlue.red(), baseBlue.green(), baseBlue.blue(), kRegionAlphaEdge));
+        } else {
+            if (midLeft < midRight) {
+                p.fillRect(QRect(midLeft, top, midRight - midLeft, h),
+                           QColor(baseBlue.red(), baseBlue.green(), baseBlue.blue(), kRegionAlphaCenter));
+            }
+
+            QLinearGradient gradL(QPointF(left, top), QPointF(left + fadeW, top));
+            gradL.setColorAt(0.0, QColor(baseBlue.red(), baseBlue.green(), baseBlue.blue(), kRegionAlphaEdge));
+            gradL.setColorAt(1.0, QColor(baseBlue.red(), baseBlue.green(), baseBlue.blue(), kRegionAlphaCenter));
+            p.fillRect(QRect(left, top, fadeW, h), QBrush(gradL));
+
+            QLinearGradient gradR(QPointF(right, top), QPointF(right - fadeW, top));
+            gradR.setColorAt(0.0, QColor(baseBlue.red(), baseBlue.green(), baseBlue.blue(), kRegionAlphaEdge));
+            gradR.setColorAt(1.0, QColor(baseBlue.red(), baseBlue.green(), baseBlue.blue(), kRegionAlphaCenter));
+            p.fillRect(QRect(right - fadeW, top, fadeW, h), QBrush(gradR));
+        }
+
         p.setPen(QPen(QColor(102, 152, 255), 2));
         p.drawLine(x1, rulerTop(), x1, paintBottom);
         p.drawLine(x2, rulerTop(), x2, paintBottom);
@@ -1833,9 +1866,10 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     // Paint through the real timeline right edge so the gradient matches the scroll hit zone (no dead strip).
     const int rightPaintEnd = tr;
     const int rightZoneW = std::max(0, rightPaintEnd - rightX0);
+    const bool pointerInWidget = rect().contains(lastHoverPos);
     const int mx = lastHoverPos.x();
-    const double heatL = edgeZoneHeatLeftOnly(mx, tl, xLeftEnd);
-    const double heatR = edgeZoneHeatRightOnly(mx, xRightStart, tr);
+    const double heatL = pointerInWidget ? edgeZoneHeatLeftOnly(mx, tl, xLeftEnd) : 0.0;
+    const double heatR = pointerInWidget ? edgeZoneHeatRightOnly(mx, xRightStart, tr) : 0.0;
     const float fillMulL = (heatL > 0.0)
         ? std::min(1.0f, kEdgeFillMulInnerBase + kEdgeFillMulInnerRange * static_cast<float>(heatL))
         : kEdgeFillMulInactive;
