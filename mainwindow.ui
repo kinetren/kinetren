@@ -17,7 +17,7 @@
    </size>
   </property>
   <property name="windowTitle">
-   <string>MainWindow</string>
+   <string>KP</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QGridLayout" name="gridLayout">
@@ -67,9 +67,6 @@
           <height>20</height>
          </size>
         </property>
-        <property name="styleSheet">
-         <string notr="true">background: gray;</string>
-        </property>
        </widget>
        <widget class="Previewer" name="frame" native="true">
         <property name="sizePolicy">
@@ -101,9 +98,6 @@
          <width>20</width>
          <height>20</height>
         </size>
-       </property>
-       <property name="styleSheet">
-        <string notr="true">background: rgba(150,150,150,0.1);</string>
        </property>
       </widget>
      </widget>

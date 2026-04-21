@@ -10,6 +10,7 @@
 #include "sourceeditwidgets.h"
 
 #include <QDockWidget>
+#include <QFrame>
 
 #include <QHBoxLayout>
 #include <QCheckBox>
@@ -45,6 +46,7 @@
 #include <QPointer>
 #include <QVector>
 #include <QCloseEvent>
+#include <QIcon>
 
 #include <QtGlobal>
 
@@ -64,6 +66,16 @@ MainWindow::MainWindow(QWidget *parent)
     , ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    ui->centralwidget->setStyleSheet(QStringLiteral("background-color:#1b1d20;"));
+    ui->gridLayout->setContentsMargins(0, 0, 0, 0);
+    ui->gridLayout->setSpacing(0);
+    setWindowIcon(QIcon(QStringLiteral(":/kp-test.png")));
+    setStyleSheet(
+        QStringLiteral("QMainWindow { background-color:#1b1d20; }\n"
+                       "QMenuBar { background-color:#1b1d20; color:#cfd6df; }\n"
+                       "QMenuBar::item:selected { background:#313740; }\n"
+                       "QStatusBar { background-color:#1b1d20; color:#8b949e; }\n"
+                       "QSplitter::handle { background:#1b1d20; }"));
     setupTimelineEditorUi();
     playbackPipeline = std::make_unique<PlaybackPipeline>(
         [this](QImage &&image) {
@@ -93,6 +105,7 @@ MainWindow::MainWindow(QWidget *parent)
         saveProjectToPath(currentProjectPath, true);
     });
     autosaveTimer.start();
+    refreshWindowTitle();
 }
 
 MainWindow::~MainWindow()
@@ -109,28 +122,68 @@ void MainWindow::startPlayback()
 
 void MainWindow::setupTimelineEditorUi()
 {
+    const QScreen *screenRef = QGuiApplication::primaryScreen();
+    const qreal dpiScale = screenRef ? std::clamp(screenRef->logicalDotsPerInch() / 96.0, 1.0, 2.4) : 1.0;
+    const int pad = qMax(6, qRound(8.0 * dpiScale));
+    const int padL = qMax(8, qRound(11.0 * dpiScale));
+    const int gap = qMax(4, qRound(6.0 * dpiScale));
+    const int frameInset = qMax(2, qRound(3.0 * dpiScale));
+
     auto *sourceLayout = new QVBoxLayout(ui->widget_3);
-    sourceLayout->setContentsMargins(6, 6, 6, 6);
-    sourceLayout->setSpacing(6);
+    sourceLayout->setContentsMargins(pad, pad, pad, pad);
+    sourceLayout->setSpacing(gap);
 
     auto *sourceTitle = new QLabel("Source area (drop files here, then drag to timeline)", ui->widget_3);
     sourceLayout->addWidget(sourceTitle);
 
-    sourceArea = new SourceAreaWidget(ui->widget_3);
+    auto *sourceListFrame = new QFrame(ui->widget_3);
+    sourceListFrame->setObjectName(QStringLiteral("SourceListFrame"));
+    sourceListFrame->setFrameShape(QFrame::NoFrame);
+    sourceListFrame->setStyleSheet(QStringLiteral(
+        "#SourceListFrame { background-color:#17191c; border:1px solid #343a42; border-radius:6px; }\n"
+        "#SourceListFrame QListWidget {\n"
+        "  background-color:#17191c; color:#cfd6df; border:none; outline:none;\n"
+        "}\n"
+        "#SourceListFrame QListWidget::item { padding:4px 8px; }\n"
+        "#SourceListFrame QListWidget::item:selected { background-color:#27435e; }\n"
+        "#SourceListFrame QListWidget::item:hover { background-color:#262a2f; }\n"));
+    auto *sourceListInner = new QVBoxLayout(sourceListFrame);
+    sourceListInner->setContentsMargins(frameInset, frameInset, frameInset, frameInset);
+    sourceListInner->setSpacing(0);
+    sourceArea = new SourceAreaWidget(sourceListFrame);
     sourceArea->setMinimumHeight(110);
     sourceArea->setMaximumHeight(220);
-    sourceLayout->addWidget(sourceArea, 1);
+    sourceListInner->addWidget(sourceArea, 1);
+    sourceLayout->addWidget(sourceListFrame, 1);
+
     performanceWidget = new PerformanceWidget(ui->widget_3);
     performanceWidget->setMinimumHeight(700);
     sourceLayout->addWidget(performanceWidget, 4);
     sourceLayout->setStretch(0, 0); // title
-    sourceLayout->setStretch(1, 1); // source list
+    sourceLayout->setStretch(1, 1); // source list frame
     sourceLayout->setStretch(2, 5); // performance panel
+
+    ui->widget_3->setStyleSheet(
+        QStringLiteral(
+            "QWidget { background-color:#1b1d20; color:#cfd6df; }\n"
+            "QLabel { color:#cfd6df; background-color:transparent; }\n"));
 
     auto *previewHost = new QWidget(ui->splitter);
     auto *previewLayout = new QVBoxLayout(previewHost);
-    previewLayout->setContentsMargins(6, 6, 6, 6);
-    previewLayout->setSpacing(6);
+    previewLayout->setContentsMargins(0, 0, 0, 0);
+    previewLayout->setSpacing(0);
+    previewHost->setStyleSheet(
+        QStringLiteral(
+            "QWidget { background-color:#1b1d20; color:#cfd6df; }\n"
+            "QLabel { color:#cfd6df; background-color:transparent; }\n"
+            "QComboBox, QSpinBox {\n"
+            "  background-color:#262a2f; color:#cfd6df; border:1px solid #343a42; border-radius:4px; padding:2px 6px;\n"
+            "}\n"
+            "QComboBox:hover, QSpinBox:hover { background-color:#313740; border-color:#4b5563; }\n"
+            "QCheckBox { color:#cfd6df; spacing:8px; }\n"
+            "QCheckBox::indicator { width:14px; height:14px; border:1px solid #343a42; border-radius:3px; "
+            "background:#262a2f; }\n"
+            "QCheckBox::indicator:checked { background:#27435e; border-color:#5f89ad; }"));
     const int previewIndex = ui->splitter->indexOf(ui->frame);
     if (previewIndex >= 0) {
         ui->splitter->replaceWidget(previewIndex, previewHost);
@@ -186,16 +239,39 @@ void MainWindow::setupTimelineEditorUi()
     previewLayout->addLayout(previewControls);
 
     auto *timelineLayout = new QVBoxLayout(ui->widget_2);
-    timelineLayout->setContentsMargins(6, 6, 6, 6);
-    timelineLayout->setSpacing(6);
+    timelineLayout->setContentsMargins(pad, 0, pad, qMax(2, qRound(4.0 * dpiScale)));
+    timelineLayout->setSpacing(qMax(2, qRound(3.0 * dpiScale)));
 
     auto *globalCounterWidget = new QWidget(ui->splitter_2);
-    globalCounterWidget->setMinimumHeight(28);
-    globalCounterWidget->setMaximumHeight(34);
+    globalCounterWidget->setObjectName(QStringLiteral("TimelineTimeStrip"));
+    globalCounterWidget->setMinimumHeight(qMax(28, qRound(26.0 * dpiScale)));
+    globalCounterWidget->setMaximumHeight(qMax(40, qRound(52.0 * dpiScale)));
     auto *globalCounterLayout = new QHBoxLayout(globalCounterWidget);
-    globalCounterLayout->setContentsMargins(8, 4, 8, 4);
+    globalCounterLayout->setContentsMargins(0, 0, 0, 0);
+    globalCounterLayout->setSpacing(qMax(6, qRound(8.0 * dpiScale)));
+    {
+        const int pt = qMax(4, qRound(5.0 * dpiScale));
+        const int pr = pad;
+        const int pb = pt;
+        const int pl = padL;
+        globalCounterWidget->setStyleSheet(QStringLiteral(
+                                               "#TimelineTimeStrip {\n"
+                                               "  background-color:#1b1d20;\n"
+                                               "  color:#cfd6df;\n"
+                                               "  padding: %1px %2px %3px %4px;\n"
+                                               "  border-bottom:1px solid #343a42;\n"
+                                               "}\n"
+                                               "#TimelineTimeStrip QLabel { color:#cfd6df; background:transparent; }\n"
+                                               "#TimelineTimeStrip QLabel#TimelineGlobalTimeValue {\n"
+                                               "  font-weight:600; color:#d9e3ef;\n"
+                                               "}")
+                                           .arg(pt)
+                                           .arg(pr)
+                                           .arg(pb)
+                                           .arg(pl));
+    }
     timelineGlobalTimeLabel = new QLabel("00:00:00.000 F00", globalCounterWidget);
-    timelineGlobalTimeLabel->setStyleSheet("font-weight:600; color:#d9e3ef;");
+    timelineGlobalTimeLabel->setObjectName(QStringLiteral("TimelineGlobalTimeValue"));
     globalCounterLayout->addWidget(new QLabel("Timeline time:", globalCounterWidget));
     globalCounterLayout->addWidget(timelineGlobalTimeLabel, 1);
     ui->splitter_2->insertWidget(1, globalCounterWidget);
@@ -214,10 +290,12 @@ void MainWindow::setupTimelineEditorUi()
     timelineLayout->addWidget(timelineScrollBar);
 
     auto *controlsLayout = new QHBoxLayout();
+    controlsLayout->setContentsMargins(padL, pad, pad, pad);
+    controlsLayout->setSpacing(qMax(3, qRound(4.0 * dpiScale)));
     ui->widget_2->setStyleSheet(
         "QWidget { background-color:#1b1d20; color:#cfd6df; }"
         "QLabel { color:#cfd6df; background-color:transparent; }"
-        "QToolButton, QPushButton { background-color:#262a2f; color:#cfd6df; border:1px solid #343a42; border-radius:4px; padding:2px; }"
+        "QToolButton, QPushButton { background-color:#262a2f; color:#cfd6df; border:1px solid #343a42; border-radius:4px; padding:3px 4px; }"
         "QToolButton:hover, QPushButton:hover { background-color:#313740; border-color:#4b5563; }"
         "QToolButton:pressed, QPushButton:pressed { background-color:#3a4350; }"
         "QToolButton:checked, QPushButton:checked { background-color:#27435e; border-color:#5f89ad; }"
@@ -292,8 +370,6 @@ void MainWindow::setupTimelineEditorUi()
     timelineLoopButton->setToolTip("Loop region");
     timelineLoopButton->setCheckable(true);
 
-    const QScreen *screenRef = QGuiApplication::primaryScreen();
-    const qreal dpiScale = screenRef ? std::clamp(screenRef->logicalDotsPerInch() / 96.0, 1.0, 2.4) : 1.0;
     const int buttonW = qRound(30.0 * dpiScale);
     const int buttonH = qRound(28.0 * dpiScale);
     const int iconPx = qRound(18.0 * dpiScale);
@@ -1232,6 +1308,7 @@ bool MainWindow::saveProjectToPath(const QString &path, bool silent)
     }
 
     currentProjectPath = path;
+    refreshWindowTitle();
     QSettings settings;
     settings.setValue("project/lastPath", currentProjectPath);
     if (!silent) {
@@ -1297,6 +1374,7 @@ bool MainWindow::loadProjectFromPath(const QString &path, bool silent)
     refreshPerformancePanel();
 
     currentProjectPath = path;
+    refreshWindowTitle();
     QSettings settings;
     settings.setValue("project/lastPath", currentProjectPath);
     if (!silent) {
@@ -1421,6 +1499,13 @@ void MainWindow::loadLastProjectOnStartup()
         }
     }
     currentProjectPath = fallbackPath;
+    refreshWindowTitle();
+}
+
+void MainWindow::refreshWindowTitle()
+{
+    const QString base = QFileInfo(currentProjectPath).fileName();
+    setWindowTitle(QStringLiteral("KP: %1").arg(base.isEmpty() ? QStringLiteral("untitled") : base));
 }
 
 void MainWindow::changeEvent(QEvent *event)

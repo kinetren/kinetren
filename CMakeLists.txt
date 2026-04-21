@@ -42,6 +42,7 @@ set(PROJECT_SOURCES
         playbackpipeline.cpp
         playbackpipeline.h
         mainwindow.ui
+        kp_icons.qrc
 )
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)

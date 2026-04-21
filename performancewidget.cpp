@@ -1,7 +1,9 @@
 #include "performancewidget.h"
 
+#include <QGuiApplication>
 #include <QLabel>
 #include <QPainter>
+#include <QScreen>
 #include <QSizePolicy>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -102,8 +104,8 @@ protected:
     {
         Q_UNUSED(event);
         QPainter p(this);
-        p.fillRect(rect(), QColor(24, 27, 31));
-        p.setPen(QColor(61, 68, 77));
+        p.fillRect(rect(), QColor(0x1b, 0x1d, 0x20));
+        p.setPen(QColor(42, 47, 53));
         p.drawRect(rect().adjusted(0, 0, -1, -1));
         const int leftLegendWidth = 112;
         const int axisLabelWidth = 36;
@@ -206,13 +208,23 @@ private:
 PerformanceWidget::PerformanceWidget(QWidget *parent)
     : QWidget(parent)
 {
+    const QScreen *scr = QGuiApplication::primaryScreen();
+    const qreal dpiScale = scr ? std::clamp(scr->logicalDotsPerInch() / 96.0, 1.0, 2.4) : 1.0;
+    const int m = std::max(6, static_cast<int>(std::lround(8.0 * dpiScale)));
+
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->setSpacing(8);
+    layout->setContentsMargins(m, m, m, m);
+    layout->setSpacing(std::max(4, static_cast<int>(std::lround(5.0 * dpiScale))));
     setMinimumHeight(460);
+    setStyleSheet(QStringLiteral(
+        "PerformanceWidget {\n"
+        "  background-color:#1b1d20;\n"
+        "  border-top:1px solid #343a42;\n"
+        "}\n"
+        "QLabel { color:#cfd6df; background-color:transparent; }"));
 
     auto *title = new QLabel("Performance / Utility", this);
-    title->setStyleSheet("font-weight:600; color:#d9e3ef;");
+    title->setStyleSheet(QStringLiteral("font-weight:600; color:#cfd6df; background:transparent;"));
     composeFpsLabel = new QLabel("Compose FPS: -", this);
     cacheStatsLabel = new QLabel("Cache: -", this);
     cacheResolutionLabel = new QLabel("Cache Resolution: -", this);

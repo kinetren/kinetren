@@ -58,6 +58,7 @@ private:
     void restoreUiState();
     void openMorpherEditWindow(int morpherEventId);
     void pruneMorpherWindows();
+    void refreshWindowTitle();
 
 protected:
     void changeEvent(QEvent *event) override;
