@@ -1,5 +1,6 @@
 #include "renderprogressdialog.h"
 #include "speedchartwidget.h"
+#include "projectsettings.h"
 
 #include <QFont>
 #include <QFormLayout>
@@ -8,7 +9,9 @@
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QStyle>
 #include <QTextCursor>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -25,12 +28,25 @@ QFont monoFont(int pointSize = 10)
 QLabel *makeValueLabel(QWidget *parent)
 {
     auto *l = new QLabel(parent);
-    l->setFont(monoFont(10));
+    l->setFont(monoFont(11));
     l->setTextInteractionFlags(Qt::TextSelectableByMouse);
     l->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    l->setMinimumWidth(280);
+    l->setMinimumWidth(300);
     l->setStyleSheet(QStringLiteral("QLabel { padding: 2px 0; }"));
     return l;
+}
+
+QSize evenRenderSize(const QSize &in)
+{
+    int w = std::max(2, in.width());
+    int h = std::max(2, in.height());
+    if ((w % 2) != 0) {
+        ++w;
+    }
+    if ((h % 2) != 0) {
+        ++h;
+    }
+    return QSize(w, h);
 }
 } // namespace
 
@@ -39,24 +55,20 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
 {
     setWindowTitle("Render to MP4");
     setModal(true);
-    resize(920, 640);
-    setMinimumSize(720, 520);
+    resize(1180, 720);
+    setMinimumSize(980, 600);
     setStyleSheet(QStringLiteral(
         "QDialog { background-color: #1c1e22; color: #dce4ef; }"
         "QPlainTextEdit { background-color: #17191c; color: #d7dee8; border: 1px solid #2f3540; border-radius: 4px; }"
-        "QProgressBar { border: 1px solid #2f3540; border-radius: 4px; background: #131519; min-height: 18px; }"
-        "QProgressBar::chunk { background-color: #3a7eb5; }"));
+        "QProgressBar { border: 1px solid #2f3540; border-radius: 4px; background: #131519; min-height: 22px; "
+        "text-align: center; }"
+        "QProgressBar::chunk { background-color: #3a7eb5; }"
+        "QToolButton { background: #2a3038; border: 1px solid #3d4652; border-radius: 4px; padding: 4px; }"
+        "QToolButton:hover { background: #343c48; }"
+        "QToolButton:checked { background: #27435e; border-color: #5f89ad; }"));
 
     m_cancelFlag = std::make_shared<std::atomic<bool>>(false);
     m_pauseFlag = std::make_shared<std::atomic<bool>>(false);
-
-    auto *metricsBox = new QWidget(this);
-    auto *form = new QFormLayout(metricsBox);
-    form->setContentsMargins(0, 0, 0, 0);
-    form->setSpacing(6);
-    form->setHorizontalSpacing(16);
-    form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
-    form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
     const QString labelStyle = QStringLiteral("QLabel { color: #aeb6c2; min-width: 7em; }");
     auto makeKey = [labelStyle](const QString &text) {
@@ -66,24 +78,56 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
         return lb;
     };
 
-    m_valPhase = makeValueLabel(metricsBox);
-    m_valProgress = makeValueLabel(metricsBox);
-    m_valElapsed = makeValueLabel(metricsBox);
-    m_valRemaining = makeValueLabel(metricsBox);
-    m_valOutput = makeValueLabel(metricsBox);
+    auto buildForm = [&](QWidget *box) {
+        auto *form = new QFormLayout(box);
+        form->setContentsMargins(0, 0, 0, 0);
+        form->setSpacing(3);
+        form->setHorizontalSpacing(12);
+        form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
+        form->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        return form;
+    };
 
+    auto *outBox = new QWidget(this);
+    auto *outForm = buildForm(outBox);
+    m_outResolution = makeValueLabel(outBox);
+    m_outFps = makeValueLabel(outBox);
+    m_outVideo = makeValueLabel(outBox);
+    m_outAudio = makeValueLabel(outBox);
+    m_outMux = makeValueLabel(outBox);
+    outForm->addRow(makeKey(tr("Resolution")), m_outResolution);
+    outForm->addRow(makeKey(tr("Frame rate")), m_outFps);
+    outForm->addRow(makeKey(tr("Video")), m_outVideo);
+    outForm->addRow(makeKey(tr("Audio")), m_outAudio);
+    outForm->addRow(makeKey(tr("Mux")), m_outMux);
+
+    auto *runBox = new QWidget(this);
+    auto *form = buildForm(runBox);
+    m_valPhase = makeValueLabel(runBox);
+    m_valProgress = makeValueLabel(runBox);
+    m_valElapsed = makeValueLabel(runBox);
+    m_valRemaining = makeValueLabel(runBox);
+    m_valOutput = makeValueLabel(runBox);
     form->addRow(makeKey(tr("Phase")), m_valPhase);
     form->addRow(makeKey(tr("Progress")), m_valProgress);
     form->addRow(makeKey(tr("Elapsed")), m_valElapsed);
     form->addRow(makeKey(tr("Remaining")), m_valRemaining);
     form->addRow(makeKey(tr("Output len")), m_valOutput);
 
+    auto *metricsRow = new QHBoxLayout();
+    metricsRow->setSpacing(20);
+    metricsRow->addWidget(outBox, 1);
+    metricsRow->addWidget(runBox, 1);
+
+    auto *metricsWrap = new QWidget(this);
+    metricsWrap->setLayout(metricsRow);
+
     m_speedStats = new QLabel(this);
-    m_speedStats->setFont(monoFont(10));
+    m_speedStats->setFont(monoFont(11));
     m_speedStats->setTextInteractionFlags(Qt::TextSelectableByMouse);
     m_speedStats->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_speedStats->setMinimumHeight(22);
-    m_speedStats->setStyleSheet(QStringLiteral("QLabel { padding: 4px 0; color: #dce4ef; }"));
+    m_speedStats->setStyleSheet(QStringLiteral("QLabel { padding: 2px 0; color: #dce4ef; }"));
     m_speedStats->setText(tr("Speed:  min —   avg —   cur —   max —"));
 
     m_chart = new SpeedChartWidget(this);
@@ -94,11 +138,25 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
     m_bar->setTextVisible(true);
     m_bar->setFormat(QStringLiteral("%p%"));
     m_bar->setMinimumHeight(22);
+    m_bar->setAlignment(Qt::AlignCenter);
+
+    m_logToggle = new QToolButton(this);
+    m_logToggle->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
+    m_logToggle->setIconSize(QSize(22, 22));
+    m_logToggle->setFixedSize(36, 32);
+    m_logToggle->setCheckable(true);
+    m_logToggle->setChecked(false);
+    m_logToggle->setAutoRaise(false);
+    m_logToggle->setFocusPolicy(Qt::NoFocus);
+    m_logToggle->setToolTip(tr("Show log"));
+    connect(m_logToggle, &QToolButton::toggled, this, &RenderProgressDialog::onLogToggle);
 
     m_log = new QPlainTextEdit(this);
     m_log->setReadOnly(true);
     m_log->setMaximumBlockCount(800);
     m_log->setFont(monoFont(10));
+    m_log->setMinimumHeight(200);
+    m_log->setVisible(false);
 
     m_pauseBtn = new QPushButton(tr("Pause"), this);
     m_cancelBtn = new QPushButton(tr("Cancel"), this);
@@ -111,25 +169,58 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
     connect(m_okBtn, &QPushButton::clicked, this, &QDialog::accept);
 
     auto *btnRow = new QHBoxLayout();
+    btnRow->setContentsMargins(0, 2, 0, 0);
+    btnRow->setSpacing(8);
     btnRow->addWidget(m_pauseBtn);
     btnRow->addWidget(m_cancelBtn);
     btnRow->addStretch(1);
     btnRow->addWidget(m_okBtn);
 
+    auto *barRow = new QHBoxLayout();
+    barRow->setSpacing(6);
+    barRow->addWidget(m_bar, 1);
+    barRow->addWidget(m_logToggle, 0, Qt::AlignVCenter);
+
     auto *lay = new QVBoxLayout(this);
-    lay->setSpacing(8);
-    lay->addWidget(metricsBox);
+    lay->setContentsMargins(8, 6, 8, 6);
+    lay->setSpacing(4);
+    lay->addWidget(metricsWrap);
     lay->addWidget(m_speedStats);
     lay->addWidget(m_chart);
-    lay->addWidget(m_bar);
+    lay->addLayout(barRow);
     lay->addWidget(m_log, 1);
     lay->addLayout(btnRow);
 
+    m_outResolution->setText(QStringLiteral("—"));
+    m_outFps->setText(QStringLiteral("—"));
+    m_outVideo->setText(QStringLiteral("—"));
+    m_outAudio->setText(QStringLiteral("—"));
+    m_outMux->setText(QStringLiteral("—"));
     m_valPhase->setText(QStringLiteral("—"));
     m_valProgress->setText(QStringLiteral("—"));
     m_valElapsed->setText(QStringLiteral("—"));
     m_valRemaining->setText(QStringLiteral("—"));
     m_valOutput->setText(QStringLiteral("—"));
+}
+
+void RenderProgressDialog::setExportInfo(const ProjectSettings &settings)
+{
+    const QSize r = evenRenderSize(settings.cacheResolution());
+    if (m_outResolution) {
+        m_outResolution->setText(QStringLiteral("%1 × %2").arg(r.width()).arg(r.height()));
+    }
+    if (m_outFps) {
+        m_outFps->setText(QStringLiteral("%1 fps").arg(settings.fps));
+    }
+    if (m_outVideo) {
+        m_outVideo->setText(QStringLiteral("H.264 (libx264), yuv420p, preset veryfast, CRF 23"));
+    }
+    if (m_outAudio) {
+        m_outAudio->setText(QStringLiteral("AAC, 48 kHz stereo, 192 kbps"));
+    }
+    if (m_outMux) {
+        m_outMux->setText(QStringLiteral("MP4 (+faststart)"));
+    }
 }
 
 void RenderProgressDialog::appendLog(const QString &line)
@@ -241,6 +332,16 @@ void RenderProgressDialog::setFinished(bool ok, const QString &summary)
     appendLog(ok ? tr("Finished successfully.") : tr("Finished with errors or cancellation."));
     if (!summary.isEmpty()) {
         appendLog(summary);
+    }
+}
+
+void RenderProgressDialog::onLogToggle(bool checked)
+{
+    if (m_log) {
+        m_log->setVisible(checked);
+    }
+    if (m_logToggle) {
+        m_logToggle->setToolTip(checked ? tr("Hide log") : tr("Show log"));
     }
 }
 

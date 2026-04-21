@@ -10,19 +10,19 @@
 SpeedChartWidget::SpeedChartWidget(QWidget *parent)
     : QWidget(parent)
 {
-    setMinimumHeight(110);
-    setMaximumHeight(160);
+    setMinimumHeight(128);
+    setMaximumHeight(200);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 }
 
 QSize SpeedChartWidget::sizeHint() const
 {
-    return QSize(400, 120);
+    return QSize(600, 168);
 }
 
 QSize SpeedChartWidget::minimumSizeHint() const
 {
-    return QSize(200, 110);
+    return QSize(320, 128);
 }
 
 void SpeedChartWidget::clear()

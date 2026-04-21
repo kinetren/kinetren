@@ -793,6 +793,7 @@ void MainWindow::renderDraftProject()
     }
 
     QPointer<RenderProgressDialog> dlg(new RenderProgressDialog(this));
+    dlg->setExportInfo(projectSettings);
     dlg->appendLog(tr("Output file: %1").arg(outPath));
     dlg->setRunning(true);
     dlg->show();
