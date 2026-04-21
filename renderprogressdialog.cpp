@@ -2,6 +2,7 @@
 #include "speedchartwidget.h"
 #include "projectsettings.h"
 
+#include <QDialog>
 #include <QFont>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -64,8 +65,7 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
         "text-align: center; }"
         "QProgressBar::chunk { background-color: #3a7eb5; }"
         "QToolButton { background: #2a3038; border: 1px solid #3d4652; border-radius: 4px; padding: 4px; }"
-        "QToolButton:hover { background: #343c48; }"
-        "QToolButton:checked { background: #27435e; border-color: #5f89ad; }"));
+        "QToolButton:hover { background: #343c48; }"));
 
     m_cancelFlag = std::make_shared<std::atomic<bool>>(false);
     m_pauseFlag = std::make_shared<std::atomic<bool>>(false);
@@ -140,23 +140,20 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
     m_bar->setMinimumHeight(22);
     m_bar->setAlignment(Qt::AlignCenter);
 
-    m_logToggle = new QToolButton(this);
-    m_logToggle->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
-    m_logToggle->setIconSize(QSize(22, 22));
-    m_logToggle->setFixedSize(36, 32);
-    m_logToggle->setCheckable(true);
-    m_logToggle->setChecked(false);
-    m_logToggle->setAutoRaise(false);
-    m_logToggle->setFocusPolicy(Qt::NoFocus);
-    m_logToggle->setToolTip(tr("Show log"));
-    connect(m_logToggle, &QToolButton::toggled, this, &RenderProgressDialog::onLogToggle);
+    m_logBtn = new QToolButton(this);
+    m_logBtn->setIcon(style()->standardIcon(QStyle::SP_MessageBoxInformation));
+    m_logBtn->setIconSize(QSize(22, 22));
+    m_logBtn->setFixedSize(36, 32);
+    m_logBtn->setAutoRaise(false);
+    m_logBtn->setFocusPolicy(Qt::NoFocus);
+    m_logBtn->setToolTip(tr("Show log"));
+    connect(m_logBtn, &QToolButton::clicked, this, &RenderProgressDialog::onLogWindowClicked);
 
     m_log = new QPlainTextEdit(this);
     m_log->setReadOnly(true);
     m_log->setMaximumBlockCount(800);
     m_log->setFont(monoFont(10));
-    m_log->setMinimumHeight(200);
-    m_log->setVisible(false);
+    m_log->hide();
 
     m_pauseBtn = new QPushButton(tr("Pause"), this);
     m_cancelBtn = new QPushButton(tr("Cancel"), this);
@@ -168,18 +165,18 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
     connect(m_cancelBtn, &QPushButton::clicked, this, &RenderProgressDialog::onCancelClicked);
     connect(m_okBtn, &QPushButton::clicked, this, &QDialog::accept);
 
+    auto *barRow = new QHBoxLayout();
+    barRow->setSpacing(0);
+    barRow->addWidget(m_bar, 1);
+
     auto *btnRow = new QHBoxLayout();
     btnRow->setContentsMargins(0, 2, 0, 0);
     btnRow->setSpacing(8);
+    btnRow->addStretch(1);
     btnRow->addWidget(m_pauseBtn);
     btnRow->addWidget(m_cancelBtn);
-    btnRow->addStretch(1);
+    btnRow->addWidget(m_logBtn, 0, Qt::AlignVCenter);
     btnRow->addWidget(m_okBtn);
-
-    auto *barRow = new QHBoxLayout();
-    barRow->setSpacing(6);
-    barRow->addWidget(m_bar, 1);
-    barRow->addWidget(m_logToggle, 0, Qt::AlignVCenter);
 
     auto *lay = new QVBoxLayout(this);
     lay->setContentsMargins(8, 6, 8, 6);
@@ -188,7 +185,6 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
     lay->addWidget(m_speedStats);
     lay->addWidget(m_chart);
     lay->addLayout(barRow);
-    lay->addWidget(m_log, 1);
     lay->addLayout(btnRow);
 
     m_outResolution->setText(QStringLiteral("—"));
@@ -225,12 +221,17 @@ void RenderProgressDialog::setExportInfo(const ProjectSettings &settings)
 
 void RenderProgressDialog::appendLog(const QString &line)
 {
-    if (m_log) {
-        m_log->appendPlainText(line);
-        QTextCursor c = m_log->textCursor();
+    auto appendOne = [&line](QPlainTextEdit *ed) {
+        if (!ed) {
+            return;
+        }
+        ed->appendPlainText(line);
+        QTextCursor c = ed->textCursor();
         c.movePosition(QTextCursor::End);
-        m_log->setTextCursor(c);
-    }
+        ed->setTextCursor(c);
+    };
+    appendOne(m_log);
+    appendOne(m_logFloatPlain);
 }
 
 void RenderProgressDialog::setProgress(int value, int maximum)
@@ -335,14 +336,37 @@ void RenderProgressDialog::setFinished(bool ok, const QString &summary)
     }
 }
 
-void RenderProgressDialog::onLogToggle(bool checked)
+void RenderProgressDialog::onLogWindowClicked()
 {
+    if (m_logFloatWindow) {
+        m_logFloatWindow->raise();
+        m_logFloatWindow->activateWindow();
+        return;
+    }
+    auto *dlg = new QDialog(this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    dlg->setModal(false);
+    dlg->setWindowTitle(tr("Render log"));
+    dlg->resize(size());
+    dlg->setMinimumSize(minimumSize());
+    dlg->setStyleSheet(styleSheet());
+    auto *vl = new QVBoxLayout(dlg);
+    vl->setContentsMargins(8, 8, 8, 8);
+    m_logFloatPlain = new QPlainTextEdit(dlg);
+    m_logFloatPlain->setReadOnly(true);
+    m_logFloatPlain->setMaximumBlockCount(800);
     if (m_log) {
-        m_log->setVisible(checked);
+        m_logFloatPlain->setFont(m_log->font());
+        m_logFloatPlain->setPlainText(m_log->toPlainText());
+    } else {
+        m_logFloatPlain->setFont(monoFont(10));
     }
-    if (m_logToggle) {
-        m_logToggle->setToolTip(checked ? tr("Hide log") : tr("Show log"));
-    }
+    vl->addWidget(m_logFloatPlain);
+    m_logFloatWindow = dlg;
+    connect(dlg, &QObject::destroyed, this, [this]() {
+        m_logFloatPlain = nullptr;
+    });
+    dlg->show();
 }
 
 void RenderProgressDialog::onPauseClicked()

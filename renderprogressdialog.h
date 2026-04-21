@@ -2,6 +2,7 @@
 #define RENDERPROGRESSDIALOG_H
 
 #include <QDialog>
+#include <QPointer>
 
 #include <atomic>
 #include <memory>
@@ -41,11 +42,13 @@ public:
 private:
     void onPauseClicked();
     void onCancelClicked();
-    void onLogToggle(bool checked);
+    void onLogWindowClicked();
     void updateSpeedStatsLine();
 
     QPlainTextEdit *m_log = nullptr;
-    QToolButton *m_logToggle = nullptr;
+    QToolButton *m_logBtn = nullptr;
+    QPointer<QDialog> m_logFloatWindow;
+    QPlainTextEdit *m_logFloatPlain = nullptr;
     QProgressBar *m_bar = nullptr;
     QLabel *m_outResolution = nullptr;
     QLabel *m_outFps = nullptr;
