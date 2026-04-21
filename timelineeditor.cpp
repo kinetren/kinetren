@@ -1,7 +1,5 @@
 #include "timelineeditor.h"
 #include "burstcon.h"
-#include "timeline_snowflake.h"
-
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QContextMenuEvent>
@@ -24,6 +22,7 @@
 #include <QUrl>
 #include <QWheelEvent>
 #include <QEvent>
+#include <QHash>
 #include <QSet>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
@@ -234,8 +233,6 @@ bool TimelineEditor::splitSelectedClipAtCursor()
 
         ClipEvent right = *clip;
         right.id = nextClipId++;
-        ensureClipSnowflake(*clip);
-        right.snowflakeId = generateTimelineSnowflakeId();
         right.startMs = cursorPositionMs;
         right.durationMs = clip->durationMs - splitOffset;
         right.sourceInMs = clip->sourceInMs + splitOffset;
@@ -414,12 +411,10 @@ bool TimelineEditor::pasteClipboardAtCursor()
     for (const auto &src : clipboardClips) {
         ClipEvent c = src;
         c.id = nextClipId++;
-        c.snowflakeId = generateTimelineSnowflakeId();
         c.startMs = cursorPositionMs + (src.startMs - sourceMinStart);
         if (!isTrackIndexValid(c.trackIndex)) {
             c.trackIndex = ensureDropTrackForType(c.mediaType, contentBottom() + 20);
         }
-        ensureClipSnowflake(c);
         if (src.linkedGroupId >= 0) {
             if (!oldGroupToNew.contains(src.linkedGroupId)) {
                 oldGroupToNew.insert(src.linkedGroupId, nextLinkedGroupId++);
@@ -780,12 +775,15 @@ void TimelineEditor::clearPendingMorpherPlacement()
     update();
 }
 
-QVector<quint64> TimelineEditor::collectMorpherTargetSnowflakes()
+QVector<int> TimelineEditor::collectMorpherTargetClipIds()
 {
-    QVector<quint64> out;
-    QSet<quint64> seen;
+    QVector<int> out;
+    QSet<int> seen;
 
     const auto addClipId = [&](int clipId) {
+        if (clipId <= 0 || seen.contains(clipId)) {
+            return;
+        }
         ClipEvent *c = findClipById(clipId);
         if (!c || !isTrackIndexValid(c->trackIndex)) {
             return;
@@ -793,11 +791,8 @@ QVector<quint64> TimelineEditor::collectMorpherTargetSnowflakes()
         if (tracks[static_cast<size_t>(c->trackIndex)].type == TrackType::Morpher) {
             return;
         }
-        ensureClipSnowflake(*c);
-        if (c->snowflakeId != 0 && !seen.contains(c->snowflakeId)) {
-            seen.insert(c->snowflakeId);
-            out.push_back(c->snowflakeId);
-        }
+        seen.insert(clipId);
+        out.push_back(clipId);
     };
 
     if (hasRegionSelection && regionEndMs > regionStartMs) {
@@ -834,11 +829,10 @@ void TimelineEditor::commitPendingMorpherPlacement(int trackIdx, qint64 startMs)
     }
     MorpherEvent m;
     m.id = nextMorpherEventId++;
-    m.morpherSnowflake = generateTimelineSnowflakeId();
     m.trackIndex = trackIdx;
     m.startMs = startMs;
     m.durationMs = 1500;
-    m.targetClipSnowflakes = pendingMorpherPlacement.targetSnowflakes;
+    m.targetClipIds = pendingMorpherPlacement.targetClipIds;
     morpherEvents.push_back(m);
     const int placedId = morpherEvents.back().id;
     clearPendingMorpherPlacement();
@@ -849,18 +843,11 @@ void TimelineEditor::commitPendingMorpherPlacement(int trackIdx, qint64 startMs)
     emit morpherEditWindowRequested(placedId);
 }
 
-void TimelineEditor::ensureClipSnowflake(TimelineEditor::ClipEvent &clip)
-{
-    if (clip.snowflakeId == 0) {
-        clip.snowflakeId = generateTimelineSnowflakeId();
-    }
-}
-
 TimelineEditor::ClipEvent TimelineEditor::effectiveClipForRender(const TimelineEditor::ClipEvent &base) const
 {
     ClipEvent out = base;
     for (const auto &m : morpherEvents) {
-        if (!m.targetClipSnowflakes.contains(base.snowflakeId)) {
+        if (!m.targetClipIds.contains(base.id)) {
             continue;
         }
         applyMorpherPatchToClipCopy(out, m);
@@ -881,26 +868,6 @@ void TimelineEditor::applyMorpherPatchToClipCopy(TimelineEditor::ClipEvent &clip
         const qint64 maxIn = std::max<qint64>(0, clip.sourceDurationMs - clip.durationMs);
         clip.sourceInMs = std::clamp(clip.sourceInMs + m.sourceInDeltaMs, 0LL, maxIn);
     }
-}
-
-TimelineEditor::ClipEvent *TimelineEditor::findClipBySnowflake(quint64 snowflake)
-{
-    for (auto &c : clips) {
-        if (c.snowflakeId == snowflake) {
-            return &c;
-        }
-    }
-    return nullptr;
-}
-
-const TimelineEditor::ClipEvent *TimelineEditor::findClipBySnowflake(quint64 snowflake) const
-{
-    for (const auto &c : clips) {
-        if (c.snowflakeId == snowflake) {
-            return &c;
-        }
-    }
-    return nullptr;
 }
 
 TimelineEditor::MorpherEvent *TimelineEditor::findMorpherById(int id)
@@ -1040,20 +1007,20 @@ bool TimelineEditor::hasMorpherEvent(int morpherEventId) const
 QString TimelineEditor::morpherTargetsDescription(int morpherEventId) const
 {
     const MorpherEvent *m = findMorpherById(morpherEventId);
-    if (!m || m->targetClipSnowflakes.isEmpty()) {
+    if (!m || m->targetClipIds.isEmpty()) {
         return tr("No frozen targets.");
     }
     QStringList parts;
-    const int n = m->targetClipSnowflakes.size();
+    const int n = m->targetClipIds.size();
     const int show = std::min(4, n);
     for (int i = 0; i < show; ++i) {
-        parts.push_back(QString::number(m->targetClipSnowflakes[static_cast<int>(i)]));
+        parts.push_back(QStringLiteral("#%1").arg(m->targetClipIds[static_cast<int>(i)]));
     }
     QString tail = parts.join(QStringLiteral(", "));
     if (n > show) {
         tail += QStringLiteral(" …");
     }
-    return tr("Frozen at creation: %1 clip(s). Snowflake ids: %2").arg(n).arg(tail);
+    return tr("Frozen at creation: %1 clip(s). Clip ids: %2").arg(n).arg(tail);
 }
 
 void TimelineEditor::addMorpherTrack()
@@ -1067,7 +1034,7 @@ void TimelineEditor::addMorpherTrack()
 
 void TimelineEditor::beginMorpherPlacementFromSelection()
 {
-    const QVector<quint64> targets = collectMorpherTargetSnowflakes();
+    const QVector<int> targets = collectMorpherTargetClipIds();
     if (targets.isEmpty()) {
         QMessageBox::information(
             this,
@@ -1086,7 +1053,7 @@ void TimelineEditor::beginMorpherPlacementFromSelection()
         addMorpherTrack();
     }
     pendingMorpherPlacement.active = true;
-    pendingMorpherPlacement.targetSnowflakes = targets;
+    pendingMorpherPlacement.targetClipIds = targets;
     setCursor(Qt::PointingHandCursor);
     setFocus(Qt::OtherFocusReason);
     emitOverlayInfo();
@@ -1107,8 +1074,8 @@ void TimelineEditor::bakeMorpherEvent(int morpherEventId)
     if (!me) {
         return;
     }
-    for (quint64 sf : me->targetClipSnowflakes) {
-        ClipEvent *c = findClipBySnowflake(sf);
+    for (int clipId : me->targetClipIds) {
+        ClipEvent *c = findClipById(clipId);
         if (!c) {
             continue;
         }
@@ -1381,7 +1348,7 @@ void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double,
 QJsonObject TimelineEditor::toJson() const
 {
     QJsonObject root;
-    root.insert("version", 2);
+    root.insert("version", 3);
     root.insert("nextClipId", nextClipId);
     root.insert("nextLinkedGroupId", nextLinkedGroupId);
     root.insert("cursorMs", static_cast<double>(cursorPositionMs));
@@ -1413,7 +1380,6 @@ QJsonObject TimelineEditor::toJson() const
     for (const auto &clip : clips) {
         QJsonObject clipObject;
         clipObject.insert("id", clip.id);
-        clipObject.insert("snowflakeId", QString::number(clip.snowflakeId));
         clipObject.insert("linkedGroupId", clip.linkedGroupId);
         clipObject.insert("mediaType", clip.mediaType == TrackType::Video ? "video" : "audio");
         clipObject.insert("trackIndex", clip.trackIndex);
@@ -1438,18 +1404,17 @@ QJsonObject TimelineEditor::toJson() const
     for (const auto &m : morpherEvents) {
         QJsonObject mo;
         mo.insert("id", m.id);
-        mo.insert("morpherSnowflake", QString::number(m.morpherSnowflake));
         mo.insert("trackIndex", m.trackIndex);
         mo.insert("startMs", static_cast<double>(m.startMs));
         mo.insert("durationMs", static_cast<double>(m.durationMs));
         mo.insert("newSourcePath", m.newSourcePath);
         mo.insert("sourceInDeltaMs", static_cast<double>(m.sourceInDeltaMs));
         mo.insert("absoluteSourceInMs", static_cast<double>(m.absoluteSourceInMs));
-        QJsonArray tarr;
-        for (quint64 s : m.targetClipSnowflakes) {
-            tarr.append(QString::number(s));
+        QJsonArray idArr;
+        for (int cid : m.targetClipIds) {
+            idArr.append(cid);
         }
-        mo.insert("targetSnowflakes", tarr);
+        mo.insert("targetClipIds", idArr);
         morphArray.append(mo);
     }
     root.insert("morpherEvents", morphArray);
@@ -1469,6 +1434,8 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     if (root.isEmpty()) {
         return false;
     }
+
+    QHash<quint64, int> legacySnowflakeToClipId;
 
     std::vector<TrackLane> loadedTracks;
     const QJsonArray tracksArray = root.value("tracks").toArray();
@@ -1509,7 +1476,9 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
         clip.id = clipObject.value("id").toInt();
         {
             const QString sfs = clipObject.value("snowflakeId").toString();
-            clip.snowflakeId = sfs.isEmpty() ? 0 : sfs.toULongLong();
+            if (!sfs.isEmpty()) {
+                legacySnowflakeToClipId.insert(sfs.toULongLong(), clip.id);
+            }
         }
         clip.linkedGroupId = clipObject.value("linkedGroupId").toInt(-1);
         clip.mediaType = (clipObject.value("mediaType").toString() == "audio") ? TrackType::Audio : TrackType::Video;
@@ -1538,9 +1507,6 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
         }
         clip.startMs = std::max<qint64>(0, clip.startMs);
         clip.sourceInMs = std::max<qint64>(0, clip.sourceInMs);
-        if (clip.snowflakeId == 0) {
-            clip.snowflakeId = generateTimelineSnowflakeId();
-        }
         loadedClips.push_back(clip);
         maxClipId = std::max(maxClipId, clip.id);
         maxLinkedGroupId = std::max(maxLinkedGroupId, clip.linkedGroupId);
@@ -1562,17 +1528,35 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
         const QJsonObject mo = mv.toObject();
         MorpherEvent m;
         m.id = mo.value("id").toInt();
-        const QString msf = mo.value("morpherSnowflake").toString();
-        m.morpherSnowflake = msf.isEmpty() ? generateTimelineSnowflakeId() : msf.toULongLong();
         m.trackIndex = mo.value("trackIndex").toInt(0);
         m.startMs = static_cast<qint64>(mo.value("startMs").toDouble(0.0));
         m.durationMs = static_cast<qint64>(mo.value("durationMs").toDouble(1500.0));
         m.newSourcePath = mo.value("newSourcePath").toString();
         m.sourceInDeltaMs = static_cast<qint64>(mo.value("sourceInDeltaMs").toDouble(0.0));
         m.absoluteSourceInMs = static_cast<qint64>(mo.value("absoluteSourceInMs").toDouble(-1.0));
-        const QJsonArray tarr = mo.value("targetSnowflakes").toArray();
-        for (const auto &tv : tarr) {
-            m.targetClipSnowflakes.push_back(tv.toString().toULongLong());
+        m.targetClipIds.clear();
+        const QJsonArray idArr = mo.value("targetClipIds").toArray();
+        if (!idArr.isEmpty()) {
+            for (const auto &v : idArr) {
+                const int cid = v.toInt(-1);
+                if (cid > 0) {
+                    m.targetClipIds.push_back(cid);
+                }
+            }
+        } else {
+            const QJsonArray tarr = mo.value("targetSnowflakes").toArray();
+            for (const auto &tv : tarr) {
+                quint64 sf = 0;
+                if (tv.isString()) {
+                    sf = tv.toString().toULongLong();
+                } else {
+                    sf = static_cast<quint64>(tv.toVariant().toULongLong());
+                }
+                const int cid = legacySnowflakeToClipId.value(sf, -1);
+                if (cid > 0) {
+                    m.targetClipIds.push_back(cid);
+                }
+            }
         }
         if (m.id > 0 && m.durationMs > 0 && m.trackIndex >= 0 &&
             m.trackIndex < static_cast<int>(loadedTracks.size()) &&
@@ -1786,7 +1770,7 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.setPen((me.id == selectedMorpherId) ? QColor(255, 255, 255) : QColor(40, 30, 55));
         p.setBrush(QColor(140, 90, 200, 200));
         p.drawRoundedRect(r, 4, 4);
-        const QString label = QStringLiteral("Morpher (%1)").arg(me.targetClipSnowflakes.size());
+        const QString label = QStringLiteral("Morpher (%1)").arg(me.targetClipIds.size());
         p.setPen(QColor(240, 240, 240));
         p.drawText(r.adjusted(6, 4, -4, -4), Qt::AlignLeft | Qt::AlignTop, label);
     }
@@ -3310,7 +3294,6 @@ void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int dr
         v.sourceDurationMs = durationMs;
         v.sourcePath = path;
         v.color = colorFromPath(path + ":v");
-        ensureClipSnowflake(v);
         clips.push_back(v);
         selectedClipId = v.id;
     }
@@ -3327,7 +3310,6 @@ void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int dr
         a.sourceDurationMs = durationMs;
         a.sourcePath = path;
         a.color = colorFromPath(path + ":a");
-        ensureClipSnowflake(a);
         clips.push_back(a);
         if (!video) {
             selectedClipId = a.id;

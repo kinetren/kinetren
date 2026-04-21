@@ -150,7 +150,6 @@ private:
 
     struct ClipEvent {
         int id = 0;
-        quint64 snowflakeId = 0;
         int linkedGroupId = -1;
         TrackType mediaType = TrackType::Video;
         int trackIndex = 0;
@@ -169,11 +168,10 @@ private:
 
     struct MorpherEvent {
         int id = 0;
-        quint64 morpherSnowflake = 0;
         int trackIndex = 0;
         qint64 startMs = 0;
         qint64 durationMs = 1500;
-        QVector<quint64> targetClipSnowflakes;
+        QVector<int> targetClipIds;
         QString newSourcePath;
         qint64 sourceInDeltaMs = 0;
         qint64 absoluteSourceInMs = -1;
@@ -229,19 +227,16 @@ private:
 
     struct PendingMorpherPlacement {
         bool active = false;
-        QVector<quint64> targetSnowflakes;
+        QVector<int> targetClipIds;
     };
     PendingMorpherPlacement pendingMorpherPlacement;
 
     void clearPendingMorpherPlacement();
-    QVector<quint64> collectMorpherTargetSnowflakes();
+    QVector<int> collectMorpherTargetClipIds();
     void commitPendingMorpherPlacement(int trackIndex, qint64 startMs);
 
-    void ensureClipSnowflake(ClipEvent &clip);
     ClipEvent effectiveClipForRender(const ClipEvent &base) const;
     void applyMorpherPatchToClipCopy(ClipEvent &clip, const MorpherEvent &m) const;
-    ClipEvent *findClipBySnowflake(quint64 snowflake);
-    const ClipEvent *findClipBySnowflake(quint64 snowflake) const;
     MorpherEvent *findMorpherById(int id);
     const MorpherEvent *findMorpherById(int id) const;
     QRect morpherEventRect(const MorpherEvent &m) const;
