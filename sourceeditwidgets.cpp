@@ -14,6 +14,128 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
+MorpherEditWindow::MorpherEditWindow(TimelineEditor *timeline, int morpherEventId, QWidget *parent)
+    : QWidget(parent)
+    , timeline(timeline)
+    , morpherId(morpherEventId)
+{
+    setWindowFlags(Qt::Window | Qt::WindowCloseButtonHint | Qt::WindowMinimizeButtonHint |
+                   Qt::WindowMaximizeButtonHint);
+    setAttribute(Qt::WA_DeleteOnClose, true);
+    setMinimumSize(420, 280);
+    resize(480, 320);
+    setWindowTitle(tr("Morpher editor — event %1").arg(morpherId));
+    setAcceptDrops(true);
+
+    auto *layout = new QVBoxLayout(this);
+    targetsLabel = new QLabel(this);
+    targetsLabel->setWordWrap(true);
+    targetsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+    auto *repTitle = new QLabel(tr("Replace source (only frozen targets below)"), this);
+    repTitle->setStyleSheet(QStringLiteral("font-weight:600;"));
+    pathEdit = new QLineEdit(this);
+    pathEdit->setPlaceholderText(tr("Drop media file or path"));
+    browseButton = new QPushButton(tr("Browse…"), this);
+    applyReplaceButton = new QPushButton(tr("Apply replace"), this);
+    auto *repRow = new QHBoxLayout();
+    repRow->addWidget(pathEdit, 1);
+    repRow->addWidget(browseButton);
+
+    auto *offTitle = new QLabel(tr("Source in delta (ms)"), this);
+    offTitle->setStyleSheet(QStringLiteral("font-weight:600;"));
+    deltaSpin = new QDoubleSpinBox(this);
+    deltaSpin->setRange(-1.0e12, 1.0e12);
+    deltaSpin->setDecimals(3);
+    deltaSpin->setSuffix(tr(" ms"));
+    applyOffsetButton = new QPushButton(tr("Apply shift"), this);
+
+    layout->addWidget(targetsLabel);
+    layout->addSpacing(8);
+    layout->addWidget(repTitle);
+    layout->addLayout(repRow);
+    layout->addWidget(applyReplaceButton);
+    layout->addSpacing(8);
+    layout->addWidget(offTitle);
+    layout->addWidget(deltaSpin);
+    layout->addWidget(applyOffsetButton);
+    layout->addStretch(1);
+
+    connect(browseButton, &QPushButton::clicked, this, &MorpherEditWindow::onBrowse);
+    connect(applyReplaceButton, &QPushButton::clicked, this, &MorpherEditWindow::onApplyReplace);
+    connect(applyOffsetButton, &QPushButton::clicked, this, &MorpherEditWindow::onApplyOffset);
+    connect(pathEdit, &QLineEdit::returnPressed, this, &MorpherEditWindow::onApplyReplace);
+
+    if (timeline) {
+        connect(timeline, &TimelineEditor::timelineContentChanged, this, &MorpherEditWindow::reloadFromTimeline);
+    }
+    reloadFromTimeline();
+}
+
+void MorpherEditWindow::reloadFromTimeline()
+{
+    if (!timeline || !timeline->hasMorpherEvent(morpherId)) {
+        close();
+        return;
+    }
+    targetsLabel->setText(timeline->morpherTargetsDescription(morpherId));
+    pathEdit->setText(timeline->morpherReplacePath(morpherId));
+    deltaSpin->setValue(static_cast<double>(timeline->morpherSourceInDeltaMs(morpherId)));
+}
+
+void MorpherEditWindow::onBrowse()
+{
+    const QString path = QFileDialog::getOpenFileName(this, tr("Replace source"), pathEdit->text(),
+                                                      tr("Media files") + QStringLiteral(" (*.*)"));
+    if (!path.isEmpty()) {
+        pathEdit->setText(path);
+    }
+}
+
+void MorpherEditWindow::applyPath(const QString &path)
+{
+    if (!timeline || path.isEmpty()) {
+        return;
+    }
+    timeline->setMorpherReplacePath(morpherId, path);
+}
+
+void MorpherEditWindow::onApplyReplace()
+{
+    applyPath(pathEdit->text().trimmed());
+}
+
+void MorpherEditWindow::onApplyOffset()
+{
+    if (!timeline) {
+        return;
+    }
+    const qint64 v = static_cast<qint64>(std::llround(deltaSpin->value()));
+    timeline->setMorpherAbsoluteSourceInMs(morpherId, -1);
+    timeline->setMorpherSourceInDeltaMs(morpherId, v);
+}
+
+void MorpherEditWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event->mimeData()->hasUrls() || event->mimeData()->hasText()) {
+        event->acceptProposedAction();
+        return;
+    }
+    QWidget::dragEnterEvent(event);
+}
+
+void MorpherEditWindow::dropEvent(QDropEvent *event)
+{
+    const QString p = TimelineEditor::firstLocalPathFromMime(event->mimeData());
+    if (!p.isEmpty()) {
+        pathEdit->setText(p);
+        applyPath(p);
+        event->acceptProposedAction();
+        return;
+    }
+    QWidget::dropEvent(event);
+}
+
 SourceReplacePanel::SourceReplacePanel(TimelineEditor *timeline, QWidget *parent)
     : QWidget(parent)
     , timeline(timeline)
@@ -110,6 +232,10 @@ void SourceReplacePanel::onBrowse()
 void SourceReplacePanel::applyPath(const QString &path)
 {
     if (!timeline || path.isEmpty()) {
+        return;
+    }
+    if (targetMorpherId >= 0) {
+        timeline->setMorpherReplacePath(targetMorpherId, path);
         return;
     }
     if (kind == TargetKind::Clip) {
@@ -228,6 +354,11 @@ void SourceOffsetPanel::onApply()
         return;
     }
     const qint64 v = static_cast<qint64>(std::llround(valueSpin->value()));
+    if (targetMorpherId >= 0) {
+        timeline->setMorpherAbsoluteSourceInMs(targetMorpherId, -1);
+        timeline->setMorpherSourceInDeltaMs(targetMorpherId, v);
+        return;
+    }
     if (kind == TargetKind::Clip) {
         timeline->applyAbsoluteSourceStartToClip(targetClipId, v);
     } else if (kind == TargetKind::RegionShift) {

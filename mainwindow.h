@@ -6,6 +6,7 @@
 #include <QtGlobal>
 #include <QString>
 #include <memory>
+#include <QHash>
 
 #include "projectsettings.h"
 
@@ -21,6 +22,7 @@ class QCloseEvent;
 class QDockWidget;
 class SourceReplacePanel;
 class SourceOffsetPanel;
+class MorpherEditWindow;
 
 class MainWindow : public QMainWindow
 {
@@ -53,6 +55,8 @@ private:
     void loadLastProjectOnStartup();
     void saveUiState();
     void restoreUiState();
+    void openMorpherEditWindow(int morpherEventId);
+    void pruneMorpherWindows();
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -88,6 +92,7 @@ protected:
     SourceOffsetPanel *sourceOffsetPanel = nullptr;
     QDockWidget *replaceSourceDock = nullptr;
     QDockWidget *sourceOffsetDock = nullptr;
+    QHash<int, MorpherEditWindow *> morpherEditWindows;
 
     Ui::MainWindow *ui;
 };

@@ -108,6 +108,8 @@ public:
     qint64 morpherAbsoluteSourceInMs(int morpherEventId) const;
     void setMorpherAbsoluteSourceInMs(int morpherEventId, qint64 ms); // pass -1 to clear
     void deleteCurrentSelection();
+    bool hasMorpherEvent(int morpherEventId) const;
+    QString morpherTargetsDescription(int morpherEventId) const;
 
 signals:
     void cursorChanged(qint64 cursorMs);
@@ -123,6 +125,7 @@ signals:
     void sourceOffsetPanelRequestedForRegion(bool allTracks, int trackIndex);
     void replaceSourcePanelRequestedForMorpher(int morpherEventId);
     void sourceOffsetPanelRequestedForMorpher(int morpherEventId);
+    void morpherEditWindowRequested(int morpherEventId);
 
 protected:
     void paintEvent(QPaintEvent *event) override;

@@ -414,6 +414,7 @@ void MainWindow::setupTimelineEditorUi()
         refreshTimelineScroll();
     });
     connect(timelineEditor, &TimelineEditor::timelineContentChanged, this, [this]() {
+        pruneMorpherWindows();
         if (!playbackPipeline) {
             return;
         }
@@ -436,6 +437,31 @@ void MainWindow::setupTimelineEditorUi()
     sourceOffsetDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     addDockWidget(Qt::RightDockWidgetArea, sourceOffsetDock);
     sourceOffsetDock->hide();
+
+    const auto styleDockChrome = [](QDockWidget *dock) {
+        if (!dock) {
+            return;
+        }
+        dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable |
+                          QDockWidget::DockWidgetFloatable);
+        dock->setMinimumWidth(320);
+        dock->setStyleSheet(
+            QStringLiteral(
+                "QDockWidget { font-size: 13px; }\n"
+                "QDockWidget::title {\n"
+                "  background: #2c3138;\n"
+                "  padding: 10px 12px;\n"
+                "  border-bottom: 2px solid #556070;\n"
+                "  font-weight: 600;\n"
+                "}\n"
+                "QDockWidget::close-button, QDockWidget::float-button {\n"
+                "  width: 22px;\n"
+                "  height: 22px;\n"
+                "  margin: 2px;\n"
+                "}\n"));
+    };
+    styleDockChrome(replaceSourceDock);
+    styleDockChrome(sourceOffsetDock);
 
     const auto showReplaceDock = [this]() {
         if (replaceSourceDock) {
@@ -462,12 +488,7 @@ void MainWindow::setupTimelineEditorUi()
                  }
                  showReplaceDock();
              });
-    connect(timelineEditor, &TimelineEditor::replaceSourcePanelRequestedForMorpher, this, [showReplaceDock, this](int id) {
-        if (sourceReplacePanel) {
-            sourceReplacePanel->setMorpherTarget(id);
-        }
-        showReplaceDock();
-    });
+    connect(timelineEditor, &TimelineEditor::morpherEditWindowRequested, this, &MainWindow::openMorpherEditWindow);
     connect(timelineEditor, &TimelineEditor::sourceOffsetPanelRequestedForClip, this, [showOffsetDock, this](int id) {
         if (sourceOffsetPanel) {
             sourceOffsetPanel->setClipTarget(id);
@@ -481,12 +502,6 @@ void MainWindow::setupTimelineEditorUi()
                  }
                  showOffsetDock();
              });
-    connect(timelineEditor, &TimelineEditor::sourceOffsetPanelRequestedForMorpher, this, [showOffsetDock, this](int id) {
-        if (sourceOffsetPanel) {
-            sourceOffsetPanel->setMorpherTarget(id);
-        }
-        showOffsetDock();
-    });
 
     connect(timelineScrollBar, &QScrollBar::valueChanged, [this](int value) {
         if (timelineEditor) {
@@ -1283,6 +1298,40 @@ QString MainWindow::defaultAutosaveProjectPath() const
         dir.mkpath(".");
     }
     return dir.filePath("autosave-project.kpproj.json");
+}
+
+void MainWindow::openMorpherEditWindow(int morpherEventId)
+{
+    if (!timelineEditor || morpherEventId < 0 || !timelineEditor->hasMorpherEvent(morpherEventId)) {
+        return;
+    }
+    if (MorpherEditWindow *existing = morpherEditWindows.value(morpherEventId)) {
+        existing->raise();
+        existing->activateWindow();
+        existing->reloadFromTimeline();
+        return;
+    }
+    auto *win = new MorpherEditWindow(timelineEditor, morpherEventId, this);
+    morpherEditWindows.insert(morpherEventId, win);
+    connect(win, &QObject::destroyed, this, [this, morpherEventId]() {
+        morpherEditWindows.remove(morpherEventId);
+    });
+    win->show();
+}
+
+void MainWindow::pruneMorpherWindows()
+{
+    if (!timelineEditor) {
+        return;
+    }
+    const QList<int> ids = morpherEditWindows.keys();
+    for (int id : ids) {
+        if (!timelineEditor->hasMorpherEvent(id)) {
+            if (MorpherEditWindow *w = morpherEditWindows.value(id)) {
+                w->close();
+            }
+        }
+    }
 }
 
 void MainWindow::loadLastProjectOnStartup()

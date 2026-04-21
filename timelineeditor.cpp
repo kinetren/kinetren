@@ -962,6 +962,30 @@ void TimelineEditor::setMorpherAbsoluteSourceInMs(int morpherEventId, qint64 ms)
     update();
 }
 
+bool TimelineEditor::hasMorpherEvent(int morpherEventId) const
+{
+    return findMorpherById(morpherEventId) != nullptr;
+}
+
+QString TimelineEditor::morpherTargetsDescription(int morpherEventId) const
+{
+    const MorpherEvent *m = findMorpherById(morpherEventId);
+    if (!m || m->targetClipSnowflakes.isEmpty()) {
+        return tr("No frozen targets.");
+    }
+    QStringList parts;
+    const int n = m->targetClipSnowflakes.size();
+    const int show = std::min(4, n);
+    for (int i = 0; i < show; ++i) {
+        parts.push_back(QString::number(m->targetClipSnowflakes[static_cast<int>(i)]));
+    }
+    QString tail = parts.join(QStringLiteral(", "));
+    if (n > show) {
+        tail += QStringLiteral(" …");
+    }
+    return tr("Frozen at creation: %1 clip(s). Snowflake ids: %2").arg(n).arg(tail);
+}
+
 void TimelineEditor::addMorpherTrack()
 {
     insertTrackAt(static_cast<int>(tracks.size()), TrackType::Morpher);
@@ -986,6 +1010,16 @@ void TimelineEditor::beginMorpherPlacementFromSelection()
     if (targets.isEmpty()) {
         QMessageBox::information(this, tr("Morpher"), tr("Select a timeline event first."));
         return;
+    }
+    bool hasMorpherLane = false;
+    for (const auto &lane : tracks) {
+        if (lane.type == TrackType::Morpher) {
+            hasMorpherLane = true;
+            break;
+        }
+    }
+    if (!hasMorpherLane) {
+        addMorpherTrack();
     }
     pendingMorpherPlacement.active = true;
     pendingMorpherPlacement.targetSnowflakes = std::move(targets);
@@ -1860,6 +1894,15 @@ void TimelineEditor::mouseDoubleClickEvent(QMouseEvent *event)
         return;
     }
     const QPoint pos = eventPos(event);
+    const int morpherHit = morpherEventIdAt(pos);
+    if (morpherHit >= 0) {
+        selectedMorpherId = morpherHit;
+        selectedClipId = -1;
+        emit morpherEditWindowRequested(morpherHit);
+        update();
+        event->accept();
+        return;
+    }
     const int id = clipIdAt(pos);
     if (id < 0) {
         QWidget::mouseDoubleClickEvent(event);
@@ -2103,17 +2146,14 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         QMenu menu(this);
         QAction *bakeAct = menu.addAction(tr("Bake morphing (apply to clips)"));
         QAction *deleteAct = menu.addAction(tr("Delete morpher"));
-        QAction *repDock = menu.addAction(tr("Open replace source panel"));
-        QAction *offDock = menu.addAction(tr("Open source offset panel"));
+        QAction *editWin = menu.addAction(tr("Open morpher editor window"));
         QAction *chosen = menu.exec(event->globalPos());
         if (chosen == bakeAct) {
             bakeMorpherEvent(morpherHit);
         } else if (chosen == deleteAct) {
             deleteMorpherEvent(morpherHit);
-        } else if (chosen == repDock) {
-            emit replaceSourcePanelRequestedForMorpher(morpherHit);
-        } else if (chosen == offDock) {
-            emit sourceOffsetPanelRequestedForMorpher(morpherHit);
+        } else if (chosen == editWin) {
+            emit morpherEditWindowRequested(morpherHit);
         }
         update();
         return;
@@ -2286,11 +2326,13 @@ void TimelineEditor::dropEvent(QDropEvent *event)
         m.durationMs = 1500;
         m.targetClipSnowflakes = pendingMorpherPlacement.targetSnowflakes;
         morpherEvents.push_back(m);
+        const int placedId = morpherEvents.back().id;
         clearPendingMorpherPlacement();
         setMinimumHeight(contentBottom() + bottomPadding());
         refreshTimelineRangeSignals();
         emit timelineContentChanged();
         update();
+        emit morpherEditWindowRequested(placedId);
         event->acceptProposedAction();
         return;
     }
