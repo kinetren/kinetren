@@ -302,7 +302,7 @@ private:
     void unlinkClipGroup(int clipId);
     std::vector<int> linkedClipIds(int clipId) const;
     std::unordered_set<int> clipIdsIntersectingRegion(bool allTracks, int trackIndex) const;
-    bool applyNewSourcePathToClip(ClipEvent &clip, const QString &path);
+    bool applyNewSourcePathToClip(ClipEvent &clip, const QString &path) const;
     void replaceSourceForLinkedClipGroup(int clipId, const QString &path);
     void setSourceStartMsForLinkedClipGroup(int clipId, qint64 sourceInMs);
     void replaceSourceForRegionClips(const QString &path, bool allTracks, int trackIndex);

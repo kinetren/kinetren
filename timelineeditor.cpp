@@ -661,7 +661,7 @@ std::unordered_set<int> TimelineEditor::clipIdsIntersectingRegion(bool allTracks
     return out;
 }
 
-bool TimelineEditor::applyNewSourcePathToClip(ClipEvent &clip, const QString &path)
+bool TimelineEditor::applyNewSourcePathToClip(TimelineEditor::ClipEvent &clip, const QString &path) const
 {
     if (path.isEmpty()) {
         return false;
@@ -779,14 +779,14 @@ void TimelineEditor::clearPendingMorpherPlacement()
     update();
 }
 
-void TimelineEditor::ensureClipSnowflake(ClipEvent &clip)
+void TimelineEditor::ensureClipSnowflake(TimelineEditor::ClipEvent &clip)
 {
     if (clip.snowflakeId == 0) {
         clip.snowflakeId = generateTimelineSnowflakeId();
     }
 }
 
-ClipEvent TimelineEditor::effectiveClipForRender(const ClipEvent &base) const
+TimelineEditor::ClipEvent TimelineEditor::effectiveClipForRender(const TimelineEditor::ClipEvent &base) const
 {
     ClipEvent out = base;
     for (const auto &m : morpherEvents) {
@@ -798,7 +798,8 @@ ClipEvent TimelineEditor::effectiveClipForRender(const ClipEvent &base) const
     return out;
 }
 
-void TimelineEditor::applyMorpherPatchToClipCopy(ClipEvent &clip, const MorpherEvent &m) const
+void TimelineEditor::applyMorpherPatchToClipCopy(TimelineEditor::ClipEvent &clip,
+                                                 const TimelineEditor::MorpherEvent &m) const
 {
     if (!m.newSourcePath.isEmpty()) {
         applyNewSourcePathToClip(clip, m.newSourcePath);
@@ -812,7 +813,7 @@ void TimelineEditor::applyMorpherPatchToClipCopy(ClipEvent &clip, const MorpherE
     }
 }
 
-ClipEvent *TimelineEditor::findClipBySnowflake(quint64 snowflake)
+TimelineEditor::ClipEvent *TimelineEditor::findClipBySnowflake(quint64 snowflake)
 {
     for (auto &c : clips) {
         if (c.snowflakeId == snowflake) {
@@ -822,7 +823,7 @@ ClipEvent *TimelineEditor::findClipBySnowflake(quint64 snowflake)
     return nullptr;
 }
 
-const ClipEvent *TimelineEditor::findClipBySnowflake(quint64 snowflake) const
+const TimelineEditor::ClipEvent *TimelineEditor::findClipBySnowflake(quint64 snowflake) const
 {
     for (const auto &c : clips) {
         if (c.snowflakeId == snowflake) {
@@ -832,7 +833,7 @@ const ClipEvent *TimelineEditor::findClipBySnowflake(quint64 snowflake) const
     return nullptr;
 }
 
-MorpherEvent *TimelineEditor::findMorpherById(int id)
+TimelineEditor::MorpherEvent *TimelineEditor::findMorpherById(int id)
 {
     for (auto &m : morpherEvents) {
         if (m.id == id) {
@@ -842,7 +843,7 @@ MorpherEvent *TimelineEditor::findMorpherById(int id)
     return nullptr;
 }
 
-const MorpherEvent *TimelineEditor::findMorpherById(int id) const
+const TimelineEditor::MorpherEvent *TimelineEditor::findMorpherById(int id) const
 {
     for (const auto &m : morpherEvents) {
         if (m.id == id) {
@@ -852,7 +853,7 @@ const MorpherEvent *TimelineEditor::findMorpherById(int id) const
     return nullptr;
 }
 
-QRect TimelineEditor::morpherEventRect(const MorpherEvent &m) const
+QRect TimelineEditor::morpherEventRect(const TimelineEditor::MorpherEvent &m) const
 {
     if (!isTrackIndexValid(m.trackIndex) || tracks[static_cast<size_t>(m.trackIndex)].type != TrackType::Morpher) {
         return {};
@@ -2260,8 +2261,9 @@ void TimelineEditor::dropEvent(QDropEvent *event)
 {
     if (pendingMorpherPlacement.active) {
         const QPoint pos = eventPos(event);
-        int tr = trackIndexAtY(pos.y());
-        if (tr < 0 || tr >= static_cast<int>(tracks.size()) || tracks[static_cast<size_t>(tr)].type != TrackType::Morpher) {
+        int trackIdx = trackIndexAtY(pos.y());
+        if (trackIdx < 0 || trackIdx >= static_cast<int>(tracks.size()) ||
+            tracks[static_cast<size_t>(trackIdx)].type != TrackType::Morpher) {
             const auto r =
                 QMessageBox::question(this,
                                       tr("Morpher"),
@@ -2270,7 +2272,7 @@ void TimelineEditor::dropEvent(QDropEvent *event)
                                       QMessageBox::Yes);
             if (r == QMessageBox::Yes) {
                 addMorpherTrack();
-                tr = static_cast<int>(tracks.size()) - 1;
+                trackIdx = static_cast<int>(tracks.size()) - 1;
             } else {
                 event->ignore();
                 return;
@@ -2279,7 +2281,7 @@ void TimelineEditor::dropEvent(QDropEvent *event)
         MorpherEvent m;
         m.id = nextMorpherEventId++;
         m.morpherSnowflake = generateTimelineSnowflakeId();
-        m.trackIndex = tr;
+        m.trackIndex = trackIdx;
         m.startMs = snapTimeMs(xToTimeMs(pos.x()));
         m.durationMs = 1500;
         m.targetClipSnowflakes = pendingMorpherPlacement.targetSnowflakes;

@@ -1,6 +1,8 @@
 #include "sourceeditwidgets.h"
 #include "timelineeditor.h"
 
+#include <cmath>
+
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
