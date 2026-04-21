@@ -9,6 +9,7 @@
 
 #include "projectsettings.h"
 
+class QWidget;
 class QPlainTextEdit;
 class QProgressBar;
 class QLabel;
@@ -62,6 +63,7 @@ private:
     QLabel *m_valOutput = nullptr;
     QLabel *m_speedStats = nullptr;
     SpeedChartWidget *m_chart = nullptr;
+    QWidget *m_runningBtnGroup = nullptr;
     QPushButton *m_pauseBtn = nullptr;
     QPushButton *m_cancelBtn = nullptr;
     QPushButton *m_okBtn = nullptr;

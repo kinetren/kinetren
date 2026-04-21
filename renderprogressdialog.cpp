@@ -14,6 +14,7 @@
 #include <QTextCursor>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QWidget>
 
 #include <algorithm>
 #include <cmath>
@@ -141,7 +142,7 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
     m_bar->setAlignment(Qt::AlignCenter);
 
     m_logBtn = new QToolButton(this);
-    m_logBtn->setIcon(style()->standardIcon(QStyle::SP_MessageBoxInformation));
+    m_logBtn->setIcon(style()->standardIcon(QStyle::SP_FileDialogDetailedView));
     m_logBtn->setIconSize(QSize(22, 22));
     m_logBtn->setFixedSize(36, 32);
     m_logBtn->setAutoRaise(false);
@@ -172,9 +173,15 @@ RenderProgressDialog::RenderProgressDialog(QWidget *parent)
     auto *btnRow = new QHBoxLayout();
     btnRow->setContentsMargins(0, 2, 0, 0);
     btnRow->setSpacing(8);
+    m_runningBtnGroup = new QWidget(this);
+    auto *runBtnLay = new QHBoxLayout(m_runningBtnGroup);
+    runBtnLay->setContentsMargins(0, 0, 0, 0);
+    runBtnLay->setSpacing(8);
+    runBtnLay->addWidget(m_pauseBtn);
+    runBtnLay->addWidget(m_cancelBtn);
+
     btnRow->addStretch(1);
-    btnRow->addWidget(m_pauseBtn);
-    btnRow->addWidget(m_cancelBtn);
+    btnRow->addWidget(m_runningBtnGroup);
     btnRow->addWidget(m_logBtn, 0, Qt::AlignVCenter);
     btnRow->addWidget(m_okBtn);
 
@@ -319,11 +326,18 @@ void RenderProgressDialog::setFinished(bool ok, const QString &summary)
     if (m_bar) {
         m_bar->setValue(m_bar->maximum());
     }
-    if (m_pauseBtn) {
-        m_pauseBtn->setVisible(false);
-    }
-    if (m_cancelBtn) {
-        m_cancelBtn->setVisible(false);
+    if (m_runningBtnGroup) {
+        m_runningBtnGroup->adjustSize();
+        const int reserveW = std::max(m_runningBtnGroup->width(), m_runningBtnGroup->sizeHint().width());
+        if (m_pauseBtn) {
+            m_pauseBtn->setVisible(false);
+        }
+        if (m_cancelBtn) {
+            m_cancelBtn->setVisible(false);
+        }
+        if (reserveW > 0) {
+            m_runningBtnGroup->setFixedWidth(reserveW);
+        }
     }
     if (m_okBtn) {
         m_okBtn->setVisible(true);
