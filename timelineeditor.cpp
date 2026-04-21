@@ -156,9 +156,18 @@ void TimelineEditor::setCursorMs(qint64 valueMs, bool ensureVisible)
 
 void TimelineEditor::addMarkerAtCursor()
 {
+    const int nearIdx = markerIndexNearTimeMs(cursorPositionMs);
+    if (nearIdx >= 0) {
+        markersMs.erase(markersMs.begin() + nearIdx);
+        refreshTimelineRangeSignals();
+        emit timelineContentChanged();
+        update();
+        return;
+    }
     markersMs.push_back(cursorPositionMs);
     std::sort(markersMs.begin(), markersMs.end());
     refreshTimelineRangeSignals();
+    emit timelineContentChanged();
     update();
 }
 
@@ -1536,6 +1545,20 @@ void TimelineEditor::leaveEvent(QEvent *event)
 
 void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
 {
+    const int markerIdx = markerIndexAt(event->pos());
+    if (markerIdx >= 0) {
+        QMenu menu(this);
+        QAction *deleteMarkerAction = menu.addAction("Delete marker");
+        QAction *chosen = menu.exec(event->globalPos());
+        if (chosen == deleteMarkerAction) {
+            markersMs.erase(markersMs.begin() + markerIdx);
+            refreshTimelineRangeSignals();
+            emit timelineContentChanged();
+            update();
+        }
+        return;
+    }
+
     const int id = clipIdAt(event->pos());
     if (id < 0) {
         QWidget::contextMenuEvent(event);
@@ -1996,6 +2019,26 @@ int TimelineEditor::markerIndexAt(const QPoint &pos) const
         }
     }
     return -1;
+}
+
+int TimelineEditor::markerIndexNearTimeMs(qint64 timeMs) const
+{
+    if (markersMs.empty()) {
+        return -1;
+    }
+    const qint64 pxThresholdMs =
+        static_cast<qint64>((kCursorMagnetPx / std::max(1.0, pixelsPerSecond())) * 1000.0);
+    const qint64 thr = std::clamp<qint64>(pxThresholdMs, 10, 150);
+    qint64 bestDist = thr + 1;
+    int bestIdx = -1;
+    for (int i = 0; i < static_cast<int>(markersMs.size()); ++i) {
+        const qint64 d = std::llabs(markersMs[static_cast<size_t>(i)] - timeMs);
+        if (d <= thr && d < bestDist) {
+            bestDist = d;
+            bestIdx = i;
+        }
+    }
+    return bestIdx;
 }
 
 void TimelineEditor::ensureCursorVisible()

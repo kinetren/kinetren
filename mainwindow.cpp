@@ -244,7 +244,7 @@ void MainWindow::setupTimelineEditorUi()
     timelinePauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
     timelinePauseButton->setToolTip("Play/Pause (Space)");
     markerButton->setIcon(style()->standardIcon(QStyle::SP_DialogYesButton));
-    markerButton->setToolTip("Add marker");
+    markerButton->setToolTip("Add or remove marker at cursor (M)");
     addVideoTrackButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogNewFolder));
     addVideoTrackButton->setToolTip("Add video track");
     addAudioTrackButton->setIcon(style()->standardIcon(QStyle::SP_DirIcon));

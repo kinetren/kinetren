@@ -211,6 +211,7 @@ private:
     qint64 edgeScrollMarginMs() const;
     void edgeScrollZoneBounds(int *xLeftEnd, int *xRightStart) const;
     int markerIndexAt(const QPoint &pos) const;
+    int markerIndexNearTimeMs(qint64 timeMs) const;
     double edgeScrollStrength(int mouseX, int tl, int tr, int xLeftEnd, int xRightStart) const;
     void refreshTimelineRangeSignals();
     qint64 snapTimeMs(qint64 candidateMs) const;
