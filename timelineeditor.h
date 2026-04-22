@@ -14,11 +14,16 @@
 #include <QEvent>
 
 #include <list>
+#include <memory>
 #include <optional>
 #include <unordered_set>
 #include <vector>
 
 #include <QVector>
+
+namespace burstcon {
+class ConMediaPool;
+}
 
 class QJsonObject;
 class QMimeData;
@@ -45,6 +50,10 @@ public:
     };
 
     explicit TimelineEditor(QWidget *parent = nullptr);
+    ~TimelineEditor() override;
+
+    /// Strip thumbnails decode through this pool (same as PlaybackPipeline) so each file is indexed once.
+    void setPlaybackMediaPool(std::shared_ptr<burstcon::ConMediaPool> pool);
 
     qint64 cursorMs() const;
     void setCursorMs(qint64 valueMs, bool ensureVisible = true);
@@ -336,6 +345,7 @@ private:
     QVector<QPair<double, double>> timelineCacheSegments;
     /// Avoid probing the same path repeatedly (bulk replace, morpher preview paint).
     mutable QHash<QString, qint64> sourceDurationProbeCache;
+    std::shared_ptr<burstcon::ConMediaPool> playbackMediaPool;
 };
 
 #endif // TIMELINEEDITOR_H

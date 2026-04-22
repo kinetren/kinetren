@@ -153,6 +153,9 @@ MainWindow::MainWindow(QWidget *parent)
                 },
                 Qt::QueuedConnection);
         });
+    if (timelineEditor) {
+        timelineEditor->setPlaybackMediaPool(playbackPipeline->sharedMediaPool());
+    }
     applyProjectSettings();
     performanceTimer.setInterval(500);
     connect(&performanceTimer, &QTimer::timeout, this, &MainWindow::refreshPerformancePanel);

@@ -191,6 +191,13 @@ TimelineEditor::TimelineEditor(QWidget *parent)
     refreshTimelineRangeSignals();
 }
 
+TimelineEditor::~TimelineEditor() = default;
+
+void TimelineEditor::setPlaybackMediaPool(std::shared_ptr<burstcon::ConMediaPool> pool)
+{
+    playbackMediaPool = std::move(pool);
+}
+
 qint64 TimelineEditor::cursorMs() const
 {
     return cursorPositionMs;
@@ -3357,33 +3364,25 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
         img.load(path);
     } else {
         static constexpr qint64 kPreviewDecodeAnchorMs = 2000;
-        static std::shared_ptr<burstcon::ConMediaPool> previewPool = []() {
-            burstcon::ConMediaPoolConfig cfg;
-            cfg.enableConMediaCache = true;
-            cfg.cacheConfig.preloadEnabled = false;
-            cfg.cacheConfig.maxEntries = 96;
-            cfg.cacheConfig.maxAudioEntries = 24;
-            cfg.cacheConfig.maxVideoEntries = 72;
-            cfg.cacheConfig.maxVideoBytes = 64ULL * 1024ULL * 1024ULL;
-            cfg.maxMediaInstances = 8;
-            cfg.forcedPreviewQualityEnabled = true;
-            cfg.forcedPreviewQuality = burstcon::BurstQuality{320, 180};
-            return std::make_shared<burstcon::ConMediaPool>(cfg);
-        }();
         const qint64 previewAnchorMs = std::max<qint64>(0, (bucketMs / kPreviewDecodeAnchorMs) * kPreviewDecodeAnchorMs);
-        auto media = previewPool->acquire(path,
-                                          true,
-                                          true,
-                                          burstcon::msToBurstIndex(previewAnchorMs),
-                                          true,
-                                          false);
-        burstcon::BurstRequest req;
-        req.index = burstcon::msToBurstIndex(bucketMs);
-        req.quality = burstcon::BurstQuality{320, 180};
-        req.decodeOrigin = burstcon::msToBurstIndex(previewAnchorMs);
-        burstcon::VideoBurst frame;
-        if (media->videoBurst(req, frame) && !frame.frame.isNull()) {
-            img = frame.frame;
+        const auto pool = playbackMediaPool;
+        if (pool) {
+            // Same acquire signature as ConTrack video rows (burstcon.cpp) so strip previews share one ConMedia
+            // per path with playback — avoids a second ensureIndexed + video demuxer (was +2 opens).
+            auto media = pool->acquire(path,
+                                       false,
+                                       false,
+                                       burstcon::msToBurstIndex(previewAnchorMs),
+                                       true,
+                                       false);
+            burstcon::BurstRequest req;
+            req.index = burstcon::msToBurstIndex(bucketMs);
+            req.quality = burstcon::BurstQuality{320, 180};
+            req.decodeOrigin = burstcon::msToBurstIndex(previewAnchorMs);
+            burstcon::VideoBurst frame;
+            if (media->videoBurst(req, frame) && !frame.frame.isNull()) {
+                img = frame.frame;
+            }
         }
         if (img.isNull() && isImagePath(path)) {
             QImageReader reader(path);

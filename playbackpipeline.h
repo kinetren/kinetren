@@ -59,6 +59,9 @@ public:
     explicit PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameReady);
     ~PlaybackPipeline();
 
+    /// Same pool as tracks/prefetch; timeline strip previews reuse it to avoid a second file index + demuxers.
+    std::shared_ptr<burstcon::ConMediaPool> sharedMediaPool() const { return mediaPool; }
+
     void start(qint64 timelineMs);
     /// Arm audio/callbacks/quality without starting the playback clock (used before head warmup).
     void preparePlaybackAt(qint64 startTimelineMs);
