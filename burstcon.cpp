@@ -415,7 +415,7 @@ public:
             const BurstIndex cursorBase = std::max<BurstIndex>(-videoFrameStep, videoCursorIndex);
             const BurstIndex framesNeeded =
                 std::max<BurstIndex>(1, ((target - cursorBase) / std::max<BurstIndex>(1, videoFrameStep)) + 2);
-            const int maxPackets = static_cast<int>(std::clamp<BurstIndex>(framesNeeded * 24, 420, 4096));
+            const int maxPackets = static_cast<int>(std::clamp<BurstIndex>(framesNeeded * 16, 320, 2048));
             for (int tries = 0; tries < maxPackets; ++tries) {
                 Packet pkt = videoInput.readPacket(ec);
                 gAvcppPacketReads.fetch_add(1);

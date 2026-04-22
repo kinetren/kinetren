@@ -26,7 +26,10 @@ constexpr qint64 kPrefetchAheadMs = 12000;
 /// When scrubbing while stopped, only look this far ahead so `isPlaybackHeadWarm` matches the usual
 /// 5 s warmup window from MainWindow / `start()` and idle skips actually trigger.
 constexpr qint64 kIdleScrubPrefetchAheadMs = 5000;
-constexpr qint64 kPrefetchPlayRescheduleMs = 450;
+/// While playing, prefetch only this far ahead. A full `kPrefetchAheadMs` window fights
+/// `MonotonicPlaybackTimer` for one `ConMedia` decoder and explodes readPacket/decode rates.
+constexpr qint64 kPrefetchDuringPlayAheadMs = 1500;
+constexpr qint64 kPrefetchPlayRescheduleMs = 2000;
 /// For prefetch/warmup spans up to this length, step video at output FPS so ConCache keys match playback.
 /// Wider sparse steps add different indices than the timer, evict playback frames in LRU and break short loops.
 constexpr qint64 kPrefetchVideoDenseMaxSpanMs = 6000;
@@ -241,7 +244,8 @@ void PlaybackPipeline::beginClockAndPrefetch(qint64 startTimelineMs)
     if (timer) {
         timer->start(burstcon::msToBurstIndex(startTimelineMs));
     }
-    qint64 prefetchEndMs = startTimelineMs + kPrefetchAheadMs;
+    // Cap initial prefetch: starting the clock and a 12 s decode job at once overloads the shared decoder.
+    qint64 prefetchEndMs = startTimelineMs + std::min(kPrefetchAheadMs, kIdleScrubPrefetchAheadMs);
     {
         std::lock_guard<std::mutex> lock(mutex);
         if ((playbackMode == burstcon::PlaybackMode::Region || playbackMode == burstcon::PlaybackMode::RegionLoop) &&
@@ -349,9 +353,10 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         const qint64 anchor = lastPrefetchAnchorMs.load();
         if (tMs > anchor + kPrefetchPlayRescheduleMs) {
             lastPrefetchAnchorMs.store(tMs);
-            const qint64 span = prefetchEndMs - tMs;
+            const qint64 playPrefetchEnd = std::min(prefetchEndMs, tMs + kPrefetchDuringPlayAheadMs);
+            const qint64 span = playPrefetchEnd - tMs;
             if (span > 0 && !isPlaybackHeadWarm(tMs, span)) {
-                requestPrefetchAsync(tMs, prefetchEndMs, true);
+                requestPrefetchAsync(tMs, playPrefetchEnd, true);
             }
         }
     }
@@ -825,7 +830,14 @@ void PlaybackPipeline::prefetchWorkerLoop()
         if (!job.allowWhileRunning && running.load()) {
             continue;
         }
-        if (job.endMs > job.startMs && isPlaybackHeadWarm(job.startMs, job.endMs - job.startMs)) {
+        qint64 runEndMs = job.endMs;
+        if (running.load() && job.allowWhileRunning) {
+            runEndMs = std::min(runEndMs, job.startMs + kPrefetchDuringPlayAheadMs);
+        }
+        if (runEndMs <= job.startMs) {
+            continue;
+        }
+        if (isPlaybackHeadWarm(job.startMs, runEndMs - job.startMs)) {
             continue;
         }
         const burstcon::BurstIndex videoStep = burstcon::outputVideoFrameStepTicks(fps);
@@ -833,8 +845,8 @@ void PlaybackPipeline::prefetchWorkerLoop()
             1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kDefaultAudioSamplesPerBurst)) / kAudioSampleRate);
         const burstcon::BurstIndex startIdx = burstcon::msToBurstIndex(job.startMs);
         const burstcon::BurstIndex alignedStart = burstcon::alignBurstIndexToOutputVideoFrame(fps, startIdx);
-        const burstcon::BurstIndex endIdx = msToBurstIndexCeil(job.endMs);
-        const qint64 prefetchSpanMs = job.endMs - job.startMs;
+        const burstcon::BurstIndex endIdx = msToBurstIndexCeil(runEndMs);
+        const qint64 prefetchSpanMs = runEndMs - job.startMs;
         const burstcon::BurstIndex prefetchVideoStep =
             prefetchSpanMs <= kPrefetchVideoDenseMaxSpanMs
                 ? videoStep
