@@ -789,6 +789,12 @@ QString TimelineEditor::firstLocalPathFromMime(const QMimeData *mime)
             }
         }
     }
+    НА БУДУЩЕЕ, 4К в рендере лагает - и судя по всему оно где-то упирается в копипасту, т.к. активны 1-2 потока
+     и комп даже не особо сильно вроде напрягается, т.е. вероятно там жеский копипастинг-туда-сюда мешает
+
+      а еще при рендере он все сохраняет в tmpfs, вместо того чтобы засылать кадры по пайпу какому-нибудь...
+         или блядь рендерить через avcpp... он там видимо реальный ffmpeg запускает
+
     if (mime->hasText()) {
         QString t = mime->text().trimmed();
         if (t.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
