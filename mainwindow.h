@@ -34,6 +34,7 @@ public:
     ~MainWindow() override;
 
     void startPlayback();
+    void requestCacheCoverageUiRefresh();
 
 private:
     void setupTimelineEditorUi();

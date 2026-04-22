@@ -192,6 +192,11 @@ void MainWindow::startPlayback()
     syncTimelinePlayback();
 }
 
+void MainWindow::requestCacheCoverageUiRefresh()
+{
+    refreshPerformancePanel();
+}
+
 void MainWindow::setupTimelineEditorUi()
 {
     const QScreen *screenRef = QGuiApplication::primaryScreen();
@@ -965,6 +970,7 @@ void MainWindow::toggleTimelinePause()
                         warmGuard->playbackPipeline->beginClockAndPrefetch(cursorMs);
                         warmGuard->syncTimelinePlayback();
                         warmGuard->timelineTimer.start();
+                        warmGuard->requestCacheCoverageUiRefresh();
                     },
                     Qt::QueuedConnection);
             });

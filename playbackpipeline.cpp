@@ -22,7 +22,8 @@ constexpr int kAudioChannels = 2;
 constexpr int kDefaultAudioSamplesPerBurst = 1024;
 constexpr qint64 kVideoCoverageBucketMs = 33;
 constexpr qint64 kAudioCoverageBucketMs = 20;
-constexpr qint64 kPrefetchAheadMs = 3000;
+constexpr qint64 kPrefetchAheadMs = 12000;
+constexpr qint64 kPrefetchPlayRescheduleMs = 450;
 constexpr qint64 kMaxCoverageProbeSteps = 40000;
 
 qint64 coverageTimeStepMs(qint64 spanMs, qint64 baseStepMs)
@@ -150,15 +151,18 @@ void PlaybackPipeline::warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 h
     }
     const burstcon::BurstIndex videoStep =
         std::max<burstcon::BurstIndex>(1, burstcon::kBurstTimebaseHz / static_cast<burstcon::BurstIndex>(fps));
+    // Prime caches with a sparse timeline grid — full-FPS warmup from mid-roll feels "real-time" slow.
+    const burstcon::BurstIndex warmVideoStep =
+        std::max(videoStep, burstcon::kBurstTimebaseHz / 10);
     const burstcon::BurstIndex audioStep = std::max<burstcon::BurstIndex>(
         1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kDefaultAudioSamplesPerBurst)) / kAudioSampleRate);
     const burstcon::BurstIndex startIdx = burstcon::msToBurstIndex(startTimelineMs);
-    const burstcon::BurstIndex alignedStart = (startIdx / videoStep) * videoStep;
+    const burstcon::BurstIndex alignedStart = (startIdx / warmVideoStep) * warmVideoStep;
     const burstcon::BurstIndex endIdx = msToBurstIndexCeil(startTimelineMs + headMs);
     std::vector<qint64> pendingVideoBuckets;
     pendingVideoBuckets.reserve(
-        static_cast<size_t>(std::max<burstcon::BurstIndex>(1, (endIdx - alignedStart) / videoStep + 2)));
-    for (burstcon::BurstIndex idx = alignedStart; idx <= endIdx; idx += videoStep) {
+        static_cast<size_t>(std::max<burstcon::BurstIndex>(1, (endIdx - alignedStart) / warmVideoStep + 2)));
+    for (burstcon::BurstIndex idx = alignedStart; idx <= endIdx; idx += warmVideoStep) {
         if (!running.load()) {
             return;
         }
@@ -244,7 +248,14 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         if (onVideoFrameReady) {
             requestDraftFrameAsync(tMs, videoClips);
         }
+        lastPrefetchAnchorMs.store(tMs);
         requestPrefetchAsync(tMs, tMs + kPrefetchAheadMs, true);
+    } else {
+        const qint64 anchor = lastPrefetchAnchorMs.load();
+        if (tMs > anchor + kPrefetchPlayRescheduleMs) {
+            lastPrefetchAnchorMs.store(tMs);
+            requestPrefetchAsync(tMs, tMs + kPrefetchAheadMs, true);
+        }
     }
 }
 

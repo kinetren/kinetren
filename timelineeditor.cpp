@@ -46,20 +46,22 @@
 #include <avcpp/videorescaler.h>
 
 namespace {
-/// Thumbnail sampling along source time: one thumb for clips ≤5s; else every 5s (clamped 1s…15s).
-qint64 videoClipThumbnailSourceStepMs(qint64 clipDurationMs)
+/// Thumbnail sampling along source time: one thumb for short clips; step scales with on-screen width (zoom).
+qint64 videoClipThumbnailSourceStepMs(qint64 clipDurationMs, int clipInnerWidthPx, int thumbWpx)
 {
     constexpr qint64 kMinStep = 1000;
     constexpr qint64 kMaxStep = 15000;
-    constexpr qint64 kTarget = 5000;
-    constexpr qint64 kSingleThumbMax = 5000;
+    constexpr qint64 kShortSingleMax = 5000;
     if (clipDurationMs <= 0) {
         return 1;
     }
-    if (clipDurationMs <= kSingleThumbMax) {
+    if (clipDurationMs <= kShortSingleMax) {
         return clipDurationMs;
     }
-    return std::clamp(kTarget, kMinStep, kMaxStep);
+    const int thumb = std::max(24, thumbWpx);
+    const int slotss = std::clamp(clipInnerWidthPx / thumb, 1, 96);
+    const qint64 rough = clipDurationMs / static_cast<qint64>(slotss);
+    return std::clamp(rough, kMinStep, kMaxStep);
 }
 
 constexpr qint64 kSnapThresholdMs = 100;
@@ -1800,7 +1802,7 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
             const int innerRight = r.right() - 2;
             const int innerWidth = std::max(1, innerRight - innerLeft);
             const qint64 durMs = std::max<qint64>(1, drawClip.durationMs);
-            const qint64 stepMs = videoClipThumbnailSourceStepMs(drawClip.durationMs);
+            const qint64 stepMs = videoClipThumbnailSourceStepMs(drawClip.durationMs, innerWidth, thumbW);
             for (qint64 srcOff = 0; srcOff < durMs; srcOff += stepMs) {
                 const double rel =
                     durMs > 1 ? static_cast<double>(srcOff) / static_cast<double>(durMs - 1) : 0.0;
