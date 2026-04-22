@@ -27,6 +27,9 @@ constexpr qint64 kPrefetchAheadMs = 12000;
 /// 5 s warmup window from MainWindow / `start()` and idle skips actually trigger.
 constexpr qint64 kIdleScrubPrefetchAheadMs = 5000;
 constexpr qint64 kPrefetchPlayRescheduleMs = 450;
+/// For prefetch/warmup spans up to this length, step video at output FPS so ConCache keys match playback.
+/// Wider sparse steps add different indices than the timer, evict playback frames in LRU and break short loops.
+constexpr qint64 kPrefetchVideoDenseMaxSpanMs = 6000;
 constexpr qint64 kMaxCoverageProbeSteps = 40000;
 
 qint64 coverageTimeStepMs(qint64 spanMs, qint64 baseStepMs)
@@ -84,10 +87,10 @@ PlaybackPipeline::PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameRe
 {
     burstcon::ConMediaPoolConfig poolCfg;
     poolCfg.enableConMediaCache = true;
-    poolCfg.cacheConfig.maxEntries = 192;
-    poolCfg.cacheConfig.maxAudioEntries = 96;
-    poolCfg.cacheConfig.maxVideoEntries = 96;
-    poolCfg.cacheConfig.maxVideoBytes = 192ULL * 1024ULL * 1024ULL;
+    poolCfg.cacheConfig.maxEntries = 256;
+    poolCfg.cacheConfig.maxAudioEntries = 128;
+    poolCfg.cacheConfig.maxVideoEntries = 192;
+    poolCfg.cacheConfig.maxVideoBytes = 384ULL * 1024ULL * 1024ULL;
     poolCfg.cacheConfig.preloadEnabled = false;
     poolCfg.cacheConfig.preloadAheadTicks = burstcon::kBurstTimebaseHz;
     poolCfg.maxMediaInstances = 16;
@@ -187,13 +190,18 @@ void PlaybackPipeline::warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 h
         return;
     }
     const burstcon::BurstIndex videoStep = burstcon::outputVideoFrameStepTicks(fps);
-    // Prime caches with a sparse timeline grid — full-FPS warmup from mid-roll feels "real-time" slow.
+    const qint64 warmSpanMs = warmEndMs - startTimelineMs;
     const burstcon::BurstIndex warmVideoStep =
-        std::max(videoStep, burstcon::kBurstTimebaseHz / 10);
+        warmSpanMs <= kPrefetchVideoDenseMaxSpanMs
+            ? videoStep
+            : std::max(videoStep, burstcon::kBurstTimebaseHz / 10);
     const burstcon::BurstIndex audioStep = std::max<burstcon::BurstIndex>(
         1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kDefaultAudioSamplesPerBurst)) / kAudioSampleRate);
     const burstcon::BurstIndex startIdx = burstcon::msToBurstIndex(startTimelineMs);
-    const burstcon::BurstIndex alignedStart = (startIdx / warmVideoStep) * warmVideoStep;
+    const burstcon::BurstIndex alignedStart =
+        warmSpanMs <= kPrefetchVideoDenseMaxSpanMs
+            ? burstcon::alignBurstIndexToOutputVideoFrame(fps, startIdx)
+            : (startIdx / warmVideoStep) * warmVideoStep;
     const burstcon::BurstIndex endIdx = msToBurstIndexCeil(warmEndMs);
     qint64 prevVideoMs = startTimelineMs - 1;
     bool hadVideoDecode = false;
@@ -468,6 +476,8 @@ PlaybackPipeline::PerformanceStats PlaybackPipeline::performanceSnapshot() const
     return stats;
 }
 
+// Clip stripes are *timeline coverage*: buckets touched by a successful decode for that source range.
+// They are not ConCache occupancy; LRU can evict decoded frames while buckets stay marked (green can stay on).
 QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::videoCacheSegments(const std::vector<Clip> &clips) const
 {
     QHash<QString, QVector<QPair<double, double>>> out;
@@ -811,8 +821,11 @@ void PlaybackPipeline::prefetchWorkerLoop()
         const burstcon::BurstIndex startIdx = burstcon::msToBurstIndex(job.startMs);
         const burstcon::BurstIndex alignedStart = burstcon::alignBurstIndexToOutputVideoFrame(fps, startIdx);
         const burstcon::BurstIndex endIdx = msToBurstIndexCeil(job.endMs);
+        const qint64 prefetchSpanMs = job.endMs - job.startMs;
         const burstcon::BurstIndex prefetchVideoStep =
-            std::max(videoStep, burstcon::kBurstTimebaseHz / 12);
+            prefetchSpanMs <= kPrefetchVideoDenseMaxSpanMs
+                ? videoStep
+                : std::max(videoStep, burstcon::kBurstTimebaseHz / 12);
         qint64 prevPrefetchMs = job.startMs - 1;
         bool hadPrefetchVideo = false;
         for (burstcon::BurstIndex idx = alignedStart; idx <= endIdx; idx += prefetchVideoStep) {
