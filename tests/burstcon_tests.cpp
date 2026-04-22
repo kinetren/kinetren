@@ -199,6 +199,32 @@ void testConMediaPoolReusesMediaAcrossOrigins()
     assert(a == b);
 }
 
+void testOutputVideoFrameGridInvariants()
+{
+    assert(outputVideoFrameStepTicks(30) == 3000);
+    assert(outputVideoFrameStepTicks(24) == 3750);
+    assert(outputVideoFrameStepTicks(25) == 3600);
+    assert(outputVideoFrameStepTicks(1) == kBurstTimebaseHz);
+    assert(outputVideoFrameStepTicks(0) == kBurstTimebaseHz);
+
+    assert(alignBurstIndexToOutputVideoFrame(30, 0) == 0);
+    assert(alignBurstIndexToOutputVideoFrame(24, 3750) == 3750);
+    assert(alignBurstIndexToOutputVideoFrame(24, 3749) == 0);
+    assert(alignBurstIndexToOutputVideoFrame(24, 7500) == 7500);
+
+    const BurstIndex raw = msToBurstIndex(1001);
+    const BurstIndex aligned24 = alignBurstIndexToOutputVideoFrame(24, raw);
+    assert(aligned24 % outputVideoFrameStepTicks(24) == 0);
+    const BurstIndex manual =
+        (std::max<BurstIndex>(0, raw) / outputVideoFrameStepTicks(24)) * outputVideoFrameStepTicks(24);
+    assert(aligned24 == manual);
+
+    const BurstIndex a30 = alignBurstIndexToOutputVideoFrame(30, msToBurstIndex(33));
+    const BurstIndex step30 = outputVideoFrameStepTicks(30);
+    const BurstIndex b30 = (msToBurstIndex(33) / step30) * step30;
+    assert(a30 == b30);
+}
+
 void testMonotonicPlaybackTimerAdvances()
 {
     auto upstream = std::make_shared<FakeBurstcon>();
@@ -226,6 +252,7 @@ int main(int argc, char **argv)
     testConTrackAndConTrimmerComposition();
     testConTrackPropagatesDecodeOrigin();
     testConMediaPoolReusesMediaAcrossOrigins();
+    testOutputVideoFrameGridInvariants();
     testMonotonicPlaybackTimerAdvances();
     return 0;
 }

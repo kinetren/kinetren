@@ -137,6 +137,9 @@ private:
     std::shared_ptr<burstcon::ConTrimmer> trimmer;
     std::shared_ptr<burstcon::IBurstcon> root;
     std::unique_ptr<burstcon::MonotonicPlaybackTimer> timer;
+    burstcon::PlaybackMode playbackMode = burstcon::PlaybackMode::Free;
+    qint64 playbackRegionStartMs = 0;
+    qint64 playbackRegionEndMs = 0;
     std::mutex draftMutex;
     std::condition_variable draftCv;
     std::thread draftWorker;

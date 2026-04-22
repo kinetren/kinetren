@@ -168,18 +168,22 @@ void PlaybackPipeline::warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 h
     std::shared_ptr<burstcon::IBurstcon> localRoot;
     burstcon::BurstQuality quality;
     int fps = 30;
+    qint64 warmEndMs = startTimelineMs + headMs;
     {
         std::lock_guard<std::mutex> lock(mutex);
         localRoot = root;
         const QSize q = projectSettings.cacheResolution();
         quality = burstcon::BurstQuality{q.width(), q.height()};
         fps = std::max(1, projectSettings.fps);
+        if ((playbackMode == burstcon::PlaybackMode::Region || playbackMode == burstcon::PlaybackMode::RegionLoop) &&
+            playbackRegionEndMs > playbackRegionStartMs) {
+            warmEndMs = std::min(warmEndMs, playbackRegionEndMs);
+        }
     }
-    if (!localRoot || headMs <= 0) {
+    if (!localRoot || warmEndMs <= startTimelineMs) {
         return;
     }
-    const burstcon::BurstIndex videoStep =
-        std::max<burstcon::BurstIndex>(1, burstcon::kBurstTimebaseHz / static_cast<burstcon::BurstIndex>(fps));
+    const burstcon::BurstIndex videoStep = burstcon::outputVideoFrameStepTicks(fps);
     // Prime caches with a sparse timeline grid — full-FPS warmup from mid-roll feels "real-time" slow.
     const burstcon::BurstIndex warmVideoStep =
         std::max(videoStep, burstcon::kBurstTimebaseHz / 10);
@@ -187,7 +191,7 @@ void PlaybackPipeline::warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 h
         1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kDefaultAudioSamplesPerBurst)) / kAudioSampleRate);
     const burstcon::BurstIndex startIdx = burstcon::msToBurstIndex(startTimelineMs);
     const burstcon::BurstIndex alignedStart = (startIdx / warmVideoStep) * warmVideoStep;
-    const burstcon::BurstIndex endIdx = msToBurstIndexCeil(startTimelineMs + headMs);
+    const burstcon::BurstIndex endIdx = msToBurstIndexCeil(warmEndMs);
     qint64 prevVideoMs = startTimelineMs - 1;
     bool hadVideoDecode = false;
     for (burstcon::BurstIndex idx = alignedStart; idx <= endIdx; idx += warmVideoStep) {
@@ -209,9 +213,8 @@ void PlaybackPipeline::warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 h
         }
     }
     if (hadVideoDecode) {
-        const qint64 tailTo = startTimelineMs + headMs;
         std::lock_guard<std::mutex> lock(coverageMutex);
-        fillVideoFinalTimelineBuckets(videoCoverageBuckets, finalCoverageBuckets, prevVideoMs, tailTo);
+        fillVideoFinalTimelineBuckets(videoCoverageBuckets, finalCoverageBuckets, prevVideoMs, warmEndMs);
     }
     const burstcon::BurstIndex alignedAudioStart = (startIdx / audioStep) * audioStep;
     for (burstcon::BurstIndex idx = alignedAudioStart; idx <= endIdx; idx += audioStep) {
@@ -235,7 +238,17 @@ void PlaybackPipeline::beginClockAndPrefetch(qint64 startTimelineMs)
     if (timer) {
         timer->start(burstcon::msToBurstIndex(startTimelineMs));
     }
-    requestPrefetchAsync(startTimelineMs, startTimelineMs + kPrefetchAheadMs, true);
+    qint64 prefetchEndMs = startTimelineMs + kPrefetchAheadMs;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if ((playbackMode == burstcon::PlaybackMode::Region || playbackMode == burstcon::PlaybackMode::RegionLoop) &&
+            playbackRegionEndMs > playbackRegionStartMs) {
+            prefetchEndMs = std::min(prefetchEndMs, playbackRegionEndMs);
+        }
+    }
+    if (prefetchEndMs > startTimelineMs) {
+        requestPrefetchAsync(startTimelineMs, prefetchEndMs, true);
+    }
 }
 
 bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
@@ -243,7 +256,17 @@ bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
     if (headMs <= 0) {
         return true;
     }
-    const qint64 endMs = startMs + headMs;
+    qint64 endMs = startMs + headMs;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if ((playbackMode == burstcon::PlaybackMode::Region || playbackMode == burstcon::PlaybackMode::RegionLoop) &&
+            playbackRegionEndMs > playbackRegionStartMs) {
+            endMs = std::min(endMs, playbackRegionEndMs);
+        }
+    }
+    if (endMs <= startMs) {
+        return true;
+    }
     constexpr qint64 kProbeStepMs = 400;
     std::lock_guard<std::mutex> lock(coverageMutex);
     for (qint64 t = startMs; t < endMs; t += kProbeStepMs) {
@@ -291,12 +314,17 @@ bool PlaybackPipeline::isRunning() const
 
 void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips)
 {
+    qint64 prefetchEndMs = tMs + kPrefetchAheadMs;
     {
         std::lock_guard<std::mutex> lock(mutex);
         if (!clipsEqual(videoClips, lastVideoClips) || !clipsEqual(audioClips, lastAudioClips)) {
             rebuildGraph(videoClips, audioClips);
             lastVideoClips = videoClips;
             lastAudioClips = audioClips;
+        }
+        if ((playbackMode == burstcon::PlaybackMode::Region || playbackMode == burstcon::PlaybackMode::RegionLoop) &&
+            playbackRegionEndMs > playbackRegionStartMs) {
+            prefetchEndMs = std::min(prefetchEndMs, playbackRegionEndMs);
         }
     }
     if (!running.load()) {
@@ -305,12 +333,16 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
             requestDraftFrameAsync(tMs, videoClips);
         }
         lastPrefetchAnchorMs.store(tMs);
-        requestPrefetchAsync(tMs, tMs + kPrefetchAheadMs, true);
+        if (prefetchEndMs > tMs) {
+            requestPrefetchAsync(tMs, prefetchEndMs, true);
+        }
     } else {
         const qint64 anchor = lastPrefetchAnchorMs.load();
         if (tMs > anchor + kPrefetchPlayRescheduleMs) {
             lastPrefetchAnchorMs.store(tMs);
-            requestPrefetchAsync(tMs, tMs + kPrefetchAheadMs, true);
+            if (prefetchEndMs > tMs) {
+                requestPrefetchAsync(tMs, prefetchEndMs, true);
+            }
         }
     }
 }
@@ -318,12 +350,23 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
 void PlaybackPipeline::setPlaybackMode(burstcon::PlaybackMode mode, qint64 regionStartMs, qint64 regionEndMs)
 {
     std::lock_guard<std::mutex> lock(mutex);
+    playbackMode = mode;
+    if (mode == burstcon::PlaybackMode::Free) {
+        playbackRegionStartMs = 0;
+        playbackRegionEndMs = 0;
+    } else {
+        playbackRegionStartMs = regionStartMs;
+        playbackRegionEndMs = regionEndMs;
+    }
     if (timer) {
         timer->setMode(mode, burstcon::msToBurstIndex(regionStartMs), burstcon::msToBurstIndex(regionEndMs));
     }
     if (mode == burstcon::PlaybackMode::Region || mode == burstcon::PlaybackMode::RegionLoop) {
         if (!running.load()) {
-            requestPrefetchAsync(regionStartMs, std::min(regionEndMs, regionStartMs + kPrefetchAheadMs), true);
+            const qint64 prefetchEnd = std::min(regionEndMs, regionStartMs + kPrefetchAheadMs);
+            if (prefetchEnd > regionStartMs) {
+                requestPrefetchAsync(regionStartMs, prefetchEnd, true);
+            }
         }
     }
 }
@@ -343,15 +386,17 @@ void PlaybackPipeline::setDraftPreviewEnabled(bool enabled)
 
 QImage PlaybackPipeline::renderDraftFrame(qint64 tMs, const std::vector<Clip> &videoClips)
 {
+    int fps = 30;
     {
         std::lock_guard<std::mutex> lock(mutex);
         if (!clipsEqual(videoClips, lastVideoClips)) {
             rebuildGraph(videoClips, lastAudioClips);
             lastVideoClips = videoClips;
         }
+        fps = std::max(1, projectSettings.fps);
     }
     burstcon::BurstRequest req;
-    req.index = burstcon::msToBurstIndex(tMs);
+    req.index = burstcon::alignBurstIndexToOutputVideoFrame(fps, burstcon::msToBurstIndex(tMs));
     req.quality = burstcon::BurstQuality{projectSettings.cacheResolution().width(), projectSettings.cacheResolution().height()};
     burstcon::VideoBurst out;
     if (root && root->videoBurst(req, out)) {
@@ -739,12 +784,11 @@ void PlaybackPipeline::prefetchWorkerLoop()
         if (!job.allowWhileRunning && running.load()) {
             continue;
         }
-        const burstcon::BurstIndex videoStep =
-            std::max<burstcon::BurstIndex>(1, burstcon::kBurstTimebaseHz / static_cast<burstcon::BurstIndex>(fps));
+        const burstcon::BurstIndex videoStep = burstcon::outputVideoFrameStepTicks(fps);
         const burstcon::BurstIndex audioStep = std::max<burstcon::BurstIndex>(
             1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kDefaultAudioSamplesPerBurst)) / kAudioSampleRate);
         const burstcon::BurstIndex startIdx = burstcon::msToBurstIndex(job.startMs);
-        const burstcon::BurstIndex alignedStart = (startIdx / videoStep) * videoStep;
+        const burstcon::BurstIndex alignedStart = burstcon::alignBurstIndexToOutputVideoFrame(fps, startIdx);
         const burstcon::BurstIndex endIdx = msToBurstIndexCeil(job.endMs);
         const burstcon::BurstIndex prefetchVideoStep =
             std::max(videoStep, burstcon::kBurstTimebaseHz / 12);

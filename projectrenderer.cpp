@@ -219,7 +219,8 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
         const double frameMsF = static_cast<double>(startMs) + (1000.0 * static_cast<double>(frameIdx) / static_cast<double>(settings.fps));
         const qint64 frameMs = static_cast<qint64>(frameMsF);
         burstcon::BurstRequest req;
-        req.index = burstcon::msToBurstIndex(frameMs);
+        const int outFps = std::max(1, settings.fps);
+        req.index = burstcon::alignBurstIndexToOutputVideoFrame(outFps, burstcon::msToBurstIndex(frameMs));
         req.quality = burstcon::BurstQuality{renderSize.width(), renderSize.height()};
         burstcon::VideoBurst vb;
         if (!trimmer->videoBurst(req, vb) || vb.frame.isNull()) {

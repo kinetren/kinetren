@@ -1523,8 +1523,7 @@ void MonotonicPlaybackTimer::runLoop()
     BurstIndex lastAudioRequest = startIndex;
     {
         std::lock_guard<std::mutex> lock(mutex);
-        const BurstIndex videoStep =
-            std::max<BurstIndex>(1, kBurstTimebaseHz / static_cast<BurstIndex>(std::max(1, playbackVideoFps)));
+        const BurstIndex videoStep = outputVideoFrameStepTicks(playbackVideoFps);
         lastVideoRequest = startIndex - std::max<BurstIndex>(1, videoStep);
     }
 
@@ -1548,8 +1547,7 @@ void MonotonicPlaybackTimer::runLoop()
             localSource = source;
             localCallbacks = callbacks;
             localVideoRequestQuality = videoRequestQuality;
-            videoStep =
-                std::max<BurstIndex>(1, kBurstTimebaseHz / static_cast<BurstIndex>(std::max(1, playbackVideoFps)));
+            videoStep = outputVideoFrameStepTicks(playbackVideoFps);
         }
         if (localMode == PlaybackMode::Region || localMode == PlaybackMode::RegionLoop) {
             if (localRegionEnd > localRegionStart) {
@@ -1627,6 +1625,19 @@ void MonotonicPlaybackTimer::preloadAhead(const std::shared_ptr<IBurstcon> &sour
         AudioBurst out;
         (void)source->audioBurst(req, out);
     }
+}
+
+BurstIndex outputVideoFrameStepTicks(int outputFps)
+{
+    const int fps = std::max(1, outputFps);
+    return std::max<BurstIndex>(1, kBurstTimebaseHz / static_cast<BurstIndex>(fps));
+}
+
+BurstIndex alignBurstIndexToOutputVideoFrame(int outputFps, BurstIndex index)
+{
+    const BurstIndex step = outputVideoFrameStepTicks(outputFps);
+    const BurstIndex safe = std::max<BurstIndex>(0, index);
+    return (safe / step) * step;
 }
 
 int64_t msToBurstIndex(int64_t ms)

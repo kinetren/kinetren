@@ -352,6 +352,12 @@ private:
 
 int64_t msToBurstIndex(int64_t ms);
 int64_t burstIndexToMs(BurstIndex index);
+
+/// Burst tick step for one output timeline video frame at integer `outputFps` (project / export FPS).
+BurstIndex outputVideoFrameStepTicks(int outputFps);
+/// Floor-align a burst index to the output-frame grid at `outputFps` (same grid as realtime playback).
+BurstIndex alignBurstIndexToOutputVideoFrame(int outputFps, BurstIndex index);
+
 BurstconMetrics metricsSnapshot();
 void resetMetrics();
 
