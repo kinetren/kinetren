@@ -23,6 +23,9 @@ constexpr int kDefaultAudioSamplesPerBurst = 1024;
 constexpr qint64 kVideoCoverageBucketMs = 33;
 constexpr qint64 kAudioCoverageBucketMs = 20;
 constexpr qint64 kPrefetchAheadMs = 12000;
+/// When scrubbing while stopped, only look this far ahead so `isPlaybackHeadWarm` matches the usual
+/// 5 s warmup window from MainWindow / `start()` and idle skips actually trigger.
+constexpr qint64 kIdleScrubPrefetchAheadMs = 5000;
 constexpr qint64 kPrefetchPlayRescheduleMs = 450;
 constexpr qint64 kMaxCoverageProbeSteps = 40000;
 
@@ -329,12 +332,15 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
     }
     if (!running.load()) {
         timelineMs.store(tMs);
-        if (onVideoFrameReady) {
+        lastPrefetchAnchorMs.store(tMs);
+        const qint64 idlePrefetchEnd = std::min(prefetchEndMs, tMs + kIdleScrubPrefetchAheadMs);
+        const qint64 idleSpan = std::max<qint64>(0, idlePrefetchEnd - tMs);
+        const bool headWarm = idleSpan > 0 && isPlaybackHeadWarm(tMs, idleSpan);
+        if (onVideoFrameReady && !headWarm) {
             requestDraftFrameAsync(tMs, videoClips);
         }
-        lastPrefetchAnchorMs.store(tMs);
-        if (prefetchEndMs > tMs) {
-            requestPrefetchAsync(tMs, prefetchEndMs, true);
+        if (idleSpan > 0 && !headWarm) {
+            requestPrefetchAsync(tMs, idlePrefetchEnd, true);
         }
     } else {
         const qint64 anchor = lastPrefetchAnchorMs.load();
