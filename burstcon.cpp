@@ -9,6 +9,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -16,14 +17,11 @@
 
 #include <QSize>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-}
-
 #include <avcpp/audioresampler.h>
 #include <avcpp/avutils.h>
 #include <avcpp/codec.h>
 #include <avcpp/codeccontext.h>
+#include <avcpp/dictionary.h>
 #include <avcpp/formatcontext.h>
 #include <avcpp/packet.h>
 #include <avcpp/videorescaler.h>
@@ -609,13 +607,11 @@ private:
         Codec codec = findDecodingCodec(dec->raw()->codec_id);
         dec->setCodec(codec);
         dec->setRefCountedFrames(true);
-        Codec codecCtx{};
-        int threadCount = static_cast<int>(std::thread::hardware_concurrency());
-        if (threadCount < 1) {
-            threadCount = 1;
-        }
-        threadCount = std::min(threadCount, 8);
-        dec->open({{"threads", std::to_string(threadCount)}}, codecCtx, ec);
+        // H.264 + frame threading + frequent seeks (trimmed segments) breaks reference/POC
+        // state ("Missing reference picture", "decode_slice_header error"). Single-threaded
+        // decode matches ffplay-style stability on cuts.
+        Codec codecOpts{};
+        dec->open(Dictionary{{"threads", "1"}}, codecOpts, ec);
         if (ec) {
             return false;
         }
@@ -690,13 +686,9 @@ private:
                 }
             }
         }
-        if (!videoDec) {
-            if (!openVideoDecoderLocked()) {
-                return false;
-            }
-        } else if (videoDec->raw()) {
-            avcodec_flush_buffers(videoDec->raw());
-        } else if (!openVideoDecoderLocked()) {
+        // Recreate the decoder after every seek so DPB / threading state matches a fresh
+        // open at the keyframe (flush alone is not reliable with frame-threaded H.264).
+        if (!openVideoDecoderLocked()) {
             return false;
         }
         videoCursorIndex = seekIndex - videoFrameStep;
