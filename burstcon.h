@@ -75,6 +75,9 @@ public:
     virtual bool burst(BurstType type, const BurstRequest &request, BurstPayload &out) = 0;
     virtual BurstOriginInfo originInfo() const = 0;
     virtual void invalidate(const BurstRange &range) = 0;
+    /// When a cache layer returns video without touching the decoder, forward the media burst index
+    /// so shared demuxer "logical cursor" matches playback (avoids massive catch-up reads on miss).
+    virtual void syncPresentationVideoIndex(BurstIndex mediaBurstIndex) { (void)mediaBurstIndex; }
 
     bool audioBurst(const BurstRequest &request, AudioBurst &out);
     bool videoBurst(const BurstRequest &request, VideoBurst &out);
@@ -116,6 +119,7 @@ public:
     bool burst(BurstType type, const BurstRequest &request, BurstPayload &out) override;
     BurstOriginInfo originInfo() const override;
     void invalidate(const BurstRange &range) override;
+    void syncPresentationVideoIndex(BurstIndex mediaBurstIndex) override;
 
 private:
     struct AudioKey {
@@ -205,6 +209,8 @@ public:
                              int channels,
                              int samplesPerBurst,
                              AudioBurst &out) = 0;
+    /// Logical playback position in this file's burst timeline (does not seek the demuxer).
+    virtual void setPresentationVideoIndex(BurstIndex mediaBurstIndex) { (void)mediaBurstIndex; }
 };
 
 class ConMedia : public IBurstcon
@@ -215,6 +221,7 @@ public:
     bool burst(BurstType type, const BurstRequest &request, BurstPayload &out) override;
     BurstOriginInfo originInfo() const override;
     void invalidate(const BurstRange &range) override;
+    void syncPresentationVideoIndex(BurstIndex mediaBurstIndex) override;
 
 private:
     QString path;

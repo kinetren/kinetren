@@ -9,6 +9,7 @@
 #include <deque>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -339,6 +340,19 @@ public:
         return origin;
     }
 
+    void setPresentationVideoIndex(BurstIndex mediaBurstIndex) override
+    {
+        if (mediaBurstIndex < 0) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(videoMutex);
+        if (!loaded || videoStream < 0) {
+            return;
+        }
+        const BurstIndex step = std::max<BurstIndex>(1, videoFrameStep);
+        videoCursorIndex = (mediaBurstIndex / step) * step;
+    }
+
     bool decodeVideo(BurstIndex index,
                      BurstIndex decodeOriginRequest,
                      const BurstQuality &quality,
@@ -363,18 +377,30 @@ public:
         const DecodedVideoFrameKey cacheLookupKey{target, outRgbW, outRgbH};
         auto cached = videoFrameCache.find(cacheLookupKey);
         if (cached != videoFrameCache.end() && !cached->second.isNull()) {
+            // Keep logical read position aligned with the frame we return; prefetch/ConCache can
+            // otherwise serve frames without advancing this cursor while the demuxer runs ahead.
+            videoCursorIndex = target;
             out = makeVideoBurst(target, quality, cached->second);
             return true;
         }
         if (lastVideoFailedTarget == target && lastVideoFailedOrigin == decodeOrigin && videoFailureStreak >= 2) {
             return false;
         }
-        const bool needReset = !videoPrimed ||
-            target < videoCursorIndex ||
+        const BurstIndex step = std::max<BurstIndex>(1, videoFrameStep);
+        const BurstIndex driftThreshold = 64 * step;
+        const bool demuxerBehindRequest =
+            videoPrimed && videoCursorIndex >= 0 && (target > videoCursorIndex + driftThreshold);
+        const bool needReset = !videoPrimed || target < videoCursorIndex || demuxerBehindRequest ||
             (videoPrimedOrigin != decodeOrigin && videoFrameCache.find(cacheLookupKey) == videoFrameCache.end());
         if (needReset) {
-            const BurstIndex initialSeekOrigin = (!videoPrimed && decodeOrigin > 0) ? 0 : decodeOrigin;
-            if (!seekVideoLocked(initialSeekOrigin)) {
+            // First priming of a trimmed clip: seek to 0 so GOP read is reliable. After that, seek
+            // to the requested target (not only decodeOrigin) so we recover when prefetch advanced
+            // the shared demuxer past the playhead or ConCache hits hid the drift.
+            BurstIndex seekGoal = std::max<BurstIndex>(0, std::max(decodeOrigin, target));
+            if (!videoPrimed && decodeOrigin > 0) {
+                seekGoal = 0;
+            }
+            if (!seekVideoLocked(seekGoal)) {
                 lastVideoFailedTarget = target;
                 lastVideoFailedOrigin = decodeOrigin;
                 ++videoFailureStreak;
@@ -389,7 +415,7 @@ public:
             const BurstIndex cursorBase = std::max<BurstIndex>(-videoFrameStep, videoCursorIndex);
             const BurstIndex framesNeeded =
                 std::max<BurstIndex>(1, ((target - cursorBase) / std::max<BurstIndex>(1, videoFrameStep)) + 2);
-            const int maxPackets = static_cast<int>(std::clamp<BurstIndex>(framesNeeded * 24, 420, 60000));
+            const int maxPackets = static_cast<int>(std::clamp<BurstIndex>(framesNeeded * 24, 420, 4096));
             for (int tries = 0; tries < maxPackets; ++tries) {
                 Packet pkt = videoInput.readPacket(ec);
                 gAvcppPacketReads.fetch_add(1);
@@ -461,12 +487,20 @@ public:
                 near->first.rgbW == outRgbW && near->first.rgbH == outRgbH) {
                 picked = near->second;
                 pickedIndex = near->first.index;
+                videoCursorIndex = pickedIndex;
             }
         };
 
         QImage picked;
         BurstIndex pickedIndex = -1;
         decodeForward(picked, pickedIndex);
+        if (picked.isNull()) {
+            const BurstIndex resyncGoal = std::max<BurstIndex>(0, std::max(decodeOrigin, target));
+            if (seekVideoLocked(resyncGoal)) {
+                videoPrimedOrigin = decodeOrigin;
+                decodeForward(picked, pickedIndex);
+            }
+        }
         if (picked.isNull() && requestedDecodeOrigin > 0 && seekVideoLocked(0)) {
             videoPrimedOrigin = requestedDecodeOrigin;
             decodeForward(picked, pickedIndex);
@@ -892,6 +926,13 @@ BurstOriginInfo ConCache::originInfo() const
     return upstream->originInfo();
 }
 
+void ConCache::syncPresentationVideoIndex(BurstIndex mediaBurstIndex)
+{
+    if (upstream) {
+        upstream->syncPresentationVideoIndex(mediaBurstIndex);
+    }
+}
+
 void ConCache::invalidate(const BurstRange &range)
 {
     std::vector<VideoKey> videoRemoved;
@@ -940,7 +981,7 @@ bool ConCache::getAudio(const AudioKey &key, AudioBurst &out)
 
 bool ConCache::getVideo(const VideoKey &key, VideoBurst &out)
 {
-    std::lock_guard<std::mutex> lock(mutex);
+    std::unique_lock<std::mutex> lock(mutex);
     auto it = videoEntries.find(key);
     if (it == videoEntries.end()) {
         gCacheMisses.fetch_add(1);
@@ -949,6 +990,10 @@ bool ConCache::getVideo(const VideoKey &key, VideoBurst &out)
     gCacheHits.fetch_add(1);
     touchVideoLocked(key, it->second);
     out = it->second.value;
+    lock.unlock();
+    if (upstream) {
+        upstream->syncPresentationVideoIndex(key.index);
+    }
     return true;
 }
 
@@ -1129,6 +1174,14 @@ BurstOriginInfo ConMedia::originInfo() const
         return BurstOriginInfo{};
     }
     return backend->originInfo();
+}
+
+void ConMedia::syncPresentationVideoIndex(BurstIndex mediaBurstIndex)
+{
+    std::lock_guard<std::mutex> lock(backendMutex);
+    if (backend) {
+        backend->setPresentationVideoIndex(mediaBurstIndex);
+    }
 }
 
 void ConMedia::invalidate(const BurstRange &range)
