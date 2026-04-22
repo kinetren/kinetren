@@ -155,6 +155,7 @@ void PlaybackPipeline::preparePlaybackAt(qint64 startTimelineMs)
     {
         std::lock_guard<std::mutex> lock(mutex);
         timer->setVideoRequestQuality(burstcon::BurstQuality{q.width(), q.height()});
+        timer->setPlaybackVideoFps(std::max(1, projectSettings.fps));
         timer->setCallbacks(callbacks);
     }
     lastVideoRequestIndex.store(-1);
@@ -368,6 +369,7 @@ void PlaybackPipeline::setProjectSettings(const ProjectSettings &settings)
     if (timer) {
         const QSize q = projectSettings.cacheResolution();
         timer->setVideoRequestQuality(burstcon::BurstQuality{q.width(), q.height()});
+        timer->setPlaybackVideoFps(std::max(1, projectSettings.fps));
     }
 }
 

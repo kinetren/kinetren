@@ -320,6 +320,8 @@ public:
     void setSource(std::shared_ptr<IBurstcon> source);
     void setMode(PlaybackMode mode, BurstIndex regionStart, BurstIndex regionEnd);
     void setVideoRequestQuality(const BurstQuality &quality);
+    /// Must match the project's output FPS so burst indices align with prefetch/warmup caches.
+    void setPlaybackVideoFps(int fps);
     void setCallbacks(const Callbacks &callbacks);
     void start(BurstIndex startIndex);
     void stop();
@@ -341,6 +343,7 @@ private:
     BurstIndex regionStart = 0;
     BurstIndex regionEnd = 0;
     BurstQuality videoRequestQuality;
+    int playbackVideoFps = 30;
     std::atomic_bool running{false};
     std::thread timerThread;
     std::atomic<BurstIndex> index{0};

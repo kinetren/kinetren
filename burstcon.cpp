@@ -1476,6 +1476,12 @@ void MonotonicPlaybackTimer::setVideoRequestQuality(const BurstQuality &quality)
     videoRequestQuality = quality;
 }
 
+void MonotonicPlaybackTimer::setPlaybackVideoFps(int fps)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    playbackVideoFps = std::max(1, fps);
+}
+
 void MonotonicPlaybackTimer::setCallbacks(const Callbacks &callbacks)
 {
     std::lock_guard<std::mutex> lock(mutex);
@@ -1513,8 +1519,14 @@ void MonotonicPlaybackTimer::runLoop()
     using Clock = std::chrono::steady_clock;
     auto loopStart = Clock::now();
     BurstIndex startIndex = index.load();
-    BurstIndex lastVideoRequest = startIndex - std::max<BurstIndex>(1, kBurstTimebaseHz / 30);
+    BurstIndex lastVideoRequest = startIndex;
     BurstIndex lastAudioRequest = startIndex;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        const BurstIndex videoStep =
+            std::max<BurstIndex>(1, kBurstTimebaseHz / static_cast<BurstIndex>(std::max(1, playbackVideoFps)));
+        lastVideoRequest = startIndex - std::max<BurstIndex>(1, videoStep);
+    }
 
     while (running.load()) {
         const auto now = Clock::now();
@@ -1527,6 +1539,7 @@ void MonotonicPlaybackTimer::runLoop()
         std::shared_ptr<IBurstcon> localSource;
         Callbacks localCallbacks;
         BurstQuality localVideoRequestQuality;
+        BurstIndex videoStep;
         {
             std::lock_guard<std::mutex> lock(mutex);
             localMode = mode;
@@ -1535,6 +1548,8 @@ void MonotonicPlaybackTimer::runLoop()
             localSource = source;
             localCallbacks = callbacks;
             localVideoRequestQuality = videoRequestQuality;
+            videoStep =
+                std::max<BurstIndex>(1, kBurstTimebaseHz / static_cast<BurstIndex>(std::max(1, playbackVideoFps)));
         }
         if (localMode == PlaybackMode::Region || localMode == PlaybackMode::RegionLoop) {
             if (localRegionEnd > localRegionStart) {
@@ -1544,7 +1559,7 @@ void MonotonicPlaybackTimer::runLoop()
                         current = localRegionStart + ((current - localRegionStart) % span);
                         loopStart = now;
                         startIndex = current;
-                        lastVideoRequest = current - std::max<BurstIndex>(1, kBurstTimebaseHz / 30);
+                        lastVideoRequest = current - std::max<BurstIndex>(1, videoStep);
                         lastAudioRequest = current;
                     } else {
                         current = localRegionEnd;
@@ -1559,7 +1574,6 @@ void MonotonicPlaybackTimer::runLoop()
 
         if (localSource) {
             const BurstOriginInfo info = localSource->originInfo();
-            const BurstIndex videoStep = std::max<BurstIndex>(1, kBurstTimebaseHz / 30);
             const BurstIndex audioStep = std::max<BurstIndex>(1, (kBurstTimebaseHz * kDefaultAudioSamplesPerBurst) / 48000);
 
             BurstRequest videoRequest;
