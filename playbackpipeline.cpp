@@ -249,7 +249,8 @@ void PlaybackPipeline::beginClockAndPrefetch(qint64 startTimelineMs)
             prefetchEndMs = std::min(prefetchEndMs, playbackRegionEndMs);
         }
     }
-    if (prefetchEndMs > startTimelineMs) {
+    if (prefetchEndMs > startTimelineMs &&
+        !isPlaybackHeadWarm(startTimelineMs, prefetchEndMs - startTimelineMs)) {
         requestPrefetchAsync(startTimelineMs, prefetchEndMs, true);
     }
 }
@@ -346,7 +347,8 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         const qint64 anchor = lastPrefetchAnchorMs.load();
         if (tMs > anchor + kPrefetchPlayRescheduleMs) {
             lastPrefetchAnchorMs.store(tMs);
-            if (prefetchEndMs > tMs) {
+            const qint64 span = prefetchEndMs - tMs;
+            if (span > 0 && !isPlaybackHeadWarm(tMs, span)) {
                 requestPrefetchAsync(tMs, prefetchEndMs, true);
             }
         }
@@ -355,25 +357,35 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
 
 void PlaybackPipeline::setPlaybackMode(burstcon::PlaybackMode mode, qint64 regionStartMs, qint64 regionEndMs)
 {
-    std::lock_guard<std::mutex> lock(mutex);
-    playbackMode = mode;
-    if (mode == burstcon::PlaybackMode::Free) {
-        playbackRegionStartMs = 0;
-        playbackRegionEndMs = 0;
-    } else {
-        playbackRegionStartMs = regionStartMs;
-        playbackRegionEndMs = regionEndMs;
-    }
-    if (timer) {
-        timer->setMode(mode, burstcon::msToBurstIndex(regionStartMs), burstcon::msToBurstIndex(regionEndMs));
-    }
-    if (mode == burstcon::PlaybackMode::Region || mode == burstcon::PlaybackMode::RegionLoop) {
-        if (!running.load()) {
+    qint64 regionPrefetchStart = 0;
+    qint64 regionPrefetchEnd = 0;
+    bool wantRegionIdlePrefetch = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        playbackMode = mode;
+        if (mode == burstcon::PlaybackMode::Free) {
+            playbackRegionStartMs = 0;
+            playbackRegionEndMs = 0;
+        } else {
+            playbackRegionStartMs = regionStartMs;
+            playbackRegionEndMs = regionEndMs;
+        }
+        if (timer) {
+            timer->setMode(mode, burstcon::msToBurstIndex(regionStartMs), burstcon::msToBurstIndex(regionEndMs));
+        }
+        if ((mode == burstcon::PlaybackMode::Region || mode == burstcon::PlaybackMode::RegionLoop) &&
+            !running.load()) {
             const qint64 prefetchEnd = std::min(regionEndMs, regionStartMs + kPrefetchAheadMs);
             if (prefetchEnd > regionStartMs) {
-                requestPrefetchAsync(regionStartMs, prefetchEnd, true);
+                regionPrefetchStart = regionStartMs;
+                regionPrefetchEnd = prefetchEnd;
+                wantRegionIdlePrefetch = true;
             }
         }
+    }
+    if (wantRegionIdlePrefetch &&
+        !isPlaybackHeadWarm(regionPrefetchStart, regionPrefetchEnd - regionPrefetchStart)) {
+        requestPrefetchAsync(regionPrefetchStart, regionPrefetchEnd, true);
     }
 }
 
@@ -788,6 +800,9 @@ void PlaybackPipeline::prefetchWorkerLoop()
             continue;
         }
         if (!job.allowWhileRunning && running.load()) {
+            continue;
+        }
+        if (job.endMs > job.startMs && isPlaybackHeadWarm(job.startMs, job.endMs - job.startMs)) {
             continue;
         }
         const burstcon::BurstIndex videoStep = burstcon::outputVideoFrameStepTicks(fps);
