@@ -66,6 +66,8 @@ public:
     void warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 headMs);
     /// Start monotonic timer and async prefetch (call after warmup).
     void beginClockAndPrefetch(qint64 startTimelineMs);
+    /// True when timeline [startMs, startMs+headMs) already has dense video+final coverage (skip redundant warmup).
+    bool isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const;
     void stop();
     bool isRunning() const;
     void update(qint64 timelineMs, const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);
@@ -105,6 +107,7 @@ private:
     void draftWorkerLoop();
     void requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning);
     void prefetchWorkerLoop();
+    void appendVideoCoverageAlongTimeline(qint64 timelineMs);
 
     std::function<void(QImage &&)> onVideoFrameReady;
     mutable std::mutex mutex;
@@ -126,6 +129,7 @@ private:
     std::unordered_set<qint64> videoCoverageBuckets;
     std::unordered_set<qint64> audioCoverageBuckets;
     std::unordered_set<qint64> finalCoverageBuckets;
+    qint64 lastVideoCoverageTimelineMs = -1;
 
     std::shared_ptr<burstcon::ConMediaPool> mediaPool;
     std::shared_ptr<burstcon::ConTrack> videoTrack;

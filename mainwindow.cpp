@@ -936,44 +936,54 @@ void MainWindow::toggleTimelinePause()
             playbackPipeline->preparePlaybackAt(cursorMs);
             playbackWarmupSerial += 1;
             const quint64 warmSerial = playbackWarmupSerial;
-            playbackWarmupPending = true;
-            playbackWarmupOverlayTimer.start(180);
-            QPointer<MainWindow> warmGuard(this);
-            (void)QtConcurrent::run([warmGuard, warmSerial, cursorMs]() {
-                if (!warmGuard) {
-                    return;
-                }
-                PlaybackPipeline *pl = warmGuard->playbackPipeline.get();
-                if (!pl) {
-                    return;
-                }
-                pl->warmPlaybackHeadBlocking(cursorMs, 5000);
-                QMetaObject::invokeMethod(
-                    warmGuard.data(),
-                    [warmGuard, warmSerial, cursorMs]() {
-                        if (!warmGuard) {
-                            return;
-                        }
-                        warmGuard->playbackWarmupOverlayTimer.stop();
-                        warmGuard->playbackWarmupPending = false;
-                        warmGuard->ui->frame->setBuffering(false);
-                        if (warmSerial != warmGuard->playbackWarmupSerial) {
-                            return;
-                        }
-                        if (!warmGuard->timelinePlaying) {
-                            warmGuard->stopMediaPlayback();
-                            return;
-                        }
-                        if (!warmGuard->playbackPipeline) {
-                            return;
-                        }
-                        warmGuard->playbackPipeline->beginClockAndPrefetch(cursorMs);
-                        warmGuard->syncTimelinePlayback();
-                        warmGuard->timelineTimer.start();
-                        warmGuard->requestCacheCoverageUiRefresh();
-                    },
-                    Qt::QueuedConnection);
-            });
+            if (playbackPipeline->isPlaybackHeadWarm(cursorMs, 5000)) {
+                playbackWarmupOverlayTimer.stop();
+                playbackWarmupPending = false;
+                ui->frame->setBuffering(false);
+                playbackPipeline->beginClockAndPrefetch(cursorMs);
+                syncTimelinePlayback();
+                timelineTimer.start();
+                requestCacheCoverageUiRefresh();
+            } else {
+                playbackWarmupPending = true;
+                playbackWarmupOverlayTimer.start(180);
+                QPointer<MainWindow> warmGuard(this);
+                (void)QtConcurrent::run([warmGuard, warmSerial, cursorMs]() {
+                    if (!warmGuard) {
+                        return;
+                    }
+                    PlaybackPipeline *pl = warmGuard->playbackPipeline.get();
+                    if (!pl) {
+                        return;
+                    }
+                    pl->warmPlaybackHeadBlocking(cursorMs, 5000);
+                    QMetaObject::invokeMethod(
+                        warmGuard.data(),
+                        [warmGuard, warmSerial, cursorMs]() {
+                            if (!warmGuard) {
+                                return;
+                            }
+                            warmGuard->playbackWarmupOverlayTimer.stop();
+                            warmGuard->playbackWarmupPending = false;
+                            warmGuard->ui->frame->setBuffering(false);
+                            if (warmSerial != warmGuard->playbackWarmupSerial) {
+                                return;
+                            }
+                            if (!warmGuard->timelinePlaying) {
+                                warmGuard->stopMediaPlayback();
+                                return;
+                            }
+                            if (!warmGuard->playbackPipeline) {
+                                return;
+                            }
+                            warmGuard->playbackPipeline->beginClockAndPrefetch(cursorMs);
+                            warmGuard->syncTimelinePlayback();
+                            warmGuard->timelineTimer.start();
+                            warmGuard->requestCacheCoverageUiRefresh();
+                        },
+                        Qt::QueuedConnection);
+                });
+            }
         }
         syncTimelinePlayback();
         if (!playbackPipeline) {
