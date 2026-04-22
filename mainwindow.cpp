@@ -62,7 +62,7 @@
 
 namespace {
 
-constexpr int kTimelineUiTickMs = 8;
+constexpr int kTimelineUiTickMs = 16;
 constexpr int kTimelineVScrollPx = 14;
 /// Empty strip under the tool strip so the timeline shows through below the buttons.
 constexpr int kTimelineChromeBottomReveal = 12;

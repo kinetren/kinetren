@@ -231,7 +231,7 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
         }
         QImage rgb = vb.frame.convertToFormat(QImage::Format_RGB888);
         if (rgb.size() != renderSize) {
-            rgb = rgb.scaled(renderSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            rgb = rgb.scaled(renderSize, Qt::IgnoreAspectRatio, Qt::FastTransformation);
         }
         const qint64 bytesPerFrame = static_cast<qint64>(renderSize.width()) * static_cast<qint64>(renderSize.height()) * 3;
         if (rgb.sizeInBytes() < bytesPerFrame) {

@@ -2,6 +2,7 @@
 #define PREVIEWER_H
 
 #include <QImage>
+#include <QPixmap>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QTimerEvent>
@@ -28,6 +29,7 @@ class Previewer : public QWidget
         std::atomic_int state{static_cast<int>(FrameState::Empty)};
         uint64_t serial = 0;
         QImage img;
+        QPixmap displayPixmap;
     };
 
 public:

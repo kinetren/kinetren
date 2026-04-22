@@ -789,11 +789,7 @@ QString TimelineEditor::firstLocalPathFromMime(const QMimeData *mime)
             }
         }
     }
-    НА БУДУЩЕЕ, 4К в рендере лагает - и судя по всему оно где-то упирается в копипасту, т.к. активны 1-2 потока
-     и комп даже не особо сильно вроде напрягается, т.е. вероятно там жеский копипастинг-туда-сюда мешает
 
-      а еще при рендере он все сохраняет в tmpfs, вместо того чтобы засылать кадры по пайпу какому-нибудь...
-         или блядь рендерить через avcpp... он там видимо реальный ffmpeg запускает
 
     if (mime->hasText()) {
         QString t = mime->text().trimmed();
@@ -1619,7 +1615,8 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     markersMs = std::move(loadedMarkers);
     clipboardClips.clear();
     previewCache.clear();
-    previewCacheOrder.clear();
+    previewCacheLru.clear();
+    previewCacheLruPos.clear();
     pendingPreviewKeys.clear();
     peaksCache.clear();
     sourceDurationProbeCache.clear();
@@ -3250,12 +3247,46 @@ QColor TimelineEditor::colorFromPath(const QString &path) const
     return QColor(r, g, b);
 }
 
+void TimelineEditor::notePreviewCacheHit(const QString &key)
+{
+    if (!previewCache.contains(key)) {
+        return;
+    }
+    const auto it = previewCacheLruPos.find(key);
+    if (it != previewCacheLruPos.end()) {
+        previewCacheLru.erase(it.value());
+        previewCacheLruPos.erase(it);
+    }
+    previewCacheLru.push_front(key);
+    previewCacheLruPos.insert(key, previewCacheLru.begin());
+}
+
+void TimelineEditor::commitPreviewCacheFromWorker(const QString &key, const QImage &img)
+{
+    static constexpr int kMaxPreviewCacheEntries = 384;
+    const auto it = previewCacheLruPos.find(key);
+    if (it != previewCacheLruPos.end()) {
+        previewCacheLru.erase(it.value());
+        previewCacheLruPos.erase(it);
+    }
+    previewCache.insert(key, img);
+    previewCacheLru.push_front(key);
+    previewCacheLruPos.insert(key, previewCacheLru.begin());
+    while (previewCacheLru.size() > kMaxPreviewCacheEntries) {
+        const QString evict = previewCacheLru.back();
+        previewCacheLru.pop_back();
+        previewCacheLruPos.remove(evict);
+        previewCache.remove(evict);
+    }
+}
+
 QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs)
 {
     const qint64 bucketMs = std::max<qint64>(0, (sourceInMs / 400) * 400);
     const QString cacheKey = QString("%1::%2").arg(path, QString::number(bucketMs));
     const auto it = previewCache.constFind(cacheKey);
     if (it != previewCache.constEnd()) {
+        notePreviewCacheHit(cacheKey);
         return it.value();
     }
 
@@ -3274,8 +3305,10 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
             return;
         }
         QImage img = guard->decodeVideoPreviewSync(path, bucketMs);
-        const QImage scaled =
-            img.scaled(320, 180, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+        const QSize target(320, 180);
+        const QImage scaled = (img.size() == target)
+            ? img
+            : img.scaled(target, Qt::KeepAspectRatioByExpanding, Qt::FastTransformation);
         if (!guard) {
             return;
         }
@@ -3285,16 +3318,7 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
                 if (!guard) {
                     return;
                 }
-                static constexpr int kMaxPreviewCacheEntries = 384;
-                if (guard->previewCache.contains(cacheKey)) {
-                    guard->previewCacheOrder.removeAll(cacheKey);
-                }
-                guard->previewCache.insert(cacheKey, scaled);
-                guard->previewCacheOrder.enqueue(cacheKey);
-                while (guard->previewCacheOrder.size() > kMaxPreviewCacheEntries) {
-                    const QString evict = guard->previewCacheOrder.dequeue();
-                    guard->previewCache.remove(evict);
-                }
+                guard->commitPreviewCacheFromWorker(cacheKey, scaled);
                 guard->pendingPreviewKeys.remove(cacheKey);
                 guard->update();
             },
@@ -3339,7 +3363,7 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
         if (media->videoBurst(req, frame) && !frame.frame.isNull()) {
             img = frame.frame;
         }
-        if (img.isNull()) {
+        if (img.isNull() && isImagePath(path)) {
             QImageReader reader(path);
             reader.setAutoTransform(true);
             img = reader.read();

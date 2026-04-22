@@ -64,6 +64,7 @@ void Previewer::paintIt(QImage &&img)
     }
 
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Writing);
+    frameBuffer[bufferIndex].displayPixmap = QPixmap();
     frameBuffer[bufferIndex].img = std::move(img);
     frameBuffer[bufferIndex].serial = nextFrameSerial++;
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Ready);
@@ -127,9 +128,12 @@ void Previewer::paintEvent(QPaintEvent *event)
         painter.fillRect(rect(), Qt::black);
         painter.setRenderHint(QPainter::Antialiasing, antialiasing);
         painter.setRenderHint(QPainter::SmoothPixmapTransform, smoothScaling);
-        QPixmap pixmap = QPixmap::fromImage(frameBuffer[bufferIndex].img, Qt::ColorOnly);
-        if (!pixmap.isNull()) {
-            painter.drawPixmap(0, 0, width(), height(), pixmap);
+        auto &slot = frameBuffer[bufferIndex];
+        if (slot.displayPixmap.isNull() && !slot.img.isNull()) {
+            slot.displayPixmap = QPixmap::fromImage(slot.img, Qt::ColorOnly);
+        }
+        if (!slot.displayPixmap.isNull()) {
+            painter.drawPixmap(0, 0, width(), height(), slot.displayPixmap);
         }
     } else {
         qCritical() << "QPainter not active";

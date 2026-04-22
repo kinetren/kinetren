@@ -10,6 +10,15 @@
 #include <limits>
 #include <map>
 #include <system_error>
+#include <thread>
+#include <utility>
+#include <vector>
+
+#include <QSize>
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
 
 #include <avcpp/audioresampler.h>
 #include <avcpp/avutils.h>
@@ -147,6 +156,8 @@ struct SharedMediaFile {
                 }
             }
         }
+        qint64 lastAudioIndexedMs = std::numeric_limits<qint64>::min();
+        constexpr qint64 kAudioIndexMinIntervalMs = 400;
         while (true) {
             Packet pkt = input.readPacket(ec);
             gAvcppPacketReads.fetch_add(1);
@@ -160,9 +171,22 @@ struct SharedMediaFile {
                     videoKeyframes.push_back(entry);
                 }
             } else if (pkt.streamIndex() == audioStream) {
-                PacketIndexEntry entry = makePacketIndexEntry(pkt);
-                if (entry.bytePos >= 0) {
-                    audioPackets.push_back(entry);
+                const qint64 pktMs = packetTimestampToMs(pkt);
+                bool record = audioPackets.empty();
+                if (!record && pktMs >= 0) {
+                    record = (pktMs - lastAudioIndexedMs) >= kAudioIndexMinIntervalMs;
+                }
+                if (!record && pktMs < 0) {
+                    record = audioPackets.size() < 8;
+                }
+                if (record) {
+                    PacketIndexEntry entry = makePacketIndexEntry(pkt);
+                    if (entry.bytePos >= 0) {
+                        audioPackets.push_back(entry);
+                        if (pktMs >= 0) {
+                            lastAudioIndexedMs = pktMs;
+                        }
+                    }
                 }
             }
         }
@@ -211,6 +235,35 @@ struct SharedMediaFile {
 };
 
 namespace {
+
+struct DecodedVideoFrameKey {
+    BurstIndex index = 0;
+    int rgbW = 0;
+    int rgbH = 0;
+    friend bool operator<(const DecodedVideoFrameKey &a, const DecodedVideoFrameKey &b)
+    {
+        if (a.index != b.index) {
+            return a.index < b.index;
+        }
+        if (a.rgbW != b.rgbW) {
+            return a.rgbW < b.rgbW;
+        }
+        return a.rgbH < b.rgbH;
+    }
+};
+
+static QSize videoRgbSizeForQuality(int srcW, int srcH, const BurstQuality &q)
+{
+    if (srcW <= 0 || srcH <= 0) {
+        return QSize();
+    }
+    if (q.width <= 0 || q.height <= 0) {
+        return QSize(srcW, srcH);
+    }
+    const QSize srcSize(srcW, srcH);
+    const QSize scaled = srcSize.scaled(q.width, q.height, Qt::KeepAspectRatio);
+    return scaled.isValid() && scaled.width() > 0 && scaled.height() > 0 ? scaled : srcSize;
+}
 
 class AvcppMediaDecoderBackend : public IMediaDecoderBackend
 {
@@ -306,7 +359,11 @@ public:
         }
         decodeOrigin = std::clamp<BurstIndex>(decodeOrigin, 0, target);
         const BurstIndex requestedDecodeOrigin = decodeOrigin;
-        auto cached = videoFrameCache.find(target);
+        const QSize rgbSize = videoRgbSizeForQuality(videoDec->width(), videoDec->height(), quality);
+        const int outRgbW = std::max(1, rgbSize.width());
+        const int outRgbH = std::max(1, rgbSize.height());
+        const DecodedVideoFrameKey cacheLookupKey{target, outRgbW, outRgbH};
+        auto cached = videoFrameCache.find(cacheLookupKey);
         if (cached != videoFrameCache.end() && !cached->second.isNull()) {
             out = makeVideoBurst(target, quality, cached->second);
             return true;
@@ -316,7 +373,7 @@ public:
         }
         const bool needReset = !videoPrimed ||
             target < videoCursorIndex ||
-            (videoPrimedOrigin != decodeOrigin && videoFrameCache.find(target) == videoFrameCache.end());
+            (videoPrimedOrigin != decodeOrigin && videoFrameCache.find(cacheLookupKey) == videoFrameCache.end());
         if (needReset) {
             const BurstIndex initialSeekOrigin = (!videoPrimed && decodeOrigin > 0) ? 0 : decodeOrigin;
             if (!seekVideoLocked(initialSeekOrigin)) {
@@ -359,19 +416,33 @@ public:
                 if ((skipFrames || localSkipFrames) && frameIndex < target && (++skipCounter % 2 == 1)) {
                     continue;
                 }
-                auto rgb = videoRescaler->rescale(frame);
-                QImage img(rgb.width(), rgb.height(), QImage::Format_RGB888);
-                const int dstStride = img.bytesPerLine();
-                const int srcStride = rgb.raw()->linesize[0];
-                const int copyStride = std::min(dstStride, srcStride);
-                auto *src = rgb.data();
-                auto *dst = img.bits();
-                for (int y = 0; y < rgb.height(); ++y) {
-                    std::memcpy(dst + y * dstStride, src + y * srcStride, copyStride);
+                const QSize scaledRgb = videoRgbSizeForQuality(frame.width(), frame.height(), quality);
+                const int dstW = std::max(1, scaledRgb.width());
+                const int dstH = std::max(1, scaledRgb.height());
+                VideoFrame rgbFrame{AV_PIX_FMT_RGB24, dstW, dstH};
+                std::error_code rescaleEc;
+                videoRescaler->rescale(rgbFrame, frame, rescaleEc);
+                if (rescaleEc) {
+                    rescaleEc.clear();
+                    continue;
                 }
-                videoFrameCache[frameIndex] = img;
+                QImage img(rgbFrame.width(), rgbFrame.height(), QImage::Format_RGB888);
+                const int dstStride = img.bytesPerLine();
+                const int srcStride = rgbFrame.raw()->linesize[0];
+                const int copyStride = std::min(dstStride, srcStride);
+                auto *srcBytes = rgbFrame.data(0);
+                auto *dstBytes = img.bits();
+                if (dstStride == srcStride && copyStride == dstW * 3) {
+                    std::memcpy(dstBytes, srcBytes, static_cast<size_t>(copyStride) * static_cast<size_t>(dstH));
+                } else {
+                    for (int y = 0; y < dstH; ++y) {
+                        std::memcpy(dstBytes + y * dstStride, srcBytes + y * srcStride, static_cast<size_t>(copyStride));
+                    }
+                }
+                const DecodedVideoFrameKey storeKey{frameIndex, dstW, dstH};
+                videoFrameCache[storeKey] = img;
                 videoFrameBytesUsed += imageBytes(img);
-                while (videoFrameCache.size() > 96 || videoFrameBytesUsed > (64ULL * 1024ULL * 1024ULL)) {
+                while (videoFrameCache.size() > 192 || videoFrameBytesUsed > (256ULL * 1024ULL * 1024ULL)) {
                     if (videoFrameCache.empty()) {
                         break;
                     }
@@ -386,10 +457,12 @@ public:
                     return;
                 }
             }
-            auto near = videoFrameCache.lower_bound(target);
-            if (picked.isNull() && near != videoFrameCache.end()) {
+            const DecodedVideoFrameKey nearKey{target, outRgbW, outRgbH};
+            auto near = videoFrameCache.lower_bound(nearKey);
+            if (picked.isNull() && near != videoFrameCache.end() && near->first.index == target &&
+                near->first.rgbW == outRgbW && near->first.rgbH == outRgbH) {
                 picked = near->second;
-                pickedIndex = near->first;
+                pickedIndex = near->first.index;
             }
         };
 
@@ -494,9 +567,7 @@ public:
                         }
                         const int count = popped.samplesCount() * popped.channelsCount();
                         const int16_t *pcm = reinterpret_cast<const int16_t *>(popped.data(0));
-                        for (int i = 0; i < count; ++i) {
-                            audioPending.push_back(pcm[i]);
-                        }
+                        audioPending.insert(audioPending.end(), pcm, pcm + count);
                     }
                 }
                 AudioBurst burst;
@@ -539,11 +610,17 @@ private:
         dec->setCodec(codec);
         dec->setRefCountedFrames(true);
         Codec codecCtx{};
-        dec->open({{"threads", "1"}}, codecCtx, ec);
+        int threadCount = static_cast<int>(std::thread::hardware_concurrency());
+        if (threadCount < 1) {
+            threadCount = 1;
+        }
+        threadCount = std::min(threadCount, 8);
+        dec->open({{"threads", std::to_string(threadCount)}}, codecCtx, ec);
         if (ec) {
             return false;
         }
-        auto scaler = std::make_unique<VideoRescaler>(dec->width(), dec->height(), AV_PIX_FMT_RGB24);
+        auto scaler = std::make_unique<VideoRescaler>(
+            dec->width(), dec->height(), AV_PIX_FMT_RGB24, av::SwsFlagFastBilinear);
         videoDec = std::move(dec);
         videoRescaler = std::move(scaler);
         return true;
@@ -613,7 +690,13 @@ private:
                 }
             }
         }
-        if (!openVideoDecoderLocked()) {
+        if (!videoDec) {
+            if (!openVideoDecoderLocked()) {
+                return false;
+            }
+        } else if (videoDec->raw()) {
+            avcodec_flush_buffers(videoDec->raw());
+        } else if (!openVideoDecoderLocked()) {
             return false;
         }
         videoCursorIndex = seekIndex - videoFrameStep;
@@ -708,7 +791,7 @@ private:
     BurstIndex lastAudioFailedTarget = -1;
     BurstIndex lastAudioFailedOrigin = -1;
     int audioFailureStreak = 0;
-    std::map<BurstIndex, QImage> videoFrameCache;
+    std::map<DecodedVideoFrameKey, QImage> videoFrameCache;
     uint64_t videoFrameBytesUsed = 0;
     std::map<BurstIndex, AudioBurst> audioBurstCache;
     std::deque<int16_t> audioPending;
@@ -1312,8 +1395,8 @@ bool ConTrimmer::burst(BurstType type, const BurstRequest &request, BurstPayload
         return true;
     }
 
-    QImage composed;
-    bool hasAny = false;
+    std::vector<VideoBurst> videoLayers;
+    videoLayers.reserve(localTracks.size());
     for (const auto &track : localTracks) {
         if (!track) {
             continue;
@@ -1322,18 +1405,22 @@ bool ConTrimmer::burst(BurstType type, const BurstRequest &request, BurstPayload
         if (!track->videoBurst(request, burst) || burst.frame.isNull()) {
             continue;
         }
-        if (!hasAny) {
-            composed = burst.frame.convertToFormat(QImage::Format_ARGB32);
-            hasAny = true;
-            continue;
-        }
-        QPainter painter(&composed);
-        painter.drawImage(composed.rect(), burst.frame);
+        videoLayers.push_back(std::move(burst));
     }
-    if (!hasAny) {
+    if (videoLayers.empty()) {
         return false;
     }
-    out = VideoBurst{request.index, BurstQuality{composed.width(), composed.height()}, composed};
+    if (videoLayers.size() == 1) {
+        videoLayers[0].index = request.index;
+        out = std::move(videoLayers[0]);
+        return true;
+    }
+    QImage composed = videoLayers[0].frame.convertToFormat(QImage::Format_ARGB32);
+    for (size_t i = 1; i < videoLayers.size(); ++i) {
+        QPainter painter(&composed);
+        painter.drawImage(composed.rect(), videoLayers[i].frame);
+    }
+    out = VideoBurst{request.index, BurstQuality{composed.width(), composed.height()}, std::move(composed)};
     return true;
 }
 
@@ -1490,7 +1577,7 @@ void MonotonicPlaybackTimer::runLoop()
             if (current - lastVideoRequest >= videoStep) {
                 VideoBurst vb;
                 if (localSource->videoBurst(videoRequest, vb) && localCallbacks.onVideo) {
-                    localCallbacks.onVideo(vb);
+                    localCallbacks.onVideo(std::move(vb));
                 }
                 lastVideoRequest = current;
             }

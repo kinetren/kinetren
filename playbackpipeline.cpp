@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <thread>
+#include <vector>
 
 namespace {
 constexpr int kAudioSampleRate = 48000;
@@ -99,7 +100,7 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
     timelineMs.store(startTimelineMs);
     ensureAudioOutput();
     burstcon::MonotonicPlaybackTimer::Callbacks callbacks;
-    callbacks.onVideo = [this](const burstcon::VideoBurst &burst) {
+    callbacks.onVideo = [this](burstcon::VideoBurst burst) {
         const qint64 tMs = burstcon::burstIndexToMs(burst.index);
         timelineMs.store(tMs);
         lastPlaybackIndex.store(burst.index);
@@ -109,7 +110,7 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
             finalCoverageBuckets.insert((tMs / kVideoCoverageBucketMs) * kVideoCoverageBucketMs);
         }
         if (onVideoFrameReady && !burst.frame.isNull()) {
-            onVideoFrameReady(QImage(burst.frame));
+            onVideoFrameReady(std::move(burst.frame));
             composedFrames.fetch_add(1);
         }
     };
@@ -604,7 +605,12 @@ void PlaybackPipeline::prefetchWorkerLoop()
         const burstcon::BurstIndex startIdx = burstcon::msToBurstIndex(job.startMs);
         const burstcon::BurstIndex alignedStart = (startIdx / videoStep) * videoStep;
         const burstcon::BurstIndex endIdx = msToBurstIndexCeil(job.endMs);
-        for (burstcon::BurstIndex idx = alignedStart; idx <= endIdx; idx += videoStep) {
+        const burstcon::BurstIndex prefetchVideoStep =
+            std::max(videoStep, burstcon::kBurstTimebaseHz / 12);
+        std::vector<qint64> pendingVideoBuckets;
+        pendingVideoBuckets.reserve(
+            static_cast<size_t>(std::max<burstcon::BurstIndex>(1, (endIdx - alignedStart) / prefetchVideoStep + 2)));
+        for (burstcon::BurstIndex idx = alignedStart; idx <= endIdx; idx += prefetchVideoStep) {
             if (job.serial != latestPrefetchSerial.load()) {
                 break;
             }
@@ -613,9 +619,13 @@ void PlaybackPipeline::prefetchWorkerLoop()
             req.quality = quality;
             burstcon::VideoBurst vb;
             if (localRoot->videoBurst(req, vb) && !vb.frame.isNull()) {
-                std::lock_guard<std::mutex> lock(coverageMutex);
                 const qint64 tMs = burstcon::burstIndexToMs(idx);
-                const qint64 bucket = (tMs / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
+                pendingVideoBuckets.push_back((tMs / kVideoCoverageBucketMs) * kVideoCoverageBucketMs);
+            }
+        }
+        if (!pendingVideoBuckets.empty()) {
+            std::lock_guard<std::mutex> lock(coverageMutex);
+            for (qint64 bucket : pendingVideoBuckets) {
                 videoCoverageBuckets.insert(bucket);
                 finalCoverageBuckets.insert(bucket);
             }

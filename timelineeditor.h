@@ -7,13 +7,13 @@
 #include <QPoint>
 #include <QHash>
 #include <QImage>
-#include <QQueue>
 #include <QSet>
 #include <QKeyEvent>
 #include <QWheelEvent>
 #include <QResizeEvent>
 #include <QEvent>
 
+#include <list>
 #include <optional>
 #include <unordered_set>
 #include <vector>
@@ -309,6 +309,8 @@ private:
     QColor colorFromPath(const QString &path) const;
     QImage cachedVideoPreview(const QString &path, qint64 sourceInMs);
     QImage decodeVideoPreviewSync(const QString &path, qint64 bucketMs) const;
+    void notePreviewCacheHit(const QString &key);
+    void commitPreviewCacheFromWorker(const QString &key, const QImage &img);
     std::vector<int> cachedAudioPeaks(const QString &path,
                                       qint64 sourceInMs,
                                       qint64 durationMs,
@@ -326,7 +328,8 @@ private:
     void addClipFromDrop(const QString &path, qint64 startMs, int dropY);
     void emitOverlayInfo();
     QHash<QString, QImage> previewCache;
-    QQueue<QString> previewCacheOrder;
+    std::list<QString> previewCacheLru;
+    QHash<QString, std::list<QString>::iterator> previewCacheLruPos;
     QSet<QString> pendingPreviewKeys;
     QHash<QString, std::vector<int>> peaksCache;
     QHash<QString, QVector<QPair<double, double>>> cacheSegmentsByClip;

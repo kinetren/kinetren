@@ -311,7 +311,7 @@ class MonotonicPlaybackTimer
 public:
     struct Callbacks {
         std::function<void(const AudioBurst &)> onAudio;
-        std::function<void(const VideoBurst &)> onVideo;
+        std::function<void(VideoBurst)> onVideo;
     };
 
     explicit MonotonicPlaybackTimer(std::shared_ptr<IBurstcon> source);
