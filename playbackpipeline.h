@@ -60,6 +60,12 @@ public:
     ~PlaybackPipeline();
 
     void start(qint64 timelineMs);
+    /// Arm audio/callbacks/quality without starting the playback clock (used before head warmup).
+    void preparePlaybackAt(qint64 startTimelineMs);
+    /// Decode video+audio for [startMs, startMs+headMs) at project FPS to prime caches and coverage.
+    void warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 headMs);
+    /// Start monotonic timer and async prefetch (call after warmup).
+    void beginClockAndPrefetch(qint64 startTimelineMs);
     void stop();
     bool isRunning() const;
     void update(qint64 timelineMs, const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);

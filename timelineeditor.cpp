@@ -46,6 +46,22 @@
 #include <avcpp/videorescaler.h>
 
 namespace {
+/// Thumbnail sampling along source time: one thumb for clips ≤5s; else every 5s (clamped 1s…15s).
+qint64 videoClipThumbnailSourceStepMs(qint64 clipDurationMs)
+{
+    constexpr qint64 kMinStep = 1000;
+    constexpr qint64 kMaxStep = 15000;
+    constexpr qint64 kTarget = 5000;
+    constexpr qint64 kSingleThumbMax = 5000;
+    if (clipDurationMs <= 0) {
+        return 1;
+    }
+    if (clipDurationMs <= kSingleThumbMax) {
+        return clipDurationMs;
+    }
+    return std::clamp(kTarget, kMinStep, kMaxStep);
+}
+
 constexpr qint64 kSnapThresholdMs = 100;
 // Allow near frame-accurate cuts (1 ms ≈ sub-frame at high zoom; copy/trim/split use this floor).
 constexpr qint64 kMinClipDurationMs = 1;
@@ -1783,13 +1799,17 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
             const int innerLeft = r.left() + 2;
             const int innerRight = r.right() - 2;
             const int innerWidth = std::max(1, innerRight - innerLeft);
-            for (int x = innerLeft; x < innerRight; x += thumbW) {
-                const QRect thumbRect(x, r.top() + 2, std::min(thumbW, innerRight - x), r.height() - 4);
-                const int centerX = thumbRect.left() + (thumbRect.width() / 2);
-                const double rel = std::clamp(static_cast<double>(centerX - innerLeft) / innerWidth, 0.0, 1.0);
-                const qint64 sourceOffsetMs =
-                    static_cast<qint64>(std::llround(rel * std::max<qint64>(0, drawClip.durationMs - 1)));
-                const QImage preview = cachedVideoPreview(drawClip.sourcePath, drawClip.sourceInMs + sourceOffsetMs);
+            const qint64 durMs = std::max<qint64>(1, drawClip.durationMs);
+            const qint64 stepMs = videoClipThumbnailSourceStepMs(drawClip.durationMs);
+            for (qint64 srcOff = 0; srcOff < durMs; srcOff += stepMs) {
+                const double rel =
+                    durMs > 1 ? static_cast<double>(srcOff) / static_cast<double>(durMs - 1) : 0.0;
+                const int centerX =
+                    innerLeft + static_cast<int>(std::llround(std::clamp(rel, 0.0, 1.0) * static_cast<double>(innerWidth - 1)));
+                const int tw = std::min(thumbW, innerRight - innerLeft);
+                const int x0 = std::clamp(centerX - tw / 2, innerLeft, std::max(innerLeft, innerRight - tw));
+                const QRect thumbRect(x0, r.top() + 2, std::min(tw, innerRight - x0), r.height() - 4);
+                const QImage preview = cachedVideoPreview(drawClip.sourcePath, drawClip.sourceInMs + srcOff);
                 if (!preview.isNull()) {
                     p.drawImage(thumbRect, preview);
                 }

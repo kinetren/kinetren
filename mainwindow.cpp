@@ -40,6 +40,7 @@
 #include <QStatusBar>
 #include <QSplitter>
 #include <QTimer>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QSizePolicy>
@@ -162,6 +163,12 @@ MainWindow::MainWindow(QWidget *parent)
     performanceRefreshDebounceTimer.setSingleShot(true);
     performanceRefreshDebounceTimer.setInterval(120);
     connect(&performanceRefreshDebounceTimer, &QTimer::timeout, this, &MainWindow::flushPerformancePanelRefresh);
+    playbackWarmupOverlayTimer.setSingleShot(true);
+    connect(&playbackWarmupOverlayTimer, &QTimer::timeout, this, [this]() {
+        if (playbackWarmupPending) {
+            ui->frame->setBuffering(true);
+        }
+    });
     syncTimelinePlayback();
     currentProjectPath = defaultAutosaveProjectPath();
     loadLastProjectOnStartup();
@@ -920,14 +927,62 @@ void MainWindow::toggleTimelinePause()
             } else {
                 playbackPipeline->setPlaybackMode(burstcon::PlaybackMode::Free, 0, 0);
             }
-            playbackPipeline->start(timelineEditor->cursorMs());
+            const qint64 cursorMs = timelineEditor->cursorMs();
+            playbackPipeline->preparePlaybackAt(cursorMs);
+            playbackWarmupSerial += 1;
+            const quint64 warmSerial = playbackWarmupSerial;
+            playbackWarmupPending = true;
+            playbackWarmupOverlayTimer.start(180);
+            QPointer<MainWindow> warmGuard(this);
+            (void)QtConcurrent::run([warmGuard, warmSerial, cursorMs]() {
+                if (!warmGuard) {
+                    return;
+                }
+                PlaybackPipeline *pl = warmGuard->playbackPipeline.get();
+                if (!pl) {
+                    return;
+                }
+                pl->warmPlaybackHeadBlocking(cursorMs, 5000);
+                QMetaObject::invokeMethod(
+                    warmGuard.data(),
+                    [warmGuard, warmSerial, cursorMs]() {
+                        if (!warmGuard) {
+                            return;
+                        }
+                        warmGuard->playbackWarmupOverlayTimer.stop();
+                        warmGuard->playbackWarmupPending = false;
+                        warmGuard->ui->frame->setBuffering(false);
+                        if (warmSerial != warmGuard->playbackWarmupSerial) {
+                            return;
+                        }
+                        if (!warmGuard->timelinePlaying) {
+                            warmGuard->stopMediaPlayback();
+                            return;
+                        }
+                        if (!warmGuard->playbackPipeline) {
+                            return;
+                        }
+                        warmGuard->playbackPipeline->beginClockAndPrefetch(cursorMs);
+                        warmGuard->syncTimelinePlayback();
+                        warmGuard->timelineTimer.start();
+                    },
+                    Qt::QueuedConnection);
+            });
         }
         syncTimelinePlayback();
-        timelineTimer.start();
+        if (!playbackPipeline) {
+            timelineTimer.start();
+        }
         return;
     }
 
     timelinePlaying = false;
+    playbackWarmupSerial += 1;
+    playbackWarmupOverlayTimer.stop();
+    playbackWarmupPending = false;
+    if (ui->frame) {
+        ui->frame->setBuffering(false);
+    }
     stoppedAtRegionEnd = false;
     lastTimelineFrameIndex = -1;
     timelineTimer.stop();

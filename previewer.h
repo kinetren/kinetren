@@ -37,6 +37,7 @@ public:
     ~Previewer() override;
 
     void paintIt(QImage &&img);
+    void setBuffering(bool enabled);
     void setSmoothScaling(bool enabled);
     void setAntialiasing(bool enabled);
 
@@ -46,12 +47,15 @@ protected:
     void paintEvent(QPaintEvent *event) override;
 
 private:
+    void drawBufferingOverlay(QPainter &painter);
+
     std::array<RPFrame, kFrameBufferCount> frameBuffer{};
     int frameWriteIndex = 0;
     int frameReadIndex = 0;
     int previousPaintedIndex = -1;
     int paintTimer = -1;
     bool pause = false;
+    bool buffering = false;
     bool smoothScaling = true;
     bool antialiasing = false;
     uint64_t nextFrameSerial = 1;

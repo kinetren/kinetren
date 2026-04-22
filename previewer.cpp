@@ -2,6 +2,7 @@
 
 #include <QPainter>
 #include <QPixmap>
+#include <QFont>
 #include <qdebug.h>
 
 #include <chrono>
@@ -70,6 +71,12 @@ void Previewer::paintIt(QImage &&img)
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Ready);
 }
 
+void Previewer::setBuffering(bool enabled)
+{
+    buffering = enabled;
+    update();
+}
+
 void Previewer::setSmoothScaling(bool enabled)
 {
     smoothScaling = enabled;
@@ -82,6 +89,16 @@ void Previewer::setAntialiasing(bool enabled)
     update();
 }
 
+void Previewer::drawBufferingOverlay(QPainter &painter)
+{
+    painter.fillRect(rect(), QColor(0, 0, 0, 140));
+    QFont f = painter.font();
+    f.setPointSize(std::max(11, f.pointSize()));
+    painter.setFont(f);
+    painter.setPen(QColor(230, 235, 245));
+    painter.drawText(rect(), Qt::AlignCenter, QStringLiteral("Загрузка…"));
+}
+
 void Previewer::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
@@ -89,6 +106,13 @@ void Previewer::paintEvent(QPaintEvent *event)
     int bufferIndex = -1;
     if (pause) {
         if (previousPaintedIndex < 0) {
+            if (buffering) {
+                QPainter p(this);
+                if (p.isActive()) {
+                    p.fillRect(rect(), Qt::black);
+                    drawBufferingOverlay(p);
+                }
+            }
             return;
         }
         bufferIndex = previousPaintedIndex;
@@ -107,6 +131,13 @@ void Previewer::paintEvent(QPaintEvent *event)
             if (previousPaintedIndex >= 0) {
                 bufferIndex = previousPaintedIndex;
             } else {
+                if (buffering) {
+                    QPainter p(this);
+                    if (p.isActive()) {
+                        p.fillRect(rect(), Qt::black);
+                        drawBufferingOverlay(p);
+                    }
+                }
                 return;
             }
         }
@@ -134,6 +165,9 @@ void Previewer::paintEvent(QPaintEvent *event)
         }
         if (!slot.displayPixmap.isNull()) {
             painter.drawPixmap(0, 0, width(), height(), slot.displayPixmap);
+        }
+        if (buffering) {
+            drawBufferingOverlay(painter);
         }
     } else {
         qCritical() << "QPainter not active";

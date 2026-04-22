@@ -607,11 +607,13 @@ private:
         Codec codec = findDecodingCodec(dec->raw()->codec_id);
         dec->setCodec(codec);
         dec->setRefCountedFrames(true);
-        // H.264 + frame threading + frequent seeks (trimmed segments) breaks reference/POC
-        // state ("Missing reference picture", "decode_slice_header error"). Single-threaded
-        // decode matches ffplay-style stability on cuts.
-        Codec codecOpts{};
-        dec->open(Dictionary{{"threads", "1"}}, codecOpts, ec);
+        int threadCount = static_cast<int>(std::thread::hardware_concurrency()) / 2;
+        if (threadCount < 1) {
+            threadCount = 1;
+        }
+        threadCount = std::min(threadCount, 8);
+        const std::string threadsOpt = std::to_string(threadCount);
+        dec->open(Dictionary{{"threads", threadsOpt.c_str()}}, ec);
         if (ec) {
             return false;
         }

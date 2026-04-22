@@ -75,6 +75,9 @@ protected:
     class QScrollBar *timelineScrollBarV = nullptr;
     class QToolButton *timelineLoopButton = nullptr;
     QTimer timelineTimer;
+    QTimer playbackWarmupOverlayTimer;
+    bool playbackWarmupPending = false;
+    quint64 playbackWarmupSerial = 0;
     bool timelinePlaying = false;
     bool stoppedAtRegionEnd = false;
     qint64 lastTimelineFrameIndex = -1;
