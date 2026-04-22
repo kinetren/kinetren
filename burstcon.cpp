@@ -827,8 +827,17 @@ size_t ConCache::VideoKeyHash::operator()(const VideoKey &key) const
     return h;
 }
 
-ConCache::ConCache(std::shared_ptr<IBurstcon> upstream, const ConCacheConfig &config)
+void ConCache::notifyVideoFrameCache(bool inserted, const VideoKey &key)
+{
+    if (!config.onVideoFrameCacheChanged || mediaPath.isEmpty()) {
+        return;
+    }
+    config.onVideoFrameCacheChanged(inserted, mediaPath, key.index, BurstQuality{key.width, key.height});
+}
+
+ConCache::ConCache(std::shared_ptr<IBurstcon> upstream, QString mediaPath, const ConCacheConfig &config)
     : upstream(std::move(upstream))
+    , mediaPath(std::move(mediaPath))
     , config(config)
 {
     if (this->config.preloadEnabled) {
@@ -898,6 +907,7 @@ void ConCache::invalidate(const BurstRange &range)
     }
     for (auto it = videoEntries.begin(); it != videoEntries.end();) {
         if (it->second.index >= range.start && it->second.index <= range.end) {
+            notifyVideoFrameCache(false, it->first);
             videoLru.erase(it->second.lruIt);
             videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(it->second.value.frame));
             gCacheEntries.fetch_sub(1);
@@ -956,6 +966,7 @@ void ConCache::put(const VideoKey &key, const VideoBurst &value, BurstIndex inde
     std::lock_guard<std::mutex> lock(mutex);
     auto existing = videoEntries.find(key);
     if (existing != videoEntries.end()) {
+        notifyVideoFrameCache(false, existing->first);
         videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(existing->second.value.frame));
         videoLru.erase(existing->second.lruIt);
         videoEntries.erase(existing);
@@ -966,6 +977,7 @@ void ConCache::put(const VideoKey &key, const VideoBurst &value, BurstIndex inde
     videoBytesUsed += imageBytes(value.frame);
     gCacheEntries.fetch_add(1);
     evictVideoLocked();
+    notifyVideoFrameCache(true, key);
 }
 
 void ConCache::evictAudioLocked()
@@ -988,6 +1000,7 @@ void ConCache::evictVideoLocked()
         const VideoKey key = videoLru.back();
         auto it = videoEntries.find(key);
         if (it != videoEntries.end()) {
+            notifyVideoFrameCache(false, key);
             videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(it->second.value.frame));
             videoEntries.erase(it);
             gCacheEntries.fetch_sub(1);
@@ -1190,7 +1203,7 @@ std::shared_ptr<IBurstcon> ConMediaPool::createMedia(const QString &path,
             c.forcedVideoQualityEnabled = true;
             c.forcedVideoQuality = config.forcedPreviewQuality;
         }
-        media = std::make_shared<ConCache>(media, c);
+        media = std::make_shared<ConCache>(media, path, c);
     }
     return media;
 }

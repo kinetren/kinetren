@@ -109,7 +109,7 @@ void testCacheAvoidsDuplicateUpstreamCalls()
     auto upstream = std::make_shared<FakeBurstcon>();
     ConCacheConfig cfg;
     cfg.maxEntries = 32;
-    auto cache = std::make_shared<ConCache>(upstream, cfg);
+    auto cache = std::make_shared<ConCache>(upstream, QStringLiteral("test.mp4"), cfg);
     BurstRequest req{123, BurstQuality{320, 180}};
     VideoBurst v1;
     VideoBurst v2;
@@ -128,7 +128,7 @@ void testCacheInvalidationForcesRefetch()
 {
     auto upstream = std::make_shared<FakeBurstcon>();
     ConCacheConfig cfg;
-    auto cache = std::make_shared<ConCache>(upstream, cfg);
+    auto cache = std::make_shared<ConCache>(upstream, QStringLiteral("test.mp4"), cfg);
     BurstRequest req{200, BurstQuality{640, 360}};
     VideoBurst tmp;
     (void)cache->videoBurst(req, tmp);

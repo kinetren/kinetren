@@ -90,6 +90,9 @@ struct ConCacheConfig {
     bool preloadEnabled = true;
     bool forcedVideoQualityEnabled = false;
     BurstQuality forcedVideoQuality;
+    /// Fires when a video frame enters or leaves this ConCache (LRU evict / replace / invalidate).
+    std::function<void(bool inserted, const QString &mediaPath, BurstIndex mediaBurstIndex, const BurstQuality &q)>
+        onVideoFrameCacheChanged;
 };
 
 struct BurstconMetrics {
@@ -107,7 +110,7 @@ struct SharedMediaFile;
 class ConCache : public IBurstcon
 {
 public:
-    ConCache(std::shared_ptr<IBurstcon> upstream, const ConCacheConfig &config = {});
+    ConCache(std::shared_ptr<IBurstcon> upstream, QString mediaPath, const ConCacheConfig &config = {});
     ~ConCache() override;
 
     bool burst(BurstType type, const BurstRequest &request, BurstPayload &out) override;
@@ -163,8 +166,10 @@ private:
     void schedulePreload(const BurstRequest &request, bool video, bool internalRequest);
     void preloadLoop();
     void preloadBurst(BurstRequest request, bool video);
+    void notifyVideoFrameCache(bool inserted, const VideoKey &key);
 
     std::shared_ptr<IBurstcon> upstream;
+    QString mediaPath;
     ConCacheConfig config;
 
     mutable std::mutex mutex;

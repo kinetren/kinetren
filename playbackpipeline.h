@@ -82,9 +82,12 @@ public:
     void resetProjectCache();
     void clearTimelineCoverage();
     PerformanceStats performanceSnapshot() const;
-    QHash<QString, QVector<QPair<double, double>>> videoCacheSegments(const std::vector<Clip> &clips) const;
+    /// Video: ConCache-backed (updates on LRU evict). Sliding = full LRU; head = start of playback region window.
+    QHash<QString, QVector<QPair<double, double>>> videoFrameSlidingSegments(const std::vector<Clip> &clips) const;
+    QHash<QString, QVector<QPair<double, double>>> videoFrameHeadSegments(const std::vector<Clip> &clips) const;
+    QVector<QPair<double, double>> timelineVideoSlidingSegments(qint64 viewStartMs, qint64 viewEndMs) const;
+    QVector<QPair<double, double>> timelineVideoHeadSegments(qint64 viewStartMs, qint64 viewEndMs) const;
     QHash<QString, QVector<QPair<double, double>>> audioCacheSegments(const std::vector<Clip> &clips) const;
-    QVector<QPair<double, double>> finalTimelineSegments(qint64 startMs, qint64 endMs) const;
     static QString coverageClipKey(const Clip &clip);
 
 private:
@@ -110,7 +113,11 @@ private:
     void draftWorkerLoop();
     void requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning);
     void prefetchWorkerLoop();
-    void appendVideoCoverageAlongTimeline(qint64 timelineMs);
+    void onVideoFrameCacheKeyChanged(bool inserted,
+                                     const QString &mediaPath,
+                                     burstcon::BurstIndex mediaBurstIndex,
+                                     const burstcon::BurstQuality &q);
+    void clearVideoFrameBucketSets();
 
     std::function<void(QImage &&)> onVideoFrameReady;
     mutable std::mutex mutex;
@@ -129,10 +136,11 @@ private:
     std::atomic<burstcon::BurstIndex> lastVideoRequestIndex{-1};
     std::atomic<burstcon::BurstIndex> lastAudioRequestIndex{-1};
     mutable std::mutex coverageMutex;
-    std::unordered_set<qint64> videoCoverageBuckets;
     std::unordered_set<qint64> audioCoverageBuckets;
-    std::unordered_set<qint64> finalCoverageBuckets;
-    qint64 lastVideoCoverageTimelineMs = -1;
+    /// Composition-timeline ms buckets (kVideoCoverageBucketMs grid) where ConCache currently holds a video frame.
+    std::unordered_set<qint64> timelineVideoSlidingBuckets;
+    /// Same, but only near `playbackRegionStartMs` (loop head / region start priming).
+    std::unordered_set<qint64> timelineVideoHeadBuckets;
 
     std::shared_ptr<burstcon::ConMediaPool> mediaPool;
     std::shared_ptr<burstcon::ConTrack> videoTrack;

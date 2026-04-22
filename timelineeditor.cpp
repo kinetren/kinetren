@@ -1405,11 +1405,17 @@ bool TimelineEditor::isEditingTimelineContent() const
         dragMode == DragMode::TrimEnd;
 }
 
-void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipSegments,
-                                      const QVector<QPair<double, double>> &timelineSegments)
+void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipVideoSliding,
+                                      const QHash<QString, QVector<QPair<double, double>>> &clipVideoHead,
+                                      const QVector<QPair<double, double>> &timelineVideoSliding,
+                                      const QVector<QPair<double, double>> &timelineVideoHead,
+                                      const QHash<QString, QVector<QPair<double, double>>> &clipAudioSegments)
 {
-    cacheSegmentsByClip = clipSegments;
-    timelineCacheSegments = timelineSegments;
+    cacheVideoSlidingByClip = clipVideoSliding;
+    cacheVideoHeadByClip = clipVideoHead;
+    timelineVideoSlidingSegments = timelineVideoSliding;
+    timelineVideoHeadSegments = timelineVideoHead;
+    cacheAudioByClip = clipAudioSegments;
     update();
 }
 
@@ -1645,8 +1651,11 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     pendingPreviewKeys.clear();
     peaksCache.clear();
     sourceDurationProbeCache.clear();
-    cacheSegmentsByClip.clear();
-    timelineCacheSegments.clear();
+    cacheVideoSlidingByClip.clear();
+    cacheVideoHeadByClip.clear();
+    timelineVideoSlidingSegments.clear();
+    timelineVideoHeadSegments.clear();
+    cacheAudioByClip.clear();
 
     nextClipId = std::max(root.value("nextClipId").toInt(maxClipId + 1), maxClipId + 1);
     nextLinkedGroupId = std::max(root.value("nextLinkedGroupId").toInt(maxLinkedGroupId + 1), maxLinkedGroupId + 1);
@@ -1693,18 +1702,24 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
     p.setClipRect(rect());
     p.translate(0, -verticalScrollPx);
     const QRect rulerRect(timelineLeft(), rulerTop(), timelineRight() - timelineLeft(), rulerHeight());
-    const QRect timelineCacheBarRect(timelineLeft(), std::max(2, rulerTop() - 8), timelineRight() - timelineLeft(), 5);
-    for (const auto &segment : timelineCacheSegments) {
-        const double a = std::clamp(segment.first, 0.0, 1.0);
-        const double b = std::clamp(segment.second, 0.0, 1.0);
-        if (b <= a) {
-            continue;
+    const int tlW = timelineRight() - timelineLeft();
+    const int barTop = std::max(2, rulerTop() - 9);
+    const QRect timelineSlideBar(timelineLeft(), barTop, tlW, 3);
+    const QRect timelineHeadBar(timelineLeft(), barTop + 3, tlW, 3);
+    auto paintSegRow = [&](const QVector<QPair<double, double>> &segs, const QRect &row, const QColor &col) {
+        for (const auto &segment : segs) {
+            const double a = std::clamp(segment.first, 0.0, 1.0);
+            const double b = std::clamp(segment.second, 0.0, 1.0);
+            if (b <= a) {
+                continue;
+            }
+            const int x1 = row.left() + static_cast<int>(a * row.width());
+            const int x2 = row.left() + static_cast<int>(b * row.width());
+            p.fillRect(QRect(x1, row.top(), std::max(1, x2 - x1), row.height()), col);
         }
-        const int x1 = timelineCacheBarRect.left() + static_cast<int>(a * timelineCacheBarRect.width());
-        const int x2 = timelineCacheBarRect.left() + static_cast<int>(b * timelineCacheBarRect.width());
-        p.fillRect(QRect(x1, timelineCacheBarRect.top(), std::max(1, x2 - x1), timelineCacheBarRect.height()),
-                   QColor(88, 198, 255));
-    }
+    };
+    paintSegRow(timelineVideoSlidingSegments, timelineSlideBar, QColor(62, 120, 178));
+    paintSegRow(timelineVideoHeadSegments, timelineHeadBar, QColor(255, 168, 72));
     p.fillRect(rulerRect, QColor(30, 30, 30));
     p.fillRect(QRect(0, rulerTop(), headerWidth(), rulerHeight()), QColor(26, 26, 26));
 
@@ -1857,18 +1872,43 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
             p.drawLine(r.right() - 2, r.top() + 2, r.right() - 2, r.bottom() - 2);
         }
 
-        const auto segments = cacheSegmentsByClip.value(clipCoverageKey(clip));
+        const QString ckey = clipCoverageKey(clip);
         const QRect barRect(r.left() + 3, r.top() - 6, std::max(6, r.width() - 6), 4);
-        const QColor barColor = (clip.mediaType == TrackType::Audio) ? QColor(114, 214, 255) : QColor(82, 226, 124);
-        for (const auto &segment : segments) {
-            const double a = std::clamp(segment.first, 0.0, 1.0);
-            const double b = std::clamp(segment.second, 0.0, 1.0);
-            if (b <= a) {
-                continue;
+        if (clip.mediaType == TrackType::Video) {
+            const QRect slideRow(barRect.left(), barRect.top(), barRect.width(), 2);
+            const QRect headRow(barRect.left(), barRect.top() + 2, barRect.width(), 2);
+            for (const auto &segment : cacheVideoSlidingByClip.value(ckey)) {
+                const double a = std::clamp(segment.first, 0.0, 1.0);
+                const double b = std::clamp(segment.second, 0.0, 1.0);
+                if (b <= a) {
+                    continue;
+                }
+                const int x1 = slideRow.left() + static_cast<int>(a * slideRow.width());
+                const int x2 = slideRow.left() + static_cast<int>(b * slideRow.width());
+                p.fillRect(QRect(x1, slideRow.top(), std::max(1, x2 - x1), slideRow.height()), QColor(62, 120, 178));
             }
-            const int x1 = barRect.left() + static_cast<int>(a * barRect.width());
-            const int x2 = barRect.left() + static_cast<int>(b * barRect.width());
-            p.fillRect(QRect(x1, barRect.top(), std::max(1, x2 - x1), barRect.height()), barColor);
+            for (const auto &segment : cacheVideoHeadByClip.value(ckey)) {
+                const double a = std::clamp(segment.first, 0.0, 1.0);
+                const double b = std::clamp(segment.second, 0.0, 1.0);
+                if (b <= a) {
+                    continue;
+                }
+                const int x1 = headRow.left() + static_cast<int>(a * headRow.width());
+                const int x2 = headRow.left() + static_cast<int>(b * headRow.width());
+                p.fillRect(QRect(x1, headRow.top(), std::max(1, x2 - x1), headRow.height()), QColor(255, 168, 72));
+            }
+        } else if (clip.mediaType == TrackType::Audio) {
+            const QColor barColor(114, 214, 255);
+            for (const auto &segment : cacheAudioByClip.value(ckey)) {
+                const double a = std::clamp(segment.first, 0.0, 1.0);
+                const double b = std::clamp(segment.second, 0.0, 1.0);
+                if (b <= a) {
+                    continue;
+                }
+                const int x1 = barRect.left() + static_cast<int>(a * barRect.width());
+                const int x2 = barRect.left() + static_cast<int>(b * barRect.width());
+                p.fillRect(QRect(x1, barRect.top(), std::max(1, x2 - x1), barRect.height()), barColor);
+            }
         }
     }
 

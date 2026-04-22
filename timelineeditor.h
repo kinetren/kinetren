@@ -92,8 +92,11 @@ public:
     QString formatTimelineTime(qint64 timeMs) const;
     void setTimelineFps(int fps);
     bool isEditingTimelineContent() const;
-    void setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipSegments,
-                          const QVector<QPair<double, double>> &timelineSegments);
+    void setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipVideoSliding,
+                          const QHash<QString, QVector<QPair<double, double>>> &clipVideoHead,
+                          const QVector<QPair<double, double>> &timelineVideoSliding,
+                          const QVector<QPair<double, double>> &timelineVideoHead,
+                          const QHash<QString, QVector<QPair<double, double>>> &clipAudioSegments);
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject &root);
 
@@ -341,8 +344,11 @@ private:
     QHash<QString, std::list<QString>::iterator> previewCacheLruPos;
     QSet<QString> pendingPreviewKeys;
     QHash<QString, std::vector<int>> peaksCache;
-    QHash<QString, QVector<QPair<double, double>>> cacheSegmentsByClip;
-    QVector<QPair<double, double>> timelineCacheSegments;
+    QHash<QString, QVector<QPair<double, double>>> cacheVideoSlidingByClip;
+    QHash<QString, QVector<QPair<double, double>>> cacheVideoHeadByClip;
+    QVector<QPair<double, double>> timelineVideoSlidingSegments;
+    QVector<QPair<double, double>> timelineVideoHeadSegments;
+    QHash<QString, QVector<QPair<double, double>>> cacheAudioByClip;
     /// Avoid probing the same path repeatedly (bulk replace, morpher preview paint).
     mutable QHash<QString, qint64> sourceDurationProbeCache;
     std::shared_ptr<burstcon::ConMediaPool> playbackMediaPool;

@@ -1378,7 +1378,6 @@ void MainWindow::refreshPerformancePanel()
     lastAvcppAudioDecodeCalls = stats.avcppAudioDecodeCalls;
     const double aggregateHitPct = (resourceHitPct * 0.45) + (finalHitPct * 0.35) + (audioHitPct * 0.20);
 
-    QHash<QString, QVector<QPair<double, double>>> clipCoverage;
     std::vector<PlaybackPipeline::Clip> videoRenderClips;
     std::vector<PlaybackPipeline::Clip> audioRenderClips;
     for (const auto &clip : timelineEditor->renderClips()) {
@@ -1390,24 +1389,15 @@ void MainWindow::refreshPerformancePanel()
             audioRenderClips.push_back(c);
         }
     }
-    const auto videoCoverage = playbackPipeline->videoCacheSegments(videoRenderClips);
-    const auto audioCoverage = playbackPipeline->audioCacheSegments(audioRenderClips);
-    for (auto it = videoCoverage.constBegin(); it != videoCoverage.constEnd(); ++it) {
-        clipCoverage.insert(it.key(), it.value());
-    }
-    for (auto it = audioCoverage.constBegin(); it != audioCoverage.constEnd(); ++it) {
-        QVector<QPair<double, double>> merged = clipCoverage.value(it.key());
-        merged += it.value();
-        std::sort(merged.begin(), merged.end(), [](const QPair<double, double> &a, const QPair<double, double> &b) {
-            return a.first < b.first;
-        });
-        clipCoverage.insert(it.key(), merged);
-    }
+    const auto clipVideoSliding = playbackPipeline->videoFrameSlidingSegments(videoRenderClips);
+    const auto clipVideoHead = playbackPipeline->videoFrameHeadSegments(videoRenderClips);
+    const auto clipAudio = playbackPipeline->audioCacheSegments(audioRenderClips);
     const qint64 viewStart = timelineEditor->viewStartMs();
     const qint64 viewEnd = viewStart + timelineEditor->visibleDurationMs();
-    const auto timelineSegments = playbackPipeline->finalTimelineSegments(viewStart, viewEnd);
+    const auto timelineVideoSliding = playbackPipeline->timelineVideoSlidingSegments(viewStart, viewEnd);
+    const auto timelineVideoHead = playbackPipeline->timelineVideoHeadSegments(viewStart, viewEnd);
     if (!timelineEditor->isEditingTimelineContent()) {
-        timelineEditor->setCacheCoverage(clipCoverage, timelineSegments);
+        timelineEditor->setCacheCoverage(clipVideoSliding, clipVideoHead, timelineVideoSliding, timelineVideoHead, clipAudio);
     }
 
     const auto mb = [](quint64 bytes) -> QString {
