@@ -145,13 +145,17 @@ MainWindow::MainWindow(QWidget *parent)
     setupTimelineEditorUi();
     playbackPipeline = std::make_unique<PlaybackPipeline>(
         [this](QImage &&image) {
-            auto *frameView = ui->frame;
+            Previewer *frameView = ui->frame;
+            if (!frameView || image.isNull()) {
+                return;
+            }
+            // Queued slot + Q_ARG is the most reliable cross-thread path to the GUI thread (functor
+            // invokeMethod / singleShot coalescing can drop frames under load).
             QMetaObject::invokeMethod(
                 frameView,
-                [frameView, image = std::move(image)]() mutable {
-                    frameView->paintIt(std::move(image));
-                },
-                Qt::QueuedConnection);
+                "submitFrame",
+                Qt::QueuedConnection,
+                Q_ARG(QImage, image));
         });
     if (timelineEditor) {
         timelineEditor->setPlaybackMediaPool(playbackPipeline->sharedMediaPool());
@@ -935,6 +939,9 @@ void MainWindow::toggleTimelinePause()
             } else {
                 playbackPipeline->setPlaybackMode(burstcon::PlaybackMode::Free, 0, 0);
             }
+            // Rebuild trimmer/video graph from the timeline *before* arming the clock — otherwise
+            // MonotonicPlaybackTimer can decode against an empty or stale graph for many frames.
+            syncTimelinePlayback();
             const qint64 cursorMs = timelineEditor->cursorMs();
             playbackPipeline->preparePlaybackAt(cursorMs);
             playbackWarmupSerial += 1;
@@ -944,7 +951,6 @@ void MainWindow::toggleTimelinePause()
                 playbackWarmupPending = false;
                 ui->frame->setBuffering(false);
                 playbackPipeline->beginClockAndPrefetch(cursorMs);
-                syncTimelinePlayback();
                 timelineTimer.start();
                 requestCacheCoverageUiRefresh();
             } else {

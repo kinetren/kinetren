@@ -464,19 +464,15 @@ void PlaybackPipeline::onVideoFrameCacheKeyChanged(bool inserted,
                                                    burstcon::BurstIndex mediaBurstIndex,
                                                    const burstcon::BurstQuality &q)
 {
-    QSize wantRes;
+    (void)q;
     std::vector<Clip> vclips;
     qint64 regStart = 0;
     qint64 regEnd = 0;
     {
         std::lock_guard<std::mutex> lock(mutex);
-        wantRes = projectSettings.cacheResolution();
         vclips = lastVideoClips;
         regStart = playbackRegionStartMs;
         regEnd = playbackRegionEndMs;
-    }
-    if (q.width != wantRes.width() || q.height != wantRes.height()) {
-        return;
     }
     std::lock_guard<std::mutex> lock(coverageMutex);
     const qint64 headEnd = (regEnd > regStart) ? std::min(regEnd, regStart + kRegionHeadVideoCacheMs) : regEnd;

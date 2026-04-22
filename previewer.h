@@ -37,6 +37,10 @@ public:
     ~Previewer() override;
 
     void paintIt(QImage &&img);
+
+public slots:
+    /// Called from the playback thread via QMetaObject::invokeMethod (QueuedConnection).
+    void submitFrame(QImage image);
     void setBuffering(bool enabled);
     void setSmoothScaling(bool enabled);
     void setAntialiasing(bool enabled);

@@ -157,7 +157,7 @@ private:
     void put(const AudioKey &key, const AudioBurst &value, BurstIndex index);
     void put(const VideoKey &key, const VideoBurst &value, BurstIndex index);
     void evictAudioLocked();
-    void evictVideoLocked();
+    void evictVideoLocked(std::vector<VideoKey> &removedVideoKeys);
     void touchAudioLocked(const AudioKey &key, AudioEntry &entry);
     void touchVideoLocked(const VideoKey &key, VideoEntry &entry);
     AudioKey keyForAudio(const BurstRequest &request) const;

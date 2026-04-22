@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <limits>
 #include <utility>
 
 Previewer::Previewer(QWidget *parent)
@@ -46,6 +47,11 @@ void Previewer::mousePressEvent(QMouseEvent *event)
     QWidget::mousePressEvent(event);
 }
 
+void Previewer::submitFrame(QImage image)
+{
+    paintIt(std::move(image));
+}
+
 void Previewer::paintIt(QImage &&img)
 {
     int bufferIndex = -1;
@@ -60,7 +66,21 @@ void Previewer::paintIt(QImage &&img)
     }
 
     if (bufferIndex < 0) {
-        // UI is behind decode speed; drop this frame to keep the event loop responsive.
+        // All slots are holding undrawn frames: replace the oldest pending frame so we always
+        // keep the latest image (otherwise playback can stall on the first N frames forever).
+        uint64_t oldestSerial = std::numeric_limits<uint64_t>::max();
+        for (int i = 0; i < kFrameBufferCount; ++i) {
+            if (frameBuffer[i].state != static_cast<int>(FrameState::Ready)) {
+                continue;
+            }
+            if (frameBuffer[i].serial < oldestSerial) {
+                oldestSerial = frameBuffer[i].serial;
+                bufferIndex = i;
+            }
+        }
+    }
+
+    if (bufferIndex < 0) {
         return;
     }
 
@@ -69,6 +89,7 @@ void Previewer::paintIt(QImage &&img)
     frameBuffer[bufferIndex].img = std::move(img);
     frameBuffer[bufferIndex].serial = nextFrameSerial++;
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Ready);
+    update();
 }
 
 void Previewer::setBuffering(bool enabled)
@@ -161,10 +182,16 @@ void Previewer::paintEvent(QPaintEvent *event)
         painter.setRenderHint(QPainter::SmoothPixmapTransform, smoothScaling);
         auto &slot = frameBuffer[bufferIndex];
         if (slot.displayPixmap.isNull() && !slot.img.isNull()) {
-            slot.displayPixmap = QPixmap::fromImage(slot.img, Qt::ColorOnly);
+            slot.displayPixmap = QPixmap::fromImage(slot.img);
+            if (slot.displayPixmap.isNull()) {
+                slot.displayPixmap = QPixmap::fromImage(slot.img.convertToFormat(QImage::Format_RGB32));
+            }
         }
         if (!slot.displayPixmap.isNull()) {
             painter.drawPixmap(0, 0, width(), height(), slot.displayPixmap);
+        } else if (!slot.img.isNull()) {
+            const QImage scaled = slot.img.scaled(size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            painter.drawImage(rect(), scaled);
         }
         if (buffering) {
             drawBufferingOverlay(painter);

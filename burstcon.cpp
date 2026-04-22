@@ -894,27 +894,33 @@ BurstOriginInfo ConCache::originInfo() const
 
 void ConCache::invalidate(const BurstRange &range)
 {
-    upstream->invalidate(range);
-    std::lock_guard<std::mutex> lock(mutex);
-    for (auto it = audioEntries.begin(); it != audioEntries.end();) {
-        if (it->second.index >= range.start && it->second.index <= range.end) {
-            audioLru.erase(it->second.lruIt);
-            gCacheEntries.fetch_sub(1);
-            it = audioEntries.erase(it);
-        } else {
-            ++it;
+    std::vector<VideoKey> videoRemoved;
+    {
+        upstream->invalidate(range);
+        std::lock_guard<std::mutex> lock(mutex);
+        for (auto it = audioEntries.begin(); it != audioEntries.end();) {
+            if (it->second.index >= range.start && it->second.index <= range.end) {
+                audioLru.erase(it->second.lruIt);
+                gCacheEntries.fetch_sub(1);
+                it = audioEntries.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = videoEntries.begin(); it != videoEntries.end();) {
+            if (it->second.index >= range.start && it->second.index <= range.end) {
+                videoRemoved.push_back(it->first);
+                videoLru.erase(it->second.lruIt);
+                videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(it->second.value.frame));
+                gCacheEntries.fetch_sub(1);
+                it = videoEntries.erase(it);
+            } else {
+                ++it;
+            }
         }
     }
-    for (auto it = videoEntries.begin(); it != videoEntries.end();) {
-        if (it->second.index >= range.start && it->second.index <= range.end) {
-            notifyVideoFrameCache(false, it->first);
-            videoLru.erase(it->second.lruIt);
-            videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(it->second.value.frame));
-            gCacheEntries.fetch_sub(1);
-            it = videoEntries.erase(it);
-        } else {
-            ++it;
-        }
+    for (const auto &vk : videoRemoved) {
+        notifyVideoFrameCache(false, vk);
     }
 }
 
@@ -963,20 +969,26 @@ void ConCache::put(const AudioKey &key, const AudioBurst &value, BurstIndex inde
 
 void ConCache::put(const VideoKey &key, const VideoBurst &value, BurstIndex index)
 {
-    std::lock_guard<std::mutex> lock(mutex);
-    auto existing = videoEntries.find(key);
-    if (existing != videoEntries.end()) {
-        notifyVideoFrameCache(false, existing->first);
-        videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(existing->second.value.frame));
-        videoLru.erase(existing->second.lruIt);
-        videoEntries.erase(existing);
-        gCacheEntries.fetch_sub(1);
+    std::vector<VideoKey> removedVideoKeys;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto existing = videoEntries.find(key);
+        if (existing != videoEntries.end()) {
+            removedVideoKeys.push_back(existing->first);
+            videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(existing->second.value.frame));
+            videoLru.erase(existing->second.lruIt);
+            videoEntries.erase(existing);
+            gCacheEntries.fetch_sub(1);
+        }
+        videoLru.push_front(key);
+        videoEntries[key] = VideoEntry{value, videoLru.begin(), index};
+        videoBytesUsed += imageBytes(value.frame);
+        gCacheEntries.fetch_add(1);
+        evictVideoLocked(removedVideoKeys);
     }
-    videoLru.push_front(key);
-    videoEntries[key] = VideoEntry{value, videoLru.begin(), index};
-    videoBytesUsed += imageBytes(value.frame);
-    gCacheEntries.fetch_add(1);
-    evictVideoLocked();
+    for (const auto &vk : removedVideoKeys) {
+        notifyVideoFrameCache(false, vk);
+    }
     notifyVideoFrameCache(true, key);
 }
 
@@ -991,7 +1003,7 @@ void ConCache::evictAudioLocked()
     }
 }
 
-void ConCache::evictVideoLocked()
+void ConCache::evictVideoLocked(std::vector<VideoKey> &removedVideoKeys)
 {
     while (((audioEntries.size() + videoEntries.size()) > config.maxEntries ||
             videoEntries.size() > config.maxVideoEntries ||
@@ -1000,7 +1012,7 @@ void ConCache::evictVideoLocked()
         const VideoKey key = videoLru.back();
         auto it = videoEntries.find(key);
         if (it != videoEntries.end()) {
-            notifyVideoFrameCache(false, key);
+            removedVideoKeys.push_back(key);
             videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(it->second.value.frame));
             videoEntries.erase(it);
             gCacheEntries.fetch_sub(1);
