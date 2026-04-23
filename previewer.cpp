@@ -13,33 +13,9 @@
 Previewer::Previewer(QWidget *parent)
     : QWidget(parent)
 {
-    using namespace std::chrono_literals;
-    paintTimer = startTimer(24ms, Qt::VeryCoarseTimer);
-    if (paintTimer < 0) {
-        abort();
-    }
 }
 
-Previewer::~Previewer()
-{
-    if (paintTimer >= 0) {
-        killTimer(paintTimer);
-    }
-}
-
-void Previewer::timerEvent(QTimerEvent *event)
-{
-    if (event->timerId() != paintTimer) {
-        return;
-    }
-
-    for (int i = 0; i < kFrameBufferCount; ++i) {
-        if (frameBuffer[i].state == static_cast<int>(FrameState::Ready)) {
-            update();
-            return;
-        }
-    }
-}
+Previewer::~Previewer() = default;
 
 void Previewer::mousePressEvent(QMouseEvent *event)
 {

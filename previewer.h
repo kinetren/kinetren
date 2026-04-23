@@ -5,7 +5,6 @@
 #include <QPixmap>
 #include <QMouseEvent>
 #include <QPaintEvent>
-#include <QTimerEvent>
 #include <QWidget>
 
 #include <array>
@@ -46,7 +45,6 @@ public slots:
     void setAntialiasing(bool enabled);
 
 protected:
-    void timerEvent(QTimerEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void paintEvent(QPaintEvent *event) override;
 
@@ -57,7 +55,6 @@ private:
     int frameWriteIndex = 0;
     int frameReadIndex = 0;
     int previousPaintedIndex = -1;
-    int paintTimer = -1;
     bool pause = false;
     bool buffering = false;
     bool smoothScaling = true;
