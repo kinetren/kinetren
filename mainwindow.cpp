@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
+#include "burstcon.h"
 #include "performancewidget.h"
 #include "playbackpipeline.h"
 #include "projectrenderer.h"
@@ -9,6 +10,7 @@
 #include "timelineeditor.h"
 #include "sourceeditwidgets.h"
 
+#include <QAbstractItemModel>
 #include <QDockWidget>
 #include <QFrame>
 
@@ -29,6 +31,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QVariant>
 #include <QPushButton>
 #include <QShortcut>
@@ -131,8 +134,6 @@ private:
 
 namespace {
 
-constexpr QSize kPreviewResolutionMax{3840, 2160};
-
 int cacheQualityToComboIndex(ProjectSettings::CacheQuality q)
 {
     switch (q) {
@@ -202,6 +203,7 @@ MainWindow::MainWindow(QWidget *parent)
     if (timelineEditor) {
         timelineEditor->setPlaybackMediaPool(playbackPipeline->sharedMediaPool());
     }
+    refreshPreviewResolutionMaxEntry();
     if (scaleVideoAtDisplayCheck) {
         connect(scaleVideoAtDisplayCheck, &QCheckBox::toggled, this, [this](bool on) {
             projectSettings.scaleVideoAtDisplayTime = on;
@@ -291,6 +293,24 @@ void MainWindow::setupTimelineEditorUi()
     sourceListInner->addWidget(sourceArea, 1);
     sourceLayout->addWidget(sourceListFrame, 1);
 
+    if (QAbstractItemModel *srcModel = sourceArea->model()) {
+        connect(srcModel, &QAbstractItemModel::rowsInserted, this, [this](const QModelIndex &, int, int) {
+            if (playbackPipeline) {
+                refreshPreviewResolutionMaxEntry();
+            }
+        });
+        connect(srcModel, &QAbstractItemModel::rowsRemoved, this, [this](const QModelIndex &, int, int) {
+            if (playbackPipeline) {
+                refreshPreviewResolutionMaxEntry();
+            }
+        });
+        connect(srcModel, &QAbstractItemModel::modelReset, this, [this]() {
+            if (playbackPipeline) {
+                refreshPreviewResolutionMaxEntry();
+            }
+        });
+    }
+
     performanceWidget = new PerformanceWidget(ui->widget_3);
     performanceWidget->setMinimumHeight(700);
     sourceLayout->addWidget(performanceWidget, 4);
@@ -355,9 +375,6 @@ void MainWindow::setupTimelineEditorUi()
     previewResolutionCombo->addItem(QStringLiteral("640×360"), QSize(640, 360));
     previewResolutionCombo->addItem(QStringLiteral("1280×720"), QSize(1280, 720));
     previewResolutionCombo->addItem(QStringLiteral("1920×1080"), QSize(1920, 1080));
-    previewResolutionCombo->addItem(
-        QStringLiteral("3840×2160 (max)"),
-        QVariant::fromValue(kPreviewResolutionMax));
     previewResolutionCombo->setCurrentIndex(1);
     previewSmoothScalingCheck = new QCheckBox("Smooth scaling", previewHost);
     previewSmoothScalingCheck->setChecked(projectSettings.previewSmoothScaling);
@@ -670,6 +687,9 @@ void MainWindow::setupTimelineEditorUi()
     connect(timelineEditor, &TimelineEditor::timelineContentChanged, this, [this]() {
         pruneMorpherWindows();
         refreshTimelineVerticalScroll();
+        if (playbackPipeline) {
+            refreshPreviewResolutionMaxEntry();
+        }
         if (!playbackPipeline) {
             return;
         }
@@ -1386,6 +1406,74 @@ void MainWindow::renderDraftProject()
     }).detach();
 }
 
+QSize MainWindow::computeMaxSourceVideoResolution() const
+{
+    int maxW = 0;
+    int maxH = 0;
+    if (!timelineEditor || !playbackPipeline) {
+        return QSize(1280, 720);
+    }
+    const std::shared_ptr<burstcon::ConMediaPool> pool = playbackPipeline->sharedMediaPool();
+    if (!pool) {
+        return QSize(1280, 720);
+    }
+
+    QSet<QString> seen;
+    auto consider = [&](const QString &path) {
+        if (path.isEmpty() || seen.contains(path)) {
+            return;
+        }
+        if (!timelineEditor->hasVideoForPath(path)) {
+            return;
+        }
+        seen.insert(path);
+        const std::shared_ptr<burstcon::IBurstcon> media =
+            pool->acquire(path, false, false, burstcon::msToBurstIndex(0), true, false);
+        if (!media) {
+            return;
+        }
+        const burstcon::BurstOriginInfo info = media->originInfo();
+        const int w = info.sourceVideoQuality.width;
+        const int h = info.sourceVideoQuality.height;
+        if (w > 0 && h > 0) {
+            maxW = std::max(maxW, w);
+            maxH = std::max(maxH, h);
+        }
+    };
+
+    for (const auto &clip : timelineEditor->renderClips()) {
+        if (clip.isVideo) {
+            consider(clip.sourcePath);
+        }
+    }
+    if (sourceArea) {
+        for (const QString &p : sourceArea->sourcePaths()) {
+            consider(p);
+        }
+    }
+
+    if (maxW <= 0 || maxH <= 0) {
+        return QSize(1280, 720);
+    }
+    return QSize(maxW, maxH);
+}
+
+void MainWindow::refreshPreviewResolutionMaxEntry()
+{
+    if (!previewResolutionCombo || !timelineEditor) {
+        return;
+    }
+    const QSize maxSz = computeMaxSourceVideoResolution();
+    const QString label = QStringLiteral("Max (%1×%2)").arg(maxSz.width()).arg(maxSz.height());
+    QSignalBlocker blocker(previewResolutionCombo);
+    if (previewResolutionCombo->count() >= 4) {
+        previewResolutionCombo->setItemText(3, label);
+        previewResolutionCombo->setItemData(3, QVariant::fromValue(maxSz));
+    } else if (previewResolutionCombo->count() == 3) {
+        previewResolutionCombo->addItem(label, QVariant::fromValue(maxSz));
+    }
+}
+
 void MainWindow::applyRecommendedPreviewCacheQualityForCap()
 {
     if (!projectSettings.scaleVideoAtDisplayTime) {
@@ -1415,6 +1503,7 @@ void MainWindow::applyRecommendedPreviewCacheQualityForCap()
 
 void MainWindow::syncPreviewUiFromProjectSettings()
 {
+    refreshPreviewResolutionMaxEntry();
     if (previewCacheQualityCombo) {
         QSignalBlocker b(previewCacheQualityCombo);
         previewCacheQualityCombo->setCurrentIndex(cacheQualityToComboIndex(projectSettings.cacheQuality));

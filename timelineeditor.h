@@ -130,6 +130,11 @@ public:
     /// Width of the left track-name column (align external chrome with the timeline).
     int timelineTrackHeaderWidth() const { return headerWidth(); }
 
+    /// Path classification (used by MainWindow / pool probing; same rules as drop-to-timeline).
+    bool isImagePath(const QString &path) const;
+    bool hasVideoForPath(const QString &path) const;
+    bool hasAudioForPath(const QString &path) const;
+
 signals:
     void cursorChanged(qint64 cursorMs);
     void overlayInfoChanged(const QString &text);
@@ -315,9 +320,6 @@ private:
     qint64 timelineTickStepMs() const;
     qint64 defaultDurationForPath(const QString &path) const;
     qint64 probeSourceDurationMsUncached(const QString &path) const;
-    bool isImagePath(const QString &path) const;
-    bool hasVideoForPath(const QString &path) const;
-    bool hasAudioForPath(const QString &path) const;
     QColor colorFromPath(const QString &path) const;
     QImage cachedVideoPreview(const QString &path, qint64 sourceInMs);
     QImage decodeVideoPreviewSync(const QString &path, qint64 bucketMs) const;

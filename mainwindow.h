@@ -56,6 +56,8 @@ private:
     void applyProjectSettings();
     void syncPreviewUiFromProjectSettings();
     void applyRecommendedPreviewCacheQualityForCap();
+    QSize computeMaxSourceVideoResolution() const;
+    void refreshPreviewResolutionMaxEntry();
     void refreshPerformancePanel();
     bool saveProjectToPath(const QString &path, bool silent = false);
     bool loadProjectFromPath(const QString &path, bool silent = false);
