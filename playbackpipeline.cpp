@@ -88,9 +88,80 @@ QVector<QPair<double, double>> segmentsFromBucketsAlongSpan(const std::unordered
     return segs;
 }
 
-} // namespace
+constexpr qint64 kRegionHeadWindowMs = 1500;
 
-constexpr qint64 kRegionHeadVideoCacheMs = 1500;
+/// Head strip = sliding cache on the composition timeline, restricted to [regionStart, regionStart+W).
+QVector<QPair<double, double>> headSegmentsOnView(const std::unordered_set<qint64> &slidingBuckets,
+                                                   qint64 viewStartMs,
+                                                   qint64 viewEndMs,
+                                                   qint64 regionStartMs,
+                                                   qint64 regionEndMs)
+{
+    if (viewEndMs <= viewStartMs || regionEndMs <= regionStartMs) {
+        return {};
+    }
+    const qint64 headEnd = std::min(regionEndMs, regionStartMs + kRegionHeadWindowMs);
+    const qint64 overlapStart = std::max(viewStartMs, regionStartMs);
+    const qint64 overlapEnd = std::min(viewEndMs, headEnd);
+    if (overlapEnd <= overlapStart) {
+        return {};
+    }
+    const auto inner = segmentsFromBucketsAlongSpan(slidingBuckets, overlapStart, overlapEnd);
+    const double innerSpan = static_cast<double>(overlapEnd - overlapStart);
+    const double outerSpan = static_cast<double>(viewEndMs - viewStartMs);
+    if (innerSpan <= 0.0 || outerSpan <= 0.0) {
+        return {};
+    }
+    QVector<QPair<double, double>> out;
+    for (const auto &seg : inner) {
+        const double t0 = static_cast<double>(overlapStart) + seg.first * innerSpan;
+        const double t1 = static_cast<double>(overlapStart) + seg.second * innerSpan;
+        const double a = (t0 - static_cast<double>(viewStartMs)) / outerSpan;
+        const double b = (t1 - static_cast<double>(viewStartMs)) / outerSpan;
+        if (b > a) {
+            out.push_back({std::clamp(a, 0.0, 1.0), std::clamp(b, 0.0, 1.0)});
+        }
+    }
+    return out;
+}
+
+QVector<QPair<double, double>> headSegmentsOnClip(const std::unordered_set<qint64> &slidingBuckets,
+                                                   qint64 clipStartMs,
+                                                   qint64 clipDurationMs,
+                                                   qint64 regionStartMs,
+                                                   qint64 regionEndMs)
+{
+    QVector<QPair<double, double>> empty;
+    if (clipDurationMs <= 0 || regionEndMs <= regionStartMs) {
+        return empty;
+    }
+    const qint64 clipEnd = clipStartMs + clipDurationMs;
+    const qint64 headEnd = std::min(regionEndMs, regionStartMs + kRegionHeadWindowMs);
+    const qint64 overlapStart = std::max(clipStartMs, regionStartMs);
+    const qint64 overlapEnd = std::min(clipEnd, headEnd);
+    if (overlapEnd <= overlapStart) {
+        return empty;
+    }
+    const auto inner = segmentsFromBucketsAlongSpan(slidingBuckets, overlapStart, overlapEnd);
+    const double innerSpan = static_cast<double>(overlapEnd - overlapStart);
+    const double outerSpan = static_cast<double>(clipDurationMs);
+    if (innerSpan <= 0.0 || outerSpan <= 0.0) {
+        return empty;
+    }
+    QVector<QPair<double, double>> out;
+    for (const auto &seg : inner) {
+        const double t0 = static_cast<double>(overlapStart) + seg.first * innerSpan;
+        const double t1 = static_cast<double>(overlapStart) + seg.second * innerSpan;
+        const double a = (t0 - static_cast<double>(clipStartMs)) / outerSpan;
+        const double b = (t1 - static_cast<double>(clipStartMs)) / outerSpan;
+        if (b > a) {
+            out.push_back({std::clamp(a, 0.0, 1.0), std::clamp(b, 0.0, 1.0)});
+        }
+    }
+    return out;
+}
+
+} // namespace
 
 PlaybackPipeline::PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameReady)
     : onVideoFrameReady(std::move(onVideoFrameReady))
@@ -454,14 +525,12 @@ void PlaybackPipeline::clearTimelineCoverage()
     std::lock_guard<std::mutex> coverageLock(coverageMutex);
     audioCoverageBuckets.clear();
     timelineVideoSlidingBuckets.clear();
-    timelineVideoHeadBuckets.clear();
 }
 
 void PlaybackPipeline::clearVideoFrameBucketSets()
 {
     std::lock_guard<std::mutex> lock(coverageMutex);
     timelineVideoSlidingBuckets.clear();
-    timelineVideoHeadBuckets.clear();
 }
 
 void PlaybackPipeline::onVideoFrameCacheKeyChanged(bool inserted,
@@ -480,7 +549,6 @@ void PlaybackPipeline::onVideoFrameCacheKeyChanged(bool inserted,
         regEnd = playbackRegionEndMs;
     }
     std::lock_guard<std::mutex> lock(coverageMutex);
-    const qint64 headEnd = (regEnd > regStart) ? std::min(regEnd, regStart + kRegionHeadVideoCacheMs) : regEnd;
     for (const auto &clip : vclips) {
         if (clip.sourcePath != mediaPath) {
             continue;
@@ -496,12 +564,8 @@ void PlaybackPipeline::onVideoFrameCacheKeyChanged(bool inserted,
         const qint64 bucket = (tMs / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
         if (inserted) {
             timelineVideoSlidingBuckets.insert(bucket);
-            if (regEnd > regStart && tMs >= regStart && tMs < headEnd) {
-                timelineVideoHeadBuckets.insert(bucket);
-            }
         } else {
             timelineVideoSlidingBuckets.erase(bucket);
-            timelineVideoHeadBuckets.erase(bucket);
         }
     }
 }
@@ -536,12 +600,19 @@ QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::videoFrameSlidi
 
 QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::videoFrameHeadSegments(const std::vector<Clip> &clips) const
 {
+    qint64 regStart = 0;
+    qint64 regEnd = 0;
+    {
+        std::lock_guard<std::mutex> g(mutex);
+        regStart = playbackRegionStartMs;
+        regEnd = playbackRegionEndMs;
+    }
     QHash<QString, QVector<QPair<double, double>>> out;
     std::lock_guard<std::mutex> lock(coverageMutex);
     for (const auto &clip : clips) {
-        const qint64 start = clip.startMs;
-        const qint64 end = clip.startMs + std::max<qint64>(1, clip.durationMs);
-        out.insert(coverageClipKey(clip), segmentsFromBucketsAlongSpan(timelineVideoHeadBuckets, start, end));
+        const qint64 dur = std::max<qint64>(1, clip.durationMs);
+        out.insert(coverageClipKey(clip),
+                   headSegmentsOnClip(timelineVideoSlidingBuckets, clip.startMs, dur, regStart, regEnd));
     }
     return out;
 }
@@ -554,8 +625,15 @@ QVector<QPair<double, double>> PlaybackPipeline::timelineVideoSlidingSegments(qi
 
 QVector<QPair<double, double>> PlaybackPipeline::timelineVideoHeadSegments(qint64 viewStartMs, qint64 viewEndMs) const
 {
+    qint64 regStart = 0;
+    qint64 regEnd = 0;
+    {
+        std::lock_guard<std::mutex> g(mutex);
+        regStart = playbackRegionStartMs;
+        regEnd = playbackRegionEndMs;
+    }
     std::lock_guard<std::mutex> lock(coverageMutex);
-    return segmentsFromBucketsAlongSpan(timelineVideoHeadBuckets, viewStartMs, viewEndMs);
+    return headSegmentsOnView(timelineVideoSlidingBuckets, viewStartMs, viewEndMs, regStart, regEnd);
 }
 
 QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::audioCacheSegments(const std::vector<Clip> &clips) const

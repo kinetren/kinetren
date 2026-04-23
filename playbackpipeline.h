@@ -82,7 +82,7 @@ public:
     void resetProjectCache();
     void clearTimelineCoverage();
     PerformanceStats performanceSnapshot() const;
-    /// Video: ConCache-backed (updates on LRU evict). Sliding = full LRU; head = start of playback region window.
+    /// Video: ConCache-backed (updates on LRU evict). Sliding = full timeline occupancy; head = sliding ∩ first ~1.5s of the playback region (composition time).
     QHash<QString, QVector<QPair<double, double>>> videoFrameSlidingSegments(const std::vector<Clip> &clips) const;
     QHash<QString, QVector<QPair<double, double>>> videoFrameHeadSegments(const std::vector<Clip> &clips) const;
     QVector<QPair<double, double>> timelineVideoSlidingSegments(qint64 viewStartMs, qint64 viewEndMs) const;
@@ -139,8 +139,6 @@ private:
     std::unordered_set<qint64> audioCoverageBuckets;
     /// Composition-timeline ms buckets (kVideoCoverageBucketMs grid) where ConCache currently holds a video frame.
     std::unordered_set<qint64> timelineVideoSlidingBuckets;
-    /// Same, but only near `playbackRegionStartMs` (loop head / region start priming).
-    std::unordered_set<qint64> timelineVideoHeadBuckets;
 
     std::shared_ptr<burstcon::ConMediaPool> mediaPool;
     std::shared_ptr<burstcon::ConTrack> videoTrack;
