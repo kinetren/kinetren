@@ -56,6 +56,15 @@ burstcon::BurstIndex msToBurstIndexCeil(qint64 ms)
     return static_cast<burstcon::BurstIndex>((safe * burstcon::kBurstTimebaseHz + 999) / 1000);
 }
 
+burstcon::BurstQuality decodeBurstQuality(const ProjectSettings &settings)
+{
+    if (settings.scaleVideoAtDisplayTime) {
+        return burstcon::BurstQuality{0, 0};
+    }
+    const QSize q = settings.cacheResolution();
+    return burstcon::BurstQuality{q.width(), q.height()};
+}
+
 QVector<QPair<double, double>> segmentsFromBucketsAlongSpan(const std::unordered_set<qint64> &buckets,
                                                             qint64 spanStartMs,
                                                             qint64 spanEndMs)
@@ -237,10 +246,10 @@ void PlaybackPipeline::preparePlaybackAt(qint64 startTimelineMs)
         }
         pushAudioBurst(burst);
     };
-    const QSize q = projectSettings.cacheResolution();
+    const burstcon::BurstQuality q = decodeBurstQuality(projectSettings);
     {
         std::lock_guard<std::mutex> lock(mutex);
-        timer->setVideoRequestQuality(burstcon::BurstQuality{q.width(), q.height()});
+        timer->setVideoRequestQuality(q);
         timer->setPlaybackVideoFps(std::max(1, projectSettings.fps));
         timer->setCallbacks(callbacks);
     }
@@ -258,8 +267,7 @@ void PlaybackPipeline::warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 h
     {
         std::lock_guard<std::mutex> lock(mutex);
         localRoot = root;
-        const QSize q = projectSettings.cacheResolution();
-        quality = burstcon::BurstQuality{q.width(), q.height()};
+        quality = decodeBurstQuality(projectSettings);
         fps = std::max(1, projectSettings.fps);
         if ((playbackMode == burstcon::PlaybackMode::Region || playbackMode == burstcon::PlaybackMode::RegionLoop) &&
             playbackRegionEndMs > playbackRegionStartMs) {
@@ -506,7 +514,7 @@ QImage PlaybackPipeline::renderDraftFrame(qint64 tMs, const std::vector<Clip> &v
     }
     burstcon::BurstRequest req;
     req.index = burstcon::alignBurstIndexToOutputVideoFrame(fps, burstcon::msToBurstIndex(tMs));
-    req.quality = burstcon::BurstQuality{projectSettings.cacheResolution().width(), projectSettings.cacheResolution().height()};
+    req.quality = decodeBurstQuality(projectSettings);
     burstcon::VideoBurst out;
     if (root && root->videoBurst(req, out)) {
         return out.frame;
@@ -519,8 +527,7 @@ void PlaybackPipeline::setProjectSettings(const ProjectSettings &settings)
     std::lock_guard<std::mutex> lock(mutex);
     projectSettings = settings;
     if (timer) {
-        const QSize q = projectSettings.cacheResolution();
-        timer->setVideoRequestQuality(burstcon::BurstQuality{q.width(), q.height()});
+        timer->setVideoRequestQuality(decodeBurstQuality(projectSettings));
         timer->setPlaybackVideoFps(std::max(1, projectSettings.fps));
     }
 }
@@ -911,8 +918,7 @@ void PlaybackPipeline::prefetchWorkerLoop()
         {
             std::lock_guard<std::mutex> lock(mutex);
             localRoot = root;
-            const QSize q = projectSettings.cacheResolution();
-            quality = burstcon::BurstQuality{q.width(), q.height()};
+            quality = decodeBurstQuality(projectSettings);
             fps = std::max(1, projectSettings.fps);
         }
         if (!localRoot) {

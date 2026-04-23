@@ -33,6 +33,7 @@
 #include <QShortcut>
 #include <QScreen>
 #include <QScrollBar>
+#include <QSignalBlocker>
 #include <QSettings>
 #include <QSpinBox>
 #include <QStandardPaths>
@@ -159,6 +160,12 @@ MainWindow::MainWindow(QWidget *parent)
         });
     if (timelineEditor) {
         timelineEditor->setPlaybackMediaPool(playbackPipeline->sharedMediaPool());
+    }
+    if (scaleVideoAtDisplayCheck) {
+        connect(scaleVideoAtDisplayCheck, &QCheckBox::toggled, this, [this](bool on) {
+            projectSettings.scaleVideoAtDisplayTime = on;
+            applyProjectSettings();
+        });
     }
     applyProjectSettings();
     performanceTimer.setInterval(500);
@@ -307,6 +314,11 @@ void MainWindow::setupTimelineEditorUi()
     resolutionCombo->setCurrentText("1280x720");
     auto *smoothScaleCheck = new QCheckBox("Smooth scaling", previewHost);
     smoothScaleCheck->setChecked(false);
+    scaleVideoAtDisplayCheck = new QCheckBox("Scale in preview (Qt)", previewHost);
+    scaleVideoAtDisplayCheck->setChecked(projectSettings.scaleVideoAtDisplayTime);
+    scaleVideoAtDisplayCheck->setToolTip(
+        QStringLiteral("Decode near source size and scale when painting the preview. "
+                       "Turn off to scale during decode (cache resolution / swscale)."));
     auto *aaCheck = new QCheckBox("Antialiasing", previewHost);
     previewControls->addWidget(previewQualityLabel);
     previewControls->addWidget(previewQualityCombo);
@@ -317,6 +329,7 @@ void MainWindow::setupTimelineEditorUi()
     previewControls->addWidget(resolutionLabel);
     previewControls->addWidget(resolutionCombo);
     previewControls->addSpacing(10);
+    previewControls->addWidget(scaleVideoAtDisplayCheck);
     previewControls->addWidget(smoothScaleCheck);
     previewControls->addWidget(aaCheck);
     previewControls->addStretch(1);
@@ -1323,6 +1336,10 @@ void MainWindow::renderDraftProject()
 
 void MainWindow::applyProjectSettings()
 {
+    if (scaleVideoAtDisplayCheck) {
+        QSignalBlocker blocker(scaleVideoAtDisplayCheck);
+        scaleVideoAtDisplayCheck->setChecked(projectSettings.scaleVideoAtDisplayTime);
+    }
     if (!playbackPipeline) {
         return;
     }
@@ -1473,6 +1490,7 @@ bool MainWindow::saveProjectToPath(const QString &path, bool silent)
     settingsObject.insert("resolutionWidth", projectSettings.resolution.width());
     settingsObject.insert("resolutionHeight", projectSettings.resolution.height());
     settingsObject.insert("cacheQuality", static_cast<int>(projectSettings.cacheQuality));
+    settingsObject.insert("scaleVideoAtDisplayTime", projectSettings.scaleVideoAtDisplayTime);
     settingsObject.insert("decodeSeekLookbackMs", projectSettings.decodeSeekLookbackMs);
 
     QJsonArray sourcePathsArray;
@@ -1548,6 +1566,8 @@ bool MainWindow::loadProjectFromPath(const QString &path, bool silent)
                        static_cast<int>(ProjectSettings::CacheQuality::Quarter16),
                        static_cast<int>(ProjectSettings::CacheQuality::Source)));
         projectSettings.decodeSeekLookbackMs = std::max(0, decodeSeekLookbackMs);
+        projectSettings.scaleVideoAtDisplayTime =
+            settingsObject.value("scaleVideoAtDisplayTime").toBool(true);
     }
 
     QStringList loadedSourcePaths;

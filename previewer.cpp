@@ -1,7 +1,6 @@
 #include "previewer.h"
 
 #include <QPainter>
-#include <QPixmap>
 #include <QFont>
 #include <qdebug.h>
 
@@ -61,7 +60,6 @@ void Previewer::paintIt(QImage &&img)
     }
 
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Writing);
-    frameBuffer[bufferIndex].displayPixmap = QPixmap();
     frameBuffer[bufferIndex].img = std::move(img);
     frameBuffer[bufferIndex].serial = nextFrameSerial++;
     frameBuffer[bufferIndex].state = static_cast<int>(FrameState::Ready);
@@ -156,18 +154,14 @@ void Previewer::paintEvent(QPaintEvent *event)
         painter.fillRect(rect(), Qt::black);
         painter.setRenderHint(QPainter::Antialiasing, antialiasing);
         painter.setRenderHint(QPainter::SmoothPixmapTransform, smoothScaling);
-        auto &slot = frameBuffer[bufferIndex];
-        if (slot.displayPixmap.isNull() && !slot.img.isNull()) {
-            slot.displayPixmap = QPixmap::fromImage(slot.img);
-            if (slot.displayPixmap.isNull()) {
-                slot.displayPixmap = QPixmap::fromImage(slot.img.convertToFormat(QImage::Format_RGB32));
-            }
-        }
-        if (!slot.displayPixmap.isNull()) {
-            painter.drawPixmap(0, 0, width(), height(), slot.displayPixmap);
-        } else if (!slot.img.isNull()) {
-            const QImage scaled = slot.img.scaled(size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            painter.drawImage(rect(), scaled);
+        const auto &slot = frameBuffer[bufferIndex];
+        if (!slot.img.isNull()) {
+            const QRect widgetRect = rect();
+            const QSize scaled =
+                slot.img.size().scaled(widgetRect.size(), Qt::KeepAspectRatio);
+            QRect target(QPoint(0, 0), scaled);
+            target.moveCenter(widgetRect.center());
+            painter.drawImage(QRectF(target), slot.img, QRectF(slot.img.rect()));
         }
         if (buffering) {
             drawBufferingOverlay(painter);

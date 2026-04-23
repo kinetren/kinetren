@@ -24,6 +24,7 @@ class QDockWidget;
 class SourceReplacePanel;
 class SourceOffsetPanel;
 class MorpherEditWindow;
+class QCheckBox;
 
 class MainWindow : public QMainWindow
 {
@@ -102,6 +103,7 @@ protected:
     QDockWidget *replaceSourceDock = nullptr;
     QDockWidget *sourceOffsetDock = nullptr;
     QHash<int, MorpherEditWindow *> morpherEditWindows;
+    QCheckBox *scaleVideoAtDisplayCheck = nullptr;
 
     Ui::MainWindow *ui;
 };
