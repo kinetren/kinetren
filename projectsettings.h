@@ -18,8 +18,9 @@ public:
     int fps = 30;
     QSize resolution = QSize(1280, 720);
     CacheQuality cacheQuality = CacheQuality::Quarter4;
-    /// When true, UI can pick the coarsest cache quality for the preview panel; decode stays near
-    /// cacheResolution(). When false, native-size decode (BurstQuality 0×0) then Qt scales.
+    /// FrontScaler (preview panel): when true, decode RGB near cacheResolution() and scale to the
+    /// preview widget in Qt; when false, full-resolution decode (BurstQuality 0×0) then Qt scales.
+    /// libswscale still performs YUV→RGB at the chosen decode size.
     bool scaleVideoAtDisplayTime = true;
     bool previewSmoothScaling = false;
     bool previewAntialiasing = false;

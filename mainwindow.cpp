@@ -204,13 +204,23 @@ MainWindow::MainWindow(QWidget *parent)
         timelineEditor->setPlaybackMediaPool(playbackPipeline->sharedMediaPool());
     }
     refreshPreviewResolutionMaxEntry();
-    if (scaleVideoAtDisplayCheck) {
-        connect(scaleVideoAtDisplayCheck, &QCheckBox::toggled, this, [this](bool on) {
+    if (frontScalerCheck) {
+        connect(frontScalerCheck, &QCheckBox::toggled, this, [this](bool on) {
             projectSettings.scaleVideoAtDisplayTime = on;
             if (on) {
                 applyRecommendedPreviewCacheQualityForCap();
             }
             applyProjectSettings();
+            if (playbackPipeline) {
+                playbackPipeline->resetProjectCache();
+            }
+            if (timelineEditor) {
+                timelineEditor->purgePresentationCaches();
+            }
+            requestCacheCoverageUiRefresh();
+            if (!timelinePlaying) {
+                syncTimelinePlayback();
+            }
         });
     }
     applyProjectSettings();
@@ -378,12 +388,14 @@ void MainWindow::setupTimelineEditorUi()
     previewResolutionCombo->setCurrentIndex(1);
     previewSmoothScalingCheck = new QCheckBox("Smooth scaling", previewHost);
     previewSmoothScalingCheck->setChecked(projectSettings.previewSmoothScaling);
-    scaleVideoAtDisplayCheck = new QCheckBox("Auto cache for preview", previewHost);
-    scaleVideoAtDisplayCheck->setChecked(projectSettings.scaleVideoAtDisplayTime);
-    scaleVideoAtDisplayCheck->setToolTip(
-        QStringLiteral("When enabled, picks the coarsest cache quality that still covers the preview "
-                       "panel (fewer libswscale pixels). You can fine-tune with Cache quality afterward. "
-                       "When disabled, full-resolution decode then Qt scales (heavier)."));
+    frontScalerCheck = new QCheckBox(QStringLiteral("FrontScaler"), previewHost);
+    frontScalerCheck->setChecked(projectSettings.scaleVideoAtDisplayTime);
+    frontScalerCheck->setToolTip(
+        QStringLiteral("Decode video near the project cache resolution, then let the preview widget scale "
+                       "the RGB image in Qt. libswscale still converts YUV→RGB at that decode size "
+                       "(you will still see ff_yuv_420_rgb24_* in profiles, but with fewer pixels than "
+                       "full-res decode). When off, decode at full source size then Qt scales (heavier). "
+                       "Toggling clears playback and strip caches so sizes stay consistent."));
     previewAntialiasingCheck = new QCheckBox("Antialiasing", previewHost);
     previewAntialiasingCheck->setChecked(projectSettings.previewAntialiasing);
     if (ui->frame) {
@@ -399,7 +411,7 @@ void MainWindow::setupTimelineEditorUi()
     previewControls->addWidget(resolutionLabel);
     previewControls->addWidget(previewResolutionCombo);
     previewControls->addSpacing(10);
-    previewControls->addWidget(scaleVideoAtDisplayCheck);
+    previewControls->addWidget(frontScalerCheck);
     previewControls->addWidget(previewSmoothScalingCheck);
     previewControls->addWidget(previewAntialiasingCheck);
     previewControls->addStretch(1);
@@ -1558,9 +1570,9 @@ void MainWindow::syncPreviewUiFromProjectSettings()
 
 void MainWindow::applyProjectSettings()
 {
-    if (scaleVideoAtDisplayCheck) {
-        QSignalBlocker blocker(scaleVideoAtDisplayCheck);
-        scaleVideoAtDisplayCheck->setChecked(projectSettings.scaleVideoAtDisplayTime);
+    if (frontScalerCheck) {
+        QSignalBlocker blocker(frontScalerCheck);
+        frontScalerCheck->setChecked(projectSettings.scaleVideoAtDisplayTime);
     }
     if (!playbackPipeline) {
         syncPreviewUiFromProjectSettings();
@@ -1714,7 +1726,8 @@ bool MainWindow::saveProjectToPath(const QString &path, bool silent)
     settingsObject.insert("resolutionWidth", projectSettings.resolution.width());
     settingsObject.insert("resolutionHeight", projectSettings.resolution.height());
     settingsObject.insert("cacheQuality", static_cast<int>(projectSettings.cacheQuality));
-    settingsObject.insert("scaleVideoAtDisplayTime", projectSettings.scaleVideoAtDisplayTime);
+    settingsObject.insert(QStringLiteral("frontScaler"), projectSettings.scaleVideoAtDisplayTime);
+    settingsObject.insert(QStringLiteral("scaleVideoAtDisplayTime"), projectSettings.scaleVideoAtDisplayTime);
     settingsObject.insert("previewSmoothScaling", projectSettings.previewSmoothScaling);
     settingsObject.insert("previewAntialiasing", projectSettings.previewAntialiasing);
     settingsObject.insert("decodeSeekLookbackMs", projectSettings.decodeSeekLookbackMs);
@@ -1792,8 +1805,13 @@ bool MainWindow::loadProjectFromPath(const QString &path, bool silent)
                        static_cast<int>(ProjectSettings::CacheQuality::Quarter16),
                        static_cast<int>(ProjectSettings::CacheQuality::Source)));
         projectSettings.decodeSeekLookbackMs = std::max(0, decodeSeekLookbackMs);
-        projectSettings.scaleVideoAtDisplayTime =
-            settingsObject.value("scaleVideoAtDisplayTime").toBool(true);
+        if (settingsObject.contains(QStringLiteral("frontScaler"))) {
+            projectSettings.scaleVideoAtDisplayTime =
+                settingsObject.value(QStringLiteral("frontScaler")).toBool(true);
+        } else {
+            projectSettings.scaleVideoAtDisplayTime =
+                settingsObject.value(QStringLiteral("scaleVideoAtDisplayTime")).toBool(true);
+        }
         projectSettings.previewSmoothScaling =
             settingsObject.value("previewSmoothScaling").toBool(false);
         projectSettings.previewAntialiasing =

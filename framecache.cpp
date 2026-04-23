@@ -7,7 +7,7 @@
 #endif
 
 namespace {
-constexpr quint64 kTwoGiB = 2ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr quint64 kTwoGiB = 10ULL * 1024ULL * 1024ULL * 1024ULL;
 }
 
 FrameCache::FrameCache()

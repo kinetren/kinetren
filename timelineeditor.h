@@ -54,6 +54,8 @@ public:
 
     /// Strip thumbnails decode through this pool (same as PlaybackPipeline) so each file is indexed once.
     void setPlaybackMediaPool(std::shared_ptr<burstcon::ConMediaPool> pool);
+    /// Drop strip thumbnails, peaks, and coverage segment caches (e.g. after preview scale mode changes).
+    void purgePresentationCaches();
 
     qint64 cursorMs() const;
     void setCursorMs(qint64 valueMs, bool ensureVisible = true);

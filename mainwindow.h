@@ -109,7 +109,7 @@ protected:
     QDockWidget *replaceSourceDock = nullptr;
     QDockWidget *sourceOffsetDock = nullptr;
     QHash<int, MorpherEditWindow *> morpherEditWindows;
-    QCheckBox *scaleVideoAtDisplayCheck = nullptr;
+    QCheckBox *frontScalerCheck = nullptr;
     QCheckBox *previewSmoothScalingCheck = nullptr;
     QCheckBox *previewAntialiasingCheck = nullptr;
     QComboBox *previewCacheQualityCombo = nullptr;

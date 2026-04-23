@@ -641,11 +641,11 @@ private:
         Codec codec = findDecodingCodec(dec->raw()->codec_id);
         dec->setCodec(codec);
         dec->setRefCountedFrames(true);
-        int threadCount = static_cast<int>(std::thread::hardware_concurrency()) / 2;
+        int threadCount = static_cast<int>(std::thread::hardware_concurrency());
         if (threadCount < 1) {
             threadCount = 1;
         }
-        threadCount = std::min(threadCount, 8);
+        threadCount = std::min(threadCount, 12);
         const std::string threadsOpt = std::to_string(threadCount);
         dec->open(Dictionary{{"threads", threadsOpt.c_str()}}, ec);
         if (ec) {

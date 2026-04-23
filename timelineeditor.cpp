@@ -198,6 +198,21 @@ void TimelineEditor::setPlaybackMediaPool(std::shared_ptr<burstcon::ConMediaPool
     playbackMediaPool = std::move(pool);
 }
 
+void TimelineEditor::purgePresentationCaches()
+{
+    previewCache.clear();
+    previewCacheLru.clear();
+    previewCacheLruPos.clear();
+    pendingPreviewKeys.clear();
+    peaksCache.clear();
+    cacheVideoSlidingByClip.clear();
+    cacheVideoHeadByClip.clear();
+    timelineVideoSlidingSegments.clear();
+    timelineVideoHeadSegments.clear();
+    cacheAudioByClip.clear();
+    update();
+}
+
 qint64 TimelineEditor::cursorMs() const
 {
     return cursorPositionMs;

@@ -85,9 +85,9 @@ public:
 
 struct ConCacheConfig {
     size_t maxEntries = 256*94024;
-    size_t maxAudioEntries = 128*94024;
-    size_t maxVideoEntries = 128*94024;
-    uint64_t maxVideoBytes = 4048ULL * 1024ULL * 1024ULL;
+    size_t maxAudioEntries = 128*14024;
+    size_t maxVideoEntries = 128*14024;
+    uint64_t maxVideoBytes = 2048ULL * 1024ULL * 1024ULL;
     BurstIndex preloadAheadTicks = kBurstTimebaseHz; // +1 second
     int preloadStepHz = 1;//30*60;
     bool preloadEnabled = true;
