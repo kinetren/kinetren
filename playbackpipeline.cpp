@@ -58,11 +58,15 @@ burstcon::BurstIndex msToBurstIndexCeil(qint64 ms)
 
 burstcon::BurstQuality decodeBurstQuality(const ProjectSettings &settings)
 {
-    if (settings.scaleVideoAtDisplayTime) {
-        return burstcon::BurstQuality{0, 0};
-    }
     const QSize q = settings.cacheResolution();
-    return burstcon::BurstQuality{q.width(), q.height()};
+    if (settings.scaleVideoAtDisplayTime) {
+        // YUV→RGB in swscale runs at this size; keep it bounded. QPainter then scales to the widget.
+        // BurstQuality {0,0} would expand to full coded size in ConCache and costs much more in
+        // ff_yuv_420_rgb24_* than scaling inside the same swscale step to cacheResolution().
+        return burstcon::BurstQuality{q.width(), q.height()};
+    }
+    // Full-resolution RGB decode (heavy); still drawn scaled to the widget in the preview.
+    return burstcon::BurstQuality{0, 0};
 }
 
 QVector<QPair<double, double>> segmentsFromBucketsAlongSpan(const std::unordered_set<qint64> &buckets,

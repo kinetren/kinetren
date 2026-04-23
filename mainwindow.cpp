@@ -314,11 +314,12 @@ void MainWindow::setupTimelineEditorUi()
     resolutionCombo->setCurrentText("1280x720");
     auto *smoothScaleCheck = new QCheckBox("Smooth scaling", previewHost);
     smoothScaleCheck->setChecked(false);
-    scaleVideoAtDisplayCheck = new QCheckBox("Scale in preview (Qt)", previewHost);
+    scaleVideoAtDisplayCheck = new QCheckBox("Decode for preview ≤ cache size", previewHost);
     scaleVideoAtDisplayCheck->setChecked(projectSettings.scaleVideoAtDisplayTime);
     scaleVideoAtDisplayCheck->setToolTip(
-        QStringLiteral("Decode near source size and scale when painting the preview. "
-                       "Turn off to scale during decode (cache resolution / swscale)."));
+        QStringLiteral("When checked, YUV→RGB runs at cache resolution (less libswscale work); "
+                       "QPainter scales to the preview window. When unchecked, decode full source size "
+                       "then scale in Qt (sharper, much heavier)."));
     auto *aaCheck = new QCheckBox("Antialiasing", previewHost);
     previewControls->addWidget(previewQualityLabel);
     previewControls->addWidget(previewQualityCombo);
