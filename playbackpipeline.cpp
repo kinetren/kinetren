@@ -337,6 +337,7 @@ bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
     }
     qint64 endMs = startMs + headMs;
     bool projectHasAudio = false;
+    bool projectHasVideo = false;
     {
         std::lock_guard<std::mutex> lock(mutex);
         if ((playbackMode == burstcon::PlaybackMode::Region || playbackMode == burstcon::PlaybackMode::RegionLoop) &&
@@ -344,16 +345,25 @@ bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
             endMs = std::min(endMs, playbackRegionEndMs);
         }
         projectHasAudio = !lastAudioClips.empty();
+        projectHasVideo = !lastVideoClips.empty();
     }
     if (endMs <= startMs) {
+        return true;
+    }
+    // Without any video clips, sliding video buckets are never populated; requiring them here kept
+    // the head "cold" forever (idle prefetch/draft churn). Same idea as skipping audio probes when
+    // there is no audio in the graph.
+    if (!projectHasAudio && !projectHasVideo) {
         return true;
     }
     constexpr qint64 kProbeStepMs = 400;
     std::lock_guard<std::mutex> lock(coverageMutex);
     for (qint64 t = startMs; t < endMs; t += kProbeStepMs) {
-        const qint64 bucket = (t / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
-        if (timelineVideoSlidingBuckets.find(bucket) == timelineVideoSlidingBuckets.end()) {
-            return false;
+        if (projectHasVideo) {
+            const qint64 bucket = (t / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
+            if (timelineVideoSlidingBuckets.find(bucket) == timelineVideoSlidingBuckets.end()) {
+                return false;
+            }
         }
         if (projectHasAudio) {
             const qint64 aBucket = (t / kAudioCoverageBucketMs) * kAudioCoverageBucketMs;
@@ -362,9 +372,12 @@ bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
             }
         }
     }
-    const qint64 lastT = std::max(startMs, endMs - 1);
-    const qint64 bLast = (lastT / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
-    return timelineVideoSlidingBuckets.find(bLast) != timelineVideoSlidingBuckets.end();
+    if (projectHasVideo) {
+        const qint64 lastT = std::max(startMs, endMs - 1);
+        const qint64 bLast = (lastT / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
+        return timelineVideoSlidingBuckets.find(bLast) != timelineVideoSlidingBuckets.end();
+    }
+    return true;
 }
 
 void PlaybackPipeline::start(qint64 startTimelineMs)
