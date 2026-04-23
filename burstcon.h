@@ -84,14 +84,14 @@ public:
 };
 
 struct ConCacheConfig {
-    size_t maxEntries = 256*4024;
-    size_t maxAudioEntries = 128*4024;
-    size_t maxVideoEntries = 128*4024;
-    uint64_t maxVideoBytes = 2048ULL * 1024ULL * 1024ULL;
+    size_t maxEntries = 256*94024;
+    size_t maxAudioEntries = 128*94024;
+    size_t maxVideoEntries = 128*94024;
+    uint64_t maxVideoBytes = 4048ULL * 1024ULL * 1024ULL;
     BurstIndex preloadAheadTicks = kBurstTimebaseHz; // +1 second
-    int preloadStepHz = 30*60;
+    int preloadStepHz = 1;//30*60;
     bool preloadEnabled = true;
-    bool forcedVideoQualityEnabled = false;
+    bool forcedVideoQualityEnabled = true;
     BurstQuality forcedVideoQuality;
     /// Fires when a video frame enters or leaves this ConCache (LRU evict / replace / invalidate).
     std::function<void(bool inserted, const QString &mediaPath, BurstIndex mediaBurstIndex, const BurstQuality &q)>
