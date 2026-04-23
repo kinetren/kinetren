@@ -29,6 +29,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QVariant>
 #include <QPushButton>
 #include <QShortcut>
 #include <QScreen>
@@ -128,6 +129,46 @@ private:
 
 } // namespace
 
+namespace {
+
+constexpr QSize kPreviewResolutionMax{3840, 2160};
+
+int cacheQualityToComboIndex(ProjectSettings::CacheQuality q)
+{
+    switch (q) {
+    case ProjectSettings::CacheQuality::Quarter16:
+        return 0;
+    case ProjectSettings::CacheQuality::Quarter8:
+        return 1;
+    case ProjectSettings::CacheQuality::Quarter4:
+        return 2;
+    case ProjectSettings::CacheQuality::Half:
+        return 3;
+    case ProjectSettings::CacheQuality::Source:
+    default:
+        return 4;
+    }
+}
+
+ProjectSettings::CacheQuality comboIndexToCacheQuality(int index)
+{
+    switch (index) {
+    case 0:
+        return ProjectSettings::CacheQuality::Quarter16;
+    case 1:
+        return ProjectSettings::CacheQuality::Quarter8;
+    case 2:
+        return ProjectSettings::CacheQuality::Quarter4;
+    case 3:
+        return ProjectSettings::CacheQuality::Half;
+    case 4:
+    default:
+        return ProjectSettings::CacheQuality::Source;
+    }
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
@@ -164,6 +205,9 @@ MainWindow::MainWindow(QWidget *parent)
     if (scaleVideoAtDisplayCheck) {
         connect(scaleVideoAtDisplayCheck, &QCheckBox::toggled, this, [this](bool on) {
             projectSettings.scaleVideoAtDisplayTime = on;
+            if (on) {
+                applyRecommendedPreviewCacheQualityForCap();
+            }
             applyProjectSettings();
         });
     }
@@ -284,55 +328,63 @@ void MainWindow::setupTimelineEditorUi()
 
     auto *previewControls = new QHBoxLayout();
     auto *previewQualityLabel = new QLabel("Cache quality:", previewHost);
-    auto *previewQualityCombo = new QComboBox(previewHost);
-    previewQualityCombo->addItem("1/16");
-    previewQualityCombo->addItem("1/8");
-    previewQualityCombo->addItem("1/4");
-    previewQualityCombo->addItem("1/2");
-    previewQualityCombo->addItem("1/1 (src)");
-    previewQualityCombo->setCurrentIndex(2);
+    previewCacheQualityCombo = new QComboBox(previewHost);
+    previewCacheQualityCombo->addItem("1/16");
+    previewCacheQualityCombo->addItem("1/8");
+    previewCacheQualityCombo->addItem("1/4");
+    previewCacheQualityCombo->addItem("1/2");
+    previewCacheQualityCombo->addItem("1/1 (src)");
+    previewCacheQualityCombo->setCurrentIndex(cacheQualityToComboIndex(projectSettings.cacheQuality));
     auto *fpsLabel = new QLabel("FPS:", previewHost);
-    auto *fpsCombo = new QComboBox(previewHost);
-    fpsCombo->addItem("24");
-    fpsCombo->addItem("25");
-    fpsCombo->addItem("30");
-    fpsCombo->addItem("60");
-    fpsCombo->setCurrentText(QString::number(projectSettings.fps));
+    previewFpsCombo = new QComboBox(previewHost);
+    previewFpsCombo->addItem("24");
+    previewFpsCombo->addItem("25");
+    previewFpsCombo->addItem("30");
+    previewFpsCombo->addItem("60");
+    previewFpsCombo->setCurrentText(QString::number(projectSettings.fps));
     auto *seekLookbackLabel = new QLabel("Read step:", previewHost);
-    auto *seekLookbackSpin = new QSpinBox(previewHost);
-    seekLookbackSpin->setRange(0, 2000);
-    seekLookbackSpin->setSingleStep(1);
-    seekLookbackSpin->setSuffix(" ms");
-    seekLookbackSpin->setSpecialValueText("Auto (1 frame)");
-    seekLookbackSpin->setToolTip("How far back we seek before decoding. Auto = 1 frame at current FPS.");
-    seekLookbackSpin->setValue(std::max(0, projectSettings.decodeSeekLookbackMs));
+    previewSeekLookbackSpin = new QSpinBox(previewHost);
+    previewSeekLookbackSpin->setRange(0, 2000);
+    previewSeekLookbackSpin->setSingleStep(1);
+    previewSeekLookbackSpin->setSuffix(" ms");
+    previewSeekLookbackSpin->setSpecialValueText("Auto (1 frame)");
+    previewSeekLookbackSpin->setToolTip("How far back we seek before decoding. Auto = 1 frame at current FPS.");
+    previewSeekLookbackSpin->setValue(std::max(0, projectSettings.decodeSeekLookbackMs));
     auto *resolutionLabel = new QLabel("Resolution:", previewHost);
-    auto *resolutionCombo = new QComboBox(previewHost);
-    resolutionCombo->addItem("640x360");
-    resolutionCombo->addItem("1280x720");
-    resolutionCombo->addItem("1920x1080");
-    resolutionCombo->setCurrentText("1280x720");
-    auto *smoothScaleCheck = new QCheckBox("Smooth scaling", previewHost);
-    smoothScaleCheck->setChecked(false);
-    scaleVideoAtDisplayCheck = new QCheckBox("Decode for preview ≤ cache size", previewHost);
+    previewResolutionCombo = new QComboBox(previewHost);
+    previewResolutionCombo->addItem(QStringLiteral("640×360"), QSize(640, 360));
+    previewResolutionCombo->addItem(QStringLiteral("1280×720"), QSize(1280, 720));
+    previewResolutionCombo->addItem(QStringLiteral("1920×1080"), QSize(1920, 1080));
+    previewResolutionCombo->addItem(
+        QStringLiteral("3840×2160 (max)"),
+        QVariant::fromValue(kPreviewResolutionMax));
+    previewResolutionCombo->setCurrentIndex(1);
+    previewSmoothScalingCheck = new QCheckBox("Smooth scaling", previewHost);
+    previewSmoothScalingCheck->setChecked(projectSettings.previewSmoothScaling);
+    scaleVideoAtDisplayCheck = new QCheckBox("Auto cache for preview", previewHost);
     scaleVideoAtDisplayCheck->setChecked(projectSettings.scaleVideoAtDisplayTime);
     scaleVideoAtDisplayCheck->setToolTip(
-        QStringLiteral("When checked, YUV→RGB runs at cache resolution (less libswscale work); "
-                       "QPainter scales to the preview window. When unchecked, decode full source size "
-                       "then scale in Qt (sharper, much heavier)."));
-    auto *aaCheck = new QCheckBox("Antialiasing", previewHost);
+        QStringLiteral("When enabled, picks the coarsest cache quality that still covers the preview "
+                       "panel (fewer libswscale pixels). You can fine-tune with Cache quality afterward. "
+                       "When disabled, full-resolution decode then Qt scales (heavier)."));
+    previewAntialiasingCheck = new QCheckBox("Antialiasing", previewHost);
+    previewAntialiasingCheck->setChecked(projectSettings.previewAntialiasing);
+    if (ui->frame) {
+        ui->frame->setSmoothScaling(projectSettings.previewSmoothScaling);
+        ui->frame->setAntialiasing(projectSettings.previewAntialiasing);
+    }
     previewControls->addWidget(previewQualityLabel);
-    previewControls->addWidget(previewQualityCombo);
+    previewControls->addWidget(previewCacheQualityCombo);
     previewControls->addWidget(fpsLabel);
-    previewControls->addWidget(fpsCombo);
+    previewControls->addWidget(previewFpsCombo);
     previewControls->addWidget(seekLookbackLabel);
-    previewControls->addWidget(seekLookbackSpin);
+    previewControls->addWidget(previewSeekLookbackSpin);
     previewControls->addWidget(resolutionLabel);
-    previewControls->addWidget(resolutionCombo);
+    previewControls->addWidget(previewResolutionCombo);
     previewControls->addSpacing(10);
     previewControls->addWidget(scaleVideoAtDisplayCheck);
-    previewControls->addWidget(smoothScaleCheck);
-    previewControls->addWidget(aaCheck);
+    previewControls->addWidget(previewSmoothScalingCheck);
+    previewControls->addWidget(previewAntialiasingCheck);
     previewControls->addStretch(1);
     previewLayout->addLayout(previewControls);
 
@@ -739,31 +791,14 @@ void MainWindow::setupTimelineEditorUi()
         timelineScrollBarV->setValue(v);
         timelineScrollBarV->blockSignals(false);
     });
-    connect(previewQualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
-        switch (index) {
-        case 0:
-            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Quarter16;
-            break;
-        case 1:
-            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Quarter8;
-            break;
-        case 2:
-            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Quarter4;
-            break;
-        case 3:
-            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Half;
-            break;
-        case 4:
-        default:
-            projectSettings.cacheQuality = ProjectSettings::CacheQuality::Source;
-            break;
-        }
+    connect(previewCacheQualityCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        projectSettings.cacheQuality = comboIndexToCacheQuality(index);
         applyProjectSettings();
         if (!timelinePlaying) {
             syncTimelinePlayback();
         }
     });
-    connect(fpsCombo, &QComboBox::currentTextChanged, this, [this](const QString &text) {
+    connect(previewFpsCombo, &QComboBox::currentTextChanged, this, [this](const QString &text) {
         bool ok = false;
         const int fps = text.toInt(&ok);
         if (!ok || fps <= 0) {
@@ -772,27 +807,43 @@ void MainWindow::setupTimelineEditorUi()
         projectSettings.fps = fps;
         applyProjectSettings();
     });
-    connect(seekLookbackSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
+    connect(previewSeekLookbackSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int value) {
         projectSettings.decodeSeekLookbackMs = std::max(0, value);
         applyProjectSettings();
     });
-    connect(resolutionCombo, &QComboBox::currentTextChanged, this, [this](const QString &text) {
-        const QStringList parts = text.split('x');
-        if (parts.size() != 2) {
+    connect(previewResolutionCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int index) {
+        if (!previewResolutionCombo || index < 0) {
             return;
         }
-        bool okW = false;
-        bool okH = false;
-        const int w = parts[0].toInt(&okW);
-        const int h = parts[1].toInt(&okH);
-        if (!okW || !okH || w <= 0 || h <= 0) {
+        const QVariant v = previewResolutionCombo->itemData(index);
+        if (!v.canConvert<QSize>()) {
             return;
         }
-        projectSettings.resolution = QSize(w, h);
+        const QSize sz = v.value<QSize>();
+        if (!sz.isValid() || sz.width() <= 0 || sz.height() <= 0) {
+            return;
+        }
+        projectSettings.resolution = sz;
+        if (projectSettings.scaleVideoAtDisplayTime) {
+            applyRecommendedPreviewCacheQualityForCap();
+        }
         applyProjectSettings();
+        if (!timelinePlaying) {
+            syncTimelinePlayback();
+        }
     });
-    connect(smoothScaleCheck, &QCheckBox::toggled, ui->frame, &Previewer::setSmoothScaling);
-    connect(aaCheck, &QCheckBox::toggled, ui->frame, &Previewer::setAntialiasing);
+    connect(previewSmoothScalingCheck, &QCheckBox::toggled, this, [this](bool on) {
+        projectSettings.previewSmoothScaling = on;
+        if (ui->frame) {
+            ui->frame->setSmoothScaling(on);
+        }
+    });
+    connect(previewAntialiasingCheck, &QCheckBox::toggled, this, [this](bool on) {
+        projectSettings.previewAntialiasing = on;
+        if (ui->frame) {
+            ui->frame->setAntialiasing(on);
+        }
+    });
 
     auto *spaceShortcut = new QShortcut(QKeySequence(Qt::Key_Space), this);
     connect(spaceShortcut, &QShortcut::activated, this, &MainWindow::toggleTimelinePause);
@@ -1335,6 +1386,87 @@ void MainWindow::renderDraftProject()
     }).detach();
 }
 
+void MainWindow::applyRecommendedPreviewCacheQualityForCap()
+{
+    if (!projectSettings.scaleVideoAtDisplayTime) {
+        return;
+    }
+    Previewer *pv = ui->frame;
+    if (!pv) {
+        return;
+    }
+    const qreal dpr = std::max(1.0, static_cast<qreal>(pv->devicePixelRatioF()));
+    const int edgePx = std::max(pv->width(), pv->height());
+    const int want = static_cast<int>(std::ceil(static_cast<qreal>(edgePx) * dpr * 1.15));
+    const int wantClamped = std::max(360, want);
+
+    using CQ = ProjectSettings::CacheQuality;
+    static const CQ kOrder[] = {CQ::Quarter16, CQ::Quarter8, CQ::Quarter4, CQ::Half, CQ::Source};
+    for (CQ q : kOrder) {
+        projectSettings.cacheQuality = q;
+        const QSize cr = projectSettings.cacheResolution();
+        const int edge = std::max(cr.width(), cr.height());
+        if (edge >= wantClamped) {
+            return;
+        }
+    }
+    projectSettings.cacheQuality = CQ::Source;
+}
+
+void MainWindow::syncPreviewUiFromProjectSettings()
+{
+    if (previewCacheQualityCombo) {
+        QSignalBlocker b(previewCacheQualityCombo);
+        previewCacheQualityCombo->setCurrentIndex(cacheQualityToComboIndex(projectSettings.cacheQuality));
+    }
+    if (previewResolutionCombo) {
+        QSignalBlocker b(previewResolutionCombo);
+        while (previewResolutionCombo->count() > 4) {
+            previewResolutionCombo->removeItem(previewResolutionCombo->count() - 1);
+        }
+        int found = -1;
+        for (int i = 0; i < previewResolutionCombo->count(); ++i) {
+            const QVariant v = previewResolutionCombo->itemData(i);
+            if (!v.canConvert<QSize>()) {
+                continue;
+            }
+            if (v.value<QSize>() == projectSettings.resolution) {
+                found = i;
+                break;
+            }
+        }
+        if (found >= 0) {
+            previewResolutionCombo->setCurrentIndex(found);
+        } else {
+            const QString label = QStringLiteral("%1×%2")
+                                      .arg(projectSettings.resolution.width())
+                                      .arg(projectSettings.resolution.height());
+            previewResolutionCombo->addItem(label, QVariant::fromValue(projectSettings.resolution));
+            previewResolutionCombo->setCurrentIndex(previewResolutionCombo->count() - 1);
+        }
+    }
+    if (previewFpsCombo) {
+        QSignalBlocker b(previewFpsCombo);
+        previewFpsCombo->setCurrentText(QString::number(projectSettings.fps));
+    }
+    if (previewSeekLookbackSpin) {
+        QSignalBlocker b(previewSeekLookbackSpin);
+        previewSeekLookbackSpin->setValue(std::max(0, projectSettings.decodeSeekLookbackMs));
+    }
+    if (previewSmoothScalingCheck) {
+        QSignalBlocker b(previewSmoothScalingCheck);
+        previewSmoothScalingCheck->setChecked(projectSettings.previewSmoothScaling);
+    }
+    if (previewAntialiasingCheck) {
+        QSignalBlocker b(previewAntialiasingCheck);
+        previewAntialiasingCheck->setChecked(projectSettings.previewAntialiasing);
+    }
+    if (ui->frame) {
+        ui->frame->setSmoothScaling(projectSettings.previewSmoothScaling);
+        ui->frame->setAntialiasing(projectSettings.previewAntialiasing);
+    }
+}
+
 void MainWindow::applyProjectSettings()
 {
     if (scaleVideoAtDisplayCheck) {
@@ -1342,6 +1474,7 @@ void MainWindow::applyProjectSettings()
         scaleVideoAtDisplayCheck->setChecked(projectSettings.scaleVideoAtDisplayTime);
     }
     if (!playbackPipeline) {
+        syncPreviewUiFromProjectSettings();
         return;
     }
     if (timelineEditor) {
@@ -1352,6 +1485,7 @@ void MainWindow::applyProjectSettings()
     playbackPipeline->setProjectSettings(projectSettings);
     playbackPipeline->setDraftPreviewEnabled(projectSettings.cacheQuality != ProjectSettings::CacheQuality::Source);
     refreshPerformancePanel();
+    syncPreviewUiFromProjectSettings();
 }
 
 void MainWindow::refreshPerformancePanel()
@@ -1492,6 +1626,8 @@ bool MainWindow::saveProjectToPath(const QString &path, bool silent)
     settingsObject.insert("resolutionHeight", projectSettings.resolution.height());
     settingsObject.insert("cacheQuality", static_cast<int>(projectSettings.cacheQuality));
     settingsObject.insert("scaleVideoAtDisplayTime", projectSettings.scaleVideoAtDisplayTime);
+    settingsObject.insert("previewSmoothScaling", projectSettings.previewSmoothScaling);
+    settingsObject.insert("previewAntialiasing", projectSettings.previewAntialiasing);
     settingsObject.insert("decodeSeekLookbackMs", projectSettings.decodeSeekLookbackMs);
 
     QJsonArray sourcePathsArray;
@@ -1569,6 +1705,10 @@ bool MainWindow::loadProjectFromPath(const QString &path, bool silent)
         projectSettings.decodeSeekLookbackMs = std::max(0, decodeSeekLookbackMs);
         projectSettings.scaleVideoAtDisplayTime =
             settingsObject.value("scaleVideoAtDisplayTime").toBool(true);
+        projectSettings.previewSmoothScaling =
+            settingsObject.value("previewSmoothScaling").toBool(false);
+        projectSettings.previewAntialiasing =
+            settingsObject.value("previewAntialiasing").toBool(false);
     }
 
     QStringList loadedSourcePaths;

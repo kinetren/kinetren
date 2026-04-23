@@ -25,6 +25,8 @@ class SourceReplacePanel;
 class SourceOffsetPanel;
 class MorpherEditWindow;
 class QCheckBox;
+class QComboBox;
+class QSpinBox;
 
 class MainWindow : public QMainWindow
 {
@@ -52,6 +54,8 @@ private:
     void refreshTimelineVerticalScroll();
     void renderDraftProject();
     void applyProjectSettings();
+    void syncPreviewUiFromProjectSettings();
+    void applyRecommendedPreviewCacheQualityForCap();
     void refreshPerformancePanel();
     bool saveProjectToPath(const QString &path, bool silent = false);
     bool loadProjectFromPath(const QString &path, bool silent = false);
@@ -104,6 +108,12 @@ protected:
     QDockWidget *sourceOffsetDock = nullptr;
     QHash<int, MorpherEditWindow *> morpherEditWindows;
     QCheckBox *scaleVideoAtDisplayCheck = nullptr;
+    QCheckBox *previewSmoothScalingCheck = nullptr;
+    QCheckBox *previewAntialiasingCheck = nullptr;
+    QComboBox *previewCacheQualityCombo = nullptr;
+    QComboBox *previewResolutionCombo = nullptr;
+    QComboBox *previewFpsCombo = nullptr;
+    QSpinBox *previewSeekLookbackSpin = nullptr;
 
     Ui::MainWindow *ui;
 };

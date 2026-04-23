@@ -18,9 +18,11 @@ public:
     int fps = 30;
     QSize resolution = QSize(1280, 720);
     CacheQuality cacheQuality = CacheQuality::Quarter4;
-    /// When true, decode RGB near cacheResolution() (bounded swscale); the preview scales to the
-    /// widget in QPainter. When false, decode at native coded size (BurstQuality 0×0) then scale in Qt.
+    /// When true, UI can pick the coarsest cache quality for the preview panel; decode stays near
+    /// cacheResolution(). When false, native-size decode (BurstQuality 0×0) then Qt scales.
     bool scaleVideoAtDisplayTime = true;
+    bool previewSmoothScaling = false;
+    bool previewAntialiasing = false;
     // 0 = auto (1 frame at current project FPS), otherwise explicit lookback in ms.
     int decodeSeekLookbackMs = 0;
 
