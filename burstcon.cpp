@@ -1625,7 +1625,10 @@ void MonotonicPlaybackTimer::runLoop()
     {
         std::lock_guard<std::mutex> lock(mutex);
         const BurstIndex videoStep = outputVideoFrameStepTicks(playbackVideoFps);
+        const BurstIndex audioStep =
+            std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / 48000);
         lastVideoRequest = startIndex - std::max<BurstIndex>(1, videoStep);
+        lastAudioRequest = startIndex - std::max<BurstIndex>(1, audioStep);
     }
 
     while (running.load()) {
@@ -1676,6 +1679,17 @@ void MonotonicPlaybackTimer::runLoop()
         if (localSource) {
             const BurstIndex audioStep = std::max<BurstIndex>(1, (kBurstTimebaseHz * kDefaultAudioSamplesPerBurst) / 48000);
 
+            // Feed audio before video so a slow video decode does not delay PCM to the device.
+            BurstRequest audioRequest;
+            audioRequest.index = (current / audioStep) * audioStep;
+            if (current - lastAudioRequest >= audioStep) {
+                AudioBurst ab;
+                if (localSource->audioBurst(audioRequest, ab) && localCallbacks.onAudio) {
+                    localCallbacks.onAudio(ab);
+                }
+                lastAudioRequest = audioRequest.index;
+            }
+
             BurstRequest videoRequest;
             videoRequest.index = (current / videoStep) * videoStep;
             // Always use the project decode quality. Replacing 0×0 with sourceVideoQuality here
@@ -1688,16 +1702,6 @@ void MonotonicPlaybackTimer::runLoop()
                     localCallbacks.onVideo(std::move(vb));
                 }
                 lastVideoRequest = videoRequest.index;
-            }
-
-            BurstRequest audioRequest;
-            audioRequest.index = (current / audioStep) * audioStep;
-            if (current - lastAudioRequest >= audioStep) {
-                AudioBurst ab;
-                if (localSource->audioBurst(audioRequest, ab) && localCallbacks.onAudio) {
-                    localCallbacks.onAudio(ab);
-                }
-                lastAudioRequest = audioRequest.index;
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(3));

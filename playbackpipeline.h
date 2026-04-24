@@ -112,6 +112,8 @@ private:
     void shutdownAudioOutput();
     void tearDownAudioLocked();
     void pushAudioBurst(const burstcon::AudioBurst &burst);
+    /// Drain a few milliseconds of queued PCM without blocking the playback timer thread indefinitely.
+    void flushAudioPendingToDevice();
     void requestDraftFrameAsync(qint64 tMs, const std::vector<Clip> &videoClips);
     void draftWorkerLoop();
     void requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning);
@@ -169,6 +171,8 @@ private:
     PrefetchJob pendingPrefetchJob;
 
     mutable std::mutex audioMutex;
+    /// PCM waiting for QIODevice::write (stereo int16 interleaved). Bounded so memory stays stable.
+    std::vector<int16_t> audioPcmPending;
     QIODevice *audioDevice = nullptr;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QAudioSink *audioSink = nullptr;

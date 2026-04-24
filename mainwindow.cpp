@@ -1668,12 +1668,7 @@ void MainWindow::refreshPerformancePanel()
     const auto clipAudio = playbackPipeline->audioCacheSegments(audioRenderClips);
     const qint64 viewStart = timelineEditor->viewStartMs();
     const qint64 viewEnd = viewStart + timelineEditor->visibleDurationMs();
-    const qint64 cacheAnchorMs =
-        (timelinePlaying && playbackPipeline && playbackPipeline->isRunning())
-            ? playbackPipeline->playbackPositionMs()
-            : (timelineEditor ? timelineEditor->cursorMs() : 0);
-    const auto timelineVideoSliding =
-        playbackPipeline->timelineVideoSlidingSegments(viewStart, viewEnd, cacheAnchorMs);
+    const auto timelineVideoSliding = playbackPipeline->timelineVideoSlidingSegments(viewStart, viewEnd, -1);
     const auto timelineVideoHead = playbackPipeline->timelineVideoHeadSegments(viewStart, viewEnd);
     if (!timelineEditor->isEditingTimelineContent()) {
         timelineEditor->setCacheCoverage(clipVideoSliding, clipVideoHead, timelineVideoSliding, timelineVideoHead, clipAudio);

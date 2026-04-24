@@ -938,6 +938,7 @@ void PlaybackPipeline::tearDownAudioLocked()
         audioSink = nullptr;
     }
     audioDevice = nullptr;
+    audioPcmPending.clear();
 }
 
 void PlaybackPipeline::ensureAudioOutput()
@@ -974,6 +975,9 @@ void PlaybackPipeline::ensureAudioOutput()
     audioSink = new QAudioOutput(format);
 #endif
     audioDevice = audioSink->start();
+    if (!audioDevice) {
+        tearDownAudioLocked();
+    }
 }
 
 void PlaybackPipeline::shutdownAudioOutput()
@@ -982,34 +986,57 @@ void PlaybackPipeline::shutdownAudioOutput()
     tearDownAudioLocked();
 }
 
+void PlaybackPipeline::flushAudioPendingToDevice()
+{
+    if (!audioDevice || audioPcmPending.empty()) {
+        return;
+    }
+    constexpr int kMaxWriteIters = 96;
+    int iters = 0;
+    while (!audioPcmPending.empty() && iters < kMaxWriteIters && running.load()) {
+        const char *bytes = reinterpret_cast<const char *>(audioPcmPending.data());
+        const int len = static_cast<int>(audioPcmPending.size() * sizeof(int16_t));
+        const qint64 w = audioDevice->write(bytes, len);
+        if (w < 0) {
+            audioPcmPending.clear();
+            return;
+        }
+        if (w == 0) {
+            break;
+        }
+        const int consumed = static_cast<int>(w) / static_cast<int>(sizeof(int16_t));
+        if (consumed <= 0) {
+            break;
+        }
+        audioPcmPending.erase(audioPcmPending.begin(), audioPcmPending.begin() + consumed);
+        ++iters;
+    }
+}
+
 void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
 {
     // QAudioOutput/QAudioSink must be created and destroyed on the same thread (Qt object thread
     // affinity). This callback runs on `MonotonicPlaybackTimer`'s thread — never (re)open audio here,
     // or `stop()` on the GUI thread will delete a foreign-thread QObject and corrupt the heap.
-    if (!audioDevice || burst.samples.empty()) {
+    if (burst.samples.empty()) {
         return;
     }
-    std::vector<int16_t> pcm;
-    pcm.resize(burst.samples.size(), 0);
+    std::lock_guard<std::mutex> lock(audioMutex);
+    if (!audioDevice) {
+        return;
+    }
+    constexpr size_t kMaxPendingStereoSamples = static_cast<size_t>(48000) * 2 * 4;
+    const size_t prev = audioPcmPending.size();
+    audioPcmPending.resize(prev + burst.samples.size());
     for (size_t i = 0; i < burst.samples.size(); ++i) {
         const int32_t v = std::clamp<int32_t>(burst.samples[i], -32768, 32767);
-        pcm[i] = static_cast<int16_t>(v);
+        audioPcmPending[prev + i] = static_cast<int16_t>(v);
     }
-    const char *bytes = reinterpret_cast<const char *>(pcm.data());
-    const int len = static_cast<int>(pcm.size() * sizeof(int16_t));
-    int written = 0;
-    while (written < len && running.load()) {
-        const qint64 w = audioDevice->write(bytes + written, len - written);
-        if (w < 0) {
-            break;
-        }
-        if (w == 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
-        }
-        written += static_cast<int>(w);
+    if (audioPcmPending.size() > kMaxPendingStereoSamples) {
+        const size_t drop = audioPcmPending.size() - kMaxPendingStereoSamples;
+        audioPcmPending.erase(audioPcmPending.begin(), audioPcmPending.begin() + static_cast<std::ptrdiff_t>(drop));
     }
+    flushAudioPendingToDevice();
 }
 
 void PlaybackPipeline::requestDraftFrameAsync(qint64 tMs, const std::vector<Clip> &videoClips)
