@@ -350,7 +350,23 @@ public:
             return;
         }
         const BurstIndex step = std::max<BurstIndex>(1, videoFrameStep);
-        videoCursorIndex = (mediaBurstIndex / step) * step;
+        const BurstIndex aligned = (mediaBurstIndex / step) * step;
+        // ConCache hits (playback + prefetch) call this without reading the demuxer. Unbounded
+        // forward updates let prefetch "jump" the logical cursor past the playhead; the next real
+        // decode then hits `target < videoCursorIndex` and runs seek+packet reads (visible as
+        // avcpp spikes on short region loops and replays even with a full frame cache).
+        if (videoCursorIndex < 0) {
+            videoCursorIndex = aligned;
+            return;
+        }
+        if (aligned <= videoCursorIndex) {
+            videoCursorIndex = aligned;
+            return;
+        }
+        const BurstIndex driftThreshold = 64 * step;
+        if (aligned - videoCursorIndex <= driftThreshold) {
+            videoCursorIndex = aligned;
+        }
     }
 
     bool decodeVideo(BurstIndex index,

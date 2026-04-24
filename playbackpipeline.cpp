@@ -220,6 +220,16 @@ QString activeVideoClipPathAtMs(qint64 tMs, const std::vector<PlaybackPipeline::
     return {};
 }
 
+bool compositionHasAudioAtMs(qint64 tMs, const std::vector<PlaybackPipeline::Clip> &clips)
+{
+    for (const auto &c : clips) {
+        if (tMs >= c.startMs && tMs < c.startMs + std::max<qint64>(1, c.durationMs)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 constexpr qint64 kRegionHeadWindowMs = 1500;
 
 /// Head strip = sliding cache on the composition timeline, restricted to [regionStart, regionStart+W).
@@ -506,16 +516,18 @@ bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
         return true;
     }
     qint64 endMs = startMs + headMs;
-    bool projectHasAudio = false;
-    bool projectHasVideo = false;
+    std::vector<Clip> videoClips;
+    std::vector<Clip> audioClips;
+    int fps = 30;
     {
         std::lock_guard<std::mutex> lock(mutex);
         if ((playbackMode == burstcon::PlaybackMode::Region || playbackMode == burstcon::PlaybackMode::RegionLoop) &&
             playbackRegionEndMs > playbackRegionStartMs) {
             endMs = std::min(endMs, playbackRegionEndMs);
         }
-        projectHasAudio = !lastAudioClips.empty();
-        projectHasVideo = !lastVideoClips.empty();
+        fps = std::max(1, projectSettings.fps);
+        videoClips = lastVideoClips;
+        audioClips = lastAudioClips;
     }
     if (endMs <= startMs) {
         return true;
@@ -523,29 +535,70 @@ bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
     // Without any video clips, sliding video buckets are never populated; requiring them here kept
     // the head "cold" forever (idle prefetch/draft churn). Same idea as skipping audio probes when
     // there is no audio in the graph.
-    if (!projectHasAudio && !projectHasVideo) {
+    if (videoClips.empty() && audioClips.empty()) {
         return true;
     }
     constexpr qint64 kProbeStepMs = 400;
     std::lock_guard<std::mutex> lock(coverageMutex);
+    // Only require coverage where composition actually has video/audio. The old logic required
+    // video buckets on the entire probe grid whenever *any* video clip existed in the project,
+    // so gaps on the timeline were never "warm" and every play-pause retriggered prefetch/warmup
+    // (avcpp spikes) even with a full ConCache.
     for (qint64 t = startMs; t < endMs; t += kProbeStepMs) {
-        if (projectHasVideo) {
-            const qint64 bucket = videoCoverageBucketCenterMs(t);
-            if (timelineVideoSlidingBuckets.find(bucket) == timelineVideoSlidingBuckets.end()) {
-                return false;
-            }
-        }
-        if (projectHasAudio) {
+        if (compositionHasAudioAtMs(t, audioClips)) {
             const qint64 aBucket = (t / kAudioCoverageBucketMs) * kAudioCoverageBucketMs;
             if (audioCoverageBuckets.find(aBucket) == audioCoverageBuckets.end()) {
                 return false;
             }
         }
     }
-    if (projectHasVideo) {
-        const qint64 lastT = std::max(startMs, endMs - 1);
-        const qint64 bLast = videoCoverageBucketCenterMs(lastT);
-        return timelineVideoSlidingBuckets.find(bLast) != timelineVideoSlidingBuckets.end();
+    // Video: walk output-aligned frame times inside each clip ∩ [start,end) so we match the
+    // buckets written during playback (coarse 400 ms grid misses sub‑400 ms clips).
+    const burstcon::BurstIndex videoStepTicks = burstcon::outputVideoFrameStepTicks(fps);
+    for (const auto &clip : videoClips) {
+        const qint64 clipEnd = clip.startMs + std::max<qint64>(1, clip.durationMs);
+        const qint64 overlapLo = std::max(startMs, clip.startMs);
+        const qint64 overlapHi = std::min(endMs, clipEnd);
+        if (overlapHi <= overlapLo) {
+            continue;
+        }
+        burstcon::BurstIndex idxLo =
+            burstcon::alignBurstIndexToOutputVideoFrame(fps, burstcon::msToBurstIndex(overlapLo));
+        burstcon::BurstIndex idxHi =
+            burstcon::alignBurstIndexToOutputVideoFrame(fps, burstcon::msToBurstIndex(overlapHi - 1));
+        if (idxLo > idxHi) {
+            std::swap(idxLo, idxHi);
+        }
+        bool sawProbeInsideOverlap = false;
+        for (burstcon::BurstIndex idx = idxLo; idx <= idxHi; idx += videoStepTicks) {
+            const qint64 tMs = burstcon::burstIndexToMs(idx);
+            if (tMs < overlapLo || tMs >= overlapHi) {
+                continue;
+            }
+            sawProbeInsideOverlap = true;
+            const qint64 bucket = videoCoverageBucketCenterMs(tMs);
+            if (timelineVideoSlidingBuckets.find(bucket) == timelineVideoSlidingBuckets.end()) {
+                return false;
+            }
+        }
+        // If the clip overlaps the window but every aligned frame lands outside the clip (short
+        // event vs output grid), we must not report "warm" without checking any bucket — that
+        // skipped draft/warmup and left the preview black.
+        if (!sawProbeInsideOverlap) {
+            return false;
+        }
+    }
+    for (const auto &clip : audioClips) {
+        const qint64 cEnd = clip.startMs + std::max<qint64>(1, clip.durationMs);
+        for (qint64 edge : {clip.startMs, cEnd - 1}) {
+            if (edge < startMs || edge >= endMs) {
+                continue;
+            }
+            const qint64 aBucket = (edge / kAudioCoverageBucketMs) * kAudioCoverageBucketMs;
+            if (audioCoverageBuckets.find(aBucket) == audioCoverageBuckets.end()) {
+                return false;
+            }
+        }
     }
     return true;
 }
