@@ -448,9 +448,20 @@ public:
             const BurstIndex cursorBase = std::max<BurstIndex>(-videoFrameStep, videoCursorIndex);
             const BurstIndex framesNeeded =
                 std::max<BurstIndex>(1, ((target - cursorBase) / std::max<BurstIndex>(1, videoFrameStep)) + 2);
-            const int maxPackets = static_cast<int>(std::clamp<BurstIndex>(framesNeeded * 16, 320, 2048));
-            for (int tries = 0; tries < maxPackets; ++tries) {
+            // Budget must count *video* packets only: the file demuxer returns interleaved audio/subtitle/etc.
+            // packets on the same FormatContext. Capping total readPacket() calls caused "decode exhausted"
+            // on dense interleave (common on high-bitrate FullHD) while the decoder was still catching up.
+            const int maxVideoPackets =
+                static_cast<int>(std::clamp<BurstIndex>(framesNeeded * 64, 512, 16384));
+            constexpr int kMaxDemuxReads = 131072;
+            int demuxReads = 0;
+            int videoPackets = 0;
+            while (demuxReads < kMaxDemuxReads) {
+                if (videoPackets >= maxVideoPackets) {
+                    break;
+                }
                 Packet pkt = videoInput.readPacket(ec);
+                ++demuxReads;
                 gAvcppPacketReads.fetch_add(1);
                 if (ec || !pkt) {
                     ec.clear();
@@ -460,6 +471,7 @@ public:
                     continue;
                 }
                 VideoFrame frame = videoDec->decode(pkt, ec);
+                ++videoPackets;
                 gAvcppVideoDecodeCalls.fetch_add(1);
                 if (ec || frame.isNull() || !frame.isComplete()) {
                     ec.clear();

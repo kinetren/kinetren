@@ -123,6 +123,8 @@ protected:
     QHash<int, MorpherEditWindow *> morpherEditWindows;
     QPointer<PerformanceDiagnosticsWindow> performanceDiagnosticsWindow;
     quint64 lastResourceUnusedEvictions = 0;
+    quint64 lastResourceCacheMissesSnap = 0;
+    quint64 lastAudioCacheMissesSnap = 0;
     QCheckBox *frontScalerCheck = nullptr;
     QCheckBox *previewSmoothScalingCheck = nullptr;
     QCheckBox *previewAntialiasingCheck = nullptr;

@@ -1640,6 +1640,8 @@ void MainWindow::refreshPerformancePanel()
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
     const qint64 prevPerfSampleMs = lastPerfSampleMs;
     const quint64 prevUnusedEvictions = lastResourceUnusedEvictions;
+    const quint64 prevResourceMisses = lastResourceCacheMissesSnap;
+    const quint64 prevAudioMisses = lastAudioCacheMissesSnap;
     double avcppCallsPerSec = 0.0;
     double avcppOpenPerSec = 0.0;
     double avcppReadPerSec = 0.0;
@@ -1660,6 +1662,33 @@ void MainWindow::refreshPerformancePanel()
             perSec((stats.avcppVideoDecodeCalls >= lastAvcppVideoDecodeCalls) ? (stats.avcppVideoDecodeCalls - lastAvcppVideoDecodeCalls) : 0);
         avcppAudioDecodePerSec =
             perSec((stats.avcppAudioDecodeCalls >= lastAvcppAudioDecodeCalls) ? (stats.avcppAudioDecodeCalls - lastAvcppAudioDecodeCalls) : 0);
+    }
+    double noReadDropsPerSec = 0.0;
+    double resourceMissesPerSec = 0.0;
+    double audioMissesPerSec = 0.0;
+    const qint64 diagDeltaMs =
+        (prevPerfSampleMs > 0 && nowMs > prevPerfSampleMs) ? (nowMs - prevPerfSampleMs) : 0;
+    if (performanceDiagnosticsWindow && diagDeltaMs > 0) {
+        const auto perSecDiag = [diagDeltaMs](quint64 deltaValue) {
+            return (diagDeltaMs > 0) ? (static_cast<double>(deltaValue) * 1000.0 / static_cast<double>(diagDeltaMs)) : 0.0;
+        };
+        const quint64 dEv = (stats.resourceCacheEvictions >= prevUnusedEvictions)
+            ? (stats.resourceCacheEvictions - prevUnusedEvictions)
+            : 0;
+        const quint64 dMiss = (stats.resourceCacheMisses >= prevResourceMisses)
+            ? (stats.resourceCacheMisses - prevResourceMisses)
+            : 0;
+        const quint64 dAudMiss = (stats.audioCacheMisses >= prevAudioMisses)
+            ? (stats.audioCacheMisses - prevAudioMisses)
+            : 0;
+        noReadDropsPerSec = perSecDiag(dEv);
+        resourceMissesPerSec = perSecDiag(dMiss);
+        audioMissesPerSec = perSecDiag(dAudMiss);
+        constexpr double kPoolMaxEntries = 384.0;
+        const double cacheOccupancyPct =
+            std::min(100.0, (static_cast<double>(stats.resourceCacheEntries) * 100.0) / kPoolMaxEntries);
+        performanceDiagnosticsWindow->ingestDiagnosticsSamples(
+            noReadDropsPerSec, resourceMissesPerSec, cacheOccupancyPct, audioMissesPerSec);
     }
     lastPerfSampleMs = nowMs;
     lastAvcppTotalCalls = avcppTotalCalls;
@@ -1749,6 +1778,8 @@ void MainWindow::refreshPerformancePanel()
     }
 
     lastResourceUnusedEvictions = stats.resourceCacheEvictions;
+    lastResourceCacheMissesSnap = stats.resourceCacheMisses;
+    lastAudioCacheMissesSnap = stats.audioCacheMisses;
 }
 
 bool MainWindow::saveProjectToPath(const QString &path, bool silent)

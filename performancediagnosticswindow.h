@@ -3,19 +3,27 @@
 
 #include <QWidget>
 
+class MultiLineGraphWidget;
 class QTextBrowser;
 
-/// Utility window (same window flags as Morpher) for diagnostic log only (no duplicate performance graphs).
+/// Utility window (Morpher-style): log + graphs that do **not** duplicate the main PerformanceWidget charts.
 class PerformanceDiagnosticsWindow : public QWidget
 {
 public:
     explicit PerformanceDiagnosticsWindow(QWidget *parent = nullptr);
+
+    /// Rates / levels not shown on the main panel (no FPS / hit% / avcpp totals there).
+    void ingestDiagnosticsSamples(double noReadDropsPerSec,
+                                   double resourceCacheMissesPerSec,
+                                   double cacheOccupancyPct,
+                                   double audioCacheMissesPerSec);
 
     void appendProblem(const QString &line);
     void clearProblems();
 
 private:
     QTextBrowser *logBrowser = nullptr;
+    MultiLineGraphWidget *churnGraph = nullptr;
 };
 
 #endif

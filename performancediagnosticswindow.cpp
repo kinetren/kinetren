@@ -1,5 +1,7 @@
 #include "performancediagnosticswindow.h"
 
+#include "multilinegraphwidget.h"
+
 #include <QApplication>
 #include <QDateTime>
 #include <QHBoxLayout>
@@ -15,8 +17,8 @@ PerformanceDiagnosticsWindow::PerformanceDiagnosticsWindow(QWidget *parent)
     setWindowFlags(Qt::Tool | Qt::Window | Qt::WindowCloseButtonHint | Qt::WindowMinimizeButtonHint |
                    Qt::WindowMaximizeButtonHint);
     setAttribute(Qt::WA_DeleteOnClose, true);
-    setMinimumSize(520, 360);
-    resize(680, 520);
+    setMinimumSize(520, 480);
+    resize(720, 560);
     setWindowTitle(tr("Performance diagnostics"));
     if (QWidget *pw = parentWidget()) {
         setFont(pw->font());
@@ -51,16 +53,41 @@ PerformanceDiagnosticsWindow::PerformanceDiagnosticsWindow(QWidget *parent)
     logBrowser->setReadOnly(true);
     logBrowser->setOpenExternalLinks(false);
     logBrowser->document()->setMaximumBlockCount(800);
-    logBrowser->setMinimumHeight(220);
+    logBrowser->setMinimumHeight(160);
+
+    churnGraph = new MultiLineGraphWidget(
+        tr("Cache churn (not on main panel)"),
+        {tr("No-read drops/s"),
+         tr("Res.cache miss/s"),
+         tr("Cache occupancy %"),
+         tr("Audio cache miss/s")},
+        {QColor(255, 120, 120), QColor(255, 180, 70), QColor(120, 200, 255), QColor(200, 140, 255)},
+        {80.0, 2000.0, 100.0, 400.0},
+        MultiLineAxisStyle::NormalizedPercentGrid,
+        180,
+        this);
+    churnGraph->setMinimumHeight(220);
 
     auto *lay = new QVBoxLayout(this);
     lay->setContentsMargins(12, 10, 12, 10);
     lay->setSpacing(8);
     lay->addLayout(titleRow);
-    lay->addWidget(logBrowser, 1);
+    lay->addWidget(logBrowser, 2);
+    lay->addWidget(churnGraph, 3);
 
-    appendProblem(tr("Decode / seek / I/O issues from burstcon and the timeline strip appear here. "
-                     "Open this window before reproducing a problem so the handler is armed."));
+    appendProblem(tr("Main window graphs: Quality (FPS, hit %…) and avcpp Activity (read/decode/s…). "
+                     "Here: drop rate, ConCache miss rate, occupancy, audio-cache miss rate."));
+}
+
+void PerformanceDiagnosticsWindow::ingestDiagnosticsSamples(const double noReadDropsPerSec,
+                                                              const double resourceCacheMissesPerSec,
+                                                              const double cacheOccupancyPct,
+                                                              const double audioCacheMissesPerSec)
+{
+    if (!churnGraph) {
+        return;
+    }
+    churnGraph->addSample({noReadDropsPerSec, resourceCacheMissesPerSec, cacheOccupancyPct, audioCacheMissesPerSec});
 }
 
 void PerformanceDiagnosticsWindow::appendProblem(const QString &line)
