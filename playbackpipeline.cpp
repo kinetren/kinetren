@@ -78,6 +78,29 @@ burstcon::BurstQuality decodeBurstQuality(const ProjectSettings &settings)
     return burstcon::BurstQuality{0, 0};
 }
 
+/// Hard upper bound for **realtime** preview / playback / prefetch in this pipeline only.
+/// Export and draft render elsewhere may use full `decodeBurstQuality`; FHD/4K full-RGB here stalls the machine.
+burstcon::BurstQuality decodeRealtimePipelineVideoQuality(const ProjectSettings &settings)
+{
+    QSize q;
+    if (settings.scaleVideoAtDisplayTime) {
+        q = settings.cacheResolution();
+    } else {
+        // Match old "full decode" intent for the panel, but never ask the decoder for >1080p-class RGB.
+        q = QSize(1920, 1080);
+    }
+    const QSize cap(1920, 1080);
+    if (q.isEmpty() || q.width() < 1 || q.height() < 1) {
+        q = QSize(960, 540);
+    }
+    if (q.width() > cap.width() || q.height() > cap.height()) {
+        q = q.scaled(cap, Qt::KeepAspectRatio);
+    }
+    q.setWidth(std::max(320, q.width()));
+    q.setHeight(std::max(180, q.height()));
+    return burstcon::BurstQuality{q.width(), q.height()};
+}
+
 QVector<QPair<double, double>> segmentsFromBucketsAlongSpan(const std::unordered_set<qint64> &buckets,
                                                             qint64 spanStartMs,
                                                             qint64 spanEndMs)
@@ -369,7 +392,7 @@ void PlaybackPipeline::preparePlaybackAt(qint64 startTimelineMs)
         }
         pushAudioBurst(burst);
     };
-    const burstcon::BurstQuality q = decodeBurstQuality(projectSettings);
+    const burstcon::BurstQuality q = decodeRealtimePipelineVideoQuality(projectSettings);
     {
         std::lock_guard<std::mutex> lock(mutex);
         timer->setVideoRequestQuality(q);
@@ -393,7 +416,7 @@ void PlaybackPipeline::warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 h
     {
         std::lock_guard<std::mutex> lock(mutex);
         localRoot = root;
-        quality = decodeBurstQuality(projectSettings);
+        quality = decodeRealtimePipelineVideoQuality(projectSettings);
         fps = std::max(1, projectSettings.fps);
         pbMode = playbackMode;
         regStartMs = playbackRegionStartMs;
@@ -667,7 +690,7 @@ QImage PlaybackPipeline::renderDraftFrame(qint64 tMs, const std::vector<Clip> &v
     }
     burstcon::BurstRequest req;
     req.index = burstcon::alignBurstIndexToOutputVideoFrame(fps, burstcon::msToBurstIndex(tMs));
-    req.quality = decodeBurstQuality(projectSettings);
+    req.quality = decodeRealtimePipelineVideoQuality(projectSettings);
     burstcon::VideoBurst out;
     if (root && root->videoBurst(req, out) && !out.frame.isNull()) {
         return out.frame;
@@ -690,7 +713,7 @@ void PlaybackPipeline::setProjectSettings(const ProjectSettings &settings)
     std::lock_guard<std::mutex> lock(mutex);
     projectSettings = settings;
     if (timer) {
-        timer->setVideoRequestQuality(decodeBurstQuality(projectSettings));
+        timer->setVideoRequestQuality(decodeRealtimePipelineVideoQuality(projectSettings));
         timer->setPlaybackVideoFps(std::max(1, projectSettings.fps));
     }
 }
@@ -1126,7 +1149,7 @@ void PlaybackPipeline::prefetchWorkerLoop()
         {
             std::lock_guard<std::mutex> lock(mutex);
             localRoot = root;
-            quality = decodeBurstQuality(projectSettings);
+            quality = decodeRealtimePipelineVideoQuality(projectSettings);
             fps = std::max(1, projectSettings.fps);
             pbMode = playbackMode;
             regStartMs = playbackRegionStartMs;
