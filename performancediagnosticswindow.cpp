@@ -1,7 +1,5 @@
 #include "performancediagnosticswindow.h"
 
-#include "multilinegraphwidget.h"
-
 #include <QApplication>
 #include <QDateTime>
 #include <QHBoxLayout>
@@ -17,8 +15,8 @@ PerformanceDiagnosticsWindow::PerformanceDiagnosticsWindow(QWidget *parent)
     setWindowFlags(Qt::Tool | Qt::Window | Qt::WindowCloseButtonHint | Qt::WindowMinimizeButtonHint |
                    Qt::WindowMaximizeButtonHint);
     setAttribute(Qt::WA_DeleteOnClose, true);
-    setMinimumSize(520, 420);
-    resize(640, 480);
+    setMinimumSize(520, 360);
+    resize(680, 520);
     setWindowTitle(tr("Performance diagnostics"));
     if (QWidget *pw = parentWidget()) {
         setFont(pw->font());
@@ -42,7 +40,7 @@ PerformanceDiagnosticsWindow::PerformanceDiagnosticsWindow(QWidget *parent)
         "QPushButton:pressed { background: #161b22; }\n"));
 
     auto *titleRow = new QHBoxLayout();
-    auto *title = new QLabel(tr("Problems & cache pressure"), this);
+    auto *title = new QLabel(tr("Diagnostics log"), this);
     title->setObjectName(QStringLiteral("PerfDiagTitle"));
     auto *clearBtn = new QPushButton(tr("Clear log"), this);
     connect(clearBtn, &QPushButton::clicked, this, [this]() { clearProblems(); });
@@ -52,39 +50,17 @@ PerformanceDiagnosticsWindow::PerformanceDiagnosticsWindow(QWidget *parent)
     logBrowser = new QTextBrowser(this);
     logBrowser->setReadOnly(true);
     logBrowser->setOpenExternalLinks(false);
-    logBrowser->document()->setMaximumBlockCount(400);
-    logBrowser->setMinimumHeight(140);
-
-    graph = new MultiLineGraphWidget(
-        tr("Cache / decode (rolling)"),
-        {tr("Unused evict/s"), tr("VDec/s"), tr("Res.hit %"), tr("Cache fill %")},
-        {QColor(255, 120, 120), QColor(95, 209, 155), QColor(74, 166, 255), QColor(250, 190, 76)},
-        {40.0, 1200.0, 100.0, 100.0},
-        MultiLineAxisStyle::NormalizedPercentGrid,
-        180,
-        this);
-    graph->setMinimumHeight(200);
+    logBrowser->document()->setMaximumBlockCount(800);
+    logBrowser->setMinimumHeight(220);
 
     auto *lay = new QVBoxLayout(this);
     lay->setContentsMargins(12, 10, 12, 10);
     lay->setSpacing(8);
     lay->addLayout(titleRow);
     lay->addWidget(logBrowser, 1);
-    lay->addWidget(graph, 2);
 
-    appendProblem(tr("Tip: “Unused evict” counts ConCache video frames removed by LRU or overwritten "
-                     "before any read — heavy prefetch vs tight limits shows up here."));
-}
-
-void PerformanceDiagnosticsWindow::ingestGraphSample(const double unusedEvictPerSec,
-                                                     const double videoDecodePerSec,
-                                                     const double resourceHitPct,
-                                                     const double cacheEntriesPercent)
-{
-    if (!graph) {
-        return;
-    }
-    graph->addSample({unusedEvictPerSec, videoDecodePerSec, resourceHitPct, cacheEntriesPercent});
+    appendProblem(tr("Decode / seek / I/O issues from burstcon and the timeline strip appear here. "
+                     "Open this window before reproducing a problem so the handler is armed."));
 }
 
 void PerformanceDiagnosticsWindow::appendProblem(const QString &line)
@@ -92,7 +68,7 @@ void PerformanceDiagnosticsWindow::appendProblem(const QString &line)
     if (!logBrowser) {
         return;
     }
-    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss.zzz"));
     logBrowser->append(QStringLiteral("[%1] %2").arg(stamp, line));
 }
 

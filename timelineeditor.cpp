@@ -1,5 +1,7 @@
 #include "timelineeditor.h"
 #include "burstcon.h"
+
+#include <QDateTime>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QContextMenuEvent>
@@ -3444,10 +3446,25 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
         return QImage();
     }
     // Prevent preview decoder flood while timeline is repainting rapidly.
-    if (pendingPreviewKeys.size() >= 12) {
+    if (pendingPreviewKeys.size() >= 32) {
+        static std::atomic<qint64> sLastStripQueueDiagMs{0};
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        qint64 prev = sLastStripQueueDiagMs.load();
+        if (now - prev > 4000 && sLastStripQueueDiagMs.compare_exchange_strong(prev, now)) {
+            burstcon::reportBurstconDiagnostic(
+                QStringLiteral("strip thumbnails: pending preview keys >= 32 (queue saturated); "
+                               "increase interval or reduce repaint rate."));
+        }
         return QImage();
     }
-    if (gStripPreviewDecodeJobs.load() >= 3) {
+    if (gStripPreviewDecodeJobs.load() >= 8) {
+        static std::atomic<qint64> sLastStripJobsDiagMs{0};
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        qint64 prev = sLastStripJobsDiagMs.load();
+        if (now - prev > 4000 && sLastStripJobsDiagMs.compare_exchange_strong(prev, now)) {
+            burstcon::reportBurstconDiagnostic(
+                QStringLiteral("strip thumbnails: concurrent decode jobs >= 8 (cap hit)."));
+        }
         return QImage();
     }
     pendingPreviewKeys.insert(cacheKey);
@@ -3505,6 +3522,25 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
             burstcon::VideoBurst frame;
             if (media && media->videoBurst(req, frame) && !frame.frame.isNull()) {
                 img = frame.frame;
+            } else if (media) {
+                static std::atomic<qint64> sLastPreviewFailMs{0};
+                const qint64 now = QDateTime::currentMSecsSinceEpoch();
+                qint64 prev = sLastPreviewFailMs.load();
+                if (now - prev > 2000 && sLastPreviewFailMs.compare_exchange_strong(prev, now)) {
+                    burstcon::reportBurstconDiagnostic(
+                        QStringLiteral("strip preview decode miss path=%1 bucketMs=%2 idx=%3")
+                            .arg(path)
+                            .arg(bucketMs)
+                            .arg(req.index));
+                }
+            } else {
+                static std::atomic<qint64> sLastAcquireFailMs{0};
+                const qint64 now = QDateTime::currentMSecsSinceEpoch();
+                qint64 prev = sLastAcquireFailMs.load();
+                if (now - prev > 5000 && sLastAcquireFailMs.compare_exchange_strong(prev, now)) {
+                    burstcon::reportBurstconDiagnostic(
+                        QStringLiteral("strip preview acquire returned null path=%1").arg(path));
+                }
             }
         }
         if (img.isNull() && isImagePath(path)) {

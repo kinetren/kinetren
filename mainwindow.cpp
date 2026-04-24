@@ -1645,7 +1645,6 @@ void MainWindow::refreshPerformancePanel()
     double avcppReadPerSec = 0.0;
     double avcppVideoDecodePerSec = 0.0;
     double avcppAudioDecodePerSec = 0.0;
-    double cacheUnusedEvictPerSec = 0.0;
     qint64 perfDeltaMs = 0;
     if (prevPerfSampleMs > 0 && nowMs > prevPerfSampleMs && avcppTotalCalls >= lastAvcppTotalCalls) {
         perfDeltaMs = nowMs - prevPerfSampleMs;
@@ -1661,10 +1660,6 @@ void MainWindow::refreshPerformancePanel()
             perSec((stats.avcppVideoDecodeCalls >= lastAvcppVideoDecodeCalls) ? (stats.avcppVideoDecodeCalls - lastAvcppVideoDecodeCalls) : 0);
         avcppAudioDecodePerSec =
             perSec((stats.avcppAudioDecodeCalls >= lastAvcppAudioDecodeCalls) ? (stats.avcppAudioDecodeCalls - lastAvcppAudioDecodeCalls) : 0);
-        const quint64 du = (stats.resourceCacheEvictions >= prevUnusedEvictions)
-            ? (stats.resourceCacheEvictions - prevUnusedEvictions)
-            : 0;
-        cacheUnusedEvictPerSec = perSec(du);
     }
     lastPerfSampleMs = nowMs;
     lastAvcppTotalCalls = avcppTotalCalls;
@@ -1742,23 +1737,14 @@ void MainWindow::refreshPerformancePanel()
         avcppVideoDecodePerSec,
         avcppAudioDecodePerSec);
 
-    if (performanceDiagnosticsWindow) {
-        constexpr double kMaxEntriesForPct = 256.0;
-        const double cacheFillPct =
-            std::min(100.0, (static_cast<double>(stats.resourceCacheEntries) * 100.0) / kMaxEntriesForPct);
-        performanceDiagnosticsWindow->ingestGraphSample(cacheUnusedEvictPerSec,
-                                                        avcppVideoDecodePerSec,
-                                                        resourceHitPct,
-                                                        cacheFillPct);
-        if (perfDeltaMs > 0) {
-            const quint64 duThisTick = (stats.resourceCacheEvictions >= prevUnusedEvictions)
-                ? (stats.resourceCacheEvictions - prevUnusedEvictions)
-                : 0;
-            if (duThisTick > 0) {
-                performanceDiagnosticsWindow->appendProblem(
-                    tr("Resource video cache dropped %1 frame(s) before any read (LRU cap, overwrite, or invalidate).")
-                        .arg(duThisTick));
-            }
+    if (performanceDiagnosticsWindow && perfDeltaMs > 0) {
+        const quint64 duThisTick = (stats.resourceCacheEvictions >= prevUnusedEvictions)
+            ? (stats.resourceCacheEvictions - prevUnusedEvictions)
+            : 0;
+        if (duThisTick > 0) {
+            performanceDiagnosticsWindow->appendProblem(
+                tr("Resource video cache dropped %1 frame(s) before any read (LRU cap, overwrite, or invalidate).")
+                    .arg(duThisTick));
         }
     }
 
@@ -1999,7 +1985,21 @@ void MainWindow::openPerformanceDiagnosticsWindow()
     }
     auto *w = new PerformanceDiagnosticsWindow(this);
     performanceDiagnosticsWindow = w;
-    connect(w, &QObject::destroyed, this, [this]() { performanceDiagnosticsWindow = nullptr; });
+    burstcon::setBurstconDiagnosticHandler([this](const QString &msg) {
+        QPointer<PerformanceDiagnosticsWindow> wg = performanceDiagnosticsWindow;
+        QMetaObject::invokeMethod(
+            this,
+            [wg, msg]() {
+                if (wg) {
+                    wg->appendProblem(msg);
+                }
+            },
+            Qt::QueuedConnection);
+    });
+    connect(w, &QObject::destroyed, this, [this]() {
+        burstcon::setBurstconDiagnosticHandler(nullptr);
+        performanceDiagnosticsWindow = nullptr;
+    });
     w->show();
     QPointer<PerformanceDiagnosticsWindow> guard(w);
     QTimer::singleShot(0, w, [guard]() {

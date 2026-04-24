@@ -308,6 +308,8 @@ public:
         audioDec.reset();
         videoRescaler.reset();
         audioResampler.reset();
+        scalerSrcW = 0;
+        scalerSrcH = 0;
         videoInput.close();
         audioInput.close();
         videoPrimed = false;
@@ -318,10 +320,12 @@ public:
             gAvcppOpenCalls.fetch_add(1);
             videoInput.openInput(path.toStdString(), ec);
             if (ec) {
+                reportBurstconDiagnostic(QStringLiteral("video openInput failed path=%1").arg(path));
                 return false;
             }
             videoInput.findStreamInfo(ec);
             if (ec || !openVideoDecoderLocked()) {
+                reportBurstconDiagnostic(QStringLiteral("video findStreamInfo/openDecoder failed path=%1").arg(path));
                 return false;
             }
         }
@@ -329,10 +333,12 @@ public:
             gAvcppOpenCalls.fetch_add(1);
             audioInput.openInput(path.toStdString(), ec);
             if (ec) {
+                reportBurstconDiagnostic(QStringLiteral("audio openInput failed path=%1").arg(path));
                 return false;
             }
             audioInput.findStreamInfo(ec);
             if (ec || !openAudioDecoderLocked(48000, 2, kDefaultAudioSamplesPerBurst)) {
+                reportBurstconDiagnostic(QStringLiteral("audio findStreamInfo/openDecoder failed path=%1").arg(path));
                 return false;
             }
         }
@@ -425,6 +431,12 @@ public:
                 lastVideoFailedTarget = target;
                 lastVideoFailedOrigin = decodeOrigin;
                 ++videoFailureStreak;
+                reportBurstconDiagnostic(
+                    QStringLiteral("video seek failed path=%1 seekGoal=%2 target=%3 decodeOrigin=%4")
+                        .arg(path)
+                        .arg(seekGoal)
+                        .arg(target)
+                        .arg(decodeOrigin));
                 return false;
             }
             videoPrimedOrigin = decodeOrigin;
@@ -466,6 +478,15 @@ public:
                 // context (anamorphic / SAR), causing perpetual L1 misses and decode storms.
                 const int dstW = outRgbW;
                 const int dstH = outRgbH;
+                const int codedW = frame.width();
+                const int codedH = frame.height();
+                if (codedW > 0 && codedH > 0 &&
+                    (!videoRescaler || codedW != scalerSrcW || codedH != scalerSrcH)) {
+                    videoRescaler = std::make_unique<VideoRescaler>(
+                        codedW, codedH, AV_PIX_FMT_RGB24, av::SwsFlagFastBilinear);
+                    scalerSrcW = codedW;
+                    scalerSrcH = codedH;
+                }
                 VideoFrame rgbFrame{AV_PIX_FMT_RGB24, dstW, dstH};
                 std::error_code rescaleEc;
                 videoRescaler->rescale(rgbFrame, frame, rescaleEc);
@@ -544,18 +565,23 @@ public:
         if (picked.isNull()) {
             const BurstIndex resyncGoal = std::max<BurstIndex>(0, std::max(decodeOrigin, target));
             if (seekVideoLocked(resyncGoal)) {
-                videoPrimedOrigin = decodeOrigin;
                 decodeForward(picked, pickedIndex);
             }
         }
         if (picked.isNull() && requestedDecodeOrigin > 0 && seekVideoLocked(0)) {
-            videoPrimedOrigin = requestedDecodeOrigin;
             decodeForward(picked, pickedIndex);
         }
         if (picked.isNull()) {
             lastVideoFailedTarget = target;
             lastVideoFailedOrigin = requestedDecodeOrigin;
             ++videoFailureStreak;
+            reportBurstconDiagnostic(
+                QStringLiteral("video decode exhausted path=%1 target=%2 decodeOrigin=%3 step=%4 streak=%5")
+                    .arg(path)
+                    .arg(target)
+                    .arg(requestedDecodeOrigin)
+                    .arg(videoFrameStep)
+                    .arg(videoFailureStreak));
             return false;
         }
         lastVideoFailedTarget = -1;
@@ -582,6 +608,8 @@ public:
         const int outSamples = std::max(1, samplesPerBurst);
         if (outRate != audioOutRate || outChannels != audioOutChannels || outSamples != audioOutSamplesPerBurst) {
             if (!openAudioDecoderLocked(outRate, outChannels, outSamples)) {
+                reportBurstconDiagnostic(
+                    QStringLiteral("audio decoder reopen failed path=%1 rate=%2 ch=%3").arg(path).arg(outRate).arg(outChannels));
                 return false;
             }
         }
@@ -608,6 +636,10 @@ public:
                 lastAudioFailedTarget = target;
                 lastAudioFailedOrigin = decodeOrigin;
                 ++audioFailureStreak;
+                reportBurstconDiagnostic(QStringLiteral("audio seek failed path=%1 target=%2 decodeOrigin=%3")
+                                              .arg(path)
+                                              .arg(target)
+                                              .arg(decodeOrigin));
                 return false;
             }
         }
@@ -682,6 +714,7 @@ private:
         std::error_code ec;
         auto st = videoInput.stream(static_cast<size_t>(videoStream));
         if (st.isNull()) {
+            reportBurstconDiagnostic(QStringLiteral("video stream null path=%1").arg(path));
             return false;
         }
         auto dec = std::make_unique<VideoDecoderContext>(st);
@@ -696,12 +729,19 @@ private:
         const std::string threadsOpt = std::to_string(threadCount);
         dec->open(Dictionary{{"threads", threadsOpt.c_str()}}, ec);
         if (ec) {
+            reportBurstconDiagnostic(
+                QStringLiteral("video decoder open failed path=%1 (%2x%3)")
+                    .arg(path)
+                    .arg(dec->width())
+                    .arg(dec->height()));
             return false;
         }
         auto scaler = std::make_unique<VideoRescaler>(
             dec->width(), dec->height(), AV_PIX_FMT_RGB24, av::SwsFlagFastBilinear);
         videoDec = std::move(dec);
         videoRescaler = std::move(scaler);
+        scalerSrcW = videoDec->width();
+        scalerSrcH = videoDec->height();
         return true;
     }
 
@@ -772,6 +812,8 @@ private:
         // Recreate the decoder after every seek so DPB / threading state matches a fresh
         // open at the keyframe (flush alone is not reliable with frame-threaded H.264).
         if (!openVideoDecoderLocked()) {
+            reportBurstconDiagnostic(
+                QStringLiteral("video decoder reopen after seek failed path=%1").arg(path));
             return false;
         }
         videoCursorIndex = seekIndex - videoFrameStep;
@@ -868,6 +910,8 @@ private:
     int audioFailureStreak = 0;
     std::map<DecodedVideoFrameKey, QImage> videoFrameCache;
     uint64_t videoFrameBytesUsed = 0;
+    int scalerSrcW = 0;
+    int scalerSrcH = 0;
     std::map<BurstIndex, AudioBurst> audioBurstCache;
     std::deque<int16_t> audioPending;
     BurstOriginInfo origin;
@@ -961,6 +1005,17 @@ bool ConCache::burst(BurstType type, const BurstRequest &request, BurstPayload &
         return true;
     }
     if (!upstream->videoBurst(effective, videoOut)) {
+        static std::atomic<uint64_t> sConCacheVideoFailN{0};
+        const uint64_t n = ++sConCacheVideoFailN;
+        if ((n % 48u) == 1u) {
+            reportBurstconDiagnostic(
+                QStringLiteral("ConCache upstream videoBurst failed (sample %1) media=%2 idx=%3 q=%4x%5")
+                    .arg(n)
+                    .arg(mediaPath)
+                    .arg(effective.index)
+                    .arg(effective.quality.width)
+                    .arg(effective.quality.height));
+        }
         return false;
     }
     put(key, videoOut, effective.index);
@@ -1820,6 +1875,27 @@ void resetMetrics()
     gCacheMisses.store(0);
     gCacheEntries.store(0);
     gCacheVideoUnusedEvictions.store(0);
+}
+
+static std::mutex gDiagnosticMutex;
+static std::function<void(const QString &)> gDiagnosticHandler;
+
+void setBurstconDiagnosticHandler(std::function<void(const QString &)> handler)
+{
+    std::lock_guard<std::mutex> lock(gDiagnosticMutex);
+    gDiagnosticHandler = std::move(handler);
+}
+
+void reportBurstconDiagnostic(const QString &message)
+{
+    std::function<void(const QString &)> cb;
+    {
+        std::lock_guard<std::mutex> lock(gDiagnosticMutex);
+        cb = gDiagnosticHandler;
+    }
+    if (cb) {
+        cb(message);
+    }
 }
 
 } // namespace burstcon

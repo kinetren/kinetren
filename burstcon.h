@@ -84,9 +84,9 @@ public:
 };
 
 struct ConCacheConfig {
-    size_t maxEntries = 256*94024;
-    size_t maxAudioEntries = 128*14024;
-    size_t maxVideoEntries = 128*14024;
+    size_t maxEntries = 384;
+    size_t maxAudioEntries = 192;
+    size_t maxVideoEntries = 256;
     uint64_t maxVideoBytes = 2048ULL * 1024ULL * 1024ULL;
     BurstIndex preloadAheadTicks = kBurstTimebaseHz; // +1 second
     int preloadStepHz = 1;//30*60;
@@ -375,6 +375,10 @@ BurstIndex alignBurstIndexToOutputVideoFrame(int outputFps, BurstIndex index);
 
 BurstconMetrics metricsSnapshot();
 void resetMetrics();
+
+/// Optional UI hook (diagnostics log). Thread-safe; handler should marshal to the GUI thread.
+void setBurstconDiagnosticHandler(std::function<void(const QString &)> handler);
+void reportBurstconDiagnostic(const QString &message);
 
 } // namespace burstcon
 
