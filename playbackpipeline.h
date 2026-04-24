@@ -85,7 +85,10 @@ public:
     /// Video: ConCache-backed (updates on LRU evict). Sliding = full timeline occupancy; head = sliding ∩ first ~1.5s of the playback region (composition time).
     QHash<QString, QVector<QPair<double, double>>> videoFrameSlidingSegments(const std::vector<Clip> &clips) const;
     QHash<QString, QVector<QPair<double, double>>> videoFrameHeadSegments(const std::vector<Clip> &clips) const;
-    QVector<QPair<double, double>> timelineVideoSlidingSegments(qint64 viewStartMs, qint64 viewEndMs) const;
+    /// When `forwardAnchorMs >= 0`, the project strip only draws coverage at/after that time (lookahead).
+    QVector<QPair<double, double>> timelineVideoSlidingSegments(qint64 viewStartMs,
+                                                               qint64 viewEndMs,
+                                                               qint64 forwardAnchorMs = -1) const;
     QVector<QPair<double, double>> timelineVideoHeadSegments(qint64 viewStartMs, qint64 viewEndMs) const;
     QHash<QString, QVector<QPair<double, double>>> audioCacheSegments(const std::vector<Clip> &clips) const;
     static QString coverageClipKey(const Clip &clip);

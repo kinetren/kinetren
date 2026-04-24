@@ -339,7 +339,7 @@ private:
     QVector<QPair<int, int>> decodeAudioPeaksStereoSync(const QString &path,
                                                         qint64 sourceInMs,
                                                         qint64 durationMs,
-                                                        int sampleCount) const;
+                                                        int peakColumns) const;
     void commitPeaksCacheFromWorker(const QString &key, const QVector<QPair<int, int>> &peaks);
     static QString peaksCacheKey(const QString &path,
                                  qint64 sourceInMs,

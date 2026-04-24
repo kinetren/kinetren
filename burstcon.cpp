@@ -1659,7 +1659,9 @@ void MonotonicPlaybackTimer::runLoop()
                         loopStart = now;
                         startIndex = current;
                         lastVideoRequest = current - std::max<BurstIndex>(1, videoStep);
-                        lastAudioRequest = current;
+                        const BurstIndex audioStepWrap = std::max<BurstIndex>(
+                            1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / 48000);
+                        lastAudioRequest = current - std::max<BurstIndex>(1, audioStepWrap);
                     } else {
                         current = localRegionEnd;
                         running.store(false);
@@ -1672,21 +1674,20 @@ void MonotonicPlaybackTimer::runLoop()
         index.store(current);
 
         if (localSource) {
-            const BurstOriginInfo info = localSource->originInfo();
             const BurstIndex audioStep = std::max<BurstIndex>(1, (kBurstTimebaseHz * kDefaultAudioSamplesPerBurst) / 48000);
 
             BurstRequest videoRequest;
             videoRequest.index = (current / videoStep) * videoStep;
+            // Always use the project decode quality. Replacing 0×0 with sourceVideoQuality here
+            // changes ConCache keys vs prefetch/warmup (which use decodeBurstQuality) and causes
+            // constant cache misses, sparse video (~10–15 s picture updates), and audio starvation.
             videoRequest.quality = localVideoRequestQuality;
-            if (videoRequest.quality.width <= 0 || videoRequest.quality.height <= 0) {
-                videoRequest.quality = info.sourceVideoQuality;
-            }
             if (current - lastVideoRequest >= videoStep) {
                 VideoBurst vb;
                 if (localSource->videoBurst(videoRequest, vb) && localCallbacks.onVideo) {
                     localCallbacks.onVideo(std::move(vb));
                 }
-                lastVideoRequest = current;
+                lastVideoRequest = videoRequest.index;
             }
 
             BurstRequest audioRequest;
@@ -1696,7 +1697,7 @@ void MonotonicPlaybackTimer::runLoop()
                 if (localSource->audioBurst(audioRequest, ab) && localCallbacks.onAudio) {
                     localCallbacks.onAudio(ab);
                 }
-                lastAudioRequest = current;
+                lastAudioRequest = audioRequest.index;
             }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(3));

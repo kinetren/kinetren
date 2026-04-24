@@ -9,7 +9,10 @@
 #include <QAudioOutput>
 #endif
 #include <QAudioFormat>
+#include <QFileInfo>
+#include <QFont>
 #include <QIODevice>
+#include <QPainter>
 
 #include <algorithm>
 #include <chrono>
@@ -34,7 +37,7 @@ constexpr qint64 kPrefetchAheadMs = 12000;
 constexpr qint64 kIdleScrubPrefetchAheadMs = 5000;
 /// While playing, prefetch only this far ahead. A full `kPrefetchAheadMs` window fights
 /// `MonotonicPlaybackTimer` for one `ConMedia` decoder and explodes readPacket/decode rates.
-constexpr qint64 kPrefetchDuringPlayAheadMs = 2200;
+constexpr qint64 kPrefetchDuringPlayAheadMs = 1600;
 constexpr qint64 kPrefetchPlayRescheduleMs = 2000;
 /// For prefetch/warmup spans up to this length, step video at output FPS so ConCache keys match playback.
 /// Wider sparse steps add different indices than the timer, evict playback frames in LRU and break short loops.
@@ -105,6 +108,93 @@ QVector<QPair<double, double>> segmentsFromBucketsAlongSpan(const std::unordered
         segs.push_back({std::clamp(a, 0.0, 1.0), 1.0});
     }
     return segs;
+}
+
+/// Project-ruler strip: only show coverage at/after `forwardAnchorMs` (lookahead from playhead).
+QVector<QPair<double, double>> segmentsFromBucketsAlongSpanForward(const std::unordered_set<qint64> &buckets,
+                                                                   qint64 spanStartMs,
+                                                                   qint64 spanEndMs,
+                                                                   qint64 forwardAnchorMs)
+{
+    if (forwardAnchorMs < 0) {
+        return segmentsFromBucketsAlongSpan(buckets, spanStartMs, spanEndMs);
+    }
+    QVector<QPair<double, double>> segs;
+    if (spanEndMs <= spanStartMs) {
+        return segs;
+    }
+    const qint64 span = spanEndMs - spanStartMs;
+    const qint64 grid = std::max<qint64>(1, kVideoCoverageBucketMs);
+    const qint64 start = std::max(spanStartMs, (forwardAnchorMs / grid) * grid);
+    if (spanEndMs <= start) {
+        return segs;
+    }
+    bool inRun = false;
+    qint64 runStart = start;
+    const qint64 stepMs = coverageTimeStepMs(spanEndMs - start, kVideoCoverageBucketMs);
+    for (qint64 t = start; t < spanEndMs; t += stepMs) {
+        const qint64 bucket = videoCoverageBucketCenterMs(t);
+        const bool hit = buckets.find(bucket) != buckets.end();
+        if (hit && !inRun) {
+            inRun = true;
+            runStart = t;
+        } else if (!hit && inRun) {
+            const double a = static_cast<double>(runStart - spanStartMs) / static_cast<double>(span);
+            const double b = static_cast<double>(t - spanStartMs) / static_cast<double>(span);
+            segs.push_back({std::clamp(a, 0.0, 1.0), std::clamp(b, 0.0, 1.0)});
+            inRun = false;
+        }
+    }
+    if (inRun) {
+        const double a = static_cast<double>(runStart - spanStartMs) / static_cast<double>(span);
+        segs.push_back({std::clamp(a, 0.0, 1.0), 1.0});
+    }
+    return segs;
+}
+
+void insertVideoCoverageForCompositionMs(std::unordered_set<qint64> &buckets, qint64 composeMs, int fps)
+{
+    const qint64 frameMs = std::max<qint64>(1, 1000 / std::max(1, fps));
+    const qint64 step = std::max<qint64>(1, kVideoCoverageBucketMs / 2);
+    const qint64 tail = composeMs + 2 * frameMs + kVideoCoverageBucketMs * 3;
+    for (qint64 u = composeMs - kVideoCoverageBucketMs * 2; u <= tail; u += step) {
+        buckets.insert(videoCoverageBucketCenterMs(u));
+    }
+}
+
+QImage makeBlackFrame(int w, int h)
+{
+    QImage img(std::max(320, w), std::max(180, h), QImage::Format_RGB32);
+    img.fill(Qt::black);
+    return img;
+}
+
+QImage makeDraftFallbackImage(int w, int h, const QString &line1, const QString &line2 = {})
+{
+    QImage img(std::max(320, w), std::max(180, h), QImage::Format_RGB32);
+    img.fill(QColor(10, 10, 12));
+    QPainter p(&img);
+    p.setPen(QColor(210, 215, 225));
+    QFont f = p.font();
+    f.setPointSize(13);
+    p.setFont(f);
+    QString body = line1;
+    if (!line2.isEmpty()) {
+        body += QLatin1Char('\n');
+        body += line2;
+    }
+    p.drawText(img.rect().adjusted(24, 24, -24, -24), Qt::AlignCenter | Qt::TextWordWrap, body);
+    return img;
+}
+
+QString activeVideoClipPathAtMs(qint64 tMs, const std::vector<PlaybackPipeline::Clip> &clips)
+{
+    for (const auto &c : clips) {
+        if (tMs >= c.startMs && tMs < c.startMs + std::max<qint64>(1, c.durationMs)) {
+            return c.sourcePath;
+        }
+    }
+    return {};
 }
 
 constexpr qint64 kRegionHeadWindowMs = 1500;
@@ -243,9 +333,32 @@ void PlaybackPipeline::preparePlaybackAt(qint64 startTimelineMs)
         const qint64 tMs = burstcon::burstIndexToMs(burst.index);
         timelineMs.store(tMs);
         lastPlaybackIndex.store(burst.index);
-        if (onVideoFrameReady && !burst.frame.isNull()) {
-            onVideoFrameReady(std::move(burst.frame));
-            composedFrames.fetch_add(1);
+        int fps = 30;
+        {
+            std::lock_guard<std::mutex> lk(mutex);
+            fps = std::max(1, projectSettings.fps);
+        }
+        {
+            std::lock_guard<std::mutex> cov(coverageMutex);
+            insertVideoCoverageForCompositionMs(timelineVideoSlidingBuckets, tMs, fps);
+            const qint64 pruneBefore = tMs - 180000;
+            for (auto it = timelineVideoSlidingBuckets.begin(); it != timelineVideoSlidingBuckets.end();) {
+                if (*it < pruneBefore) {
+                    it = timelineVideoSlidingBuckets.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        if (onVideoFrameReady) {
+            if (!burst.frame.isNull()) {
+                onVideoFrameReady(std::move(burst.frame));
+                composedFrames.fetch_add(1);
+            } else {
+                QImage black(640, 360, QImage::Format_RGB32);
+                black.fill(Qt::black);
+                onVideoFrameReady(std::move(black));
+            }
         }
     };
     callbacks.onAudio = [this](const burstcon::AudioBurst &burst) {
@@ -541,6 +654,7 @@ void PlaybackPipeline::setDraftPreviewEnabled(bool enabled)
 QImage PlaybackPipeline::renderDraftFrame(qint64 tMs, const std::vector<Clip> &videoClips)
 {
     int fps = 30;
+    QSize fallbackSize(640, 360);
     {
         std::lock_guard<std::mutex> lock(mutex);
         if (!clipsEqual(videoClips, lastVideoClips)) {
@@ -548,15 +662,27 @@ QImage PlaybackPipeline::renderDraftFrame(qint64 tMs, const std::vector<Clip> &v
             lastVideoClips = videoClips;
         }
         fps = std::max(1, projectSettings.fps);
+        const QSize r = projectSettings.cacheResolution();
+        fallbackSize = QSize(std::max(320, r.width()), std::max(180, r.height()));
     }
     burstcon::BurstRequest req;
     req.index = burstcon::alignBurstIndexToOutputVideoFrame(fps, burstcon::msToBurstIndex(tMs));
     req.quality = decodeBurstQuality(projectSettings);
     burstcon::VideoBurst out;
-    if (root && root->videoBurst(req, out)) {
+    if (root && root->videoBurst(req, out) && !out.frame.isNull()) {
         return out.frame;
     }
-    return QImage();
+    const QString activePath = activeVideoClipPathAtMs(tMs, videoClips);
+    if (activePath.isEmpty()) {
+        return makeBlackFrame(fallbackSize.width(), fallbackSize.height());
+    }
+    if (!QFileInfo::exists(activePath)) {
+        return makeDraftFallbackImage(fallbackSize.width(),
+                                      fallbackSize.height(),
+                                      QStringLiteral("Media offline"),
+                                      QFileInfo(activePath).fileName());
+    }
+    return makeBlackFrame(fallbackSize.width(), fallbackSize.height());
 }
 
 void PlaybackPipeline::setProjectSettings(const ProjectSettings &settings)
@@ -680,10 +806,15 @@ QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::videoFrameHeadS
     return out;
 }
 
-QVector<QPair<double, double>> PlaybackPipeline::timelineVideoSlidingSegments(qint64 viewStartMs, qint64 viewEndMs) const
+QVector<QPair<double, double>> PlaybackPipeline::timelineVideoSlidingSegments(qint64 viewStartMs,
+                                                                              qint64 viewEndMs,
+                                                                              qint64 forwardAnchorMs) const
 {
     std::lock_guard<std::mutex> lock(coverageMutex);
-    return segmentsFromBucketsAlongSpan(timelineVideoSlidingBuckets, viewStartMs, viewEndMs);
+    return segmentsFromBucketsAlongSpanForward(timelineVideoSlidingBuckets,
+                                               viewStartMs,
+                                               viewEndMs,
+                                               forwardAnchorMs);
 }
 
 QVector<QPair<double, double>> PlaybackPipeline::timelineVideoHeadSegments(qint64 viewStartMs, qint64 viewEndMs) const
@@ -922,11 +1053,7 @@ void PlaybackPipeline::draftWorkerLoop()
             continue;
         }
         if (onVideoFrameReady) {
-            if (!frame.isNull()) {
-                onVideoFrameReady(std::move(frame));
-            } else {
-                onVideoFrameReady(QImage());
-            }
+            onVideoFrameReady(std::move(frame));
         }
     }
 }

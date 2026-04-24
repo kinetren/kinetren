@@ -30,6 +30,8 @@
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
 
+#include <atomic>
+
 #include <algorithm>
 #include <cmath>
 #include <chrono>
@@ -48,6 +50,9 @@
 #include <avcpp/videorescaler.h>
 
 namespace {
+
+std::atomic<int> gStripPreviewDecodeJobs{0};
+
 /// Thumbnail sampling along source time: one thumb for short clips; step scales with on-screen width (zoom).
 qint64 videoClipThumbnailSourceStepMs(qint64 clipDurationMs, int clipInnerWidthPx, int thumbWpx)
 {
@@ -1916,7 +1921,12 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
                 const int midY = r.center().y();
                 const int halfH = std::max(2, (r.height() / 2) - 2);
                 for (int x = 0; x < usable; ++x) {
-                    const int idx = std::min<int>(x, peaksStereo.size() - 1);
+                    const int pi =
+                        (usable <= 1 || peaksStereo.size() <= 1)
+                            ? 0
+                            : static_cast<int>((static_cast<qint64>(x) * static_cast<qint64>(peaksStereo.size() - 1)) /
+                                               std::max<qint64>(1, static_cast<qint64>(usable - 1)));
+                    const int idx = std::clamp(pi, 0, peaksStereo.size() - 1);
                     const int ampL = std::clamp(peaksStereo[idx].first, 1, halfH);
                     const int ampR = std::clamp(peaksStereo[idx].second, 1, halfH);
                     p.setPen(QColor(170, 210, 255, 230));
@@ -3437,11 +3447,16 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
     if (pendingPreviewKeys.size() >= 12) {
         return QImage();
     }
+    if (gStripPreviewDecodeJobs.load() >= 3) {
+        return QImage();
+    }
     pendingPreviewKeys.insert(cacheKey);
+    gStripPreviewDecodeJobs.fetch_add(1);
 
     QPointer<TimelineEditor> guard(this);
     QtConcurrent::run([guard, path, bucketMs, cacheKey]() {
         if (!guard) {
+            gStripPreviewDecodeJobs.fetch_sub(1);
             return;
         }
         QImage img = guard->decodeVideoPreviewSync(path, bucketMs);
@@ -3450,16 +3465,19 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
             ? img
             : img.scaled(target, Qt::KeepAspectRatioByExpanding, Qt::FastTransformation);
         if (!guard) {
+            gStripPreviewDecodeJobs.fetch_sub(1);
             return;
         }
         QMetaObject::invokeMethod(
             guard.data(),
             [guard, cacheKey, scaled]() {
                 if (!guard) {
+                    gStripPreviewDecodeJobs.fetch_sub(1);
                     return;
                 }
                 guard->commitPreviewCacheFromWorker(cacheKey, scaled);
                 guard->pendingPreviewKeys.remove(cacheKey);
+                gStripPreviewDecodeJobs.fetch_sub(1);
                 guard->update();
             },
             Qt::QueuedConnection);
@@ -3526,10 +3544,10 @@ void TimelineEditor::commitPeaksCacheFromWorker(const QString &key, const QVecto
 QVector<QPair<int, int>> TimelineEditor::decodeAudioPeaksStereoSync(const QString &path,
                                                                     qint64 sourceInMs,
                                                                     qint64 durationMs,
-                                                                    int sampleCount) const
+                                                                    int peakColumns) const
 {
     QVector<QPair<int, int>> out;
-    if (path.isEmpty() || sampleCount <= 0 || durationMs <= 0) {
+    if (path.isEmpty() || peakColumns <= 0 || durationMs <= 0) {
         return out;
     }
     const auto pool = stripMediaPool ? stripMediaPool : playbackMediaPool;
@@ -3545,11 +3563,11 @@ QVector<QPair<int, int>> TimelineEditor::decodeAudioPeaksStereoSync(const QStrin
     const burstcon::BurstIndex audioStep =
         std::max<burstcon::BurstIndex>(1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kSpb)) / kRate);
     const burstcon::BurstIndex originIdx = burstcon::msToBurstIndex(sourceInMs);
-    const int maxCols = std::min(sampleCount, 360);
-    out.resize(maxCols);
+    const int cols = std::clamp(peakColumns, 8, 256);
+    out.resize(cols);
     const qint64 dur = std::max<qint64>(1, durationMs);
-    for (int i = 0; i < maxCols; ++i) {
-        const qint64 offset = (maxCols <= 1) ? 0 : (dur * static_cast<qint64>(i)) / static_cast<qint64>(maxCols - 1);
+    for (int i = 0; i < cols; ++i) {
+        const qint64 offset = (cols <= 1) ? 0 : (dur * static_cast<qint64>(i)) / static_cast<qint64>(cols - 1);
         const qint64 srcMs = sourceInMs + std::min(offset, dur - 1);
         const burstcon::BurstIndex rawIdx = burstcon::msToBurstIndex(srcMs);
         const burstcon::BurstIndex idx = (rawIdx / audioStep) * audioStep;
@@ -3582,14 +3600,15 @@ QVector<QPair<int, int>> TimelineEditor::decodeAudioPeaksStereoSync(const QStrin
         const int nR = std::clamp(1 + (peakR * 799) / 32768, 1, 800);
         out[i] = {nL, nR};
     }
-    if (maxCols < sampleCount) {
-        QVector<QPair<int, int>> expanded;
-        expanded.resize(sampleCount);
-        for (int x = 0; x < sampleCount; ++x) {
-            const int si = (x * (maxCols - 1)) / std::max(1, sampleCount - 1);
-            expanded[x] = out[std::clamp(si, 0, maxCols - 1)];
+    int m = 1;
+    for (const auto &pr : out) {
+        m = std::max(m, std::max(pr.first, pr.second));
+    }
+    if (m > 1) {
+        for (auto &pr : out) {
+            pr.first = std::max(1, (pr.first * 500) / m);
+            pr.second = std::max(1, (pr.second * 500) / m);
         }
-        return expanded;
     }
     return out;
 }
@@ -3603,7 +3622,9 @@ QVector<QPair<int, int>> TimelineEditor::cachedAudioPeaksStereo(const QString &p
     if (sampleCount <= 0 || path.isEmpty() || !QFileInfo::exists(path)) {
         return {};
     }
-    const QString key = peaksCacheKey(path, sourceInMs, durationMs, sourceDurationMs, sampleCount);
+    // Quantize column count so small timeline scrolls / width tweaks do not invalidate the cache.
+    const int peakCols = std::clamp(((std::max(1, sampleCount) + 31) / 32) * 32, 32, 256);
+    const QString key = peaksCacheKey(path, sourceInMs, durationMs, sourceDurationMs, peakCols);
     const auto it = peaksStereoCache.constFind(key);
     if (it != peaksStereoCache.constEnd()) {
         return it.value();
@@ -3616,10 +3637,10 @@ QVector<QPair<int, int>> TimelineEditor::cachedAudioPeaksStereo(const QString &p
     }
     pendingPeaksKeys.insert(key);
     QPointer<TimelineEditor> guard(this);
-    QtConcurrent::run([guard, path, sourceInMs, durationMs, sampleCount, key]() {
+    QtConcurrent::run([guard, path, sourceInMs, durationMs, peakCols, key]() {
         QVector<QPair<int, int>> built;
         if (guard) {
-            built = guard->decodeAudioPeaksStereoSync(path, sourceInMs, durationMs, sampleCount);
+            built = guard->decodeAudioPeaksStereoSync(path, sourceInMs, durationMs, peakCols);
         }
         if (!guard) {
             return;
