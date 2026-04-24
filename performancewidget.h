@@ -27,6 +27,9 @@ public:
                     double avcppVideoDecodePerSec,
                     double avcppAudioDecodePerSec);
 
+signals:
+    void diagnosticsWindowRequested();
+
 private:
     QLabel *composeFpsLabel = nullptr;
     QLabel *cacheStatsLabel = nullptr;

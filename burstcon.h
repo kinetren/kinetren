@@ -106,6 +106,8 @@ struct BurstconMetrics {
     uint64_t cacheHits = 0;
     uint64_t cacheMisses = 0;
     uint64_t cacheEntries = 0;
+    /// ConCache video frames dropped by LRU or overwritten before any read (prefetch thrash).
+    uint64_t cacheVideoUnusedEvictions = 0;
 };
 
 struct SharedMediaFile;
@@ -154,6 +156,7 @@ private:
         VideoBurst value;
         std::list<VideoKey>::iterator lruIt;
         BurstIndex index = 0;
+        bool hadHit = false;
     };
 
     bool getAudio(const AudioKey &key, AudioBurst &out);

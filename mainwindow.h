@@ -5,6 +5,7 @@
 #include <QTimer>
 #include <QtGlobal>
 #include <QString>
+#include <QPointer>
 #include <memory>
 #include <QHash>
 
@@ -24,6 +25,7 @@ class QDockWidget;
 class SourceReplacePanel;
 class SourceOffsetPanel;
 class MorpherEditWindow;
+class PerformanceDiagnosticsWindow;
 class QCheckBox;
 class QComboBox;
 class QSpinBox;
@@ -70,6 +72,7 @@ private:
     void saveUiState();
     void restoreUiState();
     void openMorpherEditWindow(int morpherEventId);
+    void openPerformanceDiagnosticsWindow();
     void pruneMorpherWindows();
     void refreshWindowTitle();
     void error(const QString &message) const;
@@ -118,6 +121,8 @@ protected:
     QDockWidget *replaceSourceDock = nullptr;
     QDockWidget *sourceOffsetDock = nullptr;
     QHash<int, MorpherEditWindow *> morpherEditWindows;
+    QPointer<PerformanceDiagnosticsWindow> performanceDiagnosticsWindow;
+    quint64 lastResourceUnusedEvictions = 0;
     QCheckBox *frontScalerCheck = nullptr;
     QCheckBox *previewSmoothScalingCheck = nullptr;
     QCheckBox *previewAntialiasingCheck = nullptr;

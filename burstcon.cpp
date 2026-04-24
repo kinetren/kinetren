@@ -31,6 +31,10 @@ namespace burstcon {
 namespace {
 
 constexpr int kDefaultAudioSamplesPerBurst = 1024;
+/// Hot ring inside each `AvcppMediaDecoderBackend` (below ConCache). ConCache `maxVideoBytes` can be
+/// much larger, but this cap still bounds RAM while one file is being decoded sequentially.
+constexpr size_t kDecoderVideoFrameCacheMaxFrames = 384;
+constexpr uint64_t kDecoderVideoFrameCacheMaxBytes = 512ULL * 1024ULL * 1024ULL;
 const av::Rational kMillisecondsTimebase{1, 1000};
 
 std::atomic<uint64_t> gAvcppOpenCalls{0};
@@ -40,6 +44,7 @@ std::atomic<uint64_t> gAvcppAudioDecodeCalls{0};
 std::atomic<uint64_t> gCacheHits{0};
 std::atomic<uint64_t> gCacheMisses{0};
 std::atomic<int64_t> gCacheEntries{0};
+std::atomic<uint64_t> gCacheVideoUnusedEvictions{0};
 
 int64_t qualityArea(const BurstQuality &q)
 {
@@ -484,7 +489,8 @@ public:
                 const DecodedVideoFrameKey storeKey{frameIndex, dstW, dstH};
                 videoFrameCache[storeKey] = img;
                 videoFrameBytesUsed += imageBytes(img);
-                while (videoFrameCache.size() > 192 || videoFrameBytesUsed > (256ULL * 1024ULL * 1024ULL)) {
+                while (videoFrameCache.size() > kDecoderVideoFrameCacheMaxFrames ||
+                       videoFrameBytesUsed > kDecoderVideoFrameCacheMaxBytes) {
                     if (videoFrameCache.empty()) {
                         break;
                     }
@@ -991,6 +997,9 @@ void ConCache::invalidate(const BurstRange &range)
         }
         for (auto it = videoEntries.begin(); it != videoEntries.end();) {
             if (it->second.index >= range.start && it->second.index <= range.end) {
+                if (!it->second.hadHit) {
+                    gCacheVideoUnusedEvictions.fetch_add(1);
+                }
                 videoRemoved.push_back(it->first);
                 videoLru.erase(it->second.lruIt);
                 videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(it->second.value.frame));
@@ -1029,6 +1038,7 @@ bool ConCache::getVideo(const VideoKey &key, VideoBurst &out)
         return false;
     }
     gCacheHits.fetch_add(1);
+    it->second.hadHit = true;
     touchVideoLocked(key, it->second);
     out = it->second.value;
     lock.unlock();
@@ -1060,6 +1070,9 @@ void ConCache::put(const VideoKey &key, const VideoBurst &value, BurstIndex inde
         std::lock_guard<std::mutex> lock(mutex);
         auto existing = videoEntries.find(key);
         if (existing != videoEntries.end()) {
+            if (!existing->second.hadHit) {
+                gCacheVideoUnusedEvictions.fetch_add(1);
+            }
             removedVideoKeys.push_back(existing->first);
             videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(existing->second.value.frame));
             videoLru.erase(existing->second.lruIt);
@@ -1067,7 +1080,7 @@ void ConCache::put(const VideoKey &key, const VideoBurst &value, BurstIndex inde
             gCacheEntries.fetch_sub(1);
         }
         videoLru.push_front(key);
-        videoEntries[key] = VideoEntry{value, videoLru.begin(), index};
+        videoEntries[key] = VideoEntry{value, videoLru.begin(), index, false};
         videoBytesUsed += imageBytes(value.frame);
         gCacheEntries.fetch_add(1);
         evictVideoLocked(removedVideoKeys);
@@ -1098,6 +1111,9 @@ void ConCache::evictVideoLocked(std::vector<VideoKey> &removedVideoKeys)
         const VideoKey key = videoLru.back();
         auto it = videoEntries.find(key);
         if (it != videoEntries.end()) {
+            if (!it->second.hadHit) {
+                gCacheVideoUnusedEvictions.fetch_add(1);
+            }
             removedVideoKeys.push_back(key);
             videoBytesUsed -= std::min<uint64_t>(videoBytesUsed, imageBytes(it->second.value.frame));
             videoEntries.erase(it);
@@ -1790,6 +1806,7 @@ BurstconMetrics metricsSnapshot()
     m.cacheHits = gCacheHits.load();
     m.cacheMisses = gCacheMisses.load();
     m.cacheEntries = static_cast<uint64_t>(std::max<int64_t>(0, gCacheEntries.load()));
+    m.cacheVideoUnusedEvictions = gCacheVideoUnusedEvictions.load();
     return m;
 }
 
@@ -1802,6 +1819,7 @@ void resetMetrics()
     gCacheHits.store(0);
     gCacheMisses.store(0);
     gCacheEntries.store(0);
+    gCacheVideoUnusedEvictions.store(0);
 }
 
 } // namespace burstcon

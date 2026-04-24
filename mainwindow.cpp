@@ -2,6 +2,7 @@
 #include "./ui_mainwindow.h"
 #include "burstcon.h"
 #include "performancewidget.h"
+#include "performancediagnosticswindow.h"
 #include "playbackpipeline.h"
 #include "projectrenderer.h"
 #include "renderprogressdialog.h"
@@ -338,6 +339,10 @@ void MainWindow::setupTimelineEditorUi()
 
     performanceWidget = new PerformanceWidget(ui->widget_3);
     performanceWidget->setMinimumHeight(700);
+    connect(performanceWidget,
+            &PerformanceWidget::diagnosticsWindowRequested,
+            this,
+            &MainWindow::openPerformanceDiagnosticsWindow);
     sourceLayout->addWidget(performanceWidget, 4);
     sourceLayout->setStretch(0, 0); // title
     sourceLayout->setStretch(1, 1); // source list frame
@@ -1633,17 +1638,22 @@ void MainWindow::refreshPerformancePanel()
     const quint64 avcppTotalCalls =
         stats.avcppOpenCalls + stats.avcppPacketReads + stats.avcppVideoDecodeCalls + stats.avcppAudioDecodeCalls;
     const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 prevPerfSampleMs = lastPerfSampleMs;
+    const quint64 prevUnusedEvictions = lastResourceUnusedEvictions;
     double avcppCallsPerSec = 0.0;
     double avcppOpenPerSec = 0.0;
     double avcppReadPerSec = 0.0;
     double avcppVideoDecodePerSec = 0.0;
     double avcppAudioDecodePerSec = 0.0;
-    if (lastPerfSampleMs > 0 && nowMs > lastPerfSampleMs && avcppTotalCalls >= lastAvcppTotalCalls) {
-        const qint64 deltaMs = nowMs - lastPerfSampleMs;
+    double cacheUnusedEvictPerSec = 0.0;
+    qint64 perfDeltaMs = 0;
+    if (prevPerfSampleMs > 0 && nowMs > prevPerfSampleMs && avcppTotalCalls >= lastAvcppTotalCalls) {
+        perfDeltaMs = nowMs - prevPerfSampleMs;
         const quint64 deltaCalls = avcppTotalCalls - lastAvcppTotalCalls;
-        avcppCallsPerSec = (deltaMs > 0) ? (static_cast<double>(deltaCalls) * 1000.0 / static_cast<double>(deltaMs)) : 0.0;
-        const auto perSec = [deltaMs](quint64 deltaValue) {
-            return (deltaMs > 0) ? (static_cast<double>(deltaValue) * 1000.0 / static_cast<double>(deltaMs)) : 0.0;
+        avcppCallsPerSec =
+            (perfDeltaMs > 0) ? (static_cast<double>(deltaCalls) * 1000.0 / static_cast<double>(perfDeltaMs)) : 0.0;
+        const auto perSec = [perfDeltaMs](quint64 deltaValue) {
+            return (perfDeltaMs > 0) ? (static_cast<double>(deltaValue) * 1000.0 / static_cast<double>(perfDeltaMs)) : 0.0;
         };
         avcppOpenPerSec = perSec((stats.avcppOpenCalls >= lastAvcppOpenCalls) ? (stats.avcppOpenCalls - lastAvcppOpenCalls) : 0);
         avcppReadPerSec = perSec((stats.avcppPacketReads >= lastAvcppPacketReads) ? (stats.avcppPacketReads - lastAvcppPacketReads) : 0);
@@ -1651,6 +1661,10 @@ void MainWindow::refreshPerformancePanel()
             perSec((stats.avcppVideoDecodeCalls >= lastAvcppVideoDecodeCalls) ? (stats.avcppVideoDecodeCalls - lastAvcppVideoDecodeCalls) : 0);
         avcppAudioDecodePerSec =
             perSec((stats.avcppAudioDecodeCalls >= lastAvcppAudioDecodeCalls) ? (stats.avcppAudioDecodeCalls - lastAvcppAudioDecodeCalls) : 0);
+        const quint64 du = (stats.resourceCacheEvictions >= prevUnusedEvictions)
+            ? (stats.resourceCacheEvictions - prevUnusedEvictions)
+            : 0;
+        cacheUnusedEvictPerSec = perSec(du);
     }
     lastPerfSampleMs = nowMs;
     lastAvcppTotalCalls = avcppTotalCalls;
@@ -1699,7 +1713,7 @@ void MainWindow::refreshPerformancePanel()
             .arg(stats.audioCacheHits)
             .arg(audioLookups)
             .arg(audioHitPct, 0, 'f', 1),
-        QString("Resource cache %1x%2 (%3) | decoded: %4 | entries: %5 | evictions: %6 | used/limit: %7 / %8 (max %9)")
+        QString("Resource cache %1x%2 (%3) | decoded: %4 | entries: %5 | no-read drops: %6 | used/limit: %7 / %8 (max %9)")
             .arg(projectSettings.cacheResolution().width())
             .arg(projectSettings.cacheResolution().height())
             .arg(projectSettings.cacheQualityLabel())
@@ -1727,6 +1741,28 @@ void MainWindow::refreshPerformancePanel()
         avcppReadPerSec,
         avcppVideoDecodePerSec,
         avcppAudioDecodePerSec);
+
+    if (performanceDiagnosticsWindow) {
+        constexpr double kMaxEntriesForPct = 256.0;
+        const double cacheFillPct =
+            std::min(100.0, (static_cast<double>(stats.resourceCacheEntries) * 100.0) / kMaxEntriesForPct);
+        performanceDiagnosticsWindow->ingestGraphSample(cacheUnusedEvictPerSec,
+                                                        avcppVideoDecodePerSec,
+                                                        resourceHitPct,
+                                                        cacheFillPct);
+        if (perfDeltaMs > 0) {
+            const quint64 duThisTick = (stats.resourceCacheEvictions >= prevUnusedEvictions)
+                ? (stats.resourceCacheEvictions - prevUnusedEvictions)
+                : 0;
+            if (duThisTick > 0) {
+                performanceDiagnosticsWindow->appendProblem(
+                    tr("Resource video cache dropped %1 frame(s) before any read (LRU cap, overwrite, or invalidate).")
+                        .arg(duThisTick));
+            }
+        }
+    }
+
+    lastResourceUnusedEvictions = stats.resourceCacheEvictions;
 }
 
 bool MainWindow::saveProjectToPath(const QString &path, bool silent)
@@ -1885,7 +1921,7 @@ QString MainWindow::defaultAutosaveProjectPath() const
 
 namespace {
 
-void placeMorpherWindowTitlebarUnderCursor(MorpherEditWindow *w)
+void placeMorpherWindowTitlebarUnderCursor(QWidget *w)
 {
     if (!w || !w->isVisible()) {
         return;
@@ -1949,6 +1985,26 @@ void MainWindow::openMorpherEditWindow(int morpherEventId)
     QTimer::singleShot(0, win, [winGuard]() {
         if (winGuard) {
             placeMorpherWindowTitlebarUnderCursor(winGuard.data());
+        }
+    });
+}
+
+void MainWindow::openPerformanceDiagnosticsWindow()
+{
+    if (performanceDiagnosticsWindow) {
+        performanceDiagnosticsWindow->show();
+        performanceDiagnosticsWindow->raise();
+        performanceDiagnosticsWindow->activateWindow();
+        return;
+    }
+    auto *w = new PerformanceDiagnosticsWindow(this);
+    performanceDiagnosticsWindow = w;
+    connect(w, &QObject::destroyed, this, [this]() { performanceDiagnosticsWindow = nullptr; });
+    w->show();
+    QPointer<PerformanceDiagnosticsWindow> guard(w);
+    QTimer::singleShot(0, w, [guard]() {
+        if (guard) {
+            placeMorpherWindowTitlebarUnderCursor(guard.data());
         }
     });
 }

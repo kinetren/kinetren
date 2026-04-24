@@ -3,7 +3,7 @@
 
 #include <QWidget>
 
-#include <QVector>
+class MultiLineGraphWidget;
 
 class SpeedChartWidget : public QWidget
 {
@@ -15,14 +15,11 @@ public:
     void addSample(double speedRealtimeFactor);
     void clear();
 
-protected:
-    void paintEvent(QPaintEvent *event) override;
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
 private:
-    QVector<double> m_samples;
-    static constexpr int kMaxSamples = 480;
+    MultiLineGraphWidget *m_graph = nullptr;
 };
 
 #endif

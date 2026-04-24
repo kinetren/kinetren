@@ -23,6 +23,10 @@ set(PROJECT_SOURCES
         projectsettings.h
         performancewidget.cpp
         performancewidget.h
+        multilinegraphwidget.cpp
+        multilinegraphwidget.h
+        performancediagnosticswindow.cpp
+        performancediagnosticswindow.h
         framecache.cpp
         framecache.h
         projectrenderer.cpp

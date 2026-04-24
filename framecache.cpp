@@ -7,13 +7,14 @@
 #endif
 
 namespace {
-constexpr quint64 kTwoGiB = 10ULL * 1024ULL * 1024ULL * 1024ULL;
+/// Default configured ceiling when `FrameCache` is used (final-view / other paths).
+constexpr quint64 kDefaultFrameCacheConfiguredBytes = 10ULL * 1024ULL * 1024ULL * 1024ULL;
 }
 
 FrameCache::FrameCache()
 {
     const quint64 ramTotal = totalRamBytes();
-    configuredMaxBytes = std::max<quint64>(kTwoGiB, ramTotal / 8ULL);
+    configuredMaxBytes = std::max<quint64>(kDefaultFrameCacheConfiguredBytes, ramTotal / 8ULL);
 }
 
 void FrameCache::setConfiguredMaxBytes(quint64 bytes)
@@ -108,6 +109,8 @@ FrameCache::Stats FrameCache::stats() const
 
 quint64 FrameCache::effectiveLimitBytesLocked() const
 {
+    // Never retain more than currently free RAM, so a huge `configuredMaxBytes` still will not
+    // allocate past what the OS reports as free (process RSS stays far below the ceiling).
     const quint64 freeBytes = freeRamBytes();
     if (freeBytes == 0) {
         return configuredMaxBytes;
