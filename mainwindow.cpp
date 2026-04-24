@@ -189,7 +189,7 @@ MainWindow::MainWindow(QWidget *parent)
     playbackPipeline = std::make_unique<PlaybackPipeline>(
         [this](QImage &&image) {
             Previewer *frameView = ui->frame;
-            if (!frameView || image.isNull()) {
+            if (!frameView) {
                 return;
             }
             // Queued slot + Q_ARG is the most reliable cross-thread path to the GUI thread (functor
@@ -200,8 +200,20 @@ MainWindow::MainWindow(QWidget *parent)
                 Qt::QueuedConnection,
                 Q_ARG(QImage, image));
         });
+    {
+        burstcon::ConMediaPoolConfig stripCfg;
+        stripCfg.enableConMediaCache = true;
+        stripCfg.cacheConfig.maxEntries = 160;
+        stripCfg.cacheConfig.maxAudioEntries = 96;
+        stripCfg.cacheConfig.maxVideoEntries = 72;
+        stripCfg.cacheConfig.maxVideoBytes = 96ULL * 1024ULL * 1024ULL;
+        stripCfg.cacheConfig.preloadEnabled = false;
+        stripCfg.maxMediaInstances = 10;
+        stripMediaPool = std::make_shared<burstcon::ConMediaPool>(stripCfg);
+    }
     if (timelineEditor) {
         timelineEditor->setPlaybackMediaPool(playbackPipeline->sharedMediaPool());
+        timelineEditor->setStripMediaPool(stripMediaPool);
     }
     refreshPreviewResolutionMaxEntry();
     if (frontScalerCheck) {
@@ -247,6 +259,9 @@ MainWindow::MainWindow(QWidget *parent)
         saveProjectToPath(currentProjectPath, true);
     });
     autosaveTimer.start();
+    mediaSourceProbeTimer.setInterval(900);
+    connect(&mediaSourceProbeTimer, &QTimer::timeout, this, &MainWindow::tickMediaSourceAvailability);
+    mediaSourceProbeTimer.start();
     refreshWindowTitle();
 }
 
@@ -1964,6 +1979,46 @@ void MainWindow::loadLastProjectOnStartup()
     }
     currentProjectPath = fallbackPath;
     refreshWindowTitle();
+}
+
+void MainWindow::tickMediaSourceAvailability()
+{
+    if (!timelineEditor) {
+        return;
+    }
+    QSet<QString> activePaths;
+    for (const auto &c : timelineEditor->renderClips()) {
+        if (!c.sourcePath.isEmpty()) {
+            activePaths.insert(c.sourcePath);
+        }
+    }
+    for (auto it = mediaPathPreviouslyReachable.begin(); it != mediaPathPreviouslyReachable.end();) {
+        if (!activePaths.contains(it.key())) {
+            it = mediaPathPreviouslyReachable.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (const QString &p : activePaths) {
+        const bool ok = QFileInfo::exists(p);
+        const auto prevIt = mediaPathPreviouslyReachable.constFind(p);
+        if (prevIt == mediaPathPreviouslyReachable.cend()) {
+            mediaPathPreviouslyReachable.insert(p, ok);
+            continue;
+        }
+        if (prevIt.value() != ok) {
+            mediaPathPreviouslyReachable.insert(p, ok);
+            if (playbackPipeline) {
+                playbackPipeline->sharedMediaPool()->invalidatePath(p);
+                if (stripMediaPool) {
+                    stripMediaPool->invalidatePath(p);
+                }
+            }
+            timelineEditor->invalidateSourcePath(p);
+            schedulePlaybackSync();
+            requestCacheCoverageUiRefresh();
+        }
+    }
 }
 
 void MainWindow::refreshWindowTitle()

@@ -54,6 +54,10 @@ public:
 
     /// Strip thumbnails decode through this pool (same as PlaybackPipeline) so each file is indexed once.
     void setPlaybackMediaPool(std::shared_ptr<burstcon::ConMediaPool> pool);
+    /// Dedicated pool for strip thumbnails / waveform probes so they do not share decoder instances with playback.
+    void setStripMediaPool(std::shared_ptr<burstcon::ConMediaPool> pool);
+    /// Drop strip thumbnail / waveform caches for one path (e.g. media restored after offline).
+    void invalidateSourcePath(const QString &path);
     /// Drop strip thumbnails, peaks, and coverage segment caches (e.g. after preview scale mode changes).
     void purgePresentationCaches();
 
@@ -327,11 +331,21 @@ private:
     QImage decodeVideoPreviewSync(const QString &path, qint64 bucketMs) const;
     void notePreviewCacheHit(const QString &key);
     void commitPreviewCacheFromWorker(const QString &key, const QImage &img);
-    std::vector<int> cachedAudioPeaks(const QString &path,
-                                      qint64 sourceInMs,
-                                      qint64 durationMs,
-                                      qint64 sourceDurationMs,
-                                      int sampleCount);
+    QVector<QPair<int, int>> cachedAudioPeaksStereo(const QString &path,
+                                                    qint64 sourceInMs,
+                                                    qint64 durationMs,
+                                                    qint64 sourceDurationMs,
+                                                    int sampleCount);
+    QVector<QPair<int, int>> decodeAudioPeaksStereoSync(const QString &path,
+                                                        qint64 sourceInMs,
+                                                        qint64 durationMs,
+                                                        int sampleCount) const;
+    void commitPeaksCacheFromWorker(const QString &key, const QVector<QPair<int, int>> &peaks);
+    static QString peaksCacheKey(const QString &path,
+                                 qint64 sourceInMs,
+                                 qint64 durationMs,
+                                 qint64 sourceDurationMs,
+                                 int sampleCount);
     void unlinkClipGroup(int clipId);
     std::vector<int> linkedClipIds(int clipId) const;
     std::unordered_set<int> clipIdsIntersectingRegion(bool allTracks, int trackIndex) const;
@@ -347,7 +361,8 @@ private:
     std::list<QString> previewCacheLru;
     QHash<QString, std::list<QString>::iterator> previewCacheLruPos;
     QSet<QString> pendingPreviewKeys;
-    QHash<QString, std::vector<int>> peaksCache;
+    QSet<QString> pendingPeaksKeys;
+    QHash<QString, QVector<QPair<int, int>>> peaksStereoCache;
     QHash<QString, QVector<QPair<double, double>>> cacheVideoSlidingByClip;
     QHash<QString, QVector<QPair<double, double>>> cacheVideoHeadByClip;
     QVector<QPair<double, double>> timelineVideoSlidingSegments;
@@ -356,6 +371,7 @@ private:
     /// Avoid probing the same path repeatedly (bulk replace, morpher preview paint).
     mutable QHash<QString, qint64> sourceDurationProbeCache;
     std::shared_ptr<burstcon::ConMediaPool> playbackMediaPool;
+    std::shared_ptr<burstcon::ConMediaPool> stripMediaPool;
 };
 
 #endif // TIMELINEEDITOR_H

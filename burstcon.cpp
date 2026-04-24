@@ -470,9 +470,32 @@ public:
                     if (videoFrameCache.empty()) {
                         break;
                     }
-                    const auto itOld = videoFrameCache.begin();
-                    videoFrameBytesUsed -= std::min<uint64_t>(videoFrameBytesUsed, imageBytes(itOld->second));
-                    videoFrameCache.erase(itOld);
+                    // Evict outside a "hot ring" around the current output target first so long
+                    // playback does not delete nearby frames (std::map::begin() was min index, not LRU).
+                    const BurstIndex ringLo = target - 2 * step;
+                    const BurstIndex ringHi = target + 64 * step;
+                    auto itVictim = videoFrameCache.end();
+                    for (auto it = videoFrameCache.begin(); it != videoFrameCache.end(); ++it) {
+                        const BurstIndex idx = it->first.index;
+                        if (idx < ringLo || idx > ringHi) {
+                            if (itVictim == videoFrameCache.end() || idx < itVictim->first.index) {
+                                itVictim = it;
+                            }
+                        }
+                    }
+                    if (itVictim == videoFrameCache.end()) {
+                        qint64 bestDist = -1;
+                        for (auto it = videoFrameCache.begin(); it != videoFrameCache.end(); ++it) {
+                            const qint64 di = it->first.index - target;
+                            const qint64 d = di >= 0 ? di : -di;
+                            if (d > bestDist) {
+                                bestDist = d;
+                                itVictim = it;
+                            }
+                        }
+                    }
+                    videoFrameBytesUsed -= std::min<uint64_t>(videoFrameBytesUsed, imageBytes(itVictim->second));
+                    videoFrameCache.erase(itVictim);
                 }
                 videoCursorIndex = frameIndex;
                 if (frameIndex >= target) {

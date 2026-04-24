@@ -24,6 +24,19 @@ void Previewer::mousePressEvent(QMouseEvent *event)
 
 void Previewer::submitFrame(QImage image)
 {
+    if (image.isNull()) {
+        for (auto &slot : frameBuffer) {
+            slot.state.store(static_cast<int>(FrameState::Empty));
+            slot.img = QImage();
+            slot.serial = 0;
+        }
+        previousPaintedIndex = -1;
+        frameWriteIndex = 0;
+        frameReadIndex = 0;
+        nextFrameSerial = 1;
+        update();
+        return;
+    }
     paintIt(std::move(image));
 }
 

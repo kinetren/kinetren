@@ -23,7 +23,9 @@
 #include <QWheelEvent>
 #include <QResizeEvent>
 #include <QEvent>
+#include <QTimer>
 #include <QHash>
+#include <QList>
 #include <QSet>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtGlobal>
@@ -198,13 +200,61 @@ void TimelineEditor::setPlaybackMediaPool(std::shared_ptr<burstcon::ConMediaPool
     playbackMediaPool = std::move(pool);
 }
 
+void TimelineEditor::setStripMediaPool(std::shared_ptr<burstcon::ConMediaPool> pool)
+{
+    stripMediaPool = std::move(pool);
+}
+
+void TimelineEditor::invalidateSourcePath(const QString &path)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+    const QString thumbPrefix = path + QStringLiteral("::");
+    const QString peakPrefix = path + QStringLiteral("|");
+    for (auto it = previewCache.begin(); it != previewCache.end();) {
+        if (it.key().startsWith(thumbPrefix)) {
+            const QString k = it.key();
+            const auto lit = previewCacheLruPos.find(k);
+            if (lit != previewCacheLruPos.end()) {
+                previewCacheLru.erase(lit.value());
+                previewCacheLruPos.erase(lit);
+            }
+            it = previewCache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = peaksStereoCache.begin(); it != peaksStereoCache.end();) {
+        if (it.key().startsWith(peakPrefix)) {
+            it = peaksStereoCache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    const QList<QString> pendPrev = pendingPreviewKeys.values();
+    for (const QString &k : pendPrev) {
+        if (k.startsWith(thumbPrefix)) {
+            pendingPreviewKeys.remove(k);
+        }
+    }
+    const QList<QString> pendPeaks = pendingPeaksKeys.values();
+    for (const QString &k : pendPeaks) {
+        if (k.startsWith(peakPrefix)) {
+            pendingPeaksKeys.remove(k);
+        }
+    }
+    update();
+}
+
 void TimelineEditor::purgePresentationCaches()
 {
     previewCache.clear();
     previewCacheLru.clear();
     previewCacheLruPos.clear();
     pendingPreviewKeys.clear();
-    peaksCache.clear();
+    pendingPeaksKeys.clear();
+    peaksStereoCache.clear();
     cacheVideoSlidingByClip.clear();
     cacheVideoHeadByClip.clear();
     timelineVideoSlidingSegments.clear();
@@ -1664,7 +1714,8 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     previewCacheLru.clear();
     previewCacheLruPos.clear();
     pendingPreviewKeys.clear();
-    peaksCache.clear();
+    pendingPeaksKeys.clear();
+    peaksStereoCache.clear();
     sourceDurationProbeCache.clear();
     cacheVideoSlidingByClip.clear();
     cacheVideoHeadByClip.clear();
@@ -1859,17 +1910,26 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
             }
         } else {
             const int usable = std::max(1, r.width() - 6);
-            const auto peaks =
-                cachedAudioPeaks(drawClip.sourcePath, drawClip.sourceInMs, drawClip.durationMs, drawClip.sourceDurationMs, usable);
-            if (!peaks.empty()) {
-                p.setPen(QColor(210, 225, 255, 220));
+            const auto peaksStereo = cachedAudioPeaksStereo(
+                drawClip.sourcePath, drawClip.sourceInMs, drawClip.durationMs, drawClip.sourceDurationMs, usable);
+            if (!peaksStereo.isEmpty()) {
                 const int midY = r.center().y();
+                const int halfH = std::max(2, (r.height() / 2) - 2);
                 for (int x = 0; x < usable; ++x) {
-                    const int idx = std::min<int>(x, static_cast<int>(peaks.size()) - 1);
-                    const int amp = std::clamp(peaks[static_cast<size_t>(idx)], 1, (r.height() / 2) - 2);
-                    p.drawLine(r.left() + 3 + x, midY - amp, r.left() + 3 + x, midY + amp);
+                    const int idx = std::min<int>(x, peaksStereo.size() - 1);
+                    const int ampL = std::clamp(peaksStereo[idx].first, 1, halfH);
+                    const int ampR = std::clamp(peaksStereo[idx].second, 1, halfH);
+                    p.setPen(QColor(170, 210, 255, 230));
+                    p.drawLine(r.left() + 3 + x, midY - ampL, r.left() + 3 + x, midY - 1);
+                    p.setPen(QColor(230, 190, 255, 230));
+                    p.drawLine(r.left() + 3 + x, midY + 1, r.left() + 3 + x, midY + ampR);
                 }
             }
+        }
+        if (!drawClip.sourcePath.isEmpty() && !QFileInfo::exists(drawClip.sourcePath)) {
+            p.fillRect(r, QColor(55, 25, 25, 110));
+            p.setPen(QPen(QColor(255, 140, 140), 1, Qt::DashLine));
+            p.drawRoundedRect(r.adjusted(1, 1, -2, -2), 3, 3);
         }
         if (shouldDrawClipLabel(clip)) {
             const QString fileName = QFileInfo(drawClip.sourcePath).fileName();
@@ -3414,24 +3474,18 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
     if (isImagePath(path)) {
         img.load(path);
     } else {
-        static constexpr qint64 kPreviewDecodeAnchorMs = 2000;
-        const qint64 previewAnchorMs = std::max<qint64>(0, (bucketMs / kPreviewDecodeAnchorMs) * kPreviewDecodeAnchorMs);
-        const auto pool = playbackMediaPool;
+        const auto pool = stripMediaPool ? stripMediaPool : playbackMediaPool;
         if (pool) {
-            // Same acquire signature as ConTrack video rows (burstcon.cpp) so strip previews share one ConMedia
-            // per path with playback — avoids a second ensureIndexed + video demuxer (was +2 opens).
-            auto media = pool->acquire(path,
-                                       false,
-                                       false,
-                                       burstcon::msToBurstIndex(previewAnchorMs),
-                                       true,
-                                       false);
+            // `forPreview: true` uses a separate ConMedia pool key (`p:`) so timeline thumbnails do not
+            // time-share the playback decoder (`m:`) on the same path.
+            const burstcon::BurstIndex originIdx = burstcon::msToBurstIndex(bucketMs);
+            auto media = pool->acquire(path, true, false, originIdx, true, false);
             burstcon::BurstRequest req;
             req.index = burstcon::msToBurstIndex(bucketMs);
             req.quality = burstcon::BurstQuality{320, 180};
-            req.decodeOrigin = burstcon::msToBurstIndex(previewAnchorMs);
+            req.decodeOrigin = originIdx;
             burstcon::VideoBurst frame;
-            if (media->videoBurst(req, frame) && !frame.frame.isNull()) {
+            if (media && media->videoBurst(req, frame) && !frame.frame.isNull()) {
                 img = frame.frame;
             }
         }
@@ -3448,50 +3502,139 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
     return img;
 }
 
-std::vector<int> TimelineEditor::cachedAudioPeaks(const QString &path,
-                                                  qint64 sourceInMs,
-                                                  qint64 durationMs,
-                                                  qint64 sourceDurationMs,
-                                                  int sampleCount)
+QString TimelineEditor::peaksCacheKey(const QString &path,
+                                       qint64 sourceInMs,
+                                       qint64 durationMs,
+                                       qint64 sourceDurationMs,
+                                       int sampleCount)
 {
-    if (sampleCount <= 0) {
-        return {};
-    }
+    return QStringLiteral("%1|%2|%3|%4|%5")
+        .arg(path)
+        .arg(sourceInMs)
+        .arg(durationMs)
+        .arg(sourceDurationMs)
+        .arg(sampleCount);
+}
 
-    const auto it = peaksCache.constFind(path);
-    std::vector<int> basePeaks;
-    if (it != peaksCache.constEnd()) {
-        basePeaks = it.value();
-    } else {
-        basePeaks.reserve(1024);
-        const uint base = qHash(path);
-        for (int i = 0; i < 1024; ++i) {
-            const uint v = qHash(QString::number(i) + path) ^ (base >> (i % 11));
-            basePeaks.push_back(2 + static_cast<int>(v % 20));
+void TimelineEditor::commitPeaksCacheFromWorker(const QString &key, const QVector<QPair<int, int>> &peaks)
+{
+    if (!key.isEmpty()) {
+        peaksStereoCache.insert(key, peaks);
+    }
+}
+
+QVector<QPair<int, int>> TimelineEditor::decodeAudioPeaksStereoSync(const QString &path,
+                                                                    qint64 sourceInMs,
+                                                                    qint64 durationMs,
+                                                                    int sampleCount) const
+{
+    QVector<QPair<int, int>> out;
+    if (path.isEmpty() || sampleCount <= 0 || durationMs <= 0) {
+        return out;
+    }
+    const auto pool = stripMediaPool ? stripMediaPool : playbackMediaPool;
+    if (!pool) {
+        return out;
+    }
+    auto media = pool->acquire(path, true, false, burstcon::msToBurstIndex(sourceInMs), false, true);
+    if (!media) {
+        return out;
+    }
+    constexpr int kRate = 48000;
+    constexpr int kSpb = 1024;
+    const burstcon::BurstIndex audioStep =
+        std::max<burstcon::BurstIndex>(1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kSpb)) / kRate);
+    const burstcon::BurstIndex originIdx = burstcon::msToBurstIndex(sourceInMs);
+    const int maxCols = std::min(sampleCount, 360);
+    out.resize(maxCols);
+    const qint64 dur = std::max<qint64>(1, durationMs);
+    for (int i = 0; i < maxCols; ++i) {
+        const qint64 offset = (maxCols <= 1) ? 0 : (dur * static_cast<qint64>(i)) / static_cast<qint64>(maxCols - 1);
+        const qint64 srcMs = sourceInMs + std::min(offset, dur - 1);
+        const burstcon::BurstIndex rawIdx = burstcon::msToBurstIndex(srcMs);
+        const burstcon::BurstIndex idx = (rawIdx / audioStep) * audioStep;
+        burstcon::BurstRequest req;
+        req.index = idx;
+        req.decodeOrigin = originIdx;
+        burstcon::AudioBurst ab;
+        if (!media->audioBurst(req, ab) || ab.samples.empty()) {
+            out[i] = {1, 1};
+            continue;
         }
-        peaksCache.insert(path, basePeaks);
+        const int ch = std::max(1, ab.channels);
+        int peakL = 0;
+        int peakR = 0;
+        for (size_t s = 0; s + static_cast<size_t>(ch) <= ab.samples.size(); s += static_cast<size_t>(ch)) {
+            const int v0 = static_cast<int>(std::clamp(ab.samples[s],
+                                                       static_cast<int32_t>(std::numeric_limits<int16_t>::min()),
+                                                       static_cast<int32_t>(std::numeric_limits<int16_t>::max())));
+            peakL = std::max(peakL, std::abs(v0));
+            if (ch >= 2) {
+                const int v1 = static_cast<int>(std::clamp(ab.samples[s + 1],
+                                                           static_cast<int32_t>(std::numeric_limits<int16_t>::min()),
+                                                           static_cast<int32_t>(std::numeric_limits<int16_t>::max())));
+                peakR = std::max(peakR, std::abs(v1));
+            } else {
+                peakR = peakL;
+            }
+        }
+        const int nL = std::clamp(1 + (peakL * 799) / 32768, 1, 800);
+        const int nR = std::clamp(1 + (peakR * 799) / 32768, 1, 800);
+        out[i] = {nL, nR};
     }
-    if (basePeaks.empty()) {
+    if (maxCols < sampleCount) {
+        QVector<QPair<int, int>> expanded;
+        expanded.resize(sampleCount);
+        for (int x = 0; x < sampleCount; ++x) {
+            const int si = (x * (maxCols - 1)) / std::max(1, sampleCount - 1);
+            expanded[x] = out[std::clamp(si, 0, maxCols - 1)];
+        }
+        return expanded;
+    }
+    return out;
+}
+
+QVector<QPair<int, int>> TimelineEditor::cachedAudioPeaksStereo(const QString &path,
+                                                                qint64 sourceInMs,
+                                                                qint64 durationMs,
+                                                                qint64 sourceDurationMs,
+                                                                int sampleCount)
+{
+    if (sampleCount <= 0 || path.isEmpty() || !QFileInfo::exists(path)) {
         return {};
     }
-
-    const qint64 safeDuration = std::max<qint64>(1, sourceDurationMs);
-    const double startRatio =
-        std::clamp(static_cast<double>(std::max<qint64>(0, sourceInMs)) / static_cast<double>(safeDuration), 0.0, 1.0);
-    const double endRatioRaw = static_cast<double>(std::max<qint64>(0, sourceInMs + std::max<qint64>(1, durationMs))) /
-                               static_cast<double>(safeDuration);
-    const double endRatio = std::clamp(std::max(endRatioRaw, startRatio + 0.0001), 0.0, 1.0);
-    const double span = std::max(0.0001, endRatio - startRatio);
-
-    std::vector<int> sliced;
-    sliced.reserve(static_cast<size_t>(sampleCount));
-    for (int i = 0; i < sampleCount; ++i) {
-        const double xRatio = (sampleCount == 1) ? 0.0 : (static_cast<double>(i) / (sampleCount - 1));
-        const double srcRatio = std::clamp(startRatio + (xRatio * span), 0.0, 1.0);
-        const int idx = std::clamp(static_cast<int>(srcRatio * (basePeaks.size() - 1)), 0, static_cast<int>(basePeaks.size()) - 1);
-        sliced.push_back(basePeaks[static_cast<size_t>(idx)]);
+    const QString key = peaksCacheKey(path, sourceInMs, durationMs, sourceDurationMs, sampleCount);
+    const auto it = peaksStereoCache.constFind(key);
+    if (it != peaksStereoCache.constEnd()) {
+        return it.value();
     }
-    return sliced;
+    if (pendingPeaksKeys.contains(key)) {
+        return {};
+    }
+    if (pendingPeaksKeys.size() >= 8) {
+        return {};
+    }
+    pendingPeaksKeys.insert(key);
+    QPointer<TimelineEditor> guard(this);
+    QtConcurrent::run([guard, path, sourceInMs, durationMs, sampleCount, key]() {
+        QVector<QPair<int, int>> built;
+        if (guard) {
+            built = guard->decodeAudioPeaksStereoSync(path, sourceInMs, durationMs, sampleCount);
+        }
+        if (!guard) {
+            return;
+        }
+        const QVector<QPair<int, int>> copy = built;
+        QTimer::singleShot(0, guard.data(), [guard, key, copy]() {
+            if (!guard) {
+                return;
+            }
+            guard->commitPeaksCacheFromWorker(key, copy);
+            guard->pendingPeaksKeys.remove(key);
+            guard->update();
+        });
+    });
+    return {};
 }
 
 std::vector<int> TimelineEditor::linkedClipIds(int clipId) const

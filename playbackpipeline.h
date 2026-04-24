@@ -139,6 +139,9 @@ private:
     std::unordered_set<qint64> audioCoverageBuckets;
     /// Composition-timeline ms buckets (kVideoCoverageBucketMs grid) where ConCache currently holds a video frame.
     std::unordered_set<qint64> timelineVideoSlidingBuckets;
+    /// Buckets primed at the playback region start (warmup/prefetch); kept across LRU evicts so the yellow
+    /// head strip does not vanish while sliding coverage is evicted on repeat.
+    std::unordered_set<qint64> timelineVideoRegionHeadBuckets;
 
     std::shared_ptr<burstcon::ConMediaPool> mediaPool;
     std::shared_ptr<burstcon::ConTrack> videoTrack;

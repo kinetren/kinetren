@@ -28,6 +28,10 @@ class QCheckBox;
 class QComboBox;
 class QSpinBox;
 
+namespace burstcon {
+class ConMediaPool;
+}
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -68,6 +72,7 @@ private:
     void openMorpherEditWindow(int morpherEventId);
     void pruneMorpherWindows();
     void refreshWindowTitle();
+    void tickMediaSourceAvailability();
 
 protected:
     void changeEvent(QEvent *event) override;
@@ -102,6 +107,9 @@ protected:
     qint64 lastPerfSampleMs = 0;
     QString currentProjectPath;
     QTimer autosaveTimer;
+    QTimer mediaSourceProbeTimer;
+    QHash<QString, bool> mediaPathPreviouslyReachable;
+    std::shared_ptr<burstcon::ConMediaPool> stripMediaPool;
     bool renderInProgress = false;
 
     SourceReplacePanel *sourceReplacePanel = nullptr;

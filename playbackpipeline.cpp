@@ -21,6 +21,12 @@ constexpr int kAudioSampleRate = 48000;
 constexpr int kAudioChannels = 2;
 constexpr int kDefaultAudioSamplesPerBurst = 1024;
 constexpr qint64 kVideoCoverageBucketMs = 33;
+
+qint64 videoCoverageBucketCenterMs(qint64 tMs)
+{
+    const qint64 step = std::max<qint64>(1, kVideoCoverageBucketMs);
+    return ((tMs + step / 2) / step) * step;
+}
 constexpr qint64 kAudioCoverageBucketMs = 20;
 constexpr qint64 kPrefetchAheadMs = 12000;
 /// When scrubbing while stopped, only look this far ahead so `isPlaybackHeadWarm` matches the usual
@@ -28,7 +34,7 @@ constexpr qint64 kPrefetchAheadMs = 12000;
 constexpr qint64 kIdleScrubPrefetchAheadMs = 5000;
 /// While playing, prefetch only this far ahead. A full `kPrefetchAheadMs` window fights
 /// `MonotonicPlaybackTimer` for one `ConMedia` decoder and explodes readPacket/decode rates.
-constexpr qint64 kPrefetchDuringPlayAheadMs = 1500;
+constexpr qint64 kPrefetchDuringPlayAheadMs = 2200;
 constexpr qint64 kPrefetchPlayRescheduleMs = 2000;
 /// For prefetch/warmup spans up to this length, step video at output FPS so ConCache keys match playback.
 /// Wider sparse steps add different indices than the timer, evict playback frames in LRU and break short loops.
@@ -82,7 +88,7 @@ QVector<QPair<double, double>> segmentsFromBucketsAlongSpan(const std::unordered
     qint64 runStart = spanStartMs;
     const qint64 stepMs = coverageTimeStepMs(span, kVideoCoverageBucketMs);
     for (qint64 t = spanStartMs; t < spanEndMs; t += stepMs) {
-        const qint64 bucket = (t / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
+        const qint64 bucket = videoCoverageBucketCenterMs(t);
         const bool hit = buckets.find(bucket) != buckets.end();
         if (hit && !inRun) {
             inRun = true;
@@ -268,11 +274,17 @@ void PlaybackPipeline::warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 h
     burstcon::BurstQuality quality;
     int fps = 30;
     qint64 warmEndMs = startTimelineMs + headMs;
+    burstcon::PlaybackMode pbMode = burstcon::PlaybackMode::Free;
+    qint64 regStartMs = 0;
+    qint64 regEndMs = 0;
     {
         std::lock_guard<std::mutex> lock(mutex);
         localRoot = root;
         quality = decodeBurstQuality(projectSettings);
         fps = std::max(1, projectSettings.fps);
+        pbMode = playbackMode;
+        regStartMs = playbackRegionStartMs;
+        regEndMs = playbackRegionEndMs;
         if ((playbackMode == burstcon::PlaybackMode::Region || playbackMode == burstcon::PlaybackMode::RegionLoop) &&
             playbackRegionEndMs > playbackRegionStartMs) {
             warmEndMs = std::min(warmEndMs, playbackRegionEndMs);
@@ -303,7 +315,17 @@ void PlaybackPipeline::warmPlaybackHeadBlocking(qint64 startTimelineMs, qint64 h
         req.index = idx;
         req.quality = quality;
         burstcon::VideoBurst vb;
-        (void)localRoot->videoBurst(req, vb);
+        if (localRoot->videoBurst(req, vb) && !vb.frame.isNull()) {
+            if ((pbMode == burstcon::PlaybackMode::Region || pbMode == burstcon::PlaybackMode::RegionLoop) &&
+                regEndMs > regStartMs) {
+                const qint64 tMs = burstcon::burstIndexToMs(idx);
+                const qint64 headEnd = std::min(regEndMs, regStartMs + kRegionHeadWindowMs);
+                if (tMs >= regStartMs && tMs < headEnd) {
+                    std::lock_guard<std::mutex> cov(coverageMutex);
+                    timelineVideoRegionHeadBuckets.insert(videoCoverageBucketCenterMs(tMs));
+                }
+            }
+        }
     }
     const burstcon::BurstIndex alignedAudioStart = (startIdx / audioStep) * audioStep;
     for (burstcon::BurstIndex idx = alignedAudioStart; idx <= endIdx; idx += audioStep) {
@@ -372,7 +394,7 @@ bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
     std::lock_guard<std::mutex> lock(coverageMutex);
     for (qint64 t = startMs; t < endMs; t += kProbeStepMs) {
         if (projectHasVideo) {
-            const qint64 bucket = (t / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
+            const qint64 bucket = videoCoverageBucketCenterMs(t);
             if (timelineVideoSlidingBuckets.find(bucket) == timelineVideoSlidingBuckets.end()) {
                 return false;
             }
@@ -386,7 +408,7 @@ bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
     }
     if (projectHasVideo) {
         const qint64 lastT = std::max(startMs, endMs - 1);
-        const qint64 bLast = (lastT / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
+        const qint64 bLast = videoCoverageBucketCenterMs(lastT);
         return timelineVideoSlidingBuckets.find(bLast) != timelineVideoSlidingBuckets.end();
     }
     return true;
@@ -463,8 +485,15 @@ void PlaybackPipeline::setPlaybackMode(burstcon::PlaybackMode mode, qint64 regio
     qint64 regionPrefetchStart = 0;
     qint64 regionPrefetchEnd = 0;
     bool wantRegionIdlePrefetch = false;
+    bool clearRegionHeadBuckets = false;
     {
         std::lock_guard<std::mutex> lock(mutex);
+        if (playbackMode != mode) {
+            clearRegionHeadBuckets = true;
+        } else if (mode != burstcon::PlaybackMode::Free &&
+                   (playbackRegionStartMs != regionStartMs || playbackRegionEndMs != regionEndMs)) {
+            clearRegionHeadBuckets = true;
+        }
         playbackMode = mode;
         if (mode == burstcon::PlaybackMode::Free) {
             playbackRegionStartMs = 0;
@@ -485,6 +514,10 @@ void PlaybackPipeline::setPlaybackMode(burstcon::PlaybackMode mode, qint64 regio
                 wantRegionIdlePrefetch = true;
             }
         }
+    }
+    if (clearRegionHeadBuckets) {
+        std::lock_guard<std::mutex> cov(coverageMutex);
+        timelineVideoRegionHeadBuckets.clear();
     }
     if (wantRegionIdlePrefetch &&
         !isPlaybackHeadWarm(regionPrefetchStart, regionPrefetchEnd - regionPrefetchStart)) {
@@ -549,12 +582,14 @@ void PlaybackPipeline::clearTimelineCoverage()
     std::lock_guard<std::mutex> coverageLock(coverageMutex);
     audioCoverageBuckets.clear();
     timelineVideoSlidingBuckets.clear();
+    timelineVideoRegionHeadBuckets.clear();
 }
 
 void PlaybackPipeline::clearVideoFrameBucketSets()
 {
     std::lock_guard<std::mutex> lock(coverageMutex);
     timelineVideoSlidingBuckets.clear();
+    timelineVideoRegionHeadBuckets.clear();
 }
 
 void PlaybackPipeline::onVideoFrameCacheKeyChanged(bool inserted,
@@ -585,7 +620,7 @@ void PlaybackPipeline::onVideoFrameCacheKeyChanged(bool inserted,
             continue;
         }
         const qint64 tMs = burstcon::burstIndexToMs(composition);
-        const qint64 bucket = (tMs / kVideoCoverageBucketMs) * kVideoCoverageBucketMs;
+        const qint64 bucket = videoCoverageBucketCenterMs(tMs);
         if (inserted) {
             timelineVideoSlidingBuckets.insert(bucket);
         } else {
@@ -633,10 +668,14 @@ QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::videoFrameHeadS
     }
     QHash<QString, QVector<QPair<double, double>>> out;
     std::lock_guard<std::mutex> lock(coverageMutex);
+    std::unordered_set<qint64> merged = timelineVideoSlidingBuckets;
+    for (qint64 b : timelineVideoRegionHeadBuckets) {
+        merged.insert(b);
+    }
     for (const auto &clip : clips) {
         const qint64 dur = std::max<qint64>(1, clip.durationMs);
         out.insert(coverageClipKey(clip),
-                   headSegmentsOnClip(timelineVideoSlidingBuckets, clip.startMs, dur, regStart, regEnd));
+                   headSegmentsOnClip(merged, clip.startMs, dur, regStart, regEnd));
     }
     return out;
 }
@@ -657,7 +696,11 @@ QVector<QPair<double, double>> PlaybackPipeline::timelineVideoHeadSegments(qint6
         regEnd = playbackRegionEndMs;
     }
     std::lock_guard<std::mutex> lock(coverageMutex);
-    return headSegmentsOnView(timelineVideoSlidingBuckets, viewStartMs, viewEndMs, regStart, regEnd);
+    std::unordered_set<qint64> merged = timelineVideoSlidingBuckets;
+    for (qint64 b : timelineVideoRegionHeadBuckets) {
+        merged.insert(b);
+    }
+    return headSegmentsOnView(merged, viewStartMs, viewEndMs, regStart, regEnd);
 }
 
 QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::audioCacheSegments(const std::vector<Clip> &clips) const
@@ -872,14 +915,18 @@ void PlaybackPipeline::draftWorkerLoop()
             continue;
         }
         QImage frame = renderDraftFrame(job.timelineMs, job.videoClips);
-        if (frame.isNull() || running.load()) {
+        if (running.load()) {
             continue;
         }
         if (job.serial != latestDraftSerial.load()) {
             continue;
         }
         if (onVideoFrameReady) {
-            onVideoFrameReady(std::move(frame));
+            if (!frame.isNull()) {
+                onVideoFrameReady(std::move(frame));
+            } else {
+                onVideoFrameReady(QImage());
+            }
         }
     }
 }
@@ -919,11 +966,17 @@ void PlaybackPipeline::prefetchWorkerLoop()
             job = pendingPrefetchJob;
             prefetchJobPending = false;
         }
+        burstcon::PlaybackMode pbMode = burstcon::PlaybackMode::Free;
+        qint64 regStartMs = 0;
+        qint64 regEndMs = 0;
         {
             std::lock_guard<std::mutex> lock(mutex);
             localRoot = root;
             quality = decodeBurstQuality(projectSettings);
             fps = std::max(1, projectSettings.fps);
+            pbMode = playbackMode;
+            regStartMs = playbackRegionStartMs;
+            regEndMs = playbackRegionEndMs;
         }
         if (!localRoot) {
             continue;
@@ -960,7 +1013,17 @@ void PlaybackPipeline::prefetchWorkerLoop()
             req.index = idx;
             req.quality = quality;
             burstcon::VideoBurst vb;
-            (void)localRoot->videoBurst(req, vb);
+            if (localRoot->videoBurst(req, vb) && !vb.frame.isNull()) {
+                if ((pbMode == burstcon::PlaybackMode::Region || pbMode == burstcon::PlaybackMode::RegionLoop) &&
+                    regEndMs > regStartMs) {
+                    const qint64 tMs = burstcon::burstIndexToMs(idx);
+                    const qint64 headEnd = std::min(regEndMs, regStartMs + kRegionHeadWindowMs);
+                    if (tMs >= regStartMs && tMs < headEnd) {
+                        std::lock_guard<std::mutex> cov(coverageMutex);
+                        timelineVideoRegionHeadBuckets.insert(videoCoverageBucketCenterMs(tMs));
+                    }
+                }
+            }
         }
         const burstcon::BurstIndex alignedAudioStart = (startIdx / audioStep) * audioStep;
         for (burstcon::BurstIndex idx = alignedAudioStart; idx <= endIdx; idx += audioStep) {
