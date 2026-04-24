@@ -442,6 +442,14 @@ public:
             videoPrimedOrigin = decodeOrigin;
         }
 
+        const int64_t decPixels = int64_t(std::max(1, videoDec->width())) * int64_t(std::max(1, videoDec->height()));
+        const int64_t kBaselinePixels = 1280LL * 720LL;
+        // More coded pixels => more NALU packets per frame and often more B-frame reorder; the old flat
+        // 16k cap caused "video decode exhausted" for FHD/4K (and 4KClass *RGB* output) while 720p was fine.
+        const int resPacketMul = static_cast<int>(
+            std::min<int64_t>(12, (decPixels + kBaselinePixels - 1) / kBaselinePixels));
+        const BurstIndex kPacketBudget = static_cast<BurstIndex>(64) * static_cast<BurstIndex>(resPacketMul);
+
         auto decodeForward = [&](QImage &picked, BurstIndex &pickedIndex) {
             std::error_code ec;
             int skipCounter = 0;
@@ -451,9 +459,9 @@ public:
             // Budget must count *video* packets only: the file demuxer returns interleaved audio/subtitle/etc.
             // packets on the same FormatContext. Capping total readPacket() calls caused "decode exhausted"
             // on dense interleave (common on high-bitrate FullHD) while the decoder was still catching up.
-            const int maxVideoPackets =
-                static_cast<int>(std::clamp<BurstIndex>(framesNeeded * 64, 512, 16384));
-            constexpr int kMaxDemuxReads = 131072;
+            const int maxVideoPackets = static_cast<int>(std::clamp<BurstIndex>(
+                framesNeeded * kPacketBudget, 512, static_cast<BurstIndex>(1048576)));
+            const int kMaxDemuxReads = (resPacketMul > 1) ? 524288 : 131072;
             int demuxReads = 0;
             int videoPackets = 0;
             while (demuxReads < kMaxDemuxReads) {
@@ -470,6 +478,7 @@ public:
                 if (pkt.streamIndex() != videoStream) {
                     continue;
                 }
+                const qint64 packetTsMs = packetTimestampToMs(pkt);
                 VideoFrame frame = videoDec->decode(pkt, ec);
                 ++videoPackets;
                 gAvcppVideoDecodeCalls.fetch_add(1);
@@ -479,7 +488,7 @@ public:
                 }
                 qint64 frameMs = timestampToMs(frame.pts());
                 if (frameMs < 0) {
-                    frameMs = burstIndexToMs(target);
+                    frameMs = (packetTsMs >= 0) ? packetTsMs : burstIndexToMs(target);
                 }
                 BurstIndex frameIndex = (msToBurstIndex(frameMs) / videoFrameStep) * videoFrameStep;
                 if ((skipFrames || localSkipFrames) && frameIndex < target && (++skipCounter % 2 == 1)) {
@@ -507,6 +516,9 @@ public:
                     continue;
                 }
                 QImage img(rgbFrame.width(), rgbFrame.height(), QImage::Format_RGB888);
+                if (img.isNull() || !img.bits()) {
+                    continue;
+                }
                 const int dstStride = img.bytesPerLine();
                 const int srcStride = rgbFrame.raw()->linesize[0];
                 const int copyStride = std::min(dstStride, srcStride);
@@ -561,13 +573,31 @@ public:
                     return;
                 }
             }
-            const DecodedVideoFrameKey nearKey{target, outRgbW, outRgbH};
-            auto near = videoFrameCache.lower_bound(nearKey);
-            if (picked.isNull() && near != videoFrameCache.end() && near->first.index == target &&
-                near->first.rgbW == outRgbW && near->first.rgbH == outRgbH) {
-                picked = near->second;
-                pickedIndex = near->first.index;
-                videoCursorIndex = pickedIndex;
+            if (picked.isNull()) {
+                // Exact (target, dstW, dstH) is ideal; FHD/4K + container timing can land on a nearby
+                // burst grid point so lower_bound(==) often misses even when frames are in the cache.
+                const qint64 maxSlack = 32 * static_cast<qint64>(std::max<BurstIndex>(1, videoFrameStep));
+                qint64 bestAbs = std::numeric_limits<qint64>::max();
+                BurstIndex bestIdx = -1;
+                for (const auto &entry : videoFrameCache) {
+                    if (entry.first.rgbW != outRgbW || entry.first.rgbH != outRgbH) {
+                        continue;
+                    }
+                    if (entry.second.isNull()) {
+                        continue;
+                    }
+                    const qint64 d = std::llabs(static_cast<qint64>(entry.first.index) -
+                                                static_cast<qint64>(target));
+                    if (d < bestAbs && d <= maxSlack) {
+                        bestAbs = d;
+                        bestIdx = entry.first.index;
+                        picked = entry.second;
+                    }
+                }
+                if (bestIdx >= 0) {
+                    pickedIndex = bestIdx;
+                    videoCursorIndex = bestIdx;
+                }
             }
         };
 
