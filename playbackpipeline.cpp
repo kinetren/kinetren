@@ -603,6 +603,41 @@ bool PlaybackPipeline::isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const
     return true;
 }
 
+bool PlaybackPipeline::isScrubFrameWarm(qint64 tMs) const
+{
+    std::vector<Clip> videoClips;
+    std::vector<Clip> audioClips;
+    int fps = 30;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        fps = std::max(1, projectSettings.fps);
+        videoClips = lastVideoClips;
+        audioClips = lastAudioClips;
+    }
+    const bool wantAudio = compositionHasAudioAtMs(tMs, audioClips);
+    const burstcon::BurstIndex alignedIdx =
+        burstcon::alignBurstIndexToOutputVideoFrame(fps, burstcon::msToBurstIndex(tMs));
+    const qint64 sampleMs = burstcon::burstIndexToMs(alignedIdx);
+    const bool wantVideo = !activeVideoClipPathAtMs(sampleMs, videoClips).isEmpty();
+    if (!wantVideo && !wantAudio) {
+        return true;
+    }
+    std::lock_guard<std::mutex> lock(coverageMutex);
+    if (wantVideo) {
+        const qint64 bucket = videoCoverageBucketCenterMs(sampleMs);
+        if (timelineVideoSlidingBuckets.find(bucket) == timelineVideoSlidingBuckets.end()) {
+            return false;
+        }
+    }
+    if (wantAudio) {
+        const qint64 aBucket = (tMs / kAudioCoverageBucketMs) * kAudioCoverageBucketMs;
+        if (audioCoverageBuckets.find(aBucket) == audioCoverageBuckets.end()) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void PlaybackPipeline::start(qint64 startTimelineMs)
 {
     preparePlaybackAt(startTimelineMs);
@@ -650,7 +685,10 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         const qint64 idlePrefetchEnd = std::min(prefetchEndMs, tMs + kIdleScrubPrefetchAheadMs);
         const qint64 idleSpan = std::max<qint64>(0, idlePrefetchEnd - tMs);
         const bool headWarm = idleSpan > 0 && isPlaybackHeadWarm(tMs, idleSpan);
-        if (onVideoFrameReady && !headWarm) {
+        // Do not tie idle preview to the full lookahead window: that window can be "warm" from
+        // cache elsewhere while the aligned frame under the cursor still has no bucket, so draft
+        // was skipped and one clip showed stripes but black preview.
+        if (onVideoFrameReady && !isScrubFrameWarm(tMs)) {
             requestDraftFrameAsync(tMs, videoClips);
         }
         if (idleSpan > 0 && !headWarm) {

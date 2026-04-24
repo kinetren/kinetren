@@ -72,6 +72,7 @@ private:
     void openMorpherEditWindow(int morpherEventId);
     void pruneMorpherWindows();
     void refreshWindowTitle();
+    void error(const QString &message) const;
     void tickMediaSourceAvailability();
 
 protected:

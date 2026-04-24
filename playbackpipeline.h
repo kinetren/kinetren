@@ -71,6 +71,8 @@ public:
     void beginClockAndPrefetch(qint64 startTimelineMs);
     /// True when timeline [startMs, startMs+headMs) already has dense video+final coverage (skip redundant warmup).
     bool isPlaybackHeadWarm(qint64 startMs, qint64 headMs) const;
+    /// True when the output-aligned frame at `tMs` already has coverage (used for idle preview only).
+    bool isScrubFrameWarm(qint64 tMs) const;
     void stop();
     bool isRunning() const;
     void update(qint64 timelineMs, const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);

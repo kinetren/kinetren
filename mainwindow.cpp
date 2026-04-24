@@ -1433,16 +1433,23 @@ void MainWindow::renderDraftProject()
     }).detach();
 }
 
+void MainWindow::error(const QString &message) const
+{
+    qWarning() << message;
+}
+
 QSize MainWindow::computeMaxSourceVideoResolution() const
 {
     int maxW = 0;
     int maxH = 0;
     if (!timelineEditor || !playbackPipeline) {
-        return QSize(1280, 720);
+        error("computeMaxSourceVideoResolution: timelineEditor or playbackPipeline is null");
+        return QSize(1, 1);
     }
     const std::shared_ptr<burstcon::ConMediaPool> pool = playbackPipeline->sharedMediaPool();
     if (!pool) {
-        return QSize(1280, 720);
+        error("computeMaxSourceVideoResolution: pool is null");
+        return QSize(1, 1);
     }
 
     QSet<QString> seen;
@@ -1480,7 +1487,8 @@ QSize MainWindow::computeMaxSourceVideoResolution() const
     }
 
     if (maxW <= 0 || maxH <= 0) {
-        return QSize(1280, 720);
+        error("computeMaxSourceVideoResolution: maxW <= 0 || maxH <= 0");
+        return QSize(1, 1);
     }
     return QSize(maxW, maxH);
 }
