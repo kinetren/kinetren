@@ -310,13 +310,14 @@ PlaybackPipeline::PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameRe
 {
     burstcon::ConMediaPoolConfig poolCfg;
     poolCfg.enableConMediaCache = true;
-    poolCfg.cacheConfig.maxEntries = 256;
-    poolCfg.cacheConfig.maxAudioEntries = 128;
-    poolCfg.cacheConfig.maxVideoEntries = 192;
-    poolCfg.cacheConfig.maxVideoBytes = 384ULL * 1024ULL * 1024ULL;
+    poolCfg.cacheConfig.maxEntries = 256*256;
+    poolCfg.cacheConfig.maxAudioEntries = 128*128;
+    poolCfg.cacheConfig.maxVideoEntries = 192*192;
+    // 1080p-class RGB32 is ~8 MiB/frame; a small budget evicts playback windows and starves audio.
+    poolCfg.cacheConfig.maxVideoBytes = 1024ULL * 1024ULL * 1024ULL;
     poolCfg.cacheConfig.preloadEnabled = false;
     poolCfg.cacheConfig.preloadAheadTicks = burstcon::kBurstTimebaseHz;
-    poolCfg.maxMediaInstances = 16;
+    poolCfg.maxMediaInstances = 16*16;
     poolCfg.cacheConfig.onVideoFrameCacheChanged =
         [this](bool inserted, const QString &mediaPath, burstcon::BurstIndex mediaBurstIndex, const burstcon::BurstQuality &q) {
             onVideoFrameCacheKeyChanged(inserted, mediaPath, mediaBurstIndex, q);

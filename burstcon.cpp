@@ -456,9 +456,11 @@ public:
                 if ((skipFrames || localSkipFrames) && frameIndex < target && (++skipCounter % 2 == 1)) {
                     continue;
                 }
-                const QSize scaledRgb = videoRgbSizeForQuality(frame.width(), frame.height(), quality);
-                const int dstW = std::max(1, scaledRgb.width());
-                const int dstH = std::max(1, scaledRgb.height());
+                // Must match `cacheLookupKey` / `outRgbW`/`outRgbH` above (derived from `videoDec` size).
+                // Using `frame.width()` here breaks lookups when coded size differs from the decoder
+                // context (anamorphic / SAR), causing perpetual L1 misses and decode storms.
+                const int dstW = outRgbW;
+                const int dstH = outRgbH;
                 VideoFrame rgbFrame{AV_PIX_FMT_RGB24, dstW, dstH};
                 std::error_code rescaleEc;
                 videoRescaler->rescale(rgbFrame, frame, rescaleEc);
