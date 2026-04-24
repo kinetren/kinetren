@@ -25,6 +25,7 @@
 #include <avcpp/dictionary.h>
 #include <avcpp/formatcontext.h>
 #include <avcpp/packet.h>
+#include <avcpp/frame.h>
 #include <avcpp/videorescaler.h>
 
 namespace burstcon {
@@ -48,7 +49,10 @@ std::atomic<uint64_t> gCacheVideoUnusedEvictions{0};
 
 int64_t qualityArea(const BurstQuality &q)
 {
-    return static_cast<int64_t>(std::max(1, q.width)) * static_cast<int64_t>(std::max(1, q.height));
+    if (q.width <= 0 || q.height <= 0) {
+        return 0;
+    }
+    return static_cast<int64_t>(q.width) * static_cast<int64_t>(q.height);
 }
 
 qint64 timestampToMs(const av::Timestamp &ts)
@@ -87,7 +91,37 @@ PacketIndexEntry makePacketIndexEntry(const av::Packet &pkt)
     PacketIndexEntry entry;
     entry.bytePos = pkt.raw() ? pkt.raw()->pos : -1;
     const qint64 tsMs = packetTimestampToMs(pkt);
-    if (tsMs > 0) {
+    if (tsMs >= 0) {
+        entry.index = msToBurstIndex(tsMs);
+    }
+    return entry;
+}
+
+// Demuxed packets can carry time_base=0/1 (invalid) while the stream has the correct scale.
+// For video keyframes, prefer raw DTS/PTS with the packet time_base if set, else the stream.
+PacketIndexEntry makeVideoKeyframeIndexEntry(const av::Packet &pkt, const av::Rational &videoStreamTb)
+{
+    PacketIndexEntry entry;
+    entry.bytePos = pkt.raw() ? pkt.raw()->pos : -1;
+    if (entry.bytePos < 0 || !pkt.raw()) {
+        return entry;
+    }
+    if (videoStreamTb.getDenominator() <= 0) {
+        return makePacketIndexEntry(pkt);
+    }
+    const av::Rational tb
+        = (pkt.timeBase().getDenominator() > 0) ? pkt.timeBase() : videoStreamTb;
+    int64_t raw = av::NoPts;
+    if (pkt.raw()->dts != av::NoPts) {
+        raw = pkt.raw()->dts;
+    } else if (pkt.raw()->pts != av::NoPts) {
+        raw = pkt.raw()->pts;
+    }
+    if (raw == av::NoPts) {
+        return entry;
+    }
+    const qint64 tsMs = timestampToMs(av::Timestamp{raw, tb});
+    if (tsMs >= 0) {
         entry.index = msToBurstIndex(tsMs);
     }
     return entry;
@@ -137,10 +171,12 @@ struct SharedMediaFile {
         if (ec) {
             return;
         }
+        av::Rational vStreamTimeBase;
         for (size_t i = 0; i < input.streamsCount(); ++i) {
             auto st = input.stream(i);
             if (videoStream < 0 && st.mediaType() == AVMEDIA_TYPE_VIDEO) {
                 videoStream = static_cast<int>(i);
+                vStreamTimeBase = st.timeBase();
                 const double fps = st.averageFrameRate().getDouble();
                 if (fps > 1.0) {
                     videoFrameStep = std::max<BurstIndex>(1, static_cast<BurstIndex>(kBurstTimebaseHz / fps));
@@ -170,7 +206,9 @@ struct SharedMediaFile {
                 break;
             }
             if (pkt.streamIndex() == videoStream && pkt.isKeyPacket()) {
-                PacketIndexEntry entry = makePacketIndexEntry(pkt);
+                PacketIndexEntry entry = (vStreamTimeBase.getDenominator() > 0)
+                    ? makeVideoKeyframeIndexEntry(pkt, vStreamTimeBase)
+                    : makePacketIndexEntry(pkt);
                 if (entry.bytePos >= 0) {
                     videoKeyframes.push_back(entry);
                 }
@@ -324,8 +362,20 @@ public:
                 return false;
             }
             videoInput.findStreamInfo(ec);
-            if (ec || !openVideoDecoderLocked()) {
-                reportBurstconDiagnostic(QStringLiteral("video findStreamInfo/openDecoder failed path=%1").arg(path));
+            if (ec) {
+                reportBurstconDiagnostic(QStringLiteral("video findStreamInfo failed path=%1").arg(path));
+                return false;
+            }
+            {
+                const auto vst = videoInput.stream(static_cast<size_t>(videoStream));
+                if (vst.isValid() && vst.timeBase().getDenominator() > 0) {
+                    videoStreamTimeBase = vst.timeBase();
+                } else {
+                    videoStreamTimeBase = av::Rational{};
+                }
+            }
+            if (!openVideoDecoderLocked()) {
+                reportBurstconDiagnostic(QStringLiteral("video openDecoder failed path=%1").arg(path));
                 return false;
             }
         }
@@ -450,7 +500,30 @@ public:
             std::min<int64_t>(12, (decPixels + kBaselinePixels - 1) / kBaselinePixels));
         const BurstIndex kPacketBudget = static_cast<BurstIndex>(64) * static_cast<BurstIndex>(resPacketMul);
 
-        auto decodeForward = [&](QImage &picked, BurstIndex &pickedIndex) {
+        struct VideoPassStats {
+            QString stopReason;
+            int kMaxDemux = 0;
+            int kMaxVideoPackets = 0;
+            BurstIndex cursorBase = 0;
+            BurstIndex framesNeeded = 0;
+            int demuxReads = 0;
+            int videoPackets = 0;
+            int nDecodeNullIncomplete = 0;
+            int nRescaleFail = 0;
+            int nQimageNull = 0;
+            int nSkipPolicy = 0;
+            int nPushed = 0;
+            qint64 minPushedIndex = -1;
+            qint64 maxPushedIndex = -1;
+            qint64 nearestAbs = -1;
+            int cacheSize = 0;
+            bool usedNearest = false;
+            int outW = 0, outH = 0, decW = 0, decH = 0;
+            qint64 maxSlack = 0;
+        };
+
+        auto decodeForward = [&](QImage &picked, BurstIndex &pickedIndex, VideoPassStats &ps) {
+            ps = VideoPassStats();
             std::error_code ec;
             int skipCounter = 0;
             const BurstIndex cursorBase = std::max<BurstIndex>(-videoFrameStep, videoCursorIndex);
@@ -464,14 +537,24 @@ public:
             const int kMaxDemuxReads = (resPacketMul > 1) ? 524288 : 131072;
             int demuxReads = 0;
             int videoPackets = 0;
+            ps.kMaxDemux = kMaxDemuxReads;
+            ps.kMaxVideoPackets = maxVideoPackets;
+            ps.cursorBase = cursorBase;
+            ps.framesNeeded = framesNeeded;
+            ps.outW = outRgbW;
+            ps.outH = outRgbH;
+            ps.decW = videoDec->width();
+            ps.decH = videoDec->height();
             while (demuxReads < kMaxDemuxReads) {
                 if (videoPackets >= maxVideoPackets) {
+                    ps.stopReason = QStringLiteral("videoPacketLimit");
                     break;
                 }
                 Packet pkt = videoInput.readPacket(ec);
                 ++demuxReads;
                 gAvcppPacketReads.fetch_add(1);
                 if (ec || !pkt) {
+                    ps.stopReason = ec ? QStringLiteral("packetReadError") : QStringLiteral("demuxEof");
                     ec.clear();
                     break;
                 }
@@ -483,15 +566,26 @@ public:
                 ++videoPackets;
                 gAvcppVideoDecodeCalls.fetch_add(1);
                 if (ec || frame.isNull() || !frame.isComplete()) {
+                    ++ps.nDecodeNullIncomplete;
                     ec.clear();
                     continue;
                 }
-                qint64 frameMs = timestampToMs(frame.pts());
+                qint64 frameMs = -1;
+                {
+                    const int64_t bet = av::frame::get_best_effort_timestamp(frame.raw());
+                    if (bet != av::NoPts && videoStreamTimeBase.getDenominator() > 0) {
+                        frameMs = timestampToMs(av::Timestamp(bet, videoStreamTimeBase));
+                    }
+                }
+                if (frameMs < 0) {
+                    frameMs = timestampToMs(frame.pts());
+                }
                 if (frameMs < 0) {
                     frameMs = (packetTsMs >= 0) ? packetTsMs : burstIndexToMs(target);
                 }
                 BurstIndex frameIndex = (msToBurstIndex(frameMs) / videoFrameStep) * videoFrameStep;
                 if ((skipFrames || localSkipFrames) && frameIndex < target && (++skipCounter % 2 == 1)) {
+                    ++ps.nSkipPolicy;
                     continue;
                 }
                 // Must match `cacheLookupKey` / `outRgbW`/`outRgbH` above (derived from `videoDec` size).
@@ -512,11 +606,13 @@ public:
                 std::error_code rescaleEc;
                 videoRescaler->rescale(rgbFrame, frame, rescaleEc);
                 if (rescaleEc) {
+                    ++ps.nRescaleFail;
                     rescaleEc.clear();
                     continue;
                 }
                 QImage img(rgbFrame.width(), rgbFrame.height(), QImage::Format_RGB888);
                 if (img.isNull() || !img.bits()) {
+                    ++ps.nQimageNull;
                     continue;
                 }
                 const int dstStride = img.bytesPerLine();
@@ -533,6 +629,13 @@ public:
                 }
                 const DecodedVideoFrameKey storeKey{frameIndex, dstW, dstH};
                 videoFrameCache[storeKey] = img;
+                ++ps.nPushed;
+                if (ps.minPushedIndex < 0 || frameIndex < ps.minPushedIndex) {
+                    ps.minPushedIndex = static_cast<qint64>(frameIndex);
+                }
+                if (ps.maxPushedIndex < 0 || frameIndex > ps.maxPushedIndex) {
+                    ps.maxPushedIndex = static_cast<qint64>(frameIndex);
+                }
                 videoFrameBytesUsed += imageBytes(img);
                 while (videoFrameCache.size() > kDecoderVideoFrameCacheMaxFrames ||
                        videoFrameBytesUsed > kDecoderVideoFrameCacheMaxBytes) {
@@ -570,13 +673,26 @@ public:
                 if (frameIndex >= target) {
                     picked = img;
                     pickedIndex = frameIndex;
+                    ps.demuxReads = demuxReads;
+                    ps.videoPackets = videoPackets;
+                    ps.stopReason = QStringLiteral("pickedInLoop");
                     return;
                 }
+            }
+            ps.demuxReads = demuxReads;
+            ps.videoPackets = videoPackets;
+            if (ps.stopReason.isEmpty() && demuxReads >= kMaxDemuxReads) {
+                ps.stopReason = QStringLiteral("demuxReadLimit");
+            }
+            if (ps.stopReason.isEmpty()) {
+                ps.stopReason = QStringLiteral("readLoopEnd");
             }
             if (picked.isNull()) {
                 // Exact (target, dstW, dstH) is ideal; FHD/4K + container timing can land on a nearby
                 // burst grid point so lower_bound(==) often misses even when frames are in the cache.
                 const qint64 maxSlack = 32 * static_cast<qint64>(std::max<BurstIndex>(1, videoFrameStep));
+                ps.maxSlack = maxSlack;
+                ps.cacheSize = static_cast<int>(videoFrameCache.size());
                 qint64 bestAbs = std::numeric_limits<qint64>::max();
                 BurstIndex bestIdx = -1;
                 for (const auto &entry : videoFrameCache) {
@@ -597,33 +713,65 @@ public:
                 if (bestIdx >= 0) {
                     pickedIndex = bestIdx;
                     videoCursorIndex = bestIdx;
+                    ps.usedNearest = true;
+                    ps.nearestAbs = bestAbs;
+                    ps.stopReason = QStringLiteral("pickedNearestInCache");
+                } else {
+                    ps.nearestAbs = -1;
                 }
             }
         };
 
         QImage picked;
         BurstIndex pickedIndex = -1;
-        decodeForward(picked, pickedIndex);
+        VideoPassStats vpass;
+        decodeForward(picked, pickedIndex, vpass);
         if (picked.isNull()) {
             const BurstIndex resyncGoal = std::max<BurstIndex>(0, std::max(decodeOrigin, target));
             if (seekVideoLocked(resyncGoal)) {
-                decodeForward(picked, pickedIndex);
+                decodeForward(picked, pickedIndex, vpass);
             }
         }
         if (picked.isNull() && requestedDecodeOrigin > 0 && seekVideoLocked(0)) {
-            decodeForward(picked, pickedIndex);
+            decodeForward(picked, pickedIndex, vpass);
         }
         if (picked.isNull()) {
             lastVideoFailedTarget = target;
             lastVideoFailedOrigin = requestedDecodeOrigin;
             ++videoFailureStreak;
             reportBurstconDiagnostic(
-                QStringLiteral("video decode exhausted path=%1 target=%2 decodeOrigin=%3 step=%4 streak=%5")
+                QStringLiteral("video decode exhausted path=%1 target=%2 decodeOrigin=%3 step=%4 streak=%5 | "
+                              "rMul=%6 outRgb=%7x%8 decCoded=%9x%10 passStop=%11 demux=%12/%13 vp=%14/%15 "
+                              "needFrames~%16 curBase=%17 decNull=%18 rescaleFail=%19 qimgNull=%20 skip=%21 "
+                              "pushed=%22 idx[min..max]=%23..%24 cache=%25 nearest=%26 nearestD=%27 maxSlack=%28")
                     .arg(path)
                     .arg(target)
                     .arg(requestedDecodeOrigin)
                     .arg(videoFrameStep)
-                    .arg(videoFailureStreak));
+                    .arg(videoFailureStreak)
+                    .arg(resPacketMul)
+                    .arg(vpass.outW)
+                    .arg(vpass.outH)
+                    .arg(vpass.decW)
+                    .arg(vpass.decH)
+                    .arg(vpass.stopReason)
+                    .arg(vpass.demuxReads)
+                    .arg(vpass.kMaxDemux)
+                    .arg(vpass.videoPackets)
+                    .arg(vpass.kMaxVideoPackets)
+                    .arg(vpass.framesNeeded)
+                    .arg(vpass.cursorBase)
+                    .arg(vpass.nDecodeNullIncomplete)
+                    .arg(vpass.nRescaleFail)
+                    .arg(vpass.nQimageNull)
+                    .arg(vpass.nSkipPolicy)
+                    .arg(vpass.nPushed)
+                    .arg(vpass.minPushedIndex)
+                    .arg(vpass.maxPushedIndex)
+                    .arg(vpass.cacheSize)
+                    .arg(vpass.usedNearest ? 1 : 0)
+                    .arg(vpass.nearestAbs)
+                    .arg(vpass.maxSlack));
             return false;
         }
         lastVideoFailedTarget = -1;
@@ -829,12 +977,21 @@ private:
     {
         using namespace av;
         std::error_code ec;
-        BurstIndex seekIndex = std::max<BurstIndex>(0, origin);
+        const BurstIndex originB = std::max<BurstIndex>(0, origin);
+        const BurstIndex step = std::max<BurstIndex>(1, videoFrameStep);
+        // Align to frame step so the cursor and decode demand match a real keyframe/stride
+        // even when the index table is sparse or a bad key entry was 0.
+        const BurstIndex targetAligned = (step > 0) ? ((originB / step) * step) : originB;
+        BurstIndex timeSeekTick = originB;
         if (videoInput.seekable()) {
             bool didByteSeek = false;
             if (sharedFile) {
-                const PacketIndexEntry start = sharedFile->videoStartFor(seekIndex);
-                seekIndex = start.index;
+                const PacketIndexEntry start = sharedFile->videoStartFor(originB);
+                if (start.index > 0) {
+                    timeSeekTick = start.index;
+                } else if (targetAligned > 0) {
+                    timeSeekTick = targetAligned;
+                }
                 if (start.bytePos >= 0) {
                     videoInput.seek(start.bytePos, -1, AVSEEK_FLAG_BYTE, ec);
                     didByteSeek = !ec;
@@ -844,7 +1001,7 @@ private:
                 ec.clear();
             }
             if (!didByteSeek) {
-                const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(seekIndex));
+                const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(timeSeekTick));
                 videoInput.seek(Timestamp(std::chrono::milliseconds(seekMs)), static_cast<size_t>(videoStream), true, ec);
                 if (ec) {
                     ec.clear();
@@ -858,7 +1015,7 @@ private:
                 QStringLiteral("video decoder reopen after seek failed path=%1").arg(path));
             return false;
         }
-        videoCursorIndex = seekIndex - videoFrameStep;
+        videoCursorIndex = targetAligned - videoFrameStep;
         videoPrimed = true;
         videoPrimedOrigin = origin;
         lastVideoFailedTarget = -1;
@@ -929,6 +1086,7 @@ private:
     av::FormatContext audioInput;
     int videoStream = -1;
     int audioStream = -1;
+    av::Rational videoStreamTimeBase;
     std::unique_ptr<av::VideoDecoderContext> videoDec;
     std::unique_ptr<av::AudioDecoderContext> audioDec;
     std::unique_ptr<av::VideoRescaler> videoRescaler;
@@ -1049,14 +1207,27 @@ bool ConCache::burst(BurstType type, const BurstRequest &request, BurstPayload &
     if (!upstream->videoBurst(effective, videoOut)) {
         static std::atomic<uint64_t> sConCacheVideoFailN{0};
         const uint64_t n = ++sConCacheVideoFailN;
-        if ((n % 48u) == 1u) {
+        const BurstOriginInfo oi = upstream->originInfo();
+        if ((n % 8u) == 1u) {
             reportBurstconDiagnostic(
-                QStringLiteral("ConCache upstream videoBurst failed (sample %1) media=%2 idx=%3 q=%4x%5")
+                QStringLiteral("ConCache upstream videoBurst failed n=%1 media=%2 idx=%3 "
+                              "reqQ=%4x%5 effQ=%6x%7 keyIdx=%8 keyQ=%9x%10 fileSrc=%11x%12 frameNull=%13 | "
+                              "forcedQOn=%14 forcedArea=%15 (see 'video decode exhausted' on same file)")
                     .arg(n)
                     .arg(mediaPath)
                     .arg(effective.index)
+                    .arg(request.quality.width)
+                    .arg(request.quality.height)
                     .arg(effective.quality.width)
-                    .arg(effective.quality.height));
+                    .arg(effective.quality.height)
+                    .arg(key.index)
+                    .arg(key.width)
+                    .arg(key.height)
+                    .arg(oi.sourceVideoQuality.width)
+                    .arg(oi.sourceVideoQuality.height)
+                    .arg(videoOut.frame.isNull() ? 1 : 0)
+                    .arg(config.forcedVideoQualityEnabled ? 1 : 0)
+                    .arg(qualityArea(config.forcedVideoQuality)));
         }
         return false;
     }
@@ -1937,6 +2108,18 @@ void reportBurstconDiagnostic(const QString &message)
     }
     if (cb) {
         cb(message);
+    }
+}
+
+void reportBurstconDiagnosticEvery(const QString &message, std::atomic<uint64_t> &which,
+                                   uint32_t nMod /* 1=always, 48=like (n%48)==1 */)
+{
+    if (nMod == 0) {
+        return;
+    }
+    const uint64_t k = which.fetch_add(1) + 1;
+    if (nMod == 1u || (k % static_cast<uint64_t>(nMod)) == 1u) {
+        reportBurstconDiagnostic(message);
     }
 }
 

@@ -91,7 +91,8 @@ struct ConCacheConfig {
     BurstIndex preloadAheadTicks = kBurstTimebaseHz; // +1 second
     int preloadStepHz = 1;//30*60;
     bool preloadEnabled = true;
-    bool forcedVideoQualityEnabled = true;
+    /// When false, only request quality + source resolution apply (no `forced` override).
+    bool forcedVideoQualityEnabled = false;
     BurstQuality forcedVideoQuality;
     /// Fires when a video frame enters or leaves this ConCache (LRU evict / replace / invalidate).
     std::function<void(bool inserted, const QString &mediaPath, BurstIndex mediaBurstIndex, const BurstQuality &q)>
@@ -379,6 +380,8 @@ void resetMetrics();
 /// Optional UI hook (diagnostics log). Thread-safe; handler should marshal to the GUI thread.
 void setBurstconDiagnosticHandler(std::function<void(const QString &)> handler);
 void reportBurstconDiagnostic(const QString &message);
+/// Throttled: increments `which` first; logs when `nMod` is 1 (always), or when `(which % nMod) == 1` (1,9,17,… for 8).
+void reportBurstconDiagnosticEvery(const QString &message, std::atomic<uint64_t> &which, uint32_t nMod = 1);
 
 } // namespace burstcon
 
