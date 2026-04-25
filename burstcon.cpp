@@ -30,6 +30,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 }
 
@@ -86,19 +87,6 @@ static int videoPacketBudgetCodecMul(AVCodecID id)
     }
 }
 
-/// Byte-accurate seeks to `isKeyPacket` offsets are unreliable for these codecs (open GOP / OBUs):
-/// demuxer + decoder must align on timestamps so reference pictures are not skipped.
-static bool videoCodecPrefersTimestampSeekOnly(AVCodecID id)
-{
-    switch (id) {
-    case AV_CODEC_ID_HEVC:
-    case AV_CODEC_ID_AV1:
-        return true;
-    default:
-        return false;
-    }
-}
-
 uint64_t imageBytes(const QImage &img)
 {
 #if QT_VERSION >= QT_VERSION_CHECK(5, 10, 0)
@@ -133,36 +121,6 @@ PacketIndexEntry makePacketIndexEntry(const av::Packet &pkt)
     return entry;
 }
 
-// Demuxed packets can carry time_base=0/1 (invalid) while the stream has the correct scale.
-// For video keyframes, prefer raw DTS/PTS with the packet time_base if set, else the stream.
-PacketIndexEntry makeVideoKeyframeIndexEntry(const av::Packet &pkt, const av::Rational &videoStreamTb)
-{
-    PacketIndexEntry entry;
-    entry.bytePos = pkt.raw() ? pkt.raw()->pos : -1;
-    if (entry.bytePos < 0 || !pkt.raw()) {
-        return entry;
-    }
-    if (videoStreamTb.getDenominator() <= 0) {
-        return makePacketIndexEntry(pkt);
-    }
-    const av::Rational tb
-        = (pkt.timeBase().getDenominator() > 0) ? pkt.timeBase() : videoStreamTb;
-    int64_t raw = av::NoPts;
-    if (pkt.raw()->dts != av::NoPts) {
-        raw = pkt.raw()->dts;
-    } else if (pkt.raw()->pts != av::NoPts) {
-        raw = pkt.raw()->pts;
-    }
-    if (raw == av::NoPts) {
-        return entry;
-    }
-    const qint64 tsMs = timestampToMs(av::Timestamp{raw, tb});
-    if (tsMs >= 0) {
-        entry.index = msToBurstIndex(tsMs);
-    }
-    return entry;
-}
-
 void dedupePacketIndex(std::vector<PacketIndexEntry> &entries)
 {
     std::sort(entries.begin(), entries.end(), [](const PacketIndexEntry &a, const PacketIndexEntry &b) {
@@ -178,6 +136,8 @@ void dedupePacketIndex(std::vector<PacketIndexEntry> &entries)
 
 } // namespace
 
+/// Shared probe pass: stream metadata + sparse audio byte index for coarse `seekAudioLocked`.
+/// Video random access uses `av::FormatContext::seek` (`av_seek_frame`) with `AVSEEK_FLAG_BACKWARD`.
 struct SharedMediaFile {
     QString path;
     std::mutex mutex;
@@ -185,9 +145,7 @@ struct SharedMediaFile {
     BurstOriginInfo origin;
     int videoStream = -1;
     int audioStream = -1;
-    AVCodecID videoCodecId = AV_CODEC_ID_NONE;
     BurstIndex videoFrameStep = std::max<BurstIndex>(1, kBurstTimebaseHz / 30);
-    std::vector<PacketIndexEntry> videoKeyframes;
     std::vector<PacketIndexEntry> audioPackets;
 
     void ensureIndexed()
@@ -208,19 +166,16 @@ struct SharedMediaFile {
         if (ec) {
             return;
         }
-        av::Rational vStreamTimeBase;
         for (size_t i = 0; i < input.streamsCount(); ++i) {
             auto st = input.stream(i);
             if (videoStream < 0 && st.mediaType() == AVMEDIA_TYPE_VIDEO) {
                 videoStream = static_cast<int>(i);
-                vStreamTimeBase = st.timeBase();
                 const double fps = st.averageFrameRate().getDouble();
                 if (fps > 1.0) {
                     videoFrameStep = std::max<BurstIndex>(1, static_cast<BurstIndex>(kBurstTimebaseHz / fps));
                 }
                 if (auto *codecpar = st.codecParameters().raw()) {
                     origin.sourceVideoQuality = BurstQuality{codecpar->width, codecpar->height};
-                    videoCodecId = codecpar->codec_id;
                 }
             } else if (audioStream < 0 && st.mediaType() == AVMEDIA_TYPE_AUDIO) {
                 audioStream = static_cast<int>(i);
@@ -234,23 +189,19 @@ struct SharedMediaFile {
                 }
             }
         }
-        qint64 lastAudioIndexedMs = std::numeric_limits<qint64>::min();
-        constexpr qint64 kAudioIndexMinIntervalMs = 400;
-        while (true) {
-            Packet pkt = input.readPacket(ec);
-            gAvcppPacketReads.fetch_add(1);
-            if (ec || !pkt) {
-                ec.clear();
-                break;
-            }
-            if (pkt.streamIndex() == videoStream && pkt.isKeyPacket()) {
-                PacketIndexEntry entry = (vStreamTimeBase.getDenominator() > 0)
-                    ? makeVideoKeyframeIndexEntry(pkt, vStreamTimeBase)
-                    : makePacketIndexEntry(pkt);
-                if (entry.bytePos >= 0) {
-                    videoKeyframes.push_back(entry);
+        if (audioStream >= 0) {
+            qint64 lastAudioIndexedMs = std::numeric_limits<qint64>::min();
+            constexpr qint64 kAudioIndexMinIntervalMs = 400;
+            while (true) {
+                Packet pkt = input.readPacket(ec);
+                gAvcppPacketReads.fetch_add(1);
+                if (ec || !pkt) {
+                    ec.clear();
+                    break;
                 }
-            } else if (pkt.streamIndex() == audioStream) {
+                if (pkt.streamIndex() != audioStream) {
+                    continue;
+                }
                 const qint64 pktMs = packetTimestampToMs(pkt);
                 bool record = audioPackets.empty();
                 if (!record && pktMs >= 0) {
@@ -270,31 +221,11 @@ struct SharedMediaFile {
                 }
             }
         }
-        if (videoKeyframes.empty()) {
-            videoKeyframes.push_back(PacketIndexEntry{0, 0});
-        }
         if (audioPackets.empty()) {
             audioPackets.push_back(PacketIndexEntry{0, 0});
         }
-        dedupePacketIndex(videoKeyframes);
         dedupePacketIndex(audioPackets);
         indexed = true;
-    }
-
-    PacketIndexEntry videoStartFor(BurstIndex target) const
-    {
-        if (videoKeyframes.empty()) {
-            return PacketIndexEntry{0, 0};
-        }
-        auto it = std::upper_bound(videoKeyframes.begin(), videoKeyframes.end(), target,
-                                   [](BurstIndex value, const PacketIndexEntry &entry) {
-                                       return value < entry.index;
-                                   });
-        if (it == videoKeyframes.begin()) {
-            return *it;
-        }
-        --it;
-        return *it;
     }
 
     PacketIndexEntry audioStartFor(BurstIndex target) const
@@ -390,6 +321,7 @@ public:
         audioInput.close();
         videoPrimed = false;
         audioPrimed = false;
+        presentationOutOfSyncWithDecoder = false;
 
         std::error_code ec;
         if (wantVideo && videoStream >= 0) {
@@ -458,8 +390,14 @@ public:
             videoCursorIndex = aligned;
             return;
         }
-        if (aligned <= videoCursorIndex) {
-            videoCursorIndex = aligned;
+        if (aligned < videoCursorIndex) {
+            // A higher layer returned an earlier presentation time without seeking the demuxer.
+            // Never move `videoCursorIndex` backward here — that desynchronizes HEVC DPB from the
+            // bitstream read position. Force `decodeVideo` to seek+reopen the decoder.
+            presentationOutOfSyncWithDecoder = true;
+            return;
+        }
+        if (aligned == videoCursorIndex) {
             return;
         }
         const BurstIndex driftThreshold = 64 * step;
@@ -492,11 +430,15 @@ public:
         const DecodedVideoFrameKey cacheLookupKey{target, outRgbW, outRgbH};
         auto cached = videoFrameCache.find(cacheLookupKey);
         if (cached != videoFrameCache.end() && !cached->second.isNull()) {
-            // Keep logical read position aligned with the frame we return; prefetch/ConCache can
-            // otherwise serve frames without advancing this cursor while the demuxer runs ahead.
-            videoCursorIndex = target;
-            out = makeVideoBurst(target, quality, cached->second);
-            return true;
+            // Do not return intra-decoder cache when the demuxer/DPB are still ahead of `target`
+            // (e.g. ConCache jumped backward). A backward `videoCursorIndex` without seek corrupts HEVC.
+            if (!(videoPrimed && videoCursorIndex >= 0 && target < videoCursorIndex)) {
+                // Keep logical read position aligned with the frame we return; prefetch/ConCache can
+                // otherwise serve frames without advancing this cursor while the demuxer runs ahead.
+                videoCursorIndex = target;
+                out = makeVideoBurst(target, quality, cached->second);
+                return true;
+            }
         }
         if (lastVideoFailedTarget == target && lastVideoFailedOrigin == decodeOrigin && videoFailureStreak >= 2) {
             return false;
@@ -506,7 +448,8 @@ public:
         const bool demuxerBehindRequest =
             videoPrimed && videoCursorIndex >= 0 && (target > videoCursorIndex + driftThreshold);
         const bool needReset = !videoPrimed || target < videoCursorIndex || demuxerBehindRequest ||
-            (videoPrimedOrigin != decodeOrigin && videoFrameCache.find(cacheLookupKey) == videoFrameCache.end());
+            (videoPrimedOrigin != decodeOrigin && videoFrameCache.find(cacheLookupKey) == videoFrameCache.end()) ||
+            presentationOutOfSyncWithDecoder;
         if (needReset) {
             // Seek to at least the requested (decodeOrigin, target) so random-access paths (strip
             // thumbnails, ConCache) land on the right GOP. A previous "first priming" rule forced
@@ -1096,35 +1039,19 @@ private:
         std::error_code ec;
         const BurstIndex originB = std::max<BurstIndex>(0, origin);
         const BurstIndex step = std::max<BurstIndex>(1, videoFrameStep);
-        // Align to frame step so the cursor and decode demand match a real keyframe/stride
-        // even when the index table is sparse or a bad key entry was 0.
         const BurstIndex targetAligned = (step > 0) ? ((originB / step) * step) : originB;
-        BurstIndex timeSeekTick = originB;
         if (videoInput.seekable()) {
-            bool didByteSeek = false;
-            if (sharedFile) {
-                const PacketIndexEntry start = sharedFile->videoStartFor(originB);
-                if (start.index > 0) {
-                    timeSeekTick = start.index;
-                } else if (targetAligned > 0) {
-                    timeSeekTick = targetAligned;
-                }
-                const bool allowByteSeek =
-                    start.bytePos >= 0 && !videoCodecPrefersTimestampSeekOnly(sharedFile->videoCodecId);
-                if (allowByteSeek) {
-                    videoInput.seek(start.bytePos, -1, AVSEEK_FLAG_BYTE, ec);
-                    didByteSeek = !ec;
-                }
+            auto vst = videoInput.stream(static_cast<size_t>(videoStream));
+            if (vst.isValid() && vst.timeBase().getDenominator() > 0) {
+                const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(targetAligned));
+                const Timestamp ts{std::chrono::milliseconds(seekMs)};
+                const int64_t pos = ts.timestamp(vst.timeBase());
+                // `av::FormatContext::seek(ts, stream, true)` maps to AVSEEK_FLAG_ANY (non-keyframes).
+                // Use FFmpeg backward keyframe seek instead of a hand-built byte index.
+                videoInput.seek(pos, static_cast<int>(videoStream), AVSEEK_FLAG_BACKWARD, ec);
             }
             if (ec) {
                 ec.clear();
-            }
-            if (!didByteSeek) {
-                const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(timeSeekTick));
-                videoInput.seek(Timestamp(std::chrono::milliseconds(seekMs)), static_cast<size_t>(videoStream), true, ec);
-                if (ec) {
-                    ec.clear();
-                }
             }
         }
         // Recreate the decoder after every seek so DPB / threading state matches a fresh
@@ -1137,6 +1064,7 @@ private:
         videoCursorIndex = targetAligned - videoFrameStep;
         videoPrimed = true;
         videoPrimedOrigin = origin;
+        presentationOutOfSyncWithDecoder = false;
         lastVideoFailedTarget = -1;
         lastVideoFailedOrigin = -1;
         videoFailureStreak = 0;
@@ -1163,7 +1091,12 @@ private:
             }
             if (!didByteSeek) {
                 const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(seekIndex));
-                audioInput.seek(Timestamp(std::chrono::milliseconds(seekMs)), static_cast<size_t>(audioStream), true, ec);
+                auto ast = audioInput.stream(static_cast<size_t>(audioStream));
+                if (ast.isValid() && ast.timeBase().getDenominator() > 0) {
+                    const Timestamp ts{std::chrono::milliseconds(seekMs)};
+                    const int64_t pos = ts.timestamp(ast.timeBase());
+                    audioInput.seek(pos, static_cast<int>(audioStream), AVSEEK_FLAG_BACKWARD, ec);
+                }
                 if (ec) {
                     ec.clear();
                 }
@@ -1234,6 +1167,8 @@ private:
     std::map<BurstIndex, AudioBurst> audioBurstCache;
     std::deque<int16_t> audioPending;
     BurstOriginInfo origin;
+    /// Set when presentation time moves backward vs demuxer (e.g. ConCache hit); cleared after seek.
+    bool presentationOutOfSyncWithDecoder = false;
 };
 
 } // namespace
