@@ -1077,6 +1077,21 @@ private:
                 const int64_t wantedTb = av_rescale_q(seekMs, msTb, st->time_base);
 
                 // Prefer container sync index (moov etc.): tight byte seek. No custom file scan.
+                // (AVStream::index_entries is not public in newer FFmpeg; use avformat_index_*.)
+#if LIBAVFORMAT_VERSION_INT >= AV_VERSION_INT(58, 78, 100)
+                if (avformat_index_get_entries_count(st) > 0) {
+                    const int ix = av_index_search_timestamp(st, wantedTb, AVINDEX_KEYFRAME);
+                    if (ix >= 0) {
+                        const AVIndexEntry *const idxEnt = avformat_index_get_entry(st, ix);
+                        if (idxEnt) {
+                            const int64_t bytePos = idxEnt->pos;
+                            if (bytePos >= 0) {
+                                seekRet = av_seek_frame(fc, videoStream, bytePos, AVSEEK_FLAG_BYTE);
+                            }
+                        }
+                    }
+                }
+#else
                 if (st->index_entries && st->nb_index_entries > 0) {
                     const int ix = av_index_search_timestamp(st, wantedTb, AVINDEX_KEYFRAME);
                     if (ix >= 0) {
@@ -1086,6 +1101,7 @@ private:
                         }
                     }
                 }
+#endif
                 if (seekRet < 0) {
                     seekRet = avformat_seek_file(fc, videoStream, INT64_MIN, wantedTb, wantedTb, AVSEEK_FLAG_BACKWARD);
                 }
