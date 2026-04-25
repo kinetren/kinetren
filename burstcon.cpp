@@ -770,7 +770,10 @@ public:
                     ++ps.nDecodeNullIncomplete;
                     break;
                 }
+                if (stopDecodeForward) {
+                    break;
                 }
+            }
             }
             }
             ps.demuxReads = demuxReads;
