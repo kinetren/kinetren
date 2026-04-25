@@ -30,6 +30,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/avutil.h>
 }
 
 namespace burstcon {
@@ -74,11 +75,11 @@ static int videoPacketBudgetCodecMul(AVCodecID id)
     switch (id) {
     case AV_CODEC_ID_VP9:
     case AV_CODEC_ID_AV1:
-        return 12000;
+        return 12;
     case AV_CODEC_ID_VP8:
-        return 2000;
+        return 2;
     default:
-        return 1000;
+        return 1;
     }
 }
 
@@ -564,36 +565,35 @@ public:
             ps.outH = outRgbH;
             ps.decW = videoDec->width();
             ps.decH = videoDec->height();
-            while (demuxReads < kMaxDemuxReads) {
-                if (videoPackets >= maxVideoPackets) {
-                    ps.stopReason = QStringLiteral("videoPacketLimit");
-                    break;
+            AVCodecContext* const vctx = videoDec->raw();
+            if (!vctx) {
+                ps.stopReason = QStringLiteral("noCodecCtx");
+            } else {
+            struct AvfRaii {
+                AVFrame* f{nullptr};
+                ~AvfRaii()
+                {
+                    if (f) {
+                        av_frame_free(&f);
+                    }
                 }
-                Packet pkt = videoInput.readPacket(ec);
-                ++demuxReads;
-                gAvcppPacketReads.fetch_add(1);
-                if (ec || !pkt) {
-                    ps.stopReason = ec ? QStringLiteral("packetReadError") : QStringLiteral("demuxEof");
-                    ec.clear();
-                    break;
-                }
-                if (pkt.streamIndex() != videoStream) {
-                    continue;
-                }
-                const qint64 packetTsMs = packetTimestampToMs(pkt);
-                VideoFrame frame = videoDec->decode(pkt, ec);
-                ++videoPackets;
-                gAvcppVideoDecodeCalls.fetch_add(1);
-                if (ec || frame.isNull() || !frame.isComplete()) {
-                    ++ps.nDecodeNullIncomplete;
-                    ec.clear();
-                    continue;
-                }
+            } avfRaii;
+            avfRaii.f = av_frame_alloc();
+            if (!avfRaii.f) {
+                ps.stopReason = QStringLiteral("av_frame_alloc");
+            } else {
+            AVFrame* const avf = avfRaii.f;
+            const av::Rational tsRForBets = videoStreamTimeBase.getDenominator() > 0
+                ? videoStreamTimeBase
+                : videoDec->timeBase();
+
+            bool stopDecodeForward = false;
+            const auto applyOneDecoded = [&](av::VideoFrame& frame, qint64 packetTsMs) {
                 qint64 frameMs = -1;
                 {
                     const int64_t bet = av::frame::get_best_effort_timestamp(frame.raw());
-                    if (bet != av::NoPts && videoStreamTimeBase.getDenominator() > 0) {
-                        frameMs = timestampToMs(av::Timestamp(bet, videoStreamTimeBase));
+                    if (bet != av::NoPts && tsRForBets.getDenominator() > 0) {
+                        frameMs = timestampToMs(av::Timestamp(bet, tsRForBets));
                     }
                 }
                 if (frameMs < 0) {
@@ -602,43 +602,40 @@ public:
                 if (frameMs < 0) {
                     frameMs = (packetTsMs >= 0) ? packetTsMs : burstIndexToMs(target);
                 }
-                BurstIndex frameIndex = (msToBurstIndex(frameMs) / videoFrameStep) * videoFrameStep;
+                const BurstIndex frameIndex = (msToBurstIndex(frameMs) / videoFrameStep) * videoFrameStep;
                 if ((skipFrames || localSkipFrames) && frameIndex < target && (++skipCounter % 2 == 1)) {
                     ++ps.nSkipPolicy;
-                    continue;
+                    return;
                 }
-                // Must match `cacheLookupKey` / `outRgbW`/`outRgbH` above (derived from `videoDec` size).
-                // Using `frame.width()` here breaks lookups when coded size differs from the decoder
-                // context (anamorphic / SAR), causing perpetual L1 misses and decode storms.
                 const int dstW = outRgbW;
                 const int dstH = outRgbH;
                 const int codedW = frame.width();
                 const int codedH = frame.height();
                 if (codedW > 0 && codedH > 0 &&
                     (!videoRescaler || codedW != scalerSrcW || codedH != scalerSrcH)) {
-                    videoRescaler = std::make_unique<VideoRescaler>(
+                    videoRescaler = std::make_unique<av::VideoRescaler>(
                         codedW, codedH, AV_PIX_FMT_RGB24, av::SwsFlagFastBilinear);
                     scalerSrcW = codedW;
                     scalerSrcH = codedH;
                 }
-                VideoFrame rgbFrame{AV_PIX_FMT_RGB24, dstW, dstH};
+                av::VideoFrame rgbFrame{AV_PIX_FMT_RGB24, dstW, dstH};
                 std::error_code rescaleEc;
                 videoRescaler->rescale(rgbFrame, frame, rescaleEc);
                 if (rescaleEc) {
                     ++ps.nRescaleFail;
                     rescaleEc.clear();
-                    continue;
+                    return;
                 }
                 QImage img(rgbFrame.width(), rgbFrame.height(), QImage::Format_RGB888);
                 if (img.isNull() || !img.bits()) {
                     ++ps.nQimageNull;
-                    continue;
+                    return;
                 }
                 const int dstStride = img.bytesPerLine();
                 const int srcStride = rgbFrame.raw()->linesize[0];
                 const int copyStride = std::min(dstStride, srcStride);
-                auto *srcBytes = rgbFrame.data(0);
-                auto *dstBytes = img.bits();
+                auto* srcBytes = rgbFrame.data(0);
+                auto* dstBytes = img.bits();
                 if (dstStride == srcStride && copyStride == dstW * 3) {
                     std::memcpy(dstBytes, srcBytes, static_cast<size_t>(copyStride) * static_cast<size_t>(dstH));
                 } else {
@@ -661,8 +658,6 @@ public:
                     if (videoFrameCache.empty()) {
                         break;
                     }
-                    // Evict outside a "hot ring" around the current output target first so long
-                    // playback does not delete nearby frames (std::map::begin() was min index, not LRU).
                     const BurstIndex ringLo = target - 2 * step;
                     const BurstIndex ringHi = target + 64 * step;
                     auto itVictim = videoFrameCache.end();
@@ -695,8 +690,88 @@ public:
                     ps.demuxReads = demuxReads;
                     ps.videoPackets = videoPackets;
                     ps.stopReason = QStringLiteral("pickedInLoop");
+                    stopDecodeForward = true;
+                }
+            };
+
+            const auto receiveAndProcess = [&](qint64 packetTsMs) {
+                for (;;) {
+                    if (stopDecodeForward) {
+                        return;
+                    }
+                    const int r = avcodec_receive_frame(vctx, avf);
+                    if (r == 0) {
+                        gAvcppVideoDecodeCalls.fetch_add(1);
+                        av::VideoFrame frame{avf};
+                        if (tsRForBets.getDenominator() > 0) {
+                            frame.setTimeBase(tsRForBets);
+                        }
+                        frame.setStreamIndex(videoStream);
+                        frame.setComplete(true);
+                        if (frame.isNull() || !frame.isValid() || !frame.isComplete()) {
+                            ++ps.nDecodeNullIncomplete;
+                        } else {
+                            applyOneDecoded(frame, packetTsMs);
+                        }
+                        continue; // more decoder-delayed or multi-output frames
+                    }
+                    if (r == AVERROR(EAGAIN) || r == AVERROR_EOF) {
+                        return;
+                    }
+                    ++ps.nDecodeNullIncomplete;
                     return;
                 }
+            };
+
+            while (demuxReads < kMaxDemuxReads && !stopDecodeForward) {
+                if (videoPackets >= maxVideoPackets) {
+                    ps.stopReason = QStringLiteral("videoPacketLimit");
+                    break;
+                }
+                Packet pkt = videoInput.readPacket(ec);
+                ++demuxReads;
+                gAvcppPacketReads.fetch_add(1);
+                if (ec) {
+                    ps.stopReason = QStringLiteral("packetReadError");
+                    ec.clear();
+                    break;
+                }
+                if (!pkt) {
+                    (void) avcodec_send_packet(vctx, nullptr);
+                    receiveAndProcess(burstIndexToMs(target));
+                    if (stopDecodeForward) {
+                        // picked set inside applyOneDecoded
+                    } else {
+                        ps.stopReason = QStringLiteral("demuxEof");
+                    }
+                    break;
+                }
+                if (pkt.streamIndex() != videoStream) {
+                    continue;
+                }
+                const qint64 packetTsMs = packetTimestampToMs(pkt);
+                for (int sp = 0; sp < 8; ++sp) {
+                    const int s = avcodec_send_packet(vctx, pkt.raw());
+                    if (s == 0) {
+                        ++videoPackets;
+                        receiveAndProcess(packetTsMs);
+                        if (stopDecodeForward) {
+                            break;
+                        }
+                        break; // from send-retry
+                    }
+                    if (s == AVERROR(EAGAIN)) {
+                        receiveAndProcess(packetTsMs);
+                        if (stopDecodeForward) {
+                            break;
+                        }
+                        continue; // drain then retry
+                    }
+                    ++ps.nDecodeNullIncomplete;
+                    break;
+                }
+                }
+            }
             }
             ps.demuxReads = demuxReads;
             ps.videoPackets = videoPackets;
@@ -932,6 +1007,11 @@ private:
             threadCount = 1;
         }
         threadCount = std::min(threadCount, 12);
+        // High internal thread count can delay the first `avcodec_receive_frame` result relative to
+        // packet count; 4K VP9+MP4 is sensitive, and the decode loop now drains with send/receive.
+        if (dec->raw() && (dec->raw()->codec_id == AV_CODEC_ID_VP9 || dec->raw()->codec_id == AV_CODEC_ID_AV1)) {
+            threadCount = 1;
+        }
         const std::string threadsOpt = std::to_string(threadCount);
         dec->open(Dictionary{{"threads", threadsOpt.c_str()}}, ec);
         if (ec) {
