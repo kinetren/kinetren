@@ -1035,6 +1035,27 @@ private:
         return true;
     }
 
+    /// After a demuxer seek: cheap reset vs full `openVideoDecoderLocked` (reopen is costly at 4K).
+    void flushVideoDecoderAfterSeekLocked()
+    {
+        AVCodecContext *const vctx = videoDec ? videoDec->raw() : nullptr;
+        if (!vctx) {
+            return;
+        }
+        avcodec_flush_buffers(vctx);
+        AVFrame *drain = av_frame_alloc();
+        if (!drain) {
+            return;
+        }
+        while (true) {
+            const int r = avcodec_receive_frame(vctx, drain);
+            if (r == AVERROR(EAGAIN) || r == AVERROR_EOF) {
+                break;
+            }
+        }
+        av_frame_free(&drain);
+    }
+
     bool seekVideoLocked(BurstIndex origin)
     {
         using namespace av;
@@ -1042,7 +1063,12 @@ private:
         const BurstIndex originB = std::max<BurstIndex>(0, origin);
         const BurstIndex step = std::max<BurstIndex>(1, videoFrameStep);
         const BurstIndex targetAligned = (step > 0) ? ((originB / step) * step) : originB;
+        videoFrameCache.clear();
+        videoFrameBytesUsed = 0;
+        bool demuxerSeekOk = !videoInput.seekable();
+        int seekRet = -1;
         if (videoInput.seekable()) {
+            demuxerSeekOk = false;
             AVFormatContext *const fc = videoInput.raw();
             if (fc && videoStream >= 0 && videoStream < static_cast<int>(fc->nb_streams)) {
                 AVStream *const st = fc->streams[videoStream];
@@ -1050,9 +1076,7 @@ private:
                 const AVRational msTb{1, 1000};
                 const int64_t wantedTb = av_rescale_q(seekMs, msTb, st->time_base);
 
-                int seekRet = -1;
-                // Prefer container sync index (moov etc.): tight byte seek, much less 4K preroll than a
-                // coarse timestamp-only path. No custom file scan — data comes from FFmpeg after findStreamInfo.
+                // Prefer container sync index (moov etc.): tight byte seek. No custom file scan.
                 if (st->index_entries && st->nb_index_entries > 0) {
                     const int ix = av_index_search_timestamp(st, wantedTb, AVINDEX_KEYFRAME);
                     if (ix >= 0) {
@@ -1071,19 +1095,29 @@ private:
                         const Timestamp ts{std::chrono::milliseconds(seekMs)};
                         const int64_t pos = ts.timestamp(vst.timeBase());
                         videoInput.seek(pos, static_cast<int>(videoStream), AVSEEK_FLAG_BACKWARD, ec);
+                        demuxerSeekOk = !ec;
+                        if (ec) {
+                            ec.clear();
+                        }
                     }
-                    if (ec) {
-                        ec.clear();
-                    }
+                } else {
+                    demuxerSeekOk = true;
                 }
             }
         }
-        // Recreate the decoder after every seek so DPB / threading state matches a fresh
-        // open at the keyframe (flush alone is not reliable with frame-threaded H.264).
-        if (!openVideoDecoderLocked()) {
-            reportBurstconDiagnostic(
-                QStringLiteral("video decoder reopen after seek failed path=%1").arg(path));
-            return false;
+        // Full decoder reopen is correct but very slow for 4K. Flush+drain is enough after seek for most
+        // codecs; keep reopen for multi-threaded H.264 where flush is still unreliable (see FFmpeg notes).
+        const AVCodecContext *const vctxProbe = videoDec ? videoDec->raw() : nullptr;
+        const bool h264Multithreaded =
+            vctxProbe && vctxProbe->codec_id == AV_CODEC_ID_H264 && vctxProbe->thread_count > 1;
+        if (!videoDec || !demuxerSeekOk || h264Multithreaded) {
+            if (!openVideoDecoderLocked()) {
+                reportBurstconDiagnostic(
+                    QStringLiteral("video decoder reopen after seek failed path=%1").arg(path));
+                return false;
+            }
+        } else {
+            flushVideoDecoderAfterSeekLocked();
         }
         videoCursorIndex = targetAligned - videoFrameStep;
         videoPrimed = true;
