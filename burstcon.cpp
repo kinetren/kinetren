@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstring>
 #include <deque>
+#include <climits>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -32,6 +33,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
+#include <libavutil/mathematics.h>
 }
 
 namespace burstcon {
@@ -78,8 +80,8 @@ static int videoPacketBudgetCodecMul(AVCodecID id)
     case AV_CODEC_ID_AV1:
         return 12;
     case AV_CODEC_ID_HEVC:
-        // Long reorder / multi-layer NALU bursts before a displayable picture.
-        return 6;
+        // Long reorder / multi-layer NALU bursts; 4K + prefetch benefits from a higher cap.
+        return 10;
     case AV_CODEC_ID_VP8:
         return 2;
     default:
@@ -1041,17 +1043,39 @@ private:
         const BurstIndex step = std::max<BurstIndex>(1, videoFrameStep);
         const BurstIndex targetAligned = (step > 0) ? ((originB / step) * step) : originB;
         if (videoInput.seekable()) {
-            auto vst = videoInput.stream(static_cast<size_t>(videoStream));
-            if (vst.isValid() && vst.timeBase().getDenominator() > 0) {
+            AVFormatContext *const fc = videoInput.raw();
+            if (fc && videoStream >= 0 && videoStream < static_cast<int>(fc->nb_streams)) {
+                AVStream *const st = fc->streams[videoStream];
                 const qint64 seekMs = std::max<qint64>(0, burstIndexToMs(targetAligned));
-                const Timestamp ts{std::chrono::milliseconds(seekMs)};
-                const int64_t pos = ts.timestamp(vst.timeBase());
-                // `av::FormatContext::seek(ts, stream, true)` maps to AVSEEK_FLAG_ANY (non-keyframes).
-                // Use FFmpeg backward keyframe seek instead of a hand-built byte index.
-                videoInput.seek(pos, static_cast<int>(videoStream), AVSEEK_FLAG_BACKWARD, ec);
-            }
-            if (ec) {
-                ec.clear();
+                const AVRational msTb{1, 1000};
+                const int64_t wantedTb = av_rescale_q(seekMs, msTb, st->time_base);
+
+                int seekRet = -1;
+                // Prefer container sync index (moov etc.): tight byte seek, much less 4K preroll than a
+                // coarse timestamp-only path. No custom file scan — data comes from FFmpeg after findStreamInfo.
+                if (st->index_entries && st->nb_index_entries > 0) {
+                    const int ix = av_index_search_timestamp(st, wantedTb, AVINDEX_KEYFRAME);
+                    if (ix >= 0) {
+                        const int64_t bytePos = st->index_entries[ix].pos;
+                        if (bytePos >= 0) {
+                            seekRet = av_seek_frame(fc, videoStream, bytePos, AVSEEK_FLAG_BYTE);
+                        }
+                    }
+                }
+                if (seekRet < 0) {
+                    seekRet = avformat_seek_file(fc, videoStream, INT64_MIN, wantedTb, wantedTb, AVSEEK_FLAG_BACKWARD);
+                }
+                if (seekRet < 0) {
+                    auto vst = videoInput.stream(static_cast<size_t>(videoStream));
+                    if (vst.isValid() && vst.timeBase().getDenominator() > 0) {
+                        const Timestamp ts{std::chrono::milliseconds(seekMs)};
+                        const int64_t pos = ts.timestamp(vst.timeBase());
+                        videoInput.seek(pos, static_cast<int>(videoStream), AVSEEK_FLAG_BACKWARD, ec);
+                    }
+                    if (ec) {
+                        ec.clear();
+                    }
+                }
             }
         }
         // Recreate the decoder after every seek so DPB / threading state matches a fresh
