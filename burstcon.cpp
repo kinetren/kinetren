@@ -28,6 +28,10 @@
 #include <avcpp/frame.h>
 #include <avcpp/videorescaler.h>
 
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+
 namespace burstcon {
 namespace {
 
@@ -61,6 +65,21 @@ qint64 timestampToMs(const av::Timestamp &ts)
         return -1;
     }
     return ts.timestamp(kMillisecondsTimebase);
+}
+
+/// VP9/AV1 in ISOBMFF often use many small packets (and more decoder delay) per displayed frame; the
+/// res×pixel budget that works for H.26x can run out with passStop=videoPacketLimit and decNull high.
+static int videoPacketBudgetCodecMul(AVCodecID id)
+{
+    switch (id) {
+    case AV_CODEC_ID_VP9:
+    case AV_CODEC_ID_AV1:
+        return 12000;
+    case AV_CODEC_ID_VP8:
+        return 2000;
+    default:
+        return 1000;
+    }
 }
 
 uint64_t imageBytes(const QImage &img)
@@ -470,13 +489,11 @@ public:
         const bool needReset = !videoPrimed || target < videoCursorIndex || demuxerBehindRequest ||
             (videoPrimedOrigin != decodeOrigin && videoFrameCache.find(cacheLookupKey) == videoFrameCache.end());
         if (needReset) {
-            // First priming of a trimmed clip: seek to 0 so GOP read is reliable. After that, seek
-            // to the requested target (not only decodeOrigin) so we recover when prefetch advanced
-            // the shared demuxer past the playhead or ConCache hits hid the drift.
-            BurstIndex seekGoal = std::max<BurstIndex>(0, std::max(decodeOrigin, target));
-            if (!videoPrimed && decodeOrigin > 0) {
-                seekGoal = 0;
-            }
+            // Seek to at least the requested (decodeOrigin, target) so random-access paths (strip
+            // thumbnails, ConCache) land on the right GOP. A previous "first priming" rule forced
+            // seek to file 0 whenever decodeOrigin>0, which left videoCursor at -frameStep, huge
+            // needFrames, and demuxEof after ~1 s of 4K while the requested index was minutes in.
+            const BurstIndex seekGoal = std::max<BurstIndex>(0, std::max(decodeOrigin, target));
             if (!seekVideoLocked(seekGoal)) {
                 lastVideoFailedTarget = target;
                 lastVideoFailedOrigin = decodeOrigin;
@@ -498,7 +515,9 @@ public:
         // 16k cap caused "video decode exhausted" for FHD/4K (and 4KClass *RGB* output) while 720p was fine.
         const int resPacketMul = static_cast<int>(
             std::min<int64_t>(12, (decPixels + kBaselinePixels - 1) / kBaselinePixels));
-        const BurstIndex kPacketBudget = static_cast<BurstIndex>(64) * static_cast<BurstIndex>(resPacketMul);
+        const int codecPacketMul = videoDec->raw() ? videoPacketBudgetCodecMul(videoDec->raw()->codec_id) : 1;
+        const BurstIndex kPacketBudget =
+            static_cast<BurstIndex>(64) * static_cast<BurstIndex>(resPacketMul) * static_cast<BurstIndex>(codecPacketMul);
 
         struct VideoPassStats {
             QString stopReason;
@@ -731,9 +750,6 @@ public:
             if (seekVideoLocked(resyncGoal)) {
                 decodeForward(picked, pickedIndex, vpass);
             }
-        }
-        if (picked.isNull() && requestedDecodeOrigin > 0 && seekVideoLocked(0)) {
-            decodeForward(picked, pickedIndex, vpass);
         }
         if (picked.isNull()) {
             lastVideoFailedTarget = target;
