@@ -31,14 +31,15 @@ qint64 videoCoverageBucketCenterMs(qint64 tMs)
     return ((tMs + step / 2) / step) * step;
 }
 constexpr qint64 kAudioCoverageBucketMs = 20;
-constexpr qint64 kPrefetchAheadMs = 12000;
+// (4+4)×24×(3480×2160×24)÷8÷1024÷1024÷1024 = 4GB for 4K 24fps video  (first 4sec -> for region-start, and +4sec for prefetch)
+constexpr qint64 kPrefetchAheadMs = 1000;
 /// When scrubbing while stopped, only look this far ahead so `isPlaybackHeadWarm` matches the usual
 /// 5 s warmup window from MainWindow / `start()` and idle skips actually trigger.
-constexpr qint64 kIdleScrubPrefetchAheadMs = 5000;
+constexpr qint64 kIdleScrubPrefetchAheadMs = 10000;
 /// While playing, prefetch only this far ahead. A full `kPrefetchAheadMs` window fights
 /// `MonotonicPlaybackTimer` for one `ConMedia` decoder and explodes readPacket/decode rates.
-constexpr qint64 kPrefetchDuringPlayAheadMs = 1600;
-constexpr qint64 kPrefetchPlayRescheduleMs = 2000;
+constexpr qint64 kPrefetchDuringPlayAheadMs = 1000;
+constexpr qint64 kPrefetchPlayRescheduleMs = 1000; //!
 /// For prefetch/warmup spans up to this length, step video at output FPS so ConCache keys match playback.
 /// Wider sparse steps add different indices than the timer, evict playback frames in LRU and break short loops.
 constexpr qint64 kPrefetchVideoDenseMaxSpanMs = 6000;
@@ -311,14 +312,14 @@ PlaybackPipeline::PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameRe
     burstcon::ConMediaPoolConfig poolCfg;
     poolCfg.enableConMediaCache = true;
     // Total LRU slots (audio + video). Keep bounded so one path cannot pin unbounded RAM.
-    poolCfg.cacheConfig.maxEntries = 384;
-    poolCfg.cacheConfig.maxAudioEntries = 192;
-    poolCfg.cacheConfig.maxVideoEntries = 256;
+    poolCfg.cacheConfig.maxEntries = 384*384;
+    poolCfg.cacheConfig.maxAudioEntries = 192*192;
+    poolCfg.cacheConfig.maxVideoEntries = 256*256;
     // ConCache byte ceiling for video QImages (LRU also evicts by maxVideoEntries / maxEntries).
     poolCfg.cacheConfig.maxVideoBytes = 4ULL * 1024ULL * 1024ULL * 1024ULL;
-    poolCfg.cacheConfig.preloadEnabled = false;
+    poolCfg.cacheConfig.preloadEnabled = true;
     poolCfg.cacheConfig.preloadAheadTicks = burstcon::kBurstTimebaseHz;
-    poolCfg.maxMediaInstances = 16;
+    poolCfg.maxMediaInstances = 16*16;
     poolCfg.cacheConfig.onVideoFrameCacheChanged =
         [this](bool inserted, const QString &mediaPath, burstcon::BurstIndex mediaBurstIndex, const burstcon::BurstQuality &q) {
             onVideoFrameCacheKeyChanged(inserted, mediaPath, mediaBurstIndex, q);
