@@ -42,8 +42,8 @@ namespace {
 constexpr int kDefaultAudioSamplesPerBurst = 1024;
 /// Hot ring inside each `AvcppMediaDecoderBackend` (below ConCache). ConCache `maxVideoBytes` can be
 /// much larger, but this cap still bounds RAM while one file is being decoded sequentially.
-constexpr size_t kDecoderVideoFrameCacheMaxFrames = 384;
-constexpr uint64_t kDecoderVideoFrameCacheMaxBytes = 512ULL * 1024ULL * 1024ULL;
+constexpr size_t kDecoderVideoFrameCacheMaxFrames = 384*384;
+constexpr uint64_t kDecoderVideoFrameCacheMaxBytes = 1024ULL * 1024ULL * 1024ULL;
 const av::Rational kMillisecondsTimebase{1, 1000};
 
 std::atomic<uint64_t> gAvcppOpenCalls{0};
@@ -1329,6 +1329,10 @@ bool ConCache::burst(BurstType type, const BurstRequest &request, BurstPayload &
     VideoBurst videoOut;
     const VideoKey key = keyForVideo(effective);
     if (getVideo(key, videoOut)) {
+        // Cache hit does not go through `put`, so listeners (e.g. timeline coverage stripes /
+        // `isPlaybackHeadWarm`) never see the frame unless we notify here. After a graph rebuild
+        // clears bucket sets, hits must republish composition coverage.
+        notifyVideoFrameCache(true, key);
         out = videoOut;
         return true;
     }
