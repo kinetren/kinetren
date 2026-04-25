@@ -144,7 +144,7 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
     poolCfg.cacheConfig.maxVideoEntries = 64;
     poolCfg.cacheConfig.maxVideoBytes = 128ULL * 1024ULL * 1024ULL;
     poolCfg.cacheConfig.preloadEnabled = false;
-    poolCfg.maxMediaInstances = 16;
+    poolCfg.maxMediaInstances = 48;
     auto mediaPool = std::make_shared<burstcon::ConMediaPool>(poolCfg);
     auto videoTrack = std::make_shared<burstcon::ConTrack>(mediaPool);
     auto audioTrack = std::make_shared<burstcon::ConTrack>(mediaPool);

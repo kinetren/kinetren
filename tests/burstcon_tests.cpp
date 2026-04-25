@@ -199,6 +199,21 @@ void testConMediaPoolReusesMediaAcrossOrigins()
     assert(a == b);
 }
 
+void testConMediaPoolPreviewShardsAreDistinct()
+{
+    ConMediaPoolConfig poolCfg;
+    poolCfg.enableConMediaCache = false;
+    poolCfg.previewParallelShards = 4;
+    auto pool = std::make_shared<ConMediaPool>(poolCfg);
+    assert(pool->previewParallelShardCount() == 4);
+    auto a = pool->acquire("fake.mp4", true, false, 0, true, false, 1);
+    auto b = pool->acquire("fake.mp4", true, false, 0, true, false, 2);
+    assert(a != nullptr && b != nullptr);
+    assert(a != b);
+    auto aAgain = pool->acquire("fake.mp4", true, false, 0, true, false, 1);
+    assert(aAgain == a);
+}
+
 void testOutputVideoFrameGridInvariants()
 {
     assert(outputVideoFrameStepTicks(30) == 3000);
@@ -252,6 +267,7 @@ int main(int argc, char **argv)
     testConTrackAndConTrimmerComposition();
     testConTrackPropagatesDecodeOrigin();
     testConMediaPoolReusesMediaAcrossOrigins();
+    testConMediaPoolPreviewShardsAreDistinct();
     testOutputVideoFrameGridInvariants();
     testMonotonicPlaybackTimerAdvances();
     return 0;

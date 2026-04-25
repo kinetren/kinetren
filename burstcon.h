@@ -239,6 +239,9 @@ struct ConMediaPoolConfig {
     bool forcedPreviewQualityEnabled = false;
     BurstQuality forcedPreviewQuality;
     size_t maxMediaInstances = 24;
+    /// Strip / preview video: pass `poolKeyVariant` in [1, N] to `acquire` so parallel decodes for the
+    /// same path do not serialize on one `ConMedia` (avoids HEVC DPB corruption and cache thrash).
+    size_t previewParallelShards = 1;
 };
 
 class ConMediaPool
@@ -251,8 +254,11 @@ public:
                                        bool skipFrames,
                                        BurstIndex decodeOrigin = -1,
                                        bool wantVideo = true,
-                                       bool wantAudio = true);
+                                       bool wantAudio = true,
+                                       size_t poolKeyVariant = 0);
     void invalidatePath(const QString &path);
+    /// Effective shard count for `poolKeyVariant` (at least 1). Used by strip thumbnail scheduling.
+    size_t previewParallelShardCount() const;
 
 private:
     std::shared_ptr<IBurstcon> createMedia(const QString &path,

@@ -76,10 +76,26 @@ static int videoPacketBudgetCodecMul(AVCodecID id)
     case AV_CODEC_ID_VP9:
     case AV_CODEC_ID_AV1:
         return 12;
+    case AV_CODEC_ID_HEVC:
+        // Long reorder / multi-layer NALU bursts before a displayable picture.
+        return 6;
     case AV_CODEC_ID_VP8:
         return 2;
     default:
         return 1;
+    }
+}
+
+/// Byte-accurate seeks to `isKeyPacket` offsets are unreliable for these codecs (open GOP / OBUs):
+/// demuxer + decoder must align on timestamps so reference pictures are not skipped.
+static bool videoCodecPrefersTimestampSeekOnly(AVCodecID id)
+{
+    switch (id) {
+    case AV_CODEC_ID_HEVC:
+    case AV_CODEC_ID_AV1:
+        return true;
+    default:
+        return false;
     }
 }
 
@@ -169,6 +185,7 @@ struct SharedMediaFile {
     BurstOriginInfo origin;
     int videoStream = -1;
     int audioStream = -1;
+    AVCodecID videoCodecId = AV_CODEC_ID_NONE;
     BurstIndex videoFrameStep = std::max<BurstIndex>(1, kBurstTimebaseHz / 30);
     std::vector<PacketIndexEntry> videoKeyframes;
     std::vector<PacketIndexEntry> audioPackets;
@@ -203,6 +220,7 @@ struct SharedMediaFile {
                 }
                 if (auto *codecpar = st.codecParameters().raw()) {
                     origin.sourceVideoQuality = BurstQuality{codecpar->width, codecpar->height};
+                    videoCodecId = codecpar->codec_id;
                 }
             } else if (audioStream < 0 && st.mediaType() == AVMEDIA_TYPE_AUDIO) {
                 audioStream = static_cast<int>(i);
@@ -1091,7 +1109,9 @@ private:
                 } else if (targetAligned > 0) {
                     timeSeekTick = targetAligned;
                 }
-                if (start.bytePos >= 0) {
+                const bool allowByteSeek =
+                    start.bytePos >= 0 && !videoCodecPrefersTimestampSeekOnly(sharedFile->videoCodecId);
+                if (allowByteSeek) {
                     videoInput.seek(start.bytePos, -1, AVSEEK_FLAG_BYTE, ec);
                     didByteSeek = !ec;
                 }
@@ -1618,17 +1638,26 @@ ConMediaPool::ConMediaPool(const ConMediaPoolConfig &config)
 {
 }
 
+size_t ConMediaPool::previewParallelShardCount() const
+{
+    return std::max<size_t>(1, config.previewParallelShards);
+}
+
 std::shared_ptr<IBurstcon> ConMediaPool::acquire(const QString &path,
                                                  bool forPreview,
                                                  bool skipFrames,
                                                  BurstIndex decodeOrigin,
                                                  bool wantVideo,
-                                                 bool wantAudio)
+                                                 bool wantAudio,
+                                                 size_t poolKeyVariant)
 {
     Q_UNUSED(decodeOrigin);
-    const std::string key = (forPreview ? "p:" : "m:") + path.toStdString() +
-        (skipFrames ? ":1" : ":0") +
-        ":" + (wantVideo ? "v" : "-") + (wantAudio ? "a" : "-");
+    std::string key = (forPreview ? "p:" : "m:") + path.toStdString() + (skipFrames ? ":1" : ":0") + ":" +
+        (wantVideo ? "v" : "-") + (wantAudio ? "a" : "-");
+    if (poolKeyVariant != 0) {
+        key += ":s:";
+        key += std::to_string(poolKeyVariant);
+    }
     std::lock_guard<std::mutex> lock(mutex);
     auto it = mediaByKey.find(key);
     if (it != mediaByKey.end()) {

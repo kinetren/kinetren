@@ -3446,24 +3446,24 @@ QImage TimelineEditor::cachedVideoPreview(const QString &path, qint64 sourceInMs
         return QImage();
     }
     // Prevent preview decoder flood while timeline is repainting rapidly.
-    if (pendingPreviewKeys.size() >= 32) {
+    if (pendingPreviewKeys.size() >= 48) {
         static std::atomic<qint64> sLastStripQueueDiagMs{0};
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         qint64 prev = sLastStripQueueDiagMs.load();
         if (now - prev > 4000 && sLastStripQueueDiagMs.compare_exchange_strong(prev, now)) {
             burstcon::reportBurstconDiagnostic(
-                QStringLiteral("strip thumbnails: pending preview keys >= 32 (queue saturated); "
+                QStringLiteral("strip thumbnails: pending preview keys >= 48 (queue saturated); "
                                "increase interval or reduce repaint rate."));
         }
         return QImage();
     }
-    if (gStripPreviewDecodeJobs.load() >= 8) {
+    if (gStripPreviewDecodeJobs.load() >= 16) {
         static std::atomic<qint64> sLastStripJobsDiagMs{0};
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         qint64 prev = sLastStripJobsDiagMs.load();
         if (now - prev > 4000 && sLastStripJobsDiagMs.compare_exchange_strong(prev, now)) {
             burstcon::reportBurstconDiagnostic(
-                QStringLiteral("strip thumbnails: concurrent decode jobs >= 8 (cap hit)."));
+                QStringLiteral("strip thumbnails: concurrent decode jobs >= 16 (cap hit)."));
         }
         return QImage();
     }
@@ -3514,7 +3514,16 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
             // `forPreview: true` uses a separate ConMedia pool key (`p:`) so timeline thumbnails do not
             // time-share the playback decoder (`m:`) on the same path.
             const burstcon::BurstIndex originIdx = burstcon::msToBurstIndex(bucketMs);
-            auto media = pool->acquire(path, true, false, originIdx, true, false);
+            size_t poolShard = 0;
+            if (stripMediaPool) {
+                const size_t n = stripMediaPool->previewParallelShardCount();
+                if (n > 1) {
+                    const quint64 h = static_cast<quint64>(qHash(path)) ^
+                        (static_cast<quint64>(static_cast<qint64>(bucketMs)) * 0x9e3779b97f4a7c15ULL);
+                    poolShard = 1 + static_cast<size_t>(h % n);
+                }
+            }
+            auto media = pool->acquire(path, true, false, originIdx, true, false, poolShard);
             burstcon::BurstRequest req;
             req.index = burstcon::msToBurstIndex(bucketMs);
             req.quality = burstcon::BurstQuality{320, 180};

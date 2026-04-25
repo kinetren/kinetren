@@ -209,7 +209,10 @@ MainWindow::MainWindow(QWidget *parent)
         stripCfg.cacheConfig.maxVideoEntries = 72;
         stripCfg.cacheConfig.maxVideoBytes = 96ULL * 1024ULL * 1024ULL;
         stripCfg.cacheConfig.preloadEnabled = false;
-        stripCfg.maxMediaInstances = 10;
+        stripCfg.forcedPreviewQualityEnabled = true;
+        stripCfg.forcedPreviewQuality = burstcon::BurstQuality{320, 180};
+        stripCfg.previewParallelShards = 8;
+        stripCfg.maxMediaInstances = 64;
         stripMediaPool = std::make_shared<burstcon::ConMediaPool>(stripCfg);
     }
     if (timelineEditor) {
