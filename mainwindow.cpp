@@ -9,6 +9,7 @@
 #include "previewer.h"
 #include "sourceareawidget.h"
 #include "timelineeditor.h"
+#include "clipfxchaindialog.h"
 #include "sourceeditwidgets.h"
 
 #include <QAbstractItemModel>
@@ -699,6 +700,32 @@ void MainWindow::setupTimelineEditorUi()
     connect(timelineLoopButton, &QToolButton::toggled, timelineEditor, &TimelineEditor::setLoopEnabled);
     connect(timelineEditor, &TimelineEditor::loopEnabledChanged, timelineLoopButton, &QToolButton::setChecked);
     connect(timelineEditor, &TimelineEditor::overlayInfoChanged, timelineOverlayLabel, &QLabel::setText);
+    connect(timelineEditor, &TimelineEditor::clipVideoFxEditorRequested, this, [this](int clipId, const QString &hint) {
+        if (!timelineEditor) {
+            return;
+        }
+        ClipFxChainDialog dlg(this,
+                              timelineEditor,
+                              clipId,
+                              ClipFxChainDialog::MediaKind::Video,
+                              hint,
+                              projectSettings.resolution);
+        dlg.exec();
+        schedulePlaybackSync();
+    });
+    connect(timelineEditor, &TimelineEditor::clipAudioFxEditorRequested, this, [this](int clipId) {
+        if (!timelineEditor) {
+            return;
+        }
+        ClipFxChainDialog dlg(this,
+                              timelineEditor,
+                              clipId,
+                              ClipFxChainDialog::MediaKind::Audio,
+                              QString(),
+                              projectSettings.resolution);
+        dlg.exec();
+        schedulePlaybackSync();
+    });
     connect(timelineEditor, &TimelineEditor::cursorChanged, this, [this](qint64 t) {
         if (!timelinePlaying) {
             refreshTimelineScroll();
@@ -1185,6 +1212,9 @@ void MainWindow::syncTimelinePlayback()
         clip.durationMs = c.durationMs;
         clip.sourceInMs = c.sourceInMs;
         clip.trackIndex = c.trackIndex;
+        clip.videoFxChain = c.videoFxChain;
+        clip.audioFxChain = c.audioFxChain;
+        clip.audioLinearGain = c.audioLinearGain;
         if (c.isVideo) {
             vclips.push_back(clip);
         }
@@ -1715,6 +1745,9 @@ void MainWindow::refreshPerformancePanel()
         c.durationMs = clip.durationMs;
         c.sourceInMs = clip.sourceInMs;
         c.trackIndex = clip.trackIndex;
+        c.videoFxChain = clip.videoFxChain;
+        c.audioFxChain = clip.audioFxChain;
+        c.audioLinearGain = clip.audioLinearGain;
         if (clip.isVideo) {
             videoRenderClips.push_back(c);
         }

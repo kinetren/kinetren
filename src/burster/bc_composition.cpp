@@ -16,7 +16,9 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <unordered_map>
 
+#include <QJsonArray>
 #include <QSize>
 
 #include <avcpp/audioresampler.h>
@@ -36,7 +38,41 @@ extern "C" {
 #include <libavutil/mathematics.h>
 #include <libavutil/pixdesc.h>
 }
+#include "bc_fx.h"
 #include "bc_internal.h"
+
+namespace {
+
+void crossfadePairWeights(BurstIndex t,
+                          BurstIndex a0,
+                          BurstIndex a1,
+                          BurstIndex b0,
+                          BurstIndex b1,
+                          bool aFirst,
+                          float &crossA,
+                          float &crossB)
+{
+    const BurstIndex o0 = std::max(a0, b0);
+    const BurstIndex o1 = std::min(a1, b1);
+    if (o1 <= o0) {
+        crossA = aFirst ? 1.f : 0.f;
+        crossB = aFirst ? 0.f : 1.f;
+        return;
+    }
+    const double u =
+        static_cast<double>(t - o0) / static_cast<double>(std::max<BurstIndex>(1, o1 - o0));
+    const double clamped = std::clamp(u, 0.0, 1.0);
+    const double ang = clamped * (3.14159265358979323846 * 0.5);
+    if (aFirst) {
+        crossA = static_cast<float>(std::cos(ang));
+        crossB = static_cast<float>(std::sin(ang));
+    } else {
+        crossA = static_cast<float>(std::sin(ang));
+        crossB = static_cast<float>(std::cos(ang));
+    }
+}
+
+} // namespace
 
 namespace burstcon {
 
@@ -121,8 +157,19 @@ ConTrack::ConTrack(std::shared_ptr<ConMediaPool> mediaPool)
 {
 }
 
+void ConTrack::setOutputVideoSize(BurstQuality q)
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    outputVideoSize = q;
+}
+
 void ConTrack::setEvents(const std::vector<ConTrackEvent> &events)
 {
+    BurstQuality outVideoSizeCopy;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        outVideoSizeCopy = outputVideoSize;
+    }
     std::vector<BoundEvent> bound;
     bound.reserve(events.size());
     for (const auto &event : events) {
@@ -135,6 +182,18 @@ void ConTrack::setEvents(const std::vector<ConTrackEvent> &events)
                                                  event.hasVideo,
                                                  event.hasAudio)
                             : nullptr;
+        if (b.media) {
+            if (event.hasVideo) {
+                QJsonArray vfx = event.videoFxChain;
+                if (vfx.isEmpty()) {
+                    vfx = defaultVideoFxChain();
+                }
+                b.media = wrapVideoFxChain(std::move(b.media), vfx, outVideoSizeCopy);
+            }
+            if (event.hasAudio) {
+                b.media = wrapAudioFxChain(std::move(b.media), event.audioFxChain);
+            }
+        }
         bound.push_back(b);
     }
     std::sort(bound.begin(), bound.end(), [](const BoundEvent &a, const BoundEvent &b) {
@@ -155,10 +214,14 @@ bool ConTrack::burst(BurstType type, const BurstRequest &request, BurstPayload &
         local = events;
     }
     if (type == BurstType::Audio) {
-        std::vector<int64_t> mix;
-        AudioBurst base;
-        bool hasAny = false;
-        for (const auto &bound : local) {
+        struct Active {
+            size_t boundIndex = 0;
+            AudioBurst burst;
+        };
+        std::vector<Active> active;
+        active.reserve(local.size());
+        for (size_t bi = 0; bi < local.size(); ++bi) {
+            const auto &bound = local[bi];
             const auto &event = bound.event;
             if (!event.hasAudio || !bound.media) {
                 continue;
@@ -171,21 +234,64 @@ bool ConTrack::burst(BurstType type, const BurstRequest &request, BurstPayload &
             if (!bound.media->audioBurst(BurstRequest{localIndex, request.quality, event.sourceIn}, burst)) {
                 continue;
             }
-            if (!hasAny) {
-                base = burst;
-                mix.assign(base.samples.size(), 0);
-                hasAny = true;
+            active.push_back(Active{bi, std::move(burst)});
+        }
+        if (active.empty()) {
+            return false;
+        }
+
+        std::unordered_map<int, std::vector<size_t>> byLane;
+        byLane.reserve(active.size());
+        for (size_t ai = 0; ai < active.size(); ++ai) {
+            const int lane = local[active[ai].boundIndex].event.timelineLaneIndex;
+            byLane[lane].push_back(ai);
+        }
+
+        std::vector<float> weight(active.size(), 1.f);
+        for (const auto &kv : byLane) {
+            const std::vector<size_t> &inds = kv.second;
+            if (inds.size() <= 1) {
+                continue;
             }
+            if (inds.size() == 2) {
+                const auto &e0 = local[active[inds[0]].boundIndex].event;
+                const auto &e1 = local[active[inds[1]].boundIndex].event;
+                float c0 = 1.f;
+                float c1 = 1.f;
+                crossfadePairWeights(request.index,
+                                     e0.start,
+                                     e0.start + e0.duration,
+                                     e1.start,
+                                     e1.start + e1.duration,
+                                     e0.start <= e1.start,
+                                     c0,
+                                     c1);
+                weight[inds[0]] = c0;
+                weight[inds[1]] = c1;
+            } else {
+                const float inv = 1.f / static_cast<float>(inds.size());
+                for (size_t k : inds) {
+                    weight[k] = inv;
+                }
+            }
+        }
+
+        for (size_t ai = 0; ai < active.size(); ++ai) {
+            weight[ai] *= std::max(0.f, local[active[ai].boundIndex].event.audioLinearGain);
+        }
+
+        AudioBurst base = active[0].burst;
+        std::vector<int64_t> mix(base.samples.size(), 0);
+        for (size_t ai = 0; ai < active.size(); ++ai) {
+            const AudioBurst &burst = active[ai].burst;
             if (mix.size() < burst.samples.size()) {
                 mix.resize(burst.samples.size(), 0);
                 base.samples.resize(burst.samples.size(), 0);
             }
+            const float w = weight[ai];
             for (size_t i = 0; i < burst.samples.size(); ++i) {
-                mix[i] += burst.samples[i];
+                mix[i] += static_cast<int64_t>(std::llround(static_cast<double>(burst.samples[i]) * static_cast<double>(w)));
             }
-        }
-        if (!hasAny) {
-            return false;
         }
         for (size_t i = 0; i < mix.size(); ++i) {
             base.samples[i] = static_cast<int32_t>(std::clamp<int64_t>(
@@ -194,7 +300,7 @@ bool ConTrack::burst(BurstType type, const BurstRequest &request, BurstPayload &
                 std::numeric_limits<int32_t>::max()));
         }
         base.index = request.index;
-        out = base;
+        out = std::move(base);
         return true;
     }
 

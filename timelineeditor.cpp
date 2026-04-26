@@ -1,5 +1,6 @@
 #include "timelineeditor.h"
 #include "bc.h"
+#include "bc_fx.h"
 
 #include <QDateTime>
 #include <QDragEnterEvent>
@@ -77,6 +78,19 @@ constexpr qint64 kSnapThresholdMs = 100;
 // Allow near frame-accurate cuts (1 ms ≈ sub-frame at high zoom; copy/trim/split use this floor).
 constexpr qint64 kMinClipDurationMs = 1;
 constexpr int kTrimHandlePx = 7;
+constexpr int kChromeBtnH = 16;
+constexpr int kChromeFxW = 22;
+constexpr int kChromePanW = 26;
+constexpr int kChromeAudioFxW = 24;
+constexpr int kVolumeRailW = 9;
+
+namespace {
+float audioLinearGainFromVolumeUiT(float t01)
+{
+    const float t = std::clamp(t01, 0.f, 1.f);
+    return std::pow(2.f, (0.5f - t) * 2.f);
+}
+} // namespace
 constexpr qint64 kEdgeScrollMinStepMs = 1;
 constexpr qint64 kEdgeScrollMaxStepMs = 42;
 /// How aggressively scroll speed ramps from inner zone (0) to screen edge (1). Higher = slower at first.
@@ -1436,6 +1450,10 @@ std::vector<TimelineEditor::RenderClip> TimelineEditor::renderClips() const
         c.trackIndex = eff.trackIndex;
         c.isVideo = (eff.mediaType == TrackType::Video);
         c.isAudio = (eff.mediaType == TrackType::Audio);
+        c.videoFxChain = eff.videoFxChain;
+        c.audioFxChain = eff.audioFxChain;
+        c.audioLinearGain =
+            (eff.mediaType == TrackType::Audio) ? audioLinearGainFromVolumeUiT(eff.audioVolumeUiT) : 1.f;
         result.push_back(c);
     }
     return result;
@@ -1494,7 +1512,7 @@ void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double,
 QJsonObject TimelineEditor::toJson() const
 {
     QJsonObject root;
-    root.insert("version", 3);
+    root.insert("version", 4);
     root.insert("nextClipId", nextClipId);
     root.insert("nextLinkedGroupId", nextLinkedGroupId);
     root.insert("cursorMs", static_cast<double>(cursorPositionMs));
@@ -1534,6 +1552,9 @@ QJsonObject TimelineEditor::toJson() const
         clipObject.insert("sourceInMs", static_cast<double>(clip.sourceInMs));
         clipObject.insert("sourceDurationMs", static_cast<double>(clip.sourceDurationMs));
         clipObject.insert("sourcePath", clip.sourcePath);
+        clipObject.insert("videoFxChain", clip.videoFxChain);
+        clipObject.insert("audioFxChain", clip.audioFxChain);
+        clipObject.insert("audioVolumeUiT", static_cast<double>(clip.audioVolumeUiT));
 
         QJsonObject colorObject;
         colorObject.insert("r", clip.color.red());
@@ -1634,11 +1655,18 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
         clip.sourceInMs = static_cast<qint64>(clipObject.value("sourceInMs").toDouble(0.0));
         clip.sourceDurationMs = static_cast<qint64>(clipObject.value("sourceDurationMs").toDouble(0.0));
         clip.sourcePath = clipObject.value("sourcePath").toString();
+        clip.videoFxChain = clipObject.value("videoFxChain").toArray();
+        clip.audioFxChain = clipObject.value("audioFxChain").toArray();
+        clip.audioVolumeUiT = static_cast<float>(clipObject.value("audioVolumeUiT").toDouble(0.5));
         const QJsonObject colorObject = clipObject.value("color").toObject();
         clip.color = QColor(colorObject.value("r").toInt(140),
                             colorObject.value("g").toInt(140),
                             colorObject.value("b").toInt(140),
                             colorObject.value("a").toInt(255));
+
+        if (clip.mediaType == TrackType::Video && clip.videoFxChain.isEmpty()) {
+            clip.videoFxChain = burstcon::defaultVideoFxChain();
+        }
 
         if (clip.id <= 0 || clip.durationMs <= 0 || clip.trackIndex < 0 ||
             clip.trackIndex >= static_cast<int>(loadedTracks.size()) || clip.sourcePath.isEmpty()) {
@@ -1957,6 +1985,39 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
             p.setPen(QColor(240, 240, 240));
             p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, shownName);
         }
+        if (clip.mediaType == TrackType::Video && r.width() >= 56) {
+            const QRect rFx = videoFxButtonRect(r);
+            const QRect rPan = videoPanButtonRect(r);
+            p.save();
+            QFont bf = p.font();
+            bf.setPixelSize(10);
+            p.setFont(bf);
+            p.setPen(QPen(QColor(0, 0, 0, 200), 1));
+            p.setBrush(QColor(32, 32, 40, 228));
+            p.drawRoundedRect(rPan, 2, 2);
+            p.drawRoundedRect(rFx, 2, 2);
+            p.setPen(QColor(238, 238, 245));
+            p.drawText(rPan, Qt::AlignCenter, QStringLiteral("Pan"));
+            p.drawText(rFx, Qt::AlignCenter, QStringLiteral("fx"));
+            p.restore();
+        } else if (clip.mediaType == TrackType::Audio && r.width() >= 40) {
+            const QRect rFx = audioFxButtonRect(r);
+            p.save();
+            QFont bf = p.font();
+            bf.setPixelSize(10);
+            p.setFont(bf);
+            p.setPen(QPen(QColor(0, 0, 0, 200), 1));
+            p.setBrush(QColor(32, 32, 40, 228));
+            p.drawRoundedRect(rFx, 2, 2);
+            p.setPen(QColor(238, 238, 245));
+            p.drawText(rFx, Qt::AlignCenter, QStringLiteral("fx"));
+            p.restore();
+            const QRect vr = audioVolumeRailRect(r);
+            p.fillRect(vr, QColor(0, 0, 0, 70));
+            const int yLine = vr.top() + static_cast<int>(std::clamp(clip.audioVolumeUiT, 0.f, 1.f) * (vr.height() - 1));
+            p.setPen(QPen(QColor(255, 220, 120), 2));
+            p.drawLine(vr.left(), yLine, vr.right(), yLine);
+        }
         if (clip.id == selectedClipId) {
             p.setPen(QColor(255, 255, 255));
             p.drawLine(r.left() + 2, r.top() + 2, r.left() + 2, r.bottom() - 2);
@@ -2162,6 +2223,37 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
     }
     selectedMorpherId = -1;
 
+    int chromeClipId = -1;
+    const ClipChromeHit chrome = clipChromeHit(pos, &chromeClipId);
+    if (chrome != ClipChromeHit::None && chromeClipId >= 0) {
+        selectedClipId = chromeClipId;
+        if (chrome == ClipChromeHit::VideoFx) {
+            emit clipVideoFxEditorRequested(chromeClipId, QString());
+            update();
+            return;
+        }
+        if (chrome == ClipChromeHit::VideoPan) {
+            emit clipVideoFxEditorRequested(chromeClipId, QStringLiteral("pan"));
+            update();
+            return;
+        }
+        if (chrome == ClipChromeHit::AudioFx) {
+            emit clipAudioFxEditorRequested(chromeClipId);
+            update();
+            return;
+        }
+        if (chrome == ClipChromeHit::AudioVolumeRail) {
+            const qint64 pm = xToTimeMs(pos.x());
+            setCursorMs(snapTimeMs(pm), false);
+            dragMode = DragMode::AdjustAudioVolume;
+            dragClipId = chromeClipId;
+            dragMarkerIndex = -1;
+            dragChangedTimelineContent = false;
+            update();
+            return;
+        }
+    }
+
     const bool inTimelineX = pos.x() >= timelineLeft() && pos.x() <= timelineRight();
     selectedClipId = clipIdAt(pos);
     const qint64 pointerMs = xToTimeMs(pos.x());
@@ -2295,7 +2387,16 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         const int hoverClip = clipIdAt(pos);
         if (hoverClip >= 0) {
             const ClipEvent *clip = findClipById(hoverClip);
-            if (clip && (isNearClipStartEdge(*clip, pos.x()) || isNearClipEndEdge(*clip, pos.x()))) {
+            const QRect r = clipRect(*clip);
+            bool chrome = false;
+            if (clip->mediaType == TrackType::Video && r.width() >= 56) {
+                chrome = videoFxButtonRect(r).contains(pos) || videoPanButtonRect(r).contains(pos);
+            } else if (clip->mediaType == TrackType::Audio && r.width() >= 40) {
+                chrome = audioFxButtonRect(r).contains(pos) || audioVolumeRailRect(r).contains(pos);
+            }
+            if (chrome) {
+                setCursor(Qt::PointingHandCursor);
+            } else if (clip && (isNearClipStartEdge(*clip, pos.x()) || isNearClipEndEdge(*clip, pos.x()))) {
                 setCursor(Qt::SizeHorCursor);
             } else {
                 setCursor(Qt::OpenHandCursor);
@@ -2327,6 +2428,13 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::ScrubCursor) {
         setCursorMs(pointerMs);
+    } else if (dragMode == DragMode::AdjustAudioVolume && clip && clip->mediaType == TrackType::Audio) {
+        dragChangedTimelineContent = true;
+        const QRect r = clipRect(*clip);
+        const QRect vr = audioVolumeRailRect(r);
+        const float t = static_cast<float>(pos.y() - vr.top()) / static_cast<float>(std::max(1, vr.height()));
+        clip->audioVolumeUiT = std::clamp(t, 0.f, 1.f);
+        refreshTimelineRangeSignals();
     } else if (dragMode == DragMode::MoveClip && clip) {
         dragChangedTimelineContent = true;
         qint64 desiredDelta = pointerMs - dragStartPointerMs;
@@ -2583,6 +2691,17 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
     QAction *replaceSourceAction = menu.addAction(tr("Open replace source panel"));
     QAction *sourceStartAction = menu.addAction(tr("Open source offset panel"));
     QAction *morphPlaceAction = menu.addAction(tr("Add morpher (freeze targets, place on Morph track)…"));
+    QAction *videoFxAction = nullptr;
+    QAction *videoPanAction = nullptr;
+    QAction *audioFxAction = nullptr;
+    QAction *resetVolAction = nullptr;
+    if (clip && clip->mediaType == TrackType::Video) {
+        videoFxAction = menu.addAction(tr("Video effects…"));
+        videoPanAction = menu.addAction(tr("Pan / frame…"));
+    } else if (clip && clip->mediaType == TrackType::Audio) {
+        audioFxAction = menu.addAction(tr("Audio effects…"));
+        resetVolAction = menu.addAction(tr("Reset clip volume"));
+    }
 
     QAction *regRepThis = nullptr;
     QAction *regRepAll = nullptr;
@@ -2625,6 +2744,18 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         emit sourceOffsetPanelRequestedForClip(id);
     } else if (chosen == morphPlaceAction) {
         beginMorpherPlacementFromSelection();
+    } else if (videoFxAction && chosen == videoFxAction) {
+        emit clipVideoFxEditorRequested(id, QString());
+    } else if (videoPanAction && chosen == videoPanAction) {
+        emit clipVideoFxEditorRequested(id, QStringLiteral("pan"));
+    } else if (audioFxAction && chosen == audioFxAction) {
+        emit clipAudioFxEditorRequested(id);
+    } else if (resetVolAction && chosen == resetVolAction) {
+        ClipEvent *ac = findClipById(id);
+        if (ac && ac->mediaType == TrackType::Audio) {
+            ac->audioVolumeUiT = 0.5f;
+            emit timelineContentChanged();
+        }
     } else if (regRepThis && chosen == regRepThis) {
         if (clickTrack < 0) {
             QMessageBox::information(this,
@@ -2977,6 +3108,143 @@ qint64 TimelineEditor::clipSourceInMs(int clipId) const
 {
     const ClipEvent *c = findClipById(clipId);
     return c ? c->sourceInMs : 0;
+}
+
+QJsonArray TimelineEditor::clipVideoFxChain(int clipId) const
+{
+    const ClipEvent *c = findClipById(clipId);
+    return c ? c->videoFxChain : QJsonArray();
+}
+
+void TimelineEditor::setClipVideoFxChain(int clipId, const QJsonArray &chain)
+{
+    ClipEvent *c = findClipById(clipId);
+    if (!c || c->mediaType != TrackType::Video) {
+        return;
+    }
+    c->videoFxChain = chain;
+    emit timelineContentChanged();
+    update();
+}
+
+QJsonArray TimelineEditor::clipAudioFxChain(int clipId) const
+{
+    const ClipEvent *c = findClipById(clipId);
+    return c ? c->audioFxChain : QJsonArray();
+}
+
+void TimelineEditor::setClipAudioFxChain(int clipId, const QJsonArray &chain)
+{
+    ClipEvent *c = findClipById(clipId);
+    if (!c || c->mediaType != TrackType::Audio) {
+        return;
+    }
+    c->audioFxChain = chain;
+    emit timelineContentChanged();
+    update();
+}
+
+float TimelineEditor::clipAudioVolumeUiT(int clipId) const
+{
+    const ClipEvent *c = findClipById(clipId);
+    return c ? c->audioVolumeUiT : 0.5f;
+}
+
+void TimelineEditor::setClipAudioVolumeUiT(int clipId, float t01)
+{
+    ClipEvent *c = findClipById(clipId);
+    if (!c || c->mediaType != TrackType::Audio) {
+        return;
+    }
+    c->audioVolumeUiT = std::clamp(t01, 0.f, 1.f);
+    emit timelineContentChanged();
+    update();
+}
+
+QImage TimelineEditor::previewStillForClip(int clipId)
+{
+    const ClipEvent *c = findClipById(clipId);
+    if (!c || c->mediaType != TrackType::Video) {
+        return {};
+    }
+    const qint64 mid = c->sourceInMs + std::max<qint64>(1, c->durationMs) / 2;
+    return cachedVideoPreview(c->sourcePath, mid);
+}
+
+QRect TimelineEditor::videoFxButtonRect(const QRect &clipR)
+{
+    return QRect(clipR.right() - kChromeFxW - 2, clipR.top() + 2, kChromeFxW, kChromeBtnH);
+}
+
+QRect TimelineEditor::videoPanButtonRect(const QRect &clipR)
+{
+    return QRect(clipR.right() - kChromeFxW - kChromePanW - 5, clipR.top() + 2, kChromePanW, kChromeBtnH);
+}
+
+QRect TimelineEditor::audioFxButtonRect(const QRect &clipR)
+{
+    return QRect(clipR.right() - kChromeAudioFxW - 2, clipR.top() + 2, kChromeAudioFxW, kChromeBtnH);
+}
+
+QRect TimelineEditor::audioVolumeRailRect(const QRect &clipR)
+{
+    const int left = clipR.left() + kTrimHandlePx + 3;
+    return QRect(left, clipR.top() + 2, kVolumeRailW, std::max(4, clipR.height() - 4));
+}
+
+TimelineEditor::ClipChromeHit TimelineEditor::clipChromeHit(const QPoint &pos, int *outClipId) const
+{
+    if (outClipId) {
+        *outClipId = -1;
+    }
+    for (auto it = clips.rbegin(); it != clips.rend(); ++it) {
+        if (!isTrackIndexValid(it->trackIndex)) {
+            continue;
+        }
+        const QRect r = clipRect(*it);
+        if (!r.contains(pos)) {
+            continue;
+        }
+        if (it->mediaType == TrackType::Video && r.width() >= 56) {
+            if (videoFxButtonRect(r).contains(pos)) {
+                if (outClipId) {
+                    *outClipId = it->id;
+                }
+                return ClipChromeHit::VideoFx;
+            }
+            if (videoPanButtonRect(r).contains(pos)) {
+                if (outClipId) {
+                    *outClipId = it->id;
+                }
+                return ClipChromeHit::VideoPan;
+            }
+        } else if (it->mediaType == TrackType::Audio && r.width() >= 40) {
+            if (audioFxButtonRect(r).contains(pos)) {
+                if (outClipId) {
+                    *outClipId = it->id;
+                }
+                return ClipChromeHit::AudioFx;
+            }
+            if (audioVolumeRailRect(r).contains(pos)) {
+                if (outClipId) {
+                    *outClipId = it->id;
+                }
+                return ClipChromeHit::AudioVolumeRail;
+            }
+        }
+        break;
+    }
+    return ClipChromeHit::None;
+}
+
+void TimelineEditor::ensureClipFxDefaults(ClipEvent &clip)
+{
+    if (clip.mediaType == TrackType::Video && clip.videoFxChain.isEmpty()) {
+        clip.videoFxChain = burstcon::defaultVideoFxChain();
+    }
+    if (clip.mediaType == TrackType::Audio) {
+        clip.audioVolumeUiT = std::clamp(clip.audioVolumeUiT, 0.f, 1.f);
+    }
 }
 
 int TimelineEditor::clipIdAt(const QPoint &pos) const
@@ -3760,6 +4028,7 @@ void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int dr
         v.sourceDurationMs = durationMs;
         v.sourcePath = path;
         v.color = colorFromPath(path + ":v");
+        ensureClipFxDefaults(v);
         clips.push_back(v);
         selectedClipId = v.id;
     }
@@ -3776,6 +4045,7 @@ void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int dr
         a.sourceDurationMs = durationMs;
         a.sourcePath = path;
         a.color = colorFromPath(path + ":a");
+        ensureClipFxDefaults(a);
         clips.push_back(a);
         if (!video) {
             selectedClipId = a.id;

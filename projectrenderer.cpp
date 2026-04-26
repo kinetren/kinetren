@@ -15,6 +15,7 @@
 #include <cmath>
 
 #include "bc.h"
+#include "bc_fx.h"
 
 namespace {
 constexpr int kAudioSampleRate = 48000;
@@ -122,6 +123,11 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
             e.hasAudio = false;
             const qint64 startKey = std::min<qint64>(std::max<qint64>(0, effectiveStartMs), 999'999LL);
             e.zIndex = -static_cast<int>(clip.trackIndex * 1'000'000LL + startKey);
+            e.timelineLaneIndex = clip.trackIndex;
+            e.videoFxChain = clip.videoFxChain;
+            if (e.videoFxChain.isEmpty()) {
+                e.videoFxChain = burstcon::defaultVideoFxChain();
+            }
             videoEvents.push_back(e);
         }
         if (clip.isAudio) {
@@ -132,6 +138,9 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
             e.sourceIn = burstcon::msToBurstIndex(clip.sourceInMs + (effectiveStartMs - clip.startMs));
             e.hasVideo = false;
             e.hasAudio = true;
+            e.timelineLaneIndex = clip.trackIndex;
+            e.audioFxChain = clip.audioFxChain;
+            e.audioLinearGain = clip.audioLinearGain;
             e.zIndex = audioZ++;
             audioEvents.push_back(e);
         }
@@ -148,6 +157,8 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
     auto mediaPool = std::make_shared<burstcon::ConMediaPool>(poolCfg);
     auto videoTrack = std::make_shared<burstcon::ConTrack>(mediaPool);
     auto audioTrack = std::make_shared<burstcon::ConTrack>(mediaPool);
+    videoTrack->setOutputVideoSize(
+        burstcon::BurstQuality{std::max(2, renderSize.width()), std::max(2, renderSize.height())});
     videoTrack->setEvents(videoEvents);
     audioTrack->setEvents(audioEvents);
     auto trimmer = std::make_shared<burstcon::ConTrimmer>();

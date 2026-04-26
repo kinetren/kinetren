@@ -37,6 +37,8 @@ set(PROJECT_SOURCES
         speedchartwidget.h
         timelineeditor.cpp
         timelineeditor.h
+        clipfxchaindialog.cpp
+        clipfxchaindialog.h
         sourceeditwidgets.cpp
         sourceeditwidgets.h
         sourceareawidget.cpp
@@ -44,11 +46,13 @@ set(PROJECT_SOURCES
         src/burster/bc_avcpp_decoder.cpp
         src/burster/bc_concache.cpp
         src/burster/bc_composition.cpp
+        src/burster/bc_fx.cpp
         src/burster/bc_mediapool.cpp
         src/burster/bc_playback_timer.cpp
         src/burster/bc_time.cpp
         src/burster/bc_metrics.cpp
         src/burster/bc.h
+        src/burster/bc_fx.h
         src/burster/bc_internal.h
         playbackpipeline.cpp
         playbackpipeline.h
@@ -128,11 +132,13 @@ if(BUILD_TESTING)
         src/burster/bc_avcpp_decoder.cpp
         src/burster/bc_concache.cpp
         src/burster/bc_composition.cpp
+        src/burster/bc_fx.cpp
         src/burster/bc_mediapool.cpp
         src/burster/bc_playback_timer.cpp
         src/burster/bc_time.cpp
         src/burster/bc_metrics.cpp
         src/burster/bc.h
+        src/burster/bc_fx.h
         src/burster/bc_internal.h
     )
     target_link_libraries(kp-test-burstcon-tests PRIVATE

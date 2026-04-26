@@ -20,6 +20,7 @@
 #include <vector>
 
 #include <QVector>
+#include <QJsonArray>
 
 namespace burstcon {
 class ConMediaPool;
@@ -47,6 +48,9 @@ public:
         int trackIndex = 0;
         bool isVideo = false;
         bool isAudio = false;
+        QJsonArray videoFxChain;
+        QJsonArray audioFxChain;
+        float audioLinearGain = 1.f;
     };
 
     explicit TimelineEditor(QWidget *parent = nullptr);
@@ -113,6 +117,14 @@ public:
 
     QString clipSourcePath(int clipId) const;
     qint64 clipSourceInMs(int clipId) const;
+    QJsonArray clipVideoFxChain(int clipId) const;
+    void setClipVideoFxChain(int clipId, const QJsonArray &chain);
+    QJsonArray clipAudioFxChain(int clipId) const;
+    void setClipAudioFxChain(int clipId, const QJsonArray &chain);
+    float clipAudioVolumeUiT(int clipId) const;
+    void setClipAudioVolumeUiT(int clipId, float t01);
+    QImage previewStillForClip(int clipId);
+
     static QString firstLocalPathFromMime(const QMimeData *mime);
 
     void addMorpherTrack();
@@ -156,6 +168,8 @@ signals:
     void replaceSourcePanelRequestedForMorpher(int morpherEventId);
     void sourceOffsetPanelRequestedForMorpher(int morpherEventId);
     void morpherEditWindowRequested(int morpherEventId);
+    void clipVideoFxEditorRequested(int clipId, const QString &focusHint);
+    void clipAudioFxEditorRequested(int clipId);
     void timelineViewLayoutChanged();
     void timelineVerticalScrollChanged(int px);
 
@@ -192,6 +206,10 @@ private:
         qint64 sourceDurationMs = 0;
         QString sourcePath;
         QColor color;
+        QJsonArray videoFxChain;
+        QJsonArray audioFxChain;
+        /// 0 = top of clip (boost), 1 = bottom (cut); 0.5 = unity gain.
+        float audioVolumeUiT = 0.5f;
     };
 
     struct TrackLane {
@@ -219,7 +237,8 @@ private:
         RegionSelect,
         MoveRegionStart,
         MoveRegionEnd,
-        MoveMarker
+        MoveMarker,
+        AdjustAudioVolume
     };
 
     std::vector<TrackLane> tracks;
@@ -356,6 +375,13 @@ private:
     void shiftSourceStartForRegionClips(qint64 deltaMs, bool allTracks, int trackIndex);
 
     void addClipFromDrop(const QString &path, qint64 startMs, int dropY);
+    enum class ClipChromeHit { None, VideoFx, VideoPan, AudioFx, AudioVolumeRail };
+    ClipChromeHit clipChromeHit(const QPoint &timelinePos, int *outClipId) const;
+    static QRect videoFxButtonRect(const QRect &clipR);
+    static QRect videoPanButtonRect(const QRect &clipR);
+    static QRect audioFxButtonRect(const QRect &clipR);
+    static QRect audioVolumeRailRect(const QRect &clipR);
+    void ensureClipFxDefaults(ClipEvent &clip);
     void emitOverlayInfo();
     QHash<QString, QImage> previewCache;
     std::list<QString> previewCacheLru;

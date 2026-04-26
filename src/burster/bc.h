@@ -2,6 +2,7 @@
 #define BURSTCON_H
 
 #include <QImage>
+#include <QJsonArray>
 #include <QString>
 
 #include <atomic>
@@ -284,6 +285,13 @@ struct ConTrackEvent {
     bool hasVideo = false;
     bool hasAudio = false;
     int zIndex = 0;
+    /// Timeline lane index (same as UI track row). Used for same-lane audio overlap crossfades.
+    int timelineLaneIndex = 0;
+    /// Per-clip linear gain (1 = unity). Applied after optional `audioFxChain`.
+    float audioLinearGain = 1.f;
+    /// `{ "type": "...", "params": { } }` entries; order is decoder → compositor.
+    QJsonArray videoFxChain;
+    QJsonArray audioFxChain;
 };
 
 class ConTrack : public IBurstcon
@@ -291,6 +299,7 @@ class ConTrack : public IBurstcon
 public:
     explicit ConTrack(std::shared_ptr<ConMediaPool> mediaPool);
 
+    void setOutputVideoSize(BurstQuality q);
     void setEvents(const std::vector<ConTrackEvent> &events);
     bool burst(BurstType type, const BurstRequest &request, BurstPayload &out) override;
     BurstOriginInfo originInfo() const override;
@@ -304,6 +313,7 @@ private:
 
     std::shared_ptr<ConMediaPool> mediaPool;
     std::vector<BoundEvent> events;
+    BurstQuality outputVideoSize{1280, 720};
     mutable std::mutex mutex;
 };
 

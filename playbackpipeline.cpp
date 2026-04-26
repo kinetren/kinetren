@@ -13,6 +13,7 @@
 #include <QFont>
 #include <QIODevice>
 #include <QPainter>
+#include <QJsonDocument>
 
 #include <algorithm>
 #include <chrono>
@@ -808,6 +809,12 @@ void PlaybackPipeline::setProjectSettings(const ProjectSettings &settings)
         timer->setVideoRequestQuality(decodeRealtimePipelineVideoQuality(projectSettings));
         timer->setPlaybackVideoFps(std::max(1, projectSettings.fps));
     }
+    if (videoTrack) {
+        videoTrack->setOutputVideoSize(decodeRealtimePipelineVideoQuality(projectSettings));
+    }
+    if (videoTrack && (!lastVideoClips.empty() || !lastAudioClips.empty())) {
+        rebuildGraph(lastVideoClips, lastAudioClips);
+    }
 }
 
 void PlaybackPipeline::resetProjectCache()
@@ -985,12 +992,15 @@ QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::audioCacheSegme
 
 QString PlaybackPipeline::coverageClipKey(const Clip &clip)
 {
-    return QStringLiteral("%1|%2|%3|%4|%5")
+    return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8")
         .arg(clip.sourcePath)
         .arg(clip.startMs)
         .arg(clip.durationMs)
         .arg(clip.sourceInMs)
-        .arg(clip.trackIndex);
+        .arg(clip.trackIndex)
+        .arg(QString::fromUtf8(QJsonDocument(clip.videoFxChain).toJson(QJsonDocument::Compact)))
+        .arg(QString::fromUtf8(QJsonDocument(clip.audioFxChain).toJson(QJsonDocument::Compact)))
+        .arg(clip.audioLinearGain, 0, 'g', 12);
 }
 
 bool PlaybackPipeline::clipsEqual(const std::vector<Clip> &a, const std::vector<Clip> &b)
@@ -1003,7 +1013,10 @@ bool PlaybackPipeline::clipsEqual(const std::vector<Clip> &a, const std::vector<
             a[i].startMs != b[i].startMs ||
             a[i].durationMs != b[i].durationMs ||
             a[i].sourceInMs != b[i].sourceInMs ||
-            a[i].trackIndex != b[i].trackIndex) {
+            a[i].trackIndex != b[i].trackIndex ||
+            a[i].videoFxChain != b[i].videoFxChain ||
+            a[i].audioFxChain != b[i].audioFxChain ||
+            a[i].audioLinearGain != b[i].audioLinearGain) {
             return false;
         }
     }
@@ -1012,6 +1025,9 @@ bool PlaybackPipeline::clipsEqual(const std::vector<Clip> &a, const std::vector<
 
 void PlaybackPipeline::rebuildGraph(const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips)
 {
+    const burstcon::BurstQuality outVideoQ = decodeRealtimePipelineVideoQuality(projectSettings);
+    videoTrack->setOutputVideoSize(outVideoQ);
+
     std::vector<burstcon::ConTrackEvent> v;
     std::vector<burstcon::ConTrackEvent> a;
     for (const auto &clip : videoClips) {
@@ -1022,6 +1038,8 @@ void PlaybackPipeline::rebuildGraph(const std::vector<Clip> &videoClips, const s
         e.sourceIn = burstcon::msToBurstIndex(clip.sourceInMs);
         e.hasVideo = true;
         e.hasAudio = false;
+        e.timelineLaneIndex = clip.trackIndex;
+        e.videoFxChain = clip.videoFxChain;
         // Ascending z = background first: lower track index (upper row in UI) composites on top.
         const qint64 startKey = std::min<qint64>(std::max<qint64>(0, clip.startMs), 999'999LL);
         e.zIndex = -static_cast<int>(clip.trackIndex * 1'000'000LL + startKey);
@@ -1036,6 +1054,9 @@ void PlaybackPipeline::rebuildGraph(const std::vector<Clip> &videoClips, const s
         e.sourceIn = burstcon::msToBurstIndex(clip.sourceInMs);
         e.hasVideo = false;
         e.hasAudio = true;
+        e.timelineLaneIndex = clip.trackIndex;
+        e.audioFxChain = clip.audioFxChain;
+        e.audioLinearGain = clip.audioLinearGain;
         e.zIndex = z++;
         a.push_back(e);
     }

@@ -3,6 +3,7 @@
 
 #include <QHash>
 #include <QImage>
+#include <QJsonArray>
 #include <QPair>
 #include <QVector>
 
@@ -35,6 +36,9 @@ public:
         qint64 sourceInMs = 0;
         /// Timeline video track index; lower = upper track in the UI (foreground when compositing).
         int trackIndex = 0;
+        QJsonArray videoFxChain;
+        QJsonArray audioFxChain;
+        float audioLinearGain = 1.f;
     };
     struct PerformanceStats {
         double composeFps = 0.0;
