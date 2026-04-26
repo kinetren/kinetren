@@ -34,6 +34,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/pixdesc.h>
 }
 
 namespace burstcon {
@@ -96,6 +97,12 @@ uint64_t imageBytes(const QImage &img)
 #else
     return static_cast<uint64_t>(img.byteCount());
 #endif
+}
+
+bool avPixelFormatHasAlpha(AVPixelFormat fmt)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+    return desc != nullptr && (desc->flags & AV_PIX_FMT_FLAG_ALPHA) != 0;
 }
 
 qint64 packetTimestampToMs(const av::Packet &pkt)
@@ -319,6 +326,7 @@ public:
         audioResampler.reset();
         scalerSrcW = 0;
         scalerSrcH = 0;
+        scalerOutputsAlpha = false;
         videoInput.close();
         audioInput.close();
         videoPrimed = false;
@@ -416,7 +424,7 @@ public:
     {
         using namespace av;
         std::lock_guard<std::mutex> lock(videoMutex);
-        if (!loaded || videoStream < 0 || !videoDec || !videoRescaler) {
+        if (!loaded || videoStream < 0 || !videoDec) {
             return false;
         }
         const BurstIndex target = (index / videoFrameStep) * videoFrameStep;
@@ -574,36 +582,71 @@ public:
                 const int dstH = outRgbH;
                 const int codedW = frame.width();
                 const int codedH = frame.height();
-                if (codedW > 0 && codedH > 0 &&
-                    (!videoRescaler || codedW != scalerSrcW || codedH != scalerSrcH)) {
+                const AVPixelFormat srcPixFmt = static_cast<AVPixelFormat>(frame.raw()->format);
+                const bool wantsAlpha = avPixelFormatHasAlpha(srcPixFmt);
+                if (codedW <= 0 || codedH <= 0) {
+                    return;
+                }
+                if (!videoRescaler || codedW != scalerSrcW || codedH != scalerSrcH ||
+                    wantsAlpha != scalerOutputsAlpha) {
+                    const AVPixelFormat dstPixFmt = wantsAlpha ? AV_PIX_FMT_BGRA : AV_PIX_FMT_RGB24;
                     videoRescaler = std::make_unique<av::VideoRescaler>(
-                        codedW, codedH, AV_PIX_FMT_RGB24, av::SwsFlagFastBilinear);
+                        codedW, codedH, dstPixFmt, av::SwsFlagFastBilinear);
                     scalerSrcW = codedW;
                     scalerSrcH = codedH;
+                    scalerOutputsAlpha = wantsAlpha;
                 }
-                av::VideoFrame rgbFrame{AV_PIX_FMT_RGB24, dstW, dstH};
                 std::error_code rescaleEc;
-                videoRescaler->rescale(rgbFrame, frame, rescaleEc);
-                if (rescaleEc) {
-                    ++ps.nRescaleFail;
-                    rescaleEc.clear();
-                    return;
-                }
-                QImage img(rgbFrame.width(), rgbFrame.height(), QImage::Format_RGB888);
-                if (img.isNull() || !img.bits()) {
-                    ++ps.nQimageNull;
-                    return;
-                }
-                const int dstStride = img.bytesPerLine();
-                const int srcStride = rgbFrame.raw()->linesize[0];
-                const int copyStride = std::min(dstStride, srcStride);
-                auto* srcBytes = rgbFrame.data(0);
-                auto* dstBytes = img.bits();
-                if (dstStride == srcStride && copyStride == dstW * 3) {
-                    std::memcpy(dstBytes, srcBytes, static_cast<size_t>(copyStride) * static_cast<size_t>(dstH));
+                QImage img;
+                if (wantsAlpha) {
+                    av::VideoFrame bgraFrame{AV_PIX_FMT_BGRA, dstW, dstH};
+                    videoRescaler->rescale(bgraFrame, frame, rescaleEc);
+                    if (rescaleEc) {
+                        ++ps.nRescaleFail;
+                        rescaleEc.clear();
+                        return;
+                    }
+                    img = QImage(dstW, dstH, QImage::Format_ARGB32);
+                    if (img.isNull() || !img.bits()) {
+                        ++ps.nQimageNull;
+                        return;
+                    }
+                    const int dstStride = img.bytesPerLine();
+                    const int srcStride = bgraFrame.raw()->linesize[0];
+                    const int copyStride = std::min(dstStride, srcStride);
+                    auto* srcBytes = bgraFrame.data(0);
+                    auto* dstBytes = img.bits();
+                    if (dstStride == srcStride && copyStride == dstW * 4) {
+                        std::memcpy(dstBytes, srcBytes, static_cast<size_t>(copyStride) * static_cast<size_t>(dstH));
+                    } else {
+                        for (int y = 0; y < dstH; ++y) {
+                            std::memcpy(dstBytes + y * dstStride, srcBytes + y * srcStride, static_cast<size_t>(copyStride));
+                        }
+                    }
                 } else {
-                    for (int y = 0; y < dstH; ++y) {
-                        std::memcpy(dstBytes + y * dstStride, srcBytes + y * srcStride, static_cast<size_t>(copyStride));
+                    av::VideoFrame rgbFrame{AV_PIX_FMT_RGB24, dstW, dstH};
+                    videoRescaler->rescale(rgbFrame, frame, rescaleEc);
+                    if (rescaleEc) {
+                        ++ps.nRescaleFail;
+                        rescaleEc.clear();
+                        return;
+                    }
+                    img = QImage(rgbFrame.width(), rgbFrame.height(), QImage::Format_RGB888);
+                    if (img.isNull() || !img.bits()) {
+                        ++ps.nQimageNull;
+                        return;
+                    }
+                    const int dstStride = img.bytesPerLine();
+                    const int srcStride = rgbFrame.raw()->linesize[0];
+                    const int copyStride = std::min(dstStride, srcStride);
+                    auto* srcBytes = rgbFrame.data(0);
+                    auto* dstBytes = img.bits();
+                    if (dstStride == srcStride && copyStride == dstW * 3) {
+                        std::memcpy(dstBytes, srcBytes, static_cast<size_t>(copyStride) * static_cast<size_t>(dstH));
+                    } else {
+                        for (int y = 0; y < dstH; ++y) {
+                            std::memcpy(dstBytes + y * dstStride, srcBytes + y * srcStride, static_cast<size_t>(copyStride));
+                        }
                     }
                 }
                 const DecodedVideoFrameKey storeKey{frameIndex, dstW, dstH};
@@ -988,12 +1031,11 @@ private:
                     .arg(dec->height()));
             return false;
         }
-        auto scaler = std::make_unique<VideoRescaler>(
-            dec->width(), dec->height(), AV_PIX_FMT_RGB24, av::SwsFlagFastBilinear);
         videoDec = std::move(dec);
-        videoRescaler = std::move(scaler);
-        scalerSrcW = videoDec->width();
-        scalerSrcH = videoDec->height();
+        videoRescaler.reset();
+        scalerSrcW = 0;
+        scalerSrcH = 0;
+        scalerOutputsAlpha = false;
         return true;
     }
 
@@ -1238,6 +1280,7 @@ private:
     uint64_t videoFrameBytesUsed = 0;
     int scalerSrcW = 0;
     int scalerSrcH = 0;
+    bool scalerOutputsAlpha = false;
     std::map<BurstIndex, AudioBurst> audioBurstCache;
     std::deque<int16_t> audioPending;
     BurstOriginInfo origin;
@@ -1834,8 +1877,13 @@ bool ConTrack::burst(BurstType type, const BurstRequest &request, BurstPayload &
         return true;
     }
 
-    bool found = false;
-    VideoBurst best;
+    struct VideoLayerCandidate {
+        int zIndex = 0;
+        BurstIndex start = 0;
+        QString path;
+        VideoBurst burst;
+    };
+    std::vector<VideoLayerCandidate> layers;
     for (const auto &bound : local) {
         const auto &event = bound.event;
         if (!event.hasVideo || !bound.media) {
@@ -1849,14 +1897,32 @@ bool ConTrack::burst(BurstType type, const BurstRequest &request, BurstPayload &
         if (!bound.media->videoBurst(BurstRequest{localIndex, request.quality, event.sourceIn}, burst)) {
             continue;
         }
-        best = burst;
-        found = true;
+        layers.push_back(VideoLayerCandidate{event.zIndex, event.start, event.sourcePath, std::move(burst)});
     }
-    if (!found) {
+    if (layers.empty()) {
         return false;
     }
-    best.index = request.index;
-    out = best;
+    std::sort(layers.begin(), layers.end(), [](const VideoLayerCandidate &a, const VideoLayerCandidate &b) {
+        if (a.zIndex != b.zIndex) {
+            return a.zIndex < b.zIndex;
+        }
+        if (a.start != b.start) {
+            return a.start < b.start;
+        }
+        return a.path < b.path;
+    });
+    if (layers.size() == 1) {
+        layers[0].burst.index = request.index;
+        out = std::move(layers[0].burst);
+        return true;
+    }
+    QImage composed = layers[0].burst.frame.convertToFormat(QImage::Format_ARGB32);
+    for (size_t i = 1; i < layers.size(); ++i) {
+        QPainter painter(&composed);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        painter.drawImage(composed.rect(), layers[i].burst.frame);
+    }
+    out = VideoBurst{request.index, BurstQuality{composed.width(), composed.height()}, std::move(composed)};
     return true;
 }
 
@@ -1956,6 +2022,7 @@ bool ConTrimmer::burst(BurstType type, const BurstRequest &request, BurstPayload
     QImage composed = videoLayers[0].frame.convertToFormat(QImage::Format_ARGB32);
     for (size_t i = 1; i < videoLayers.size(); ++i) {
         QPainter painter(&composed);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
         painter.drawImage(composed.rect(), videoLayers[i].frame);
     }
     out = VideoBurst{request.index, BurstQuality{composed.width(), composed.height()}, std::move(composed)};

@@ -985,11 +985,12 @@ QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::audioCacheSegme
 
 QString PlaybackPipeline::coverageClipKey(const Clip &clip)
 {
-    return QStringLiteral("%1|%2|%3|%4")
+    return QStringLiteral("%1|%2|%3|%4|%5")
         .arg(clip.sourcePath)
         .arg(clip.startMs)
         .arg(clip.durationMs)
-        .arg(clip.sourceInMs);
+        .arg(clip.sourceInMs)
+        .arg(clip.trackIndex);
 }
 
 bool PlaybackPipeline::clipsEqual(const std::vector<Clip> &a, const std::vector<Clip> &b)
@@ -1001,7 +1002,8 @@ bool PlaybackPipeline::clipsEqual(const std::vector<Clip> &a, const std::vector<
         if (a[i].sourcePath != b[i].sourcePath ||
             a[i].startMs != b[i].startMs ||
             a[i].durationMs != b[i].durationMs ||
-            a[i].sourceInMs != b[i].sourceInMs) {
+            a[i].sourceInMs != b[i].sourceInMs ||
+            a[i].trackIndex != b[i].trackIndex) {
             return false;
         }
     }
@@ -1012,7 +1014,6 @@ void PlaybackPipeline::rebuildGraph(const std::vector<Clip> &videoClips, const s
 {
     std::vector<burstcon::ConTrackEvent> v;
     std::vector<burstcon::ConTrackEvent> a;
-    int z = 0;
     for (const auto &clip : videoClips) {
         burstcon::ConTrackEvent e;
         e.sourcePath = clip.sourcePath;
@@ -1021,10 +1022,12 @@ void PlaybackPipeline::rebuildGraph(const std::vector<Clip> &videoClips, const s
         e.sourceIn = burstcon::msToBurstIndex(clip.sourceInMs);
         e.hasVideo = true;
         e.hasAudio = false;
-        e.zIndex = z++;
+        // Ascending z = background first: lower track index (upper row in UI) composites on top.
+        const qint64 startKey = std::min<qint64>(std::max<qint64>(0, clip.startMs), 999'999LL);
+        e.zIndex = -static_cast<int>(clip.trackIndex * 1'000'000LL + startKey);
         v.push_back(e);
     }
-    z = 0;
+    int z = 0;
     for (const auto &clip : audioClips) {
         burstcon::ConTrackEvent e;
         e.sourcePath = clip.sourcePath;

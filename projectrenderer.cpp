@@ -100,7 +100,6 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
     std::vector<burstcon::ConTrackEvent> audioEvents;
     videoEvents.reserve(clips.size());
     audioEvents.reserve(clips.size());
-    int videoZ = 0;
     int audioZ = 0;
     for (const auto &clip : clips) {
         const qint64 clipEnd = clip.startMs + clip.durationMs;
@@ -121,7 +120,8 @@ ProjectRenderer::Result ProjectRenderer::renderMp4(const std::vector<TimelineEdi
             e.sourceIn = burstcon::msToBurstIndex(clip.sourceInMs + (effectiveStartMs - clip.startMs));
             e.hasVideo = true;
             e.hasAudio = false;
-            e.zIndex = videoZ++;
+            const qint64 startKey = std::min<qint64>(std::max<qint64>(0, effectiveStartMs), 999'999LL);
+            e.zIndex = -static_cast<int>(clip.trackIndex * 1'000'000LL + startKey);
             videoEvents.push_back(e);
         }
         if (clip.isAudio) {

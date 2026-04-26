@@ -1179,7 +1179,12 @@ void MainWindow::syncTimelinePlayback()
     vclips.reserve(clips.size());
     aclips.reserve(clips.size());
     for (const auto &c : clips) {
-        const PlaybackPipeline::Clip clip{c.sourcePath, c.startMs, c.durationMs, c.sourceInMs};
+        PlaybackPipeline::Clip clip;
+        clip.sourcePath = c.sourcePath;
+        clip.startMs = c.startMs;
+        clip.durationMs = c.durationMs;
+        clip.sourceInMs = c.sourceInMs;
+        clip.trackIndex = c.trackIndex;
         if (c.isVideo) {
             vclips.push_back(clip);
         }
@@ -1704,7 +1709,12 @@ void MainWindow::refreshPerformancePanel()
     std::vector<PlaybackPipeline::Clip> videoRenderClips;
     std::vector<PlaybackPipeline::Clip> audioRenderClips;
     for (const auto &clip : timelineEditor->renderClips()) {
-        PlaybackPipeline::Clip c{clip.sourcePath, clip.startMs, clip.durationMs, clip.sourceInMs};
+        PlaybackPipeline::Clip c;
+        c.sourcePath = clip.sourcePath;
+        c.startMs = clip.startMs;
+        c.durationMs = clip.durationMs;
+        c.sourceInMs = clip.sourceInMs;
+        c.trackIndex = clip.trackIndex;
         if (clip.isVideo) {
             videoRenderClips.push_back(c);
         }

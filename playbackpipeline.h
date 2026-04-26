@@ -33,6 +33,8 @@ public:
         qint64 startMs = 0;
         qint64 durationMs = 0;
         qint64 sourceInMs = 0;
+        /// Timeline video track index; lower = upper track in the UI (foreground when compositing).
+        int trackIndex = 0;
     };
     struct PerformanceStats {
         double composeFps = 0.0;
