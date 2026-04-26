@@ -9,6 +9,7 @@
 #include <memory>
 #include <QHash>
 
+#include "clipfxchaindialog.h"
 #include "projectsettings.h"
 
 QT_BEGIN_NAMESPACE
@@ -72,8 +73,10 @@ private:
     void saveUiState();
     void restoreUiState();
     void openMorpherEditWindow(int morpherEventId);
+    void openClipFxChainWindow(int clipId, ClipFxChainWindow::MediaKind kind, const QString &focusHint);
     void openPerformanceDiagnosticsWindow();
     void pruneMorpherWindows();
+    void pruneClipFxWindows();
     void refreshWindowTitle();
     void error(const QString &message) const;
     void tickMediaSourceAvailability();
@@ -121,6 +124,7 @@ protected:
     QDockWidget *replaceSourceDock = nullptr;
     QDockWidget *sourceOffsetDock = nullptr;
     QHash<int, MorpherEditWindow *> morpherEditWindows;
+    QHash<qint64, ClipFxChainWindow *> clipFxWindows;
     QPointer<PerformanceDiagnosticsWindow> performanceDiagnosticsWindow;
     quint64 lastResourceUnusedEvictions = 0;
     quint64 lastResourceCacheMissesSnap = 0;

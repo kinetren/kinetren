@@ -142,6 +142,17 @@ public:
     bool hasMorpherEvent(int morpherEventId) const;
     QString morpherTargetsDescription(int morpherEventId) const;
 
+    enum class MorpherKind { ReplaceSource, EffectBatch };
+    void beginMorpherEffectBatchPlacementFromSelection();
+    MorpherKind morpherEventKind(int morpherEventId) const;
+    QJsonArray morpherBulkVideoFxAppend(int morpherEventId) const;
+    QJsonArray morpherBulkAudioFxAppend(int morpherEventId) const;
+    void setMorpherBulkVideoFxAppend(int morpherEventId, const QJsonArray &chain);
+    void setMorpherBulkAudioFxAppend(int morpherEventId, const QJsonArray &chain);
+
+    /// True if clip exists and matches the FX editor kind (video vs audio).
+    bool clipMatchesFxTarget(int clipId, bool wantVideoFx) const;
+
     int timelineContentHeightPx() const;
     int timelineVerticalScroll() const;
     void setTimelineVerticalScroll(int px);
@@ -223,9 +234,12 @@ private:
         qint64 startMs = 0;
         qint64 durationMs = 1500;
         QVector<int> targetClipIds;
+        MorpherKind kind = MorpherKind::ReplaceSource;
         QString newSourcePath;
         qint64 sourceInDeltaMs = 0;
         qint64 absoluteSourceInMs = -1;
+        QJsonArray bulkVideoFxAppend;
+        QJsonArray bulkAudioFxAppend;
     };
 
     enum class DragMode {
@@ -281,10 +295,12 @@ private:
     struct PendingMorpherPlacement {
         bool active = false;
         QVector<int> targetClipIds;
+        MorpherKind pendingKind = MorpherKind::ReplaceSource;
     };
     PendingMorpherPlacement pendingMorpherPlacement;
 
     void clearPendingMorpherPlacement();
+    void beginMorpherPlacementCommon(MorpherKind kind);
     QVector<int> collectMorpherTargetClipIds();
     void commitPendingMorpherPlacement(int trackIndex, qint64 startMs);
 

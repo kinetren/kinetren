@@ -523,6 +523,7 @@ void MainWindow::setupTimelineEditorUi()
     auto *addAudioTrackButton = new QToolButton(timelineChrome);
     auto *addMorpherTrackButton = new QToolButton(timelineChrome);
     auto *placeMorpherButton = new QToolButton(timelineChrome);
+    auto *placeMorpherFxBatchButton = new QToolButton(timelineChrome);
     auto *splitButton = new QToolButton(timelineChrome);
     auto *copyButton = new QToolButton(timelineChrome);
     auto *pasteButton = new QToolButton(timelineChrome);
@@ -552,6 +553,10 @@ void MainWindow::setupTimelineEditorUi()
     placeMorpherButton->setToolTip(
         tr("Add morpher: uses clips in the time region (if drawn) or the selected clip + linked audio/video. "
            "Then click the purple Morph track at the desired time (or drop a file there). Esc cancels."));
+    placeMorpherFxBatchButton->setIcon(style()->standardIcon(QStyle::SP_CommandLink));
+    placeMorpherFxBatchButton->setToolTip(
+        tr("Add morpher FX batch: same target locking as morpher, but the block stores VFX/AFX to append to all "
+           "frozen targets when you bake (replace source is not used)."));
     splitButton->setIcon(style()->standardIcon(QStyle::SP_TitleBarShadeButton));
     splitButton->setToolTip("Cut selected event (S)");
     copyButton->setIcon(style()->standardIcon(QStyle::SP_FileDialogContentsView));
@@ -597,6 +602,7 @@ void MainWindow::setupTimelineEditorUi()
     configureToolButton(addAudioTrackButton);
     configureToolButton(addMorpherTrackButton);
     configureToolButton(placeMorpherButton);
+    configureToolButton(placeMorpherFxBatchButton);
     configureToolButton(splitButton);
     configureToolButton(copyButton);
     configureToolButton(pasteButton);
@@ -619,6 +625,7 @@ void MainWindow::setupTimelineEditorUi()
     controlsLayout->addWidget(addAudioTrackButton);
     controlsLayout->addWidget(addMorpherTrackButton);
     controlsLayout->addWidget(placeMorpherButton);
+    controlsLayout->addWidget(placeMorpherFxBatchButton);
     controlsLayout->addWidget(splitButton);
     controlsLayout->addWidget(copyButton);
     controlsLayout->addWidget(pasteButton);
@@ -660,6 +667,8 @@ void MainWindow::setupTimelineEditorUi()
     connect(addAudioTrackButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addAudioTrack);
     connect(addMorpherTrackButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::addMorpherTrack);
     connect(placeMorpherButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::beginMorpherPlacementFromSelection);
+    connect(placeMorpherFxBatchButton, &QToolButton::clicked, timelineEditor,
+            &TimelineEditor::beginMorpherEffectBatchPlacementFromSelection);
     connect(splitButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::splitSelectedClipAtCursor);
     connect(trimStartButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::trimSelectedClipStartToCursor);
     connect(trimEndButton, &QToolButton::clicked, timelineEditor, &TimelineEditor::trimSelectedClipEndToCursor);
@@ -700,31 +709,10 @@ void MainWindow::setupTimelineEditorUi()
     connect(timelineLoopButton, &QToolButton::toggled, timelineEditor, &TimelineEditor::setLoopEnabled);
     connect(timelineEditor, &TimelineEditor::loopEnabledChanged, timelineLoopButton, &QToolButton::setChecked);
     connect(timelineEditor, &TimelineEditor::overlayInfoChanged, timelineOverlayLabel, &QLabel::setText);
-    connect(timelineEditor, &TimelineEditor::clipVideoFxEditorRequested, this, [this](int clipId, const QString &hint) {
-        if (!timelineEditor) {
-            return;
-        }
-        ClipFxChainDialog dlg(this,
-                              timelineEditor,
-                              clipId,
-                              ClipFxChainDialog::MediaKind::Video,
-                              hint,
-                              projectSettings.resolution);
-        dlg.exec();
-        schedulePlaybackSync();
-    });
+    connect(timelineEditor, &TimelineEditor::clipVideoFxEditorRequested, this,
+            [this](int clipId, const QString &hint) { openClipFxChainWindow(clipId, ClipFxChainWindow::MediaKind::Video, hint); });
     connect(timelineEditor, &TimelineEditor::clipAudioFxEditorRequested, this, [this](int clipId) {
-        if (!timelineEditor) {
-            return;
-        }
-        ClipFxChainDialog dlg(this,
-                              timelineEditor,
-                              clipId,
-                              ClipFxChainDialog::MediaKind::Audio,
-                              QString(),
-                              projectSettings.resolution);
-        dlg.exec();
-        schedulePlaybackSync();
+        openClipFxChainWindow(clipId, ClipFxChainWindow::MediaKind::Audio, QString());
     });
     connect(timelineEditor, &TimelineEditor::cursorChanged, this, [this](qint64 t) {
         if (!timelinePlaying) {
@@ -748,6 +736,7 @@ void MainWindow::setupTimelineEditorUi()
     });
     connect(timelineEditor, &TimelineEditor::timelineContentChanged, this, [this]() {
         pruneMorpherWindows();
+        pruneClipFxWindows();
         refreshTimelineVerticalScroll();
         if (playbackPipeline) {
             refreshPreviewResolutionMaxEntry();
@@ -2027,6 +2016,50 @@ void placeMorpherWindowTitlebarUnderCursor(QWidget *w)
 
 } // namespace
 
+void MainWindow::openClipFxChainWindow(int clipId, ClipFxChainWindow::MediaKind kind, const QString &focusHint)
+{
+    if (!timelineEditor || clipId < 0) {
+        return;
+    }
+    const bool wantVideo = (kind == ClipFxChainWindow::MediaKind::Video);
+    if (!timelineEditor->clipMatchesFxTarget(clipId, wantVideo)) {
+        return;
+    }
+    const qint64 key = (static_cast<qint64>(clipId) << 1) | (wantVideo ? 0LL : 1LL);
+    if (ClipFxChainWindow *existing = clipFxWindows.value(key)) {
+        existing->raise();
+        existing->activateWindow();
+        return;
+    }
+    auto *win = new ClipFxChainWindow(this, timelineEditor, clipId, kind, focusHint, projectSettings.resolution);
+    clipFxWindows.insert(key, win);
+    connect(win, &QObject::destroyed, this, [this, key]() { clipFxWindows.remove(key); });
+    win->show();
+    QPointer<ClipFxChainWindow> winGuard(win);
+    QTimer::singleShot(0, win, [winGuard]() {
+        if (winGuard) {
+            placeMorpherWindowTitlebarUnderCursor(winGuard.data());
+        }
+    });
+}
+
+void MainWindow::pruneClipFxWindows()
+{
+    if (!timelineEditor) {
+        return;
+    }
+    const QList<qint64> keys = clipFxWindows.keys();
+    for (const qint64 key : keys) {
+        const int clipId = static_cast<int>(key >> 1);
+        const bool wantVideo = (key & 1) == 0;
+        if (!timelineEditor->clipMatchesFxTarget(clipId, wantVideo)) {
+            if (ClipFxChainWindow *w = clipFxWindows.value(key)) {
+                w->close();
+            }
+        }
+    }
+}
+
 void MainWindow::openMorpherEditWindow(int morpherEventId)
 {
     if (!timelineEditor || morpherEventId < 0 || !timelineEditor->hasMorpherEvent(morpherEventId)) {
@@ -2173,6 +2206,12 @@ void MainWindow::changeEvent(QEvent *event)
     if (event->type() == QEvent::WindowActivate) {
         const QList<MorpherEditWindow *> morphers = morpherEditWindows.values();
         for (MorpherEditWindow *w : morphers) {
+            if (w && w->isVisible() && !w->isMinimized()) {
+                w->raise();
+            }
+        }
+        const QList<ClipFxChainWindow *> fxs = clipFxWindows.values();
+        for (ClipFxChainWindow *w : fxs) {
             if (w && w->isVisible() && !w->isMinimized()) {
                 w->raise();
             }

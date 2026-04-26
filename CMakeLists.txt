@@ -39,6 +39,8 @@ set(PROJECT_SOURCES
         timelineeditor.h
         clipfxchaindialog.cpp
         clipfxchaindialog.h
+        fxchaineditorwidget.cpp
+        fxchaineditorwidget.h
         sourceeditwidgets.cpp
         sourceeditwidgets.h
         sourceareawidget.cpp

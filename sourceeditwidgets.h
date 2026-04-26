@@ -11,6 +11,7 @@ class QPushButton;
 class QDragEnterEvent;
 class QDropEvent;
 class TimelineEditor;
+class FxChainEditorWidget;
 
 class SourceReplacePanel : public QWidget
 {
@@ -76,6 +77,10 @@ private:
     TimelineEditor *timeline = nullptr;
     int morpherId = -1;
     QLabel *targetsLabel = nullptr;
+    QWidget *replaceModeWidget = nullptr;
+    QWidget *fxBatchWidget = nullptr;
+    FxChainEditorWidget *vfxEditor = nullptr;
+    FxChainEditorWidget *afxEditor = nullptr;
     QLineEdit *pathEdit = nullptr;
     QPushButton *browseButton = nullptr;
     QDoubleSpinBox *deltaSpin = nullptr;

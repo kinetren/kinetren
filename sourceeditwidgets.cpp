@@ -1,5 +1,6 @@
 #include "sourceeditwidgets.h"
 #include "timelineeditor.h"
+#include "fxchaineditorwidget.h"
 
 #include <algorithm>
 #include <cmath>
@@ -120,13 +121,18 @@ MorpherEditWindow::MorpherEditWindow(TimelineEditor *timeline, int morpherEventI
     targetsLabel->setWordWrap(true);
     targetsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
 
-    auto *repTitle = new QLabel(tr("Replace source"), this);
+    replaceModeWidget = new QWidget(this);
+    auto *replaceLay = new QVBoxLayout(replaceModeWidget);
+    replaceLay->setContentsMargins(0, 0, 0, 0);
+    replaceLay->setSpacing(8);
+
+    auto *repTitle = new QLabel(tr("Replace source"), replaceModeWidget);
     repTitle->setObjectName(QStringLiteral("MorpherSectionTitle"));
-    pathEdit = new QLineEdit(this);
+    pathEdit = new QLineEdit(replaceModeWidget);
     pathEdit->setPlaceholderText(tr("Path or drop media here"));
     pathEdit->setAcceptDrops(true);
     pathEdit->installEventFilter(this);
-    browseButton = new QPushButton(this);
+    browseButton = new QPushButton(replaceModeWidget);
     browseButton->setToolTip(tr("Browse…"));
     browseButton->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
     {
@@ -139,27 +145,60 @@ MorpherEditWindow::MorpherEditWindow(TimelineEditor *timeline, int morpherEventI
     repRow->addWidget(pathEdit, 1);
     repRow->addWidget(browseButton);
 
-    auto *offTitle = new QLabel(tr("Source-in shift"), this);
+    auto *offTitle = new QLabel(tr("Source-in shift"), replaceModeWidget);
     offTitle->setObjectName(QStringLiteral("MorpherSectionTitle"));
-    deltaSpin = new QDoubleSpinBox(this);
+    deltaSpin = new QDoubleSpinBox(replaceModeWidget);
     deltaSpin->setRange(-1.0e12, 1.0e12);
     deltaSpin->setDecimals(3);
     deltaSpin->setSuffix(tr(" ms"));
 
+    replaceLay->addWidget(repTitle);
+    replaceLay->addLayout(repRow);
+    replaceLay->addSpacing(4);
+    replaceLay->addWidget(offTitle);
+    replaceLay->addWidget(deltaSpin);
+
+    fxBatchWidget = new QWidget(this);
+    auto *fxLay = new QVBoxLayout(fxBatchWidget);
+    fxLay->setContentsMargins(0, 0, 0, 0);
+    fxLay->setSpacing(8);
+    auto *vfxCap = new QLabel(tr("Video effects (VFX) — appended to each frozen video clip on bake"), fxBatchWidget);
+    vfxCap->setObjectName(QStringLiteral("MorpherSectionTitle"));
+    vfxCap->setWordWrap(true);
+    vfxEditor = new FxChainEditorWidget(fxBatchWidget);
+    vfxEditor->setMediaKind(FxChainEditorWidget::MediaKind::Video);
+    auto *afxCap = new QLabel(tr("Audio effects (AFX) — appended to each frozen audio clip on bake"), fxBatchWidget);
+    afxCap->setObjectName(QStringLiteral("MorpherSectionTitle"));
+    afxCap->setWordWrap(true);
+    afxEditor = new FxChainEditorWidget(fxBatchWidget);
+    afxEditor->setMediaKind(FxChainEditorWidget::MediaKind::Audio);
+    fxLay->addWidget(vfxCap);
+    fxLay->addWidget(vfxEditor, 1);
+    fxLay->addWidget(afxCap);
+    fxLay->addWidget(afxEditor, 1);
+    fxBatchWidget->hide();
+
     layout->addWidget(targetsCaption);
     layout->addWidget(targetsLabel);
     layout->addSpacing(4);
-    layout->addWidget(repTitle);
-    layout->addLayout(repRow);
-    layout->addSpacing(4);
-    layout->addWidget(offTitle);
-    layout->addWidget(deltaSpin);
-    layout->addStretch(1);
+    layout->addWidget(replaceModeWidget, 1);
+    layout->addWidget(fxBatchWidget, 1);
 
     connect(browseButton, &QPushButton::clicked, this, &MorpherEditWindow::onBrowse);
     connect(pathEdit, &QLineEdit::textChanged, this, &MorpherEditWindow::onPathEditChanged);
     connect(deltaSpin, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
             &MorpherEditWindow::onDeltaSpinChanged);
+
+    connect(vfxEditor, &FxChainEditorWidget::chainChanged, this, [this](const QJsonArray &c) {
+        if (timeline && timeline->hasMorpherEvent(morpherId)) {
+            timeline->setMorpherBulkVideoFxAppend(morpherId, c);
+        }
+    });
+    connect(afxEditor, &FxChainEditorWidget::chainChanged, this, [this](const QJsonArray &c) {
+        if (timeline && timeline->hasMorpherEvent(morpherId)) {
+            timeline->setMorpherBulkAudioFxAppend(morpherId, c);
+        }
+    });
 
     if (timeline) {
         connect(timeline, &TimelineEditor::timelineContentChanged, this, &MorpherEditWindow::reloadFromTimeline);
@@ -196,6 +235,20 @@ void MorpherEditWindow::reloadFromTimeline()
         return;
     }
     targetsLabel->setText(timeline->morpherTargetsDescription(morpherId));
+
+    const bool batch = timeline->morpherEventKind(morpherId) == TimelineEditor::MorpherKind::EffectBatch;
+    replaceModeWidget->setVisible(!batch);
+    fxBatchWidget->setVisible(batch);
+    setWindowTitle(batch ? tr("Morpher FX batch — event %1").arg(morpherId) : tr("Morpher — event %1").arg(morpherId));
+    if (batch) {
+        setMinimumSize(560, 520);
+        QSignalBlocker bv(vfxEditor);
+        QSignalBlocker ba(afxEditor);
+        vfxEditor->setChain(timeline->morpherBulkVideoFxAppend(morpherId));
+        afxEditor->setChain(timeline->morpherBulkAudioFxAppend(morpherId));
+        return;
+    }
+    setMinimumSize(410, 275);
 
     const QString newPath = timeline->morpherReplacePath(morpherId);
     if (pathEdit->text() != newPath) {

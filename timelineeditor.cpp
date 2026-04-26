@@ -989,6 +989,7 @@ void TimelineEditor::commitPendingMorpherPlacement(int trackIdx, qint64 startMs)
     m.startMs = startMs;
     m.durationMs = 1500;
     m.targetClipIds = pendingMorpherPlacement.targetClipIds;
+    m.kind = pendingMorpherPlacement.pendingKind;
     morpherEvents.push_back(m);
     const int placedId = morpherEvents.back().id;
     clearPendingMorpherPlacement();
@@ -1005,6 +1006,9 @@ TimelineEditor::ClipEvent TimelineEditor::effectiveClipForRender(const TimelineE
         if (!m.targetClipIds.contains(base.id)) {
             continue;
         }
+        if (m.kind == MorpherKind::EffectBatch) {
+            continue;
+        }
         applyMorpherPatchToClipCopy(out, m);
     }
     return out;
@@ -1013,6 +1017,18 @@ TimelineEditor::ClipEvent TimelineEditor::effectiveClipForRender(const TimelineE
 void TimelineEditor::applyMorpherPatchToClipCopy(TimelineEditor::ClipEvent &clip,
                                                  const TimelineEditor::MorpherEvent &m) const
 {
+    if (m.kind == MorpherKind::EffectBatch) {
+        if (clip.mediaType == TrackType::Video) {
+            for (const auto &v : m.bulkVideoFxAppend) {
+                clip.videoFxChain.append(v);
+            }
+        } else if (clip.mediaType == TrackType::Audio) {
+            for (const auto &v : m.bulkAudioFxAppend) {
+                clip.audioFxChain.append(v);
+            }
+        }
+        return;
+    }
     if (!m.newSourcePath.isEmpty()) {
         applyNewSourcePathToClip(clip, m.newSourcePath);
     }
@@ -1159,6 +1175,58 @@ bool TimelineEditor::hasMorpherEvent(int morpherEventId) const
     return findMorpherById(morpherEventId) != nullptr;
 }
 
+TimelineEditor::MorpherKind TimelineEditor::morpherEventKind(int morpherEventId) const
+{
+    const MorpherEvent *m = findMorpherById(morpherEventId);
+    return m ? m->kind : MorpherKind::ReplaceSource;
+}
+
+QJsonArray TimelineEditor::morpherBulkVideoFxAppend(int morpherEventId) const
+{
+    const MorpherEvent *m = findMorpherById(morpherEventId);
+    return m ? m->bulkVideoFxAppend : QJsonArray();
+}
+
+QJsonArray TimelineEditor::morpherBulkAudioFxAppend(int morpherEventId) const
+{
+    const MorpherEvent *m = findMorpherById(morpherEventId);
+    return m ? m->bulkAudioFxAppend : QJsonArray();
+}
+
+void TimelineEditor::setMorpherBulkVideoFxAppend(int morpherEventId, const QJsonArray &chain)
+{
+    MorpherEvent *m = findMorpherById(morpherEventId);
+    if (!m) {
+        return;
+    }
+    m->bulkVideoFxAppend = chain;
+    emit timelineContentChanged();
+    update();
+}
+
+void TimelineEditor::setMorpherBulkAudioFxAppend(int morpherEventId, const QJsonArray &chain)
+{
+    MorpherEvent *m = findMorpherById(morpherEventId);
+    if (!m) {
+        return;
+    }
+    m->bulkAudioFxAppend = chain;
+    emit timelineContentChanged();
+    update();
+}
+
+bool TimelineEditor::clipMatchesFxTarget(int clipId, bool wantVideoFx) const
+{
+    const ClipEvent *c = findClipById(clipId);
+    if (!c) {
+        return false;
+    }
+    if (wantVideoFx) {
+        return c->mediaType == TrackType::Video;
+    }
+    return c->mediaType == TrackType::Audio;
+}
+
 QString TimelineEditor::morpherTargetsDescription(int morpherEventId) const
 {
     const MorpherEvent *m = findMorpherById(morpherEventId);
@@ -1188,6 +1256,16 @@ void TimelineEditor::addMorpherTrack()
 
 void TimelineEditor::beginMorpherPlacementFromSelection()
 {
+    beginMorpherPlacementCommon(MorpherKind::ReplaceSource);
+}
+
+void TimelineEditor::beginMorpherEffectBatchPlacementFromSelection()
+{
+    beginMorpherPlacementCommon(MorpherKind::EffectBatch);
+}
+
+void TimelineEditor::beginMorpherPlacementCommon(MorpherKind placeKind)
+{
     const QVector<int> targets = collectMorpherTargetClipIds();
     if (targets.isEmpty()) {
         QMessageBox::information(
@@ -1208,18 +1286,31 @@ void TimelineEditor::beginMorpherPlacementFromSelection()
     }
     pendingMorpherPlacement.active = true;
     pendingMorpherPlacement.targetClipIds = targets;
+    pendingMorpherPlacement.pendingKind = placeKind;
     setCursor(Qt::PointingHandCursor);
     setFocus(Qt::OtherFocusReason);
     emitOverlayInfo();
     update();
-    QMessageBox::information(
-        this,
-        tr("Place morpher"),
-        tr("Locked %n clip target(s).\n\n"
-           "Click the purple Morph track at the time where the block should start (you can also drop a file onto that track).\n"
-           "Esc cancels.",
-           "",
-           targets.size()));
+    if (placeKind == MorpherKind::EffectBatch) {
+        QMessageBox::information(
+            this,
+            tr("Place FX batch morpher"),
+            tr("Locked %n clip target(s).\n\n"
+               "Click the purple Morph track where the batch block should start.\n"
+               "Edit VFX/AFX in the morpher window, then bake to append those effects to every frozen target clip.\n"
+               "Esc cancels placement.",
+               "",
+               targets.size()));
+    } else {
+        QMessageBox::information(
+            this,
+            tr("Place morpher"),
+            tr("Locked %n clip target(s).\n\n"
+               "Click the purple Morph track at the time where the block should start (you can also drop a file onto that track).\n"
+               "Esc cancels.",
+               "",
+               targets.size()));
+    }
 }
 
 void TimelineEditor::bakeMorpherEvent(int morpherEventId)
@@ -1577,6 +1668,10 @@ QJsonObject TimelineEditor::toJson() const
         mo.insert("newSourcePath", m.newSourcePath);
         mo.insert("sourceInDeltaMs", static_cast<double>(m.sourceInDeltaMs));
         mo.insert("absoluteSourceInMs", static_cast<double>(m.absoluteSourceInMs));
+        mo.insert(QStringLiteral("kind"),
+                  m.kind == MorpherKind::EffectBatch ? QStringLiteral("effectBatch") : QStringLiteral("replace"));
+        mo.insert(QStringLiteral("bulkVideoFxAppend"), m.bulkVideoFxAppend);
+        mo.insert(QStringLiteral("bulkAudioFxAppend"), m.bulkAudioFxAppend);
         QJsonArray idArr;
         for (int cid : m.targetClipIds) {
             idArr.append(cid);
@@ -1708,6 +1803,10 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
         m.newSourcePath = mo.value("newSourcePath").toString();
         m.sourceInDeltaMs = static_cast<qint64>(mo.value("sourceInDeltaMs").toDouble(0.0));
         m.absoluteSourceInMs = static_cast<qint64>(mo.value("absoluteSourceInMs").toDouble(-1.0));
+        const QString kindStr = mo.value(QStringLiteral("kind")).toString();
+        m.kind = (kindStr == QStringLiteral("effectBatch")) ? MorpherKind::EffectBatch : MorpherKind::ReplaceSource;
+        m.bulkVideoFxAppend = mo.value(QStringLiteral("bulkVideoFxAppend")).toArray();
+        m.bulkAudioFxAppend = mo.value(QStringLiteral("bulkAudioFxAppend")).toArray();
         m.targetClipIds.clear();
         const QJsonArray idArr = mo.value("targetClipIds").toArray();
         if (!idArr.isEmpty()) {
@@ -2064,7 +2163,9 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.setPen((me.id == selectedMorpherId) ? QColor(255, 255, 255) : QColor(40, 30, 55));
         p.setBrush(QColor(140, 90, 200, 200));
         p.drawRoundedRect(r, 4, 4);
-        const QString label = QStringLiteral("Morpher (%1)").arg(me.targetClipIds.size());
+        const QString label = me.kind == MorpherKind::EffectBatch
+            ? QStringLiteral("FX batch (%1)").arg(me.targetClipIds.size())
+            : QStringLiteral("Morpher (%1)").arg(me.targetClipIds.size());
         p.setPen(QColor(240, 240, 240));
         p.drawText(r.adjusted(6, 4, -4, -4), Qt::AlignLeft | Qt::AlignTop, label);
     }
@@ -2607,7 +2708,11 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         selectedMorpherId = morpherHit;
         selectedClipId = -1;
         QMenu menu(this);
-        QAction *bakeAct = menu.addAction(tr("Bake morphing (apply to clips)"));
+        const MorpherEvent *hitM = findMorpherById(morpherHit);
+        QAction *bakeAct = menu.addAction(
+            hitM && hitM->kind == MorpherKind::EffectBatch
+                ? tr("Bake FX batch (append effects to clips)")
+                : tr("Bake morphing (apply to clips)"));
         QAction *deleteAct = menu.addAction(tr("Delete morpher"));
         QAction *editWin = menu.addAction(tr("Open morpher editor window"));
         QAction *chosen = menu.exec(event->globalPos());
@@ -2650,12 +2755,17 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         QAction *shiftAll = shiftSub->addAction(tr("All tracks"));
         menu.addSeparator();
         QAction *morphFromRegion = menu.addAction(tr("Add morpher (clips in region)…"));
+        QAction *morphFxFromRegion = menu.addAction(tr("Add morpher FX batch (clips in region)…"));
         QAction *chosen = menu.exec(event->globalPos());
         if (!chosen) {
             return;
         }
         if (chosen == morphFromRegion) {
             beginMorpherPlacementFromSelection();
+            return;
+        }
+        if (chosen == morphFxFromRegion) {
+            beginMorpherEffectBatchPlacementFromSelection();
             return;
         }
         if (chosen == repThis) {
@@ -2691,6 +2801,7 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
     QAction *replaceSourceAction = menu.addAction(tr("Open replace source panel"));
     QAction *sourceStartAction = menu.addAction(tr("Open source offset panel"));
     QAction *morphPlaceAction = menu.addAction(tr("Add morpher (freeze targets, place on Morph track)…"));
+    QAction *morphFxPlaceAction = menu.addAction(tr("Add morpher FX batch (freeze targets, place on Morph track)…"));
     QAction *videoFxAction = nullptr;
     QAction *videoPanAction = nullptr;
     QAction *audioFxAction = nullptr;
@@ -2744,6 +2855,8 @@ void TimelineEditor::contextMenuEvent(QContextMenuEvent *event)
         emit sourceOffsetPanelRequestedForClip(id);
     } else if (chosen == morphPlaceAction) {
         beginMorpherPlacementFromSelection();
+    } else if (chosen == morphFxPlaceAction) {
+        beginMorpherEffectBatchPlacementFromSelection();
     } else if (videoFxAction && chosen == videoFxAction) {
         emit clipVideoFxEditorRequested(id, QString());
     } else if (videoPanAction && chosen == videoPanAction) {
