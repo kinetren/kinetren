@@ -117,6 +117,7 @@ public:
 
     QString clipSourcePath(int clipId) const;
     qint64 clipSourceInMs(int clipId) const;
+    qint64 clipDurationMs(int clipId) const;
     QJsonArray clipVideoFxChain(int clipId) const;
     void setClipVideoFxChain(int clipId, const QJsonArray &chain);
     QJsonArray clipAudioFxChain(int clipId) const;

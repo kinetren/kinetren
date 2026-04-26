@@ -26,6 +26,12 @@ int64_t msToBurstIndex(int64_t ms)
     return (ms * kBurstTimebaseHz) / 1000;
 }
 
+BurstIndex msToBurstIndexCeil(int64_t ms)
+{
+    const int64_t safe = std::max<int64_t>(1, ms);
+    return static_cast<BurstIndex>((safe * kBurstTimebaseHz + 999) / 1000);
+}
+
 int64_t burstIndexToMs(BurstIndex index)
 {
     if (index <= 0) {

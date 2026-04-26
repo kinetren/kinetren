@@ -3,6 +3,8 @@
 #include <QPainter>
 #include <QtMath>
 
+#include <QJsonArray>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -19,6 +21,91 @@ QJsonObject mergeDefaults(const QJsonObject &base, const QJsonObject &over)
         out.insert(it.key(), it.value());
     }
     return out;
+}
+
+bool composePanZoomOutput(const QImage &srcArgb32,
+                          int outW,
+                          int outH,
+                          const QString &mode,
+                          double panX,
+                          double panY,
+                          double zoom,
+                          QImage &outImage)
+{
+    if (srcArgb32.isNull() || srcArgb32.format() != QImage::Format_ARGB32) {
+        return false;
+    }
+    outW = std::max(1, outW);
+    outH = std::max(1, outH);
+    zoom = std::clamp(zoom, 0.05, 32.0);
+    const double sw = srcArgb32.width();
+    const double sh = srcArgb32.height();
+    if (sw < 1.0 || sh < 1.0) {
+        return false;
+    }
+
+    double cropX = 0.0;
+    double cropY = 0.0;
+    double cropW = sw;
+    double cropH = sh;
+
+    const double arSrc = sw / sh;
+    const double arOut = static_cast<double>(outW) / static_cast<double>(outH);
+
+    if (mode == QStringLiteral("stretch")) {
+        cropX = 0.0;
+        cropY = 0.0;
+        cropW = sw;
+        cropH = sh;
+    } else if (mode == QStringLiteral("fill")) {
+        if (arSrc > arOut) {
+            cropH = sh;
+            cropW = sh * arOut;
+            cropX = (sw - cropW) * 0.5;
+            cropY = 0.0;
+        } else {
+            cropW = sw;
+            cropH = sw / arOut;
+            cropX = 0.0;
+            cropY = (sh - cropH) * 0.5;
+        }
+    } else {
+        // fit (letterbox / pillarbox)
+        if (arSrc > arOut) {
+            cropW = sw;
+            cropH = sw / arOut;
+            cropX = 0.0;
+            cropY = (sh - cropH) * 0.5;
+        } else {
+            cropH = sh;
+            cropW = sh * arOut;
+            cropX = (sw - cropW) * 0.5;
+            cropY = 0.0;
+        }
+    }
+
+    const double invZoom = 1.0 / zoom;
+    const double cx = cropX + cropW * 0.5 + panX * (sw - cropW) * 0.5;
+    const double cy = cropY + cropH * 0.5 + panY * (sh - cropH) * 0.5;
+    cropW *= invZoom;
+    cropH *= invZoom;
+    cropX = cx - cropW * 0.5;
+    cropY = cy - cropH * 0.5;
+    cropX = std::clamp(cropX, 0.0, std::max(0.0, sw - cropW));
+    cropY = std::clamp(cropY, 0.0, std::max(0.0, sh - cropH));
+
+    QImage out(outW, outH, QImage::Format_ARGB32);
+    out.fill(QColor(0, 0, 0, 255));
+
+    QPainter painter(&out);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    const QRectF dest(0, 0, outW, outH);
+    const QRectF source(cropX, cropY, cropW, cropH);
+    painter.drawImage(dest, srcArgb32, source);
+    painter.end();
+
+    outImage = std::move(out);
+    return true;
 }
 
 // --- VideoPanFx ---
@@ -43,75 +130,10 @@ public:
         const double zoom = std::clamp(p.value(QStringLiteral("zoom")).toDouble(1.0), 0.05, 32.0);
 
         QImage src = inOut.frame.convertToFormat(QImage::Format_ARGB32);
-        const double sw = src.width();
-        const double sh = src.height();
-        if (sw < 1.0 || sh < 1.0) {
+        QImage out;
+        if (!composePanZoomOutput(src, outW, outH, mode, panX, panY, zoom, out)) {
             return false;
         }
-
-        double scale = 1.0;
-        double cropX = 0.0;
-        double cropY = 0.0;
-        double cropW = sw;
-        double cropH = sh;
-
-        const double arSrc = sw / sh;
-        const double arOut = static_cast<double>(outW) / static_cast<double>(outH);
-
-        if (mode == QStringLiteral("stretch")) {
-            scale = 1.0;
-            cropX = 0.0;
-            cropY = 0.0;
-            cropW = sw;
-            cropH = sh;
-        } else if (mode == QStringLiteral("fill")) {
-            if (arSrc > arOut) {
-                cropH = sh;
-                cropW = sh * arOut;
-                cropX = (sw - cropW) * 0.5;
-                cropY = 0.0;
-            } else {
-                cropW = sw;
-                cropH = sw / arOut;
-                cropX = 0.0;
-                cropY = (sh - cropH) * 0.5;
-            }
-        } else {
-            // fit (letterbox / pillarbox)
-            if (arSrc > arOut) {
-                cropW = sw;
-                cropH = sw / arOut;
-                cropX = 0.0;
-                cropY = (sh - cropH) * 0.5;
-            } else {
-                cropH = sh;
-                cropW = sh * arOut;
-                cropX = (sw - cropW) * 0.5;
-                cropY = 0.0;
-            }
-        }
-
-        // zoom: shrink crop window (see more of frame = zoom out; grow window = zoom in)
-        const double invZoom = 1.0 / zoom;
-        const double cx = cropX + cropW * 0.5 + panX * (sw - cropW) * 0.5;
-        const double cy = cropY + cropH * 0.5 + panY * (sh - cropH) * 0.5;
-        cropW *= invZoom;
-        cropH *= invZoom;
-        cropX = cx - cropW * 0.5;
-        cropY = cy - cropH * 0.5;
-        cropX = std::clamp(cropX, 0.0, std::max(0.0, sw - cropW));
-        cropY = std::clamp(cropY, 0.0, std::max(0.0, sh - cropH));
-
-        QImage out(outW, outH, QImage::Format_ARGB32);
-        out.fill(QColor(0, 0, 0, 255));
-
-        QPainter painter(&out);
-        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        const QRectF dest(0, 0, outW, outH);
-        const QRectF source(cropX, cropY, cropW, cropH);
-        painter.drawImage(dest, src, source);
-        painter.end();
-
         inOut.quality = BurstQuality{outW, outH};
         inOut.frame = std::move(out);
         return true;
@@ -125,6 +147,182 @@ private:
         o.insert(QStringLiteral("panX"), 0.0);
         o.insert(QStringLiteral("panY"), 0.0);
         o.insert(QStringLiteral("zoom"), 1.0);
+        return o;
+    }
+
+    QJsonObject p = defaultParams();
+};
+
+struct MotionKf {
+    double t = 0.0;
+    double panX = 0.0;
+    double panY = 0.0;
+    double zoom = 1.0;
+};
+
+static bool motionKfLess(const MotionKf &a, const MotionKf &b)
+{
+    return a.t < b.t;
+}
+
+static double smoothstep01(double x)
+{
+    x = std::clamp(x, 0.0, 1.0);
+    return x * x * (3.0 - 2.0 * x);
+}
+
+static void parseMotionKeyframes(const QJsonObject &params, std::vector<MotionKf> &out)
+{
+    out.clear();
+    const QJsonArray arr = params.value(QStringLiteral("keyframes")).toArray();
+    for (const QJsonValue &v : arr) {
+        if (!v.isObject()) {
+            continue;
+        }
+        const QJsonObject o = v.toObject();
+        MotionKf k;
+        k.t = std::clamp(o.value(QStringLiteral("t")).toDouble(0.0), 0.0, 1.0);
+        k.panX = std::clamp(o.value(QStringLiteral("panX")).toDouble(0.0), -1.0, 1.0);
+        k.panY = std::clamp(o.value(QStringLiteral("panY")).toDouble(0.0), -1.0, 1.0);
+        k.zoom = std::clamp(o.value(QStringLiteral("zoom")).toDouble(1.0), 0.05, 32.0);
+        out.push_back(k);
+    }
+    if (out.empty()) {
+        out.push_back(MotionKf{0.0, 0.0, 0.0, 1.0});
+        out.push_back(MotionKf{1.0, 0.0, 0.0, 1.0});
+        return;
+    }
+    std::sort(out.begin(), out.end(), motionKfLess);
+    // De-duplicate by t (keep last)
+    std::vector<MotionKf> dedup;
+    dedup.reserve(out.size());
+    for (const MotionKf &k : out) {
+        if (!dedup.empty() && std::abs(dedup.back().t - k.t) < 1e-9) {
+            dedup.back() = k;
+        } else {
+            dedup.push_back(k);
+        }
+    }
+    out = std::move(dedup);
+}
+
+static void sampleMotionAt(const std::vector<MotionKf> &kfs,
+                           double u01,
+                           bool easeSegments,
+                           double &panX,
+                           double &panY,
+                           double &zoom)
+{
+    if (kfs.empty()) {
+        panX = panY = 0.0;
+        zoom = 1.0;
+        return;
+    }
+    u01 = std::clamp(u01, 0.0, 1.0);
+    if (u01 <= kfs.front().t) {
+        panX = kfs.front().panX;
+        panY = kfs.front().panY;
+        zoom = kfs.front().zoom;
+        return;
+    }
+    if (u01 >= kfs.back().t) {
+        panX = kfs.back().panX;
+        panY = kfs.back().panY;
+        zoom = kfs.back().zoom;
+        return;
+    }
+    size_t i = 0;
+    while (i + 1 < kfs.size() && !(u01 >= kfs[i].t && u01 <= kfs[i + 1].t)) {
+        ++i;
+    }
+    if (i + 1 >= kfs.size()) {
+        panX = kfs.back().panX;
+        panY = kfs.back().panY;
+        zoom = kfs.back().zoom;
+        return;
+    }
+    const MotionKf &a = kfs[i];
+    const MotionKf &b = kfs[i + 1];
+    const double span = b.t - a.t;
+    double s = span > 1e-12 ? (u01 - a.t) / span : 0.0;
+    s = std::clamp(s, 0.0, 1.0);
+    if (easeSegments) {
+        s = smoothstep01(s);
+    }
+    panX = a.panX + (b.panX - a.panX) * s;
+    panY = a.panY + (b.panY - a.panY) * s;
+    zoom = a.zoom + (b.zoom - a.zoom) * s;
+}
+
+// --- Camera motion (keyframes 0..1 along clip) — copy JSON between clips for same relative move ---
+
+class CamMotionVideoFx : public IVideoFx
+{
+public:
+    QString typeId() const override { return QStringLiteral("cammotion"); }
+    void setParams(const QJsonObject &o) override { p = mergeDefaults(defaultParams(), o); }
+    QJsonObject params() const override { return p; }
+
+    bool process(VideoBurst &inOut, const VideoFxContext &ctx) override
+    {
+        if (inOut.frame.isNull()) {
+            return false;
+        }
+        const int outW = std::max(1, ctx.projectOutput.width);
+        const int outH = std::max(1, ctx.projectOutput.height);
+        const QString mode = p.value(QStringLiteral("mode")).toString(QStringLiteral("fit"));
+        const bool ease = p.value(QStringLiteral("ease")).toBool(true);
+        const double timeScale = std::clamp(p.value(QStringLiteral("timeScale")).toDouble(1.0), 0.05, 8.0);
+
+        double u = 0.0;
+        if (ctx.clipDurationTicks > 0 && ctx.decodeOrigin >= 0) {
+            const double rel = static_cast<double>(ctx.timelineBurstIndex - ctx.decodeOrigin);
+            u = rel / static_cast<double>(ctx.clipDurationTicks);
+        }
+        u = std::clamp(u * timeScale, 0.0, 1.0);
+
+        std::vector<MotionKf> kfs;
+        parseMotionKeyframes(p, kfs);
+        double panX = 0.0;
+        double panY = 0.0;
+        double zoom = 1.0;
+        sampleMotionAt(kfs, u, ease, panX, panY, zoom);
+
+        QImage src = inOut.frame.convertToFormat(QImage::Format_ARGB32);
+        QImage out;
+        if (!composePanZoomOutput(src, outW, outH, mode, panX, panY, zoom, out)) {
+            return false;
+        }
+        inOut.quality = BurstQuality{outW, outH};
+        inOut.frame = std::move(out);
+        return true;
+    }
+
+private:
+    static QJsonObject defaultParams()
+    {
+        QJsonObject o;
+        o.insert(QStringLiteral("mode"), QStringLiteral("fit"));
+        o.insert(QStringLiteral("ease"), true);
+        o.insert(QStringLiteral("timeScale"), 1.0);
+        QJsonArray kf;
+        {
+            QJsonObject a;
+            a.insert(QStringLiteral("t"), 0.0);
+            a.insert(QStringLiteral("panX"), 0.0);
+            a.insert(QStringLiteral("panY"), 0.0);
+            a.insert(QStringLiteral("zoom"), 1.0);
+            kf.append(a);
+        }
+        {
+            QJsonObject b;
+            b.insert(QStringLiteral("t"), 1.0);
+            b.insert(QStringLiteral("panX"), 0.0);
+            b.insert(QStringLiteral("panY"), 0.0);
+            b.insert(QStringLiteral("zoom"), 1.35);
+            kf.append(b);
+        }
+        o.insert(QStringLiteral("keyframes"), kf);
         return o;
     }
 
@@ -593,7 +791,7 @@ bool ConVideoFx::burst(BurstType type, const BurstRequest &request, BurstPayload
     if (outQ.width <= 0 || outQ.height <= 0) {
         outQ = projectOutput;
     }
-    VideoFxContext ctx{outQ, request.index, upstream->originInfo()};
+    VideoFxContext ctx{outQ, request.index, upstream->originInfo(), request.clipDurationTicks, request.decodeOrigin};
     if (!effect->process(vb, ctx)) {
         return false;
     }
@@ -678,6 +876,8 @@ std::shared_ptr<IVideoFx> createVideoFx(const QString &typeId, const QJsonObject
     std::shared_ptr<IVideoFx> fx;
     if (typeId == QStringLiteral("pan")) {
         fx = std::make_shared<VideoPanFx>();
+    } else if (typeId == QStringLiteral("cammotion")) {
+        fx = std::make_shared<CamMotionVideoFx>();
     } else if (typeId == QStringLiteral("mirror")) {
         fx = std::make_shared<MirrorVideoFx>();
     } else if (typeId == QStringLiteral("blur")) {

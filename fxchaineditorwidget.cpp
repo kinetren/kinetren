@@ -1,8 +1,12 @@
 #include "fxchaineditorwidget.h"
 
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 
 #include <QApplication>
+#include <QGuiApplication>
+#include <QClipboard>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -21,6 +25,7 @@
 #include <QScrollArea>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
+#include <QPlainTextEdit>
 #include <QVBoxLayout>
 #include <QVariant>
 
@@ -79,6 +84,31 @@ QJsonObject defaultParamsForVideoType(const QString &type)
         o.insert(QStringLiteral("strength"), 0.65);
         return o;
     }
+    if (type == QStringLiteral("cammotion")) {
+        QJsonObject o;
+        o.insert(QStringLiteral("mode"), QStringLiteral("fit"));
+        o.insert(QStringLiteral("ease"), true);
+        o.insert(QStringLiteral("timeScale"), 1.0);
+        QJsonArray kf;
+        {
+            QJsonObject a;
+            a.insert(QStringLiteral("t"), 0.0);
+            a.insert(QStringLiteral("panX"), 0.0);
+            a.insert(QStringLiteral("panY"), 0.0);
+            a.insert(QStringLiteral("zoom"), 1.0);
+            kf.append(a);
+        }
+        {
+            QJsonObject b;
+            b.insert(QStringLiteral("t"), 1.0);
+            b.insert(QStringLiteral("panX"), 0.0);
+            b.insert(QStringLiteral("panY"), 0.0);
+            b.insert(QStringLiteral("zoom"), 1.35);
+            kf.append(b);
+        }
+        o.insert(QStringLiteral("keyframes"), kf);
+        return o;
+    }
     return QJsonObject();
 }
 
@@ -100,6 +130,7 @@ QJsonObject defaultParamsForAudioType(const QString &type)
 QString humanTypeName(const QString &id)
 {
     static const QHash<QString, QString> map{{QStringLiteral("pan"), QStringLiteral("Pan")},
+                                             {QStringLiteral("cammotion"), QStringLiteral("Camera motion")},
                                              {QStringLiteral("mirror"), QStringLiteral("Mirror")},
                                              {QStringLiteral("blur"), QStringLiteral("Blur")},
                                              {QStringLiteral("greenscreen"), QStringLiteral("Chroma")},
@@ -317,6 +348,7 @@ void FxChainEditorWidget::setMediaKind(MediaKind k)
             const char *label;
         } items[] = {
             {"pan", "Pan / frame"},
+            {"cammotion", "Camera motion (keyframes)"},
             {"mirror", "Mirror"},
             {"blur", "Blur"},
             {"greenscreen", "Greenscreen"},
@@ -471,6 +503,28 @@ void FxChainEditorWidget::applyParamsFromPanelToChain()
         if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_pan_zoom"))) {
             p.insert(QStringLiteral("zoom"), w->value());
         }
+    } else if (type == QStringLiteral("cammotion")) {
+        if (auto *w = paramPanel->findChild<QComboBox *>(QStringLiteral("fx_cammotion_mode"))) {
+            p.insert(QStringLiteral("mode"), w->currentData().toString());
+        }
+        if (auto *w = paramPanel->findChild<QCheckBox *>(QStringLiteral("fx_cammotion_ease"))) {
+            p.insert(QStringLiteral("ease"), w->isChecked());
+        }
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_cammotion_timescale"))) {
+            p.insert(QStringLiteral("timeScale"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QPlainTextEdit *>(QStringLiteral("fx_cammotion_keyframes_json"))) {
+            const QString raw = w->toPlainText().trimmed();
+            QJsonParseError err{};
+            const QJsonDocument doc = QJsonDocument::fromJson(raw.toUtf8(), &err);
+            QJsonArray kf;
+            if (doc.isArray()) {
+                kf = doc.array();
+            } else if (doc.isObject()) {
+                kf = doc.object().value(QStringLiteral("keyframes")).toArray();
+            }
+            p.insert(QStringLiteral("keyframes"), kf);
+        }
     } else if (type == QStringLiteral("mirror")) {
         if (auto *w = paramPanel->findChild<QCheckBox *>(QStringLiteral("fx_mirror_h"))) {
             p.insert(QStringLiteral("horizontal"), w->isChecked());
@@ -593,6 +647,72 @@ void FxChainEditorWidget::rebuildParamPanel()
         zoom->setValue(p.value(QStringLiteral("zoom")).toDouble(1.0));
         form->addRow(tr("Zoom"), zoom);
         connect(zoom, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+    } else if (type == QStringLiteral("cammotion")) {
+        auto *mode = new QComboBox(paramPanel);
+        mode->setObjectName(QStringLiteral("fx_cammotion_mode"));
+        mode->addItem(tr("Fit (letterbox)"), QStringLiteral("fit"));
+        mode->addItem(tr("Fill (crop)"), QStringLiteral("fill"));
+        mode->addItem(tr("Stretch"), QStringLiteral("stretch"));
+        const QString m = p.value(QStringLiteral("mode")).toString(QStringLiteral("fit"));
+        const int mi = std::max(0, mode->findData(m));
+        mode->setCurrentIndex(mi >= 0 ? mi : 0);
+        form->addRow(tr("Framing"), mode);
+        connect(mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [hook](int) { hook(); });
+
+        auto *ease = new QCheckBox(tr("Smooth segments (smoothstep)"), paramPanel);
+        ease->setObjectName(QStringLiteral("fx_cammotion_ease"));
+        ease->setChecked(p.value(QStringLiteral("ease")).toBool(true));
+        form->addRow(ease);
+        connect(ease, &QCheckBox::toggled, this, [hook](bool) { hook(); });
+
+        auto *ts = new QDoubleSpinBox(paramPanel);
+        ts->setObjectName(QStringLiteral("fx_cammotion_timescale"));
+        ts->setRange(0.05, 8.0);
+        ts->setSingleStep(0.05);
+        ts->setDecimals(3);
+        ts->setValue(p.value(QStringLiteral("timeScale")).toDouble(1.0));
+        form->addRow(tr("Time scale (clip progress)"), ts);
+        connect(ts, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+
+        auto *hint = new QLabel(
+            tr("Keyframes: JSON array of objects {\"t\":0..1,\"panX\":…,\"panY\":…,\"zoom\":…}. "
+               "Same curve on any clip length — copy text to another clip’s Camera motion."),
+            paramPanel);
+        hint->setWordWrap(true);
+        form->addRow(hint);
+
+        auto *pte = new QPlainTextEdit(paramPanel);
+        pte->setObjectName(QStringLiteral("fx_cammotion_keyframes_json"));
+        pte->setMinimumHeight(120);
+        {
+            QFont f = pte->font();
+            f.setFamily(QStringLiteral("monospace"));
+            pte->setFont(f);
+        }
+        const QJsonArray kfArr = p.value(QStringLiteral("keyframes")).toArray();
+        pte->setPlainText(QString::fromUtf8(QJsonDocument(kfArr).toJson(QJsonDocument::Compact)));
+        form->addRow(tr("Keyframes"), pte);
+        connect(pte, &QPlainTextEdit::textChanged, this, [hook]() { hook(); });
+
+        auto *btnRow = new QWidget(paramPanel);
+        auto *bh = new QHBoxLayout(btnRow);
+        bh->setContentsMargins(0, 0, 0, 0);
+        auto *copyBtn = new QPushButton(tr("Copy"), btnRow);
+        auto *pasteBtn = new QPushButton(tr("Paste"), btnRow);
+        bh->addWidget(copyBtn);
+        bh->addWidget(pasteBtn);
+        bh->addStretch(1);
+        form->addRow(tr("Clipboard"), btnRow);
+        connect(copyBtn, &QPushButton::clicked, this, [pte]() {
+            QGuiApplication::clipboard()->setText(pte->toPlainText());
+        });
+        connect(pasteBtn, &QPushButton::clicked, this, [pte, hook]() {
+            const QString t = QGuiApplication::clipboard()->text();
+            if (!t.isEmpty()) {
+                pte->setPlainText(t);
+            }
+            hook();
+        });
     } else if (type == QStringLiteral("mirror")) {
         auto *h = new QCheckBox(tr("Horizontal flip"), paramPanel);
         h->setObjectName(QStringLiteral("fx_mirror_h"));

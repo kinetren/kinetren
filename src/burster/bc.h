@@ -41,6 +41,9 @@ struct BurstRequest {
     BurstIndex index = 0;
     BurstQuality quality;
     BurstIndex decodeOrigin = -1;
+    /// Trimmed clip length in burst ticks (same as `ConTrackEvent::duration`). Video FX use this with
+    /// `decodeOrigin` for normalized time along the clip. 0 means unknown (e.g. preview / tests).
+    BurstIndex clipDurationTicks = 0;
 };
 
 enum class BurstType {
@@ -383,6 +386,8 @@ private:
 };
 
 int64_t msToBurstIndex(int64_t ms);
+/// Smallest burst span that fully covers `ms` milliseconds (matches clip duration rounding in the editor).
+BurstIndex msToBurstIndexCeil(int64_t ms);
 int64_t burstIndexToMs(BurstIndex index);
 
 /// Burst tick step for one output timeline video frame at integer `outputFps` (project / export FPS).

@@ -13,8 +13,13 @@ namespace burstcon {
 
 struct VideoFxContext {
     BurstQuality projectOutput;
+    /// Media decode index passed with the burst request (same as `BurstRequest::index` under `ConVideoFx`).
     BurstIndex timelineBurstIndex = 0;
     BurstOriginInfo mediaOrigin;
+    /// From `BurstRequest::clipDurationTicks` when the track supplies clip bounds.
+    BurstIndex clipDurationTicks = 0;
+    /// From `BurstRequest::decodeOrigin` (clip `sourceIn` in media timebase).
+    BurstIndex decodeOrigin = -1;
 };
 
 /// Video effect (Vegas-style chain element). Stateless apart from JSON params.

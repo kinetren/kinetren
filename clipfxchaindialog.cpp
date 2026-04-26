@@ -2,6 +2,7 @@
 
 #include "fxchaineditorwidget.h"
 #include "timelineeditor.h"
+#include "bc.h"
 #include "bc_fx.h"
 
 #include <QHBoxLayout>
@@ -142,10 +143,21 @@ void ClipFxChainWindow::refreshPreview()
     const int ph = std::max(2, std::min(360, projectOutputSize.height() > 0 ? projectOutputSize.height() : 720));
     QJsonArray chain = timeline->clipVideoFxChain(clipId);
     burstcon::VideoBurst vb;
-    vb.index = 0;
     vb.quality = burstcon::BurstQuality{img.width(), img.height()};
     vb.frame = img.convertToFormat(QImage::Format_ARGB32);
-    burstcon::VideoFxContext ctx{{pw, ph}, 0, {}};
+    burstcon::BurstIndex clipDurBurst = 0;
+    burstcon::BurstIndex decodeOrigin = -1;
+    burstcon::BurstIndex sampleIndex = 0;
+    if (timeline->clipMatchesFxTarget(clipId, true)) {
+        const qint64 durationMs = timeline->clipDurationMs(clipId);
+        const qint64 sourceInMs = timeline->clipSourceInMs(clipId);
+        clipDurBurst = burstcon::msToBurstIndexCeil(durationMs);
+        decodeOrigin = burstcon::msToBurstIndex(sourceInMs);
+        const qint64 midOff = std::max<qint64>(0, durationMs / 2);
+        sampleIndex = burstcon::msToBurstIndex(sourceInMs + midOff);
+    }
+    vb.index = sampleIndex;
+    burstcon::VideoFxContext ctx{{pw, ph}, sampleIndex, {}, clipDurBurst, decodeOrigin};
     burstcon::processVideoFxChainInPlace(vb, chain, ctx);
     if (vb.frame.isNull()) {
         preview->setText(tr("Effect error"));

@@ -3223,6 +3223,12 @@ qint64 TimelineEditor::clipSourceInMs(int clipId) const
     return c ? c->sourceInMs : 0;
 }
 
+qint64 TimelineEditor::clipDurationMs(int clipId) const
+{
+    const ClipEvent *c = findClipById(clipId);
+    return c ? c->durationMs : 0;
+}
+
 QJsonArray TimelineEditor::clipVideoFxChain(int clipId) const
 {
     const ClipEvent *c = findClipById(clipId);

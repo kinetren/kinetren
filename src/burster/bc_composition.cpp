@@ -233,7 +233,9 @@ bool ConTrack::burst(BurstType type, const BurstRequest &request, BurstPayload &
             }
             AudioBurst burst;
             const BurstIndex localIndex = event.sourceIn + (request.index - event.start);
-            if (!bound.media->audioBurst(BurstRequest{localIndex, request.quality, event.sourceIn}, burst)) {
+            if (!bound.media->audioBurst(
+                    BurstRequest{localIndex, request.quality, event.sourceIn, event.duration},
+                    burst)) {
                 continue;
             }
             active.push_back(Active{bi, std::move(burst)});
@@ -323,7 +325,9 @@ bool ConTrack::burst(BurstType type, const BurstRequest &request, BurstPayload &
         }
         VideoBurst burst;
         const BurstIndex localIndex = event.sourceIn + (request.index - event.start);
-        if (!bound.media->videoBurst(BurstRequest{localIndex, request.quality, event.sourceIn}, burst)) {
+        if (!bound.media->videoBurst(
+                BurstRequest{localIndex, request.quality, event.sourceIn, event.duration},
+                burst)) {
             continue;
         }
         layers.push_back(VideoLayerCandidate{event.zIndex, event.start, event.sourcePath, std::move(burst)});
