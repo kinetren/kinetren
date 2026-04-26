@@ -1,4 +1,4 @@
-#include "burstcon.h"
+#include "bc.h"
 
 #include <QCoreApplication>
 #include <QImage>

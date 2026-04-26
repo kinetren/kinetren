@@ -41,8 +41,15 @@ set(PROJECT_SOURCES
         sourceeditwidgets.h
         sourceareawidget.cpp
         sourceareawidget.h
-        burstcon.cpp
-        burstcon.h
+        src/burster/bc_avcpp_decoder.cpp
+        src/burster/bc_concache.cpp
+        src/burster/bc_composition.cpp
+        src/burster/bc_mediapool.cpp
+        src/burster/bc_playback_timer.cpp
+        src/burster/bc_time.cpp
+        src/burster/bc_metrics.cpp
+        src/burster/bc.h
+        src/burster/bc_internal.h
         playbackpipeline.cpp
         playbackpipeline.h
         mainwindow.ui
@@ -85,6 +92,7 @@ target_link_libraries(kp-test PUBLIC
 )
 target_include_directories(kp-test PUBLIC ${AVCPP_INCLUDE_DIR})
 target_include_directories(kp-test PUBLIC ${CMAKE_SOURCE_DIR})
+target_include_directories(kp-test PUBLIC ${CMAKE_SOURCE_DIR}/src/burster)
 
 # Qt for iOS sets MACOSX_BUNDLE_GUI_IDENTIFIER automatically since Qt 6.1.
 # If you are developing for iOS or macOS you should consider setting an
@@ -117,8 +125,15 @@ endif()
 if(BUILD_TESTING)
     add_executable(kp-test-burstcon-tests
         tests/burstcon_tests.cpp
-        burstcon.cpp
-        burstcon.h
+        src/burster/bc_avcpp_decoder.cpp
+        src/burster/bc_concache.cpp
+        src/burster/bc_composition.cpp
+        src/burster/bc_mediapool.cpp
+        src/burster/bc_playback_timer.cpp
+        src/burster/bc_time.cpp
+        src/burster/bc_metrics.cpp
+        src/burster/bc.h
+        src/burster/bc_internal.h
     )
     target_link_libraries(kp-test-burstcon-tests PRIVATE
         Qt${QT_VERSION_MAJOR}::Widgets
@@ -127,5 +142,6 @@ if(BUILD_TESTING)
     )
     target_include_directories(kp-test-burstcon-tests PUBLIC ${AVCPP_INCLUDE_DIR})
     target_include_directories(kp-test-burstcon-tests PUBLIC ${CMAKE_SOURCE_DIR})
+    target_include_directories(kp-test-burstcon-tests PUBLIC ${CMAKE_SOURCE_DIR}/src/burster)
     add_test(NAME kp-test-burstcon-tests COMMAND kp-test-burstcon-tests)
 endif()

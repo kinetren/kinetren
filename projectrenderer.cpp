@@ -14,7 +14,7 @@
 #include <climits>
 #include <cmath>
 
-#include "burstcon.h"
+#include "bc.h"
 
 namespace {
 constexpr int kAudioSampleRate = 48000;

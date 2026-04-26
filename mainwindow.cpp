@@ -1,6 +1,6 @@
 #include "mainwindow.h"
 #include "./ui_mainwindow.h"
-#include "burstcon.h"
+#include "bc.h"
 #include "performancewidget.h"
 #include "performancediagnosticswindow.h"
 #include "playbackpipeline.h"

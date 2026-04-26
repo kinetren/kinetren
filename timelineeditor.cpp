@@ -1,5 +1,5 @@
 #include "timelineeditor.h"
-#include "burstcon.h"
+#include "bc.h"
 
 #include <QDateTime>
 #include <QDragEnterEvent>

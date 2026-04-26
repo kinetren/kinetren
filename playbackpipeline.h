@@ -15,7 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "burstcon.h"
+#include "bc.h"
 #include "projectsettings.h"
 
 class QIODevice;
