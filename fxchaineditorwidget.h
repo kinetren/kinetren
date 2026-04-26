@@ -4,6 +4,8 @@
 #include <QJsonArray>
 #include <QWidget>
 
+class TimelineEditor;
+
 /// Horizontal FX chain + parameter widgets (shared by clip FX window and morpher FX batch).
 class FxChainEditorWidget : public QWidget
 {
@@ -17,6 +19,8 @@ public:
     explicit FxChainEditorWidget(QWidget *parent = nullptr);
 
     void setMediaKind(MediaKind k);
+    /// Enables "Auto from clip" for camera motion when non-null.
+    void setCamMotionEstimateContext(TimelineEditor *timeline, int clipId);
     void setChain(const QJsonArray &chain);
     /// Select a chain tile without emitting chainChanged (UI only).
     void selectRow(int row);
@@ -48,6 +52,9 @@ private:
     class QHBoxLayout *chainLayout = nullptr;
     QWidget *paramPanel = nullptr;
     class QComboBox *addCombo = nullptr;
+
+    TimelineEditor *camMotionTimeline = nullptr;
+    int camMotionClipId = -1;
 };
 
 #endif

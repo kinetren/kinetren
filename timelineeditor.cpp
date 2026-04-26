@@ -3952,6 +3952,75 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
     return img;
 }
 
+QImage TimelineEditor::decodeVideoPreviewAtSourceMs(const QString &path,
+                                                    qint64 sourceMsAbsolute,
+                                                    qint64 decodeOriginMs) const
+{
+    QImage img;
+    if (isImagePath(path)) {
+        img.load(path);
+    } else {
+        const auto pool = stripMediaPool ? stripMediaPool : playbackMediaPool;
+        if (pool) {
+            const burstcon::BurstIndex originIdx = burstcon::msToBurstIndex(decodeOriginMs);
+            const burstcon::BurstIndex idx = burstcon::msToBurstIndex(sourceMsAbsolute);
+            size_t poolShard = 0;
+            if (stripMediaPool) {
+                const size_t n = stripMediaPool->previewParallelShardCount();
+                if (n > 1) {
+                    const quint64 h = static_cast<quint64>(qHash(path)) ^
+                        (static_cast<quint64>(static_cast<qint64>(decodeOriginMs)) * 0x9e3779b97f4a7c15ULL);
+                    poolShard = 1 + static_cast<size_t>(h % n);
+                }
+            }
+            auto media = pool->acquire(path, true, false, originIdx, true, false, poolShard);
+            burstcon::BurstRequest req;
+            req.index = idx;
+            req.quality = burstcon::BurstQuality{320, 180};
+            req.decodeOrigin = originIdx;
+            burstcon::VideoBurst frame;
+            if (media && media->videoBurst(req, frame) && !frame.frame.isNull()) {
+                img = frame.frame;
+            }
+        }
+        if (img.isNull() && isImagePath(path)) {
+            QImageReader reader(path);
+            reader.setAutoTransform(true);
+            img = reader.read();
+        }
+    }
+    if (img.isNull()) {
+        img = QImage(160, 90, QImage::Format_RGB32);
+        img.fill(colorFromPath(path));
+    }
+    return img;
+}
+
+QJsonArray TimelineEditor::estimateCamMotionKeyframesFromClip(int clipId,
+                                                               int sampleCount,
+                                                               const QString &mode) const
+{
+    const ClipEvent *c = findClipById(clipId);
+    if (!c || c->mediaType != TrackType::Video || isImagePath(c->sourcePath)) {
+        return {};
+    }
+    const int n = std::clamp(sampleCount, 5, 40);
+    QList<QImage> frames;
+    frames.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        const qint64 offset = (n <= 1) ? 0 : (c->durationMs * i) / (n - 1);
+        const qint64 absMs = c->sourceInMs + offset;
+        QImage img = decodeVideoPreviewAtSourceMs(c->sourcePath, absMs, c->sourceInMs);
+        if (img.isNull()) {
+            return {};
+        }
+        frames.append(img);
+    }
+    const int ow = frames.front().width();
+    const int oh = frames.front().height();
+    return burstcon::estimateCamMotionFromDecodedFrames(frames, ow, oh, mode);
+}
+
 QString TimelineEditor::peaksCacheKey(const QString &path,
                                        qint64 sourceInMs,
                                        qint64 durationMs,

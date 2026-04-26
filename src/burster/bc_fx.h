@@ -3,8 +3,10 @@
 
 #include "bc.h"
 
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QList>
 #include <QString>
 
 #include <memory>
@@ -97,6 +99,13 @@ QJsonArray defaultVideoFxChain();
 
 /// Applies the same video chain as playback (for UI preview). Mutates `vb.frame` / `vb.quality`.
 bool processVideoFxChainInPlace(VideoBurst &vb, const QJsonArray &chain, const VideoFxContext &ctx);
+
+/// `frames[0]` is the reference texture at clip start; all frames same size (e.g. 320×180 decode).
+/// Returns a `keyframes` JSON array: `{ "t", "panX", "panY", "zoom" }` in [0,1] time along the clip.
+QJsonArray estimateCamMotionFromDecodedFrames(const QList<QImage> &frames,
+                                              int outW,
+                                              int outH,
+                                              const QString &mode = QStringLiteral("fit"));
 
 } // namespace burstcon
 

@@ -2,7 +2,6 @@
 
 #include "fxchaineditorwidget.h"
 #include "timelineeditor.h"
-#include "bc.h"
 #include "bc_fx.h"
 
 #include <QHBoxLayout>
@@ -50,6 +49,9 @@ ClipFxChainWindow::ClipFxChainWindow(QWidget *parent,
     editor = new FxChainEditorWidget(split);
     editor->setMediaKind(kind == MediaKind::Video ? FxChainEditorWidget::MediaKind::Video
                                                    : FxChainEditorWidget::MediaKind::Audio);
+    if (kind == MediaKind::Video && timeline) {
+        editor->setCamMotionEstimateContext(timeline, clipId);
+    }
     editor->setChain(initial);
     connect(editor, &FxChainEditorWidget::chainChanged, this, &ClipFxChainWindow::onEditorChainChanged);
 

@@ -1,4 +1,5 @@
 #include "fxchaineditorwidget.h"
+#include "timelineeditor.h"
 
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -7,6 +8,8 @@
 #include <QApplication>
 #include <QGuiApplication>
 #include <QClipboard>
+#include <QCursor>
+#include <QMessageBox>
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
@@ -336,6 +339,12 @@ FxChainEditorWidget::FxChainEditorWidget(QWidget *parent)
     connect(removeBtn, &QPushButton::clicked, this, &FxChainEditorWidget::onRemoveClicked);
 
     setMediaKind(MediaKind::Video);
+}
+
+void FxChainEditorWidget::setCamMotionEstimateContext(TimelineEditor *timeline, int clipId)
+{
+    camMotionTimeline = timeline;
+    camMotionClipId = clipId;
 }
 
 void FxChainEditorWidget::setMediaKind(MediaKind k)
@@ -673,6 +682,43 @@ void FxChainEditorWidget::rebuildParamPanel()
         ts->setValue(p.value(QStringLiteral("timeScale")).toDouble(1.0));
         form->addRow(tr("Time scale (clip progress)"), ts);
         connect(ts, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+
+        auto *autoRow = new QWidget(paramPanel);
+        auto *autoLay = new QHBoxLayout(autoRow);
+        autoLay->setContentsMargins(0, 0, 0, 0);
+        auto *samplesSpin = new QSpinBox(autoRow);
+        samplesSpin->setObjectName(QStringLiteral("fx_cammotion_samples"));
+        samplesSpin->setRange(6, 40);
+        samplesSpin->setValue(20);
+        samplesSpin->setToolTip(tr("More samples follow fast back-and-forth motion better (slower)."));
+        auto *autoBtn = new QPushButton(tr("Auto from clip video…"), autoRow);
+        autoBtn->setEnabled(camMotionTimeline != nullptr && camMotionClipId >= 0);
+        autoLay->addWidget(new QLabel(tr("Samples:"), autoRow));
+        autoLay->addWidget(samplesSpin);
+        autoLay->addWidget(autoBtn, 1);
+        form->addRow(tr("Estimate"), autoRow);
+        connect(autoBtn, &QPushButton::clicked, this, [this, samplesSpin, mode, hook]() {
+            if (!camMotionTimeline || camMotionClipId < 0) {
+                return;
+            }
+            const QString framing = mode->currentData().toString();
+            QApplication::setOverrideCursor(Qt::WaitCursor);
+            const QJsonArray kf =
+                camMotionTimeline->estimateCamMotionKeyframesFromClip(camMotionClipId,
+                                                                      samplesSpin->value(),
+                                                                      framing);
+            QApplication::restoreOverrideCursor();
+            if (kf.isEmpty()) {
+                QMessageBox::warning(this,
+                                     tr("Camera motion"),
+                                     tr("Could not decode enough frames from this clip (or it is a still image)."));
+                return;
+            }
+            if (auto *pte = paramPanel->findChild<QPlainTextEdit *>(QStringLiteral("fx_cammotion_keyframes_json"))) {
+                pte->setPlainText(QString::fromUtf8(QJsonDocument(kf).toJson(QJsonDocument::Compact)));
+            }
+            hook();
+        });
 
         auto *hint = new QLabel(
             tr("Keyframes: JSON array of objects {\"t\":0..1,\"panX\":…,\"panY\":…,\"zoom\":…}. "

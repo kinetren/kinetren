@@ -126,6 +126,9 @@ public:
     void setClipAudioVolumeUiT(int clipId, float t01);
     QImage previewStillForClip(int clipId);
 
+    /// Sample decoded frames along the clip and estimate `cammotion` keyframes (pan/zoom vs first frame).
+    QJsonArray estimateCamMotionKeyframesFromClip(int clipId, int sampleCount, const QString &mode) const;
+
     static QString firstLocalPathFromMime(const QMimeData *mime);
 
     void addMorpherTrack();
@@ -365,6 +368,8 @@ private:
     QColor colorFromPath(const QString &path) const;
     QImage cachedVideoPreview(const QString &path, qint64 sourceInMs);
     QImage decodeVideoPreviewSync(const QString &path, qint64 bucketMs) const;
+    /// Decode one frame at `sourceMsAbsolute` (ms from file start), with demuxer origin at `decodeOriginMs`.
+    QImage decodeVideoPreviewAtSourceMs(const QString &path, qint64 sourceMsAbsolute, qint64 decodeOriginMs) const;
     void notePreviewCacheHit(const QString &key);
     void commitPreviewCacheFromWorker(const QString &key, const QImage &img);
     QVector<QPair<int, int>> cachedAudioPeaksStereo(const QString &path,

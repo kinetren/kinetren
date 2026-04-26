@@ -4,24 +4,17 @@
 #include <QtMath>
 
 #include <QJsonArray>
+#include <QJsonObject>
+#include <QList>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <vector>
 
 namespace burstcon {
-namespace {
-
-QJsonObject mergeDefaults(const QJsonObject &base, const QJsonObject &over)
-{
-    QJsonObject out = base;
-    for (auto it = over.begin(); it != over.end(); ++it) {
-        out.insert(it.key(), it.value());
-    }
-    return out;
-}
 
 bool composePanZoomOutput(const QImage &srcArgb32,
                           int outW,
@@ -106,6 +99,17 @@ bool composePanZoomOutput(const QImage &srcArgb32,
 
     outImage = std::move(out);
     return true;
+}
+
+namespace {
+
+QJsonObject mergeDefaults(const QJsonObject &base, const QJsonObject &over)
+{
+    QJsonObject out = base;
+    for (auto it = over.begin(); it != over.end(); ++it) {
+        out.insert(it.key(), it.value());
+    }
+    return out;
 }
 
 // --- VideoPanFx ---
@@ -763,6 +767,291 @@ private:
 };
 
 } // namespace
+
+static double rgbMseSubsampled(const QImage &a, const QImage &b)
+{
+    if (a.isNull() || b.isNull() || a.size() != b.size()) {
+        return 1e18;
+    }
+    const QImage aa = a.convertToFormat(QImage::Format_ARGB32);
+    const QImage bb = b.convertToFormat(QImage::Format_ARGB32);
+    const int w = aa.width();
+    const int h = aa.height();
+    if (w < 1 || h < 1) {
+        return 1e18;
+    }
+    const int step = (std::min(w, h) >= 160) ? 2 : 1;
+    double sum = 0.0;
+    int n = 0;
+    for (int y = 0; y < h; y += step) {
+        const QRgb *la = reinterpret_cast<const QRgb *>(aa.constScanLine(y));
+        const QRgb *lb = reinterpret_cast<const QRgb *>(bb.constScanLine(y));
+        for (int x = 0; x < w; x += step) {
+            const QRgb ca = la[x];
+            const QRgb cb = lb[x];
+            const int dr = int(qRed(ca)) - int(qRed(cb));
+            const int dg = int(qGreen(ca)) - int(qGreen(cb));
+            const int db = int(qBlue(ca)) - int(qBlue(cb));
+            sum += double(dr * dr + dg * dg + db * db);
+            ++n;
+        }
+    }
+    return n > 0 ? sum / double(n) : 1e18;
+}
+
+static void searchPanZoomMatch(const QImage &refArgb,
+                               const QImage &targetArgb,
+                               int outW,
+                               int outH,
+                               const QString &mode,
+                               double hintPanX,
+                               double hintPanY,
+                               double hintZoom,
+                               double &outPanX,
+                               double &outPanY,
+                               double &outZoom)
+{
+    const int maxW = 96;
+    QImage refS = refArgb.convertToFormat(QImage::Format_ARGB32);
+    if (refS.width() > maxW) {
+        refS = refS.scaledToWidth(maxW, Qt::SmoothTransformation);
+    }
+    refS = refS.convertToFormat(QImage::Format_ARGB32);
+    const int outSw = std::max(32, refS.width());
+    const int outSh = std::max(18, (outSw * outH + outW / 2) / std::max(1, outW));
+
+    QImage targS =
+        targetArgb.scaled(outSw, outSh, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+            .convertToFormat(QImage::Format_ARGB32);
+
+    auto eval = [&](double panX, double panY, double zoom) -> double {
+        QImage syn;
+        if (!composePanZoomOutput(refS, outSw, outSh, mode, panX, panY, zoom, syn)) {
+            return 1e18;
+        }
+        return rgbMseSubsampled(syn, targS);
+    };
+
+    double best = 1e18;
+    outPanX = hintPanX;
+    outPanY = hintPanY;
+    outZoom = hintZoom;
+
+    // Wide coarse search (strong zoom-ins / push beyond frame edges need high zoom values).
+    const double zMin = 0.22;
+    const double zMax = 6.5;
+    const int nz = 22;
+    const int np = 13;
+    for (int iz = 0; iz < nz; ++iz) {
+        const double t = (nz <= 1) ? 0.5 : double(iz) / double(nz - 1);
+        const double zoom = zMin + (zMax - zMin) * t;
+        for (int ix = 0; ix < np; ++ix) {
+            const double panX = -1.0 + (2.0 * double(ix)) / double(np - 1);
+            for (int iy = 0; iy < np; ++iy) {
+                const double panY = -1.0 + (2.0 * double(iy)) / double(np - 1);
+                const double m = eval(panX, panY, zoom);
+                if (m < best) {
+                    best = m;
+                    outPanX = panX;
+                    outPanY = panY;
+                    outZoom = zoom;
+                }
+            }
+        }
+    }
+
+    // Local refine
+    for (int pass = 0; pass < 4; ++pass) {
+        const double stepPan = 0.06 / double(1 << pass);
+        const double stepZ = 0.045 / double(1 << pass);
+        for (int dz = -2; dz <= 2; ++dz) {
+            for (int dx = -2; dx <= 2; ++dx) {
+                for (int dy = -2; dy <= 2; ++dy) {
+                    if (dx == 0 && dy == 0 && dz == 0) {
+                        continue;
+                    }
+                    const double panX = std::clamp(outPanX + dx * stepPan, -1.0, 1.0);
+                    const double panY = std::clamp(outPanY + dy * stepPan, -1.0, 1.0);
+                    const double zoom = std::clamp(outZoom + dz * stepZ, 0.08, 8.0);
+                    const double m = eval(panX, panY, zoom);
+                    if (m < best) {
+                        best = m;
+                        outPanX = panX;
+                        outPanY = panY;
+                        outZoom = zoom;
+                    }
+                }
+            }
+        }
+    }
+
+    // Full-res polish (few evaluations)
+    QImage refF = refArgb.convertToFormat(QImage::Format_ARGB32);
+    QImage targF = targetArgb.convertToFormat(QImage::Format_ARGB32);
+    if (targF.size() != QSize(outW, outH)) {
+        targF = targF.scaled(outW, outH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    auto evalFull = [&](double panX, double panY, double zoom) -> double {
+        QImage syn;
+        if (!composePanZoomOutput(refF, outW, outH, mode, panX, panY, zoom, syn)) {
+            return 1e18;
+        }
+        return rgbMseSubsampled(syn, targF);
+    };
+    for (int pass = 0; pass < 3; ++pass) {
+        const double sp = 0.025 / double(1 << pass);
+        const double sz = 0.02 / double(1 << pass);
+        for (int dz = -1; dz <= 1; ++dz) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    if (dx == 0 && dy == 0 && dz == 0) {
+                        continue;
+                    }
+                    const double panX = std::clamp(outPanX + dx * sp, -1.0, 1.0);
+                    const double panY = std::clamp(outPanY + dy * sp, -1.0, 1.0);
+                    const double zoom = std::clamp(outZoom + dz * sz, 0.08, 8.0);
+                    const double m = evalFull(panX, panY, zoom);
+                    if (m < best) {
+                        best = m;
+                        outPanX = panX;
+                        outPanY = panY;
+                        outZoom = zoom;
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct EstMotionKf {
+    double t = 0.0;
+    double panX = 0.0;
+    double panY = 0.0;
+    double zoom = 1.0;
+};
+
+static double chordDeviation(const EstMotionKf &A, const EstMotionKf &B, const EstMotionKf &P)
+{
+    if (std::abs(B.t - A.t) < 1e-9) {
+        const double dx = P.panX - A.panX;
+        const double dy = P.panY - A.panY;
+        const double lz = std::log(std::max(0.05, P.zoom)) - std::log(std::max(0.05, A.zoom));
+        return std::sqrt(dx * dx + dy * dy + lz * lz * 2.25);
+    }
+    const double s = std::clamp((P.t - A.t) / (B.t - A.t), 0.0, 1.0);
+    const double ix = A.panX + (B.panX - A.panX) * s;
+    const double iy = A.panY + (B.panY - A.panY) * s;
+    const double iz = std::log(std::max(0.05, A.zoom)) + (std::log(std::max(0.05, B.zoom)) - std::log(std::max(0.05, A.zoom))) * s;
+    const double dx = P.panX - ix;
+    const double dy = P.panY - iy;
+    const double lz = std::log(std::max(0.05, P.zoom)) - iz;
+    return std::sqrt(dx * dx + dy * dy + lz * lz * 2.25);
+}
+
+static void rdpSimplifyKeyframes(std::vector<EstMotionKf> &kf, double epsilon)
+{
+    if (kf.size() < 3) {
+        return;
+    }
+    const int n = static_cast<int>(kf.size());
+    std::vector<uint8_t> keep(static_cast<size_t>(n), 0);
+    keep[0] = 1;
+    keep[static_cast<size_t>(n - 1)] = 1;
+
+    std::function<void(int, int)> recur;
+    recur = [&](int a, int b) {
+        if (b <= a + 1) {
+            return;
+        }
+        int worst = -1;
+        double maxD = 0.0;
+        for (int i = a + 1; i < b; ++i) {
+            const double d = chordDeviation(kf[static_cast<size_t>(a)], kf[static_cast<size_t>(b)], kf[static_cast<size_t>(i)]);
+            if (d > maxD) {
+                maxD = d;
+                worst = i;
+            }
+        }
+        if (worst > 0 && maxD > epsilon) {
+            keep[static_cast<size_t>(worst)] = 1;
+            recur(a, worst);
+            recur(worst, b);
+        }
+    };
+    recur(0, n - 1);
+
+    std::vector<EstMotionKf> out;
+    out.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        if (keep[static_cast<size_t>(i)]) {
+            out.push_back(kf[static_cast<size_t>(i)]);
+        }
+    }
+    kf = std::move(out);
+}
+
+QJsonArray estimateCamMotionFromDecodedFrames(const QList<QImage> &frames,
+                                              int outW,
+                                              int outH,
+                                              const QString &mode)
+{
+    QJsonArray arr;
+    if (frames.size() < 2 || outW < 8 || outH < 8) {
+        return arr;
+    }
+    QImage ref0 = frames.front().convertToFormat(QImage::Format_ARGB32);
+    if (ref0.isNull()) {
+        return arr;
+    }
+    if (ref0.size() != QSize(outW, outH)) {
+        ref0 = ref0.scaled(outW, outH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+
+    const int n = frames.size();
+    std::vector<EstMotionKf> kf;
+    kf.reserve(static_cast<size_t>(n));
+    double prevPanX = 0.0;
+    double prevPanY = 0.0;
+    double prevZoom = 1.0;
+
+    for (int i = 0; i < n; ++i) {
+        QImage tgt = frames.at(i).convertToFormat(QImage::Format_ARGB32);
+        if (tgt.isNull()) {
+            return {};
+        }
+        if (tgt.size() != QSize(outW, outH)) {
+            tgt = tgt.scaled(outW, outH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+        EstMotionKf row;
+        row.t = (n <= 1) ? 0.0 : double(i) / double(n - 1);
+        if (i == 0) {
+            row.panX = 0.0;
+            row.panY = 0.0;
+            row.zoom = 1.0;
+        } else {
+            searchPanZoomMatch(ref0, tgt, outW, outH, mode, prevPanX, prevPanY, prevZoom, row.panX, row.panY, row.zoom);
+        }
+        row.panX = std::clamp(row.panX, -1.0, 1.0);
+        row.panY = std::clamp(row.panY, -1.0, 1.0);
+        row.zoom = std::clamp(row.zoom, 0.05, 32.0);
+        prevPanX = row.panX;
+        prevPanY = row.panY;
+        prevZoom = row.zoom;
+        kf.push_back(row);
+    }
+
+    rdpSimplifyKeyframes(kf, 0.055);
+
+    for (const EstMotionKf &row : kf) {
+        QJsonObject o;
+        o.insert(QStringLiteral("t"), row.t);
+        o.insert(QStringLiteral("panX"), row.panX);
+        o.insert(QStringLiteral("panY"), row.panY);
+        o.insert(QStringLiteral("zoom"), row.zoom);
+        arr.append(o);
+    }
+    return arr;
+}
 
 // --- ConVideoFx / ConAudioFx ---
 
