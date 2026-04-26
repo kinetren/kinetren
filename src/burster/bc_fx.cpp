@@ -37,43 +37,60 @@ bool composePanZoomOutput(const QImage &srcArgb32,
         return false;
     }
 
-    double cropW = sw;
-    double cropH = sh;
+    double bx = 0.0;
+    double by = 0.0;
+    double bw = sw;
+    double bh = sh;
 
     const double arSrc = sw / sh;
     const double arOut = static_cast<double>(outW) / static_cast<double>(outH);
 
     if (mode == QStringLiteral("stretch")) {
-        cropW = sw;
-        cropH = sh;
+        bw = sw;
+        bh = sh;
+        bx = 0.0;
+        by = 0.0;
     } else if (mode == QStringLiteral("fill")) {
         if (arSrc > arOut) {
-            cropH = sh;
-            cropW = sh * arOut;
+            bh = sh;
+            bw = bh * arOut;
+            bx = (sw - bw) * 0.5;
+            by = 0.0;
         } else {
-            cropW = sw;
-            cropH = sw / arOut;
+            bw = sw;
+            bh = sw / arOut;
+            bx = 0.0;
+            by = (sh - bh) * 0.5;
         }
     } else {
-        // fit (letterbox / pillarbox)
+        // fit: largest arOut rectangle inside the decoded bitmap (decoder uses KeepAspectRatio, so
+        // sw:sh is media DAR — not necessarily the same box as outW:outH; old "wide" branch used
+        // cropH = sw/arOut which often exceeded sh and killed pan slack).
         if (arSrc > arOut) {
-            cropW = sw;
-            cropH = sw / arOut;
+            bh = sh;
+            bw = bh * arOut;
+            bx = (sw - bw) * 0.5;
+            by = 0.0;
         } else {
-            cropH = sh;
-            cropW = sh * arOut;
+            bw = sw;
+            bh = bw / arOut;
+            bx = 0.0;
+            by = (sh - bh) * 0.5;
         }
     }
 
+    const double cx0 = bx + bw * 0.5;
+    const double cy0 = by + bh * 0.5;
+
     const double invZoom = 1.0 / zoom;
-    const double zw = cropW * invZoom;
-    const double zh = cropH * invZoom;
+    const double zw = bw * invZoom;
+    const double zh = bh * invZoom;
     const double slackX = std::max(0.0, sw - zw);
     const double slackY = std::max(0.0, sh - zh);
-    const double cx = sw * 0.5 + panX * slackX * 0.5;
-    const double cy = sh * 0.5 + panY * slackY * 0.5;
-    cropW = zw;
-    cropH = zh;
+    const double cx = cx0 + panX * slackX * 0.5;
+    const double cy = cy0 + panY * slackY * 0.5;
+    const double cropW = zw;
+    const double cropH = zh;
     double cropX = cx - cropW * 0.5;
     double cropY = cy - cropH * 0.5;
     cropX = std::clamp(cropX, 0.0, std::max(0.0, sw - cropW));
