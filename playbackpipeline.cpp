@@ -1068,6 +1068,8 @@ void PlaybackPipeline::rebuildGraph(const std::vector<Clip> &videoClips, const s
         timer->setSource(root);
     }
     clearVideoFrameBucketSets();
+    // Invalidate in-flight draft jobs so idle preview does not keep showing frames from the old FX graph.
+    latestDraftSerial.fetch_add(1);
 }
 
 void PlaybackPipeline::tearDownAudioLocked()

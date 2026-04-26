@@ -1240,9 +1240,9 @@ void MainWindow::flushPlaybackSync()
     if (!playbackPipeline || !timelineEditor) {
         return;
     }
-    if (timelinePlaying) {
-        return;
-    }
+    // Always push the latest clip FX chains into the pipeline. Skipping while `timelinePlaying` was
+    // wrong: the UI timer can lag a tick, and debounced updates (timelineContentChanged) must still
+    // refresh the graph so ConTrack picks up new `videoFxChain` / `audioFxChain` JSON.
     syncTimelinePlayback();
 }
 

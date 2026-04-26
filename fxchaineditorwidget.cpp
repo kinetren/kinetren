@@ -238,18 +238,28 @@ private:
     bool selected = false;
 };
 
-void clearLayout(QWidget *w)
+/// Remove all layout items then delete the layout. Uses count() so we never call takeAt(0) on an empty
+/// QFormLayout (that emits "QFormLayout::takeAt: Invalid index 0" and can corrupt state).
+static void deleteLayoutAndChildren(QWidget *w)
 {
-    if (!w || !w->layout()) {
+    if (!w) {
         return;
     }
-    QLayoutItem *it = nullptr;
-    while ((it = w->layout()->takeAt(0)) != nullptr) {
-        if (it->widget()) {
-            delete it->widget();
+    QLayout *layout = w->layout();
+    if (!layout) {
+        return;
+    }
+    while (layout->count() > 0) {
+        QLayoutItem *it = layout->takeAt(0);
+        if (!it) {
+            break;
+        }
+        if (QWidget *cw = it->widget()) {
+            delete cw;
         }
         delete it;
     }
+    delete layout;
 }
 
 } // namespace
@@ -387,7 +397,7 @@ void FxChainEditorWidget::onChainReorder(int fromIndex, int toIndex)
     selectedFxRow = adj;
     rebuildChainStrip();
     rebuildParamPanel();
-    emit chainChanged(workingChain);
+    emit chainChanged(QJsonArray(workingChain));
 }
 
 void FxChainEditorWidget::rebuildChainStrip()
@@ -433,8 +443,19 @@ void FxChainEditorWidget::applyParamsFromPanelToChain()
     if (selectedFxRow < 0 || selectedFxRow >= workingChain.size() || !paramPanel) {
         return;
     }
-    QJsonObject slot = workingChain.at(selectedFxRow).toObject();
-    const QString type = slot.value(QStringLiteral("type")).toString();
+    const QJsonValue rowVal = workingChain.at(selectedFxRow);
+    if (!rowVal.isObject()) {
+        return;
+    }
+    QJsonObject slot = rowVal.toObject();
+    QString type = slot.value(QStringLiteral("type")).toString();
+    if (type.isEmpty()) {
+        type = effectTypeAt(selectedFxRow);
+        if (type.isEmpty()) {
+            return;
+        }
+        slot.insert(QStringLiteral("type"), type);
+    }
     QJsonObject p = slot.value(QStringLiteral("params")).toObject();
 
     if (type == QStringLiteral("pan")) {
@@ -510,8 +531,7 @@ void FxChainEditorWidget::applyParamsFromPanelToChain()
 void FxChainEditorWidget::rebuildParamPanel()
 {
     suppressParamRefresh = 1;
-    clearLayout(paramPanel);
-    delete paramPanel->layout();
+    deleteLayoutAndChildren(paramPanel);
 
     if (selectedFxRow < 0 || selectedFxRow >= workingChain.size()) {
         auto *lay = new QVBoxLayout(paramPanel);
@@ -532,7 +552,7 @@ void FxChainEditorWidget::rebuildParamPanel()
             return;
         }
         applyParamsFromPanelToChain();
-        emit chainChanged(workingChain);
+        emit chainChanged(QJsonArray(workingChain));
     };
 
     if (type == QStringLiteral("pan")) {
@@ -713,7 +733,7 @@ void FxChainEditorWidget::onAddClicked()
     selectedFxRow = workingChain.size() - 1;
     rebuildChainStrip();
     rebuildParamPanel();
-    emit chainChanged(workingChain);
+    emit chainChanged(QJsonArray(workingChain));
 }
 
 void FxChainEditorWidget::onRemoveClicked()
@@ -730,7 +750,7 @@ void FxChainEditorWidget::onRemoveClicked()
     }
     rebuildChainStrip();
     rebuildParamPanel();
-    emit chainChanged(workingChain);
+    emit chainChanged(QJsonArray(workingChain));
 }
 
 #include "fxchaineditorwidget.moc"

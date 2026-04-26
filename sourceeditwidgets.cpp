@@ -16,6 +16,7 @@
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -245,10 +246,18 @@ void MorpherEditWindow::reloadFromTimeline()
     setWindowTitle(batch ? tr("Morpher FX batch — event %1").arg(morpherId) : tr("Morpher — event %1").arg(morpherId));
     if (batch) {
         setMinimumSize(560, 520);
-        QSignalBlocker bv(vfxEditor);
-        QSignalBlocker ba(afxEditor);
-        vfxEditor->setChain(timeline->morpherBulkVideoFxAppend(morpherId));
-        afxEditor->setChain(timeline->morpherBulkAudioFxAppend(morpherId));
+        const QJsonArray v = timeline->morpherBulkVideoFxAppend(morpherId);
+        const QJsonArray a = timeline->morpherBulkAudioFxAppend(morpherId);
+        // Avoid setChain when unchanged: our own FX edits emit timelineContentChanged, and setChain
+        // rebuilds the form (would fight the focused control and was triggering QFormLayout takeAt warnings).
+        if (v != vfxEditor->chain()) {
+            QSignalBlocker bv(vfxEditor);
+            vfxEditor->setChain(v);
+        }
+        if (a != afxEditor->chain()) {
+            QSignalBlocker ba(afxEditor);
+            afxEditor->setChain(a);
+        }
         return;
     }
     setMinimumSize(410, 275);
