@@ -1,5 +1,7 @@
 #include "fxchaineditorwidget.h"
 
+#include <QJsonObject>
+
 #include <QApplication>
 #include <QCheckBox>
 #include <QColorDialog>

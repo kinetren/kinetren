@@ -190,13 +190,13 @@ MorpherEditWindow::MorpherEditWindow(TimelineEditor *timeline, int morpherEventI
             &MorpherEditWindow::onDeltaSpinChanged);
 
     connect(vfxEditor, &FxChainEditorWidget::chainChanged, this, [this](const QJsonArray &c) {
-        if (timeline && timeline->hasMorpherEvent(morpherId)) {
-            timeline->setMorpherBulkVideoFxAppend(morpherId, c);
+        if (this->timeline && this->timeline->hasMorpherEvent(this->morpherId)) {
+            this->timeline->setMorpherBulkVideoFxAppend(this->morpherId, c);
         }
     });
     connect(afxEditor, &FxChainEditorWidget::chainChanged, this, [this](const QJsonArray &c) {
-        if (timeline && timeline->hasMorpherEvent(morpherId)) {
-            timeline->setMorpherBulkAudioFxAppend(morpherId, c);
+        if (this->timeline && this->timeline->hasMorpherEvent(this->morpherId)) {
+            this->timeline->setMorpherBulkAudioFxAppend(this->morpherId, c);
         }
     });
 
