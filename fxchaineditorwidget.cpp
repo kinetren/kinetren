@@ -688,16 +688,24 @@ void FxChainEditorWidget::rebuildParamPanel()
         autoLay->setContentsMargins(0, 0, 0, 0);
         auto *samplesSpin = new QSpinBox(autoRow);
         samplesSpin->setObjectName(QStringLiteral("fx_cammotion_samples"));
-        samplesSpin->setRange(6, 40);
-        samplesSpin->setValue(20);
-        samplesSpin->setToolTip(tr("More samples follow fast back-and-forth motion better (slower)."));
+        samplesSpin->setRange(8, 48);
+        samplesSpin->setValue(28);
+        samplesSpin->setToolTip(tr("More time samples capture more reversals (slower decode)."));
+        auto *targetSpin = new QSpinBox(autoRow);
+        targetSpin->setObjectName(QStringLiteral("fx_cammotion_targetkeys"));
+        targetSpin->setRange(0, 24);
+        targetSpin->setValue(0);
+        targetSpin->setSpecialValueText(tr("Auto"));
+        targetSpin->setToolTip(tr("Approximate number of keyframes after simplification (0 = auto from samples)."));
         auto *autoBtn = new QPushButton(tr("Auto from clip video…"), autoRow);
         autoBtn->setEnabled(camMotionTimeline != nullptr && camMotionClipId >= 0);
         autoLay->addWidget(new QLabel(tr("Samples:"), autoRow));
         autoLay->addWidget(samplesSpin);
+        autoLay->addWidget(new QLabel(tr("Keys:"), autoRow));
+        autoLay->addWidget(targetSpin);
         autoLay->addWidget(autoBtn, 1);
         form->addRow(tr("Estimate"), autoRow);
-        connect(autoBtn, &QPushButton::clicked, this, [this, samplesSpin, mode, hook]() {
+        connect(autoBtn, &QPushButton::clicked, this, [this, samplesSpin, targetSpin, mode, hook]() {
             if (!camMotionTimeline || camMotionClipId < 0) {
                 return;
             }
@@ -706,7 +714,8 @@ void FxChainEditorWidget::rebuildParamPanel()
             const QJsonArray kf =
                 camMotionTimeline->estimateCamMotionKeyframesFromClip(camMotionClipId,
                                                                       samplesSpin->value(),
-                                                                      framing);
+                                                                      framing,
+                                                                      targetSpin->value());
             QApplication::restoreOverrideCursor();
             if (kf.isEmpty()) {
                 QMessageBox::warning(this,

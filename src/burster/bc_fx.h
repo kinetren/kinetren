@@ -102,10 +102,12 @@ bool processVideoFxChainInPlace(VideoBurst &vb, const QJsonArray &chain, const V
 
 /// `frames[0]` is the reference texture at clip start; all frames same size (e.g. 320×180 decode).
 /// Returns a `keyframes` JSON array: `{ "t", "panX", "panY", "zoom" }` in [0,1] time along the clip.
+/// `targetKeyframeCount` > 0: RDP simplification is tuned to leave about that many keys (else ~n/3, min 6).
 QJsonArray estimateCamMotionFromDecodedFrames(const QList<QImage> &frames,
                                               int outW,
                                               int outH,
-                                              const QString &mode = QStringLiteral("fit"));
+                                              const QString &mode = QStringLiteral("fit"),
+                                              int targetKeyframeCount = 0);
 
 } // namespace burstcon
 

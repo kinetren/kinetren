@@ -830,8 +830,8 @@ static void searchPanZoomMatch(const QImage &refArgb,
     outZoom = hintZoom;
 
     // Wide coarse search (strong zoom-ins / push beyond frame edges need high zoom values).
-    const double zMin = 0.22;
-    const double zMax = 6.5;
+    const double zMin = 0.18;
+    const double zMax = 8.0;
     const int nz = 22;
     const int np = 13;
     for (int iz = 0; iz < nz; ++iz) {
@@ -864,7 +864,7 @@ static void searchPanZoomMatch(const QImage &refArgb,
                     }
                     const double panX = std::clamp(outPanX + dx * stepPan, -1.0, 1.0);
                     const double panY = std::clamp(outPanY + dy * stepPan, -1.0, 1.0);
-                    const double zoom = std::clamp(outZoom + dz * stepZ, 0.08, 8.0);
+                    const double zoom = std::clamp(outZoom + dz * stepZ, 0.06, 14.0);
                     const double m = eval(panX, panY, zoom);
                     if (m < best) {
                         best = m;
@@ -901,7 +901,7 @@ static void searchPanZoomMatch(const QImage &refArgb,
                     }
                     const double panX = std::clamp(outPanX + dx * sp, -1.0, 1.0);
                     const double panY = std::clamp(outPanY + dy * sp, -1.0, 1.0);
-                    const double zoom = std::clamp(outZoom + dz * sz, 0.08, 8.0);
+                    const double zoom = std::clamp(outZoom + dz * sz, 0.06, 14.0);
                     const double m = evalFull(panX, panY, zoom);
                     if (m < best) {
                         best = m;
@@ -982,10 +982,58 @@ static void rdpSimplifyKeyframes(std::vector<EstMotionKf> &kf, double epsilon)
     kf = std::move(out);
 }
 
+/// Pick RDP epsilon so we end up near `target` keys (monotone: larger ε → fewer points).
+static void rdpToKeyframeBudget(std::vector<EstMotionKf> &kf, int target)
+{
+    const int n = static_cast<int>(kf.size());
+    if (n <= 2 || target >= n) {
+        return;
+    }
+    target = std::clamp(target, 3, n);
+    double lo = 1e-5;
+    double hi = 0.48;
+    std::vector<EstMotionKf> best = kf;
+    int bestDiff = std::abs(n - target);
+    for (int iter = 0; iter < 26; ++iter) {
+        const double mid = 0.5 * (lo + hi);
+        std::vector<EstMotionKf> t = kf;
+        rdpSimplifyKeyframes(t, mid);
+        const int sz = static_cast<int>(t.size());
+        const int df = std::abs(sz - target);
+        if (df < bestDiff) {
+            bestDiff = df;
+            best = std::move(t);
+        }
+        if (sz > target) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    {
+        std::vector<EstMotionKf> t = kf;
+        rdpSimplifyKeyframes(t, lo);
+        const int df = std::abs(static_cast<int>(t.size()) - target);
+        if (df < bestDiff) {
+            best = std::move(t);
+        }
+    }
+    {
+        std::vector<EstMotionKf> t = kf;
+        rdpSimplifyKeyframes(t, hi);
+        const int df = std::abs(static_cast<int>(t.size()) - target);
+        if (df < bestDiff) {
+            best = std::move(t);
+        }
+    }
+    kf = std::move(best);
+}
+
 QJsonArray estimateCamMotionFromDecodedFrames(const QList<QImage> &frames,
                                               int outW,
                                               int outH,
-                                              const QString &mode)
+                                              const QString &mode,
+                                              int targetKeyframeCount)
 {
     QJsonArray arr;
     if (frames.size() < 2 || outW < 8 || outH < 8) {
@@ -1032,7 +1080,11 @@ QJsonArray estimateCamMotionFromDecodedFrames(const QList<QImage> &frames,
         kf.push_back(row);
     }
 
-    rdpSimplifyKeyframes(kf, 0.055);
+    const int nKeys = static_cast<int>(kf.size());
+    int target = targetKeyframeCount > 0 ? std::min(targetKeyframeCount, nKeys)
+                                           : std::clamp((nKeys + 2) / 3, 6, 16);
+    target = std::clamp(target, 3, nKeys);
+    rdpToKeyframeBudget(kf, target);
 
     for (const EstMotionKf &row : kf) {
         QJsonObject o;

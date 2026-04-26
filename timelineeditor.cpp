@@ -3954,9 +3954,13 @@ QImage TimelineEditor::decodeVideoPreviewSync(const QString &path, qint64 bucket
 
 QImage TimelineEditor::decodeVideoPreviewAtSourceMs(const QString &path,
                                                     qint64 sourceMsAbsolute,
-                                                    qint64 decodeOriginMs) const
+                                                    qint64 decodeOriginMs,
+                                                    int outWidth,
+                                                    int outHeight) const
 {
     QImage img;
+    const int qw = std::max(160, outWidth);
+    const int qh = std::max(90, outHeight);
     if (isImagePath(path)) {
         img.load(path);
     } else {
@@ -3976,7 +3980,7 @@ QImage TimelineEditor::decodeVideoPreviewAtSourceMs(const QString &path,
             auto media = pool->acquire(path, true, false, originIdx, true, false, poolShard);
             burstcon::BurstRequest req;
             req.index = idx;
-            req.quality = burstcon::BurstQuality{320, 180};
+            req.quality = burstcon::BurstQuality{qw, qh};
             req.decodeOrigin = originIdx;
             burstcon::VideoBurst frame;
             if (media && media->videoBurst(req, frame) && !frame.frame.isNull()) {
@@ -3998,19 +4002,22 @@ QImage TimelineEditor::decodeVideoPreviewAtSourceMs(const QString &path,
 
 QJsonArray TimelineEditor::estimateCamMotionKeyframesFromClip(int clipId,
                                                                int sampleCount,
-                                                               const QString &mode) const
+                                                               const QString &mode,
+                                                               int targetKeyframeCount) const
 {
     const ClipEvent *c = findClipById(clipId);
     if (!c || c->mediaType != TrackType::Video || isImagePath(c->sourcePath)) {
         return {};
     }
     const int n = std::clamp(sampleCount, 5, 40);
+    const int decW = 480;
+    const int decH = 270;
     QList<QImage> frames;
     frames.reserve(n);
     for (int i = 0; i < n; ++i) {
         const qint64 offset = (n <= 1) ? 0 : (c->durationMs * i) / (n - 1);
         const qint64 absMs = c->sourceInMs + offset;
-        QImage img = decodeVideoPreviewAtSourceMs(c->sourcePath, absMs, c->sourceInMs);
+        QImage img = decodeVideoPreviewAtSourceMs(c->sourcePath, absMs, c->sourceInMs, decW, decH);
         if (img.isNull()) {
             return {};
         }
@@ -4018,7 +4025,11 @@ QJsonArray TimelineEditor::estimateCamMotionKeyframesFromClip(int clipId,
     }
     const int ow = frames.front().width();
     const int oh = frames.front().height();
-    return burstcon::estimateCamMotionFromDecodedFrames(frames, ow, oh, mode);
+    const int targetKeys =
+        targetKeyframeCount > 0
+            ? std::clamp(targetKeyframeCount, 4, std::max(4, n - 1))
+            : std::clamp((n + 2) / 3, 6, 16);
+    return burstcon::estimateCamMotionFromDecodedFrames(frames, ow, oh, mode, targetKeys);
 }
 
 QString TimelineEditor::peaksCacheKey(const QString &path,

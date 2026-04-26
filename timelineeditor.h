@@ -127,7 +127,11 @@ public:
     QImage previewStillForClip(int clipId);
 
     /// Sample decoded frames along the clip and estimate `cammotion` keyframes (pan/zoom vs first frame).
-    QJsonArray estimateCamMotionKeyframesFromClip(int clipId, int sampleCount, const QString &mode) const;
+    /// `targetKeyframeCount` 0 = derive from sample count (~n/3, at least 6); else clamped to samples.
+    QJsonArray estimateCamMotionKeyframesFromClip(int clipId,
+                                                  int sampleCount,
+                                                  const QString &mode,
+                                                  int targetKeyframeCount = 0) const;
 
     static QString firstLocalPathFromMime(const QMimeData *mime);
 
@@ -369,7 +373,11 @@ private:
     QImage cachedVideoPreview(const QString &path, qint64 sourceInMs);
     QImage decodeVideoPreviewSync(const QString &path, qint64 bucketMs) const;
     /// Decode one frame at `sourceMsAbsolute` (ms from file start), with demuxer origin at `decodeOriginMs`.
-    QImage decodeVideoPreviewAtSourceMs(const QString &path, qint64 sourceMsAbsolute, qint64 decodeOriginMs) const;
+    QImage decodeVideoPreviewAtSourceMs(const QString &path,
+                                        qint64 sourceMsAbsolute,
+                                        qint64 decodeOriginMs,
+                                        int outWidth = 320,
+                                        int outHeight = 180) const;
     void notePreviewCacheHit(const QString &key);
     void commitPreviewCacheFromWorker(const QString &key, const QImage &img);
     QVector<QPair<int, int>> cachedAudioPeaksStereo(const QString &path,
