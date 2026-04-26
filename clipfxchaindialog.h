@@ -6,13 +6,14 @@
 #include <QSize>
 #include <QString>
 
-class QListWidget;
-class QPlainTextEdit;
 class QLabel;
 class QComboBox;
+class QScrollArea;
+class QWidget;
+class QHBoxLayout;
 class TimelineEditor;
 
-/// Edit per-clip video or audio FX chain (JSON slots), with live video preview when editing video.
+/// Edit per-clip video or audio FX chain: horizontal chain + DnD reorder + widget parameters.
 class ClipFxChainDialog : public QDialog
 {
 public:
@@ -29,11 +30,15 @@ public:
                        const QSize &projectOutputSize);
 
 private:
-    void repopulateList();
-    void loadParamsEditor();
-    void saveParamsFromEditor();
+    void onChainCardClicked(int index);
+    void onChainReorder(int fromIndex, int toIndex);
+    void rebuildChainStrip();
+    void rebuildParamPanel();
+    void applyParamsFromPanelToChain();
     void refreshPreview();
     void appendEffect(const QString &typeId);
+    void removeSelectedEffect();
+    QString effectTypeAt(int row) const;
 
     TimelineEditor *timeline = nullptr;
     int clipId = -1;
@@ -41,11 +46,17 @@ private:
     QSize projectOutputSize;
     QJsonArray workingChain;
 
-    QListWidget *fxList = nullptr;
-    QPlainTextEdit *paramEdit = nullptr;
+    int selectedFxRow = -1;
+
+    QScrollArea *chainScroll = nullptr;
+    QWidget *chainInner = nullptr;
+    QHBoxLayout *chainLayout = nullptr;
+
+    QWidget *paramPanel = nullptr;
     QLabel *preview = nullptr;
     QComboBox *addCombo = nullptr;
-    int suppressParamSignal = 0;
+
+    int suppressParamRefresh = 0;
 };
 
 #endif

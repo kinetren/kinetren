@@ -43,6 +43,8 @@ extern "C" {
 
 namespace {
 
+using burstcon::BurstIndex;
+
 void crossfadePairWeights(BurstIndex t,
                           BurstIndex a0,
                           BurstIndex a1,
