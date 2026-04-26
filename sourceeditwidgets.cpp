@@ -201,7 +201,10 @@ MorpherEditWindow::MorpherEditWindow(TimelineEditor *timeline, int morpherEventI
     });
 
     if (timeline) {
-        connect(timeline, &TimelineEditor::timelineContentChanged, this, &MorpherEditWindow::reloadFromTimeline);
+        // Queued: bulk FX edits emit timelineContentChanged → this slot must not rebuild param
+        // widgets synchronously (would delete the QSpinBox / QLineEdit still emitting).
+        connect(timeline, &TimelineEditor::timelineContentChanged, this, &MorpherEditWindow::reloadFromTimeline,
+                Qt::QueuedConnection);
     }
     reloadFromTimeline();
 }
