@@ -37,8 +37,6 @@ bool composePanZoomOutput(const QImage &srcArgb32,
         return false;
     }
 
-    double cropX = 0.0;
-    double cropY = 0.0;
     double cropW = sw;
     double cropH = sh;
 
@@ -46,44 +44,38 @@ bool composePanZoomOutput(const QImage &srcArgb32,
     const double arOut = static_cast<double>(outW) / static_cast<double>(outH);
 
     if (mode == QStringLiteral("stretch")) {
-        cropX = 0.0;
-        cropY = 0.0;
         cropW = sw;
         cropH = sh;
     } else if (mode == QStringLiteral("fill")) {
         if (arSrc > arOut) {
             cropH = sh;
             cropW = sh * arOut;
-            cropX = (sw - cropW) * 0.5;
-            cropY = 0.0;
         } else {
             cropW = sw;
             cropH = sw / arOut;
-            cropX = 0.0;
-            cropY = (sh - cropH) * 0.5;
         }
     } else {
         // fit (letterbox / pillarbox)
         if (arSrc > arOut) {
             cropW = sw;
             cropH = sw / arOut;
-            cropX = 0.0;
-            cropY = (sh - cropH) * 0.5;
         } else {
             cropH = sh;
             cropW = sh * arOut;
-            cropX = (sw - cropW) * 0.5;
-            cropY = 0.0;
         }
     }
 
     const double invZoom = 1.0 / zoom;
-    const double cx = cropX + cropW * 0.5 + panX * (sw - cropW) * 0.5;
-    const double cy = cropY + cropH * 0.5 + panY * (sh - cropH) * 0.5;
-    cropW *= invZoom;
-    cropH *= invZoom;
-    cropX = cx - cropW * 0.5;
-    cropY = cy - cropH * 0.5;
+    const double zw = cropW * invZoom;
+    const double zh = cropH * invZoom;
+    const double slackX = std::max(0.0, sw - zw);
+    const double slackY = std::max(0.0, sh - zh);
+    const double cx = sw * 0.5 + panX * slackX * 0.5;
+    const double cy = sh * 0.5 + panY * slackY * 0.5;
+    cropW = zw;
+    cropH = zh;
+    double cropX = cx - cropW * 0.5;
+    double cropY = cy - cropH * 0.5;
     cropX = std::clamp(cropX, 0.0, std::max(0.0, sw - cropW));
     cropY = std::clamp(cropY, 0.0, std::max(0.0, sh - cropH));
 
