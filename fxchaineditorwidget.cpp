@@ -1,6 +1,7 @@
 #include "fxchaineditorwidget.h"
 #include "timelineeditor.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
@@ -30,7 +31,16 @@
 #include <QDoubleSpinBox>
 #include <QPlainTextEdit>
 #include <QVBoxLayout>
-#include <QVariant>
+#include <vector>
+#include <QPainter>
+#include <QPaintEvent>
+#include <QPolygon>
+#include <QResizeEvent>
+#include <QTimer>
+#include <cmath>
+#include <functional>
+#include <limits>
+#include <algorithm>
 
 namespace {
 
@@ -87,6 +97,13 @@ QJsonObject defaultParamsForVideoType(const QString &type)
         o.insert(QStringLiteral("strength"), 0.65);
         return o;
     }
+    if (type == QStringLiteral("eventgrid")) {
+        QJsonObject o;
+        o.insert(QStringLiteral("gridCols"), 1);
+        o.insert(QStringLiteral("gridRows"), 1);
+        o.insert(QStringLiteral("centerGrid"), true);
+        return o;
+    }
     if (type == QStringLiteral("cammotion")) {
         QJsonObject o;
         o.insert(QStringLiteral("mode"), QStringLiteral("fit"));
@@ -127,6 +144,13 @@ QJsonObject defaultParamsForAudioType(const QString &type)
         o.insert(QStringLiteral("cutoffHz"), 6000.0);
         return o;
     }
+    if (type == QStringLiteral("audiogrid")) {
+        QJsonObject o;
+        o.insert(QStringLiteral("gridCols"), 1);
+        o.insert(QStringLiteral("gridRows"), 1);
+        o.insert(QStringLiteral("spreadMs"), 4.0);
+        return o;
+    }
     return QJsonObject();
 }
 
@@ -141,6 +165,8 @@ QString humanTypeName(const QString &id)
                                              {QStringLiteral("noise"), QStringLiteral("Noise")},
                                              {QStringLiteral("vhs"), QStringLiteral("VHS")},
                                              {QStringLiteral("glow"), QStringLiteral("Glow")},
+                                             {QStringLiteral("eventgrid"), QStringLiteral("Event grid")},
+                                             {QStringLiteral("audiogrid"), QStringLiteral("Audio grid")},
                                              {QStringLiteral("softclip"), QStringLiteral("Soft clip")},
                                              {QStringLiteral("lowpass"), QStringLiteral("Low-pass")}};
     return map.value(id, id.isEmpty() ? QStringLiteral("?") : id);
@@ -272,6 +298,383 @@ private:
     bool selected = false;
 };
 
+} // namespace
+
+constexpr char kFxAutomationMime[] = "application/x-kp-fx-automation";
+
+/// Multi-row envelopes (one lane per parameter). Time axis auto-fits all keyframe t values; green dashed lines mark clip 0 and 1.
+/// Keyframe t may be outside [0,1] for edits after trimming. Playback still samples automation at clip-normalized u ∈ [0,1].
+class FxAutomationMultiLaneWidget : public QWidget
+{
+public:
+    explicit FxAutomationMultiLaneWidget(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumHeight(96);
+        setMinimumWidth(320);
+        setMouseTracking(true);
+    }
+
+    void setParamKeys(const QStringList &keys, const QStringList &labels)
+    {
+        paramKeys = keys;
+        paramLabels = labels.size() == keys.size() ? labels : keys;
+        setMinimumHeight(28 + std::max(1, paramKeys.size()) * 22 + 24);
+        recomputeBounds();
+        updateGeometry();
+        update();
+    }
+
+    void setKeyframes(QJsonArray k)
+    {
+        keyframesData = std::move(k);
+        sortKeyframesStable();
+        recomputeBounds();
+        update();
+    }
+
+    QJsonArray keyframes() const { return keyframesData; }
+
+    int selectedKeyframeIndex() const { return selectedIndex; }
+
+    bool removeSelectedKeyframe()
+    {
+        if (selectedIndex < 0 || keyframesData.size() <= 1) {
+            return false;
+        }
+        keyframesData.removeAt(selectedIndex);
+        selectedIndex = std::min(selectedIndex, keyframesData.size() - 1);
+        sortKeyframesStable();
+        recomputeBounds();
+        update();
+        return true;
+    }
+
+    void refreshTimeScale()
+    {
+        recomputeBounds();
+        update();
+    }
+
+    std::function<void()> onEdited;
+    std::function<void(int)> onKeyframeSelected;
+
+protected:
+    void resizeEvent(QResizeEvent *e) override
+    {
+        recomputeBounds();
+        QWidget::resizeEvent(e);
+    }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.fillRect(rect(), QColor(22, 24, 28));
+
+        const int leftMargin = 112;
+        const int laneH = 22;
+        const int topPad = 22;
+        const int lanesH = std::max(1, paramKeys.size()) * laneH;
+        trackRect = QRect(leftMargin, topPad, std::max(40, width() - leftMargin - 10), lanesH);
+
+        painter.setPen(QColor(140, 150, 165));
+        painter.drawText(8, 16,
+                         tr("Envelope time (t = position on clip; dashed lines = clip in/out)."));
+
+        for (double mark : {0.0, 1.0}) {
+            if (mark + 1e-9 >= tLo && mark <= tHi + 1e-9) {
+                const int x = timeToX(mark);
+                painter.setPen(QPen(QColor(55, 160, 95, 200), 1, Qt::DashLine));
+                painter.drawLine(x, topPad - 2, x, topPad + lanesH + 2);
+            }
+        }
+
+        painter.setPen(QPen(QColor(65, 74, 88), 1));
+        painter.drawRect(trackRect.adjusted(0, 0, -1, -1));
+
+        int y = trackRect.top();
+        for (int li = 0; li < paramKeys.size(); ++li) {
+            const QString &pk = paramKeys[li];
+            const QString lab = li < paramLabels.size() ? paramLabels[li] : pk;
+            painter.setPen(QColor(185, 193, 206));
+            painter.drawText(6, y + 15, lab);
+            const QRect laneRect(trackRect.left(), y, trackRect.width(), laneH);
+            painter.setPen(QPen(QColor(48, 54, 62), 1));
+            painter.drawLine(laneRect.left(), laneRect.center().y(), laneRect.right(), laneRect.center().y());
+
+            for (int i = 0; i < keyframesData.size(); ++i) {
+                const QJsonObject o = keyframesData.at(i).toObject();
+                if (!o.contains(pk)) {
+                    continue;
+                }
+                const double t = o.value(QStringLiteral("t")).toDouble();
+                const int cx = timeToX(t);
+                const int cy = laneRect.center().y();
+                const QColor fill = (i == selectedIndex) ? QColor(91, 143, 212) : QColor(120, 133, 152);
+                painter.setBrush(fill);
+                painter.setPen(QPen(QColor(235, 240, 250), 1));
+                QPolygon dia;
+                dia << QPoint(cx, cy - 5) << QPoint(cx + 5, cy) << QPoint(cx, cy + 5) << QPoint(cx - 5, cy);
+                painter.drawPolygon(dia);
+            }
+            y += laneH;
+        }
+    }
+
+    void mousePressEvent(QMouseEvent *e) override
+    {
+        const int idx = hitTest(e->pos());
+        if (idx >= 0) {
+            selectedIndex = idx;
+            update();
+            if (onKeyframeSelected) {
+                onKeyframeSelected(idx);
+            }
+            dragging = true;
+            dragStartX = e->pos().x();
+            const QJsonObject o = keyframesData.at(idx).toObject();
+            dragStartT = o.value(QStringLiteral("t")).toDouble();
+            return;
+        }
+        selectedIndex = -1;
+        update();
+        if (onKeyframeSelected) {
+            onKeyframeSelected(-1);
+        }
+        QWidget::mousePressEvent(e);
+    }
+
+    void mouseMoveEvent(QMouseEvent *e) override
+    {
+        if (dragging && selectedIndex >= 0 && selectedIndex < keyframesData.size()) {
+            const double dt = xToTimeDelta(e->pos().x() - dragStartX);
+            QJsonObject o = keyframesData.at(selectedIndex).toObject();
+            o.insert(QStringLiteral("t"), dragStartT + dt);
+            keyframesData[selectedIndex] = o;
+            recomputeBounds();
+            update();
+            return;
+        }
+        QWidget::mouseMoveEvent(e);
+    }
+
+    void mouseReleaseEvent(QMouseEvent *e) override
+    {
+        if (dragging) {
+            dragging = false;
+            sortKeyframesStable();
+            recomputeBounds();
+            update();
+            if (onEdited) {
+                onEdited();
+            }
+            return;
+        }
+        QWidget::mouseReleaseEvent(e);
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent *e) override
+    {
+        const int idx = hitTest(e->pos());
+        if (idx >= 0 && keyframesData.size() > 1) {
+            keyframesData.removeAt(idx);
+            selectedIndex = std::min(selectedIndex, keyframesData.size() - 1);
+            sortKeyframesStable();
+            recomputeBounds();
+            update();
+            if (onKeyframeSelected) {
+                onKeyframeSelected(selectedIndex);
+            }
+            if (onEdited) {
+                onEdited();
+            }
+            return;
+        }
+        QWidget::mouseDoubleClickEvent(e);
+    }
+
+private:
+    void sortKeyframesStable()
+    {
+        std::vector<std::pair<double, QJsonValue>> items;
+        items.reserve(static_cast<size_t>(keyframesData.size()));
+        for (const QJsonValue &jv : keyframesData) {
+            if (!jv.isObject()) {
+                continue;
+            }
+            const QJsonObject o = jv.toObject();
+            items.push_back({o.value(QStringLiteral("t")).toDouble(), jv});
+        }
+        std::stable_sort(items.begin(), items.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+        keyframesData = QJsonArray();
+        for (const auto &pr : items) {
+            keyframesData.append(pr.second);
+        }
+    }
+
+    void recomputeBounds()
+    {
+        double mn = std::numeric_limits<double>::infinity();
+        double mx = -std::numeric_limits<double>::infinity();
+        for (const QJsonValue &jv : keyframesData) {
+            if (!jv.isObject()) {
+                continue;
+            }
+            const double t = jv.toObject().value(QStringLiteral("t")).toDouble();
+            mn = std::min(mn, t);
+            mx = std::max(mx, t);
+        }
+        if (!std::isfinite(mn) || !std::isfinite(mx)) {
+            tLo = -0.2;
+            tHi = 1.2;
+            return;
+        }
+        double pad = 0.12 * std::max(1e-6, mx - mn);
+        if (pad < 0.06) {
+            pad = 0.06;
+        }
+        tLo = std::min(0.0, mn) - pad;
+        tHi = std::max(1.0, mx) + pad;
+        if (tHi - tLo < 0.3) {
+            tLo -= 0.15;
+            tHi += 0.15;
+        }
+    }
+
+    int timeToX(double t) const
+    {
+        double u = (t - tLo) / (tHi - tLo);
+        u = std::clamp(u, 0.0, 1.0);
+        return trackRect.left() + static_cast<int>(std::lround(u * std::max(1, trackRect.width() - 1)));
+    }
+
+    double xToTimeDelta(int dx) const
+    {
+        return static_cast<double>(dx) / static_cast<double>(std::max(1, trackRect.width() - 1)) * (tHi - tLo);
+    }
+
+    int hitTest(QPoint pos) const
+    {
+        if (!trackRect.contains(pos)) {
+            return -1;
+        }
+        constexpr int laneH = 22;
+        const int li = (pos.y() - trackRect.top()) / laneH;
+        if (li < 0 || li >= paramKeys.size()) {
+            return -1;
+        }
+        const QString &pk = paramKeys[li];
+        const int yLane = trackRect.top() + li * laneH;
+        const int cy = yLane + laneH / 2;
+        for (int i = 0; i < keyframesData.size(); ++i) {
+            const QJsonObject o = keyframesData.at(i).toObject();
+            if (!o.contains(pk)) {
+                continue;
+            }
+            const double t = o.value(QStringLiteral("t")).toDouble();
+            const int cx = timeToX(t);
+            if (std::abs(pos.x() - cx) <= 8 && std::abs(pos.y() - cy) <= 9) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    QJsonArray keyframesData;
+    QStringList paramKeys;
+    QStringList paramLabels;
+    double tLo = -0.2;
+    double tHi = 1.2;
+    QRect trackRect;
+    int selectedIndex = -1;
+    bool dragging = false;
+    int dragStartX = 0;
+    double dragStartT = 0.0;
+};
+
+static QString automationLabelForKey(const QString &key)
+{
+    static const QHash<QString, QString> map{{QStringLiteral("mode"), QStringLiteral("Framing")},
+                                             {QStringLiteral("panX"), QStringLiteral("Pan X")},
+                                             {QStringLiteral("panY"), QStringLiteral("Pan Y")},
+                                             {QStringLiteral("zoom"), QStringLiteral("Zoom")},
+                                             {QStringLiteral("ease"), QStringLiteral("Ease")},
+                                             {QStringLiteral("timeScale"), QStringLiteral("Time scale")},
+                                             {QStringLiteral("horizontal"), QStringLiteral("Flip H")},
+                                             {QStringLiteral("vertical"), QStringLiteral("Flip V")},
+                                             {QStringLiteral("radius"), QStringLiteral("Radius")},
+                                             {QStringLiteral("keyR"), QStringLiteral("Key R")},
+                                             {QStringLiteral("keyG"), QStringLiteral("Key G")},
+                                             {QStringLiteral("keyB"), QStringLiteral("Key B")},
+                                             {QStringLiteral("tolerance"), QStringLiteral("Tolerance")},
+                                             {QStringLiteral("softness"), QStringLiteral("Softness")},
+                                             {QStringLiteral("threshold"), QStringLiteral("Threshold")},
+                                             {QStringLiteral("amount"), QStringLiteral("Amount")},
+                                             {QStringLiteral("rgbShift"), QStringLiteral("RGB shift")},
+                                             {QStringLiteral("bleed"), QStringLiteral("Bleed")},
+                                             {QStringLiteral("strength"), QStringLiteral("Strength")},
+                                             {QStringLiteral("gridCols"), QStringLiteral("Grid cols")},
+                                             {QStringLiteral("gridRows"), QStringLiteral("Grid rows")},
+                                             {QStringLiteral("centerGrid"), QStringLiteral("Center grid")},
+                                             {QStringLiteral("drive"), QStringLiteral("Drive")},
+                                             {QStringLiteral("cutoffHz"), QStringLiteral("Cutoff")},
+                                             {QStringLiteral("spreadMs"), QStringLiteral("Spread ms")}};
+    return map.value(key, key);
+}
+
+static FxAutomationMultiLaneWidget *findAutomationMultiLane(QWidget *paramPanel)
+{
+    return dynamic_cast<FxAutomationMultiLaneWidget *>(
+        paramPanel->findChild<QWidget *>(QStringLiteral("fx_param_automation_multilane")));
+}
+
+static QStringList animatableParamKeys(const QString &type)
+{
+    if (type == QStringLiteral("pan")) {
+        return {QStringLiteral("mode"), QStringLiteral("panX"), QStringLiteral("panY"), QStringLiteral("zoom")};
+    }
+    if (type == QStringLiteral("cammotion")) {
+        return {QStringLiteral("mode"), QStringLiteral("ease"), QStringLiteral("timeScale")};
+    }
+    if (type == QStringLiteral("mirror")) {
+        return {QStringLiteral("horizontal"), QStringLiteral("vertical")};
+    }
+    if (type == QStringLiteral("blur")) {
+        return {QStringLiteral("radius")};
+    }
+    if (type == QStringLiteral("greenscreen")) {
+        return {QStringLiteral("keyR"), QStringLiteral("keyG"), QStringLiteral("keyB"),
+                QStringLiteral("tolerance"), QStringLiteral("softness")};
+    }
+    if (type == QStringLiteral("edges")) {
+        return {QStringLiteral("threshold")};
+    }
+    if (type == QStringLiteral("noise")) {
+        return {QStringLiteral("amount")};
+    }
+    if (type == QStringLiteral("vhs")) {
+        return {QStringLiteral("rgbShift"), QStringLiteral("bleed")};
+    }
+    if (type == QStringLiteral("glow")) {
+        return {QStringLiteral("strength")};
+    }
+    if (type == QStringLiteral("eventgrid")) {
+        return {QStringLiteral("gridCols"), QStringLiteral("gridRows"), QStringLiteral("centerGrid")};
+    }
+    if (type == QStringLiteral("audiogrid")) {
+        return {QStringLiteral("gridCols"), QStringLiteral("gridRows"), QStringLiteral("spreadMs")};
+    }
+    if (type == QStringLiteral("softclip")) {
+        return {QStringLiteral("drive")};
+    }
+    if (type == QStringLiteral("lowpass")) {
+        return {QStringLiteral("cutoffHz")};
+    }
+    return {};
+}
+
+namespace {
+
 /// Remove all layout items then delete the layout. Uses count() so we never call takeAt(0) on an empty
 /// QFormLayout (that emits "QFormLayout::takeAt: Invalid index 0" and can corrupt state).
 static void deleteLayoutAndChildren(QWidget *w)
@@ -365,11 +768,13 @@ void FxChainEditorWidget::setMediaKind(MediaKind k)
             {"noise", "Noise"},
             {"vhs", "VHS"},
             {"glow", "Glow"},
+            {"eventgrid", "Event grid (tile dup)"},
         };
         for (const auto &it : items) {
             addCombo->addItem(QString::fromUtf8(it.label), QString::fromUtf8(it.id));
         }
     } else {
+        addCombo->addItem(tr("Audio grid (multi-tap)"), QStringLiteral("audiogrid"));
         addCombo->addItem(tr("Soft clip"), QStringLiteral("softclip"));
         addCombo->addItem(tr("Low-pass"), QStringLiteral("lowpass"));
     }
@@ -424,21 +829,23 @@ void FxChainEditorWidget::onChainCardClicked(int index)
 
 void FxChainEditorWidget::onChainReorder(int fromIndex, int toIndex)
 {
-    if (fromIndex < 0 || fromIndex >= workingChain.size() || toIndex < 0 || toIndex >= workingChain.size() ||
-        fromIndex == toIndex) {
-        return;
-    }
-    applyParamsFromPanelToChain();
-    const QJsonValue v = workingChain.takeAt(fromIndex);
-    int adj = toIndex;
-    if (fromIndex < toIndex) {
-        adj = toIndex - 1;
-    }
-    workingChain.insert(adj, v);
-    selectedFxRow = adj;
-    rebuildChainStrip();
-    rebuildParamPanel();
-    emit chainChanged(QJsonArray(workingChain));
+    QTimer::singleShot(0, this, [this, fromIndex, toIndex]() {
+        if (fromIndex < 0 || fromIndex >= workingChain.size() || toIndex < 0 || toIndex >= workingChain.size() ||
+            fromIndex == toIndex) {
+            return;
+        }
+        applyParamsFromPanelToChain();
+        const QJsonValue v = workingChain.takeAt(fromIndex);
+        int adj = toIndex;
+        if (fromIndex < toIndex) {
+            adj = toIndex - 1;
+        }
+        workingChain.insert(adj, v);
+        selectedFxRow = adj;
+        rebuildChainStrip();
+        rebuildParamPanel();
+        emit chainChanged(QJsonArray(workingChain));
+    });
 }
 
 void FxChainEditorWidget::rebuildChainStrip()
@@ -585,6 +992,41 @@ void FxChainEditorWidget::applyParamsFromPanelToChain()
         if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_lp_cut"))) {
             p.insert(QStringLiteral("cutoffHz"), w->value());
         }
+    } else if (type == QStringLiteral("eventgrid")) {
+        if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_grid_cols"))) {
+            p.insert(QStringLiteral("gridCols"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_grid_rows"))) {
+            p.insert(QStringLiteral("gridRows"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QCheckBox *>(QStringLiteral("fx_grid_center"))) {
+            p.insert(QStringLiteral("centerGrid"), w->isChecked());
+        }
+    } else if (type == QStringLiteral("audiogrid")) {
+        if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_audio_grid_cols"))) {
+            p.insert(QStringLiteral("gridCols"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_audio_grid_rows"))) {
+            p.insert(QStringLiteral("gridRows"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_audio_spread_ms"))) {
+            p.insert(QStringLiteral("spreadMs"), w->value());
+        }
+    }
+
+    if (FxAutomationMultiLaneWidget *ml = findAutomationMultiLane(paramPanel)) {
+        QJsonArray arr = ml->keyframes();
+        if (fxAutomationSelectedKeyframe >= 0 && fxAutomationSelectedKeyframe < arr.size()) {
+            QJsonObject kobj = arr.at(fxAutomationSelectedKeyframe).toObject();
+            const QStringList ak = animatableParamKeys(type);
+            for (const QString &k : ak) {
+                if (p.contains(k)) {
+                    kobj.insert(k, p.value(k));
+                }
+            }
+            arr[fxAutomationSelectedKeyframe] = kobj;
+        }
+        p.insert(QStringLiteral("automation"), arr);
     }
 
     slot.insert(QStringLiteral("params"), p);
@@ -594,6 +1036,7 @@ void FxChainEditorWidget::applyParamsFromPanelToChain()
 void FxChainEditorWidget::rebuildParamPanel()
 {
     suppressParamRefresh = 1;
+    fxAutomationSelectedKeyframe = -1;
     deleteLayoutAndChildren(paramPanel);
 
     if (selectedFxRow < 0 || selectedFxRow >= workingChain.size()) {
@@ -867,6 +1310,24 @@ void FxChainEditorWidget::rebuildParamPanel()
         s->setValue(p.value(QStringLiteral("strength")).toDouble(0.65));
         form->addRow(tr("Strength"), s);
         connect(s, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+    } else if (type == QStringLiteral("eventgrid")) {
+        auto *cols = new QSpinBox(paramPanel);
+        cols->setObjectName(QStringLiteral("fx_grid_cols"));
+        cols->setRange(1, 512);
+        cols->setValue(p.value(QStringLiteral("gridCols")).toInt(1));
+        form->addRow(tr("Grid columns"), cols);
+        connect(cols, QOverload<int>::of(&QSpinBox::valueChanged), this, [hook](int) { hook(); });
+        auto *rows = new QSpinBox(paramPanel);
+        rows->setObjectName(QStringLiteral("fx_grid_rows"));
+        rows->setRange(1, 512);
+        rows->setValue(p.value(QStringLiteral("gridRows")).toInt(1));
+        form->addRow(tr("Grid rows"), rows);
+        connect(rows, QOverload<int>::of(&QSpinBox::valueChanged), this, [hook](int) { hook(); });
+        auto *center = new QCheckBox(tr("Center grid in frame (letterbox padding)"), paramPanel);
+        center->setObjectName(QStringLiteral("fx_grid_center"));
+        center->setChecked(p.value(QStringLiteral("centerGrid")).toBool(true));
+        form->addRow(center);
+        connect(center, &QCheckBox::toggled, this, [hook](bool) { hook(); });
     } else if (type == QStringLiteral("softclip")) {
         auto *d = new QDoubleSpinBox(paramPanel);
         d->setObjectName(QStringLiteral("fx_sc_drive"));
@@ -886,8 +1347,146 @@ void FxChainEditorWidget::rebuildParamPanel()
         c->setValue(p.value(QStringLiteral("cutoffHz")).toDouble(6000.0));
         form->addRow(tr("Cutoff"), c);
         connect(c, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+    } else if (type == QStringLiteral("audiogrid")) {
+        auto *cols = new QSpinBox(paramPanel);
+        cols->setObjectName(QStringLiteral("fx_audio_grid_cols"));
+        cols->setRange(1, 32);
+        cols->setValue(p.value(QStringLiteral("gridCols")).toInt(1));
+        cols->setToolTip(tr("Parallel taps mixed down (with spread). Higher counts cost more CPU."));
+        form->addRow(tr("Grid columns"), cols);
+        connect(cols, QOverload<int>::of(&QSpinBox::valueChanged), this, [hook](int) { hook(); });
+        auto *rows = new QSpinBox(paramPanel);
+        rows->setObjectName(QStringLiteral("fx_audio_grid_rows"));
+        rows->setRange(1, 32);
+        rows->setValue(p.value(QStringLiteral("gridRows")).toInt(1));
+        form->addRow(tr("Grid rows"), rows);
+        connect(rows, QOverload<int>::of(&QSpinBox::valueChanged), this, [hook](int) { hook(); });
+        auto *sp = new QDoubleSpinBox(paramPanel);
+        sp->setObjectName(QStringLiteral("fx_audio_spread_ms"));
+        sp->setRange(0.0, 120.0);
+        sp->setDecimals(2);
+        sp->setSuffix(QStringLiteral(" ms"));
+        sp->setValue(p.value(QStringLiteral("spreadMs")).toDouble(4.0));
+        sp->setToolTip(tr("Max delay between first and last tap. At 1×1 grid this has no effect."));
+        form->addRow(tr("Delay spread"), sp);
+        connect(sp, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
     } else {
         form->addRow(new QLabel(tr("No editor for type \"%1\"").arg(type), paramPanel));
+    }
+
+    const QStringList animKeys = animatableParamKeys(type);
+    if (!animKeys.isEmpty()) {
+        auto *hint =
+            new QLabel(tr("Automation: one horizontal lane per parameter (envelope-style). "
+                          "Green dashed lines mark clip start/end (t = 0 and 1 along the clip). "
+                          "Markers may sit outside [0,1] — useful after trimming — and remain draggable. "
+                          "Click a diamond to load that keyframe into the controls below for editing."),
+                       paramPanel);
+        hint->setWordWrap(true);
+        form->addRow(hint);
+
+        QStringList laneLabels;
+        laneLabels.reserve(animKeys.size());
+        for (const QString &k : animKeys) {
+            laneLabels.append(automationLabelForKey(k));
+        }
+
+        auto *ml = new FxAutomationMultiLaneWidget(paramPanel);
+        ml->setObjectName(QStringLiteral("fx_param_automation_multilane"));
+        ml->setParamKeys(animKeys, laneLabels);
+        ml->setKeyframes(p.value(QStringLiteral("automation")).toArray());
+        ml->onEdited = [hook]() { hook(); };
+        ml->onKeyframeSelected = [this](int idx) {
+            fxAutomationSelectedKeyframe = idx;
+            if (idx >= 0) {
+                syncWidgetsFromAutomationKeyframe(idx);
+            }
+        };
+        form->addRow(tr("Envelopes"), ml);
+
+        auto *tRow = new QWidget(paramPanel);
+        auto *th = new QHBoxLayout(tRow);
+        th->setContentsMargins(0, 0, 0, 0);
+        auto *timeSpin = new QDoubleSpinBox(tRow);
+        timeSpin->setRange(-100.0, 100.0);
+        timeSpin->setDecimals(5);
+        timeSpin->setSingleStep(0.02);
+        timeSpin->setValue(0.5);
+        timeSpin->setToolTip(
+            tr("Time of a new keyframe (t). Inside the clip, playback uses 0…1; keys outside stay editable."));
+        auto *addBtn = new QPushButton(tr("Add keyframe at t"), tRow);
+        auto *delBtn = new QPushButton(tr("Remove selected"), tRow);
+        auto *copyBtn = new QPushButton(tr("Copy envelopes"), tRow);
+        auto *pasteBtn = new QPushButton(tr("Paste envelopes"), tRow);
+        th->addWidget(timeSpin);
+        th->addWidget(addBtn);
+        th->addWidget(delBtn);
+        th->addWidget(copyBtn);
+        th->addWidget(pasteBtn);
+        th->addStretch(1);
+        form->addRow(tr("Keyframes"), tRow);
+
+        connect(addBtn, &QPushButton::clicked, this, [this, type, timeSpin, ml, hook]() {
+            applyParamsFromPanelToChain();
+            if (selectedFxRow < 0 || selectedFxRow >= workingChain.size()) {
+                return;
+            }
+            QJsonObject slot = workingChain.at(selectedFxRow).toObject();
+            QJsonObject bp = slot.value(QStringLiteral("params")).toObject();
+            QJsonArray arr = bp.value(QStringLiteral("automation")).toArray();
+            QJsonObject row;
+            row.insert(QStringLiteral("t"), timeSpin->value());
+            for (const QString &k : animatableParamKeys(type)) {
+                if (bp.contains(k)) {
+                    row.insert(k, bp.value(k));
+                }
+            }
+            arr.append(row);
+            bp.insert(QStringLiteral("automation"), arr);
+            slot.insert(QStringLiteral("params"), bp);
+            workingChain[selectedFxRow] = slot;
+            ml->setKeyframes(arr);
+            hook();
+        });
+        connect(delBtn, &QPushButton::clicked, this, [this, ml, hook]() {
+            if (ml->removeSelectedKeyframe()) {
+                fxAutomationSelectedKeyframe = ml->selectedKeyframeIndex();
+                hook();
+            }
+        });
+        connect(copyBtn, &QPushButton::clicked, this, [ml]() {
+            const QJsonDocument doc(ml->keyframes());
+            auto *mime = new QMimeData;
+            mime->setData(QString::fromLatin1(kFxAutomationMime), doc.toJson(QJsonDocument::Compact));
+            mime->setText(QString::fromUtf8(doc.toJson(QJsonDocument::Indented)));
+            QGuiApplication::clipboard()->setMimeData(mime);
+        });
+        connect(pasteBtn, &QPushButton::clicked, this, [this, ml, hook]() {
+            const QClipboard *clip = QGuiApplication::clipboard();
+            QByteArray raw;
+            if (const QMimeData *md = clip->mimeData()) {
+                if (md->hasFormat(QString::fromLatin1(kFxAutomationMime))) {
+                    raw = md->data(QString::fromLatin1(kFxAutomationMime));
+                }
+            }
+            if (raw.isEmpty()) {
+                raw = clip->text().toUtf8();
+            }
+            QJsonParseError err{};
+            const QJsonDocument doc = QJsonDocument::fromJson(raw, &err);
+            QJsonArray arr;
+            if (doc.isArray()) {
+                arr = doc.array();
+            }
+            if (arr.isEmpty()) {
+                QMessageBox::information(this,
+                                         tr("Paste envelopes"),
+                                         tr("Clipboard does not contain a valid automation JSON array."));
+                return;
+            }
+            ml->setKeyframes(arr);
+            hook();
+        });
     }
 
     suppressParamRefresh = 0;
@@ -926,6 +1525,188 @@ void FxChainEditorWidget::onRemoveClicked()
     rebuildChainStrip();
     rebuildParamPanel();
     emit chainChanged(QJsonArray(workingChain));
+}
+
+void FxChainEditorWidget::refreshAutomationUi()
+{
+    if (!paramPanel) {
+        return;
+    }
+    if (FxAutomationMultiLaneWidget *ml = findAutomationMultiLane(paramPanel)) {
+        ml->refreshTimeScale();
+    }
+}
+
+void FxChainEditorWidget::syncWidgetsFromAutomationKeyframe(int idx)
+{
+    if (!paramPanel || selectedFxRow < 0) {
+        return;
+    }
+    FxAutomationMultiLaneWidget *ml = findAutomationMultiLane(paramPanel);
+    if (!ml || idx < 0 || idx >= ml->keyframes().size()) {
+        return;
+    }
+    const QJsonObject kf = ml->keyframes().at(idx).toObject();
+    const QString type = effectTypeAt(selectedFxRow);
+    suppressParamRefresh++;
+
+    auto setModeCombo = [&](const QString &objName, const QString &key) {
+        if (!kf.contains(key)) {
+            return;
+        }
+        auto *cb = paramPanel->findChild<QComboBox *>(objName);
+        if (!cb) {
+            return;
+        }
+        const QString data = kf.value(key).toString();
+        const int ix = cb->findData(data);
+        if (ix >= 0) {
+            cb->setCurrentIndex(ix);
+        }
+    };
+
+    if (type == QStringLiteral("pan")) {
+        setModeCombo(QStringLiteral("fx_pan_mode"), QStringLiteral("mode"));
+        if (kf.contains(QStringLiteral("panX"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_pan_panX"))) {
+                w->setValue(kf.value(QStringLiteral("panX")).toDouble());
+            }
+        }
+        if (kf.contains(QStringLiteral("panY"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_pan_panY"))) {
+                w->setValue(kf.value(QStringLiteral("panY")).toDouble());
+            }
+        }
+        if (kf.contains(QStringLiteral("zoom"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_pan_zoom"))) {
+                w->setValue(kf.value(QStringLiteral("zoom")).toDouble());
+            }
+        }
+    } else if (type == QStringLiteral("cammotion")) {
+        setModeCombo(QStringLiteral("fx_cammotion_mode"), QStringLiteral("mode"));
+        if (kf.contains(QStringLiteral("ease"))) {
+            if (auto *w = paramPanel->findChild<QCheckBox *>(QStringLiteral("fx_cammotion_ease"))) {
+                w->setChecked(kf.value(QStringLiteral("ease")).toBool());
+            }
+        }
+        if (kf.contains(QStringLiteral("timeScale"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_cammotion_timescale"))) {
+                w->setValue(kf.value(QStringLiteral("timeScale")).toDouble());
+            }
+        }
+    } else if (type == QStringLiteral("mirror")) {
+        if (kf.contains(QStringLiteral("horizontal"))) {
+            if (auto *w = paramPanel->findChild<QCheckBox *>(QStringLiteral("fx_mirror_h"))) {
+                w->setChecked(kf.value(QStringLiteral("horizontal")).toBool());
+            }
+        }
+        if (kf.contains(QStringLiteral("vertical"))) {
+            if (auto *w = paramPanel->findChild<QCheckBox *>(QStringLiteral("fx_mirror_v"))) {
+                w->setChecked(kf.value(QStringLiteral("vertical")).toBool());
+            }
+        }
+    } else if (type == QStringLiteral("blur")) {
+        if (kf.contains(QStringLiteral("radius"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_blur_radius"))) {
+                w->setValue(kf.value(QStringLiteral("radius")).toInt());
+            }
+        }
+    } else if (type == QStringLiteral("greenscreen")) {
+        if (kf.contains(QStringLiteral("keyR")) && kf.contains(QStringLiteral("keyG")) && kf.contains(QStringLiteral("keyB"))) {
+            if (auto *sw = paramPanel->findChild<QFrame *>(QStringLiteral("fx_chroma_swatch"))) {
+                const QColor c(kf.value(QStringLiteral("keyR")).toInt(), kf.value(QStringLiteral("keyG")).toInt(),
+                               kf.value(QStringLiteral("keyB")).toInt());
+                sw->setProperty("keyColor", c);
+                sw->setStyleSheet(
+                    QStringLiteral("background:%1; border:1px solid #555; border-radius:4px;").arg(c.name()));
+            }
+        }
+        if (kf.contains(QStringLiteral("tolerance"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_chroma_tol"))) {
+                w->setValue(kf.value(QStringLiteral("tolerance")).toInt());
+            }
+        }
+        if (kf.contains(QStringLiteral("softness"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_chroma_soft"))) {
+                w->setValue(kf.value(QStringLiteral("softness")).toInt());
+            }
+        }
+    } else if (type == QStringLiteral("edges")) {
+        if (kf.contains(QStringLiteral("threshold"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_edges_th"))) {
+                w->setValue(kf.value(QStringLiteral("threshold")).toInt());
+            }
+        }
+    } else if (type == QStringLiteral("noise")) {
+        if (kf.contains(QStringLiteral("amount"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_noise_amt"))) {
+                w->setValue(kf.value(QStringLiteral("amount")).toDouble());
+            }
+        }
+    } else if (type == QStringLiteral("vhs")) {
+        if (kf.contains(QStringLiteral("rgbShift"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_vhs_shift"))) {
+                w->setValue(kf.value(QStringLiteral("rgbShift")).toInt());
+            }
+        }
+        if (kf.contains(QStringLiteral("bleed"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_vhs_bleed"))) {
+                w->setValue(kf.value(QStringLiteral("bleed")).toDouble());
+            }
+        }
+    } else if (type == QStringLiteral("glow")) {
+        if (kf.contains(QStringLiteral("strength"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_glow_str"))) {
+                w->setValue(kf.value(QStringLiteral("strength")).toDouble());
+            }
+        }
+    } else if (type == QStringLiteral("eventgrid")) {
+        if (kf.contains(QStringLiteral("gridCols"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_grid_cols"))) {
+                w->setValue(kf.value(QStringLiteral("gridCols")).toInt());
+            }
+        }
+        if (kf.contains(QStringLiteral("gridRows"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_grid_rows"))) {
+                w->setValue(kf.value(QStringLiteral("gridRows")).toInt());
+            }
+        }
+        if (kf.contains(QStringLiteral("centerGrid"))) {
+            if (auto *w = paramPanel->findChild<QCheckBox *>(QStringLiteral("fx_grid_center"))) {
+                w->setChecked(kf.value(QStringLiteral("centerGrid")).toBool());
+            }
+        }
+    } else if (type == QStringLiteral("audiogrid")) {
+        if (kf.contains(QStringLiteral("gridCols"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_audio_grid_cols"))) {
+                w->setValue(kf.value(QStringLiteral("gridCols")).toInt());
+            }
+        }
+        if (kf.contains(QStringLiteral("gridRows"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_audio_grid_rows"))) {
+                w->setValue(kf.value(QStringLiteral("gridRows")).toInt());
+            }
+        }
+        if (kf.contains(QStringLiteral("spreadMs"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_audio_spread_ms"))) {
+                w->setValue(kf.value(QStringLiteral("spreadMs")).toDouble());
+            }
+        }
+    } else if (type == QStringLiteral("softclip")) {
+        if (kf.contains(QStringLiteral("drive"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sc_drive"))) {
+                w->setValue(kf.value(QStringLiteral("drive")).toDouble());
+            }
+        }
+    } else if (type == QStringLiteral("lowpass")) {
+        if (kf.contains(QStringLiteral("cutoffHz"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_lp_cut"))) {
+                w->setValue(kf.value(QStringLiteral("cutoffHz")).toDouble());
+            }
+        }
+    }
+
+    suppressParamRefresh--;
 }
 
 #include "fxchaineditorwidget.moc"

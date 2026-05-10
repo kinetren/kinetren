@@ -6,6 +6,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
+#include <QSet>
+#include <QVariant>
 
 #include <algorithm>
 #include <cmath>
@@ -108,6 +110,148 @@ bool composePanZoomOutput(const QImage &srcArgb32,
 
     outImage = std::move(out);
     return true;
+}
+
+double normalizedClipProgress(BurstIndex idx, BurstIndex origin, BurstIndex durTicks)
+{
+    if (durTicks <= 0 || origin < 0) {
+        return 0.0;
+    }
+    const double rel = static_cast<double>(idx - origin);
+    return std::clamp(rel / static_cast<double>(durTicks), 0.0, 1.0);
+}
+
+static bool jsonValueToInterpDouble(const QJsonValue &v, double &out)
+{
+    if (v.isBool()) {
+        out = v.toBool() ? 1.0 : 0.0;
+        return true;
+    }
+    bool ok = false;
+    const double d = v.toVariant().toDouble(&ok);
+    if (ok) {
+        out = d;
+        return true;
+    }
+    return false;
+}
+
+QJsonObject resolveParamsAutomationForBurst(const QJsonObject &stored, double u01)
+{
+    QJsonObject out = stored;
+    const QJsonArray arr = stored.value(QStringLiteral("automation")).toArray();
+    out.remove(QStringLiteral("automation"));
+    if (arr.isEmpty()) {
+        return out;
+    }
+
+    QSet<QString> keySet;
+    for (const QJsonValue &jv : arr) {
+        if (!jv.isObject()) {
+            continue;
+        }
+        const QJsonObject o = jv.toObject();
+        for (auto it = o.begin(); it != o.end(); ++it) {
+            if (it.key() != QStringLiteral("t")) {
+                keySet.insert(it.key());
+            }
+        }
+    }
+
+    for (const QString &key : keySet) {
+        struct Pt {
+            double t = 0.0;
+            QJsonValue v;
+        };
+        std::vector<Pt> pts;
+        for (const QJsonValue &jv : arr) {
+            if (!jv.isObject()) {
+                continue;
+            }
+            const QJsonObject o = jv.toObject();
+            if (!o.contains(key)) {
+                continue;
+            }
+            Pt p;
+            p.t = o.value(QStringLiteral("t")).toDouble(0.0);
+            p.v = o.value(key);
+            pts.push_back(p);
+        }
+        if (pts.empty()) {
+            continue;
+        }
+        std::sort(pts.begin(), pts.end(), [](const Pt &a, const Pt &b) { return a.t < b.t; });
+        std::vector<Pt> dedup;
+        for (const Pt &p : pts) {
+            if (!dedup.empty() && std::abs(dedup.back().t - p.t) < 1e-12) {
+                dedup.back() = p;
+            } else {
+                dedup.push_back(p);
+            }
+        }
+        pts = std::move(dedup);
+
+        auto pickDiscrete = [&]() {
+            QJsonValue chosen = pts.front().v;
+            for (const Pt &p : pts) {
+                if (p.t <= u01 + 1e-12) {
+                    chosen = p.v;
+                }
+            }
+            out.insert(key, chosen);
+        };
+
+        if (u01 <= pts.front().t) {
+            out.insert(key, pts.front().v);
+            continue;
+        }
+        if (u01 >= pts.back().t) {
+            out.insert(key, pts.back().v);
+            continue;
+        }
+
+        size_t i = 0;
+        while (i + 1 < pts.size() && !(u01 >= pts[i].t && u01 <= pts[i + 1].t)) {
+            ++i;
+        }
+        if (i + 1 >= pts.size()) {
+            pickDiscrete();
+            continue;
+        }
+        const Pt &a = pts[i];
+        const Pt &b = pts[i + 1];
+        double va = 0.0;
+        double vb = 0.0;
+        const bool na = jsonValueToInterpDouble(a.v, va);
+        const bool nb = jsonValueToInterpDouble(b.v, vb);
+        if (na && nb) {
+            const double span = b.t - a.t;
+            double s = span > 1e-12 ? (u01 - a.t) / span : 0.0;
+            s = std::clamp(s, 0.0, 1.0);
+            const double interp = va + (vb - va) * s;
+            if (a.v.type() == QJsonValue::Bool || b.v.type() == QJsonValue::Bool) {
+                out.insert(key, interp >= 0.5);
+            } else if (a.v.isDouble() && b.v.isDouble() && std::floor(va) == va && std::floor(vb) == vb) {
+                out.insert(key, static_cast<int>(std::lround(interp)));
+            } else {
+                const QVariant qva = a.v.toVariant();
+                const QVariant qvb = b.v.toVariant();
+                bool okA = false;
+                bool okB = false;
+                const double fa = qva.toDouble(&okA);
+                const double fb = qvb.toDouble(&okB);
+                if (okA && okB && std::floor(fa) == fa && std::floor(fb) == fb) {
+                    out.insert(key, static_cast<int>(std::lround(interp)));
+                } else {
+                    out.insert(key, interp);
+                }
+            }
+        } else {
+            pickDiscrete();
+        }
+    }
+
+    return out;
 }
 
 namespace {
@@ -698,6 +842,140 @@ private:
     QJsonObject p = defaults();
 };
 
+// --- Event grid: duplicate the decoded picture into a cols×rows mosaic on the project frame ---
+
+class GridDupVideoFx : public IVideoFx
+{
+public:
+    QString typeId() const override { return QStringLiteral("eventgrid"); }
+    void setParams(const QJsonObject &o) override { p = mergeDefaults(defaults(), o); }
+    QJsonObject params() const override { return p; }
+
+    bool process(VideoBurst &inOut, const VideoFxContext &ctx) override
+    {
+        if (inOut.frame.isNull()) {
+            return false;
+        }
+        int cols = p.value(QStringLiteral("gridCols")).toInt(1);
+        int rows = p.value(QStringLiteral("gridRows")).toInt(1);
+        cols = std::clamp(cols, 1, 512);
+        rows = std::clamp(rows, 1, 512);
+
+        const int outW = std::max(1, ctx.projectOutput.width);
+        const int outH = std::max(1, ctx.projectOutput.height);
+        const int cellW = outW / cols;
+        const int cellH = outH / rows;
+        if (cellW < 1 || cellH < 1) {
+            return false;
+        }
+
+        const bool centerGrid = p.value(QStringLiteral("centerGrid")).toBool(true);
+        const int gridPixelW = cellW * cols;
+        const int gridPixelH = cellH * rows;
+        const int startX = centerGrid ? (outW - gridPixelW) / 2 : 0;
+        const int startY = centerGrid ? (outH - gridPixelH) / 2 : 0;
+
+        QImage src = inOut.frame.convertToFormat(QImage::Format_ARGB32);
+        QImage tile = src.scaled(cellW, cellH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+        QImage outImg(outW, outH, QImage::Format_ARGB32);
+        outImg.fill(QColor(0, 0, 0, 255));
+
+        QPainter painter(&outImg);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        for (int row = 0; row < rows; ++row) {
+            for (int col = 0; col < cols; ++col) {
+                painter.drawImage(startX + col * cellW, startY + row * cellH, tile);
+            }
+        }
+        painter.end();
+
+        inOut.frame = std::move(outImg);
+        inOut.quality = BurstQuality{outW, outH};
+        return true;
+    }
+
+private:
+    static QJsonObject defaults()
+    {
+        QJsonObject o;
+        o.insert(QStringLiteral("gridCols"), 1);
+        o.insert(QStringLiteral("gridRows"), 1);
+        o.insert(QStringLiteral("centerGrid"), true);
+        return o;
+    }
+
+    QJsonObject p = defaults();
+};
+
+class AudioGridDupFx : public IAudioFx
+{
+public:
+    QString typeId() const override { return QStringLiteral("audiogrid"); }
+    void setParams(const QJsonObject &o) override { p = mergeDefaults(defaults(), o); }
+    QJsonObject params() const override { return p; }
+
+    bool process(AudioBurst &inOut, const AudioFxContext &ctx) override
+    {
+        const int cols = std::clamp(p.value(QStringLiteral("gridCols")).toInt(1), 1, 32);
+        const int rows = std::clamp(p.value(QStringLiteral("gridRows")).toInt(1), 1, 32);
+        const int n = cols * rows;
+        const double spreadMs = std::clamp(p.value(QStringLiteral("spreadMs")).toDouble(4.0), 0.0, 120.0);
+
+        const int ch = std::max(1, inOut.channels > 0 ? inOut.channels : ctx.channels);
+        const int sr = std::max(1, inOut.sampleRate > 0 ? inOut.sampleRate : ctx.sampleRate);
+        const size_t len = inOut.samples.size();
+        if (len == 0 || ch <= 0) {
+            return true;
+        }
+        const size_t numFrames = len / static_cast<size_t>(ch);
+        std::vector<int32_t> out(len, 0);
+
+        auto delaySamplesForCopy = [&](int copyIdx) -> int {
+            if (n <= 1 || spreadMs <= 1e-6) {
+                return 0;
+            }
+            const double maxDelaySec = spreadMs / 1000.0;
+            const double u = static_cast<double>(copyIdx) / static_cast<double>(n - 1);
+            return static_cast<int>(std::llround(maxDelaySec * static_cast<double>(sr) * u));
+        };
+
+        const double gain = 1.0 / static_cast<double>(std::max(1, n));
+
+        for (size_t fi = 0; fi < numFrames; ++fi) {
+            for (int c = 0; c < ch; ++c) {
+                double acc = 0.0;
+                for (int copyIdx = 0; copyIdx < n; ++copyIdx) {
+                    const int d = delaySamplesForCopy(copyIdx);
+                    if (static_cast<qint64>(fi) >= static_cast<qint64>(d)) {
+                        const size_t srcIdx =
+                            (fi - static_cast<size_t>(d)) * static_cast<size_t>(ch) + static_cast<size_t>(c);
+                        acc += static_cast<double>(inOut.samples[srcIdx]) * gain;
+                    }
+                }
+                const size_t outIdx = fi * static_cast<size_t>(ch) + static_cast<size_t>(c);
+                out[outIdx] = static_cast<int32_t>(std::clamp(acc,
+                                                             static_cast<double>(std::numeric_limits<int32_t>::min()),
+                                                             static_cast<double>(std::numeric_limits<int32_t>::max())));
+            }
+        }
+        inOut.samples = std::move(out);
+        return true;
+    }
+
+private:
+    static QJsonObject defaults()
+    {
+        QJsonObject o;
+        o.insert(QStringLiteral("gridCols"), 1);
+        o.insert(QStringLiteral("gridRows"), 1);
+        o.insert(QStringLiteral("spreadMs"), 4.0);
+        return o;
+    }
+
+    QJsonObject p = defaults();
+};
+
 // --- Audio: soft clip ---
 
 class SoftClipAudioFx : public IAudioFx
@@ -737,7 +1015,16 @@ class LowpassAudioFx : public IAudioFx
 {
 public:
     QString typeId() const override { return QStringLiteral("lowpass"); }
-    void setParams(const QJsonObject &o) override { p = mergeDefaults(defaults(), o); }
+    void setParams(const QJsonObject &o) override
+    {
+        QJsonObject merged = mergeDefaults(defaults(), o);
+        const double nc = merged.value(QStringLiteral("cutoffHz")).toDouble(8000.0);
+        if (lastCutoffApplied >= 0.0 && std::abs(nc - lastCutoffApplied) > 0.5) {
+            z.clear();
+        }
+        lastCutoffApplied = nc;
+        p = merged;
+    }
     QJsonObject params() const override { return p; }
 
     bool process(AudioBurst &inOut, const AudioFxContext &ctx) override
@@ -773,6 +1060,7 @@ private:
 
     QJsonObject p = defaults();
     std::vector<double> z;
+    double lastCutoffApplied = -1.0;
 };
 
 } // namespace
@@ -1118,10 +1406,12 @@ QJsonArray estimateCamMotionFromDecodedFrames(const QList<QImage> &frames,
 
 ConVideoFx::ConVideoFx(std::shared_ptr<IVideoFx> effect,
                        std::shared_ptr<IBurstcon> upstream,
-                       BurstQuality projectOutput)
+                       BurstQuality projectOutput,
+                       QJsonObject storedParamsIn)
     : effect(std::move(effect))
     , upstream(std::move(upstream))
     , projectOutput(projectOutput)
+    , storedParams(std::move(storedParamsIn))
 {
 }
 
@@ -1142,6 +1432,9 @@ bool ConVideoFx::burst(BurstType type, const BurstRequest &request, BurstPayload
         outQ = projectOutput;
     }
     VideoFxContext ctx{outQ, request.index, upstream->originInfo(), request.clipDurationTicks, request.decodeOrigin};
+    const double u = normalizedClipProgress(request.index, request.decodeOrigin, request.clipDurationTicks);
+    QJsonObject resolved = resolveParamsAutomationForBurst(storedParams, u);
+    effect->setParams(resolved);
     if (!effect->process(vb, ctx)) {
         return false;
     }
@@ -1172,9 +1465,12 @@ void ConVideoFx::syncPresentationVideoIndex(BurstIndex mediaBurstIndex)
     }
 }
 
-ConAudioFx::ConAudioFx(std::shared_ptr<IAudioFx> effect, std::shared_ptr<IBurstcon> upstream)
+ConAudioFx::ConAudioFx(std::shared_ptr<IAudioFx> effect,
+                       std::shared_ptr<IBurstcon> upstream,
+                       QJsonObject storedParamsIn)
     : effect(std::move(effect))
     , upstream(std::move(upstream))
+    , storedParams(std::move(storedParamsIn))
 {
 }
 
@@ -1190,7 +1486,15 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
     if (!upstream->audioBurst(request, ab)) {
         return false;
     }
-    AudioFxContext ctx{request.index, ab.sampleRate, ab.channels};
+    AudioFxContext ctx;
+    ctx.timelineBurstIndex = request.index;
+    ctx.sampleRate = ab.sampleRate;
+    ctx.channels = ab.channels;
+    ctx.clipDurationTicks = request.clipDurationTicks;
+    ctx.decodeOrigin = request.decodeOrigin;
+    const double u = normalizedClipProgress(request.index, request.decodeOrigin, request.clipDurationTicks);
+    QJsonObject resolved = resolveParamsAutomationForBurst(storedParams, u);
+    effect->setParams(resolved);
     if (!effect->process(ab, ctx)) {
         return false;
     }
@@ -1242,6 +1546,8 @@ std::shared_ptr<IVideoFx> createVideoFx(const QString &typeId, const QJsonObject
         fx = std::make_shared<VhsVideoFx>();
     } else if (typeId == QStringLiteral("glow")) {
         fx = std::make_shared<GlowVideoFx>();
+    } else if (typeId == QStringLiteral("eventgrid")) {
+        fx = std::make_shared<GridDupVideoFx>();
     }
     if (fx) {
         fx->setParams(params);
@@ -1254,8 +1560,10 @@ std::shared_ptr<IAudioFx> createAudioFx(const QString &typeId, const QJsonObject
     std::shared_ptr<IAudioFx> fx;
     if (typeId == QStringLiteral("softclip")) {
         fx = std::make_shared<SoftClipAudioFx>();
-    } else if (typeId == QStringLiteral("lowpass")) {
+    } else     if (typeId == QStringLiteral("lowpass")) {
         fx = std::make_shared<LowpassAudioFx>();
+    } else if (typeId == QStringLiteral("audiogrid")) {
+        fx = std::make_shared<AudioGridDupFx>();
     }
     if (fx) {
         fx->setParams(params);
@@ -1280,7 +1588,7 @@ std::shared_ptr<IBurstcon> wrapVideoFxChain(std::shared_ptr<IBurstcon> media,
         if (!fx) {
             continue;
         }
-        node = std::make_shared<ConVideoFx>(std::move(fx), std::move(node), projectOutput);
+        node = std::make_shared<ConVideoFx>(std::move(fx), std::move(node), projectOutput, params);
     }
     return node;
 }
@@ -1299,11 +1607,14 @@ bool processVideoFxChainInPlace(VideoBurst &vb, const QJsonArray &chain, const V
         return false;
     }
     const int n = chain.size();
+    const double u =
+        normalizedClipProgress(ctx.timelineBurstIndex, ctx.decodeOrigin, ctx.clipDurationTicks);
     for (int i = 0; i < n; ++i) {
         const QJsonObject slot = chain.at(i).toObject();
         const QString type = slot.value(QStringLiteral("type")).toString();
         const QJsonObject params = slot.value(QStringLiteral("params")).toObject();
-        std::shared_ptr<IVideoFx> fx = createVideoFx(type, params);
+        QJsonObject resolved = resolveParamsAutomationForBurst(params, u);
+        std::shared_ptr<IVideoFx> fx = createVideoFx(type, resolved);
         if (!fx) {
             continue;
         }
@@ -1329,7 +1640,7 @@ std::shared_ptr<IBurstcon> wrapAudioFxChain(std::shared_ptr<IBurstcon> media, co
         if (!fx) {
             continue;
         }
-        node = std::make_shared<ConAudioFx>(std::move(fx), std::move(node));
+        node = std::make_shared<ConAudioFx>(std::move(fx), std::move(node), params);
     }
     return node;
 }

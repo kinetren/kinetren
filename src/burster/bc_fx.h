@@ -39,6 +39,9 @@ struct AudioFxContext {
     BurstIndex timelineBurstIndex = 0;
     int sampleRate = 48000;
     int channels = 2;
+    /// Same semantics as `BurstRequest::clipDurationTicks` / `decodeOrigin` for automation along the clip.
+    BurstIndex clipDurationTicks = 0;
+    BurstIndex decodeOrigin = -1;
 };
 
 class IAudioFx
@@ -57,7 +60,8 @@ class ConVideoFx : public IBurstcon
 public:
     ConVideoFx(std::shared_ptr<IVideoFx> effect,
                std::shared_ptr<IBurstcon> upstream,
-               BurstQuality projectOutput);
+               BurstQuality projectOutput,
+               QJsonObject storedParams = {});
 
     bool burst(BurstType type, const BurstRequest &request, BurstPayload &out) override;
     BurstOriginInfo originInfo() const override;
@@ -68,12 +72,15 @@ private:
     std::shared_ptr<IVideoFx> effect;
     std::shared_ptr<IBurstcon> upstream;
     BurstQuality projectOutput;
+    QJsonObject storedParams;
 };
 
 class ConAudioFx : public IBurstcon
 {
 public:
-    ConAudioFx(std::shared_ptr<IAudioFx> effect, std::shared_ptr<IBurstcon> upstream);
+    ConAudioFx(std::shared_ptr<IAudioFx> effect,
+               std::shared_ptr<IBurstcon> upstream,
+               QJsonObject storedParams = {});
 
     bool burst(BurstType type, const BurstRequest &request, BurstPayload &out) override;
     BurstOriginInfo originInfo() const override;
@@ -83,6 +90,7 @@ public:
 private:
     std::shared_ptr<IAudioFx> effect;
     std::shared_ptr<IBurstcon> upstream;
+    QJsonObject storedParams;
 };
 
 std::shared_ptr<IVideoFx> createVideoFx(const QString &typeId, const QJsonObject &params);

@@ -26,6 +26,10 @@ public:
     void selectRow(int row);
     QJsonArray chain() const { return workingChain; }
 
+public slots:
+    /// Refreshes automation lane scaling (e.g. after timeline trim); keeps keyframe data unchanged.
+    void refreshAutomationUi();
+
 signals:
     /// Emitted after any edit (reorder, add/remove, parameter tweak).
     void chainChanged(const QJsonArray &chain);
@@ -41,11 +45,14 @@ private:
     void rebuildChainStrip();
     void rebuildParamPanel();
     void applyParamsFromPanelToChain();
+    void syncWidgetsFromAutomationKeyframe(int keyframeIndex);
 
     MediaKind mediaKind = MediaKind::Video;
     QJsonArray workingChain;
     int selectedFxRow = -1;
     int suppressParamRefresh = 0;
+    /// Selected row in params.automation while editing (syncs spinboxes).
+    int fxAutomationSelectedKeyframe = -1;
 
     class QScrollArea *chainScroll = nullptr;
     QWidget *chainInner = nullptr;

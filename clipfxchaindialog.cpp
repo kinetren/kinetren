@@ -54,6 +54,9 @@ ClipFxChainWindow::ClipFxChainWindow(QWidget *parent,
     }
     editor->setChain(initial);
     connect(editor, &FxChainEditorWidget::chainChanged, this, &ClipFxChainWindow::onEditorChainChanged);
+    if (timeline) {
+        connect(timeline, &TimelineEditor::timelineContentChanged, editor, &FxChainEditorWidget::refreshAutomationUi);
+    }
 
     if (kind == MediaKind::Video) {
         preview = new QLabel(split);
