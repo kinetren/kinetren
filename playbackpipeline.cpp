@@ -425,6 +425,7 @@ PlaybackPipeline::~PlaybackPipeline()
         std::lock_guard<std::mutex> lock(draftMutex);
         stopDraftWorker = true;
         draftJobPending = false;
+        scrubAudioJobPending = false;
     }
     draftCv.notify_all();
     if (draftWorker.joinable()) {
@@ -733,7 +734,9 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
 void PlaybackPipeline::stop()
 {
     running.store(false);
+    idleScrubDragging.store(false);
     lastIdleScrubAudioMs.store(-1);
+    latestScrubAudioSerial.fetch_add(1);
     latestDraftSerial.fetch_add(1);
     auto *localTimer = timer.get();
     if (localTimer) {
@@ -775,7 +778,7 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         // cache elsewhere while the aligned frame under the cursor still has no bucket, so draft
         // was skipped and one clip showed stripes but black preview.
         if (onVideoFrameReady) {
-            requestIdlePreviewAsync(tMs, videoClips, audioClips);
+            requestIdlePreviewAsync(tMs, videoClips);
         }
         if (idleSpan > 0 && !headWarm) {
             requestPrefetchAsync(tMs, idlePrefetchEnd, true);
@@ -925,6 +928,51 @@ std::pair<float, float> PlaybackPipeline::sampleMixedLevelsDbAt(qint64 timelineM
 void PlaybackPipeline::ensureIdlePreviewAudio()
 {
     ensureAudioOutput();
+}
+
+void PlaybackPipeline::beginIdleScrub()
+{
+    latestScrubAudioSerial.fetch_add(1);
+    lastIdleScrubAudioMs.store(-1);
+    idleScrubDragging.store(true);
+    {
+        std::lock_guard<std::mutex> lock(audioMutex);
+        audioPcmPending.clear();
+    }
+}
+
+void PlaybackPipeline::idleScrubSeek(qint64 timelineMs)
+{
+    if (running.load() || !idleScrubDragging.load()) {
+        return;
+    }
+    const qint64 tMs = std::max<qint64>(0, timelineMs);
+    const qint64 last = lastIdleScrubAudioMs.load();
+    if (last < 0) {
+        requestIdleScrubAudioAsync(tMs, tMs, false);
+        lastIdleScrubAudioMs.store(tMs);
+        return;
+    }
+    if (tMs + 12 < last) {
+        requestIdleScrubAudioAsync(tMs, tMs, true);
+        lastIdleScrubAudioMs.store(tMs);
+        return;
+    }
+    if (tMs > last + 5) {
+        requestIdleScrubAudioAsync(last, tMs, false);
+        lastIdleScrubAudioMs.store(tMs);
+    }
+}
+
+void PlaybackPipeline::endIdleScrub()
+{
+    idleScrubDragging.store(false);
+    latestScrubAudioSerial.fetch_add(1);
+    lastIdleScrubAudioMs.store(-1);
+    {
+        std::lock_guard<std::mutex> lock(audioMutex);
+        audioPcmPending.clear();
+    }
 }
 
 void PlaybackPipeline::requestMixedLevelsSampleAsync(qint64 timelineMs)
@@ -1413,7 +1461,9 @@ void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
         onAudioLevelsReady(levels.first, levels.second);
     }
 
-    constexpr size_t kMaxPendingStereoSamples = static_cast<size_t>(48000) * 2 * 8;
+    const size_t maxPendingStereoSamples = idleScrubDragging.load()
+        ? static_cast<size_t>(48000) * 2 * 20
+        : static_cast<size_t>(48000) * 2 * 8;
     const size_t prev = audioPcmPending.size();
     audioPcmPending.resize(prev + burst.samples.size());
     for (size_t i = 0; i < burst.samples.size(); ++i) {
@@ -1422,22 +1472,24 @@ void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
         const int32_t v = std::clamp<int32_t>(scaled, -32768, 32767);
         audioPcmPending[prev + i] = static_cast<int16_t>(v);
     }
-    if (audioPcmPending.size() > kMaxPendingStereoSamples) {
-        const size_t drop = audioPcmPending.size() - kMaxPendingStereoSamples;
+    if (audioPcmPending.size() > maxPendingStereoSamples) {
+        const size_t drop = audioPcmPending.size() - maxPendingStereoSamples;
         audioPcmPending.erase(audioPcmPending.begin(), audioPcmPending.begin() + static_cast<std::ptrdiff_t>(drop));
     }
     flushAudioPendingToDevice();
 }
 
-void PlaybackPipeline::requestIdlePreviewAsync(qint64 tMs,
-                                               const std::vector<Clip> &videoClips,
-                                               const std::vector<Clip> &audioClips)
+void PlaybackPipeline::clearAudioPendingLocked()
+{
+    audioPcmPending.clear();
+}
+
+void PlaybackPipeline::requestIdlePreviewAsync(qint64 tMs, const std::vector<Clip> &videoClips)
 {
     DraftJob job;
     job.kind = DraftJob::Kind::IdlePreview;
     job.timelineMs = tMs;
     job.videoClips = videoClips;
-    job.audioClips = audioClips;
     job.serial = latestDraftSerial.fetch_add(1) + 1;
     {
         std::lock_guard<std::mutex> lock(draftMutex);
@@ -1447,18 +1499,105 @@ void PlaybackPipeline::requestIdlePreviewAsync(qint64 tMs,
     draftCv.notify_one();
 }
 
+void PlaybackPipeline::requestIdleScrubAudioAsync(qint64 fromMs, qint64 toMs, bool backward)
+{
+    ScrubAudioJob job;
+    job.fromMs = std::max<qint64>(0, fromMs);
+    job.toMs = std::max<qint64>(0, toMs);
+    job.backward = backward;
+    job.serial = latestScrubAudioSerial.fetch_add(1) + 1;
+    {
+        std::lock_guard<std::mutex> lock(draftMutex);
+        pendingScrubAudioJob = std::move(job);
+        scrubAudioJobPending = true;
+    }
+    draftCv.notify_one();
+}
+
+void PlaybackPipeline::feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs, quint64 serial)
+{
+    constexpr int kRate = 48000;
+    constexpr int kSpb = 1024;
+    const burstcon::BurstIndex audioStep = std::max<burstcon::BurstIndex>(
+        1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kSpb)) / kRate);
+
+    auto alignAudioIndex = [audioStep](burstcon::BurstIndex raw) {
+        return (raw / audioStep) * audioStep;
+    };
+
+    burstcon::BurstIndex idx = alignAudioIndex(burstcon::msToBurstIndex(fromMs));
+    if (burstcon::burstIndexToMs(idx) <= fromMs) {
+        idx += audioStep;
+    }
+    const burstcon::BurstIndex endIdx = alignAudioIndex(burstcon::msToBurstIndex(toMs));
+
+    constexpr int kMaxBursts = 48;
+    int count = 0;
+    for (; idx <= endIdx && count < kMaxBursts; idx += audioStep, ++count) {
+        if (serial != latestScrubAudioSerial.load() || running.load() || !idleScrubDragging.load()) {
+            return;
+        }
+        const qint64 t = burstcon::burstIndexToMs(idx);
+        burstcon::AudioBurst ab;
+        if (fetchMixedAudioBurstAt(t, ab)) {
+            pushAudioBurst(ab);
+        }
+    }
+    std::lock_guard<std::mutex> lock(audioMutex);
+    for (int pass = 0; pass < 32 && !audioPcmPending.empty(); ++pass) {
+        flushAudioPendingToDevice();
+    }
+}
+
 void PlaybackPipeline::draftWorkerLoop()
 {
     while (true) {
         DraftJob job;
+        ScrubAudioJob scrubJob;
+        bool haveDraft = false;
+        bool haveScrub = false;
         {
             std::unique_lock<std::mutex> lock(draftMutex);
-            draftCv.wait(lock, [this]() { return stopDraftWorker || draftJobPending; });
+            draftCv.wait(lock, [this]() { return stopDraftWorker || draftJobPending || scrubAudioJobPending; });
             if (stopDraftWorker) {
                 return;
             }
-            job = pendingDraftJob;
-            draftJobPending = false;
+            if (scrubAudioJobPending) {
+                scrubJob = pendingScrubAudioJob;
+                scrubAudioJobPending = false;
+                haveScrub = true;
+            }
+            if (draftJobPending) {
+                job = pendingDraftJob;
+                draftJobPending = false;
+                haveDraft = true;
+            }
+        }
+        if (haveScrub) {
+            if (scrubJob.serial == latestScrubAudioSerial.load() && !running.load() && idleScrubDragging.load()) {
+                if (scrubJob.backward) {
+                    {
+                        std::lock_guard<std::mutex> audioLock(audioMutex);
+                        clearAudioPendingLocked();
+                    }
+                    burstcon::AudioBurst ab;
+                    if (fetchMixedAudioBurstAt(scrubJob.toMs, ab)) {
+                        pushAudioBurst(ab);
+                    }
+                } else if (scrubJob.fromMs == scrubJob.toMs) {
+                    burstcon::AudioBurst ab;
+                    if (fetchMixedAudioBurstAt(scrubJob.toMs, ab)) {
+                        pushAudioBurst(ab);
+                    }
+                } else {
+                    const qint64 catchUpTo =
+                        std::max(scrubJob.toMs, lastIdleScrubAudioMs.load());
+                    feedIdleScrubAudioSpan(scrubJob.fromMs, catchUpTo, scrubJob.serial);
+                }
+            }
+        }
+        if (!haveDraft) {
+            continue;
         }
         if (job.serial != latestDraftSerial.load()) {
             continue;
@@ -1485,18 +1624,6 @@ void PlaybackPipeline::draftWorkerLoop()
         }
         if (onVideoFrameReady) {
             onVideoFrameReady(std::move(frame));
-        }
-        constexpr qint64 kMinIdleScrubAudioStepMs = 35;
-        if (compositionHasAudioAtMs(job.timelineMs, job.audioClips)) {
-            const qint64 prevAudioMs = lastIdleScrubAudioMs.load();
-            if (prevAudioMs < 0 || job.timelineMs - prevAudioMs >= kMinIdleScrubAudioStepMs) {
-                burstcon::AudioBurst ab;
-                if (fetchMixedAudioBurstAt(job.timelineMs, ab) && job.serial == latestDraftSerial.load() &&
-                    !running.load()) {
-                    lastIdleScrubAudioMs.store(job.timelineMs);
-                    pushAudioBurst(ab);
-                }
-            }
         }
     }
 }

@@ -2683,6 +2683,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
             dragMode = DragMode::MoveRegionEnd;
         } else {
             dragMode = DragMode::ScrubCursor;
+            emit playheadScrubStarted();
             setCursorMs(snapTimeMs(pointerMs));
         }
     } else if (inTimelineX && pos.y() >= (rulerTop() + rulerHeight()) &&
@@ -2923,6 +2924,9 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
 void TimelineEditor::mouseReleaseEvent(QMouseEvent *event)
 {
     const DragMode finishedMode = dragMode;
+    if (finishedMode == DragMode::ScrubCursor) {
+        emit playheadScrubEnded();
+    }
     dragMode = DragMode::None;
     dragClipId = -1;
     dragMarkerIndex = -1;

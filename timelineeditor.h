@@ -192,6 +192,8 @@ public:
 
 signals:
     void cursorChanged(qint64 cursorMs);
+    void playheadScrubStarted();
+    void playheadScrubEnded();
     void overlayInfoChanged(const QString &text);
     void timelineRangeChanged(qint64 maxTimelineMs, qint64 visibleDurationMs);
     void viewStartChanged(qint64 viewStartMs, qint64 maxViewStartMs);
