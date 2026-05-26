@@ -159,6 +159,7 @@ QJsonObject defaultParamsForAudioType(const QString &type)
         o.insert(QStringLiteral("reverbDecay"), 0.58);
         o.insert(QStringLiteral("reverbDamp"), 0.32);
         o.insert(QStringLiteral("reverbGain"), 0.95);
+        o.insert(QStringLiteral("lockTimelineDuration"), false);
         return o;
     }
     return QJsonObject();
@@ -1048,6 +1049,9 @@ void FxChainEditorWidget::applyParamsFromPanelToChain()
         if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sr_gain"))) {
             p.insert(QStringLiteral("reverbGain"), w->value());
         }
+        if (auto *w = paramPanel->findChild<QCheckBox *>(QStringLiteral("fx_sr_lock_dur"))) {
+            p.insert(QStringLiteral("lockTimelineDuration"), w->isChecked());
+        }
     }
 
     if (FxAutomationMultiLaneWidget *ml = findAutomationMultiLane(paramPanel)) {
@@ -1426,7 +1430,7 @@ void FxChainEditorWidget::rebuildParamPanel()
         connect(mix, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
         auto *delay = new QDoubleSpinBox(paramPanel);
         delay->setObjectName(QStringLiteral("fx_sr_delay"));
-        delay->setRange(20.0, 800.0);
+        delay->setRange(0.0, 800.0);
         delay->setDecimals(0);
         delay->setSuffix(QStringLiteral(" ms"));
         delay->setValue(p.value(QStringLiteral("reverbDelayMs")).toDouble(140.0));
@@ -1434,7 +1438,7 @@ void FxChainEditorWidget::rebuildParamPanel()
         connect(delay, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
         auto *decay = new QDoubleSpinBox(paramPanel);
         decay->setObjectName(QStringLiteral("fx_sr_decay"));
-        decay->setRange(0.05, 0.92);
+        decay->setRange(0.0, 1.0);
         decay->setDecimals(3);
         decay->setSingleStep(0.01);
         decay->setValue(p.value(QStringLiteral("reverbDecay")).toDouble(0.58));
@@ -1442,7 +1446,7 @@ void FxChainEditorWidget::rebuildParamPanel()
         connect(decay, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
         auto *damp = new QDoubleSpinBox(paramPanel);
         damp->setObjectName(QStringLiteral("fx_sr_damp"));
-        damp->setRange(0.0, 0.95);
+        damp->setRange(0.0, 1.0);
         damp->setDecimals(3);
         damp->setSingleStep(0.01);
         damp->setValue(p.value(QStringLiteral("reverbDamp")).toDouble(0.32));
@@ -1450,12 +1454,18 @@ void FxChainEditorWidget::rebuildParamPanel()
         connect(damp, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
         auto *gain = new QDoubleSpinBox(paramPanel);
         gain->setObjectName(QStringLiteral("fx_sr_gain"));
-        gain->setRange(0.1, 2.5);
+        gain->setRange(0.0, 8.0);
         gain->setDecimals(3);
         gain->setSingleStep(0.05);
         gain->setValue(p.value(QStringLiteral("reverbGain")).toDouble(0.95));
         form->addRow(tr("Reverb gain"), gain);
         connect(gain, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+        auto *lockDur = new QCheckBox(tr("Keep event length on timeline (no auto stretch/shrink)"), paramPanel);
+        lockDur->setObjectName(QStringLiteral("fx_sr_lock_dur"));
+        lockDur->setChecked(p.value(QStringLiteral("lockTimelineDuration")).toBool(false));
+        lockDur->setToolTip(tr("When off, changing playback rate resizes the clip. When on, rate still affects playback inside the fixed event."));
+        form->addRow(lockDur);
+        connect(lockDur, &QCheckBox::toggled, this, [hook](bool) { hook(); });
     } else {
         form->addRow(new QLabel(tr("No editor for type \"%1\"").arg(type), paramPanel));
     }

@@ -417,8 +417,10 @@ private:
     static QRect audioFxButtonRect(const QRect &clipR);
     static QRect audioVolumeRailRect(const QRect &clipR);
     void ensureClipFxDefaults(ClipEvent &clip);
+    qint64 clipEffectiveSourceDurationMs(const ClipEvent &clip) const;
     qint64 clipSourceSpanMs(const ClipEvent &clip) const;
     qint64 clipMaxTimelineDurationMs(const ClipEvent &clip) const;
+    qint64 clipMaxTrimDurationMs(const ClipEvent &clip, qint64 durationAtDragStart) const;
     void syncClipDurationToAudioStretch(ClipEvent &clip, double priorPlaybackRate = 1.0);
     void clearUndoHistory();
     struct TimelineUndoSnapshot {

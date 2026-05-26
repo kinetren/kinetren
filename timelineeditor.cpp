@@ -380,14 +380,39 @@ bool TimelineEditor::redo()
     return true;
 }
 
+qint64 TimelineEditor::clipEffectiveSourceDurationMs(const ClipEvent &clip) const
+{
+    qint64 dur = clip.sourceDurationMs;
+    if (!clip.sourcePath.isEmpty()) {
+        const qint64 probed = probeSourceDurationMsUncached(clip.sourcePath);
+        if (probed > dur) {
+            dur = probed;
+        }
+    }
+    return std::max<qint64>(kMinClipDurationMs, dur);
+}
+
 qint64 TimelineEditor::clipSourceSpanMs(const ClipEvent &clip) const
 {
-    return std::max<qint64>(kMinClipDurationMs, clip.sourceDurationMs - clip.sourceInMs);
+    return std::max<qint64>(kMinClipDurationMs, clipEffectiveSourceDurationMs(clip) - clip.sourceInMs);
+}
+
+qint64 TimelineEditor::clipMaxTrimDurationMs(const ClipEvent &clip, qint64 durationAtDragStart) const
+{
+    const qint64 span = clipSourceSpanMs(clip);
+    qint64 maxDur = std::max(durationAtDragStart, span);
+    if (!burstcon::audioFxLockTimelineDuration(clip.audioFxChain)) {
+        maxDur = std::max(maxDur, clipMaxTimelineDurationMs(clip));
+    }
+    return maxDur;
 }
 
 qint64 TimelineEditor::clipMaxTimelineDurationMs(const ClipEvent &clip) const
 {
     const qint64 sourceSpan = clipSourceSpanMs(clip);
+    if (burstcon::audioFxLockTimelineDuration(clip.audioFxChain)) {
+        return sourceSpan;
+    }
     const double rate = burstcon::audioTimelineSourceRate(clip.audioFxChain);
     if (std::abs(rate - 1.0) < 1e-6) {
         return sourceSpan;
@@ -398,6 +423,9 @@ qint64 TimelineEditor::clipMaxTimelineDurationMs(const ClipEvent &clip) const
 void TimelineEditor::syncClipDurationToAudioStretch(ClipEvent &clip, double priorPlaybackRate)
 {
     if (clip.mediaType != TrackType::Audio) {
+        return;
+    }
+    if (burstcon::audioFxLockTimelineDuration(clip.audioFxChain)) {
         return;
     }
     const double rate = burstcon::audioTimelineSourceRate(clip.audioFxChain);
@@ -559,12 +587,15 @@ bool TimelineEditor::trimSelectedClipStartToCursor()
     if (!clip) {
         return false;
     }
-    qint64 newStart = std::clamp(cursorPositionMs, clip->startMs, clip->startMs + clip->durationMs - kMinClipDurationMs);
-    const qint64 maxSourceIn = std::max<qint64>(0, clip->sourceDurationMs - kMinClipDurationMs);
+    const qint64 absoluteEnd = clip->startMs + clip->durationMs;
+    const qint64 minStart = std::max<qint64>(0, clip->startMs - clip->sourceInMs);
+    qint64 newStart = std::clamp(cursorPositionMs, minStart, absoluteEnd - kMinClipDurationMs);
+    const qint64 maxSourceIn =
+        std::max<qint64>(0, clipEffectiveSourceDurationMs(*clip) - kMinClipDurationMs);
     const qint64 sourceDelta = newStart - clip->startMs;
     const qint64 newSourceIn = std::clamp(clip->sourceInMs + sourceDelta, 0LL, maxSourceIn);
     newStart = clip->startMs + (newSourceIn - clip->sourceInMs);
-    if (newStart <= clip->startMs) {
+    if (newStart == clip->startMs) {
         return false;
     }
     const qint64 delta = newStart - clip->startMs;
@@ -601,9 +632,10 @@ bool TimelineEditor::trimSelectedClipEndToCursor()
     }
     const qint64 absoluteStart = clip->startMs;
     const qint64 absoluteEnd = clip->startMs + clip->durationMs;
-    const qint64 maxEnd = clip->startMs + clipMaxTimelineDurationMs(*clip);
-    const qint64 newEnd = std::clamp(cursorPositionMs, absoluteStart + kMinClipDurationMs, std::max(absoluteEnd, maxEnd));
-    if (newEnd >= absoluteEnd) {
+    const qint64 maxEnd = clip->startMs + clipMaxTrimDurationMs(*clip, clip->durationMs);
+    const qint64 newEnd =
+        std::clamp(cursorPositionMs, absoluteStart + kMinClipDurationMs, std::max(absoluteEnd, maxEnd));
+    if (newEnd == absoluteEnd) {
         return false;
     }
     const qint64 oldDuration = clip->durationMs;
@@ -2786,8 +2818,10 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         const qint64 originalDuration = dragInitialDurations.value(clip->id, trimOriginalDurationMs);
         const qint64 originalSourceIn = dragInitialSourceIns.value(clip->id, trimOriginalSourceInMs);
         const qint64 originalEnd = originalStart + originalDuration;
-        const qint64 maxSourceIn = std::max<qint64>(0, clip->sourceDurationMs - kMinClipDurationMs);
-        qint64 wantedStart = std::clamp(pointerMs, originalStart, originalEnd - kMinClipDurationMs);
+        const qint64 maxSourceIn =
+            std::max<qint64>(0, clipEffectiveSourceDurationMs(*clip) - kMinClipDurationMs);
+        const qint64 minStart = std::max<qint64>(0, originalStart - originalSourceIn);
+        qint64 wantedStart = std::clamp(pointerMs, minStart, originalEnd - kMinClipDurationMs);
         qint64 newSourceIn = std::clamp(originalSourceIn + (wantedStart - originalStart), 0LL, maxSourceIn);
         wantedStart = originalStart + (newSourceIn - originalSourceIn);
         clip->startMs = wantedStart;
@@ -2818,7 +2852,7 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         const qint64 originalDuration = dragInitialDurations.value(clip->id, trimOriginalDurationMs);
         const qint64 originalSourceIn = dragInitialSourceIns.value(clip->id, trimOriginalSourceInMs);
         const qint64 minEnd = originalStart + kMinClipDurationMs;
-        const qint64 maxEnd = originalStart + clipMaxTimelineDurationMs(*clip);
+        const qint64 maxEnd = originalStart + clipMaxTrimDurationMs(*clip, originalDuration);
         const qint64 wantedEnd = std::clamp(pointerMs, minEnd, std::max(minEnd, maxEnd));
         const qint64 oldDuration = originalDuration;
         clip->durationMs = wantedEnd - originalStart;
@@ -3608,7 +3642,11 @@ int TimelineEditor::clipIdAt(const QPoint &pos) const
 bool TimelineEditor::isNearClipStartEdge(const ClipEvent &clip, int x) const
 {
     const QRect r = clipRect(clip);
-    return std::abs(x - r.left()) <= kTrimHandlePx;
+    int handleX = r.left();
+    if (clip.mediaType == TrackType::Audio && r.width() >= 40) {
+        handleX = audioVolumeRailRect(r).right() + 1;
+    }
+    return std::abs(x - handleX) <= kTrimHandlePx;
 }
 
 bool TimelineEditor::isNearClipEndEdge(const ClipEvent &clip, int x) const

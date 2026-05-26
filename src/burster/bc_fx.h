@@ -98,6 +98,12 @@ std::shared_ptr<IAudioFx> createAudioFx(const QString &typeId, const QJsonObject
 
 /// Timeline→source speed from audio FX (1.0 = normal). &lt;1 stretches, &gt;1 compresses timeline vs source.
 double audioTimelineSourceRate(const QJsonArray &chain);
+/// When true, UI must not auto-resize the clip for playback-rate / stretch FX.
+bool audioFxLockTimelineDuration(const QJsonArray &chain);
+/// Source offset in media ticks for `timelineRel` within `timelineDur` (handles playback-rate automation).
+BurstIndex audioTimelineToSourceOffsetTicks(const QJsonArray &chain,
+                                            BurstIndex timelineRel,
+                                            BurstIndex timelineDur);
 
 /// Each JSON element: `{ "type": "<id>", "params": { ... } }` — first entry sits closest to the decoder.
 std::shared_ptr<IBurstcon> wrapVideoFxChain(std::shared_ptr<IBurstcon> media,

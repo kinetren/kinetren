@@ -1073,7 +1073,7 @@ public:
     {
         QJsonObject merged = mergeDefaults(defaults(), o);
         p = merged;
-        const double newDelayMs = std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 20.0, 800.0);
+        const double newDelayMs = std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 0.0, 800.0);
         if (lastSampleRate > 0 && std::abs(newDelayMs - lastDelayMs) > 0.5) {
             ensureDelayBuffers(lastChannels, lastSampleRate, newDelayMs);
         }
@@ -1085,14 +1085,15 @@ public:
     {
         const int ch = std::max(1, inOut.channels > 0 ? inOut.channels : ctx.channels);
         const int sr = std::max(1, inOut.sampleRate > 0 ? inOut.sampleRate : ctx.sampleRate);
-        const double delayMs = std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 20.0, 800.0);
+        const double delayMs = std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 0.0, 800.0);
+        const double delayMsEff = std::max(delayMs, 1.0);
         if (sr != lastSampleRate || ch != lastChannels || delayLen < 2 ||
             static_cast<int>(delayBuf.size()) < ch) {
-            ensureDelayBuffers(ch, sr, delayMs);
+            ensureDelayBuffers(ch, sr, delayMsEff);
         } else {
             for (size_t ci = 0; ci < delayBuf.size(); ++ci) {
                 if (delayBuf[ci].size() != static_cast<size_t>(delayLen)) {
-                    ensureDelayBuffers(ch, sr, delayMs);
+                    ensureDelayBuffers(ch, sr, delayMsEff);
                     break;
                 }
             }
@@ -1102,9 +1103,12 @@ public:
             return true;
         }
         const double mix = std::clamp(p.value(QStringLiteral("reverbMix")).toDouble(0.35), 0.0, 1.0);
-        const double decay = std::clamp(p.value(QStringLiteral("reverbDecay")).toDouble(0.55), 0.05, 0.92);
-        const double damp = std::clamp(p.value(QStringLiteral("reverbDamp")).toDouble(0.35), 0.0, 0.95);
-        const double wetGain = std::clamp(p.value(QStringLiteral("reverbGain")).toDouble(0.9), 0.1, 2.5);
+        if (mix <= 1e-9) {
+            return true;
+        }
+        const double decay = std::clamp(p.value(QStringLiteral("reverbDecay")).toDouble(0.55), 0.0, 1.0);
+        const double damp = std::clamp(p.value(QStringLiteral("reverbDamp")).toDouble(0.35), 0.0, 1.0);
+        const double wetGain = std::clamp(p.value(QStringLiteral("reverbGain")).toDouble(0.9), 0.0, 8.0);
 
         for (size_t i = 0; i < len; ++i) {
             const int c = static_cast<int>(i % static_cast<size_t>(ch));
@@ -1134,6 +1138,7 @@ private:
         o.insert(QStringLiteral("reverbDecay"), 0.58);
         o.insert(QStringLiteral("reverbDamp"), 0.32);
         o.insert(QStringLiteral("reverbGain"), 0.95);
+        o.insert(QStringLiteral("lockTimelineDuration"), false);
         return o;
     }
 
@@ -1164,21 +1169,90 @@ private:
 
 } // namespace
 
-double audioTimelineSourceRate(const QJsonArray &chain)
+QJsonObject slowedReverbParamsFromChain(const QJsonArray &chain)
 {
-    double rate = 1.0;
     for (const QJsonValue &v : chain) {
         const QJsonObject slot = v.toObject();
         if (slot.value(QStringLiteral("type")).toString() != QStringLiteral("slowedreverb")) {
             continue;
         }
-        const double r =
-            std::clamp(slot.value(QStringLiteral("params")).toObject().value(QStringLiteral("playbackRate")).toDouble(0.82),
-                       0.25,
-                       32.0);
-        rate *= r;
+        QJsonObject o;
+        o.insert(QStringLiteral("playbackRate"), 0.82);
+        o.insert(QStringLiteral("reverbMix"), 0.38);
+        o.insert(QStringLiteral("reverbDelayMs"), 140.0);
+        o.insert(QStringLiteral("reverbDecay"), 0.58);
+        o.insert(QStringLiteral("reverbDamp"), 0.32);
+        o.insert(QStringLiteral("reverbGain"), 0.95);
+        o.insert(QStringLiteral("lockTimelineDuration"), false);
+        const QJsonObject over = slot.value(QStringLiteral("params")).toObject();
+        for (auto it = over.begin(); it != over.end(); ++it) {
+            o.insert(it.key(), it.value());
+        }
+        return o;
     }
-    return std::clamp(rate, 0.25, 32.0);
+    return {};
+}
+
+static double playbackRateAtProgress(const QJsonObject &params, double u01)
+{
+    const QJsonObject resolved = resolveParamsAutomationForBurst(params, u01);
+    return std::clamp(resolved.value(QStringLiteral("playbackRate")).toDouble(1.0), 0.25, 32.0);
+}
+
+static double integratePlaybackRate01(const QJsonObject &params, double u0, double u1)
+{
+    if (u1 <= u0) {
+        return 0.0;
+    }
+    constexpr int kSteps = 48;
+    double sum = 0.0;
+    for (int i = 0; i < kSteps; ++i) {
+        const double a = u0 + (u1 - u0) * static_cast<double>(i) / static_cast<double>(kSteps);
+        const double b = u0 + (u1 - u0) * static_cast<double>(i + 1) / static_cast<double>(kSteps);
+        const double ra = playbackRateAtProgress(params, a);
+        const double rb = playbackRateAtProgress(params, b);
+        sum += 0.5 * (ra + rb) * (b - a);
+    }
+    return sum;
+}
+
+double audioTimelineSourceRate(const QJsonArray &chain)
+{
+    const QJsonObject params = slowedReverbParamsFromChain(chain);
+    if (params.isEmpty()) {
+        return 1.0;
+    }
+    const double integral = integratePlaybackRate01(params, 0.0, 1.0);
+    if (integral < 1e-9) {
+        return 1.0;
+    }
+    return std::clamp(integral, 0.25, 32.0);
+}
+
+bool audioFxLockTimelineDuration(const QJsonArray &chain)
+{
+    const QJsonObject params = slowedReverbParamsFromChain(chain);
+    if (params.isEmpty()) {
+        return false;
+    }
+    return params.value(QStringLiteral("lockTimelineDuration")).toBool(false);
+}
+
+BurstIndex audioTimelineToSourceOffsetTicks(const QJsonArray &chain,
+                                            BurstIndex timelineRel,
+                                            BurstIndex timelineDur)
+{
+    if (timelineDur <= 0) {
+        return 0;
+    }
+    const QJsonObject params = slowedReverbParamsFromChain(chain);
+    if (params.isEmpty()) {
+        return timelineRel;
+    }
+    const double u = std::clamp(static_cast<double>(timelineRel) / static_cast<double>(timelineDur), 0.0, 1.0);
+    const double consumed = integratePlaybackRate01(params, 0.0, u);
+    return static_cast<BurstIndex>(
+        std::llround(std::clamp(consumed, 0.0, 1.0) * static_cast<double>(timelineDur)));
 }
 
 static double rgbMseSubsampled(const QImage &a, const QImage &b)
