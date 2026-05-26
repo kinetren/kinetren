@@ -90,6 +90,8 @@ public:
     float previewVolume() const;
     using AudioLevelsCallback = std::function<void(float leftDb, float rightDb)>;
     void setAudioLevelsCallback(AudioLevelsCallback cb);
+    /// Opens preview audio output on the GUI thread (required before idle scrub can be heard).
+    void ensureIdlePreviewAudio();
     /// One composited burst at `timelineMs` for meter refresh while stopped/scrubbing.
     void requestMixedLevelsSampleAsync(qint64 timelineMs);
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
@@ -114,14 +116,16 @@ public:
 
 private:
     struct DraftJob {
-        enum class Kind { VideoFrame, MixedLevelsSample };
-        Kind kind = Kind::VideoFrame;
+        enum class Kind { IdlePreview, MixedLevelsSample };
+        Kind kind = Kind::IdlePreview;
         qint64 timelineMs = 0;
         std::vector<Clip> videoClips;
+        std::vector<Clip> audioClips;
         quint64 serial = 0;
     };
     static std::pair<float, float> peaksDbFromAudioBurst(const burstcon::AudioBurst &burst, float gainLinear);
     std::pair<float, float> sampleMixedLevelsDbAt(qint64 timelineMs) const;
+    bool fetchMixedAudioBurstAt(qint64 timelineMs, burstcon::AudioBurst &out) const;
     struct PrefetchJob {
         qint64 startMs = 0;
         qint64 endMs = 0;
@@ -137,7 +141,9 @@ private:
     void pushAudioBurst(const burstcon::AudioBurst &burst);
     /// Drain a few milliseconds of queued PCM without blocking the playback timer thread indefinitely.
     void flushAudioPendingToDevice();
-    void requestDraftFrameAsync(qint64 tMs, const std::vector<Clip> &videoClips);
+    void requestIdlePreviewAsync(qint64 tMs,
+                                 const std::vector<Clip> &videoClips,
+                                 const std::vector<Clip> &audioClips);
     void draftWorkerLoop();
     void requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning);
     void prefetchWorkerLoop();
@@ -165,6 +171,7 @@ private:
     std::atomic<quint64> latestDraftSerial{0};
     std::atomic<quint64> latestPrefetchSerial{0};
     std::atomic<qint64> lastPrefetchAnchorMs{-1};
+    std::atomic<qint64> lastIdleScrubAudioMs{-1};
     std::atomic<burstcon::BurstIndex> lastVideoRequestIndex{-1};
     std::atomic<burstcon::BurstIndex> lastAudioRequestIndex{-1};
     std::atomic<float> previewVolumeLinear{1.f};

@@ -781,7 +781,11 @@ void MainWindow::setupTimelineEditorUi()
                 timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(t));
             }
             if (!timelineEditor->isEditingTimelineContent()) {
-                schedulePlaybackSync();
+                if (timelineEditor->isScrubbingPlayhead()) {
+                    flushPlaybackSync();
+                } else {
+                    schedulePlaybackSync();
+                }
             }
         }
     });
@@ -1327,6 +1331,9 @@ void MainWindow::flushPlaybackSync()
     // Always push the latest clip FX chains into the pipeline. Skipping while `timelinePlaying` was
     // wrong: the UI timer can lag a tick, and debounced updates (timelineContentChanged) must still
     // refresh the graph so ConTrack picks up new `videoFxChain` / `audioFxChain` JSON.
+    if (!timelinePlaying) {
+        playbackPipeline->ensureIdlePreviewAudio();
+    }
     syncTimelinePlayback();
     refreshMainAudioMeters();
 }

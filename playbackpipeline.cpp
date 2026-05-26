@@ -733,6 +733,7 @@ void PlaybackPipeline::start(qint64 startTimelineMs)
 void PlaybackPipeline::stop()
 {
     running.store(false);
+    lastIdleScrubAudioMs.store(-1);
     latestDraftSerial.fetch_add(1);
     auto *localTimer = timer.get();
     if (localTimer) {
@@ -773,8 +774,8 @@ void PlaybackPipeline::update(qint64 tMs, const std::vector<Clip> &videoClips, c
         // Do not tie idle preview to the full lookahead window: that window can be "warm" from
         // cache elsewhere while the aligned frame under the cursor still has no bucket, so draft
         // was skipped and one clip showed stripes but black preview.
-        if (onVideoFrameReady && !isScrubFrameWarm(tMs)) {
-            requestDraftFrameAsync(tMs, videoClips);
+        if (onVideoFrameReady) {
+            requestIdlePreviewAsync(tMs, videoClips, audioClips);
         }
         if (idleSpan > 0 && !headWarm) {
             requestPrefetchAsync(tMs, idlePrefetchEnd, true);
@@ -891,7 +892,7 @@ std::pair<float, float> PlaybackPipeline::peaksDbFromAudioBurst(const burstcon::
     return {toDb(peakL), toDb(peakR)};
 }
 
-std::pair<float, float> PlaybackPipeline::sampleMixedLevelsDbAt(qint64 timelineMs) const
+bool PlaybackPipeline::fetchMixedAudioBurstAt(qint64 timelineMs, burstcon::AudioBurst &out) const
 {
     std::shared_ptr<burstcon::IBurstcon> src;
     {
@@ -899,7 +900,7 @@ std::pair<float, float> PlaybackPipeline::sampleMixedLevelsDbAt(qint64 timelineM
         src = root;
     }
     if (!src) {
-        return {-60.f, -60.f};
+        return false;
     }
     constexpr int kRate = 48000;
     constexpr int kSpb = 1024;
@@ -909,11 +910,21 @@ std::pair<float, float> PlaybackPipeline::sampleMixedLevelsDbAt(qint64 timelineM
     const burstcon::BurstIndex idx = (rawIdx / audioStep) * audioStep;
     burstcon::BurstRequest req;
     req.index = idx;
+    return src->audioBurst(req, out) && !out.samples.empty();
+}
+
+std::pair<float, float> PlaybackPipeline::sampleMixedLevelsDbAt(qint64 timelineMs) const
+{
     burstcon::AudioBurst ab;
-    if (!src->audioBurst(req, ab)) {
+    if (!fetchMixedAudioBurstAt(timelineMs, ab)) {
         return {-60.f, -60.f};
     }
     return peaksDbFromAudioBurst(ab, previewVolumeLinear.load());
+}
+
+void PlaybackPipeline::ensureIdlePreviewAudio()
+{
+    ensureAudioOutput();
 }
 
 void PlaybackPipeline::requestMixedLevelsSampleAsync(qint64 timelineMs)
@@ -1364,7 +1375,7 @@ void PlaybackPipeline::flushAudioPendingToDevice()
     }
     constexpr int kMaxWriteIters = 96;
     int iters = 0;
-    while (!audioPcmPending.empty() && iters < kMaxWriteIters && running.load()) {
+    while (!audioPcmPending.empty() && iters < kMaxWriteIters) {
         const char *bytes = reinterpret_cast<const char *>(audioPcmPending.data());
         const int len = static_cast<int>(audioPcmPending.size() * sizeof(int16_t));
         const qint64 w = audioDevice->write(bytes, len);
@@ -1418,12 +1429,15 @@ void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
     flushAudioPendingToDevice();
 }
 
-void PlaybackPipeline::requestDraftFrameAsync(qint64 tMs, const std::vector<Clip> &videoClips)
+void PlaybackPipeline::requestIdlePreviewAsync(qint64 tMs,
+                                               const std::vector<Clip> &videoClips,
+                                               const std::vector<Clip> &audioClips)
 {
     DraftJob job;
-    job.kind = DraftJob::Kind::VideoFrame;
+    job.kind = DraftJob::Kind::IdlePreview;
     job.timelineMs = tMs;
     job.videoClips = videoClips;
+    job.audioClips = audioClips;
     job.serial = latestDraftSerial.fetch_add(1) + 1;
     {
         std::lock_guard<std::mutex> lock(draftMutex);
@@ -1471,6 +1485,18 @@ void PlaybackPipeline::draftWorkerLoop()
         }
         if (onVideoFrameReady) {
             onVideoFrameReady(std::move(frame));
+        }
+        constexpr qint64 kMinIdleScrubAudioStepMs = 35;
+        if (compositionHasAudioAtMs(job.timelineMs, job.audioClips)) {
+            const qint64 prevAudioMs = lastIdleScrubAudioMs.load();
+            if (prevAudioMs < 0 || job.timelineMs - prevAudioMs >= kMinIdleScrubAudioStepMs) {
+                burstcon::AudioBurst ab;
+                if (fetchMixedAudioBurstAt(job.timelineMs, ab) && job.serial == latestDraftSerial.load() &&
+                    !running.load()) {
+                    lastIdleScrubAudioMs.store(job.timelineMs);
+                    pushAudioBurst(ab);
+                }
+            }
         }
     }
 }

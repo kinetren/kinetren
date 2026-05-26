@@ -104,6 +104,7 @@ public:
     QString formatTimelineTime(qint64 timeMs) const;
     void setTimelineFps(int fps);
     bool isEditingTimelineContent() const;
+    bool isScrubbingPlayhead() const;
     void setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipVideoSliding,
                           const QHash<QString, QVector<QPair<double, double>>> &clipVideoHead,
                           const QVector<QPair<double, double>> &timelineVideoSliding,

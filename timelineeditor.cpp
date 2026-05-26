@@ -1801,6 +1801,11 @@ bool TimelineEditor::isEditingTimelineContent() const
         dragMode == DragMode::TrimEnd;
 }
 
+bool TimelineEditor::isScrubbingPlayhead() const
+{
+    return dragMode == DragMode::ScrubCursor;
+}
+
 void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double, double>>> &clipVideoSliding,
                                       const QHash<QString, QVector<QPair<double, double>>> &clipVideoHead,
                                       const QVector<QPair<double, double>> &timelineVideoSliding,
@@ -2678,6 +2683,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
             dragMode = DragMode::MoveRegionEnd;
         } else {
             dragMode = DragMode::ScrubCursor;
+            setCursorMs(snapTimeMs(pointerMs));
         }
     } else if (inTimelineX && pos.y() >= (rulerTop() + rulerHeight()) &&
                pos.y() <= (verticalScrollPx + height() - bottomPadding())) {
