@@ -135,6 +135,84 @@ QVector<QPair<double, double>> segmentsFromBucketsAlongSpan(const std::unordered
     return segs;
 }
 
+static qint64 audioCoverageBucketMs(qint64 tMs)
+{
+    return (tMs / kAudioCoverageBucketMs) * kAudioCoverageBucketMs;
+}
+
+QVector<QPair<double, double>> segmentsFromBucketsAlongSpanAudio(const std::unordered_set<qint64> &buckets,
+                                                                 qint64 spanStartMs,
+                                                                 qint64 spanEndMs)
+{
+    QVector<QPair<double, double>> segs;
+    if (spanEndMs <= spanStartMs) {
+        return segs;
+    }
+    const qint64 span = spanEndMs - spanStartMs;
+    bool inRun = false;
+    qint64 runStart = spanStartMs;
+    const qint64 stepMs = coverageTimeStepMs(span, kAudioCoverageBucketMs);
+    for (qint64 t = spanStartMs; t < spanEndMs; t += stepMs) {
+        const qint64 bucket = audioCoverageBucketMs(t);
+        const bool hit = buckets.find(bucket) != buckets.end();
+        if (hit && !inRun) {
+            inRun = true;
+            runStart = t;
+        } else if (!hit && inRun) {
+            const double a = static_cast<double>(runStart - spanStartMs) / static_cast<double>(span);
+            const double b = static_cast<double>(t - spanStartMs) / static_cast<double>(span);
+            segs.push_back({std::clamp(a, 0.0, 1.0), std::clamp(b, 0.0, 1.0)});
+            inRun = false;
+        }
+    }
+    if (inRun) {
+        const double a = static_cast<double>(runStart - spanStartMs) / static_cast<double>(span);
+        segs.push_back({std::clamp(a, 0.0, 1.0), 1.0});
+    }
+    return segs;
+}
+
+QVector<QPair<double, double>> segmentsFromBucketsAlongSpanAudioForward(const std::unordered_set<qint64> &buckets,
+                                                                        qint64 spanStartMs,
+                                                                        qint64 spanEndMs,
+                                                                        qint64 forwardAnchorMs)
+{
+    if (forwardAnchorMs < 0) {
+        return segmentsFromBucketsAlongSpanAudio(buckets, spanStartMs, spanEndMs);
+    }
+    QVector<QPair<double, double>> segs;
+    if (spanEndMs <= spanStartMs) {
+        return segs;
+    }
+    const qint64 span = spanEndMs - spanStartMs;
+    const qint64 grid = std::max<qint64>(1, kAudioCoverageBucketMs);
+    const qint64 start = std::max(spanStartMs, (forwardAnchorMs / grid) * grid);
+    if (spanEndMs <= start) {
+        return segs;
+    }
+    bool inRun = false;
+    qint64 runStart = start;
+    const qint64 stepMs = coverageTimeStepMs(spanEndMs - start, kAudioCoverageBucketMs);
+    for (qint64 t = start; t < spanEndMs; t += stepMs) {
+        const qint64 bucket = audioCoverageBucketMs(t);
+        const bool hit = buckets.find(bucket) != buckets.end();
+        if (hit && !inRun) {
+            inRun = true;
+            runStart = t;
+        } else if (!hit && inRun) {
+            const double a = static_cast<double>(runStart - spanStartMs) / static_cast<double>(span);
+            const double b = static_cast<double>(t - spanStartMs) / static_cast<double>(span);
+            segs.push_back({std::clamp(a, 0.0, 1.0), std::clamp(b, 0.0, 1.0)});
+            inRun = false;
+        }
+    }
+    if (inRun) {
+        const double a = static_cast<double>(runStart - spanStartMs) / static_cast<double>(span);
+        segs.push_back({std::clamp(a, 0.0, 1.0), 1.0});
+    }
+    return segs;
+}
+
 /// Project-ruler strip: only show coverage at/after `forwardAnchorMs` (lookahead from playhead).
 QVector<QPair<double, double>> segmentsFromBucketsAlongSpanForward(const std::unordered_set<qint64> &buckets,
                                                                    qint64 spanStartMs,
@@ -1093,6 +1171,17 @@ QVector<QPair<double, double>> PlaybackPipeline::timelineVideoHeadSegments(qint6
     return headSegmentsOnView(merged, viewStartMs, viewEndMs, regStart, regEnd);
 }
 
+QVector<QPair<double, double>> PlaybackPipeline::timelineAudioSlidingSegments(qint64 viewStartMs,
+                                                                            qint64 viewEndMs,
+                                                                            qint64 forwardAnchorMs) const
+{
+    std::lock_guard<std::mutex> lock(coverageMutex);
+    return segmentsFromBucketsAlongSpanAudioForward(audioCoverageBuckets,
+                                                    viewStartMs,
+                                                    viewEndMs,
+                                                    forwardAnchorMs);
+}
+
 QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::audioCacheSegments(const std::vector<Clip> &clips) const
 {
     QHash<QString, QVector<QPair<double, double>>> out;
@@ -1128,15 +1217,12 @@ QHash<QString, QVector<QPair<double, double>>> PlaybackPipeline::audioCacheSegme
 
 QString PlaybackPipeline::coverageClipKey(const Clip &clip)
 {
-    return QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8")
+    // Must match TimelineEditor::clipCoverageKey() or cache stripes never paint on clips.
+    return QStringLiteral("%1|%2|%3|%4")
         .arg(clip.sourcePath)
         .arg(clip.startMs)
         .arg(clip.durationMs)
-        .arg(clip.sourceInMs)
-        .arg(clip.trackIndex)
-        .arg(QString::fromUtf8(QJsonDocument(clip.videoFxChain).toJson(QJsonDocument::Compact)))
-        .arg(QString::fromUtf8(QJsonDocument(clip.audioFxChain).toJson(QJsonDocument::Compact)))
-        .arg(clip.audioLinearGain, 0, 'g', 12);
+        .arg(clip.sourceInMs);
 }
 
 bool PlaybackPipeline::clipsEqual(const std::vector<Clip> &a, const std::vector<Clip> &b)

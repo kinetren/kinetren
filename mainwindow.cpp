@@ -1849,8 +1849,14 @@ void MainWindow::refreshPerformancePanel()
     const qint64 viewEnd = viewStart + timelineEditor->visibleDurationMs();
     const auto timelineVideoSliding = playbackPipeline->timelineVideoSlidingSegments(viewStart, viewEnd, -1);
     const auto timelineVideoHead = playbackPipeline->timelineVideoHeadSegments(viewStart, viewEnd);
+    const auto timelineAudioSliding = playbackPipeline->timelineAudioSlidingSegments(viewStart, viewEnd, -1);
     if (!timelineEditor->isEditingTimelineContent()) {
-        timelineEditor->setCacheCoverage(clipVideoSliding, clipVideoHead, timelineVideoSliding, timelineVideoHead, clipAudio);
+        timelineEditor->setCacheCoverage(clipVideoSliding,
+                                         clipVideoHead,
+                                         timelineVideoSliding,
+                                         timelineVideoHead,
+                                         timelineAudioSliding,
+                                         clipAudio);
     }
 
     const auto mb = [](quint64 bytes) -> QString {

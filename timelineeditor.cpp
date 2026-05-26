@@ -280,6 +280,7 @@ void TimelineEditor::purgePresentationCaches()
     cacheVideoHeadByClip.clear();
     timelineVideoSlidingSegments.clear();
     timelineVideoHeadSegments.clear();
+    timelineAudioSlidingSegments.clear();
     cacheAudioByClip.clear();
     update();
 }
@@ -1804,12 +1805,14 @@ void TimelineEditor::setCacheCoverage(const QHash<QString, QVector<QPair<double,
                                       const QHash<QString, QVector<QPair<double, double>>> &clipVideoHead,
                                       const QVector<QPair<double, double>> &timelineVideoSliding,
                                       const QVector<QPair<double, double>> &timelineVideoHead,
+                                      const QVector<QPair<double, double>> &timelineAudioSliding,
                                       const QHash<QString, QVector<QPair<double, double>>> &clipAudioSegments)
 {
     cacheVideoSlidingByClip = clipVideoSliding;
     cacheVideoHeadByClip = clipVideoHead;
     timelineVideoSlidingSegments = timelineVideoSliding;
     timelineVideoHeadSegments = timelineVideoHead;
+    timelineAudioSlidingSegments = timelineAudioSliding;
     cacheAudioByClip = clipAudioSegments;
     update();
 }
@@ -2077,6 +2080,7 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     cacheVideoHeadByClip.clear();
     timelineVideoSlidingSegments.clear();
     timelineVideoHeadSegments.clear();
+    timelineAudioSlidingSegments.clear();
     cacheAudioByClip.clear();
 
     nextClipId = std::max(root.value("nextClipId").toInt(maxClipId + 1), maxClipId + 1);
@@ -2170,11 +2174,11 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
         p.drawText(x + 2, rulerTop() + 14, tickLabel);
     }
 
-    // Video cache strip (above ruler): draw after tick grid so vertical lines do not erase it.
+    // Cache strips above ruler: audio (cyan) then video (green + yellow head).
     {
         const int tlW = timelineRight() - timelineLeft();
         const int cacheH = 4;
-        const QRect timelineCacheStrip(timelineLeft(), std::max(2, rulerTop() - cacheH - 1), tlW, cacheH);
+        const int cacheGap = 1;
         auto paintSegRow = [&](const QVector<QPair<double, double>> &segs, const QRect &row, const QColor &col) {
             for (const auto &segment : segs) {
                 const double a = std::clamp(segment.first, 0.0, 1.0);
@@ -2187,9 +2191,17 @@ void TimelineEditor::paintEvent(QPaintEvent *event)
                 p.fillRect(QRect(x1, row.top(), std::max(1, x2 - x1), row.height()), col);
             }
         };
-        // Green = decoded frame in ConCache (LRU). Yellow overlay = also in region-head window.
-        paintSegRow(timelineVideoSlidingSegments, timelineCacheStrip, QColor(72, 168, 96));
-        paintSegRow(timelineVideoHeadSegments, timelineCacheStrip, QColor(255, 210, 72, 150));
+        const QRect timelineVideoCacheStrip(timelineLeft(),
+                                            std::max(2, rulerTop() - cacheH - 1),
+                                            tlW,
+                                            cacheH);
+        const QRect timelineAudioCacheStrip(timelineLeft(),
+                                            std::max(2, timelineVideoCacheStrip.top() - cacheH - cacheGap),
+                                            tlW,
+                                            cacheH);
+        paintSegRow(timelineAudioSlidingSegments, timelineAudioCacheStrip, QColor(114, 214, 255));
+        paintSegRow(timelineVideoSlidingSegments, timelineVideoCacheStrip, QColor(72, 168, 96));
+        paintSegRow(timelineVideoHeadSegments, timelineVideoCacheStrip, QColor(255, 210, 72, 150));
     }
 
     if (hasRegionSelection && regionEndMs > regionStartMs) {

@@ -105,6 +105,10 @@ public:
                                                                qint64 viewEndMs,
                                                                qint64 forwardAnchorMs = -1) const;
     QVector<QPair<double, double>> timelineVideoHeadSegments(qint64 viewStartMs, qint64 viewEndMs) const;
+    /// Composition-timeline audio ConCache coverage (cyan strip on the ruler).
+    QVector<QPair<double, double>> timelineAudioSlidingSegments(qint64 viewStartMs,
+                                                                qint64 viewEndMs,
+                                                                qint64 forwardAnchorMs = -1) const;
     QHash<QString, QVector<QPair<double, double>>> audioCacheSegments(const std::vector<Clip> &clips) const;
     static QString coverageClipKey(const Clip &clip);
 

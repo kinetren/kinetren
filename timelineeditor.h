@@ -108,6 +108,7 @@ public:
                           const QHash<QString, QVector<QPair<double, double>>> &clipVideoHead,
                           const QVector<QPair<double, double>> &timelineVideoSliding,
                           const QVector<QPair<double, double>> &timelineVideoHead,
+                          const QVector<QPair<double, double>> &timelineAudioSliding,
                           const QHash<QString, QVector<QPair<double, double>>> &clipAudioSegments);
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject &root);
@@ -467,6 +468,7 @@ private:
     QHash<QString, QVector<QPair<double, double>>> cacheVideoHeadByClip;
     QVector<QPair<double, double>> timelineVideoSlidingSegments;
     QVector<QPair<double, double>> timelineVideoHeadSegments;
+    QVector<QPair<double, double>> timelineAudioSlidingSegments;
     QHash<QString, QVector<QPair<double, double>>> cacheAudioByClip;
     /// Avoid probing the same path repeatedly (bulk replace, morpher preview paint).
     mutable QHash<QString, qint64> sourceDurationProbeCache;
