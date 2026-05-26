@@ -126,13 +126,11 @@ private:
         Kind kind = Kind::IdlePreview;
         qint64 timelineMs = 0;
         std::vector<Clip> videoClips;
-        quint64 serial = 0;
     };
     struct ScrubAudioJob {
         qint64 fromMs = 0;
         qint64 toMs = 0;
         bool backward = false;
-        quint64 serial = 0;
     };
     static std::pair<float, float> peaksDbFromAudioBurst(const burstcon::AudioBurst &burst, float gainLinear);
     std::pair<float, float> sampleMixedLevelsDbAt(qint64 timelineMs) const;
@@ -155,7 +153,7 @@ private:
     void flushAudioPendingToDevice();
     void requestIdlePreviewAsync(qint64 tMs, const std::vector<Clip> &videoClips);
     void requestIdleScrubAudioAsync(qint64 fromMs, qint64 toMs, bool backward);
-    void feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs, quint64 serial);
+    void feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs);
     void draftWorkerLoop();
     void requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning);
     void prefetchWorkerLoop();
@@ -184,7 +182,6 @@ private:
     std::atomic<quint64> latestPrefetchSerial{0};
     std::atomic<qint64> lastPrefetchAnchorMs{-1};
     std::atomic<qint64> lastIdleScrubAudioMs{-1};
-    std::atomic<quint64> latestScrubAudioSerial{0};
     std::atomic_bool idleScrubDragging{false};
     bool scrubAudioJobPending = false;
     ScrubAudioJob pendingScrubAudioJob;

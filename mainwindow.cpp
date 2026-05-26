@@ -775,8 +775,10 @@ void MainWindow::setupTimelineEditorUi()
         openClipFxChainWindow(clipId, ClipFxChainWindow::MediaKind::Audio, QString());
     });
     connect(timelineEditor, &TimelineEditor::playheadScrubStarted, this, [this]() {
-        if (!timelinePlaying && playbackPipeline) {
+        if (!timelinePlaying && playbackPipeline && timelineEditor) {
             playbackPipeline->beginIdleScrub();
+            flushPlaybackSync();
+            playbackPipeline->idleScrubSeek(timelineEditor->cursorMs());
         }
     });
     connect(timelineEditor, &TimelineEditor::playheadScrubEnded, this, [this]() {

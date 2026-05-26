@@ -736,7 +736,6 @@ void PlaybackPipeline::stop()
     running.store(false);
     idleScrubDragging.store(false);
     lastIdleScrubAudioMs.store(-1);
-    latestScrubAudioSerial.fetch_add(1);
     latestDraftSerial.fetch_add(1);
     auto *localTimer = timer.get();
     if (localTimer) {
@@ -932,7 +931,6 @@ void PlaybackPipeline::ensureIdlePreviewAudio()
 
 void PlaybackPipeline::beginIdleScrub()
 {
-    latestScrubAudioSerial.fetch_add(1);
     lastIdleScrubAudioMs.store(-1);
     idleScrubDragging.store(true);
     {
@@ -948,26 +946,20 @@ void PlaybackPipeline::idleScrubSeek(qint64 timelineMs)
     }
     const qint64 tMs = std::max<qint64>(0, timelineMs);
     const qint64 last = lastIdleScrubAudioMs.load();
-    if (last < 0) {
-        requestIdleScrubAudioAsync(tMs, tMs, false);
-        lastIdleScrubAudioMs.store(tMs);
+    if (last >= 0 && tMs == last) {
         return;
     }
-    if (tMs + 12 < last) {
-        requestIdleScrubAudioAsync(tMs, tMs, true);
-        lastIdleScrubAudioMs.store(tMs);
-        return;
-    }
-    if (tMs > last + 5) {
+    if (last < 0 || tMs + 10 < last) {
+        requestIdleScrubAudioAsync(tMs, tMs, last >= 0 && tMs + 10 < last);
+    } else if (tMs > last) {
         requestIdleScrubAudioAsync(last, tMs, false);
-        lastIdleScrubAudioMs.store(tMs);
     }
+    lastIdleScrubAudioMs.store(tMs);
 }
 
 void PlaybackPipeline::endIdleScrub()
 {
     idleScrubDragging.store(false);
-    latestScrubAudioSerial.fetch_add(1);
     lastIdleScrubAudioMs.store(-1);
     {
         std::lock_guard<std::mutex> lock(audioMutex);
@@ -977,16 +969,17 @@ void PlaybackPipeline::endIdleScrub()
 
 void PlaybackPipeline::requestMixedLevelsSampleAsync(qint64 timelineMs)
 {
-    DraftJob job;
-    job.kind = DraftJob::Kind::MixedLevelsSample;
-    job.timelineMs = timelineMs;
-    job.serial = latestDraftSerial.fetch_add(1) + 1;
-    {
+    const bool notify = [&]() {
         std::lock_guard<std::mutex> lock(draftMutex);
-        pendingDraftJob = std::move(job);
+        pendingDraftJob.kind = DraftJob::Kind::MixedLevelsSample;
+        pendingDraftJob.timelineMs = timelineMs;
+        const bool wasPending = draftJobPending;
         draftJobPending = true;
+        return !wasPending;
+    }();
+    if (notify) {
+        draftCv.notify_one();
     }
-    draftCv.notify_one();
 }
 
 void PlaybackPipeline::setPreviewVolume(float linearGain)
@@ -1486,35 +1479,37 @@ void PlaybackPipeline::clearAudioPendingLocked()
 
 void PlaybackPipeline::requestIdlePreviewAsync(qint64 tMs, const std::vector<Clip> &videoClips)
 {
-    DraftJob job;
-    job.kind = DraftJob::Kind::IdlePreview;
-    job.timelineMs = tMs;
-    job.videoClips = videoClips;
-    job.serial = latestDraftSerial.fetch_add(1) + 1;
-    {
+    const bool notify = [&]() {
         std::lock_guard<std::mutex> lock(draftMutex);
-        pendingDraftJob = std::move(job);
+        pendingDraftJob.kind = DraftJob::Kind::IdlePreview;
+        pendingDraftJob.timelineMs = tMs;
+        pendingDraftJob.videoClips = videoClips;
+        const bool wasPending = draftJobPending;
         draftJobPending = true;
+        return !wasPending;
+    }();
+    if (notify) {
+        draftCv.notify_one();
     }
-    draftCv.notify_one();
 }
 
 void PlaybackPipeline::requestIdleScrubAudioAsync(qint64 fromMs, qint64 toMs, bool backward)
 {
-    ScrubAudioJob job;
-    job.fromMs = std::max<qint64>(0, fromMs);
-    job.toMs = std::max<qint64>(0, toMs);
-    job.backward = backward;
-    job.serial = latestScrubAudioSerial.fetch_add(1) + 1;
-    {
+    const bool notify = [&]() {
         std::lock_guard<std::mutex> lock(draftMutex);
-        pendingScrubAudioJob = std::move(job);
+        pendingScrubAudioJob.fromMs = std::max<qint64>(0, fromMs);
+        pendingScrubAudioJob.toMs = std::max<qint64>(0, toMs);
+        pendingScrubAudioJob.backward = backward;
+        const bool wasPending = scrubAudioJobPending;
         scrubAudioJobPending = true;
+        return !wasPending;
+    }();
+    if (notify) {
+        draftCv.notify_one();
     }
-    draftCv.notify_one();
 }
 
-void PlaybackPipeline::feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs, quint64 serial)
+void PlaybackPipeline::feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs)
 {
     constexpr int kRate = 48000;
     constexpr int kSpb = 1024;
@@ -1531,10 +1526,10 @@ void PlaybackPipeline::feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs, quint6
     }
     const burstcon::BurstIndex endIdx = alignAudioIndex(burstcon::msToBurstIndex(toMs));
 
-    constexpr int kMaxBursts = 48;
+    constexpr int kMaxBursts = 16;
     int count = 0;
     for (; idx <= endIdx && count < kMaxBursts; idx += audioStep, ++count) {
-        if (serial != latestScrubAudioSerial.load() || running.load() || !idleScrubDragging.load()) {
+        if (running.load() || !idleScrubDragging.load()) {
             return;
         }
         const qint64 t = burstcon::burstIndexToMs(idx);
@@ -1573,58 +1568,75 @@ void PlaybackPipeline::draftWorkerLoop()
                 haveDraft = true;
             }
         }
-        if (haveScrub) {
-            if (scrubJob.serial == latestScrubAudioSerial.load() && !running.load() && idleScrubDragging.load()) {
-                if (scrubJob.backward) {
-                    {
-                        std::lock_guard<std::mutex> audioLock(audioMutex);
-                        clearAudioPendingLocked();
-                    }
-                    burstcon::AudioBurst ab;
-                    if (fetchMixedAudioBurstAt(scrubJob.toMs, ab)) {
-                        pushAudioBurst(ab);
-                    }
-                } else if (scrubJob.fromMs == scrubJob.toMs) {
-                    burstcon::AudioBurst ab;
-                    if (fetchMixedAudioBurstAt(scrubJob.toMs, ab)) {
-                        pushAudioBurst(ab);
-                    }
-                } else {
-                    const qint64 catchUpTo =
-                        std::max(scrubJob.toMs, lastIdleScrubAudioMs.load());
-                    feedIdleScrubAudioSpan(scrubJob.fromMs, catchUpTo, scrubJob.serial);
-                }
+        const auto processScrubAudio = [&]() {
+            if (!haveScrub || running.load() || !idleScrubDragging.load()) {
+                return;
             }
-        }
+            if (scrubJob.backward) {
+                {
+                    std::lock_guard<std::mutex> audioLock(audioMutex);
+                    clearAudioPendingLocked();
+                }
+                burstcon::AudioBurst ab;
+                if (fetchMixedAudioBurstAt(scrubJob.toMs, ab)) {
+                    pushAudioBurst(ab);
+                }
+            } else if (scrubJob.fromMs == scrubJob.toMs) {
+                burstcon::AudioBurst ab;
+                if (fetchMixedAudioBurstAt(scrubJob.toMs, ab)) {
+                    pushAudioBurst(ab);
+                }
+            } else {
+                const qint64 catchUpTo = std::max(scrubJob.toMs, lastIdleScrubAudioMs.load());
+                feedIdleScrubAudioSpan(scrubJob.fromMs, catchUpTo);
+            }
+        };
+
         if (!haveDraft) {
-            continue;
-        }
-        if (job.serial != latestDraftSerial.load()) {
+            processScrubAudio();
             continue;
         }
         if (job.kind == DraftJob::Kind::MixedLevelsSample) {
             const auto levels = sampleMixedLevelsDbAt(job.timelineMs);
-            if (job.serial != latestDraftSerial.load()) {
-                continue;
-            }
             if (onAudioLevelsReady) {
                 onAudioLevelsReady(levels.first, levels.second);
             }
+            processScrubAudio();
             continue;
         }
         if (running.load() || !draftPreviewEnabled.load()) {
+            processScrubAudio();
             continue;
         }
-        QImage frame = renderDraftFrame(job.timelineMs, job.videoClips);
-        if (running.load()) {
-            continue;
+        for (;;) {
+            DraftJob previewJob = job;
+            {
+                std::lock_guard<std::mutex> lock(draftMutex);
+                if (draftJobPending && pendingDraftJob.kind == DraftJob::Kind::IdlePreview) {
+                    previewJob = pendingDraftJob;
+                    draftJobPending = false;
+                }
+            }
+            QImage frame = renderDraftFrame(previewJob.timelineMs, previewJob.videoClips);
+            if (running.load()) {
+                break;
+            }
+            bool superseded = false;
+            {
+                std::lock_guard<std::mutex> lock(draftMutex);
+                if (draftJobPending && pendingDraftJob.kind == DraftJob::Kind::IdlePreview) {
+                    superseded = true;
+                }
+            }
+            if (superseded) {
+                continue;
+            }
+            if (onVideoFrameReady) {
+                onVideoFrameReady(std::move(frame));
+            }
+            break;
         }
-        if (job.serial != latestDraftSerial.load()) {
-            continue;
-        }
-        if (onVideoFrameReady) {
-            onVideoFrameReady(std::move(frame));
-        }
+        processScrubAudio();
     }
 }
 
