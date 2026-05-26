@@ -12,6 +12,9 @@ public:
 
     void pushLevelsDb(float leftDb, float rightDb);
 
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
+
 protected:
     void paintEvent(QPaintEvent *event) override;
     void timerEvent(QTimerEvent *event) override;

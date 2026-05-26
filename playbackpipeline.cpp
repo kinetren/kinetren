@@ -803,7 +803,8 @@ std::pair<float, float> PlaybackPipeline::peaksDbFromAudioBurst(const burstcon::
         if (peak < 2) {
             return -60.f;
         }
-        return 20.f * std::log10(static_cast<float>(peak) / 32768.f);
+        const float norm = static_cast<float>(peak) / 32768.f;
+        return std::clamp(20.f * std::log10(norm), -60.f, 6.f);
     };
     return {toDb(peakL), toDb(peakR)};
 }

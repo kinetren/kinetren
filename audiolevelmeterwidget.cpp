@@ -1,8 +1,8 @@
 #include "audiolevelmeterwidget.h"
 
+#include <QFontDatabase>
 #include <QFontMetrics>
 #include <QPainter>
-#include <QFontDatabase>
 
 #include <algorithm>
 #include <cmath>
@@ -12,64 +12,80 @@ constexpr float kMeterMinDb = -48.f;
 constexpr float kMeterMaxDb = 6.f;
 constexpr float kSilenceDb = -60.f;
 constexpr int kTimerMs = 25;
-constexpr float kBarFallDbPerTick = 2.4f;
-constexpr float kCapFallDbPerTick = 0.22f;
-constexpr int kSegPx = 3;
-constexpr int kSegGap = 1;
+constexpr float kBarFallDbPerTick = 2.8f;
+constexpr float kCapFallDbPerTick = 0.2f;
+constexpr int kScaleW = 22;
+constexpr int kChannelGap = 5;
+constexpr int kMinBarW = 14;
+constexpr int kSegPx = 6;
+constexpr int kSegGap = 2;
 } // namespace
 
 AudioLevelMeterWidget::AudioLevelMeterWidget(QWidget *parent)
     : QWidget(parent)
 {
-    setMinimumWidth(68);
-    setMaximumWidth(88);
-    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+    setMinimumWidth(104);
+    setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Expanding);
     QFont f = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     if (f.pointSize() <= 0) {
         f = font();
     }
-    f.setPointSize(9);
+    f.setPointSize(8);
     f.setStyleStrategy(QFont::PreferAntialias);
     setFont(f);
     startTimer(kTimerMs);
 }
 
+QSize AudioLevelMeterWidget::sizeHint() const
+{
+    return QSize(112, 220);
+}
+
+QSize AudioLevelMeterWidget::minimumSizeHint() const
+{
+    return QSize(104, 120);
+}
+
 float AudioLevelMeterWidget::clampDb(float db)
 {
-    return std::clamp(db, kSilenceDb, kMeterMaxDb + 3.f);
+    return std::clamp(db, kSilenceDb, kMeterMaxDb);
 }
 
 float AudioLevelMeterWidget::decayToward(float current, float target, float fallDb)
 {
-    if (target >= current) {
+    if (target > current) {
         return target;
     }
     return current - fallDb;
 }
 
-QColor AudioLevelMeterWidget::segmentColor(float segTopDb)
+QColor AudioLevelMeterWidget::segmentColor(float segDb)
 {
-    if (segTopDb >= -3.f) {
+    if (segDb >= -3.f) {
         return QColor(228, 62, 52);
     }
-    if (segTopDb >= -9.f) {
+    if (segDb >= -9.f) {
         return QColor(238, 178, 42);
     }
-    if (segTopDb >= -18.f) {
+    if (segDb >= -18.f) {
         return QColor(108, 198, 82);
     }
-    if (segTopDb >= -36.f) {
+    if (segDb >= -36.f) {
         return QColor(58, 142, 68);
     }
-    return QColor(32, 72, 42);
+    return QColor(38, 98, 48);
 }
 
 void AudioLevelMeterWidget::pushLevelsDb(float leftDb, float rightDb)
 {
     targetL = clampDb(leftDb);
     targetR = clampDb(rightDb);
-    levelL = std::max(levelL, targetL);
-    levelR = std::max(levelR, targetR);
+    if (targetL > levelL) {
+        levelL = targetL;
+    }
+    if (targetR > levelR) {
+        levelR = targetR;
+    }
     if (targetL > capHoldL) {
         capHoldL = targetL;
     }
@@ -84,8 +100,8 @@ void AudioLevelMeterWidget::timerEvent(QTimerEvent *event)
     Q_UNUSED(event);
     levelL = decayToward(levelL, targetL, kBarFallDbPerTick);
     levelR = decayToward(levelR, targetR, kBarFallDbPerTick);
-    targetL = decayToward(targetL, kSilenceDb, kBarFallDbPerTick * 0.65f);
-    targetR = decayToward(targetR, kSilenceDb, kBarFallDbPerTick * 0.65f);
+    targetL = decayToward(targetL, kSilenceDb, kBarFallDbPerTick * 0.7f);
+    targetR = decayToward(targetR, kSilenceDb, kBarFallDbPerTick * 0.7f);
     capHoldL = decayToward(capHoldL, kSilenceDb, kCapFallDbPerTick);
     capHoldR = decayToward(capHoldR, kSilenceDb, kCapFallDbPerTick);
     update();
@@ -95,7 +111,7 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::Antialiasing, false);
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
     p.fillRect(rect(), QColor(14, 16, 18));
@@ -103,13 +119,13 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
     const QFont labelFont = font();
     const QFontMetrics fm(labelFont);
 
-    const QRect area = rect().adjusted(4, 5, -4, -20);
-    const int scaleW = fm.horizontalAdvance(QStringLiteral("-48")) + 6;
-    const int gap = 5;
-    const int barW = std::max(12, (area.width() - scaleW - gap * 2) / 2);
-    const QRect scaleRect(area.left(), area.top(), scaleW, area.height());
-    const QRect barL(scaleRect.right() + gap, area.top(), barW, area.height());
-    const QRect barR(barL.right() + gap, area.top(), barW, area.height());
+    const QRect area = rect().adjusted(3, 4, -3, -18);
+    const int availForBars = std::max(0, area.width() - kScaleW - kChannelGap);
+    const int barW = std::max(kMinBarW, (availForBars - kChannelGap) / 2);
+
+    const QRect scaleRect(area.left(), area.top(), kScaleW, area.height());
+    const QRect barL(scaleRect.right() + 1, area.top(), barW, area.height());
+    const QRect barR(barL.right() + kChannelGap, area.top(), barW, area.height());
 
     auto dbToY = [&](float db, const QRect &bar) {
         const float t = (clampDb(db) - kMeterMinDb) / (kMeterMaxDb - kMeterMinDb);
@@ -118,31 +134,29 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
 
     p.setFont(labelFont);
     p.setPen(QColor(175, 185, 198));
-    for (float db : {0.f, -6.f, -12.f, -24.f, -36.f, -48.f}) {
+    for (float db : {0.f, -12.f, -24.f, -48.f}) {
         const int y = dbToY(db, barL);
-        p.drawLine(scaleRect.right() - 3, y, scaleRect.right(), y);
-        if (db == 0.f || db == -12.f || db == -24.f || db == -48.f) {
-            const QString txt = (db > -0.05f) ? QStringLiteral("0")
-                                              : QString::number(static_cast<int>(db));
-            const QRect tr(scaleRect.left(), y - fm.height() / 2, scaleW - 4, fm.height());
-            p.drawText(tr, Qt::AlignRight | Qt::AlignVCenter, txt);
-        }
+        p.drawLine(scaleRect.right() - 2, y, scaleRect.right(), y);
+        const QString txt = (db > -0.05f) ? QStringLiteral("0") : QString::number(static_cast<int>(db));
+        const QRect tr(scaleRect.left() - 2, y - fm.height() / 2, kScaleW + 2, fm.height());
+        p.drawText(tr, Qt::AlignRight | Qt::AlignVCenter, txt);
     }
 
+    const int segStep = kSegPx + kSegGap;
+
     auto drawChannel = [&](const QRect &bar, float levelDb, float capDb, const char *chLabel) {
-        QRect well = bar.adjusted(0, 0, 0, 0);
-        p.fillRect(well, QColor(8, 9, 11));
-        p.setPen(QColor(38, 44, 52));
-        p.drawRect(well);
+        if (bar.width() < 4 || bar.height() < 8) {
+            return;
+        }
 
-        const int segStep = kSegPx + kSegGap;
-        const int innerTop = well.top() + 2;
-        const int innerBottom = well.bottom() - 2;
+        p.fillRect(bar, QColor(6, 7, 9));
+        p.setPen(QColor(40, 46, 54));
+        p.drawRect(bar);
+
+        const int innerTop = bar.top() + 2;
+        const int innerBottom = bar.bottom() - 2;
         const int innerH = std::max(1, innerBottom - innerTop);
-        const int segCount = innerH / segStep;
-
-        const int yLevel = dbToY(levelDb, well);
-        const int yCap = dbToY(capDb, well);
+        const int segCount = std::max(1, innerH / segStep);
 
         for (int s = 0; s < segCount; ++s) {
             const int segBottom = innerBottom - s * segStep;
@@ -150,36 +164,35 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
             if (segTop < innerTop) {
                 break;
             }
-            const float rel = static_cast<float>(innerBottom - segBottom) / static_cast<float>(innerH);
-            const float segDb = kMeterMinDb + rel * (kMeterMaxDb - kMeterMinDb);
 
-            if (segTop >= yLevel - 1 && segTop >= innerTop) {
-                QRect seg(well.left() + 2, segTop, well.width() - 4, kSegPx);
-                p.fillRect(seg, segmentColor(segDb + static_cast<float>(kSegPx) * 0.5f));
+            const float relCenter =
+                1.f - static_cast<float>(segTop + kSegPx / 2 - innerTop) / static_cast<float>(innerH);
+            const float segDb = kMeterMinDb + relCenter * (kMeterMaxDb - kMeterMinDb);
+
+            const QRect slot(bar.left() + 2, segTop, bar.width() - 4, kSegPx);
+            p.fillRect(slot, QColor(14, 16, 19));
+
+            if (segDb <= levelDb + 0.35f) {
+                p.fillRect(slot.adjusted(1, 1, -1, -1), segmentColor(segDb));
             }
         }
 
-        if (capDb > kMeterMinDb + 0.5f) {
-            const int capY = yCap - 2;
-            QColor capCol = QColor(250, 248, 235);
+        if (capDb > levelDb + 0.4f && capDb > kMeterMinDb + 1.f) {
+            const int yCap = dbToY(capDb, bar);
+            QColor capCol = QColor(245, 242, 230);
             if (capDb >= -3.f) {
-                capCol = QColor(255, 90, 75);
+                capCol = QColor(255, 85, 70);
             } else if (capDb >= -9.f) {
-                capCol = QColor(255, 210, 70);
+                capCol = QColor(255, 205, 60);
             }
-            QRect cap(well.left() - 1, capY, well.width() + 2, 5);
-            p.setPen(QPen(capCol.darker(115), 1));
-            p.setBrush(capCol);
-            p.drawRoundedRect(cap, 2, 2);
-            p.setPen(Qt::NoPen);
-            p.setBrush(QColor(255, 255, 255, 55));
-            p.drawRoundedRect(cap.adjusted(1, 0, -1, -2), 1, 1);
+            const QRect capLine(bar.left() + 1, yCap - 1, bar.width() - 2, 3);
+            p.fillRect(capLine, capCol);
         }
 
-        p.setPen(QColor(200, 210, 222));
+        p.setPen(QColor(210, 218, 228));
         p.setFont(labelFont);
-        const QRect lr(bar.left(), rect().bottom() - 17, bar.width(), 16);
-        p.drawText(lr, Qt::AlignHCenter | Qt::AlignVCenter, QString::fromLatin1(chLabel));
+        p.drawText(QRect(bar.left(), rect().bottom() - 15, bar.width(), 14), Qt::AlignHCenter | Qt::AlignVCenter,
+                   QString::fromLatin1(chLabel));
     };
 
     drawChannel(barL, levelL, capHoldL, "L");

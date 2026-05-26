@@ -404,6 +404,7 @@ void MainWindow::setupTimelineEditorUi()
     previewMediaLayout->setSpacing(4);
     previewMediaLayout->addWidget(ui->frame, 1);
     mainAudioMeters = new AudioLevelMeterWidget(previewMediaRow);
+    mainAudioMeters->setMinimumWidth(112);
     previewMediaLayout->addWidget(mainAudioMeters, 0);
     previewVolumeFader = new PreviewVolumeFader(previewMediaRow);
     previewMediaLayout->addWidget(previewVolumeFader, 0);
