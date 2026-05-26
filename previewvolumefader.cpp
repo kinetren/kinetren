@@ -1,5 +1,7 @@
 #include "previewvolumefader.h"
 
+#include <QFontDatabase>
+#include <QFontMetrics>
 #include <QPainter>
 #include <QMouseEvent>
 
@@ -15,9 +17,12 @@ constexpr float kDefaultDb = 0.f;
 PreviewVolumeFader::PreviewVolumeFader(QWidget *parent)
     : QWidget(parent)
 {
-    setFixedWidth(40);
+    setFixedWidth(44);
     setCursor(Qt::SizeVerCursor);
     setToolTip(tr("Master preview volume. Double-click: 0 dB. M: mute."));
+    QFont f = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    f.setPointSize(9);
+    setFont(f);
 }
 
 void PreviewVolumeFader::setVolumeDb(float db)
@@ -77,7 +82,7 @@ float PreviewVolumeFader::dbForY(int y) const
 
 QRect PreviewVolumeFader::railRect() const
 {
-    return rect().adjusted(8, 6, -8, -22);
+    return rect().adjusted(10, 8, -10, -26);
 }
 
 void PreviewVolumeFader::applyFromY(int y)
@@ -100,7 +105,7 @@ void PreviewVolumeFader::mousePressEvent(QMouseEvent *event)
     if (event->button() != Qt::LeftButton) {
         return;
     }
-    const QRect muteRect((width() - 22) / 2, height() - 18, 22, 14);
+    const QRect muteRect((width() - 26) / 2, height() - 20, 26, 16);
     if (muteRect.contains(event->pos())) {
         setMuted(!muted_);
         return;
@@ -130,54 +135,56 @@ void PreviewVolumeFader::mouseDoubleClickEvent(QMouseEvent *event)
 
 QSize PreviewVolumeFader::sizeHint() const
 {
-    return QSize(40, 220);
+    return QSize(44, 220);
 }
 
 QSize PreviewVolumeFader::minimumSizeHint() const
 {
-    return QSize(36, 120);
+    return QSize(40, 120);
 }
 
 void PreviewVolumeFader::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter p(this);
-    p.fillRect(rect(), QColor(22, 24, 27));
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::TextAntialiasing, true);
+    p.fillRect(rect(), QColor(18, 20, 23));
+
+    const QFont textFont = font();
+    const QFontMetrics fm(textFont);
+    p.setFont(textFont);
 
     const QRect rail = railRect();
-    p.fillRect(rail, QColor(30, 34, 38));
-    p.setPen(QColor(55, 62, 70));
+    p.fillRect(rail, QColor(26, 30, 34));
+    p.setPen(QColor(50, 58, 68));
     p.drawRect(rail);
 
-    p.setPen(QColor(75, 85, 98));
-    p.setFont(QFont(QStringLiteral("Sans"), 7));
-    for (float db : {12.f, 0.f, -12.f, -24.f, -48.f}) {
+    p.setPen(QColor(90, 100, 115));
+    for (float db : {12.f, 0.f, -12.f, -24.f}) {
         const int y = yForDb(db);
         p.drawLine(rail.left(), y, rail.right(), y);
-        if (db == 0.f) {
-            p.setPen(QColor(140, 155, 175));
-            p.drawText(QRect(rail.left() - 1, y - 7, rail.width() + 2, 14), Qt::AlignHCenter, QStringLiteral("0"));
-            p.setPen(QColor(75, 85, 98));
-        }
     }
 
     const int handleY = muted_ ? rail.bottom() : yForDb(volumeDb_);
-    p.setPen(Qt::NoPen);
-    p.setBrush(muted_ ? QColor(150, 65, 65) : QColor(95, 165, 220));
-    p.drawRoundedRect(rail.left() - 1, handleY - 4, rail.width() + 2, 8, 3, 3);
+    p.setPen(QPen(QColor(35, 40, 48), 1));
+    p.setBrush(muted_ ? QColor(160, 55, 55) : QColor(72, 148, 210));
+    p.drawRoundedRect(rail.left() + 1, handleY - 5, rail.width() - 2, 10, 2, 2);
 
     if (dragging_ || muted_) {
-        QRect valueBox((width() - 36) / 2, rail.top() + 4, 36, 16);
-        p.fillRect(valueBox, QColor(12, 14, 16, 230));
-        p.setPen(QColor(230, 236, 245));
-        p.setFont(QFont(QStringLiteral("Sans"), 8, QFont::Bold));
-        const QString t = muted_ ? QStringLiteral("M")
-                                 : QStringLiteral("%1").arg(volumeDb_, 0, 'f', volumeDb_ >= 10.f ? 0 : 1);
-        p.drawText(valueBox, Qt::AlignCenter, t);
+        const QString t =
+            muted_ ? QStringLiteral("MUTE") : QStringLiteral("%1 dB").arg(volumeDb_, 0, 'f', volumeDb_ >= 10.f ? 0 : 1);
+        const int tw = fm.horizontalAdvance(t) + 12;
+        QRect box((width() - tw) / 2, rail.top() + 6, tw, fm.height() + 8);
+        p.fillRect(box, QColor(8, 10, 12, 245));
+        p.setPen(QColor(55, 65, 78));
+        p.drawRect(box);
+        p.setPen(QColor(245, 248, 252));
+        p.drawText(box, Qt::AlignCenter, t);
     }
 
-    const QRect muteRect((width() - 22) / 2, height() - 18, 22, 14);
-    p.setPen(QColor(175, 185, 198));
-    p.drawRoundedRect(muteRect, 2, 2);
+    const QRect muteRect((width() - 26) / 2, height() - 20, 26, 16);
+    p.setPen(QColor(190, 200, 215));
+    p.drawRoundedRect(muteRect, 3, 3);
     p.drawText(muteRect, Qt::AlignCenter, QStringLiteral("M"));
 }

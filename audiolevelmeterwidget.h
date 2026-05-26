@@ -3,14 +3,13 @@
 
 #include <QWidget>
 
-/// Stereo peak/VU-style level meters (Sony Vegas–style), real-time.
+/// Stereo broadcast-style peak meters with Vegas-like peak-hold caps.
 class AudioLevelMeterWidget : public QWidget
 {
     Q_OBJECT
 public:
     explicit AudioLevelMeterWidget(QWidget *parent = nullptr);
 
-    /// Peak levels in dBFS (−60 = silence, 0 = full scale, may exceed 0 on hot material).
     void pushLevelsDb(float leftDb, float rightDb);
 
 protected:
@@ -18,15 +17,17 @@ protected:
     void timerEvent(QTimerEvent *event) override;
 
 private:
-    static float decayDb(float current, float target);
-    static QColor colorForDb(float db);
+    static float clampDb(float db);
+    static float decayToward(float current, float target, float fallDb);
+    static QColor segmentColor(float segTopDb);
 
     float levelL = -60.f;
     float levelR = -60.f;
     float targetL = -60.f;
     float targetR = -60.f;
-    float peakHoldL = -60.f;
-    float peakHoldR = -60.f;
+    /// Peak-hold “cap” (крышечка) — slow decay, shows extrema.
+    float capHoldL = -60.f;
+    float capHoldR = -60.f;
 };
 
 #endif
