@@ -23,6 +23,7 @@ private:
 
     QWidget *metersRow = nullptr;
     QLabel *volumeOverlay = nullptr;
+    int overlayBandHeight_ = 0;
 };
 
 #endif

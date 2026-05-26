@@ -1,45 +1,47 @@
 #include "previewaudiopanel.h"
 
+#include <QFont>
 #include <QFontMetrics>
 #include <QLabel>
 #include <QResizeEvent>
-#include <QStackedLayout>
-
-#include <algorithm>
+#include <QVBoxLayout>
 
 PreviewAudioPanel::PreviewAudioPanel(QWidget *parent)
     : QWidget(parent)
 {
     setObjectName(QStringLiteral("PreviewAudioPanel"));
 
-    auto *stack = new QStackedLayout(this);
-    stack->setStackingMode(QStackedLayout::StackAll);
-    stack->setContentsMargins(0, 0, 0, 0);
-
     metersRow = new QWidget(this);
     metersRow->setObjectName(QStringLiteral("PreviewAudioMetersRow"));
-    stack->addWidget(metersRow);
+    auto *panelLayout = new QVBoxLayout(this);
+    panelLayout->setContentsMargins(0, 0, 0, 0);
+    panelLayout->setSpacing(0);
+    panelLayout->addWidget(metersRow);
 
     volumeOverlay = new QLabel(this);
     volumeOverlay->setObjectName(QStringLiteral("PreviewVolumeDbOverlay"));
     volumeOverlay->setAttribute(Qt::WA_TransparentForMouseEvents);
     volumeOverlay->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
     volumeOverlay->setText(QStringLiteral("0 dB"));
+    QFont overlayFont = volumeOverlay->font();
+    overlayFont.setPixelSize(26);
+    overlayFont.setWeight(QFont::Bold);
+    volumeOverlay->setFont(overlayFont);
     volumeOverlay->setStyleSheet(
         QStringLiteral("QLabel#PreviewVolumeDbOverlay {"
                        "  color: #f4f7fc;"
-                       "  font-size: 26px;"
-                       "  font-weight: 700;"
                        "  background: transparent;"
                        "}"));
-    stack->addWidget(volumeOverlay);
+    const QFontMetrics fm(overlayFont);
+    overlayBandHeight_ = fm.height() + 4;
+    repositionOverlay();
 }
 
 void PreviewAudioPanel::setVolumeOverlayText(const QString &text)
 {
     if (volumeOverlay) {
         volumeOverlay->setText(text);
-        repositionOverlay();
+        volumeOverlay->raise();
     }
 }
 
@@ -51,13 +53,9 @@ void PreviewAudioPanel::resizeEvent(QResizeEvent *event)
 
 void PreviewAudioPanel::repositionOverlay()
 {
-    if (!volumeOverlay) {
+    if (!volumeOverlay || overlayBandHeight_ <= 0) {
         return;
     }
-    const QFontMetrics fm(volumeOverlay->fontMetrics());
-    const int tw = fm.horizontalAdvance(volumeOverlay->text()) + 4;
-    const int th = fm.height() + 4;
-    const int x = std::max(0, (width() - tw) / 2);
-    volumeOverlay->setGeometry(x, 6, tw, th);
+    volumeOverlay->setGeometry(0, 6, width(), overlayBandHeight_);
     volumeOverlay->raise();
 }
