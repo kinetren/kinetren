@@ -61,6 +61,14 @@ void ConCache::notifyVideoFrameCache(bool inserted, const VideoKey &key)
     config.onVideoFrameCacheChanged(inserted, mediaPath, key.index, BurstQuality{key.width, key.height});
 }
 
+void ConCache::notifyAudioBurstCache(bool inserted, const AudioKey &key)
+{
+    if (!config.onAudioBurstCacheChanged || mediaPath.isEmpty()) {
+        return;
+    }
+    config.onAudioBurstCacheChanged(inserted, mediaPath, key.index);
+}
+
 ConCache::ConCache(std::shared_ptr<IBurstcon> upstream, QString mediaPath, const ConCacheConfig &config)
     : upstream(std::move(upstream))
     , mediaPath(std::move(mediaPath))
@@ -161,6 +169,7 @@ void ConCache::invalidate(const BurstRange &range)
         std::lock_guard<std::mutex> lock(mutex);
         for (auto it = audioEntries.begin(); it != audioEntries.end();) {
             if (it->second.index >= range.start && it->second.index <= range.end) {
+                notifyAudioBurstCache(false, it->first);
                 audioLru.erase(it->second.lruIt);
                 gCacheEntries.fetch_sub(1);
                 it = audioEntries.erase(it);
@@ -226,6 +235,7 @@ void ConCache::put(const AudioKey &key, const AudioBurst &value, BurstIndex inde
     std::lock_guard<std::mutex> lock(mutex);
     auto existing = audioEntries.find(key);
     if (existing != audioEntries.end()) {
+        notifyAudioBurstCache(false, existing->first);
         audioLru.erase(existing->second.lruIt);
         audioEntries.erase(existing);
         gCacheEntries.fetch_sub(1);
@@ -234,6 +244,7 @@ void ConCache::put(const AudioKey &key, const AudioBurst &value, BurstIndex inde
     audioEntries[key] = AudioEntry{value, audioLru.begin(), index};
     gCacheEntries.fetch_add(1);
     evictAudioLocked();
+    notifyAudioBurstCache(true, key);
 }
 
 void ConCache::put(const VideoKey &key, const VideoBurst &value, BurstIndex index)
@@ -272,6 +283,7 @@ void ConCache::evictAudioLocked()
         audioLru.pop_back();
         audioEntries.erase(key);
         gCacheEntries.fetch_sub(1);
+        notifyAudioBurstCache(false, key);
     }
 }
 

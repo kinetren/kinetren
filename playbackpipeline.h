@@ -141,6 +141,9 @@ private:
                                      const QString &mediaPath,
                                      burstcon::BurstIndex mediaBurstIndex,
                                      const burstcon::BurstQuality &q);
+    void onAudioBurstCacheKeyChanged(bool inserted,
+                                     const QString &mediaPath,
+                                     burstcon::BurstIndex mediaBurstIndex);
     void clearVideoFrameBucketSets();
 
     std::function<void(QImage &&)> onVideoFrameReady;

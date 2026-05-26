@@ -38,9 +38,9 @@ constexpr qint64 kAudioCoverageBucketMs = 20;
 constexpr qint64 kPrefetchAheadMs = 10000;
 constexpr qint64 kIdleScrubPrefetchAheadMs = 10000;
 /// While playing, prefetch this far ahead of the playhead (decode + ConCache), capped by `prefetchEndMs`.
-constexpr qint64 kPrefetchDuringPlayAheadMs = 2500;
+constexpr qint64 kPrefetchDuringPlayAheadMs = 5000;
 /// How often `PlaybackPipeline::update` may extend the rolling prefetch window while playing.
-constexpr qint64 kPrefetchPlayRescheduleMs = 1000;
+constexpr qint64 kPrefetchPlayRescheduleMs = 400;
 /// For prefetch/warmup spans up to this length, step video at output FPS so ConCache keys match playback.
 /// Wider sparse steps add different indices than the timer, evict playback frames in LRU and break short loops.
 constexpr qint64 kPrefetchVideoDenseMaxSpanMs = 6000;
@@ -324,6 +324,10 @@ PlaybackPipeline::PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameRe
     poolCfg.cacheConfig.onVideoFrameCacheChanged =
         [this](bool inserted, const QString &mediaPath, burstcon::BurstIndex mediaBurstIndex, const burstcon::BurstQuality &q) {
             onVideoFrameCacheKeyChanged(inserted, mediaPath, mediaBurstIndex, q);
+        };
+    poolCfg.cacheConfig.onAudioBurstCacheChanged =
+        [this](bool inserted, const QString &mediaPath, burstcon::BurstIndex mediaBurstIndex) {
+            onAudioBurstCacheKeyChanged(inserted, mediaPath, mediaBurstIndex);
         };
     mediaPool = std::make_shared<burstcon::ConMediaPool>(poolCfg);
     videoTrack = std::make_shared<burstcon::ConTrack>(mediaPool);
@@ -974,6 +978,37 @@ void PlaybackPipeline::onVideoFrameCacheKeyChanged(bool inserted,
             timelineVideoSlidingBuckets.insert(bucket);
         } else {
             timelineVideoSlidingBuckets.erase(bucket);
+        }
+    }
+}
+
+void PlaybackPipeline::onAudioBurstCacheKeyChanged(bool inserted,
+                                                   const QString &mediaPath,
+                                                   burstcon::BurstIndex mediaBurstIndex)
+{
+    std::vector<Clip> aclips;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        aclips = lastAudioClips;
+    }
+    std::lock_guard<std::mutex> lock(coverageMutex);
+    for (const auto &clip : aclips) {
+        if (clip.sourcePath != mediaPath) {
+            continue;
+        }
+        const burstcon::BurstIndex eventStart = burstcon::msToBurstIndex(clip.startMs);
+        const burstcon::BurstIndex eventDur = msToBurstIndexCeil(clip.durationMs);
+        const burstcon::BurstIndex eventSourceIn = burstcon::msToBurstIndex(clip.sourceInMs);
+        const burstcon::BurstIndex composition = eventStart + (mediaBurstIndex - eventSourceIn);
+        if (composition < eventStart || composition >= eventStart + eventDur) {
+            continue;
+        }
+        const qint64 tMs = burstcon::burstIndexToMs(composition);
+        const qint64 bucket = (tMs / kAudioCoverageBucketMs) * kAudioCoverageBucketMs;
+        if (inserted) {
+            audioCoverageBuckets.insert(bucket);
+        } else {
+            audioCoverageBuckets.erase(bucket);
         }
     }
 }

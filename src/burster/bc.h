@@ -107,6 +107,9 @@ struct ConCacheConfig {
     /// Fires when a video frame enters or leaves this ConCache (LRU evict / replace / invalidate).
     std::function<void(bool inserted, const QString &mediaPath, BurstIndex mediaBurstIndex, const BurstQuality &q)>
         onVideoFrameCacheChanged;
+    /// Fires when an audio burst enters or leaves this ConCache (LRU evict / replace / invalidate).
+    std::function<void(bool inserted, const QString &mediaPath, BurstIndex mediaBurstIndex)>
+        onAudioBurstCacheChanged;
 };
 
 struct BurstconMetrics {
@@ -185,6 +188,7 @@ private:
     void preloadLoop();
     void preloadBurst(BurstRequest request, bool video);
     void notifyVideoFrameCache(bool inserted, const VideoKey &key);
+    void notifyAudioBurstCache(bool inserted, const AudioKey &key);
 
     std::shared_ptr<IBurstcon> upstream;
     QString mediaPath;

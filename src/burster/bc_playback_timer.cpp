@@ -114,14 +114,16 @@ void MonotonicPlaybackTimer::runLoop()
     auto loopStart = Clock::now();
     BurstIndex startIndex = index.load();
     BurstIndex lastVideoRequest = startIndex;
-    BurstIndex lastAudioRequest = startIndex;
+    const BurstIndex audioStep =
+        std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / 48000);
+    BurstIndex nextAudioIndex = (startIndex / audioStep) * audioStep;
+    auto nextAudioEmit = loopStart;
+    const auto audioPeriod =
+        std::chrono::microseconds(static_cast<int64_t>(audioStep) * 1000000LL / static_cast<int64_t>(kBurstTimebaseHz));
     {
         std::lock_guard<std::mutex> lock(mutex);
         const BurstIndex videoStep = outputVideoFrameStepTicks(playbackVideoFps);
-        const BurstIndex audioStep =
-            std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / 48000);
         lastVideoRequest = startIndex - std::max<BurstIndex>(1, videoStep);
-        lastAudioRequest = startIndex - std::max<BurstIndex>(1, audioStep);
     }
 
     while (running.load()) {
@@ -155,9 +157,8 @@ void MonotonicPlaybackTimer::runLoop()
                         loopStart = now;
                         startIndex = current;
                         lastVideoRequest = current - std::max<BurstIndex>(1, videoStep);
-                        const BurstIndex audioStepWrap = std::max<BurstIndex>(
-                            1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / 48000);
-                        lastAudioRequest = current - std::max<BurstIndex>(1, audioStepWrap);
+                        nextAudioIndex = (current / audioStep) * audioStep;
+                        nextAudioEmit = now;
                     } else {
                         current = localRegionEnd;
                         running.store(false);
@@ -170,26 +171,40 @@ void MonotonicPlaybackTimer::runLoop()
         index.store(current);
 
         if (localSource) {
-            const BurstIndex audioStep = std::max<BurstIndex>(1, (kBurstTimebaseHz * kDefaultAudioSamplesPerBurst) / 48000);
-
-            // Feed audio before video so a slow video decode does not delay PCM to the device.
-            BurstRequest audioRequest;
-            audioRequest.index = (current / audioStep) * audioStep;
-            if (current - lastAudioRequest >= audioStep) {
+            // Feed audio on a steady clock with strictly sequential burst indices. The old path
+            // jumped to (current/audioStep)*audioStep when the loop fell behind, skipping bursts
+            // (clicks, "speed-up" glitches) and starving coverage stripes.
+            const BurstIndex maxAudioIndex = (current / audioStep) * audioStep;
+            constexpr int kMaxAudioBurstsPerTick = 2;
+            int audioDelivered = 0;
+            while (nextAudioEmit <= now && audioDelivered < kMaxAudioBurstsPerTick && nextAudioIndex <= maxAudioIndex) {
+                BurstRequest audioRequest;
+                audioRequest.index = nextAudioIndex;
                 AudioBurst ab;
                 if (localSource->audioBurst(audioRequest, ab) && localCallbacks.onAudio) {
                     localCallbacks.onAudio(ab);
                 }
-                lastAudioRequest = audioRequest.index;
+                nextAudioIndex += audioStep;
+                nextAudioEmit += audioPeriod;
+                ++audioDelivered;
+            }
+            if (nextAudioEmit + audioPeriod * 4 < now) {
+                nextAudioEmit = now;
             }
 
             BurstRequest videoRequest;
-            videoRequest.index = (current / videoStep) * videoStep;
+            BurstIndex nextVideoIndex = lastVideoRequest + videoStep;
+            const BurstIndex maxVideoIndex = (current / videoStep) * videoStep;
+            if (nextVideoIndex <= maxVideoIndex) {
+                videoRequest.index = nextVideoIndex;
+            } else {
+                videoRequest.index = maxVideoIndex;
+            }
             // Always use the project decode quality. Replacing 0×0 with sourceVideoQuality here
             // changes ConCache keys vs prefetch/warmup (which use decodeBurstQuality) and causes
             // constant cache misses, sparse video (~10–15 s picture updates), and audio starvation.
             videoRequest.quality = localVideoRequestQuality;
-            if (current - lastVideoRequest >= videoStep) {
+            if (videoRequest.index > lastVideoRequest && videoRequest.index <= maxVideoIndex) {
                 VideoBurst vb;
                 if (localSource->videoBurst(videoRequest, vb) && localCallbacks.onVideo) {
                     localCallbacks.onVideo(std::move(vb));
