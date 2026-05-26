@@ -372,6 +372,8 @@ public:
     void stop();
     bool isRunning() const;
     BurstIndex currentIndex() const;
+    /// Decode and deliver one video frame + one audio burst at `atIndex` (scrub while paused).
+    void emitAt(BurstIndex atIndex);
 
 private:
     void runLoop();

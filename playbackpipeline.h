@@ -90,14 +90,13 @@ public:
     float previewVolume() const;
     using AudioLevelsCallback = std::function<void(float leftDb, float rightDb)>;
     void setAudioLevelsCallback(AudioLevelsCallback cb);
-    /// Opens preview audio output on the GUI thread (required before idle scrub can be heard).
+    /// Opens preview audio output on the GUI thread (required before idle preview can be heard).
     void ensureIdlePreviewAudio();
-    /// Call when the user starts dragging the playhead on the ruler (resets scrub audio state).
-    void beginIdleScrub();
-    /// Feed continuous scrub audio between the last scrub position and `timelineMs`.
-    void idleScrubSeek(qint64 timelineMs);
-    /// Call when playhead scrub drag ends (cancels pending scrub audio, clears PCM queue).
-    void endIdleScrub();
+    /// Scrub on the ruler while paused: same decode/audio path as playback, no clock advance.
+    void beginScrubPlayback(qint64 timelineMs);
+    void scrubPlaybackSeek(qint64 timelineMs);
+    void endScrubPlayback();
+    bool isScrubPlaybackActive() const { return scrubPlaybackActive.load(); }
     /// One composited burst at `timelineMs` for meter refresh while stopped/scrubbing.
     void requestMixedLevelsSampleAsync(qint64 timelineMs);
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
@@ -127,11 +126,6 @@ private:
         qint64 timelineMs = 0;
         std::vector<Clip> videoClips;
     };
-    struct ScrubAudioJob {
-        qint64 fromMs = 0;
-        qint64 toMs = 0;
-        bool backward = false;
-    };
     static std::pair<float, float> peaksDbFromAudioBurst(const burstcon::AudioBurst &burst, float gainLinear);
     std::pair<float, float> sampleMixedLevelsDbAt(qint64 timelineMs) const;
     bool fetchMixedAudioBurstAt(qint64 timelineMs, burstcon::AudioBurst &out) const;
@@ -152,9 +146,6 @@ private:
     /// Drain a few milliseconds of queued PCM without blocking the playback timer thread indefinitely.
     void flushAudioPendingToDevice();
     void requestIdlePreviewAsync(qint64 tMs, const std::vector<Clip> &videoClips);
-    void requestIdleScrubAudioAsync(qint64 fromMs, qint64 toMs, bool backward);
-    void feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs);
-    void playScrubAudioBurstAt(qint64 timelineMs, bool clearPendingFirst);
     void draftWorkerLoop();
     void requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning);
     void prefetchWorkerLoop();
@@ -182,10 +173,7 @@ private:
     std::atomic<quint64> latestDraftSerial{0};
     std::atomic<quint64> latestPrefetchSerial{0};
     std::atomic<qint64> lastPrefetchAnchorMs{-1};
-    std::atomic<qint64> lastIdleScrubAudioMs{-1};
-    std::atomic_bool idleScrubDragging{false};
-    bool scrubAudioJobPending = false;
-    ScrubAudioJob pendingScrubAudioJob;
+    std::atomic_bool scrubPlaybackActive{false};
     std::atomic<burstcon::BurstIndex> lastVideoRequestIndex{-1};
     std::atomic<burstcon::BurstIndex> lastAudioRequestIndex{-1};
     std::atomic<float> previewVolumeLinear{1.f};

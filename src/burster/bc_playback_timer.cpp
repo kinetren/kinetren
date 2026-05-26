@@ -108,6 +108,42 @@ BurstIndex MonotonicPlaybackTimer::currentIndex() const
     return index.load();
 }
 
+void MonotonicPlaybackTimer::emitAt(BurstIndex atIndex)
+{
+    std::shared_ptr<IBurstcon> localSource;
+    Callbacks localCallbacks;
+    BurstQuality localVideoRequestQuality;
+    int localFps = 30;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        localSource = source;
+        localCallbacks = callbacks;
+        localVideoRequestQuality = videoRequestQuality;
+        localFps = std::max(1, playbackVideoFps);
+    }
+    index.store(atIndex);
+    if (!localSource) {
+        return;
+    }
+    const BurstIndex audioStep = std::max<BurstIndex>(
+        1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / 48000);
+    const BurstIndex audioIdx = (atIndex / audioStep) * audioStep;
+    BurstRequest audioRequest;
+    audioRequest.index = audioIdx;
+    AudioBurst ab;
+    if (localSource->audioBurst(audioRequest, ab) && localCallbacks.onAudio) {
+        localCallbacks.onAudio(ab);
+    }
+    const BurstIndex videoIdx = alignBurstIndexToOutputVideoFrame(localFps, atIndex);
+    BurstRequest videoRequest;
+    videoRequest.index = videoIdx;
+    videoRequest.quality = localVideoRequestQuality;
+    VideoBurst vb;
+    if (localSource->videoBurst(videoRequest, vb) && localCallbacks.onVideo) {
+        localCallbacks.onVideo(std::move(vb));
+    }
+}
+
 void MonotonicPlaybackTimer::runLoop()
 {
     using Clock = std::chrono::steady_clock;

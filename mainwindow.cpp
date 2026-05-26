@@ -776,14 +776,14 @@ void MainWindow::setupTimelineEditorUi()
     });
     connect(timelineEditor, &TimelineEditor::playheadScrubStarted, this, [this]() {
         if (!timelinePlaying && playbackPipeline && timelineEditor) {
-            playbackPipeline->beginIdleScrub();
             flushPlaybackSync();
-            playbackPipeline->idleScrubSeek(timelineEditor->cursorMs());
+            playbackPipeline->beginScrubPlayback(timelineEditor->cursorMs());
         }
     });
     connect(timelineEditor, &TimelineEditor::playheadScrubEnded, this, [this]() {
         if (playbackPipeline) {
-            playbackPipeline->endIdleScrub();
+            playbackPipeline->endScrubPlayback();
+            flushPlaybackSync();
         }
     });
     connect(timelineEditor, &TimelineEditor::cursorChanged, this, [this](qint64 t) {
@@ -796,7 +796,7 @@ void MainWindow::setupTimelineEditorUi()
                 if (timelineEditor->isScrubbingPlayhead()) {
                     flushPlaybackSync();
                     if (playbackPipeline) {
-                        playbackPipeline->idleScrubSeek(t);
+                        playbackPipeline->scrubPlaybackSeek(t);
                     }
                 } else {
                     schedulePlaybackSync();
@@ -1165,6 +1165,9 @@ void MainWindow::toggleTimelinePause()
         playbackSyncDebounceTimer.stop();
         performanceRefreshDebounceTimer.stop();
         if (playbackPipeline) {
+            if (playbackPipeline->isScrubPlaybackActive()) {
+                playbackPipeline->endScrubPlayback();
+            }
             if (timelineEditor->hasSelectionRegion() &&
                 timelineEditor->selectionRegionEndMs() > timelineEditor->selectionRegionStartMs()) {
                 const auto mode = timelineEditor->loopEnabled()
@@ -1346,7 +1349,7 @@ void MainWindow::flushPlaybackSync()
     // Always push the latest clip FX chains into the pipeline. Skipping while `timelinePlaying` was
     // wrong: the UI timer can lag a tick, and debounced updates (timelineContentChanged) must still
     // refresh the graph so ConTrack picks up new `videoFxChain` / `audioFxChain` JSON.
-    if (!timelinePlaying) {
+    if (!timelinePlaying && !playbackPipeline->isScrubPlaybackActive()) {
         playbackPipeline->ensureIdlePreviewAudio();
     }
     syncTimelinePlayback();
