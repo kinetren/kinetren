@@ -1064,6 +1064,50 @@ private:
     double lastCutoffApplied = -1.0;
 };
 
+static bool isReverbAudible(const QJsonObject &params)
+{
+    const double mix = std::clamp(params.value(QStringLiteral("reverbMix")).toDouble(0.35), 0.0, 1.0);
+    if (mix <= 1e-9) {
+        return false;
+    }
+    const double gain = std::clamp(params.value(QStringLiteral("reverbGain")).toDouble(0.9), 0.0, 8.0);
+    return mix * gain > 1e-9;
+}
+
+static void applyBurstBoundaryCrossfade(AudioBurst &burst, std::vector<float> &overlapTail, int fadeLen)
+{
+    const int ch = std::max(1, burst.channels);
+    const int frames = static_cast<int>(burst.samples.size() / static_cast<size_t>(ch));
+    if (frames <= 0 || fadeLen <= 0) {
+        overlapTail.clear();
+        return;
+    }
+    const int fade = std::min(fadeLen, frames / 2);
+    if (fade < 2) {
+        return;
+    }
+    if (!overlapTail.empty() && static_cast<int>(overlapTail.size()) == fade * ch) {
+        for (int i = 0; i < fade; ++i) {
+            const double t = static_cast<double>(i) / static_cast<double>(fade - 1);
+            const double wCur = std::sin(t * 3.14159265358979323846 * 0.5);
+            const double wPrev = std::cos(t * 3.14159265358979323846 * 0.5);
+            for (int c = 0; c < ch; ++c) {
+                const size_t idx = static_cast<size_t>(i * ch + c);
+                const double prev = static_cast<double>(overlapTail[static_cast<size_t>(i * ch + c)]);
+                const double cur = static_cast<double>(burst.samples[idx]);
+                burst.samples[idx] = static_cast<int32_t>(prev * wPrev + cur * wCur);
+            }
+        }
+    }
+    overlapTail.resize(static_cast<size_t>(fade * ch));
+    for (int i = 0; i < fade; ++i) {
+        for (int c = 0; c < ch; ++c) {
+            const size_t idx = static_cast<size_t>((frames - fade + i) * ch + c);
+            overlapTail[static_cast<size_t>(i * ch + c)] = static_cast<float>(burst.samples[idx]);
+        }
+    }
+}
+
 // --- Audio: slowed + reverb (timeline stretch via ConTrack; this effect adds space) ---
 
 class SlowedReverbAudioFx : public IAudioFx
@@ -1074,6 +1118,9 @@ public:
     {
         QJsonObject merged = mergeDefaults(defaults(), o);
         p = merged;
+        if (!isReverbAudible(p)) {
+            return;
+        }
         const double newDelayMs = std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 0.0, 800.0);
         if (lastSampleRate > 0 && std::abs(newDelayMs - lastDelayMs) > 0.5) {
             ensureDelayBuffers(lastChannels, lastSampleRate, newDelayMs);
@@ -1084,6 +1131,9 @@ public:
 
     bool process(AudioBurst &inOut, const AudioFxContext &ctx) override
     {
+        if (!isReverbAudible(p)) {
+            return true;
+        }
         const int ch = std::max(1, inOut.channels > 0 ? inOut.channels : ctx.channels);
         const int sr = std::max(1, inOut.sampleRate > 0 ? inOut.sampleRate : ctx.sampleRate);
         const double delayMs = std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 0.0, 800.0);
@@ -1103,13 +1153,10 @@ public:
         if (len == 0 || ch <= 0 || delayLen < 2) {
             return true;
         }
-        const double mix = std::clamp(p.value(QStringLiteral("reverbMix")).toDouble(0.35), 0.0, 1.0);
-        if (mix <= 1e-9) {
-            return true;
-        }
         const double decay = std::clamp(p.value(QStringLiteral("reverbDecay")).toDouble(0.55), 0.0, 1.0);
         const double damp = std::clamp(p.value(QStringLiteral("reverbDamp")).toDouble(0.35), 0.0, 1.0);
         const double wetGain = std::clamp(p.value(QStringLiteral("reverbGain")).toDouble(0.9), 0.0, 8.0);
+        const double mix = std::clamp(p.value(QStringLiteral("reverbMix")).toDouble(0.38), 0.0, 1.0);
 
         for (size_t i = 0; i < len; ++i) {
             const int c = static_cast<int>(i % static_cast<size_t>(ch));
@@ -1120,9 +1167,7 @@ public:
             const double fb = tap * decay;
             delayBuf[ci][wp] = dry + fb * (1.0 - damp);
             writePos[ci] = (wp + 1) % static_cast<size_t>(delayLen);
-            double wet = tap * wetGain;
-            constexpr double kScale = 1.0 / 2147483648.0;
-            wet = std::tanh(wet * kScale * 1.1) * 2147483647.0;
+            const double wet = tap * wetGain;
             const double out = dry * (1.0 - mix) + wet * mix;
             inOut.samples[i] = static_cast<int32_t>(std::clamp(out,
                                                                static_cast<double>(std::numeric_limits<int32_t>::min()),
@@ -1962,6 +2007,16 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
     ctx.decodeOrigin = request.decodeOrigin;
     const double u = u0;
     QJsonObject resolved = resolveParamsAutomationForBurst(storedParams, u);
+    if (effect && effect->typeId() == QStringLiteral("slowedreverb")) {
+        const BurstIndex audioStepFx =
+            std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) /
+                                         std::max(1, ab.sampleRate));
+        if (lastPreFxTimelineIndex >= 0 && timelineIdx + audioStepFx < lastPreFxTimelineIndex) {
+            preFxOverlapTail.clear();
+        }
+        applyBurstBoundaryCrossfade(ab, preFxOverlapTail, 48);
+        lastPreFxTimelineIndex = timelineIdx;
+    }
     effect->setParams(resolved);
     if (!effect->process(ab, ctx)) {
         return false;
@@ -1983,6 +2038,8 @@ void ConAudioFx::invalidate(const BurstRange &range)
 {
     warpFileSampleCursor = -1.0;
     lastWarpTimelineIndex = -1;
+    lastPreFxTimelineIndex = -1;
+    preFxOverlapTail.clear();
     warpSourceRingReset();
     if (upstream) {
         upstream->invalidate(range);

@@ -120,6 +120,9 @@ private:
     BurstIndex warpNextDecodeTick = -1;
     int warpRingChannels = 2;
     int warpRingSampleRate = 48000;
+    /// Crossfade warped PCM at burst boundaries before reverb (reverb amplifies seam clicks).
+    std::vector<float> preFxOverlapTail;
+    BurstIndex lastPreFxTimelineIndex = -1;
 };
 
 std::shared_ptr<IVideoFx> createVideoFx(const QString &typeId, const QJsonObject &params);
