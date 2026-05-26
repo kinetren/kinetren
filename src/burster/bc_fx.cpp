@@ -1120,10 +1120,10 @@ public:
             const double fb = tap * decay;
             delayBuf[ci][wp] = dry + fb * (1.0 - damp);
             writePos[ci] = (wp + 1) % static_cast<size_t>(delayLen);
-            const double wet = tap * wetGain;
-            double out = dry * (1.0 - mix) + wet * mix;
+            double wet = tap * wetGain;
             constexpr double kScale = 1.0 / 2147483648.0;
-            out = std::tanh(out * kScale * 1.15) * 2147483647.0;
+            wet = std::tanh(wet * kScale * 1.1) * 2147483647.0;
+            const double out = dry * (1.0 - mix) + wet * mix;
             inOut.samples[i] = static_cast<int32_t>(std::clamp(out,
                                                                static_cast<double>(std::numeric_limits<int32_t>::min()),
                                                                static_cast<double>(std::numeric_limits<int32_t>::max())));
@@ -1217,6 +1217,16 @@ static double integratePlaybackRate01(const QJsonObject &params, double u0, doub
         sum += 0.5 * (ra + rb) * (b - a);
     }
     return sum;
+}
+
+static bool playbackRateWarpNeeded(const QJsonObject &params, double u0, double u1)
+{
+    constexpr double kEps = 1e-3;
+    if (u1 <= u0) {
+        return std::abs(playbackRateAtProgress(params, u0) - 1.0) > kEps;
+    }
+    const double avg = integratePlaybackRate01(params, u0, u1) / (u1 - u0);
+    return std::abs(avg - 1.0) > kEps;
 }
 
 double audioTimelineSourceRate(const QJsonArray &chain)
@@ -1353,9 +1363,11 @@ static bool fetchWarpedAudioBurst(std::shared_ptr<IBurstcon> upstream,
         1, static_cast<int>(std::llround(srcSpanTicks * static_cast<double>(sr) /
                                          static_cast<double>(kBurstTimebaseHz))));
 
-    const double srcTickFrac = srcTick0 - std::floor(srcTick0);
+    const double burstStartRel = static_cast<double>(r0.index - clipSourceIn);
+    const double offsetTicks = srcTick0 - burstStartRel;
     const int skipFrames = std::clamp(
-        static_cast<int>(std::llround(srcTickFrac * static_cast<double>(sourceFramesNeeded))),
+        static_cast<int>(std::llround(offsetTicks * static_cast<double>(sr) /
+                                      static_cast<double>(kBurstTimebaseHz))),
         0,
         std::max(0, frames0 - 1));
 
@@ -1387,11 +1399,16 @@ static bool fetchWarpedAudioBurst(std::shared_ptr<IBurstcon> upstream,
         rNext.index += mediaStep;
     }
 
-    const int inFrames = std::min(sourceFramesNeeded,
-                                  static_cast<int>(sourcePcm.size() / static_cast<size_t>(ch)));
+    const int collectedFrames = static_cast<int>(sourcePcm.size() / static_cast<size_t>(ch));
+    int inFrames = sourceFramesNeeded;
+    if (collectedFrames < inFrames) {
+        inFrames = std::max(1, collectedFrames);
+    } else if (collectedFrames > inFrames) {
+        sourcePcm.resize(static_cast<size_t>(inFrames * ch));
+    }
 
     std::vector<int32_t> resampled;
-    resamplePcmLinear(sourcePcm, std::max(1, inFrames), ch, outFrames, resampled);
+    resamplePcmLinear(sourcePcm, inFrames, ch, outFrames, resampled);
 
     out = std::move(raw0);
     out.samples = std::move(resampled);
@@ -1850,12 +1867,17 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
     }
     const BurstIndex timelineIdx =
         request.timelineBurstIndex >= 0 ? request.timelineBurstIndex : request.index;
-    const bool useWarp = effect && effect->typeId() == QStringLiteral("slowedreverb");
+    const BurstIndex clipTimelineStart =
+        request.clipTimelineStart >= 0 ? request.clipTimelineStart : request.decodeOrigin;
+    const BurstIndex audioStep =
+        std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / 48000);
+    const double u0 = normalizedClipProgress(timelineIdx, clipTimelineStart, request.clipDurationTicks);
+    const double u1 = normalizedClipProgress(timelineIdx + audioStep, clipTimelineStart, request.clipDurationTicks);
+    const bool useWarp = effect && effect->typeId() == QStringLiteral("slowedreverb") &&
+                         playbackRateWarpNeeded(storedParams, u0, u1);
 
     AudioBurst ab;
     if (useWarp) {
-        const BurstIndex audioStep =
-            std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / 48000);
         if (lastWarpTimelineIndex >= 0 && timelineIdx + audioStep < lastWarpTimelineIndex) {
             warpOverlapTail.clear();
         }
@@ -1863,13 +1885,11 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
         if (!fetchWarpedAudioBurst(upstream, storedParams, request, kDefaultAudioSamplesPerBurst, ab)) {
             return false;
         }
-        applyBurstBoundaryCrossfade(ab, warpOverlapTail, 64);
+        applyBurstBoundaryCrossfade(ab, warpOverlapTail, 24);
     } else if (!upstream->audioBurst(request, ab)) {
         return false;
     }
 
-    const BurstIndex clipTimelineStart =
-        request.clipTimelineStart >= 0 ? request.clipTimelineStart : request.decodeOrigin;
     AudioFxContext ctx;
     ctx.timelineBurstIndex = timelineIdx;
     ctx.sampleRate = ab.sampleRate;
@@ -1877,7 +1897,7 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
     ctx.clipDurationTicks = request.clipDurationTicks;
     ctx.clipTimelineStart = clipTimelineStart;
     ctx.decodeOrigin = request.decodeOrigin;
-    const double u = normalizedClipProgress(timelineIdx, clipTimelineStart, request.clipDurationTicks);
+    const double u = u0;
     QJsonObject resolved = resolveParamsAutomationForBurst(storedParams, u);
     effect->setParams(resolved);
     if (!effect->process(ab, ctx)) {
