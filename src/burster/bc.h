@@ -44,6 +44,10 @@ struct BurstRequest {
     /// Trimmed clip length in burst ticks (same as `ConTrackEvent::duration`). Video FX use this with
     /// `decodeOrigin` for normalized time along the clip. 0 means unknown (e.g. preview / tests).
     BurstIndex clipDurationTicks = 0;
+    /// Global timeline index for audio FX automation / warp (ConTrack). -1 = use `index`.
+    BurstIndex timelineBurstIndex = -1;
+    /// Media `sourceIn` for the clip (audio warp / decode). -1 = use `decodeOrigin`.
+    BurstIndex clipSourceIn = -1;
 };
 
 enum class BurstType {

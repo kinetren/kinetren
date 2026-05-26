@@ -1,4 +1,5 @@
 #include "bc_fx.h"
+#include "bc_internal.h"
 
 #include <QPainter>
 #include <QtMath>
@@ -1120,7 +1121,9 @@ public:
             delayBuf[ci][wp] = dry + fb * (1.0 - damp);
             writePos[ci] = (wp + 1) % static_cast<size_t>(delayLen);
             const double wet = tap * wetGain;
-            const double out = dry * (1.0 - mix) + wet * mix;
+            double out = dry * (1.0 - mix) + wet * mix;
+            constexpr double kScale = 1.0 / 2147483648.0;
+            out = std::tanh(out * kScale * 1.15) * 2147483647.0;
             inOut.samples[i] = static_cast<int32_t>(std::clamp(out,
                                                                static_cast<double>(std::numeric_limits<int32_t>::min()),
                                                                static_cast<double>(std::numeric_limits<int32_t>::max())));
@@ -1204,7 +1207,7 @@ static double integratePlaybackRate01(const QJsonObject &params, double u0, doub
     if (u1 <= u0) {
         return 0.0;
     }
-    constexpr int kSteps = 48;
+    constexpr int kSteps = 96;
     double sum = 0.0;
     for (int i = 0; i < kSteps; ++i) {
         const double a = u0 + (u1 - u0) * static_cast<double>(i) / static_cast<double>(kSteps);
@@ -1253,6 +1256,171 @@ BurstIndex audioTimelineToSourceOffsetTicks(const QJsonArray &chain,
     const double consumed = integratePlaybackRate01(params, 0.0, u);
     return static_cast<BurstIndex>(
         std::llround(std::clamp(consumed, 0.0, 1.0) * static_cast<double>(timelineDur)));
+}
+
+static double audioSourceTicksAtTimelineU(const QJsonObject &params, double u01)
+{
+    if (params.isEmpty()) {
+        return u01;
+    }
+    return integratePlaybackRate01(params, 0.0, std::clamp(u01, 0.0, 1.0));
+}
+
+static void resamplePcmLinear(const std::vector<int32_t> &in,
+                              int inFrames,
+                              int channels,
+                              int outFrames,
+                              std::vector<int32_t> &out)
+{
+    const int ch = std::max(1, channels);
+    out.assign(static_cast<size_t>(std::max(0, outFrames) * ch), 0);
+    if (inFrames <= 0 || outFrames <= 0) {
+        return;
+    }
+    if (inFrames == 1) {
+        for (int i = 0; i < outFrames; ++i) {
+            for (int c = 0; c < ch; ++c) {
+                out[static_cast<size_t>(i * ch + c)] = in[static_cast<size_t>(c)];
+            }
+        }
+        return;
+    }
+    for (int i = 0; i < outFrames; ++i) {
+        const double pos = static_cast<double>(i) * static_cast<double>(inFrames - 1) /
+                           static_cast<double>(std::max(1, outFrames - 1));
+        const int i0 = static_cast<int>(std::floor(pos));
+        const int i1 = std::min(inFrames - 1, i0 + 1);
+        const double frac = pos - static_cast<double>(i0);
+        for (int c = 0; c < ch; ++c) {
+            const double s0 = static_cast<double>(in[static_cast<size_t>(i0 * ch + c)]);
+            const double s1 = static_cast<double>(in[static_cast<size_t>(i1 * ch + c)]);
+            const double v = s0 + (s1 - s0) * frac;
+            out[static_cast<size_t>(i * ch + c)] =
+                static_cast<int32_t>(std::clamp(v,
+                                                static_cast<double>(std::numeric_limits<int32_t>::min()),
+                                                static_cast<double>(std::numeric_limits<int32_t>::max())));
+        }
+    }
+}
+
+static bool fetchWarpedAudioBurst(std::shared_ptr<IBurstcon> upstream,
+                                  const QJsonObject &srParams,
+                                  const BurstRequest &request,
+                                  int outFrames,
+                                  AudioBurst &out)
+{
+    if (!upstream || outFrames <= 0 || request.clipDurationTicks <= 0) {
+        return false;
+    }
+    const BurstIndex clipStart = request.decodeOrigin >= 0 ? request.decodeOrigin : 0;
+    const BurstIndex clipSourceIn =
+        request.clipSourceIn >= 0 ? request.clipSourceIn : std::max<BurstIndex>(0, request.decodeOrigin);
+    const BurstIndex timelineIdx =
+        request.timelineBurstIndex >= 0 ? request.timelineBurstIndex : request.index;
+    const BurstIndex timelineRel = std::max<BurstIndex>(0, timelineIdx - clipStart);
+    const BurstIndex audioStep =
+        std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(outFrames)) / 48000);
+
+    const double u0 =
+        std::clamp(static_cast<double>(timelineRel) / static_cast<double>(request.clipDurationTicks), 0.0, 1.0);
+    const double u1 = std::clamp(static_cast<double>(timelineRel + audioStep) /
+                                     static_cast<double>(request.clipDurationTicks),
+                                 0.0,
+                                 1.0);
+    const double srcTick0 = audioSourceTicksAtTimelineU(srParams, u0) *
+                            static_cast<double>(request.clipDurationTicks);
+    const double srcTick1 = audioSourceTicksAtTimelineU(srParams, u1) *
+                            static_cast<double>(request.clipDurationTicks);
+    const double srcSpanTicks = std::max(1e-6, srcTick1 - srcTick0);
+
+    const BurstIndex mediaStep =
+        std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(outFrames)) / 48000);
+    const BurstIndex mediaIndex0 = clipSourceIn + static_cast<BurstIndex>(std::floor(srcTick0));
+    BurstRequest r0;
+    r0.index = (mediaIndex0 / mediaStep) * mediaStep;
+    r0.decodeOrigin = clipSourceIn;
+    r0.clipDurationTicks = request.clipDurationTicks;
+    AudioBurst raw0;
+    if (!upstream->audioBurst(r0, raw0) || raw0.samples.empty()) {
+        return false;
+    }
+    const int ch = std::max(1, raw0.channels);
+    const int frames0 = static_cast<int>(raw0.samples.size() / static_cast<size_t>(ch));
+
+    const double fracStart = srcTick0 - std::floor(srcTick0);
+    const int skipFrames =
+        std::clamp(static_cast<int>(std::floor(fracStart * static_cast<double>(outFrames))),
+                   0,
+                   std::max(0, frames0 - 1));
+
+    std::vector<int32_t> sourcePcm;
+    sourcePcm.reserve(raw0.samples.size());
+    for (int fi = skipFrames; fi < frames0; ++fi) {
+        for (int c = 0; c < ch; ++c) {
+            sourcePcm.push_back(raw0.samples[static_cast<size_t>(fi * ch + c)]);
+        }
+    }
+    const double ticksPerFrame = srcSpanTicks / static_cast<double>(std::max(1, outFrames));
+    const int framesNeeded = static_cast<int>(std::ceil(srcSpanTicks / std::max(1e-9, ticksPerFrame))) + 4;
+    if (framesNeeded > frames0) {
+        BurstRequest r1 = r0;
+        r1.index = r0.index + mediaStep;
+        AudioBurst raw1;
+        if (upstream->audioBurst(r1, raw1) && !raw1.samples.empty()) {
+            const int ch1 = std::max(1, raw1.channels);
+            const int frames1 = static_cast<int>(raw1.samples.size() / static_cast<size_t>(ch1));
+            sourcePcm.reserve(sourcePcm.size() + raw1.samples.size());
+            for (int fi = 0; fi < frames1; ++fi) {
+                for (int c = 0; c < ch; ++c) {
+                    const int32_t v =
+                        raw1.samples[static_cast<size_t>(std::min(fi, frames1 - 1) * ch1 + std::min(c, ch1 - 1))];
+                    sourcePcm.push_back(v);
+                }
+            }
+        }
+    }
+
+    const int inFrames = static_cast<int>(sourcePcm.size() / static_cast<size_t>(ch));
+
+    std::vector<int32_t> resampled;
+    resamplePcmLinear(sourcePcm, std::max(1, inFrames), ch, outFrames, resampled);
+
+    out = std::move(raw0);
+    out.samples = std::move(resampled);
+    out.index = request.index;
+    return true;
+}
+
+static void applyBurstBoundaryCrossfade(AudioBurst &burst, std::vector<float> &overlapTail, int fadeLen)
+{
+    const int ch = std::max(1, burst.channels);
+    const int frames = static_cast<int>(burst.samples.size() / static_cast<size_t>(ch));
+    if (frames <= 0 || fadeLen <= 0) {
+        overlapTail.clear();
+        return;
+    }
+    const int fade = std::min(fadeLen, frames / 2);
+    if (fade < 2) {
+        return;
+    }
+    if (!overlapTail.empty() && static_cast<int>(overlapTail.size()) == fade * ch) {
+        for (int i = 0; i < fade; ++i) {
+            const double t = static_cast<double>(i) / static_cast<double>(fade - 1);
+            for (int c = 0; c < ch; ++c) {
+                const size_t idx = static_cast<size_t>(i * ch + c);
+                const double prev = static_cast<double>(overlapTail[static_cast<size_t>(i * ch + c)]);
+                const double cur = static_cast<double>(burst.samples[idx]);
+                burst.samples[idx] = static_cast<int32_t>(prev * (1.0 - t) + cur * t);
+            }
+        }
+    }
+    overlapTail.resize(static_cast<size_t>(fade * ch));
+    for (int i = 0; i < fade; ++i) {
+        for (int c = 0; c < ch; ++c) {
+            const size_t idx = static_cast<size_t>((frames - fade + i) * ch + c);
+            overlapTail[static_cast<size_t>(i * ch + c)] = static_cast<float>(burst.samples[idx]);
+        }
+    }
 }
 
 static double rgbMseSubsampled(const QImage &a, const QImage &b)
@@ -1672,17 +1840,33 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
     if (type != BurstType::Audio) {
         return upstream->burst(type, request, out);
     }
+    const BurstIndex timelineIdx =
+        request.timelineBurstIndex >= 0 ? request.timelineBurstIndex : request.index;
+    const bool useWarp = effect && effect->typeId() == QStringLiteral("slowedreverb");
+
     AudioBurst ab;
-    if (!upstream->audioBurst(request, ab)) {
+    if (useWarp) {
+        const BurstIndex audioStep =
+            std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / 48000);
+        if (lastWarpTimelineIndex >= 0 && timelineIdx + audioStep < lastWarpTimelineIndex) {
+            warpOverlapTail.clear();
+        }
+        lastWarpTimelineIndex = timelineIdx;
+        if (!fetchWarpedAudioBurst(upstream, storedParams, request, kDefaultAudioSamplesPerBurst, ab)) {
+            return false;
+        }
+        applyBurstBoundaryCrossfade(ab, warpOverlapTail, 64);
+    } else if (!upstream->audioBurst(request, ab)) {
         return false;
     }
+
     AudioFxContext ctx;
-    ctx.timelineBurstIndex = request.index;
+    ctx.timelineBurstIndex = timelineIdx;
     ctx.sampleRate = ab.sampleRate;
     ctx.channels = ab.channels;
     ctx.clipDurationTicks = request.clipDurationTicks;
     ctx.decodeOrigin = request.decodeOrigin;
-    const double u = normalizedClipProgress(request.index, request.decodeOrigin, request.clipDurationTicks);
+    const double u = normalizedClipProgress(timelineIdx, request.decodeOrigin, request.clipDurationTicks);
     QJsonObject resolved = resolveParamsAutomationForBurst(storedParams, u);
     effect->setParams(resolved);
     if (!effect->process(ab, ctx)) {
@@ -1703,6 +1887,8 @@ BurstOriginInfo ConAudioFx::originInfo() const
 
 void ConAudioFx::invalidate(const BurstRange &range)
 {
+    warpOverlapTail.clear();
+    lastWarpTimelineIndex = -1;
     if (upstream) {
         upstream->invalidate(range);
     }

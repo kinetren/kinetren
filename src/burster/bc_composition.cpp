@@ -237,9 +237,14 @@ bool ConTrack::burst(BurstType type, const BurstRequest &request, BurstPayload &
             const BurstIndex sourceOffset =
                 audioTimelineToSourceOffsetTicks(event.audioFxChain, timelineRel, event.duration);
             const BurstIndex localIndex = event.sourceIn + sourceOffset;
-            if (!bound.media->audioBurst(
-                    BurstRequest{localIndex, request.quality, event.sourceIn, event.duration},
-                    burst)) {
+            BurstRequest mediaReq;
+            mediaReq.index = localIndex;
+            mediaReq.quality = request.quality;
+            mediaReq.decodeOrigin = event.start;
+            mediaReq.clipDurationTicks = event.duration;
+            mediaReq.timelineBurstIndex = request.index;
+            mediaReq.clipSourceIn = event.sourceIn;
+            if (!bound.media->audioBurst(mediaReq, burst)) {
                 continue;
             }
             active.push_back(Active{bi, std::move(burst)});

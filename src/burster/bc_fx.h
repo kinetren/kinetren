@@ -91,6 +91,8 @@ private:
     std::shared_ptr<IAudioFx> effect;
     std::shared_ptr<IBurstcon> upstream;
     QJsonObject storedParams;
+    BurstIndex lastWarpTimelineIndex = -1;
+    std::vector<float> warpOverlapTail;
 };
 
 std::shared_ptr<IVideoFx> createVideoFx(const QString &typeId, const QJsonObject &params);
