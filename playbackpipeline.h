@@ -154,6 +154,7 @@ private:
     void requestIdlePreviewAsync(qint64 tMs, const std::vector<Clip> &videoClips);
     void requestIdleScrubAudioAsync(qint64 fromMs, qint64 toMs, bool backward);
     void feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs);
+    void playScrubAudioBurstAt(qint64 timelineMs, bool clearPendingFirst);
     void draftWorkerLoop();
     void requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning);
     void prefetchWorkerLoop();

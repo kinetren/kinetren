@@ -933,9 +933,25 @@ void PlaybackPipeline::beginIdleScrub()
 {
     lastIdleScrubAudioMs.store(-1);
     idleScrubDragging.store(true);
+    ensureIdlePreviewAudio();
     {
         std::lock_guard<std::mutex> lock(audioMutex);
         audioPcmPending.clear();
+    }
+}
+
+void PlaybackPipeline::playScrubAudioBurstAt(qint64 timelineMs, bool clearPendingFirst)
+{
+    if (running.load()) {
+        return;
+    }
+    if (clearPendingFirst) {
+        std::lock_guard<std::mutex> lock(audioMutex);
+        clearAudioPendingLocked();
+    }
+    burstcon::AudioBurst ab;
+    if (fetchMixedAudioBurstAt(timelineMs, ab)) {
+        pushAudioBurst(ab);
     }
 }
 
@@ -949,10 +965,11 @@ void PlaybackPipeline::idleScrubSeek(qint64 timelineMs)
     if (last >= 0 && tMs == last) {
         return;
     }
+    ensureIdlePreviewAudio();
     if (last < 0 || tMs + 10 < last) {
-        requestIdleScrubAudioAsync(tMs, tMs, last >= 0 && tMs + 10 < last);
+        playScrubAudioBurstAt(tMs, last >= 0 && tMs + 10 < last);
     } else if (tMs > last) {
-        requestIdleScrubAudioAsync(last, tMs, false);
+        feedIdleScrubAudioSpan(last, tMs);
     }
     lastIdleScrubAudioMs.store(tMs);
 }
@@ -1361,15 +1378,7 @@ void PlaybackPipeline::ensureAudioOutput()
 {
     std::lock_guard<std::mutex> lock(audioMutex);
     if (audioSink && audioDevice) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-        if (audioSink->state() != QAudio::StoppedState) {
-            return;
-        }
-#else
-        if (audioSink->state() != QAudio::StoppedState) {
-            return;
-        }
-#endif
+        return;
     }
     tearDownAudioLocked();
 
@@ -1395,6 +1404,9 @@ void PlaybackPipeline::ensureAudioOutput()
         const float hw = std::min(1.f, previewVolumeLinear.load());
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         audioSink->setVolume(hw);
+        if (audioSink->state() == QAudio::SuspendedState || audioSink->state() == QAudio::IdleState) {
+            audioSink->resume();
+        }
 #else
         audioSink->setVolume(hw);
 #endif
@@ -1414,17 +1426,44 @@ void PlaybackPipeline::flushAudioPendingToDevice()
     if (!audioDevice || audioPcmPending.empty()) {
         return;
     }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    if (audioSink) {
+        const QAudio::State st = audioSink->state();
+        if (st == QAudio::SuspendedState) {
+            audioSink->resume();
+        } else if (st == QAudio::IdleState) {
+            audioSink->resume();
+        }
+    }
+#endif
     constexpr int kMaxWriteIters = 96;
     int iters = 0;
     while (!audioPcmPending.empty() && iters < kMaxWriteIters) {
         const char *bytes = reinterpret_cast<const char *>(audioPcmPending.data());
-        const int len = static_cast<int>(audioPcmPending.size() * sizeof(int16_t));
+        int len = static_cast<int>(audioPcmPending.size() * sizeof(int16_t));
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        if (audioSink) {
+            const qsizetype freeBytes = audioSink->bytesFree();
+            if (freeBytes > 0 && freeBytes < static_cast<qsizetype>(len)) {
+                len = static_cast<int>(freeBytes);
+                len -= len % static_cast<int>(sizeof(int16_t));
+            }
+        }
+#endif
+        if (len <= 0) {
+            break;
+        }
         const qint64 w = audioDevice->write(bytes, len);
         if (w < 0) {
             audioPcmPending.clear();
             return;
         }
         if (w == 0) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+            if (audioSink && audioSink->state() == QAudio::IdleState) {
+                audioSink->resume();
+            }
+#endif
             break;
         }
         const int consumed = static_cast<int>(w) / static_cast<int>(sizeof(int16_t));
@@ -1495,18 +1534,14 @@ void PlaybackPipeline::requestIdlePreviewAsync(qint64 tMs, const std::vector<Cli
 
 void PlaybackPipeline::requestIdleScrubAudioAsync(qint64 fromMs, qint64 toMs, bool backward)
 {
-    const bool notify = [&]() {
+    {
         std::lock_guard<std::mutex> lock(draftMutex);
         pendingScrubAudioJob.fromMs = std::max<qint64>(0, fromMs);
         pendingScrubAudioJob.toMs = std::max<qint64>(0, toMs);
         pendingScrubAudioJob.backward = backward;
-        const bool wasPending = scrubAudioJobPending;
         scrubAudioJobPending = true;
-        return !wasPending;
-    }();
-    if (notify) {
-        draftCv.notify_one();
     }
+    draftCv.notify_one();
 }
 
 void PlaybackPipeline::feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs)
@@ -1529,7 +1564,7 @@ void PlaybackPipeline::feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs)
     constexpr int kMaxBursts = 16;
     int count = 0;
     for (; idx <= endIdx && count < kMaxBursts; idx += audioStep, ++count) {
-        if (running.load() || !idleScrubDragging.load()) {
+        if (running.load()) {
             return;
         }
         const qint64 t = burstcon::burstIndexToMs(idx);
@@ -1546,31 +1581,19 @@ void PlaybackPipeline::feedIdleScrubAudioSpan(qint64 fromMs, qint64 toMs)
 
 void PlaybackPipeline::draftWorkerLoop()
 {
-    while (true) {
-        DraftJob job;
-        ScrubAudioJob scrubJob;
-        bool haveDraft = false;
-        bool haveScrub = false;
-        {
-            std::unique_lock<std::mutex> lock(draftMutex);
-            draftCv.wait(lock, [this]() { return stopDraftWorker || draftJobPending || scrubAudioJobPending; });
-            if (stopDraftWorker) {
+    const auto drainScrubAudio = [this]() {
+        for (;;) {
+            if (running.load()) {
                 return;
             }
-            if (scrubAudioJobPending) {
+            ScrubAudioJob scrubJob;
+            {
+                std::lock_guard<std::mutex> lock(draftMutex);
+                if (!scrubAudioJobPending) {
+                    return;
+                }
                 scrubJob = pendingScrubAudioJob;
                 scrubAudioJobPending = false;
-                haveScrub = true;
-            }
-            if (draftJobPending) {
-                job = pendingDraftJob;
-                draftJobPending = false;
-                haveDraft = true;
-            }
-        }
-        const auto processScrubAudio = [&]() {
-            if (!haveScrub || running.load() || !idleScrubDragging.load()) {
-                return;
             }
             if (scrubJob.backward) {
                 {
@@ -1590,10 +1613,28 @@ void PlaybackPipeline::draftWorkerLoop()
                 const qint64 catchUpTo = std::max(scrubJob.toMs, lastIdleScrubAudioMs.load());
                 feedIdleScrubAudioSpan(scrubJob.fromMs, catchUpTo);
             }
-        };
+        }
+    };
+
+    while (true) {
+        DraftJob job;
+        bool haveDraft = false;
+        {
+            std::unique_lock<std::mutex> lock(draftMutex);
+            draftCv.wait(lock, [this]() { return stopDraftWorker || draftJobPending || scrubAudioJobPending; });
+            if (stopDraftWorker) {
+                return;
+            }
+            if (draftJobPending) {
+                job = pendingDraftJob;
+                draftJobPending = false;
+                haveDraft = true;
+            }
+        }
+
+        drainScrubAudio();
 
         if (!haveDraft) {
-            processScrubAudio();
             continue;
         }
         if (job.kind == DraftJob::Kind::MixedLevelsSample) {
@@ -1601,11 +1642,11 @@ void PlaybackPipeline::draftWorkerLoop()
             if (onAudioLevelsReady) {
                 onAudioLevelsReady(levels.first, levels.second);
             }
-            processScrubAudio();
+            drainScrubAudio();
             continue;
         }
         if (running.load() || !draftPreviewEnabled.load()) {
-            processScrubAudio();
+            drainScrubAudio();
             continue;
         }
         for (;;) {
@@ -1636,7 +1677,7 @@ void PlaybackPipeline::draftWorkerLoop()
             }
             break;
         }
-        processScrubAudio();
+        drainScrubAudio();
     }
 }
 
