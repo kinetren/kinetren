@@ -8,6 +8,7 @@
 #include "renderprogressdialog.h"
 #include "audiolevelmeterwidget.h"
 #include "previewer.h"
+#include "previewaudiopanel.h"
 #include "previewvolumefader.h"
 #include "sourceareawidget.h"
 #include "timelineeditor.h"
@@ -403,11 +404,17 @@ void MainWindow::setupTimelineEditorUi()
     previewMediaLayout->setContentsMargins(0, 0, 0, 0);
     previewMediaLayout->setSpacing(4);
     previewMediaLayout->addWidget(ui->frame, 1);
-    mainAudioMeters = new AudioLevelMeterWidget(previewMediaRow);
+
+    previewAudioPanel = new PreviewAudioPanel(previewMediaRow);
+    auto *audioMetersHBox = new QHBoxLayout(previewAudioPanel->contentRow());
+    audioMetersHBox->setContentsMargins(0, 0, 0, 0);
+    audioMetersHBox->setSpacing(4);
+    mainAudioMeters = new AudioLevelMeterWidget(previewAudioPanel->contentRow());
     mainAudioMeters->setMinimumWidth(112);
-    previewMediaLayout->addWidget(mainAudioMeters, 0);
-    previewVolumeFader = new PreviewVolumeFader(previewMediaRow);
-    previewMediaLayout->addWidget(previewVolumeFader, 0);
+    audioMetersHBox->addWidget(mainAudioMeters, 0);
+    previewVolumeFader = new PreviewVolumeFader(previewAudioPanel->contentRow());
+    audioMetersHBox->addWidget(previewVolumeFader, 0);
+    previewMediaLayout->addWidget(previewAudioPanel, 0);
     previewLayout->addWidget(previewMediaRow, 1);
 
     auto *previewControls = new QHBoxLayout();
@@ -476,6 +483,23 @@ void MainWindow::setupTimelineEditorUi()
             playbackPipeline->setPreviewVolume(linear);
         }
     });
+    auto refreshPreviewVolumeOverlay = [this]() {
+        if (!previewAudioPanel || !previewVolumeFader) {
+            return;
+        }
+        if (previewVolumeFader->isMuted()) {
+            previewAudioPanel->setVolumeOverlayText(tr("MUTE"));
+        } else {
+            const float db = previewVolumeFader->volumeDb();
+            previewAudioPanel->setVolumeOverlayText(
+                QStringLiteral("%1 dB").arg(db, 0, 'f', db >= 10.f ? 0 : 1));
+        }
+    };
+    connect(previewVolumeFader, &PreviewVolumeFader::volumeDbChanged, this,
+            [refreshPreviewVolumeOverlay](float) { refreshPreviewVolumeOverlay(); });
+    connect(previewVolumeFader, &PreviewVolumeFader::activityChanged, this,
+            [refreshPreviewVolumeOverlay](bool) { refreshPreviewVolumeOverlay(); });
+    refreshPreviewVolumeOverlay();
 
     auto *timelineLayout = new QVBoxLayout(ui->widget_2);
     timelineLayout->setContentsMargins(0, 0, pad, qMax(2, qRound(4.0 * dpiScale)));

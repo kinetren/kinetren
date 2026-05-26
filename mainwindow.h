@@ -141,6 +141,7 @@ protected:
     QSpinBox *previewSeekLookbackSpin = nullptr;
     PreviewVolumeFader *previewVolumeFader = nullptr;
     AudioLevelMeterWidget *mainAudioMeters = nullptr;
+    class PreviewAudioPanel *previewAudioPanel = nullptr;
     qint64 lastAudioMeterSampleMs = 0;
 
     Ui::MainWindow *ui;

@@ -149,9 +149,7 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
             return;
         }
 
-        p.fillRect(bar, QColor(6, 7, 9));
-        p.setPen(QColor(40, 46, 54));
-        p.drawRect(bar);
+        p.fillRect(bar, QColor(8, 9, 11));
 
         const int innerTop = bar.top() + 2;
         const int innerBottom = bar.bottom() - 2;
@@ -197,7 +195,4 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
 
     drawChannel(barL, levelL, capHoldL, "L");
     drawChannel(barR, levelR, capHoldR, "R");
-
-    p.setPen(QColor(42, 48, 56));
-    p.drawRect(rect().adjusted(0, 0, -1, -1));
 }
