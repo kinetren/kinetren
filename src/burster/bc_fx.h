@@ -39,8 +39,11 @@ struct AudioFxContext {
     BurstIndex timelineBurstIndex = 0;
     int sampleRate = 48000;
     int channels = 2;
-    /// Same semantics as `BurstRequest::clipDurationTicks` / `decodeOrigin` for automation along the clip.
+    /// Same semantics as `BurstRequest::clipDurationTicks` for automation along the clip.
     BurstIndex clipDurationTicks = 0;
+    /// Clip start on the timeline (burst ticks); with `timelineBurstIndex` defines normalized u.
+    BurstIndex clipTimelineStart = -1;
+    /// Media `sourceIn` (burst ticks) for decode / seed offsets.
     BurstIndex decodeOrigin = -1;
 };
 

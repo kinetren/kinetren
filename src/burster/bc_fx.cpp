@@ -1312,12 +1312,12 @@ static bool fetchWarpedAudioBurst(std::shared_ptr<IBurstcon> upstream,
     if (!upstream || outFrames <= 0 || request.clipDurationTicks <= 0) {
         return false;
     }
-    const BurstIndex clipStart = request.decodeOrigin >= 0 ? request.decodeOrigin : 0;
+    const BurstIndex clipTimelineStart = request.clipTimelineStart >= 0 ? request.clipTimelineStart : 0;
     const BurstIndex clipSourceIn =
         request.clipSourceIn >= 0 ? request.clipSourceIn : std::max<BurstIndex>(0, request.decodeOrigin);
     const BurstIndex timelineIdx =
         request.timelineBurstIndex >= 0 ? request.timelineBurstIndex : request.index;
-    const BurstIndex timelineRel = std::max<BurstIndex>(0, timelineIdx - clipStart);
+    const BurstIndex timelineRel = std::max<BurstIndex>(0, timelineIdx - clipTimelineStart);
     const BurstIndex audioStep =
         std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(outFrames)) / 48000);
 
@@ -1868,13 +1868,16 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
         return false;
     }
 
+    const BurstIndex clipTimelineStart =
+        request.clipTimelineStart >= 0 ? request.clipTimelineStart : request.decodeOrigin;
     AudioFxContext ctx;
     ctx.timelineBurstIndex = timelineIdx;
     ctx.sampleRate = ab.sampleRate;
     ctx.channels = ab.channels;
     ctx.clipDurationTicks = request.clipDurationTicks;
+    ctx.clipTimelineStart = clipTimelineStart;
     ctx.decodeOrigin = request.decodeOrigin;
-    const double u = normalizedClipProgress(timelineIdx, request.decodeOrigin, request.clipDurationTicks);
+    const double u = normalizedClipProgress(timelineIdx, clipTimelineStart, request.clipDurationTicks);
     QJsonObject resolved = resolveParamsAutomationForBurst(storedParams, u);
     effect->setParams(resolved);
     if (!effect->process(ab, ctx)) {
@@ -2017,8 +2020,10 @@ bool processAudioFxChainInPlace(AudioBurst &ab, const QJsonArray &chain, const A
         return false;
     }
     const int n = chain.size();
+    const BurstIndex clipStart =
+        ctx.clipTimelineStart >= 0 ? ctx.clipTimelineStart : ctx.decodeOrigin;
     const double u =
-        normalizedClipProgress(ctx.timelineBurstIndex, ctx.decodeOrigin, ctx.clipDurationTicks);
+        normalizedClipProgress(ctx.timelineBurstIndex, clipStart, ctx.clipDurationTicks);
     for (int i = 0; i < n; ++i) {
         const QJsonObject slot = chain.at(i).toObject();
         const QString type = slot.value(QStringLiteral("type")).toString();

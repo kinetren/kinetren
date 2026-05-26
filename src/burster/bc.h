@@ -46,6 +46,8 @@ struct BurstRequest {
     BurstIndex clipDurationTicks = 0;
     /// Global timeline index for audio FX automation / warp (ConTrack). -1 = use `index`.
     BurstIndex timelineBurstIndex = -1;
+    /// Clip start on the composition timeline (burst ticks). Used with `timelineBurstIndex` for FX u.
+    BurstIndex clipTimelineStart = -1;
     /// Media `sourceIn` for the clip (audio warp / decode). -1 = use `decodeOrigin`.
     BurstIndex clipSourceIn = -1;
 };
