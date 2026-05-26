@@ -120,6 +120,8 @@ private:
     BurstIndex warpNextDecodeTick = -1;
     int warpRingChannels = 2;
     int warpRingSampleRate = 48000;
+    /// Last output frame (per channel) for short seam repair between warped bursts.
+    std::vector<int32_t> warpOutputTail;
 };
 
 std::shared_ptr<IVideoFx> createVideoFx(const QString &typeId, const QJsonObject &params);
@@ -129,6 +131,7 @@ std::shared_ptr<IAudioFx> createAudioFx(const QString &typeId, const QJsonObject
 double audioTimelineSourceRate(const QJsonArray &chain);
 /// When true, UI must not auto-resize the clip for playback-rate / stretch FX.
 bool audioFxLockTimelineDuration(const QJsonArray &chain);
+bool audioFxChainHasSlowedReverb(const QJsonArray &chain);
 /// Source offset in media ticks for `timelineRel` within `timelineDur` (handles playback-rate automation).
 BurstIndex audioTimelineToSourceOffsetTicks(const QJsonArray &chain,
                                             BurstIndex timelineRel,

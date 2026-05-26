@@ -1402,7 +1402,7 @@ void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
         onAudioLevelsReady(levels.first, levels.second);
     }
 
-    constexpr size_t kMaxPendingStereoSamples = static_cast<size_t>(48000) * 2 * 4;
+    constexpr size_t kMaxPendingStereoSamples = static_cast<size_t>(48000) * 2 * 8;
     const size_t prev = audioPcmPending.size();
     audioPcmPending.resize(prev + burst.samples.size());
     for (size_t i = 0; i < burst.samples.size(); ++i) {

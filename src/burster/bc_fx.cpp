@@ -1064,6 +1064,49 @@ private:
     double lastCutoffApplied = -1.0;
 };
 
+static void repairWarpBurstSeam(std::vector<int32_t> &samples, int ch, const std::vector<int32_t> &prevTail)
+{
+    if (prevTail.size() != static_cast<size_t>(ch) || samples.size() < static_cast<size_t>(ch * 2)) {
+        return;
+    }
+    const int frames = static_cast<int>(samples.size() / static_cast<size_t>(ch));
+    const int fade = std::min(12, frames / 4);
+    if (fade < 2) {
+        return;
+    }
+    int64_t maxJump = 0;
+    for (int c = 0; c < ch; ++c) {
+        const int64_t jump = static_cast<int64_t>(std::llabs(static_cast<int64_t>(samples[static_cast<size_t>(c)]) -
+                                                             static_cast<int64_t>(prevTail[static_cast<size_t>(c)])));
+        maxJump = std::max(maxJump, jump);
+    }
+    if (maxJump < 4000000) {
+        return;
+    }
+    for (int i = 0; i < fade; ++i) {
+        const double u = static_cast<double>(i + 1) / static_cast<double>(fade + 1);
+        for (int c = 0; c < ch; ++c) {
+            const size_t idx = static_cast<size_t>(i * ch + c);
+            const double prev = static_cast<double>(prevTail[static_cast<size_t>(c)]);
+            const double cur = static_cast<double>(samples[idx]);
+            samples[idx] = static_cast<int32_t>(prev * (1.0 - u) + cur * u);
+        }
+    }
+}
+
+static void storeWarpOutputTail(std::vector<int32_t> &tail, const std::vector<int32_t> &samples, int ch)
+{
+    const int frames = static_cast<int>(samples.size() / static_cast<size_t>(std::max(1, ch)));
+    if (frames <= 0) {
+        tail.clear();
+        return;
+    }
+    tail.resize(static_cast<size_t>(ch));
+    for (int c = 0; c < ch; ++c) {
+        tail[static_cast<size_t>(c)] = samples[static_cast<size_t>((frames - 1) * ch + c)];
+    }
+}
+
 static bool isReverbAudible(const QJsonObject &params)
 {
     const double mix = std::clamp(params.value(QStringLiteral("reverbMix")).toDouble(0.35), 0.0, 1.0);
@@ -1131,7 +1174,8 @@ public:
             const size_t wp = writePos[ci];
             const double tap = delayBuf[ci][wp];
             const double fb = tap * decay;
-            delayBuf[ci][wp] = dry + fb * (1.0 - damp);
+            delayBuf[ci][wp] =
+                std::clamp(dry + fb * (1.0 - damp), -2e9, 2e9);
             writePos[ci] = (wp + 1) % static_cast<size_t>(delayLen);
             const double wet = tap * wetGain;
             const double out = dry * (1.0 - mix) + wet * mix;
@@ -1262,6 +1306,11 @@ bool audioFxLockTimelineDuration(const QJsonArray &chain)
     return params.value(QStringLiteral("lockTimelineDuration")).toBool(false);
 }
 
+bool audioFxChainHasSlowedReverb(const QJsonArray &chain)
+{
+    return !slowedReverbParamsFromChain(chain).isEmpty();
+}
+
 BurstIndex audioTimelineToSourceOffsetTicks(const QJsonArray &chain,
                                             BurstIndex timelineRel,
                                             BurstIndex timelineDur)
@@ -1341,6 +1390,7 @@ void ConAudioFx::warpSourceRingReset()
     warpRingStartSample = 0;
     warpRingClipSourceIn = -1;
     warpNextDecodeTick = -1;
+    warpOutputTail.clear();
 }
 
 void ConAudioFx::warpSourceRingTrimFront(int64_t keepFromSample)
@@ -1472,19 +1522,20 @@ bool ConAudioFx::fetchWarpedAudioBurst(const std::shared_ptr<IBurstcon> &upstrea
     const double fileBase = static_cast<double>(clipSourceIn) * tickToSample;
     const double spanSamples = std::max(1e-6, (srcTick1 - srcTick0) * tickToSample);
 
-    double fileSample0 = fileBase + srcTick0 * tickToSample;
-    double fileSample1 = fileSample0 + spanSamples;
+    const double idealSample0 = fileBase + srcTick0 * tickToSample;
+    double fileSample0 = idealSample0;
+    double fileSample1 = idealSample0 + spanSamples;
+
+    if (warpRingClipSourceIn != clipSourceIn || warpNextDecodeTick < 0) {
+        warpSourceRingRebaseAt(clipSourceIn, ch, sr, idealSample0);
+        ioFileSampleCursor = -1.0;
+    }
+
     if (sequentialPlayback && ioFileSampleCursor >= 0.0) {
         fileSample0 = ioFileSampleCursor;
         fileSample1 = fileSample0 + spanSamples;
-    }
-
-    if (warpRingClipSourceIn != clipSourceIn || warpNextDecodeTick < 0) {
-        warpSourceRingRebaseAt(clipSourceIn, ch, sr, fileBase + srcTick0 * tickToSample);
-        fileSample0 = fileBase + srcTick0 * tickToSample;
-        fileSample1 = fileSample0 + spanSamples;
-    } else if (!sequentialPlayback || ioFileSampleCursor < 0.0) {
-        warpSourceRingRebaseAt(clipSourceIn, ch, sr, fileSample0);
+    } else if (warpSourceRing.empty()) {
+        warpSourceRingRebaseAt(clipSourceIn, ch, sr, idealSample0);
     }
     if (!warpSourceRingEnsureThrough(upstream, clipSourceIn, ch, sr, fileSample1)) {
         return false;
@@ -1503,6 +1554,9 @@ bool ConAudioFx::fetchWarpedAudioBurst(const std::shared_ptr<IBurstcon> &upstrea
                             fileSample1,
                             outFrames,
                             resampled);
+
+    repairWarpBurstSeam(resampled, ch, warpOutputTail);
+    storeWarpOutputTail(warpOutputTail, resampled, ch);
 
     ioFileSampleCursor = fileSample1;
     out.index = request.index;
@@ -1942,12 +1996,12 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
 
     AudioBurst ab;
     if (useWarp) {
-        const bool sequential =
-            lastWarpTimelineIndex >= 0 && timelineIdx == lastWarpTimelineIndex + audioStep;
         if (lastWarpTimelineIndex >= 0 && timelineIdx + audioStep < lastWarpTimelineIndex) {
             warpFileSampleCursor = -1.0;
             warpSourceRingReset();
+            warpOutputTail.clear();
         }
+        const bool sequential = lastWarpTimelineIndex < 0 || timelineIdx >= lastWarpTimelineIndex;
         if (!fetchWarpedAudioBurst(upstream,
                                    storedParams,
                                    request,

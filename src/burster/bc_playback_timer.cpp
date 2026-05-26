@@ -175,10 +175,6 @@ void MonotonicPlaybackTimer::runLoop()
             // jumped to (current/audioStep)*audioStep when the loop fell behind, skipping bursts
             // (clicks, "speed-up" glitches) and starving coverage stripes.
             const BurstIndex maxAudioIndex = (current / audioStep) * audioStep;
-            if (nextAudioEmit + audioPeriod * 2 < now && nextAudioIndex < maxAudioIndex) {
-                nextAudioIndex = maxAudioIndex;
-                nextAudioEmit = now;
-            }
             if (nextAudioEmit <= now && nextAudioIndex <= maxAudioIndex) {
                 BurstRequest audioRequest;
                 audioRequest.index = nextAudioIndex;
