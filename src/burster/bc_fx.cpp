@@ -1072,13 +1072,12 @@ public:
     void setParams(const QJsonObject &o) override
     {
         QJsonObject merged = mergeDefaults(defaults(), o);
-        const int sr = std::max(1, lastSampleRate);
-        const double newDelayMs = std::clamp(merged.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 20.0, 800.0);
+        p = merged;
+        const double newDelayMs = std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 20.0, 800.0);
         if (lastSampleRate > 0 && std::abs(newDelayMs - lastDelayMs) > 0.5) {
-            resizeDelay(sr, newDelayMs);
+            ensureDelayBuffers(lastChannels, lastSampleRate, newDelayMs);
         }
         lastDelayMs = newDelayMs;
-        p = merged;
     }
     QJsonObject params() const override { return p; }
 
@@ -1086,13 +1085,17 @@ public:
     {
         const int ch = std::max(1, inOut.channels > 0 ? inOut.channels : ctx.channels);
         const int sr = std::max(1, inOut.sampleRate > 0 ? inOut.sampleRate : ctx.sampleRate);
-        if (sr != lastSampleRate) {
-            lastSampleRate = sr;
-            resizeDelay(sr, std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 20.0, 800.0));
-        }
-        if (static_cast<int>(delayBuf.size()) < ch) {
-            delayBuf.assign(static_cast<size_t>(ch), {});
-            writePos.assign(static_cast<size_t>(ch), 0);
+        const double delayMs = std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 20.0, 800.0);
+        if (sr != lastSampleRate || ch != lastChannels || delayLen < 2 ||
+            static_cast<int>(delayBuf.size()) < ch) {
+            ensureDelayBuffers(ch, sr, delayMs);
+        } else {
+            for (size_t ci = 0; ci < delayBuf.size(); ++ci) {
+                if (delayBuf[ci].size() != static_cast<size_t>(delayLen)) {
+                    ensureDelayBuffers(ch, sr, delayMs);
+                    break;
+                }
+            }
         }
         const size_t len = inOut.samples.size();
         if (len == 0 || ch <= 0 || delayLen < 2) {
@@ -1134,13 +1137,20 @@ private:
         return o;
     }
 
-    void resizeDelay(int sr, double delayMs)
+    void ensureDelayBuffers(int ch, int sr, double delayMs)
     {
-        delayLen = std::clamp(static_cast<int>(std::llround(delayMs * 0.001 * static_cast<double>(sr))), 64, sr * 2);
-        for (auto &lane : delayBuf) {
-            lane.assign(static_cast<size_t>(delayLen), 0.0);
+        const int channels = std::max(1, ch);
+        lastSampleRate = std::max(1, sr);
+        lastChannels = channels;
+        delayLen = std::clamp(static_cast<int>(std::llround(delayMs * 0.001 * static_cast<double>(lastSampleRate))),
+                              64,
+                              lastSampleRate * 2);
+        delayBuf.resize(static_cast<size_t>(channels));
+        writePos.resize(static_cast<size_t>(channels));
+        for (int c = 0; c < channels; ++c) {
+            delayBuf[static_cast<size_t>(c)].assign(static_cast<size_t>(delayLen), 0.0);
+            writePos[static_cast<size_t>(c)] = 0;
         }
-        writePos.assign(delayBuf.size(), 0);
     }
 
     QJsonObject p = defaults();
@@ -1148,6 +1158,7 @@ private:
     std::vector<size_t> writePos;
     int delayLen = 0;
     int lastSampleRate = 0;
+    int lastChannels = 0;
     double lastDelayMs = -1.0;
 };
 
@@ -1164,10 +1175,10 @@ double audioTimelineSourceRate(const QJsonArray &chain)
         const double r =
             std::clamp(slot.value(QStringLiteral("params")).toObject().value(QStringLiteral("playbackRate")).toDouble(0.82),
                        0.25,
-                       1.0);
+                       32.0);
         rate *= r;
     }
-    return std::clamp(rate, 0.25, 1.0);
+    return std::clamp(rate, 0.25, 32.0);
 }
 
 static double rgbMseSubsampled(const QImage &a, const QImage &b)

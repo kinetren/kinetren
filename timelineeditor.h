@@ -419,7 +419,7 @@ private:
     void ensureClipFxDefaults(ClipEvent &clip);
     qint64 clipSourceSpanMs(const ClipEvent &clip) const;
     qint64 clipMaxTimelineDurationMs(const ClipEvent &clip) const;
-    void syncClipDurationToAudioStretch(ClipEvent &clip);
+    void syncClipDurationToAudioStretch(ClipEvent &clip, double priorPlaybackRate = 1.0);
     void clearUndoHistory();
     struct TimelineUndoSnapshot {
         std::vector<TrackLane> tracks;

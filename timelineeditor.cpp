@@ -389,23 +389,36 @@ qint64 TimelineEditor::clipMaxTimelineDurationMs(const ClipEvent &clip) const
 {
     const qint64 sourceSpan = clipSourceSpanMs(clip);
     const double rate = burstcon::audioTimelineSourceRate(clip.audioFxChain);
-    if (rate >= 0.999) {
+    if (std::abs(rate - 1.0) < 1e-6) {
         return sourceSpan;
     }
     return static_cast<qint64>(std::ceil(static_cast<double>(sourceSpan) / rate));
 }
 
-void TimelineEditor::syncClipDurationToAudioStretch(ClipEvent &clip)
+void TimelineEditor::syncClipDurationToAudioStretch(ClipEvent &clip, double priorPlaybackRate)
 {
     if (clip.mediaType != TrackType::Audio) {
         return;
     }
-    const qint64 needed = clipMaxTimelineDurationMs(clip);
-    if (clip.durationMs >= needed) {
+    const double rate = burstcon::audioTimelineSourceRate(clip.audioFxChain);
+    if (std::abs(rate - 1.0) < 1e-6) {
+        return;
+    }
+    priorPlaybackRate = std::clamp(priorPlaybackRate, 0.25, 32.0);
+    // Source ms represented by the clip before applying the new rate.
+    const qint64 sourceMs =
+        (std::abs(priorPlaybackRate - 1.0) > 1e-6)
+            ? static_cast<qint64>(
+                  std::ceil(static_cast<double>(clip.durationMs) * priorPlaybackRate))
+            : clip.durationMs;
+    const qint64 needed = static_cast<qint64>(std::ceil(static_cast<double>(sourceMs) / rate));
+    const qint64 maxTimeline = clipMaxTimelineDurationMs(clip);
+    const qint64 target = std::clamp(needed, kMinClipDurationMs, maxTimeline);
+    if (clip.durationMs == target) {
         return;
     }
     const qint64 oldDuration = clip.durationMs;
-    clip.durationMs = needed;
+    clip.durationMs = target;
     if (clip.linkedGroupId >= 0) {
         const qint64 deltaDur = clip.durationMs - oldDuration;
         for (const int id : linkedClipIds(clip.id)) {
@@ -709,6 +722,15 @@ bool TimelineEditor::pasteClipboardAtCursor()
             c.linkedGroupId = oldGroupToNew.value(src.linkedGroupId);
         } else {
             c.linkedGroupId = -1;
+        }
+        if (!c.sourcePath.isEmpty()) {
+            const qint64 probed = probeSourceDurationMsUncached(c.sourcePath);
+            if (probed > 0) {
+                c.sourceDurationMs = probed;
+            }
+        }
+        if (c.mediaType == TrackType::Audio) {
+            syncClipDurationToAudioStretch(c, 1.0);
         }
         clips.push_back(c);
         pasteMaxEndMs = std::max(pasteMaxEndMs, c.startMs + c.durationMs);
@@ -1990,7 +2012,10 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     clips = std::move(loadedClips);
     for (auto &clip : clips) {
         if (clip.mediaType == TrackType::Audio) {
-            syncClipDurationToAudioStretch(clip);
+            const double r = burstcon::audioTimelineSourceRate(clip.audioFxChain);
+            if (std::abs(r - 1.0) > 1e-6) {
+                syncClipDurationToAudioStretch(clip, r);
+            }
         }
     }
     morpherEvents = std::move(loadedMorphs);
@@ -3457,8 +3482,9 @@ void TimelineEditor::setClipAudioFxChain(int clipId, const QJsonArray &chain, bo
     if (recordUndo) {
         pushUndoSnapshot();
     }
+    const double priorRate = burstcon::audioTimelineSourceRate(c->audioFxChain);
     c->audioFxChain = chain;
-    syncClipDurationToAudioStretch(*c);
+    syncClipDurationToAudioStretch(*c, priorRate);
     emit timelineContentChanged();
     update();
 }
