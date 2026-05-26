@@ -1074,40 +1074,6 @@ static bool isReverbAudible(const QJsonObject &params)
     return mix * gain > 1e-9;
 }
 
-static void applyBurstBoundaryCrossfade(AudioBurst &burst, std::vector<float> &overlapTail, int fadeLen)
-{
-    const int ch = std::max(1, burst.channels);
-    const int frames = static_cast<int>(burst.samples.size() / static_cast<size_t>(ch));
-    if (frames <= 0 || fadeLen <= 0) {
-        overlapTail.clear();
-        return;
-    }
-    const int fade = std::min(fadeLen, frames / 2);
-    if (fade < 2) {
-        return;
-    }
-    if (!overlapTail.empty() && static_cast<int>(overlapTail.size()) == fade * ch) {
-        for (int i = 0; i < fade; ++i) {
-            const double t = static_cast<double>(i) / static_cast<double>(fade - 1);
-            const double wCur = std::sin(t * 3.14159265358979323846 * 0.5);
-            const double wPrev = std::cos(t * 3.14159265358979323846 * 0.5);
-            for (int c = 0; c < ch; ++c) {
-                const size_t idx = static_cast<size_t>(i * ch + c);
-                const double prev = static_cast<double>(overlapTail[static_cast<size_t>(i * ch + c)]);
-                const double cur = static_cast<double>(burst.samples[idx]);
-                burst.samples[idx] = static_cast<int32_t>(prev * wPrev + cur * wCur);
-            }
-        }
-    }
-    overlapTail.resize(static_cast<size_t>(fade * ch));
-    for (int i = 0; i < fade; ++i) {
-        for (int c = 0; c < ch; ++c) {
-            const size_t idx = static_cast<size_t>((frames - fade + i) * ch + c);
-            overlapTail[static_cast<size_t>(i * ch + c)] = static_cast<float>(burst.samples[idx]);
-        }
-    }
-}
-
 // --- Audio: slowed + reverb (timeline stretch via ConTrack; this effect adds space) ---
 
 class SlowedReverbAudioFx : public IAudioFx
@@ -1513,20 +1479,18 @@ bool ConAudioFx::fetchWarpedAudioBurst(const std::shared_ptr<IBurstcon> &upstrea
         fileSample1 = fileSample0 + spanSamples;
     }
 
-    const int64_t needStartSample = static_cast<int64_t>(std::floor(fileSample0));
-    const int ringCh = std::max(1, ch);
-    const int64_t ringEndSample =
-        warpRingStartSample + static_cast<int64_t>(warpSourceRing.size() / static_cast<size_t>(ringCh));
-    const bool ringCovers =
-        warpRingClipSourceIn == clipSourceIn && !warpSourceRing.empty() &&
-        needStartSample >= warpRingStartSample && needStartSample < ringEndSample;
-    if (!sequentialPlayback || !ringCovers) {
+    if (warpRingClipSourceIn != clipSourceIn || warpNextDecodeTick < 0) {
+        warpSourceRingRebaseAt(clipSourceIn, ch, sr, fileBase + srcTick0 * tickToSample);
+        fileSample0 = fileBase + srcTick0 * tickToSample;
+        fileSample1 = fileSample0 + spanSamples;
+    } else if (!sequentialPlayback || ioFileSampleCursor < 0.0) {
         warpSourceRingRebaseAt(clipSourceIn, ch, sr, fileSample0);
     }
     if (!warpSourceRingEnsureThrough(upstream, clipSourceIn, ch, sr, fileSample1)) {
         return false;
     }
-    const int64_t trimFrom = std::max<int64_t>(0, needStartSample - static_cast<int64_t>(sr) * 2);
+    const int64_t trimFrom =
+        std::max<int64_t>(0, static_cast<int64_t>(std::floor(fileSample0)) - static_cast<int64_t>(sr) * 2);
     warpSourceRingTrimFront(trimFrom);
 
     const int pcmFrames = static_cast<int>(warpSourceRing.size() / static_cast<size_t>(ch));
@@ -2007,18 +1971,8 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
     ctx.decodeOrigin = request.decodeOrigin;
     const double u = u0;
     QJsonObject resolved = resolveParamsAutomationForBurst(storedParams, u);
-    if (effect && effect->typeId() == QStringLiteral("slowedreverb")) {
-        const BurstIndex audioStepFx =
-            std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) /
-                                         std::max(1, ab.sampleRate));
-        if (lastPreFxTimelineIndex >= 0 && timelineIdx + audioStepFx < lastPreFxTimelineIndex) {
-            preFxOverlapTail.clear();
-        }
-        applyBurstBoundaryCrossfade(ab, preFxOverlapTail, 48);
-        lastPreFxTimelineIndex = timelineIdx;
-    }
     effect->setParams(resolved);
-    if (!effect->process(ab, ctx)) {
+    if (isReverbAudible(resolved) && !effect->process(ab, ctx)) {
         return false;
     }
     ab.index = request.index;
@@ -2038,8 +1992,6 @@ void ConAudioFx::invalidate(const BurstRange &range)
 {
     warpFileSampleCursor = -1.0;
     lastWarpTimelineIndex = -1;
-    lastPreFxTimelineIndex = -1;
-    preFxOverlapTail.clear();
     warpSourceRingReset();
     if (upstream) {
         upstream->invalidate(range);
