@@ -21,6 +21,10 @@ set(PROJECT_SOURCES
         previewer.h
         audiopreviewwidget.cpp
         audiopreviewwidget.h
+        audiolevelmeterwidget.cpp
+        audiolevelmeterwidget.h
+        previewvolumefader.cpp
+        previewvolumefader.h
         projectsettings.cpp
         projectsettings.h
         performancewidget.cpp

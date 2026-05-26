@@ -1,6 +1,5 @@
 #include "clipfxchaindialog.h"
 
-#include "audiopreviewwidget.h"
 #include "fxchaineditorwidget.h"
 #include "timelineeditor.h"
 #include "bc_fx.h"
@@ -10,8 +9,6 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QVBoxLayout>
-
-#include <algorithm>
 
 ClipFxChainWindow::ClipFxChainWindow(QWidget *parent,
                                      TimelineEditor *timeline,
@@ -59,37 +56,23 @@ ClipFxChainWindow::ClipFxChainWindow(QWidget *parent,
     connect(editor, &FxChainEditorWidget::chainChanged, this, &ClipFxChainWindow::onEditorChainChanged);
     if (timeline) {
         connect(timeline, &TimelineEditor::timelineContentChanged, editor, &FxChainEditorWidget::refreshAutomationUi);
-        connect(timeline, &TimelineEditor::timelineContentChanged, this, [this]() {
-            refreshAudioPreview();
-            if (this->kind == MediaKind::Video) {
-                refreshPreview();
-            }
-        });
+        if (kind == MediaKind::Video) {
+            connect(timeline, &TimelineEditor::timelineContentChanged, this, [this]() { refreshPreview(); });
+        }
     }
 
     split->addWidget(editor);
     split->setStretchFactor(0, 3);
 
-    auto *previewRow = new QWidget(split);
-    auto *previewRowLayout = new QHBoxLayout(previewRow);
-    previewRowLayout->setContentsMargins(0, 0, 0, 0);
-    previewRowLayout->setSpacing(6);
-
     if (kind == MediaKind::Video) {
-        videoPreview = new QLabel(previewRow);
+        videoPreview = new QLabel(split);
         videoPreview->setMinimumHeight(200);
         videoPreview->setAlignment(Qt::AlignCenter);
         videoPreview->setStyleSheet(QStringLiteral("QLabel { background:#101214; border:1px solid #343a42; }"));
         videoPreview->setText(tr("Preview"));
-        previewRowLayout->addWidget(videoPreview, 1);
+        split->addWidget(videoPreview);
+        split->setStretchFactor(1, 2);
     }
-
-    audioPreview = new AudioPreviewWidget(previewRow);
-    audioPreview->setMinimumHeight(kind == MediaKind::Video ? 200 : 120);
-    previewRowLayout->addWidget(audioPreview);
-
-    split->addWidget(previewRow);
-    split->setStretchFactor(1, 2);
     root->addWidget(split, 1);
 
     auto *btnRow = new QHBoxLayout();
@@ -126,8 +109,9 @@ ClipFxChainWindow::ClipFxChainWindow(QWidget *parent,
         }
         editor->selectRow(selRow);
     }
-    refreshPreview();
-    refreshAudioPreview();
+    if (kind == MediaKind::Video) {
+        refreshPreview();
+    }
 }
 
 qint64 ClipFxChainWindow::stableKey() const
@@ -155,7 +139,6 @@ void ClipFxChainWindow::onEditorChainChanged(const QJsonArray &chain)
 {
     pushChainToTimeline(chain);
     refreshPreview();
-    refreshAudioPreview();
 }
 
 void ClipFxChainWindow::refreshPreview()
@@ -194,55 +177,6 @@ void ClipFxChainWindow::refreshPreview()
     }
     videoPreview->setPixmap(
         QPixmap::fromImage(vb.frame.scaled(pw, ph, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
-}
-
-void ClipFxChainWindow::refreshAudioPreview()
-{
-    if (!audioPreview || !timeline) {
-        return;
-    }
-    int peaksClipId = clipId;
-    QJsonArray fxChain;
-    if (kind == MediaKind::Audio) {
-        fxChain = timeline->clipAudioFxChain(clipId);
-    } else {
-        const int linkedId = timeline->linkedAudioClipId(clipId);
-        if (linkedId > 0) {
-            peaksClipId = linkedId;
-            fxChain = timeline->clipAudioFxChain(linkedId);
-        }
-    }
-    if (kind == MediaKind::Video && timeline->linkedAudioClipId(clipId) < 0) {
-        peaksClipId = clipId;
-        fxChain = QJsonArray();
-    }
-    QVector<QPair<int, int>> peaks;
-    if (kind == MediaKind::Audio && !fxChain.isEmpty()) {
-        peaks = timeline->clipAudioPeaksWithFxPreview(peaksClipId, fxChain, 128);
-    } else {
-        peaks = timeline->clipAudioPeaksForPreview(peaksClipId, 128);
-    }
-    if (peaks.isEmpty()) {
-        const bool videoEmbedded =
-            kind == MediaKind::Video && timeline->linkedAudioClipId(clipId) < 0;
-        if (videoEmbedded) {
-            audioPreview->setStatusText(tr("Loading waveform…"));
-        } else if (kind == MediaKind::Video) {
-            audioPreview->setStatusText(tr("No linked audio"));
-        } else {
-            audioPreview->setStatusText(tr("Loading waveform…"));
-        }
-        return;
-    }
-    double playRel = -1.0;
-    if (timeline->clipMatchesFxTarget(peaksClipId, false) ||
-        (kind == MediaKind::Video && peaksClipId == clipId && timeline->clipMatchesFxTarget(clipId, true))) {
-        const qint64 dur = std::max<qint64>(1, timeline->clipDurationMs(peaksClipId));
-        const qint64 midOff = std::max<qint64>(0, dur / 2);
-        playRel = static_cast<double>(midOff) / static_cast<double>(dur - 1);
-    }
-    audioPreview->setPeaks(peaks);
-    audioPreview->setPlayheadRel(playRel);
 }
 
 void ClipFxChainWindow::onDoneClicked()

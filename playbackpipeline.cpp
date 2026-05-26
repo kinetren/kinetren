@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -767,16 +768,96 @@ void PlaybackPipeline::setDraftPreviewEnabled(bool enabled)
     draftPreviewEnabled.store(enabled);
 }
 
-void PlaybackPipeline::setPreviewVolume(float linear01)
+void PlaybackPipeline::setAudioLevelsCallback(AudioLevelsCallback cb)
 {
-    const float v = std::clamp(linear01, 0.f, 1.f);
+    onAudioLevelsReady = std::move(cb);
+}
+#include <cmath>
+std::pair<float, float> PlaybackPipeline::peaksDbFromAudioBurst(const burstcon::AudioBurst &burst, float gainLinear)
+{
+    constexpr float kSilenceDb = -60.f;
+    if (burst.samples.empty()) {
+        return {kSilenceDb, kSilenceDb};
+    }
+    const int ch = std::max(1, burst.channels);
+    int peakL = 0;
+    int peakR = 0;
+    const float g = std::max(0.f, gainLinear);
+    for (size_t s = 0; s + static_cast<size_t>(ch) <= burst.samples.size(); s += static_cast<size_t>(ch)) {
+        const int v0 = static_cast<int>(
+            std::llround(std::clamp(static_cast<double>(burst.samples[s]) * static_cast<double>(g),
+                                    static_cast<double>(std::numeric_limits<int16_t>::min()),
+                                    static_cast<double>(std::numeric_limits<int16_t>::max()))));
+        peakL = std::max(peakL, std::abs(v0));
+        if (ch >= 2) {
+            const int v1 = static_cast<int>(
+                std::llround(std::clamp(static_cast<double>(burst.samples[s + 1]) * static_cast<double>(g),
+                                        static_cast<double>(std::numeric_limits<int16_t>::min()),
+                                        static_cast<double>(std::numeric_limits<int16_t>::max()))));
+            peakR = std::max(peakR, std::abs(v1));
+        } else {
+            peakR = peakL;
+        }
+    }
+    auto toDb = [](int peak) {
+        if (peak < 2) {
+            return -60.f;
+        }
+        return 20.f * std::log10(static_cast<float>(peak) / 32768.f);
+    };
+    return {toDb(peakL), toDb(peakR)};
+}
+
+std::pair<float, float> PlaybackPipeline::sampleMixedLevelsDbAt(qint64 timelineMs) const
+{
+    std::shared_ptr<burstcon::IBurstcon> src;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        src = root;
+    }
+    if (!src) {
+        return {-60.f, -60.f};
+    }
+    constexpr int kRate = 48000;
+    constexpr int kSpb = 1024;
+    const burstcon::BurstIndex audioStep = std::max<burstcon::BurstIndex>(
+        1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kSpb)) / kRate);
+    const burstcon::BurstIndex rawIdx = burstcon::msToBurstIndex(timelineMs);
+    const burstcon::BurstIndex idx = (rawIdx / audioStep) * audioStep;
+    burstcon::BurstRequest req;
+    req.index = idx;
+    burstcon::AudioBurst ab;
+    if (!src->audioBurst(req, ab)) {
+        return {-60.f, -60.f};
+    }
+    return peaksDbFromAudioBurst(ab, previewVolumeLinear.load());
+}
+
+void PlaybackPipeline::requestMixedLevelsSampleAsync(qint64 timelineMs)
+{
+    DraftJob job;
+    job.kind = DraftJob::Kind::MixedLevelsSample;
+    job.timelineMs = timelineMs;
+    job.serial = latestDraftSerial.fetch_add(1) + 1;
+    {
+        std::lock_guard<std::mutex> lock(draftMutex);
+        pendingDraftJob = std::move(job);
+        draftJobPending = true;
+    }
+    draftCv.notify_one();
+}
+
+void PlaybackPipeline::setPreviewVolume(float linearGain)
+{
+    const float v = std::max(0.f, linearGain);
     previewVolumeLinear.store(v);
     std::lock_guard<std::mutex> lock(audioMutex);
     if (audioSink) {
+        const float hw = std::min(1.f, v);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-        audioSink->setVolume(v);
+        audioSink->setVolume(hw);
 #else
-        audioSink->setVolume(v);
+        audioSink->setVolume(hw);
 #endif
     }
 }
@@ -1137,11 +1218,11 @@ void PlaybackPipeline::ensureAudioOutput()
 #endif
     audioDevice = audioSink->start();
     if (audioDevice) {
-        const float v = previewVolumeLinear.load();
+        const float hw = std::min(1.f, previewVolumeLinear.load());
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-        audioSink->setVolume(v);
+        audioSink->setVolume(hw);
 #else
-        audioSink->setVolume(v);
+        audioSink->setVolume(hw);
 #endif
     } else {
         tearDownAudioLocked();
@@ -1193,11 +1274,19 @@ void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
     if (!audioDevice) {
         return;
     }
+    const float gain = previewVolumeLinear.load();
+    const auto levels = peaksDbFromAudioBurst(burst, gain);
+    if (onAudioLevelsReady) {
+        onAudioLevelsReady(levels.first, levels.second);
+    }
+
     constexpr size_t kMaxPendingStereoSamples = static_cast<size_t>(48000) * 2 * 4;
     const size_t prev = audioPcmPending.size();
     audioPcmPending.resize(prev + burst.samples.size());
     for (size_t i = 0; i < burst.samples.size(); ++i) {
-        const int32_t v = std::clamp<int32_t>(burst.samples[i], -32768, 32767);
+        const int32_t scaled =
+            static_cast<int32_t>(std::llround(static_cast<double>(burst.samples[i]) * static_cast<double>(gain)));
+        const int32_t v = std::clamp<int32_t>(scaled, -32768, 32767);
         audioPcmPending[prev + i] = static_cast<int16_t>(v);
     }
     if (audioPcmPending.size() > kMaxPendingStereoSamples) {
@@ -1210,6 +1299,7 @@ void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
 void PlaybackPipeline::requestDraftFrameAsync(qint64 tMs, const std::vector<Clip> &videoClips)
 {
     DraftJob job;
+    job.kind = DraftJob::Kind::VideoFrame;
     job.timelineMs = tMs;
     job.videoClips = videoClips;
     job.serial = latestDraftSerial.fetch_add(1) + 1;
@@ -1234,10 +1324,20 @@ void PlaybackPipeline::draftWorkerLoop()
             job = pendingDraftJob;
             draftJobPending = false;
         }
-        if (running.load() || !draftPreviewEnabled.load()) {
+        if (job.serial != latestDraftSerial.load()) {
             continue;
         }
-        if (job.serial != latestDraftSerial.load()) {
+        if (job.kind == DraftJob::Kind::MixedLevelsSample) {
+            const auto levels = sampleMixedLevelsDbAt(job.timelineMs);
+            if (job.serial != latestDraftSerial.load()) {
+                continue;
+            }
+            if (onAudioLevelsReady) {
+                onAudioLevelsReady(levels.first, levels.second);
+            }
+            continue;
+        }
+        if (running.load() || !draftPreviewEnabled.load()) {
             continue;
         }
         QImage frame = renderDraftFrame(job.timelineMs, job.videoClips);

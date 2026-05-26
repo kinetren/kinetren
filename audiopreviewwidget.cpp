@@ -46,7 +46,7 @@ void AudioPreviewWidget::paintEvent(QPaintEvent *event)
     }
     if (peaks.isEmpty()) {
         p.setPen(QColor(100, 110, 125));
-        p.drawText(inner, Qt::AlignCenter, tr("Audio…"));
+        p.drawText(inner, Qt::AlignCenter, tr("Master mix…"));
         return;
     }
 

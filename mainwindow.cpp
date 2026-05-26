@@ -6,8 +6,9 @@
 #include "playbackpipeline.h"
 #include "projectrenderer.h"
 #include "renderprogressdialog.h"
-#include "audiopreviewwidget.h"
+#include "audiolevelmeterwidget.h"
 #include "previewer.h"
+#include "previewvolumefader.h"
 #include "sourceareawidget.h"
 #include "timelineeditor.h"
 #include "clipfxchaindialog.h"
@@ -49,7 +50,6 @@
 #include <QSplitter>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrentRun>
-#include <QSlider>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QSizePolicy>
@@ -64,6 +64,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <climits>
 #include <cmath>
@@ -222,8 +223,22 @@ MainWindow::MainWindow(QWidget *parent)
         timelineEditor->setPlaybackMediaPool(playbackPipeline->sharedMediaPool());
         timelineEditor->setStripMediaPool(stripMediaPool);
     }
-    if (previewVolumeSlider && playbackPipeline) {
-        playbackPipeline->setPreviewVolume(static_cast<float>(previewVolumeSlider->value()) / 100.f);
+    playbackPipeline->setAudioLevelsCallback([this](float dbL, float dbR) {
+        QMetaObject::invokeMethod(
+            this,
+            [this, dbL, dbR]() {
+                if (mainAudioMeters) {
+                    mainAudioMeters->pushLevelsDb(dbL, dbR);
+                }
+            },
+            Qt::QueuedConnection);
+    });
+    if (previewVolumeFader && playbackPipeline) {
+        float lin = 0.f;
+        if (!previewVolumeFader->isMuted()) {
+            lin = std::pow(10.f, previewVolumeFader->volumeDb() / 20.f);
+        }
+        playbackPipeline->setPreviewVolume(lin);
     }
     refreshPreviewResolutionMaxEntry();
     if (frontScalerCheck) {
@@ -262,7 +277,6 @@ MainWindow::MainWindow(QWidget *parent)
         }
     });
     syncTimelinePlayback();
-    refreshMainAudioPreview();
     currentProjectPath = defaultAutosaveProjectPath();
     loadLastProjectOnStartup();
     autosaveTimer.setInterval(4000);
@@ -389,8 +403,10 @@ void MainWindow::setupTimelineEditorUi()
     previewMediaLayout->setContentsMargins(0, 0, 0, 0);
     previewMediaLayout->setSpacing(4);
     previewMediaLayout->addWidget(ui->frame, 1);
-    mainAudioPreview = new AudioPreviewWidget(previewMediaRow);
-    previewMediaLayout->addWidget(mainAudioPreview);
+    mainAudioMeters = new AudioLevelMeterWidget(previewMediaRow);
+    previewMediaLayout->addWidget(mainAudioMeters, 0);
+    previewVolumeFader = new PreviewVolumeFader(previewMediaRow);
+    previewMediaLayout->addWidget(previewVolumeFader, 0);
     previewLayout->addWidget(previewMediaRow, 1);
 
     auto *previewControls = new QHBoxLayout();
@@ -435,12 +451,6 @@ void MainWindow::setupTimelineEditorUi()
                        "Toggling clears playback and strip caches so sizes stay consistent."));
     previewAntialiasingCheck = new QCheckBox("Antialiasing", previewHost);
     previewAntialiasingCheck->setChecked(projectSettings.previewAntialiasing);
-    auto *previewVolumeLabel = new QLabel(tr("Volume:"), previewHost);
-    previewVolumeSlider = new QSlider(Qt::Horizontal, previewHost);
-    previewVolumeSlider->setRange(0, 100);
-    previewVolumeSlider->setValue(100);
-    previewVolumeSlider->setFixedWidth(120);
-    previewVolumeSlider->setToolTip(tr("Preview and playback output volume"));
     if (ui->frame) {
         ui->frame->setSmoothScaling(projectSettings.previewSmoothScaling);
         ui->frame->setAntialiasing(projectSettings.previewAntialiasing);
@@ -457,15 +467,12 @@ void MainWindow::setupTimelineEditorUi()
     previewControls->addWidget(frontScalerCheck);
     previewControls->addWidget(previewSmoothScalingCheck);
     previewControls->addWidget(previewAntialiasingCheck);
-    previewControls->addSpacing(10);
-    previewControls->addWidget(previewVolumeLabel);
-    previewControls->addWidget(previewVolumeSlider);
     previewControls->addStretch(1);
     previewLayout->addLayout(previewControls);
 
-    connect(previewVolumeSlider, &QSlider::valueChanged, this, [this](int pct) {
+    connect(previewVolumeFader, &PreviewVolumeFader::volumeChanged, this, [this](float linear) {
         if (playbackPipeline) {
-            playbackPipeline->setPreviewVolume(static_cast<float>(pct) / 100.f);
+            playbackPipeline->setPreviewVolume(linear);
         }
     });
 
@@ -751,7 +758,6 @@ void MainWindow::setupTimelineEditorUi()
             if (!timelineEditor->isEditingTimelineContent()) {
                 schedulePlaybackSync();
             }
-            refreshMainAudioPreview();
         }
     });
     connect(timelineEditor, &TimelineEditor::timelineRangeChanged, this, [this](qint64, qint64) {
@@ -770,7 +776,6 @@ void MainWindow::setupTimelineEditorUi()
         if (playbackPipeline) {
             refreshPreviewResolutionMaxEntry();
         }
-        refreshMainAudioPreview();
         if (!playbackPipeline) {
             return;
         }
@@ -1053,8 +1058,9 @@ void MainWindow::saveUiState()
 {
     QSettings settings;
     settings.setValue("ui/geometry", saveGeometry());
-    if (previewVolumeSlider) {
-        settings.setValue(QStringLiteral("ui/previewVolume"), previewVolumeSlider->value());
+    if (previewVolumeFader) {
+        settings.setValue(QStringLiteral("ui/previewVolumeDb"), static_cast<double>(previewVolumeFader->volumeDb()));
+        settings.setValue(QStringLiteral("ui/previewVolumeMuted"), previewVolumeFader->isMuted());
     }
     if (ui->splitter) {
         settings.setValue("ui/splitterHorizontal", ui->splitter->saveState());
@@ -1083,9 +1089,12 @@ void MainWindow::restoreUiState()
             ui->splitter_2->restoreState(st);
         }
     }
-    if (previewVolumeSlider) {
-        const int vol = settings.value(QStringLiteral("ui/previewVolume"), 100).toInt();
-        previewVolumeSlider->setValue(std::clamp(vol, 0, 100));
+    if (previewVolumeFader) {
+        const float db = static_cast<float>(settings.value(QStringLiteral("ui/previewVolumeDb"), 0.0).toDouble());
+        previewVolumeFader->setVolumeDb(db);
+        if (settings.value(QStringLiteral("ui/previewVolumeMuted"), false).toBool()) {
+            previewVolumeFader->setMuted(true);
+        }
     }
 }
 
@@ -1229,6 +1238,7 @@ void MainWindow::onTimelineTick()
     }
 
     syncTimelinePlayback();
+    refreshMainAudioMeters();
 }
 
 void MainWindow::syncTimelinePlayback()
@@ -1293,6 +1303,7 @@ void MainWindow::flushPlaybackSync()
     // wrong: the UI timer can lag a tick, and debounced updates (timelineContentChanged) must still
     // refresh the graph so ConTrack picks up new `videoFxChain` / `audioFxChain` JSON.
     syncTimelinePlayback();
+    refreshMainAudioMeters();
 }
 
 void MainWindow::schedulePerformancePanelRefresh()
@@ -1351,32 +1362,17 @@ void MainWindow::stopMediaPlayback()
     }
 }
 
-void MainWindow::refreshMainAudioPreview()
+void MainWindow::refreshMainAudioMeters()
 {
-    if (!mainAudioPreview || !timelineEditor) {
+    if (!timelineEditor || !playbackPipeline || timelinePlaying) {
         return;
     }
-    const qint64 t = timelineEditor->cursorMs();
-    const int clipId = timelineEditor->activeAudioClipIdAt(t);
-    if (clipId < 0) {
-        mainAudioPreview->setStatusText(tr("No audio at playhead"));
-        mainAudioPreview->setPlayheadRel(-1.0);
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (now - lastAudioMeterSampleMs < 120) {
         return;
     }
-    const QVector<QPair<int, int>> peaks = timelineEditor->clipAudioPeaksForPreview(clipId, 96);
-    if (peaks.isEmpty()) {
-        mainAudioPreview->setStatusText(tr("Loading waveform…"));
-        return;
-    }
-    const qint64 clipTimelineStart = timelineEditor->clipTimelineStartMs(clipId);
-    const qint64 dur = timelineEditor->clipDurationMs(clipId);
-    double playRel = -1.0;
-    if (dur > 1) {
-        playRel = static_cast<double>(t - clipTimelineStart) / static_cast<double>(dur - 1);
-        playRel = std::clamp(playRel, 0.0, 1.0);
-    }
-    mainAudioPreview->setPeaks(peaks);
-    mainAudioPreview->setPlayheadRel(playRel);
+    lastAudioMeterSampleMs = now;
+    playbackPipeline->requestMixedLevelsSampleAsync(timelineEditor->cursorMs());
 }
 
 void MainWindow::renderDraftProject()

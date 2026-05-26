@@ -88,6 +88,10 @@ public:
     /// Master gain for preview/playback output (0..1, default 1).
     void setPreviewVolume(float linear01);
     float previewVolume() const;
+    using AudioLevelsCallback = std::function<void(float leftDb, float rightDb)>;
+    void setAudioLevelsCallback(AudioLevelsCallback cb);
+    /// One composited burst at `timelineMs` for meter refresh while stopped/scrubbing.
+    void requestMixedLevelsSampleAsync(qint64 timelineMs);
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
     void setProjectSettings(const ProjectSettings &settings);
     void resetProjectCache();
@@ -106,10 +110,14 @@ public:
 
 private:
     struct DraftJob {
+        enum class Kind { VideoFrame, MixedLevelsSample };
+        Kind kind = Kind::VideoFrame;
         qint64 timelineMs = 0;
         std::vector<Clip> videoClips;
         quint64 serial = 0;
     };
+    static std::pair<float, float> peaksDbFromAudioBurst(const burstcon::AudioBurst &burst, float gainLinear);
+    std::pair<float, float> sampleMixedLevelsDbAt(qint64 timelineMs) const;
     struct PrefetchJob {
         qint64 startMs = 0;
         qint64 endMs = 0;
@@ -136,6 +144,7 @@ private:
     void clearVideoFrameBucketSets();
 
     std::function<void(QImage &&)> onVideoFrameReady;
+    AudioLevelsCallback onAudioLevelsReady;
     mutable std::mutex mutex;
     ProjectSettings projectSettings;
     std::vector<Clip> lastVideoClips;
