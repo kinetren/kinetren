@@ -284,6 +284,143 @@ void TimelineEditor::purgePresentationCaches()
     update();
 }
 
+TimelineEditor::TimelineUndoSnapshot TimelineEditor::captureUndoSnapshot() const
+{
+    TimelineUndoSnapshot snap;
+    snap.tracks = tracks;
+    snap.clips = clips;
+    snap.morpherEvents = morpherEvents;
+    snap.markersMs = markersMs;
+    snap.nextClipId = nextClipId;
+    snap.nextLinkedGroupId = nextLinkedGroupId;
+    snap.nextMorpherEventId = nextMorpherEventId;
+    snap.selectedClipId = selectedClipId;
+    snap.selectedMorpherId = selectedMorpherId;
+    return snap;
+}
+
+void TimelineEditor::restoreUndoSnapshot(const TimelineUndoSnapshot &snap)
+{
+    tracks = snap.tracks;
+    clips = snap.clips;
+    morpherEvents = snap.morpherEvents;
+    markersMs = snap.markersMs;
+    nextClipId = snap.nextClipId;
+    nextLinkedGroupId = snap.nextLinkedGroupId;
+    nextMorpherEventId = snap.nextMorpherEventId;
+    selectedClipId = snap.selectedClipId;
+    selectedMorpherId = snap.selectedMorpherId;
+    if (selectedClipId >= 0 && !findClipById(selectedClipId)) {
+        selectedClipId = -1;
+    }
+    if (selectedMorpherId >= 0 && !findMorpherById(selectedMorpherId)) {
+        selectedMorpherId = -1;
+    }
+    contentGeometryUpdated();
+    refreshTimelineRangeSignals();
+    emitOverlayInfo();
+    emit timelineContentChanged();
+    update();
+}
+
+void TimelineEditor::pushUndoSnapshot()
+{
+    if (applyingUndoRedo) {
+        return;
+    }
+    constexpr size_t kMaxUndo = 80;
+    undoStack.push_back(captureUndoSnapshot());
+    if (undoStack.size() > kMaxUndo) {
+        undoStack.erase(undoStack.begin());
+    }
+    redoStack.clear();
+}
+
+void TimelineEditor::clearUndoHistory()
+{
+    undoStack.clear();
+    redoStack.clear();
+}
+
+bool TimelineEditor::canUndo() const
+{
+    return !undoStack.empty();
+}
+
+bool TimelineEditor::canRedo() const
+{
+    return !redoStack.empty();
+}
+
+bool TimelineEditor::undo()
+{
+    if (undoStack.empty()) {
+        return false;
+    }
+    applyingUndoRedo = true;
+    redoStack.push_back(captureUndoSnapshot());
+    TimelineUndoSnapshot snap = std::move(undoStack.back());
+    undoStack.pop_back();
+    restoreUndoSnapshot(snap);
+    applyingUndoRedo = false;
+    return true;
+}
+
+bool TimelineEditor::redo()
+{
+    if (redoStack.empty()) {
+        return false;
+    }
+    applyingUndoRedo = true;
+    undoStack.push_back(captureUndoSnapshot());
+    TimelineUndoSnapshot snap = std::move(redoStack.back());
+    redoStack.pop_back();
+    restoreUndoSnapshot(snap);
+    applyingUndoRedo = false;
+    return true;
+}
+
+qint64 TimelineEditor::clipSourceSpanMs(const ClipEvent &clip) const
+{
+    return std::max<qint64>(kMinClipDurationMs, clip.sourceDurationMs - clip.sourceInMs);
+}
+
+qint64 TimelineEditor::clipMaxTimelineDurationMs(const ClipEvent &clip) const
+{
+    const qint64 sourceSpan = clipSourceSpanMs(clip);
+    const double rate = burstcon::audioTimelineSourceRate(clip.audioFxChain);
+    if (rate >= 0.999) {
+        return sourceSpan;
+    }
+    return static_cast<qint64>(std::ceil(static_cast<double>(sourceSpan) / rate));
+}
+
+void TimelineEditor::syncClipDurationToAudioStretch(ClipEvent &clip)
+{
+    if (clip.mediaType != TrackType::Audio) {
+        return;
+    }
+    const qint64 needed = clipMaxTimelineDurationMs(clip);
+    if (clip.durationMs >= needed) {
+        return;
+    }
+    const qint64 oldDuration = clip.durationMs;
+    clip.durationMs = needed;
+    if (clip.linkedGroupId >= 0) {
+        const qint64 deltaDur = clip.durationMs - oldDuration;
+        for (const int id : linkedClipIds(clip.id)) {
+            if (id == clip.id) {
+                continue;
+            }
+            ClipEvent *linked = findClipById(id);
+            if (!linked) {
+                continue;
+            }
+            linked->durationMs = std::max<qint64>(kMinClipDurationMs, linked->durationMs + deltaDur);
+        }
+    }
+}
+
 qint64 TimelineEditor::cursorMs() const
 {
     return cursorPositionMs;
@@ -341,6 +478,7 @@ void TimelineEditor::addAudioTrack()
 
 bool TimelineEditor::splitSelectedClipAtCursor()
 {
+    pushUndoSnapshot();
     ClipEvent *selected = findClipById(selectedClipId);
     if (!selected) {
         return false;
@@ -403,6 +541,7 @@ bool TimelineEditor::splitSelectedClipAtCursor()
 
 bool TimelineEditor::trimSelectedClipStartToCursor()
 {
+    pushUndoSnapshot();
     ClipEvent *clip = findClipById(selectedClipId);
     if (!clip) {
         return false;
@@ -442,13 +581,14 @@ bool TimelineEditor::trimSelectedClipStartToCursor()
 
 bool TimelineEditor::trimSelectedClipEndToCursor()
 {
+    pushUndoSnapshot();
     ClipEvent *clip = findClipById(selectedClipId);
     if (!clip) {
         return false;
     }
     const qint64 absoluteStart = clip->startMs;
     const qint64 absoluteEnd = clip->startMs + clip->durationMs;
-    const qint64 maxEnd = clip->startMs + std::max<qint64>(kMinClipDurationMs, clip->sourceDurationMs - clip->sourceInMs);
+    const qint64 maxEnd = clip->startMs + clipMaxTimelineDurationMs(*clip);
     const qint64 newEnd = std::clamp(cursorPositionMs, absoluteStart + kMinClipDurationMs, std::max(absoluteEnd, maxEnd));
     if (newEnd >= absoluteEnd) {
         return false;
@@ -480,6 +620,7 @@ bool TimelineEditor::moveSelectedClipToAdjacentTrack(int direction)
     if (direction == 0) {
         return false;
     }
+    pushUndoSnapshot();
     ClipEvent *clip = findClipById(selectedClipId);
     if (!clip || !isTrackIndexValid(clip->trackIndex)) {
         return false;
@@ -546,6 +687,7 @@ bool TimelineEditor::pasteClipboardAtCursor()
     if (clipboardClips.empty()) {
         return false;
     }
+    pushUndoSnapshot();
     qint64 sourceMinStart = clipboardClips.front().startMs;
     for (const auto &clip : clipboardClips) {
         sourceMinStart = std::min(sourceMinStart, clip.startMs);
@@ -647,6 +789,7 @@ bool TimelineEditor::deleteSelectedClip()
     if (selectedClipId < 0) {
         return false;
     }
+    pushUndoSnapshot();
 
     const auto ids = linkedClipIds(selectedClipId);
     const size_t before = clips.size();
@@ -677,6 +820,7 @@ bool TimelineEditor::deleteClipsIntersectingRegion()
     if (!hasRegionSelection || regionEndMs <= regionStartMs) {
         return false;
     }
+    pushUndoSnapshot();
     const qint64 rs = regionStartMs;
     const qint64 re = regionEndMs;
 
@@ -712,6 +856,7 @@ bool TimelineEditor::splitDeleteRegionInterior()
     if (!hasRegionSelection || regionEndMs <= regionStartMs) {
         return false;
     }
+    pushUndoSnapshot();
     const qint64 rs = regionStartMs;
     const qint64 re = regionEndMs;
 
@@ -1355,6 +1500,7 @@ void TimelineEditor::deleteMorpherEvent(int morpherEventId)
 void TimelineEditor::deleteCurrentSelection()
 {
     if (selectedMorpherId >= 0) {
+        pushUndoSnapshot();
         deleteMorpherEvent(selectedMorpherId);
         return;
     }
@@ -1367,6 +1513,7 @@ bool TimelineEditor::magnetizeSelectedClip()
     if (!selected) {
         return false;
     }
+    pushUndoSnapshot();
 
     ClipEvent *best = nullptr;
     qint64 bestDistance = std::numeric_limits<qint64>::max();
@@ -1841,6 +1988,11 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
 
     tracks = std::move(loadedTracks);
     clips = std::move(loadedClips);
+    for (auto &clip : clips) {
+        if (clip.mediaType == TrackType::Audio) {
+            syncClipDurationToAudioStretch(clip);
+        }
+    }
     morpherEvents = std::move(loadedMorphs);
     markersMs = std::move(loadedMarkers);
     clipboardClips.clear();
@@ -1885,6 +2037,7 @@ bool TimelineEditor::fromJson(const QJsonObject &root)
     emitOverlayInfo();
     emit timelineContentChanged();
     emit cursorChanged(cursorPositionMs);
+    clearUndoHistory();
     return true;
 }
 
@@ -2299,6 +2452,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
 
     const int hitMarker = markerIndexAt(pos);
     if (hitMarker >= 0) {
+        pushUndoSnapshot();
         selectedClipId = -1;
         selectedMorpherId = -1;
         dragMode = DragMode::MoveMarker;
@@ -2324,6 +2478,41 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
     }
     selectedMorpherId = -1;
 
+    const int hitClipId = clipIdAt(pos);
+    if (hitClipId >= 0) {
+        ClipEvent *edgeClip = findClipById(hitClipId);
+        const qint64 pointerMsEdge = xToTimeMs(pos.x());
+        if (edgeClip && (isNearClipStartEdge(*edgeClip, pos.x()) || isNearClipEndEdge(*edgeClip, pos.x()))) {
+            selectedClipId = hitClipId;
+            setCursorMs(snapTimeMs(pointerMsEdge));
+            pushUndoSnapshot();
+            dragMode = isNearClipStartEdge(*edgeClip, pos.x()) ? DragMode::TrimStart : DragMode::TrimEnd;
+            dragClipId = hitClipId;
+            dragAnchorMs = pointerMsEdge;
+            dragStartPointerMs = pointerMsEdge;
+            dragLastPointerMs = pointerMsEdge;
+            dragOriginalStartMs = edgeClip->startMs;
+            dragOriginalTrackIndex = edgeClip->trackIndex;
+            trimOriginalDurationMs = edgeClip->durationMs;
+            trimOriginalSourceInMs = edgeClip->sourceInMs;
+            dragInitialStarts.clear();
+            dragInitialDurations.clear();
+            dragInitialSourceIns.clear();
+            for (int id : linkedClipIds(edgeClip->id)) {
+                ClipEvent *linked = findClipById(id);
+                if (!linked) {
+                    continue;
+                }
+                dragInitialStarts.insert(id, linked->startMs);
+                dragInitialDurations.insert(id, linked->durationMs);
+                dragInitialSourceIns.insert(id, linked->sourceInMs);
+            }
+            dragChangedTimelineContent = false;
+            update();
+            return;
+        }
+    }
+
     int chromeClipId = -1;
     const ClipChromeHit chrome = clipChromeHit(pos, &chromeClipId);
     if (chrome != ClipChromeHit::None && chromeClipId >= 0) {
@@ -2344,6 +2533,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
             return;
         }
         if (chrome == ClipChromeHit::AudioVolumeRail) {
+            pushUndoSnapshot();
             const qint64 pm = xToTimeMs(pos.x());
             setCursorMs(snapTimeMs(pm), false);
             dragMode = DragMode::AdjustAudioVolume;
@@ -2356,7 +2546,7 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
     }
 
     const bool inTimelineX = pos.x() >= timelineLeft() && pos.x() <= timelineRight();
-    selectedClipId = clipIdAt(pos);
+    selectedClipId = hitClipId >= 0 ? hitClipId : clipIdAt(pos);
     const qint64 pointerMs = xToTimeMs(pos.x());
     setCursorMs(snapTimeMs(pointerMs));
 
@@ -2393,17 +2583,23 @@ void TimelineEditor::mousePressEvent(QMouseEvent *event)
             } else {
                 dragMode = DragMode::MoveClip;
             }
+            if (dragMode == DragMode::MoveClip) {
+                pushUndoSnapshot();
+            }
         }
     } else if (inTimelineX && pos.y() >= rulerTop() && pos.y() <= (rulerTop() + rulerHeight())) {
         if (hasRegionSelection && isNearRegionStartBoundary(pos.x())) {
+            pushUndoSnapshot();
             dragMode = DragMode::MoveRegionStart;
         } else if (hasRegionSelection && isNearRegionEndBoundary(pos.x())) {
+            pushUndoSnapshot();
             dragMode = DragMode::MoveRegionEnd;
         } else {
             dragMode = DragMode::ScrubCursor;
         }
     } else if (inTimelineX && pos.y() >= (rulerTop() + rulerHeight()) &&
                pos.y() <= (verticalScrollPx + height() - bottomPadding())) {
+        pushUndoSnapshot();
         dragMode = DragMode::RegionSelect;
         regionAnchorMs = snapTimeMsForRegion(pointerMs);
         setRegionBounds(regionAnchorMs, regionAnchorMs);
@@ -2597,7 +2793,7 @@ void TimelineEditor::mouseMoveEvent(QMouseEvent *event)
         const qint64 originalDuration = dragInitialDurations.value(clip->id, trimOriginalDurationMs);
         const qint64 originalSourceIn = dragInitialSourceIns.value(clip->id, trimOriginalSourceInMs);
         const qint64 minEnd = originalStart + kMinClipDurationMs;
-        const qint64 maxEnd = originalStart + std::max<qint64>(kMinClipDurationMs, clip->sourceDurationMs - originalSourceIn);
+        const qint64 maxEnd = originalStart + clipMaxTimelineDurationMs(*clip);
         const qint64 wantedEnd = std::clamp(pointerMs, minEnd, std::max(minEnd, maxEnd));
         const qint64 oldDuration = originalDuration;
         clip->durationMs = wantedEnd - originalStart;
@@ -3252,13 +3448,17 @@ QJsonArray TimelineEditor::clipAudioFxChain(int clipId) const
     return c ? c->audioFxChain : QJsonArray();
 }
 
-void TimelineEditor::setClipAudioFxChain(int clipId, const QJsonArray &chain)
+void TimelineEditor::setClipAudioFxChain(int clipId, const QJsonArray &chain, bool recordUndo)
 {
     ClipEvent *c = findClipById(clipId);
     if (!c || c->mediaType != TrackType::Audio) {
         return;
     }
+    if (recordUndo) {
+        pushUndoSnapshot();
+    }
     c->audioFxChain = chain;
+    syncClipDurationToAudioStretch(*c);
     emit timelineContentChanged();
     update();
 }
@@ -3388,7 +3588,13 @@ bool TimelineEditor::isNearClipStartEdge(const ClipEvent &clip, int x) const
 bool TimelineEditor::isNearClipEndEdge(const ClipEvent &clip, int x) const
 {
     const QRect r = clipRect(clip);
-    return std::abs(x - r.right()) <= kTrimHandlePx;
+    int handleX = r.right();
+    if (clip.mediaType == TrackType::Audio && r.width() >= 40) {
+        handleX = audioFxButtonRect(r).left() - 1;
+    } else if (clip.mediaType == TrackType::Video && r.width() >= 56) {
+        handleX = videoPanButtonRect(r).left() - 1;
+    }
+    return std::abs(x - handleX) <= kTrimHandlePx;
 }
 
 bool TimelineEditor::hasMatchingLinkedVideo(const ClipEvent &clip) const
@@ -4210,6 +4416,7 @@ void TimelineEditor::addClipFromDrop(const QString &path, qint64 startMs, int dr
     if (path.isEmpty()) {
         return;
     }
+    pushUndoSnapshot();
 
     const qint64 durationMs = defaultDurationForPath(path);
     const bool audio = hasAudioForPath(path);

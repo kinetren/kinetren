@@ -86,6 +86,9 @@ ClipFxChainWindow::ClipFxChainWindow(QWidget *parent,
     connect(cancelBtn, &QPushButton::clicked, this, &ClipFxChainWindow::onCancelClicked);
     connect(doneBtn, &QPushButton::clicked, this, &ClipFxChainWindow::onDoneClicked);
 
+    if (timeline) {
+        timeline->pushUndoSnapshot();
+    }
     pushChainToTimeline(initial);
 
     int selRow = -1;
@@ -124,7 +127,7 @@ void ClipFxChainWindow::pushChainToTimeline(const QJsonArray &chain)
         }
         timeline->setClipVideoFxChain(clipId, c);
     } else {
-        timeline->setClipAudioFxChain(clipId, chain);
+        timeline->setClipAudioFxChain(clipId, chain, false);
     }
 }
 
@@ -182,7 +185,7 @@ void ClipFxChainWindow::onCancelClicked()
         if (kind == MediaKind::Video) {
             timeline->setClipVideoFxChain(clipId, backupChain);
         } else {
-            timeline->setClipAudioFxChain(clipId, backupChain);
+            timeline->setClipAudioFxChain(clipId, backupChain, false);
         }
     }
     close();

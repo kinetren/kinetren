@@ -960,6 +960,18 @@ void MainWindow::setupTimelineEditorUi()
             timelineEditor->deleteCurrentSelection();
         }
     });
+    auto *undoShortcut = new QShortcut(QKeySequence::Undo, this);
+    connect(undoShortcut, &QShortcut::activated, [this]() {
+        if (timelineEditor) {
+            timelineEditor->undo();
+        }
+    });
+    auto *redoShortcut = new QShortcut(QKeySequence::Redo, this);
+    connect(redoShortcut, &QShortcut::activated, [this]() {
+        if (timelineEditor) {
+            timelineEditor->redo();
+        }
+    });
     auto *backspaceShortcut = new QShortcut(QKeySequence(Qt::Key_Backspace), this);
     connect(backspaceShortcut, &QShortcut::activated, [this]() {
         if (!timelineEditor) {

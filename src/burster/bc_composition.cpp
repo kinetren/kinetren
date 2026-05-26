@@ -1,4 +1,5 @@
 #include "bc.h"
+#include "bc_fx.h"
 
 #include <QPainter>
 
@@ -232,7 +233,10 @@ bool ConTrack::burst(BurstType type, const BurstRequest &request, BurstPayload &
                 continue;
             }
             AudioBurst burst;
-            const BurstIndex localIndex = event.sourceIn + (request.index - event.start);
+            const BurstIndex timelineRel = request.index - event.start;
+            const double srcRate = audioTimelineSourceRate(event.audioFxChain);
+            const BurstIndex localIndex =
+                event.sourceIn + static_cast<BurstIndex>(static_cast<double>(timelineRel) * srcRate);
             if (!bound.media->audioBurst(
                     BurstRequest{localIndex, request.quality, event.sourceIn, event.duration},
                     burst)) {

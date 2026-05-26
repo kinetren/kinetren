@@ -96,6 +96,9 @@ private:
 std::shared_ptr<IVideoFx> createVideoFx(const QString &typeId, const QJsonObject &params);
 std::shared_ptr<IAudioFx> createAudioFx(const QString &typeId, const QJsonObject &params);
 
+/// Timeline→source speed from audio FX (1.0 = normal). Values &lt; 1 mean the clip needs more timeline time per source second.
+double audioTimelineSourceRate(const QJsonArray &chain);
+
 /// Each JSON element: `{ "type": "<id>", "params": { ... } }` — first entry sits closest to the decoder.
 std::shared_ptr<IBurstcon> wrapVideoFxChain(std::shared_ptr<IBurstcon> media,
                                             const QJsonArray &chain,

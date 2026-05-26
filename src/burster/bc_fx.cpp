@@ -1063,7 +1063,112 @@ private:
     double lastCutoffApplied = -1.0;
 };
 
+// --- Audio: slowed + reverb (timeline stretch via ConTrack; this effect adds space) ---
+
+class SlowedReverbAudioFx : public IAudioFx
+{
+public:
+    QString typeId() const override { return QStringLiteral("slowedreverb"); }
+    void setParams(const QJsonObject &o) override
+    {
+        QJsonObject merged = mergeDefaults(defaults(), o);
+        const int sr = std::max(1, lastSampleRate);
+        const double newDelayMs = std::clamp(merged.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 20.0, 800.0);
+        if (lastSampleRate > 0 && std::abs(newDelayMs - lastDelayMs) > 0.5) {
+            resizeDelay(sr, newDelayMs);
+        }
+        lastDelayMs = newDelayMs;
+        p = merged;
+    }
+    QJsonObject params() const override { return p; }
+
+    bool process(AudioBurst &inOut, const AudioFxContext &ctx) override
+    {
+        const int ch = std::max(1, inOut.channels > 0 ? inOut.channels : ctx.channels);
+        const int sr = std::max(1, inOut.sampleRate > 0 ? inOut.sampleRate : ctx.sampleRate);
+        if (sr != lastSampleRate) {
+            lastSampleRate = sr;
+            resizeDelay(sr, std::clamp(p.value(QStringLiteral("reverbDelayMs")).toDouble(120.0), 20.0, 800.0));
+        }
+        if (static_cast<int>(delayBuf.size()) < ch) {
+            delayBuf.assign(static_cast<size_t>(ch), {});
+            writePos.assign(static_cast<size_t>(ch), 0);
+        }
+        const size_t len = inOut.samples.size();
+        if (len == 0 || ch <= 0 || delayLen < 2) {
+            return true;
+        }
+        const double mix = std::clamp(p.value(QStringLiteral("reverbMix")).toDouble(0.35), 0.0, 1.0);
+        const double decay = std::clamp(p.value(QStringLiteral("reverbDecay")).toDouble(0.55), 0.05, 0.92);
+        const double damp = std::clamp(p.value(QStringLiteral("reverbDamp")).toDouble(0.35), 0.0, 0.95);
+        const double wetGain = std::clamp(p.value(QStringLiteral("reverbGain")).toDouble(0.9), 0.1, 2.5);
+
+        for (size_t i = 0; i < len; ++i) {
+            const int c = static_cast<int>(i % static_cast<size_t>(ch));
+            const double dry = static_cast<double>(inOut.samples[i]);
+            const size_t ci = static_cast<size_t>(c);
+            const size_t wp = writePos[ci];
+            const double tap = delayBuf[ci][wp];
+            const double fb = tap * decay;
+            delayBuf[ci][wp] = dry + fb * (1.0 - damp);
+            writePos[ci] = (wp + 1) % static_cast<size_t>(delayLen);
+            const double wet = tap * wetGain;
+            const double out = dry * (1.0 - mix) + wet * mix;
+            inOut.samples[i] = static_cast<int32_t>(std::clamp(out,
+                                                               static_cast<double>(std::numeric_limits<int32_t>::min()),
+                                                               static_cast<double>(std::numeric_limits<int32_t>::max())));
+        }
+        return true;
+    }
+
+private:
+    static QJsonObject defaults()
+    {
+        QJsonObject o;
+        o.insert(QStringLiteral("playbackRate"), 0.82);
+        o.insert(QStringLiteral("reverbMix"), 0.38);
+        o.insert(QStringLiteral("reverbDelayMs"), 140.0);
+        o.insert(QStringLiteral("reverbDecay"), 0.58);
+        o.insert(QStringLiteral("reverbDamp"), 0.32);
+        o.insert(QStringLiteral("reverbGain"), 0.95);
+        return o;
+    }
+
+    void resizeDelay(int sr, double delayMs)
+    {
+        delayLen = std::clamp(static_cast<int>(std::llround(delayMs * 0.001 * static_cast<double>(sr))), 64, sr * 2);
+        for (auto &lane : delayBuf) {
+            lane.assign(static_cast<size_t>(delayLen), 0.0);
+        }
+        writePos.assign(delayBuf.size(), 0);
+    }
+
+    QJsonObject p = defaults();
+    std::vector<std::vector<double>> delayBuf;
+    std::vector<size_t> writePos;
+    int delayLen = 0;
+    int lastSampleRate = 0;
+    double lastDelayMs = -1.0;
+};
+
 } // namespace
+
+double audioTimelineSourceRate(const QJsonArray &chain)
+{
+    double rate = 1.0;
+    for (const QJsonValue &v : chain) {
+        const QJsonObject slot = v.toObject();
+        if (slot.value(QStringLiteral("type")).toString() != QStringLiteral("slowedreverb")) {
+            continue;
+        }
+        const double r =
+            std::clamp(slot.value(QStringLiteral("params")).toObject().value(QStringLiteral("playbackRate")).toDouble(0.82),
+                       0.25,
+                       1.0);
+        rate *= r;
+    }
+    return std::clamp(rate, 0.25, 1.0);
+}
 
 static double rgbMseSubsampled(const QImage &a, const QImage &b)
 {
@@ -1564,6 +1669,8 @@ std::shared_ptr<IAudioFx> createAudioFx(const QString &typeId, const QJsonObject
         fx = std::make_shared<LowpassAudioFx>();
     } else if (typeId == QStringLiteral("audiogrid")) {
         fx = std::make_shared<AudioGridDupFx>();
+    } else if (typeId == QStringLiteral("slowedreverb")) {
+        fx = std::make_shared<SlowedReverbAudioFx>();
     }
     if (fx) {
         fx->setParams(params);

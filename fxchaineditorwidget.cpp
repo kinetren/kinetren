@@ -151,6 +151,16 @@ QJsonObject defaultParamsForAudioType(const QString &type)
         o.insert(QStringLiteral("spreadMs"), 4.0);
         return o;
     }
+    if (type == QStringLiteral("slowedreverb")) {
+        QJsonObject o;
+        o.insert(QStringLiteral("playbackRate"), 0.82);
+        o.insert(QStringLiteral("reverbMix"), 0.38);
+        o.insert(QStringLiteral("reverbDelayMs"), 140.0);
+        o.insert(QStringLiteral("reverbDecay"), 0.58);
+        o.insert(QStringLiteral("reverbDamp"), 0.32);
+        o.insert(QStringLiteral("reverbGain"), 0.95);
+        return o;
+    }
     return QJsonObject();
 }
 
@@ -168,7 +178,8 @@ QString humanTypeName(const QString &id)
                                              {QStringLiteral("eventgrid"), QStringLiteral("Event grid")},
                                              {QStringLiteral("audiogrid"), QStringLiteral("Audio grid")},
                                              {QStringLiteral("softclip"), QStringLiteral("Soft clip")},
-                                             {QStringLiteral("lowpass"), QStringLiteral("Low-pass")}};
+                                             {QStringLiteral("lowpass"), QStringLiteral("Low-pass")},
+                                             {QStringLiteral("slowedreverb"), QStringLiteral("Slowed + reverb")}};
     return map.value(id, id.isEmpty() ? QStringLiteral("?") : id);
 }
 
@@ -618,7 +629,9 @@ static QString automationLabelForKey(const QString &key)
                                              {QStringLiteral("centerGrid"), QStringLiteral("Center grid")},
                                              {QStringLiteral("drive"), QStringLiteral("Drive")},
                                              {QStringLiteral("cutoffHz"), QStringLiteral("Cutoff")},
-                                             {QStringLiteral("spreadMs"), QStringLiteral("Spread ms")}};
+                                             {QStringLiteral("spreadMs"), QStringLiteral("Spread ms")},
+                                             {QStringLiteral("playbackRate"), QStringLiteral("Playback rate")},
+                                             {QStringLiteral("reverbMix"), QStringLiteral("Reverb mix")}};
     return map.value(key, key);
 }
 
@@ -669,6 +682,9 @@ static QStringList animatableParamKeys(const QString &type)
     }
     if (type == QStringLiteral("lowpass")) {
         return {QStringLiteral("cutoffHz")};
+    }
+    if (type == QStringLiteral("slowedreverb")) {
+        return {QStringLiteral("playbackRate"), QStringLiteral("reverbMix")};
     }
     return {};
 }
@@ -777,6 +793,7 @@ void FxChainEditorWidget::setMediaKind(MediaKind k)
         addCombo->addItem(tr("Audio grid (multi-tap)"), QStringLiteral("audiogrid"));
         addCombo->addItem(tr("Soft clip"), QStringLiteral("softclip"));
         addCombo->addItem(tr("Low-pass"), QStringLiteral("lowpass"));
+        addCombo->addItem(tr("Slowed + reverb"), QStringLiteral("slowedreverb"));
     }
 }
 
@@ -1011,6 +1028,25 @@ void FxChainEditorWidget::applyParamsFromPanelToChain()
         }
         if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_audio_spread_ms"))) {
             p.insert(QStringLiteral("spreadMs"), w->value());
+        }
+    } else if (type == QStringLiteral("slowedreverb")) {
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sr_rate"))) {
+            p.insert(QStringLiteral("playbackRate"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sr_mix"))) {
+            p.insert(QStringLiteral("reverbMix"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sr_delay"))) {
+            p.insert(QStringLiteral("reverbDelayMs"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sr_decay"))) {
+            p.insert(QStringLiteral("reverbDecay"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sr_damp"))) {
+            p.insert(QStringLiteral("reverbDamp"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sr_gain"))) {
+            p.insert(QStringLiteral("reverbGain"), w->value());
         }
     }
 
@@ -1370,6 +1406,53 @@ void FxChainEditorWidget::rebuildParamPanel()
         sp->setToolTip(tr("Max delay between first and last tap. At 1×1 grid this has no effect."));
         form->addRow(tr("Delay spread"), sp);
         connect(sp, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+    } else if (type == QStringLiteral("slowedreverb")) {
+        auto *rate = new QDoubleSpinBox(paramPanel);
+        rate->setObjectName(QStringLiteral("fx_sr_rate"));
+        rate->setRange(0.25, 1.0);
+        rate->setDecimals(2);
+        rate->setSingleStep(0.01);
+        rate->setValue(p.value(QStringLiteral("playbackRate")).toDouble(0.82));
+        rate->setToolTip(tr("Timeline stretch: lower values slow the clip and extend its event on the timeline."));
+        form->addRow(tr("Playback rate"), rate);
+        connect(rate, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+        auto *mix = new QDoubleSpinBox(paramPanel);
+        mix->setObjectName(QStringLiteral("fx_sr_mix"));
+        mix->setRange(0.0, 1.0);
+        mix->setDecimals(2);
+        mix->setSingleStep(0.02);
+        mix->setValue(p.value(QStringLiteral("reverbMix")).toDouble(0.38));
+        form->addRow(tr("Reverb mix"), mix);
+        connect(mix, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+        auto *delay = new QDoubleSpinBox(paramPanel);
+        delay->setObjectName(QStringLiteral("fx_sr_delay"));
+        delay->setRange(20.0, 800.0);
+        delay->setDecimals(0);
+        delay->setSuffix(QStringLiteral(" ms"));
+        delay->setValue(p.value(QStringLiteral("reverbDelayMs")).toDouble(140.0));
+        form->addRow(tr("Reverb delay"), delay);
+        connect(delay, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+        auto *decay = new QDoubleSpinBox(paramPanel);
+        decay->setObjectName(QStringLiteral("fx_sr_decay"));
+        decay->setRange(0.05, 0.92);
+        decay->setDecimals(2);
+        decay->setValue(p.value(QStringLiteral("reverbDecay")).toDouble(0.58));
+        form->addRow(tr("Reverb decay"), decay);
+        connect(decay, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+        auto *damp = new QDoubleSpinBox(paramPanel);
+        damp->setObjectName(QStringLiteral("fx_sr_damp"));
+        damp->setRange(0.0, 0.95);
+        damp->setDecimals(2);
+        damp->setValue(p.value(QStringLiteral("reverbDamp")).toDouble(0.32));
+        form->addRow(tr("Reverb damp"), damp);
+        connect(damp, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+        auto *gain = new QDoubleSpinBox(paramPanel);
+        gain->setObjectName(QStringLiteral("fx_sr_gain"));
+        gain->setRange(0.1, 2.5);
+        gain->setDecimals(2);
+        gain->setValue(p.value(QStringLiteral("reverbGain")).toDouble(0.95));
+        form->addRow(tr("Reverb gain"), gain);
+        connect(gain, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
     } else {
         form->addRow(new QLabel(tr("No editor for type \"%1\"").arg(type), paramPanel));
     }
@@ -1702,6 +1785,17 @@ void FxChainEditorWidget::syncWidgetsFromAutomationKeyframe(int idx)
         if (kf.contains(QStringLiteral("cutoffHz"))) {
             if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_lp_cut"))) {
                 w->setValue(kf.value(QStringLiteral("cutoffHz")).toDouble());
+            }
+        }
+    } else if (type == QStringLiteral("slowedreverb")) {
+        if (kf.contains(QStringLiteral("playbackRate"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sr_rate"))) {
+                w->setValue(kf.value(QStringLiteral("playbackRate")).toDouble());
+            }
+        }
+        if (kf.contains(QStringLiteral("reverbMix"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_sr_mix"))) {
+                w->setValue(kf.value(QStringLiteral("reverbMix")).toDouble());
             }
         }
     }
