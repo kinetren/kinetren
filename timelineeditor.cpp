@@ -1725,6 +1725,19 @@ std::vector<TimelineEditor::ActiveClip> TimelineEditor::activeAudioAt(qint64 tim
     return result;
 }
 
+int TimelineEditor::activeAudioClipIdAt(qint64 timeMs) const
+{
+    for (const auto &clip : clips) {
+        if (!isTrackIndexValid(clip.trackIndex) || clip.mediaType != TrackType::Audio) {
+            continue;
+        }
+        if (timeMs >= clip.startMs && timeMs < (clip.startMs + clip.durationMs)) {
+            return clip.id;
+        }
+    }
+    return -1;
+}
+
 std::vector<TimelineEditor::RenderClip> TimelineEditor::renderClips() const
 {
     std::vector<RenderClip> result;
@@ -3478,6 +3491,12 @@ qint64 TimelineEditor::clipSourceInMs(int clipId) const
     return c ? c->sourceInMs : 0;
 }
 
+qint64 TimelineEditor::clipTimelineStartMs(int clipId) const
+{
+    const ClipEvent *c = findClipById(clipId);
+    return c ? c->startMs : 0;
+}
+
 qint64 TimelineEditor::clipDurationMs(int clipId) const
 {
     const ClipEvent *c = findClipById(clipId);
@@ -3548,6 +3567,50 @@ QImage TimelineEditor::previewStillForClip(int clipId)
     }
     const qint64 mid = c->sourceInMs + std::max<qint64>(1, c->durationMs) / 2;
     return cachedVideoPreview(c->sourcePath, mid);
+}
+
+int TimelineEditor::linkedAudioClipId(int videoClipId) const
+{
+    const ClipEvent *v = findClipById(videoClipId);
+    if (!v || v->mediaType != TrackType::Video || v->linkedGroupId < 0) {
+        return -1;
+    }
+    for (const auto &c : clips) {
+        if (c.linkedGroupId == v->linkedGroupId && c.mediaType == TrackType::Audio) {
+            return c.id;
+        }
+    }
+    return -1;
+}
+
+QVector<QPair<int, int>> TimelineEditor::clipAudioPeaksForPreview(int clipId, int columnCount) const
+{
+    const ClipEvent *c = findClipById(clipId);
+    if (!c) {
+        return {};
+    }
+    if (c->mediaType == TrackType::Video) {
+        if (!hasAudioForPath(c->sourcePath)) {
+            return {};
+        }
+    } else if (c->mediaType != TrackType::Audio) {
+        return {};
+    }
+    const qint64 span = clipSourceSpanMs(*c);
+    return const_cast<TimelineEditor *>(this)->cachedAudioPeaksStereo(
+        c->sourcePath, c->sourceInMs, c->durationMs, span, columnCount);
+}
+
+QVector<QPair<int, int>> TimelineEditor::clipAudioPeaksWithFxPreview(int clipId,
+                                                                     const QJsonArray &audioFxChain,
+                                                                     int columnCount) const
+{
+    const ClipEvent *c = findClipById(clipId);
+    if (!c || c->mediaType != TrackType::Audio || audioFxChain.isEmpty()) {
+        return clipAudioPeaksForPreview(clipId, columnCount);
+    }
+    return decodeAudioPeaksStereoWithFxSync(
+        c->sourcePath, c->sourceInMs, c->durationMs, c->durationMs, columnCount, audioFxChain);
 }
 
 QRect TimelineEditor::videoFxButtonRect(const QRect &clipR)
@@ -4361,6 +4424,89 @@ QVector<QPair<int, int>> TimelineEditor::decodeAudioPeaksStereoSync(const QStrin
             out[i] = {1, 1};
             continue;
         }
+        const int ch = std::max(1, ab.channels);
+        int peakL = 0;
+        int peakR = 0;
+        for (size_t s = 0; s + static_cast<size_t>(ch) <= ab.samples.size(); s += static_cast<size_t>(ch)) {
+            const int v0 = static_cast<int>(std::clamp(ab.samples[s],
+                                                       static_cast<int32_t>(std::numeric_limits<int16_t>::min()),
+                                                       static_cast<int32_t>(std::numeric_limits<int16_t>::max())));
+            peakL = std::max(peakL, std::abs(v0));
+            if (ch >= 2) {
+                const int v1 = static_cast<int>(std::clamp(ab.samples[s + 1],
+                                                           static_cast<int32_t>(std::numeric_limits<int16_t>::min()),
+                                                           static_cast<int32_t>(std::numeric_limits<int16_t>::max())));
+                peakR = std::max(peakR, std::abs(v1));
+            } else {
+                peakR = peakL;
+            }
+        }
+        const int nL = std::clamp(1 + (peakL * 799) / 32768, 1, 800);
+        const int nR = std::clamp(1 + (peakR * 799) / 32768, 1, 800);
+        out[i] = {nL, nR};
+    }
+    int m = 1;
+    for (const auto &pr : out) {
+        m = std::max(m, std::max(pr.first, pr.second));
+    }
+    if (m > 1) {
+        for (auto &pr : out) {
+            pr.first = std::max(1, (pr.first * 500) / m);
+            pr.second = std::max(1, (pr.second * 500) / m);
+        }
+    }
+    return out;
+}
+
+QVector<QPair<int, int>> TimelineEditor::decodeAudioPeaksStereoWithFxSync(const QString &path,
+                                                                          qint64 sourceInMs,
+                                                                          qint64 durationMs,
+                                                                          qint64 clipDurationMs,
+                                                                          int peakColumns,
+                                                                          const QJsonArray &audioFxChain) const
+{
+    QVector<QPair<int, int>> out;
+    if (path.isEmpty() || peakColumns <= 0 || durationMs <= 0 || audioFxChain.isEmpty()) {
+        return out;
+    }
+    const auto pool = stripMediaPool ? stripMediaPool : playbackMediaPool;
+    if (!pool) {
+        return out;
+    }
+    auto media = pool->acquire(path, true, false, burstcon::msToBurstIndex(sourceInMs), false, true);
+    if (!media) {
+        return out;
+    }
+    constexpr int kRate = 48000;
+    constexpr int kSpb = 1024;
+    const burstcon::BurstIndex audioStep =
+        std::max<burstcon::BurstIndex>(1, (burstcon::kBurstTimebaseHz * static_cast<burstcon::BurstIndex>(kSpb)) / kRate);
+    const burstcon::BurstIndex originIdx = burstcon::msToBurstIndex(sourceInMs);
+    const burstcon::BurstIndex clipDurTicks = burstcon::msToBurstIndexCeil(clipDurationMs);
+    const int cols = std::clamp(peakColumns, 8, 256);
+    out.resize(cols);
+    const qint64 dur = std::max<qint64>(1, durationMs);
+    burstcon::AudioFxContext fxCtx;
+    fxCtx.decodeOrigin = originIdx;
+    fxCtx.clipDurationTicks = clipDurTicks;
+    for (int i = 0; i < cols; ++i) {
+        const qint64 offset = (cols <= 1) ? 0 : (dur * static_cast<qint64>(i)) / static_cast<qint64>(cols - 1);
+        const qint64 srcMs = sourceInMs + std::min(offset, dur - 1);
+        const burstcon::BurstIndex rawIdx = burstcon::msToBurstIndex(srcMs);
+        const burstcon::BurstIndex idx = (rawIdx / audioStep) * audioStep;
+        burstcon::BurstRequest req;
+        req.index = idx;
+        req.decodeOrigin = originIdx;
+        req.clipDurationTicks = clipDurTicks;
+        burstcon::AudioBurst ab;
+        if (!media->audioBurst(req, ab) || ab.samples.empty()) {
+            out[i] = {1, 1};
+            continue;
+        }
+        fxCtx.timelineBurstIndex = idx;
+        fxCtx.sampleRate = ab.sampleRate;
+        fxCtx.channels = ab.channels;
+        burstcon::processAudioFxChainInPlace(ab, audioFxChain, fxCtx);
         const int ch = std::max(1, ab.channels);
         int peakL = 0;
         int peakR = 0;

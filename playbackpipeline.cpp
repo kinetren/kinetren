@@ -767,6 +767,25 @@ void PlaybackPipeline::setDraftPreviewEnabled(bool enabled)
     draftPreviewEnabled.store(enabled);
 }
 
+void PlaybackPipeline::setPreviewVolume(float linear01)
+{
+    const float v = std::clamp(linear01, 0.f, 1.f);
+    previewVolumeLinear.store(v);
+    std::lock_guard<std::mutex> lock(audioMutex);
+    if (audioSink) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        audioSink->setVolume(v);
+#else
+        audioSink->setVolume(v);
+#endif
+    }
+}
+
+float PlaybackPipeline::previewVolume() const
+{
+    return previewVolumeLinear.load();
+}
+
 QImage PlaybackPipeline::renderDraftFrame(qint64 tMs, const std::vector<Clip> &videoClips)
 {
     int fps = 30;
@@ -1117,7 +1136,14 @@ void PlaybackPipeline::ensureAudioOutput()
     audioSink = new QAudioOutput(format);
 #endif
     audioDevice = audioSink->start();
-    if (!audioDevice) {
+    if (audioDevice) {
+        const float v = previewVolumeLinear.load();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        audioSink->setVolume(v);
+#else
+        audioSink->setVolume(v);
+#endif
+    } else {
         tearDownAudioLocked();
     }
 }

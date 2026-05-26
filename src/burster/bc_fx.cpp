@@ -1817,6 +1817,30 @@ bool processVideoFxChainInPlace(VideoBurst &vb, const QJsonArray &chain, const V
     return true;
 }
 
+bool processAudioFxChainInPlace(AudioBurst &ab, const QJsonArray &chain, const AudioFxContext &ctx)
+{
+    if (ab.samples.empty()) {
+        return false;
+    }
+    const int n = chain.size();
+    const double u =
+        normalizedClipProgress(ctx.timelineBurstIndex, ctx.decodeOrigin, ctx.clipDurationTicks);
+    for (int i = 0; i < n; ++i) {
+        const QJsonObject slot = chain.at(i).toObject();
+        const QString type = slot.value(QStringLiteral("type")).toString();
+        const QJsonObject params = slot.value(QStringLiteral("params")).toObject();
+        QJsonObject resolved = resolveParamsAutomationForBurst(params, u);
+        std::shared_ptr<IAudioFx> fx = createAudioFx(type, resolved);
+        if (!fx) {
+            continue;
+        }
+        if (!fx->process(ab, ctx)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::shared_ptr<IBurstcon> wrapAudioFxChain(std::shared_ptr<IBurstcon> media, const QJsonArray &chain)
 {
     if (!media) {

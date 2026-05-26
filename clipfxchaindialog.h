@@ -6,6 +6,7 @@
 #include <QString>
 #include <QWidget>
 
+class AudioPreviewWidget;
 class FxChainEditorWidget;
 class QLabel;
 class TimelineEditor;
@@ -36,6 +37,7 @@ private slots:
 
 private:
     void refreshPreview();
+    void refreshAudioPreview();
     void pushChainToTimeline(const QJsonArray &chain);
 
     TimelineEditor *timeline = nullptr;
@@ -45,7 +47,8 @@ private:
     QJsonArray backupChain;
 
     FxChainEditorWidget *editor = nullptr;
-    QLabel *preview = nullptr;
+    QLabel *videoPreview = nullptr;
+    AudioPreviewWidget *audioPreview = nullptr;
 };
 
 #endif

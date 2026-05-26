@@ -19,6 +19,8 @@ set(PROJECT_SOURCES
         mainwindow.h
         previewer.cpp
         previewer.h
+        audiopreviewwidget.cpp
+        audiopreviewwidget.h
         projectsettings.cpp
         projectsettings.h
         performancewidget.cpp

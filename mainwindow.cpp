@@ -6,6 +6,7 @@
 #include "playbackpipeline.h"
 #include "projectrenderer.h"
 #include "renderprogressdialog.h"
+#include "audiopreviewwidget.h"
 #include "previewer.h"
 #include "sourceareawidget.h"
 #include "timelineeditor.h"
@@ -48,6 +49,7 @@
 #include <QSplitter>
 #include <QTimer>
 #include <QtConcurrent/QtConcurrentRun>
+#include <QSlider>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QSizePolicy>
@@ -220,6 +222,9 @@ MainWindow::MainWindow(QWidget *parent)
         timelineEditor->setPlaybackMediaPool(playbackPipeline->sharedMediaPool());
         timelineEditor->setStripMediaPool(stripMediaPool);
     }
+    if (previewVolumeSlider && playbackPipeline) {
+        playbackPipeline->setPreviewVolume(static_cast<float>(previewVolumeSlider->value()) / 100.f);
+    }
     refreshPreviewResolutionMaxEntry();
     if (frontScalerCheck) {
         connect(frontScalerCheck, &QCheckBox::toggled, this, [this](bool on) {
@@ -257,6 +262,7 @@ MainWindow::MainWindow(QWidget *parent)
         }
     });
     syncTimelinePlayback();
+    refreshMainAudioPreview();
     currentProjectPath = defaultAutosaveProjectPath();
     loadLastProjectOnStartup();
     autosaveTimer.setInterval(4000);
@@ -378,7 +384,14 @@ void MainWindow::setupTimelineEditorUi()
         ui->splitter->replaceWidget(previewIndex, previewHost);
         ui->frame->setParent(previewHost);
     }
-    previewLayout->addWidget(ui->frame, 1);
+    auto *previewMediaRow = new QWidget(previewHost);
+    auto *previewMediaLayout = new QHBoxLayout(previewMediaRow);
+    previewMediaLayout->setContentsMargins(0, 0, 0, 0);
+    previewMediaLayout->setSpacing(4);
+    previewMediaLayout->addWidget(ui->frame, 1);
+    mainAudioPreview = new AudioPreviewWidget(previewMediaRow);
+    previewMediaLayout->addWidget(mainAudioPreview);
+    previewLayout->addWidget(previewMediaRow, 1);
 
     auto *previewControls = new QHBoxLayout();
     auto *previewQualityLabel = new QLabel("Cache quality:", previewHost);
@@ -422,6 +435,12 @@ void MainWindow::setupTimelineEditorUi()
                        "Toggling clears playback and strip caches so sizes stay consistent."));
     previewAntialiasingCheck = new QCheckBox("Antialiasing", previewHost);
     previewAntialiasingCheck->setChecked(projectSettings.previewAntialiasing);
+    auto *previewVolumeLabel = new QLabel(tr("Volume:"), previewHost);
+    previewVolumeSlider = new QSlider(Qt::Horizontal, previewHost);
+    previewVolumeSlider->setRange(0, 100);
+    previewVolumeSlider->setValue(100);
+    previewVolumeSlider->setFixedWidth(120);
+    previewVolumeSlider->setToolTip(tr("Preview and playback output volume"));
     if (ui->frame) {
         ui->frame->setSmoothScaling(projectSettings.previewSmoothScaling);
         ui->frame->setAntialiasing(projectSettings.previewAntialiasing);
@@ -438,8 +457,17 @@ void MainWindow::setupTimelineEditorUi()
     previewControls->addWidget(frontScalerCheck);
     previewControls->addWidget(previewSmoothScalingCheck);
     previewControls->addWidget(previewAntialiasingCheck);
+    previewControls->addSpacing(10);
+    previewControls->addWidget(previewVolumeLabel);
+    previewControls->addWidget(previewVolumeSlider);
     previewControls->addStretch(1);
     previewLayout->addLayout(previewControls);
+
+    connect(previewVolumeSlider, &QSlider::valueChanged, this, [this](int pct) {
+        if (playbackPipeline) {
+            playbackPipeline->setPreviewVolume(static_cast<float>(pct) / 100.f);
+        }
+    });
 
     auto *timelineLayout = new QVBoxLayout(ui->widget_2);
     timelineLayout->setContentsMargins(0, 0, pad, qMax(2, qRound(4.0 * dpiScale)));
@@ -723,6 +751,7 @@ void MainWindow::setupTimelineEditorUi()
             if (!timelineEditor->isEditingTimelineContent()) {
                 schedulePlaybackSync();
             }
+            refreshMainAudioPreview();
         }
     });
     connect(timelineEditor, &TimelineEditor::timelineRangeChanged, this, [this](qint64, qint64) {
@@ -741,6 +770,7 @@ void MainWindow::setupTimelineEditorUi()
         if (playbackPipeline) {
             refreshPreviewResolutionMaxEntry();
         }
+        refreshMainAudioPreview();
         if (!playbackPipeline) {
             return;
         }
@@ -1023,6 +1053,9 @@ void MainWindow::saveUiState()
 {
     QSettings settings;
     settings.setValue("ui/geometry", saveGeometry());
+    if (previewVolumeSlider) {
+        settings.setValue(QStringLiteral("ui/previewVolume"), previewVolumeSlider->value());
+    }
     if (ui->splitter) {
         settings.setValue("ui/splitterHorizontal", ui->splitter->saveState());
     }
@@ -1049,6 +1082,10 @@ void MainWindow::restoreUiState()
         if (!st.isEmpty()) {
             ui->splitter_2->restoreState(st);
         }
+    }
+    if (previewVolumeSlider) {
+        const int vol = settings.value(QStringLiteral("ui/previewVolume"), 100).toInt();
+        previewVolumeSlider->setValue(std::clamp(vol, 0, 100));
     }
 }
 
@@ -1312,6 +1349,34 @@ void MainWindow::stopMediaPlayback()
     if (playbackPipeline) {
         playbackPipeline->stop();
     }
+}
+
+void MainWindow::refreshMainAudioPreview()
+{
+    if (!mainAudioPreview || !timelineEditor) {
+        return;
+    }
+    const qint64 t = timelineEditor->cursorMs();
+    const int clipId = timelineEditor->activeAudioClipIdAt(t);
+    if (clipId < 0) {
+        mainAudioPreview->setStatusText(tr("No audio at playhead"));
+        mainAudioPreview->setPlayheadRel(-1.0);
+        return;
+    }
+    const QVector<QPair<int, int>> peaks = timelineEditor->clipAudioPeaksForPreview(clipId, 96);
+    if (peaks.isEmpty()) {
+        mainAudioPreview->setStatusText(tr("Loading waveform…"));
+        return;
+    }
+    const qint64 clipTimelineStart = timelineEditor->clipTimelineStartMs(clipId);
+    const qint64 dur = timelineEditor->clipDurationMs(clipId);
+    double playRel = -1.0;
+    if (dur > 1) {
+        playRel = static_cast<double>(t - clipTimelineStart) / static_cast<double>(dur - 1);
+        playRel = std::clamp(playRel, 0.0, 1.0);
+    }
+    mainAudioPreview->setPeaks(peaks);
+    mainAudioPreview->setPlayheadRel(playRel);
 }
 
 void MainWindow::renderDraftProject()

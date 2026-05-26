@@ -85,6 +85,9 @@ public:
     void setPlaybackMode(burstcon::PlaybackMode mode, qint64 regionStartMs, qint64 regionEndMs);
     qint64 playbackPositionMs() const;
     void setDraftPreviewEnabled(bool enabled);
+    /// Master gain for preview/playback output (0..1, default 1).
+    void setPreviewVolume(float linear01);
+    float previewVolume() const;
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
     void setProjectSettings(const ProjectSettings &settings);
     void resetProjectCache();
@@ -148,6 +151,7 @@ private:
     std::atomic<qint64> lastPrefetchAnchorMs{-1};
     std::atomic<burstcon::BurstIndex> lastVideoRequestIndex{-1};
     std::atomic<burstcon::BurstIndex> lastAudioRequestIndex{-1};
+    std::atomic<float> previewVolumeLinear{1.f};
     mutable std::mutex coverageMutex;
     std::unordered_set<qint64> audioCoverageBuckets;
     /// Composition-timeline ms buckets (kVideoCoverageBucketMs grid) where ConCache currently holds a video frame.

@@ -98,6 +98,8 @@ public:
     std::optional<ActiveClip> activeVideoAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeVideoLayersAt(qint64 timeMs) const;
     std::vector<ActiveClip> activeAudioAt(qint64 timeMs) const;
+    /// First active audio clip at `timeMs`, or -1.
+    int activeAudioClipIdAt(qint64 timeMs) const;
     std::vector<RenderClip> renderClips() const;
     QString formatTimelineTime(qint64 timeMs) const;
     void setTimelineFps(int fps);
@@ -117,6 +119,7 @@ public:
 
     QString clipSourcePath(int clipId) const;
     qint64 clipSourceInMs(int clipId) const;
+    qint64 clipTimelineStartMs(int clipId) const;
     qint64 clipDurationMs(int clipId) const;
     QJsonArray clipVideoFxChain(int clipId) const;
     void setClipVideoFxChain(int clipId, const QJsonArray &chain);
@@ -130,6 +133,14 @@ public:
     float clipAudioVolumeUiT(int clipId) const;
     void setClipAudioVolumeUiT(int clipId, float t01);
     QImage previewStillForClip(int clipId);
+    /// Linked audio clip for a video clip, or -1 if none.
+    int linkedAudioClipId(int videoClipId) const;
+    /// Cached/async stereo peak columns for strip-style preview (empty while loading).
+    QVector<QPair<int, int>> clipAudioPeaksForPreview(int clipId, int columnCount) const;
+    /// Synchronous peaks with FX applied (for FX editor preview; may block briefly).
+    QVector<QPair<int, int>> clipAudioPeaksWithFxPreview(int clipId,
+                                                         const QJsonArray &audioFxChain,
+                                                         int columnCount) const;
 
     /// Sample decoded frames along the clip and estimate `cammotion` keyframes (pan/zoom vs first frame).
     /// `targetKeyframeCount` 0 = derive from sample count (~n/3, at least 6); else clamped to samples.
@@ -394,6 +405,12 @@ private:
                                                         qint64 sourceInMs,
                                                         qint64 durationMs,
                                                         int peakColumns) const;
+    QVector<QPair<int, int>> decodeAudioPeaksStereoWithFxSync(const QString &path,
+                                                              qint64 sourceInMs,
+                                                              qint64 durationMs,
+                                                              qint64 clipDurationMs,
+                                                              int peakColumns,
+                                                              const QJsonArray &audioFxChain) const;
     void commitPeaksCacheFromWorker(const QString &key, const QVector<QPair<int, int>> &peaks);
     static QString peaksCacheKey(const QString &path,
                                  qint64 sourceInMs,

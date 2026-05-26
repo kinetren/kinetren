@@ -117,6 +117,9 @@ QJsonArray defaultVideoFxChain();
 /// Applies the same video chain as playback (for UI preview). Mutates `vb.frame` / `vb.quality`.
 bool processVideoFxChainInPlace(VideoBurst &vb, const QJsonArray &chain, const VideoFxContext &ctx);
 
+/// Applies the same audio chain as playback (for UI preview). Mutates `ab.samples`.
+bool processAudioFxChainInPlace(AudioBurst &ab, const QJsonArray &chain, const AudioFxContext &ctx);
+
 /// `frames[0]` is the reference texture at clip start; all frames same size (e.g. 320×180 decode).
 /// Returns a `keyframes` JSON array: `{ "t", "panX", "panY", "zoom" }` in [0,1] time along the clip.
 /// `targetKeyframeCount` > 0: RDP simplification is tuned to leave about that many keys (else ~n/3, min 6).

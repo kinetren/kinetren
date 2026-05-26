@@ -27,8 +27,10 @@ class SourceReplacePanel;
 class SourceOffsetPanel;
 class MorpherEditWindow;
 class PerformanceDiagnosticsWindow;
+class AudioPreviewWidget;
 class QCheckBox;
 class QComboBox;
+class QSlider;
 class QSpinBox;
 
 namespace burstcon {
@@ -65,6 +67,7 @@ private:
     void applyRecommendedPreviewCacheQualityForCap();
     QSize computeMaxSourceVideoResolution() const;
     void refreshPreviewResolutionMaxEntry();
+    void refreshMainAudioPreview();
     void refreshPerformancePanel();
     bool saveProjectToPath(const QString &path, bool silent = false);
     bool loadProjectFromPath(const QString &path, bool silent = false);
@@ -136,6 +139,8 @@ protected:
     QComboBox *previewResolutionCombo = nullptr;
     QComboBox *previewFpsCombo = nullptr;
     QSpinBox *previewSeekLookbackSpin = nullptr;
+    QSlider *previewVolumeSlider = nullptr;
+    AudioPreviewWidget *mainAudioPreview = nullptr;
 
     Ui::MainWindow *ui;
 };
