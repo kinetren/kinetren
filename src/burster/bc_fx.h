@@ -91,12 +91,35 @@ public:
     void syncPresentationVideoIndex(BurstIndex mediaBurstIndex) override;
 
 private:
+    void warpSourceRingReset();
+    void warpSourceRingTrimFront(int64_t keepFromSample);
+    bool warpSourceRingEnsureThrough(const std::shared_ptr<IBurstcon> &upstream,
+                                     BurstIndex clipSourceIn,
+                                     int ch,
+                                     int sr,
+                                     double fileSampleEnd);
+    void warpSourceRingRebaseAt(BurstIndex clipSourceIn, int ch, int sr, double fileSample0);
+    bool fetchWarpedAudioBurst(const std::shared_ptr<IBurstcon> &upstream,
+                               const QJsonObject &srParams,
+                               const BurstRequest &request,
+                               int outFrames,
+                               bool sequentialPlayback,
+                               double &ioFileSampleCursor,
+                               AudioBurst &out);
+
     std::shared_ptr<IAudioFx> effect;
     std::shared_ptr<IBurstcon> upstream;
     QJsonObject storedParams;
     BurstIndex lastWarpTimelineIndex = -1;
     /// End of last warped window in absolute file samples (for gap-free sequential playback).
     double warpFileSampleCursor = -1.0;
+    /// Forward-only source PCM for warp (avoids decoder seek when rate &lt; 1 revisits earlier bursts).
+    std::vector<int32_t> warpSourceRing;
+    int64_t warpRingStartSample = 0;
+    BurstIndex warpRingClipSourceIn = -1;
+    BurstIndex warpNextDecodeTick = -1;
+    int warpRingChannels = 2;
+    int warpRingSampleRate = 48000;
 };
 
 std::shared_ptr<IVideoFx> createVideoFx(const QString &typeId, const QJsonObject &params);

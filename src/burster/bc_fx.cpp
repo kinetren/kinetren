@@ -1324,71 +1324,112 @@ static void resampleFileSampleRange(const std::vector<int32_t> &pcm,
     }
 }
 
-static bool fetchFileSamplePcm(std::shared_ptr<IBurstcon> upstream,
-                               BurstIndex clipSourceIn,
-                               double fileSampleStart,
-                               double fileSampleEnd,
-                               int ch,
-                               int sr,
-                               std::vector<int32_t> &pcm,
-                               int64_t &pcmAbsStartSample)
+void ConAudioFx::warpSourceRingReset()
 {
-    pcm.clear();
-    if (!upstream || fileSampleEnd <= fileSampleStart) {
+    warpSourceRing.clear();
+    warpRingStartSample = 0;
+    warpRingClipSourceIn = -1;
+    warpNextDecodeTick = -1;
+}
+
+void ConAudioFx::warpSourceRingTrimFront(int64_t keepFromSample)
+{
+    if (warpSourceRing.empty()) {
+        return;
+    }
+    const int ch = std::max(1, warpRingChannels);
+    const int64_t discardFrames = std::min<int64_t>(std::max<int64_t>(0, keepFromSample - warpRingStartSample),
+                                                    static_cast<int64_t>(warpSourceRing.size() / static_cast<size_t>(ch)));
+    if (discardFrames <= 0) {
+        return;
+    }
+    const size_t drop = static_cast<size_t>(discardFrames) * static_cast<size_t>(ch);
+    warpSourceRing.erase(warpSourceRing.begin(),
+                         warpSourceRing.begin() + static_cast<std::ptrdiff_t>(drop));
+    warpRingStartSample += discardFrames;
+}
+
+bool ConAudioFx::warpSourceRingEnsureThrough(const std::shared_ptr<IBurstcon> &upstream,
+                                             BurstIndex clipSourceIn,
+                                             int ch,
+                                             int sr,
+                                             double fileSampleEnd)
+{
+    if (!upstream) {
         return false;
     }
-    const int64_t iStart = static_cast<int64_t>(std::floor(fileSampleStart));
-    const int64_t iEnd = static_cast<int64_t>(std::ceil(fileSampleEnd)) + 1;
-    pcmAbsStartSample = iStart;
-    const int framesNeeded = static_cast<int>(std::max<int64_t>(1, iEnd - iStart));
-
+    const int64_t needEndSample = static_cast<int64_t>(std::ceil(fileSampleEnd)) + 2;
     const BurstIndex mediaStep =
         std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / sr);
-    const double tickPerSample = static_cast<double>(kBurstTimebaseHz) / static_cast<double>(sr);
-    BurstIndex burstIdx =
-        clipSourceIn +
-        static_cast<BurstIndex>(static_cast<int64_t>(std::floor(static_cast<double>(iStart) * tickPerSample)));
-    burstIdx = (burstIdx / mediaStep) * mediaStep;
+
+    if (warpRingClipSourceIn != clipSourceIn || warpNextDecodeTick < 0) {
+        warpSourceRingReset();
+        warpRingClipSourceIn = clipSourceIn;
+        warpRingChannels = ch;
+        warpRingSampleRate = sr;
+        warpNextDecodeTick = (clipSourceIn / mediaStep) * mediaStep;
+        warpRingStartSample =
+            static_cast<int64_t>(std::floor(static_cast<double>(clipSourceIn) * static_cast<double>(sr) /
+                                            static_cast<double>(kBurstTimebaseHz)));
+    }
+
+    auto ringEndSample = [&]() -> int64_t {
+        return warpRingStartSample +
+               static_cast<int64_t>(warpSourceRing.size() / static_cast<size_t>(std::max(1, ch)));
+    };
 
     BurstRequest req;
     req.decodeOrigin = clipSourceIn;
 
-    while (static_cast<int>(pcm.size() / static_cast<size_t>(ch)) < framesNeeded) {
-        req.index = burstIdx;
+    while (ringEndSample() < needEndSample) {
+        req.index = warpNextDecodeTick;
         AudioBurst raw;
         if (!upstream->audioBurst(req, raw) || raw.samples.empty()) {
             break;
         }
         const int bch = std::max(1, raw.channels);
         const int bframes = static_cast<int>(raw.samples.size() / static_cast<size_t>(bch));
-        const double burstFirstSample = static_cast<double>(burstIdx) / tickPerSample;
-        int skip = static_cast<int>(std::floor(burstFirstSample)) - static_cast<int>(iStart);
-        if (skip < 0) {
-            skip = 0;
-        }
-        const int haveFrames = static_cast<int>(pcm.size() / static_cast<size_t>(ch));
-        const int stillNeed = std::max(0, framesNeeded - haveFrames);
-        const int last = std::min(bframes, skip + stillNeed);
-        for (int fi = skip; fi < last; ++fi) {
+        const size_t prev = warpSourceRing.size();
+        warpSourceRing.resize(prev + static_cast<size_t>(bframes * ch));
+        for (int fi = 0; fi < bframes; ++fi) {
             for (int c = 0; c < ch; ++c) {
-                pcm.push_back(raw.samples[static_cast<size_t>(fi * bch + std::min(c, bch - 1))]);
+                warpSourceRing[prev + static_cast<size_t>(fi * ch + c)] =
+                    raw.samples[static_cast<size_t>(fi * bch + std::min(c, bch - 1))];
             }
         }
-        burstIdx += mediaStep;
+        warpNextDecodeTick += mediaStep;
         if (bframes <= 0) {
             break;
         }
     }
-    return !pcm.empty();
+    return ringEndSample() > warpRingStartSample;
 }
 
-static bool fetchWarpedAudioBurst(std::shared_ptr<IBurstcon> upstream,
-                                  const QJsonObject &srParams,
-                                  const BurstRequest &request,
-                                  int outFrames,
-                                  bool sequentialPlayback,
-                                  double &ioFileSampleCursor,
-                                  AudioBurst &out)
+void ConAudioFx::warpSourceRingRebaseAt(BurstIndex clipSourceIn, int ch, int sr, double fileSample0)
+{
+    warpSourceRingReset();
+    warpRingClipSourceIn = clipSourceIn;
+    warpRingChannels = ch;
+    warpRingSampleRate = sr;
+    const BurstIndex mediaStep =
+        std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / sr);
+    const int64_t startSample = static_cast<int64_t>(std::floor(fileSample0));
+    const BurstIndex relTick = static_cast<BurstIndex>(std::max<int64_t>(
+        0, (startSample * static_cast<int64_t>(kBurstTimebaseHz)) / std::max(1, sr)));
+    const BurstIndex absTick = clipSourceIn + relTick;
+    warpNextDecodeTick = (absTick / mediaStep) * mediaStep;
+    warpRingStartSample =
+        static_cast<int64_t>(std::floor(static_cast<double>(warpNextDecodeTick) * static_cast<double>(sr) /
+                                        static_cast<double>(kBurstTimebaseHz)));
+}
+
+bool ConAudioFx::fetchWarpedAudioBurst(const std::shared_ptr<IBurstcon> &upstream,
+                                       const QJsonObject &srParams,
+                                       const BurstRequest &request,
+                                       int outFrames,
+                                       bool sequentialPlayback,
+                                       double &ioFileSampleCursor,
+                                       AudioBurst &out)
 {
     if (!upstream || outFrames <= 0 || request.clipDurationTicks <= 0) {
         return false;
@@ -1427,25 +1468,28 @@ static bool fetchWarpedAudioBurst(std::shared_ptr<IBurstcon> upstream,
         fileSample1 = fileSample0 + spanSamples;
     }
 
-    std::vector<int32_t> sourcePcm;
-    int64_t pcmAbsStart = 0;
-    if (!fetchFileSamplePcm(upstream,
-                            clipSourceIn,
-                            fileSample0,
-                            fileSample1,
-                            ch,
-                            sr,
-                            sourcePcm,
-                            pcmAbsStart)) {
+    const int64_t needStartSample = static_cast<int64_t>(std::floor(fileSample0));
+    const int ringCh = std::max(1, ch);
+    const int64_t ringEndSample =
+        warpRingStartSample + static_cast<int64_t>(warpSourceRing.size() / static_cast<size_t>(ringCh));
+    const bool ringCovers =
+        warpRingClipSourceIn == clipSourceIn && !warpSourceRing.empty() &&
+        needStartSample >= warpRingStartSample && needStartSample < ringEndSample;
+    if (!sequentialPlayback || !ringCovers) {
+        warpSourceRingRebaseAt(clipSourceIn, ch, sr, fileSample0);
+    }
+    if (!warpSourceRingEnsureThrough(upstream, clipSourceIn, ch, sr, fileSample1)) {
         return false;
     }
-    const int pcmFrames = static_cast<int>(sourcePcm.size() / static_cast<size_t>(ch));
+    const int64_t trimFrom = std::max<int64_t>(0, needStartSample - static_cast<int64_t>(sr) * 2);
+    warpSourceRingTrimFront(trimFrom);
 
+    const int pcmFrames = static_cast<int>(warpSourceRing.size() / static_cast<size_t>(ch));
     std::vector<int32_t> resampled;
-    resampleFileSampleRange(sourcePcm,
+    resampleFileSampleRange(warpSourceRing,
                             pcmFrames,
                             ch,
-                            pcmAbsStart,
+                            warpRingStartSample,
                             fileSample0,
                             fileSample1,
                             outFrames,
@@ -1893,6 +1937,7 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
             lastWarpTimelineIndex >= 0 && timelineIdx == lastWarpTimelineIndex + audioStep;
         if (lastWarpTimelineIndex >= 0 && timelineIdx + audioStep < lastWarpTimelineIndex) {
             warpFileSampleCursor = -1.0;
+            warpSourceRingReset();
         }
         if (!fetchWarpedAudioBurst(upstream,
                                    storedParams,
@@ -1938,6 +1983,7 @@ void ConAudioFx::invalidate(const BurstRange &range)
 {
     warpFileSampleCursor = -1.0;
     lastWarpTimelineIndex = -1;
+    warpSourceRingReset();
     if (upstream) {
         upstream->invalidate(range);
     }
