@@ -95,7 +95,8 @@ private:
     std::shared_ptr<IBurstcon> upstream;
     QJsonObject storedParams;
     BurstIndex lastWarpTimelineIndex = -1;
-    std::vector<float> warpOverlapTail;
+    /// End of last warped window in absolute file samples (for gap-free sequential playback).
+    double warpFileSampleCursor = -1.0;
 };
 
 std::shared_ptr<IVideoFx> createVideoFx(const QString &typeId, const QJsonObject &params);

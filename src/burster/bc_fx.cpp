@@ -1276,35 +1276,46 @@ static double audioSourceTicksAtTimelineU(const QJsonObject &params, double u01)
     return integratePlaybackRate01(params, 0.0, std::clamp(u01, 0.0, 1.0));
 }
 
-static void resamplePcmLinear(const std::vector<int32_t> &in,
-                              int inFrames,
-                              int channels,
-                              int outFrames,
-                              std::vector<int32_t> &out)
+static double pcmSampleAt(const std::vector<int32_t> &pcm, int frameCount, int ch, double framePos, int channel)
 {
-    const int ch = std::max(1, channels);
-    out.assign(static_cast<size_t>(std::max(0, outFrames) * ch), 0);
-    if (inFrames <= 0 || outFrames <= 0) {
+    if (frameCount <= 0 || pcm.empty()) {
+        return 0.0;
+    }
+    const int c = std::clamp(channel, 0, ch - 1);
+    if (framePos <= 0.0) {
+        return static_cast<double>(pcm[static_cast<size_t>(c)]);
+    }
+    if (framePos >= static_cast<double>(frameCount - 1)) {
+        return static_cast<double>(pcm[static_cast<size_t>((frameCount - 1) * ch + c)]);
+    }
+    const int i0 = static_cast<int>(std::floor(framePos));
+    const int i1 = std::min(frameCount - 1, i0 + 1);
+    const double frac = framePos - static_cast<double>(i0);
+    const double s0 = static_cast<double>(pcm[static_cast<size_t>(i0 * ch + c)]);
+    const double s1 = static_cast<double>(pcm[static_cast<size_t>(i1 * ch + c)]);
+    return s0 + (s1 - s0) * frac;
+}
+
+static void resampleFileSampleRange(const std::vector<int32_t> &pcm,
+                                    int pcmFrameCount,
+                                    int ch,
+                                    int64_t pcmAbsStartSample,
+                                    double fileSample0,
+                                    double fileSample1,
+                                    int outFrames,
+                                    std::vector<int32_t> &out)
+{
+    out.assign(static_cast<size_t>(std::max(0, outFrames) * static_cast<size_t>(ch)), 0);
+    if (pcmFrameCount <= 0 || outFrames <= 0) {
         return;
     }
-    if (inFrames == 1) {
-        for (int i = 0; i < outFrames; ++i) {
-            for (int c = 0; c < ch; ++c) {
-                out[static_cast<size_t>(i * ch + c)] = in[static_cast<size_t>(c)];
-            }
-        }
-        return;
-    }
+    const double span = std::max(1e-9, fileSample1 - fileSample0);
     for (int i = 0; i < outFrames; ++i) {
-        const double pos = static_cast<double>(i) * static_cast<double>(inFrames - 1) /
-                           static_cast<double>(std::max(1, outFrames - 1));
-        const int i0 = static_cast<int>(std::floor(pos));
-        const int i1 = std::min(inFrames - 1, i0 + 1);
-        const double frac = pos - static_cast<double>(i0);
+        const double t = (outFrames <= 1) ? 0.0 : static_cast<double>(i) / static_cast<double>(outFrames - 1);
+        const double absSample = fileSample0 + t * span;
+        const double relFrame = absSample - static_cast<double>(pcmAbsStartSample);
         for (int c = 0; c < ch; ++c) {
-            const double s0 = static_cast<double>(in[static_cast<size_t>(i0 * ch + c)]);
-            const double s1 = static_cast<double>(in[static_cast<size_t>(i1 * ch + c)]);
-            const double v = s0 + (s1 - s0) * frac;
+            const double v = pcmSampleAt(pcm, pcmFrameCount, ch, relFrame, c);
             out[static_cast<size_t>(i * ch + c)] =
                 static_cast<int32_t>(std::clamp(v,
                                                 static_cast<double>(std::numeric_limits<int32_t>::min()),
@@ -1313,10 +1324,70 @@ static void resamplePcmLinear(const std::vector<int32_t> &in,
     }
 }
 
+static bool fetchFileSamplePcm(std::shared_ptr<IBurstcon> upstream,
+                               BurstIndex clipSourceIn,
+                               double fileSampleStart,
+                               double fileSampleEnd,
+                               int ch,
+                               int sr,
+                               std::vector<int32_t> &pcm,
+                               int64_t &pcmAbsStartSample)
+{
+    pcm.clear();
+    if (!upstream || fileSampleEnd <= fileSampleStart) {
+        return false;
+    }
+    const int64_t iStart = static_cast<int64_t>(std::floor(fileSampleStart));
+    const int64_t iEnd = static_cast<int64_t>(std::ceil(fileSampleEnd)) + 1;
+    pcmAbsStartSample = iStart;
+    const int framesNeeded = static_cast<int>(std::max<int64_t>(1, iEnd - iStart));
+
+    const BurstIndex mediaStep =
+        std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(kDefaultAudioSamplesPerBurst)) / sr);
+    const double tickPerSample = static_cast<double>(kBurstTimebaseHz) / static_cast<double>(sr);
+    BurstIndex burstIdx =
+        clipSourceIn +
+        static_cast<BurstIndex>(static_cast<int64_t>(std::floor(static_cast<double>(iStart) * tickPerSample)));
+    burstIdx = (burstIdx / mediaStep) * mediaStep;
+
+    BurstRequest req;
+    req.decodeOrigin = clipSourceIn;
+
+    while (static_cast<int>(pcm.size() / static_cast<size_t>(ch)) < framesNeeded) {
+        req.index = burstIdx;
+        AudioBurst raw;
+        if (!upstream->audioBurst(req, raw) || raw.samples.empty()) {
+            break;
+        }
+        const int bch = std::max(1, raw.channels);
+        const int bframes = static_cast<int>(raw.samples.size() / static_cast<size_t>(bch));
+        const double burstFirstSample = static_cast<double>(burstIdx) / tickPerSample;
+        int skip = static_cast<int>(std::floor(burstFirstSample)) - static_cast<int>(iStart);
+        if (skip < 0) {
+            skip = 0;
+        }
+        const int haveFrames = static_cast<int>(pcm.size() / static_cast<size_t>(ch));
+        const int stillNeed = std::max(0, framesNeeded - haveFrames);
+        const int last = std::min(bframes, skip + stillNeed);
+        for (int fi = skip; fi < last; ++fi) {
+            for (int c = 0; c < ch; ++c) {
+                pcm.push_back(raw.samples[static_cast<size_t>(fi * bch + std::min(c, bch - 1))]);
+            }
+        }
+        burstIdx += mediaStep;
+        if (bframes <= 0) {
+            break;
+        }
+    }
+    return !pcm.empty();
+}
+
 static bool fetchWarpedAudioBurst(std::shared_ptr<IBurstcon> upstream,
                                   const QJsonObject &srParams,
                                   const BurstRequest &request,
                                   int outFrames,
+                                  bool sequentialPlayback,
+                                  double &ioFileSampleCursor,
                                   AudioBurst &out)
 {
     if (!upstream || outFrames <= 0 || request.clipDurationTicks <= 0) {
@@ -1341,111 +1412,51 @@ static bool fetchWarpedAudioBurst(std::shared_ptr<IBurstcon> upstream,
                             static_cast<double>(request.clipDurationTicks);
     const double srcTick1 = audioSourceTicksAtTimelineU(srParams, u1) *
                             static_cast<double>(request.clipDurationTicks);
-    const double srcSpanTicks = std::max(1e-6, srcTick1 - srcTick0);
 
-    const BurstIndex mediaStep =
-        std::max<BurstIndex>(1, (kBurstTimebaseHz * static_cast<BurstIndex>(outFrames)) / 48000);
-    const BurstIndex mediaIndex0 = clipSourceIn + static_cast<BurstIndex>(std::floor(srcTick0));
-    BurstRequest r0;
-    r0.index = (mediaIndex0 / mediaStep) * mediaStep;
-    r0.decodeOrigin = clipSourceIn;
-    r0.clipDurationTicks = request.clipDurationTicks;
-    AudioBurst raw0;
-    if (!upstream->audioBurst(r0, raw0) || raw0.samples.empty()) {
-        return false;
+    const BurstOriginInfo origin = upstream->originInfo();
+    const int ch = std::max(1, origin.sourceAudioChannels);
+    const int sr = std::max(1, origin.sourceAudioSampleRate);
+    const double tickToSample = static_cast<double>(sr) / static_cast<double>(kBurstTimebaseHz);
+    const double fileBase = static_cast<double>(clipSourceIn) * tickToSample;
+    const double spanSamples = std::max(1e-6, (srcTick1 - srcTick0) * tickToSample);
+
+    double fileSample0 = fileBase + srcTick0 * tickToSample;
+    double fileSample1 = fileSample0 + spanSamples;
+    if (sequentialPlayback && ioFileSampleCursor >= 0.0) {
+        fileSample0 = ioFileSampleCursor;
+        fileSample1 = fileSample0 + spanSamples;
     }
-    const int ch = std::max(1, raw0.channels);
-    const int sr = std::max(1, raw0.sampleRate);
-    const int frames0 = static_cast<int>(raw0.samples.size() / static_cast<size_t>(ch));
-
-    // How many source PCM frames belong in this timeline burst window.
-    const int sourceFramesNeeded = std::max(
-        1, static_cast<int>(std::llround(srcSpanTicks * static_cast<double>(sr) /
-                                         static_cast<double>(kBurstTimebaseHz))));
-
-    const double burstStartRel = static_cast<double>(r0.index - clipSourceIn);
-    const double offsetTicks = srcTick0 - burstStartRel;
-    const int skipFrames = std::clamp(
-        static_cast<int>(std::llround(offsetTicks * static_cast<double>(sr) /
-                                      static_cast<double>(kBurstTimebaseHz))),
-        0,
-        std::max(0, frames0 - 1));
 
     std::vector<int32_t> sourcePcm;
-    sourcePcm.reserve(static_cast<size_t>(sourceFramesNeeded * ch));
-
-    auto appendFrames = [&](const AudioBurst &burst, int fromFrame, int toFrame) {
-        const int bch = std::max(1, burst.channels);
-        const int last = std::min(toFrame, static_cast<int>(burst.samples.size() / static_cast<size_t>(bch)));
-        for (int fi = fromFrame; fi < last; ++fi) {
-            for (int c = 0; c < ch; ++c) {
-                const int32_t v =
-                    burst.samples[static_cast<size_t>(fi * bch + std::min(c, bch - 1))];
-                sourcePcm.push_back(v);
-            }
-        }
-    };
-    appendFrames(raw0, skipFrames, frames0);
-
-    BurstRequest rNext = r0;
-    rNext.index = r0.index + mediaStep;
-    while (static_cast<int>(sourcePcm.size() / static_cast<size_t>(ch)) < sourceFramesNeeded) {
-        AudioBurst rawMore;
-        if (!upstream->audioBurst(rNext, rawMore) || rawMore.samples.empty()) {
-            break;
-        }
-        const int moreFrames = static_cast<int>(rawMore.samples.size() / static_cast<size_t>(std::max(1, rawMore.channels)));
-        appendFrames(rawMore, 0, moreFrames);
-        rNext.index += mediaStep;
+    int64_t pcmAbsStart = 0;
+    if (!fetchFileSamplePcm(upstream,
+                            clipSourceIn,
+                            fileSample0,
+                            fileSample1,
+                            ch,
+                            sr,
+                            sourcePcm,
+                            pcmAbsStart)) {
+        return false;
     }
-
-    const int collectedFrames = static_cast<int>(sourcePcm.size() / static_cast<size_t>(ch));
-    int inFrames = sourceFramesNeeded;
-    if (collectedFrames < inFrames) {
-        inFrames = std::max(1, collectedFrames);
-    } else if (collectedFrames > inFrames) {
-        sourcePcm.resize(static_cast<size_t>(inFrames * ch));
-    }
+    const int pcmFrames = static_cast<int>(sourcePcm.size() / static_cast<size_t>(ch));
 
     std::vector<int32_t> resampled;
-    resamplePcmLinear(sourcePcm, inFrames, ch, outFrames, resampled);
+    resampleFileSampleRange(sourcePcm,
+                            pcmFrames,
+                            ch,
+                            pcmAbsStart,
+                            fileSample0,
+                            fileSample1,
+                            outFrames,
+                            resampled);
 
-    out = std::move(raw0);
-    out.samples = std::move(resampled);
+    ioFileSampleCursor = fileSample1;
     out.index = request.index;
+    out.sampleRate = sr;
+    out.channels = ch;
+    out.samples = std::move(resampled);
     return true;
-}
-
-static void applyBurstBoundaryCrossfade(AudioBurst &burst, std::vector<float> &overlapTail, int fadeLen)
-{
-    const int ch = std::max(1, burst.channels);
-    const int frames = static_cast<int>(burst.samples.size() / static_cast<size_t>(ch));
-    if (frames <= 0 || fadeLen <= 0) {
-        overlapTail.clear();
-        return;
-    }
-    const int fade = std::min(fadeLen, frames / 2);
-    if (fade < 2) {
-        return;
-    }
-    if (!overlapTail.empty() && static_cast<int>(overlapTail.size()) == fade * ch) {
-        for (int i = 0; i < fade; ++i) {
-            const double t = static_cast<double>(i) / static_cast<double>(fade - 1);
-            for (int c = 0; c < ch; ++c) {
-                const size_t idx = static_cast<size_t>(i * ch + c);
-                const double prev = static_cast<double>(overlapTail[static_cast<size_t>(i * ch + c)]);
-                const double cur = static_cast<double>(burst.samples[idx]);
-                burst.samples[idx] = static_cast<int32_t>(prev * (1.0 - t) + cur * t);
-            }
-        }
-    }
-    overlapTail.resize(static_cast<size_t>(fade * ch));
-    for (int i = 0; i < fade; ++i) {
-        for (int c = 0; c < ch; ++c) {
-            const size_t idx = static_cast<size_t>((frames - fade + i) * ch + c);
-            overlapTail[static_cast<size_t>(i * ch + c)] = static_cast<float>(burst.samples[idx]);
-        }
-    }
 }
 
 static double rgbMseSubsampled(const QImage &a, const QImage &b)
@@ -1878,14 +1889,21 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
 
     AudioBurst ab;
     if (useWarp) {
+        const bool sequential =
+            lastWarpTimelineIndex >= 0 && timelineIdx == lastWarpTimelineIndex + audioStep;
         if (lastWarpTimelineIndex >= 0 && timelineIdx + audioStep < lastWarpTimelineIndex) {
-            warpOverlapTail.clear();
+            warpFileSampleCursor = -1.0;
         }
-        lastWarpTimelineIndex = timelineIdx;
-        if (!fetchWarpedAudioBurst(upstream, storedParams, request, kDefaultAudioSamplesPerBurst, ab)) {
+        if (!fetchWarpedAudioBurst(upstream,
+                                   storedParams,
+                                   request,
+                                   kDefaultAudioSamplesPerBurst,
+                                   sequential,
+                                   warpFileSampleCursor,
+                                   ab)) {
             return false;
         }
-        applyBurstBoundaryCrossfade(ab, warpOverlapTail, 24);
+        lastWarpTimelineIndex = timelineIdx;
     } else if (!upstream->audioBurst(request, ab)) {
         return false;
     }
@@ -1918,7 +1936,7 @@ BurstOriginInfo ConAudioFx::originInfo() const
 
 void ConAudioFx::invalidate(const BurstRange &range)
 {
-    warpOverlapTail.clear();
+    warpFileSampleCursor = -1.0;
     lastWarpTimelineIndex = -1;
     if (upstream) {
         upstream->invalidate(range);
