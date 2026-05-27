@@ -17,9 +17,39 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <limits>
 #include <thread>
 #include <vector>
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+class PlaybackPipeline::PreviewPcmIODevice final : public QIODevice
+{
+public:
+    explicit PreviewPcmIODevice(PlaybackPipeline *owner)
+        : QIODevice()
+        , pipe(owner)
+    {
+        open(QIODevice::ReadOnly);
+    }
+
+    bool isSequential() const override { return true; }
+
+protected:
+    qint64 readData(char *data, qint64 maxSize) override
+    {
+        if (!pipe || !data || maxSize <= 0) {
+            return 0;
+        }
+        return pipe->readAudioPcmForDevice(data, maxSize);
+    }
+
+    qint64 writeData(const char *, qint64) override { return -1; }
+
+private:
+    PlaybackPipeline *pipe = nullptr;
+};
+#endif
 
 namespace {
 constexpr int kAudioSampleRate = 48000;
@@ -935,6 +965,7 @@ void PlaybackPipeline::beginScrubPlayback(qint64 timelineMs)
     if (timer) {
         timer->stop();
         timer->emitAt(burstcon::msToBurstIndex(tMs));
+        notifyAudioPcmReady();
     }
 }
 
@@ -947,6 +978,7 @@ void PlaybackPipeline::scrubPlaybackSeek(qint64 positionMs)
     timelineMs.store(tMs);
     if (timer) {
         timer->emitAt(burstcon::msToBurstIndex(tMs));
+        notifyAudioPcmReady();
     }
 }
 
@@ -1350,6 +1382,10 @@ void PlaybackPipeline::tearDownAudioLocked()
         delete audioSink;
         audioSink = nullptr;
     }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    delete pcmFeedDevice;
+    pcmFeedDevice = nullptr;
+#endif
     audioDevice = nullptr;
     audioPcmPending.clear();
 }
@@ -1357,9 +1393,15 @@ void PlaybackPipeline::tearDownAudioLocked()
 void PlaybackPipeline::ensureAudioOutput()
 {
     std::lock_guard<std::mutex> lock(audioMutex);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    if (audioSink && pcmFeedDevice) {
+        return;
+    }
+#else
     if (audioSink && audioDevice) {
         return;
     }
+#endif
     tearDownAudioLocked();
 
     QAudioFormat format;
@@ -1369,30 +1411,45 @@ void PlaybackPipeline::ensureAudioOutput()
     format.setSampleFormat(QAudioFormat::Int16);
     const QAudioDevice output = QMediaDevices::defaultAudioOutput();
     if (!output.isFormatSupported(format)) {
-        format = output.preferredFormat();
+        bool foundInt16 = false;
+        for (const QAudioFormat &candidate : output.supportedFormats()) {
+            if (candidate.sampleFormat() == QAudioFormat::Int16 &&
+                candidate.channelCount() == kAudioChannels &&
+                candidate.sampleRate() == kAudioSampleRate) {
+                format = candidate;
+                foundInt16 = true;
+                break;
+            }
+        }
+        if (!foundInt16) {
+            format = output.preferredFormat();
+        }
     }
+    audioOutputFormat = format;
+    pcmFeedDevice = new PreviewPcmIODevice(this);
     audioSink = new QAudioSink(output, format);
+    audioSink->setBufferSize(64 * 1024);
+    audioSink->start(pcmFeedDevice);
+    audioDevice = nullptr;
+    const float hw = std::min(1.f, previewVolumeLinear.load());
+    audioSink->setVolume(hw);
+    if (audioSink->state() == QAudio::SuspendedState || audioSink->state() == QAudio::IdleState) {
+        audioSink->resume();
+    }
 #else
     format.setSampleSize(16);
     format.setCodec("audio/pcm");
     format.setByteOrder(QAudioFormat::LittleEndian);
     format.setSampleType(QAudioFormat::SignedInt);
     audioSink = new QAudioOutput(format);
-#endif
     audioDevice = audioSink->start();
     if (audioDevice) {
         const float hw = std::min(1.f, previewVolumeLinear.load());
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
         audioSink->setVolume(hw);
-        if (audioSink->state() == QAudio::SuspendedState || audioSink->state() == QAudio::IdleState) {
-            audioSink->resume();
-        }
-#else
-        audioSink->setVolume(hw);
-#endif
     } else {
         tearDownAudioLocked();
     }
+#endif
 }
 
 void PlaybackPipeline::shutdownAudioOutput()
@@ -1463,35 +1520,76 @@ void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
     if (burst.samples.empty()) {
         return;
     }
-    std::lock_guard<std::mutex> lock(audioMutex);
-    if (!audioDevice) {
-        return;
-    }
     const float gain = previewVolumeLinear.load();
     const auto levels = peaksDbFromAudioBurst(burst, gain);
     if (onAudioLevelsReady) {
         onAudioLevelsReady(levels.first, levels.second);
     }
 
-    const size_t maxPendingStereoSamples = static_cast<size_t>(48000) * 2 * 8;
-    const size_t prev = audioPcmPending.size();
-    audioPcmPending.resize(prev + burst.samples.size());
-    for (size_t i = 0; i < burst.samples.size(); ++i) {
-        const int32_t scaled =
-            static_cast<int32_t>(std::llround(static_cast<double>(burst.samples[i]) * static_cast<double>(gain)));
-        const int32_t v = std::clamp<int32_t>(scaled, -32768, 32767);
-        audioPcmPending[prev + i] = static_cast<int16_t>(v);
+    {
+        std::lock_guard<std::mutex> lock(audioMutex);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        if (!audioSink || !pcmFeedDevice) {
+            return;
+        }
+#else
+        if (!audioDevice) {
+            return;
+        }
+#endif
+        constexpr size_t kMaxPendingStereoSamples = static_cast<size_t>(48000) * 2 * 8;
+        const size_t prev = audioPcmPending.size();
+        audioPcmPending.resize(prev + burst.samples.size());
+        for (size_t i = 0; i < burst.samples.size(); ++i) {
+            const int32_t scaled =
+                static_cast<int32_t>(std::llround(static_cast<double>(burst.samples[i]) * static_cast<double>(gain)));
+            const int32_t v = std::clamp<int32_t>(scaled, -32768, 32767);
+            audioPcmPending[prev + i] = static_cast<int16_t>(v);
+        }
+        if (audioPcmPending.size() > kMaxPendingStereoSamples) {
+            const size_t drop = audioPcmPending.size() - kMaxPendingStereoSamples;
+            audioPcmPending.erase(audioPcmPending.begin(),
+                                  audioPcmPending.begin() + static_cast<std::ptrdiff_t>(drop));
+        }
     }
-    if (audioPcmPending.size() > maxPendingStereoSamples) {
-        const size_t drop = audioPcmPending.size() - maxPendingStereoSamples;
-        audioPcmPending.erase(audioPcmPending.begin(), audioPcmPending.begin() + static_cast<std::ptrdiff_t>(drop));
-    }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    notifyAudioPcmReady();
+#else
     flushAudioPendingToDevice();
+#endif
 }
 
 void PlaybackPipeline::clearAudioPendingLocked()
 {
     audioPcmPending.clear();
+}
+
+qint64 PlaybackPipeline::readAudioPcmForDevice(char *data, qint64 maxBytes)
+{
+    if (!data || maxBytes <= 0) {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(audioMutex);
+    const qint64 available =
+        static_cast<qint64>(audioPcmPending.size()) * static_cast<qint64>(sizeof(int16_t));
+    const qint64 toRead = std::min(maxBytes, available);
+    if (toRead <= 0) {
+        return 0;
+    }
+    std::memcpy(data, audioPcmPending.data(), static_cast<size_t>(toRead));
+    const size_t samplesConsumed = static_cast<size_t>(toRead / static_cast<qint64>(sizeof(int16_t)));
+    audioPcmPending.erase(audioPcmPending.begin(),
+                            audioPcmPending.begin() + static_cast<std::ptrdiff_t>(samplesConsumed));
+    return toRead;
+}
+
+void PlaybackPipeline::notifyAudioPcmReady()
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    if (pcmFeedDevice) {
+        (void)QMetaObject::invokeMethod(pcmFeedDevice, "readyRead", Qt::QueuedConnection);
+    }
+#endif
 }
 
 void PlaybackPipeline::requestIdlePreviewAsync(qint64 tMs, const std::vector<Clip> &videoClips)

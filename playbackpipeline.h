@@ -97,6 +97,8 @@ public:
     void scrubPlaybackSeek(qint64 timelineMs);
     void endScrubPlayback();
     bool isScrubPlaybackActive() const { return scrubPlaybackActive.load(); }
+    /// Qt6 pull-mode PCM device reads from the preview ring buffer.
+    qint64 readAudioPcmForDevice(char *data, qint64 maxBytes);
     /// One composited burst at `timelineMs` for meter refresh while stopped/scrubbing.
     void requestMixedLevelsSampleAsync(qint64 timelineMs);
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
@@ -143,6 +145,7 @@ private:
     void tearDownAudioLocked();
     void pushAudioBurst(const burstcon::AudioBurst &burst);
     void clearAudioPendingLocked();
+    void notifyAudioPcmReady();
     /// Drain a few milliseconds of queued PCM without blocking the playback timer thread indefinitely.
     void flushAudioPendingToDevice();
     void requestIdlePreviewAsync(qint64 tMs, const std::vector<Clip> &videoClips);
@@ -213,6 +216,8 @@ private:
     QIODevice *audioDevice = nullptr;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QAudioSink *audioSink = nullptr;
+    class PreviewPcmIODevice *pcmFeedDevice = nullptr;
+    QAudioFormat audioOutputFormat;
 #else
     QAudioOutput *audioSink = nullptr;
 #endif
