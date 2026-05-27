@@ -3,15 +3,17 @@
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QPainter>
+#include <QRadialGradient>
 #include <QResizeEvent>
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 constexpr float kMeterMinDb = -48.f;
-/// Meter scale tops at 0 dB; overload pegs at the 0 dB line (no +headroom band).
-constexpr float kMeterMaxDb = 0.f;
+constexpr float kMeterMaxDb = 6.f;       // overload headroom above 0 dB
+constexpr float kMeterNominalTopDb = 0.f; // red/yellow/green ladder ends here
 constexpr float kSilenceDb = -60.f;
 constexpr int kTimerMs = 25;
 constexpr float kBarFallDbPerTick = 2.8f;
@@ -21,6 +23,52 @@ constexpr int kChannelGap = 5;
 constexpr int kMinBarW = 14;
 constexpr int kSegPx = 6;
 constexpr int kSegGap = 2;
+
+QColor glowColor(float db, int alpha)
+{
+    QColor color;
+    if (db > kMeterNominalTopDb) {
+        const float t = std::clamp(db / kMeterMaxDb, 0.f, 1.f);
+        color = QColor(255, static_cast<int>(88 - 28 * t), static_cast<int>(72 - 40 * t));
+    } else if (db >= -3.f) {
+        color = QColor(228, 62, 52);
+    } else if (db >= -9.f) {
+        color = QColor(238, 178, 42);
+    } else if (db >= -18.f) {
+        color = QColor(108, 198, 82);
+    } else if (db >= -36.f) {
+        color = QColor(58, 142, 68);
+    } else {
+        color = QColor(38, 98, 48);
+    }
+    color.setAlpha(alpha);
+    return color;
+}
+
+void drawGlowEllipse(QPainter &p, const QPointF &center, qreal radiusX, qreal radiusY, QColor color)
+{
+    if (radiusX <= 0.0 || radiusY <= 0.0 || color.alpha() <= 0) {
+        return;
+    }
+
+    QColor core = color;
+    QColor soft = color;
+    QColor clear = color;
+    soft.setAlpha(color.alpha() / 3);
+    clear.setAlpha(0);
+
+    p.save();
+    p.translate(center);
+    p.scale(1.0, radiusY / radiusX);
+    p.setPen(Qt::NoPen);
+    QRadialGradient glow(QPointF(0.0, 0.0), radiusX);
+    glow.setColorAt(0.0, core);
+    glow.setColorAt(0.28, soft);
+    glow.setColorAt(1.0, clear);
+    p.setBrush(glow);
+    p.drawEllipse(QPointF(0.0, 0.0), radiusX, radiusX);
+    p.restore();
+}
 } // namespace
 
 AudioLevelMeterWidget::AudioLevelMeterWidget(QWidget *parent)
@@ -107,6 +155,10 @@ float AudioLevelMeterWidget::decayToward(float current, float target, float fall
 
 QColor AudioLevelMeterWidget::segmentColor(float segDb)
 {
+    if (segDb > kMeterNominalTopDb) {
+        const float t = std::clamp(segDb / kMeterMaxDb, 0.f, 1.f);
+        return QColor(255, static_cast<int>(88 - 28 * t), static_cast<int>(72 - 40 * t));
+    }
     if (segDb >= -3.f) {
         return QColor(228, 62, 52);
     }
@@ -224,10 +276,16 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
             }
         }
 
+        const int yZero = dbToY(kMeterNominalTopDb, bar);
+        p.setPen(QPen(QColor(95, 105, 118, 140), 1));
+        p.drawLine(bar.left() + 1, yZero, bar.right() - 1, yZero);
+
         if (capDb > levelDb + 0.4f && capDb > kMeterMinDb + 1.f) {
             const int yCap = dbToY(capDb, bar);
             QColor capCol = QColor(245, 242, 230);
-            if (capDb >= -3.f) {
+            if (capDb > kMeterNominalTopDb + 0.05f) {
+                capCol = QColor(255, 120, 95);
+            } else if (capDb >= -3.f) {
                 capCol = QColor(255, 85, 70);
             } else if (capDb >= -9.f) {
                 capCol = QColor(255, 205, 60);
@@ -244,4 +302,46 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
 
     drawChannel(barL, levelL, capHoldL, "L");
     drawChannel(barR, levelR, capHoldR, "R");
+
+    const float glowLevelDb = std::max(levelL, levelR);
+    if (glowLevelDb > kMeterMinDb + 0.5f) {
+        const int glowTop = dbToY(glowLevelDb, barL);
+        const int innerTop = barL.top() + 2;
+        const int innerBottom = barL.bottom() - 2;
+        const int innerH = std::max(1, innerBottom - innerTop);
+        const qreal glowX = (barL.left() + barR.right()) * 0.5;
+        const qreal wideRadius = std::max<qreal>(area.width() * 1.15, barR.right() - scaleRect.left() + 28);
+
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setCompositionMode(QPainter::CompositionMode_Plus);
+        p.setPen(Qt::NoPen);
+
+        for (int y = innerBottom; y >= glowTop; y -= kSegPx + kSegGap) {
+            const float rel = 1.f - static_cast<float>(y - innerTop) / static_cast<float>(innerH);
+            const float db = kMeterMinDb + rel * (kMeterMaxDb - kMeterMinDb);
+            drawGlowEllipse(p, QPointF(glowX, y), wideRadius * 0.7, 14.0, glowColor(db, 42));
+        }
+
+        for (const auto &[topDb, bottomDb] :
+             {std::pair<float, float>{kMeterMaxDb, 0.f}, {0.f, -3.f}, {-3.f, -9.f}, {-9.f, -18.f},
+              {-18.f, -36.f}, {-36.f, kMeterMinDb}}) {
+            const float activeTopDb = std::min(glowLevelDb, topDb);
+            if (activeTopDb <= bottomDb) {
+                continue;
+            }
+
+            const int zoneTop = dbToY(activeTopDb, barL);
+            const int zoneBottom = dbToY(bottomDb, barL);
+            const qreal zoneCenterY = (zoneTop + zoneBottom) * 0.5;
+            const qreal zoneRadiusY = std::max<qreal>(24.0, (zoneBottom - zoneTop) * 0.7 + 20.0);
+            drawGlowEllipse(p, QPointF(glowX, zoneCenterY), wideRadius, zoneRadiusY,
+                            glowColor((activeTopDb + bottomDb) * 0.5f, 24));
+        }
+
+        drawGlowEllipse(p, QPointF(glowX, glowTop), wideRadius * 1.08, 24.0, glowColor(glowLevelDb, 38));
+        drawGlowEllipse(p, QPointF(glowX, rect().bottom() - 26), wideRadius * 0.85, 28.0,
+                        glowColor(std::min(glowLevelDb, -18.f), 20));
+        p.restore();
+    }
 }

@@ -2,8 +2,8 @@
 
 #include <QFontDatabase>
 #include <QLinearGradient>
-#include <QPainter>
 #include <QMouseEvent>
+#include <QPainter>
 
 #include <algorithm>
 #include <cmath>
@@ -181,16 +181,17 @@ void PreviewVolumeFader::paintEvent(QPaintEvent *event)
     const QRect rail = railRect();
     const int handleY = muted_ ? rail.bottom() : yForDb(volumeDb_);
     const QRect cap = handleRectForY(handleY);
+    p.setPen(Qt::NoPen);
 
     const QColor base = muted_ ? QColor(172, 52, 52) : QColor(78, 82, 90);
     const QColor topHi = muted_ ? QColor(210, 90, 90) : QColor(128, 132, 142);
     const QColor botSh = muted_ ? QColor(110, 32, 32) : QColor(48, 50, 56);
-    QLinearGradient grad(cap.topLeft(), cap.bottomLeft());
-    grad.setColorAt(0.0, topHi);
-    grad.setColorAt(0.45, base);
-    grad.setColorAt(1.0, botSh);
+    QLinearGradient capGrad(cap.topLeft(), cap.bottomLeft());
+    capGrad.setColorAt(0.0, topHi);
+    capGrad.setColorAt(0.45, base);
+    capGrad.setColorAt(1.0, botSh);
     p.setPen(QPen(QColor(12, 14, 18), 1));
-    p.setBrush(grad);
+    p.setBrush(capGrad);
     p.drawRoundedRect(cap, kCapRadius, kCapRadius);
     p.setPen(QPen(QColor(0, 0, 0, 70), 1));
     p.drawLine(cap.left() + 5, cap.bottom() - 1, cap.right() - 5, cap.bottom() - 1);
@@ -201,7 +202,7 @@ void PreviewVolumeFader::paintEvent(QPaintEvent *event)
     p.fillRect(QRect(cap.center().x() - 1, cap.top() + 3, 2, cap.height() - 6), QColor(0, 0, 0, 45));
 
     const QRect muteRect = muteButtonRect();
-    p.fillRect(muteRect, QColor(32, 36, 42));
+    p.fillRect(muteRect, QColor(32, 36, 42, 190));
     p.setPen(QColor(220, 228, 240));
     QFont muteFont = font();
     muteFont.setPointSize(11);
