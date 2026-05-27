@@ -895,6 +895,11 @@ std::pair<float, float> PlaybackPipeline::peaksDbFromAudioBurst(const burstcon::
 
 bool PlaybackPipeline::fetchMixedAudioBurstAt(qint64 timelineMs, burstcon::AudioBurst &out) const
 {
+    return fetchMixedAudioPreviewAt(timelineMs, 1, out);
+}
+
+bool PlaybackPipeline::fetchMixedAudioPreviewAt(qint64 timelineMs, int burstCount, burstcon::AudioBurst &out) const
+{
     std::shared_ptr<burstcon::IBurstcon> src;
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -910,8 +915,25 @@ bool PlaybackPipeline::fetchMixedAudioBurstAt(qint64 timelineMs, burstcon::Audio
     const burstcon::BurstIndex rawIdx = burstcon::msToBurstIndex(timelineMs);
     const burstcon::BurstIndex idx = (rawIdx / audioStep) * audioStep;
     burstcon::BurstRequest req;
+    burstcon::AudioBurst first;
     req.index = idx;
-    return src->audioBurst(req, out) && !out.samples.empty();
+    if (!src->audioBurst(req, first) || first.samples.empty()) {
+        return false;
+    }
+    out = std::move(first);
+    const int count = std::max(1, burstCount);
+    for (int i = 1; i < count; ++i) {
+        burstcon::AudioBurst next;
+        req.index = idx + audioStep * i;
+        if (!src->audioBurst(req, next) || next.samples.empty()) {
+            break;
+        }
+        if (next.channels != out.channels || next.sampleRate != out.sampleRate) {
+            break;
+        }
+        out.samples.insert(out.samples.end(), next.samples.begin(), next.samples.end());
+    }
+    return !out.samples.empty();
 }
 
 void PlaybackPipeline::ensureIdlePreviewAudio()
@@ -926,8 +948,9 @@ void PlaybackPipeline::beginScrubPlayback(qint64 timelineMs)
     preparePlaybackAt(tMs);
     if (timer) {
         timer->stop();
-        timer->start(burstcon::msToBurstIndex(tMs));
+        timer->emitAt(burstcon::msToBurstIndex(tMs));
     }
+    requestMixedLevelsSampleAsync(tMs, true);
 }
 
 void PlaybackPipeline::scrubPlaybackSeek(qint64 positionMs)
@@ -938,7 +961,8 @@ void PlaybackPipeline::scrubPlaybackSeek(qint64 positionMs)
     const qint64 tMs = std::max<qint64>(0, positionMs);
     timelineMs.store(tMs);
     timer->stop();
-    timer->start(burstcon::msToBurstIndex(tMs));
+    timer->emitAt(burstcon::msToBurstIndex(tMs));
+    requestMixedLevelsSampleAsync(tMs, true);
 }
 
 void PlaybackPipeline::endScrubPlayback()
@@ -954,13 +978,13 @@ void PlaybackPipeline::endScrubPlayback()
     latestDraftSerial.fetch_add(1);
 }
 
-void PlaybackPipeline::requestMixedLevelsSampleAsync(qint64 timelineMs)
+void PlaybackPipeline::requestMixedLevelsSampleAsync(qint64 timelineMs, bool audiblePreview)
 {
     const bool notify = [&]() {
         std::lock_guard<std::mutex> lock(draftMutex);
         pendingDraftJob.kind = DraftJob::Kind::MixedLevelsSample;
         pendingDraftJob.timelineMs = timelineMs;
-        pendingDraftJob.audiblePreview = scrubPlaybackActive.load();
+        pendingDraftJob.audiblePreview = audiblePreview || scrubPlaybackActive.load();
         const bool wasPending = draftJobPending;
         draftJobPending = true;
         return !wasPending;
@@ -1500,7 +1524,9 @@ void PlaybackPipeline::draftWorkerLoop()
         }
         if (job.kind == DraftJob::Kind::MixedLevelsSample) {
             burstcon::AudioBurst ab;
-            const bool haveAudio = fetchMixedAudioBurstAt(job.timelineMs, ab);
+            const bool haveAudio = job.audiblePreview
+                ? fetchMixedAudioPreviewAt(job.timelineMs, 8, ab)
+                : fetchMixedAudioBurstAt(job.timelineMs, ab);
             const auto levels = haveAudio
                 ? peaksDbFromAudioBurst(ab, previewVolumeLinear.load())
                 : std::pair<float, float>{-60.f, -60.f};

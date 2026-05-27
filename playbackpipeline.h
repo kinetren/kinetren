@@ -98,7 +98,7 @@ public:
     void endScrubPlayback();
     bool isScrubPlaybackActive() const { return scrubPlaybackActive.load(); }
     /// One composited burst at `timelineMs` for meter refresh while stopped/scrubbing.
-    void requestMixedLevelsSampleAsync(qint64 timelineMs);
+    void requestMixedLevelsSampleAsync(qint64 timelineMs, bool audiblePreview = false);
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
     void setProjectSettings(const ProjectSettings &settings);
     void resetProjectCache();
@@ -129,6 +129,7 @@ private:
     };
     static std::pair<float, float> peaksDbFromAudioBurst(const burstcon::AudioBurst &burst, float gainLinear);
     bool fetchMixedAudioBurstAt(qint64 timelineMs, burstcon::AudioBurst &out) const;
+    bool fetchMixedAudioPreviewAt(qint64 timelineMs, int burstCount, burstcon::AudioBurst &out) const;
     struct PrefetchJob {
         qint64 startMs = 0;
         qint64 endMs = 0;

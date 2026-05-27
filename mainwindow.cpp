@@ -793,6 +793,7 @@ void MainWindow::setupTimelineEditorUi()
                 timelineGlobalTimeLabel->setText(timelineEditor->formatTimelineTime(t));
             }
             if (!timelineEditor->isEditingTimelineContent()) {
+                pendingAudibleCursorPreview = true;
                 if (timelineEditor->isScrubbingPlayhead()) {
                     flushPlaybackSync();
                     if (playbackPipeline) {
@@ -1424,7 +1425,11 @@ void MainWindow::refreshMainAudioMeters()
         return;
     }
     lastAudioMeterSampleMs = now;
-    playbackPipeline->requestMixedLevelsSampleAsync(timelineEditor->cursorMs());
+    const bool audiblePreview =
+        pendingAudibleCursorPreview || timelineEditor->isScrubbingPlayhead() ||
+        playbackPipeline->isScrubPlaybackActive();
+    pendingAudibleCursorPreview = false;
+    playbackPipeline->requestMixedLevelsSampleAsync(timelineEditor->cursorMs(), audiblePreview);
 }
 
 void MainWindow::renderDraftProject()

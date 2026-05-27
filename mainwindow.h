@@ -143,6 +143,7 @@ protected:
     AudioLevelMeterWidget *mainAudioMeters = nullptr;
     class PreviewAudioPanel *previewAudioPanel = nullptr;
     qint64 lastAudioMeterSampleMs = 0;
+    bool pendingAudibleCursorPreview = false;
 
     Ui::MainWindow *ui;
 };
