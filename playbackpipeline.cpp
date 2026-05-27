@@ -27,6 +27,8 @@ namespace {
 constexpr int kAudioSampleRate = 48000;
 constexpr int kAudioChannels = 2;
 constexpr int kDefaultAudioSamplesPerBurst = 1024;
+/// Short enough for scrub feedback: 2 * 1024 / 48000 ~= 43 ms.
+constexpr int kScrubAudioPreviewBursts = 4;
 constexpr qint64 kVideoCoverageBucketMs = 33;
 
 qint64 videoCoverageBucketCenterMs(qint64 tMs)
@@ -997,7 +999,7 @@ void PlaybackPipeline::audioPreviewWorkerLoop()
             }
         }
         burstcon::AudioBurst ab;
-        if (!fetchMixedAudioPreviewAt(job.timelineMs, 8, ab)) {
+        if (!fetchMixedAudioPreviewAt(job.timelineMs, kScrubAudioPreviewBursts, ab)) {
             continue;
         }
         if (job.emitFrame && !scrubPlaybackActive.load()) {
@@ -1674,7 +1676,7 @@ void PlaybackPipeline::draftWorkerLoop()
         if (job.kind == DraftJob::Kind::MixedLevelsSample) {
             burstcon::AudioBurst ab;
             const bool haveAudio = job.audiblePreview
-                ? fetchMixedAudioPreviewAt(job.timelineMs, 8, ab)
+                ? fetchMixedAudioPreviewAt(job.timelineMs, kScrubAudioPreviewBursts, ab)
                 : fetchMixedAudioBurstAt(job.timelineMs, ab);
             const auto levels = haveAudio
                 ? peaksDbFromAudioBurst(ab, previewVolumeLinear.load())
