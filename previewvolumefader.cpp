@@ -1,6 +1,7 @@
 #include "previewvolumefader.h"
 
 #include <QFontDatabase>
+#include <QLinearGradient>
 #include <QPainter>
 #include <QMouseEvent>
 
@@ -14,8 +15,9 @@ constexpr float kDefaultDb = 0.f;
 constexpr int kMuteBtnW = 28;
 constexpr int kMuteBtnH = 34;
 constexpr int kMuteBandH = 40;
-constexpr int kHandleW = 18;
-constexpr int kHandleH = 12;
+constexpr int kHandleMarginH = 3;
+constexpr int kHandleH = 14;
+constexpr int kCapRadius = 3;
 } // namespace
 
 PreviewVolumeFader::PreviewVolumeFader(QWidget *parent)
@@ -23,7 +25,7 @@ PreviewVolumeFader::PreviewVolumeFader(QWidget *parent)
 {
     setAttribute(Qt::WA_TranslucentBackground, true);
     setAutoFillBackground(false);
-    setFixedWidth(34);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
     setCursor(Qt::SizeVerCursor);
     setToolTip(tr("Master preview volume. Double-click: 0 dB. M: mute."));
     QFont f = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
@@ -77,8 +79,14 @@ float PreviewVolumeFader::linearToDb(float linear)
 
 QRect PreviewVolumeFader::railRect() const
 {
-    const int hx = (width() - kHandleW) / 2;
-    return QRect(hx, 4, kHandleW, height() - kMuteBandH - 6);
+    return QRect(kHandleMarginH, 4, width() - 2 * kHandleMarginH, height() - kMuteBandH - 6);
+}
+
+QRect PreviewVolumeFader::handleRectForY(int centerY) const
+{
+    const QRect rail = railRect();
+    const int top = std::clamp(centerY - kHandleH / 2, rail.top(), rail.bottom() - kHandleH);
+    return QRect(rail.left(), top, rail.width(), kHandleH);
 }
 
 QRect PreviewVolumeFader::muteButtonRect() const
@@ -156,12 +164,12 @@ void PreviewVolumeFader::mouseDoubleClickEvent(QMouseEvent *event)
 
 QSize PreviewVolumeFader::sizeHint() const
 {
-    return QSize(34, 220);
+    return QSize(48, 220);
 }
 
 QSize PreviewVolumeFader::minimumSizeHint() const
 {
-    return QSize(34, 120);
+    return QSize(36, 120);
 }
 
 void PreviewVolumeFader::paintEvent(QPaintEvent *event)
@@ -172,13 +180,25 @@ void PreviewVolumeFader::paintEvent(QPaintEvent *event)
 
     const QRect rail = railRect();
     const int handleY = muted_ ? rail.bottom() : yForDb(volumeDb_);
-    const int handleTop = std::clamp(handleY - kHandleH / 2, rail.top(), rail.bottom() - kHandleH);
-    const QRect handle(rail.left(), handleTop, rail.width(), kHandleH);
-    p.setPen(QPen(QColor(28, 32, 38), 1));
-    p.setBrush(muted_ ? QColor(178, 58, 58) : QColor(88, 158, 218));
-    p.drawRoundedRect(handle, 3, 3);
-    p.setPen(QPen(QColor(210, 228, 248, 90), 1));
-    p.drawLine(handle.left() + 4, handle.center().y(), handle.right() - 4, handle.center().y());
+    const QRect cap = handleRectForY(handleY);
+
+    const QColor base = muted_ ? QColor(172, 52, 52) : QColor(78, 82, 90);
+    const QColor topHi = muted_ ? QColor(210, 90, 90) : QColor(128, 132, 142);
+    const QColor botSh = muted_ ? QColor(110, 32, 32) : QColor(48, 50, 56);
+    QLinearGradient grad(cap.topLeft(), cap.bottomLeft());
+    grad.setColorAt(0.0, topHi);
+    grad.setColorAt(0.45, base);
+    grad.setColorAt(1.0, botSh);
+    p.setPen(QPen(QColor(12, 14, 18), 1));
+    p.setBrush(grad);
+    p.drawRoundedRect(cap, kCapRadius, kCapRadius);
+    p.setPen(QPen(QColor(0, 0, 0, 70), 1));
+    p.drawLine(cap.left() + 5, cap.bottom() - 1, cap.right() - 5, cap.bottom() - 1);
+    p.setPen(QPen(QColor(255, 255, 255, 40), 1));
+    for (int gx = cap.left() + 7; gx < cap.right() - 7; gx += 4) {
+        p.drawLine(gx, cap.top() + 3, gx, cap.bottom() - 3);
+    }
+    p.fillRect(QRect(cap.center().x() - 1, cap.top() + 3, 2, cap.height() - 6), QColor(0, 0, 0, 45));
 
     const QRect muteRect = muteButtonRect();
     p.fillRect(muteRect, QColor(32, 36, 42));

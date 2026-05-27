@@ -39,6 +39,7 @@ private:
     int yForDb(float db) const;
     float dbForY(int y) const;
     QRect railRect() const;
+    QRect handleRectForY(int centerY) const;
     QRect muteButtonRect() const;
 
     float volumeDb_ = 0.f;

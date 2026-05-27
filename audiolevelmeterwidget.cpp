@@ -18,24 +18,9 @@ constexpr float kBarFallDbPerTick = 2.8f;
 constexpr float kCapFallDbPerTick = 0.2f;
 constexpr int kScaleW = 22;
 constexpr int kChannelGap = 5;
-constexpr int kFaderSlotW = 34;
 constexpr int kMinBarW = 14;
 constexpr int kSegPx = 6;
 constexpr int kSegGap = 2;
-
-void drawLitSegment(QPainter &p, const QRect &slot, const QColor &color)
-{
-    const QRect core = slot.adjusted(1, 1, -1, -1);
-    p.setPen(Qt::NoPen);
-    for (int spread = 4; spread >= 1; --spread) {
-        QColor halo = color;
-        halo.setAlpha(spread == 1 ? 200 : 28 + spread * 14);
-        p.setBrush(halo);
-        p.drawRoundedRect(core.adjusted(-spread, -spread, spread, spread), 2, 2);
-    }
-    p.setBrush(color);
-    p.drawRoundedRect(core, 1, 1);
-}
 } // namespace
 
 AudioLevelMeterWidget::AudioLevelMeterWidget(QWidget *parent)
@@ -55,12 +40,12 @@ AudioLevelMeterWidget::AudioLevelMeterWidget(QWidget *parent)
 
 QSize AudioLevelMeterWidget::sizeHint() const
 {
-    return QSize(128, 220);
+    return QSize(112, 220);
 }
 
 QSize AudioLevelMeterWidget::minimumSizeHint() const
 {
-    return QSize(128, 120);
+    return QSize(104, 120);
 }
 
 void AudioLevelMeterWidget::setCenterWidget(QWidget *widget)
@@ -75,6 +60,7 @@ void AudioLevelMeterWidget::setCenterWidget(QWidget *widget)
     if (centerWidget_) {
         centerWidget_->setParent(this);
         centerWidget_->show();
+        centerWidget_->raise();
         layoutCenterWidget();
     }
 }
@@ -90,12 +76,14 @@ void AudioLevelMeterWidget::layoutCenterWidget()
         return;
     }
     const QRect area = meterAreaRect();
-    const int availForBars =
-        std::max(0, area.width() - kScaleW - kChannelGap - kFaderSlotW - kChannelGap);
+    const int availForBars = std::max(0, area.width() - kScaleW - kChannelGap);
     const int barW = std::max(kMinBarW, (availForBars - kChannelGap) / 2);
     const QRect scaleRect(area.left(), area.top(), kScaleW, area.height());
     const QRect barL(scaleRect.right() + 1, area.top(), barW, area.height());
-    centerWidget_->setGeometry(QRect(barL.right() + 1, 0, kFaderSlotW, height()));
+    const QRect barR(barL.right() + kChannelGap, area.top(), barW, area.height());
+    const int faderW = barR.right() - barL.left();
+    centerWidget_->setGeometry(barL.left(), 0, faderW, height());
+    centerWidget_->raise();
 }
 
 void AudioLevelMeterWidget::resizeEvent(QResizeEvent *event)
@@ -169,7 +157,7 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::Antialiasing, false);
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
     p.fillRect(rect(), QColor(14, 16, 18));
@@ -178,13 +166,12 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
     const QFontMetrics fm(labelFont);
 
     const QRect area = meterAreaRect();
-    const int availForBars =
-        std::max(0, area.width() - kScaleW - kChannelGap - kFaderSlotW - kChannelGap);
+    const int availForBars = std::max(0, area.width() - kScaleW - kChannelGap);
     const int barW = std::max(kMinBarW, (availForBars - kChannelGap) / 2);
 
     const QRect scaleRect(area.left(), area.top(), kScaleW, area.height());
     const QRect barL(scaleRect.right() + 1, area.top(), barW, area.height());
-    const QRect barR(barL.right() + 1 + kFaderSlotW + kChannelGap, area.top(), barW, area.height());
+    const QRect barR(barL.right() + kChannelGap, area.top(), barW, area.height());
 
     auto dbToY = [&](float db, const QRect &bar) {
         const float t = (clampDb(db) - kMeterMinDb) / (kMeterMaxDb - kMeterMinDb);
@@ -230,7 +217,10 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
             p.fillRect(slot, QColor(14, 16, 19));
 
             if (segDb <= levelDb + 0.35f) {
-                drawLitSegment(p, slot, segmentColor(segDb));
+                const QColor col = segmentColor(segDb);
+                p.fillRect(slot.adjusted(1, 1, -1, -1), col);
+                p.setPen(QPen(col.lighter(125), 1));
+                p.drawLine(slot.left() + 2, slot.top() + 1, slot.right() - 2, slot.top() + 1);
             }
         }
 

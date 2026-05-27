@@ -12,7 +12,7 @@ public:
 
     void pushLevelsDb(float leftDb, float rightDb);
 
-    /// Vertical fader slot between L/R bars (e.g. PreviewVolumeFader).
+    /// Fader cap drawn on top of L/R bars (e.g. PreviewVolumeFader).
     void setCenterWidget(QWidget *widget);
 
     QSize sizeHint() const override;
