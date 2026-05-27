@@ -1418,7 +1418,9 @@ void MainWindow::refreshMainAudioMeters()
         return;
     }
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (now - lastAudioMeterSampleMs < 120) {
+    const qint64 sampleIntervalMs =
+        timelineEditor->isScrubbingPlayhead() ? 35 : 120;
+    if (now - lastAudioMeterSampleMs < sampleIntervalMs) {
         return;
     }
     lastAudioMeterSampleMs = now;

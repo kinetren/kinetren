@@ -914,15 +914,6 @@ bool PlaybackPipeline::fetchMixedAudioBurstAt(qint64 timelineMs, burstcon::Audio
     return src->audioBurst(req, out) && !out.samples.empty();
 }
 
-std::pair<float, float> PlaybackPipeline::sampleMixedLevelsDbAt(qint64 timelineMs) const
-{
-    burstcon::AudioBurst ab;
-    if (!fetchMixedAudioBurstAt(timelineMs, ab)) {
-        return {-60.f, -60.f};
-    }
-    return peaksDbFromAudioBurst(ab, previewVolumeLinear.load());
-}
-
 void PlaybackPipeline::ensureIdlePreviewAudio()
 {
     ensureAudioOutput();
@@ -969,6 +960,7 @@ void PlaybackPipeline::requestMixedLevelsSampleAsync(qint64 timelineMs)
         std::lock_guard<std::mutex> lock(draftMutex);
         pendingDraftJob.kind = DraftJob::Kind::MixedLevelsSample;
         pendingDraftJob.timelineMs = timelineMs;
+        pendingDraftJob.audiblePreview = scrubPlaybackActive.load();
         const bool wasPending = draftJobPending;
         draftJobPending = true;
         return !wasPending;
@@ -1507,9 +1499,20 @@ void PlaybackPipeline::draftWorkerLoop()
             continue;
         }
         if (job.kind == DraftJob::Kind::MixedLevelsSample) {
-            const auto levels = sampleMixedLevelsDbAt(job.timelineMs);
+            burstcon::AudioBurst ab;
+            const bool haveAudio = fetchMixedAudioBurstAt(job.timelineMs, ab);
+            const auto levels = haveAudio
+                ? peaksDbFromAudioBurst(ab, previewVolumeLinear.load())
+                : std::pair<float, float>{-60.f, -60.f};
             if (onAudioLevelsReady) {
                 onAudioLevelsReady(levels.first, levels.second);
+            }
+            if (haveAudio && job.audiblePreview && scrubPlaybackActive.load()) {
+                {
+                    std::lock_guard<std::mutex> lock(audioMutex);
+                    clearAudioPendingLocked();
+                }
+                pushAudioBurst(ab);
             }
             continue;
         }

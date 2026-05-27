@@ -125,9 +125,9 @@ private:
         Kind kind = Kind::IdlePreview;
         qint64 timelineMs = 0;
         std::vector<Clip> videoClips;
+        bool audiblePreview = false;
     };
     static std::pair<float, float> peaksDbFromAudioBurst(const burstcon::AudioBurst &burst, float gainLinear);
-    std::pair<float, float> sampleMixedLevelsDbAt(qint64 timelineMs) const;
     bool fetchMixedAudioBurstAt(qint64 timelineMs, burstcon::AudioBurst &out) const;
     struct PrefetchJob {
         qint64 startMs = 0;
