@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <thread>
@@ -416,6 +417,7 @@ PlaybackPipeline::PlaybackPipeline(std::function<void(QImage &&)> onVideoFrameRe
     root = trimmer;
     timer = std::make_unique<burstcon::MonotonicPlaybackTimer>(root);
     draftWorker = std::thread([this]() { draftWorkerLoop(); });
+    audioPreviewWorker = std::thread([this]() { audioPreviewWorkerLoop(); });
     prefetchWorker = std::thread([this]() { prefetchWorkerLoop(); });
 }
 
@@ -430,6 +432,15 @@ PlaybackPipeline::~PlaybackPipeline()
     draftCv.notify_all();
     if (draftWorker.joinable()) {
         draftWorker.join();
+    }
+    {
+        std::lock_guard<std::mutex> lock(audioPreviewMutex);
+        stopAudioPreviewWorker = true;
+        audioPreviewJobPending = false;
+    }
+    audioPreviewCv.notify_all();
+    if (audioPreviewWorker.joinable()) {
+        audioPreviewWorker.join();
     }
     {
         std::lock_guard<std::mutex> lock(prefetchMutex);
@@ -941,6 +952,65 @@ void PlaybackPipeline::ensureIdlePreviewAudio()
     ensureAudioOutput();
 }
 
+void PlaybackPipeline::playAudioPreviewAt(qint64 timelineMs)
+{
+    ensureAudioOutput();
+    requestAudioPreviewAsync(timelineMs, false);
+}
+
+void PlaybackPipeline::requestAudioPreviewAsync(qint64 timelineMs, bool emitFrame)
+{
+    {
+        std::lock_guard<std::mutex> lock(audioPreviewMutex);
+        pendingAudioPreviewJob.timelineMs = timelineMs;
+        pendingAudioPreviewJob.emitFrame = emitFrame;
+        audioPreviewJobPending = true;
+    }
+    audioPreviewCv.notify_one();
+}
+
+void PlaybackPipeline::audioPreviewWorkerLoop()
+{
+    while (true) {
+        AudioPreviewJob job;
+        {
+            std::unique_lock<std::mutex> lock(audioPreviewMutex);
+            audioPreviewCv.wait(lock, [this]() { return stopAudioPreviewWorker || audioPreviewJobPending; });
+            if (stopAudioPreviewWorker) {
+                return;
+            }
+            job = pendingAudioPreviewJob;
+            audioPreviewJobPending = false;
+        }
+        if (job.emitFrame && scrubPlaybackActive.load() && timer) {
+            timer->emitAt(burstcon::msToBurstIndex(job.timelineMs));
+        }
+        if (stopAudioPreviewWorker) {
+            return;
+        }
+        // Coalesce aggressively: if a newer cursor position arrived while decoding the frame, skip
+        // this older audio snippet so scrubbing stays responsive.
+        {
+            std::lock_guard<std::mutex> lock(audioPreviewMutex);
+            if (audioPreviewJobPending) {
+                continue;
+            }
+        }
+        burstcon::AudioBurst ab;
+        if (!fetchMixedAudioPreviewAt(job.timelineMs, 8, ab)) {
+            continue;
+        }
+        if (job.emitFrame && !scrubPlaybackActive.load()) {
+            continue;
+        }
+        {
+            std::lock_guard<std::mutex> lock(audioMutex);
+            clearAudioPendingLocked();
+        }
+        pushAudioBurst(ab);
+    }
+}
+
 void PlaybackPipeline::beginScrubPlayback(qint64 timelineMs)
 {
     const qint64 tMs = std::max<qint64>(0, timelineMs);
@@ -948,9 +1018,9 @@ void PlaybackPipeline::beginScrubPlayback(qint64 timelineMs)
     preparePlaybackAt(tMs);
     if (timer) {
         timer->stop();
-        timer->emitAt(burstcon::msToBurstIndex(tMs));
     }
-    requestMixedLevelsSampleAsync(tMs, true);
+    requestAudioPreviewAsync(tMs, true);
+    requestMixedLevelsSampleAsync(tMs, false);
 }
 
 void PlaybackPipeline::scrubPlaybackSeek(qint64 positionMs)
@@ -961,8 +1031,8 @@ void PlaybackPipeline::scrubPlaybackSeek(qint64 positionMs)
     const qint64 tMs = std::max<qint64>(0, positionMs);
     timelineMs.store(tMs);
     timer->stop();
-    timer->emitAt(burstcon::msToBurstIndex(tMs));
-    requestMixedLevelsSampleAsync(tMs, true);
+    requestAudioPreviewAsync(tMs, true);
+    requestMixedLevelsSampleAsync(tMs, false);
 }
 
 void PlaybackPipeline::endScrubPlayback()
@@ -972,6 +1042,10 @@ void PlaybackPipeline::endScrubPlayback()
     }
     scrubPlaybackActive.store(false);
     running.store(false);
+    {
+        std::lock_guard<std::mutex> lock(audioPreviewMutex);
+        audioPreviewJobPending = false;
+    }
     if (timer) {
         timer->stop();
     }
@@ -984,7 +1058,7 @@ void PlaybackPipeline::requestMixedLevelsSampleAsync(qint64 timelineMs, bool aud
         std::lock_guard<std::mutex> lock(draftMutex);
         pendingDraftJob.kind = DraftJob::Kind::MixedLevelsSample;
         pendingDraftJob.timelineMs = timelineMs;
-        pendingDraftJob.audiblePreview = audiblePreview || scrubPlaybackActive.load();
+        pendingDraftJob.audiblePreview = audiblePreview;
         const bool wasPending = draftJobPending;
         draftJobPending = true;
         return !wasPending;
@@ -1396,6 +1470,43 @@ void PlaybackPipeline::ensureAudioOutput()
 #endif
     audioDevice = audioSink->start();
     if (audioDevice) {
+        audioOutputSampleRate = std::max(1, format.sampleRate());
+        audioOutputChannels = std::max(1, format.channelCount());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        switch (format.sampleFormat()) {
+        case QAudioFormat::UInt8:
+            audioOutputSampleKind = AudioOutputSampleKind::UInt8;
+            audioOutputBytesPerSample = 1;
+            break;
+        case QAudioFormat::Float:
+            audioOutputSampleKind = AudioOutputSampleKind::Float32;
+            audioOutputBytesPerSample = 4;
+            break;
+        case QAudioFormat::Int32:
+            audioOutputSampleKind = AudioOutputSampleKind::Int32;
+            audioOutputBytesPerSample = 4;
+            break;
+        case QAudioFormat::Int16:
+        default:
+            audioOutputSampleKind = AudioOutputSampleKind::Int16;
+            audioOutputBytesPerSample = 2;
+            break;
+        }
+#else
+        if (format.sampleSize() == 8 && format.sampleType() == QAudioFormat::UnSignedInt) {
+            audioOutputSampleKind = AudioOutputSampleKind::UInt8;
+            audioOutputBytesPerSample = 1;
+        } else if (format.sampleType() == QAudioFormat::Float) {
+            audioOutputSampleKind = AudioOutputSampleKind::Float32;
+            audioOutputBytesPerSample = 4;
+        } else if (format.sampleSize() == 32) {
+            audioOutputSampleKind = AudioOutputSampleKind::Int32;
+            audioOutputBytesPerSample = 4;
+        } else {
+            audioOutputSampleKind = AudioOutputSampleKind::Int16;
+            audioOutputBytesPerSample = 2;
+        }
+#endif
         const float hw = std::min(1.f, previewVolumeLinear.load());
         audioSink->setVolume(hw);
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
@@ -1427,8 +1538,8 @@ void PlaybackPipeline::flushAudioPendingToDevice()
     constexpr int kMaxWriteIters = 96;
     int iters = 0;
     while (!audioPcmPending.empty() && iters < kMaxWriteIters) {
-        const char *bytes = reinterpret_cast<const char *>(audioPcmPending.data());
-        const int len = static_cast<int>(audioPcmPending.size() * sizeof(int16_t));
+        const char *bytes = audioPcmPending.data();
+        const int len = static_cast<int>(audioPcmPending.size());
         const qint64 w = audioDevice->write(bytes, len);
         if (w < 0) {
             audioPcmPending.clear();
@@ -1437,7 +1548,7 @@ void PlaybackPipeline::flushAudioPendingToDevice()
         if (w == 0) {
             break;
         }
-        const int consumed = static_cast<int>(w) / static_cast<int>(sizeof(int16_t));
+        const int consumed = static_cast<int>(w);
         if (consumed <= 0) {
             break;
         }
@@ -1464,17 +1575,55 @@ void PlaybackPipeline::pushAudioBurst(const burstcon::AudioBurst &burst)
     if (!audioDevice) {
         return;
     }
-    constexpr size_t kMaxPendingStereoSamples = static_cast<size_t>(48000) * 2 * 8;
+    constexpr size_t kMaxPendingSeconds = 8;
+    const int inChannels = std::max(1, burst.channels);
+    const int outChannels = std::max(1, audioOutputChannels);
+    const int bytesPerSample = std::max(1, audioOutputBytesPerSample);
+    const size_t frames = burst.samples.size() / static_cast<size_t>(inChannels);
     const size_t prev = audioPcmPending.size();
-    audioPcmPending.resize(prev + burst.samples.size());
-    for (size_t i = 0; i < burst.samples.size(); ++i) {
-        const int32_t scaled =
-            static_cast<int32_t>(std::llround(static_cast<double>(burst.samples[i]) * static_cast<double>(gain)));
-        const int32_t v = std::clamp<int32_t>(scaled, -32768, 32767);
-        audioPcmPending[prev + i] = static_cast<int16_t>(v);
+    audioPcmPending.resize(prev + frames * static_cast<size_t>(outChannels * bytesPerSample));
+    char *dst = audioPcmPending.data() + prev;
+    for (size_t frame = 0; frame < frames; ++frame) {
+        for (int c = 0; c < outChannels; ++c) {
+            const int srcC = std::min(c, inChannels - 1);
+            const size_t srcIdx = frame * static_cast<size_t>(inChannels) + static_cast<size_t>(srcC);
+            const int32_t scaled =
+                static_cast<int32_t>(std::llround(static_cast<double>(burst.samples[srcIdx]) * static_cast<double>(gain)));
+            const int32_t v16 = std::clamp<int32_t>(scaled, -32768, 32767);
+            switch (audioOutputSampleKind) {
+            case AudioOutputSampleKind::UInt8: {
+                const uint8_t v = static_cast<uint8_t>(std::clamp<int32_t>((v16 + 32768) / 256, 0, 255));
+                std::memcpy(dst, &v, sizeof(v));
+                dst += sizeof(v);
+                break;
+            }
+            case AudioOutputSampleKind::Float32: {
+                const float v = static_cast<float>(v16) / 32768.f;
+                std::memcpy(dst, &v, sizeof(v));
+                dst += sizeof(v);
+                break;
+            }
+            case AudioOutputSampleKind::Int32: {
+                const int32_t v = static_cast<int32_t>(v16) << 16;
+                std::memcpy(dst, &v, sizeof(v));
+                dst += sizeof(v);
+                break;
+            }
+            case AudioOutputSampleKind::Int16:
+            default: {
+                const int16_t v = static_cast<int16_t>(v16);
+                std::memcpy(dst, &v, sizeof(v));
+                dst += sizeof(v);
+                break;
+            }
+            }
+        }
     }
-    if (audioPcmPending.size() > kMaxPendingStereoSamples) {
-        const size_t drop = audioPcmPending.size() - kMaxPendingStereoSamples;
+    const size_t maxPendingBytes =
+        static_cast<size_t>(std::max(1, audioOutputSampleRate)) *
+        static_cast<size_t>(outChannels * bytesPerSample) * kMaxPendingSeconds;
+    if (audioPcmPending.size() > maxPendingBytes) {
+        const size_t drop = audioPcmPending.size() - maxPendingBytes;
         audioPcmPending.erase(audioPcmPending.begin(),
                               audioPcmPending.begin() + static_cast<std::ptrdiff_t>(drop));
     }

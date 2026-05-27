@@ -97,6 +97,8 @@ public:
     void scrubPlaybackSeek(qint64 timelineMs);
     void endScrubPlayback();
     bool isScrubPlaybackActive() const { return scrubPlaybackActive.load(); }
+    /// Plays a short mixed snippet at the stopped/scrub cursor position.
+    void playAudioPreviewAt(qint64 timelineMs);
     /// One composited burst at `timelineMs` for meter refresh while stopped/scrubbing.
     void requestMixedLevelsSampleAsync(qint64 timelineMs, bool audiblePreview = false);
     QImage renderDraftFrame(qint64 timelineMs, const std::vector<Clip> &videoClips);
@@ -136,6 +138,10 @@ private:
         quint64 serial = 0;
         bool allowWhileRunning = true;
     };
+    struct AudioPreviewJob {
+        qint64 timelineMs = 0;
+        bool emitFrame = false;
+    };
 
     void rebuildGraph(const std::vector<Clip> &videoClips, const std::vector<Clip> &audioClips);
     static bool clipsEqual(const std::vector<Clip> &a, const std::vector<Clip> &b);
@@ -148,6 +154,8 @@ private:
     void flushAudioPendingToDevice();
     void requestIdlePreviewAsync(qint64 tMs, const std::vector<Clip> &videoClips);
     void draftWorkerLoop();
+    void requestAudioPreviewAsync(qint64 timelineMs, bool emitFrame);
+    void audioPreviewWorkerLoop();
     void requestPrefetchAsync(qint64 startMs, qint64 endMs, bool allowWhileRunning);
     void prefetchWorkerLoop();
     void onVideoFrameCacheKeyChanged(bool inserted,
@@ -201,6 +209,12 @@ private:
     bool stopDraftWorker = false;
     bool draftJobPending = false;
     DraftJob pendingDraftJob;
+    std::mutex audioPreviewMutex;
+    std::condition_variable audioPreviewCv;
+    std::thread audioPreviewWorker;
+    bool stopAudioPreviewWorker = false;
+    bool audioPreviewJobPending = false;
+    AudioPreviewJob pendingAudioPreviewJob;
     std::mutex prefetchMutex;
     std::condition_variable prefetchCv;
     std::thread prefetchWorker;
@@ -209,8 +223,13 @@ private:
     PrefetchJob pendingPrefetchJob;
 
     mutable std::mutex audioMutex;
-    /// PCM waiting for QIODevice::write (stereo int16 interleaved). Bounded so memory stays stable.
-    std::vector<int16_t> audioPcmPending;
+    enum class AudioOutputSampleKind { UInt8, Int16, Int32, Float32 };
+    /// PCM waiting for QIODevice::write, already converted to the active QAudioSink format.
+    std::vector<char> audioPcmPending;
+    AudioOutputSampleKind audioOutputSampleKind = AudioOutputSampleKind::Int16;
+    int audioOutputSampleRate = 48000;
+    int audioOutputChannels = 2;
+    int audioOutputBytesPerSample = 2;
     QIODevice *audioDevice = nullptr;
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     QAudioSink *audioSink = nullptr;

@@ -1426,10 +1426,15 @@ void MainWindow::refreshMainAudioMeters()
     }
     lastAudioMeterSampleMs = now;
     const bool audiblePreview =
-        pendingAudibleCursorPreview || timelineEditor->isScrubbingPlayhead() ||
-        playbackPipeline->isScrubPlaybackActive();
+        pendingAudibleCursorPreview &&
+        !timelineEditor->isScrubbingPlayhead() &&
+        !playbackPipeline->isScrubPlaybackActive();
     pendingAudibleCursorPreview = false;
-    playbackPipeline->requestMixedLevelsSampleAsync(timelineEditor->cursorMs(), audiblePreview);
+    const qint64 cursorMs = timelineEditor->cursorMs();
+    if (audiblePreview) {
+        playbackPipeline->playAudioPreviewAt(cursorMs);
+    }
+    playbackPipeline->requestMixedLevelsSampleAsync(cursorMs, false);
 }
 
 void MainWindow::renderDraftProject()
