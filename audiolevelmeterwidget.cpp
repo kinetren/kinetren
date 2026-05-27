@@ -69,6 +69,23 @@ void drawGlowEllipse(QPainter &p, const QPointF &center, qreal radiusX, qreal ra
     p.drawEllipse(QPointF(0.0, 0.0), radiusX, radiusX);
     p.restore();
 }
+
+QColor capGlowColor(float db, int alpha)
+{
+    QColor color = QColor(245, 242, 230);
+    if (db > kMeterNominalTopDb + 0.05f) {
+        color = QColor(255, 120, 95);
+    } else if (db >= -3.f) {
+        color = QColor(255, 85, 70);
+    } else if (db >= -9.f) {
+        color = QColor(255, 205, 60);
+    } else if (db < -18.f) {
+        color = glowColor(db, alpha);
+        return color;
+    }
+    color.setAlpha(alpha);
+    return color;
+}
 } // namespace
 
 AudioLevelMeterWidget::AudioLevelMeterWidget(QWidget *parent)
@@ -241,6 +258,22 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
     }
 
     const int segStep = kSegPx + kSegGap;
+    auto segmentSlotForDb = [&](float db, const QRect &bar) {
+        const int innerTop = bar.top() + 2;
+        const int innerBottom = bar.bottom() - 2;
+        const int innerH = std::max(1, innerBottom - innerTop);
+        const int segCount = std::max(1, innerH / segStep);
+        const int rawY = dbToY(db, bar);
+        return std::clamp(static_cast<int>(std::llround(static_cast<float>(innerBottom - rawY) /
+                                                        static_cast<float>(segStep))),
+                          0, segCount - 1);
+    };
+    auto segmentCenterYForDb = [&](float db, const QRect &bar) {
+        const int innerBottom = bar.bottom() - 2;
+        const int segBottom = innerBottom - segmentSlotForDb(db, bar) * segStep;
+        const int segTop = segBottom - kSegPx;
+        return segTop + kSegPx / 2;
+    };
 
     auto drawChannel = [&](const QRect &bar, float levelDb, float capDb, const char *chLabel) {
         if (bar.width() < 4 || bar.height() < 8) {
@@ -253,6 +286,8 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
         const int innerBottom = bar.bottom() - 2;
         const int innerH = std::max(1, innerBottom - innerTop);
         const int segCount = std::max(1, innerH / segStep);
+        const bool hasCap = capDb > levelDb + 0.4f && capDb > kMeterMinDb + 1.f;
+        const int capSlot = hasCap ? segmentSlotForDb(capDb, bar) : -1;
 
         for (int s = 0; s < segCount; ++s) {
             const int segBottom = innerBottom - s * segStep;
@@ -268,7 +303,7 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
             const QRect slot(bar.left() + 2, segTop, bar.width() - 4, kSegPx);
             p.fillRect(slot, QColor(14, 16, 19));
 
-            if (segDb <= levelDb + 0.35f) {
+            if (segDb <= levelDb + 0.35f || s == capSlot) {
                 const QColor col = segmentColor(segDb);
                 p.fillRect(slot.adjusted(1, 1, -1, -1), col);
                 p.setPen(QPen(col.lighter(125), 1));
@@ -279,20 +314,6 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
         const int yZero = dbToY(kMeterNominalTopDb, bar);
         p.setPen(QPen(QColor(95, 105, 118, 140), 1));
         p.drawLine(bar.left() + 1, yZero, bar.right() - 1, yZero);
-
-        if (capDb > levelDb + 0.4f && capDb > kMeterMinDb + 1.f) {
-            const int yCap = dbToY(capDb, bar);
-            QColor capCol = QColor(245, 242, 230);
-            if (capDb > kMeterNominalTopDb + 0.05f) {
-                capCol = QColor(255, 120, 95);
-            } else if (capDb >= -3.f) {
-                capCol = QColor(255, 85, 70);
-            } else if (capDb >= -9.f) {
-                capCol = QColor(255, 205, 60);
-            }
-            const QRect capLine(bar.left() + 1, yCap - 1, bar.width() - 2, 3);
-            p.fillRect(capLine, capCol);
-        }
 
         p.setPen(QColor(210, 218, 228));
         p.setFont(labelFont);
@@ -320,7 +341,7 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
         for (int y = innerBottom; y >= glowTop; y -= kSegPx + kSegGap) {
             const float rel = 1.f - static_cast<float>(y - innerTop) / static_cast<float>(innerH);
             const float db = kMeterMinDb + rel * (kMeterMaxDb - kMeterMinDb);
-            drawGlowEllipse(p, QPointF(glowX, y), wideRadius * 0.7, 14.0, glowColor(db, 42));
+            drawGlowEllipse(p, QPointF(glowX, y), wideRadius * 0.7, 18.0, glowColor(db, 42));
         }
 
         for (const auto &[topDb, bottomDb] :
@@ -334,14 +355,34 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
             const int zoneTop = dbToY(activeTopDb, barL);
             const int zoneBottom = dbToY(bottomDb, barL);
             const qreal zoneCenterY = (zoneTop + zoneBottom) * 0.5;
-            const qreal zoneRadiusY = std::max<qreal>(24.0, (zoneBottom - zoneTop) * 0.7 + 20.0);
+            const qreal zoneRadiusY = std::max<qreal>(32.0, (zoneBottom - zoneTop) * 0.78 + 24.0);
             drawGlowEllipse(p, QPointF(glowX, zoneCenterY), wideRadius, zoneRadiusY,
                             glowColor((activeTopDb + bottomDb) * 0.5f, 24));
         }
 
-        drawGlowEllipse(p, QPointF(glowX, glowTop), wideRadius * 1.08, 24.0, glowColor(glowLevelDb, 38));
+        drawGlowEllipse(p, QPointF(glowX, glowTop), wideRadius * 1.08, 38.0, glowColor(glowLevelDb, 42));
+        drawGlowEllipse(p, QPointF(glowX, glowTop - 14), wideRadius * 0.95, 34.0, glowColor(glowLevelDb, 28));
         drawGlowEllipse(p, QPointF(glowX, rect().bottom() - 26), wideRadius * 0.85, 28.0,
                         glowColor(std::min(glowLevelDb, -18.f), 20));
         p.restore();
     }
+
+    auto drawCapGlow = [&](const QRect &bar, float levelDb, float capDb) {
+        if (capDb <= levelDb + 0.4f || capDb <= kMeterMinDb + 1.f) {
+            return;
+        }
+
+        const int yCap = segmentCenterYForDb(capDb, bar);
+        p.save();
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.setCompositionMode(QPainter::CompositionMode_Plus);
+        p.setPen(Qt::NoPen);
+        drawGlowEllipse(p, QPointF(bar.center().x(), yCap), bar.width() * 2.7, 20.0, capGlowColor(capDb, 52));
+        drawGlowEllipse(p, QPointF(bar.center().x(), yCap), bar.width() * 4.6, 38.0, capGlowColor(capDb, 26));
+        drawGlowEllipse(p, QPointF(bar.center().x(), yCap - 8), bar.width() * 3.8, 28.0, capGlowColor(capDb, 18));
+        p.restore();
+    };
+
+    drawCapGlow(barL, levelL, capHoldL);
+    drawCapGlow(barR, levelR, capHoldR);
 }
