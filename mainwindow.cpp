@@ -410,10 +410,10 @@ void MainWindow::setupTimelineEditorUi()
     audioMetersHBox->setContentsMargins(0, 0, 0, 0);
     audioMetersHBox->setSpacing(4);
     mainAudioMeters = new AudioLevelMeterWidget(previewAudioPanel->contentRow());
-    mainAudioMeters->setMinimumWidth(112);
+    mainAudioMeters->setMinimumWidth(128);
+    previewVolumeFader = new PreviewVolumeFader(mainAudioMeters);
+    mainAudioMeters->setCenterWidget(previewVolumeFader);
     audioMetersHBox->addWidget(mainAudioMeters, 0);
-    previewVolumeFader = new PreviewVolumeFader(previewAudioPanel->contentRow());
-    audioMetersHBox->addWidget(previewVolumeFader, 0);
     previewMediaLayout->addWidget(previewAudioPanel, 0);
     previewLayout->addWidget(previewMediaRow, 1);
 

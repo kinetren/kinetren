@@ -3,22 +3,39 @@
 #include <QFontDatabase>
 #include <QFontMetrics>
 #include <QPainter>
+#include <QResizeEvent>
 
 #include <algorithm>
 #include <cmath>
 
 namespace {
 constexpr float kMeterMinDb = -48.f;
-constexpr float kMeterMaxDb = 6.f;
+/// Meter scale tops at 0 dB; overload pegs at the 0 dB line (no +headroom band).
+constexpr float kMeterMaxDb = 0.f;
 constexpr float kSilenceDb = -60.f;
 constexpr int kTimerMs = 25;
 constexpr float kBarFallDbPerTick = 2.8f;
 constexpr float kCapFallDbPerTick = 0.2f;
 constexpr int kScaleW = 22;
 constexpr int kChannelGap = 5;
+constexpr int kFaderSlotW = 34;
 constexpr int kMinBarW = 14;
 constexpr int kSegPx = 6;
 constexpr int kSegGap = 2;
+
+void drawLitSegment(QPainter &p, const QRect &slot, const QColor &color)
+{
+    const QRect core = slot.adjusted(1, 1, -1, -1);
+    p.setPen(Qt::NoPen);
+    for (int spread = 4; spread >= 1; --spread) {
+        QColor halo = color;
+        halo.setAlpha(spread == 1 ? 200 : 28 + spread * 14);
+        p.setBrush(halo);
+        p.drawRoundedRect(core.adjusted(-spread, -spread, spread, spread), 2, 2);
+    }
+    p.setBrush(color);
+    p.drawRoundedRect(core, 1, 1);
+}
 } // namespace
 
 AudioLevelMeterWidget::AudioLevelMeterWidget(QWidget *parent)
@@ -38,12 +55,53 @@ AudioLevelMeterWidget::AudioLevelMeterWidget(QWidget *parent)
 
 QSize AudioLevelMeterWidget::sizeHint() const
 {
-    return QSize(112, 220);
+    return QSize(128, 220);
 }
 
 QSize AudioLevelMeterWidget::minimumSizeHint() const
 {
-    return QSize(104, 120);
+    return QSize(128, 120);
+}
+
+void AudioLevelMeterWidget::setCenterWidget(QWidget *widget)
+{
+    if (centerWidget_ == widget) {
+        return;
+    }
+    if (centerWidget_) {
+        centerWidget_->setParent(nullptr);
+    }
+    centerWidget_ = widget;
+    if (centerWidget_) {
+        centerWidget_->setParent(this);
+        centerWidget_->show();
+        layoutCenterWidget();
+    }
+}
+
+QRect AudioLevelMeterWidget::meterAreaRect() const
+{
+    return rect().adjusted(3, 4, -3, -18);
+}
+
+void AudioLevelMeterWidget::layoutCenterWidget()
+{
+    if (!centerWidget_) {
+        return;
+    }
+    const QRect area = meterAreaRect();
+    const int availForBars =
+        std::max(0, area.width() - kScaleW - kChannelGap - kFaderSlotW - kChannelGap);
+    const int barW = std::max(kMinBarW, (availForBars - kChannelGap) / 2);
+    const QRect scaleRect(area.left(), area.top(), kScaleW, area.height());
+    const QRect barL(scaleRect.right() + 1, area.top(), barW, area.height());
+    centerWidget_->setGeometry(QRect(barL.right() + 1, 0, kFaderSlotW, height()));
+}
+
+void AudioLevelMeterWidget::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    layoutCenterWidget();
 }
 
 float AudioLevelMeterWidget::clampDb(float db)
@@ -111,7 +169,7 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, false);
+    p.setRenderHint(QPainter::Antialiasing, true);
     p.setRenderHint(QPainter::TextAntialiasing, true);
 
     p.fillRect(rect(), QColor(14, 16, 18));
@@ -119,13 +177,14 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
     const QFont labelFont = font();
     const QFontMetrics fm(labelFont);
 
-    const QRect area = rect().adjusted(3, 4, -3, -18);
-    const int availForBars = std::max(0, area.width() - kScaleW - kChannelGap);
+    const QRect area = meterAreaRect();
+    const int availForBars =
+        std::max(0, area.width() - kScaleW - kChannelGap - kFaderSlotW - kChannelGap);
     const int barW = std::max(kMinBarW, (availForBars - kChannelGap) / 2);
 
     const QRect scaleRect(area.left(), area.top(), kScaleW, area.height());
     const QRect barL(scaleRect.right() + 1, area.top(), barW, area.height());
-    const QRect barR(barL.right() + kChannelGap, area.top(), barW, area.height());
+    const QRect barR(barL.right() + 1 + kFaderSlotW + kChannelGap, area.top(), barW, area.height());
 
     auto dbToY = [&](float db, const QRect &bar) {
         const float t = (clampDb(db) - kMeterMinDb) / (kMeterMaxDb - kMeterMinDb);
@@ -171,7 +230,7 @@ void AudioLevelMeterWidget::paintEvent(QPaintEvent *event)
             p.fillRect(slot, QColor(14, 16, 19));
 
             if (segDb <= levelDb + 0.35f) {
-                p.fillRect(slot.adjusted(1, 1, -1, -1), segmentColor(segDb));
+                drawLitSegment(p, slot, segmentColor(segDb));
             }
         }
 
