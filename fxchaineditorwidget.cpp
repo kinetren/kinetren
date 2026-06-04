@@ -624,11 +624,16 @@ public:
     explicit BeamformingDirectionWidget(QWidget *parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumHeight(280);
+        setMinimumHeight(360);
+        QSizePolicy sp(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        sp.setHeightForWidth(true);
+        setSizePolicy(sp);
         setMouseTracking(true);
     }
 
-    QSize sizeHint() const override { return QSize(320, 300); }
+    QSize sizeHint() const override { return QSize(420, 440); }
+    bool hasHeightForWidth() const override { return true; }
+    int heightForWidth(int w) const override { return std::clamp(w + 20, 360, 620); }
 
     void setAngles(double azimuthDegIn, double elevationDegIn)
     {
@@ -641,6 +646,13 @@ public:
     {
         arrayCols = std::clamp(colsIn, 1, 16);
         arrayRows = std::clamp(rowsIn, 1, 16);
+        update();
+    }
+
+    void setSpacing(double spacingXcmIn, double spacingYcmIn)
+    {
+        spacingXcm = std::clamp(spacingXcmIn, 0.1, 200.0);
+        spacingYcm = std::clamp(spacingYcmIn, 0.1, 200.0);
         update();
     }
 
@@ -687,10 +699,19 @@ protected:
         p.setBrush(QColor(90, 190, 255));
         p.drawEllipse(tip, 5.5, 5.5);
 
-        const QRectF arrayBox(center.x() - radius * 0.24,
-                              center.y() - radius * 0.24,
-                              radius * 0.48,
-                              radius * 0.48);
+        const double apertureXcm = std::max(0.0, static_cast<double>(arrayCols - 1) * spacingXcm);
+        const double apertureYcm = std::max(0.0, static_cast<double>(arrayRows - 1) * spacingYcm);
+        const double maxApertureCm = std::max({apertureXcm, apertureYcm, 1.0});
+        const double visualAperture = radius * std::clamp(maxApertureCm / 50.0, 0.34, 1.05);
+        const double physW = apertureXcm > 0.0 ? apertureXcm : 0.0;
+        const double physH = apertureYcm > 0.0 ? apertureYcm : 0.0;
+        const double physMax = std::max({physW, physH, 1.0});
+        const double arrayW = visualAperture * (physW / physMax);
+        const double arrayH = visualAperture * (physH / physMax);
+        const QRectF arrayBox(center.x() - arrayW * 0.5,
+                              center.y() - arrayH * 0.5,
+                              std::max(1.0, arrayW),
+                              std::max(1.0, arrayH));
         std::vector<QPointF> micPoints;
         micPoints.reserve(static_cast<size_t>(arrayCols * arrayRows));
         const double dx = arrayBox.width() / static_cast<double>(std::max(1, arrayCols - 1));
@@ -703,22 +724,33 @@ protected:
                                             startY + dy * static_cast<double>(y)));
             }
         }
-        p.setPen(QPen(QColor(210, 225, 245, 80), 1));
-        for (int y = 0; y < arrayRows; ++y) {
-            for (int x = 1; x < arrayCols; ++x) {
-                p.drawLine(micPoints[static_cast<size_t>(y * arrayCols + x - 1)],
-                           micPoints[static_cast<size_t>(y * arrayCols + x)]);
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(QColor(210, 225, 245, 80), 1, Qt::DashLine));
+        if (arrayCols > 1 && arrayRows > 1) {
+            p.drawRect(arrayBox);
+        } else if (arrayCols > 1 || arrayRows > 1) {
+            p.drawLine(micPoints.front(), micPoints.back());
+        }
+        const bool drawInternalGrid = arrayCols * arrayRows <= 36 && dx >= 9.0 && dy >= 9.0;
+        if (drawInternalGrid) {
+            p.setPen(QPen(QColor(210, 225, 245, 55), 1));
+            for (int y = 0; y < arrayRows; ++y) {
+                for (int x = 1; x < arrayCols; ++x) {
+                    p.drawLine(micPoints[static_cast<size_t>(y * arrayCols + x - 1)],
+                               micPoints[static_cast<size_t>(y * arrayCols + x)]);
+                }
+            }
+            for (int x = 0; x < arrayCols; ++x) {
+                for (int y = 1; y < arrayRows; ++y) {
+                    p.drawLine(micPoints[static_cast<size_t>((y - 1) * arrayCols + x)],
+                               micPoints[static_cast<size_t>(y * arrayCols + x)]);
+                }
             }
         }
-        for (int x = 0; x < arrayCols; ++x) {
-            for (int y = 1; y < arrayRows; ++y) {
-                p.drawLine(micPoints[static_cast<size_t>((y - 1) * arrayCols + x)],
-                           micPoints[static_cast<size_t>(y * arrayCols + x)]);
-            }
-        }
-        p.setPen(QPen(QColor(235, 245, 255), 1));
+        const double cell = std::min(arrayCols > 1 ? dx : 999.0, arrayRows > 1 ? dy : 999.0);
+        const double dotR = std::clamp(cell * 0.24, 0.8, 3.2);
+        p.setPen(QPen(QColor(235, 245, 255, arrayCols * arrayRows > 80 ? 120 : 220), 1));
         p.setBrush(QColor(90, 190, 255));
-        const double dotR = arrayCols * arrayRows > 64 ? 2.3 : 3.4;
         for (const QPointF &pt : micPoints) {
             p.drawEllipse(pt, dotR, dotR);
         }
@@ -743,7 +775,11 @@ protected:
         p.setPen(QColor(130, 140, 155));
         p.drawText(map.adjusted(8, 6, -8, -6),
                    Qt::AlignBottom | Qt::AlignLeft,
-                   QStringLiteral("Array %1 x %2, beam drawn from center").arg(arrayCols).arg(arrayRows));
+                   QStringLiteral("Array %1 x %2, spacing %3 x %4 cm")
+                       .arg(arrayCols)
+                       .arg(arrayRows)
+                       .arg(spacingXcm, 0, 'f', 1)
+                       .arg(spacingYcm, 0, 'f', 1));
         p.drawText(tilt.adjusted(-8, -18, 8, -tilt.height() - 4), Qt::AlignCenter, QStringLiteral("Tilt"));
     }
 
@@ -799,6 +835,8 @@ private:
     double elevationDeg = 0.0;
     int arrayCols = 2;
     int arrayRows = 1;
+    double spacingXcm = 8.5;
+    double spacingYcm = 8.5;
 };
 
 static QString automationLabelForKey(const QString &key)
@@ -1739,7 +1777,6 @@ void FxChainEditorWidget::rebuildParamPanel()
         spacing->setValue(p.value(QStringLiteral("micSpacingCm")).toDouble(8.5));
         spacing->setToolTip(tr("Horizontal distance between neighbouring microphones."));
         form->addRow(tr("Mic spacing X"), spacing);
-        connect(spacing, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
         auto *spacingY = new QDoubleSpinBox(paramPanel);
         spacingY->setObjectName(QStringLiteral("fx_bf_spacing_y"));
         spacingY->setRange(0.1, 200.0);
@@ -1749,7 +1786,15 @@ void FxChainEditorWidget::rebuildParamPanel()
         spacingY->setValue(p.value(QStringLiteral("micSpacingYcm")).toDouble(8.5));
         spacingY->setToolTip(tr("Vertical distance between neighbouring microphone rows."));
         form->addRow(tr("Mic spacing Y"), spacingY);
-        connect(spacingY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+        direction->setSpacing(spacing->value(), spacingY->value());
+        connect(spacing, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [direction, spacingY, hook](double v) {
+            direction->setSpacing(v, spacingY->value());
+            hook();
+        });
+        connect(spacingY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [direction, spacing, hook](double v) {
+            direction->setSpacing(spacing->value(), v);
+            hook();
+        });
         auto *speed = new QDoubleSpinBox(paramPanel);
         speed->setObjectName(QStringLiteral("fx_bf_sound_speed"));
         speed->setRange(250.0, 450.0);
