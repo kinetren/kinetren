@@ -624,11 +624,11 @@ public:
     explicit BeamformingDirectionWidget(QWidget *parent = nullptr)
         : QWidget(parent)
     {
-        setMinimumHeight(190);
+        setMinimumHeight(280);
         setMouseTracking(true);
     }
 
-    QSize sizeHint() const override { return QSize(360, 210); }
+    QSize sizeHint() const override { return QSize(320, 300); }
 
     void setAngles(double azimuthDegIn, double elevationDegIn)
     {
@@ -653,28 +653,86 @@ protected:
         p.setRenderHint(QPainter::Antialiasing, true);
         p.fillRect(rect(), QColor(23, 27, 34));
 
-        const QRect map = rect().adjusted(12, 12, -12, -62);
+        const QRect map = directionMapRect();
+        const QPointF center = map.center();
+        const double radius = std::min(map.width(), map.height()) * 0.42;
         p.setPen(QPen(QColor(70, 78, 92), 1));
         p.setBrush(QColor(30, 36, 46));
         p.drawRoundedRect(map, 8, 8);
-        for (int i = 1; i < 4; ++i) {
-            const int x = map.left() + (map.width() * i) / 4;
-            p.drawLine(x, map.top(), x, map.bottom());
-        }
-        for (int i = 1; i < 4; ++i) {
-            const int y = map.top() + (map.height() * i) / 4;
-            p.drawLine(map.left(), y, map.right(), y);
-        }
-        p.setPen(QPen(QColor(105, 150, 210), 1));
-        const int horizonY = map.top() + map.height() / 2;
-        p.drawLine(map.left(), horizonY, map.right(), horizonY);
 
-        const QPointF pt(map.left() + ((azimuthDeg + 180.0) / 360.0) * map.width(),
-                         map.top() + ((90.0 - elevationDeg) / 180.0) * map.height());
+        p.setPen(QPen(QColor(58, 67, 80), 1));
+        for (double k : {0.33, 0.66, 1.0}) {
+            p.drawEllipse(center, radius * k, radius * k);
+        }
+        p.drawLine(QPointF(center.x(), center.y() - radius), QPointF(center.x(), center.y() + radius));
+        p.drawLine(QPointF(center.x() - radius, center.y()), QPointF(center.x() + radius, center.y()));
+
+        constexpr double kPi = 3.14159265358979323846;
+        const double az = azimuthDeg * kPi / 180.0;
+        const double elev = std::clamp(elevationDeg, -90.0, 90.0) * kPi / 180.0;
+        const double beamLen = radius * (0.45 + 0.45 * std::cos(elev));
+        const auto dirPoint = [&](double a, double len) {
+            return QPointF(center.x() + std::sin(a) * len, center.y() - std::cos(a) * len);
+        };
+        const QPointF tip = dirPoint(az, beamLen);
+        const QPointF left = dirPoint(az - 18.0 * kPi / 180.0, radius * 0.34);
+        const QPointF right = dirPoint(az + 18.0 * kPi / 180.0, radius * 0.34);
+        QPolygonF cone;
+        cone << left << tip << right;
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(90, 190, 255, 58));
+        p.drawPolygon(cone);
         p.setPen(QPen(QColor(90, 190, 255), 2));
-        p.setBrush(QColor(90, 190, 255, 190));
-        p.drawLine(QPointF(map.center()), pt);
-        p.drawEllipse(pt, 7.0, 7.0);
+        p.drawLine(center, tip);
+        p.setBrush(QColor(90, 190, 255));
+        p.drawEllipse(tip, 5.5, 5.5);
+
+        const QRectF arrayBox(center.x() - radius * 0.24,
+                              center.y() - radius * 0.24,
+                              radius * 0.48,
+                              radius * 0.48);
+        std::vector<QPointF> micPoints;
+        micPoints.reserve(static_cast<size_t>(arrayCols * arrayRows));
+        const double dx = arrayBox.width() / static_cast<double>(std::max(1, arrayCols - 1));
+        const double dy = arrayBox.height() / static_cast<double>(std::max(1, arrayRows - 1));
+        const double startX = arrayCols == 1 ? center.x() : arrayBox.left();
+        const double startY = arrayRows == 1 ? center.y() : arrayBox.top();
+        for (int y = 0; y < arrayRows; ++y) {
+            for (int x = 0; x < arrayCols; ++x) {
+                micPoints.push_back(QPointF(startX + dx * static_cast<double>(x),
+                                            startY + dy * static_cast<double>(y)));
+            }
+        }
+        p.setPen(QPen(QColor(210, 225, 245, 80), 1));
+        for (int y = 0; y < arrayRows; ++y) {
+            for (int x = 1; x < arrayCols; ++x) {
+                p.drawLine(micPoints[static_cast<size_t>(y * arrayCols + x - 1)],
+                           micPoints[static_cast<size_t>(y * arrayCols + x)]);
+            }
+        }
+        for (int x = 0; x < arrayCols; ++x) {
+            for (int y = 1; y < arrayRows; ++y) {
+                p.drawLine(micPoints[static_cast<size_t>((y - 1) * arrayCols + x)],
+                           micPoints[static_cast<size_t>(y * arrayCols + x)]);
+            }
+        }
+        p.setPen(QPen(QColor(235, 245, 255), 1));
+        p.setBrush(QColor(90, 190, 255));
+        const double dotR = arrayCols * arrayRows > 64 ? 2.3 : 3.4;
+        for (const QPointF &pt : micPoints) {
+            p.drawEllipse(pt, dotR, dotR);
+        }
+
+        const QRect tilt = tiltRect();
+        p.setPen(QPen(QColor(70, 78, 92), 1));
+        p.setBrush(QColor(30, 36, 46));
+        p.drawRoundedRect(tilt, 4, 4);
+        p.setPen(QPen(QColor(80, 90, 106), 1));
+        p.drawLine(tilt.center().x(), tilt.top() + 8, tilt.center().x(), tilt.bottom() - 8);
+        const double elevU = (90.0 - elevationDeg) / 180.0;
+        const int elevY = tilt.top() + static_cast<int>(std::lround(std::clamp(elevU, 0.0, 1.0) * tilt.height()));
+        p.setPen(QPen(QColor(90, 190, 255), 2));
+        p.drawLine(tilt.left() + 4, elevY, tilt.right() - 4, elevY);
 
         p.setPen(QColor(195, 205, 220));
         p.drawText(map.adjusted(8, 6, -8, -6),
@@ -683,30 +741,10 @@ protected:
                        .arg(azimuthDeg, 0, 'f', 1)
                        .arg(elevationDeg, 0, 'f', 1));
         p.setPen(QColor(130, 140, 155));
-        p.drawText(map.adjusted(8, 6, -8, -6), Qt::AlignBottom | Qt::AlignLeft, QStringLiteral("-180"));
-        p.drawText(map.adjusted(8, 6, -8, -6), Qt::AlignBottom | Qt::AlignHCenter, QStringLiteral("0"));
-        p.drawText(map.adjusted(8, 6, -8, -6), Qt::AlignBottom | Qt::AlignRight, QStringLiteral("+180"));
-
-        const QRect grid(rect().left() + 12, rect().bottom() - 48, std::min(170, rect().width() - 24), 36);
-        p.setPen(QPen(QColor(70, 78, 92), 1));
-        p.setBrush(QColor(30, 36, 46));
-        p.drawRoundedRect(grid, 6, 6);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(90, 190, 255));
-        const double dx = grid.width() / static_cast<double>(arrayCols + 1);
-        const double dy = grid.height() / static_cast<double>(arrayRows + 1);
-        for (int y = 0; y < arrayRows; ++y) {
-            for (int x = 0; x < arrayCols; ++x) {
-                p.drawEllipse(QPointF(grid.left() + dx * static_cast<double>(x + 1),
-                                      grid.top() + dy * static_cast<double>(y + 1)),
-                              3.0,
-                              3.0);
-            }
-        }
-        p.setPen(QColor(195, 205, 220));
-        p.drawText(QRect(grid.right() + 10, grid.top(), rect().right() - grid.right() - 20, grid.height()),
-                   Qt::AlignVCenter | Qt::AlignLeft,
-                   QStringLiteral("Array %1 x %2").arg(arrayCols).arg(arrayRows));
+        p.drawText(map.adjusted(8, 6, -8, -6),
+                   Qt::AlignBottom | Qt::AlignLeft,
+                   QStringLiteral("Array %1 x %2, beam drawn from center").arg(arrayCols).arg(arrayRows));
+        p.drawText(tilt.adjusted(-8, -18, 8, -tilt.height() - 4), Qt::AlignCenter, QStringLiteral("Tilt"));
     }
 
     void mousePressEvent(QMouseEvent *event) override { updateFromPoint(event->pos()); }
@@ -721,18 +759,40 @@ protected:
 private:
     void updateFromPoint(const QPoint &pos)
     {
-        const QRect map = rect().adjusted(12, 12, -12, -62);
+        const QRect map = directionMapRect();
         if (!map.isValid()) {
             return;
         }
-        const double x = std::clamp(static_cast<double>(pos.x() - map.left()) / std::max(1, map.width()), 0.0, 1.0);
-        const double y = std::clamp(static_cast<double>(pos.y() - map.top()) / std::max(1, map.height()), 0.0, 1.0);
-        azimuthDeg = x * 360.0 - 180.0;
-        elevationDeg = 90.0 - y * 180.0;
+        const QRect tilt = tiltRect();
+        if (tilt.contains(pos)) {
+            const double y = std::clamp(static_cast<double>(pos.y() - tilt.top()) / std::max(1, tilt.height()), 0.0, 1.0);
+            elevationDeg = 90.0 - y * 180.0;
+        } else {
+            const QPointF center = map.center();
+            const double dx = static_cast<double>(pos.x()) - center.x();
+            const double dy = center.y() - static_cast<double>(pos.y());
+            if (std::hypot(dx, dy) < 3.0) {
+                return;
+            }
+            azimuthDeg = std::atan2(dx, dy) * 180.0 / 3.14159265358979323846;
+        }
         update();
         if (onDirectionChanged) {
             onDirectionChanged(azimuthDeg, elevationDeg);
         }
+    }
+
+    QRect directionMapRect() const
+    {
+        const int side = std::max(120, std::min(width() - 24, height() - 24));
+        const int x = rect().center().x() - side / 2;
+        return QRect(x, 12, side, side);
+    }
+
+    QRect tiltRect() const
+    {
+        const QRect map = directionMapRect();
+        return QRect(map.right() - 26, map.top() + 34, 16, map.height() - 68);
     }
 
     double azimuthDeg = 0.0;
@@ -789,6 +849,30 @@ static FxAutomationMultiLaneWidget *findAutomationMultiLane(QWidget *paramPanel)
         paramPanel->findChild<QWidget *>(QStringLiteral("fx_param_automation_multilane")));
 }
 
+static QJsonArray sanitizeAutomationForType(const QString &type, QJsonArray arr)
+{
+    if (type != QStringLiteral("beamforming")) {
+        return arr;
+    }
+    const QStringList fixedGeometryKeys{QStringLiteral("arrayCols"),
+                                        QStringLiteral("arrayRows"),
+                                        QStringLiteral("micSpacingCm"),
+                                        QStringLiteral("micSpacingYcm"),
+                                        QStringLiteral("soundSpeed")};
+    for (int i = 0; i < arr.size(); ++i) {
+        QJsonObject row = arr.at(i).toObject();
+        if (row.contains(QStringLiteral("angleDeg")) && !row.contains(QStringLiteral("azimuthDeg"))) {
+            row.insert(QStringLiteral("azimuthDeg"), row.value(QStringLiteral("angleDeg")));
+        }
+        row.remove(QStringLiteral("angleDeg"));
+        for (const QString &key : fixedGeometryKeys) {
+            row.remove(key);
+        }
+        arr[i] = row;
+    }
+    return arr;
+}
+
 static QStringList animatableParamKeys(const QString &type)
 {
     if (type == QStringLiteral("pan")) {
@@ -826,8 +910,7 @@ static QStringList animatableParamKeys(const QString &type)
         return {QStringLiteral("gridCols"), QStringLiteral("gridRows"), QStringLiteral("spreadMs")};
     }
     if (type == QStringLiteral("beamforming")) {
-        return {QStringLiteral("azimuthDeg"), QStringLiteral("elevationDeg"), QStringLiteral("arrayCols"),
-                QStringLiteral("arrayRows"), QStringLiteral("micSpacingCm"), QStringLiteral("micSpacingYcm"),
+        return {QStringLiteral("azimuthDeg"), QStringLiteral("elevationDeg"),
                 QStringLiteral("mix"), QStringLiteral("outputGain")};
     }
     if (type == QStringLiteral("softclip")) {
@@ -1247,7 +1330,7 @@ void FxChainEditorWidget::applyParamsFromPanelToChain()
             }
             arr[fxAutomationSelectedKeyframe] = kobj;
         }
-        p.insert(QStringLiteral("automation"), arr);
+        p.insert(QStringLiteral("automation"), sanitizeAutomationForType(type, arr));
     }
 
     slot.insert(QStringLiteral("params"), p);
@@ -2080,26 +2163,6 @@ void FxChainEditorWidget::syncWidgetsFromAutomationKeyframe(int idx)
         if (kf.contains(QStringLiteral("elevationDeg"))) {
             if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_elevation"))) {
                 w->setValue(kf.value(QStringLiteral("elevationDeg")).toDouble());
-            }
-        }
-        if (kf.contains(QStringLiteral("arrayCols"))) {
-            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_bf_cols"))) {
-                w->setValue(kf.value(QStringLiteral("arrayCols")).toInt());
-            }
-        }
-        if (kf.contains(QStringLiteral("arrayRows"))) {
-            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_bf_rows"))) {
-                w->setValue(kf.value(QStringLiteral("arrayRows")).toInt());
-            }
-        }
-        if (kf.contains(QStringLiteral("micSpacingCm"))) {
-            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_spacing"))) {
-                w->setValue(kf.value(QStringLiteral("micSpacingCm")).toDouble());
-            }
-        }
-        if (kf.contains(QStringLiteral("micSpacingYcm"))) {
-            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_spacing_y"))) {
-                w->setValue(kf.value(QStringLiteral("micSpacingYcm")).toDouble());
             }
         }
         if (kf.contains(QStringLiteral("mix"))) {

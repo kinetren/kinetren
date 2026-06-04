@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QList>
 #include <QSet>
+#include <QStringList>
 #include <QVariant>
 
 #include <algorithm>
@@ -1421,6 +1422,23 @@ static double playbackRateAtProgress(const QJsonObject &params, double u01)
     return std::clamp(resolved.value(QStringLiteral("playbackRate")).toDouble(1.0), 0.25, 32.0);
 }
 
+static QJsonObject restoreBeamformingGeometryParams(QJsonObject resolved, const QJsonObject &stored)
+{
+    const QStringList geometryKeys{QStringLiteral("arrayCols"),
+                                   QStringLiteral("arrayRows"),
+                                   QStringLiteral("micSpacingCm"),
+                                   QStringLiteral("micSpacingYcm"),
+                                   QStringLiteral("soundSpeed")};
+    for (const QString &key : geometryKeys) {
+        if (stored.contains(key)) {
+            resolved.insert(key, stored.value(key));
+        } else {
+            resolved.remove(key);
+        }
+    }
+    return resolved;
+}
+
 static double integratePlaybackRate01(const QJsonObject &params, double u0, double u1)
 {
     if (u1 <= u0) {
@@ -2189,6 +2207,9 @@ bool ConAudioFx::burst(BurstType type, const BurstRequest &request, BurstPayload
     ctx.decodeOrigin = request.decodeOrigin;
     const double u = u0;
     QJsonObject resolved = resolveParamsAutomationForBurst(storedParams, u);
+    if (effect->typeId() == QStringLiteral("beamforming")) {
+        resolved = restoreBeamformingGeometryParams(resolved, storedParams);
+    }
     effect->setParams(resolved);
     if (isReverbAudible(resolved) && !effect->process(ab, ctx)) {
         return false;
@@ -2345,6 +2366,10 @@ bool processAudioFxChainInPlace(AudioBurst &ab, const QJsonArray &chain, const A
         std::shared_ptr<IAudioFx> fx = createAudioFx(type, resolved);
         if (!fx) {
             continue;
+        }
+        if (type == QStringLiteral("beamforming")) {
+            resolved = restoreBeamformingGeometryParams(resolved, params);
+            fx->setParams(resolved);
         }
         if (!fx->process(ab, ctx)) {
             return false;
