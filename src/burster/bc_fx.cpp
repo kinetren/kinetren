@@ -977,6 +977,149 @@ private:
     QJsonObject p = defaults();
 };
 
+// --- Audio: delay-and-sum beamforming for a linear microphone array ---
+
+class BeamformingAudioFx : public IAudioFx
+{
+public:
+    QString typeId() const override { return QStringLiteral("beamforming"); }
+    void setParams(const QJsonObject &o) override { p = mergeDefaults(defaults(), o); }
+    QJsonObject params() const override { return p; }
+
+    bool process(AudioBurst &inOut, const AudioFxContext &ctx) override
+    {
+        const int ch = std::max(1, inOut.channels > 0 ? inOut.channels : ctx.channels);
+        const int sr = std::max(1, inOut.sampleRate > 0 ? inOut.sampleRate : ctx.sampleRate);
+        const size_t len = inOut.samples.size();
+        if (len == 0 || ch <= 1) {
+            return true;
+        }
+        const size_t frames = len / static_cast<size_t>(ch);
+        if (frames == 0) {
+            return true;
+        }
+
+        constexpr double kPi = 3.14159265358979323846;
+        const double angleDeg = std::clamp(p.value(QStringLiteral("angleDeg")).toDouble(0.0), -90.0, 90.0);
+        const double spacingM = std::clamp(p.value(QStringLiteral("micSpacingCm")).toDouble(8.5), 0.1, 200.0) * 0.01;
+        const double soundSpeed = std::clamp(p.value(QStringLiteral("soundSpeed")).toDouble(343.0), 250.0, 450.0);
+        const double wet = std::clamp(p.value(QStringLiteral("mix")).toDouble(1.0), 0.0, 1.0);
+        const double outputGain = std::clamp(p.value(QStringLiteral("outputGain")).toDouble(1.0), 0.0, 8.0);
+        if (wet <= 1e-9) {
+            return true;
+        }
+
+        std::vector<double> delays(static_cast<size_t>(ch), 0.0);
+        double minDelay = std::numeric_limits<double>::max();
+        double maxDelay = 0.0;
+        const double sinTheta = std::sin(angleDeg * kPi / 180.0);
+        const double center = 0.5 * static_cast<double>(ch - 1);
+        for (int c = 0; c < ch; ++c) {
+            const double micPosM = (static_cast<double>(c) - center) * spacingM;
+            const double tauSec = micPosM * sinTheta / soundSpeed;
+            delays[static_cast<size_t>(c)] = tauSec * static_cast<double>(sr);
+            minDelay = std::min(minDelay, delays[static_cast<size_t>(c)]);
+        }
+        for (double &d : delays) {
+            d -= minDelay;
+            maxDelay = std::max(maxDelay, d);
+        }
+
+        const int historyFrames = std::clamp(static_cast<int>(std::ceil(maxDelay)) + 3, 4, sr);
+        ensureHistory(ch, historyFrames);
+
+        std::vector<std::vector<double>> ext(static_cast<size_t>(ch));
+        for (int c = 0; c < ch; ++c) {
+            auto &row = ext[static_cast<size_t>(c)];
+            row.reserve(history[static_cast<size_t>(c)].size() + frames);
+            row.insert(row.end(), history[static_cast<size_t>(c)].begin(), history[static_cast<size_t>(c)].end());
+            for (size_t fi = 0; fi < frames; ++fi) {
+                row.push_back(static_cast<double>(inOut.samples[fi * static_cast<size_t>(ch) + static_cast<size_t>(c)]));
+            }
+        }
+
+        auto sampleDelayed = [](const std::vector<double> &row, double pos) -> double {
+            if (row.empty()) {
+                return 0.0;
+            }
+            pos = std::clamp(pos, 0.0, static_cast<double>(row.size() - 1));
+            const int i0 = static_cast<int>(std::floor(pos));
+            const int i1 = std::min<int>(static_cast<int>(row.size() - 1), i0 + 1);
+            const double frac = pos - static_cast<double>(i0);
+            return row[static_cast<size_t>(i0)] * (1.0 - frac) + row[static_cast<size_t>(i1)] * frac;
+        };
+
+        std::vector<int32_t> out = inOut.samples;
+        const double invCh = 1.0 / static_cast<double>(ch);
+        const double histBase = static_cast<double>(historyFrames);
+        for (size_t fi = 0; fi < frames; ++fi) {
+            double beam = 0.0;
+            for (int c = 0; c < ch; ++c) {
+                const double pos = histBase + static_cast<double>(fi) - delays[static_cast<size_t>(c)];
+                beam += sampleDelayed(ext[static_cast<size_t>(c)], pos);
+            }
+            beam *= invCh * outputGain;
+            for (int c = 0; c < ch; ++c) {
+                const size_t idx = fi * static_cast<size_t>(ch) + static_cast<size_t>(c);
+                const double dry = static_cast<double>(inOut.samples[idx]);
+                const double v = dry * (1.0 - wet) + beam * wet;
+                out[idx] = static_cast<int32_t>(std::clamp(v,
+                                                           static_cast<double>(std::numeric_limits<int32_t>::min()),
+                                                           static_cast<double>(std::numeric_limits<int32_t>::max())));
+            }
+        }
+
+        for (int c = 0; c < ch; ++c) {
+            const auto &row = ext[static_cast<size_t>(c)];
+            auto &h = history[static_cast<size_t>(c)];
+            const size_t keep = std::min<size_t>(static_cast<size_t>(historyFrames), row.size());
+            h.assign(row.end() - static_cast<std::ptrdiff_t>(keep), row.end());
+            if (h.size() < static_cast<size_t>(historyFrames)) {
+                h.insert(h.begin(), static_cast<size_t>(historyFrames) - h.size(), 0.0);
+            }
+        }
+
+        inOut.samples = std::move(out);
+        return true;
+    }
+
+private:
+    static QJsonObject defaults()
+    {
+        QJsonObject o;
+        o.insert(QStringLiteral("angleDeg"), 0.0);
+        o.insert(QStringLiteral("micSpacingCm"), 8.5);
+        o.insert(QStringLiteral("soundSpeed"), 343.0);
+        o.insert(QStringLiteral("mix"), 1.0);
+        o.insert(QStringLiteral("outputGain"), 1.0);
+        return o;
+    }
+
+    void ensureHistory(int ch, int frames)
+    {
+        if (lastChannels != ch || lastHistoryFrames != frames) {
+            std::vector<std::vector<double>> next(static_cast<size_t>(ch));
+            for (int c = 0; c < ch; ++c) {
+                auto &dst = next[static_cast<size_t>(c)];
+                dst.assign(static_cast<size_t>(frames), 0.0);
+                if (c < static_cast<int>(history.size())) {
+                    const auto &src = history[static_cast<size_t>(c)];
+                    const size_t copy = std::min(src.size(), dst.size());
+                    std::copy(src.end() - static_cast<std::ptrdiff_t>(copy), src.end(), dst.end() - static_cast<std::ptrdiff_t>(copy));
+                }
+            }
+            history = std::move(next);
+            lastChannels = ch;
+            lastHistoryFrames = frames;
+        }
+    }
+
+    QJsonObject p = defaults();
+    std::vector<std::vector<double>> history;
+    int lastChannels = 0;
+    int lastHistoryFrames = 0;
+};
+
 // --- Audio: soft clip ---
 
 class SoftClipAudioFx : public IAudioFx
@@ -2098,6 +2241,8 @@ std::shared_ptr<IAudioFx> createAudioFx(const QString &typeId, const QJsonObject
         fx = std::make_shared<LowpassAudioFx>();
     } else if (typeId == QStringLiteral("audiogrid")) {
         fx = std::make_shared<AudioGridDupFx>();
+    } else if (typeId == QStringLiteral("beamforming")) {
+        fx = std::make_shared<BeamformingAudioFx>();
     } else if (typeId == QStringLiteral("slowedreverb")) {
         fx = std::make_shared<SlowedReverbAudioFx>();
     }
