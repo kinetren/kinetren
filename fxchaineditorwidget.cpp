@@ -153,8 +153,12 @@ QJsonObject defaultParamsForAudioType(const QString &type)
     }
     if (type == QStringLiteral("beamforming")) {
         QJsonObject o;
-        o.insert(QStringLiteral("angleDeg"), 0.0);
+        o.insert(QStringLiteral("azimuthDeg"), 0.0);
+        o.insert(QStringLiteral("elevationDeg"), 0.0);
+        o.insert(QStringLiteral("arrayCols"), 2);
+        o.insert(QStringLiteral("arrayRows"), 1);
         o.insert(QStringLiteral("micSpacingCm"), 8.5);
+        o.insert(QStringLiteral("micSpacingYcm"), 8.5);
         o.insert(QStringLiteral("soundSpeed"), 343.0);
         o.insert(QStringLiteral("mix"), 1.0);
         o.insert(QStringLiteral("outputGain"), 1.0);
@@ -614,6 +618,129 @@ private:
     double dragStartT = 0.0;
 };
 
+class BeamformingDirectionWidget : public QWidget
+{
+public:
+    explicit BeamformingDirectionWidget(QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        setMinimumHeight(190);
+        setMouseTracking(true);
+    }
+
+    QSize sizeHint() const override { return QSize(360, 210); }
+
+    void setAngles(double azimuthDegIn, double elevationDegIn)
+    {
+        azimuthDeg = std::clamp(azimuthDegIn, -180.0, 180.0);
+        elevationDeg = std::clamp(elevationDegIn, -90.0, 90.0);
+        update();
+    }
+
+    void setArrayShape(int colsIn, int rowsIn)
+    {
+        arrayCols = std::clamp(colsIn, 1, 16);
+        arrayRows = std::clamp(rowsIn, 1, 16);
+        update();
+    }
+
+    std::function<void(double azimuthDeg, double elevationDeg)> onDirectionChanged;
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing, true);
+        p.fillRect(rect(), QColor(23, 27, 34));
+
+        const QRect map = rect().adjusted(12, 12, -12, -62);
+        p.setPen(QPen(QColor(70, 78, 92), 1));
+        p.setBrush(QColor(30, 36, 46));
+        p.drawRoundedRect(map, 8, 8);
+        for (int i = 1; i < 4; ++i) {
+            const int x = map.left() + (map.width() * i) / 4;
+            p.drawLine(x, map.top(), x, map.bottom());
+        }
+        for (int i = 1; i < 4; ++i) {
+            const int y = map.top() + (map.height() * i) / 4;
+            p.drawLine(map.left(), y, map.right(), y);
+        }
+        p.setPen(QPen(QColor(105, 150, 210), 1));
+        const int horizonY = map.top() + map.height() / 2;
+        p.drawLine(map.left(), horizonY, map.right(), horizonY);
+
+        const QPointF pt(map.left() + ((azimuthDeg + 180.0) / 360.0) * map.width(),
+                         map.top() + ((90.0 - elevationDeg) / 180.0) * map.height());
+        p.setPen(QPen(QColor(90, 190, 255), 2));
+        p.setBrush(QColor(90, 190, 255, 190));
+        p.drawLine(QPointF(map.center()), pt);
+        p.drawEllipse(pt, 7.0, 7.0);
+
+        p.setPen(QColor(195, 205, 220));
+        p.drawText(map.adjusted(8, 6, -8, -6),
+                   Qt::AlignTop | Qt::AlignLeft,
+                   QStringLiteral("Azimuth %1 deg, elevation %2 deg")
+                       .arg(azimuthDeg, 0, 'f', 1)
+                       .arg(elevationDeg, 0, 'f', 1));
+        p.setPen(QColor(130, 140, 155));
+        p.drawText(map.adjusted(8, 6, -8, -6), Qt::AlignBottom | Qt::AlignLeft, QStringLiteral("-180"));
+        p.drawText(map.adjusted(8, 6, -8, -6), Qt::AlignBottom | Qt::AlignHCenter, QStringLiteral("0"));
+        p.drawText(map.adjusted(8, 6, -8, -6), Qt::AlignBottom | Qt::AlignRight, QStringLiteral("+180"));
+
+        const QRect grid(rect().left() + 12, rect().bottom() - 48, std::min(170, rect().width() - 24), 36);
+        p.setPen(QPen(QColor(70, 78, 92), 1));
+        p.setBrush(QColor(30, 36, 46));
+        p.drawRoundedRect(grid, 6, 6);
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor(90, 190, 255));
+        const double dx = grid.width() / static_cast<double>(arrayCols + 1);
+        const double dy = grid.height() / static_cast<double>(arrayRows + 1);
+        for (int y = 0; y < arrayRows; ++y) {
+            for (int x = 0; x < arrayCols; ++x) {
+                p.drawEllipse(QPointF(grid.left() + dx * static_cast<double>(x + 1),
+                                      grid.top() + dy * static_cast<double>(y + 1)),
+                              3.0,
+                              3.0);
+            }
+        }
+        p.setPen(QColor(195, 205, 220));
+        p.drawText(QRect(grid.right() + 10, grid.top(), rect().right() - grid.right() - 20, grid.height()),
+                   Qt::AlignVCenter | Qt::AlignLeft,
+                   QStringLiteral("Array %1 x %2").arg(arrayCols).arg(arrayRows));
+    }
+
+    void mousePressEvent(QMouseEvent *event) override { updateFromPoint(event->pos()); }
+
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        if (event->buttons() & Qt::LeftButton) {
+            updateFromPoint(event->pos());
+        }
+    }
+
+private:
+    void updateFromPoint(const QPoint &pos)
+    {
+        const QRect map = rect().adjusted(12, 12, -12, -62);
+        if (!map.isValid()) {
+            return;
+        }
+        const double x = std::clamp(static_cast<double>(pos.x() - map.left()) / std::max(1, map.width()), 0.0, 1.0);
+        const double y = std::clamp(static_cast<double>(pos.y() - map.top()) / std::max(1, map.height()), 0.0, 1.0);
+        azimuthDeg = x * 360.0 - 180.0;
+        elevationDeg = 90.0 - y * 180.0;
+        update();
+        if (onDirectionChanged) {
+            onDirectionChanged(azimuthDeg, elevationDeg);
+        }
+    }
+
+    double azimuthDeg = 0.0;
+    double elevationDeg = 0.0;
+    int arrayCols = 2;
+    int arrayRows = 1;
+};
+
 static QString automationLabelForKey(const QString &key)
 {
     static const QHash<QString, QString> map{{QStringLiteral("mode"), QStringLiteral("Framing")},
@@ -642,7 +769,12 @@ static QString automationLabelForKey(const QString &key)
                                              {QStringLiteral("cutoffHz"), QStringLiteral("Cutoff")},
                                              {QStringLiteral("spreadMs"), QStringLiteral("Spread ms")},
                                              {QStringLiteral("angleDeg"), QStringLiteral("Beam angle")},
+                                             {QStringLiteral("azimuthDeg"), QStringLiteral("Azimuth")},
+                                             {QStringLiteral("elevationDeg"), QStringLiteral("Elevation")},
+                                             {QStringLiteral("arrayCols"), QStringLiteral("Array cols")},
+                                             {QStringLiteral("arrayRows"), QStringLiteral("Array rows")},
                                              {QStringLiteral("micSpacingCm"), QStringLiteral("Mic spacing")},
+                                             {QStringLiteral("micSpacingYcm"), QStringLiteral("Mic spacing Y")},
                                              {QStringLiteral("soundSpeed"), QStringLiteral("Sound speed")},
                                              {QStringLiteral("mix"), QStringLiteral("Mix")},
                                              {QStringLiteral("outputGain"), QStringLiteral("Output gain")},
@@ -694,7 +826,9 @@ static QStringList animatableParamKeys(const QString &type)
         return {QStringLiteral("gridCols"), QStringLiteral("gridRows"), QStringLiteral("spreadMs")};
     }
     if (type == QStringLiteral("beamforming")) {
-        return {QStringLiteral("angleDeg"), QStringLiteral("micSpacingCm"), QStringLiteral("mix"), QStringLiteral("outputGain")};
+        return {QStringLiteral("azimuthDeg"), QStringLiteral("elevationDeg"), QStringLiteral("arrayCols"),
+                QStringLiteral("arrayRows"), QStringLiteral("micSpacingCm"), QStringLiteral("micSpacingYcm"),
+                QStringLiteral("mix"), QStringLiteral("outputGain")};
     }
     if (type == QStringLiteral("softclip")) {
         return {QStringLiteral("drive")};
@@ -1050,11 +1184,23 @@ void FxChainEditorWidget::applyParamsFromPanelToChain()
             p.insert(QStringLiteral("spreadMs"), w->value());
         }
     } else if (type == QStringLiteral("beamforming")) {
-        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_angle"))) {
-            p.insert(QStringLiteral("angleDeg"), w->value());
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_azimuth"))) {
+            p.insert(QStringLiteral("azimuthDeg"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_elevation"))) {
+            p.insert(QStringLiteral("elevationDeg"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_bf_cols"))) {
+            p.insert(QStringLiteral("arrayCols"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_bf_rows"))) {
+            p.insert(QStringLiteral("arrayRows"), w->value());
         }
         if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_spacing"))) {
             p.insert(QStringLiteral("micSpacingCm"), w->value());
+        }
+        if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_spacing_y"))) {
+            p.insert(QStringLiteral("micSpacingYcm"), w->value());
         }
         if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_sound_speed"))) {
             p.insert(QStringLiteral("soundSpeed"), w->value());
@@ -1446,16 +1592,61 @@ void FxChainEditorWidget::rebuildParamPanel()
         form->addRow(tr("Delay spread"), sp);
         connect(sp, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
     } else if (type == QStringLiteral("beamforming")) {
-        auto *angle = new QDoubleSpinBox(paramPanel);
-        angle->setObjectName(QStringLiteral("fx_bf_angle"));
-        angle->setRange(-90.0, 90.0);
-        angle->setDecimals(2);
-        angle->setSingleStep(1.0);
-        angle->setSuffix(QStringLiteral(" deg"));
-        angle->setValue(p.value(QStringLiteral("angleDeg")).toDouble(0.0));
-        angle->setToolTip(tr("Direction of arrival for the beam. 0° is broadside, ±90° is along the array."));
-        form->addRow(tr("Beam angle"), angle);
-        connect(angle, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+        const double azDefault = p.value(QStringLiteral("azimuthDeg")).toDouble(
+            p.value(QStringLiteral("angleDeg")).toDouble(0.0));
+        auto *azimuth = new QDoubleSpinBox(paramPanel);
+        azimuth->setObjectName(QStringLiteral("fx_bf_azimuth"));
+        azimuth->setRange(-180.0, 180.0);
+        azimuth->setDecimals(2);
+        azimuth->setSingleStep(1.0);
+        azimuth->setSuffix(QStringLiteral(" deg"));
+        azimuth->setValue(azDefault);
+        azimuth->setToolTip(tr("Horizontal direction of arrival. 0° is forward on the array map."));
+        auto *elevation = new QDoubleSpinBox(paramPanel);
+        elevation->setObjectName(QStringLiteral("fx_bf_elevation"));
+        elevation->setRange(-90.0, 90.0);
+        elevation->setDecimals(2);
+        elevation->setSingleStep(1.0);
+        elevation->setSuffix(QStringLiteral(" deg"));
+        elevation->setValue(p.value(QStringLiteral("elevationDeg")).toDouble(0.0));
+        elevation->setToolTip(tr("Vertical direction. At ±90° the source is broadside to the planar array."));
+        auto *direction = new BeamformingDirectionWidget(paramPanel);
+        direction->setObjectName(QStringLiteral("fx_bf_direction"));
+        direction->setAngles(azimuth->value(), elevation->value());
+        form->addRow(tr("Direction"), direction);
+        form->addRow(tr("Azimuth"), azimuth);
+        form->addRow(tr("Elevation"), elevation);
+        connect(azimuth, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [direction, elevation, hook](double v) {
+            direction->setAngles(v, elevation->value());
+            hook();
+        });
+        connect(elevation, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [direction, azimuth, hook](double v) {
+            direction->setAngles(azimuth->value(), v);
+            hook();
+        });
+        direction->onDirectionChanged = [azimuth, elevation](double az, double el) {
+            azimuth->setValue(az);
+            elevation->setValue(el);
+        };
+        auto *cols = new QSpinBox(paramPanel);
+        cols->setObjectName(QStringLiteral("fx_bf_cols"));
+        cols->setRange(1, 16);
+        cols->setValue(p.value(QStringLiteral("arrayCols")).toInt(2));
+        form->addRow(tr("Array columns"), cols);
+        auto *rows = new QSpinBox(paramPanel);
+        rows->setObjectName(QStringLiteral("fx_bf_rows"));
+        rows->setRange(1, 16);
+        rows->setValue(p.value(QStringLiteral("arrayRows")).toInt(1));
+        form->addRow(tr("Array rows"), rows);
+        direction->setArrayShape(cols->value(), rows->value());
+        connect(cols, QOverload<int>::of(&QSpinBox::valueChanged), this, [direction, rows, hook](int v) {
+            direction->setArrayShape(v, rows->value());
+            hook();
+        });
+        connect(rows, QOverload<int>::of(&QSpinBox::valueChanged), this, [direction, cols, hook](int v) {
+            direction->setArrayShape(cols->value(), v);
+            hook();
+        });
         auto *spacing = new QDoubleSpinBox(paramPanel);
         spacing->setObjectName(QStringLiteral("fx_bf_spacing"));
         spacing->setRange(0.1, 200.0);
@@ -1463,9 +1654,19 @@ void FxChainEditorWidget::rebuildParamPanel()
         spacing->setSingleStep(0.5);
         spacing->setSuffix(QStringLiteral(" cm"));
         spacing->setValue(p.value(QStringLiteral("micSpacingCm")).toDouble(8.5));
-        spacing->setToolTip(tr("Distance between neighbouring microphone channels in a linear array."));
-        form->addRow(tr("Mic spacing"), spacing);
+        spacing->setToolTip(tr("Horizontal distance between neighbouring microphones."));
+        form->addRow(tr("Mic spacing X"), spacing);
         connect(spacing, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
+        auto *spacingY = new QDoubleSpinBox(paramPanel);
+        spacingY->setObjectName(QStringLiteral("fx_bf_spacing_y"));
+        spacingY->setRange(0.1, 200.0);
+        spacingY->setDecimals(2);
+        spacingY->setSingleStep(0.5);
+        spacingY->setSuffix(QStringLiteral(" cm"));
+        spacingY->setValue(p.value(QStringLiteral("micSpacingYcm")).toDouble(8.5));
+        spacingY->setToolTip(tr("Vertical distance between neighbouring microphone rows."));
+        form->addRow(tr("Mic spacing Y"), spacingY);
+        connect(spacingY, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [hook](double) { hook(); });
         auto *speed = new QDoubleSpinBox(paramPanel);
         speed->setObjectName(QStringLiteral("fx_bf_sound_speed"));
         speed->setRange(250.0, 450.0);
@@ -1870,14 +2071,35 @@ void FxChainEditorWidget::syncWidgetsFromAutomationKeyframe(int idx)
             }
         }
     } else if (type == QStringLiteral("beamforming")) {
-        if (kf.contains(QStringLiteral("angleDeg"))) {
-            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_angle"))) {
-                w->setValue(kf.value(QStringLiteral("angleDeg")).toDouble());
+        if (kf.contains(QStringLiteral("azimuthDeg")) || kf.contains(QStringLiteral("angleDeg"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_azimuth"))) {
+                w->setValue(kf.value(QStringLiteral("azimuthDeg"))
+                                .toDouble(kf.value(QStringLiteral("angleDeg")).toDouble()));
+            }
+        }
+        if (kf.contains(QStringLiteral("elevationDeg"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_elevation"))) {
+                w->setValue(kf.value(QStringLiteral("elevationDeg")).toDouble());
+            }
+        }
+        if (kf.contains(QStringLiteral("arrayCols"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_bf_cols"))) {
+                w->setValue(kf.value(QStringLiteral("arrayCols")).toInt());
+            }
+        }
+        if (kf.contains(QStringLiteral("arrayRows"))) {
+            if (auto *w = paramPanel->findChild<QSpinBox *>(QStringLiteral("fx_bf_rows"))) {
+                w->setValue(kf.value(QStringLiteral("arrayRows")).toInt());
             }
         }
         if (kf.contains(QStringLiteral("micSpacingCm"))) {
             if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_spacing"))) {
                 w->setValue(kf.value(QStringLiteral("micSpacingCm")).toDouble());
+            }
+        }
+        if (kf.contains(QStringLiteral("micSpacingYcm"))) {
+            if (auto *w = paramPanel->findChild<QDoubleSpinBox *>(QStringLiteral("fx_bf_spacing_y"))) {
+                w->setValue(kf.value(QStringLiteral("micSpacingYcm")).toDouble());
             }
         }
         if (kf.contains(QStringLiteral("mix"))) {

@@ -977,7 +977,7 @@ private:
     QJsonObject p = defaults();
 };
 
-// --- Audio: delay-and-sum beamforming for a linear microphone array ---
+// --- Audio: delay-and-sum beamforming for a planar microphone array ---
 
 class BeamformingAudioFx : public IAudioFx
 {
@@ -1000,8 +1000,13 @@ public:
         }
 
         constexpr double kPi = 3.14159265358979323846;
-        const double angleDeg = std::clamp(p.value(QStringLiteral("angleDeg")).toDouble(0.0), -90.0, 90.0);
-        const double spacingM = std::clamp(p.value(QStringLiteral("micSpacingCm")).toDouble(8.5), 0.1, 200.0) * 0.01;
+        const double azimuthDeg = std::clamp(p.value(QStringLiteral("azimuthDeg"))
+                                                 .toDouble(p.value(QStringLiteral("angleDeg")).toDouble(0.0)),
+                                             -180.0,
+                                             180.0);
+        const double elevationDeg = std::clamp(p.value(QStringLiteral("elevationDeg")).toDouble(0.0), -90.0, 90.0);
+        const double spacingXM = std::clamp(p.value(QStringLiteral("micSpacingCm")).toDouble(8.5), 0.1, 200.0) * 0.01;
+        const double spacingYM = std::clamp(p.value(QStringLiteral("micSpacingYcm")).toDouble(8.5), 0.1, 200.0) * 0.01;
         const double soundSpeed = std::clamp(p.value(QStringLiteral("soundSpeed")).toDouble(343.0), 250.0, 450.0);
         const double wet = std::clamp(p.value(QStringLiteral("mix")).toDouble(1.0), 0.0, 1.0);
         const double outputGain = std::clamp(p.value(QStringLiteral("outputGain")).toDouble(1.0), 0.0, 8.0);
@@ -1012,11 +1017,23 @@ public:
         std::vector<double> delays(static_cast<size_t>(ch), 0.0);
         double minDelay = std::numeric_limits<double>::max();
         double maxDelay = 0.0;
-        const double sinTheta = std::sin(angleDeg * kPi / 180.0);
-        const double center = 0.5 * static_cast<double>(ch - 1);
+        const double az = azimuthDeg * kPi / 180.0;
+        const double el = elevationDeg * kPi / 180.0;
+        const double dirX = std::sin(az) * std::cos(el);
+        const double dirY = std::cos(az) * std::cos(el);
+        int cols = std::clamp(p.value(QStringLiteral("arrayCols")).toInt(std::min(ch, 2)), 1, 16);
+        cols = std::min(cols, ch);
+        int rows = std::clamp(p.value(QStringLiteral("arrayRows")).toInt(1), 1, 16);
+        rows = std::max(rows, (ch + cols - 1) / cols);
+        rows = std::min(rows, 16);
+        const double centerX = 0.5 * static_cast<double>(cols - 1);
+        const double centerY = 0.5 * static_cast<double>(rows - 1);
         for (int c = 0; c < ch; ++c) {
-            const double micPosM = (static_cast<double>(c) - center) * spacingM;
-            const double tauSec = micPosM * sinTheta / soundSpeed;
+            const int col = c % cols;
+            const int row = c / cols;
+            const double x = (static_cast<double>(col) - centerX) * spacingXM;
+            const double y = (static_cast<double>(row) - centerY) * spacingYM;
+            const double tauSec = (x * dirX + y * dirY) / soundSpeed;
             delays[static_cast<size_t>(c)] = tauSec * static_cast<double>(sr);
             minDelay = std::min(minDelay, delays[static_cast<size_t>(c)]);
         }
@@ -1087,8 +1104,12 @@ private:
     static QJsonObject defaults()
     {
         QJsonObject o;
-        o.insert(QStringLiteral("angleDeg"), 0.0);
+        o.insert(QStringLiteral("azimuthDeg"), 0.0);
+        o.insert(QStringLiteral("elevationDeg"), 0.0);
+        o.insert(QStringLiteral("arrayCols"), 2);
+        o.insert(QStringLiteral("arrayRows"), 1);
         o.insert(QStringLiteral("micSpacingCm"), 8.5);
+        o.insert(QStringLiteral("micSpacingYcm"), 8.5);
         o.insert(QStringLiteral("soundSpeed"), 343.0);
         o.insert(QStringLiteral("mix"), 1.0);
         o.insert(QStringLiteral("outputGain"), 1.0);
