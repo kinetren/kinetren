@@ -61,9 +61,16 @@ pub trait MediaSource: Send {
     fn info(&self) -> &MediaInfo;
     /// Sample-accurate: burst `idx` покрывает сэмплы источника [idx*1024, (idx+1)*1024).
     fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError>;
-    fn read_video_frame(&mut self, pts: Tick, quality: Option<Quality>)
-    -> Result<VideoFrame, MediaError>;
+    fn read_video_frame(
+        &mut self,
+        pts: Tick,
+        quality: Option<Quality>,
+    ) -> Result<VideoFrame, MediaError>;
     fn keyframe_before(&self, pts: Tick) -> Option<Tick>;
 }
 
+/// Кадров в блоке уровня 0 peak-пирамиды (docs/media-index.md).
+pub const PEAK_BLOCK_FRAMES: usize = 256;
+
+pub mod index;
 pub mod synthetic;

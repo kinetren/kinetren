@@ -19,7 +19,9 @@ pub struct SourceId(pub u64);
 pub enum BurstKind {
     Audio,
     /// None = полное разрешение источника.
-    Video { quality: Option<(u32, u32)> },
+    Video {
+        quality: Option<(u32, u32)>,
+    },
 }
 
 impl BurstKind {
@@ -82,14 +84,15 @@ impl IntervalSet {
         let (mut start, mut end) = (idx, idx + 1);
         // сосед слева (может содержать или примыкать)
         if let Some((&s, &e)) = self.runs.range(..=idx).next_back()
-            && e >= start {
-                if e >= end {
-                    return; // уже покрыт
-                }
-                start = s;
-                end = end.max(e);
-                self.runs.remove(&s);
+            && e >= start
+        {
+            if e >= end {
+                return; // уже покрыт
             }
+            start = s;
+            end = end.max(e);
+            self.runs.remove(&s);
+        }
         // сосед справа (примыкание end == next start)
         if let Some((&s, &e)) = self.runs.range(end..=end).next() {
             self.runs.remove(&s);
@@ -100,15 +103,16 @@ impl IntervalSet {
 
     fn remove(&mut self, idx: i64) {
         if let Some((&s, &e)) = self.runs.range(..=idx).next_back()
-            && idx < e {
-                self.runs.remove(&s);
-                if s < idx {
-                    self.runs.insert(s, idx);
-                }
-                if idx + 1 < e {
-                    self.runs.insert(idx + 1, e);
-                }
+            && idx < e
+        {
+            self.runs.remove(&s);
+            if s < idx {
+                self.runs.insert(s, idx);
             }
+            if idx + 1 < e {
+                self.runs.insert(idx + 1, e);
+            }
+        }
     }
 
     fn query(&self, range: std::ops::Range<i64>) -> Vec<std::ops::Range<i64>> {
@@ -178,7 +182,12 @@ impl BurstCache {
         }
     }
 
-    pub fn get_video(&self, source: SourceId, quality: Option<Quality>, idx: i64) -> Option<Arc<VideoFrame>> {
+    pub fn get_video(
+        &self,
+        source: SourceId,
+        quality: Option<Quality>,
+        idx: i64,
+    ) -> Option<Arc<VideoFrame>> {
         match self.get(BurstKey { source, kind: BurstKind::video(quality), idx })? {
             Payload::Video(f) => Some(f),
             Payload::Audio(_) => unreachable!("video key holds audio payload"),
@@ -203,8 +212,17 @@ impl BurstCache {
         self.insert(BurstKey { source, kind: BurstKind::Audio, idx }, Payload::Audio(burst));
     }
 
-    pub fn insert_video(&self, source: SourceId, quality: Option<Quality>, idx: i64, frame: Arc<VideoFrame>) {
-        self.insert(BurstKey { source, kind: BurstKind::video(quality), idx }, Payload::Video(frame));
+    pub fn insert_video(
+        &self,
+        source: SourceId,
+        quality: Option<Quality>,
+        idx: i64,
+        frame: Arc<VideoFrame>,
+    ) {
+        self.insert(
+            BurstKey { source, kind: BurstKind::video(quality), idx },
+            Payload::Video(frame),
+        );
     }
 
     pub fn insert(&self, key: BurstKey, payload: Payload) {

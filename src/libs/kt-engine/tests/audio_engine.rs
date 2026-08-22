@@ -29,7 +29,14 @@ fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
     p
 }
 
-fn audio_clip(id: u64, lane: u32, start_f: i64, dur_f: i64, src_in_f: i64, media: u64) -> ClipEvent {
+fn audio_clip(
+    id: u64,
+    lane: u32,
+    start_f: i64,
+    dur_f: i64,
+    src_in_f: i64,
+    media: u64,
+) -> ClipEvent {
     ClipEvent {
         id: ClipId(id),
         link_group: None,
@@ -59,10 +66,8 @@ fn t1_butt_joined_clips_are_sample_exact() {
     // Два клипа встык, второй продолжает источник с того же места:
     // выход обязан быть НЕОТЛИЧИМ от сплошного чтения источника. Exact f32.
     let d = 3 * AUDIO_BURST_FRAMES as i64 + 136; // границы клипов не на burst'ах
-    let p = project_with_audio_clips(vec![
-        audio_clip(1, 0, 0, d, 0, 1),
-        audio_clip(2, 0, d, d, d, 1),
-    ]);
+    let p =
+        project_with_audio_clips(vec![audio_clip(1, 0, 0, d, 0, 1), audio_clip(2, 0, d, d, d, 1)]);
     let r = AudioRenderer::new(&p);
     let mut f = direct(&[(1, AudioPattern::Ramp)]);
     let total = (2 * d) as usize;
@@ -72,11 +77,7 @@ fn t1_butt_joined_clips_are_sample_exact() {
     for s in 0..total as i64 {
         for ch in 0..CH {
             let expect = SyntheticSource::sample_at(AudioPattern::Ramp, s, ch);
-            assert_eq!(
-                out[s as usize * CH + ch],
-                expect,
-                "разрыв на сэмпле {s} (шов на {d})"
-            );
+            assert_eq!(out[s as usize * CH + ch], expect, "разрыв на сэмпле {s} (шов на {d})");
         }
     }
 }
@@ -85,17 +86,18 @@ fn t1_butt_joined_clips_are_sample_exact() {
 fn t1_second_clip_reads_its_own_source_window() {
     // Второй клип с source_in=0: после шва выход = источник с нуля.
     let d = 2 * AUDIO_BURST_FRAMES as i64 + 40;
-    let p = project_with_audio_clips(vec![
-        audio_clip(1, 0, 0, d, 0, 1),
-        audio_clip(2, 0, d, d, 0, 1),
-    ]);
+    let p =
+        project_with_audio_clips(vec![audio_clip(1, 0, 0, d, 0, 1), audio_clip(2, 0, d, d, 0, 1)]);
     let r = AudioRenderer::new(&p);
     let mut f = direct(&[(1, AudioPattern::Ramp)]);
     let total = (2 * d) as usize;
     let mut out = vec![0f32; total * CH];
     r.render_frames(&mut f, 0, &mut out);
     for s in 0..d {
-        assert_eq!(out[(d + s) as usize * CH], SyntheticSource::sample_at(AudioPattern::Ramp, s, 0));
+        assert_eq!(
+            out[(d + s) as usize * CH],
+            SyntheticSource::sample_at(AudioPattern::Ramp, s, 0)
+        );
     }
 }
 
@@ -112,7 +114,8 @@ fn t2_two_clip_overlap_is_equal_power() {
         audio_clip(2, 0, start2, d, 0, 2),
     ]);
     let r = AudioRenderer::new(&p);
-    let mut f = direct(&[(1, AudioPattern::Dc { value: 1.0 }), (2, AudioPattern::Dc { value: 1.0 })]);
+    let mut f =
+        direct(&[(1, AudioPattern::Dc { value: 1.0 }), (2, AudioPattern::Dc { value: 1.0 })]);
     let total = (start2 + d) as usize;
     let mut out = vec![0f32; total * CH];
     assert_eq!(r.render_frames(&mut f, 0, &mut out).underruns, 0);
@@ -126,10 +129,7 @@ fn t2_two_clip_overlap_is_equal_power() {
             1.0f32 // только поздний
         };
         let got = out[s as usize * CH];
-        assert!(
-            (got - expect).abs() < 1e-6,
-            "сэмпл {s}: got {got}, expect {expect}"
-        );
+        assert!((got - expect).abs() < 1e-6, "сэмпл {s}: got {got}, expect {expect}");
     }
     // unity power на равных входах в зоне перекрытия: w1²+w2² == 1
     for s in start2..d {
@@ -157,18 +157,20 @@ fn t2_three_clip_overlap_is_one_over_n() {
     r.render_frames(&mut f, 0, &mut out);
     // на сэмпле 300 активны все три: каждый с весом 1/3
     let got = out[300 * CH];
-    assert!((got - 0.9f32).abs() < 1e-6, "1/N микс трёх равных DC должен дать исходный уровень, got {got}");
+    assert!(
+        (got - 0.9f32).abs() < 1e-6,
+        "1/N микс трёх равных DC должен дать исходный уровень, got {got}"
+    );
 }
 
 #[test]
 fn t2_different_lanes_sum_without_weights() {
     let d = AUDIO_BURST_FRAMES as i64;
-    let p = project_with_audio_clips(vec![
-        audio_clip(1, 0, 0, d, 0, 1),
-        audio_clip(2, 1, 0, d, 0, 2),
-    ]);
+    let p =
+        project_with_audio_clips(vec![audio_clip(1, 0, 0, d, 0, 1), audio_clip(2, 1, 0, d, 0, 2)]);
     let r = AudioRenderer::new(&p);
-    let mut f = direct(&[(1, AudioPattern::Dc { value: 0.25 }), (2, AudioPattern::Dc { value: 0.5 })]);
+    let mut f =
+        direct(&[(1, AudioPattern::Dc { value: 0.25 }), (2, AudioPattern::Dc { value: 0.5 })]);
     let mut out = vec![0f32; d as usize * CH];
     r.render_frames(&mut f, 0, &mut out);
     assert_eq!(out[0], 0.75);
@@ -308,7 +310,10 @@ fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
         max_video_bytes: usize::MAX,
     }));
     let mut warm = DirectFetcher::new(Some(cache.clone()));
-    warm.add_source(MediaId(1), Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Ramp)));
+    warm.add_source(
+        MediaId(1),
+        Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Ramp)),
+    );
     // prefetch = wanted-ключи региона (как это будет делать prefetch-поток)
     for (media, bursts) in r.wanted_audio_bursts(region.clone()) {
         for b in bursts {
@@ -321,7 +326,10 @@ fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
 
     // давление: другой источник вымывает LRU
     let mut noise = DirectFetcher::new(Some(cache.clone()));
-    noise.add_source(MediaId(2), Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence)));
+    noise.add_source(
+        MediaId(2),
+        Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence)),
+    );
     for b in 100..112 {
         noise.audio_burst(MediaId(2), b);
     }
@@ -332,7 +340,8 @@ fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
 
     // wrap на прогретой голове не даёт промахов
     let mut cf = CacheFetcher::new(cache.clone());
-    let head_frames = 2 * AUDIO_BURST_FRAMES as i64 - (region.start - head0 * AUDIO_BURST_FRAMES as i64);
+    let head_frames =
+        2 * AUDIO_BURST_FRAMES as i64 - (region.start - head0 * AUDIO_BURST_FRAMES as i64);
     let mut out = vec![0f32; (head_frames.min(region_len)) as usize * CH];
     r.render_frames(&mut cf, region.start, &mut out);
     assert_eq!(cf.miss_count(), 0, "прогретая голова региона не должна давать Playback-промахов");

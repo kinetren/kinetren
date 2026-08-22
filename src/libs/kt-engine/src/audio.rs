@@ -176,8 +176,8 @@ impl AudioRenderer {
         while done < total {
             let tl = region.start + (start_frame - region.start + done).rem_euclid(len);
             let chunk = (region.end - tl).min(total - done);
-            let sub =
-                &mut out[(done as usize) * AUDIO_CHANNELS..((done + chunk) as usize) * AUDIO_CHANNELS];
+            let sub = &mut out
+                [(done as usize) * AUDIO_CHANNELS..((done + chunk) as usize) * AUDIO_CHANNELS];
             let s = self.render_frames(fetcher, tl, sub);
             stats.underruns += s.underruns;
             done += chunk;

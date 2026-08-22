@@ -15,21 +15,52 @@ pub const MIN_CLIP_DURATION: Tick = Tick(90);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    AddMedia { id: MediaId, path: String },
+    AddMedia {
+        id: MediaId,
+        path: String,
+    },
     AddClip(ClipEvent),
-    RemoveClip { id: ClipId },
+    RemoveClip {
+        id: ClipId,
+    },
     /// Двигает клип (и всю его link-группу — тем же смещением).
-    MoveClip { id: ClipId, new_start: Tick, new_lane: u32 },
+    MoveClip {
+        id: ClipId,
+        new_start: Tick,
+        new_lane: u32,
+    },
     /// Триммит начало: start/duration/source_in двигаются согласованно.
-    TrimStart { id: ClipId, new_start: Tick },
-    TrimEnd { id: ClipId, new_end: Tick },
+    TrimStart {
+        id: ClipId,
+        new_start: Tick,
+    },
+    TrimEnd {
+        id: ClipId,
+        new_end: Tick,
+    },
     /// Разрез в точке `at` (абсолютный тик). Правая половина получает новый id
     /// и новую link-группу (правые половины A/V-пары остаются связаны).
-    Split { id: ClipId, at: Tick, new_id: ClipId, new_group: Option<GroupId> },
-    SetGain { id: ClipId, gain_db: f32 },
-    SetFx { id: ClipId, fx: Vec<FxInstance> },
-    LinkClips { ids: Vec<ClipId>, group: GroupId },
-    UnlinkClip { id: ClipId },
+    Split {
+        id: ClipId,
+        at: Tick,
+        new_id: ClipId,
+        new_group: Option<GroupId>,
+    },
+    SetGain {
+        id: ClipId,
+        gain_db: f32,
+    },
+    SetFx {
+        id: ClipId,
+        fx: Vec<FxInstance>,
+    },
+    LinkClips {
+        ids: Vec<ClipId>,
+        group: GroupId,
+    },
+    UnlinkClip {
+        id: ClipId,
+    },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
