@@ -223,11 +223,12 @@ fn run(args: &[String]) -> i32 {
             match kt_engine::export_mp4(&project, audio_sources, video_sources, output) {
                 Ok(stats) => {
                     eprintln!(
-                        "ok: {} видеокадров, {} аудио-кадров, underruns {}, недостающих слоёв {}",
+                        "ok: {} видеокадров, {} аудио-кадров, underruns {}, недостающих слоёв {}, энкодер {}",
                         stats.video_frames,
                         stats.audio_frames,
                         stats.underruns,
-                        stats.missing_video_layers
+                        stats.missing_video_layers,
+                        stats.encoder
                     );
                     0
                 }

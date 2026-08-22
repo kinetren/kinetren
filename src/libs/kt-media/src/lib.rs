@@ -75,4 +75,6 @@ pub const PEAK_BLOCK_FRAMES: usize = 256;
 #[cfg(feature = "ffmpeg")]
 pub mod ffmpeg;
 pub mod index;
+#[cfg(feature = "ffmpeg")]
+pub mod muxer;
 pub mod synthetic;

@@ -101,8 +101,8 @@ impl KtApp {
                     let _ = tx.send(RenderMsg::Done(
                         res.map(|s| {
                             format!(
-                                "{} кадров видео, {} кадров аудио, underruns {}",
-                                s.video_frames, s.audio_frames, s.underruns
+                                "{} кадров видео, {} кадров аудио, underruns {}, энкодер {}",
+                                s.video_frames, s.audio_frames, s.underruns, s.encoder
                             )
                         })
                         .map_err(|e| e.to_string()),
@@ -135,6 +135,10 @@ impl KtApp {
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.label(format!("Файл: {}", job.out_path));
+                let encoders = kt_media::muxer::available_encoders();
+                if !encoders.is_empty() {
+                    ui.weak(format!("Доступные энкодеры: {}", encoders.join(", ")));
+                }
                 let frac = if job.progress.total_video_frames > 0 {
                     job.progress.video_frames as f32 / job.progress.total_video_frames as f32
                 } else {

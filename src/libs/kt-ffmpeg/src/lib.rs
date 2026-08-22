@@ -47,6 +47,27 @@ pub struct Probe {
     pub height: u32,
 }
 
+/// Конфигурация экспорта.
+#[derive(Debug, Clone)]
+pub struct MuxConfig {
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    /// CRF/CQ/QP — смысл зависит от энкодера (23 ≈ визуально прозрачно).
+    pub quality: u32,
+    pub audio_bitrate: u32,
+    /// Принудительный энкодер (иначе автовыбор с hw-приоритетом).
+    pub force_encoder: Option<String>,
+}
+
+/// Выбранный энкодер (для показа в UI).
+#[derive(Debug, Clone)]
+pub struct EncoderChoice {
+    pub name: String,
+    pub hardware: bool,
+}
+
 /// Кадр в RGBA.
 pub struct RgbaFrame {
     pub pts: Tick,
@@ -74,6 +95,7 @@ macro_rules! version_module {
             }
             crate::ffmpeg_api!();
             include!("source_impl.rs");
+            include!("muxer_impl.rs");
         }
     };
 }
@@ -124,6 +146,68 @@ pub fn backend_info() -> Option<BackendInfo> {
 
 pub fn backend_error() -> Option<String> {
     init().as_ref().err().cloned()
+}
+
+/// Список доступных в системе видео-энкодеров (для UI).
+pub fn available_encoders() -> Vec<String> {
+    match init().as_ref() {
+        Ok((Backend::V6(api), _)) => v6::available_encoders(api),
+        Ok((Backend::V7(api), _)) => v7::available_encoders(api),
+        Ok((Backend::V8(api), _)) => v8::available_encoders(api),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Муксер MP4 — динамическая диспетчеризация по версии.
+pub enum Muxer {
+    V6(v6::Muxer),
+    V7(v7::Muxer),
+    V8(v8::Muxer),
+}
+
+impl Muxer {
+    pub fn open(cfg: &MuxConfig) -> Result<Muxer, FfError> {
+        let (backend, _) = init().as_ref().map_err(|e| FfError::NotFound(e.clone()))?;
+        match backend {
+            Backend::V6(api) => v6::Muxer::open(api, cfg).map(Muxer::V6),
+            Backend::V7(api) => v7::Muxer::open(api, cfg).map(Muxer::V7),
+            Backend::V8(api) => v8::Muxer::open(api, cfg).map(Muxer::V8),
+        }
+    }
+
+    pub fn encoder_name(&self) -> &str {
+        match self {
+            Muxer::V6(m) => m.encoder_name(),
+            Muxer::V7(m) => m.encoder_name(),
+            Muxer::V8(m) => m.encoder_name(),
+        }
+    }
+
+    /// Один кадр RGBA размера width×height из конфигурации.
+    pub fn write_video(&mut self, rgba: &[u8]) -> Result<(), FfError> {
+        match self {
+            Muxer::V6(m) => m.write_video(rgba),
+            Muxer::V7(m) => m.write_video(rgba),
+            Muxer::V8(m) => m.write_video(rgba),
+        }
+    }
+
+    /// Аудио 48 kHz stereo f32 interleaved (любой длины).
+    pub fn write_audio(&mut self, samples: &[f32]) -> Result<(), FfError> {
+        match self {
+            Muxer::V6(m) => m.write_audio(samples),
+            Muxer::V7(m) => m.write_audio(samples),
+            Muxer::V8(m) => m.write_audio(samples),
+        }
+    }
+
+    pub fn finish(self) -> Result<(), FfError> {
+        match self {
+            Muxer::V6(m) => m.finish(),
+            Muxer::V7(m) => m.finish(),
+            Muxer::V8(m) => m.finish(),
+        }
+    }
 }
 
 /// Открытый источник — динамическая диспетчеризация по версии.

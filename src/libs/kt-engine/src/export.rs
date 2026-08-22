@@ -17,7 +17,6 @@ use kt_cache::{BurstCache, CacheConfig};
 use kt_media::{MediaSource, Quality};
 use kt_model::{MediaId, Project};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
-use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -30,11 +29,13 @@ pub struct ExportProgress {
     pub total_video_frames: u64,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ExportStats {
     pub video_frames: u64,
     pub audio_frames: u64,
     pub underruns: u64,
+    /// Какой видео-энкодер выбран (для UI); пусто для render_raw_*.
+    pub encoder: String,
     /// Слои видео, не декодированные к моменту кадра (в экспорте это ошибка
     /// источника, не тайминга — декод блокирующий).
     pub missing_video_layers: u64,
@@ -211,44 +212,33 @@ pub fn export_mp4_with(
         height: project.settings.height.max(2) & !1,
     };
     let fps = project.settings.fps;
-
-    // fifo — крошечный спец-файл (не данные!), единственное, что касается ФС
-    let fifo_dir = std::env::temp_dir().join(format!("kt-export-{}", std::process::id()));
-    std::fs::create_dir_all(&fifo_dir)?;
-    let fifo = fifo_dir.join("audio.f32le");
-    let _ = std::fs::remove_file(&fifo);
-    let status = std::process::Command::new("mkfifo").arg(&fifo).status()?;
-    if !status.success() {
-        return Err(ExportError::Io(std::io::Error::other("mkfifo failed")));
-    }
-
-    let mut child = std::process::Command::new("ffmpeg")
-        .args(["-hide_banner", "-loglevel", "error", "-y"])
-        // видео: rawvideo RGBA из stdin
-        .args(["-f", "rawvideo", "-pix_fmt", "rgba"])
-        .args(["-s", &format!("{}x{}", quality.width, quality.height)])
-        .args(["-r", &fps.to_string()])
-        .args(["-i", "pipe:0"])
-        // аудио: f32le из fifo
-        .args(["-f", "f32le", "-ar", "48000", "-ac", "2"])
-        .args(["-i", &fifo.to_string_lossy()])
-        .args(["-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "23"])
-        .args(["-c:a", "aac", "-b:a", "192k"])
-        .args(["-movflags", "+faststart", "-shortest"])
-        .arg(out_path)
-        .stdin(std::process::Stdio::piped())
-        .spawn()?;
-
-    // тоталы для прогресса
     let (r0, r1) = match range {
         Some((a, b)) => (a, b),
         None => (Tick(0), project_range(project)),
     };
     let total_audio = (r1.to_audio_frames() - r0.to_audio_frames()).max(0) as u64;
     let total_video = ((r1.0 - r0.0) / (kt_time::TICK_HZ / fps as i64)).max(0) as u64;
-    let progress = Arc::new(progress);
+
+    // Внутрипроцессный муксер: кодеки берутся из СИСТЕМНОГО FFmpeg,
+    // поэтому доступны его аппаратные энкодеры. Внешний бинарник ffmpeg
+    // и mkfifo больше не нужны (инвариант №9 усилен: не только без
+    // временных файлов, но и без внешних процессов).
+    let mut muxer = kt_media::muxer::Muxer::open(&kt_media::muxer::MuxConfig {
+        path: out_path.to_string(),
+        width: quality.width,
+        height: quality.height,
+        fps,
+        quality: 23,
+        audio_bitrate: 192_000,
+        force_encoder: None,
+    })
+    .map_err(|e| ExportError::Io(std::io::Error::other(e)))?;
+
+    // Аудио и видео рендерятся последовательно в один муксер (он
+    // сам перемежает пакеты через av_interleaved_write_frame).
     let a_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let v_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let progress = Arc::new(progress);
     let report = {
         let progress = progress.clone();
         let a_done = a_done.clone();
@@ -263,48 +253,11 @@ pub fn export_mp4_with(
         }
     };
 
-    // аудио — в своём потоке (fifo блокируется, пока ffmpeg его не откроет)
-    let audio_project = project.clone();
-    let fifo_path = fifo.clone();
-    let a_cancel = cancel.clone();
-    let audio_thread = {
-        let a_done = a_done.clone();
-        let report = report.clone();
-        std::thread::Builder::new()
-            .name("export-audio".into())
-            .spawn(move || -> std::io::Result<ExportStats> {
-                let mut w = std::io::BufWriter::new(std::fs::File::create(&fifo_path)?);
-                let stats = render_raw_audio_range(
-                    &audio_project,
-                    audio_sources,
-                    range,
-                    &a_cancel,
-                    |done| {
-                        a_done.store(done, Ordering::Relaxed);
-                        if done % 48_000 < 1024 {
-                            report();
-                        }
-                    },
-                    |chunk| {
-                        let bytes: &[u8] = unsafe {
-                            std::slice::from_raw_parts(chunk.as_ptr() as *const u8, chunk.len() * 4)
-                        };
-                        w.write_all(bytes)
-                    },
-                )?;
-                w.flush()?;
-                Ok(stats)
-            })
-            .expect("spawn export audio")
-    };
-
-    // видео — в текущем потоке, в stdin ffmpeg
-    let mut stdin = child.stdin.take().expect("child stdin");
-    let vres = {
-        let mut w = std::io::BufWriter::new(&mut stdin);
+    // 1) видео
+    let vstats = {
         let v_done = v_done.clone();
         let report = report.clone();
-        let r = render_raw_video_range(
+        render_raw_video_range(
             project,
             video_sources,
             quality,
@@ -316,35 +269,41 @@ pub fn export_mp4_with(
                     report();
                 }
             },
-            |rgba| w.write_all(rgba),
-        );
-        let _ = w.flush();
-        r
+            |rgba| muxer.write_video(rgba).map_err(std::io::Error::other),
+        )?
     };
-    drop(stdin); // EOF видео
+    // 2) аудио
+    let astats = {
+        let a_done = a_done.clone();
+        let report = report.clone();
+        render_raw_audio_range(
+            project,
+            audio_sources,
+            range,
+            cancel,
+            |done| {
+                a_done.store(done, Ordering::Relaxed);
+                if done % 48_000 < 1024 {
+                    report();
+                }
+            },
+            |chunk| muxer.write_audio(chunk).map_err(std::io::Error::other),
+        )?
+    };
 
-    let ares = audio_thread.join().map_err(|_| ExportError::AudioThread)?;
     if cancel.load(Ordering::Acquire) {
-        let _ = child.kill();
-        let _ = child.wait();
+        drop(muxer);
         let _ = std::fs::remove_file(out_path);
-        let _ = std::fs::remove_file(&fifo);
-        let _ = std::fs::remove_dir(&fifo_dir);
         return Err(ExportError::Cancelled);
     }
-    let vstats = vres?;
-    let astats = ares?;
-    let status = child.wait()?;
-    let _ = std::fs::remove_file(&fifo);
-    let _ = std::fs::remove_dir(&fifo_dir);
-    if !status.success() {
-        return Err(ExportError::FfmpegFailed(status));
-    }
+    let encoder = muxer.encoder_name().to_string();
+    muxer.finish().map_err(|e| ExportError::Io(std::io::Error::other(e)))?;
     report();
     Ok(ExportStats {
         video_frames: vstats.video_frames,
         audio_frames: astats.audio_frames,
         underruns: astats.underruns,
         missing_video_layers: vstats.missing_video_layers,
+        encoder,
     })
 }
