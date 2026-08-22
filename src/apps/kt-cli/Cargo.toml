@@ -9,4 +9,5 @@ publish.workspace = true
 kt-time = { workspace = true }
 kt-model = { workspace = true }
 kt-engine = { workspace = true }
+kt-media = { workspace = true }
 serde_json = { workspace = true }

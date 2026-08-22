@@ -1651,6 +1651,7 @@ name = "kt-cli"
 version = "0.1.0"
 dependencies = [
  "kt-engine",
+ "kt-media",
  "kt-model",
  "kt-time",
  "serde_json",
