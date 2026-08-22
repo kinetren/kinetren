@@ -189,30 +189,30 @@ fn run(args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            let open_all =
-                || -> Result<Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)>, String> {
-                    let base =
-                        std::path::Path::new(input).parent().unwrap_or(std::path::Path::new("."));
-                    let mut out = Vec::new();
-                    for m in &project.media {
-                        let src: Box<dyn kt_media::MediaSource> =
-                            if let Some(p) = synth_pattern(&m.path) {
-                                Box::new(SyntheticSource::new(Tick(90_000 * 3600), p))
+            type Sources = Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)>;
+            let open_all = || -> Result<Sources, String> {
+                let base =
+                    std::path::Path::new(input).parent().unwrap_or(std::path::Path::new("."));
+                let mut out = Vec::new();
+                for m in &project.media {
+                    let src: Box<dyn kt_media::MediaSource> =
+                        if let Some(p) = synth_pattern(&m.path) {
+                            Box::new(SyntheticSource::new(Tick(90_000 * 3600), p))
+                        } else {
+                            let resolved = if std::path::Path::new(&m.path).is_absolute() {
+                                m.path.clone()
                             } else {
-                                let resolved = if std::path::Path::new(&m.path).is_absolute() {
-                                    m.path.clone()
-                                } else {
-                                    base.join(&m.path).to_string_lossy().to_string()
-                                };
-                                Box::new(
-                                    kt_media::ffmpeg::FfmpegSource::open(&resolved)
-                                        .map_err(|e| format!("{resolved}: {e}"))?,
-                                )
+                                base.join(&m.path).to_string_lossy().to_string()
                             };
-                        out.push((m.id, src));
-                    }
-                    Ok(out)
-                };
+                            Box::new(
+                                kt_media::ffmpeg::FfmpegSource::open(&resolved)
+                                    .map_err(|e| format!("{resolved}: {e}"))?,
+                            )
+                        };
+                    out.push((m.id, src));
+                }
+                Ok(out)
+            };
             let (audio_sources, video_sources) = match (open_all(), open_all()) {
                 (Ok(a), Ok(v)) => (a, v),
                 (Err(e), _) | (_, Err(e)) => {
