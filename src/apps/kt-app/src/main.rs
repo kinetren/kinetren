@@ -11,6 +11,7 @@ mod meters;
 mod render_dialog;
 mod thumbs;
 mod timeline;
+mod toolbar;
 mod util;
 
 fn main() -> eframe::Result {

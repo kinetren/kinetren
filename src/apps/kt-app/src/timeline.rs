@@ -12,7 +12,8 @@ use kt_time::{AUDIO_BURST_FRAMES, Tick};
 use std::collections::HashMap;
 use std::path::Path;
 
-pub const RULER_H: f32 = 22.0;
+pub const STRIPES_H: f32 = 11.0; // 4+1+4+2: глобальные полоски кэша
+pub const RULER_H: f32 = 22.0 + STRIPES_H;
 pub const GUTTER_W: f32 = 52.0;
 pub const EDGE_GRAB_PX: f32 = 7.0;
 pub const SNAP_PX: f64 = 10.0;
@@ -216,6 +217,94 @@ impl KtApp {
         let tick_to_x =
             move |t: i64| -> f32 { rect.left() + ((t as f64 - view_start) / tpp) as f32 };
 
+        // ---- глобальные полоски кэша (порт: cyan=аудио, green=видео) --------
+        {
+            let y0 = rect.top() + 1.0;
+            let cyan = egui::Color32::from_rgb(114, 214, 255);
+            let green = egui::Color32::from_rgb(72, 168, 96);
+            // фоновые подложки
+            for (row, _) in [(0.0f32, cyan), (5.0, green)] {
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(rect.left(), y0 + row),
+                        egui::pos2(rect.right(), y0 + row + 4.0),
+                    ),
+                    0.0,
+                    egui::Color32::from_gray(30),
+                );
+            }
+            let q = self.player.preview_quality();
+            for c in &self.model.project().clips {
+                let (kind, row, col) = match c.kind {
+                    ClipKind::Audio => (BurstKind::Audio, 0.0f32, cyan),
+                    ClipKind::Video => (BurstKind::video(Some(q)), 5.0, green),
+                };
+                let (b0, b1) = match c.kind {
+                    ClipKind::Audio => {
+                        let f0 = c.source_in.to_audio_frames();
+                        let f1 = (c.source_in + c.duration).to_audio_frames();
+                        (
+                            f0.div_euclid(AUDIO_BURST_FRAMES as i64),
+                            (f1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1,
+                        )
+                    }
+                    ClipKind::Video => (c.source_in.0, c.source_in.0 + c.duration.0),
+                };
+                for run in self.player.cache.coverage(source_id(c.media), kind, b0..b1) {
+                    let (t0, t1) = match c.kind {
+                        ClipKind::Audio => (
+                            c.start.0
+                                + Tick::from_audio_frames(
+                                    run.start * AUDIO_BURST_FRAMES as i64
+                                        - c.source_in.to_audio_frames(),
+                                )
+                                .0,
+                            c.start.0
+                                + Tick::from_audio_frames(
+                                    run.end * AUDIO_BURST_FRAMES as i64
+                                        - c.source_in.to_audio_frames(),
+                                )
+                                .0,
+                        ),
+                        ClipKind::Video => (
+                            c.start.0 + run.start - c.source_in.0,
+                            c.start.0 + run.end - c.source_in.0,
+                        ),
+                    };
+                    let x0 = tick_to_x(t0).max(rect.left());
+                    let x1 = tick_to_x(t1).min(rect.right());
+                    if x1 > x0 {
+                        painter.rect_filled(
+                            egui::Rect::from_min_max(
+                                egui::pos2(x0, y0 + row),
+                                egui::pos2(x1, y0 + row + 4.0),
+                            ),
+                            0.0,
+                            col,
+                        );
+                    }
+                }
+            }
+            // янтарная «голова» loop-региона поверх видео-полоски (порт head)
+            if let Some(r) = self.model.project().region
+                && self.model.project().loop_enabled
+            {
+                let head_end = (r.start.0 + 90_000 / 2).min(r.end.0);
+                let x0 = tick_to_x(r.start.0).max(rect.left());
+                let x1 = tick_to_x(head_end).min(rect.right());
+                if x1 > x0 {
+                    painter.rect_filled(
+                        egui::Rect::from_min_max(
+                            egui::pos2(x0, y0 + 5.0),
+                            egui::pos2(x1, y0 + 9.0),
+                        ),
+                        0.0,
+                        egui::Color32::from_rgba_unmultiplied(255, 210, 72, 150),
+                    );
+                }
+            }
+        }
+
         // ---- линейка --------------------------------------------------------
         let sec_px = (90_000.0 / tpp) as f32;
         let label_every = (70.0 / sec_px).ceil().max(1.0) as i64;
@@ -224,14 +313,14 @@ impl KtApp {
             let major = s % label_every == 0;
             painter.line_segment(
                 [
-                    egui::pos2(x, rect.top()),
-                    egui::pos2(x, rect.top() + if major { RULER_H } else { 7.0 }),
+                    egui::pos2(x, rect.top() + STRIPES_H),
+                    egui::pos2(x, rect.top() + if major { RULER_H } else { STRIPES_H + 7.0 }),
                 ],
                 egui::Stroke::new(1.0, egui::Color32::from_gray(70)),
             );
             if major {
                 painter.text(
-                    egui::pos2(x + 4.0, rect.top() + 3.0),
+                    egui::pos2(x + 4.0, rect.top() + STRIPES_H + 3.0),
                     egui::Align2::LEFT_TOP,
                     format!("{}:{:02}", s / 60, s % 60),
                     egui::FontId::proportional(10.5),
@@ -662,6 +751,10 @@ impl KtApp {
                 .get(&c.media)
                 .map(|p| clip_color(p, c.kind))
                 .unwrap_or(egui::Color32::from_gray(80));
+            // аудио-клипы темнее — волноформа должна читаться
+            if c.kind == ClipKind::Audio {
+                fill = fill.gamma_multiply(0.55);
+            }
             if dragging {
                 fill = fill.gamma_multiply(0.75);
             }
@@ -674,6 +767,30 @@ impl KtApp {
                 egui::Stroke::new(if selected { 2.0 } else { 1.0 }, edge),
                 egui::StrokeKind::Inside,
             );
+            // лёгкий вертикальный градиент (свет сверху)
+            crate::toolbar::gradient_rect(
+                &painter,
+                egui::Rect::from_min_max(
+                    clip_rect.left_top() + egui::vec2(1.0, 1.0),
+                    egui::pos2(clip_rect.right() - 1.0, clip_rect.center().y),
+                ),
+                egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22),
+                egui::Color32::TRANSPARENT,
+            );
+            let hovered =
+                hover.map(|h| clip_rect.contains(h) && self.drag.is_none()).unwrap_or(false);
+            if hovered && !selected {
+                painter.rect(
+                    clip_rect,
+                    4.0,
+                    egui::Color32::TRANSPARENT,
+                    egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 90),
+                    ),
+                    egui::StrokeKind::Inside,
+                );
+            }
             if is_offline {
                 painter.rect_filled(
                     clip_rect,
@@ -913,6 +1030,62 @@ impl KtApp {
                 amber,
                 egui::Stroke::NONE,
             ));
+        }
+
+        // ---- heat-зоны edge-scroll при драге --------------------------------------
+        if self.drag.is_some()
+            && let Some(pos) = hover
+        {
+            let margin = (rect.width() / 6.0).max(24.0);
+            let warm = |heat: f32, zone: egui::Rect, from_left: bool| {
+                if heat > 0.02 {
+                    let a = (36.0 + heat * 174.0) as u8;
+                    let (c0, c1) = if from_left {
+                        (
+                            egui::Color32::from_rgba_unmultiplied(255, 178, 100, a),
+                            egui::Color32::TRANSPARENT,
+                        )
+                    } else {
+                        (
+                            egui::Color32::TRANSPARENT,
+                            egui::Color32::from_rgba_unmultiplied(255, 178, 100, a),
+                        )
+                    };
+                    let mut mesh = egui::Mesh::default();
+                    for (p, c) in [
+                        (zone.left_top(), c0),
+                        (zone.right_top(), c1),
+                        (zone.right_bottom(), c1),
+                        (zone.left_bottom(), c0),
+                    ] {
+                        mesh.vertices.push(egui::epaint::Vertex {
+                            pos: p,
+                            uv: egui::epaint::WHITE_UV,
+                            color: c,
+                        });
+                    }
+                    mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+                    painter.add(egui::Shape::mesh(mesh));
+                }
+            };
+            let lh = ((rect.left() + margin - pos.x) / margin).clamp(0.0, 1.0);
+            let rh = ((pos.x - (rect.right() - margin)) / margin).clamp(0.0, 1.0);
+            warm(
+                lh,
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.left(), rect.top() + RULER_H),
+                    egui::pos2(rect.left() + margin * 0.6, rect.bottom()),
+                ),
+                true,
+            );
+            warm(
+                rh,
+                egui::Rect::from_min_max(
+                    egui::pos2(rect.right() - margin * 0.6, rect.top() + RULER_H),
+                    egui::pos2(rect.right(), rect.bottom()),
+                ),
+                false,
+            );
         }
 
         // ---- снап-линия / playhead -----------------------------------------------

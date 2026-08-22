@@ -38,6 +38,10 @@ pub struct KtApp {
     pub gesture_counter: u64,
     pub render_job: Option<crate::render_dialog::RenderJob>,
     pub last_autosave: std::time::Instant,
+    /// Хинт наведённой кнопки тулбара — дублируется в статусбар (порт).
+    pub hover_hint: Option<String>,
+    /// Rect таймлайна прошлого кадра (для плавающего тулбара).
+    pub timeline_rect: egui::Rect,
     pub thumbs: crate::thumbs::ThumbService,
     /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
     pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
@@ -100,6 +104,8 @@ impl KtApp {
             gesture_counter: 0,
             render_job: None,
             last_autosave: std::time::Instant::now(),
+            hover_hint: None,
+            timeline_rect: egui::Rect::NOTHING,
             thumb_textures: HashMap::new(),
         }
     }
@@ -140,6 +146,8 @@ impl KtApp {
             gesture_counter: 0,
             render_job: None,
             last_autosave: std::time::Instant::now(),
+            hover_hint: None,
+            timeline_rect: egui::Rect::NOTHING,
             thumb_textures: HashMap::new(),
         })
     }
@@ -585,145 +593,41 @@ impl KtApp {
                 self.texture = Some(ui.ctx().load_texture("preview", image, opts));
             }
         }
-        let rect = ui.available_rect_before_wrap();
-        ui.painter().rect_filled(rect, 0.0, egui::Color32::from_gray(12));
+        let (rect, _resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(10, 10, 12));
         if let Some(tex) = &self.texture {
             let scale =
                 (rect.width() / q.width as f32).min(rect.height() / q.height as f32).max(0.05);
             let size = egui::vec2(q.width as f32 * scale, q.height as f32 * scale);
             let img_rect = egui::Rect::from_center_size(rect.center(), size);
-            egui::Image::new((tex.id(), size)).paint_at(ui, img_rect);
+            painter.image(
+                tex.id(),
+                img_rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+            // тонкая рамка кадра
+            painter.rect(
+                img_rect,
+                2.0,
+                egui::Color32::TRANSPARENT,
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 24)),
+                egui::StrokeKind::Outside,
+            );
             if !complete {
-                ui.painter().text(
-                    rect.left_top() + egui::vec2(8.0, 8.0),
-                    egui::Align2::LEFT_TOP,
-                    "буферизация…",
-                    egui::FontId::proportional(12.0),
-                    egui::Color32::YELLOW,
+                // скрим «Загрузка…» (порт buffering overlay)
+                painter.rect_filled(img_rect, 2.0, egui::Color32::from_black_alpha(140));
+                painter.text(
+                    img_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "Загрузка…",
+                    egui::FontId::proportional(16.0),
+                    egui::Color32::from_gray(230),
                 );
             }
         }
     }
-    fn draw_transport(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            let playing = self.player.transport.is_playing();
-            if ui
-                .add_sized([34.0, 24.0], egui::Button::new(if playing { "⏸" } else { "▶" }))
-                .clicked()
-            {
-                if playing {
-                    self.player.pause();
-                } else {
-                    self.player.play();
-                }
-            }
-            if ui.add_sized([28.0, 24.0], egui::Button::new("⏮")).clicked() {
-                self.player.seek(Tick(0));
-            }
-            ui.separator();
-            let t = self.player.transport.playhead();
-            let ms = t.as_ms();
-            let fps = self.model.project().settings.fps as i64;
-            let frame = t.0 % 90_000 / (90_000 / fps);
-            ui.monospace(format!(
-                "{:02}:{:02}:{:02}.{:02}",
-                ms / 3_600_000,
-                ms % 3_600_000 / 60_000,
-                ms % 60_000 / 1000,
-                frame
-            ));
-            ui.separator();
-            if ui.button("🚩").on_hover_text("Маркер на курсоре (M)").clicked() {
-                self.marker_toggle_at_cursor();
-            }
-            if ui.button("+V").on_hover_text("Добавить видео-дорожку").clicked()
-            {
-                self.add_track(ClipKind::Video);
-            }
-            if ui.button("+A").on_hover_text("Добавить аудио-дорожку").clicked()
-            {
-                self.add_track(ClipKind::Audio);
-            }
-            ui.separator();
-            if ui.button("✂").on_hover_text("Разрез/вырез региона (S)").clicked()
-            {
-                self.cut_action();
-            }
-            if ui.button("🗐").on_hover_text("Копировать (Ctrl+C)").clicked() {
-                self.copy_selection();
-            }
-            if ui.button("📋").on_hover_text("Вставить на курсор (Ctrl+V)").clicked()
-            {
-                self.paste_at_cursor();
-            }
-            if ui.button("🗑").on_hover_text("Удалить (Del)").clicked() {
-                self.delete_action();
-            }
-            if ui.button("⇤").on_hover_text("Трим начала к курсору").clicked() {
-                self.trim_selected_start_to_cursor();
-            }
-            if ui.button("⇥").on_hover_text("Трим конца к курсору").clicked() {
-                self.trim_selected_end_to_cursor();
-            }
-            if ui.button("⬆").on_hover_text("На дорожку выше").clicked() {
-                self.move_selected_lane(-1);
-            }
-            if ui.button("⬇").on_hover_text("На дорожку ниже").clicked() {
-                self.move_selected_lane(1);
-            }
-            ui.separator();
-            if ui.button("🔍-").on_hover_text("Отдалить (Ctrl+колесо)").clicked() {
-                self.ticks_per_px = (self.ticks_per_px * 1.25).clamp(30.0, 90_000.0);
-            }
-            if ui.button("🔍+").on_hover_text("Приблизить").clicked() {
-                self.ticks_per_px = (self.ticks_per_px * 0.8).clamp(30.0, 90_000.0);
-            }
-            ui.separator();
-            if ui.button("⌊").on_hover_text("Регион: начало от курсора (I)").clicked()
-            {
-                self.set_region_edge_from_cursor(true);
-            }
-            if ui.button("⌋").on_hover_text("Регион: конец от курсора (O)").clicked()
-            {
-                self.set_region_edge_from_cursor(false);
-            }
-            if ui.button("✖").on_hover_text("Снять регион").clicked() {
-                self.clear_region();
-            }
-            let loop_on = self.model.project().loop_enabled;
-            if ui.selectable_label(loop_on, "🔁").on_hover_text("Loop региона (L)").clicked()
-            {
-                self.toggle_loop();
-            }
-            ui.separator();
-            if ui.button("🎬").on_hover_text("Рендер в MP4 (регион или весь проект)").clicked()
-            {
-                self.start_render();
-            }
-            ui.separator();
-            if ui.button("↶").on_hover_text("Ctrl+Z").clicked() {
-                self.undo();
-            }
-            if ui.button("↷").on_hover_text("Ctrl+Shift+Z").clicked() {
-                self.redo();
-            }
-            ui.separator();
-            if ui.button(if self.dirty { "💾 ●" } else { "💾" }).on_hover_text("Ctrl+S").clicked()
-            {
-                self.save();
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(p) = &self.project_path {
-                    ui.weak(format!(
-                        "{}{}",
-                        p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
-                        if self.dirty { " ●" } else { "" }
-                    ));
-                }
-            });
-        });
-    }
-
     fn draw_preview_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             // лестница качеств превью: доля разрешения проекта
@@ -793,6 +697,31 @@ impl KtApp {
         });
     }
 
+    fn draw_perf_box(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("Производительность").strong());
+        ui.add_space(2.0);
+        let ord = std::sync::atomic::Ordering::Relaxed;
+        let q = self.player.preview_quality();
+        ui.weak(format!(
+            "Кэш: аудио {:.0} МБ / видео {:.0} МБ",
+            self.player.cache.audio_bytes() as f64 / 1e6,
+            self.player.cache.video_bytes() as f64 / 1e6
+        ));
+        ui.weak(format!(
+            "Underruns: render {} / callback {}",
+            self.player.underruns.load(ord),
+            self.player.shared.callback_underruns.load(ord)
+        ));
+        ui.weak(format!("Превью: {}×{}", q.width, q.height));
+        let s = &self.model.project().settings;
+        ui.weak(format!("Проект: {} fps, {}×{}", s.fps, s.width, s.height));
+        ui.weak(format!(
+            "Клипов: {} | медиа: {}",
+            self.model.project().clips.len(),
+            self.model.project().media.len()
+        ));
+    }
+
     fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let ord = std::sync::atomic::Ordering::Relaxed;
@@ -831,7 +760,10 @@ impl KtApp {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak("перетащи медиафайл на окно — клип встанет на курсор");
+                match &self.hover_hint {
+                    Some(h) => ui.weak(h.clone()),
+                    None => ui.weak("перетащи медиафайл на окно — клип встанет на курсор"),
+                };
             });
         });
     }
@@ -932,24 +864,71 @@ impl eframe::App for KtApp {
         let ctx = ui.ctx().clone();
         self.handle_keys(&ctx);
         self.handle_drops(&ctx);
+        self.hover_hint = None;
 
-        egui::Panel::top("transport").show(ui, |ui| {
-            ui.add_space(3.0);
-            self.draw_transport(ui);
-            ui.add_space(3.0);
-        });
+        // статусбар (низ)
         egui::Panel::bottom("status").show(ui, |ui| {
             self.draw_statusbar(ui);
         });
-        egui::Panel::bottom("timeline").resizable(true).default_size(260.0).show(ui, |ui| {
+        // таймлайн (низ, на всю ширину) + плавающий тулбар поверх
+        egui::Panel::bottom("timeline").resizable(true).default_size(280.0).show(ui, |ui| {
+            let rect = ui.available_rect_before_wrap();
+            self.timeline_rect = rect;
             self.draw_timeline(ui);
+            self.draw_toolbar_chrome(ui, rect);
         });
-        egui::Panel::left("bin").resizable(true).default_size(210.0).show(ui, |ui| {
-            ui.add_space(4.0);
-            self.draw_bin(ui);
+        // полоса времени над таймлайном (порт Timeline time strip)
+        egui::Panel::bottom("timestrip").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.add_space(6.0);
+                ui.weak("Timeline time:");
+                let t = self.player.transport.playhead();
+                let ms = t.as_ms();
+                let fps = self.model.project().settings.fps as i64;
+                let frame = t.0 % 90_000 / (90_000 / fps);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{:02}:{:02}:{:02}.{:03} F{:02}",
+                        ms / 3_600_000,
+                        ms % 3_600_000 / 60_000,
+                        ms % 60_000 / 1000,
+                        ms % 1000,
+                        frame
+                    ))
+                    .monospace()
+                    .size(16.0)
+                    .color(egui::Color32::from_rgb(230, 230, 235)),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(p) = &self.project_path {
+                        ui.weak(format!(
+                            "{}{}",
+                            p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
+                            if self.dirty { " ●" } else { "" }
+                        ));
+                    }
+                });
+            });
         });
+        // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
+        egui::Panel::left("left_col").resizable(true).default_size(232.0).show(ui, |ui| {
+            ui.add_space(6.0);
+            egui::Frame::group(ui.style())
+                .fill(egui::Color32::from_gray(24))
+                .corner_radius(6.0)
+                .show(ui, |ui| {
+                    self.draw_bin(ui);
+                });
+            ui.add_space(8.0);
+            egui::Frame::group(ui.style())
+                .fill(egui::Color32::from_gray(24))
+                .corner_radius(6.0)
+                .show(ui, |ui| {
+                    self.draw_perf_box(ui);
+                });
+        });
+        // центр: превью + метры справа, под ними контролы
         egui::CentralPanel::default().show(ui, |ui| {
-            // стоп на границе региона без loop (семантика старого)
             let p = self.model.project();
             if let Some(r) = p.region
                 && !p.loop_enabled
@@ -959,19 +938,16 @@ impl eframe::App for KtApp {
             {
                 self.player.pause();
             }
-            ui.vertical(|ui| {
-                let controls_h = 28.0;
-                let avail = ui.available_height() - controls_h;
-                ui.allocate_ui(egui::vec2(ui.available_width(), avail), |ui| {
-                    ui.horizontal(|ui| {
-                        let w = ui.available_width() - 70.0;
-                        ui.allocate_ui(egui::vec2(w, ui.available_height()), |ui| {
-                            self.draw_preview(ui);
-                        });
-                        self.draw_meters(ui);
-                    });
-                });
+            egui::Panel::bottom("prev_controls").show(ui, |ui| {
+                ui.add_space(3.0);
                 self.draw_preview_controls(ui);
+                ui.add_space(3.0);
+            });
+            egui::Panel::right("meters_col").resizable(false).default_size(72.0).show(ui, |ui| {
+                self.draw_meters(ui);
+            });
+            egui::CentralPanel::default().show(ui, |ui| {
+                self.draw_preview(ui);
             });
         });
 
@@ -1014,7 +990,17 @@ pub fn run() -> eframe::Result {
         "kinotrain",
         options,
         Box::new(move |cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            let mut v = egui::Visuals::dark();
+            v.panel_fill = egui::Color32::from_rgb(27, 29, 32); // #1b1d20 старого
+            v.window_fill = egui::Color32::from_rgb(30, 32, 36);
+            v.extreme_bg_color = egui::Color32::from_rgb(18, 18, 20);
+            v.widgets.noninteractive.corner_radius = 4.into();
+            v.widgets.inactive.corner_radius = 4.into();
+            v.widgets.hovered.corner_radius = 4.into();
+            v.widgets.active.corner_radius = 4.into();
+            v.selection.bg_fill = egui::Color32::from_rgb(62, 96, 180);
+            v.widgets.hovered.bg_fill = egui::Color32::from_rgb(52, 56, 63);
+            cc.egui_ctx.set_visuals(v);
             let restored =
                 arg.clone().or_else(|| cc.storage.and_then(|s| s.get_string("last_project")));
             let app = match restored {
