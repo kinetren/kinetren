@@ -14,3 +14,4 @@ kt-engine = { workspace = true }
 eframe = { workspace = true }
 cpal = { workspace = true }
 rtrb = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }

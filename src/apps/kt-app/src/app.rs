@@ -32,6 +32,11 @@ pub struct KtApp {
     pub clipboard: Vec<ClipEvent>,
     /// Медиа, чьи файлы сейчас недоступны (watchdog, 900 мс).
     pub offline: Arc<Mutex<std::collections::HashSet<MediaId>>>,
+    pub meter: crate::meters::MeterState,
+    pub smooth_scaling: bool,
+    pub thumbs: crate::thumbs::ThumbService,
+    /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
+    pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
 }
 
 impl KtApp {
@@ -64,6 +69,7 @@ impl KtApp {
 
     fn new_empty(error: Option<String>) -> KtApp {
         let project = Self::empty_project();
+        let project2 = project.clone();
         let (player, audio, _) = Self::build_player(&project, None);
         KtApp {
             model: TimelineModel::new(project),
@@ -83,6 +89,10 @@ impl KtApp {
             status: error.map(|e| (e, std::time::Instant::now())),
             clipboard: Vec::new(),
             offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            meter: Default::default(),
+            smooth_scaling: true,
+            thumbs: crate::thumbs::ThumbService::start(&project2, None),
+            thumb_textures: HashMap::new(),
         }
     }
 
@@ -92,6 +102,7 @@ impl KtApp {
         let base = path.parent();
         let (player, audio, err) = Self::build_player(&project, base);
         let offline = spawn_media_watchdog(&project, base);
+        let thumbs_svc = crate::thumbs::ThumbService::start(&project, Some(path.to_path_buf()));
         let peaks = Arc::new(Mutex::new(HashMap::new()));
         let media: Vec<_> =
             project.media.iter().map(|m| (m.id, resolve_media_path(base, &m.path))).collect();
@@ -114,6 +125,10 @@ impl KtApp {
             status: err.map(|e| (e, std::time::Instant::now())),
             clipboard: Vec::new(),
             offline,
+            meter: Default::default(),
+            smooth_scaling: true,
+            thumbs: thumbs_svc,
+            thumb_textures: HashMap::new(),
         })
     }
 
@@ -195,10 +210,13 @@ impl KtApp {
         self.on_region_changed();
     }
 
-    /// Синхронизация региона/loop с плеером (loop появится в U3 — пока
-    /// только персист/отрисовка).
+    /// Синхронизация региона/loop с плеером.
     pub fn on_region_changed(&mut self) {
         self.player.set_project(self.model.project().clone());
+        let p = self.model.project();
+        let region =
+            p.region.filter(|_| p.loop_enabled).map(|r| kt_time::TickRange::new(r.start, r.end));
+        self.player.set_loop_region(region);
         self.dirty = true;
     }
 
@@ -479,30 +497,48 @@ impl KtApp {
     }
 
     pub fn add_media_clip(&mut self, path: &str) {
-        let src = match open_source(path) {
-            Ok(s) => s,
+        let media_id = MediaId(self.next_media_id());
+        if !self.apply(Command::AddMedia { id: media_id, path: path.to_string() }) {
+            return;
+        }
+        self.place_media_at_cursor(media_id);
+        self.rebuild_player();
+        spawn_index_worker(
+            self.project_path.as_ref().map(|p| p.with_extension("ktindex.db")),
+            vec![(media_id, path.to_string())],
+            self.peaks.clone(),
+        );
+        self.note(format!("добавлено: {path}"));
+    }
+
+    /// Клип(ы) существующего медиа на курсор (клик в бине).
+    pub fn place_media_at_cursor(&mut self, media_id: MediaId) {
+        let Some(path) =
+            self.model.project().media.iter().find(|m| m.id == media_id).map(|m| m.path.clone())
+        else {
+            return;
+        };
+        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        let resolved = resolve_media_path(base.as_deref(), &path);
+        let info = match open_source(&resolved) {
+            Ok(s) => s.info().clone(),
             Err(e) => {
                 self.note(format!("{path}: {e}"));
                 return;
             }
         };
-        let info = src.info().clone();
-        drop(src);
-        let media_id = MediaId(self.next_media_id());
-        if !self.apply(Command::AddMedia { id: media_id, path: path.to_string() }) {
-            return;
-        }
         let at = self.player.transport.playhead();
         let dur = if info.duration.0 > 0 { info.duration } else { Tick(90_000 * 5) };
         let group = (info.has_video && info.has_audio).then(|| GroupId(self.next_group_id()));
         let mut next_id = self.next_clip_id();
+        let mut cmds = Vec::new();
         for (kind, present) in
             [(ClipKind::Video, info.has_video), (ClipKind::Audio, info.has_audio)]
         {
             if !present {
                 continue;
             }
-            self.apply(Command::AddClip(ClipEvent {
+            cmds.push(Command::AddClip(ClipEvent {
                 id: ClipId(next_id),
                 link_group: group,
                 kind,
@@ -516,13 +552,7 @@ impl KtApp {
             }));
             next_id += 1;
         }
-        self.rebuild_player();
-        spawn_index_worker(
-            self.project_path.as_ref().map(|p| p.with_extension("ktindex.db")),
-            vec![(media_id, path.to_string())],
-            self.peaks.clone(),
-        );
-        self.note(format!("добавлено: {path}"));
+        self.apply_batch(cmds);
     }
 
     // -- снап ---------------------------------------------------------------
@@ -532,11 +562,15 @@ impl KtApp {
         let (rgba, q, complete) = self.player.compose_preview(t);
         let image =
             egui::ColorImage::from_rgba_unmultiplied([q.width as usize, q.height as usize], &rgba);
+        let opts = if self.smooth_scaling {
+            egui::TextureOptions::LINEAR
+        } else {
+            egui::TextureOptions::NEAREST
+        };
         match &mut self.texture {
-            Some(tex) => tex.set(image, egui::TextureOptions::LINEAR),
+            Some(tex) => tex.set(image, opts),
             None => {
-                self.texture =
-                    Some(ui.ctx().load_texture("preview", image, egui::TextureOptions::LINEAR));
+                self.texture = Some(ui.ctx().load_texture("preview", image, opts));
             }
         }
         let rect = ui.available_rect_before_wrap();
@@ -670,6 +704,75 @@ impl KtApp {
                     ));
                 }
             });
+        });
+    }
+
+    fn draw_preview_controls(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            // лестница качеств превью: доля разрешения проекта
+            let proj = self.model.project().settings.clone();
+            let cur_q = self.player.preview_quality();
+            let mut frac_idx = {
+                let ratio = cur_q.width as f32 / proj.width.max(1) as f32;
+                [(1.0 / 16.0), 1.0 / 8.0, 1.0 / 4.0, 1.0 / 2.0, 1.0]
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| (a.1 - ratio).abs().partial_cmp(&(b.1 - ratio).abs()).unwrap())
+                    .map(|(i, _)| i)
+                    .unwrap_or(2)
+            };
+            ui.label("Качество:");
+            let labels = ["1/16", "1/8", "1/4", "1/2", "1/1"];
+            let before = frac_idx;
+            egui::ComboBox::from_id_salt("quality").selected_text(labels[frac_idx]).show_ui(
+                ui,
+                |ui| {
+                    for (i, l) in labels.iter().enumerate() {
+                        ui.selectable_value(&mut frac_idx, i, *l);
+                    }
+                },
+            );
+            if frac_idx != before {
+                let f = [1.0 / 16.0, 1.0 / 8.0, 1.0 / 4.0, 1.0 / 2.0, 1.0][frac_idx];
+                let q = kt_media::Quality {
+                    width: (((proj.width as f32 * f) as u32).max(2)) & !1,
+                    height: (((proj.height as f32 * f) as u32).max(2)) & !1,
+                };
+                self.player.set_preview_quality(q);
+            }
+            ui.separator();
+            ui.label("FPS:");
+            let mut fps = proj.fps;
+            let before_fps = fps;
+            egui::ComboBox::from_id_salt("fps").selected_text(fps.to_string()).show_ui(ui, |ui| {
+                for f in [24u32, 25, 30, 60] {
+                    ui.selectable_value(&mut fps, f, f.to_string());
+                }
+            });
+            if fps != before_fps {
+                let mut st = proj.clone();
+                st.fps = fps;
+                self.apply(Command::SetSettings { settings: st });
+            }
+            ui.separator();
+            ui.label("Разрешение:");
+            let mut res = (proj.width, proj.height);
+            let before_res = res;
+            egui::ComboBox::from_id_salt("res")
+                .selected_text(format!("{}×{}", res.0, res.1))
+                .show_ui(ui, |ui| {
+                    for r in [(640u32, 360u32), (1280, 720), (1920, 1080)] {
+                        ui.selectable_value(&mut res, r, format!("{}×{}", r.0, r.1));
+                    }
+                });
+            if res != before_res {
+                let mut st = proj.clone();
+                st.width = res.0;
+                st.height = res.1;
+                self.apply(Command::SetSettings { settings: st });
+            }
+            ui.separator();
+            ui.checkbox(&mut self.smooth_scaling, "Сглаживание");
         });
     }
 
@@ -824,8 +927,35 @@ impl eframe::App for KtApp {
         egui::Panel::bottom("timeline").resizable(true).default_size(260.0).show(ui, |ui| {
             self.draw_timeline(ui);
         });
+        egui::Panel::left("bin").resizable(true).default_size(210.0).show(ui, |ui| {
+            ui.add_space(4.0);
+            self.draw_bin(ui);
+        });
         egui::CentralPanel::default().show(ui, |ui| {
-            self.draw_preview(ui);
+            // стоп на границе региона без loop (семантика старого)
+            let p = self.model.project();
+            if let Some(r) = p.region
+                && !p.loop_enabled
+                && self.player.transport.is_playing()
+                && self.player.transport.playhead() >= r.end
+                && self.player.transport.playhead() < r.end + Tick(9000)
+            {
+                self.player.pause();
+            }
+            ui.vertical(|ui| {
+                let controls_h = 28.0;
+                let avail = ui.available_height() - controls_h;
+                ui.allocate_ui(egui::vec2(ui.available_width(), avail), |ui| {
+                    ui.horizontal(|ui| {
+                        let w = ui.available_width() - 70.0;
+                        ui.allocate_ui(egui::vec2(w, ui.available_height()), |ui| {
+                            self.draw_preview(ui);
+                        });
+                        self.draw_meters(ui);
+                    });
+                });
+                self.draw_preview_controls(ui);
+            });
         });
 
         ctx.request_repaint_after(std::time::Duration::from_millis(16));

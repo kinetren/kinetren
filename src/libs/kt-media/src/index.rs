@@ -229,6 +229,31 @@ impl MediaIndexDb {
         Ok(())
     }
 
+    /// JPEG-тумбнейл на момент t (тики), если уже построен.
+    pub fn thumbnail(&self, media_id: i64, t_ticks: i64) -> Result<Option<Vec<u8>>, IndexError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT jpeg FROM thumbnails WHERE media_id=?1 AND t_ticks=?2",
+                params![media_id, t_ticks],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn put_thumbnail(
+        &self,
+        media_id: i64,
+        t_ticks: i64,
+        jpeg: &[u8],
+    ) -> Result<(), IndexError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO thumbnails(media_id, t_ticks, jpeg) VALUES(?1,?2,?3)",
+            params![media_id, t_ticks, jpeg],
+        )?;
+        Ok(())
+    }
+
     /// Прочитать уровень пирамиды канала: Vec<(min, max)> по блокам.
     pub fn audio_peaks(
         &self,

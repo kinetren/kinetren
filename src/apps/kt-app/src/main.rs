@@ -5,6 +5,9 @@
 
 mod app;
 mod audio_out;
+mod bin_panel;
+mod meters;
+mod thumbs;
 mod timeline;
 mod util;
 

@@ -346,3 +346,102 @@ fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
     r.render_frames(&mut cf, region.start, &mut out);
     assert_eq!(cf.miss_count(), 0, "прогретая голова региона не должна давать Playback-промахов");
 }
+
+// ---- Loop в Player-домене (U3): wrap-математика transport --------------------
+
+#[test]
+fn t14_transport_wrap_math() {
+    use kt_engine::Transport;
+    let tr = Transport::new();
+    tr.seek_frames(90);
+    // без региона — линейно
+    tr.advance_frames_wrapped(10, None);
+    assert_eq!(tr.playhead_frames(), 100);
+    // wrap: регион [50, 110)
+    tr.advance_frames_wrapped(15, Some((50, 110)));
+    assert_eq!(tr.playhead_frames(), 50 + (115 - 50) % 60, "wrap в начало региона");
+    // до конца региона не долетели — линейно
+    tr.advance_frames_wrapped(5, Some((50, 110)));
+    assert_eq!(tr.playhead_frames(), 60);
+    // playhead ДО региона: не wrap'ается (старт до входа в регион)
+    tr.seek_frames(10);
+    tr.advance_frames_wrapped(20, Some((50, 110)));
+    assert_eq!(tr.playhead_frames(), 30);
+}
+
+#[test]
+fn t14_player_loop_stream_equals_render_looped_reference() {
+    use kt_engine::{FxStateStore, Player};
+    use kt_time::TickRange;
+    // Проект: ramp-клип 4с; loop-регион не по границе burst'а.
+    let d = 4 * 48_000i64;
+    let p = project_with_audio_clips(vec![audio_clip(1, 0, 0, d, 0, 1)]);
+    let (player, mut ring) = Player::new(
+        p.clone(),
+        vec![(
+            MediaId(1),
+            Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Ramp)) as _,
+        )],
+    );
+    let region_f = 48_000i64 + 696..2 * 48_000 + 264;
+    player.set_loop_region(Some(TickRange::new(
+        Tick::from_audio_frames(region_f.start),
+        Tick::from_audio_frames(region_f.end),
+    )));
+    player.seek(Tick::from_audio_frames(region_f.start));
+    // ждём прогрева кэша prefetch-потоком (иначе первые чанки — underrun-тишина)
+    let b0 = region_f.start.div_euclid(1024);
+    let b1 = (region_f.end - 1).div_euclid(1024) + 1;
+    let warm_start = std::time::Instant::now();
+    loop {
+        let cov = player.cache.coverage(
+            kt_engine::source_id(MediaId(1)),
+            kt_cache::BurstKind::Audio,
+            b0..b1 + 4,
+        );
+        if cov.len() == 1 && cov[0] == (b0..b1 + 4) {
+            break;
+        }
+        assert!(warm_start.elapsed().as_secs() < 20, "prefetch не прогрел регион: {cov:?}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    player.play();
+
+    // потребляем из кольца как «колбэк»: 6с выхода (≈4 оборота)
+    let total = 6 * 48_000usize;
+    let mut got = Vec::with_capacity(total * 2);
+    let start = std::time::Instant::now();
+    while got.len() < total * 2 {
+        match ring.pop() {
+            Ok(v) => {
+                got.push(v);
+                if got.len() % 4096 == 0 {
+                    player
+                        .shared
+                        .consumed_frames
+                        .fetch_add(2048, std::sync::atomic::Ordering::AcqRel);
+                }
+            }
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(1)),
+        }
+        assert!(start.elapsed().as_secs() < 30, "кольцо не наполняется");
+    }
+    player.pause();
+
+    // эталон: render_looped с той же позиции
+    let r = AudioRenderer::new(&p);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut f = direct(&[(1, AudioPattern::Ramp)]);
+    let mut expect = vec![0f32; got.len()];
+    r.render_looped_with(&mut f, &mut store, region_f.clone(), region_f.start, &mut expect);
+    if let Some(i) = (0..got.len()).find(|&i| got[i] != expect[i]) {
+        panic!(
+            "расхождение с эталоном на сэмпле {} (кадр {}): got {:?} expect {:?}",
+            i,
+            i / 2,
+            &got[i.saturating_sub(2)..(i + 6).min(got.len())],
+            &expect[i.saturating_sub(2)..(i + 6).min(expect.len())],
+        );
+    }
+}

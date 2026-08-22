@@ -48,6 +48,24 @@ impl Transport {
         self.playhead_frames.fetch_add(frames, Ordering::AcqRel);
     }
 
+    /// Продвижение с wrap'ом по loop-региону [start, end) в кадрах.
+    /// Generation НЕ бампается: wrap — не seek, FX-состояние и кольцо живут
+    /// (иначе слышимый разрыв).
+    pub fn advance_frames_wrapped(&self, frames: i64, region: Option<(i64, i64)>) {
+        match region {
+            Some((s, e)) if e > s => {
+                let _ =
+                    self.playhead_frames.fetch_update(Ordering::AcqRel, Ordering::Acquire, |p| {
+                        let np = p + frames;
+                        Some(if np >= e && p >= s { s + (np - s).rem_euclid(e - s) } else { np })
+                    });
+            }
+            _ => {
+                self.playhead_frames.fetch_add(frames, Ordering::AcqRel);
+            }
+        }
+    }
+
     /// Прыжок. Бампает generation.
     pub fn seek_frames(&self, frame: i64) {
         self.playhead_frames.store(frame, Ordering::Release);

@@ -689,6 +689,59 @@ impl KtApp {
                 );
             }
 
+            // филмстрип видео-клипа: тумбы из индекс-БД/сервиса, отрисовка
+            // никогда не блокируется и не трогает декодеры плеера
+            if c.kind == ClipKind::Video && !is_offline && clip_rect.width() > 30.0 {
+                let thumb_h = clip_rect.height() - 2.0;
+                let thumb_w = (thumb_h * 16.0 / 9.0).max(28.0);
+                let step = crate::thumbs::thumb_source_step(
+                    Tick(end - start),
+                    (x1 - x0).max(1.0) * 1.0,
+                    thumb_w,
+                );
+                let mut x = clip_rect.left();
+                while x < clip_rect.right() {
+                    let tl = x_to_tick(x) - start;
+                    if tl >= 0 {
+                        let src_t = (c.source_in.0 + tl) / step * step; // бакет по сетке шага
+                        let key = crate::thumbs::ThumbKey { media: c.media, t: src_t };
+                        let tex = match self.thumb_textures.get(&key) {
+                            Some(t) => Some(t.clone()),
+                            None => match self.thumbs.get(&key) {
+                                Some(img) => {
+                                    let t = ui.ctx().load_texture(
+                                        format!("thumb-{}-{}", key.media.0, key.t),
+                                        (*img).clone(),
+                                        egui::TextureOptions::LINEAR,
+                                    );
+                                    self.thumb_textures.insert(key, t.clone());
+                                    if self.thumb_textures.len() > crate::thumbs::MAX_READY {
+                                        self.thumb_textures.clear(); // грубый сброс, LRU в сервисе
+                                    }
+                                    Some(t)
+                                }
+                                None => {
+                                    self.thumbs.request(key);
+                                    None
+                                }
+                            },
+                        };
+                        if let Some(t) = tex {
+                            let dst = egui::Rect::from_min_size(
+                                egui::pos2(x, clip_rect.top() + 1.0),
+                                egui::vec2(thumb_w.min(clip_rect.right() - x), thumb_h),
+                            );
+                            let uv = egui::Rect::from_min_max(
+                                egui::pos2(0.0, 0.0),
+                                egui::pos2((dst.width() / thumb_w).min(1.0), 1.0),
+                            );
+                            painter.image(t.id(), dst, uv, egui::Color32::WHITE);
+                        }
+                    }
+                    x += thumb_w;
+                }
+            }
+
             // стерео-волноформа
             if c.kind == ClipKind::Audio
                 && !is_offline

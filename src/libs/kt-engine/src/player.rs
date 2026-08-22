@@ -26,7 +26,7 @@ use kt_media::{MediaSource, Quality};
 use kt_model::{MediaId, Project};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick, TickRange};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 const RING_CAPACITY_FRAMES: usize = AUDIO_BURST_FRAMES * 4;
@@ -44,10 +44,44 @@ pub struct AudioShared {
     pub callback_underruns: AtomicU64,
 }
 
+/// Пиковые уровни того, что уходит в кольцо (f32-биты; UI делает dB,
+/// спад и peak-hold). fetch_max корректен: битовый паттерн неотрицательных
+/// f32 монотонен.
+pub struct Meters {
+    pub peak_l: AtomicU32,
+    pub peak_r: AtomicU32,
+}
+
+impl Meters {
+    fn fold(&self, chunk: &[f32]) {
+        let mut pl = 0f32;
+        let mut pr = 0f32;
+        for fr in chunk.chunks_exact(AUDIO_CHANNELS) {
+            pl = pl.max(fr[0].abs());
+            pr = pr.max(fr[1].abs());
+        }
+        self.peak_l.fetch_max(pl.to_bits(), Ordering::AcqRel);
+        self.peak_r.fetch_max(pr.to_bits(), Ordering::AcqRel);
+    }
+
+    /// Прочитать и сбросить (swap-to-zero).
+    pub fn take(&self) -> (f32, f32) {
+        (
+            f32::from_bits(self.peak_l.swap(0, Ordering::AcqRel)),
+            f32::from_bits(self.peak_r.swap(0, Ordering::AcqRel)),
+        )
+    }
+}
+
 pub struct Player {
     pub cache: Arc<BurstCache>,
     pub transport: Arc<Transport>,
     pub shared: Arc<AudioShared>,
+    pub meters: Arc<Meters>,
+    /// Мастер-громкость (линейная, f32-биты), применяется в render-потоке.
+    master_gain: Arc<AtomicU32>,
+    /// Loop-регион в кадрах 48k (None = выключен).
+    loop_region: Arc<Mutex<Option<(i64, i64)>>>,
     workers: Arc<HashMap<MediaId, MediaWorker>>,
     project: Arc<Mutex<Project>>,
     model_dirty: Arc<AtomicBool>,
@@ -72,6 +106,9 @@ impl Player {
             flush: AtomicBool::new(false),
             callback_underruns: AtomicU64::new(0),
         });
+        let meters = Arc::new(Meters { peak_l: AtomicU32::new(0), peak_r: AtomicU32::new(0) });
+        let master_gain = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let loop_region: Arc<Mutex<Option<(i64, i64)>>> = Arc::new(Mutex::new(None));
         let mut workers = HashMap::new();
         for (media, src) in sources {
             workers.insert(media, MediaWorker::spawn(media, src, cache.clone()));
@@ -95,13 +132,26 @@ impl Player {
             let dirty = model_dirty.clone();
             let stop = stop.clone();
             let underruns = underruns.clone();
+            let meters = meters.clone();
+            let master_gain = master_gain.clone();
+            let loop_region = loop_region.clone();
             std::thread::Builder::new()
                 .name("audio-render".into())
                 .spawn(move || {
-                    audio_render_loop(
-                        producer, cache, transport, shared, workers, project, dirty, stop,
+                    audio_render_loop(RenderCtx {
+                        producer,
+                        cache,
+                        transport,
+                        shared,
+                        workers,
+                        project,
+                        dirty,
+                        stop,
                         underruns,
-                    )
+                        meters,
+                        master_gain,
+                        loop_region,
+                    })
                 })
                 .expect("spawn audio render")
         };
@@ -124,6 +174,9 @@ impl Player {
             cache,
             transport,
             shared,
+            meters,
+            master_gain,
+            loop_region,
             workers,
             project,
             model_dirty,
@@ -161,6 +214,50 @@ impl Player {
 
     pub fn pause(&self) {
         self.transport.set_playing(false);
+    }
+
+    /// Мастер-громкость превью (линейная; mute = 0).
+    pub fn set_master_gain(&self, linear: f32) {
+        self.master_gain.store(linear.max(0.0).to_bits(), Ordering::Release);
+    }
+
+    pub fn master_gain(&self) -> f32 {
+        f32::from_bits(self.master_gain.load(Ordering::Acquire))
+    }
+
+    /// Loop-регион (None = выключен). Голова региона пинится в кэше,
+    /// чтобы wrap не начинался с холода (тест 14).
+    pub fn set_loop_region(&self, region: Option<TickRange>) {
+        let frames = region.map(|r| (r.start.to_audio_frames(), r.end.to_audio_frames()));
+        *self.loop_region.lock().unwrap() = frames;
+        self.cache.unpin_all();
+        if let Some((s, _)) = frames {
+            let renderer = AudioRenderer::new(&self.project.lock().unwrap().clone());
+            for (media, bursts) in
+                renderer.wanted_audio_bursts(s..s + kt_time::AUDIO_SAMPLE_RATE as i64 / 2)
+            {
+                self.cache.pin_range(source_id(media), kt_cache::BurstKind::Audio, bursts);
+            }
+        }
+    }
+
+    /// Пиковые уровни на паузе: один burst с позиции t через одноразовое
+    /// FX-состояние и кэш (промах = тишина — для метра этого достаточно).
+    pub fn sample_levels_at(&self, t: Tick) -> (f32, f32) {
+        let renderer = AudioRenderer::new(&self.project.lock().unwrap().clone());
+        let mut store = FxStateStore::new();
+        renderer.sync_fx(&mut store);
+        let mut fetcher = CacheFetcher::new(self.cache.clone());
+        let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
+        renderer.render_frames_with(&mut fetcher, &mut store, t.to_audio_frames(), &mut chunk);
+        let gain = self.master_gain();
+        let mut pl = 0f32;
+        let mut pr = 0f32;
+        for fr in chunk.chunks_exact(AUDIO_CHANNELS) {
+            pl = pl.max((fr[0] * gain).abs());
+            pr = pr.max((fr[1] * gain).abs());
+        }
+        (pl, pr)
     }
 
     pub fn seek(&self, t: Tick) {
@@ -217,9 +314,8 @@ impl Drop for Player {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn audio_render_loop(
-    mut producer: rtrb::Producer<f32>,
+struct RenderCtx {
+    producer: rtrb::Producer<f32>,
     cache: Arc<BurstCache>,
     transport: Arc<Transport>,
     shared: Arc<AudioShared>,
@@ -228,7 +324,26 @@ fn audio_render_loop(
     dirty: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     underruns: Arc<AtomicU64>,
-) {
+    meters: Arc<Meters>,
+    master_gain: Arc<AtomicU32>,
+    loop_region: Arc<Mutex<Option<(i64, i64)>>>,
+}
+
+fn audio_render_loop(ctx: RenderCtx) {
+    let RenderCtx {
+        mut producer,
+        cache,
+        transport,
+        shared,
+        workers,
+        project,
+        dirty,
+        stop,
+        underruns,
+        meters,
+        master_gain,
+        loop_region,
+    } = ctx;
     let mut store = FxStateStore::new();
     let mut renderer = AudioRenderer::new(&project.lock().unwrap().clone());
     renderer.sync_fx(&mut store);
@@ -251,29 +366,80 @@ fn audio_render_loop(
             shared.consumed_frames.store(0, Ordering::Release);
         }
 
-        // продвигаем playhead на потреблённое колбэком
+        let region = *loop_region.lock().unwrap();
+        // продвигаем playhead на потреблённое колбэком (с wrap при loop)
         let consumed = shared.consumed_frames.swap(0, Ordering::AcqRel);
         if consumed > 0 {
-            transport.advance_frames(consumed);
+            transport.advance_frames_wrapped(consumed, region);
         }
 
         if transport.is_playing() {
-            // заказ ближайшего аудио с Playback-приоритетом (идемпотентно)
-            prefetch_audio_pass(
-                &renderer,
-                &cache,
-                &workers,
-                render_head..render_head + PLAYBACK_AUDIO_LOOKAHEAD_FRAMES,
-                Priority::Playback,
-                generation,
-            );
-            // наполняем кольцо
+            let gain = f32::from_bits(master_gain.load(Ordering::Acquire));
+            // заказ ближайшего аудио с Playback-приоритетом (идемпотентно);
+            // при loop заказываем через wrap-отображение
+            match region {
+                Some((rs, re)) if re > rs && render_head >= rs => {
+                    let tl = rs + (render_head - rs).rem_euclid(re - rs);
+                    let ahead = PLAYBACK_AUDIO_LOOKAHEAD_FRAMES.min(re - rs);
+                    let end1 = (tl + ahead).min(re);
+                    prefetch_audio_pass(
+                        &renderer,
+                        &cache,
+                        &workers,
+                        tl..end1,
+                        Priority::Playback,
+                        generation,
+                    );
+                    let rest = ahead - (end1 - tl);
+                    if rest > 0 {
+                        prefetch_audio_pass(
+                            &renderer,
+                            &cache,
+                            &workers,
+                            rs..rs + rest,
+                            Priority::Playback,
+                            generation,
+                        );
+                    }
+                }
+                _ => {
+                    prefetch_audio_pass(
+                        &renderer,
+                        &cache,
+                        &workers,
+                        render_head..render_head + PLAYBACK_AUDIO_LOOKAHEAD_FRAMES,
+                        Priority::Playback,
+                        generation,
+                    );
+                }
+            }
+            // наполняем кольцо: render_head линеен, loop-маппинг внутри
+            // render_looped_with (wrap НЕ бампает generation — FX живут)
             while producer.slots() >= chunk.len() {
-                let stats =
-                    renderer.render_frames_with(&mut fetcher, &mut store, render_head, &mut chunk);
+                let stats = match region {
+                    Some((rs, re)) if re > rs && render_head >= rs => renderer.render_looped_with(
+                        &mut fetcher,
+                        &mut store,
+                        rs..re,
+                        render_head,
+                        &mut chunk,
+                    ),
+                    _ => renderer.render_frames_with(
+                        &mut fetcher,
+                        &mut store,
+                        render_head,
+                        &mut chunk,
+                    ),
+                };
                 if stats.underruns > 0 {
                     underruns.fetch_add(stats.underruns, Ordering::Relaxed);
                 }
+                if gain != 1.0 {
+                    for s in chunk.iter_mut() {
+                        *s *= gain;
+                    }
+                }
+                meters.fold(&chunk);
                 for &s in chunk.iter() {
                     let _ = producer.push(s);
                 }
