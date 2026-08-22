@@ -1,7 +1,7 @@
 //! KtApp: состояние приложения, панели, клавиши, дропы, lifecycle.
 
 use crate::audio_out;
-use crate::timeline::DragState;
+use crate::timeline::{CtxTarget, Drag};
 use crate::util::*;
 use eframe::egui;
 use kt_engine::Player;
@@ -22,9 +22,16 @@ pub struct KtApp {
     pub view_start: f64, // тики
     pub ticks_per_px: f64,
     pub selected: Option<ClipId>,
-    pub drag: Option<DragState>,
+    pub drag: Option<Drag>,
     pub snap_line: Option<i64>,
+    pub ctx_target: Option<CtxTarget>,
+    /// Live-громкость volume rail до отпускания (id, dB).
+    pub live_gain: Option<(ClipId, f32)>,
     pub status: Option<(String, std::time::Instant)>,
+    /// Внутренний буфер обмена (блок клипов, ребейзнутых к нулю).
+    pub clipboard: Vec<ClipEvent>,
+    /// Медиа, чьи файлы сейчас недоступны (watchdog, 900 мс).
+    pub offline: Arc<Mutex<std::collections::HashSet<MediaId>>>,
 }
 
 impl KtApp {
@@ -71,7 +78,11 @@ impl KtApp {
             selected: None,
             drag: None,
             snap_line: None,
+            ctx_target: None,
+            live_gain: None,
             status: error.map(|e| (e, std::time::Instant::now())),
+            clipboard: Vec::new(),
+            offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
         }
     }
 
@@ -80,6 +91,7 @@ impl KtApp {
         let project = Project::from_json(&text).map_err(|e| e.to_string())?;
         let base = path.parent();
         let (player, audio, err) = Self::build_player(&project, base);
+        let offline = spawn_media_watchdog(&project, base);
         let peaks = Arc::new(Mutex::new(HashMap::new()));
         let media: Vec<_> =
             project.media.iter().map(|m| (m.id, resolve_media_path(base, &m.path))).collect();
@@ -97,7 +109,11 @@ impl KtApp {
             selected: None,
             drag: None,
             snap_line: None,
+            ctx_target: None,
+            live_gain: None,
             status: err.map(|e| (e, std::time::Instant::now())),
+            clipboard: Vec::new(),
+            offline,
         })
     }
 
@@ -132,6 +148,220 @@ impl KtApp {
                 false
             }
         }
+    }
+
+    // ---- операции паритета (регион/маркеры/клипборд/дорожки) ----------------
+
+    pub fn marker_toggle_at_cursor(&mut self) {
+        let at = self.player.transport.playhead();
+        // магнит как в старом: удалить ближайший в пределах порога, иначе добавить
+        let threshold = ((crate::timeline::SNAP_PX * self.ticks_per_px) as i64).clamp(900, 13_500);
+        let near = self
+            .model
+            .project()
+            .markers
+            .iter()
+            .copied()
+            .min_by_key(|m| (m.0 - at.0).abs())
+            .filter(|m| (m.0 - at.0).abs() <= threshold);
+        match near {
+            Some(m) => self.apply(Command::RemoveMarker { at: m }),
+            None => self.apply(Command::AddMarker { at }),
+        };
+    }
+
+    /// Регион in/out от курсора; без региона — затравка [cursor, cursor+1с].
+    pub fn set_region_edge_from_cursor(&mut self, set_start: bool) {
+        let at = self.player.transport.playhead();
+        let cur =
+            self.model.project().region.unwrap_or(Region { start: at, end: Tick(at.0 + 90_000) });
+        let r = if set_start {
+            Region::normalized(at, cur.end.max(Tick(at.0 + 90)))
+        } else {
+            Region::normalized(cur.start.min(at), at)
+        };
+        self.model.set_region(r);
+        self.on_region_changed();
+    }
+
+    pub fn clear_region(&mut self) {
+        self.model.set_region(None);
+        self.on_region_changed();
+    }
+
+    pub fn toggle_loop(&mut self) {
+        let on = !self.model.project().loop_enabled;
+        self.model.set_loop_enabled(on);
+        self.on_region_changed();
+    }
+
+    /// Синхронизация региона/loop с плеером (loop появится в U3 — пока
+    /// только персист/отрисовка).
+    pub fn on_region_changed(&mut self) {
+        self.player.set_project(self.model.project().clone());
+        self.dirty = true;
+    }
+
+    pub fn copy_selection(&mut self) {
+        let block = match self.model.project().region {
+            Some(r) => kt_model::ops::copy_region_block(self.model.project(), r),
+            None => match self.selected {
+                Some(id) => kt_model::ops::copy_group(self.model.project(), id),
+                None => Vec::new(),
+            },
+        };
+        if block.is_empty() {
+            self.note("нечего копировать (нет региона и выделения)");
+        } else {
+            self.note(format!("скопировано клипов: {}", block.len()));
+            self.clipboard = block;
+        }
+    }
+
+    pub fn paste_at_cursor(&mut self) {
+        if self.clipboard.is_empty() {
+            self.note("буфер пуст");
+            return;
+        }
+        let at = self.player.transport.playhead();
+        let mut next_clip = self.next_clip_id();
+        let mut next_group = self.next_group_id();
+        let (cmds, end) =
+            kt_model::ops::paste_block(&self.clipboard, at, &mut next_clip, &mut next_group);
+        let first = cmds.iter().find_map(|c| match c {
+            Command::AddClip(ev) => Some(ev.id),
+            _ => None,
+        });
+        if self.apply_batch(cmds) {
+            self.selected = first;
+            // курсор в конец блока — chain-paste (семантика старого)
+            self.player.seek(end);
+        }
+    }
+
+    /// S: с регионом = punch-out, без — сплит выделенного.
+    pub fn cut_action(&mut self) {
+        if let Some(r) = self.model.project().region {
+            let mut next = self.next_clip_id();
+            let cmds = kt_model::ops::punch_out_region(self.model.project(), r, &mut next);
+            if cmds.is_empty() {
+                self.note("регион не пересекает клипы");
+            } else {
+                self.apply_batch(cmds);
+                self.selected = None;
+            }
+        } else {
+            self.split_selected();
+        }
+    }
+
+    /// Del: с регионом = удалить пересекающиеся (+партнёры), без — выделение.
+    pub fn delete_action(&mut self) {
+        if let Some(r) = self.model.project().region {
+            let cmds = kt_model::ops::delete_region(self.model.project(), r);
+            if cmds.is_empty() {
+                self.note("регион не пересекает клипы");
+            } else {
+                self.apply_batch(cmds);
+                self.selected = None;
+            }
+        } else {
+            self.delete_selected();
+        }
+    }
+
+    pub fn trim_selected_start_to_cursor(&mut self) {
+        let Some(sel) = self.selected else { return };
+        let at = self.player.transport.playhead();
+        let cmds = kt_model::ops::trim_group_start_to(self.model.project(), sel, at);
+        if cmds.is_empty() {
+            self.note("курсор вне выбранного клипа");
+        } else {
+            self.apply_batch(cmds);
+        }
+    }
+
+    pub fn trim_selected_end_to_cursor(&mut self) {
+        let Some(sel) = self.selected else { return };
+        let at = self.player.transport.playhead();
+        let cmds = kt_model::ops::trim_group_end_to(self.model.project(), sel, at);
+        if cmds.is_empty() {
+            self.note("курсор вне выбранного клипа");
+        } else {
+            self.apply_batch(cmds);
+        }
+    }
+
+    /// Перенос выделенного на соседнюю дорожку своего типа (партнёр на месте).
+    pub fn move_selected_lane(&mut self, delta: i32) {
+        let Some(sel) = self.selected else { return };
+        let Some(c) = self.model.clip(sel).cloned() else { return };
+        let lanes = match c.kind {
+            ClipKind::Video => self.model.project().video_lanes,
+            ClipKind::Audio => self.model.project().audio_lanes,
+        };
+        let new_lane = (c.lane as i64 + delta as i64).clamp(0, lanes.saturating_sub(1) as i64);
+        if new_lane as u32 != c.lane {
+            // MoveClip двигает всю группу по времени; здесь время не меняется,
+            // а lane меняется только у выбранного — семантика старого
+            self.apply(Command::MoveClip {
+                id: sel,
+                new_start: c.start,
+                new_lane: new_lane as u32,
+            });
+        }
+    }
+
+    pub fn add_track(&mut self, kind: ClipKind) {
+        let p = self.model.project();
+        let (v, a) = (p.video_lanes, p.audio_lanes);
+        let cmd = match kind {
+            ClipKind::Video => Command::SetLanes { video: v + 1, audio: a },
+            ClipKind::Audio => Command::SetLanes { video: v, audio: a + 1 },
+        };
+        self.apply(cmd);
+    }
+
+    /// Магнит A/V: ближайший клип противоположного типа того же медиа
+    /// в пределах 2×порога → общий старт/длительность/линк (старый magnetize).
+    pub fn magnetize_selected(&mut self) {
+        let Some(sel) = self.selected else { return };
+        let Some(c) = self.model.clip(sel).cloned() else { return };
+        let threshold =
+            2 * ((crate::timeline::SNAP_PX * self.ticks_per_px) as i64).clamp(1080, 9000);
+        let partner = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .filter(|o| o.kind != c.kind && o.media == c.media && o.id != c.id)
+            .min_by_key(|o| (o.start.0 - c.start.0).abs())
+            .filter(|o| (o.start.0 - c.start.0).abs() <= threshold)
+            .cloned();
+        let Some(partner) = partner else {
+            self.note("нет подходящего A/V-партнёра рядом (то же медиа)");
+            return;
+        };
+        let group = c.link_group.or(partner.link_group).unwrap_or(GroupId(self.next_group_id()));
+        self.apply_batch(vec![
+            Command::MoveClip { id: partner.id, new_start: c.start, new_lane: partner.lane },
+            Command::TrimEnd { id: partner.id, new_end: c.start + c.duration },
+            Command::LinkClips { ids: vec![c.id, partner.id], group },
+        ]);
+    }
+
+    pub fn unlink_selected(&mut self) {
+        let Some(sel) = self.selected else { return };
+        let group = self.model.clip(sel).and_then(|c| c.link_group);
+        let ids: Vec<ClipId> = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .filter(|c| c.id == sel || (group.is_some() && c.link_group == group))
+            .map(|c| c.id)
+            .collect();
+        self.apply_batch(ids.into_iter().map(|id| Command::UnlinkClip { id }).collect());
     }
 
     pub fn undo(&mut self) {
@@ -357,12 +587,69 @@ impl KtApp {
                 frame
             ));
             ui.separator();
-            if ui.button("✂ split (S)").clicked() {
-                self.split_selected();
+            if ui.button("🚩").on_hover_text("Маркер на курсоре (M)").clicked() {
+                self.marker_toggle_at_cursor();
             }
-            if ui.button("🗑 del").clicked() {
-                self.delete_selected();
+            if ui.button("+V").on_hover_text("Добавить видео-дорожку").clicked()
+            {
+                self.add_track(ClipKind::Video);
             }
+            if ui.button("+A").on_hover_text("Добавить аудио-дорожку").clicked()
+            {
+                self.add_track(ClipKind::Audio);
+            }
+            ui.separator();
+            if ui.button("✂").on_hover_text("Разрез/вырез региона (S)").clicked()
+            {
+                self.cut_action();
+            }
+            if ui.button("🗐").on_hover_text("Копировать (Ctrl+C)").clicked() {
+                self.copy_selection();
+            }
+            if ui.button("📋").on_hover_text("Вставить на курсор (Ctrl+V)").clicked()
+            {
+                self.paste_at_cursor();
+            }
+            if ui.button("🗑").on_hover_text("Удалить (Del)").clicked() {
+                self.delete_action();
+            }
+            if ui.button("⇤").on_hover_text("Трим начала к курсору").clicked() {
+                self.trim_selected_start_to_cursor();
+            }
+            if ui.button("⇥").on_hover_text("Трим конца к курсору").clicked() {
+                self.trim_selected_end_to_cursor();
+            }
+            if ui.button("⬆").on_hover_text("На дорожку выше").clicked() {
+                self.move_selected_lane(-1);
+            }
+            if ui.button("⬇").on_hover_text("На дорожку ниже").clicked() {
+                self.move_selected_lane(1);
+            }
+            ui.separator();
+            if ui.button("🔍-").on_hover_text("Отдалить (Ctrl+колесо)").clicked() {
+                self.ticks_per_px = (self.ticks_per_px * 1.25).clamp(30.0, 90_000.0);
+            }
+            if ui.button("🔍+").on_hover_text("Приблизить").clicked() {
+                self.ticks_per_px = (self.ticks_per_px * 0.8).clamp(30.0, 90_000.0);
+            }
+            ui.separator();
+            if ui.button("⌊").on_hover_text("Регион: начало от курсора (I)").clicked()
+            {
+                self.set_region_edge_from_cursor(true);
+            }
+            if ui.button("⌋").on_hover_text("Регион: конец от курсора (O)").clicked()
+            {
+                self.set_region_edge_from_cursor(false);
+            }
+            if ui.button("✖").on_hover_text("Снять регион").clicked() {
+                self.clear_region();
+            }
+            let loop_on = self.model.project().loop_enabled;
+            if ui.selectable_label(loop_on, "🔁").on_hover_text("Loop региона (L)").clicked()
+            {
+                self.toggle_loop();
+            }
+            ui.separator();
             if ui.button("↶").on_hover_text("Ctrl+Z").clicked() {
                 self.undo();
             }
@@ -402,6 +689,18 @@ impl KtApp {
             ));
             ui.separator();
             ui.weak(format!("зум: {:.0} px/с", 90_000.0 / self.ticks_per_px));
+            ui.separator();
+            let (lv, la) = self.layers_at_cursor();
+            let mut overlay = format!("слои: V{lv} A{la}");
+            if let Some(r) = self.model.project().region {
+                overlay.push_str(&format!(
+                    " | регион {:.2}–{:.2}с{}",
+                    r.start.as_secs_f64(),
+                    r.end.as_secs_f64(),
+                    if self.model.project().loop_enabled { " (loop)" } else { "" }
+                ));
+            }
+            ui.weak(overlay);
             if let Some((msg, at)) = &self.status {
                 if at.elapsed().as_secs() < 6 {
                     let msg = msg.clone();
@@ -421,39 +720,75 @@ impl KtApp {
         if ctx.egui_wants_keyboard_input() {
             return;
         }
-        let (space, s, del, undo, redo, save) = ctx.input(|i| {
-            (
-                i.key_pressed(egui::Key::Space),
-                i.key_pressed(egui::Key::S) && !i.modifiers.ctrl,
-                i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace),
-                i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
-                i.modifiers.ctrl
-                    && (i.modifiers.shift && i.key_pressed(egui::Key::Z)
-                        || i.key_pressed(egui::Key::Y)),
-                i.modifiers.ctrl && i.key_pressed(egui::Key::S),
-            )
+        struct Keys {
+            space: bool,
+            cut: bool,
+            del: bool,
+            undo: bool,
+            redo: bool,
+            save: bool,
+            marker: bool,
+            region_in: bool,
+            region_out: bool,
+            loop_toggle: bool,
+            copy: bool,
+            paste: bool,
+        }
+        let k = ctx.input(|i| Keys {
+            space: i.key_pressed(egui::Key::Space),
+            cut: i.key_pressed(egui::Key::S) && !i.modifiers.ctrl,
+            del: i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace),
+            undo: i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
+            redo: i.modifiers.ctrl
+                && (i.modifiers.shift && i.key_pressed(egui::Key::Z)
+                    || i.key_pressed(egui::Key::Y)),
+            save: i.modifiers.ctrl && i.key_pressed(egui::Key::S),
+            marker: i.key_pressed(egui::Key::M),
+            region_in: i.key_pressed(egui::Key::I),
+            region_out: i.key_pressed(egui::Key::O),
+            loop_toggle: i.key_pressed(egui::Key::L),
+            copy: i.modifiers.ctrl && i.key_pressed(egui::Key::C),
+            paste: i.modifiers.ctrl && i.key_pressed(egui::Key::V),
         });
-        if space {
+        if k.space {
             if self.player.transport.is_playing() {
                 self.player.pause();
             } else {
                 self.player.play();
             }
         }
-        if s {
-            self.split_selected();
+        if k.cut {
+            self.cut_action();
         }
-        if del {
-            self.delete_selected();
+        if k.del {
+            self.delete_action();
         }
-        if undo {
+        if k.undo {
             self.undo();
         }
-        if redo {
+        if k.redo {
             self.redo();
         }
-        if save {
+        if k.save {
             self.save();
+        }
+        if k.marker {
+            self.marker_toggle_at_cursor();
+        }
+        if k.region_in {
+            self.set_region_edge_from_cursor(true);
+        }
+        if k.region_out {
+            self.set_region_edge_from_cursor(false);
+        }
+        if k.loop_toggle {
+            self.toggle_loop();
+        }
+        if k.copy {
+            self.copy_selection();
+        }
+        if k.paste {
+            self.paste_at_cursor();
         }
     }
 

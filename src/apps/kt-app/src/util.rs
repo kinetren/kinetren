@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-pub type Peaks = Vec<Vec<(i16, i16)>>; // [level][block] (канал 0)
+pub type Peaks = Vec<(Vec<(i16, i16)>, Vec<(i16, i16)>)>; // [level] -> (L, R) по блокам
 
 pub fn synth_pattern(path: &str) -> Option<AudioPattern> {
     let rest = path.strip_prefix("synth:")?;
@@ -59,7 +59,11 @@ pub fn spawn_index_worker(
                         kt_media::index::PeakPyramid::build(s.as_mut())
                             .levels
                             .into_iter()
-                            .map(|chs| chs.into_iter().next().unwrap_or_default())
+                            .map(|mut chs| {
+                                let l = if chs.is_empty() { Vec::new() } else { chs.remove(0) };
+                                let r = if chs.is_empty() { l.clone() } else { chs.remove(0) };
+                                (l, r)
+                            })
                             .collect()
                     })
                 } else if let Some(db) = &mut db {
@@ -75,8 +79,13 @@ pub fn spawn_index_worker(
                             }
                             let mut levels = Vec::new();
                             let mut level = 0u32;
-                            while let Ok(Some(blocks)) = db.audio_peaks(mid, level, 0) {
-                                levels.push(blocks);
+                            while let Ok(Some(l)) = db.audio_peaks(mid, level, 0) {
+                                let r = db
+                                    .audio_peaks(mid, level, 1)
+                                    .ok()
+                                    .flatten()
+                                    .unwrap_or_else(|| l.clone());
+                                levels.push((l, r));
                                 level += 1;
                             }
                             Some(levels)
@@ -92,4 +101,37 @@ pub fn spawn_index_worker(
             }
         })
         .expect("spawn index worker");
+}
+
+/// Watchdog доступности медиафайлов (порт mediaSourceProbeTimer 900 мс):
+/// оффлайн-множество читает UI (тинт клипов); работает в своём потоке.
+pub fn spawn_media_watchdog(
+    project: &kt_model::Project,
+    base: Option<&Path>,
+) -> Arc<Mutex<std::collections::HashSet<MediaId>>> {
+    let set: Arc<Mutex<std::collections::HashSet<MediaId>>> =
+        Arc::new(Mutex::new(std::collections::HashSet::new()));
+    let paths: Vec<(MediaId, String)> = project
+        .media
+        .iter()
+        .filter(|m| !m.path.starts_with("synth:"))
+        .map(|m| (m.id, resolve_media_path(base, &m.path)))
+        .collect();
+    let out = set.clone();
+    std::thread::Builder::new()
+        .name("media-watchdog".into())
+        .spawn(move || {
+            loop {
+                let mut offline = std::collections::HashSet::new();
+                for (id, p) in &paths {
+                    if !Path::new(p).exists() {
+                        offline.insert(*id);
+                    }
+                }
+                *out.lock().unwrap() = offline;
+                std::thread::sleep(std::time::Duration::from_millis(900));
+            }
+        })
+        .expect("spawn media watchdog");
+    set
 }
