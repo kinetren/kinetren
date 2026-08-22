@@ -8,6 +8,7 @@
 //! Реализация — этап M1 (см. docs/porting-notes.md).
 
 pub mod model;
+pub mod ops;
 pub mod project;
 
 pub use model::*;

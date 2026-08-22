@@ -61,6 +61,32 @@ pub enum Command {
     UnlinkClip {
         id: ClipId,
     },
+    AddMarker {
+        at: Tick,
+    },
+    RemoveMarker {
+        at: Tick,
+    },
+    MoveMarker {
+        from: Tick,
+        to: Tick,
+    },
+    /// Вставить пустую дорожку типа `kind` в позицию `at`; lane клипов
+    /// этого типа >= at сдвигаются на +1.
+    InsertLane {
+        kind: ClipKind,
+        at: u32,
+    },
+    SetLanes {
+        video: u32,
+        audio: u32,
+    },
+    RemoveMedia {
+        id: MediaId,
+    },
+    SetSettings {
+        settings: ProjectSettings,
+    },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -77,6 +103,14 @@ pub enum CommandError {
     SplitOutside,
     #[error("invalid clip: {0}")]
     InvalidClip(#[from] ProjectError),
+    #[error("marker at {0:?} not found")]
+    MarkerNotFound(Tick),
+    #[error("marker at {0:?} already exists")]
+    MarkerExists(Tick),
+    #[error("media {0:?} is used by clips")]
+    MediaInUse(MediaId),
+    #[error("lane count would orphan clips")]
+    LanesTooFew,
     #[error("nothing to undo")]
     NothingToUndo,
     #[error("nothing to redo")]
@@ -89,11 +123,13 @@ pub struct TimelineModel {
     project: Project,
     undo: Vec<Project>,
     redo: Vec<Project>,
+    /// Токен последнего coalesced-жеста (см. apply_coalesced).
+    last_gesture: Option<u64>,
 }
 
 impl TimelineModel {
     pub fn new(project: Project) -> TimelineModel {
-        TimelineModel { project, undo: Vec::new(), redo: Vec::new() }
+        TimelineModel { project, undo: Vec::new(), redo: Vec::new(), last_gesture: None }
     }
 
     pub fn project(&self) -> &Project {
@@ -110,29 +146,75 @@ impl TimelineModel {
     }
 
     pub fn apply(&mut self, cmd: Command) -> Result<(), CommandError> {
-        // 1) валидация без мутаций
-        self.check(&cmd)?;
-        // 2) снапшот — только теперь, когда команда точно применима
+        self.apply_batch(vec![cmd])
+    }
+
+    /// Пакет команд = ОДИН undo-снапшот на жест (сплит A/V-пары, удаление
+    /// группы, paste, punch-out). Атомарно: валидация всей серии на клоне,
+    /// провал любой команды = ноль изменений и ноль записей в истории.
+    pub fn apply_batch(&mut self, cmds: Vec<Command>) -> Result<(), CommandError> {
+        if cmds.is_empty() {
+            return Ok(());
+        }
+        let mut scratch = self.project.clone();
+        for cmd in &cmds {
+            Self::check_on(&scratch, cmd)?;
+            Self::mutate_on(&mut scratch, cmd.clone());
+        }
+        debug_assert!(scratch.validate().is_ok());
+        self.push_undo();
+        self.project = scratch;
+        self.last_gesture = None;
+        Ok(())
+    }
+
+    /// Как apply, но серия вызовов с одним `gesture`-токеном сливается в
+    /// одну undo-запись (live-редактирование параметров FX из окна).
+    pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> Result<(), CommandError> {
+        let mut scratch = self.project.clone();
+        Self::check_on(&scratch, &cmd)?;
+        Self::mutate_on(&mut scratch, cmd);
+        if self.last_gesture != Some(gesture) {
+            self.push_undo();
+        }
+        self.project = scratch;
+        self.last_gesture = Some(gesture);
+        Ok(())
+    }
+
+    fn push_undo(&mut self) {
         self.undo.push(self.project.clone());
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
         }
         self.redo.clear();
-        // 3) мутация (не может провалиться после check)
-        self.mutate(cmd);
-        debug_assert!(self.project.validate().is_ok());
-        Ok(())
+    }
+
+    /// Регион ВНЕ undo-истории (семантика старого редактора).
+    pub fn set_region(&mut self, r: Option<Region>) {
+        self.project.region = r;
+    }
+
+    pub fn set_loop_enabled(&mut self, on: bool) {
+        self.project.loop_enabled = on;
     }
 
     pub fn undo(&mut self) -> Result<(), CommandError> {
-        let prev = self.undo.pop().ok_or(CommandError::NothingToUndo)?;
+        let mut prev = self.undo.pop().ok_or(CommandError::NothingToUndo)?;
+        // регион/loop не откатываются — переносим текущие значения
+        prev.region = self.project.region;
+        prev.loop_enabled = self.project.loop_enabled;
         self.redo.push(std::mem::replace(&mut self.project, prev));
+        self.last_gesture = None;
         Ok(())
     }
 
     pub fn redo(&mut self) -> Result<(), CommandError> {
-        let next = self.redo.pop().ok_or(CommandError::NothingToRedo)?;
+        let mut next = self.redo.pop().ok_or(CommandError::NothingToRedo)?;
+        next.region = self.project.region;
+        next.loop_enabled = self.project.loop_enabled;
         self.undo.push(std::mem::replace(&mut self.project, next));
+        self.last_gesture = None;
         Ok(())
     }
 
@@ -140,19 +222,20 @@ impl TimelineModel {
         self.undo.len()
     }
 
-    fn check(&self, cmd: &Command) -> Result<(), CommandError> {
-        let find = |id: ClipId| self.clip(id).ok_or(CommandError::ClipNotFound(id));
+    fn check_on(p: &Project, cmd: &Command) -> Result<(), CommandError> {
+        let find =
+            |id: ClipId| p.clips.iter().find(|c| c.id == id).ok_or(CommandError::ClipNotFound(id));
         match cmd {
             Command::AddMedia { id, .. } => {
-                if self.project.media.iter().any(|m| m.id == *id) {
+                if p.media.iter().any(|m| m.id == *id) {
                     return Err(CommandError::IdInUse(id.0));
                 }
             }
             Command::AddClip(c) => {
-                if self.project.clips.iter().any(|x| x.id == c.id) {
+                if p.clips.iter().any(|x| x.id == c.id) {
                     return Err(CommandError::IdInUse(c.id.0));
                 }
-                if !self.project.media.iter().any(|m| m.id == c.media) {
+                if !p.media.iter().any(|m| m.id == c.media) {
                     return Err(CommandError::MediaNotFound(c.media));
                 }
                 if c.duration < MIN_CLIP_DURATION {
@@ -188,7 +271,7 @@ impl TimelineModel {
             }
             Command::Split { id, at, new_id, .. } => {
                 let c = find(*id)?;
-                if self.project.clips.iter().any(|x| x.id == *new_id) {
+                if p.clips.iter().any(|x| x.id == *new_id) {
                     return Err(CommandError::IdInUse(new_id.0));
                 }
                 let r = Self::clip_range(c);
@@ -204,23 +287,74 @@ impl TimelineModel {
                     find(*id)?;
                 }
             }
+            Command::AddMarker { at } => {
+                if p.markers.contains(at) {
+                    return Err(CommandError::MarkerExists(*at));
+                }
+            }
+            Command::RemoveMarker { at } => {
+                if !p.markers.contains(at) {
+                    return Err(CommandError::MarkerNotFound(*at));
+                }
+            }
+            Command::MoveMarker { from, to } => {
+                if !p.markers.contains(from) {
+                    return Err(CommandError::MarkerNotFound(*from));
+                }
+                if p.markers.contains(to) && from != to {
+                    return Err(CommandError::MarkerExists(*to));
+                }
+            }
+            Command::InsertLane { .. } => {}
+            Command::SetLanes { video, audio } => {
+                let need_v =
+                    p.clips.iter().filter(|c| c.kind == ClipKind::Video).map(|c| c.lane + 1).max();
+                let need_a =
+                    p.clips.iter().filter(|c| c.kind == ClipKind::Audio).map(|c| c.lane + 1).max();
+                if *video < need_v.unwrap_or(1).max(1) || *audio < need_a.unwrap_or(1).max(1) {
+                    return Err(CommandError::LanesTooFew);
+                }
+            }
+            Command::RemoveMedia { id } => {
+                if !p.media.iter().any(|m| m.id == *id) {
+                    return Err(CommandError::MediaNotFound(*id));
+                }
+                if p.clips.iter().any(|c| c.media == *id) {
+                    return Err(CommandError::MediaInUse(*id));
+                }
+            }
+            Command::SetSettings { settings } => {
+                if settings.fps == 0 || kt_time::TICK_HZ % settings.fps as i64 != 0 {
+                    return Err(CommandError::InvalidClip(ProjectError::BadFps));
+                }
+            }
         }
         Ok(())
     }
 
-    fn mutate(&mut self, cmd: Command) {
+    fn mutate_on(p: &mut Project, cmd: Command) {
         match cmd {
             Command::AddMedia { id, path } => {
-                self.project.media.push(MediaRef { id, path });
+                p.media.push(MediaRef { id, path });
             }
-            Command::AddClip(c) => self.project.clips.push(c),
-            Command::RemoveClip { id } => self.project.clips.retain(|c| c.id != id),
+            Command::AddClip(c) => {
+                match c.kind {
+                    ClipKind::Video => p.video_lanes = p.video_lanes.max(c.lane + 1),
+                    ClipKind::Audio => p.audio_lanes = p.audio_lanes.max(c.lane + 1),
+                }
+                p.clips.push(c)
+            }
+            Command::RemoveClip { id } => p.clips.retain(|c| c.id != id),
             Command::MoveClip { id, new_start, new_lane } => {
-                let (group, delta) = {
-                    let c = self.clip(id).unwrap();
-                    (c.link_group, new_start - c.start)
+                let (group, delta, kind) = {
+                    let c = p.clips.iter().find(|c| c.id == id).unwrap();
+                    (c.link_group, new_start - c.start, c.kind)
                 };
-                for c in &mut self.project.clips {
+                match kind {
+                    ClipKind::Video => p.video_lanes = p.video_lanes.max(new_lane + 1),
+                    ClipKind::Audio => p.audio_lanes = p.audio_lanes.max(new_lane + 1),
+                }
+                for c in &mut p.clips {
                     if c.id == id {
                         c.start = new_start;
                         c.lane = new_lane;
@@ -231,18 +365,18 @@ impl TimelineModel {
                 }
             }
             Command::TrimStart { id, new_start } => {
-                let c = self.clip_mut(id);
+                let c = Self::clip_mut_on(p, id);
                 let delta = new_start - c.start;
                 c.start = new_start;
                 c.duration = c.duration - delta;
                 c.source_in = c.source_in + delta;
             }
             Command::TrimEnd { id, new_end } => {
-                let c = self.clip_mut(id);
+                let c = Self::clip_mut_on(p, id);
                 c.duration = new_end - c.start;
             }
             Command::Split { id, at, new_id, new_group } => {
-                let left = self.clip_mut(id);
+                let left = Self::clip_mut_on(p, id);
                 let left_len = at - left.start;
                 let mut right = left.clone();
                 left.duration = left_len;
@@ -251,22 +385,49 @@ impl TimelineModel {
                 right.start = at;
                 right.duration = right.duration - left_len;
                 right.source_in = right.source_in + left_len;
-                self.project.clips.push(right);
+                p.clips.push(right);
             }
-            Command::SetGain { id, gain_db } => self.clip_mut(id).gain_db = gain_db,
-            Command::SetFx { id, fx } => self.clip_mut(id).fx = fx,
+            Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,
+            Command::SetFx { id, fx } => Self::clip_mut_on(p, id).fx = fx,
             Command::LinkClips { ids, group } => {
-                for c in &mut self.project.clips {
+                for c in &mut p.clips {
                     if ids.contains(&c.id) {
                         c.link_group = Some(group);
                     }
                 }
             }
-            Command::UnlinkClip { id } => self.clip_mut(id).link_group = None,
+            Command::UnlinkClip { id } => Self::clip_mut_on(p, id).link_group = None,
+            Command::AddMarker { at } => {
+                let i = p.markers.partition_point(|&m| m < at);
+                p.markers.insert(i, at);
+            }
+            Command::RemoveMarker { at } => p.markers.retain(|&m| m != at),
+            Command::MoveMarker { from, to } => {
+                p.markers.retain(|&m| m != from);
+                let i = p.markers.partition_point(|&m| m < to);
+                p.markers.insert(i, to);
+            }
+            Command::InsertLane { kind, at } => {
+                match kind {
+                    ClipKind::Video => p.video_lanes = (p.video_lanes.max(at) + 1).max(1),
+                    ClipKind::Audio => p.audio_lanes = (p.audio_lanes.max(at) + 1).max(1),
+                }
+                for c in &mut p.clips {
+                    if c.kind == kind && c.lane >= at {
+                        c.lane += 1;
+                    }
+                }
+            }
+            Command::SetLanes { video, audio } => {
+                p.video_lanes = video.max(1);
+                p.audio_lanes = audio.max(1);
+            }
+            Command::RemoveMedia { id } => p.media.retain(|m| m.id != id),
+            Command::SetSettings { settings } => p.settings = settings,
         }
     }
 
-    fn clip_mut(&mut self, id: ClipId) -> &mut ClipEvent {
-        self.project.clips.iter_mut().find(|c| c.id == id).unwrap()
+    fn clip_mut_on(p: &mut Project, id: ClipId) -> &mut ClipEvent {
+        p.clips.iter_mut().find(|c| c.id == id).unwrap()
     }
 }

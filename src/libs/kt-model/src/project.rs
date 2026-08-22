@@ -30,6 +30,49 @@ pub struct Project {
     pub settings: ProjectSettings,
     pub media: Vec<MediaRef>,
     pub clips: Vec<ClipEvent>,
+    /// Маркеры (сортированы по времени, без дублей).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<Tick>,
+    /// Выделенный регион таймлайна (вне undo-истории, как в старом редакторе).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<Region>,
+    /// Loop по региону (вне undo).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub loop_enabled: bool,
+    /// Явное число дорожек — пустые дорожки полноценны (кнопки add track,
+    /// вставка дорожки дропом в зазор). На загрузке нормализуется вверх
+    /// до max(lane клипов)+1.
+    #[serde(default = "default_lanes")]
+    pub video_lanes: u32,
+    #[serde(default = "default_lanes")]
+    pub audio_lanes: u32,
+}
+
+fn default_lanes() -> u32 {
+    1
+}
+
+/// Полуоткрытый регион [start, end), start < end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Region {
+    pub start: Tick,
+    pub end: Tick,
+}
+
+impl Region {
+    pub fn normalized(a: Tick, b: Tick) -> Option<Region> {
+        let (start, end) = if a <= b { (a, b) } else { (b, a) };
+        let start = Tick(start.0.max(0));
+        (end > start).then_some(Region { start, end })
+    }
+
+    pub fn contains(&self, t: Tick) -> bool {
+        self.start <= t && t < self.end
+    }
+
+    pub fn intersects_clip(&self, c: &ClipEvent) -> bool {
+        c.start < self.end && c.start + c.duration > self.start
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -144,11 +187,38 @@ pub enum ProjectError {
     DuplicateMediaId(MediaId),
     #[error("settings: fps must divide {tick_hz}", tick_hz = kt_time::TICK_HZ)]
     BadFps,
+    #[error("region: end must be greater than start")]
+    BadRegion,
 }
 
 impl Project {
     pub fn new(settings: ProjectSettings) -> Project {
-        Project { format_version: FORMAT_VERSION, settings, media: Vec::new(), clips: Vec::new() }
+        Project {
+            format_version: FORMAT_VERSION,
+            settings,
+            media: Vec::new(),
+            clips: Vec::new(),
+            markers: Vec::new(),
+            region: None,
+            loop_enabled: false,
+            video_lanes: 1,
+            audio_lanes: 1,
+        }
+    }
+
+    /// Нормализация после загрузки: число дорожек подтягивается вверх до
+    /// фактических lane клипов (файлы, писанные до появления полей).
+    pub fn normalize(&mut self) {
+        for c in &self.clips {
+            match c.kind {
+                ClipKind::Video => self.video_lanes = self.video_lanes.max(c.lane + 1),
+                ClipKind::Audio => self.audio_lanes = self.audio_lanes.max(c.lane + 1),
+            }
+        }
+        self.video_lanes = self.video_lanes.max(1);
+        self.audio_lanes = self.audio_lanes.max(1);
+        self.markers.sort_unstable();
+        self.markers.dedup();
     }
 
     /// Полная проверка инвариантов. Ошибки загрузки ЯВНЫЕ — никаких
@@ -181,6 +251,11 @@ impl Project {
                 return Err(ProjectError::UnknownMedia(c.id, c.media));
             }
         }
+        if let Some(r) = &self.region
+            && r.end <= r.start
+        {
+            return Err(ProjectError::BadRegion);
+        }
         Ok(())
     }
 
@@ -204,7 +279,9 @@ impl Project {
         if v.format_version != FORMAT_VERSION {
             return Err(ProjectError::UnsupportedVersion(v.format_version));
         }
-        let p: Project = serde_json::from_str(s).map_err(|e| ProjectError::Json(e.to_string()))?;
+        let mut p: Project =
+            serde_json::from_str(s).map_err(|e| ProjectError::Json(e.to_string()))?;
+        p.normalize();
         p.validate()?;
         Ok(p)
     }
