@@ -6,15 +6,16 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-default = []
-# rsmpeg/FFmpeg-бэкенд подключается в M3; без фичи крейт собирается без FFmpeg.
-ffmpeg = []
+default = ["ffmpeg"]
+# Без фичи крейт собирается без FFmpeg (синтетика, индекс-БД, тесты движка).
+ffmpeg = ["dep:rsmpeg"]
 
 [dependencies]
 kt-time = { workspace = true }
 thiserror = { workspace = true }
 rusqlite = { workspace = true }
 xxhash-rust = { workspace = true }
+rsmpeg = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

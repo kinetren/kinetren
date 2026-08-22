@@ -33,14 +33,17 @@ fn synth_pattern(path: &str) -> Option<AudioPattern> {
 fn render_wav(project: &Project, output: &str) -> i32 {
     let mut fetcher = DirectFetcher::new(None);
     for m in &project.media {
-        let Some(pattern) = synth_pattern(&m.path) else {
-            eprintln!(
-                "{}: реальные файлы поддерживаются с M3; пока только synth:-источники",
-                m.path
-            );
-            return 1;
-        };
-        fetcher.add_source(m.id, Box::new(SyntheticSource::new(Tick(90_000 * 3600), pattern)));
+        if let Some(pattern) = synth_pattern(&m.path) {
+            fetcher.add_source(m.id, Box::new(SyntheticSource::new(Tick(90_000 * 3600), pattern)));
+            continue;
+        }
+        match kt_media::ffmpeg::FfmpegSource::open(&m.path) {
+            Ok(src) => fetcher.add_source(m.id, Box::new(src)),
+            Err(e) => {
+                eprintln!("{}: {e}", m.path);
+                return 1;
+            }
+        }
     }
     let end_frame =
         project.clips.iter().map(|c| (c.start + c.duration).to_audio_frames()).max().unwrap_or(0);

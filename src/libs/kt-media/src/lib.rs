@@ -72,5 +72,7 @@ pub trait MediaSource: Send {
 /// Кадров в блоке уровня 0 peak-пирамиды (docs/media-index.md).
 pub const PEAK_BLOCK_FRAMES: usize = 256;
 
+#[cfg(feature = "ffmpeg")]
+pub mod ffmpeg;
 pub mod index;
 pub mod synthetic;
