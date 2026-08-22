@@ -9,10 +9,10 @@
 mod audio_out;
 
 use eframe::egui;
-use kt_engine::{Player, source_id};
 use kt_cache::BurstKind;
-use kt_media::synthetic::{AudioPattern, SyntheticSource};
+use kt_engine::{Player, source_id};
 use kt_media::MediaSource;
+use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_model::{ClipKind, MediaId, Project};
 use kt_time::{AUDIO_BURST_FRAMES, Tick};
 use std::collections::HashMap;
@@ -95,7 +95,7 @@ struct KtApp {
     peaks: Arc<Mutex<HashMap<MediaId, Peaks>>>,
     texture: Option<egui::TextureHandle>,
     // таймлайн-вью
-    view_start: f64,    // тики
+    view_start: f64, // тики
     ticks_per_px: f64,
     error: Option<String>,
 }
@@ -107,11 +107,12 @@ impl KtApp {
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let mut sources = Vec::new();
         for m in &project.media {
-            let resolved = if m.path.starts_with("synth:") || std::path::Path::new(&m.path).is_absolute() {
-                m.path.clone()
-            } else {
-                base.join(&m.path).to_string_lossy().to_string()
-            };
+            let resolved =
+                if m.path.starts_with("synth:") || std::path::Path::new(&m.path).is_absolute() {
+                    m.path.clone()
+                } else {
+                    base.join(&m.path).to_string_lossy().to_string()
+                };
             sources.push((m.id, open_source(&resolved)?));
         }
         let (player, ring) = Player::new(project.clone(), sources);
@@ -139,10 +140,8 @@ impl KtApp {
     fn draw_preview(&mut self, ui: &mut egui::Ui) {
         let t = self.player.transport.playhead();
         let (rgba, q, _complete) = self.player.compose_preview(t);
-        let image = egui::ColorImage::from_rgba_unmultiplied(
-            [q.width as usize, q.height as usize],
-            &rgba,
-        );
+        let image =
+            egui::ColorImage::from_rgba_unmultiplied([q.width as usize, q.height as usize], &rgba);
         match &mut self.texture {
             Some(tex) => tex.set(image, egui::TextureOptions::LINEAR),
             None => {
@@ -161,8 +160,8 @@ impl KtApp {
     }
 
     fn draw_timeline(&mut self, ui: &mut egui::Ui) {
-        let (rect, response) = ui
-            .allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+        let (rect, response) =
+            ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, egui::Color32::from_gray(24));
 
@@ -191,8 +190,10 @@ impl KtApp {
         self.view_start = view_start;
         self.ticks_per_px = tpp;
 
-        let x_to_tick = move |x: f32| -> i64 { (view_start + (x - rect.left()) as f64 * tpp) as i64 };
-        let tick_to_x = move |t: i64| -> f32 { rect.left() + ((t as f64 - view_start) / tpp) as f32 };
+        let x_to_tick =
+            move |x: f32| -> i64 { (view_start + (x - rect.left()) as f64 * tpp) as i64 };
+        let tick_to_x =
+            move |t: i64| -> f32 { rect.left() + ((t as f64 - view_start) / tpp) as f32 };
 
         // линейка секунд
         let ruler_h = 18.0;
@@ -204,7 +205,10 @@ impl KtApp {
             let x = tick_to_x(s * 90_000);
             let major = s % label_every == 0;
             painter.line_segment(
-                [egui::pos2(x, rect.top()), egui::pos2(x, rect.top() + if major { ruler_h } else { 6.0 })],
+                [
+                    egui::pos2(x, rect.top()),
+                    egui::pos2(x, rect.top() + if major { ruler_h } else { 6.0 }),
+                ],
                 egui::Stroke::new(1.0, egui::Color32::from_gray(70)),
             );
             if major {
@@ -219,10 +223,22 @@ impl KtApp {
         }
 
         // дорожки: видео сверху, аудио ниже
-        let video_lanes =
-            self.project.clips.iter().filter(|c| c.kind == ClipKind::Video).map(|c| c.lane + 1).max().unwrap_or(0);
-        let audio_lanes =
-            self.project.clips.iter().filter(|c| c.kind == ClipKind::Audio).map(|c| c.lane + 1).max().unwrap_or(0);
+        let video_lanes = self
+            .project
+            .clips
+            .iter()
+            .filter(|c| c.kind == ClipKind::Video)
+            .map(|c| c.lane + 1)
+            .max()
+            .unwrap_or(0);
+        let audio_lanes = self
+            .project
+            .clips
+            .iter()
+            .filter(|c| c.kind == ClipKind::Audio)
+            .map(|c| c.lane + 1)
+            .max()
+            .unwrap_or(0);
         let lane_h = ((rect.height() - ruler_h - 8.0) / (video_lanes + audio_lanes).max(1) as f32)
             .clamp(24.0, 72.0);
         let lane_top = |kind: ClipKind, lane: u32| -> f32 {
@@ -253,7 +269,13 @@ impl KtApp {
                     (egui::Color32::from_rgb(40, 84, 60), egui::Color32::from_rgb(90, 180, 120))
                 }
             };
-            painter.rect(clip_rect, 3.0, fill, egui::Stroke::new(1.0, edge), egui::StrokeKind::Inside);
+            painter.rect(
+                clip_rect,
+                3.0,
+                fill,
+                egui::Stroke::new(1.0, edge),
+                egui::StrokeKind::Inside,
+            );
 
             // волноформа из peak-пирамиды (ноль декодов — инвариант №8)
             if c.kind == ClipKind::Audio
@@ -307,10 +329,17 @@ impl KtApp {
             for run in self.player.cache.coverage(source_id(c.media), cov_kind, b0..b1) {
                 let (t0, t1) = match c.kind {
                     ClipKind::Audio => (
-                        c.start.0 + Tick::from_audio_frames(run.start * AUDIO_BURST_FRAMES as i64
-                            - c.source_in.to_audio_frames()).0,
-                        c.start.0 + Tick::from_audio_frames(run.end * AUDIO_BURST_FRAMES as i64
-                            - c.source_in.to_audio_frames()).0,
+                        c.start.0
+                            + Tick::from_audio_frames(
+                                run.start * AUDIO_BURST_FRAMES as i64
+                                    - c.source_in.to_audio_frames(),
+                            )
+                            .0,
+                        c.start.0
+                            + Tick::from_audio_frames(
+                                run.end * AUDIO_BURST_FRAMES as i64 - c.source_in.to_audio_frames(),
+                            )
+                            .0,
                     ),
                     ClipKind::Video => {
                         (c.start.0 + run.start - c.source_in.0, c.start.0 + run.end - c.source_in.0)
@@ -328,12 +357,11 @@ impl KtApp {
         drop(peaks);
 
         // взаимодействие: клик/драг = seek (скраб)
-        if response.clicked() || response.dragged() {
-            if let Some(pos) = response.interact_pointer_pos() {
+        if (response.clicked() || response.dragged())
+            && let Some(pos) = response.interact_pointer_pos() {
                 let t = x_to_tick(pos.x).max(0);
                 self.player.seek(Tick(t));
             }
-        }
 
         // playhead
         let ph = self.player.transport.playhead();

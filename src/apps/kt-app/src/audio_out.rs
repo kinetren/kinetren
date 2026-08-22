@@ -44,7 +44,10 @@ pub fn start(
     let device_rate = config.sample_rate().0;
     let device_channels = config.channels() as usize;
     if config.sample_format() != cpal::SampleFormat::F32 {
-        return Err(format!("формат сэмплов {:?} не поддержан (нужен f32)", config.sample_format()));
+        return Err(format!(
+            "формат сэмплов {:?} не поддержан (нужен f32)",
+            config.sample_format()
+        ));
     }
     // Наивная подгонка под чужой rate (позиционный повтор/пропуск кадров).
     // На 48k-устройствах (норма для PipeWire) путь тождественный.

@@ -183,10 +183,7 @@ impl Player {
         let generation = self.transport.generation();
         for (media, src_pts) in video.layers_at(aligned) {
             let idx = video_cache_idx(src_pts);
-            if self
-                .cache
-                .get_video(source_id(media), Some(q), idx)
-                .is_none()
+            if self.cache.get_video(source_id(media), Some(q), idx).is_none()
                 && let Some(w) = self.workers.get(&media)
             {
                 w.submit(DecodeRequest {
@@ -272,7 +269,8 @@ fn audio_render_loop(
             );
             // наполняем кольцо
             while producer.slots() >= chunk.len() {
-                let stats = renderer.render_frames_with(&mut fetcher, &mut store, render_head, &mut chunk);
+                let stats =
+                    renderer.render_frames_with(&mut fetcher, &mut store, render_head, &mut chunk);
                 if stats.underruns > 0 {
                     underruns.fetch_add(stats.underruns, Ordering::Relaxed);
                 }
@@ -317,9 +315,7 @@ fn prefetch_loop(
         let range = TickRange::new(t0, Tick(t0.0 + PREFETCH_VIDEO_LOOKAHEAD_TICKS));
         let q = *preview_quality.lock().unwrap();
         for (media, src_pts) in video.wanted_frames(range) {
-            if cache
-                .get_video(source_id(media), Some(q), video_cache_idx(src_pts))
-                .is_none()
+            if cache.get_video(source_id(media), Some(q), video_cache_idx(src_pts)).is_none()
                 && let Some(w) = workers.get(&media)
             {
                 w.submit(DecodeRequest {
