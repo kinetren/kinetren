@@ -1,0 +1,15 @@
+[package]
+name = "kt-media"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# rsmpeg/FFmpeg-бэкенд подключается в M3; без фичи крейт собирается без FFmpeg.
+ffmpeg = []
+
+[dependencies]
+kt-time = { workspace = true }
+thiserror = { workspace = true }

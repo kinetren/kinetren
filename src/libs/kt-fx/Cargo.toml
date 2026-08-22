@@ -1,0 +1,13 @@
+[package]
+name = "kt-fx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kt-time = { workspace = true }
+kt-model = { workspace = true }
+
+[dev-dependencies]
+realfft = { workspace = true }

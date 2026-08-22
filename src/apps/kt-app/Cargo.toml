@@ -1,0 +1,12 @@
+[package]
+name = "kt-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kt-time = { workspace = true }
+kt-model = { workspace = true }
+kt-engine = { workspace = true }
+eframe = { workspace = true }

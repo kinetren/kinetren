@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/kt-app",
+    "apps/kt-cli",
+    "libs/kt-time",
+    "libs/kt-model",
+    "libs/kt-media",
+    "libs/kt-cache",
+    "libs/kt-fx",
+    "libs/kt-engine",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "UNLICENSED"
+publish = false
+
+[workspace.dependencies]
+kt-time = { path = "libs/kt-time" }
+kt-model = { path = "libs/kt-model" }
+kt-media = { path = "libs/kt-media" }
+kt-cache = { path = "libs/kt-cache" }
+kt-fx = { path = "libs/kt-fx" }
+kt-engine = { path = "libs/kt-engine" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+crossbeam-channel = "0.5"
+rtrb = "0.3"
+eframe = "0.36"
+cpal = "0.16"
+rubato = "0.16"
+rusqlite = { version = "0.37", features = ["bundled"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+realfft = "3"
+
+[profile.release]
+debug = true
+
+# Аудио-DSP и композитинг должны быть быстрыми и в dev-сборке
+[profile.dev.package."*"]
+opt-level = 2
