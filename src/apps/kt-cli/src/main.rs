@@ -30,17 +30,27 @@ fn synth_pattern(path: &str) -> Option<AudioPattern> {
     }
 }
 
-fn render_wav(project: &Project, output: &str) -> i32 {
+fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
+    let base = std::path::Path::new(project_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
     let mut fetcher = DirectFetcher::new(None);
     for m in &project.media {
         if let Some(pattern) = synth_pattern(&m.path) {
             fetcher.add_source(m.id, Box::new(SyntheticSource::new(Tick(90_000 * 3600), pattern)));
             continue;
         }
-        match kt_media::ffmpeg::FfmpegSource::open(&m.path) {
+        // относительные пути — от файла проекта (как в kt-app)
+        let resolved = if std::path::Path::new(&m.path).is_absolute() {
+            m.path.clone()
+        } else {
+            base.join(&m.path).to_string_lossy().to_string()
+        };
+        match kt_media::ffmpeg::FfmpegSource::open(&resolved) {
             Ok(src) => fetcher.add_source(m.id, Box::new(src)),
             Err(e) => {
-                eprintln!("{}: {e}", m.path);
+                eprintln!("{resolved}: {e}");
                 return 1;
             }
         }
@@ -158,7 +168,7 @@ fn run(args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            render_wav(&project, output)
+            render_wav(&project, input, output)
         }
         Some(cmd) => {
             eprintln!("unknown command: {cmd} (доступно: version, new, roundtrip, render)");

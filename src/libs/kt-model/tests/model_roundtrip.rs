@@ -18,7 +18,7 @@ fn sample_project() -> Project {
         source_in: Tick(0),
         media: MediaId(1),
         gain_db: 0.0,
-        fx: vec![FxInstance::SlowedReverb { rate: 0.82, mix: 0.3, reverb_delay_ms: 140.0 }],
+        fx: vec![FxInstance::slowed_reverb(0.82, 0.3, 140.0)],
     });
     p.clips.push(ClipEvent {
         id: ClipId(11),

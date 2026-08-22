@@ -22,16 +22,25 @@ impl FxStateStore {
     /// - структура цепочки та же → переиспользуем state, доносим параметры;
     /// - структура сменилась → пересоздаём ТОЛЬКО этот клип;
     /// - цепочка пуста → процессор не нужен.
-    pub fn sync_clip(&mut self, id: ClipId, fx: &[FxInstance], src_in_frames: i64) {
+    pub fn sync_clip(
+        &mut self,
+        id: ClipId,
+        fx: &[FxInstance],
+        src_in_frames: i64,
+        clip_len_frames: i64,
+    ) {
         if fx.is_empty() {
             self.map.remove(&id);
             return;
         }
         let fp = chain_fingerprint(fx);
         match self.map.get_mut(&id) {
-            Some(p) if p.fingerprint() == fp => p.apply_params(fx, false),
+            Some(p) if p.fingerprint() == fp => {
+                p.set_clip_len(clip_len_frames);
+                p.apply_params(fx, false);
+            }
             _ => {
-                self.map.insert(id, ClipProcessor::new(fx, src_in_frames));
+                self.map.insert(id, ClipProcessor::new(fx, src_in_frames, clip_len_frames));
             }
         }
     }

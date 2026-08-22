@@ -78,7 +78,7 @@ impl AudioRenderer {
     /// стора — аудио-render-потоком — после каждой пересборки графа).
     pub fn sync_fx(&self, store: &mut crate::fxstore::FxStateStore) {
         for c in &self.clips {
-            store.sync_clip(c.id, &c.fx, c.source_in);
+            store.sync_clip(c.id, &c.fx, c.source_in, c.end - c.start);
         }
         let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();
         store.retain_clips(&|id| alive.contains(&id));
@@ -223,7 +223,7 @@ impl AudioRenderer {
         if from >= to {
             return;
         }
-        let rate = kt_fx::chain_rate(&clip.fx);
+        let rate = kt_fx::chain_avg_rate(&clip.fx);
         // окно источника клипа: за его пределами — законная тишина (хвост)
         let src_window_end =
             clip.source_in + (((clip.end - clip.start) as f64) * rate).ceil() as i64;

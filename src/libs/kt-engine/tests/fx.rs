@@ -67,11 +67,7 @@ fn spectrum_db(samples: &[f32]) -> Vec<f32> {
 #[test]
 fn t4_slowed_halves_pitch_without_artifacts() {
     let dur = 5 * AUDIO_SAMPLE_RATE as i64; // 5 c
-    let p = fx_project(
-        vec![FxInstance::SlowedReverb { rate: 0.5, mix: 0.0, reverb_delay_ms: 140.0 }],
-        "synth:sine:440",
-        dur,
-    );
+    let p = fx_project(vec![FxInstance::slowed_reverb(0.5, 0.0, 140.0)], "synth:sine:440", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Sine { hz: 440.0 });
     let mut store = FxStateStore::new();
@@ -109,11 +105,7 @@ fn t4_warp_consumes_source_at_rate() {
     // rate 0.5 на клипе длиной D требует D/2 кадров источника: ramp в конце
     // окна источника должен дойти ровно до source_in + D*rate (±чанк ресемплера).
     let dur = 4 * AUDIO_SAMPLE_RATE as i64;
-    let p = fx_project(
-        vec![FxInstance::SlowedReverb { rate: 0.5, mix: 0.0, reverb_delay_ms: 140.0 }],
-        "synth:ramp",
-        dur,
-    );
+    let p = fx_project(vec![FxInstance::slowed_reverb(0.5, 0.0, 140.0)], "synth:ramp", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Ramp);
     let mut store = FxStateStore::new();
@@ -139,11 +131,7 @@ fn t4_warp_consumes_source_at_rate() {
 fn t5_param_step_does_not_click() {
     let dur = 4 * AUDIO_SAMPLE_RATE as i64;
     let mk = |mix: f32| {
-        fx_project(
-            vec![FxInstance::SlowedReverb { rate: 1.0, mix, reverb_delay_ms: 140.0 }],
-            "synth:sine:220",
-            dur,
-        )
+        fx_project(vec![FxInstance::slowed_reverb(1.0, mix, 140.0)], "synth:sine:220", dur)
     };
     let mut f = direct(AudioPattern::Sine { hz: 220.0 });
     let mut store = FxStateStore::new();
@@ -182,11 +170,7 @@ fn t5_param_step_does_not_click() {
 #[test]
 fn t6_reverb_tail_rings_past_clip_end_and_decays() {
     let dur = AUDIO_SAMPLE_RATE as i64; // 1 c
-    let p = fx_project(
-        vec![FxInstance::SlowedReverb { rate: 1.0, mix: 0.6, reverb_delay_ms: 140.0 }],
-        "synth:impulse",
-        dur,
-    );
+    let p = fx_project(vec![FxInstance::slowed_reverb(1.0, 0.6, 140.0)], "synth:impulse", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Impulse);
     let mut store = FxStateStore::new();
@@ -215,7 +199,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     // Правка ДРУГОГО клипа (пересборка AudioRenderer) посреди звучания
     // не должна прерывать/менять реверб (старый rebuildGraph убивал state).
     let dur = AUDIO_SAMPLE_RATE as i64;
-    let fx = vec![FxInstance::SlowedReverb { rate: 1.0, mix: 0.6, reverb_delay_ms: 140.0 }];
+    let fx = vec![FxInstance::slowed_reverb(1.0, 0.6, 140.0)];
     let p1 = fx_project(fx.clone(), "synth:sine:330", dur);
 
     // эталон: непрерывный рендер одним графом

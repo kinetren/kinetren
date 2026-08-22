@@ -358,10 +358,11 @@ impl KtApp {
 
         // взаимодействие: клик/драг = seek (скраб)
         if (response.clicked() || response.dragged())
-            && let Some(pos) = response.interact_pointer_pos() {
-                let t = x_to_tick(pos.x).max(0);
-                self.player.seek(Tick(t));
-            }
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let t = x_to_tick(pos.x).max(0);
+            self.player.seek(Tick(t));
+        }
 
         // playhead
         let ph = self.player.transport.playhead();

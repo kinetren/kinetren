@@ -11,7 +11,7 @@
 //!   буферы; полный сброс — только reset() при разрыве непрерывности (e);
 //! - tail() сообщает хвост реверба — граф продлевает окно клипа (f).
 
-use kt_model::FxInstance;
+use kt_model::{FxInstance, SlowedKeyframe};
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 use rubato::{
     Resampler, SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction,
@@ -62,8 +62,6 @@ impl SmoothedParam {
 const COMB_TUNINGS: [usize; 8] = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
 const ALLPASS_TUNINGS: [usize; 4] = [556, 441, 341, 225];
 const STEREO_SPREAD: usize = 23;
-const FEEDBACK: f32 = 0.84;
-const DAMP: f32 = 0.2;
 
 struct Comb {
     buf: Vec<f32>,
@@ -76,10 +74,10 @@ impl Comb {
         Comb { buf: vec![0.0; len.max(1)], pos: 0, filter_state: 0.0 }
     }
     #[inline]
-    fn process(&mut self, input: f32) -> f32 {
+    fn process(&mut self, input: f32, damp: f32, feedback: f32) -> f32 {
         let out = self.buf[self.pos];
-        self.filter_state = out * (1.0 - DAMP) + self.filter_state * DAMP;
-        self.buf[self.pos] = input + self.filter_state * FEEDBACK;
+        self.filter_state = out * (1.0 - damp) + self.filter_state * damp;
+        self.buf[self.pos] = input + self.filter_state * feedback;
         self.pos = (self.pos + 1) % self.buf.len();
         out
     }
@@ -111,10 +109,13 @@ pub struct Freeverb {
     allpasses: [Vec<Allpass>; CH],
     wet: SmoothedParam,
     delay_ms: f32,
+    damp: f32,
+    feedback: f32,
+    wet_gain: f32,
 }
 
 impl Freeverb {
-    pub fn new(mix: f32, delay_ms: f32) -> Freeverb {
+    pub fn new(mix: f32, delay_ms: f32, damp: f32, decay: f32, wet_gain: f32) -> Freeverb {
         let scale = |base: usize, extra: usize| -> usize {
             let s = base as f32 * (AUDIO_SAMPLE_RATE as f32 / 44_100.0) * (delay_ms / 100.0);
             (s as usize + extra).max(8)
@@ -131,29 +132,41 @@ impl Freeverb {
                 .map(|&t| Allpass::new(scale(t, ch * STEREO_SPREAD)))
                 .collect::<Vec<_>>()
         });
-        Freeverb { combs, allpasses, wet: SmoothedParam::new(mix.clamp(0.0, 1.0)), delay_ms }
+        Freeverb {
+            combs,
+            allpasses,
+            wet: SmoothedParam::new(mix.clamp(0.0, 1.0)),
+            delay_ms,
+            damp: damp.clamp(0.0, 0.99),
+            feedback: decay.clamp(0.0, 0.98),
+            wet_gain: wet_gain.max(0.0),
+        }
     }
 
-    pub fn set_params(&mut self, mix: f32, delay_ms: f32) {
+    pub fn set_params(&mut self, mix: f32, delay_ms: f32, damp: f32, decay: f32, wet_gain: f32) {
         self.wet.set_target(mix.clamp(0.0, 1.0));
+        self.damp = damp.clamp(0.0, 0.99);
+        self.feedback = decay.clamp(0.0, 0.98);
+        self.wet_gain = wet_gain.max(0.0);
         // структурная смена геометрии: пересоздание допускается только при
         // реально другом delay (порог 0.5 мс, как в старом коде, но wet/dry
         // это не трогает)
         if (delay_ms - self.delay_ms).abs() > 0.5 {
             let keep_wet = self.wet;
-            *self = Freeverb::new(keep_wet.target, delay_ms);
+            *self = Freeverb::new(keep_wet.target, delay_ms, damp, decay, wet_gain);
             self.wet = keep_wet;
         }
+    }
+
+    /// Только цель wet-mix (автоматизация) — сглаженно, буферы не трогаются.
+    pub fn set_mix(&mut self, mix: f32) {
+        self.wet.set_target(mix.clamp(0.0, 1.0));
     }
 
     /// Хвост: время затухания до −60 dB (t60) по максимальной comb-линии.
     pub fn tail(&self) -> Tick {
         let max_len = self.combs[CH - 1].iter().map(|c| c.buf.len()).max().unwrap_or(1);
-        // энергия падает на 20·log10(FEEDBACK) dB за проход линии
-        let db_per_pass = -20.0 * FEEDBACK.log10(); // ≈ 1.51 dB
-        let passes = 60.0 / db_per_pass;
-        let frames = (max_len as f32 * passes) as i64;
-        Tick::from_audio_frames(frames)
+        tail_frames_for(max_len as f32, self.feedback)
     }
 
     pub fn process(&mut self, samples: &mut [f32]) {
@@ -164,12 +177,12 @@ impl Freeverb {
                 let input = dry * 0.015;
                 let mut wet = 0.0;
                 for comb in &mut self.combs[ch] {
-                    wet += comb.process(input);
+                    wet += comb.process(input, self.damp, self.feedback);
                 }
                 for ap in &mut self.allpasses[ch] {
                     wet = ap.process(wet);
                 }
-                *s = dry * (1.0 - wet_gain) + wet * wet_gain;
+                *s = dry * (1.0 - wet_gain) + wet * self.wet_gain * wet_gain;
             }
         }
     }
@@ -281,11 +294,84 @@ impl Warp {
 // Процессор клипа: цепочка FX поверх (возможно варпнутого) источника
 // ---------------------------------------------------------------------------
 
+fn tail_frames_for(max_comb_len: f32, feedback: f32) -> Tick {
+    let fb = feedback.clamp(0.01, 0.98);
+    let db_per_pass = -20.0 * fb.log10();
+    Tick::from_audio_frames((max_comb_len.max(8.0) * (60.0 / db_per_pass)) as i64)
+}
+
+/// Значение rate в прогрессе t (линейная интерполяция, края зажаты).
+pub fn rate_at(base: f64, automation: &[SlowedKeyframe], t: f64) -> f64 {
+    interp(automation, t, base, |k| k.rate)
+}
+
+/// Значение mix в прогрессе t.
+pub fn mix_at(base: f32, automation: &[SlowedKeyframe], t: f64) -> f32 {
+    interp(automation, t, base as f64, |k| k.mix as f64) as f32
+}
+
+fn interp(kfs: &[SlowedKeyframe], t: f64, base: f64, get: impl Fn(&SlowedKeyframe) -> f64) -> f64 {
+    if kfs.is_empty() {
+        return base;
+    }
+    if t <= kfs[0].t {
+        return get(&kfs[0]);
+    }
+    for w in kfs.windows(2) {
+        if t <= w[1].t {
+            let span = (w[1].t - w[0].t).max(1e-12);
+            let a = (t - w[0].t) / span;
+            return get(&w[0]) * (1.0 - a) + get(&w[1]) * a;
+        }
+    }
+    get(&kfs[kfs.len() - 1])
+}
+
+/// ∫₀ᵗ rate dτ (кусочно-линейно; края зажаты): маппинг «прогресс клипа →
+/// потреблённая доля источника».
+pub fn rate_integral(base: f64, automation: &[SlowedKeyframe], t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    if automation.is_empty() {
+        return base * t;
+    }
+    let mut acc = 0.0;
+    let mut prev_t = 0.0f64;
+    let mut prev_v = rate_at(base, automation, 0.0);
+    for k in automation {
+        if k.t >= t {
+            break;
+        }
+        if k.t > prev_t {
+            acc += (k.t - prev_t) * (prev_v + k.rate) / 2.0;
+            prev_t = k.t;
+            prev_v = k.rate;
+        }
+    }
+    let v = rate_at(base, automation, t);
+    acc + (t - prev_t) * (prev_v + v) / 2.0
+}
+
+/// Средняя скорость по клипу: ∫₀¹ rate. Определяет расход источника.
+pub fn avg_rate(base: f64, automation: &[SlowedKeyframe]) -> f64 {
+    rate_integral(base, automation, 1.0)
+}
+
 /// Скорость воспроизведения цепочки (1.0 = без варпа).
 pub fn chain_rate(fx: &[FxInstance]) -> f64 {
     fx.iter()
-        .find_map(|f| match *f {
+        .find_map(|f| match f {
             FxInstance::SlowedReverb { rate, .. } => Some(rate.clamp(0.25, 32.0)),
+            _ => None,
+        })
+        .unwrap_or(1.0)
+}
+
+/// Средняя скорость цепочки с учётом автоматизации: определяет, сколько
+/// источника съедает клип (для source-окна и длительности).
+pub fn chain_avg_rate(fx: &[FxInstance]) -> f64 {
+    fx.iter()
+        .find_map(|f| match f {
+            FxInstance::SlowedReverb { rate, automation, .. } => Some(avg_rate(*rate, automation)),
             _ => None,
         })
         .unwrap_or(1.0)
@@ -295,9 +381,11 @@ pub fn chain_rate(fx: &[FxInstance]) -> f64 {
 /// в графе до того, как процессор построен).
 pub fn chain_tail(fx: &[FxInstance]) -> Tick {
     fx.iter()
-        .map(|f| match *f {
-            FxInstance::SlowedReverb { mix, reverb_delay_ms, .. } if mix > 0.0 => {
-                reverb_tail_for_delay(reverb_delay_ms)
+        .map(|f| match f {
+            FxInstance::SlowedReverb { mix, reverb_delay_ms, decay, automation, .. }
+                if *mix > 0.0 || automation.iter().any(|k| k.mix > 0.0) =>
+            {
+                reverb_tail_for_delay(*reverb_delay_ms, *decay)
             }
             _ => Tick::ZERO,
         })
@@ -305,14 +393,12 @@ pub fn chain_tail(fx: &[FxInstance]) -> Tick {
         .unwrap_or(Tick::ZERO)
 }
 
-fn reverb_tail_for_delay(delay_ms: f32) -> Tick {
+fn reverb_tail_for_delay(delay_ms: f32, decay: f32) -> Tick {
     let max_comb = COMB_TUNINGS[COMB_TUNINGS.len() - 1] as f32
         * (AUDIO_SAMPLE_RATE as f32 / 44_100.0)
         * (delay_ms / 100.0)
         + ((CH - 1) * STEREO_SPREAD) as f32;
-    let db_per_pass = -20.0 * FEEDBACK.log10();
-    let frames = (max_comb.max(8.0) * (60.0 / db_per_pass)) as i64;
-    Tick::from_audio_frames(frames)
+    tail_frames_for(max_comb, decay)
 }
 
 /// Отпечаток СТРУКТУРЫ цепочки (виды FX по порядку). Совпадает → state
@@ -337,12 +423,16 @@ pub struct ClipProcessor {
     reverb: Option<Freeverb>,
     static_gain: f32,
     rate: f64,
-    /// Курсор источника для пути без варпа (rate == 1).
+    base_mix: f32,
+    automation: Vec<SlowedKeyframe>,
+    /// Длина клипа в кадрах — знаменатель прогресса автоматизации.
+    clip_len: i64,
+    /// Курсор источника для пути без варпа (rate == 1, без автоматизации).
     plain_cursor: i64,
 }
 
 impl ClipProcessor {
-    pub fn new(fx: &[FxInstance], src_in_frames: i64) -> ClipProcessor {
+    pub fn new(fx: &[FxInstance], src_in_frames: i64, clip_len_frames: i64) -> ClipProcessor {
         let mut p = ClipProcessor {
             fingerprint: chain_fingerprint(fx),
             next_local: i64::MIN,
@@ -351,10 +441,18 @@ impl ClipProcessor {
             reverb: None,
             static_gain: 1.0,
             rate: 1.0,
+            base_mix: 0.0,
+            automation: Vec::new(),
+            clip_len: clip_len_frames.max(1),
             plain_cursor: src_in_frames,
         };
         p.apply_params(fx, true);
         p
+    }
+
+    /// Обновить длину клипа (trim) без сброса состояния.
+    pub fn set_clip_len(&mut self, clip_len_frames: i64) {
+        self.clip_len = clip_len_frames.max(1);
     }
 
     pub fn fingerprint(&self) -> u64 {
@@ -365,22 +463,38 @@ impl ClipProcessor {
     pub fn apply_params(&mut self, fx: &[FxInstance], structural: bool) {
         let mut gain = 1.0f32;
         for f in fx {
-            match *f {
+            match f {
                 FxInstance::Gain { db } => gain *= 10f32.powf(db / 20.0),
-                FxInstance::SlowedReverb { rate, mix, reverb_delay_ms } => {
+                FxInstance::SlowedReverb {
+                    rate,
+                    mix,
+                    reverb_delay_ms,
+                    damp,
+                    decay,
+                    wet_gain,
+                    automation,
+                } => {
                     self.rate = rate.clamp(0.25, 32.0);
+                    self.base_mix = *mix;
+                    self.automation = automation.clone();
                     if structural {
-                        self.reverb = Some(Freeverb::new(mix, reverb_delay_ms));
+                        self.reverb =
+                            Some(Freeverb::new(*mix, *reverb_delay_ms, *damp, *decay, *wet_gain));
                     } else if let Some(rv) = &mut self.reverb {
-                        rv.set_params(mix, reverb_delay_ms);
+                        rv.set_params(*mix, *reverb_delay_ms, *damp, *decay, *wet_gain);
                     }
                     if let Some(w) = &mut self.warp {
-                        w.set_rate(rate);
+                        w.set_rate(rate_at(self.rate, &self.automation, 0.5_f64.min(1.0)));
                     }
                 }
             }
         }
         self.static_gain = gain;
+    }
+
+    fn has_warp(&self) -> bool {
+        (self.rate - 1.0).abs() > 1e-9
+            || self.automation.iter().any(|k| (k.rate - 1.0).abs() > 1e-9)
     }
 
     pub fn tail(&self) -> Tick {
@@ -415,9 +529,16 @@ impl ClipProcessor {
             self.hard_seek(local, pull);
         }
         let before = self.warp.as_ref().map(|w| w.underruns()).unwrap_or(0);
-        self.produce(out, pull);
+        self.produce(local, out, pull);
         self.next_local = local + (out.len() / CH) as i64;
         self.warp.as_ref().map(|w| w.underruns()).unwrap_or(0) - before
+    }
+
+    /// Смещение источника (кадры от src_in) для клип-локальной позиции:
+    /// интеграл rate по прогрессу — с автоматизацией НЕ линейно.
+    fn source_offset(&self, local: i64) -> i64 {
+        let t = local as f64 / self.clip_len as f64;
+        (self.clip_len as f64 * rate_integral(self.rate, &self.automation, t)).round() as i64
     }
 
     fn hard_seek(&mut self, local: i64, pull: &mut dyn FnMut(i64, &mut [f32]) -> bool) {
@@ -426,11 +547,12 @@ impl ClipProcessor {
         }
         let preroll = self.tail_frames().max(MIN_PREROLL_FRAMES).min(local.max(0));
         let start = local - preroll;
-        // позиция источника для local=start: дробный курсор начинается здесь
-        let src_start = self.src_in + (start as f64 * self.rate) as i64;
-        if (self.rate - 1.0).abs() > 1e-9 {
-            let mut w = Warp::new(self.rate, src_start);
-            w.set_rate(self.rate);
+        // позиция источника для local=start (интеграл автоматизации)
+        let src_start = self.src_in + self.source_offset(start);
+        if self.has_warp() {
+            let t = start as f64 / self.clip_len as f64;
+            let mut w = Warp::new(rate_at(self.rate, &self.automation, t), src_start);
+            w.set_rate(rate_at(self.rate, &self.automation, t));
             self.warp = Some(w);
         } else {
             self.warp = None;
@@ -441,16 +563,31 @@ impl ClipProcessor {
         let mut done = 0i64;
         while done < preroll {
             let n = (preroll - done).min(1024) as usize;
-            self.produce(&mut scratch[..n * CH], pull);
+            self.produce(start + done, &mut scratch[..n * CH], pull);
             done += n as i64;
         }
     }
 
-    fn produce(&mut self, out: &mut [f32], pull: &mut dyn FnMut(i64, &mut [f32]) -> bool) {
+    fn produce(
+        &mut self,
+        local: i64,
+        out: &mut [f32],
+        pull: &mut dyn FnMut(i64, &mut [f32]) -> bool,
+    ) {
+        let frames = out.len() / CH;
+        // автоматизация: цели на середину чанка; rubato/one-pole сглаживают
+        if !self.automation.is_empty() {
+            let t = (local as f64 + frames as f64 * 0.5) / self.clip_len as f64;
+            if let Some(w) = &mut self.warp {
+                w.set_rate(rate_at(self.rate, &self.automation, t));
+            }
+            if let Some(r) = &mut self.reverb {
+                r.set_mix(mix_at(self.base_mix, &self.automation, t));
+            }
+        }
         match &mut self.warp {
             Some(w) => w.produce(out, pull),
             None => {
-                let frames = out.len() / CH;
                 if !pull(self.plain_cursor, out) {
                     out.fill(0.0);
                 }
@@ -465,5 +602,53 @@ impl ClipProcessor {
                 *s *= self.static_gain;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod automation_tests {
+    use super::*;
+
+    fn kf(t: f64, rate: f64) -> SlowedKeyframe {
+        SlowedKeyframe { t, rate, mix: 0.1 }
+    }
+
+    #[test]
+    fn rate_interp_clamps_ends_and_is_linear() {
+        let a = vec![kf(0.2, 1.0), kf(0.4, 0.5)];
+        assert_eq!(rate_at(9.0, &a, 0.0), 1.0, "до первой точки — её значение (base игнорируется)");
+        assert_eq!(rate_at(9.0, &a, 0.3), 0.75);
+        assert_eq!(rate_at(9.0, &a, 1.0), 0.5);
+    }
+
+    #[test]
+    fn rate_integral_matches_trapezoid_and_is_monotone() {
+        // кейфреймы из старого проекта song1 — контрольная сумма посчитана
+        // независимо (трапеции)
+        let a = vec![
+            kf(0.21616990640748734, 1.0),
+            kf(0.2935781137508999, 0.35),
+            kf(0.3822750179985601, 0.62),
+            kf(0.6397019809160477, 0.6),
+            kf(0.7557084786003034, 1.0),
+        ];
+        let avg = avg_rate(1.0, &a);
+        assert!((avg - 0.805566).abs() < 1e-5, "avg_rate = {avg}");
+        // монотонность и согласованность с rate_at
+        let mut prev = 0.0;
+        for i in 0..=100 {
+            let t = i as f64 / 100.0;
+            let v = rate_integral(1.0, &a, t);
+            assert!(v >= prev, "интеграл обязан быть неубывающим");
+            prev = v;
+        }
+        assert_eq!(rate_integral(1.0, &a, 0.0), 0.0);
+        assert!((rate_integral(1.0, &a, 1.0) - avg).abs() < 1e-12);
+    }
+
+    #[test]
+    fn no_automation_integral_is_linear() {
+        assert_eq!(rate_integral(0.5, &[], 0.5), 0.25);
+        assert_eq!(avg_rate(0.82, &[]), 0.82);
     }
 }

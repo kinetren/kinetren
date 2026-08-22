@@ -66,12 +66,64 @@ pub struct ClipEvent {
 }
 
 /// Типизированные FX (не opaque JSON — валидация на загрузке, тест 12).
-/// Наполняется в M6; заготовка нужна формату с v1.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FxInstance {
-    Gain { db: f32 },
-    SlowedReverb { rate: f64, mix: f32, reverb_delay_ms: f32 },
+    Gain {
+        db: f32,
+    },
+    SlowedReverb {
+        /// Базовая скорость (0.25–32); автоматизация её перекрывает.
+        rate: f64,
+        /// Доля wet-сигнала 0..1.
+        mix: f32,
+        reverb_delay_ms: f32,
+        /// Демпфирование ВЧ в comb-линиях 0..1 (старый reverbDamp).
+        #[serde(default = "default_damp")]
+        damp: f32,
+        /// Обратная связь comb-линий 0..0.98 (старый reverbDecay).
+        #[serde(default = "default_decay")]
+        decay: f32,
+        /// Множитель wet-выхода (старый reverbGain).
+        #[serde(default = "default_wet_gain")]
+        wet_gain: f32,
+        /// Keyframe-автоматизация по прогрессу клипа t∈[0,1]; между точками
+        /// линейная интерполяция, за краями — крайние значения.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        automation: Vec<SlowedKeyframe>,
+    },
+}
+
+fn default_damp() -> f32 {
+    0.2
+}
+fn default_decay() -> f32 {
+    0.84
+}
+fn default_wet_gain() -> f32 {
+    1.0
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlowedKeyframe {
+    pub t: f64,
+    pub rate: f64,
+    pub mix: f32,
+}
+
+impl FxInstance {
+    /// Конструктор с дефолтными параметрами реверба (для тестов/простых случаев).
+    pub fn slowed_reverb(rate: f64, mix: f32, reverb_delay_ms: f32) -> FxInstance {
+        FxInstance::SlowedReverb {
+            rate,
+            mix,
+            reverb_delay_ms,
+            damp: default_damp(),
+            decay: default_decay(),
+            wet_gain: default_wet_gain(),
+            automation: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
