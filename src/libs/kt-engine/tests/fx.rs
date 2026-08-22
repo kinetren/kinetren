@@ -10,6 +10,7 @@
 
 use kt_engine::{AudioRenderer, DirectFetcher, FxStateStore};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
+use kt_model::SlowedKeyframe;
 use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 
@@ -238,4 +239,127 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     r2.render_frames_with(&mut fb, &mut store_b, half as i64, &mut split[half * CH..]);
 
     assert_eq!(full, split, "пересборка графа не должна менять звук (state сохранён)");
+}
+
+// ---- Тест 4в: автоматизация rate реально меняет скорость во времени -------
+// (регрессия: оценка автоматизации один раз на буфер давала константное
+// замедление; поймано на слух пользователем — фикс: по-чанковая оценка)
+
+/// Мгновенная частота сигнала в окне по нулевым пересечениям (канал 0).
+fn window_freq_hz(out: &[f32], from_frame: usize, frames: usize) -> f64 {
+    let mut crossings = 0u32;
+    let mut prev = out[from_frame * CH];
+    for f in (from_frame + 1)..(from_frame + frames) {
+        let v = out[f * CH];
+        if (prev < 0.0 && v >= 0.0) || (prev > 0.0 && v <= 0.0) {
+            crossings += 1;
+        }
+        prev = v;
+    }
+    crossings as f64 / 2.0 * AUDIO_SAMPLE_RATE as f64 / frames as f64
+}
+
+#[test]
+fn t4_automation_changes_rate_over_time() {
+    // 40 c клипа, тон 240 Гц; профиль: 1.0 до 25%, спад к 0.5 на 50%,
+    // плато, возврат к 1.0 к 75%. Выход обязан следовать профилю:
+    // f_out(t) = 240 * rate(t).
+    let dur = 40 * AUDIO_SAMPLE_RATE as i64;
+    let automation = vec![
+        SlowedKeyframe { t: 0.25, rate: 1.0, mix: 0.0 },
+        SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 },
+        SlowedKeyframe { t: 0.60, rate: 0.5, mix: 0.0 },
+        SlowedKeyframe { t: 0.75, rate: 1.0, mix: 0.0 },
+    ];
+    let fx = vec![FxInstance::SlowedReverb {
+        rate: 1.0,
+        mix: 0.0,
+        reverb_delay_ms: 85.0,
+        damp: 0.32,
+        decay: 0.58,
+        wet_gain: 0.95,
+        automation,
+    }];
+    let p = fx_project(fx, "synth:sine:240", dur);
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Sine { hz: 240.0 });
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    // рендер ОДНИМ куском — как офлайн-экспорт (там и была регрессия)
+    let mut out = vec![0f32; dur as usize * CH];
+    assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
+
+    let win = AUDIO_SAMPLE_RATE as usize; // окно 1 c
+    let checks = [
+        (0.10, 1.0),   // до первой точки
+        (0.375, 0.75), // середина спада: линейная интерполяция
+        (0.55, 0.5),   // плато
+        (0.90, 1.0),   // после последней точки
+    ];
+    for (t, expected_rate) in checks {
+        let center = (dur as f64 * t) as usize;
+        let freq = window_freq_hz(&out, center - win / 2, win);
+        let expected = 240.0 * expected_rate;
+        assert!(
+            (freq - expected).abs() < expected * 0.05,
+            "t={t}: частота {freq:.1} Гц, ожидалось ~{expected:.1} Гц — \
+             автоматизация обязана менять скорость по профилю"
+        );
+    }
+}
+
+fn automation_probe() -> &'static [SlowedKeyframe] {
+    use std::sync::OnceLock;
+    static A: OnceLock<Vec<SlowedKeyframe>> = OnceLock::new();
+    A.get_or_init(|| {
+        vec![
+            SlowedKeyframe { t: 0.2, rate: 1.0, mix: 0.0 },
+            SlowedKeyframe { t: 0.3, rate: 0.35, mix: 0.0 },
+            SlowedKeyframe { t: 0.7, rate: 0.6, mix: 0.0 },
+            SlowedKeyframe { t: 0.8, rate: 1.0, mix: 0.0 },
+        ]
+    })
+}
+
+#[test]
+fn t4_automation_consumes_source_by_integral() {
+    // «Оборванный конец»: при duration = src/avg_rate источник обязан быть
+    // дочитан до конца (± задержка ресемплера), а не до avg-доли константы.
+    let automation = automation_probe().to_vec();
+    let avg = kt_fx::avg_rate(1.0, &automation);
+    let dur = 20 * AUDIO_SAMPLE_RATE as i64;
+    let fx = vec![FxInstance::SlowedReverb {
+        rate: 1.0,
+        mix: 0.0,
+        reverb_delay_ms: 85.0,
+        damp: 0.32,
+        decay: 0.58,
+        wet_gain: 0.95,
+        automation,
+    }];
+    let p = fx_project(fx, "synth:ramp", dur);
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Ramp);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut out = vec![0f32; dur as usize * CH];
+    r.render_frames_with(&mut f, &mut store, 0, &mut out);
+
+    // пробуем не самый край (последние ~64 сэмпла легально затухают:
+    // sinc-ресемплер видит нули за окном источника), а точку чуть раньше
+    // плюс несколько промежуточных — интеральный маппинг по всему клипу
+    for frac in [0.35f64, 0.55, 0.75, 0.95, 0.995] {
+        let x = (dur as f64 * frac) as usize;
+        let got = out[x * CH];
+        let expect_src = dur as f64 * kt_fx::rate_integral(1.0, automation_probe(), frac);
+        let expect = SyntheticSource::sample_at(AudioPattern::Ramp, expect_src as i64, 0);
+        let tolerance = 4096.0 * 1e-6;
+        assert!(
+            (got - expect).abs() < tolerance,
+            "t={frac}: источник на {:.0}, ожидалось {:.0} (интеграл профиля)",
+            got as f64 / 1e-6,
+            expect_src
+        );
+    }
+    let _ = avg;
 }

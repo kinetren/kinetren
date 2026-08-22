@@ -288,6 +288,11 @@ impl Warp {
     pub fn underruns(&self) -> u64 {
         self.underruns
     }
+
+    /// Текущий курсор источника (диагностика/тесты).
+    pub fn src_cursor(&self) -> i64 {
+        self.src_cursor
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -568,34 +573,50 @@ impl ClipProcessor {
         }
     }
 
+    /// Максимальный шаг оценки автоматизации: буфер режется на чанки этого
+    /// размера НЕЗАВИСИМО от размера запроса — офлайн-рендер, отдающий клип
+    /// одним куском, обязан следовать профилю так же, как playback
+    /// по-burst'ово. (Регрессия: оценка один раз на весь буфер давала
+    /// константное замедление по значению в середине клипа и оборванный
+    /// конец источника; поймано на слух, закрыто тестами
+    /// t4_automation_changes_rate_over_time / _consumes_source_by_integral.)
+    const AUTOMATION_STEP_FRAMES: usize = 1024;
+
     fn produce(
         &mut self,
         local: i64,
         out: &mut [f32],
         pull: &mut dyn FnMut(i64, &mut [f32]) -> bool,
     ) {
-        let frames = out.len() / CH;
-        // автоматизация: цели на середину чанка; rubato/one-pole сглаживают
-        if !self.automation.is_empty() {
-            let t = (local as f64 + frames as f64 * 0.5) / self.clip_len as f64;
-            if let Some(w) = &mut self.warp {
-                w.set_rate(rate_at(self.rate, &self.automation, t));
+        let total = out.len() / CH;
+        let mut done = 0usize;
+        while done < total {
+            let n = (total - done).min(Self::AUTOMATION_STEP_FRAMES);
+            let chunk_local = local + done as i64;
+            // автоматизация: цели на середину чанка; rubato/one-pole сглаживают
+            if !self.automation.is_empty() {
+                let t = (chunk_local as f64 + n as f64 * 0.5) / self.clip_len as f64;
+                if let Some(w) = &mut self.warp {
+                    w.set_rate(rate_at(self.rate, &self.automation, t));
+                }
+                if let Some(r) = &mut self.reverb {
+                    r.set_mix(mix_at(self.base_mix, &self.automation, t));
+                }
+            }
+            let sub = &mut out[done * CH..(done + n) * CH];
+            match &mut self.warp {
+                Some(w) => w.produce(sub, pull),
+                None => {
+                    if !pull(self.plain_cursor, sub) {
+                        sub.fill(0.0);
+                    }
+                    self.plain_cursor += n as i64;
+                }
             }
             if let Some(r) = &mut self.reverb {
-                r.set_mix(mix_at(self.base_mix, &self.automation, t));
+                r.process(sub);
             }
-        }
-        match &mut self.warp {
-            Some(w) => w.produce(out, pull),
-            None => {
-                if !pull(self.plain_cursor, out) {
-                    out.fill(0.0);
-                }
-                self.plain_cursor += frames as i64;
-            }
-        }
-        if let Some(r) = &mut self.reverb {
-            r.process(out);
+            done += n;
         }
         if self.static_gain != 1.0 {
             for s in out.iter_mut() {
