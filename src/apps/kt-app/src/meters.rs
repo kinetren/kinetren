@@ -143,8 +143,7 @@ impl KtApp {
             );
         }
 
-        for ch in 0..2 {
-            let x0 = bar_x[ch];
+        for (ch, &x0) in bar_x.iter().enumerate() {
             let mut y = bars.bottom();
             while y > bars.top() {
                 let seg_top = (y - 5.0).max(bars.top());

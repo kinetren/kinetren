@@ -8,14 +8,14 @@ publish.workspace = true
 [features]
 default = ["ffmpeg"]
 # Без фичи крейт собирается без FFmpeg (синтетика, индекс-БД, тесты движка).
-ffmpeg = ["dep:rsmpeg"]
+ffmpeg = ["dep:kt-ffmpeg"]
 
 [dependencies]
 kt-time = { workspace = true }
 thiserror = { workspace = true }
 rusqlite = { workspace = true }
 xxhash-rust = { workspace = true }
-rsmpeg = { workspace = true, optional = true }
+kt-ffmpeg = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

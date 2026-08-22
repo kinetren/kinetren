@@ -5,6 +5,7 @@ members = [
     "apps/kt-cli",
     "libs/kt-time",
     "libs/kt-model",
+    "libs/kt-ffmpeg",
     "libs/kt-media",
     "libs/kt-cache",
     "libs/kt-fx",
@@ -20,12 +21,12 @@ publish = false
 [workspace.dependencies]
 kt-time = { path = "libs/kt-time" }
 kt-model = { path = "libs/kt-model" }
+kt-ffmpeg = { path = "libs/kt-ffmpeg" }
 kt-media = { path = "libs/kt-media" }
 kt-cache = { path = "libs/kt-cache" }
 kt-fx = { path = "libs/kt-fx" }
 kt-engine = { path = "libs/kt-engine" }
 
-rsmpeg = { version = "0.18", default-features = false, features = ["ffmpeg6", "link_system_ffmpeg"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
