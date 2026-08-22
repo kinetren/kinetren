@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "settings": { "fps": 30, "width": 640, "height": 360, "sample_rate": 48000 },
+  "media": [
+    { "id": 1, "path": "out/muxed_av.mp4" },
+    { "id": 2, "path": "out/sine48k_stereo.flac" },
+    { "id": 3, "path": "out/testsrc_vp9.webm" }
+  ],
+  "clips": [
+    { "id": 1, "link_group": 1, "kind": "video", "lane": 0, "start": 0, "duration": 180000, "source_in": 0, "media": 1 },
+    { "id": 2, "link_group": 1, "kind": "audio", "lane": 0, "start": 0, "duration": 180000, "source_in": 0, "media": 1 },
+    { "id": 3, "kind": "video", "lane": 0, "start": 180000, "duration": 150000, "source_in": 0, "media": 3 },
+    { "id": 4, "kind": "audio", "lane": 0, "start": 150000, "duration": 165000, "source_in": 0, "media": 2, "gain_db": -6.0,
+      "fx": [ { "kind": "slowed_reverb", "rate": 0.75, "mix": 0.3, "reverb_delay_ms": 140.0 } ] }
+  ]
+}

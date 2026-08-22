@@ -12,6 +12,7 @@ kt-media = { workspace = true }
 kt-cache = { workspace = true }
 kt-fx = { workspace = true }
 crossbeam-channel = { workspace = true }
+rtrb = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
