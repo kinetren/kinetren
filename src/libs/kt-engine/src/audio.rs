@@ -21,12 +21,17 @@ use std::sync::Arc;
 /// Клип, подготовленный к аудио-рендеру (границы в кадрах 48 kHz).
 #[derive(Debug, Clone)]
 struct AudioClip {
+    id: kt_model::ClipId,
     start: i64,
     end: i64,
+    /// Конец с учётом хвоста FX (реверб дозванивает за границей клипа —
+    /// инвариант «tail», дефект f старого движка).
+    ext_end: i64,
     source_in: i64,
     lane: u32,
     gain: f32,
     media: kt_model::MediaId,
+    fx: Vec<kt_model::FxInstance>,
 }
 
 /// Результат рендера непрерывного диапазона.
@@ -46,13 +51,21 @@ impl AudioRenderer {
             .clips
             .iter()
             .filter(|c| c.kind == ClipKind::Audio)
-            .map(|c: &ClipEvent| AudioClip {
-                start: c.start.to_audio_frames(),
-                end: (c.start + c.duration).to_audio_frames(),
-                source_in: c.source_in.to_audio_frames(),
-                lane: c.lane,
-                gain: db_to_linear(c.gain_db),
-                media: c.media,
+            .map(|c: &ClipEvent| {
+                let start = c.start.to_audio_frames();
+                let end = (c.start + c.duration).to_audio_frames();
+                let tail = kt_fx::chain_tail(&c.fx).to_audio_frames();
+                AudioClip {
+                    id: c.id,
+                    start,
+                    end,
+                    ext_end: end + tail,
+                    source_in: c.source_in.to_audio_frames(),
+                    lane: c.lane,
+                    gain: db_to_linear(c.gain_db),
+                    media: c.media,
+                    fx: c.fx.clone(),
+                }
             })
             .collect();
         // Стабильный порядок — часть детерминизма и правила кроссфейда
@@ -61,12 +74,38 @@ impl AudioRenderer {
         AudioRenderer { clips }
     }
 
-    /// Рендер непрерывного диапазона таймлайна [start_frame, start_frame+out/2)
-    /// в interleaved stereo `out`. Без loop-логики — wrap делает вызывающий
-    /// (`render_looped`), разрезая диапазон по границе региона.
+    /// Синхронизировать FX-состояние с этим графом (вызывается владельцем
+    /// стора — аудио-render-потоком — после каждой пересборки графа).
+    pub fn sync_fx(&self, store: &mut crate::fxstore::FxStateStore) {
+        for c in &self.clips {
+            store.sync_clip(c.id, &c.fx, c.source_in);
+        }
+        let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();
+        store.retain_clips(&|id| alive.contains(&id));
+    }
+
+    /// Рендер без внешнего FX-состояния (для клипов без FX эквивалентно
+    /// `render_frames_with`; FX-клипы получат одноразовый store — годится
+    /// для одноразовых офлайн-вызовов, но не для потокового плеера).
     pub fn render_frames(
         &self,
         fetcher: &mut dyn AudioFetcher,
+        start_frame: i64,
+        out: &mut [f32],
+    ) -> RenderStats {
+        let mut store = crate::fxstore::FxStateStore::new();
+        self.sync_fx(&mut store);
+        self.render_frames_with(fetcher, &mut store, start_frame, out)
+    }
+
+    /// Рендер непрерывного диапазона таймлайна [start_frame, start_frame+out/2)
+    /// в interleaved stereo `out`. Без loop-логики — wrap делает вызывающий
+    /// (`render_looped`), разрезая диапазон по границе региона.
+    /// `store` — долгоживущее FX-состояние аудио-render-потока.
+    pub fn render_frames_with(
+        &self,
+        fetcher: &mut dyn AudioFetcher,
+        store: &mut crate::fxstore::FxStateStore,
         start_frame: i64,
         out: &mut [f32],
     ) -> RenderStats {
@@ -77,14 +116,21 @@ impl AudioRenderer {
         let mut stats = RenderStats::default();
 
         let active: Vec<usize> = (0..self.clips.len())
-            .filter(|&i| self.clips[i].start < range.end && self.clips[i].end > range.start)
+            .filter(|&i| self.clips[i].start < range.end && self.clips[i].ext_end > range.start)
             .collect();
 
         // Вклад каждого клипа считаем по-бурстово (источника), веса — по-сэмплово.
         for &ci in &active {
             let clip = &self.clips[ci];
+            if !clip.fx.is_empty() {
+                self.render_fx_clip(ci, fetcher, store, &range, out, &mut stats);
+                continue;
+            }
             let from = clip.start.max(range.start);
             let to = clip.end.min(range.end);
+            if from >= to {
+                continue;
+            }
             let mut f = from;
             let mut cursor: Option<(i64, Arc<AudioBurst>)> = None; // (burst idx, data)
             while f < to {
@@ -158,12 +204,72 @@ impl AudioRenderer {
         }
     }
 
+    /// FX-клип: клип-локальный поток через ClipProcessor (варп+реверб+gain
+    /// цепочки), затем веса кроссфейда (в пределах реального клипа) и gain
+    /// клипа. В зоне хвоста (за end) вес 1.0 — реверб дозванивает под
+    /// соседями без взвешивания.
+    fn render_fx_clip(
+        &self,
+        ci: usize,
+        fetcher: &mut dyn AudioFetcher,
+        store: &mut crate::fxstore::FxStateStore,
+        range: &std::ops::Range<i64>,
+        out: &mut [f32],
+        stats: &mut RenderStats,
+    ) {
+        let clip = &self.clips[ci];
+        let from = clip.start.max(range.start);
+        let to = clip.ext_end.min(range.end);
+        if from >= to {
+            return;
+        }
+        let rate = kt_fx::chain_rate(&clip.fx);
+        // окно источника клипа: за его пределами — законная тишина (хвост)
+        let src_window_end =
+            clip.source_in + (((clip.end - clip.start) as f64) * rate).ceil() as i64;
+        let media = clip.media;
+        let mut pull_underruns = 0u64;
+        let Some(proc) = store.get_mut(clip.id) else { return };
+        let local = from - clip.start;
+        let count = (to - from) as usize;
+        let mut buf = vec![0f32; count * AUDIO_CHANNELS];
+        {
+            let mut pull = |src_frame: i64, dst: &mut [f32]| -> bool {
+                fill_source(fetcher, media, src_frame, src_window_end, dst, &mut pull_underruns)
+            };
+            proc.read(local, &mut buf, &mut pull);
+        }
+        stats.underruns += pull_underruns;
+        for k in 0..count as i64 {
+            let f = from + k;
+            let w = if f < clip.end { self.weight_at(ci, f) } else { 1.0 } * clip.gain;
+            let oi = ((f - range.start) as usize) * AUDIO_CHANNELS;
+            let bi = (k as usize) * AUDIO_CHANNELS;
+            for ch in 0..AUDIO_CHANNELS {
+                out[oi + ch] += buf[bi + ch] * w;
+            }
+        }
+    }
+
     /// Рендер с loop-регионом: выходной поток длиной `frames` кадров, таймлайн
     /// позиции wrap'ятся по [region) per-sample (граница может не совпадать
     /// с burst'ом). Тест 14: непрерывность через wrap.
     pub fn render_looped(
         &self,
         fetcher: &mut dyn AudioFetcher,
+        region: std::ops::Range<i64>,
+        start_frame: i64,
+        out: &mut [f32],
+    ) -> RenderStats {
+        let mut store = crate::fxstore::FxStateStore::new();
+        self.sync_fx(&mut store);
+        self.render_looped_with(fetcher, &mut store, region, start_frame, out)
+    }
+
+    pub fn render_looped_with(
+        &self,
+        fetcher: &mut dyn AudioFetcher,
+        store: &mut crate::fxstore::FxStateStore,
         region: std::ops::Range<i64>,
         start_frame: i64,
         out: &mut [f32],
@@ -178,7 +284,7 @@ impl AudioRenderer {
             let chunk = (region.end - tl).min(total - done);
             let sub = &mut out
                 [(done as usize) * AUDIO_CHANNELS..((done + chunk) as usize) * AUDIO_CHANNELS];
-            let s = self.render_frames(fetcher, tl, sub);
+            let s = self.render_frames_with(fetcher, store, tl, sub);
             stats.underruns += s.underruns;
             done += chunk;
         }
@@ -210,4 +316,45 @@ impl AudioRenderer {
 
 pub fn db_to_linear(db: f32) -> f32 {
     10f32.powf(db / 20.0)
+}
+
+/// Заполнить `dst` кадрами источника [src_frame, +len): читает burst'ы через
+/// фетчер; кадры вне [0, window_end) — тишина БЕЗ underrun'а (хвост/пре-ролл),
+/// промах внутри окна — тишина с underrun'ом. Возвращает true (буфер всегда
+/// валиден).
+fn fill_source(
+    fetcher: &mut dyn AudioFetcher,
+    media: kt_model::MediaId,
+    src_frame: i64,
+    window_end: i64,
+    dst: &mut [f32],
+    underruns: &mut u64,
+) -> bool {
+    dst.fill(0.0);
+    let frames = (dst.len() / AUDIO_CHANNELS) as i64;
+    let mut f = 0i64;
+    while f < frames {
+        let src = src_frame + f;
+        if src < 0 {
+            f += (-src).min(frames - f);
+            continue;
+        }
+        if src >= window_end {
+            break; // дальше только тишина
+        }
+        let bidx = src.div_euclid(AUDIO_BURST_FRAMES as i64);
+        let within = src.rem_euclid(AUDIO_BURST_FRAMES as i64);
+        let take = (AUDIO_BURST_FRAMES as i64 - within).min(frames - f).min(window_end - src);
+        match fetcher.audio_burst(media, bidx) {
+            Some(b) => {
+                let d0 = (f as usize) * AUDIO_CHANNELS;
+                let s0 = (within as usize) * AUDIO_CHANNELS;
+                let n = (take as usize) * AUDIO_CHANNELS;
+                dst[d0..d0 + n].copy_from_slice(&b.data[s0..s0 + n]);
+            }
+            None => *underruns += 1,
+        }
+        f += take;
+    }
+    true
 }

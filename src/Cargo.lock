@@ -1703,6 +1703,7 @@ dependencies = [
  "kt-media",
  "kt-model",
  "kt-time",
+ "realfft",
  "thiserror 2.0.20",
 ]
 
@@ -1713,6 +1714,7 @@ dependencies = [
  "kt-model",
  "kt-time",
  "realfft",
+ "rubato",
 ]
 
 [[package]]
@@ -2730,6 +2732,18 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "rubato"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5258099699851cfd0082aeb645feb9c084d9a5e1f1b8d5372086b989fc5e56a1"
+dependencies = [
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "realfft",
+]
 
 [[package]]
 name = "rusqlite"

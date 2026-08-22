@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 kt-time = { workspace = true }
 kt-model = { workspace = true }
+rubato = { workspace = true }
 
 [dev-dependencies]
 realfft = { workspace = true }

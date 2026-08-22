@@ -7,12 +7,14 @@
 
 pub mod audio;
 pub mod fetch;
+pub mod fxstore;
 pub mod prefetch;
 pub mod transport;
 pub mod worker;
 
 pub use audio::{AudioRenderer, RenderStats, db_to_linear};
 pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
+pub use fxstore::FxStateStore;
 pub use prefetch::prefetch_audio_pass;
 pub use transport::Transport;
 pub use worker::{DecodeRequest, MediaWorker, RequestKind};

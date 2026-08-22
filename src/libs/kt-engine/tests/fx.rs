@@ -1,0 +1,257 @@
+//! Тесты 4–6 (docs/porting-notes.md) — регрессии на хрипы slowed&reverb.
+//!
+//! 4 — спектральная чистота варпа: 440 Гц при rate 0.5 → пик на 220 Гц,
+//!     паразитные компоненты < −60 dB (ловит и «46.9 Гц треск» (дефект c),
+//!     и пропуски burst'ов (дефект a) старого движка);
+//! 5 — сглаживание параметров: смена mix посреди воспроизведения не даёт
+//!     скачка сэмпл-к-сэмплу (дефект e — зануление буферов в setParams);
+//! 6 — хвост реверба живёт за границей клипа и переживает пересборку графа
+//!     (дефекты f и «rebuildGraph убивает FX-состояние»).
+
+use kt_engine::{AudioRenderer, DirectFetcher, FxStateStore};
+use kt_media::synthetic::{AudioPattern, SyntheticSource};
+use kt_model::*;
+use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
+
+const CH: usize = AUDIO_CHANNELS;
+
+fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Project {
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: pattern_path.into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick::from_audio_frames(dur_frames),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        fx,
+    });
+    p.validate().unwrap();
+    p
+}
+
+fn direct(pattern: AudioPattern) -> DirectFetcher {
+    let mut f = DirectFetcher::new(None);
+    f.add_source(MediaId(1), Box::new(SyntheticSource::new(Tick(90_000 * 600), pattern)));
+    f
+}
+
+/// Амплитудный спектр моно-сигнала (окно Ханна), дБ относительно пика.
+fn spectrum_db(samples: &[f32]) -> Vec<f32> {
+    use realfft::RealFftPlanner;
+    let n = samples.len();
+    let mut planner = RealFftPlanner::<f32>::new();
+    let fft = planner.plan_fft_forward(n);
+    let mut input: Vec<f32> = samples
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| {
+            let w = 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / n as f32).cos();
+            s * w
+        })
+        .collect();
+    let mut out = fft.make_output_vec();
+    fft.process(&mut input, &mut out).unwrap();
+    let mags: Vec<f32> = out.iter().map(|c| c.norm()).collect();
+    let peak = mags.iter().cloned().fold(f32::MIN, f32::max).max(1e-12);
+    mags.iter().map(|m| 20.0 * (m / peak).max(1e-12).log10()).collect()
+}
+
+// ---- Тест 4 -----------------------------------------------------------------
+
+#[test]
+fn t4_slowed_halves_pitch_without_artifacts() {
+    let dur = 5 * AUDIO_SAMPLE_RATE as i64; // 5 c
+    let p = fx_project(
+        vec![FxInstance::SlowedReverb { rate: 0.5, mix: 0.0, reverb_delay_ms: 140.0 }],
+        "synth:sine:440",
+        dur,
+    );
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Sine { hz: 440.0 });
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+
+    let n = 1 << 16; // 65536 сэмплов анализа
+    let skip = 8192; // пропускаем переходный процесс ресемплера
+    let mut out = vec![0f32; (skip + n) * CH];
+    let stats = r.render_frames_with(&mut f, &mut store, 0, &mut out);
+    assert_eq!(stats.underruns, 0);
+
+    let mono: Vec<f32> = out[skip * CH..].chunks_exact(CH).map(|fr| fr[0]).collect();
+    let db = spectrum_db(&mono);
+    let bin_hz = AUDIO_SAMPLE_RATE as f32 / n as f32;
+    let peak_bin = db.iter().enumerate().max_by(|a, b| a.1.total_cmp(b.1)).unwrap().0;
+    let peak_hz = peak_bin as f32 * bin_hz;
+    assert!(
+        (peak_hz - 220.0).abs() < 2.0 * bin_hz,
+        "rate 0.5 обязан дать 220 Гц, получили {peak_hz:.2} Гц"
+    );
+    // Всё вне ±16 бинов (±12 Гц — скирт окна Ханна) — тише −60 dB.
+    // Артефакты старого движка лежали далеко за этим окном: треск 46.9 Гц
+    // дал бы компоненты на peak±47 Гц (±64 бина), пропуск burst'ов — гребёнку
+    // по всей полосе.
+    for (bin, &v) in db.iter().enumerate() {
+        if (bin as i64 - peak_bin as i64).abs() > 16 && v > -60.0 {
+            let hz = bin as f32 * bin_hz;
+            panic!("паразитная компонента {v:.1} dB на {hz:.1} Гц (bin {bin})");
+        }
+    }
+}
+
+#[test]
+fn t4_warp_consumes_source_at_rate() {
+    // rate 0.5 на клипе длиной D требует D/2 кадров источника: ramp в конце
+    // окна источника должен дойти ровно до source_in + D*rate (±чанк ресемплера).
+    let dur = 4 * AUDIO_SAMPLE_RATE as i64;
+    let p = fx_project(
+        vec![FxInstance::SlowedReverb { rate: 0.5, mix: 0.0, reverb_delay_ms: 140.0 }],
+        "synth:ramp",
+        dur,
+    );
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Ramp);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut out = vec![0f32; dur as usize * CH];
+    r.render_frames_with(&mut f, &mut store, 0, &mut out);
+    // последний выходной сэмпл ≈ значение ramp на кадре dur*0.5 источника
+    let got = out[(dur as usize - 1) * CH];
+    let expect = SyntheticSource::sample_at(AudioPattern::Ramp, dur / 2, 0);
+    // допуск = групповая задержка sinc-ресемплера + пара чанков; главное,
+    // что нет НАКОПЛЕННОГО дрейфа (старый движок терял burst каждые ~230 мс,
+    // что за 4 c дало бы ~17 000 кадров)
+    let tolerance = 4096.0 * 1e-6;
+    assert!(
+        (got - expect).abs() < tolerance,
+        "источник потреблялся не с rate 0.5: конец на {got} vs {expect}"
+    );
+}
+
+// ---- Тест 5 -----------------------------------------------------------------
+
+#[test]
+fn t5_param_step_does_not_click() {
+    let dur = 4 * AUDIO_SAMPLE_RATE as i64;
+    let mk = |mix: f32| {
+        fx_project(
+            vec![FxInstance::SlowedReverb { rate: 1.0, mix, reverb_delay_ms: 140.0 }],
+            "synth:sine:220",
+            dur,
+        )
+    };
+    let mut f = direct(AudioPattern::Sine { hz: 220.0 });
+    let mut store = FxStateStore::new();
+
+    let half = dur as usize / 2;
+    let mut out = vec![0f32; dur as usize * CH];
+
+    // первая половина с mix 0.1
+    let p1 = mk(0.1);
+    let r1 = AudioRenderer::new(&p1);
+    r1.sync_fx(&mut store);
+    r1.render_frames_with(&mut f, &mut store, 0, &mut out[..half * CH]);
+
+    // ступенька: mix 0.9 (та же структура цепочки → тот же state, сглаживание)
+    let p2 = mk(0.9);
+    let r2 = AudioRenderer::new(&p2);
+    r2.sync_fx(&mut store);
+    r2.render_frames_with(&mut f, &mut store, half as i64, &mut out[half * CH..]);
+
+    // максимальный скачок сэмпл-к-сэмплу вокруг ступеньки не больше, чем
+    // естественный наклон синуса с запасом (сглаживание ~20 мс)
+    let natural = 2.0 * std::f32::consts::PI * 220.0 / AUDIO_SAMPLE_RATE as f32; // ~0.0288 при ампл. 1
+    let window = &out[(half - 2000) * CH..(half + 4000) * CH];
+    let mut max_jump = 0f32;
+    for w in window.chunks_exact(CH).collect::<Vec<_>>().windows(2) {
+        max_jump = max_jump.max((w[1][0] - w[0][0]).abs());
+    }
+    assert!(
+        max_jump < natural * 1.5,
+        "ступенька mix дала щелчок: max sample-to-sample jump {max_jump}"
+    );
+}
+
+// ---- Тест 6 -----------------------------------------------------------------
+
+#[test]
+fn t6_reverb_tail_rings_past_clip_end_and_decays() {
+    let dur = AUDIO_SAMPLE_RATE as i64; // 1 c
+    let p = fx_project(
+        vec![FxInstance::SlowedReverb { rate: 1.0, mix: 0.6, reverb_delay_ms: 140.0 }],
+        "synth:impulse",
+        dur,
+    );
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Impulse);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+
+    let tail = store.get_mut(ClipId(1)).unwrap().tail_frames();
+    assert!(tail > 0);
+    let total = (dur + tail) as usize;
+    let mut out = vec![0f32; total * CH];
+    r.render_frames_with(&mut f, &mut store, 0, &mut out);
+
+    // энергия сразу за границей клипа есть (хвост дозванивает)
+    let after: f32 = out[dur as usize * CH..(dur as usize + 4800) * CH]
+        .iter()
+        .map(|s| s.abs())
+        .fold(0.0, f32::max);
+    assert!(after > 1e-4, "хвост реверба обрезан на границе клипа: {after}");
+
+    // к концу tail затухает ниже −60 dB от пика хвоста
+    let tail_last: f32 = out[(total - 4800) * CH..].iter().map(|s| s.abs()).fold(0.0, f32::max);
+    assert!(tail_last < after * 0.001, "хвост не затух за tail(): пик {after}, конец {tail_last}");
+}
+
+#[test]
+fn t6_graph_rebuild_mid_tail_preserves_state() {
+    // Правка ДРУГОГО клипа (пересборка AudioRenderer) посреди звучания
+    // не должна прерывать/менять реверб (старый rebuildGraph убивал state).
+    let dur = AUDIO_SAMPLE_RATE as i64;
+    let fx = vec![FxInstance::SlowedReverb { rate: 1.0, mix: 0.6, reverb_delay_ms: 140.0 }];
+    let p1 = fx_project(fx.clone(), "synth:sine:330", dur);
+
+    // эталон: непрерывный рендер одним графом
+    let r1 = AudioRenderer::new(&p1);
+    let mut store_a = FxStateStore::new();
+    r1.sync_fx(&mut store_a);
+    let mut fa = direct(AudioPattern::Sine { hz: 330.0 });
+    let mut full = vec![0f32; dur as usize * CH];
+    r1.render_frames_with(&mut fa, &mut store_a, 0, &mut full);
+
+    // тот же рендер, но посреди — «правка»: добавлен посторонний клип,
+    // граф пересобран, store тот же
+    let mut store_b = FxStateStore::new();
+    r1.sync_fx(&mut store_b);
+    let mut fb = direct(AudioPattern::Sine { hz: 330.0 });
+    let half = dur as usize / 2;
+    let mut split = vec![0f32; dur as usize * CH];
+    r1.render_frames_with(&mut fb, &mut store_b, 0, &mut split[..half * CH]);
+
+    let mut p2 = p1.clone();
+    p2.media.push(MediaRef { id: MediaId(2), path: "synth:silence".into() });
+    p2.clips.push(ClipEvent {
+        id: ClipId(99),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 3,
+        start: Tick::from_audio_frames(10 * dur),
+        duration: Tick::from_audio_frames(dur),
+        source_in: Tick(0),
+        media: MediaId(2),
+        gain_db: 0.0,
+        fx: vec![],
+    });
+    let r2 = AudioRenderer::new(&p2);
+    r2.sync_fx(&mut store_b); // state клипа 1 обязан пережить пересборку
+    r2.render_frames_with(&mut fb, &mut store_b, half as i64, &mut split[half * CH..]);
+
+    assert_eq!(full, split, "пересборка графа не должна менять звук (state сохранён)");
+}
