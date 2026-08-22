@@ -18,6 +18,17 @@ use kt_media::{MediaSource, Quality};
 use kt_model::{MediaId, Project};
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Прогресс экспорта (ETA/скорость считает UI — wall-clock не наш, инв. №10).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExportProgress {
+    pub audio_frames: u64,
+    pub total_audio_frames: u64,
+    pub video_frames: u64,
+    pub total_video_frames: u64,
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ExportStats {
@@ -39,6 +50,18 @@ pub fn project_range(project: &Project) -> Tick {
 pub fn render_raw_audio(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    emit: impl FnMut(&[f32]) -> std::io::Result<()>,
+) -> std::io::Result<ExportStats> {
+    render_raw_audio_range(project, sources, None, &AtomicBool::new(false).into(), |_| {}, emit)
+}
+
+/// Полный вариант: диапазон, отмена, прогресс.
+pub fn render_raw_audio_range(
+    project: &Project,
+    sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    range: Option<(Tick, Tick)>,
+    cancel: &Arc<AtomicBool>,
+    mut progress: impl FnMut(u64),
     mut emit: impl FnMut(&[f32]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
     let mut stats = ExportStats::default();
@@ -49,10 +72,17 @@ pub fn render_raw_audio(
     let renderer = AudioRenderer::new(project);
     let mut store = FxStateStore::new();
     renderer.sync_fx(&mut store);
-    let end_frame = project_range(project).to_audio_frames();
+    let (start_frame, end_frame) = match range {
+        Some((a, b)) => (a.to_audio_frames(), b.to_audio_frames()),
+        None => (0, project_range(project).to_audio_frames()),
+    };
     let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
-    let mut head = 0i64;
+    let mut head = start_frame;
     while head < end_frame {
+        if cancel.load(Ordering::Acquire) {
+            return Err(std::io::Error::other("cancelled"));
+        }
+        progress(stats.audio_frames);
         let n = ((end_frame - head) as usize).min(AUDIO_BURST_FRAMES);
         let sub = &mut chunk[..n * AUDIO_CHANNELS];
         let s = renderer.render_frames_with(&mut fetcher, &mut store, head, sub);
@@ -70,6 +100,27 @@ pub fn render_raw_video(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     quality: Quality,
+    emit: impl FnMut(&[u8]) -> std::io::Result<()>,
+) -> std::io::Result<ExportStats> {
+    render_raw_video_range(
+        project,
+        sources,
+        quality,
+        None,
+        &AtomicBool::new(false).into(),
+        |_| {},
+        emit,
+    )
+}
+
+/// Полный вариант: диапазон, отмена, прогресс.
+pub fn render_raw_video_range(
+    project: &Project,
+    sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    quality: Quality,
+    range: Option<(Tick, Tick)>,
+    cancel: &Arc<AtomicBool>,
+    mut progress: impl FnMut(u64),
     mut emit: impl FnMut(&[u8]) -> std::io::Result<()>,
 ) -> std::io::Result<ExportStats> {
     let mut stats = ExportStats::default();
@@ -80,10 +131,16 @@ pub fn render_raw_video(
     let cache =
         BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 64 * 1024 * 1024 });
     let video = VideoRenderer::new(project);
-    let end = project_range(project);
+    let (mut t, end) = match range {
+        Some((a, b)) => (video.grid.align_floor(a), b),
+        None => (Tick(0), project_range(project)),
+    };
     let step = video.grid.frame_step();
-    let mut t = Tick(0);
     while t < end {
+        if cancel.load(Ordering::Acquire) {
+            return Err(std::io::Error::other("cancelled"));
+        }
+        progress(stats.video_frames);
         for (media, src_pts) in video.layers_at(t) {
             let idx = video_cache_idx(src_pts);
             if cache.get_video(source_id(media), Some(quality), idx).is_none() {
@@ -114,6 +171,8 @@ pub enum ExportError {
     FfmpegFailed(std::process::ExitStatus),
     #[error("audio thread panicked")]
     AudioThread,
+    #[error("export cancelled")]
+    Cancelled,
 }
 
 /// Потоковый экспорт в mp4 (h264+aac). `audio_sources`/`video_sources` —
@@ -124,6 +183,28 @@ pub fn export_mp4(
     audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     video_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     out_path: &str,
+) -> Result<ExportStats, ExportError> {
+    export_mp4_with(
+        project,
+        audio_sources,
+        video_sources,
+        out_path,
+        None,
+        &AtomicBool::new(false).into(),
+        |_| {},
+    )
+}
+
+/// Полный экспорт: диапазон (регион), отмена (kill ffmpeg + удаление
+/// частичного файла), прогресс-колбэк (зовётся из обоих потоков).
+pub fn export_mp4_with(
+    project: &Project,
+    audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    video_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    out_path: &str,
+    range: Option<(Tick, Tick)>,
+    cancel: &Arc<AtomicBool>,
+    progress: impl Fn(ExportProgress) + Send + Sync + 'static,
 ) -> Result<ExportStats, ExportError> {
     let quality = Quality {
         width: project.settings.width.max(2) & !1,
@@ -158,41 +239,108 @@ pub fn export_mp4(
         .stdin(std::process::Stdio::piped())
         .spawn()?;
 
+    // тоталы для прогресса
+    let (r0, r1) = match range {
+        Some((a, b)) => (a, b),
+        None => (Tick(0), project_range(project)),
+    };
+    let total_audio = (r1.to_audio_frames() - r0.to_audio_frames()).max(0) as u64;
+    let total_video = ((r1.0 - r0.0) / (kt_time::TICK_HZ / fps as i64)).max(0) as u64;
+    let progress = Arc::new(progress);
+    let a_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let v_done = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let report = {
+        let progress = progress.clone();
+        let a_done = a_done.clone();
+        let v_done = v_done.clone();
+        move || {
+            progress(ExportProgress {
+                audio_frames: a_done.load(Ordering::Relaxed),
+                total_audio_frames: total_audio,
+                video_frames: v_done.load(Ordering::Relaxed),
+                total_video_frames: total_video,
+            })
+        }
+    };
+
     // аудио — в своём потоке (fifo блокируется, пока ffmpeg его не откроет)
     let audio_project = project.clone();
     let fifo_path = fifo.clone();
-    let audio_thread = std::thread::Builder::new()
-        .name("export-audio".into())
-        .spawn(move || -> std::io::Result<ExportStats> {
-            let mut w = std::io::BufWriter::new(std::fs::File::create(&fifo_path)?);
-            let stats = render_raw_audio(&audio_project, audio_sources, |chunk| {
-                let bytes: &[u8] = unsafe {
-                    std::slice::from_raw_parts(chunk.as_ptr() as *const u8, chunk.len() * 4)
-                };
-                w.write_all(bytes)
-            })?;
-            w.flush()?;
-            Ok(stats)
-        })
-        .expect("spawn export audio");
+    let a_cancel = cancel.clone();
+    let audio_thread = {
+        let a_done = a_done.clone();
+        let report = report.clone();
+        std::thread::Builder::new()
+            .name("export-audio".into())
+            .spawn(move || -> std::io::Result<ExportStats> {
+                let mut w = std::io::BufWriter::new(std::fs::File::create(&fifo_path)?);
+                let stats = render_raw_audio_range(
+                    &audio_project,
+                    audio_sources,
+                    range,
+                    &a_cancel,
+                    |done| {
+                        a_done.store(done, Ordering::Relaxed);
+                        if done % 48_000 < 1024 {
+                            report();
+                        }
+                    },
+                    |chunk| {
+                        let bytes: &[u8] = unsafe {
+                            std::slice::from_raw_parts(chunk.as_ptr() as *const u8, chunk.len() * 4)
+                        };
+                        w.write_all(bytes)
+                    },
+                )?;
+                w.flush()?;
+                Ok(stats)
+            })
+            .expect("spawn export audio")
+    };
 
     // видео — в текущем потоке, в stdin ffmpeg
     let mut stdin = child.stdin.take().expect("child stdin");
-    let vstats = {
+    let vres = {
         let mut w = std::io::BufWriter::new(&mut stdin);
-        let s = render_raw_video(project, video_sources, quality, |rgba| w.write_all(rgba))?;
-        w.flush()?;
-        s
+        let v_done = v_done.clone();
+        let report = report.clone();
+        let r = render_raw_video_range(
+            project,
+            video_sources,
+            quality,
+            range,
+            cancel,
+            |done| {
+                v_done.store(done, Ordering::Relaxed);
+                if done % 10 == 0 {
+                    report();
+                }
+            },
+            |rgba| w.write_all(rgba),
+        );
+        let _ = w.flush();
+        r
     };
     drop(stdin); // EOF видео
 
-    let astats = audio_thread.join().map_err(|_| ExportError::AudioThread)??;
+    let ares = audio_thread.join().map_err(|_| ExportError::AudioThread)?;
+    if cancel.load(Ordering::Acquire) {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_file(out_path);
+        let _ = std::fs::remove_file(&fifo);
+        let _ = std::fs::remove_dir(&fifo_dir);
+        return Err(ExportError::Cancelled);
+    }
+    let vstats = vres?;
+    let astats = ares?;
     let status = child.wait()?;
     let _ = std::fs::remove_file(&fifo);
     let _ = std::fs::remove_dir(&fifo_dir);
     if !status.success() {
         return Err(ExportError::FfmpegFailed(status));
     }
+    report();
     Ok(ExportStats {
         video_frames: vstats.video_frames,
         audio_frames: astats.audio_frames,

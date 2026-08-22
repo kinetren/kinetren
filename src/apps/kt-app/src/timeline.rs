@@ -965,6 +965,10 @@ impl KtApp {
                     self.cut_action();
                     ui.close();
                 }
+                if ui.button("Эффекты…").clicked() {
+                    self.open_fx_editor(id);
+                    ui.close();
+                }
                 ui.separator();
                 if has_group {
                     if ui.button("Разомкнуть A/V").clicked() {

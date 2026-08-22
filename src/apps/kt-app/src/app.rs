@@ -34,6 +34,10 @@ pub struct KtApp {
     pub offline: Arc<Mutex<std::collections::HashSet<MediaId>>>,
     pub meter: crate::meters::MeterState,
     pub smooth_scaling: bool,
+    pub fx_editors: Vec<crate::fx_editor::FxEditor>,
+    pub gesture_counter: u64,
+    pub render_job: Option<crate::render_dialog::RenderJob>,
+    pub last_autosave: std::time::Instant,
     pub thumbs: crate::thumbs::ThumbService,
     /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
     pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
@@ -92,6 +96,10 @@ impl KtApp {
             meter: Default::default(),
             smooth_scaling: true,
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
+            fx_editors: Vec::new(),
+            gesture_counter: 0,
+            render_job: None,
+            last_autosave: std::time::Instant::now(),
             thumb_textures: HashMap::new(),
         }
     }
@@ -128,6 +136,10 @@ impl KtApp {
             meter: Default::default(),
             smooth_scaling: true,
             thumbs: thumbs_svc,
+            fx_editors: Vec::new(),
+            gesture_counter: 0,
+            render_job: None,
+            last_autosave: std::time::Instant::now(),
             thumb_textures: HashMap::new(),
         })
     }
@@ -684,6 +696,11 @@ impl KtApp {
                 self.toggle_loop();
             }
             ui.separator();
+            if ui.button("🎬").on_hover_text("Рендер в MP4 (регион или весь проект)").clicked()
+            {
+                self.start_render();
+            }
+            ui.separator();
             if ui.button("↶").on_hover_text("Ctrl+Z").clicked() {
                 self.undo();
             }
@@ -958,7 +975,30 @@ impl eframe::App for KtApp {
             });
         });
 
+        self.draw_fx_editors(&ctx);
+        self.draw_render_dialog(&ctx);
+
+        // автосейв каждые 4 c (порт autosaveTimer)
+        if self.dirty && self.project_path.is_some() && self.last_autosave.elapsed().as_secs() >= 4
+        {
+            self.last_autosave = std::time::Instant::now();
+            let path = self.project_path.clone().unwrap();
+            if std::fs::write(&path, self.model.project().to_json()).is_ok() {
+                self.dirty = false;
+            }
+        }
+
         ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        // последний проект + финальный сейв при выходе
+        if let Some(p) = &self.project_path {
+            storage.set_string("last_project", p.to_string_lossy().to_string());
+            if self.dirty {
+                let _ = std::fs::write(p, self.model.project().to_json());
+            }
+        }
     }
 }
 
@@ -975,7 +1015,9 @@ pub fn run() -> eframe::Result {
         options,
         Box::new(move |cc| {
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            let app = match arg {
+            let restored =
+                arg.clone().or_else(|| cc.storage.and_then(|s| s.get_string("last_project")));
+            let app = match restored {
                 Some(p) => {
                     let path = std::path::PathBuf::from(&p);
                     KtApp::open(&path).unwrap_or_else(|e| KtApp::new_empty(Some(e)))

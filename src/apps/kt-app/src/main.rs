@@ -6,7 +6,9 @@
 mod app;
 mod audio_out;
 mod bin_panel;
+mod fx_editor;
 mod meters;
+mod render_dialog;
 mod thumbs;
 mod timeline;
 mod util;
