@@ -6,6 +6,7 @@
 //! Впереди: M7 (экспорт). Архитектура и владение потоками — docs/architecture.md.
 
 pub mod audio;
+pub mod export;
 pub mod fetch;
 pub mod fxstore;
 pub mod player;
@@ -15,6 +16,7 @@ pub mod video;
 pub mod worker;
 
 pub use audio::{AudioRenderer, RenderStats, db_to_linear};
+pub use export::{ExportStats, export_mp4, render_raw_audio, render_raw_video};
 pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
 pub use fxstore::FxStateStore;
 pub use player::{AudioShared, Player};

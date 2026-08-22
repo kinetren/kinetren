@@ -170,8 +170,75 @@ fn run(args: &[String]) -> i32 {
             };
             render_wav(&project, input, output)
         }
+        Some("export") => {
+            let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
+                eprintln!("usage: kt-cli export <in.ktproj> <out.mp4>");
+                return 2;
+            };
+            let text = match std::fs::read_to_string(input) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("read {input}: {e}");
+                    return 1;
+                }
+            };
+            let project = match Project::from_json(&text) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("{input}: {e}");
+                    return 1;
+                }
+            };
+            let open_all =
+                || -> Result<Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)>, String> {
+                    let base =
+                        std::path::Path::new(input).parent().unwrap_or(std::path::Path::new("."));
+                    let mut out = Vec::new();
+                    for m in &project.media {
+                        let src: Box<dyn kt_media::MediaSource> =
+                            if let Some(p) = synth_pattern(&m.path) {
+                                Box::new(SyntheticSource::new(Tick(90_000 * 3600), p))
+                            } else {
+                                let resolved = if std::path::Path::new(&m.path).is_absolute() {
+                                    m.path.clone()
+                                } else {
+                                    base.join(&m.path).to_string_lossy().to_string()
+                                };
+                                Box::new(
+                                    kt_media::ffmpeg::FfmpegSource::open(&resolved)
+                                        .map_err(|e| format!("{resolved}: {e}"))?,
+                                )
+                            };
+                        out.push((m.id, src));
+                    }
+                    Ok(out)
+                };
+            let (audio_sources, video_sources) = match (open_all(), open_all()) {
+                (Ok(a), Ok(v)) => (a, v),
+                (Err(e), _) | (_, Err(e)) => {
+                    eprintln!("{e}");
+                    return 1;
+                }
+            };
+            match kt_engine::export_mp4(&project, audio_sources, video_sources, output) {
+                Ok(stats) => {
+                    eprintln!(
+                        "ok: {} видеокадров, {} аудио-кадров, underruns {}, недостающих слоёв {}",
+                        stats.video_frames,
+                        stats.audio_frames,
+                        stats.underruns,
+                        stats.missing_video_layers
+                    );
+                    0
+                }
+                Err(e) => {
+                    eprintln!("export: {e}");
+                    1
+                }
+            }
+        }
         Some(cmd) => {
-            eprintln!("unknown command: {cmd} (доступно: version, new, roundtrip, render)");
+            eprintln!("unknown command: {cmd} (доступно: version, new, roundtrip, render, export)");
             2
         }
     }
