@@ -23,6 +23,13 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
+/// Счётчики реальных обращений к декодерам (для перф-панели).
+#[derive(Default)]
+pub struct DecodeStats {
+    pub audio_decodes: AtomicU64,
+    pub video_decodes: AtomicU64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RequestKind {
     /// Аудио-burst источника.
@@ -76,8 +83,17 @@ pub struct MediaWorker {
 impl MediaWorker {
     pub fn spawn(
         media: MediaId,
+        source: Box<dyn MediaSource>,
+        cache: Arc<BurstCache>,
+    ) -> MediaWorker {
+        Self::spawn_with_stats(media, source, cache, Arc::new(DecodeStats::default()))
+    }
+
+    pub fn spawn_with_stats(
+        media: MediaId,
         mut source: Box<dyn MediaSource>,
         cache: Arc<BurstCache>,
+        stats: Arc<DecodeStats>,
     ) -> MediaWorker {
         let shared = Arc::new(Shared {
             queue: Mutex::new(Queue::default()),
@@ -89,7 +105,7 @@ impl MediaWorker {
         let source_id = crate::source_id(media);
         let join = std::thread::Builder::new()
             .name(format!("media-worker-{}", media.0))
-            .spawn(move || worker_loop(&sh, source_id, source.as_mut(), &cache))
+            .spawn(move || worker_loop(&sh, source_id, source.as_mut(), &cache, &stats))
             .expect("spawn media worker");
         MediaWorker { shared, join: Some(join), media }
     }
@@ -139,6 +155,7 @@ fn worker_loop(
     source_id: SourceId,
     source: &mut dyn MediaSource,
     cache: &BurstCache,
+    stats: &DecodeStats,
 ) {
     // Курсор «где был декодер»: позиция последнего обслуженного запроса.
     let mut cursor: i64 = 0;
@@ -162,19 +179,21 @@ fn worker_loop(
         cursor = pos;
         match kind {
             RequestKind::Audio { idx } => {
-                if cache.get_audio(source_id, idx).is_none()
-                    && let Ok(burst) = source.read_audio_burst(idx)
-                {
-                    cache.insert_audio(source_id, Arc::new(burst));
+                if cache.get_audio(source_id, idx).is_none() {
+                    stats.audio_decodes.fetch_add(1, Ordering::Relaxed);
+                    if let Ok(burst) = source.read_audio_burst(idx) {
+                        cache.insert_audio(source_id, Arc::new(burst));
+                    }
                 }
             }
             RequestKind::Video { pts, quality } => {
                 let q = quality.map(|(width, height)| Quality { width, height });
                 let frame_idx = pts.0; // ключ кадра = pts в тиках
-                if cache.get_video(source_id, q, frame_idx).is_none()
-                    && let Ok(frame) = source.read_video_frame(pts, q)
-                {
-                    cache.insert_video(source_id, q, frame_idx, Arc::new(frame));
+                if cache.get_video(source_id, q, frame_idx).is_none() {
+                    stats.video_decodes.fetch_add(1, Ordering::Relaxed);
+                    if let Ok(frame) = source.read_video_frame(pts, q) {
+                        cache.insert_video(source_id, q, frame_idx, Arc::new(frame));
+                    }
                 }
             }
         }

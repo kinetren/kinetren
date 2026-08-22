@@ -42,6 +42,7 @@ pub struct KtApp {
     pub hover_hint: Option<String>,
     /// Rect таймлайна прошлого кадра (для плавающего тулбара).
     pub timeline_rect: egui::Rect,
+    pub perf: PerfState,
     pub thumbs: crate::thumbs::ThumbService,
     /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
     pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
@@ -106,6 +107,7 @@ impl KtApp {
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
             timeline_rect: egui::Rect::NOTHING,
+            perf: PerfState::new(),
             thumb_textures: HashMap::new(),
         }
     }
@@ -148,6 +150,7 @@ impl KtApp {
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
             timeline_rect: egui::Rect::NOTHING,
+            perf: PerfState::new(),
             thumb_textures: HashMap::new(),
         })
     }
@@ -720,6 +723,14 @@ impl KtApp {
             self.model.project().clips.len(),
             self.model.project().media.len()
         ));
+        ui.add_space(4.0);
+        self.perf.quality.draw(ui, 96.0);
+        ui.add_space(4.0);
+        self.perf.decode.draw(ui, 96.0);
+        ui.add_space(4.0);
+        if ui.button("Диагностика…").clicked() {
+            self.perf.diag_open = true;
+        }
     }
 
     fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
@@ -859,6 +870,162 @@ impl KtApp {
         }
     }
 }
+/// Состояние перф-панели: rolling-графики, дельты счётчиков, журнал проблем.
+pub struct PerfState {
+    pub quality: crate::graphs::RollingGraph,
+    pub decode: crate::graphs::RollingGraph,
+    pub churn: crate::graphs::RollingGraph,
+    last_sample: std::time::Instant,
+    // прошлые кумулятивные значения для дельт
+    last_cache: kt_cache::CacheStats,
+    last_decode: (u64, u64),
+    last_underruns: (u64, u64),
+    frames: u32,
+    pub diag_open: bool,
+    pub log: std::collections::VecDeque<String>,
+    last_offline: usize,
+}
+
+impl PerfState {
+    fn new() -> PerfState {
+        use crate::graphs::{Axis, RollingGraph};
+        PerfState {
+            quality: RollingGraph::new(
+                "Качество (FPS / hit%)",
+                Axis::Percent,
+                vec![
+                    ("FPS", egui::Color32::from_rgb(120, 230, 90), 120.0),
+                    ("A-hit", egui::Color32::from_rgb(114, 214, 255), 100.0),
+                    ("V-hit", egui::Color32::from_rgb(240, 190, 70), 100.0),
+                ],
+            ),
+            decode: RollingGraph::new(
+                "Декодер (операций/с)",
+                Axis::LinearAuto,
+                vec![
+                    ("A-dec", egui::Color32::from_rgb(140, 200, 255), 1500.0),
+                    ("V-dec", egui::Color32::from_rgb(255, 160, 120), 500.0),
+                ],
+            ),
+            churn: RollingGraph::new(
+                "Кэш-чёрн (/с)",
+                Axis::LinearAuto,
+                vec![
+                    ("evict", egui::Color32::from_rgb(255, 120, 120), 2000.0),
+                    ("miss", egui::Color32::from_rgb(200, 160, 255), 2000.0),
+                ],
+            ),
+            last_sample: std::time::Instant::now(),
+            last_cache: Default::default(),
+            last_decode: (0, 0),
+            last_underruns: (0, 0),
+            frames: 0,
+            diag_open: false,
+            log: std::collections::VecDeque::new(),
+            last_offline: 0,
+        }
+    }
+
+    fn note(&mut self, msg: String) {
+        let now = chrono_like_now();
+        self.log.push_back(format!("[{now}] {msg}"));
+        while self.log.len() > 400 {
+            self.log.pop_front();
+        }
+    }
+}
+
+/// hh:mm:ss без зависимости chrono.
+fn chrono_like_now() -> String {
+    let secs =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let s = secs % 86_400;
+    format!("{:02}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
+}
+
+impl KtApp {
+    /// Сэмплер метрик раз в 500 мс (порт performanceTimer).
+    fn sample_perf(&mut self) {
+        self.perf.frames += 1;
+        let dt = self.perf.last_sample.elapsed().as_secs_f32();
+        if dt < 0.5 {
+            return;
+        }
+        self.perf.last_sample = std::time::Instant::now();
+        let ord = std::sync::atomic::Ordering::Relaxed;
+
+        let cache = self.player.cache.stats();
+        let lc = self.perf.last_cache;
+        let d_ah = cache.audio_hits - lc.audio_hits;
+        let d_am = cache.audio_misses - lc.audio_misses;
+        let d_vh = cache.video_hits - lc.video_hits;
+        let d_vm = cache.video_misses - lc.video_misses;
+        let d_ev = cache.evictions - lc.evictions;
+        self.perf.last_cache = cache;
+
+        let a_dec = self.player.decode_stats.audio_decodes.load(ord);
+        let v_dec = self.player.decode_stats.video_decodes.load(ord);
+        let (la, lv) = self.perf.last_decode;
+        self.perf.last_decode = (a_dec, v_dec);
+
+        let fps = self.perf.frames as f32 / dt;
+        self.perf.frames = 0;
+        let a_hit =
+            if d_ah + d_am > 0 { d_ah as f32 / (d_ah + d_am) as f32 * 100.0 } else { 100.0 };
+        let v_hit =
+            if d_vh + d_vm > 0 { d_vh as f32 / (d_vh + d_vm) as f32 * 100.0 } else { 100.0 };
+        self.perf.quality.push(&[fps.min(120.0), a_hit, v_hit]);
+        self.perf.decode.push(&[(a_dec - la) as f32 / dt, (v_dec - lv) as f32 / dt]);
+        self.perf.churn.push(&[d_ev as f32 / dt, (d_am + d_vm) as f32 / dt]);
+
+        // журнал проблем
+        let ur = self.player.underruns.load(ord);
+        let uc = self.player.shared.callback_underruns.load(ord);
+        let (lur, luc) = self.perf.last_underruns;
+        if ur > lur {
+            self.perf.note(format!("render underruns +{} (итого {ur})", ur - lur));
+        }
+        if uc > luc {
+            self.perf.note(format!("callback underruns +{} (итого {uc})", uc - luc));
+        }
+        self.perf.last_underruns = (ur, uc);
+        if d_ev as f32 / dt > 500.0 {
+            self.perf.note(format!("всплеск eviction: {:.0}/с — кэшу тесно", d_ev as f32 / dt));
+        }
+        let offline_now = self.offline.lock().unwrap().len();
+        if offline_now != self.perf.last_offline {
+            self.perf.note(format!("доступность медиа изменилась: офлайн {offline_now}"));
+            self.perf.last_offline = offline_now;
+        }
+    }
+
+    fn draw_diagnostics(&mut self, ctx: &egui::Context) {
+        if !self.perf.diag_open {
+            return;
+        }
+        let mut open = self.perf.diag_open;
+        egui::Window::new("Диагностика").open(&mut open).default_width(520.0).show(ctx, |ui| {
+            self.perf.churn.draw(ui, 110.0);
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Журнал проблем").strong());
+                if ui.button("Очистить").clicked() {
+                    self.perf.log.clear();
+                }
+            });
+            egui::ScrollArea::vertical().max_height(240.0).stick_to_bottom(true).show(ui, |ui| {
+                for line in &self.perf.log {
+                    ui.monospace(line);
+                }
+                if self.perf.log.is_empty() {
+                    ui.weak("проблем не замечено");
+                }
+            });
+        });
+        self.perf.diag_open = open;
+    }
+}
+
 impl eframe::App for KtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -871,11 +1038,26 @@ impl eframe::App for KtApp {
             self.draw_statusbar(ui);
         });
         // таймлайн (низ, на всю ширину) + плавающий тулбар поверх
-        egui::Panel::bottom("timeline").resizable(true).default_size(280.0).show(ui, |ui| {
-            let rect = ui.available_rect_before_wrap();
-            self.timeline_rect = rect;
-            self.draw_timeline(ui);
-            self.draw_toolbar_chrome(ui, rect);
+        egui::Panel::bottom("timeline").resizable(true).default_size(300.0).show(ui, |ui| {
+            let full = ui.available_rect_before_wrap();
+            self.timeline_rect = full;
+            let strip_h = 34.0;
+            let tl_rect = egui::Rect::from_min_max(
+                full.min,
+                egui::pos2(full.right(), full.bottom() - strip_h),
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(tl_rect), |ui| {
+                self.draw_timeline(ui);
+            });
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
+                    egui::pos2(full.left(), full.bottom() - strip_h),
+                    full.max,
+                )),
+                |ui| {
+                    self.draw_toolbar_strip(ui);
+                },
+            );
         });
         // полоса времени над таймлайном (порт Timeline time strip)
         egui::Panel::bottom("timestrip").show(ui, |ui| {
@@ -951,8 +1133,10 @@ impl eframe::App for KtApp {
             });
         });
 
+        self.sample_perf();
         self.draw_fx_editors(&ctx);
         self.draw_render_dialog(&ctx);
+        self.draw_diagnostics(&ctx);
 
         // автосейв каждые 4 c (порт autosaveTimer)
         if self.dirty && self.project_path.is_some() && self.last_autosave.elapsed().as_secs() >= 4

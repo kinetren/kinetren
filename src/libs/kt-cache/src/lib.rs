@@ -145,6 +145,25 @@ struct Inner {
     recency_counter: u64,
 }
 
+/// Счётчики для перф-панели (кумулятивные; UI считает дельты).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CacheStats {
+    pub audio_hits: u64,
+    pub audio_misses: u64,
+    pub video_hits: u64,
+    pub video_misses: u64,
+    pub evictions: u64,
+}
+
+#[derive(Default)]
+struct StatCounters {
+    audio_hits: AtomicU64,
+    audio_misses: AtomicU64,
+    video_hits: AtomicU64,
+    video_misses: AtomicU64,
+    evictions: AtomicU64,
+}
+
 /// Потокобезопасный кэш burst'ов с LRU по раздельным байтовым бюджетам
 /// аудио/видео, pin'ом (loop-регион) и coverage-запросами.
 pub struct BurstCache {
@@ -153,6 +172,7 @@ pub struct BurstCache {
     /// Меняется при insert/evict/invalidate — UI перерисовывает полоски
     /// только при изменении.
     epoch: AtomicU64,
+    stats: StatCounters,
 }
 
 impl BurstCache {
@@ -168,6 +188,17 @@ impl BurstCache {
                 recency_counter: 0,
             }),
             epoch: AtomicU64::new(0),
+            stats: StatCounters::default(),
+        }
+    }
+
+    pub fn stats(&self) -> CacheStats {
+        CacheStats {
+            audio_hits: self.stats.audio_hits.load(Ordering::Relaxed),
+            audio_misses: self.stats.audio_misses.load(Ordering::Relaxed),
+            video_hits: self.stats.video_hits.load(Ordering::Relaxed),
+            video_misses: self.stats.video_misses.load(Ordering::Relaxed),
+            evictions: self.stats.evictions.load(Ordering::Relaxed),
         }
     }
 
@@ -198,7 +229,18 @@ impl BurstCache {
         let mut inner = self.inner.lock().unwrap();
         inner.recency_counter += 1;
         let counter = inner.recency_counter;
-        let entry = inner.map.get_mut(&key)?;
+        let is_audio = key.kind == BurstKind::Audio;
+        let Some(entry) = inner.map.get_mut(&key) else {
+            match is_audio {
+                true => self.stats.audio_misses.fetch_add(1, Ordering::Relaxed),
+                false => self.stats.video_misses.fetch_add(1, Ordering::Relaxed),
+            };
+            return None;
+        };
+        match is_audio {
+            true => self.stats.audio_hits.fetch_add(1, Ordering::Relaxed),
+            false => self.stats.video_hits.fetch_add(1, Ordering::Relaxed),
+        };
         let old = entry.recency;
         entry.recency = counter;
         let payload = entry.payload.clone();
@@ -286,6 +328,7 @@ impl BurstCache {
             if let Some(set) = inner.coverage.get_mut(&(key.source, key.kind)) {
                 set.remove(key.idx);
             }
+            self.stats.evictions.fetch_add(1, Ordering::Relaxed);
         }
     }
 

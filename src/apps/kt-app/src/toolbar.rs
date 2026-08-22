@@ -46,39 +46,30 @@ impl KtApp {
         r.clicked()
     }
 
-    /// Рисуется ПОВЕРХ таймлайна (вызвать после draw_timeline).
-    pub fn draw_toolbar_chrome(&mut self, ui: &mut egui::Ui, timeline_rect: egui::Rect) {
-        let chrome = egui::Rect::from_min_size(
-            egui::pos2(timeline_rect.left() + 58.0, timeline_rect.top() + 40.0),
-            egui::vec2((timeline_rect.width() - 76.0).min(760.0), 32.0),
+    /// Полоса кнопок ВНИЗУ панели таймлайна (порт: кнопки снизу),
+    /// градиентный фон на всю ширину — ничего не вылезает.
+    pub fn draw_toolbar_strip(&mut self, ui: &mut egui::Ui) {
+        let strip = egui::Rect::from_min_size(
+            ui.available_rect_before_wrap().min,
+            egui::vec2(ui.available_width(), 34.0),
         );
         let painter = ui.painter();
-        // тень
-        painter.rect_filled(
-            chrome.translate(egui::vec2(0.0, 2.5)).expand(1.5),
-            8.0,
-            egui::Color32::from_black_alpha(70),
-        );
-        // градиентная плашка
         gradient_rect(
             painter,
-            chrome,
-            egui::Color32::from_rgba_unmultiplied(38, 41, 46, 235),
-            egui::Color32::from_rgba_unmultiplied(24, 26, 30, 235),
+            strip,
+            egui::Color32::from_rgb(40, 43, 48),
+            egui::Color32::from_rgb(26, 28, 32),
         );
-        painter.rect(
-            chrome,
-            8.0,
-            egui::Color32::TRANSPARENT,
-            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 18)),
-            egui::StrokeKind::Inside,
+        painter.line_segment(
+            [strip.left_top(), strip.right_top()],
+            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22)),
         );
-
         let mut child = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(chrome.shrink2(egui::vec2(8.0, 2.0)))
+                .max_rect(strip.shrink2(egui::vec2(8.0, 2.0)))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
+        ui.advance_cursor_after_rect(strip);
         let ui = &mut child;
         let playing = self.player.transport.is_playing();
         if self.tb(ui, if playing { "⏸" } else { "▶" }, "Play/Pause (Space)") {

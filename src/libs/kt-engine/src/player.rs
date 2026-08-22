@@ -19,7 +19,7 @@ use crate::fxstore::FxStateStore;
 use crate::prefetch::prefetch_audio_pass;
 use crate::transport::Transport;
 use crate::video::{VideoRenderer, video_cache_idx};
-use crate::worker::{DecodeRequest, MediaWorker, RequestKind};
+use crate::worker::{DecodeRequest, DecodeStats, MediaWorker, RequestKind};
 use crate::{Priority, source_id};
 use kt_cache::{BurstCache, CacheConfig};
 use kt_media::{MediaSource, Quality};
@@ -91,6 +91,7 @@ pub struct Player {
     render_thread: Option<std::thread::JoinHandle<()>>,
     prefetch_thread: Option<std::thread::JoinHandle<()>>,
     pub underruns: Arc<AtomicU64>,
+    pub decode_stats: Arc<DecodeStats>,
 }
 
 impl Player {
@@ -109,9 +110,13 @@ impl Player {
         let meters = Arc::new(Meters { peak_l: AtomicU32::new(0), peak_r: AtomicU32::new(0) });
         let master_gain = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let loop_region: Arc<Mutex<Option<(i64, i64)>>> = Arc::new(Mutex::new(None));
+        let decode_stats = Arc::new(DecodeStats::default());
         let mut workers = HashMap::new();
         for (media, src) in sources {
-            workers.insert(media, MediaWorker::spawn(media, src, cache.clone()));
+            workers.insert(
+                media,
+                MediaWorker::spawn_with_stats(media, src, cache.clone(), decode_stats.clone()),
+            );
         }
         let workers = Arc::new(workers);
         let video = Mutex::new(VideoRenderer::new(&project));
@@ -186,6 +191,7 @@ impl Player {
             render_thread: Some(render_thread),
             prefetch_thread: Some(prefetch_thread),
             underruns,
+            decode_stats,
         };
         (player, consumer)
     }

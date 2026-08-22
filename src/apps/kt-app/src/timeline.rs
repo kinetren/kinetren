@@ -167,11 +167,9 @@ impl KtApp {
         if let Some(pos) = response.hover_pos() {
             let scroll = ui.input(|i| i.smooth_scroll_delta);
             let zoom = ui.input(|i| i.zoom_delta());
-            if scroll.y != 0.0 && ui.input(|i| i.modifiers.shift) {
-                view_start -= scroll.y as f64 * tpp * 4.0;
-            } else if scroll.x != 0.0 {
-                view_start -= scroll.x as f64 * tpp * 4.0;
-            } else if scroll.y != 0.0 || zoom != 1.0 {
+            let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+            if ctrl && scroll.y != 0.0 || zoom != 1.0 {
+                // зум: Ctrl+колесо или пинч, якорь под курсором (порт старого)
                 let factor = if zoom != 1.0 {
                     1.0 / zoom as f64
                 } else if scroll.y > 0.0 {
@@ -182,20 +180,28 @@ impl KtApp {
                 let anchor = view_start + (pos.x - rect.left()) as f64 * tpp;
                 tpp = (tpp * factor).clamp(30.0, 90_000.0);
                 view_start = anchor - (pos.x - rect.left()) as f64 * tpp;
+            } else if scroll.x != 0.0 || scroll.y != 0.0 {
+                // голое колесо (любая ось) = скролл по таймлайну (порт старого)
+                let delta = if scroll.x.abs() > scroll.y.abs() { scroll.x } else { scroll.y };
+                view_start -= delta as f64 * tpp * 2.5;
             }
         }
-        // edge-autoscroll: порт heat^4.15 * 0.18, шаг 1..42 мс за кадр
+        // Зоны «прыжка» у краёв (порт): heat = близость к краю [-1..1].
+        let edge_margin = (rect.width() / 8.0).max(40.0);
+        let edge_heat = |x: f32| -> f32 {
+            if x < rect.left() + edge_margin {
+                -((rect.left() + edge_margin - x) / edge_margin).clamp(0.0, 1.0)
+            } else if x > rect.right() - edge_margin {
+                ((x - (rect.right() - edge_margin)) / edge_margin).clamp(0.0, 1.0)
+            } else {
+                0.0
+            }
+        };
+        // при драге — плавный autoscroll (heat^4.15, порт)
         if self.drag.is_some()
             && let Some(pos) = response.hover_pos()
         {
-            let margin = (rect.width() / 6.0).max(24.0);
-            let heat = if pos.x < rect.left() + margin {
-                -((rect.left() + margin - pos.x) / margin).clamp(0.0, 1.0)
-            } else if pos.x > rect.right() - margin {
-                ((pos.x - (rect.right() - margin)) / margin).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
+            let heat = edge_heat(pos.x);
             if heat != 0.0 {
                 let ms = (heat.abs().powf(4.15) * 0.18 * 240.0).clamp(1.0, 42.0) as f64;
                 view_start += heat.signum() as f64 * ms * 90.0;
@@ -558,6 +564,13 @@ impl KtApp {
                         }
                     }
                 }
+            } else if response.clicked() && edge_heat(pos.x) != 0.0 {
+                // клик в зоне прыжка: ближе к краю = сильнее сдвиг (порт)
+                let heat = edge_heat(pos.x);
+                let vis = rect.width() as f64 * tpp;
+                self.view_start = (self.view_start
+                    + heat.signum() as f64 * (heat.abs() as f64).powi(2) * vis * 0.6)
+                    .max(-(tpp * 40.0));
             } else if response.drag_started() {
                 // пустое место: выделение региона (порт RegionSelect)
                 let anchor = x_to_tick(pos.x).max(0);
@@ -1032,14 +1045,13 @@ impl KtApp {
             ));
         }
 
-        // ---- heat-зоны edge-scroll при драге --------------------------------------
-        if self.drag.is_some()
-            && let Some(pos) = hover
-        {
-            let margin = (rect.width() / 6.0).max(24.0);
+        // ---- heat-зоны прыжка/edge-scroll: градиент при наведении ------------------
+        if let Some(pos) = hover {
+            let boost = if self.drag.is_some() { 1.0f32 } else { 0.6 };
+            let margin = edge_margin;
             let warm = |heat: f32, zone: egui::Rect, from_left: bool| {
                 if heat > 0.02 {
-                    let a = (36.0 + heat * 174.0) as u8;
+                    let a = ((36.0 + heat * 174.0) * boost) as u8;
                     let (c0, c1) = if from_left {
                         (
                             egui::Color32::from_rgba_unmultiplied(255, 178, 100, a),
