@@ -119,3 +119,60 @@ fn t25_auto_encoder_selects_something() {
     .expect("экспорт с автовыбором");
     assert!(!stats.encoder.is_empty(), "имя выбранного энкодера должно быть видно (UI)");
 }
+
+/// Тест 33 (п.9): в файле РЕАЛЬНО есть все кадры — дроп любого (EAGAIN
+/// без ретрая в муксере) — провал. Считаем кадры собственным декодером.
+#[test]
+fn t33_exported_file_contains_every_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("t33.mp4").to_string_lossy().to_string();
+    // 2 секунды = 60 кадров при 30 fps
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    for (id, kind, lane) in [(1u64, ClipKind::Video, 0u32), (2, ClipKind::Audio, 0)] {
+        p.clips.push(ClipEvent {
+            id: ClipId(id),
+            link_group: Some(GroupId(1)),
+            kind,
+            lane,
+            start: Tick(0),
+            duration: Tick(180_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+        });
+    }
+    p.validate().unwrap();
+    let stats = export_mp4_with(
+        &p,
+        sources(),
+        sources(),
+        &out,
+        None,
+        &ExportOptions { force_encoder: Some("libx264".into()), ..Default::default() },
+        &Arc::new(AtomicBool::new(false)),
+        &Arc::new(AtomicBool::new(false)),
+        |_| {},
+    )
+    .expect("экспорт");
+    assert_eq!(stats.video_frames, 60, "движок отдал 60 кадров");
+
+    // считаем кадры В ФАЙЛЕ: span по всем ключам + frames_decoded
+    let mut src = kt_media::ffmpeg::FfmpegSource::open(&out).unwrap();
+    let step = 90_000 / 30;
+    let keys: Vec<Tick> = (0..60).map(|i| Tick(i * step)).collect();
+    let mut emitted = 0usize;
+    src.read_video_span(&keys, Some(Quality { width: 320, height: 180 }), &mut |_, _| {
+        emitted += 1
+    })
+    .expect("чтение всех ключей");
+    assert_eq!(emitted, 60, "каждый ключ сетки закрыт кадром");
+    let (_reopens, decoded) = src.decode_debug_stats();
+    assert!(
+        decoded >= 60,
+        "файл обязан содержать все 60 кадров (декодировано {decoded}) — дроп в муксере"
+    );
+}

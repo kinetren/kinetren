@@ -329,9 +329,28 @@ impl Muxer {
         } else {
             (self.aenc, self.aframe, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))
         };
-        let r = unsafe { (api.avcodec_send_frame)(enc, frame) };
-        if r < 0 && r != AVERROR_EAGAIN {
-            return Err(averr(api, "энкодер send", r));
+        // EAGAIN = «энкодер полон, кадр НЕ принят» — обязан быть ретрай
+        // после дренажа очереди. Раньше кадр молча ТЕРЯЛСЯ, а PTS-сетка
+        // продолжалась: ролик той же длины со «скачками» (п.9 — дропы
+        // кадров у nvenc с глубокой очередью; у аудио — дыра в 1024
+        // сэмпла со сдвигом A/V).
+        let mut attempts = 0u32;
+        loop {
+            let r = unsafe { (api.avcodec_send_frame)(enc, frame) };
+            if r >= 0 {
+                break;
+            }
+            if r != AVERROR_EAGAIN {
+                return Err(averr(api, "энкодер send", r));
+            }
+            attempts += 1;
+            if attempts > 1000 {
+                return Err(FfError::Av(
+                    "энкодер не принимает кадры (1000 попыток при EAGAIN)".into(),
+                ));
+            }
+            // освободить место в очереди энкодера и повторить send
+            self.drain(enc, stream_idx, tb_src)?;
         }
         self.drain(enc, stream_idx, tb_src)
     }
