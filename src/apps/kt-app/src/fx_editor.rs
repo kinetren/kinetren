@@ -194,7 +194,9 @@ impl KtApp {
 
                             // --- автоматизация ---------------------------------
                             ui.add_space(4.0);
-                            ui.label("Автоматизация (t = прогресс клипа 0..1):");
+                            ui.label(
+                                "Автоматизация (t = позиция по ленте ИСТОЧНИКА, доля клипа 0..1):",
+                            );
                             let (rect, resp) = ui.allocate_exact_size(
                                 egui::vec2(ui.available_width(), 90.0),
                                 egui::Sense::click_and_drag(),

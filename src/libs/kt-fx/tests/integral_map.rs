@@ -1,5 +1,5 @@
 //! Диагностика: позиция источника на выходе vs интеграл профиля.
-use kt_fx::{CH, ClipProcessor, rate_integral};
+use kt_fx::{CH, ClipProcessor, source_progress};
 use kt_model::{FxInstance, SlowedKeyframe};
 
 #[test]
@@ -33,7 +33,7 @@ fn clip_processor_follows_integral_map() {
     while local < len {
         p.read(local, &mut out, &mut pull);
         let t = (local + 1024) as f64 / len as f64;
-        let expect = len as f64 * rate_integral(1.0, &automation, t.min(1.0));
+        let expect = len as f64 * source_progress(1.0, &automation, t.min(1.0));
         let got = out[(1023) * CH] as f64 / 1e-6;
         if (local / 1024) % 200 == 0 || local + 1024 >= len {
             println!("t={t:.3} src_got={got:.0} src_expect={expect:.0} diff={:.0}", got - expect);
@@ -70,7 +70,7 @@ fn clip_processor_single_big_read_matches() {
     let mut out = vec![0f32; len as usize * CH];
     p.read(0, &mut out, &mut pull);
     let got = out[(len as usize - 1) * CH] as f64 / 1e-6;
-    let expect = len as f64 * rate_integral(1.0, &automation, 1.0);
+    let expect = len as f64 * source_progress(1.0, &automation, 1.0);
     println!("single-read: got {got:.0}, expect {expect:.0}");
     assert!((got - expect).abs() < 4096.0, "got {got}, expect {expect}");
 }

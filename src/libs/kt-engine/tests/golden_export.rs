@@ -201,7 +201,11 @@ fn t11_streams_match_committed_golden() {
     assert_eq!(video, GOLDEN_VIDEO, "видео-поток разошёлся с эталоном: 0x{video:016x}");
 }
 
-const GOLDEN_AUDIO: u64 = 0x5a83eef245ab43f0;
+// ПЕРЕГЕНЕРИРОВАН 2026-08-23: автоматизация slowed переведена в
+// SOURCE-домен по явному решению пользователя (п.1 v1.3, тест 31) —
+// звучание клипа с автоматизацией изменилось осознанно. Видео-эталон
+// НЕ менялся (правка чисто аудио).
+const GOLDEN_AUDIO: u64 = 0x469c89aa2adc3b14;
 const GOLDEN_VIDEO: u64 = 0x95b790352d74f586;
 
 #[test]

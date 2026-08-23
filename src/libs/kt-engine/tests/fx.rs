@@ -263,15 +263,15 @@ fn window_freq_hz(out: &[f32], from_frame: usize, frames: usize) -> f64 {
 
 #[test]
 fn t4_automation_changes_rate_over_time() {
-    // 40 c клипа, тон 240 Гц; профиль: 1.0 до 25%, спад к 0.5 на 50%,
-    // плато, возврат к 1.0 к 75%. Выход обязан следовать профилю:
-    // f_out(t) = 240 * rate(t).
+    // SOURCE-домен (п.1): kf.t — позиция в МАТЕРИАЛЕ. Выход обязан следовать
+    // профилю: на выходном времени τ звучит rate(S(τ)). Чек-точки выходного
+    // времени вычисляются через T(s) = output_time_for_source.
     let dur = 40 * AUDIO_SAMPLE_RATE as i64;
     let automation = vec![
-        SlowedKeyframe { t: 0.25, rate: 1.0, mix: 0.0 },
+        SlowedKeyframe { t: 0.20, rate: 1.0, mix: 0.0 },
+        SlowedKeyframe { t: 0.40, rate: 0.5, mix: 0.0 },
         SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 },
-        SlowedKeyframe { t: 0.60, rate: 0.5, mix: 0.0 },
-        SlowedKeyframe { t: 0.75, rate: 1.0, mix: 0.0 },
+        SlowedKeyframe { t: 0.65, rate: 1.0, mix: 0.0 },
     ];
     let fx = vec![FxInstance::SlowedReverb {
         rate: 1.0,
@@ -292,11 +292,13 @@ fn t4_automation_changes_rate_over_time() {
     assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
 
     let win = AUDIO_SAMPLE_RATE as usize; // окно 1 c
+    // выходные позиции чек-точек — через T(s) от source-позиций профиля
+    let t_of_s = |s: f64| kt_fx::output_time_for_source(1.0, &automation_rate_profile(), s);
     let checks = [
-        (0.10, 1.0),   // до первой точки
-        (0.375, 0.75), // середина спада: линейная интерполяция
-        (0.55, 0.5),   // плато
-        (0.90, 1.0),   // после последней точки
+        (0.10, 1.0),          // материал до первой точки
+        (t_of_s(0.30), 0.75), // середина спада (материал s=0.30)
+        (t_of_s(0.45), 0.5),  // центр плато (материал s=0.45)
+        (0.95, 1.0),          // далеко после последнего kf
     ];
     for (t, expected_rate) in checks {
         let center = (dur as f64 * t) as usize;
@@ -308,6 +310,15 @@ fn t4_automation_changes_rate_over_time() {
              автоматизация обязана менять скорость по профилю"
         );
     }
+}
+
+fn automation_rate_profile() -> Vec<SlowedKeyframe> {
+    vec![
+        SlowedKeyframe { t: 0.20, rate: 1.0, mix: 0.0 },
+        SlowedKeyframe { t: 0.40, rate: 0.5, mix: 0.0 },
+        SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 },
+        SlowedKeyframe { t: 0.65, rate: 1.0, mix: 0.0 },
+    ]
 }
 
 fn automation_probe() -> &'static [SlowedKeyframe] {
@@ -353,7 +364,7 @@ fn t4_automation_consumes_source_by_integral() {
     for frac in [0.35f64, 0.55, 0.75, 0.95, 0.995] {
         let x = (dur as f64 * frac) as usize;
         let got = out[x * CH];
-        let expect_src = dur as f64 * kt_fx::rate_integral(1.0, automation_probe(), frac);
+        let expect_src = dur as f64 * kt_fx::source_progress(1.0, automation_probe(), frac);
         let expect = SyntheticSource::sample_at(AudioPattern::Ramp, expect_src as i64, 0);
         let tolerance = 4096.0 * 1e-6;
         assert!(
@@ -364,4 +375,112 @@ fn t4_automation_consumes_source_by_integral() {
         );
     }
     let _ = avg;
+}
+
+/// Тест 31 (п.1): кейфреймы приклеены к МАТЕРИАЛУ. Добавление РАННЕГО
+/// кейфрейма (ускорение) сдвигает выходное время, но не материал, на
+/// котором срабатывает поздний кейфрейм замедления. При старой (выходной)
+/// семантике материал точки замедления в сценарии B другой — тест падает.
+#[test]
+fn t31_keyframes_anchor_to_source_material() {
+    let dur = 20 * AUDIO_SAMPLE_RATE as i64; // L, кадры
+    let profile_a = vec![
+        SlowedKeyframe { t: 0.40, rate: 1.0, mix: 0.0 },
+        SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 },
+        SlowedKeyframe { t: 0.70, rate: 0.5, mix: 0.0 },
+        SlowedKeyframe { t: 0.75, rate: 1.0, mix: 0.0 },
+    ];
+    let mut profile_b = vec![
+        SlowedKeyframe { t: 0.10, rate: 1.0, mix: 0.0 },
+        SlowedKeyframe { t: 0.18, rate: 2.0, mix: 0.0 },
+        SlowedKeyframe { t: 0.26, rate: 2.0, mix: 0.0 },
+        SlowedKeyframe { t: 0.34, rate: 1.0, mix: 0.0 },
+    ];
+    profile_b.extend(profile_a.iter().cloned());
+
+    let render = |automation: Vec<SlowedKeyframe>| -> Vec<f32> {
+        let fx = vec![FxInstance::SlowedReverb {
+            rate: 1.0,
+            mix: 0.0, // ramp не должен загрязняться ревербом
+            reverb_delay_ms: 85.0,
+            damp: 0.32,
+            decay: 0.58,
+            wet_gain: 0.95,
+            automation,
+        }];
+        let p = fx_project(fx, "synth:ramp", dur);
+        let r = AudioRenderer::new(&p);
+        let mut f = direct(AudioPattern::Ramp);
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; dur as usize * CH];
+        assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
+        out
+    };
+    let out_a = render(profile_a);
+    let out_b = render(profile_b);
+
+    // выходной кадр, где играет материал src (ramp кодирует source-кадр)
+    let x_of_material = |out: &[f32], src: f64| -> usize {
+        let target = (src * 1e-6) as f32;
+        out.chunks_exact(CH).position(|fr| fr[0] >= target).expect("материал достижим")
+    };
+    // фактическая скорость НА материале: сколько источника за окно выхода
+    let rate_at_material = |out: &[f32], src: f64| -> f64 {
+        let x = x_of_material(out, src);
+        let w = AUDIO_SAMPLE_RATE as usize; // 1 c
+        let v0 = out[x * CH] as f64;
+        let v1 = out[(x + w) * CH] as f64;
+        (v1 - v0) / (w as f64 * 1e-6)
+    };
+
+    // 1) ЯКОРЬ: материал за кейфреймом s=0.5 замедлен в ОБОИХ сценариях
+    let m = 0.55 * dur as f64;
+    let ra = rate_at_material(&out_a, m);
+    let rb = rate_at_material(&out_b, m);
+    assert!((ra - 0.5).abs() < 0.05, "A:材 s=0.55 обязан играть на 0.5, вышло {ra:.3}");
+    assert!(
+        (rb - 0.5).abs() < 0.05,
+        "B: ранний кейфрейм НЕ должен сдвигать материал замедления, вышло {rb:.3}"
+    );
+
+    // 2) бамп активен на своём материале
+    let r_bump = rate_at_material(&out_b, 0.22 * dur as f64);
+    assert!((r_bump - 2.0).abs() < 0.2, "материал s=0.22 ускорен ×2, вышло {r_bump:.3}");
+
+    // 3) ускорение сдвигает ВРЕМЯ достижения материала, не материал
+    let xa = x_of_material(&out_a, 0.5 * dur as f64);
+    let xb = x_of_material(&out_b, 0.5 * dur as f64);
+    let dt_pred = kt_fx::output_time_for_source(1.0, &[], 0.0); // 0 — только для типа
+    let _ = dt_pred;
+    assert!(xa > xb, "с ранним ускорением материал s=0.5 достигается РАНЬШЕ: xa={xa}, xb={xb}");
+    let shift = (xa - xb) as f64 / dur as f64;
+    // предсказание: T_A(0.5) − T_B(0.5)
+    let ta = {
+        let a = vec![
+            SlowedKeyframe { t: 0.40, rate: 1.0, mix: 0.0 },
+            SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 },
+            SlowedKeyframe { t: 0.70, rate: 0.5, mix: 0.0 },
+            SlowedKeyframe { t: 0.75, rate: 1.0, mix: 0.0 },
+        ];
+        kt_fx::output_time_for_source(1.0, &a, 0.5)
+    };
+    let tb = {
+        let mut b = vec![
+            SlowedKeyframe { t: 0.10, rate: 1.0, mix: 0.0 },
+            SlowedKeyframe { t: 0.18, rate: 2.0, mix: 0.0 },
+            SlowedKeyframe { t: 0.26, rate: 2.0, mix: 0.0 },
+            SlowedKeyframe { t: 0.34, rate: 1.0, mix: 0.0 },
+        ];
+        b.push(SlowedKeyframe { t: 0.40, rate: 1.0, mix: 0.0 });
+        b.push(SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 });
+        b.push(SlowedKeyframe { t: 0.70, rate: 0.5, mix: 0.0 });
+        b.push(SlowedKeyframe { t: 0.75, rate: 1.0, mix: 0.0 });
+        kt_fx::output_time_for_source(1.0, &b, 0.5)
+    };
+    let pred = ta - tb;
+    assert!(
+        (shift - pred).abs() < 8192.0 / dur as f64,
+        "сдвиг времени {shift:.5} должен совпадать с предсказанием карты {pred:.5}"
+    );
 }

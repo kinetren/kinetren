@@ -165,10 +165,8 @@ fn t33_exported_file_contains_every_frame() {
     let step = 90_000 / 30;
     let keys: Vec<Tick> = (0..60).map(|i| Tick(i * step)).collect();
     let mut emitted = 0usize;
-    src.read_video_span(&keys, Some(Quality { width: 320, height: 180 }), &mut |_, _| {
-        emitted += 1
-    })
-    .expect("чтение всех ключей");
+    src.read_video_span(&keys, Some(Quality { width: 320, height: 180 }), &mut |_, _| emitted += 1)
+        .expect("чтение всех ключей");
     assert_eq!(emitted, 60, "каждый ключ сетки закрыт кадром");
     let (_reopens, decoded) = src.decode_debug_stats();
     assert!(

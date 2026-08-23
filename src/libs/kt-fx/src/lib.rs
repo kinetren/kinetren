@@ -334,33 +334,102 @@ fn interp(kfs: &[SlowedKeyframe], t: f64, base: f64, get: impl Fn(&SlowedKeyfram
     get(&kfs[kfs.len() - 1])
 }
 
-/// ∫₀ᵗ rate dτ (кусочно-линейно; края зажаты): маппинг «прогресс клипа →
-/// потреблённая доля источника».
-pub fn rate_integral(base: f64, automation: &[SlowedKeyframe], t: f64) -> f64 {
-    let t = t.clamp(0.0, 1.0);
-    if automation.is_empty() {
-        return base * t;
-    }
-    let mut acc = 0.0;
-    let mut prev_t = 0.0f64;
-    let mut prev_v = rate_at(base, automation, 0.0);
-    for k in automation {
-        if k.t >= t {
-            break;
-        }
-        if k.t > prev_t {
-            acc += (k.t - prev_t) * (prev_v + k.rate) / 2.0;
-            prev_t = k.t;
-            prev_v = k.rate;
-        }
-    }
-    let v = rate_at(base, automation, t);
-    acc + (t - prev_t) * (prev_v + v) / 2.0
+// ---------------------------------------------------------------------------
+// SOURCE-домен автоматизации (п.1, решение пользователя): kf.t — позиция
+// В МАТЕРИАЛЕ (кадры источника от source_in, нормированные clip_len).
+// Кейфрейм приклеен к материалу: добавление РАННЕГО кейфрейма меняет
+// момент выходного времени, но не материал, на котором срабатывают поздние.
+//
+// Карта: rate(s) кусочно-линеен по s; T(s) = ∫₀ˢ ds′/rate(s′) — выходной
+// прогресс (доли clip_len), при котором варп доиграл до source-доли s.
+// S(t) = T⁻¹(t). Кусочно-аналитические формы (ln/expm1) — без итераций,
+// точность ~1e-15, детерминизм libm (golden закреплён на linux x86_64).
+// Rate внутри карты зажат тем же клампом, что и Warp — иначе карта
+// разошлась бы с фактическим потреблением.
+// ---------------------------------------------------------------------------
+
+const RATE_CLAMP: (f64, f64) = (0.25, 32.0);
+
+fn eff_rate(base: f64, automation: &[SlowedKeyframe], s: f64) -> f64 {
+    rate_at(base, automation, s).clamp(RATE_CLAMP.0, RATE_CLAMP.1)
 }
 
-/// Средняя скорость по клипу: ∫₀¹ rate. Определяет расход источника.
+/// Δτ на сегменте [s0,s1] с линейным rate r0→r1: ∫ds/rate.
+fn seg_dt(ds: f64, r0: f64, r1: f64) -> f64 {
+    if (r1 - r0).abs() < 1e-9 { ds * 2.0 / (r0 + r1) } else { ds * (r1.ln() - r0.ln()) / (r1 - r0) }
+}
+
+/// Δs, потребляемая за Δτ на сегменте, начинающемся с rate r0 и наклоном
+/// b = dr/ds: s(τ) = r0·(e^{bτ} − 1)/b.
+fn seg_ds(dt: f64, r0: f64, b: f64) -> f64 {
+    if (b * dt).abs() < 1e-12 { r0 * dt } else { r0 * (b * dt).exp_m1() / b }
+}
+
+/// Сегменты (s0, s1, r0, r1) профиля по source-домену; последний — хвост
+/// с константным rate до бесконечности (s1 = f64::INFINITY).
+fn segments(base: f64, kfs: &[SlowedKeyframe]) -> Vec<(f64, f64, f64, f64)> {
+    let cl = |r: f64| r.clamp(RATE_CLAMP.0, RATE_CLAMP.1);
+    if kfs.is_empty() {
+        return vec![(0.0, f64::INFINITY, cl(base), cl(base))];
+    }
+    let mut out = Vec::with_capacity(kfs.len() + 1);
+    let first = cl(kfs[0].rate);
+    if kfs[0].t > 0.0 {
+        out.push((0.0, kfs[0].t, first, first));
+    }
+    for w in kfs.windows(2) {
+        if w[1].t > w[0].t {
+            out.push((w[0].t, w[1].t, cl(w[0].rate), cl(w[1].rate)));
+        }
+    }
+    let last = cl(kfs[kfs.len() - 1].rate);
+    out.push((kfs[kfs.len() - 1].t, f64::INFINITY, last, last));
+    out
+}
+
+/// T(s): выходной прогресс (доли clip_len), при котором потреблена
+/// source-доля s. Строго возрастает.
+pub fn output_time_for_source(base: f64, automation: &[SlowedKeyframe], s: f64) -> f64 {
+    let s = s.max(0.0);
+    let mut acc = 0.0;
+    for (s0, s1, r0, r1) in segments(base, automation) {
+        if s <= s0 {
+            break;
+        }
+        let hi = s.min(s1);
+        let frac = if s1.is_finite() && s1 > s0 { (hi - s0) / (s1 - s0) } else { 0.0 };
+        let r_hi = if s1.is_finite() { r0 + (r1 - r0) * frac } else { r0 };
+        acc += seg_dt(hi - s0, r0, r_hi);
+        if hi >= s {
+            break;
+        }
+    }
+    acc
+}
+
+/// S(t) = T⁻¹: source-доля, потреблённая к выходному прогрессу t
+/// (t может быть > 1 — хвост за клипом; rate за последним kf константен).
+pub fn source_progress(base: f64, automation: &[SlowedKeyframe], t: f64) -> f64 {
+    let t = t.max(0.0);
+    let mut tau_acc = 0.0;
+    let mut s_acc = 0.0;
+    for (s0, s1, r0, r1) in segments(base, automation) {
+        let seg_span = s1 - s0;
+        let seg_tau = if s1.is_finite() { seg_dt(seg_span, r0, r1) } else { f64::INFINITY };
+        if tau_acc + seg_tau >= t {
+            let rest = t - tau_acc;
+            let b = if s1.is_finite() && seg_span > 0.0 { (r1 - r0) / seg_span } else { 0.0 };
+            return s_acc + seg_ds(rest, r0, b);
+        }
+        tau_acc += seg_tau;
+        s_acc += seg_span;
+    }
+    s_acc
+}
+
+/// Средняя скорость = потреблённая доля источника за весь клип: S(1).
 pub fn avg_rate(base: f64, automation: &[SlowedKeyframe]) -> f64 {
-    rate_integral(base, automation, 1.0)
+    source_progress(base, automation, 1.0)
 }
 
 /// Скорость воспроизведения цепочки (1.0 = без варпа).
@@ -421,10 +490,10 @@ pub fn chain_source_window(
         .unwrap_or((1.0, &[]));
     let t0 = l0 as f64 / len as f64;
     let t1 = l1 as f64 / len as f64;
-    let s0 = ((len as f64 * rate_integral(rate, automation, t0)).floor() as i64)
+    let s0 = ((len as f64 * source_progress(rate, automation, t0)).floor() as i64)
         .saturating_sub(WARP_SOURCE_MARGIN_FRAMES)
         .max(0);
-    let s1 = (len as f64 * rate_integral(rate, automation, t1)).ceil() as i64
+    let s1 = (len as f64 * source_progress(rate, automation, t1)).ceil() as i64
         + WARP_SOURCE_MARGIN_FRAMES;
     s0..s1.max(s0)
 }
@@ -533,8 +602,11 @@ impl ClipProcessor {
                     } else if let Some(rv) = &mut self.reverb {
                         rv.set_params(*mix, *reverb_delay_ms, *damp, *decay, *wet_gain);
                     }
-                    if let Some(w) = &mut self.warp {
-                        w.set_rate(rate_at(self.rate, &self.automation, 0.5_f64.min(1.0)));
+                    if let Some(w) = &mut self.warp
+                        && self.automation.is_empty()
+                    {
+                        // с автоматизацией produce() выставит по позиции сам
+                        w.set_rate(self.rate);
                     }
                 }
                 // видео-FX аудио-процессором игнорируются
@@ -587,10 +659,10 @@ impl ClipProcessor {
     }
 
     /// Смещение источника (кадры от src_in) для клип-локальной позиции:
-    /// интеграл rate по прогрессу — с автоматизацией НЕ линейно.
+    /// S(t) — инверсия карты source-домена (см. output_time_for_source).
     fn source_offset(&self, local: i64) -> i64 {
         let t = local as f64 / self.clip_len as f64;
-        (self.clip_len as f64 * rate_integral(self.rate, &self.automation, t)).round() as i64
+        (self.clip_len as f64 * source_progress(self.rate, &self.automation, t)).round() as i64
     }
 
     fn hard_seek(&mut self, local: i64, pull: &mut dyn FnMut(i64, &mut [f32]) -> bool) {
@@ -642,12 +714,16 @@ impl ClipProcessor {
             let chunk_local = local + done as i64;
             // автоматизация: цели на середину чанка; rubato/one-pole сглаживают
             if !self.automation.is_empty() {
-                let t = (chunk_local as f64 + n as f64 * 0.5) / self.clip_len as f64;
+                // source-домен (п.1): цель чанка — по ПОЗИЦИИ В МАТЕРИАЛЕ,
+                // а не по выходному времени; ранние кейфреймы не сдвигают
+                // материал поздних
+                let tau = (chunk_local as f64 + n as f64 * 0.5) / self.clip_len as f64;
+                let s = source_progress(self.rate, &self.automation, tau);
                 if let Some(w) = &mut self.warp {
-                    w.set_rate(rate_at(self.rate, &self.automation, t));
+                    w.set_rate(eff_rate(self.rate, &self.automation, s));
                 }
                 if let Some(r) = &mut self.reverb {
-                    r.set_mix(mix_at(self.base_mix, &self.automation, t));
+                    r.set_mix(mix_at(self.base_mix, &self.automation, s));
                 }
             }
             let sub = &mut out[done * CH..(done + n) * CH];
@@ -699,10 +775,10 @@ mod automation_tests {
         assert_eq!(rate_at(9.0, &a, 1.0), 0.5);
     }
 
+    /// Source-карта: round-trip T∘S = id, монотонность, сверка с
+    /// независимым численным интегратором (профиль song1).
     #[test]
-    fn rate_integral_matches_trapezoid_and_is_monotone() {
-        // кейфреймы из старого проекта song1 — контрольная сумма посчитана
-        // независимо (трапеции)
+    fn source_map_roundtrip_and_matches_numeric() {
         let a = vec![
             kf(0.21616990640748734, 1.0),
             kf(0.2935781137508999, 0.35),
@@ -710,23 +786,64 @@ mod automation_tests {
             kf(0.6397019809160477, 0.6),
             kf(0.7557084786003034, 1.0),
         ];
-        let avg = avg_rate(1.0, &a);
-        assert!((avg - 0.805566).abs() < 1e-5, "avg_rate = {avg}");
-        // монотонность и согласованность с rate_at
+        assert_eq!(source_progress(1.0, &a, 0.0), 0.0);
         let mut prev = 0.0;
         for i in 0..=100 {
             let t = i as f64 / 100.0;
-            let v = rate_integral(1.0, &a, t);
-            assert!(v >= prev, "интеграл обязан быть неубывающим");
-            prev = v;
+            let s = source_progress(1.0, &a, t);
+            assert!(s >= prev, "S(t) обязана быть неубывающей");
+            prev = s;
+            // round-trip
+            let back = output_time_for_source(1.0, &a, s);
+            assert!((back - t).abs() < 1e-9, "T(S({t})) = {back}");
         }
-        assert_eq!(rate_integral(1.0, &a, 0.0), 0.0);
-        assert!((rate_integral(1.0, &a, 1.0) - avg).abs() < 1e-12);
+        // независимый численный интегратор: τ(s) трапециями по 1/rate
+        let numeric_t_of_s = |s_target: f64| -> f64 {
+            let n = 200_000;
+            let mut acc = 0.0;
+            let mut prev_inv = 1.0 / rate_at(1.0, &a, 0.0).clamp(0.25, 32.0);
+            for i in 1..=n {
+                let s = s_target * i as f64 / n as f64;
+                let inv = 1.0 / rate_at(1.0, &a, s).clamp(0.25, 32.0);
+                acc += (s_target / n as f64) * (prev_inv + inv) / 2.0;
+                prev_inv = inv;
+            }
+            acc
+        };
+        for s in [0.1f64, 0.3, 0.5, 0.7] {
+            let analytic = output_time_for_source(1.0, &a, s);
+            let numeric = numeric_t_of_s(s);
+            assert!(
+                (analytic - numeric).abs() < 1e-6,
+                "T({s}): аналитика {analytic} vs численно {numeric}"
+            );
+        }
     }
 
     #[test]
-    fn no_automation_integral_is_linear() {
-        assert_eq!(rate_integral(0.5, &[], 0.5), 0.25);
+    fn no_automation_map_is_linear() {
+        assert_eq!(source_progress(0.5, &[], 0.5), 0.25);
         assert_eq!(avg_rate(0.82, &[]), 0.82);
+        assert!((output_time_for_source(0.5, &[], 0.25) - 0.5).abs() < 1e-12);
+    }
+
+    /// Якорь к материалу (чистая функция): ранний бамп меняет ВРЕМЯ
+    /// достижения материала, но не rate НА материале.
+    #[test]
+    fn early_keyframe_shifts_time_not_material() {
+        let a = vec![kf(0.4, 1.0), kf(0.5, 0.5), kf(0.7, 0.5), kf(0.75, 1.0)];
+        let mut b = vec![kf(0.1, 1.0), kf(0.18, 2.0), kf(0.26, 2.0), kf(0.34, 1.0)];
+        b.extend(a.iter().cloned());
+        for s in [0.45f64, 0.55, 0.65, 0.72] {
+            assert_eq!(
+                rate_at(1.0, &a, s),
+                rate_at(1.0, &b, s),
+                "rate на материале s={s} не должен зависеть от раннего бампа"
+            );
+        }
+        // а выходное время достижения s=0.5 при бампе меньше
+        let ta = output_time_for_source(1.0, &a, 0.5);
+        let tb = output_time_for_source(1.0, &b, 0.5);
+        assert!(tb < ta, "ускорение раньше = материал достигается раньше: {tb} vs {ta}");
     }
 }
