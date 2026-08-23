@@ -126,6 +126,23 @@ pub struct ClipEvent {
     pub reversed: bool,
     #[serde(default)]
     pub fx: Vec<FxInstance>,
+    /// Bypass-флаги слотов (п.2 v1.3): true = слот ВЫКЛЮЧЕН. Параллелен
+    /// fx (индексы); короче fx = хвост включён. Пустой не сериализуется.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fx_bypass: Vec<bool>,
+}
+
+impl ClipEvent {
+    /// Активная FX-цепочка (без bypass-слотов) — единственный вид цепочки,
+    /// который видят движок и рендереры.
+    pub fn active_fx(&self) -> Vec<FxInstance> {
+        self.fx
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.fx_bypass.get(*i).copied().unwrap_or(false))
+            .map(|(_, f)| f.clone())
+            .collect()
+    }
 }
 
 /// Типизированные FX (не opaque JSON — валидация на загрузке, тест 12).

@@ -25,6 +25,7 @@ fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
         media: MediaId(1),
         gain_db: 0.0,
         reversed,
+        fx_bypass: vec![],
         fx,
     });
     p.validate().unwrap();

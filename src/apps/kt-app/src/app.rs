@@ -45,6 +45,8 @@ pub struct KtApp {
     pub status: Option<(String, std::time::Instant)>,
     /// Внутренний буфер обмена (блок клипов, ребейзнутых к нулю).
     pub clipboard: Vec<ClipEvent>,
+    /// Буфер огибающей автоматизации (п.5 v1.3, порт «Copy envelopes»).
+    pub automation_clipboard: Option<Vec<SlowedKeyframe>>,
     /// Медиа, чьи файлы сейчас недоступны (watchdog, 900 мс).
     pub offline: Arc<Mutex<std::collections::HashSet<MediaId>>>,
     /// Drop останавливает watchdog-поток (переоткрытие без утечек).
@@ -145,6 +147,7 @@ impl KtApp {
             live_gain: None,
             status: error.map(|e| (e, std::time::Instant::now())),
             clipboard: Vec::new(),
+            automation_clipboard: None,
             offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
             watchdog: None,
             meter: Default::default(),
@@ -203,6 +206,7 @@ impl KtApp {
             live_gain: None,
             status: err.map(|e| (e, std::time::Instant::now())),
             clipboard: Vec::new(),
+            automation_clipboard: None,
             offline,
             watchdog: Some(watchdog),
             meter: Default::default(),
@@ -899,6 +903,7 @@ impl KtApp {
                 media: media_id,
                 gain_db: 0.0,
                 reversed: false,
+                fx_bypass: vec![],
                 fx: vec![],
             }));
             next_id += 1;

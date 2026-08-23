@@ -55,7 +55,8 @@ impl AudioRenderer {
             .map(|c: &ClipEvent| {
                 let start = c.start.to_audio_frames();
                 let end = (c.start + c.duration).to_audio_frames();
-                let tail = kt_fx::chain_tail(&c.fx).to_audio_frames();
+                let active = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
+                let tail = kt_fx::chain_tail(&active).to_audio_frames();
                 AudioClip {
                     id: c.id,
                     start,
@@ -65,7 +66,7 @@ impl AudioRenderer {
                     lane: c.lane,
                     gain: db_to_linear(c.gain_db),
                     media: c.media,
-                    fx: c.fx.clone(),
+                    fx: active,
                     reversed: c.reversed,
                 }
             })

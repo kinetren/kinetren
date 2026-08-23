@@ -33,6 +33,7 @@ fn t19_copy_region_fragment_paste_renders_identically() {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
+        fx_bypass: vec![],
         fx: vec![],
     });
     p.validate().unwrap();
@@ -80,6 +81,7 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
+        fx_bypass: vec![],
         fx: vec![],
     });
     p.validate().unwrap();

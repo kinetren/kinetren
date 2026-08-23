@@ -38,6 +38,7 @@ fn clip(
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
+        fx_bypass: vec![],
         fx: vec![],
     }
 }

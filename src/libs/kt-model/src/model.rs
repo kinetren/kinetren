@@ -55,6 +55,11 @@ pub enum Command {
         id: ClipId,
         reversed: bool,
     },
+    /// Bypass-флаги FX-слотов (п.2 v1.3). Undo-able.
+    SetFxBypass {
+        id: ClipId,
+        bypass: Vec<bool>,
+    },
     SetFx {
         id: ClipId,
         fx: Vec<FxInstance>,
@@ -258,6 +263,7 @@ impl TimelineModel {
             Command::RemoveClip { id }
             | Command::SetGain { id, .. }
             | Command::SetReversed { id, .. }
+            | Command::SetFxBypass { id, .. }
             | Command::SetFx { id, .. }
             | Command::UnlinkClip { id }
             | Command::MoveClip { id, .. } => {
@@ -444,6 +450,7 @@ impl TimelineModel {
             }
             Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,
             Command::SetReversed { id, reversed } => Self::clip_mut_on(p, id).reversed = reversed,
+            Command::SetFxBypass { id, bypass } => Self::clip_mut_on(p, id).fx_bypass = bypass,
             Command::SetFx { id, fx } => Self::clip_mut_on(p, id).fx = fx,
             Command::LinkClips { ids, group } => {
                 for c in &mut p.clips {

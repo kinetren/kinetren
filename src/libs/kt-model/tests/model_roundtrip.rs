@@ -19,6 +19,7 @@ fn sample_project() -> Project {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
+        fx_bypass: vec![],
         fx: vec![FxInstance::slowed_reverb(0.82, 0.3, 140.0)],
     });
     p.clips.push(ClipEvent {
@@ -32,6 +33,7 @@ fn sample_project() -> Project {
         media: MediaId(1),
         gain_db: -3.0,
         reversed: false,
+        fx_bypass: vec![],
         fx: vec![],
     });
     p

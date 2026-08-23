@@ -214,6 +214,7 @@ fn t9_prefetch_pass_is_idempotent() {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
+        fx_bypass: vec![],
         fx: vec![],
     });
     let renderer = AudioRenderer::new(&p);

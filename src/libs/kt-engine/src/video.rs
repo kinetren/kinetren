@@ -59,7 +59,7 @@ impl VideoRenderer {
                 lane: c.lane,
                 media: c.media,
                 reversed: c.reversed,
-                fx: c.fx.clone(),
+                fx: c.active_fx(), // bypass-слоты отфильтрованы (п.2)
             })
             .collect();
         // задний план первым (большая lane), передний (lane 0) — последним

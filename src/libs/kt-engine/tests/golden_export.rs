@@ -49,6 +49,7 @@ fn golden_project() -> Project {
             media: MediaId(1),
             gain_db: 0.0,
             reversed: false,
+            fx_bypass: vec![],
             fx: vec![],
         },
         ClipEvent {
@@ -62,6 +63,7 @@ fn golden_project() -> Project {
             media: MediaId(1),
             gain_db: 0.0,
             reversed: false,
+            fx_bypass: vec![],
             fx: vec![],
         },
         // кроссфейд: DC внахлёст на второй ramp-клип
@@ -76,6 +78,7 @@ fn golden_project() -> Project {
             media: MediaId(2),
             gain_db: -3.0,
             reversed: false,
+            fx_bypass: vec![],
             fx: vec![],
         },
         // slowed с автоматизацией + реверб на отдельной дорожке
@@ -90,6 +93,7 @@ fn golden_project() -> Project {
             media: MediaId(3),
             gain_db: 0.0,
             reversed: false,
+            fx_bypass: vec![],
             fx: vec![FxInstance::SlowedReverb {
                 rate: 0.7,
                 mix: 0.4,
@@ -115,6 +119,7 @@ fn golden_project() -> Project {
             media: MediaId(1),
             gain_db: 0.0,
             reversed: false,
+            fx_bypass: vec![],
             fx: vec![],
         },
         ClipEvent {
@@ -128,6 +133,7 @@ fn golden_project() -> Project {
             media: MediaId(4),
             gain_db: 0.0,
             reversed: false,
+            fx_bypass: vec![],
             fx: vec![],
         },
     ];

@@ -22,6 +22,7 @@ fn base_project() -> Project {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
+        fx_bypass: vec![],
         fx: vec![],
     });
     p.validate().unwrap();
@@ -79,6 +80,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         media: MediaId(2),
         gain_db: 0.0,
         reversed: false,
+        fx_bypass: vec![],
         fx: vec![],
     });
     p2.validate().unwrap();

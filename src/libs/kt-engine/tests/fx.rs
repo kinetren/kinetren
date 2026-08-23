@@ -31,6 +31,7 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
+        fx_bypass: vec![],
         fx,
     });
     p.validate().unwrap();
@@ -234,6 +235,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
         media: MediaId(2),
         gain_db: 0.0,
         reversed: false,
+        fx_bypass: vec![],
         fx: vec![],
     });
     let r2 = AudioRenderer::new(&p2);

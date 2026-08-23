@@ -44,4 +44,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     }
     ctx.set_fonts(fonts);
 }
+pub const CARET_LEFT: &str = "\u{E138}";
+pub const CARET_RIGHT: &str = "\u{E13A}";
+pub const POWER: &str = "\u{E3DA}";
 pub const BELL: &str = "\u{E0CE}";

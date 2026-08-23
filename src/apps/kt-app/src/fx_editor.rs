@@ -62,7 +62,10 @@ impl KtApp {
             ed.clip.0
         );
         let mut fx = clip.fx.clone();
+        let mut bypass = clip.fx_bypass.clone();
+        bypass.resize(fx.len(), false);
         let mut changed = false;
+        let mut bypass_changed = false;
         let mut open = ed.open;
         egui::Window::new(title)
             .id(egui::Id::new(("fx", ed.clip)))
@@ -76,9 +79,18 @@ impl KtApp {
                 ui.horizontal(|ui| {
                     ui.add_enabled(false, egui::Button::new("Media"));
                     for (i, f) in fx.iter().enumerate() {
-                        ui.label("→");
-                        let name = fx_display_name(f);
-                        if ui.selectable_label(ed.selected == i, name).clicked() {
+                        ui.label(crate::icons::CARET_RIGHT);
+                        let off = bypass.get(i).copied().unwrap_or(false);
+                        let name = if off {
+                            format!("{} (выкл)", fx_display_name(f))
+                        } else {
+                            fx_display_name(f).to_string()
+                        };
+                        let mut text = egui::RichText::new(name);
+                        if off {
+                            text = text.weak().strikethrough();
+                        }
+                        if ui.selectable_label(ed.selected == i, text).clicked() {
                             ed.selected = i;
                             ed.sel_kf = None;
                         }
@@ -109,24 +121,58 @@ impl KtApp {
                         },
                     );
                     if !fx.is_empty() {
+                        // bypass выбранного слота (п.2)
+                        if let Some(b) = bypass.get_mut(ed.selected) {
+                            let label = egui::RichText::new(crate::icons::POWER).color(if *b {
+                                egui::Color32::from_gray(110)
+                            } else {
+                                egui::Color32::from_rgb(120, 230, 120)
+                            });
+                            if ui
+                                .button(label)
+                                .on_hover_text(if *b {
+                                    "Включить эффект"
+                                } else {
+                                    "Выключить эффект (bypass)"
+                                })
+                                .clicked()
+                            {
+                                *b = !*b;
+                                bypass_changed = true;
+                            }
+                        }
                         if ui.button("Удалить слот").clicked() && ed.selected < fx.len()
                         {
                             fx.remove(ed.selected);
+                            if ed.selected < bypass.len() {
+                                bypass.remove(ed.selected);
+                                bypass_changed = true;
+                            }
                             ed.selected = ed.selected.saturating_sub(1);
                             ed.sel_kf = None;
                             changed = true;
                         }
-                        if ui.button("←").on_hover_text("Сдвинуть слот влево").clicked()
+                        if ui
+                            .button(crate::icons::CARET_LEFT)
+                            .on_hover_text("Сдвинуть слот влево")
+                            .clicked()
                             && ed.selected > 0
                         {
                             fx.swap(ed.selected, ed.selected - 1);
+                            bypass.swap(ed.selected, ed.selected - 1);
+                            bypass_changed = true;
                             ed.selected -= 1;
                             changed = true;
                         }
-                        if ui.button("→").on_hover_text("Сдвинуть слот вправо").clicked()
+                        if ui
+                            .button(crate::icons::CARET_RIGHT)
+                            .on_hover_text("Сдвинуть слот вправо")
+                            .clicked()
                             && ed.selected + 1 < fx.len()
                         {
                             fx.swap(ed.selected, ed.selected + 1);
+                            bypass.swap(ed.selected, ed.selected + 1);
+                            bypass_changed = true;
                             ed.selected += 1;
                             changed = true;
                         }
@@ -283,10 +329,36 @@ impl KtApp {
                                         as f64
                                         * (2.0 - 0.25);
                                 automation[i].rate = r;
+                                // сортировка может переставить точки —
+                                // выбор следует за СВОЕЙ (по t), а не за
+                                // индексом (уезжал на чужой кейфрейм)
+                                let moved_t = automation[i].t;
                                 automation.sort_by(|a, b| a.t.total_cmp(&b.t));
+                                ed.sel_kf =
+                                    automation.iter().position(|k| (k.t - moved_t).abs() < 1e-12);
                                 changed = true;
                             }
                             ui.horizontal(|ui| {
+                                // копипаст огибающей (п.5, порт v1
+                                // «Copy/Paste envelopes» + JSON в системный
+                                // клипборд для интеропа)
+                                if ui.button("Копировать огибающую").clicked() {
+                                    self.automation_clipboard = Some(automation.clone());
+                                    if let Ok(json) = serde_json::to_string_pretty(&automation) {
+                                        ui.ctx().copy_text(json);
+                                    }
+                                }
+                                let can_paste = self.automation_clipboard.is_some();
+                                if ui
+                                    .add_enabled(can_paste, egui::Button::new("Вставить огибающую"))
+                                    .on_hover_text("Полная замена кейфреймов (как в v1)")
+                                    .clicked()
+                                    && let Some(kfs) = self.automation_clipboard.clone()
+                                {
+                                    *automation = kfs;
+                                    ed.sel_kf = None;
+                                    changed = true;
+                                }
                                 if ui.button("+ keyframe на курсоре").clicked() {
                                     let ph = self.player.transport.playhead();
                                     let t = ((ph.0 - clip.start.0) as f64
@@ -349,6 +421,18 @@ impl KtApp {
         }
         if changed {
             self.set_fx_coalesced(ed.clip, fx, ed.gesture);
+        }
+        if bypass_changed {
+            // хвостовые false не сериализуются зря
+            let mut b = bypass;
+            while b.last() == Some(&false) {
+                b.pop();
+            }
+            let _ = self
+                .model
+                .apply_coalesced(Command::SetFxBypass { id: ed.clip, bypass: b }, ed.gesture);
+            self.player.set_project(self.model.project().clone());
+            self.dirty = true;
         }
     }
 }
@@ -441,14 +525,14 @@ fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> bool {
                     .changed();
                 ui.end_row();
             });
-            ui.weak(format!("Кейфреймы: {} (пусто = наезд 1.0→1.35 как в v1)", keyframes.len()));
+            ui.weak(format!("Кейфреймы: {} (пусто = наезд 1.0 к 1.35 как в v1)", keyframes.len()));
             ui.horizontal(|ui| {
                 if ui.button("+ кейфрейм").clicked() {
                     let t = keyframes.last().map(|k| (k.t + 0.25).min(1.0)).unwrap_or(0.0);
                     keyframes.push(kt_model::CamKeyframe { t, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 });
                     ch = true;
                 }
-                if !keyframes.is_empty() && ui.button("− последний").clicked() {
+                if !keyframes.is_empty() && ui.button("- последний").clicked() {
                     keyframes.pop();
                     ch = true;
                 }

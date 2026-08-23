@@ -25,6 +25,7 @@ fn tiny_project() -> Project {
             media: MediaId(1),
             gain_db: 0.0,
             reversed: false,
+            fx_bypass: vec![],
             fx: vec![],
         });
     }
@@ -142,6 +143,7 @@ fn t33_exported_file_contains_every_frame() {
             media: MediaId(1),
             gain_db: 0.0,
             reversed: false,
+            fx_bypass: vec![],
             fx: vec![],
         });
     }
