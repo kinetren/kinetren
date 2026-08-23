@@ -188,3 +188,37 @@ fn t10_ogg_cover_art_no_abort_and_decodes() {
     );
     let _ = CH;
 }
+
+// ---- Спан-декод (тест 21, пп.14/15) ------------------------------------------
+
+#[test]
+fn t21_ffmpeg_span_equals_per_frame_and_no_reopen() {
+    use kt_time::TICK_HZ;
+    let path = fixture("testsrc_h264.mp4");
+    let step = TICK_HZ / 30;
+    let keys: Vec<kt_time::Tick> = (0..60).map(|i| kt_time::Tick(i * step)).collect();
+    let q = Some(Quality { width: 160, height: 90 });
+
+    // эталон: по-кадровые вызовы
+    let mut per_frame = FfmpegSource::open(&path).unwrap();
+    let mut expected = Vec::new();
+    for &k in &keys {
+        expected.push(per_frame.read_video_frame(k, q).expect("per-frame декод"));
+    }
+
+    // спан: один forward-проход
+    let mut span_src = FfmpegSource::open(&path).unwrap();
+    let mut got: Vec<(kt_time::Tick, kt_media::VideoFrame)> = Vec::new();
+    span_src.read_video_span(&keys, q, &mut |k, f| got.push((k, f))).expect("спан-декод");
+
+    assert_eq!(got.len(), keys.len(), "спан обязан закрыть каждый ключ");
+    for (i, (k, f)) in got.iter().enumerate() {
+        assert_eq!(*k, keys[i]);
+        assert_eq!(f.rgba, expected[i].rgba, "кадр ключа {i} разошёлся с по-кадровым эталоном");
+    }
+    // GOP декодирован один раз: после стартового seek — ноль пересозданий,
+    // кадров декодировано не сильно больше числа ключей
+    let (reopens, decoded) = span_src.decode_debug_stats();
+    assert!(reopens <= 1, "спан не должен пересоздавать декодер: reopens={reopens}");
+    assert!(decoded <= 62, "спан декодирует каждый кадр один раз: decoded={decoded}");
+}

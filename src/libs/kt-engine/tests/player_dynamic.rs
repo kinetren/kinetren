@@ -90,7 +90,16 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         kt_cache::BurstKind::Audio,
         0..1_000_000,
     );
-    assert_eq!(cov_before, cov_after, "coverage медиа 1 не должен пострадать");
+    // prefetch живой и мог ДОГРЕТЬ ещё — проверяем, что покрытие не сжалось
+    let covered = |cov: &[std::ops::Range<i64>], x: i64| cov.iter().any(|r| r.contains(&x));
+    for r in &cov_before {
+        for x in [r.start, (r.start + r.end) / 2, r.end - 1] {
+            assert!(
+                covered(&cov_after, x),
+                "burst {x} был в кэше до add_media и пропал: до {cov_before:?}, после {cov_after:?}"
+            );
+        }
+    }
     assert!(player.cache.audio_bytes() >= bytes_before, "кэш не должен сжаться");
 
     // новый воркер живой: prefetch наполняет медиа 2
@@ -107,4 +116,73 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         assert!(std::time::Instant::now() < deadline, "новое медиа не декодируется — воркер мёртв");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+}
+
+/// Тест 20 (п.1): в паузе фоновые потоки НЕ жгут ресурсы.
+/// Раньше: audio-render крутился 500 раз/с, prefetch клонировал весь
+/// Project и пересобирал рендереры каждые 100 мс — система лагала даже
+/// с пустым проектом.
+#[test]
+fn t20_paused_player_is_quiescent() {
+    let project = base_project();
+    let (player, _consumer) = Player::new(project.clone(), vec![(MediaId(1), synth())]);
+    std::thread::sleep(std::time::Duration::from_millis(400)); // прогрев/стабилизация
+
+    use std::sync::atomic::Ordering::Relaxed;
+    let r0 = player.loop_stats.render_passes.load(Relaxed);
+    let rb0 = player.loop_stats.prefetch_rebuilds.load(Relaxed);
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    let render_delta = player.loop_stats.render_passes.load(Relaxed) - r0;
+    let rebuild_delta = player.loop_stats.prefetch_rebuilds.load(Relaxed) - rb0;
+
+    assert!(
+        render_delta <= 8,
+        "в паузе render-поток должен парковаться (страховочный таймаут 250мс), \
+         а не крутиться: {render_delta} проходов за 1 с (раньше ~500)"
+    );
+    assert_eq!(rebuild_delta, 0, "prefetch не должен пересобирать рендереры без правок модели");
+
+    // правка модели будит и пересобирает ровно один раз
+    player.set_project(project);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let rebuilds = player.loop_stats.prefetch_rebuilds.load(Relaxed) - rb0;
+    assert!(rebuilds >= 1, "после set_project prefetch обязан пересобрать графы");
+}
+
+/// Пауза → продолжение: рендер просыпается и кольцо снова наполняется
+/// (защита от дедлока на condvar; страхует t14).
+#[test]
+fn t20_pause_resume_still_streams() {
+    let project = base_project();
+    let (player, mut consumer) = Player::new(project, vec![(MediaId(1), synth())]);
+    // дождаться прогрева кэша, чтобы рендер не молчал из-за промахов
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while player
+        .cache
+        .coverage(kt_engine::source_id(MediaId(1)), kt_cache::BurstKind::Audio, 0..40)
+        .is_empty()
+    {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+
+    let drain = |c: &mut rtrb::Consumer<f32>| {
+        let mut n = 0usize;
+        while c.pop().is_ok() {
+            n += 1;
+        }
+        n
+    };
+
+    player.play();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(drain(&mut consumer) > 0, "после play кольцо должно наполняться");
+
+    player.pause();
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    drain(&mut consumer);
+
+    player.play();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(drain(&mut consumer) > 0, "после resume рендер обязан проснуться (condvar)");
 }

@@ -95,6 +95,9 @@ struct VideoPath {
     sws: *mut ffi::SwsContext,
     sws_key: (c_int, c_int, c_int, c_int, c_int),
     eof: bool,
+    /// Диагностика: пересоздания декодера (backward) и декодированные кадры.
+    backward_reopens: u64,
+    frames_decoded: u64,
 }
 
 pub struct Source {
@@ -336,6 +339,92 @@ impl Source {
         let out = v.to_rgba(api, frame, width, height);
         unsafe { (api.av_frame_free)(&mut (frame as *mut _)) };
         out
+    }
+
+    /// Спан-декод: кадр для КАЖДОГО ключа из `keys` (строго возрастают)
+    /// за ОДИН forward-проход декодера. Семантика кадра для ключа k — как у
+    /// read_video_frame: наибольший pts <= k (или первый после, если раньше
+    /// ничего нет). Промежуточные кадры GOP декодируются ровно один раз на
+    /// весь спан (п.14/15: по-кадровые вызовы декодировали GOP заново для
+    /// каждого кадра и выбрасывали остальное).
+    pub fn read_video_span(
+        &mut self,
+        keys: &[Tick],
+        width: u32,
+        height: u32,
+        emit: &mut dyn FnMut(Tick, RgbaFrame),
+    ) -> Result<(), FfError> {
+        let api = self.api;
+        let v = self.video.as_mut().ok_or(FfError::OutOfRange)?;
+        if keys.is_empty() {
+            return Ok(());
+        }
+        debug_assert!(keys.windows(2).all(|w| w[0] < w[1]), "ключи спана должны возрастать");
+        let targets: Vec<i64> = keys
+            .iter()
+            .map(|k| {
+                let ts = unsafe { (api.av_rescale_q)(k.0, tb(1, TICK_HZ as i32), v.time_base) };
+                ts + v.start_time
+            })
+            .collect();
+
+        let forward_ok = match v.last_pts {
+            Some(last) if targets[0] > last => {
+                let ahead = unsafe {
+                    (api.av_rescale_q)(targets[0] - last, v.time_base, tb(1, TICK_HZ as i32))
+                };
+                ahead < VIDEO_FORWARD_DECODE_MAX_TICKS
+            }
+            _ => false,
+        };
+        if !forward_ok {
+            v.seek_and_reopen(api, targets[0])?;
+        }
+
+        let mut prev: *mut ffi::AVFrame = core::ptr::null_mut();
+        let mut next = 0usize;
+        let res = (|| -> Result<(), FfError> {
+            while next < targets.len() {
+                let Some(frame) = v.decode_next_frame(api)? else { break };
+                let f = unsafe { &*frame };
+                let pts = if f.best_effort_timestamp != AV_NOPTS_VALUE {
+                    f.best_effort_timestamp
+                } else {
+                    f.pts
+                };
+                // все ключи СТРОГО ПЕРЕД этим кадром закрываются предыдущим
+                while next < targets.len() && pts > targets[next] {
+                    let use_frame = if prev.is_null() { frame } else { prev };
+                    let rgba = v.to_rgba(api, use_frame, width, height)?;
+                    emit(keys[next], rgba);
+                    next += 1;
+                }
+                if !prev.is_null() {
+                    unsafe { (api.av_frame_free)(&mut prev) };
+                }
+                prev = frame;
+            }
+            // EOF/конец: оставшиеся ключи закрывает последний кадр
+            while next < targets.len() {
+                if prev.is_null() {
+                    return Err(FfError::OutOfRange);
+                }
+                let rgba = v.to_rgba(api, prev, width, height)?;
+                emit(keys[next], rgba);
+                next += 1;
+            }
+            Ok(())
+        })();
+        if !prev.is_null() {
+            unsafe { (api.av_frame_free)(&mut prev) };
+        }
+        res
+    }
+
+    /// Диагностика для тестов производительности (п.14/15): сколько раз
+    /// пересоздавался декодер (backward seek) и сколько кадров декодировано.
+    pub fn video_debug_stats(&self) -> (u64, u64) {
+        self.video.as_ref().map(|v| (v.backward_reopens, v.frames_decoded)).unwrap_or((0, 0))
     }
 }
 
@@ -580,6 +669,8 @@ impl VideoPath {
             sws: core::ptr::null_mut(),
             sws_key: (0, 0, 0, 0, 0),
             eof: false,
+            backward_reopens: 0,
+            frames_decoded: 0,
         })
     }
 
@@ -600,14 +691,16 @@ impl VideoPath {
             return Err(averr(api, "видео codecpar", r));
         }
         unsafe { (*dec).pkt_timebase = st.time_base };
-        // VP9/AV1: threads=1 — многопоточный декод этих кодеков нестабилен
-        // при частых seek (проверено старым движком)
+        // threads=auto для ВСЕХ кодеков: дефолт libavcodec — ОДИН поток,
+        // и 4К декодился в одну нитку (п.14: «VLC легко, у нас минута»).
+        // Старый запрет MT для VP9/AV1 касался ОБЩЕГО декодера с shared
+        // seek (avcpp); у нас backward seek всегда пересоздаёт декодер,
+        // а битовая точность MT-декода гарантирована спецификацией кодека
+        // (проверяется t10_vp9 и t10_h264_backward_seek_is_deterministic).
         let mut opts: *mut ffi::AVDictionary = core::ptr::null_mut();
-        if codec_id == ffi::AV_CODEC_ID_VP9 || codec_id == ffi::AV_CODEC_ID_AV1 {
-            let k = CString::new("threads").unwrap();
-            let v = CString::new("1").unwrap();
-            unsafe { (api.av_dict_set)(&mut opts, k.as_ptr(), v.as_ptr(), 0) };
-        }
+        let k = CString::new("threads").unwrap();
+        let v = CString::new("auto").unwrap();
+        unsafe { (api.av_dict_set)(&mut opts, k.as_ptr(), v.as_ptr(), 0) };
         let r = unsafe { (api.avcodec_open2)(dec, codec, &mut opts) };
         unsafe { (api.av_dict_free)(&mut opts) };
         if r < 0 {
@@ -634,86 +727,106 @@ impl VideoPath {
         self.dec = Self::open_decoder(api, self.fmt, self.stream_index, self.codec_id)?;
         self.last_pts = None;
         self.eof = false;
+        self.backward_reopens += 1;
         Ok(())
     }
 
-    /// Кадр с наибольшим pts <= target_ts (или первый после, если точного нет).
-    fn decode_to(&mut self, api: &Api, target_ts: i64) -> Result<*mut ffi::AVFrame, FfError> {
+    /// Следующий декодированный кадр (владение — у вызывающего:
+    /// av_frame_free). None = EOF потока. Обновляет last_pts.
+    fn decode_next_frame(&mut self, api: &Api) -> Result<Option<*mut ffi::AVFrame>, FfError> {
         let pkt = unsafe { (api.av_packet_alloc)() };
-        let mut best: *mut ffi::AVFrame = core::ptr::null_mut();
-        let mut scratch = unsafe { (api.av_frame_alloc)() };
-        let res = (|| -> Result<*mut ffi::AVFrame, FfError> {
+        let frame = unsafe { (api.av_frame_alloc)() };
+        let res = (|| -> Result<Option<*mut ffi::AVFrame>, FfError> {
             loop {
-                if self.eof && best.is_null() {
-                    return Err(FfError::OutOfRange);
-                }
-                if self.eof {
-                    return Ok(best);
-                }
-                let r = unsafe { (api.av_read_frame)(self.fmt, pkt) };
-                if r < 0 {
-                    unsafe { (api.avcodec_send_packet)(self.dec, core::ptr::null()) };
-                    self.eof = true;
-                } else {
-                    let si = unsafe { (*pkt).stream_index };
-                    if si != self.stream_index {
-                        unsafe { (api.av_packet_unref)(pkt) };
-                        continue;
-                    }
-                    let r = unsafe { (api.avcodec_send_packet)(self.dec, pkt) };
-                    unsafe { (api.av_packet_unref)(pkt) };
-                    if r < 0 && r != AVERROR_EAGAIN {
-                        return Err(averr(api, "видео send", r));
-                    }
-                }
-                loop {
-                    let r = unsafe { (api.avcodec_receive_frame)(self.dec, scratch) };
-                    if r == AVERROR_EAGAIN {
-                        break;
-                    }
-                    if r == AVERROR_EOF_ {
-                        self.eof = true;
-                        break;
-                    }
-                    if r < 0 {
-                        return Err(averr(api, "видео receive", r));
-                    }
-                    let f = unsafe { &*scratch };
+                // сперва пробуем забрать готовый кадр
+                let r = unsafe { (api.avcodec_receive_frame)(self.dec, frame) };
+                if r >= 0 {
+                    let f = unsafe { &*frame };
                     let pts = if f.best_effort_timestamp != AV_NOPTS_VALUE {
                         f.best_effort_timestamp
                     } else {
                         f.pts
                     };
                     self.last_pts = Some(pts);
+                    self.frames_decoded += 1;
+                    return Ok(Some(frame));
+                }
+                if r == AVERROR_EOF_ {
+                    self.eof = true;
+                    return Ok(None);
+                }
+                if r != AVERROR_EAGAIN {
+                    return Err(averr(api, "видео receive", r));
+                }
+                if self.eof {
+                    return Ok(None);
+                }
+                // декодер голоден — кормим пакетами
+                let r = unsafe { (api.av_read_frame)(self.fmt, pkt) };
+                if r < 0 {
+                    unsafe { (api.avcodec_send_packet)(self.dec, core::ptr::null()) };
+                    self.eof = true;
+                    continue;
+                }
+                let si = unsafe { (*pkt).stream_index };
+                if si != self.stream_index {
+                    unsafe { (api.av_packet_unref)(pkt) };
+                    continue;
+                }
+                let r = unsafe { (api.avcodec_send_packet)(self.dec, pkt) };
+                unsafe { (api.av_packet_unref)(pkt) };
+                if r < 0 && r != AVERROR_EAGAIN {
+                    return Err(averr(api, "видео send", r));
+                }
+            }
+        })();
+        unsafe { (api.av_packet_free)(&mut (pkt as *mut _)) };
+        if !matches!(res, Ok(Some(_))) {
+            let mut f = frame;
+            unsafe { (api.av_frame_free)(&mut f) };
+        }
+        res
+    }
+
+    /// Кадр с наибольшим pts <= target_ts (или первый после, если точного
+    /// нет). Поверх decode_next_frame: тот корректно ДРЕНИРУЕТ кадры из
+    /// уже флашнутого декодера (с threads=auto демуксер добирает EOF на
+    /// десятки кадров раньше цели — старая ветка `if self.eof` возвращала
+    /// OutOfRange, не забрав оставшееся из конвейера декодера).
+    fn decode_to(&mut self, api: &Api, target_ts: i64) -> Result<*mut ffi::AVFrame, FfError> {
+        let mut best: *mut ffi::AVFrame = core::ptr::null_mut();
+        loop {
+            match self.decode_next_frame(api) {
+                Ok(Some(frame)) => {
+                    let f = unsafe { &*frame };
+                    let pts = if f.best_effort_timestamp != AV_NOPTS_VALUE {
+                        f.best_effort_timestamp
+                    } else {
+                        f.pts
+                    };
                     let done = pts >= target_ts;
                     if pts <= target_ts || best.is_null() {
-                        // забираем кадр себе (перенос владения буферами)
                         if !best.is_null() {
                             unsafe { (api.av_frame_free)(&mut best) };
                         }
-                        best = scratch;
-                        scratch = unsafe { (api.av_frame_alloc)() };
+                        best = frame;
                     } else {
-                        unsafe { (api.av_frame_unref)(scratch) };
+                        let mut frame = frame;
+                        unsafe { (api.av_frame_free)(&mut frame) };
                     }
                     if done && !best.is_null() {
                         return Ok(best);
                     }
                 }
-            }
-        })();
-        unsafe {
-            (api.av_frame_free)(&mut scratch);
-            (api.av_packet_free)(&mut (pkt as *mut _));
-        }
-        match res {
-            Ok(f) if !f.is_null() => Ok(f),
-            Ok(_) => Err(FfError::OutOfRange),
-            Err(e) => {
-                if !best.is_null() {
-                    unsafe { (api.av_frame_free)(&mut best) };
+                Ok(None) => {
+                    return if best.is_null() { Err(FfError::OutOfRange) } else { Ok(best) };
                 }
-                Err(e)
+                Err(e) => {
+                    if !best.is_null() {
+                        unsafe { (api.av_frame_free)(&mut best) };
+                    }
+                    return Err(e);
+                }
             }
         }
     }

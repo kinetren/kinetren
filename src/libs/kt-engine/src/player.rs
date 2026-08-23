@@ -42,6 +42,10 @@ pub struct AudioShared {
     pub flush: AtomicBool,
     /// Underrun'ы колбэка (кольцо было пусто во время playing).
     pub callback_underruns: AtomicU64,
+    /// Оценка задержки вывода в кадрах 48k (cpal timestamp playback−callback):
+    /// playhead двигается в момент ЗАБОРА кадров колбэком, а слышны они на
+    /// эту задержку позже — видео для «слышимого сейчас» момента (п.30).
+    pub output_latency_frames: AtomicI64,
 }
 
 /// Пиковые уровни того, что уходит в кольцо (f32-биты; UI делает dB,
@@ -73,6 +77,34 @@ impl Meters {
     }
 }
 
+/// Побудка фоновых потоков: в паузе они паркуются на condvar вместо
+/// busy-цикла (п.1: 500 пробуждений/с audio-render + клон Project каждые
+/// 100 мс prefetch грели систему даже с пустым проектом).
+pub struct Wake {
+    lock: Mutex<()>,
+    cv: std::sync::Condvar,
+}
+
+impl Wake {
+    fn notify(&self) {
+        let _g = self.lock.lock().unwrap();
+        self.cv.notify_all();
+    }
+
+    fn wait_timeout(&self, d: std::time::Duration) {
+        let g = self.lock.lock().unwrap();
+        let _ = self.cv.wait_timeout(g, d).unwrap();
+    }
+}
+
+/// Диагностика фоновых циклов (тест 20: тишина в простое).
+#[derive(Default)]
+pub struct LoopStats {
+    pub render_passes: AtomicU64,
+    pub prefetch_passes: AtomicU64,
+    pub prefetch_rebuilds: AtomicU64,
+}
+
 pub struct Player {
     pub cache: Arc<BurstCache>,
     pub transport: Arc<Transport>,
@@ -92,6 +124,10 @@ pub struct Player {
     prefetch_thread: Option<std::thread::JoinHandle<()>>,
     pub underruns: Arc<AtomicU64>,
     pub decode_stats: Arc<DecodeStats>,
+    wake: Arc<Wake>,
+    /// Версия проекта: prefetch пересобирает рендереры только по смене.
+    project_version: Arc<AtomicU64>,
+    pub loop_stats: Arc<LoopStats>,
 }
 
 impl Player {
@@ -106,6 +142,7 @@ impl Player {
             consumed_frames: AtomicI64::new(0),
             flush: AtomicBool::new(false),
             callback_underruns: AtomicU64::new(0),
+            output_latency_frames: AtomicI64::new(0),
         });
         let meters = Arc::new(Meters { peak_l: AtomicU32::new(0), peak_r: AtomicU32::new(0) });
         let master_gain = Arc::new(AtomicU32::new(1.0f32.to_bits()));
@@ -122,6 +159,9 @@ impl Player {
         let video = Mutex::new(VideoRenderer::new(&project));
         let project = Arc::new(Mutex::new(project));
         let model_dirty = Arc::new(AtomicBool::new(true));
+        let wake = Arc::new(Wake { lock: Mutex::new(()), cv: std::sync::Condvar::new() });
+        let project_version = Arc::new(AtomicU64::new(0));
+        let loop_stats = Arc::new(LoopStats::default());
         let stop = Arc::new(AtomicBool::new(false));
         let underruns = Arc::new(AtomicU64::new(0));
 
@@ -129,6 +169,8 @@ impl Player {
             rtrb::RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * AUDIO_CHANNELS);
 
         let render_thread = {
+            let wake_r = wake.clone();
+            let stats_r = loop_stats.clone();
             let cache = cache.clone();
             let transport = transport.clone();
             let shared = shared.clone();
@@ -147,6 +189,8 @@ impl Player {
                         producer,
                         cache,
                         transport,
+                        wake: wake_r,
+                        loop_stats: stats_r,
                         shared,
                         workers,
                         project,
@@ -163,6 +207,9 @@ impl Player {
 
         let preview_quality = Arc::new(Mutex::new(Quality { width: 640, height: 360 }));
         let prefetch_thread = {
+            let wake_p = wake.clone();
+            let stats_p = loop_stats.clone();
+            let version_p = project_version.clone();
             let cache = cache.clone();
             let transport = transport.clone();
             let workers = workers.clone();
@@ -171,7 +218,12 @@ impl Player {
             let quality = preview_quality.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
-                .spawn(move || prefetch_loop(cache, transport, workers, project, quality, stop))
+                .spawn(move || {
+                    prefetch_loop(
+                        cache, transport, workers, project, quality, stop, wake_p, stats_p,
+                        version_p,
+                    )
+                })
                 .expect("spawn prefetch")
         };
 
@@ -192,14 +244,23 @@ impl Player {
             prefetch_thread: Some(prefetch_thread),
             underruns,
             decode_stats,
+            wake,
+            project_version,
+            loop_stats,
         };
         (player, consumer)
     }
 
     pub fn set_project(&self, p: Project) {
+        self.project_version.fetch_add(1, Ordering::AcqRel);
+        self.wake_after_project_swap(p);
+    }
+
+    fn wake_after_project_swap(&self, p: Project) {
         *self.video.lock().unwrap() = VideoRenderer::new(&p);
         *self.project.lock().unwrap() = p;
         self.model_dirty.store(true, Ordering::Release);
+        self.wake.notify();
     }
 
     pub fn project(&self) -> Project {
@@ -216,10 +277,12 @@ impl Player {
 
     pub fn play(&self) {
         self.transport.set_playing(true);
+        self.wake.notify();
     }
 
     pub fn pause(&self) {
         self.transport.set_playing(false);
+        self.wake.notify();
     }
 
     /// Мастер-громкость превью (линейная; mute = 0).
@@ -245,6 +308,7 @@ impl Player {
                 self.cache.pin_range(source_id(media), kt_cache::BurstKind::Audio, bursts);
             }
         }
+        self.wake.notify();
     }
 
     /// Пиковые уровни на паузе: один burst с позиции t через одноразовое
@@ -274,6 +338,7 @@ impl Player {
             w.cancel_generations_below(generation);
         }
         self.shared.flush.store(true, Ordering::Release);
+        self.wake.notify();
     }
 
     /// Добавить медиа-источник БЕЗ пересоздания плеера: новый MediaWorker
@@ -297,6 +362,19 @@ impl Player {
         if let Some(w) = self.workers.write().unwrap().remove(&media) {
             w.shutdown();
         }
+    }
+
+    /// Момент, который сейчас СЛЫШНО (для выбора видеокадра превью):
+    /// playhead минус задержка вывода. При паузе или без вывода — playhead
+    /// как есть; loop-регион учитывается wrap'ом (п.30 — рассинхрон A/V).
+    pub fn video_playhead(&self) -> Tick {
+        if !self.transport.is_playing() {
+            return self.transport.playhead();
+        }
+        let latency = self.shared.output_latency_frames.load(Ordering::Acquire);
+        let head = self.transport.playhead_frames();
+        let region = *self.loop_region.lock().unwrap();
+        Tick::from_audio_frames(video_display_frame(head, latency, region))
     }
 
     /// UI: составить кадр превью для момента t (выравнивается по сетке fps).
@@ -327,6 +405,7 @@ impl Player {
 impl Drop for Player {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        self.wake.notify();
         if let Some(t) = self.render_thread.take() {
             let _ = t.join();
         }
@@ -347,6 +426,8 @@ struct RenderCtx {
     producer: rtrb::Producer<f32>,
     cache: Arc<BurstCache>,
     transport: Arc<Transport>,
+    wake: Arc<Wake>,
+    loop_stats: Arc<LoopStats>,
     shared: Arc<AudioShared>,
     workers: Workers,
     project: Arc<Mutex<Project>>,
@@ -369,6 +450,8 @@ fn audio_render_loop(ctx: RenderCtx) {
         mut producer,
         cache,
         transport,
+        wake,
+        loop_stats,
         shared,
         workers,
         project,
@@ -483,10 +566,31 @@ fn audio_render_loop(ctx: RenderCtx) {
         }
         // render_head сбрасывается ТОЛЬКО по seek (generation): при паузе
         // кольцо сохраняет уже отрендеренный хвост, resume продолжает с него.
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        loop_stats.render_passes.fetch_add(1, Ordering::Relaxed);
+        if transport.is_playing() {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        } else {
+            // пауза: паркуемся до play/seek/правки (страховочный таймаут —
+            // добрать «хвостовой» consumed после остановки колбэка)
+            wake.wait_timeout(std::time::Duration::from_millis(250));
+        }
     }
 }
 
+/// Кадр (48k) для отображения при данной задержке вывода. Чистая функция —
+/// тест 22-sync. Внутри loop-региона вычитание wrap'ится по региону.
+pub fn video_display_frame(playhead: i64, latency_frames: i64, region: Option<(i64, i64)>) -> i64 {
+    let lat = latency_frames.max(0);
+    match region {
+        Some((rs, re)) if re > rs && playhead >= rs => {
+            let span = re - rs;
+            rs + (playhead - rs - lat).rem_euclid(span)
+        }
+        _ => (playhead - lat).max(0),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn prefetch_loop(
     cache: Arc<BurstCache>,
     transport: Arc<Transport>,
@@ -494,17 +598,30 @@ fn prefetch_loop(
     project: Arc<Mutex<Project>>,
     preview_quality: Arc<Mutex<Quality>>,
     stop: Arc<AtomicBool>,
+    wake: Arc<Wake>,
+    loop_stats: Arc<LoopStats>,
+    project_version: Arc<AtomicU64>,
 ) {
+    // рендереры кэшируются до смены версии проекта: клонировать Project и
+    // пересобирать графы каждые 100 мс было дорого даже в простое (п.1)
+    let mut cached: Option<(u64, AudioRenderer, VideoRenderer)> = None;
     while !stop.load(Ordering::Acquire) {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        // модель могла смениться — пересобираем дёшево каждый цикл
-        let p = project.lock().unwrap().clone();
-        let renderer = AudioRenderer::new(&p);
-        let video = VideoRenderer::new(&p);
+        wake.wait_timeout(std::time::Duration::from_millis(100));
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        loop_stats.prefetch_passes.fetch_add(1, Ordering::Relaxed);
+        let version = project_version.load(Ordering::Acquire);
+        if cached.as_ref().map(|(v, _, _)| *v) != Some(version) {
+            let p = project.lock().unwrap().clone();
+            loop_stats.prefetch_rebuilds.fetch_add(1, Ordering::Relaxed);
+            cached = Some((version, AudioRenderer::new(&p), VideoRenderer::new(&p)));
+        }
+        let (_, renderer, video) = cached.as_ref().unwrap();
         let generation = transport.generation();
         let head = transport.playhead_frames();
         prefetch_audio_pass(
-            &renderer,
+            renderer,
             &cache,
             &workers.read().unwrap(),
             head..head + PREFETCH_AUDIO_LOOKAHEAD_FRAMES,
@@ -526,5 +643,29 @@ fn prefetch_loop(
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::video_display_frame;
+
+    /// Тест 22-sync (п.30): компенсация задержки вывода при выборе видеокадра.
+    #[test]
+    fn t22_video_display_frame_compensates_latency() {
+        // без задержки — тождество
+        assert_eq!(video_display_frame(1000, 0, None), 1000);
+        // вычитание
+        assert_eq!(video_display_frame(48_000, 4_800, None), 43_200);
+        // клэмп в 0 у старта
+        assert_eq!(video_display_frame(100, 4_800, None), 0);
+        // отрицательная задержка не двигает вперёд
+        assert_eq!(video_display_frame(1000, -500, None), 1000);
+        // wrap в loop-регионе: 50_500 − 1_000 → заворот к концу региона
+        assert_eq!(video_display_frame(50_500, 1_000, Some((50_000, 60_000))), 59_500);
+        // внутри региона без пересечения границы
+        assert_eq!(video_display_frame(55_000, 1_000, Some((50_000, 60_000))), 54_000);
+        // до региона — линейно
+        assert_eq!(video_display_frame(10_000, 1_000, Some((50_000, 60_000))), 9_000);
     }
 }

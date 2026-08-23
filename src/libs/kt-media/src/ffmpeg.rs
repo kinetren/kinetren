@@ -39,6 +39,13 @@ impl FfmpegSource {
     }
 }
 
+impl FfmpegSource {
+    /// (backward_reopens, frames_decoded) — диагностика теста 21.
+    pub fn decode_debug_stats(&self) -> (u64, u64) {
+        self.inner.video_debug_stats()
+    }
+}
+
 /// Версия загруженного FFmpeg (для перф-панели/диагностики).
 pub fn backend_info() -> Option<kt_ffmpeg::BackendInfo> {
     kt_ffmpeg::backend_info()
@@ -81,6 +88,32 @@ impl MediaSource for FfmpegSource {
 
     fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
         self.inner.keyframe_before(pts)
+    }
+
+    fn read_video_span(
+        &mut self,
+        keys: &[Tick],
+        quality: Option<Quality>,
+        emit: &mut dyn FnMut(Tick, VideoFrame),
+    ) -> Result<(), MediaError> {
+        let (w, h) = match quality {
+            Some(q) => (q.width, q.height),
+            None => self.src_size,
+        };
+        self.inner
+            .read_video_span(keys, w, h, &mut |k, f| {
+                emit(
+                    k,
+                    VideoFrame {
+                        pts: f.pts,
+                        width: f.width,
+                        height: f.height,
+                        rgba: f.rgba.into_boxed_slice(),
+                        has_alpha: false,
+                    },
+                )
+            })
+            .map_err(MediaError::from)
     }
 }
 

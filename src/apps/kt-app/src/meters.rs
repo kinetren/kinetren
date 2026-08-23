@@ -16,10 +16,20 @@ pub const CAP_FALL_DB: f32 = 0.2;
 pub struct MeterState {
     pub bar_db: [f32; 2],
     pub cap_db: [f32; 2],
+    /// Целевой уровень: бары спадают К НЕМУ, а не к минимуму. В паузе
+    /// держит последний сэмпл — без «пилы» между редкими замерами (п.2).
+    pub target_db: [f32; 2],
     pub fader_db: f32,
     pub muted: bool,
     last_tick: std::time::Instant,
     last_sample: std::time::Instant,
+}
+
+impl MeterState {
+    /// Есть ли что анимировать (для repaint-политики, п.1).
+    pub fn is_active(&self) -> bool {
+        self.bar_db.iter().chain(self.cap_db.iter()).any(|db| *db > METER_MIN_DB + 0.1)
+    }
 }
 
 impl Default for MeterState {
@@ -27,6 +37,7 @@ impl Default for MeterState {
         MeterState {
             bar_db: [METER_MIN_DB; 2],
             cap_db: [METER_MIN_DB; 2],
+            target_db: [METER_MIN_DB; 2],
             fader_db: 0.0,
             muted: false,
             last_tick: std::time::Instant::now(),
@@ -59,31 +70,42 @@ impl KtApp {
     /// Панель метров+фейдера справа от превью. Возвращает высоту не более
     /// доступной; ширина ~64 px.
     pub fn draw_meters(&mut self, ui: &mut egui::Ui) {
-        // 1) подкачка уровней
+        // 1) подкачка уровней: играем — каждый кадр; пауза — замер на
+        // курсоре раз в 120 мс (v1), target ДЕРЖИТ последний замер
         let playing = self.player.transport.is_playing();
-        let (pl, pr) = if playing {
-            self.player.meters.take()
+        let sample = if playing {
+            Some(self.player.meters.take())
         } else if self.meter.last_sample.elapsed().as_millis() >= 120 {
             self.meter.last_sample = std::time::Instant::now();
-            self.player.sample_levels_at(self.player.transport.playhead())
+            Some(self.player.sample_levels_at(self.player.transport.playhead()))
         } else {
-            (0.0, 0.0)
+            None // между замерами target не трогаем (раньше сюда шли нули)
         };
-        // 2) спад и peak-hold (тик 25 мс)
+        if let Some((pl, pr)) = sample {
+            for (ch, lin) in [(0usize, pl), (1, pr)] {
+                self.meter.target_db[ch] = db_of(lin);
+            }
+        }
+        // 2) спад к target и peak-hold (тик 25 мс, спады v1)
         let ticks = (self.meter.last_tick.elapsed().as_millis() / 25).min(40) as f32;
         if ticks >= 1.0 {
             self.meter.last_tick = std::time::Instant::now();
             for ch in 0..2 {
-                self.meter.bar_db[ch] =
-                    (self.meter.bar_db[ch] - BAR_FALL_DB * ticks).max(METER_MIN_DB);
+                let floor = self.meter.target_db[ch].max(METER_MIN_DB);
+                self.meter.bar_db[ch] = (self.meter.bar_db[ch] - BAR_FALL_DB * ticks).max(floor);
                 self.meter.cap_db[ch] =
                     (self.meter.cap_db[ch] - CAP_FALL_DB * ticks).max(METER_MIN_DB);
+                // target тоже медленно отпускаем (v1: 0.7×BAR_FALL), чтобы
+                // при остановке подкачки бары не зависали навсегда
+                if playing {
+                    self.meter.target_db[ch] =
+                        (self.meter.target_db[ch] - BAR_FALL_DB * 0.7 * ticks).max(METER_MIN_DB);
+                }
             }
         }
-        for (ch, lin) in [(0usize, pl), (1, pr)] {
-            let db = db_of(lin);
-            self.meter.bar_db[ch] = self.meter.bar_db[ch].max(db);
-            self.meter.cap_db[ch] = self.meter.cap_db[ch].max(db);
+        for ch in 0..2 {
+            self.meter.bar_db[ch] = self.meter.bar_db[ch].max(self.meter.target_db[ch]);
+            self.meter.cap_db[ch] = self.meter.cap_db[ch].max(self.meter.bar_db[ch]);
         }
 
         let (rect, response) = ui.allocate_exact_size(

@@ -45,6 +45,13 @@ pub struct KtApp {
     /// Rect таймлайна прошлого кадра (для плавающего тулбара).
     pub timeline_rect: egui::Rect,
     pub perf: PerfState,
+    /// Ключ последнего ЗАГРУЖЕННОГО в текстуру кадра превью: (playhead-тик,
+    /// качество, полный ли). Текстура обновляется только при смене —
+    /// раньше кадр заливался в GPU 60 раз/с даже в паузе (п.1).
+    pub preview_key: Option<(i64, (u32, u32), bool)>,
+    /// Когда превью впервые стало неполным (скрим «Загрузка» — после 180 мс,
+    /// как в v1, чтобы не мигал на быстрых промахах; п.14).
+    pub incomplete_since: Option<std::time::Instant>,
     pub thumbs: crate::thumbs::ThumbService,
     /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
     pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
@@ -110,6 +117,8 @@ impl KtApp {
             hover_hint: None,
             timeline_rect: egui::Rect::NOTHING,
             perf: PerfState::new(),
+            preview_key: None,
+            incomplete_since: None,
             thumb_textures: HashMap::new(),
         }
     }
@@ -153,6 +162,8 @@ impl KtApp {
             hover_hint: None,
             timeline_rect: egui::Rect::NOTHING,
             perf: PerfState::new(),
+            preview_key: None,
+            incomplete_since: None,
             thumb_textures: HashMap::new(),
         })
     }
@@ -543,6 +554,7 @@ impl KtApp {
             Ok(src) => self.player.add_media(media_id, src),
             Err(e) => self.note(format!("{path}: {e}")),
         }
+        self.thumbs.add_media(media_id, resolved.clone());
         spawn_index_worker(
             self.project_path.as_ref().map(|p| p.with_extension("ktindex.db")),
             vec![(media_id, path.to_string())],
@@ -598,20 +610,44 @@ impl KtApp {
     // -- снап ---------------------------------------------------------------
 
     fn draw_preview(&mut self, ui: &mut egui::Ui) {
-        let t = self.player.transport.playhead();
-        let (rgba, q, complete) = self.player.compose_preview(t);
-        let image =
-            egui::ColorImage::from_rgba_unmultiplied([q.width as usize, q.height as usize], &rgba);
-        let opts = if self.smooth_scaling {
-            egui::TextureOptions::LINEAR
-        } else {
-            egui::TextureOptions::NEAREST
+        let t = self.player.video_playhead();
+        let q = self.player.preview_quality();
+        let key_now = (t.0, (q.width, q.height));
+        // композитим/грузим текстуру ТОЛЬКО если кадр мог смениться:
+        // другой момент времени, другое качество, или прошлый был неполным
+        let need = match self.preview_key {
+            Some((pt, pq, was_complete)) => pt != key_now.0 || pq != key_now.1 || !was_complete,
+            None => true,
         };
-        match &mut self.texture {
-            Some(tex) => tex.set(image, opts),
-            None => {
-                self.texture = Some(ui.ctx().load_texture("preview", image, opts));
+        let mut complete = self.preview_key.map(|k| k.2).unwrap_or(false);
+        if need {
+            let (rgba, cq, c) = self.player.compose_preview(t);
+            complete = c;
+            // держим последний ПОЛНЫЙ кадр: неполный композит не затирает
+            // картинку (мигание «чёрный кадр ↔ Загрузка», п.14/15)
+            if c || self.texture.is_none() {
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [cq.width as usize, cq.height as usize],
+                    &rgba,
+                );
+                let opts = if self.smooth_scaling {
+                    egui::TextureOptions::LINEAR
+                } else {
+                    egui::TextureOptions::NEAREST
+                };
+                match &mut self.texture {
+                    Some(tex) => tex.set(image, opts),
+                    None => {
+                        self.texture = Some(ui.ctx().load_texture("preview", image, opts));
+                    }
+                }
             }
+            self.preview_key = Some((key_now.0, key_now.1, c));
+        }
+        if complete {
+            self.incomplete_since = None;
+        } else if self.incomplete_since.is_none() {
+            self.incomplete_since = Some(std::time::Instant::now());
         }
         let (rect, _resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
         let painter = ui.painter_at(rect);
@@ -635,8 +671,12 @@ impl KtApp {
                 egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 24)),
                 egui::StrokeKind::Outside,
             );
-            if !complete {
-                // скрим «Загрузка…» (порт buffering overlay)
+            // скрим — только если неполнота держится >180 мс (v1)
+            let show_overlay = self
+                .incomplete_since
+                .map(|t0| t0.elapsed() > std::time::Duration::from_millis(180))
+                .unwrap_or(false);
+            if show_overlay {
                 painter.rect_filled(img_rect, 2.0, egui::Color32::from_black_alpha(140));
                 painter.text(
                     img_rect.center(),
@@ -893,6 +933,17 @@ impl KtApp {
     }
 }
 /// Состояние перф-панели: rolling-графики, дельты счётчиков, журнал проблем.
+/// Задержка следующей перерисовки: 60 fps только когда есть что
+/// анимировать, в простое — редкий тик (статусбар/watchdog).
+/// Чистая функция — тест 20-repaint (п.1).
+pub fn repaint_delay(animating: bool) -> std::time::Duration {
+    if animating {
+        std::time::Duration::from_millis(16)
+    } else {
+        std::time::Duration::from_millis(250)
+    }
+}
+
 pub struct PerfState {
     pub quality: crate::graphs::RollingGraph,
     pub decode: crate::graphs::RollingGraph,
@@ -1175,7 +1226,15 @@ impl eframe::App for KtApp {
             }
         }
 
-        ctx.request_repaint_after(std::time::Duration::from_millis(16));
+        // Перерисовка ПО ПОТРЕБНОСТИ (п.1: безусловные 60 fps + заливка
+        // текстуры каждый кадр грели систему даже с пустым проектом; egui
+        // и так перерисовывает мгновенно на любой ввод).
+        let animating = self.player.transport.is_playing()
+            || self.drag.is_some()
+            || self.render_job.is_some()
+            || self.incomplete_since.is_some()
+            || self.meter.is_active();
+        ctx.request_repaint_after(repaint_delay(animating));
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -1226,4 +1285,16 @@ pub fn run() -> eframe::Result {
             Ok(Box::new(app))
         }),
     )
+}
+
+#[cfg(test)]
+mod repaint_tests {
+    use super::repaint_delay;
+
+    /// Тест 20-repaint (п.1): в простое НЕ 60 fps.
+    #[test]
+    fn t20_idle_repaint_is_slow_playing_is_60fps() {
+        assert_eq!(repaint_delay(true).as_millis(), 16);
+        assert!(repaint_delay(false).as_millis() >= 100, "простой = редкий тик");
+    }
 }

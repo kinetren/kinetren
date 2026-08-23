@@ -21,6 +21,20 @@ pub enum AudioPattern {
     Impulse,
 }
 
+/// Разделяемые счётчики обращений: источник живёт в потоке воркера, а тест
+/// наблюдает снаружи (тесты 13, 21).
+#[derive(Default)]
+pub struct SyntheticStats {
+    pub audio_reads: std::sync::atomic::AtomicU64,
+    pub video_reads: std::sync::atomic::AtomicU64,
+    /// Видео-запросы с pts МЕНЬШЕ предыдущего (для реального декодера это
+    /// backward seek + пересоздание — тест 21 требует ноль на секвенции).
+    pub video_backward_reads: std::sync::atomic::AtomicU64,
+    pub last_video_pts: std::sync::atomic::AtomicI64,
+    pub audio_backward_reads: std::sync::atomic::AtomicU64,
+    pub last_audio_idx: std::sync::atomic::AtomicI64,
+}
+
 /// Синтетический источник: детерминированная функция от номера burst'а/pts.
 pub struct SyntheticSource {
     info: MediaInfo,
@@ -28,6 +42,8 @@ pub struct SyntheticSource {
     /// Счётчик обращений — для регрессионных тестов «ноль декодов» (тест 13).
     pub audio_reads: u64,
     pub video_reads: u64,
+    /// Опциональные разделяемые счётчики (тесты через MediaWorker).
+    pub stats: Option<std::sync::Arc<SyntheticStats>>,
 }
 
 impl SyntheticSource {
@@ -37,7 +53,18 @@ impl SyntheticSource {
             pattern,
             audio_reads: 0,
             video_reads: 0,
+            stats: None,
         }
+    }
+
+    pub fn with_stats(
+        duration: Tick,
+        pattern: AudioPattern,
+        stats: std::sync::Arc<SyntheticStats>,
+    ) -> SyntheticSource {
+        let mut s = SyntheticSource::new(duration, pattern);
+        s.stats = Some(stats);
+        s
     }
 
     /// Значение сэмпла `n` канала `ch` для паттерна — эталон для ассертов в тестах.
@@ -74,6 +101,14 @@ impl MediaSource for SyntheticSource {
             return Err(MediaError::OutOfRange);
         }
         self.audio_reads += 1;
+        if let Some(st) = &self.stats {
+            use std::sync::atomic::Ordering::Relaxed;
+            st.audio_reads.fetch_add(1, Relaxed);
+            let last = st.last_audio_idx.swap(idx, Relaxed);
+            if idx < last {
+                st.audio_backward_reads.fetch_add(1, Relaxed);
+            }
+        }
         let mut burst = AudioBurst::silence(idx);
         let base = idx * AUDIO_BURST_FRAMES as i64;
         for f in 0..AUDIO_BURST_FRAMES {
@@ -91,6 +126,14 @@ impl MediaSource for SyntheticSource {
         quality: Option<Quality>,
     ) -> Result<VideoFrame, MediaError> {
         self.video_reads += 1;
+        if let Some(st) = &self.stats {
+            use std::sync::atomic::Ordering::Relaxed;
+            st.video_reads.fetch_add(1, Relaxed);
+            let last = st.last_video_pts.swap(pts.0, Relaxed);
+            if pts.0 < last {
+                st.video_backward_reads.fetch_add(1, Relaxed);
+            }
+        }
         let q = quality.unwrap_or(Quality { width: 64, height: 36 });
         // Кадр однозначно определяется pts: цвет кодирует номер тика.
         let r = (pts.0 & 0xff) as u8;

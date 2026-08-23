@@ -67,6 +67,26 @@ pub trait MediaSource: Send {
         quality: Option<Quality>,
     ) -> Result<VideoFrame, MediaError>;
     fn keyframe_before(&self, pts: Tick) -> Option<Tick>;
+
+    /// Спан: кадр для КАЖДОГО ключа (ключи выровнены по сетке, строго
+    /// возрастают). Семантика кадра для ключа k — как у read_video_frame
+    /// (наибольший pts <= k). Планировщик кладёт ВСЕ кадры в кэш — GOP
+    /// декодируется один раз на спан (п.14/15). Дефолт — цикл одиночных.
+    fn read_video_span(
+        &mut self,
+        keys: &[Tick],
+        quality: Option<Quality>,
+        emit: &mut dyn FnMut(Tick, VideoFrame),
+    ) -> Result<(), MediaError> {
+        for &k in keys {
+            match self.read_video_frame(k, quality) {
+                Ok(f) => emit(k, f),
+                Err(MediaError::OutOfRange) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Кадров в блоке уровня 0 peak-пирамиды (docs/media-index.md).

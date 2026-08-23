@@ -257,6 +257,30 @@ impl Source {
         }
     }
 
+    /// Спан-декод: см. source_impl::read_video_span.
+    pub fn read_video_span(
+        &mut self,
+        keys: &[Tick],
+        width: u32,
+        height: u32,
+        emit: &mut dyn FnMut(Tick, RgbaFrame),
+    ) -> Result<(), FfError> {
+        match self {
+            Source::V6(s) => s.read_video_span(keys, width, height, emit),
+            Source::V7(s) => s.read_video_span(keys, width, height, emit),
+            Source::V8(s) => s.read_video_span(keys, width, height, emit),
+        }
+    }
+
+    /// (backward_reopens, frames_decoded) — диагностика производительности.
+    pub fn video_debug_stats(&self) -> (u64, u64) {
+        match self {
+            Source::V6(s) => s.video_debug_stats(),
+            Source::V7(s) => s.video_debug_stats(),
+            Source::V8(s) => s.video_debug_stats(),
+        }
+    }
+
     pub fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
         match self {
             Source::V6(s) => s.keyframe_before(pts),

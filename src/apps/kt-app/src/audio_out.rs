@@ -56,7 +56,13 @@ pub fn start(
     let stream = device
         .build_output_stream(
             &config.config(),
-            move |data: &mut [f32], _| {
+            move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
+                // задержка вывода: когда прозвучит то, что забираем сейчас
+                let ts = info.timestamp();
+                if let Some(d) = ts.playback.duration_since(&ts.callback) {
+                    let frames = (d.as_secs_f64() * 48_000.0) as i64;
+                    shared.output_latency_frames.store(frames, Ordering::Relaxed);
+                }
                 if shared.flush.swap(false, Ordering::AcqRel) {
                     while ring.pop().is_ok() {}
                 }

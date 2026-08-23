@@ -93,7 +93,21 @@ pub fn spawn_index_worker(
                         Err(_) => None,
                     }
                 } else {
-                    None
+                    // Проект без пути → БД нет, но пики нужны (п.3:
+                    // «пропало превью аудио» у безымянного проекта):
+                    // строим пирамиду в памяти — при сохранении проекта
+                    // воркер перезапустится уже с БД
+                    open_source(&path).ok().map(|mut s| {
+                        kt_media::index::PeakPyramid::build(s.as_mut())
+                            .levels
+                            .into_iter()
+                            .map(|mut chs| {
+                                let l = if chs.is_empty() { Vec::new() } else { chs.remove(0) };
+                                let r = if chs.is_empty() { l.clone() } else { chs.remove(0) };
+                                (l, r)
+                            })
+                            .collect()
+                    })
                 };
                 if let Some(p) = peaks {
                     out.lock().unwrap().insert(id, p);

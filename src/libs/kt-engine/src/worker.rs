@@ -23,11 +23,14 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
-/// Счётчики реальных обращений к декодерам (для перф-панели).
+/// Счётчики реальных обращений к декодерам (для перф-панели и тестов 21).
 #[derive(Default)]
 pub struct DecodeStats {
     pub audio_decodes: AtomicU64,
     pub video_decodes: AtomicU64,
+    /// Спанов видео-декода (батчей) и кадров, декодированных спанами.
+    pub video_span_batches: AtomicU64,
+    pub video_span_frames: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -42,14 +45,6 @@ impl RequestKind {
     pub fn video(pts: Tick, quality: Option<Quality>) -> RequestKind {
         RequestKind::Video { pts, quality: quality.map(|q| (q.width, q.height)) }
     }
-
-    /// Позиция для сортировки «вперёд по курсору».
-    fn position(&self) -> i64 {
-        match *self {
-            RequestKind::Audio { idx } => idx * kt_time::AUDIO_BURST_TICKS,
-            RequestKind::Video { pts, .. } => pts.0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -59,11 +54,24 @@ pub struct DecodeRequest {
     pub generation: u64,
 }
 
+/// (prio, pts-тики, quality) — ключ видео-очереди.
+type VideoQueueKey = (Priority, i64, Option<(u32, u32)>);
+
 #[derive(Default)]
 struct Queue {
-    // (prio, position, kind) → generation; BTreeMap даёт и порядок, и dedup
-    entries: BTreeMap<(Priority, i64, RequestKind), u64>,
+    // Раздельные карты по типу: у аудио и видео СВОИ курсоры декодера —
+    // общий курсор заставлял видео-выбор зигзагом следовать за аудио
+    // (п.14/15: постоянные backward seek → полный reopen на каждый кадр).
+    // BTreeMap даёт и порядок, и dedup.
+    audio: BTreeMap<(Priority, i64), u64>, // pos = burst idx
+    video: BTreeMap<VideoQueueKey, u64>,   // pos = pts тики
     closed: bool,
+}
+
+impl Queue {
+    fn is_empty(&self) -> bool {
+        self.audio.is_empty() && self.video.is_empty()
+    }
 }
 
 struct Shared {
@@ -115,9 +123,15 @@ impl MediaWorker {
         if req.generation < self.shared.min_generation.load(Ordering::Acquire) {
             return;
         }
-        let key = (req.prio, req.kind.position(), req.kind);
         // dedup: тот же ключ обновляет generation, но не дублирует работу
-        q.entries.insert(key, req.generation);
+        match req.kind {
+            RequestKind::Audio { idx } => {
+                q.audio.insert((req.prio, idx), req.generation);
+            }
+            RequestKind::Video { pts, quality } => {
+                q.video.insert((req.prio, pts.0, quality), req.generation);
+            }
+        }
         self.shared.idle.store(false, Ordering::Release);
         drop(q);
         self.shared.cond.notify_one();
@@ -127,15 +141,15 @@ impl MediaWorker {
     pub fn cancel_generations_below(&self, min_generation: u64) {
         self.shared.min_generation.store(min_generation, Ordering::Release);
         let mut q = self.shared.queue.lock().unwrap();
-        q.entries.retain(|_, g| *g >= min_generation);
+        q.audio.retain(|_, g| *g >= min_generation);
+        q.video.retain(|_, g| *g >= min_generation);
         drop(q);
         self.shared.cond.notify_one();
     }
 
     /// true, когда очередь пуста и воркер не занят декодом.
     pub fn is_idle(&self) -> bool {
-        self.shared.idle.load(Ordering::Acquire)
-            && self.shared.queue.lock().unwrap().entries.is_empty()
+        self.shared.idle.load(Ordering::Acquire) && self.shared.queue.lock().unwrap().is_empty()
     }
 
     pub fn shutdown(mut self) {
@@ -157,28 +171,70 @@ fn worker_loop(
     cache: &BurstCache,
     stats: &DecodeStats,
 ) {
-    // Курсор «где был декодер»: позиция последнего обслуженного запроса.
-    let mut cursor: i64 = 0;
+    /// Сколько видео-ключей забираем в один спан-декод.
+    const SPAN_MAX_KEYS: usize = 64;
+    /// Насколько далеко вперёд от первого ключа расширяем спан.
+    const SPAN_MAX_AHEAD_TICKS: i64 = 2 * kt_time::TICK_HZ;
+
+    // Курсоры «где был декодер» — СВОИ у аудио и видео (см. Queue).
+    let mut cursor_audio: i64 = 0;
+    let mut cursor_video: i64 = 0;
     loop {
-        let req = {
+        enum Job {
+            Audio {
+                idx: i64,
+            },
+            /// Первый ключ + добранные вперёд того же приоритета/качества.
+            VideoSpan {
+                keys: Vec<Tick>,
+                quality: Option<(u32, u32)>,
+            },
+        }
+        let job = {
             let mut q = shared.queue.lock().unwrap();
             loop {
                 if q.closed {
                     return;
                 }
-                if let Some(key) = pick_next(&q.entries, cursor) {
-                    q.entries.remove(&key);
-                    break key;
+                match pick_next(&q, cursor_audio, cursor_video) {
+                    Some(Pick::Audio(key)) => {
+                        q.audio.remove(&key);
+                        break Job::Audio { idx: key.1 };
+                    }
+                    Some(Pick::Video(key)) => {
+                        let (prio, first_pts, quality) = key;
+                        q.video.remove(&key);
+                        // добор спана: те же prio/quality, строго вперёд,
+                        // в пределах окна, не в кэше
+                        let mut keys = vec![Tick(first_pts)];
+                        let horizon = first_pts + SPAN_MAX_AHEAD_TICKS;
+                        let candidates: Vec<_> = q
+                            .video
+                            .range((prio, first_pts, None)..)
+                            .take_while(|(k, _)| k.0 == prio && k.1 <= horizon)
+                            .map(|(&k, _)| k)
+                            .filter(|&(_, pos, ql)| ql == quality && pos > first_pts)
+                            .take(SPAN_MAX_KEYS - 1)
+                            .collect();
+                        for k in candidates {
+                            if cache.get_video(source_id, quality.map(into_q), k.1).is_none() {
+                                keys.push(Tick(k.1));
+                            }
+                            q.video.remove(&k);
+                        }
+                        break Job::VideoSpan { keys, quality };
+                    }
+                    None => {
+                        shared.idle.store(true, Ordering::Release);
+                        q = shared.cond.wait(q).unwrap();
+                    }
                 }
-                shared.idle.store(true, Ordering::Release);
-                q = shared.cond.wait(q).unwrap();
             }
         };
         shared.idle.store(false, Ordering::Release);
-        let (_prio, pos, kind) = req;
-        cursor = pos;
-        match kind {
-            RequestKind::Audio { idx } => {
+        match job {
+            Job::Audio { idx } => {
+                cursor_audio = idx * kt_time::AUDIO_BURST_TICKS;
                 if cache.get_audio(source_id, idx).is_none() {
                     stats.audio_decodes.fetch_add(1, Ordering::Relaxed);
                     if let Ok(burst) = source.read_audio_burst(idx) {
@@ -186,39 +242,95 @@ fn worker_loop(
                     }
                 }
             }
-            RequestKind::Video { pts, quality } => {
-                let q = quality.map(|(width, height)| Quality { width, height });
-                let frame_idx = pts.0; // ключ кадра = pts в тиках
-                if cache.get_video(source_id, q, frame_idx).is_none() {
-                    stats.video_decodes.fetch_add(1, Ordering::Relaxed);
-                    if let Ok(frame) = source.read_video_frame(pts, q) {
-                        cache.insert_video(source_id, q, frame_idx, Arc::new(frame));
-                    }
+            Job::VideoSpan { keys, quality } => {
+                let q = quality.map(into_q);
+                cursor_video = keys.last().map(|k| k.0).unwrap_or(cursor_video);
+                let missing: Vec<Tick> = keys
+                    .into_iter()
+                    .filter(|k| cache.get_video(source_id, q, k.0).is_none())
+                    .collect();
+                if missing.is_empty() {
+                    continue;
                 }
+                stats.video_decodes.fetch_add(missing.len() as u64, Ordering::Relaxed);
+                if missing.len() > 1 {
+                    stats.video_span_batches.fetch_add(1, Ordering::Relaxed);
+                    stats.video_span_frames.fetch_add(missing.len() as u64, Ordering::Relaxed);
+                }
+                let _ = source.read_video_span(&missing, q, &mut |k, frame| {
+                    cache.insert_video(source_id, q, k.0, Arc::new(frame));
+                });
             }
         }
     }
 }
 
-/// Выбор следующего запроса: минимальный приоритет; внутри него — ближайший
-/// вперёд от курсора; если вперёд пусто — ближайший назад.
-fn pick_next(
-    entries: &BTreeMap<(Priority, i64, RequestKind), u64>,
-    cursor: i64,
-) -> Option<(Priority, i64, RequestKind)> {
-    let (&(top_prio, _, _), _) = entries.iter().next()?;
-    // вперёд от курсора в этом приоритете
-    if let Some((&key, _)) =
-        entries.range((top_prio, cursor, RequestKind::Audio { idx: i64::MIN })..).next()
-        && key.0 == top_prio
-    {
-        return Some(key);
+fn into_q((width, height): (u32, u32)) -> Quality {
+    Quality { width, height }
+}
+
+enum Pick {
+    Audio((Priority, i64)),
+    Video(VideoQueueKey),
+}
+
+/// Выбор следующего запроса: минимальный приоритет по ОБЕИМ картам; внутри
+/// него у каждого вида — кандидат вперёд от СВОЕГО курсора (ближайший);
+/// если вперёд есть у обоих — меньшая forward-дистанция (ничья → аудио);
+/// вперёд пусто у обоих — ближайший назад аналогично.
+fn pick_next(q: &Queue, cursor_audio: i64, cursor_video: i64) -> Option<Pick> {
+    let top_a = q.audio.keys().next().map(|k| k.0);
+    let top_v = q.video.keys().next().map(|k| k.0);
+    let top = match (top_a, top_v) {
+        (Some(a), Some(v)) => a.min(v),
+        (Some(a), None) => a,
+        (None, Some(v)) => v,
+        (None, None) => return None,
+    };
+    // burst idx → тики для сравнения дистанций в одном домене
+    let a_cursor_idx = cursor_audio / kt_time::AUDIO_BURST_TICKS;
+    let a_fwd = q.audio.range((top, a_cursor_idx)..).next().map(|(&k, _)| k).filter(|k| k.0 == top);
+    let v_fwd =
+        q.video.range((top, cursor_video, None)..).next().map(|(&k, _)| k).filter(|k| k.0 == top);
+    match (a_fwd, v_fwd) {
+        (Some(a), Some(v)) => {
+            let da = a.1 * kt_time::AUDIO_BURST_TICKS - cursor_audio;
+            let dv = v.1 - cursor_video;
+            if da <= dv { Some(Pick::Audio(a)) } else { Some(Pick::Video(v)) }
+        }
+        (Some(a), None) => Some(Pick::Audio(a)),
+        (None, Some(v)) => Some(Pick::Video(v)),
+        (None, None) => {
+            // назад: ближайший к своему курсору
+            let a_back = q
+                .audio
+                .range(..(top, a_cursor_idx))
+                .next_back()
+                .map(|(&k, _)| k)
+                .filter(|k| k.0 == top);
+            let v_back = q
+                .video
+                .range(..(top, cursor_video, None))
+                .next_back()
+                .map(|(&k, _)| k)
+                .filter(|k| k.0 == top);
+            match (a_back, v_back) {
+                (Some(a), Some(v)) => {
+                    let da = cursor_audio - a.1 * kt_time::AUDIO_BURST_TICKS;
+                    let dv = cursor_video - v.1;
+                    if da <= dv { Some(Pick::Audio(a)) } else { Some(Pick::Video(v)) }
+                }
+                (Some(a), None) => Some(Pick::Audio(a)),
+                (None, Some(v)) => Some(Pick::Video(v)),
+                (None, None) => {
+                    // остались только записи другого приоритета/края — любой
+                    q.audio
+                        .keys()
+                        .next()
+                        .map(|&k| Pick::Audio(k))
+                        .or_else(|| q.video.keys().next().map(|&k| Pick::Video(k)))
+                }
+            }
+        }
     }
-    // иначе — последний (ближайший к курсору) из «задних»
-    entries
-        .range(..(top_prio, cursor, RequestKind::Audio { idx: i64::MIN }))
-        .next_back()
-        .map(|(&k, _)| k)
-        .filter(|k| k.0 == top_prio)
-        .or_else(|| entries.iter().next().map(|(&k, _)| k))
 }

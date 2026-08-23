@@ -41,6 +41,9 @@ struct Shared {
     queue: Mutex<(VecDeque<ThumbKey>, HashSet<ThumbKey>)>, // LIFO + dedup
     ready: Mutex<HashMap<ThumbKey, Arc<egui::ColorImage>>>,
     order: Mutex<VecDeque<ThumbKey>>, // для LRU-выселения ready
+    /// ЖИВАЯ карта медиа: пополняется при добавлении файлов (п.3 — раньше
+    /// карта замораживалась при старте и новые медиа не получали тумбы).
+    media: Mutex<HashMap<MediaId, String>>,
 }
 
 pub struct ThumbService {
@@ -53,6 +56,7 @@ impl ThumbService {
             queue: Mutex::new((VecDeque::new(), HashSet::new())),
             ready: Mutex::new(HashMap::new()),
             order: Mutex::new(VecDeque::new()),
+            media: Mutex::new(HashMap::new()),
         });
         let media: HashMap<MediaId, String> = {
             let base = project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
@@ -63,16 +67,25 @@ impl ThumbService {
                 .map(|m| (m.id, resolve_media_path(base.as_deref(), &m.path)))
                 .collect()
         };
+        *shared.media.lock().unwrap() = media;
         let db_path = project_path.map(|p| p.with_extension("ktindex.db"));
         let sh = shared.clone();
         std::thread::Builder::new()
             .name("thumbs".into())
-            .spawn(move || worker(sh, media, db_path))
+            .spawn(move || worker(sh, db_path))
             .expect("spawn thumbs");
         ThumbService { shared }
     }
 
     /// Поставить в очередь (dedup); отрисовка никогда не блокируется.
+    /// Зарегистрировать новое медиа (добавление файла в проект) — тумбы
+    /// начинают строиться сразу, без перезапуска сервиса.
+    pub fn add_media(&self, id: MediaId, resolved_path: String) {
+        if !resolved_path.starts_with("synth:") {
+            self.shared.media.lock().unwrap().insert(id, resolved_path);
+        }
+    }
+
     pub fn request(&self, key: ThumbKey) {
         let mut q = self.shared.queue.lock().unwrap();
         if q.1.insert(key) {
@@ -85,7 +98,7 @@ impl ThumbService {
     }
 }
 
-fn worker(shared: Arc<Shared>, media: HashMap<MediaId, String>, db_path: Option<PathBuf>) {
+fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
     let mut db = db_path.and_then(|p| kt_media::index::MediaIndexDb::open(&p).ok());
     // ленивые источники (≤2 открытых одновременно)
     let mut sources: HashMap<MediaId, Box<dyn kt_media::MediaSource>> = HashMap::new();
@@ -108,7 +121,10 @@ fn worker(shared: Arc<Shared>, media: HashMap<MediaId, String>, db_path: Option<
         if shared.ready.lock().unwrap().contains_key(&key) {
             continue;
         }
-        let Some(path) = media.get(&key.media) else { continue };
+        let Some(path) = shared.media.lock().unwrap().get(&key.media).cloned() else {
+            continue;
+        };
+        let path = &path;
 
         // 1) пробуем БД
         let mut jpeg: Option<Vec<u8>> = None;
