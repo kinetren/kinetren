@@ -1917,6 +1917,7 @@ dependencies = [
  "kt-time",
  "rfd",
  "rtrb",
+ "serde_json",
 ]
 
 [[package]]

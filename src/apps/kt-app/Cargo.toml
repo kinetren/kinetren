@@ -16,3 +16,4 @@ cpal = { workspace = true }
 rtrb = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 rfd = "0.15"
+serde_json.workspace = true
