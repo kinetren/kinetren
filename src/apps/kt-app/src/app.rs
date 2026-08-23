@@ -73,6 +73,9 @@ pub struct KtApp {
     /// Когда превью впервые стало неполным (скрим «Загрузка» — после 180 мс,
     /// как в v1, чтобы не мигал на быстрых промахах; п.14).
     pub incomplete_since: Option<std::time::Instant>,
+    /// Размытая мини-копия кадра для ambient glow (п.18): 32×18,
+    /// обновляется вместе с кадром, рисуется LINEAR-растяжкой.
+    pub glow_texture: Option<egui::TextureHandle>,
     pub thumbs: crate::thumbs::ThumbService,
     /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
     pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
@@ -130,6 +133,7 @@ impl KtApp {
             offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
             meter: Default::default(),
             smooth_scaling: true,
+            glow_texture: None,
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
             fx_editors: Vec::new(),
             gesture_counter: 0,
@@ -181,6 +185,7 @@ impl KtApp {
             offline,
             meter: Default::default(),
             smooth_scaling: true,
+            glow_texture: None,
             thumbs: thumbs_svc,
             fx_editors: Vec::new(),
             gesture_counter: 0,
@@ -264,6 +269,38 @@ impl KtApp {
             }
         }
         (mw >= 2 && mh >= 2).then_some((mw & !1, mh & !1))
+    }
+
+    /// Esc-каскад (п.11): окна → активный драг → регион+выделение.
+    pub fn escape_action(&mut self) {
+        // 1) закрыть верхнее наше окно
+        if self.render_setup.open {
+            self.render_setup.open = false;
+            return;
+        }
+        if let Some(ed) = self.fx_editors.iter_mut().rev().find(|e| e.open) {
+            ed.open = false;
+            return;
+        }
+        if self.notices_open {
+            self.notices_open = false;
+            return;
+        }
+        if self.perf.diag_open {
+            self.perf.diag_open = false;
+            return;
+        }
+        // 2) отменить активный драг
+        if self.drag.is_some() {
+            self.drag = None;
+            self.snap_line = None;
+            return;
+        }
+        // 3) снять регион и выделение
+        if self.model.project().region.is_some() {
+            self.clear_region();
+        }
+        self.selected = None;
     }
 
     pub fn note(&mut self, msg: impl Into<String>) {
@@ -752,6 +789,32 @@ impl KtApp {
             // держим последний ПОЛНЫЙ кадр: неполный композит не затирает
             // картинку (мигание «чёрный кадр ↔ Загрузка», п.14/15)
             if c || self.texture.is_none() {
+                // glow-мип: грубый box-даунскейл 32×18 (дешёвый, раз на кадр)
+                if self.sw_render == Some(false) {
+                    let (gw, gh) = (32usize, 18usize);
+                    let mut small = vec![0u8; gw * gh * 4];
+                    let (sw, sh) = (cq.width as usize, cq.height as usize);
+                    for gy in 0..gh {
+                        let sy = gy * sh / gh;
+                        for gx in 0..gw {
+                            let sx = gx * sw / gw;
+                            let si = (sy * sw + sx) * 4;
+                            let di = (gy * gw + gx) * 4;
+                            small[di..di + 4].copy_from_slice(&rgba[si..si + 4]);
+                        }
+                    }
+                    let gimg = egui::ColorImage::from_rgba_unmultiplied([gw, gh], &small);
+                    match &mut self.glow_texture {
+                        Some(t) => t.set(gimg, egui::TextureOptions::LINEAR),
+                        None => {
+                            self.glow_texture = Some(ui.ctx().load_texture(
+                                "preview-glow",
+                                gimg,
+                                egui::TextureOptions::LINEAR,
+                            ));
+                        }
+                    }
+                }
                 let image = egui::ColorImage::from_rgba_unmultiplied(
                     [cq.width as usize, cq.height as usize],
                     &rgba,
@@ -783,22 +846,71 @@ impl KtApp {
                 (rect.width() / q.width as f32).min(rect.height() / q.height as f32).max(0.05);
             let size = egui::vec2(q.width as f32 * scale, q.height as f32 * scale);
             let img_rect = egui::Rect::from_center_size(rect.center(), size);
-            // ambient glow позади кадра (п.17, как на youtube): растянутая
-            // полупрозрачная копия кадра; только при аппаратном рендере (п.19)
-            if self.sw_render == Some(false) {
-                for (expand, alpha) in [(0.16f32, 26u8), (0.08, 44)] {
+            // ambient glow как на youtube (п.18): РАЗМЫТАЯ мини-копия
+            // (32×18, LINEAR-растяжка = сильный блюр) + виньетка к фону
+            if self.sw_render == Some(false)
+                && let Some(glow) = &self.glow_texture
+            {
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                for (expand, alpha) in [(0.35f32, 40u8), (0.18, 60)] {
                     let glow_rect = egui::Rect::from_center_size(
                         img_rect.center(),
                         img_rect.size() * (1.0 + expand),
                     )
-                    .intersect(rect.shrink(2.0));
+                    .intersect(rect);
                     painter.image(
-                        tex.id(),
+                        glow.id(),
                         glow_rect,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        uv,
                         egui::Color32::from_rgba_unmultiplied(255, 255, 255, alpha),
                     );
                 }
+                // виньетка: края области затухают в цвет фона
+                let bg = egui::Color32::from_rgb(10, 10, 12);
+                let fade = 36.0f32;
+                let mut vin = egui::Mesh::default();
+                let mut quad = |a: egui::Pos2,
+                                b: egui::Pos2,
+                                ca: egui::Color32,
+                                cb: egui::Color32,
+                                horiz: bool| {
+                    let i = vin.vertices.len() as u32;
+                    let pts = if horiz {
+                        [
+                            (egui::pos2(a.x, a.y), ca),
+                            (egui::pos2(b.x, a.y), cb),
+                            (egui::pos2(b.x, b.y), cb),
+                            (egui::pos2(a.x, b.y), ca),
+                        ]
+                    } else {
+                        [
+                            (egui::pos2(a.x, a.y), ca),
+                            (egui::pos2(b.x, a.y), ca),
+                            (egui::pos2(b.x, b.y), cb),
+                            (egui::pos2(a.x, b.y), cb),
+                        ]
+                    };
+                    for (p, c) in pts {
+                        vin.vertices.push(egui::epaint::Vertex {
+                            pos: p,
+                            uv: egui::epaint::WHITE_UV,
+                            color: c,
+                        });
+                    }
+                    vin.indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+                };
+                let t = egui::Color32::from_rgba_unmultiplied(10, 10, 12, 0);
+                quad(rect.left_top(), egui::pos2(rect.left() + fade, rect.bottom()), bg, t, true);
+                quad(egui::pos2(rect.right() - fade, rect.top()), rect.right_bottom(), t, bg, true);
+                quad(rect.left_top(), egui::pos2(rect.right(), rect.top() + fade), bg, t, false);
+                quad(
+                    egui::pos2(rect.left(), rect.bottom() - fade),
+                    rect.right_bottom(),
+                    t,
+                    bg,
+                    false,
+                );
+                painter.add(egui::Shape::mesh(vin));
             }
             painter.image(
                 tex.id(),
@@ -1027,6 +1139,7 @@ impl KtApp {
             region_in: bool,
             region_out: bool,
             loop_toggle: bool,
+            esc: bool,
             copy: bool,
             paste: bool,
         }
@@ -1046,6 +1159,7 @@ impl KtApp {
             // Ctrl+C/Ctrl+V НЕ приходят как key_pressed: egui-winit
             // перехватывает их и шлёт Event::Copy / Event::Paste(..)
             // (регрессия п.21 — «Ctrl+V не работает»)
+            esc: i.key_pressed(egui::Key::Escape),
             copy: i.events.iter().any(|e| matches!(e, egui::Event::Copy))
                 || (i.modifiers.ctrl && i.key_pressed(egui::Key::C)),
             paste: i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))
@@ -1084,6 +1198,9 @@ impl KtApp {
         }
         if k.loop_toggle {
             self.toggle_loop();
+        }
+        if k.esc {
+            self.escape_action();
         }
         if k.copy {
             self.copy_selection();

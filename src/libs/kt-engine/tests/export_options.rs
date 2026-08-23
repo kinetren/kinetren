@@ -47,6 +47,7 @@ fn t25_force_libx264_and_roundtrip_via_own_source() {
     let opts = ExportOptions {
         force_encoder: Some("libx264".into()),
         quality: 28,
+        video_bitrate: None,
         audio_bitrate: 128_000,
         resolution: None,
     };
@@ -57,6 +58,7 @@ fn t25_force_libx264_and_roundtrip_via_own_source() {
         &out,
         None,
         &opts,
+        &Arc::new(AtomicBool::new(false)),
         &Arc::new(AtomicBool::new(false)),
         |_| {},
     )
@@ -93,6 +95,7 @@ fn t25_force_unknown_encoder_is_explicit_error() {
         None,
         &opts,
         &Arc::new(AtomicBool::new(false)),
+        &Arc::new(AtomicBool::new(false)),
         |_| {},
     );
     assert!(err.is_err(), "неизвестный force-энкодер = явная ошибка, не фолбэк");
@@ -109,6 +112,7 @@ fn t25_auto_encoder_selects_something() {
         &out,
         None,
         &ExportOptions::default(),
+        &Arc::new(AtomicBool::new(false)),
         &Arc::new(AtomicBool::new(false)),
         |_| {},
     )

@@ -27,6 +27,17 @@ pub struct ExportProgress {
     pub total_audio_frames: u64,
     pub video_frames: u64,
     pub total_video_frames: u64,
+    /// Текущая фаза (п.17: видно, чем занят экспорт).
+    pub phase: ExportPhase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExportPhase {
+    #[default]
+    Video,
+    Audio,
+    Finalize,
+    Done,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -193,6 +204,7 @@ pub fn export_mp4(
         None,
         &ExportOptions::default(),
         &AtomicBool::new(false).into(),
+        &AtomicBool::new(false).into(),
         |_| {},
     )
 }
@@ -202,8 +214,10 @@ pub fn export_mp4(
 /// Настройки экспорта (п.5): выбор кодека, качество, битрейт, разрешение.
 #[derive(Debug, Clone)]
 pub struct ExportOptions {
-    /// CRF/CQ/QP (23 ≈ визуально прозрачно).
+    /// CRF/CQ/QP (23 ≈ визуально прозрачно). Игнорируется при video_bitrate.
     pub quality: u32,
+    /// Целевой битрейт видео, бит/с (None = режим качества).
+    pub video_bitrate: Option<u32>,
     pub audio_bitrate: u32,
     /// None = автовыбор с hw-приоритетом; Some = только этот энкодер
     /// (не открылся — явная ошибка, без фолбэка).
@@ -214,7 +228,13 @@ pub struct ExportOptions {
 
 impl Default for ExportOptions {
     fn default() -> ExportOptions {
-        ExportOptions { quality: 23, audio_bitrate: 192_000, force_encoder: None, resolution: None }
+        ExportOptions {
+            quality: 23,
+            video_bitrate: None,
+            audio_bitrate: 192_000,
+            force_encoder: None,
+            resolution: None,
+        }
     }
 }
 
@@ -227,8 +247,20 @@ pub fn export_mp4_with(
     range: Option<(Tick, Tick)>,
     opts: &ExportOptions,
     cancel: &Arc<AtomicBool>,
+    pause: &Arc<AtomicBool>,
     progress: impl Fn(ExportProgress) + Send + Sync + 'static,
 ) -> Result<ExportStats, ExportError> {
+    // пауза (порт v1 waitWhilePaused): кооперативный wait 40 мс,
+    // отменяемый; проверяется на каждом кадре/чанке через progress-обёртки
+    let wait_paused = {
+        let pause = pause.clone();
+        let cancel = cancel.clone();
+        move || {
+            while pause.load(Ordering::Acquire) && !cancel.load(Ordering::Acquire) {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+        }
+    };
     let (ow, oh) = opts.resolution.unwrap_or((project.settings.width, project.settings.height));
     let quality = Quality { width: ow.max(2) & !1, height: oh.max(2) & !1 };
     let fps = project.settings.fps;
@@ -249,6 +281,7 @@ pub fn export_mp4_with(
         height: quality.height,
         fps,
         quality: opts.quality,
+        video_bitrate: opts.video_bitrate,
         audio_bitrate: opts.audio_bitrate,
         force_encoder: opts.force_encoder.clone(),
     })
@@ -263,17 +296,22 @@ pub fn export_mp4_with(
         let progress = progress.clone();
         let a_done = a_done.clone();
         let v_done = v_done.clone();
-        move || {
+        move |phase: ExportPhase| {
             progress(ExportProgress {
                 audio_frames: a_done.load(Ordering::Relaxed),
                 total_audio_frames: total_audio,
                 video_frames: v_done.load(Ordering::Relaxed),
                 total_video_frames: total_video,
+                phase,
             })
         }
     };
 
-    // 1) видео
+    // 1) видео (ошибка/отмена внутри фаз — удалить частичный файл, п.17)
+    let cleanup_on_err = |e: ExportError| {
+        let _ = std::fs::remove_file(out_path);
+        e
+    };
     let vstats = {
         let v_done = v_done.clone();
         let report = report.clone();
@@ -284,13 +322,15 @@ pub fn export_mp4_with(
             range,
             cancel,
             |done| {
+                wait_paused();
                 v_done.store(done, Ordering::Relaxed);
                 if done % 10 == 0 {
-                    report();
+                    report(ExportPhase::Video);
                 }
             },
             |rgba| muxer.write_video(rgba).map_err(std::io::Error::other),
-        )?
+        )
+        .map_err(|e| cleanup_on_err(e.into()))?
     };
     // 2) аудио
     let astats = {
@@ -302,13 +342,15 @@ pub fn export_mp4_with(
             range,
             cancel,
             |done| {
+                wait_paused();
                 a_done.store(done, Ordering::Relaxed);
                 if done % 48_000 < 1024 {
-                    report();
+                    report(ExportPhase::Audio);
                 }
             },
             |chunk| muxer.write_audio(chunk).map_err(std::io::Error::other),
-        )?
+        )
+        .map_err(|e| cleanup_on_err(e.into()))?
     };
 
     if cancel.load(Ordering::Acquire) {
@@ -316,9 +358,10 @@ pub fn export_mp4_with(
         let _ = std::fs::remove_file(out_path);
         return Err(ExportError::Cancelled);
     }
+    report(ExportPhase::Finalize);
     let encoder = muxer.encoder_name().to_string();
     muxer.finish().map_err(|e| ExportError::Io(std::io::Error::other(e)))?;
-    report();
+    report(ExportPhase::Done);
     Ok(ExportStats {
         video_frames: vstats.video_frames,
         audio_frames: astats.audio_frames,

@@ -72,6 +72,8 @@ pub enum Drag {
 pub enum CtxTarget {
     Clip(ClipId),
     Marker(i64),
+    /// Правый клик у границы региона (тик границы).
+    RegionEdge(i64),
     Empty,
 }
 
@@ -454,10 +456,9 @@ impl KtApp {
                 .min_by_key(|m| (tick_to_x(*m) - pos.x).abs() as i64)
                 .filter(|m| (tick_to_x(*m) - pos.x).abs() <= EDGE_GRAB_PX)
         };
+        // границы региона хватаются на ВСЕЙ высоте (п.14): линии рисуются
+        // на всю высоту и должны быть кликабельны везде
         let region_edge_at = |app: &KtApp, pos: egui::Pos2| -> Option<bool> {
-            if pos.y > rect.top() + RULER_H {
-                return None;
-            }
             let r = app.model.project().region?;
             if (tick_to_x(r.start.0) - pos.x).abs() <= REGION_EDGE_PX {
                 Some(true)
@@ -529,6 +530,9 @@ impl KtApp {
         {
             self.ctx_target = Some(if let Some(m) = marker_at(self, pos) {
                 CtxTarget::Marker(m)
+            } else if let Some(start_edge) = region_edge_at(self, pos) {
+                let r = self.model.project().region.unwrap();
+                CtxTarget::RegionEdge(if start_edge { r.start.0 } else { r.end.0 })
             } else if let Some((id, _)) = clip_at(self, pos) {
                 self.selected = Some(id);
                 CtxTarget::Clip(id)
@@ -1173,11 +1177,28 @@ impl KtApp {
         let ph = self.player.transport.playhead();
         let x = tick_to_x(ph.0);
         if x >= rect.left() && x <= rect.right() {
-            // v1: широкая полупрозрачная подложка + яркое ядро
-            painter.line_segment(
-                [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                egui::Stroke::new(6.0, egui::Color32::from_rgba_unmultiplied(255, 60, 60, 120)),
-            );
+            // мягкое свечение (п.4): горизонтальный градиент 0→α→0 + ядро
+            let glow_half = 7.0f32;
+            let mut mesh = egui::Mesh::default();
+            let c0 = egui::Color32::from_rgba_unmultiplied(255, 60, 60, 0);
+            let c1 = egui::Color32::from_rgba_unmultiplied(255, 60, 60, 90);
+            for (xa, xb, ca, cb) in [(x - glow_half, x, c0, c1), (x, x + glow_half, c1, c0)] {
+                let i = mesh.vertices.len() as u32;
+                for (px, col) in [
+                    (egui::pos2(xa, rect.top()), ca),
+                    (egui::pos2(xb, rect.top()), cb),
+                    (egui::pos2(xb, rect.bottom()), cb),
+                    (egui::pos2(xa, rect.bottom()), ca),
+                ] {
+                    mesh.vertices.push(egui::epaint::Vertex {
+                        pos: px,
+                        uv: egui::epaint::WHITE_UV,
+                        color: col,
+                    });
+                }
+                mesh.indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+            }
+            painter.add(egui::Shape::mesh(mesh));
             painter.line_segment(
                 [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 100)),
@@ -1244,6 +1265,16 @@ impl KtApp {
                 }
                 if is_audio && ui.button("Сбросить громкость (0 dB)").clicked() {
                     self.apply(Command::SetGain { id, gain_db: 0.0 });
+                    ui.close();
+                }
+            }
+            Some(CtxTarget::RegionEdge(t)) => {
+                if ui.button("Маркер здесь").clicked() {
+                    self.apply(Command::AddMarker { at: Tick(t) });
+                    ui.close();
+                }
+                if ui.button("Снять регион").clicked() {
+                    self.clear_region();
                     ui.close();
                 }
             }

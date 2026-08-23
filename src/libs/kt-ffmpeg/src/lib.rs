@@ -55,7 +55,10 @@ pub struct MuxConfig {
     pub height: u32,
     pub fps: u32,
     /// CRF/CQ/QP — смысл зависит от энкодера (23 ≈ визуально прозрачно).
+    /// Игнорируется, если задан video_bitrate.
     pub quality: u32,
+    /// Целевой битрейт видео, бит/с (None = режим качества CRF/CQ).
+    pub video_bitrate: Option<u32>,
     pub audio_bitrate: u32,
     /// Принудительный энкодер (иначе автовыбор с hw-приоритетом).
     pub force_encoder: Option<String>,

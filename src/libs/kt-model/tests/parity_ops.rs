@@ -296,8 +296,16 @@ fn ui_state_round_trip_and_old_json() {
     // save→load→save байт-стабильно
     assert_eq!(p2.to_json(), json);
     // старый JSON без ui
-    let stripped: String =
-        json.lines().filter(|l| !l.contains("\"ui\"") && !l.contains("view_start") && !l.contains("ticks_per_px") && !l.contains("\"cursor\"")).collect::<Vec<_>>().join("\n");
+    let stripped: String = json
+        .lines()
+        .filter(|l| {
+            !l.contains("\"ui\"")
+                && !l.contains("view_start")
+                && !l.contains("ticks_per_px")
+                && !l.contains("\"cursor\"")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
     let _ = stripped; // структура json вложенная — надёжнее собрать без ui:
     let mut p3 = base();
     p3.ui = None;

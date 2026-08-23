@@ -21,6 +21,7 @@ pub enum RenderMsg {
 pub struct RenderJob {
     pub rx: std::sync::mpsc::Receiver<RenderMsg>,
     pub cancel: Arc<AtomicBool>,
+    pub pause: Arc<AtomicBool>,
     pub started: std::time::Instant,
     pub progress: ExportProgress,
     pub out_path: String,
@@ -42,6 +43,8 @@ pub struct RenderJob {
 pub struct RenderSetup {
     pub encoder: Option<String>, // None = Auto
     pub quality: u32,
+    /// Some = режим целевого битрейта видео (бит/с) вместо CRF (п.9).
+    pub video_bitrate: Option<u32>,
     pub audio_bitrate: u32,
     pub resolution: Option<(u32, u32)>,
     pub open: bool,
@@ -52,6 +55,7 @@ impl Default for RenderSetup {
         RenderSetup {
             encoder: None,
             quality: 23,
+            video_bitrate: None,
             audio_bitrate: 192_000,
             resolution: None,
             open: false,
@@ -114,14 +118,17 @@ impl KtApp {
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let range = project.region.map(|r| (r.start, r.end));
         let cancel = Arc::new(AtomicBool::new(false));
+        let pause = Arc::new(AtomicBool::new(false));
         let opts = kt_engine::export::ExportOptions {
             quality: self.render_setup.quality,
+            video_bitrate: self.render_setup.video_bitrate,
             audio_bitrate: self.render_setup.audio_bitrate,
             force_encoder: self.render_setup.encoder.clone(),
             resolution: self.render_setup.resolution,
         };
         let (tx, rx) = std::sync::mpsc::channel();
         let opts_thread = opts.clone();
+        let pause_thread = pause.clone();
         {
             let cancel = cancel.clone();
             let out_path = out_path.clone();
@@ -145,6 +152,7 @@ impl KtApp {
                         range,
                         &opts_thread,
                         &cancel,
+                        &pause_thread,
                         move |p| {
                             let _ = txp.send(RenderMsg::Progress(p));
                         },
@@ -165,6 +173,7 @@ impl KtApp {
         self.render_job = Some(RenderJob {
             rx,
             cancel,
+            pause,
             started: std::time::Instant::now(),
             progress: ExportProgress::default(),
             out_path,
@@ -223,8 +232,40 @@ impl KtApp {
                         });
                         ui.end_row();
 
-                        ui.label("Качество (CRF/CQ):");
-                        ui.add(egui::Slider::new(&mut self.render_setup.quality, 14..=32));
+                        ui.label("Качество:");
+                        ui.horizontal(|ui| {
+                            let mut by_bitrate = self.render_setup.video_bitrate.is_some();
+                            if ui.selectable_label(!by_bitrate, "CRF").clicked() {
+                                by_bitrate = false;
+                                self.render_setup.video_bitrate = None;
+                            }
+                            if ui.selectable_label(by_bitrate, "Битрейт").clicked()
+                                && self.render_setup.video_bitrate.is_none()
+                            {
+                                self.render_setup.video_bitrate = Some(8_000_000);
+                            }
+                            match &mut self.render_setup.video_bitrate {
+                                Some(bps) => {
+                                    let mut mbps = *bps as f32 / 1_000_000.0;
+                                    if ui
+                                        .add(
+                                            egui::Slider::new(&mut mbps, 0.5..=80.0)
+                                                .suffix(" Мбит/с")
+                                                .logarithmic(true),
+                                        )
+                                        .changed()
+                                    {
+                                        *bps = (mbps * 1_000_000.0) as u32;
+                                    }
+                                }
+                                None => {
+                                    ui.add(egui::Slider::new(
+                                        &mut self.render_setup.quality,
+                                        14..=32,
+                                    ));
+                                }
+                            }
+                        });
                         ui.end_row();
 
                         ui.label("Аудио-битрейт:");
@@ -311,8 +352,9 @@ impl KtApp {
         let mut close = false;
         egui::Window::new("Рендер в MP4")
             .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .resizable(true)
+            .default_size([560.0, 300.0])
+            .default_pos(ctx.content_rect().center() - egui::vec2(280.0, 150.0))
             .show(ctx, |ui| {
                 ui.label(format!("Файл: {}", job.out_path));
                 ui.weak(format!(
@@ -329,6 +371,16 @@ impl KtApp {
                 } else {
                     0.0
                 };
+                let phase = match job.progress.phase {
+                    kt_engine::export::ExportPhase::Video => "Видео",
+                    kt_engine::export::ExportPhase::Audio => "Аудио",
+                    kt_engine::export::ExportPhase::Finalize => "Финализация (faststart)…",
+                    kt_engine::export::ExportPhase::Done => "Готово",
+                };
+                ui.horizontal(|ui| {
+                    ui.label("Фаза:");
+                    ui.strong(phase);
+                });
                 ui.add(egui::ProgressBar::new(frac).show_percentage());
                 let elapsed = job.started.elapsed().as_secs_f64();
                 let proj_fps = job.fps.max(1) as f64;
@@ -378,9 +430,21 @@ impl KtApp {
                 ui.add_space(4.0);
                 match &job.done {
                     None => {
-                        if ui.button("Отмена").clicked() {
-                            job.cancel.store(true, std::sync::atomic::Ordering::Release);
-                        }
+                        ui.horizontal(|ui| {
+                            let paused = job.pause.load(std::sync::atomic::Ordering::Acquire);
+                            if ui.button(if paused { "Продолжить" } else { "Пауза" }).clicked() {
+                                job.pause.store(!paused, std::sync::atomic::Ordering::Release);
+                            }
+                            if paused {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(255, 200, 100),
+                                    "на паузе",
+                                );
+                            }
+                            if ui.button("Отмена").clicked() {
+                                job.cancel.store(true, std::sync::atomic::Ordering::Release);
+                            }
+                        });
                     }
                     Some(Ok(msg)) => {
                         ui.colored_label(egui::Color32::from_rgb(120, 230, 120), format!("Готово: {msg}"));

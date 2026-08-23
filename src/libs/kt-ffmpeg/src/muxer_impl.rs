@@ -117,19 +117,36 @@ impl Muxer {
                 }
             }
             let mut vopts: *mut ffi::AVDictionary = core::ptr::null_mut();
-            match *name {
-                "libx264" => {
-                    set(&mut vopts, "preset", "veryfast");
-                    set(&mut vopts, "crf", &cfg.quality.to_string());
+            if let Some(bps) = cfg.video_bitrate {
+                // режим целевого битрейта (п.9)
+                unsafe { (*ctx).bit_rate = bps as i64 };
+                match *name {
+                    "libx264" => {
+                        set(&mut vopts, "preset", "veryfast");
+                        set(&mut vopts, "maxrate", &(bps as u64 * 3 / 2).to_string());
+                        set(&mut vopts, "bufsize", &(bps as u64 * 2).to_string());
+                    }
+                    "h264_nvenc" => {
+                        set(&mut vopts, "preset", "p4");
+                        set(&mut vopts, "rc", "vbr");
+                    }
+                    _ => {}
                 }
-                "h264_nvenc" => {
-                    set(&mut vopts, "preset", "p4");
-                    set(&mut vopts, "rc", "vbr");
-                    set(&mut vopts, "cq", &cfg.quality.to_string());
+            } else {
+                match *name {
+                    "libx264" => {
+                        set(&mut vopts, "preset", "veryfast");
+                        set(&mut vopts, "crf", &cfg.quality.to_string());
+                    }
+                    "h264_nvenc" => {
+                        set(&mut vopts, "preset", "p4");
+                        set(&mut vopts, "rc", "vbr");
+                        set(&mut vopts, "cq", &cfg.quality.to_string());
+                    }
+                    "h264_qsv" => set(&mut vopts, "global_quality", &cfg.quality.to_string()),
+                    "h264_vaapi" => set(&mut vopts, "qp", &cfg.quality.to_string()),
+                    _ => {}
                 }
-                "h264_qsv" => set(&mut vopts, "global_quality", &cfg.quality.to_string()),
-                "h264_vaapi" => set(&mut vopts, "qp", &cfg.quality.to_string()),
-                _ => {}
             }
             let r = unsafe { (api.avcodec_open2)(ctx, codec, &mut vopts) };
             unsafe { (api.av_dict_free)(&mut vopts) };
