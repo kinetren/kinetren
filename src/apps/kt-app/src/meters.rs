@@ -66,8 +66,10 @@ fn zone_color(db: f32) -> egui::Color32 {
     }
 }
 
-/// Радиальное свечение (порт drawGlowEllipse: QRadialGradient, режим Plus).
-/// Аппроксимация: три вложенных эллипса с убывающей альфой.
+/// Радиальное свечение (порт drawGlowEllipse: QRadialGradient, Plus).
+/// 7 вложенных эллипсов с гаусс-профилем альфы, УБЫВАЮЩЕЙ наружу —
+/// плавный градиент без жёстких кромок (п.7: у трёх плоских колец
+/// альфа росла к центру и кромки читались ступенями).
 fn glow_ellipse(
     painter: &egui::Painter,
     center: egui::Pos2,
@@ -75,16 +77,19 @@ fn glow_ellipse(
     col: egui::Color32,
     alpha: u8,
 ) {
-    for (k, a) in [(1.0f32, 1.0f32), (0.62, 1.6), (0.28, 2.4)] {
+    const RINGS: usize = 7;
+    for i in (0..RINGS).rev() {
+        let k = (i + 1) as f32 / RINGS as f32; // 1/7 .. 1
+        // гаусс: яркость выше к центру, мягкий спад к краю
+        let g = (-(k * k) * 2.2f32).exp();
+        let a = (alpha as f32 * g * 0.55).min(255.0) as u8;
+        if a == 0 {
+            continue;
+        }
         painter.add(egui::Shape::from(egui::epaint::EllipseShape {
             center,
             radius: radius * k,
-            fill: egui::Color32::from_rgba_unmultiplied(
-                col.r(),
-                col.g(),
-                col.b(),
-                ((alpha as f32) * a).min(255.0) as u8,
-            ),
+            fill: egui::Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), a),
             stroke: egui::Stroke::NONE,
             angle: 0.0,
         }));
@@ -152,6 +157,12 @@ impl KtApp {
             egui::vec2(64.0, ui.available_height()),
             egui::Sense::click_and_drag(),
         );
+        {
+            // ореол для оверлея поверх UI (п.8)
+            let loud = self.meter.bar_db[0].max(self.meter.bar_db[1]);
+            let k = ((loud - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB)).clamp(0.0, 1.0);
+            self.meter_glow = (k > 0.05).then(|| (rect, zone_color(loud), k));
+        }
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, egui::Color32::from_gray(16));
 
@@ -215,11 +226,30 @@ impl KtApp {
                 2.0,
                 egui::Color32::from_rgb(8, 9, 11),
             );
-            // зонное свечение позади бара (v1: слои Plus-эллипсов)
+            // v1-свечение: ОБЩИЙ центр между барами, широкий радиус,
+            // построчный шлейф от низа до уровня (шаг 8px, alpha 42) +
+            // зоны (alpha 24) + двойной головной блик (п.7)
             let level_db = self.meter.bar_db[ch];
-            if level_db > METER_MIN_DB + 1.0 {
-                let level_y = db_to_y(level_db);
-                let cx = x0 + bar_w / 2.0;
+            if ch == 0 && level_db.max(self.meter.bar_db[1]) > METER_MIN_DB + 1.0 {
+                let loud = self.meter.bar_db[0].max(self.meter.bar_db[1]);
+                let cx = bars.center().x;
+                let wide = bars.width() * 1.15;
+                // построчный шлейф на всю высоту зажжённой части
+                let level_y = db_to_y(loud);
+                let mut y = bars.bottom();
+                while y >= level_y {
+                    let db_here = METER_MIN_DB
+                        + (bars.bottom() - y) / bars.height() * (METER_MAX_DB - METER_MIN_DB);
+                    glow_ellipse(
+                        &painter,
+                        egui::pos2(cx, y),
+                        egui::vec2(wide * 0.7, 18.0),
+                        zone_color(db_here),
+                        42,
+                    );
+                    y -= 8.0;
+                }
+                // зоны
                 for (zone_top, zone_bot) in [
                     (6.0f32, 0.0f32),
                     (0.0, -3.0),
@@ -228,27 +258,40 @@ impl KtApp {
                     (-18.0, -36.0),
                     (-36.0, -48.0),
                 ] {
-                    if level_db < zone_bot {
-                        continue; // зона не зажжена
+                    if loud < zone_bot {
+                        continue;
                     }
-                    let y_top = db_to_y(zone_top.min(level_db));
+                    let y_top = db_to_y(zone_top.min(loud));
                     let y_bot = db_to_y(zone_bot.max(METER_MIN_DB));
-                    let cy = (y_top + y_bot) / 2.0;
                     glow_ellipse(
                         &painter,
-                        egui::pos2(cx, cy),
-                        egui::vec2(bar_w * 1.35, ((y_bot - y_top) * 0.5 + 14.0).max(16.0)),
+                        egui::pos2(cx, (y_top + y_bot) / 2.0),
+                        egui::vec2(wide, ((y_bot - y_top) * 0.78 + 24.0).max(32.0)),
                         zone_color((zone_top + zone_bot) / 2.0),
-                        10,
+                        24,
                     );
                 }
-                // головной блик у текущего уровня
+                // двойной головной блик + подсветка низа (v1 :363-366)
                 glow_ellipse(
                     &painter,
                     egui::pos2(cx, level_y),
-                    egui::vec2(bar_w * 1.6, 15.0),
-                    zone_color(level_db),
-                    16,
+                    egui::vec2(wide * 1.08, 38.0),
+                    zone_color(loud),
+                    42,
+                );
+                glow_ellipse(
+                    &painter,
+                    egui::pos2(cx, level_y - 14.0),
+                    egui::vec2(wide * 0.95, 34.0),
+                    zone_color(loud),
+                    28,
+                );
+                glow_ellipse(
+                    &painter,
+                    egui::pos2(cx, bars.bottom()),
+                    egui::vec2(wide * 0.85, 28.0),
+                    zone_color(METER_MIN_DB + 6.0),
+                    20,
                 );
             }
             // LED-сегменты v1: 6 px + 2 px зазор, светлая верхняя кромка

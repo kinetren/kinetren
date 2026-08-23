@@ -83,6 +83,10 @@ pub struct KtApp {
     /// Размытая мини-копия кадра для ambient glow (п.18): 32×18,
     /// обновляется вместе с кадром, рисуется LINEAR-растяжкой.
     pub glow_texture: Option<egui::TextureHandle>,
+    /// Rect превью прошлого кадра (для оверлей-свечения поверх UI, п.8).
+    pub preview_rect: egui::Rect,
+    /// Rect метров прошлого кадра + цвет доминирующей зоны.
+    pub meter_glow: Option<(egui::Rect, egui::Color32, f32)>,
     pub thumbs: crate::thumbs::ThumbService,
     /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
     pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
@@ -153,6 +157,8 @@ impl KtApp {
             meter: Default::default(),
             smooth_scaling: true,
             glow_texture: None,
+            preview_rect: egui::Rect::NOTHING,
+            meter_glow: None,
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
             fx_editors: Vec::new(),
             gesture_counter: 0,
@@ -212,6 +218,8 @@ impl KtApp {
             meter: Default::default(),
             smooth_scaling: true,
             glow_texture: None,
+            preview_rect: egui::Rect::NOTHING,
+            meter_glow: None,
             thumbs: thumbs_svc,
             fx_editors: Vec::new(),
             gesture_counter: 0,
@@ -981,6 +989,7 @@ impl KtApp {
             self.incomplete_since = Some(std::time::Instant::now());
         }
         let (rect, _resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+        self.preview_rect = rect;
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(10, 10, 12));
         if let Some(tex) = &self.texture {
@@ -1842,6 +1851,53 @@ impl eframe::App for KtApp {
                 self.warn(
                     "Нет аппаратного ускорения графики (софт-рендер) — интерфейс может                      подтормаживать, glow превью отключён",
                 );
+            }
+        }
+
+        // Оверлей-свечение поверх интерфейса (п.8): превью и метры мягко
+        // «светят» за границы своих панелей, не мешая чтению UI.
+        if self.sw_render == Some(false) {
+            let fg = ui.ctx().layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("ambient-overlay"),
+            ));
+            // превью: размытая текстура чуть шире панели, очень низкая альфа
+            if let (Some(glow), true) = (&self.glow_texture, self.preview_rect.is_finite()) {
+                let r = self.preview_rect.expand(28.0);
+                fg.image(
+                    glow.id(),
+                    r,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 14),
+                );
+            }
+            // метры: цветной ореол влево от панели по громкости
+            if let Some((r, col, k)) = self.meter_glow {
+                let a = (k * 22.0) as u8;
+                if a > 2 {
+                    let glow_rect = egui::Rect::from_min_max(
+                        egui::pos2(r.left() - 46.0, r.top()),
+                        egui::pos2(r.left() + 8.0, r.bottom()),
+                    );
+                    let mut mesh = egui::Mesh::default();
+                    let t = egui::Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 0);
+                    let c = egui::Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), a);
+                    let i0 = mesh.vertices.len() as u32;
+                    for (pos, color) in [
+                        (glow_rect.left_top(), t),
+                        (glow_rect.right_top(), c),
+                        (glow_rect.right_bottom(), c),
+                        (glow_rect.left_bottom(), t),
+                    ] {
+                        mesh.vertices.push(egui::epaint::Vertex {
+                            pos,
+                            uv: egui::epaint::WHITE_UV,
+                            color,
+                        });
+                    }
+                    mesh.indices.extend_from_slice(&[i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3]);
+                    fg.add(egui::Shape::mesh(mesh));
+                }
             }
         }
 

@@ -1029,6 +1029,37 @@ impl KtApp {
                                 egui::pos2((dst.width() / thumb_w).min(1.0), 1.0),
                             );
                             painter.image(t.id(), dst, uv, egui::Color32::WHITE);
+                            // кино-лента (п.6): чёрная рамка кадра +
+                            // перфорация сверху/снизу — филмстрип читается
+                            // как лента и даёт визуальную навигацию
+                            let black = egui::Color32::from_rgb(8, 8, 10);
+                            painter.rect(
+                                dst,
+                                0.0,
+                                egui::Color32::TRANSPARENT,
+                                egui::Stroke::new(2.0, black),
+                                egui::StrokeKind::Inside,
+                            );
+                            for band_y in [dst.top(), dst.bottom() - 4.0] {
+                                let band = egui::Rect::from_min_max(
+                                    egui::pos2(dst.left(), band_y),
+                                    egui::pos2(dst.right(), band_y + 4.0),
+                                );
+                                painter.rect_filled(band, 0.0, black);
+                                // отверстия перфорации
+                                let mut hx = dst.left() + 4.0;
+                                while hx < dst.right() - 2.0 {
+                                    painter.rect_filled(
+                                        egui::Rect::from_center_size(
+                                            egui::pos2(hx, band.center().y),
+                                            egui::vec2(2.5, 2.0),
+                                        ),
+                                        0.5,
+                                        egui::Color32::from_gray(120),
+                                    );
+                                    hx += 7.0;
+                                }
+                            }
                         }
                     }
                     x += thumb_w;
