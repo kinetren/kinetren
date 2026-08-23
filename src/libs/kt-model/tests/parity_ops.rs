@@ -283,3 +283,25 @@ fn t24_reversed_roundtrip_and_undo() {
     let p3 = Project::from_json(&stripped).unwrap();
     assert!(!p3.clips[0].reversed);
 }
+
+/// П.13: UiState (вьюпорт) сохраняется в проект и читается; старые файлы
+/// без секции ui загружаются как None.
+#[test]
+fn ui_state_round_trip_and_old_json() {
+    let mut p = base();
+    p.ui = Some(UiState { view_start: 12_345.0, ticks_per_px: 450.0, cursor: 90_000 });
+    let json = p.to_json();
+    let p2 = Project::from_json(&json).unwrap();
+    assert_eq!(p2.ui, p.ui);
+    // save→load→save байт-стабильно
+    assert_eq!(p2.to_json(), json);
+    // старый JSON без ui
+    let stripped: String =
+        json.lines().filter(|l| !l.contains("\"ui\"") && !l.contains("view_start") && !l.contains("ticks_per_px") && !l.contains("\"cursor\"")).collect::<Vec<_>>().join("\n");
+    let _ = stripped; // структура json вложенная — надёжнее собрать без ui:
+    let mut p3 = base();
+    p3.ui = None;
+    let plain = p3.to_json();
+    assert!(!plain.contains("\"ui\""), "None не сериализуется");
+    assert_eq!(Project::from_json(&plain).unwrap().ui, None);
+}

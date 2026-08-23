@@ -32,7 +32,7 @@ serde_json = "1"
 thiserror = "2"
 crossbeam-channel = "0.5"
 rtrb = "0.3"
-eframe = "0.36"
+eframe = { version = "0.36", features = ["persistence"] }
 cpal = "0.16"
 rubato = "0.16"
 rusqlite = { version = "0.37", features = ["bundled"] }

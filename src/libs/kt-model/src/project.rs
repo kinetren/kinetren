@@ -46,10 +46,26 @@ pub struct Project {
     pub video_lanes: u32,
     #[serde(default = "default_lanes")]
     pub audio_lanes: u32,
+    /// Состояние вьюпорта редактора (п.13, порт v1: timelineViewStartMs/
+    /// zoomLevel/cursorMs). Вне undo-истории (как region); старые файлы
+    /// без секции читаются как None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<UiState>,
 }
 
 fn default_lanes() -> u32 {
     1
+}
+
+/// Вьюпорт таймлайна, сохраняемый в проекте.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UiState {
+    /// Левый край вью (тики).
+    pub view_start: f64,
+    /// Зум (тиков на пиксель).
+    pub ticks_per_px: f64,
+    /// Позиция курсора (тики).
+    pub cursor: i64,
 }
 
 /// Полуоткрытый регион [start, end), start < end.
@@ -348,6 +364,7 @@ impl Project {
             loop_enabled: false,
             video_lanes: 1,
             audio_lanes: 1,
+            ui: None,
         }
     }
 

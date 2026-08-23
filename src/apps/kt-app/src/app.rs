@@ -160,7 +160,8 @@ impl KtApp {
         let media: Vec<_> =
             project.media.iter().map(|m| (m.id, resolve_media_path(base, &m.path))).collect();
         spawn_index_worker(Some(path.with_extension("ktindex.db")), media, peaks.clone());
-        Ok(KtApp {
+        let ui_state = project.ui.clone();
+        let mut app = KtApp {
             model: TimelineModel::new(project),
             project_path: Some(path.to_path_buf()),
             dirty: false,
@@ -196,7 +197,23 @@ impl KtApp {
             preview_key: None,
             incomplete_since: None,
             thumb_textures: HashMap::new(),
-        })
+        };
+        // восстановление вьюпорта/курсора (п.13, v1: fromJson)
+        if let Some(ui) = ui_state {
+            app.view_start = ui.view_start.max(-40.0 * app.ticks_per_px);
+            app.ticks_per_px = ui.ticks_per_px.clamp(30.0, 30_000.0);
+            app.player.seek(Tick(ui.cursor.max(0)));
+        }
+        Ok(app)
+    }
+
+    /// Снимок вьюпорта для записи в проект (п.13).
+    fn ui_state(&self) -> kt_model::UiState {
+        kt_model::UiState {
+            view_start: self.view_start,
+            ticks_per_px: self.ticks_per_px,
+            cursor: self.player.transport.playhead().0,
+        }
     }
 
     /// Правила Play при регионе (п.4, поведение v1):
@@ -560,10 +577,15 @@ impl KtApp {
                 p
             }
         };
+        let ui = Some(self.ui_state());
+        self.model.set_ui_state(ui);
         match std::fs::write(&path, self.model.project().to_json()) {
             Ok(()) => {
                 self.dirty = false;
                 self.note(format!("сохранено: {}", path.display()));
+                // именованный проект сохранён — recovery-файл безымянного
+                // больше не должен «воскресать» при старте (п.12)
+                let _ = std::fs::remove_file(autosave_path());
             }
             Err(e) => self.note(format!("ошибка сохранения: {e}")),
         }
@@ -1390,6 +1412,8 @@ impl eframe::App for KtApp {
         // в recovery-файл ~/.local/share/kinotrain/ (п.20, v1)
         if self.dirty && self.last_autosave.elapsed().as_secs() >= 4 {
             self.last_autosave = std::time::Instant::now();
+            let ui = Some(self.ui_state());
+            self.model.set_ui_state(ui);
             let target = self.project_path.clone().unwrap_or_else(autosave_path);
             if let Some(dir) = target.parent() {
                 let _ = std::fs::create_dir_all(dir);
@@ -1465,11 +1489,11 @@ impl eframe::App for KtApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         // последний проект + финальный сейв при выходе
-        if let Some(p) = &self.project_path {
+        if let Some(p) = &self.project_path.clone() {
             storage.set_string("last_project", p.to_string_lossy().to_string());
-            if self.dirty {
-                let _ = std::fs::write(p, self.model.project().to_json());
-            }
+            let ui = Some(self.ui_state());
+            self.model.set_ui_state(ui);
+            let _ = std::fs::write(p, self.model.project().to_json());
         }
     }
 }

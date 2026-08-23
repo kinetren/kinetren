@@ -204,6 +204,11 @@ impl TimelineModel {
         self.project.loop_enabled = on;
     }
 
+    /// Вьюпорт (вне undo, как регион) — сохраняется в файл проекта.
+    pub fn set_ui_state(&mut self, ui: Option<crate::UiState>) {
+        self.project.ui = ui;
+    }
+
     pub fn undo(&mut self) -> Result<(), CommandError> {
         let mut prev = self.undo.pop().ok_or(CommandError::NothingToUndo)?;
         // регион/loop не откатываются — переносим текущие значения
