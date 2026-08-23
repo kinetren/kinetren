@@ -17,6 +17,22 @@ struct VideoClip {
     source_in: Tick,
     lane: u32,
     media: MediaId,
+    reversed: bool,
+}
+
+/// pts источника для момента таймлайна `t` внутри клипа: прямой или
+/// зеркальный (п.16 реверс). Чистая функция — тест 24.
+fn clip_source_pts(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
+    let src = if c.reversed {
+        // зеркало: последний кадр клипа показывает source_in, первый —
+        // конец использованного куска источника (минус шаг кадра)
+        let span = c.end.0 - c.start.0;
+        let step = grid.frame_step();
+        Tick((c.source_in.0 + span - step - (t.0 - c.start.0)).max(c.source_in.0))
+    } else {
+        Tick(c.source_in.0 + (t.0 - c.start.0))
+    };
+    grid.align_floor(src)
 }
 
 pub struct VideoRenderer {
@@ -41,6 +57,7 @@ impl VideoRenderer {
                 source_in: c.source_in,
                 lane: c.lane,
                 media: c.media,
+                reversed: c.reversed,
             })
             .collect();
         // задний план первым (большая lane), передний (lane 0) — последним
@@ -54,10 +71,7 @@ impl VideoRenderer {
         self.clips
             .iter()
             .filter(|c| c.start <= t && t < c.end)
-            .map(|c| {
-                let src = Tick(c.source_in.0 + (t.0 - c.start.0));
-                (c.media, self.grid.align_floor(src))
-            })
+            .map(|c| (c.media, clip_source_pts(c, t, &self.grid)))
             .collect()
     }
 

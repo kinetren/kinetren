@@ -37,6 +37,7 @@ fn clip(
         source_in: Tick(src_in),
         media: MediaId(1),
         gain_db: 0.0,
+        reversed: false,
         fx: vec![],
     }
 }
@@ -257,4 +258,28 @@ fn trim_group_to_cursor() {
     let cmds = trim_group_end_to(m.project(), ClipId(10), Tick(60_000));
     m.apply_batch(cmds).unwrap();
     assert_eq!(m.clip(ClipId(10)).unwrap().duration, Tick(30_000));
+}
+
+/// Тест 24 (модельная часть, п.16): reversed сериализуется, undo/redo
+/// работает, старые проекты без поля читаются (default=false).
+#[test]
+fn t24_reversed_roundtrip_and_undo() {
+    let p = base();
+    let mut m = TimelineModel::new(p);
+    let id = m.project().clips[0].id;
+    m.apply(Command::SetReversed { id, reversed: true }).unwrap();
+    assert!(m.project().clips[0].reversed);
+    // сериализация round-trip
+    let json = m.project().to_json();
+    let p2 = Project::from_json(&json).unwrap();
+    assert!(p2.clips[0].reversed);
+    // undo/redo
+    m.undo().unwrap();
+    assert!(!m.project().clips[0].reversed);
+    m.redo().unwrap();
+    assert!(m.project().clips[0].reversed);
+    // проект БЕЗ поля reversed читается (обратная совместимость)
+    let stripped = json.replace("\"reversed\": true,", "").replace("\"reversed\":true,", "");
+    let p3 = Project::from_json(&stripped).unwrap();
+    assert!(!p3.clips[0].reversed);
 }

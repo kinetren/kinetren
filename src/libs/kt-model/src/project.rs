@@ -104,6 +104,10 @@ pub struct ClipEvent {
     pub media: MediaId,
     #[serde(default)]
     pub gain_db: f32,
+    /// Реверс источника (аудио и видео читаются задом наперёд; FX-цепочка
+    /// применяется ПОСЛЕ реверса). serde-default — старые файлы стабильны.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reversed: bool,
     #[serde(default)]
     pub fx: Vec<FxInstance>,
 }

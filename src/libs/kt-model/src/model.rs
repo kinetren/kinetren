@@ -50,6 +50,11 @@ pub enum Command {
         id: ClipId,
         gain_db: f32,
     },
+    /// Реверс события (п.16). Undo-able.
+    SetReversed {
+        id: ClipId,
+        reversed: bool,
+    },
     SetFx {
         id: ClipId,
         fx: Vec<FxInstance>,
@@ -247,6 +252,7 @@ impl TimelineModel {
             }
             Command::RemoveClip { id }
             | Command::SetGain { id, .. }
+            | Command::SetReversed { id, .. }
             | Command::SetFx { id, .. }
             | Command::UnlinkClip { id }
             | Command::MoveClip { id, .. } => {
@@ -388,6 +394,7 @@ impl TimelineModel {
                 p.clips.push(right);
             }
             Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,
+            Command::SetReversed { id, reversed } => Self::clip_mut_on(p, id).reversed = reversed,
             Command::SetFx { id, fx } => Self::clip_mut_on(p, id).fx = fx,
             Command::LinkClips { ids, group } => {
                 for c in &mut p.clips {

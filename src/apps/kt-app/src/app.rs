@@ -11,6 +11,19 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+/// Важность уведомления (п.18).
+#[derive(Clone, Copy, PartialEq)]
+pub enum Severity {
+    Info,
+    Warn,
+}
+
+pub struct Notice {
+    pub at: String,
+    pub severity: Severity,
+    pub text: String,
+}
+
 pub struct KtApp {
     pub model: TimelineModel,
     pub project_path: Option<PathBuf>,
@@ -39,11 +52,19 @@ pub struct KtApp {
     pub fx_editors: Vec<crate::fx_editor::FxEditor>,
     pub gesture_counter: u64,
     pub render_job: Option<crate::render_dialog::RenderJob>,
+    pub render_setup: crate::render_dialog::RenderSetup,
     pub last_autosave: std::time::Instant,
     /// Хинт наведённой кнопки тулбара — дублируется в статусбар (порт).
     pub hover_hint: Option<String>,
     /// Rect таймлайна прошлого кадра (для плавающего тулбара).
     pub timeline_rect: egui::Rect,
+    /// Ретроспектива уведомлений (п.18): кольцо + счётчик непрочитанных,
+    /// окно открывается колокольчиком в статусбаре.
+    pub notices: std::collections::VecDeque<Notice>,
+    pub notices_unread: usize,
+    pub notices_open: bool,
+    /// Софт-рендер (llvmpipe/Cpu) — детект один раз (пп. 17, 19).
+    pub sw_render: Option<bool>,
     pub perf: PerfState,
     /// Ключ последнего ЗАГРУЖЕННОГО в текстуру кадра превью: (playhead-тик,
     /// качество, полный ли). Текстура обновляется только при смене —
@@ -113,9 +134,14 @@ impl KtApp {
             fx_editors: Vec::new(),
             gesture_counter: 0,
             render_job: None,
+            render_setup: Default::default(),
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
             timeline_rect: egui::Rect::NOTHING,
+            notices: std::collections::VecDeque::new(),
+            notices_unread: 0,
+            notices_open: false,
+            sw_render: None,
             perf: PerfState::new(),
             preview_key: None,
             incomplete_since: None,
@@ -158,9 +184,14 @@ impl KtApp {
             fx_editors: Vec::new(),
             gesture_counter: 0,
             render_job: None,
+            render_setup: Default::default(),
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
             timeline_rect: egui::Rect::NOTHING,
+            notices: std::collections::VecDeque::new(),
+            notices_unread: 0,
+            notices_open: false,
+            sw_render: None,
             perf: PerfState::new(),
             preview_key: None,
             incomplete_since: None,
@@ -219,7 +250,29 @@ impl KtApp {
     }
 
     pub fn note(&mut self, msg: impl Into<String>) {
-        self.status = Some((msg.into(), std::time::Instant::now()));
+        let text = msg.into();
+        self.push_notice(Severity::Info, text.clone());
+        self.status = Some((text, std::time::Instant::now()));
+    }
+
+    /// Warning-уведомление: в статусбар и в ретроспективу (п.18).
+    pub fn warn(&mut self, msg: impl Into<String>) {
+        let text = msg.into();
+        self.push_notice(Severity::Warn, text.clone());
+        self.status = Some((text, std::time::Instant::now()));
+    }
+
+    fn push_notice(&mut self, severity: Severity, text: String) {
+        // не плодим дубликаты подряд
+        if self.notices.back().map(|n| n.text == text).unwrap_or(false) {
+            return;
+        }
+        let at = chrono_like_now();
+        self.notices.push_back(Notice { at, severity, text });
+        if self.notices.len() > 200 {
+            self.notices.pop_front();
+        }
+        self.notices_unread += 1;
     }
 
     pub fn apply(&mut self, cmd: Command) -> bool {
@@ -650,6 +703,7 @@ impl KtApp {
                 source_in: Tick(0),
                 media: media_id,
                 gain_db: 0.0,
+                reversed: false,
                 fx: vec![],
             }));
             next_id += 1;
@@ -707,6 +761,23 @@ impl KtApp {
                 (rect.width() / q.width as f32).min(rect.height() / q.height as f32).max(0.05);
             let size = egui::vec2(q.width as f32 * scale, q.height as f32 * scale);
             let img_rect = egui::Rect::from_center_size(rect.center(), size);
+            // ambient glow позади кадра (п.17, как на youtube): растянутая
+            // полупрозрачная копия кадра; только при аппаратном рендере (п.19)
+            if self.sw_render == Some(false) {
+                for (expand, alpha) in [(0.16f32, 26u8), (0.08, 44)] {
+                    let glow_rect = egui::Rect::from_center_size(
+                        img_rect.center(),
+                        img_rect.size() * (1.0 + expand),
+                    )
+                    .intersect(rect.shrink(2.0));
+                    painter.image(
+                        tex.id(),
+                        glow_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, alpha),
+                    );
+                }
+            }
             painter.image(
                 tex.id(),
                 img_rect,
@@ -849,6 +920,33 @@ impl KtApp {
     fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let ord = std::sync::atomic::Ordering::Relaxed;
+            // колокольчик уведомлений (п.18): бейдж = непрочитанные
+            let bell = if self.notices_unread > 0 {
+                format!("{} {}", crate::icons::BELL, self.notices_unread)
+            } else {
+                crate::icons::BELL.to_string()
+            };
+            let has_warn = self
+                .notices
+                .iter()
+                .rev()
+                .take(self.notices_unread)
+                .any(|n| n.severity == Severity::Warn);
+            let bell_btn = egui::Button::new(egui::RichText::new(bell).color(if has_warn {
+                egui::Color32::from_rgb(255, 170, 80)
+            } else if self.notices_unread > 0 {
+                egui::Color32::from_rgb(160, 200, 255)
+            } else {
+                egui::Color32::from_gray(140)
+            }))
+            .frame(false);
+            if ui.add(bell_btn).on_hover_text("Уведомления").clicked() {
+                self.notices_open = !self.notices_open;
+                if self.notices_open {
+                    self.notices_unread = 0;
+                }
+            }
+            ui.separator();
             ui.weak(format!(
                 "кэш: {:.0}/{:.0} МБ",
                 self.player.cache.audio_bytes() as f64 / 1e6,
@@ -1065,6 +1163,16 @@ impl PerfState {
 }
 
 /// hh:mm:ss без зависимости chrono.
+/// Файл автосохранения безымянного проекта (порт v1
+/// defaultAutosaveProjectPath: ~/.local/share/kinotrain/).
+pub fn autosave_path() -> PathBuf {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("kinotrain").join("autosave-project.ktproj")
+}
+
 fn chrono_like_now() -> String {
     let secs =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
@@ -1278,13 +1386,69 @@ impl eframe::App for KtApp {
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
 
-        // автосейв каждые 4 c (порт autosaveTimer)
-        if self.dirty && self.project_path.is_some() && self.last_autosave.elapsed().as_secs() >= 4
-        {
+        // автосейв каждые 4 c (порт autosaveTimer); безымянный проект —
+        // в recovery-файл ~/.local/share/kinotrain/ (п.20, v1)
+        if self.dirty && self.last_autosave.elapsed().as_secs() >= 4 {
             self.last_autosave = std::time::Instant::now();
-            let path = self.project_path.clone().unwrap();
-            if std::fs::write(&path, self.model.project().to_json()).is_ok() {
-                self.dirty = false;
+            let target = self.project_path.clone().unwrap_or_else(autosave_path);
+            if let Some(dir) = target.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            match std::fs::write(&target, self.model.project().to_json()) {
+                Ok(()) => {
+                    if self.project_path.is_some() {
+                        self.dirty = false;
+                    }
+                }
+                Err(e) => self.warn(format!("автосейв не удался: {e}")),
+            }
+        }
+
+        // окно уведомлений (п.18)
+        if self.notices_open {
+            let mut open = self.notices_open;
+            egui::Window::new("Уведомления")
+                .open(&mut open)
+                .default_size([460.0, 340.0])
+                .min_size([320.0, 200.0])
+                .resizable(true)
+                .vscroll(true)
+                .show(ui.ctx(), |ui| {
+                    if self.notices.is_empty() {
+                        ui.weak("Пока пусто");
+                    }
+                    for n in self.notices.iter().rev() {
+                        let col = match n.severity {
+                            Severity::Warn => egui::Color32::from_rgb(255, 190, 120),
+                            Severity::Info => egui::Color32::from_gray(200),
+                        };
+                        ui.horizontal_wrapped(|ui| {
+                            ui.weak(&n.at);
+                            ui.colored_label(col, &n.text);
+                        });
+                    }
+                });
+            self.notices_open = open;
+        }
+
+        // детект софт-рендера — один раз (пп. 17, 19)
+        if self.sw_render.is_none() {
+            let sw = _frame
+                .wgpu_render_state()
+                .map(|rs| {
+                    let info = rs.adapter.get_info();
+                    let name = info.name.to_lowercase();
+                    info.device_type == eframe::wgpu::DeviceType::Cpu
+                        || name.contains("llvmpipe")
+                        || name.contains("softpipe")
+                        || name.contains("swiftshader")
+                })
+                .unwrap_or(false);
+            self.sw_render = Some(sw);
+            if sw {
+                self.warn(
+                    "Нет аппаратного ускорения графики (софт-рендер) — интерфейс может                      подтормаживать, glow превью отключён",
+                );
             }
         }
 
@@ -1334,12 +1498,22 @@ pub fn run() -> eframe::Result {
             v.widgets.hovered.bg_fill = egui::Color32::from_rgb(52, 56, 63);
             cc.egui_ctx.set_visuals(v);
             crate::icons::install_fonts(&cc.egui_ctx);
-            let restored =
-                arg.clone().or_else(|| cc.storage.and_then(|s| s.get_string("last_project")));
+            let restored = arg
+                .clone()
+                .or_else(|| cc.storage.and_then(|s| s.get_string("last_project")))
+                .map(std::path::PathBuf::from)
+                .filter(|p| p.exists())
+                // v1: если last_project нет — восстановление из автосейва
+                .or_else(|| Some(autosave_path()).filter(|p| p.exists()));
             let app = match restored {
-                Some(p) => {
-                    let path = std::path::PathBuf::from(&p);
-                    KtApp::open(&path).unwrap_or_else(|e| KtApp::new_empty(Some(e)))
+                Some(path) => {
+                    let mut a = KtApp::open(&path).unwrap_or_else(|e| KtApp::new_empty(Some(e)));
+                    if path == autosave_path() {
+                        // восстановленный recovery остаётся «безымянным»
+                        a.project_path = None;
+                        a.note("Восстановлен автосейв безымянного проекта");
+                    }
+                    a
                 }
                 None => KtApp::new_empty(Some(
                     "Открой проект: kt-app <file.ktproj> или перетащи его на окно".into(),

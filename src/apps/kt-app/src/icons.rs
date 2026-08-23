@@ -44,3 +44,4 @@ pub fn install_fonts(ctx: &egui::Context) {
     }
     ctx.set_fonts(fonts);
 }
+pub const BELL: &str = "\u{E0CE}";

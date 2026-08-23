@@ -191,6 +191,7 @@ pub fn export_mp4(
         video_sources,
         out_path,
         None,
+        &ExportOptions::default(),
         &AtomicBool::new(false).into(),
         |_| {},
     )
@@ -198,19 +199,38 @@ pub fn export_mp4(
 
 /// Полный экспорт: диапазон (регион), отмена (kill ffmpeg + удаление
 /// частичного файла), прогресс-колбэк (зовётся из обоих потоков).
+/// Настройки экспорта (п.5): выбор кодека, качество, битрейт, разрешение.
+#[derive(Debug, Clone)]
+pub struct ExportOptions {
+    /// CRF/CQ/QP (23 ≈ визуально прозрачно).
+    pub quality: u32,
+    pub audio_bitrate: u32,
+    /// None = автовыбор с hw-приоритетом; Some = только этот энкодер
+    /// (не открылся — явная ошибка, без фолбэка).
+    pub force_encoder: Option<String>,
+    /// Переопределение разрешения (None = из настроек проекта).
+    pub resolution: Option<(u32, u32)>,
+}
+
+impl Default for ExportOptions {
+    fn default() -> ExportOptions {
+        ExportOptions { quality: 23, audio_bitrate: 192_000, force_encoder: None, resolution: None }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn export_mp4_with(
     project: &Project,
     audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     video_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     out_path: &str,
     range: Option<(Tick, Tick)>,
+    opts: &ExportOptions,
     cancel: &Arc<AtomicBool>,
     progress: impl Fn(ExportProgress) + Send + Sync + 'static,
 ) -> Result<ExportStats, ExportError> {
-    let quality = Quality {
-        width: project.settings.width.max(2) & !1,
-        height: project.settings.height.max(2) & !1,
-    };
+    let (ow, oh) = opts.resolution.unwrap_or((project.settings.width, project.settings.height));
+    let quality = Quality { width: ow.max(2) & !1, height: oh.max(2) & !1 };
     let fps = project.settings.fps;
     let (r0, r1) = match range {
         Some((a, b)) => (a, b),
@@ -228,9 +248,9 @@ pub fn export_mp4_with(
         width: quality.width,
         height: quality.height,
         fps,
-        quality: 23,
-        audio_bitrate: 192_000,
-        force_encoder: None,
+        quality: opts.quality,
+        audio_bitrate: opts.audio_bitrate,
+        force_encoder: opts.force_encoder.clone(),
     })
     .map_err(|e| ExportError::Io(std::io::Error::other(e)))?;
 

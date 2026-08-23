@@ -47,6 +47,7 @@ fn audio_clip(
         source_in: Tick::from_audio_frames(src_in_f),
         media: MediaId(media),
         gain_db: 0.0,
+        reversed: false,
         fx: vec![],
     }
 }

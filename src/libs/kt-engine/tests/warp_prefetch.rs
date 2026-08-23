@@ -26,6 +26,7 @@ fn slowed_project() -> Project {
         source_in: Tick::from_audio_frames(0),
         media: MediaId(1),
         gain_db: 0.0,
+        reversed: false,
         fx: vec![FxInstance::SlowedReverb {
             rate: 0.5,
             mix: 0.15,

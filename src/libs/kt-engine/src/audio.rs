@@ -32,6 +32,7 @@ struct AudioClip {
     gain: f32,
     media: kt_model::MediaId,
     fx: Vec<kt_model::FxInstance>,
+    reversed: bool,
 }
 
 /// Результат рендера непрерывного диапазона.
@@ -65,6 +66,7 @@ impl AudioRenderer {
                     gain: db_to_linear(c.gain_db),
                     media: c.media,
                     fx: c.fx.clone(),
+                    reversed: c.reversed,
                 }
             })
             .collect();
@@ -133,12 +135,23 @@ impl AudioRenderer {
             }
             let mut f = from;
             let mut cursor: Option<(i64, Arc<AudioBurst>)> = None; // (burst idx, data)
+            let clip_len = clip.end - clip.start;
             while f < to {
-                let src = clip.source_in + (f - clip.start);
+                // реверс: локальный кадр k читает источник с конца (п.16)
+                let src = if clip.reversed {
+                    clip.source_in + (clip_len - 1 - (f - clip.start))
+                } else {
+                    clip.source_in + (f - clip.start)
+                };
                 let bidx = src.div_euclid(AUDIO_BURST_FRAMES as i64);
                 let within = src.rem_euclid(AUDIO_BURST_FRAMES as i64);
-                // сколько кадров можем взять из этого source-burst'а подряд
-                let take = (AUDIO_BURST_FRAMES as i64 - within).min(to - f);
+                // сколько кадров можем взять из этого source-burst'а подряд:
+                // вперёд — до конца бёрста, при реверсе — вниз до его начала
+                let take = if clip.reversed {
+                    (within + 1).min(to - f)
+                } else {
+                    (AUDIO_BURST_FRAMES as i64 - within).min(to - f)
+                };
                 let burst = match &cursor {
                     Some((i, b)) if *i == bidx => Some(b.clone()),
                     _ => {
@@ -154,7 +167,8 @@ impl AudioRenderer {
                         for k in 0..take {
                             let w = self.weight_at(ci, f + k) * clip.gain;
                             let oi = ((f + k - range.start) as usize) * AUDIO_CHANNELS;
-                            let si = ((within + k) as usize) * AUDIO_CHANNELS;
+                            let sk = if clip.reversed { within - k } else { within + k };
+                            let si = (sk as usize) * AUDIO_CHANNELS;
                             for ch in 0..AUDIO_CHANNELS {
                                 out[oi + ch] += b.data[si + ch] * w;
                             }
@@ -237,8 +251,10 @@ impl AudioRenderer {
         let count = (to - from) as usize;
         let mut buf = vec![0f32; count * AUDIO_CHANNELS];
         {
+            let reversed = clip.reversed;
+            let win = (clip.source_in, src_window_end);
             let mut pull = |src_frame: i64, dst: &mut [f32]| -> bool {
-                fill_source(fetcher, media, src_frame, src_window_end, dst, &mut pull_underruns)
+                fill_source(fetcher, media, src_frame, win, reversed, dst, &mut pull_underruns)
             };
             proc.read(local, &mut buf, &mut pull);
         }
@@ -308,8 +324,20 @@ impl AudioRenderer {
                 continue;
             }
             let (s0, s1) = if c.fx.is_empty() {
-                // без FX: источник течёт 1:1 с таймлайном
-                (c.source_in + (from - c.start), c.source_in + (to - c.start))
+                if c.reversed {
+                    // зеркало: конец таймлайн-диапазона читает НАЧАЛО куска
+                    let len = c.end - c.start;
+                    (c.source_in + (len - (to - c.start)), c.source_in + (len - (from - c.start)))
+                } else {
+                    // без FX: источник течёт 1:1 с таймлайном
+                    (c.source_in + (from - c.start), c.source_in + (to - c.start))
+                }
+            } else if c.reversed {
+                // FX+реверс: окно потребления зеркалится внутри ПОЛНОГО окна
+                let len = c.end - c.start;
+                let total = kt_fx::chain_source_window(&c.fx, len, 0..len).end;
+                let w = kt_fx::chain_source_window(&c.fx, len, (from - c.start)..(to - c.start));
+                (c.source_in + (total - w.end).max(0), c.source_in + (total - w.start).max(1))
             } else {
                 // с FX: варп потребляет источник по rate_integral, а не
                 // линейно; wanted обязан покрывать РЕАЛЬНОЕ потребление
@@ -339,31 +367,50 @@ fn fill_source(
     fetcher: &mut dyn AudioFetcher,
     media: kt_model::MediaId,
     src_frame: i64,
-    window_end: i64,
+    window: (i64, i64), // (start=source_in, end) — окно потребления клипа
+    reversed: bool,
     dst: &mut [f32],
     underruns: &mut u64,
 ) -> bool {
     dst.fill(0.0);
+    let (win_start, window_end) = window;
     let frames = (dst.len() / AUDIO_CHANNELS) as i64;
     let mut f = 0i64;
     while f < frames {
-        let src = src_frame + f;
-        if src < 0 {
-            f += (-src).min(frames - f);
-            continue;
-        }
-        if src >= window_end {
+        // Реверс (п.16): виртуальный форвард-поток [win_start, window_end)
+        // читает РЕАЛЬНЫЙ источник зеркально внутри окна; FX-цепочка (варп,
+        // реверб) видит обычный форвард-поток и не знает о реверсе.
+        let virt = src_frame + f;
+        if virt >= window_end {
             break; // дальше только тишина
+        }
+        let src = if reversed { win_start + (window_end - 1 - virt) } else { virt };
+        if src < 0 || virt < 0 {
+            f += 1;
+            continue;
         }
         let bidx = src.div_euclid(AUDIO_BURST_FRAMES as i64);
         let within = src.rem_euclid(AUDIO_BURST_FRAMES as i64);
-        let take = (AUDIO_BURST_FRAMES as i64 - within).min(frames - f).min(window_end - src);
+        let take = if reversed {
+            (within + 1).min(frames - f).min(window_end - virt)
+        } else {
+            (AUDIO_BURST_FRAMES as i64 - within).min(frames - f).min(window_end - virt)
+        };
         match fetcher.audio_burst(media, bidx) {
             Some(b) => {
                 let d0 = (f as usize) * AUDIO_CHANNELS;
-                let s0 = (within as usize) * AUDIO_CHANNELS;
-                let n = (take as usize) * AUDIO_CHANNELS;
-                dst[d0..d0 + n].copy_from_slice(&b.data[s0..s0 + n]);
+                if reversed {
+                    for k in 0..take as usize {
+                        let si = (within as usize - k) * AUDIO_CHANNELS;
+                        for ch in 0..AUDIO_CHANNELS {
+                            dst[d0 + k * AUDIO_CHANNELS + ch] = b.data[si + ch];
+                        }
+                    }
+                } else {
+                    let s0 = (within as usize) * AUDIO_CHANNELS;
+                    let n = (take as usize) * AUDIO_CHANNELS;
+                    dst[d0..d0 + n].copy_from_slice(&b.data[s0..s0 + n]);
+                }
             }
             None => *underruns += 1,
         }

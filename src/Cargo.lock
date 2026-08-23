@@ -1924,6 +1924,7 @@ dependencies = [
  "kt-time",
  "realfft",
  "rtrb",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 

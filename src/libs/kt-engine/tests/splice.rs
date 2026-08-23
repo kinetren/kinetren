@@ -32,6 +32,7 @@ fn t19_copy_region_fragment_paste_renders_identically() {
         source_in: Tick::from_audio_frames(48_000), // источник со смещением
         media: MediaId(1),
         gain_db: 0.0,
+        reversed: false,
         fx: vec![],
     });
     p.validate().unwrap();
@@ -78,6 +79,7 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
         source_in: Tick(0),
         media: MediaId(1),
         gain_db: 0.0,
+        reversed: false,
         fx: vec![],
     });
     p.validate().unwrap();

@@ -1001,6 +1001,9 @@ impl KtApp {
                     label.push(' ');
                     label.push_str(crate::icons::FX);
                 }
+                if c.reversed {
+                    label.push_str(" ◀");
+                }
                 let galley = painter.layout_no_wrap(
                     label,
                     egui::FontId::proportional(10.5),
@@ -1220,6 +1223,11 @@ impl KtApp {
                 }
                 if ui.button("Эффекты…").clicked() {
                     self.open_fx_editor(id);
+                    ui.close();
+                }
+                let is_rev = self.model.clip(id).map(|c| c.reversed).unwrap_or(false);
+                if ui.button(if is_rev { "Реверс ✓" } else { "Реверс" }).clicked() {
+                    self.apply(Command::SetReversed { id, reversed: !is_rev });
                     ui.close();
                 }
                 ui.separator();
