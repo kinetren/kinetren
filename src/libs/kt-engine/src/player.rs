@@ -42,6 +42,11 @@ pub struct AudioShared {
     pub flush: AtomicBool,
     /// Underrun'ы колбэка (кольцо было пусто во время playing).
     pub callback_underruns: AtomicU64,
+    /// Скорость воспроизведения (f32-биты; 1.0 = норма). Колбэк читает
+    /// кольцо с этим шагом (линейная интерполяция) — питч плывёт как в
+    /// Vegas (varispeed, п.4); playhead сам едет быстрее/медленнее,
+    /// т.к. consumed считает кадры ИСТОЧНИКА.
+    pub playback_rate: AtomicU32,
     /// Оценка задержки вывода в кадрах 48k (cpal timestamp playback−callback):
     /// playhead двигается в момент ЗАБОРА кадров колбэком, а слышны они на
     /// эту задержку позже — видео для «слышимого сейчас» момента (п.30).
@@ -144,6 +149,7 @@ impl Player {
             consumed_frames: AtomicI64::new(0),
             flush: AtomicBool::new(false),
             callback_underruns: AtomicU64::new(0),
+            playback_rate: AtomicU32::new(1.0f32.to_bits()),
             output_latency_frames: AtomicI64::new(0),
         });
         let meters = Arc::new(Meters { peak_l: AtomicU32::new(0), peak_r: AtomicU32::new(0) });
@@ -268,6 +274,15 @@ impl Player {
 
     pub fn project(&self) -> Project {
         self.project.lock().unwrap().clone()
+    }
+
+    /// Скорость воспроизведения (п.4, ползунок как в Vegas).
+    pub fn set_playback_rate(&self, rate: f32) {
+        self.shared.playback_rate.store(rate.clamp(0.25, 2.0).to_bits(), Ordering::Release);
+    }
+
+    pub fn playback_rate(&self) -> f32 {
+        f32::from_bits(self.shared.playback_rate.load(Ordering::Acquire))
     }
 
     pub fn set_preview_quality(&self, q: Quality) {
@@ -694,5 +709,118 @@ mod sync_tests {
         assert_eq!(video_display_frame(55_000, 1_000, Some((50_000, 60_000))), 54_000);
         // до региона — линейно
         assert_eq!(video_display_frame(10_000, 1_000, Some((50_000, 60_000))), 9_000);
+    }
+}
+
+/// Varispeed-ядро колбэка (п.4): читает кадры источника через `next_frame`
+/// с дробным шагом `step` (кадров источника на выходной кадр) и ЛИНЕЙНОЙ
+/// интерполяцией. `phase` — дробное положение между prev и cur (переживает
+/// колбэки). Возвращает число потреблённых кадров источника — оно двигает
+/// playhead, поэтому скорость воспроизведения масштабируется сама.
+/// Чистая функция — тест 32.
+#[allow(clippy::too_many_arguments)]
+pub fn varispeed_fill(
+    next_frame: &mut dyn FnMut() -> Option<(f32, f32)>,
+    step: f64,
+    out_frames: usize,
+    prev: &mut (f32, f32),
+    cur: &mut (f32, f32),
+    primed: &mut bool,
+    phase: &mut f64,
+    mut emit: impl FnMut(usize, (f32, f32)),
+) -> i64 {
+    let mut consumed = 0i64;
+    if !*primed {
+        // прайминг: два кадра, чтобы интерполяция prev..cur была честной
+        if let Some(f) = next_frame() {
+            *prev = f;
+            consumed += 1;
+            *cur = next_frame().inspect(|_| consumed += 1).unwrap_or(f);
+            *primed = true;
+            *phase = 0.0;
+        }
+    }
+    for i in 0..out_frames {
+        *phase += step;
+        while *phase >= 1.0 {
+            *phase -= 1.0;
+            *prev = *cur;
+            match next_frame() {
+                Some(f) => {
+                    *cur = f;
+                    consumed += 1;
+                }
+                None => {
+                    // underrun: тянем последний кадр (без щелчка)
+                    *cur = *prev;
+                }
+            }
+        }
+        let a = *phase as f32;
+        emit(i, (prev.0 + (cur.0 - prev.0) * a, prev.1 + (cur.1 - prev.1) * a));
+    }
+    consumed
+}
+
+#[cfg(test)]
+mod varispeed_tests {
+    use super::varispeed_fill;
+
+    fn run(rate: f64, out_frames: usize, src_len: usize) -> (Vec<(f32, f32)>, i64) {
+        // источник-рампа: кадр n = (n, -n)
+        let mut n = 0usize;
+        let mut next = move || {
+            if n < src_len {
+                let v = n as f32;
+                n += 1;
+                Some((v, -v))
+            } else {
+                None
+            }
+        };
+        let mut out = vec![(0.0, 0.0); out_frames];
+        let (mut prev, mut cur, mut primed, mut phase) = ((0.0, 0.0), (0.0, 0.0), false, 0.0);
+        let consumed = varispeed_fill(
+            &mut next,
+            rate,
+            out_frames,
+            &mut prev,
+            &mut cur,
+            &mut primed,
+            &mut phase,
+            |i, f| out[i] = f,
+        );
+        (out, consumed)
+    }
+
+    /// Тест 32 (п.4): потребление = out×rate (±1 кадр прайминга),
+    /// линейная интерполяция exact на рампе, rate=1 — тождество.
+    #[test]
+    fn t32_varispeed_consumption_and_interpolation() {
+        // rate=1: тождество
+        let (out, consumed) = run(1.0, 100, 1000);
+        assert_eq!(consumed, 102, "прайминг (2) + 100 шагов");
+        for (i, f) in out.iter().enumerate() {
+            assert_eq!(f.0, (i + 1) as f32, "rate=1 == кадр за кадром");
+            assert_eq!(f.1, -((i + 1) as f32));
+        }
+
+        // rate=0.5: половинное потребление, интерполяция между кадрами exact
+        let (out, consumed) = run(0.5, 100, 1000);
+        assert!((consumed - 52).abs() <= 1, "0.5×100 + прайминг, вышло {consumed}");
+        // рампа: значение выхода растёт ровно на 0.5 за кадр
+        for w in out.windows(2) {
+            let d = w[1].0 - w[0].0;
+            assert!((d - 0.5).abs() < 1e-4, "линейная интерполяция рампы: шаг {d}");
+        }
+
+        // rate=2: двойное потребление
+        let (_, consumed) = run(2.0, 100, 1000);
+        assert!((consumed - 202).abs() <= 1, "2×100 + прайминг, вышло {consumed}");
+
+        // источник иссяк: не паникуем, тянем последний кадр
+        let (out, consumed) = run(1.0, 100, 20);
+        assert_eq!(consumed, 20);
+        assert_eq!(out[99].0, 19.0, "после конца — последний кадр");
     }
 }

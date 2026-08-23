@@ -53,6 +53,11 @@ pub fn start(
     // На 48k-устройствах (норма для PipeWire) путь тождественный.
     let step = AUDIO_SAMPLE_RATE as f64 / device_rate as f64;
 
+    // состояние varispeed-интерполятора между колбэками
+    let mut vs_prev = (0.0f32, 0.0f32);
+    let mut vs_cur = (0.0f32, 0.0f32);
+    let mut vs_primed = false;
+    let mut vs_phase = 0.0f64;
     let stream = device
         .build_output_stream(
             &config.config(),
@@ -65,64 +70,45 @@ pub fn start(
                 }
                 if shared.flush.swap(false, Ordering::AcqRel) {
                     while ring.pop().is_ok() {}
+                    vs_primed = false;
+                    vs_phase = 0.0;
                 }
                 let out_frames = data.len() / device_channels;
                 if !transport.is_playing() {
                     data.fill(0.0);
                     return;
                 }
-                if (step - 1.0).abs() < 1e-9 {
-                    // прямой путь: device 48k
-                    let mut consumed = 0i64;
-                    for f in 0..out_frames {
-                        let (l, r) = match (ring.pop(), ring.pop()) {
-                            (Ok(l), Ok(r)) => {
-                                consumed += 1;
-                                (l, r)
-                            }
-                            _ => {
-                                shared.callback_underruns.fetch_add(1, Ordering::Relaxed);
-                                (0.0, 0.0)
-                            }
-                        };
+                // Единый varispeed-путь (п.4): шаг = device_step × rate,
+                // линейная интерполяция (ядро kt_engine::varispeed_fill,
+                // тест 32). Питч плывёт со скоростью — как в Vegas;
+                // consumed считает кадры ИСТОЧНИКА, поэтому playhead
+                // (и видео за ним) сами едут с выбранной скоростью.
+                let rate = f32::from_bits(shared.playback_rate.load(Ordering::Acquire)) as f64;
+                let eff_step = step * rate;
+                let mut next = || -> Option<(f32, f32)> {
+                    match (ring.pop(), ring.pop()) {
+                        (Ok(l), Ok(r)) => Some((l, r)),
+                        _ => {
+                            shared.callback_underruns.fetch_add(1, Ordering::Relaxed);
+                            None
+                        }
+                    }
+                };
+                let consumed = kt_engine::varispeed_fill(
+                    &mut next,
+                    eff_step,
+                    out_frames,
+                    &mut vs_prev,
+                    &mut vs_cur,
+                    &mut vs_primed,
+                    &mut vs_phase,
+                    |f, (l, r)| {
                         for ch in 0..device_channels {
                             data[f * device_channels + ch] = if ch == 0 { l } else { r };
                         }
-                    }
-                    shared.consumed_frames.fetch_add(consumed, Ordering::AcqRel);
-                } else {
-                    // редкий путь: устройство не 48k — тянем с дробным шагом
-                    let mut acc = 0f64;
-                    let mut consumed = 0i64;
-                    let mut cur = (0.0f32, 0.0f32);
-                    let mut have = false;
-                    for f in 0..out_frames {
-                        acc += step;
-                        while acc >= 1.0 || !have {
-                            match (ring.pop(), ring.pop()) {
-                                (Ok(l), Ok(r)) => {
-                                    cur = (l, r);
-                                    consumed += 1;
-                                    have = true;
-                                }
-                                _ => {
-                                    shared.callback_underruns.fetch_add(1, Ordering::Relaxed);
-                                    cur = (0.0, 0.0);
-                                    have = true;
-                                }
-                            }
-                            if acc >= 1.0 {
-                                acc -= 1.0;
-                            } else {
-                                break;
-                            }
-                        }
-                        for ch in 0..device_channels {
-                            data[f * device_channels + ch] = if ch == 0 { cur.0 } else { cur.1 };
-                        }
-                    }
-                    shared.consumed_frames.fetch_add(consumed, Ordering::AcqRel);
-                }
+                    },
+                );
+                shared.consumed_frames.fetch_add(consumed, Ordering::AcqRel);
             },
             |e| eprintln!("cpal error: {e}"),
             None,

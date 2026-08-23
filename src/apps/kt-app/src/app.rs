@@ -1128,6 +1128,26 @@ impl KtApp {
                 self.apply(Command::SetSettings { settings: st });
             }
             ui.separator();
+            // ползунок скорости воспроизведения (п.4, как в Sony Vegas)
+            ui.separator();
+            ui.label("Скорость:");
+            let mut rate = self.player.playback_rate();
+            let slider = ui.add(
+                egui::Slider::new(&mut rate, 0.25..=2.0)
+                    .logarithmic(true)
+                    .fixed_decimals(2)
+                    .suffix("×"),
+            );
+            if slider.changed() {
+                self.player.set_playback_rate(rate);
+            }
+            if slider.double_clicked() {
+                self.player.set_playback_rate(1.0);
+            }
+            if (rate - 1.0).abs() > 0.001 {
+                ui.colored_label(egui::Color32::from_rgb(255, 200, 100), "≠1×");
+            }
+            ui.separator();
             ui.label("Разрешение:");
             let mut res = (proj.width, proj.height);
             let before_res = res;
