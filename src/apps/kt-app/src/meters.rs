@@ -66,6 +66,46 @@ fn zone_color(db: f32) -> egui::Color32 {
     }
 }
 
+/// Радиальное свечение (порт drawGlowEllipse: QRadialGradient, режим Plus).
+/// Аппроксимация: три вложенных эллипса с убывающей альфой.
+fn glow_ellipse(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: egui::Vec2,
+    col: egui::Color32,
+    alpha: u8,
+) {
+    for (k, a) in [(1.0f32, 1.0f32), (0.62, 1.6), (0.28, 2.4)] {
+        painter.add(egui::Shape::from(egui::epaint::EllipseShape {
+            center,
+            radius: radius * k,
+            fill: egui::Color32::from_rgba_unmultiplied(
+                col.r(),
+                col.g(),
+                col.b(),
+                ((alpha as f32) * a).min(255.0) as u8,
+            ),
+            stroke: egui::Stroke::NONE,
+            angle: 0.0,
+        }));
+    }
+}
+
+/// Цвет свечения кэпа (порт capGlowColor: кремово-белая база, тонировка зоной).
+fn cap_glow_color(db: f32) -> egui::Color32 {
+    if db > 0.0 {
+        egui::Color32::from_rgb(255, 120, 95)
+    } else if db >= -3.0 {
+        egui::Color32::from_rgb(255, 85, 70)
+    } else if db >= -9.0 {
+        egui::Color32::from_rgb(255, 205, 60)
+    } else if db >= -18.0 {
+        egui::Color32::from_rgb(245, 242, 230)
+    } else {
+        zone_color(db)
+    }
+}
+
 impl KtApp {
     /// Панель метров+фейдера справа от превью. Возвращает высоту не более
     /// доступной; ширина ~64 px.
@@ -166,50 +206,102 @@ impl KtApp {
         }
 
         for (ch, &x0) in bar_x.iter().enumerate() {
+            // фон бара (порт: QColor(8,9,11))
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(x0 - 1.0, bars.top() - 1.0),
+                    egui::pos2(x0 + bar_w + 1.0, bars.bottom() + 1.0),
+                ),
+                2.0,
+                egui::Color32::from_rgb(8, 9, 11),
+            );
+            // зонное свечение позади бара (v1: слои Plus-эллипсов)
+            let level_db = self.meter.bar_db[ch];
+            if level_db > METER_MIN_DB + 1.0 {
+                let level_y = db_to_y(level_db);
+                let cx = x0 + bar_w / 2.0;
+                for (zone_top, zone_bot) in [
+                    (6.0f32, 0.0f32),
+                    (0.0, -3.0),
+                    (-3.0, -9.0),
+                    (-9.0, -18.0),
+                    (-18.0, -36.0),
+                    (-36.0, -48.0),
+                ] {
+                    if level_db < zone_bot {
+                        continue; // зона не зажжена
+                    }
+                    let y_top = db_to_y(zone_top.min(level_db));
+                    let y_bot = db_to_y(zone_bot.max(METER_MIN_DB));
+                    let cy = (y_top + y_bot) / 2.0;
+                    glow_ellipse(
+                        &painter,
+                        egui::pos2(cx, cy),
+                        egui::vec2(bar_w * 1.35, ((y_bot - y_top) * 0.5 + 14.0).max(16.0)),
+                        zone_color((zone_top + zone_bot) / 2.0),
+                        10,
+                    );
+                }
+                // головной блик у текущего уровня
+                glow_ellipse(
+                    &painter,
+                    egui::pos2(cx, level_y),
+                    egui::vec2(bar_w * 1.6, 15.0),
+                    zone_color(level_db),
+                    16,
+                );
+            }
+            // LED-сегменты v1: 6 px + 2 px зазор, светлая верхняя кромка
             let mut y = bars.bottom();
             while y > bars.top() {
-                let seg_top = (y - 5.0).max(bars.top());
+                let seg_top = (y - 6.0).max(bars.top());
                 let db_here = METER_MIN_DB
                     + (bars.bottom() - y) / bars.height() * (METER_MAX_DB - METER_MIN_DB);
                 let lit = db_here <= self.meter.bar_db[ch];
-                let col = if lit { zone_color(db_here) } else { egui::Color32::from_gray(34) };
-                painter.rect_filled(
-                    egui::Rect::from_min_max(
-                        egui::pos2(x0, seg_top),
-                        egui::pos2(x0 + bar_w, y - 1.0),
-                    ),
-                    1.0,
-                    col,
+                let col =
+                    if lit { zone_color(db_here) } else { egui::Color32::from_rgb(14, 16, 19) };
+                let seg = egui::Rect::from_min_max(
+                    egui::pos2(x0, seg_top),
+                    egui::pos2(x0 + bar_w, y - 1.0),
                 );
-                y -= 7.0;
-            }
-            // peak-hold cap со свечением (два слоя ореола)
-            let cap_db = self.meter.cap_db[ch];
-            if cap_db > METER_MIN_DB + 0.5 {
-                let cap_y = db_to_y(cap_db);
-                let cap_col = zone_color(cap_db);
-                for (expand, alpha) in [(4.0f32, 26u8), (2.0, 60)] {
-                    painter.rect_filled(
-                        egui::Rect::from_min_max(
-                            egui::pos2(x0 - expand, cap_y - 2.0 - expand),
-                            egui::pos2(x0 + bar_w + expand, cap_y + expand),
-                        ),
-                        3.0,
-                        egui::Color32::from_rgba_unmultiplied(
-                            cap_col.r(),
-                            cap_col.g(),
-                            cap_col.b(),
-                            alpha,
-                        ),
+                painter.rect_filled(seg.shrink(0.5), 1.0, col);
+                if lit {
+                    painter.line_segment(
+                        [
+                            egui::pos2(seg.left() + 1.0, seg.top() + 0.5),
+                            egui::pos2(seg.right() - 1.0, seg.top() + 0.5),
+                        ],
+                        egui::Stroke::new(1.0, col.gamma_multiply(1.25)),
                     );
                 }
+                y -= 8.0;
+            }
+            // линия 0 dB поперёк бара (порт: 95,105,118,140)
+            let zero_y = db_to_y(0.0);
+            painter.line_segment(
+                [egui::pos2(x0, zero_y), egui::pos2(x0 + bar_w, zero_y)],
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(95, 105, 118, 140)),
+            );
+            // peak-hold cap: кремово-белый сегмент со свечением (v1:
+            // capDb > level+0.4, три эллипса ореола)
+            let cap_db = self.meter.cap_db[ch];
+            if cap_db > self.meter.bar_db[ch] + 0.4 && cap_db > METER_MIN_DB + 1.0 {
+                let cap_y = db_to_y(cap_db);
+                let cap_col = cap_glow_color(cap_db);
+                glow_ellipse(
+                    &painter,
+                    egui::pos2(x0 + bar_w / 2.0, cap_y),
+                    egui::vec2(bar_w * 2.0, 13.0),
+                    cap_col,
+                    22,
+                );
                 painter.rect_filled(
                     egui::Rect::from_min_max(
-                        egui::pos2(x0, cap_y - 2.0),
+                        egui::pos2(x0, cap_y - 2.5),
                         egui::pos2(x0 + bar_w, cap_y),
                     ),
-                    0.0,
-                    cap_col.gamma_multiply(1.25),
+                    1.0,
+                    cap_col,
                 );
             }
         }
@@ -234,33 +326,68 @@ impl KtApp {
         painter.rect_filled(track, 2.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 120));
         let ft = (self.meter.fader_db - FADER_MIN_DB) / (FADER_MAX_DB - FADER_MIN_DB);
         let hy = bars.bottom() - ft.clamp(0.0, 1.0) * bars.height();
+        // Ручка v1 (PreviewVolumeFader): вертикальный градиент, насечки,
+        // центральная канавка, тень снизу, обводка тёмным.
         let handle = egui::Rect::from_center_size(
             egui::pos2(bars.center().x, hy),
-            egui::vec2(bars.width() + 6.0, 9.0),
+            egui::vec2(bars.width() + 6.0, 14.0),
         );
-        let handle_col = if self.meter.muted {
-            egui::Color32::from_rgb(220, 70, 70)
+        let (g_top, g_mid, g_bot) = if self.meter.muted {
+            (
+                egui::Color32::from_rgb(210, 90, 90),
+                egui::Color32::from_rgb(172, 52, 52),
+                egui::Color32::from_rgb(110, 32, 32),
+            )
         } else {
-            egui::Color32::from_gray(235)
+            (
+                egui::Color32::from_rgb(128, 132, 142),
+                egui::Color32::from_rgb(78, 82, 90),
+                egui::Color32::from_rgb(48, 50, 56),
+            )
         };
-        // ореол ручки
+        // тень под ручкой
         painter.rect_filled(
-            handle.expand(2.5),
-            4.0,
-            egui::Color32::from_rgba_unmultiplied(
-                handle_col.r(),
-                handle_col.g(),
-                handle_col.b(),
-                40,
-            ),
+            handle.translate(egui::vec2(0.0, 2.0)),
+            3.0,
+            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 70),
         );
-        painter.rect_filled(handle, 3.0, handle_col.gamma_multiply(0.95));
+        // 3-стоповый градиент двумя мешами (стоп 0.45 как в v1)
+        let mid_y = handle.top() + handle.height() * 0.45;
+        crate::toolbar::gradient_rect(
+            &painter,
+            egui::Rect::from_min_max(handle.left_top(), egui::pos2(handle.right(), mid_y)),
+            g_top,
+            g_mid,
+        );
+        crate::toolbar::gradient_rect(
+            &painter,
+            egui::Rect::from_min_max(egui::pos2(handle.left(), mid_y), handle.right_bottom()),
+            g_mid,
+            g_bot,
+        );
+        painter.rect(
+            handle,
+            3.0,
+            egui::Color32::TRANSPARENT,
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(12, 14, 18)),
+            egui::StrokeKind::Outside,
+        );
+        // насечки каждые 4 px (белые, альфа 40)
+        let mut nx = handle.left() + 7.0;
+        while nx <= handle.right() - 7.0 {
+            painter.line_segment(
+                [egui::pos2(nx, handle.top() + 3.0), egui::pos2(nx, handle.bottom() - 3.0)],
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 40)),
+            );
+            nx += 4.0;
+        }
+        // центральная канавка
         painter.line_segment(
             [
-                egui::pos2(handle.left() + 4.0, handle.center().y),
-                egui::pos2(handle.right() - 4.0, handle.center().y),
+                egui::pos2(handle.left() + 3.0, handle.center().y),
+                egui::pos2(handle.right() - 3.0, handle.center().y),
             ],
-            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(120)),
+            egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 45)),
         );
 
         // кнопка M (mute) внизу

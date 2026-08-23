@@ -149,3 +149,75 @@ pub fn spawn_media_watchdog(
         .expect("spawn media watchdog");
     set
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> String {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+        static GEN: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+        GEN.get_or_init(|| {
+            let st = std::process::Command::new("bash")
+                .arg(dir.join("gen.sh"))
+                .status()
+                .expect("run fixtures/gen.sh");
+            assert!(st.success());
+        });
+        dir.join("out").join(name).to_string_lossy().to_string()
+    }
+
+    /// Тест 23 (п.3): пики строятся и БЕЗ индекс-БД (безымянный проект) —
+    /// раньше db_path=None означал «пиков не будет вообще».
+    #[test]
+    fn t23_peaks_build_without_db() {
+        let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
+        spawn_index_worker(
+            None, // безымянный проект
+            vec![(MediaId(7), fixture("sine48k_stereo.flac"))],
+            out.clone(),
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if let Some(p) = out.lock().unwrap().get(&MediaId(7)) {
+                assert!(!p.is_empty(), "пирамида должна иметь уровни");
+                let l0 = &p[0].0;
+                assert!(!l0.is_empty(), "уровень 0 не пустой");
+                assert!(
+                    l0.iter().any(|(lo, hi)| *lo != 0 || *hi != 0),
+                    "пики синуса не должны быть нулями"
+                );
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "пики не построились за 15 с");
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+    }
+
+    /// Тест 23 (п.3): тумбы для медиа, добавленного ПОСЛЕ старта сервиса
+    /// (раньше карта медиа замораживалась при старте).
+    #[test]
+    fn t23_thumbs_for_media_added_after_start() {
+        let project = kt_model::Project::new(kt_model::ProjectSettings {
+            fps: 30,
+            width: 640,
+            height: 360,
+            sample_rate: 48000,
+        });
+        let svc = crate::thumbs::ThumbService::start(&project, None);
+        svc.add_media(MediaId(3), fixture("testsrc_h264.mp4"));
+        let key = crate::thumbs::ThumbKey { media: MediaId(3), t: 0 };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            svc.request(key);
+            if svc.get(&key).is_some() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "тумба добавленного медиа не построилась за 15 с"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+    }
+}
