@@ -38,12 +38,23 @@ pub enum RequestKind {
     /// Аудио-burst источника.
     Audio { idx: i64 },
     /// Видеокадр по pts источника (в тиках), выровненный вызывающим.
-    Video { pts: Tick, quality: Option<(u32, u32)> },
+    /// `step` — шаг сетки кадров (тики): ширина покрытия в coverage (п.20).
+    Video { pts: Tick, quality: Option<(u32, u32)>, step: i64 },
 }
 
 impl RequestKind {
     pub fn video(pts: Tick, quality: Option<Quality>) -> RequestKind {
-        RequestKind::Video { pts, quality: quality.map(|q| (q.width, q.height)) }
+        RequestKind::Video { pts, quality: quality.map(|q| (q.width, q.height)), step: 1 }
+    }
+
+    /// Видео-запрос по сетке проекта: coverage закроется полосой [pts,
+    /// pts+step) — полоска кэша честная (п.20).
+    pub fn video_on_grid(pts: Tick, quality: Option<Quality>, frame_step: i64) -> RequestKind {
+        RequestKind::Video {
+            pts,
+            quality: quality.map(|q| (q.width, q.height)),
+            step: frame_step.max(1),
+        }
     }
 }
 
@@ -64,7 +75,7 @@ struct Queue {
     // (п.14/15: постоянные backward seek → полный reopen на каждый кадр).
     // BTreeMap даёт и порядок, и dedup.
     audio: BTreeMap<(Priority, i64), u64>, // pos = burst idx
-    video: BTreeMap<VideoQueueKey, u64>,   // pos = pts тики
+    video: BTreeMap<VideoQueueKey, (u64, i64)>, // pos = pts тики; (gen, step)
     closed: bool,
 }
 
@@ -128,8 +139,8 @@ impl MediaWorker {
             RequestKind::Audio { idx } => {
                 q.audio.insert((req.prio, idx), req.generation);
             }
-            RequestKind::Video { pts, quality } => {
-                q.video.insert((req.prio, pts.0, quality), req.generation);
+            RequestKind::Video { pts, quality, step } => {
+                q.video.insert((req.prio, pts.0, quality), (req.generation, step));
             }
         }
         self.shared.idle.store(false, Ordering::Release);
@@ -142,7 +153,7 @@ impl MediaWorker {
         self.shared.min_generation.store(min_generation, Ordering::Release);
         let mut q = self.shared.queue.lock().unwrap();
         q.audio.retain(|_, g| *g >= min_generation);
-        q.video.retain(|_, g| *g >= min_generation);
+        q.video.retain(|_, (g, _)| *g >= min_generation);
         drop(q);
         self.shared.cond.notify_one();
     }
@@ -171,22 +182,26 @@ fn worker_loop(
     cache: &BurstCache,
     stats: &DecodeStats,
 ) {
-    /// Сколько видео-ключей забираем в один спан-декод.
-    const SPAN_MAX_KEYS: usize = 64;
     /// Насколько далеко вперёд от первого ключа расширяем спан.
     const SPAN_MAX_AHEAD_TICKS: i64 = 2 * kt_time::TICK_HZ;
 
     // Курсоры «где был декодер» — СВОИ у аудио и видео (см. Queue).
     let mut cursor_audio: i64 = 0;
     let mut cursor_video: i64 = 0;
+    // Negative-кэш (п.19г): ключи, по которым декодер ничего не отдал
+    // (за EOF) — не декодируем повторно, иначе prefetch каждые 100 мс
+    // гонял декодер в вечные seek'и.
+    let mut failed_video: std::collections::HashSet<(i64, Option<(u32, u32)>)> =
+        std::collections::HashSet::new();
+    let mut failed_audio: std::collections::HashSet<i64> = std::collections::HashSet::new();
     loop {
         enum Job {
             Audio {
                 idx: i64,
             },
-            /// Первый ключ + добранные вперёд того же приоритета/качества.
+            /// Первый ключ + добранный вперёд хвост (любых приоритетов).
             VideoSpan {
-                keys: Vec<Tick>,
+                keys: Vec<(Tick, i64)>, // (pts, step покрытия)
                 quality: Option<(u32, u32)>,
             },
         }
@@ -202,23 +217,40 @@ fn worker_loop(
                         break Job::Audio { idx: key.1 };
                     }
                     Some(Pick::Video(key)) => {
-                        let (prio, first_pts, quality) = key;
-                        q.video.remove(&key);
-                        // добор спана: те же prio/quality, строго вперёд,
-                        // в пределах окна, не в кэше
-                        let mut keys = vec![Tick(first_pts)];
+                        let (_prio, first_pts, quality) = key;
+                        let (_g, first_step) = q.video.remove(&key).unwrap_or((0, 1));
+                        // Добор спана ПОВЕРХ приоритетов (п.19а): Playback-ключ
+                        // становится НАЧАЛОМ спана, а NearPrefetch-хвост едет
+                        // тем же декод-проходом. Раньше добор брал только свой
+                        // приоритет: пока жив хоть один Playback-ключ (кадр
+                        // неполный), спаны вырождались в «один кадр за раз с
+                        // seek'ами» — кэш переставал расти.
+                        let mut keys = vec![(Tick(first_pts), first_step)];
                         let horizon = first_pts + SPAN_MAX_AHEAD_TICKS;
-                        let candidates: Vec<_> = q
-                            .video
-                            .range((prio, first_pts, None)..)
-                            .take_while(|(k, _)| k.0 == prio && k.1 <= horizon)
-                            .map(|(&k, _)| k)
-                            .filter(|&(_, pos, ql)| ql == quality && pos > first_pts)
-                            .take(SPAN_MAX_KEYS - 1)
-                            .collect();
-                        for k in candidates {
-                            if cache.get_video(source_id, quality.map(into_q), k.1).is_none() {
-                                keys.push(Tick(k.1));
+                        let budget = span_key_budget(quality, cache.max_video_bytes());
+                        let mut cand: Vec<(VideoQueueKey, i64)> = Vec::new();
+                        for p in [
+                            crate::Priority::Playback,
+                            crate::Priority::NearPrefetch,
+                            crate::Priority::FarPrefetch,
+                            crate::Priority::Thumbnail,
+                        ] {
+                            cand.extend(
+                                q.video
+                                    .range((p, first_pts + 1, None)..)
+                                    .take_while(|(k, _)| k.0 == p && k.1 <= horizon)
+                                    .filter(|(k, _)| k.2 == quality)
+                                    .map(|(&k, &(_, step))| (k, step)),
+                            );
+                        }
+                        cand.sort_by_key(|(k, _)| k.1);
+                        cand.dedup_by_key(|(k, _)| k.1);
+                        for (k, step) in cand {
+                            if keys.len() < budget
+                                && !cache.contains_video(source_id, quality.map(into_q), k.1)
+                                && !failed_video.contains(&(k.1, quality))
+                            {
+                                keys.push((Tick(k.1), step));
                             }
                             q.video.remove(&k);
                         }
@@ -235,19 +267,26 @@ fn worker_loop(
         match job {
             Job::Audio { idx } => {
                 cursor_audio = idx * kt_time::AUDIO_BURST_TICKS;
-                if cache.get_audio(source_id, idx).is_none() {
+                if !cache.contains_audio(source_id, idx) && !failed_audio.contains(&idx) {
                     stats.audio_decodes.fetch_add(1, Ordering::Relaxed);
-                    if let Ok(burst) = source.read_audio_burst(idx) {
-                        cache.insert_audio(source_id, Arc::new(burst));
+                    match source.read_audio_burst(idx) {
+                        Ok(burst) => cache.insert_audio(source_id, Arc::new(burst)),
+                        Err(kt_media::MediaError::OutOfRange) => {
+                            failed_audio.insert(idx);
+                        }
+                        Err(_) => {}
                     }
                 }
             }
             Job::VideoSpan { keys, quality } => {
                 let q = quality.map(into_q);
-                cursor_video = keys.last().map(|k| k.0).unwrap_or(cursor_video);
-                let missing: Vec<Tick> = keys
+                cursor_video = keys.last().map(|(k, _)| k.0).unwrap_or(cursor_video);
+                let missing: Vec<(Tick, i64)> = keys
                     .into_iter()
-                    .filter(|k| cache.get_video(source_id, q, k.0).is_none())
+                    .filter(|(k, _)| {
+                        !cache.contains_video(source_id, q, k.0)
+                            && !failed_video.contains(&(k.0, quality))
+                    })
                     .collect();
                 if missing.is_empty() {
                     continue;
@@ -257,9 +296,23 @@ fn worker_loop(
                     stats.video_span_batches.fetch_add(1, Ordering::Relaxed);
                     stats.video_span_frames.fetch_add(missing.len() as u64, Ordering::Relaxed);
                 }
-                let _ = source.read_video_span(&missing, q, &mut |k, frame| {
-                    cache.insert_video(source_id, q, k.0, Arc::new(frame));
+                let steps: std::collections::HashMap<i64, i64> =
+                    missing.iter().map(|(k, s)| (k.0, *s)).collect();
+                let pts_only: Vec<Tick> = missing.iter().map(|(k, _)| *k).collect();
+                let mut emitted: std::collections::HashSet<i64> = std::collections::HashSet::new();
+                let res = source.read_video_span(&pts_only, q, &mut |k, frame| {
+                    emitted.insert(k.0);
+                    let span = steps.get(&k.0).copied().unwrap_or(1).max(1);
+                    cache.insert_video_span(source_id, q, k.0, span, Arc::new(frame));
                 });
+                if res.is_ok() {
+                    // ключи, не закрытые декодером (EOF) — в negative-кэш
+                    for k in pts_only {
+                        if !emitted.contains(&k.0) {
+                            failed_video.insert((k.0, quality));
+                        }
+                    }
+                }
             }
         }
     }
@@ -267,6 +320,19 @@ fn worker_loop(
 
 fn into_q((width, height): (u32, u32)) -> Quality {
     Quality { width, height }
+}
+
+/// Спан не должен уметь выселить сам себя: не больше половины видео-бюджета
+/// за один проход (п.19в). Для превью 640×360 это прежние 64 ключа.
+fn span_key_budget(quality: Option<(u32, u32)>, max_video_bytes: usize) -> usize {
+    const SPAN_MAX_KEYS: usize = 64;
+    match quality {
+        Some((w, h)) => {
+            let frame_bytes = (w as usize * h as usize * 4).max(1);
+            ((max_video_bytes / 2) / frame_bytes).clamp(1, SPAN_MAX_KEYS)
+        }
+        None => SPAN_MAX_KEYS,
+    }
 }
 
 enum Pick {

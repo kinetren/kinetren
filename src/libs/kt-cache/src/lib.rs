@@ -71,6 +71,9 @@ struct Entry {
     payload: Payload,
     recency: u64,
     pinned: bool,
+    /// Ширина покрытия записи в idx-единицах (аудио = 1 burst; видео = шаг
+    /// сетки кадров в тиках — coverage сливается в честные полосы, п.20).
+    span: i64,
 }
 
 /// Набор непересекающихся полуоткрытых диапазонов [start, end) по idx.
@@ -80,8 +83,11 @@ struct IntervalSet {
 }
 
 impl IntervalSet {
-    fn insert(&mut self, idx: i64) {
-        let (mut start, mut end) = (idx, idx + 1);
+    fn insert_range(&mut self, idx: i64, idx_end: i64) {
+        if idx_end <= idx {
+            return;
+        }
+        let (mut start, mut end) = (idx, idx_end);
         // сосед слева (может содержать или примыкать)
         if let Some((&s, &e)) = self.runs.range(..=idx).next_back()
             && e >= start
@@ -93,15 +99,20 @@ impl IntervalSet {
             end = end.max(e);
             self.runs.remove(&s);
         }
-        // сосед справа (примыкание end == next start)
-        if let Some((&s, &e)) = self.runs.range(end..=end).next() {
-            self.runs.remove(&s);
-            end = e;
+        // все runs, начинающиеся внутри/на границе нового диапазона
+        let overlapped: Vec<i64> = self.runs.range(start..=end).map(|(&s, _)| s).collect();
+        for s in overlapped {
+            let e = self.runs.remove(&s).unwrap();
+            end = end.max(e);
         }
         self.runs.insert(start, end);
     }
 
-    fn remove(&mut self, idx: i64) {
+    fn remove_range(&mut self, idx: i64, idx_end: i64) {
+        if idx_end <= idx {
+            return;
+        }
+        // run слева, накрывающий начало
         if let Some((&s, &e)) = self.runs.range(..=idx).next_back()
             && idx < e
         {
@@ -109,8 +120,16 @@ impl IntervalSet {
             if s < idx {
                 self.runs.insert(s, idx);
             }
-            if idx + 1 < e {
-                self.runs.insert(idx + 1, e);
+            if idx_end < e {
+                self.runs.insert(idx_end, e);
+            }
+        }
+        // runs, начинающиеся внутри вырезаемого диапазона
+        let inside: Vec<i64> = self.runs.range(idx..idx_end).map(|(&s, _)| s).collect();
+        for s in inside {
+            let e = self.runs.remove(&s).unwrap();
+            if idx_end < e {
+                self.runs.insert(idx_end, e);
             }
         }
     }
@@ -206,6 +225,27 @@ impl BurstCache {
         self.epoch.load(Ordering::Acquire)
     }
 
+    /// Проба наличия БЕЗ бампа recency и статистики: для планировщика и
+    /// префетча (п.19: get-пробы в возрастающем порядке инвертировали LRU —
+    /// ближние к playhead кадры становились «самыми старыми» и выселялись
+    /// первыми).
+    pub fn contains(&self, key: BurstKey) -> bool {
+        self.inner.lock().unwrap().map.contains_key(&key)
+    }
+
+    pub fn contains_audio(&self, source: SourceId, idx: i64) -> bool {
+        self.contains(BurstKey { source, kind: BurstKind::Audio, idx })
+    }
+
+    pub fn contains_video(&self, source: SourceId, quality: Option<Quality>, idx: i64) -> bool {
+        self.contains(BurstKey { source, kind: BurstKind::video(quality), idx })
+    }
+
+    /// Видео-бюджет (для бюджетно-осознанного lookahead префетча).
+    pub fn max_video_bytes(&self) -> usize {
+        self.config.max_video_bytes
+    }
+
     pub fn get_audio(&self, source: SourceId, idx: i64) -> Option<Arc<AudioBurst>> {
         match self.get(BurstKey { source, kind: BurstKind::Audio, idx })? {
             Payload::Audio(b) => Some(b),
@@ -267,7 +307,28 @@ impl BurstCache {
         );
     }
 
+    /// Видео со span'ом покрытия (шаг сетки кадров, тики): coverage
+    /// сливается в честные полосы вместо 1-тиковых точек (п.20).
+    pub fn insert_video_span(
+        &self,
+        source: SourceId,
+        quality: Option<Quality>,
+        idx: i64,
+        span: i64,
+        frame: Arc<VideoFrame>,
+    ) {
+        self.insert_spanned(
+            BurstKey { source, kind: BurstKind::video(quality), idx },
+            Payload::Video(frame),
+            span.max(1),
+        );
+    }
+
     pub fn insert(&self, key: BurstKey, payload: Payload) {
+        self.insert_spanned(key, payload, 1);
+    }
+
+    fn insert_spanned(&self, key: BurstKey, payload: Payload, span: i64) {
         let mut inner = self.inner.lock().unwrap();
         let bytes = payload.bytes();
         let is_audio = payload.is_audio();
@@ -281,18 +342,26 @@ impl BurstCache {
             } else {
                 inner.video_bytes -= ob;
             }
+            // старое покрытие снимаем со СВОИМ span'ом (мог отличаться)
+            if let Some(set) = inner.coverage.get_mut(&(key.source, key.kind)) {
+                set.remove_range(key.idx, key.idx + old.span);
+            }
         }
 
         inner.recency_counter += 1;
         let recency = inner.recency_counter;
-        inner.map.insert(key, Entry { payload, recency, pinned: false });
+        inner.map.insert(key, Entry { payload, recency, pinned: false, span });
         inner.lru.insert(recency, key);
         if is_audio {
             inner.audio_bytes += bytes;
         } else {
             inner.video_bytes += bytes;
         }
-        inner.coverage.entry((key.source, key.kind)).or_default().insert(key.idx);
+        inner
+            .coverage
+            .entry((key.source, key.kind))
+            .or_default()
+            .insert_range(key.idx, key.idx + span);
 
         self.evict_over_budget(&mut inner);
         self.epoch.fetch_add(1, Ordering::AcqRel);
@@ -326,7 +395,7 @@ impl BurstCache {
                 inner.video_bytes -= b;
             }
             if let Some(set) = inner.coverage.get_mut(&(key.source, key.kind)) {
-                set.remove(key.idx);
+                set.remove_range(key.idx, key.idx + entry.span);
             }
             self.stats.evictions.fetch_add(1, Ordering::Relaxed);
         }
@@ -411,5 +480,90 @@ mod interval_tests {
         assert_eq!(s.query(-10..100), vec![1..2, 7..9]);
         // запрос обрезается диапазоном
         assert_eq!(s.query(8..100), vec![8..9]);
+    }
+}
+
+#[cfg(test)]
+mod v12_tests {
+    use super::*;
+    use kt_time::Tick;
+
+    fn frame(bytes: usize) -> Arc<VideoFrame> {
+        // w*h*4 == bytes
+        let w = 4u32;
+        let h = (bytes / 16) as u32;
+        Arc::new(VideoFrame {
+            pts: Tick(0),
+            width: w,
+            height: h,
+            rgba: vec![0u8; bytes].into_boxed_slice(),
+            has_alpha: false,
+        })
+    }
+
+    /// Тест 27 (кэш-часть, п.19): contains-проба не трогает ни LRU, ни epoch.
+    #[test]
+    fn t27_contains_probe_does_not_touch_lru_or_epoch() {
+        let bytes = 1000usize;
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: bytes * 3 });
+        let src = SourceId(1);
+        for idx in [0i64, 1, 2] {
+            cache.insert_video(src, None, idx, frame(bytes));
+        }
+        // честное чтение 0 — самый свежий
+        let _ = cache.get_video(src, None, 0);
+        let epoch_before = cache.epoch();
+        // пробы 1 и 2 НЕ должны освежать
+        assert!(cache.contains_video(src, None, 1));
+        assert!(cache.contains_video(src, None, 2));
+        assert_eq!(cache.epoch(), epoch_before, "contains не меняет epoch");
+        // вставка 3 выселяет 1 (старейший по НАСТОЯЩЕЙ recency)
+        cache.insert_video(src, None, 3, frame(bytes));
+        assert!(!cache.contains_video(src, None, 1), "выселен должен быть idx 1");
+        assert!(cache.contains_video(src, None, 0), "честно прочитанный 0 жив");
+    }
+
+    /// Тест 28 (п.20): видео-coverage со span'ом сливается в полосы и
+    /// честно дырявится при eviction.
+    #[test]
+    fn t28_video_coverage_merges_and_eviction_splits() {
+        let bytes = 1000usize;
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: bytes * 3 });
+        let src = SourceId(1);
+        let step = 3000i64;
+        for idx in [0i64, 3000, 6000] {
+            cache.insert_video_span(src, None, idx, step, frame(bytes));
+        }
+        let cov = cache.coverage(src, BurstKind::Video { quality: None }, 0..9000);
+        assert_eq!(cov, vec![0..9000], "полосы должны слиться в одну");
+
+        // бампим 0 и 6000 честным чтением, вставляем 9000 → выселяется 3000
+        let _ = cache.get_video(src, None, 0);
+        let _ = cache.get_video(src, None, 6000);
+        cache.insert_video_span(src, None, 9000, step, frame(bytes));
+        let cov = cache.coverage(src, BurstKind::Video { quality: None }, 0..12000);
+        assert_eq!(
+            cov,
+            vec![0..3000, 6000..12000],
+            "eviction обязан выбить ровно свой span (дыра на 3000..6000)"
+        );
+    }
+
+    /// insert_range/remove_range: граничные случаи слияния/разрезания.
+    #[test]
+    fn t28_interval_set_range_ops() {
+        let mut s = IntervalSet::default();
+        s.insert_range(0, 10);
+        s.insert_range(20, 30);
+        s.insert_range(10, 20); // мост
+        assert_eq!(s.query(0..40), vec![0..30]);
+        s.remove_range(5, 25);
+        assert_eq!(s.query(0..40), vec![0..5, 25..30]);
+        s.insert_range(4, 26); // накрыть обе + дыру
+        assert_eq!(s.query(0..40), vec![0..30]);
+        s.remove_range(0, 30);
+        assert!(s.query(0..40).is_empty());
     }
 }

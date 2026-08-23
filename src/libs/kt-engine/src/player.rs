@@ -385,13 +385,15 @@ impl Player {
         let video = self.video.lock().unwrap();
         let aligned = video.grid.align_floor(t);
         let generation = self.transport.generation();
+        let step = video.grid.frame_step();
         for (media, src_pts) in video.layers_at(aligned) {
             let idx = video_cache_idx(src_pts);
-            if self.cache.get_video(source_id(media), Some(q), idx).is_none()
+            // contains, не get: проба не должна освежать LRU (п.19)
+            if !self.cache.contains_video(source_id(media), Some(q), idx)
                 && let Some(w) = self.workers.read().unwrap().get(&media)
             {
                 w.submit(DecodeRequest {
-                    kind: RequestKind::video(src_pts, Some(q)),
+                    kind: RequestKind::video_on_grid(src_pts, Some(q), step),
                     prio: Priority::Playback,
                     generation,
                 });
@@ -577,6 +579,14 @@ fn audio_render_loop(ctx: RenderCtx) {
     }
 }
 
+/// Видео-lookahead префетча: мин(2 с, половина видео-бюджета) — иначе
+/// prefetch-вставки высоких качеств выселяют собственное окно (п.19в).
+fn video_lookahead_ticks(q: Quality, frame_step: i64, max_video_bytes: usize) -> i64 {
+    let frame_bytes = (q.width as usize * q.height as usize * 4).max(1);
+    let frames = ((max_video_bytes / 2) / frame_bytes).max(2) as i64;
+    (frames * frame_step).min(PREFETCH_VIDEO_LOOKAHEAD_TICKS)
+}
+
 /// Кадр (48k) для отображения при данной задержке вывода. Чистая функция —
 /// тест 22-sync. Внутри loop-региона вычитание wrap'ится по региону.
 pub fn video_display_frame(playhead: i64, latency_frames: i64, region: Option<(i64, i64)>) -> i64 {
@@ -628,16 +638,19 @@ fn prefetch_loop(
             Priority::NearPrefetch,
             generation,
         );
-        // видео-lookahead: кадры ближайших 2 c в превью-качестве
+        // видео-lookahead: 2 c, но не больше половины бюджета кэша (п.19в:
+        // 4К-кадры выселяли собственное окно)
         let t0 = transport.playhead();
-        let range = TickRange::new(t0, Tick(t0.0 + PREFETCH_VIDEO_LOOKAHEAD_TICKS));
         let q = *preview_quality.lock().unwrap();
+        let step = video.grid.frame_step();
+        let ahead = video_lookahead_ticks(q, step, cache.max_video_bytes());
+        let range = TickRange::new(t0, Tick(t0.0 + ahead));
         for (media, src_pts) in video.wanted_frames(range) {
-            if cache.get_video(source_id(media), Some(q), video_cache_idx(src_pts)).is_none()
+            if !cache.contains_video(source_id(media), Some(q), video_cache_idx(src_pts))
                 && let Some(w) = workers.read().unwrap().get(&media)
             {
                 w.submit(DecodeRequest {
-                    kind: RequestKind::video(src_pts, Some(q)),
+                    kind: RequestKind::video_on_grid(src_pts, Some(q), step),
                     prio: Priority::NearPrefetch,
                     generation,
                 });

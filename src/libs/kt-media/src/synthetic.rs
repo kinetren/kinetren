@@ -44,6 +44,10 @@ pub struct SyntheticSource {
     pub video_reads: u64,
     /// Опциональные разделяемые счётчики (тесты через MediaWorker).
     pub stats: Option<std::sync::Arc<SyntheticStats>>,
+    /// Искусственная задержка видео-декода (тест 27: «медленный 4К»).
+    pub video_delay: std::time::Duration,
+    /// true: кадры за пределами duration → OutOfRange (тест 27: EOF).
+    pub video_eof: bool,
 }
 
 impl SyntheticSource {
@@ -61,7 +65,19 @@ impl SyntheticSource {
             audio_reads: 0,
             video_reads: 0,
             stats: None,
+            video_delay: std::time::Duration::ZERO,
+            video_eof: false,
         }
+    }
+
+    pub fn with_video_delay(mut self, d: std::time::Duration) -> SyntheticSource {
+        self.video_delay = d;
+        self
+    }
+
+    pub fn with_video_eof(mut self) -> SyntheticSource {
+        self.video_eof = true;
+        self
     }
 
     pub fn with_stats(
@@ -132,6 +148,12 @@ impl MediaSource for SyntheticSource {
         pts: Tick,
         quality: Option<Quality>,
     ) -> Result<VideoFrame, MediaError> {
+        if self.video_eof && pts >= self.info.duration {
+            return Err(MediaError::OutOfRange);
+        }
+        if !self.video_delay.is_zero() {
+            std::thread::sleep(self.video_delay);
+        }
         self.video_reads += 1;
         if let Some(st) = &self.stats {
             use std::sync::atomic::Ordering::Relaxed;
