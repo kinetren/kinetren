@@ -168,6 +168,56 @@ impl KtApp {
         })
     }
 
+    /// Правила Play при регионе (п.4, поведение v1):
+    /// из паузы при непустом регионе курсор всегда уводится в начало
+    /// региона (свежий регион, курсор внутри, повторный Play после
+    /// авто-паузы на конце — все четыре правила пользователя).
+    pub fn play_start_position(region: Option<(i64, i64)>) -> Option<i64> {
+        match region {
+            Some((s, e)) if e > s => Some(s),
+            _ => None,
+        }
+    }
+
+    /// Единая точка запуска воспроизведения (Space, кнопка ▶).
+    pub fn on_play(&mut self) {
+        let p = self.model.project();
+        let region = p.region.map(|r| (r.start.0, r.end.0));
+        if let Some(start) = Self::play_start_position(region) {
+            self.player.seek(Tick(start));
+        }
+        self.player.play();
+    }
+
+    /// Регион отпущен мышью (конец драга). Во время воспроизведения курсор
+    /// немедленно уводится в начало нового региона (правило «выделил во
+    /// время плея — отпустил — играем регион», п.4/v1-clamp).
+    pub fn on_region_released(&mut self) {
+        if self.player.transport.is_playing()
+            && let Some(r) = self.model.project().region
+            && r.end > r.start
+        {
+            self.player.seek(r.start);
+        }
+    }
+
+    /// Покомпонентный максимум разрешения по видео-источникам проекта
+    /// (порт computeMaxSourceVideoResolution; короткоживущие пробы).
+    pub fn max_source_resolution(&self) -> Option<(u32, u32)> {
+        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        let (mut mw, mut mh) = (0u32, 0u32);
+        for m in &self.model.project().media {
+            if let Ok(src) = open_source(&resolve_media_path(base.as_deref(), &m.path)) {
+                let i = src.info();
+                if i.has_video {
+                    mw = mw.max(i.width);
+                    mh = mh.max(i.height);
+                }
+            }
+        }
+        (mw >= 2 && mh >= 2).then_some((mw & !1, mh & !1))
+    }
+
     pub fn note(&mut self, msg: impl Into<String>) {
         self.status = Some((msg.into(), std::time::Instant::now()));
     }
@@ -742,8 +792,14 @@ impl KtApp {
             egui::ComboBox::from_id_salt("res")
                 .selected_text(format!("{}×{}", res.0, res.1))
                 .show_ui(ui, |ui| {
-                    for r in [(640u32, 360u32), (1280, 720), (1920, 1080)] {
+                    for r in
+                        [(640u32, 360u32), (1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)]
+                    {
                         ui.selectable_value(&mut res, r, format!("{}×{}", r.0, r.1));
+                    }
+                    // «Max (W×H)» — покомпонентный максимум по источникам (v1)
+                    if let Some((mw, mh)) = self.max_source_resolution() {
+                        ui.selectable_value(&mut res, (mw, mh), format!("Max ({mw}×{mh})"));
                     }
                 });
             if res != before_res {
@@ -879,7 +935,7 @@ impl KtApp {
             if self.player.transport.is_playing() {
                 self.player.pause();
             } else {
-                self.player.play();
+                self.on_play();
             }
         }
         if k.cut {
@@ -1082,24 +1138,30 @@ impl KtApp {
             return;
         }
         let mut open = self.perf.diag_open;
-        egui::Window::new("Диагностика").open(&mut open).default_width(520.0).show(ctx, |ui| {
-            self.perf.churn.draw(ui, 110.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Журнал проблем").strong());
-                if ui.button("Очистить").clicked() {
-                    self.perf.log.clear();
-                }
+        egui::Window::new("Диагностика")
+            .open(&mut open)
+            .default_size([560.0, 460.0])
+            .min_size([420.0, 300.0])
+            .resizable(true)
+            .vscroll(true)
+            .show(ctx, |ui| {
+                self.perf.churn.draw(ui, 110.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Журнал проблем").strong());
+                    if ui.button("Очистить").clicked() {
+                        self.perf.log.clear();
+                    }
+                });
+                egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+                    for line in &self.perf.log {
+                        ui.monospace(line);
+                    }
+                    if self.perf.log.is_empty() {
+                        ui.weak("проблем не замечено");
+                    }
+                });
             });
-            egui::ScrollArea::vertical().max_height(240.0).stick_to_bottom(true).show(ui, |ui| {
-                for line in &self.perf.log {
-                    ui.monospace(line);
-                }
-                if self.perf.log.is_empty() {
-                    ui.weak("проблем не замечено");
-                }
-            });
-        });
         self.perf.diag_open = open;
     }
 }
@@ -1271,6 +1333,7 @@ pub fn run() -> eframe::Result {
             v.selection.bg_fill = egui::Color32::from_rgb(62, 96, 180);
             v.widgets.hovered.bg_fill = egui::Color32::from_rgb(52, 56, 63);
             cc.egui_ctx.set_visuals(v);
+            crate::icons::install_fonts(&cc.egui_ctx);
             let restored =
                 arg.clone().or_else(|| cc.storage.and_then(|s| s.get_string("last_project")));
             let app = match restored {
@@ -1290,6 +1353,15 @@ pub fn run() -> eframe::Result {
 #[cfg(test)]
 mod repaint_tests {
     use super::repaint_delay;
+
+    /// Правила регион-плей (п.4): из паузы при регионе — всегда в начало.
+    #[test]
+    fn t_region_play_rules() {
+        use super::KtApp;
+        assert_eq!(KtApp::play_start_position(Some((100, 200))), Some(100));
+        assert_eq!(KtApp::play_start_position(Some((100, 100))), None, "пустой регион");
+        assert_eq!(KtApp::play_start_position(None), None);
+    }
 
     /// Тест 20-repaint (п.1): в простое НЕ 60 fps.
     #[test]

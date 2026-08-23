@@ -45,6 +45,8 @@ pub struct DragState {
 /// Все виды перетаскиваний на таймлайне.
 pub enum Drag {
     Clip(DragState),
+    /// Скраб курсора (захват треугольника playhead в руллере).
+    Scrub,
     /// Выделение региона по пустому месту.
     Region {
         anchor: i64,
@@ -113,7 +115,8 @@ impl KtApp {
     }
 
     pub fn snap(&mut self, tick: i64, exclude: Option<ClipId>) -> i64 {
-        let threshold = (SNAP_PX * self.ticks_per_px) as i64;
+        // v1 snapTimeMs: порог 10 px, но не меньше 12 мс и не больше 100 мс
+        let threshold = ((SNAP_PX * self.ticks_per_px) as i64).clamp(1_080, 9_000);
         let mut best = tick;
         let mut best_d = threshold + 1;
         for target in self.snap_targets(exclude) {
@@ -386,14 +389,40 @@ impl KtApp {
             let x0 = tick_to_x(r.start.0).max(rect.left());
             let x1 = tick_to_x(r.end.0).min(rect.right());
             if x1 > x0 {
-                painter.rect_filled(
-                    egui::Rect::from_min_max(
-                        egui::pos2(x0, rect.top()),
-                        egui::pos2(x1, rect.bottom()),
-                    ),
-                    0.0,
-                    egui::Color32::from_rgba_unmultiplied(84, 124, 255, 22),
-                );
+                // v1: центр альфа 14, боковые градиенты к краям альфа 58,
+                // ширина фейда min(56, w/2)
+                let base = |a: u8| egui::Color32::from_rgba_unmultiplied(84, 124, 255, a);
+                let fade_w = ((x1 - x0) / 2.0).clamp(1.0, 56.0);
+                let grad_h = |xa: f32, xb: f32, ca: egui::Color32, cb: egui::Color32| {
+                    let mut mesh = egui::Mesh::default();
+                    let i = mesh.vertices.len() as u32;
+                    for (pos, col) in [
+                        (egui::pos2(xa, rect.top()), ca),
+                        (egui::pos2(xb, rect.top()), cb),
+                        (egui::pos2(xb, rect.bottom()), cb),
+                        (egui::pos2(xa, rect.bottom()), ca),
+                    ] {
+                        mesh.vertices.push(egui::epaint::Vertex {
+                            pos,
+                            uv: egui::epaint::WHITE_UV,
+                            color: col,
+                        });
+                    }
+                    mesh.indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+                    painter.add(egui::Shape::mesh(mesh));
+                };
+                grad_h(x0, x0 + fade_w, base(58), base(14));
+                if x1 - fade_w > x0 + fade_w {
+                    painter.rect_filled(
+                        egui::Rect::from_min_max(
+                            egui::pos2(x0 + fade_w, rect.top()),
+                            egui::pos2(x1 - fade_w, rect.bottom()),
+                        ),
+                        0.0,
+                        base(14),
+                    );
+                }
+                grad_h(x1, x1 - fade_w, base(58), base(14));
                 for (edge_t, x) in
                     [(r.start.0, tick_to_x(r.start.0)), (r.end.0, tick_to_x(r.end.0))]
                 {
@@ -509,8 +538,13 @@ impl KtApp {
         }
 
         // ---- press ------------------------------------------------------------
+        // Зоны определяем по точке НАЖАТИЯ (press_origin), а не по текущему
+        // указателю: drag_started приходит после сдвига в несколько px, и
+        // указатель успевал выползти из узкой трим-зоны — трим превращался
+        // в перенос клипа (п.28 «не могу изменить длину события»).
+        let press_pos = ui.input(|i| i.pointer.press_origin());
         if (response.drag_started() || response.clicked())
-            && let Some(pos) = pointer
+            && let Some(pos) = press_pos.or(pointer)
         {
             if let Some(m) = marker_at(self, pos) {
                 if response.drag_started() {
@@ -521,9 +555,26 @@ impl KtApp {
                     self.drag = Some(Drag::RegionEdge { start_edge });
                 }
             } else if pos.y <= rect.top() + RULER_H {
-                self.player.seek(Tick(x_to_tick(pos.x).max(0)));
+                // руллер: захват треугольника playhead = скраб; клик =
+                // постановка курсора (снап к маркерам, п.29); драг =
+                // выделение региона (решение пользователя, п.8)
+                let head_x = tick_to_x(self.player.transport.playhead().0);
+                if response.drag_started() && (pos.x - head_x).abs() <= 8.0 {
+                    self.drag = Some(Drag::Scrub);
+                } else if response.drag_started() {
+                    let anchor = x_to_tick(pos.x).max(0);
+                    self.drag = Some(Drag::Region { anchor });
+                } else {
+                    let t = self.snap(x_to_tick(pos.x).max(0), None);
+                    self.player.seek(Tick(t.max(0)));
+                }
             } else if let Some((id, zone)) = clip_at(self, pos) {
                 self.selected = Some(id);
+                // клик по СОБЫТИЮ тоже ставит курсор (v1, п.7)
+                if response.clicked() {
+                    let t = self.snap(x_to_tick(pos.x).max(0), None);
+                    self.player.seek(Tick(t.max(0)));
+                }
                 if response.double_clicked() {
                     // регион на span всей link-группы (порт double-click)
                     let group = self.model.clip(id).and_then(|c| c.link_group);
@@ -565,7 +616,10 @@ impl KtApp {
                     }
                 }
             } else if response.clicked() && edge_heat(pos.x) != 0.0 {
-                // клик в зоне прыжка: ближе к краю = сильнее сдвиг (порт)
+                // клик в зоне прыжка: курсор СТАВИТСЯ (по позиции до сдвига),
+                // и вью прыгает — «и то и то» (решение пользователя, п.10)
+                let t = self.snap(x_to_tick(pos.x).max(0), None);
+                self.player.seek(Tick(t.max(0)));
                 let heat = edge_heat(pos.x);
                 let vis = rect.width() as f64 * tpp;
                 self.view_start = (self.view_start
@@ -577,7 +631,8 @@ impl KtApp {
                 self.drag = Some(Drag::Region { anchor });
             } else {
                 self.selected = None;
-                self.player.seek(Tick(x_to_tick(pos.x).max(0)));
+                let t = self.snap(x_to_tick(pos.x).max(0), None);
+                self.player.seek(Tick(t.max(0)));
             }
         }
 
@@ -622,6 +677,11 @@ impl KtApp {
                     }
                     self.drag = Some(Drag::Clip(d));
                 }
+                Some(Drag::Scrub) => {
+                    let t = self.snap(x_to_tick(pos.x).max(0), None);
+                    self.player.seek(Tick(t.max(0)));
+                    self.drag = Some(Drag::Scrub);
+                }
                 Some(Drag::Region { anchor }) => {
                     let cur = x_to_tick(pos.x).max(0);
                     self.model.set_region(Region::normalized(Tick(anchor), Tick(cur)));
@@ -662,11 +722,7 @@ impl KtApp {
                     }
                     self.drag = Some(Drag::Volume { id, moved: true });
                 }
-                None => {
-                    if pos.y <= rect.top() + RULER_H {
-                        self.player.seek(Tick(x_to_tick(pos.x).max(0)));
-                    }
-                }
+                None => {}
             }
         }
 
@@ -700,6 +756,8 @@ impl KtApp {
                 }
                 Some(Drag::Region { .. }) | Some(Drag::RegionEdge { .. }) => {
                     self.on_region_changed();
+                    // играем — курсор немедленно в начало нового региона (п.4)
+                    self.on_region_released();
                 }
                 _ => {}
             }
@@ -940,7 +998,8 @@ impl KtApp {
             if clip_rect.width() > 40.0 && !suppress_name.contains(&c.id) {
                 let mut label = media_names.get(&c.media).cloned().unwrap_or_default();
                 if !c.fx.is_empty() {
-                    label.push_str(" ⚡");
+                    label.push(' ');
+                    label.push_str(crate::icons::FX);
                 }
                 let galley = painter.layout_no_wrap(
                     label,
@@ -1111,9 +1170,14 @@ impl KtApp {
         let ph = self.player.transport.playhead();
         let x = tick_to_x(ph.0);
         if x >= rect.left() && x <= rect.right() {
+            // v1: широкая полупрозрачная подложка + яркое ядро
             painter.line_segment(
                 [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 80, 80)),
+                egui::Stroke::new(6.0, egui::Color32::from_rgba_unmultiplied(255, 60, 60, 120)),
+            );
+            painter.line_segment(
+                [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 100)),
             );
             painter.add(egui::Shape::convex_polygon(
                 vec![

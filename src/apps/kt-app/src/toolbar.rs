@@ -72,18 +72,22 @@ impl KtApp {
         ui.advance_cursor_after_rect(strip);
         let ui = &mut child;
         let playing = self.player.transport.is_playing();
-        if self.tb(ui, if playing { "⏸" } else { "▶" }, "Play/Pause (Space)") {
+        if self.tb(
+            ui,
+            if playing { crate::icons::PAUSE } else { crate::icons::PLAY },
+            "Play/Pause (Space)",
+        ) {
             if playing {
                 self.player.pause();
             } else {
-                self.player.play();
+                self.on_play();
             }
         }
-        if self.tb(ui, "⏮", "В начало") {
+        if self.tb(ui, crate::icons::SKIP_BACK, "В начало") {
             self.player.seek(Tick(0));
         }
         ui.separator();
-        if self.tb(ui, "🚩", "Маркер на курсоре (M)") {
+        if self.tb(ui, crate::icons::FLAG, "Маркер на курсоре (M)") {
             self.marker_toggle_at_cursor();
         }
         if self.tb(ui, "+V", "Добавить видео-дорожку") {
@@ -93,63 +97,71 @@ impl KtApp {
             self.add_track(ClipKind::Audio);
         }
         ui.separator();
-        if self.tb(ui, "✂", "Разрез / вырез региона (S)") {
+        if self.tb(ui, crate::icons::SCISSORS, "Разрез / вырез региона (S)") {
             self.cut_action();
         }
-        if self.tb(ui, "🗐", "Копировать (Ctrl+C)") {
+        if self.tb(ui, crate::icons::COPY, "Копировать (Ctrl+C)") {
             self.copy_selection();
         }
-        if self.tb(ui, "📋", "Вставить на курсор (Ctrl+V)") {
+        if self.tb(ui, crate::icons::CLIPBOARD, "Вставить на курсор (Ctrl+V)") {
             self.paste_at_cursor();
         }
-        if self.tb(ui, "🗑", "Удалить (Del)") {
+        if self.tb(ui, crate::icons::TRASH, "Удалить (Del)") {
             self.delete_action();
         }
-        if self.tb(ui, "⇤", "Трим начала к курсору") {
+        if self.tb(ui, crate::icons::TRIM_START, "Трим начала к курсору") {
             self.trim_selected_start_to_cursor();
         }
-        if self.tb(ui, "⇥", "Трим конца к курсору") {
+        if self.tb(ui, crate::icons::TRIM_END, "Трим конца к курсору") {
             self.trim_selected_end_to_cursor();
         }
-        if self.tb(ui, "⬆", "На дорожку выше") {
+        if self.tb(ui, crate::icons::LANE_UP, "На дорожку выше") {
             self.move_selected_lane(-1);
         }
-        if self.tb(ui, "⬇", "На дорожку ниже") {
+        if self.tb(ui, crate::icons::LANE_DOWN, "На дорожку ниже") {
             self.move_selected_lane(1);
         }
         ui.separator();
-        if self.tb(ui, "-", "Отдалить (Ctrl+колесо)") {
+        if self.tb(ui, crate::icons::MINUS, "Отдалить (Ctrl+колесо)") {
             self.ticks_per_px = (self.ticks_per_px * 1.25).clamp(30.0, 90_000.0);
         }
-        if self.tb(ui, "+", "Приблизить") {
+        if self.tb(ui, crate::icons::PLUS, "Приблизить") {
             self.ticks_per_px = (self.ticks_per_px * 0.8).clamp(30.0, 90_000.0);
         }
         ui.separator();
-        if self.tb(ui, "⌊", "Регион: начало от курсора (I)") {
+        if self.tb(ui, crate::icons::REGION_IN, "Регион: начало от курсора (I)")
+        {
             self.set_region_edge_from_cursor(true);
         }
-        if self.tb(ui, "⌋", "Регион: конец от курсора (O)") {
+        if self.tb(ui, crate::icons::REGION_OUT, "Регион: конец от курсора (O)")
+        {
             self.set_region_edge_from_cursor(false);
         }
-        if self.tb(ui, "✖", "Снять регион") {
+        if self.tb(ui, crate::icons::CLEAR, "Снять регион") {
             self.clear_region();
         }
         let loop_on = self.model.project().loop_enabled;
-        if self.tb_toggle(ui, loop_on, "🔁", "Loop региона (L)") {
+        if self.tb_toggle(ui, loop_on, crate::icons::LOOP, "Loop региона (L)") {
             self.toggle_loop();
         }
         ui.separator();
-        if self.tb(ui, "↶", "Отменить (Ctrl+Z)") {
+        if self.tb(ui, crate::icons::UNDO, "Отменить (Ctrl+Z)") {
             self.undo();
         }
-        if self.tb(ui, "↷", "Вернуть (Ctrl+Shift+Z)") {
+        if self.tb(ui, crate::icons::REDO, "Вернуть (Ctrl+Shift+Z)") {
             self.redo();
         }
         ui.separator();
-        if self.tb(ui, "🎬", "Рендер в MP4 (регион или весь проект)") {
+        if self.tb(ui, crate::icons::RENDER, "Рендер в MP4 (регион или весь проект)")
+        {
             self.start_render();
         }
-        if self.tb(ui, if self.dirty { "💾●" } else { "💾" }, "Сохранить (Ctrl+S)") {
+        let save_label = if self.dirty {
+            format!("{}●", crate::icons::SAVE)
+        } else {
+            crate::icons::SAVE.to_string()
+        };
+        if self.tb(ui, &save_label, "Сохранить (Ctrl+S)") {
             self.save();
         }
     }

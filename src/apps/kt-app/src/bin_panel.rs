@@ -22,7 +22,11 @@ impl KtApp {
                     .unwrap_or_else(|| path.clone());
                 ui.horizontal(|ui| {
                     let is_off = offline.contains(id);
-                    let label = if is_off { format!("⚠ {name}") } else { name.clone() };
+                    let label = if is_off {
+                        format!("{} {name}", crate::icons::WARN)
+                    } else {
+                        name.clone()
+                    };
                     let resp = ui
                         .add(egui::Label::new(label).sense(egui::Sense::click()))
                         .on_hover_text(path.clone());

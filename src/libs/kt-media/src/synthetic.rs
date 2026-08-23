@@ -49,7 +49,14 @@ pub struct SyntheticSource {
 impl SyntheticSource {
     pub fn new(duration: Tick, pattern: AudioPattern) -> SyntheticSource {
         SyntheticSource {
-            info: MediaInfo { duration, has_video: true, has_audio: true, fps: Some((30, 1)) },
+            info: MediaInfo {
+                duration,
+                has_video: true,
+                has_audio: true,
+                fps: Some((30, 1)),
+                width: 64,
+                height: 36,
+            },
             pattern,
             audio_reads: 0,
             video_reads: 0,

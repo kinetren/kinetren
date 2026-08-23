@@ -33,6 +33,8 @@ impl FfmpegSource {
             has_video: p.has_video,
             has_audio: p.has_audio,
             fps: p.fps,
+            width: p.width,
+            height: p.height,
         };
         let src_size = (p.width.max(2), p.height.max(2));
         Ok(FfmpegSource { inner, info, src_size })

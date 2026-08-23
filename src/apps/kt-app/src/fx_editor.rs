@@ -67,7 +67,10 @@ impl KtApp {
         egui::Window::new(title)
             .id(egui::Id::new(("fx", ed.clip)))
             .open(&mut open)
-            .default_width(560.0)
+            .default_size([580.0, 520.0])
+            .min_size([460.0, 320.0])
+            .resizable(true)
+            .vscroll(true)
             .show(ctx, |ui| {
                 // --- полоса цепочки -------------------------------------------
                 ui.horizontal(|ui| {
