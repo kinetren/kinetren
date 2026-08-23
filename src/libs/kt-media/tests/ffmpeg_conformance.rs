@@ -155,3 +155,36 @@ fn t10_keyframe_index_and_quality_ladder() {
     let b = src.read_audio_burst(10).unwrap();
     assert!(b.data.iter().any(|&s| s.abs() > 0.05), "аудио муксованного файла слышно");
 }
+
+// ---- ogg с обложкой (регрессия п.26) ----------------------------------------
+
+#[test]
+fn t10_ogg_cover_art_no_abort_and_decodes() {
+    // Раньше: mjpeg-обложка считалась видео-потоком, а её stream_index из
+    // скан-контекста уходил в av_seek_frame нового ogg-контекста →
+    // av_assert0(stream_index < ogg->nstreams) → abort ВСЕГО процесса.
+    let mut src = FfmpegSource::open(&fixture("cover_art.ogg")).expect("открытие ogg");
+    let info = src.info().clone();
+    assert!(info.has_audio, "vorbis-поток должен быть виден");
+    assert!(!info.has_video, "обложка (attached_pic) — не видео");
+
+    // Аудио декодируется и не тишина.
+    let b = src.read_audio_burst(0).expect("burst 0");
+    let energy: f32 = b.data.iter().map(|s| s * s).sum();
+    assert!(energy > 1e-3, "vorbis burst 0 не должен быть тишиной, energy={energy}");
+
+    // Seek вперёд-назад не падает (тот самый путь с av_seek_frame).
+    let far = (AUDIO_SAMPLE_RATE as i64) / (AUDIO_BURST_FRAMES as i64); // ~1 c
+    let b1 = src.read_audio_burst(far).expect("burst после seek вперёд");
+    let b0 = src.read_audio_burst(0).expect("burst после seek назад");
+    let e1: f32 = b1.data.iter().map(|s| s * s).sum();
+    let e0: f32 = b0.data.iter().map(|s| s * s).sum();
+    assert!(e1 > 1e-3 && e0 > 1e-3);
+
+    // Запрос видеокадра у аудио-файла — ошибка, не падение.
+    assert!(
+        src.read_video_frame(Tick(0), Some(Quality { width: 64, height: 64 })).is_err(),
+        "у файла без видео read_video_frame должен вернуть ошибку"
+    );
+    let _ = CH;
+}

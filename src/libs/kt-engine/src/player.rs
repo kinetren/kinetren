@@ -82,7 +82,7 @@ pub struct Player {
     master_gain: Arc<AtomicU32>,
     /// Loop-регион в кадрах 48k (None = выключен).
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
-    workers: Arc<HashMap<MediaId, MediaWorker>>,
+    workers: Workers,
     project: Arc<Mutex<Project>>,
     model_dirty: Arc<AtomicBool>,
     video: Mutex<VideoRenderer>,
@@ -118,7 +118,7 @@ impl Player {
                 MediaWorker::spawn_with_stats(media, src, cache.clone(), decode_stats.clone()),
             );
         }
-        let workers = Arc::new(workers);
+        let workers: Workers = Arc::new(std::sync::RwLock::new(workers));
         let video = Mutex::new(VideoRenderer::new(&project));
         let project = Arc::new(Mutex::new(project));
         let model_dirty = Arc::new(AtomicBool::new(true));
@@ -270,10 +270,33 @@ impl Player {
         self.transport.seek(t);
         // воркеры дропают запросы старых поколений
         let generation = self.transport.generation();
-        for w in self.workers.values() {
+        for w in self.workers.read().unwrap().values() {
             w.cancel_generations_below(generation);
         }
         self.shared.flush.store(true, Ordering::Release);
+    }
+
+    /// Добавить медиа-источник БЕЗ пересоздания плеера: новый MediaWorker
+    /// на общий кэш; транспорт, кольцо, FX-state и прогретый кэш нетронуты
+    /// (регрессия п.27: раньше добавление файла сбрасывало весь кэш).
+    pub fn add_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
+        let w = MediaWorker::spawn_with_stats(
+            media,
+            source,
+            self.cache.clone(),
+            self.decode_stats.clone(),
+        );
+        if let Some(old) = self.workers.write().unwrap().insert(media, w) {
+            old.shutdown();
+        }
+    }
+
+    /// Убрать медиа (симметрия RemoveMedia): воркер гасится, кэш других
+    /// источников не трогается.
+    pub fn remove_media(&self, media: kt_model::MediaId) {
+        if let Some(w) = self.workers.write().unwrap().remove(&media) {
+            w.shutdown();
+        }
     }
 
     /// UI: составить кадр превью для момента t (выравнивается по сетке fps).
@@ -287,7 +310,7 @@ impl Player {
         for (media, src_pts) in video.layers_at(aligned) {
             let idx = video_cache_idx(src_pts);
             if self.cache.get_video(source_id(media), Some(q), idx).is_none()
-                && let Some(w) = self.workers.get(&media)
+                && let Some(w) = self.workers.read().unwrap().get(&media)
             {
                 w.submit(DecodeRequest {
                     kind: RequestKind::video(src_pts, Some(q)),
@@ -312,8 +335,8 @@ impl Drop for Player {
         }
         // воркеры остановим, забрав их из Arc: render/prefetch потоки уже
         // завершены, мы — последний владелец
-        if let Some(map) = Arc::get_mut(&mut self.workers) {
-            for (_, w) in map.drain() {
+        if let Some(lock) = Arc::get_mut(&mut self.workers) {
+            for (_, w) in lock.get_mut().unwrap().drain() {
                 w.shutdown();
             }
         }
@@ -325,7 +348,7 @@ struct RenderCtx {
     cache: Arc<BurstCache>,
     transport: Arc<Transport>,
     shared: Arc<AudioShared>,
-    workers: Arc<HashMap<MediaId, MediaWorker>>,
+    workers: Workers,
     project: Arc<Mutex<Project>>,
     dirty: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
@@ -334,6 +357,12 @@ struct RenderCtx {
     master_gain: Arc<AtomicU32>,
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
 }
+
+/// Карта воркеров: RwLock, чтобы add_media/remove_media добавляли декодеры
+/// БЕЗ пересоздания плеера (кэш/транспорт/кольцо переживают правки медиа —
+/// регрессия п.27: раньше добавление файла пересоздавало Player и сбрасывало
+/// весь прогретый кэш). Пишущие захваты — только короткие, из UI-потока.
+type Workers = Arc<std::sync::RwLock<HashMap<MediaId, MediaWorker>>>;
 
 fn audio_render_loop(ctx: RenderCtx) {
     let RenderCtx {
@@ -391,7 +420,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                     prefetch_audio_pass(
                         &renderer,
                         &cache,
-                        &workers,
+                        &workers.read().unwrap(),
                         tl..end1,
                         Priority::Playback,
                         generation,
@@ -401,7 +430,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                         prefetch_audio_pass(
                             &renderer,
                             &cache,
-                            &workers,
+                            &workers.read().unwrap(),
                             rs..rs + rest,
                             Priority::Playback,
                             generation,
@@ -412,7 +441,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                     prefetch_audio_pass(
                         &renderer,
                         &cache,
-                        &workers,
+                        &workers.read().unwrap(),
                         render_head..render_head + PLAYBACK_AUDIO_LOOKAHEAD_FRAMES,
                         Priority::Playback,
                         generation,
@@ -461,7 +490,7 @@ fn audio_render_loop(ctx: RenderCtx) {
 fn prefetch_loop(
     cache: Arc<BurstCache>,
     transport: Arc<Transport>,
-    workers: Arc<HashMap<MediaId, MediaWorker>>,
+    workers: Workers,
     project: Arc<Mutex<Project>>,
     preview_quality: Arc<Mutex<Quality>>,
     stop: Arc<AtomicBool>,
@@ -477,7 +506,7 @@ fn prefetch_loop(
         prefetch_audio_pass(
             &renderer,
             &cache,
-            &workers,
+            &workers.read().unwrap(),
             head..head + PREFETCH_AUDIO_LOOKAHEAD_FRAMES,
             Priority::NearPrefetch,
             generation,
@@ -488,7 +517,7 @@ fn prefetch_loop(
         let q = *preview_quality.lock().unwrap();
         for (media, src_pts) in video.wanted_frames(range) {
             if cache.get_video(source_id(media), Some(q), video_cache_idx(src_pts)).is_none()
-                && let Some(w) = workers.get(&media)
+                && let Some(w) = workers.read().unwrap().get(&media)
             {
                 w.submit(DecodeRequest {
                     kind: RequestKind::video(src_pts, Some(q)),

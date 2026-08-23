@@ -36,4 +36,32 @@ gen muxed_av.mp4 \
     -af "pan=stereo|c0=c0|c1=c0" \
     -c:v libx264 -preset veryfast -g 15 -pix_fmt yuv420p -c:a aac -shortest -f mp4
 
+# 2 c синус 330 Гц ogg/vorbis + ОБЛОЖКА через METADATA_BLOCK_PICTURE
+# (как в реальных файлах). Регрессия п.26: libavformat выставляет обложку
+# отдельным attached_pic-потоком; чужой stream_index на ленивом
+# ogg-демуксере бил av_assert0 (stream_index < ogg->nstreams) → abort.
+if [ ! -f out/cover_art.ogg ]; then
+    ffmpeg -v error -y -f lavfi -i "testsrc=size=64x64:rate=1:duration=1" \
+        -frames:v 1 -q:v 5 out/.tmp.cover.jpg
+    ffmpeg -v error -y -f lavfi -i "sine=frequency=330:sample_rate=48000:duration=2" \
+        -c:a libvorbis -f ogg out/.tmp.plain.ogg
+    python3 - <<'PY'
+import base64, struct
+jpg = open('out/.tmp.cover.jpg','rb').read()
+mime = b'image/jpeg'
+# FLAC METADATA_BLOCK_PICTURE: type=3 (front cover), BE-поля
+blk = struct.pack('>I', 3)
+blk += struct.pack('>I', len(mime)) + mime
+blk += struct.pack('>I', 0)                     # описание пустое
+blk += struct.pack('>IIII', 64, 64, 24, 0)      # w, h, depth, colors
+blk += struct.pack('>I', len(jpg)) + jpg
+open('out/.tmp.mbp.txt','w').write(base64.b64encode(blk).decode())
+PY
+    ffmpeg -v error -y -i out/.tmp.plain.ogg -c copy \
+        -metadata METADATA_BLOCK_PICTURE="$(cat out/.tmp.mbp.txt)" \
+        -f ogg out/.tmp.cover_art.ogg
+    rm -f out/.tmp.cover.jpg out/.tmp.plain.ogg out/.tmp.mbp.txt
+    mv out/.tmp.cover_art.ogg out/cover_art.ogg
+fi
+
 echo ok

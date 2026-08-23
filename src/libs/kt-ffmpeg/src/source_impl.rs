@@ -24,6 +24,36 @@ fn tb(num: i32, den: i32) -> ffi::AVRational {
     ffi::AVRational { num, den }
 }
 
+/// Проверяет, что `wanted` (индекс из скан-контекста) существует и имеет
+/// нужный тип в ЭТОМ контексте; иначе ищет заново. У ленивых демуксеров
+/// (ogg) число потоков в новом контексте может отличаться — чужой индекс
+/// без проверки приводил к av_assert0 внутри libavformat (abort процесса).
+fn resolve_stream_index(
+    api: &Api,
+    fmt: *mut ffi::AVFormatContext,
+    wanted: c_int,
+    media_type: ffi::AVMediaType,
+    what: &str,
+) -> Result<c_int, FfError> {
+    let nb = unsafe { (*fmt).nb_streams } as c_int;
+    if wanted >= 0 && wanted < nb {
+        let st = unsafe { &**(*fmt).streams.add(wanted as usize) };
+        let par = unsafe { &*st.codecpar };
+        if par.codec_type == media_type
+            && (st.disposition as u32 & ffi::AV_DISPOSITION_ATTACHED_PIC) == 0
+        {
+            return Ok(wanted);
+        }
+    }
+    let found = unsafe {
+        (api.av_find_best_stream)(fmt, media_type, -1, -1, core::ptr::null_mut(), 0)
+    };
+    if found >= 0 && found < nb {
+        return Ok(found);
+    }
+    Err(FfError::Av(format!("{what}: поток не найден в контексте (nb_streams={nb})")))
+}
+
 fn averr(api: &Api, ctx: &str, code: c_int) -> FfError {
     let mut buf = [0i8; 256];
     unsafe { (api.av_strerror)(code, buf.as_mut_ptr() as *mut c_char, buf.len()) };
@@ -112,7 +142,7 @@ impl Source {
                 0,
             )
         };
-        let video_idx = unsafe {
+        let mut video_idx = unsafe {
             (api.av_find_best_stream)(
                 scan,
                 ffi::AVMEDIA_TYPE_VIDEO,
@@ -122,6 +152,15 @@ impl Source {
                 0,
             )
         };
+        // Обложка (attached picture, напр. mjpeg в ogg/mp3) — не видео:
+        // это один пакет без таймлайна, а seek по такому потоку в ogg
+        // бьёт av_assert0 (stream_index < ogg->nstreams) и валит процесс.
+        if video_idx >= 0 {
+            let st = unsafe { &**(*scan).streams.add(video_idx as usize) };
+            if (st.disposition as u32 & ffi::AV_DISPOSITION_ATTACHED_PIC) != 0 {
+                video_idx = -1;
+            }
+        }
 
         let mut index = PacketIndex { audio_pts: Vec::new(), video_keyframes: Vec::new() };
         let pkt = unsafe { (api.av_packet_alloc)() };
@@ -173,6 +212,9 @@ impl Source {
         unsafe { (api.avformat_close_input)(&mut scan) };
 
         // --- независимые демуксеры (аудио и видео не дерутся за seek) ---
+        // Индексы из скан-контекста НЕ переносимы автоматически: у ленивых
+        // демуксеров (ogg) новый контекст может видеть меньше потоков.
+        // AudioPath/VideoPath перепроверяют индекс на своём контексте.
         let audio = if audio_idx >= 0 {
             Some(AudioPath::open(api, &cpath, audio_idx)?)
         } else {
@@ -333,6 +375,8 @@ impl AudioPath {
             return Err(averr(api, "аудио: открытие", r));
         }
         unsafe { (api.avformat_find_stream_info)(fmt, core::ptr::null_mut()) };
+        let stream_index =
+            resolve_stream_index(api, fmt, stream_index, ffi::AVMEDIA_TYPE_AUDIO, "аудио")?;
         let st = unsafe { &**(*fmt).streams.add(stream_index as usize) };
         let time_base = st.time_base;
         let start_time = if st.start_time == AV_NOPTS_VALUE { 0 } else { st.start_time };
@@ -518,6 +562,8 @@ impl VideoPath {
             return Err(averr(api, "видео: открытие", r));
         }
         unsafe { (api.avformat_find_stream_info)(fmt, core::ptr::null_mut()) };
+        let stream_index =
+            resolve_stream_index(api, fmt, stream_index, ffi::AVMEDIA_TYPE_VIDEO, "видео")?;
         let st = unsafe { &**(*fmt).streams.add(stream_index as usize) };
         let time_base = st.time_base;
         let start_time = if st.start_time == AV_NOPTS_VALUE { 0 } else { st.start_time };

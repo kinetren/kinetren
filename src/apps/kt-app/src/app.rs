@@ -16,6 +16,8 @@ pub struct KtApp {
     pub project_path: Option<PathBuf>,
     pub dirty: bool,
     pub player: Player,
+    /// Keep-alive хэндл cpal-стрима (Drop = остановка вывода).
+    #[allow(dead_code)]
     pub audio: Option<audio_out::AudioOutput>,
     pub peaks: Arc<Mutex<HashMap<MediaId, Peaks>>>,
     pub texture: Option<egui::TextureHandle>,
@@ -420,9 +422,29 @@ impl KtApp {
     }
 
     pub fn save(&mut self) {
-        let Some(path) = self.project_path.clone() else {
-            self.note("нет пути проекта (открой .ktproj)");
-            return;
+        let path = match self.project_path.clone() {
+            Some(p) => p,
+            // безымянный проект: Save-As диалог (п.12 — отказ здесь был
+            // «это не должно быть проблемой»)
+            None => {
+                let Some(p) = rfd::FileDialog::new()
+                    .set_title("Сохранить проект")
+                    .add_filter("Kinotrain project", &["ktproj"])
+                    .set_file_name("untitled.ktproj")
+                    .save_file()
+                else {
+                    return; // пользователь передумал
+                };
+                let p = if p.extension().is_none() { p.with_extension("ktproj") } else { p };
+                self.project_path = Some(p.clone());
+                // индекс-БД и тумбы теперь могут жить рядом с проектом
+                spawn_index_worker(
+                    Some(p.with_extension("ktindex.db")),
+                    self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect(),
+                    self.peaks.clone(),
+                );
+                p
+            }
         };
         match std::fs::write(&path, self.model.project().to_json()) {
             Ok(()) => {
@@ -506,26 +528,21 @@ impl KtApp {
         self.selected = None;
     }
 
-    /// Пересобрать плеер (после добавления медиа — воркерам нужны источники).
-    pub fn rebuild_player(&mut self) {
-        let pos = self.player.transport.playhead();
-        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
-        let (player, audio, err) = Self::build_player(self.model.project(), base.as_deref());
-        self.player = player;
-        self.audio = audio;
-        self.player.seek(pos);
-        if let Some(e) = err {
-            self.note(e);
-        }
-    }
-
     pub fn add_media_clip(&mut self, path: &str) {
         let media_id = MediaId(self.next_media_id());
         if !self.apply(Command::AddMedia { id: media_id, path: path.to_string() }) {
             return;
         }
         self.place_media_at_cursor(media_id);
-        self.rebuild_player();
+        // Инкрементально: новый воркер на общий кэш. Пересоздание плеера
+        // здесь сбрасывало ВЕСЬ прогретый кэш (п.27) и ломало дельты
+        // perf-счётчиков (п.24: «10^19 evictions/с»).
+        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        let resolved = resolve_media_path(base.as_deref(), path);
+        match open_source(&resolved) {
+            Ok(src) => self.player.add_media(media_id, src),
+            Err(e) => self.note(format!("{path}: {e}")),
+        }
         spawn_index_worker(
             self.project_path.as_ref().map(|p| p.with_extension("ktindex.db")),
             vec![(media_id, path.to_string())],
@@ -810,8 +827,13 @@ impl KtApp {
             region_in: i.key_pressed(egui::Key::I),
             region_out: i.key_pressed(egui::Key::O),
             loop_toggle: i.key_pressed(egui::Key::L),
-            copy: i.modifiers.ctrl && i.key_pressed(egui::Key::C),
-            paste: i.modifiers.ctrl && i.key_pressed(egui::Key::V),
+            // Ctrl+C/Ctrl+V НЕ приходят как key_pressed: egui-winit
+            // перехватывает их и шлёт Event::Copy / Event::Paste(..)
+            // (регрессия п.21 — «Ctrl+V не работает»)
+            copy: i.events.iter().any(|e| matches!(e, egui::Event::Copy))
+                || (i.modifiers.ctrl && i.key_pressed(egui::Key::C)),
+            paste: i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))
+                || (i.modifiers.ctrl && i.key_pressed(egui::Key::V)),
         });
         if k.space {
             if self.player.transport.is_playing() {
@@ -954,13 +976,16 @@ impl KtApp {
         self.perf.last_sample = std::time::Instant::now();
         let ord = std::sync::atomic::Ordering::Relaxed;
 
+        // saturating: пересоздание плеера обнуляет счётчики нового кэша,
+        // а perf.last_* хранит кумулятивы старого — голое вычитание давало
+        // u64-wrap и «10870945131100372992 evictions/с» (п.24)
         let cache = self.player.cache.stats();
         let lc = self.perf.last_cache;
-        let d_ah = cache.audio_hits - lc.audio_hits;
-        let d_am = cache.audio_misses - lc.audio_misses;
-        let d_vh = cache.video_hits - lc.video_hits;
-        let d_vm = cache.video_misses - lc.video_misses;
-        let d_ev = cache.evictions - lc.evictions;
+        let d_ah = cache.audio_hits.saturating_sub(lc.audio_hits);
+        let d_am = cache.audio_misses.saturating_sub(lc.audio_misses);
+        let d_vh = cache.video_hits.saturating_sub(lc.video_hits);
+        let d_vm = cache.video_misses.saturating_sub(lc.video_misses);
+        let d_ev = cache.evictions.saturating_sub(lc.evictions);
         self.perf.last_cache = cache;
 
         let a_dec = self.player.decode_stats.audio_decodes.load(ord);
@@ -975,7 +1000,9 @@ impl KtApp {
         let v_hit =
             if d_vh + d_vm > 0 { d_vh as f32 / (d_vh + d_vm) as f32 * 100.0 } else { 100.0 };
         self.perf.quality.push(&[fps.min(120.0), a_hit, v_hit]);
-        self.perf.decode.push(&[(a_dec - la) as f32 / dt, (v_dec - lv) as f32 / dt]);
+        self.perf
+            .decode
+            .push(&[a_dec.saturating_sub(la) as f32 / dt, v_dec.saturating_sub(lv) as f32 / dt]);
         self.perf.churn.push(&[d_ev as f32 / dt, (d_am + d_vm) as f32 / dt]);
 
         // журнал проблем

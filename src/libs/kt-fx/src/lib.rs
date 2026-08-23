@@ -384,6 +384,49 @@ pub fn chain_avg_rate(fx: &[FxInstance]) -> f64 {
 
 /// Длина хвоста цепочки БЕЗ создания state (для расширения окна клипа
 /// в графе до того, как процессор построен).
+/// Запас источника на прайминг rubato (sinc_len 128 × oversampling) и
+/// чанк-квантование варпа: реальный курсор источника может обгонять
+/// rate_integral на групповую задержку ресемплера (~3к кадров).
+pub const WARP_SOURCE_MARGIN_FRAMES: i64 = 8192;
+
+/// Окно источника (кадры ОТНОСИТЕЛЬНО source_in), которое ClipProcessor
+/// реально потребит, выдавая клип-локальные кадры `local`, включая pre-roll
+/// перед local.start и прайминг варпа. Для цепочки без варпа — линейно и
+/// без запаса. ЕДИНЫЙ источник правды для prefetch (wanted) и рендера
+/// (window_end): расхождение этих двух расчётов = вечный промах кэша и
+/// тишина (регрессия п.13, тест 17).
+pub fn chain_source_window(
+    fx: &[FxInstance],
+    clip_len_frames: i64,
+    local: std::ops::Range<i64>,
+) -> std::ops::Range<i64> {
+    let len = clip_len_frames.max(1);
+    let preroll = chain_tail(fx).to_audio_frames().max(MIN_PREROLL_FRAMES);
+    let l0 = (local.start - preroll).max(0).min(len);
+    let l1 = local.end.clamp(0, len);
+    let has_warp = fx.iter().any(|f| matches!(f, FxInstance::SlowedReverb { .. }));
+    if !has_warp {
+        return l0..l1.max(l0);
+    }
+    let (rate, automation) = fx
+        .iter()
+        .find_map(|f| match f {
+            FxInstance::SlowedReverb { rate, automation, .. } => {
+                Some((*rate, automation.as_slice()))
+            }
+            _ => None,
+        })
+        .unwrap_or((1.0, &[]));
+    let t0 = l0 as f64 / len as f64;
+    let t1 = l1 as f64 / len as f64;
+    let s0 = ((len as f64 * rate_integral(rate, automation, t0)).floor() as i64)
+        .saturating_sub(WARP_SOURCE_MARGIN_FRAMES)
+        .max(0);
+    let s1 = (len as f64 * rate_integral(rate, automation, t1)).ceil() as i64
+        + WARP_SOURCE_MARGIN_FRAMES;
+    s0..s1.max(s0)
+}
+
 pub fn chain_tail(fx: &[FxInstance]) -> Tick {
     fx.iter()
         .map(|f| match f {
@@ -612,6 +655,16 @@ impl ClipProcessor {
                     }
                     self.plain_cursor += n as i64;
                 }
+            }
+            // Гейт dry-выхода в OUTPUT-домене: за концом клипа сухой сигнал
+            // обязан быть нулём (в хвосте дозванивает только реверб).
+            // Благодаря этому окно ИСТОЧНИКА можно расширять с запасом на
+            // прайминг rubato, не боясь утечки dry в хвост (дефект «тихий
+            // хвост»: sinc-ресемплер видел нули за жёстко обрезанным окном
+            // и рано глушил конец клипа).
+            if chunk_local + (n as i64) > self.clip_len {
+                let cut = (self.clip_len - chunk_local).clamp(0, n as i64) as usize;
+                sub[cut * CH..].fill(0.0);
             }
             if let Some(r) = &mut self.reverb {
                 r.process(sub);

@@ -1140,6 +1140,10 @@ impl KtApp {
                     self.copy_selection();
                     ui.close();
                 }
+                if ui.button("Вставить (Ctrl+V)").clicked() {
+                    self.paste_at_cursor();
+                    ui.close();
+                }
                 if ui.button("Удалить (Del)").clicked() {
                     self.selected = Some(id);
                     self.delete_action();
@@ -1178,6 +1182,10 @@ impl KtApp {
                 }
             }
             _ => {
+                if !self.clipboard.is_empty() && ui.button("Вставить (Ctrl+V)").clicked() {
+                    self.paste_at_cursor();
+                    ui.close();
+                }
                 if self.model.project().region.is_some() {
                     if ui.button("Удалить клипы в регионе (Del)").clicked() {
                         self.delete_action();
@@ -1191,7 +1199,7 @@ impl KtApp {
                         self.clear_region();
                         ui.close();
                     }
-                } else {
+                } else if self.clipboard.is_empty() {
                     ui.weak("Выдели регион или клип");
                 }
             }

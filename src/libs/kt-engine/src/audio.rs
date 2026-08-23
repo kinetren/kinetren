@@ -223,10 +223,13 @@ impl AudioRenderer {
         if from >= to {
             return;
         }
-        let rate = kt_fx::chain_avg_rate(&clip.fx);
-        // окно источника клипа: за его пределами — законная тишина (хвост)
+        // окно источника клипа: за его пределами — законная тишина.
+        // Единый расчёт с wanted_audio_bursts (chain_source_window); dry за
+        // концом клипа глушит сам ClipProcessor (output-гейт), поэтому запас
+        // окна безопасен.
+        let clip_len = clip.end - clip.start;
         let src_window_end =
-            clip.source_in + (((clip.end - clip.start) as f64) * rate).ceil() as i64;
+            clip.source_in + kt_fx::chain_source_window(&clip.fx, clip_len, 0..clip_len).end;
         let media = clip.media;
         let mut pull_underruns = 0u64;
         let Some(proc) = store.get_mut(clip.id) else { return };
@@ -304,8 +307,18 @@ impl AudioRenderer {
             if from >= to {
                 continue;
             }
-            let s0 = c.source_in + (from - c.start);
-            let s1 = c.source_in + (to - c.start);
+            let (s0, s1) = if c.fx.is_empty() {
+                // без FX: источник течёт 1:1 с таймлайном
+                (c.source_in + (from - c.start), c.source_in + (to - c.start))
+            } else {
+                // с FX: варп потребляет источник по rate_integral, а не
+                // линейно; wanted обязан покрывать РЕАЛЬНОЕ потребление
+                // (регрессия п.13: линейный маппинг грел не те бёрсты →
+                // глубже в клипе вечный промах кэша → тишина)
+                let len = c.end - c.start;
+                let w = kt_fx::chain_source_window(&c.fx, len, (from - c.start)..(to - c.start));
+                (c.source_in + w.start, c.source_in + w.end.max(w.start + 1))
+            };
             let b0 = s0.div_euclid(AUDIO_BURST_FRAMES as i64);
             let b1 = (s1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1;
             out.push((c.media, b0..b1));
