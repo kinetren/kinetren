@@ -29,15 +29,28 @@ pub struct ThumbKey {
 
 /// Шаг источника для тумбнейлов (порт videoClipThumbnailSourceStepMs):
 /// один тумб при клипе ≤5 c, иначе dur/slots, зажатый в 1..15 c.
+/// Шаг тумбов КВАНТУЕТСЯ к фиксированной лестнице (п.2): непрерывная
+/// зависимость от зума давала новый набор ключей на каждый щелчок колеса —
+/// филмстрип перегружался целиком. Соседние ступени переиспользуют кэш
+/// (ключи крупной ступени — подмножество мелкой).
+pub const THUMB_STEP_LADDER: [i64; 5] = [45_000, 90_000, 180_000, 450_000, 1_350_000]; // 0.5/1/2/5/15 c
+
 pub fn thumb_source_step(clip_dur: Tick, inner_width_px: f32, thumb_w_px: f32) -> i64 {
     if clip_dur.0 <= 5 * 90_000 {
-        return clip_dur.0.max(90_000);
+        // короткий клип: один тумб, ключ стабилен (кратен 0.5 c)
+        return THUMB_STEP_LADDER[0].max(clip_dur.0 / 2).max(45_000);
     }
     let slots = (inner_width_px / thumb_w_px).clamp(1.0, 96.0) as i64;
-    (clip_dur.0 / slots.max(1)).clamp(90_000, 15 * 90_000)
+    let rough = clip_dur.0 / slots.max(1);
+    // ближайшая ступень СВЕРХУ (реже — дешевле)
+    *THUMB_STEP_LADDER
+        .iter()
+        .find(|&&s| s >= rough)
+        .unwrap_or(&THUMB_STEP_LADDER[THUMB_STEP_LADDER.len() - 1])
 }
 
 struct Shared {
+    cond: std::sync::Condvar,
     queue: Mutex<(VecDeque<ThumbKey>, HashSet<ThumbKey>)>, // LIFO + dedup
     ready: Mutex<HashMap<ThumbKey, Arc<egui::ColorImage>>>,
     order: Mutex<VecDeque<ThumbKey>>, // для LRU-выселения ready
@@ -53,6 +66,7 @@ pub struct ThumbService {
 impl ThumbService {
     pub fn start(project: &Project, project_path: Option<PathBuf>) -> ThumbService {
         let shared = Arc::new(Shared {
+            cond: std::sync::Condvar::new(),
             queue: Mutex::new((VecDeque::new(), HashSet::new())),
             ready: Mutex::new(HashMap::new()),
             order: Mutex::new(VecDeque::new()),
@@ -90,6 +104,8 @@ impl ThumbService {
         let mut q = self.shared.queue.lock().unwrap();
         if q.1.insert(key) {
             q.0.push_back(key); // pop_back = LIFO: свежие запросы первыми
+            drop(q);
+            self.shared.cond.notify_one();
         }
     }
 
@@ -104,19 +120,18 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
     let mut sources: HashMap<MediaId, Box<dyn kt_media::MediaSource>> = HashMap::new();
     let mut db_ids: HashMap<MediaId, i64> = HashMap::new();
     loop {
+        // condvar вместо 33 пробуждений/с на пустой очереди (п.1)
         let key = {
             let mut q = shared.queue.lock().unwrap();
-            match q.0.pop_back() {
-                Some(k) => {
+            loop {
+                if let Some(k) = q.0.pop_back() {
                     q.1.remove(&k);
-                    Some(k)
+                    break k;
                 }
-                None => None,
+                let (guard, _timeout) =
+                    shared.cond.wait_timeout(q, std::time::Duration::from_secs(2)).unwrap();
+                q = guard;
             }
-        };
-        let Some(key) = key else {
-            std::thread::sleep(std::time::Duration::from_millis(30));
-            continue;
         };
         if shared.ready.lock().unwrap().contains_key(&key) {
             continue;

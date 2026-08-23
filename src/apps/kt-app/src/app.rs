@@ -47,6 +47,9 @@ pub struct KtApp {
     pub clipboard: Vec<ClipEvent>,
     /// Медиа, чьи файлы сейчас недоступны (watchdog, 900 мс).
     pub offline: Arc<Mutex<std::collections::HashSet<MediaId>>>,
+    /// Drop останавливает watchdog-поток (переоткрытие без утечек).
+    #[allow(dead_code)]
+    pub watchdog: Option<crate::util::WatchdogHandle>,
     pub meter: crate::meters::MeterState,
     pub smooth_scaling: bool,
     pub fx_editors: Vec<crate::fx_editor::FxEditor>,
@@ -73,12 +76,24 @@ pub struct KtApp {
     /// Когда превью впервые стало неполным (скрим «Загрузка» — после 180 мс,
     /// как в v1, чтобы не мигал на быстрых промахах; п.14).
     pub incomplete_since: Option<std::time::Instant>,
+    /// Последняя попытка композита неполного кадра (троттлинг ретраев, п.1).
+    pub last_compose_retry: std::time::Instant,
     /// Размытая мини-копия кадра для ambient glow (п.18): 32×18,
     /// обновляется вместе с кадром, рисуется LINEAR-растяжкой.
     pub glow_texture: Option<egui::TextureHandle>,
     pub thumbs: crate::thumbs::ThumbService,
     /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
     pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
+    /// Порядок вставки текстур — LRU-вытеснение вместо clear() (п.2).
+    pub thumb_lru: std::collections::VecDeque<crate::thumbs::ThumbKey>,
+    /// Версия модели (бамп в apply/undo/redo) — ключ кэшей отрисовки (п.1).
+    pub model_rev: u64,
+    /// Кэш coverage-опросов: (cache.epoch, model_rev, quality) → per-clip
+    /// runs. Раньше draw_timeline брал лок кэша ДВАЖДЫ на клип на кадр.
+    pub coverage_cache: CoverageCache,
+    /// Кэш имён/подавления имён клипов по model_rev (были 2 HashMap +
+    /// O(n²) на каждый кадр).
+    pub names_cache: NamesCache,
 }
 
 impl KtApp {
@@ -131,6 +146,7 @@ impl KtApp {
             status: error.map(|e| (e, std::time::Instant::now())),
             clipboard: Vec::new(),
             offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            watchdog: None,
             meter: Default::default(),
             smooth_scaling: true,
             glow_texture: None,
@@ -149,7 +165,12 @@ impl KtApp {
             perf: PerfState::new(),
             preview_key: None,
             incomplete_since: None,
+            last_compose_retry: std::time::Instant::now(),
             thumb_textures: HashMap::new(),
+            thumb_lru: std::collections::VecDeque::new(),
+            model_rev: 0,
+            coverage_cache: Default::default(),
+            names_cache: Default::default(),
         }
     }
 
@@ -158,7 +179,7 @@ impl KtApp {
         let project = Project::from_json(&text).map_err(|e| e.to_string())?;
         let base = path.parent();
         let (player, audio, err) = Self::build_player(&project, base);
-        let offline = spawn_media_watchdog(&project, base);
+        let (offline, watchdog) = spawn_media_watchdog(&project, base);
         let thumbs_svc = crate::thumbs::ThumbService::start(&project, Some(path.to_path_buf()));
         let peaks = Arc::new(Mutex::new(HashMap::new()));
         let media: Vec<_> =
@@ -183,6 +204,7 @@ impl KtApp {
             status: err.map(|e| (e, std::time::Instant::now())),
             clipboard: Vec::new(),
             offline,
+            watchdog: Some(watchdog),
             meter: Default::default(),
             smooth_scaling: true,
             glow_texture: None,
@@ -201,7 +223,12 @@ impl KtApp {
             perf: PerfState::new(),
             preview_key: None,
             incomplete_since: None,
+            last_compose_retry: std::time::Instant::now(),
             thumb_textures: HashMap::new(),
+            thumb_lru: std::collections::VecDeque::new(),
+            model_rev: 0,
+            coverage_cache: Default::default(),
+            names_cache: Default::default(),
         };
         // восстановление вьюпорта/курсора (п.13, v1: fromJson)
         if let Some(ui) = ui_state {
@@ -391,6 +418,7 @@ impl KtApp {
     }
 
     pub fn apply(&mut self, cmd: Command) -> bool {
+        self.model_rev += 1;
         match self.model.apply(cmd) {
             Ok(()) => {
                 self.player.set_project(self.model.project().clone());
@@ -406,6 +434,7 @@ impl KtApp {
 
     /// Пакет команд = один undo-снапшот на жест (атомарно).
     pub fn apply_batch(&mut self, cmds: Vec<Command>) -> bool {
+        self.model_rev += 1;
         match self.model.apply_batch(cmds) {
             Ok(()) => {
                 self.player.set_project(self.model.project().clone());
@@ -681,6 +710,7 @@ impl KtApp {
     }
 
     pub fn undo(&mut self) {
+        self.model_rev += 1;
         if self.model.undo().is_ok() {
             self.player.set_project(self.model.project().clone());
             self.dirty = true;
@@ -688,6 +718,7 @@ impl KtApp {
     }
 
     pub fn redo(&mut self) {
+        self.model_rev += 1;
         if self.model.redo().is_ok() {
             self.player.set_project(self.model.project().clone());
             self.dirty = true;
@@ -889,6 +920,7 @@ impl KtApp {
         };
         let mut complete = self.preview_key.map(|k| k.2).unwrap_or(false);
         if need {
+            self.last_compose_retry = std::time::Instant::now();
             let (rgba, cq, c) = self.player.compose_preview(t);
             complete = c;
             // держим последний ПОЛНЫЙ кадр: неполный композит не затирает
@@ -1331,6 +1363,96 @@ impl KtApp {
     }
 }
 /// Состояние перф-панели: rolling-графики, дельты счётчиков, журнал проблем.
+/// Кэш coverage-опросов таймлайна (п.1).
+#[derive(Default)]
+pub struct CoverageCache {
+    stamp: Option<(u64, u64, (u32, u32))>,
+    pub per_clip: HashMap<ClipId, Vec<std::ops::Range<i64>>>,
+}
+
+/// Кэш имён клипов (п.1: HashMap'ы и O(n²) suppress пересобирались кадр).
+#[derive(Default)]
+pub struct NamesCache {
+    rev: Option<u64>,
+    pub names: HashMap<ClipId, String>,
+    pub suppress: std::collections::HashSet<ClipId>,
+}
+
+impl KtApp {
+    /// Runs покрытия per-clip; пересчёт только при смене epoch кэша,
+    /// версии модели или качества превью.
+    pub fn coverage_runs(&mut self) -> &HashMap<ClipId, Vec<std::ops::Range<i64>>> {
+        use kt_time::AUDIO_BURST_FRAMES;
+        let q = self.player.preview_quality();
+        let stamp = (self.player.cache.epoch(), self.model_rev, (q.width, q.height));
+        if self.coverage_cache.stamp != Some(stamp) {
+            self.coverage_cache.stamp = Some(stamp);
+            self.coverage_cache.per_clip.clear();
+            for c in &self.model.project().clips {
+                let (kind, b0, b1) = match c.kind {
+                    ClipKind::Audio => {
+                        let f0 = c.source_in.to_audio_frames();
+                        let f1 = (c.source_in + c.duration).to_audio_frames();
+                        (
+                            kt_cache::BurstKind::Audio,
+                            f0.div_euclid(AUDIO_BURST_FRAMES as i64),
+                            (f1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1,
+                        )
+                    }
+                    ClipKind::Video => (
+                        kt_cache::BurstKind::video(Some(q)),
+                        c.source_in.0,
+                        c.source_in.0 + c.duration.0,
+                    ),
+                };
+                let runs = self.player.cache.coverage(
+                    kt_engine::source_id(c.media),
+                    kind,
+                    b0..b1.max(b0 + 1),
+                );
+                self.coverage_cache.per_clip.insert(c.id, runs);
+            }
+        }
+        &self.coverage_cache.per_clip
+    }
+
+    /// Имена клипов и множество «подавить имя» (партнёр пары) по model_rev.
+    pub fn names(&mut self) -> (&HashMap<ClipId, String>, &std::collections::HashSet<ClipId>) {
+        if self.names_cache.rev != Some(self.model_rev) {
+            self.names_cache.rev = Some(self.model_rev);
+            self.names_cache.names.clear();
+            self.names_cache.suppress.clear();
+            let p = self.model.project();
+            let media_names: HashMap<MediaId, String> = p
+                .media
+                .iter()
+                .map(|m| {
+                    let name = std::path::Path::new(&m.path)
+                        .file_name()
+                        .map(|f| f.to_string_lossy().to_string())
+                        .unwrap_or_else(|| m.path.clone());
+                    (m.id, name)
+                })
+                .collect();
+            for c in &p.clips {
+                if let Some(n) = media_names.get(&c.media) {
+                    self.names_cache.names.insert(c.id, n.clone());
+                }
+                // подавить имя у АУДИО-половины A/V-пары (рисуется на видео)
+                if c.kind == ClipKind::Audio
+                    && let Some(g) = c.link_group
+                    && p.clips.iter().any(|o| {
+                        o.kind == ClipKind::Video && o.link_group == Some(g) && o.media == c.media
+                    })
+                {
+                    self.names_cache.suppress.insert(c.id);
+                }
+            }
+        }
+        (&self.names_cache.names, &self.names_cache.suppress)
+    }
+}
+
 /// Задержка следующей перерисовки: 60 fps только когда есть что
 /// анимировать, в простое — редкий тик (статусбар/watchdog).
 /// Чистая функция — тест 20-repaint (п.1).
@@ -1704,9 +1826,15 @@ impl eframe::App for KtApp {
         let animating = self.player.transport.is_playing()
             || self.drag.is_some()
             || self.render_job.is_some()
-            || self.incomplete_since.is_some()
             || self.meter.is_active();
-        ctx.request_repaint_after(repaint_delay(animating));
+        let delay = if animating {
+            std::time::Duration::from_millis(16)
+        } else if self.incomplete_since.is_some() {
+            std::time::Duration::from_millis(100) // ретраи неполного кадра
+        } else {
+            repaint_delay(false)
+        };
+        ctx.request_repaint_after(delay);
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

@@ -6,11 +6,9 @@
 use crate::app::KtApp;
 use eframe::egui;
 use kt_cache::BurstKind;
-use kt_engine::source_id;
 use kt_model::*;
 use kt_time::{AUDIO_BURST_FRAMES, Tick};
 use std::collections::HashMap;
-use std::path::Path;
 
 pub const STRIPES_H: f32 = 11.0; // 4+1+4+2: глобальные полоски кэша
 pub const RULER_H: f32 = 22.0 + STRIPES_H;
@@ -168,6 +166,9 @@ impl KtApp {
 
     #[allow(clippy::too_many_lines)]
     pub fn draw_timeline(&mut self, ui: &mut egui::Ui) {
+        // один проход coverage-опросов на кадр (кэш по epoch, п.1)
+        let coverage_snapshot: HashMap<ClipId, Vec<std::ops::Range<i64>>> =
+            self.coverage_runs().clone();
         let full = ui.available_rect_before_wrap();
         let gutter =
             egui::Rect::from_min_max(full.min, egui::pos2(full.left() + GUTTER_W, full.bottom()));
@@ -276,7 +277,8 @@ impl KtApp {
                     }
                     ClipKind::Video => (c.source_in.0, c.source_in.0 + c.duration.0),
                 };
-                for run in self.player.cache.coverage(source_id(c.media), kind, b0..b1) {
+                let _ = (kind, b0, b1);
+                for run in coverage_snapshot.get(&c.id).cloned().unwrap_or_default() {
                     let (t0, t1) = match c.kind {
                         ClipKind::Audio => (
                             c.start.0
@@ -881,40 +883,14 @@ impl KtApp {
         }
 
         // ---- клипы -----------------------------------------------------------------
-        let peaks = self.peaks.lock().unwrap();
-        let offline = self.offline.lock().unwrap().clone();
+        // кэши по model_rev (п.1: HashMap'ы и O(n²) пересобирались кадр)
+        let (names_ref, suppress_ref) = self.names();
+        let media_names: HashMap<ClipId, String> = names_ref.clone();
+        let suppress_name: std::collections::HashSet<ClipId> = suppress_ref.clone();
         let media_paths: HashMap<MediaId, String> =
             self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect();
-        let media_names: HashMap<MediaId, String> = media_paths
-            .iter()
-            .map(|(id, p)| {
-                let name = Path::new(p)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| p.clone());
-                (*id, name)
-            })
-            .collect();
-
-        // подавление имени у аудио-двойника magnetized-пары
-        let suppress_name: std::collections::HashSet<ClipId> = {
-            let p = self.model.project();
-            p.clips
-                .iter()
-                .filter(|a| a.kind == ClipKind::Audio && a.link_group.is_some())
-                .filter(|a| {
-                    p.clips.iter().any(|v| {
-                        v.kind == ClipKind::Video
-                            && v.link_group == a.link_group
-                            && v.media == a.media
-                            && v.start == a.start
-                            && v.duration == a.duration
-                            && v.source_in == a.source_in
-                    })
-                })
-                .map(|a| a.id)
-                .collect()
-        };
+        let peaks = self.peaks.lock().unwrap();
+        let offline = self.offline.lock().unwrap().clone();
 
         for c in &self.model.project().clips {
             let (start, end, lane) = match &self.drag {
@@ -1006,9 +982,14 @@ impl KtApp {
                 );
                 let mut x = clip_rect.left();
                 while x < clip_rect.right() {
-                    let tl = x_to_tick(x) - start;
+                    // момент СЕРЕДИНЫ колонки (v1: тумб центрируется на
+                    // своей позиции, а не floor'ится в прошлое — п.3)
+                    let tl = x_to_tick(x + thumb_w * 0.5) - start;
                     if tl >= 0 {
-                        let src_t = (c.source_in.0 + tl) / step * step; // бакет по сетке шага
+                        // бакет от НАЧАЛА КУСКА (source_in), не от нуля
+                        // файла: у клипа с source_in=3c первая колонка
+                        // показывала кадр за 3 секунды ДО начала куска
+                        let src_t = c.source_in.0 + (tl / step * step).max(0);
                         let key = crate::thumbs::ThumbKey { media: c.media, t: src_t };
                         let tex = match self.thumb_textures.get(&key) {
                             Some(t) => Some(t.clone()),
@@ -1020,8 +1001,15 @@ impl KtApp {
                                         egui::TextureOptions::LINEAR,
                                     );
                                     self.thumb_textures.insert(key, t.clone());
-                                    if self.thumb_textures.len() > crate::thumbs::MAX_READY {
-                                        self.thumb_textures.clear(); // грубый сброс, LRU в сервисе
+                                    self.thumb_lru.retain(|k| *k != key);
+                                    self.thumb_lru.push_back(key);
+                                    // LRU вместо полного clear() (п.2: сброс
+                                    // всех текстур давал шторм перезагрузок
+                                    // при зуме)
+                                    while self.thumb_textures.len() > crate::thumbs::MAX_READY
+                                        && let Some(old) = self.thumb_lru.pop_front()
+                                    {
+                                        self.thumb_textures.remove(&old);
                                     }
                                     Some(t)
                                 }
@@ -1113,7 +1101,7 @@ impl KtApp {
 
             // имя клипа на плашке
             if clip_rect.width() > 40.0 && !suppress_name.contains(&c.id) {
-                let mut label = media_names.get(&c.media).cloned().unwrap_or_default();
+                let mut label = media_names.get(&c.id).cloned().unwrap_or_default();
                 if !c.fx.is_empty() {
                     label.push(' ');
                     label.push_str(crate::icons::FX);
@@ -1168,7 +1156,8 @@ impl KtApp {
                 }
                 ClipKind::Video => (c.source_in.0, c.source_in.0 + c.duration.0),
             };
-            for run in self.player.cache.coverage(source_id(c.media), cov_kind, b0..b1) {
+            let _ = (cov_kind, b0, b1);
+            for run in coverage_snapshot.get(&c.id).cloned().unwrap_or_default() {
                 let (t0, t1) = match c.kind {
                     ClipKind::Audio => (
                         c.start.0

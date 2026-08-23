@@ -127,6 +127,8 @@ pub struct Player {
     wake: Arc<Wake>,
     /// Версия проекта: prefetch пересобирает рендереры только по смене.
     project_version: Arc<AtomicU64>,
+    /// Кэш графа для sample_levels_at (п.1): (версия, renderer, store).
+    levels_probe: Mutex<Option<(u64, AudioRenderer, FxStateStore)>>,
     pub loop_stats: Arc<LoopStats>,
 }
 
@@ -247,6 +249,7 @@ impl Player {
             wake,
             project_version,
             loop_stats,
+            levels_probe: Mutex::new(None),
         };
         (player, consumer)
     }
@@ -314,12 +317,23 @@ impl Player {
     /// Пиковые уровни на паузе: один burst с позиции t через одноразовое
     /// FX-состояние и кэш (промах = тишина — для метра этого достаточно).
     pub fn sample_levels_at(&self, t: Tick) -> (f32, f32) {
-        let renderer = AudioRenderer::new(&self.project.lock().unwrap().clone());
-        let mut store = FxStateStore::new();
-        renderer.sync_fx(&mut store);
+        // Кэш пробы (п.1): раньше КАЖДЫЙ вызов (8 раз/с на паузе) клонировал
+        // весь Project и пересоздавал все FX. Теперь граф живёт до смены
+        // версии проекта; state сбрасывается перед замером (детерминизм).
+        let version = self.project_version.load(Ordering::Acquire);
+        let mut probe = self.levels_probe.lock().unwrap();
+        let rebuild = probe.as_ref().map(|(v, _, _)| *v != version).unwrap_or(true);
+        if rebuild {
+            let renderer = AudioRenderer::new(&self.project.lock().unwrap().clone());
+            let mut store = FxStateStore::new();
+            renderer.sync_fx(&mut store);
+            *probe = Some((version, renderer, store));
+        }
+        let (_, renderer, store) = probe.as_mut().unwrap();
+        store.reset_all();
         let mut fetcher = CacheFetcher::new(self.cache.clone());
         let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
-        renderer.render_frames_with(&mut fetcher, &mut store, t.to_audio_frames(), &mut chunk);
+        renderer.render_frames_with(&mut fetcher, store, t.to_audio_frames(), &mut chunk);
         let gain = self.master_gain();
         let mut pl = 0f32;
         let mut pr = 0f32;

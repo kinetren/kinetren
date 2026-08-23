@@ -119,10 +119,22 @@ pub fn spawn_index_worker(
 
 /// Watchdog доступности медиафайлов (порт mediaSourceProbeTimer 900 мс):
 /// оффлайн-множество читает UI (тинт клипов); работает в своём потоке.
+/// Хэндл watchdog'а: Drop останавливает поток (раньше при переоткрытии
+/// проекта старые watchdog'и жили вечно — утечка потоков, п.1).
+pub struct WatchdogHandle {
+    stop: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for WatchdogHandle {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
 pub fn spawn_media_watchdog(
     project: &kt_model::Project,
     base: Option<&Path>,
-) -> Arc<Mutex<std::collections::HashSet<MediaId>>> {
+) -> (Arc<Mutex<std::collections::HashSet<MediaId>>>, WatchdogHandle) {
     let set: Arc<Mutex<std::collections::HashSet<MediaId>>> =
         Arc::new(Mutex::new(std::collections::HashSet::new()));
     let paths: Vec<(MediaId, String)> = project
@@ -132,10 +144,12 @@ pub fn spawn_media_watchdog(
         .map(|m| (m.id, resolve_media_path(base, &m.path)))
         .collect();
     let out = set.clone();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop_t = stop.clone();
     std::thread::Builder::new()
         .name("media-watchdog".into())
         .spawn(move || {
-            loop {
+            while !stop_t.load(std::sync::atomic::Ordering::Acquire) {
                 let mut offline = std::collections::HashSet::new();
                 for (id, p) in &paths {
                     if !Path::new(p).exists() {
@@ -147,7 +161,7 @@ pub fn spawn_media_watchdog(
             }
         })
         .expect("spawn media watchdog");
-    set
+    (set, WatchdogHandle { stop })
 }
 
 #[cfg(test)]
