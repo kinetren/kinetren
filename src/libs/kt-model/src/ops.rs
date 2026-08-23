@@ -21,7 +21,13 @@ pub fn copy_region_block(p: &Project, r: Region) -> Vec<ClipEvent> {
             continue;
         }
         let mut copy = c.clone();
-        copy.source_in = c.source_in + (t0 - c.start);
+        // реверс (п.16): кроп слева таймлайна режет ХВОСТ источника,
+        // source_in двигается только от кропа СПРАВА
+        copy.source_in = if c.reversed {
+            c.source_in + ((c.start + c.duration) - t1)
+        } else {
+            c.source_in + (t0 - c.start)
+        };
         copy.start = t0 - r.start; // rebase к нулю региона
         copy.duration = t1 - t0;
         out.push(copy);
@@ -98,6 +104,10 @@ pub fn punch_out_region(p: &Project, r: Region, next_clip: &mut u64) -> Vec<Comm
             *next_clip += 1;
             left.link_group = None;
             left.duration = r.start - c.start;
+            if c.reversed {
+                // реверс (п.16): левый кусок играет хвост источника
+                left.source_in = c.source_in + (end - r.start);
+            }
             cmds.push(Command::AddClip(left));
         }
         // правый остаток
@@ -106,7 +116,9 @@ pub fn punch_out_region(p: &Project, r: Region, next_clip: &mut u64) -> Vec<Comm
             right.id = ClipId(*next_clip);
             *next_clip += 1;
             right.link_group = None;
-            right.source_in = c.source_in + (r.end - c.start);
+            if !c.reversed {
+                right.source_in = c.source_in + (r.end - c.start);
+            } // reversed: правый кусок играет НАЧАЛО источника — source_in как есть
             right.start = r.end;
             right.duration = end - r.end;
             cmds.push(Command::AddClip(right));
@@ -145,7 +157,7 @@ pub fn trim_group_start_to(p: &Project, sel: ClipId, at: Tick) -> Vec<Command> {
     group_members(p, sel)
         .into_iter()
         .filter(|c| c.start < at && at < c.start + c.duration - MIN_CLIP_DURATION + Tick(1))
-        .filter(|c| (c.source_in + (at - c.start)).0 >= 0)
+        .filter(|c| c.reversed || (c.source_in + (at - c.start)).0 >= 0)
         .map(|c| Command::TrimStart { id: c.id, new_start: at })
         .collect()
 }
@@ -166,4 +178,44 @@ fn group_members(p: &Project, sel: ClipId) -> Vec<ClipEvent> {
         .filter(|c| c.id == sel || (group.is_some() && c.link_group == group))
         .cloned()
         .collect()
+}
+
+/// Магнетизация A/V-пары (п.6): партнёр противоположного типа с ближайшим
+/// стартом подтягивается к выделенному и линкуется. None — партнёра нет;
+/// Some(vec![]) — уже слинкованы и выровнены (no-op). Партнёр
+/// предварительно отвязывается — иначе MoveClip двигал ВСЮ его группу
+/// (включая сам выделенный) и пара никогда не сходилась.
+pub fn magnetize_commands(
+    p: &Project,
+    sel: ClipId,
+    threshold: Tick,
+    next_group: &mut u64,
+) -> Option<Vec<Command>> {
+    let c = p.clips.iter().find(|c| c.id == sel)?;
+    let partner = p
+        .clips
+        .iter()
+        .filter(|o| o.kind != c.kind)
+        .min_by_key(|o| (o.start.0 - c.start.0).abs())?;
+    if (partner.start.0 - c.start.0).abs() > threshold.0 {
+        return None;
+    }
+    let aligned = partner.start == c.start && partner.duration == c.duration;
+    let linked = c.link_group.is_some() && partner.link_group == c.link_group;
+    if aligned && linked {
+        return Some(Vec::new()); // уже намагничены
+    }
+    let group = c.link_group.unwrap_or_else(|| {
+        let g = GroupId(*next_group);
+        *next_group += 1;
+        g
+    });
+    let mut cmds = Vec::new();
+    if partner.link_group.is_some() {
+        cmds.push(Command::UnlinkClip { id: partner.id });
+    }
+    cmds.push(Command::MoveClip { id: partner.id, new_start: c.start, new_lane: partner.lane });
+    cmds.push(Command::TrimEnd { id: partner.id, new_end: c.start + c.duration });
+    cmds.push(Command::LinkClips { ids: vec![c.id, partner.id], group });
+    Some(cmds)
 }

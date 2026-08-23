@@ -45,6 +45,12 @@ pub struct DragState {
 /// Все виды перетаскиваний на таймлайне.
 pub enum Drag {
     Clip(DragState),
+    /// Перетаскивание заголовка дорожки (реордер, п.7).
+    Lane {
+        kind: ClipKind,
+        from: u32,
+        cur: u32,
+    },
     /// Скраб курсора (захват треугольника playhead в руллере).
     Scrub,
     /// Выделение региона по пустому месту.
@@ -74,6 +80,11 @@ pub enum CtxTarget {
     Marker(i64),
     /// Правый клик у границы региона (тик границы).
     RegionEdge(i64),
+    /// Правый клик по заголовку дорожки (п.8).
+    Lane {
+        kind: ClipKind,
+        lane: u32,
+    },
     Empty,
 }
 
@@ -165,6 +176,10 @@ impl KtApp {
         let painter = ui.painter_at(full);
         painter.rect_filled(full, 0.0, egui::Color32::from_gray(22));
         painter.rect_filled(gutter, 0.0, egui::Color32::from_gray(28));
+        // заголовки дорожек интерактивны: драг = реордер (п.7), ПКМ = меню
+        // удаления/вставки (п.8)
+        let gutter_resp =
+            ui.interact(gutter, ui.id().with("lane-gutter"), egui::Sense::click_and_drag());
 
         // ---- зум/пан + edge-autoscroll при драге --------------------------
         let mut view_start = self.view_start;
@@ -384,6 +399,100 @@ impl KtApp {
                 egui::FontId::proportional(12.0),
                 egui::Color32::from_gray(140),
             );
+        }
+
+        // ---- дорожки: реордер драгом и меню (пп. 7-8) ----------------------
+        {
+            let lane_at_y = |y: f32| -> Option<(ClipKind, u32)> {
+                let rel = y - (rect.top() + RULER_H + 3.0);
+                if rel < 0.0 {
+                    return None;
+                }
+                let idx = (rel / lane_h).floor() as u32;
+                if idx < video_lanes {
+                    Some((ClipKind::Video, idx))
+                } else if idx < lanes_total {
+                    Some((ClipKind::Audio, idx - video_lanes))
+                } else {
+                    None
+                }
+            };
+            if gutter_resp.drag_started()
+                && let Some(pos) = gutter_resp.interact_pointer_pos()
+                && let Some((kind, lane)) = lane_at_y(pos.y)
+            {
+                self.drag = Some(Drag::Lane { kind, from: lane, cur: lane });
+            }
+            if gutter_resp.dragged()
+                && let Some(pos) = gutter_resp.interact_pointer_pos()
+                && let Some(Drag::Lane { kind, from, .. }) = self.drag
+                && let Some((k2, cur)) = lane_at_y(pos.y)
+                && k2 == kind
+            {
+                self.drag = Some(Drag::Lane { kind, from, cur });
+            }
+            if gutter_resp.drag_stopped()
+                && let Some(Drag::Lane { kind, from, cur }) = self.drag.take()
+                && from != cur
+            {
+                self.reorder_lane(kind, from, cur);
+            }
+            // индикатор перетаскиваемой дорожки
+            if let Some(Drag::Lane { kind, cur, .. }) = self.drag {
+                let y = lane_top(kind, cur);
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(gutter.left(), y),
+                        egui::pos2(rect.right(), y + lane_h - 2.0),
+                    ),
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(120, 160, 255, 26),
+                );
+            }
+            // ПКМ по заголовку — меню дорожки
+            if gutter_resp.secondary_clicked()
+                && let Some(pos) = gutter_resp.interact_pointer_pos()
+                && let Some((kind, lane)) = lane_at_y(pos.y)
+            {
+                self.ctx_target = Some(CtxTarget::Lane { kind, lane });
+            }
+            gutter_resp.context_menu(|ui| {
+                if let Some(CtxTarget::Lane { kind, lane }) = self.ctx_target {
+                    let n = self
+                        .model
+                        .project()
+                        .clips
+                        .iter()
+                        .filter(|c| c.kind == kind && c.lane == lane)
+                        .count();
+                    let name = match kind {
+                        ClipKind::Video => format!("V{}", lane + 1),
+                        ClipKind::Audio => format!("A{}", lane + 1),
+                    };
+                    ui.label(egui::RichText::new(format!("Дорожка {name}")).strong());
+                    let del_label = if n > 0 {
+                        format!("Удалить дорожку ({n} событ.)")
+                    } else {
+                        "Удалить дорожку".into()
+                    };
+                    let lanes_of_kind = match kind {
+                        ClipKind::Video => video_lanes,
+                        ClipKind::Audio => audio_lanes,
+                    };
+                    if ui.add_enabled(lanes_of_kind > 1, egui::Button::new(del_label)).clicked() {
+                        self.delete_lane(kind, lane);
+                        ui.close();
+                    }
+                    if ui.button("Вставить дорожку выше").clicked() {
+                        self.apply(Command::InsertLane { kind, at: lane });
+                        ui.close();
+                    }
+                    if ui.button("Вставить дорожку ниже").clicked() {
+                        self.apply(Command::InsertLane { kind, at: lane + 1 });
+                        ui.close();
+                    }
+                }
+            });
         }
 
         // ---- регион: заливка ---------------------------------------------------
@@ -645,6 +754,10 @@ impl KtApp {
             && let Some(pos) = pointer
         {
             match self.drag.take() {
+                Some(Drag::Lane { kind, from, cur }) => {
+                    // обрабатывается gutter-областью; здесь просто держим
+                    self.drag = Some(Drag::Lane { kind, from, cur });
+                }
                 Some(Drag::Clip(mut d)) => {
                     d.moved = true;
                     match d.mode {
@@ -1234,7 +1347,8 @@ impl KtApp {
                 }
                 if ui.button("Удалить (Del)").clicked() {
                     self.selected = Some(id);
-                    self.delete_action();
+                    // именно ЭТОТ клип (+группа), а не содержимое региона (п.10)
+                    self.delete_selected();
                     ui.close();
                 }
                 if ui.button("Разрезать по курсору (S)").clicked() {
@@ -1294,8 +1408,8 @@ impl KtApp {
                         self.delete_action();
                         ui.close();
                     }
-                    if ui.button("Вырезать интерьер региона (S)").clicked() {
-                        self.cut_action();
+                    if ui.button("Вырезать интерьер региона").clicked() {
+                        self.punch_out_action();
                         ui.close();
                     }
                     if ui.button("Снять регион").clicked() {

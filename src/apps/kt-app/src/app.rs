@@ -303,6 +303,67 @@ impl KtApp {
         self.selected = None;
     }
 
+    /// Реордер дорожки (п.7): батч MoveClip перекладывает клипы между
+    /// lane `from` и `to` (сдвигом), один undo-шаг.
+    pub fn reorder_lane(&mut self, kind: ClipKind, from: u32, to: u32) {
+        if from == to {
+            return;
+        }
+        let mut cmds = Vec::new();
+        for c in &self.model.project().clips {
+            if c.kind != kind {
+                continue;
+            }
+            let new_lane = if c.lane == from {
+                to
+            } else if from < to && c.lane > from && c.lane <= to {
+                c.lane - 1
+            } else if from > to && c.lane >= to && c.lane < from {
+                c.lane + 1
+            } else {
+                continue;
+            };
+            cmds.push(Command::MoveClip { id: c.id, new_start: c.start, new_lane });
+        }
+        if cmds.is_empty() {
+            self.note("на этих дорожках нет событий — порядок пустых не важен");
+            return;
+        }
+        self.apply_batch(cmds);
+    }
+
+    /// Удаление дорожки (п.8, решение пользователя: вместе с событиями,
+    /// один undo-шаг): RemoveClip событий + сдвиг верхних + SetLanes−1.
+    pub fn delete_lane(&mut self, kind: ClipKind, lane: u32) {
+        let p = self.model.project();
+        let (v, a) = (p.video_lanes.max(1), p.audio_lanes.max(1));
+        let lanes_of_kind = match kind {
+            ClipKind::Video => v,
+            ClipKind::Audio => a,
+        };
+        if lanes_of_kind <= 1 {
+            self.note("последнюю дорожку удалить нельзя");
+            return;
+        }
+        let mut cmds = Vec::new();
+        for c in &p.clips {
+            if c.kind == kind && c.lane == lane {
+                cmds.push(Command::RemoveClip { id: c.id });
+            }
+        }
+        for c in &p.clips {
+            if c.kind == kind && c.lane > lane {
+                cmds.push(Command::MoveClip { id: c.id, new_start: c.start, new_lane: c.lane - 1 });
+            }
+        }
+        let (nv, na) = match kind {
+            ClipKind::Video => (v - 1, a),
+            ClipKind::Audio => (v, a - 1),
+        };
+        cmds.push(Command::SetLanes { video: nv, audio: na });
+        self.apply_batch(cmds);
+    }
+
     pub fn note(&mut self, msg: impl Into<String>) {
         let text = msg.into();
         self.push_notice(Severity::Info, text.clone());
@@ -450,8 +511,58 @@ impl KtApp {
         }
     }
 
-    /// S: с регионом = punch-out, без — сплит выделенного.
+    /// S: ВСЕГДА разрез по курсору (п.5): выделенное+группа, без
+    /// выделения — все события под курсором. Вырезка региона — только из
+    /// контекст-меню (punch_out_action).
     pub fn cut_action(&mut self) {
+        if self.selected.is_some() {
+            self.split_selected();
+        } else {
+            self.split_all_at_cursor();
+        }
+    }
+
+    /// Разрез ВСЕХ клипов, пересекающих курсор (S без выделения).
+    pub fn split_all_at_cursor(&mut self) {
+        let at = self.player.transport.playhead();
+        let targets: Vec<ClipId> = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .filter(|c| {
+                c.start + MIN_CLIP_DURATION <= at && at + MIN_CLIP_DURATION <= c.start + c.duration
+            })
+            .map(|c| c.id)
+            .collect();
+        if targets.is_empty() {
+            self.note("под курсором нет событий");
+            return;
+        }
+        let mut next_id = self.next_clip_id();
+        let mut next_group = self.next_group_id();
+        // одна новая группа на каждую старую (правые половины пар остаются парами)
+        let mut group_map: std::collections::HashMap<GroupId, GroupId> =
+            std::collections::HashMap::new();
+        let mut cmds = Vec::new();
+        #[allow(clippy::explicit_counter_loop)]
+        for id in targets {
+            let old_group = self.model.clip(id).and_then(|c| c.link_group);
+            let new_group = old_group.map(|g| {
+                *group_map.entry(g).or_insert_with(|| {
+                    let ng = GroupId(next_group);
+                    next_group += 1;
+                    ng
+                })
+            });
+            cmds.push(Command::Split { id, at, new_id: ClipId(next_id), new_group });
+            next_id += 1;
+        }
+        self.apply_batch(cmds);
+    }
+
+    /// Вырезка интерьера региона (контекст-меню).
+    pub fn punch_out_action(&mut self) {
         if let Some(r) = self.model.project().region {
             let mut next = self.next_clip_id();
             let cmds = kt_model::ops::punch_out_region(self.model.project(), r, &mut next);
@@ -461,8 +572,6 @@ impl KtApp {
                 self.apply_batch(cmds);
                 self.selected = None;
             }
-        } else {
-            self.split_selected();
         }
     }
 
@@ -536,29 +645,25 @@ impl KtApp {
     /// Магнит A/V: ближайший клип противоположного типа того же медиа
     /// в пределах 2×порога → общий старт/длительность/линк (старый magnetize).
     pub fn magnetize_selected(&mut self) {
-        let Some(sel) = self.selected else { return };
-        let Some(c) = self.model.clip(sel).cloned() else { return };
-        let threshold =
-            2 * ((crate::timeline::SNAP_PX * self.ticks_per_px) as i64).clamp(1080, 9000);
-        let partner = self
-            .model
-            .project()
-            .clips
-            .iter()
-            .filter(|o| o.kind != c.kind && o.media == c.media && o.id != c.id)
-            .min_by_key(|o| (o.start.0 - c.start.0).abs())
-            .filter(|o| (o.start.0 - c.start.0).abs() <= threshold)
-            .cloned();
-        let Some(partner) = partner else {
-            self.note("нет подходящего A/V-партнёра рядом (то же медиа)");
+        let Some(sel) = self.selected else {
+            self.note("выбери клип");
             return;
         };
-        let group = c.link_group.or(partner.link_group).unwrap_or(GroupId(self.next_group_id()));
-        self.apply_batch(vec![
-            Command::MoveClip { id: partner.id, new_start: c.start, new_lane: partner.lane },
-            Command::TrimEnd { id: partner.id, new_end: c.start + c.duration },
-            Command::LinkClips { ids: vec![c.id, partner.id], group },
-        ]);
+        let mut next_group = self.next_group_id();
+        match kt_model::ops::magnetize_commands(
+            self.model.project(),
+            sel,
+            Tick(90_000 * 5), // партнёр в пределах 5 c
+            &mut next_group,
+        ) {
+            None => self.note("рядом нет события другого типа"),
+            Some(cmds) if cmds.is_empty() => self.note("уже намагничены"),
+            Some(cmds) => {
+                if self.apply_batch(cmds) {
+                    self.note("A/V связаны");
+                }
+            }
+        }
     }
 
     pub fn unlink_selected(&mut self) {

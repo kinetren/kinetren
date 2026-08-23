@@ -313,3 +313,75 @@ fn ui_state_round_trip_and_old_json() {
     assert!(!plain.contains("\"ui\""), "None не сериализуется");
     assert_eq!(Project::from_json(&plain).unwrap().ui, None);
 }
+
+/// Тест 29 (п.6): трим применяется ко ВСЕЙ link-группе (v1) — края пары
+/// больше не разъезжаются.
+#[test]
+fn t29_trim_applies_to_link_group() {
+    let p = base(); // пара 10(V)+11(A) 0..90000
+    let mut m = TimelineModel::new(p);
+    m.apply(Command::TrimStart { id: ClipId(10), new_start: Tick(30_000) }).unwrap();
+    let v = m.project().clips.iter().find(|c| c.id == ClipId(10)).unwrap().clone();
+    let a = m.project().clips.iter().find(|c| c.id == ClipId(11)).unwrap().clone();
+    assert_eq!(v.start, a.start, "партнёр обязан получить тот же срез");
+    assert_eq!(v.duration, a.duration);
+
+    m.apply(Command::TrimEnd { id: ClipId(11), new_end: Tick(80_000) }).unwrap();
+    let v = m.project().clips.iter().find(|c| c.id == ClipId(10)).unwrap().clone();
+    let a = m.project().clips.iter().find(|c| c.id == ClipId(11)).unwrap().clone();
+    assert_eq!(v.start + v.duration, a.start + a.duration, "правые края пары должны совпасть");
+}
+
+/// Тест 30 (п.6): магнетизация разъехавшейся пары сходится и идемпотентна.
+#[test]
+fn t30_magnetize_desynced_pair_converges() {
+    let mut p = base();
+    // разъехавшаяся, но слинкованная пара
+    p.clips.iter_mut().find(|c| c.id == ClipId(11)).unwrap().start = Tick(15_000);
+    p.normalize();
+    p.validate().unwrap();
+    let mut m = TimelineModel::new(p);
+
+    let mut ng = 100u64;
+    let cmds = kt_model::ops::magnetize_commands(m.project(), ClipId(10), Tick(90_000), &mut ng)
+        .expect("партнёр есть");
+    assert!(!cmds.is_empty());
+    m.apply_batch(cmds).unwrap();
+    let v = m.project().clips.iter().find(|c| c.id == ClipId(10)).unwrap().clone();
+    let a = m.project().clips.iter().find(|c| c.id == ClipId(11)).unwrap().clone();
+    assert_eq!(v.start, Tick(0), "выделенный клип НЕ должен сдвигаться");
+    assert_eq!(a.start, v.start, "партнёр подтянут");
+    assert_eq!(a.start + a.duration, v.start + v.duration);
+    assert_eq!(a.link_group, v.link_group);
+
+    // повторно — no-op
+    let again =
+        kt_model::ops::magnetize_commands(m.project(), ClipId(10), Tick(90_000), &mut ng).unwrap();
+    assert!(again.is_empty(), "уже намагничены = no-op");
+}
+
+/// Тест 30 (пп.7-8): реордер/удаление дорожки через батчи undo-able.
+#[test]
+fn t30_lane_delete_via_batch_is_single_undo() {
+    let mut p = base();
+    // вторая аудио-дорожка с клипом
+    p.audio_lanes = 2;
+    p.clips.push(clip(20, None, ClipKind::Audio, 1, 200_000, 90_000, 0));
+    p.normalize();
+    p.validate().unwrap();
+    let mut m = TimelineModel::new(p);
+    let before = m.project().to_json();
+
+    // удаление дорожки A1 (lane 0): её клипы удаляются, верхние съезжают
+    let cmds = vec![
+        Command::RemoveClip { id: ClipId(11) },
+        Command::MoveClip { id: ClipId(20), new_start: Tick(200_000), new_lane: 0 },
+        Command::SetLanes { video: 1, audio: 1 },
+    ];
+    m.apply_batch(cmds).unwrap();
+    assert_eq!(m.project().audio_lanes, 1);
+    assert!(m.project().clips.iter().all(|c| c.kind != ClipKind::Audio || c.lane == 0));
+
+    m.undo().unwrap();
+    assert_eq!(m.project().to_json(), before, "один undo возвращает всё");
+}

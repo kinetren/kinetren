@@ -269,14 +269,19 @@ impl TimelineModel {
                 if end - *new_start < MIN_CLIP_DURATION {
                     return Err(CommandError::TooShort);
                 }
-                // source_in не может уйти в минус
-                if (c.source_in + (*new_start - c.start)).0 < 0 {
+                // source_in не может уйти в минус (у reversed левый трим
+                // source_in не трогает — п.16)
+                if !c.reversed && (c.source_in + (*new_start - c.start)).0 < 0 {
                     return Err(CommandError::TooShort);
                 }
             }
             Command::TrimEnd { id, new_end } => {
                 let c = find(*id)?;
                 if *new_end - c.start < MIN_CLIP_DURATION {
+                    return Err(CommandError::TooShort);
+                }
+                // у reversed расширение вправо тянет source_in вниз (п.16)
+                if c.reversed && (c.source_in + (c.start + c.duration - *new_end)).0 < 0 {
                     return Err(CommandError::TooShort);
                 }
             }
@@ -375,27 +380,66 @@ impl TimelineModel {
                     }
                 }
             }
+            // Тримы применяются ко ВСЕЙ link-группе (v1; п.6 «магнит
+            // распадается»: трим края видео оставлял аудио-партнёра прежней
+            // длины). Партнёры клампятся к своим ограничениям.
+            // Реверс (п.16): у reversed клипа source_in живёт «с другого
+            // конца» — TrimStart его НЕ трогает, TrimEnd сдвигает.
             Command::TrimStart { id, new_start } => {
-                let c = Self::clip_mut_on(p, id);
-                let delta = new_start - c.start;
-                c.start = new_start;
-                c.duration = c.duration - delta;
-                c.source_in = c.source_in + delta;
+                let group = p.clips.iter().find(|c| c.id == id).and_then(|c| c.link_group);
+                for c in &mut p.clips {
+                    if c.id != id && (group.is_none() || c.link_group != group) {
+                        continue;
+                    }
+                    let max_start = c.start + c.duration - MIN_CLIP_DURATION;
+                    let min_start =
+                        if c.reversed { Tick(0) } else { Tick((c.start - c.source_in).0.max(0)) };
+                    let ns = Tick(new_start.0.clamp(min_start.0, max_start.0));
+                    let delta = ns - c.start;
+                    c.start = ns;
+                    c.duration = c.duration - delta;
+                    if !c.reversed {
+                        c.source_in = c.source_in + delta;
+                    }
+                }
             }
             Command::TrimEnd { id, new_end } => {
-                let c = Self::clip_mut_on(p, id);
-                c.duration = new_end - c.start;
+                let group = p.clips.iter().find(|c| c.id == id).and_then(|c| c.link_group);
+                for c in &mut p.clips {
+                    if c.id != id && (group.is_none() || c.link_group != group) {
+                        continue;
+                    }
+                    let min_end = c.start + MIN_CLIP_DURATION;
+                    let mut ne = Tick(new_end.0.max(min_end.0));
+                    if c.reversed {
+                        // расширение вправо тянет source_in вниз — клэмп в 0
+                        let max_end = c.start + c.duration + c.source_in;
+                        ne = Tick(ne.0.min(max_end.0));
+                        let old_dur = c.duration;
+                        c.duration = ne - c.start;
+                        c.source_in = c.source_in + (old_dur - c.duration);
+                    } else {
+                        c.duration = ne - c.start;
+                    }
+                }
             }
             Command::Split { id, at, new_id, new_group } => {
                 let left = Self::clip_mut_on(p, id);
                 let left_len = at - left.start;
+                let right_len = left.duration - left_len;
                 let mut right = left.clone();
                 left.duration = left_len;
                 right.id = new_id;
                 right.link_group = new_group;
                 right.start = at;
-                right.duration = right.duration - left_len;
-                right.source_in = right.source_in + left_len;
+                right.duration = right_len;
+                if left.reversed {
+                    // реверс (п.16): левая половина играет ХВОСТ источника,
+                    // правая — начало; right.source_in остаётся
+                    left.source_in = left.source_in + right_len;
+                } else {
+                    right.source_in = right.source_in + left_len;
+                }
                 p.clips.push(right);
             }
             Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,

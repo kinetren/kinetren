@@ -139,3 +139,78 @@ fn t26_video_fx_applied_in_compose_and_deterministic() {
     assert!(a.chunks_exact(4).all(|p| p[3] == 255));
     assert!(a.iter().any(|v| *v != 0));
 }
+
+/// Тест 29 (п.16): у reversed клипа содержимое НЕ зависит от правого края.
+#[test]
+fn t29_reversed_trim_end_preserves_left_edge_frames() {
+    let p = clip(true, vec![], ClipKind::Video);
+    let vr_before = VideoRenderer::new(&p);
+    let step = TICK_HZ / 30;
+    let probes: Vec<Tick> = (0..10).map(|i| Tick(90_000 + i * step)).collect();
+    let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t)[0].1).collect();
+
+    // TrimEnd: укоротить на 0.5 c справа
+    let mut m = kt_model::TimelineModel::new(p);
+    let id = m.project().clips[0].id;
+    let old_end = m.project().clips[0].start + m.project().clips[0].duration;
+    m.apply(Command::TrimEnd { id, new_end: Tick(old_end.0 - 45_000) }).unwrap();
+    let vr_after = VideoRenderer::new(m.project());
+    let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t)[0].1).collect();
+
+    assert_eq!(before, after, "кадры у ЛЕВОГО края reversed клипа не должны меняться при TrimEnd");
+}
+
+#[test]
+fn t29_reversed_trim_start_preserves_surviving_frames() {
+    let p = clip(true, vec![], ClipKind::Video);
+    let vr_before = VideoRenderer::new(&p);
+    let step = TICK_HZ / 30;
+    // пробы в интервале, который переживёт трим
+    let probes: Vec<Tick> = (0..8).map(|i| Tick(90_000 + 45_000 + i * step)).collect();
+    let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t)[0].1).collect();
+
+    let mut m = kt_model::TimelineModel::new(p);
+    let id = m.project().clips[0].id;
+    let old_start = m.project().clips[0].start;
+    m.apply(Command::TrimStart { id, new_start: Tick(old_start.0 + 45_000) }).unwrap();
+    let vr_after = VideoRenderer::new(m.project());
+    let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t)[0].1).collect();
+
+    assert_eq!(before, after, "выжившие кадры reversed клипа не должны меняться при TrimStart");
+}
+
+#[test]
+fn t29_reversed_split_is_visually_seamless() {
+    let p = clip(true, vec![], ClipKind::Video);
+    let vr_before = VideoRenderer::new(&p);
+    let step = TICK_HZ / 30;
+    let probes: Vec<Tick> = (0..20).map(|i| Tick(90_000 + i * step * 3)).collect();
+    let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t)[0].1).collect();
+
+    let mut m = kt_model::TimelineModel::new(p);
+    let id = m.project().clips[0].id;
+    let at = Tick(90_000 + 90_000); // середина
+    m.apply(Command::Split { id, at, new_id: ClipId(99), new_group: None }).unwrap();
+    let vr_after = VideoRenderer::new(m.project());
+    let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t)[0].1).collect();
+
+    assert_eq!(before, after, "сплит reversed клипа обязан быть бесшовным по содержимому");
+}
+
+/// Тест 29 (аудио-половина): реверс + TrimEnd — сэмплы у левого края exact.
+#[test]
+fn t29_reversed_audio_trim_end_left_edge_exact() {
+    let p = clip(true, vec![], ClipKind::Audio);
+    let n = 4096usize;
+    let mut before = vec![0f32; n * CH];
+    AudioRenderer::new(&p).render_frames(&mut direct(), 48_000, &mut before);
+
+    let mut m = kt_model::TimelineModel::new(p);
+    let id = m.project().clips[0].id;
+    let old_end = m.project().clips[0].start + m.project().clips[0].duration;
+    m.apply(Command::TrimEnd { id, new_end: Tick(old_end.0 - 45_000) }).unwrap();
+    let mut after = vec![0f32; n * CH];
+    AudioRenderer::new(m.project()).render_frames(&mut direct(), 48_000, &mut after);
+
+    assert_eq!(before, after, "начало reversed аудио-события не должно сдвигаться при TrimEnd");
+}
