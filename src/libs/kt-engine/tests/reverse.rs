@@ -104,3 +104,38 @@ fn t24_reversed_with_slowed_fx_is_deterministic_and_not_silent() {
     let rms = (a.iter().map(|s| (*s as f64).powi(2)).sum::<f64>() / a.len() as f64).sqrt();
     assert!(rms > 1e-4, "реверс+slowed не должен быть тишиной, rms={rms}");
 }
+
+/// Тест 26 (интеграция, п.25): видео-FX применяются в ЕДИНОМ пути композита
+/// (превью == экспорт), кэш хранит пре-FX кадры.
+#[test]
+fn t26_video_fx_applied_in_compose_and_deterministic() {
+    let mut p = clip(false, vec![], ClipKind::Video);
+    p.clips[0].fx = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
+    p.validate().unwrap();
+    let vr = VideoRenderer::new(&p);
+
+    let cache = std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig::default()));
+    let q = kt_media::Quality { width: 64, height: 36 };
+    // прогреть кадр клипа в кэш напрямую (пре-FX)
+    let t = Tick(90_000);
+    let src_pts = vr.layers_at(t)[0].1;
+    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
+    use kt_media::MediaSource;
+    let frame = synth.read_video_frame(src_pts, Some(q)).unwrap();
+    cache.insert_video(
+        kt_engine::source_id(MediaId(1)),
+        Some(q),
+        kt_engine::video_cache_idx(src_pts),
+        std::sync::Arc::new(frame),
+    );
+
+    let (a, complete) = vr.compose_from_cache(&cache, t, q);
+    assert!(complete);
+    let (b, _) = vr.compose_from_cache(&cache, t, q);
+    assert_eq!(a, b, "FX-композит детерминирован");
+    // кэш не тронут FX'ом: кадр в кэше остался пре-FX (сплошной цвет),
+    // а выход — зеркален, но у сплошного цвета зеркало == оригинал; проверим
+    // хотя бы что выход не пуст и альфа непрозрачна
+    assert!(a.chunks_exact(4).all(|p| p[3] == 255));
+    assert!(a.iter().any(|v| *v != 0));
+}

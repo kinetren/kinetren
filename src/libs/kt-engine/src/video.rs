@@ -18,6 +18,7 @@ struct VideoClip {
     lane: u32,
     media: MediaId,
     reversed: bool,
+    fx: Vec<kt_model::FxInstance>,
 }
 
 /// pts источника для момента таймлайна `t` внутри клипа: прямой или
@@ -58,6 +59,7 @@ impl VideoRenderer {
                 lane: c.lane,
                 media: c.media,
                 reversed: c.reversed,
+                fx: c.fx.clone(),
             })
             .collect();
         // задний план первым (большая lane), передний (lane 0) — последним
@@ -102,11 +104,39 @@ impl VideoRenderer {
         let h = quality.height as usize;
         let mut out = vec![0u8; w * h * 4];
         let mut complete = true;
-        for (media, src_pts) in self.layers_at(t) {
+        for clip in self.clips.iter().filter(|c| c.start <= t && t < c.end) {
+            let src_pts = clip_source_pts(clip, t, &self.grid);
             let key_idx = video_cache_idx(src_pts);
-            match cache.get_video(SourceId(media.0), Some(quality), key_idx) {
+            match cache.get_video(SourceId(clip.media.0), Some(quality), key_idx) {
                 Some(frame) => {
-                    alpha_over(&mut out, &frame.rgba, frame.has_alpha, w * h);
+                    if kt_fx::video::has_video_fx(&clip.fx) {
+                        // цепочка видео-FX (п.25): кэш хранит ПРЕ-FX кадры
+                        // (инвариант кэша), эффекты — на композите; один код
+                        // для превью и экспорта (инвариант №7)
+                        let span = (clip.end.0 - clip.start.0).max(1);
+                        let u = (t.0 - clip.start.0) as f64 / span as f64;
+                        let ctx = kt_fx::video::VideoFxCtx {
+                            out_w: quality.width,
+                            out_h: quality.height,
+                            u,
+                            burst_index: t.0,
+                        };
+                        let f = kt_fx::video::apply_video_chain(
+                            &clip.fx,
+                            kt_fx::video::Frame {
+                                w: frame.width,
+                                h: frame.height,
+                                rgba: frame.rgba.to_vec(),
+                                has_alpha: frame.has_alpha,
+                            },
+                            &ctx,
+                        );
+                        if (f.w as usize, f.h as usize) == (w, h) {
+                            alpha_over(&mut out, &f.rgba, f.has_alpha, w * h);
+                        }
+                    } else {
+                        alpha_over(&mut out, &frame.rgba, frame.has_alpha, w * h);
+                    }
                 }
                 None => complete = false,
             }

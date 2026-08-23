@@ -22,7 +22,7 @@ pub use fxstore::FxStateStore;
 pub use player::{AudioShared, Player};
 pub use prefetch::prefetch_audio_pass;
 pub use transport::Transport;
-pub use video::VideoRenderer;
+pub use video::{VideoRenderer, video_cache_idx};
 pub use worker::{DecodeRequest, MediaWorker, RequestKind};
 
 /// Приоритеты запросов к MediaWorker. Порядок значим (инвариант №5).

@@ -23,6 +23,8 @@ pub const CH: usize = AUDIO_CHANNELS;
 /// чтобы состояние (реверб, ресемплер) было прогрето детерминированно.
 pub const MIN_PREROLL_FRAMES: i64 = (AUDIO_SAMPLE_RATE as i64) / 10;
 
+pub mod video;
+
 /// Сглаженный параметр: one-pole к цели, ~20 мс. Не «телепортируется»
 /// при set_target — только в reset().
 #[derive(Debug, Clone, Copy)]
@@ -535,6 +537,8 @@ impl ClipProcessor {
                         w.set_rate(rate_at(self.rate, &self.automation, 0.5_f64.min(1.0)));
                     }
                 }
+                // видео-FX аудио-процессором игнорируются
+                _ => {}
             }
         }
         self.static_gain = gain;

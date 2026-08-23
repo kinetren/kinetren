@@ -67,3 +67,21 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 - Новый найденный дефект/тонкость → сразу документировать (`docs/porting-notes.md` или CLAUDE.md крейта) и по возможности закрыть регрессионным тестом.
 - `cargo test` обязан быть зелёным на каждый коммит; тесты 1–16 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
 - Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine.
+
+## Карта крейт → обязательные тесты (гонять при правках, требование пользователя)
+
+| Правишь | Обязательно зелёные |
+|---|---|
+| kt-fx (аудио) | kt-engine/tests/{fx,warp_prefetch,reverse}.rs, golden_export.rs |
+| kt-fx/video.rs | kt-fx/tests/video_fx.rs (golden 26), kt-engine/tests/reverse.rs::t26 |
+| kt-engine/audio.rs | audio_engine, warp_prefetch, splice, reverse, golden_export |
+| kt-engine/worker.rs | scheduler, video_span |
+| kt-engine/player.rs | player_dynamic (t18/t20), audio_engine::t14, unit t22-sync |
+| kt-engine/video.rs | viewport, reverse (t24/t26), golden_export |
+| kt-engine/export.rs | golden_export (11), export_options (25) |
+| kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg) |
+| kt-media | ffmpeg_conformance, index_db, kt-app unit t23 |
+| kt-model | model_roundtrip, parity_ops (вкл. t24) |
+| kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей) |
+
+Всё вместе: `cd src && cargo test --workspace` (плюс `cargo clippy`).

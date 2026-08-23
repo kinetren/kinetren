@@ -1946,6 +1946,7 @@ dependencies = [
  "kt-time",
  "realfft",
  "rubato",
+ "xxhash-rust",
 ]
 
 [[package]]

@@ -139,6 +139,147 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         automation: Vec<SlowedKeyframe>,
     },
+    // ---- видео-FX (порт bc_fx.cpp, п.25; параметры и дефолты v1) ----------
+    /// Кроп-рамка + пан/зум в размер проекта.
+    Pan {
+        #[serde(default)]
+        mode: PanMode,
+        #[serde(default)]
+        pan_x: f64,
+        #[serde(default)]
+        pan_y: f64,
+        #[serde(default = "default_zoom")]
+        zoom: f64,
+    },
+    /// Пан/зум по кейфреймам прогресса клипа (smoothstep при ease).
+    CamMotion {
+        #[serde(default)]
+        mode: PanMode,
+        #[serde(default = "default_true")]
+        ease: bool,
+        #[serde(default = "default_one")]
+        time_scale: f64,
+        #[serde(default)]
+        keyframes: Vec<CamKeyframe>,
+    },
+    Mirror {
+        #[serde(default = "default_true")]
+        horizontal: bool,
+        #[serde(default)]
+        vertical: bool,
+    },
+    Blur {
+        #[serde(default = "default_blur_radius")]
+        radius: u32,
+    },
+    Greenscreen {
+        #[serde(default)]
+        key_r: u8,
+        #[serde(default = "default_255")]
+        key_g: u8,
+        #[serde(default)]
+        key_b: u8,
+        #[serde(default = "default_tolerance")]
+        tolerance: u32,
+        #[serde(default = "default_softness")]
+        softness: u32,
+    },
+    Edges {
+        #[serde(default = "default_edges_threshold")]
+        threshold: u32,
+    },
+    Noise {
+        #[serde(default = "default_noise_amount")]
+        amount: f64,
+    },
+    Vhs {
+        #[serde(default = "default_rgb_shift")]
+        rgb_shift: u32,
+        #[serde(default = "default_bleed")]
+        bleed: f64,
+    },
+    Glow {
+        #[serde(default = "default_glow_strength")]
+        strength: f64,
+    },
+    EventGrid {
+        #[serde(default = "default_one_u32")]
+        cols: u32,
+        #[serde(default = "default_one_u32")]
+        rows: u32,
+        #[serde(default = "default_true")]
+        center: bool,
+    },
+}
+
+impl FxInstance {
+    /// Аудио-эффект? (видео-FX живут в той же цепочке клипа, но
+    /// обрабатываются VideoRenderer'ом)
+    pub fn is_audio(&self) -> bool {
+        matches!(self, FxInstance::Gain { .. } | FxInstance::SlowedReverb { .. })
+    }
+}
+
+/// Режим кроп-рамки пан/зума (v1: fit/fill/stretch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PanMode {
+    #[default]
+    Fit,
+    Fill,
+    Stretch,
+}
+
+/// Кейфрейм CamMotion по прогрессу клипа t∈[0,1].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CamKeyframe {
+    pub t: f64,
+    #[serde(default)]
+    pub pan_x: f64,
+    #[serde(default)]
+    pub pan_y: f64,
+    #[serde(default = "default_zoom")]
+    pub zoom: f64,
+}
+
+fn default_zoom() -> f64 {
+    1.0
+}
+fn default_true() -> bool {
+    true
+}
+fn default_one() -> f64 {
+    1.0
+}
+fn default_one_u32() -> u32 {
+    1
+}
+fn default_255() -> u8 {
+    255
+}
+fn default_blur_radius() -> u32 {
+    8
+}
+fn default_tolerance() -> u32 {
+    70
+}
+fn default_softness() -> u32 {
+    25
+}
+fn default_edges_threshold() -> u32 {
+    48
+}
+fn default_noise_amount() -> f64 {
+    0.08
+}
+fn default_rgb_shift() -> u32 {
+    4
+}
+fn default_bleed() -> f64 {
+    0.4
+}
+fn default_glow_strength() -> f64 {
+    0.65
 }
 
 fn default_damp() -> f32 {

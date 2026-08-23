@@ -12,3 +12,4 @@ rubato = { workspace = true }
 
 [dev-dependencies]
 realfft = { workspace = true }
+xxhash-rust = { workspace = true, features = ["xxh3"] }
