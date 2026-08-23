@@ -466,17 +466,17 @@ mod interval_tests {
     fn insert_merges_and_remove_splits() {
         let mut s = IntervalSet::default();
         for i in [1, 3, 2, 7, 8, 0] {
-            s.insert(i);
+            s.insert_range(i, i + 1);
         }
         assert_eq!(s.query(-10..100), vec![0..4, 7..9]);
-        s.remove(2);
+        s.remove_range(2, 2 + 1);
         assert_eq!(s.query(-10..100), vec![0..2, 3..4, 7..9]);
-        s.remove(0);
-        s.remove(3);
+        s.remove_range(0, 1);
+        s.remove_range(3, 3 + 1);
         assert_eq!(s.query(-10..100), vec![1..2, 7..9]);
         // повторные операции идемпотентны
-        s.remove(0);
-        s.insert(7);
+        s.remove_range(0, 1);
+        s.insert_range(7, 7 + 1);
         assert_eq!(s.query(-10..100), vec![1..2, 7..9]);
         // запрос обрезается диапазоном
         assert_eq!(s.query(8..100), vec![8..9]);
