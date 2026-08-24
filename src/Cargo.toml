@@ -42,6 +42,17 @@ realfft = "3"
 [profile.release]
 debug = true
 
+# Релизная поставка: без debug-инфы (release с debug=true — 500+МБ),
+# со strip и LTO. Собирается scripts/release-build.sh в контейнере со
+# старым glibc — см. packaging/. panic=abort не ставим — семантика
+# паник остаётся той же, что в тестируемых профилях.
+[profile.dist]
+inherits = "release"
+debug = false
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+
 # Аудио-DSP и композитинг должны быть быстрыми и в dev-сборке
 [profile.dev.package."*"]
 opt-level = 2

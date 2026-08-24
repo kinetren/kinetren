@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Kinotrain
+GenericName=Video Editor
+GenericName[ru]=Видеоредактор
+Comment=Non-linear video editor
+Comment[ru]=Нелинейный видеоредактор
+Exec=kt-app %f
+Icon=kinotrain
+Terminal=false
+Categories=AudioVideo;AudioVideoEditing;Video;
+MimeType=application/x-kinotrain-project;
+StartupWMClass=kinotrain

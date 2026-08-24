@@ -17,6 +17,9 @@ cargo test --features conformance   # + conformance на реальных фик
 cargo clippy --all-targets
 cargo run -p kt-app        # GUI
 cargo run -p kt-cli -- …   # headless-рендер/экспорт
+./scripts/release-build.sh # релизный тарбол: dist-профиль (strip+LTO) в контейнере
+                           # Ubuntu 22.04 → работает на glibc >= 2.35; внутри
+                           # проверяются «ldd без libav*» и потолок GLIBC_
 ```
 
 Системные требования для полной сборки (kt-media/kt-app): dev-пакеты FFmpeg (libavcodec/format/util/swscale/swresample), `clang` (bindgen), `libasound2-dev` (cpal/ALSA), бинарник `ffmpeg` в PATH (экспорт и генерация фикстур). Крейты kt-time/kt-model/kt-fx/kt-cache и ядро kt-engine собираются и тестируются **без** всего этого.
