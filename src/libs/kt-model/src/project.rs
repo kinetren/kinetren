@@ -17,6 +17,9 @@ pub struct MediaId(pub u64);
 #[serde(transparent)]
 pub struct GroupId(pub u64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct MorphId(pub u64);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipKind {
@@ -46,11 +49,89 @@ pub struct Project {
     pub video_lanes: u32,
     #[serde(default = "default_lanes")]
     pub audio_lanes: u32,
+    /// Morph-дорожки (порт v1): отдельный тип дорожек, клипы на них не
+    /// живут — только morph-события. 0 = дорожек нет (старые файлы).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub morph_lanes: u32,
+    /// Morph-события. Применяются к клипам в `effective_clips()`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub morphers: Vec<MorpherEvent>,
     /// Состояние вьюпорта редактора (п.13, порт v1: timelineViewStartMs/
     /// zoomLevel/cursorMs). Вне undo-истории (как region); старые файлы
     /// без секции читаются как None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<UiState>,
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
+}
+
+/// Morpher (порт v1): непрозрачный «патч» на фиолетовой morph-дорожке.
+/// Действует на ЗАМОРОЖЕННЫЙ при создании список клипов (`targets`) —
+/// целиком, независимо от времени: `start`/`duration` только позиционируют
+/// блок на таймлайне (v1-семантика, осознанно сохранена: подмена источника
+/// посреди клипа невыразима без его разреза).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MorpherEvent {
+    pub id: MorphId,
+    /// Индекс morph-дорожки (0..morph_lanes).
+    pub lane: u32,
+    pub start: Tick,
+    pub duration: Tick,
+    /// Замороженные цели. Команды модели поддерживают список актуальным:
+    /// удаление клипа вычищает id, split добавляет правую половину
+    /// (в v1 висячие id жили вечно — дефект D5 разведки).
+    pub targets: Vec<ClipId>,
+    pub kind: MorphKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MorphKind {
+    /// Подмена источника и/или сдвиг точки входа у целевых клипов.
+    Replace {
+        /// None = источник не менять (только сдвиг точки входа).
+        media: Option<MediaId>,
+        /// Сдвиг source_in (тики); применяется, если absolute не задан.
+        source_in_delta: Tick,
+        /// Абсолютный source_in — приоритетнее delta (в v1 поле было
+        /// недостижимо из UI — дефект D4 разведки).
+        absolute_source_in: Option<Tick>,
+    },
+    /// Дописать FX в конец цепочек целевых клипов. В отличие от v1
+    /// (дефект D1) действует live — bake лишь материализует то же самое.
+    EffectBatch { video_fx: Vec<FxInstance>, audio_fx: Vec<FxInstance> },
+}
+
+impl MorpherEvent {
+    /// Применить патч к копии клипа (v1 applyMorpherPatchToClipCopy).
+    /// Верхнего клампа source_in по длительности источника нет намеренно:
+    /// модель не знает длительностей медиа (никакого FFmpeg в kt-model);
+    /// чтение за концом источника движок отдаёт тишиной/последним кадром.
+    pub fn apply_to(&self, c: &mut ClipEvent) {
+        match &self.kind {
+            MorphKind::Replace { media, source_in_delta, absolute_source_in } => {
+                if let Some(m) = media {
+                    c.media = *m;
+                }
+                c.source_in = match absolute_source_in {
+                    Some(abs) => Tick(abs.0.max(0)),
+                    None => Tick((c.source_in + *source_in_delta).0.max(0)),
+                };
+            }
+            MorphKind::EffectBatch { video_fx, audio_fx } => {
+                let extra = match c.kind {
+                    ClipKind::Video => video_fx,
+                    ClipKind::Audio => audio_fx,
+                };
+                if !extra.is_empty() {
+                    // fx_bypass короче цепочки = дописанные слоты включены
+                    // (active_fx трактует отсутствующий флаг как false)
+                    c.fx.extend(extra.iter().cloned());
+                }
+            }
+        }
+    }
 }
 
 fn default_lanes() -> u32 {
@@ -370,6 +451,12 @@ pub enum ProjectError {
     BadFps,
     #[error("region: end must be greater than start")]
     BadRegion,
+    #[error("duplicate morpher id {0:?}")]
+    DuplicateMorphId(MorphId),
+    #[error("morpher {0:?}: unknown target clip {1:?}")]
+    MorphUnknownTarget(MorphId, ClipId),
+    #[error("morpher {0:?}: unknown media {1:?}")]
+    MorphUnknownMedia(MorphId, MediaId),
 }
 
 impl Project {
@@ -384,8 +471,33 @@ impl Project {
             loop_enabled: false,
             video_lanes: 1,
             audio_lanes: 1,
+            morph_lanes: 0,
+            morphers: Vec::new(),
             ui: None,
         }
+    }
+
+    /// Клипы после применения morpher'ов — ЕДИНСТВЕННАЯ точка выдачи клипов
+    /// движку, экспорту и отрисовке (v1 effectiveClipForRender/renderClips):
+    /// движок про morpher не знает. Порядок применения детерминирован —
+    /// по возрастанию MorphId (порядок создания; в v1 порядок вектора был
+    /// негласным — дефект D11 разведки). Несколько morpher'ов на клип
+    /// применяются кумулятивно.
+    pub fn effective_clips(&self) -> Vec<ClipEvent> {
+        let mut out = self.clips.clone();
+        if self.morphers.is_empty() {
+            return out;
+        }
+        let mut ms: Vec<&MorpherEvent> = self.morphers.iter().collect();
+        ms.sort_by_key(|m| m.id);
+        for m in ms {
+            for c in out.iter_mut() {
+                if m.targets.contains(&c.id) {
+                    m.apply_to(c);
+                }
+            }
+        }
+        out
     }
 
     /// Нормализация после загрузки: число дорожек подтягивается вверх до
@@ -399,6 +511,9 @@ impl Project {
         }
         self.video_lanes = self.video_lanes.max(1);
         self.audio_lanes = self.audio_lanes.max(1);
+        for m in &self.morphers {
+            self.morph_lanes = self.morph_lanes.max(m.lane + 1);
+        }
         self.markers.sort_unstable();
         self.markers.dedup();
     }
@@ -437,6 +552,22 @@ impl Project {
             && r.end <= r.start
         {
             return Err(ProjectError::BadRegion);
+        }
+        let mut morph_ids = std::collections::HashSet::new();
+        for m in &self.morphers {
+            if !morph_ids.insert(m.id) {
+                return Err(ProjectError::DuplicateMorphId(m.id));
+            }
+            for t in &m.targets {
+                if !clip_ids.contains(t) {
+                    return Err(ProjectError::MorphUnknownTarget(m.id, *t));
+                }
+            }
+            if let MorphKind::Replace { media: Some(mid), .. } = &m.kind
+                && !media_ids.contains(mid)
+            {
+                return Err(ProjectError::MorphUnknownMedia(m.id, *mid));
+            }
         }
         Ok(())
     }

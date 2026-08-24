@@ -41,7 +41,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 
 В каждом libs/-крейте есть свой `CLAUDE.md` с инвариантами и неочевидными решениями. Читай его перед правкой крейта.
 
-Состояние UI-паритета со старым Qt-редактором (инвентаризация в docs/porting-notes.md): U1–U4 выполнены — маркеры/регион/loop/punch-out/копипаст-цепочки/volume rail/стерео-волноформы/филмстрип/метры+фейдер/медиа-бин/FX-редактор с автоматизацией/рендер-диалог/автосейв. Не перенесено (осознанно, отдельными этапами): morpher-система, DSP старых видео-FX (Pan/CamMotion/Blur/Greenscreen/Edges/Noise/VHS/Glow/EventGrid), полная перф-панель с графиками.
+Состояние UI-паритета со старым Qt-редактором (инвентаризация в docs/porting-notes.md): U1–U4 выполнены — маркеры/регион/loop/punch-out/копипаст-цепочки/volume rail/стерео-волноформы/филмстрип/метры+фейдер/медиа-бин/FX-редактор с автоматизацией/рендер-диалог/автосейв. E5 перенёс все 10 видео-FX, H1 — morpher-систему (morph-дорожки, размещение, FX-батчи, bake; тесты 35–36). Не перенесено (осознанно): полная перф-панель v1 с графиками (текущая — упрощённая).
 
 ## Модель времени
 
@@ -68,7 +68,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 
 - Перед правкой крейта — его `CLAUDE.md`; перед архитектурными изменениями — `docs/architecture.md`.
 - Новый найденный дефект/тонкость → сразу документировать (`docs/porting-notes.md` или CLAUDE.md крейта) и по возможности закрыть регрессионным тестом.
-- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–34 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
+- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–36 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
 - Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine.
 
 ## Карта крейт → обязательные тесты (гонять при правках, требование пользователя)
@@ -84,7 +84,8 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-engine/export.rs | golden_export (11), export_options (25, 33) |
 | kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg/t34), export_options t33 (муксер) |
 | kt-media | ffmpeg_conformance (вкл. t34 — персист пакетного индекса), index_db, kt-app unit t23 |
-| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30) |
+| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30), morpher t35 |
+| kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |
 | kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей) |
 
 Всё вместе: `cd src && cargo test --workspace` (плюс `cargo clippy`).

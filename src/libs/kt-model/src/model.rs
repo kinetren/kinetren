@@ -97,6 +97,26 @@ pub enum Command {
     SetSettings {
         settings: ProjectSettings,
     },
+    /// Morpher (порт v1). В отличие от v1 ВСЕ операции undo-able (дефект D6).
+    AddMorpher(MorpherEvent),
+    RemoveMorpher {
+        id: MorphId,
+    },
+    /// Полная замена события (окно редактора; в UI — coalesced-жест).
+    SetMorpher(MorpherEvent),
+    /// Bake: деструктивно вписать патч в целевые клипы и удалить событие.
+    /// Результат рендера не меняется: effective_clips уже применял то же.
+    BakeMorpher {
+        id: MorphId,
+    },
+    /// Вставить morph-дорожку в позицию `at` (lane событий >= at сдвигается).
+    InsertMorphLane {
+        at: u32,
+    },
+    /// Удалить morph-дорожку вместе с её событиями.
+    RemoveMorphLane {
+        at: u32,
+    },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -121,6 +141,12 @@ pub enum CommandError {
     MediaInUse(MediaId),
     #[error("lane count would orphan clips")]
     LanesTooFew,
+    #[error("morpher {0:?} not found")]
+    MorpherNotFound(MorphId),
+    #[error("morpher needs at least one target clip")]
+    MorpherNoTargets,
+    #[error("morph lane {0} not found")]
+    MorphLaneNotFound(u32),
     #[error("nothing to undo")]
     NothingToUndo,
     #[error("nothing to redo")]
@@ -344,12 +370,58 @@ impl TimelineModel {
                 if p.clips.iter().any(|c| c.media == *id) {
                     return Err(CommandError::MediaInUse(*id));
                 }
+                // morpher с подменой на это медиа тоже держит его
+                if p.morphers.iter().any(|m| {
+                    matches!(&m.kind, MorphKind::Replace { media: Some(x), .. } if x == id)
+                }) {
+                    return Err(CommandError::MediaInUse(*id));
+                }
             }
             Command::SetSettings { settings } => {
                 if settings.fps == 0 || kt_time::TICK_HZ % settings.fps as i64 != 0 {
                     return Err(CommandError::InvalidClip(ProjectError::BadFps));
                 }
             }
+            Command::AddMorpher(m) => {
+                if p.morphers.iter().any(|x| x.id == m.id) {
+                    return Err(CommandError::IdInUse(m.id.0));
+                }
+                Self::check_morpher_on(p, m)?;
+            }
+            Command::SetMorpher(m) => {
+                if !p.morphers.iter().any(|x| x.id == m.id) {
+                    return Err(CommandError::MorpherNotFound(m.id));
+                }
+                Self::check_morpher_on(p, m)?;
+            }
+            Command::RemoveMorpher { id } | Command::BakeMorpher { id } => {
+                if !p.morphers.iter().any(|x| x.id == *id) {
+                    return Err(CommandError::MorpherNotFound(*id));
+                }
+            }
+            Command::InsertMorphLane { .. } => {}
+            Command::RemoveMorphLane { at } => {
+                if *at >= p.morph_lanes {
+                    return Err(CommandError::MorphLaneNotFound(*at));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_morpher_on(p: &Project, m: &MorpherEvent) -> Result<(), CommandError> {
+        if m.targets.is_empty() {
+            return Err(CommandError::MorpherNoTargets);
+        }
+        for t in &m.targets {
+            if !p.clips.iter().any(|c| c.id == *t) {
+                return Err(CommandError::ClipNotFound(*t));
+            }
+        }
+        if let MorphKind::Replace { media: Some(mid), .. } = &m.kind
+            && !p.media.iter().any(|x| x.id == *mid)
+        {
+            return Err(CommandError::MediaNotFound(*mid));
         }
         Ok(())
     }
@@ -366,7 +438,13 @@ impl TimelineModel {
                 }
                 p.clips.push(c)
             }
-            Command::RemoveClip { id } => p.clips.retain(|c| c.id != id),
+            Command::RemoveClip { id } => {
+                p.clips.retain(|c| c.id != id);
+                // D5 (v1): вычищаем id из замороженных целей morpher'ов
+                for m in &mut p.morphers {
+                    m.targets.retain(|t| *t != id);
+                }
+            }
             Command::MoveClip { id, new_start, new_lane } => {
                 let (group, delta, kind) = {
                     let c = p.clips.iter().find(|c| c.id == id).unwrap();
@@ -447,6 +525,12 @@ impl TimelineModel {
                     right.source_in = right.source_in + left_len;
                 }
                 p.clips.push(right);
+                // D5 (v1): правая половина наследует таргетинг morpher'ов
+                for m in &mut p.morphers {
+                    if m.targets.contains(&id) {
+                        m.targets.push(new_id);
+                    }
+                }
             }
             Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,
             Command::SetReversed { id, reversed } => Self::clip_mut_on(p, id).reversed = reversed,
@@ -487,6 +571,43 @@ impl TimelineModel {
             }
             Command::RemoveMedia { id } => p.media.retain(|m| m.id != id),
             Command::SetSettings { settings } => p.settings = settings,
+            Command::AddMorpher(m) => {
+                p.morph_lanes = p.morph_lanes.max(m.lane + 1);
+                p.morphers.push(m);
+            }
+            Command::SetMorpher(m) => {
+                p.morph_lanes = p.morph_lanes.max(m.lane + 1);
+                if let Some(slot) = p.morphers.iter_mut().find(|x| x.id == m.id) {
+                    *slot = m;
+                }
+            }
+            Command::RemoveMorpher { id } => p.morphers.retain(|m| m.id != id),
+            Command::BakeMorpher { id } => {
+                let Some(pos) = p.morphers.iter().position(|m| m.id == id) else { return };
+                let m = p.morphers.remove(pos);
+                for c in &mut p.clips {
+                    if m.targets.contains(&c.id) {
+                        m.apply_to(c);
+                    }
+                }
+            }
+            Command::InsertMorphLane { at } => {
+                p.morph_lanes = (p.morph_lanes.max(at) + 1).max(1);
+                for m in &mut p.morphers {
+                    if m.lane >= at {
+                        m.lane += 1;
+                    }
+                }
+            }
+            Command::RemoveMorphLane { at } => {
+                p.morphers.retain(|m| m.lane != at);
+                for m in &mut p.morphers {
+                    if m.lane > at {
+                        m.lane -= 1;
+                    }
+                }
+                p.morph_lanes = p.morph_lanes.saturating_sub(1);
+            }
         }
     }
 

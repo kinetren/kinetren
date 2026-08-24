@@ -37,6 +37,11 @@ pub struct KtApp {
     pub view_start: f64, // тики
     pub ticks_per_px: f64,
     pub selected: Option<ClipId>,
+    /// Выделенный morph-блок (H1; приоритет над клипом при Del).
+    pub selected_morph: Option<MorphId>,
+    /// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
+    /// замороженные цели + вид; Esc — отмена.
+    pub pending_morpher: Option<PendingMorph>,
     pub drag: Option<Drag>,
     pub snap_line: Option<i64>,
     pub ctx_target: Option<CtxTarget>,
@@ -55,6 +60,7 @@ pub struct KtApp {
     pub meter: crate::meters::MeterState,
     pub smooth_scaling: bool,
     pub fx_editors: Vec<crate::fx_editor::FxEditor>,
+    pub morph_editors: Vec<crate::morpher_editor::MorphEditor>,
     pub gesture_counter: u64,
     pub render_job: Option<crate::render_dialog::RenderJob>,
     pub render_setup: crate::render_dialog::RenderSetup,
@@ -146,6 +152,8 @@ impl KtApp {
             view_start: 0.0,
             ticks_per_px: 900.0,
             selected: None,
+            selected_morph: None,
+            pending_morpher: None,
             drag: None,
             snap_line: None,
             ctx_target: None,
@@ -162,6 +170,7 @@ impl KtApp {
             meter_glow: None,
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
             fx_editors: Vec::new(),
+            morph_editors: Vec::new(),
             gesture_counter: 0,
             render_job: None,
             render_setup: Default::default(),
@@ -208,6 +217,8 @@ impl KtApp {
             view_start: 0.0,
             ticks_per_px: 900.0,
             selected: None,
+            selected_morph: None,
+            pending_morpher: None,
             drag: None,
             snap_line: None,
             ctx_target: None,
@@ -224,6 +235,7 @@ impl KtApp {
             meter_glow: None,
             thumbs: thumbs_svc,
             fx_editors: Vec::new(),
+            morph_editors: Vec::new(),
             gesture_counter: 0,
             render_job: None,
             render_setup: Default::default(),
@@ -322,12 +334,21 @@ impl KtApp {
 
     /// Esc-каскад (п.11): окна → активный драг → регион+выделение.
     pub fn escape_action(&mut self) {
+        // 0) отмена размещения morpher'а (v1: Esc cancels placement)
+        if self.pending_morpher.take().is_some() {
+            self.note("Размещение morpher'а отменено");
+            return;
+        }
         // 1) закрыть верхнее наше окно
         if self.render_setup.open {
             self.render_setup.open = false;
             return;
         }
         if let Some(ed) = self.fx_editors.iter_mut().rev().find(|e| e.open) {
+            ed.open = false;
+            return;
+        }
+        if let Some(ed) = self.morph_editors.iter_mut().rev().find(|e| e.open) {
             ed.open = false;
             return;
         }
@@ -350,6 +371,7 @@ impl KtApp {
             self.clear_region();
         }
         self.selected = None;
+        self.selected_morph = None;
     }
 
     /// Реордер дорожки (п.7): батч MoveClip перекладывает клипы между
@@ -628,6 +650,14 @@ impl KtApp {
 
     /// Del: с регионом = удалить пересекающиеся (+партнёры), без — выделение.
     pub fn delete_action(&mut self) {
+        // выделенный morph-блок — приоритет (фикс D6 v1: при нарисованном
+        // регионе morpher было не удалить с клавиатуры)
+        if let Some(id) = self.selected_morph {
+            if self.apply(Command::RemoveMorpher { id }) {
+                self.selected_morph = None;
+            }
+            return;
+        }
         if let Some(r) = self.model.project().region {
             let cmds = kt_model::ops::delete_region(self.model.project(), r);
             if cmds.is_empty() {
@@ -783,6 +813,86 @@ impl KtApp {
                 let _ = std::fs::remove_file(autosave_path());
             }
             Err(e) => self.note(format!("ошибка сохранения: {e}")),
+        }
+    }
+
+    pub fn next_morph_id(&self) -> u64 {
+        self.model.project().morphers.iter().map(|m| m.id.0).max().unwrap_or(0) + 1
+    }
+
+    /// Сбор целей morpher'а (порт collectMorpherTargetClipIds v1): регион
+    /// приоритетнее выделения (клипы всех дорожек, пересекающие регион),
+    /// иначе выделенный клип; в обоих случаях цели расширяются link-группами.
+    pub fn morph_target_ids(&self) -> Vec<ClipId> {
+        let p = self.model.project();
+        let mut ids: Vec<ClipId> = match (p.region, self.selected) {
+            (Some(r), _) => p.clips.iter().filter(|c| r.intersects_clip(c)).map(|c| c.id).collect(),
+            (None, Some(sel)) => vec![sel],
+            (None, None) => Vec::new(),
+        };
+        let groups: Vec<GroupId> = p
+            .clips
+            .iter()
+            .filter(|c| ids.contains(&c.id))
+            .filter_map(|c| c.link_group)
+            .collect();
+        for c in &p.clips {
+            if let Some(g) = c.link_group
+                && groups.contains(&g)
+                && !ids.contains(&c.id)
+            {
+                ids.push(c.id);
+            }
+        }
+        ids.sort_by_key(|i| i.0);
+        ids.dedup();
+        ids
+    }
+
+    /// Запуск режима размещения morpher'а (v1: beginMorpherPlacementCommon).
+    /// Morph-дорожка создаётся автоматически, если её нет.
+    pub fn begin_morph_placement(&mut self, batch: bool) {
+        let targets = self.morph_target_ids();
+        if targets.is_empty() {
+            self.note("Нечего морфить: выдели регион над клипами или клип");
+            return;
+        }
+        if self.model.project().morph_lanes == 0 {
+            self.apply(Command::InsertMorphLane { at: 0 });
+        }
+        self.pending_morpher = Some(PendingMorph { targets, batch });
+        self.note("Morpher: кликни по фиолетовой Morph-дорожке (Esc — отмена)");
+    }
+
+    /// Коммит размещения (v1: commitPendingMorpherPlacement + фикс D3:
+    /// дропнутый файл становится новым источником Replace-morpher'а).
+    pub fn commit_morph_placement(&mut self, lane: u32, at: Tick, drop_path: Option<String>) {
+        let Some(pm) = self.pending_morpher.take() else { return };
+        let id = MorphId(self.next_morph_id());
+        let mut cmds = Vec::new();
+        let kind = if pm.batch {
+            MorphKind::EffectBatch { video_fx: Vec::new(), audio_fx: Vec::new() }
+        } else {
+            let media = drop_path.map(|path| {
+                let mid = MediaId(self.next_media_id());
+                cmds.push(Command::AddMedia { id: mid, path });
+                mid
+            });
+            MorphKind::Replace { media, source_in_delta: Tick(0), absolute_source_in: None }
+        };
+        cmds.push(Command::AddMorpher(MorpherEvent {
+            id,
+            lane,
+            start: Tick(at.0.max(0)),
+            duration: Tick(90 * 1500), // v1: 1500 мс
+            targets: pm.targets,
+            kind,
+        }));
+        if self.apply_batch(cmds) {
+            self.selected_morph = Some(id);
+            self.selected = None;
+            // v1: окно редактора открывается сразу после размещения
+            self.open_morph_editor(id);
         }
     }
 
@@ -1400,12 +1510,30 @@ impl KtApp {
                     Ok(app) => *self = app,
                     Err(e) => self.note(format!("{}: {e}", path.display())),
                 }
+            } else if self
+                .pending_morpher
+                .as_ref()
+                .map(|p| !p.batch)
+                .unwrap_or(false)
+            {
+                // дроп файла в режиме размещения Replace-morpher'а: файл
+                // становится новым источником (фикс D3 v1: там путь терялся).
+                // Блок ставится на первую Morph-дорожку к плейхеду.
+                let at = self.player.transport.playhead();
+                self.commit_morph_placement(0, at, Some(path.to_string_lossy().to_string()));
             } else {
                 self.add_media_clip(&path.to_string_lossy());
             }
         }
     }
 }
+/// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
+/// цели заморожены в момент запуска, kind выбран пунктом меню.
+pub struct PendingMorph {
+    pub targets: Vec<ClipId>,
+    pub batch: bool,
+}
+
 /// Состояние перф-панели: rolling-графики, дельты счётчиков, журнал проблем.
 /// Кэш coverage-опросов таймлайна (п.1).
 #[derive(Default)]
@@ -1793,6 +1921,7 @@ impl eframe::App for KtApp {
 
         self.sample_perf();
         self.draw_fx_editors(&ctx);
+        self.draw_morph_editors(&ctx);
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
 

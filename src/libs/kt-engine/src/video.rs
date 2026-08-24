@@ -48,8 +48,9 @@ pub fn video_cache_idx(source_pts: Tick) -> i64 {
 
 impl VideoRenderer {
     pub fn new(project: &Project) -> VideoRenderer {
-        let mut clips: Vec<VideoClip> = project
-            .clips
+        // effective_clips: morpher'ы применены здесь, движок их не видит (H1)
+        let effective = project.effective_clips();
+        let mut clips: Vec<VideoClip> = effective
             .iter()
             .filter(|c| c.kind == ClipKind::Video)
             .map(|c| VideoClip {

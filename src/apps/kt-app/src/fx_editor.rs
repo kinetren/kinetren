@@ -438,7 +438,7 @@ impl KtApp {
 }
 
 /// Имя эффекта в полосе цепочки.
-fn fx_display_name(f: &FxInstance) -> &'static str {
+pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
     match f {
         FxInstance::Gain { .. } => "Gain",
         FxInstance::SlowedReverb { .. } => "Slowed+Reverb",
@@ -456,7 +456,7 @@ fn fx_display_name(f: &FxInstance) -> &'static str {
 }
 
 /// Шаблоны видео-FX с дефолтами v1 (кнопка «+ видео-FX…»).
-fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
+pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
     use kt_model::PanMode;
     vec![
         ("Pan", FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }),
@@ -484,7 +484,7 @@ fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
 }
 
 /// Параметры видео-FX (компактная сетка). true = изменилось.
-fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> bool {
+pub(crate) fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> bool {
     use kt_model::PanMode;
     let mut ch = false;
     let mode_ui = |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut bool| {

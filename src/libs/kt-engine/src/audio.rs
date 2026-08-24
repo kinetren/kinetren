@@ -48,8 +48,10 @@ pub struct AudioRenderer {
 
 impl AudioRenderer {
     pub fn new(project: &Project) -> AudioRenderer {
-        let mut clips: Vec<AudioClip> = project
-            .clips
+        // effective_clips: morpher'ы уже применены (подмена источника,
+        // live FX batch) — движок про morpher не знает (H1)
+        let effective = project.effective_clips();
+        let mut clips: Vec<AudioClip> = effective
             .iter()
             .filter(|c| c.kind == ClipKind::Audio)
             .map(|c: &ClipEvent| {

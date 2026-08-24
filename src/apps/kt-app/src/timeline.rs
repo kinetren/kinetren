@@ -69,6 +69,13 @@ pub enum Drag {
         id: ClipId,
         moved: bool,
     },
+    /// Перенос morph-блока по времени (H1; в v1 блок был недвижим).
+    Morph {
+        id: MorphId,
+        grab_dt: i64,
+        cur_start: i64,
+        moved: bool,
+    },
 }
 
 /// Цель контекст-меню, захваченная на right-click.
@@ -83,6 +90,10 @@ pub enum CtxTarget {
         kind: ClipKind,
         lane: u32,
     },
+    /// Правый клик по morph-блоку (H1).
+    Morpher(MorphId),
+    /// Правый клик по заголовку morph-дорожки (H1).
+    MorphLane(u32),
     Empty,
 }
 
@@ -366,7 +377,9 @@ impl KtApp {
 
         // ---- дорожки ---------------------------------------------------------
         let (video_lanes, audio_lanes) = self.lane_counts();
-        let lanes_total = (video_lanes + audio_lanes).max(1);
+        let morph_lanes = self.model.project().morph_lanes;
+        let clip_lanes_total = (video_lanes + audio_lanes).max(1);
+        let lanes_total = clip_lanes_total + morph_lanes;
         let lane_h = ((rect.height() - RULER_H - 6.0) / lanes_total as f32).clamp(30.0, 84.0);
         let lane_top = |kind: ClipKind, lane: u32| -> f32 {
             let idx = match kind {
@@ -375,25 +388,34 @@ impl KtApp {
             };
             rect.top() + RULER_H + 3.0 + idx as f32 * lane_h
         };
+        // morph-дорожки — нижняя секция (H1, порт v1: фиолетовые)
+        let morph_lane_top = |lane: u32| -> f32 {
+            rect.top() + RULER_H + 3.0 + (clip_lanes_total + lane) as f32 * lane_h
+        };
+        let morph_lane_at_y = |y: f32| -> Option<u32> {
+            let rel = y - (rect.top() + RULER_H + 3.0);
+            if rel < 0.0 {
+                return None;
+            }
+            let idx = (rel / lane_h).floor() as u32;
+            (idx >= clip_lanes_total && idx < lanes_total).then(|| idx - clip_lanes_total)
+        };
         for i in 0..lanes_total {
             let y = rect.top() + RULER_H + 3.0 + i as f32 * lane_h;
             let lane_rect = egui::Rect::from_min_max(
                 egui::pos2(rect.left(), y),
                 egui::pos2(rect.right(), y + lane_h - 2.0),
             );
-            let is_video = i < video_lanes;
-            // фоны дорожек в тонах старого: видео синеватый, аудио тёплый
-            painter.rect_filled(
-                lane_rect,
-                0.0,
-                if is_video {
-                    egui::Color32::from_rgb(30, 36, 44)
-                } else {
-                    egui::Color32::from_rgb(38, 32, 32)
-                },
-            );
-            let label =
-                if is_video { format!("V{}", i + 1) } else { format!("A{}", i - video_lanes + 1) };
+            // фоны дорожек в тонах старого: видео синеватый, аудио тёплый,
+            // morph фиолетовый (v1: QColor(42,32,58))
+            let (fill, label) = if i < video_lanes {
+                (egui::Color32::from_rgb(30, 36, 44), format!("V{}", i + 1))
+            } else if i < clip_lanes_total {
+                (egui::Color32::from_rgb(38, 32, 32), format!("A{}", i - video_lanes + 1))
+            } else {
+                (egui::Color32::from_rgb(42, 32, 58), format!("M{}", i - clip_lanes_total + 1))
+            };
+            painter.rect_filled(lane_rect, 0.0, fill);
             painter.text(
                 egui::pos2(gutter.center().x, y + lane_h * 0.5),
                 egui::Align2::CENTER_CENTER,
@@ -402,6 +424,22 @@ impl KtApp {
                 egui::Color32::from_gray(140),
             );
         }
+        // хит-тест morph-блока (нужен и press-обработке, и ПКМ ниже)
+        let morpher_at = |slf: &KtApp, pos: egui::Pos2| -> Option<MorphId> {
+            let lane = morph_lane_at_y(pos.y)?;
+            slf.model
+                .project()
+                .morphers
+                .iter()
+                .rev()
+                .filter(|m| m.lane == lane)
+                .find(|m| {
+                    let x0 = tick_to_x(m.start.0);
+                    let x1 = tick_to_x((m.start + m.duration).0).max(x0 + 8.0);
+                    pos.x >= x0 && pos.x <= x1
+                })
+                .map(|m| m.id)
+        };
 
         // ---- дорожки: реордер драгом и меню (пп. 7-8) ----------------------
         {
@@ -413,10 +451,10 @@ impl KtApp {
                 let idx = (rel / lane_h).floor() as u32;
                 if idx < video_lanes {
                     Some((ClipKind::Video, idx))
-                } else if idx < lanes_total {
+                } else if idx < clip_lanes_total {
                     Some((ClipKind::Audio, idx - video_lanes))
                 } else {
-                    None
+                    None // morph-полоса — см. morph_lane_at_y
                 }
             };
             if gutter_resp.drag_started()
@@ -454,9 +492,12 @@ impl KtApp {
             // ПКМ по заголовку — меню дорожки
             if gutter_resp.secondary_clicked()
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
-                && let Some((kind, lane)) = lane_at_y(pos.y)
             {
-                self.ctx_target = Some(CtxTarget::Lane { kind, lane });
+                if let Some((kind, lane)) = lane_at_y(pos.y) {
+                    self.ctx_target = Some(CtxTarget::Lane { kind, lane });
+                } else if let Some(ml) = morph_lane_at_y(pos.y) {
+                    self.ctx_target = Some(CtxTarget::MorphLane(ml));
+                }
             }
             gutter_resp.context_menu(|ui| {
                 if let Some(CtxTarget::Lane { kind, lane }) = self.ctx_target {
@@ -491,6 +532,24 @@ impl KtApp {
                     }
                     if ui.button("Вставить дорожку ниже").clicked() {
                         self.apply(Command::InsertLane { kind, at: lane + 1 });
+                        ui.close();
+                    }
+                }
+                if let Some(CtxTarget::MorphLane(lane)) = self.ctx_target {
+                    let n =
+                        self.model.project().morphers.iter().filter(|m| m.lane == lane).count();
+                    ui.label(egui::RichText::new(format!("Morph-дорожка M{}", lane + 1)).strong());
+                    let del_label = if n > 0 {
+                        format!("Удалить дорожку ({n} morph.)")
+                    } else {
+                        "Удалить дорожку".into()
+                    };
+                    if ui.button(del_label).clicked() {
+                        self.apply(Command::RemoveMorphLane { at: lane });
+                        ui.close();
+                    }
+                    if ui.button("Вставить morph-дорожку ниже").clicked() {
+                        self.apply(Command::InsertMorphLane { at: lane + 1 });
                         ui.close();
                     }
                 }
@@ -646,7 +705,12 @@ impl KtApp {
                 CtxTarget::RegionEdge(if start_edge { r.start.0 } else { r.end.0 })
             } else if let Some((id, _)) = clip_at(self, pos) {
                 self.selected = Some(id);
+                self.selected_morph = None;
                 CtxTarget::Clip(id)
+            } else if let Some(mid) = morpher_at(self, pos) {
+                self.selected_morph = Some(mid);
+                self.selected = None;
+                CtxTarget::Morpher(mid)
             } else {
                 CtxTarget::Empty
             });
@@ -683,8 +747,34 @@ impl KtApp {
                     let t = self.snap(x_to_tick(pos.x).max(0), None);
                     self.player.seek(Tick(t.max(0)));
                 }
+            } else if self.pending_morpher.is_some() && morph_lane_at_y(pos.y).is_some() {
+                // режим размещения morpher'а (H1): клик по Morph-дорожке =
+                // создать событие тут; прочие клики проходят как обычно
+                if response.clicked()
+                    && let Some(lane) = morph_lane_at_y(pos.y)
+                {
+                    let at = self.snap(x_to_tick(pos.x).max(0), None);
+                    self.commit_morph_placement(lane, Tick(at), None);
+                }
+            } else if let Some(mid) = morpher_at(self, pos) {
+                self.selected_morph = Some(mid);
+                self.selected = None;
+                if response.double_clicked() {
+                    self.open_morph_editor(mid);
+                } else if response.drag_started()
+                    && let Some(orig) =
+                        self.model.project().morphers.iter().find(|m| m.id == mid)
+                {
+                    self.drag = Some(Drag::Morph {
+                        id: mid,
+                        grab_dt: x_to_tick(pos.x) - orig.start.0,
+                        cur_start: orig.start.0,
+                        moved: false,
+                    });
+                }
             } else if let Some((id, zone)) = clip_at(self, pos) {
                 self.selected = Some(id);
+                self.selected_morph = None;
                 // клик по СОБЫТИЮ тоже ставит курсор (v1, п.7)
                 if response.clicked() {
                     let t = self.snap(x_to_tick(pos.x).max(0), None);
@@ -824,6 +914,11 @@ impl KtApp {
                     let cur = self.snap(raw, None);
                     self.drag = Some(Drag::Marker { orig, cur });
                 }
+                Some(Drag::Morph { id, grab_dt, .. }) => {
+                    let raw = x_to_tick(pos.x) - grab_dt;
+                    let cur_start = self.snap(raw, None).max(0);
+                    self.drag = Some(Drag::Morph { id, grab_dt, cur_start, moved: true });
+                }
                 Some(Drag::Volume { id, .. }) => {
                     // t: 0 = верх (+6 dB), 1 = низ (−6 dB) — порт рейла
                     if let Some(c) = self.model.clip(id) {
@@ -877,6 +972,15 @@ impl KtApp {
                     self.on_region_changed();
                     // играем — курсор немедленно в начало нового региона (п.4)
                     self.on_region_released();
+                }
+                Some(Drag::Morph { id, cur_start, moved, .. }) => {
+                    if moved
+                        && let Some(mut ev) =
+                            self.model.project().morphers.iter().find(|m| m.id == id).cloned()
+                    {
+                        ev.start = Tick(cur_start);
+                        self.apply(Command::SetMorpher(ev));
+                    }
                 }
                 _ => {}
             }
@@ -1218,6 +1322,72 @@ impl KtApp {
         }
         drop(peaks);
 
+        // ---- morph-блоки (H1, порт v1: фиолетовый скруглённый блок) ---------
+        for m in &self.model.project().morphers {
+            let start = match &self.drag {
+                Some(Drag::Morph { id, cur_start, .. }) if *id == m.id => *cur_start,
+                _ => m.start.0,
+            };
+            let x0 = tick_to_x(start);
+            let x1 = tick_to_x(start + m.duration.0).max(x0 + 8.0);
+            if x1 < rect.left() || x0 > rect.right() {
+                continue;
+            }
+            let top = morph_lane_top(m.lane);
+            let r = egui::Rect::from_min_max(
+                egui::pos2(x0.max(rect.left()), top + 3.0),
+                egui::pos2(x1.min(rect.right()), top + lane_h - 5.0),
+            );
+            let selected = self.selected_morph == Some(m.id);
+            painter.rect(
+                r,
+                4.0,
+                egui::Color32::from_rgba_unmultiplied(140, 90, 200, 200),
+                egui::Stroke::new(
+                    if selected { 2.0 } else { 1.0 },
+                    if selected { egui::Color32::WHITE } else { egui::Color32::from_rgb(40, 30, 55) },
+                ),
+                egui::StrokeKind::Inside,
+            );
+            if r.width() > 46.0 {
+                let label = match &m.kind {
+                    MorphKind::EffectBatch { .. } => format!("FX-батч ({})", m.targets.len()),
+                    MorphKind::Replace { .. } => format!("Morpher ({})", m.targets.len()),
+                };
+                painter.text(
+                    egui::pos2(r.left() + 6.0, r.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    egui::FontId::proportional(11.0),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
+        // режим размещения: подсветка morph-дорожек + строка-подсказка (v1)
+        if self.pending_morpher.is_some() {
+            for lane in 0..morph_lanes {
+                let y = morph_lane_top(lane);
+                let lr = egui::Rect::from_min_max(
+                    egui::pos2(rect.left(), y),
+                    egui::pos2(rect.right(), y + lane_h - 2.0),
+                );
+                painter.rect(
+                    lr,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(96, 200, 140, 52),
+                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(140, 235, 170, 200)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+            painter.text(
+                egui::pos2(rect.center().x, rect.top() + RULER_H + 16.0),
+                egui::Align2::CENTER_CENTER,
+                "Morpher: кликни по фиолетовой Morph-дорожке, куда поставить блок (Esc — отмена)",
+                egui::FontId::proportional(13.0),
+                egui::Color32::from_rgb(160, 235, 180),
+            );
+        }
+
         // ---- маркеры ----------------------------------------------------------------
         for m in &self.model.project().markers {
             let mt = match &self.drag {
@@ -1401,6 +1571,49 @@ impl KtApp {
                     self.apply(Command::SetGain { id, gain_db: 0.0 });
                     ui.close();
                 }
+                ui.separator();
+                // morpher (H1, порт v1): цели = регион (приоритет) или клип+группа
+                if ui.button("Добавить morpher (заморозить цели)…").clicked() {
+                    self.selected = Some(id);
+                    self.begin_morph_placement(false);
+                    ui.close();
+                }
+                if ui.button("Добавить morpher FX-батч…").clicked() {
+                    self.selected = Some(id);
+                    self.begin_morph_placement(true);
+                    ui.close();
+                }
+            }
+            Some(CtxTarget::Morpher(mid)) => {
+                let is_batch = self
+                    .model
+                    .project()
+                    .morphers
+                    .iter()
+                    .find(|m| m.id == mid)
+                    .map(|m| matches!(m.kind, MorphKind::EffectBatch { .. }))
+                    .unwrap_or(false);
+                let bake_label = if is_batch {
+                    "Bake FX-батча (вписать эффекты в клипы)"
+                } else {
+                    "Bake морфинга (вписать в клипы)"
+                };
+                if ui.button(bake_label).clicked() {
+                    if self.apply(Command::BakeMorpher { id: mid }) {
+                        self.selected_morph = None;
+                    }
+                    ui.close();
+                }
+                if ui.button("Удалить morpher (Del)").clicked() {
+                    if self.apply(Command::RemoveMorpher { id: mid }) {
+                        self.selected_morph = None;
+                    }
+                    ui.close();
+                }
+                if ui.button("Окно редактора morpher'а…").clicked() {
+                    self.open_morph_editor(mid);
+                    ui.close();
+                }
             }
             Some(CtxTarget::RegionEdge(t)) => {
                 if ui.button("Маркер здесь").clicked() {
@@ -1432,12 +1645,28 @@ impl KtApp {
                         self.punch_out_action();
                         ui.close();
                     }
+                    ui.separator();
+                    // v1: «Add morpher (clips in region)…» / FX batch
+                    if ui.button("Добавить morpher (клипы в регионе)…").clicked() {
+                        self.begin_morph_placement(false);
+                        ui.close();
+                    }
+                    if ui.button("Добавить morpher FX-батч (клипы в регионе)…").clicked() {
+                        self.begin_morph_placement(true);
+                        ui.close();
+                    }
+                    ui.separator();
                     if ui.button("Снять регион").clicked() {
                         self.clear_region();
                         ui.close();
                     }
                 } else if self.clipboard.is_empty() {
                     ui.weak("Выдели регион или клип");
+                }
+                if ui.button("Добавить Morph-дорожку").clicked() {
+                    let at = self.model.project().morph_lanes;
+                    self.apply(Command::InsertMorphLane { at });
+                    ui.close();
                 }
             }
         });

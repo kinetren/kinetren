@@ -10,6 +10,7 @@ mod fx_editor;
 mod graphs;
 mod icons;
 mod meters;
+mod morpher_editor;
 mod render_dialog;
 mod thumbs;
 mod timeline;
