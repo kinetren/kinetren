@@ -113,6 +113,64 @@ pub fn clip_color(path: &str, kind: ClipKind) -> egui::Color32 {
     )
 }
 
+/// Геометрия таймлайна последнего кадра — маппинг позиций ВНЕ
+/// draw_timeline (дроп файлов в позицию мыши, п.2 v1.4). Чистые
+/// функции — тест 47.
+#[derive(Clone, Copy)]
+pub struct TlGeom {
+    /// Зона отрисовки дорожек (правее gutter, включая руллер сверху).
+    pub rect: egui::Rect,
+    pub lane_h: f32,
+    pub video_lanes: u32,
+    pub audio_lanes: u32,
+    /// Пока не используется маппингом (morph-полоса — не цель дропа),
+    /// но нужен J8 (произвольный порядок дорожек).
+    #[allow(dead_code)]
+    pub morph_lanes: u32,
+    pub view_start: f64,
+    pub tpp: f64,
+}
+
+impl TlGeom {
+    pub fn x_to_tick(&self, x: f32) -> i64 {
+        (self.view_start + (x - self.rect.left()) as f64 * self.tpp) as i64
+    }
+
+    pub fn tick_to_x(&self, t: i64) -> f32 {
+        self.rect.left() + ((t as f64 - self.view_start) / self.tpp) as f32
+    }
+
+    /// Дорожка клипов под y (руллер/gutter/morph-полоса → None).
+    pub fn lane_at_y(&self, y: f32) -> Option<(ClipKind, u32)> {
+        let rel = y - (self.rect.top() + RULER_H + 3.0);
+        if rel < 0.0 {
+            return None;
+        }
+        let idx = (rel / self.lane_h).floor() as u32;
+        let clip_total = (self.video_lanes + self.audio_lanes).max(1);
+        if idx < self.video_lanes {
+            Some((ClipKind::Video, idx))
+        } else if idx < clip_total {
+            Some((ClipKind::Audio, idx - self.video_lanes))
+        } else {
+            None
+        }
+    }
+
+    pub fn lane_top(&self, kind: ClipKind, lane: u32) -> f32 {
+        let idx = match kind {
+            ClipKind::Video => lane,
+            ClipKind::Audio => self.video_lanes + lane,
+        };
+        self.rect.top() + RULER_H + 3.0 + idx as f32 * self.lane_h
+    }
+
+    /// Точка внутри полосы дорожек (не gutter/не руллер)?
+    pub fn in_lanes(&self, pos: egui::Pos2) -> bool {
+        self.rect.contains(pos) && pos.y > self.rect.top() + RULER_H
+    }
+}
+
 impl KtApp {
     /// Магнитные цели: границы чужих клипов, маркеры, границы региона,
     /// playhead, ноль (порт snapTimeMs).
@@ -380,6 +438,16 @@ impl KtApp {
         let clip_lanes_total = (video_lanes + audio_lanes).max(1);
         let lanes_total = clip_lanes_total + morph_lanes;
         let lane_h = ((rect.height() - RULER_H - 6.0) / lanes_total as f32).clamp(30.0, 84.0);
+        // кэш геометрии для маппинга вне draw_timeline (дроп, п.2 v1.4)
+        self.tl_geom = Some(TlGeom {
+            rect,
+            lane_h,
+            video_lanes,
+            audio_lanes,
+            morph_lanes,
+            view_start: self.view_start,
+            tpp: self.ticks_per_px,
+        });
         let lane_top = |kind: ClipKind, lane: u32| -> f32 {
             let idx = match kind {
                 ClipKind::Video => lane,
@@ -1395,6 +1463,45 @@ impl KtApp {
             );
         }
 
+        // ---- силуэт дропа файла (п.2 v1.4): подсветка дорожки + призрак --
+        if let Some(pos) = self.dnd_hover
+            && self.pending_morpher.is_none()
+            && let Some(g) = self.tl_geom
+            && g.in_lanes(pos)
+            && let Some((kind, lane)) = g.lane_at_y(pos.y)
+        {
+            let top = g.lane_top(kind, lane);
+            let lane_rect = egui::Rect::from_min_max(
+                egui::pos2(rect.left(), top),
+                egui::pos2(rect.right(), top + lane_h - 2.0),
+            );
+            painter.rect(
+                lane_rect,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(96, 200, 140, 36),
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(140, 235, 170, 160)),
+                egui::StrokeKind::Inside,
+            );
+            let at = self.snap(g.x_to_tick(pos.x).max(0), None);
+            let x0 = g.tick_to_x(at);
+            let ghost_w = ((90_000.0 * 3.0) / self.ticks_per_px) as f32; // ~3 c
+            let ghost = egui::Rect::from_min_max(
+                egui::pos2(x0, top + 1.0),
+                egui::pos2((x0 + ghost_w).min(rect.right()), top + lane_h - 3.0),
+            );
+            painter.rect(
+                ghost,
+                4.0,
+                egui::Color32::from_rgba_unmultiplied(140, 235, 170, 44),
+                egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(160, 240, 180, 220)),
+                egui::StrokeKind::Inside,
+            );
+            painter.line_segment(
+                [egui::pos2(x0, rect.top() + RULER_H), egui::pos2(x0, rect.bottom())],
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(160, 240, 180, 180)),
+            );
+        }
+
         // ---- маркеры ----------------------------------------------------------------
         for m in &self.model.project().markers {
             let mt = match &self.drag {
@@ -1677,5 +1784,45 @@ impl KtApp {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod geom_tests {
+    use super::*;
+
+    /// Тест 47 (п.2 v1.4): извлечённая геометрия таймлайна для дропа —
+    /// lane_at_y по раскладке V/A, x_to_tick round-trip с зумом/скроллом,
+    /// руллер и morph-полоса дают None.
+    #[test]
+    fn t47_tl_geom_mapping() {
+        let g = TlGeom {
+            rect: egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 500.0)),
+            lane_h: 50.0,
+            video_lanes: 2,
+            audio_lanes: 2,
+            morph_lanes: 1,
+            view_start: 90_000.0,
+            tpp: 900.0,
+        };
+        // x↔tick round-trip
+        for t in [90_000i64, 180_000, 900_000] {
+            let x = g.tick_to_x(t);
+            assert!((g.x_to_tick(x) - t).abs() <= (g.tpp as i64), "round-trip тика {t}");
+        }
+        // раскладка дорожек: V0 V1 A0 A1 [morph]
+        let lanes_top = g.rect.top() + RULER_H + 3.0;
+        assert_eq!(g.lane_at_y(lanes_top + 10.0), Some((ClipKind::Video, 0)));
+        assert_eq!(g.lane_at_y(lanes_top + 60.0), Some((ClipKind::Video, 1)));
+        assert_eq!(g.lane_at_y(lanes_top + 110.0), Some((ClipKind::Audio, 0)));
+        assert_eq!(g.lane_at_y(lanes_top + 160.0), Some((ClipKind::Audio, 1)));
+        assert_eq!(g.lane_at_y(lanes_top + 210.0), None, "morph-полоса — не цель дропа");
+        // руллер и зона выше — None; in_lanes согласован
+        assert_eq!(g.lane_at_y(g.rect.top() + 5.0), None);
+        assert!(!g.in_lanes(egui::pos2(500.0, g.rect.top() + 5.0)));
+        assert!(g.in_lanes(egui::pos2(500.0, lanes_top + 10.0)));
+        assert!(!g.in_lanes(egui::pos2(10.0, lanes_top + 10.0)), "gutter левее rect");
+        // lane_top обратен lane_at_y
+        assert_eq!(g.lane_at_y(g.lane_top(ClipKind::Audio, 1) + 1.0), Some((ClipKind::Audio, 1)));
     }
 }

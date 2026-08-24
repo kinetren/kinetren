@@ -17,3 +17,8 @@ rtrb = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 rfd = "0.15"
 serde_json.workspace = true
+
+# позиция курсора при DnD файлов: winit/X11 не отдаёт координаты
+# XdndPosition (п.2 v1.4) — читаем указатель напрямую
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = "0.13"

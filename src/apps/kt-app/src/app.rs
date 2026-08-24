@@ -47,6 +47,10 @@ pub struct KtApp {
     pub base_rate: f32,
     /// Позиция shuttle-слайдера, пока его держат (None = не держат).
     pub shuttle_override: Option<f32>,
+    /// Позиция мыши во время DnD файла (X11-опрос; None на Wayland).
+    pub dnd_hover: Option<egui::Pos2>,
+    /// Кэш геометрии таймлайна последнего кадра (дроп, п.2 v1.4).
+    pub tl_geom: Option<crate::timeline::TlGeom>,
     pub snap_line: Option<i64>,
     pub ctx_target: Option<CtxTarget>,
     /// Live-громкость volume rail до отпускания (id, dB).
@@ -163,6 +167,8 @@ impl KtApp {
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
+            dnd_hover: None,
+            tl_geom: None,
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -230,6 +236,8 @@ impl KtApp {
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
+            dnd_hover: None,
+            tl_geom: None,
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -980,11 +988,22 @@ impl KtApp {
     }
 
     pub fn add_media_clip(&mut self, path: &str) {
+        let at = self.player.transport.playhead();
+        self.add_media_clip_at(path, at, None);
+    }
+
+    /// Медиа + клип(ы) в конкретную позицию (дроп в позицию мыши, п.2 v1.4).
+    pub fn add_media_clip_at(
+        &mut self,
+        path: &str,
+        at: Tick,
+        lane_hint: Option<(ClipKind, u32)>,
+    ) {
         let media_id = MediaId(self.next_media_id());
         if !self.apply(Command::AddMedia { id: media_id, path: path.to_string() }) {
             return;
         }
-        self.place_media_at_cursor(media_id);
+        self.place_media_at(media_id, at, lane_hint);
         // Инкрементально: новый воркер на общий кэш. Пересоздание плеера
         // здесь сбрасывало ВЕСЬ прогретый кэш (п.27) и ломало дельты
         // perf-счётчиков (п.24: «10^19 evictions/с»).
@@ -1005,6 +1024,18 @@ impl KtApp {
 
     /// Клип(ы) существующего медиа на курсор (клик в бине).
     pub fn place_media_at_cursor(&mut self, media_id: MediaId) {
+        let at = self.player.transport.playhead();
+        self.place_media_at(media_id, at, None);
+    }
+
+    /// Клип(ы) медиа в позицию `at`; `lane_hint` — дорожка под мышкой при
+    /// дропе (п.2 v1.4): её kind получает эту lane, парная половина — lane 0.
+    pub fn place_media_at(
+        &mut self,
+        media_id: MediaId,
+        at: Tick,
+        lane_hint: Option<(ClipKind, u32)>,
+    ) {
         let Some(path) =
             self.model.project().media.iter().find(|m| m.id == media_id).map(|m| m.path.clone())
         else {
@@ -1019,7 +1050,6 @@ impl KtApp {
                 return;
             }
         };
-        let at = self.player.transport.playhead();
         let dur = if info.duration.0 > 0 { info.duration } else { Tick(90_000 * 5) };
         let group = (info.has_video && info.has_audio).then(|| GroupId(self.next_group_id()));
         let mut next_id = self.next_clip_id();
@@ -1030,11 +1060,15 @@ impl KtApp {
             if !present {
                 continue;
             }
+            let lane = match lane_hint {
+                Some((k, l)) if k == kind => l,
+                _ => 0,
+            };
             cmds.push(Command::AddClip(ClipEvent {
                 id: ClipId(next_id),
                 link_group: group,
                 kind,
-                lane: 0,
+                lane,
                 start: at,
                 duration: dur,
                 source_in: Tick(0),
@@ -1456,7 +1490,7 @@ impl KtApp {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 match &self.hover_hint {
                     Some(h) => ui.weak(h.clone()),
-                    None => ui.weak("перетащи медиафайл на окно — клип встанет на курсор"),
+                    None => ui.weak("перетащи медиафайл на окно — клип встанет под мышку"),
                 };
             });
         });
@@ -1549,8 +1583,30 @@ impl KtApp {
     }
 
     fn handle_drops(&mut self, ctx: &egui::Context) {
+        // во время DnD-hover winit/X11 не шлёт движение мыши (координаты
+        // XdndPosition выброшены в winit) — читаем указатель напрямую;
+        // на Wayland вернётся None → честный fallback на playhead
+        let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
         let dropped: Vec<PathBuf> =
             ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        if hovering {
+            if let Some(p) = dnd_pointer_pos(ctx) {
+                self.dnd_hover = Some(p);
+            }
+            ctx.request_repaint(); // силуэт следует за мышью
+        } else if dropped.is_empty() {
+            self.dnd_hover = None;
+        }
+        // цель дропа по последней hover-позиции
+        let target = self.dnd_hover.take().filter(|_| !dropped.is_empty()).and_then(|pos| {
+            let g = self.tl_geom?;
+            if !g.in_lanes(pos) {
+                return None;
+            }
+            let lane = g.lane_at_y(pos.y)?;
+            let at = self.snap(g.x_to_tick(pos.x).max(0), None);
+            Some((Tick(at), lane))
+        });
         for path in dropped {
             if path.extension().map(|e| e == "ktproj").unwrap_or(false) {
                 match KtApp::open(&path) {
@@ -1568,6 +1624,8 @@ impl KtApp {
                 // Блок ставится на первую Morph-дорожку к плейхеду.
                 let at = self.player.transport.playhead();
                 self.commit_morph_placement(0, at, Some(path.to_string_lossy().to_string()));
+            } else if let Some((at, lane)) = target {
+                self.add_media_clip_at(&path.to_string_lossy(), at, Some(lane));
             } else {
                 self.add_media_clip(&path.to_string_lossy());
             }
@@ -1700,6 +1758,41 @@ pub fn repaint_delay(animating: bool) -> std::time::Duration {
     } else {
         std::time::Duration::from_millis(250)
     }
+}
+
+/// Позиция мыши в координатах окна (points) во время DnD файла.
+/// winit 0.30/X11 выбрасывает координаты XdndPosition и не шлёт движение
+/// мыши при перетаскивании файла (п.2 v1.4) — опрашиваем X-сервер напрямую
+/// (x11rb). На Wayland/без X11 → None (fallback: дроп на playhead).
+#[cfg(target_os = "linux")]
+fn dnd_pointer_pos(ctx: &egui::Context) -> Option<egui::Pos2> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt;
+    static X11: std::sync::OnceLock<Option<(x11rb::rust_connection::RustConnection, u32)>> =
+        std::sync::OnceLock::new();
+    let conn = X11
+        .get_or_init(|| {
+            x11rb::connect(None)
+                .ok()
+                .map(|(c, screen)| {
+                    let root = c.setup().roots[screen].root;
+                    (c, root)
+                })
+        })
+        .as_ref()?;
+    let reply = conn.0.query_pointer(conn.1).ok()?.reply().ok()?;
+    let inner = ctx.input(|i| i.viewport().inner_rect)?;
+    let ppp = ctx.pixels_per_point();
+    let p = egui::pos2(
+        reply.root_x as f32 / ppp - inner.min.x,
+        reply.root_y as f32 / ppp - inner.min.y,
+    );
+    (p.x >= 0.0 && p.y >= 0.0).then_some(p)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn dnd_pointer_pos(_ctx: &egui::Context) -> Option<egui::Pos2> {
+    None
 }
 
 /// Мёртвая зона слайдера скорости вокруг нуля (доля хода).
