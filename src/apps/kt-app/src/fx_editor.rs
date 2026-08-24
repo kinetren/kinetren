@@ -10,6 +10,7 @@ use kt_model::*;
 
 pub struct FxEditor {
     pub clip: ClipId,
+    pub picker_query: String,
     pub backup: Vec<FxInstance>,
     pub gesture: u64,
     pub selected: usize,
@@ -26,6 +27,7 @@ impl KtApp {
         self.gesture_counter += 1;
         self.fx_editors.push(FxEditor {
             clip,
+            picker_query: String::new(),
             backup: c.fx.clone(),
             gesture: self.gesture_counter,
             selected: c.fx.len().saturating_sub(1),
@@ -97,29 +99,17 @@ impl KtApp {
                     }
                 });
                 ui.horizontal(|ui| {
-                    if ui.button("+ Gain").clicked() {
-                        fx.push(FxInstance::Gain { db: 0.0 });
-                        ed.selected = fx.len() - 1;
-                        changed = true;
-                    }
-                    if ui.button("+ Slowed+Reverb").clicked() {
-                        fx.push(FxInstance::slowed_reverb(0.82, 0.1, 85.0));
-                        ed.selected = fx.len() - 1;
-                        changed = true;
-                    }
-                    egui::ComboBox::from_id_salt("add_vfx").selected_text("+ видео-FX…").show_ui(
+                    // единый пикер с поиском (п.3 v1.4), фильтр по виду клипа
+                    if let Some(tmpl) = crate::fx_registry::fx_picker(
                         ui,
-                        |ui| {
-                            for (name, tmpl) in video_fx_templates() {
-                                if ui.button(name).clicked() {
-                                    fx.push(tmpl);
-                                    ed.selected = fx.len() - 1;
-                                    changed = true;
-                                    ui.close();
-                                }
-                            }
-                        },
-                    );
+                        ("fx_add", ed.clip),
+                        clip.kind == ClipKind::Audio,
+                        &mut ed.picker_query,
+                    ) {
+                        fx.push(tmpl);
+                        ed.selected = fx.len() - 1;
+                        changed = true;
+                    }
                     if !fx.is_empty() {
                         // bypass выбранного слота (п.2)
                         if let Some(b) = bypass.get_mut(ed.selected) {

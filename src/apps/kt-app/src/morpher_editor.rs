@@ -13,6 +13,7 @@ use kt_time::{TICK_HZ, Tick};
 
 pub struct MorphEditor {
     pub id: MorphId,
+    pub picker_query: String,
     pub gesture: u64,
     pub open: bool,
     /// Выбранные слоты цепочек батча (видео, аудио).
@@ -29,6 +30,7 @@ impl KtApp {
         self.gesture_counter += 1;
         self.morph_editors.push(MorphEditor {
             id,
+            picker_query: String::new(),
             gesture: self.gesture_counter,
             open: true,
             sel: (0, 0),
@@ -185,6 +187,7 @@ impl KtApp {
                             video_fx,
                             &mut ed.sel.0,
                             true,
+                            &mut ed.picker_query,
                         );
                         ui.separator();
                         changed |= chain_section(
@@ -194,6 +197,7 @@ impl KtApp {
                             audio_fx,
                             &mut ed.sel.1,
                             false,
+                            &mut ed.picker_query,
                         );
                     }
                 }
@@ -258,6 +262,7 @@ fn chain_section(
     fx: &mut Vec<FxInstance>,
     sel: &mut usize,
     video: bool,
+    query: &mut String,
 ) -> bool {
     let mut changed = false;
     ui.label(egui::RichText::new(title).strong());
@@ -282,30 +287,13 @@ fn chain_section(
             *sel = (*sel).min(fx.len().saturating_sub(1));
             changed = true;
         }
-        if video {
-            egui::ComboBox::from_id_salt(("morph_add_vfx", win_id))
-                .selected_text("+ видео-FX…")
-                .show_ui(ui, |ui| {
-                    for (name, tmpl) in crate::fx_editor::video_fx_templates() {
-                        if ui.button(name).clicked() {
-                            fx.push(tmpl);
-                            *sel = fx.len() - 1;
-                            changed = true;
-                            ui.close();
-                        }
-                    }
-                });
-        } else {
-            if ui.button("+ Gain").clicked() {
-                fx.push(FxInstance::Gain { db: 0.0 });
-                *sel = fx.len() - 1;
-                changed = true;
-            }
-            if ui.button("+ Slowed+Reverb").clicked() {
-                fx.push(FxInstance::slowed_reverb(0.82, 0.1, 85.0));
-                *sel = fx.len() - 1;
-                changed = true;
-            }
+        // единый пикер с поиском (п.3 v1.4)
+        if let Some(tmpl) =
+            crate::fx_registry::fx_picker(ui, ("morph_add", win_id, video), !video, query)
+        {
+            fx.push(tmpl);
+            *sel = fx.len() - 1;
+            changed = true;
         }
     });
     if let Some(f) = fx.get_mut(*sel) {

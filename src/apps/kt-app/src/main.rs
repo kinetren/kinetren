@@ -7,6 +7,7 @@ mod app;
 mod audio_out;
 mod bin_panel;
 mod fx_editor;
+mod fx_registry;
 mod graphs;
 mod icons;
 mod meters;
