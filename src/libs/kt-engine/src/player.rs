@@ -278,7 +278,10 @@ impl Player {
 
     /// Скорость воспроизведения (п.4, ползунок как в Vegas).
     pub fn set_playback_rate(&self, rate: f32) {
-        self.shared.playback_rate.store(rate.clamp(0.25, 2.0).to_bits(), Ordering::Release);
+        // отрицательное = reverse-транспорт (J4 v1.4); 0 = стоп потребления
+        // (тишина, playhead стоит). Колбэк использует |rate|, знак читает
+        // только render-поток.
+        self.shared.playback_rate.store(rate.clamp(-2.0, 2.0).to_bits(), Ordering::Release);
     }
 
     pub fn playback_rate(&self) -> f32 {
@@ -403,7 +406,13 @@ impl Player {
         let latency = self.shared.output_latency_frames.load(Ordering::Acquire);
         let head = self.transport.playhead_frames();
         let region = *self.loop_region.lock().unwrap();
-        Tick::from_audio_frames(video_display_frame(head, latency, region))
+        let dir: i64 =
+            if f32::from_bits(self.shared.playback_rate.load(Ordering::Acquire)) < 0.0 {
+                -1
+            } else {
+                1
+            };
+        Tick::from_audio_frames(video_display_frame(head, latency, region, dir))
     }
 
     /// UI: составить кадр превью для момента t (выравнивается по сетке fps).
@@ -506,6 +515,7 @@ fn audio_render_loop(ctx: RenderCtx) {
     // локальная позиция рендера (кадры); может опережать playhead на кольцо
     let mut render_head: i64 = transport.playhead_frames();
     let mut last_generation = transport.generation();
+    let mut last_dir: i64 = 1;
     let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
 
     while !stop.load(Ordering::Acquire) {
@@ -522,10 +532,23 @@ fn audio_render_loop(ctx: RenderCtx) {
         }
 
         let region = *loop_region.lock().unwrap();
-        // продвигаем playhead на потреблённое колбэком (с wrap при loop)
+        // направление транспорта — знак playback_rate (J4 v1.4). Смена
+        // знака = мини-seek без бампа generation: сброс FX, кольца и
+        // render_head (в кольце лежит материал прежнего направления).
+        let rate_now = f32::from_bits(shared.playback_rate.load(Ordering::Acquire));
+        let dir: i64 = if rate_now < 0.0 { -1 } else { 1 };
+        if dir != last_dir {
+            last_dir = dir;
+            store.reset_all();
+            render_head = transport.playhead_frames();
+            shared.consumed_frames.store(0, Ordering::Release);
+            shared.flush.store(true, Ordering::Release);
+        }
+        // продвигаем playhead на потреблённое колбэком (со знаком
+        // направления; wrap при loop работает в обе стороны — тест 43)
         let consumed = shared.consumed_frames.swap(0, Ordering::AcqRel);
         if consumed > 0 {
-            transport.advance_frames_wrapped(consumed, region);
+            transport.advance_frames_wrapped(consumed * dir, region);
         }
 
         if transport.is_playing() {
@@ -558,11 +581,16 @@ fn audio_render_loop(ctx: RenderCtx) {
                     }
                 }
                 _ => {
+                    let win = if dir < 0 {
+                        (render_head - PLAYBACK_AUDIO_LOOKAHEAD_FRAMES).max(0)..render_head
+                    } else {
+                        render_head..render_head + PLAYBACK_AUDIO_LOOKAHEAD_FRAMES
+                    };
                     prefetch_audio_pass(
                         &renderer,
                         &cache,
                         &workers.read().unwrap(),
-                        render_head..render_head + PLAYBACK_AUDIO_LOOKAHEAD_FRAMES,
+                        win,
                         Priority::Playback,
                         generation,
                     );
@@ -571,20 +599,39 @@ fn audio_render_loop(ctx: RenderCtx) {
             // наполняем кольцо: render_head линеен, loop-маппинг внутри
             // render_looped_with (wrap НЕ бампает generation — FX живут)
             while producer.slots() >= chunk.len() {
-                let stats = match region {
-                    Some((rs, re)) if re > rs && render_head >= rs => renderer.render_looped_with(
-                        &mut fetcher,
-                        &mut store,
-                        rs..re,
-                        render_head,
-                        &mut chunk,
-                    ),
-                    _ => renderer.render_frames_with(
-                        &mut fetcher,
-                        &mut store,
-                        render_head,
-                        &mut chunk,
-                    ),
+                let stats = if dir < 0 {
+                    // reverse (J4 v1.4): блок ПЕРЕД render_head, материал
+                    // разворачивается покадрово перед кольцом; FX — dry
+                    // (см. render_frames_raw), loop-wrap через rem_euclid
+                    let start = render_head - AUDIO_BURST_FRAMES as i64;
+                    let st = match region {
+                        Some((rs, re)) if re > rs && render_head > rs => {
+                            renderer.render_looped_raw(&mut fetcher, rs..re, start, &mut chunk)
+                        }
+                        _ => renderer.render_frames_raw(&mut fetcher, start, &mut chunk),
+                    };
+                    reverse_frames(&mut chunk);
+                    render_head = start;
+                    st
+                } else {
+                    let st = match region {
+                        Some((rs, re)) if re > rs && render_head >= rs => renderer
+                            .render_looped_with(
+                                &mut fetcher,
+                                &mut store,
+                                rs..re,
+                                render_head,
+                                &mut chunk,
+                            ),
+                        _ => renderer.render_frames_with(
+                            &mut fetcher,
+                            &mut store,
+                            render_head,
+                            &mut chunk,
+                        ),
+                    };
+                    render_head += AUDIO_BURST_FRAMES as i64;
+                    st
                 };
                 if stats.underruns > 0 {
                     underruns.fetch_add(stats.underruns, Ordering::Relaxed);
@@ -598,7 +645,6 @@ fn audio_render_loop(ctx: RenderCtx) {
                 for &s in chunk.iter() {
                     let _ = producer.push(s);
                 }
-                render_head += AUDIO_BURST_FRAMES as i64;
             }
         }
         // render_head сбрасывается ТОЛЬКО по seek (generation): при паузе
@@ -623,9 +669,17 @@ fn video_lookahead_ticks(q: Quality, frame_step: i64, max_video_bytes: usize) ->
 }
 
 /// Кадр (48k) для отображения при данной задержке вывода. Чистая функция —
-/// тест 22-sync. Внутри loop-региона вычитание wrap'ится по региону.
-pub fn video_display_frame(playhead: i64, latency_frames: i64, region: Option<(i64, i64)>) -> i64 {
-    let lat = latency_frames.max(0);
+/// тесты 22-sync и 44. Внутри loop-региона вычитание wrap'ится по региону.
+/// `dir` — направление транспорта (J4): при реверсе слышимое сейчас
+/// находится ПОЗЖЕ по таймлайну (playhead едет влево), поэтому знак
+/// компенсации задержки обратный.
+pub fn video_display_frame(
+    playhead: i64,
+    latency_frames: i64,
+    region: Option<(i64, i64)>,
+    dir: i64,
+) -> i64 {
+    let lat = latency_frames.max(0) * dir.signum().clamp(-1, 1);
     match region {
         Some((rs, re)) if re > rs && playhead >= rs => {
             let span = re - rs;
@@ -720,19 +774,30 @@ mod sync_tests {
     #[test]
     fn t22_video_display_frame_compensates_latency() {
         // без задержки — тождество
-        assert_eq!(video_display_frame(1000, 0, None), 1000);
+        assert_eq!(video_display_frame(1000, 0, None, 1), 1000);
         // вычитание
-        assert_eq!(video_display_frame(48_000, 4_800, None), 43_200);
+        assert_eq!(video_display_frame(48_000, 4_800, None, 1), 43_200);
         // клэмп в 0 у старта
-        assert_eq!(video_display_frame(100, 4_800, None), 0);
+        assert_eq!(video_display_frame(100, 4_800, None, 1), 0);
         // отрицательная задержка не двигает вперёд
-        assert_eq!(video_display_frame(1000, -500, None), 1000);
+        assert_eq!(video_display_frame(1000, -500, None, 1), 1000);
         // wrap в loop-регионе: 50_500 − 1_000 → заворот к концу региона
-        assert_eq!(video_display_frame(50_500, 1_000, Some((50_000, 60_000))), 59_500);
+        assert_eq!(video_display_frame(50_500, 1_000, Some((50_000, 60_000)), 1), 59_500);
         // внутри региона без пересечения границы
-        assert_eq!(video_display_frame(55_000, 1_000, Some((50_000, 60_000))), 54_000);
+        assert_eq!(video_display_frame(55_000, 1_000, Some((50_000, 60_000)), 1), 54_000);
         // до региона — линейно
-        assert_eq!(video_display_frame(10_000, 1_000, Some((50_000, 60_000))), 9_000);
+        assert_eq!(video_display_frame(10_000, 1_000, Some((50_000, 60_000)), 1), 9_000);
+    }
+
+    /// Тест 44 (J4): при реверсе знак компенсации задержки обратный —
+    /// слышимое сейчас ПОЗЖЕ по таймлайну (playhead едет влево).
+    #[test]
+    fn t44_latency_sign_flips_in_reverse() {
+        assert_eq!(video_display_frame(48_000, 4_800, None, -1), 52_800);
+        assert_eq!(video_display_frame(48_000, 4_800, None, 1), 43_200);
+        // в loop-регионе wrap в обе стороны
+        assert_eq!(video_display_frame(59_500, 1_000, Some((50_000, 60_000)), -1), 50_500);
+        assert_eq!(video_display_frame(1000, 0, None, -1), 1000, "нулевая задержка нейтральна");
     }
 }
 
@@ -754,6 +819,15 @@ pub fn varispeed_fill(
     mut emit: impl FnMut(usize, (f32, f32)),
 ) -> i64 {
     let mut consumed = 0i64;
+    // защита (тест 41): неположительный шаг НЕ крутит while phase>=1.0 —
+    // раньше phase уходил в −∞ и интерполяция prev+(cur−prev)·a линейно
+    // РАСХОДИЛАСЬ (опасно громко). step<=0 = тишина, ноль потребления.
+    if step <= 0.0 || step.is_nan() {
+        for i in 0..out_frames {
+            emit(i, (0.0, 0.0));
+        }
+        return 0;
+    }
     if !*primed {
         // прайминг: два кадра, чтобы интерполяция prev..cur была честной
         if let Some(f) = next_frame() {
@@ -786,9 +860,68 @@ pub fn varispeed_fill(
     consumed
 }
 
+/// Покадровый разворот interleaved-стерео буфера: L/R остаются парой
+/// (реверс-транспорт, тест 42).
+pub fn reverse_frames(buf: &mut [f32]) {
+    let n = buf.len() / AUDIO_CHANNELS;
+    for i in 0..n / 2 {
+        let j = n - 1 - i;
+        for ch in 0..AUDIO_CHANNELS {
+            buf.swap(i * AUDIO_CHANNELS + ch, j * AUDIO_CHANNELS + ch);
+        }
+    }
+}
+
+/// Шаг чтения кольца для cpal-колбэка (тест 45): всегда |rate| — колбэк
+/// не знает про направление (материал в кольце уже развёрнут render-
+/// потоком, инвариант №6 цел); None = |rate|≈0 → тишина, ноль потребления.
+pub fn callback_step(device_step: f64, rate: f32) -> Option<f64> {
+    let r = (rate as f64).abs();
+    if r < 1e-3 { None } else { Some(device_step * r) }
+}
+
 #[cfg(test)]
 mod varispeed_tests {
-    use super::varispeed_fill;
+    use super::{callback_step, varispeed_fill};
+
+    /// Тест 41 (J4): неположительный шаг безопасен — тишина, ноль
+    /// потребления, фаза не уезжает (раньше step<0 давал расходящуюся
+    /// экстраполяцию — опасно громко).
+    #[test]
+    fn t41_nonpositive_step_is_safe_silence() {
+        for step in [-1.0f64, -0.25, 0.0] {
+            let mut frames = (0..64).map(|i| (i as f32, -(i as f32)));
+            let mut next = || frames.next();
+            let (mut prev, mut cur, mut primed, mut phase) =
+                ((1.0f32, 1.0f32), (2.0f32, 2.0f32), true, 0.25f64);
+            let mut out = vec![(9.0f32, 9.0f32); 32];
+            let consumed = varispeed_fill(
+                &mut next,
+                step,
+                out.len(),
+                &mut prev,
+                &mut cur,
+                &mut primed,
+                &mut phase,
+                |i, f| out[i] = f,
+            );
+            assert_eq!(consumed, 0, "step={step}: ничего не потреблено");
+            assert!(out.iter().all(|&(l, r)| l == 0.0 && r == 0.0), "step={step}: тишина");
+            assert_eq!(phase, 0.25, "step={step}: фаза не тронута");
+        }
+    }
+
+    /// Тест 45 (J4): шаг колбэка — всегда |rate| (направление применяет
+    /// render-поток); |rate|≈0 → None (тишина). Стерео-парность закрыта
+    /// конструктивно: колбэк не забирает полкадра (slots >= 2).
+    #[test]
+    fn t45_callback_step_uses_abs_rate() {
+        assert_eq!(callback_step(1.0, 1.5), Some(1.5));
+        assert_eq!(callback_step(1.0, -1.5), Some(1.5), "реверс = тот же шаг по модулю");
+        assert_eq!(callback_step(0.5, -2.0), Some(1.0));
+        assert_eq!(callback_step(1.0, 0.0), None, "rate 0 — тишина");
+        assert_eq!(callback_step(1.0, -0.0004), None);
+    }
 
     fn run(rate: f64, out_frames: usize, src_len: usize) -> (Vec<(f32, f32)>, i64) {
         // источник-рампа: кадр n = (n, -n)

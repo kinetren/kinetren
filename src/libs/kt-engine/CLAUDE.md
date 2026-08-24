@@ -13,3 +13,4 @@ Render graph, планировщик декода, transport, prefetch, эксп
 
 ## Тесты
 1–3 (конкатенация/кроссфейд/gain), 7 (детерминизм seek), 9 (планировщик), 11 (golden-экспорт), 13 (вьюпорт-чёрн), 14 (loop).
+- Reverse-транспорт (J4 v1.4): rate<0 — render-поток рендерит блоки НАЗАД (render_frames_raw/render_looped_raw, БЕЗ FX — dry, как Vegas) и разворачивает покадрово перед кольцом; колбэк направление не знает (|rate|), знак применяется в advance_frames_wrapped (wrap в обе стороны). Смена знака = мини-seek без бампа generation (reset FX + flush кольца). Тесты 41–45.

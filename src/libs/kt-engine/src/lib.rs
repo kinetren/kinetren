@@ -19,7 +19,7 @@ pub use audio::{AudioRenderer, RenderStats, db_to_linear};
 pub use export::{ExportStats, export_mp4, render_raw_audio, render_raw_video};
 pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
 pub use fxstore::FxStateStore;
-pub use player::{AudioShared, Player, varispeed_fill};
+pub use player::{AudioShared, Player, callback_step, reverse_frames, varispeed_fill};
 pub use prefetch::prefetch_audio_pass;
 pub use transport::Transport;
 pub use video::{VideoRenderer, video_cache_idx};

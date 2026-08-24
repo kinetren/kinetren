@@ -131,10 +131,27 @@ impl AudioRenderer {
                 self.render_fx_clip(ci, fetcher, store, &range, out, &mut stats);
                 continue;
             }
+            self.render_plain_clip(ci, fetcher, &range, out, &mut stats);
+        }
+        stats
+    }
+
+    /// Клип без FX: прямое чтение source-burst'ов с весами кроссфейда.
+    /// Общий код render_frames_with и render_frames_raw (реверс-превью).
+    fn render_plain_clip(
+        &self,
+        ci: usize,
+        fetcher: &mut dyn AudioFetcher,
+        range: &std::ops::Range<i64>,
+        out: &mut [f32],
+        stats: &mut RenderStats,
+    ) {
+        let clip = &self.clips[ci];
+        {
             let from = clip.start.max(range.start);
             let to = clip.end.min(range.end);
             if from >= to {
-                continue;
+                return;
             }
             let mut f = from;
             let mut cursor: Option<(i64, Arc<AudioBurst>)> = None; // (burst idx, data)
@@ -181,6 +198,55 @@ impl AudioRenderer {
                 }
                 f += take;
             }
+        }
+    }
+
+    /// Рендер БЕЗ FX-цепочек — реверс-превью транспорта (J4 v1.4): клипы
+    /// с FX играют dry, т.к. потоковые состояния (реверб/варп) при подаче
+    /// материала ЗАДОМ НАПЕРЁД бессмысленны — хвост реверба звучал бы «из
+    /// будущего» (Vegas в reverse-скрабе так же). Обычное воспроизведение
+    /// и экспорт этим путём НЕ ходят (инварианты №2/№7 целы).
+    pub fn render_frames_raw(
+        &self,
+        fetcher: &mut dyn AudioFetcher,
+        start_frame: i64,
+        out: &mut [f32],
+    ) -> RenderStats {
+        assert_eq!(out.len() % AUDIO_CHANNELS, 0);
+        out.fill(0.0);
+        let frames = (out.len() / AUDIO_CHANNELS) as i64;
+        let range = start_frame..start_frame + frames;
+        let mut stats = RenderStats::default();
+        for ci in 0..self.clips.len() {
+            if self.clips[ci].start < range.end && self.clips[ci].end > range.start {
+                self.render_plain_clip(ci, fetcher, &range, out, &mut stats);
+            }
+        }
+        stats
+    }
+
+    /// Loop-вариант render_frames_raw: linear-позиция wrap'ится в регион
+    /// (rem_euclid корректен и для хода НАЗАД — отрицательных смещений).
+    pub fn render_looped_raw(
+        &self,
+        fetcher: &mut dyn AudioFetcher,
+        region: std::ops::Range<i64>,
+        start_frame: i64,
+        out: &mut [f32],
+    ) -> RenderStats {
+        assert!(!region.is_empty());
+        let len = region.end - region.start;
+        let total = (out.len() / AUDIO_CHANNELS) as i64;
+        let mut stats = RenderStats::default();
+        let mut done = 0i64;
+        while done < total {
+            let tl = region.start + (start_frame - region.start + done).rem_euclid(len);
+            let chunk = (region.end - tl).min(total - done);
+            let sub = &mut out
+                [(done as usize) * AUDIO_CHANNELS..((done + chunk) as usize) * AUDIO_CHANNELS];
+            let s = self.render_frames_raw(fetcher, tl, sub);
+            stats.underruns += s.underruns;
+            done += chunk;
         }
         stats
     }

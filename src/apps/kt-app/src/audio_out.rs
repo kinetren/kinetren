@@ -78,20 +78,28 @@ pub fn start(
                     data.fill(0.0);
                     return;
                 }
-                // Единый varispeed-путь (п.4): шаг = device_step × rate,
+                // Единый varispeed-путь (п.4): шаг = device_step × |rate|,
                 // линейная интерполяция (ядро kt_engine::varispeed_fill,
-                // тест 32). Питч плывёт со скоростью — как в Vegas;
-                // consumed считает кадры ИСТОЧНИКА, поэтому playhead
-                // (и видео за ним) сами едут с выбранной скоростью.
-                let rate = f32::from_bits(shared.playback_rate.load(Ordering::Acquire)) as f64;
-                let eff_step = step * rate;
+                // тест 32). Направление колбэк НЕ знает (J4): при реверсе
+                // материал в кольце уже развёрнут render-потоком, знак
+                // применяется при продвижении playhead. rate≈0 → тишина,
+                // ноль потребления (playhead стоит). Тест 45.
+                let rate = f32::from_bits(shared.playback_rate.load(Ordering::Acquire));
+                let Some(eff_step) = kt_engine::callback_step(step, rate) else {
+                    data.fill(0.0);
+                    return;
+                };
+                // пара L/R атомарно: полкадра из кольца не забираем — иначе
+                // перманентный swap каналов (латентный дефект прежнего кода,
+                // тест 45); underrun честно считается
                 let mut next = || -> Option<(f32, f32)> {
+                    if ring.slots() < 2 {
+                        shared.callback_underruns.fetch_add(1, Ordering::Relaxed);
+                        return None;
+                    }
                     match (ring.pop(), ring.pop()) {
                         (Ok(l), Ok(r)) => Some((l, r)),
-                        _ => {
-                            shared.callback_underruns.fetch_add(1, Ordering::Relaxed);
-                            None
-                        }
+                        _ => None,
                     }
                 };
                 let consumed = kt_engine::varispeed_fill(

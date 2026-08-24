@@ -50,18 +50,29 @@ impl Transport {
 
     /// Продвижение с wrap'ом по loop-региону [start, end) в кадрах.
     /// Generation НЕ бампается: wrap — не seek, FX-состояние и кольцо живут
-    /// (иначе слышимый разрыв).
+    /// (иначе слышимый разрыв). `frames` может быть отрицательным
+    /// (reverse-транспорт, J4 v1.4): wrap работает в обе стороны —
+    /// rem_euclid корректен для отрицательных смещений (тест 43); вне
+    /// региона позиция клампится в 0 (реверс не уводит playhead в минус).
     pub fn advance_frames_wrapped(&self, frames: i64, region: Option<(i64, i64)>) {
         match region {
             Some((s, e)) if e > s => {
                 let _ =
                     self.playhead_frames.fetch_update(Ordering::AcqRel, Ordering::Acquire, |p| {
                         let np = p + frames;
-                        Some(if np >= e && p >= s { s + (np - s).rem_euclid(e - s) } else { np })
+                        Some(if p >= s && p <= e && (np >= e || np < s) {
+                            s + (np - s).rem_euclid(e - s)
+                        } else {
+                            np.max(0)
+                        })
                     });
             }
             _ => {
-                self.playhead_frames.fetch_add(frames, Ordering::AcqRel);
+                let _ = self
+                    .playhead_frames
+                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |p| {
+                        Some((p + frames).max(0))
+                    });
             }
         }
     }
@@ -74,5 +85,41 @@ impl Transport {
 
     pub fn seek(&self, t: Tick) {
         self.seek_frames(t.to_audio_frames());
+    }
+}
+
+#[cfg(test)]
+mod reverse_wrap_tests {
+    use super::*;
+
+    /// Тест 43 (J4): loop-wrap работает в обе стороны; вне региона
+    /// отрицательное продвижение клампится в 0.
+    #[test]
+    fn t43_wrap_backwards_and_clamp() {
+        let t = Transport::new();
+        // вперёд через границу (регресс не сломан)
+        t.seek_frames(9_800);
+        t.advance_frames_wrapped(400, Some((5_000, 10_000)));
+        assert_eq!(t.playhead_frames(), 5_200);
+        // назад через начало региона → к концу
+        t.seek_frames(5_100);
+        t.advance_frames_wrapped(-400, Some((5_000, 10_000)));
+        assert_eq!(t.playhead_frames(), 9_700);
+        // ровно в start: без движения не wrap'ится
+        t.seek_frames(5_000);
+        t.advance_frames_wrapped(0, Some((5_000, 10_000)));
+        assert_eq!(t.playhead_frames(), 5_000);
+        // назад ровно на span → та же позиция
+        t.seek_frames(7_000);
+        t.advance_frames_wrapped(-5_000, Some((5_000, 10_000)));
+        assert_eq!(t.playhead_frames(), 7_000);
+        // вне региона (левее): обычное движение, без wrap
+        t.seek_frames(1_000);
+        t.advance_frames_wrapped(-300, Some((5_000, 10_000)));
+        assert_eq!(t.playhead_frames(), 700);
+        // без региона: кламп в 0
+        t.seek_frames(100);
+        t.advance_frames_wrapped(-500, None);
+        assert_eq!(t.playhead_frames(), 0);
     }
 }
