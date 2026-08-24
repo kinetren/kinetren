@@ -1,110 +1,15 @@
-# This file is used to ignore files which are generated
-# ----------------------------------------------------------------------------
-kp-test
-kp-test-burstcon-tests
-
-# Vendored avcpp checkout (local build dep for the frozen C++ reference; not tracked)
-/avcpp/
-
-# In-root CMake build artifacts (the repo root doubles as a build dir for the C++ reference)
-CMakeFiles/
-CMakeCache.txt.prev
-CTestTestfile.cmake
-DartConfiguration.tcl
-qtcsettings.cmake
-cmake_install.cmake
-/Testing/
-/.cmake/
-/.qtc_clangd/
-*_autogen/
-
 # Rust workspace
 /src/target/
 /src/fixtures/out/
-*.cmake
-*.qtc_clangd
-*CMakeFiles/*
-*_autogen/*
-*.log
-CMakeCache*
-.qtc/*
-*.tcl
+
+# Редакторы/ОС
 *~
-*.autosave
-*.a
-*.core
-*.moc
-*.o
-*.obj
-*.orig
-*.rej
-*.so
-*.so.*
-*_pch.h.cpp
-*_resource.rc
-*.qm
-.#*
-*.*#
-core
-!core/
-tags
+*.swp
 .DS_Store
 .directory
-*.debug
-Makefile*
-*.prl
-*.app
-moc_*.cpp
-ui_*.h
-qrc_*.cpp
 Thumbs.db
-*.res
-*.rc
-/.qmake.cache
-/.qmake.stash
 
-# qtcreator generated files
-*.pro.user*
-*.qbs.user*
-CMakeLists.txt.user*
-
-# xemacs temporary files
-*.flc
-
-# Vim temporary files
-.*.swp
-
-# Visual Studio generated files
-*.ib_pdb_index
-*.idb
-*.ilk
-*.pdb
-*.sln
-*.suo
-*.vcproj
-*vcproj.*.*.user
-*.ncb
-*.sdf
-*.opensdf
-*.vcxproj
-*vcxproj.*
-
-# MinGW generated files
-*.Debug
-*.Release
-
-# Python byte code
-*.pyc
-
-# Binaries
-# --------
-*.dll
-*.exe
-
-# Directories with generated files
-.moc/
-.obj/
-.pch/
-.rcc/
-.uic/
-/build*/
+# Sidecar-кэши проектов (создаются рядом с .ktproj)
+*.ktindex.db
+*.ktindex.db-wal
+*.ktindex.db-shm
