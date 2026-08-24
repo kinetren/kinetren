@@ -43,6 +43,10 @@ pub struct KtApp {
     /// замороженные цели + вид; Esc — отмена.
     pub pending_morpher: Option<PendingMorph>,
     pub drag: Option<Drag>,
+    /// Основная (зафиксированная) скорость воспроизведения (пп.4-5 v1.4).
+    pub base_rate: f32,
+    /// Позиция shuttle-слайдера, пока его держат (None = не держат).
+    pub shuttle_override: Option<f32>,
     pub snap_line: Option<i64>,
     pub ctx_target: Option<CtxTarget>,
     /// Live-громкость volume rail до отпускания (id, dB).
@@ -157,6 +161,8 @@ impl KtApp {
             selected_morph: None,
             pending_morpher: None,
             drag: None,
+            base_rate: 1.0,
+            shuttle_override: None,
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -222,6 +228,8 @@ impl KtApp {
             selected_morph: None,
             pending_morpher: None,
             drag: None,
+            base_rate: 1.0,
+            shuttle_override: None,
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -1274,20 +1282,43 @@ impl KtApp {
             // ползунок скорости воспроизведения (п.4, как в Sony Vegas)
             ui.separator();
             ui.label("Скорость:");
-            let mut rate = self.player.playback_rate();
+            // основной слайдер: −2×…+2× с реверсом и мёртвой зоной у нуля
+            // (пп.4-5 v1.4); double-click = 1×; фиксируется
+            let mut t = rate_to_slider(self.base_rate);
             let slider = ui.add(
-                egui::Slider::new(&mut rate, 0.25..=2.0)
-                    .logarithmic(true)
-                    .fixed_decimals(2)
-                    .suffix("×"),
+                egui::Slider::new(&mut t, -1.0..=1.0)
+                    .show_value(false)
+                    .custom_formatter(|v, _| format_rate(slider_to_rate(v as f32))),
             );
             if slider.changed() {
-                self.player.set_playback_rate(rate);
+                self.base_rate = slider_to_rate(t);
+                if self.shuttle_override.is_none() {
+                    self.player.set_playback_rate(self.base_rate);
+                }
             }
             if slider.double_clicked() {
+                self.base_rate = 1.0;
+                self.shuttle_override = None;
                 self.player.set_playback_rate(1.0);
             }
-            if (rate - 1.0).abs() > 0.001 {
+            ui.monospace(format_rate(self.player.playback_rate()));
+            // shuttle (Vegas): временно перекрывает скорость, при
+            // отпускании возвращается к основной
+            let mut sh = self.shuttle_override.unwrap_or_else(|| rate_to_slider(self.base_rate));
+            let shuttle = ui.add(
+                egui::Slider::new(&mut sh, -1.0..=1.0)
+                    .show_value(false)
+                    .trailing_fill(false),
+            );
+            if shuttle.dragged() {
+                self.shuttle_override = Some(sh);
+                self.player.set_playback_rate(slider_to_rate(sh));
+            }
+            if shuttle.drag_stopped() && self.shuttle_override.take().is_some() {
+                self.player.set_playback_rate(self.base_rate);
+            }
+            let cur = self.player.playback_rate();
+            if (cur - 1.0).abs() > 0.001 {
                 ui.colored_label(egui::Color32::from_rgb(255, 200, 100), "≠1×");
             }
             ui.separator();
@@ -1668,6 +1699,43 @@ pub fn repaint_delay(animating: bool) -> std::time::Duration {
         std::time::Duration::from_millis(16)
     } else {
         std::time::Duration::from_millis(250)
+    }
+}
+
+/// Мёртвая зона слайдера скорости вокруг нуля (доля хода).
+const RATE_DEAD: f32 = 0.07;
+/// |rate| на краю мёртвой зоны и на краю слайдера.
+const RATE_MIN: f32 = 0.25;
+const RATE_MAX: f32 = 2.0;
+
+/// Слайдер [−1..1] → скорость [−2..2]: лог по модулю, мёртвая зона у нуля
+/// отдаёт ровно 0 (пп.4-5 v1.4, тест 46). Симметрично для реверса.
+pub fn slider_to_rate(t: f32) -> f32 {
+    let a = t.abs();
+    if a < RATE_DEAD {
+        // строгое: край зоны — уже RATE_MIN (round-trip, тест 46)
+        return 0.0;
+    }
+    let x = ((a - RATE_DEAD) / (1.0 - RATE_DEAD)).clamp(0.0, 1.0);
+    let r = RATE_MIN * (RATE_MAX / RATE_MIN).powf(x);
+    r.copysign(t)
+}
+
+/// Обратное отображение (тест 46): rate → позиция слайдера.
+pub fn rate_to_slider(rate: f32) -> f32 {
+    let a = rate.abs();
+    if a < RATE_MIN * 0.999 {
+        return 0.0;
+    }
+    let x = (a.clamp(RATE_MIN, RATE_MAX) / RATE_MIN).ln() / (RATE_MAX / RATE_MIN).ln();
+    (RATE_DEAD + x * (1.0 - RATE_DEAD)).copysign(rate)
+}
+
+pub fn format_rate(r: f32) -> String {
+    if r == 0.0 {
+        "0 (стоп)".into()
+    } else {
+        format!("{r:+.2}×")
     }
 }
 
@@ -2320,6 +2388,31 @@ mod repaint_tests {
             prev = Some(key);
         }
         assert_eq!(shown, 30, "V-fps считает кадры проекта, а не ui-кадры");
+    }
+
+    /// Тест 46 (пп.4-5 v1.4): маппинг слайдера скорости — симметрия по
+    /// знаку, мёртвая зона отдаёт ровно 0, границы ±2, round-trip.
+    #[test]
+    fn t46_rate_slider_mapping() {
+        use super::{rate_to_slider, slider_to_rate};
+        // мёртвая зона: ровно 0 (стоп), не крошечная скорость
+        for t in [0.0f32, 0.03, -0.05, 0.069, -0.069] {
+            assert_eq!(slider_to_rate(t), 0.0, "t={t} в мёртвой зоне");
+        }
+        // границы и опорные точки
+        assert!((slider_to_rate(1.0) - 2.0).abs() < 1e-5);
+        assert!((slider_to_rate(-1.0) + 2.0).abs() < 1e-5);
+        // симметрия знака
+        for t in [0.1f32, 0.3, 0.7, 1.0] {
+            assert_eq!(slider_to_rate(t), -slider_to_rate(-t));
+        }
+        // round-trip на представимых скоростях
+        for r in [0.25f32, 0.5, 1.0, 1.5, 2.0, -0.25, -1.0, -2.0] {
+            let back = slider_to_rate(rate_to_slider(r));
+            assert!((back - r).abs() < 1e-4, "round-trip {r} → {back}");
+        }
+        // rate=0 маппится в центр слайдера
+        assert_eq!(rate_to_slider(0.0), 0.0);
     }
 
     /// Тест 20-repaint (п.1): в простое НЕ 60 fps.
