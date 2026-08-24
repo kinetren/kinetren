@@ -222,3 +222,60 @@ fn t21_ffmpeg_span_equals_per_frame_and_no_reopen() {
     assert!(reopens <= 1, "спан не должен пересоздавать декодер: reopens={reopens}");
     assert!(decoded <= 62, "спан декодирует каждый кадр один раз: decoded={decoded}");
 }
+
+// ---- Пакетный индекс в sidecar-БД -------------------------------------------
+
+/// Тест 34 (docs/porting-notes.md): персист пакетного индекса.
+/// Второе открытие того же файла НЕ сканирует его заново (индекс приходит
+/// из БД), индекс байт-в-байт равен свежему скану и функционально рабочий
+/// (keyframe_before, sample-accurate аудио). Изменение файла инвалидирует
+/// индекс — снова полный скан.
+#[test]
+fn t34_packet_index_persisted_and_reused() {
+    use kt_media::index::MediaIndexDb;
+
+    // копия фикстуры — тест меняет файл на шаге инвалидации
+    let dir = std::env::temp_dir().join(format!("kt_t34_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let media = dir.join("muxed_av.mp4");
+    std::fs::copy(fixture("muxed_av.mp4"), &media).unwrap();
+    let media_s = media.to_string_lossy().to_string();
+    let db_path = dir.join("t34.ktindex.db");
+    let _ = std::fs::remove_file(&db_path);
+    let mut db = MediaIndexDb::open(&db_path).unwrap();
+
+    // 1-е открытие: скан + персист
+    let s1 = FfmpegSource::open_indexed(&media_s, Some(&mut db)).unwrap();
+    assert!(!s1.index_was_prebuilt(), "первое открытие обязано сканировать");
+    let (a1, v1) = s1.packet_index();
+    assert!(!a1.is_empty() && !v1.is_empty(), "у muxed_av есть оба потока");
+
+    // 2-е открытие: индекс из БД, скана нет
+    let mut s2 = FfmpegSource::open_indexed(&media_s, Some(&mut db)).unwrap();
+    assert!(s2.index_was_prebuilt(), "повторное открытие не должно сканировать файл");
+    assert_eq!(s1.packet_index(), s2.packet_index(), "индекс из БД != свежий скан");
+
+    // индекс из БД функционально эквивалентен: keyframe_before и аудио
+    let mut fresh = FfmpegSource::open(&media_s).unwrap();
+    for t in [0i64, 30_000, 90_000, 150_000] {
+        assert_eq!(
+            s2.keyframe_before(Tick(t)),
+            fresh.keyframe_before(Tick(t)),
+            "keyframe_before({t}) разошёлся"
+        );
+    }
+    let want = fresh.read_audio_burst(7).unwrap();
+    let got = s2.read_audio_burst(7).unwrap();
+    assert_eq!(&got.data[..], &want.data[..], "декод с индексом из БД разошёлся");
+
+    // правка файла → идентичность не сходится → снова скан
+    {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&media).unwrap();
+        f.write_all(&[0u8]).unwrap();
+    }
+    let s3 = FfmpegSource::open_indexed(&media_s, Some(&mut db)).unwrap();
+    assert!(!s3.index_was_prebuilt(), "изменённый файл обязан пересканироваться");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

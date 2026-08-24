@@ -26,7 +26,47 @@ impl From<kt_ffmpeg::FfError> for MediaError {
 
 impl FfmpegSource {
     pub fn open(path: &str) -> Result<FfmpegSource, MediaError> {
-        let inner = kt_ffmpeg::Source::open(path)?;
+        Self::from_inner(kt_ffmpeg::Source::open(path)?)
+    }
+
+    /// Открытие через sidecar индекс-БД: пакетный индекс (pts аудио-пакетов
+    /// и видео-кейфреймов) берётся из БД, если файл не менялся — полный
+    /// скан-проход по файлу пропадает (быстрое открытие больших файлов).
+    /// После свежего скана индекс сохраняется в БД. Любая ошибка БД — это
+    /// ошибка КЭША: молча откатываемся к обычному open со сканом.
+    pub fn open_indexed(
+        path: &str,
+        db: Option<&mut crate::index::MediaIndexDb>,
+    ) -> Result<FfmpegSource, MediaError> {
+        let Some(db) = db else { return Self::open(path) };
+        let Ok((mid, status)) = db.ensure_media(std::path::Path::new(path)) else {
+            return Self::open(path);
+        };
+        if status == crate::index::MediaEntryStatus::Reused
+            && let (Ok(Some(audio)), Ok(Some(video))) =
+                (db.packet_index(mid, "audio"), db.packet_index(mid, "video"))
+        {
+            let prebuilt = kt_ffmpeg::PrebuiltIndex { audio_pts: audio, video_keyframes: video };
+            return Self::from_inner(kt_ffmpeg::Source::open_with_index(path, Some(prebuilt))?);
+        }
+        let src = Self::open(path)?;
+        let (audio, video) = src.inner.packet_index();
+        let _ = db.put_packet_index(mid, "audio", audio);
+        let _ = db.put_packet_index(mid, "video", video);
+        Ok(src)
+    }
+
+    /// Индекс пришёл из БД (скан не выполнялся) — диагностика/тест 34.
+    pub fn index_was_prebuilt(&self) -> bool {
+        self.inner.index_was_prebuilt()
+    }
+
+    /// (pts аудио-пакетов, pts видео-кейфреймов) — сверка в тесте 34.
+    pub fn packet_index(&self) -> (&[i64], &[i64]) {
+        self.inner.packet_index()
+    }
+
+    fn from_inner(inner: kt_ffmpeg::Source) -> Result<FfmpegSource, MediaError> {
         let p = inner.probe();
         let info = MediaInfo {
             duration: p.duration,

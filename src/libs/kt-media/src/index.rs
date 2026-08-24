@@ -9,7 +9,10 @@ use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: i64 = 1;
+// v2: audio_seek/video_keyframes (по строке на пакет, никогда не писались)
+// заменены на packet_index с блобами i64 LE — персист пакетного индекса
+// FfmpegSource (быстрое открытие больших файлов). Бамп = пересоздание БД.
+pub const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum IndexError {
@@ -76,6 +79,9 @@ impl MediaIndexDb {
     fn try_open(path: &Path) -> Result<MediaIndexDb, IndexError> {
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
+        // БД открывают несколько потоков (index-worker, тумбы, открытие
+        // источников) — короткие записи не должны падать по SQLITE_BUSY.
+        conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         let version: Option<i64> = conn
             .query_row("SELECT value FROM meta WHERE key='schema_version'", [], |r| r.get(0))
             .optional()
@@ -102,13 +108,9 @@ impl MediaIndexDb {
                        built_at   INTEGER NOT NULL DEFAULT 0,
                        complete   INTEGER NOT NULL DEFAULT 0
                      );
-                     CREATE TABLE IF NOT EXISTS audio_seek (
-                       media_id INTEGER, pkt_pos INTEGER, pkt_pts INTEGER, first_sample INTEGER,
-                       PRIMARY KEY (media_id, first_sample)
-                     );
-                     CREATE TABLE IF NOT EXISTS video_keyframes (
-                       media_id INTEGER, pts_ticks INTEGER,
-                       PRIMARY KEY (media_id, pts_ticks)
+                     CREATE TABLE IF NOT EXISTS packet_index (
+                       media_id INTEGER, stream TEXT, data BLOB,
+                       PRIMARY KEY (media_id, stream)
                      );
                      CREATE TABLE IF NOT EXISTS audio_peaks (
                        media_id INTEGER, level INTEGER, channel INTEGER, data BLOB,
@@ -178,7 +180,7 @@ impl MediaIndexDb {
     }
 
     fn purge_media(&self, media_id: i64) -> Result<(), IndexError> {
-        for table in ["audio_seek", "video_keyframes", "audio_peaks", "thumbnails"] {
+        for table in ["packet_index", "audio_peaks", "thumbnails"] {
             self.conn
                 .execute(&format!("DELETE FROM {table} WHERE media_id=?1"), params![media_id])?;
         }
@@ -227,6 +229,47 @@ impl MediaIndexDb {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Сохранить пакетный индекс потока (`stream` = "audio" | "video");
+    /// значения — pts в timebase потока, блоб i64 LE.
+    pub fn put_packet_index(
+        &self,
+        media_id: i64,
+        stream: &str,
+        pts: &[i64],
+    ) -> Result<(), IndexError> {
+        let mut blob = Vec::with_capacity(pts.len() * 8);
+        for &v in pts {
+            blob.extend_from_slice(&v.to_le_bytes());
+        }
+        self.conn.execute(
+            "INSERT OR REPLACE INTO packet_index(media_id, stream, data) VALUES(?1,?2,?3)",
+            params![media_id, stream, blob],
+        )?;
+        Ok(())
+    }
+
+    /// Пакетный индекс потока, если сохранён. None = не строился
+    /// (пустой Vec — валидный индекс файла без такого потока).
+    pub fn packet_index(
+        &self,
+        media_id: i64,
+        stream: &str,
+    ) -> Result<Option<Vec<i64>>, IndexError> {
+        let blob: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT data FROM packet_index WHERE media_id=?1 AND stream=?2",
+                params![media_id, stream],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(blob.map(|b| {
+            b.chunks_exact(8)
+                .map(|c| i64::from_le_bytes([c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]]))
+                .collect()
+        }))
     }
 
     /// JPEG-тумбнейл на момент t (тики), если уже построен.

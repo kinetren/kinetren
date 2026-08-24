@@ -110,11 +110,12 @@ impl KtApp {
     fn build_player(
         project: &Project,
         base: Option<&Path>,
+        index_db: Option<&Path>,
     ) -> (Player, Option<audio_out::AudioOutput>, Option<String>) {
         let mut sources = Vec::new();
         let mut err = None;
         for m in &project.media {
-            match open_source(&resolve_media_path(base, &m.path)) {
+            match open_source_indexed(&resolve_media_path(base, &m.path), index_db) {
                 Ok(s) => sources.push((m.id, s)),
                 Err(e) => err = Some(format!("{}: {e}", m.path)),
             }
@@ -133,7 +134,7 @@ impl KtApp {
     fn new_empty(error: Option<String>) -> KtApp {
         let project = Self::empty_project();
         let project2 = project.clone();
-        let (player, audio, _) = Self::build_player(&project, None);
+        let (player, audio, _) = Self::build_player(&project, None, None);
         KtApp {
             model: TimelineModel::new(project),
             project_path: None,
@@ -187,7 +188,8 @@ impl KtApp {
         let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let project = Project::from_json(&text).map_err(|e| e.to_string())?;
         let base = path.parent();
-        let (player, audio, err) = Self::build_player(&project, base);
+        let (player, audio, err) =
+            Self::build_player(&project, base, Some(&path.with_extension("ktindex.db")));
         let (offline, watchdog) = spawn_media_watchdog(&project, base);
         let thumbs_svc = crate::thumbs::ThumbService::start(&project, Some(path.to_path_buf()));
         let peaks = Arc::new(Mutex::new(HashMap::new()));
@@ -293,13 +295,21 @@ impl KtApp {
         }
     }
 
+    /// Путь sidecar индекс-БД текущего проекта (None у безымянного).
+    fn index_db_path(&self) -> Option<std::path::PathBuf> {
+        self.project_path.as_ref().map(|p| p.with_extension("ktindex.db"))
+    }
+
     /// Покомпонентный максимум разрешения по видео-источникам проекта
     /// (порт computeMaxSourceVideoResolution; короткоживущие пробы).
     pub fn max_source_resolution(&self) -> Option<(u32, u32)> {
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        let db = self.index_db_path();
         let (mut mw, mut mh) = (0u32, 0u32);
         for m in &self.model.project().media {
-            if let Ok(src) = open_source(&resolve_media_path(base.as_deref(), &m.path)) {
+            if let Ok(src) =
+                open_source_indexed(&resolve_media_path(base.as_deref(), &m.path), db.as_deref())
+            {
                 let i = src.info();
                 if i.has_video {
                     mw = mw.max(i.width);
@@ -860,7 +870,7 @@ impl KtApp {
         // perf-счётчиков (п.24: «10^19 evictions/с»).
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let resolved = resolve_media_path(base.as_deref(), path);
-        match open_source(&resolved) {
+        match open_source_indexed(&resolved, self.index_db_path().as_deref()) {
             Ok(src) => self.player.add_media(media_id, src),
             Err(e) => self.note(format!("{path}: {e}")),
         }
@@ -882,7 +892,7 @@ impl KtApp {
         };
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let resolved = resolve_media_path(base.as_deref(), &path);
-        let info = match open_source(&resolved) {
+        let info = match open_source_indexed(&resolved, self.index_db_path().as_deref()) {
             Ok(s) => s.info().clone(),
             Err(e) => {
                 self.note(format!("{path}: {e}"));

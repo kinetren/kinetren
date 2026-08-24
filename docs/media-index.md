@@ -4,7 +4,7 @@ SQLite (rusqlite, bundled). Лежит рядом с файлом проекта
 
 Назначение: убрать любые декоды по требованию UI (волноформы, тумбнейлы — дефект m в `porting-notes.md`) и любое сканирование файлов при открытии проекта (probe, seek-индексы — дефект j).
 
-## Схема (schema_version = 1)
+## Схема (schema_version = 2)
 
 ```sql
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);           -- schema_version
@@ -20,15 +20,14 @@ CREATE TABLE media (
   complete     INTEGER NOT NULL    -- 0 пока воркер не закончил все секции
 );
 
-CREATE TABLE audio_seek (          -- sample-accurate seek: декод вперёд от ближайшей записи
-  media_id INTEGER, pkt_pos INTEGER, pkt_pts INTEGER, first_sample INTEGER,
-  PRIMARY KEY (media_id, first_sample)
+CREATE TABLE packet_index (        -- пакетный индекс FfmpegSource (тест 34):
+  media_id INTEGER,                -- открытие без полного скан-прохода по файлу
+  stream   TEXT,                   -- 'audio' (pts аудио-пакетов) | 'video' (pts кейфреймов)
+  data     BLOB,                   -- i64 LE, отсортированы; pts в timebase потока
+  PRIMARY KEY (media_id, stream)
 );
-
-CREATE TABLE video_keyframes (     -- keyframe_before() без обращения к контейнеру
-  media_id INTEGER, pts_ticks INTEGER,     -- тики 90 kHz
-  PRIMARY KEY (media_id, pts_ticks)
-);
+-- v1 имела audio_seek/video_keyframes (строка на пакет) — не писались ни разу;
+-- заменены blob-таблицей в v2.
 
 CREATE TABLE audio_peaks (         -- peak-пирамида: level 0 = блок 256 сэмплов, level n = ×2^n
   media_id INTEGER, level INTEGER, channel INTEGER,
@@ -54,3 +53,5 @@ CREATE TABLE thumbnails (          -- полоса ~1–2 c по keyframes
 ## Кто пишет
 
 Один фоновый index-воркер на проект; декодирует собственным короткоживущим FfmpegSource (никогда — декодерами воспроизведения). Пишет секциями в транзакциях (probe → seek-индексы → peaks → thumbnails), UI показывает плейсхолдеры до готовности секции. Blob'ы — по-уровнево (peaks) и по-кадрово (thumbnails), не одним куском.
+
+`packet_index` дополнительно пишет **любой** `FfmpegSource::open_indexed` после свежего скана (первое открытие файла в проекте) — поэтому уже второе открытие того же файла (перезапуск, добавление в плеер, тумбы) обходится без скан-прохода. Соединения короткоживущие, WAL + busy_timeout 5 с покрывают конкуренцию потоков.

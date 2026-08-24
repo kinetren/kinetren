@@ -30,7 +30,7 @@ src/apps/kt-app     eframe GUI: таймлайн, превью, cpal-вывод
 src/apps/kt-cli     headless-рендер (детерминизм, golden-тесты, CI)
 src/libs/kt-time    тики 90 kHz, диапазоны, сетки fps/аудио-burst (без зависимостей)
 src/libs/kt-model   модель таймлайна, команды, undo, формат проекта (.ktproj)
-src/libs/kt-media   трейт MediaSource, rsmpeg-бэкенд, SyntheticSource, sidecar индекс-БД
+src/libs/kt-media   трейт MediaSource, мост к kt-ffmpeg, SyntheticSource, sidecar индекс-БД
 src/libs/kt-cache   кэш burst'ов + coverage (единственная правда о «прогретости»)
 src/libs/kt-fx      AudioFx/VideoFx: slowedreverb, gain, видео-FX
 src/libs/kt-engine  render graph, MediaWorker-планировщик, transport, prefetch, экспорт
@@ -65,7 +65,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 
 - Перед правкой крейта — его `CLAUDE.md`; перед архитектурными изменениями — `docs/architecture.md`.
 - Новый найденный дефект/тонкость → сразу документировать (`docs/porting-notes.md` или CLAUDE.md крейта) и по возможности закрыть регрессионным тестом.
-- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–16 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
+- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–34 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
 - Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine.
 
 ## Карта крейт → обязательные тесты (гонять при правках, требование пользователя)
@@ -79,8 +79,8 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-engine/player.rs | player_dynamic (t18/t20), audio_engine::t14, unit t22-sync/t32-varispeed |
 | kt-engine/video.rs | viewport, reverse (t24/t26), golden_export |
 | kt-engine/export.rs | golden_export (11), export_options (25, 33) |
-| kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg), export_options t33 (муксер) |
-| kt-media | ffmpeg_conformance, index_db, kt-app unit t23 |
+| kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg/t34), export_options t33 (муксер) |
+| kt-media | ffmpeg_conformance (вкл. t34 — персист пакетного индекса), index_db, kt-app unit t23 |
 | kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30) |
 | kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей) |
 

@@ -104,6 +104,8 @@ pub struct Source {
     api: &'static Api,
     probe: Probe,
     index: PacketIndex,
+    /// Индекс пришёл готовым из sidecar-БД — скан-проход не выполнялся.
+    index_prebuilt: bool,
     audio: Option<AudioPath>,
     video: Option<VideoPath>,
 }
@@ -114,10 +116,19 @@ unsafe impl Send for Source {}
 
 impl Source {
     pub fn open(api: &'static Api, path: &str) -> Result<Source, FfError> {
+        Self::open_with_index(api, path, None)
+    }
+
+    pub fn open_with_index(
+        api: &'static Api,
+        path: &str,
+        prebuilt: Option<crate::PrebuiltIndex>,
+    ) -> Result<Source, FfError> {
         unsafe { (api.av_log_set_level)(16) }; // AV_LOG_ERROR
         let cpath = CString::new(path).map_err(|_| FfError::Av("путь содержит NUL".into()))?;
 
-        // --- скан-проход: probe + пакетный индекс (без декода) ---
+        // --- probe (заголовок) + пакетный индекс (полный скан без декода;
+        //     при готовом индексе из sidecar-БД скан пропускается) ---
         let mut scan: *mut ffi::AVFormatContext = core::ptr::null_mut();
         let r = unsafe {
             (api.avformat_open_input)(
@@ -165,28 +176,43 @@ impl Source {
             }
         }
 
-        let mut index = PacketIndex { audio_pts: Vec::new(), video_keyframes: Vec::new() };
-        let pkt = unsafe { (api.av_packet_alloc)() };
-        loop {
-            let r = unsafe { (api.av_read_frame)(scan, pkt) };
-            if r < 0 {
-                break;
+        let index_prebuilt = prebuilt.is_some();
+        let index = match prebuilt {
+            Some(p) => {
+                // Индекс из БД уже отсортирован при персисте; сортировка
+                // дешёвая и защищает от битого блоба.
+                let mut idx = PacketIndex { audio_pts: p.audio_pts, video_keyframes: p.video_keyframes };
+                idx.audio_pts.sort_unstable();
+                idx.video_keyframes.sort_unstable();
+                idx
             }
-            let p = unsafe { &*pkt };
-            if p.pts != AV_NOPTS_VALUE {
-                if p.stream_index == audio_idx {
-                    index.audio_pts.push(p.pts);
-                } else if p.stream_index == video_idx
-                    && (p.flags & ffi::AV_PKT_FLAG_KEY as c_int) != 0
-                {
-                    index.video_keyframes.push(p.pts);
+            None => {
+                let mut idx =
+                    PacketIndex { audio_pts: Vec::new(), video_keyframes: Vec::new() };
+                let pkt = unsafe { (api.av_packet_alloc)() };
+                loop {
+                    let r = unsafe { (api.av_read_frame)(scan, pkt) };
+                    if r < 0 {
+                        break;
+                    }
+                    let p = unsafe { &*pkt };
+                    if p.pts != AV_NOPTS_VALUE {
+                        if p.stream_index == audio_idx {
+                            idx.audio_pts.push(p.pts);
+                        } else if p.stream_index == video_idx
+                            && (p.flags & ffi::AV_PKT_FLAG_KEY as c_int) != 0
+                        {
+                            idx.video_keyframes.push(p.pts);
+                        }
+                    }
+                    unsafe { (api.av_packet_unref)(pkt) };
                 }
+                unsafe { (api.av_packet_free)(&mut (pkt as *mut _)) };
+                idx.audio_pts.sort_unstable();
+                idx.video_keyframes.sort_unstable();
+                idx
             }
-            unsafe { (api.av_packet_unref)(pkt) };
-        }
-        unsafe { (api.av_packet_free)(&mut (pkt as *mut _)) };
-        index.audio_pts.sort_unstable();
-        index.video_keyframes.sort_unstable();
+        };
 
         let sc = unsafe { &*scan };
         let duration = if sc.duration > 0 {
@@ -228,11 +254,19 @@ impl Source {
         } else {
             None
         };
-        Ok(Source { api, probe, index, audio, video })
+        Ok(Source { api, probe, index, index_prebuilt, audio, video })
     }
 
     pub fn probe(&self) -> &Probe {
         &self.probe
+    }
+
+    pub fn packet_index(&self) -> (&[i64], &[i64]) {
+        (&self.index.audio_pts, &self.index.video_keyframes)
+    }
+
+    pub fn index_was_prebuilt(&self) -> bool {
+        self.index_prebuilt
     }
 
     pub fn keyframe_before(&self, pts: Tick) -> Option<Tick> {

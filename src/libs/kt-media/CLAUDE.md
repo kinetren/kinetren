@@ -1,6 +1,6 @@
 # kt-media
 
-Источники медиа: трейт `MediaSource`, `SyntheticSource` (тесты), `FfmpegSource` (rsmpeg, feature `ffmpeg`, M3), sidecar индекс-БД (M3, схема — docs/media-index.md).
+Источники медиа: трейт `MediaSource`, `SyntheticSource` (тесты), `FfmpegSource` (мост к kt-ffmpeg, feature `ffmpeg`), sidecar индекс-БД (схема — docs/media-index.md).
 
 ## Инварианты
 - Всё аудио наружу — **48 kHz stereo f32 interleaved**, ровно 1024 кадра на burst. Приведение форматов (swr) происходит ВНУТРИ источника. Ни один потребитель не видит sample-rate файла (дефект a — хрипы slowed&reverb в старом коде).
@@ -14,5 +14,5 @@
 - Аудио: swr → 48k stereo FLT внутри; FIFO с абсолютным якорем по pts первого декодированного кадра после seek. Seek = контейнерный BACKWARD к индексированному пакету (с запасом 3 пакета) + ПОЛНОЕ пересоздание декодера и swr. Sample-accuracy подтверждена conformance-тестом: FLAC — exact, AAC — нулевой фазовый сдвиг (лосси-значения сравниваются корреляцией).
 - Видео: `threads=1` для VP9/AV1 (наследие C++: MT-декод этих кодеков нестабилен при частых seek); backward seek = seek + пересоздание декодера ВСЕГДА (покрывает MT H.264, дешевле, чем ловить артефакты); вперёд ≤4 c — сквозной декод без seek. sws → RGBA, кэш контекста по (размер, src-формат).
 - `unsafe impl Send` корректен, потому что экземпляром владеет ровно один MediaWorker (&mut self); Sync не реализован намеренно.
-- TODO: пакетный индекс сейчас строится при каждом open (быстрый скан без декода); персист в sidecar-БД (таблицы audio_seek/video_keyframes уже есть) — подключить, когда откроем большие файлы.
-- rsmpeg 0.18 с фичами `ffmpeg6` + `link_system_ffmpeg`; системный FFmpeg 6.1 (нужны libav*-dev включая libavfilter-dev/libavdevice-dev — rusty_ffmpeg линкует все), clang.
+- Пакетный индекс персистится в sidecar-БД (`packet_index`, schema v2): `FfmpegSource::open_indexed(path, db)` берёт индекс из БД при неизменном файле (идентичность size/mtime/xxhash через `ensure_media`) и пропускает полный скан-проход; после свежего скана — сохраняет. Ошибки БД = ошибки кэша: молчаливый откат к обычному open. Тест 34.
+- Реализация decoding-слоя — крейт kt-ffmpeg (dlopen системного FFmpeg 6/7/8, без линковки); rsmpeg удалён.

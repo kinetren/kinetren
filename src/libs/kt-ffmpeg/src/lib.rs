@@ -71,6 +71,16 @@ pub struct EncoderChoice {
     pub hardware: bool,
 }
 
+/// Готовый пакетный индекс (из sidecar-БД kt-media): pts аудио-пакетов и
+/// pts видео-кейфреймов в timebase соответствующих потоков, отсортированы.
+/// Валиден только для байт-в-байт того же файла (идентичность проверяет
+/// вызывающая сторона по xxhash/size) — pts привязаны к контейнеру.
+#[derive(Debug, Clone, Default)]
+pub struct PrebuiltIndex {
+    pub audio_pts: Vec<i64>,
+    pub video_keyframes: Vec<i64>,
+}
+
 /// Кадр в RGBA.
 pub struct RgbaFrame {
     pub pts: Tick,
@@ -222,11 +232,40 @@ pub enum Source {
 
 impl Source {
     pub fn open(path: &str) -> Result<Source, FfError> {
+        Self::open_with_index(path, None)
+    }
+
+    /// Открытие с готовым пакетным индексом: полный скан-проход по файлу
+    /// пропускается (остаётся только чтение заголовка) — быстрое открытие
+    /// больших файлов. Индекс обязан соответствовать текущему содержимому
+    /// файла (идентичность проверяет вызывающая сторона).
+    pub fn open_with_index(
+        path: &str,
+        prebuilt: Option<PrebuiltIndex>,
+    ) -> Result<Source, FfError> {
         let (backend, _) = init().as_ref().map_err(|e| FfError::NotFound(e.clone()))?;
         match backend {
-            Backend::V6(api) => v6::Source::open(api, path).map(Source::V6),
-            Backend::V7(api) => v7::Source::open(api, path).map(Source::V7),
-            Backend::V8(api) => v8::Source::open(api, path).map(Source::V8),
+            Backend::V6(api) => v6::Source::open_with_index(api, path, prebuilt).map(Source::V6),
+            Backend::V7(api) => v7::Source::open_with_index(api, path, prebuilt).map(Source::V7),
+            Backend::V8(api) => v8::Source::open_with_index(api, path, prebuilt).map(Source::V8),
+        }
+    }
+
+    /// (pts аудио-пакетов, pts видео-кейфреймов) — для персиста в sidecar-БД.
+    pub fn packet_index(&self) -> (&[i64], &[i64]) {
+        match self {
+            Source::V6(s) => s.packet_index(),
+            Source::V7(s) => s.packet_index(),
+            Source::V8(s) => s.packet_index(),
+        }
+    }
+
+    /// Индекс пришёл готовым (скан не выполнялся) — диагностика/тест 34.
+    pub fn index_was_prebuilt(&self) -> bool {
+        match self {
+            Source::V6(s) => s.index_was_prebuilt(),
+            Source::V7(s) => s.index_was_prebuilt(),
+            Source::V8(s) => s.index_was_prebuilt(),
         }
     }
 

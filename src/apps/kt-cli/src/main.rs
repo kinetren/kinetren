@@ -47,7 +47,12 @@ fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
         } else {
             base.join(&m.path).to_string_lossy().to_string()
         };
-        match kt_media::ffmpeg::FfmpegSource::open(&resolved) {
+        // sidecar-БД проекта: пакетный индекс вместо полного скана (тест 34)
+        let mut idx_db = kt_media::index::MediaIndexDb::open(
+            &std::path::Path::new(project_path).with_extension("ktindex.db"),
+        )
+        .ok();
+        match kt_media::ffmpeg::FfmpegSource::open_indexed(&resolved, idx_db.as_mut()) {
             Ok(src) => fetcher.add_source(m.id, Box::new(src)),
             Err(e) => {
                 eprintln!("{resolved}: {e}");
@@ -204,10 +209,19 @@ fn run(args: &[String]) -> i32 {
                             } else {
                                 base.join(&m.path).to_string_lossy().to_string()
                             };
-                            Box::new(
-                                kt_media::ffmpeg::FfmpegSource::open(&resolved)
+                            {
+                                let mut idx_db = kt_media::index::MediaIndexDb::open(
+                                    &std::path::Path::new(input).with_extension("ktindex.db"),
+                                )
+                                .ok();
+                                Box::new(
+                                    kt_media::ffmpeg::FfmpegSource::open_indexed(
+                                        &resolved,
+                                        idx_db.as_mut(),
+                                    )
                                     .map_err(|e| format!("{resolved}: {e}"))?,
-                            )
+                                )
+                            }
                         };
                     out.push((m.id, src));
                 }

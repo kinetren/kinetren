@@ -24,10 +24,24 @@ pub fn synth_pattern(path: &str) -> Option<AudioPattern> {
 }
 
 pub fn open_source(path: &str) -> Result<Box<dyn MediaSource>, String> {
+    open_source_indexed(path, None)
+}
+
+/// Открытие через sidecar индекс-БД проекта: если файл не менялся,
+/// пакетный индекс берётся из БД и полный скан-проход пропускается
+/// (быстрое открытие больших файлов, тест 34). Соединение короткоживущее —
+/// WAL допускает параллельных читателей/писателей из других потоков.
+pub fn open_source_indexed(
+    path: &str,
+    db_path: Option<&Path>,
+) -> Result<Box<dyn MediaSource>, String> {
     if let Some(p) = synth_pattern(path) {
         return Ok(Box::new(SyntheticSource::new(Tick(90_000 * 3600), p)));
     }
-    kt_media::ffmpeg::FfmpegSource::open(path).map(|s| Box::new(s) as _).map_err(|e| e.to_string())
+    let mut db = db_path.and_then(|p| kt_media::index::MediaIndexDb::open(p).ok());
+    kt_media::ffmpeg::FfmpegSource::open_indexed(path, db.as_mut())
+        .map(|s| Box::new(s) as _)
+        .map_err(|e| e.to_string())
 }
 
 pub fn resolve_media_path(base: Option<&Path>, path: &str) -> String {
@@ -71,10 +85,14 @@ pub fn spawn_index_worker(
                         Ok((mid, status)) => {
                             let complete = db.is_complete(mid).unwrap_or(false)
                                 && status == kt_media::index::MediaEntryStatus::Reused;
-                            if !complete && let Ok(mut src) = open_source(&path) {
+                            if !complete
+                                && let Ok(mut src) =
+                                    kt_media::ffmpeg::FfmpegSource::open_indexed(&path, Some(db))
+                            {
                                 // отдельный короткоживущий источник —
-                                // не декодеры воспроизведения
-                                let _ = db.build_audio_peaks(mid, src.as_mut());
+                                // не декодеры воспроизведения; заодно
+                                // персистится пакетный индекс (тест 34)
+                                let _ = db.build_audio_peaks(mid, &mut src);
                                 let _ = db.mark_complete(mid);
                             }
                             let mut levels = Vec::new();

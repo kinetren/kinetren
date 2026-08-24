@@ -157,7 +157,17 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 sources.clear();
             }
             let src = sources.entry(key.media).or_insert_with(|| {
-                open_source(path).unwrap_or_else(|_| {
+                // синтетика — через open_source; файлы — через open_indexed
+                // с уже открытой БД (переиспользуем пакетный индекс, тест 34)
+                let opened: Option<Box<dyn kt_media::MediaSource>> =
+                    if path.starts_with("synth:") || db.is_none() {
+                        open_source(path).ok()
+                    } else {
+                        kt_media::ffmpeg::FfmpegSource::open_indexed(path, db.as_mut())
+                            .ok()
+                            .map(|s| Box::new(s) as _)
+                    };
+                opened.unwrap_or_else(|| {
                     Box::new(kt_media::synthetic::SyntheticSource::new(
                         Tick(0),
                         kt_media::synthetic::AudioPattern::Silence,
