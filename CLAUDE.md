@@ -41,7 +41,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 
 В каждом libs/-крейте есть свой `CLAUDE.md` с инвариантами и неочевидными решениями. Читай его перед правкой крейта.
 
-Состояние UI-паритета со старым Qt-редактором (инвентаризация в docs/porting-notes.md): U1–U4 выполнены — маркеры/регион/loop/punch-out/копипаст-цепочки/volume rail/стерео-волноформы/филмстрип/метры+фейдер/медиа-бин/FX-редактор с автоматизацией/рендер-диалог/автосейв. E5 перенёс все 10 видео-FX, H1 — morpher-систему (morph-дорожки, размещение, FX-батчи, bake; тесты 35–36). Не перенесено (осознанно): полная перф-панель v1 с графиками (текущая — упрощённая).
+Состояние UI-паритета со старым Qt-редактором (инвентаризация в docs/porting-notes.md): U1–U4 выполнены — маркеры/регион/loop/punch-out/копипаст-цепочки/volume rail/стерео-волноформы/филмстрип/метры+фейдер/медиа-бин/FX-редактор с автоматизацией/рендер-диалог/автосейв. E5 перенёс все 10 видео-FX, H1 — morpher-систему (morph-дорожки, размещение, FX-батчи, bake; тесты 35–36). I1 довёл перф-панель до уровня v1 и выше: 5-серийный график FFmpeg-активности (Total/Open/Read/VDec/ADec по живым счётчикам kt-ffmpeg::iostats), no-read drops (prefetch-thrash) в кэш-чёрне, занятость кэша от настоящего лимита, «pinned legends» с выносками, дедуп журнала «×N», пороговые предупреждения. Функциональный паритет с v1 ЗАКРЫТ (в v1 треть метрик панели были мёртвыми нулями — их не воспроизводим, см. тест 37).
 
 ## Модель времени
 
@@ -68,7 +68,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 
 - Перед правкой крейта — его `CLAUDE.md`; перед архитектурными изменениями — `docs/architecture.md`.
 - Новый найденный дефект/тонкость → сразу документировать (`docs/porting-notes.md` или CLAUDE.md крейта) и по возможности закрыть регрессионным тестом.
-- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–36 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
+- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–37 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
 - Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine.
 
 ## Карта крейт → обязательные тесты (гонять при правках, требование пользователя)
@@ -82,7 +82,8 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-engine/player.rs | player_dynamic (t18/t20), audio_engine::t14, unit t22-sync/t32-varispeed |
 | kt-engine/video.rs | viewport, reverse (t24/t26), golden_export |
 | kt-engine/export.rs | golden_export (11), export_options (25, 33) |
-| kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg/t34), export_options t33 (муксер) |
+| kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg/t34/t37), export_options t33 (муксер) |
+| kt-cache | kt-cache unit (t8/t14/t27/t28/t37 no-read drops) |
 | kt-media | ffmpeg_conformance (вкл. t34 — персист пакетного индекса), index_db, kt-app unit t23 |
 | kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30), morpher t35 |
 | kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |

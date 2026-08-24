@@ -1332,6 +1332,13 @@ impl KtApp {
             self.model.project().clips.len(),
             self.model.project().media.len()
         ));
+        // кумулятивы FFmpeg-слоя (порт строки avcpp open/read/vdec/adec v1)
+        let (opens, reads) = kt_media::ffmpeg::io_stats();
+        ui.weak(format!(
+            "FFmpeg: open {opens} | read {reads} | vdec {} | adec {}",
+            self.player.decode_stats.video_decodes.load(ord),
+            self.player.decode_stats.audio_decodes.load(ord)
+        ));
         ui.add_space(4.0);
         self.perf.quality.draw(ui, 96.0);
         ui.add_space(4.0);
@@ -1644,11 +1651,15 @@ pub struct PerfState {
     // прошлые кумулятивные значения для дельт
     last_cache: kt_cache::CacheStats,
     last_decode: (u64, u64),
+    last_io: (u64, u64),
     last_underruns: (u64, u64),
     frames: u32,
     pub diag_open: bool,
     pub log: std::collections::VecDeque<String>,
+    /// Дедуп подряд идущих одинаковых сообщений: (текст, повторов).
+    last_msg: Option<(String, u32)>,
     last_offline: usize,
+    last_hit_warn: Option<std::time::Instant>,
 }
 
 impl PerfState {
@@ -1664,37 +1675,59 @@ impl PerfState {
                     ("V-hit", egui::Color32::from_rgb(240, 190, 70), 100.0),
                 ],
             ),
+            // FFmpeg-активность: порт «avcpp Activity» v1 (те же 5 серий
+            // и цвета), но по ЖИВЫМ счётчикам kt-ffmpeg::iostats
             decode: RollingGraph::new(
-                "Декодер (операций/с)",
+                "FFmpeg-активность (/с)",
                 Axis::LinearAuto,
                 vec![
-                    ("A-dec", egui::Color32::from_rgb(140, 200, 255), 1500.0),
-                    ("V-dec", egui::Color32::from_rgb(255, 160, 120), 500.0),
+                    ("Всего", egui::Color32::from_rgb(255, 145, 80), 10_000.0),
+                    ("Open", egui::Color32::from_rgb(255, 205, 105), 500.0),
+                    ("Read", egui::Color32::from_rgb(244, 99, 99), 10_000.0),
+                    ("V-dec", egui::Color32::from_rgb(95, 209, 155), 1500.0),
+                    ("A-dec", egui::Color32::from_rgb(130, 173, 255), 1500.0),
                 ],
             ),
             churn: RollingGraph::new(
                 "Кэш-чёрн (/с)",
                 Axis::LinearAuto,
                 vec![
-                    ("evict", egui::Color32::from_rgb(255, 120, 120), 2000.0),
+                    ("evict", egui::Color32::from_rgb(255, 160, 120), 2000.0),
                     ("miss", egui::Color32::from_rgb(200, 160, 255), 2000.0),
+                    // самая ценная метрика v1: вытеснено ДО первого чтения
+                    ("no-read", egui::Color32::from_rgb(255, 90, 90), 2000.0),
                 ],
             ),
             last_sample: std::time::Instant::now(),
             last_cache: Default::default(),
             last_decode: (0, 0),
+            last_io: (0, 0),
             last_underruns: (0, 0),
             frames: 0,
             diag_open: false,
             log: std::collections::VecDeque::new(),
+            last_msg: None,
             last_offline: 0,
+            last_hit_warn: None,
         }
     }
 
     fn note(&mut self, msg: String) {
+        // подряд идущие одинаковые сообщения схлопываются в «×N»
+        // (в v1 всплеск забивал весь лог за секунды)
+        if let Some((last, n)) = &mut self.last_msg
+            && *last == msg
+        {
+            *n += 1;
+            if let Some(line) = self.log.back_mut() {
+                *line = format!("[{}] {} ×{}", chrono_like_now(), msg, n);
+            }
+            return;
+        }
+        self.last_msg = Some((msg.clone(), 1));
         let now = chrono_like_now();
         self.log.push_back(format!("[{now}] {msg}"));
-        while self.log.len() > 400 {
+        while self.log.len() > 800 {
             self.log.pop_front();
         }
     }
@@ -1745,6 +1778,11 @@ impl KtApp {
         let v_dec = self.player.decode_stats.video_decodes.load(ord);
         let (la, lv) = self.perf.last_decode;
         self.perf.last_decode = (a_dec, v_dec);
+        // FFmpeg-активность: opens (demux+декодеры, вкл. reopen на seek) и
+        // прочитанные пакеты (порт avcpp open/read v1)
+        let (opens, reads) = kt_media::ffmpeg::io_stats();
+        let (lo, lr) = self.perf.last_io;
+        self.perf.last_io = (opens, reads);
 
         let fps = self.perf.frames as f32 / dt;
         self.perf.frames = 0;
@@ -1753,10 +1791,13 @@ impl KtApp {
         let v_hit =
             if d_vh + d_vm > 0 { d_vh as f32 / (d_vh + d_vm) as f32 * 100.0 } else { 100.0 };
         self.perf.quality.push(&[fps.min(120.0), a_hit, v_hit]);
-        self.perf
-            .decode
-            .push(&[a_dec.saturating_sub(la) as f32 / dt, v_dec.saturating_sub(lv) as f32 / dt]);
-        self.perf.churn.push(&[d_ev as f32 / dt, (d_am + d_vm) as f32 / dt]);
+        let (r_open, r_read) =
+            (opens.saturating_sub(lo) as f32 / dt, reads.saturating_sub(lr) as f32 / dt);
+        let (r_vdec, r_adec) =
+            (v_dec.saturating_sub(lv) as f32 / dt, a_dec.saturating_sub(la) as f32 / dt);
+        self.perf.decode.push(&[r_open + r_read + r_vdec + r_adec, r_open, r_read, r_vdec, r_adec]);
+        let d_unused = cache.unused_evictions.saturating_sub(lc.unused_evictions);
+        self.perf.churn.push(&[d_ev as f32 / dt, (d_am + d_vm) as f32 / dt, d_unused as f32 / dt]);
 
         // журнал проблем
         let ur = self.player.underruns.load(ord);
@@ -1771,6 +1812,24 @@ impl KtApp {
         self.perf.last_underruns = (ur, uc);
         if d_ev as f32 / dt > 500.0 {
             self.perf.note(format!("всплеск eviction: {:.0}/с — кэшу тесно", d_ev as f32 / dt));
+        }
+        // порт главного предупреждения v1: кадры выселены ДО первого чтения
+        if d_unused > 0 {
+            self.perf.note(format!(
+                "сброшено {d_unused} записей кэша до первого чтения (prefetch-thrash)"
+            ));
+        }
+        // порог (в v1 порогов не было вовсе): низкий видео-hit при игре
+        if v_hit < 80.0
+            && self.player.transport.is_playing()
+            && self
+                .perf
+                .last_hit_warn
+                .map(|t| t.elapsed().as_secs() >= 10)
+                .unwrap_or(true)
+        {
+            self.perf.last_hit_warn = Some(std::time::Instant::now());
+            self.perf.note(format!("видео-hit {v_hit:.0}% при воспроизведении — декод не успевает"));
         }
         let offline_now = self.offline.lock().unwrap().len();
         if offline_now != self.perf.last_offline {
@@ -1791,12 +1850,50 @@ impl KtApp {
             .resizable(true)
             .vscroll(true)
             .show(ctx, |ui| {
+                // занятость видео-кэша от НАСТОЯЩЕГО лимита (в v1 константа
+                // лимита была продублирована руками и врала в 384 раза)
+                let used = self.player.cache.video_bytes() as f64;
+                let limit = self.player.cache.max_video_bytes() as f64;
+                let occ = if limit > 0.0 { (used / limit * 100.0).min(100.0) } else { 0.0 };
+                ui.horizontal(|ui| {
+                    ui.weak(format!(
+                        "Занятость видео-кэша: {occ:.0}% ({:.0} / {:.0} МБ)",
+                        used / 1e6,
+                        limit / 1e6
+                    ));
+                    let cache = self.player.cache.stats();
+                    ui.weak(format!("| no-read drops всего: {}", cache.unused_evictions));
+                });
+                let (bar, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 6.0),
+                    egui::Sense::hover(),
+                );
+                let pnt = ui.painter_at(bar);
+                pnt.rect_filled(bar, 3.0, egui::Color32::from_gray(30));
+                let fill_w = bar.width() * (occ as f32 / 100.0);
+                let col = if occ > 90.0 {
+                    egui::Color32::from_rgb(230, 120, 90)
+                } else {
+                    egui::Color32::from_rgb(95, 209, 155)
+                };
+                pnt.rect_filled(
+                    egui::Rect::from_min_size(bar.min, egui::vec2(fill_w, bar.height())),
+                    3.0,
+                    col,
+                );
+                ui.add_space(6.0);
                 self.perf.churn.draw(ui, 110.0);
                 ui.separator();
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new("Журнал проблем").strong());
                     if ui.button("Очистить").clicked() {
                         self.perf.log.clear();
+                        self.perf.last_msg = None;
+                    }
+                    if ui.button("Сброс графиков").clicked() {
+                        self.perf.quality.clear();
+                        self.perf.decode.clear();
+                        self.perf.churn.clear();
                     }
                 });
                 egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {

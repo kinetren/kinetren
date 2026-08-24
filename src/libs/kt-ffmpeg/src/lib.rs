@@ -11,6 +11,21 @@
 pub mod api;
 pub mod loader;
 
+/// Кумулятивные счётчики активности FFmpeg-слоя (перф-панель; порт
+/// avcpp-метрик v1: gAvcppOpenCalls/gAvcppPacketReads). Глобальные на
+/// процесс, монотонные; UI дифференцирует по времени.
+pub mod iostats {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    /// Открытия demux-контекстов и декодеров (включая пересоздания на seek).
+    pub static OPENS: AtomicU64 = AtomicU64::new(0);
+    /// Прочитанные пакеты (av_read_frame по всем путям, включая скан).
+    pub static PACKET_READS: AtomicU64 = AtomicU64::new(0);
+    /// (opens, packet_reads)
+    pub fn snapshot() -> (u64, u64) {
+        (OPENS.load(Ordering::Relaxed), PACKET_READS.load(Ordering::Relaxed))
+    }
+}
+
 use kt_time::Tick;
 
 #[derive(Debug, thiserror::Error)]

@@ -141,6 +141,7 @@ impl Source {
         if r < 0 {
             return Err(averr(api, "открытие файла", r));
         }
+        crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let r = unsafe { (api.avformat_find_stream_info)(scan, core::ptr::null_mut()) };
         if r < 0 {
             unsafe { (api.avformat_close_input)(&mut scan) };
@@ -195,6 +196,7 @@ impl Source {
                     if r < 0 {
                         break;
                     }
+                    crate::iostats::PACKET_READS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     let p = unsafe { &*pkt };
                     if p.pts != AV_NOPTS_VALUE {
                         if p.stream_index == audio_idx {
@@ -497,6 +499,7 @@ impl AudioPath {
         if r < 0 {
             return Err(averr(api, "аудио: открытие", r));
         }
+        crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         unsafe { (api.avformat_find_stream_info)(fmt, core::ptr::null_mut()) };
         let stream_index =
             resolve_stream_index(api, fmt, stream_index, ffi::AVMEDIA_TYPE_AUDIO, "аудио")?;
@@ -528,6 +531,7 @@ impl AudioPath {
         if codec.is_null() {
             return Err(FfError::Av("нет аудио-декодера".into()));
         }
+        crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let dec = unsafe { (api.avcodec_alloc_context3)(codec) };
         let r = unsafe { (api.avcodec_parameters_to_context)(dec, st.codecpar) };
         if r < 0 {
@@ -635,6 +639,7 @@ impl AudioPath {
                     unsafe { (api.avcodec_send_packet)(self.dec, core::ptr::null()) };
                     self.eof = true;
                 } else {
+                    crate::iostats::PACKET_READS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                     let si = unsafe { (*pkt).stream_index };
                     if si != self.stream_index {
                         unsafe { (api.av_packet_unref)(pkt) };
@@ -684,6 +689,7 @@ impl VideoPath {
         if r < 0 {
             return Err(averr(api, "видео: открытие", r));
         }
+        crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         unsafe { (api.avformat_find_stream_info)(fmt, core::ptr::null_mut()) };
         let stream_index =
             resolve_stream_index(api, fmt, stream_index, ffi::AVMEDIA_TYPE_VIDEO, "видео")?;
@@ -719,6 +725,7 @@ impl VideoPath {
         if codec.is_null() {
             return Err(FfError::Av("нет видео-декодера".into()));
         }
+        crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let dec = unsafe { (api.avcodec_alloc_context3)(codec) };
         let r = unsafe { (api.avcodec_parameters_to_context)(dec, st.codecpar) };
         if r < 0 {
@@ -802,6 +809,7 @@ impl VideoPath {
                     self.eof = true;
                     continue;
                 }
+                crate::iostats::PACKET_READS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
                 let si = unsafe { (*pkt).stream_index };
                 if si != self.stream_index {
                     unsafe { (api.av_packet_unref)(pkt) };

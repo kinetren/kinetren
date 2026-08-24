@@ -98,6 +98,12 @@ pub fn backend_error() -> Option<String> {
     kt_ffmpeg::backend_error()
 }
 
+/// Кумулятивные (opens, packet_reads) FFmpeg-слоя — перф-панель
+/// дифференцирует по времени (порт avcpp-метрик v1).
+pub fn io_stats() -> (u64, u64) {
+    kt_ffmpeg::iostats::snapshot()
+}
+
 impl MediaSource for FfmpegSource {
     fn info(&self) -> &MediaInfo {
         &self.info

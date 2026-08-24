@@ -279,3 +279,17 @@ fn t34_packet_index_persisted_and_reused() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Тест 37 (I/O-часть, перф-панель): счётчики kt-ffmpeg живые — открытие
+/// и чтение файла двигают opens/packet_reads (порт avcpp-метрик v1; в v1
+/// треть метрик панели была мёртвыми нулями — этот тест не даёт панели
+/// снова показывать мёртвые серии).
+#[test]
+fn t37_io_counters_alive() {
+    let (o0, r0) = kt_media::ffmpeg::io_stats();
+    let mut s = FfmpegSource::open(&fixture("muxed_av.mp4")).unwrap();
+    let _ = s.read_audio_burst(0);
+    let (o1, r1) = kt_media::ffmpeg::io_stats();
+    assert!(o1 > o0, "открытие должно инкрементить opens (было {o0}, стало {o1})");
+    assert!(r1 > r0, "скан/декод должны инкрементить packet_reads (было {r0}, стало {r1})");
+}

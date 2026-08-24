@@ -71,6 +71,9 @@ struct Entry {
     payload: Payload,
     recency: u64,
     pinned: bool,
+    /// Был ли хоть один get после вставки — eviction непрочитанной записи
+    /// это prefetch-thrash (перф-панель: «no-read drops», порт v1 hadHit).
+    had_hit: bool,
     /// Ширина покрытия записи в idx-единицах (аудио = 1 burst; видео = шаг
     /// сетки кадров в тиках — coverage сливается в честные полосы, п.20).
     span: i64,
@@ -172,6 +175,8 @@ pub struct CacheStats {
     pub video_hits: u64,
     pub video_misses: u64,
     pub evictions: u64,
+    /// Записи, выселенные/перезаписанные ДО первого чтения (prefetch-thrash).
+    pub unused_evictions: u64,
 }
 
 #[derive(Default)]
@@ -181,6 +186,7 @@ struct StatCounters {
     video_hits: AtomicU64,
     video_misses: AtomicU64,
     evictions: AtomicU64,
+    unused_evictions: AtomicU64,
 }
 
 /// Потокобезопасный кэш burst'ов с LRU по раздельным байтовым бюджетам
@@ -218,6 +224,7 @@ impl BurstCache {
             video_hits: self.stats.video_hits.load(Ordering::Relaxed),
             video_misses: self.stats.video_misses.load(Ordering::Relaxed),
             evictions: self.stats.evictions.load(Ordering::Relaxed),
+            unused_evictions: self.stats.unused_evictions.load(Ordering::Relaxed),
         }
     }
 
@@ -281,6 +288,7 @@ impl BurstCache {
             true => self.stats.audio_hits.fetch_add(1, Ordering::Relaxed),
             false => self.stats.video_hits.fetch_add(1, Ordering::Relaxed),
         };
+        entry.had_hit = true;
         let old = entry.recency;
         entry.recency = counter;
         let payload = entry.payload.clone();
@@ -335,6 +343,10 @@ impl BurstCache {
         debug_assert_eq!(is_audio, key.kind == BurstKind::Audio);
 
         if let Some(old) = inner.map.remove(&key) {
+            if !old.had_hit {
+                // перезапись непрочитанной записи — тоже thrash (v1)
+                self.stats.unused_evictions.fetch_add(1, Ordering::Relaxed);
+            }
             inner.lru.remove(&old.recency);
             let ob = old.payload.bytes();
             if old.payload.is_audio() {
@@ -350,7 +362,7 @@ impl BurstCache {
 
         inner.recency_counter += 1;
         let recency = inner.recency_counter;
-        inner.map.insert(key, Entry { payload, recency, pinned: false, span });
+        inner.map.insert(key, Entry { payload, recency, pinned: false, had_hit: false, span });
         inner.lru.insert(recency, key);
         if is_audio {
             inner.audio_bytes += bytes;
@@ -398,6 +410,9 @@ impl BurstCache {
                 set.remove_range(key.idx, key.idx + entry.span);
             }
             self.stats.evictions.fetch_add(1, Ordering::Relaxed);
+            if !entry.had_hit {
+                self.stats.unused_evictions.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 
@@ -565,5 +580,56 @@ mod v12_tests {
         assert_eq!(s.query(0..40), vec![0..30]);
         s.remove_range(0, 30);
         assert!(s.query(0..40).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod perf_counter_tests {
+    use super::*;
+    use kt_time::Tick;
+
+    fn frame(bytes: usize) -> Arc<VideoFrame> {
+        Arc::new(VideoFrame {
+            pts: Tick(0),
+            width: 4,
+            height: (bytes / 16) as u32,
+            rgba: vec![0u8; bytes].into_boxed_slice(),
+            has_alpha: false,
+        })
+    }
+
+    /// Тест 37 (перф-панель): no-read drops — записи, выселенные ИЛИ
+    /// перезаписанные до первого чтения, считаются отдельным счётчиком
+    /// (prefetch-thrash, порт hadHit v1); прочитанные записи в него
+    /// не попадают.
+    #[test]
+    fn t37_unused_evictions_counted_separately() {
+        let bytes = 1000usize;
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: bytes * 2 });
+        let src = SourceId(1);
+
+        // 0 и 1 влезают; 0 читаем (had_hit), 1 — нет
+        cache.insert_video(src, None, 0, frame(bytes));
+        cache.insert_video(src, None, 1, frame(bytes));
+        let _ = cache.get_video(src, None, 0);
+        assert_eq!(cache.stats().unused_evictions, 0);
+
+        // вставка 2 выселяет самого старого НЕчитанного (1) → thrash +1
+        cache.insert_video(src, None, 2, frame(bytes));
+        let s = cache.stats();
+        assert_eq!(s.evictions, 1, "бюджет на 2 кадра");
+        assert_eq!(s.unused_evictions, 1, "выселен непрочитанный");
+
+        // вставка 3 выселяет прочитанного (0) → thrash НЕ растёт
+        cache.insert_video(src, None, 3, frame(bytes));
+        let s = cache.stats();
+        assert_eq!(s.evictions, 2);
+        assert_eq!(s.unused_evictions, 1, "прочитанная запись — не thrash");
+
+        // перезапись непрочитанного ключа 3 тем же ключом → thrash +1 (v1:
+        // «dropped by LRU or overwritten before any read»)
+        cache.insert_video(src, None, 3, frame(bytes));
+        assert_eq!(cache.stats().unused_evictions, 2, "overwrite до чтения — thrash");
     }
 }
