@@ -85,7 +85,7 @@ fn db_of(linear: f32) -> f32 {
     if linear <= 1e-6 { METER_MIN_DB } else { (20.0 * linear.log10()).max(METER_MIN_DB) }
 }
 
-fn zone_color(db: f32) -> egui::Color32 {
+pub(crate) fn zone_color(db: f32) -> egui::Color32 {
     if db > 0.0 {
         egui::Color32::from_rgb(255, 60, 40)
     } else if db >= -3.0 {
@@ -101,6 +101,35 @@ fn zone_color(db: f32) -> egui::Color32 {
     }
 }
 
+/// Зонные полосы dB (верх, низ) сверху вниз: смежные, без дыр и
+/// перекрытий, покрывают весь диапазон метра (тест 40).
+pub(crate) const ZONE_BANDS: [(f32, f32); 6] =
+    [(6.0, 0.0), (0.0, -3.0), (-3.0, -9.0), (-9.0, -18.0), (-18.0, -36.0), (-36.0, -48.0)];
+
+/// dB-остановки вертикального градиента свечения: низ метра, границы зон
+/// ниже уровня, сам уровень. Отсортированы снизу вверх (тест 40).
+pub(crate) fn glow_stops(level_db: f32) -> Vec<f32> {
+    let level = level_db.clamp(METER_MIN_DB, METER_MAX_DB);
+    let mut v = vec![METER_MIN_DB];
+    for &(top, _bot) in ZONE_BANDS.iter().rev() {
+        if top > METER_MIN_DB && top < level {
+            v.push(top);
+        }
+    }
+    v.push(level);
+    v
+}
+
+/// Ореол слева от панели метров для оверлея поверх UI. Правая кромка —
+/// ровно левый край панели: раньше +8 px наезжали на первый бар у подписи
+/// dB (п.10 v1.4, тест 40).
+pub(crate) fn overlay_glow_rect(panel: egui::Rect) -> egui::Rect {
+    egui::Rect::from_min_max(
+        egui::pos2(panel.left() - 46.0, panel.top()),
+        egui::pos2(panel.left(), panel.bottom()),
+    )
+}
+
 /// Радиальное свечение (порт drawGlowEllipse: QRadialGradient, Plus).
 /// 7 вложенных эллипсов с гаусс-профилем альфы, УБЫВАЮЩЕЙ наружу —
 /// плавный градиент без жёстких кромок (п.7: у трёх плоских колец
@@ -112,7 +141,7 @@ fn glow_ellipse(
     col: egui::Color32,
     alpha: u8,
 ) {
-    const RINGS: usize = 7;
+    const RINGS: usize = 4;
     for i in (0..RINGS).rev() {
         let k = (i + 1) as f32 / RINGS as f32; // 1/7 .. 1
         // гаусс: яркость выше к центру, мягкий спад к краю
@@ -183,7 +212,8 @@ impl KtApp {
             // ореол для оверлея поверх UI (п.8)
             let loud = self.meter.bar_db[0].max(self.meter.bar_db[1]);
             let k = ((loud - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB)).clamp(0.0, 1.0);
-            self.meter_glow = (k > 0.05).then(|| (rect, zone_color(loud), k));
+            // (панель, интенсивность, уровень dB) — оверлей красит по зонам
+            self.meter_glow = (k > 0.05).then_some((rect, k, loud));
         }
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, egui::Color32::from_gray(16));
@@ -221,25 +251,12 @@ impl KtApp {
         let bar_w = (bars.width() - gap) / 2.0;
         let bar_x = [bars.left(), bars.left() + bar_w + gap];
 
-        // мягкое свечение фона от громкого канала (имитация additive glow)
         let loud_db = self.meter.bar_db[0].max(self.meter.bar_db[1]);
-        if loud_db > METER_MIN_DB + 6.0 {
-            let k = ((loud_db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB)).clamp(0.0, 1.0);
-            let glow_col = zone_color(loud_db);
-            painter.rect_filled(
-                bars.expand(3.0),
-                6.0,
-                egui::Color32::from_rgba_unmultiplied(
-                    glow_col.r(),
-                    glow_col.g(),
-                    glow_col.b(),
-                    (k * 26.0) as u8,
-                ),
-            );
-        }
 
-        for (ch, &x0) in bar_x.iter().enumerate() {
-            // фон бара (порт: QColor(8,9,11))
+        // фоны ОБОИХ баров ДО свечения (п.9 v1.4: раньше glow рисовался
+        // внутри цикла под ch==0 и непрозрачный фон второго бара его
+        // закрашивал — эффект был виден только на первом)
+        for &x0 in &bar_x {
             painter.rect_filled(
                 egui::Rect::from_min_max(
                     egui::pos2(x0 - 1.0, bars.top() - 1.0),
@@ -248,74 +265,66 @@ impl KtApp {
                 2.0,
                 egui::Color32::from_rgb(8, 9, 11),
             );
-            // v1-свечение: ОБЩИЙ центр между барами, широкий радиус,
-            // построчный шлейф от низа до уровня (шаг 8px, alpha 42) +
-            // зоны (alpha 24) + двойной головной блик (п.7)
-            let level_db = self.meter.bar_db[ch];
-            if ch == 0 && level_db.max(self.meter.bar_db[1]) > METER_MIN_DB + 1.0 {
-                let loud = self.meter.bar_db[0].max(self.meter.bar_db[1]);
-                let cx = bars.center().x;
-                let wide = bars.width() * 1.15;
-                // построчный шлейф на всю высоту зажжённой части
-                let level_y = db_to_y(loud);
-                let mut y = bars.bottom();
-                while y >= level_y {
-                    let db_here = METER_MIN_DB
-                        + (bars.bottom() - y) / bars.height() * (METER_MAX_DB - METER_MIN_DB);
-                    glow_ellipse(
-                        &painter,
-                        egui::pos2(cx, y),
-                        egui::vec2(wide * 0.7, 18.0),
-                        zone_color(db_here),
-                        42,
-                    );
-                    y -= 8.0;
+        }
+
+        // --- свечение (пп.8-9 v1.4): цвет по ЗОНАМ высоты, один меш ------
+        // вертикальный градиент с остановками на границах зон (glow_stops,
+        // тест 40) и треугольным горизонтальным затуханием — заменяет
+        // ~250 тессилируемых эллипсов шлейфа и зон прежней версии
+        if loud_db > METER_MIN_DB + 1.0 {
+            let cx = bars.center().x;
+            let half_w = bars.width() * 1.15;
+            let level_y = db_to_y(loud_db);
+            let mut mesh = egui::Mesh::default();
+            let stops = glow_stops(loud_db);
+            let push_row = |mesh: &mut egui::Mesh, y: f32, col: egui::Color32, a: u8| {
+                for (x, alpha) in
+                    [(cx - half_w, 0u8), (cx, a), (cx + half_w, 0u8)]
+                {
+                    mesh.vertices.push(egui::epaint::Vertex {
+                        pos: egui::pos2(x, y),
+                        uv: egui::epaint::WHITE_UV,
+                        color: egui::Color32::from_rgba_unmultiplied(
+                            col.r(),
+                            col.g(),
+                            col.b(),
+                            alpha,
+                        ),
+                    });
                 }
-                // зоны
-                for (zone_top, zone_bot) in [
-                    (6.0f32, 0.0f32),
-                    (0.0, -3.0),
-                    (-3.0, -9.0),
-                    (-9.0, -18.0),
-                    (-18.0, -36.0),
-                    (-36.0, -48.0),
-                ] {
-                    if loud < zone_bot {
-                        continue;
-                    }
-                    let y_top = db_to_y(zone_top.min(loud));
-                    let y_bot = db_to_y(zone_bot.max(METER_MIN_DB));
-                    glow_ellipse(
-                        &painter,
-                        egui::pos2(cx, (y_top + y_bot) / 2.0),
-                        egui::vec2(wide, ((y_bot - y_top) * 0.78 + 24.0).max(32.0)),
-                        zone_color((zone_top + zone_bot) / 2.0),
-                        24,
-                    );
-                }
-                // двойной головной блик + подсветка низа (v1 :363-366)
-                glow_ellipse(
-                    &painter,
-                    egui::pos2(cx, level_y),
-                    egui::vec2(wide * 1.08, 38.0),
-                    zone_color(loud),
-                    42,
-                );
-                glow_ellipse(
-                    &painter,
-                    egui::pos2(cx, level_y - 14.0),
-                    egui::vec2(wide * 0.95, 34.0),
-                    zone_color(loud),
-                    28,
-                );
-                glow_ellipse(
-                    &painter,
-                    egui::pos2(cx, bars.bottom()),
-                    egui::vec2(wide * 0.85, 28.0),
-                    zone_color(METER_MIN_DB + 6.0),
-                    20,
-                );
+            };
+            for &db in &stops {
+                push_row(&mut mesh, db_to_y(db), zone_color(db), 46);
             }
+            // мягкий хвост над уровнем — затухание в ноль
+            push_row(&mut mesh, (level_y - 22.0).max(bars.top()), zone_color(loud_db), 0);
+            let rows = stops.len() + 1;
+            for r in 0..rows - 1 {
+                let b = (r * 3) as u32;
+                // два квада между соседними рядами (3 колонки)
+                for c in 0..2u32 {
+                    mesh.indices.extend_from_slice(&[
+                        b + c,
+                        b + c + 1,
+                        b + c + 4,
+                        b + c,
+                        b + c + 4,
+                        b + c + 3,
+                    ]);
+                }
+            }
+            painter.add(egui::Shape::mesh(mesh));
+            // подсветка низа (v1)
+            glow_ellipse(
+                &painter,
+                egui::pos2(cx, bars.bottom()),
+                egui::vec2(half_w * 0.85, 28.0),
+                zone_color(METER_MIN_DB + 6.0),
+                20,
+            );
+        }
+
+        for (ch, &x0) in bar_x.iter().enumerate() {
             // LED-сегменты v1: 6 px + 2 px зазор, светлая верхняя кромка
             let mut y = bars.bottom();
             while y > bars.top() {
@@ -347,8 +356,33 @@ impl KtApp {
                 [egui::pos2(x0, zero_y), egui::pos2(x0 + bar_w, zero_y)],
                 egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(95, 105, 118, 140)),
             );
-            // peak-hold cap: кремово-белый сегмент со свечением (v1:
-            // capDb > level+0.4, три эллипса ореола)
+        }
+
+        // головной блик ПОВЕРХ LED обоих баров (bloom симметричен, п.9);
+        // цвет — зоны уровня: локально у головы, ниже доминируют зонные
+        // цвета меша (п.8)
+        if loud_db > METER_MIN_DB + 1.0 {
+            let cx = bars.center().x;
+            let wide = bars.width() * 1.15;
+            let level_y = db_to_y(loud_db);
+            glow_ellipse(
+                &painter,
+                egui::pos2(cx, level_y),
+                egui::vec2(wide * 1.08, 38.0),
+                zone_color(loud_db),
+                42,
+            );
+            glow_ellipse(
+                &painter,
+                egui::pos2(cx, level_y - 14.0),
+                egui::vec2(wide * 0.95, 34.0),
+                zone_color(loud_db),
+                28,
+            );
+        }
+
+        for (ch, &x0) in bar_x.iter().enumerate() {
+            // peak-hold cap: кремово-белый сегмент со свечением (v1)
             let cap_db = self.meter.cap_db[ch];
             if cap_db > self.meter.bar_db[ch] + 0.4 && cap_db > METER_MIN_DB + 1.0 {
                 let cap_y = db_to_y(cap_db);
@@ -504,6 +538,41 @@ impl KtApp {
 #[cfg(test)]
 mod repaint_tests {
     use super::*;
+
+    /// Тест 40 (пп.8-10 v1.4): раскладка glow. Зонные полосы смежны, без
+    /// дыр и перекрытий, покрывают весь диапазон метра; остановки градиента
+    /// отсортированы и включают все границы зон ниже уровня; ореол оверлея
+    /// не заходит на панель (раньше +8 px наезжали на первый бар).
+    #[test]
+    fn t40_glow_layout() {
+        // зоны: сверху вниз, верх первой = MAX, низ последней = MIN, стык в стык
+        assert_eq!(ZONE_BANDS[0].0, METER_MAX_DB);
+        assert_eq!(ZONE_BANDS[ZONE_BANDS.len() - 1].1, METER_MIN_DB);
+        for w in ZONE_BANDS.windows(2) {
+            assert_eq!(w[0].1, w[1].0, "полосы стык в стык: {w:?}");
+        }
+        for (top, bot) in ZONE_BANDS {
+            assert!(top > bot, "полоса невырожденная: ({top}, {bot})");
+        }
+        // остановки градиента: низ, границы зон ниже уровня, уровень
+        for level in [-40.0f32, -20.0, -10.0, -5.0, -1.0, 3.0, 99.0] {
+            let stops = glow_stops(level);
+            assert_eq!(stops[0], METER_MIN_DB);
+            let clamped = level.clamp(METER_MIN_DB, METER_MAX_DB);
+            assert_eq!(*stops.last().unwrap(), clamped);
+            assert!(stops.windows(2).all(|w| w[0] < w[1]), "строго вверх: {stops:?}");
+            for &(top, _bot) in &ZONE_BANDS {
+                if top > METER_MIN_DB && top < clamped {
+                    assert!(stops.contains(&top), "граница зоны {top} в остановках {stops:?}");
+                }
+            }
+        }
+        // ореол оверлея: правая кромка = левый край панели (не дальше)
+        let panel = egui::Rect::from_min_max(egui::pos2(100.0, 0.0), egui::pos2(164.0, 400.0));
+        let g = overlay_glow_rect(panel);
+        assert!(g.right() <= panel.left(), "ореол не заходит на панель");
+        assert!(g.left() < panel.left(), "и реально светит влево");
+    }
 
     /// Тест 38 (п.1 v1.4): метры не держат 60 fps вечно. После остановки
     /// подкачки (пауза, статичный target) бары/капы сходятся и

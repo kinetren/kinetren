@@ -92,7 +92,9 @@ pub struct KtApp {
     /// Rect превью прошлого кадра (для оверлей-свечения поверх UI, п.8).
     pub preview_rect: egui::Rect,
     /// Rect метров прошлого кадра + цвет доминирующей зоны.
-    pub meter_glow: Option<(egui::Rect, egui::Color32, f32)>,
+    /// (панель метров, интенсивность 0..1, уровень dB) — оверлей красит
+    /// ореол по ЗОНАМ высоты (п.8 v1.4), не одним цветом.
+    pub meter_glow: Option<(egui::Rect, f32, f32)>,
     pub thumbs: crate::thumbs::ThumbService,
     /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
     pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
@@ -2149,31 +2151,46 @@ impl eframe::App for KtApp {
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 14),
                 );
             }
-            // метры: цветной ореол влево от панели по громкости
-            if let Some((r, col, k)) = self.meter_glow {
+            // метры: ореол влево от панели, цвет по ЗОНАМ высоты (п.8);
+            // правая кромка — ровно левый край панели (п.10: раньше +8 px
+            // наезжали на первый бар у подписи dB)
+            if let Some((r, k, loud_db)) = self.meter_glow {
                 let a = (k * 22.0) as u8;
                 if a > 2 {
-                    let glow_rect = egui::Rect::from_min_max(
-                        egui::pos2(r.left() - 46.0, r.top()),
-                        egui::pos2(r.left() + 8.0, r.bottom()),
-                    );
+                    let glow_rect = crate::meters::overlay_glow_rect(r);
+                    // строки на границах зон: цвет зоны, альфа по k;
+                    // выше уровня — затухание в прозрачность
                     let mut mesh = egui::Mesh::default();
-                    let t = egui::Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 0);
-                    let c = egui::Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), a);
-                    let i0 = mesh.vertices.len() as u32;
-                    for (pos, color) in [
-                        (glow_rect.left_top(), t),
-                        (glow_rect.right_top(), c),
-                        (glow_rect.right_bottom(), c),
-                        (glow_rect.left_bottom(), t),
-                    ] {
-                        mesh.vertices.push(egui::epaint::Vertex {
-                            pos,
-                            uv: egui::epaint::WHITE_UV,
-                            color,
-                        });
+                    let y_of = |db: f32| -> f32 {
+                        let t = (db - crate::meters::METER_MIN_DB)
+                            / (crate::meters::METER_MAX_DB - crate::meters::METER_MIN_DB);
+                        glow_rect.bottom() - t.clamp(0.0, 1.0) * glow_rect.height()
+                    };
+                    let mut push_row = |y: f32, col: egui::Color32, alpha: u8| {
+                        for (x, aa) in [(glow_rect.left(), 0u8), (glow_rect.right(), alpha)] {
+                            mesh.vertices.push(egui::epaint::Vertex {
+                                pos: egui::pos2(x, y),
+                                uv: egui::epaint::WHITE_UV,
+                                color: egui::Color32::from_rgba_unmultiplied(
+                                    col.r(),
+                                    col.g(),
+                                    col.b(),
+                                    aa,
+                                ),
+                            });
+                        }
+                    };
+                    let stops = crate::meters::glow_stops(loud_db);
+                    for &db in &stops {
+                        push_row(y_of(db), crate::meters::zone_color(db), a);
                     }
-                    mesh.indices.extend_from_slice(&[i0, i0 + 1, i0 + 2, i0, i0 + 2, i0 + 3]);
+                    let top_col = crate::meters::zone_color(loud_db);
+                    push_row((y_of(loud_db) - 24.0).max(glow_rect.top()), top_col, 0);
+                    let rows = stops.len() + 1;
+                    for row in 0..rows - 1 {
+                        let b = (row * 2) as u32;
+                        mesh.indices.extend_from_slice(&[b, b + 1, b + 3, b, b + 3, b + 2]);
+                    }
                     fg.add(egui::Shape::mesh(mesh));
                 }
             }
