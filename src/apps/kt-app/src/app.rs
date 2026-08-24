@@ -54,6 +54,8 @@ pub struct KtApp {
     /// Display-порядок дорожек (п.6 v1.4); нормализуется каждый кадр,
     /// сохраняется в UiState проекта.
     pub lane_order: Vec<(LaneKind, u32)>,
+    /// Превью отделено в собственное окно (п.7 v1.4, второй монитор).
+    pub preview_detached: bool,
     pub snap_line: Option<i64>,
     pub ctx_target: Option<CtxTarget>,
     /// Live-громкость volume rail до отпускания (id, dB).
@@ -173,6 +175,8 @@ impl KtApp {
             dnd_hover: None,
             tl_geom: None,
             lane_order: Vec::new(),
+            // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
+            preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -243,6 +247,8 @@ impl KtApp {
             dnd_hover: None,
             tl_geom: None,
             lane_order: Vec::new(),
+            // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
+            preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -1409,6 +1415,12 @@ impl KtApp {
             }
             ui.separator();
             ui.checkbox(&mut self.smooth_scaling, "Сглаживание");
+            ui.separator();
+            // деатач превью (п.7 v1.4): окно на второй монитор
+            let label = if self.preview_detached { "Вернуть превью" } else { "Отделить превью" };
+            if ui.button(label).clicked() {
+                self.preview_detached = preview_detached_next(self.preview_detached, true, false);
+            }
         });
     }
 
@@ -1822,6 +1834,18 @@ fn dnd_pointer_pos(ctx: &egui::Context) -> Option<egui::Pos2> {
 #[cfg(not(target_os = "linux"))]
 fn dnd_pointer_pos(_ctx: &egui::Context) -> Option<egui::Pos2> {
     None
+}
+
+/// State-машина деатача превью (п.7 v1.4, тест 51): закрытие окна всегда
+/// возвращает превью; иначе кнопка переключает.
+pub fn preview_detached_next(detached: bool, toggle: bool, close_requested: bool) -> bool {
+    if close_requested {
+        false
+    } else if toggle {
+        !detached
+    } else {
+        detached
+    }
 }
 
 /// Мёртвая зона слайдера скорости вокруг нуля (доля хода).
@@ -2246,9 +2270,41 @@ impl eframe::App for KtApp {
                 self.draw_meters(ui);
             });
             egui::CentralPanel::default().show(ui, |ui| {
-                self.draw_preview(ui);
+                if self.preview_detached {
+                    ui.centered_and_justified(|ui| {
+                        ui.weak("превью в отдельном окне (закрой его, чтобы вернуть)");
+                    });
+                } else {
+                    self.draw_preview(ui);
+                }
             });
         });
+
+        // ---- отделённое окно превью (п.7 v1.4): второй монитор ------------
+        // show_viewport_immediate: один egui::Context на все вьюпорты →
+        // текстура превью работает в чужом окне без переезда; deferred не
+        // годится (требует Send+Sync при &mut self).
+        if self.preview_detached {
+            let vp = egui::ViewportId::from_hash_of("kt-preview-window");
+            ctx.show_viewport_immediate(
+                vp,
+                egui::ViewportBuilder::default()
+                    .with_title("Kinotrain — превью")
+                    .with_inner_size([960.0, 560.0]),
+                |ui, _class| {
+                    // input этого вьюпорта: пробел/шорткаты работают из окна
+                    let child_ctx = ui.ctx().clone();
+                    self.handle_keys(&child_ctx);
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        self.draw_preview(ui);
+                    });
+                    if child_ctx.input(|i| i.viewport().close_requested()) {
+                        self.preview_detached =
+                            preview_detached_next(self.preview_detached, false, true);
+                    }
+                },
+            );
+        }
 
         self.sample_perf();
         self.draw_fx_editors(&ctx);
@@ -2332,7 +2388,9 @@ impl eframe::App for KtApp {
                 egui::Id::new("ambient-overlay"),
             ));
             // превью: размытая текстура чуть шире панели, очень низкая альфа
-            if let (Some(glow), true) = (&self.glow_texture, self.preview_rect.is_finite()) {
+            if let (Some(glow), true, false) =
+                (&self.glow_texture, self.preview_rect.is_finite(), self.preview_detached)
+            {
                 let r = self.preview_rect.expand(28.0);
                 fg.image(
                     glow.id(),
@@ -2535,6 +2593,19 @@ mod repaint_tests {
         }
         // rate=0 маппится в центр слайдера
         assert_eq!(rate_to_slider(0.0), 0.0);
+    }
+
+    /// Тест 51 (п.7 v1.4): state-машина деатача превью — закрытие окна
+    /// всегда возвращает превью в главное, кнопка переключает.
+    #[test]
+    fn t51_preview_detach_state() {
+        use super::preview_detached_next as next;
+        assert!(next(false, true, false), "кнопка отделяет");
+        assert!(!next(true, true, false), "кнопка возвращает");
+        assert!(!next(true, false, true), "закрытие окна возвращает");
+        assert!(!next(true, true, true), "закрытие сильнее кнопки");
+        assert!(!next(false, false, false), "покой");
+        assert!(next(true, false, false), "остаётся отделённым");
     }
 
     /// Тест 20-repaint (п.1): в простое НЕ 60 fps.
