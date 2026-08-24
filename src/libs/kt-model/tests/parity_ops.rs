@@ -290,7 +290,7 @@ fn t24_reversed_roundtrip_and_undo() {
 #[test]
 fn ui_state_round_trip_and_old_json() {
     let mut p = base();
-    p.ui = Some(UiState { view_start: 12_345.0, ticks_per_px: 450.0, cursor: 90_000 });
+    p.ui = Some(UiState { view_start: 12_345.0, ticks_per_px: 450.0, cursor: 90_000, lane_order: vec![] });
     let json = p.to_json();
     let p2 = Project::from_json(&json).unwrap();
     assert_eq!(p2.ui, p.ui);

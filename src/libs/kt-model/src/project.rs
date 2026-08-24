@@ -147,6 +147,77 @@ pub struct UiState {
     pub ticks_per_px: f64,
     /// Позиция курсора (тики).
     pub cursor: i64,
+    /// Порядок отображения дорожек сверху вниз (п.6 v1.4): произвольное
+    /// перемешивание V/A/M. Пусто (старые файлы) = блочный V..A..M.
+    /// Чисто визуальное свойство: семантика ClipEvent.lane (z-order видео,
+    /// микс-шина аудио) НЕ зависит от порядка строк. Вне undo, как весь
+    /// UiState; нормализация — normalize_lane_order (тест 49).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lane_order: Vec<(LaneKind, u32)>,
+}
+
+/// Вид дорожки в display-порядке (ClipKind не годится: нет Morph).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LaneKind {
+    Video,
+    Audio,
+    Morph,
+}
+
+/// Нормализация display-порядка дорожек к фактическим счётчикам (тест 49):
+/// дубли и несуществующие (kind, lane) выбрасываются, недостающие
+/// дописываются в конец в блочном порядке V..A..M. Пустой вход даёт
+/// дефолтный блочный порядок.
+pub fn normalize_lane_order(
+    order: &[(LaneKind, u32)],
+    video: u32,
+    audio: u32,
+    morph: u32,
+) -> Vec<(LaneKind, u32)> {
+    let valid = |&(k, l): &(LaneKind, u32)| match k {
+        LaneKind::Video => l < video,
+        LaneKind::Audio => l < audio,
+        LaneKind::Morph => l < morph,
+    };
+    let mut out: Vec<(LaneKind, u32)> = Vec::with_capacity((video + audio + morph) as usize);
+    for &e in order.iter().filter(|e| valid(e)) {
+        if !out.contains(&e) {
+            out.push(e);
+        }
+    }
+    for (kind, n) in [(LaneKind::Video, video), (LaneKind::Audio, audio), (LaneKind::Morph, morph)]
+    {
+        for l in 0..n {
+            if !out.contains(&(kind, l)) {
+                out.push((kind, l));
+            }
+        }
+    }
+    out
+}
+
+/// Синхронизация display-вектора при ВСТАВКЕ дорожки (lane >= at у этого
+/// вида сдвинулись на +1): новая строка встаёт прямо над бывшей `at`
+/// (теперь at+1), при её отсутствии — в конец (тест 49).
+pub fn lane_order_insert(rows: &mut Vec<(LaneKind, u32)>, kind: LaneKind, at: u32) {
+    for e in rows.iter_mut() {
+        if e.0 == kind && e.1 >= at {
+            e.1 += 1;
+        }
+    }
+    let pos = rows.iter().position(|&(k, l)| k == kind && l == at + 1).unwrap_or(rows.len());
+    rows.insert(pos, (kind, at));
+}
+
+/// Синхронизация display-вектора при УДАЛЕНИИ дорожки (тест 49).
+pub fn lane_order_remove(rows: &mut Vec<(LaneKind, u32)>, kind: LaneKind, at: u32) {
+    rows.retain(|&(k, l)| !(k == kind && l == at));
+    for e in rows.iter_mut() {
+        if e.0 == kind && e.1 > at {
+            e.1 -= 1;
+        }
+    }
 }
 
 /// Полуоткрытый регион [start, end), start < end.

@@ -42,11 +42,11 @@ pub struct DragState {
 /// Все виды перетаскиваний на таймлайне.
 pub enum Drag {
     Clip(DragState),
-    /// Перетаскивание заголовка дорожки (реордер, п.7).
-    Lane {
-        kind: ClipKind,
-        from: u32,
-        cur: u32,
+    /// Перетаскивание заголовка СТРОКИ дорожек (реордер; п.6 v1.4 —
+    /// строки в display-порядке, перемешивание V/A/M разрешено).
+    LaneRow {
+        from: usize,
+        cur: usize,
     },
     /// Скраб курсора (захват треугольника playhead в руллере).
     Scrub,
@@ -114,19 +114,15 @@ pub fn clip_color(path: &str, kind: ClipKind) -> egui::Color32 {
 }
 
 /// Геометрия таймлайна последнего кадра — маппинг позиций ВНЕ
-/// draw_timeline (дроп файлов в позицию мыши, п.2 v1.4). Чистые
-/// функции — тест 47.
-#[derive(Clone, Copy)]
+/// draw_timeline (дроп файлов п.2, произвольный порядок дорожек п.6 v1.4).
+/// Строки — display-порядок (LaneKind, lane); чистые функции — тесты 47/50.
+#[derive(Clone)]
 pub struct TlGeom {
     /// Зона отрисовки дорожек (правее gutter, включая руллер сверху).
     pub rect: egui::Rect,
     pub lane_h: f32,
-    pub video_lanes: u32,
-    pub audio_lanes: u32,
-    /// Пока не используется маппингом (morph-полоса — не цель дропа),
-    /// но нужен J8 (произвольный порядок дорожек).
-    #[allow(dead_code)]
-    pub morph_lanes: u32,
+    /// Display-порядок строк сверху вниз (нормализован).
+    pub rows: std::sync::Arc<Vec<(LaneKind, u32)>>,
     pub view_start: f64,
     pub tpp: f64,
 }
@@ -140,29 +136,74 @@ impl TlGeom {
         self.rect.left() + ((t as f64 - self.view_start) / self.tpp) as f32
     }
 
-    /// Дорожка клипов под y (руллер/gutter/morph-полоса → None).
-    pub fn lane_at_y(&self, y: f32) -> Option<(ClipKind, u32)> {
-        let rel = y - (self.rect.top() + RULER_H + 3.0);
+    fn lanes_top(&self) -> f32 {
+        self.rect.top() + RULER_H + 3.0
+    }
+
+    /// Индекс строки под y (в пределах rows).
+    pub fn row_at_y(&self, y: f32) -> Option<usize> {
+        let rel = y - self.lanes_top();
         if rel < 0.0 {
             return None;
         }
-        let idx = (rel / self.lane_h).floor() as u32;
-        let clip_total = (self.video_lanes + self.audio_lanes).max(1);
-        if idx < self.video_lanes {
-            Some((ClipKind::Video, idx))
-        } else if idx < clip_total {
-            Some((ClipKind::Audio, idx - self.video_lanes))
-        } else {
-            None
+        let idx = (rel / self.lane_h).floor() as usize;
+        (idx < self.rows.len()).then_some(idx)
+    }
+
+    pub fn key_at_y(&self, y: f32) -> Option<(LaneKind, u32)> {
+        self.rows.get(self.row_at_y(y)?).copied()
+    }
+
+    /// Дорожка КЛИПОВ под y (morph-строка/руллер → None).
+    pub fn lane_at_y(&self, y: f32) -> Option<(ClipKind, u32)> {
+        match self.key_at_y(y)? {
+            (LaneKind::Video, l) => Some((ClipKind::Video, l)),
+            (LaneKind::Audio, l) => Some((ClipKind::Audio, l)),
+            (LaneKind::Morph, _) => None,
         }
     }
 
+    pub fn morph_lane_at_y(&self, y: f32) -> Option<u32> {
+        match self.key_at_y(y)? {
+            (LaneKind::Morph, l) => Some(l),
+            _ => None,
+        }
+    }
+
+    pub fn row_of(&self, key: (LaneKind, u32)) -> Option<usize> {
+        self.rows.iter().position(|&k| k == key)
+    }
+
+    pub fn row_top(&self, row: usize) -> f32 {
+        self.lanes_top() + row as f32 * self.lane_h
+    }
+
     pub fn lane_top(&self, kind: ClipKind, lane: u32) -> f32 {
-        let idx = match kind {
-            ClipKind::Video => lane,
-            ClipKind::Audio => self.video_lanes + lane,
+        let key = match kind {
+            ClipKind::Video => (LaneKind::Video, lane),
+            ClipKind::Audio => (LaneKind::Audio, lane),
         };
-        self.rect.top() + RULER_H + 3.0 + idx as f32 * self.lane_h
+        self.row_top(self.row_of(key).unwrap_or(0))
+    }
+
+    pub fn morph_lane_top(&self, lane: u32) -> f32 {
+        self.row_top(self.row_of((LaneKind::Morph, lane)).unwrap_or(0))
+    }
+
+    /// Ближайшая к строке `row` дорожка вида `kind` (drag клипа через
+    /// чужие строки «прилипает» к своему виду, п.6 v1.4, тест 50).
+    pub fn nearest_lane(&self, kind: ClipKind, row: i64) -> u32 {
+        let want = match kind {
+            ClipKind::Video => LaneKind::Video,
+            ClipKind::Audio => LaneKind::Audio,
+        };
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.0 == want)
+            .min_by_key(|(i, _)| (*i as i64 - row).abs())
+            .map(|(_, e)| e.1)
+            .unwrap_or(0)
     }
 
     /// Точка внутри полосы дорожек (не gutter/не руллер)?
@@ -435,52 +476,41 @@ impl KtApp {
         // ---- дорожки ---------------------------------------------------------
         let (video_lanes, audio_lanes) = self.lane_counts();
         let morph_lanes = self.model.project().morph_lanes;
-        let clip_lanes_total = (video_lanes + audio_lanes).max(1);
-        let lanes_total = clip_lanes_total + morph_lanes;
+        let lanes_total = (video_lanes + audio_lanes).max(1) + morph_lanes;
         let lane_h = ((rect.height() - RULER_H - 6.0) / lanes_total as f32).clamp(30.0, 84.0);
-        // кэш геометрии для маппинга вне draw_timeline (дроп, п.2 v1.4)
-        self.tl_geom = Some(TlGeom {
-            rect,
-            lane_h,
+        // display-порядок строк (п.6 v1.4): произвольное перемешивание
+        // V/A/M; нормализация каждый кадр — вставки/удаления дорожек
+        // подтягиваются автоматически
+        self.lane_order = kt_model::normalize_lane_order(
+            &self.lane_order,
             video_lanes,
             audio_lanes,
             morph_lanes,
+        );
+        // кэш геометрии для маппинга вне draw_timeline (дроп п.2, строки п.6)
+        let geom = TlGeom {
+            rect,
+            lane_h,
+            rows: std::sync::Arc::new(self.lane_order.clone()),
             view_start: self.view_start,
             tpp: self.ticks_per_px,
-        });
-        let lane_top = |kind: ClipKind, lane: u32| -> f32 {
-            let idx = match kind {
-                ClipKind::Video => lane,
-                ClipKind::Audio => video_lanes + lane,
-            };
-            rect.top() + RULER_H + 3.0 + idx as f32 * lane_h
         };
-        // morph-дорожки — нижняя секция (H1, порт v1: фиолетовые)
-        let morph_lane_top = |lane: u32| -> f32 {
-            rect.top() + RULER_H + 3.0 + (clip_lanes_total + lane) as f32 * lane_h
-        };
-        let morph_lane_at_y = |y: f32| -> Option<u32> {
-            let rel = y - (rect.top() + RULER_H + 3.0);
-            if rel < 0.0 {
-                return None;
-            }
-            let idx = (rel / lane_h).floor() as u32;
-            (idx >= clip_lanes_total && idx < lanes_total).then(|| idx - clip_lanes_total)
-        };
-        for i in 0..lanes_total {
-            let y = rect.top() + RULER_H + 3.0 + i as f32 * lane_h;
+        self.tl_geom = Some(geom.clone());
+        let lane_top = |kind: ClipKind, lane: u32| -> f32 { geom.lane_top(kind, lane) };
+        let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
+        let morph_lane_at_y = |y: f32| -> Option<u32> { geom.morph_lane_at_y(y) };
+        for (row, &(kind, lane)) in geom.rows.iter().enumerate() {
+            let y = geom.row_top(row);
             let lane_rect = egui::Rect::from_min_max(
                 egui::pos2(rect.left(), y),
                 egui::pos2(rect.right(), y + lane_h - 2.0),
             );
             // фоны дорожек в тонах старого: видео синеватый, аудио тёплый,
             // morph фиолетовый (v1: QColor(42,32,58))
-            let (fill, label) = if i < video_lanes {
-                (egui::Color32::from_rgb(30, 36, 44), format!("V{}", i + 1))
-            } else if i < clip_lanes_total {
-                (egui::Color32::from_rgb(38, 32, 32), format!("A{}", i - video_lanes + 1))
-            } else {
-                (egui::Color32::from_rgb(42, 32, 58), format!("M{}", i - clip_lanes_total + 1))
+            let (fill, label) = match kind {
+                LaneKind::Video => (egui::Color32::from_rgb(30, 36, 44), format!("V{}", lane + 1)),
+                LaneKind::Audio => (egui::Color32::from_rgb(38, 32, 32), format!("A{}", lane + 1)),
+                LaneKind::Morph => (egui::Color32::from_rgb(42, 32, 58), format!("M{}", lane + 1)),
             };
             painter.rect_filled(lane_rect, 0.0, fill);
             painter.text(
@@ -493,7 +523,7 @@ impl KtApp {
         }
         // хит-тест morph-блока (нужен и press-обработке, и ПКМ ниже)
         let morpher_at = |slf: &KtApp, pos: egui::Pos2| -> Option<MorphId> {
-            let lane = morph_lane_at_y(pos.y)?;
+            let lane = geom.morph_lane_at_y(pos.y)?;
             slf.model
                 .project()
                 .morphers
@@ -508,45 +538,30 @@ impl KtApp {
                 .map(|m| m.id)
         };
 
-        // ---- дорожки: реордер драгом и меню (пп. 7-8) ----------------------
+        // ---- дорожки: реордер драгом и меню (пп. 7-8; п.6 v1.4: строки) ----
         {
-            let lane_at_y = |y: f32| -> Option<(ClipKind, u32)> {
-                let rel = y - (rect.top() + RULER_H + 3.0);
-                if rel < 0.0 {
-                    return None;
-                }
-                let idx = (rel / lane_h).floor() as u32;
-                if idx < video_lanes {
-                    Some((ClipKind::Video, idx))
-                } else if idx < clip_lanes_total {
-                    Some((ClipKind::Audio, idx - video_lanes))
-                } else {
-                    None // morph-полоса — см. morph_lane_at_y
-                }
-            };
             if gutter_resp.drag_started()
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
-                && let Some((kind, lane)) = lane_at_y(pos.y)
+                && let Some(row) = geom.row_at_y(pos.y)
             {
-                self.drag = Some(Drag::Lane { kind, from: lane, cur: lane });
+                self.drag = Some(Drag::LaneRow { from: row, cur: row });
             }
             if gutter_resp.dragged()
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
-                && let Some(Drag::Lane { kind, from, .. }) = self.drag
-                && let Some((k2, cur)) = lane_at_y(pos.y)
-                && k2 == kind
+                && let Some(Drag::LaneRow { from, .. }) = self.drag
+                && let Some(cur) = geom.row_at_y(pos.y)
             {
-                self.drag = Some(Drag::Lane { kind, from, cur });
+                self.drag = Some(Drag::LaneRow { from, cur });
             }
             if gutter_resp.drag_stopped()
-                && let Some(Drag::Lane { kind, from, cur }) = self.drag.take()
+                && let Some(Drag::LaneRow { from, cur }) = self.drag.take()
                 && from != cur
             {
-                self.reorder_lane(kind, from, cur);
+                self.reorder_rows(from, cur);
             }
-            // индикатор перетаскиваемой дорожки
-            if let Some(Drag::Lane { kind, cur, .. }) = self.drag {
-                let y = lane_top(kind, cur);
+            // индикатор перетаскиваемой строки
+            if let Some(Drag::LaneRow { cur, .. }) = self.drag {
+                let y = geom.row_top(cur);
                 painter.rect_filled(
                     egui::Rect::from_min_max(
                         egui::pos2(gutter.left(), y),
@@ -560,10 +575,17 @@ impl KtApp {
             if gutter_resp.secondary_clicked()
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
             {
-                if let Some((kind, lane)) = lane_at_y(pos.y) {
-                    self.ctx_target = Some(CtxTarget::Lane { kind, lane });
-                } else if let Some(ml) = morph_lane_at_y(pos.y) {
-                    self.ctx_target = Some(CtxTarget::MorphLane(ml));
+                match geom.key_at_y(pos.y) {
+                    Some((LaneKind::Video, lane)) => {
+                        self.ctx_target = Some(CtxTarget::Lane { kind: ClipKind::Video, lane });
+                    }
+                    Some((LaneKind::Audio, lane)) => {
+                        self.ctx_target = Some(CtxTarget::Lane { kind: ClipKind::Audio, lane });
+                    }
+                    Some((LaneKind::Morph, lane)) => {
+                        self.ctx_target = Some(CtxTarget::MorphLane(lane));
+                    }
+                    None => {}
                 }
             }
             gutter_resp.context_menu(|ui| {
@@ -589,16 +611,25 @@ impl KtApp {
                         ClipKind::Video => video_lanes,
                         ClipKind::Audio => audio_lanes,
                     };
+                    let lk = match kind {
+                        ClipKind::Video => LaneKind::Video,
+                        ClipKind::Audio => LaneKind::Audio,
+                    };
                     if ui.add_enabled(lanes_of_kind > 1, egui::Button::new(del_label)).clicked() {
                         self.delete_lane(kind, lane);
+                        kt_model::lane_order_remove(&mut self.lane_order, lk, lane);
                         ui.close();
                     }
                     if ui.button("Вставить дорожку выше").clicked() {
-                        self.apply(Command::InsertLane { kind, at: lane });
+                        if self.apply(Command::InsertLane { kind, at: lane }) {
+                            kt_model::lane_order_insert(&mut self.lane_order, lk, lane);
+                        }
                         ui.close();
                     }
                     if ui.button("Вставить дорожку ниже").clicked() {
-                        self.apply(Command::InsertLane { kind, at: lane + 1 });
+                        if self.apply(Command::InsertLane { kind, at: lane + 1 }) {
+                            kt_model::lane_order_insert(&mut self.lane_order, lk, lane + 1);
+                        }
                         ui.close();
                     }
                 }
@@ -612,11 +643,23 @@ impl KtApp {
                         "Удалить дорожку".into()
                     };
                     if ui.button(del_label).clicked() {
-                        self.apply(Command::RemoveMorphLane { at: lane });
+                        if self.apply(Command::RemoveMorphLane { at: lane }) {
+                            kt_model::lane_order_remove(
+                                &mut self.lane_order,
+                                LaneKind::Morph,
+                                lane,
+                            );
+                        }
                         ui.close();
                     }
                     if ui.button("Вставить morph-дорожку ниже").clicked() {
-                        self.apply(Command::InsertMorphLane { at: lane + 1 });
+                        if self.apply(Command::InsertMorphLane { at: lane + 1 }) {
+                            kt_model::lane_order_insert(
+                                &mut self.lane_order,
+                                LaneKind::Morph,
+                                lane + 1,
+                            );
+                        }
                         ui.close();
                     }
                 }
@@ -913,9 +956,9 @@ impl KtApp {
             && let Some(pos) = pointer
         {
             match self.drag.take() {
-                Some(Drag::Lane { kind, from, cur }) => {
+                Some(Drag::LaneRow { from, cur }) => {
                     // обрабатывается gutter-областью; здесь просто держим
-                    self.drag = Some(Drag::Lane { kind, from, cur });
+                    self.drag = Some(Drag::LaneRow { from, cur });
                 }
                 Some(Drag::Clip(mut d)) => {
                     d.moved = true;
@@ -929,14 +972,11 @@ impl KtApp {
                                 if (s1 - raw).abs() <= (s2 - raw).abs() { s1 } else { s2 };
                             d.cur_start = snapped.max(0);
                             d.cur_end = d.cur_start + dur;
+                            // строки перемешаны (п.6): прилипаем к
+                            // ближайшей строке СВОЕГО вида (тест 50)
                             let rel = pos.y - (rect.top() + RULER_H + 3.0);
-                            let idx = (rel / lane_h).floor().max(0.0) as u32;
-                            d.cur_lane = match d.orig.kind {
-                                ClipKind::Video => idx.min(video_lanes.saturating_sub(1)),
-                                ClipKind::Audio => idx
-                                    .saturating_sub(video_lanes)
-                                    .min(audio_lanes.saturating_sub(1)),
-                            };
+                            let row = (rel / lane_h).floor().max(0.0) as i64;
+                            d.cur_lane = geom.nearest_lane(d.orig.kind, row);
                         }
                         DragMode::TrimStart => {
                             let raw = x_to_tick(pos.x);
@@ -1466,7 +1506,7 @@ impl KtApp {
         // ---- силуэт дропа файла (п.2 v1.4): подсветка дорожки + призрак --
         if let Some(pos) = self.dnd_hover
             && self.pending_morpher.is_none()
-            && let Some(g) = self.tl_geom
+            && let Some(g) = self.tl_geom.clone()
             && g.in_lanes(pos)
             && let Some((kind, lane)) = g.lane_at_y(pos.y)
         {
@@ -1791,38 +1831,76 @@ impl KtApp {
 mod geom_tests {
     use super::*;
 
-    /// Тест 47 (п.2 v1.4): извлечённая геометрия таймлайна для дропа —
-    /// lane_at_y по раскладке V/A, x_to_tick round-trip с зумом/скроллом,
-    /// руллер и morph-полоса дают None.
+    /// Тест 47 (п.2 v1.4): геометрия таймлайна для дропа — lane_at_y по
+    /// display-строкам, x_to_tick round-trip, руллер/gutter/morph → None.
     #[test]
     fn t47_tl_geom_mapping() {
+        use kt_model::LaneKind;
         let g = TlGeom {
             rect: egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 500.0)),
             lane_h: 50.0,
-            video_lanes: 2,
-            audio_lanes: 2,
-            morph_lanes: 1,
+            rows: std::sync::Arc::new(vec![
+                (LaneKind::Video, 0),
+                (LaneKind::Video, 1),
+                (LaneKind::Audio, 0),
+                (LaneKind::Audio, 1),
+                (LaneKind::Morph, 0),
+            ]),
             view_start: 90_000.0,
             tpp: 900.0,
         };
-        // x↔tick round-trip
         for t in [90_000i64, 180_000, 900_000] {
             let x = g.tick_to_x(t);
             assert!((g.x_to_tick(x) - t).abs() <= (g.tpp as i64), "round-trip тика {t}");
         }
-        // раскладка дорожек: V0 V1 A0 A1 [morph]
         let lanes_top = g.rect.top() + RULER_H + 3.0;
         assert_eq!(g.lane_at_y(lanes_top + 10.0), Some((ClipKind::Video, 0)));
         assert_eq!(g.lane_at_y(lanes_top + 60.0), Some((ClipKind::Video, 1)));
         assert_eq!(g.lane_at_y(lanes_top + 110.0), Some((ClipKind::Audio, 0)));
         assert_eq!(g.lane_at_y(lanes_top + 160.0), Some((ClipKind::Audio, 1)));
-        assert_eq!(g.lane_at_y(lanes_top + 210.0), None, "morph-полоса — не цель дропа");
-        // руллер и зона выше — None; in_lanes согласован
+        assert_eq!(g.lane_at_y(lanes_top + 210.0), None, "morph-строка — не цель дропа");
+        assert_eq!(g.morph_lane_at_y(lanes_top + 210.0), Some(0));
         assert_eq!(g.lane_at_y(g.rect.top() + 5.0), None);
         assert!(!g.in_lanes(egui::pos2(500.0, g.rect.top() + 5.0)));
         assert!(g.in_lanes(egui::pos2(500.0, lanes_top + 10.0)));
         assert!(!g.in_lanes(egui::pos2(10.0, lanes_top + 10.0)), "gutter левее rect");
-        // lane_top обратен lane_at_y
         assert_eq!(g.lane_at_y(g.lane_top(ClipKind::Audio, 1) + 1.0), Some((ClipKind::Audio, 1)));
+    }
+
+    /// Тест 50 (п.6 v1.4): произвольный порядок строк — биекция
+    /// row_of/key_at_y, прилипание drag'а клипа к ближайшей строке
+    /// своего вида.
+    #[test]
+    fn t50_mixed_rows_bijection_and_nearest() {
+        use kt_model::LaneKind;
+        let rows = vec![
+            (LaneKind::Video, 0),
+            (LaneKind::Audio, 0),
+            (LaneKind::Video, 1),
+            (LaneKind::Morph, 0),
+            (LaneKind::Audio, 1),
+        ];
+        let g = TlGeom {
+            rect: egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 500.0)),
+            lane_h: 40.0,
+            rows: std::sync::Arc::new(rows.clone()),
+            view_start: 0.0,
+            tpp: 900.0,
+        };
+        // биекция row_of ↔ key_at_y по центру каждой строки
+        for (row, &key) in rows.iter().enumerate() {
+            assert_eq!(g.row_of(key), Some(row));
+            let y = g.row_top(row) + 5.0;
+            assert_eq!(g.key_at_y(y), Some(key), "строка {row}");
+        }
+        // lane_top отражает перемешанный порядок
+        assert_eq!(g.lane_top(ClipKind::Audio, 0), g.row_top(1));
+        assert_eq!(g.lane_top(ClipKind::Video, 1), g.row_top(2));
+        // прилипание: видео-клип над morph-строкой (row 3) едет на V1 (row 2)
+        assert_eq!(g.nearest_lane(ClipKind::Video, 3), 1);
+        // аудио-клип над видео-строкой row 0 липнет к A0 (row 1)
+        assert_eq!(g.nearest_lane(ClipKind::Audio, 0), 0);
+        // аудио внизу (row 4) — A1
+        assert_eq!(g.nearest_lane(ClipKind::Audio, 4), 1);
     }
 }

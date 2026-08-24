@@ -51,6 +51,9 @@ pub struct KtApp {
     pub dnd_hover: Option<egui::Pos2>,
     /// Кэш геометрии таймлайна последнего кадра (дроп, п.2 v1.4).
     pub tl_geom: Option<crate::timeline::TlGeom>,
+    /// Display-порядок дорожек (п.6 v1.4); нормализуется каждый кадр,
+    /// сохраняется в UiState проекта.
+    pub lane_order: Vec<(LaneKind, u32)>,
     pub snap_line: Option<i64>,
     pub ctx_target: Option<CtxTarget>,
     /// Live-громкость volume rail до отпускания (id, dB).
@@ -169,6 +172,7 @@ impl KtApp {
             shuttle_override: None,
             dnd_hover: None,
             tl_geom: None,
+            lane_order: Vec::new(),
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -238,6 +242,7 @@ impl KtApp {
             shuttle_override: None,
             dnd_hover: None,
             tl_geom: None,
+            lane_order: Vec::new(),
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -279,6 +284,7 @@ impl KtApp {
             app.view_start = ui.view_start.max(-40.0 * app.ticks_per_px);
             app.ticks_per_px = ui.ticks_per_px.clamp(30.0, 30_000.0);
             app.player.seek(Tick(ui.cursor.max(0)));
+            app.lane_order = ui.lane_order; // п.6 v1.4 (нормализуется в draw)
         }
         Ok(app)
     }
@@ -289,6 +295,7 @@ impl KtApp {
             view_start: self.view_start,
             ticks_per_px: self.ticks_per_px,
             cursor: self.player.transport.playhead().0,
+            lane_order: self.lane_order.clone(),
         }
     }
 
@@ -390,6 +397,28 @@ impl KtApp {
         }
         self.selected = None;
         self.selected_morph = None;
+    }
+
+    /// Перестановка display-строк дорожек (п.6 v1.4): между строками
+    /// одного КЛИП-вида содержимое перекладывается существующим
+    /// reorder_lane (z-order видео соответствует экрану, аудио-шины — как
+    /// раньше, вектор не меняется — лейблы V1..Vn остаются по порядку);
+    /// в остальных случаях (перемешивание видов, morph) — чисто
+    /// визуальный сдвиг элемента вектора.
+    pub fn reorder_rows(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.lane_order.len() || to >= self.lane_order.len() {
+            return;
+        }
+        let (a, b) = (self.lane_order[from], self.lane_order[to]);
+        match (a.0, b.0) {
+            (LaneKind::Video, LaneKind::Video) => self.reorder_lane(ClipKind::Video, a.1, b.1),
+            (LaneKind::Audio, LaneKind::Audio) => self.reorder_lane(ClipKind::Audio, a.1, b.1),
+            _ => {
+                let e = self.lane_order.remove(from);
+                self.lane_order.insert(to, e);
+                self.dirty = true;
+            }
+        }
     }
 
     /// Реордер дорожки (п.7): батч MoveClip перекладывает клипы между
@@ -1599,7 +1628,7 @@ impl KtApp {
         }
         // цель дропа по последней hover-позиции
         let target = self.dnd_hover.take().filter(|_| !dropped.is_empty()).and_then(|pos| {
-            let g = self.tl_geom?;
+            let g = self.tl_geom.clone()?;
             if !g.in_lanes(pos) {
                 return None;
             }
