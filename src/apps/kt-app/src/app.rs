@@ -1044,13 +1044,16 @@ impl KtApp {
     fn draw_preview(&mut self, ui: &mut egui::Ui) {
         let t = self.player.video_playhead();
         let q = self.player.preview_quality();
-        let key_now = (t.0, (q.width, q.height));
-        // композитим/грузим текстуру ТОЛЬКО если кадр мог смениться:
-        // другой момент времени, другое качество, или прошлый был неполным
+        // Ключ — тик, ВЫРОВНЕННЫЙ по сетке fps (тест 39): раньше ключом
+        // был сырой тик — при игре он менялся каждый UI-кадр и текстура
+        // перезаливалась в GPU 60 раз/с независимо от fps проекта
+        // (до ~500 МБ/с на 1080p — главный источник «визуально <30 fps»).
+        let key_now = (preview_key_tick(self.player.video_grid(), t), (q.width, q.height));
         let need = match self.preview_key {
             Some((pt, pq, was_complete)) => pt != key_now.0 || pq != key_now.1 || !was_complete,
             None => true,
         };
+        let new_frame = self.preview_key.map(|k| k.0) != Some(key_now.0);
         let mut complete = self.preview_key.map(|k| k.2).unwrap_or(false);
         if need {
             self.last_compose_retry = std::time::Instant::now();
@@ -1099,6 +1102,10 @@ impl KtApp {
                     None => {
                         self.texture = Some(ui.ctx().load_texture("preview", image, opts));
                     }
+                }
+                // честная метрика V-fps: реальные показы НОВЫХ кадров
+                if new_frame {
+                    self.perf.video_frames_shown += 1;
                 }
             }
             self.preview_key = Some((key_now.0, key_now.1, c));
@@ -1643,6 +1650,11 @@ pub fn repaint_delay(animating: bool) -> std::time::Duration {
     }
 }
 
+/// Ключ кадра превью: тик, выровненный по сетке fps проекта (тест 39).
+pub fn preview_key_tick(grid: kt_time::FpsGrid, t: Tick) -> i64 {
+    grid.align_floor(t).0
+}
+
 pub struct PerfState {
     pub quality: crate::graphs::RollingGraph,
     pub decode: crate::graphs::RollingGraph,
@@ -1654,6 +1666,9 @@ pub struct PerfState {
     last_io: (u64, u64),
     last_underruns: (u64, u64),
     frames: u32,
+    /// Кумулятив реально показанных НОВЫХ видеокадров (выровненный ключ).
+    pub video_frames_shown: u64,
+    last_video_shown: u64,
     pub diag_open: bool,
     pub log: std::collections::VecDeque<String>,
     /// Дедуп подряд идущих одинаковых сообщений: (текст, повторов).
@@ -1671,6 +1686,9 @@ impl PerfState {
                 Axis::Percent,
                 vec![
                     ("FPS", egui::Color32::from_rgb(120, 230, 90), 120.0),
+                    // честный видео-fps: показанные НОВЫЕ кадры (п.1 v1.4;
+                    // «FPS» — это ui-кадры и о видео ничего не говорит)
+                    ("V-fps", egui::Color32::from_rgb(255, 145, 80), 120.0),
                     ("A-hit", egui::Color32::from_rgb(114, 214, 255), 100.0),
                     ("V-hit", egui::Color32::from_rgb(240, 190, 70), 100.0),
                 ],
@@ -1704,6 +1722,8 @@ impl PerfState {
             last_io: (0, 0),
             last_underruns: (0, 0),
             frames: 0,
+            video_frames_shown: 0,
+            last_video_shown: 0,
             diag_open: false,
             log: std::collections::VecDeque::new(),
             last_msg: None,
@@ -1790,7 +1810,10 @@ impl KtApp {
             if d_ah + d_am > 0 { d_ah as f32 / (d_ah + d_am) as f32 * 100.0 } else { 100.0 };
         let v_hit =
             if d_vh + d_vm > 0 { d_vh as f32 / (d_vh + d_vm) as f32 * 100.0 } else { 100.0 };
-        self.perf.quality.push(&[fps.min(120.0), a_hit, v_hit]);
+        let v_shown = self.perf.video_frames_shown;
+        let v_fps = v_shown.saturating_sub(self.perf.last_video_shown) as f32 / dt;
+        self.perf.last_video_shown = v_shown;
+        self.perf.quality.push(&[fps.min(120.0), v_fps.min(120.0), a_hit, v_hit]);
         let (r_open, r_read) =
             (opens.saturating_sub(lo) as f32 / dt, reads.saturating_sub(lr) as f32 / dt);
         let (r_vdec, r_adec) =
@@ -2167,10 +2190,20 @@ impl eframe::App for KtApp {
 
 pub fn run() -> eframe::Result {
     let arg = std::env::args().nth(1);
+    // GPU: дефолт egui-wgpu — HighPerformance, т.е. дискретная карта; на
+    // гибридной графике это PRIME-копирование каждого кадра и тормоза ВСЕЙ
+    // системы (п.1 v1.4). UI-нагрузка скромная — берём энергоэффективный
+    // адаптер; WGPU_POWER_PREF=high_performance возвращает дискретный.
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
+        setup.power_preference = eframe::wgpu::PowerPreference::from_env()
+            .unwrap_or(eframe::wgpu::PowerPreference::LowPower);
+    }
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 860.0])
             .with_title("Kinotrain"),
+        wgpu_options,
         ..Default::default()
     };
     eframe::run_native(
@@ -2226,6 +2259,31 @@ mod repaint_tests {
         assert_eq!(KtApp::play_start_position(Some((100, 200))), Some(100));
         assert_eq!(KtApp::play_start_position(Some((100, 100))), None, "пустой регион");
         assert_eq!(KtApp::play_start_position(None), None);
+    }
+
+    /// Тест 39 (п.1 v1.4): ключ превью выровнен по сетке fps — внутри
+    /// одной ячейки кадра ключ стабилен (текстура не перезаливается),
+    /// на границе — новый. Счётчик V-fps растёт только на новом ключе.
+    #[test]
+    fn t39_preview_key_is_grid_aligned() {
+        use super::preview_key_tick;
+        let grid = kt_time::FpsGrid::new(30); // шаг 3000 тиков
+        assert_eq!(preview_key_tick(grid, kt_time::Tick(0)), 0);
+        assert_eq!(preview_key_tick(grid, kt_time::Tick(1)), 0);
+        assert_eq!(preview_key_tick(grid, kt_time::Tick(2999)), 0, "внутри ячейки ключ тот же");
+        assert_eq!(preview_key_tick(grid, kt_time::Tick(3000)), 3000, "граница — новый ключ");
+        // симуляция UI 60 fps (шаг 1500 тиков) на проекте 30 fps:
+        // из 60 ui-кадров ровно 30 дают новый ключ
+        let mut shown = 0u64;
+        let mut prev: Option<i64> = None;
+        for ui_frame in 0..60i64 {
+            let key = preview_key_tick(grid, kt_time::Tick(ui_frame * 1500));
+            if prev != Some(key) {
+                shown += 1;
+            }
+            prev = Some(key);
+        }
+        assert_eq!(shown, 30, "V-fps считает кадры проекта, а не ui-кадры");
     }
 
     /// Тест 20-repaint (п.1): в простое НЕ 60 fps.

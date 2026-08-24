@@ -26,9 +26,44 @@ pub struct MeterState {
 }
 
 impl MeterState {
-    /// Есть ли что анимировать (для repaint-политики, п.1).
+    /// Есть ли что анимировать (для repaint-политики, п.1 v1.4): бары/капы
+    /// ДВИЖУТСЯ, а не просто горят. Статичный показ уровня на курсоре в
+    /// паузе (фича п.2 v1.1) не должен держать 60 fps: раньше условие было
+    /// «бар выше минимума» и залипало в true навсегда после первого звука —
+    /// приложение вечно рисовало 60 fps в простое и грело всю систему.
+    /// Тест 38.
     pub fn is_active(&self) -> bool {
-        self.bar_db.iter().chain(self.cap_db.iter()).any(|db| *db > METER_MIN_DB + 0.1)
+        (0..2).any(|ch| {
+            let floor = self.target_db[ch].max(METER_MIN_DB);
+            (self.bar_db[ch] - floor).abs() > 0.05
+                || (self.cap_db[ch] - self.bar_db[ch] > 0.05
+                    && self.cap_db[ch] > METER_MIN_DB + 0.05)
+        })
+    }
+
+    /// Один шаг спада (тик 25 мс, спады v1) — чистая логика для теста 38.
+    /// `playing` дополнительно отпускает target (иначе при остановке
+    /// подкачки бары зависали бы навсегда).
+    pub fn tick(&mut self, ticks: f32, playing: bool) {
+        for ch in 0..2 {
+            let floor = self.target_db[ch].max(METER_MIN_DB);
+            self.bar_db[ch] = (self.bar_db[ch] - BAR_FALL_DB * ticks).max(floor);
+            self.cap_db[ch] = (self.cap_db[ch] - CAP_FALL_DB * ticks).max(METER_MIN_DB);
+            if playing {
+                self.target_db[ch] =
+                    (self.target_db[ch] - BAR_FALL_DB * 0.7 * ticks).max(METER_MIN_DB);
+            }
+        }
+        for ch in 0..2 {
+            self.bar_db[ch] = self.bar_db[ch].max(self.target_db[ch]);
+            self.cap_db[ch] = self.cap_db[ch].max(self.bar_db[ch]);
+        }
+    }
+
+    /// Подача замера уровней (linear 0..1 на канал).
+    pub fn feed(&mut self, pl: f32, pr: f32) {
+        self.target_db[0] = db_of(pl);
+        self.target_db[1] = db_of(pr);
     }
 }
 
@@ -127,30 +162,17 @@ impl KtApp {
             None // между замерами target не трогаем (раньше сюда шли нули)
         };
         if let Some((pl, pr)) = sample {
-            for (ch, lin) in [(0usize, pl), (1, pr)] {
-                self.meter.target_db[ch] = db_of(lin);
-            }
+            self.meter.feed(pl, pr);
         }
-        // 2) спад к target и peak-hold (тик 25 мс, спады v1)
+        // 2) спад к target и peak-hold (тик 25 мс, спады v1) — чистая
+        // логика в MeterState::tick (тест 38)
         let ticks = (self.meter.last_tick.elapsed().as_millis() / 25).min(40) as f32;
         if ticks >= 1.0 {
             self.meter.last_tick = std::time::Instant::now();
-            for ch in 0..2 {
-                let floor = self.meter.target_db[ch].max(METER_MIN_DB);
-                self.meter.bar_db[ch] = (self.meter.bar_db[ch] - BAR_FALL_DB * ticks).max(floor);
-                self.meter.cap_db[ch] =
-                    (self.meter.cap_db[ch] - CAP_FALL_DB * ticks).max(METER_MIN_DB);
-                // target тоже медленно отпускаем (v1: 0.7×BAR_FALL), чтобы
-                // при остановке подкачки бары не зависали навсегда
-                if playing {
-                    self.meter.target_db[ch] =
-                        (self.meter.target_db[ch] - BAR_FALL_DB * 0.7 * ticks).max(METER_MIN_DB);
-                }
-            }
-        }
-        for ch in 0..2 {
-            self.meter.bar_db[ch] = self.meter.bar_db[ch].max(self.meter.target_db[ch]);
-            self.meter.cap_db[ch] = self.meter.cap_db[ch].max(self.meter.bar_db[ch]);
+            self.meter.tick(ticks, playing);
+        } else {
+            // клампы к target — и между тиками (подкачка выше спада)
+            self.meter.tick(0.0, false);
         }
 
         let (rect, response) = ui.allocate_exact_size(
@@ -476,5 +498,50 @@ impl KtApp {
         };
         self.player.set_master_gain(gain);
         response.on_hover_text("Мастер-громкость превью. Double-click: 0 dB. M: mute.");
+    }
+}
+
+#[cfg(test)]
+mod repaint_tests {
+    use super::*;
+
+    /// Тест 38 (п.1 v1.4): метры не держат 60 fps вечно. После остановки
+    /// подкачки (пауза, статичный target) бары/капы сходятся и
+    /// is_active() гаснет; во время движения — горит. Раньше условие
+    /// «бар выше минимума» залипало в true навсегда после первого звука.
+    #[test]
+    fn t38_meters_settle_and_release_repaint() {
+        let mut m = MeterState::default();
+        assert!(!m.is_active(), "тишина с нуля — неактивно");
+
+        // громкий замер при игре: движение началось
+        m.feed(0.9, 0.9);
+        m.tick(1.0, true);
+        assert!(m.is_active(), "бар едет к target — активно");
+
+        // пауза: target держит уровень на курсоре (фича п.2 v1.1) — бары
+        // сходятся к нему, капы спадают до баров, движение заканчивается
+        m.feed(0.5, 0.5);
+        for _ in 0..2000 {
+            m.tick(1.0, false);
+        }
+        assert!(
+            !m.is_active(),
+            "статичный показ уровня в паузе не должен требовать анимации: \
+             bar={:?} cap={:?} target={:?}",
+            m.bar_db,
+            m.cap_db,
+            m.target_db
+        );
+        // при этом уровень ПОКАЗЫВАЕТСЯ (не затух к минимуму — фича)
+        assert!(m.bar_db[0] > METER_MIN_DB + 1.0, "уровень на курсоре виден");
+
+        // игра без сигнала: target отпускается, всё затухает до минимума
+        m.feed(0.0, 0.0);
+        for _ in 0..2000 {
+            m.tick(1.0, true);
+        }
+        assert!(!m.is_active());
+        assert!((m.bar_db[0] - METER_MIN_DB).abs() < 0.1, "после игры затухли в пол");
     }
 }

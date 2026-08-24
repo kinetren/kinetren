@@ -409,6 +409,12 @@ impl Player {
     /// UI: составить кадр превью для момента t (выравнивается по сетке fps).
     /// Недостающие слои заказываются с Priority::Playback; вернётся
     /// (буфер RGBA, размер, все ли слои готовы).
+    /// Сетка кадров проекта — ключ кадра превью для UI (тест 39): тик,
+    /// выровненный по ней, меняется только на границе видеокадра.
+    pub fn video_grid(&self) -> kt_time::FpsGrid {
+        self.video.lock().unwrap().grid
+    }
+
     pub fn compose_preview(&self, t: Tick) -> (Vec<u8>, Quality, bool) {
         let q = self.preview_quality();
         let video = self.video.lock().unwrap();
@@ -644,10 +650,28 @@ fn prefetch_loop(
     // рендереры кэшируются до смены версии проекта: клонировать Project и
     // пересобирать графы каждые 100 мс было дорого даже в простое (п.1)
     let mut cached: Option<(u64, AudioRenderer, VideoRenderer)> = None;
+    // состояние последнего прохода: в простое (пауза, ничего не менялось)
+    // проход пропускается — раньше поток молотил 10 раз/с с десятками
+    // захватов мьютекса кэша даже при полной тишине (п.1 v1.4). Прогрев
+    // после seek/правки/смены качества сохраняется: любое изменение
+    // состояния снимает пропуск.
+    let mut last_state: Option<(i64, u64, u64, Quality)> = None;
     while !stop.load(Ordering::Acquire) {
         wake.wait_timeout(std::time::Duration::from_millis(100));
         if stop.load(Ordering::Acquire) {
             return;
+        }
+        {
+            let state = (
+                transport.playhead_frames(),
+                project_version.load(Ordering::Acquire),
+                transport.generation(),
+                *preview_quality.lock().unwrap(),
+            );
+            if !transport.is_playing() && last_state == Some(state) {
+                continue;
+            }
+            last_state = Some(state);
         }
         loop_stats.prefetch_passes.fetch_add(1, Ordering::Relaxed);
         let version = project_version.load(Ordering::Acquire);
