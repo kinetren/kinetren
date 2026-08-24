@@ -1553,27 +1553,30 @@ pub struct PendingMorph {
 #[derive(Default)]
 pub struct CoverageCache {
     stamp: Option<(u64, u64, (u32, u32))>,
-    pub per_clip: HashMap<ClipId, Vec<std::ops::Range<i64>>>,
+    /// Arc: снапшот на кадр — клон указателя, не карты (п.1 v1.4).
+    pub per_clip: Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>>,
 }
 
 /// Кэш имён клипов (п.1: HashMap'ы и O(n²) suppress пересобирались кадр).
 #[derive(Default)]
 pub struct NamesCache {
     rev: Option<u64>,
-    pub names: HashMap<ClipId, String>,
-    pub suppress: std::collections::HashSet<ClipId>,
+    /// Arc: снапшоты на кадр — клон указателя, не структур (п.1 v1.4).
+    pub names: Arc<HashMap<ClipId, String>>,
+    pub suppress: Arc<std::collections::HashSet<ClipId>>,
+    pub media_paths: Arc<HashMap<MediaId, String>>,
 }
 
 impl KtApp {
     /// Runs покрытия per-clip; пересчёт только при смене epoch кэша,
     /// версии модели или качества превью.
-    pub fn coverage_runs(&mut self) -> &HashMap<ClipId, Vec<std::ops::Range<i64>>> {
+    pub fn coverage_runs(&mut self) -> Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>> {
         use kt_time::AUDIO_BURST_FRAMES;
         let q = self.player.preview_quality();
         let stamp = (self.player.cache.epoch(), self.model_rev, (q.width, q.height));
         if self.coverage_cache.stamp != Some(stamp) {
             self.coverage_cache.stamp = Some(stamp);
-            self.coverage_cache.per_clip.clear();
+            let mut per_clip = HashMap::new();
             for c in &self.model.project().clips {
                 let (kind, b0, b1) = match c.kind {
                     ClipKind::Audio => {
@@ -1596,18 +1599,26 @@ impl KtApp {
                     kind,
                     b0..b1.max(b0 + 1),
                 );
-                self.coverage_cache.per_clip.insert(c.id, runs);
+                per_clip.insert(c.id, runs);
             }
+            self.coverage_cache.per_clip = Arc::new(per_clip);
         }
-        &self.coverage_cache.per_clip
+        self.coverage_cache.per_clip.clone()
     }
 
     /// Имена клипов и множество «подавить имя» (партнёр пары) по model_rev.
-    pub fn names(&mut self) -> (&HashMap<ClipId, String>, &std::collections::HashSet<ClipId>) {
+    #[allow(clippy::type_complexity)]
+    pub fn names(
+        &mut self,
+    ) -> (
+        Arc<HashMap<ClipId, String>>,
+        Arc<std::collections::HashSet<ClipId>>,
+        Arc<HashMap<MediaId, String>>,
+    ) {
         if self.names_cache.rev != Some(self.model_rev) {
             self.names_cache.rev = Some(self.model_rev);
-            self.names_cache.names.clear();
-            self.names_cache.suppress.clear();
+            let mut names = HashMap::new();
+            let mut suppress = std::collections::HashSet::new();
             let p = self.model.project();
             let media_names: HashMap<MediaId, String> = p
                 .media
@@ -1622,7 +1633,7 @@ impl KtApp {
                 .collect();
             for c in &p.clips {
                 if let Some(n) = media_names.get(&c.media) {
-                    self.names_cache.names.insert(c.id, n.clone());
+                    names.insert(c.id, n.clone());
                 }
                 // подавить имя у АУДИО-половины A/V-пары (рисуется на видео)
                 if c.kind == ClipKind::Audio
@@ -1631,11 +1642,19 @@ impl KtApp {
                         o.kind == ClipKind::Video && o.link_group == Some(g) && o.media == c.media
                     })
                 {
-                    self.names_cache.suppress.insert(c.id);
+                    suppress.insert(c.id);
                 }
             }
+            self.names_cache.names = Arc::new(names);
+            self.names_cache.suppress = Arc::new(suppress);
+            self.names_cache.media_paths =
+                Arc::new(p.media.iter().map(|m| (m.id, m.path.clone())).collect());
         }
-        (&self.names_cache.names, &self.names_cache.suppress)
+        (
+            self.names_cache.names.clone(),
+            self.names_cache.suppress.clone(),
+            self.names_cache.media_paths.clone(),
+        )
     }
 }
 

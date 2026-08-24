@@ -8,7 +8,6 @@ use eframe::egui;
 use kt_cache::BurstKind;
 use kt_model::*;
 use kt_time::{AUDIO_BURST_FRAMES, Tick};
-use std::collections::HashMap;
 
 pub const STRIPES_H: f32 = 11.0; // 4+1+4+2: глобальные полоски кэша
 pub const RULER_H: f32 = 22.0 + STRIPES_H;
@@ -177,9 +176,9 @@ impl KtApp {
 
     #[allow(clippy::too_many_lines)]
     pub fn draw_timeline(&mut self, ui: &mut egui::Ui) {
-        // один проход coverage-опросов на кадр (кэш по epoch, п.1)
-        let coverage_snapshot: HashMap<ClipId, Vec<std::ops::Range<i64>>> =
-            self.coverage_runs().clone();
+        // один проход coverage-опросов на кадр (кэш по epoch, п.1);
+        // Arc-снапшот — клон указателя, не карты (п.1 v1.4)
+        let coverage_snapshot = self.coverage_runs();
         let full = ui.available_rect_before_wrap();
         let gutter =
             egui::Rect::from_min_max(full.min, egui::pos2(full.left() + GUTTER_W, full.bottom()));
@@ -289,7 +288,7 @@ impl KtApp {
                     ClipKind::Video => (c.source_in.0, c.source_in.0 + c.duration.0),
                 };
                 let _ = (kind, b0, b1);
-                for run in coverage_snapshot.get(&c.id).cloned().unwrap_or_default() {
+                for run in coverage_snapshot.get(&c.id).map(|v| v.as_slice()).unwrap_or(&[]) {
                     let (t0, t1) = match c.kind {
                         ClipKind::Audio => (
                             c.start.0
@@ -987,12 +986,8 @@ impl KtApp {
         }
 
         // ---- клипы -----------------------------------------------------------------
-        // кэши по model_rev (п.1: HashMap'ы и O(n²) пересобирались кадр)
-        let (names_ref, suppress_ref) = self.names();
-        let media_names: HashMap<ClipId, String> = names_ref.clone();
-        let suppress_name: std::collections::HashSet<ClipId> = suppress_ref.clone();
-        let media_paths: HashMap<MediaId, String> =
-            self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect();
+        // кэши по model_rev; Arc-снапшоты — клоны указателей (п.1 v1.4)
+        let (media_names, suppress_name, media_paths) = self.names();
         let peaks = self.peaks.lock().unwrap();
         let offline = self.offline.lock().unwrap().clone();
 
@@ -1190,6 +1185,9 @@ impl KtApp {
                 let src_in_frames = Tick(eff_src_in.max(0)).to_audio_frames() as f64;
                 let col_l = egui::Color32::from_rgba_unmultiplied(170, 210, 255, 230);
                 let col_r = egui::Color32::from_rgba_unmultiplied(230, 190, 255, 230);
+                // один меш на клип вместо 2 line_segment на ПИКСЕЛЬ
+                // (п.1 v1.4: тысячи шейпов за кадр на широких клипах)
+                let mut mesh = egui::Mesh::default();
                 let mut x = clip_rect.left();
                 while x < clip_rect.right() {
                     let tl0 = x_to_tick(x) - start;
@@ -1198,20 +1196,29 @@ impl KtApp {
                         let bi = (f0 / block) as usize;
                         if let Some(&(mn, mx)) = left_ch.get(bi) {
                             let amp = (mx.abs().max(mn.abs())) as f32 / 32767.0;
-                            painter.line_segment(
-                                [egui::pos2(x, mid), egui::pos2(x, mid - (amp * half).max(0.5))],
-                                egui::Stroke::new(1.0, col_l),
+                            mesh.add_colored_rect(
+                                egui::Rect::from_min_max(
+                                    egui::pos2(x, mid - (amp * half).max(0.5)),
+                                    egui::pos2(x + 1.0, mid),
+                                ),
+                                col_l,
                             );
                         }
                         if let Some(&(mn, mx)) = right_ch.get(bi) {
                             let amp = (mx.abs().max(mn.abs())) as f32 / 32767.0;
-                            painter.line_segment(
-                                [egui::pos2(x, mid), egui::pos2(x, mid + (amp * half).max(0.5))],
-                                egui::Stroke::new(1.0, col_r),
+                            mesh.add_colored_rect(
+                                egui::Rect::from_min_max(
+                                    egui::pos2(x, mid),
+                                    egui::pos2(x + 1.0, mid + (amp * half).max(0.5)),
+                                ),
+                                col_r,
                             );
                         }
                     }
                     x += 1.0;
+                }
+                if !mesh.is_empty() {
+                    painter.add(egui::Shape::mesh(mesh));
                 }
             }
 
@@ -1292,7 +1299,7 @@ impl KtApp {
                 ClipKind::Video => (c.source_in.0, c.source_in.0 + c.duration.0),
             };
             let _ = (cov_kind, b0, b1);
-            for run in coverage_snapshot.get(&c.id).cloned().unwrap_or_default() {
+            for run in coverage_snapshot.get(&c.id).map(|v| v.as_slice()).unwrap_or(&[]) {
                 let (t0, t1) = match c.kind {
                     ClipKind::Audio => (
                         c.start.0
