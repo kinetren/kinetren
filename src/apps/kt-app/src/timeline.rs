@@ -12,6 +12,12 @@ use kt_time::{AUDIO_BURST_FRAMES, Tick};
 pub const STRIPES_H: f32 = 11.0; // 4+1+4+2: глобальные полоски кэша
 pub const RULER_H: f32 = 22.0 + STRIPES_H;
 pub const GUTTER_W: f32 = 52.0;
+/// Единые пределы зума (п.17 р.6): 2e6 тиков/px = 22 с/px — 30-минутный
+/// проект целиком в окне ~80 px... на всю ширину ≈ 1.5 px/с и мельче.
+pub const TPP_MIN: f64 = 30.0;
+pub const TPP_MAX: f64 = 2_000_000.0;
+/// Лестница шагов руллера, тики: 1с/10с/1м/10м/1ч.
+const RULER_LADDER: [i64; 5] = [90_000, 900_000, 5_400_000, 54_000_000, 324_000_000];
 pub const EDGE_GRAB_PX: f32 = 7.0;
 pub const SNAP_PX: f64 = 10.0;
 pub const REGION_EDGE_PX: f32 = 8.0;
@@ -111,6 +117,47 @@ pub fn clip_color(path: &str, kind: ClipKind) -> egui::Color32 {
         (80 + (h / 7) % 120) as u8,
         (80 + (h / 17) % 120) as u8,
     )
+}
+
+/// Шаги руллера для зума (п.17 р.6, тест 60): минорные риски — минимальная
+/// ступень лестницы с >= 7 px, подписи — с >= 70 px. Раньше цикл шёл ПО
+/// СЕКУНДАМ и на глубоком зум-ауте давал тысячи шейпов за кадр.
+pub fn ruler_steps(tpp: f64) -> (i64, i64) {
+    let minor = RULER_LADDER
+        .iter()
+        .copied()
+        .find(|&st| st as f64 / tpp >= 7.0)
+        .unwrap_or(RULER_LADDER[RULER_LADDER.len() - 1]);
+    let label = RULER_LADDER
+        .iter()
+        .copied()
+        .find(|&st| st >= minor && st as f64 / tpp >= 70.0)
+        .unwrap_or(RULER_LADDER[RULER_LADDER.len() - 1]);
+    (minor, label)
+}
+
+/// Подпись времени руллера: мм:сс до часа, ч:мм:сс дальше (тест 60).
+pub fn format_ruler_time(ticks: i64) -> String {
+    let s = ticks / 90_000;
+    if s < 3600 {
+        format!("{}:{:02}", s / 60, s % 60)
+    } else {
+        format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
+    }
+}
+
+/// Порог снапа, тики (п.17 р.6, тест 60): пропорционален зуму БЕЗ верхнего
+/// клампа — прежний потолок 9000 тиков (0.1 c) на глубоком зум-ауте делал
+/// снап мёртвым (0.005 px при tpp=2e6).
+pub fn snap_threshold(tpp: f64) -> i64 {
+    ((SNAP_PX * tpp) as i64).max(1_080)
+}
+
+/// Зоны клипа по ширине (п.17 р.6, тест 60): у узких клипов (< 3 захватов)
+/// трим-зоны сжимаются до w/4 (мин 2 px) — раньше клип уже 14 px целиком
+/// состоял из трим-зон и его нельзя было перенести.
+pub fn edge_grab_for_width(w: f32) -> f32 {
+    if w >= 3.0 * EDGE_GRAB_PX { EDGE_GRAB_PX } else { (w / 4.0).max(2.0) }
 }
 
 /// Возврат окна к playhead при игре (п.14 р.6, тест 59): только в
@@ -257,7 +304,7 @@ impl KtApp {
 
     pub fn snap(&mut self, tick: i64, exclude: Option<ClipId>) -> i64 {
         // v1 snapTimeMs: порог 10 px, но не меньше 12 мс и не больше 100 мс
-        let threshold = ((SNAP_PX * self.ticks_per_px) as i64).clamp(1_080, 9_000);
+        let threshold = snap_threshold(self.ticks_per_px);
         let mut best = tick;
         let mut best_d = threshold + 1;
         for target in self.snap_targets(exclude) {
@@ -334,7 +381,7 @@ impl KtApp {
                     1.25
                 };
                 let anchor = view_start + (pos.x - rect.left()) as f64 * tpp;
-                tpp = (tpp * factor).clamp(30.0, 90_000.0);
+                tpp = (tpp * factor).clamp(TPP_MIN, TPP_MAX);
                 view_start = anchor - (pos.x - rect.left()) as f64 * tpp;
             } else if scroll.x != 0.0 || scroll.y != 0.0 {
                 // голое колесо (любая ось) = скролл по таймлайну (порт старого)
@@ -472,28 +519,39 @@ impl KtApp {
             }
         }
 
-        // ---- линейка --------------------------------------------------------
-        let sec_px = (90_000.0 / tpp) as f32;
-        let label_every = (70.0 / sec_px).ceil().max(1.0) as i64;
-        for s in (x_to_tick(rect.left()) / 90_000).max(0)..=(x_to_tick(rect.right()) / 90_000 + 1) {
-            let x = tick_to_x(s * 90_000);
-            let major = s % label_every == 0;
-            painter.line_segment(
-                [
+        // ---- линейка: лестница шагов (п.17 р.6), риски одним мешем ---------
+        let (minor_step, label_step) = ruler_steps(tpp);
+        let mut ruler_mesh = egui::Mesh::default();
+        let tick_col = egui::Color32::from_gray(70);
+        let t0 = (x_to_tick(rect.left()).max(0) / minor_step) * minor_step;
+        let t1 = x_to_tick(rect.right()) + minor_step;
+        let mut t = t0;
+        while t <= t1 {
+            let x = tick_to_x(t);
+            let major = t % label_step == 0;
+            ruler_mesh.add_colored_rect(
+                egui::Rect::from_min_max(
                     egui::pos2(x, rect.top() + STRIPES_H),
-                    egui::pos2(x, rect.top() + if major { RULER_H } else { STRIPES_H + 7.0 }),
-                ],
-                egui::Stroke::new(1.0, egui::Color32::from_gray(70)),
+                    egui::pos2(
+                        x + 1.0,
+                        rect.top() + if major { RULER_H } else { STRIPES_H + 7.0 },
+                    ),
+                ),
+                tick_col,
             );
             if major {
                 painter.text(
                     egui::pos2(x + 4.0, rect.top() + STRIPES_H + 3.0),
                     egui::Align2::LEFT_TOP,
-                    format!("{}:{:02}", s / 60, s % 60),
+                    format_ruler_time(t),
                     egui::FontId::proportional(10.5),
                     egui::Color32::from_gray(150),
                 );
             }
+            t += minor_step;
+        }
+        if !ruler_mesh.is_empty() {
+            painter.add(egui::Shape::mesh(ruler_mesh));
         }
         painter.line_segment(
             [
@@ -796,9 +854,12 @@ impl KtApp {
                 if pos.x < x0 - 2.0 || pos.x > x1 + 2.0 {
                     continue;
                 }
-                let zone = if (pos.x - x0).abs() <= EDGE_GRAB_PX {
+                // у узких клипов трим-зоны сжимаются — середина всегда
+                // Body (п.17 р.6, тест 60: клип <14px нельзя было двигать)
+                let grab = edge_grab_for_width(x1 - x0);
+                let zone = if (pos.x - x0).abs() <= grab {
                     ClipZone::TrimStart
-                } else if (pos.x - x1).abs() <= EDGE_GRAB_PX {
+                } else if (pos.x - x1).abs() <= grab {
                     ClipZone::TrimEnd
                 } else if c.kind == ClipKind::Audio
                     && x1 - x0 > 40.0
@@ -1556,7 +1617,7 @@ impl KtApp {
             );
             let at = self.snap(g.x_to_tick(pos.x).max(0), None);
             let x0 = g.tick_to_x(at);
-            let ghost_w = ((90_000.0 * 3.0) / self.ticks_per_px) as f32; // ~3 c
+            let ghost_w = (((90_000.0 * 3.0) / self.ticks_per_px) as f32).max(3.0); // ~3 c, мин 3 px
             let ghost = egui::Rect::from_min_max(
                 egui::pos2(x0, top + 1.0),
                 egui::pos2((x0 + ghost_w).min(rect.right()), top + lane_h - 3.0),
@@ -1862,6 +1923,41 @@ impl KtApp {
 #[cfg(test)]
 mod geom_tests {
     use super::*;
+
+    /// Тест 60 (п.17 р.6): глубокий зум-аут — лестница руллера, формат
+    /// времени, пропорциональный порог снапа, зоны узкого клипа.
+    #[test]
+    fn t60_zoom_out_support() {
+        // лестница: на всём диапазоне minor >= 7px, label >= 70px
+        for tpp in [30.0f64, 900.0, 9_000.0, 90_000.0, 500_000.0, 2_000_000.0] {
+            let (minor, label) = ruler_steps(tpp);
+            assert!(minor as f64 / tpp >= 7.0 || minor == 324_000_000, "minor@{tpp}");
+            assert!(label as f64 / tpp >= 70.0 || label == 324_000_000, "label@{tpp}");
+            assert!(label % minor == 0, "label кратен minor@{tpp}");
+        }
+        // на мелком зуме — секунды, как раньше
+        assert_eq!(ruler_steps(900.0).0, 90_000);
+        // формат: мм:сс до часа, ч:мм:сс дальше
+        assert_eq!(format_ruler_time(0), "0:00");
+        assert_eq!(format_ruler_time(59 * 90_000), "0:59");
+        assert_eq!(format_ruler_time(3599 * 90_000), "59:59");
+        assert_eq!(format_ruler_time(3600 * 90_000), "1:00:00");
+        // порог снапа растёт с зумом, без мёртвого потолка
+        assert!(snap_threshold(30.0) >= 1_080);
+        assert!(snap_threshold(2_000_000.0) > snap_threshold(90_000.0));
+        assert_eq!(snap_threshold(90_000.0), 900_000, "10px при 90k тиков/px");
+        // узкий клип: середина всегда Body
+        assert_eq!(edge_grab_for_width(100.0), EDGE_GRAB_PX);
+        let g = edge_grab_for_width(10.0);
+        assert!((2.0..=2.5).contains(&g), "узкий клип: захват ~w/4, got {g}");
+        // 30-мин клип при узком окне получает крупную ступень тумбов
+        let step = crate::thumbs::thumb_source_step(
+            kt_time::Tick(30 * 60 * 90_000),
+            600.0,
+            150.0,
+        );
+        assert_eq!(step, 10_800_000, "2-минутная ступень");
+    }
 
     /// Тест 59 (п.14 р.6): follow-правила возврата окна к playhead.
     #[test]

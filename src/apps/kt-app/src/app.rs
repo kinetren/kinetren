@@ -328,8 +328,11 @@ impl KtApp {
         }
         // восстановление вьюпорта/курсора (п.13, v1: fromJson)
         if let Some(ui) = ui_state {
+            // сперва tpp (единые пределы п.17), потом view_start — раньше
+            // view_start клампился по ещё-дефолтному tpp
+            app.ticks_per_px =
+                ui.ticks_per_px.clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
             app.view_start = ui.view_start.max(-40.0 * app.ticks_per_px);
-            app.ticks_per_px = ui.ticks_per_px.clamp(30.0, 30_000.0);
             app.player.seek(Tick(ui.cursor.max(0)));
             app.lane_order = ui.lane_order; // п.6 v1.4 (нормализуется в draw)
         }
@@ -640,7 +643,7 @@ impl KtApp {
     pub fn marker_toggle_at_cursor(&mut self) {
         let at = self.player.transport.playhead();
         // магнит как в старом: удалить ближайший в пределах порога, иначе добавить
-        let threshold = ((crate::timeline::SNAP_PX * self.ticks_per_px) as i64).clamp(900, 13_500);
+        let threshold = ((crate::timeline::SNAP_PX * self.ticks_per_px) as i64).max(900);
         let near = self
             .model
             .project()

@@ -33,14 +33,15 @@ pub struct ThumbKey {
 /// зависимость от зума давала новый набор ключей на каждый щелчок колеса —
 /// филмстрип перегружался целиком. Соседние ступени переиспользуют кэш
 /// (ключи крупной ступени — подмножество мелкой).
-pub const THUMB_STEP_LADDER: [i64; 5] = [45_000, 90_000, 180_000, 450_000, 1_350_000]; // 0.5/1/2/5/15 c
+pub const THUMB_STEP_LADDER: [i64; 7] =
+    [45_000, 90_000, 180_000, 450_000, 1_350_000, 4_050_000, 10_800_000]; // 0.5/1/2/5/15/45 c/2 м
 
 pub fn thumb_source_step(clip_dur: Tick, inner_width_px: f32, thumb_w_px: f32) -> i64 {
     if clip_dur.0 <= 5 * 90_000 {
         // короткий клип: один тумб, ключ стабилен (кратен 0.5 c)
         return THUMB_STEP_LADDER[0].max(clip_dur.0 / 2).max(45_000);
     }
-    let slots = (inner_width_px / thumb_w_px).clamp(1.0, 96.0) as i64;
+    let slots = (inner_width_px / thumb_w_px).max(1.0) as i64;
     let rough = clip_dur.0 / slots.max(1);
     // ближайшая ступень СВЕРХУ (реже — дешевле)
     *THUMB_STEP_LADDER
