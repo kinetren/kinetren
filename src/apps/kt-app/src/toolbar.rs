@@ -77,11 +77,7 @@ impl KtApp {
             if playing { crate::icons::PAUSE } else { crate::icons::PLAY },
             "Play/Pause (Space)",
         ) {
-            if playing {
-                self.player.pause();
-            } else {
-                self.on_play();
-            }
+            self.on_transport_toggle();
         }
         if self.tb(ui, crate::icons::SKIP_BACK, "В начало") {
             self.player.seek(Tick(0));

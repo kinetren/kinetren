@@ -58,6 +58,11 @@ pub struct KtApp {
     pub preview_detached: bool,
     /// Экономный UI: 30 fps при воспроизведении (п.1 раунда 5, слабые GPU).
     pub ui_economy: bool,
+    /// Момент последней паузы (двойной Space = стоп, п.15 раунда 6).
+    pub paused_at: Option<std::time::Instant>,
+    /// Окно следует за курсором при игре; гаснет при ручном пане/зуме
+    /// (п.14 раунда 6) — используется в L2, ставится в on_play.
+    pub follow_playhead: bool,
     /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
     preview_buf: Vec<u8>,
     /// Троттлинг glow-мипа: каждые N новых кадров (амбиент не мерцает).
@@ -186,6 +191,8 @@ impl KtApp {
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
+            paused_at: None,
+            follow_playhead: false,
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -262,6 +269,8 @@ impl KtApp {
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
+            paused_at: None,
+            follow_playhead: false,
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -314,6 +323,7 @@ impl KtApp {
         }
         // KT_AUTOPLAY=1 — сразу играть (отладка перф без ввода)
         if std::env::var_os("KT_AUTOPLAY").is_some() {
+            app.follow_playhead = true;
             app.player.play();
         }
         // восстановление вьюпорта/курсора (п.13, v1: fromJson)
@@ -336,24 +346,73 @@ impl KtApp {
         }
     }
 
-    /// Правила Play при регионе (п.4, поведение v1):
-    /// из паузы при непустом регионе курсор всегда уводится в начало
-    /// региона (свежий регион, курсор внутри, повторный Play после
-    /// авто-паузы на конце — все четыре правила пользователя).
-    pub fn play_start_position(region: Option<(i64, i64)>) -> Option<i64> {
+    /// Транспорт-машина Space/кнопки (п.15 раунда 6, тест 58; заменяет
+    /// прежние правила «из паузы при регионе — всегда в начало», санкция
+    /// пользователя):
+    /// - играет → пауза, курсор на месте;
+    /// - пауза + повторный Space в течение DOUBLE_PAUSE_MS → «стоп»:
+    ///   курсор в начало региона (или 0);
+    /// - пауза + Space позже → resume С ТОГО ЖЕ места; но при включённом
+    ///   loop и курсоре ВНЕ региона — с начала региона (wrap транспорта
+    ///   работает только изнутри региона).
+    pub fn transport_toggle(
+        playing: bool,
+        pause_recent: bool,
+        cursor: i64,
+        region: Option<(i64, i64)>,
+        loop_enabled: bool,
+    ) -> TransportAction {
+        if playing {
+            return TransportAction::Pause;
+        }
+        let region = region.filter(|(s, e)| e > s);
+        if pause_recent {
+            return TransportAction::SeekStart(region.map(|(s, _)| s).unwrap_or(0));
+        }
         match region {
-            Some((s, e)) if e > s => Some(s),
-            _ => None,
+            Some((s, e)) if loop_enabled && !(cursor >= s && cursor < e) => {
+                TransportAction::Resume { seek: Some(s) }
+            }
+            _ => TransportAction::Resume { seek: None },
         }
     }
 
-    /// Единая точка запуска воспроизведения (Space, кнопка ▶).
-    pub fn on_play(&mut self) {
+    /// Единая точка Space/кнопки Play-Pause (обе идут сюда).
+    pub fn on_transport_toggle(&mut self) {
         let p = self.model.project();
         let region = p.region.map(|r| (r.start.0, r.end.0));
-        if let Some(start) = Self::play_start_position(region) {
-            self.player.seek(Tick(start));
+        let pause_recent = self
+            .paused_at
+            .map(|t| t.elapsed().as_millis() < DOUBLE_PAUSE_MS)
+            .unwrap_or(false);
+        match Self::transport_toggle(
+            self.player.transport.is_playing(),
+            pause_recent,
+            self.player.transport.playhead().0,
+            region,
+            p.loop_enabled,
+        ) {
+            TransportAction::Pause => {
+                self.player.pause();
+                self.paused_at = Some(std::time::Instant::now());
+            }
+            TransportAction::SeekStart(at) => {
+                self.player.seek(Tick(at));
+                self.paused_at = None;
+            }
+            TransportAction::Resume { seek } => {
+                if let Some(at) = seek {
+                    self.player.seek(Tick(at));
+                }
+                self.paused_at = None;
+                self.on_play();
+            }
         }
+    }
+
+    /// Запуск воспроизведения с текущей позиции (resume-семантика п.15).
+    pub fn on_play(&mut self) {
+        self.follow_playhead = true;
         self.player.play();
     }
 
@@ -612,6 +671,9 @@ impl KtApp {
 
     pub fn clear_region(&mut self) {
         self.model.set_region(None);
+        // п.16 раунда 6: без региона включённый loop — «лампочка горит,
+        // не зацикливает» (и переживал рестарт) — гасим вместе
+        self.model.set_loop_enabled(false);
         self.on_region_changed();
     }
 
@@ -1703,11 +1765,7 @@ impl KtApp {
                 || (i.modifiers.ctrl && i.key_pressed(egui::Key::V)),
         });
         if k.space {
-            if self.player.transport.is_playing() {
-                self.player.pause();
-            } else {
-                self.on_play();
-            }
+            self.on_transport_toggle();
         }
         if k.cut {
             self.cut_action();
@@ -1805,6 +1863,17 @@ impl KtApp {
         }
     }
 }
+/// Действие транспорт-машины Space (п.15 раунда 6, тест 58).
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransportAction {
+    Pause,
+    Resume { seek: Option<i64> },
+    SeekStart(i64),
+}
+
+/// Окно «двойного Space» = стоп (мс).
+pub const DOUBLE_PAUSE_MS: u128 = 400;
+
 /// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
 /// цели заморожены в момент запуска, kind выбран пунктом меню.
 pub struct PendingMorph {
@@ -2700,13 +2769,34 @@ pub fn run() -> eframe::Result {
 mod repaint_tests {
     use super::repaint_delay;
 
-    /// Правила регион-плей (п.4): из паузы при регионе — всегда в начало.
+    /// Тест 58 (п.15 раунда 6; заменяет прежние правила «из паузы при
+    /// регионе — всегда в начало» с санкции пользователя): транспорт-машина
+    /// Space — пауза на месте; resume с места; двойной Space (в окне
+    /// DOUBLE_PAUSE_MS) = стоп в начало региона/0; resume при loop и
+    /// курсоре вне региона — с начала региона (wrap работает изнутри).
     #[test]
-    fn t_region_play_rules() {
-        use super::KtApp;
-        assert_eq!(KtApp::play_start_position(Some((100, 200))), Some(100));
-        assert_eq!(KtApp::play_start_position(Some((100, 100))), None, "пустой регион");
-        assert_eq!(KtApp::play_start_position(None), None);
+    fn t58_transport_toggle_rules() {
+        use super::{KtApp, TransportAction as A};
+        let toggle = KtApp::transport_toggle;
+        // играет → пауза (курсор не трогаем)
+        assert_eq!(toggle(true, false, 500, Some((100, 200)), true), A::Pause);
+        // пауза → resume с места (регион есть, но курсор внутри/loop любой)
+        assert_eq!(toggle(false, false, 150, Some((100, 200)), true), A::Resume { seek: None });
+        assert_eq!(toggle(false, false, 150, Some((100, 200)), false), A::Resume { seek: None });
+        assert_eq!(toggle(false, false, 5, None, false), A::Resume { seek: None });
+        // loop включён, курсор ВНЕ региона → resume с начала региона
+        assert_eq!(
+            toggle(false, false, 500, Some((100, 200)), true),
+            A::Resume { seek: Some(100) }
+        );
+        // loop выключен, курсор вне региона → всё равно с места
+        assert_eq!(toggle(false, false, 500, Some((100, 200)), false), A::Resume { seek: None });
+        // двойной Space в паузе → стоп в начало региона (или 0)
+        assert_eq!(toggle(false, true, 150, Some((100, 200)), false), A::SeekStart(100));
+        assert_eq!(toggle(false, true, 150, None, false), A::SeekStart(0));
+        // пустой регион игнорируется
+        assert_eq!(toggle(false, true, 150, Some((100, 100)), true), A::SeekStart(0));
+        assert_eq!(toggle(false, false, 500, Some((100, 100)), true), A::Resume { seek: None });
     }
 
     /// Тест 39 (п.1 v1.4): ключ превью выровнен по сетке fps — внутри
