@@ -51,6 +51,11 @@ pub struct AudioShared {
     /// playhead двигается в момент ЗАБОРА кадров колбэком, а слышны они на
     /// эту задержку позже — видео для «слышимого сейчас» момента (п.30).
     pub output_latency_frames: AtomicI64,
+    /// Сглаженная задержка (EMA в render-потоке): сырая оценка от
+    /// PipeWire/ALSA дрожит на ±кадр между колбэками → ключ кадра превью
+    /// прыгал через ячейки сетки и назад — видимые рывки при честном
+    /// декоде (п.1 раунда 5). Видео читает ЭТО поле.
+    pub latency_smooth: AtomicI64,
 }
 
 /// Пиковые уровни того, что уходит в кольцо (f32-биты; UI делает dB,
@@ -150,6 +155,7 @@ impl Player {
             flush: AtomicBool::new(false),
             callback_underruns: AtomicU64::new(0),
             playback_rate: AtomicU32::new(1.0f32.to_bits()),
+            latency_smooth: AtomicI64::new(0),
             output_latency_frames: AtomicI64::new(0),
         });
         let meters = Arc::new(Meters { peak_l: AtomicU32::new(0), peak_r: AtomicU32::new(0) });
@@ -403,7 +409,7 @@ impl Player {
         if !self.transport.is_playing() {
             return self.transport.playhead();
         }
-        let latency = self.shared.output_latency_frames.load(Ordering::Acquire);
+        let latency = self.shared.latency_smooth.load(Ordering::Acquire);
         let head = self.transport.playhead_frames();
         let region = *self.loop_region.lock().unwrap();
         let dir: i64 =
@@ -531,6 +537,12 @@ fn audio_render_loop(ctx: RenderCtx) {
             shared.consumed_frames.store(0, Ordering::Release);
         }
 
+        {
+            // EMA задержки вывода (см. AudioShared::latency_smooth)
+            let raw = shared.output_latency_frames.load(Ordering::Acquire);
+            let sm = shared.latency_smooth.load(Ordering::Acquire);
+            shared.latency_smooth.store(sm + (raw - sm) / 8, Ordering::Release);
+        }
         let region = *loop_region.lock().unwrap();
         // направление транспорта — знак playback_rate (J4 v1.4). Смена
         // знака = мини-seek без бампа generation: сброс FX, кольца и

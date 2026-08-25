@@ -293,6 +293,21 @@ impl KtApp {
             coverage_cache: Default::default(),
             names_cache: Default::default(),
         };
+        // loop-регион загруженного проекта — в плеер сразу (раньше
+        // синхронизация была только в on_region_changed, т.е. только при
+        // ПРАВКЕ региона — загруженный loop не зацикливался вовсе)
+        {
+            let p = app.model.project();
+            let region = p
+                .region
+                .filter(|_| p.loop_enabled)
+                .map(|r| kt_time::TickRange::new(r.start, r.end));
+            app.player.set_loop_region(region);
+        }
+        // KT_AUTOPLAY=1 — сразу играть (отладка перф без ввода)
+        if std::env::var_os("KT_AUTOPLAY").is_some() {
+            app.player.play();
+        }
         // восстановление вьюпорта/курсора (п.13, v1: fromJson)
         if let Some(ui) = ui_state {
             app.view_start = ui.view_start.max(-40.0 * app.ticks_per_px);
@@ -1135,7 +1150,22 @@ impl KtApp {
         // был сырой тик — при игре он менялся каждый UI-кадр и текстура
         // перезаливалась в GPU 60 раз/с независимо от fps проекта
         // (до ~500 МБ/с на 1080p — главный источник «визуально <30 fps»).
-        let key_now = (preview_key_tick(self.player.video_grid(), t), (q.width, q.height));
+        let grid = self.player.video_grid();
+        let mut key_tick = preview_key_tick(grid, t);
+        // при игре ключ не откатывается назад на мелкий джиттер latency
+        // (откат больше 2 ячеек = loop-wrap/seek — пропускаем легитимно);
+        // пропуск ВПЕРЁД больше чем на ячейку — считаем (V-skip, п.1 р.5)
+        if self.player.transport.is_playing()
+            && let Some((prev, _, _)) = self.preview_key
+        {
+            let step = grid.frame_step();
+            if key_tick < prev && prev - key_tick <= 2 * step {
+                key_tick = prev;
+            } else if key_tick > prev + step {
+                self.perf.video_cells_skipped += ((key_tick - prev) / step - 1) as u64;
+            }
+        }
+        let key_now = (key_tick, (q.width, q.height));
         let need = match self.preview_key {
             Some((pt, pq, was_complete)) => pt != key_now.0 || pq != key_now.1 || !was_complete,
             None => true,
@@ -1523,6 +1553,10 @@ impl KtApp {
         if let Some(g) = &self.gpu_info {
             ui.weak(format!("GPU: {g}"));
         }
+        ui.weak(format!(
+            "V-показано: {} | V-пропущено ячеек: {}",
+            self.perf.video_frames_shown, self.perf.video_cells_skipped
+        ));
         ui.checkbox(&mut self.ui_economy, "Экономный UI (30 fps при игре)")
             .on_hover_text("Для слабых GPU: вдвое меньше перерисовок при воспроизведении");
         // кумулятивы FFmpeg-слоя (порт строки avcpp open/read/vdec/adec v1)
@@ -2008,6 +2042,8 @@ pub struct PerfState {
     /// Кумулятив реально показанных НОВЫХ видеокадров (выровненный ключ).
     pub video_frames_shown: u64,
     last_video_shown: u64,
+    /// Пропущенные ячейки сетки кадров при игре (диагностика джиттера).
+    pub video_cells_skipped: u64,
     pub diag_open: bool,
     pub log: std::collections::VecDeque<String>,
     /// Дедуп подряд идущих одинаковых сообщений: (текст, повторов).
@@ -2063,6 +2099,7 @@ impl PerfState {
             frames: 0,
             video_frames_shown: 0,
             last_video_shown: 0,
+            video_cells_skipped: 0,
             diag_open: false,
             log: std::collections::VecDeque::new(),
             last_msg: None,
