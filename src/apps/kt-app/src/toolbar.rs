@@ -27,7 +27,106 @@ pub fn gradient_rect(
     painter.add(egui::Shape::mesh(mesh));
 }
 
+/// Кнопка окна borderless-титлбара, ИКОНКИ РИСУЮТСЯ painter'ом (п.22 р.6:
+/// шрифтовые глифы ✕/❐ рендерились «квадратиками»-tofu). kind: 0=свернуть,
+/// 1=развернуть/восстановить, 2=закрыть (красный ховер).
+fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(34.0, 22.0), egui::Sense::click());
+    let p = ui.painter();
+    if resp.hovered() {
+        let fill = if kind == 2 {
+            egui::Color32::from_rgb(178, 44, 44)
+        } else {
+            crate::theme::HOVER
+        };
+        p.rect_filled(rect, 0.0, fill);
+    }
+    let c = rect.center();
+    let s = egui::Stroke::new(1.2, egui::Color32::from_gray(210));
+    match kind {
+        0 => {
+            p.line_segment([c + egui::vec2(-4.5, 3.0), c + egui::vec2(4.5, 3.0)], s);
+        }
+        1 if maximized => {
+            // «восстановить»: два наложенных квадрата
+            let r0 = egui::Rect::from_center_size(c + egui::vec2(1.5, -1.5), egui::vec2(7.0, 7.0));
+            let r1 = egui::Rect::from_center_size(c + egui::vec2(-1.5, 1.5), egui::vec2(7.0, 7.0));
+            p.rect_stroke(r0, 0.0, s, egui::StrokeKind::Middle);
+            p.rect_filled(r1, 0.0, crate::theme::WINDOW);
+            p.rect_stroke(r1, 0.0, s, egui::StrokeKind::Middle);
+        }
+        1 => {
+            p.rect_stroke(
+                egui::Rect::from_center_size(c, egui::vec2(8.5, 8.5)),
+                0.0,
+                s,
+                egui::StrokeKind::Middle,
+            );
+        }
+        _ => {
+            p.line_segment([c + egui::vec2(-4.0, -4.0), c + egui::vec2(4.0, 4.0)], s);
+            p.line_segment([c + egui::vec2(-4.0, 4.0), c + egui::vec2(4.0, -4.0)], s);
+        }
+    }
+    resp
+}
+
 impl KtApp {
+    /// Титлбар borderless-окна СВЕРХУ (п.22 р.6): имя проекта, драг,
+    /// double-click = maximize, кнопки окна справа. Драг за нижний тулбар
+    /// тоже остаётся.
+    pub fn draw_titlebar(&mut self, ui: &mut egui::Ui) {
+        let strip = egui::Rect::from_min_size(
+            ui.available_rect_before_wrap().min,
+            egui::vec2(ui.available_width(), 24.0),
+        );
+        let painter = ui.painter();
+        painter.rect_filled(strip, 0.0, crate::theme::WINDOW);
+        painter.line_segment(
+            [strip.left_bottom(), strip.right_bottom()],
+            egui::Stroke::new(1.0, crate::theme::SEAM),
+        );
+        painter.text(
+            egui::pos2(strip.left() + 10.0, strip.center().y),
+            egui::Align2::LEFT_CENTER,
+            &self.last_title,
+            egui::FontId::proportional(12.0),
+            egui::Color32::from_gray(150),
+        );
+        let bg = ui.interact(strip, ui.id().with("titlebar-top-drag"), egui::Sense::click_and_drag());
+        if bg.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if bg.double_clicked() {
+            let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+        }
+        let mut right = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_max(
+                    egui::pos2(strip.right() - 120.0, strip.top()),
+                    egui::pos2(strip.right(), strip.bottom() - 1.0),
+                ))
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        right.spacing_mut().item_spacing.x = 0.0;
+        let ctx = right.ctx().clone();
+        if window_button(&mut right, 2, false).on_hover_text("Закрыть").clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        if window_button(&mut right, 1, max)
+            .on_hover_text(if max { "Восстановить" } else { "Развернуть" })
+            .clicked()
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+        }
+        if window_button(&mut right, 0, false).on_hover_text("Свернуть").clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+        ui.advance_cursor_after_rect(strip);
+    }
+
     /// Кнопка тулбара: фиксированный размер, ховер-подсказка + статус-хинт.
     fn tb(&mut self, ui: &mut egui::Ui, label: &str, hint: &str) -> bool {
         let r =
@@ -76,31 +175,6 @@ impl KtApp {
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         ui.advance_cursor_after_rect(strip);
-        // кнопки окна _ □ × справа (borderless, п.22 р.6)
-        {
-            let mut right = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(strip.shrink2(egui::vec2(6.0, 2.0)))
-                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
-            );
-            let ctx = right.ctx().clone();
-            if right.button(egui::RichText::new("✕").size(14.0)).on_hover_text("Закрыть").clicked()
-            {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-            if right
-                .button(egui::RichText::new(if max { "❐" } else { "□" }).size(13.0))
-                .on_hover_text(if max { "Восстановить" } else { "Развернуть" })
-                .clicked()
-            {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-            }
-            if right.button(egui::RichText::new("—").size(13.0)).on_hover_text("Свернуть").clicked()
-            {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            }
-        }
         let ui = &mut child;
         let playing = self.player.transport.is_playing();
         if self.tb(

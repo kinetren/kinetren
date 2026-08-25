@@ -375,8 +375,7 @@ impl KtApp {
         let rect = egui::Rect::from_min_max(egui::pos2(gutter.right(), full.top()), full.max);
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
         let painter = ui.painter_at(full);
-        painter.rect_filled(full, 0.0, egui::Color32::from_gray(22));
-        painter.rect_filled(gutter, 0.0, egui::Color32::from_gray(28));
+        painter.rect_filled(full, 0.0, crate::theme::TL_BG);
         // заголовки дорожек интерактивны: драг = реордер (п.7), ПКМ = меню
         // удаления/вставки (п.8)
         let gutter_resp =
@@ -664,22 +663,31 @@ impl KtApp {
         let lane_top = |kind: ClipKind, lane: u32| -> f32 { geom.lane_top(kind, lane) };
         let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
         let morph_lane_at_y = |y: f32| -> Option<u32> { geom.morph_lane_at_y(y) };
+        let mut gutter_labels: Vec<(String, f32)> = Vec::with_capacity(geom.rows.len());
         for (row, &(kind, lane)) in geom.rows.iter().enumerate() {
             let y = geom.row_top(row);
+            // фон дорожки тянется ПОД gutter — градиент ниже «растворяет»
+            // номерную полосу в дорожках (п.20 р.6)
             let lane_rect = egui::Rect::from_min_max(
-                egui::pos2(rect.left(), y),
+                egui::pos2(full.left(), y),
                 egui::pos2(rect.right(), y + lane_h - 2.0),
             );
             // фоны дорожек в тонах старого: видео синеватый, аудио тёплый,
-            // morph фиолетовый (v1: QColor(42,32,58))
+            // morph фиолетовый (темнее — тема р.6)
             let (fill, label) = match kind {
-                LaneKind::Video => (egui::Color32::from_rgb(30, 36, 44), format!("V{}", lane + 1)),
-                LaneKind::Audio => (egui::Color32::from_rgb(38, 32, 32), format!("A{}", lane + 1)),
-                LaneKind::Morph => (egui::Color32::from_rgb(42, 32, 58), format!("M{}", lane + 1)),
+                LaneKind::Video => (crate::theme::LANE_VIDEO, format!("V{}", lane + 1)),
+                LaneKind::Audio => (crate::theme::LANE_AUDIO, format!("A{}", lane + 1)),
+                LaneKind::Morph => (crate::theme::LANE_MORPH, format!("M{}", lane + 1)),
             };
             painter.rect_filled(lane_rect, 0.0, fill);
+            gutter_labels.push((label, y + lane_h * 0.5));
+        }
+        // gutter: горизонтальный градиент вместо сплошной полосы (п.20 р.6 —
+        // визуально уже; кликабельность на реордер сохранена interact'ом выше)
+        crate::theme::hgrad(&painter, gutter, crate::theme::GUTTER, egui::Color32::TRANSPARENT);
+        for (label, cy) in &gutter_labels {
             painter.text(
-                egui::pos2(gutter.center().x, y + lane_h * 0.5),
+                egui::pos2(gutter.center().x, *cy),
                 egui::Align2::CENTER_CENTER,
                 label,
                 egui::FontId::proportional(12.0),
@@ -1795,10 +1803,13 @@ impl KtApp {
             };
             let lh = ((rect.left() + margin - pos.x) / margin).clamp(0.0, 1.0);
             let rh = ((pos.x - (rect.right() - margin)) / margin).clamp(0.0, 1.0);
+            // левая зона начинается от КРАЯ панели (через gutter): горячий
+            // конец градиента упирается в физическую кромку окна, а не
+            // обрывается на шве gutter'а (п.20 р.6)
             warm(
                 lh,
                 egui::Rect::from_min_max(
-                    egui::pos2(rect.left(), rect.top() + RULER_H),
+                    egui::pos2(full.left(), rect.top() + RULER_H),
                     egui::pos2(rect.left() + margin * 0.6, rect.bottom()),
                 ),
                 true,

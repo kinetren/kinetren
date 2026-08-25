@@ -70,7 +70,7 @@ pub struct KtApp {
     /// Последний удачный бакет превью в бине (скраб без миганий, п.11 р.6).
     pub bin_last_good: HashMap<MediaId, crate::thumbs::ThumbKey>,
     /// Последний отправленный заголовок окна (шлём Title только при смене).
-    last_title: String,
+    pub(crate) last_title: String,
     /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
     preview_buf: Vec<u8>,
     /// Троттлинг glow-мипа: каждые N новых кадров (амбиент не мерцает).
@@ -2481,6 +2481,15 @@ impl eframe::App for KtApp {
             }
         }
 
+        // титлбар (верх, п.22 р.6) — только в borderless-режиме
+        if std::env::var_os("KT_DECORATIONS").is_none() {
+            egui::Panel::top("titlebar")
+                .frame(egui::Frame::new().fill(crate::theme::WINDOW))
+                .exact_size(24.0)
+                .show(ui, |ui| {
+                    self.draw_titlebar(ui);
+                });
+        }
         // статусбар (низ)
         egui::Panel::bottom("status").frame(crate::theme::panel_frame()).show(ui, |ui| {
             self.draw_statusbar(ui);
@@ -2512,15 +2521,15 @@ impl eframe::App for KtApp {
         egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).show(ui, |ui| {
             ui.add_space(6.0);
             egui::Frame::group(ui.style())
-                .fill(egui::Color32::from_gray(24))
-                .corner_radius(6.0)
+                .fill(crate::theme::WINDOW)
+                .corner_radius(1.0)
                 .show(ui, |ui| {
                     self.draw_bin(ui);
                 });
             ui.add_space(8.0);
             egui::Frame::group(ui.style())
-                .fill(egui::Color32::from_gray(24))
-                .corner_radius(6.0)
+                .fill(crate::theme::WINDOW)
+                .corner_radius(1.0)
                 .show(ui, |ui| {
                     self.draw_perf_box(ui);
                 });
