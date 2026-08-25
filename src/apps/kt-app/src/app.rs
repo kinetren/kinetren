@@ -63,6 +63,10 @@ pub struct KtApp {
     /// Окно следует за курсором при игре; гаснет при ручном пане/зуме
     /// (п.14 раунда 6) — используется в L2, ставится в on_play.
     pub follow_playhead: bool,
+    /// Вертикальный скролл зоны дорожек, px (п.12 р.6).
+    pub tl_scroll: f32,
+    /// Явная высота строки (Shift+Ctrl+колесо); None = авто-подгонка.
+    pub tl_v_zoom: Option<f32>,
     /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
     preview_buf: Vec<u8>,
     /// Троттлинг glow-мипа: каждые N новых кадров (амбиент не мерцает).
@@ -193,6 +197,8 @@ impl KtApp {
             ui_economy: false,
             paused_at: None,
             follow_playhead: false,
+            tl_scroll: 0.0,
+            tl_v_zoom: None,
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -271,6 +277,8 @@ impl KtApp {
             ui_economy: false,
             paused_at: None,
             follow_playhead: false,
+            tl_scroll: 0.0,
+            tl_v_zoom: None,
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,

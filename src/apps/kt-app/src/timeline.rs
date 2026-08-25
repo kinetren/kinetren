@@ -11,7 +11,7 @@ use kt_time::{AUDIO_BURST_FRAMES, Tick};
 
 pub const STRIPES_H: f32 = 11.0; // 4+1+4+2: глобальные полоски кэша
 pub const RULER_H: f32 = 22.0 + STRIPES_H;
-pub const GUTTER_W: f32 = 52.0;
+pub const GUTTER_W: f32 = 34.0; // п.20 р.6: поуже
 /// Единые пределы зума (п.17 р.6): 2e6 тиков/px = 22 с/px — 30-минутный
 /// проект целиком в окне ~80 px... на всю ширину ≈ 1.5 px/с и мельче.
 pub const TPP_MIN: f64 = 30.0;
@@ -119,6 +119,27 @@ pub fn clip_color(path: &str, kind: ClipKind) -> egui::Color32 {
     )
 }
 
+/// Вертикальная раскладка дорожек (п.12 р.6, тест 61): сжатие ПАНЕЛИ
+/// поджимает высоту строк как раньше (до 30), но рост ЧИСЛА дорожек
+/// строки не плющит — появляется вертикальный скролл. Явный v_zoom
+/// (Shift+Ctrl+колесо) задаёт высоту строки напрямую.
+pub struct VLayout {
+    pub lane_h: f32,
+    pub content_h: f32,
+    pub scroll_max: f32,
+}
+
+pub fn vertical_layout(avail_h: f32, lanes: usize, v_zoom: Option<f32>) -> VLayout {
+    let lanes = lanes.max(1) as f32;
+    let usable = (avail_h - RULER_H - 6.0).max(0.0);
+    let lane_h = match v_zoom {
+        Some(z) => z.clamp(16.0, 120.0),
+        None => (usable / lanes).clamp(30.0, 84.0),
+    };
+    let content_h = lanes * lane_h;
+    VLayout { lane_h, content_h, scroll_max: (content_h - usable).max(0.0) }
+}
+
 /// Шаги руллера для зума (п.17 р.6, тест 60): минорные риски — минимальная
 /// ступень лестницы с >= 7 px, подписи — с >= 70 px. Раньше цикл шёл ПО
 /// СЕКУНДАМ и на глубоком зум-ауте давал тысячи шейпов за кадр.
@@ -191,6 +212,8 @@ pub struct TlGeom {
     pub lane_h: f32,
     /// Display-порядок строк сверху вниз (нормализован).
     pub rows: std::sync::Arc<Vec<(LaneKind, u32)>>,
+    /// Вертикальный скролл-офсет зоны дорожек (п.12 р.6).
+    pub view_top: f32,
     pub view_start: f64,
     pub tpp: f64,
 }
@@ -205,7 +228,7 @@ impl TlGeom {
     }
 
     fn lanes_top(&self) -> f32 {
-        self.rect.top() + RULER_H + 3.0
+        self.rect.top() + RULER_H + 3.0 - self.view_top
     }
 
     /// Индекс строки под y (в пределах rows).
@@ -359,19 +382,61 @@ impl KtApp {
         let gutter_resp =
             ui.interact(gutter, ui.id().with("lane-gutter"), egui::Sense::click_and_drag());
 
+        // число строк заранее — вертикальному зуму колесом нужно до layout
+        let lanes_hint = {
+            let (v, a) = self.lane_counts();
+            (v + a).max(1) as usize + self.model.project().morph_lanes as usize
+        };
         // ---- зум/пан + edge-autoscroll при драге --------------------------
         let mut view_start = self.view_start;
         let mut tpp = self.ticks_per_px;
         if let Some(pos) = response.hover_pos() {
             let scroll = ui.input(|i| i.smooth_scroll_delta);
+            // ВАЖНО: egui перекладывает Shift+колесо в scroll.x — для
+            // вертикальных жестов (п.12 р.6) читаем СЫРОЕ колесо+модификаторы
+            // сырое колесо: MouseWheel-события ДО egui-обработки (Shift
+            // перекладывает smooth_scroll в X — а нам нужен вертикальный жест)
+            let raw_y: f32 = ui.input(|i| {
+                i.raw
+                    .events
+                    .iter()
+                    .filter_map(|e| match e {
+                        egui::Event::MouseWheel { unit, delta, .. } => Some(match unit {
+                            egui::MouseWheelUnit::Point => delta.y,
+                            egui::MouseWheelUnit::Line => delta.y * 20.0,
+                            egui::MouseWheelUnit::Page => delta.y * 200.0,
+                        }),
+                        _ => None,
+                    })
+                    .sum()
+            });
             let zoom = ui.input(|i| i.zoom_delta());
-            let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+            let (ctrl, shift) = ui
+                .input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
             let user_scrolled = scroll != egui::Vec2::ZERO || zoom != 1.0;
             if user_scrolled {
                 // ручное движение окна отключает следование (п.14 р.6)
                 self.follow_playhead = false;
             }
-            if ctrl && scroll.y != 0.0 || zoom != 1.0 {
+            if shift && ctrl && raw_y != 0.0 {
+                // Shift+Ctrl+колесо = вертикальный зум, якорь — строка
+                // под курсором (п.12 р.6)
+                let cur_h = self
+                    .tl_v_zoom
+                    .unwrap_or_else(|| {
+                        vertical_layout(rect.height(), lanes_hint.max(1), None).lane_h
+                    });
+                let factor = if raw_y > 0.0 { 1.15 } else { 1.0 / 1.15 };
+                let new_h = (cur_h * factor).clamp(16.0, 120.0);
+                let rel = pos.y - (rect.top() + RULER_H + 3.0) + self.tl_scroll;
+                let row = (rel / cur_h).max(0.0);
+                self.tl_v_zoom = Some(new_h);
+                self.tl_scroll =
+                    (row * new_h - (pos.y - (rect.top() + RULER_H + 3.0))).max(0.0);
+            } else if shift && raw_y != 0.0 {
+                // Shift+колесо = вертикальный скролл (кламп ниже, по layout)
+                self.tl_scroll = (self.tl_scroll - raw_y).max(0.0);
+            } else if ctrl && scroll.y != 0.0 || zoom != 1.0 {
                 // зум: Ctrl+колесо или пинч, якорь под курсором (порт старого)
                 let factor = if zoom != 1.0 {
                     1.0 / zoom as f64
@@ -383,7 +448,7 @@ impl KtApp {
                 let anchor = view_start + (pos.x - rect.left()) as f64 * tpp;
                 tpp = (tpp * factor).clamp(TPP_MIN, TPP_MAX);
                 view_start = anchor - (pos.x - rect.left()) as f64 * tpp;
-            } else if scroll.x != 0.0 || scroll.y != 0.0 {
+            } else if !shift && (scroll.x != 0.0 || scroll.y != 0.0) {
                 // голое колесо (любая ось) = скролл по таймлайну (порт старого)
                 let delta = if scroll.x.abs() > scroll.y.abs() { scroll.x } else { scroll.y };
                 view_start -= delta as f64 * tpp * 2.5;
@@ -561,11 +626,22 @@ impl KtApp {
             egui::Stroke::new(1.0, egui::Color32::from_gray(45)),
         );
 
+        // зона дорожек рисуется с клипом НИЖЕ руллера: при вертикальном
+        // скролле (п.12 р.6) контент уезжает под линейку, не поверх неё
+        let full_painter = painter.clone();
+        let painter = ui.painter_at(egui::Rect::from_min_max(
+            egui::pos2(full.left(), rect.top() + RULER_H + 1.0),
+            full.max,
+        ));
+
         // ---- дорожки ---------------------------------------------------------
         let (video_lanes, audio_lanes) = self.lane_counts();
         let morph_lanes = self.model.project().morph_lanes;
         let lanes_total = (video_lanes + audio_lanes).max(1) + morph_lanes;
-        let lane_h = ((rect.height() - RULER_H - 6.0) / lanes_total as f32).clamp(30.0, 84.0);
+        let vl = vertical_layout(rect.height(), lanes_total as usize, self.tl_v_zoom);
+        let lane_h = vl.lane_h;
+        // кламп скролла каждый кадр (удаление дорожек/ресайз панели)
+        self.tl_scroll = self.tl_scroll.clamp(0.0, vl.scroll_max);
         // display-порядок строк (п.6 v1.4): произвольное перемешивание
         // V/A/M; нормализация каждый кадр — вставки/удаления дорожек
         // подтягиваются автоматически
@@ -580,6 +656,7 @@ impl KtApp {
             rect,
             lane_h,
             rows: std::sync::Arc::new(self.lane_order.clone()),
+            view_top: self.tl_scroll,
             view_start: self.view_start,
             tpp: self.ticks_per_px,
         };
@@ -1067,7 +1144,7 @@ impl KtApp {
                             d.cur_end = d.cur_start + dur;
                             // строки перемешаны (п.6): прилипаем к
                             // ближайшей строке СВОЕГО вида (тест 50)
-                            let rel = pos.y - (rect.top() + RULER_H + 3.0);
+                            let rel = pos.y - geom.lanes_top();
                             let row = (rel / lane_h).floor().max(0.0) as i64;
                             d.cur_lane = geom.nearest_lane(d.orig.kind, row);
                         }
@@ -1635,6 +1712,45 @@ impl KtApp {
             );
         }
 
+        // ---- вертикальный скроллбар (п.12 р.6) -----------------------------
+        if vl.scroll_max > 0.0 {
+            let track = egui::Rect::from_min_max(
+                egui::pos2(rect.right() - 7.0, rect.top() + RULER_H + 2.0),
+                egui::pos2(rect.right() - 1.0, rect.bottom() - 2.0),
+            );
+            let usable = track.height();
+            let frac_vis = (usable / vl.content_h).clamp(0.05, 1.0);
+            let knob_h = (usable * frac_vis).max(24.0);
+            let frac_pos = (self.tl_scroll / vl.scroll_max).clamp(0.0, 1.0);
+            let knob_y = track.top() + frac_pos * (usable - knob_h);
+            let knob = egui::Rect::from_min_size(
+                egui::pos2(track.left(), knob_y),
+                egui::vec2(track.width(), knob_h),
+            );
+            let resp = ui.interact(
+                track,
+                ui.id().with("tl-vscroll"),
+                egui::Sense::click_and_drag(),
+            );
+            if resp.dragged()
+                && let Some(p) = resp.interact_pointer_pos()
+            {
+                let f = ((p.y - track.top() - knob_h / 2.0) / (usable - knob_h).max(1.0))
+                    .clamp(0.0, 1.0);
+                self.tl_scroll = f * vl.scroll_max;
+            }
+            painter.rect_filled(track, 3.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 90));
+            painter.rect_filled(
+                knob,
+                3.0,
+                if resp.hovered() || resp.dragged() {
+                    egui::Color32::from_gray(120)
+                } else {
+                    egui::Color32::from_gray(80)
+                },
+            );
+        }
+
         // ---- маркеры ----------------------------------------------------------------
         for m in &self.model.project().markers {
             let mt = match &self.drag {
@@ -1646,11 +1762,11 @@ impl KtApp {
                 continue;
             }
             let amber = egui::Color32::from_rgb(255, 195, 0);
-            painter.line_segment(
+            full_painter.line_segment(
                 [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(1.0, amber),
             );
-            painter.add(egui::Shape::convex_polygon(
+            full_painter.add(egui::Shape::convex_polygon(
                 vec![
                     egui::pos2(x - 5.0, rect.top()),
                     egui::pos2(x + 5.0, rect.top()),
@@ -1693,7 +1809,7 @@ impl KtApp {
                         });
                     }
                     mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
-                    painter.add(egui::Shape::mesh(mesh));
+                    full_painter.add(egui::Shape::mesh(mesh));
                 }
             };
             let lh = ((rect.left() + margin - pos.x) / margin).clamp(0.0, 1.0);
@@ -1719,7 +1835,7 @@ impl KtApp {
         // ---- снап-линия / playhead -----------------------------------------------
         if let Some(t) = self.snap_line {
             let x = tick_to_x(t);
-            painter.line_segment(
+            full_painter.line_segment(
                 [egui::pos2(x, rect.top() + RULER_H), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 220, 120)),
             );
@@ -1748,12 +1864,12 @@ impl KtApp {
                 }
                 mesh.indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
             }
-            painter.add(egui::Shape::mesh(mesh));
-            painter.line_segment(
+            full_painter.add(egui::Shape::mesh(mesh));
+            full_painter.line_segment(
                 [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 100)),
             );
-            painter.add(egui::Shape::convex_polygon(
+            full_painter.add(egui::Shape::convex_polygon(
                 vec![
                     egui::pos2(x - 6.0, rect.top()),
                     egui::pos2(x + 6.0, rect.top()),
@@ -1924,6 +2040,32 @@ impl KtApp {
 mod geom_tests {
     use super::*;
 
+    /// Тест 61 (п.12 р.6): вертикальная раскладка — сжатие панели
+    /// поджимает строки до 30, рост числа дорожек даёт скролл, v_zoom
+    /// уважает клампы.
+    #[test]
+    fn t61_vertical_layout() {
+        // 3 дорожки в высокой панели: высота из панели, скролла нет
+        let v = vertical_layout(400.0, 3, None);
+        assert_eq!(v.lane_h, 84.0, "кламп сверху");
+        assert_eq!(v.scroll_max, 0.0);
+        // сжатие панели поджимает (как раньше)
+        let v = vertical_layout(160.0, 3, None);
+        assert!(v.lane_h < 84.0 && v.lane_h >= 30.0);
+        // много дорожек: строки НЕ тоньше 30 — появляется скролл
+        let v = vertical_layout(300.0, 12, None);
+        assert_eq!(v.lane_h, 30.0);
+        assert!(v.scroll_max > 0.0);
+        let v13 = vertical_layout(300.0, 13, None);
+        assert!(v13.scroll_max > v.scroll_max, "ещё дорожка — больше скролл");
+        // v_zoom задаёт высоту явно, с клампами
+        assert_eq!(vertical_layout(300.0, 12, Some(50.0)).lane_h, 50.0);
+        assert_eq!(vertical_layout(300.0, 12, Some(4.0)).lane_h, 16.0);
+        assert_eq!(vertical_layout(300.0, 12, Some(500.0)).lane_h, 120.0);
+        // при v_zoom, помещающемся целиком, скролла нет
+        assert_eq!(vertical_layout(800.0, 3, Some(40.0)).scroll_max, 0.0);
+    }
+
     /// Тест 60 (п.17 р.6): глубокий зум-аут — лестница руллера, формат
     /// времени, пропорциональный порог снапа, зоны узкого клипа.
     #[test]
@@ -1990,6 +2132,7 @@ mod geom_tests {
                 (LaneKind::Audio, 1),
                 (LaneKind::Morph, 0),
             ]),
+            view_top: 0.0,
             view_start: 90_000.0,
             tpp: 900.0,
         };
@@ -2028,6 +2171,7 @@ mod geom_tests {
             rect: egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 500.0)),
             lane_h: 40.0,
             rows: std::sync::Arc::new(rows.clone()),
+            view_top: 0.0,
             view_start: 0.0,
             tpp: 900.0,
         };
