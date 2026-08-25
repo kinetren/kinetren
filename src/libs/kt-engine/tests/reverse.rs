@@ -113,7 +113,7 @@ fn t26_video_fx_applied_in_compose_and_deterministic() {
     let mut p = clip(false, vec![], ClipKind::Video);
     p.clips[0].fx = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
     p.validate().unwrap();
-    let vr = VideoRenderer::new(&p);
+    let mut vr = VideoRenderer::new(&p);
 
     let cache = std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig::default()));
     let q = kt_media::Quality { width: 64, height: 36 };

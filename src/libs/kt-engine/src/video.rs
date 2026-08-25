@@ -19,6 +19,31 @@ struct VideoClip {
     media: MediaId,
     reversed: bool,
     fx: Vec<kt_model::FxInstance>,
+    /// Ключ пост-FX кэша (п.2 р.7): параметры цепочки + геометрия клипа +
+    /// шаг сетки. Любая правка модели пересоздаёт VideoRenderer → хэш
+    /// пересчитывается, стейл-кадры не читаются (их ключ не совпадёт).
+    fx_hash: u64,
+}
+
+/// Хэш цепочки для пост-FX кэша. Вход — Debug-представление параметров
+/// (детерминировано, f64 печатается shortest-roundtrip) + геометрия:
+/// start/span/source_in/reversed задают отображение t→(src_pts, u),
+/// frame_step — сетку (смена fps проекта обязана инвалидировать).
+fn fx_chain_hash(
+    fx: &[kt_model::FxInstance],
+    start: Tick,
+    end: Tick,
+    source_in: Tick,
+    reversed: bool,
+    frame_step: i64,
+) -> u64 {
+    let repr = format!(
+        "{fx:?}|{}|{}|{}|{reversed}|{frame_step}",
+        start.0,
+        end.0 - start.0,
+        source_in.0
+    );
+    xxhash_rust::xxh3::xxh3_64(repr.as_bytes())
 }
 
 /// pts источника для момента таймлайна `t` внутри клипа: прямой или
@@ -39,6 +64,9 @@ fn clip_source_pts(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
 pub struct VideoRenderer {
     clips: Vec<VideoClip>,
     pub grid: FpsGrid,
+    /// Пул RGBA-буферов FX-цепочек (п.2 р.7): без него каждый compose
+    /// платил ~6 полноразмерных аллокаций.
+    fx_scratch: kt_fx::video::FxScratch,
 }
 
 /// Ключ кадра в кэше: idx = pts источника в тиках (выравнен по сетке проекта).
@@ -50,22 +78,35 @@ impl VideoRenderer {
     pub fn new(project: &Project) -> VideoRenderer {
         // effective_clips: morpher'ы применены здесь, движок их не видит (H1)
         let effective = project.effective_clips();
+        let grid = FpsGrid::new(project.settings.fps);
         let mut clips: Vec<VideoClip> = effective
             .iter()
             .filter(|c| c.kind == ClipKind::Video)
-            .map(|c| VideoClip {
-                start: c.start,
-                end: c.start + c.duration,
-                source_in: c.source_in,
-                lane: c.lane,
-                media: c.media,
-                reversed: c.reversed,
-                fx: c.active_fx(), // bypass-слоты отфильтрованы (п.2)
+            .map(|c| {
+                let fx = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
+                let fx_hash = fx_chain_hash(
+                    &fx,
+                    c.start,
+                    c.start + c.duration,
+                    c.source_in,
+                    c.reversed,
+                    grid.frame_step(),
+                );
+                VideoClip {
+                    start: c.start,
+                    end: c.start + c.duration,
+                    source_in: c.source_in,
+                    lane: c.lane,
+                    media: c.media,
+                    reversed: c.reversed,
+                    fx,
+                    fx_hash,
+                }
             })
             .collect();
         // задний план первым (большая lane), передний (lane 0) — последним
         clips.sort_by_key(|c| std::cmp::Reverse((c.lane, c.start.0)));
-        VideoRenderer { clips, grid: FpsGrid::new(project.settings.fps) }
+        VideoRenderer { clips, grid, fx_scratch: Default::default() }
     }
 
     /// Кадры, нужные для композиции момента `t` (выравненного вызывающим):
@@ -96,7 +137,7 @@ impl VideoRenderer {
     /// Возвращает (буфер, все ли слои были в кэше). Отсутствующий слой
     /// пропускается (playback не ждёт — инвариант №5).
     pub fn compose_from_cache(
-        &self,
+        &mut self,
         cache: &BurstCache,
         t: Tick,
         quality: Quality,
@@ -109,7 +150,7 @@ impl VideoRenderer {
     /// Вариант с переиспользуемым буфером (превью 60 раз/с: аллокация
     /// полного RGBA-кадра на каждый кадр была заметной, п.1 раунда 5).
     pub fn compose_from_cache_into(
-        &self,
+        &mut self,
         cache: &BurstCache,
         t: Tick,
         quality: Quality,
@@ -120,42 +161,75 @@ impl VideoRenderer {
         out.clear();
         out.resize(w * h * 4, 0);
         let mut complete = true;
+        let q_key = (quality.width, quality.height);
+        let scratch = &mut self.fx_scratch;
         for clip in self.clips.iter().filter(|c| c.start <= t && t < c.end) {
             let src_pts = clip_source_pts(clip, t, &self.grid);
             let key_idx = video_cache_idx(src_pts);
-            match cache.get_video(SourceId(clip.media.0), Some(quality), key_idx) {
-                Some(frame) => {
-                    if kt_fx::video::has_video_fx(&clip.fx) {
-                        // цепочка видео-FX (п.25): кэш хранит ПРЕ-FX кадры
-                        // (инвариант кэша), эффекты — на композите; один код
-                        // для превью и экспорта (инвариант №7)
-                        let span = (clip.end.0 - clip.start.0).max(1);
-                        let u = (t.0 - clip.start.0) as f64 / span as f64;
-                        let ctx = kt_fx::video::VideoFxCtx {
-                            out_w: quality.width,
-                            out_h: quality.height,
-                            u,
-                            burst_index: t.0,
-                        };
-                        let f = kt_fx::video::apply_video_chain(
-                            &clip.fx,
-                            kt_fx::video::Frame {
-                                w: frame.width,
-                                h: frame.height,
-                                rgba: frame.rgba.to_vec(),
-                                has_alpha: frame.has_alpha,
-                            },
-                            &ctx,
-                        );
-                        if (f.w as usize, f.h as usize) == (w, h) {
-                            alpha_over(out, &f.rgba, f.has_alpha, w * h);
-                        }
-                    } else {
-                        alpha_over(out, &frame.rgba, frame.has_alpha, w * h);
-                    }
+            let sid = SourceId(clip.media.0);
+            // пре-FX кадр читается ВСЕГДА (бамп recency: полоски прогретости
+            // и prefetch не «остывают» под живым пост-FX кэшем)
+            let pre = cache.get_video(sid, Some(quality), key_idx);
+            if !kt_fx::video::has_video_fx(&clip.fx) {
+                match pre {
+                    Some(frame) => alpha_over(out, &frame.rgba, frame.has_alpha, w * h),
+                    None => complete = false,
                 }
-                None => complete = false,
+                continue;
             }
+            // цепочка видео-FX (п.25): кэш хранит ПРЕ-FX кадры (правда о
+            // coverage), пост-FX кадр мемоизируется отдельным kind'ом
+            // (п.2 р.7 — иначе цепочка платится на КАЖДЫЙ compose и loop
+            // играет 6.8 fps даже прогретым); один код для превью и
+            // экспорта (инвариант №7), эффекты детерминированы по
+            // (t, fx_hash) → байт-идентичность сохранена.
+            if let Some(f) = cache.get_postfx_video(sid, q_key, clip.fx_hash, t.0) {
+                if (f.width as usize, f.height as usize) == (w, h) {
+                    alpha_over(out, &f.rgba, f.has_alpha, w * h);
+                }
+                continue;
+            }
+            let Some(frame) = pre else {
+                complete = false;
+                continue;
+            };
+            let span = (clip.end.0 - clip.start.0).max(1);
+            let u = (t.0 - clip.start.0) as f64 / span as f64;
+            let ctx = kt_fx::video::VideoFxCtx {
+                out_w: quality.width,
+                out_h: quality.height,
+                u,
+                burst_index: t.0,
+            };
+            let mut rgba = scratch.take(frame.rgba.len());
+            rgba.copy_from_slice(&frame.rgba);
+            let f = kt_fx::video::apply_video_chain_pooled(
+                &clip.fx,
+                kt_fx::video::Frame {
+                    w: frame.width,
+                    h: frame.height,
+                    rgba,
+                    has_alpha: frame.has_alpha,
+                },
+                &ctx,
+                scratch,
+            );
+            if (f.w as usize, f.h as usize) == (w, h) {
+                alpha_over(out, &f.rgba, f.has_alpha, w * h);
+            }
+            cache.insert_postfx_video(
+                sid,
+                q_key,
+                clip.fx_hash,
+                t.0,
+                std::sync::Arc::new(kt_media::VideoFrame {
+                    pts: t,
+                    width: f.w,
+                    height: f.h,
+                    rgba: f.rgba.into_boxed_slice(),
+                    has_alpha: f.has_alpha,
+                }),
+            );
         }
         complete
     }

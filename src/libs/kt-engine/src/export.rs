@@ -142,7 +142,7 @@ pub fn render_raw_video_range(
     // экспорт лишь наполняет его блокирующим декодом.
     let cache =
         BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 64 * 1024 * 1024 });
-    let video = VideoRenderer::new(project);
+    let mut video = VideoRenderer::new(project);
     let (mut t, end) = match range {
         Some((a, b)) => (video.grid.align_floor(a), b),
         None => (Tick(0), project_range(project)),

@@ -453,7 +453,7 @@ impl Player {
     /// стоимости кадра UI, п.1 раунда 5).
     pub fn compose_preview_into(&self, t: Tick, out: &mut Vec<u8>) -> (Quality, bool) {
         let q = self.preview_quality();
-        let video = self.video.lock().unwrap();
+        let mut video = self.video.lock().unwrap();
         let aligned = video.grid.align_floor(t);
         let generation = self.transport.generation();
         let step = video.grid.frame_step();

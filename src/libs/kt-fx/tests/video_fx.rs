@@ -177,3 +177,60 @@ fn t26_pan_stretch_identity_when_no_zoom() {
     let per_px = diff as f64 / (W * H * 4) as f64;
     assert!(per_px < 1.5, "stretch 1:1 почти без искажений, avg diff {per_px:.3}");
 }
+
+/// Тест 68 (п.2 р.7): pooled-цепочка с ГРЯЗНЫМ переиспользованным пулом
+/// байт-идентична свежему прогону — для каждого эффекта и для цепочки
+/// Mirror+EventGrid+Glow+VHS (пул не протекает между кадрами).
+#[test]
+fn t68_pooled_chain_identical_with_dirty_scratch() {
+    use kt_fx::video::{FxScratch, apply_video_chain_pooled};
+    let all: Vec<Vec<FxInstance>> = vec![
+        vec![FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.3, pan_y: -0.2, zoom: 1.4 }],
+        vec![FxInstance::CamMotion {
+            mode: PanMode::Fill,
+            ease: true,
+            time_scale: 1.0,
+            keyframes: vec![],
+        }],
+        vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+        vec![FxInstance::Mirror { horizontal: true, vertical: true }],
+        vec![FxInstance::Blur { radius: 9 }],
+        vec![FxInstance::Greenscreen {
+            key_r: 0,
+            key_g: 255,
+            key_b: 0,
+            tolerance: 90,
+            softness: 30,
+        }],
+        vec![FxInstance::Edges { threshold: 40 }],
+        vec![FxInstance::Noise { amount: 0.5 }],
+        vec![FxInstance::Vhs { rgb_shift: 3, bleed: 0.4 }],
+        vec![FxInstance::Glow { strength: 1.2 }],
+        vec![FxInstance::EventGrid { cols: 3, rows: 2, center: true }],
+        // цепочка из жалобы пользователя (п.2 р.7)
+        vec![
+            FxInstance::Mirror { horizontal: true, vertical: false },
+            FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+            FxInstance::Glow { strength: 1.0 },
+            FxInstance::Vhs { rgb_shift: 2, bleed: 0.5 },
+        ],
+    ];
+    let mut dirty = FxScratch::default();
+    // испачкать пул чужими данными разных размеров
+    let junk = apply_video_chain_pooled(
+        &[FxInstance::Blur { radius: 5 }],
+        test_frame(),
+        &ctx(),
+        &mut dirty,
+    );
+    drop(junk);
+    for fx in &all {
+        let fresh = apply_video_chain(fx, test_frame(), &ctx());
+        let pooled = apply_video_chain_pooled(fx, test_frame(), &ctx(), &mut dirty);
+        assert_eq!(fresh.rgba, pooled.rgba, "грязный пул изменил результат: {fx:?}");
+        assert_eq!((fresh.w, fresh.h, fresh.has_alpha), (pooled.w, pooled.h, pooled.has_alpha));
+        // второй прогон тем же пулом — тоже идентичен
+        let again = apply_video_chain_pooled(fx, test_frame(), &ctx(), &mut dirty);
+        assert_eq!(fresh.rgba, again.rgba);
+    }
+}

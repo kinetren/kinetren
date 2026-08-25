@@ -22,6 +22,16 @@ pub enum BurstKind {
     Video {
         quality: Option<(u32, u32)>,
     },
+    /// Пост-FX композит-слой клипа (memoization, п.2 р.7): idx ключа —
+    /// ТАЙМЛАЙН-тик по сетке кадров (vhs/noise зависят от t, pan/cam — от
+    /// позиции в клипе; и то и другое — функции (idx, fx_hash)). fx_hash
+    /// включает параметры цепочки и геометрию клипа. В coverage-полоски,
+    /// prefetch и pin НЕ попадает: все эти запросы kind-точные (инвариант
+    /// №4 остаётся про ПРЕ-FX данные; см. kt-cache/CLAUDE.md).
+    PostFxVideo {
+        quality: (u32, u32),
+        fx_hash: u64,
+    },
 }
 
 impl BurstKind {
@@ -297,6 +307,21 @@ impl BurstCache {
         Some(payload)
     }
 
+    /// Пост-FX кадр клипа (п.2 р.7): idx = таймлайн-тик по сетке.
+    pub fn get_postfx_video(
+        &self,
+        source: SourceId,
+        quality: (u32, u32),
+        fx_hash: u64,
+        idx: i64,
+    ) -> Option<Arc<VideoFrame>> {
+        match self.get(BurstKey { source, kind: BurstKind::PostFxVideo { quality, fx_hash }, idx })?
+        {
+            Payload::Video(f) => Some(f),
+            Payload::Audio(_) => unreachable!("postfx key holds audio payload"),
+        }
+    }
+
     pub fn insert_audio(&self, source: SourceId, burst: Arc<AudioBurst>) {
         let idx = burst.idx;
         self.insert(BurstKey { source, kind: BurstKind::Audio, idx }, Payload::Audio(burst));
@@ -329,6 +354,20 @@ impl BurstCache {
             BurstKey { source, kind: BurstKind::video(quality), idx },
             Payload::Video(frame),
             span.max(1),
+        );
+    }
+
+    pub fn insert_postfx_video(
+        &self,
+        source: SourceId,
+        quality: (u32, u32),
+        fx_hash: u64,
+        idx: i64,
+        frame: Arc<VideoFrame>,
+    ) {
+        self.insert(
+            BurstKey { source, kind: BurstKind::PostFxVideo { quality, fx_hash }, idx },
+            Payload::Video(frame),
         );
     }
 
@@ -580,6 +619,74 @@ mod v12_tests {
         assert_eq!(s.query(0..40), vec![0..30]);
         s.remove_range(0, 30);
         assert!(s.query(0..40).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod postfx_tests {
+    use super::*;
+
+    fn vframe(bytes: usize) -> Arc<VideoFrame> {
+        Arc::new(VideoFrame {
+            pts: kt_time::Tick(0),
+            width: 2,
+            height: 2,
+            rgba: vec![7u8; bytes].into_boxed_slice(),
+            has_alpha: false,
+        })
+    }
+
+    /// Тест 65 (п.2 р.7): пост-FX kind невидим для coverage (инвариант №4 —
+    /// полоски прогретости строятся ТОЛЬКО по пре-FX записям), но участвует
+    /// в видео-бюджете/LRU и выбивается invalidate_source.
+    #[test]
+    fn t65_postfx_kind_invisible_to_coverage() {
+        let cache = BurstCache::new(CacheConfig::default());
+        let src = SourceId(1);
+        let q = Quality { width: 2, height: 2 };
+        cache.insert_video_span(src, Some(q), 0, 3000, vframe(16));
+        let before = cache.coverage(src, BurstKind::video(Some(q)), 0..10_000);
+        let bytes_before = cache.video_bytes();
+
+        cache.insert_postfx_video(src, (2, 2), 0xDEAD, 0, vframe(16));
+        cache.insert_postfx_video(src, (2, 2), 0xDEAD, 3000, vframe(16));
+        // coverage пре-FX не изменился
+        assert_eq!(cache.coverage(src, BurstKind::video(Some(q)), 0..10_000), before);
+        assert!(cache.coverage(src, BurstKind::Audio, 0..10_000).is_empty());
+        // байты учитываются в видео-пуле
+        assert_eq!(cache.video_bytes(), bytes_before + 32);
+        // хит по точному ключу; другой fx_hash/quality — промах
+        assert!(cache.get_postfx_video(src, (2, 2), 0xDEAD, 0).is_some());
+        assert!(cache.get_postfx_video(src, (2, 2), 0xBEEF, 0).is_none());
+        assert!(cache.get_postfx_video(src, (4, 4), 0xDEAD, 0).is_none());
+        // invalidate_source выбивает и пост-FX записи
+        cache.invalidate_source(src);
+        assert!(cache.get_postfx_video(src, (2, 2), 0xDEAD, 0).is_none());
+        assert_eq!(cache.video_bytes(), 0);
+    }
+
+    /// Пост-FX записи вытесняются LRU при переполнении видео-бюджета,
+    /// не дырявя пре-FX полосу (у неё свой kind).
+    #[test]
+    fn t65b_postfx_evicts_under_budget() {
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 64 });
+        let src = SourceId(1);
+        let q = Quality { width: 2, height: 2 };
+        cache.insert_video_span(src, Some(q), 0, 3000, vframe(32));
+        let pre = cache.coverage(src, BurstKind::video(Some(q)), 0..10_000);
+        for i in 0..8 {
+            cache.insert_postfx_video(src, (2, 2), 1, i * 3000, vframe(32));
+            // пре-FX запись горячая (как при живом compose: get бампает
+            // recency) — вытесняться должны только пост-FX записи
+            assert!(cache.get_video(src, Some(q), 0).is_some());
+        }
+        assert!(cache.video_bytes() <= 64 + 32, "бюджет держится");
+        assert_eq!(
+            cache.coverage(src, BurstKind::video(Some(q)), 0..10_000),
+            pre,
+            "пре-FX полоса не продырявлена пост-FX-вытеснением"
+        );
     }
 }
 

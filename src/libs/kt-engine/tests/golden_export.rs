@@ -241,7 +241,7 @@ fn t11_preview_equals_export_frame() {
     let export_frame = captured.unwrap();
 
     // «превью»: независимый кэш, прямой декод слоёв, тот же композит
-    let video = VideoRenderer::new(&p);
+    let mut video = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let t = Tick(target as i64 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
@@ -258,4 +258,55 @@ fn t11_preview_equals_export_frame() {
     let (preview_frame, complete) = video.compose_from_cache(&cache, t, q);
     assert!(complete);
     assert_eq!(preview_frame, export_frame, "превью и экспорт обязаны совпадать байт-в-байт");
+}
+
+/// Тест 67 (п.2 р.7): превью == экспорт с ВИДЕО-FX-цепочкой — и холодный
+/// compose (цепочка применяется), и прогретый (кадр из пост-FX кэша)
+/// байт-в-байт равны кадру экспортного потока. Пост-FX мемоизация не
+/// нарушает инвариант №7.
+#[test]
+fn t67_preview_equals_export_with_fx_cold_and_warm() {
+    let mut p = golden_project();
+    // цепочка из жалобы пользователя на видео-клип
+    for c in p.clips.iter_mut().filter(|c| c.kind == ClipKind::Video) {
+        c.fx = vec![
+            FxInstance::Mirror { horizontal: true, vertical: false },
+            FxInstance::Glow { strength: 1.0 },
+            FxInstance::Vhs { rgb_shift: 2, bleed: 0.4 },
+        ];
+    }
+    p.validate().unwrap();
+    let q = Quality { width: 128, height: 72 };
+    let target = 17usize;
+    let mut captured: Option<Vec<u8>> = None;
+    let mut n = 0usize;
+    render_raw_video(&p, all_sources(), q, |rgba| {
+        if n == target {
+            captured = Some(rgba.to_vec());
+        }
+        n += 1;
+        Ok(())
+    })
+    .unwrap();
+    let export_frame = captured.unwrap();
+
+    let mut video = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let t = Tick(target as i64 * 3000);
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        all_sources().into_iter().collect();
+    for (media, src_pts) in video.layers_at(t) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(q)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(q),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    let (cold, complete) = video.compose_from_cache(&cache, t, q);
+    assert!(complete);
+    assert_eq!(cold, export_frame, "холодный FX-композит == экспорт");
+    let (warm, _) = video.compose_from_cache(&cache, t, q);
+    assert_eq!(warm, export_frame, "прогретый (пост-FX кэш) == экспорт");
 }

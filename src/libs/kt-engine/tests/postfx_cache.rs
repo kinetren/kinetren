@@ -1,0 +1,131 @@
+//! Тест 66 (п.2 р.7): пост-FX кэш видео — повторный compose байт-идентичен
+//! и идёт из кэша (без повторного применения цепочки), смена параметров FX
+//! или геометрии клипа даёт другой fx_hash → стейл не читается.
+//! Тест 67 — в golden_export.rs (превью==экспорт с FX, холодный/прогретый).
+
+use kt_engine::VideoRenderer;
+use kt_media::synthetic::{AudioPattern, SyntheticSource};
+use kt_model::*;
+use kt_time::Tick;
+
+fn project_with_fx(fx: Vec<FxInstance>, start_frames: i64) -> Project {
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick::from_audio_frames(start_frames),
+        duration: Tick::from_audio_frames(48_000 * 2),
+        source_in: Tick::from_audio_frames(9_600),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx,
+    });
+    p.validate().unwrap();
+    p
+}
+
+fn warm_pre_fx(
+    vr: &VideoRenderer,
+    cache: &kt_cache::BurstCache,
+    t: Tick,
+    q: kt_media::Quality,
+) {
+    use kt_media::MediaSource;
+    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
+    for (media, src_pts) in vr.layers_at(t) {
+        let frame = synth.read_video_frame(src_pts, Some(q)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(q),
+            kt_engine::video_cache_idx(src_pts),
+            std::sync::Arc::new(frame),
+        );
+    }
+}
+
+#[test]
+fn t66_postfx_cached_and_no_stale() {
+    // Noise: амплитуда меняет байты даже на плоском синтетическом кадре
+    // (SyntheticSource кодирует pts сплошным цветом — Mirror/Vhs на нём
+    // вырождаются в identity, стейл по байтам не отличить)
+    let chain = vec![
+        FxInstance::Mirror { horizontal: true, vertical: false },
+        FxInstance::Noise { amount: 0.3 },
+    ];
+    let p = project_with_fx(chain.clone(), 48_000);
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(90_000 + 3000);
+    warm_pre_fx(&vr, &cache, t, q);
+
+    let (a, complete) = vr.compose_from_cache(&cache, t, q);
+    assert!(complete);
+    let bytes_after_first = cache.video_bytes();
+    let hits_after_first = cache.stats().video_hits;
+
+    // повторный compose: байт-идентичен, из кэша (байты не растут — нет
+    // повторной вставки), пост-FX хит зарегистрирован
+    let (b, complete2) = vr.compose_from_cache(&cache, t, q);
+    assert!(complete2);
+    assert_eq!(a, b, "повторный compose байт-идентичен");
+    assert_eq!(cache.video_bytes(), bytes_after_first, "хит: без повторной вставки");
+    assert!(cache.stats().video_hits > hits_after_first, "пост-FX читался из кэша");
+
+    // смена ПАРАМЕТРА цепочки → другой fx_hash → пересчёт (байты кэша
+    // растут: вставка нового ключа, а не стейл-хит) и другой результат
+    let p2 = project_with_fx(
+        vec![
+            FxInstance::Mirror { horizontal: true, vertical: false },
+            FxInstance::Noise { amount: 0.9 },
+        ],
+        48_000,
+    );
+    let mut vr2 = VideoRenderer::new(&p2);
+    let (c, _) = vr2.compose_from_cache(&cache, t, q);
+    assert_ne!(a, c, "изменённые параметры FX не должны читать стейл");
+    assert!(cache.video_bytes() > bytes_after_first, "новый fx_hash → новая запись");
+
+    // сдвиг клипа при той же цепочке → другой fx_hash (u/t-отображение
+    // изменилось) → пересчёт со вставкой, а не стейл-хит
+    let bytes_before_shift = cache.video_bytes();
+    let p3 = project_with_fx(chain, 48_000 - 4800); // t остаётся внутри клипа
+    let mut vr3 = VideoRenderer::new(&p3);
+    warm_pre_fx(&vr3, &cache, t, q);
+    let bytes_warmed = cache.video_bytes();
+    assert!(bytes_warmed >= bytes_before_shift);
+    let (_, complete3) = vr3.compose_from_cache(&cache, t, q);
+    assert!(complete3);
+    assert!(
+        cache.video_bytes() > bytes_warmed,
+        "сдвинутый клип обязан пересчитать пост-FX (другой fx_hash), не взять стейл"
+    );
+}
+
+/// Пост-FX хит делает слой complete даже когда пре-FX кадр уже вытеснен:
+/// прогреваем, выбиваем пре-FX перезаписью бюджета... проще: новый кэш
+/// с только-пост-FX записью не собрать снаружи, поэтому проверяем слабее —
+/// удаление пре-FX через invalidate_source сносит И пост-FX (нет осиротевших
+/// стейлов при смене файла на диске).
+#[test]
+fn t66b_invalidate_source_drops_postfx() {
+    let p = project_with_fx(vec![FxInstance::Glow { strength: 1.0 }], 48_000);
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(90_000 + 3000);
+    warm_pre_fx(&vr, &cache, t, q);
+    let (_, complete) = vr.compose_from_cache(&cache, t, q);
+    assert!(complete);
+    assert!(cache.video_bytes() > 0);
+    cache.invalidate_source(kt_engine::source_id(MediaId(1)));
+    assert_eq!(cache.video_bytes(), 0, "invalidate снёс и пре-FX, и пост-FX");
+    let (_, complete_cold) = vr.compose_from_cache(&cache, t, q);
+    assert!(!complete_cold, "после инвалидации слоёв нет");
+}
