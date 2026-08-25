@@ -83,6 +83,18 @@ impl KtApp {
             self.player.seek(Tick(0));
         }
         ui.separator();
+        // тайм-код + скорость (п.19 р.6: бывшая полоса timestrip)
+        ui.label(
+            egui::RichText::new(crate::util::format_timecode(
+                self.player.transport.playhead(),
+                self.model.project().settings.fps,
+            ))
+            .monospace()
+            .size(15.0)
+            .color(egui::Color32::from_rgb(235, 235, 240)),
+        );
+        self.draw_speed_control(ui);
+        ui.separator();
         if self.tb(ui, crate::icons::FLAG, "Маркер на курсоре (M)") {
             self.marker_toggle_at_cursor();
         }

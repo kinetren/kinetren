@@ -69,6 +69,8 @@ pub struct KtApp {
     pub tl_v_zoom: Option<f32>,
     /// Последний удачный бакет превью в бине (скраб без миганий, п.11 р.6).
     pub bin_last_good: HashMap<MediaId, crate::thumbs::ThumbKey>,
+    /// Последний отправленный заголовок окна (шлём Title только при смене).
+    last_title: String,
     /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
     preview_buf: Vec<u8>,
     /// Троттлинг glow-мипа: каждые N новых кадров (амбиент не мерцает).
@@ -202,6 +204,7 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            last_title: String::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -283,6 +286,7 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            last_title: String::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -1431,7 +1435,7 @@ impl KtApp {
     /// скорости + ОДНА полоса — drag по ней = shuttle (упругий, отпустил —
     /// вернулся к основной, Vegas), double-click = 1×; маркер основной
     /// скорости виден на полосе. Маппинг полосы — slider_to_rate (тест 46).
-    fn draw_speed_control(&mut self, ui: &mut egui::Ui) {
+    pub(crate) fn draw_speed_control(&mut self, ui: &mut egui::Ui) {
         ui.label("Скорость:");
         let mut base = self.base_rate;
         let dv = ui.add(
@@ -1524,11 +1528,14 @@ impl KtApp {
             "Drag — shuttle (отпустишь — вернётся), double-click — 1×,
 точная основная скорость — в поле слева",
         );
+        // ≠1× — ярким акцентом самого значения (п.19 р.6), без бейджа
         let cur = self.player.playback_rate();
-        ui.monospace(format_rate(cur));
-        if (cur - 1.0).abs() > 0.001 {
-            ui.colored_label(egui::Color32::from_rgb(255, 200, 100), "≠1×");
-        }
+        let rt = egui::RichText::new(format_rate(cur)).monospace();
+        ui.label(if (cur - 1.0).abs() > 0.001 {
+            rt.strong().color(egui::Color32::WHITE)
+        } else {
+            rt.weak()
+        });
     }
 
     fn draw_preview_controls(&mut self, ui: &mut egui::Ui) {
@@ -1581,8 +1588,7 @@ impl KtApp {
             ui.separator();
             // ползунок скорости воспроизведения (п.4, как в Sony Vegas)
             ui.separator();
-            self.draw_speed_control(ui);
-            ui.separator();
+
             ui.label("Разрешение:");
             let mut res = (proj.width, proj.height);
             let before_res = res;
@@ -1617,6 +1623,8 @@ impl KtApp {
     }
 
     fn draw_perf_box(&mut self, ui: &mut egui::Ui) {
+        // длинные строки не должны задавать минимум ширины панели (п.18 р.6)
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
         ui.label(egui::RichText::new("Производительность").strong());
         ui.add_space(2.0);
         let ord = std::sync::atomic::Ordering::Relaxed;
@@ -2407,6 +2415,19 @@ impl KtApp {
 impl eframe::App for KtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // имя проекта — в заголовок окна (п.19 р.6), не каждый кадр
+        let title = format!(
+            "{}{} — Kinotrain",
+            self.project_path
+                .as_ref()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                .unwrap_or_else(|| "безымянный".into()),
+            if self.dirty { " ●" } else { "" }
+        );
+        if title != self.last_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_title = title;
+        }
         self.handle_keys(&ctx);
         self.handle_drops(&ctx);
         self.hover_hint = None;
@@ -2438,40 +2459,8 @@ impl eframe::App for KtApp {
             );
         });
         // полоса времени над таймлайном (порт Timeline time strip)
-        egui::Panel::bottom("timestrip").show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.add_space(6.0);
-                ui.weak("Timeline time:");
-                let t = self.player.transport.playhead();
-                let ms = t.as_ms();
-                let fps = self.model.project().settings.fps as i64;
-                let frame = t.0 % 90_000 / (90_000 / fps);
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{:02}:{:02}:{:02}.{:03} F{:02}",
-                        ms / 3_600_000,
-                        ms % 3_600_000 / 60_000,
-                        ms % 60_000 / 1000,
-                        ms % 1000,
-                        frame
-                    ))
-                    .monospace()
-                    .size(16.0)
-                    .color(egui::Color32::from_rgb(230, 230, 235)),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(p) = &self.project_path {
-                        ui.weak(format!(
-                            "{}{}",
-                            p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default(),
-                            if self.dirty { " ●" } else { "" }
-                        ));
-                    }
-                });
-            });
-        });
         // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
-        egui::Panel::left("left_col").resizable(true).default_size(232.0).show(ui, |ui| {
+        egui::Panel::left("left_col").resizable(true).default_size(232.0).min_size(72.0).show(ui, |ui| {
             ui.add_space(6.0);
             egui::Frame::group(ui.style())
                 .fill(egui::Color32::from_gray(24))
@@ -2503,7 +2492,7 @@ impl eframe::App for KtApp {
                 self.draw_preview_controls(ui);
                 ui.add_space(3.0);
             });
-            egui::Panel::right("meters_col").resizable(false).default_size(72.0).show(ui, |ui| {
+            egui::Panel::right("meters_col").resizable(true).default_size(72.0).show(ui, |ui| {
                 self.draw_meters(ui);
             });
             egui::CentralPanel::default().show(ui, |ui| {

@@ -182,6 +182,21 @@ pub fn spawn_media_watchdog(
     (set, WatchdogHandle { stop })
 }
 
+/// Тайм-код «чч:мм:сс.млс Fкк» (п.19 р.6, тест 63) — верхняя строка.
+pub fn format_timecode(t: kt_time::Tick, fps: u32) -> String {
+    let ms = t.as_ms();
+    let fps = fps.max(1) as i64;
+    let frame = t.0.rem_euclid(90_000) / (90_000 / fps);
+    format!(
+        "{:02}:{:02}:{:02}.{:03} F{:02}",
+        ms / 3_600_000,
+        ms % 3_600_000 / 60_000,
+        ms % 60_000 / 1000,
+        ms % 1000,
+        frame
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +212,17 @@ mod tests {
             assert!(st.success());
         });
         dir.join("out").join(name).to_string_lossy().to_string()
+    }
+
+    /// Тест 63 (п.19 р.6): тайм-код верхней строки.
+    #[test]
+    fn t63_format_timecode() {
+        use kt_time::Tick;
+        assert_eq!(format_timecode(Tick(0), 30), "00:00:00.000 F00");
+        assert_eq!(format_timecode(Tick(90_000 - 3000), 30), "00:00:00.966 F29");
+        assert_eq!(format_timecode(Tick(59 * 90_000), 30), "00:00:59.000 F00");
+        assert_eq!(format_timecode(Tick(3600 * 90_000), 30), "01:00:00.000 F00");
+        assert_eq!(format_timecode(Tick(90_000 / 24 * 5), 24), "00:00:00.208 F05");
     }
 
     /// Тест 23 (п.3): пики строятся и БЕЗ индекс-БД (безымянный проект) —
