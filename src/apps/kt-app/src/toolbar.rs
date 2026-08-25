@@ -107,6 +107,102 @@ impl KtApp {
             });
     }
 
+    /// Меню-ряд (п.3 р.7): Файл/Правка/Вид в ТОПе левой колонки — жирная
+    /// зона драга окна вместо неюзабельной тонкой полоски; полоса на всю
+    /// ширину окна не возвращается (п.4: центр сверху — превью).
+    pub fn draw_menubar(&mut self, ui: &mut egui::Ui) {
+        let strip = egui::Rect::from_min_size(
+            ui.available_rect_before_wrap().min,
+            egui::vec2(ui.available_width(), 22.0),
+        );
+        // драг окна за пустую часть ряда (кнопки меню перекрывают хит)
+        let bg = ui.interact(strip, ui.id().with("menubar-drag"), egui::Sense::click_and_drag());
+        if bg.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            KtApp::release_pointer_after_wm_grab(ui.ctx());
+        }
+        if bg.double_clicked() {
+            let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+        }
+        egui::MenuBar::new().ui(ui, |ui| {
+            ui.menu_button("Файл", |ui| {
+                if ui.button("Новый").clicked() {
+                    self.new_project();
+                    ui.close();
+                }
+                if ui.button("Открыть…").clicked() {
+                    self.open_project_dialog();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Сохранить	Ctrl+S").clicked() {
+                    self.save();
+                    ui.close();
+                }
+                if ui.button("Сохранить как…").clicked() {
+                    self.save_as();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Рендер в MP4…").clicked() {
+                    self.start_render();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Выход").clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            });
+            ui.menu_button("Правка", |ui| {
+                if ui.button("Отменить	Ctrl+Z").clicked() {
+                    self.undo();
+                    ui.close();
+                }
+                if ui.button("Вернуть	Ctrl+Shift+Z").clicked() {
+                    self.redo();
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Копировать	Ctrl+C").clicked() {
+                    self.copy_selection();
+                    ui.close();
+                }
+                if ui.button("Вставить на курсор	Ctrl+V").clicked() {
+                    self.paste_at_cursor();
+                    ui.close();
+                }
+                if ui.button("Удалить	Del").clicked() {
+                    self.delete_action();
+                    ui.close();
+                }
+                if ui.button("Разрез / вырез региона	S").clicked() {
+                    self.cut_action();
+                    ui.close();
+                }
+            });
+            ui.menu_button("Вид", |ui| {
+                let detach_label =
+                    if self.preview_detached { "Вернуть превью" } else { "Отделить превью" };
+                if ui.button(detach_label).clicked() {
+                    self.preview_detached =
+                        crate::app::preview_detached_next(self.preview_detached, true, false);
+                    ui.close();
+                }
+                ui.checkbox(&mut self.ui_economy, "Экономный UI (30 fps при игре)");
+                ui.separator();
+                if ui.button("Диагностика…").clicked() {
+                    self.perf.diag_open = true;
+                    ui.close();
+                }
+                if ui.button("Уведомления").clicked() {
+                    self.notices_open = true;
+                    ui.close();
+                }
+            });
+        });
+    }
+
     /// Кнопка тулбара: фиксированный размер, ховер-подсказка + статус-хинт.
     fn tb(&mut self, ui: &mut egui::Ui, label: &str, hint: &str) -> bool {
         let r =
@@ -253,6 +349,9 @@ impl KtApp {
         if self.tb(ui, crate::icons::RENDER, "Рендер в MP4 (регион или весь проект)")
         {
             self.start_render();
+        }
+        if self.tb(ui, crate::icons::GAUGE, "Диагностика") {
+            self.perf.diag_open = true;
         }
         let save_label = if self.dirty {
             format!("{}●", crate::icons::SAVE)

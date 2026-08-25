@@ -967,6 +967,38 @@ impl KtApp {
         }
     }
 
+    /// Меню Файл → Новый (п.3 р.7): свежий безымянный проект на месте.
+    /// Старое состояние (плеер/потоки/watchdog) корректно дропается ПОСЛЕ
+    /// постройки нового.
+    pub fn new_project(&mut self) {
+        *self = Self::new_empty(None);
+    }
+
+    /// Меню Файл → Открыть…: диалог + пересоздание приложения на месте.
+    pub fn open_project_dialog(&mut self) {
+        let Some(p) = rfd::FileDialog::new()
+            .set_title("Открыть проект")
+            .add_filter("Kinotrain project", &["ktproj"])
+            .pick_file()
+        else {
+            return;
+        };
+        match Self::open(&p) {
+            Ok(app) => *self = app,
+            Err(e) => self.note(format!("не открылось: {e}")),
+        }
+    }
+
+    /// Меню Файл → Сохранить как…: диалог принудительно (save() без
+    /// project_path сам его открывает); отмена возвращает старый путь.
+    pub fn save_as(&mut self) {
+        let old = self.project_path.take();
+        self.save();
+        if self.project_path.is_none() {
+            self.project_path = old; // пользователь передумал
+        }
+    }
+
     pub fn save(&mut self) {
         let path = match self.project_path.clone() {
             Some(p) => p,
@@ -1699,6 +1731,17 @@ impl KtApp {
     }
 
     fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
+        // п.5 р.7: за статусбар окно ТАСКАЕТСЯ (виджеты поверх перехватят
+        // свои клики; пустые зоны — драг)
+        let strip = egui::Rect::from_min_size(
+            ui.available_rect_before_wrap().min,
+            egui::vec2(ui.available_width(), 22.0),
+        );
+        let bg = ui.interact(strip, ui.id().with("status-drag"), egui::Sense::click_and_drag());
+        if bg.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            Self::release_pointer_after_wm_grab(ui.ctx());
+        }
         ui.horizontal(|ui| {
             let ord = std::sync::atomic::Ordering::Relaxed;
             // колокольчик уведомлений (п.18): бейдж = непрочитанные
@@ -2556,7 +2599,9 @@ impl eframe::App for KtApp {
         // полоса времени над таймлайном (порт Timeline time strip)
         // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
         egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).show(ui, |ui| {
-            ui.add_space(6.0);
+            // меню-ряд = жирная зона драга окна (п.3 р.7)
+            self.draw_menubar(ui);
+            ui.add_space(4.0);
             egui::Frame::group(ui.style())
                 .fill(crate::theme::WINDOW)
                 .corner_radius(1.0)
@@ -2591,6 +2636,11 @@ impl eframe::App for KtApp {
                 ui.add_space(3.0);
             });
             egui::Panel::right("meters_col").resizable(true).default_size(72.0).show(ui, |ui| {
+                // borderless (п.4 р.7): кнопки окна занимают верхние 22px
+                // угла — контент метров (надпись dB) съезжает под них
+                if std::env::var_os("KT_DECORATIONS").is_none() {
+                    ui.add_space(24.0);
+                }
                 self.draw_meters(ui);
             });
             egui::CentralPanel::default().show(ui, |ui| {

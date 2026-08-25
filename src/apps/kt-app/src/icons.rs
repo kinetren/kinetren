@@ -28,6 +28,7 @@ pub const RENDER: &str = "\u{E8C2}"; // film-slate
 pub const SAVE: &str = "\u{E248}"; // floppy-disk
 pub const FX: &str = "\u{E2DE}"; // lightning (клип с эффектами)
 pub const WARN: &str = "\u{E4DE}"; // warning (офлайн-медиа)
+pub const GAUGE: &str = "\u{E288}"; // gauge (диагностика, п.9 р.7)
 
 /// Подключить Phosphor к egui-шрифтам (fallback к proportional).
 pub fn install_fonts(ctx: &egui::Context) {
