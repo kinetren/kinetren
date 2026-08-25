@@ -7,18 +7,26 @@
 //! «last good» на медиа — превью не мигает при недогруженных бакетах.
 
 use crate::app::KtApp;
-use crate::thumbs::{ThumbKey, thumb_key_t, thumb_source_step};
+use crate::thumbs::{THUMB_STEP_LADDER, ThumbKey, ThumbState, thumb_key_t, thumb_source_step};
 use eframe::egui;
 use kt_model::{Command, MediaId};
 
 const PREVIEW_W: f32 = 128.0;
 const PREVIEW_H: f32 = 72.0;
+/// Логических позиций скраба на файл (п.14 р.7: было 8 — «слишком мало
+/// превьюшек»); тумбы филмстрипа подхватываются near-поиском в БД.
+const BIN_SCRUB_SLOTS: f32 = 48.0;
 
 impl KtApp {
     pub fn draw_bin(&mut self, ui: &mut egui::Ui) {
         ui.label("Медиа (дроп файлов сюда/на окно; клик — поставить на курсор)");
         ui.add_space(2.0);
         let offline = self.offline.lock().unwrap().clone();
+        // offline→online: негативные кэши тумб устарели (п.1 р.7)
+        for id in self.bin_last_offline.difference(&offline) {
+            self.thumbs.invalidate_media(*id);
+        }
+        self.bin_last_offline = offline.clone();
         let media: Vec<(MediaId, String)> =
             self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect();
         let mut to_place: Option<MediaId> = None;
@@ -43,23 +51,33 @@ impl KtApp {
                     if !is_synth && !is_off {
                         let dur = self.thumbs.duration_or_probe(*id);
                         // момент: hover-x → доля файла; без hover — постер
-                        let t = match (resp.hover_pos(), dur) {
+                        let (t, tol) = match (resp.hover_pos(), dur) {
                             (Some(pos), Some(d)) if d.0 > 0 => {
                                 let frac = ((pos.x - rect.left()) / rect.width())
                                     .clamp(0.0, 0.999);
-                                let step =
-                                    thumb_source_step(d, rect.width() * 8.0, PREVIEW_W);
-                                thumb_key_t(0, (frac as f64 * d.0 as f64) as i64, step)
+                                let step = thumb_source_step(
+                                    d,
+                                    BIN_SCRUB_SLOTS * PREVIEW_W,
+                                    PREVIEW_W,
+                                );
+                                (
+                                    thumb_key_t(0, (frac as f64 * d.0 as f64) as i64, step),
+                                    step / 2,
+                                )
                             }
-                            _ => 0,
+                            _ => (0, THUMB_STEP_LADDER[0] / 2),
                         };
                         let key = ThumbKey { media: *id, t };
                         let tex = self.thumb_texture(ui, key);
                         let shown = match &tex {
                             Some(t) => Some(t.clone()),
                             None => {
-                                self.thumbs.request(key);
-                                pending = true;
+                                // Failed НЕ перезаказываем и НЕ держим
+                                // repaint-цикл (п.1 р.7)
+                                if self.thumbs.state(&key) != ThumbState::Failed {
+                                    self.thumbs.request_near(key, tol);
+                                    pending = true;
+                                }
                                 // не мигаем: последний удачный кадр медиа
                                 let last = self.bin_last_good.get(id).copied();
                                 last.and_then(|k| self.thumb_texture(ui, k))

@@ -69,6 +69,8 @@ pub struct KtApp {
     pub tl_v_zoom: Option<f32>,
     /// Последний удачный бакет превью в бине (скраб без миганий, п.11 р.6).
     pub bin_last_good: HashMap<MediaId, crate::thumbs::ThumbKey>,
+    /// Прошлый offline-снапшот бина: детект offline→online (п.1 р.7).
+    pub bin_last_offline: std::collections::HashSet<kt_model::MediaId>,
     /// Последний отправленный заголовок окна (шлём Title только при смене).
     pub(crate) last_title: String,
     /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
@@ -204,6 +206,7 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            bin_last_offline: std::collections::HashSet::new(),
             last_title: String::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,
@@ -286,6 +289,7 @@ impl KtApp {
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
+            bin_last_offline: std::collections::HashSet::new(),
             last_title: String::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,

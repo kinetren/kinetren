@@ -284,6 +284,27 @@ impl MediaIndexDb {
             .optional()?)
     }
 
+    /// Ближайший тумбнейл в допуске max_dist тиков (п.14 р.7): скраб бина
+    /// переиспользует тумбы, записанные филмстрипом с другим шагом. BETWEEN
+    /// по PK (media_id, t_ticks) — range-scan, ABS только на кандидатах.
+    pub fn thumbnail_near(
+        &self,
+        media_id: i64,
+        t_ticks: i64,
+        max_dist: i64,
+    ) -> Result<Option<(i64, Vec<u8>)>, IndexError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT t_ticks, jpeg FROM thumbnails \
+                 WHERE media_id=?1 AND t_ticks BETWEEN ?2-?3 AND ?2+?3 \
+                 ORDER BY ABS(t_ticks-?2) LIMIT 1",
+                params![media_id, t_ticks, max_dist],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
     pub fn put_thumbnail(
         &self,
         media_id: i64,

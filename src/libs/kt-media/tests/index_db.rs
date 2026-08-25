@@ -151,3 +151,41 @@ fn t16_corrupted_db_is_recreated_without_panic() {
     let (_, status) = db.ensure_media(&file).unwrap();
     assert_eq!(status, MediaEntryStatus::Rebuilt);
 }
+
+// ---- Тест 70 (п.14 р.7): ближайший тумбнейл в допуске -----------------------
+
+#[test]
+fn t70_thumbnail_near() {
+    let dir = tempfile::tempdir().unwrap();
+    let media_file = dir.path().join("v.bin");
+    std::fs::write(&media_file, b"fake video").unwrap();
+    let db_path = dir.path().join("p.ktindex.db");
+    let mut db = MediaIndexDb::open(&db_path).unwrap();
+    let (id, _) = db.ensure_media(&media_file).unwrap();
+    db.put_thumbnail(id, 90_000, b"jpeg-a").unwrap();
+    db.put_thumbnail(id, 180_000, b"jpeg-b").unwrap();
+
+    // точное совпадение приоритетно
+    assert_eq!(
+        db.thumbnail_near(id, 90_000, 45_000).unwrap(),
+        Some((90_000, b"jpeg-a".to_vec()))
+    );
+    // ближайший в допуске (100_000 ближе к 90_000, чем к 180_000)
+    assert_eq!(
+        db.thumbnail_near(id, 100_000, 45_000).unwrap(),
+        Some((90_000, b"jpeg-a".to_vec()))
+    );
+    assert_eq!(
+        db.thumbnail_near(id, 150_000, 45_000).unwrap(),
+        Some((180_000, b"jpeg-b".to_vec()))
+    );
+    // вне допуска — None (скраб не должен врать позицией)
+    assert_eq!(db.thumbnail_near(id, 400_000, 45_000).unwrap(), None);
+    // границы BETWEEN включительны
+    assert_eq!(
+        db.thumbnail_near(id, 135_000, 45_000).unwrap().map(|(t, _)| t),
+        Some(90_000)
+    );
+    // чужое медиа не видно
+    assert_eq!(db.thumbnail_near(id + 1, 90_000, 45_000).unwrap(), None);
+}
