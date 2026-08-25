@@ -47,6 +47,12 @@ pub struct KtApp {
     pub base_rate: f32,
     /// Позиция shuttle-слайдера, пока его держат (None = не держат).
     pub shuttle_override: Option<f32>,
+    /// Какая полоса спид-контрола схвачена драгом: Some(true)=верхняя
+    /// (постоянная), Some(false)=нижняя (shuttle). Пп.18-19 р.7.
+    pub speed_drag_upper: Option<bool>,
+    /// Отложенный одиночный клик по превью (п.11 р.7): ждём окно
+    /// double-click, потом play/pause.
+    pub preview_click_at: Option<std::time::Instant>,
     /// Позиция мыши во время DnD файла (X11-опрос; None на Wayland).
     pub dnd_hover: Option<egui::Pos2>,
     /// Кэш геометрии таймлайна последнего кадра (дроп, п.2 v1.4).
@@ -197,6 +203,8 @@ impl KtApp {
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
+            speed_drag_upper: None,
+            preview_click_at: None,
             dnd_hover: None,
             tl_geom: None,
             lane_order: Vec::new(),
@@ -281,6 +289,8 @@ impl KtApp {
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
+            speed_drag_upper: None,
+            preview_click_at: None,
             dnd_hover: None,
             tl_geom: None,
             lane_order: Vec::new(),
@@ -381,6 +391,15 @@ impl KtApp {
     pub(crate) fn release_pointer_after_wm_grab(ctx: &egui::Context) {
         ctx.stop_dragging();
         ctx.input_mut(|i| i.pointer = Default::default());
+    }
+
+    /// Подсказка: попап + строка в правом низу статусбара (п.16 р.7 —
+    /// hover_hint читает draw_statusbar). Все on_hover_text ходят сюда.
+    pub(crate) fn hint(&mut self, r: egui::Response, text: &str) -> egui::Response {
+        if r.hovered() {
+            self.hover_hint = Some(text.to_string());
+        }
+        r.on_hover_text(text)
     }
 
     /// Транспорт-машина Space/кнопки (п.15 раунда 6, тест 58; заменяет
@@ -1382,8 +1401,38 @@ impl KtApp {
         } else if self.incomplete_since.is_none() {
             self.incomplete_since = Some(std::time::Instant::now());
         }
-        let (rect, _resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+        let (rect, resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
         self.preview_rect = rect;
+        // пп.10-11 р.7: одиночный клик (отложенный на окно double-click) =
+        // play/pause; двойной = detach/attach. Работает и в отдельном окне
+        // превью (двойной клик там возвращает превью обратно).
+        {
+            let pending_ms = self.preview_click_at.map(|t| t.elapsed().as_millis());
+            let (action, op) = preview_click_step(
+                pending_ms,
+                resp.clicked(),
+                resp.double_clicked(),
+                PREVIEW_CLICK_DELAY_MS,
+            );
+            match op {
+                PendingOp::Arm => self.preview_click_at = Some(std::time::Instant::now()),
+                PendingOp::Clear => self.preview_click_at = None,
+                PendingOp::Keep => {}
+            }
+            match action {
+                PreviewClick::TogglePlay => self.on_transport_toggle(),
+                PreviewClick::ToggleDetach => {
+                    self.preview_detached =
+                        preview_detached_next(self.preview_detached, true, false);
+                }
+                PreviewClick::None => {}
+            }
+            if let Some(t0) = self.preview_click_at {
+                // дождаться истечения окна без ввода
+                let left = PREVIEW_CLICK_DELAY_MS.saturating_sub(t0.elapsed().as_millis());
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(left as u64 + 5));
+            }
+        }
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, egui::Color32::from_rgb(10, 10, 12));
         if let Some(tex) = &self.texture {
@@ -1492,29 +1541,26 @@ impl KtApp {
     /// скорости + ОДНА полоса — drag по ней = shuttle (упругий, отпустил —
     /// вернулся к основной, Vegas), double-click = 1×; маркер основной
     /// скорости виден на полосе. Маппинг полосы — slider_to_rate (тест 46).
+    /// Контрол скорости (пп.18-19 р.7, решение пользователя): ДВЕ
+    /// параллельные полосы в прежнем футпринте 170×20 — верхняя двигает
+    /// ПОСТОЯННУЮ скорость (остаётся), нижняя — shuttle с автовозвратом.
+    /// Значение при драге — оверлеем у курсора; поле ввода и правая
+    /// надпись «+1.00×» убраны (очевидные надписи не делаем).
     pub(crate) fn draw_speed_control(&mut self, ui: &mut egui::Ui) {
-        ui.label("Скорость:");
-        let mut base = self.base_rate;
-        let dv = ui.add(
-            egui::DragValue::new(&mut base)
-                .speed(0.02)
-                .range(-2.0..=2.0)
-                .fixed_decimals(2)
-                .suffix("×"),
-        );
-        if dv.changed() {
-            self.base_rate = base;
-            if self.shuttle_override.is_none() {
-                self.player.set_playback_rate(base);
-            }
-        }
         let (rect, resp) =
             ui.allocate_exact_size(egui::vec2(170.0, 20.0), egui::Sense::click_and_drag());
         let p = ui.painter_at(rect);
         let overriding = self.shuttle_override.is_some();
-        p.rect_filled(rect, 6.0, egui::Color32::from_gray(24));
+        let mid = rect.center().y;
+        let upper = egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), mid));
+        let lower = egui::Rect::from_min_max(egui::pos2(rect.left(), mid), rect.max);
+        p.rect_filled(rect, 2.0, egui::Color32::from_gray(24));
+        p.line_segment(
+            [egui::pos2(rect.left(), mid), egui::pos2(rect.right(), mid)],
+            egui::Stroke::new(1.0, crate::theme::SEAM),
+        );
         let to_x = |t: f32| rect.left() + (t + 1.0) * 0.5 * rect.width();
-        // засечки: центр (0/стоп) и ±1×, ±2×
+        // засечки: центр (0/стоп) и ±1×, ±2× — на всю высоту
         for (t, strong) in [
             (0.0f32, true),
             (rate_to_slider(1.0), true),
@@ -1525,22 +1571,39 @@ impl KtApp {
             let x = to_x(t);
             p.line_segment(
                 [
-                    egui::pos2(x, rect.top() + if strong { 3.0 } else { 6.0 }),
-                    egui::pos2(x, rect.bottom() - if strong { 3.0 } else { 6.0 }),
+                    egui::pos2(x, rect.top() + if strong { 2.0 } else { 5.0 }),
+                    egui::pos2(x, rect.bottom() - if strong { 2.0 } else { 5.0 }),
                 ],
                 egui::Stroke::new(1.0, egui::Color32::from_gray(if strong { 70 } else { 48 })),
             );
         }
-        // drag полосы = shuttle
+        // полоса выбирается в кадре нажатия и держится до конца драга
+        if resp.drag_started()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            self.speed_drag_upper = Some(pos.y < mid);
+        }
         if (resp.dragged() || resp.drag_started())
             && let Some(pos) = resp.interact_pointer_pos()
         {
             let t = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0).clamp(-1.0, 1.0);
-            self.shuttle_override = Some(t);
-            self.player.set_playback_rate(slider_to_rate(t));
+            if self.speed_drag_upper == Some(true) {
+                // верхняя полоса: постоянная скорость (остаётся)
+                self.base_rate = slider_to_rate(t);
+                if self.shuttle_override.is_none() {
+                    self.player.set_playback_rate(self.base_rate);
+                }
+            } else {
+                // нижняя: временный shuttle с автовозвратом
+                self.shuttle_override = Some(t);
+                self.player.set_playback_rate(slider_to_rate(t));
+            }
         }
-        if resp.drag_stopped() && self.shuttle_override.take().is_some() {
-            self.player.set_playback_rate(self.base_rate);
+        if resp.drag_stopped() {
+            self.speed_drag_upper = None;
+            if self.shuttle_override.take().is_some() {
+                self.player.set_playback_rate(self.base_rate);
+            }
         }
         if resp.double_clicked() {
             self.base_rate = 1.0;
@@ -1549,87 +1612,86 @@ impl KtApp {
         }
         let base_t = rate_to_slider(self.base_rate);
         let cur_t = self.shuttle_override.unwrap_or(base_t);
-        // полоса от центра до текущей позиции (янтарная при shuttle)
-        let (x0, x1) = (to_x(0.0).min(to_x(cur_t)), to_x(0.0).max(to_x(cur_t)));
-        let band = if overriding {
-            egui::Color32::from_rgba_unmultiplied(255, 190, 90, 90)
-        } else {
-            egui::Color32::from_rgba_unmultiplied(120, 160, 255, 70)
-        };
+        // верхняя полоса: заливка от центра до base + маркер
         p.rect_filled(
             egui::Rect::from_min_max(
-                egui::pos2(x0, rect.top() + 5.0),
-                egui::pos2(x1, rect.bottom() - 5.0),
+                egui::pos2(to_x(0.0).min(to_x(base_t)), upper.top() + 3.0),
+                egui::pos2(to_x(0.0).max(to_x(base_t)), upper.bottom() - 1.0),
             ),
-            3.0,
-            band,
+            1.0,
+            egui::Color32::from_rgba_unmultiplied(120, 160, 255, 70),
         );
-        // маркер ОСНОВНОЙ скорости (тонкая рамка) + текущий (кружок)
         p.line_segment(
             [
-                egui::pos2(to_x(base_t), rect.top() + 2.0),
-                egui::pos2(to_x(base_t), rect.bottom() - 2.0),
+                egui::pos2(to_x(base_t), upper.top() + 1.0),
+                egui::pos2(to_x(base_t), upper.bottom()),
             ],
-            egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(150, 180, 255, 200)),
+            egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(150, 180, 255, 220)),
         );
+        // нижняя полоса: shuttle-заливка + кружок текущей скорости
+        let (x0, x1) = (to_x(0.0).min(to_x(cur_t)), to_x(0.0).max(to_x(cur_t)));
+        if overriding {
+            p.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(x0, lower.top() + 1.0),
+                    egui::pos2(x1, lower.bottom() - 3.0),
+                ),
+                1.0,
+                egui::Color32::from_rgba_unmultiplied(255, 190, 90, 90),
+            );
+        }
         p.circle_filled(
-            egui::pos2(to_x(cur_t), rect.center().y),
-            6.0,
+            egui::pos2(to_x(cur_t), lower.center().y),
+            4.5,
             if overriding {
                 egui::Color32::from_rgb(255, 200, 100)
             } else {
                 egui::Color32::from_gray(210)
             },
         );
-        resp.on_hover_text(
-            "Drag — shuttle (отпустишь — вернётся), double-click — 1×,
-точная основная скорость — в поле слева",
+        // значение — оверлеем у курсора ТОЛЬКО при драге (п.19 р.7)
+        if self.speed_drag_upper.is_some()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            let cur = self.player.playback_rate();
+            let shown =
+                if self.speed_drag_upper == Some(true) { self.base_rate } else { cur };
+            egui::Area::new(egui::Id::new("speed-drag-overlay"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(pos + egui::vec2(14.0, -26.0))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.monospace(format_rate(shown));
+                    });
+                });
+        }
+        self.hint(
+            resp,
+            "Верхняя полоса — постоянная скорость, нижняя — shuttle (отпустишь — вернётся), double-click — 1×",
         );
-        // ≠1× — ярким акцентом самого значения (п.19 р.6), без бейджа
-        let cur = self.player.playback_rate();
-        let rt = egui::RichText::new(format_rate(cur)).monospace();
-        ui.label(if (cur - 1.0).abs() > 0.001 {
-            rt.strong().color(egui::Color32::WHITE)
-        } else {
-            rt.weak()
-        });
     }
 
+    /// Контролы превью (п.17 р.7: без очевидных надписей — значения
+    /// самодостаточны; п.20: Разрешение ПЕРЕД Качеством — качество есть
+    /// доля разрешения проекта, движок превью видит только произведение).
     fn draw_preview_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            // лестница качеств превью: доля разрешения проекта
             let proj = self.model.project().settings.clone();
             let cur_q = self.player.preview_quality();
+            let fracs = [1.0f32 / 16.0, 1.0 / 8.0, 1.0 / 4.0, 1.0 / 2.0, 1.0];
             let mut frac_idx = {
                 let ratio = cur_q.width as f32 / proj.width.max(1) as f32;
-                [(1.0 / 16.0), 1.0 / 8.0, 1.0 / 4.0, 1.0 / 2.0, 1.0]
+                fracs
                     .iter()
                     .enumerate()
                     .min_by(|a, b| (a.1 - ratio).abs().partial_cmp(&(b.1 - ratio).abs()).unwrap())
                     .map(|(i, _)| i)
                     .unwrap_or(2)
             };
-            ui.label("Качество:");
-            let labels = ["1/16", "1/8", "1/4", "1/2", "1/1"];
-            let before = frac_idx;
-            egui::ComboBox::from_id_salt("quality").selected_text(labels[frac_idx]).show_ui(
-                ui,
-                |ui| {
-                    for (i, l) in labels.iter().enumerate() {
-                        ui.selectable_value(&mut frac_idx, i, *l);
-                    }
-                },
-            );
-            if frac_idx != before {
-                let f = [1.0 / 16.0, 1.0 / 8.0, 1.0 / 4.0, 1.0 / 2.0, 1.0][frac_idx];
-                let q = kt_media::Quality {
-                    width: (((proj.width as f32 * f) as u32).max(2)) & !1,
-                    height: (((proj.height as f32 * f) as u32).max(2)) & !1,
-                };
-                self.player.set_preview_quality(q);
-            }
-            ui.separator();
-            ui.label("FPS:");
+            let q_for = |w: u32, h: u32, f: f32| kt_media::Quality {
+                width: (((w as f32 * f) as u32).max(2)) & !1,
+                height: (((h as f32 * f) as u32).max(2)) & !1,
+            };
             let mut fps = proj.fps;
             let before_fps = fps;
             egui::ComboBox::from_id_salt("fps").selected_text(fps.to_string()).show_ui(ui, |ui| {
@@ -1643,10 +1705,6 @@ impl KtApp {
                 self.apply(Command::SetSettings { settings: st });
             }
             ui.separator();
-            // ползунок скорости воспроизведения (п.4, как в Sony Vegas)
-            ui.separator();
-
-            ui.label("Разрешение:");
             let mut res = (proj.width, proj.height);
             let before_res = res;
             egui::ComboBox::from_id_salt("res")
@@ -1667,15 +1725,26 @@ impl KtApp {
                 st.width = res.0;
                 st.height = res.1;
                 self.apply(Command::SetSettings { settings: st });
+                // качество — доля разрешения: сохранить долю, а не пиксели
+                // (раньше показанная доля молча съезжала, п.20 р.7)
+                self.player.set_preview_quality(q_for(res.0, res.1, fracs[frac_idx]));
+            }
+            ui.separator();
+            let labels = ["1/16", "1/8", "1/4", "1/2", "1/1"];
+            let before = frac_idx;
+            egui::ComboBox::from_id_salt("quality").selected_text(labels[frac_idx]).show_ui(
+                ui,
+                |ui| {
+                    for (i, l) in labels.iter().enumerate() {
+                        ui.selectable_value(&mut frac_idx, i, *l);
+                    }
+                },
+            );
+            if frac_idx != before {
+                self.player.set_preview_quality(q_for(proj.width, proj.height, fracs[frac_idx]));
             }
             ui.separator();
             ui.checkbox(&mut self.smooth_scaling, "Сглаживание");
-            ui.separator();
-            // деатач превью (п.7 v1.4): окно на второй монитор
-            let label = if self.preview_detached { "Вернуть превью" } else { "Отделить превью" };
-            if ui.button(label).clicked() {
-                self.preview_detached = preview_detached_next(self.preview_detached, true, false);
-            }
         });
     }
 
@@ -2176,6 +2245,44 @@ pub fn resize_zone(
 
 /// State-машина деатача превью (п.7 v1.4, тест 51): закрытие окна всегда
 /// возвращает превью; иначе кнопка переключает.
+/// Отложенный одиночный клик по превью (пп.10-11 р.7): одиночный =
+/// play/pause (ждёт окно double-click), двойной = detach/attach.
+/// Чистая машина — тест 74.
+#[derive(Debug, PartialEq)]
+pub enum PreviewClick {
+    None,
+    TogglePlay,
+    ToggleDetach,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum PendingOp {
+    Keep,
+    Arm,
+    Clear,
+}
+
+pub const PREVIEW_CLICK_DELAY_MS: u128 = 300;
+
+pub fn preview_click_step(
+    pending_ms: Option<u128>,
+    clicked: bool,
+    double_clicked: bool,
+    delay_ms: u128,
+) -> (PreviewClick, PendingOp) {
+    if double_clicked {
+        // двойной отменяет отложенный одиночный (play не дёргается)
+        return (PreviewClick::ToggleDetach, PendingOp::Clear);
+    }
+    if clicked {
+        return (PreviewClick::None, PendingOp::Arm);
+    }
+    match pending_ms {
+        Some(ms) if ms >= delay_ms => (PreviewClick::TogglePlay, PendingOp::Clear),
+        _ => (PreviewClick::None, PendingOp::Keep),
+    }
+}
+
 pub fn preview_detached_next(detached: bool, toggle: bool, close_requested: bool) -> bool {
     if close_requested {
         false
@@ -3017,6 +3124,30 @@ mod repaint_tests {
         assert!(dnd_keep_hover(false, true), "на кадре дропа (hover уже пуст) — живёт");
         assert!(dnd_keep_hover(true, true));
         assert!(!dnd_keep_hover(false, false), "без hover и без дропа — гаснет");
+    }
+
+    /// Тест 74 (пп.10-11 р.7): машина отложенного клика по превью —
+    /// одиночный ждёт окно double-click и даёт play/pause; двойной
+    /// отменяет одиночный и переключает detach.
+    #[test]
+    fn t74_preview_click_machine() {
+        use super::{PendingOp as O, PreviewClick as C, preview_click_step};
+        // клик → взводим, действия нет
+        assert_eq!(preview_click_step(None, true, false, 300), (C::None, O::Arm));
+        // окно ещё не истекло → ждём
+        assert_eq!(preview_click_step(Some(100), false, false, 300), (C::None, O::Keep));
+        // истекло → play/pause
+        assert_eq!(preview_click_step(Some(300), false, false, 300), (C::TogglePlay, O::Clear));
+        assert_eq!(preview_click_step(Some(999), false, false, 300), (C::TogglePlay, O::Clear));
+        // двойной клик отменяет отложенный одиночный и детачит
+        assert_eq!(
+            preview_click_step(Some(120), false, true, 300),
+            (C::ToggleDetach, O::Clear)
+        );
+        // двойной без pending — тоже детач
+        assert_eq!(preview_click_step(None, false, true, 300), (C::ToggleDetach, O::Clear));
+        // без клика и без pending — ничего
+        assert_eq!(preview_click_step(None, false, false, 300), (C::None, O::Keep));
     }
 
     /// Тест 64 (п.22 р.6): зоны ресайза borderless-окна — 8 зон, углы
