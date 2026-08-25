@@ -56,6 +56,10 @@ pub struct KtApp {
     pub lane_order: Vec<(LaneKind, u32)>,
     /// Превью отделено в собственное окно (п.7 v1.4, второй монитор).
     pub preview_detached: bool,
+    /// Экономный UI: 30 fps при воспроизведении (п.1 раунда 5, слабые GPU).
+    pub ui_economy: bool,
+    /// Имя адаптера/бэкенда wgpu (диагностика перф-панели).
+    pub gpu_info: Option<String>,
     pub snap_line: Option<i64>,
     pub ctx_target: Option<CtxTarget>,
     /// Live-громкость volume rail до отпускания (id, dB).
@@ -177,6 +181,8 @@ impl KtApp {
             lane_order: Vec::new(),
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
+            ui_economy: false,
+            gpu_info: None,
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -249,6 +255,8 @@ impl KtApp {
             lane_order: Vec::new(),
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
+            ui_economy: false,
+            gpu_info: None,
             snap_line: None,
             ctx_target: None,
             live_gain: None,
@@ -1300,6 +1308,110 @@ impl KtApp {
             }
         }
     }
+    /// Компактный контрол скорости (пп.4-5 раунда 5): точное поле основной
+    /// скорости + ОДНА полоса — drag по ней = shuttle (упругий, отпустил —
+    /// вернулся к основной, Vegas), double-click = 1×; маркер основной
+    /// скорости виден на полосе. Маппинг полосы — slider_to_rate (тест 46).
+    fn draw_speed_control(&mut self, ui: &mut egui::Ui) {
+        ui.label("Скорость:");
+        let mut base = self.base_rate;
+        let dv = ui.add(
+            egui::DragValue::new(&mut base)
+                .speed(0.02)
+                .range(-2.0..=2.0)
+                .fixed_decimals(2)
+                .suffix("×"),
+        );
+        if dv.changed() {
+            self.base_rate = base;
+            if self.shuttle_override.is_none() {
+                self.player.set_playback_rate(base);
+            }
+        }
+        let (rect, resp) =
+            ui.allocate_exact_size(egui::vec2(170.0, 20.0), egui::Sense::click_and_drag());
+        let p = ui.painter_at(rect);
+        let overriding = self.shuttle_override.is_some();
+        p.rect_filled(rect, 6.0, egui::Color32::from_gray(24));
+        let to_x = |t: f32| rect.left() + (t + 1.0) * 0.5 * rect.width();
+        // засечки: центр (0/стоп) и ±1×, ±2×
+        for (t, strong) in [
+            (0.0f32, true),
+            (rate_to_slider(1.0), true),
+            (rate_to_slider(-1.0), true),
+            (1.0, false),
+            (-1.0, false),
+        ] {
+            let x = to_x(t);
+            p.line_segment(
+                [
+                    egui::pos2(x, rect.top() + if strong { 3.0 } else { 6.0 }),
+                    egui::pos2(x, rect.bottom() - if strong { 3.0 } else { 6.0 }),
+                ],
+                egui::Stroke::new(1.0, egui::Color32::from_gray(if strong { 70 } else { 48 })),
+            );
+        }
+        // drag полосы = shuttle
+        if (resp.dragged() || resp.drag_started())
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            let t = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0).clamp(-1.0, 1.0);
+            self.shuttle_override = Some(t);
+            self.player.set_playback_rate(slider_to_rate(t));
+        }
+        if resp.drag_stopped() && self.shuttle_override.take().is_some() {
+            self.player.set_playback_rate(self.base_rate);
+        }
+        if resp.double_clicked() {
+            self.base_rate = 1.0;
+            self.shuttle_override = None;
+            self.player.set_playback_rate(1.0);
+        }
+        let base_t = rate_to_slider(self.base_rate);
+        let cur_t = self.shuttle_override.unwrap_or(base_t);
+        // полоса от центра до текущей позиции (янтарная при shuttle)
+        let (x0, x1) = (to_x(0.0).min(to_x(cur_t)), to_x(0.0).max(to_x(cur_t)));
+        let band = if overriding {
+            egui::Color32::from_rgba_unmultiplied(255, 190, 90, 90)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(120, 160, 255, 70)
+        };
+        p.rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(x0, rect.top() + 5.0),
+                egui::pos2(x1, rect.bottom() - 5.0),
+            ),
+            3.0,
+            band,
+        );
+        // маркер ОСНОВНОЙ скорости (тонкая рамка) + текущий (кружок)
+        p.line_segment(
+            [
+                egui::pos2(to_x(base_t), rect.top() + 2.0),
+                egui::pos2(to_x(base_t), rect.bottom() - 2.0),
+            ],
+            egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(150, 180, 255, 200)),
+        );
+        p.circle_filled(
+            egui::pos2(to_x(cur_t), rect.center().y),
+            6.0,
+            if overriding {
+                egui::Color32::from_rgb(255, 200, 100)
+            } else {
+                egui::Color32::from_gray(210)
+            },
+        );
+        resp.on_hover_text(
+            "Drag — shuttle (отпустишь — вернётся), double-click — 1×,
+точная основная скорость — в поле слева",
+        );
+        let cur = self.player.playback_rate();
+        ui.monospace(format_rate(cur));
+        if (cur - 1.0).abs() > 0.001 {
+            ui.colored_label(egui::Color32::from_rgb(255, 200, 100), "≠1×");
+        }
+    }
+
     fn draw_preview_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             // лестница качеств превью: доля разрешения проекта
@@ -1350,46 +1462,7 @@ impl KtApp {
             ui.separator();
             // ползунок скорости воспроизведения (п.4, как в Sony Vegas)
             ui.separator();
-            ui.label("Скорость:");
-            // основной слайдер: −2×…+2× с реверсом и мёртвой зоной у нуля
-            // (пп.4-5 v1.4); double-click = 1×; фиксируется
-            let mut t = rate_to_slider(self.base_rate);
-            let slider = ui.add(
-                egui::Slider::new(&mut t, -1.0..=1.0)
-                    .show_value(false)
-                    .custom_formatter(|v, _| format_rate(slider_to_rate(v as f32))),
-            );
-            if slider.changed() {
-                self.base_rate = slider_to_rate(t);
-                if self.shuttle_override.is_none() {
-                    self.player.set_playback_rate(self.base_rate);
-                }
-            }
-            if slider.double_clicked() {
-                self.base_rate = 1.0;
-                self.shuttle_override = None;
-                self.player.set_playback_rate(1.0);
-            }
-            ui.monospace(format_rate(self.player.playback_rate()));
-            // shuttle (Vegas): временно перекрывает скорость, при
-            // отпускании возвращается к основной
-            let mut sh = self.shuttle_override.unwrap_or_else(|| rate_to_slider(self.base_rate));
-            let shuttle = ui.add(
-                egui::Slider::new(&mut sh, -1.0..=1.0)
-                    .show_value(false)
-                    .trailing_fill(false),
-            );
-            if shuttle.dragged() {
-                self.shuttle_override = Some(sh);
-                self.player.set_playback_rate(slider_to_rate(sh));
-            }
-            if shuttle.drag_stopped() && self.shuttle_override.take().is_some() {
-                self.player.set_playback_rate(self.base_rate);
-            }
-            let cur = self.player.playback_rate();
-            if (cur - 1.0).abs() > 0.001 {
-                ui.colored_label(egui::Color32::from_rgb(255, 200, 100), "≠1×");
-            }
+            self.draw_speed_control(ui);
             ui.separator();
             ui.label("Разрешение:");
             let mut res = (proj.width, proj.height);
@@ -1447,6 +1520,11 @@ impl KtApp {
             self.model.project().clips.len(),
             self.model.project().media.len()
         ));
+        if let Some(g) = &self.gpu_info {
+            ui.weak(format!("GPU: {g}"));
+        }
+        ui.checkbox(&mut self.ui_economy, "Экономный UI (30 fps при игре)")
+            .on_hover_text("Для слабых GPU: вдвое меньше перерисовок при воспроизведении");
         // кумулятивы FFmpeg-слоя (порт строки avcpp open/read/vdec/adec v1)
         let (opens, reads) = kt_media::ffmpeg::io_stats();
         ui.weak(format!(
@@ -1630,24 +1708,32 @@ impl KtApp {
         let hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
         let dropped: Vec<PathBuf> =
             ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).collect());
+        if hovering && let Some(p) = dnd_pointer_pos(ctx) {
+            self.dnd_hover = Some(p);
+        }
         if hovering {
-            if let Some(p) = dnd_pointer_pos(ctx) {
-                self.dnd_hover = Some(p);
-            }
-            ctx.request_repaint(); // силуэт следует за мышью
-        } else if dropped.is_empty() {
+            ctx.request_repaint(); // движение мыши при DnD не шлётся — опрос
+        }
+        // Позиция живёт, ПОКА идёт hover, и забирается ТОЛЬКО при дропе
+        // (dnd_keep_hover, тест 47): прежний take() на каждом кадре стирал
+        // позицию в том же кадре, где она ставилась, — к дропу всегда None
+        // (дроп падал на playhead) и силуэт не рисовался вовсе.
+        if !dnd_keep_hover(hovering, !dropped.is_empty()) {
             self.dnd_hover = None;
         }
-        // цель дропа по последней hover-позиции
-        let target = self.dnd_hover.take().filter(|_| !dropped.is_empty()).and_then(|pos| {
-            let g = self.tl_geom.clone()?;
-            if !g.in_lanes(pos) {
-                return None;
-            }
-            let lane = g.lane_at_y(pos.y)?;
-            let at = self.snap(g.x_to_tick(pos.x).max(0), None);
-            Some((Tick(at), lane))
-        });
+        let target = if dropped.is_empty() {
+            None
+        } else {
+            self.dnd_hover.take().and_then(|pos| {
+                let g = self.tl_geom.clone()?;
+                if !g.in_lanes(pos) {
+                    return None;
+                }
+                let lane = g.lane_at_y(pos.y)?;
+                let at = self.snap(g.x_to_tick(pos.x).max(0), None);
+                Some((Tick(at), lane))
+            })
+        };
         for path in dropped {
             if path.extension().map(|e| e == "ktproj").unwrap_or(false) {
                 match KtApp::open(&path) {
@@ -1687,6 +1773,10 @@ pub struct CoverageCache {
     stamp: Option<(u64, u64, (u32, u32))>,
     /// Arc: снапшот на кадр — клон указателя, не карты (п.1 v1.4).
     pub per_clip: Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>>,
+    /// Троттлинг при игре (п.1 раунда 5): epoch кэша меняется КАЖДОЙ
+    /// вставкой → пересчёт шёл 60 раз/с с мьютексом кэша (контеншен с
+    /// декодерами и аудио-рендером). Полоски освежаются не чаще 4 Гц.
+    last_refresh: Option<std::time::Instant>,
 }
 
 /// Кэш имён клипов (п.1: HashMap'ы и O(n²) suppress пересобирались кадр).
@@ -1706,8 +1796,15 @@ impl KtApp {
         use kt_time::AUDIO_BURST_FRAMES;
         let q = self.player.preview_quality();
         let stamp = (self.player.cache.epoch(), self.model_rev, (q.width, q.height));
-        if self.coverage_cache.stamp != Some(stamp) {
+        let throttled = self.player.transport.is_playing()
+            && self
+                .coverage_cache
+                .last_refresh
+                .map(|t| t.elapsed().as_millis() < 250)
+                .unwrap_or(false);
+        if self.coverage_cache.stamp != Some(stamp) && !throttled {
             self.coverage_cache.stamp = Some(stamp);
+            self.coverage_cache.last_refresh = Some(std::time::Instant::now());
             let mut per_clip = HashMap::new();
             for c in &self.model.project().clips {
                 let (kind, b0, b1) = match c.kind {
@@ -1834,6 +1931,13 @@ fn dnd_pointer_pos(ctx: &egui::Context) -> Option<egui::Pos2> {
 #[cfg(not(target_os = "linux"))]
 fn dnd_pointer_pos(_ctx: &egui::Context) -> Option<egui::Pos2> {
     None
+}
+
+/// Жизнь dnd-позиции (п.2 v1.4, тест 47): держится при hover'е И на кадре
+/// дропа (hovered_files к этому кадру уже пуст); гаснет только когда нет
+/// ни того, ни другого.
+pub fn dnd_keep_hover(hovering: bool, dropping: bool) -> bool {
+    hovering || dropping
 }
 
 /// State-машина деатача превью (п.7 v1.4, тест 51): закрытие окна всегда
@@ -2292,13 +2396,22 @@ impl eframe::App for KtApp {
                     .with_title("Kinotrain — превью")
                     .with_inner_size([960.0, 560.0]),
                 |ui, _class| {
-                    // input этого вьюпорта: пробел/шорткаты работают из окна
+                    // input этого вьюпорта: пробел/шорткаты работают из
+                    // окна; Esc здесь ТОЛЬКО возвращает превью (не трогает
+                    // глобальный каскад — регион/окна главного не страдают)
                     let child_ctx = ui.ctx().clone();
-                    self.handle_keys(&child_ctx);
-                    egui::CentralPanel::default().show(ui, |ui| {
-                        self.draw_preview(ui);
-                    });
-                    if child_ctx.input(|i| i.viewport().close_requested()) {
+                    let esc = child_ctx.input(|i| i.key_pressed(egui::Key::Escape));
+                    if !esc {
+                        self.handle_keys(&child_ctx);
+                    }
+                    // без отступов, чёрный фон — только видео (п.7 раунда 5)
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(8, 8, 10)))
+                        .show(ui, |ui| {
+                            self.draw_preview(ui);
+                        });
+                    // Esc в окне превью возвращает его в главное
+                    if esc || child_ctx.input(|i| i.viewport().close_requested()) {
                         self.preview_detached =
                             preview_detached_next(self.preview_detached, false, true);
                     }
@@ -2365,6 +2478,8 @@ impl eframe::App for KtApp {
                 .wgpu_render_state()
                 .map(|rs| {
                     let info = rs.adapter.get_info();
+                    self.gpu_info =
+                        Some(format!("{} / {:?}", info.name, info.backend));
                     let name = info.name.to_lowercase();
                     info.device_type == eframe::wgpu::DeviceType::Cpu
                         || name.contains("llvmpipe")
@@ -2452,7 +2567,7 @@ impl eframe::App for KtApp {
             || self.render_job.is_some()
             || self.meter.is_active();
         let delay = if animating {
-            std::time::Duration::from_millis(16)
+            std::time::Duration::from_millis(if self.ui_economy { 33 } else { 16 })
         } else if self.incomplete_since.is_some() {
             std::time::Duration::from_millis(100) // ретраи неполного кадра
         } else {
@@ -2593,6 +2708,18 @@ mod repaint_tests {
         }
         // rate=0 маппится в центр слайдера
         assert_eq!(rate_to_slider(0.0), 0.0);
+    }
+
+    /// Тест 47 (дополнение, регресс п.2 раунда 5): dnd-позиция живёт при
+    /// hover'е и на кадре дропа — прежний безусловный take() стирал её
+    /// каждый кадр, дроп всегда падал на playhead, силуэт не рисовался.
+    #[test]
+    fn t47_dnd_hover_survives_until_drop() {
+        use super::dnd_keep_hover;
+        assert!(dnd_keep_hover(true, false), "во время hover — живёт");
+        assert!(dnd_keep_hover(false, true), "на кадре дропа (hover уже пуст) — живёт");
+        assert!(dnd_keep_hover(true, true));
+        assert!(!dnd_keep_hover(false, false), "без hover и без дропа — гаснет");
     }
 
     /// Тест 51 (п.7 v1.4): state-машина деатача превью — закрытие окна

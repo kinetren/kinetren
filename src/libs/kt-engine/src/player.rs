@@ -651,7 +651,10 @@ fn audio_render_loop(ctx: RenderCtx) {
         // кольцо сохраняет уже отрендеренный хвост, resume продолжает с него.
         loop_stats.render_passes.fetch_add(1, Ordering::Relaxed);
         if transport.is_playing() {
-            std::thread::sleep(std::time::Duration::from_millis(2));
+            // 8 мс: кольцо держит ~85 мс (4 burst'а), колбэк ест ~21 мс за
+            // раз — запас четырёхкратный; 2 мс были 500 пробуждениями/с и
+            // грели CPU на слабых машинах (п.1 раунда 5)
+            std::thread::sleep(std::time::Duration::from_millis(8));
         } else {
             // пауза: паркуемся до play/seek/правки (страховочный таймаут —
             // добрать «хвостовой» consumed после остановки колбэка)
