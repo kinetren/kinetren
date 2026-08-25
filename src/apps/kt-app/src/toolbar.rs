@@ -144,6 +144,7 @@ impl KtApp {
         let bg = ui.interact(strip, ui.id().with("titlebar-drag"), egui::Sense::click_and_drag());
         if bg.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            KtApp::release_pointer_after_wm_grab(ui.ctx());
         }
         if bg.double_clicked() {
             let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
@@ -217,10 +218,12 @@ impl KtApp {
         ui.separator();
         if self.tb(ui, crate::icons::MINUS, "Отдалить (Ctrl+колесо)") {
             self.follow_playhead = false; // ручной зум (п.14 р.6)
+            self.last_user_scroll = Some(std::time::Instant::now());
             self.ticks_per_px = (self.ticks_per_px * 1.25).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
         }
         if self.tb(ui, crate::icons::PLUS, "Приблизить") {
             self.follow_playhead = false;
+            self.last_user_scroll = Some(std::time::Instant::now());
             self.ticks_per_px = (self.ticks_per_px * 0.8).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
         }
         ui.separator();

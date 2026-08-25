@@ -202,6 +202,30 @@ pub fn follow_view(
     }
 }
 
+/// Авто-восстановление follow-режима (п.30 р.7): ручной скролл гасит
+/// follow, но если играет loop/регион, регион ЦЕЛИКОМ видим в окне, курсор
+/// внутри него и юзер перестал крутить (grace-пауза) — следование
+/// включается обратно само.
+pub fn follow_rearm(
+    playing: bool,
+    since_scroll_s: f32,
+    grace_s: f32,
+    ph: f64,
+    region: Option<(f64, f64)>,
+    view_start: f64,
+    vis: f64,
+) -> bool {
+    let Some((rs, re)) = region.filter(|(s, e)| e > s) else {
+        return false;
+    };
+    playing
+        && since_scroll_s >= grace_s
+        && rs >= view_start
+        && re <= view_start + vis
+        && ph >= rs
+        && ph < re
+}
+
 /// Геометрия таймлайна последнего кадра — маппинг позиций ВНЕ
 /// draw_timeline (дроп файлов п.2, произвольный порядок дорожек п.6 v1.4).
 /// Строки — display-порядок (LaneKind, lane); чистые функции — тесты 47/50.
@@ -389,7 +413,12 @@ impl KtApp {
         // ---- зум/пан + edge-autoscroll при драге --------------------------
         let mut view_start = self.view_start;
         let mut tpp = self.ticks_per_px;
-        if let Some(pos) = response.hover_pos() {
+        // contains_pointer, НЕ hover_pos: во время чужого drag egui глушит
+        // hovered у всех остальных виджетов — колесо переставало работать
+        // (п.28 р.7); contains_pointer активным драгом не подавляется
+        if response.contains_pointer()
+            && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+        {
             let scroll = ui.input(|i| i.smooth_scroll_delta);
             // ВАЖНО: egui перекладывает Shift+колесо в scroll.x — для
             // вертикальных жестов (п.12 р.6) читаем СЫРОЕ колесо+модификаторы
@@ -412,10 +441,12 @@ impl KtApp {
             let zoom = ui.input(|i| i.zoom_delta());
             let (ctrl, shift) = ui
                 .input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
-            let user_scrolled = scroll != egui::Vec2::ZERO || zoom != 1.0;
+            // Shift-вертикаль окно НЕ двигает — follow не гасим (п.30 р.7)
+            let user_scrolled = (!shift && scroll != egui::Vec2::ZERO) || zoom != 1.0;
             if user_scrolled {
                 // ручное движение окна отключает следование (п.14 р.6)
                 self.follow_playhead = false;
+                self.last_user_scroll = Some(std::time::Instant::now());
             }
             if shift && ctrl && raw_y != 0.0 {
                 // Shift+Ctrl+колесо = вертикальный зум, якорь — строка
@@ -475,7 +506,22 @@ impl KtApp {
             }
         }
         // ensureCursorVisible при воспроизведении — ТОЛЬКО в follow-режиме
-        // (п.14 р.6): ручной пан/зум отключает следование до нового Play
+        // (п.14 р.6): ручной пан/зум отключает следование до нового Play.
+        // Авто-восстановление (п.30 р.7): регион видим + курсор в нём +
+        // юзер перестал крутить ≥1.5 c → follow сам включается обратно.
+        if !self.follow_playhead
+            && follow_rearm(
+                self.player.transport.is_playing(),
+                self.last_user_scroll.map(|t| t.elapsed().as_secs_f32()).unwrap_or(f32::MAX),
+                1.5,
+                self.player.transport.playhead().0 as f64,
+                self.model.project().region.map(|r| (r.start.0 as f64, r.end.0 as f64)),
+                view_start,
+                rect.width() as f64 * tpp,
+            )
+        {
+            self.follow_playhead = true;
+        }
         if let Some(vs) = follow_view(
             self.follow_playhead,
             self.player.transport.is_playing(),
@@ -2091,6 +2137,29 @@ mod geom_tests {
             150.0,
         );
         assert_eq!(step, 10_800_000, "2-минутная ступень");
+    }
+
+    /// Тест 72 (п.30 р.7): авто-восстановление follow — только когда
+    /// играет, регион ЦЕЛИКОМ видим, курсор внутри него и юзер перестал
+    /// крутить (grace).
+    #[test]
+    fn t72_follow_rearm_rules() {
+        use super::follow_rearm;
+        let reg = Some((1000.0, 2000.0));
+        // всё сошлось → true
+        assert!(follow_rearm(true, 2.0, 1.5, 1500.0, reg, 500.0, 2000.0));
+        // не играет / рано после скролла / нет региона
+        assert!(!follow_rearm(false, 2.0, 1.5, 1500.0, reg, 500.0, 2000.0));
+        assert!(!follow_rearm(true, 0.4, 1.5, 1500.0, reg, 500.0, 2000.0));
+        assert!(!follow_rearm(true, 2.0, 1.5, 1500.0, None, 500.0, 2000.0));
+        // регион виден не целиком (обрезан слева/справа)
+        assert!(!follow_rearm(true, 2.0, 1.5, 1500.0, reg, 1200.0, 2000.0));
+        assert!(!follow_rearm(true, 2.0, 1.5, 1500.0, reg, 500.0, 1400.0));
+        // курсор вне региона
+        assert!(!follow_rearm(true, 2.0, 1.5, 800.0, reg, 500.0, 2000.0));
+        assert!(!follow_rearm(true, 2.0, 1.5, 2000.0, reg, 500.0, 2000.0), "end исключён");
+        // пустой регион игнорируется
+        assert!(!follow_rearm(true, 2.0, 1.5, 1000.0, Some((1000.0, 1000.0)), 0.0, 5000.0));
     }
 
     /// Тест 59 (п.14 р.6): follow-правила возврата окна к playhead.

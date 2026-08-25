@@ -63,6 +63,8 @@ pub struct KtApp {
     /// Окно следует за курсором при игре; гаснет при ручном пане/зуме
     /// (п.14 раунда 6) — используется в L2, ставится в on_play.
     pub follow_playhead: bool,
+    /// Момент последнего РУЧНОГО скролла/зума (п.30 р.7: grace для follow_rearm).
+    pub last_user_scroll: Option<std::time::Instant>,
     /// Вертикальный скролл зоны дорожек, px (п.12 р.6).
     pub tl_scroll: f32,
     /// Явная высота строки (Shift+Ctrl+колесо); None = авто-подгонка.
@@ -203,6 +205,7 @@ impl KtApp {
             ui_economy: false,
             paused_at: None,
             follow_playhead: false,
+            last_user_scroll: None,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -286,6 +289,7 @@ impl KtApp {
             ui_economy: false,
             paused_at: None,
             follow_playhead: false,
+            last_user_scroll: None,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -369,6 +373,16 @@ impl KtApp {
         }
     }
 
+    /// После системного драга/ресайза окна (X11 `_NET_WM_MOVERESIZE`) WM
+    /// забирает указатель и ButtonReleased в приложение НЕ приходит — egui
+    /// вечно считает кнопку зажатой, `dragged` держит виджет драга, и весь
+    /// остальной UI лишается hovered (скролл таймлайна умирал до клика,
+    /// п.28 р.7). Звать сразу после send_viewport_cmd(StartDrag/BeginResize).
+    pub(crate) fn release_pointer_after_wm_grab(ctx: &egui::Context) {
+        ctx.stop_dragging();
+        ctx.input_mut(|i| i.pointer = Default::default());
+    }
+
     /// Транспорт-машина Space/кнопки (п.15 раунда 6, тест 58; заменяет
     /// прежние правила «из паузы при регионе — всегда в начало», санкция
     /// пользователя):
@@ -394,6 +408,13 @@ impl KtApp {
         }
         match region {
             Some((s, e)) if loop_enabled && !(cursor >= s && cursor < e) => {
+                TransportAction::Resume { seek: Some(s) }
+            }
+            // п.29 р.7: регион отыгран (авто-пауза оставила курсор на/за
+            // концом) → Play играет регион заново; иначе resume попадал в
+            // окно авто-паузы тем же кадром и «ничего не делал». Только
+            // cursor >= e: игра ДО региона не трогается.
+            Some((s, e)) if !loop_enabled && cursor >= e => {
                 TransportAction::Resume { seek: Some(s) }
             }
             _ => TransportAction::Resume { seek: None },
@@ -2481,6 +2502,7 @@ impl eframe::App for KtApp {
                 });
                 if resp.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+                    Self::release_pointer_after_wm_grab(&ctx);
                 }
             }
         }
@@ -2497,6 +2519,7 @@ impl eframe::App for KtApp {
             let resp = ui.interact(strip, egui::Id::new("top-drag"), egui::Sense::click_and_drag());
             if resp.drag_started() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                Self::release_pointer_after_wm_grab(&ctx);
             }
             if resp.double_clicked() {
                 let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
@@ -2558,6 +2581,9 @@ impl eframe::App for KtApp {
                 && self.player.transport.playhead() < r.end + Tick(9000)
             {
                 self.player.pause();
+                // как ручная пауза: двойной Space после авто-паузы = стоп
+                // в начало региона (п.29 р.7)
+                self.paused_at = Some(std::time::Instant::now());
             }
             egui::Panel::bottom("prev_controls").show(ui, |ui| {
                 ui.add_space(3.0);
@@ -2859,8 +2885,20 @@ mod repaint_tests {
             toggle(false, false, 500, Some((100, 200)), true),
             A::Resume { seek: Some(100) }
         );
-        // loop выключен, курсор вне региона → всё равно с места
-        assert_eq!(toggle(false, false, 500, Some((100, 200)), false), A::Resume { seek: None });
+        // t73 (п.29 р.7, санкционированная правка t58): loop выключен,
+        // курсор НА/ЗА концом региона (после авто-паузы) → Play играет
+        // регион заново с начала; раньше Resume{None} тем же кадром
+        // попадал обратно в окно авто-паузы — «play ничего не делает»
+        assert_eq!(
+            toggle(false, false, 500, Some((100, 200)), false),
+            A::Resume { seek: Some(100) }
+        );
+        assert_eq!(
+            toggle(false, false, 200, Some((100, 200)), false),
+            A::Resume { seek: Some(100) }
+        );
+        // ...но игра ДО региона не трогается (cursor < start)
+        assert_eq!(toggle(false, false, 50, Some((100, 200)), false), A::Resume { seek: None });
         // двойной Space в паузе → стоп в начало региона (или 0)
         assert_eq!(toggle(false, true, 150, Some((100, 200)), false), A::SeekStart(100));
         assert_eq!(toggle(false, true, 150, None, false), A::SeekStart(0));
