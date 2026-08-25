@@ -101,9 +101,24 @@ impl VideoRenderer {
         t: Tick,
         quality: Quality,
     ) -> (Vec<u8>, bool) {
+        let mut out = Vec::new();
+        let complete = self.compose_from_cache_into(cache, t, quality, &mut out);
+        (out, complete)
+    }
+
+    /// Вариант с переиспользуемым буфером (превью 60 раз/с: аллокация
+    /// полного RGBA-кадра на каждый кадр была заметной, п.1 раунда 5).
+    pub fn compose_from_cache_into(
+        &self,
+        cache: &BurstCache,
+        t: Tick,
+        quality: Quality,
+        out: &mut Vec<u8>,
+    ) -> bool {
         let w = quality.width as usize;
         let h = quality.height as usize;
-        let mut out = vec![0u8; w * h * 4];
+        out.clear();
+        out.resize(w * h * 4, 0);
         let mut complete = true;
         for clip in self.clips.iter().filter(|c| c.start <= t && t < c.end) {
             let src_pts = clip_source_pts(clip, t, &self.grid);
@@ -133,16 +148,16 @@ impl VideoRenderer {
                             &ctx,
                         );
                         if (f.w as usize, f.h as usize) == (w, h) {
-                            alpha_over(&mut out, &f.rgba, f.has_alpha, w * h);
+                            alpha_over(out, &f.rgba, f.has_alpha, w * h);
                         }
                     } else {
-                        alpha_over(&mut out, &frame.rgba, frame.has_alpha, w * h);
+                        alpha_over(out, &frame.rgba, frame.has_alpha, w * h);
                     }
                 }
                 None => complete = false,
             }
         }
-        (out, complete)
+        complete
     }
 }
 

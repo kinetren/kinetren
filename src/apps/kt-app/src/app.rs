@@ -58,6 +58,10 @@ pub struct KtApp {
     pub preview_detached: bool,
     /// Экономный UI: 30 fps при воспроизведении (п.1 раунда 5, слабые GPU).
     pub ui_economy: bool,
+    /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
+    preview_buf: Vec<u8>,
+    /// Троттлинг glow-мипа: каждые N новых кадров (амбиент не мерцает).
+    glow_skip: u8,
     /// Имя адаптера/бэкенда wgpu (диагностика перф-панели).
     pub gpu_info: Option<String>,
     pub snap_line: Option<i64>,
@@ -182,6 +186,8 @@ impl KtApp {
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
+            preview_buf: Vec::new(),
+            glow_skip: 0,
             gpu_info: None,
             snap_line: None,
             ctx_target: None,
@@ -256,6 +262,8 @@ impl KtApp {
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
+            preview_buf: Vec::new(),
+            glow_skip: 0,
             gpu_info: None,
             snap_line: None,
             ctx_target: None,
@@ -1174,13 +1182,16 @@ impl KtApp {
         let mut complete = self.preview_key.map(|k| k.2).unwrap_or(false);
         if need {
             self.last_compose_retry = std::time::Instant::now();
-            let (rgba, cq, c) = self.player.compose_preview(t);
+            let mut rgba = std::mem::take(&mut self.preview_buf);
+            let (cq, c) = self.player.compose_preview_into(t, &mut rgba);
             complete = c;
             // держим последний ПОЛНЫЙ кадр: неполный композит не затирает
             // картинку (мигание «чёрный кадр ↔ Загрузка», п.14/15)
             if c || self.texture.is_none() {
-                // glow-мип: грубый box-даунскейл 32×18 (дешёвый, раз на кадр)
-                if self.sw_render == Some(false) {
+                // glow-мип: грубый box-даунскейл 32×18; при игре — каждый
+                // 4-й новый кадр (амбиент-свечение мерцания не заметит)
+                self.glow_skip = self.glow_skip.wrapping_add(1);
+                if self.sw_render == Some(false) && self.glow_skip % 4 == 1 {
                     let (gw, gh) = (32usize, 18usize);
                     let mut small = vec![0u8; gw * gh * 4];
                     let (sw, sh) = (cq.width as usize, cq.height as usize);
@@ -1226,6 +1237,7 @@ impl KtApp {
                 }
             }
             self.preview_key = Some((key_now.0, key_now.1, c));
+            self.preview_buf = rgba; // буфер обратно (переиспользование)
         }
         if complete {
             self.incomplete_since = None;

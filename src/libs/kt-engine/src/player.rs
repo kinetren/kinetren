@@ -448,7 +448,10 @@ impl Player {
         self.video.lock().unwrap().grid
     }
 
-    pub fn compose_preview(&self, t: Tick) -> (Vec<u8>, Quality, bool) {
+    /// Вариант compose_preview с переиспользуемым буфером (превью 60 раз/с:
+    /// две аллокации полного RGBA-кадра на каждый кадр — заметная часть
+    /// стоимости кадра UI, п.1 раунда 5).
+    pub fn compose_preview_into(&self, t: Tick, out: &mut Vec<u8>) -> (Quality, bool) {
         let q = self.preview_quality();
         let video = self.video.lock().unwrap();
         let aligned = video.grid.align_floor(t);
@@ -467,8 +470,14 @@ impl Player {
                 });
             }
         }
-        let (buf, complete) = video.compose_from_cache(&self.cache, aligned, q);
-        (buf, q, complete)
+        let complete = video.compose_from_cache_into(&self.cache, aligned, q, out);
+        (q, complete)
+    }
+
+    pub fn compose_preview(&self, t: Tick) -> (Vec<u8>, Quality, bool) {
+        let mut out = Vec::new();
+        let (q, complete) = self.compose_preview_into(t, &mut out);
+        (out, q, complete)
     }
 }
 
