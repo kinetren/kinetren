@@ -54,22 +54,53 @@ impl KtApp {
             egui::vec2(ui.available_width(), 34.0),
         );
         let painter = ui.painter();
-        gradient_rect(
-            painter,
-            strip,
-            egui::Color32::from_rgb(40, 43, 48),
-            egui::Color32::from_rgb(26, 28, 32),
-        );
+        // плоский фон + 1px шов (тема р.6 — без градиентов)
+        painter.rect_filled(strip, 0.0, crate::theme::WINDOW);
         painter.line_segment(
-            [strip.left_top(), strip.right_top()],
-            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22)),
+            [strip.left_bottom(), strip.right_bottom()],
+            egui::Stroke::new(1.0, crate::theme::SEAM),
         );
+        // borderless (п.22 р.6): драг окна за пустые зоны строки,
+        // double-click = maximize; строго в кадре drag_started
+        let bg = ui.interact(strip, ui.id().with("titlebar-drag"), egui::Sense::click_and_drag());
+        if bg.drag_started() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if bg.double_clicked() {
+            let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+        }
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(strip.shrink2(egui::vec2(8.0, 2.0)))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
         ui.advance_cursor_after_rect(strip);
+        // кнопки окна _ □ × справа (borderless, п.22 р.6)
+        {
+            let mut right = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(strip.shrink2(egui::vec2(6.0, 2.0)))
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            );
+            let ctx = right.ctx().clone();
+            if right.button(egui::RichText::new("✕").size(14.0)).on_hover_text("Закрыть").clicked()
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+            if right
+                .button(egui::RichText::new(if max { "❐" } else { "□" }).size(13.0))
+                .on_hover_text(if max { "Восстановить" } else { "Развернуть" })
+                .clicked()
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+            }
+            if right.button(egui::RichText::new("—").size(13.0)).on_hover_text("Свернуть").clicked()
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+        }
         let ui = &mut child;
         let playing = self.player.transport.is_playing();
         if self.tb(

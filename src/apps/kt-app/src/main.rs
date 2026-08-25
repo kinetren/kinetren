@@ -13,6 +13,7 @@ mod icons;
 mod meters;
 mod morpher_editor;
 mod render_dialog;
+mod theme;
 mod thumbs;
 mod timeline;
 mod toolbar;

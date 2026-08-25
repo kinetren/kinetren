@@ -2078,6 +2078,34 @@ pub fn dnd_keep_hover(hovering: bool, dropping: bool) -> bool {
     hovering || dropping
 }
 
+/// Зона ресайза borderless-окна по позиции у края (п.22 р.6, тест 64):
+/// углы приоритетнее рёбер, центр → None.
+pub fn resize_zone(
+    win: egui::Rect,
+    pos: egui::Pos2,
+    margin: f32,
+) -> Option<egui::ResizeDirection> {
+    use egui::ResizeDirection::*;
+    let l = pos.x - win.left() <= margin;
+    let r = win.right() - pos.x <= margin;
+    let t = pos.y - win.top() <= margin;
+    let b = win.bottom() - pos.y <= margin;
+    if !win.contains(pos) {
+        return None;
+    }
+    Some(match (l, r, t, b) {
+        (true, _, true, _) => NorthWest,
+        (_, true, true, _) => NorthEast,
+        (true, _, _, true) => SouthWest,
+        (_, true, _, true) => SouthEast,
+        (true, ..) => West,
+        (_, true, ..) => East,
+        (_, _, true, _) => North,
+        (_, _, _, true) => South,
+        _ => return None,
+    })
+}
+
 /// State-машина деатача превью (п.7 v1.4, тест 51): закрытие окна всегда
 /// возвращает превью; иначе кнопка переключает.
 pub fn preview_detached_next(detached: bool, toggle: bool, close_requested: bool) -> bool {
@@ -2432,12 +2460,33 @@ impl eframe::App for KtApp {
         self.handle_drops(&ctx);
         self.hover_hint = None;
 
+        // ---- ресайз borderless-окна за края (п.22 р.6) --------------------
+        if !ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+            let win = ctx.content_rect();
+            let id = egui::Id::new("win-resize");
+            let resp = ui.interact(win, id, egui::Sense::click_and_drag());
+            if let Some(pos) = resp.hover_pos()
+                && let Some(dir) = resize_zone(win, pos, 4.0)
+            {
+                use egui::ResizeDirection::*;
+                ctx.set_cursor_icon(match dir {
+                    North | South => egui::CursorIcon::ResizeVertical,
+                    East | West => egui::CursorIcon::ResizeHorizontal,
+                    NorthEast | SouthWest => egui::CursorIcon::ResizeNeSw,
+                    NorthWest | SouthEast => egui::CursorIcon::ResizeNwSe,
+                });
+                if resp.drag_started() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+                }
+            }
+        }
+
         // статусбар (низ)
-        egui::Panel::bottom("status").show(ui, |ui| {
+        egui::Panel::bottom("status").frame(crate::theme::panel_frame()).show(ui, |ui| {
             self.draw_statusbar(ui);
         });
         // таймлайн (низ, на всю ширину) + плавающий тулбар поверх
-        egui::Panel::bottom("timeline").resizable(true).default_size(300.0).show(ui, |ui| {
+        egui::Panel::bottom("timeline").frame(crate::theme::panel_frame()).resizable(true).default_size(300.0).show(ui, |ui| {
             let full = ui.available_rect_before_wrap();
             self.timeline_rect = full;
             let strip_h = 34.0;
@@ -2460,7 +2509,7 @@ impl eframe::App for KtApp {
         });
         // полоса времени над таймлайном (порт Timeline time strip)
         // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
-        egui::Panel::left("left_col").resizable(true).default_size(232.0).min_size(72.0).show(ui, |ui| {
+        egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).show(ui, |ui| {
             ui.add_space(6.0);
             egui::Frame::group(ui.style())
                 .fill(egui::Color32::from_gray(24))
@@ -2720,9 +2769,13 @@ pub fn run() -> eframe::Result {
         setup.power_preference = eframe::wgpu::PowerPreference::from_env()
             .unwrap_or(eframe::wgpu::PowerPreference::LowPower);
     }
+    // borderless (п.22 р.6): свой титлбар в тулбар-строке; KT_DECORATIONS=1
+    // возвращает системную рамку (страховка от капризов WM)
+    let decorations = std::env::var_os("KT_DECORATIONS").is_some();
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 860.0])
+            .with_decorations(decorations)
             .with_title("Kinotrain"),
         wgpu_options,
         ..Default::default()
@@ -2731,17 +2784,7 @@ pub fn run() -> eframe::Result {
         "kinotrain",
         options,
         Box::new(move |cc| {
-            let mut v = egui::Visuals::dark();
-            v.panel_fill = egui::Color32::from_rgb(27, 29, 32); // #1b1d20 старого
-            v.window_fill = egui::Color32::from_rgb(30, 32, 36);
-            v.extreme_bg_color = egui::Color32::from_rgb(18, 18, 20);
-            v.widgets.noninteractive.corner_radius = 4.into();
-            v.widgets.inactive.corner_radius = 4.into();
-            v.widgets.hovered.corner_radius = 4.into();
-            v.widgets.active.corner_radius = 4.into();
-            v.selection.bg_fill = egui::Color32::from_rgb(62, 96, 180);
-            v.widgets.hovered.bg_fill = egui::Color32::from_rgb(52, 56, 63);
-            cc.egui_ctx.set_visuals(v);
+            crate::theme::apply(&cc.egui_ctx); // п.23 р.6
             crate::icons::install_fonts(&cc.egui_ctx);
             let restored = arg
                 .clone()
@@ -2863,6 +2906,28 @@ mod repaint_tests {
         assert!(dnd_keep_hover(false, true), "на кадре дропа (hover уже пуст) — живёт");
         assert!(dnd_keep_hover(true, true));
         assert!(!dnd_keep_hover(false, false), "без hover и без дропа — гаснет");
+    }
+
+    /// Тест 64 (п.22 р.6): зоны ресайза borderless-окна — 8 зон, углы
+    /// приоритетнее рёбер, центр и внешние точки → None.
+    #[test]
+    fn t64_resize_zones() {
+        use eframe::egui::{Rect, ResizeDirection::*, pos2};
+        let w = Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 80.0));
+        let m = 4.0;
+        assert_eq!(super::resize_zone(w, pos2(1.0, 1.0), m), Some(NorthWest));
+        assert_eq!(super::resize_zone(w, pos2(99.0, 1.0), m), Some(NorthEast));
+        assert_eq!(super::resize_zone(w, pos2(1.0, 79.0), m), Some(SouthWest));
+        assert_eq!(super::resize_zone(w, pos2(99.0, 79.0), m), Some(SouthEast));
+        assert_eq!(super::resize_zone(w, pos2(1.0, 40.0), m), Some(West));
+        assert_eq!(super::resize_zone(w, pos2(99.0, 40.0), m), Some(East));
+        assert_eq!(super::resize_zone(w, pos2(50.0, 1.0), m), Some(North));
+        assert_eq!(super::resize_zone(w, pos2(50.0, 79.0), m), Some(South));
+        assert_eq!(super::resize_zone(w, pos2(50.0, 40.0), m), None, "центр");
+        assert_eq!(super::resize_zone(w, pos2(-1.0, 40.0), m), None, "вне окна");
+        // граница margin точная
+        assert_eq!(super::resize_zone(w, pos2(4.0, 40.0), m), Some(West));
+        assert_eq!(super::resize_zone(w, pos2(4.1, 40.0), m), None);
     }
 
     /// Тест 51 (п.7 v1.4): state-машина деатача превью — закрытие окна
