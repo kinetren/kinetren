@@ -531,7 +531,7 @@ impl KtApp {
             10f32.powf(self.meter.fader_db / 20.0)
         };
         self.player.set_master_gain(gain);
-        response.on_hover_text("Мастер-громкость превью. Double-click: 0 dB. M: mute.");
+        self.hint(response, "Мастер-громкость превью. Double-click: 0 dB. M: mute.");
     }
 }
 

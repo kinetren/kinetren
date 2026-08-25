@@ -57,6 +57,9 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, SEAM);
     ctx.set_visuals(v);
     ctx.all_styles_mut(|st| {
+        // п.16 р.7: подсказки быстрые (дублируются в правый низ статусбара)
+        st.interaction.tooltip_delay = 0.15;
+        st.interaction.tooltip_grace_time = 0.2;
         st.spacing.item_spacing = egui::vec2(6.0, 3.0);
         st.spacing.button_padding = egui::vec2(5.0, 2.0);
         st.spacing.window_margin = 4.into();

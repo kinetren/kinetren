@@ -393,6 +393,23 @@ impl KtApp {
         ctx.input_mut(|i| i.pointer = Default::default());
     }
 
+    /// Зум кнопками — якорь на PLAYHEAD (п.26 р.7: раньше якорился левый
+    /// край окна). Курсор остаётся на той же экранной позиции; если он вне
+    /// окна — центрируем.
+    pub(crate) fn zoom_at_playhead(&mut self, factor: f64) {
+        self.follow_playhead = false; // ручной зум (п.14 р.6)
+        self.last_user_scroll = Some(std::time::Instant::now());
+        let ph = self.player.transport.playhead().0 as f64;
+        let old_tpp = self.ticks_per_px;
+        let new_tpp =
+            (old_tpp * factor).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
+        let w = (self.timeline_rect.width() as f64 - crate::timeline::GUTTER_W as f64).max(1.0);
+        let px = (ph - self.view_start) / old_tpp; // экранная позиция курсора
+        let px = if (0.0..=w).contains(&px) { px } else { w * 0.5 };
+        self.view_start = ph - px * new_tpp;
+        self.ticks_per_px = new_tpp;
+    }
+
     /// Подсказка: попап + строка в правом низу статусбара (п.16 р.7 —
     /// hover_hint читает draw_statusbar). Все on_hover_text ходят сюда.
     pub(crate) fn hint(&mut self, r: egui::Response, text: &str) -> egui::Response {
@@ -1755,33 +1772,52 @@ impl KtApp {
         ui.add_space(2.0);
         let ord = std::sync::atomic::Ordering::Relaxed;
         let q = self.player.preview_quality();
-        ui.weak(format!(
-            "Кэш: аудио {:.0} МБ / видео {:.0} МБ",
-            self.player.cache.audio_bytes() as f64 / 1e6,
-            self.player.cache.video_bytes() as f64 / 1e6
-        ));
-        ui.weak(format!(
-            "Underruns: render {} / callback {}",
-            self.player.underruns.load(ord),
-            self.player.shared.callback_underruns.load(ord)
-        ));
-        ui.weak(format!("Превью: {}×{}", q.width, q.height));
-        let s = &self.model.project().settings;
-        ui.weak(format!("Проект: {} fps, {}×{}", s.fps, s.width, s.height));
-        ui.weak(format!(
-            "Клипов: {} | медиа: {}",
-            self.model.project().clips.len(),
-            self.model.project().media.len()
-        ));
+        // п.15 р.7: короткие метрики — двумя колонками (экономия высоты)
+        let s = self.model.project().settings.clone();
+        let rows: [(String, String); 4] = [
+            (
+                format!(
+                    "Кэш {:.0}/{:.0} МБ",
+                    self.player.cache.audio_bytes() as f64 / 1e6,
+                    self.player.cache.video_bytes() as f64 / 1e6
+                ),
+                format!(
+                    "Underruns {}/{}",
+                    self.player.underruns.load(ord),
+                    self.player.shared.callback_underruns.load(ord)
+                ),
+            ),
+            (
+                format!("Превью {}×{}", q.width, q.height),
+                format!("{} fps, {}×{}", s.fps, s.width, s.height),
+            ),
+            (
+                format!("Клипов {}", self.model.project().clips.len()),
+                format!("Медиа {}", self.model.project().media.len()),
+            ),
+            (
+                format!(
+                    "V-показано {}",
+                    self.perf.video_frames_shown
+                ),
+                format!("V-пропущено {}", self.perf.video_cells_skipped),
+            ),
+        ];
+        egui::Grid::new("perf-2col").num_columns(2).spacing([10.0, 1.0]).show(ui, |ui| {
+            // короткие строки — без Truncate (иначе Grid ужимает колонку
+            // до троеточий); длинные (GPU/FFmpeg) остаются вне грида
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+            for (a, b) in rows {
+                ui.weak(a);
+                ui.weak(b);
+                ui.end_row();
+            }
+        });
         if let Some(g) = &self.gpu_info {
             ui.weak(format!("GPU: {g}"));
         }
-        ui.weak(format!(
-            "V-показано: {} | V-пропущено ячеек: {}",
-            self.perf.video_frames_shown, self.perf.video_cells_skipped
-        ));
-        ui.checkbox(&mut self.ui_economy, "Экономный UI (30 fps при игре)")
-            .on_hover_text("Для слабых GPU: вдвое меньше перерисовок при воспроизведении");
+        let r = ui.checkbox(&mut self.ui_economy, "Экономный UI (30 fps при игре)");
+        self.hint(r, "Для слабых GPU: вдвое меньше перерисовок при воспроизведении");
         // кумулятивы FFmpeg-слоя (порт строки avcpp open/read/vdec/adec v1)
         let (opens, reads) = kt_media::ffmpeg::io_stats();
         ui.weak(format!(
@@ -1793,10 +1829,6 @@ impl KtApp {
         self.perf.quality.draw(ui, 96.0);
         ui.add_space(4.0);
         self.perf.decode.draw(ui, 96.0);
-        ui.add_space(4.0);
-        if ui.button("Диагностика…").clicked() {
-            self.perf.diag_open = true;
-        }
     }
 
     fn draw_statusbar(&mut self, ui: &mut egui::Ui) {
@@ -1813,6 +1845,7 @@ impl KtApp {
         }
         ui.horizontal(|ui| {
             let ord = std::sync::atomic::Ordering::Relaxed;
+            ui.add_space(6.0); // п.6 р.7: колокольчик не липнет к краю
             // колокольчик уведомлений (п.18): бейдж = непрочитанные
             let bell = if self.notices_unread > 0 {
                 format!("{} {}", crate::icons::BELL, self.notices_unread)
@@ -1833,12 +1866,26 @@ impl KtApp {
                 egui::Color32::from_gray(140)
             }))
             .frame(false);
-            if ui.add(bell_btn).on_hover_text("Уведомления").clicked() {
+            let bell_resp = ui.add(bell_btn);
+            if self.hint(bell_resp, "Уведомления").clicked() {
                 self.notices_open = !self.notices_open;
                 if self.notices_open {
                     self.notices_unread = 0;
                 }
             }
+            ui.separator();
+            // пп.21,24,25 р.7: «зум:» стёрт (значение с единицей само себя
+            // объясняет), «слои» удалены, «(loop)» не пишем — горит кнопка
+            ui.weak(format!("{:.0} px/s", 90_000.0 / self.ticks_per_px));
+            if let Some(r) = self.model.project().region {
+                ui.separator();
+                ui.weak(format!(
+                    "регион {:.2}–{:.2}с",
+                    r.start.as_secs_f64(),
+                    r.end.as_secs_f64(),
+                ));
+            }
+            // п.22 р.7: кэш/underruns после региона
             ui.separator();
             ui.weak(format!(
                 "кэш: {:.0}/{:.0} МБ",
@@ -1851,20 +1898,6 @@ impl KtApp {
                 self.player.underruns.load(ord),
                 self.player.shared.callback_underruns.load(ord)
             ));
-            ui.separator();
-            ui.weak(format!("зум: {:.0} px/с", 90_000.0 / self.ticks_per_px));
-            ui.separator();
-            let (lv, la) = self.layers_at_cursor();
-            let mut overlay = format!("слои: V{lv} A{la}");
-            if let Some(r) = self.model.project().region {
-                overlay.push_str(&format!(
-                    " | регион {:.2}–{:.2}с{}",
-                    r.start.as_secs_f64(),
-                    r.end.as_secs_f64(),
-                    if self.model.project().loop_enabled { " (loop)" } else { "" }
-                ));
-            }
-            ui.weak(overlay);
             if let Some((msg, at)) = &self.status {
                 if at.elapsed().as_secs() < 6 {
                     let msg = msg.clone();
@@ -1875,6 +1908,7 @@ impl KtApp {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_space(6.0); // п.7 р.7: подсказка не липнет к краю
                 match &self.hover_hint {
                     Some(h) => ui.weak(h.clone()),
                     None => ui.weak("перетащи медиафайл на окно — клип встанет под мышку"),
@@ -2348,6 +2382,9 @@ pub struct PerfState {
     frames: u32,
     /// Кумулятив реально показанных НОВЫХ видеокадров (выровненный ключ).
     pub video_frames_shown: u64,
+    /// Сглаженный V-fps последнего окна замера (п.23 р.7: показывается в
+    /// тайм-коде тулбара).
+    pub vfps: f32,
     last_video_shown: u64,
     /// Пропущенные ячейки сетки кадров при игре (диагностика джиттера).
     pub video_cells_skipped: u64,
@@ -2405,6 +2442,7 @@ impl PerfState {
             last_underruns: (0, 0),
             frames: 0,
             video_frames_shown: 0,
+            vfps: 0.0,
             last_video_shown: 0,
             video_cells_skipped: 0,
             diag_open: false,
@@ -2496,6 +2534,7 @@ impl KtApp {
         let v_shown = self.perf.video_frames_shown;
         let v_fps = v_shown.saturating_sub(self.perf.last_video_shown) as f32 / dt;
         self.perf.last_video_shown = v_shown;
+        self.perf.vfps = v_fps; // п.23 р.7: тайм-код тулбара
         self.perf.quality.push(&[fps.min(120.0), v_fps.min(120.0), a_hit, v_hit]);
         let (r_open, r_read) =
             (opens.saturating_sub(lo) as f32 / dt, reads.saturating_sub(lr) as f32 / dt);
@@ -2709,19 +2748,25 @@ impl eframe::App for KtApp {
             // меню-ряд = жирная зона драга окна (п.3 р.7)
             self.draw_menubar(ui);
             ui.add_space(4.0);
-            egui::Frame::group(ui.style())
-                .fill(crate::theme::WINDOW)
-                .corner_radius(1.0)
-                .show(ui, |ui| {
-                    self.draw_bin(ui);
-                });
-            ui.add_space(8.0);
-            egui::Frame::group(ui.style())
-                .fill(crate::theme::WINDOW)
-                .corner_radius(1.0)
-                .show(ui, |ui| {
-                    self.draw_perf_box(ui);
-                });
+            // п.27 р.7: контент в ScrollArea — фрейм панели не перерастает
+            // высоту, и сепаратор egui больше не залезает на таймлайн
+            // (panel.rs берёт ФАКТИЧЕСКИЙ rect фрейма); заодно колонка
+            // скроллится при малой высоте окна
+            egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+                egui::Frame::group(ui.style())
+                    .fill(crate::theme::WINDOW)
+                    .corner_radius(1.0)
+                    .show(ui, |ui| {
+                        self.draw_bin(ui);
+                    });
+                ui.add_space(8.0);
+                egui::Frame::group(ui.style())
+                    .fill(crate::theme::WINDOW)
+                    .corner_radius(1.0)
+                    .show(ui, |ui| {
+                        self.draw_perf_box(ui);
+                    });
+            });
         });
         // центр: превью + метры справа, под ними контролы
         egui::CentralPanel::default().show(ui, |ui| {
@@ -2742,7 +2787,7 @@ impl eframe::App for KtApp {
                 self.draw_preview_controls(ui);
                 ui.add_space(3.0);
             });
-            egui::Panel::right("meters_col").resizable(true).default_size(72.0).show(ui, |ui| {
+            egui::Panel::right("meters_col").resizable(true).default_size(66.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
                 // borderless (п.4 р.7): кнопки окна занимают верхние 22px
                 // угла — контент метров (надпись dB) съезжает под них
                 if std::env::var_os("KT_DECORATIONS").is_none() {

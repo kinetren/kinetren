@@ -32,7 +32,13 @@ impl KtApp {
         let mut to_place: Option<MediaId> = None;
         let mut to_remove: Option<MediaId> = None;
         let mut pending = false;
-        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+        // п.12 р.7: бин занимает ВСЮ ширину панели (auto_shrink по
+        // умолчанию ужимал по контенту — справа была пустота);
+        // п.13: карточки в grid (horizontal_wrapped, колонки от ширины)
+        egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             for (id, path) in &media {
                 let name = std::path::Path::new(path)
                     .file_name()
@@ -40,7 +46,8 @@ impl KtApp {
                     .unwrap_or_else(|| path.clone());
                 let is_synth = path.starts_with("synth:");
                 let is_off = offline.contains(id);
-                ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(PREVIEW_W);
                     // --- превью со скрабом -------------------------------
                     let (rect, resp) = ui.allocate_exact_size(
                         egui::vec2(PREVIEW_W, PREVIEW_H),
@@ -134,18 +141,9 @@ impl KtApp {
                             ui.close();
                         }
                     });
-                    // --- имя + длительность ------------------------------
-                    ui.vertical(|ui| {
-                        ui.add_space(4.0);
-                        let label = if is_off {
-                            format!("{} {name}", crate::icons::WARN)
-                        } else {
-                            name.clone()
-                        };
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(label).size(12.0)).truncate(),
-                        )
-                        .on_hover_text(path.clone());
+                    // --- имя + длительность (под превью) -----------------
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
                         if let Some(d) = self.thumbs.duration(*id) {
                             let s = d.0 / 90_000;
                             ui.monospace(
@@ -159,13 +157,22 @@ impl KtApp {
                                 .weak(),
                             );
                         }
+                        let label = if is_off {
+                            format!("{} {name}", crate::icons::WARN)
+                        } else {
+                            name.clone()
+                        };
+                        let r = ui.add(
+                            egui::Label::new(egui::RichText::new(label).size(12.0)).truncate(),
+                        );
+                        self.hint(r, path);
                     });
                 });
-                ui.add_space(3.0);
             }
             if media.is_empty() {
                 ui.weak("пусто — перетащи медиафайлы на окно");
             }
+            });
         });
         if pending {
             // тумба грузится — мягкий ретрай, не 60 fps

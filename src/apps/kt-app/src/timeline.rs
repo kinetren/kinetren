@@ -371,24 +371,6 @@ impl KtApp {
         let p = self.model.project();
         (p.video_lanes.max(1), p.audio_lanes.max(1))
     }
-
-    /// Слои (клипы), активные на курсоре — для overlay-строки.
-    pub fn layers_at_cursor(&self) -> (usize, usize) {
-        let t = self.player.transport.playhead();
-        let mut v = 0;
-        let mut a = 0;
-        for c in &self.model.project().clips {
-            if c.start <= t && t < c.start + c.duration {
-                match c.kind {
-                    ClipKind::Video => v += 1,
-                    ClipKind::Audio => a += 1,
-                }
-            }
-        }
-        (v, a)
-    }
-
-    #[allow(clippy::too_many_lines)]
     pub fn draw_timeline(&mut self, ui: &mut egui::Ui) {
         // один проход coverage-опросов на кадр (кэш по epoch, п.1);
         // Arc-снапшот — клон указателя, не карты (п.1 v1.4)

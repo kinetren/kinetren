@@ -90,17 +90,15 @@ impl KtApp {
                         egui::vec2(3.0 * 34.0, 22.0),
                     );
                     ui.painter().rect_filled(bg, 0.0, egui::Color32::from_black_alpha(110));
-                    if window_button(ui, 0, false).on_hover_text("Свернуть").clicked() {
+                    if self.hint(window_button(ui, 0, false), "Свернуть").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                     }
                     let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                    if window_button(ui, 1, max)
-                        .on_hover_text(if max { "Восстановить" } else { "Развернуть" })
-                        .clicked()
-                    {
+                    let hint = if max { "Восстановить" } else { "Развернуть" };
+                    if self.hint(window_button(ui, 1, max), hint).clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
                     }
-                    if window_button(ui, 2, false).on_hover_text("Закрыть").clicked() {
+                    if self.hint(window_button(ui, 2, false), "Закрыть").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
@@ -205,20 +203,13 @@ impl KtApp {
 
     /// Кнопка тулбара: фиксированный размер, ховер-подсказка + статус-хинт.
     fn tb(&mut self, ui: &mut egui::Ui, label: &str, hint: &str) -> bool {
-        let r =
-            ui.add_sized([30.0, 26.0], egui::Button::new(label).frame(false)).on_hover_text(hint);
-        if r.hovered() {
-            self.hover_hint = Some(hint.to_string());
-        }
-        r.clicked()
+        let r = ui.add_sized([30.0, 26.0], egui::Button::new(label).frame(false));
+        self.hint(r, hint).clicked()
     }
 
     fn tb_toggle(&mut self, ui: &mut egui::Ui, on: bool, label: &str, hint: &str) -> bool {
-        let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(on, label)).on_hover_text(hint);
-        if r.hovered() {
-            self.hover_hint = Some(hint.to_string());
-        }
-        r.clicked()
+        let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(on, label));
+        self.hint(r, hint).clicked()
     }
 
     /// Полоса кнопок ВНИЗУ панели таймлайна (порт: кнопки снизу),
@@ -275,6 +266,13 @@ impl KtApp {
             .size(15.0)
             .color(egui::Color32::from_rgb(235, 235, 240)),
         );
+        // п.23 р.7: V-fps (реально показанные НОВЫЕ кадры) рядом с кадром
+        ui.label(
+            egui::RichText::new(format!("V{:.0}", self.perf.vfps))
+                .monospace()
+                .size(12.0)
+                .color(egui::Color32::from_gray(150)),
+        );
         self.draw_speed_control(ui);
         ui.separator();
         if self.tb(ui, crate::icons::FLAG, "Маркер на курсоре (M)") {
@@ -313,14 +311,10 @@ impl KtApp {
         }
         ui.separator();
         if self.tb(ui, crate::icons::MINUS, "Отдалить (Ctrl+колесо)") {
-            self.follow_playhead = false; // ручной зум (п.14 р.6)
-            self.last_user_scroll = Some(std::time::Instant::now());
-            self.ticks_per_px = (self.ticks_per_px * 1.25).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
+            self.zoom_at_playhead(1.25);
         }
         if self.tb(ui, crate::icons::PLUS, "Приблизить") {
-            self.follow_playhead = false;
-            self.last_user_scroll = Some(std::time::Instant::now());
-            self.ticks_per_px = (self.ticks_per_px * 0.8).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
+            self.zoom_at_playhead(0.8);
         }
         ui.separator();
         if self.tb(ui, crate::icons::REGION_IN, "Регион: начало от курсора (I)")
