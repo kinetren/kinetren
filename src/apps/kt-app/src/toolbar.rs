@@ -72,59 +72,39 @@ fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response
 }
 
 impl KtApp {
-    /// Титлбар borderless-окна СВЕРХУ (п.22 р.6): имя проекта, драг,
-    /// double-click = maximize, кнопки окна справа. Драг за нижний тулбар
-    /// тоже остаётся.
-    pub fn draw_titlebar(&mut self, ui: &mut egui::Ui) {
-        let strip = egui::Rect::from_min_size(
-            ui.available_rect_before_wrap().min,
-            egui::vec2(ui.available_width(), 24.0),
-        );
-        let painter = ui.painter();
-        painter.rect_filled(strip, 0.0, crate::theme::WINDOW);
-        painter.line_segment(
-            [strip.left_bottom(), strip.right_bottom()],
-            egui::Stroke::new(1.0, crate::theme::SEAM),
-        );
-        painter.text(
-            egui::pos2(strip.left() + 10.0, strip.center().y),
-            egui::Align2::LEFT_CENTER,
-            &self.last_title,
-            egui::FontId::proportional(12.0),
-            egui::Color32::from_gray(150),
-        );
-        let bg = ui.interact(strip, ui.id().with("titlebar-top-drag"), egui::Sense::click_and_drag());
-        if bg.drag_started() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-        }
-        if bg.double_clicked() {
-            let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-        }
-        let mut right = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(egui::Rect::from_min_max(
-                    egui::pos2(strip.right() - 120.0, strip.top()),
-                    egui::pos2(strip.right(), strip.bottom() - 1.0),
-                ))
-                .layout(egui::Layout::right_to_left(egui::Align::Center)),
-        );
-        right.spacing_mut().item_spacing.x = 0.0;
-        let ctx = right.ctx().clone();
-        if window_button(&mut right, 2, false).on_hover_text("Закрыть").clicked() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-        let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-        if window_button(&mut right, 1, max)
-            .on_hover_text(if max { "Восстановить" } else { "Развернуть" })
-            .clicked()
-        {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-        }
-        if window_button(&mut right, 0, false).on_hover_text("Свернуть").clicked() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        }
-        ui.advance_cursor_after_rect(strip);
+    /// Кнопки окна borderless — ПЛАВАЮЩИЙ оверлей в правом верхнем углу
+    /// (п.22 р.6, уточнение: никакой полосы-титлбара на всю ширину —
+    /// место не тратим). Драг — за тонкую верхнюю кромку (app.rs) и за
+    /// нижний тулбар.
+    pub fn draw_window_overlay(&mut self, ctx: &egui::Context) {
+        let win = ctx.content_rect();
+        egui::Area::new(egui::Id::new("win-buttons"))
+            .fixed_pos(egui::pos2(win.right() - 3.0 * 34.0 - 2.0, win.top()))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                ui.horizontal(|ui| {
+                    // лёгкая подложка — кнопки читаются на любом контенте
+                    let bg = egui::Rect::from_min_size(
+                        ui.next_widget_position(),
+                        egui::vec2(3.0 * 34.0, 22.0),
+                    );
+                    ui.painter().rect_filled(bg, 0.0, egui::Color32::from_black_alpha(110));
+                    if window_button(ui, 0, false).on_hover_text("Свернуть").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                    }
+                    let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                    if window_button(ui, 1, max)
+                        .on_hover_text(if max { "Восстановить" } else { "Развернуть" })
+                        .clicked()
+                    {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+                    }
+                    if window_button(ui, 2, false).on_hover_text("Закрыть").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+            });
     }
 
     /// Кнопка тулбара: фиксированный размер, ховер-подсказка + статус-хинт.

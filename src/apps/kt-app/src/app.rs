@@ -2481,14 +2481,24 @@ impl eframe::App for KtApp {
             }
         }
 
-        // титлбар (верх, п.22 р.6) — только в borderless-режиме
+        // borderless (п.22 р.6, без полосы-титлбара): драг за тонкую
+        // верхнюю кромку (ниже 4px-зоны ресайза; верх панелей — паддинг,
+        // виджетов там нет) + плавающие кнопки окна в правом верхнем углу
         if std::env::var_os("KT_DECORATIONS").is_none() {
-            egui::Panel::top("titlebar")
-                .frame(egui::Frame::new().fill(crate::theme::WINDOW))
-                .exact_size(24.0)
-                .show(ui, |ui| {
-                    self.draw_titlebar(ui);
-                });
+            let win = ctx.content_rect();
+            let strip = egui::Rect::from_min_max(
+                egui::pos2(win.left() + 4.0, win.top() + 4.0),
+                egui::pos2(win.right() - 3.0 * 34.0 - 6.0, win.top() + 14.0),
+            );
+            let resp = ui.interact(strip, egui::Id::new("top-drag"), egui::Sense::click_and_drag());
+            if resp.drag_started() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+            if resp.double_clicked() {
+                let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+            }
+            self.draw_window_overlay(&ctx);
         }
         // статусбар (низ)
         egui::Panel::bottom("status").frame(crate::theme::panel_frame()).show(ui, |ui| {

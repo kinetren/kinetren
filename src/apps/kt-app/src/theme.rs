@@ -38,11 +38,11 @@ pub fn apply(ctx: &egui::Context) {
     v.panel_fill = PANEL;
     v.window_fill = WINDOW;
     v.extreme_bg_color = EXTREME;
-    // нулевые скругления виджетов — «брутально»; окна чуть смягчены
-    v.widgets.noninteractive.corner_radius = 0.into();
-    v.widgets.inactive.corner_radius = 0.into();
-    v.widgets.hovered.corner_radius = 0.into();
-    v.widgets.active.corner_radius = 0.into();
+    // минимальные скругления 1px (уточнение р.6.1); окна чуть смягчены
+    v.widgets.noninteractive.corner_radius = 1.into();
+    v.widgets.inactive.corner_radius = 1.into();
+    v.widgets.hovered.corner_radius = 1.into();
+    v.widgets.active.corner_radius = 1.into();
     v.window_corner_radius = 2.into();
     v.selection.bg_fill = ACCENT;
     v.selection.stroke = egui::Stroke::new(1.0, Color32::from_rgb(150, 190, 255));
