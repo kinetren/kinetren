@@ -36,6 +36,14 @@ pub struct ThumbKey {
 pub const THUMB_STEP_LADDER: [i64; 7] =
     [45_000, 90_000, 180_000, 450_000, 1_350_000, 4_050_000, 10_800_000]; // 0.5/1/2/5/15/45 c/2 м
 
+/// Ключ тумбы: момент источника, квантованный к сетке шага ОТ НУЛЯ ФАЙЛА
+/// (п.11 р.6, тест 62). Раньше таймлайн квантовал от source_in — при
+/// source_in, не кратном шагу, бин и таймлайн плодили РАЗНЫЕ ключи на один
+/// момент файла (двойной декод + раздутая sidecar-БД).
+pub fn thumb_key_t(source_in: i64, timeline_local: i64, step: i64) -> i64 {
+    (((source_in + timeline_local).max(0)) / step.max(1)) * step.max(1)
+}
+
 pub fn thumb_source_step(clip_dur: Tick, inner_width_px: f32, thumb_w_px: f32) -> i64 {
     if clip_dur.0 <= 5 * 90_000 {
         // короткий клип: один тумб, ключ стабилен (кратен 0.5 c)
@@ -51,6 +59,12 @@ pub fn thumb_source_step(clip_dur: Tick, inner_width_px: f32, thumb_w_px: f32) -
 }
 
 struct Shared {
+    /// Длительности медиа (публикует воркер при открытии источника) —
+    /// скраб в бине (п.11 р.6): frac → t без блокирующего probe.
+    durations: Mutex<HashMap<MediaId, Tick>>,
+    /// Явные заявки на длительность: когда тумбы идут из БД, источник не
+    /// открывается и длительность иначе не появится.
+    probe: Mutex<std::collections::HashSet<MediaId>>,
     cond: std::sync::Condvar,
     queue: Mutex<(VecDeque<ThumbKey>, HashSet<ThumbKey>)>, // LIFO + dedup
     ready: Mutex<HashMap<ThumbKey, Arc<egui::ColorImage>>>,
@@ -67,6 +81,8 @@ pub struct ThumbService {
 impl ThumbService {
     pub fn start(project: &Project, project_path: Option<PathBuf>) -> ThumbService {
         let shared = Arc::new(Shared {
+            durations: Mutex::new(HashMap::new()),
+            probe: Mutex::new(std::collections::HashSet::new()),
             cond: std::sync::Condvar::new(),
             queue: Mutex::new((VecDeque::new(), HashSet::new())),
             ready: Mutex::new(HashMap::new()),
@@ -113,6 +129,21 @@ impl ThumbService {
     pub fn get(&self, key: &ThumbKey) -> Option<Arc<egui::ColorImage>> {
         self.shared.ready.lock().unwrap().get(key).cloned()
     }
+
+    /// Длительность медиа, если воркер уже открывал источник (п.11 р.6).
+    pub fn duration(&self, id: MediaId) -> Option<Tick> {
+        self.shared.durations.lock().unwrap().get(&id).copied()
+    }
+
+    /// Длительность либо заявка на неё: тумбы из БД не открывают источник,
+    /// поэтому длительность нужно запросить явно (скраб бина, п.11 р.6).
+    pub fn duration_or_probe(&self, id: MediaId) -> Option<Tick> {
+        let d = self.duration(id);
+        if d.is_none() && self.shared.probe.lock().unwrap().insert(id) {
+            self.shared.cond.notify_one();
+        }
+        d
+    }
 }
 
 fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
@@ -134,6 +165,20 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 q = guard;
             }
         };
+        // заявки на длительность (скраб бина): пакетный индекс делает
+        // открытие дешёвым, декода нет
+        let probes: Vec<MediaId> = shared.probe.lock().unwrap().drain().collect();
+        for pid in probes {
+            if shared.durations.lock().unwrap().contains_key(&pid) {
+                continue;
+            }
+            if let Some(path) = shared.media.lock().unwrap().get(&pid).cloned()
+                && let Ok(src) = kt_media::ffmpeg::FfmpegSource::open_indexed(&path, db.as_mut())
+            {
+                use kt_media::MediaSource;
+                shared.durations.lock().unwrap().insert(pid, src.info().duration);
+            }
+        }
         if shared.ready.lock().unwrap().contains_key(&key) {
             continue;
         }
@@ -175,6 +220,12 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                     ))
                 })
             });
+            shared
+                .durations
+                .lock()
+                .unwrap()
+                .entry(key.media)
+                .or_insert_with(|| src.info().duration);
             if let Ok(frame) =
                 src.read_video_frame(Tick(key.t), Some(Quality { width: THUMB_W, height: THUMB_H }))
             {
@@ -210,6 +261,42 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                     ready.remove(&old);
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    /// Тест 62 (п.11 р.6): квантование ключей тумб ОТ НУЛЯ ФАЙЛА — бин и
+    /// таймлайн (с ненулевым source_in) дают ОДИН ключ на один момент
+    /// файла; ключ кратен шагу и стабилен внутри бакета; скраб монотонен.
+    #[test]
+    fn t62_thumb_keys_unified_from_file_zero() {
+        let step = 90_000i64;
+        // кратность и стабильность внутри бакета
+        for tl in [0i64, 1, 44_999, 89_999] {
+            assert_eq!(thumb_key_t(0, tl, step), 0);
+        }
+        assert_eq!(thumb_key_t(0, 90_000, step), 90_000);
+        // таймлайн с source_in=30_000 (не кратен шагу) и бин на тот же
+        // момент файла 120_000 → одинаковый ключ
+        let timeline_key = thumb_key_t(30_000, 90_000, step); // файл: 120_000
+        let bin_key = thumb_key_t(0, 120_000, step);
+        assert_eq!(timeline_key, bin_key, "общий кэш бин↔таймлайн");
+        assert_eq!(timeline_key, 90_000, "бакет floor");
+        // отрицательное не бывает
+        assert_eq!(thumb_key_t(0, -5, step), 0);
+        // скраб: монотонен по доле, края в [0, dur)
+        let dur = 10 * 90_000i64;
+        let mut prev = -1i64;
+        for i in 0..=20 {
+            let frac = i as f64 / 20.0 * 0.999;
+            let t = thumb_key_t(0, (frac * dur as f64) as i64, step);
+            assert!(t >= prev, "монотонность скраба");
+            assert!((0..dur).contains(&t));
+            prev = t;
         }
     }
 }

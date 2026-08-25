@@ -1366,7 +1366,9 @@ impl KtApp {
                         // бакет от НАЧАЛА КУСКА (source_in), не от нуля
                         // файла: у клипа с source_in=3c первая колонка
                         // показывала кадр за 3 секунды ДО начала куска
-                        let src_t = c.source_in.0 + (tl / step * step).max(0);
+                        // квантование ОТ НУЛЯ ФАЙЛА — общий кэш с бином
+                        // (п.11 р.6, тест 62)
+                        let src_t = crate::thumbs::thumb_key_t(c.source_in.0, tl, step);
                         let key = crate::thumbs::ThumbKey { media: c.media, t: src_t };
                         let tex = match self.thumb_textures.get(&key) {
                             Some(t) => Some(t.clone()),

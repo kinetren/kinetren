@@ -67,6 +67,8 @@ pub struct KtApp {
     pub tl_scroll: f32,
     /// Явная высота строки (Shift+Ctrl+колесо); None = авто-подгонка.
     pub tl_v_zoom: Option<f32>,
+    /// Последний удачный бакет превью в бине (скраб без миганий, п.11 р.6).
+    pub bin_last_good: HashMap<MediaId, crate::thumbs::ThumbKey>,
     /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
     preview_buf: Vec<u8>,
     /// Троттлинг glow-мипа: каждые N новых кадров (амбиент не мерцает).
@@ -199,6 +201,7 @@ impl KtApp {
             follow_playhead: false,
             tl_scroll: 0.0,
             tl_v_zoom: None,
+            bin_last_good: HashMap::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
@@ -279,6 +282,7 @@ impl KtApp {
             follow_playhead: false,
             tl_scroll: 0.0,
             tl_v_zoom: None,
+            bin_last_good: HashMap::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
