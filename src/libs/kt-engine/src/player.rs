@@ -124,6 +124,9 @@ pub struct Player {
     master_gain: Arc<AtomicU32>,
     /// Loop-регион в кадрах 48k (None = выключен).
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
+    /// Часы показа: интерполяция между квантами playhead (см.
+    /// display_extrapolation). (последний head, момент, EMA шага).
+    video_clock: Mutex<(i64, std::time::Instant, i64)>,
     workers: Workers,
     project: Arc<Mutex<Project>>,
     model_dirty: Arc<AtomicBool>,
@@ -248,6 +251,7 @@ impl Player {
             meters,
             master_gain,
             loop_region,
+            video_clock: Mutex::new((0, std::time::Instant::now(), 0)),
             workers,
             project,
             model_dirty,
@@ -412,13 +416,27 @@ impl Player {
         let latency = self.shared.latency_smooth.load(Ordering::Acquire);
         let head = self.transport.playhead_frames();
         let region = *self.loop_region.lock().unwrap();
-        let dir: i64 =
-            if f32::from_bits(self.shared.playback_rate.load(Ordering::Acquire)) < 0.0 {
-                -1
-            } else {
-                1
-            };
-        Tick::from_audio_frames(video_display_frame(head, latency, region, dir))
+        let rate = f32::from_bits(self.shared.playback_rate.load(Ordering::Acquire));
+        let dir: i64 = if rate < 0.0 { -1 } else { 1 };
+        // интерполяция между квантами аудио-часов (display_extrapolation)
+        let extra = {
+            let mut vc = self.video_clock.lock().unwrap();
+            let now = std::time::Instant::now();
+            if head != vc.0 {
+                let step = (head - vc.0).abs();
+                // скачок больше секунды = seek/wrap, EMA не портим
+                if step < AUDIO_SAMPLE_RATE as i64 {
+                    vc.2 = if vc.2 == 0 { step } else { (vc.2 * 3 + step) / 4 };
+                }
+                vc.0 = head;
+                vc.1 = now;
+            }
+            let elapsed = (now.duration_since(vc.1).as_secs_f64()
+                * AUDIO_SAMPLE_RATE as f64
+                * rate.abs() as f64) as i64;
+            display_extrapolation(elapsed, vc.2)
+        };
+        Tick::from_audio_frames(video_display_frame(head + extra * dir, latency, region, dir))
     }
 
     /// UI: составить кадр превью для момента t (выравнивается по сетке fps).
@@ -875,6 +893,19 @@ pub fn varispeed_fill(
     consumed
 }
 
+/// Интерполяция позиции ПОКАЗА между шагами аудио-часов (п.1 раунда 5,
+/// тест 56). Playhead двигается квантами аудио-колбэка (PipeWire нередко
+/// 2048 сэмплов = 42.7 мс) — без интерполяции видео физически не может
+/// показать больше 1000/квант различимых кадров в секунду (наблюдалось
+/// ровно 24 при кванте 2048, независимо от качества и бэкенда). Wall-clock
+/// здесь ТОЛЬКО сглаживает показ между обновлениями мастер-часов: аудио
+/// остаётся мастером (инвариант №6), офлайн-пути это не читают (№11).
+/// Экстраполяция клампится размером последнего шага — показ не уходит
+/// вперёд дальше, чем реально будет потреблено к следующему обновлению.
+pub fn display_extrapolation(elapsed_frames: i64, step_ema: i64) -> i64 {
+    elapsed_frames.clamp(0, step_ema.max(0))
+}
+
 /// Покадровый разворот interleaved-стерео буфера: L/R остаются парой
 /// (реверс-транспорт, тест 42).
 pub fn reverse_frames(buf: &mut [f32]) {
@@ -893,6 +924,55 @@ pub fn reverse_frames(buf: &mut [f32]) {
 pub fn callback_step(device_step: f64, rate: f32) -> Option<f64> {
     let r = (rate as f64).abs();
     if r < 1e-3 { None } else { Some(device_step * r) }
+}
+
+#[cfg(test)]
+mod display_clock_tests {
+    use super::display_extrapolation;
+
+    /// Тест 56 (п.1 раунда 5): интерполяция показа между квантами
+    /// аудио-часов. Симуляция: playhead шагает квантами 2048 (PipeWire
+    /// 42.7 мс — потолок 23.4 «сырых» кадров/с), UI сэмплирует 60 Гц;
+    /// с интерполяцией последовательность выровненных ключей сетки 60 fps
+    /// покрывает ВСЕ ячейки подряд (ноль пропусков) и монотонна.
+    #[test]
+    fn t56_interpolated_display_hits_every_grid_cell() {
+        const QUANTUM: i64 = 2048; // кадров на шаг playhead
+        const GRID: i64 = 800; // кадров на ячейку 60 fps (48000/60)
+        const UI_DT: i64 = 800; // UI-сэмпл каждые ~16.7 мс в кадрах
+        let step_ema = QUANTUM;
+        let mut shown = Vec::new();
+        let mut prev_key = -1i64;
+        for k in 0..600 {
+            let wall = k * UI_DT; // «время» в кадрах
+            let head = (wall / QUANTUM) * QUANTUM; // квантованный playhead
+            let elapsed = wall - head; // с последнего шага
+            let display = head + display_extrapolation(elapsed, step_ema);
+            let key = display / GRID;
+            assert!(key >= prev_key, "монотонность: {prev_key} -> {key}");
+            if key != prev_key {
+                if prev_key >= 0 {
+                    assert_eq!(key, prev_key + 1, "пропуск ячейки: {prev_key} -> {key}");
+                }
+                shown.push(key);
+                prev_key = key;
+            }
+        }
+        // все ячейки за окно наблюдения показаны (60 кадров/с, не 23)
+        assert!(shown.len() >= 590, "показано {} ячеек из ~599", shown.len());
+
+        // БЕЗ интерполяции — потолок 1000/42.7 ≈ 23.4 кадра/с (регресс)
+        let mut raw_keys = std::collections::BTreeSet::new();
+        for k in 0..600 {
+            let head = ((k * UI_DT) / QUANTUM) * QUANTUM;
+            raw_keys.insert(head / GRID);
+        }
+        assert!(
+            raw_keys.len() < 250,
+            "без интерполяции ключей мало ({}) — иначе тест не о том",
+            raw_keys.len()
+        );
+    }
 }
 
 #[cfg(test)]
