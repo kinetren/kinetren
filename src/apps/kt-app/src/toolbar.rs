@@ -119,9 +119,11 @@ impl KtApp {
         }
         ui.separator();
         if self.tb(ui, crate::icons::MINUS, "Отдалить (Ctrl+колесо)") {
+            self.follow_playhead = false; // ручной зум (п.14 р.6)
             self.ticks_per_px = (self.ticks_per_px * 1.25).clamp(30.0, 90_000.0);
         }
         if self.tb(ui, crate::icons::PLUS, "Приблизить") {
+            self.follow_playhead = false;
             self.ticks_per_px = (self.ticks_per_px * 0.8).clamp(30.0, 90_000.0);
         }
         ui.separator();

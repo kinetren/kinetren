@@ -113,6 +113,27 @@ pub fn clip_color(path: &str, kind: ClipKind) -> egui::Color32 {
     )
 }
 
+/// Возврат окна к playhead при игре (п.14 р.6, тест 59): только в
+/// follow-режиме (Play включает, ручной пан/зум выключает), не во время
+/// драга; окно возвращается, когда курсор вышел из зоны [2%, 85%].
+pub fn follow_view(
+    follow: bool,
+    playing: bool,
+    dragging: bool,
+    ph: f64,
+    view_start: f64,
+    vis: f64,
+) -> Option<f64> {
+    if !follow || !playing || dragging {
+        return None;
+    }
+    if ph < view_start + vis * 0.02 || ph > view_start + vis * 0.85 {
+        Some(ph - vis * 0.15)
+    } else {
+        None
+    }
+}
+
 /// Геометрия таймлайна последнего кадра — маппинг позиций ВНЕ
 /// draw_timeline (дроп файлов п.2, произвольный порядок дорожек п.6 v1.4).
 /// Строки — display-порядок (LaneKind, lane); чистые функции — тесты 47/50.
@@ -298,6 +319,11 @@ impl KtApp {
             let scroll = ui.input(|i| i.smooth_scroll_delta);
             let zoom = ui.input(|i| i.zoom_delta());
             let ctrl = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+            let user_scrolled = scroll != egui::Vec2::ZERO || zoom != 1.0;
+            if user_scrolled {
+                // ручное движение окна отключает следование (п.14 р.6)
+                self.follow_playhead = false;
+            }
             if ctrl && scroll.y != 0.0 || zoom != 1.0 {
                 // зум: Ctrl+колесо или пинч, якорь под курсором (порт старого)
                 let factor = if zoom != 1.0 {
@@ -337,13 +363,17 @@ impl KtApp {
                 view_start += heat.signum() as f64 * ms * 90.0;
             }
         }
-        // ensureCursorVisible при воспроизведении
-        if self.player.transport.is_playing() && self.drag.is_none() {
-            let ph = self.player.transport.playhead().0 as f64;
-            let vis = rect.width() as f64 * tpp;
-            if ph < view_start + vis * 0.02 || ph > view_start + vis * 0.85 {
-                view_start = ph - vis * 0.15;
-            }
+        // ensureCursorVisible при воспроизведении — ТОЛЬКО в follow-режиме
+        // (п.14 р.6): ручной пан/зум отключает следование до нового Play
+        if let Some(vs) = follow_view(
+            self.follow_playhead,
+            self.player.transport.is_playing(),
+            self.drag.is_some(),
+            self.player.transport.playhead().0 as f64,
+            view_start,
+            rect.width() as f64 * tpp,
+        ) {
+            view_start = vs;
         }
         view_start = view_start.max(-(tpp * 40.0));
         self.view_start = view_start;
@@ -851,7 +881,8 @@ impl KtApp {
                 if response.drag_started() && (pos.x - head_x).abs() <= 8.0 {
                     self.drag = Some(Drag::Scrub);
                 } else if response.drag_started() {
-                    let anchor = x_to_tick(pos.x).max(0);
+                    // снап и при СОЗДАНИИ региона (п.13 р.6, тест 59)
+                    let anchor = self.snap(x_to_tick(pos.x).max(0), None);
                     self.drag = Some(Drag::Region { anchor });
                 } else {
                     let t = self.snap(x_to_tick(pos.x).max(0), None);
@@ -942,7 +973,8 @@ impl KtApp {
                     .max(-(tpp * 40.0));
             } else if response.drag_started() {
                 // пустое место: выделение региона (порт RegionSelect)
-                let anchor = x_to_tick(pos.x).max(0);
+                // снап и при создании региона с пустого места (п.13 р.6)
+                let anchor = self.snap(x_to_tick(pos.x).max(0), None);
                 self.drag = Some(Drag::Region { anchor });
             } else {
                 self.selected = None;
@@ -999,7 +1031,7 @@ impl KtApp {
                     self.drag = Some(Drag::Scrub);
                 }
                 Some(Drag::Region { anchor }) => {
-                    let cur = x_to_tick(pos.x).max(0);
+                    let cur = self.snap(x_to_tick(pos.x).max(0), None);
                     self.model.set_region(Region::normalized(Tick(anchor), Tick(cur)));
                     self.drag = Some(Drag::Region { anchor });
                 }
@@ -1830,6 +1862,22 @@ impl KtApp {
 #[cfg(test)]
 mod geom_tests {
     use super::*;
+
+    /// Тест 59 (п.14 р.6): follow-правила возврата окна к playhead.
+    #[test]
+    fn t59_follow_view_rules() {
+        // без follow — никогда
+        assert_eq!(follow_view(false, true, false, 0.0, 1000.0, 100.0), None);
+        // пауза/драг — никогда
+        assert_eq!(follow_view(true, false, false, 0.0, 1000.0, 100.0), None);
+        assert_eq!(follow_view(true, true, true, 0.0, 1000.0, 100.0), None);
+        // внутри зоны [2%, 85%] — не трогаем
+        assert_eq!(follow_view(true, true, false, 1050.0, 1000.0, 100.0), None);
+        // вышел вправо за 85% → окно на ph - 15%
+        assert_eq!(follow_view(true, true, false, 1090.0, 1000.0, 100.0), Some(1090.0 - 15.0));
+        // вышел влево за 2% → тоже
+        assert_eq!(follow_view(true, true, false, 1001.0, 1000.0, 100.0), Some(1001.0 - 15.0));
+    }
 
     /// Тест 47 (п.2 v1.4): геометрия таймлайна для дропа — lane_at_y по
     /// display-строкам, x_to_tick round-trip, руллер/gutter/morph → None.
