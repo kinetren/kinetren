@@ -183,7 +183,7 @@ impl KtApp {
         (player, audio, err)
     }
 
-    fn new_empty(error: Option<String>) -> KtApp {
+    pub(crate) fn new_empty(error: Option<String>) -> KtApp {
         let project = Self::empty_project();
         let project2 = project.clone();
         let (player, audio, _) = Self::build_player(&project, None, None);
@@ -382,6 +382,328 @@ impl KtApp {
             lane_order: self.lane_order.clone(),
         }
     }
+
+    /// Полная отрисовка кадра. Вынесена из `eframe::App::ui`, чтобы её
+    /// мог вызывать harness-тест вёрстки (правило п.9 р.8: вёрстка и
+    /// интеракции проверяются egui_kittest, не только скриншотом).
+    pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        // имя проекта — в заголовок окна (п.19 р.6), не каждый кадр
+        let title = format!(
+            "{}{} — kt {}",
+            self.project_path
+                .as_ref()
+                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                .unwrap_or_else(|| "безымянный".into()),
+            if self.dirty { " ●" } else { "" },
+            env!("CARGO_PKG_VERSION")
+        );
+        if title != self.last_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_title = title;
+        }
+        self.handle_keys(&ctx);
+        self.handle_drops(&ctx);
+        self.hover_hint = None;
+
+        // Титлбар: лого + меню + имя проекта с версией + кнопки окна
+        // (пп.3,6,7 р.7.1). Полоса оправдана содержимым: меню переехало
+        // сюда из левой колонки, та снова ужимается до 72 px.
+        egui::Panel::top("titlebar")
+            .frame(egui::Frame::new().fill(crate::theme::WINDOW))
+            .resizable(false)
+            .exact_size(22.0)
+            .show(ui, |ui| {
+                self.draw_titlebar(ui);
+            });
+        // статусбар (низ)
+        egui::Panel::bottom("status")
+            .resizable(false)
+            .frame(egui::Frame::new().fill(crate::theme::PANEL).inner_margin(egui::Margin {
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: 1,
+            }))
+            .exact_size(20.0)
+            .show(ui, |ui| {
+                self.draw_statusbar(ui);
+            });
+        // таймлайн (низ, на всю ширину) + плавающий тулбар поверх
+        egui::Panel::bottom("timeline").frame(egui::Frame::new().fill(crate::theme::PANEL)).resizable(true).default_size(300.0).show(ui, |ui| {
+            let full = ui.available_rect_before_wrap();
+            self.timeline_rect = full;
+            let strip_h = 34.0;
+            let tl_rect = egui::Rect::from_min_max(
+                full.min,
+                egui::pos2(full.right(), full.bottom() - strip_h),
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(tl_rect), |ui| {
+                self.draw_timeline(ui);
+            });
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
+                    egui::pos2(full.left(), full.bottom() - strip_h),
+                    full.max,
+                )),
+                |ui| {
+                    self.draw_toolbar_strip(ui);
+                },
+            );
+        });
+        // полоса времени над таймлайном (порт Timeline time strip)
+        // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
+        egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).max_size(420.0).show(ui, |ui| {
+            ui.add_space(2.0);
+            // п.27 р.7: контент в ScrollArea — фрейм панели не перерастает
+            // высоту, и сепаратор egui больше не залезает на таймлайн
+            // (panel.rs берёт ФАКТИЧЕСКИЙ rect фрейма); заодно колонка
+            // скроллится при малой высоте окна
+            // auto_shrink по ШИРИНЕ обязателен: [false] заставлял контент
+            // требовать всю доступную ширину, панель раздувалась по
+            // контенту и съедала превью (регрессия п.3 р.7.1). По высоте
+            // false — ради п.27 (фрейм не перерастает панель).
+            egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
+                egui::Frame::group(ui.style())
+                    .fill(crate::theme::WINDOW)
+                    .corner_radius(1.0)
+                    .show(ui, |ui| {
+                        self.draw_bin(ui);
+                    });
+                ui.add_space(8.0);
+                egui::Frame::group(ui.style())
+                    .fill(crate::theme::WINDOW)
+                    .corner_radius(1.0)
+                    .show(ui, |ui| {
+                        self.draw_perf_box(ui);
+                    });
+            });
+        });
+        // центр: превью + метры справа, под ними контролы
+        egui::CentralPanel::default().show(ui, |ui| {
+            let p = self.model.project();
+            if let Some(r) = p.region
+                && !p.loop_enabled
+                && self.player.transport.is_playing()
+                && self.player.transport.playhead() >= r.end
+                && self.player.transport.playhead() < r.end + Tick(9000)
+            {
+                self.player.pause();
+                // как ручная пауза: двойной Space после авто-паузы = стоп
+                // в начало региона (п.29 р.7)
+                self.paused_at = Some(std::time::Instant::now());
+            }
+            egui::Panel::bottom("prev_controls").show(ui, |ui| {
+                ui.add_space(3.0);
+                self.draw_preview_controls(ui);
+                ui.add_space(3.0);
+            });
+            egui::Panel::right("meters_col").resizable(true).default_size(66.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
+                self.draw_meters(ui);
+            });
+            egui::CentralPanel::default().show(ui, |ui| {
+                if self.preview_detached {
+                    ui.centered_and_justified(|ui| {
+                        ui.weak("превью в отдельном окне (закрой его, чтобы вернуть)");
+                    });
+                } else {
+                    self.draw_preview(ui);
+                }
+            });
+        });
+
+        // ---- отделённое окно превью (п.7 v1.4): второй монитор ------------
+        // show_viewport_immediate: один egui::Context на все вьюпорты →
+        // текстура превью работает в чужом окне без переезда; deferred не
+        // годится (требует Send+Sync при &mut self).
+        if self.preview_detached {
+            let vp = egui::ViewportId::from_hash_of("kt-preview-window");
+            ctx.show_viewport_immediate(
+                vp,
+                egui::ViewportBuilder::default()
+                    .with_title("Kinotrain — превью")
+                    .with_inner_size([960.0, 560.0]),
+                |ui, _class| {
+                    // input этого вьюпорта: пробел/шорткаты работают из
+                    // окна; Esc здесь ТОЛЬКО возвращает превью (не трогает
+                    // глобальный каскад — регион/окна главного не страдают)
+                    let child_ctx = ui.ctx().clone();
+                    let esc = child_ctx.input(|i| i.key_pressed(egui::Key::Escape));
+                    if !esc {
+                        self.handle_keys(&child_ctx);
+                    }
+                    // без отступов, чёрный фон — только видео (п.7 раунда 5)
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(8, 8, 10)))
+                        .show(ui, |ui| {
+                            self.draw_preview(ui);
+                        });
+                    // Esc в окне превью возвращает его в главное
+                    if esc || child_ctx.input(|i| i.viewport().close_requested()) {
+                        self.preview_detached =
+                            preview_detached_next(self.preview_detached, false, true);
+                    }
+                },
+            );
+        }
+
+        self.sample_perf();
+        self.draw_fx_editors(&ctx);
+        self.draw_morph_editors(&ctx);
+        self.draw_render_dialog(&ctx);
+        self.draw_diagnostics(&ctx);
+
+        // автосейв каждые 4 c (порт autosaveTimer); безымянный проект —
+        // в recovery-файл ~/.local/share/kinotrain/ (п.20, v1)
+        if self.dirty && self.last_autosave.elapsed().as_secs() >= 4 {
+            self.last_autosave = std::time::Instant::now();
+            let ui = Some(self.ui_state());
+            self.model.set_ui_state(ui);
+            let target = self.project_path.clone().unwrap_or_else(autosave_path);
+            if let Some(dir) = target.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            match std::fs::write(&target, self.model.project().to_json()) {
+                Ok(()) => {
+                    if self.project_path.is_some() {
+                        self.dirty = false;
+                    }
+                }
+                Err(e) => self.warn(format!("автосейв не удался: {e}")),
+            }
+        }
+
+        // окно уведомлений (п.18)
+        if self.notices_open {
+            let mut open = self.notices_open;
+            egui::Window::new("Уведомления")
+                .open(&mut open)
+                .default_size([460.0, 340.0])
+                .min_size([320.0, 200.0])
+                .resizable(true)
+                .vscroll(true)
+                .show(ui.ctx(), |ui| {
+                    if self.notices.is_empty() {
+                        ui.weak("Пока пусто");
+                    }
+                    for n in self.notices.iter().rev() {
+                        let col = match n.severity {
+                            Severity::Warn => egui::Color32::from_rgb(255, 190, 120),
+                            Severity::Info => egui::Color32::from_gray(200),
+                        };
+                        ui.horizontal_wrapped(|ui| {
+                            ui.weak(&n.at);
+                            ui.colored_label(col, &n.text);
+                        });
+                    }
+                });
+            self.notices_open = open;
+        }
+
+        // ---- ресайз borderless-окна за кромки и углы (пп.11-13 р.8) ----
+        // ВАЖНО: не виджет и не в начале кадра. Виджет проигрывал hit-test
+        // всем панелям (egui при равном расстоянии отдаёт клик виджету,
+        // зарегистрированному ПОЗЖЕ), а `drag_started` у click_and_drag
+        // наступал только после сдвига >6 px — курсор к тому моменту уже
+        // покидал зону, и BeginResize не уходил НИКОГДА. Теперь читаем
+        // указатель напрямую в конце кадра: курсор выставляется последним
+        // (побеждает), команда шлётся на самом нажатии.
+        if !ctx.input(|i| i.viewport().maximized.unwrap_or(false))
+            && std::env::var_os("KT_DECORATIONS").is_none()
+        {
+            let win = ctx.content_rect();
+            if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
+                && let Some(dir) = resize_zone(win, pos, WIN_EDGE, WIN_CORNER)
+            {
+                ctx.set_cursor_icon(resize_cursor(dir));
+                if ctx.input(|i| i.pointer.primary_pressed()) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+                    Self::release_pointer_after_wm_grab(&ctx);
+                }
+            }
+        }
+
+        // Оверлей-свечение поверх интерфейса (п.8): превью и метры мягко
+        // «светят» за границы своих панелей, не мешая чтению UI.
+        if self.sw_render == Some(false) {
+            let fg = ui.ctx().layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("ambient-overlay"),
+            ));
+            // превью: размытая текстура чуть шире панели, очень низкая альфа
+            if let (Some(glow), true, false) =
+                (&self.glow_texture, self.preview_rect.is_finite(), self.preview_detached)
+            {
+                let r = self.preview_rect.expand(28.0);
+                fg.image(
+                    glow.id(),
+                    r,
+                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 14),
+                );
+            }
+            // метры: ореол влево от панели, цвет по ЗОНАМ высоты (п.8);
+            // правая кромка — ровно левый край панели (п.10: раньше +8 px
+            // наезжали на первый бар у подписи dB)
+            if let Some((r, k, loud_db)) = self.meter_glow {
+                let a = (k * 22.0) as u8;
+                if a > 2 {
+                    let glow_rect = crate::meters::overlay_glow_rect(r);
+                    // строки на границах зон: цвет зоны, альфа по k;
+                    // выше уровня — затухание в прозрачность
+                    let mut mesh = egui::Mesh::default();
+                    let y_of = |db: f32| -> f32 {
+                        let t = (db - crate::meters::METER_MIN_DB)
+                            / (crate::meters::METER_MAX_DB - crate::meters::METER_MIN_DB);
+                        glow_rect.bottom() - t.clamp(0.0, 1.0) * glow_rect.height()
+                    };
+                    let mut push_row = |y: f32, col: egui::Color32, alpha: u8| {
+                        for (x, aa) in [(glow_rect.left(), 0u8), (glow_rect.right(), alpha)] {
+                            mesh.vertices.push(egui::epaint::Vertex {
+                                pos: egui::pos2(x, y),
+                                uv: egui::epaint::WHITE_UV,
+                                color: egui::Color32::from_rgba_unmultiplied(
+                                    col.r(),
+                                    col.g(),
+                                    col.b(),
+                                    aa,
+                                ),
+                            });
+                        }
+                    };
+                    let stops = crate::meters::glow_stops(loud_db);
+                    for &db in &stops {
+                        push_row(y_of(db), crate::meters::zone_color(db), a);
+                    }
+                    let top_col = crate::meters::zone_color(loud_db);
+                    push_row((y_of(loud_db) - 24.0).max(glow_rect.top()), top_col, 0);
+                    let rows = stops.len() + 1;
+                    for row in 0..rows - 1 {
+                        let b = (row * 2) as u32;
+                        mesh.indices.extend_from_slice(&[b, b + 1, b + 3, b, b + 3, b + 2]);
+                    }
+                    fg.add(egui::Shape::mesh(mesh));
+                }
+            }
+        }
+
+        // Перерисовка ПО ПОТРЕБНОСТИ (п.1: безусловные 60 fps + заливка
+        // текстуры каждый кадр грели систему даже с пустым проектом; egui
+        // и так перерисовывает мгновенно на любой ввод).
+        let animating = self.player.transport.is_playing()
+            || self.drag.is_some()
+            || self.render_job.is_some()
+            || self.meter.is_active();
+        let delay = if animating {
+            std::time::Duration::from_millis(if self.ui_economy { 33 } else { 16 })
+        } else if self.incomplete_since.is_some() {
+            std::time::Duration::from_millis(100) // ретраи неполного кадра
+        } else {
+            repaint_delay(false)
+        };
+        ctx.request_repaint_after(delay);
+    }
+
 
     /// После системного драга/ресайза окна (X11 `_NET_WM_MOVERESIZE`) WM
     /// забирает указатель и ButtonReleased в приложение НЕ приходит — egui
@@ -2258,24 +2580,35 @@ pub fn dnd_keep_hover(hovering: bool, dropping: bool) -> bool {
 
 /// Зона ресайза borderless-окна по позиции у края (п.22 р.6, тест 64):
 /// углы приоритетнее рёбер, центр → None.
+/// Зона ресайза окна: ДВА радиуса (пп.11-13 р.8) — тонкая кромка и
+/// заметно более крупный угол, иначе в углы невозможно попасть мышью.
 pub fn resize_zone(
     win: egui::Rect,
     pos: egui::Pos2,
-    margin: f32,
+    edge: f32,
+    corner: f32,
 ) -> Option<egui::ResizeDirection> {
     use egui::ResizeDirection::*;
-    let l = pos.x - win.left() <= margin;
-    let r = win.right() - pos.x <= margin;
-    let t = pos.y - win.top() <= margin;
-    let b = win.bottom() - pos.y <= margin;
     if !win.contains(pos) {
         return None;
     }
-    Some(match (l, r, t, b) {
-        (true, _, true, _) => NorthWest,
-        (_, true, true, _) => NorthEast,
-        (true, _, _, true) => SouthWest,
-        (_, true, _, true) => SouthEast,
+    let (dl, dr) = (pos.x - win.left(), win.right() - pos.x);
+    let (dt, db) = (pos.y - win.top(), win.bottom() - pos.y);
+    // углы приоритетнее рёбер и «ловятся» на большем расстоянии
+    let (cl, cr, ct, cb) = (dl <= corner, dr <= corner, dt <= corner, db <= corner);
+    if cl && ct {
+        return Some(NorthWest);
+    }
+    if cr && ct {
+        return Some(NorthEast);
+    }
+    if cl && cb {
+        return Some(SouthWest);
+    }
+    if cr && cb {
+        return Some(SouthEast);
+    }
+    Some(match (dl <= edge, dr <= edge, dt <= edge, db <= edge) {
         (true, ..) => West,
         (_, true, ..) => East,
         (_, _, true, _) => North,
@@ -2283,6 +2616,22 @@ pub fn resize_zone(
         _ => return None,
     })
 }
+
+/// Курсор для направления ресайза.
+pub fn resize_cursor(dir: egui::ResizeDirection) -> egui::CursorIcon {
+    use egui::ResizeDirection::*;
+    match dir {
+        North | South => egui::CursorIcon::ResizeVertical,
+        East | West => egui::CursorIcon::ResizeHorizontal,
+        NorthEast | SouthWest => egui::CursorIcon::ResizeNeSw,
+        NorthWest | SouthEast => egui::CursorIcon::ResizeNwSe,
+    }
+}
+
+/// Ширина «хватаемой» кромки окна и радиус угла (п.12 р.8: 4 px требовали
+/// пиксельного прицеливания).
+pub const WIN_EDGE: f32 = 8.0;
+pub const WIN_CORNER: f32 = 16.0;
 
 /// State-машина деатача превью (п.7 v1.4, тест 51): закрытие окна всегда
 /// возвращает превью; иначе кнопка переключает.
@@ -2663,239 +3012,6 @@ impl KtApp {
 
 impl eframe::App for KtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
-        // имя проекта — в заголовок окна (п.19 р.6), не каждый кадр
-        let title = format!(
-            "{}{} — kt {}",
-            self.project_path
-                .as_ref()
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-                .unwrap_or_else(|| "безымянный".into()),
-            if self.dirty { " ●" } else { "" },
-            env!("CARGO_PKG_VERSION")
-        );
-        if title != self.last_title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
-            self.last_title = title;
-        }
-        self.handle_keys(&ctx);
-        self.handle_drops(&ctx);
-        self.hover_hint = None;
-
-        // ---- ресайз borderless-окна за края (п.22 р.6) --------------------
-        if !ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
-            let win = ctx.content_rect();
-            let id = egui::Id::new("win-resize");
-            let resp = ui.interact(win, id, egui::Sense::click_and_drag());
-            if let Some(pos) = resp.hover_pos()
-                && let Some(dir) = resize_zone(win, pos, 4.0)
-            {
-                use egui::ResizeDirection::*;
-                ctx.set_cursor_icon(match dir {
-                    North | South => egui::CursorIcon::ResizeVertical,
-                    East | West => egui::CursorIcon::ResizeHorizontal,
-                    NorthEast | SouthWest => egui::CursorIcon::ResizeNeSw,
-                    NorthWest | SouthEast => egui::CursorIcon::ResizeNwSe,
-                });
-                if resp.drag_started() {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
-                    Self::release_pointer_after_wm_grab(&ctx);
-                }
-            }
-        }
-
-        // Титлбар: лого + меню + имя проекта с версией + кнопки окна
-        // (пп.3,6,7 р.7.1). Полоса оправдана содержимым: меню переехало
-        // сюда из левой колонки, та снова ужимается до 72 px.
-        egui::Panel::top("titlebar")
-            .frame(egui::Frame::new().fill(crate::theme::WINDOW))
-            .exact_size(22.0)
-            .show(ui, |ui| {
-                self.draw_titlebar(ui);
-            });
-        // статусбар (низ)
-        egui::Panel::bottom("status")
-            .frame(egui::Frame::new().fill(crate::theme::PANEL).inner_margin(egui::Margin {
-                left: 0,
-                right: 0,
-                top: 0,
-                bottom: 1,
-            }))
-            .exact_size(20.0)
-            .show(ui, |ui| {
-                self.draw_statusbar(ui);
-            });
-        // таймлайн (низ, на всю ширину) + плавающий тулбар поверх
-        egui::Panel::bottom("timeline").frame(egui::Frame::new().fill(crate::theme::PANEL)).resizable(true).default_size(300.0).show(ui, |ui| {
-            let full = ui.available_rect_before_wrap();
-            self.timeline_rect = full;
-            let strip_h = 34.0;
-            let tl_rect = egui::Rect::from_min_max(
-                full.min,
-                egui::pos2(full.right(), full.bottom() - strip_h),
-            );
-            ui.scope_builder(egui::UiBuilder::new().max_rect(tl_rect), |ui| {
-                self.draw_timeline(ui);
-            });
-            ui.scope_builder(
-                egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
-                    egui::pos2(full.left(), full.bottom() - strip_h),
-                    full.max,
-                )),
-                |ui| {
-                    self.draw_toolbar_strip(ui);
-                },
-            );
-        });
-        // полоса времени над таймлайном (порт Timeline time strip)
-        // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
-        egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).max_size(420.0).show(ui, |ui| {
-            ui.add_space(2.0);
-            // п.27 р.7: контент в ScrollArea — фрейм панели не перерастает
-            // высоту, и сепаратор egui больше не залезает на таймлайн
-            // (panel.rs берёт ФАКТИЧЕСКИЙ rect фрейма); заодно колонка
-            // скроллится при малой высоте окна
-            // auto_shrink по ШИРИНЕ обязателен: [false] заставлял контент
-            // требовать всю доступную ширину, панель раздувалась по
-            // контенту и съедала превью (регрессия п.3 р.7.1). По высоте
-            // false — ради п.27 (фрейм не перерастает панель).
-            egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
-                egui::Frame::group(ui.style())
-                    .fill(crate::theme::WINDOW)
-                    .corner_radius(1.0)
-                    .show(ui, |ui| {
-                        self.draw_bin(ui);
-                    });
-                ui.add_space(8.0);
-                egui::Frame::group(ui.style())
-                    .fill(crate::theme::WINDOW)
-                    .corner_radius(1.0)
-                    .show(ui, |ui| {
-                        self.draw_perf_box(ui);
-                    });
-            });
-        });
-        // центр: превью + метры справа, под ними контролы
-        egui::CentralPanel::default().show(ui, |ui| {
-            let p = self.model.project();
-            if let Some(r) = p.region
-                && !p.loop_enabled
-                && self.player.transport.is_playing()
-                && self.player.transport.playhead() >= r.end
-                && self.player.transport.playhead() < r.end + Tick(9000)
-            {
-                self.player.pause();
-                // как ручная пауза: двойной Space после авто-паузы = стоп
-                // в начало региона (п.29 р.7)
-                self.paused_at = Some(std::time::Instant::now());
-            }
-            egui::Panel::bottom("prev_controls").show(ui, |ui| {
-                ui.add_space(3.0);
-                self.draw_preview_controls(ui);
-                ui.add_space(3.0);
-            });
-            egui::Panel::right("meters_col").resizable(true).default_size(66.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
-                self.draw_meters(ui);
-            });
-            egui::CentralPanel::default().show(ui, |ui| {
-                if self.preview_detached {
-                    ui.centered_and_justified(|ui| {
-                        ui.weak("превью в отдельном окне (закрой его, чтобы вернуть)");
-                    });
-                } else {
-                    self.draw_preview(ui);
-                }
-            });
-        });
-
-        // ---- отделённое окно превью (п.7 v1.4): второй монитор ------------
-        // show_viewport_immediate: один egui::Context на все вьюпорты →
-        // текстура превью работает в чужом окне без переезда; deferred не
-        // годится (требует Send+Sync при &mut self).
-        if self.preview_detached {
-            let vp = egui::ViewportId::from_hash_of("kt-preview-window");
-            ctx.show_viewport_immediate(
-                vp,
-                egui::ViewportBuilder::default()
-                    .with_title("Kinotrain — превью")
-                    .with_inner_size([960.0, 560.0]),
-                |ui, _class| {
-                    // input этого вьюпорта: пробел/шорткаты работают из
-                    // окна; Esc здесь ТОЛЬКО возвращает превью (не трогает
-                    // глобальный каскад — регион/окна главного не страдают)
-                    let child_ctx = ui.ctx().clone();
-                    let esc = child_ctx.input(|i| i.key_pressed(egui::Key::Escape));
-                    if !esc {
-                        self.handle_keys(&child_ctx);
-                    }
-                    // без отступов, чёрный фон — только видео (п.7 раунда 5)
-                    egui::CentralPanel::default()
-                        .frame(egui::Frame::NONE.fill(egui::Color32::from_rgb(8, 8, 10)))
-                        .show(ui, |ui| {
-                            self.draw_preview(ui);
-                        });
-                    // Esc в окне превью возвращает его в главное
-                    if esc || child_ctx.input(|i| i.viewport().close_requested()) {
-                        self.preview_detached =
-                            preview_detached_next(self.preview_detached, false, true);
-                    }
-                },
-            );
-        }
-
-        self.sample_perf();
-        self.draw_fx_editors(&ctx);
-        self.draw_morph_editors(&ctx);
-        self.draw_render_dialog(&ctx);
-        self.draw_diagnostics(&ctx);
-
-        // автосейв каждые 4 c (порт autosaveTimer); безымянный проект —
-        // в recovery-файл ~/.local/share/kinotrain/ (п.20, v1)
-        if self.dirty && self.last_autosave.elapsed().as_secs() >= 4 {
-            self.last_autosave = std::time::Instant::now();
-            let ui = Some(self.ui_state());
-            self.model.set_ui_state(ui);
-            let target = self.project_path.clone().unwrap_or_else(autosave_path);
-            if let Some(dir) = target.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            match std::fs::write(&target, self.model.project().to_json()) {
-                Ok(()) => {
-                    if self.project_path.is_some() {
-                        self.dirty = false;
-                    }
-                }
-                Err(e) => self.warn(format!("автосейв не удался: {e}")),
-            }
-        }
-
-        // окно уведомлений (п.18)
-        if self.notices_open {
-            let mut open = self.notices_open;
-            egui::Window::new("Уведомления")
-                .open(&mut open)
-                .default_size([460.0, 340.0])
-                .min_size([320.0, 200.0])
-                .resizable(true)
-                .vscroll(true)
-                .show(ui.ctx(), |ui| {
-                    if self.notices.is_empty() {
-                        ui.weak("Пока пусто");
-                    }
-                    for n in self.notices.iter().rev() {
-                        let col = match n.severity {
-                            Severity::Warn => egui::Color32::from_rgb(255, 190, 120),
-                            Severity::Info => egui::Color32::from_gray(200),
-                        };
-                        ui.horizontal_wrapped(|ui| {
-                            ui.weak(&n.at);
-                            ui.colored_label(col, &n.text);
-                        });
-                    }
-                });
-            self.notices_open = open;
-        }
-
         // детект софт-рендера — один раз (пп. 17, 19)
         if self.sw_render.is_none() {
             let sw = _frame
@@ -2919,87 +3035,8 @@ impl eframe::App for KtApp {
             }
         }
 
-        // Оверлей-свечение поверх интерфейса (п.8): превью и метры мягко
-        // «светят» за границы своих панелей, не мешая чтению UI.
-        if self.sw_render == Some(false) {
-            let fg = ui.ctx().layer_painter(egui::LayerId::new(
-                egui::Order::Foreground,
-                egui::Id::new("ambient-overlay"),
-            ));
-            // превью: размытая текстура чуть шире панели, очень низкая альфа
-            if let (Some(glow), true, false) =
-                (&self.glow_texture, self.preview_rect.is_finite(), self.preview_detached)
-            {
-                let r = self.preview_rect.expand(28.0);
-                fg.image(
-                    glow.id(),
-                    r,
-                    egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 14),
-                );
-            }
-            // метры: ореол влево от панели, цвет по ЗОНАМ высоты (п.8);
-            // правая кромка — ровно левый край панели (п.10: раньше +8 px
-            // наезжали на первый бар у подписи dB)
-            if let Some((r, k, loud_db)) = self.meter_glow {
-                let a = (k * 22.0) as u8;
-                if a > 2 {
-                    let glow_rect = crate::meters::overlay_glow_rect(r);
-                    // строки на границах зон: цвет зоны, альфа по k;
-                    // выше уровня — затухание в прозрачность
-                    let mut mesh = egui::Mesh::default();
-                    let y_of = |db: f32| -> f32 {
-                        let t = (db - crate::meters::METER_MIN_DB)
-                            / (crate::meters::METER_MAX_DB - crate::meters::METER_MIN_DB);
-                        glow_rect.bottom() - t.clamp(0.0, 1.0) * glow_rect.height()
-                    };
-                    let mut push_row = |y: f32, col: egui::Color32, alpha: u8| {
-                        for (x, aa) in [(glow_rect.left(), 0u8), (glow_rect.right(), alpha)] {
-                            mesh.vertices.push(egui::epaint::Vertex {
-                                pos: egui::pos2(x, y),
-                                uv: egui::epaint::WHITE_UV,
-                                color: egui::Color32::from_rgba_unmultiplied(
-                                    col.r(),
-                                    col.g(),
-                                    col.b(),
-                                    aa,
-                                ),
-                            });
-                        }
-                    };
-                    let stops = crate::meters::glow_stops(loud_db);
-                    for &db in &stops {
-                        push_row(y_of(db), crate::meters::zone_color(db), a);
-                    }
-                    let top_col = crate::meters::zone_color(loud_db);
-                    push_row((y_of(loud_db) - 24.0).max(glow_rect.top()), top_col, 0);
-                    let rows = stops.len() + 1;
-                    for row in 0..rows - 1 {
-                        let b = (row * 2) as u32;
-                        mesh.indices.extend_from_slice(&[b, b + 1, b + 3, b, b + 3, b + 2]);
-                    }
-                    fg.add(egui::Shape::mesh(mesh));
-                }
-            }
-        }
-
-        // Перерисовка ПО ПОТРЕБНОСТИ (п.1: безусловные 60 fps + заливка
-        // текстуры каждый кадр грели систему даже с пустым проектом; egui
-        // и так перерисовывает мгновенно на любой ввод).
-        let animating = self.player.transport.is_playing()
-            || self.drag.is_some()
-            || self.render_job.is_some()
-            || self.meter.is_active();
-        let delay = if animating {
-            std::time::Duration::from_millis(if self.ui_economy { 33 } else { 16 })
-        } else if self.incomplete_since.is_some() {
-            std::time::Duration::from_millis(100) // ретраи неполного кадра
-        } else {
-            repaint_delay(false)
-        };
-        ctx.request_repaint_after(delay);
+        self.draw_all(ui);
     }
-
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         // последний проект + финальный сейв при выходе
         if let Some(p) = &self.project_path.clone() {
@@ -3037,7 +3074,8 @@ pub fn run() -> eframe::Result {
         "kinotrain",
         options,
         Box::new(move |cc| {
-            crate::theme::apply(&cc.egui_ctx); // п.23 р.6
+            crate::theme::apply(&cc.egui_ctx);
+            crate::theme::apply_debug_flags(&cc.egui_ctx); // п.23 р.6
             crate::icons::install_fonts(&cc.egui_ctx);
             let restored = arg
                 .clone()
@@ -3197,26 +3235,35 @@ mod repaint_tests {
         assert_eq!(preview_click_step(None, false, false, 300), (C::None, O::Keep));
     }
 
-    /// Тест 64 (п.22 р.6): зоны ресайза borderless-окна — 8 зон, углы
-    /// приоритетнее рёбер, центр и внешние точки → None.
+    /// Тест 77 (пп.11-13 р.8, расширяет t64): зоны ресайза окна с ДВУМЯ
+    /// радиусами — углы «ловятся» на большем расстоянии и приоритетнее
+    /// рёбер (раньше угол был 4×4 px и в него невозможно было попасть).
     #[test]
-    fn t64_resize_zones() {
+    fn t77_resize_zones_edge_and_corner() {
+        use super::{WIN_CORNER, WIN_EDGE, resize_zone};
         use eframe::egui::{Rect, ResizeDirection::*, pos2};
-        let w = Rect::from_min_max(pos2(0.0, 0.0), pos2(100.0, 80.0));
-        let m = 4.0;
-        assert_eq!(super::resize_zone(w, pos2(1.0, 1.0), m), Some(NorthWest));
-        assert_eq!(super::resize_zone(w, pos2(99.0, 1.0), m), Some(NorthEast));
-        assert_eq!(super::resize_zone(w, pos2(1.0, 79.0), m), Some(SouthWest));
-        assert_eq!(super::resize_zone(w, pos2(99.0, 79.0), m), Some(SouthEast));
-        assert_eq!(super::resize_zone(w, pos2(1.0, 40.0), m), Some(West));
-        assert_eq!(super::resize_zone(w, pos2(99.0, 40.0), m), Some(East));
-        assert_eq!(super::resize_zone(w, pos2(50.0, 1.0), m), Some(North));
-        assert_eq!(super::resize_zone(w, pos2(50.0, 79.0), m), Some(South));
-        assert_eq!(super::resize_zone(w, pos2(50.0, 40.0), m), None, "центр");
-        assert_eq!(super::resize_zone(w, pos2(-1.0, 40.0), m), None, "вне окна");
-        // граница margin точная
-        assert_eq!(super::resize_zone(w, pos2(4.0, 40.0), m), Some(West));
-        assert_eq!(super::resize_zone(w, pos2(4.1, 40.0), m), None);
+        let w = Rect::from_min_max(pos2(0.0, 0.0), pos2(400.0, 300.0));
+        let z = |x: f32, y: f32| resize_zone(w, pos2(x, y), WIN_EDGE, WIN_CORNER);
+        // углы — по радиусу WIN_CORNER, даже вдали от самой кромки
+        assert_eq!(z(12.0, 12.0), Some(NorthWest));
+        assert_eq!(z(389.0, 14.0), Some(NorthEast));
+        assert_eq!(z(10.0, 290.0), Some(SouthWest));
+        assert_eq!(z(392.0, 288.0), Some(SouthEast));
+        // рёбра — по радиусу WIN_EDGE
+        assert_eq!(z(3.0, 150.0), Some(West));
+        assert_eq!(z(397.0, 150.0), Some(East));
+        assert_eq!(z(200.0, 3.0), Some(North));
+        assert_eq!(z(200.0, 297.0), Some(South));
+        // за кромкой ребра, но ещё не в углу — ничего
+        assert_eq!(z(200.0, 150.0), None, "центр");
+        assert_eq!(z(30.0, 150.0), None, "в стороне от кромки");
+        // точные границы
+        assert_eq!(z(WIN_EDGE, 150.0), Some(West));
+        assert_eq!(z(WIN_EDGE + 0.1, 150.0), None);
+        assert_eq!(z(WIN_CORNER, WIN_CORNER), Some(NorthWest));
+        assert_eq!(z(WIN_CORNER + 0.1, WIN_CORNER + 0.1), None);
+        // вне окна
+        assert_eq!(z(-1.0, 150.0), None);
     }
 
     /// Тест 51 (п.7 v1.4): state-машина деатача превью — закрытие окна

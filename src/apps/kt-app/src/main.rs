@@ -10,6 +10,8 @@ mod fx_editor;
 mod fx_registry;
 mod graphs;
 mod icons;
+#[cfg(test)]
+mod layout_tests;
 mod meters;
 mod morpher_editor;
 mod render_dialog;

@@ -60,11 +60,26 @@ pub fn apply(ctx: &egui::Context) {
         // п.16 р.7: подсказки быстрые (дублируются в правый низ статусбара)
         st.interaction.tooltip_delay = 0.15;
         st.interaction.tooltip_grace_time = 0.2;
+        // п.9/п.12 р.8: 3 px (дефолт) означали 6-пиксельную хват-зону
+        // сепаратора — промах на пиксель попадал в превью
+        st.interaction.resize_grab_radius_side = 8.0;
+        st.interaction.resize_grab_radius_corner = 14.0;
         st.spacing.item_spacing = egui::vec2(6.0, 3.0);
         st.spacing.button_padding = egui::vec2(5.0, 2.0);
         st.spacing.window_margin = 4.into();
         st.spacing.menu_margin = 4.into();
     });
+}
+
+/// KT_DEBUG_HITS=1 — штатная подсветка egui «кто ловит клик под курсором»
+/// (п.9 р.8: так разбираются жалобы «кнопка/полоска не нажимается»).
+pub fn apply_debug_flags(ctx: &egui::Context) {
+    if std::env::var_os("KT_DEBUG_HITS").is_some() {
+        ctx.all_styles_mut(|st| {
+            st.debug.show_widget_hits = true;
+            st.debug.debug_on_hover = true;
+        });
+    }
 }
 
 /// Фрейм панелей без воздуха по краям (п.22 р.6) + 1px шов.
