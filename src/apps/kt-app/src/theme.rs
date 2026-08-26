@@ -76,12 +76,17 @@ pub fn apply(ctx: &egui::Context) {
 /// KT_DEBUG_HITS=1 — штатная подсветка egui «кто ловит клик под курсором»
 /// (п.9 р.8: так разбираются жалобы «кнопка/полоска не нажимается»).
 pub fn apply_debug_flags(ctx: &egui::Context) {
+    // Style::debug существует только в debug-сборке egui — в релизном
+    // профиле поля нет вовсе (ловится ТОЛЬКО релизной сборкой).
+    #[cfg(debug_assertions)]
     if std::env::var_os("KT_DEBUG_HITS").is_some() {
         ctx.all_styles_mut(|st| {
             st.debug.show_widget_hits = true;
             st.debug.debug_on_hover = true;
         });
     }
+    #[cfg(not(debug_assertions))]
+    let _ = ctx;
 }
 
 /// Фрейм панелей без воздуха по краям (п.22 р.6) + 1px шов.
