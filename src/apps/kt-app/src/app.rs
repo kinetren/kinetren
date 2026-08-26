@@ -3453,7 +3453,7 @@ mod repaint_tests {
             sample_rate: 48000,
         });
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
-        let mut clip = |id: u64, start: i64, dur: i64| ClipEvent {
+        let clip = |id: u64, start: i64, dur: i64| ClipEvent {
             id: ClipId(id),
             link_group: None,
             kind: ClipKind::Video,

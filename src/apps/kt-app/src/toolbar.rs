@@ -5,7 +5,6 @@
 use crate::app::KtApp;
 use eframe::egui;
 use kt_model::ClipKind;
-use kt_time::Tick;
 
 pub fn gradient_rect(
     painter: &egui::Painter,

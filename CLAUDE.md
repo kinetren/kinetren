@@ -64,7 +64,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 
 - Перед правкой крейта — его `CLAUDE.md`; перед архитектурными изменениями — `docs/architecture.md`.
 - Новый найденный дефект/тонкость → сразу документировать (`docs/porting-notes.md` или CLAUDE.md крейта) и по возможности закрыть регрессионным тестом.
-- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–74 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
+- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–82 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
 - Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine.
 
 ## Карта крейт → обязательные тесты (гонять при правках, требование пользователя)
@@ -84,5 +84,6 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30), morpher t35 |
 | kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |
 | kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей, t69/t71 негативные кэши тумб, t72/t74) |
+| kt-app (вёрстка/интеракции) | **обязательно** kt-app `layout_tests.rs` (t76: панели, сепараторы, кромки окна, кликабельность) + t77-t82 |
 
 Всё вместе: `cd src && cargo test --workspace` (плюс `cargo clippy`).
