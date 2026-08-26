@@ -447,3 +447,32 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
         );
     }
 }
+
+/// Тест 84 (п.7 р.9): мастер-громкость КЛАМПИТСЯ в движке. Сбой в UI
+/// (расходящаяся анимация фейдера) однажды прислал сюда 10^20 — целый
+/// burst умножился на это и ушёл в звук. Движок обязан защищаться сам.
+#[test]
+fn t84_master_gain_is_clamped() {
+    let p = kt_model::Project::new(kt_model::ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+    });
+    let (player, _rx) = kt_engine::Player::new(p, vec![]);
+    player.set_master_gain(1e20);
+    assert!(
+        player.master_gain() <= kt_engine::player::MASTER_GAIN_MAX,
+        "усиление не ограничено: {}",
+        player.master_gain()
+    );
+    player.set_master_gain(f32::NAN);
+    assert!(player.master_gain().is_finite(), "NaN просочился в мастер-гейн");
+    player.set_master_gain(f32::INFINITY);
+    assert!(player.master_gain().is_finite());
+    player.set_master_gain(-5.0);
+    assert!(player.master_gain() >= 0.0);
+    // нормальные значения проходят как есть
+    player.set_master_gain(0.5);
+    assert!((player.master_gain() - 0.5).abs() < 1e-6);
+}

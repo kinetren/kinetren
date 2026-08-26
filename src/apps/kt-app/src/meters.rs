@@ -62,11 +62,22 @@ impl MeterState {
     /// на цель, а не ползти бесконечно.
     pub fn fader_tick(&mut self, dt: f32) {
         let dt = dt.clamp(0.0, 0.1);
-        let d = self.fader_target - self.fader_db;
-        // x'' = -2ζω x' - ω² x при ζ=1: плавный подъезд без перелёта
+        if dt <= 0.0 {
+            return;
+        }
+        // ТОЧНОЕ решение x'' + 2ωx' + ω²x = 0 при ζ=1: x(t) = (A + Bt)e^{−ωt}.
+        // Явный Эйлер здесь РАСХОДИЛСЯ при ω·dt > 2√2−2, то есть уже при
+        // dt > 32 мс: а stable_dt после простоя приходит равным 100 мс
+        // (кламп) — отклонение умножалось на −10 за кадр, фейдер улетал на
+        // сотни dB и это уходило в звук (п.7 р.9). Экспонента не расходится
+        // ни при каком dt.
         let w = FADER_OMEGA;
-        self.fader_vel += (w * w * d - 2.0 * w * self.fader_vel) * dt;
-        self.fader_db += self.fader_vel * dt;
+        let x0 = self.fader_db - self.fader_target;
+        let b = self.fader_vel + w * x0;
+        let e = (-w * dt).exp();
+        let xt = (x0 + b * dt) * e;
+        self.fader_db = (self.fader_target + xt).clamp(FADER_MIN_DB, FADER_MAX_DB);
+        self.fader_vel = (b - w * (x0 + b * dt)) * e;
         if (self.fader_target - self.fader_db).abs() <= FADER_EPS_DB
             && self.fader_vel.abs() <= FADER_EPS_DB
         {
@@ -557,7 +568,8 @@ impl KtApp {
         let fader = ui.interact(hit, ui.id().with("fader"), egui::Sense::click_and_drag());
         let db_at = |y: f32| {
             let t = ((bars.bottom() - y) / bars.height()).clamp(0.0, 1.0);
-            FADER_MIN_DB + t * (FADER_MAX_DB - FADER_MIN_DB)
+            (FADER_MIN_DB + t * (FADER_MAX_DB - FADER_MIN_DB))
+                .clamp(FADER_MIN_DB, FADER_MAX_DB)
         };
         if response.clicked() && response.interact_pointer_pos().is_some_and(|p| mute_rect.contains(p))
         {
@@ -620,6 +632,34 @@ impl KtApp {
 #[cfg(test)]
 mod repaint_tests {
     use super::*;
+
+    /// Тест 84 (п.7 р.9): фейдер обязан выдержать ЛЮБОЙ dt из клампа.
+    /// Прежняя схема (явный Эйлер) расходилась уже при 30 fps, а после
+    /// простоя dt приходит равным 0.1 — фейдер улетал за 400 dB и это
+    /// превращалось в усиление 10^20 на выходе движка.
+    #[test]
+    fn t84_fader_never_diverges_on_bad_dt() {
+        let series: Vec<Vec<f32>> = vec![
+            vec![0.1; 60],
+            vec![1.0 / 30.0; 300],
+            vec![0.05; 200],
+            // чередование — худший случай для явных схем
+            (0..300).map(|i| if i % 2 == 0 { 0.1 } else { 1.0 / 240.0 }).collect(),
+        ];
+        for dts in series {
+            let mut m = MeterState { fader_target: -20.0, ..Default::default() };
+            for dt in &dts {
+                m.fader_tick(*dt);
+                assert!(m.fader_db.is_finite() && m.fader_vel.is_finite(), "NaN/inf при dt={dt}");
+                assert!(
+                    (FADER_MIN_DB..=FADER_MAX_DB).contains(&m.fader_db),
+                    "фейдер улетел: {} dB при dt={dt}",
+                    m.fader_db
+                );
+            }
+            assert!((m.fader_db + 20.0).abs() < 0.2, "не сошёлся: {}", m.fader_db);
+        }
+    }
 
     /// Тест 80 (п.2 р.8): инерция фейдера — сходится к цели за разумное
     /// время и ОСТАНАВЛИВАЕТСЯ (иначе вечный repaint, ради которого

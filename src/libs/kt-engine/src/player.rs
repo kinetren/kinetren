@@ -37,6 +37,8 @@ const RING_CAPACITY_FRAMES: usize = AUDIO_BURST_FRAMES * 16;
 /// Максимальная скорость воспроизведения (п.4 р.8: «второе дыхание»
 /// шаттла до ±8×).
 pub const ENGINE_RATE_MAX: f32 = 8.0;
+/// Потолок мастер-громкости (+24 dB — верх фейдера UI).
+pub const MASTER_GAIN_MAX: f32 = 16.0;
 const PLAYBACK_AUDIO_LOOKAHEAD_FRAMES: i64 = AUDIO_SAMPLE_RATE as i64 / 5; // 200 мс
 const PREFETCH_AUDIO_LOOKAHEAD_FRAMES: i64 = 2 * AUDIO_SAMPLE_RATE as i64; // 2 c
 const PREFETCH_VIDEO_LOOKAHEAD_TICKS: i64 = 2 * kt_time::TICK_HZ;
@@ -324,8 +326,12 @@ impl Player {
     }
 
     /// Мастер-громкость превью (линейная; mute = 0).
+    /// Мастер-громкость превью. ПОТОЛОК ОБЯЗАТЕЛЕН (п.7 р.9): сбой в UI
+    /// однажды прислал сюда 10^20 (расходящаяся анимация фейдера), и это
+    /// умножило целый burst — «по ушам больно». NaN/inf гасим в 1.0.
     pub fn set_master_gain(&self, linear: f32) {
-        self.master_gain.store(linear.max(0.0).to_bits(), Ordering::Release);
+        let g = if linear.is_finite() { linear.clamp(0.0, MASTER_GAIN_MAX) } else { 1.0 };
+        self.master_gain.store(g.to_bits(), Ordering::Release);
     }
 
     pub fn master_gain(&self) -> f32 {
