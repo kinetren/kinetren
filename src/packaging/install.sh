@@ -12,6 +12,12 @@ MIME="$HOME/.local/share/mime/packages"
 mkdir -p "$BIN" "$APPS" "$ICONS" "$MIME"
 install -m 755 kt-app kt-cli "$BIN/"
 install -m 644 kinotrain.svg "$ICONS/kinotrain.svg"
+# растры: часть панелей/таскбаров плохо масштабирует SVG в мелкие размеры
+for s in 16 22 24 32 48 64 128 256; do
+    d="$HOME/.local/share/icons/hicolor/${s}x${s}/apps"
+    mkdir -p "$d"
+    [ -f "icons/$s/kinotrain.png" ] && install -m 644 "icons/$s/kinotrain.png" "$d/kinotrain.png"
+done
 install -m 644 kinotrain-mime.xml "$MIME/kinotrain-mime.xml"
 # Exec без пути: полагаемся на ~/.local/bin в PATH; если его там нет —
 # подставляем абсолютный путь.

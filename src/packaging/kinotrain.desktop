@@ -10,4 +10,6 @@ Icon=kinotrain
 Terminal=false
 Categories=AudioVideo;AudioVideoEditing;Video;
 MimeType=application/x-kinotrain-project;
-StartupWMClass=kinotrain
+# WM_CLASS на X11 = имя бинаря (winit не выставляет app_id на X11), иначе
+# таскбар не связывает окно с этим .desktop и показывает заглушку
+StartupWMClass=kt-app

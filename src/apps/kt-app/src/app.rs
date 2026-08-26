@@ -74,6 +74,9 @@ pub struct KtApp {
     /// Драг окна начат из развёрнутого состояния: сначала восстановить
     /// окно, StartDrag — СЛЕДУЮЩИМ кадром (п.10 р.8, X11).
     pub pending_unmax_drag: bool,
+    /// Куда подмотать окно таймлайна на следующем кадре (п.11 р.9:
+    /// прыжок к точке остановки должен показывать курсор).
+    pub pending_reveal: Option<i64>,
     /// Вертикальный скролл зоны дорожек, px (п.12 р.6).
     pub tl_scroll: f32,
     /// Явная высота строки (Shift+Ctrl+колесо); None = авто-подгонка.
@@ -231,6 +234,7 @@ impl KtApp {
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
+            pending_reveal: None,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -324,6 +328,7 @@ impl KtApp {
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
+            pending_reveal: None,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -877,7 +882,11 @@ impl KtApp {
                 prev_stop(cursor, &pts).unwrap_or(0)
             }
         };
-        self.player.seek(Tick(at.max(0)));
+        let at = at.max(0);
+        self.player.seek(Tick(at));
+        // окно таймлайна обязано показать курсор (п.11 р.9); применяем в
+        // draw_timeline, где известны актуальные rect и зум
+        self.pending_reveal = Some(at);
     }
 
     /// Зум кнопками — якорь на PLAYHEAD (п.26 р.7: раньше якорился левый
@@ -2913,6 +2922,19 @@ const RATE_DEAD: f32 = 0.07;
 const RATE_MIN: f32 = 0.25;
 const RATE_MAX: f32 = 2.0;
 
+/// Иконка окна (п.6 р.9): без неё таскбар показывал заглушку. Растр —
+/// тот же силуэт, что рисуется в шапке и лежит в packaging/.
+fn app_icon() -> egui::IconData {
+    let img = image::load_from_memory_with_format(
+        include_bytes!("../assets/kinotrain-256.png"),
+        image::ImageFormat::Png,
+    )
+    .expect("иконка приложения")
+    .to_rgba8();
+    let (width, height) = img.dimensions();
+    egui::IconData { rgba: img.into_raw(), width, height }
+}
+
 /// Точки остановки для навигации (п.16 р.8): ноль, границы региона, все
 /// маркеры, границы ОБЪЕДИНЁННЫХ клипов (там, где пустота сменяется
 /// материалом) и конец проекта. Отсортированы, без дублей. Строится
@@ -3352,6 +3374,10 @@ pub fn run() -> eframe::Result {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 860.0])
                     .with_min_inner_size([640.0, 640.0])
+                    .with_icon(app_icon())
+                    // app_id для Wayland и связи с .desktop (на X11 WM_CLASS
+                    // всё равно = имя бинаря, см. StartupWMClass в .desktop)
+                    .with_app_id("kinotrain")
             .with_decorations(decorations)
             .with_title("Kinotrain"),
         wgpu_options,

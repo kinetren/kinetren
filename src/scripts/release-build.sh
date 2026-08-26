@@ -69,6 +69,7 @@ mkdir -p "$STAGE"
 cp "$BIN_DIR/kt-app" "$BIN_DIR/kt-cli" "$STAGE/"
 cp packaging/kinotrain.desktop packaging/kinotrain.svg \
     packaging/kinotrain-mime.xml packaging/install.sh "$STAGE/"
+cp -r packaging/icons "$STAGE/"
 chmod +x "$STAGE/install.sh"
 tar -C "$OUT" -czf "$STAGE.tar.gz" "$(basename "$STAGE")"
 echo "Готово: $STAGE.tar.gz"

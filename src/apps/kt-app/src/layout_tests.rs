@@ -298,3 +298,24 @@ fn t86_meters_edge_and_min_window() {
         h.state().preview_rect
     );
 }
+
+/// Тест 88 (п.11 р.9): прыжок по точкам остановки ПОКАЗЫВАЕТ курсор —
+/// раньше playhead уезжал, а окно таймлайна оставалось на месте (на паузе
+/// follow_view не работает по построению).
+#[test]
+fn t88_jump_reveals_cursor() {
+    let mut h = harness();
+    h.state_mut().view_start = 5_000_000.0;
+    h.step();
+    h.state_mut().jump_stop(false, true); // Shift+Home — в начало проекта
+    h.step();
+    let st = h.state();
+    let vis = (st.timeline_rect.width() as f64 - crate::timeline::GUTTER_W as f64) * st.ticks_per_px;
+    let ph = st.player.transport.playhead().0 as f64;
+    let vs = st.view_start;
+    assert!(
+        ph >= vs && ph <= vs + vis,
+        "курсор вне окна: ph={ph}, окно=[{vs}, {}]",
+        vs + vis
+    );
+}

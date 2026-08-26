@@ -14,7 +14,7 @@ kt-engine = { workspace = true }
 eframe = { workspace = true }
 cpal = { workspace = true }
 rtrb = { workspace = true }
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rfd = "0.15"
 serde_json.workspace = true
 

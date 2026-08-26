@@ -504,6 +504,21 @@ impl KtApp {
         {
             self.follow_playhead = true;
         }
+        // подмотка после прыжка по точкам остановки (п.11 р.9): те же
+        // зоны, что у follow_view, но без требования «играет» — иначе на
+        // паузе Home/End оставляли окно на месте
+        if let Some(at) = self.pending_reveal.take()
+            && let Some(vs) = follow_view(
+                true,
+                true,
+                false,
+                at as f64,
+                view_start,
+                rect.width() as f64 * tpp,
+            )
+        {
+            view_start = vs;
+        }
         if let Some(vs) = follow_view(
             self.follow_playhead,
             self.player.transport.is_playing(),
