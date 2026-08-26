@@ -978,23 +978,51 @@ impl KtApp {
             None
         };
 
-        // курсор-иконка
+        // курсор-иконка + КОНТЕКСТНАЯ ПОДСКАЗКА зоны (п.1 р.9: у таймлайна
+        // не было ни одной подсказки — а это самая большая площадь окна)
         if self.drag.is_none()
             && let Some(pos) = hover
         {
-            if marker_at(self, pos).is_some() || region_edge_at(self, pos).is_some() {
+            let zone_hint: Option<&str>;
+            if marker_at(self, pos).is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-            } else if pos.y > rect.top() + RULER_H {
+                zone_hint = Some("Маркер: тяни — сдвинуть, ПКМ — удалить");
+            } else if region_edge_at(self, pos).is_some() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                zone_hint = Some("Граница региона: тяни (I/O — поставить от курсора)");
+            } else if pos.y <= rect.top() + RULER_H {
+                zone_hint = Some("Линейка: клик и тяни — перемотка курсора");
+            } else if pos.x < rect.left() {
+                zone_hint = Some("Дорожка: тяни — поменять порядок, ПКМ — добавить/удалить");
+            } else {
                 match clip_at(self, pos) {
-                    Some((_, ClipZone::TrimStart)) | Some((_, ClipZone::TrimEnd)) => {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal)
+                    Some((_, ClipZone::TrimStart)) => {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                        zone_hint = Some("Трим начала клипа");
+                    }
+                    Some((_, ClipZone::TrimEnd)) => {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                        zone_hint = Some("Трим конца клипа");
                     }
                     Some((_, ClipZone::VolumeRail)) => {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand)
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        zone_hint = Some("Громкость клипа: тяни, double-click — 0 dB");
                     }
-                    Some((_, ClipZone::Body)) => ui.ctx().set_cursor_icon(egui::CursorIcon::Grab),
-                    None => {}
+                    Some((_, ClipZone::Body)) => {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                        zone_hint = Some(
+                            "Клип: тяни — перенос, двойной клик — FX, ПКМ — меню, S — разрез",
+                        );
+                    }
+                    None => {
+                        zone_hint = Some(
+                            "ЛКМ — курсор, тяни — регион; колесо — прокрутка, Ctrl — зум, Shift — дорожки",
+                        );
+                    }
                 }
+            }
+            if let Some(h) = zone_hint {
+                self.hover_hint = Some(h.to_string());
             }
         }
 

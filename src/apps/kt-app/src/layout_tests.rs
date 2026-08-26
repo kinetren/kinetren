@@ -201,3 +201,41 @@ fn t79_bin_modes_and_layout() {
     assert!(!json.contains("bin_layout"), "пустая раскладка не должна попадать в файл: {json}");
     assert!(!json.contains("bin_free"));
 }
+
+/// Тест 83 (п.1 р.9): подсказка кнопки ОБЯЗАНА отрисоваться в строке
+/// состояния в ТОМ ЖЕ кадре. Регрессия: статусбар — вторая панель кадра,
+/// а кнопки рисуются позже, поэтому он всегда видел hover_hint = None и
+/// показывал дежурную строку. Прошлые тесты читали внутреннее поле после
+/// кадра и были ложно-зелёными — здесь проверяется ОТРИСОВАННОЕ.
+#[test]
+fn t83_hints_reach_status_line() {
+    use crate::app::HintKind;
+    let mut h = harness();
+    assert_eq!(h.state().status_line_shown.1, HintKind::Idle, "без наведения — дежурная строка");
+
+    let toolbar_y = H - 20.0 - 34.0 * 0.5; // статусбар 20 + полоса тулбара 34
+    for (pos, want) in [
+        (egui::pos2(24.0, toolbar_y), "Play/Pause (Space)"),   // тулбар (рисуется ПОСЛЕ статусбара)
+        (egui::pos2(W - 11.0, 10.0), "Закрыть"),               // кнопки окна (ещё позже)
+        (egui::pos2(14.0, 40.0), "Свободная раскладка"),       // бин
+    ] {
+        let mut h = harness();
+        h.hover_at(pos);
+        h.step();
+        let (text, kind) = h.state().status_line_shown.clone();
+        assert!(
+            text.starts_with(want),
+            "из {pos:?} ждали «{want}», в строке состояния «{text}»"
+        );
+        assert_eq!(kind, HintKind::Hover);
+    }
+
+    // всплывающих подсказок в программе нет (п.14 р.8)
+    h.hover_at(egui::pos2(24.0, toolbar_y));
+    h.step();
+    h.step();
+    assert!(
+        h.ctx.memory(|m| m.layer_ids().all(|l| l.order != egui::Order::Tooltip)),
+        "вернулся всплывающий тултип"
+    );
+}

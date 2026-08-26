@@ -605,7 +605,15 @@ impl KtApp {
             10f32.powf(self.meter.fader_db / 20.0)
         };
         self.player.set_master_gain(gain);
-        self.hint(response, "Мастер-громкость превью. Double-click: 0 dB. M: mute.");
+        // подсказка зависит от зоны под курсором (п.1 р.9)
+        let over_mute = fader.hover_pos().is_some_and(|p| mute_rect.contains(p));
+        let text = if over_mute {
+            "Мьют мастера превью"
+        } else {
+            "Мастер-громкость превью: тяни или колесо (Shift — точно), double-click — 0 dB"
+        };
+        self.hint(fader, text);
+        self.hint(response, "Пиковый уровень мастера, dBFS");
     }
 }
 

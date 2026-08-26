@@ -123,6 +123,10 @@ pub struct KtApp {
     pub last_autosave: std::time::Instant,
     /// Хинт наведённой кнопки тулбара — дублируется в статусбар (порт).
     pub hover_hint: Option<String>,
+    /// Прямоугольник строки состояния (заполняется при её отрисовке).
+    pub statusbar_rect: egui::Rect,
+    /// Что реально показано в строке подсказки (для harness-теста).
+    pub status_line_shown: (String, HintKind),
     /// Rect таймлайна прошлого кадра (для плавающего тулбара).
     pub timeline_rect: egui::Rect,
     /// Ретроспектива уведомлений (п.18): кольцо + счётчик непрочитанных,
@@ -260,6 +264,8 @@ impl KtApp {
             render_setup: Default::default(),
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
+            statusbar_rect: egui::Rect::NOTHING,
+            status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
             notices: std::collections::VecDeque::new(),
             notices_unread: 0,
@@ -351,6 +357,8 @@ impl KtApp {
             render_setup: Default::default(),
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
+            statusbar_rect: egui::Rect::NOTHING,
+            status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
             notices: std::collections::VecDeque::new(),
             notices_unread: 0,
@@ -660,6 +668,9 @@ impl KtApp {
             }
         }
 
+        // подсказка — последней, поверх статусбара (п.1 р.9)
+        self.draw_status_hint(&ctx);
+
         // Оверлей-свечение поверх интерфейса (п.8): превью и метры мягко
         // «светят» за границы своих панелей, не мешая чтению UI.
         if self.sw_render == Some(false) {
@@ -750,6 +761,68 @@ impl KtApp {
     pub(crate) fn release_pointer_after_wm_grab(ctx: &egui::Context) {
         ctx.stop_dragging();
         ctx.input_mut(|i| i.pointer = Default::default());
+    }
+
+    /// Строка подсказки — рисуется ПОСЛЕДНЕЙ в кадре, поверх статусбара
+    /// (п.1 р.9). Статусбар как панель рисуется вторым, задолго до кнопок,
+    /// поэтому читать `hover_hint` внутри него бессмысленно — там всегда
+    /// None. Слой Foreground + interactable(false): драг окна за статусбар
+    /// не перехватывается.
+    fn draw_status_hint(&mut self, ctx: &egui::Context) {
+        let strip = self.statusbar_rect;
+        if !strip.is_finite() || strip.width() < 1.0 {
+            return;
+        }
+        let mode = if self.pending_morpher.is_some() {
+            Some("Morpher: кликни по фиолетовой Morph-дорожке, куда поставить блок (Esc — отмена)")
+        } else if self.dnd_hover.is_some() {
+            Some("Отпусти — клип встанет под мышку (дорожка подсвечена)")
+        } else {
+            None
+        };
+        let status =
+            self.status.as_ref().map(|(m, at)| (m.as_str(), at.elapsed().as_millis() as u64));
+        let (text, kind) = status_line(
+            self.hover_hint.as_deref(),
+            mode,
+            status,
+            STATUS_TTL_MS,
+            "перетащи медиафайл на окно — клип встанет под мышку",
+        );
+        if kind != HintKind::Status
+            && self.status.as_ref().is_some_and(|(_, at)| {
+                at.elapsed().as_millis() as u64 >= STATUS_TTL_MS
+            })
+        {
+            self.status = None;
+        }
+        let col = match kind {
+            HintKind::Status => egui::Color32::from_rgb(255, 210, 120),
+            HintKind::Mode => egui::Color32::from_rgb(150, 215, 175),
+            HintKind::Hover => egui::Color32::from_gray(205),
+            HintKind::Idle => egui::Color32::from_gray(120),
+        };
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("status-hint"),
+        ));
+        let galley =
+            painter.layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), col);
+        let x1 = strip.right() - 6.0;
+        // длинная подсказка спокойно затирает метрики слева — она важнее
+        let plate = egui::Rect::from_min_max(
+            egui::pos2((x1 - galley.size().x - 8.0).max(strip.left()), strip.top()),
+            egui::pos2(x1, strip.bottom()),
+        );
+        painter.rect_filled(plate, 0.0, crate::theme::PANEL);
+        painter.galley(
+            egui::pos2(plate.left() + 4.0, strip.center().y - galley.size().y * 0.5),
+            galley,
+            col,
+        );
+        // что РЕАЛЬНО отрисовано — для harness-теста (проверять внутреннее
+        // поле hover_hint бесполезно: оно наполняется уже после статусбара)
+        self.status_line_shown = (text, kind);
     }
 
     /// Прыжок к предыдущей/следующей точке остановки (п.16 р.8).
@@ -1800,6 +1873,7 @@ impl KtApp {
         }
         let (rect, resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
         self.preview_rect = rect;
+        let resp = self.hint(resp, "Клик — play/pause, двойной клик — отделить превью в окно");
         // пп.10-11 р.7: одиночный клик (отложенный на окно double-click) =
         // play/pause; двойной = detach/attach. Работает и в отдельном окне
         // превью (двойной клик там возвращает превью обратно).
@@ -2095,11 +2169,15 @@ impl KtApp {
             };
             let mut fps = proj.fps;
             let before_fps = fps;
-            egui::ComboBox::from_id_salt("fps").selected_text(fps.to_string()).show_ui(ui, |ui| {
-                for f in [24u32, 25, 30, 60] {
-                    ui.selectable_value(&mut fps, f, f.to_string());
-                }
-            });
+            let r = egui::ComboBox::from_id_salt("fps")
+                .selected_text(fps.to_string())
+                .show_ui(ui, |ui| {
+                    for f in [24u32, 25, 30, 60] {
+                        ui.selectable_value(&mut fps, f, f.to_string());
+                    }
+                })
+                .response;
+            self.hint(r, "Частота кадров проекта");
             if fps != before_fps {
                 let mut st = proj.clone();
                 st.fps = fps;
@@ -2108,7 +2186,7 @@ impl KtApp {
             ui.separator();
             let mut res = (proj.width, proj.height);
             let before_res = res;
-            egui::ComboBox::from_id_salt("res")
+            let res_resp = egui::ComboBox::from_id_salt("res")
                 .selected_text(format!("{}×{}", res.0, res.1))
                 .show_ui(ui, |ui| {
                     for r in
@@ -2120,7 +2198,9 @@ impl KtApp {
                     if let Some((mw, mh)) = self.max_source_resolution() {
                         ui.selectable_value(&mut res, (mw, mh), format!("Max ({mw}×{mh})"));
                     }
-                });
+                })
+                .response;
+            self.hint(res_resp, "Разрешение проекта (Max — по самому крупному источнику)");
             if res != before_res {
                 let mut st = proj.clone();
                 st.width = res.0;
@@ -2133,19 +2213,21 @@ impl KtApp {
             ui.separator();
             let labels = ["1/16", "1/8", "1/4", "1/2", "1/1"];
             let before = frac_idx;
-            egui::ComboBox::from_id_salt("quality").selected_text(labels[frac_idx]).show_ui(
-                ui,
-                |ui| {
+            let q_resp = egui::ComboBox::from_id_salt("quality")
+                .selected_text(labels[frac_idx])
+                .show_ui(ui, |ui| {
                     for (i, l) in labels.iter().enumerate() {
                         ui.selectable_value(&mut frac_idx, i, *l);
                     }
-                },
-            );
+                })
+                .response;
+            self.hint(q_resp, "Качество превью: доля разрешения проекта (меньше — быстрее)");
             if frac_idx != before {
                 self.player.set_preview_quality(q_for(proj.width, proj.height, fracs[frac_idx]));
             }
             ui.separator();
-            ui.checkbox(&mut self.smooth_scaling, "Сглаживание");
+            let sm = ui.checkbox(&mut self.smooth_scaling, "Сглаживание");
+            self.hint(sm, "Линейное сглаживание превью (выкл — резкие пиксели)");
         });
     }
 
@@ -2225,6 +2307,10 @@ impl KtApp {
             ui.available_rect_before_wrap().min,
             egui::vec2(ui.available_width(), 22.0),
         );
+        // прямоугольник строки состояния нужен в КОНЦЕ кадра: подсказка
+        // рисуется там (п.1 р.9 — иначе статусбар видит hover_hint прошлого
+        // кадра, точнее вообще ничего: он рисуется РАНЬШЕ всех кнопок)
+        self.statusbar_rect = strip;
         let bg = ui.interact(strip, ui.id().with("status-drag"), egui::Sense::click_and_drag());
         if bg.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
@@ -2289,45 +2375,6 @@ impl KtApp {
             ui.separator();
             // п.1 р.7.1: V-fps (показанные НОВЫЕ кадры) — здесь, не в тулбаре
             ui.weak(format!("{:.0} vfps", self.perf.vfps));
-            // ЕДИНСТВЕННОЕ место любых подсказок (п.14 р.8): наведение →
-            // активный режим → временное сообщение → дежурная строка.
-            // Длинная строка спокойно затирает метрики слева — она важнее.
-            let mode = if self.pending_morpher.is_some() {
-                Some("Morpher: кликни по фиолетовой Morph-дорожке, куда поставить блок (Esc — отмена)")
-            } else if self.dnd_hover.is_some() {
-                Some("Отпусти — клип встанет под мышку (дорожка подсвечена)")
-            } else {
-                None
-            };
-            let status = self.status.as_ref().map(|(m, at)| (m.as_str(), at.elapsed().as_millis() as u64));
-            let (text, kind) = status_line(
-                self.hover_hint.as_deref(),
-                mode,
-                status,
-                STATUS_TTL_MS,
-                "перетащи медиафайл на окно — клип встанет под мышку",
-            );
-            if kind != HintKind::Status && self.status.as_ref().is_some_and(|(_, at)| at.elapsed().as_millis() as u64 >= STATUS_TTL_MS) {
-                self.status = None;
-            }
-            let col = match kind {
-                HintKind::Status => egui::Color32::from_rgb(255, 210, 120),
-                HintKind::Mode => egui::Color32::from_rgb(150, 215, 175),
-                _ => egui::Color32::from_gray(130),
-            };
-            let font = egui::FontId::proportional(12.0);
-            let galley = ui.painter().layout_no_wrap(text, font, col);
-            let x1 = strip.right() - 6.0;
-            let plate = egui::Rect::from_min_max(
-                egui::pos2(x1 - galley.size().x - 6.0, strip.top()),
-                egui::pos2(x1, strip.bottom()),
-            );
-            ui.painter().rect_filled(plate, 0.0, crate::theme::PANEL);
-            ui.painter().galley(
-                egui::pos2(plate.left() + 3.0, strip.center().y - galley.size().y * 0.5),
-                galley,
-                col,
-            );
         });
     }
 
@@ -2738,7 +2785,7 @@ pub const WIN_CORNER: f32 = 16.0;
 /// Что показывать в правом низу строки состояния (п.14 р.8). Приоритет:
 /// наведение → активный режим → временное сообщение → дежурная строка.
 /// Всё в одном месте: ни попапов, ни оверлеев поверх таймлайна.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HintKind {
     Hover,
     Mode,
