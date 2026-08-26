@@ -82,6 +82,12 @@ pub struct KtApp {
     pub bin_last_good: HashMap<MediaId, crate::thumbs::ThumbKey>,
     /// Прошлый offline-снапшот бина: детект offline→online (п.1 р.7).
     pub bin_last_offline: std::collections::HashSet<kt_model::MediaId>,
+    /// Медиа-бин: свободная раскладка (п.7 р.8) вместо сетки.
+    pub bin_free: bool,
+    /// Позиции карточек свободной раскладки (живут в проекте, UiState).
+    pub bin_layout: std::collections::HashMap<kt_model::MediaId, egui::Pos2>,
+    /// Какую карточку тащим внутри бина (свободный режим).
+    pub bin_drag: Option<(kt_model::MediaId, egui::Vec2)>,
     /// Последний отправленный заголовок окна (шлём Title только при смене).
     pub(crate) last_title: String,
     /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
@@ -222,6 +228,9 @@ impl KtApp {
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
             bin_last_offline: std::collections::HashSet::new(),
+            bin_free: true,
+            bin_layout: std::collections::HashMap::new(),
+            bin_drag: None,
             last_title: String::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,
@@ -309,6 +318,9 @@ impl KtApp {
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
             bin_last_offline: std::collections::HashSet::new(),
+            bin_free: true,
+            bin_layout: std::collections::HashMap::new(),
+            bin_drag: None,
             last_title: String::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,
@@ -374,8 +386,16 @@ impl KtApp {
             app.view_start = ui.view_start.max(-40.0 * app.ticks_per_px);
             app.player.seek(Tick(ui.cursor.max(0)));
             app.lane_order = ui.lane_order; // п.6 v1.4 (нормализуется в draw)
+            app.bin_free = ui.bin_free; // п.7 р.8
+            app.bin_layout =
+                ui.bin_layout.iter().map(|(id, x, y)| (*id, egui::pos2(*x, *y))).collect();
         }
         Ok(app)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ui_state_for_test(&self) -> kt_model::UiState {
+        self.ui_state()
     }
 
     /// Снимок вьюпорта для записи в проект (п.13).
@@ -385,6 +405,8 @@ impl KtApp {
             ticks_per_px: self.ticks_per_px,
             cursor: self.player.transport.playhead().0,
             lane_order: self.lane_order.clone(),
+            bin_free: self.bin_free,
+            bin_layout: self.bin_layout.iter().map(|(id, p)| (*id, p.x, p.y)).collect(),
         }
     }
 

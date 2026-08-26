@@ -26,12 +26,17 @@ fn harness() -> Harness<'static, KtApp> {
     h
 }
 
-/// Ширина панели по её сохранённому состоянию (то же, что читает egui).
-fn panel_width(h: &Harness<'_, KtApp>, id: &str) -> f32 {
+/// ФАКТИЧЕСКИЙ прямоугольник панели (не запрошенный размер: сепаратор
+/// egui живёт у фактической границы, и именно расхождение между ними —
+/// та самая ловушка «полоска не двигается»).
+fn panel_rect(h: &Harness<'_, KtApp>, id: &str) -> egui::Rect {
     egui::containers::panel::PanelState::load(&h.ctx, egui::Id::new(id))
         .expect("панель должна быть отрисована")
-        .size()
-        .x
+        .outer_rect
+}
+
+fn panel_width(h: &Harness<'_, KtApp>, id: &str) -> f32 {
+    panel_rect(h, id).width()
 }
 
 fn cursor(h: &Harness<'_, KtApp>) -> egui::CursorIcon {
@@ -64,9 +69,11 @@ fn t76_layout_panels_and_preview_share_space() {
 #[test]
 fn t76_left_panel_separator_is_draggable() {
     let mut h = harness();
-    let w0 = panel_width(&h, "left_col");
+    let w0 = panel_rect(&h, "left_col").right();
     let y = H * 0.5;
 
+    h.hover_at(egui::pos2(w0, y));
+    h.step();
     h.hover_at(egui::pos2(w0, y));
     h.step();
     assert_eq!(
@@ -81,10 +88,10 @@ fn t76_left_panel_separator_is_draggable() {
     h.step();
     h.drop_at(egui::pos2(w0 + 90.0, y));
     h.step();
-    let w1 = panel_width(&h, "left_col");
+    let w1 = panel_rect(&h, "left_col").right();
     assert!(
         (w1 - (w0 + 90.0)).abs() < 12.0,
-        "сепаратор не потянулся: было {w0}, стало {w1}"
+        "сепаратор не потянулся: правый край был {w0}, стал {w1}"
     );
 }
 
@@ -162,4 +169,35 @@ fn t76_resize_zones_do_not_steal_widgets() {
         playing_before,
         "клик по кнопке тулбара не сработал"
     );
+}
+
+/// Тест 79 (пп.5,7 р.8): медиа-бин — режимы и раскладка.
+/// Свободная раскладка живёт в проекте (UiState, вне undo), переключение
+/// режимов её не стирает, а карточки не вылезают за панель (иначе панель
+/// растёт под контент и её сепаратор уезжает — ловушка из t76).
+#[test]
+fn t79_bin_modes_and_layout() {
+    use kt_model::MediaId;
+    let mut h = harness();
+    assert!(h.state().bin_free, "свободная раскладка — режим по умолчанию");
+
+    // позиции карточек переживают переключение режимов
+    h.state_mut().bin_layout.insert(MediaId(7), egui::pos2(30.0, 40.0));
+    h.state_mut().bin_free = false;
+    h.step();
+    h.state_mut().bin_free = true;
+    h.step();
+    assert_eq!(
+        h.state().bin_layout.get(&MediaId(7)).copied(),
+        Some(egui::pos2(30.0, 40.0)),
+        "переключение режимов сбило раскладку"
+    );
+
+    // раскладка едет в проект и не раздувает файл, когда пуста
+    let st = h.state().ui_state_for_test();
+    assert_eq!(st.bin_layout, vec![(MediaId(7), 30.0, 40.0)]);
+    assert!(st.bin_free);
+    let json = serde_json::to_string(&kt_model::UiState::default()).unwrap();
+    assert!(!json.contains("bin_layout"), "пустая раскладка не должна попадать в файл: {json}");
+    assert!(!json.contains("bin_free"));
 }

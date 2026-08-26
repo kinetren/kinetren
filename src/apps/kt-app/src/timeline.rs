@@ -1676,6 +1676,24 @@ impl KtApp {
         }
 
         // ---- силуэт дропа файла (п.2 v1.4): подсветка дорожки + призрак --
+        // Тот же силуэт обслуживает перетаскивание карточки ИЗ БИНА
+        // (п.5 р.8): payload от egui-драга даёт позицию сам.
+        let bin_drag_pos = egui::DragAndDrop::payload::<crate::bin_panel::BinDrag>(ui.ctx())
+            .map(|p| *p)
+            .and_then(|p| ui.input(|i| i.pointer.hover_pos()).map(|pos| (p.0, pos)));
+        if let Some((media, pos)) = bin_drag_pos
+            && let Some(g) = self.tl_geom.clone()
+            && g.in_lanes(pos)
+            && let Some((kind, lane)) = g.lane_at_y(pos.y)
+        {
+            self.dnd_hover = Some(pos);
+            if ui.input(|i| i.pointer.any_released()) {
+                let _ = egui::DragAndDrop::take_payload::<crate::bin_panel::BinDrag>(ui.ctx());
+                let at = self.snap(x_to_tick(pos.x).max(0), None);
+                self.place_media_at(media, Tick(at), Some((kind, lane)));
+                self.dnd_hover = None;
+            }
+        }
         if let Some(pos) = self.dnd_hover
             && self.pending_morpher.is_none()
             && let Some(g) = self.tl_geom.clone()

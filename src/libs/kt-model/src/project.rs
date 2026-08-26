@@ -139,7 +139,7 @@ fn default_lanes() -> u32 {
 }
 
 /// Вьюпорт таймлайна, сохраняемый в проекте.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UiState {
     /// Левый край вью (тики).
     pub view_start: f64,
@@ -154,6 +154,19 @@ pub struct UiState {
     /// UiState; нормализация — normalize_lane_order (тест 49).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lane_order: Vec<(LaneKind, u32)>,
+    /// Медиа-бин: режим свободной раскладки (п.7 р.8). По умолчанию
+    /// включён — пользователь сам группирует карточки.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub bin_free: bool,
+    /// Позиции карточек в свободном режиме (медиа, x, y в точках от
+    /// левого-верхнего угла бина). Переключение режимов раскладку НЕ
+    /// трогает — она просто не используется в режиме сетки.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bin_layout: Vec<(MediaId, f32, f32)>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Вид дорожки в display-порядке (ClipKind не годится: нет Morph).
