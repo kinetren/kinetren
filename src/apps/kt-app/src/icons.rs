@@ -27,8 +27,12 @@ pub const REDO: &str = "\u{E08C}"; // arrow-u-up-right
 pub const RENDER: &str = "\u{E8C2}"; // film-slate
 pub const SAVE: &str = "\u{E248}"; // floppy-disk
 pub const FX: &str = "\u{E2DE}"; // lightning (клип с эффектами)
-pub const WARN: &str = "\u{E4DE}"; // warning (офлайн-медиа)
-pub const GAUGE: &str = "\u{E288}"; // gauge (диагностика, п.9 р.7)
+pub const WARN: &str = "\u{E4E0}"; // warning (E4DE был voicemail — п.1 р.8)
+pub const GAUGE: &str = "\u{E628}"; // gauge (E288 был globe — п.1 р.8)
+pub const SQUARES_FOUR: &str = "\u{E464}"; // сетка (режим бина)
+pub const LIST: &str = "\u{E2F0}"; // список (режим бина)
+pub const ARROWS_OUT: &str = "\u{E0A2}"; // свободная раскладка
+pub const SKIP_FWD: &str = "\u{E5A6}"; // к следующей точке
 
 /// Подключить Phosphor к egui-шрифтам (fallback к proportional).
 pub fn install_fonts(ctx: &egui::Context) {

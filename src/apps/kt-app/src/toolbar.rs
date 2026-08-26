@@ -60,7 +60,8 @@ pub fn draw_logo(painter: &egui::Painter, rect: egui::Rect) {
 /// шрифтовые глифы ✕/❐ рендерились «квадратиками»-tofu). kind: 0=свернуть,
 /// 1=развернуть/восстановить, 2=закрыть (красный ховер).
 fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(34.0, 22.0), egui::Sense::click());
+    // 22 px: три кнопки помещаются в узкую колонку метров (п.15 р.8)
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 20.0), egui::Sense::click());
     let p = ui.painter();
     if resp.hovered() {
         let fill = if kind == 2 {
@@ -101,79 +102,120 @@ fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response
 }
 
 impl KtApp {
-    /// Титлбар borderless-окна (пп.3,6,7 р.7.1): лого + меню слева, имя
-    /// проекта и версия по центру, кнопки окна справа; пустые зоны —
-    /// перетаскивание окна. Полоса на всю ширину, но НЕ пустая — место
-    /// оправдано (меню съехало сюда из левой колонки, та снова ужимается).
-    pub fn draw_titlebar(&mut self, ui: &mut egui::Ui) {
-        let strip = ui.available_rect_before_wrap();
+    /// Шапка ЛЕВОЙ колонки (пп.15,6,7 р.8): лого + меню + имя проекта с
+    /// версией. Полосы на всю ширину больше нет — центр сверху отдан
+    /// превью. Имя проекта рисуется painter'ом ВНЕ layout: если в колонку
+    /// не влезает, спокойно вытекает вправо поверх превью (решение
+    /// пользователя), а ширину панели не раздувает.
+    pub fn draw_column_header(&mut self, ui: &mut egui::Ui) {
+        let strip = egui::Rect::from_min_size(
+            ui.available_rect_before_wrap().min,
+            egui::vec2(ui.available_width(), 22.0),
+        );
         let painter = ui.painter_at(strip);
         painter.rect_filled(strip, 0.0, crate::theme::WINDOW);
-        painter.line_segment(
-            [strip.left_bottom(), strip.right_bottom()],
-            egui::Stroke::new(1.0, crate::theme::SEAM),
-        );
-        let bg = ui.interact(strip, ui.id().with("titlebar-drag"), egui::Sense::click_and_drag());
-        if bg.drag_started() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-            KtApp::release_pointer_after_wm_grab(ui.ctx());
-        }
-        if bg.double_clicked() {
-            let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-        }
-        // имя проекта + версия по центру полосы (п.7)
-        painter.text(
-            egui::pos2(strip.center().x, strip.center().y),
-            egui::Align2::CENTER_CENTER,
-            &self.last_title,
-            egui::FontId::proportional(11.5),
-            egui::Color32::from_gray(140),
-        );
-        // лого слева (п.6)
+        // драг окна за пустую часть шапки
+        let bg = ui.interact(strip, ui.id().with("header-drag"), egui::Sense::click_and_drag());
+        self.window_drag_from(&bg, ui.ctx());
+        // лого
         let logo = egui::Rect::from_min_size(
-            egui::pos2(strip.left() + 5.0, strip.top() + 3.0),
+            egui::pos2(strip.left() + 3.0, strip.top() + 3.0),
             egui::vec2(16.0, 16.0),
         );
         draw_logo(&painter, logo);
-        let mut left = ui.new_child(
+        // меню: три пункта, если помещаются, иначе бургер (панель не
+        // должна раздуваться под контент — регрессия р.7.1)
+        let menu_left = logo.right() + 5.0;
+        let wide = strip.right() - menu_left >= 150.0;
+        let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(egui::Rect::from_min_max(
-                    egui::pos2(logo.right() + 6.0, strip.top()),
-                    egui::pos2(strip.center().x - 90.0, strip.bottom()),
+                    egui::pos2(menu_left, strip.top()),
+                    egui::pos2(strip.right(), strip.bottom()),
                 ))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        self.draw_menus(&mut left);
-        // кнопки окна справа (п.4 р.7: в вёрстке, не оверлеем над метрами)
-        if std::env::var_os("KT_DECORATIONS").is_none() {
-            let mut right = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(egui::Rect::from_min_max(
-                        egui::pos2(strip.right() - 3.0 * 34.0, strip.top()),
-                        strip.max,
-                    ))
-                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
-            );
-            right.spacing_mut().item_spacing.x = 0.0;
-            let ctx = right.ctx().clone();
-            if self.hint(window_button(&mut right, 2, false), "Закрыть").clicked() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-            let h = if max { "Восстановить" } else { "Развернуть" };
-            if self.hint(window_button(&mut right, 1, max), h).clicked() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-            }
-            if self.hint(window_button(&mut right, 0, false), "Свернуть").clicked() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            }
+        let menu_end = if wide {
+            self.draw_menus(&mut child);
+            child.min_rect().right()
+        } else {
+            child.menu_button("\u{2261}", |ui| {
+                self.menu_items(ui);
+            });
+            child.min_rect().right()
+        };
+        ui.advance_cursor_after_rect(strip);
+        // имя проекта + версия — поверх всего, начиная за меню
+        let fg = ui.ctx().layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("project-title"),
+        ));
+        fg.text(
+            egui::pos2(menu_end + 10.0, strip.center().y),
+            egui::Align2::LEFT_CENTER,
+            &self.last_title,
+            egui::FontId::proportional(11.5),
+            egui::Color32::from_gray(125),
+        );
+    }
+
+    /// Кнопки окна — компактным блоком в шапке панели метров (п.15 р.8:
+    /// полосы на всю ширину нет, оверлея поверх метров тоже).
+    pub fn draw_window_buttons(&mut self, ui: &mut egui::Ui) {
+        if std::env::var_os("KT_DECORATIONS").is_some() {
+            return;
+        }
+        let strip = egui::Rect::from_min_size(
+            ui.available_rect_before_wrap().min,
+            egui::vec2(ui.available_width(), 22.0),
+        );
+        ui.painter_at(strip).rect_filled(strip, 0.0, crate::theme::WINDOW);
+        let bg = ui.interact(strip, ui.id().with("wbtn-drag"), egui::Sense::click_and_drag());
+        self.window_drag_from(&bg, ui.ctx());
+        let mut row = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(strip)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        row.spacing_mut().item_spacing.x = 0.0;
+        let ctx = row.ctx().clone();
+        if self.hint(window_button(&mut row, 2, false), "Закрыть").clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        let h = if max { "Восстановить" } else { "Развернуть" };
+        if self.hint(window_button(&mut row, 1, max), h).clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+        }
+        if self.hint(window_button(&mut row, 0, false), "Свернуть").clicked() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
         ui.advance_cursor_after_rect(strip);
     }
 
-    fn draw_menus(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
+    /// Общая обработка драга окна за «пустое место» полосы (п.10 р.8:
+    /// из развёрнутого состояния окно сперва восстанавливается, и только
+    /// СЛЕДУЮЩИМ кадром начинается перетаскивание — X11 не переваривает
+    /// обе команды в одном кадре).
+    pub(crate) fn window_drag_from(&mut self, bg: &egui::Response, ctx: &egui::Context) {
+        if bg.drag_started() {
+            if ctx.input(|i| i.viewport().maximized.unwrap_or(false)) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                self.pending_unmax_drag = true;
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                KtApp::release_pointer_after_wm_grab(ctx);
+            }
+        }
+        if bg.double_clicked() {
+            let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+        }
+    }
+
+    /// Пункты меню (три корневых). Отдельно от контейнера, чтобы их же
+    /// показывал бургер при узкой колонке.
+    fn menu_items(&mut self, ui: &mut egui::Ui) {
             ui.menu_button("Файл", |ui| {
                 if ui.button("Новый").clicked() {
                     self.new_project();
@@ -248,6 +290,11 @@ impl KtApp {
                     ui.close();
                 }
             });
+    }
+
+    fn draw_menus(&mut self, ui: &mut egui::Ui) {
+        egui::MenuBar::new().ui(ui, |ui| {
+            self.menu_items(ui);
         });
     }
 

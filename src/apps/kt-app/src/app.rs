@@ -71,6 +71,9 @@ pub struct KtApp {
     pub follow_playhead: bool,
     /// Момент последнего РУЧНОГО скролла/зума (п.30 р.7: grace для follow_rearm).
     pub last_user_scroll: Option<std::time::Instant>,
+    /// Драг окна начат из развёрнутого состояния: сначала восстановить
+    /// окно, StartDrag — СЛЕДУЮЩИМ кадром (п.10 р.8, X11).
+    pub pending_unmax_drag: bool,
     /// Вертикальный скролл зоны дорожек, px (п.12 р.6).
     pub tl_scroll: f32,
     /// Явная высота строки (Shift+Ctrl+колесо); None = авто-подгонка.
@@ -214,6 +217,7 @@ impl KtApp {
             paused_at: None,
             follow_playhead: false,
             last_user_scroll: None,
+            pending_unmax_drag: false,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -300,6 +304,7 @@ impl KtApp {
             paused_at: None,
             follow_playhead: false,
             last_user_scroll: None,
+            pending_unmax_drag: false,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -406,16 +411,13 @@ impl KtApp {
         self.handle_drops(&ctx);
         self.hover_hint = None;
 
-        // Титлбар: лого + меню + имя проекта с версией + кнопки окна
-        // (пп.3,6,7 р.7.1). Полоса оправдана содержимым: меню переехало
-        // сюда из левой колонки, та снова ужимается до 72 px.
-        egui::Panel::top("titlebar")
-            .frame(egui::Frame::new().fill(crate::theme::WINDOW))
-            .resizable(false)
-            .exact_size(22.0)
-            .show(ui, |ui| {
-                self.draw_titlebar(ui);
-            });
+        // п.10 р.8: окно восстановлено из maximized прошлым кадром —
+        // теперь можно начинать перетаскивание
+        if self.pending_unmax_drag {
+            self.pending_unmax_drag = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            Self::release_pointer_after_wm_grab(&ctx);
+        }
         // статусбар (низ)
         egui::Panel::bottom("status")
             .resizable(false)
@@ -454,6 +456,8 @@ impl KtApp {
         // полоса времени над таймлайном (порт Timeline time strip)
         // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
         egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).max_size(420.0).show(ui, |ui| {
+            // шапка: лого + меню + имя проекта (пп.15,6,7 р.8)
+            self.draw_column_header(ui);
             ui.add_space(2.0);
             // п.27 р.7: контент в ScrollArea — фрейм панели не перерастает
             // высоту, и сепаратор egui больше не залезает на таймлайн
@@ -479,8 +483,12 @@ impl KtApp {
                     });
             });
         });
-        // центр: превью + метры справа, под ними контролы
-        egui::CentralPanel::default().show(ui, |ui| {
+        // центр: превью + метры справа, под ними контролы.
+        // Фрейм без воздуха: дефолтные 8 px по периметру съедали место и
+        // отодвигали кнопки окна от угла (п.15 р.8).
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(crate::theme::PANEL))
+            .show(ui, |ui| {
             let p = self.model.project();
             if let Some(r) = p.region
                 && !p.loop_enabled
@@ -498,7 +506,9 @@ impl KtApp {
                 self.draw_preview_controls(ui);
                 ui.add_space(3.0);
             });
-            egui::Panel::right("meters_col").resizable(true).default_size(66.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
+            egui::Panel::right("meters_col").resizable(true).default_size(70.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
+                // кнопки окна — здесь, в вёрстке (п.15 р.8)
+                self.draw_window_buttons(ui);
                 self.draw_meters(ui);
             });
             egui::CentralPanel::default().show(ui, |ui| {
