@@ -251,8 +251,11 @@ impl KtApp {
             self.meter.tick(0.0, false);
         }
 
+        // п.3 р.9: занимаем ВСЮ ширину панели — жёсткие 64 px при панели
+        // 70 оставляли мёртвый зазор у правого края окна (и он рос, если
+        // панель расширяли). Внутренняя геометрия ниже относительная.
         let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(64.0, ui.available_height()),
+            egui::vec2(ui.available_width(), ui.available_height()),
             egui::Sense::click_and_drag(),
         );
         {

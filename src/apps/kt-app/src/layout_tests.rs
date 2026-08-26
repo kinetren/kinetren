@@ -239,3 +239,62 @@ fn t83_hints_reach_status_line() {
         "вернулся всплывающий тултип"
     );
 }
+
+/// Тест 85 (п.2 р.9): окно таскается за верх В ЛЮБОЙ точке ширины —
+/// раньше между шапкой колонки и кнопками окна зияла дыра над превью.
+#[test]
+fn t85_top_drag_is_continuous() {
+    use egui::ViewportCommand as V;
+    for x in [120.0f32, W * 0.5, W - 200.0] {
+        let mut h = harness();
+        h.drag_at(egui::pos2(x, 14.0)); // ниже кромки ресайза (8 px)
+        h.step();
+        h.hover_at(egui::pos2(x + 20.0, 18.0)); // реальный жест: сдвиг мыши
+        h.step();
+        let sent = h
+            .output()
+            .viewport_output
+            .values()
+            .any(|v| v.commands.iter().any(|c| matches!(c, V::StartDrag)));
+        assert!(sent, "окно не таскается за верх при x={x}");
+    }
+}
+
+/// Тест 86 (пп.3,10 р.9): метры прижаты к правому краю окна, а при
+/// минимальном окне 640×640 шапка (кнопки окна) не вытесняется таймлайном
+/// и превью не схлопывается.
+#[test]
+fn t86_meters_edge_and_min_window() {
+    let mut h = harness();
+    let p = panel_rect(&h, "meters_col");
+    assert!((W - p.right()).abs() < 1.5, "панель метров не у края: {p:?}");
+    // у самой кромки окна метр обязан ловить наведение (нет мёртвой зоны)
+    h.hover_at(egui::pos2(W - 3.0, H * 0.35));
+    h.step();
+    assert!(
+        h.state().status_line_shown.0.contains("громкость")
+            || h.state().status_line_shown.0.contains("уровень"),
+        "у правого края зазор: в строке «{}»",
+        h.state().status_line_shown.0
+    );
+
+    // минимальное окно
+    let app = KtApp::new_empty(None);
+    let (w, hh) = (640.0f32, 640.0f32);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(w, hh))
+        .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    h.step();
+    h.step();
+    h.hover_at(egui::pos2(w - 11.0, 10.0));
+    h.step();
+    assert_eq!(
+        h.state().status_line_shown.0, "Закрыть",
+        "при 640×640 шапку вытеснил таймлайн"
+    );
+    assert!(
+        h.state().preview_rect.height() > 60.0,
+        "превью схлопнулось: {:?}",
+        h.state().preview_rect
+    );
+}

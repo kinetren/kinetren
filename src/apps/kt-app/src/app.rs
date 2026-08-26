@@ -428,6 +428,14 @@ impl KtApp {
     /// интеракции проверяются egui_kittest, не только скриншотом).
     pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        // Корневой Ui, который отдаёт eframe, обрамлён дефолтными 8 px —
+        // из-за них ВЕСЬ интерфейс не доходил до краёв окна (жалоба п.3
+        // р.9 про «отступ метров справа» — на самом деле отступала каждая
+        // панель). Работаем на полном content_rect.
+        let mut root = ui.new_child(
+            egui::UiBuilder::new().max_rect(ctx.content_rect()).layout(*ui.layout()),
+        );
+        let ui = &mut root;
         // имя проекта — в заголовок окна (п.19 р.6), не каждый кадр
         let title = format!(
             "{}{} — kt {}",
@@ -467,7 +475,12 @@ impl KtApp {
                 self.draw_statusbar(ui);
             });
         // таймлайн (низ, на всю ширину) + плавающий тулбар поверх
-        egui::Panel::bottom("timeline").frame(egui::Frame::new().fill(crate::theme::PANEL)).resizable(true).default_size(300.0).show(ui, |ui| {
+        // п.10 р.9: таймлайну нужен ПОТОЛОК, иначе при малой высоте он
+        // забирает всё и вытесняет шапку с лого/меню и кнопки окна (они
+        // живут внутри боковых колонок). Умное сжатие панелей egui при
+        // этом не ломается — добавлен только верхний предел.
+        let tl_max = (ui.available_height() - 140.0).max(80.0);
+        egui::Panel::bottom("timeline").frame(egui::Frame::new().fill(crate::theme::PANEL)).resizable(true).default_size(300.0).max_size(tl_max).show(ui, |ui| {
             let full = ui.available_rect_before_wrap();
             self.timeline_rect = full;
             let strip_h = 34.0;
@@ -541,12 +554,35 @@ impl KtApp {
                 self.draw_preview_controls(ui);
                 ui.add_space(3.0);
             });
-            egui::Panel::right("meters_col").resizable(true).default_size(70.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
+            egui::Panel::right("meters_col").resizable(true).default_size(70.0).min_size(64.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
                 // кнопки окна — здесь, в вёрстке (п.15 р.8)
                 self.draw_window_buttons(ui);
                 self.draw_meters(ui);
             });
-            egui::CentralPanel::default().show(ui, |ui| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new())
+                .show(ui, |ui| {
+                // п.2 р.9: НЕПРЕРЫВНАЯ зона драга окна по всей ширине.
+                // Полоса невидима и лежит между кромкой ресайза (WIN_EDGE)
+                // и низом шапок колонок, поэтому места не занимает и
+                // стыкуется с шапкой слева и кнопками окна справа.
+                if std::env::var_os("KT_DECORATIONS").is_none() {
+                    let full = ui.available_rect_before_wrap();
+                    let strip = egui::Rect::from_min_max(
+                        egui::pos2(full.left() - 8.0, full.top() + WIN_EDGE),
+                        egui::pos2(full.right() + 8.0, full.top() + 20.0),
+                    );
+                    let bg = ui.interact(
+                        strip,
+                        ui.id().with("top-drag"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    self.window_drag_from(&bg, ui.ctx());
+                    ui.advance_cursor_after_rect(egui::Rect::from_min_max(
+                        full.min,
+                        egui::pos2(full.right(), full.top() + 20.0),
+                    ));
+                }
                 if self.preview_detached {
                     ui.centered_and_justified(|ui| {
                         ui.weak("превью в отдельном окне (закрой его, чтобы вернуть)");
@@ -3315,6 +3351,7 @@ pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 860.0])
+                    .with_min_inner_size([640.0, 640.0])
             .with_decorations(decorations)
             .with_title("Kinotrain"),
         wgpu_options,
