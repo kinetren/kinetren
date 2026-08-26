@@ -748,7 +748,9 @@ impl KtApp {
         if r.hovered() {
             self.hover_hint = Some(text.to_string());
         }
-        r.on_hover_text(text)
+        // п.14 р.8: НИКАКИХ всплывающих попапов — подсказка живёт ровно в
+        // одном месте, в правом низу строки состояния
+        r
     }
 
     /// Транспорт-машина Space/кнопки (п.15 раунда 6, тест 58; заменяет
@@ -2237,22 +2239,45 @@ impl KtApp {
             ui.separator();
             // п.1 р.7.1: V-fps (показанные НОВЫЕ кадры) — здесь, не в тулбаре
             ui.weak(format!("{:.0} vfps", self.perf.vfps));
-            if let Some((msg, at)) = &self.status {
-                if at.elapsed().as_secs() < 6 {
-                    let msg = msg.clone();
-                    ui.separator();
-                    ui.colored_label(egui::Color32::from_rgb(255, 210, 120), msg);
-                } else {
-                    self.status = None;
-                }
+            // ЕДИНСТВЕННОЕ место любых подсказок (п.14 р.8): наведение →
+            // активный режим → временное сообщение → дежурная строка.
+            // Длинная строка спокойно затирает метрики слева — она важнее.
+            let mode = if self.pending_morpher.is_some() {
+                Some("Morpher: кликни по фиолетовой Morph-дорожке, куда поставить блок (Esc — отмена)")
+            } else if self.dnd_hover.is_some() {
+                Some("Отпусти — клип встанет под мышку (дорожка подсвечена)")
+            } else {
+                None
+            };
+            let status = self.status.as_ref().map(|(m, at)| (m.as_str(), at.elapsed().as_millis() as u64));
+            let (text, kind) = status_line(
+                self.hover_hint.as_deref(),
+                mode,
+                status,
+                STATUS_TTL_MS,
+                "перетащи медиафайл на окно — клип встанет под мышку",
+            );
+            if kind != HintKind::Status && self.status.as_ref().is_some_and(|(_, at)| at.elapsed().as_millis() as u64 >= STATUS_TTL_MS) {
+                self.status = None;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(6.0); // п.7 р.7: подсказка не липнет к краю
-                match &self.hover_hint {
-                    Some(h) => ui.weak(h.clone()),
-                    None => ui.weak("перетащи медиафайл на окно — клип встанет под мышку"),
-                };
-            });
+            let col = match kind {
+                HintKind::Status => egui::Color32::from_rgb(255, 210, 120),
+                HintKind::Mode => egui::Color32::from_rgb(150, 215, 175),
+                _ => egui::Color32::from_gray(130),
+            };
+            let font = egui::FontId::proportional(12.0);
+            let galley = ui.painter().layout_no_wrap(text, font, col);
+            let x1 = strip.right() - 6.0;
+            let plate = egui::Rect::from_min_max(
+                egui::pos2(x1 - galley.size().x - 6.0, strip.top()),
+                egui::pos2(x1, strip.bottom()),
+            );
+            ui.painter().rect_filled(plate, 0.0, crate::theme::PANEL);
+            ui.painter().galley(
+                egui::pos2(plate.left() + 3.0, strip.center().y - galley.size().y * 0.5),
+                galley,
+                col,
+            );
         });
     }
 
@@ -2405,6 +2430,7 @@ pub enum TransportAction {
 }
 
 /// Окно «двойного Space» = стоп (мс).
+pub const STATUS_TTL_MS: u64 = 6000;
 pub const DOUBLE_PAUSE_MS: u128 = 400;
 
 /// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
@@ -2645,6 +2671,47 @@ pub const WIN_CORNER: f32 = 16.0;
 
 /// State-машина деатача превью (п.7 v1.4, тест 51): закрытие окна всегда
 /// возвращает превью; иначе кнопка переключает.
+/// Что показывать в правом низу строки состояния (п.14 р.8). Приоритет:
+/// наведение → активный режим → временное сообщение → дежурная строка.
+/// Всё в одном месте: ни попапов, ни оверлеев поверх таймлайна.
+#[derive(Debug, PartialEq)]
+pub enum HintKind {
+    Hover,
+    Mode,
+    Status,
+    Idle,
+}
+
+/// Записать подсказку в накопитель кадра там, где `&mut self` недоступен
+/// (внутри ui-замыканий панелей). Попапа НЕ создаёт (п.14 р.8).
+pub fn hint_into(out: &mut Option<String>, r: egui::Response, text: &str) -> egui::Response {
+    if r.hovered() {
+        *out = Some(text.to_string());
+    }
+    r
+}
+
+pub fn status_line(
+    hover: Option<&str>,
+    mode: Option<&str>,
+    status: Option<(&str, u64)>, // (текст, возраст в мс)
+    status_ttl_ms: u64,
+    idle: &str,
+) -> (String, HintKind) {
+    if let Some(h) = hover {
+        return (h.to_string(), HintKind::Hover);
+    }
+    if let Some(m) = mode {
+        return (m.to_string(), HintKind::Mode);
+    }
+    if let Some((s, age)) = status
+        && age < status_ttl_ms
+    {
+        return (s.to_string(), HintKind::Status);
+    }
+    (idle.to_string(), HintKind::Idle)
+}
+
 /// Отложенный одиночный клик по превью (пп.10-11 р.7): одиночный =
 /// play/pause (ждёт окно double-click), двойной = detach/attach.
 /// Чистая машина — тест 74.
@@ -3243,6 +3310,29 @@ mod repaint_tests {
         assert_eq!(preview_click_step(None, false, true, 300), (C::ToggleDetach, O::Clear));
         // без клика и без pending — ничего
         assert_eq!(preview_click_step(None, false, false, 300), (C::None, O::Keep));
+    }
+
+    /// Тест 78 (п.14 р.8): единственная строка подсказок — приоритеты
+    /// наведение → режим → временное сообщение → дежурная строка.
+    #[test]
+    fn t78_status_line_priority() {
+        use super::{HintKind as K, STATUS_TTL_MS, status_line};
+        let idle = "дежурная";
+        // наведение перебивает всё
+        let (t, k) = status_line(Some("hover"), Some("mode"), Some(("st", 0)), STATUS_TTL_MS, idle);
+        assert_eq!((t.as_str(), k), ("hover", K::Hover));
+        // режим перебивает временное сообщение
+        let (t, k) = status_line(None, Some("mode"), Some(("st", 0)), STATUS_TTL_MS, idle);
+        assert_eq!((t.as_str(), k), ("mode", K::Mode));
+        // временное сообщение живёт до TTL
+        let (t, k) = status_line(None, None, Some(("st", STATUS_TTL_MS - 1)), STATUS_TTL_MS, idle);
+        assert_eq!((t.as_str(), k), ("st", K::Status));
+        // ...и уступает дежурной строке после
+        let (t, k) = status_line(None, None, Some(("st", STATUS_TTL_MS)), STATUS_TTL_MS, idle);
+        assert_eq!((t.as_str(), k), (idle, K::Idle));
+        // пусто → дежурная
+        let (t, k) = status_line(None, None, None, STATUS_TTL_MS, idle);
+        assert_eq!((t.as_str(), k), (idle, K::Idle));
     }
 
     /// Тест 77 (пп.11-13 р.8, расширяет t64): зоны ресайза окна с ДВУМЯ

@@ -1673,13 +1673,6 @@ impl KtApp {
                     egui::StrokeKind::Inside,
                 );
             }
-            painter.text(
-                egui::pos2(rect.center().x, rect.top() + RULER_H + 16.0),
-                egui::Align2::CENTER_CENTER,
-                "Morpher: кликни по фиолетовой Morph-дорожке, куда поставить блок (Esc — отмена)",
-                egui::FontId::proportional(13.0),
-                egui::Color32::from_rgb(160, 235, 180),
-            );
         }
 
         // ---- силуэт дропа файла (п.2 v1.4): подсветка дорожки + призрак --

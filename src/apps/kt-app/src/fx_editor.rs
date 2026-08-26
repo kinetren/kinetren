@@ -54,6 +54,9 @@ impl KtApp {
 
     #[allow(clippy::too_many_lines)]
     fn draw_one_fx_editor(&mut self, ctx: &egui::Context, ed: &mut FxEditor) {
+        // подсказки из ui-замыканий (там `self` занят) — в накопитель
+        // кадра, потом в hover_hint: попапов нет (п.14 р.8)
+        let mut hover_out: Option<String> = None;
         let Some(clip) = self.model.clip(ed.clip).cloned() else {
             ed.open = false;
             return;
@@ -118,14 +121,12 @@ impl KtApp {
                             } else {
                                 egui::Color32::from_rgb(120, 230, 120)
                             });
-                            if ui
-                                .button(label)
-                                .on_hover_text(if *b {
-                                    "Включить эффект"
-                                } else {
-                                    "Выключить эффект (bypass)"
-                                })
-                                .clicked()
+                            if crate::app::hint_into(
+                                &mut hover_out,
+                                ui.button(label),
+                                if *b { "Включить эффект" } else { "Выключить эффект (bypass)" },
+                            )
+                            .clicked()
                             {
                                 *b = !*b;
                                 bypass_changed = true;
@@ -142,10 +143,12 @@ impl KtApp {
                             ed.sel_kf = None;
                             changed = true;
                         }
-                        if ui
-                            .button(crate::icons::CARET_LEFT)
-                            .on_hover_text("Сдвинуть слот влево")
-                            .clicked()
+                        if crate::app::hint_into(
+                            &mut hover_out,
+                            ui.button(crate::icons::CARET_LEFT),
+                            "Сдвинуть слот влево",
+                        )
+                        .clicked()
                             && ed.selected > 0
                         {
                             fx.swap(ed.selected, ed.selected - 1);
@@ -154,10 +157,12 @@ impl KtApp {
                             ed.selected -= 1;
                             changed = true;
                         }
-                        if ui
-                            .button(crate::icons::CARET_RIGHT)
-                            .on_hover_text("Сдвинуть слот вправо")
-                            .clicked()
+                        if crate::app::hint_into(
+                            &mut hover_out,
+                            ui.button(crate::icons::CARET_RIGHT),
+                            "Сдвинуть слот вправо",
+                        )
+                        .clicked()
                             && ed.selected + 1 < fx.len()
                         {
                             fx.swap(ed.selected, ed.selected + 1);
@@ -339,10 +344,15 @@ impl KtApp {
                                     }
                                 }
                                 let can_paste = self.automation_clipboard.is_some();
-                                if ui
-                                    .add_enabled(can_paste, egui::Button::new("Вставить огибающую"))
-                                    .on_hover_text("Полная замена кейфреймов (как в v1)")
-                                    .clicked()
+                                if crate::app::hint_into(
+                                    &mut hover_out,
+                                    ui.add_enabled(
+                                        can_paste,
+                                        egui::Button::new("Вставить огибающую"),
+                                    ),
+                                    "Полная замена кейфреймов (как в v1)",
+                                )
+                                .clicked()
                                     && let Some(kfs) = self.automation_clipboard.clone()
                                 {
                                     *automation = kfs;
@@ -406,6 +416,9 @@ impl KtApp {
                     }
                 });
             });
+        if let Some(h) = hover_out {
+            self.hover_hint = Some(h); // подсказка едет в строку состояния
+        }
         if !open {
             ed.open = false;
         }

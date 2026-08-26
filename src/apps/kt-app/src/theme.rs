@@ -57,9 +57,11 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, SEAM);
     ctx.set_visuals(v);
     ctx.all_styles_mut(|st| {
-        // п.16 р.7: подсказки быстрые (дублируются в правый низ статусбара)
-        st.interaction.tooltip_delay = 0.15;
-        st.interaction.tooltip_grace_time = 0.2;
+        // п.14 р.8: всплывающих подсказок НЕТ вообще — единственное место
+        // подсказки это правый низ строки состояния. Заградительная
+        // задержка глушит и чужие on_hover_text из виджетов egui.
+        st.interaction.tooltip_delay = 1.0e6;
+        st.interaction.tooltip_grace_time = 0.0;
         // п.9/п.12 р.8: 3 px (дефолт) означали 6-пиксельную хват-зону
         // сепаратора — промах на пиксель попадал в превью
         st.interaction.resize_grab_radius_side = 8.0;

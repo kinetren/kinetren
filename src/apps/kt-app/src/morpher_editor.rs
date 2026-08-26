@@ -210,7 +210,6 @@ impl KtApp {
                         } else {
                             "Bake морфинга"
                         })
-                        .on_hover_text("Вписать патч в клипы и удалить morph-событие (undo-able)")
                         .clicked()
                     {
                         bake = true;
@@ -275,7 +274,7 @@ fn chain_section(
             {
                 *sel = i;
             }
-            if ui.small_button("×").on_hover_text("Убрать слот").clicked() {
+            if ui.small_button("×").clicked() {
                 remove = Some(i);
             }
             if i + 1 < fx.len() {
