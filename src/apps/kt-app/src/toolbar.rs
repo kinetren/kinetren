@@ -349,8 +349,15 @@ impl KtApp {
         ) {
             self.on_transport_toggle();
         }
-        if self.tb(ui, crate::icons::SKIP_BACK, "В начало") {
-            self.player.seek(Tick(0));
+        if self.tb(ui, crate::icons::SKIP_BACK, "Назад: маркер / регион / край клипа (Home; Shift — в начало)")
+        {
+            let far = ui.input(|i| i.modifiers.shift);
+            self.jump_stop(false, far);
+        }
+        if self.tb(ui, crate::icons::SKIP_FWD, "Вперёд: маркер / регион / край клипа (End; Shift — в конец)")
+        {
+            let far = ui.input(|i| i.modifiers.shift);
+            self.jump_stop(true, far);
         }
         ui.separator();
         // тайм-код + скорость (п.19 р.6: бывшая полоса timestrip)

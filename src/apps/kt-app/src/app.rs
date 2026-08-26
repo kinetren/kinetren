@@ -752,6 +752,25 @@ impl KtApp {
         ctx.input_mut(|i| i.pointer = Default::default());
     }
 
+    /// Прыжок к предыдущей/следующей точке остановки (п.16 р.8).
+    /// `far` (Shift) — сразу в начало/конец проекта.
+    pub(crate) fn jump_stop(&mut self, forward: bool, far: bool) {
+        let p = self.model.project();
+        let end = kt_engine::export::project_range(p).0;
+        let cursor = self.player.transport.playhead().0;
+        let at = if far {
+            if forward { end } else { 0 }
+        } else {
+            let pts = stop_points(p);
+            if forward {
+                next_stop(cursor, &pts).unwrap_or(end)
+            } else {
+                prev_stop(cursor, &pts).unwrap_or(0)
+            }
+        };
+        self.player.seek(Tick(at.max(0)));
+    }
+
     /// Зум кнопками — якорь на PLAYHEAD (п.26 р.7: раньше якорился левый
     /// край окна). Курсор остаётся на той же экранной позиции; если он вне
     /// окна — центрируем.
@@ -2330,6 +2349,9 @@ impl KtApp {
             esc: bool,
             copy: bool,
             paste: bool,
+            nav_prev: bool,
+            nav_next: bool,
+            nav_far: bool,
         }
         let k = ctx.input(|i| Keys {
             space: i.key_pressed(egui::Key::Space),
@@ -2352,7 +2374,18 @@ impl KtApp {
                 || (i.modifiers.ctrl && i.key_pressed(egui::Key::C)),
             paste: i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))
                 || (i.modifiers.ctrl && i.key_pressed(egui::Key::V)),
+            // п.16 р.8: Home/End — по точкам остановки, с Shift — в
+            // самое начало/конец проекта
+            nav_prev: i.key_pressed(egui::Key::Home),
+            nav_next: i.key_pressed(egui::Key::End),
+            nav_far: i.modifiers.shift,
         });
+        if k.nav_prev {
+            self.jump_stop(false, k.nav_far);
+        }
+        if k.nav_next {
+            self.jump_stop(true, k.nav_far);
+        }
         if k.space {
             self.on_transport_toggle();
         }
@@ -2796,6 +2829,50 @@ const RATE_DEAD: f32 = 0.07;
 /// |rate| на краю мёртвой зоны и на краю слайдера.
 const RATE_MIN: f32 = 0.25;
 const RATE_MAX: f32 = 2.0;
+
+/// Точки остановки для навигации (п.16 р.8): ноль, границы региона, все
+/// маркеры, границы ОБЪЕДИНЁННЫХ клипов (там, где пустота сменяется
+/// материалом) и конец проекта. Отсортированы, без дублей. Строится
+/// только по нажатию, не каждый кадр.
+pub fn stop_points(p: &kt_model::Project) -> Vec<i64> {
+    let mut v: Vec<i64> = vec![0];
+    if let Some(r) = p.region {
+        v.push(r.start.0);
+        v.push(r.end.0);
+    }
+    v.extend(p.markers.iter().map(|m| m.0));
+    // объединяем перекрывающиеся клипы: границей считается смена
+    // «пусто ↔ есть материал», а не каждый стык внутри плотного монтажа
+    let mut spans: Vec<(i64, i64)> =
+        p.clips.iter().map(|c| (c.start.0, (c.start + c.duration).0)).collect();
+    spans.sort_unstable();
+    let mut merged: Vec<(i64, i64)> = Vec::with_capacity(spans.len());
+    for (s, e) in spans {
+        match merged.last_mut() {
+            Some((_, pe)) if s <= *pe => *pe = (*pe).max(e),
+            _ => merged.push((s, e)),
+        }
+    }
+    for (s, e) in merged {
+        v.push(s);
+        v.push(e);
+    }
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// Ближайшая точка остановки СТРОГО левее курсора. Строгое неравенство
+/// само даёт «повторное нажатие — следующая точка», без хранения
+/// направления и без залипания на текущей позиции.
+pub fn prev_stop(cursor: i64, points: &[i64]) -> Option<i64> {
+    points.iter().copied().filter(|&p| p < cursor).max()
+}
+
+/// Ближайшая точка остановки строго правее курсора.
+pub fn next_stop(cursor: i64, points: &[i64]) -> Option<i64> {
+    points.iter().copied().filter(|&p| p > cursor).min()
+}
 
 /// «Второе дыхание» шаттла (п.4 р.8): если во время драга мышь ушла за
 /// пределы виджета, скорость растёт дальше края шкалы — до ±8×. Виджет
@@ -3359,6 +3436,69 @@ mod repaint_tests {
         assert_eq!(preview_click_step(None, false, true, 300), (C::ToggleDetach, O::Clear));
         // без клика и без pending — ничего
         assert_eq!(preview_click_step(None, false, false, 300), (C::None, O::Keep));
+    }
+
+    /// Тест 82 (п.16 р.8): умная навигация — точки остановки и прыжки.
+    /// Курсор РОВНО на точке уходит дальше (не залипает), цепочка нажатий
+    /// монотонна, перекрытые клипы дают одну границу.
+    #[test]
+    fn t82_stop_points_and_jumps() {
+        use super::{next_stop, prev_stop, stop_points};
+        use kt_model::*;
+        use kt_time::Tick;
+        let mut p = Project::new(ProjectSettings {
+            fps: 30,
+            width: 640,
+            height: 360,
+            sample_rate: 48000,
+        });
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        let mut clip = |id: u64, start: i64, dur: i64| ClipEvent {
+            id: ClipId(id),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(start),
+            duration: Tick(dur),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx: vec![],
+        };
+        // два ПЕРЕКРЫВАЮЩИХСЯ клипа: 1000..3000 и 2500..4000 → одна
+        // область 1000..4000, стык внутри не считается границей
+        p.clips.push(clip(1, 1000, 2000));
+        p.clips.push(clip(2, 2500, 1500));
+        p.markers.push(Tick(5000));
+        p.region = Some(Region { start: Tick(7000), end: Tick(9000) });
+        let pts = stop_points(&p);
+        assert_eq!(pts, vec![0, 1000, 4000, 5000, 7000, 9000], "точки: {pts:?}");
+
+        // курсор ровно на точке — уходим дальше, не залипаем
+        assert_eq!(prev_stop(5000, &pts), Some(4000));
+        assert_eq!(next_stop(5000, &pts), Some(7000));
+        // цепочка нажатий влево монотонна и без повторов
+        let mut cur = 9000;
+        let mut seen = vec![];
+        while let Some(p) = prev_stop(cur, &pts) {
+            assert!(p < cur);
+            seen.push(p);
+            cur = p;
+        }
+        assert_eq!(seen, vec![7000, 5000, 4000, 1000, 0]);
+        // края
+        assert_eq!(prev_stop(0, &pts), None);
+        assert_eq!(next_stop(9000, &pts), None);
+        // пустой проект — только ноль
+        let empty = Project::new(ProjectSettings {
+            fps: 30,
+            width: 640,
+            height: 360,
+            sample_rate: 48000,
+        });
+        assert_eq!(stop_points(&empty), vec![0]);
     }
 
     /// Тест 81 (п.4 р.8): «второе дыхание» шаттла — за пределами виджета
