@@ -128,6 +128,17 @@ impl MediaIndexDb {
                 )?;
             }
         }
+        // Аддитивные таблицы создаются ПРИ КАЖДОМ открытии (IF NOT EXISTS):
+        // так новая таблица появляется и в уже существующих БД, не требуя
+        // бампа SCHEMA_VERSION (бамп сносит packet_index/peaks/тумбы всех
+        // медиа проекта — слишком дорого ради одной таблицы).
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS poster (
+               media_id INTEGER PRIMARY KEY,
+               t_ticks  INTEGER NOT NULL,
+               score    INTEGER NOT NULL
+             );",
+        )?;
         Ok(MediaIndexDb { conn, path: path.to_path_buf() })
     }
 
@@ -180,7 +191,7 @@ impl MediaIndexDb {
     }
 
     fn purge_media(&self, media_id: i64) -> Result<(), IndexError> {
-        for table in ["packet_index", "audio_peaks", "thumbnails"] {
+        for table in ["packet_index", "audio_peaks", "thumbnails", "poster"] {
             self.conn
                 .execute(&format!("DELETE FROM {table} WHERE media_id=?1"), params![media_id])?;
         }
@@ -303,6 +314,28 @@ impl MediaIndexDb {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?)
+    }
+
+    /// Постер медиа: момент самого информативного кадра (п.4 р.9).
+    /// `t_ticks < 0` — «информативного кадра нет» (негативный кэш: аудио,
+    /// битое видео) — повторно не ищем.
+    pub fn poster(&self, media_id: i64) -> Result<Option<i64>, IndexError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT t_ticks FROM poster WHERE media_id=?1",
+                params![media_id],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn put_poster(&self, media_id: i64, t_ticks: i64, score: i64) -> Result<(), IndexError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO poster(media_id, t_ticks, score) VALUES(?1,?2,?3)",
+            params![media_id, t_ticks, score],
+        )?;
+        Ok(())
     }
 
     pub fn put_thumbnail(

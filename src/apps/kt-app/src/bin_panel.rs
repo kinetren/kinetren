@@ -21,6 +21,18 @@ const BIN_SCRUB_SLOTS: f32 = 48.0;
 #[derive(Clone, Copy, Debug)]
 pub struct BinDrag(pub MediaId);
 
+/// Состояние перетаскивания карточки внутри бина (п.8 р.9).
+#[derive(Clone, Copy, Debug)]
+pub struct BinDragState {
+    pub id: MediaId,
+    /// Смещение курсора внутри карточки.
+    pub grab: egui::Vec2,
+    /// Исходная позиция — на неё откатываемся при выносе на таймлайн.
+    pub start: egui::Pos2,
+    /// Курсор уже покидал бин: дальше это вынос, раскладка не меняется.
+    pub escaped: bool,
+}
+
 impl KtApp {
     pub fn draw_bin(&mut self, ui: &mut egui::Ui) {
         // Переключатель режимов — ИКОНКА, не галочка (п.8 р.8: галочек
@@ -108,23 +120,41 @@ impl KtApp {
                 if resp.drag_started()
                     && let Some(pos) = resp.interact_pointer_pos()
                 {
-                    self.bin_drag = Some((*id, pos - rect.min));
+                    self.bin_drag = Some(BinDragState {
+                        id: *id,
+                        grab: pos - rect.min,
+                        start: self.bin_layout.get(id).copied().unwrap_or(p),
+                        escaped: false,
+                    });
                 }
                 if resp.dragged()
-                    && let Some((drag_id, off)) = self.bin_drag
-                    && drag_id == *id
+                    && let Some(st) = self.bin_drag.as_mut()
+                    && st.id == *id
                     && let Some(pos) = resp.interact_pointer_pos()
                 {
-                    if ui.max_rect().contains(pos) {
-                        let np = pos - off - area.min.to_vec2();
+                    // Липкий режим «вынос»: как только курсор ушёл за
+                    // границу бина, раскладку НЕ трогаем и откатываем
+                    // позицию — иначе карточка уезжала даже при удачном
+                    // дропе на таймлайн (п.8 р.9). Гистерезис 4 px, чтобы
+                    // дрожание у кромки не переключало режим.
+                    if st.escaped {
+                        drag_out = Some(*id);
+                    } else if ui.max_rect().shrink(4.0).contains(pos) {
+                        let np = pos - st.grab - area.min.to_vec2();
                         self.bin_layout.insert(*id, egui::pos2(np.x.max(0.0), np.y.max(0.0)));
-                        self.dirty = true;
                     } else {
+                        st.escaped = true;
+                        let start = st.start;
+                        self.bin_layout.insert(*id, start);
                         drag_out = Some(*id);
                     }
                 }
-                if resp.drag_stopped() {
-                    self.bin_drag = None;
+                if resp.drag_stopped()
+                    && let Some(st) = self.bin_drag.take()
+                    && !st.escaped
+                    && self.bin_layout.get(id).copied() != Some(st.start)
+                {
+                    self.dirty = true; // раскладка реально изменилась
                 }
             }
         } else {
@@ -205,7 +235,13 @@ impl KtApp {
         );
         let p = ui.painter_at(rect);
         p.rect_filled(thumb_rect, 2.0, egui::Color32::from_rgb(10, 11, 13));
-        if !is_synth && !is_off {
+        // аудио-медиа: вместо чёрного квадрата — мини-волноформа из уже
+        // построенной peak-пирамиды (п.5 р.9)
+        let kinds = self.thumbs.kinds(id);
+        let audio_only = kinds == Some((false, true));
+        if audio_only {
+            self.draw_bin_waveform(&p, thumb_rect, id);
+        } else if !is_synth && !is_off {
             let dur = self.thumbs.duration_or_probe(id);
             // момент: hover-x → доля файла; без hover — постер
             let (t, tol) = match (resp.hover_pos(), dur) {
@@ -214,7 +250,11 @@ impl KtApp {
                     let step = thumb_source_step(d, BIN_SCRUB_SLOTS * card_w, card_w);
                     (thumb_key_t(0, (frac as f64 * d.0 as f64) as i64, step), step / 2)
                 }
-                _ => (0, THUMB_STEP_LADDER[0] / 2),
+                // постер: самый информативный кадр, а не первый (п.4 р.9)
+                _ => (
+                    self.thumbs.poster_t_or_request(id).unwrap_or(0),
+                    THUMB_STEP_LADDER[0] / 2,
+                ),
             };
             let key = ThumbKey { media: id, t };
             let tex = self.thumb_texture(ui, key);
@@ -300,6 +340,68 @@ impl KtApp {
         p.galley(egui::pos2(x, label_y), g, egui::Color32::from_gray(190));
         self.hint(resp.clone(), path);
         resp
+    }
+
+    /// Мини-волноформа аудио-медиа в карточке (п.5 р.9): один меш из
+    /// уже готовой peak-пирамиды — обзор всего файла. Если весь файл ниже
+    /// порога тишины, рисуем плоскую линию и значок.
+    fn draw_bin_waveform(&self, p: &egui::Painter, rect: egui::Rect, id: MediaId) {
+        let peaks = self.peaks.lock().unwrap();
+        let Some(levels) = peaks.get(&id) else {
+            p.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "♪",
+                egui::FontId::proportional(18.0),
+                egui::Color32::from_gray(120),
+            );
+            return;
+        };
+        let cols = rect.width().max(1.0) as usize;
+        // уровень пирамиды под ширину карточки: меньше блоков — грубее
+        let li = levels
+            .iter()
+            .position(|(l, _)| l.len() <= cols.max(1))
+            .unwrap_or(levels.len().saturating_sub(1));
+        let Some((lch, rch)) = levels.get(li) else {
+            return;
+        };
+        let n = lch.len().max(1);
+        let mid = rect.center().y;
+        let half = rect.height() * 0.45;
+        let mut mesh = egui::Mesh::default();
+        let mut loud = false;
+        for c in 0..cols {
+            let i = c * n / cols.max(1);
+            let (lo, hi) = lch.get(i).copied().unwrap_or((0, 0));
+            let (rlo, rhi) = rch.get(i).copied().unwrap_or((0, 0));
+            let amp_l = lo.unsigned_abs().max(hi.unsigned_abs()) as f32 / 32767.0;
+            let amp_r = rlo.unsigned_abs().max(rhi.unsigned_abs()) as f32 / 32767.0;
+            if amp_l.max(amp_r) > 0.02 {
+                loud = true;
+            }
+            let x = rect.left() + c as f32;
+            for (amp, dir) in [(amp_l, -1.0f32), (amp_r, 1.0)] {
+                let hgt = (amp * half).max(0.5);
+                mesh.add_colored_rect(
+                    egui::Rect::from_min_max(
+                        egui::pos2(x, mid.min(mid + dir * hgt)),
+                        egui::pos2(x + 1.0, mid.max(mid + dir * hgt)),
+                    ),
+                    egui::Color32::from_rgb(96, 168, 220),
+                );
+            }
+        }
+        p.add(egui::Shape::mesh(mesh));
+        if !loud {
+            p.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "♪",
+                egui::FontId::proportional(16.0),
+                egui::Color32::from_gray(120),
+            );
+        }
     }
 
     /// Тумба как egui-текстура из ОБЩЕГО кэша приложения (тот же путь,

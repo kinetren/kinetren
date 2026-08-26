@@ -132,6 +132,13 @@ struct Shared {
     order: Mutex<VecDeque<ThumbKey>>, // для LRU-выселения ready
     /// Негативный кэш: ключи, по которым открытие/декод/энкод упали.
     failed: Mutex<HashSet<ThumbKey>>,
+    /// Постеры: момент самого информативного кадра медиа (п.4 р.9).
+    /// `None` внутри — «искали, информативного кадра нет» (аудио/битое).
+    posters: Mutex<HashMap<MediaId, Option<i64>>>,
+    /// Заявки на поиск постера (обслуживаются после тумб).
+    poster_jobs: Mutex<std::collections::VecDeque<MediaId>>,
+    /// Есть ли у медиа видео/аудио (публикует probe-ветка воркера).
+    kinds: Mutex<HashMap<MediaId, (bool, bool)>>,
     /// ЖИВАЯ карта медиа: пополняется при добавлении файлов (п.3 — раньше
     /// карта замораживалась при старте и новые медиа не получали тумбы).
     media: Mutex<HashMap<MediaId, String>>,
@@ -151,6 +158,9 @@ impl ThumbService {
             ready: Mutex::new(HashMap::new()),
             order: Mutex::new(VecDeque::new()),
             failed: Mutex::new(HashSet::new()),
+            posters: Mutex::new(HashMap::new()),
+            poster_jobs: Mutex::new(std::collections::VecDeque::new()),
+            kinds: Mutex::new(HashMap::new()),
             media: Mutex::new(HashMap::new()),
         });
         let media: HashMap<MediaId, String> = {
@@ -224,6 +234,26 @@ impl ThumbService {
         ThumbState::Missing
     }
 
+    /// Момент постера (информативного кадра) либо ЗАЯВКА на его поиск —
+    /// ровно одна на медиа за сессию (п.4 р.9).
+    pub fn poster_t_or_request(&self, id: MediaId) -> Option<i64> {
+        if let Some(p) = self.shared.posters.lock().unwrap().get(&id) {
+            return *p;
+        }
+        let mut jobs = self.shared.poster_jobs.lock().unwrap();
+        if !jobs.contains(&id) {
+            jobs.push_back(id);
+            self.shared.cond.notify_one();
+        }
+        None
+    }
+
+    /// Есть ли у медиа видео и аудио (для карточки бина: аудио рисуем
+    /// волноформой, а не гоняем тумб-путь впустую).
+    pub fn kinds(&self, id: MediaId) -> Option<(bool, bool)> {
+        self.shared.kinds.lock().unwrap().get(&id).copied()
+    }
+
     /// Длительность медиа, если воркер уже открывал источник (п.11 р.6).
     pub fn duration(&self, id: MediaId) -> Option<Tick> {
         self.shared.durations.lock().unwrap().get(&id).copied().flatten()
@@ -259,7 +289,9 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                     q.1.remove(&kt.0);
                     break Some(kt);
                 }
-                if !shared.probe.lock().unwrap().is_empty() {
+                if !shared.probe.lock().unwrap().is_empty()
+                    || !shared.poster_jobs.lock().unwrap().is_empty()
+                {
                     break None;
                 }
                 let (guard, _timeout) =
@@ -276,11 +308,29 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 continue;
             }
             let dur = shared.media.lock().unwrap().get(&pid).cloned().and_then(|path| {
-                kt_media::ffmpeg::FfmpegSource::open_indexed(&path, db.as_mut())
-                    .ok()
-                    .map(|src| src.info().duration)
+                kt_media::ffmpeg::FfmpegSource::open_indexed(&path, db.as_mut()).ok().map(|src| {
+                    let info = src.info();
+                    // вид медиа достаётся бесплатно: источник уже открыт
+                    shared
+                        .kinds
+                        .lock()
+                        .unwrap()
+                        .insert(pid, (info.has_video, info.has_audio));
+                    info.duration
+                })
             });
             shared.durations.lock().unwrap().insert(pid, dur);
+        }
+        // заявки на постер (п.4 р.9): ищем информативный кадр — сначала по
+        // готовым тумбам в БД (без единого декода), потом декодом
+        // нескольких кандидатов. Ровно одна попытка на медиа: результат
+        // (в т.ч. «нет кадра») пишется в БД и в память.
+        let poster_job = shared.poster_jobs.lock().unwrap().pop_front();
+        if let Some(pid) = poster_job
+            && !shared.posters.lock().unwrap().contains_key(&pid)
+        {
+            let found = find_poster(&shared, &mut db, &mut sources, pid);
+            shared.posters.lock().unwrap().insert(pid, found);
         }
         let Some((key, near_tol)) = next else {
             continue;
@@ -390,9 +440,177 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
     }
 }
 
+/// «Информативность» кадра: разброс средней яркости по блокам 16×9.
+/// Чёрный/одноцветный/пересвеченный кадр даёт ~0 — именно такие кадры
+/// стоят в начале роликов и превращали карточку бина в чёрный квадрат.
+fn frame_score(rgba: &[u8], w: u32, h: u32) -> i64 {
+    if w == 0 || h == 0 || rgba.len() < (w as usize * h as usize * 4) {
+        return 0;
+    }
+    const BX: u32 = 16;
+    const BY: u32 = 9;
+    let mut means = [0f32; (BX * BY) as usize];
+    let mut global = 0f32;
+    for by in 0..BY {
+        for bx in 0..BX {
+            let (x0, x1) = (bx * w / BX, ((bx + 1) * w / BX).max(bx * w / BX + 1));
+            let (y0, y1) = (by * h / BY, ((by + 1) * h / BY).max(by * h / BY + 1));
+            let mut sum = 0f32;
+            let mut n = 0f32;
+            // выборка каждого 2-го пикселя по обеим осям — хватает с запасом
+            let mut y = y0;
+            while y < y1.min(h) {
+                let mut x = x0;
+                while x < x1.min(w) {
+                    let i = ((y * w + x) * 4) as usize;
+                    let l = 0.299 * rgba[i] as f32
+                        + 0.587 * rgba[i + 1] as f32
+                        + 0.114 * rgba[i + 2] as f32;
+                    sum += l;
+                    n += 1.0;
+                    x += 2;
+                }
+                y += 2;
+            }
+            let m = if n > 0.0 { sum / n } else { 0.0 };
+            means[(by * BX + bx) as usize] = m;
+            global += m;
+        }
+    }
+    let cnt = (BX * BY) as f32;
+    let mean = global / cnt;
+    // сплошная чернота/пересвет — неинформативно независимо от разброса
+    if !(8.0..=247.0).contains(&mean) {
+        return 0;
+    }
+    let var = means.iter().map(|m| (m - mean) * (m - mean)).sum::<f32>() / cnt;
+    var.sqrt() as i64
+}
+
+/// Кандидаты в постер: доли длительности (лениво, до 5 попыток —
+/// решение пользователя). Квантуются тем же шагом, что и филмстрип, —
+/// ключи попадают в общий кэш (тест 62).
+fn poster_candidates(dur: Tick) -> Vec<i64> {
+    let step = THUMB_STEP_LADDER[0];
+    let mut v: Vec<i64> = [0.02, 0.10, 0.25, 0.50]
+        .iter()
+        .map(|f| thumb_key_t(0, (dur.0 as f64 * f) as i64, step))
+        .collect();
+    v.push(0);
+    v.sort_unstable();
+    v.dedup();
+    v
+}
+
+/// Минимальный разброс яркости, при котором кадр считается информативным.
+const POSTER_MIN_SCORE: i64 = 6;
+
+fn find_poster(
+    shared: &Shared,
+    db: &mut Option<kt_media::index::MediaIndexDb>,
+    sources: &mut SourceLru<Box<dyn kt_media::MediaSource>>,
+    media: MediaId,
+) -> Option<i64> {
+    let path = shared.media.lock().unwrap().get(&media).cloned()?;
+    let db_id = db.as_mut().and_then(|d| d.ensure_media(std::path::Path::new(&path)).ok())
+        .map(|(id, _)| id);
+    // уже искали в прошлой сессии — берём из БД
+    if let (Some(d), Some(id)) = (db.as_ref(), db_id)
+        && let Ok(Some(t)) = d.poster(id)
+    {
+        return (t >= 0).then_some(t);
+    }
+    let dur = shared.durations.lock().unwrap().get(&media).copied().flatten();
+    let Some(dur) = dur.filter(|d| d.0 > 0) else {
+        return None; // длительности ещё нет — заявка вернётся позже
+    };
+    let mut best: Option<(i64, i64)> = None; // (score, t)
+    for t in poster_candidates(dur) {
+        // 1) кадр уже мог построить филмстрип — оценим без декода
+        let ready = shared.ready.lock().unwrap().get(&ThumbKey { media, t }).cloned();
+        let score = if let Some(img) = ready {
+            let px: Vec<u8> = img.as_raw().to_vec();
+            frame_score(&px, img.width() as u32, img.height() as u32)
+        } else {
+            // 2) декод кандидата
+            if !sources.contains(media) {
+                let opened: Option<Box<dyn kt_media::MediaSource>> =
+                    if path.starts_with("synth:") || db.is_none() {
+                        open_source(&path).ok()
+                    } else {
+                        kt_media::ffmpeg::FfmpegSource::open_indexed(&path, db.as_mut())
+                            .ok()
+                            .map(|s| Box::new(s) as _)
+                    };
+                match opened {
+                    Some(src) => sources.insert(media, src),
+                    None => break,
+                }
+            }
+            let src = sources.get_mut(media).expect("source just inserted");
+            match src.read_video_frame(Tick(t), Some(Quality { width: THUMB_W, height: THUMB_H })) {
+                Ok(f) => frame_score(&f.rgba, f.width, f.height),
+                Err(_) => break,
+            }
+        };
+        if best.as_ref().is_none_or(|(bs, _)| score > *bs) {
+            best = Some((score, t));
+        }
+        // лениво: первый же достаточно «жирный» кадр — наш
+        if score >= POSTER_MIN_SCORE {
+            break;
+        }
+    }
+    let chosen = best.filter(|(s, _)| *s > 0).map(|(_, t)| t);
+    if let (Some(d), Some(id)) = (db.as_ref(), db_id) {
+        let _ = d.put_poster(id, chosen.unwrap_or(-1), best.map(|(s, _)| s).unwrap_or(0));
+    }
+    chosen
+}
+
 #[cfg(test)]
 mod key_tests {
     use super::*;
+
+    /// Тест 87 (п.4 р.9): метрика информативности кадра — чёрный,
+    /// белый и одноцветный кадры дают 0, картинка со структурой — больше
+    /// порога. Из-за жёсткого t=0 карточки бина были чёрными квадратами.
+    #[test]
+    fn t87_frame_score_rejects_flat_frames() {
+        use super::{POSTER_MIN_SCORE, frame_score, poster_candidates};
+        let (w, h) = (64u32, 36u32);
+        let flat = |v: u8| [v, v, v, 255].repeat((w * h) as usize);
+        assert_eq!(frame_score(&flat(0), w, h), 0, "чёрный кадр");
+        assert_eq!(frame_score(&flat(255), w, h), 0, "белый кадр");
+        assert_eq!(frame_score(&flat(128), w, h), 0, "одноцветный кадр");
+        // «шахматка» крупными блоками — заведомо информативна
+        let mut img = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                let v = if (x / 8 + y / 6) % 2 == 0 { 20 } else { 230 };
+                img[i] = v;
+                img[i + 1] = v;
+                img[i + 2] = v;
+                img[i + 3] = 255;
+            }
+        }
+        assert!(
+            frame_score(&img, w, h) >= POSTER_MIN_SCORE,
+            "структурный кадр должен пройти порог: {}",
+            frame_score(&img, w, h)
+        );
+        // кандидаты: не больше пяти, кратны шагу филмстрипа, без дублей
+        let c = poster_candidates(Tick(90_000 * 600));
+        assert!(c.len() <= 5, "кандидатов больше пяти: {c:?}");
+        assert!(c.iter().all(|t| t % THUMB_STEP_LADDER[0] == 0), "не кратно шагу: {c:?}");
+        let mut sorted = c.clone();
+        sorted.dedup();
+        assert_eq!(sorted, c, "дубли среди кандидатов");
+        // короткий файл не должен давать отрицательных/дублирующих позиций
+        let short = poster_candidates(Tick(1000));
+        assert!(short.iter().all(|t| *t >= 0));
+    }
 
     /// Тест 69 (п.1 р.7): негативные кэши — probe/тумба неизвестного медиа
     /// публикуют неудачу РОВНО ОДИН РАЗ, повторные вызовы не порождают
