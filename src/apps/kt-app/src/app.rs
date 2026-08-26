@@ -88,6 +88,9 @@ pub struct KtApp {
     pub bin_layout: std::collections::HashMap<kt_model::MediaId, egui::Pos2>,
     /// Какую карточку тащим внутри бина (свободный режим).
     pub bin_drag: Option<(kt_model::MediaId, egui::Vec2)>,
+    /// Захват ручки фейдера: смещение курсора относительно ручки —
+    /// тянем «относительно», без рывка к позиции (п.2 р.8).
+    pub fader_grab: Option<f32>,
     /// Последний отправленный заголовок окна (шлём Title только при смене).
     pub(crate) last_title: String,
     /// Переиспользуемый буфер композиции превью (без аллокаций на кадр).
@@ -231,6 +234,7 @@ impl KtApp {
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            fader_grab: None,
             last_title: String::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,
@@ -321,6 +325,7 @@ impl KtApp {
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            fader_grab: None,
             last_title: String::new(),
             preview_buf: Vec::new(),
             glow_skip: 0,
@@ -1959,17 +1964,21 @@ impl KtApp {
         if (resp.dragged() || resp.drag_started())
             && let Some(pos) = resp.interact_pointer_pos()
         {
-            let t = ((pos.x - rect.left()) / rect.width() * 2.0 - 1.0).clamp(-1.0, 1.0);
+            let raw = (pos.x - rect.left()) / rect.width() * 2.0 - 1.0;
+            let t = raw.clamp(-1.0, 1.0);
+            // ушли за пределы виджета — «второе дыхание» (п.4 р.8)
+            let over_px = ((raw.abs() - 1.0) * rect.width() * 0.5).max(0.0);
+            let rate_of = |t: f32| overshoot_rate(slider_to_rate(t), over_px, OVERSHOOT_PX_PER_DOUBLE);
             if self.speed_drag_upper == Some(true) {
                 // верхняя полоса: постоянная скорость (остаётся)
-                self.base_rate = slider_to_rate(t);
+                self.base_rate = rate_of(t);
                 if self.shuttle_override.is_none() {
                     self.player.set_playback_rate(self.base_rate);
                 }
             } else {
                 // нижняя: временный shuttle с автовозвратом
                 self.shuttle_override = Some(t);
-                self.player.set_playback_rate(slider_to_rate(t));
+                self.player.set_playback_rate(rate_of(t));
             }
         }
         if resp.drag_stopped() {
@@ -2788,6 +2797,24 @@ const RATE_DEAD: f32 = 0.07;
 const RATE_MIN: f32 = 0.25;
 const RATE_MAX: f32 = 2.0;
 
+/// «Второе дыхание» шаттла (п.4 р.8): если во время драга мышь ушла за
+/// пределы виджета, скорость растёт дальше края шкалы — до ±8×. Виджет
+/// визуально не меняется. `over_px` — на сколько курсор вышел за край
+/// (>=0), `k` — сколько пикселей даёт удвоение.
+pub fn overshoot_rate(base: f32, over_px: f32, k: f32) -> f32 {
+    if over_px <= 0.0 || base == 0.0 {
+        return base;
+    }
+    let mult = 2f32.powf(over_px / k.max(1.0));
+    let out = base.abs() * mult;
+    out.min(ENGINE_RATE_MAX) * base.signum()
+}
+
+/// Потолок скорости движка (кольцо и упреждение рассчитаны под него).
+pub const ENGINE_RATE_MAX: f32 = kt_engine::player::ENGINE_RATE_MAX;
+/// Пикселей ухода за виджет на удвоение скорости.
+pub const OVERSHOOT_PX_PER_DOUBLE: f32 = 60.0;
+
 /// Слайдер [−1..1] → скорость [−2..2]: лог по модулю, мёртвая зона у нуля
 /// отдаёт ровно 0 (пп.4-5 v1.4, тест 46). Симметрично для реверса.
 pub fn slider_to_rate(t: f32) -> f32 {
@@ -3332,6 +3359,31 @@ mod repaint_tests {
         assert_eq!(preview_click_step(None, false, true, 300), (C::ToggleDetach, O::Clear));
         // без клика и без pending — ничего
         assert_eq!(preview_click_step(None, false, false, 300), (C::None, O::Keep));
+    }
+
+    /// Тест 81 (п.4 р.8): «второе дыхание» шаттла — за пределами виджета
+    /// скорость растёт до ±8×, симметрично по знаку и монотонно.
+    #[test]
+    fn t81_overshoot_rate() {
+        use super::{ENGINE_RATE_MAX, OVERSHOOT_PX_PER_DOUBLE as K, overshoot_rate};
+        // внутри виджета множителя нет
+        assert_eq!(overshoot_rate(2.0, 0.0, K), 2.0);
+        assert_eq!(overshoot_rate(-2.0, -5.0, K), -2.0);
+        // ровно одно удвоение
+        assert!((overshoot_rate(2.0, K, K) - 4.0).abs() < 1e-4);
+        assert!((overshoot_rate(-2.0, K, K) + 4.0).abs() < 1e-4, "симметрия по знаку");
+        // потолок движка
+        assert_eq!(overshoot_rate(2.0, K * 10.0, K), ENGINE_RATE_MAX);
+        assert_eq!(overshoot_rate(-2.0, K * 10.0, K), -ENGINE_RATE_MAX);
+        // ноль (стоп) остаётся нулём
+        assert_eq!(overshoot_rate(0.0, K * 3.0, K), 0.0);
+        // монотонность
+        let mut prev = 0.0;
+        for i in 0..20 {
+            let r = overshoot_rate(1.0, i as f32 * 10.0, K);
+            assert!(r >= prev, "не монотонно на {i}");
+            prev = r;
+        }
     }
 
     /// Тест 78 (п.14 р.8): единственная строка подсказок — приоритеты

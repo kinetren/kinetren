@@ -8,6 +8,9 @@ use eframe::egui;
 pub const METER_MIN_DB: f32 = -48.0;
 pub const METER_MAX_DB: f32 = 6.0;
 pub const FADER_MIN_DB: f32 = -60.0;
+/// Жёсткость подъезда фейдера (рад/с) и порог схождения.
+pub const FADER_OMEGA: f32 = 26.0;
+pub const FADER_EPS_DB: f32 = 0.02;
 pub const FADER_MAX_DB: f32 = 24.0;
 /// Спад бара/капов, dB за тик 25 мс (порт: 2.8 / 0.2).
 pub const BAR_FALL_DB: f32 = 2.8;
@@ -20,6 +23,11 @@ pub struct MeterState {
     /// держит последний сэмпл — без «пилы» между редкими замерами (п.2).
     pub target_db: [f32; 2],
     pub fader_db: f32,
+    /// Куда тянет мышь/колесо: фейдер едет к цели с инерцией, как
+    /// физический слайдер (п.2 р.8).
+    pub fader_target: f32,
+    /// Скорость движения фейдера, dB/с (критическое демпфирование).
+    pub fader_vel: f32,
     pub muted: bool,
     last_tick: std::time::Instant,
     last_sample: std::time::Instant,
@@ -33,12 +41,38 @@ impl MeterState {
     /// приложение вечно рисовало 60 fps в простое и грело всю систему.
     /// Тест 38.
     pub fn is_active(&self) -> bool {
+        // фейдер в движении тоже держит перерисовку — но ровно до
+        // схождения (снап в fader_tick), иначе вернётся вечный 60 fps
+        // в простое, ради которого писался t38
+        if (self.fader_db - self.fader_target).abs() > FADER_EPS_DB
+            || self.fader_vel.abs() > FADER_EPS_DB
+        {
+            return true;
+        }
         (0..2).any(|ch| {
             let floor = self.target_db[ch].max(METER_MIN_DB);
             (self.bar_db[ch] - floor).abs() > 0.05
                 || (self.cap_db[ch] - self.bar_db[ch] > 0.05
                     && self.cap_db[ch] > METER_MIN_DB + 0.05)
         })
+    }
+
+    /// Шаг инерции фейдера (критическое демпфирование, dt в секундах).
+    /// Чистая функция ради теста 80: обязана СХОДИТЬСЯ и вставать ровно
+    /// на цель, а не ползти бесконечно.
+    pub fn fader_tick(&mut self, dt: f32) {
+        let dt = dt.clamp(0.0, 0.1);
+        let d = self.fader_target - self.fader_db;
+        // x'' = -2ζω x' - ω² x при ζ=1: плавный подъезд без перелёта
+        let w = FADER_OMEGA;
+        self.fader_vel += (w * w * d - 2.0 * w * self.fader_vel) * dt;
+        self.fader_db += self.fader_vel * dt;
+        if (self.fader_target - self.fader_db).abs() <= FADER_EPS_DB
+            && self.fader_vel.abs() <= FADER_EPS_DB
+        {
+            self.fader_db = self.fader_target;
+            self.fader_vel = 0.0;
+        }
     }
 
     /// Один шаг спада (тик 25 мс, спады v1) — чистая логика для теста 38.
@@ -74,6 +108,8 @@ impl Default for MeterState {
             cap_db: [METER_MIN_DB; 2],
             target_db: [METER_MIN_DB; 2],
             fader_db: 0.0,
+            fader_target: 0.0,
+            fader_vel: 0.0,
             muted: false,
             last_tick: std::time::Instant::now(),
             last_sample: std::time::Instant::now(),
@@ -511,20 +547,58 @@ impl KtApp {
             egui::Color32::WHITE,
         );
 
-        // интеракции: драг по всей области баров двигает фейдер
-        if let Some(pos) = response.interact_pointer_pos() {
-            if response.double_clicked() && !mute_rect.contains(pos) {
-                self.meter.fader_db = 0.0;
-            } else if response.clicked() && mute_rect.contains(pos) {
-                self.meter.muted = !self.meter.muted;
-            } else if (response.dragged() || response.drag_started())
-                && pos.y >= bars.top() - 6.0
-                && pos.y <= bars.bottom() + 6.0
-            {
-                let t = ((bars.bottom() - pos.y) / bars.height()).clamp(0.0, 1.0);
-                self.meter.fader_db = FADER_MIN_DB + t * (FADER_MAX_DB - FADER_MIN_DB);
+        // Интеракции фейдера (п.2 р.8). Хит-зона ШИРЕ виджета (рисование
+        // не меняется): раньше приходилось целиться в узкую полоску, а
+        // любой промах телепортировал громкость под курсор.
+        let hit = egui::Rect::from_x_y_ranges(
+            rect.x_range(),
+            egui::Rangef::new(bars.top() - 10.0, bars.bottom() + 10.0),
+        );
+        let fader = ui.interact(hit, ui.id().with("fader"), egui::Sense::click_and_drag());
+        let db_at = |y: f32| {
+            let t = ((bars.bottom() - y) / bars.height()).clamp(0.0, 1.0);
+            FADER_MIN_DB + t * (FADER_MAX_DB - FADER_MIN_DB)
+        };
+        if response.clicked() && response.interact_pointer_pos().is_some_and(|p| mute_rect.contains(p))
+        {
+            self.meter.muted = !self.meter.muted;
+        } else if fader.double_clicked() {
+            self.meter.fader_target = 0.0;
+        } else if let Some(pos) = fader.interact_pointer_pos() {
+            if fader.drag_started() {
+                // нажали рядом с ручкой — тянем ОТНОСИТЕЛЬНО (без рывка);
+                // нажали по треку — едем к точке
+                self.fader_grab =
+                    if (pos.y - hy).abs() <= 12.0 { Some(hy - pos.y) } else { None };
+                if self.fader_grab.is_none() {
+                    self.meter.fader_target = db_at(pos.y);
+                }
+            }
+            if fader.dragged() {
+                let y = pos.y + self.fader_grab.unwrap_or(0.0);
+                self.meter.fader_target = db_at(y);
+            }
+            if fader.clicked() && !mute_rect.contains(pos) {
+                self.meter.fader_target = db_at(pos.y);
             }
         }
+        if fader.drag_stopped() {
+            self.fader_grab = None;
+        }
+        // колесо над метром: шаг 1 dB, с Shift — точный 0.2 dB
+        if fader.contains_pointer() {
+            let (scroll, shift) =
+                ui.input(|i| (i.smooth_scroll_delta.y, i.modifiers.shift));
+            if scroll != 0.0 {
+                let step = if shift { 0.2 } else { 1.0 };
+                self.meter.fader_target = (self.meter.fader_target
+                    + scroll.signum() * step)
+                    .clamp(FADER_MIN_DB, FADER_MAX_DB);
+            }
+        }
+        // инерция: фейдер догоняет цель между кадрами
+        let dt = ui.input(|i| i.stable_dt);
+        self.meter.fader_tick(dt);
         let gain = if self.meter.muted || self.meter.fader_db <= FADER_MIN_DB + 0.01 {
             0.0
         } else {
@@ -538,6 +612,36 @@ impl KtApp {
 #[cfg(test)]
 mod repaint_tests {
     use super::*;
+
+    /// Тест 80 (п.2 р.8): инерция фейдера — сходится к цели за разумное
+    /// время и ОСТАНАВЛИВАЕТСЯ (иначе вечный repaint, ради которого
+    /// писался t38).
+    #[test]
+    fn t80_fader_inertia_settles() {
+        let mut m = MeterState { fader_target: -20.0, ..Default::default() };
+        assert!(m.is_active(), "поехали — перерисовка нужна");
+        let mut steps = 0;
+        while m.is_active() && steps < 400 {
+            m.fader_tick(1.0 / 60.0);
+            steps += 1;
+        }
+        assert!(steps < 120, "фейдер едет слишком долго: {steps} кадров");
+        assert_eq!(m.fader_db, -20.0, "не встал ровно на цель");
+        assert_eq!(m.fader_vel, 0.0);
+        assert!(!m.is_active(), "после схождения перерисовка отпущена");
+        // без цели ничего не происходит
+        m.fader_tick(1.0 / 60.0);
+        assert_eq!(m.fader_db, -20.0);
+        // движение к цели монотонно (без перелёта): критическое демпфирование
+        m.fader_target = 0.0;
+        let mut prev = m.fader_db;
+        for _ in 0..200 {
+            m.fader_tick(1.0 / 60.0);
+            assert!(m.fader_db >= prev - 1e-3, "перелёт вниз");
+            assert!(m.fader_db <= 0.0 + 1e-3, "перелёт вверх");
+            prev = m.fader_db;
+        }
+    }
 
     /// Тест 40 (пп.8-10 v1.4): раскладка glow. Зонные полосы смежны, без
     /// дыр и перекрытий, покрывают весь диапазон метра; остановки градиента

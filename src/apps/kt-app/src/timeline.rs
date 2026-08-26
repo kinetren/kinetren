@@ -577,7 +577,9 @@ impl KtApp {
                             c.start.0 + run.end - c.source_in.0,
                         ),
                     };
-                    let x0 = tick_to_x(t0).max(rect.left());
+                    // полоска уходит влево под полосу имён, как дорожки
+                    // (п.3 р.8) — градиент поверх неё просвечивает
+                    let x0 = tick_to_x(t0).max(full.left());
                     let x1 = tick_to_x(t1).min(rect.right());
                     if x1 > x0 {
                         painter.rect_filled(
@@ -596,7 +598,7 @@ impl KtApp {
                 && self.model.project().loop_enabled
             {
                 let head_end = (r.start.0 + 90_000 / 2).min(r.end.0);
-                let x0 = tick_to_x(r.start.0).max(rect.left());
+                let x0 = tick_to_x(r.start.0).max(full.left());
                 let x1 = tick_to_x(head_end).min(rect.right());
                 if x1 > x0 {
                     painter.rect_filled(

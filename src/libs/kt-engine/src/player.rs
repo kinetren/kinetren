@@ -29,7 +29,14 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-const RING_CAPACITY_FRAMES: usize = AUDIO_BURST_FRAMES * 4;
+/// Кольцо на 4 бурста ≈ 85 мс при 1×. На высоких скоростях запас тает
+/// пропорционально (при 8× это ~10 мс — меньше одного цикла сна
+/// render-потока), поэтому ёмкость взята с запасом под ENGINE_RATE_MAX
+/// (п.4 р.8).
+const RING_CAPACITY_FRAMES: usize = AUDIO_BURST_FRAMES * 16;
+/// Максимальная скорость воспроизведения (п.4 р.8: «второе дыхание»
+/// шаттла до ±8×).
+pub const ENGINE_RATE_MAX: f32 = 8.0;
 const PLAYBACK_AUDIO_LOOKAHEAD_FRAMES: i64 = AUDIO_SAMPLE_RATE as i64 / 5; // 200 мс
 const PREFETCH_AUDIO_LOOKAHEAD_FRAMES: i64 = 2 * AUDIO_SAMPLE_RATE as i64; // 2 c
 const PREFETCH_VIDEO_LOOKAHEAD_TICKS: i64 = 2 * kt_time::TICK_HZ;
@@ -291,7 +298,7 @@ impl Player {
         // отрицательное = reverse-транспорт (J4 v1.4); 0 = стоп потребления
         // (тишина, playhead стоит). Колбэк использует |rate|, знак читает
         // только render-поток.
-        self.shared.playback_rate.store(rate.clamp(-2.0, 2.0).to_bits(), Ordering::Release);
+        self.shared.playback_rate.store(rate.clamp(-ENGINE_RATE_MAX, ENGINE_RATE_MAX).to_bits(), Ordering::Release);
     }
 
     pub fn playback_rate(&self) -> f32 {
@@ -597,7 +604,11 @@ fn audio_render_loop(ctx: RenderCtx) {
             match region {
                 Some((rs, re)) if re > rs && render_head >= rs => {
                     let tl = rs + (render_head - rs).rem_euclid(re - rs);
-                    let ahead = PLAYBACK_AUDIO_LOOKAHEAD_FRAMES.min(re - rs);
+                    // на скорости >1 окно упреждения растягивается: иначе
+                    // при 8× 200 мс превращаются в 25 мс реального времени
+                    let look = (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32
+                        * rate_now.abs().max(1.0)) as i64;
+                    let ahead = look.min(re - rs);
                     let end1 = (tl + ahead).min(re);
                     prefetch_audio_pass(
                         &renderer,
@@ -621,9 +632,17 @@ fn audio_render_loop(ctx: RenderCtx) {
                 }
                 _ => {
                     let win = if dir < 0 {
-                        (render_head - PLAYBACK_AUDIO_LOOKAHEAD_FRAMES).max(0)..render_head
+                        (render_head
+                            - (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32
+                                * rate_now.abs().max(1.0))
+                                as i64)
+                            .max(0)..render_head
                     } else {
-                        render_head..render_head + PLAYBACK_AUDIO_LOOKAHEAD_FRAMES
+                        render_head
+                            ..render_head
+                                + (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32
+                                    * rate_now.abs().max(1.0))
+                                    as i64
                     };
                     prefetch_audio_pass(
                         &renderer,

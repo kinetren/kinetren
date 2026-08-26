@@ -103,7 +103,7 @@ impl KtApp {
                             .and_then(|id| {
                                 media_list.iter().find(|(i, _)| *i == id).map(|(_, p)| p.clone())
                             })
-                            .unwrap_or_else(|| "— не менять источник —".into());
+                            .unwrap_or_else(|| "— не менять источник —".to_string());
                         ui.horizontal(|ui| {
                             ui.label("Новый источник:");
                             egui::ComboBox::from_id_salt(("morph_src", ed.id.0))
