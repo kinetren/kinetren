@@ -1803,14 +1803,17 @@ impl KtApp {
                 format!("V-пропущено {}", self.perf.video_cells_skipped),
             ),
         ];
-        egui::Grid::new("perf-2col").num_columns(2).spacing([10.0, 1.0]).show(ui, |ui| {
-            // короткие строки — без Truncate (иначе Grid ужимает колонку
-            // до троеточий); длинные (GPU/FFmpeg) остаются вне грида
-            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        // ui.columns делит ДОСТУПНУЮ ширину пополам и не требует минимума —
+        // Grid с Extend раздувал панель по контенту и съедал превью
+        // (регрессия п.3 р.7.1; тот же дефект, что чинил п.18 р.6)
+        ui.columns(2, |cols| {
+            for c in cols.iter_mut() {
+                c.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+                c.spacing_mut().item_spacing.y = 1.0;
+            }
             for (a, b) in rows {
-                ui.weak(a);
-                ui.weak(b);
-                ui.end_row();
+                cols[0].weak(a);
+                cols[1].weak(b);
             }
         });
         if let Some(g) = &self.gpu_info {
@@ -1844,6 +1847,7 @@ impl KtApp {
             Self::release_pointer_after_wm_grab(ui.ctx());
         }
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
             let ord = std::sync::atomic::Ordering::Relaxed;
             ui.add_space(6.0); // п.6 р.7: колокольчик не липнет к краю
             // колокольчик уведомлений (п.18): бейдж = непрочитанные
@@ -1898,6 +1902,9 @@ impl KtApp {
                 self.player.underruns.load(ord),
                 self.player.shared.callback_underruns.load(ord)
             ));
+            ui.separator();
+            // п.1 р.7.1: V-fps (показанные НОВЫЕ кадры) — здесь, не в тулбаре
+            ui.weak(format!("{:.0} vfps", self.perf.vfps));
             if let Some((msg, at)) = &self.status {
                 if at.elapsed().as_secs() < 6 {
                     let msg = msg.clone();
@@ -2659,12 +2666,13 @@ impl eframe::App for KtApp {
         let ctx = ui.ctx().clone();
         // имя проекта — в заголовок окна (п.19 р.6), не каждый кадр
         let title = format!(
-            "{}{} — Kinotrain",
+            "{}{} — kt {}",
             self.project_path
                 .as_ref()
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                 .unwrap_or_else(|| "безымянный".into()),
-            if self.dirty { " ●" } else { "" }
+            if self.dirty { " ●" } else { "" },
+            env!("CARGO_PKG_VERSION")
         );
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -2696,32 +2704,29 @@ impl eframe::App for KtApp {
             }
         }
 
-        // borderless (п.22 р.6, без полосы-титлбара): драг за тонкую
-        // верхнюю кромку (ниже 4px-зоны ресайза; верх панелей — паддинг,
-        // виджетов там нет) + плавающие кнопки окна в правом верхнем углу
-        if std::env::var_os("KT_DECORATIONS").is_none() {
-            let win = ctx.content_rect();
-            let strip = egui::Rect::from_min_max(
-                egui::pos2(win.left() + 4.0, win.top() + 4.0),
-                egui::pos2(win.right() - 3.0 * 34.0 - 6.0, win.top() + 14.0),
-            );
-            let resp = ui.interact(strip, egui::Id::new("top-drag"), egui::Sense::click_and_drag());
-            if resp.drag_started() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                Self::release_pointer_after_wm_grab(&ctx);
-            }
-            if resp.double_clicked() {
-                let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-            }
-            self.draw_window_overlay(&ctx);
-        }
+        // Титлбар: лого + меню + имя проекта с версией + кнопки окна
+        // (пп.3,6,7 р.7.1). Полоса оправдана содержимым: меню переехало
+        // сюда из левой колонки, та снова ужимается до 72 px.
+        egui::Panel::top("titlebar")
+            .frame(egui::Frame::new().fill(crate::theme::WINDOW))
+            .exact_size(22.0)
+            .show(ui, |ui| {
+                self.draw_titlebar(ui);
+            });
         // статусбар (низ)
-        egui::Panel::bottom("status").frame(crate::theme::panel_frame()).show(ui, |ui| {
-            self.draw_statusbar(ui);
-        });
+        egui::Panel::bottom("status")
+            .frame(egui::Frame::new().fill(crate::theme::PANEL).inner_margin(egui::Margin {
+                left: 0,
+                right: 0,
+                top: 0,
+                bottom: 1,
+            }))
+            .exact_size(20.0)
+            .show(ui, |ui| {
+                self.draw_statusbar(ui);
+            });
         // таймлайн (низ, на всю ширину) + плавающий тулбар поверх
-        egui::Panel::bottom("timeline").frame(crate::theme::panel_frame()).resizable(true).default_size(300.0).show(ui, |ui| {
+        egui::Panel::bottom("timeline").frame(egui::Frame::new().fill(crate::theme::PANEL)).resizable(true).default_size(300.0).show(ui, |ui| {
             let full = ui.available_rect_before_wrap();
             self.timeline_rect = full;
             let strip_h = 34.0;
@@ -2744,15 +2749,17 @@ impl eframe::App for KtApp {
         });
         // полоса времени над таймлайном (порт Timeline time strip)
         // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
-        egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).show(ui, |ui| {
-            // меню-ряд = жирная зона драга окна (п.3 р.7)
-            self.draw_menubar(ui);
-            ui.add_space(4.0);
+        egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).max_size(420.0).show(ui, |ui| {
+            ui.add_space(2.0);
             // п.27 р.7: контент в ScrollArea — фрейм панели не перерастает
             // высоту, и сепаратор egui больше не залезает на таймлайн
             // (panel.rs берёт ФАКТИЧЕСКИЙ rect фрейма); заодно колонка
             // скроллится при малой высоте окна
-            egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+            // auto_shrink по ШИРИНЕ обязателен: [false] заставлял контент
+            // требовать всю доступную ширину, панель раздувалась по
+            // контенту и съедала превью (регрессия п.3 р.7.1). По высоте
+            // false — ради п.27 (фрейм не перерастает панель).
+            egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
                 egui::Frame::group(ui.style())
                     .fill(crate::theme::WINDOW)
                     .corner_radius(1.0)
@@ -2788,11 +2795,6 @@ impl eframe::App for KtApp {
                 ui.add_space(3.0);
             });
             egui::Panel::right("meters_col").resizable(true).default_size(66.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
-                // borderless (п.4 р.7): кнопки окна занимают верхние 22px
-                // угла — контент метров (надпись dB) съезжает под них
-                if std::env::var_os("KT_DECORATIONS").is_none() {
-                    ui.add_space(24.0);
-                }
                 self.draw_meters(ui);
             });
             egui::CentralPanel::default().show(ui, |ui| {

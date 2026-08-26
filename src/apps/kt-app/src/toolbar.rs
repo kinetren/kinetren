@@ -27,6 +27,35 @@ pub fn gradient_rect(
     painter.add(egui::Shape::mesh(mesh));
 }
 
+/// Логотип программы (п.6 р.7.1): кадр киноплёнки с монограммой «kt» —
+/// рисуется painter'ом, тот же силуэт, что в packaging/kinotrain.svg.
+pub fn draw_logo(painter: &egui::Painter, rect: egui::Rect) {
+    let a = crate::theme::ACCENT;
+    let body = egui::Rect::from_center_size(rect.center(), rect.size() * 0.92);
+    painter.rect_filled(body, 1.0, egui::Color32::from_rgb(18, 20, 24));
+    painter.rect_stroke(body, 1.0, egui::Stroke::new(1.0, a), egui::StrokeKind::Middle);
+    // перфорация плёнки: по две «дырки» слева и справа
+    let hole_w = body.width() * 0.13;
+    let hole_h = body.height() * 0.17;
+    for i in 0..2 {
+        let y = body.top() + body.height() * (0.22 + 0.44 * i as f32);
+        for x in [body.left() + hole_w * 0.55, body.right() - hole_w * 0.55] {
+            painter.rect_filled(
+                egui::Rect::from_center_size(egui::pos2(x, y), egui::vec2(hole_w, hole_h)),
+                0.0,
+                egui::Color32::from_rgb(70, 78, 92),
+            );
+        }
+    }
+    painter.text(
+        body.center() + egui::vec2(0.0, 0.5),
+        egui::Align2::CENTER_CENTER,
+        "kt",
+        egui::FontId::proportional(body.height() * 0.62),
+        egui::Color32::from_rgb(228, 233, 242),
+    );
+}
+
 /// Кнопка окна borderless-титлбара, ИКОНКИ РИСУЮТСЯ painter'ом (п.22 р.6:
 /// шрифтовые глифы ✕/❐ рендерились «квадратиками»-tofu). kind: 0=свернуть,
 /// 1=развернуть/восстановить, 2=закрыть (красный ховер).
@@ -72,49 +101,19 @@ fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response
 }
 
 impl KtApp {
-    /// Кнопки окна borderless — ПЛАВАЮЩИЙ оверлей в правом верхнем углу
-    /// (п.22 р.6, уточнение: никакой полосы-титлбара на всю ширину —
-    /// место не тратим). Драг — за тонкую верхнюю кромку (app.rs) и за
-    /// нижний тулбар.
-    pub fn draw_window_overlay(&mut self, ctx: &egui::Context) {
-        let win = ctx.content_rect();
-        egui::Area::new(egui::Id::new("win-buttons"))
-            .fixed_pos(egui::pos2(win.right() - 3.0 * 34.0 - 2.0, win.top()))
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                ui.horizontal(|ui| {
-                    // лёгкая подложка — кнопки читаются на любом контенте
-                    let bg = egui::Rect::from_min_size(
-                        ui.next_widget_position(),
-                        egui::vec2(3.0 * 34.0, 22.0),
-                    );
-                    ui.painter().rect_filled(bg, 0.0, egui::Color32::from_black_alpha(110));
-                    if self.hint(window_button(ui, 0, false), "Свернуть").clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                    }
-                    let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-                    let hint = if max { "Восстановить" } else { "Развернуть" };
-                    if self.hint(window_button(ui, 1, max), hint).clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
-                    }
-                    if self.hint(window_button(ui, 2, false), "Закрыть").clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-            });
-    }
-
-    /// Меню-ряд (п.3 р.7): Файл/Правка/Вид в ТОПе левой колонки — жирная
-    /// зона драга окна вместо неюзабельной тонкой полоски; полоса на всю
-    /// ширину окна не возвращается (п.4: центр сверху — превью).
-    pub fn draw_menubar(&mut self, ui: &mut egui::Ui) {
-        let strip = egui::Rect::from_min_size(
-            ui.available_rect_before_wrap().min,
-            egui::vec2(ui.available_width(), 22.0),
+    /// Титлбар borderless-окна (пп.3,6,7 р.7.1): лого + меню слева, имя
+    /// проекта и версия по центру, кнопки окна справа; пустые зоны —
+    /// перетаскивание окна. Полоса на всю ширину, но НЕ пустая — место
+    /// оправдано (меню съехало сюда из левой колонки, та снова ужимается).
+    pub fn draw_titlebar(&mut self, ui: &mut egui::Ui) {
+        let strip = ui.available_rect_before_wrap();
+        let painter = ui.painter_at(strip);
+        painter.rect_filled(strip, 0.0, crate::theme::WINDOW);
+        painter.line_segment(
+            [strip.left_bottom(), strip.right_bottom()],
+            egui::Stroke::new(1.0, crate::theme::SEAM),
         );
-        // драг окна за пустую часть ряда (кнопки меню перекрывают хит)
-        let bg = ui.interact(strip, ui.id().with("menubar-drag"), egui::Sense::click_and_drag());
+        let bg = ui.interact(strip, ui.id().with("titlebar-drag"), egui::Sense::click_and_drag());
         if bg.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             KtApp::release_pointer_after_wm_grab(ui.ctx());
@@ -123,6 +122,57 @@ impl KtApp {
             let max = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
+        // имя проекта + версия по центру полосы (п.7)
+        painter.text(
+            egui::pos2(strip.center().x, strip.center().y),
+            egui::Align2::CENTER_CENTER,
+            &self.last_title,
+            egui::FontId::proportional(11.5),
+            egui::Color32::from_gray(140),
+        );
+        // лого слева (п.6)
+        let logo = egui::Rect::from_min_size(
+            egui::pos2(strip.left() + 5.0, strip.top() + 3.0),
+            egui::vec2(16.0, 16.0),
+        );
+        draw_logo(&painter, logo);
+        let mut left = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(egui::Rect::from_min_max(
+                    egui::pos2(logo.right() + 6.0, strip.top()),
+                    egui::pos2(strip.center().x - 90.0, strip.bottom()),
+                ))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        self.draw_menus(&mut left);
+        // кнопки окна справа (п.4 р.7: в вёрстке, не оверлеем над метрами)
+        if std::env::var_os("KT_DECORATIONS").is_none() {
+            let mut right = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(egui::Rect::from_min_max(
+                        egui::pos2(strip.right() - 3.0 * 34.0, strip.top()),
+                        strip.max,
+                    ))
+                    .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            );
+            right.spacing_mut().item_spacing.x = 0.0;
+            let ctx = right.ctx().clone();
+            if self.hint(window_button(&mut right, 2, false), "Закрыть").clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+            let h = if max { "Восстановить" } else { "Развернуть" };
+            if self.hint(window_button(&mut right, 1, max), h).clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
+            }
+            if self.hint(window_button(&mut right, 0, false), "Свернуть").clicked() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+        }
+        ui.advance_cursor_after_rect(strip);
+    }
+
+    fn draw_menus(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("Файл", |ui| {
                 if ui.button("Новый").clicked() {
@@ -134,7 +184,7 @@ impl KtApp {
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Сохранить	Ctrl+S").clicked() {
+                if ui.button("Сохранить\tCtrl+S").clicked() {
                     self.save();
                     ui.close();
                 }
@@ -153,28 +203,28 @@ impl KtApp {
                 }
             });
             ui.menu_button("Правка", |ui| {
-                if ui.button("Отменить	Ctrl+Z").clicked() {
+                if ui.button("Отменить\tCtrl+Z").clicked() {
                     self.undo();
                     ui.close();
                 }
-                if ui.button("Вернуть	Ctrl+Shift+Z").clicked() {
+                if ui.button("Вернуть\tCtrl+Shift+Z").clicked() {
                     self.redo();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Копировать	Ctrl+C").clicked() {
+                if ui.button("Копировать\tCtrl+C").clicked() {
                     self.copy_selection();
                     ui.close();
                 }
-                if ui.button("Вставить на курсор	Ctrl+V").clicked() {
+                if ui.button("Вставить на курсор\tCtrl+V").clicked() {
                     self.paste_at_cursor();
                     ui.close();
                 }
-                if ui.button("Удалить	Del").clicked() {
+                if ui.button("Удалить\tDel").clicked() {
                     self.delete_action();
                     ui.close();
                 }
-                if ui.button("Разрез / вырез региона	S").clicked() {
+                if ui.button("Разрез / вырез региона\tS").clicked() {
                     self.cut_action();
                     ui.close();
                 }
@@ -265,13 +315,6 @@ impl KtApp {
             .monospace()
             .size(15.0)
             .color(egui::Color32::from_rgb(235, 235, 240)),
-        );
-        // п.23 р.7: V-fps (реально показанные НОВЫЕ кадры) рядом с кадром
-        ui.label(
-            egui::RichText::new(format!("V{:.0}", self.perf.vfps))
-                .monospace()
-                .size(12.0)
-                .color(egui::Color32::from_gray(150)),
         );
         self.draw_speed_control(ui);
         ui.separator();

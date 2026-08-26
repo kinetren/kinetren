@@ -1,28 +1,44 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-  <!-- Иконка Kinotrain: кадр киноленты на тёмной плашке -->
+  <!-- Kinotrain (kt): кадр киноплёнки с монограммой kt.
+       Тот же силуэт рисуется в титлбаре приложения (toolbar.rs::draw_logo):
+       тёмная плашка, акцентная рамка кадра, перфорация по бокам, «kt». -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2a2d33"/>
-      <stop offset="1" stop-color="#17181b"/>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a1d23"/>
+      <stop offset="1" stop-color="#0b0c0f"/>
     </linearGradient>
-    <linearGradient id="frame" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4a7ae0"/>
-      <stop offset="1" stop-color="#2c4f9e"/>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6f9bff"/>
+      <stop offset="1" stop-color="#2f56b8"/>
     </linearGradient>
   </defs>
-  <rect x="4" y="4" width="120" height="120" rx="24" fill="url(#bg)"/>
-  <!-- лента -->
-  <rect x="16" y="34" width="96" height="60" rx="6" fill="#0d0e10"/>
-  <!-- перфорация -->
-  <g fill="#3a3e46">
-    <rect x="22" y="39" width="8" height="6" rx="1.5"/><rect x="36" y="39" width="8" height="6" rx="1.5"/>
-    <rect x="50" y="39" width="8" height="6" rx="1.5"/><rect x="64" y="39" width="8" height="6" rx="1.5"/>
-    <rect x="78" y="39" width="8" height="6" rx="1.5"/><rect x="92" y="39" width="8" height="6" rx="1.5"/>
-    <rect x="22" y="83" width="8" height="6" rx="1.5"/><rect x="36" y="83" width="8" height="6" rx="1.5"/>
-    <rect x="50" y="83" width="8" height="6" rx="1.5"/><rect x="64" y="83" width="8" height="6" rx="1.5"/>
-    <rect x="78" y="83" width="8" height="6" rx="1.5"/><rect x="92" y="83" width="8" height="6" rx="1.5"/>
+
+  <!-- плашка приложения -->
+  <rect x="4" y="4" width="120" height="120" rx="14" fill="url(#plate)"/>
+  <rect x="4.75" y="4.75" width="118.5" height="118.5" rx="13.5" fill="none"
+        stroke="#2b303a" stroke-width="1.5"/>
+
+  <!-- кадр плёнки -->
+  <rect x="20" y="26" width="88" height="76" rx="3" fill="#0a0b0d"/>
+  <rect x="20.75" y="26.75" width="86.5" height="74.5" rx="2.5" fill="none"
+        stroke="url(#edge)" stroke-width="2.5"/>
+
+  <!-- перфорация: по две «дырки» слева и справа (как на кадре 35 мм) -->
+  <g fill="#464e5c">
+    <rect x="26" y="40" width="10" height="13" rx="2"/>
+    <rect x="26" y="75" width="10" height="13" rx="2"/>
+    <rect x="92" y="40" width="10" height="13" rx="2"/>
+    <rect x="92" y="75" width="10" height="13" rx="2"/>
   </g>
-  <!-- кадр с play -->
-  <rect x="24" y="50" width="80" height="28" rx="3" fill="url(#frame)"/>
-  <path d="M 57 55 L 74 64 L 57 73 Z" fill="#eef2fa"/>
+
+  <!-- монограмма kt: «k» штрихами, «t» с перекладиной — читается и в 16 px -->
+  <g stroke="#e4e9f2" stroke-width="7" stroke-linecap="round" fill="none">
+    <!-- k -->
+    <path d="M50 38 V90"/>
+    <path d="M50 68 L64 52"/>
+    <path d="M50 68 L65 90"/>
+    <!-- t -->
+    <path d="M78 44 V82 a6 6 0 0 0 6 6 h4"/>
+    <path d="M70 58 H88"/>
+  </g>
 </svg>

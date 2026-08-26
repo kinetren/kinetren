@@ -531,7 +531,7 @@ impl KtApp {
             for (row, _) in [(0.0f32, cyan), (5.0, green)] {
                 painter.rect_filled(
                     egui::Rect::from_min_max(
-                        egui::pos2(rect.left(), y0 + row),
+                        egui::pos2(full.left(), y0 + row),
                         egui::pos2(rect.right(), y0 + row + 4.0),
                     ),
                     0.0,
@@ -709,18 +709,6 @@ impl KtApp {
             };
             painter.rect_filled(lane_rect, 0.0, fill);
             gutter_labels.push((label, y + lane_h * 0.5));
-        }
-        // gutter: горизонтальный градиент вместо сплошной полосы (п.20 р.6 —
-        // визуально уже; кликабельность на реордер сохранена interact'ом выше)
-        crate::theme::hgrad(&painter, gutter, crate::theme::GUTTER, egui::Color32::TRANSPARENT);
-        for (label, cy) in &gutter_labels {
-            painter.text(
-                egui::pos2(gutter.center().x, *cy),
-                egui::Align2::CENTER_CENTER,
-                label,
-                egui::FontId::proportional(12.0),
-                egui::Color32::from_gray(140),
-            );
         }
         // хит-тест morph-блока (нужен и press-обработке, и ПКМ ниже)
         let morpher_at = |slf: &KtApp, pos: egui::Pos2| -> Option<MorphId> {
@@ -1316,8 +1304,11 @@ impl KtApp {
                 continue;
             }
             let top = lane_top(c.kind, lane);
+            // клип тянется ПОД полосу имён дорожек — она полупрозрачная и
+            // таймлайн просвечивает (п.4 р.7.1); имя рисуется от СТАРОЙ
+            // границы (rect.left()), чтобы текст не лез под градиент
             let clip_rect = egui::Rect::from_min_max(
-                egui::pos2(x0.max(rect.left()), top + 1.0),
+                egui::pos2(x0.max(full.left()), top + 1.0),
                 egui::pos2(x1.min(rect.right()), top + lane_h - 3.0),
             );
             let selected = self.selected == Some(c.id);
@@ -1552,7 +1543,8 @@ impl KtApp {
                     egui::Color32::WHITE,
                 );
                 let plate = egui::Rect::from_min_size(
-                    clip_rect.left_top() + egui::vec2(4.0, 2.0),
+                    egui::pos2(clip_rect.left().max(rect.left()), clip_rect.top())
+                        + egui::vec2(4.0, 2.0),
                     galley.size() + egui::vec2(8.0, 3.0),
                 );
                 painter.rect_filled(
@@ -1850,6 +1842,38 @@ impl KtApp {
                 ),
                 false,
             );
+        }
+
+        // ---- полоса имён дорожек: полупрозрачный градиент ПОВЕРХ всего --
+        // (пп.4-5 р.7.1) Рисуется ПОСЛЕ клипов и heat-зон: таймлайн и
+        // полоски кэша просвечивают, heat-градиент втекает под неё слева
+        // без резкой границы; сами имена — сплошные, читаемые.
+        {
+            let g = crate::theme::GUTTER;
+            let solid = egui::Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), 165);
+            let mid = egui::Color32::from_rgba_unmultiplied(g.r(), g.g(), g.b(), 85);
+            let split = gutter.left() + gutter.width() * 0.45;
+            crate::theme::hgrad(
+                &full_painter,
+                egui::Rect::from_min_max(gutter.min, egui::pos2(split, gutter.bottom())),
+                solid,
+                mid,
+            );
+            crate::theme::hgrad(
+                &full_painter,
+                egui::Rect::from_min_max(egui::pos2(split, gutter.top()), gutter.max),
+                mid,
+                egui::Color32::TRANSPARENT,
+            );
+            for (label, cy) in &gutter_labels {
+                full_painter.text(
+                    egui::pos2(gutter.left() + gutter.width() * 0.42, *cy),
+                    egui::Align2::CENTER_CENTER,
+                    label,
+                    egui::FontId::proportional(12.0),
+                    egui::Color32::from_gray(165),
+                );
+            }
         }
 
         // ---- снап-линия / playhead -----------------------------------------------

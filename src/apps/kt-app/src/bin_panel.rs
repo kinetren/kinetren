@@ -35,8 +35,10 @@ impl KtApp {
         // п.12 р.7: бин занимает ВСЮ ширину панели (auto_shrink по
         // умолчанию ужимал по контенту — справа была пустота);
         // п.13: карточки в grid (horizontal_wrapped, колонки от ширины)
-        egui::ScrollArea::vertical().max_height(320.0).auto_shrink([false, true]).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
+        // ширину бин НЕ навязывает панели (set_min_width раздувал её —
+        // регрессия п.3 р.7.1): карточки просто переносятся по доступной
+        // ширине, а лишнего места справа не остаётся (п.12 р.7)
+        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             for (id, path) in &media {
@@ -46,13 +48,15 @@ impl KtApp {
                     .unwrap_or_else(|| path.clone());
                 let is_synth = path.starts_with("synth:");
                 let is_off = offline.contains(id);
+                // карточка ужимается под узкую панель (иначе фиксированные
+                // 128px раздували панель — регрессия п.3 р.7.1)
+                let card_w = ui.available_width().clamp(56.0, PREVIEW_W);
+                let card_h = card_w * PREVIEW_H / PREVIEW_W;
                 ui.vertical(|ui| {
-                    ui.set_width(PREVIEW_W);
+                    ui.set_width(card_w);
                     // --- превью со скрабом -------------------------------
-                    let (rect, resp) = ui.allocate_exact_size(
-                        egui::vec2(PREVIEW_W, PREVIEW_H),
-                        egui::Sense::click(),
-                    );
+                    let (rect, resp) = ui
+                        .allocate_exact_size(egui::vec2(card_w, card_h), egui::Sense::click());
                     let p = ui.painter_at(rect);
                     p.rect_filled(rect, 2.0, egui::Color32::from_rgb(10, 11, 13));
                     if !is_synth && !is_off {
@@ -62,11 +66,8 @@ impl KtApp {
                             (Some(pos), Some(d)) if d.0 > 0 => {
                                 let frac = ((pos.x - rect.left()) / rect.width())
                                     .clamp(0.0, 0.999);
-                                let step = thumb_source_step(
-                                    d,
-                                    BIN_SCRUB_SLOTS * PREVIEW_W,
-                                    PREVIEW_W,
-                                );
+                                let step =
+                                    thumb_source_step(d, BIN_SCRUB_SLOTS * card_w, card_w);
                                 (
                                     thumb_key_t(0, (frac as f64 * d.0 as f64) as i64, step),
                                     step / 2,
