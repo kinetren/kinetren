@@ -64,7 +64,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 
 - Перед правкой крейта — его `CLAUDE.md`; перед архитектурными изменениями — `docs/architecture.md`.
 - Новый найденный дефект/тонкость → сразу документировать (`docs/porting-notes.md` или CLAUDE.md крейта) и по возможности закрыть регрессионным тестом.
-- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–88 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
+- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–94 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
 - Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine.
 
 ## Карта крейт → обязательные тесты (гонять при правках, требование пользователя)
@@ -81,7 +81,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg/t34/t37), export_options t33 (муксер) |
 | kt-cache | kt-cache unit (t8/t14/t27/t28/t37 no-read drops, t65 пост-FX kind) |
 | kt-media | ffmpeg_conformance (вкл. t34 — персист пакетного индекса), index_db (вкл. t70), kt-app unit t23 |
-| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30), morpher t35 |
+| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30, t89 метки, t90 дорожки), morpher t35 |
 | kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |
 | kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей, t69/t71 негативные кэши тумб, t72/t74) |
 | kt-app (вёрстка/интеракции) | **обязательно** kt-app `layout_tests.rs` (t76 панели/сепараторы/кромки, t83 подсказки, t85 драг сверху, t86 края и минимум окна, t88 подмотка) + t77-t87 |
