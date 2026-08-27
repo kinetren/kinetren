@@ -124,6 +124,11 @@ pub struct KtApp {
     pub bin_rubber: Option<egui::Pos2>,
     /// Переименование группы: индекс + буфер.
     pub bin_group_edit: Option<(usize, String)>,
+    /// Зоны, где ресайз окна НЕ начинается (п.9 р.12): кнопки окна, меню,
+    /// колокольчик. Зона ресайза читает сырой указатель в конце кадра и
+    /// мимо хит-теста egui забирает нажатие себе, поэтому кнопки в 16 px
+    /// от края были практически некликабельны. Буфер переиспользуется.
+    pub no_resize_rects: Vec<egui::Rect>,
     /// Прямоугольники карточек этого кадра (свободный режим): нужны
     /// рамке выделения и рамкам групп, заодно дают harness-тесту куда
     /// целиться мышью. Буфер переиспользуется, не аллоцируется на кадр.
@@ -298,6 +303,7 @@ impl KtApp {
             bin_sel: Default::default(),
             bin_rubber: None,
             bin_group_edit: None,
+            no_resize_rects: Vec::new(),
             bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
@@ -410,6 +416,7 @@ impl KtApp {
             bin_sel: Default::default(),
             bin_rubber: None,
             bin_group_edit: None,
+            no_resize_rects: Vec::new(),
             bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
@@ -540,6 +547,7 @@ impl KtApp {
         self.handle_keys(&ctx);
         self.handle_drops(&ctx);
         self.hover_hint = None;
+        self.no_resize_rects.clear();
 
         // п.10 р.8: окно восстановлено из maximized прошлым кадром —
         // теперь можно начинать перетаскивание
@@ -786,6 +794,7 @@ impl KtApp {
         {
             let win = ctx.content_rect();
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
+                && !self.no_resize_rects.iter().any(|r| r.contains(pos))
                 && let Some(dir) = resize_zone(win, pos, WIN_EDGE, WIN_CORNER)
             {
                 ctx.set_cursor_icon(resize_cursor(dir));
@@ -2623,6 +2632,7 @@ impl KtApp {
             }))
             .frame(false);
             let bell_resp = ui.add(bell_btn);
+            self.no_resize_rects.push(bell_resp.rect.expand(2.0));
             if self.hint(bell_resp, "Уведомления").clicked() {
                 self.notices_open = !self.notices_open;
                 if self.notices_open {

@@ -909,3 +909,88 @@ fn t99_bin_groups() {
     assert_eq!(groups.len(), 1, "опустевшая группа не убрана");
     assert_eq!(groups[0].members, vec![MediaId(1)], "удалённое медиа осталось в группе");
 }
+
+/// Тест 101 (п.9 р.12): кнопки у краёв окна нажимаются, а не отдают
+/// нажатие window-менеджеру.
+///
+/// Зона ресайза — не виджет: она читает СЫРОЙ указатель в конце кадра и
+/// на нажатии шлёт BeginResize, забирая указатель у WM. Центр кнопки
+/// «Закрыть» (W−11, 11) лежал прямо в углу 16×16, колокольчик — в углу
+/// SW, у меню умирала верхняя четверть. Старые тесты этого не видели,
+/// потому что проверяли НАВЕДЕНИЕ: ему зона ресайза не мешает.
+#[test]
+fn t101_edge_buttons_are_clickable() {
+    use egui::ViewportCommand as V;
+
+    // Команды копим за ОБА кадра: BeginResize уходит на нажатии, а
+    // Close/Minimized — только на отпускании (clicked()). Отпускание
+    // шлём ЯВНЫМ событием, а не drop_at: тот следом кладёт PointerGone,
+    // step() прогоняет кадр НА КАЖДОЕ событие, и output() показывает уже
+    // кадр без команды — тест ловил пустоту при работающей кнопке.
+    fn press(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) -> Vec<V> {
+        let grab = |h: &Harness<'_, KtApp>| -> Vec<V> {
+            h.output()
+                .viewport_output
+                .values()
+                .flat_map(|v| v.commands.iter().cloned())
+                .collect()
+        };
+        let button = |pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        h.hover_at(pos);
+        h.step();
+        h.event(button(true));
+        h.step();
+        let mut sent = grab(h);
+        h.event(button(false));
+        h.step();
+        sent.extend(grab(h));
+        h.event(egui::Event::PointerGone);
+        h.step();
+        sent
+    }
+
+    // мёртвые точки: центр «Закрыть» в углу NE, «Развернуть»/«Свернуть» в
+    // верхней кромке, колокольчик в углу SW, «Файл» в верхней кромке
+    let cases: [(egui::Pos2, &str); 5] = [
+        (egui::pos2(W - 11.0, 11.0), "Закрыть"),
+        (egui::pos2(W - 33.0, 4.0), "Развернуть"),
+        (egui::pos2(W - 55.0, 4.0), "Свернуть"),
+        (egui::pos2(18.0, H - 5.0), "Уведомления"),
+        (egui::pos2(30.0, 6.0), "меню Файл"),
+    ];
+    for (pos, what) in cases {
+        let mut h = harness();
+        let sent = press(&mut h, pos);
+        assert!(
+            !sent.iter().any(|c| matches!(c, V::BeginResize(_))),
+            "нажатие по «{what}» ушло в ресайз окна вместо кнопки"
+        );
+    }
+
+    // и последствия нажатий действительно наступают
+    let mut h = harness();
+    let sent = press(&mut h, egui::pos2(W - 11.0, 11.0));
+    assert!(sent.iter().any(|c| matches!(c, V::Close)), "окно не закрылось");
+
+    let mut h = harness();
+    let sent = press(&mut h, egui::pos2(W - 55.0, 4.0));
+    assert!(sent.iter().any(|c| matches!(c, V::Minimized(true))), "окно не свернулось");
+
+    let mut h = harness();
+    let before = h.state().notices_open;
+    press(&mut h, egui::pos2(18.0, H - 5.0));
+    assert_ne!(h.state().notices_open, before, "колокольчик не открыл уведомления");
+
+    // чистые кромки по-прежнему дают ресайз — гейт не должен убить его
+    let mut h = harness();
+    let sent = press(&mut h, egui::pos2(W * 0.5, H - 2.0));
+    assert!(
+        sent.iter().any(|c| matches!(c, V::BeginResize(_))),
+        "нижняя кромка перестала тянуться"
+    );
+}

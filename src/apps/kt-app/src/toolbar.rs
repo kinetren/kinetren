@@ -59,7 +59,11 @@ pub fn draw_logo(painter: &egui::Painter, rect: egui::Rect) {
 /// шрифтовые глифы ✕/❐ рендерились «квадратиками»-tofu). kind: 0=свернуть,
 /// 1=развернуть/восстановить, 2=закрыть (красный ховер).
 fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response {
-    // 22 px: три кнопки помещаются в узкую колонку метров (п.15 р.8)
+    // 22 px: три кнопки помещаются в узкую колонку метров (п.15 р.8).
+    // Сенс именно click: с click_and_drag egui считает нажатие началом
+    // драга и clicked() не наступает вовсе (проверено t101). Драг окна
+    // за кнопку остаётся у полосы под ней — это привычное поведение
+    // титлбара, а сам клик теперь доходит (п.9 р.12).
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 20.0), egui::Sense::click());
     let p = ui.painter();
     if resp.hovered() {
@@ -145,6 +149,14 @@ impl KtApp {
             });
             r.response.rect.right()
         };
+        // меню тоже сидит в кромке окна: без этого верхняя четверть
+        // кнопок «Файл/Правка/Вид» уходила в ресайз (п.9 р.12)
+        self.no_resize_rects.push(
+            egui::Rect::from_min_max(
+                egui::pos2(logo.left() - 2.0, strip.top() - 4.0),
+                egui::pos2(menu_end + 2.0, strip.bottom() + 2.0),
+            ),
+        );
         ui.advance_cursor_after_rect(strip);
         // имя проекта + версия — поверх всего, начиная за меню
         let fg = ui.ctx().layer_painter(egui::LayerId::new(
@@ -180,15 +192,21 @@ impl KtApp {
         );
         row.spacing_mut().item_spacing.x = 0.0;
         let ctx = row.ctx().clone();
-        if self.hint(window_button(&mut row, 2, false), "Закрыть").clicked() {
+        let close = window_button(&mut row, 2, false);
+        self.no_resize_rects.push(close.rect.expand(2.0));
+        if self.hint(close, "Закрыть").clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         let h = if max { "Восстановить" } else { "Развернуть" };
-        if self.hint(window_button(&mut row, 1, max), h).clicked() {
+        let maxi = window_button(&mut row, 1, max);
+        self.no_resize_rects.push(maxi.rect.expand(2.0));
+        if self.hint(maxi, h).clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
-        if self.hint(window_button(&mut row, 0, false), "Свернуть").clicked() {
+        let mini = window_button(&mut row, 0, false);
+        self.no_resize_rects.push(mini.rect.expand(2.0));
+        if self.hint(mini, "Свернуть").clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
         ui.advance_cursor_after_rect(strip);
