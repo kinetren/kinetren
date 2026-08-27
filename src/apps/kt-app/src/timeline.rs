@@ -2143,7 +2143,12 @@ impl KtApp {
                     ui.close();
                 }
                 let is_rev = self.model.clip(id).map(|c| c.reversed).unwrap_or(false);
-                if ui.button(if is_rev { "Реверс ✓" } else { "Реверс" }).clicked() {
+                let rev_label = if is_rev {
+                    format!("Реверс {}", crate::icons::CHECK)
+                } else {
+                    "Реверс".into()
+                };
+                if ui.button(rev_label).clicked() {
                     self.apply(Command::SetReversed { id, reversed: !is_rev });
                     ui.close();
                 }

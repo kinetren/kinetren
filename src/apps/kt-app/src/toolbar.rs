@@ -138,7 +138,7 @@ impl KtApp {
             self.draw_menus(&mut child);
             child.min_rect().right()
         } else {
-            child.menu_button("\u{2261}", |ui| {
+            child.menu_button(crate::icons::LIST, |ui| {
                 self.menu_items(ui);
             });
             child.min_rect().right()

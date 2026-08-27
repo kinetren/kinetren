@@ -31,8 +31,10 @@ pub const WARN: &str = "\u{E4E0}"; // warning (E4DE был voicemail — п.1 р
 pub const SEARCH: &str = "\u{E30C}"; // magnifying-glass (п.3 р.10)
 pub const GAUGE: &str = "\u{E000}"; // pulse (gauge E628 читался как робот Reddit — п.5 р.10)
 pub const SQUARES_FOUR: &str = "\u{E464}"; // сетка (режим бина)
-#[allow(dead_code)]
-pub const LIST: &str = "\u{E2F0}"; // список (режим бина)
+pub const LIST: &str = "\u{E2F0}"; // список; он же «гамбургер» узкого тулбара
+pub const CHECK: &str = "\u{E182}"; // галка в пунктах меню (≡/✓ из юникода — тофу, т.100)
+#[allow(dead_code)] // задействуется группами бина (п.13 р.11)
+pub const LOCK: &str = "\u{E2FA}"; // замок (группы бина)
 pub const ARROWS_OUT: &str = "\u{E0A2}"; // свободная раскладка
 pub const SKIP_FWD: &str = "\u{E5A6}"; // к следующей точке
 

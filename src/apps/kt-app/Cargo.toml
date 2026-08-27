@@ -22,6 +22,8 @@ serde_json.workspace = true
 # чистый CPU, без окна и GPU
 [dev-dependencies]
 egui_kittest = { version = "0.36.1", default-features = false }
+# проверка покрытия глифов (тест 100, п.12 р.11); версия уже в графе egui
+ab_glyph = "0.2"
 
 # позиция курсора при DnD файлов: winit/X11 не отдаёт координаты
 # XdndPosition (п.2 v1.4) — читаем указатель напрямую

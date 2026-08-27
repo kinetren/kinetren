@@ -7,6 +7,8 @@ mod app;
 mod audio_out;
 mod bin_panel;
 mod fx_editor;
+#[cfg(test)]
+mod font_tests;
 mod fx_registry;
 mod graphs;
 mod icons;
