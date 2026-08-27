@@ -487,3 +487,55 @@ fn t95_clip_drag_snaps_to_neighbour() {
     );
     assert_ne!(free, NEIGHBOUR_END, "Ctrl не снял магнит");
 }
+
+/// Тест 96 (пп.3,4,5 р.11): грязность проекта и loop.
+///
+/// «Правки содержимого» (клипы, FX, метки) поднимают звёздочку и
+/// запускают автосейв; «правки удобства» (регион, loop, зум, раскладка
+/// бина, имена дорожек) — нет, они доезжают на диск попутно. Esc снимает
+/// регион, но НЕ гасит взведённый loop — это отдельное намерение.
+#[test]
+fn t96_dirty_split_and_loop_survives_esc() {
+    use kt_model::*;
+    use kt_time::Tick;
+
+    let mut h = harness();
+    assert!(!h.state().dirty_content && !h.state().dirty_ui, "свежий проект чист");
+
+    // --- удобства: регион, loop, зум, раскладка бина, имя дорожки
+    h.state_mut().model.set_region(Region::normalized(Tick(0), Tick(90_000)));
+    h.state_mut().on_region_changed();
+    h.state_mut().toggle_loop();
+    h.state_mut().ticks_per_px = 4321.0;
+    h.state_mut().bin_layout.insert(MediaId(3), egui::pos2(12.0, 34.0));
+    h.state_mut().lane_names.push((LaneKind::Video, 0, "камера".into()));
+    h.step();
+    assert!(
+        !h.state().dirty_content,
+        "удобства не должны помечать проект изменённым (звёздочка врёт)"
+    );
+    assert!(h.state().dirty_ui, "удобства обязаны быть учтены как ui-правки");
+
+    // --- содержимое: правка модели
+    h.state_mut().apply(Command::AddMarker { at: Tick(45_000) });
+    h.step();
+    assert!(h.state().dirty_content, "правка содержимого обязана дать звёздочку");
+
+    // --- Esc: регион снят, loop ОСТАЁТСЯ взведённым
+    assert!(h.state().model.project().loop_enabled, "loop включён");
+    h.state_mut().escape_action();
+    h.step();
+    assert!(h.state().model.project().region.is_none(), "Esc не снял регион");
+    assert!(
+        h.state().model.project().loop_enabled,
+        "Esc погасил loop — это отдельное намерение пользователя (п.3 р.11)"
+    );
+    // явное «Снять регион» по-прежнему гасит и loop (иначе лампочка горит
+    // без региона и переживает рестарт — п.16 р.6)
+    h.state_mut().model.set_region(Region::normalized(Tick(0), Tick(90_000)));
+    h.state_mut().clear_region();
+    assert!(!h.state().model.project().loop_enabled, "явная команда обязана гасить loop");
+
+    // --- автосейв не срабатывает чаще положенного и не пишет во время жеста
+    assert!(!h.state().autosave_due(), "автосейв сразу после старта — слишком часто");
+}

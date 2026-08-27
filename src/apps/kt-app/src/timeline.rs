@@ -2016,7 +2016,7 @@ impl KtApp {
                     if !name.is_empty() {
                         self.lane_names.push((ed.kind, ed.lane, name));
                     }
-                    self.dirty = true;
+                    self.dirty_ui = true;
                     self.lane_edit = None;
                 }
                 Some(false) => self.lane_edit = None,

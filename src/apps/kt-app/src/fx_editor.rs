@@ -39,7 +39,7 @@ impl KtApp {
     fn set_fx_coalesced(&mut self, clip: ClipId, fx: Vec<FxInstance>, gesture: u64) {
         if self.model.apply_coalesced(Command::SetFx { id: clip, fx }, gesture).is_ok() {
             self.player.set_project(self.model.project().clone());
-            self.dirty = true;
+            self.dirty_content = true;
         }
     }
 
@@ -435,7 +435,7 @@ impl KtApp {
                 .model
                 .apply_coalesced(Command::SetFxBypass { id: ed.clip, bypass: b }, ed.gesture);
             self.player.set_project(self.model.project().clone());
-            self.dirty = true;
+            self.dirty_content = true;
         }
     }
 }

@@ -154,7 +154,7 @@ impl KtApp {
                     && !st.escaped
                     && self.bin_layout.get(id).copied() != Some(st.start)
                 {
-                    self.dirty = true; // раскладка реально изменилась
+                    self.dirty_ui = true; // раскладка — удобство, не содержимое
                 }
             }
         } else {

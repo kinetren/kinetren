@@ -27,7 +27,13 @@ pub struct Notice {
 pub struct KtApp {
     pub model: TimelineModel,
     pub project_path: Option<PathBuf>,
-    pub dirty: bool,
+    /// Правки СОДЕРЖИМОГО (клипы, FX, morpher, метки, дорожки, медиа):
+    /// только они дают звёздочку и запускают автосейв (п.5 р.11).
+    pub dirty_content: bool,
+    /// Правки УДОБСТВА (регион/loop, раскладка бина, имена дорожек,
+    /// порядок строк): пользователь ничего не изменил — звёздочки нет,
+    /// на диск они попадают попутно с сохранением/выходом.
+    pub dirty_ui: bool,
     pub player: Player,
     /// Keep-alive хэндл cpal-стрима (Drop = остановка вывода).
     #[allow(dead_code)]
@@ -230,7 +236,8 @@ impl KtApp {
         KtApp {
             model: TimelineModel::new(project),
             project_path: None,
-            dirty: false,
+            dirty_content: false,
+            dirty_ui: false,
             player,
             audio,
             peaks: Arc::new(Mutex::new(HashMap::new())),
@@ -336,7 +343,8 @@ impl KtApp {
         let mut app = KtApp {
             model: TimelineModel::new(project),
             project_path: Some(path.to_path_buf()),
-            dirty: false,
+            dirty_content: false,
+            dirty_ui: false,
             player,
             audio,
             peaks,
@@ -495,7 +503,7 @@ impl KtApp {
                 .as_ref()
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                 .unwrap_or_else(|| "безымянный".into()),
-            if self.dirty { " *" } else { "" },
+            if self.dirty_content { " *" } else { "" },
             env!("CARGO_PKG_VERSION")
         );
         if title != self.last_title {
@@ -687,20 +695,23 @@ impl KtApp {
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
 
-        // автосейв каждые 4 c (порт autosaveTimer); безымянный проект —
-        // в recovery-файл ~/.local/share/kinotrain/ (п.20, v1)
-        if self.dirty && self.last_autosave.elapsed().as_secs() >= 4 {
+        // автосейв (порт autosaveTimer): безымянный проект — в
+        // recovery-файл ~/.local/share/kinotrain/ (п.20, v1).
+        // п.4 р.11: было каждые 4 с и по ЛЮБОЙ правке, включая движение
+        // региона и зум — то есть постоянная запись всего проекта в
+        // UI-потоке. Теперь: раз в 30 с, только от правок СОДЕРЖИМОГО и
+        // не во время жеста/игры (страховка — если тихо больше двух
+        // интервалов, пишем всё равно: терять правки хуже микрофриза).
+        if self.dirty_content && self.autosave_due() {
             self.last_autosave = std::time::Instant::now();
             let ui = Some(self.ui_state());
             self.model.set_ui_state(ui);
             let target = self.project_path.clone().unwrap_or_else(autosave_path);
-            if let Some(dir) = target.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            match std::fs::write(&target, self.model.project().to_json()) {
+            match write_project_atomic(&target, &self.model.project().to_json()) {
                 Ok(()) => {
                     if self.project_path.is_some() {
-                        self.dirty = false;
+                        self.dirty_content = false;
+                        self.dirty_ui = false;
                     }
                 }
                 Err(e) => self.warn(format!("автосейв не удался: {e}")),
@@ -1206,9 +1217,9 @@ impl KtApp {
             self.snap_line = None;
             return;
         }
-        // 3) снять регион и выделение
+        // 3) снять регион и выделение (loop остаётся взведённым — п.3 р.11)
         if self.model.project().region.is_some() {
-            self.clear_region();
+            self.clear_region_keep_loop();
         }
         self.selected = None;
         self.selected_morph = None;
@@ -1231,7 +1242,7 @@ impl KtApp {
             _ => {
                 let e = self.lane_order.remove(from);
                 self.lane_order.insert(to, e);
-                self.dirty = true;
+                self.dirty_ui = true;
             }
         }
     }
@@ -1328,7 +1339,7 @@ impl KtApp {
         match self.model.apply(cmd) {
             Ok(()) => {
                 self.player.set_project(self.model.project().clone());
-                self.dirty = true;
+                self.dirty_content = true;
                 true
             }
             Err(e) => {
@@ -1344,7 +1355,7 @@ impl KtApp {
         match self.model.apply_batch(cmds) {
             Ok(()) => {
                 self.player.set_project(self.model.project().clone());
-                self.dirty = true;
+                self.dirty_content = true;
                 true
             }
             Err(e) => {
@@ -1398,11 +1409,33 @@ impl KtApp {
         self.on_region_changed();
     }
 
+    /// Пора ли автосохраняться: раз в 30 с, не во время жеста и не при
+    /// игре — но если тихого момента нет дольше двух интервалов, пишем
+    /// всё равно (потерять правки хуже, чем разово моргнуть, п.4 р.11).
+    pub fn autosave_due(&self) -> bool {
+        let idle = self.last_autosave.elapsed().as_secs();
+        if idle < AUTOSAVE_SECS {
+            return false;
+        }
+        let busy = self.drag.is_some()
+            || self.bin_drag.is_some()
+            || self.player.transport.is_playing();
+        !busy || idle >= AUTOSAVE_SECS * 2
+    }
+
     pub fn clear_region(&mut self) {
         self.model.set_region(None);
         // п.16 раунда 6: без региона включённый loop — «лампочка горит,
         // не зацикливает» (и переживал рестарт) — гасим вместе
         self.model.set_loop_enabled(false);
+        self.on_region_changed();
+    }
+
+    /// Esc: снять регион, НЕ трогая loop (п.3 р.11). Loop — отдельное
+    /// намерение пользователя; выключала его только явная команда «Снять
+    /// регион», а Esc заодно гасил и его.
+    pub fn clear_region_keep_loop(&mut self) {
+        self.model.set_region(None);
         self.on_region_changed();
     }
 
@@ -1419,7 +1452,7 @@ impl KtApp {
         let region =
             p.region.filter(|_| p.loop_enabled).map(|r| kt_time::TickRange::new(r.start, r.end));
         self.player.set_loop_region(region);
-        self.dirty = true;
+        self.dirty_ui = true;
     }
 
     pub fn copy_selection(&mut self) {
@@ -1640,7 +1673,7 @@ impl KtApp {
         self.model_rev += 1;
         if self.model.undo().is_ok() {
             self.player.set_project(self.model.project().clone());
-            self.dirty = true;
+            self.dirty_content = true;
         }
     }
 
@@ -1648,7 +1681,7 @@ impl KtApp {
         self.model_rev += 1;
         if self.model.redo().is_ok() {
             self.player.set_project(self.model.project().clone());
-            self.dirty = true;
+            self.dirty_content = true;
         }
     }
 
@@ -1711,9 +1744,10 @@ impl KtApp {
         };
         let ui = Some(self.ui_state());
         self.model.set_ui_state(ui);
-        match std::fs::write(&path, self.model.project().to_json()) {
+        match write_project_atomic(&path, &self.model.project().to_json()) {
             Ok(()) => {
-                self.dirty = false;
+                self.dirty_content = false;
+                self.dirty_ui = false;
                 self.note(format!("сохранено: {}", path.display()));
                 // именованный проект сохранён — recovery-файл безымянного
                 // больше не должен «воскресать» при старте (п.12)
@@ -2755,6 +2789,9 @@ pub enum TransportAction {
 }
 
 /// Окно «двойного Space» = стоп (мс).
+/// Интервал автосейва (п.4 р.11): было 4 с — постоянная запись всего
+/// проекта в UI-потоке при любом чихе вроде движения региона.
+pub const AUTOSAVE_SECS: u64 = 30;
 pub const STATUS_TTL_MS: u64 = 6000;
 pub const DOUBLE_PAUSE_MS: u128 = 400;
 
@@ -3462,6 +3499,18 @@ pub fn autosave_path() -> PathBuf {
     base.join("kinotrain").join("autosave-project.ktproj")
 }
 
+/// Запись проекта: сначала во временный файл рядом, потом переименование.
+/// Прямая перезапись живого .ktproj (как было) при обрыве питания/ошибке
+/// на середине оставляла пользователя с обрезанным проектом.
+pub fn write_project_atomic(path: &std::path::Path, json: &str) -> std::io::Result<()> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("ktproj.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)
+}
+
 fn chrono_like_now() -> String {
     let secs =
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
@@ -3662,9 +3711,16 @@ impl eframe::App for KtApp {
         // последний проект + финальный сейв при выходе
         if let Some(p) = &self.project_path.clone() {
             storage.set_string("last_project", p.to_string_lossy().to_string());
-            let ui = Some(self.ui_state());
-            self.model.set_ui_state(ui);
-            let _ = std::fs::write(p, self.model.project().to_json());
+            // правки удобства (регион, зум, раскладка, имена дорожек) на
+            // диск попадают именно здесь — попутно, без звёздочки (п.5
+            // р.11). Вьюпорт/курсор флагов не поднимают (менялись бы на
+            // каждом кадре) — сравниваем со снимком в проекте.
+            let fresh = self.ui_state();
+            let moved = self.model.project().ui.as_ref() != Some(&fresh);
+            if self.dirty_content || self.dirty_ui || moved {
+                self.model.set_ui_state(Some(fresh));
+                let _ = write_project_atomic(p, &self.model.project().to_json());
+            }
         }
     }
 }

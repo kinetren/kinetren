@@ -303,11 +303,6 @@ impl KtApp {
         self.hint(r, hint).clicked()
     }
 
-    fn tb_toggle(&mut self, ui: &mut egui::Ui, on: bool, label: &str, hint: &str) -> bool {
-        let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(on, label));
-        self.hint(r, hint).clicked()
-    }
-
     /// Полоса кнопок ВНИЗУ панели таймлайна (порт: кнопки снизу),
     /// градиентный фон на всю ширину — ничего не вылезает.
     pub fn draw_toolbar_strip(&mut self, ui: &mut egui::Ui) {
@@ -463,8 +458,26 @@ impl KtApp {
         if self.tb(ui, crate::icons::CLEAR, "Снять регион") {
             self.clear_region();
         }
-        let loop_on = self.model.project().loop_enabled;
-        if self.tb_toggle(ui, loop_on, crate::icons::LOOP, "Loop региона (L)") {
+        // три состояния (п.3 р.11): выключен / включён с регионом /
+        // ВЗВЕДЁН без региона (Esc снял регион, намерение осталось) —
+        // приглушённый значок, подсказка объясняет, чего не хватает
+        let (loop_on, has_region) = {
+            let p = self.model.project();
+            (p.loop_enabled, p.region.is_some())
+        };
+        let armed = loop_on && !has_region;
+        let label = if armed {
+            egui::RichText::new(crate::icons::LOOP).color(egui::Color32::from_gray(120))
+        } else {
+            egui::RichText::new(crate::icons::LOOP)
+        };
+        let hint = if armed {
+            "Loop взведён — выдели регион (L)"
+        } else {
+            "Loop региона (L)"
+        };
+        let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(loop_on, label));
+        if self.hint(r, hint).clicked() {
             self.toggle_loop();
         }
         ui.separator();
@@ -488,7 +501,7 @@ impl KtApp {
         }
         // п.6 р.10: «●» нет ни в одном шрифте семейства Proportional —
         // рисовался квадрат-заглушка. Звёздочка есть везде.
-        let save_label = if self.dirty {
+        let save_label = if self.dirty_content {
             format!("{} *", crate::icons::SAVE)
         } else {
             crate::icons::SAVE.to_string()

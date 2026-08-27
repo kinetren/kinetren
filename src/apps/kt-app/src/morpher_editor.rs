@@ -239,7 +239,7 @@ impl KtApp {
             self.model_rev += 1;
             if self.model.apply_coalesced(Command::SetMorpher(ev), ed.gesture).is_ok() {
                 self.player.set_project(self.model.project().clone());
-                self.dirty = true;
+                self.dirty_content = true;
             }
         }
     }
