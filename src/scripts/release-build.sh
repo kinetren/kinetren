@@ -9,7 +9,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.." # src/
 
 IMAGE=kinotrain-build:ubuntu2204
-VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+# Версия считается ЗДЕСЬ, на хосте (п.6 р.12): внутри контейнера нет ни
+# git, ни каталога .git — монтируется только src/. Формат vYY.MM.DD-hash
+# по дате КОММИТА; build.rs крейта kt-version возьмёт её из окружения.
+KT_VERSION_FULL="${KT_VERSION_FULL:-$(git log -1 --format=%cd --date=format:%y.%m.%d 2>/dev/null | sed 's/^/v/')-$(git rev-parse --short=8 HEAD 2>/dev/null)}"
+[ "$KT_VERSION_FULL" = "v-" ] && KT_VERSION_FULL="v00.00.00-nogit"
+KT_VERSION_SHORT="${KT_VERSION_SHORT:-kt${KT_VERSION_FULL:1:5}}"
+export KT_VERSION_FULL KT_VERSION_SHORT
+VERSION="${KT_VERSION_FULL#v}"
 ARCH=$(uname -m)
 OUT="target/dist-out"
 STAGE="$OUT/kinotrain-$VERSION-linux-$ARCH"
@@ -39,6 +46,7 @@ fi
 docker run --rm --network=host -u "$(id -u):$(id -g)" \
     -v "$PWD:/work" -w /work "${CACHE_ARGS[@]}" \
     -e CARGO_TARGET_DIR=/work/target/dist-container \
+    -e KT_VERSION_FULL="$KT_VERSION_FULL" -e KT_VERSION_SHORT="$KT_VERSION_SHORT" \
     "$IMAGE" cargo build --profile dist -p kt-app -p kt-cli
 
 BIN_DIR="target/dist-container/dist"
@@ -64,7 +72,9 @@ for b in kt-app kt-cli; do
 done
 
 # --- Тарбол --------------------------------------------------------------
-rm -rf "$STAGE"
+# чистим ВЕСЬ выхлоп: раньше старые тарболы и распакованные каталоги
+# копились вечно, и пользователь мог взять не ту сборку (п.7 р.12)
+rm -rf "$OUT"
 mkdir -p "$STAGE"
 cp "$BIN_DIR/kt-app" "$BIN_DIR/kt-cli" "$STAGE/"
 cp packaging/kinotrain.desktop packaging/kinotrain.svg \
@@ -72,4 +82,5 @@ cp packaging/kinotrain.desktop packaging/kinotrain.svg \
 cp -r packaging/icons "$STAGE/"
 chmod +x "$STAGE/install.sh"
 tar -C "$OUT" -czf "$STAGE.tar.gz" "$(basename "$STAGE")"
-echo "Готово: $STAGE.tar.gz"
+printf '%s\n%s\n' "$KT_VERSION_FULL" "$STAGE.tar.gz" > "$OUT/LATEST"
+echo "Готово: $STAGE.tar.gz (версия $KT_VERSION_FULL)"

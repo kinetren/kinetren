@@ -42,7 +42,9 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 realfft = "3"
 
 [profile.release]
-debug = true
+# line tables вместо полных символов: полный debug раздувал target/release
+# до 3+ ГБ, а для профайлинга достаточно строк (п.7 р.12)
+debug = 1
 
 # Релизная поставка: без debug-инфы (release с debug=true — 500+МБ),
 # со strip и LTO. Собирается scripts/release-build.sh в контейнере со
