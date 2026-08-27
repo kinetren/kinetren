@@ -184,7 +184,7 @@ impl MediaSource for SyntheticSource {
         // кадра источника (п.14 р.14).
         let (code, out_pts) = match self.video_fps {
             Some(fps) => {
-                let step = kt_time::TICK_HZ as i64 / fps.max(1) as i64;
+                let step = kt_time::TICK_HZ / fps.max(1) as i64;
                 let k = pts.0.div_euclid(step);
                 (k, Tick(k * step))
             }

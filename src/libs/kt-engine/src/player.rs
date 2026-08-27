@@ -296,7 +296,15 @@ impl Player {
     }
 
     /// Скорость воспроизведения (п.4, ползунок как в Vegas).
+    /// Смена скорости сбрасывает окно экстраполяции: оно выучено на
+    /// шагах ПРЕЖНЕЙ скорости и после входа в слоу-мо ещё ~170 мс
+    /// разрешает вчетверо больший забег вперёд — с последующим снапом
+    /// назад ровно в момент включения (п.14 р.14).
     pub fn set_playback_rate(&self, rate: f32) {
+        if let Ok(mut vc) = self.video_clock.lock() {
+            vc.2 = 0;
+            vc.1 = std::time::Instant::now();
+        }
         // отрицательное = reverse-транспорт (J4 v1.4); 0 = стоп потребления
         // (тишина, playhead стоит). Колбэк использует |rate|, знак читает
         // только render-поток.
@@ -449,7 +457,7 @@ impl Player {
                 * rate.abs() as f64) as i64;
             display_extrapolation(elapsed, vc.2)
         };
-        Tick::from_audio_frames(video_display_frame(head + extra * dir, latency, region, dir))
+        Tick::from_audio_frames(video_display_frame(head + extra * dir, latency, region, dir, rate))
     }
 
     /// UI: составить кадр превью для момента t (выравнивается по сетке fps).
@@ -740,13 +748,51 @@ fn video_lookahead_ticks(q: Quality, frame_step: i64, max_video_bytes: usize) ->
 /// `dir` — направление транспорта (J4): при реверсе слышимое сейчас
 /// находится ПОЗЖЕ по таймлайну (playhead едет влево), поэтому знак
 /// компенсации задержки обратный.
+/// Ключ показанного кадра НЕ ЕДЕТ НАЗАД (п.14 р.14).
+///
+/// Возвращает (ключ, пропущено ячеек вперёд, был ли откат). Назад ключ
+/// уезжает ТОЛЬКО при смене поколения транспорта (seek) или loop-wrap —
+/// то есть по построению, а не «если откат меньше двух ячеек». Прежний
+/// допуск был задан в ячейках и слеп к скорости: при 0.25× ячейка живёт
+/// 8 UI-кадров, любой скачок EMA задержки перепрыгивал допуск и картинка
+/// откатывалась на пару кадров назад — ровно то, на что жаловались.
+pub fn preview_key_step(
+    prev: Option<i64>,
+    key: i64,
+    step: i64,
+    dir: i64,
+    reanchor: bool,
+) -> (i64, u64, bool) {
+    let Some(prev) = prev.filter(|_| !reanchor) else { return (key, 0, false) };
+    // «назад» — это против направления воспроизведения: в реверсе ключ
+    // обязан УБЫВАТЬ, и убывание откатом не является
+    let ahead = (key - prev) * dir.signum();
+    if ahead < 0 {
+        return (prev, 0, true);
+    }
+    let skipped =
+        if step > 0 && ahead > step { ((ahead / step) - 1).max(0) as u64 } else { 0 };
+    (key, skipped, false)
+}
+
+/// Позиция ПОКАЗА: из позиции таймлайна вычитается задержка вывода.
+///
+/// `latency_frames` — задержка в кадрах WALL-CLOCK (её так меряет
+/// cpal-обвязка), а `playhead` — позиция ТАЙМЛАЙНА. За `latency` секунд
+/// реального времени таймлайн уходит на `latency·|rate|`, поэтому
+/// вычитать надо масштабированную величину (п.14 р.14). Раньше
+/// вычиталась полная: при 0.25× это вчетверо больше нужного, а главное —
+/// джиттер EMA задержки (сотни кадров) превышал ход показа за UI-кадр
+/// (~200 кадров при 0.25×) и разворачивал картинку НАЗАД.
 pub fn video_display_frame(
     playhead: i64,
     latency_frames: i64,
     region: Option<(i64, i64)>,
     dir: i64,
+    rate: f32,
 ) -> i64 {
-    let lat = latency_frames.max(0) * dir.signum().clamp(-1, 1);
+    let scaled = (latency_frames.max(0) as f64 * rate.abs().max(0.0) as f64) as i64;
+    let lat = scaled * dir.signum().clamp(-1, 1);
     match region {
         Some((rs, re)) if re > rs && playhead >= rs => {
             let span = re - rs;
@@ -841,30 +887,30 @@ mod sync_tests {
     #[test]
     fn t22_video_display_frame_compensates_latency() {
         // без задержки — тождество
-        assert_eq!(video_display_frame(1000, 0, None, 1), 1000);
+        assert_eq!(video_display_frame(1000, 0, None, 1, 1.0), 1000);
         // вычитание
-        assert_eq!(video_display_frame(48_000, 4_800, None, 1), 43_200);
+        assert_eq!(video_display_frame(48_000, 4_800, None, 1, 1.0), 43_200);
         // клэмп в 0 у старта
-        assert_eq!(video_display_frame(100, 4_800, None, 1), 0);
+        assert_eq!(video_display_frame(100, 4_800, None, 1, 1.0), 0);
         // отрицательная задержка не двигает вперёд
-        assert_eq!(video_display_frame(1000, -500, None, 1), 1000);
+        assert_eq!(video_display_frame(1000, -500, None, 1, 1.0), 1000);
         // wrap в loop-регионе: 50_500 − 1_000 → заворот к концу региона
-        assert_eq!(video_display_frame(50_500, 1_000, Some((50_000, 60_000)), 1), 59_500);
+        assert_eq!(video_display_frame(50_500, 1_000, Some((50_000, 60_000)), 1, 1.0), 59_500);
         // внутри региона без пересечения границы
-        assert_eq!(video_display_frame(55_000, 1_000, Some((50_000, 60_000)), 1), 54_000);
+        assert_eq!(video_display_frame(55_000, 1_000, Some((50_000, 60_000)), 1, 1.0), 54_000);
         // до региона — линейно
-        assert_eq!(video_display_frame(10_000, 1_000, Some((50_000, 60_000)), 1), 9_000);
+        assert_eq!(video_display_frame(10_000, 1_000, Some((50_000, 60_000)), 1, 1.0), 9_000);
     }
 
     /// Тест 44 (J4): при реверсе знак компенсации задержки обратный —
     /// слышимое сейчас ПОЗЖЕ по таймлайну (playhead едет влево).
     #[test]
     fn t44_latency_sign_flips_in_reverse() {
-        assert_eq!(video_display_frame(48_000, 4_800, None, -1), 52_800);
-        assert_eq!(video_display_frame(48_000, 4_800, None, 1), 43_200);
+        assert_eq!(video_display_frame(48_000, 4_800, None, -1, 1.0), 52_800);
+        assert_eq!(video_display_frame(48_000, 4_800, None, 1, 1.0), 43_200);
         // в loop-регионе wrap в обе стороны
-        assert_eq!(video_display_frame(59_500, 1_000, Some((50_000, 60_000)), -1), 50_500);
-        assert_eq!(video_display_frame(1000, 0, None, -1), 1000, "нулевая задержка нейтральна");
+        assert_eq!(video_display_frame(59_500, 1_000, Some((50_000, 60_000)), -1, 1.0), 50_500);
+        assert_eq!(video_display_frame(1000, 0, None, -1, 1.0), 1000, "нулевая задержка нейтральна");
     }
 }
 
@@ -1109,4 +1155,96 @@ mod varispeed_tests {
         assert_eq!(consumed, 20);
         assert_eq!(out[99].0, 19.0, "после конца — последний кадр");
     }
+
+    /// Тест 114 (п.14 р.14): показ на МЕДЛЕННОЙ скорости не откатывается.
+    ///
+    /// Собираем всю цепочку целиком — шаг мастер-часов по скорости,
+    /// экстраполяция, компенсация задержки (с ДЖИТТЕРОМ, как её двигает
+    /// EMA), выравнивание по сетке и ратчет ключа. Раньше каждый кусок
+    /// проверялся изолированно при 1×, и ошибка единиц (wall-clock
+    /// задержка вычиталась из позиции таймлайна без учёта скорости)
+    /// пряталась между ними: при 0.25× картинка уезжала на пару кадров
+    /// назад — ровно жалоба пользователя.
+    #[test]
+    fn t114_display_key_never_goes_back_at_slow_rates() {
+        let fps_step = 90_000 / 30; // ячейка 30 fps в тиках
+        for &rate in &[0.25f32, 0.5, 1.0, 2.0, 8.0] {
+            for &dir in &[1i64, -1] {
+                let quantum = 2048i64; // кадров устройства на колбэк
+                let step = (quantum as f64 * rate as f64) as i64; // ход head
+                let mut head = 480_000i64;
+                let mut prev_key: Option<i64> = None;
+                let mut rollbacks = 0;
+                // 200 колбэков, между ними 8 UI-кадров
+                for cb in 0..200 {
+                    head += step * dir;
+                    // джиттер задержки: EMA гуляет на ±квант
+                    let latency = 2048 + (cb % 7) * 512;
+                    for ui in 0..8 {
+                        let elapsed = (quantum as f64 * rate as f64 * (ui as f64 / 8.0)) as i64;
+                        let extra = super::display_extrapolation(elapsed, step);
+                        let frames = super::video_display_frame(
+                            head + extra * dir,
+                            latency,
+                            None,
+                            dir,
+                            rate,
+                        );
+                        let key = kt_time::Tick::from_audio_frames(frames).0.div_euclid(fps_step)
+                            * fps_step;
+                        let (key, _, rolled) =
+                            super::preview_key_step(prev_key, key, fps_step, dir, false);
+                        if rolled {
+                            rollbacks += 1;
+                        }
+                        if let Some(p) = prev_key {
+                            assert!(
+                                (key - p) * dir >= 0,
+                                "rate={rate} dir={dir}: ключ показа уехал назад {p} → {key}"
+                            );
+                        }
+                        prev_key = Some(key);
+                    }
+                }
+                // ратчет обязан быть РЕДКОЙ страховкой, а не рабочим
+                // режимом: если он срабатывает постоянно — значит часы
+                // показа опять дрожат (это и был баг при 0.25×)
+                // Числа замерены: со старой (немасштабированной) задержкой
+                // при 0.25× ратчет ловил 186/189 откатов из 1600 выборок,
+                // с масштабированной — 10/6. При 1× обе формулы дают
+                // одинаковые 34/30, то есть правка нейтральна к норме.
+                if rate <= 1.0 {
+                    assert!(
+                        rollbacks < 50,
+                        "rate={rate} dir={dir}: {rollbacks} откатов — часы показа дрожат"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Ратчет: назад только по seek/переанкору, вперёд считает пропуски.
+    #[test]
+    fn t114_preview_key_step_rules() {
+        let step = 3000;
+        assert_eq!(super::preview_key_step(None, 9000, step, 1, false), (9000, 0, false));
+        // откат запрещён при любом размере — даже на 10 ячеек
+        assert_eq!(super::preview_key_step(Some(9000), 6000, step, 1, false), (9000, 0, true));
+        assert_eq!(super::preview_key_step(Some(9000), 0, step, 1, false), (9000, 0, true));
+        // seek/пауза — переанкор, ключ уходит куда сказано
+        assert_eq!(super::preview_key_step(Some(9000), 0, step, 1, true), (0, 0, false));
+        // вперёд: пропуск ячеек считается
+        assert_eq!(
+            super::preview_key_step(Some(9000), 12_000, step, 1, false),
+            (12_000, 0, false)
+        );
+        assert_eq!(
+            super::preview_key_step(Some(9000), 21_000, step, 1, false),
+            (21_000, 3, false)
+        );
+        // РЕВЕРС: убывание — норма, рост — откат
+        assert_eq!(super::preview_key_step(Some(9000), 6000, step, -1, false), (6000, 0, false));
+        assert_eq!(super::preview_key_step(Some(9000), 12_000, step, -1, false), (9000, 0, true));
+    }
+
 }

@@ -149,6 +149,9 @@ pub struct KtApp {
     /// Имя адаптера/бэкенда wgpu (диагностика перф-панели).
     pub gpu_info: Option<String>,
     pub snap_line: Option<i64>,
+    /// Поколение транспорта на прошлом кадре превью: его смена = seek,
+    /// только тогда ключу показа разрешено уехать назад (п.14 р.14).
+    pub preview_gen: u64,
     /// Магнит временно выключен (зажат Ctrl во время перетаскивания, п.2 р.11).
     /// Полезное поведение — умолчание, модификатор его СНИМАЕТ.
     pub snap_off: bool,
@@ -323,6 +326,7 @@ impl KtApp {
             glow_skip: 0,
             gpu_info: None,
             snap_line: None,
+            preview_gen: 0,
             snap_off: false,
             play_dir_back: false,
             meters_w: 70.0,
@@ -439,6 +443,7 @@ impl KtApp {
             glow_skip: 0,
             gpu_info: None,
             snap_line: None,
+            preview_gen: 0,
             snap_off: false,
             play_dir_back: false,
             meters_w: 70.0,
@@ -2141,19 +2146,23 @@ impl KtApp {
         // перезаливалась в GPU 60 раз/с независимо от fps проекта
         // (до ~500 МБ/с на 1080p — главный источник «визуально <30 fps»).
         let grid = self.player.video_grid();
-        let mut key_tick = preview_key_tick(grid, t);
-        // при игре ключ не откатывается назад на мелкий джиттер latency
-        // (откат больше 2 ячеек = loop-wrap/seek — пропускаем легитимно);
-        // пропуск ВПЕРЁД больше чем на ячейку — считаем (V-skip, п.1 р.5)
-        if self.player.transport.is_playing()
-            && let Some((prev, _, _)) = self.preview_key
-        {
-            let step = grid.frame_step();
-            if key_tick < prev && prev - key_tick <= 2 * step {
-                key_tick = prev;
-            } else if key_tick > prev + step {
-                self.perf.video_cells_skipped += ((key_tick - prev) / step - 1) as u64;
-            }
+        let raw_key = preview_key_tick(grid, t);
+        // Ключ не едет назад ВООБЩЕ, кроме seek/loop-wrap (п.14 р.14):
+        // прежний допуск «откат до 2 ячеек» был слеп к скорости и при
+        // 0.25× пропускал откаты картинки на пару кадров назад.
+        let tgen = self.player.transport.generation();
+        let reanchor = !self.player.transport.is_playing() || tgen != self.preview_gen;
+        let (key_tick, skipped, rolled) = kt_engine::player::preview_key_step(
+            self.preview_key.map(|k| k.0),
+            raw_key,
+            grid.frame_step(),
+            if self.play_dir_back { -1 } else { 1 },
+            reanchor,
+        );
+        self.preview_gen = tgen;
+        self.perf.video_cells_skipped += skipped;
+        if rolled {
+            self.perf.video_rollbacks += 1;
         }
         let key_now = (key_tick, (q.width, q.height));
         let need = match self.preview_key {
@@ -2165,7 +2174,11 @@ impl KtApp {
         if need {
             self.last_compose_retry = std::time::Instant::now();
             let mut rgba = std::mem::take(&mut self.preview_buf);
-            let (cq, c) = self.player.compose_preview_into(t, &mut rgba);
+            // композиция по РАТЧЕТНОМУ ключу, а не по сырому t: иначе на
+            // ретрае (кадр ещё догружается) картинка пересобиралась по
+            // позиции, которая на 1-2 ячейки позади ключа, и на экран
+            // уходил более ранний кадр (п.14 р.14)
+            let (cq, c) = self.player.compose_preview_into(Tick(key_tick), &mut rgba);
             complete = c;
             // держим последний ПОЛНЫЙ кадр: неполный композит не затирает
             // картинку (мигание «чёрный кадр ↔ Загрузка», п.14/15)
@@ -2629,7 +2642,10 @@ impl KtApp {
                     "V-показано {}",
                     self.perf.video_frames_shown
                 ),
-                format!("V-пропущено {}", self.perf.video_cells_skipped),
+                format!(
+                    "V-пропущено {} / откатов {}",
+                    self.perf.video_cells_skipped, self.perf.video_rollbacks
+                ),
             ),
         ];
         // ui.columns делит ДОСТУПНУЮ ширину пополам и не требует минимума —
@@ -3572,6 +3588,10 @@ pub struct PerfState {
     last_video_shown: u64,
     /// Пропущенные ячейки сетки кадров при игре (диагностика джиттера).
     pub video_cells_skipped: u64,
+    /// Откаты ключа показа назад (п.14 р.14): счётчик односторонним быть
+    /// не должен — при медленной игре пропусков вперёд не бывает вовсе,
+    /// и панель молчала ровно в том случае, на который жаловались.
+    pub video_rollbacks: u64,
     pub diag_open: bool,
     pub log: std::collections::VecDeque<String>,
     /// Дедуп подряд идущих одинаковых сообщений: (текст, повторов).
@@ -3629,6 +3649,7 @@ impl PerfState {
             vfps: 0.0,
             last_video_shown: 0,
             video_cells_skipped: 0,
+            video_rollbacks: 0,
             diag_open: false,
             log: std::collections::VecDeque::new(),
             last_msg: None,

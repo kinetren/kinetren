@@ -109,3 +109,62 @@ fn t113_export_frames_are_monotonic_and_uniform() {
         assert!(w[0] - w[1] <= 1, "реверс: пропущен кадр {} → {}", w[0], w[1]);
     }
 }
+
+/// Тест 115 (п.14 р.14): при МЕДЛЕННОМ воспроизведении (0.25×) ключ
+/// показанного кадра не откатывается назад — интеграционно, через живой
+/// `Player` с фейковым аудио-колбэком (звуковое железо не нужно).
+#[test]
+fn t115_preview_keys_are_monotonic_at_quarter_rate() {
+    use kt_engine::Player;
+    use kt_engine::player::preview_key_step;
+
+    let p = project(30, false);
+    let (player, mut ring) = Player::new(
+        p,
+        vec![(
+            MediaId(1),
+            Box::new(SyntheticSource::new(Tick(90_000 * 30), AudioPattern::Ramp)) as _,
+        )],
+    );
+    player.seek(Tick(0));
+    player.set_playback_rate(0.25);
+    player.play();
+
+    let grid = player.video_grid();
+    let step = grid.frame_step();
+    let mut prev: Option<i64> = None;
+    let mut rollbacks = 0u64;
+    let start = std::time::Instant::now();
+    let mut consumed = 0usize;
+    // ~1.5 с реального времени: колбэк по 1024 кадра, между ними
+    // несколько «UI-кадров» с чтением позиции показа
+    while start.elapsed().as_millis() < 1500 {
+        for _ in 0..1024 {
+            if ring.pop().is_err() {
+                break;
+            }
+        }
+        consumed += 1;
+        player
+            .shared
+            .consumed_frames
+            .fetch_add(256, std::sync::atomic::Ordering::AcqRel);
+        for _ in 0..4 {
+            let t = player.video_playhead();
+            let key = grid.align_floor(t).0;
+            let (key, _, rolled) = preview_key_step(prev, key, step, 1, false);
+            if rolled {
+                rollbacks += 1;
+            }
+            if let Some(pv) = prev {
+                assert!(key >= pv, "ключ показа уехал назад: {pv} → {key}");
+            }
+            prev = Some(key);
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+    }
+    assert!(consumed > 10, "колбэк не крутился: {consumed}");
+    // ратчет — страховка, а не рабочий режим: при исправных часах он
+    // срабатывает единицами раз, при дрожащих — постоянно
+    assert!(rollbacks < 20, "часы показа дрожат при 0.25×: {rollbacks} откатов");
+}
