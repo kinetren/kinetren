@@ -174,6 +174,42 @@ pub fn snap_threshold(tpp: f64) -> i64 {
     ((SNAP_PX * tpp) as i64).max(1_080)
 }
 
+/// Ближайшая магнитная цель, если она в пределах порога.
+pub fn snap_point(tick: i64, targets: &[i64], threshold: i64) -> Option<i64> {
+    targets
+        .iter()
+        .copied()
+        .map(|t| (t, (t - tick).abs()))
+        .filter(|(_, d)| *d <= threshold)
+        .min_by_key(|(t, d)| (*d, *t))
+        .map(|(t, _)| t)
+}
+
+/// Перенос клипа: магнитим НАЧАЛО либо КОНЕЦ, побеждает меньшее смещение.
+/// Возвращает новое начало и цель для жёлтой линии.
+///
+/// Дефект п.2 р.11: раньше кандидаты сравнивались уже ПОСЛЕ подстановки
+/// «не нашлось = оставить как есть», и такой кандидат имел смещение 0 —
+/// то есть всегда побеждал, а линия при этом рисовалась. Снап срабатывал
+/// только при одновременном попадании обоих краёв, и пользователь видел
+/// «линия есть, магнита нет».
+pub fn snap_move(raw: i64, dur: i64, targets: &[i64], threshold: i64) -> (i64, Option<i64>) {
+    let by_start = snap_point(raw, targets, threshold);
+    let by_end = snap_point(raw + dur, targets, threshold);
+    match (by_start, by_end) {
+        (Some(s), Some(e)) => {
+            if (s - raw).abs() <= (e - dur - raw).abs() {
+                (s, Some(s))
+            } else {
+                (e - dur, Some(e))
+            }
+        }
+        (Some(s), None) => (s, Some(s)),
+        (None, Some(e)) => (e - dur, Some(e)),
+        (None, None) => (raw, None),
+    }
+}
+
 /// Зоны клипа по ширине (п.17 р.6, тест 60): у узких клипов (< 3 захватов)
 /// трим-зоны сжимаются до w/4 (мин 2 px) — раньше клип уже 14 px целиком
 /// состоял из трим-зон и его нельзя было перенести.
@@ -330,11 +366,19 @@ impl TlGeom {
 impl KtApp {
     /// Магнитные цели: границы чужих клипов, маркеры, границы региона,
     /// playhead, ноль (порт snapTimeMs).
+    ///
+    /// Исключается не только сам клип, но и вся его link-группа: A/V-партнёр
+    /// стоит на тех же границах и притягивал клип обратно в точку старта
+    /// (п.2 р.11).
     pub fn snap_targets(&self, exclude: Option<ClipId>) -> Vec<i64> {
         let p = self.model.project();
+        let group = exclude
+            .and_then(|id| p.clips.iter().find(|c| c.id == id))
+            .and_then(|c| c.link_group);
         let mut t: Vec<i64> = vec![0, self.player.transport.playhead().0];
         for c in &p.clips {
-            if Some(c.id) != exclude {
+            let same_group = group.is_some() && c.link_group == group;
+            if Some(c.id) != exclude && !same_group {
                 t.push(c.start.0);
                 t.push(c.start.0 + c.duration.0);
             }
@@ -350,21 +394,19 @@ impl KtApp {
     }
 
     pub fn snap(&mut self, tick: i64, exclude: Option<ClipId>) -> i64 {
+        if self.snap_off {
+            return tick;
+        }
         // v1 snapTimeMs: порог 10 px, но не меньше 12 мс и не больше 100 мс
         let threshold = snap_threshold(self.ticks_per_px);
-        let mut best = tick;
-        let mut best_d = threshold + 1;
-        for target in self.snap_targets(exclude) {
-            let d = (target - tick).abs();
-            if d < best_d {
-                best_d = d;
-                best = target;
+        let targets = self.snap_targets(exclude);
+        match snap_point(tick, &targets, threshold) {
+            Some(t) => {
+                self.snap_line = Some(t);
+                t
             }
+            None => tick,
         }
-        if best != tick {
-            self.snap_line = Some(best);
-        }
-        best
     }
 
     pub fn lane_counts(&self) -> (u32, u32) {
@@ -954,6 +996,8 @@ impl KtApp {
         let pointer = response.interact_pointer_pos();
         let hover = response.hover_pos();
         self.snap_line = None;
+        // магнит включён всегда; Ctrl его снимает (п.2 р.11)
+        self.snap_off = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
 
         let marker_at = |app: &KtApp, pos: egui::Pos2| -> Option<i64> {
             if pos.y > rect.top() + RULER_H {
@@ -1051,7 +1095,7 @@ impl KtApp {
                     Some((_, ClipZone::Body)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                         zone_hint = Some(
-                            "Клип: тяни — перенос, двойной клик — FX, ПКМ — меню, S — разрез",
+                            "Клип: тяни — перенос (Ctrl — без магнита), двойной клик — FX, ПКМ — меню, S — разрез",
                         );
                     }
                     None => {
@@ -1230,11 +1274,20 @@ impl KtApp {
                         DragMode::Move => {
                             let raw = x_to_tick(pos.x) - d.grab_dt;
                             let dur = d.orig.duration.0;
-                            let s1 = self.snap(raw, Some(d.id));
-                            let s2 = self.snap(raw + dur, Some(d.id)) - dur;
-                            let snapped =
-                                if (s1 - raw).abs() <= (s2 - raw).abs() { s1 } else { s2 };
+                            let (snapped, line) = if self.snap_off {
+                                (raw, None)
+                            } else {
+                                let targets = self.snap_targets(Some(d.id));
+                                snap_move(
+                                    raw,
+                                    dur,
+                                    &targets,
+                                    snap_threshold(self.ticks_per_px),
+                                )
+                            };
                             d.cur_start = snapped.max(0);
+                            // упор в ноль ломает примагничивание — линию гасим
+                            self.snap_line = if d.cur_start == snapped { line } else { None };
                             d.cur_end = d.cur_start + dur;
                             // строки перемешаны (п.6): прилипаем к
                             // ближайшей строке СВОЕГО вида (тест 50)
@@ -2461,5 +2514,28 @@ mod geom_tests {
         assert_eq!(g.nearest_lane(ClipKind::Audio, 0), 0);
         // аудио внизу (row 4) — A1
         assert_eq!(g.nearest_lane(ClipKind::Audio, 4), 1);
+    }
+
+    /// Тест 95 (п.2 р.11): выбор кандидата магнита при переносе клипа.
+    #[test]
+    fn t95_snap_move_candidates() {
+        let dur = 100;
+        let th = 10;
+        // цель только для НАЧАЛА — раньше побеждал «не двигать» со
+        // смещением 0, и магнит молча не работал
+        assert_eq!(snap_move(104, dur, &[100], th), (100, Some(100)));
+        // цель только для КОНЦА: конец клипа тянется к 500
+        assert_eq!(snap_move(404, dur, &[500], th), (400, Some(500)));
+        // обе цели: побеждает меньшее смещение (конец ближе)
+        assert_eq!(snap_move(105, dur, &[100, 208], th), (108, Some(208)));
+        assert_eq!(snap_move(103, dur, &[100, 208], th), (100, Some(100)));
+        // ни одной цели в пороге — ничего не двигаем и линии нет
+        assert_eq!(snap_move(300, dur, &[100, 500], th), (300, None));
+        // ровно на пороге цель ещё считается, за порогом — уже нет
+        assert_eq!(snap_move(110, dur, &[100], th), (100, Some(100)));
+        assert_eq!(snap_move(111, dur, &[100], th), (111, None));
+        // одиночная точка: ближайшая из нескольких
+        assert_eq!(snap_point(104, &[100, 107, 300], th), Some(107));
+        assert_eq!(snap_point(104, &[300], th), None);
     }
 }

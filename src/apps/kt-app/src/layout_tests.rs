@@ -388,3 +388,102 @@ fn t94_forward_navigation_advances() {
     }
     assert_eq!(h.state().player.transport.playhead().0, 0, "не дошли до нуля");
 }
+
+/// Тест 95 (п.2 р.11): магнит РЕАЛЬНО притягивает клип к границе соседа.
+///
+/// Дефект: кандидаты «примагнитить по началу» и «по концу» сравнивались
+/// после подстановки «не нашлось = как есть», и такой кандидат со
+/// смещением 0 всегда побеждал — жёлтая линия рисовалась, а клип не
+/// прилипал. Тест ведёт мышь как человек (нажать, сдвинуть, отпустить) и
+/// проверяет ИТОГОВУЮ модель, а не внутренние поля.
+#[test]
+fn t95_clip_drag_snaps_to_neighbour() {
+    use kt_model::*;
+    use kt_time::Tick;
+
+    // тики/px = 1000 → порог магнита 10 px = 10 000 тиков
+    const TPP: f64 = 1000.0;
+    const DUR: i64 = 90_000;
+    const NEIGHBOUR_END: i64 = DUR; // сосед [0, 90000)
+    const FAR: i64 = 200_000; // таскаемый клип
+
+    fn scene(ctrl: bool) -> (i64, i64) {
+        let mut h = harness();
+        {
+            let app = h.state_mut();
+            let mut p = app.model.project().clone();
+            p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+            for (n, start) in [(1u64, 0i64), (2, FAR)] {
+                p.clips.push(ClipEvent {
+                    id: ClipId(n),
+                    link_group: None,
+                    kind: ClipKind::Video,
+                    lane: 0,
+                    start: Tick(start),
+                    duration: Tick(DUR),
+                    source_in: Tick(0),
+                    media: MediaId(1),
+                    gain_db: 0.0,
+                    reversed: false,
+                    fx_bypass: vec![],
+                    fx: vec![],
+                });
+            }
+            p.validate().unwrap();
+            app.model = kt_model::TimelineModel::new(p);
+            app.view_start = 0.0;
+            app.ticks_per_px = TPP;
+            app.player.seek(Tick(0));
+        }
+        h.step();
+
+        let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+        let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+        let grab = g.tick_to_x(FAR + DUR / 2);
+        if ctrl {
+            h.event(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
+        }
+        h.hover_at(egui::pos2(grab, y));
+        h.step();
+        h.drag_at(egui::pos2(grab, y));
+        h.step();
+        // сдвиг на 8 px — здесь egui и признаёт драг начавшимся
+        h.hover_at(egui::pos2(grab - 8.0, y));
+        h.step();
+
+        // целимся так, чтобы НАЧАЛО оказалось на 4 px правее конца соседа:
+        // магнит должен дотянуть, «без магнита» — оставить как есть.
+        let want_raw = NEIGHBOUR_END + (4.0 * TPP) as i64;
+        let grab_dt = match h.state().drag {
+            Some(crate::timeline::Drag::Clip(ref d)) => d.grab_dt,
+            _ => panic!("драг клипа не начался — его перехватил кто-то другой"),
+        };
+        let to = g.tick_to_x(want_raw + grab_dt);
+        h.hover_at(egui::pos2(to, y));
+        h.step();
+        h.drop_at(egui::pos2(to, y));
+        h.step();
+
+        let start = h
+            .state()
+            .model
+            .project()
+            .clips
+            .iter()
+            .find(|c| c.id == ClipId(2))
+            .expect("клип пропал")
+            .start
+            .0;
+        (start, want_raw)
+    }
+
+    let (snapped, _) = scene(false);
+    assert_eq!(snapped, NEIGHBOUR_END, "магнит не притянул клип к соседу");
+
+    let (free, raw) = scene(true);
+    assert!(
+        (free - raw).abs() <= 2 * TPP as i64,
+        "Ctrl обязан снимать магнит: клип встал в {free}, ждали ≈{raw}"
+    );
+    assert_ne!(free, NEIGHBOUR_END, "Ctrl не снял магнит");
+}

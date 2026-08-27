@@ -121,6 +121,9 @@ pub struct KtApp {
     /// Имя адаптера/бэкенда wgpu (диагностика перф-панели).
     pub gpu_info: Option<String>,
     pub snap_line: Option<i64>,
+    /// Магнит временно выключен (зажат Ctrl во время перетаскивания, п.2 р.11).
+    /// Полезное поведение — умолчание, модификатор его СНИМАЕТ.
+    pub snap_off: bool,
     pub ctx_target: Option<CtxTarget>,
     /// Live-громкость volume rail до отпускания (id, dB).
     pub live_gain: Option<(ClipId, f32)>,
@@ -277,6 +280,7 @@ impl KtApp {
             glow_skip: 0,
             gpu_info: None,
             snap_line: None,
+            snap_off: false,
             ctx_target: None,
             live_gain: None,
             status: error.map(|e| (e, std::time::Instant::now())),
@@ -382,6 +386,7 @@ impl KtApp {
             glow_skip: 0,
             gpu_info: None,
             snap_line: None,
+            snap_off: false,
             ctx_target: None,
             live_gain: None,
             status: err.map(|e| (e, std::time::Instant::now())),
