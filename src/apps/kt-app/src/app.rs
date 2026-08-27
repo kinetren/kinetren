@@ -614,7 +614,7 @@ impl KtApp {
                 self.draw_preview_controls(ui);
                 ui.add_space(3.0);
             });
-            egui::Panel::right("meters_col").resizable(true).default_size(70.0).min_size(64.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
+            egui::Panel::right("meters_col").resizable(true).default_size(70.0).min_size(64.0).max_size(180.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
                 // кнопки окна — здесь, в вёрстке (п.15 р.8)
                 self.draw_window_buttons(ui);
                 self.draw_meters(ui);
@@ -630,7 +630,7 @@ impl KtApp {
                     let full = ui.available_rect_before_wrap();
                     let strip = egui::Rect::from_min_max(
                         egui::pos2(full.left() - 8.0, full.top() + WIN_EDGE),
-                        egui::pos2(full.right() + 8.0, full.top() + 20.0),
+                        egui::pos2(full.right() + 8.0, full.top() + TOP_DRAG_H),
                     );
                     let bg = ui.interact(
                         strip,
@@ -638,10 +638,11 @@ impl KtApp {
                         egui::Sense::click_and_drag(),
                     );
                     self.window_drag_from(&bg, ui.ctx());
-                    ui.advance_cursor_after_rect(egui::Rect::from_min_max(
-                        full.min,
-                        egui::pos2(full.right(), full.top() + 20.0),
-                    ));
+                    // МЕСТА полоса не занимает (п.1 р.11): раньше здесь
+                    // стоял advance_cursor_after_rect, и превью теряло
+                    // 20 px по высоте ни за что. Клики полоса не крадёт —
+                    // egui ищет цель клика и цель драга независимо, а
+                    // превью само не принимает клики выше TOP_DRAG_H.
                 }
                 if self.preview_detached {
                     ui.centered_and_justified(|ui| {
@@ -2101,8 +2102,16 @@ impl KtApp {
         } else if self.incomplete_since.is_none() {
             self.incomplete_since = Some(std::time::Instant::now());
         }
-        let (rect, resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
+        let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
         self.preview_rect = rect;
+        // картинка рисуется от самого верха окна, а клики принимаются
+        // НИЖЕ полосы перетаскивания окна: иначе нажатие у кромки — это
+        // одновременно ресайз, перенос окна и play/pause (п.1 р.11)
+        let hit = egui::Rect::from_min_max(
+            egui::pos2(rect.left(), rect.top() + TOP_DRAG_H),
+            rect.max,
+        );
+        let resp = ui.interact(hit, ui.id().with("preview-click"), egui::Sense::click());
         let resp = self.hint(resp, "Клик — play/pause, двойной клик — отделить превью в окно");
         // пп.10-11 р.7: одиночный клик (отложенный на окно double-click) =
         // play/pause; двойной = detach/attach. Работает и в отдельном окне
@@ -3028,6 +3037,9 @@ pub fn resize_cursor(dir: egui::ResizeDirection) -> egui::CursorIcon {
 
 /// Ширина «хватаемой» кромки окна и радиус угла (п.12 р.8: 4 px требовали
 /// пиксельного прицеливания).
+/// Высота невидимой полосы перетаскивания окна вдоль верхней кромки
+/// (п.2 р.9). Места не занимает — просто первые пиксели центральной зоны.
+pub const TOP_DRAG_H: f32 = 20.0;
 pub const WIN_EDGE: f32 = 8.0;
 pub const WIN_CORNER: f32 = 16.0;
 

@@ -148,6 +148,28 @@ pub(crate) fn zone_color(db: f32) -> egui::Color32 {
     }
 }
 
+/// Шаг LED-сегмента в ДЕЦИБЕЛАХ (п.8 р.11). Раньше сегменты нарезались
+/// по пикселям (6 px + 2 px), поэтому их число и положение плыли с
+/// высотой панели, а границы цветовых зон резали сегмент пополам. 1.5 dB
+/// делит нацело каждую зону (6/3/6/9/18/12) — сегмент всегда одноцветный
+/// и всегда либо горит целиком, либо не горит вовсе.
+pub const SEG_DB: f32 = 1.5;
+pub const SEG_COUNT: usize = 36; // (METER_MAX_DB − METER_MIN_DB) / SEG_DB
+
+/// Сколько сегментов зажжено при уровне db (чистая, тест 97).
+pub fn led_lit(db: f32) -> usize {
+    if db <= METER_MIN_DB {
+        return 0;
+    }
+    let n = ((db - METER_MIN_DB) / SEG_DB).ceil() as i32;
+    n.clamp(0, SEG_COUNT as i32) as usize
+}
+
+/// Середина сегмента i (0 — самый нижний) в dB: по ней берётся цвет зоны.
+pub fn seg_mid_db(i: usize) -> f32 {
+    METER_MIN_DB + (i as f32 + 0.5) * SEG_DB
+}
+
 /// Зонные полосы dB (верх, низ) сверху вниз: смежные, без дыр и
 /// перекрытий, покрывают весь диапазон метра (тест 40).
 pub(crate) const ZONE_BANDS: [(f32, f32); 6] =
@@ -303,20 +325,6 @@ impl KtApp {
 
         let loud_db = self.meter.bar_db[0].max(self.meter.bar_db[1]);
 
-        // фоны ОБОИХ баров ДО свечения (п.9 v1.4: раньше glow рисовался
-        // внутри цикла под ch==0 и непрозрачный фон второго бара его
-        // закрашивал — эффект был виден только на первом)
-        for &x0 in &bar_x {
-            painter.rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(x0 - 1.0, bars.top() - 1.0),
-                    egui::pos2(x0 + bar_w + 1.0, bars.bottom() + 1.0),
-                ),
-                2.0,
-                egui::Color32::from_rgb(8, 9, 11),
-            );
-        }
-
         // --- свечение (пп.8-9 v1.4): цвет по ЗОНАМ высоты, один меш ------
         // вертикальный градиент с остановками на границах зон (glow_stops,
         // тест 40) и треугольным горизонтальным затуханием — заменяет
@@ -374,43 +382,22 @@ impl KtApp {
             );
         }
 
-        for (ch, &x0) in bar_x.iter().enumerate() {
-            // LED-сегменты v1: 6 px + 2 px зазор, светлая верхняя кромка
-            let mut y = bars.bottom();
-            while y > bars.top() {
-                let seg_top = (y - 6.0).max(bars.top());
-                let db_here = METER_MIN_DB
-                    + (bars.bottom() - y) / bars.height() * (METER_MAX_DB - METER_MIN_DB);
-                let lit = db_here <= self.meter.bar_db[ch];
-                let col =
-                    if lit { zone_color(db_here) } else { egui::Color32::from_rgb(14, 16, 19) };
-                let seg = egui::Rect::from_min_max(
-                    egui::pos2(x0, seg_top),
-                    egui::pos2(x0 + bar_w, y - 1.0),
-                );
-                painter.rect_filled(seg.shrink(0.5), 1.0, col);
-                if lit {
-                    painter.line_segment(
-                        [
-                            egui::pos2(seg.left() + 1.0, seg.top() + 0.5),
-                            egui::pos2(seg.right() - 1.0, seg.top() + 0.5),
-                        ],
-                        egui::Stroke::new(1.0, col.gamma_multiply(1.25)),
-                    );
-                }
-                y -= 8.0;
-            }
-            // линия 0 dB поперёк бара (порт: 95,105,118,140)
-            let zero_y = db_to_y(0.0);
-            painter.line_segment(
-                [egui::pos2(x0, zero_y), egui::pos2(x0 + bar_w, zero_y)],
-                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(95, 105, 118, 140)),
+        // непрозрачные подложки баров — ПОСЛЕ свечения (п.8 р.11): иначе
+        // зонный меш просвечивал в зазорах между сегментами и «погашенная»
+        // часть шкалы выглядела наполовину зажжённой. Ореол шире баров,
+        // поэтому снаружи он остаётся.
+        for &x0 in &bar_x {
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(x0 - 1.0, bars.top() - 1.0),
+                    egui::pos2(x0 + bar_w + 1.0, bars.bottom() + 1.0),
+                ),
+                2.0,
+                egui::Color32::from_rgb(8, 9, 11),
             );
         }
 
-        // головной блик ПОВЕРХ LED обоих баров (bloom симметричен, п.9);
-        // цвет — зоны уровня: локально у головы, ниже доминируют зонные
-        // цвета меша (п.8)
+        // головной блик — ТОЖЕ до сегментов, иначе размазывает зазоры
         if loud_db > METER_MIN_DB + 1.0 {
             let cx = bars.center().x;
             let wide = bars.width() * 1.15;
@@ -431,29 +418,64 @@ impl KtApp {
             );
         }
 
+        // peak-hold: ореол вокруг кэпа (сам кэп — ЗАЖЖЁННЫЙ СЕГМЕНТ выше,
+        // а не прямоугольник на произвольной высоте, п.8 р.11)
         for (ch, &x0) in bar_x.iter().enumerate() {
-            // peak-hold cap: кремово-белый сегмент со свечением (v1)
             let cap_db = self.meter.cap_db[ch];
             if cap_db > self.meter.bar_db[ch] + 0.4 && cap_db > METER_MIN_DB + 1.0 {
-                let cap_y = db_to_y(cap_db);
-                let cap_col = cap_glow_color(cap_db);
                 glow_ellipse(
                     &painter,
-                    egui::pos2(x0 + bar_w / 2.0, cap_y),
+                    egui::pos2(x0 + bar_w / 2.0, db_to_y(cap_db)),
                     egui::vec2(bar_w * 2.0, 13.0),
-                    cap_col,
+                    cap_glow_color(cap_db),
                     22,
-                );
-                painter.rect_filled(
-                    egui::Rect::from_min_max(
-                        egui::pos2(x0, cap_y - 2.5),
-                        egui::pos2(x0 + bar_w, cap_y),
-                    ),
-                    1.0,
-                    cap_col,
                 );
             }
         }
+
+        for (ch, &x0) in bar_x.iter().enumerate() {
+            // LED-сегменты по сетке dB: каждый горит целиком или не горит
+            let lit_n = led_lit(self.meter.bar_db[ch]);
+            let cap_db = self.meter.cap_db[ch];
+            let cap_seg = (cap_db > self.meter.bar_db[ch] + 0.4
+                && cap_db > METER_MIN_DB + 1.0)
+                .then(|| led_lit(cap_db).saturating_sub(1));
+            let seg_h = bars.height() / SEG_COUNT as f32;
+            let gap_y = (seg_h * 0.28).clamp(0.5, 2.0);
+            for i in 0..SEG_COUNT {
+                let y_bot = db_to_y(METER_MIN_DB + i as f32 * SEG_DB);
+                let y_top = db_to_y(METER_MIN_DB + (i + 1) as f32 * SEG_DB);
+                let seg = egui::Rect::from_min_max(
+                    egui::pos2(x0, y_top),
+                    egui::pos2(x0 + bar_w, y_bot - gap_y),
+                );
+                let lit = i < lit_n;
+                let col = if cap_seg == Some(i) {
+                    cap_glow_color(seg_mid_db(i))
+                } else if lit {
+                    zone_color(seg_mid_db(i))
+                } else {
+                    egui::Color32::from_rgb(14, 16, 19)
+                };
+                painter.rect_filled(seg, 1.0, col);
+                if lit || cap_seg == Some(i) {
+                    painter.line_segment(
+                        [
+                            egui::pos2(seg.left() + 1.0, seg.top() + 0.5),
+                            egui::pos2(seg.right() - 1.0, seg.top() + 0.5),
+                        ],
+                        egui::Stroke::new(1.0, col.gamma_multiply(1.25)),
+                    );
+                }
+            }
+            // линия 0 dB поперёк бара (порт: 95,105,118,140)
+            let zero_y = db_to_y(0.0);
+            painter.line_segment(
+                [egui::pos2(x0, zero_y), egui::pos2(x0 + bar_w, zero_y)],
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(95, 105, 118, 140)),
+            );
+        }
+
         // шкала 0/-12/-24/-48
         for mark in [0.0f32, -12.0, -24.0, -48.0] {
             let y = db_to_y(mark);

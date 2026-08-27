@@ -9,9 +9,18 @@ use kt_cache::BurstKind;
 use kt_model::*;
 use kt_time::{AUDIO_BURST_FRAMES, Tick};
 
+// Линейка разложена на три полосы (п.6 р.11): имена меток рисовались от
+// самого верха и ложились ПОВЕРХ полосок кэша.
 pub const STRIPES_H: f32 = 11.0; // 4+1+4+2: глобальные полоски кэша
-pub const RULER_H: f32 = 22.0 + STRIPES_H;
+pub const MARKS_H: f32 = 13.0; // флажки меток и их имена
+pub const TIME_H: f32 = 15.0; // риски и цифры времени
+pub const MARKS_TOP: f32 = STRIPES_H;
+pub const TIME_TOP: f32 = STRIPES_H + MARKS_H;
+pub const RULER_H: f32 = STRIPES_H + MARKS_H + TIME_H;
 pub const GUTTER_W: f32 = 34.0; // п.20 р.6: поуже
+/// Предел ярлыка длинного имени дорожки (п.10 р.11): дальше — многоточие,
+/// полное имя показывает подсказка.
+pub const LANE_LABEL_MAX_W: f32 = 160.0;
 /// Единые пределы зума (п.17 р.6): 2e6 тиков/px = 22 с/px — 30-минутный
 /// проект целиком в окне ~80 px... на всю ширину ≈ 1.5 px/с и мельче.
 pub const TPP_MIN: f64 = 30.0;
@@ -682,17 +691,17 @@ impl KtApp {
             let major = t % label_step == 0;
             ruler_mesh.add_colored_rect(
                 egui::Rect::from_min_max(
-                    egui::pos2(x, rect.top() + STRIPES_H),
+                    egui::pos2(x, rect.top() + TIME_TOP),
                     egui::pos2(
                         x + 1.0,
-                        rect.top() + if major { RULER_H } else { STRIPES_H + 7.0 },
+                        rect.top() + if major { RULER_H } else { TIME_TOP + 6.0 },
                     ),
                 ),
                 tick_col,
             );
             if major {
                 painter.text(
-                    egui::pos2(x + 4.0, rect.top() + STRIPES_H + 3.0),
+                    egui::pos2(x + 4.0, rect.top() + TIME_TOP + 1.0),
                     egui::Align2::LEFT_TOP,
                     format_ruler_time(t),
                     egui::FontId::proportional(10.5),
@@ -1067,7 +1076,8 @@ impl KtApp {
         if self.drag.is_none()
             && let Some(pos) = hover
         {
-            let zone_hint: Option<&str>;
+            let mut zone_hint: Option<&str> = None;
+            let mut hint_owned: Option<String> = None;
             if marker_at(self, pos).is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                 zone_hint = Some("Маркер: тяни — сдвинуть, ПКМ — удалить");
@@ -1077,7 +1087,15 @@ impl KtApp {
             } else if pos.y <= rect.top() + RULER_H {
                 zone_hint = Some("Линейка: клик и тяни — перемотка курсора");
             } else if pos.x < rect.left() {
-                zone_hint = Some("Дорожка: тяни — поменять порядок, ПКМ — добавить/удалить");
+                // полное имя дорожки — в подсказке (ярлык может быть усечён)
+                if let Some((k, l)) = geom.key_at_y(pos.y) {
+                    let name = kt_model::lane_label(&self.lane_names, k, l);
+                    hint_owned = Some(format!(
+                        "{name}: тяни — поменять порядок, ПКМ — добавить/удалить"
+                    ));
+                } else {
+                    zone_hint = Some("Дорожка: тяни — поменять порядок, ПКМ — добавить/удалить");
+                }
             } else {
                 match clip_at(self, pos) {
                     Some((_, ClipZone::TrimStart)) => {
@@ -1105,7 +1123,9 @@ impl KtApp {
                     }
                 }
             }
-            if let Some(h) = zone_hint {
+            if let Some(h) = hint_owned {
+                self.hover_hint = Some(h);
+            } else if let Some(h) = zone_hint {
                 self.hover_hint = Some(h.to_string());
             }
         }
@@ -1905,23 +1925,25 @@ impl KtApp {
                 continue;
             }
             let amber = egui::Color32::from_rgb(255, 195, 0);
+            let top = rect.top() + MARKS_TOP;
             full_painter.line_segment(
-                [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                [egui::pos2(x, top), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(1.0, amber),
             );
             full_painter.add(egui::Shape::convex_polygon(
                 vec![
-                    egui::pos2(x - 5.0, rect.top()),
-                    egui::pos2(x + 5.0, rect.top()),
-                    egui::pos2(x, rect.top() + 8.0),
+                    egui::pos2(x - 5.0, top),
+                    egui::pos2(x + 5.0, top),
+                    egui::pos2(x, top + 8.0),
                 ],
                 amber,
                 egui::Stroke::NONE,
             ));
-            // имя метки — в полосе линейки, правее флажка (п.1 р.10)
+            // имя метки — в СВОЕЙ полосе линейки, правее флажка (п.1 р.10,
+            // п.6 р.11: раньше налезало на полоски кэша)
             if !m.name.is_empty() {
                 full_painter.text(
-                    egui::pos2(x + 7.0, rect.top() + 1.0),
+                    egui::pos2(x + 7.0, top + 1.0),
                     egui::Align2::LEFT_TOP,
                     &m.name,
                     egui::FontId::proportional(10.5),
@@ -1937,7 +1959,7 @@ impl KtApp {
             let mut done: Option<bool> = None; // Some(true) — сохранить
             egui::Area::new(egui::Id::new("marker-name-edit"))
                 .order(egui::Order::Foreground)
-                .fixed_pos(egui::pos2(x + 6.0, rect.top() + 2.0))
+                .fixed_pos(egui::pos2(x + 6.0, rect.top() + MARKS_TOP))
                 .show(ui.ctx(), |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         let r = ui.add(
@@ -2103,13 +2125,46 @@ impl KtApp {
                 mid,
                 egui::Color32::TRANSPARENT,
             );
+            // п.10 р.11: переименованная дорожка в 34-пиксельный жёлоб не
+            // влезает — раньше текст центрировался в нём и вытекал В ОБЕ
+            // стороны: слева обрезался краем окна, справа лез на клипы.
+            // Теперь: влезает — как раньше; не влезает — ярлык от левого
+            // края поверх НАЧАЛА дорожки, на своей подложке, с усечением.
+            let col = egui::Color32::from_gray(175);
+            let font = egui::FontId::proportional(12.0);
             for (label, cy) in &gutter_labels {
-                full_painter.text(
-                    egui::pos2(gutter.left() + gutter.width() * 0.42, *cy),
-                    egui::Align2::CENTER_CENTER,
-                    label,
-                    egui::FontId::proportional(12.0),
-                    egui::Color32::from_gray(165),
+                let fit = full_painter.layout_no_wrap(label.clone(), font.clone(), col);
+                if fit.size().x <= gutter.width() - 4.0 {
+                    full_painter.text(
+                        egui::pos2(gutter.left() + gutter.width() * 0.42, *cy),
+                        egui::Align2::CENTER_CENTER,
+                        label,
+                        font.clone(),
+                        col,
+                    );
+                    continue;
+                }
+                let mut job = egui::text::LayoutJob::single_section(
+                    label.clone(),
+                    egui::TextFormat { font_id: font.clone(), color: col, ..Default::default() },
+                );
+                job.wrap = egui::text::TextWrapping {
+                    max_width: LANE_LABEL_MAX_W,
+                    max_rows: 1,
+                    break_anywhere: true,
+                    overflow_character: Some('…'),
+                };
+                let galley = full_painter.layout_job(job);
+                let x = gutter.left() + 3.0;
+                let plate = egui::Rect::from_min_size(
+                    egui::pos2(x - 3.0, *cy - galley.size().y * 0.5 - 1.0),
+                    egui::vec2(galley.size().x + 12.0, galley.size().y + 2.0),
+                );
+                crate::theme::hgrad(&full_painter, plate, solid, egui::Color32::TRANSPARENT);
+                full_painter.galley(
+                    egui::pos2(x, *cy - galley.size().y * 0.5),
+                    galley,
+                    col,
                 );
             }
         }
@@ -2148,14 +2203,14 @@ impl KtApp {
             }
             full_painter.add(egui::Shape::mesh(mesh));
             full_painter.line_segment(
-                [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                [egui::pos2(x, rect.top() + MARKS_TOP), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 100)),
             );
             full_painter.add(egui::Shape::convex_polygon(
                 vec![
-                    egui::pos2(x - 6.0, rect.top()),
-                    egui::pos2(x + 6.0, rect.top()),
-                    egui::pos2(x, rect.top() + 9.0),
+                    egui::pos2(x - 6.0, rect.top() + MARKS_TOP),
+                    egui::pos2(x + 6.0, rect.top() + MARKS_TOP),
+                    egui::pos2(x, rect.top() + MARKS_TOP + 9.0),
                 ],
                 egui::Color32::from_rgb(255, 80, 80),
                 egui::Stroke::NONE,

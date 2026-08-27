@@ -129,8 +129,10 @@ fn t76_window_edges_resize() {
 #[test]
 fn t76_top_area_gives_space_to_preview() {
     let mut h = harness();
+    // п.1 р.11: превью начинается У САМОЙ кромки — полоса перетаскивания
+    // окна места больше не занимает (было ~23 px впустую)
     assert!(
-        h.state().preview_rect.top() < 30.0,
+        h.state().preview_rect.top() <= crate::app::WIN_EDGE,
         "превью не дотянулось до верха: {:?}",
         h.state().preview_rect
     );
@@ -538,4 +540,81 @@ fn t96_dirty_split_and_loop_survives_esc() {
 
     // --- автосейв не срабатывает чаще положенного и не пишет во время жеста
     assert!(!h.state().autosave_due(), "автосейв сразу после старта — слишком часто");
+}
+
+/// Тест 97 (пп.1,7,8 р.11): верх превью, предел ширины метров, LED-сетка.
+#[test]
+fn t97_top_meters_and_leds() {
+    use crate::meters::{METER_MAX_DB, METER_MIN_DB, SEG_COUNT, SEG_DB, led_lit, seg_mid_db,
+        zone_color};
+
+    // --- (п.8) сегменты: монотонность, границы, одноцветность
+    assert_eq!(led_lit(METER_MIN_DB), 0, "тишина — всё погашено");
+    assert_eq!(led_lit(METER_MIN_DB - 20.0), 0);
+    assert_eq!(led_lit(METER_MAX_DB), SEG_COUNT, "клип — шкала до верха");
+    assert_eq!(led_lit(METER_MAX_DB + 6.0), SEG_COUNT, "перегруз не выходит за шкалу");
+    let mut prev = 0;
+    let mut db = METER_MIN_DB;
+    while db <= METER_MAX_DB {
+        let n = led_lit(db);
+        assert!(n >= prev, "число сегментов обязано расти монотонно при {db} dB");
+        prev = n;
+        db += 0.1;
+    }
+    // ни один сегмент не пересекает границу цветовой зоны — иначе он
+    // был бы двухцветным и «горел наполовину»
+    for i in 0..SEG_COUNT {
+        let lo = METER_MIN_DB + i as f32 * SEG_DB + 0.01;
+        let hi = METER_MIN_DB + (i + 1) as f32 * SEG_DB - 0.01;
+        assert_eq!(
+            zone_color(lo),
+            zone_color(hi),
+            "сегмент {i} ({lo}..{hi} dB) двухцветный"
+        );
+        assert_eq!(zone_color(seg_mid_db(i)), zone_color(lo), "цвет сегмента {i} не из его зоны");
+    }
+
+    let mut h = harness();
+    // --- (п.1) превью начинается у самой кромки окна
+    let top = h.state().preview_rect.top();
+    assert!(top <= crate::app::WIN_EDGE, "превью не у верха: {top}");
+
+    // клик в полосе перетаскивания окна НЕ должен играть/ставить паузу
+    let playing = h.state().player.transport.is_playing();
+    let x = h.state().preview_rect.center().x;
+    h.drag_at(egui::pos2(x, crate::app::WIN_EDGE + 4.0));
+    h.step();
+    h.drop_at(egui::pos2(x, crate::app::WIN_EDGE + 4.0));
+    h.step();
+    assert_eq!(
+        h.state().player.transport.is_playing(),
+        playing,
+        "клик в полосе драга окна дёрнул воспроизведение"
+    );
+    // а ниже полосы — обычный клик по превью (play/pause с задержкой на
+    // распознавание двойного клика)
+    let y = h.state().preview_rect.center().y;
+    h.drag_at(egui::pos2(x, y));
+    h.step();
+    h.drop_at(egui::pos2(x, y));
+    h.step();
+    assert!(
+        h.state().preview_click_at.is_some() || h.state().player.transport.is_playing() != playing,
+        "клик по превью не дошёл"
+    );
+
+    // --- (п.7) панель метров нельзя растянуть на пол-экрана
+    let sep = panel_rect(&h, "meters_col").left();
+    let mid = H * 0.5;
+    h.hover_at(egui::pos2(sep, mid));
+    h.step();
+    h.drag_at(egui::pos2(sep, mid));
+    h.step();
+    h.hover_at(egui::pos2(W * 0.4, mid));
+    h.step();
+    h.drop_at(egui::pos2(W * 0.4, mid));
+    h.step();
+    let w = panel_width(&h, "meters_col");
+    assert!(w <= 180.0, "метры растянулись на {w} px — нет верхнего предела");
+    assert!(w > 100.0, "сепаратор метров вообще не потянулся ({w}) — тест ничего не проверил");
 }
