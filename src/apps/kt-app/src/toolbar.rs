@@ -134,14 +134,16 @@ impl KtApp {
                 ))
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
+        // ФАКТИЧЕСКИЙ конец последней кнопки меню: min_rect самого
+        // MenuBar растянут на всю доступную ширину, и имя проекта из-за
+        // этого улетало к правому краю колонки (п.5 р.12)
         let menu_end = if wide {
-            self.draw_menus(&mut child);
-            child.min_rect().right()
+            self.draw_menus(&mut child)
         } else {
-            child.menu_button(crate::icons::LIST, |ui| {
-                self.menu_items(ui);
+            let r = child.menu_button(crate::icons::LIST, |ui| {
+                let _ = self.menu_items(ui);
             });
-            child.min_rect().right()
+            r.response.rect.right()
         };
         ui.advance_cursor_after_rect(strip);
         // имя проекта + версия — поверх всего, начиная за меню
@@ -214,7 +216,7 @@ impl KtApp {
 
     /// Пункты меню (три корневых). Отдельно от контейнера, чтобы их же
     /// показывал бургер при узкой колонке.
-    fn menu_items(&mut self, ui: &mut egui::Ui) {
+    fn menu_items(&mut self, ui: &mut egui::Ui) -> f32 {
             ui.menu_button("Файл", |ui| {
                 if ui.button("Новый").clicked() {
                     self.new_project();
@@ -270,7 +272,7 @@ impl KtApp {
                     ui.close();
                 }
             });
-            ui.menu_button("Вид", |ui| {
+            let last = ui.menu_button("Вид", |ui| {
                 let detach_label =
                     if self.preview_detached { "Вернуть превью" } else { "Отделить превью" };
                 if ui.button(detach_label).clicked() {
@@ -289,12 +291,16 @@ impl KtApp {
                     ui.close();
                 }
             });
+            last.response.rect.right()
     }
 
-    fn draw_menus(&mut self, ui: &mut egui::Ui) {
+    /// Рисует три корневых меню и возвращает x конца ПОСЛЕДНЕЙ кнопки.
+    fn draw_menus(&mut self, ui: &mut egui::Ui) -> f32 {
+        let mut end = ui.min_rect().left();
         egui::MenuBar::new().ui(ui, |ui| {
-            self.menu_items(ui);
+            end = self.menu_items(ui);
         });
+        end
     }
 
     /// Кнопка тулбара: фиксированный размер, ховер-подсказка + статус-хинт.
@@ -467,6 +473,14 @@ impl KtApp {
                     self.tc_edit = None;
                 } else {
                     self.tc_edit = Some(input);
+                }
+                // ФОКУС ОБЯЗАН ВЕРНУТЬСЯ (п.8 р.12): виджет живёт каждый
+                // кадр с тем же id, поэтому «просто закрыть» мало —
+                // egui продолжал считать его сфокусированным, а
+                // handle_keys гейтится egui_wants_keyboard_input(), и
+                // Ctrl+L срабатывал ровно один раз до клика мышью
+                if self.tc_edit.is_none() {
+                    ui.memory_mut(|m| m.surrender_focus(r.id));
                 }
             } else {
                 ui.painter_at(rect).text(

@@ -1940,6 +1940,7 @@ dependencies = [
  "kt-media",
  "kt-model",
  "kt-time",
+ "kt-version",
  "rfd",
  "rtrb",
  "serde_json",
@@ -1962,6 +1963,7 @@ dependencies = [
  "kt-media",
  "kt-model",
  "kt-time",
+ "kt-version",
  "serde_json",
 ]
 
@@ -2031,6 +2033,10 @@ version = "0.1.0"
 dependencies = [
  "serde",
 ]
+
+[[package]]
+name = "kt-version"
+version = "0.1.0"
 
 [[package]]
 name = "kurbo"

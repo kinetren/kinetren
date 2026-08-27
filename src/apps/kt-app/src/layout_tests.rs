@@ -619,15 +619,11 @@ fn t97_top_meters_and_leds() {
 
     // --- (п.3 р.12) линейка не тратит место: полоса под метки убрана,
     // имя метки живёт на строке подписей времени
-    assert_eq!(
-        crate::timeline::RULER_H,
-        crate::timeline::STRIPES_H + crate::timeline::TIME_H,
-        "у линейки снова появилась лишняя полоса"
-    );
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let ruler = g.lane_top(kt_model::ClipKind::Video, 0) - g.rect.top();
     assert!(
-        crate::timeline::RULER_H <= 33.0,
-        "линейка выросла до {} px — место тратится впустую",
-        crate::timeline::RULER_H
+        ruler <= 36.0,
+        "линейка съела {ruler} px до первой дорожки — место тратится впустую"
     );
 
     // --- (п.7) панель метров нельзя растянуть на пол-экрана
@@ -713,6 +709,19 @@ fn t98_timecode_mask() {
         "пробел утёк в хоткеи мимо маски"
     );
 
+    // --- ПОВТОРНЫЙ вызов (п.8 р.12): после Enter маска обязана отдать
+    // фокус, иначе все горячие клавиши мертвы до клика мышью
+    h.key_press(egui::Key::Escape);
+    h.step();
+    assert!(h.state().tc_edit.is_none(), "Esc не закрыл маску");
+    assert!(
+        !h.ctx.egui_wants_keyboard_input(),
+        "маска закрылась, но фокус не отдан — хоткеи мертвы"
+    );
+    h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::L);
+    h.step();
+    assert!(h.state().tc_edit.is_some(), "второй Ctrl+L не открыл маску");
+
     // --- ввод цифр и Enter переводят курсор (и не требуют паузы)
     h.event(egui::Event::Text("130".into()));
     h.step();
@@ -727,6 +736,13 @@ fn t98_timecode_mask() {
     // подмотка отрабатывает тем же кадром: запрос уже погашен, а курсор
     // виден в окне (иначе «перешёл, но не видно»)
     assert!(h.state().pending_reveal.is_none(), "запрос подмотки завис");
+    // и после ПРИМЕНЕНИЯ маска тоже отдаёт фокус — Ctrl+L работает снова
+    assert!(!h.ctx.egui_wants_keyboard_input(), "после Enter фокус остался на маске");
+    h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::L);
+    h.step();
+    assert!(h.state().tc_edit.is_some(), "Ctrl+L после Enter не сработал");
+    h.key_press(egui::Key::Escape);
+    h.step();
     let g = h.state().tl_geom.clone().expect("нет геометрии");
     let x = g.tick_to_x(90 * 90_000);
     assert!(

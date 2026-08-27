@@ -522,14 +522,16 @@ impl KtApp {
         );
         let ui = &mut root;
         // имя проекта — в заголовок окна (п.19 р.6), не каждый кадр
+        // имя БЕЗ расширения (п.5 р.12: «.ktproj» и так понятно) и версия
+        // сборки: в debug полная vYY.MM.DD-hash, в релизе короткая ktYY.MM
         let title = format!(
-            "{}{} — kt {}",
+            "{}{} — {}",
             self.project_path
                 .as_ref()
-                .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+                .and_then(|p| p.file_stem().map(|n| n.to_string_lossy().to_string()))
                 .unwrap_or_else(|| "безымянный".into()),
             if self.dirty_content { " *" } else { "" },
-            env!("CARGO_PKG_VERSION")
+            kt_version::display()
         );
         if title != self.last_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));

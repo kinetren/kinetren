@@ -97,7 +97,7 @@ fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
 fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("version") | None => {
-            println!("kt-cli {} (tick rate {} Hz)", env!("CARGO_PKG_VERSION"), kt_time::TICK_HZ);
+            println!("kt-cli {} (tick rate {} Hz)", kt_version::FULL, kt_time::TICK_HZ);
             0
         }
         Some("new") => {

@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 kt-time = { workspace = true }
+kt-version = { workspace = true }
 kt-model = { workspace = true }
 kt-engine = { workspace = true }
 kt-media = { workspace = true }
