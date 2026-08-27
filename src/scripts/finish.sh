@@ -25,7 +25,7 @@ done
 
 VER=$(git log -1 --format=%cd --date=format:%y.%m.%d 2>/dev/null || echo 00.00.00)
 HASH=$(git rev-parse --short=8 HEAD 2>/dev/null || echo nogit)
-FULL="v$VER-$HASH"
+FULL="kt$VER-$HASH"
 DIRTY=""
 [ -n "$(git status --porcelain 2>/dev/null)" ] && DIRTY=" (есть незакоммиченные правки)"
 
@@ -41,7 +41,7 @@ echo "== чистка =="
 # старые тарболы и распакованные каталоги: оставляем только текущий
 if [ -d target/dist-out ]; then
     find target/dist-out -maxdepth 1 -name 'kinotrain-*' \
-        ! -name "kinotrain-${FULL#v}-*" -exec rm -rf {} + 2>/dev/null || true
+        ! -name "kinotrain-${FULL#kt}-*" -exec rm -rf {} + 2>/dev/null || true
 fi
 if [ "$DEEP" = 1 ]; then
     # release/ и dist-container/ полностью регенерируемы и весят гигабайты;

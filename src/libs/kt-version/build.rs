@@ -1,4 +1,6 @@
-//! Версия сборки (п.6 р.12): `vYY.MM.DD-<hash8>` по дате КОММИТА.
+//! Версия сборки (п.6 р.12, префикс — п.3 р.13): `ktYY.MM.DD-<hash8>` по
+//! дате КОММИТА. Префикс везде одинаковый: короткая ktYY.MM — это просто
+//! обрезанная полная, и пользователю не надо держать в голове два формата.
 //!
 //! Версия в манифесте остаётся 0.1.0 — semver не примет «v26.08.27-…».
 //! Отображаемая версия считается здесь, тремя способами по приоритету:
@@ -32,12 +34,12 @@ fn main() {
     let full = std::env::var("KT_VERSION_FULL").ok().or_else(|| {
         let date = git(&["log", "-1", "--format=%cd", "--date=format:%y.%m.%d"])?;
         let hash = git(&["rev-parse", "--short=8", "HEAD"])?;
-        Some(format!("v{date}-{hash}"))
+        Some(format!("kt{date}-{hash}"))
     });
-    let full = full.unwrap_or_else(|| "v00.00.00-nogit".to_string());
+    let full = full.unwrap_or_else(|| "kt00.00.00-nogit".to_string());
     // короткая: ktYY.MM из тех же цифр
     let short = std::env::var("KT_VERSION_SHORT").ok().unwrap_or_else(|| {
-        let digits: String = full.trim_start_matches('v').chars().take(5).collect();
+        let digits: String = full.trim_start_matches("kt").chars().take(5).collect();
         format!("kt{digits}")
     });
 

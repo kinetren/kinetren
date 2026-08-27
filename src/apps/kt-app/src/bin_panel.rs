@@ -13,6 +13,10 @@ use kt_model::{Command, MediaId};
 
 const PREVIEW_W: f32 = 128.0;
 const PREVIEW_H: f32 = 72.0;
+/// Потолок карточки в широкой колонке (п.4 р.13): тумбы декодируются в
+/// 320×180, поэтому до 240 px превью растёт без замыливания — иначе
+/// широкая панель давала только БОЛЬШЕ мелких карточек, а не крупные.
+const CARD_W_MAX: f32 = 240.0;
 /// Логических позиций скраба на файл (п.14 р.7: было 8 — «слишком мало
 /// превьюшек»); тумбы филмстрипа подхватываются near-поиском в БД.
 const BIN_SCRUB_SLOTS: f32 = 48.0;
@@ -116,7 +120,14 @@ impl KtApp {
         // ширина карточки считается ОДИН раз от ширины панели: внутри
         // wrapped-строки available_width убывает и карточки выходили
         // рваными (п.5 р.8)
-        let card_w = ui.available_width().clamp(56.0, PREVIEW_W);
+        // карточка растёт вместе с колонкой: до PREVIEW_W всегда, дальше —
+        // если колонка широкая, но не больше CARD_W_MAX (п.4 р.13)
+        let avail = ui.available_width();
+        let card_w = if avail >= PREVIEW_W * 2.0 + 12.0 {
+            (avail / 2.0 - 8.0).clamp(PREVIEW_W, CARD_W_MAX)
+        } else {
+            avail.clamp(56.0, PREVIEW_W)
+        };
         let card_h = card_w * PREVIEW_H / PREVIEW_W;
         let row_h = card_h + 18.0;
         let mut to_place: Option<MediaId> = None;

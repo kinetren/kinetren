@@ -12,11 +12,11 @@ IMAGE=kinotrain-build:ubuntu2204
 # Версия считается ЗДЕСЬ, на хосте (п.6 р.12): внутри контейнера нет ни
 # git, ни каталога .git — монтируется только src/. Формат vYY.MM.DD-hash
 # по дате КОММИТА; build.rs крейта kt-version возьмёт её из окружения.
-KT_VERSION_FULL="${KT_VERSION_FULL:-$(git log -1 --format=%cd --date=format:%y.%m.%d 2>/dev/null | sed 's/^/v/')-$(git rev-parse --short=8 HEAD 2>/dev/null)}"
-[ "$KT_VERSION_FULL" = "v-" ] && KT_VERSION_FULL="v00.00.00-nogit"
-KT_VERSION_SHORT="${KT_VERSION_SHORT:-kt${KT_VERSION_FULL:1:5}}"
+KT_VERSION_FULL="${KT_VERSION_FULL:-$(git log -1 --format=%cd --date=format:%y.%m.%d 2>/dev/null | sed 's/^/kt/')-$(git rev-parse --short=8 HEAD 2>/dev/null)}"
+[ "$KT_VERSION_FULL" = "kt-" ] && KT_VERSION_FULL="kt00.00.00-nogit"
+KT_VERSION_SHORT="${KT_VERSION_SHORT:-kt${KT_VERSION_FULL:2:5}}"
 export KT_VERSION_FULL KT_VERSION_SHORT
-VERSION="${KT_VERSION_FULL#v}"
+VERSION="${KT_VERSION_FULL#kt}"
 ARCH=$(uname -m)
 OUT="target/dist-out"
 STAGE="$OUT/kinotrain-$VERSION-linux-$ARCH"

@@ -282,6 +282,12 @@ impl KtApp {
         if let Some((pl, pr)) = sample {
             self.meter.feed(pl, pr);
         }
+        // KT_METER_DEMO=1 — подать метру фиктивные уровни: вид метра
+        // (свечение, зоны, пик) иначе не проверить без звукового железа
+        if std::env::var_os("KT_METER_DEMO").is_some() {
+            let t = self.meter.last_sample.elapsed().as_secs_f32();
+            self.meter.feed(0.75, 0.42 + 0.2 * (t * 3.0).sin().abs());
+        }
         // 2) спад к target и peak-hold (тик 25 мс, спады v1) — чистая
         // логика в MeterState::tick (тест 38)
         let ticks = (self.meter.last_tick.elapsed().as_millis() / 25).min(40) as f32;
@@ -349,10 +355,33 @@ impl KtApp {
 
         let loud_db = self.meter.bar_db[0].max(self.meter.bar_db[1]);
 
-        // --- свечение (пп.8-9 v1.4): цвет по ЗОНАМ высоты, один меш ------
-        // вертикальный градиент с остановками на границах зон (glow_stops,
-        // тест 40) и треугольным горизонтальным затуханием — заменяет
-        // ~250 тессилируемых эллипсов шлейфа и зон прежней версии
+        // Порядок слоёв — как в «красивой» версии до р.11 (п.1 р.13):
+        // подложка → свечение → LED → блик и пик ПОВЕРХ. В р.11 подложка
+        // уехала поверх свечения и закрасила его целиком, а блик ушёл под
+        // непрозрачные сегменты — метр стал плоским и «фейковым».
+        let lit_n: [usize; 2] = [
+            led_lit(self.meter.bar_db[0], seg_db),
+            led_lit(self.meter.bar_db[1], seg_db),
+        ];
+        let cap_seg: [Option<usize>; 2] = std::array::from_fn(|ch| {
+            let cap = self.meter.cap_db[ch];
+            (cap > self.meter.bar_db[ch] + 0.4 && cap > METER_MIN_DB + 1.0)
+                .then(|| led_lit(cap, seg_db).saturating_sub(1))
+        });
+        let back = egui::Color32::from_rgb(8, 9, 11);
+        // 1) дно баров
+        for &x0 in &bar_x {
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(x0 - 1.0, bars.top() - 1.0),
+                    egui::pos2(x0 + bar_w + 1.0, bars.bottom() + 1.0),
+                ),
+                2.0,
+                back,
+            );
+        }
+
+        // 2) зонное свечение по дну бара (зазоры между LED им и светятся)
         if loud_db > METER_MIN_DB + 1.0 {
             let cx = bars.center().x;
             let half_w = bars.width() * 1.15;
@@ -360,9 +389,7 @@ impl KtApp {
             let mut mesh = egui::Mesh::default();
             let stops = glow_stops(loud_db);
             let push_row = |mesh: &mut egui::Mesh, y: f32, col: egui::Color32, a: u8| {
-                for (x, alpha) in
-                    [(cx - half_w, 0u8), (cx, a), (cx + half_w, 0u8)]
-                {
+                for (x, alpha) in [(cx - half_w, 0u8), (cx, a), (cx + half_w, 0u8)] {
                     mesh.vertices.push(egui::epaint::Vertex {
                         pos: egui::pos2(x, y),
                         uv: egui::epaint::WHITE_UV,
@@ -378,12 +405,13 @@ impl KtApp {
             for &db in &stops {
                 push_row(&mut mesh, db_to_y(db), zone_color(db), 46);
             }
-            // мягкий хвост над уровнем — затухание в ноль
-            push_row(&mut mesh, (level_y - 22.0).max(bars.top()), zone_color(loud_db), 0);
+            // хвост КОРОТКИЙ (8 px): прежние 22 px и делали погашенную
+            // часть «полузажжённой» — вот это и была настоящая причина
+            // жалобы п.8 р.11, а вовсе не частичная заливка сегментов
+            push_row(&mut mesh, (level_y - 8.0).max(bars.top()), zone_color(loud_db), 0);
             let rows = stops.len() + 1;
             for r in 0..rows - 1 {
                 let b = (r * 3) as u32;
-                // два квада между соседними рядами (3 колонки)
                 for c in 0..2u32 {
                     mesh.indices.extend_from_slice(&[
                         b + c,
@@ -396,7 +424,6 @@ impl KtApp {
                 }
             }
             painter.add(egui::Shape::mesh(mesh));
-            // подсветка низа (v1)
             glow_ellipse(
                 &painter,
                 egui::pos2(cx, bars.bottom()),
@@ -406,88 +433,49 @@ impl KtApp {
             );
         }
 
-        // непрозрачные подложки баров — ПОСЛЕ свечения (п.8 р.11): иначе
-        // зонный меш просвечивал в зазорах между сегментами и «погашенная»
-        // часть шкалы выглядела наполовину зажжённой. Ореол шире баров,
-        // поэтому снаружи он остаётся.
-        for &x0 in &bar_x {
-            painter.rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(x0 - 1.0, bars.top() - 1.0),
-                    egui::pos2(x0 + bar_w + 1.0, bars.bottom() + 1.0),
-                ),
-                2.0,
-                egui::Color32::from_rgb(8, 9, 11),
-            );
-        }
-
-        // головной блик — ТОЖЕ до сегментов, иначе размазывает зазоры
-        if loud_db > METER_MIN_DB + 1.0 {
-            let cx = bars.center().x;
-            let wide = bars.width() * 1.15;
-            let level_y = db_to_y(loud_db);
-            glow_ellipse(
-                &painter,
-                egui::pos2(cx, level_y),
-                egui::vec2(wide * 1.08, 38.0),
-                zone_color(loud_db),
-                42,
-            );
-            glow_ellipse(
-                &painter,
-                egui::pos2(cx, level_y - 14.0),
-                egui::vec2(wide * 0.95, 34.0),
-                zone_color(loud_db),
-                28,
-            );
-        }
-
-        // peak-hold: ореол вокруг кэпа (сам кэп — ЗАЖЖЁННЫЙ СЕГМЕНТ выше,
-        // а не прямоугольник на произвольной высоте, п.8 р.11)
+        // 3) выше уровня КАЖДОГО канала бар глухой: свечение соседнего
+        // (громкого) канала не должно подсвечивать погашенную шкалу
         for (ch, &x0) in bar_x.iter().enumerate() {
-            let cap_db = self.meter.cap_db[ch];
-            if cap_db > self.meter.bar_db[ch] + 0.4 && cap_db > METER_MIN_DB + 1.0 {
-                glow_ellipse(
-                    &painter,
-                    egui::pos2(x0 + bar_w / 2.0, db_to_y(cap_db)),
-                    egui::vec2(bar_w * 2.0, 13.0),
-                    cap_glow_color(cap_db),
-                    22,
+            let top_lit = db_to_y(METER_MIN_DB + lit_n[ch] as f32 * seg_db);
+            if top_lit > bars.top() {
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(x0 - 1.0, bars.top() - 1.0),
+                        egui::pos2(x0 + bar_w + 1.0, top_lit),
+                    ),
+                    0.0,
+                    back,
                 );
             }
         }
 
+        // 4) LED-сегменты: скважность ~55 %, как у v1 (там было 4 px
+        // нарисованных на 8 px шага) — в р.11-12 доходило до 82 %, отчего
+        // шкала выглядела сплошной «колбасой со швами»
         for (ch, &x0) in bar_x.iter().enumerate() {
-            // LED-сегменты по сетке dB: каждый горит целиком или не горит
-            let lit_n = led_lit(self.meter.bar_db[ch], seg_db);
-            let cap_db = self.meter.cap_db[ch];
-            let cap_seg = (cap_db > self.meter.bar_db[ch] + 0.4
-                && cap_db > METER_MIN_DB + 1.0)
-                .then(|| led_lit(cap_db, seg_db).saturating_sub(1));
-            let gap_y = (seg_h * 0.28).clamp(0.5, 1.5);
+            let gap_y = (seg_h * 0.38).clamp(1.0, 2.5);
             for i in 0..segs {
                 let y_bot = db_to_y(METER_MIN_DB + i as f32 * seg_db);
                 let y_top = db_to_y(METER_MIN_DB + (i + 1) as f32 * seg_db);
                 let seg = egui::Rect::from_min_max(
                     egui::pos2(x0, y_top),
                     egui::pos2(x0 + bar_w, y_bot - gap_y),
-                );
-                let lit = i < lit_n;
-                let col = if cap_seg == Some(i) {
-                    cap_glow_color(seg_mid_db(i, seg_db))
-                } else if lit {
+                )
+                .shrink2(egui::vec2(0.5, 0.0));
+                let lit = i < lit_n[ch];
+                let col = if lit {
                     zone_color(seg_mid_db(i, seg_db))
                 } else {
-                    egui::Color32::from_rgb(14, 16, 19)
+                    egui::Color32::from_rgb(13, 15, 18)
                 };
                 painter.rect_filled(seg, 1.0, col);
-                if lit || cap_seg == Some(i) {
+                if lit {
                     painter.line_segment(
                         [
                             egui::pos2(seg.left() + 1.0, seg.top() + 0.5),
                             egui::pos2(seg.right() - 1.0, seg.top() + 0.5),
                         ],
-                        egui::Stroke::new(1.0, col.gamma_multiply(1.25)),
+                        egui::Stroke::new(1.0, col.gamma_multiply(1.12)),
                     );
                 }
             }
@@ -496,6 +484,51 @@ impl KtApp {
             painter.line_segment(
                 [egui::pos2(x0, zero_y), egui::pos2(x0 + bar_w, zero_y)],
                 egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(95, 105, 118, 140)),
+            );
+        }
+
+        // 5) головной блик ПОВЕРХ горящих LED (тот самый bloom из v1)
+        if loud_db > METER_MIN_DB + 1.0 {
+            let cx = bars.center().x;
+            let wide = bars.width() * 1.15;
+            let level_y = db_to_y(loud_db);
+            glow_ellipse(
+                &painter,
+                egui::pos2(cx, level_y),
+                egui::vec2(wide * 1.08, 34.0),
+                zone_color(loud_db),
+                38,
+            );
+            glow_ellipse(
+                &painter,
+                egui::pos2(cx, level_y - 12.0),
+                egui::vec2(wide * 0.95, 30.0),
+                zone_color(loud_db),
+                24,
+            );
+        }
+
+        // 6) peak-hold: кремовая ЛЕНТА по верхней кромке своего сегмента
+        // (сетка LED не нарушается) + ореол — поверх сегментов
+        for (ch, &x0) in bar_x.iter().enumerate() {
+            let Some(seg_i) = cap_seg[ch] else { continue };
+            let cap_db = self.meter.cap_db[ch];
+            let col = cap_glow_color(cap_db);
+            let cap_y = db_to_y(METER_MIN_DB + (seg_i + 1) as f32 * seg_db);
+            glow_ellipse(
+                &painter,
+                egui::pos2(x0 + bar_w / 2.0, cap_y),
+                egui::vec2(bar_w * 2.0, 13.0),
+                col,
+                22,
+            );
+            painter.rect_filled(
+                egui::Rect::from_min_max(
+                    egui::pos2(x0, cap_y),
+                    egui::pos2(x0 + bar_w, cap_y + 2.5),
+                ),
+                1.0,
+                col,
             );
         }
 

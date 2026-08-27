@@ -50,14 +50,14 @@ fn cursor(h: &Harness<'_, KtApp>) -> egui::CursorIcon {
 fn t76_layout_panels_and_preview_share_space() {
     let mut h = harness();
     let w = panel_width(&h, "left_col");
-    assert!((72.0..=420.0).contains(&w), "левая колонка вне пределов: {w}");
+    assert!((72.0..=420.0).contains(&w), "левая колонка по умолчанию вне пределов: {w}");
     assert!(h.state().preview_rect.width() > 600.0, "превью схлопнулось: {:?}", h.state().preview_rect);
 
     // длинный контент не должен раздувать панель
     h.state_mut().gpu_info = Some("X".repeat(400));
     h.step();
     let w2 = panel_width(&h, "left_col");
-    assert!(w2 <= 420.0, "длинный контент раздул колонку: {w2}");
+    assert!(w2 <= w + 1.0, "длинный контент раздул колонку: было {w}, стало {w2}");
     assert!(
         h.state().preview_rect.width() > 600.0,
         "длинный контент съел превью: {:?}",
@@ -652,9 +652,13 @@ fn t97_top_meters_and_leds() {
     h.step();
     h.drop_at(egui::pos2(W * 0.9, mid));
     h.step();
+    // п.4 р.13: предел бина — 70 % окна (не ужимать!), тянуться обязан
     let lw = panel_width(&h, "left_col");
-    assert!(lw <= 420.0, "левая колонка растянулась на {lw} px");
-    assert!(lw > 300.0, "сепаратор левой колонки не потянулся ({lw})");
+    assert!(lw <= W * 0.7 + 1.0, "левая колонка вышла за предел: {lw}");
+    assert!(
+        lw > 600.0,
+        "медиа-бин снова зажат ({lw} px) — предел ставился по прямой просьбе"
+    );
 }
 
 /// Тест 98 (п.9 р.11): маска ввода таймкода.
@@ -995,6 +999,37 @@ fn t101_edge_buttons_are_clickable() {
         "угол окна перестал тянуться из-за кнопок"
     );
 
+    // (п.6 р.13) кнопка «свернуть» нажимается при ЛЮБОЙ ширине панели
+    // метров: своя полоса перетаскивания лежит ЛЕВЕЕ панели и в кнопки не
+    // заходит (штатный хват egui был ±8 px по всей высоте и выигрывал)
+    for w in [crate::app::METERS_W_MIN, 70.0, crate::app::METERS_W_MAX] {
+        let mut h = harness();
+        h.state_mut().meters_w = w;
+        h.step();
+        let sent = press(&mut h, egui::pos2(W - 55.0, 11.0));
+        assert!(
+            sent.iter().any(|c| matches!(c, V::Minimized(true))),
+            "при ширине метров {w} «свернуть» не сработала"
+        );
+    }
+
+    // и сама полоса тянет панель: хват СЛЕВА от её кромки
+    let mut h = harness();
+    let start = W - h.state().meters_w;
+    h.hover_at(egui::pos2(start - 5.0, H * 0.5));
+    h.step();
+    h.drag_at(egui::pos2(start - 5.0, H * 0.5));
+    h.step();
+    h.hover_at(egui::pos2(start - 12.0, H * 0.5));
+    h.step();
+    h.hover_at(egui::pos2(W - 88.0, H * 0.5));
+    h.step();
+    h.drop_at(egui::pos2(W - 88.0, H * 0.5));
+    h.step();
+    let mw = h.state().meters_w;
+    assert!(mw > 80.0, "полоса не потянула панель метров: {mw}");
+    assert!(mw <= crate::app::METERS_W_MAX, "панель метров вышла за предел: {mw}");
+
     // чистые кромки по-прежнему дают ресайз — гейт не должен убить его
     let mut h = harness();
     let sent = press(&mut h, egui::pos2(W * 0.5, H - 2.0));
@@ -1002,4 +1037,46 @@ fn t101_edge_buttons_are_clickable() {
         sent.iter().any(|c| matches!(c, V::BeginResize(_))),
         "нижняя кромка перестала тянуться"
     );
+}
+
+/// Тест 102 (пп.2,5 р.13): ярлык дорожки не наслаивается на имя клипа,
+/// свечение курсора не заходит на полоски кэша и светит со стороны
+/// движения.
+#[test]
+fn t102_lane_label_and_playhead_trail() {
+    use crate::timeline::{STRIPES_H, TIME_TOP, lane_label_y};
+
+    // (п.2) ярлык дорожки живёт СТРОКОЙ НИЖЕ имени клипа: имя клипа
+    // рисуется от row_top+2 плашкой высотой ~17 px, значит ярлык обязан
+    // начинаться не выше row_top+17 — иначе буквы наложатся
+    for (lane_h, galley_h) in [(64.0f32, 14.0f32), (40.0, 14.0), (28.0, 14.0), (120.0, 14.0)] {
+        let y = lane_label_y(100.0, lane_h, galley_h);
+        assert!(y >= 100.0, "ярлык уехал выше дорожки: {y}");
+        assert!(y + galley_h <= 100.0 + lane_h, "ярлык вылез за дорожку: {y}+{galley_h}");
+        if lane_h >= 36.0 {
+            assert!(
+                y >= 117.0,
+                "ярлык на дорожке {lane_h} встал на строку имени клипа: {y}"
+            );
+        }
+    }
+    // (п.5) свечение стартует ниже полосок кэша
+    let g = harness().state().tl_geom.clone().expect("нет геометрии");
+    assert!(
+        g.rect.top() + TIME_TOP >= g.rect.top() + STRIPES_H,
+        "свечение курсора начнётся поверх полосок кэша"
+    );
+
+    let mut h = harness();
+    // направление запоминается по знаку скорости и не мигает на паузе
+    assert!(!h.state().play_dir_back, "по умолчанию шлейф слева (игра вперёд)");
+    h.state_mut().player.set_playback_rate(-1.0);
+    h.step();
+    assert!(h.state().play_dir_back, "реверс не переключил сторону шлейфа");
+    h.state_mut().player.set_playback_rate(0.0);
+    h.step();
+    assert!(h.state().play_dir_back, "на паузе сторона обязана сохраниться");
+    h.state_mut().player.set_playback_rate(1.0);
+    h.step();
+    assert!(!h.state().play_dir_back, "вперёд не вернуло шлейф налево");
 }

@@ -22,6 +22,18 @@ pub const GUTTER_W: f32 = 34.0; // п.20 р.6: поуже
 /// Предел ярлыка длинного имени дорожки (п.10 р.11): дальше — многоточие,
 /// полное имя показывает подсказка.
 pub const LANE_LABEL_MAX_W: f32 = 160.0;
+/// Высота строки, которую занимает имя КЛИПА на его плашке. Ярлык дорожки
+/// пишется строкой НИЖЕ (п.2 р.13): заезжать на дорожку можно, но буквы
+/// поверх букв — каша, которую пользователь и не принял.
+pub const CLIP_NAME_ROW_H: f32 = 19.0;
+
+/// Y ярлыка дорожки: строкой ниже имени клипа, но не ниже дна дорожки.
+/// Чистая функция ради теста 102 — «под именем клипа» проверяется числом,
+/// а не на глаз.
+pub fn lane_label_y(row_top: f32, lane_h: f32, galley_h: f32) -> f32 {
+    let row_bottom = row_top + lane_h - 2.0;
+    (row_top + CLIP_NAME_ROW_H).min(row_bottom - galley_h).max(row_top)
+}
 /// Единые пределы зума (п.17 р.6): 2e6 тиков/px = 22 с/px — 30-минутный
 /// проект целиком в окне ~80 px... на всю ширину ≈ 1.5 px/с и мельче.
 pub const TPP_MIN: f64 = 30.0;
@@ -760,7 +772,9 @@ impl KtApp {
         let lane_top = |kind: ClipKind, lane: u32| -> f32 { geom.lane_top(kind, lane) };
         let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
         let morph_lane_at_y = |y: f32| -> Option<u32> { geom.morph_lane_at_y(y) };
-        let mut gutter_labels: Vec<(String, f32)> = Vec::with_capacity(geom.rows.len());
+        // (подпись, центр строки, верх строки) — верх нужен, чтобы длинный
+        // ярлык встал ПОД именем клипа, а не поверх него
+        let mut gutter_labels: Vec<(String, f32, f32)> = Vec::with_capacity(geom.rows.len());
         for (row, &(kind, lane)) in geom.rows.iter().enumerate() {
             let y = geom.row_top(row);
             // фон дорожки тянется ПОД gutter — градиент ниже «растворяет»
@@ -779,7 +793,7 @@ impl KtApp {
             // подпись: пользовательское имя либо формула V1/A1/M1 (п.2 р.10)
             let label = kt_model::lane_label(&self.lane_names, kind, lane);
             painter.rect_filled(lane_rect, 0.0, fill);
-            gutter_labels.push((label, y + lane_h * 0.5));
+            gutter_labels.push((label, y + lane_h * 0.5, y));
         }
         // хит-тест morph-блока (нужен и press-обработке, и ПКМ ниже)
         let morpher_at = |slf: &KtApp, pos: egui::Pos2| -> Option<MorphId> {
@@ -2139,7 +2153,7 @@ impl KtApp {
             // края поверх НАЧАЛА дорожки, на своей подложке, с усечением.
             let col = egui::Color32::from_gray(175);
             let font = egui::FontId::proportional(12.0);
-            for (label, cy) in &gutter_labels {
+            for (label, cy, row_top) in &gutter_labels {
                 let fit = full_painter.layout_no_wrap(label.clone(), font.clone(), col);
                 if fit.size().x <= gutter.width() - 4.0 {
                     full_painter.text(
@@ -2163,16 +2177,15 @@ impl KtApp {
                 };
                 let galley = full_painter.layout_job(job);
                 let x = gutter.left() + 3.0;
+                // строкой НИЖЕ имени клипа; на низкой дорожке прижимаемся к
+                // её низу, но всё равно под именем клипа (п.2 р.13)
+                let y = lane_label_y(*row_top, lane_h, galley.size().y);
                 let plate = egui::Rect::from_min_size(
-                    egui::pos2(x - 3.0, *cy - galley.size().y * 0.5 - 1.0),
+                    egui::pos2(x - 3.0, y - 1.0),
                     egui::vec2(galley.size().x + 12.0, galley.size().y + 2.0),
                 );
                 crate::theme::hgrad(&full_painter, plate, solid, egui::Color32::TRANSPARENT);
-                full_painter.galley(
-                    egui::pos2(x, *cy - galley.size().y * 0.5),
-                    galley,
-                    col,
-                );
+                full_painter.galley(egui::pos2(x, y), galley, col);
             }
         }
 
@@ -2187,16 +2200,26 @@ impl KtApp {
         let ph = self.player.transport.playhead();
         let x = tick_to_x(ph.0);
         if x >= rect.left() && x <= rect.right() {
-            // мягкое свечение (п.4): горизонтальный градиент 0→α→0 + ядро
-            let glow_half = 7.0f32;
+            // Свечение курсора (п.4 р.5, переделано п.5 р.13): НЕ заходит на
+            // полоски кэша (начинается с полосы времени) и светит ТОЛЬКО со
+            // стороны движения — шлейф позади курсора: вперёд слева, в
+            // реверсе справа. На паузе сторона берётся от последнего знака
+            // скорости, чтобы не мигала при остановке.
+            let glow_half = 12.0f32;
             let mut mesh = egui::Mesh::default();
             let c0 = egui::Color32::from_rgba_unmultiplied(255, 60, 60, 0);
             let c1 = egui::Color32::from_rgba_unmultiplied(255, 60, 60, 90);
-            for (xa, xb, ca, cb) in [(x - glow_half, x, c0, c1), (x, x + glow_half, c1, c0)] {
+            let top_y = rect.top() + TIME_TOP;
+            let trail = if self.play_dir_back {
+                [(x, x + glow_half, c1, c0)]
+            } else {
+                [(x - glow_half, x, c0, c1)]
+            };
+            for (xa, xb, ca, cb) in trail {
                 let i = mesh.vertices.len() as u32;
                 for (px, col) in [
-                    (egui::pos2(xa, rect.top()), ca),
-                    (egui::pos2(xb, rect.top()), cb),
+                    (egui::pos2(xa, top_y), ca),
+                    (egui::pos2(xb, top_y), cb),
                     (egui::pos2(xb, rect.bottom()), cb),
                     (egui::pos2(xa, rect.bottom()), ca),
                 ] {

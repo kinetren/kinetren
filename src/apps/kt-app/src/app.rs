@@ -148,6 +148,13 @@ pub struct KtApp {
     /// Магнит временно выключен (зажат Ctrl во время перетаскивания, п.2 р.11).
     /// Полезное поведение — умолчание, модификатор его СНИМАЕТ.
     pub snap_off: bool,
+    /// Последнее направление воспроизведения (п.5 р.13): шлейф курсора
+    /// светит позади него, а на паузе не должен прыгать со стороны на
+    /// сторону — держим знак последней ненулевой скорости.
+    pub play_dir_back: bool,
+    /// Ширина панели метров (её тянет своя полоса, п.6 р.13). «Удобство»:
+    /// едет в UiState, звёздочку не зажигает.
+    pub meters_w: f32,
     pub ctx_target: Option<CtxTarget>,
     /// Live-громкость volume rail до отпускания (id, dB).
     pub live_gain: Option<(ClipId, f32)>,
@@ -312,6 +319,8 @@ impl KtApp {
             gpu_info: None,
             snap_line: None,
             snap_off: false,
+            play_dir_back: false,
+            meters_w: 70.0,
             ctx_target: None,
             live_gain: None,
             status: error.map(|e| (e, std::time::Instant::now())),
@@ -425,6 +434,8 @@ impl KtApp {
             gpu_info: None,
             snap_line: None,
             snap_off: false,
+            play_dir_back: false,
+            meters_w: 70.0,
             ctx_target: None,
             live_gain: None,
             status: err.map(|e| (e, std::time::Instant::now())),
@@ -491,6 +502,9 @@ impl KtApp {
             app.bin_layout =
                 ui.bin_layout.iter().map(|(id, x, y)| (*id, egui::pos2(*x, *y))).collect();
             app.bin_groups = ui.bin_groups;
+            if ui.meters_w > 0.0 {
+                app.meters_w = ui.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
+            }
             app.lane_names = ui.lane_names;
         }
         Ok(app)
@@ -511,6 +525,7 @@ impl KtApp {
             bin_free: self.bin_free,
             bin_layout: self.bin_layout.iter().map(|(id, p)| (*id, p.x, p.y)).collect(),
             bin_groups: self.bin_groups.clone(),
+            meters_w: self.meters_w,
             lane_names: self.lane_names.clone(),
         }
     }
@@ -548,6 +563,10 @@ impl KtApp {
         self.handle_drops(&ctx);
         self.hover_hint = None;
         self.no_resize_rects.clear();
+        let rate = self.player.playback_rate();
+        if rate.abs() > 0.01 {
+            self.play_dir_back = rate < 0.0;
+        }
 
         // п.10 р.8: окно восстановлено из maximized прошлым кадром —
         // теперь можно начинать перетаскивание
@@ -598,7 +617,11 @@ impl KtApp {
         });
         // полоса времени над таймлайном (порт Timeline time strip)
         // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
-        egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).max_size(420.0).show(ui, |ui| {
+        // ПРЕДЕЛ ПОСТАВЛЕН ПО ЖАЛОБЕ п.4 р.13 — не ужимать без новой просьбы
+            // пользователя: 420 px были страховкой р.7.1, в р.9 подняты до
+            // половины окна по его прямой просьбе, а в р.11 я срезал их
+            // обратно «по аналогии» с метрами и сломал работу в третий раз.
+            egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).max_size((ui.max_rect().width() * 0.7).max(420.0)).show(ui, |ui| {
             // шапка: лого + меню + имя проекта (пп.15,6,7 р.8)
             self.draw_column_header(ui);
             ui.add_space(2.0);
@@ -649,11 +672,40 @@ impl KtApp {
                 self.draw_preview_controls(ui);
                 ui.add_space(3.0);
             });
-            egui::Panel::right("meters_col").resizable(true).default_size(70.0).min_size(64.0).max_size(90.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
+            // Ширину держим САМИ, штатный resizable выключен (п.6 р.13):
+            // хват egui — ±8 px по ВСЕЙ высоте панели и регистрируется
+            // ПОСЛЕ её контента (так задумано в egui), поэтому он выигрывал
+            // у кнопок окна и «свернуть» нажималась наполовину. Своя полоса
+            // лежит ЛЕВЕЕ панели и внутрь неё не заходит.
+            let mw = self.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
+            egui::Panel::right("meters_col").resizable(false).exact_size(mw).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
                 // кнопки окна — здесь, в вёрстке (п.15 р.8)
                 self.draw_window_buttons(ui);
                 self.draw_meters(ui);
             });
+            // полоса перетаскивания — уже ВНЕ панели: место под неё забрала
+            // сама панель, поэтому правый край оставшегося места и есть её
+            // левая кромка. Ниже полосы драга окна, чтобы не спорить с ней.
+            {
+                // кромка панели считается от окна (ui.max_rect() панель не
+                // ужимает), полоса лежит СЛЕВА от неё и в панель не заходит
+                let win = ui.ctx().content_rect();
+                let edge = win.right() - mw;
+                let sep = egui::Rect::from_min_max(
+                    egui::pos2(edge - METERS_SEP_W, win.top() + TOP_DRAG_H),
+                    egui::pos2(edge, win.bottom()),
+                );
+                let r = ui.interact(sep, egui::Id::new("meters-sep"), egui::Sense::drag());
+                if r.hovered() || r.dragged() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                }
+                if r.dragged()
+                    && let Some(pos) = r.interact_pointer_pos()
+                {
+                    self.meters_w = (win.right() - pos.x).clamp(METERS_W_MIN, METERS_W_MAX);
+                    self.dirty_ui = true;
+                }
+            }
             egui::CentralPanel::default()
                 .frame(egui::Frame::new())
                 .show(ui, |ui| {
@@ -3104,6 +3156,12 @@ pub fn resize_cursor(dir: egui::ResizeDirection) -> egui::CursorIcon {
 pub const TOP_DRAG_H: f32 = 20.0;
 /// Самая кромка окна: тут ресайз выигрывает даже у кнопок, чтобы угол
 /// окна оставался «тянущимся» (п.9 р.12).
+/// Панель метров: пределы ширины и своя полоса перетаскивания СЛЕВА от
+/// панели (п.6 р.13). Максимум поставлен по просьбе п.2 р.12 — не менять
+/// без новой просьбы пользователя.
+pub const METERS_W_MIN: f32 = 64.0;
+pub const METERS_W_MAX: f32 = 90.0;
+pub const METERS_SEP_W: f32 = 10.0;
 pub const WIN_BORDER: f32 = 4.0;
 pub const WIN_EDGE: f32 = 8.0;
 pub const WIN_CORNER: f32 = 16.0;
