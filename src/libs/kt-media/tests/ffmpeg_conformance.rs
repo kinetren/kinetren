@@ -348,4 +348,19 @@ fn t112_video_frame_selection_is_floor_on_mismatched_fps() {
     // 3) forward-проход не устраивает seek-шторм
     let (reopens, _) = per_frame.decode_debug_stats();
     assert!(reopens <= 1, "по-кадровый путь пересоздал декодер {reopens} раз");
+
+    // 4) ХВОСТ: ключи у самого конца источника и за ним обязаны отдавать
+    // последний кадр, а не ошибку — иначе экспорт дорисовывает ЧЁРНЫЕ
+    // кадры в конце (проверено живьём: старый код давал «недостающих
+    // слоёв 2» и чёрный последний кадр)
+    let dur = kt_media::MediaSource::info(&per_frame).duration;
+    let mut tail = FfmpegSource::open(&path).unwrap();
+    for i in 0..4 {
+        let k = kt_time::Tick(dur.0 - step + i * step);
+        assert!(
+            tail.read_video_frame(k, q).is_ok(),
+            "ключ у конца источника ({}) не отдал кадр — в экспорте будет чернота",
+            k.0
+        );
+    }
 }
