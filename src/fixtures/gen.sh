@@ -25,6 +25,12 @@ gen sine48k_stereo.flac -f lavfi -i "sine=frequency=440:sample_rate=48000:durati
 gen testsrc_h264.mp4 -f lavfi -i "testsrc=size=320x180:rate=30:duration=2" \
     -c:v libx264 -preset veryfast -g 15 -pix_fmt yuv420p -f mp4
 
+# 2 c testsrc 25 fps H.264 (п.14 р.14: fps источника ≠ fps проекта —
+# только на такой фикстуре видна разница floor/ceil при выборке кадра;
+# на 30 fps обе ветки вырождаются в один и тот же кадр)
+gen testsrc_25fps.mp4 -f lavfi -i "testsrc=size=320x180:rate=25:duration=2" \
+    -c:v libx264 -preset veryfast -g 13 -pix_fmt yuv420p -f mp4
+
 # 2 c testsrc VP9 (threads=1 путь)
 gen testsrc_vp9.webm -f lavfi -i "testsrc=size=320x180:rate=30:duration=2" \
     -c:v libvpx-vp9 -cpu-used 8 -g 15 -f webm

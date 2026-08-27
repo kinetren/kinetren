@@ -293,3 +293,59 @@ fn t37_io_counters_alive() {
     assert!(o1 > o0, "открытие должно инкрементить opens (было {o0}, стало {o1})");
     assert!(r1 > r0, "скан/декод должны инкрементить packet_reads (было {r0}, стало {r1})");
 }
+
+/// Тест 112 (п.14 р.14): выборка кадра — ОДНА семантика, floor.
+///
+/// Источник 25 fps, ключи по сетке проекта 60 fps: сетки не совпадают,
+/// поэтому раньше `read_video_frame` шла то по floor (после seek), то по
+/// ceil (forward-путь, предыдущий кадр уже отдан и освобождён) — кадры в
+/// экспорте шли `f0, f1, f0, f2, f1, f3…`, пользователь видел откаты.
+/// Спан всегда был floor, поэтому он и служит эталоном.
+#[test]
+fn t112_video_frame_selection_is_floor_on_mismatched_fps() {
+    use kt_time::TICK_HZ;
+    let path = fixture("testsrc_25fps.mp4");
+    let step = TICK_HZ / 60; // сетка ПРОЕКТА мельче сетки источника
+    let keys: Vec<kt_time::Tick> = (0..90).map(|i| kt_time::Tick(i * step)).collect();
+    let q = Some(Quality { width: 160, height: 90 });
+
+    let mut span_src = FfmpegSource::open(&path).unwrap();
+    let mut expected: Vec<kt_media::VideoFrame> = Vec::new();
+    span_src.read_video_span(&keys, q, &mut |_, f| expected.push(f)).expect("спан-декод");
+    assert_eq!(expected.len(), keys.len());
+
+    let mut per_frame = FfmpegSource::open(&path).unwrap();
+    let mut got = Vec::new();
+    for &k in &keys {
+        got.push(per_frame.read_video_frame(k, q).expect("по-кадровый декод"));
+    }
+
+    // 1) по-кадровый путь совпадает со спаном КАДР В КАДР
+    for i in 0..keys.len() {
+        assert_eq!(
+            got[i].rgba, expected[i].rgba,
+            "ключ {i}: по-кадровый декод отдал не тот кадр, что спан (floor)"
+        );
+    }
+
+    // 2) кадры не откатываются: каждый следующий либо тот же, либо новый,
+    //    и однажды сменившийся кадр не возвращается
+    let mut seen: Vec<&[u8]> = Vec::new();
+    for f in &got {
+        let cur: &[u8] = &f.rgba;
+        if seen.last().map(|p| *p == cur).unwrap_or(false) {
+            continue;
+        }
+        assert!(
+            !seen.contains(&cur),
+            "кадр повторился ПОСЛЕ смены — это откат назад"
+        );
+        seen.push(cur);
+    }
+    // источник 25 fps на 1.5 с сетки 60 fps даёт ~38 разных кадров
+    assert!(seen.len() >= 30, "слишком мало разных кадров: {}", seen.len());
+
+    // 3) forward-проход не устраивает seek-шторм
+    let (reopens, _) = per_frame.decode_debug_stats();
+    assert!(reopens <= 1, "по-кадровый путь пересоздал декодер {reopens} раз");
+}

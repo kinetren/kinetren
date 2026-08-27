@@ -92,6 +92,16 @@ struct VideoPath {
     start_time: i64,
     codec_id: ffi::AVCodecID,
     last_pts: Option<i64>,
+    /// Кадр-ОТВЕТ на последний запрос: наибольший pts <= цели. Владение
+    /// у потока — вызывающий его только конвертирует, не освобождает.
+    held: *mut ffi::AVFrame,
+    held_pts: i64,
+    /// Первый декодированный кадр ПОСЛЕ цели: он уже стоил декода, и
+    /// выбрасывать его нельзя — иначе следующий запрос уедет в seek
+    /// (п.14 р.14: отсюда и брался seek-шторм при fps проекта > fps
+    /// источника).
+    pending: *mut ffi::AVFrame,
+    pending_pts: i64,
     sws: *mut ffi::SwsContext,
     sws_key: (c_int, c_int, c_int, c_int, c_int),
     eof: bool,
@@ -356,33 +366,17 @@ impl Source {
     ) -> Result<RgbaFrame, FfError> {
         let api = self.api;
         let v = self.video.as_mut().ok_or(FfError::OutOfRange)?;
-        let target_ts =
-            unsafe { (api.av_rescale_q)(pts.0, tb(1, TICK_HZ as i32), v.time_base) } + v.start_time;
-
-        let forward_ok = match v.last_pts {
-            Some(last) if target_ts > last => {
-                let ahead = unsafe {
-                    (api.av_rescale_q)(target_ts - last, v.time_base, tb(1, TICK_HZ as i32))
-                };
-                ahead < VIDEO_FORWARD_DECODE_MAX_TICKS
-            }
-            _ => false,
-        };
-        if !forward_ok {
-            v.seek_and_reopen(api, target_ts)?;
-        }
-        let frame = v.decode_to(api, target_ts)?;
-        let out = v.to_rgba(api, frame, width, height);
-        unsafe { (api.av_frame_free)(&mut (frame as *mut _)) };
-        out
+        let target_ts = v.target_ts(api, pts);
+        v.prepare_for(api, target_ts)?;
+        let frame = v.frame_for(api, target_ts)?;
+        v.to_rgba(api, frame, width, height)
     }
 
-    /// Спан-декод: кадр для КАЖДОГО ключа из `keys` (строго возрастают)
-    /// за ОДИН forward-проход декодера. Семантика кадра для ключа k — как у
-    /// read_video_frame: наибольший pts <= k (или первый после, если раньше
-    /// ничего нет). Промежуточные кадры GOP декодируются ровно один раз на
-    /// весь спан (п.14/15: по-кадровые вызовы декодировали GOP заново для
-    /// каждого кадра и выбрасывали остальное).
+    /// Спан-декод: кадр для КАЖДОГО ключа из `keys` (строго возрастают) за
+    /// ОДИН forward-проход декодера. Семантика ровно та же, что у
+    /// `read_video_frame` — обе идут через `frame_for` (п.14 р.14: раньше
+    /// это были две независимые реализации с РАЗНОЙ семантикой, из-за чего
+    /// экспорт и превью показывали разные кадры и ломался инвариант №7).
     pub fn read_video_span(
         &mut self,
         keys: &[Tick],
@@ -396,65 +390,15 @@ impl Source {
             return Ok(());
         }
         debug_assert!(keys.windows(2).all(|w| w[0] < w[1]), "ключи спана должны возрастать");
-        let targets: Vec<i64> = keys
-            .iter()
-            .map(|k| {
-                let ts = unsafe { (api.av_rescale_q)(k.0, tb(1, TICK_HZ as i32), v.time_base) };
-                ts + v.start_time
-            })
-            .collect();
-
-        let forward_ok = match v.last_pts {
-            Some(last) if targets[0] > last => {
-                let ahead = unsafe {
-                    (api.av_rescale_q)(targets[0] - last, v.time_base, tb(1, TICK_HZ as i32))
-                };
-                ahead < VIDEO_FORWARD_DECODE_MAX_TICKS
-            }
-            _ => false,
-        };
-        if !forward_ok {
-            v.seek_and_reopen(api, targets[0])?;
+        let first = v.target_ts(api, keys[0]);
+        v.prepare_for(api, first)?;
+        for k in keys {
+            let target = v.target_ts(api, *k);
+            let frame = v.frame_for(api, target)?;
+            let rgba = v.to_rgba(api, frame, width, height)?;
+            emit(*k, rgba);
         }
-
-        let mut prev: *mut ffi::AVFrame = core::ptr::null_mut();
-        let mut next = 0usize;
-        let res = (|| -> Result<(), FfError> {
-            while next < targets.len() {
-                let Some(frame) = v.decode_next_frame(api)? else { break };
-                let f = unsafe { &*frame };
-                let pts = if f.best_effort_timestamp != AV_NOPTS_VALUE {
-                    f.best_effort_timestamp
-                } else {
-                    f.pts
-                };
-                // все ключи СТРОГО ПЕРЕД этим кадром закрываются предыдущим
-                while next < targets.len() && pts > targets[next] {
-                    let use_frame = if prev.is_null() { frame } else { prev };
-                    let rgba = v.to_rgba(api, use_frame, width, height)?;
-                    emit(keys[next], rgba);
-                    next += 1;
-                }
-                if !prev.is_null() {
-                    unsafe { (api.av_frame_free)(&mut prev) };
-                }
-                prev = frame;
-            }
-            // EOF/конец: оставшиеся ключи закрывает последний кадр
-            while next < targets.len() {
-                if prev.is_null() {
-                    return Err(FfError::OutOfRange);
-                }
-                let rgba = v.to_rgba(api, prev, width, height)?;
-                emit(keys[next], rgba);
-                next += 1;
-            }
-            Ok(())
-        })();
-        if !prev.is_null() {
-            unsafe { (api.av_frame_free)(&mut prev) };
-        }
-        res
+        Ok(())
     }
 
     /// Диагностика для тестов производительности (п.14/15): сколько раз
@@ -706,6 +650,10 @@ impl VideoPath {
             start_time,
             codec_id,
             last_pts: None,
+            held: core::ptr::null_mut(),
+            held_pts: i64::MIN,
+            pending: core::ptr::null_mut(),
+            pending_pts: i64::MIN,
             sws: core::ptr::null_mut(),
             sws_key: (0, 0, 0, 0, 0),
             eof: false,
@@ -767,9 +715,21 @@ impl VideoPath {
         unsafe { (api.avcodec_free_context)(&mut self.dec) };
         self.dec = Self::open_decoder(api, self.fmt, self.stream_index, self.codec_id)?;
         self.last_pts = None;
+        self.drop_cached_frames(api);
         self.eof = false;
         self.backward_reopens += 1;
         Ok(())
+    }
+
+    fn drop_cached_frames(&mut self, api: &Api) {
+        if !self.held.is_null() {
+            unsafe { (api.av_frame_free)(&mut self.held) };
+        }
+        if !self.pending.is_null() {
+            unsafe { (api.av_frame_free)(&mut self.pending) };
+        }
+        self.held_pts = i64::MIN;
+        self.pending_pts = i64::MIN;
     }
 
     /// Следующий декодированный кадр (владение — у вызывающего:
@@ -830,13 +790,72 @@ impl VideoPath {
         res
     }
 
-    /// Кадр с наибольшим pts <= target_ts (или первый после, если точного
-    /// нет). Поверх decode_next_frame: тот корректно ДРЕНИРУЕТ кадры из
-    /// уже флашнутого декодера (с threads=auto демуксер добирает EOF на
-    /// десятки кадров раньше цели — старая ветка `if self.eof` возвращала
-    /// OutOfRange, не забрав оставшееся из конвейера декодера).
-    fn decode_to(&mut self, api: &Api, target_ts: i64) -> Result<*mut ffi::AVFrame, FfError> {
-        let mut best: *mut ffi::AVFrame = core::ptr::null_mut();
+    /// Кадр-ответ для цели: **наибольший pts <= target_ts** — ВСЕГДА, а не
+    /// «как повезёт с состоянием декодера» (п.14 р.14).
+    ///
+    /// Раньше это работало по двум разным правилам: после seek копился
+    /// `best` и получался floor, а на forward-пути предыдущий кадр был уже
+    /// отдан и освобождён, срабатывала ветка «best пуст → верни то, что
+    /// декодировалось» — то есть кадр СПРАВА от цели. При fps проекта ≠ fps
+    /// источника правила чередовались, и кадры в экспорте шли
+    /// `f0, f1, f0, f2, f1, f3…` — пользователь видел «откаты назад».
+    ///
+    /// Теперь поток держит два кадра: `held` (ответ, floor) и `pending`
+    /// (первый декодированный ПОСЛЕ цели — он уже стоил декода). Владение
+    /// остаётся у потока: вызывающий только конвертирует кадр в RGBA.
+    /// Возвращается заимствованный указатель, освобождать его нельзя.
+    /// Тик проекта → ts источника. Округление ВНИЗ: `av_rescale_q`
+    /// округляет к ближайшему, и цель могла перескочить границу кадра
+    /// источника (второй источник джаддера, п.14 р.14).
+    fn target_ts(&self, api: &Api, pts: Tick) -> i64 {
+        let _ = api;
+        // floor вручную: ts = pts/TICK_HZ секунд / (num/den) единиц
+        let num = self.time_base.num as i128;
+        let den = self.time_base.den as i128;
+        let ts = if num > 0 {
+            ((pts.0 as i128) * den).div_euclid(TICK_HZ as i128 * num) as i64
+        } else {
+            unsafe { (api.av_rescale_q)(pts.0, tb(1, TICK_HZ as i32), self.time_base) }
+        };
+        ts + self.start_time
+    }
+
+    /// Нужен ли seek перед запросом цели: назад или слишком далеко вперёд.
+    fn prepare_for(&mut self, api: &Api, target_ts: i64) -> Result<(), FfError> {
+        // ответ уже удержан — ни seek, ни декода не требуется
+        if !self.held.is_null() && self.held_pts <= target_ts && !self.pending.is_null() {
+            return Ok(());
+        }
+        let forward_ok = match self.last_pts {
+            Some(last) if target_ts >= last => {
+                let ahead = unsafe {
+                    (api.av_rescale_q)(target_ts - last, self.time_base, tb(1, TICK_HZ as i32))
+                };
+                ahead < VIDEO_FORWARD_DECODE_MAX_TICKS
+            }
+            _ => self.held_pts != i64::MIN && target_ts >= self.held_pts,
+        };
+        if !forward_ok {
+            self.seek_and_reopen(api, target_ts)?;
+        }
+        Ok(())
+    }
+
+    fn frame_for(&mut self, api: &Api, target_ts: i64) -> Result<*mut ffi::AVFrame, FfError> {
+        // отложенный кадр дозрел до ответа
+        if !self.pending.is_null() && self.pending_pts <= target_ts {
+            if !self.held.is_null() {
+                unsafe { (api.av_frame_free)(&mut self.held) };
+            }
+            self.held = self.pending;
+            self.held_pts = self.pending_pts;
+            self.pending = core::ptr::null_mut();
+            self.pending_pts = i64::MIN;
+        }
+        // ответ уже есть: цель между held и pending — отдаём held
+        if !self.held.is_null() && self.held_pts <= target_ts && !self.pending.is_null() {
+            return Ok(self.held);
+        }
         loop {
             match self.decode_next_frame(api) {
                 Ok(Some(frame)) => {
@@ -846,29 +865,38 @@ impl VideoPath {
                     } else {
                         f.pts
                     };
-                    let done = pts >= target_ts;
-                    if pts <= target_ts || best.is_null() {
-                        if !best.is_null() {
-                            unsafe { (api.av_frame_free)(&mut best) };
+                    if pts <= target_ts {
+                        if !self.held.is_null() {
+                            unsafe { (api.av_frame_free)(&mut self.held) };
                         }
-                        best = frame;
-                    } else {
-                        let mut frame = frame;
-                        unsafe { (api.av_frame_free)(&mut frame) };
+                        self.held = frame;
+                        self.held_pts = pts;
+                        continue;
                     }
-                    if done && !best.is_null() {
-                        return Ok(best);
+                    // первый кадр ПОСЛЕ цели закрывает запрос
+                    if !self.pending.is_null() {
+                        unsafe { (api.av_frame_free)(&mut self.pending) };
                     }
+                    self.pending = frame;
+                    self.pending_pts = pts;
+                    if self.held.is_null() {
+                        // раньше цели кадров нет вовсе (запрос до первого
+                        // кадра файла) — честно отдаём первый существующий
+                        self.held = self.pending;
+                        self.held_pts = self.pending_pts;
+                        self.pending = core::ptr::null_mut();
+                        self.pending_pts = i64::MIN;
+                    }
+                    return Ok(self.held);
                 }
                 Ok(None) => {
-                    return if best.is_null() { Err(FfError::OutOfRange) } else { Ok(best) };
+                    return if self.held.is_null() {
+                        Err(FfError::OutOfRange)
+                    } else {
+                        Ok(self.held)
+                    };
                 }
-                Err(e) => {
-                    if !best.is_null() {
-                        unsafe { (api.av_frame_free)(&mut best) };
-                    }
-                    return Err(e);
-                }
+                Err(e) => return Err(e),
             }
         }
     }
