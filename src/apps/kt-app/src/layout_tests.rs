@@ -331,7 +331,6 @@ fn t88_jump_reveals_cursor() {
 fn t94_forward_navigation_advances() {
     use kt_model::*;
     use kt_time::Tick;
-
     let mut h = harness();
     {
         let app = h.state_mut();
@@ -617,4 +616,79 @@ fn t97_top_meters_and_leds() {
     let w = panel_width(&h, "meters_col");
     assert!(w <= 180.0, "метры растянулись на {w} px — нет верхнего предела");
     assert!(w > 100.0, "сепаратор метров вообще не потянулся ({w}) — тест ничего не проверил");
+}
+
+/// Тест 98 (п.9 р.11): маска ввода таймкода.
+///
+/// Требования пользователя: набор СПРАВА НАЛЕВО, ширина тулбара не
+/// скачет при открытии маски, работает во время воспроизведения, и это
+/// не «просто воткнутый inputfield» — рисуется в том же прямоугольнике и
+/// тем же шрифтом, что сам тайм-код.
+#[test]
+fn t98_timecode_mask() {
+    use crate::util::{mask_digits, mask_text, mask_to_tick};
+
+    // цифры вдвигаются справа, ненабранные старшие разряды — нули
+    assert_eq!(mask_digits(""), "000000");
+    assert_eq!(mask_digits("7"), "000007");
+    assert_eq!(mask_digits("130"), "000130");
+    assert_eq!(mask_digits("123456"), "123456");
+    // лишние цифры не ломают маску: держим последние шесть
+    assert_eq!(mask_digits("9123456"), "123456");
+    // разбор: 00:01:30; минуты/секунды не нормализуются (99 минут — можно)
+    assert_eq!(mask_to_tick("130", 30).0, 90_000 * 90);
+    assert_eq!(mask_to_tick("9900", 30).0, 90_000 * 99 * 60);
+    // подсветка: набранное — справа, ненабранное — слева приглушённо
+    let (dimmed, typed) = mask_text("130");
+    assert_eq!(dimmed, "00:0", "ненабранная часть слева");
+    assert_eq!(typed, "1:30", "набранное справа");
+    assert_eq!(mask_text("").1, "", "ничего не набрано — подсвечивать нечего");
+    // вставка готового тайм-кода раскладывается по разрядам
+    assert_eq!(
+        crate::util::tick_to_mask(
+            crate::util::parse_timecode("1:02:03", 30).expect("не разобрался")
+        ),
+        "010203"
+    );
+
+    // --- ширина тулбара не меняется при открытии маски
+    let mut h = harness();
+    let strip_h = |h: &Harness<'_, KtApp>| h.state().tl_geom.clone().map(|g| g.rect.height());
+    let before = strip_h(&h);
+    h.state_mut().tc_edit = Some(String::new());
+    h.state_mut().tc_edit_focus = true;
+    h.step();
+    assert_eq!(strip_h(&h), before, "открытие маски сдвинуло вёрстку таймлайна");
+
+    // --- при открытой маске пробел НЕ запускает воспроизведение
+    let playing = h.state().player.transport.is_playing();
+    h.key_press(egui::Key::Space);
+    h.step();
+    assert_eq!(
+        h.state().player.transport.is_playing(),
+        playing,
+        "пробел утёк в хоткеи мимо маски"
+    );
+
+    // --- ввод цифр и Enter переводят курсор (и не требуют паузы)
+    h.event(egui::Event::Text("130".into()));
+    h.step();
+    h.key_press(egui::Key::Enter);
+    h.step();
+    assert!(h.state().tc_edit.is_none(), "Enter не закрыл маску");
+    assert_eq!(
+        h.state().player.transport.playhead().0 / 90_000,
+        90,
+        "курсор не встал на 00:01:30"
+    );
+    // подмотка отрабатывает тем же кадром: запрос уже погашен, а курсор
+    // виден в окне (иначе «перешёл, но не видно»)
+    assert!(h.state().pending_reveal.is_none(), "запрос подмотки завис");
+    let g = h.state().tl_geom.clone().expect("нет геометрии");
+    let x = g.tick_to_x(90 * 90_000);
+    assert!(
+        (g.rect.left()..=g.rect.right()).contains(&x),
+        "после перехода курсор вне видимой области: x={x}, окно {:?}",
+        g.rect
+    );
 }

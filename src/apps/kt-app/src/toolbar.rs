@@ -354,54 +354,129 @@ impl KtApp {
             self.jump_stop(true, far);
         }
         ui.separator();
-        // тайм-код: на паузе двойной клик (или Ctrl+L) превращает его в
-        // поле ввода — переход к произвольной позиции (п.4 р.10)
-        if let Some(buf) = self.tc_edit.clone() {
-            let mut buf = buf;
-            let r = ui.add(
-                egui::TextEdit::singleline(&mut buf)
-                    .hint_text("чч:мм:сс")
-                    .desired_width(96.0)
-                    .font(egui::TextStyle::Monospace),
+        // ---- тайм-код и маска ввода (п.4 р.10, переделано п.9 р.11) ----
+        // Ввод рисуется В ТОМ ЖЕ прямоугольнике и ТЕМ ЖЕ шрифтом, что и
+        // сам тайм-код: ширина берётся от полного формата, поэтому
+        // раскладка тулбара при открытии маски не дёргается (был
+        // TextEdit на 96 px против 150 px текста). Работает и во время
+        // воспроизведения — плеер умеет seek на ходу.
+        {
+            let fps = self.model.project().settings.fps;
+            // позиция ПОКАЗА: сырой playhead при игре дёргается квантами
+            // аудио-колбэка (п.12 корневого CLAUDE.md)
+            let live = self.player.video_playhead();
+            let font = egui::FontId::monospace(15.0);
+            let bright = egui::Color32::from_rgb(235, 235, 240);
+            let dim = egui::Color32::from_gray(120);
+            let full = crate::util::format_timecode(live, fps);
+            let size = ui.painter().layout_no_wrap(full.clone(), font.clone(), bright).size()
+                + egui::vec2(6.0, 0.0);
+            let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
+            let editing = self.tc_edit.is_some();
+            let r = self.hint(
+                r,
+                if editing {
+                    "Цифры набираются справа налево, Enter — перейти, Esc — отмена"
+                } else {
+                    "Позиция курсора; двойной клик или Ctrl+L — перейти к таймкоду"
+                },
             );
-            if !r.has_focus() && self.tc_edit_focus {
-                r.request_focus();
-                self.tc_edit_focus = false;
+            if r.double_clicked() && !editing {
+                self.tc_edit = Some(String::new());
+                self.tc_edit_focus = true;
             }
-            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                if let Some(t) =
-                    crate::util::parse_timecode(&buf, self.model.project().settings.fps)
-                {
+            if let Some(input) = self.tc_edit.clone() {
+                if self.tc_edit_focus {
+                    r.request_focus();
+                    self.tc_edit_focus = false;
+                }
+                // стрелки/Tab не должны уводить фокус из маски
+                ui.memory_mut(|m| {
+                    m.set_focus_lock_filter(
+                        r.id,
+                        egui::EventFilter {
+                            tab: true,
+                            horizontal_arrows: true,
+                            vertical_arrows: true,
+                            escape: false,
+                        },
+                    )
+                });
+                // события СЪЕДАЕМ: иначе цифры и Enter утекут в хоткеи
+                let mut input = input;
+                let mut apply = false;
+                let mut cancel = false;
+                ui.input_mut(|i| {
+                    i.events.retain(|e| match e {
+                        egui::Event::Text(t) if t.chars().all(|c| c.is_ascii_digit()) => {
+                            input.push_str(t);
+                            false
+                        }
+                        // вставка готового тайм-кода («1:02:03») — разбираем
+                        // и раскладываем по разрядам маски
+                        egui::Event::Text(t) => {
+                            match crate::util::parse_timecode(t, fps) {
+                                Some(at) => {
+                                    input = crate::util::tick_to_mask(at);
+                                    false
+                                }
+                                None => true,
+                            }
+                        }
+                        egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
+                            input.pop();
+                            false
+                        }
+                        egui::Event::Key { key: egui::Key::Enter, pressed: true, .. } => {
+                            apply = true;
+                            false
+                        }
+                        egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } => {
+                            cancel = true;
+                            false
+                        }
+                        _ => true,
+                    })
+                });
+                let painter = ui.painter_at(rect);
+                painter.rect_filled(rect, 1.0, egui::Color32::from_rgb(22, 24, 28));
+                painter.line_segment(
+                    [
+                        egui::pos2(rect.left() + 2.0, rect.bottom() - 1.0),
+                        egui::pos2(rect.right() - 2.0, rect.bottom() - 1.0),
+                    ],
+                    egui::Stroke::new(1.0, crate::theme::ACCENT),
+                );
+                let (live_part, typed_part) = crate::util::mask_text(&input);
+                let mut x = rect.left() + 3.0;
+                for (txt, col) in [(live_part, dim), (typed_part, bright)] {
+                    if txt.is_empty() {
+                        continue;
+                    }
+                    let g = painter.layout_no_wrap(txt, font.clone(), col);
+                    let w = g.size().x;
+                    painter.galley(egui::pos2(x, rect.center().y - g.size().y * 0.5), g, col);
+                    x += w;
+                }
+                if apply {
+                    let t = crate::util::mask_to_tick(&input, fps);
                     self.player.seek(t);
                     self.pending_reveal = Some(t.0);
+                    self.tc_edit = None;
+                } else if cancel || (r.lost_focus() && !r.has_focus()) {
+                    self.tc_edit = None;
+                } else {
+                    self.tc_edit = Some(input);
                 }
-                self.tc_edit = None;
-            } else if ui.input(|i| i.key_pressed(egui::Key::Escape))
-                || (r.lost_focus() && !r.has_focus())
-            {
-                self.tc_edit = None;
             } else {
-                self.tc_edit = Some(buf);
+                ui.painter_at(rect).text(
+                    egui::pos2(rect.left() + 3.0, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    full,
+                    font,
+                    bright,
+                );
             }
-        } else {
-        // тайм-код + скорость (п.19 р.6: бывшая полоса timestrip)
-        let tc = ui.add(egui::Label::new(
-            egui::RichText::new(crate::util::format_timecode(
-                self.player.transport.playhead(),
-                self.model.project().settings.fps,
-            ))
-            .monospace()
-            .size(15.0)
-            .color(egui::Color32::from_rgb(235, 235, 240)),
-        ).sense(egui::Sense::click()));
-        let tc = self.hint(
-            tc,
-            "Позиция курсора; на паузе двойной клик или Ctrl+L — перейти к таймкоду",
-        );
-        if tc.double_clicked() && !playing {
-            self.tc_edit = Some(String::new());
-            self.tc_edit_focus = true;
-        }
         }
         self.draw_speed_control(ui);
         ui.separator();

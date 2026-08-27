@@ -2676,7 +2676,9 @@ impl KtApp {
             nav_far: i.modifiers.shift
                 && (i.key_pressed(egui::Key::Home) || i.key_pressed(egui::Key::End)),
         });
-        if k.goto_tc && !self.player.transport.is_playing() {
+        // п.9 р.11: работает и во время воспроизведения (seek на ходу
+        // плеер умеет; гейт «только на паузе» был перестраховкой)
+        if k.goto_tc {
             self.tc_edit = Some(String::new());
             self.tc_edit_focus = true;
         }

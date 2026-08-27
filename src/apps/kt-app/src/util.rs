@@ -244,6 +244,47 @@ pub fn parse_timecode(s: &str, fps: u32) -> Option<kt_time::Tick> {
     Some(grid.align_floor(kt_time::Tick::from_secs_f64(secs)))
 }
 
+
+/// Маска ввода таймкода (п.9 р.11): цифры набиваются СПРАВА НАЛЕВО
+/// (решение пользователя) в разряды ЧЧММСС, ненабранные старшие разряды —
+/// нули. Так «130» это 00:01:30, а не «что-то от текущей позиции»: как в
+/// монтажках, где частичный тайм-код всегда дополняется нулями.
+pub const TC_MASK_DIGITS: usize = 6;
+
+/// Разряды маски (ровно 6 символов) при текущем вводе.
+pub fn mask_digits(input: &str) -> String {
+    let d: Vec<char> = input.chars().filter(|c| c.is_ascii_digit()).collect();
+    let d: String = d[d.len().saturating_sub(TC_MASK_DIGITS)..].iter().collect();
+    format!("{}{}", "0".repeat(TC_MASK_DIGITS - d.len()), d)
+}
+
+/// Тик по маске. Минуты/секунды не нормализуются в 0..59 намеренно:
+/// «00:99:00» = 99 минут, так набирать быстрее и это не сюрприз.
+pub fn mask_to_tick(input: &str, fps: u32) -> kt_time::Tick {
+    let d = mask_digits(input);
+    let n = |a: usize, b: usize| -> i64 { d[a..b].parse::<i64>().unwrap_or(0) };
+    let secs = n(0, 2) * 3600 + n(2, 4) * 60 + n(4, 6);
+    let step = 90_000 / fps.max(1) as i64;
+    kt_time::Tick(secs * 90_000 / step * step)
+}
+
+/// Разряды ЧЧММСС из тика — для вставки готового тайм-кода в маску.
+pub fn tick_to_mask(t: kt_time::Tick) -> String {
+    let ms = t.as_ms().max(0);
+    format!("{:02}{:02}{:02}", (ms / 3_600_000).min(99), ms % 3_600_000 / 60_000, ms % 60_000 / 1000)
+}
+
+/// Как маска выглядит на экране: (ненабранная часть, набранная часть).
+/// Первая рисуется приглушённо — сразу видно, что уже зафиксировано.
+pub fn mask_text(input: &str) -> (String, String) {
+    let d = mask_digits(input);
+    let typed = input.chars().filter(|c| c.is_ascii_digit()).count().min(TC_MASK_DIGITS);
+    let full = format!("{}:{}:{}", &d[0..2], &d[2..4], &d[4..6]);
+    // индексы первого набранного символа в «чч:мм:сс» для 0..6 цифр
+    let cut = [8usize, 7, 6, 4, 3, 1, 0][typed];
+    (full[..cut].to_string(), full[cut..].to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
