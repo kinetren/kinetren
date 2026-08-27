@@ -448,7 +448,7 @@ impl KtApp {
                 .as_ref()
                 .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
                 .unwrap_or_else(|| "безымянный".into()),
-            if self.dirty { " ●" } else { "" },
+            if self.dirty { " *" } else { "" },
             env!("CARGO_PKG_VERSION")
         );
         if title != self.last_title {
@@ -870,23 +870,26 @@ impl KtApp {
     /// `far` (Shift) — сразу в начало/конец проекта.
     pub(crate) fn jump_stop(&mut self, forward: bool, far: bool) {
         let p = self.model.project();
-        let end = kt_engine::export::project_range(p).0;
+        let pts = stop_points(p);
+        // «конец» — не только конец материала: маркер или граница региона
+        // могут лежать правее, и тогда прыжок вперёд утаскивал курсор
+        // НАЗАД (п.7 р.10)
+        let end = kt_engine::export::project_range(p)
+            .0
+            .max(pts.last().copied().unwrap_or(0));
         let cursor = self.player.transport.playhead().0;
         let at = if far {
             if forward { end } else { 0 }
+        } else if forward {
+            next_stop(cursor, &pts).unwrap_or(end)
         } else {
-            let pts = stop_points(p);
-            if forward {
-                next_stop(cursor, &pts).unwrap_or(end)
-            } else {
-                prev_stop(cursor, &pts).unwrap_or(0)
-            }
+            prev_stop(cursor, &pts).unwrap_or(0)
         };
-        let at = at.max(0);
-        self.player.seek(Tick(at));
+        let at = Tick(at.max(0)).align_audio_up();
+        self.player.seek(at);
         // окно таймлайна обязано показать курсор (п.11 р.9); применяем в
         // draw_timeline, где известны актуальные rect и зум
-        self.pending_reveal = Some(at);
+        self.pending_reveal = Some(self.player.transport.playhead().0);
     }
 
     /// Зум кнопками — якорь на PLAYHEAD (п.26 р.7: раньше якорился левый
@@ -2454,10 +2457,10 @@ impl KtApp {
                 && (i.modifiers.shift && i.key_pressed(egui::Key::Z)
                     || i.key_pressed(egui::Key::Y)),
             save: i.modifiers.ctrl && i.key_pressed(egui::Key::S),
-            marker: i.key_pressed(egui::Key::M),
-            region_in: i.key_pressed(egui::Key::I),
-            region_out: i.key_pressed(egui::Key::O),
-            loop_toggle: i.key_pressed(egui::Key::L),
+            marker: i.key_pressed(egui::Key::M) && !i.modifiers.ctrl && !i.modifiers.alt,
+            region_in: i.key_pressed(egui::Key::I) && !i.modifiers.ctrl && !i.modifiers.alt,
+            region_out: i.key_pressed(egui::Key::O) && !i.modifiers.ctrl && !i.modifiers.alt,
+            loop_toggle: i.key_pressed(egui::Key::L) && !i.modifiers.ctrl && !i.modifiers.alt,
             // Ctrl+C/Ctrl+V НЕ приходят как key_pressed: egui-winit
             // перехватывает их и шлёт Event::Copy / Event::Paste(..)
             // (регрессия п.21 — «Ctrl+V не работает»)
@@ -2468,9 +2471,15 @@ impl KtApp {
                 || (i.modifiers.ctrl && i.key_pressed(egui::Key::V)),
             // п.16 р.8: Home/End — по точкам остановки, с Shift — в
             // самое начало/конец проекта
-            nav_prev: i.key_pressed(egui::Key::Home),
-            nav_next: i.key_pressed(egui::Key::End),
-            nav_far: i.modifiers.shift,
+            // п.8 р.10: A/D — те же прыжки, что кнопки навигации.
+            // «В самый конец» остаётся только за Shift+Home/End: Shift+D
+            // не должен внезапно улетать в конец проекта.
+            nav_prev: i.key_pressed(egui::Key::Home)
+                || (i.key_pressed(egui::Key::A) && !i.modifiers.ctrl && !i.modifiers.alt),
+            nav_next: i.key_pressed(egui::Key::End)
+                || (i.key_pressed(egui::Key::D) && !i.modifiers.ctrl && !i.modifiers.alt),
+            nav_far: i.modifiers.shift
+                && (i.key_pressed(egui::Key::Home) || i.key_pressed(egui::Key::End)),
         });
         if k.nav_prev {
             self.jump_stop(false, k.nav_far);
@@ -2962,6 +2971,11 @@ pub fn stop_points(p: &kt_model::Project) -> Vec<i64> {
         v.push(s);
         v.push(e);
     }
+    // Точки выравниваются к аудио-сетке (п.7 р.10): playhead хранится в
+    // аудиокадрах, и round-trip «тик → кадр → тик» усекает вниз. Без
+    // выравнивания курсор после прыжка вставал на тик ЛЕВЕЕ цели, и
+    // «вперёд» бесконечно находил ту же самую точку.
+    let mut v: Vec<i64> = v.into_iter().map(|t| Tick(t).align_audio_up().0).collect();
     v.sort_unstable();
     v.dedup();
     v
@@ -3584,11 +3598,14 @@ mod repaint_tests {
         p.markers.push(Tick(5000));
         p.region = Some(Region { start: Tick(7000), end: Tick(9000) });
         let pts = stop_points(&p);
-        assert_eq!(pts, vec![0, 1000, 4000, 5000, 7000, 9000], "точки: {pts:?}");
+        // точки выровнены ВВЕРХ к аудио-сетке (кратно 15 тикам, п.7 р.10):
+        // сдвиг ≤14 тиков = 0.15 мс, зато прыжок вперёд не застревает
+        assert_eq!(pts, vec![0, 1005, 4005, 5010, 7005, 9000], "точки: {pts:?}");
+        assert!(pts.iter().all(|t| t % 15 == 0), "не выровнено: {pts:?}");
 
         // курсор ровно на точке — уходим дальше, не залипаем
-        assert_eq!(prev_stop(5000, &pts), Some(4000));
-        assert_eq!(next_stop(5000, &pts), Some(7000));
+        assert_eq!(prev_stop(5010, &pts), Some(4005));
+        assert_eq!(next_stop(5010, &pts), Some(7005));
         // цепочка нажатий влево монотонна и без повторов
         let mut cur = 9000;
         let mut seen = vec![];
@@ -3597,7 +3614,7 @@ mod repaint_tests {
             seen.push(p);
             cur = p;
         }
-        assert_eq!(seen, vec![7000, 5000, 4000, 1000, 0]);
+        assert_eq!(seen, vec![7005, 5010, 4005, 1005, 0]);
         // края
         assert_eq!(prev_stop(0, &pts), None);
         assert_eq!(next_stop(9000, &pts), None);

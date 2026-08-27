@@ -348,12 +348,12 @@ impl KtApp {
         ) {
             self.on_transport_toggle();
         }
-        if self.tb(ui, crate::icons::SKIP_BACK, "Назад: маркер / регион / край клипа (Home; Shift — в начало)")
+        if self.tb(ui, crate::icons::SKIP_BACK, "Назад: маркер / регион / край клипа (A или Home; Shift+Home — в начало)")
         {
             let far = ui.input(|i| i.modifiers.shift);
             self.jump_stop(false, far);
         }
-        if self.tb(ui, crate::icons::SKIP_FWD, "Вперёд: маркер / регион / край клипа (End; Shift — в конец)")
+        if self.tb(ui, crate::icons::SKIP_FWD, "Вперёд: маркер / регион / край клипа (D или End; Shift+End — в конец)")
         {
             let far = ui.input(|i| i.modifiers.shift);
             self.jump_stop(true, far);
@@ -444,8 +444,10 @@ impl KtApp {
         if self.tb(ui, crate::icons::GAUGE, "Диагностика") {
             self.perf.diag_open = true;
         }
+        // п.6 р.10: «●» нет ни в одном шрифте семейства Proportional —
+        // рисовался квадрат-заглушка. Звёздочка есть везде.
         let save_label = if self.dirty {
-            format!("{}●", crate::icons::SAVE)
+            format!("{} *", crate::icons::SAVE)
         } else {
             crate::icons::SAVE.to_string()
         };

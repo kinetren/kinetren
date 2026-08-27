@@ -319,3 +319,72 @@ fn t88_jump_reveals_cursor() {
         vs + vis
     );
 }
+
+/// Тест 94 (пп.7,8 р.10): кнопка «Вперёд» РЕАЛЬНО двигает курсор вправо,
+/// повторные нажатия дают монотонную цепочку без застревания, и хоткеи
+/// A/D делают то же самое. Регрессия: playhead живёт в аудиокадрах, а
+/// точки остановки — в тиках; round-trip усекал вниз, курсор вставал на
+/// тик левее цели, и next_stop бесконечно находил ту же точку.
+#[test]
+fn t94_forward_navigation_advances() {
+    use kt_model::*;
+    use kt_time::Tick;
+
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        // проект с точками, НЕ кратными аудио-сетке: 1000, 4000, 7000
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.clips.push(ClipEvent {
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(1000),
+            duration: Tick(3000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx: vec![],
+        });
+        p.markers.push(Tick(7000));
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.player.seek(Tick(0));
+    }
+    h.step();
+
+    // цепочка вперёд обязана быть строго возрастающей
+    let mut seen = vec![h.state().player.transport.playhead().0];
+    for _ in 0..3 {
+        h.state_mut().jump_stop(true, false);
+        h.step();
+        let now = h.state().player.transport.playhead().0;
+        assert!(
+            now > *seen.last().unwrap(),
+            "курсор не двинулся вперёд: цепочка {seen:?} → {now}"
+        );
+        seen.push(now);
+    }
+    // и ни один прыжок не утащил назад
+    assert!(seen.windows(2).all(|w| w[1] > w[0]), "не монотонно: {seen:?}");
+    // на самой правой точке дальше двигаться некуда — и НЕ отбрасывает назад
+    let last = *seen.last().unwrap();
+    h.state_mut().jump_stop(true, false);
+    h.step();
+    assert_eq!(
+        h.state().player.transport.playhead().0,
+        last,
+        "упор в конец не должен утаскивать курсор назад"
+    );
+
+    // назад — тоже монотонно, до нуля
+    for _ in 0..6 {
+        h.state_mut().jump_stop(false, false);
+        h.step();
+    }
+    assert_eq!(h.state().player.transport.playhead().0, 0, "не дошли до нуля");
+}

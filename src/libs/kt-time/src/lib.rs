@@ -28,6 +28,10 @@ pub const AUDIO_BURST_TICKS: i64 = TICK_HZ * AUDIO_BURST_FRAMES as i64 / AUDIO_S
 #[serde(transparent)]
 pub struct Tick(pub i64);
 
+const fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
 impl Tick {
     pub const ZERO: Tick = Tick(0);
 
@@ -56,6 +60,15 @@ impl Tick {
 
     /// Номер аудио-сэмпла (кадра) → тики. Точно: 90000/48000 = 15/8 требует кратности 8,
     /// поэтому считаем через умножение до деления.
+    /// Выровнять тик ВВЕРХ к аудио-сетке (кратно 15 тикам): round-trip
+    /// «тик → аудиокадр → тик» усекает вниз и точен только на кратных 15.
+    /// Из-за этого навигация «строго правее» застревала на одной точке —
+    /// курсор после seek оказывался на тик ЛЕВЕЕ цели (п.7 р.10).
+    pub fn align_audio_up(self) -> Tick {
+        const STEP: i64 = TICK_HZ / gcd(TICK_HZ, AUDIO_SAMPLE_RATE as i64); // 15
+        Tick(self.0.div_euclid(STEP) * STEP + if self.0.rem_euclid(STEP) > 0 { STEP } else { 0 })
+    }
+
     pub fn from_audio_frames(frames: i64) -> Tick {
         Tick(frames * TICK_HZ / AUDIO_SAMPLE_RATE as i64)
     }
