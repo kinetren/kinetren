@@ -115,6 +115,19 @@ pub struct KtApp {
     pub bin_layout: std::collections::HashMap<kt_model::MediaId, egui::Pos2>,
     /// Какую карточку тащим внутри бина (свободный режим).
     pub bin_drag: Option<crate::bin_panel::BinDragState>,
+    /// Группы карточек бина (п.13 р.11): живут здесь, в проект едут
+    /// вместе с остальным UiState.
+    pub bin_groups: Vec<kt_model::BinGroup>,
+    /// Выделение карточек (рамкой или Ctrl+клик) — только в этой сессии.
+    pub bin_sel: std::collections::BTreeSet<kt_model::MediaId>,
+    /// Начало рамки выделения (координаты области бина).
+    pub bin_rubber: Option<egui::Pos2>,
+    /// Переименование группы: индекс + буфер.
+    pub bin_group_edit: Option<(usize, String)>,
+    /// Прямоугольники карточек этого кадра (свободный режим): нужны
+    /// рамке выделения и рамкам групп, заодно дают harness-тесту куда
+    /// целиться мышью. Буфер переиспользуется, не аллоцируется на кадр.
+    pub bin_card_rects: Vec<(kt_model::MediaId, egui::Rect)>,
     /// Захват ручки фейдера: смещение курсора относительно ручки —
     /// тянем «относительно», без рывка к позиции (п.2 р.8).
     pub fader_grab: Option<f32>,
@@ -281,6 +294,11 @@ impl KtApp {
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            bin_groups: Vec::new(),
+            bin_sel: Default::default(),
+            bin_rubber: None,
+            bin_group_edit: None,
+            bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
             preview_buf: Vec::new(),
@@ -388,6 +406,11 @@ impl KtApp {
             bin_free: true,
             bin_layout: std::collections::HashMap::new(),
             bin_drag: None,
+            bin_groups: Vec::new(),
+            bin_sel: Default::default(),
+            bin_rubber: None,
+            bin_group_edit: None,
+            bin_card_rects: Vec::new(),
             fader_grab: None,
             last_title: String::new(),
             preview_buf: Vec::new(),
@@ -460,6 +483,7 @@ impl KtApp {
             app.bin_free = ui.bin_free; // п.7 р.8
             app.bin_layout =
                 ui.bin_layout.iter().map(|(id, x, y)| (*id, egui::pos2(*x, *y))).collect();
+            app.bin_groups = ui.bin_groups;
             app.lane_names = ui.lane_names;
         }
         Ok(app)
@@ -479,6 +503,7 @@ impl KtApp {
             lane_order: self.lane_order.clone(),
             bin_free: self.bin_free,
             bin_layout: self.bin_layout.iter().map(|(id, p)| (*id, p.x, p.y)).collect(),
+            bin_groups: self.bin_groups.clone(),
             lane_names: self.lane_names.clone(),
         }
     }
@@ -933,7 +958,12 @@ impl KtApp {
         if !self.search_open {
             return;
         }
-        let hits = search_hits(self.model.project(), &self.lane_names, &self.search_query);
+        let hits = search_hits(
+            self.model.project(),
+            &self.lane_names,
+            &self.bin_groups,
+            &self.search_query,
+        );
         let mut open = true;
         let mut go: Option<Hit> = None;
         egui::Window::new("Поиск по проекту")
@@ -977,6 +1007,7 @@ impl KtApp {
                             HitKind::Media => "медиа",
                             HitKind::Track => "дорожка",
                             HitKind::Clip => "клип",
+                            HitKind::Group => "группа",
                         };
                         let sel = i == self.search_sel;
                         let text = format!("{tag}  ·  {}", h.label);
@@ -1001,6 +1032,16 @@ impl KtApp {
                 HitKind::Media => {
                     if let Some(id) = h.media {
                         self.place_media_at_cursor(id);
+                    }
+                }
+                // группа: показать её в бине — свободный режим и
+                // выделение целиком (переход «в никуда» бесполезен)
+                HitKind::Group => {
+                    if let Some(first) = h.media
+                        && let Some(gi) = self.bin_group_of(first)
+                    {
+                        self.bin_free = true;
+                        self.bin_sel = self.bin_groups[gi].members.iter().copied().collect();
                     }
                 }
                 _ => {
@@ -3162,6 +3203,8 @@ pub enum HitKind {
     Media,
     Track,
     Clip,
+    /// Группа карточек бина (п.13 р.11).
+    Group,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -3179,6 +3222,9 @@ pub struct Hit {
 pub fn search_hits(
     p: &kt_model::Project,
     lane_names: &[(kt_model::LaneKind, u32, String)],
+    // группы живут в приложении и попадают в проект только при
+    // сохранении — поиск обязан видеть ЖИВЫЕ (п.13 р.11)
+    groups: &[kt_model::BinGroup],
     query: &str,
 ) -> Vec<Hit> {
     let q = query.trim().to_lowercase();
@@ -3209,6 +3255,23 @@ pub fn search_hits(
             out.push((
                 r,
                 Hit { kind: HitKind::Marker, label, at: m.t.0, media: None, clip: None },
+            ));
+        }
+    }
+    for g in groups {
+        if g.name.is_empty() {
+            continue;
+        }
+        if let Some(r) = rank(&g.name) {
+            out.push((
+                r,
+                Hit {
+                    kind: HitKind::Group,
+                    label: format!("{} ({})", g.name, g.members.len()),
+                    at: 0,
+                    media: g.members.first().copied(),
+                    clip: None,
+                },
             ));
         }
     }
@@ -3948,29 +4011,40 @@ mod repaint_tests {
         p.markers.push(Marker::named(Tick(5000), "Интро"));
         p.markers.push(Marker::named(Tick(9000), "интервью — начало"));
         let names = vec![(LaneKind::Audio, 0, "Голос".to_string())];
+        let groups = vec![BinGroup {
+            name: "Планы города".into(),
+            members: vec![MediaId(1)],
+            locked: false,
+        }];
 
         // пустой запрос — пусто
-        assert!(search_hits(&p, &names, "   ").is_empty());
+        assert!(search_hits(&p, &names, &groups, "   ").is_empty());
 
         // регистр не важен, точное совпадение первым
-        let hits = search_hits(&p, &names, "интро");
+        let hits = search_hits(&p, &names, &groups, "интро");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].kind, HitKind::Marker);
         assert_eq!(hits[0].at, 5000);
 
         // одна подстрока находит и метку, и медиа
-        let hits = search_hits(&p, &names, "интервью");
+        let hits = search_hits(&p, &names, &groups, "интервью");
         assert!(hits.iter().any(|h| h.kind == HitKind::Marker));
         assert!(hits.iter().any(|h| h.kind == HitKind::Media));
 
         // дорожка по пользовательскому имени и по формуле
         assert!(
-            search_hits(&p, &names, "голос").iter().any(|h| h.kind == HitKind::Track)
+            search_hits(&p, &names, &groups, "голос").iter().any(|h| h.kind == HitKind::Track)
         );
-        assert!(search_hits(&p, &names, "v1").iter().any(|h| h.kind == HitKind::Track));
+        assert!(search_hits(&p, &names, &groups, "v1").iter().any(|h| h.kind == HitKind::Track));
 
         // мимо
-        assert!(search_hits(&p, &names, "щщщ").is_empty());
+        assert!(search_hits(&p, &names, &groups, "щщщ").is_empty());
+        // группы бина тоже ищутся по имени (п.13 р.11)
+        let hits = search_hits(&p, &names, &groups, "планы");
+        assert!(hits.iter().any(|h| h.kind == HitKind::Group), "группа не найдена: {hits:?}");
+        // безымянная группа в выдачу не лезет
+        let anon = vec![BinGroup { name: String::new(), members: vec![MediaId(1)], locked: true }];
+        assert!(search_hits(&p, &names, &anon, "").is_empty());
     }
 
     /// Тест 82 (п.16 р.8): умная навигация — точки остановки и прыжки.

@@ -692,3 +692,161 @@ fn t98_timecode_mask() {
         g.rect
     );
 }
+
+/// Тест 99 (п.13 р.11): группы карточек медиа-бина.
+///
+/// Проверяем ЖИВЫЕ сценарии: рамка выделения ловит карточки, группа
+/// едет целиком и не выпускает карточки за край панели, замок держит,
+/// удаление медиа не оставляет висячих групп, пустое не попадает в файл.
+#[test]
+fn t99_bin_groups() {
+    use kt_model::{BinGroup, MediaId, MediaRef};
+
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        for n in 1..=3u64 {
+            p.media.push(MediaRef { id: MediaId(n), path: format!("synth:{n}") });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.bin_free = true;
+        app.bin_layout.insert(MediaId(1), egui::pos2(0.0, 0.0));
+        app.bin_layout.insert(MediaId(2), egui::pos2(0.0, 100.0));
+        // третья карточка стоит с запасом: между второй и третьей есть
+        // пустое место, откуда можно тянуть рамку выделения
+        app.bin_layout.insert(MediaId(3), egui::pos2(0.0, 320.0));
+    }
+    h.step();
+
+    // --- группировка выделенного: одна группа, карточка ровно в одной
+    h.state_mut().bin_sel = [MediaId(1), MediaId(2)].into_iter().collect();
+    let gi = h.state_mut().bin_group_selection("Планы".into()).expect("группа не создалась");
+    assert_eq!(h.state().bin_groups[gi].members.len(), 2);
+    assert_eq!(h.state().bin_group_of(MediaId(3)), None, "третья карточка вне группы");
+    // повторная группировка перекладывает участника, а не дублирует
+    h.state_mut().bin_sel = [MediaId(2), MediaId(3)].into_iter().collect();
+    let gi2 = h.state_mut().bin_group_selection("Интервью".into()).expect("вторая группа");
+    let in_groups: Vec<usize> = (0..h.state().bin_groups.len())
+        .filter(|i| h.state().bin_groups[*i].members.contains(&MediaId(2)))
+        .collect();
+    assert_eq!(in_groups, vec![gi2], "карточка оказалась сразу в двух группах: {in_groups:?}");
+
+    // --- кого тянуть: всю группу, даже если схвачена одна карточка
+    let mates = h.state().bin_drag_set(MediaId(3));
+    assert_eq!(mates.len(), 2, "группа обязана ехать целиком: {mates:?}");
+    // карточка ВНЕ группы, но в выделении — едет вместе с выделением
+    h.state_mut().bin_ungroup(gi); // «Планы» осталась с одним участником
+    h.state_mut().bin_sel = [MediaId(1), MediaId(3)].into_iter().collect();
+    assert_eq!(
+        h.state().bin_drag_set(MediaId(1)).len(),
+        2,
+        "свободная карточка обязана ехать со всем выделением"
+    );
+
+    // --- замок
+    assert!(!h.state().bin_locked(MediaId(3)));
+    let gi2 = h
+        .state()
+        .bin_groups
+        .iter()
+        .position(|g| g.name == "Интервью")
+        .expect("группа пропала");
+    h.state_mut().bin_groups[gi2].locked = true;
+    h.step();
+    assert!(h.state().bin_locked(MediaId(3)), "замок группы не действует на участника");
+    assert!(!h.state().bin_locked(MediaId(1)), "замок утёк на чужую карточку");
+
+    // --- группы переживают переключение режимов и едут в проект
+    h.state_mut().bin_free = false;
+    h.step();
+    h.state_mut().bin_free = true;
+    h.step();
+    assert_eq!(h.state().bin_groups.len(), 1, "переключение режимов потеряло группы");
+    let st = h.state().ui_state_for_test();
+    assert_eq!(st.bin_groups.len(), 1, "группы не попали в UiState");
+    assert!(st.bin_groups[0].locked, "замок не доехал до проекта");
+    let json = serde_json::to_string(&kt_model::UiState::default()).unwrap();
+    assert!(!json.contains("bin_groups"), "пустые группы не должны попадать в файл: {json}");
+
+    // --- ЖИВОЙ сценарий: рамка выделения по пустому месту ловит карточки
+    h.state_mut().bin_groups.clear();
+    h.state_mut().bin_sel.clear();
+    h.step();
+    let rects = h.state().bin_card_rects.clone();
+    assert_eq!(rects.len(), 3, "карточки не нарисовались: {rects:?}");
+    let at = |h: &Harness<'_, KtApp>, m: MediaId| {
+        h.state().bin_card_rects.iter().find(|(id, _)| *id == m).unwrap().1
+    };
+    let (r0, r1) = (at(&h, MediaId(1)), at(&h, MediaId(2)));
+    // тянем из ПУСТОГО места под второй карточкой вверх, накрывая первые
+    // две; жест как у человека: нажать, чуть сдвинуть, вести дальше
+    let start = egui::pos2(r0.center().x, r1.bottom() + 40.0);
+    h.drag_at(start);
+    h.step();
+    h.hover_at(start + egui::vec2(-4.0, -8.0));
+    h.step();
+    h.hover_at(r0.center());
+    h.step();
+    h.drop_at(r0.center());
+    h.step();
+    assert!(
+        h.state().bin_sel.contains(&MediaId(1)) && h.state().bin_sel.contains(&MediaId(2)),
+        "рамка выделения не поймала карточки: {:?}",
+        h.state().bin_sel
+    );
+    assert!(!h.state().bin_sel.contains(&MediaId(3)), "рамка захватила лишнюю карточку");
+
+    // --- групповой драг: обе карточки уехали на одну дельту
+    h.state_mut().bin_group_selection("Пара".into()).expect("группа");
+    h.step();
+    let before: Vec<egui::Pos2> = [MediaId(1), MediaId(2)]
+        .iter()
+        .map(|m| h.state().bin_layout[m])
+        .collect();
+    let grab = at(&h, MediaId(1));
+    // нажать → чуть сдвинуть (здесь egui признаёт драг) → вести дальше
+    h.drag_at(grab.center());
+    h.step();
+    h.hover_at(grab.center() + egui::vec2(0.0, 8.0));
+    h.step();
+    h.hover_at(grab.center() + egui::vec2(0.0, 38.0));
+    h.step();
+    h.drop_at(grab.center() + egui::vec2(0.0, 38.0));
+    h.step();
+    let after: Vec<egui::Pos2> = [MediaId(1), MediaId(2)]
+        .iter()
+        .map(|m| h.state().bin_layout[m])
+        .collect();
+    let d0 = after[0] - before[0];
+    let d1 = after[1] - before[1];
+    assert!(d0.y > 10.0, "схваченная карточка не поехала: {d0:?}");
+    assert!((d0 - d1).length() < 0.6, "группа разъехалась: {d0:?} vs {d1:?}");
+    assert!(after.iter().all(|p| p.x >= 0.0 && p.y >= 0.0), "карточку вынесло за край: {after:?}");
+
+    // --- замок держит: залоченная группа не двигается мышью
+    let gi3 = h.state().bin_groups.len() - 1;
+    h.state_mut().bin_groups[gi3].locked = true;
+    h.step();
+    let before = h.state().bin_layout[&MediaId(1)];
+    let grab = at(&h, MediaId(1));
+    h.drag_at(grab.center());
+    h.step();
+    h.hover_at(grab.center() + egui::vec2(0.0, 8.0));
+    h.step();
+    h.hover_at(grab.center() + egui::vec2(0.0, 40.0));
+    h.step();
+    h.drop_at(grab.center() + egui::vec2(0.0, 40.0));
+    h.step();
+    assert_eq!(h.state().bin_layout[&MediaId(1)], before, "замок не удержал карточку");
+
+    // --- удаление медиа не оставляет висячих участников и пустых групп
+    let mut groups = vec![
+        BinGroup { name: "a".into(), members: vec![MediaId(1), MediaId(2)], locked: false },
+        BinGroup { name: "b".into(), members: vec![MediaId(3)], locked: true },
+    ];
+    kt_model::prune_bin_groups(&mut groups, &[MediaId(1)]);
+    assert_eq!(groups.len(), 1, "опустевшая группа не убрана");
+    assert_eq!(groups[0].members, vec![MediaId(1)], "удалённое медиа осталось в группе");
+}

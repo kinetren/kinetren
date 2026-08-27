@@ -22,7 +22,7 @@ const BIN_SCRUB_SLOTS: f32 = 48.0;
 pub struct BinDrag(pub MediaId);
 
 /// Состояние перетаскивания карточки внутри бина (п.8 р.9).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct BinDragState {
     pub id: MediaId,
     /// Смещение курсора внутри карточки.
@@ -31,9 +31,60 @@ pub struct BinDragState {
     pub start: egui::Pos2,
     /// Курсор уже покидал бин: дальше это вынос, раскладка не меняется.
     pub escaped: bool,
+    /// Кто едет вместе (группа или выделение) и с каких позиций: дельта
+    /// применяется ко всем сразу (п.13 р.11).
+    pub mates: Vec<(MediaId, egui::Pos2)>,
 }
 
 impl KtApp {
+    /// Индекс группы, в которой состоит карточка.
+    pub fn bin_group_of(&self, id: MediaId) -> Option<usize> {
+        self.bin_groups.iter().position(|g| g.members.contains(&id))
+    }
+
+    /// Кого тянуть вместе с карточкой: всю её группу, а если группы нет —
+    /// всё выделение (когда карточка в него входит), иначе её одну.
+    pub fn bin_drag_set(&self, id: MediaId) -> Vec<MediaId> {
+        if let Some(gi) = self.bin_group_of(id) {
+            return self.bin_groups[gi].members.clone();
+        }
+        if self.bin_sel.contains(&id) {
+            return self.bin_sel.iter().copied().collect();
+        }
+        vec![id]
+    }
+
+    /// Заперта ли карточка (замок группы).
+    pub fn bin_locked(&self, id: MediaId) -> bool {
+        self.bin_group_of(id).is_some_and(|gi| self.bin_groups[gi].locked)
+    }
+
+    /// Собрать выделенные карточки в группу (одиночная — тоже группа:
+    /// так «замок на карточке» не заводит второй механизм).
+    pub fn bin_group_selection(&mut self, name: String) -> Option<usize> {
+        let members: Vec<MediaId> = self.bin_sel.iter().copied().collect();
+        if members.is_empty() {
+            return None;
+        }
+        // карточка состоит максимум в одной группе
+        for m in &members {
+            if let Some(gi) = self.bin_group_of(*m) {
+                self.bin_groups[gi].members.retain(|x| x != m);
+            }
+        }
+        self.bin_groups.retain(|g| !g.members.is_empty());
+        self.bin_groups.push(kt_model::BinGroup { name, members, locked: false });
+        self.dirty_ui = true;
+        Some(self.bin_groups.len() - 1)
+    }
+
+    pub fn bin_ungroup(&mut self, gi: usize) {
+        if gi < self.bin_groups.len() {
+            self.bin_groups.remove(gi);
+            self.dirty_ui = true;
+        }
+    }
+
     pub fn draw_bin(&mut self, ui: &mut egui::Ui) {
         // Переключатель режимов — ИКОНКА, не галочка (п.8 р.8: галочек
         // «не к месту» больше не делаем)
@@ -91,8 +142,26 @@ impl KtApp {
                 .values()
                 .map(|p| p.y + row_h)
                 .fold(rows as f32 * (row_h + 6.0), f32::max);
-            let (area, _) =
-                ui.allocate_exact_size(egui::vec2(ui.available_width(), need_h), egui::Sense::hover());
+            // фон бина ловит рамку выделения; карточки регистрируются
+            // ПОЗЖЕ и потому выигрывают хит-тест (п.13 р.11)
+            let (area, bg) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), need_h),
+                egui::Sense::click_and_drag(),
+            );
+            let add_mode = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
+            if bg.drag_started()
+                && let Some(pos) = bg.interact_pointer_pos()
+            {
+                if !add_mode {
+                    self.bin_sel.clear();
+                }
+                self.bin_rubber = Some(pos);
+            }
+            if bg.clicked() && !add_mode {
+                self.bin_sel.clear();
+            }
+            let mut card_rects = std::mem::take(&mut self.bin_card_rects);
+            card_rects.clear();
             for (id, path) in &media {
                 let p = self.bin_layout.get(id).copied().unwrap_or_default();
                 // позиция клампится по ФАКТИЧЕСКОЙ ширине панели: иначе
@@ -103,6 +172,7 @@ impl KtApp {
                     area.min + egui::vec2(p.x.min(max_x), p.y),
                     egui::vec2(card_w, row_h),
                 );
+                card_rects.push((*id, rect));
                 let resp = self.draw_bin_card(
                     ui,
                     *id,
@@ -115,37 +185,51 @@ impl KtApp {
                     &mut to_place,
                     &mut to_remove,
                 );
-                // перетаскивание внутри бина двигает карточку; уход мышью
-                // за пределы панели = вынос на таймлайн
+                // перетаскивание внутри бина двигает карточку (и всю её
+                // группу/выделение); уход мышью за пределы панели = вынос
                 if resp.drag_started()
                     && let Some(pos) = resp.interact_pointer_pos()
+                    && !self.bin_locked(*id)
                 {
+                    let mates = self
+                        .bin_drag_set(*id)
+                        .into_iter()
+                        .map(|m| (m, self.bin_layout.get(&m).copied().unwrap_or_default()))
+                        .collect();
                     self.bin_drag = Some(BinDragState {
                         id: *id,
                         grab: pos - rect.min,
                         start: self.bin_layout.get(id).copied().unwrap_or(p),
                         escaped: false,
+                        mates,
                     });
                 }
                 if resp.dragged()
-                    && let Some(st) = self.bin_drag.as_mut()
+                    && let Some(st) = self.bin_drag.clone()
                     && st.id == *id
                     && let Some(pos) = resp.interact_pointer_pos()
                 {
                     // Липкий режим «вынос»: как только курсор ушёл за
                     // границу бина, раскладку НЕ трогаем и откатываем
-                    // позицию — иначе карточка уезжала даже при удачном
+                    // позиции — иначе карточки уезжали даже при удачном
                     // дропе на таймлайн (п.8 р.9). Гистерезис 4 px, чтобы
                     // дрожание у кромки не переключало режим.
                     if st.escaped {
                         drag_out = Some(*id);
                     } else if ui.max_rect().shrink(4.0).contains(pos) {
                         let np = pos - st.grab - area.min.to_vec2();
-                        self.bin_layout.insert(*id, egui::pos2(np.x.max(0.0), np.y.max(0.0)));
+                        let delta = egui::pos2(np.x.max(0.0), np.y.max(0.0)) - st.start;
+                        for (m, from) in &st.mates {
+                            let to = *from + delta;
+                            self.bin_layout.insert(*m, egui::pos2(to.x.max(0.0), to.y.max(0.0)));
+                        }
                     } else {
-                        st.escaped = true;
-                        let start = st.start;
-                        self.bin_layout.insert(*id, start);
+                        if let Some(st) = self.bin_drag.as_mut() {
+                            st.escaped = true;
+                        }
+                        for (m, from) in &st.mates {
+                            self.bin_layout.insert(*m, *from);
+                        }
                         drag_out = Some(*id);
                     }
                 }
@@ -157,6 +241,34 @@ impl KtApp {
                     self.dirty_ui = true; // раскладка — удобство, не содержимое
                 }
             }
+
+            // рамка выделения: рисуем и по отпусканию забираем карточки
+            if let Some(anchor) = self.bin_rubber {
+                let cur = ui.ctx().pointer_latest_pos().unwrap_or(anchor);
+                let band = egui::Rect::from_two_pos(anchor, cur);
+                ui.painter().rect_filled(
+                    band,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(90, 140, 220, 40),
+                );
+                ui.painter().rect_stroke(
+                    band,
+                    0.0,
+                    egui::Stroke::new(1.0, crate::theme::ACCENT),
+                    egui::StrokeKind::Middle,
+                );
+                if !ui.ctx().input(|i| i.pointer.primary_down()) {
+                    for (id, r) in &card_rects {
+                        if band.intersects(*r) {
+                            self.bin_sel.insert(*id);
+                        }
+                    }
+                    self.bin_rubber = None;
+                }
+            }
+
+            self.draw_bin_groups(ui, &card_rects);
+            self.bin_card_rects = card_rects;
         } else {
             // --- сетка ---------------------------------------------------
             ui.horizontal_wrapped(|ui| {
@@ -200,9 +312,154 @@ impl KtApp {
             self.place_media_at_cursor(id);
         }
         if let Some(id) = to_remove
-            && !self.apply(Command::RemoveMedia { id })
+            && self.apply(Command::RemoveMedia { id })
         {
-            // ошибка уже в статусе (MediaInUse)
+            // раскладка и группы жили отдельно от медиа и текли: чистим
+            // их вместе с удалением (п.13 р.11)
+            self.bin_layout.remove(&id);
+            self.bin_sel.remove(&id);
+            let alive: Vec<MediaId> = self.model.project().media.iter().map(|m| m.id).collect();
+            kt_model::prune_bin_groups(&mut self.bin_groups, &alive);
+            self.dirty_ui = true;
+        }
+    }
+
+    /// Рамки групп: объединение прямоугольников участников, имя — В
+    /// РАЗРЫВЕ верхней линии (лишней высоты не занимает), замок — глифом.
+    /// Плюс подсветка выделенных карточек.
+    fn draw_bin_groups(&mut self, ui: &mut egui::Ui, cards: &[(MediaId, egui::Rect)]) {
+        let painter = ui.painter().clone();
+        let at = |id: MediaId| cards.iter().find(|(m, _)| *m == id).map(|(_, r)| *r);
+        for (id, r) in cards {
+            if self.bin_sel.contains(id) {
+                painter.rect_stroke(
+                    r.expand(1.0),
+                    2.0,
+                    egui::Stroke::new(1.0, crate::theme::ACCENT),
+                    egui::StrokeKind::Middle,
+                );
+            }
+        }
+        let mut rename: Option<usize> = None;
+        for gi in 0..self.bin_groups.len() {
+            let g = self.bin_groups[gi].clone();
+            let mut frame: Option<egui::Rect> = None;
+            for m in &g.members {
+                if let Some(r) = at(*m) {
+                    frame = Some(frame.map_or(r, |f: egui::Rect| f.union(r)));
+                }
+            }
+            let Some(frame) = frame.map(|f| f.expand(4.0)) else { continue };
+            let col = if g.locked {
+                egui::Color32::from_rgb(150, 130, 90)
+            } else {
+                egui::Color32::from_rgb(90, 120, 165)
+            };
+            let stroke = egui::Stroke::new(1.0, col);
+            // рамка без верхней линии — её нарисуем с разрывом под имя
+            for seg in [
+                [frame.left_bottom(), frame.right_bottom()],
+                [frame.left_top(), frame.left_bottom()],
+                [frame.right_top(), frame.right_bottom()],
+            ] {
+                painter.line_segment(seg, stroke);
+            }
+            let title = if g.locked {
+                format!("{} {}", crate::icons::LOCK, g.name)
+            } else {
+                g.name.clone()
+            };
+            let title = title.trim().to_string();
+            if title.is_empty() {
+                painter.line_segment([frame.left_top(), frame.right_top()], stroke);
+            } else {
+                let galley = painter.layout_no_wrap(
+                    title,
+                    egui::FontId::proportional(10.5),
+                    col,
+                );
+                let w = galley.size().x.min(frame.width() - 12.0).max(0.0);
+                let x0 = frame.left() + 6.0;
+                painter.line_segment(
+                    [frame.left_top(), egui::pos2(x0 - 3.0, frame.top())],
+                    stroke,
+                );
+                painter.line_segment(
+                    [egui::pos2(x0 + w + 3.0, frame.top()), frame.right_top()],
+                    stroke,
+                );
+                painter.galley(
+                    egui::pos2(x0, frame.top() - galley.size().y * 0.5),
+                    galley,
+                    col,
+                );
+            }
+            // клик по РАМКЕ (не по карточке): выделить группу, ПКМ — меню
+            let bar = egui::Rect::from_min_max(
+                frame.left_top() - egui::vec2(0.0, 5.0),
+                egui::pos2(frame.right(), frame.top() + 2.0),
+            );
+            let r = ui.interact(bar, ui.id().with(("bin-group", gi)), egui::Sense::click());
+            let r = self.hint(r, "Группа: клик — выделить, ПКМ — переименовать/замок/разгруппировать");
+            if r.clicked() {
+                self.bin_sel = g.members.iter().copied().collect();
+            }
+            r.context_menu(|ui| {
+                if ui.button("Переименовать…").clicked() {
+                    rename = Some(gi);
+                    ui.close();
+                }
+                let lock_label =
+                    if g.locked { "Снять замок" } else { "Замок: не двигать карточки" };
+                if ui.button(lock_label).clicked() {
+                    self.bin_groups[gi].locked = !g.locked;
+                    self.dirty_ui = true;
+                    ui.close();
+                }
+                if ui.button("Разгруппировать").clicked() {
+                    self.bin_ungroup(gi);
+                    ui.close();
+                }
+            });
+        }
+        if let Some(gi) = rename {
+            let name = self.bin_groups[gi].name.clone();
+            self.bin_group_edit = Some((gi, name));
+        }
+        // инлайн-ввод имени группы
+        if let Some((gi, buf)) = self.bin_group_edit.clone() {
+            let mut buf = buf;
+            let mut done: Option<bool> = None;
+            egui::Area::new(egui::Id::new("bin-group-name"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(ui.max_rect().left_top() + egui::vec2(8.0, 8.0))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut buf)
+                                .hint_text("имя группы")
+                                .desired_width(150.0),
+                        );
+                        r.request_focus();
+                        if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            done = Some(true);
+                        }
+                        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                            done = Some(false);
+                        }
+                    });
+                });
+            match done {
+                Some(true) => {
+                    if gi < self.bin_groups.len() {
+                        self.bin_groups[gi].name = buf.trim().to_string();
+                        self.dirty_ui = true;
+                    }
+                    self.bin_group_edit = None;
+                }
+                Some(false) => self.bin_group_edit = None,
+                None => self.bin_group_edit = Some((gi, buf)),
+            }
         }
     }
 
@@ -304,19 +561,79 @@ impl KtApp {
                 egui::Color32::from_gray(120),
             );
         }
+        // Ctrl/Shift+клик — набор выделения, обычный клик — как раньше
+        // (поставить на курсор), заодно делая карточку единственной
+        // выделенной: иначе «выделил рамкой, кликнул мимо — а выделение
+        // осталось» (п.13 р.11)
         if resp.clicked() {
-            *to_place = Some(id);
+            let add = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
+            if add {
+                if !self.bin_sel.remove(&id) {
+                    self.bin_sel.insert(id);
+                }
+            } else {
+                self.bin_sel.clear();
+                self.bin_sel.insert(id);
+                *to_place = Some(id);
+            }
         }
+        let sel_n = self.bin_sel.len();
+        let group_of = self.bin_group_of(id);
+        let mut group_now = false;
+        let mut ungroup: Option<usize> = None;
+        let mut lock_toggle: Option<usize> = None;
         resp.clone().context_menu(|ui| {
             if ui.button("Поставить на курсор").clicked() {
                 *to_place = Some(id);
                 ui.close();
             }
+            ui.separator();
+            match group_of {
+                Some(gi) => {
+                    if ui.button("Разгруппировать").clicked() {
+                        ungroup = Some(gi);
+                        ui.close();
+                    }
+                    if ui.button("Замок / снять").clicked() {
+                        lock_toggle = Some(gi);
+                        ui.close();
+                    }
+                }
+                None => {
+                    let label = if sel_n > 1 {
+                        format!("Сгруппировать выделенные ({sel_n})")
+                    } else {
+                        "Сгруппировать (замок на карточку)".into()
+                    };
+                    if ui.button(label).clicked() {
+                        group_now = true;
+                        ui.close();
+                    }
+                }
+            }
+            ui.separator();
             if ui.button("Убрать из проекта").clicked() {
                 *to_remove = Some(id);
                 ui.close();
             }
         });
+        if group_now {
+            if self.bin_sel.is_empty() {
+                self.bin_sel.insert(id);
+            }
+            if let Some(gi) = self.bin_group_selection(String::new()) {
+                self.bin_group_edit = Some((gi, String::new()));
+            }
+        }
+        if let Some(gi) = ungroup {
+            self.bin_ungroup(gi);
+        }
+        if let Some(gi) = lock_toggle
+            && gi < self.bin_groups.len()
+        {
+            self.bin_groups[gi].locked = !self.bin_groups[gi].locked;
+            self.dirty_ui = true;
+        }
         // подпись: длительность (моно) + имя, под превью
         let label_y = thumb_rect.bottom() + 2.0;
         let dur_txt = self.thumbs.duration(id).map(|d| {

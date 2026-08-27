@@ -202,6 +202,12 @@ pub struct UiState {
     /// трогает — она просто не используется в режиме сетки.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin_layout: Vec<(MediaId, f32, f32)>,
+    /// Группы карточек бина (п.13 р.11): рамка + имя + замок. Одиночный
+    /// «замок» — это группа из одного члена без имени, отдельного поля
+    /// нет намеренно (иначе появляется класс дефектов «карточка заперта,
+    /// а группа нет»). Вне undo, как весь UiState.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bin_groups: Vec<BinGroup>,
     /// Имена дорожек (п.2 р.10). Пусто → подпись по формуле V1/A1/M1.
     /// Вне undo, как весь UiState; имя привязано к (вид, индекс) и едет
     /// вместе с содержимым при перестановке дорожек.
@@ -211,6 +217,27 @@ pub struct UiState {
 
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+/// Группа карточек медиа-бина (п.13 р.11).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BinGroup {
+    /// Имя в разрыве верхней линии рамки; пустое — рамка без подписи.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    pub members: Vec<MediaId>,
+    /// Замок: карточки группы не двигаются мышью.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub locked: bool,
+}
+
+/// Выбросить из групп исчезнувшие медиа и сами опустевшие группы
+/// (медиа удаляют из проекта, а раскладка/группы жили отдельно и текли).
+pub fn prune_bin_groups(groups: &mut Vec<BinGroup>, alive: &[MediaId]) {
+    for g in groups.iter_mut() {
+        g.members.retain(|m| alive.contains(m));
+    }
+    groups.retain(|g| !g.members.is_empty());
 }
 
 /// Вид дорожки в display-порядке (ClipKind не годится: нет Morph).
