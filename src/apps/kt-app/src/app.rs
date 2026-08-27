@@ -890,7 +890,7 @@ impl KtApp {
             // правая кромка — ровно левый край панели (п.10: раньше +8 px
             // наезжали на первый бар у подписи dB)
             if let Some((r, k, loud_db)) = self.meter_glow {
-                let a = (k * 22.0) as u8;
+                let a = (k * 58.0) as u8;
                 if a > 2 {
                     let glow_rect = crate::meters::overlay_glow_rect(r);
                     // строки на границах зон: цвет зоны, альфа по k;
@@ -920,7 +920,7 @@ impl KtApp {
                         push_row(y_of(db), crate::meters::zone_color(db), a);
                     }
                     let top_col = crate::meters::zone_color(loud_db);
-                    push_row((y_of(loud_db) - 24.0).max(glow_rect.top()), top_col, 0);
+                    push_row((y_of(loud_db) - 30.0).max(glow_rect.top()), top_col, 0);
                     let rows = stops.len() + 1;
                     for row in 0..rows - 1 {
                         let b = (row * 2) as u32;

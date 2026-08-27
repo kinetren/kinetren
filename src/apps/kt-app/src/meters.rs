@@ -214,7 +214,7 @@ pub(crate) fn glow_stops(level_db: f32) -> Vec<f32> {
 /// dB (п.10 v1.4, тест 40).
 pub(crate) fn overlay_glow_rect(panel: egui::Rect) -> egui::Rect {
     egui::Rect::from_min_max(
-        egui::pos2(panel.left() - 46.0, panel.top()),
+        egui::pos2(panel.left() - 78.0, panel.top()),
         egui::pos2(panel.left(), panel.bottom()),
     )
 }
@@ -230,12 +230,14 @@ fn glow_ellipse(
     col: egui::Color32,
     alpha: u8,
 ) {
-    const RINGS: usize = 4;
+    // 7 колец вместо 4: на прежней альфе спад был незаметен, а на яркой
+    // (п.1 р.13) 4 кольца читались как концентрические «блины»
+    const RINGS: usize = 7;
     for i in (0..RINGS).rev() {
         let k = (i + 1) as f32 / RINGS as f32; // 1/7 .. 1
         // гаусс: яркость выше к центру, мягкий спад к краю
         let g = (-(k * k) * 2.2f32).exp();
-        let a = (alpha as f32 * g * 0.55).min(255.0) as u8;
+        let a = (alpha as f32 * g * 0.62).min(255.0) as u8;
         if a == 0 {
             continue;
         }
@@ -384,7 +386,7 @@ impl KtApp {
         // 2) зонное свечение по дну бара (зазоры между LED им и светятся)
         if loud_db > METER_MIN_DB + 1.0 {
             let cx = bars.center().x;
-            let half_w = bars.width() * 1.15;
+            let half_w = bars.width() * 1.4;
             let level_y = db_to_y(loud_db);
             let mut mesh = egui::Mesh::default();
             let stops = glow_stops(loud_db);
@@ -403,7 +405,7 @@ impl KtApp {
                 }
             };
             for &db in &stops {
-                push_row(&mut mesh, db_to_y(db), zone_color(db), 46);
+                push_row(&mut mesh, db_to_y(db), zone_color(db), 96);
             }
             // хвост КОРОТКИЙ (8 px): прежние 22 px и делали погашенную
             // часть «полузажжённой» — вот это и была настоящая причина
@@ -427,9 +429,9 @@ impl KtApp {
             glow_ellipse(
                 &painter,
                 egui::pos2(cx, bars.bottom()),
-                egui::vec2(half_w * 0.85, 28.0),
+                egui::vec2(half_w * 0.85, 30.0),
                 zone_color(METER_MIN_DB + 6.0),
-                20,
+                40,
             );
         }
 
@@ -495,17 +497,58 @@ impl KtApp {
             glow_ellipse(
                 &painter,
                 egui::pos2(cx, level_y),
-                egui::vec2(wide * 1.08, 34.0),
+                egui::vec2(wide * 1.15, 38.0),
                 zone_color(loud_db),
-                38,
+                96,
             );
             glow_ellipse(
                 &painter,
                 egui::pos2(cx, level_y - 12.0),
-                egui::vec2(wide * 0.95, 30.0),
+                egui::vec2(wide * 0.95, 32.0),
                 zone_color(loud_db),
-                24,
+                62,
             );
+        }
+
+        // 5б) свечение самой ЗАЖЖЁННОЙ части бара: без него LED плоские,
+        // а погашенная часть не подсвечивается — меш обрывается ровно на
+        // уровне канала (п.1 р.13: «glow очень слабый»)
+        for (ch, &x0) in bar_x.iter().enumerate() {
+            if lit_n[ch] == 0 {
+                continue;
+            }
+            let top_lit = db_to_y(METER_MIN_DB + lit_n[ch] as f32 * seg_db);
+            let col = zone_color(self.meter.bar_db[ch]);
+            let mut mesh = egui::Mesh::default();
+            let cx = x0 + bar_w * 0.5;
+            let half = bar_w * 1.25;
+            let mut row = |y: f32, a: u8| {
+                for (x, k) in [(cx - half, 0u8), (cx, a), (cx + half, 0u8)] {
+                    mesh.vertices.push(egui::epaint::Vertex {
+                        pos: egui::pos2(x, y),
+                        uv: egui::epaint::WHITE_UV,
+                        color: egui::Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), k),
+                    });
+                }
+            };
+            row(bars.bottom(), 26);
+            row((top_lit + bars.bottom()) * 0.5, 44);
+            row(top_lit, 70);
+            row((top_lit - 10.0).max(bars.top()), 0);
+            for r in 0..3u32 {
+                let b = r * 3;
+                for c in 0..2u32 {
+                    mesh.indices.extend_from_slice(&[
+                        b + c,
+                        b + c + 1,
+                        b + c + 4,
+                        b + c,
+                        b + c + 4,
+                        b + c + 3,
+                    ]);
+                }
+            }
+            painter.add(egui::Shape::mesh(mesh));
         }
 
         // 6) peak-hold: кремовая ЛЕНТА по верхней кромке своего сегмента
