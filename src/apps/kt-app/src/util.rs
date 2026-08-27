@@ -197,6 +197,53 @@ pub fn format_timecode(t: kt_time::Tick, fps: u32) -> String {
     )
 }
 
+/// Разбор введённого тайм-кода (п.4 р.10). Толерантен: «90» → 90 с,
+/// «1:30» → мм:сс, «1:02:03» → чч:мм:сс, можно с дробной частью
+/// («1:02:03.250»). Результат выравнивается по сетке кадров — иначе
+/// после перехода номер кадра дёргается. Мусор → None.
+pub fn parse_timecode(s: &str, fps: u32) -> Option<kt_time::Tick> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let mut parts: Vec<&str> = s.split(':').collect();
+    if parts.len() > 3 {
+        return None;
+    }
+    // последняя группа может нести дробную часть секунд
+    let last = parts.pop()?;
+    let (sec_str, frac_str) = match last.split_once(['.', ',']) {
+        Some((a, b)) => (a, Some(b)),
+        None => (last, None),
+    };
+    let mut secs: f64 = 0.0;
+    for p in &parts {
+        let v: f64 = p.trim().parse().ok()?;
+        if v < 0.0 {
+            return None;
+        }
+        secs = secs * 60.0 + v;
+    }
+    let tail: f64 = if sec_str.trim().is_empty() && !parts.is_empty() {
+        0.0 // «1:» — минуты без секунд
+    } else {
+        sec_str.trim().parse().ok()?
+    };
+    if tail < 0.0 {
+        return None;
+    }
+    secs = secs * 60.0 + tail;
+    if let Some(f) = frac_str {
+        let f = f.trim();
+        if !f.is_empty() {
+            let digits: f64 = f.parse().ok()?;
+            secs += digits / 10f64.powi(f.len() as i32);
+        }
+    }
+    let grid = kt_time::FpsGrid::new(fps.max(1));
+    Some(grid.align_floor(kt_time::Tick::from_secs_f64(secs)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +270,41 @@ mod tests {
         assert_eq!(format_timecode(Tick(59 * 90_000), 30), "00:00:59.000 F00");
         assert_eq!(format_timecode(Tick(3600 * 90_000), 30), "01:00:00.000 F00");
         assert_eq!(format_timecode(Tick(90_000 / 24 * 5), 24), "00:00:00.208 F05");
+    }
+
+    /// Тест 93 (п.4 р.10): разбор введённого тайм-кода.
+    #[test]
+    fn t93_parse_timecode() {
+        use kt_time::{FpsGrid, Tick};
+        let g = FpsGrid::new(30);
+        let p = |s: &str| parse_timecode(s, 30);
+        // формы ввода
+        assert_eq!(p("90"), Some(g.align_floor(Tick(90 * 90_000))));
+        assert_eq!(p("1:30"), Some(g.align_floor(Tick(90 * 90_000))));
+        assert_eq!(p("1:02:03"), Some(g.align_floor(Tick(3723 * 90_000))));
+        assert_eq!(p("0:00:01.5"), Some(g.align_floor(Tick(90_000 + 45_000))));
+        assert_eq!(p("  2:00  "), Some(g.align_floor(Tick(120 * 90_000))));
+        // результат всегда на границе кадра
+        let t = p("0:00:01.999").unwrap();
+        assert_eq!(g.align_floor(t), t, "не выровнено по сетке кадров");
+        // round-trip с форматтером: строка несёт миллисекунды, поэтому
+        // допуск — один кадр (шаг сетки)
+        for ticks in [0i64, 90_000, 3_723_000, 12_345_678] {
+            let s = format_timecode(Tick(ticks), 30);
+            let head = s.split(' ').next().unwrap();
+            let back = parse_timecode(head, 30).expect("round-trip");
+            assert!(
+                (back.0 - g.align_floor(Tick(ticks)).0).abs() <= g.frame_step(),
+                "round-trip {s}: {} vs {}",
+                back.0,
+                ticks
+            );
+        }
+        // мусор
+        assert_eq!(p(""), None);
+        assert_eq!(p("abc"), None);
+        assert_eq!(p("1:2:3:4"), None);
+        assert_eq!(p("-5"), None);
     }
 
     /// Тест 23 (п.3): пики строятся и БЕЗ индекс-БД (безымянный проект) —

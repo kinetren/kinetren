@@ -87,6 +87,14 @@ pub struct KtApp {
     pub lane_edit: Option<LaneEdit>,
     /// Запросить фокус полю имени дорожки.
     pub lane_edit_focus: bool,
+    /// Ввод тайм-кода в тулбаре (п.4 р.10): Some — поле открыто.
+    pub tc_edit: Option<String>,
+    pub tc_edit_focus: bool,
+    /// Палитра поиска по проекту (п.3 р.10).
+    pub search_open: bool,
+    pub search_focus: bool,
+    pub search_query: String,
+    pub search_sel: usize,
     /// Вертикальный скролл зоны дорожек, px (п.12 р.6).
     pub tl_scroll: f32,
     /// Явная высота строки (Shift+Ctrl+колесо); None = авто-подгонка.
@@ -250,6 +258,12 @@ impl KtApp {
             marker_edit_focus: false,
             lane_edit: None,
             lane_edit_focus: false,
+            tc_edit: None,
+            tc_edit_focus: false,
+            search_open: false,
+            search_focus: false,
+            search_query: String::new(),
+            search_sel: 0,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -349,6 +363,12 @@ impl KtApp {
             marker_edit_focus: false,
             lane_edit: None,
             lane_edit_focus: false,
+            tc_edit: None,
+            tc_edit_focus: false,
+            search_open: false,
+            search_focus: false,
+            search_query: String::new(),
+            search_sel: 0,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -656,6 +676,7 @@ impl KtApp {
         }
 
         self.sample_perf();
+        self.draw_search(&ctx);
         self.draw_fx_editors(&ctx);
         self.draw_morph_editors(&ctx);
         self.draw_render_dialog(&ctx);
@@ -888,6 +909,92 @@ impl KtApp {
         self.status_line_shown = (text, kind);
     }
 
+    /// Палитра поиска по проекту (п.3 р.10): Ctrl+F, стрелки, Enter.
+    /// Esc обрабатывается ЗДЕСЬ: пока фокус в поле, handle_keys не
+    /// выполняется вообще и до общего Esc-каскада дело не доходит.
+    fn draw_search(&mut self, ctx: &egui::Context) {
+        if !self.search_open {
+            return;
+        }
+        let hits = search_hits(self.model.project(), &self.lane_names, &self.search_query);
+        let mut open = true;
+        let mut go: Option<Hit> = None;
+        egui::Window::new("Поиск по проекту")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, -80.0])
+            .default_width(420.0)
+            .show(ctx, |ui| {
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut self.search_query)
+                        .hint_text("метка, медиа, дорожка…")
+                        .desired_width(400.0),
+                );
+                if !r.has_focus() && self.search_focus {
+                    r.request_focus();
+                    self.search_focus = false;
+                }
+                let (up, down, enter, esc) = ui.input(|i| {
+                    (
+                        i.key_pressed(egui::Key::ArrowUp),
+                        i.key_pressed(egui::Key::ArrowDown),
+                        i.key_pressed(egui::Key::Enter),
+                        i.key_pressed(egui::Key::Escape),
+                    )
+                });
+                if down {
+                    self.search_sel = (self.search_sel + 1).min(hits.len().saturating_sub(1));
+                }
+                if up {
+                    self.search_sel = self.search_sel.saturating_sub(1);
+                }
+                if esc {
+                    self.search_open = false;
+                }
+                ui.separator();
+                egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                    for (i, h) in hits.iter().enumerate() {
+                        let tag = match h.kind {
+                            HitKind::Marker => "метка",
+                            HitKind::Media => "медиа",
+                            HitKind::Track => "дорожка",
+                            HitKind::Clip => "клип",
+                        };
+                        let sel = i == self.search_sel;
+                        let text = format!("{tag}  ·  {}", h.label);
+                        if ui.selectable_label(sel, text).clicked() {
+                            go = Some(h.clone());
+                        }
+                    }
+                    if hits.is_empty() && !self.search_query.trim().is_empty() {
+                        ui.weak("ничего не найдено");
+                    }
+                });
+                if enter && let Some(h) = hits.get(self.search_sel) {
+                    go = Some(h.clone());
+                }
+            });
+        if !open {
+            self.search_open = false;
+        }
+        if let Some(h) = go {
+            self.search_open = false;
+            match h.kind {
+                HitKind::Media => {
+                    if let Some(id) = h.media {
+                        self.place_media_at_cursor(id);
+                    }
+                }
+                _ => {
+                    self.player.seek(Tick(h.at));
+                    self.pending_reveal = Some(h.at);
+                    self.selected = h.clip;
+                }
+            }
+        }
+    }
+
     /// Прыжок к предыдущей/следующей точке остановки (п.16 р.8).
     /// `far` (Shift) — сразу в начало/конец проекта.
     pub(crate) fn jump_stop(&mut self, forward: bool, far: bool) {
@@ -1058,6 +1165,10 @@ impl KtApp {
 
     /// Esc-каскад (п.11): окна → активный драг → регион+выделение.
     pub fn escape_action(&mut self) {
+        if self.search_open {
+            self.search_open = false;
+            return;
+        }
         // 0) отмена размещения morpher'а (v1: Esc cancels placement)
         if self.pending_morpher.take().is_some() {
             self.note("Размещение morpher'а отменено");
@@ -2479,6 +2590,8 @@ impl KtApp {
             nav_prev: bool,
             nav_next: bool,
             nav_far: bool,
+            goto_tc: bool,
+            find: bool,
         }
         let k = ctx.input(|i| Keys {
             space: i.key_pressed(egui::Key::Space),
@@ -2510,9 +2623,19 @@ impl KtApp {
                 || (i.key_pressed(egui::Key::A) && !i.modifiers.ctrl && !i.modifiers.alt),
             nav_next: i.key_pressed(egui::Key::End)
                 || (i.key_pressed(egui::Key::D) && !i.modifiers.ctrl && !i.modifiers.alt),
+            goto_tc: i.modifiers.ctrl && i.key_pressed(egui::Key::L),
+            find: i.modifiers.ctrl && i.key_pressed(egui::Key::F),
             nav_far: i.modifiers.shift
                 && (i.key_pressed(egui::Key::Home) || i.key_pressed(egui::Key::End)),
         });
+        if k.goto_tc && !self.player.transport.is_playing() {
+            self.tc_edit = Some(String::new());
+            self.tc_edit_focus = true;
+        }
+        if k.find {
+            self.search_open = true;
+            self.search_focus = true;
+        }
         if k.nav_prev {
             self.jump_stop(false, k.nav_far);
         }
@@ -2974,6 +3097,128 @@ fn app_icon() -> egui::IconData {
     .to_rgba8();
     let (width, height) = img.dimensions();
     egui::IconData { rgba: img.into_raw(), width, height }
+}
+
+/// Что нашли поиском по проекту (п.3 р.10).
+#[derive(Debug, Clone, PartialEq)]
+pub enum HitKind {
+    Marker,
+    Media,
+    Track,
+    Clip,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hit {
+    pub kind: HitKind,
+    pub label: String,
+    /// Куда перейти (тики); для медиа — 0.
+    pub at: i64,
+    pub media: Option<kt_model::MediaId>,
+    pub clip: Option<kt_model::ClipId>,
+}
+
+/// Поиск по меткам, медиа, дорожкам и клипам. Чистая функция — ровно как
+/// фильтр FX-реестра: тестируется без UI. Пустой запрос — пусто.
+pub fn search_hits(
+    p: &kt_model::Project,
+    lane_names: &[(kt_model::LaneKind, u32, String)],
+    query: &str,
+) -> Vec<Hit> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let mut out: Vec<(u8, Hit)> = Vec::new();
+    // ранг 0 — точное совпадение, 1 — начинается с запроса, 2 — подстрока
+    let rank = |s: &str| -> Option<u8> {
+        let l = s.to_lowercase();
+        if l == q {
+            Some(0)
+        } else if l.starts_with(&q) {
+            Some(1)
+        } else if l.contains(&q) {
+            Some(2)
+        } else {
+            None
+        }
+    };
+    for m in &p.markers {
+        let label = if m.name.is_empty() {
+            format!("метка {:.2}с", m.t.as_secs_f64())
+        } else {
+            m.name.clone()
+        };
+        if let Some(r) = rank(&label) {
+            out.push((
+                r,
+                Hit { kind: HitKind::Marker, label, at: m.t.0, media: None, clip: None },
+            ));
+        }
+    }
+    for m in &p.media {
+        let name = std::path::Path::new(&m.path)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| m.path.clone());
+        let r = rank(&name).or_else(|| rank(&m.path));
+        if let Some(r) = r {
+            out.push((
+                r,
+                Hit { kind: HitKind::Media, label: name, at: 0, media: Some(m.id), clip: None },
+            ));
+        }
+    }
+    let (v, a) = (p.video_lanes.max(1), p.audio_lanes.max(1));
+    for (kind, count) in [
+        (kt_model::LaneKind::Video, v),
+        (kt_model::LaneKind::Audio, a),
+        (kt_model::LaneKind::Morph, p.morph_lanes),
+    ] {
+        for lane in 0..count {
+            let label = kt_model::lane_label(lane_names, kind, lane);
+            if let Some(r) = rank(&label) {
+                let at = p
+                    .clips
+                    .iter()
+                    .filter(|c| c.lane == lane)
+                    .map(|c| c.start.0)
+                    .min()
+                    .unwrap_or(0);
+                out.push((
+                    r,
+                    Hit { kind: HitKind::Track, label, at, media: None, clip: None },
+                ));
+            }
+        }
+    }
+    for c in &p.clips {
+        let name = p
+            .media
+            .iter()
+            .find(|m| m.id == c.media)
+            .map(|m| {
+                std::path::Path::new(&m.path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| m.path.clone())
+            })
+            .unwrap_or_default();
+        if let Some(r) = rank(&name) {
+            out.push((
+                r + 1, // клипы ниже медиа с тем же именем
+                Hit {
+                    kind: HitKind::Clip,
+                    label: format!("{name} @ {:.2}с", c.start.as_secs_f64()),
+                    at: c.start.0,
+                    media: Some(c.media),
+                    clip: Some(c.id),
+                },
+            ));
+        }
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.at.cmp(&b.1.at)));
+    out.into_iter().map(|(_, h)| h).collect()
 }
 
 /// Инлайн-ввод имени метки (п.1 р.10).
@@ -3609,6 +3854,48 @@ mod repaint_tests {
         assert_eq!(preview_click_step(None, false, true, 300), (C::ToggleDetach, O::Clear));
         // без клика и без pending — ничего
         assert_eq!(preview_click_step(None, false, false, 300), (C::None, O::Keep));
+    }
+
+    /// Тест 92 (п.3 р.10): поиск по проекту — метки, медиа, дорожки;
+    /// регистронезависимо, точное совпадение выше подстроки.
+    #[test]
+    fn t92_search_hits() {
+        use super::{HitKind, search_hits};
+        use kt_model::*;
+        use kt_time::Tick;
+        let mut p = Project::new(ProjectSettings {
+            fps: 30,
+            width: 640,
+            height: 360,
+            sample_rate: 48000,
+        });
+        p.media.push(MediaRef { id: MediaId(1), path: "/tmp/Интервью.mp4".into() });
+        p.markers.push(Marker::named(Tick(5000), "Интро"));
+        p.markers.push(Marker::named(Tick(9000), "интервью — начало"));
+        let names = vec![(LaneKind::Audio, 0, "Голос".to_string())];
+
+        // пустой запрос — пусто
+        assert!(search_hits(&p, &names, "   ").is_empty());
+
+        // регистр не важен, точное совпадение первым
+        let hits = search_hits(&p, &names, "интро");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].kind, HitKind::Marker);
+        assert_eq!(hits[0].at, 5000);
+
+        // одна подстрока находит и метку, и медиа
+        let hits = search_hits(&p, &names, "интервью");
+        assert!(hits.iter().any(|h| h.kind == HitKind::Marker));
+        assert!(hits.iter().any(|h| h.kind == HitKind::Media));
+
+        // дорожка по пользовательскому имени и по формуле
+        assert!(
+            search_hits(&p, &names, "голос").iter().any(|h| h.kind == HitKind::Track)
+        );
+        assert!(search_hits(&p, &names, "v1").iter().any(|h| h.kind == HitKind::Track));
+
+        // мимо
+        assert!(search_hits(&p, &names, "щщщ").is_empty());
     }
 
     /// Тест 82 (п.16 р.8): умная навигация — точки остановки и прыжки.

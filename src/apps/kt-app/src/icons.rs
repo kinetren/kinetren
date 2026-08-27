@@ -28,6 +28,7 @@ pub const RENDER: &str = "\u{E8C2}"; // film-slate
 pub const SAVE: &str = "\u{E248}"; // floppy-disk
 pub const FX: &str = "\u{E2DE}"; // lightning (клип с эффектами)
 pub const WARN: &str = "\u{E4E0}"; // warning (E4DE был voicemail — п.1 р.8)
+pub const SEARCH: &str = "\u{E30C}"; // magnifying-glass (п.3 р.10)
 pub const GAUGE: &str = "\u{E000}"; // pulse (gauge E628 читался как робот Reddit — п.5 р.10)
 pub const SQUARES_FOUR: &str = "\u{E464}"; // сетка (режим бина)
 #[allow(dead_code)]

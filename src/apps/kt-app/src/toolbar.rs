@@ -359,8 +359,38 @@ impl KtApp {
             self.jump_stop(true, far);
         }
         ui.separator();
+        // тайм-код: на паузе двойной клик (или Ctrl+L) превращает его в
+        // поле ввода — переход к произвольной позиции (п.4 р.10)
+        if let Some(buf) = self.tc_edit.clone() {
+            let mut buf = buf;
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut buf)
+                    .hint_text("чч:мм:сс")
+                    .desired_width(96.0)
+                    .font(egui::TextStyle::Monospace),
+            );
+            if !r.has_focus() && self.tc_edit_focus {
+                r.request_focus();
+                self.tc_edit_focus = false;
+            }
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if let Some(t) =
+                    crate::util::parse_timecode(&buf, self.model.project().settings.fps)
+                {
+                    self.player.seek(t);
+                    self.pending_reveal = Some(t.0);
+                }
+                self.tc_edit = None;
+            } else if ui.input(|i| i.key_pressed(egui::Key::Escape))
+                || (r.lost_focus() && !r.has_focus())
+            {
+                self.tc_edit = None;
+            } else {
+                self.tc_edit = Some(buf);
+            }
+        } else {
         // тайм-код + скорость (п.19 р.6: бывшая полоса timestrip)
-        let tc = ui.label(
+        let tc = ui.add(egui::Label::new(
             egui::RichText::new(crate::util::format_timecode(
                 self.player.transport.playhead(),
                 self.model.project().settings.fps,
@@ -368,8 +398,16 @@ impl KtApp {
             .monospace()
             .size(15.0)
             .color(egui::Color32::from_rgb(235, 235, 240)),
+        ).sense(egui::Sense::click()));
+        let tc = self.hint(
+            tc,
+            "Позиция курсора; на паузе двойной клик или Ctrl+L — перейти к таймкоду",
         );
-        self.hint(tc, "Позиция курсора: чч:мм:сс.мс и номер кадра");
+        if tc.double_clicked() && !playing {
+            self.tc_edit = Some(String::new());
+            self.tc_edit_focus = true;
+        }
+        }
         self.draw_speed_control(ui);
         ui.separator();
         if self.tb(ui, crate::icons::FLAG, "Маркер на курсоре (M)") {
@@ -440,6 +478,10 @@ impl KtApp {
         if self.tb(ui, crate::icons::RENDER, "Рендер в MP4 (регион или весь проект)")
         {
             self.start_render();
+        }
+        if self.tb(ui, crate::icons::SEARCH, "Поиск по проекту (Ctrl+F)") {
+            self.search_open = true;
+            self.search_focus = true;
         }
         if self.tb(ui, crate::icons::GAUGE, "Диагностика") {
             self.perf.diag_open = true;
