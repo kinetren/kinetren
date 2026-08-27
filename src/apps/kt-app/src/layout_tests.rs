@@ -260,6 +260,27 @@ fn t85_top_drag_is_continuous() {
             .any(|v| v.commands.iter().any(|c| matches!(c, V::StartDrag)));
         assert!(sent, "окно не таскается за верх при x={x}");
     }
+
+    // п.11 р.13: в РАЗВЁРНУТОМ окне ресайза нет, поэтому верхние WIN_EDGE
+    // пикселей раньше были мёртвыми — «полоска, по которой бесполезно
+    // тянуть». Теперь драг начинается от самой кромки.
+    let mut h = harness();
+    h.input_mut()
+        .viewports
+        .entry(egui::ViewportId::ROOT)
+        .or_default()
+        .maximized = Some(true);
+    h.step();
+    h.drag_at(egui::pos2(W * 0.5, 1.0));
+    h.step();
+    h.hover_at(egui::pos2(W * 0.5 + 20.0, 6.0));
+    h.step();
+    let sent = h
+        .output()
+        .viewport_output
+        .values()
+        .any(|v| v.commands.iter().any(|c| matches!(c, V::StartDrag | V::Maximized(false))));
+    assert!(sent, "в развёрнутом окне верхняя кромка не тянет окно");
 }
 
 /// Тест 86 (пп.3,10 р.9): метры прижаты к правому краю окна, а при
@@ -903,6 +924,31 @@ fn t99_bin_groups() {
     h.drop_at(grab.center() + egui::vec2(0.0, 40.0));
     h.step();
     assert_eq!(h.state().bin_layout[&MediaId(1)], before, "замок не удержал карточку");
+
+    // --- ИМЯ ГРУППЫ СОХРАНЯЕТСЯ ПО ENTER (жалоба р.13: поле не исчезало
+    // и имя терялось — request_focus звался каждый кадр, поэтому
+    // lost_focus не наступал никогда)
+    h.state_mut().bin_sel = [MediaId(1)].into_iter().collect();
+    let gi4 = h.state_mut().bin_group_selection(String::new()).expect("группа");
+    h.state_mut().bin_group_edit = Some((gi4, String::new()));
+    h.state_mut().bin_group_focus = true;
+    h.step();
+    h.event(egui::Event::Text("план".into()));
+    h.step();
+    h.key_press(egui::Key::Enter);
+    h.step();
+    h.step();
+    assert!(h.state().bin_group_edit.is_none(), "поле имени группы не закрылось по Enter");
+    assert_eq!(h.state().bin_groups[gi4].name, "план", "имя группы не сохранилось");
+
+    // Esc закрывает поле и имя НЕ меняет
+    h.state_mut().bin_group_edit = Some((gi4, "другое".into()));
+    h.state_mut().bin_group_focus = true;
+    h.step();
+    h.key_press(egui::Key::Escape);
+    h.step();
+    assert!(h.state().bin_group_edit.is_none(), "Esc не закрыл поле");
+    assert_eq!(h.state().bin_groups[gi4].name, "план", "Esc не должен менять имя");
 
     // --- удаление медиа не оставляет висячих участников и пустых групп
     let mut groups = vec![

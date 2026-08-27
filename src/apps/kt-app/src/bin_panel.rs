@@ -13,10 +13,6 @@ use kt_model::{Command, MediaId};
 
 const PREVIEW_W: f32 = 128.0;
 const PREVIEW_H: f32 = 72.0;
-/// Потолок карточки в широкой колонке (п.4 р.13): тумбы декодируются в
-/// 320×180, поэтому до 240 px превью растёт без замыливания — иначе
-/// широкая панель давала только БОЛЬШЕ мелких карточек, а не крупные.
-const CARD_W_MAX: f32 = 240.0;
 /// Логических позиций скраба на файл (п.14 р.7: было 8 — «слишком мало
 /// превьюшек»); тумбы филмстрипа подхватываются near-поиском в БД.
 const BIN_SCRUB_SLOTS: f32 = 48.0;
@@ -120,14 +116,9 @@ impl KtApp {
         // ширина карточки считается ОДИН раз от ширины панели: внутри
         // wrapped-строки available_width убывает и карточки выходили
         // рваными (п.5 р.8)
-        // карточка растёт вместе с колонкой: до PREVIEW_W всегда, дальше —
-        // если колонка широкая, но не больше CARD_W_MAX (п.4 р.13)
-        let avail = ui.available_width();
-        let card_w = if avail >= PREVIEW_W * 2.0 + 12.0 {
-            (avail / 2.0 - 8.0).clamp(PREVIEW_W, CARD_W_MAX)
-        } else {
-            avail.clamp(56.0, PREVIEW_W)
-        };
+        // размер карточки НЕ раздуваем (жалоба р.13): широкая колонка даёт
+        // больше карточек в ряд, а не гигантские превью
+        let card_w = ui.available_width().clamp(56.0, PREVIEW_W);
         let card_h = card_w * PREVIEW_H / PREVIEW_W;
         let row_h = card_h + 18.0;
         let mut to_place: Option<MediaId> = None;
@@ -173,6 +164,20 @@ impl KtApp {
             }
             let mut card_rects = std::mem::take(&mut self.bin_card_rects);
             card_rects.clear();
+            // прямоугольники считаем ЗАРАНЕЕ: рамки групп рисуются ДО
+            // карточек и потому лежат под ними (жалоба р.13)
+            for (id, _) in &media {
+                let p = self.bin_layout.get(id).copied().unwrap_or_default();
+                let max_x = (area.width() - card_w).max(0.0);
+                card_rects.push((
+                    *id,
+                    egui::Rect::from_min_size(
+                        area.min + egui::vec2(p.x.min(max_x), p.y),
+                        egui::vec2(card_w, row_h),
+                    ),
+                ));
+            }
+            self.draw_bin_groups(ui, &card_rects);
             for (id, path) in &media {
                 let p = self.bin_layout.get(id).copied().unwrap_or_default();
                 // позиция клампится по ФАКТИЧЕСКОЙ ширине панели: иначе
@@ -183,7 +188,6 @@ impl KtApp {
                     area.min + egui::vec2(p.x.min(max_x), p.y),
                     egui::vec2(card_w, row_h),
                 );
-                card_rects.push((*id, rect));
                 let resp = self.draw_bin_card(
                     ui,
                     *id,
@@ -278,7 +282,8 @@ impl KtApp {
                 }
             }
 
-            self.draw_bin_groups(ui, &card_rects);
+            self.draw_bin_selection(ui, &card_rects);
+            self.draw_bin_group_name_edit(ui);
             self.bin_card_rects = card_rects;
         } else {
             // --- сетка ---------------------------------------------------
@@ -338,9 +343,10 @@ impl KtApp {
     /// Рамки групп: объединение прямоугольников участников, имя — В
     /// РАЗРЫВЕ верхней линии (лишней высоты не занимает), замок — глифом.
     /// Плюс подсветка выделенных карточек.
-    fn draw_bin_groups(&mut self, ui: &mut egui::Ui, cards: &[(MediaId, egui::Rect)]) {
+    /// Подсветка выделенных карточек — рисуется ПОСЛЕ них (тонкая рамка
+    /// вокруг, её видно), в отличие от рамок групп (те уходят ПОД карточки).
+    fn draw_bin_selection(&mut self, ui: &mut egui::Ui, cards: &[(MediaId, egui::Rect)]) {
         let painter = ui.painter().clone();
-        let at = |id: MediaId| cards.iter().find(|(m, _)| *m == id).map(|(_, r)| *r);
         for (id, r) in cards {
             if self.bin_sel.contains(id) {
                 painter.rect_stroke(
@@ -351,6 +357,13 @@ impl KtApp {
                 );
             }
         }
+    }
+
+    /// Рамки групп: рисуются ДО карточек, поэтому лежат ПОД ними — линия
+    /// поверх превью выглядела нелепо (жалоба р.13).
+    fn draw_bin_groups(&mut self, ui: &mut egui::Ui, cards: &[(MediaId, egui::Rect)]) {
+        let painter = ui.painter().clone();
+        let at = |id: MediaId| cards.iter().find(|(m, _)| *m == id).map(|(_, r)| *r);
         let mut rename: Option<usize> = None;
         for gi in 0..self.bin_groups.len() {
             let g = self.bin_groups[gi].clone();
@@ -436,8 +449,12 @@ impl KtApp {
         if let Some(gi) = rename {
             let name = self.bin_groups[gi].name.clone();
             self.bin_group_edit = Some((gi, name));
+            self.bin_group_focus = true;
         }
-        // инлайн-ввод имени группы
+    }
+
+    /// Инлайн-ввод имени группы (поверх всего, как прочие инлайн-поля).
+    fn draw_bin_group_name_edit(&mut self, ui: &mut egui::Ui) {
         if let Some((gi, buf)) = self.bin_group_edit.clone() {
             let mut buf = buf;
             let mut done: Option<bool> = None;
@@ -451,7 +468,13 @@ impl KtApp {
                                 .hint_text("имя группы")
                                 .desired_width(150.0),
                         );
-                        r.request_focus();
+                        // фокус запрашиваем РОВНО один раз: иначе поле его
+                        // никогда не «теряет», lost_focus не наступает и
+                        // Enter не сохраняет имя (жалоба р.13)
+                        if !r.has_focus() && self.bin_group_focus {
+                            r.request_focus();
+                            self.bin_group_focus = false;
+                        }
                         if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             done = Some(true);
                         }
@@ -634,6 +657,7 @@ impl KtApp {
             }
             if let Some(gi) = self.bin_group_selection(String::new()) {
                 self.bin_group_edit = Some((gi, String::new()));
+                self.bin_group_focus = true;
             }
         }
         if let Some(gi) = ungroup {

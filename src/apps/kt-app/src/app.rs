@@ -124,6 +124,10 @@ pub struct KtApp {
     pub bin_rubber: Option<egui::Pos2>,
     /// Переименование группы: индекс + буфер.
     pub bin_group_edit: Option<(usize, String)>,
+    /// Фокус в поле имени группы запрашивается ОДИН раз (как у меток):
+    /// безусловный request_focus каждый кадр не давал полю «потерять
+    /// фокус», и Enter не сохранял имя вовсе (жалоба р.13).
+    pub bin_group_focus: bool,
     /// Зоны, где ресайз окна НЕ начинается (п.9 р.12): кнопки окна, меню,
     /// колокольчик. Зона ресайза читает сырой указатель в конце кадра и
     /// мимо хит-теста egui забирает нажатие себе, поэтому кнопки в 16 px
@@ -310,6 +314,7 @@ impl KtApp {
             bin_sel: Default::default(),
             bin_rubber: None,
             bin_group_edit: None,
+            bin_group_focus: false,
             no_resize_rects: Vec::new(),
             bin_card_rects: Vec::new(),
             fader_grab: None,
@@ -425,6 +430,7 @@ impl KtApp {
             bin_sel: Default::default(),
             bin_rubber: None,
             bin_group_edit: None,
+            bin_group_focus: false,
             no_resize_rects: Vec::new(),
             bin_card_rects: Vec::new(),
             fader_grab: None,
@@ -715,8 +721,15 @@ impl KtApp {
                 // стыкуется с шапкой слева и кнопками окна справа.
                 if std::env::var_os("KT_DECORATIONS").is_none() {
                     let full = ui.available_rect_before_wrap();
+                    // В развёрнутом окне ресайза НЕТ (блок ниже выключен
+                    // гардом maximized), поэтому верхние WIN_EDGE пикселей
+                    // оставались МЁРТВЫМИ: тянешь у самой кромки — ничего,
+                    // чуть ниже — работает (п.11 р.13). Отдаём их драгу.
+                    let maximized =
+                        ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+                    let top = if maximized { full.top() } else { full.top() + WIN_EDGE };
                     let strip = egui::Rect::from_min_max(
-                        egui::pos2(full.left() - 8.0, full.top() + WIN_EDGE),
+                        egui::pos2(full.left() - 8.0, top),
                         egui::pos2(full.right() + 8.0, full.top() + TOP_DRAG_H),
                     );
                     let bg = ui.interact(
