@@ -148,29 +148,57 @@ pub fn render_raw_video_range(
         None => (Tick(0), project_range(project)),
     };
     let step = video.grid.frame_step();
+    // Кадры берём ПАЧКАМИ через read_video_span — тем же путём, что
+    // превью (п.14 р.14). Раньше здесь был по-кадровый read_video_frame:
+    // при fps проекта > fps источника он на каждом втором кадре уходил в
+    // seek+пересоздание декодера, а семантика выборки расходилась со
+    // span'ом — отсюда джаддер в готовом файле и нарушение инварианта №7.
+    const CHUNK_FRAMES: i64 = 120;
     while t < end {
         if cancel.load(Ordering::Acquire) {
             return Err(std::io::Error::other("cancelled"));
         }
-        progress(stats.video_frames);
-        for (media, src_pts) in video.layers_at(t) {
-            let idx = video_cache_idx(src_pts);
-            if cache.get_video(source_id(media), Some(quality), idx).is_none() {
-                match src.get_mut(&media).map(|s| s.read_video_frame(src_pts, Some(quality))) {
-                    Some(Ok(frame)) => {
-                        cache.insert_video(source_id(media), Some(quality), idx, frame.into())
-                    }
-                    _ => stats.missing_video_layers += 1,
-                }
+        let chunk_end = Tick((t.0 + CHUNK_FRAMES * step).min(end.0));
+        // ключи чанка по каждому источнику: строго возрастают, дубли сняты
+        let mut per_src: std::collections::BTreeMap<MediaId, Vec<Tick>> = Default::default();
+        for (media, src_pts) in video.wanted_frames(kt_time::TickRange::new(t, chunk_end)) {
+            per_src.entry(media).or_default().push(src_pts);
+        }
+        for (media, keys) in per_src {
+            let Some(s) = src.get_mut(&media) else {
+                stats.missing_video_layers += keys.len() as u64;
+                continue;
+            };
+            let sid = source_id(media);
+            let missing: Vec<Tick> = keys
+                .into_iter()
+                .filter(|k| cache.get_video(sid, Some(quality), video_cache_idx(*k)).is_none())
+                .collect();
+            if missing.is_empty() {
+                continue;
+            }
+            let ok = s
+                .read_video_span(&missing, Some(quality), &mut |k, frame| {
+                    cache.insert_video(sid, Some(quality), video_cache_idx(k), frame.into());
+                })
+                .is_ok();
+            if !ok {
+                stats.missing_video_layers += 1;
             }
         }
-        let (rgba, complete) = video.compose_from_cache(&cache, t, quality);
-        if !complete {
-            stats.missing_video_layers += 1;
+        while t < chunk_end {
+            if cancel.load(Ordering::Acquire) {
+                return Err(std::io::Error::other("cancelled"));
+            }
+            progress(stats.video_frames);
+            let (rgba, complete) = video.compose_from_cache(&cache, t, quality);
+            if !complete {
+                stats.missing_video_layers += 1;
+            }
+            emit(&rgba)?;
+            stats.video_frames += 1;
+            t = Tick(t.0 + step);
         }
-        emit(&rgba)?;
-        stats.video_frames += 1;
-        t = Tick(t.0 + step);
     }
     Ok(stats)
 }

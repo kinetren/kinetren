@@ -48,6 +48,13 @@ pub struct SyntheticSource {
     pub video_delay: std::time::Duration,
     /// true: кадры за пределами duration → OutOfRange (тест 27: EOF).
     pub video_eof: bool,
+    /// Собственная СЕТКА КАДРОВ источника (п.14 р.14). По умолчанию нет:
+    /// синтетика отдаёт кадр ровно на запрошенный тик, поэтому на ней
+    /// неразличимы floor и ceil и не воспроизводится конверсия частот.
+    /// Со включённой сеткой кадр выравнивается вниз по сетке ИСТОЧНИКА, а
+    /// цвет кодирует НОМЕР кадра источника — по готовому кадру композиции
+    /// тест видит, какой именно кадр попал в вывод.
+    pub video_fps: Option<u32>,
 }
 
 impl SyntheticSource {
@@ -67,11 +74,19 @@ impl SyntheticSource {
             stats: None,
             video_delay: std::time::Duration::ZERO,
             video_eof: false,
+            video_fps: None,
         }
     }
 
     pub fn with_video_delay(mut self, d: std::time::Duration) -> SyntheticSource {
         self.video_delay = d;
+        self
+    }
+
+    /// Включить собственную сетку кадров источника (п.14 р.14).
+    pub fn with_video_fps(mut self, fps: u32) -> Self {
+        self.video_fps = Some(fps);
+        self.info.fps = Some((fps, 1));
         self
     }
 
@@ -164,15 +179,25 @@ impl MediaSource for SyntheticSource {
             }
         }
         let q = quality.unwrap_or(Quality { width: 64, height: 36 });
-        // Кадр однозначно определяется pts: цвет кодирует номер тика.
-        let r = (pts.0 & 0xff) as u8;
-        let g = ((pts.0 >> 8) & 0xff) as u8;
-        let b = ((pts.0 >> 16) & 0xff) as u8;
+        // Без своей сетки: кадр однозначно определяется pts (цвет = номер
+        // тика). Со своей сеткой: floor по сетке источника, цвет = НОМЕР
+        // кадра источника (п.14 р.14).
+        let (code, out_pts) = match self.video_fps {
+            Some(fps) => {
+                let step = kt_time::TICK_HZ as i64 / fps.max(1) as i64;
+                let k = pts.0.div_euclid(step);
+                (k, Tick(k * step))
+            }
+            None => (pts.0, pts),
+        };
+        let r = (code & 0xff) as u8;
+        let g = ((code >> 8) & 0xff) as u8;
+        let b = ((code >> 16) & 0xff) as u8;
         let px = [r, g, b, 255u8];
         let rgba: Vec<u8> =
             px.iter().copied().cycle().take((q.width * q.height * 4) as usize).collect();
         Ok(VideoFrame {
-            pts,
+            pts: out_pts,
             width: q.width,
             height: q.height,
             rgba: rgba.into_boxed_slice(),
