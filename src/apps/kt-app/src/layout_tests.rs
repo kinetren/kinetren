@@ -544,33 +544,48 @@ fn t96_dirty_split_and_loop_survives_esc() {
 /// Тест 97 (пп.1,7,8 р.11): верх превью, предел ширины метров, LED-сетка.
 #[test]
 fn t97_top_meters_and_leds() {
-    use crate::meters::{METER_MAX_DB, METER_MIN_DB, SEG_COUNT, SEG_DB, led_lit, seg_mid_db,
-        zone_color};
+    use crate::meters::{
+        METER_MAX_DB, METER_MIN_DB, SEG_STEPS, led_lit, seg_count, seg_db_for, seg_mid_db,
+        zone_color,
+    };
 
-    // --- (п.8) сегменты: монотонность, границы, одноцветность
-    assert_eq!(led_lit(METER_MIN_DB), 0, "тишина — всё погашено");
-    assert_eq!(led_lit(METER_MIN_DB - 20.0), 0);
-    assert_eq!(led_lit(METER_MAX_DB), SEG_COUNT, "клип — шкала до верха");
-    assert_eq!(led_lit(METER_MAX_DB + 6.0), SEG_COUNT, "перегруз не выходит за шкалу");
-    let mut prev = 0;
-    let mut db = METER_MIN_DB;
-    while db <= METER_MAX_DB {
-        let n = led_lit(db);
-        assert!(n >= prev, "число сегментов обязано расти монотонно при {db} dB");
-        prev = n;
-        db += 0.1;
-    }
-    // ни один сегмент не пересекает границу цветовой зоны — иначе он
-    // был бы двухцветным и «горел наполовину»
-    for i in 0..SEG_COUNT {
-        let lo = METER_MIN_DB + i as f32 * SEG_DB + 0.01;
-        let hi = METER_MIN_DB + (i + 1) as f32 * SEG_DB - 0.01;
-        assert_eq!(
-            zone_color(lo),
-            zone_color(hi),
-            "сегмент {i} ({lo}..{hi} dB) двухцветный"
+    // --- (п.1 р.12) шаг сетки подбирается под высоту бара: сегменты
+    // должны быть ЧАСТЫМИ (как в v1 — 6 px + 2 px), а не крупными
+    for bar_h in [180.0f32, 300.0, 420.0, 560.0, 700.0] {
+        let step = seg_db_for(bar_h);
+        let px = bar_h * step / (METER_MAX_DB - METER_MIN_DB);
+        assert!(
+            (4.5..=9.5).contains(&px),
+            "при баре {bar_h} px шаг сегмента {px} px (шаг {step} dB) — сетка не как в v1"
         );
-        assert_eq!(zone_color(seg_mid_db(i)), zone_color(lo), "цвет сегмента {i} не из его зоны");
+        assert!(SEG_STEPS.contains(&step), "шаг {step} не из списка делителей зон");
+    }
+    // на типичной высоте панели сегментов заметно больше прежних 36
+    assert!(seg_count(seg_db_for(500.0)) >= 60, "сегментов мало: {}", seg_count(seg_db_for(500.0)));
+
+    // --- свойства для КАЖДОГО допустимого шага
+    for step in SEG_STEPS {
+        let n = seg_count(step);
+        assert_eq!(led_lit(METER_MIN_DB, step), 0, "тишина — всё погашено");
+        assert_eq!(led_lit(METER_MIN_DB - 20.0, step), 0);
+        assert_eq!(led_lit(METER_MAX_DB, step), n, "клип — шкала до верха");
+        assert_eq!(led_lit(METER_MAX_DB + 6.0, step), n, "перегруз не выходит за шкалу");
+        let mut prev = 0;
+        let mut db = METER_MIN_DB;
+        while db <= METER_MAX_DB {
+            let lit = led_lit(db, step);
+            assert!(lit >= prev, "немонотонно при {db} dB, шаг {step}");
+            prev = lit;
+            db += 0.1;
+        }
+        // ни один сегмент не пересекает границу цветовой зоны — иначе он
+        // был бы двухцветным и «горел наполовину»
+        for i in 0..n {
+            let lo = METER_MIN_DB + i as f32 * step + 0.01;
+            let hi = METER_MIN_DB + (i + 1) as f32 * step - 0.01;
+            assert_eq!(zone_color(lo), zone_color(hi), "сегмент {i} шага {step} двухцветный");
+            assert_eq!(zone_color(seg_mid_db(i, step)), zone_color(lo), "цвет сегмента {i}");
+        }
     }
 
     let mut h = harness();
@@ -602,6 +617,19 @@ fn t97_top_meters_and_leds() {
         "клик по превью не дошёл"
     );
 
+    // --- (п.3 р.12) линейка не тратит место: полоса под метки убрана,
+    // имя метки живёт на строке подписей времени
+    assert_eq!(
+        crate::timeline::RULER_H,
+        crate::timeline::STRIPES_H + crate::timeline::TIME_H,
+        "у линейки снова появилась лишняя полоса"
+    );
+    assert!(
+        crate::timeline::RULER_H <= 33.0,
+        "линейка выросла до {} px — место тратится впустую",
+        crate::timeline::RULER_H
+    );
+
     // --- (п.7) панель метров нельзя растянуть на пол-экрана
     let sep = panel_rect(&h, "meters_col").left();
     let mid = H * 0.5;
@@ -614,8 +642,8 @@ fn t97_top_meters_and_leds() {
     h.drop_at(egui::pos2(W * 0.4, mid));
     h.step();
     let w = panel_width(&h, "meters_col");
-    assert!(w <= 120.0, "метры растянулись на {w} px — нет верхнего предела");
-    assert!(w > 90.0, "сепаратор метров вообще не потянулся ({w}) — тест ничего не проверил");
+    assert!(w <= 90.0, "метры растянулись на {w} px — нет верхнего предела");
+    assert!(w > 75.0, "сепаратор метров вообще не потянулся ({w}) — тест ничего не проверил");
     // тот же класс: левая колонка не должна занимать пол-окна
     let sep = panel_rect(&h, "left_col").right();
     h.hover_at(egui::pos2(sep, mid));

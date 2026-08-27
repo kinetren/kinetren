@@ -9,14 +9,15 @@ use kt_cache::BurstKind;
 use kt_model::*;
 use kt_time::{AUDIO_BURST_FRAMES, Tick};
 
-// Линейка разложена на три полосы (п.6 р.11): имена меток рисовались от
-// самого верха и ложились ПОВЕРХ полосок кэша.
+// Линейка = полоски кэша + ОДНА рабочая строка (п.6 р.11 + п.3 р.12).
+// Сначала под метки была заведена отдельная полоса 13 px — и она пустовала
+// у любого проекта без меток. Теперь имя метки пишется на той же строке,
+// что и подписи времени (янтарным, поверх цифры): места не тратим, а на
+// полоски кэша ничего не налезает.
 pub const STRIPES_H: f32 = 11.0; // 4+1+4+2: глобальные полоски кэша
-pub const MARKS_H: f32 = 13.0; // флажки меток и их имена
-pub const TIME_H: f32 = 15.0; // риски и цифры времени
-pub const MARKS_TOP: f32 = STRIPES_H;
-pub const TIME_TOP: f32 = STRIPES_H + MARKS_H;
-pub const RULER_H: f32 = STRIPES_H + MARKS_H + TIME_H;
+pub const TIME_H: f32 = 22.0; // риски, цифры времени, флажки и имена меток
+pub const TIME_TOP: f32 = STRIPES_H;
+pub const RULER_H: f32 = STRIPES_H + TIME_H;
 pub const GUTTER_W: f32 = 34.0; // п.20 р.6: поуже
 /// Предел ярлыка длинного имени дорожки (п.10 р.11): дальше — многоточие,
 /// полное имя показывает подсказка.
@@ -1925,7 +1926,7 @@ impl KtApp {
                 continue;
             }
             let amber = egui::Color32::from_rgb(255, 195, 0);
-            let top = rect.top() + MARKS_TOP;
+            let top = rect.top() + TIME_TOP;
             full_painter.line_segment(
                 [egui::pos2(x, top), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(1.0, amber),
@@ -1939,16 +1940,22 @@ impl KtApp {
                 amber,
                 egui::Stroke::NONE,
             ));
-            // имя метки — в СВОЕЙ полосе линейки, правее флажка (п.1 р.10,
-            // п.6 р.11: раньше налезало на полоски кэша)
+            // имя метки — НА ТОЙ ЖЕ строке, что подписи времени, правее
+            // флажка (п.3 р.12: отдельная полоса под метки пустовала).
+            // Рисуется после линейки, поэтому янтарное имя перекрывает
+            // серую цифру времени, а не наоборот.
             if !m.name.is_empty() {
-                full_painter.text(
-                    egui::pos2(x + 7.0, top + 1.0),
-                    egui::Align2::LEFT_TOP,
-                    &m.name,
-                    egui::FontId::proportional(10.5),
-                    amber,
+                let font = egui::FontId::proportional(10.5);
+                let g = full_painter.layout_no_wrap(m.name.clone(), font, amber);
+                let at = egui::pos2(x + 7.0, top + 1.0);
+                // подложка: имя ложится на цифру времени, и без неё они
+                // сливаются в кашу (проверено живьём, п.3 р.12)
+                full_painter.rect_filled(
+                    egui::Rect::from_min_size(at, g.size()).expand2(egui::vec2(2.0, 0.0)),
+                    2.0,
+                    egui::Color32::from_rgba_unmultiplied(12, 13, 16, 235),
                 );
+                full_painter.galley(at, g, amber);
             }
         }
 
@@ -1959,7 +1966,7 @@ impl KtApp {
             let mut done: Option<bool> = None; // Some(true) — сохранить
             egui::Area::new(egui::Id::new("marker-name-edit"))
                 .order(egui::Order::Foreground)
-                .fixed_pos(egui::pos2(x + 6.0, rect.top() + MARKS_TOP))
+                .fixed_pos(egui::pos2(x + 6.0, rect.top() + TIME_TOP))
                 .show(ui.ctx(), |ui| {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         let r = ui.add(
@@ -2203,14 +2210,14 @@ impl KtApp {
             }
             full_painter.add(egui::Shape::mesh(mesh));
             full_painter.line_segment(
-                [egui::pos2(x, rect.top() + MARKS_TOP), egui::pos2(x, rect.bottom())],
+                [egui::pos2(x, rect.top() + TIME_TOP), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 100, 100)),
             );
             full_painter.add(egui::Shape::convex_polygon(
                 vec![
-                    egui::pos2(x - 6.0, rect.top() + MARKS_TOP),
-                    egui::pos2(x + 6.0, rect.top() + MARKS_TOP),
-                    egui::pos2(x, rect.top() + MARKS_TOP + 9.0),
+                    egui::pos2(x - 6.0, rect.top() + TIME_TOP),
+                    egui::pos2(x + 6.0, rect.top() + TIME_TOP),
+                    egui::pos2(x, rect.top() + TIME_TOP + 9.0),
                 ],
                 egui::Color32::from_rgb(255, 80, 80),
                 egui::Stroke::NONE,

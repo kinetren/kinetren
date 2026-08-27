@@ -148,26 +148,46 @@ pub(crate) fn zone_color(db: f32) -> egui::Color32 {
     }
 }
 
-/// Шаг LED-сегмента в ДЕЦИБЕЛАХ (п.8 р.11). Раньше сегменты нарезались
-/// по пикселям (6 px + 2 px), поэтому их число и положение плыли с
-/// высотой панели, а границы цветовых зон резали сегмент пополам. 1.5 dB
-/// делит нацело каждую зону (6/3/6/9/18/12) — сегмент всегда одноцветный
-/// и всегда либо горит целиком, либо не горит вовсе.
-pub const SEG_DB: f32 = 1.5;
-pub const SEG_COUNT: usize = 36; // (METER_MAX_DB − METER_MIN_DB) / SEG_DB
+/// Допустимые шаги LED-сетки в ДЕЦИБЕЛАХ (п.8 р.11, уточнено п.1 р.12).
+/// Каждый делит НАЦЕЛО все цветовые зоны (6/3/6/9/18/12 dB), поэтому
+/// сегмент никогда не бывает двухцветным и всегда горит целиком либо не
+/// горит вовсе. Пиксельная нарезка (6 px + 2 px), как в первой версии,
+/// этого не гарантировала: границы зон резали сегмент пополам.
+pub const SEG_STEPS: [f32; 5] = [0.5, 0.75, 1.0, 1.5, 3.0];
+/// Желаемый шаг сетки на экране: v1 рисовал 6 px сегмент + 2 px зазор.
+pub const SEG_TARGET_PX: f32 = 7.0;
+
+/// Сколько сегментов на всю шкалу при данном шаге.
+pub fn seg_count(seg_db: f32) -> usize {
+    ((METER_MAX_DB - METER_MIN_DB) / seg_db).round() as usize
+}
+
+/// Шаг сетки под высоту бара: берём тот из `SEG_STEPS`, чей шаг на экране
+/// ближе всего к `SEG_TARGET_PX`. Иначе на высоком баре сегменты выходят
+/// огромными и редкими (жалоба п.1 р.12: «сегментов очень мало»).
+pub fn seg_db_for(bar_h: f32) -> f32 {
+    let span = METER_MAX_DB - METER_MIN_DB;
+    *SEG_STEPS
+        .iter()
+        .min_by(|a, b| {
+            let px = |s: f32| (bar_h * s / span - SEG_TARGET_PX).abs();
+            px(**a).total_cmp(&px(**b))
+        })
+        .expect("SEG_STEPS не пуст")
+}
 
 /// Сколько сегментов зажжено при уровне db (чистая, тест 97).
-pub fn led_lit(db: f32) -> usize {
+pub fn led_lit(db: f32, seg_db: f32) -> usize {
     if db <= METER_MIN_DB {
         return 0;
     }
-    let n = ((db - METER_MIN_DB) / SEG_DB).ceil() as i32;
-    n.clamp(0, SEG_COUNT as i32) as usize
+    let n = ((db - METER_MIN_DB) / seg_db).ceil() as i32;
+    n.clamp(0, seg_count(seg_db) as i32) as usize
 }
 
 /// Середина сегмента i (0 — самый нижний) в dB: по ней берётся цвет зоны.
-pub fn seg_mid_db(i: usize) -> f32 {
-    METER_MIN_DB + (i as f32 + 0.5) * SEG_DB
+pub fn seg_mid_db(i: usize, seg_db: f32) -> f32 {
+    METER_MIN_DB + (i as f32 + 0.5) * seg_db
 }
 
 /// Зонные полосы dB (верх, низ) сверху вниз: смежные, без дыр и
@@ -318,6 +338,10 @@ impl KtApp {
             let t = (db - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB);
             bars.bottom() - t.clamp(0.0, 1.0) * bars.height()
         };
+        // шаг LED-сетки под фактическую высоту бара (п.1 р.12)
+        let seg_db = seg_db_for(bars.height());
+        let segs = seg_count(seg_db);
+        let seg_h = bars.height() / segs as f32;
         // два бара с зазором по центру — фейдер живёт в зазоре (порт старого)
         let gap = 10.0;
         let bar_w = (bars.width() - gap) / 2.0;
@@ -435,25 +459,24 @@ impl KtApp {
 
         for (ch, &x0) in bar_x.iter().enumerate() {
             // LED-сегменты по сетке dB: каждый горит целиком или не горит
-            let lit_n = led_lit(self.meter.bar_db[ch]);
+            let lit_n = led_lit(self.meter.bar_db[ch], seg_db);
             let cap_db = self.meter.cap_db[ch];
             let cap_seg = (cap_db > self.meter.bar_db[ch] + 0.4
                 && cap_db > METER_MIN_DB + 1.0)
-                .then(|| led_lit(cap_db).saturating_sub(1));
-            let seg_h = bars.height() / SEG_COUNT as f32;
-            let gap_y = (seg_h * 0.28).clamp(0.5, 2.0);
-            for i in 0..SEG_COUNT {
-                let y_bot = db_to_y(METER_MIN_DB + i as f32 * SEG_DB);
-                let y_top = db_to_y(METER_MIN_DB + (i + 1) as f32 * SEG_DB);
+                .then(|| led_lit(cap_db, seg_db).saturating_sub(1));
+            let gap_y = (seg_h * 0.28).clamp(0.5, 1.5);
+            for i in 0..segs {
+                let y_bot = db_to_y(METER_MIN_DB + i as f32 * seg_db);
+                let y_top = db_to_y(METER_MIN_DB + (i + 1) as f32 * seg_db);
                 let seg = egui::Rect::from_min_max(
                     egui::pos2(x0, y_top),
                     egui::pos2(x0 + bar_w, y_bot - gap_y),
                 );
                 let lit = i < lit_n;
                 let col = if cap_seg == Some(i) {
-                    cap_glow_color(seg_mid_db(i))
+                    cap_glow_color(seg_mid_db(i, seg_db))
                 } else if lit {
-                    zone_color(seg_mid_db(i))
+                    zone_color(seg_mid_db(i, seg_db))
                 } else {
                     egui::Color32::from_rgb(14, 16, 19)
                 };

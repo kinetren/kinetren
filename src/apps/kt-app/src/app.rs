@@ -639,7 +639,7 @@ impl KtApp {
                 self.draw_preview_controls(ui);
                 ui.add_space(3.0);
             });
-            egui::Panel::right("meters_col").resizable(true).default_size(70.0).min_size(64.0).max_size(120.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
+            egui::Panel::right("meters_col").resizable(true).default_size(70.0).min_size(64.0).max_size(90.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
                 // кнопки окна — здесь, в вёрстке (п.15 р.8)
                 self.draw_window_buttons(ui);
                 self.draw_meters(ui);
