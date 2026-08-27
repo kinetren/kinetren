@@ -33,9 +33,10 @@ pub struct Project {
     pub settings: ProjectSettings,
     pub media: Vec<MediaRef>,
     pub clips: Vec<ClipEvent>,
-    /// Маркеры (сортированы по времени, без дублей).
+    /// Маркеры (сортированы по времени, без дублей). У метки может быть
+    /// имя (п.1 р.10); старые проекты с массивом чисел читаются как есть.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub markers: Vec<Tick>,
+    pub markers: Vec<Marker>,
     /// Выделенный регион таймлайна (вне undo-истории, как в старом редакторе).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<Region>,
@@ -138,6 +139,44 @@ fn default_lanes() -> u32 {
     1
 }
 
+/// Метка на таймлайне: момент и (необязательное) имя.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Marker {
+    pub t: Tick,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
+impl Marker {
+    pub fn at(t: Tick) -> Marker {
+        Marker { t, name: String::new() }
+    }
+    pub fn named(t: Tick, name: impl Into<String>) -> Marker {
+        Marker { t, name: name.into() }
+    }
+}
+
+impl<'de> Deserialize<'de> for Marker {
+    /// Принимает и старую форму (число тиков), и новую (объект): проекты,
+    /// сохранённые до появления имён, продолжают открываться.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Marker, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Bare(i64),
+            Full {
+                t: i64,
+                #[serde(default)]
+                name: String,
+            },
+        }
+        Ok(match Repr::deserialize(d)? {
+            Repr::Bare(t) => Marker::at(Tick(t)),
+            Repr::Full { t, name } => Marker { t: Tick(t), name },
+        })
+    }
+}
+
 /// Вьюпорт таймлайна, сохраняемый в проекте.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UiState {
@@ -163,6 +202,11 @@ pub struct UiState {
     /// трогает — она просто не используется в режиме сетки.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bin_layout: Vec<(MediaId, f32, f32)>,
+    /// Имена дорожек (п.2 р.10). Пусто → подпись по формуле V1/A1/M1.
+    /// Вне undo, как весь UiState; имя привязано к (вид, индекс) и едет
+    /// вместе с содержимым при перестановке дорожек.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lane_names: Vec<(LaneKind, u32, String)>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -231,6 +275,55 @@ pub fn lane_order_remove(rows: &mut Vec<(LaneKind, u32)>, kind: LaneKind, at: u3
             e.1 -= 1;
         }
     }
+}
+
+/// Синхронизация имён дорожек при ВСТАВКЕ дорожки (п.2 р.10).
+pub fn lane_names_insert(names: &mut [(LaneKind, u32, String)], kind: LaneKind, at: u32) {
+    for e in names.iter_mut() {
+        if e.0 == kind && e.1 >= at {
+            e.1 += 1;
+        }
+    }
+}
+
+/// Синхронизация имён при УДАЛЕНИИ дорожки: имя удалённой уходит,
+/// остальные сдвигаются.
+pub fn lane_names_remove(names: &mut Vec<(LaneKind, u32, String)>, kind: LaneKind, at: u32) {
+    names.retain(|(k, l, _)| !(*k == kind && *l == at));
+    for e in names.iter_mut() {
+        if e.0 == kind && e.1 > at {
+            e.1 -= 1;
+        }
+    }
+}
+
+/// Имя дорожки едет ВМЕСТЕ с содержимым при перестановке (иначе
+/// пользователь перетащит «Голос» вниз, а подпись останется наверху).
+pub fn lane_names_swap(names: &mut [(LaneKind, u32, String)], kind: LaneKind, a: u32, b: u32) {
+    for e in names.iter_mut() {
+        if e.0 == kind {
+            if e.1 == a {
+                e.1 = b;
+            } else if e.1 == b {
+                e.1 = a;
+            }
+        }
+    }
+}
+
+/// Подпись дорожки: пользовательское имя либо формула V1/A1/M1.
+pub fn lane_label(names: &[(LaneKind, u32, String)], kind: LaneKind, lane: u32) -> String {
+    if let Some((_, _, n)) = names.iter().find(|(k, l, _)| *k == kind && *l == lane)
+        && !n.is_empty()
+    {
+        return n.clone();
+    }
+    let p = match kind {
+        LaneKind::Video => "V",
+        LaneKind::Audio => "A",
+        LaneKind::Morph => "M",
+    };
+    format!("{p}{}", lane + 1)
 }
 
 /// Полуоткрытый регион [start, end), start < end.
@@ -598,8 +691,11 @@ impl Project {
         for m in &self.morphers {
             self.morph_lanes = self.morph_lanes.max(m.lane + 1);
         }
-        self.markers.sort_unstable();
-        self.markers.dedup();
+        // ВАЖНО: stable-сортировка и дедуп по времени — при двух метках на
+        // один тик с разными именами unstable дал бы недетерминированный
+        // порядок и сломал байт-стабильность проекта (тест 12)
+        self.markers.sort_by_key(|m| m.t);
+        self.markers.dedup_by_key(|m| m.t);
     }
 
     /// Полная проверка инвариантов. Ошибки загрузки ЯВНЫЕ — никаких

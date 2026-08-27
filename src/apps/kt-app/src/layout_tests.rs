@@ -350,7 +350,7 @@ fn t94_forward_navigation_advances() {
             fx_bypass: vec![],
             fx: vec![],
         });
-        p.markers.push(Tick(7000));
+        p.markers.push(Marker::at(Tick(7000)));
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
         app.player.seek(Tick(0));

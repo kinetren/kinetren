@@ -77,6 +77,13 @@ pub enum Command {
     RemoveMarker {
         at: Tick,
     },
+    /// Задать/сменить имя метки (п.1 р.10). Отдельная команда: создание
+    /// с именем = батч [AddMarker, SetMarkerName] (один undo-шаг), живой
+    /// ввод — apply_coalesced по токену жеста.
+    SetMarkerName {
+        at: Tick,
+        name: String,
+    },
     MoveMarker {
         from: Tick,
         to: Tick,
@@ -336,20 +343,25 @@ impl TimelineModel {
                 }
             }
             Command::AddMarker { at } => {
-                if p.markers.contains(at) {
+                if p.markers.iter().any(|m| m.t == *at) {
                     return Err(CommandError::MarkerExists(*at));
                 }
             }
             Command::RemoveMarker { at } => {
-                if !p.markers.contains(at) {
+                if !p.markers.iter().any(|m| m.t == *at) {
+                    return Err(CommandError::MarkerNotFound(*at));
+                }
+            }
+            Command::SetMarkerName { at, .. } => {
+                if !p.markers.iter().any(|m| m.t == *at) {
                     return Err(CommandError::MarkerNotFound(*at));
                 }
             }
             Command::MoveMarker { from, to } => {
-                if !p.markers.contains(from) {
+                if !p.markers.iter().any(|m| m.t == *from) {
                     return Err(CommandError::MarkerNotFound(*from));
                 }
-                if p.markers.contains(to) && from != to {
+                if p.markers.iter().any(|m| m.t == *to) && from != to {
                     return Err(CommandError::MarkerExists(*to));
                 }
             }
@@ -545,14 +557,26 @@ impl TimelineModel {
             }
             Command::UnlinkClip { id } => Self::clip_mut_on(p, id).link_group = None,
             Command::AddMarker { at } => {
-                let i = p.markers.partition_point(|&m| m < at);
-                p.markers.insert(i, at);
+                let i = p.markers.partition_point(|m| m.t < at);
+                p.markers.insert(i, Marker::at(at));
             }
-            Command::RemoveMarker { at } => p.markers.retain(|&m| m != at),
+            Command::RemoveMarker { at } => p.markers.retain(|m| m.t != at),
+            Command::SetMarkerName { at, name } => {
+                if let Some(m) = p.markers.iter_mut().find(|m| m.t == at) {
+                    m.name = name;
+                }
+            }
             Command::MoveMarker { from, to } => {
-                p.markers.retain(|&m| m != from);
-                let i = p.markers.partition_point(|&m| m < to);
-                p.markers.insert(i, to);
+                // имя переезжает ВМЕСТЕ с меткой (раньше терялось)
+                let name = p
+                    .markers
+                    .iter()
+                    .find(|m| m.t == from)
+                    .map(|m| m.name.clone())
+                    .unwrap_or_default();
+                p.markers.retain(|m| m.t != from);
+                let i = p.markers.partition_point(|m| m.t < to);
+                p.markers.insert(i, Marker { t: to, name });
             }
             Command::InsertLane { kind, at } => {
                 match kind {

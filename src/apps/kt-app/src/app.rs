@@ -77,6 +77,16 @@ pub struct KtApp {
     /// Куда подмотать окно таймлайна на следующем кадре (п.11 р.9:
     /// прыжок к точке остановки должен показывать курсор).
     pub pending_reveal: Option<i64>,
+    /// Имена дорожек (п.2 р.10) — зеркало UiState.lane_names.
+    pub lane_names: Vec<(kt_model::LaneKind, u32, String)>,
+    /// Активный инлайн-ввод имени метки (п.1 р.10).
+    pub marker_edit: Option<MarkerEdit>,
+    /// Запросить фокус полю имени метки (один раз при открытии).
+    pub marker_edit_focus: bool,
+    /// Активный инлайн-ввод имени дорожки (п.2 р.10).
+    pub lane_edit: Option<LaneEdit>,
+    /// Запросить фокус полю имени дорожки.
+    pub lane_edit_focus: bool,
     /// Вертикальный скролл зоны дорожек, px (п.12 р.6).
     pub tl_scroll: f32,
     /// Явная высота строки (Shift+Ctrl+колесо); None = авто-подгонка.
@@ -235,6 +245,11 @@ impl KtApp {
             last_user_scroll: None,
             pending_unmax_drag: false,
             pending_reveal: None,
+            lane_names: Vec::new(),
+            marker_edit: None,
+            marker_edit_focus: false,
+            lane_edit: None,
+            lane_edit_focus: false,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -329,6 +344,11 @@ impl KtApp {
             last_user_scroll: None,
             pending_unmax_drag: false,
             pending_reveal: None,
+            lane_names: Vec::new(),
+            marker_edit: None,
+            marker_edit_focus: false,
+            lane_edit: None,
+            lane_edit_focus: false,
             tl_scroll: 0.0,
             tl_v_zoom: None,
             bin_last_good: HashMap::new(),
@@ -407,6 +427,7 @@ impl KtApp {
             app.bin_free = ui.bin_free; // п.7 р.8
             app.bin_layout =
                 ui.bin_layout.iter().map(|(id, x, y)| (*id, egui::pos2(*x, *y))).collect();
+            app.lane_names = ui.lane_names;
         }
         Ok(app)
     }
@@ -425,6 +446,7 @@ impl KtApp {
             lane_order: self.lane_order.clone(),
             bin_free: self.bin_free,
             bin_layout: self.bin_layout.iter().map(|(id, p)| (*id, p.x, p.y)).collect(),
+            lane_names: self.lane_names.clone(),
         }
     }
 
@@ -1227,12 +1249,22 @@ impl KtApp {
             .project()
             .markers
             .iter()
-            .copied()
-            .min_by_key(|m| (m.0 - at.0).abs())
-            .filter(|m| (m.0 - at.0).abs() <= threshold);
+            .map(|m| m.t)
+            .min_by_key(|t| (t.0 - at.0).abs())
+            .filter(|t| (t.0 - at.0).abs() <= threshold);
         match near {
-            Some(m) => self.apply(Command::RemoveMarker { at: m }),
-            None => self.apply(Command::AddMarker { at }),
+            Some(t) => {
+                self.apply(Command::RemoveMarker { at: t });
+            }
+            None => {
+                // новая метка: сразу открываем поле имени (п.1 р.10);
+                // клик мимо/Esc оставит метку без имени
+                if self.apply(Command::AddMarker { at }) {
+                    self.marker_edit =
+                        Some(MarkerEdit { at: at.0, buf: String::new(), is_new: true });
+                    self.marker_edit_focus = true;
+                }
+            }
         };
     }
 
@@ -2944,6 +2976,23 @@ fn app_icon() -> egui::IconData {
     egui::IconData { rgba: img.into_raw(), width, height }
 }
 
+/// Инлайн-ввод имени метки (п.1 р.10).
+#[derive(Debug, Clone)]
+pub struct MarkerEdit {
+    pub at: i64,
+    pub buf: String,
+    /// Метка только что создана: закрытие без Enter оставляет её без имени.
+    pub is_new: bool,
+}
+
+/// Инлайн-ввод имени дорожки (п.2 р.10).
+#[derive(Debug, Clone)]
+pub struct LaneEdit {
+    pub kind: kt_model::LaneKind,
+    pub lane: u32,
+    pub buf: String,
+}
+
 /// Точки остановки для навигации (п.16 р.8): ноль, границы региона, все
 /// маркеры, границы ОБЪЕДИНЁННЫХ клипов (там, где пустота сменяется
 /// материалом) и конец проекта. Отсортированы, без дублей. Строится
@@ -2954,7 +3003,7 @@ pub fn stop_points(p: &kt_model::Project) -> Vec<i64> {
         v.push(r.start.0);
         v.push(r.end.0);
     }
-    v.extend(p.markers.iter().map(|m| m.0));
+    v.extend(p.markers.iter().map(|m| m.t.0));
     // объединяем перекрывающиеся клипы: границей считается смена
     // «пусто ↔ есть материал», а не каждый стык внутри плотного монтажа
     let mut spans: Vec<(i64, i64)> =
@@ -3595,7 +3644,7 @@ mod repaint_tests {
         // область 1000..4000, стык внутри не считается границей
         p.clips.push(clip(1, 1000, 2000));
         p.clips.push(clip(2, 2500, 1500));
-        p.markers.push(Tick(5000));
+        p.markers.push(Marker::at(Tick(5000)));
         p.region = Some(Region { start: Tick(7000), end: Tick(9000) });
         let pts = stop_points(&p);
         // точки выровнены ВВЕРХ к аудио-сетке (кратно 15 тикам, п.7 р.10):

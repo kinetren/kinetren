@@ -48,7 +48,7 @@ fn clip(
 #[test]
 fn new_fields_round_trip_and_old_json_loads() {
     let mut p = base();
-    p.markers = vec![Tick(1000), Tick(5000)];
+    p.markers = vec![Marker::at(Tick(1000)), Marker::at(Tick(5000))];
     p.region = Some(Region { start: Tick(100), end: Tick(50_000) });
     p.loop_enabled = true;
     p.video_lanes = 2;
@@ -121,9 +121,9 @@ fn markers_sorted_and_region_survives_undo() {
     let mut m = TimelineModel::new(base());
     m.apply(Command::AddMarker { at: Tick(5000) }).unwrap();
     m.apply(Command::AddMarker { at: Tick(1000) }).unwrap();
-    assert_eq!(m.project().markers, vec![Tick(1000), Tick(5000)], "сортировка при вставке");
+    assert_eq!(m.project().markers, vec![Marker::at(Tick(1000)), Marker::at(Tick(5000))], "сортировка при вставке");
     m.apply(Command::MoveMarker { from: Tick(1000), to: Tick(9000) }).unwrap();
-    assert_eq!(m.project().markers, vec![Tick(5000), Tick(9000)]);
+    assert_eq!(m.project().markers, vec![Marker::at(Tick(5000)), Marker::at(Tick(9000))]);
 
     // регион ставится ПОСЛЕ команд и обязан пережить undo
     m.set_region(Some(Region { start: Tick(0), end: Tick(10) }));
@@ -385,4 +385,97 @@ fn t30_lane_delete_via_batch_is_single_undo() {
 
     m.undo().unwrap();
     assert_eq!(m.project().to_json(), before, "один undo возвращает всё");
+}
+
+/// Тест 89 (п.1 р.10): метки с именами — старый формат (массив чисел)
+/// читается, имя переживает round-trip, порядок детерминирован даже при
+/// совпадающих тиках, MoveMarker переносит имя.
+#[test]
+fn t89_named_markers() {
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+    });
+    // старый проект: markers — просто числа
+    p.markers = vec![Marker::at(Tick(5000)), Marker::at(Tick(1000))];
+    let old_json = r#"{"format_version":1,"settings":{"fps":30,"width":640,"height":360,"sample_rate":48000},"media":[],"clips":[],"markers":[1000,5000]}"#;
+    let loaded = Project::from_json(old_json).expect("старый формат должен читаться");
+    assert_eq!(loaded.markers, vec![Marker::at(Tick(1000)), Marker::at(Tick(5000))]);
+    assert!(loaded.markers.iter().all(|m| m.name.is_empty()));
+
+    // новый формат: имя переживает round-trip и не пишется, когда пусто
+    p.markers = vec![Marker::named(Tick(1000), "старт"), Marker::at(Tick(5000))];
+    p.validate().unwrap();
+    let json = p.to_json();
+    assert!(json.contains("старт"), "имя должно сериализоваться");
+    let back = Project::from_json(&json).unwrap();
+    assert_eq!(back.markers, p.markers);
+    assert_eq!(json, back.to_json(), "байт-стабильность");
+
+    // дубли по времени схлопываются детерминированно (stable-сортировка)
+    let mut p2 = p.clone();
+    p2.markers = vec![
+        Marker::named(Tick(2000), "первая"),
+        Marker::named(Tick(2000), "вторая"),
+    ];
+    p2.normalize();
+    assert_eq!(p2.markers, vec![Marker::named(Tick(2000), "первая")]);
+
+    // MoveMarker переносит имя (раньше терялось)
+    let mut m = TimelineModel::new(p.clone());
+    m.apply(Command::MoveMarker { from: Tick(1000), to: Tick(3000) }).unwrap();
+    let moved = m.project().markers.iter().find(|k| k.t == Tick(3000)).unwrap();
+    assert_eq!(moved.name, "старт", "имя должно переехать вместе с меткой");
+
+    // SetMarkerName на несуществующей метке — ошибка
+    assert!(
+        m.apply(Command::SetMarkerName { at: Tick(999_999), name: "x".into() }).is_err()
+    );
+}
+
+/// Тест 90 (п.2 р.10): имена дорожек — round-trip, вставка/удаление
+/// сдвигают индексы, перестановка переносит имя вместе с содержимым.
+#[test]
+fn t90_lane_names() {
+    use kt_model::{lane_label, lane_names_insert, lane_names_remove, lane_names_swap};
+    let mut names = vec![
+        (LaneKind::Video, 0, "Камера".to_string()),
+        (LaneKind::Video, 1, "Титры".to_string()),
+        (LaneKind::Audio, 0, "Голос".to_string()),
+    ];
+    // подпись: имя или формула
+    assert_eq!(lane_label(&names, LaneKind::Video, 0), "Камера");
+    assert_eq!(lane_label(&names, LaneKind::Video, 5), "V6");
+    assert_eq!(lane_label(&[], LaneKind::Audio, 2), "A3");
+
+    // вставка дорожки сдвигает те, что ниже
+    lane_names_insert(&mut names, LaneKind::Video, 0);
+    assert_eq!(lane_label(&names, LaneKind::Video, 1), "Камера");
+    assert_eq!(lane_label(&names, LaneKind::Video, 2), "Титры");
+    assert_eq!(lane_label(&names, LaneKind::Audio, 0), "Голос", "чужой вид не тронут");
+
+    // удаление убирает своё имя и подтягивает остальные
+    lane_names_remove(&mut names, LaneKind::Video, 1);
+    assert_eq!(lane_label(&names, LaneKind::Video, 1), "Титры");
+
+    // перестановка переносит имя вместе с содержимым
+    lane_names_swap(&mut names, LaneKind::Video, 1, 3);
+    assert_eq!(lane_label(&names, LaneKind::Video, 3), "Титры");
+    assert_eq!(lane_label(&names, LaneKind::Video, 1), "V2");
+
+    // round-trip через проект: пустой вектор не сериализуется
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+    });
+    p.ui = Some(UiState { lane_names: names.clone(), ..Default::default() });
+    let json = p.to_json();
+    assert!(json.contains("Титры"));
+    assert_eq!(Project::from_json(&json).unwrap().ui.unwrap().lane_names, names);
+    let empty = UiState::default();
+    assert!(!serde_json::to_string(&empty).unwrap().contains("lane_names"));
 }

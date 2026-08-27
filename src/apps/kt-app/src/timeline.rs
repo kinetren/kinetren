@@ -340,7 +340,7 @@ impl KtApp {
             }
         }
         for m in &p.markers {
-            t.push(m.0);
+            t.push(m.t.0);
         }
         if let Some(r) = p.region {
             t.push(r.start.0);
@@ -719,11 +719,13 @@ impl KtApp {
             );
             // фоны дорожек в тонах старого: видео синеватый, аудио тёплый,
             // morph фиолетовый (темнее — тема р.6)
-            let (fill, label) = match kind {
-                LaneKind::Video => (crate::theme::LANE_VIDEO, format!("V{}", lane + 1)),
-                LaneKind::Audio => (crate::theme::LANE_AUDIO, format!("A{}", lane + 1)),
-                LaneKind::Morph => (crate::theme::LANE_MORPH, format!("M{}", lane + 1)),
+            let fill = match kind {
+                LaneKind::Video => crate::theme::LANE_VIDEO,
+                LaneKind::Audio => crate::theme::LANE_AUDIO,
+                LaneKind::Morph => crate::theme::LANE_MORPH,
             };
+            // подпись: пользовательское имя либо формула V1/A1/M1 (п.2 р.10)
+            let label = kt_model::lane_label(&self.lane_names, kind, lane);
             painter.rect_filled(lane_rect, 0.0, fill);
             gutter_labels.push((label, y + lane_h * 0.5));
         }
@@ -746,7 +748,20 @@ impl KtApp {
 
         // ---- дорожки: реордер драгом и меню (пп. 7-8; п.6 v1.4: строки) ----
         {
-            if gutter_resp.drag_started()
+            // двойной клик по заголовку дорожки — переименование (п.2 р.10)
+            if gutter_resp.double_clicked()
+                && let Some(pos) = gutter_resp.interact_pointer_pos()
+                && let Some((kind, lane)) = geom.key_at_y(pos.y)
+            {
+                let cur = kt_model::lane_label(&self.lane_names, kind, lane);
+                self.lane_edit = Some(crate::app::LaneEdit { kind, lane, buf: cur });
+                self.lane_edit_focus = true;
+                self.drag = None;
+            }
+            // пока идёт ввод имени — драг-реордер выключен, иначе «кликнул
+            // в поле — уехала дорожка»
+            if self.lane_edit.is_none()
+                && gutter_resp.drag_started()
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
                 && let Some(row) = geom.row_at_y(pos.y)
             {
@@ -826,7 +841,17 @@ impl KtApp {
                         kt_model::lane_order_remove(&mut self.lane_order, lk, lane);
                         ui.close();
                     }
-                    if ui.button("Вставить дорожку выше").clicked() {
+                    if ui.button("Переименовать дорожку…").clicked() {
+                    let lk = match kind {
+                        ClipKind::Video => LaneKind::Video,
+                        ClipKind::Audio => LaneKind::Audio,
+                    };
+                    let cur = kt_model::lane_label(&self.lane_names, lk, lane);
+                    self.lane_edit = Some(crate::app::LaneEdit { kind: lk, lane, buf: cur });
+                    self.lane_edit_focus = true;
+                    ui.close();
+                }
+                if ui.button("Вставить дорожку выше").clicked() {
                         if self.apply(Command::InsertLane { kind, at: lane }) {
                             kt_model::lane_order_insert(&mut self.lane_order, lk, lane);
                         }
@@ -938,7 +963,7 @@ impl KtApp {
                 .project()
                 .markers
                 .iter()
-                .map(|m| m.0)
+                .map(|m| m.t.0)
                 .min_by_key(|m| (tick_to_x(*m) - pos.x).abs() as i64)
                 .filter(|m| (tick_to_x(*m) - pos.x).abs() <= EDGE_GRAB_PX)
         };
@@ -1819,8 +1844,8 @@ impl KtApp {
         // ---- маркеры ----------------------------------------------------------------
         for m in &self.model.project().markers {
             let mt = match &self.drag {
-                Some(Drag::Marker { orig, cur }) if *orig == m.0 => *cur,
-                _ => m.0,
+                Some(Drag::Marker { orig, cur }) if *orig == m.t.0 => *cur,
+                _ => m.t.0,
             };
             let x = tick_to_x(mt);
             if x < rect.left() || x > rect.right() {
@@ -1840,6 +1865,110 @@ impl KtApp {
                 amber,
                 egui::Stroke::NONE,
             ));
+            // имя метки — в полосе линейки, правее флажка (п.1 р.10)
+            if !m.name.is_empty() {
+                full_painter.text(
+                    egui::pos2(x + 7.0, rect.top() + 1.0),
+                    egui::Align2::LEFT_TOP,
+                    &m.name,
+                    egui::FontId::proportional(10.5),
+                    amber,
+                );
+            }
+        }
+
+        // ---- инлайн-ввод имени метки (п.1 р.10) --------------------------
+        if let Some(ed) = self.marker_edit.clone() {
+            let x = tick_to_x(ed.at);
+            let mut buf = ed.buf.clone();
+            let mut done: Option<bool> = None; // Some(true) — сохранить
+            egui::Area::new(egui::Id::new("marker-name-edit"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(egui::pos2(x + 6.0, rect.top() + 2.0))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut buf)
+                                .hint_text(if ed.is_new { "имя метки (можно пропустить)" } else { "имя метки" })
+                                .desired_width(140.0),
+                        );
+                        if !r.has_focus() && self.marker_edit_focus {
+                            r.request_focus();
+                            self.marker_edit_focus = false;
+                        }
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            done = Some(true);
+                        } else if ui.input(|i| i.key_pressed(egui::Key::Escape))
+                            || (r.lost_focus() && !r.has_focus())
+                        {
+                            // клик мимо/Esc: метка просто остаётся без имени
+                            done = Some(false);
+                        }
+                    });
+                });
+            match done {
+                Some(true) => {
+                    let name = buf.trim().to_string();
+                    self.marker_edit = None;
+                    if !name.is_empty() {
+                        self.apply(Command::SetMarkerName { at: Tick(ed.at), name });
+                    }
+                }
+                Some(false) => {
+                    // новая метка остаётся без имени; при переименовании
+                    // Esc/клик мимо — просто отмена, старое имя на месте
+                    self.marker_edit = None;
+                }
+                None => self.marker_edit = Some(crate::app::MarkerEdit { buf, ..ed }),
+            }
+        }
+
+        // ---- инлайн-ввод имени дорожки (п.2 р.10) ------------------------
+        if let Some(ed) = self.lane_edit.clone() {
+            let y = geom
+                .rows
+                .iter()
+                .position(|&(k, l)| k == ed.kind && l == ed.lane)
+                .map(|row| geom.row_top(row))
+                .unwrap_or(rect.top());
+            let mut buf = ed.buf.clone();
+            let mut done: Option<bool> = None;
+            egui::Area::new(egui::Id::new("lane-name-edit"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(egui::pos2(full.left() + 2.0, y + 2.0))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut buf)
+                                .hint_text("имя дорожки")
+                                .desired_width(120.0),
+                        );
+                        if !r.has_focus() && self.lane_edit_focus {
+                            r.request_focus();
+                            self.lane_edit_focus = false;
+                        }
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            done = Some(true);
+                        } else if ui.input(|i| i.key_pressed(egui::Key::Escape))
+                            || (r.lost_focus() && !r.has_focus())
+                        {
+                            done = Some(false);
+                        }
+                    });
+                });
+            match done {
+                Some(true) => {
+                    let name = buf.trim().to_string();
+                    self.lane_names.retain(|(k, l, _)| !(*k == ed.kind && *l == ed.lane));
+                    if !name.is_empty() {
+                        self.lane_names.push((ed.kind, ed.lane, name));
+                    }
+                    self.dirty = true;
+                    self.lane_edit = None;
+                }
+                Some(false) => self.lane_edit = None,
+                None => self.lane_edit = Some(crate::app::LaneEdit { buf, ..ed }),
+            }
         }
 
         // ---- heat-зоны прыжка/edge-scroll: градиент при наведении ------------------
@@ -2089,6 +2218,20 @@ impl KtApp {
                 }
             }
             Some(CtxTarget::Marker(m)) => {
+                if ui.button("Переименовать…").clicked() {
+                    let name = self
+                        .model
+                        .project()
+                        .markers
+                        .iter()
+                        .find(|k| k.t.0 == m)
+                        .map(|k| k.name.clone())
+                        .unwrap_or_default();
+                    self.marker_edit =
+                        Some(crate::app::MarkerEdit { at: m, buf: name, is_new: false });
+                    self.marker_edit_focus = true;
+                    ui.close();
+                }
                 if ui.button("Удалить маркер").clicked() {
                     self.apply(Command::RemoveMarker { at: Tick(m) });
                     ui.close();
