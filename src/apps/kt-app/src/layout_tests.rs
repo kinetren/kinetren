@@ -986,6 +986,15 @@ fn t101_edge_buttons_are_clickable() {
     press(&mut h, egui::pos2(18.0, H - 5.0));
     assert_ne!(h.state().notices_open, before, "колокольчик не открыл уведомления");
 
+    // САМАЯ кромка (4 px) остаётся за ресайзом даже поверх кнопок —
+    // иначе теряется диагональ угла; проверяем, что она жива
+    let mut h = harness();
+    let sent = press(&mut h, egui::pos2(W - 2.0, 2.0));
+    assert!(
+        sent.iter().any(|c| matches!(c, V::BeginResize(_))),
+        "угол окна перестал тянуться из-за кнопок"
+    );
+
     // чистые кромки по-прежнему дают ресайз — гейт не должен убить его
     let mut h = harness();
     let sent = press(&mut h, egui::pos2(W * 0.5, H - 2.0));

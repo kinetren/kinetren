@@ -793,8 +793,15 @@ impl KtApp {
             && std::env::var_os("KT_DECORATIONS").is_none()
         {
             let win = ctx.content_rect();
+            // кнопки у краёв (окно, меню, колокольчик) забирают нажатие
+            // себе — кроме САМОЙ кромки в 2 px, где остаётся ресайз, в том
+            // числе диагональный за угол (п.9 р.12)
+            let guarded = |slf: &Self, pos: egui::Pos2| {
+                win.shrink(WIN_BORDER).contains(pos)
+                    && slf.no_resize_rects.iter().any(|r| r.contains(pos))
+            };
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
-                && !self.no_resize_rects.iter().any(|r| r.contains(pos))
+                && !guarded(self, pos)
                 && let Some(dir) = resize_zone(win, pos, WIN_EDGE, WIN_CORNER)
             {
                 ctx.set_cursor_icon(resize_cursor(dir));
@@ -3095,6 +3102,9 @@ pub fn resize_cursor(dir: egui::ResizeDirection) -> egui::CursorIcon {
 /// Высота невидимой полосы перетаскивания окна вдоль верхней кромки
 /// (п.2 р.9). Места не занимает — просто первые пиксели центральной зоны.
 pub const TOP_DRAG_H: f32 = 20.0;
+/// Самая кромка окна: тут ресайз выигрывает даже у кнопок, чтобы угол
+/// окна оставался «тянущимся» (п.9 р.12).
+pub const WIN_BORDER: f32 = 4.0;
 pub const WIN_EDGE: f32 = 8.0;
 pub const WIN_CORNER: f32 = 16.0;
 

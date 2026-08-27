@@ -151,12 +151,12 @@ impl KtApp {
         };
         // меню тоже сидит в кромке окна: без этого верхняя четверть
         // кнопок «Файл/Правка/Вид» уходила в ресайз (п.9 р.12)
-        self.no_resize_rects.push(
-            egui::Rect::from_min_max(
-                egui::pos2(logo.left() - 2.0, strip.top() - 4.0),
-                egui::pos2(menu_end + 2.0, strip.bottom() + 2.0),
-            ),
-        );
+        // ТОЛЬКО кнопки меню: лого не интерактивно, и если захватить его,
+        // умирает угол окна NW (ловит t76 — тянуть за угол перестало)
+        self.no_resize_rects.push(egui::Rect::from_min_max(
+            egui::pos2(menu_left - 2.0, strip.top() - 4.0),
+            egui::pos2(menu_end + 2.0, strip.bottom() + 2.0),
+        ));
         ui.advance_cursor_after_rect(strip);
         // имя проекта + версия — поверх всего, начиная за меню
         let fg = ui.ctx().layer_painter(egui::LayerId::new(
