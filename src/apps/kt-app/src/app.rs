@@ -588,7 +588,7 @@ impl KtApp {
         });
         // полоса времени над таймлайном (порт Timeline time strip)
         // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
-        egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).max_size((ui.max_rect().width() * 0.5).max(420.0)).show(ui, |ui| {
+        egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).max_size(420.0).show(ui, |ui| {
             // шапка: лого + меню + имя проекта (пп.15,6,7 р.8)
             self.draw_column_header(ui);
             ui.add_space(2.0);
@@ -639,7 +639,7 @@ impl KtApp {
                 self.draw_preview_controls(ui);
                 ui.add_space(3.0);
             });
-            egui::Panel::right("meters_col").resizable(true).default_size(70.0).min_size(64.0).max_size(180.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
+            egui::Panel::right("meters_col").resizable(true).default_size(70.0).min_size(64.0).max_size(120.0).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
                 // кнопки окна — здесь, в вёрстке (п.15 р.8)
                 self.draw_window_buttons(ui);
                 self.draw_meters(ui);

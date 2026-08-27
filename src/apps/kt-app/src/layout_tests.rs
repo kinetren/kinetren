@@ -614,8 +614,23 @@ fn t97_top_meters_and_leds() {
     h.drop_at(egui::pos2(W * 0.4, mid));
     h.step();
     let w = panel_width(&h, "meters_col");
-    assert!(w <= 180.0, "метры растянулись на {w} px — нет верхнего предела");
-    assert!(w > 100.0, "сепаратор метров вообще не потянулся ({w}) — тест ничего не проверил");
+    assert!(w <= 120.0, "метры растянулись на {w} px — нет верхнего предела");
+    assert!(w > 90.0, "сепаратор метров вообще не потянулся ({w}) — тест ничего не проверил");
+    // тот же класс: левая колонка не должна занимать пол-окна
+    let sep = panel_rect(&h, "left_col").right();
+    h.hover_at(egui::pos2(sep, mid));
+    h.step();
+    h.drag_at(egui::pos2(sep, mid));
+    h.step();
+    h.hover_at(egui::pos2(sep + 40.0, mid));
+    h.step();
+    h.hover_at(egui::pos2(W * 0.9, mid));
+    h.step();
+    h.drop_at(egui::pos2(W * 0.9, mid));
+    h.step();
+    let lw = panel_width(&h, "left_col");
+    assert!(lw <= 420.0, "левая колонка растянулась на {lw} px");
+    assert!(lw > 300.0, "сепаратор левой колонки не потянулся ({lw})");
 }
 
 /// Тест 98 (п.9 р.11): маска ввода таймкода.
