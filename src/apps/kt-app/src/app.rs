@@ -2642,8 +2642,10 @@ impl KtApp {
                     "V-показано {}",
                     self.perf.video_frames_shown
                 ),
+                // короткая подпись: в узкой колонке длинная строка
+                // обрезалась многоточием и счётчик откатов было не видно
                 format!(
-                    "V-пропущено {} / откатов {}",
+                    "V-проп/откат {}/{}",
                     self.perf.video_cells_skipped, self.perf.video_rollbacks
                 ),
             ),
