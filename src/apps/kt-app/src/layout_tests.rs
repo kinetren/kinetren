@@ -1269,6 +1269,14 @@ fn t120_space_hold_boosts_playback() {
         prev = b;
     }
     assert!(b > SPACE_BOOST_MAX * 0.9, "за {SPACE_BOOST_SECS} с не доехали до потолка: {b}");
+    // и НЕ быстрее, чем просил пользователь (п.3 р.17: «надо не за 2с а
+    // за 5, а то очень быстро»): за 2 с разгон обязан быть заметно ниже
+    // потолка — на прежней константе выходило 3.85 из 4
+    let mut half = 1.0f32;
+    for _ in 0..120 {
+        half = KtApp::space_boost_step(half, 1.0 / 60.0);
+    }
+    assert!(half < 3.4, "разгон слишком резкий: за 2 с уже {half}× из {SPACE_BOOST_MAX}");
     let mut rough = 1.0f32;
     for dt in [0.25f32, 0.1, 1.0 / 30.0, 0.25, 0.25] {
         rough = KtApp::space_boost_step(rough, dt);
@@ -1552,6 +1560,92 @@ fn t118_bin_autoscrolls_and_wheel_works() {
     }
     let after = at(&h, MediaId(3)).top();
     assert!(after < before - 20.0, "колесо не крутит медиа-бин: {before} → {after}");
+
+    // --- п.1 р.17: колесо обязано работать И ВО ВРЕМЯ драга. egui сам
+    // глушит скролл у ScrollArea, пока что-нибудь тащат
+    // (`dragged_id().is_none()`), а человек крутит колесо именно тогда —
+    // чтобы дотянуться до нужного места («scroll мышки по прежнему не
+    // работает»).
+    // возвращаемся наверх: после проверок выше список домотан вниз и
+    // карточки уехали за пределы видимой полосы
+    let wheel_up = |h: &mut Harness<'_, KtApp>, n: usize| {
+        for _ in 0..n {
+            h.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, 90.0),
+                modifiers: egui::Modifiers::NONE,
+                phase: egui::TouchPhase::Move,
+            });
+            h.step();
+        }
+    };
+    h.hover_at(over);
+    h.step();
+    wheel_up(&mut h, 12);
+    let grab2 = at(&h, MediaId(2)).center();
+    assert!(col.contains(grab2), "карточка вне видимой части колонки: {grab2:?} / {col:?}");
+    h.drag_at(grab2);
+    h.step();
+    h.hover_at(grab2 + egui::vec2(0.0, 8.0));
+    h.step();
+    let before_drag_wheel = at(&h, MediaId(3)).top();
+    for _ in 0..3 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -60.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.step();
+    }
+    let after_drag_wheel = at(&h, MediaId(3)).top();
+    assert!(
+        after_drag_wheel < before_drag_wheel - 20.0,
+        "колесо во время драга не крутит бин: {before_drag_wheel} → {after_drag_wheel}"
+    );
+    h.drop_at(grab2 + egui::vec2(0.0, 8.0));
+    h.step();
+
+    // --- п.1 р.17: тычок В КРОМКУ — это «мотай список», а не «выноси»:
+    // карточка обязана остаться там, куда её ведут. Пользователь: «тыкаю
+    // в край — мы скролимся, но потом сурс сам улетает обратно».
+    let card = at(&h, MediaId(1));
+    let before_pos = h.state().bin_layout[&MediaId(1)];
+    h.drag_at(card.center());
+    h.step();
+    h.hover_at(card.center() + egui::vec2(0.0, 8.0));
+    h.step();
+    let jab = egui::pos2(card.center().x, col.bottom() + 12.0);
+    for _ in 0..4 {
+        h.hover_at(jab);
+        h.step();
+    }
+    h.drop_at(jab);
+    h.step();
+    let after_pos = h.state().bin_layout[&MediaId(1)];
+    assert!(
+        (after_pos - before_pos).length() > 4.0,
+        "тычок в кромку откатил карточку на старое место: {before_pos:?} → {after_pos:?}"
+    );
+
+    // но настоящий вынос (далеко за колонку) по-прежнему откатывает
+    // раскладку — иначе карточка уезжает при удачном дропе на таймлайн
+    let card = at(&h, MediaId(1));
+    let before_pos = h.state().bin_layout[&MediaId(1)];
+    h.drag_at(card.center());
+    h.step();
+    h.hover_at(card.center() + egui::vec2(8.0, 0.0));
+    h.step();
+    let out = egui::pos2(col.right() + 200.0, col.center().y);
+    h.hover_at(out);
+    h.step();
+    h.drop_at(out);
+    h.step();
+    assert_eq!(
+        h.state().bin_layout[&MediaId(1)],
+        before_pos,
+        "вынос на таймлайн не должен менять раскладку бина (п.8 р.9)"
+    );
 }
 
 #[test]

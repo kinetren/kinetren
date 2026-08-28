@@ -22,6 +22,14 @@ const BIN_SCRUB_SLOTS: f32 = 48.0;
 /// список — как у таймлайна.
 const BIN_EDGE_MARGIN: f32 = 28.0;
 
+/// Насколько курсор должен УЙТИ за видимую полосу, чтобы это считалось
+/// выносом на таймлайн (п.1 р.17). Тычок в кромку — это «мотай список»,
+/// а не «выноси»: пользователь жаловался, что при быстром тычке карточка
+/// улетает обратно, а вид остаётся отскролленным. По вертикали запас
+/// больше ширины полосы автоскролла, по горизонтали — минимальный
+/// (уход вбок однозначно означает вынос).
+const BIN_ESCAPE_SLACK: egui::Vec2 = egui::vec2(6.0, 36.0);
+
 /// Скорость автоскролла бина по вертикали: та же кривая, что у зон
 /// «прыжка» таймлайна (heat^4.15) — у самой кромки быстро, чуть выше
 /// почти незаметно. Возвращает СМЕЩЕНИЕ СОДЕРЖИМОГО в точках за кадр:
@@ -41,6 +49,26 @@ pub fn bin_edge_scroll(view: egui::Rect, y: f32) -> f32 {
     // знак: heat>0 (низ) → содержимое едет ВВЕРХ, то есть дельта скролла
     // отрицательная (см. Ui::scroll_with_delta)
     -heat.signum() * (heat.abs().powf(4.15) * 0.18 * 240.0).clamp(1.0, 42.0)
+}
+
+/// Сырое вертикальное колесо за кадр в точках (п.1 р.17). Берём
+/// `Event::MouseWheel` ДО обработки egui: `smooth_scroll_delta` при
+/// активном драге уже обнулён гейтом ScrollArea.
+fn raw_wheel_y(ui: &egui::Ui) -> f32 {
+    ui.input(|i| {
+        i.raw
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::MouseWheel { unit, delta, .. } => Some(match unit {
+                    egui::MouseWheelUnit::Point => delta.y,
+                    egui::MouseWheelUnit::Line => delta.y * 20.0,
+                    egui::MouseWheelUnit::Page => delta.y * 200.0,
+                }),
+                _ => None,
+            })
+            .sum()
+    })
 }
 
 /// Полезная нагрузка перетаскивания карточки из бина (п.5 р.8).
@@ -264,6 +292,19 @@ impl KtApp {
                     // никогда не перерастал вьюпорт — и скроллить было
                     // нечего ни колесом, ни как-либо ещё (п.1 р.16).
                     let view = ui.clip_rect();
+                    // Колесо ВО ВРЕМЯ драга: egui глушит скролл у
+                    // ScrollArea, пока что-нибудь тащат (гейт
+                    // `dragged_id().is_none()`), а человек крутит колесо
+                    // именно тогда — чтобы дотянуться до нужного места
+                    // (жалоба «scroll мышки по прежнему не работает»,
+                    // п.1 р.17). Читаем сырые события и мотаем сами.
+                    let wheel = raw_wheel_y(ui);
+                    if wheel != 0.0 {
+                        ui.scroll_with_delta_animation(
+                            egui::vec2(0.0, wheel),
+                            egui::style::ScrollAnimation::none(),
+                        );
+                    }
                     if !st.escaped {
                         // у кромок — мотаем список, а не выносим карточку;
                         // scroll_with_delta идёт мимо гейта колеса egui
@@ -279,9 +320,13 @@ impl KtApp {
                             ui.ctx().request_repaint();
                         }
                     }
+                    // «Вынос» засчитываем, только если курсор УШЁЛ за
+                    // полосу с запасом (п.1 р.17): тычок в кромку — это
+                    // «мотай список», и карточка обязана остаться там,
+                    // куда её ведут, а не улететь на старое место.
                     if st.escaped {
                         drag_out = Some(*id);
-                    } else if view.contains(pos) {
+                    } else if view.expand2(BIN_ESCAPE_SLACK).contains(pos) {
                         let np = pos - st.grab - area.min.to_vec2();
                         let delta = egui::pos2(np.x.max(0.0), np.y.max(0.0)) - st.start;
                         for (m, from) in &st.mates {
