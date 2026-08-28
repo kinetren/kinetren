@@ -168,3 +168,145 @@ fn t115_preview_keys_are_monotonic_at_quarter_rate() {
     // срабатывает единицами раз, при дрожащих — постоянно
     assert!(rollbacks < 20, "часы показа дрожат при 0.25×: {rollbacks} откатов");
 }
+
+/// Тест 116 (п.1 р.15): рендер не выдаёт ЧЁРНЫЕ кадры на большом
+/// разрешении.
+///
+/// Регрессия: экспорт декодировал пачками по 120 кадров в кэш на 64 МБ.
+/// При 640×360 пачка весит 111 МБ, при 1080p — 995 МБ: LRU выбрасывал
+/// кадры ДО композиции, и рендер выходил чёрным с редкими уцелевшими
+/// кадрами. На 320×180 пачка влезала — поэтому живая проверка прошлого
+/// раунда дефект не увидела.
+#[test]
+fn t116_export_has_no_black_frames_at_large_quality() {
+    use kt_engine::export::{EXPORT_VIDEO_CACHE_BYTES, export_chunk_frames};
+
+    // чистая функция: пачка не должна превышать половину бюджета
+    for (w, h) in [(320u32, 180u32), (640, 360), (1280, 720), (1920, 1080)] {
+        let n = export_chunk_frames(EXPORT_VIDEO_CACHE_BYTES, w, h);
+        assert!(n >= 1, "{w}×{h}: пачка выродилась в 0 кадров");
+        let bytes = n as usize * w as usize * h as usize * 4;
+        assert!(
+            bytes * 2 <= EXPORT_VIDEO_CACHE_BYTES,
+            "{w}×{h}: пачка {n} кадров = {} МБ не влезает в бюджет кэша",
+            bytes / 1_000_000
+        );
+    }
+
+    // живой рендер на разрешении, где старый чанк гарантированно не влезал
+    // в кэш (640×360 × 120 кадров = 111 МБ). Признак выброшенного кадра —
+    // не «чернота» (индекс 0 сам по себе чёрный), а НЕДОСТАЮЩИЙ СЛОЙ и
+    // разрыв в последовательности индексов.
+    let p = project(30, false);
+    let q = kt_media::Quality { width: 640, height: 360 };
+    let mut idx: Vec<i64> = Vec::new();
+    let stats = kt_engine::export::render_raw_video(&p, sources(25), q, |rgba| {
+        idx.push(rgba[0] as i64 | (rgba[1] as i64) << 8 | (rgba[2] as i64) << 16);
+        Ok(())
+    })
+    .expect("рендер");
+    assert_eq!(idx.len(), 90, "3 с при 30 fps");
+    assert_eq!(
+        stats.missing_video_layers, 0,
+        "кадры выброшены из кэша ДО композиции: недостающих слоёв {}",
+        stats.missing_video_layers
+    );
+    for w in idx.windows(2) {
+        assert!(w[1] >= w[0], "индекс кадра откатился: {} → {}", w[0], w[1]);
+        assert!(w[1] - w[0] <= 1, "пропущен кадр источника: {} → {}", w[0], w[1]);
+    }
+    assert!(*idx.last().unwrap() >= 70, "рендер не дошёл до конца: {:?}", idx.last());
+}
+
+/// Тест 117 (п.2 р.15): на ВТОРОМ круге loop'а видео не зависает.
+///
+/// Регрессия: анти-откатный ратчет ключа показа разрешал уехать назад
+/// только при смене generation, а loop-wrap его намеренно не бампает
+/// (звук и FX-хвосты продолжаются) — картинка замерзала на конце региона,
+/// пока звук играл дальше.
+#[test]
+fn t117_loop_wrap_unfreezes_video() {
+    use kt_engine::player::preview_key_step;
+    use kt_engine::transport::Transport;
+
+    // 1) транспорт считает перескоки, но НЕ трогает generation
+    let tr = Transport::new();
+    let (s, e) = (48_000i64, 96_000i64);
+    tr.seek_frames(s);
+    let gen0 = tr.generation();
+    assert_eq!(tr.wraps(), 0);
+    tr.advance_frames_wrapped(40_000, Some((s, e)));
+    assert_eq!(tr.wraps(), 0, "внутри региона перескока нет");
+    tr.advance_frames_wrapped(40_000, Some((s, e)));
+    assert_eq!(tr.wraps(), 1, "перескок через конец региона не посчитан");
+    assert_eq!(tr.generation(), gen0, "wrap не должен бампать generation");
+    assert!(tr.playhead_frames() >= s && tr.playhead_frames() < e);
+    // реверс через начало региона — тоже перескок
+    tr.advance_frames_wrapped(-40_000, Some((s, e)));
+    assert_eq!(tr.wraps(), 2, "перескок назад не посчитан");
+
+    // 2) ратчет: без переанкора ключ замерзает (это и была регрессия),
+    //    с переанкором по wrap'у — уезжает в начало региона
+    let step = 3000;
+    let (frozen, _, rolled) = preview_key_step(Some(90_000), 48_000, step, 1, false);
+    assert_eq!((frozen, rolled), (90_000, true), "без переанкора ключ обязан замереть");
+    let (jumped, _, rolled) = preview_key_step(Some(90_000), 48_000, step, 1, true);
+    assert_eq!((jumped, rolled), (48_000, false), "по wrap'у ключ обязан прыгнуть в регион");
+
+    // 3) ЖИВОЙ плеер: два круга loop'а — ключ показа обязан вернуться к
+    //    началу региона, а не замереть на его конце (звук-то идёт)
+    use kt_engine::Player;
+    let proj = project(30, false);
+    let (player, mut ring) = Player::new(
+        proj,
+        vec![(
+            MediaId(1),
+            Box::new(SyntheticSource::new(DUR, AudioPattern::Ramp).with_video_fps(30)) as _,
+        )],
+    );
+    let r0 = Tick(90_000 / 2); // регион 0.5 c … 1.0 c
+    let r1 = Tick(90_000);
+    player.set_loop_region(Some(kt_time::TickRange::new(r0, r1)));
+    player.seek(r0);
+    player.play();
+
+    let grid = player.video_grid();
+    let step = grid.frame_step();
+    let mut prev: Option<i64> = None;
+    let mut anchor = (player.transport.generation(), player.transport.wraps());
+    let mut keys: Vec<i64> = Vec::new();
+    let start = std::time::Instant::now();
+    while start.elapsed().as_millis() < 2500 && player.transport.wraps() < 2 {
+        for _ in 0..1024 {
+            if ring.pop().is_err() {
+                break;
+            }
+        }
+        player.shared.consumed_frames.fetch_add(1024, std::sync::atomic::Ordering::AcqRel);
+        let now = (player.transport.generation(), player.transport.wraps());
+        let reanchor = now != anchor;
+        anchor = now;
+        let key = grid.align_floor(player.video_playhead()).0;
+        let (key, _, _) = preview_key_step(prev, key, step, 1, reanchor);
+        prev = Some(key);
+        keys.push(key);
+        std::thread::sleep(std::time::Duration::from_millis(4));
+    }
+    assert!(player.transport.wraps() >= 1, "loop не перескочил ни разу: {keys:?}");
+    // после перескока ключ обязан оказаться СНОВА в начале региона
+    let wrap_at = keys
+        .windows(2)
+        .position(|w| w[1] < w[0])
+        .expect("ключ показа ни разу не вернулся к началу региона — видео зависло");
+    assert!(
+        keys[wrap_at + 1] < r0.0 + 6 * step,
+        "после перескока ключ не у начала региона: {}",
+        keys[wrap_at + 1]
+    );
+    // и дальше он снова движется вперёд
+    let after: Vec<i64> = keys[wrap_at + 1..].to_vec();
+    assert!(
+        after.last().unwrap() > after.first().unwrap(),
+        "после перескока видео не поехало дальше: {after:?}"
+    );
+}

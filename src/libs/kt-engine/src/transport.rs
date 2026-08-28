@@ -16,6 +16,9 @@ pub struct Transport {
     /// Растёт при каждом seek: MediaWorker'ы дропают запросы устаревших
     /// поколений (инвариант №5), FX делают reset (инвариант №3).
     generation: AtomicU64,
+    /// Перескоки через край loop-региона (р.15 п.2): нужны видео-части,
+    /// которой иначе неоткуда узнать о переходе на новый круг.
+    wraps: AtomicU64,
 }
 
 impl Transport {
@@ -43,6 +46,16 @@ impl Transport {
         self.generation.load(Ordering::Acquire)
     }
 
+    /// Сколько раз позиция ПЕРЕПРЫГИВАЛА через край loop-региона.
+    /// Generation при wrap'е намеренно не бампается (это не seek, звук и
+    /// FX-хвосты продолжаются), поэтому видео-часть узнаёт о перескоке
+    /// только отсюда. Без этого счётчика анти-откатный ратчет ключа
+    /// показа замораживал картинку на втором круге loop'а, пока звук
+    /// продолжал играть (р.15 п.2).
+    pub fn wraps(&self) -> u64 {
+        self.wraps.load(Ordering::Acquire)
+    }
+
     /// Продвинуть на потреблённые аудио-кадры. Только аудио-render-поток.
     pub fn advance_frames(&self, frames: i64) {
         self.playhead_frames.fetch_add(frames, Ordering::AcqRel);
@@ -57,7 +70,7 @@ impl Transport {
     pub fn advance_frames_wrapped(&self, frames: i64, region: Option<(i64, i64)>) {
         match region {
             Some((s, e)) if e > s => {
-                let _ =
+                let prev =
                     self.playhead_frames.fetch_update(Ordering::AcqRel, Ordering::Acquire, |p| {
                         let np = p + frames;
                         Some(if p >= s && p <= e && (np >= e || np < s) {
@@ -66,6 +79,15 @@ impl Transport {
                             np.max(0)
                         })
                     });
+                // счётчик бампаем ПОСЛЕ обмена и по возвращённому старому
+                // значению: замыкание fetch_update может выполниться
+                // несколько раз при гонке, внутри считать нельзя
+                if let Ok(p) = prev {
+                    let np = p + frames;
+                    if p >= s && p <= e && (np >= e || np < s) {
+                        self.wraps.fetch_add(1, Ordering::AcqRel);
+                    }
+                }
             }
             _ => {
                 let _ = self

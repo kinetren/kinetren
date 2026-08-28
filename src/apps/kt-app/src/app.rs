@@ -149,9 +149,12 @@ pub struct KtApp {
     /// Имя адаптера/бэкенда wgpu (диагностика перф-панели).
     pub gpu_info: Option<String>,
     pub snap_line: Option<i64>,
-    /// Поколение транспорта на прошлом кадре превью: его смена = seek,
-    /// только тогда ключу показа разрешено уехать назад (п.14 р.14).
-    pub preview_gen: u64,
+    /// (поколение транспорта, число loop-перескоков) на прошлом кадре
+    /// превью. Смена любого — законная причина уехать ключу показа назад:
+    /// seek бампает поколение, а loop-wrap намеренно его НЕ бампает (звук
+    /// и FX-хвосты продолжаются), поэтому у него свой счётчик — без него
+    /// на втором круге loop'а картинка замерзала (п.14 р.14, р.15 п.2).
+    pub preview_gen: (u64, u64),
     /// Магнит временно выключен (зажат Ctrl во время перетаскивания, п.2 р.11).
     /// Полезное поведение — умолчание, модификатор его СНИМАЕТ.
     pub snap_off: bool,
@@ -326,7 +329,7 @@ impl KtApp {
             glow_skip: 0,
             gpu_info: None,
             snap_line: None,
-            preview_gen: 0,
+            preview_gen: (0, 0),
             snap_off: false,
             play_dir_back: false,
             meters_w: 70.0,
@@ -443,7 +446,7 @@ impl KtApp {
             glow_skip: 0,
             gpu_info: None,
             snap_line: None,
-            preview_gen: 0,
+            preview_gen: (0, 0),
             snap_off: false,
             play_dir_back: false,
             meters_w: 70.0,
@@ -2150,7 +2153,7 @@ impl KtApp {
         // Ключ не едет назад ВООБЩЕ, кроме seek/loop-wrap (п.14 р.14):
         // прежний допуск «откат до 2 ячеек» был слеп к скорости и при
         // 0.25× пропускал откаты картинки на пару кадров назад.
-        let tgen = self.player.transport.generation();
+        let tgen = (self.player.transport.generation(), self.player.transport.wraps());
         let reanchor = !self.player.transport.is_playing() || tgen != self.preview_gen;
         let (key_tick, skipped, rolled) = kt_engine::player::preview_key_step(
             self.preview_key.map(|k| k.0),

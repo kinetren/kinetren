@@ -53,6 +53,18 @@ pub struct ExportStats {
 }
 
 /// Диапазон экспорта: [0, конец последнего клипа].
+/// Бюджет видео-кэша экспорта.
+pub const EXPORT_VIDEO_CACHE_BYTES: usize = 192 * 1024 * 1024;
+
+/// Сколько кадров декодировать одной пачкой, чтобы они ГАРАНТИРОВАННО
+/// дожили в кэше до композиции (р.15 п.1). Пачка занимает не больше
+/// половины бюджета: вторая половина — на слои других источников и на
+/// кадры, уже лежащие в кэше с прошлого чанка.
+pub fn export_chunk_frames(budget_bytes: usize, width: u32, height: u32) -> i64 {
+    let frame = (width.max(1) as usize) * (height.max(1) as usize) * 4;
+    ((budget_bytes / 2) / frame.max(1)).clamp(1, 120) as i64
+}
+
 pub fn project_range(project: &Project) -> Tick {
     project.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO)
 }
@@ -140,8 +152,10 @@ pub fn render_raw_video_range(
         sources.into_iter().collect();
     // Кэш на пару кадров: композит читает из кэша (тот же код, что превью),
     // экспорт лишь наполняет его блокирующим декодом.
-    let cache =
-        BurstCache::new(CacheConfig { max_audio_bytes: 1, max_video_bytes: 64 * 1024 * 1024 });
+    let cache = BurstCache::new(CacheConfig {
+        max_audio_bytes: 1,
+        max_video_bytes: EXPORT_VIDEO_CACHE_BYTES,
+    });
     let mut video = VideoRenderer::new(project);
     let (mut t, end) = match range {
         Some((a, b)) => (video.grid.align_floor(a), b),
@@ -153,12 +167,18 @@ pub fn render_raw_video_range(
     // при fps проекта > fps источника он на каждом втором кадре уходил в
     // seek+пересоздание декодера, а семантика выборки расходилась со
     // span'ом — отсюда джаддер в готовом файле и нарушение инварианта №7.
-    const CHUNK_FRAMES: i64 = 120;
+    // Размер чанка считается от ПАМЯТИ, а не «120 и всё» (р.15 п.1):
+    // 120 кадров 1080p — это 995 МБ, они не влезали в кэш экспорта, LRU
+    // выбрасывал их ДО композиции, и рендер выходил чёрным с редкими
+    // уцелевшими кадрами. На 320×180 (где я это «проверил») чанк влезал —
+    // отсюда и пропущенная регрессия.
+    let chunk_frames =
+        export_chunk_frames(EXPORT_VIDEO_CACHE_BYTES, quality.width, quality.height);
     while t < end {
         if cancel.load(Ordering::Acquire) {
             return Err(std::io::Error::other("cancelled"));
         }
-        let chunk_end = Tick((t.0 + CHUNK_FRAMES * step).min(end.0));
+        let chunk_end = Tick((t.0 + chunk_frames * step).min(end.0));
         // ключи чанка по каждому источнику: строго возрастают, дубли сняты
         let mut per_src: std::collections::BTreeMap<MediaId, Vec<Tick>> = Default::default();
         for (media, src_pts) in video.wanted_frames(kt_time::TickRange::new(t, chunk_end)) {
