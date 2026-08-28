@@ -72,6 +72,10 @@ pub struct KtApp {
     pub ui_economy: bool,
     /// Момент последней паузы (двойной Space = стоп, п.15 раунда 6).
     pub paused_at: Option<std::time::Instant>,
+    /// Пробел зажат с этого момента (п.3 р.16). None = не зажат.
+    pub space_down_at: Option<std::time::Instant>,
+    /// Текущий множитель разгона удержанием пробела (None = не разгоняем).
+    pub space_boost: Option<f32>,
     /// Окно следует за курсором при игре; гаснет при ручном пане/зуме
     /// (п.14 раунда 6) — используется в L2, ставится в on_play.
     pub follow_playhead: bool,
@@ -166,6 +170,9 @@ pub struct KtApp {
     /// едет в UiState, звёздочку не зажигает.
     pub meters_w: f32,
     pub ctx_target: Option<CtxTarget>,
+    /// Строка таймлайна под правым кликом (п.5 р.16): новая дорожка из
+    /// контекстного меню встаёт СРАЗУ ПОД ней, а не в самый низ.
+    pub ctx_row: Option<(LaneKind, u32)>,
     /// Live-громкость volume rail до отпускания (id, dB).
     pub live_gain: Option<(ClipId, f32)>,
     pub status: Option<(String, std::time::Instant)>,
@@ -294,6 +301,8 @@ impl KtApp {
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
             paused_at: None,
+            space_down_at: None,
+            space_boost: None,
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
@@ -334,6 +343,7 @@ impl KtApp {
             play_dir_back: false,
             meters_w: 70.0,
             ctx_target: None,
+            ctx_row: None,
             live_gain: None,
             status: error.map(|e| (e, std::time::Instant::now())),
             clipboard: Vec::new(),
@@ -411,6 +421,8 @@ impl KtApp {
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
             paused_at: None,
+            space_down_at: None,
+            space_boost: None,
             follow_playhead: false,
             last_user_scroll: None,
             pending_unmax_drag: false,
@@ -451,6 +463,7 @@ impl KtApp {
             play_dir_back: false,
             meters_w: 70.0,
             ctx_target: None,
+            ctx_row: None,
             live_gain: None,
             status: err.map(|e| (e, std::time::Instant::now())),
             clipboard: Vec::new(),
@@ -574,6 +587,9 @@ impl KtApp {
             self.last_title = title;
         }
         self.handle_keys(&ctx);
+        // разгон удержанием пробела — РОВНО раз в кадр (handle_keys при
+        // отделённом превью зовётся дважды, п.3 р.16)
+        self.tick_space_boost(&ctx);
         self.handle_drops(&ctx);
         self.hover_hint = None;
         self.no_resize_rects.clear();
@@ -910,9 +926,10 @@ impl KtApp {
             // метры: ореол влево от панели, цвет по ЗОНАМ высоты (п.8);
             // правая кромка — ровно левый край панели (п.10: раньше +8 px
             // наезжали на первый бар у подписи dB)
-            if let Some((r, k, loud_db)) = self.meter_glow {
-                let a = (k * 58.0) as u8;
-                if a > 2 {
+            if let Some((r, _k, loud_db)) = self.meter_glow
+                && loud_db > crate::meters::METER_MIN_DB + 0.5
+            {
+                {
                     let glow_rect = crate::meters::overlay_glow_rect(r);
                     // строки на границах зон: цвет зоны, альфа по k;
                     // выше уровня — затухание в прозрачность
@@ -936,9 +953,20 @@ impl KtApp {
                             });
                         }
                     };
+                    // альфа ряда — от ЕГО dB, а не от общей громкости
+                    // (п.4 р.16): одна общая `k` заставляла мерцать весь
+                    // ореол по высоте, включая всегда горящий низ
                     let stops = crate::meters::glow_stops(loud_db);
                     for &db in &stops {
-                        push_row(y_of(db), crate::meters::zone_color(db), a);
+                        push_row(
+                            y_of(db),
+                            crate::meters::zone_color(db),
+                            crate::meters::glow_row_alpha(
+                                db,
+                                loud_db,
+                                crate::meters::GLOW_OVERLAY_A,
+                            ),
+                        );
                     }
                     let top_col = crate::meters::zone_color(loud_db);
                     push_row((y_of(loud_db) - 30.0).max(glow_rect.top()), top_col, 0);
@@ -956,6 +984,7 @@ impl KtApp {
         // текстуры каждый кадр грели систему даже с пустым проектом; egui
         // и так перерисовывает мгновенно на любой ввод).
         let animating = self.player.transport.is_playing()
+            || self.space_down_at.is_some()
             || self.drag.is_some()
             || self.render_job.is_some()
             || self.meter.is_active();
@@ -1170,6 +1199,28 @@ impl KtApp {
         self.pending_reveal = Some(self.player.transport.playhead().0);
     }
 
+    /// Навигация «Назад»/«Вперёд» с Shift = ТЯНУТЬ регион (п.2 р.16).
+    ///
+    /// Shift — тот же модификатор «расширить выделение», что в Premiere,
+    /// Resolve и DAW. Shift+A ставит ЛЕВЫЙ край региона в новую позицию,
+    /// Shift+D — правый; если региона ещё нет, вторым краем становится
+    /// позиция ДО прыжка, поэтому первый же Shift+D выделяет пройденный
+    /// участок. Регион — «удобство», поэтому только `dirty_ui`.
+    pub(crate) fn nav_jump(&mut self, forward: bool, far: bool, drag_region: bool) {
+        let before = self.player.transport.playhead();
+        self.jump_stop(forward, far);
+        if !drag_region {
+            return;
+        }
+        if self.model.project().region.is_none() {
+            let at = self.player.transport.playhead();
+            self.model.set_region(Region::normalized(before, at));
+        }
+        // край ставится в НОВУЮ позицию курсора; противоположный край
+        // зажимается внутри set_region_edge_from_cursor
+        self.set_region_edge_from_cursor(!forward);
+    }
+
     /// Зум кнопками — якорь на PLAYHEAD (п.26 р.7: раньше якорился левый
     /// край окна). Курсор остаётся на той же экранной позиции; если он вне
     /// окна — центрируем.
@@ -1233,6 +1284,77 @@ impl KtApp {
                 TransportAction::Resume { seek: Some(s) }
             }
             _ => TransportAction::Resume { seek: None },
+        }
+    }
+
+    /// Разгон удержанием пробела (п.3 р.16, как на YouTube): за кадр dt
+    /// множитель подъезжает к `SPACE_BOOST_MAX`, до потолка ~2 секунды.
+    ///
+    /// Схема АНАЛИТИЧЕСКАЯ (экспонента), а не явная: `stable_dt` после
+    /// простоя приходит равным задержке idle-перерисовки (до 250 мс), и
+    /// явное интегрирование на таких шагах перелетает цель (п.7 р.9 —
+    /// ровно так фейдер улетал на 400 dB).
+    pub fn space_boost_step(cur: f32, dt: f32) -> f32 {
+        // за SPACE_BOOST_SECS проходим 95% пути до потолка
+        let k = -(0.05f32.ln()) / SPACE_BOOST_SECS;
+        let a = (-k * dt.clamp(0.0, 0.25)).exp();
+        let next = SPACE_BOOST_MAX + (cur - SPACE_BOOST_MAX) * a;
+        next.clamp(1.0, SPACE_BOOST_MAX)
+    }
+
+    /// Кадр разгона: пока пробел зажат дольше порога — скорость ползёт
+    /// вверх. Вызывается РОВНО один раз за кадр (не из handle_keys: тот
+    /// зовётся дважды при отделённом превью и разгонял бы вдвое быстрее).
+    fn tick_space_boost(&mut self, ctx: &egui::Context) {
+        let Some(t0) = self.space_down_at else { return };
+        // шаттл — более явное намерение пользователя, ему не мешаем
+        if self.shuttle_override.is_some() {
+            return;
+        }
+        if t0.elapsed().as_millis() < SPACE_HOLD_MS {
+            return;
+        }
+        if self.space_boost.is_none() {
+            self.space_boost = Some(1.0);
+            // стояли — удержание сразу запускает игру (иначе «ускорять»
+            // нечего), но play/pause по отпусканию уже не переключаем
+            if !self.player.transport.is_playing() {
+                self.on_play();
+            }
+        }
+        let dt = ctx.input(|i| i.stable_dt);
+        let b = Self::space_boost_step(self.space_boost.unwrap_or(1.0), dt);
+        self.space_boost = Some(b);
+        // гистерезис: каждый set_playback_rate сбрасывает окно
+        // экстраполяции часов показа (п.14 р.14) — дёргать его на каждую
+        // сотую нельзя
+        let want = self.base_rate * b;
+        if (want - self.player.playback_rate()).abs() > 0.02 {
+            self.player.set_playback_rate(want);
+        }
+        ctx.request_repaint();
+    }
+
+    /// Что показывать на НИЖНЕЙ (временной) полосе контрола скорости:
+    /// shuttle, а при разгоне удержанием пробела — фактическую скорость
+    /// (п.3 р.16). Иначе разгон идёт, а виджет молча показывает 1×.
+    pub fn speed_temp_slider(&self) -> Option<f32> {
+        if self.shuttle_override.is_some() {
+            return self.shuttle_override;
+        }
+        self.space_boost.map(|_| rate_to_slider(self.player.playback_rate()))
+    }
+
+    /// Пробел отпущен: короткое нажатие = play/pause, длинное = конец
+    /// разгона (транспорт при этом НЕ переключается).
+    fn on_space_released(&mut self) {
+        let held = self.space_down_at.take().map(|t| t.elapsed().as_millis()).unwrap_or(0);
+        if self.space_boost.take().is_some() {
+            self.player.set_playback_rate(self.base_rate);
+            return;
+        }
+        if held < SPACE_HOLD_MS {
+            self.on_transport_toggle();
         }
     }
 
@@ -1380,6 +1502,63 @@ impl KtApp {
         }
     }
 
+    /// Вставка дорожки на КОНКРЕТНОЕ место: команда модели, display-строка
+    /// и ИМЕНА разом (п.5 р.16).
+    ///
+    /// Имена раньше не двигались вовсе: функции `lane_names_insert` и
+    /// соседние существовали и были покрыты t90, но из приложения не
+    /// вызывались — после вставки подпись оказывалась у чужой дорожки.
+    pub fn insert_lane_at(&mut self, kind: LaneKind, at: u32) -> bool {
+        let ok = match kind {
+            LaneKind::Video => self.apply(Command::InsertLane { kind: ClipKind::Video, at }),
+            LaneKind::Audio => self.apply(Command::InsertLane { kind: ClipKind::Audio, at }),
+            LaneKind::Morph => self.apply(Command::InsertMorphLane { at }),
+        };
+        if ok {
+            kt_model::lane_order_insert(&mut self.lane_order, kind, at);
+            kt_model::lane_names_insert(&mut self.lane_names, kind, at);
+            self.dirty_ui = true;
+        }
+        ok
+    }
+
+    /// Добавить дорожку СРАЗУ ПОД кликнутой строкой (п.5 р.16: «чтобы
+    /// добавление происходило не в самый низ, а после той дорожки по
+    /// которой кликнули»). Строка другого вида ставится в display-порядке
+    /// сразу за кликнутой — номер внутри своего вида при этом свой.
+    pub fn insert_lane_after_row(&mut self, kind: LaneKind, after: Option<(LaneKind, u32)>) {
+        let p = self.model.project();
+        let tail = match kind {
+            LaneKind::Video => p.video_lanes,
+            LaneKind::Audio => p.audio_lanes,
+            LaneKind::Morph => p.morph_lanes,
+        };
+        let at = match after {
+            Some((k, l)) if k == kind => l + 1,
+            _ => tail,
+        };
+        if !self.insert_lane_at(kind, at) {
+            return;
+        }
+        // Ставим новую строку РОВНО под кликнутой. Одного
+        // `lane_order_insert` мало: он кладёт строку перед следующей
+        // дорожкой СВОЕГО вида, а если такой нет — в самый конец списка.
+        // Живая проверка: клик по V2 при порядке V1,V2,A1,A2 давал
+        // V1,V2,A1,A2,V3 — то самое «в самый низ», на которое жаловались.
+        if let Some(row) = after
+            && let Some(f) = self.lane_order.iter().position(|&e| e == (kind, at))
+        {
+            let e = self.lane_order.remove(f);
+            let to = self
+                .lane_order
+                .iter()
+                .position(|&x| x == row)
+                .map(|i| i + 1)
+                .unwrap_or(self.lane_order.len());
+            self.lane_order.insert(to, e);
+        }
+    }
+
     /// Реордер дорожки (п.7): батч MoveClip перекладывает клипы между
     /// lane `from` и `to` (сдвигом), один undo-шаг.
     pub fn reorder_lane(&mut self, kind: ClipKind, from: u32, to: u32) {
@@ -1406,6 +1585,15 @@ impl KtApp {
             self.note("на этих дорожках нет событий — порядок пустых не важен");
             return;
         }
+        // имена едут ТЕМ ЖЕ сдвигом, что и содержимое (п.5 р.16): раньше
+        // они оставались на месте и подпись «Голос» приклеивалась к чужой
+        // дорожке
+        let lk = match kind {
+            ClipKind::Video => LaneKind::Video,
+            ClipKind::Audio => LaneKind::Audio,
+        };
+        kt_model::lane_names_rotate(&mut self.lane_names, lk, from, to);
+        self.dirty_ui = true;
         self.apply_batch(cmds);
     }
 
@@ -1438,6 +1626,14 @@ impl KtApp {
             ClipKind::Audio => (v, a - 1),
         };
         cmds.push(Command::SetLanes { video: nv, audio: na });
+        // имя удалённой дорожки уходит вместе с ней, остальные съезжают
+        // (п.5 р.16)
+        let lk = match kind {
+            ClipKind::Video => LaneKind::Video,
+            ClipKind::Audio => LaneKind::Audio,
+        };
+        kt_model::lane_names_remove(&mut self.lane_names, lk, lane);
+        self.dirty_ui = true;
         self.apply_batch(cmds);
     }
 
@@ -1754,14 +1950,15 @@ impl KtApp {
         }
     }
 
+    /// «Добавить дорожку» из меню: в конец своего вида. Идёт через ту же
+    /// точку, что и вставка из контекстного меню, — иначе имена и
+    /// display-порядок расходятся (п.5 р.16).
     pub fn add_track(&mut self, kind: ClipKind) {
-        let p = self.model.project();
-        let (v, a) = (p.video_lanes, p.audio_lanes);
-        let cmd = match kind {
-            ClipKind::Video => Command::SetLanes { video: v + 1, audio: a },
-            ClipKind::Audio => Command::SetLanes { video: v, audio: a + 1 },
+        let lk = match kind {
+            ClipKind::Video => LaneKind::Video,
+            ClipKind::Audio => LaneKind::Audio,
         };
-        self.apply(cmd);
+        self.insert_lane_after_row(lk, None);
     }
 
     /// Магнит A/V: ближайший клип противоположного типа того же медиа
@@ -2400,7 +2597,11 @@ impl KtApp {
         let (rect, resp) =
             ui.allocate_exact_size(egui::vec2(170.0, 20.0), egui::Sense::click_and_drag());
         let p = ui.painter_at(rect);
-        let overriding = self.shuttle_override.is_some();
+        // временная скорость на нижней полосе — это shuttle ИЛИ разгон
+        // удержанием пробела: без этого при разгоне виджет врал «1×»
+        // (п.3 р.16, найдено живой проверкой)
+        let temp_t = self.speed_temp_slider();
+        let overriding = temp_t.is_some();
         let mid = rect.center().y;
         let upper = egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), mid));
         let lower = egui::Rect::from_min_max(egui::pos2(rect.left(), mid), rect.max);
@@ -2465,7 +2666,7 @@ impl KtApp {
             self.player.set_playback_rate(1.0);
         }
         let base_t = rate_to_slider(self.base_rate);
-        let cur_t = self.shuttle_override.unwrap_or(base_t);
+        let cur_t = temp_t.unwrap_or(base_t);
         // верхняя полоса: заливка от центра до base + маркер
         p.rect_filled(
             egui::Rect::from_min_max(
@@ -2768,7 +2969,6 @@ impl KtApp {
             return;
         }
         struct Keys {
-            space: bool,
             cut: bool,
             del: bool,
             undo: bool,
@@ -2784,11 +2984,35 @@ impl KtApp {
             nav_prev: bool,
             nav_next: bool,
             nav_far: bool,
+            nav_region: bool,
             goto_tc: bool,
             find: bool,
         }
+        // Пробел читаем СОБЫТИЯМИ, а не key_pressed: тот включает
+        // автоповтор клавиатуры, и зажатый пробел слал серию play/pause
+        // (п.3 р.16). Нажатие только запоминаем — решение принимается на
+        // ОТПУСКАНИИ: короткое нажатие = play/pause, длинное = разгон.
+        let (space_down, space_up) = ctx.input(|i| {
+            let mut down = false;
+            let mut up = false;
+            for e in &i.events {
+                if let egui::Event::Key { key: egui::Key::Space, pressed, repeat, .. } = e {
+                    if *pressed {
+                        down |= !*repeat;
+                    } else {
+                        up = true;
+                    }
+                }
+            }
+            (down, up)
+        });
+        if space_down && self.space_down_at.is_none() {
+            self.space_down_at = Some(std::time::Instant::now());
+        }
+        if space_up {
+            self.on_space_released();
+        }
         let k = ctx.input(|i| Keys {
-            space: i.key_pressed(egui::Key::Space),
             cut: i.key_pressed(egui::Key::S) && !i.modifiers.ctrl,
             del: i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace),
             undo: i.modifiers.ctrl && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
@@ -2821,6 +3045,13 @@ impl KtApp {
             find: i.modifiers.ctrl && i.key_pressed(egui::Key::F),
             nav_far: i.modifiers.shift
                 && (i.key_pressed(egui::Key::Home) || i.key_pressed(egui::Key::End)),
+            // п.2 р.16: Shift+A/D — прыжок ТЯНЕТ край региона (Shift как
+            // «расширить выделение» в проф. программах). У Home/End Shift
+            // занят под «в самое начало/конец», поэтому смотрим A/D.
+            nav_region: i.modifiers.shift
+                && !i.modifiers.ctrl
+                && !i.modifiers.alt
+                && (i.key_pressed(egui::Key::A) || i.key_pressed(egui::Key::D)),
         });
         // п.9 р.11: работает и во время воспроизведения (seek на ходу
         // плеер умеет; гейт «только на паузе» был перестраховкой)
@@ -2833,13 +3064,10 @@ impl KtApp {
             self.search_focus = true;
         }
         if k.nav_prev {
-            self.jump_stop(false, k.nav_far);
+            self.nav_jump(false, k.nav_far, k.nav_region);
         }
         if k.nav_next {
-            self.jump_stop(true, k.nav_far);
-        }
-        if k.space {
-            self.on_transport_toggle();
+            self.nav_jump(true, k.nav_far, k.nav_region);
         }
         if k.cut {
             self.cut_action();
@@ -2951,6 +3179,14 @@ pub enum TransportAction {
 pub const AUTOSAVE_SECS: u64 = 30;
 pub const STATUS_TTL_MS: u64 = 6000;
 pub const DOUBLE_PAUSE_MS: u128 = 400;
+/// Сколько держать пробел, прежде чем это станет «разгоном», а не
+/// play/pause (п.3 р.16). Заметно меньше окна двойного нажатия, поэтому
+/// «стоп в начало региона» двумя быстрыми нажатиями не страдает.
+pub const SPACE_HOLD_MS: u128 = 220;
+/// Потолок разгона удержанием (ответ пользователя: «до 4× за ~2 с»).
+pub const SPACE_BOOST_MAX: f32 = 4.0;
+/// За сколько секунд удержания разгон доезжает до потолка.
+pub const SPACE_BOOST_SECS: f32 = 2.0;
 
 /// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
 /// цели заморожены в момент запуска, kind выбран пунктом меню.

@@ -465,6 +465,24 @@ fn t90_lane_names() {
     assert_eq!(lane_label(&names, LaneKind::Video, 3), "Титры");
     assert_eq!(lane_label(&names, LaneKind::Video, 1), "V2");
 
+    // ДАЛЬНЯЯ перестановка (п.5 р.16): имена едут по той же формуле
+    // сдвига, что и клипы в reorder_lane, — иначе подпись приклеится к
+    // чужой дорожке
+    let mut rot = vec![
+        (LaneKind::Audio, 0, "Голос".to_string()),
+        (LaneKind::Audio, 1, "Музыка".to_string()),
+        (LaneKind::Audio, 2, "Шумы".to_string()),
+    ];
+    kt_model::lane_names_rotate(&mut rot, LaneKind::Audio, 0, 2);
+    assert_eq!(lane_label(&rot, LaneKind::Audio, 2), "Голос");
+    assert_eq!(lane_label(&rot, LaneKind::Audio, 0), "Музыка");
+    assert_eq!(lane_label(&rot, LaneKind::Audio, 1), "Шумы");
+    // и обратно — состояние восстанавливается
+    kt_model::lane_names_rotate(&mut rot, LaneKind::Audio, 2, 0);
+    assert_eq!(lane_label(&rot, LaneKind::Audio, 0), "Голос");
+    assert_eq!(lane_label(&rot, LaneKind::Audio, 1), "Музыка");
+    assert_eq!(lane_label(&rot, LaneKind::Audio, 2), "Шумы");
+
     // round-trip через проект: пустой вектор не сериализуется
     let mut p = Project::new(ProjectSettings {
         fps: 30,

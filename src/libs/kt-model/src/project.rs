@@ -346,6 +346,30 @@ pub fn lane_names_swap(names: &mut [(LaneKind, u32, String)], kind: LaneKind, a:
     }
 }
 
+/// Имена при ДАЛЬНЕЙ перестановке (перетащили дорожку через несколько
+/// строк): содержимое едет по формуле сдвига (см. `reorder_lane` в
+/// kt-app) — имена обязаны ехать по ней же, иначе подпись приклеится к
+/// чужой дорожке (п.5 р.16).
+pub fn lane_names_rotate(names: &mut [(LaneKind, u32, String)], kind: LaneKind, from: u32, to: u32) {
+    if from == to {
+        return;
+    }
+    for e in names.iter_mut() {
+        if e.0 != kind {
+            continue;
+        }
+        e.1 = if e.1 == from {
+            to
+        } else if from < to && e.1 > from && e.1 <= to {
+            e.1 - 1
+        } else if from > to && e.1 >= to && e.1 < from {
+            e.1 + 1
+        } else {
+            e.1
+        };
+    }
+}
+
 /// Подпись дорожки: пользовательское имя либо формула V1/A1/M1.
 pub fn lane_label(names: &[(LaneKind, u32, String)], kind: LaneKind, lane: u32) -> String {
     if let Some((_, _, n)) = names.iter().find(|(k, l, _)| *k == kind && *l == lane)

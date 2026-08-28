@@ -86,6 +86,28 @@ def key(spec):
     time.sleep(0.12)
 
 
+def hold(spec, secs):
+    """Зажать клавишу на время (разгон пробелом, п.3 р.16).
+
+    Автоповтор X11 при этом шлёт серию KeyPress с repeat — ровно то, на
+    чём ломался прежний обработчик Space.
+    """
+    *mods, name = spec.split("+")
+    table = {"ctrl": "Control_L", "shift": "Shift_L", "alt": "Alt_L"}
+    mcodes = [d.keysym_to_keycode(XK.string_to_keysym(table[m.lower()])) for m in mods]
+    code = d.keysym_to_keycode(XK.string_to_keysym(name))
+    for m in mcodes:
+        xtest.fake_input(d, X.KeyPress, m)
+    xtest.fake_input(d, X.KeyPress, code)
+    d.sync()
+    time.sleep(secs)
+    xtest.fake_input(d, X.KeyRelease, code)
+    for m in reversed(mcodes):
+        xtest.fake_input(d, X.KeyRelease, m)
+    d.sync()
+    time.sleep(0.2)
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "geom"
     ox, oy, w, h = origin(window())
@@ -101,6 +123,48 @@ def main():
             move(ox + x1 + (x2 - x1) * k, oy + y1 + (y2 - y1) * k)
         button(False)
         time.sleep(0.3)
+    elif cmd == "draghold":
+        # тянуть и ДЕРЖАТЬ у цели: так проверяется автоскролл у кромки
+        # (медиа-бин, п.1 р.16) — курсор стоит, а список обязан ползти
+        x1, y1, x2, y2, secs = (float(v) for v in sys.argv[2:7])
+        move(ox + x1, oy + y1)
+        move(ox + x1, oy + y1)
+        button(True)
+        move(ox + x1, oy + y1 + (8 if y2 > y1 else -8))
+        for k in (0.35, 0.7, 1.0):
+            move(ox + x1 + (x2 - x1) * k, oy + y1 + (y2 - y1) * k)
+        t0 = time.time()
+        while time.time() - t0 < secs:
+            move(ox + x2, oy + y2, pause=0.03)
+        button(False)
+        time.sleep(0.3)
+    elif cmd == "click" or cmd == "rclick":
+        x, y = (int(v) for v in sys.argv[2:4])
+        move(ox + x, oy + y)
+        move(ox + x, oy + y)
+        b = 1 if cmd == "click" else 3
+        button(True, b)
+        button(False, b)
+        time.sleep(0.3)
+    elif cmd == "wheel":
+        # колесо: кнопки 4 (вверх) и 5 (вниз); n<0 — вверх
+        x, y, n = (int(v) for v in sys.argv[2:5])
+        move(ox + x, oy + y)
+        move(ox + x, oy + y)
+        b = 5 if n > 0 else 4
+        for _ in range(abs(n)):
+            button(True, b)
+            button(False, b)
+        time.sleep(0.3)
+    elif cmd == "px":
+        from PIL import Image
+
+        x, y = (int(v) for v in sys.argv[2:4])
+        subprocess.run(["import", "-window", "root", "/tmp/kt-probe-full.png"], check=True)
+        im = Image.open("/tmp/kt-probe-full.png").convert("RGB")
+        print(im.getpixel((ox + x, oy + y)))
+    elif cmd == "hold":
+        hold(sys.argv[2], float(sys.argv[3]))
     elif cmd == "key":
         key(sys.argv[2])
     elif cmd == "type":

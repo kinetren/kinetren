@@ -367,15 +367,17 @@ impl KtApp {
         ) {
             self.on_transport_toggle();
         }
-        if self.tb(ui, crate::icons::SKIP_BACK, "Назад: маркер / регион / край клипа (A или Home; Shift+Home — в начало)")
+        // Shift здесь — «тянуть регион» (как Shift+A/D, п.2 р.16); «в
+        // самое начало/конец» осталось за Shift+Home/End
+        if self.tb(ui, crate::icons::SKIP_BACK, "Назад: маркер / регион / край клипа (A или Home; Shift — тянуть левый край региона)")
         {
-            let far = ui.input(|i| i.modifiers.shift);
-            self.jump_stop(false, far);
+            let shift = ui.input(|i| i.modifiers.shift);
+            self.nav_jump(false, false, shift);
         }
-        if self.tb(ui, crate::icons::SKIP_FWD, "Вперёд: маркер / регион / край клипа (D или End; Shift+End — в конец)")
+        if self.tb(ui, crate::icons::SKIP_FWD, "Вперёд: маркер / регион / край клипа (D или End; Shift — тянуть правый край региона)")
         {
-            let far = ui.input(|i| i.modifiers.shift);
-            self.jump_stop(true, far);
+            let shift = ui.input(|i| i.modifiers.shift);
+            self.nav_jump(true, false, shift);
         }
         ui.separator();
         // ---- тайм-код и маска ввода (п.4 р.10, переделано п.9 р.11) ----

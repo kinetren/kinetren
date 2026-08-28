@@ -918,15 +918,11 @@ impl KtApp {
                     ui.close();
                 }
                 if ui.button("Вставить дорожку выше").clicked() {
-                        if self.apply(Command::InsertLane { kind, at: lane }) {
-                            kt_model::lane_order_insert(&mut self.lane_order, lk, lane);
-                        }
+                        self.insert_lane_at(lk, lane);
                         ui.close();
                     }
                     if ui.button("Вставить дорожку ниже").clicked() {
-                        if self.apply(Command::InsertLane { kind, at: lane + 1 }) {
-                            kt_model::lane_order_insert(&mut self.lane_order, lk, lane + 1);
-                        }
+                        self.insert_lane_at(lk, lane + 1);
                         ui.close();
                     }
                 }
@@ -946,17 +942,16 @@ impl KtApp {
                                 LaneKind::Morph,
                                 lane,
                             );
+                            kt_model::lane_names_remove(
+                                &mut self.lane_names,
+                                LaneKind::Morph,
+                                lane,
+                            );
                         }
                         ui.close();
                     }
                     if ui.button("Вставить morph-дорожку ниже").clicked() {
-                        if self.apply(Command::InsertMorphLane { at: lane + 1 }) {
-                            kt_model::lane_order_insert(
-                                &mut self.lane_order,
-                                LaneKind::Morph,
-                                lane + 1,
-                            );
-                        }
+                        self.insert_lane_at(LaneKind::Morph, lane + 1);
                         ui.close();
                     }
                 }
@@ -1149,6 +1144,9 @@ impl KtApp {
         if response.secondary_clicked()
             && let Some(pos) = response.interact_pointer_pos()
         {
+            // строка под кликом нужна и для пустого места: «добавить
+            // дорожку» из меню встаёт СРАЗУ ПОД ней (п.5 р.16)
+            self.ctx_row = geom.key_at_y(pos.y);
             self.ctx_target = Some(if let Some(m) = marker_at(self, pos) {
                 CtxTarget::Marker(m)
             } else if let Some(start_edge) = region_edge_at(self, pos) {
@@ -2412,10 +2410,20 @@ impl KtApp {
                 } else if self.clipboard.is_empty() {
                     ui.weak("Выдели регион или клип");
                 }
-                if ui.button("Добавить Morph-дорожку").clicked() {
-                    let at = self.model.project().morph_lanes;
-                    self.apply(Command::InsertMorphLane { at });
-                    ui.close();
+                // Дорожки добавляются ПОД кликнутой строкой (п.5 р.16):
+                // «не в самый низ, а после той дорожки по которой кликнули».
+                // Если кликнули по пустому месту — в конец своего вида.
+                ui.separator();
+                let row = self.ctx_row;
+                for (label, kind) in [
+                    ("Добавить видео-дорожку", LaneKind::Video),
+                    ("Добавить аудио-дорожку", LaneKind::Audio),
+                    ("Добавить Morph-дорожку", LaneKind::Morph),
+                ] {
+                    if ui.button(label).clicked() {
+                        self.insert_lane_after_row(kind, row);
+                        ui.close();
+                    }
                 }
             }
         });

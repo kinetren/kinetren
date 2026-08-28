@@ -31,6 +31,28 @@ pub struct MeterState {
     pub muted: bool,
     last_tick: std::time::Instant,
     last_sample: std::time::Instant,
+    /// Позиция курсора прошлого кадра и момент её последнего изменения:
+    /// на паузе метр гаснет, но при скрабе/перемотке показывает уровень
+    /// ПОД КУРСОРОМ (решение пользователя, п.4 р.16).
+    last_playhead: i64,
+    last_move: std::time::Instant,
+}
+
+/// Сколько после последнего движения курсора метр ещё показывает уровень
+/// под ним (на паузе). Дальше — гаснет.
+///
+/// 1.2 с, а не пол-секунды: замер берётся ИЗ КЭША (`sample_levels_at`
+/// читает CacheFetcher), и на свежей позиции первые пробы возвращают
+/// тишину, пока prefetch не донесёт burst. Слишком узкое окно гасило
+/// метр раньше, чем под курсором появлялись данные.
+pub const SCRUB_SHOW_MS: u128 = 1200;
+
+/// Держит ли метр замер под курсором (п.4 р.16). При игре — нет (там
+/// живой поток), на паузе — только пока курсор ДВИГАЮТ: скраб и
+/// перемотка показывают уровень под курсором, а неподвижная пауза гасит
+/// метр вместо прежнего «замирания».
+pub fn meter_holds_level(playing: bool, since_move_ms: u128) -> bool {
+    !playing && since_move_ms < SCRUB_SHOW_MS
 }
 
 impl MeterState {
@@ -87,14 +109,16 @@ impl MeterState {
     }
 
     /// Один шаг спада (тик 25 мс, спады v1) — чистая логика для теста 38.
-    /// `playing` дополнительно отпускает target (иначе при остановке
-    /// подкачки бары зависали бы навсегда).
-    pub fn tick(&mut self, ticks: f32, playing: bool) {
+    /// `release` отпускает и сам target (иначе при остановке подкачки
+    /// бары зависали бы навсегда). Отпускаем при игре И на паузе, когда
+    /// курсор не двигают: «на паузе монитор не гаснет а замирает» —
+    /// жалоба п.4 р.16; при скрабе target держит замер под курсором.
+    pub fn tick(&mut self, ticks: f32, release: bool) {
         for ch in 0..2 {
             let floor = self.target_db[ch].max(METER_MIN_DB);
             self.bar_db[ch] = (self.bar_db[ch] - BAR_FALL_DB * ticks).max(floor);
             self.cap_db[ch] = (self.cap_db[ch] - CAP_FALL_DB * ticks).max(METER_MIN_DB);
-            if playing {
+            if release {
                 self.target_db[ch] =
                     (self.target_db[ch] - BAR_FALL_DB * 0.7 * ticks).max(METER_MIN_DB);
             }
@@ -124,6 +148,8 @@ impl Default for MeterState {
             muted: false,
             last_tick: std::time::Instant::now(),
             last_sample: std::time::Instant::now(),
+            last_playhead: i64::MIN,
+            last_move: std::time::Instant::now(),
         }
     }
 }
@@ -209,6 +235,33 @@ pub(crate) fn glow_stops(level_db: f32) -> Vec<f32> {
     v
 }
 
+/// Базовые альфы свечения (п.4 р.16 — «подубавь свечение»): зонный меш
+/// по дну бара, головной блик (два эллипса), свечение зажжённой части,
+/// ореол кэпа и оверлей слева от панели. Держим их в одном месте, чтобы
+/// «сделать тише» не превращалось в охоту по файлу.
+pub(crate) const GLOW_ZONE_A: u8 = 70;
+pub(crate) const GLOW_HEAD_A: (u8, u8) = (68, 44);
+pub(crate) const GLOW_LIT_A: u8 = 48;
+pub(crate) const GLOW_CAP_A: u8 = 18;
+pub(crate) const GLOW_OVERLAY_A: u8 = 40;
+
+/// Альфа ряда свечения на ФИКСИРОВАННОЙ высоте шкалы (п.4 р.16).
+///
+/// Жалоба: «свечение мерцает по всей высоте, что странно например для
+/// самых нижних сегментов — ведь они горят практически всегда». Причина
+/// была в том, что альфа И цвет всего столба брались от ТЕКУЩЕГО уровня:
+/// ряды стояли в доле от головы и перекрашивались целиком при переходе
+/// зоны. Теперь ряд ниже головы светит РОВНО, от уровня зависит только
+/// узкая кромка (3 dB) у самой головы — там движение и должно быть.
+pub fn glow_row_alpha(row_db: f32, level_db: f32, base: u8) -> u8 {
+    let below = level_db - row_db;
+    if below < -1.0 {
+        return 0; // выше головы шкала погашена
+    }
+    let k = ((below + 1.0) / 3.0).clamp(0.0, 1.0);
+    (base as f32 * k).round() as u8
+}
+
 /// Ореол слева от панели метров для оверлея поверх UI. Правая кромка —
 /// ровно левый край панели: раньше +8 px наезжали на первый бар у подписи
 /// dB (п.10 v1.4, тест 40).
@@ -273,9 +326,18 @@ impl KtApp {
         // 1) подкачка уровней: играем — каждый кадр; пауза — замер на
         // курсоре раз в 120 мс (v1), target ДЕРЖИТ последний замер
         let playing = self.player.transport.is_playing();
+        // на паузе метр ГАСНЕТ, но при скрабе/перемотке показывает уровень
+        // под курсором (решение пользователя, п.4 р.16): «замирающий»
+        // метр выглядел сломанным
+        let ph = self.player.transport.playhead().0;
+        if ph != self.meter.last_playhead {
+            self.meter.last_playhead = ph;
+            self.meter.last_move = std::time::Instant::now();
+        }
+        let scrubbing = meter_holds_level(playing, self.meter.last_move.elapsed().as_millis());
         let sample = if playing {
             Some(self.player.meters.take())
-        } else if self.meter.last_sample.elapsed().as_millis() >= 120 {
+        } else if scrubbing && self.meter.last_sample.elapsed().as_millis() >= 120 {
             self.meter.last_sample = std::time::Instant::now();
             Some(self.player.sample_levels_at(self.player.transport.playhead()))
         } else {
@@ -295,7 +357,9 @@ impl KtApp {
         let ticks = (self.meter.last_tick.elapsed().as_millis() / 25).min(40) as f32;
         if ticks >= 1.0 {
             self.meter.last_tick = std::time::Instant::now();
-            self.meter.tick(ticks, playing);
+            // target отпускаем и на паузе — но только когда курсор стоит:
+            // при скрабе он держит замер под курсором
+            self.meter.tick(ticks, playing || !scrubbing);
         } else {
             // клампы к target — и между тиками (подкачка выше спада)
             self.meter.tick(0.0, false);
@@ -313,7 +377,9 @@ impl KtApp {
             let loud = self.meter.bar_db[0].max(self.meter.bar_db[1]);
             let k = ((loud - METER_MIN_DB) / (METER_MAX_DB - METER_MIN_DB)).clamp(0.0, 1.0);
             // (панель, интенсивность, уровень dB) — оверлей красит по зонам
-            self.meter_glow = (k > 0.05).then_some((rect, k, loud));
+            // порог по УРОВНЮ, а не по общей яркости: так ореол не
+            // вспыхивает/не гаснет целиком на тихом материале (п.4 р.16)
+            self.meter_glow = (loud > METER_MIN_DB + 0.5).then_some((rect, k, loud));
         }
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 4.0, egui::Color32::from_gray(16));
@@ -405,7 +471,12 @@ impl KtApp {
                 }
             };
             for &db in &stops {
-                push_row(&mut mesh, db_to_y(db), zone_color(db), 96);
+                push_row(
+                    &mut mesh,
+                    db_to_y(db),
+                    zone_color(db),
+                    glow_row_alpha(db, loud_db, GLOW_ZONE_A),
+                );
             }
             // хвост КОРОТКИЙ (8 px): прежние 22 px и делали погашенную
             // часть «полузажжённой» — вот это и была настоящая причина
@@ -431,7 +502,7 @@ impl KtApp {
                 egui::pos2(cx, bars.bottom()),
                 egui::vec2(half_w * 0.85, 30.0),
                 zone_color(METER_MIN_DB + 6.0),
-                40,
+                30,
             );
         }
 
@@ -499,14 +570,14 @@ impl KtApp {
                 egui::pos2(cx, level_y),
                 egui::vec2(wide * 1.15, 38.0),
                 zone_color(loud_db),
-                96,
+                GLOW_HEAD_A.0,
             );
             glow_ellipse(
                 &painter,
                 egui::pos2(cx, level_y - 12.0),
                 egui::vec2(wide * 0.95, 32.0),
                 zone_color(loud_db),
-                62,
+                GLOW_HEAD_A.1,
             );
         }
 
@@ -518,11 +589,11 @@ impl KtApp {
                 continue;
             }
             let top_lit = db_to_y(METER_MIN_DB + lit_n[ch] as f32 * seg_db);
-            let col = zone_color(self.meter.bar_db[ch]);
+            let level = self.meter.bar_db[ch];
             let mut mesh = egui::Mesh::default();
             let cx = x0 + bar_w * 0.5;
             let half = bar_w * 1.25;
-            let mut row = |y: f32, a: u8| {
+            let mut row = |y: f32, col: egui::Color32, a: u8| {
                 for (x, k) in [(cx - half, 0u8), (cx, a), (cx + half, 0u8)] {
                     mesh.vertices.push(egui::epaint::Vertex {
                         pos: egui::pos2(x, y),
@@ -531,11 +602,18 @@ impl KtApp {
                     });
                 }
             };
-            row(bars.bottom(), 26);
-            row((top_lit + bars.bottom()) * 0.5, 44);
-            row(top_lit, 70);
-            row((top_lit - 10.0).max(bars.top()), 0);
-            for r in 0..3u32 {
+            // Ряды стоят на ФИКСИРОВАННЫХ dB-стопах, цвет и альфа — от
+            // СВОЕГО dB (п.4 р.16). Раньше средний ряд стоял в доле от
+            // головы, а цвет всего столба брался от текущего уровня —
+            // столб мигал целиком, включая нижние сегменты, которые
+            // горят практически всегда.
+            let stops = glow_stops(level);
+            for &db in &stops {
+                row(db_to_y(db), zone_color(db), glow_row_alpha(db, level, GLOW_LIT_A));
+            }
+            row((top_lit - 10.0).max(bars.top()), zone_color(level), 0);
+            let rows = stops.len() + 1;
+            for r in 0..rows as u32 - 1 {
                 let b = r * 3;
                 for c in 0..2u32 {
                     mesh.indices.extend_from_slice(&[
@@ -563,7 +641,7 @@ impl KtApp {
                 egui::pos2(x0 + bar_w / 2.0, cap_y),
                 egui::vec2(bar_w * 2.0, 13.0),
                 col,
-                22,
+                GLOW_CAP_A,
             );
             painter.rect_filled(
                 egui::Rect::from_min_max(
@@ -848,6 +926,58 @@ mod repaint_tests {
         let g = overlay_glow_rect(panel);
         assert!(g.right() <= panel.left(), "ореол не заходит на панель");
         assert!(g.left() < panel.left(), "и реально светит влево");
+    }
+
+    /// Тест 121 (п.4 р.16): свечение не мерцает по всей высоте, а на
+    /// паузе метр ГАСНЕТ (показывая уровень под курсором только при
+    /// скрабе/перемотке).
+    ///
+    /// Жалоба: «подубавь свечение монитора звука, а еще — у него свечение
+    /// мерцает по всей высоте, что странно например для самых нижних
+    /// сегментов — ведь они горят практически всегда. а еще — на паузе
+    /// почему-то монитор не гаснет а замирает».
+    #[test]
+    fn t121_glow_is_steady_and_pause_fades() {
+        // --- ряд ниже головы светит ОДИНАКОВО при любом уровне выше него
+        for row in [-46.0f32, -36.0, -24.0, -12.0] {
+            let a = glow_row_alpha(row, row + 3.0, GLOW_LIT_A);
+            for level in [row + 3.0, row + 9.0, row + 20.0, METER_MAX_DB] {
+                assert_eq!(
+                    glow_row_alpha(row, level, GLOW_LIT_A),
+                    a,
+                    "ряд {row} dB мерцает вслед за уровнем {level} dB"
+                );
+            }
+            assert_eq!(a, GLOW_LIT_A, "ряд под головой обязан светить в полную базу");
+        }
+        // выше головы — темно; у самой головы мягкая кромка, а не ступень
+        assert_eq!(glow_row_alpha(0.0, -12.0, GLOW_LIT_A), 0, "погашенная часть светится");
+        let edge = glow_row_alpha(-12.0, -12.0, GLOW_LIT_A);
+        assert!(edge > 0 && edge < GLOW_LIT_A, "кромка у головы обязана быть мягкой: {edge}");
+        // «подубавь»: базы свечения ниже прежних (96/96/62/40/22/58)
+        const {
+            assert!(GLOW_ZONE_A < 96 && GLOW_HEAD_A.0 < 96 && GLOW_HEAD_A.1 < 62);
+            assert!(GLOW_LIT_A < 70 && GLOW_CAP_A < 22 && GLOW_OVERLAY_A < 58);
+        }
+
+        // --- пауза: курсор стоит → замер отпускается; курсор двигают →
+        // держим уровень под ним
+        assert!(!meter_holds_level(true, 0), "при игре держать замер нечего");
+        assert!(meter_holds_level(false, 100), "скраб обязан показывать уровень под курсором");
+        assert!(
+            !meter_holds_level(false, SCRUB_SHOW_MS + 1),
+            "неподвижная пауза обязана гасить метр"
+        );
+        // и сам спад доходит до пола и ОТПУСКАЕТ перерисовку (иначе t38)
+        let mut m = MeterState::default();
+        m.feed(0.9, 0.9);
+        m.tick(1.0, false);
+        assert!(m.bar_db[0] > METER_MIN_DB + 1.0, "уровень не показался");
+        for _ in 0..2000 {
+            m.tick(1.0, true);
+        }
+        assert!((m.bar_db[0] - METER_MIN_DB).abs() < 0.1, "на паузе метр не погас: {:?}", m.bar_db);
+        assert!(!m.is_active(), "погасший метр обязан отпустить перерисовку");
     }
 
     /// Тест 38 (п.1 v1.4): метры не держат 60 fps вечно. После остановки

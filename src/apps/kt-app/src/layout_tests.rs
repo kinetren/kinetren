@@ -1088,6 +1088,472 @@ fn t101_edge_buttons_are_clickable() {
 /// Тест 102 (пп.2,5 р.13): ярлык дорожки не наслаивается на имя клипа,
 /// свечение курсора не заходит на полоски кэша и светит со стороны
 /// движения.
+/// Тест 122 (п.5 р.16): дорожки добавляются ПОД кликнутой строкой, а
+/// имена дорожек едут вместе со своими дорожками.
+///
+/// Вторая половина — настоящий дефект, найденный по дороге: функции
+/// `lane_names_insert/remove/rotate` в kt-model есть и покрыты t90, но из
+/// приложения не вызывались ни разу, поэтому после вставки/удаления/
+/// перестановки подпись приклеивалась к чужой дорожке.
+#[test]
+fn t122_insert_lane_after_clicked_row() {
+    use kt_model::{LaneKind, lane_label};
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.video_lanes = 3;
+        p.audio_lanes = 2;
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.lane_order = vec![
+            (LaneKind::Video, 0),
+            (LaneKind::Video, 1),
+            (LaneKind::Video, 2),
+            (LaneKind::Audio, 0),
+            (LaneKind::Audio, 1),
+        ];
+        app.lane_names = vec![
+            (LaneKind::Video, 1, "Титры".into()),
+            (LaneKind::Audio, 1, "Голос".into()),
+        ];
+    }
+    h.step();
+
+    // --- клик по V1 (индекс 0) + «добавить видео-дорожку» → новая
+    // строка ровно СЛЕДУЮЩАЯ, а не в конце списка
+    h.state_mut().insert_lane_after_row(LaneKind::Video, Some((LaneKind::Video, 0)));
+    h.step();
+    assert_eq!(h.state().model.project().video_lanes, 4, "дорожка не добавилась");
+    assert_eq!(
+        h.state().lane_order[1],
+        (LaneKind::Video, 1),
+        "новая дорожка не встала под кликнутой: {:?}",
+        h.state().lane_order
+    );
+    // имя «Титры» ехало на V2 (индекс 1) — обязано уехать на индекс 2
+    assert_eq!(
+        lane_label(&h.state().lane_names, LaneKind::Video, 2),
+        "Титры",
+        "имя не поехало вместе со своей дорожкой: {:?}",
+        h.state().lane_names
+    );
+    assert_eq!(
+        lane_label(&h.state().lane_names, LaneKind::Video, 1),
+        "V2",
+        "новая дорожка забрала чужое имя"
+    );
+
+    // --- клик по ПОСЛЕДНЕЙ строке своего вида: строка обязана встать
+    // сразу под ней, а не в самый низ списка. Именно это и нашлось живой
+    // проверкой: lane_order_insert кладёт строку перед следующей
+    // дорожкой своего вида, а когда такой нет — в конец, и клик по V2
+    // при порядке V1,V2,A1,A2 давал V1,V2,A1,A2,V3.
+    let last_video = h
+        .state()
+        .lane_order
+        .iter()
+        .position(|&e| e == (LaneKind::Video, 3))
+        .expect("последняя видео-строка");
+    h.state_mut().insert_lane_after_row(LaneKind::Video, Some((LaneKind::Video, 3)));
+    h.step();
+    assert_eq!(
+        h.state().lane_order[last_video + 1],
+        (LaneKind::Video, 4),
+        "новая строка уехала в самый низ вместо места под кликнутой: {:?}",
+        h.state().lane_order
+    );
+
+    // --- клик по строке ДРУГОГО вида: аудио-дорожка встаёт под ней же
+    let audio_row = h
+        .state()
+        .lane_order
+        .iter()
+        .position(|&e| e == (LaneKind::Video, 3))
+        .expect("строка V4 пропала");
+    h.state_mut().insert_lane_after_row(LaneKind::Audio, Some((LaneKind::Video, 3)));
+    h.step();
+    assert_eq!(
+        h.state().lane_order[audio_row + 1].0,
+        LaneKind::Audio,
+        "аудио-дорожка не встала под кликнутой видео-строкой: {:?}",
+        h.state().lane_order
+    );
+
+    // --- morph тоже добавляется из меню
+    let m0 = h.state().model.project().morph_lanes;
+    h.state_mut().insert_lane_after_row(LaneKind::Morph, None);
+    h.step();
+    assert_eq!(h.state().model.project().morph_lanes, m0 + 1, "morph-дорожка не добавилась");
+
+    // --- удаление: имя уходит вместе с дорожкой, соседи съезжают
+    {
+        let app = h.state_mut();
+        app.lane_names = vec![
+            (LaneKind::Audio, 0, "Музыка".into()),
+            (LaneKind::Audio, 1, "Голос".into()),
+        ];
+        app.delete_lane(kt_model::ClipKind::Audio, 0);
+    }
+    h.step();
+    assert_eq!(
+        lane_label(&h.state().lane_names, LaneKind::Audio, 0),
+        "Голос",
+        "после удаления имена не съехали: {:?}",
+        h.state().lane_names
+    );
+
+    // --- перестановка: имя едет за содержимым (иначе «Голос» останется
+    // на чужой строке)
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.audio_lanes = 3;
+        p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "synth:1".into() });
+        p.clips.push(kt_model::ClipEvent {
+            id: kt_model::ClipId(1),
+            link_group: None,
+            kind: kt_model::ClipKind::Audio,
+            lane: 0,
+            start: kt_time::Tick(0),
+            duration: kt_time::Tick(90_000),
+            source_in: kt_time::Tick(0),
+            media: kt_model::MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx: vec![],
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.lane_names = vec![(LaneKind::Audio, 0, "Голос".into())];
+        app.reorder_lane(kt_model::ClipKind::Audio, 0, 2);
+    }
+    h.step();
+    assert_eq!(
+        h.state().model.project().clips[0].lane,
+        2,
+        "содержимое не переехало — тест ниже проверял бы не то"
+    );
+    assert_eq!(
+        lane_label(&h.state().lane_names, LaneKind::Audio, 2),
+        "Голос",
+        "имя не поехало за содержимым при перестановке: {:?}",
+        h.state().lane_names
+    );
+}
+
+/// Тест 120 (п.3 р.16): удержание пробела разгоняет воспроизведение до
+/// 4× примерно за 2 с (как на YouTube) и НЕ ломает одиночное/двойное
+/// нажатие.
+///
+/// Ловушка, из-за которой понадобился перенос решения на отпускание:
+/// `key_pressed` включает АВТОПОВТОР клавиатуры — зажатый пробел слал
+/// серию play/pause. Поэтому нажатие только запоминается, а play/pause
+/// делается по отпусканию, если удержание было коротким.
+#[test]
+fn t120_space_hold_boosts_playback() {
+    use crate::app::{KtApp, SPACE_BOOST_MAX, SPACE_BOOST_SECS};
+    use kt_model::*;
+    use kt_time::Tick;
+
+    // --- чистая функция: монотонна, упирается в потолок, устойчива на
+    // плохих dt (после простоя stable_dt приходит до 250 мс — явная
+    // схема на таких шагах перелетает цель, п.7 р.9)
+    let mut b = 1.0f32;
+    let mut prev = b;
+    for _ in 0..(60.0 * SPACE_BOOST_SECS) as i32 {
+        b = KtApp::space_boost_step(b, 1.0 / 60.0);
+        assert!(b >= prev, "разгон не монотонен: {prev} → {b}");
+        assert!(b <= SPACE_BOOST_MAX + 1e-4, "разгон перелетел потолок: {b}");
+        prev = b;
+    }
+    assert!(b > SPACE_BOOST_MAX * 0.9, "за {SPACE_BOOST_SECS} с не доехали до потолка: {b}");
+    let mut rough = 1.0f32;
+    for dt in [0.25f32, 0.1, 1.0 / 30.0, 0.25, 0.25] {
+        rough = KtApp::space_boost_step(rough, dt);
+        assert!(
+            (1.0..=SPACE_BOOST_MAX + 1e-4).contains(&rough),
+            "плохой dt={dt} вынес разгон за пределы: {rough}"
+        );
+    }
+
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.clips.push(ClipEvent {
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Audio,
+            lane: 0,
+            start: Tick(0),
+            duration: Tick(90_000 * 60),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx: vec![],
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+
+    // --- одиночное нажатие по-прежнему переключает транспорт
+    let before = h.state().player.transport.is_playing();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert_ne!(
+        h.state().player.transport.is_playing(),
+        before,
+        "короткое нажатие пробела перестало переключать play/pause"
+    );
+    let playing = h.state().player.transport.is_playing();
+
+    // --- удержание: скорость растёт, транспорт НЕ переключается
+    h.key_down(egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(260));
+    for _ in 0..60 {
+        h.step();
+    }
+    let boosted = h.state().player.playback_rate();
+    assert!(
+        boosted > 1.5 && boosted <= SPACE_BOOST_MAX + 0.01,
+        "удержание не разогнало воспроизведение: {boosted}"
+    );
+    assert!(h.state().player.transport.is_playing(), "удержание обязано играть");
+    // пользователь обязан ВИДЕТЬ разгон: нижняя (временная) полоса
+    // контрола скорости показывает фактическую скорость, а не «1×»
+    let shown = h.state().speed_temp_slider().expect("разгон не виден на контроле скорости");
+    assert!(
+        shown > crate::app::rate_to_slider(1.0) + 0.01,
+        "полоса скорости показывает не разгон: {shown}"
+    );
+    h.key_up(egui::Key::Space);
+    h.step();
+    assert!(
+        (h.state().player.playback_rate() - 1.0).abs() < 0.01,
+        "после отпускания скорость не вернулась: {}",
+        h.state().player.playback_rate()
+    );
+    assert_eq!(
+        h.state().player.transport.is_playing(),
+        playing,
+        "отпускание разгона не должно переключать play/pause"
+    );
+
+    // --- реверс: разгон не теряет знак скорости
+    h.state_mut().base_rate = -1.0;
+    h.state_mut().player.set_playback_rate(-1.0);
+    h.key_down(egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(260));
+    for _ in 0..40 {
+        h.step();
+    }
+    let rev = h.state().player.playback_rate();
+    assert!(rev < -1.5, "разгон в реверсе потерял знак/скорость: {rev}");
+    h.key_up(egui::Key::Space);
+    h.step();
+    h.state_mut().base_rate = 1.0;
+    h.state_mut().player.set_playback_rate(1.0);
+
+    // --- двойное нажатие: пауза, затем «стоп в начало региона» (п.15 р.6)
+    h.state_mut().model.set_region(Region::normalized(Tick(90_000), Tick(180_000)));
+    h.state_mut().player.seek(Tick(120_000));
+    h.step();
+    h.key_press(egui::Key::Space); // пауза
+    h.step();
+    h.step();
+    assert!(!h.state().player.transport.is_playing(), "первое нажатие не поставило паузу");
+    h.key_press(egui::Key::Space); // сразу второе — стоп в начало региона
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().player.transport.playhead(),
+        Tick(90_000),
+        "двойное нажатие пробела перестало уводить в начало региона"
+    );
+}
+
+/// Тест 119 (п.2 р.16): Shift+A / Shift+D тянут край региона.
+///
+/// Shift — модификатор «расширить выделение» из проф. программ. Shift+A
+/// ставит ЛЕВЫЙ край в новую позицию курсора, Shift+D — правый; без
+/// региона вторым краем становится позиция ДО прыжка. Обычные A/D регион
+/// не трогают (иначе навигация начнёт молча портить выделение), а
+/// Shift+Home/End остаются «в самое начало/конец».
+#[test]
+fn t119_shift_nav_drags_region() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        for (i, start) in [90_000i64, 270_000, 450_000].into_iter().enumerate() {
+            p.clips.push(ClipEvent {
+                id: ClipId(i as u64 + 1),
+                link_group: None,
+                kind: ClipKind::Video,
+                lane: 0,
+                start: Tick(start),
+                duration: Tick(90_000),
+                source_in: Tick(0),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx_bypass: vec![],
+                fx: vec![],
+            });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.player.seek(Tick(0));
+        app.dirty_content = false;
+        app.dirty_ui = false;
+    }
+    h.step();
+
+    // обычная навигация регион НЕ создаёт
+    h.key_press(egui::Key::D);
+    h.step();
+    let after_plain = h.state().player.transport.playhead();
+    assert!(after_plain.0 > 0, "обычный D не сдвинул курсор");
+    assert!(h.state().model.project().region.is_none(), "обычный D создал регион");
+
+    // первый Shift+D выделяет пройденный участок [было, стало]
+    let before = h.state().player.transport.playhead();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::D);
+    h.step();
+    let now = h.state().player.transport.playhead();
+    let r = h.state().model.project().region.expect("Shift+D не создал регион");
+    assert!(now > before, "Shift+D не сдвинул курсор: {before:?} → {now:?}");
+    assert_eq!(r.start, before, "левый край обязан остаться там, откуда прыгнули");
+    assert_eq!(r.end, now, "правый край обязан встать в новую позицию");
+
+    // следующий Shift+D двигает ТОЛЬКО правый край
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::D);
+    h.step();
+    let r2 = h.state().model.project().region.expect("регион пропал");
+    assert_eq!(r2.start, r.start, "правый край утянул за собой левый: {r:?} → {r2:?}");
+    assert!(r2.end > r.end, "правый край не поехал: {r:?} → {r2:?}");
+
+    // Shift+A двигает ЛЕВЫЙ край и правого не трогает
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::A);
+    h.step();
+    let r3 = h.state().model.project().region.expect("регион пропал");
+    assert_eq!(r3.end, r2.end, "левый край утянул правый: {r2:?} → {r3:?}");
+    assert!(r3.start > r2.start, "левый край не поехал: {r2:?} → {r3:?}");
+    assert_eq!(h.state().player.transport.playhead(), r3.start, "курсор не на левом крае");
+
+    // регион — «удобство»: звёздочка «есть несохранённое содержимое» не
+    // загорается (п.5 р.11)
+    assert!(!h.state().dirty_content, "правка региона подняла dirty_content");
+    assert!(h.state().dirty_ui, "правка региона не подняла dirty_ui");
+}
+
+/// Тест 118 (п.1 р.16): медиа-бин скроллится — сам при драге к кромке и
+/// колесом.
+///
+/// Причина дефекта: «курсор ушёл из бина» проверялось по `ui.max_rect()`,
+/// а внутри ScrollArea это ВЬЮПОРТ в координатах содержимого. У нижней
+/// кромки экрана включался липкий режим «вынос на таймлайн», позиции
+/// откатывались — карточку нельзя было положить ниже одного экрана,
+/// содержимое никогда не перерастало вьюпорт, и колесу было нечего
+/// крутить. Тест ведёт мышь как человек (нажать → сдвинуть → вести).
+#[test]
+fn t118_bin_autoscrolls_and_wheel_works() {
+    use crate::bin_panel::bin_edge_scroll;
+    use kt_model::{MediaId, MediaRef};
+
+    // --- чистая кривая: у нижней кромки мотаем вниз, у верхней вверх,
+    // в середине покоя нет вообще
+    let view = egui::Rect::from_min_size(egui::pos2(0.0, 100.0), egui::vec2(200.0, 400.0));
+    assert_eq!(bin_edge_scroll(view, 300.0), 0.0, "середина не должна мотать");
+    let down = bin_edge_scroll(view, view.bottom() - 1.0);
+    let up = bin_edge_scroll(view, view.top() + 1.0);
+    assert!(down < 0.0, "у нижней кромки список обязан ехать вниз: {down}");
+    assert!(up > 0.0, "у верхней кромки — вверх: {up}");
+    assert!(
+        bin_edge_scroll(view, view.bottom() - 20.0).abs() < down.abs(),
+        "кривая обязана расти к кромке"
+    );
+
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        for n in 1..=3u64 {
+            p.media.push(MediaRef { id: MediaId(n), path: format!("synth:{n}") });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.bin_free = true;
+        app.bin_layout.insert(MediaId(1), egui::pos2(0.0, 0.0));
+        app.bin_layout.insert(MediaId(2), egui::pos2(0.0, 100.0));
+        app.bin_layout.insert(MediaId(3), egui::pos2(0.0, 200.0));
+    }
+    h.step();
+    let at = |h: &Harness<'_, KtApp>, m: MediaId| {
+        h.state().bin_card_rects.iter().find(|(id, _)| *id == m).unwrap().1
+    };
+    let col = panel_rect(&h, "left_col");
+    let grab = at(&h, MediaId(1)).center();
+    let anchor_before = at(&h, MediaId(3));
+
+    // тянем первую карточку к самой нижней кромке колонки и ДЕРЖИМ там:
+    // список обязан ползти сам, как у таймлайна
+    h.drag_at(grab);
+    h.step();
+    h.hover_at(grab + egui::vec2(0.0, 8.0));
+    h.step();
+    let low = egui::pos2(grab.x, col.bottom() - 10.0);
+    for _ in 0..12 {
+        h.hover_at(low);
+        h.step();
+    }
+    let anchor_after = at(&h, MediaId(3));
+    assert!(
+        anchor_after.top() < anchor_before.top() - 20.0,
+        "список не проскроллился при драге к кромке: {} → {}",
+        anchor_before.top(),
+        anchor_after.top()
+    );
+    h.drop_at(low);
+    h.step();
+    let moved = h.state().bin_layout[&MediaId(1)];
+    assert!(
+        moved.y > 200.0,
+        "карточку откатило вместо переноса вниз (липкий «вынос»): {moved:?}"
+    );
+
+    // --- колесо: содержимое теперь длиннее вьюпорта, и над бином оно
+    // обязано крутиться (штатный ScrollArea глушит колесо только на
+    // время драга — драг мы уже отпустили)
+    let before = at(&h, MediaId(3)).top();
+    let over = egui::pos2(col.center().x, col.center().y);
+    h.hover_at(over);
+    h.step();
+    for _ in 0..3 {
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -60.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.step();
+    }
+    let after = at(&h, MediaId(3)).top();
+    assert!(after < before - 20.0, "колесо не крутит медиа-бин: {before} → {after}");
+}
+
 #[test]
 fn t102_lane_label_and_playhead_trail() {
     use crate::timeline::{STRIPES_H, TIME_TOP, lane_label_y};
