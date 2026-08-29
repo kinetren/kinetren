@@ -13,3 +13,7 @@ Thumbs.db
 *.ktindex.db
 *.ktindex.db-wal
 *.ktindex.db-shm
+
+# Python-кэш (site/build.py)
+__pycache__/
+*.pyc
