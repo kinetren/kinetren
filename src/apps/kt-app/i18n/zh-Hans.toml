@@ -1,0 +1,393 @@
+# Каталог перевода Kinotrain. Правила — i18n/README.md.
+# Формат: строгое подмножество TOML, значения только в одну строку.
+# СОБРАН автоматически на шаге массового переноса строк (Р.19);
+# дальше правится руками.
+
+# Самоназвания языков. Одинаковы во ВСЕХ каталогах (сборка проверяет).
+[lang]
+en = "English"
+ru = "Русский"
+es = "Español"
+zh = "中文（简体）"
+ar = "العربية"
+
+# Кнопки окна (свой титлбар, п.22 р.6).
+[win]
+close = "关闭"
+restore = "还原"
+maximize = "最大化"
+minimize = "最小化"
+untitled = "未命名"
+preview_title = "Kinotrain — 预览"
+notices_title = "通知"
+notices_empty = "暂无内容"
+search_title = "在项目中搜索"
+diag_title = "诊断"
+
+[menu.file]
+title = "文件"
+new = "新建"
+open = "打开…"
+save = "保存"
+save_as = "另存为…"
+render = "导出为 MP4…"
+quit = "退出"
+
+[menu.edit]
+title = "编辑"
+undo = "撤销"
+redo = "重做"
+copy = "复制"
+paste = "粘贴到播放头"
+delete = "删除"
+cut_region = "切分 / 裁去区间"
+
+[menu.view]
+title = "视图"
+detach_preview = "分离预览"
+attach_preview = "停靠预览"
+economy = "省电界面（播放时 30 fps）"
+language = "语言"
+lang_auto = "自动（跟随系统）"
+diagnostics = "诊断…"
+notices = "通知"
+
+# Тулбар: подсказки кнопок. Акселератор в скобках — часть подсказки.
+[tb]
+play_pause = "播放/暂停（空格）"
+back = "后退：标记 / 区间 / 片段边缘（A 或 Home；Shift — 拖动区间左边缘）"
+forward = "前进：标记 / 区间 / 片段边缘（D 或 End；Shift — 拖动区间右边缘）"
+timecode_edit = "数字从右往左输入，Enter — 跳转，Esc — 取消"
+timecode = "播放头位置；双击或 Ctrl+L — 跳到时间码"
+marker = "在播放头添加标记（M）"
+add_video_lane = "添加视频轨道"
+add_audio_lane = "添加音频轨道"
+cut = "切分 / 裁去区间（S）"
+copy = "复制（Ctrl+C）"
+paste = "粘贴到播放头（Ctrl+V）"
+delete = "删除（Del）"
+trim_start = "把入点修剪到播放头"
+trim_end = "把出点修剪到播放头"
+lane_up = "移到上一轨道"
+lane_down = "移到下一轨道"
+zoom_out = "缩小（Ctrl+滚轮）"
+zoom_in = "放大"
+region_in = "区间：从播放头设入点（I）"
+region_out = "区间：从播放头设出点（O）"
+region_clear = "清除区间"
+loop_armed = "循环已就绪 — 请先选区间（L）"
+loop = "区间循环（L）"
+undo = "撤销（Ctrl+Z）"
+redo = "重做（Ctrl+Shift+Z）"
+render = "导出为 MP4（区间或整个项目）"
+search = "在项目中搜索（Ctrl+F）"
+diag = "诊断"
+save = "保存（Ctrl+S）"
+
+# Таймлайн: контекстное меню дорожки.
+[tl.lane]
+title = "轨道 {0}"
+delete = "删除轨道"
+delete_n = "删除轨道（{0} 个事件）"
+rename = "重命名轨道…"
+insert_above = "在上方插入轨道"
+insert_below = "在下方插入轨道"
+morph_title = "Morph 轨道 M{0}"
+delete_morph_n = "删除轨道（{0} 个 morpher）"
+insert_morph_below = "在下方插入 Morph 轨道"
+add_video = "添加视频轨道"
+add_audio = "添加音频轨道"
+add_morph = "添加 Morph 轨道"
+
+# Таймлайн: подсказки зон (правый низ статусбара).
+[tl.hint]
+marker = "标记：拖动 — 移动，右键 — 删除"
+region_edge = "区间边缘：拖动（I/O — 在播放头设置）"
+ruler = "标尺：点击并拖动 — 拖动播放头"
+lane_named = "{0}：拖动 — 调整顺序，右键 — 添加/删除"
+lane = "轨道：拖动 — 调整顺序，右键 — 添加/删除"
+trim_start = "修剪片段入点"
+trim_end = "修剪片段出点"
+volume = "片段音量：拖动，双击 — 0 dB"
+clip = "片段：拖动 — 移动（Ctrl — 关闭吸附），双击 — 特效，右键 — 菜单，S — 切分"
+empty = "左键 — 播放头，拖动 — 区间；滚轮 — 滚动，Ctrl — 缩放，Shift — 轨道"
+
+# Таймлайн: подписи на morph-событиях.
+[tl.morph]
+batch = "特效批次（{0}）"
+replace = "Morpher（{0}）"
+
+# Таймлайн: подсказки полей ввода.
+[tl.field]
+marker_name_new = "标记名称（可留空）"
+marker_name = "标记名称"
+lane_name = "轨道名称"
+
+# Таймлайн: контекстные меню клипа, метки, региона.
+[tl.menu]
+copy = "复制（Ctrl+C）"
+paste = "粘贴（Ctrl+V）"
+delete = "删除（Del）"
+split = "在播放头切分（S）"
+fx = "特效…"
+reverse = "反向"
+unlink = "解除 A/V 链接"
+link = "链接 A/V"
+reset_gain = "重置音量（0 dB）"
+add_morpher = "添加 morpher（冻结目标）…"
+add_fx_batch = "添加 morpher 特效批次…"
+bake_batch = "把特效批次烘焙进片段"
+bake_morph = "把变形烘焙进片段"
+remove_morpher = "删除 morpher（Del）"
+morph_editor = "打开 morpher 编辑器窗口…"
+marker_here = "在此添加标记"
+region_clear = "清除区间"
+rename = "重命名…"
+remove_marker = "删除标记"
+delete_in_region = "删除区间内的片段（Del）"
+punch_out = "挖去区间内部"
+add_morpher_region = "添加 morpher（区间内的片段）…"
+add_fx_batch_region = "添加 morpher 特效批次（区间内的片段）…"
+pick_something = "请先选择区间或片段"
+
+# Медиа-бин: режимы, подсказки, пустое состояние.
+[bin]
+hint_free = "自由布局：卡片可用鼠标拖动"
+hint_grid = "网格：卡片自动排列"
+hint_group = "分组：点击 — 选中，右键 — 重命名/锁定/取消分组"
+empty = "空 — 把媒体文件拖到窗口上"
+group_name = "分组名称"
+
+# Медиа-бин: контекстные меню карточки и группы.
+[bin.menu]
+rename = "重命名…"
+unlock = "解除锁定"
+lock = "锁定：不移动卡片"
+ungroup = "取消分组"
+place = "放到播放头"
+lock_toggle = "锁定 / 解锁"
+group_selected = "把选中的分组（{0}）"
+group_one = "分组（锁定此卡片）"
+remove = "从项目中移除"
+
+# Метры и мастер-фейдер превью.
+[meter]
+mute = "静音预览主输出"
+fader = "主音量：拖动或滚轮（Shift — 微调），双击 — 0 dB"
+peak = "主输出峰值电平，dBFS"
+
+# Редактор morpher'а.
+[mrph]
+title_batch = "Morpher 特效批次 — 事件 {0}"
+title = "Morpher — 事件 {0}"
+frozen = "创建时冻结：{0} 个片段。{1}"
+keep_source = "— 不更换源 —"
+new_source = "新的源："
+not_in_bin = "文件不在项目里？把它拖进媒体箱，就会出现在列表中。"
+absolute_in = "绝对 source-in（而非偏移）"
+source_in_ms = "source-in，毫秒："
+source_in_delta_ms = "source-in 偏移，毫秒："
+live_note = "特效实时生效；烘焙会把它们写入片段。"
+video_fx = "视频特效（追加到视频片段）"
+audio_fx = "音频特效（追加到音频片段）"
+bake_batch = "烘焙特效批次"
+bake_morph = "烘焙变形"
+remove = "删除 morpher"
+delay_ms = "延迟，毫秒："
+
+# Реестр FX и пикер с поиском.
+[fxreg]
+add = "+ 特效…"
+search = "搜索…"
+nothing = "没有找到"
+
+# Категории эффектов в пикере.
+[fxreg.cat]
+motion = "运动"
+geometry = "几何"
+blur = "模糊"
+key = "抠像"
+style = "风格化"
+glow = "辉光"
+video = "视频"
+volume = "音量"
+timestretch = "时间伸缩"
+
+# Ключевые слова поиска. НЕ переупорядочиваются для арабского
+# (сравниваются с вводом пользователя), пишутся в нижнем регистре.
+[fxreg.kw]
+pan = "pan zoom 平移 缩放 裁剪 构图 crop"
+cammotion = "camera shake 摄像机 抖动 手持 运动"
+mirror = "mirror flip 镜像 翻转 反射"
+blur = "blur 模糊 柔化 虚化"
+greenscreen = "chroma key green 绿幕 抠像 键控 透明"
+edges = "edges 边缘 轮廓 描边"
+noise = "noise grain 噪点 颗粒 胶片"
+vhs = "vhs 录像带 复古 故障 glitch"
+glow = "glow bloom 辉光 发光 泛光"
+eventgrid = "grid tiles 网格 马赛克 平铺"
+gain = "volume gain db 音量 增益 响度"
+slowedreverb = "slowed reverb warp 减速 混响 速度 回声"
+
+# Редактор FX клипа.
+[fx]
+title = "{0}特效 — 片段 {1}"
+kind_audio = "音频"
+kind_video = "视频"
+off_suffix = "{0}（关闭）"
+enable = "启用特效"
+disable = "停用特效（旁通）"
+remove_slot = "删除插槽"
+move_left = "把插槽左移"
+move_right = "把插槽右移"
+automation = "自动化（t = 在源素材上的位置，片段比例 0..1）："
+copy_env = "复制包络"
+paste_env = "粘贴包络"
+paste_env_hint = "完全替换关键帧（与 v1 相同）"
+kf_at_cursor = "+ 在播放头加关键帧"
+chain_empty = "特效链为空 — 请添加特效"
+done = "完成"
+cancel = "取消（还原）"
+mode = "模式："
+keyframes_n = "关键帧：{0}（留空 = 与 v1 相同的 1.0 到 1.35 推近）"
+add_kf = "+ 关键帧"
+drop_last = "- 最后一个"
+horizontal = "水平"
+vertical = "垂直"
+radius = "半径："
+key_color = "键控色："
+tolerance = "容差："
+softness = "柔化："
+threshold = "阈值："
+rgb_shift = "RGB 偏移："
+strength = "强度："
+columns = "列数："
+rows = "行数："
+center = "居中"
+
+# Диалог настроек рендера и окно прогресса.
+[render]
+already_running = "已经在导出了"
+summary = "{0} 个视频帧，{1} 个音频帧，underruns {2}，编码器 {3}"
+settings_title = "导出设置"
+video_codec = "视频编码："
+encoder_auto = "自动（优先硬件）"
+quality = "质量："
+bitrate = "码率"
+mbps_suffix = " Mbit/s"
+audio_bitrate = "音频码率："
+resolution = "分辨率："
+res_project = "项目（{0}×{1}）"
+audio = "音频："
+container = "容器："
+start = "开始导出…"
+cancel = "取消"
+progress_title = "导出为 MP4"
+file = "文件：{0}"
+encoder_default = "自动编码器"
+phase_video = "视频"
+phase_audio = "音频"
+phase_finalize = "正在收尾（faststart）…"
+phase_done = "完成"
+phase = "阶段："
+speed = "速度：最小 {0}×  平均 {1}×  当前 {2}×  最大 {3}×"
+counters = "视频 {0}/{1}  音频 {2}/{3}  |  {4}× 实时  |  已用 {5} 秒，剩余约 {6} 秒"
+resume = "继续"
+pause = "暂停"
+paused = "已暂停"
+done_msg = "完成：{0}"
+error_msg = "错误：{0}"
+close = "关闭"
+
+# Подсказки главного окна (правый низ статусбара).
+[hint]
+preview_detached = "预览在独立窗口里（关掉它就会回来）"
+morph_place = "Morpher：点击紫色的 Morph 轨道放置区块（Esc — 取消）"
+drop_here = "松开 — 片段落在鼠标下（轨道已高亮）"
+idle = "把媒体文件拖到窗口上 — 片段会落在鼠标下"
+preview_click = "点击 — 播放/暂停，双击 — 把预览分离成窗口"
+speed = "上面一条 — 恒定速度，下面 — shuttle（松开即回），双击 — 1×"
+fps = "项目帧率"
+resolution = "项目分辨率（Max — 取最大的源）"
+preview_quality = "预览质量：项目分辨率的比例（越小越快）"
+smoothing = "预览线性平滑（关闭 — 硬像素）"
+economy = "适合较弱的 GPU：播放时重绘减半"
+
+# Палитра поиска по проекту.
+[search]
+field = "标记、媒体、轨道…"
+marker = "标记"
+media = "媒体"
+track = "轨道"
+clip = "片段"
+group = "分组"
+nothing = "没有找到"
+marker_at = "标记 {0} 秒"
+clip_at = "{0} @ {1} 秒"
+
+# Разовые сообщения note()/warn(). Согласования с числом НЕТ:
+# пишем «существительное: N» (правило Р.19, см. README).
+[msg]
+autosave_failed = "自动保存失败：{0}"
+morph_cancelled = "已取消 morpher 的放置"
+empty_lanes = "这些轨道上没有事件 — 空轨道的顺序无所谓"
+last_lane = "最后一条轨道不能删除"
+nothing_to_copy = "没有可复制的内容（无区间也无选中）"
+clips_copied = "已复制片段：{0}"
+clipboard_empty = "剪贴板是空的"
+no_events_here = "播放头下没有事件"
+region_misses = "区间没有和任何片段相交"
+cursor_outside = "播放头在所选片段之外"
+pick_clip = "请选择一个片段"
+no_other_kind = "附近没有另一种类型的事件"
+already_linked = "已经链接了"
+av_linked = "A/V 已链接"
+open_failed = "打不开：{0}"
+saved = "已保存：{0}"
+save_failed = "保存出错：{0}"
+nothing_to_morph = "没有可变形的对象：请在片段上选区间，或选一个片段"
+morph_click_lane = "Morpher：点击紫色的 Morph 轨道（Esc — 取消）"
+nothing_to_cut = "没有可切分的：未选中片段"
+added = "已添加：{0}"
+autosave_restored = "已恢复未命名项目的自动保存"
+open_a_project = "打开项目：kt-app <文件.ktproj>，或把它拖到窗口上"
+software_render = "没有图形加速（软件渲染）— 界面可能卡顿，预览辉光已关闭"
+
+# Заголовки системных файловых диалогов.
+[dialog]
+open_project = "打开项目"
+save_project = "保存项目"
+
+# Перф-панель и окно диагностики.
+[perf]
+loading = "加载中…"
+smoothing = "平滑"
+economy = "省电界面（播放时 30 fps）"
+title = "性能"
+cache_mb = "缓存 {0}/{1} MB"
+preview_res = "预览 {0}×{1}"
+clips_n = "片段 {0}"
+media_n = "媒体 {0}"
+v_shown = "V-已显示 {0}"
+v_skipped = "V-跳过/回退 {0}/{1}"
+region_s = "区间 {0}–{1} 秒"
+cache_short = "缓存：{0}/{1} MB"
+rate_stop = "0（停止）"
+graph_quality = "质量（FPS / hit%）"
+graph_decode = "FFmpeg 活动（/秒）"
+graph_churn = "缓存周转（/秒）"
+cache_occupancy = "视频缓存占用：{0}%（{1} / {2} MB）"
+no_read_drops = "| no-read drops 总计：{0}"
+log_title = "问题日志"
+log_clear = "清空"
+graph_reset = "重置图表"
+log_empty = "没有发现问题"
+
+# Пороговые предупреждения в журнале проблем.
+[perf.note]
+render_underruns = "render underruns +{0}（总计 {1}）"
+callback_underruns = "callback underruns +{0}（总计 {1}）"
+eviction_spike = "eviction 峰值：{0}/秒 — 缓存太小"
+prefetch_thrash = "{0} 条缓存在第一次读取前就被丢弃（prefetch thrash）"
+low_video_hit = "播放时视频 hit {0}% — 解码跟不上"
+offline_changed = "媒体可用性变了：离线 {0}"

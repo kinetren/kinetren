@@ -1,0 +1,393 @@
+# Каталог перевода Kinotrain. Правила — i18n/README.md.
+# Формат: строгое подмножество TOML, значения только в одну строку.
+# СОБРАН автоматически на шаге массового переноса строк (Р.19);
+# дальше правится руками.
+
+# Самоназвания языков. Одинаковы во ВСЕХ каталогах (сборка проверяет).
+[lang]
+en = "English"
+ru = "Русский"
+es = "Español"
+zh = "中文（简体）"
+ar = "العربية"
+
+# Кнопки окна (свой титлбар, п.22 р.6).
+[win]
+close = "إغلاق"
+restore = "استعادة"
+maximize = "تكبير"
+minimize = "تصغير"
+untitled = "بلا عنوان"
+preview_title = "Kinotrain — المعاينة"
+notices_title = "الإشعارات"
+notices_empty = "لا شيء بعد"
+search_title = "البحث في المشروع"
+diag_title = "التشخيص"
+
+[menu.file]
+title = "ملف"
+new = "جديد"
+open = "فتح…"
+save = "حفظ"
+save_as = "حفظ باسم…"
+render = "التصدير إلى MP4…"
+quit = "خروج"
+
+[menu.edit]
+title = "تحرير"
+undo = "تراجع"
+redo = "إعادة"
+copy = "نسخ"
+paste = "لصق عند المؤشر"
+delete = "حذف"
+cut_region = "تقسيم / قص المنطقة"
+
+[menu.view]
+title = "عرض"
+detach_preview = "فصل المعاينة"
+attach_preview = "إرجاع المعاينة"
+economy = "واجهة موفرة (30 إطارًا في الثانية أثناء التشغيل)"
+language = "اللغة"
+lang_auto = "تلقائي (النظام)"
+diagnostics = "التشخيص…"
+notices = "الإشعارات"
+
+# Тулбар: подсказки кнопок. Акселератор в скобках — часть подсказки.
+[tb]
+play_pause = "تشغيل/إيقاف (المسافة)"
+back = "للخلف: علامة / منطقة / حافة مقطع (A أو Home؛ Shift — سحب الحافة اليسرى)"
+forward = "للأمام: علامة / منطقة / حافة مقطع (D أو End؛ Shift — سحب الحافة اليمنى)"
+timecode_edit = "تُدخل الأرقام من اليمين إلى اليسار، Enter — انتقال، Esc — إلغاء"
+timecode = "موضع المؤشر؛ نقر مزدوج أو Ctrl+L — الانتقال إلى الرمز الزمني"
+marker = "علامة عند المؤشر (M)"
+add_video_lane = "إضافة مسار فيديو"
+add_audio_lane = "إضافة مسار صوت"
+cut = "تقسيم / قص المنطقة (S)"
+copy = "نسخ (Ctrl+C)"
+paste = "لصق عند المؤشر (Ctrl+V)"
+delete = "حذف (Del)"
+trim_start = "قص البداية حتى المؤشر"
+trim_end = "قص النهاية حتى المؤشر"
+lane_up = "إلى المسار الأعلى"
+lane_down = "إلى المسار الأدنى"
+zoom_out = "تصغير (Ctrl+عجلة)"
+zoom_in = "تكبير"
+region_in = "المنطقة: البداية عند المؤشر (I)"
+region_out = "المنطقة: النهاية عند المؤشر (O)"
+region_clear = "إزالة المنطقة"
+loop_armed = "التكرار مُهيأ — حدد منطقة (L)"
+loop = "تكرار المنطقة (L)"
+undo = "تراجع (Ctrl+Z)"
+redo = "إعادة (Ctrl+Shift+Z)"
+render = "التصدير إلى MP4 (المنطقة أو المشروع كله)"
+search = "البحث في المشروع (Ctrl+F)"
+diag = "التشخيص"
+save = "حفظ (Ctrl+S)"
+
+# Таймлайн: контекстное меню дорожки.
+[tl.lane]
+title = "مسار {0}"
+delete = "حذف المسار"
+delete_n = "حذف المسار ({0} أحداث)"
+rename = "إعادة تسمية المسار…"
+insert_above = "إدراج مسار أعلى"
+insert_below = "إدراج مسار أسفل"
+morph_title = "مسار Morph رقم M{0}"
+delete_morph_n = "حذف المسار ({0} morpher)"
+insert_morph_below = "إدراج مسار morph أسفل"
+add_video = "إضافة مسار فيديو"
+add_audio = "إضافة مسار صوت"
+add_morph = "إضافة مسار Morph"
+
+# Таймлайн: подсказки зон (правый низ статусбара).
+[tl.hint]
+marker = "علامة: اسحب — نقل، زر أيمن — حذف"
+region_edge = "حافة المنطقة: اسحب (I/O — تعيين عند المؤشر)"
+ruler = "المسطرة: انقر واسحب — تحريك المؤشر"
+lane_named = "{0}: اسحب — إعادة الترتيب، زر أيمن — إضافة/حذف"
+lane = "مسار: اسحب — إعادة الترتيب، زر أيمن — إضافة/حذف"
+trim_start = "قص بداية المقطع"
+trim_end = "قص نهاية المقطع"
+volume = "مستوى المقطع: اسحب، نقر مزدوج — 0 dB"
+clip = "مقطع: اسحب — نقل (Ctrl — بلا مغناطيس)، نقر مزدوج — مؤثرات، زر أيمن — قائمة، S — تقسيم"
+empty = "زر أيسر — المؤشر، اسحب — منطقة؛ عجلة — تمرير، Ctrl — تكبير، Shift — مسارات"
+
+# Таймлайн: подписи на morph-событиях.
+[tl.morph]
+batch = "دفعة مؤثرات ({0})"
+replace = "Morpher ({0})"
+
+# Таймлайн: подсказки полей ввода.
+[tl.field]
+marker_name_new = "اسم العلامة (اختياري)"
+marker_name = "اسم العلامة"
+lane_name = "اسم المسار"
+
+# Таймлайн: контекстные меню клипа, метки, региона.
+[tl.menu]
+copy = "نسخ (Ctrl+C)"
+paste = "لصق (Ctrl+V)"
+delete = "حذف (Del)"
+split = "تقسيم عند المؤشر (S)"
+fx = "المؤثرات…"
+reverse = "عكس"
+unlink = "فصل الصوت والصورة"
+link = "ربط الصوت والصورة"
+reset_gain = "إعادة ضبط المستوى (0 dB)"
+add_morpher = "إضافة morpher (تجميد الأهداف)…"
+add_fx_batch = "إضافة دفعة مؤثرات morpher…"
+bake_batch = "دمج دفعة المؤثرات في المقاطع"
+bake_morph = "دمج التحويل في المقاطع"
+remove_morpher = "حذف morpher (Del)"
+morph_editor = "نافذة محرر morpher…"
+marker_here = "علامة هنا"
+region_clear = "إزالة المنطقة"
+rename = "إعادة تسمية…"
+remove_marker = "حذف العلامة"
+delete_in_region = "حذف المقاطع داخل المنطقة (Del)"
+punch_out = "قص داخل المنطقة"
+add_morpher_region = "إضافة morpher (مقاطع المنطقة)…"
+add_fx_batch_region = "إضافة دفعة مؤثرات morpher (مقاطع المنطقة)…"
+pick_something = "حدد منطقة أو مقطعًا"
+
+# Медиа-бин: режимы, подсказки, пустое состояние.
+[bin]
+hint_free = "تخطيط حر: تُحرَّك البطاقات بالفأرة"
+hint_grid = "شبكة: تُرتَّب البطاقات تلقائيًا"
+hint_group = "مجموعة: نقر — تحديد، زر أيمن — تسمية/قفل/فك التجميع"
+empty = "فارغ — أفلت ملفات الوسائط على النافذة"
+group_name = "اسم المجموعة"
+
+# Медиа-бин: контекстные меню карточки и группы.
+[bin.menu]
+rename = "إعادة تسمية…"
+unlock = "إزالة القفل"
+lock = "قفل: لا تُحرَّك البطاقات"
+ungroup = "فك التجميع"
+place = "وضع عند المؤشر"
+lock_toggle = "قفل / فتح"
+group_selected = "تجميع المحدد ({0})"
+group_one = "تجميع (قفل هذه البطاقة)"
+remove = "إزالة من المشروع"
+
+# Метры и мастер-фейдер превью.
+[meter]
+mute = "كتم مخرج المعاينة الرئيسي"
+fader = "مستوى المخرج الرئيسي: اسحب أو استخدم العجلة (Shift — دقيق)، نقر مزدوج — 0 dB"
+peak = "مستوى الذروة للمخرج الرئيسي، dBFS"
+
+# Редактор morpher'а.
+[mrph]
+title_batch = "دفعة مؤثرات morpher — الحدث {0}"
+title = "Morpher — الحدث {0}"
+frozen = "مُجمَّد عند الإنشاء: {0} مقطع. {1}"
+keep_source = "— إبقاء المصدر —"
+new_source = "المصدر الجديد:"
+not_in_bin = "الملف ليس في المشروع؟ أفلته في الصندوق ليظهر هنا."
+absolute_in = "source-in مطلق (بدل الإزاحة)"
+source_in_ms = "source-in بالمللي ثانية:"
+source_in_delta_ms = "إزاحة source-in بالمللي ثانية:"
+live_note = "المؤثرات تعمل مباشرة؛ الدمج يكتبها في المقاطع."
+video_fx = "مؤثرات فيديو (تُضاف إلى مقاطع الفيديو)"
+audio_fx = "مؤثرات صوت (تُضاف إلى مقاطع الصوت)"
+bake_batch = "دمج دفعة المؤثرات"
+bake_morph = "دمج التحويل"
+remove = "حذف morpher"
+delay_ms = "التأخير بالمللي ثانية:"
+
+# Реестр FX и пикер с поиском.
+[fxreg]
+add = "+ مؤثر…"
+search = "بحث…"
+nothing = "لا نتائج"
+
+# Категории эффектов в пикере.
+[fxreg.cat]
+motion = "حركة"
+geometry = "هندسة"
+blur = "ضبابية"
+key = "فصل اللون"
+style = "تنميط"
+glow = "توهج"
+video = "فيديو"
+volume = "مستوى الصوت"
+timestretch = "تمديد زمني"
+
+# Ключевые слова поиска. НЕ переупорядочиваются для арабского
+# (сравниваются с вводом пользователя), пишутся в нижнем регистре.
+[fxreg.kw]
+pan = "pan zoom تحريك تكبير قص تأطير crop"
+cammotion = "camera shake كاميرا اهتزاز حركة"
+mirror = "mirror flip مرآة انعكاس قلب"
+blur = "blur ضباب نعومة تمويه"
+greenscreen = "chroma key green شاشة خضراء شفافية"
+edges = "edges حواف حدود"
+noise = "noise grain ضجيج حبيبات فيلم"
+vhs = "vhs شريط قديم تشويش"
+glow = "glow bloom توهج إشراق"
+eventgrid = "grid tiles شبكة فسيفساء بلاط"
+gain = "volume gain db مستوى كسب"
+slowedreverb = "slowed reverb warp إبطاء صدى سرعة"
+
+# Редактор FX клипа.
+[fx]
+title = "مؤثرات {0} — المقطع {1}"
+kind_audio = "الصوت"
+kind_video = "الفيديو"
+off_suffix = "{0} (معطّل)"
+enable = "تفعيل المؤثر"
+disable = "تعطيل المؤثر (تجاوز)"
+remove_slot = "حذف الخانة"
+move_left = "نقل الخانة يسارًا"
+move_right = "نقل الخانة يمينًا"
+automation = "الأتمتة (t = الموضع على المصدر، نسبة المقطع 0..1):"
+copy_env = "نسخ المنحنى"
+paste_env = "لصق المنحنى"
+paste_env_hint = "استبدال كامل للإطارات المفتاحية (كما في v1)"
+kf_at_cursor = "+ إطار مفتاحي عند المؤشر"
+chain_empty = "السلسلة فارغة — أضف مؤثرًا"
+done = "تم"
+cancel = "إلغاء (استرجاع)"
+mode = "الوضع:"
+keyframes_n = "الإطارات المفتاحية: {0} (فارغ = تقريب من 1.0 إلى 1.35 كما في v1)"
+add_kf = "+ إطار مفتاحي"
+drop_last = "- الأخير"
+horizontal = "أفقي"
+vertical = "رأسي"
+radius = "نصف القطر:"
+key_color = "اللون المفتاح:"
+tolerance = "التساهل:"
+softness = "النعومة:"
+threshold = "العتبة:"
+rgb_shift = "إزاحة RGB:"
+strength = "الشدة:"
+columns = "الأعمدة:"
+rows = "الصفوف:"
+center = "توسيط"
+
+# Диалог настроек рендера и окно прогресса.
+[render]
+already_running = "هناك تصدير جارٍ بالفعل"
+summary = "{0} إطار فيديو، {1} إطار صوت، underruns {2}، المرمّز {3}"
+settings_title = "إعدادات التصدير"
+video_codec = "مرمّز الفيديو:"
+encoder_auto = "تلقائي (العتاد أولًا)"
+quality = "الجودة:"
+bitrate = "معدل البت"
+mbps_suffix = " Mbit/s"
+audio_bitrate = "معدل بت الصوت:"
+resolution = "الدقة:"
+res_project = "المشروع ({0}×{1})"
+audio = "الصوت:"
+container = "الحاوية:"
+start = "التصدير…"
+cancel = "إلغاء"
+progress_title = "التصدير إلى MP4"
+file = "الملف: {0}"
+encoder_default = "مرمّز تلقائي"
+phase_video = "الفيديو"
+phase_audio = "الصوت"
+phase_finalize = "الإنهاء (faststart)…"
+phase_done = "تم"
+phase = "المرحلة:"
+speed = "السرعة: الأدنى {0}×  المتوسط {1}×  الحالي {2}×  الأقصى {3}×"
+counters = "فيديو {0}/{1}  صوت {2}/{3}  |  {4}× زمن حقيقي  |  مضى {5} ثانية، بقي نحو {6} ثانية"
+resume = "متابعة"
+pause = "إيقاف مؤقت"
+paused = "متوقف مؤقتًا"
+done_msg = "تم: {0}"
+error_msg = "خطأ: {0}"
+close = "إغلاق"
+
+# Подсказки главного окна (правый низ статусбара).
+[hint]
+preview_detached = "المعاينة في نافذة منفصلة (أغلقها لإرجاعها)"
+morph_place = "Morpher: انقر مسار Morph البنفسجي لوضع الكتلة (Esc — إلغاء)"
+drop_here = "أفلت — يسقط المقطع تحت الفأرة (المسار مُبرز)"
+idle = "أفلت ملف وسائط على النافذة — يسقط المقطع تحت الفأرة"
+preview_click = "نقر — تشغيل/إيقاف، نقر مزدوج — فصل المعاينة في نافذة"
+speed = "الشريط العلوي — سرعة ثابتة، السفلي — shuttle (يعود عند الإفلات)، نقر مزدوج — 1×"
+fps = "معدل إطارات المشروع"
+resolution = "دقة المشروع (Max — حسب أكبر مصدر)"
+preview_quality = "جودة المعاينة: نسبة من دقة المشروع (أقل — أسرع)"
+smoothing = "تنعيم خطي للمعاينة (معطّل — بكسلات حادة)"
+economy = "لبطاقات الرسوم الضعيفة: نصف عدد عمليات الرسم أثناء التشغيل"
+
+# Палитра поиска по проекту.
+[search]
+field = "علامة، وسائط، مسار…"
+marker = "علامة"
+media = "وسائط"
+track = "مسار"
+clip = "مقطع"
+group = "مجموعة"
+nothing = "لا نتائج"
+marker_at = "علامة {0} ثانية"
+clip_at = "{0} @ {1} ثانية"
+
+# Разовые сообщения note()/warn(). Согласования с числом НЕТ:
+# пишем «существительное: N» (правило Р.19, см. README).
+[msg]
+autosave_failed = "فشل الحفظ التلقائي: {0}"
+morph_cancelled = "أُلغي وضع morpher"
+empty_lanes = "لا أحداث على هذه المسارات — ترتيب الفارغة لا يهم"
+last_lane = "لا يمكن حذف المسار الأخير"
+nothing_to_copy = "لا شيء لنسخه (لا منطقة ولا تحديد)"
+clips_copied = "المقاطع المنسوخة: {0}"
+clipboard_empty = "الحافظة فارغة"
+no_events_here = "لا أحداث تحت المؤشر"
+region_misses = "المنطقة لا تتقاطع مع أي مقطع"
+cursor_outside = "المؤشر خارج المقطع المحدد"
+pick_clip = "حدد مقطعًا"
+no_other_kind = "لا يوجد حدث من النوع الآخر بالجوار"
+already_linked = "مرتبطان بالفعل"
+av_linked = "تم ربط الصوت والصورة"
+open_failed = "تعذر الفتح: {0}"
+saved = "تم الحفظ: {0}"
+save_failed = "خطأ في الحفظ: {0}"
+nothing_to_morph = "لا شيء للتحويل: حدد منطقة فوق مقاطع أو حدد مقطعًا"
+morph_click_lane = "Morpher: انقر مسار Morph البنفسجي (Esc — إلغاء)"
+nothing_to_cut = "لا شيء للقص: لم يُحدَّد مقطع"
+added = "أُضيف: {0}"
+autosave_restored = "استُعيد الحفظ التلقائي لمشروع بلا اسم"
+open_a_project = "افتح مشروعًا: kt-app <file.ktproj> أو أفلته على النافذة"
+software_render = "لا تسريع رسومي (معالجة برمجية) — قد تتباطأ الواجهة، وتوهج المعاينة معطّل"
+
+# Заголовки системных файловых диалогов.
+[dialog]
+open_project = "فتح مشروع"
+save_project = "حفظ المشروع"
+
+# Перф-панель и окно диагностики.
+[perf]
+loading = "جارٍ التحميل…"
+smoothing = "تنعيم"
+economy = "واجهة موفرة (30 إطارًا في الثانية أثناء التشغيل)"
+title = "الأداء"
+cache_mb = "الذاكرة {0}/{1} MB"
+preview_res = "معاينة {0}×{1}"
+clips_n = "مقاطع {0}"
+media_n = "وسائط {0}"
+v_shown = "V-معروض {0}"
+v_skipped = "V-تخطي/رجوع {0}/{1}"
+region_s = "منطقة {0}–{1} ثانية"
+cache_short = "ذاكرة: {0}/{1} MB"
+rate_stop = "0 (متوقف)"
+graph_quality = "الجودة (FPS / hit%)"
+graph_decode = "نشاط FFmpeg (/ث)"
+graph_churn = "دوران الذاكرة (/ث)"
+cache_occupancy = "استخدام ذاكرة الفيديو: {0}% ({1} / {2} MB)"
+no_read_drops = "| مجموع no-read drops: {0}"
+log_title = "سجل المشكلات"
+log_clear = "مسح"
+graph_reset = "تصفير الرسوم"
+log_empty = "لم تُلاحظ مشكلات"
+
+# Пороговые предупреждения в журнале проблем.
+[perf.note]
+render_underruns = "render underruns +{0} (المجموع {1})"
+callback_underruns = "callback underruns +{0} (المجموع {1})"
+eviction_spike = "ذروة eviction: {0}/ث — الذاكرة ضيقة"
+prefetch_thrash = "{0} مدخلات ذاكرة أُسقطت قبل أول قراءة (prefetch thrash)"
+low_video_hit = "إصابة الفيديو {0}% أثناء التشغيل — فك الترميز لا يلحق"
+offline_changed = "تغيّر توفر الوسائط: غير متصل {0}"

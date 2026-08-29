@@ -1,0 +1,393 @@
+# Каталог перевода Kinotrain. Правила — i18n/README.md.
+# Формат: строгое подмножество TOML, значения только в одну строку.
+# СОБРАН автоматически на шаге массового переноса строк (Р.19);
+# дальше правится руками.
+
+# Самоназвания языков. Одинаковы во ВСЕХ каталогах (сборка проверяет).
+[lang]
+en = "English"
+ru = "Русский"
+es = "Español"
+zh = "中文（简体）"
+ar = "العربية"
+
+# Кнопки окна (свой титлбар, п.22 р.6).
+[win]
+close = "Close"
+restore = "Restore"
+maximize = "Maximize"
+minimize = "Minimize"
+untitled = "untitled"
+preview_title = "Kinotrain — Preview"
+notices_title = "Notices"
+notices_empty = "Nothing yet"
+search_title = "Search the project"
+diag_title = "Diagnostics"
+
+[menu.file]
+title = "File"
+new = "New"
+open = "Open…"
+save = "Save"
+save_as = "Save As…"
+render = "Render to MP4…"
+quit = "Quit"
+
+[menu.edit]
+title = "Edit"
+undo = "Undo"
+redo = "Redo"
+copy = "Copy"
+paste = "Paste at playhead"
+delete = "Delete"
+cut_region = "Split / cut region"
+
+[menu.view]
+title = "View"
+detach_preview = "Detach preview"
+attach_preview = "Dock preview"
+economy = "Economy UI (30 fps while playing)"
+language = "Language"
+lang_auto = "Auto (system)"
+diagnostics = "Diagnostics…"
+notices = "Notices"
+
+# Тулбар: подсказки кнопок. Акселератор в скобках — часть подсказки.
+[tb]
+play_pause = "Play/Pause (Space)"
+back = "Back: marker / region / clip edge (A or Home; Shift — drag the left region edge)"
+forward = "Forward: marker / region / clip edge (D or End; Shift — drag the right region edge)"
+timecode_edit = "Digits go in right to left, Enter — jump, Esc — cancel"
+timecode = "Playhead position; double click or Ctrl+L — jump to timecode"
+marker = "Marker at playhead (M)"
+add_video_lane = "Add a video track"
+add_audio_lane = "Add an audio track"
+cut = "Split / cut region (S)"
+copy = "Copy (Ctrl+C)"
+paste = "Paste at playhead (Ctrl+V)"
+delete = "Delete (Del)"
+trim_start = "Trim start to playhead"
+trim_end = "Trim end to playhead"
+lane_up = "To the track above"
+lane_down = "To the track below"
+zoom_out = "Zoom out (Ctrl+wheel)"
+zoom_in = "Zoom in"
+region_in = "Region: start at playhead (I)"
+region_out = "Region: end at playhead (O)"
+region_clear = "Clear the region"
+loop_armed = "Loop is armed — select a region (L)"
+loop = "Loop the region (L)"
+undo = "Undo (Ctrl+Z)"
+redo = "Redo (Ctrl+Shift+Z)"
+render = "Render to MP4 (region or whole project)"
+search = "Search the project (Ctrl+F)"
+diag = "Diagnostics"
+save = "Save (Ctrl+S)"
+
+# Таймлайн: контекстное меню дорожки.
+[tl.lane]
+title = "Track {0}"
+delete = "Delete track"
+delete_n = "Delete track ({0} events)"
+rename = "Rename track…"
+insert_above = "Insert track above"
+insert_below = "Insert track below"
+morph_title = "Morph track M{0}"
+delete_morph_n = "Delete track ({0} morphers)"
+insert_morph_below = "Insert morph track below"
+add_video = "Add a video track"
+add_audio = "Add an audio track"
+add_morph = "Add a Morph track"
+
+# Таймлайн: подсказки зон (правый низ статусбара).
+[tl.hint]
+marker = "Marker: drag — move, right click — delete"
+region_edge = "Region edge: drag (I/O — set at playhead)"
+ruler = "Ruler: click and drag — scrub the playhead"
+lane_named = "{0}: drag — reorder, right click — add/remove"
+lane = "Track: drag — reorder, right click — add/remove"
+trim_start = "Trim the clip start"
+trim_end = "Trim the clip end"
+volume = "Clip volume: drag, double click — 0 dB"
+clip = "Clip: drag — move (Ctrl — no magnet), double click — FX, right click — menu, S — split"
+empty = "LMB — playhead, drag — region; wheel — scroll, Ctrl — zoom, Shift — tracks"
+
+# Таймлайн: подписи на morph-событиях.
+[tl.morph]
+batch = "FX batch ({0})"
+replace = "Morpher ({0})"
+
+# Таймлайн: подсказки полей ввода.
+[tl.field]
+marker_name_new = "marker name (optional)"
+marker_name = "marker name"
+lane_name = "track name"
+
+# Таймлайн: контекстные меню клипа, метки, региона.
+[tl.menu]
+copy = "Copy (Ctrl+C)"
+paste = "Paste (Ctrl+V)"
+delete = "Delete (Del)"
+split = "Split at playhead (S)"
+fx = "Effects…"
+reverse = "Reverse"
+unlink = "Unlink A/V"
+link = "Link A/V"
+reset_gain = "Reset volume (0 dB)"
+add_morpher = "Add morpher (freeze targets)…"
+add_fx_batch = "Add morpher FX batch…"
+bake_batch = "Bake the FX batch (write effects into clips)"
+bake_morph = "Bake the morph (write it into clips)"
+remove_morpher = "Delete morpher (Del)"
+morph_editor = "Morpher editor window…"
+marker_here = "Marker here"
+region_clear = "Clear the region"
+rename = "Rename…"
+remove_marker = "Delete marker"
+delete_in_region = "Delete clips in the region (Del)"
+punch_out = "Cut out the region interior"
+add_morpher_region = "Add morpher (clips in region)…"
+add_fx_batch_region = "Add morpher FX batch (clips in region)…"
+pick_something = "Select a region or a clip"
+
+# Медиа-бин: режимы, подсказки, пустое состояние.
+[bin]
+hint_free = "Free layout: cards move with the mouse"
+hint_grid = "Grid: cards arrange themselves"
+hint_group = "Group: click — select, right click — rename/lock/ungroup"
+empty = "empty — drop media files on the window"
+group_name = "group name"
+
+# Медиа-бин: контекстные меню карточки и группы.
+[bin.menu]
+rename = "Rename…"
+unlock = "Remove the lock"
+lock = "Lock: do not move cards"
+ungroup = "Ungroup"
+place = "Place at playhead"
+lock_toggle = "Lock / unlock"
+group_selected = "Group the selected ({0})"
+group_one = "Group (lock this card)"
+remove = "Remove from the project"
+
+# Метры и мастер-фейдер превью.
+[meter]
+mute = "Mute the preview master"
+fader = "Preview master volume: drag or wheel (Shift — fine), double click — 0 dB"
+peak = "Master peak level, dBFS"
+
+# Редактор morpher'а.
+[mrph]
+title_batch = "Morpher FX batch — event {0}"
+title = "Morpher — event {0}"
+frozen = "Frozen at creation: {0} clip(s). {1}"
+keep_source = "— keep the source —"
+new_source = "New source:"
+not_in_bin = "File not in the project? Drop it into the bin and it shows up here."
+absolute_in = "Absolute source-in (instead of a shift)"
+source_in_ms = "Source-in, ms:"
+source_in_delta_ms = "Source-in shift, ms:"
+live_note = "Effects apply live; bake writes them into the clips."
+video_fx = "Video FX (appended to video clips)"
+audio_fx = "Audio FX (appended to audio clips)"
+bake_batch = "Bake the FX batch"
+bake_morph = "Bake the morph"
+remove = "Delete morpher"
+delay_ms = "Delay, ms:"
+
+# Реестр FX и пикер с поиском.
+[fxreg]
+add = "+ effect…"
+search = "search…"
+nothing = "nothing found"
+
+# Категории эффектов в пикере.
+[fxreg.cat]
+motion = "Motion"
+geometry = "Geometry"
+blur = "Blur"
+key = "Keying"
+style = "Stylize"
+glow = "Glow"
+video = "Video"
+volume = "Volume"
+timestretch = "Time stretch"
+
+# Ключевые слова поиска. НЕ переупорядочиваются для арабского
+# (сравниваются с вводом пользователя), пишутся в нижнем регистре.
+[fxreg.kw]
+pan = "pan zoom crop framing"
+cammotion = "camera shake handheld motion"
+mirror = "mirror flip reflection"
+blur = "blur soft softness"
+greenscreen = "chroma key green transparency"
+edges = "edges outline contours"
+noise = "noise grain film"
+vhs = "vhs tape retro glitch"
+glow = "glow bloom"
+eventgrid = "grid mosaic tiles"
+gain = "volume gain db loudness"
+slowedreverb = "slowed reverb warp speed echo"
+
+# Редактор FX клипа.
+[fx]
+title = "{0} effects — clip {1}"
+kind_audio = "Audio"
+kind_video = "Video"
+off_suffix = "{0} (off)"
+enable = "Enable the effect"
+disable = "Disable the effect (bypass)"
+remove_slot = "Delete slot"
+move_left = "Move the slot left"
+move_right = "Move the slot right"
+automation = "Automation (t = position along the SOURCE, clip fraction 0..1):"
+copy_env = "Copy the envelope"
+paste_env = "Paste the envelope"
+paste_env_hint = "Full keyframe replacement (as in v1)"
+kf_at_cursor = "+ keyframe at playhead"
+chain_empty = "Chain is empty — add an effect"
+done = "Done"
+cancel = "Cancel (revert)"
+mode = "Mode:"
+keyframes_n = "Keyframes: {0} (empty = a 1.0 to 1.35 push as in v1)"
+add_kf = "+ keyframe"
+drop_last = "- last"
+horizontal = "Horizontal"
+vertical = "Vertical"
+radius = "Radius:"
+key_color = "Key:"
+tolerance = "Tolerance:"
+softness = "Softness:"
+threshold = "Threshold:"
+rgb_shift = "RGB shift:"
+strength = "Strength:"
+columns = "Columns:"
+rows = "Rows:"
+center = "Center"
+
+# Диалог настроек рендера и окно прогресса.
+[render]
+already_running = "a render is already running"
+summary = "{0} video frames, {1} audio frames, underruns {2}, encoder {3}"
+settings_title = "Render settings"
+video_codec = "Video codec:"
+encoder_auto = "Auto (hardware first)"
+quality = "Quality:"
+bitrate = "Bitrate"
+mbps_suffix = " Mbit/s"
+audio_bitrate = "Audio bitrate:"
+resolution = "Resolution:"
+res_project = "Project ({0}×{1})"
+audio = "Audio:"
+container = "Container:"
+start = "Render…"
+cancel = "Cancel"
+progress_title = "Render to MP4"
+file = "File: {0}"
+encoder_default = "auto encoder"
+phase_video = "Video"
+phase_audio = "Audio"
+phase_finalize = "Finalizing (faststart)…"
+phase_done = "Done"
+phase = "Phase:"
+speed = "Speed: min {0}×  avg {1}×  cur {2}×  max {3}×"
+counters = "Video {0}/{1}  Audio {2}/{3}  |  {4}× realtime  |  {5}s elapsed, ~{6}s left"
+resume = "Resume"
+pause = "Pause"
+paused = "paused"
+done_msg = "Done: {0}"
+error_msg = "Error: {0}"
+close = "Close"
+
+# Подсказки главного окна (правый низ статусбара).
+[hint]
+preview_detached = "preview is in a separate window (close it to bring it back)"
+morph_place = "Morpher: click the purple Morph track to place the block (Esc — cancel)"
+drop_here = "Release — the clip lands under the mouse (track highlighted)"
+idle = "drop a media file on the window — the clip lands under the mouse"
+preview_click = "Click — play/pause, double click — detach the preview into a window"
+speed = "Top strip — constant speed, bottom — shuttle (release to return), double click — 1×"
+fps = "Project frame rate"
+resolution = "Project resolution (Max — from the largest source)"
+preview_quality = "Preview quality: a fraction of the project resolution (less — faster)"
+smoothing = "Linear preview smoothing (off — hard pixels)"
+economy = "For weak GPUs: half the repaints while playing"
+
+# Палитра поиска по проекту.
+[search]
+field = "marker, media, track…"
+marker = "marker"
+media = "media"
+track = "track"
+clip = "clip"
+group = "group"
+nothing = "nothing found"
+marker_at = "marker {0}s"
+clip_at = "{0} @ {1}s"
+
+# Разовые сообщения note()/warn(). Согласования с числом НЕТ:
+# пишем «существительное: N» (правило Р.19, см. README).
+[msg]
+autosave_failed = "autosave failed: {0}"
+morph_cancelled = "Morpher placement cancelled"
+empty_lanes = "no events on those tracks — the order of empty ones does not matter"
+last_lane = "the last track cannot be deleted"
+nothing_to_copy = "nothing to copy (no region and no selection)"
+clips_copied = "clips copied: {0}"
+clipboard_empty = "the clipboard is empty"
+no_events_here = "no events under the playhead"
+region_misses = "the region does not intersect any clips"
+cursor_outside = "the playhead is outside the selected clip"
+pick_clip = "select a clip"
+no_other_kind = "no event of the other kind nearby"
+already_linked = "already linked"
+av_linked = "A/V linked"
+open_failed = "could not open: {0}"
+saved = "saved: {0}"
+save_failed = "save failed: {0}"
+nothing_to_morph = "Nothing to morph: select a region over clips, or a clip"
+morph_click_lane = "Morpher: click the purple Morph track (Esc — cancel)"
+nothing_to_cut = "nothing to cut: no clip selected"
+added = "added: {0}"
+autosave_restored = "Restored the autosave of an unnamed project"
+open_a_project = "Open a project: kt-app <file.ktproj> or drop it on the window"
+software_render = "No graphics acceleration (software render) — the UI may lag, preview glow is off"
+
+# Заголовки системных файловых диалогов.
+[dialog]
+open_project = "Open project"
+save_project = "Save project"
+
+# Перф-панель и окно диагностики.
+[perf]
+loading = "Loading…"
+smoothing = "Smoothing"
+economy = "Economy UI (30 fps while playing)"
+title = "Performance"
+cache_mb = "Cache {0}/{1} MB"
+preview_res = "Preview {0}×{1}"
+clips_n = "Clips {0}"
+media_n = "Media {0}"
+v_shown = "V-shown {0}"
+v_skipped = "V-skip/back {0}/{1}"
+region_s = "region {0}–{1}s"
+cache_short = "cache: {0}/{1} MB"
+rate_stop = "0 (stop)"
+graph_quality = "Quality (FPS / hit%)"
+graph_decode = "FFmpeg activity (/s)"
+graph_churn = "Cache churn (/s)"
+cache_occupancy = "Video cache usage: {0}% ({1} / {2} MB)"
+no_read_drops = "| no-read drops total: {0}"
+log_title = "Problem log"
+log_clear = "Clear"
+graph_reset = "Reset the graphs"
+log_empty = "no problems noticed"
+
+# Пороговые предупреждения в журнале проблем.
+[perf.note]
+render_underruns = "render underruns +{0} (total {1})"
+callback_underruns = "callback underruns +{0} (total {1})"
+eviction_spike = "eviction spike: {0}/s — the cache is too small"
+prefetch_thrash = "{0} cache entries dropped before the first read (prefetch thrash)"
+low_video_hit = "video hit {0}% while playing — decoding cannot keep up"
+offline_changed = "media availability changed: offline {0}"

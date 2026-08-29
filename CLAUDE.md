@@ -15,6 +15,7 @@ cargo test                 # conformance на реальных фикстура�
 cargo clippy --all-targets
 cargo run -p kt-app        # GUI
 cargo run -p kt-cli -- …   # headless-рендер/экспорт
+python3 scripts/subset-fonts.py  # сабсеты шрифтов CJK/арабского по каталогам перевода
 ./scripts/release-build.sh # релизный тарбол: dist-профиль (strip+LTO) в контейнере
                            # Ubuntu 22.04 → работает на glibc >= 2.35; внутри
                            # проверяются «ldd без libav*» и потолок GLIBC_
@@ -26,7 +27,7 @@ cargo run -p kt-cli -- …   # headless-рендер/экспорт
 ## Карта workspace
 
 ```
-src/apps/kt-app     eframe GUI: таймлайн, превью, cpal-вывод
+src/apps/kt-app     eframe GUI: таймлайн, превью, cpal-вывод, каталоги перевода i18n/
 src/apps/kt-cli     headless-рендер (детерминизм, golden-тесты, CI)
 src/libs/kt-time    тики 90 kHz, диапазоны, сетки fps/аудио-burst (без зависимостей)
 src/libs/kt-model   модель таймлайна, команды, undo, формат проекта (.ktproj)
@@ -90,6 +91,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |
 | kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей, t69/t71 негативные кэши тумб, t72/t74, t121 свечение и гашение метров) |
 | kt-app (вёрстка/интеракции) | **обязательно** kt-app `layout_tests.rs` (t76 панели/сепараторы/кромки/верх превью, t83 подсказки, t85 драг сверху, t86 края и минимум окна, t88 подмотка, t95 магнит, t96 грязность/loop, t97 метры и LED, t98 маска таймкода, t99 группы бина, t101 кнопки у краёв окна и сепаратор метров, t102 ярлык дорожки и шлейф курсора, t118 скролл бина, t119 Shift+A/D, t120 разгон пробелом, t122 дорожки из меню) + t77-t87 |
-| kt-app (любой текст в UI) | `font_tests.rs` t100 — глифы всех неASCII-символов обязаны быть в загружаемых шрифтах |
+| kt-app (любой текст в UI) | `font_tests.rs` t100 (глифы всех неASCII-символов, включая каталоги `i18n/*.toml`) + `i18n_tests.rs` t125/t126/t130/t131 + `layout_tests.rs` t127/t128/t129 |
+| каталоги `apps/kt-app/i18n/*.toml` | те же t100/t125/t128; новые иероглифы — пересобрать сабсеты `python3 scripts/subset-fonts.py` |
 
 Всё вместе: `cd src && cargo test --workspace` (плюс `cargo clippy`).

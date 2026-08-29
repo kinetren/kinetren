@@ -27,7 +27,7 @@ pub enum Axis {
 }
 
 pub struct RollingGraph {
-    pub title: &'static str,
+    pub title: crate::i18n::Key,
     pub series: Vec<Series>,
     pub axis: Axis,
     scale: f32,
@@ -38,7 +38,7 @@ const VALUE_W: f32 = 44.0;
 
 impl RollingGraph {
     pub fn new(
-        title: &'static str,
+        title: crate::i18n::Key,
         axis: Axis,
         series: Vec<(&'static str, egui::Color32, f32)>,
     ) -> Self {
@@ -76,7 +76,7 @@ impl RollingGraph {
 
     #[allow(clippy::too_many_lines)]
     pub fn draw(&mut self, ui: &mut egui::Ui, height: f32) {
-        ui.label(egui::RichText::new(self.title).small().strong());
+        ui.label(egui::RichText::new(crate::i18n::tr(self.title)).small().strong());
         let (rect, _) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
         let p = ui.painter_at(rect);

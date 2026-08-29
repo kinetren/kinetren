@@ -18,6 +18,12 @@ rtrb = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rfd = "0.15"
 serde_json.workspace = true
+# порядок арабского текста (Р.19): egui 0.36 шейпит вязь, но не переупорядочивает
+unicode-bidi = "0.3"
+
+# каталоги перевода компилируются в статические таблицы (apps/kt-app/build.rs)
+[build-dependencies]
+unicode-bidi = "0.3"
 
 # harness-тесты вёрстки и интеракций (правило п.9 р.8): без wgpu/snapshot —
 # чистый CPU, без окна и GPU

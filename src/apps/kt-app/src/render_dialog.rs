@@ -2,6 +2,7 @@
 //! лог, Cancel. Экспорт в фоне через export_mp4_with со СВЕЖИМИ
 //! FfmpegSource (не декодеры плеера); диапазон = регион, иначе весь проект.
 
+use crate::i18n::{k, tr};
 use crate::app::KtApp;
 use crate::util::{resolve_media_path, synth_pattern};
 use eframe::egui;
@@ -15,7 +16,7 @@ use std::sync::atomic::AtomicBool;
 
 pub enum RenderMsg {
     Progress(ExportProgress),
-    Done(Result<String, String>),
+    Done(Result<kt_engine::export::ExportStats, String>),
 }
 
 pub struct RenderJob {
@@ -25,7 +26,7 @@ pub struct RenderJob {
     pub started: std::time::Instant,
     pub progress: ExportProgress,
     pub out_path: String,
-    pub done: Option<Result<String, String>>,
+    pub done: Option<Result<kt_engine::export::ExportStats, String>>,
     /// Настройки запуска (для панели Output).
     pub opts: kt_engine::export::ExportOptions,
     pub out_res: (u32, u32),
@@ -86,7 +87,7 @@ impl KtApp {
     /// Кнопка «Рендер»: открыть панель настроек (п.5 — выбор кодека и пр.).
     pub fn start_render(&mut self) {
         if self.render_job.is_some() {
-            self.note("рендер уже идёт");
+            self.note(tr(k::render::ALREADY_RUNNING));
             return;
         }
         self.render_setup.open = true;
@@ -157,15 +158,7 @@ impl KtApp {
                             let _ = txp.send(RenderMsg::Progress(p));
                         },
                     );
-                    let _ = tx.send(RenderMsg::Done(
-                        res.map(|s| {
-                            format!(
-                                "{} кадров видео, {} кадров аудио, underruns {}, энкодер {}",
-                                s.video_frames, s.audio_frames, s.underruns, s.encoder
-                            )
-                        })
-                        .map_err(|e| e.to_string()),
-                    ));
+                    let _ = tx.send(RenderMsg::Done(res.map_err(|e| e.to_string())));
                 })
                 .expect("spawn render");
         }
@@ -200,7 +193,8 @@ impl KtApp {
         let mut launch = false;
         let proj = self.model.project().settings.clone();
         let max_src = self.max_source_resolution();
-        egui::Window::new("Настройки рендера")
+        egui::Window::new(tr(k::render::SETTINGS_TITLE))
+            .id(egui::Id::new("kt_render_settings"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -209,18 +203,18 @@ impl KtApp {
                 egui::Grid::new("render_setup").num_columns(2).spacing([12.0, 8.0]).show(
                     ui,
                     |ui| {
-                        ui.label("Видео-кодек:");
+                        ui.label(tr(k::render::VIDEO_CODEC));
                         let encoders = kt_media::muxer::available_encoders();
                         let sel = self
                             .render_setup
                             .encoder
                             .clone()
-                            .unwrap_or_else(|| "Авто (hw-приоритет)".into());
+                            .unwrap_or_else(|| tr(k::render::ENCODER_AUTO).to_string());
                         egui::ComboBox::from_id_salt("enc").selected_text(&sel).show_ui(ui, |ui| {
                             ui.selectable_value(
                                 &mut self.render_setup.encoder,
                                 None,
-                                "Авто (hw-приоритет)",
+                                tr(k::render::ENCODER_AUTO),
                             );
                             for e in &encoders {
                                 ui.selectable_value(
@@ -232,14 +226,14 @@ impl KtApp {
                         });
                         ui.end_row();
 
-                        ui.label("Качество:");
+                        ui.label(tr(k::render::QUALITY));
                         ui.horizontal(|ui| {
                             let mut by_bitrate = self.render_setup.video_bitrate.is_some();
                             if ui.selectable_label(!by_bitrate, "CRF").clicked() {
                                 by_bitrate = false;
                                 self.render_setup.video_bitrate = None;
                             }
-                            if ui.selectable_label(by_bitrate, "Битрейт").clicked()
+                            if ui.selectable_label(by_bitrate, tr(k::render::BITRATE)).clicked()
                                 && self.render_setup.video_bitrate.is_none()
                             {
                                 self.render_setup.video_bitrate = Some(8_000_000);
@@ -250,7 +244,7 @@ impl KtApp {
                                     if ui
                                         .add(
                                             egui::Slider::new(&mut mbps, 0.5..=80.0)
-                                                .suffix(" Мбит/с")
+                                                .suffix(tr(k::render::MBPS_SUFFIX))
                                                 .logarithmic(true),
                                         )
                                         .changed()
@@ -268,7 +262,7 @@ impl KtApp {
                         });
                         ui.end_row();
 
-                        ui.label("Аудио-битрейт:");
+                        ui.label(tr(k::render::AUDIO_BITRATE));
                         egui::ComboBox::from_id_salt("abr")
                             .selected_text(format!(
                                 "{} kbps",
@@ -285,17 +279,19 @@ impl KtApp {
                             });
                         ui.end_row();
 
-                        ui.label("Разрешение:");
+                        ui.label(tr(k::render::RESOLUTION));
                         let cur = self
                             .render_setup
                             .resolution
                             .map(|(w, h)| format!("{w}×{h}"))
-                            .unwrap_or_else(|| format!("Проект ({}×{})", proj.width, proj.height));
+                            .unwrap_or_else(|| {
+                                crate::tf!(k::render::RES_PROJECT, proj.width, proj.height)
+                            });
                         egui::ComboBox::from_id_salt("rres").selected_text(cur).show_ui(ui, |ui| {
                             ui.selectable_value(
                                 &mut self.render_setup.resolution,
                                 None,
-                                format!("Проект ({}×{})", proj.width, proj.height),
+                                crate::tf!(k::render::RES_PROJECT, proj.width, proj.height),
                             );
                             for r in [(1280u32, 720u32), (1920, 1080), (2560, 1440), (3840, 2160)] {
                                 ui.selectable_value(
@@ -314,20 +310,20 @@ impl KtApp {
                         });
                         ui.end_row();
 
-                        ui.label("Аудио:");
+                        ui.label(tr(k::render::AUDIO));
                         ui.weak("AAC, 48 kHz stereo");
                         ui.end_row();
-                        ui.label("Контейнер:");
+                        ui.label(tr(k::render::CONTAINER));
                         ui.weak("MP4 (+faststart)");
                         ui.end_row();
                     },
                 );
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.button("Рендер…").clicked() {
+                    if ui.button(tr(k::render::START)).clicked() {
                         launch = true;
                     }
-                    if ui.button("Отмена").clicked() {
+                    if ui.button(tr(k::render::CANCEL)).clicked() {
                         self.render_setup.open = false;
                     }
                 });
@@ -350,19 +346,20 @@ impl KtApp {
             }
         }
         let mut close = false;
-        egui::Window::new("Рендер в MP4")
+        egui::Window::new(tr(k::render::PROGRESS_TITLE))
+            .id(egui::Id::new("kt_render_progress"))
             .collapsible(false)
             .resizable(true)
             .default_size([560.0, 300.0])
             .default_pos(ctx.content_rect().center() - egui::vec2(280.0, 150.0))
             .show(ctx, |ui| {
-                ui.label(format!("Файл: {}", job.out_path));
+                ui.label(crate::tf!(k::render::FILE, job.out_path));
                 ui.weak(format!(
                     "{}×{} @ {} fps  |  {}  CRF {}  |  AAC {} kbps  |  MP4 +faststart",
                     job.out_res.0,
                     job.out_res.1,
                     job.fps,
-                    job.opts.force_encoder.as_deref().unwrap_or("авто-энкодер"),
+                    job.opts.force_encoder.as_deref().unwrap_or(tr(k::render::ENCODER_DEFAULT)),
                     job.opts.quality,
                     job.opts.audio_bitrate / 1000,
                 ));
@@ -372,13 +369,13 @@ impl KtApp {
                     0.0
                 };
                 let phase = match job.progress.phase {
-                    kt_engine::export::ExportPhase::Video => "Видео",
-                    kt_engine::export::ExportPhase::Audio => "Аудио",
-                    kt_engine::export::ExportPhase::Finalize => "Финализация (faststart)…",
-                    kt_engine::export::ExportPhase::Done => "Готово",
+                    kt_engine::export::ExportPhase::Video => tr(k::render::PHASE_VIDEO),
+                    kt_engine::export::ExportPhase::Audio => tr(k::render::PHASE_AUDIO),
+                    kt_engine::export::ExportPhase::Finalize => tr(k::render::PHASE_FINALIZE),
+                    kt_engine::export::ExportPhase::Done => tr(k::render::PHASE_DONE),
                 };
                 ui.horizontal(|ui| {
-                    ui.label("Фаза:");
+                    ui.label(tr(k::render::PHASE));
                     ui.strong(phase);
                 });
                 ui.add(egui::ProgressBar::new(frac).show_percentage());
@@ -404,12 +401,12 @@ impl KtApp {
                     }
                 }
                 if job.speed_n > 0 {
-                    ui.weak(format!(
-                        "Скорость: min {:.2}×  avg {:.2}×  cur {:.2}×  max {:.2}×",
-                        if job.speed_min == f64::MAX { 0.0 } else { job.speed_min },
-                        job.speed_sum / job.speed_n as f64,
-                        speed,
-                        job.speed_max,
+                    ui.weak(crate::tf!(
+                        k::render::SPEED,
+                        format!("{:.2}", if job.speed_min == f64::MAX { 0.0 } else { job.speed_min }),
+                        format!("{:.2}", job.speed_sum / job.speed_n as f64),
+                        format!("{speed:.2}"),
+                        format!("{:.2}", job.speed_max),
                     ));
                 }
                 let eta = if frac > 0.01 && job.done.is_none() {
@@ -417,44 +414,57 @@ impl KtApp {
                 } else {
                     0.0
                 };
-                ui.label(format!(
-                    "Видео {}/{}  Аудио {}/{}  |  {:.2}× realtime  |  прошло {:.0}с, осталось ~{:.0}с",
+                ui.label(crate::tf!(
+                    k::render::COUNTERS,
                     job.progress.video_frames,
                     job.progress.total_video_frames,
                     job.progress.audio_frames,
                     job.progress.total_audio_frames,
-                    speed,
-                    elapsed,
-                    eta
+                    format!("{speed:.2}"),
+                    format!("{elapsed:.0}"),
+                    format!("{eta:.0}"),
                 ));
                 ui.add_space(4.0);
                 match &job.done {
                     None => {
                         ui.horizontal(|ui| {
                             let paused = job.pause.load(std::sync::atomic::Ordering::Acquire);
-                            if ui.button(if paused { "Продолжить" } else { "Пауза" }).clicked() {
+                            if ui.button(if paused { tr(k::render::RESUME) } else { tr(k::render::PAUSE) }).clicked() {
                                 job.pause.store(!paused, std::sync::atomic::Ordering::Release);
                             }
                             if paused {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(255, 200, 100),
-                                    "на паузе",
+                                    tr(k::render::PAUSED),
                                 );
                             }
-                            if ui.button("Отмена").clicked() {
+                            if ui.button(tr(k::render::CANCEL)).clicked() {
                                 job.cancel.store(true, std::sync::atomic::Ordering::Release);
                             }
                         });
                     }
-                    Some(Ok(msg)) => {
-                        ui.colored_label(egui::Color32::from_rgb(120, 230, 120), format!("Готово: {msg}"));
+                    Some(Ok(stats)) => {
+                        let msg = crate::tf!(
+                            k::render::SUMMARY,
+                            stats.video_frames,
+                            stats.audio_frames,
+                            stats.underruns,
+                            stats.encoder
+                        );
+                        ui.colored_label(
+                            egui::Color32::from_rgb(120, 230, 120),
+                            crate::tf!(k::render::DONE_MSG, msg),
+                        );
                         if ui.button("OK").clicked() {
                             close = true;
                         }
                     }
                     Some(Err(e)) => {
-                        ui.colored_label(egui::Color32::from_rgb(255, 120, 120), format!("Ошибка: {e}"));
-                        if ui.button("Закрыть").clicked() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(255, 120, 120),
+                            crate::tf!(k::render::ERROR_MSG, e),
+                        );
+                        if ui.button(tr(k::render::CLOSE)).clicked() {
                             close = true;
                         }
                     }

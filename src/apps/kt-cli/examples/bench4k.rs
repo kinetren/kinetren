@@ -16,7 +16,7 @@ fn main() {
     let el = t.elapsed();
     let (reopens, decoded) = src.decode_debug_stats();
     eprintln!(
-        "span 60@640x360: {:?} ({:.1}x realtime), кадров {n}, reopens {reopens}, decoded {decoded}",
+        "span 60@640x360: {:?} ({:.1}x realtime), frames {n}, reopens {reopens}, decoded {decoded}",
         el,
         2.0 / el.as_secs_f64()
     );
@@ -27,7 +27,7 @@ fn main() {
     let mut n2 = 0;
     src.read_video_span(&keys2, q, &mut |_, _| n2 += 1).unwrap();
     eprintln!(
-        "span назад+60: {:?} ({:.1}x realtime), кадров {n2}",
+        "span back+60: {:?} ({:.1}x realtime), frames {n2}",
         t.elapsed(),
         2.0 / t.elapsed().as_secs_f64()
     );

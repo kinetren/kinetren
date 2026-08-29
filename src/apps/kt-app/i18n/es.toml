@@ -1,0 +1,393 @@
+# Каталог перевода Kinotrain. Правила — i18n/README.md.
+# Формат: строгое подмножество TOML, значения только в одну строку.
+# СОБРАН автоматически на шаге массового переноса строк (Р.19);
+# дальше правится руками.
+
+# Самоназвания языков. Одинаковы во ВСЕХ каталогах (сборка проверяет).
+[lang]
+en = "English"
+ru = "Русский"
+es = "Español"
+zh = "中文（简体）"
+ar = "العربية"
+
+# Кнопки окна (свой титлбар, п.22 р.6).
+[win]
+close = "Cerrar"
+restore = "Restaurar"
+maximize = "Maximizar"
+minimize = "Minimizar"
+untitled = "sin título"
+preview_title = "Kinotrain — Previsualización"
+notices_title = "Avisos"
+notices_empty = "Todavía nada"
+search_title = "Buscar en el proyecto"
+diag_title = "Diagnóstico"
+
+[menu.file]
+title = "Archivo"
+new = "Nuevo"
+open = "Abrir…"
+save = "Guardar"
+save_as = "Guardar como…"
+render = "Renderizar a MP4…"
+quit = "Salir"
+
+[menu.edit]
+title = "Editar"
+undo = "Deshacer"
+redo = "Rehacer"
+copy = "Copiar"
+paste = "Pegar en el cursor"
+delete = "Eliminar"
+cut_region = "Dividir / cortar región"
+
+[menu.view]
+title = "Ver"
+detach_preview = "Separar previsualización"
+attach_preview = "Acoplar previsualización"
+economy = "Interfaz económica (30 fps al reproducir)"
+language = "Idioma"
+lang_auto = "Automático (sistema)"
+diagnostics = "Diagnóstico…"
+notices = "Avisos"
+
+# Тулбар: подсказки кнопок. Акселератор в скобках — часть подсказки.
+[tb]
+play_pause = "Reproducir/Pausa (Espacio)"
+back = "Atrás: marcador / región / borde de clip (A o Inicio; Mayús — arrastra el borde izquierdo)"
+forward = "Adelante: marcador / región / borde de clip (D o Fin; Mayús — arrastra el borde derecho)"
+timecode_edit = "Los dígitos entran de derecha a izquierda, Enter — ir, Esc — cancelar"
+timecode = "Posición del cursor; doble clic o Ctrl+L — ir al código de tiempo"
+marker = "Marcador en el cursor (M)"
+add_video_lane = "Añadir pista de vídeo"
+add_audio_lane = "Añadir pista de audio"
+cut = "Dividir / cortar región (S)"
+copy = "Copiar (Ctrl+C)"
+paste = "Pegar en el cursor (Ctrl+V)"
+delete = "Eliminar (Supr)"
+trim_start = "Recortar inicio hasta el cursor"
+trim_end = "Recortar final hasta el cursor"
+lane_up = "A la pista de arriba"
+lane_down = "A la pista de abajo"
+zoom_out = "Alejar (Ctrl+rueda)"
+zoom_in = "Acercar"
+region_in = "Región: inicio en el cursor (I)"
+region_out = "Región: final en el cursor (O)"
+region_clear = "Quitar la región"
+loop_armed = "Bucle armado — selecciona una región (L)"
+loop = "Bucle de la región (L)"
+undo = "Deshacer (Ctrl+Z)"
+redo = "Rehacer (Ctrl+Mayús+Z)"
+render = "Renderizar a MP4 (región o proyecto)"
+search = "Buscar en el proyecto (Ctrl+F)"
+diag = "Diagnóstico"
+save = "Guardar (Ctrl+S)"
+
+# Таймлайн: контекстное меню дорожки.
+[tl.lane]
+title = "Pista {0}"
+delete = "Eliminar pista"
+delete_n = "Eliminar pista ({0} eventos)"
+rename = "Renombrar pista…"
+insert_above = "Insertar pista arriba"
+insert_below = "Insertar pista abajo"
+morph_title = "Pista Morph M{0}"
+delete_morph_n = "Eliminar pista ({0} morphers)"
+insert_morph_below = "Insertar pista morph abajo"
+add_video = "Añadir pista de vídeo"
+add_audio = "Añadir pista de audio"
+add_morph = "Añadir pista Morph"
+
+# Таймлайн: подсказки зон (правый низ статусбара).
+[tl.hint]
+marker = "Marcador: arrastra — mover, clic derecho — eliminar"
+region_edge = "Borde de región: arrastra (I/O — fijar en el cursor)"
+ruler = "Regla: clic y arrastra — mover el cursor"
+lane_named = "{0}: arrastra — reordenar, clic derecho — añadir/quitar"
+lane = "Pista: arrastra — reordenar, clic derecho — añadir/quitar"
+trim_start = "Recortar el inicio del clip"
+trim_end = "Recortar el final del clip"
+volume = "Volumen del clip: arrastra, doble clic — 0 dB"
+clip = "Clip: arrastra — mover (Ctrl — sin imán), doble clic — FX, clic derecho — menú, S — dividir"
+empty = "Clic izq. — cursor, arrastra — región; rueda — desplazar, Ctrl — zoom, Mayús — pistas"
+
+# Таймлайн: подписи на morph-событиях.
+[tl.morph]
+batch = "Lote FX ({0})"
+replace = "Morpher ({0})"
+
+# Таймлайн: подсказки полей ввода.
+[tl.field]
+marker_name_new = "nombre del marcador (opcional)"
+marker_name = "nombre del marcador"
+lane_name = "nombre de la pista"
+
+# Таймлайн: контекстные меню клипа, метки, региона.
+[tl.menu]
+copy = "Copiar (Ctrl+C)"
+paste = "Pegar (Ctrl+V)"
+delete = "Eliminar (Supr)"
+split = "Dividir en el cursor (S)"
+fx = "Efectos…"
+reverse = "Invertir"
+unlink = "Desvincular A/V"
+link = "Vincular A/V"
+reset_gain = "Restablecer volumen (0 dB)"
+add_morpher = "Añadir morpher (congelar objetivos)…"
+add_fx_batch = "Añadir lote FX de morpher…"
+bake_batch = "Aplicar el lote FX a los clips"
+bake_morph = "Aplicar el morph a los clips"
+remove_morpher = "Eliminar morpher (Supr)"
+morph_editor = "Ventana del editor de morpher…"
+marker_here = "Marcador aquí"
+region_clear = "Quitar la región"
+rename = "Renombrar…"
+remove_marker = "Eliminar marcador"
+delete_in_region = "Eliminar clips de la región (Supr)"
+punch_out = "Recortar el interior de la región"
+add_morpher_region = "Añadir morpher (clips de la región)…"
+add_fx_batch_region = "Añadir lote FX de morpher (clips de la región)…"
+pick_something = "Selecciona una región o un clip"
+
+# Медиа-бин: режимы, подсказки, пустое состояние.
+[bin]
+hint_free = "Disposición libre: las tarjetas se mueven con el ratón"
+hint_grid = "Cuadrícula: las tarjetas se ordenan solas"
+hint_group = "Grupo: clic — seleccionar, clic derecho — renombrar/bloquear/desagrupar"
+empty = "vacío — arrastra archivos multimedia a la ventana"
+group_name = "nombre del grupo"
+
+# Медиа-бин: контекстные меню карточки и группы.
+[bin.menu]
+rename = "Renombrar…"
+unlock = "Quitar el bloqueo"
+lock = "Bloqueo: no mover las tarjetas"
+ungroup = "Desagrupar"
+place = "Colocar en el cursor"
+lock_toggle = "Bloquear / desbloquear"
+group_selected = "Agrupar lo seleccionado ({0})"
+group_one = "Agrupar (bloquear esta tarjeta)"
+remove = "Quitar del proyecto"
+
+# Метры и мастер-фейдер превью.
+[meter]
+mute = "Silenciar el máster de previsualización"
+fader = "Volumen máster: arrastra o rueda (Mayús — fino), doble clic — 0 dB"
+peak = "Nivel de pico del máster, dBFS"
+
+# Редактор morpher'а.
+[mrph]
+title_batch = "Lote FX de morpher — evento {0}"
+title = "Morpher — evento {0}"
+frozen = "Congelado al crear: {0} clip(s). {1}"
+keep_source = "— mantener la fuente —"
+new_source = "Nueva fuente:"
+not_in_bin = "¿El archivo no está en el proyecto? Arrástralo al bin y aparecerá aquí."
+absolute_in = "Source-in absoluto (en vez de desplazamiento)"
+source_in_ms = "Source-in, ms:"
+source_in_delta_ms = "Desplazamiento de source-in, ms:"
+live_note = "Los efectos se aplican en vivo; bake los escribe en los clips."
+video_fx = "FX de vídeo (se añaden a los clips de vídeo)"
+audio_fx = "FX de audio (se añaden a los clips de audio)"
+bake_batch = "Aplicar el lote FX"
+bake_morph = "Aplicar el morph"
+remove = "Eliminar morpher"
+delay_ms = "Delay, ms:"
+
+# Реестр FX и пикер с поиском.
+[fxreg]
+add = "+ efecto…"
+search = "buscar…"
+nothing = "no se encontró nada"
+
+# Категории эффектов в пикере.
+[fxreg.cat]
+motion = "Movimiento"
+geometry = "Geometría"
+blur = "Desenfoque"
+key = "Incrustación"
+style = "Estilizar"
+glow = "Resplandor"
+video = "Vídeo"
+volume = "Volumen"
+timestretch = "Estiramiento de tiempo"
+
+# Ключевые слова поиска. НЕ переупорядочиваются для арабского
+# (сравниваются с вводом пользователя), пишутся в нижнем регистре.
+[fxreg.kw]
+pan = "pan zoom recorte encuadre crop"
+cammotion = "camara temblor movimiento shake handheld"
+mirror = "espejo reflejo volteo mirror flip"
+blur = "desenfoque suavizado blur soft"
+greenscreen = "croma clave verde transparencia chroma key green"
+edges = "bordes contornos edges"
+noise = "ruido grano pelicula noise grain"
+vhs = "vhs cinta retro glitch"
+glow = "resplandor brillo glow bloom"
+eventgrid = "rejilla mosaico baldosas grid tiles"
+gain = "volumen ganancia db sonoridad gain"
+slowedreverb = "ralentizado reverb warp velocidad eco slowed"
+
+# Редактор FX клипа.
+[fx]
+title = "Efectos de {0} — clip {1}"
+kind_audio = "audio"
+kind_video = "vídeo"
+off_suffix = "{0} (desact.)"
+enable = "Activar el efecto"
+disable = "Desactivar el efecto (bypass)"
+remove_slot = "Eliminar la ranura"
+move_left = "Mover la ranura a la izquierda"
+move_right = "Mover la ranura a la derecha"
+automation = "Automatización (t = posición en la FUENTE, fracción del clip 0..1):"
+copy_env = "Copiar la envolvente"
+paste_env = "Pegar la envolvente"
+paste_env_hint = "Reemplazo completo de fotogramas clave (como en v1)"
+kf_at_cursor = "+ fotograma clave en el cursor"
+chain_empty = "La cadena está vacía — añade un efecto"
+done = "Hecho"
+cancel = "Cancelar (revertir)"
+mode = "Modo:"
+keyframes_n = "Fotogramas clave: {0} (vacío = zoom 1.0 a 1.35 como en v1)"
+add_kf = "+ fotograma clave"
+drop_last = "- el último"
+horizontal = "Horizontal"
+vertical = "Vertical"
+radius = "Radio:"
+key_color = "Clave:"
+tolerance = "Tolerancia:"
+softness = "Suavidad:"
+threshold = "Umbral:"
+rgb_shift = "Desfase RGB:"
+strength = "Intensidad:"
+columns = "Columnas:"
+rows = "Filas:"
+center = "Centrar"
+
+# Диалог настроек рендера и окно прогресса.
+[render]
+already_running = "ya hay un render en curso"
+summary = "{0} fotogramas de vídeo, {1} de audio, underruns {2}, codificador {3}"
+settings_title = "Ajustes de render"
+video_codec = "Códec de vídeo:"
+encoder_auto = "Auto (hardware primero)"
+quality = "Calidad:"
+bitrate = "Tasa de bits"
+mbps_suffix = " Mbit/s"
+audio_bitrate = "Tasa de audio:"
+resolution = "Resolución:"
+res_project = "Proyecto ({0}×{1})"
+audio = "Audio:"
+container = "Contenedor:"
+start = "Renderizar…"
+cancel = "Cancelar"
+progress_title = "Renderizar a MP4"
+file = "Archivo: {0}"
+encoder_default = "codificador automático"
+phase_video = "Vídeo"
+phase_audio = "Audio"
+phase_finalize = "Finalizando (faststart)…"
+phase_done = "Hecho"
+phase = "Fase:"
+speed = "Velocidad: min {0}×  media {1}×  actual {2}×  max {3}×"
+counters = "Vídeo {0}/{1}  Audio {2}/{3}  |  {4}× tiempo real  |  {5}s transcurridos, ~{6}s restantes"
+resume = "Continuar"
+pause = "Pausa"
+paused = "en pausa"
+done_msg = "Hecho: {0}"
+error_msg = "Error: {0}"
+close = "Cerrar"
+
+# Подсказки главного окна (правый низ статусбара).
+[hint]
+preview_detached = "la previsualización está en otra ventana (ciérrala para devolverla)"
+morph_place = "Morpher: haz clic en la pista Morph morada para colocar el bloque (Esc — cancelar)"
+drop_here = "Suelta — el clip cae bajo el ratón (pista resaltada)"
+idle = "arrastra un archivo a la ventana — el clip cae bajo el ratón"
+preview_click = "Clic — reproducir/pausa, doble clic — separar la previsualización"
+speed = "Banda superior — velocidad fija, inferior — shuttle (al soltar vuelve), doble clic — 1×"
+fps = "Fotogramas por segundo del proyecto"
+resolution = "Resolución del proyecto (Max — según la fuente mayor)"
+preview_quality = "Calidad de previsualización: fracción de la resolución (menos — más rápido)"
+smoothing = "Suavizado lineal de la previsualización (off — píxeles duros)"
+economy = "Para GPU modestas: la mitad de repintados al reproducir"
+
+# Палитра поиска по проекту.
+[search]
+field = "marcador, medio, pista…"
+marker = "marcador"
+media = "medio"
+track = "pista"
+clip = "clip"
+group = "grupo"
+nothing = "no se encontró nada"
+marker_at = "marcador {0}s"
+clip_at = "{0} @ {1}s"
+
+# Разовые сообщения note()/warn(). Согласования с числом НЕТ:
+# пишем «существительное: N» (правило Р.19, см. README).
+[msg]
+autosave_failed = "fallo el autoguardado: {0}"
+morph_cancelled = "Colocación del morpher cancelada"
+empty_lanes = "no hay eventos en esas pistas — el orden de las vacías da igual"
+last_lane = "no se puede eliminar la última pista"
+nothing_to_copy = "nada que copiar (no hay región ni selección)"
+clips_copied = "clips copiados: {0}"
+clipboard_empty = "el portapapeles está vacío"
+no_events_here = "no hay eventos bajo el cursor"
+region_misses = "la región no cruza ningún clip"
+cursor_outside = "el cursor está fuera del clip seleccionado"
+pick_clip = "selecciona un clip"
+no_other_kind = "no hay un evento del otro tipo cerca"
+already_linked = "ya están vinculados"
+av_linked = "A/V vinculados"
+open_failed = "no se pudo abrir: {0}"
+saved = "guardado: {0}"
+save_failed = "error al guardar: {0}"
+nothing_to_morph = "Nada que transformar: selecciona una región sobre clips, o un clip"
+morph_click_lane = "Morpher: haz clic en la pista Morph morada (Esc — cancelar)"
+nothing_to_cut = "nada que cortar: no hay clip seleccionado"
+added = "añadido: {0}"
+autosave_restored = "Se restauró el autoguardado de un proyecto sin nombre"
+open_a_project = "Abre un proyecto: kt-app <archivo.ktproj> o arrástralo a la ventana"
+software_render = "Sin aceleración gráfica (render por software) — la interfaz puede ir lenta, glow desactivado"
+
+# Заголовки системных файловых диалогов.
+[dialog]
+open_project = "Abrir proyecto"
+save_project = "Guardar proyecto"
+
+# Перф-панель и окно диагностики.
+[perf]
+loading = "Cargando…"
+smoothing = "Suavizado"
+economy = "Interfaz económica (30 fps al reproducir)"
+title = "Rendimiento"
+cache_mb = "Caché {0}/{1} MB"
+preview_res = "Previs. {0}×{1}"
+clips_n = "Clips {0}"
+media_n = "Medios {0}"
+v_shown = "V-mostrados {0}"
+v_skipped = "V-salt/atr {0}/{1}"
+region_s = "región {0}–{1}s"
+cache_short = "caché: {0}/{1} MB"
+rate_stop = "0 (parado)"
+graph_quality = "Calidad (FPS / hit%)"
+graph_decode = "Actividad de FFmpeg (/s)"
+graph_churn = "Rotación de caché (/s)"
+cache_occupancy = "Uso de la caché de vídeo: {0}% ({1} / {2} MB)"
+no_read_drops = "| no-read drops total: {0}"
+log_title = "Registro de problemas"
+log_clear = "Limpiar"
+graph_reset = "Reiniciar las gráficas"
+log_empty = "no se han detectado problemas"
+
+# Пороговые предупреждения в журнале проблем.
+[perf.note]
+render_underruns = "render underruns +{0} (total {1})"
+callback_underruns = "callback underruns +{0} (total {1})"
+eviction_spike = "pico de eviction: {0}/s — la caché se queda corta"
+prefetch_thrash = "{0} entradas de caché descartadas antes de la primera lectura (prefetch thrash)"
+low_video_hit = "hit de vídeo {0}% al reproducir — la decodificación no llega"
+offline_changed = "cambió la disponibilidad de medios: offline {0}"

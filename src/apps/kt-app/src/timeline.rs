@@ -3,6 +3,7 @@
 //! volume rail, стерео-волноформы, цвет клипа из хэша пути, офлайн-тинт,
 //! edge-autoscroll, контекст-меню, снап к маркерам/региону/клипам.
 
+use crate::i18n::{k, tr};
 use crate::app::KtApp;
 use eframe::egui;
 use kt_cache::BurstKind;
@@ -888,11 +889,11 @@ impl KtApp {
                         ClipKind::Video => format!("V{}", lane + 1),
                         ClipKind::Audio => format!("A{}", lane + 1),
                     };
-                    ui.label(egui::RichText::new(format!("Дорожка {name}")).strong());
+                    ui.label(egui::RichText::new(crate::tf!(k::tl::lane::TITLE, name)).strong());
                     let del_label = if n > 0 {
-                        format!("Удалить дорожку ({n} событ.)")
+                        crate::tf!(k::tl::lane::DELETE_N, n)
                     } else {
-                        "Удалить дорожку".into()
+                        tr(k::tl::lane::DELETE).to_string()
                     };
                     let lanes_of_kind = match kind {
                         ClipKind::Video => video_lanes,
@@ -907,7 +908,7 @@ impl KtApp {
                         kt_model::lane_order_remove(&mut self.lane_order, lk, lane);
                         ui.close();
                     }
-                    if ui.button("Переименовать дорожку…").clicked() {
+                    if ui.button(tr(k::tl::lane::RENAME)).clicked() {
                     let lk = match kind {
                         ClipKind::Video => LaneKind::Video,
                         ClipKind::Audio => LaneKind::Audio,
@@ -917,11 +918,11 @@ impl KtApp {
                     self.lane_edit_focus = true;
                     ui.close();
                 }
-                if ui.button("Вставить дорожку выше").clicked() {
+                if ui.button(tr(k::tl::lane::INSERT_ABOVE)).clicked() {
                         self.insert_lane_at(lk, lane);
                         ui.close();
                     }
-                    if ui.button("Вставить дорожку ниже").clicked() {
+                    if ui.button(tr(k::tl::lane::INSERT_BELOW)).clicked() {
                         self.insert_lane_at(lk, lane + 1);
                         ui.close();
                     }
@@ -929,11 +930,11 @@ impl KtApp {
                 if let Some(CtxTarget::MorphLane(lane)) = self.ctx_target {
                     let n =
                         self.model.project().morphers.iter().filter(|m| m.lane == lane).count();
-                    ui.label(egui::RichText::new(format!("Morph-дорожка M{}", lane + 1)).strong());
+                    ui.label(egui::RichText::new(crate::tf!(k::tl::lane::MORPH_TITLE, lane + 1)).strong());
                     let del_label = if n > 0 {
-                        format!("Удалить дорожку ({n} morph.)")
+                        crate::tf!(k::tl::lane::DELETE_MORPH_N, n)
                     } else {
-                        "Удалить дорожку".into()
+                        tr(k::tl::lane::DELETE).to_string()
                     };
                     if ui.button(del_label).clicked() {
                         if self.apply(Command::RemoveMorphLane { at: lane }) {
@@ -950,7 +951,7 @@ impl KtApp {
                         }
                         ui.close();
                     }
-                    if ui.button("Вставить morph-дорожку ниже").clicked() {
+                    if ui.button(tr(k::tl::lane::INSERT_MORPH_BELOW)).clicked() {
                         self.insert_lane_at(LaneKind::Morph, lane + 1);
                         ui.close();
                     }
@@ -1090,45 +1091,43 @@ impl KtApp {
             let mut hint_owned: Option<String> = None;
             if marker_at(self, pos).is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                zone_hint = Some("Маркер: тяни — сдвинуть, ПКМ — удалить");
+                zone_hint = Some(tr(k::tl::hint::MARKER));
             } else if region_edge_at(self, pos).is_some() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                zone_hint = Some("Граница региона: тяни (I/O — поставить от курсора)");
+                zone_hint = Some(tr(k::tl::hint::REGION_EDGE));
             } else if pos.y <= rect.top() + RULER_H {
-                zone_hint = Some("Линейка: клик и тяни — перемотка курсора");
+                zone_hint = Some(tr(k::tl::hint::RULER));
             } else if pos.x < rect.left() {
                 // полное имя дорожки — в подсказке (ярлык может быть усечён)
                 if let Some((k, l)) = geom.key_at_y(pos.y) {
                     let name = kt_model::lane_label(&self.lane_names, k, l);
-                    hint_owned = Some(format!(
-                        "{name}: тяни — поменять порядок, ПКМ — добавить/удалить"
-                    ));
+                    hint_owned = Some(crate::tf!(k::tl::hint::LANE_NAMED, name));
                 } else {
-                    zone_hint = Some("Дорожка: тяни — поменять порядок, ПКМ — добавить/удалить");
+                    zone_hint = Some(tr(k::tl::hint::LANE));
                 }
             } else {
                 match clip_at(self, pos) {
                     Some((_, ClipZone::TrimStart)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                        zone_hint = Some("Трим начала клипа");
+                        zone_hint = Some(tr(k::tl::hint::TRIM_START));
                     }
                     Some((_, ClipZone::TrimEnd)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                        zone_hint = Some("Трим конца клипа");
+                        zone_hint = Some(tr(k::tl::hint::TRIM_END));
                     }
                     Some((_, ClipZone::VolumeRail)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        zone_hint = Some("Громкость клипа: тяни, double-click — 0 dB");
+                        zone_hint = Some(tr(k::tl::hint::VOLUME));
                     }
                     Some((_, ClipZone::Body)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                         zone_hint = Some(
-                            "Клип: тяни — перенос (Ctrl — без магнита), двойной клик — FX, ПКМ — меню, S — разрез",
+                            tr(k::tl::hint::CLIP),
                         );
                     }
                     None => {
                         zone_hint = Some(
-                            "ЛКМ — курсор, тяни — регион; колесо — прокрутка, Ctrl — зум, Shift — дорожки",
+                            tr(k::tl::hint::EMPTY),
                         );
                     }
                 }
@@ -1801,8 +1800,8 @@ impl KtApp {
             );
             if r.width() > 46.0 {
                 let label = match &m.kind {
-                    MorphKind::EffectBatch { .. } => format!("FX-батч ({})", m.targets.len()),
-                    MorphKind::Replace { .. } => format!("Morpher ({})", m.targets.len()),
+                    MorphKind::EffectBatch { .. } => crate::tf!(k::tl::morph::BATCH, m.targets.len()),
+                    MorphKind::Replace { .. } => crate::tf!(k::tl::morph::REPLACE, m.targets.len()),
                 };
                 painter.text(
                     egui::pos2(r.left() + 6.0, r.center().y),
@@ -1983,7 +1982,11 @@ impl KtApp {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         let r = ui.add(
                             egui::TextEdit::singleline(&mut buf)
-                                .hint_text(if ed.is_new { "имя метки (можно пропустить)" } else { "имя метки" })
+                                .hint_text(if ed.is_new {
+                                    tr(k::tl::field::MARKER_NAME_NEW)
+                                } else {
+                                    tr(k::tl::field::MARKER_NAME)
+                                })
                                 .desired_width(140.0),
                         );
                         if !r.has_focus() && self.marker_edit_focus {
@@ -2034,7 +2037,7 @@ impl KtApp {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         let r = ui.add(
                             egui::TextEdit::singleline(&mut buf)
-                                .hint_text("имя дорожки")
+                                .hint_text(tr(k::tl::field::LANE_NAME))
                                 .desired_width(120.0),
                         );
                         if !r.has_focus() && self.lane_edit_focus {
@@ -2254,35 +2257,35 @@ impl KtApp {
                     .clip(id)
                     .map(|c| (c.kind == ClipKind::Audio, c.link_group.is_some()))
                     .unwrap_or((false, false));
-                if ui.button("Копировать (Ctrl+C)").clicked() {
+                if ui.button(tr(k::tl::menu::COPY)).clicked() {
                     self.selected = Some(id);
                     self.copy_selection();
                     ui.close();
                 }
-                if ui.button("Вставить (Ctrl+V)").clicked() {
+                if ui.button(tr(k::tl::menu::PASTE)).clicked() {
                     self.paste_at_cursor();
                     ui.close();
                 }
-                if ui.button("Удалить (Del)").clicked() {
+                if ui.button(tr(k::tl::menu::DELETE)).clicked() {
                     self.selected = Some(id);
                     // именно ЭТОТ клип (+группа), а не содержимое региона (п.10)
                     self.delete_selected();
                     ui.close();
                 }
-                if ui.button("Разрезать по курсору (S)").clicked() {
+                if ui.button(tr(k::tl::menu::SPLIT)).clicked() {
                     self.selected = Some(id);
                     self.cut_action();
                     ui.close();
                 }
-                if ui.button("Эффекты…").clicked() {
+                if ui.button(tr(k::tl::menu::FX)).clicked() {
                     self.open_fx_editor(id);
                     ui.close();
                 }
                 let is_rev = self.model.clip(id).map(|c| c.reversed).unwrap_or(false);
                 let rev_label = if is_rev {
-                    format!("Реверс {}", crate::icons::CHECK)
+                    format!("{} {}", tr(k::tl::menu::REVERSE), crate::icons::CHECK)
                 } else {
-                    "Реверс".into()
+                    tr(k::tl::menu::REVERSE).to_string()
                 };
                 if ui.button(rev_label).clicked() {
                     self.apply(Command::SetReversed { id, reversed: !is_rev });
@@ -2290,28 +2293,28 @@ impl KtApp {
                 }
                 ui.separator();
                 if has_group {
-                    if ui.button("Разомкнуть A/V").clicked() {
+                    if ui.button(tr(k::tl::menu::UNLINK)).clicked() {
                         self.selected = Some(id);
                         self.unlink_selected();
                         ui.close();
                     }
-                } else if ui.button("Магнит A/V").clicked() {
+                } else if ui.button(tr(k::tl::menu::LINK)).clicked() {
                     self.selected = Some(id);
                     self.magnetize_selected();
                     ui.close();
                 }
-                if is_audio && ui.button("Сбросить громкость (0 dB)").clicked() {
+                if is_audio && ui.button(tr(k::tl::menu::RESET_GAIN)).clicked() {
                     self.apply(Command::SetGain { id, gain_db: 0.0 });
                     ui.close();
                 }
                 ui.separator();
                 // morpher (H1, порт v1): цели = регион (приоритет) или клип+группа
-                if ui.button("Добавить morpher (заморозить цели)…").clicked() {
+                if ui.button(tr(k::tl::menu::ADD_MORPHER)).clicked() {
                     self.selected = Some(id);
                     self.begin_morph_placement(false);
                     ui.close();
                 }
-                if ui.button("Добавить morpher FX-батч…").clicked() {
+                if ui.button(tr(k::tl::menu::ADD_FX_BATCH)).clicked() {
                     self.selected = Some(id);
                     self.begin_morph_placement(true);
                     ui.close();
@@ -2327,9 +2330,9 @@ impl KtApp {
                     .map(|m| matches!(m.kind, MorphKind::EffectBatch { .. }))
                     .unwrap_or(false);
                 let bake_label = if is_batch {
-                    "Bake FX-батча (вписать эффекты в клипы)"
+                    tr(k::tl::menu::BAKE_BATCH)
                 } else {
-                    "Bake морфинга (вписать в клипы)"
+                    tr(k::tl::menu::BAKE_MORPH)
                 };
                 if ui.button(bake_label).clicked() {
                     if self.apply(Command::BakeMorpher { id: mid }) {
@@ -2337,29 +2340,29 @@ impl KtApp {
                     }
                     ui.close();
                 }
-                if ui.button("Удалить morpher (Del)").clicked() {
+                if ui.button(tr(k::tl::menu::REMOVE_MORPHER)).clicked() {
                     if self.apply(Command::RemoveMorpher { id: mid }) {
                         self.selected_morph = None;
                     }
                     ui.close();
                 }
-                if ui.button("Окно редактора morpher'а…").clicked() {
+                if ui.button(tr(k::tl::menu::MORPH_EDITOR)).clicked() {
                     self.open_morph_editor(mid);
                     ui.close();
                 }
             }
             Some(CtxTarget::RegionEdge(t)) => {
-                if ui.button("Маркер здесь").clicked() {
+                if ui.button(tr(k::tl::menu::MARKER_HERE)).clicked() {
                     self.apply(Command::AddMarker { at: Tick(t) });
                     ui.close();
                 }
-                if ui.button("Снять регион").clicked() {
+                if ui.button(tr(k::tl::menu::REGION_CLEAR)).clicked() {
                     self.clear_region();
                     ui.close();
                 }
             }
             Some(CtxTarget::Marker(m)) => {
-                if ui.button("Переименовать…").clicked() {
+                if ui.button(tr(k::tl::menu::RENAME)).clicked() {
                     let name = self
                         .model
                         .project()
@@ -2373,42 +2376,42 @@ impl KtApp {
                     self.marker_edit_focus = true;
                     ui.close();
                 }
-                if ui.button("Удалить маркер").clicked() {
+                if ui.button(tr(k::tl::menu::REMOVE_MARKER)).clicked() {
                     self.apply(Command::RemoveMarker { at: Tick(m) });
                     ui.close();
                 }
             }
             _ => {
-                if !self.clipboard.is_empty() && ui.button("Вставить (Ctrl+V)").clicked() {
+                if !self.clipboard.is_empty() && ui.button(tr(k::tl::menu::PASTE)).clicked() {
                     self.paste_at_cursor();
                     ui.close();
                 }
                 if self.model.project().region.is_some() {
-                    if ui.button("Удалить клипы в регионе (Del)").clicked() {
+                    if ui.button(tr(k::tl::menu::DELETE_IN_REGION)).clicked() {
                         self.delete_action();
                         ui.close();
                     }
-                    if ui.button("Вырезать интерьер региона").clicked() {
+                    if ui.button(tr(k::tl::menu::PUNCH_OUT)).clicked() {
                         self.punch_out_action();
                         ui.close();
                     }
                     ui.separator();
                     // v1: «Add morpher (clips in region)…» / FX batch
-                    if ui.button("Добавить morpher (клипы в регионе)…").clicked() {
+                    if ui.button(tr(k::tl::menu::ADD_MORPHER_REGION)).clicked() {
                         self.begin_morph_placement(false);
                         ui.close();
                     }
-                    if ui.button("Добавить morpher FX-батч (клипы в регионе)…").clicked() {
+                    if ui.button(tr(k::tl::menu::ADD_FX_BATCH_REGION)).clicked() {
                         self.begin_morph_placement(true);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Снять регион").clicked() {
+                    if ui.button(tr(k::tl::menu::REGION_CLEAR)).clicked() {
                         self.clear_region();
                         ui.close();
                     }
                 } else if self.clipboard.is_empty() {
-                    ui.weak("Выдели регион или клип");
+                    ui.weak(tr(k::tl::menu::PICK_SOMETHING));
                 }
                 // Дорожки добавляются ПОД кликнутой строкой (п.5 р.16):
                 // «не в самый низ, а после той дорожки по которой кликнули».
@@ -2416,9 +2419,9 @@ impl KtApp {
                 ui.separator();
                 let row = self.ctx_row;
                 for (label, kind) in [
-                    ("Добавить видео-дорожку", LaneKind::Video),
-                    ("Добавить аудио-дорожку", LaneKind::Audio),
-                    ("Добавить Morph-дорожку", LaneKind::Morph),
+                    (tr(k::tl::lane::ADD_VIDEO), LaneKind::Video),
+                    (tr(k::tl::lane::ADD_AUDIO), LaneKind::Audio),
+                    (tr(k::tl::lane::ADD_MORPH), LaneKind::Morph),
                 ] {
                     if ui.button(label).clicked() {
                         self.insert_lane_after_row(kind, row);

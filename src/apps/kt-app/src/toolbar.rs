@@ -2,6 +2,7 @@
 //! полупрозрачная градиентная полоса с тенью, кнопки 30×28, подсказки
 //! дублируются в статусбар.
 
+use crate::i18n::{k, tr};
 use crate::app::KtApp;
 use eframe::egui;
 use kt_model::ClipKind;
@@ -194,11 +195,11 @@ impl KtApp {
         let ctx = row.ctx().clone();
         let close = window_button(&mut row, 2, false);
         self.no_resize_rects.push(close.rect.expand(2.0));
-        if self.hint(close, "Закрыть").clicked() {
+        if self.hint(close, tr(k::win::CLOSE)).clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         let max = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-        let h = if max { "Восстановить" } else { "Развернуть" };
+        let h = if max { tr(k::win::RESTORE) } else { tr(k::win::MAXIMIZE) };
         let maxi = window_button(&mut row, 1, max);
         self.no_resize_rects.push(maxi.rect.expand(2.0));
         if self.hint(maxi, h).clicked() {
@@ -206,7 +207,7 @@ impl KtApp {
         }
         let mini = window_button(&mut row, 0, false);
         self.no_resize_rects.push(mini.rect.expand(2.0));
-        if self.hint(mini, "Свернуть").clicked() {
+        if self.hint(mini, tr(k::win::MINIMIZE)).clicked() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
         ui.advance_cursor_after_rect(strip);
@@ -232,79 +233,110 @@ impl KtApp {
         }
     }
 
+    /// Пункт меню с горячей клавишей. Ярлык склеивается ЗДЕСЬ, а не лежит в
+    /// каталоге: переводчик не должен иметь возможности сломать акселератор, а
+    /// латинский ярлык внутри арабской строки уехал бы при переупорядочивании.
+    fn menu_btn(ui: &mut egui::Ui, label: &str, accel: &str) -> bool {
+        ui.button(format!("{label}\t{accel}")).clicked()
+    }
+
     /// Пункты меню (три корневых). Отдельно от контейнера, чтобы их же
     /// показывал бургер при узкой колонке.
     fn menu_items(&mut self, ui: &mut egui::Ui) -> f32 {
-            ui.menu_button("Файл", |ui| {
-                if ui.button("Новый").clicked() {
+            ui.menu_button(tr(k::menu::file::TITLE), |ui| {
+                if ui.button(tr(k::menu::file::NEW)).clicked() {
                     self.new_project();
                     ui.close();
                 }
-                if ui.button("Открыть…").clicked() {
+                if ui.button(tr(k::menu::file::OPEN)).clicked() {
                     self.open_project_dialog();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Сохранить\tCtrl+S").clicked() {
+                if Self::menu_btn(ui, tr(k::menu::file::SAVE), "Ctrl+S") {
                     self.save();
                     ui.close();
                 }
-                if ui.button("Сохранить как…").clicked() {
+                if ui.button(tr(k::menu::file::SAVE_AS)).clicked() {
                     self.save_as();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Рендер в MP4…").clicked() {
+                if ui.button(tr(k::menu::file::RENDER)).clicked() {
                     self.start_render();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Выход").clicked() {
+                if ui.button(tr(k::menu::file::QUIT)).clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
-            ui.menu_button("Правка", |ui| {
-                if ui.button("Отменить\tCtrl+Z").clicked() {
+            ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
+                if Self::menu_btn(ui, tr(k::menu::edit::UNDO), "Ctrl+Z") {
                     self.undo();
                     ui.close();
                 }
-                if ui.button("Вернуть\tCtrl+Shift+Z").clicked() {
+                if Self::menu_btn(ui, tr(k::menu::edit::REDO), "Ctrl+Shift+Z") {
                     self.redo();
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Копировать\tCtrl+C").clicked() {
+                if Self::menu_btn(ui, tr(k::menu::edit::COPY), "Ctrl+C") {
                     self.copy_selection();
                     ui.close();
                 }
-                if ui.button("Вставить на курсор\tCtrl+V").clicked() {
+                if Self::menu_btn(ui, tr(k::menu::edit::PASTE), "Ctrl+V") {
                     self.paste_at_cursor();
                     ui.close();
                 }
-                if ui.button("Удалить\tDel").clicked() {
+                if Self::menu_btn(ui, tr(k::menu::edit::DELETE), "Del") {
                     self.delete_action();
                     ui.close();
                 }
-                if ui.button("Разрез / вырез региона\tS").clicked() {
+                if Self::menu_btn(ui, tr(k::menu::edit::CUT_REGION), "S") {
                     self.cut_action();
                     ui.close();
                 }
             });
-            let last = ui.menu_button("Вид", |ui| {
+            let last = ui.menu_button(tr(k::menu::view::TITLE), |ui| {
                 let detach_label =
-                    if self.preview_detached { "Вернуть превью" } else { "Отделить превью" };
+                    if self.preview_detached {
+                        tr(k::menu::view::ATTACH_PREVIEW)
+                    } else {
+                        tr(k::menu::view::DETACH_PREVIEW)
+                    };
                 if ui.button(detach_label).clicked() {
                     self.preview_detached =
                         crate::app::preview_detached_next(self.preview_detached, true, false);
                     ui.close();
                 }
-                ui.checkbox(&mut self.ui_economy, "Экономный UI (30 fps при игре)");
+                ui.checkbox(&mut self.ui_economy, tr(k::menu::view::ECONOMY));
+                // Язык живёт в УЖЕ существующем меню (правило 13 чек-листа:
+                // новой полосы под него не заводим). Пункты — самоназвания:
+                // выбравшему китайский нечего искать в русском списке.
+                ui.menu_button(tr(k::menu::view::LANGUAGE), |ui| {
+                    let items = std::iter::once((None, tr(k::menu::view::LANG_AUTO)))
+                        .chain(crate::i18n::Lang::ALL.into_iter().map(|l| (Some(l), l.endonym())));
+                    for (choice, label) in items {
+                        let active = self.lang_choice == choice;
+                        let label = if active {
+                            format!("{label} {}", crate::icons::CHECK)
+                        } else {
+                            label.to_string()
+                        };
+                        if ui.button(label).clicked() {
+                            self.lang_choice = choice;
+                            crate::i18n::set_lang_ctx(ui.ctx(), crate::i18n::resolve(choice));
+                            ui.close();
+                        }
+                    }
+                });
                 ui.separator();
-                if ui.button("Диагностика…").clicked() {
+                if ui.button(tr(k::menu::view::DIAGNOSTICS)).clicked() {
                     self.perf.diag_open = true;
                     ui.close();
                 }
-                if ui.button("Уведомления").clicked() {
+                if ui.button(tr(k::menu::view::NOTICES)).clicked() {
                     self.notices_open = true;
                     ui.close();
                 }
@@ -363,18 +395,18 @@ impl KtApp {
         if self.tb(
             ui,
             if playing { crate::icons::PAUSE } else { crate::icons::PLAY },
-            "Play/Pause (Space)",
+            tr(k::tb::PLAY_PAUSE),
         ) {
             self.on_transport_toggle();
         }
         // Shift здесь — «тянуть регион» (как Shift+A/D, п.2 р.16); «в
         // самое начало/конец» осталось за Shift+Home/End
-        if self.tb(ui, crate::icons::SKIP_BACK, "Назад: маркер / регион / край клипа (A или Home; Shift — тянуть левый край региона)")
+        if self.tb(ui, crate::icons::SKIP_BACK, tr(k::tb::BACK))
         {
             let shift = ui.input(|i| i.modifiers.shift);
             self.nav_jump(false, false, shift);
         }
-        if self.tb(ui, crate::icons::SKIP_FWD, "Вперёд: маркер / регион / край клипа (D или End; Shift — тянуть правый край региона)")
+        if self.tb(ui, crate::icons::SKIP_FWD, tr(k::tb::FORWARD))
         {
             let shift = ui.input(|i| i.modifiers.shift);
             self.nav_jump(true, false, shift);
@@ -402,9 +434,9 @@ impl KtApp {
             let r = self.hint(
                 r,
                 if editing {
-                    "Цифры набираются справа налево, Enter — перейти, Esc — отмена"
+                    tr(k::tb::TIMECODE_EDIT)
                 } else {
-                    "Позиция курсора; двойной клик или Ctrl+L — перейти к таймкоду"
+                    tr(k::tb::TIMECODE)
                 },
             );
             if r.double_clicked() && !editing {
@@ -514,57 +546,57 @@ impl KtApp {
         }
         self.draw_speed_control(ui);
         ui.separator();
-        if self.tb(ui, crate::icons::FLAG, "Маркер на курсоре (M)") {
+        if self.tb(ui, crate::icons::FLAG, tr(k::tb::MARKER)) {
             self.marker_toggle_at_cursor();
         }
-        if self.tb(ui, "+V", "Добавить видео-дорожку") {
+        if self.tb(ui, "+V", tr(k::tb::ADD_VIDEO_LANE)) {
             self.add_track(ClipKind::Video);
         }
-        if self.tb(ui, "+A", "Добавить аудио-дорожку") {
+        if self.tb(ui, "+A", tr(k::tb::ADD_AUDIO_LANE)) {
             self.add_track(ClipKind::Audio);
         }
         ui.separator();
-        if self.tb(ui, crate::icons::SCISSORS, "Разрез / вырез региона (S)") {
+        if self.tb(ui, crate::icons::SCISSORS, tr(k::tb::CUT)) {
             self.cut_action();
         }
-        if self.tb(ui, crate::icons::COPY, "Копировать (Ctrl+C)") {
+        if self.tb(ui, crate::icons::COPY, tr(k::tb::COPY)) {
             self.copy_selection();
         }
-        if self.tb(ui, crate::icons::CLIPBOARD, "Вставить на курсор (Ctrl+V)") {
+        if self.tb(ui, crate::icons::CLIPBOARD, tr(k::tb::PASTE)) {
             self.paste_at_cursor();
         }
-        if self.tb(ui, crate::icons::TRASH, "Удалить (Del)") {
+        if self.tb(ui, crate::icons::TRASH, tr(k::tb::DELETE)) {
             self.delete_action();
         }
-        if self.tb(ui, crate::icons::TRIM_START, "Трим начала к курсору") {
+        if self.tb(ui, crate::icons::TRIM_START, tr(k::tb::TRIM_START)) {
             self.trim_selected_start_to_cursor();
         }
-        if self.tb(ui, crate::icons::TRIM_END, "Трим конца к курсору") {
+        if self.tb(ui, crate::icons::TRIM_END, tr(k::tb::TRIM_END)) {
             self.trim_selected_end_to_cursor();
         }
-        if self.tb(ui, crate::icons::LANE_UP, "На дорожку выше") {
+        if self.tb(ui, crate::icons::LANE_UP, tr(k::tb::LANE_UP)) {
             self.move_selected_lane(-1);
         }
-        if self.tb(ui, crate::icons::LANE_DOWN, "На дорожку ниже") {
+        if self.tb(ui, crate::icons::LANE_DOWN, tr(k::tb::LANE_DOWN)) {
             self.move_selected_lane(1);
         }
         ui.separator();
-        if self.tb(ui, crate::icons::MINUS, "Отдалить (Ctrl+колесо)") {
+        if self.tb(ui, crate::icons::MINUS, tr(k::tb::ZOOM_OUT)) {
             self.zoom_at_playhead(1.25);
         }
-        if self.tb(ui, crate::icons::PLUS, "Приблизить") {
+        if self.tb(ui, crate::icons::PLUS, tr(k::tb::ZOOM_IN)) {
             self.zoom_at_playhead(0.8);
         }
         ui.separator();
-        if self.tb(ui, crate::icons::REGION_IN, "Регион: начало от курсора (I)")
+        if self.tb(ui, crate::icons::REGION_IN, tr(k::tb::REGION_IN))
         {
             self.set_region_edge_from_cursor(true);
         }
-        if self.tb(ui, crate::icons::REGION_OUT, "Регион: конец от курсора (O)")
+        if self.tb(ui, crate::icons::REGION_OUT, tr(k::tb::REGION_OUT))
         {
             self.set_region_edge_from_cursor(false);
         }
-        if self.tb(ui, crate::icons::CLEAR, "Снять регион") {
+        if self.tb(ui, crate::icons::CLEAR, tr(k::tb::REGION_CLEAR)) {
             self.clear_region();
         }
         // три состояния (п.3 р.11): выключен / включён с регионом /
@@ -581,31 +613,31 @@ impl KtApp {
             egui::RichText::new(crate::icons::LOOP)
         };
         let hint = if armed {
-            "Loop взведён — выдели регион (L)"
+            tr(k::tb::LOOP_ARMED)
         } else {
-            "Loop региона (L)"
+            tr(k::tb::LOOP)
         };
         let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(loop_on, label));
         if self.hint(r, hint).clicked() {
             self.toggle_loop();
         }
         ui.separator();
-        if self.tb(ui, crate::icons::UNDO, "Отменить (Ctrl+Z)") {
+        if self.tb(ui, crate::icons::UNDO, tr(k::tb::UNDO)) {
             self.undo();
         }
-        if self.tb(ui, crate::icons::REDO, "Вернуть (Ctrl+Shift+Z)") {
+        if self.tb(ui, crate::icons::REDO, tr(k::tb::REDO)) {
             self.redo();
         }
         ui.separator();
-        if self.tb(ui, crate::icons::RENDER, "Рендер в MP4 (регион или весь проект)")
+        if self.tb(ui, crate::icons::RENDER, tr(k::tb::RENDER))
         {
             self.start_render();
         }
-        if self.tb(ui, crate::icons::SEARCH, "Поиск по проекту (Ctrl+F)") {
+        if self.tb(ui, crate::icons::SEARCH, tr(k::tb::SEARCH)) {
             self.search_open = true;
             self.search_focus = true;
         }
-        if self.tb(ui, crate::icons::GAUGE, "Диагностика") {
+        if self.tb(ui, crate::icons::GAUGE, tr(k::tb::DIAG)) {
             self.perf.diag_open = true;
         }
         // п.6 р.10: «●» нет ни в одном шрифте семейства Proportional —
@@ -615,7 +647,7 @@ impl KtApp {
         } else {
             crate::icons::SAVE.to_string()
         };
-        if self.tb(ui, &save_label, "Сохранить (Ctrl+S)") {
+        if self.tb(ui, &save_label, tr(k::tb::SAVE)) {
             self.save();
         }
     }

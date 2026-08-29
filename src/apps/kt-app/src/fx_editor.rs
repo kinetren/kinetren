@@ -4,6 +4,7 @@
 //! live-применение через apply_coalesced (вся сессия окна = 1 undo),
 //! Отмена = откат к состоянию на момент открытия.
 
+use crate::i18n::{k, tr};
 use crate::app::KtApp;
 use eframe::egui;
 use kt_model::*;
@@ -61,9 +62,13 @@ impl KtApp {
             ed.open = false;
             return;
         };
-        let title = format!(
-            "{} эффекты — клип {}",
-            if clip.kind == ClipKind::Audio { "Аудио" } else { "Видео" },
+        let title = crate::tf!(
+            k::fx::TITLE,
+            if clip.kind == ClipKind::Audio {
+                tr(k::fx::KIND_AUDIO)
+            } else {
+                tr(k::fx::KIND_VIDEO)
+            },
             ed.clip.0
         );
         let mut fx = clip.fx.clone();
@@ -87,7 +92,7 @@ impl KtApp {
                         ui.label(crate::icons::CARET_RIGHT);
                         let off = bypass.get(i).copied().unwrap_or(false);
                         let name = if off {
-                            format!("{} (выкл)", fx_display_name(f))
+                            crate::tf!(k::fx::OFF_SUFFIX, fx_display_name(f))
                         } else {
                             fx_display_name(f).to_string()
                         };
@@ -124,7 +129,7 @@ impl KtApp {
                             if crate::app::hint_into(
                                 &mut hover_out,
                                 ui.button(label),
-                                if *b { "Включить эффект" } else { "Выключить эффект (bypass)" },
+                                if *b { tr(k::fx::ENABLE) } else { tr(k::fx::DISABLE) },
                             )
                             .clicked()
                             {
@@ -132,7 +137,7 @@ impl KtApp {
                                 bypass_changed = true;
                             }
                         }
-                        if ui.button("Удалить слот").clicked() && ed.selected < fx.len()
+                        if ui.button(tr(k::fx::REMOVE_SLOT)).clicked() && ed.selected < fx.len()
                         {
                             fx.remove(ed.selected);
                             if ed.selected < bypass.len() {
@@ -146,7 +151,7 @@ impl KtApp {
                         if crate::app::hint_into(
                             &mut hover_out,
                             ui.button(crate::icons::CARET_LEFT),
-                            "Сдвинуть слот влево",
+                            tr(k::fx::MOVE_LEFT),
                         )
                         .clicked()
                             && ed.selected > 0
@@ -160,7 +165,7 @@ impl KtApp {
                         if crate::app::hint_into(
                             &mut hover_out,
                             ui.button(crate::icons::CARET_RIGHT),
-                            "Сдвинуть слот вправо",
+                            tr(k::fx::MOVE_RIGHT),
                         )
                         .clicked()
                             && ed.selected + 1 < fx.len()
@@ -236,7 +241,7 @@ impl KtApp {
                             // --- автоматизация ---------------------------------
                             ui.add_space(4.0);
                             ui.label(
-                                "Автоматизация (t = позиция по ленте ИСТОЧНИКА, доля клипа 0..1):",
+                                tr(k::fx::AUTOMATION),
                             );
                             let (rect, resp) = ui.allocate_exact_size(
                                 egui::vec2(ui.available_width(), 90.0),
@@ -337,7 +342,7 @@ impl KtApp {
                                 // копипаст огибающей (п.5, порт v1
                                 // «Copy/Paste envelopes» + JSON в системный
                                 // клипборд для интеропа)
-                                if ui.button("Копировать огибающую").clicked() {
+                                if ui.button(tr(k::fx::COPY_ENV)).clicked() {
                                     self.automation_clipboard = Some(automation.clone());
                                     if let Ok(json) = serde_json::to_string_pretty(&automation) {
                                         ui.ctx().copy_text(json);
@@ -348,9 +353,9 @@ impl KtApp {
                                     &mut hover_out,
                                     ui.add_enabled(
                                         can_paste,
-                                        egui::Button::new("Вставить огибающую"),
+                                        egui::Button::new(tr(k::fx::PASTE_ENV)),
                                     ),
-                                    "Полная замена кейфреймов (как в v1)",
+                                    tr(k::fx::PASTE_ENV_HINT),
                                 )
                                 .clicked()
                                     && let Some(kfs) = self.automation_clipboard.clone()
@@ -359,7 +364,7 @@ impl KtApp {
                                     ed.sel_kf = None;
                                     changed = true;
                                 }
-                                if ui.button("+ keyframe на курсоре").clicked() {
+                                if ui.button(tr(k::fx::KF_AT_CURSOR)).clicked() {
                                     let ph = self.player.transport.playhead();
                                     let t = ((ph.0 - clip.start.0) as f64
                                         / clip.duration.0.max(1) as f64)
@@ -402,14 +407,14 @@ impl KtApp {
                         _ => {}
                     }
                 } else {
-                    ui.weak("Цепочка пуста — добавь эффект");
+                    ui.weak(tr(k::fx::CHAIN_EMPTY));
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Готово").clicked() {
+                    if ui.button(tr(k::fx::DONE)).clicked() {
                         ed.open = false;
                     }
-                    if ui.button("Отмена (вернуть как было)").clicked() {
+                    if ui.button(tr(k::fx::CANCEL)).clicked() {
                         fx = ed.backup.clone();
                         changed = true;
                         ed.open = false;
@@ -503,7 +508,7 @@ pub(crate) fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> boo
     match f {
         FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
             egui::Grid::new("vfx").num_columns(4).show(ui, |ui| {
-                ui.label("Режим:");
+                ui.label(tr(k::fx::MODE));
                 mode_ui(ui, mode, &mut ch);
                 ui.label("Zoom:");
                 ch |= ui.add(egui::DragValue::new(zoom).range(0.05..=32.0).speed(0.01)).changed();
@@ -517,7 +522,7 @@ pub(crate) fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> boo
         }
         FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
             egui::Grid::new("vfx").num_columns(4).show(ui, |ui| {
-                ui.label("Режим:");
+                ui.label(tr(k::fx::MODE));
                 mode_ui(ui, mode, &mut ch);
                 ui.label("Ease:");
                 ch |= ui.checkbox(ease, "").changed();
@@ -528,14 +533,14 @@ pub(crate) fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> boo
                     .changed();
                 ui.end_row();
             });
-            ui.weak(format!("Кейфреймы: {} (пусто = наезд 1.0 к 1.35 как в v1)", keyframes.len()));
+            ui.weak(crate::tf!(k::fx::KEYFRAMES_N, keyframes.len()));
             ui.horizontal(|ui| {
-                if ui.button("+ кейфрейм").clicked() {
+                if ui.button(tr(k::fx::ADD_KF)).clicked() {
                     let t = keyframes.last().map(|k| (k.t + 0.25).min(1.0)).unwrap_or(0.0);
                     keyframes.push(kt_model::CamKeyframe { t, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 });
                     ch = true;
                 }
-                if !keyframes.is_empty() && ui.button("- последний").clicked() {
+                if !keyframes.is_empty() && ui.button(tr(k::fx::DROP_LAST)).clicked() {
                     keyframes.pop();
                     ch = true;
                 }
@@ -563,35 +568,35 @@ pub(crate) fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> boo
         }
         FxInstance::Mirror { horizontal, vertical } => {
             ui.horizontal(|ui| {
-                ch |= ui.checkbox(horizontal, "Горизонталь").changed();
-                ch |= ui.checkbox(vertical, "Вертикаль").changed();
+                ch |= ui.checkbox(horizontal, tr(k::fx::HORIZONTAL)).changed();
+                ch |= ui.checkbox(vertical, tr(k::fx::VERTICAL)).changed();
             });
         }
         FxInstance::Blur { radius } => {
             ui.horizontal(|ui| {
-                ui.label("Радиус:");
+                ui.label(tr(k::fx::RADIUS));
                 ch |= ui.add(egui::Slider::new(radius, 1..=48)).changed();
             });
         }
         FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness } => {
             ui.horizontal(|ui| {
                 let mut col = [*key_r as f32 / 255.0, *key_g as f32 / 255.0, *key_b as f32 / 255.0];
-                ui.label("Ключ:");
+                ui.label(tr(k::fx::KEY_COLOR));
                 if ui.color_edit_button_rgb(&mut col).changed() {
                     *key_r = (col[0] * 255.0) as u8;
                     *key_g = (col[1] * 255.0) as u8;
                     *key_b = (col[2] * 255.0) as u8;
                     ch = true;
                 }
-                ui.label("Допуск:");
+                ui.label(tr(k::fx::TOLERANCE));
                 ch |= ui.add(egui::Slider::new(tolerance, 1..=200)).changed();
-                ui.label("Мягкость:");
+                ui.label(tr(k::fx::SOFTNESS));
                 ch |= ui.add(egui::Slider::new(softness, 0..=100)).changed();
             });
         }
         FxInstance::Edges { threshold } => {
             ui.horizontal(|ui| {
-                ui.label("Порог:");
+                ui.label(tr(k::fx::THRESHOLD));
                 ch |= ui.add(egui::Slider::new(threshold, 1..=255)).changed();
             });
         }
@@ -603,7 +608,7 @@ pub(crate) fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> boo
         }
         FxInstance::Vhs { rgb_shift, bleed } => {
             ui.horizontal(|ui| {
-                ui.label("RGB-сдвиг:");
+                ui.label(tr(k::fx::RGB_SHIFT));
                 ch |= ui.add(egui::Slider::new(rgb_shift, 0..=12)).changed();
                 ui.label("Bleed:");
                 ch |= ui.add(egui::Slider::new(bleed, 0.0..=1.0)).changed();
@@ -611,17 +616,17 @@ pub(crate) fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> boo
         }
         FxInstance::Glow { strength } => {
             ui.horizontal(|ui| {
-                ui.label("Сила:");
+                ui.label(tr(k::fx::STRENGTH));
                 ch |= ui.add(egui::Slider::new(strength, 0.0..=2.0)).changed();
             });
         }
         FxInstance::EventGrid { cols, rows, center } => {
             ui.horizontal(|ui| {
-                ui.label("Столбцы:");
+                ui.label(tr(k::fx::COLUMNS));
                 ch |= ui.add(egui::DragValue::new(cols).range(1..=512)).changed();
-                ui.label("Строки:");
+                ui.label(tr(k::fx::ROWS));
                 ch |= ui.add(egui::DragValue::new(rows).range(1..=512)).changed();
-                ch |= ui.checkbox(center, "Центрировать").changed();
+                ch |= ui.checkbox(center, tr(k::fx::CENTER)).changed();
             });
         }
         _ => {}

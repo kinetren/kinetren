@@ -31,14 +31,14 @@ use kt_time::Tick;
 #[derive(Debug, thiserror::Error)]
 pub enum FfError {
     #[error(
-        "FFmpeg не найден в системе. Установите libavcodec/libavformat (FFmpeg 6, 7 или 8).\n{0}"
+        "FFmpeg not found on this system. Install libavcodec/libavformat (FFmpeg 6, 7 or 8).\n{0}"
     )]
     NotFound(String),
-    #[error("загрузка FFmpeg: {0}")]
+    #[error("loading FFmpeg: {0}")]
     Load(String),
     #[error("{0}")]
     Av(String),
-    #[error("нет такого потока/позиции")]
+    #[error("no such stream or position")]
     OutOfRange,
 }
 

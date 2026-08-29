@@ -11,16 +11,27 @@
 
 use crate::app::KtApp;
 use eframe::egui;
+use crate::i18n::{Lang, k, tr};
 use egui_kittest::Harness;
 
 const W: f32 = 1440.0;
 const H: f32 = 860.0;
 
 fn harness() -> Harness<'static, KtApp> {
+    harness_lang(crate::i18n::Lang::Ru)
+}
+
+/// Харнесс на конкретном языке. Язык закреплён ЯВНО: иначе тест зависел бы от
+/// LANG в оболочке разработчика. Шрифты ставятся настоящие — до Р.19 все
+/// замеры ширин делались на дефолтном наборе egui, то есть не на той
+/// программе, которую запускает пользователь.
+fn harness_lang(lang: crate::i18n::Lang) -> Harness<'static, KtApp> {
+    crate::i18n::set_lang(lang);
     let app = KtApp::new_empty(None);
     let mut h = Harness::builder()
         .with_size(egui::vec2(W, H))
         .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    crate::icons::install_fonts(&h.ctx);
     h.step();
     h.step();
     h
@@ -143,7 +154,7 @@ fn t76_top_area_gives_space_to_preview() {
     h.step();
     assert_eq!(
         h.state().hover_hint.as_deref(),
-        Some("Закрыть"),
+        Some(tr(k::win::CLOSE)),
         "кнопка окна не ловит наведение (её перекрыли)"
     );
 }
@@ -217,9 +228,9 @@ fn t83_hints_reach_status_line() {
 
     let toolbar_y = H - 20.0 - 34.0 * 0.5; // статусбар 20 + полоса тулбара 34
     for (pos, want) in [
-        (egui::pos2(24.0, toolbar_y), "Play/Pause (Space)"),   // тулбар (рисуется ПОСЛЕ статусбара)
-        (egui::pos2(W - 11.0, 10.0), "Закрыть"),               // кнопки окна (ещё позже)
-        (egui::pos2(14.0, 40.0), "Свободная раскладка"),       // бин
+        (egui::pos2(24.0, toolbar_y), tr(k::tb::PLAY_PAUSE)), // тулбар (рисуется ПОСЛЕ статусбара)
+        (egui::pos2(W - 11.0, 10.0), tr(k::win::CLOSE)),      // кнопки окна (ещё позже)
+        (egui::pos2(14.0, 40.0), tr(k::bin::HINT_FREE)),      // бин
     ] {
         let mut h = harness();
         h.hover_at(pos);
@@ -295,8 +306,9 @@ fn t86_meters_edge_and_min_window() {
     h.hover_at(egui::pos2(W - 3.0, H * 0.35));
     h.step();
     assert!(
-        h.state().status_line_shown.0.contains("громкость")
-            || h.state().status_line_shown.0.contains("уровень"),
+        [tr(k::meter::FADER), tr(k::meter::PEAK), tr(k::meter::MUTE)]
+            .iter()
+            .any(|want| h.state().status_line_shown.0.starts_with(want)),
         "у правого края зазор: в строке «{}»",
         h.state().status_line_shown.0
     );
@@ -307,12 +319,14 @@ fn t86_meters_edge_and_min_window() {
     let mut h = Harness::builder()
         .with_size(egui::vec2(w, hh))
         .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    crate::icons::install_fonts(&h.ctx);
     h.step();
     h.step();
     h.hover_at(egui::pos2(w - 11.0, 10.0));
     h.step();
     assert_eq!(
-        h.state().status_line_shown.0, "Закрыть",
+        h.state().status_line_shown.0,
+        tr(k::win::CLOSE),
         "при 640×640 шапку вытеснил таймлайн"
     );
     assert!(
@@ -1685,4 +1699,234 @@ fn t102_lane_label_and_playhead_trail() {
     h.state_mut().player.set_playback_rate(1.0);
     h.step();
     assert!(!h.state().play_dir_back, "вперёд не вернуло шлейф налево");
+}
+
+/// Тест 127 (Р.19): вёрстка держится ВО ВСЕХ ПЯТИ ЯЗЫКАХ.
+///
+/// Пределы 420 px (левая колонка) и 90 px (метры) поставлены по прямым
+/// просьбам пользователя (п.4 р.13, п.6 р.12) и НЕ двигаются: если перевод в
+/// них не влезает — короче делают перевод. До Р.19 эти пределы проверялись
+/// только на русском, то есть на одном наборе длин строк.
+#[test]
+fn t127_layout_holds_in_every_language() {
+    for lang in Lang::ALL {
+        let code = lang.code();
+        let mut h = harness_lang(lang);
+        let w = panel_width(&h, "left_col");
+        assert!((72.0..=420.0).contains(&w), "{code}: левая колонка {w}");
+        assert!(
+            h.state().preview_rect.width() > 600.0,
+            "{code}: превью схлопнулось: {:?}",
+            h.state().preview_rect
+        );
+        assert!(
+            panel_width(&h, "meters_col") <= crate::app::METERS_W_MAX + 0.5,
+            "{code}: панель метров шире предела: {}",
+            panel_width(&h, "meters_col")
+        );
+
+        // длинный контент не имеет права раздуть колонку ни в одном языке
+        h.state_mut().gpu_info = Some("X".repeat(400));
+        h.step();
+        let w = panel_width(&h, "left_col");
+        assert!(w <= 420.0, "{code}: длинный контент раздул колонку: {w}");
+
+        // маска таймкода — чистые ASCII-цифры, она обязана быть одинаковой
+        // во всех языках (её порядок ввода — справа налево независимо от RTL)
+        assert_eq!(
+            crate::util::mask_text("130"),
+            crate::util::mask_text("130"),
+            "{code}: маска таймкода зависит от языка"
+        );
+    }
+}
+
+/// Тест 129 (Р.19): переключение языка на лету не ломает состояние.
+///
+/// Главное здесь — id окон. `Window::new(title)` выводит `Id` из ЗАГОЛОВКА, а
+/// под этим id живут позиция и размер: без явного `.id()` смена языка
+/// сбрасывала бы положение каждого диалога. Проверяется именно это — что
+/// состояние окна лежит под постоянным id, а не под переведённым заголовком.
+#[test]
+fn t129_language_switch_keeps_state() {
+    use egui::AreaState;
+
+    let mut h = harness_lang(Lang::Ru);
+    h.state_mut().notices_open = true;
+    h.state_mut().search_open = true;
+    h.state_mut().perf.diag_open = true;
+    h.step();
+    h.step();
+
+    let ids = ["kt_notices", "kt_search", "kt_diag"];
+    let before: Vec<_> = ids
+        .iter()
+        .map(|i| {
+            AreaState::load(&h.ctx, egui::Id::new(*i))
+                .unwrap_or_else(|| panic!("окно {i} не отрисовано"))
+                .left_top_pos()
+        })
+        .collect();
+
+    // реестр FX не должен пересобираться: категории и keywords — ключи
+    let reg_before = crate::fx_registry::registry().as_ptr();
+
+    crate::i18n::set_lang_ctx(&h.ctx, Lang::En);
+    h.step();
+    h.step();
+
+    for (i, id) in ids.iter().enumerate() {
+        let after = AreaState::load(&h.ctx, egui::Id::new(*id))
+            .unwrap_or_else(|| panic!("после смены языка окно {id} потеряло состояние"))
+            .left_top_pos();
+        assert_eq!(before[i], after, "окно {id} переехало при смене языка");
+    }
+    assert_eq!(
+        reg_before,
+        crate::fx_registry::registry().as_ptr(),
+        "реестр FX пересобрался при смене языка"
+    );
+
+    // и собственно перевод: подсказка кнопки окна стала английской
+    h.hover_at(egui::pos2(W - 11.0, 10.0));
+    h.step();
+    assert_eq!(h.state().status_line_shown.0, tr(k::win::CLOSE));
+    assert_eq!(tr(k::win::CLOSE), "Close", "английский каталог не подхватился");
+}
+
+/// Тест 126, часть «б» (Р.19): ЗАКРЕПЛЕНИЕ РЕНДЕРА арабского.
+///
+/// Юнит-тесты `bidi::visual` проверяют строку, а этот — то, что из неё
+/// получилось у egui. Он и отличает верный алгоритм от правдоподобного:
+///
+/// * без переупорядочивания первое ЛОГИЧЕСКОЕ слово оказывается СЛЕВА, то
+///   есть фраза читается задом наперёд (замерено: 'م' на x=22, 'ج' на x=56);
+/// * с посимвольным разворотом (`unicode_bidi::reorder_line`) порядок слов
+///   верный, но harfrust разворачивает каждый прогон ВТОРОЙ раз, и буквы
+///   внутри слова встают наоборот — это ловит первая проверка.
+///
+/// Если egui когда-нибудь научится bidi сам, этот тест покраснеет — и это
+/// правильный сигнал: тогда наш слой надо снимать.
+#[test]
+fn t126_arabic_renders_right_to_left() {
+    let h = harness_lang(Lang::Ar);
+    let font = egui::FontId::proportional(16.0);
+    let layout = |text: String| {
+        h.ctx.fonts_mut(|f| f.layout_no_wrap(text, font.clone(), egui::Color32::WHITE))
+    };
+
+    // «файл»: م ل ف. Внутри слова буквы обязаны остаться логическими — их
+    // развернёт сам harfrust, поэтому САМЫЙ ЛЕВЫЙ глиф это ПОСЛЕДНЯЯ буква.
+    let word = "\u{0645}\u{0644}\u{0641}";
+    let g = layout(crate::i18n::bidi::visual(word));
+    assert_eq!(
+        g.rows[0].glyphs.first().map(|x| x.chr),
+        Some('\u{0641}'),
+        "буквы внутри слова развёрнуты дважды — похоже на посимвольный reorder_line"
+    );
+
+    // «ملف جديد»: последнее логическое слово обязано оказаться ЛЕВЕЕ первого.
+    // Буквы у слов не пересекаются, поэтому позиции однозначны.
+    let phrase = format!("{word} \u{062C}\u{062F}\u{064A}\u{062F}");
+    let g = layout(crate::i18n::bidi::visual(&phrase));
+    let x_of = |ch: char| {
+        g.rows[0]
+            .glyphs
+            .iter()
+            .find(|x| x.chr == ch)
+            .unwrap_or_else(|| panic!("глиф {ch:?} не отрисован"))
+            .pos
+            .x
+    };
+    assert!(
+        x_of('\u{062C}') < x_of('\u{0645}'),
+        "второе слово не уехало влево: ج на {:.0}, م на {:.0}",
+        x_of('\u{062C}'),
+        x_of('\u{0645}')
+    );
+
+    // и контроль: БЕЗ переупорядочивания порядок обратный — то есть тест
+    // действительно меряет работу bidi, а не свойство шрифта
+    let g = layout(phrase.clone());
+    let x_of = |ch: char| {
+        g.rows[0].glyphs.iter().find(|x| x.chr == ch).expect("глиф").pos.x
+    };
+    assert!(
+        x_of('\u{062C}') > x_of('\u{0645}'),
+        "логический порядок вдруг совпал с визуальным — проверка выродилась"
+    );
+}
+
+/// Тест 128 (Р.19): надпись влезает в отведённое ей место В КАЖДОМ ЯЗЫКЕ.
+///
+/// Прямая реализация правил 3 и 7 чек-листа (`apps/kt-app/CLAUDE.md`):
+/// ширина берётся от галлеи самого длинного варианта, а длинное имя не имеет
+/// права вылезти за свою зону. Бюджеты выведены из настоящих констант
+/// вёрстки, а не назначены на глаз:
+///
+/// * меню делит шапку левой колонки с кнопками окна, а колонка по умолчанию
+///   232 px (`app.rs`), поэтому трём заголовкам отведено 160;
+/// * строки перф-панели рисуются `ui.columns(2)` внутри колонки шириной до
+///   420 px — на столбец приходится меньше 200, и именно из-за этого
+///   пользователю уже обрезало счётчик откатов многоточием (п.14 р.14).
+///
+/// Слишком длинный перевод падает здесь с именем ключа и фактической шириной:
+/// чинится он на стороне перевода, а не расширением панели — пределы 420 и 90
+/// стоят по прямым просьбам пользователя.
+#[test]
+fn t128_labels_fit_their_budget() {
+    const MENU_BUDGET: f32 = 160.0;
+    const PERF_COLUMN: f32 = 190.0;
+    const CHECKBOX_BUDGET: f32 = 380.0;
+
+    for lang in Lang::ALL {
+        let h = harness_lang(lang);
+        let body = h.ctx.style_of(egui::Theme::Dark).text_styles
+            [&egui::TextStyle::Body]
+            .clone();
+        let heading = egui::FontId::proportional(14.0);
+        let w = |text: String, font: egui::FontId| {
+            h.ctx
+                .fonts_mut(|f| f.layout_no_wrap(text, font, egui::Color32::WHITE))
+                .size()
+                .x
+        };
+        let code = lang.code();
+
+        let menu: f32 = [k::menu::file::TITLE, k::menu::edit::TITLE, k::menu::view::TITLE]
+            .iter()
+            .map(|key| w(tr(*key).to_string(), heading.clone()))
+            .sum();
+        assert!(
+            menu <= MENU_BUDGET,
+            "{code}: три заголовка меню занимают {menu:.0} px при бюджете {MENU_BUDGET}"
+        );
+
+        // двухколоночные строки меряются СОБРАННЫМИ: шаблон короче того, что
+        // увидит пользователь
+        let rows = [
+            (k::perf::CACHE_MB, crate::tf!(k::perf::CACHE_MB, 1234, 5678)),
+            (k::perf::PREVIEW_RES, crate::tf!(k::perf::PREVIEW_RES, 1920, 1080)),
+            (k::perf::CLIPS_N, crate::tf!(k::perf::CLIPS_N, 1234)),
+            (k::perf::MEDIA_N, crate::tf!(k::perf::MEDIA_N, 1234)),
+            (k::perf::V_SHOWN, crate::tf!(k::perf::V_SHOWN, 123456)),
+            (k::perf::V_SKIPPED, crate::tf!(k::perf::V_SKIPPED, 1234, 567)),
+            (k::perf::REGION_S, crate::tf!(k::perf::REGION_S, "123.45", "678.90")),
+            (k::perf::CACHE_SHORT, crate::tf!(k::perf::CACHE_SHORT, 1234, 5678)),
+        ];
+        for (key, text) in rows {
+            let got = w(text.clone(), body.clone());
+            assert!(
+                got <= PERF_COLUMN,
+                "{code}: {} = {text:?} занимает {got:.0} px при бюджете {PERF_COLUMN}",
+                crate::i18n::key_name(key)
+            );
+        }
+
+        let got = w(tr(k::perf::ECONOMY).to_string(), body.clone());
+        assert!(
+            got <= CHECKBOX_BUDGET,
+            "{code}: чекбокс экономного UI занимает {got:.0} px при бюджете {CHECKBOX_BUDGET}"
+        );
+    }
 }

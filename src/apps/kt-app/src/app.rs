@@ -1,5 +1,6 @@
 //! KtApp: состояние приложения, панели, клавиши, дропы, lifecycle.
 
+use crate::i18n::{k, tr};
 use crate::audio_out;
 use crate::timeline::{CtxTarget, Drag};
 use crate::util::*;
@@ -70,6 +71,10 @@ pub struct KtApp {
     pub preview_detached: bool,
     /// Экономный UI: 30 fps при воспроизведении (п.1 раунда 5, слабые GPU).
     pub ui_economy: bool,
+    /// Выбранный язык интерфейса; `None` — «авто» (по локали ОС, п.3 р.19).
+    /// Это ПОЛЬЗОВАТЕЛЬСКАЯ настройка: живёт в eframe Storage, а не в
+    /// `.ktproj`, и звёздочку несохранённого не поднимает.
+    pub lang_choice: Option<crate::i18n::Lang>,
     /// Момент последней паузы (двойной Space = стоп, п.15 раунда 6).
     pub paused_at: Option<std::time::Instant>,
     /// Пробел зажат с этого момента (п.3 р.16). None = не зажат.
@@ -264,7 +269,7 @@ impl KtApp {
         let audio = match audio_out::start(ring, player.shared.clone(), player.transport.clone()) {
             Ok(a) => Some(a),
             Err(e) => {
-                eprintln!("аудио-вывод недоступен: {e}");
+                eprintln!("audio output unavailable: {e}");
                 None
             }
         };
@@ -300,6 +305,7 @@ impl KtApp {
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
+            lang_choice: None,
             paused_at: None,
             space_down_at: None,
             space_boost: None,
@@ -420,6 +426,7 @@ impl KtApp {
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
+            lang_choice: None,
             paused_at: None,
             space_down_at: None,
             space_boost: None,
@@ -578,7 +585,7 @@ impl KtApp {
             self.project_path
                 .as_ref()
                 .and_then(|p| p.file_stem().map(|n| n.to_string_lossy().to_string()))
-                .unwrap_or_else(|| "безымянный".into()),
+                .unwrap_or_else(|| tr(k::win::UNTITLED).to_string()),
             if self.dirty_content { " *" } else { "" },
             kt_version::display()
         );
@@ -770,7 +777,7 @@ impl KtApp {
                 }
                 if self.preview_detached {
                     ui.centered_and_justified(|ui| {
-                        ui.weak("превью в отдельном окне (закрой его, чтобы вернуть)");
+                        ui.weak(tr(k::hint::PREVIEW_DETACHED));
                     });
                 } else {
                     self.draw_preview(ui);
@@ -787,7 +794,7 @@ impl KtApp {
             ctx.show_viewport_immediate(
                 vp,
                 egui::ViewportBuilder::default()
-                    .with_title("Kinotrain — превью")
+                    .with_title(tr(k::win::PREVIEW_TITLE))
                     .with_inner_size([960.0, 560.0]),
                 |ui, _class| {
                     // input этого вьюпорта: пробел/шорткаты работают из
@@ -839,14 +846,15 @@ impl KtApp {
                         self.dirty_ui = false;
                     }
                 }
-                Err(e) => self.warn(format!("автосейв не удался: {e}")),
+                Err(e) => self.warn(crate::tf!(k::msg::AUTOSAVE_FAILED, e)),
             }
         }
 
         // окно уведомлений (п.18)
         if self.notices_open {
             let mut open = self.notices_open;
-            egui::Window::new("Уведомления")
+            egui::Window::new(tr(k::win::NOTICES_TITLE))
+                .id(egui::Id::new("kt_notices"))
                 .open(&mut open)
                 .default_size([460.0, 340.0])
                 .min_size([320.0, 200.0])
@@ -854,7 +862,7 @@ impl KtApp {
                 .vscroll(true)
                 .show(ui.ctx(), |ui| {
                     if self.notices.is_empty() {
-                        ui.weak("Пока пусто");
+                        ui.weak(tr(k::win::NOTICES_EMPTY));
                     }
                     for n in self.notices.iter().rev() {
                         let col = match n.severity {
@@ -1020,9 +1028,9 @@ impl KtApp {
             return;
         }
         let mode = if self.pending_morpher.is_some() {
-            Some("Morpher: кликни по фиолетовой Morph-дорожке, куда поставить блок (Esc — отмена)")
+            Some(tr(k::hint::MORPH_PLACE))
         } else if self.dnd_hover.is_some() {
-            Some("Отпусти — клип встанет под мышку (дорожка подсвечена)")
+            Some(tr(k::hint::DROP_HERE))
         } else {
             None
         };
@@ -1033,7 +1041,7 @@ impl KtApp {
             mode,
             status,
             STATUS_TTL_MS,
-            "перетащи медиафайл на окно — клип встанет под мышку",
+            tr(k::hint::IDLE),
         );
         if kind != HintKind::Status
             && self.status.as_ref().is_some_and(|(_, at)| {
@@ -1086,7 +1094,8 @@ impl KtApp {
         );
         let mut open = true;
         let mut go: Option<Hit> = None;
-        egui::Window::new("Поиск по проекту")
+        egui::Window::new(tr(k::win::SEARCH_TITLE))
+            .id(egui::Id::new("kt_search"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -1095,7 +1104,7 @@ impl KtApp {
             .show(ctx, |ui| {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.search_query)
-                        .hint_text("метка, медиа, дорожка…")
+                        .hint_text(tr(k::search::FIELD))
                         .desired_width(400.0),
                 );
                 if !r.has_focus() && self.search_focus {
@@ -1123,11 +1132,11 @@ impl KtApp {
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                     for (i, h) in hits.iter().enumerate() {
                         let tag = match h.kind {
-                            HitKind::Marker => "метка",
-                            HitKind::Media => "медиа",
-                            HitKind::Track => "дорожка",
-                            HitKind::Clip => "клип",
-                            HitKind::Group => "группа",
+                            HitKind::Marker => tr(k::search::MARKER),
+                            HitKind::Media => tr(k::search::MEDIA),
+                            HitKind::Track => tr(k::search::TRACK),
+                            HitKind::Clip => tr(k::search::CLIP),
+                            HitKind::Group => tr(k::search::GROUP),
                         };
                         let sel = i == self.search_sel;
                         let text = format!("{tag}  ·  {}", h.label);
@@ -1136,7 +1145,7 @@ impl KtApp {
                         }
                     }
                     if hits.is_empty() && !self.search_query.trim().is_empty() {
-                        ui.weak("ничего не найдено");
+                        ui.weak(tr(k::search::NOTHING));
                     }
                 });
                 if enter && let Some(h) = hits.get(self.search_sel) {
@@ -1442,7 +1451,7 @@ impl KtApp {
         }
         // 0) отмена размещения morpher'а (v1: Esc cancels placement)
         if self.pending_morpher.take().is_some() {
-            self.note("Размещение morpher'а отменено");
+            self.note(tr(k::msg::MORPH_CANCELLED));
             return;
         }
         // 1) закрыть верхнее наше окно
@@ -1582,7 +1591,7 @@ impl KtApp {
             cmds.push(Command::MoveClip { id: c.id, new_start: c.start, new_lane });
         }
         if cmds.is_empty() {
-            self.note("на этих дорожках нет событий — порядок пустых не важен");
+            self.note(tr(k::msg::EMPTY_LANES));
             return;
         }
         // имена едут ТЕМ ЖЕ сдвигом, что и содержимое (п.5 р.16): раньше
@@ -1607,7 +1616,7 @@ impl KtApp {
             ClipKind::Audio => a,
         };
         if lanes_of_kind <= 1 {
-            self.note("последнюю дорожку удалить нельзя");
+            self.note(tr(k::msg::LAST_LANE));
             return;
         }
         let mut cmds = Vec::new();
@@ -1793,16 +1802,16 @@ impl KtApp {
             },
         };
         if block.is_empty() {
-            self.note("нечего копировать (нет региона и выделения)");
+            self.note(tr(k::msg::NOTHING_TO_COPY));
         } else {
-            self.note(format!("скопировано клипов: {}", block.len()));
+            self.note(crate::tf!(k::msg::CLIPS_COPIED, block.len()));
             self.clipboard = block;
         }
     }
 
     pub fn paste_at_cursor(&mut self) {
         if self.clipboard.is_empty() {
-            self.note("буфер пуст");
+            self.note(tr(k::msg::CLIPBOARD_EMPTY));
             return;
         }
         let at = self.player.transport.playhead();
@@ -1846,7 +1855,7 @@ impl KtApp {
             .map(|c| c.id)
             .collect();
         if targets.is_empty() {
-            self.note("под курсором нет событий");
+            self.note(tr(k::msg::NO_EVENTS_HERE));
             return;
         }
         let mut next_id = self.next_clip_id();
@@ -1877,7 +1886,7 @@ impl KtApp {
             let mut next = self.next_clip_id();
             let cmds = kt_model::ops::punch_out_region(self.model.project(), r, &mut next);
             if cmds.is_empty() {
-                self.note("регион не пересекает клипы");
+                self.note(tr(k::msg::REGION_MISSES));
             } else {
                 self.apply_batch(cmds);
                 self.selected = None;
@@ -1898,7 +1907,7 @@ impl KtApp {
         if let Some(r) = self.model.project().region {
             let cmds = kt_model::ops::delete_region(self.model.project(), r);
             if cmds.is_empty() {
-                self.note("регион не пересекает клипы");
+                self.note(tr(k::msg::REGION_MISSES));
             } else {
                 self.apply_batch(cmds);
                 self.selected = None;
@@ -1913,7 +1922,7 @@ impl KtApp {
         let at = self.player.transport.playhead();
         let cmds = kt_model::ops::trim_group_start_to(self.model.project(), sel, at);
         if cmds.is_empty() {
-            self.note("курсор вне выбранного клипа");
+            self.note(tr(k::msg::CURSOR_OUTSIDE));
         } else {
             self.apply_batch(cmds);
         }
@@ -1924,7 +1933,7 @@ impl KtApp {
         let at = self.player.transport.playhead();
         let cmds = kt_model::ops::trim_group_end_to(self.model.project(), sel, at);
         if cmds.is_empty() {
-            self.note("курсор вне выбранного клипа");
+            self.note(tr(k::msg::CURSOR_OUTSIDE));
         } else {
             self.apply_batch(cmds);
         }
@@ -1965,7 +1974,7 @@ impl KtApp {
     /// в пределах 2×порога → общий старт/длительность/линк (старый magnetize).
     pub fn magnetize_selected(&mut self) {
         let Some(sel) = self.selected else {
-            self.note("выбери клип");
+            self.note(tr(k::msg::PICK_CLIP));
             return;
         };
         let mut next_group = self.next_group_id();
@@ -1975,11 +1984,11 @@ impl KtApp {
             Tick(90_000 * 5), // партнёр в пределах 5 c
             &mut next_group,
         ) {
-            None => self.note("рядом нет события другого типа"),
-            Some(cmds) if cmds.is_empty() => self.note("уже намагничены"),
+            None => self.note(tr(k::msg::NO_OTHER_KIND)),
+            Some(cmds) if cmds.is_empty() => self.note(tr(k::msg::ALREADY_LINKED)),
             Some(cmds) => {
                 if self.apply_batch(cmds) {
-                    self.note("A/V связаны");
+                    self.note(tr(k::msg::AV_LINKED));
                 }
             }
         }
@@ -2025,7 +2034,7 @@ impl KtApp {
     /// Меню Файл → Открыть…: диалог + пересоздание приложения на месте.
     pub fn open_project_dialog(&mut self) {
         let Some(p) = rfd::FileDialog::new()
-            .set_title("Открыть проект")
+            .set_title(tr(k::dialog::OPEN_PROJECT))
             .add_filter("Kinotrain project", &["ktproj"])
             .pick_file()
         else {
@@ -2033,7 +2042,7 @@ impl KtApp {
         };
         match Self::open(&p) {
             Ok(app) => *self = app,
-            Err(e) => self.note(format!("не открылось: {e}")),
+            Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
         }
     }
 
@@ -2054,7 +2063,7 @@ impl KtApp {
             // «это не должно быть проблемой»)
             None => {
                 let Some(p) = rfd::FileDialog::new()
-                    .set_title("Сохранить проект")
+                    .set_title(tr(k::dialog::SAVE_PROJECT))
                     .add_filter("Kinotrain project", &["ktproj"])
                     .set_file_name("untitled.ktproj")
                     .save_file()
@@ -2078,12 +2087,12 @@ impl KtApp {
             Ok(()) => {
                 self.dirty_content = false;
                 self.dirty_ui = false;
-                self.note(format!("сохранено: {}", path.display()));
+                self.note(crate::tf!(k::msg::SAVED, path.display()));
                 // именованный проект сохранён — recovery-файл безымянного
                 // больше не должен «воскресать» при старте (п.12)
                 let _ = std::fs::remove_file(autosave_path());
             }
-            Err(e) => self.note(format!("ошибка сохранения: {e}")),
+            Err(e) => self.note(crate::tf!(k::msg::SAVE_FAILED, e)),
         }
     }
 
@@ -2125,14 +2134,14 @@ impl KtApp {
     pub fn begin_morph_placement(&mut self, batch: bool) {
         let targets = self.morph_target_ids();
         if targets.is_empty() {
-            self.note("Нечего морфить: выдели регион над клипами или клип");
+            self.note(tr(k::msg::NOTHING_TO_MORPH));
             return;
         }
         if self.model.project().morph_lanes == 0 {
             self.apply(Command::InsertMorphLane { at: 0 });
         }
         self.pending_morpher = Some(PendingMorph { targets, batch });
-        self.note("Morpher: кликни по фиолетовой Morph-дорожке (Esc — отмена)");
+        self.note(tr(k::msg::MORPH_CLICK_LANE));
     }
 
     /// Коммит размещения (v1: commitPendingMorpherPlacement + фикс D3:
@@ -2188,7 +2197,7 @@ impl KtApp {
 
     pub fn split_selected(&mut self) {
         let Some(sel) = self.selected else {
-            self.note("нечего резать: клип не выбран");
+            self.note(tr(k::msg::NOTHING_TO_CUT));
             return;
         };
         let at = self.player.transport.playhead();
@@ -2209,7 +2218,7 @@ impl KtApp {
             .map(|c| c.id)
             .collect();
         if targets.is_empty() {
-            self.note("курсор вне выбранного клипа");
+            self.note(tr(k::msg::CURSOR_OUTSIDE));
             return;
         }
         let mut next_id = self.next_clip_id();
@@ -2272,7 +2281,7 @@ impl KtApp {
             vec![(media_id, path.to_string())],
             self.peaks.clone(),
         );
-        self.note(format!("добавлено: {path}"));
+        self.note(crate::tf!(k::msg::ADDED, path));
     }
 
     /// Клип(ы) существующего медиа на курсор (клик в бине).
@@ -2449,7 +2458,7 @@ impl KtApp {
             rect.max,
         );
         let resp = ui.interact(hit, ui.id().with("preview-click"), egui::Sense::click());
-        let resp = self.hint(resp, "Клик — play/pause, двойной клик — отделить превью в окно");
+        let resp = self.hint(resp, tr(k::hint::PREVIEW_CLICK));
         // пп.10-11 р.7: одиночный клик (отложенный на окно double-click) =
         // play/pause; двойной = detach/attach. Работает и в отдельном окне
         // превью (двойной клик там возвращает превью обратно).
@@ -2577,7 +2586,7 @@ impl KtApp {
                 painter.text(
                     img_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    "Загрузка…",
+                    tr(k::perf::LOADING),
                     egui::FontId::proportional(16.0),
                     egui::Color32::from_gray(230),
                 );
@@ -2722,7 +2731,7 @@ impl KtApp {
         }
         self.hint(
             resp,
-            "Верхняя полоса — постоянная скорость, нижняя — shuttle (отпустишь — вернётся), double-click — 1×",
+            tr(k::hint::SPEED),
         );
     }
 
@@ -2757,7 +2766,7 @@ impl KtApp {
                     }
                 })
                 .response;
-            self.hint(r, "Частота кадров проекта");
+            self.hint(r, tr(k::hint::FPS));
             if fps != before_fps {
                 let mut st = proj.clone();
                 st.fps = fps;
@@ -2780,7 +2789,7 @@ impl KtApp {
                     }
                 })
                 .response;
-            self.hint(res_resp, "Разрешение проекта (Max — по самому крупному источнику)");
+            self.hint(res_resp, tr(k::hint::RESOLUTION));
             if res != before_res {
                 let mut st = proj.clone();
                 st.width = res.0;
@@ -2801,20 +2810,20 @@ impl KtApp {
                     }
                 })
                 .response;
-            self.hint(q_resp, "Качество превью: доля разрешения проекта (меньше — быстрее)");
+            self.hint(q_resp, tr(k::hint::PREVIEW_QUALITY));
             if frac_idx != before {
                 self.player.set_preview_quality(q_for(proj.width, proj.height, fracs[frac_idx]));
             }
             ui.separator();
-            let sm = ui.checkbox(&mut self.smooth_scaling, "Сглаживание");
-            self.hint(sm, "Линейное сглаживание превью (выкл — резкие пиксели)");
+            let sm = ui.checkbox(&mut self.smooth_scaling, tr(k::perf::SMOOTHING));
+            self.hint(sm, tr(k::hint::SMOOTHING));
         });
     }
 
     fn draw_perf_box(&mut self, ui: &mut egui::Ui) {
         // длинные строки не должны задавать минимум ширины панели (п.18 р.6)
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-        ui.label(egui::RichText::new("Производительность").strong());
+        ui.label(egui::RichText::new(tr(k::perf::TITLE)).strong());
         ui.add_space(2.0);
         let ord = std::sync::atomic::Ordering::Relaxed;
         let q = self.player.preview_quality();
@@ -2822,10 +2831,10 @@ impl KtApp {
         let s = self.model.project().settings.clone();
         let rows: [(String, String); 4] = [
             (
-                format!(
-                    "Кэш {:.0}/{:.0} МБ",
-                    self.player.cache.audio_bytes() as f64 / 1e6,
-                    self.player.cache.video_bytes() as f64 / 1e6
+                crate::tf!(
+                    k::perf::CACHE_MB,
+                    format!("{:.0}", self.player.cache.audio_bytes() as f64 / 1e6),
+                    format!("{:.0}", self.player.cache.video_bytes() as f64 / 1e6)
                 ),
                 format!(
                     "Underruns {}/{}",
@@ -2834,23 +2843,21 @@ impl KtApp {
                 ),
             ),
             (
-                format!("Превью {}×{}", q.width, q.height),
+                crate::tf!(k::perf::PREVIEW_RES, q.width, q.height),
                 format!("{} fps, {}×{}", s.fps, s.width, s.height),
             ),
             (
-                format!("Клипов {}", self.model.project().clips.len()),
-                format!("Медиа {}", self.model.project().media.len()),
+                crate::tf!(k::perf::CLIPS_N, self.model.project().clips.len()),
+                crate::tf!(k::perf::MEDIA_N, self.model.project().media.len()),
             ),
             (
-                format!(
-                    "V-показано {}",
-                    self.perf.video_frames_shown
-                ),
+                crate::tf!(k::perf::V_SHOWN, self.perf.video_frames_shown),
                 // короткая подпись: в узкой колонке длинная строка
                 // обрезалась многоточием и счётчик откатов было не видно
-                format!(
-                    "V-проп/откат {}/{}",
-                    self.perf.video_cells_skipped, self.perf.video_rollbacks
+                crate::tf!(
+                    k::perf::V_SKIPPED,
+                    self.perf.video_cells_skipped,
+                    self.perf.video_rollbacks
                 ),
             ),
         ];
@@ -2870,8 +2877,8 @@ impl KtApp {
         if let Some(g) = &self.gpu_info {
             ui.weak(format!("GPU: {g}"));
         }
-        let r = ui.checkbox(&mut self.ui_economy, "Экономный UI (30 fps при игре)");
-        self.hint(r, "Для слабых GPU: вдвое меньше перерисовок при воспроизведении");
+        let r = ui.checkbox(&mut self.ui_economy, tr(k::perf::ECONOMY));
+        self.hint(r, tr(k::hint::ECONOMY));
         // кумулятивы FFmpeg-слоя (порт строки avcpp open/read/vdec/adec v1)
         let (opens, reads) = kt_media::ffmpeg::io_stats();
         ui.weak(format!(
@@ -2927,7 +2934,7 @@ impl KtApp {
             .frame(false);
             let bell_resp = ui.add(bell_btn);
             self.no_resize_rects.push(bell_resp.rect.expand(2.0));
-            if self.hint(bell_resp, "Уведомления").clicked() {
+            if self.hint(bell_resp, tr(k::win::NOTICES_TITLE)).clicked() {
                 self.notices_open = !self.notices_open;
                 if self.notices_open {
                     self.notices_unread = 0;
@@ -2939,18 +2946,18 @@ impl KtApp {
             ui.weak(format!("{:.0} px/s", 90_000.0 / self.ticks_per_px));
             if let Some(r) = self.model.project().region {
                 ui.separator();
-                ui.weak(format!(
-                    "регион {:.2}–{:.2}с",
-                    r.start.as_secs_f64(),
-                    r.end.as_secs_f64(),
+                ui.weak(crate::tf!(
+                    k::perf::REGION_S,
+                    format!("{:.2}", r.start.as_secs_f64()),
+                    format!("{:.2}", r.end.as_secs_f64()),
                 ));
             }
             // п.22 р.7: кэш/underruns после региона
             ui.separator();
-            ui.weak(format!(
-                "кэш: {:.0}/{:.0} МБ",
-                self.player.cache.audio_bytes() as f64 / 1e6,
-                self.player.cache.video_bytes() as f64 / 1e6,
+            ui.weak(crate::tf!(
+                k::perf::CACHE_SHORT,
+                format!("{:.0}", self.player.cache.audio_bytes() as f64 / 1e6),
+                format!("{:.0}", self.player.cache.video_bytes() as f64 / 1e6),
             ));
             ui.separator();
             ui.weak(format!(
@@ -3542,7 +3549,7 @@ fn app_icon() -> egui::IconData {
         include_bytes!("../assets/kinotrain-256.png"),
         image::ImageFormat::Png,
     )
-    .expect("иконка приложения")
+    .expect("application icon")
     .to_rgba8();
     let (width, height) = img.dimensions();
     egui::IconData { rgba: img.into_raw(), width, height }
@@ -3599,7 +3606,7 @@ pub fn search_hits(
     };
     for m in &p.markers {
         let label = if m.name.is_empty() {
-            format!("метка {:.2}с", m.t.as_secs_f64())
+            crate::tf!(k::search::MARKER_AT, format!("{:.2}", m.t.as_secs_f64()))
         } else {
             m.name.clone()
         };
@@ -3680,7 +3687,7 @@ pub fn search_hits(
                 r + 1, // клипы ниже медиа с тем же именем
                 Hit {
                     kind: HitKind::Clip,
-                    label: format!("{name} @ {:.2}с", c.start.as_secs_f64()),
+                    label: crate::tf!(k::search::CLIP_AT, name, format!("{:.2}", c.start.as_secs_f64())),
                     at: c.start.0,
                     media: Some(c.media),
                     clip: Some(c.id),
@@ -3801,7 +3808,7 @@ pub fn rate_to_slider(rate: f32) -> f32 {
 
 pub fn format_rate(r: f32) -> String {
     if r == 0.0 {
-        "0 (стоп)".into()
+        tr(k::perf::RATE_STOP).to_string()
     } else {
         format!("{r:+.2}×")
     }
@@ -3848,7 +3855,7 @@ impl PerfState {
         use crate::graphs::{Axis, RollingGraph};
         PerfState {
             quality: RollingGraph::new(
-                "Качество (FPS / hit%)",
+                k::perf::GRAPH_QUALITY,
                 Axis::Percent,
                 vec![
                     ("FPS", egui::Color32::from_rgb(120, 230, 90), 120.0),
@@ -3862,10 +3869,10 @@ impl PerfState {
             // FFmpeg-активность: порт «avcpp Activity» v1 (те же 5 серий
             // и цвета), но по ЖИВЫМ счётчикам kt-ffmpeg::iostats
             decode: RollingGraph::new(
-                "FFmpeg-активность (/с)",
+                k::perf::GRAPH_DECODE,
                 Axis::LinearAuto,
                 vec![
-                    ("Всего", egui::Color32::from_rgb(255, 145, 80), 10_000.0),
+                    ("Total", egui::Color32::from_rgb(255, 145, 80), 10_000.0),
                     ("Open", egui::Color32::from_rgb(255, 205, 105), 500.0),
                     ("Read", egui::Color32::from_rgb(244, 99, 99), 10_000.0),
                     ("V-dec", egui::Color32::from_rgb(95, 209, 155), 1500.0),
@@ -3873,7 +3880,7 @@ impl PerfState {
                 ],
             ),
             churn: RollingGraph::new(
-                "Кэш-чёрн (/с)",
+                k::perf::GRAPH_CHURN,
                 Axis::LinearAuto,
                 vec![
                     ("evict", egui::Color32::from_rgb(255, 160, 120), 2000.0),
@@ -4009,20 +4016,18 @@ impl KtApp {
         let uc = self.player.shared.callback_underruns.load(ord);
         let (lur, luc) = self.perf.last_underruns;
         if ur > lur {
-            self.perf.note(format!("render underruns +{} (итого {ur})", ur - lur));
+            self.perf.note(crate::tf!(k::perf::note::RENDER_UNDERRUNS, ur - lur, ur));
         }
         if uc > luc {
-            self.perf.note(format!("callback underruns +{} (итого {uc})", uc - luc));
+            self.perf.note(crate::tf!(k::perf::note::CALLBACK_UNDERRUNS, uc - luc, uc));
         }
         self.perf.last_underruns = (ur, uc);
         if d_ev as f32 / dt > 500.0 {
-            self.perf.note(format!("всплеск eviction: {:.0}/с — кэшу тесно", d_ev as f32 / dt));
+            self.perf.note(crate::tf!(k::perf::note::EVICTION_SPIKE, format!("{:.0}", d_ev as f32 / dt)));
         }
         // порт главного предупреждения v1: кадры выселены ДО первого чтения
         if d_unused > 0 {
-            self.perf.note(format!(
-                "сброшено {d_unused} записей кэша до первого чтения (prefetch-thrash)"
-            ));
+            self.perf.note(crate::tf!(k::perf::note::PREFETCH_THRASH, d_unused));
         }
         // порог (в v1 порогов не было вовсе): низкий видео-hit при игре
         if v_hit < 80.0
@@ -4034,11 +4039,11 @@ impl KtApp {
                 .unwrap_or(true)
         {
             self.perf.last_hit_warn = Some(std::time::Instant::now());
-            self.perf.note(format!("видео-hit {v_hit:.0}% при воспроизведении — декод не успевает"));
+            self.perf.note(crate::tf!(k::perf::note::LOW_VIDEO_HIT, format!("{v_hit:.0}")));
         }
         let offline_now = self.offline.lock().unwrap().len();
         if offline_now != self.perf.last_offline {
-            self.perf.note(format!("доступность медиа изменилась: офлайн {offline_now}"));
+            self.perf.note(crate::tf!(k::perf::note::OFFLINE_CHANGED, offline_now));
             self.perf.last_offline = offline_now;
         }
     }
@@ -4048,7 +4053,8 @@ impl KtApp {
             return;
         }
         let mut open = self.perf.diag_open;
-        egui::Window::new("Диагностика")
+        egui::Window::new(tr(k::win::DIAG_TITLE))
+            .id(egui::Id::new("kt_diag"))
             .open(&mut open)
             .default_size([560.0, 460.0])
             .min_size([420.0, 300.0])
@@ -4061,13 +4067,14 @@ impl KtApp {
                 let limit = self.player.cache.max_video_bytes() as f64;
                 let occ = if limit > 0.0 { (used / limit * 100.0).min(100.0) } else { 0.0 };
                 ui.horizontal(|ui| {
-                    ui.weak(format!(
-                        "Занятость видео-кэша: {occ:.0}% ({:.0} / {:.0} МБ)",
-                        used / 1e6,
-                        limit / 1e6
+                    ui.weak(crate::tf!(
+                        k::perf::CACHE_OCCUPANCY,
+                        format!("{occ:.0}"),
+                        format!("{:.0}", used / 1e6),
+                        format!("{:.0}", limit / 1e6)
                     ));
                     let cache = self.player.cache.stats();
-                    ui.weak(format!("| no-read drops всего: {}", cache.unused_evictions));
+                    ui.weak(crate::tf!(k::perf::NO_READ_DROPS, cache.unused_evictions));
                 });
                 let (bar, _) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), 6.0),
@@ -4090,12 +4097,12 @@ impl KtApp {
                 self.perf.churn.draw(ui, 110.0);
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Журнал проблем").strong());
-                    if ui.button("Очистить").clicked() {
+                    ui.label(egui::RichText::new(tr(k::perf::LOG_TITLE)).strong());
+                    if ui.button(tr(k::perf::LOG_CLEAR)).clicked() {
                         self.perf.log.clear();
                         self.perf.last_msg = None;
                     }
-                    if ui.button("Сброс графиков").clicked() {
+                    if ui.button(tr(k::perf::GRAPH_RESET)).clicked() {
                         self.perf.quality.clear();
                         self.perf.decode.clear();
                         self.perf.churn.clear();
@@ -4106,7 +4113,7 @@ impl KtApp {
                         ui.monospace(line);
                     }
                     if self.perf.log.is_empty() {
-                        ui.weak("проблем не замечено");
+                        ui.weak(tr(k::perf::LOG_EMPTY));
                     }
                 });
             });
@@ -4133,15 +4140,16 @@ impl eframe::App for KtApp {
                 .unwrap_or(false);
             self.sw_render = Some(sw);
             if sw {
-                self.warn(
-                    "Нет аппаратного ускорения графики (софт-рендер) — интерфейс может                      подтормаживать, glow превью отключён",
-                );
+                self.warn(tr(k::msg::SOFTWARE_RENDER));
             }
         }
 
         self.draw_all(ui);
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        // язык — настройка пользователя, а не проекта: пишется всегда, даже
+        // когда проект безымянный
+        storage.set_string("lang", crate::i18n::choice_code(self.lang_choice).to_string());
         // последний проект + финальный сейв при выходе
         if let Some(p) = &self.project_path.clone() {
             storage.set_string("last_project", p.to_string_lossy().to_string());
@@ -4190,8 +4198,16 @@ pub fn run() -> eframe::Result {
         "kinotrain",
         options,
         Box::new(move |cc| {
+            // Язык решается ДО построения KtApp: строки ниже (восстановленный
+            // автосейв, приглашение открыть проект) уже переводятся.
+            // KT_LANG — отладочный оверрайд в ряду KT_AUTOPLAY/KT_DECORATIONS.
+            let lang_choice = std::env::var("KT_LANG")
+                .ok()
+                .or_else(|| cc.storage.and_then(|s| s.get_string("lang")))
+                .and_then(|v| crate::i18n::choice_from_code(&v));
             crate::theme::apply(&cc.egui_ctx);
             crate::theme::apply_debug_flags(&cc.egui_ctx); // п.23 р.6
+            crate::i18n::set_lang_ctx(&cc.egui_ctx, crate::i18n::resolve(lang_choice));
             crate::icons::install_fonts(&cc.egui_ctx);
             let restored = arg
                 .clone()
@@ -4200,20 +4216,19 @@ pub fn run() -> eframe::Result {
                 .filter(|p| p.exists())
                 // v1: если last_project нет — восстановление из автосейва
                 .or_else(|| Some(autosave_path()).filter(|p| p.exists()));
-            let app = match restored {
+            let mut app = match restored {
                 Some(path) => {
                     let mut a = KtApp::open(&path).unwrap_or_else(|e| KtApp::new_empty(Some(e)));
                     if path == autosave_path() {
                         // восстановленный recovery остаётся «безымянным»
                         a.project_path = None;
-                        a.note("Восстановлен автосейв безымянного проекта");
+                        a.note(tr(k::msg::AUTOSAVE_RESTORED));
                     }
                     a
                 }
-                None => KtApp::new_empty(Some(
-                    "Открой проект: kt-app <file.ktproj> или перетащи его на окно".into(),
-                )),
+                None => KtApp::new_empty(Some(tr(k::msg::OPEN_A_PROJECT).to_string())),
             };
+            app.lang_choice = lang_choice;
             Ok(Box::new(app))
         }),
     )

@@ -6,6 +6,7 @@
 //! не безусловный; текстуры — общие thumb_textures/LRU приложения;
 //! «last good» на медиа — превью не мигает при недогруженных бакетах.
 
+use crate::i18n::{k, tr};
 use crate::app::KtApp;
 use crate::thumbs::{THUMB_STEP_LADDER, ThumbKey, ThumbState, thumb_key_t, thumb_source_step};
 use eframe::egui;
@@ -148,14 +149,14 @@ impl KtApp {
                 [22.0, 20.0],
                 egui::Button::selectable(free, crate::icons::ARROWS_OUT),
             );
-            if self.hint(r, "Свободная раскладка: карточки двигаются мышью").clicked() {
+            if self.hint(r, tr(k::bin::HINT_FREE)).clicked() {
                 self.bin_free = true;
             }
             let r = ui.add_sized(
                 [22.0, 20.0],
                 egui::Button::selectable(!free, crate::icons::SQUARES_FOUR),
             );
-            if self.hint(r, "Сетка: карточки выстраиваются автоматически").clicked() {
+            if self.hint(r, tr(k::bin::HINT_GRID)).clicked() {
                 self.bin_free = false;
             }
         });
@@ -408,7 +409,7 @@ impl KtApp {
             });
         }
         if media.is_empty() {
-            ui.weak("пусто — перетащи медиафайлы на окно");
+            ui.weak(tr(k::bin::EMPTY));
         }
         // вынос карточки на таймлайн (п.5 р.8): дальше её ведёт обычный
         // силуэт-призрак таймлайна, как при дропе файла из системы
@@ -519,23 +520,26 @@ impl KtApp {
                 egui::pos2(frame.right(), frame.top() + 2.0),
             );
             let r = ui.interact(bar, ui.id().with(("bin-group", gi)), egui::Sense::click());
-            let r = self.hint(r, "Группа: клик — выделить, ПКМ — переименовать/замок/разгруппировать");
+            let r = self.hint(r, tr(k::bin::HINT_GROUP));
             if r.clicked() {
                 self.bin_sel = g.members.iter().copied().collect();
             }
             r.context_menu(|ui| {
-                if ui.button("Переименовать…").clicked() {
+                if ui.button(tr(k::bin::menu::RENAME)).clicked() {
                     rename = Some(gi);
                     ui.close();
                 }
-                let lock_label =
-                    if g.locked { "Снять замок" } else { "Замок: не двигать карточки" };
+                let lock_label = if g.locked {
+                    tr(k::bin::menu::UNLOCK)
+                } else {
+                    tr(k::bin::menu::LOCK)
+                };
                 if ui.button(lock_label).clicked() {
                     self.bin_groups[gi].locked = !g.locked;
                     self.dirty_ui = true;
                     ui.close();
                 }
-                if ui.button("Разгруппировать").clicked() {
+                if ui.button(tr(k::bin::menu::UNGROUP)).clicked() {
                     self.bin_ungroup(gi);
                     ui.close();
                 }
@@ -560,7 +564,7 @@ impl KtApp {
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         let r = ui.add(
                             egui::TextEdit::singleline(&mut buf)
-                                .hint_text("имя группы")
+                                .hint_text(tr(k::bin::GROUP_NAME))
                                 .desired_width(150.0),
                         );
                         // фокус запрашиваем РОВНО один раз: иначе поле его
@@ -712,27 +716,27 @@ impl KtApp {
         let mut ungroup: Option<usize> = None;
         let mut lock_toggle: Option<usize> = None;
         resp.clone().context_menu(|ui| {
-            if ui.button("Поставить на курсор").clicked() {
+            if ui.button(tr(k::bin::menu::PLACE)).clicked() {
                 *to_place = Some(id);
                 ui.close();
             }
             ui.separator();
             match group_of {
                 Some(gi) => {
-                    if ui.button("Разгруппировать").clicked() {
+                    if ui.button(tr(k::bin::menu::UNGROUP)).clicked() {
                         ungroup = Some(gi);
                         ui.close();
                     }
-                    if ui.button("Замок / снять").clicked() {
+                    if ui.button(tr(k::bin::menu::LOCK_TOGGLE)).clicked() {
                         lock_toggle = Some(gi);
                         ui.close();
                     }
                 }
                 None => {
                     let label = if sel_n > 1 {
-                        format!("Сгруппировать выделенные ({sel_n})")
+                        crate::tf!(k::bin::menu::GROUP_SELECTED, sel_n)
                     } else {
-                        "Сгруппировать (замок на карточку)".into()
+                        tr(k::bin::menu::GROUP_ONE).to_string()
                     };
                     if ui.button(label).clicked() {
                         group_now = true;
@@ -741,7 +745,7 @@ impl KtApp {
                 }
             }
             ui.separator();
-            if ui.button("Убрать из проекта").clicked() {
+            if ui.button(tr(k::bin::menu::REMOVE)).clicked() {
                 *to_remove = Some(id);
                 ui.close();
             }

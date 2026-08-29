@@ -2,6 +2,7 @@
 //! PreviewVolumeFader): лестница цветов, peak-hold caps со спадом,
 //! фейдер −60..+24 dB, double-click = 0 dB, кнопка M = mute.
 
+use crate::i18n::{k, tr};
 use crate::app::KtApp;
 use eframe::egui;
 
@@ -199,7 +200,7 @@ pub fn seg_db_for(bar_h: f32) -> f32 {
             let px = |s: f32| (bar_h * s / span - SEG_TARGET_PX).abs();
             px(**a).total_cmp(&px(**b))
         })
-        .expect("SEG_STEPS не пуст")
+        .expect("SEG_STEPS is not empty")
 }
 
 /// Сколько сегментов зажжено при уровне db (чистая, тест 97).
@@ -822,12 +823,12 @@ impl KtApp {
         // подсказка зависит от зоны под курсором (п.1 р.9)
         let over_mute = fader.hover_pos().is_some_and(|p| mute_rect.contains(p));
         let text = if over_mute {
-            "Мьют мастера превью"
+            tr(k::meter::MUTE)
         } else {
-            "Мастер-громкость превью: тяни или колесо (Shift — точно), double-click — 0 dB"
+            tr(k::meter::FADER)
         };
         self.hint(fader, text);
-        self.hint(response, "Пиковый уровень мастера, dBFS");
+        self.hint(response, tr(k::meter::PEAK));
     }
 }
 

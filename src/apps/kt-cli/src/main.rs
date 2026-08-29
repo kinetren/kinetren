@@ -63,7 +63,7 @@ fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
     let end_frame =
         project.clips.iter().map(|c| (c.start + c.duration).to_audio_frames()).max().unwrap_or(0);
     if end_frame == 0 {
-        eprintln!("пустой проект — нечего рендерить");
+        eprintln!("empty project - nothing to render");
         return 1;
     }
     let renderer = AudioRenderer::new(project);
@@ -86,7 +86,7 @@ fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
         return 1;
     }
     eprintln!(
-        "ok: {} кадров ({:.3} c), underruns: {}",
+        "ok: {} frames ({:.3} s), underruns: {}",
         end_frame,
         end_frame as f64 / AUDIO_SAMPLE_RATE as f64,
         stats.underruns
@@ -237,7 +237,7 @@ fn run(args: &[String]) -> i32 {
             match kt_engine::export_mp4(&project, audio_sources, video_sources, output) {
                 Ok(stats) => {
                     eprintln!(
-                        "ok: {} видеокадров, {} аудио-кадров, underruns {}, недостающих слоёв {}, энкодер {}",
+                        "ok: {} video frames, {} audio frames, underruns {}, missing layers {}, encoder {}",
                         stats.video_frames,
                         stats.audio_frames,
                         stats.underruns,
@@ -253,7 +253,7 @@ fn run(args: &[String]) -> i32 {
             }
         }
         Some(cmd) => {
-            eprintln!("unknown command: {cmd} (доступно: version, new, roundtrip, render, export)");
+            eprintln!("unknown command: {cmd} (available: version, new, roundtrip, render, export)");
             2
         }
     }

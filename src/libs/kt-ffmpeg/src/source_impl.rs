@@ -51,7 +51,7 @@ fn resolve_stream_index(
     if found >= 0 && found < nb {
         return Ok(found);
     }
-    Err(FfError::Av(format!("{what}: поток не найден в контексте (nb_streams={nb})")))
+    Err(FfError::Av(format!("{what}: stream not found in context (nb_streams={nb})")))
 }
 
 fn averr(api: &Api, ctx: &str, code: c_int) -> FfError {
@@ -135,7 +135,7 @@ impl Source {
         prebuilt: Option<crate::PrebuiltIndex>,
     ) -> Result<Source, FfError> {
         unsafe { (api.av_log_set_level)(16) }; // AV_LOG_ERROR
-        let cpath = CString::new(path).map_err(|_| FfError::Av("путь содержит NUL".into()))?;
+        let cpath = CString::new(path).map_err(|_| FfError::Av("path contains NUL".into()))?;
 
         // --- probe (заголовок) + пакетный индекс (полный скан без декода;
         //     при готовом индексе из sidecar-БД скан пропускается) ---
@@ -149,13 +149,13 @@ impl Source {
             )
         };
         if r < 0 {
-            return Err(averr(api, "открытие файла", r));
+            return Err(averr(api, "opening file", r));
         }
         crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let r = unsafe { (api.avformat_find_stream_info)(scan, core::ptr::null_mut()) };
         if r < 0 {
             unsafe { (api.avformat_close_input)(&mut scan) };
-            return Err(averr(api, "разбор потоков", r));
+            return Err(averr(api, "parsing streams", r));
         }
         let audio_idx = unsafe {
             (api.av_find_best_stream)(
@@ -324,7 +324,7 @@ impl Source {
                 (api.av_seek_frame)(a.fmt, a.stream_index, seek_pts, AVSEEK_FLAG_BACKWARD)
             };
             if r < 0 {
-                return Err(averr(api, "аудио seek", r));
+                return Err(averr(api, "audio seek", r));
             }
             a.reopen_decoder(api)?;
         }
@@ -389,7 +389,7 @@ impl Source {
         if keys.is_empty() {
             return Ok(());
         }
-        debug_assert!(keys.windows(2).all(|w| w[0] < w[1]), "ключи спана должны возрастать");
+        debug_assert!(keys.windows(2).all(|w| w[0] < w[1]), "span keys must be increasing");
         let first = v.target_ts(api, keys[0]);
         v.prepare_for(api, first)?;
         for k in keys {
@@ -441,12 +441,12 @@ impl AudioPath {
             (api.avformat_open_input)(&mut fmt, path.as_ptr(), core::ptr::null(), core::ptr::null_mut())
         };
         if r < 0 {
-            return Err(averr(api, "аудио: открытие", r));
+            return Err(averr(api, "audio: open", r));
         }
         crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         unsafe { (api.avformat_find_stream_info)(fmt, core::ptr::null_mut()) };
         let stream_index =
-            resolve_stream_index(api, fmt, stream_index, ffi::AVMEDIA_TYPE_AUDIO, "аудио")?;
+            resolve_stream_index(api, fmt, stream_index, ffi::AVMEDIA_TYPE_AUDIO, "audio")?;
         let st = unsafe { &**(*fmt).streams.add(stream_index as usize) };
         let time_base = st.time_base;
         let start_time = if st.start_time == AV_NOPTS_VALUE { 0 } else { st.start_time };
@@ -473,18 +473,18 @@ impl AudioPath {
         let par = unsafe { &*st.codecpar };
         let codec = unsafe { (api.avcodec_find_decoder)(par.codec_id) };
         if codec.is_null() {
-            return Err(FfError::Av("нет аудио-декодера".into()));
+            return Err(FfError::Av("no audio decoder".into()));
         }
         crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let dec = unsafe { (api.avcodec_alloc_context3)(codec) };
         let r = unsafe { (api.avcodec_parameters_to_context)(dec, st.codecpar) };
         if r < 0 {
-            return Err(averr(api, "аудио codecpar", r));
+            return Err(averr(api, "audio codecpar", r));
         }
         unsafe { (*dec).pkt_timebase = st.time_base };
         let r = unsafe { (api.avcodec_open2)(dec, codec, core::ptr::null_mut()) };
         if r < 0 {
-            return Err(averr(api, "аудио декодер", r));
+            return Err(averr(api, "audio decoder", r));
         }
         // swr → 48k stereo f32 (инвариант №1: наружу только этот формат)
         let mut out_layout: ffi::AVChannelLayout = unsafe { core::mem::zeroed() };
@@ -592,7 +592,7 @@ impl AudioPath {
                     let r = unsafe { (api.avcodec_send_packet)(self.dec, pkt) };
                     unsafe { (api.av_packet_unref)(pkt) };
                     if r < 0 && r != AVERROR_EAGAIN {
-                        return Err(averr(api, "аудио send", r));
+                        return Err(averr(api, "audio send", r));
                     }
                 }
                 loop {
@@ -605,7 +605,7 @@ impl AudioPath {
                         break;
                     }
                     if r < 0 {
-                        return Err(averr(api, "аудио receive", r));
+                        return Err(averr(api, "audio receive", r));
                     }
                     self.push_frame(api, frame)?;
                     unsafe { (api.av_frame_unref)(frame) };
@@ -631,12 +631,12 @@ impl VideoPath {
             (api.avformat_open_input)(&mut fmt, path.as_ptr(), core::ptr::null(), core::ptr::null_mut())
         };
         if r < 0 {
-            return Err(averr(api, "видео: открытие", r));
+            return Err(averr(api, "video: open", r));
         }
         crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         unsafe { (api.avformat_find_stream_info)(fmt, core::ptr::null_mut()) };
         let stream_index =
-            resolve_stream_index(api, fmt, stream_index, ffi::AVMEDIA_TYPE_VIDEO, "видео")?;
+            resolve_stream_index(api, fmt, stream_index, ffi::AVMEDIA_TYPE_VIDEO, "video")?;
         let st = unsafe { &**(*fmt).streams.add(stream_index as usize) };
         let time_base = st.time_base;
         let start_time = if st.start_time == AV_NOPTS_VALUE { 0 } else { st.start_time };
@@ -671,13 +671,13 @@ impl VideoPath {
         let st = unsafe { &**(*fmt).streams.add(stream_index as usize) };
         let codec = unsafe { (api.avcodec_find_decoder)(codec_id) };
         if codec.is_null() {
-            return Err(FfError::Av("нет видео-декодера".into()));
+            return Err(FfError::Av("no video decoder".into()));
         }
         crate::iostats::OPENS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         let dec = unsafe { (api.avcodec_alloc_context3)(codec) };
         let r = unsafe { (api.avcodec_parameters_to_context)(dec, st.codecpar) };
         if r < 0 {
-            return Err(averr(api, "видео codecpar", r));
+            return Err(averr(api, "video codecpar", r));
         }
         unsafe { (*dec).pkt_timebase = st.time_base };
         // threads=auto для ВСЕХ кодеков: дефолт libavcodec — ОДИН поток,
@@ -693,7 +693,7 @@ impl VideoPath {
         let r = unsafe { (api.avcodec_open2)(dec, codec, &mut opts) };
         unsafe { (api.av_dict_free)(&mut opts) };
         if r < 0 {
-            return Err(averr(api, "видео декодер", r));
+            return Err(averr(api, "video decoder", r));
         }
         Ok(dec)
     }
@@ -710,7 +710,7 @@ impl VideoPath {
             )
         };
         if r < 0 {
-            return Err(averr(api, "видео seek", r));
+            return Err(averr(api, "video seek", r));
         }
         unsafe { (api.avcodec_free_context)(&mut self.dec) };
         self.dec = Self::open_decoder(api, self.fmt, self.stream_index, self.codec_id)?;
@@ -757,7 +757,7 @@ impl VideoPath {
                     return Ok(None);
                 }
                 if r != AVERROR_EAGAIN {
-                    return Err(averr(api, "видео receive", r));
+                    return Err(averr(api, "video receive", r));
                 }
                 if self.eof {
                     return Ok(None);
@@ -778,7 +778,7 @@ impl VideoPath {
                 let r = unsafe { (api.avcodec_send_packet)(self.dec, pkt) };
                 unsafe { (api.av_packet_unref)(pkt) };
                 if r < 0 && r != AVERROR_EAGAIN {
-                    return Err(averr(api, "видео send", r));
+                    return Err(averr(api, "video send", r));
                 }
             }
         })();

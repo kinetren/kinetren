@@ -59,7 +59,7 @@ unsafe impl Send for Muxer {}
 impl Muxer {
     pub fn open(api: &'static Api, cfg: &MuxConfig) -> Result<Muxer, FfError> {
         let path = CString::new(cfg.path.as_str())
-            .map_err(|_| FfError::Av("путь содержит NUL".into()))?;
+            .map_err(|_| FfError::Av("path contains NUL".into()))?;
         let mut fmt: *mut ffi::AVFormatContext = core::ptr::null_mut();
         let mp4 = CString::new("mp4").unwrap();
         let r = unsafe {
@@ -71,7 +71,7 @@ impl Muxer {
             )
         };
         if r < 0 || fmt.is_null() {
-            return Err(averr(api, "создание mp4-контекста", r));
+            return Err(averr(api, "creating mp4 context", r));
         }
 
         // --- видео-энкодер: автовыбор с РЕАЛЬНОЙ проверкой открытия ---
@@ -154,14 +154,14 @@ impl Muxer {
                 opened = Some((name.to_string(), ctx));
                 break;
             }
-            last_err = format!("{name}: код {r}");
+            last_err = format!("{name}: code {r}");
             let mut ctx = ctx;
             unsafe { (api.avcodec_free_context)(&mut ctx) };
         }
         unsafe { (api.av_log_set_level)(16) }; // обратно AV_LOG_ERROR
         let (enc_name, venc) = opened.ok_or_else(|| {
             FfError::Av(format!(
-                "ни один видео-энкодер не открылся (последняя ошибка — {last_err})"
+                "no video encoder could be opened (last error: {last_err})"
             ))
         })?;
         let enc_name = enc_name.as_str();
@@ -170,7 +170,7 @@ impl Muxer {
         let aac = CString::new("aac").unwrap();
         let acodec = unsafe { (api.avcodec_find_encoder_by_name)(aac.as_ptr()) };
         if acodec.is_null() {
-            return Err(FfError::Av("в системном FFmpeg нет AAC-энкодера".into()));
+            return Err(FfError::Av("system FFmpeg has no AAC encoder".into()));
         }
         let aenc = unsafe { (api.avcodec_alloc_context3)(acodec) };
         unsafe {
@@ -185,7 +185,7 @@ impl Muxer {
         }
         let r = unsafe { (api.avcodec_open2)(aenc, acodec, core::ptr::null_mut()) };
         if r < 0 {
-            return Err(averr(api, "открытие AAC", r));
+            return Err(averr(api, "opening AAC", r));
         }
         let frame_size = {
             let fs = unsafe { (*aenc).frame_size };
@@ -196,7 +196,7 @@ impl Muxer {
         let vst = unsafe { (api.avformat_new_stream)(fmt, core::ptr::null()) };
         let ast = unsafe { (api.avformat_new_stream)(fmt, core::ptr::null()) };
         if vst.is_null() || ast.is_null() {
-            return Err(FfError::Av("не удалось создать потоки".into()));
+            return Err(FfError::Av("failed to create streams".into()));
         }
         unsafe {
             (*vst).time_base = tb(1, cfg.fps as c_int);
@@ -209,14 +209,14 @@ impl Muxer {
         // --- открытие файла и заголовок (+faststart) ---
         let r = unsafe { (api.avio_open)(&mut (*fmt).pb, path.as_ptr(), AVIO_FLAG_WRITE) };
         if r < 0 {
-            return Err(averr(api, "создание файла", r));
+            return Err(averr(api, "creating file", r));
         }
         let mut mopts: *mut ffi::AVDictionary = core::ptr::null_mut();
         set(&mut mopts, "movflags", "+faststart");
         let r = unsafe { (api.avformat_write_header)(fmt, &mut mopts) };
         unsafe { (api.av_dict_free)(&mut mopts) };
         if r < 0 {
-            return Err(averr(api, "запись заголовка", r));
+            return Err(averr(api, "writing header", r));
         }
 
         // --- рабочие буферы ---
@@ -280,7 +280,7 @@ impl Muxer {
         let expected = self.width as usize * self.height as usize * 4;
         if rgba.len() != expected {
             return Err(FfError::Av(format!(
-                "кадр {} байт, ожидалось {expected}",
+                "frame is {} bytes, expected {expected}",
                 rgba.len()
             )));
         }
@@ -341,12 +341,12 @@ impl Muxer {
                 break;
             }
             if r != AVERROR_EAGAIN {
-                return Err(averr(api, "энкодер send", r));
+                return Err(averr(api, "encoder send", r));
             }
             attempts += 1;
             if attempts > 1000 {
                 return Err(FfError::Av(
-                    "энкодер не принимает кадры (1000 попыток при EAGAIN)".into(),
+                    "encoder does not accept frames (1000 attempts on EAGAIN)".into(),
                 ));
             }
             // освободить место в очереди энкодера и повторить send
@@ -368,7 +368,7 @@ impl Muxer {
                 return Ok(());
             }
             if r < 0 {
-                return Err(averr(api, "энкодер receive", r));
+                return Err(averr(api, "encoder receive", r));
             }
             unsafe {
                 let st = &**(*self.fmt).streams.add(stream_idx as usize);
@@ -377,7 +377,7 @@ impl Muxer {
                 let r = (api.av_interleaved_write_frame)(self.fmt, self.pkt);
                 (api.av_packet_unref)(self.pkt);
                 if r < 0 {
-                    return Err(averr(api, "запись пакета", r));
+                    return Err(averr(api, "writing packet", r));
                 }
             }
         }
@@ -400,7 +400,7 @@ impl Muxer {
         self.drain(self.aenc, self.astream_idx, tb(1, AUDIO_SAMPLE_RATE as c_int))?;
         let r = unsafe { (api.av_write_trailer)(self.fmt) };
         if r < 0 {
-            return Err(averr(api, "финализация файла", r));
+            return Err(averr(api, "finalizing file", r));
         }
         Ok(())
     }

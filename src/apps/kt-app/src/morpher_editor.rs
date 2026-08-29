@@ -6,6 +6,7 @@
 //! окна = один undo-шаг. Автоматизация в батч-цепочках не редактируется —
 //! после bake доступен полный FX-редактор клипа.
 
+use crate::i18n::{k, tr};
 use crate::app::KtApp;
 use eframe::egui;
 use kt_model::*;
@@ -56,9 +57,9 @@ impl KtApp {
         };
         let is_batch = matches!(orig.kind, MorphKind::EffectBatch { .. });
         let title = if is_batch {
-            format!("Morpher FX-батч — событие {}", ed.id.0)
+            crate::tf!(k::mrph::TITLE_BATCH, ed.id.0)
         } else {
-            format!("Morpher — событие {}", ed.id.0)
+            crate::tf!(k::mrph::TITLE, ed.id.0)
         };
         let mut ev = orig.clone();
         let mut changed = false;
@@ -80,8 +81,8 @@ impl KtApp {
                     ids.push("…".into());
                 }
                 ui.label(
-                    egui::RichText::new(format!(
-                        "Заморожено при создании: {} клип(ов). {}",
+                    egui::RichText::new(crate::tf!(
+                        k::mrph::FROZEN,
                         ev.targets.len(),
                         ids.join(", ")
                     ))
@@ -103,15 +104,15 @@ impl KtApp {
                             .and_then(|id| {
                                 media_list.iter().find(|(i, _)| *i == id).map(|(_, p)| p.clone())
                             })
-                            .unwrap_or_else(|| "— не менять источник —".to_string());
+                            .unwrap_or_else(|| tr(k::mrph::KEEP_SOURCE).to_string());
                         ui.horizontal(|ui| {
-                            ui.label("Новый источник:");
+                            ui.label(tr(k::mrph::NEW_SOURCE));
                             egui::ComboBox::from_id_salt(("morph_src", ed.id.0))
                                 .width(240.0)
                                 .selected_text(short_name(&cur_name))
                                 .show_ui(ui, |ui| {
                                     if ui
-                                        .selectable_label(media.is_none(), "— не менять источник —")
+                                        .selectable_label(media.is_none(), tr(k::mrph::KEEP_SOURCE))
                                         .clicked()
                                     {
                                         *media = None;
@@ -133,7 +134,7 @@ impl KtApp {
                         });
                         ui.label(
                             egui::RichText::new(
-                                "Файл не из проекта? Перетащи его в бин — он появится в списке.",
+                                tr(k::mrph::NOT_IN_BIN),
                             )
                             .weak()
                             .small(),
@@ -142,7 +143,7 @@ impl KtApp {
                         // --- сдвиг source-in (delta / absolute, D4) ---------
                         let mut absolute = absolute_source_in.is_some();
                         if ui
-                            .checkbox(&mut absolute, "Абсолютный source-in (вместо сдвига)")
+                            .checkbox(&mut absolute, tr(k::mrph::ABSOLUTE_IN))
                             .changed()
                         {
                             *absolute_source_in =
@@ -152,7 +153,7 @@ impl KtApp {
                         if let Some(abs) = absolute_source_in {
                             let mut ms = abs.0 / MS;
                             ui.horizontal(|ui| {
-                                ui.label("Source-in, мс:");
+                                ui.label(tr(k::mrph::SOURCE_IN_MS));
                                 if ui
                                     .add(egui::DragValue::new(&mut ms).speed(10).range(0..=i64::MAX))
                                     .changed()
@@ -164,7 +165,7 @@ impl KtApp {
                         } else {
                             let mut ms = source_in_delta.0 / MS;
                             ui.horizontal(|ui| {
-                                ui.label("Сдвиг source-in, мс:");
+                                ui.label(tr(k::mrph::SOURCE_IN_DELTA_MS));
                                 if ui.add(egui::DragValue::new(&mut ms).speed(10)).changed() {
                                     *source_in_delta = Tick(ms * MS);
                                     changed = true;
@@ -175,7 +176,7 @@ impl KtApp {
                     MorphKind::EffectBatch { video_fx, audio_fx } => {
                         ui.label(
                             egui::RichText::new(
-                                "Эффекты действуют сразу (live); bake впишет их в клипы.",
+                                tr(k::mrph::LIVE_NOTE),
                             )
                             .weak()
                             .small(),
@@ -183,7 +184,7 @@ impl KtApp {
                         changed |= chain_section(
                             ui,
                             ed.id.0,
-                            "Видео-FX (допишутся видео-клипам)",
+                            tr(k::mrph::VIDEO_FX),
                             video_fx,
                             &mut ed.sel.0,
                             true,
@@ -193,7 +194,7 @@ impl KtApp {
                         changed |= chain_section(
                             ui,
                             ed.id.0,
-                            "Аудио-FX (допишутся аудио-клипам)",
+                            tr(k::mrph::AUDIO_FX),
                             audio_fx,
                             &mut ed.sel.1,
                             false,
@@ -206,15 +207,15 @@ impl KtApp {
                 ui.horizontal(|ui| {
                     if ui
                         .button(if is_batch {
-                            "Bake FX-батча"
+                            tr(k::mrph::BAKE_BATCH)
                         } else {
-                            "Bake морфинга"
+                            tr(k::mrph::BAKE_MORPH)
                         })
                         .clicked()
                     {
                         bake = true;
                     }
-                    if ui.button("Удалить morpher").clicked() {
+                    if ui.button(tr(k::mrph::REMOVE)).clicked() {
                         delete = true;
                     }
                 });
@@ -316,7 +317,7 @@ fn chain_section(
                     changed |=
                         ui.add(egui::DragValue::new(mix).speed(0.01).range(0.0..=1.0)).changed();
                     ui.end_row();
-                    ui.label("Delay, мс:");
+                    ui.label(tr(k::mrph::DELAY_MS));
                     changed |= ui
                         .add(egui::DragValue::new(reverb_delay_ms).speed(1.0).range(1.0..=500.0))
                         .changed();

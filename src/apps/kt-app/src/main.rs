@@ -11,6 +11,9 @@ mod fx_editor;
 mod font_tests;
 mod fx_registry;
 mod graphs;
+mod i18n;
+#[cfg(test)]
+mod i18n_tests;
 mod icons;
 #[cfg(test)]
 mod layout_tests;

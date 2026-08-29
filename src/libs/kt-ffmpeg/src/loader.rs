@@ -59,7 +59,7 @@ impl Lib {
     /// Тип `T` должен соответствовать реальной сигнатуре функции.
     pub unsafe fn sym<T: Copy>(&self, name: &str) -> Result<T, FfError> {
         let sym: Symbol<T> = unsafe { self.0.get(name.as_bytes()) }
-            .map_err(|e| FfError::Load(format!("символ {}: {e}", name.trim_end_matches('\0'))))?;
+            .map_err(|e| FfError::Load(format!("symbol {}: {e}", name.trim_end_matches('\0'))))?;
         Ok(*sym)
     }
 }
@@ -101,7 +101,7 @@ fn try_candidate(c: &Soname) -> Result<Libs, FfError> {
     };
     if maj != expected_avcodec_major {
         return Err(FfError::Load(format!(
-            "{}: avcodec_version() = {maj}.{min}.{mic}, ожидался мажор {expected_avcodec_major}",
+            "{}: avcodec_version() = {maj}.{min}.{mic}, expected major {expected_avcodec_major}",
             c.avcodec
         )));
     }

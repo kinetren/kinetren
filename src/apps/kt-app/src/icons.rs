@@ -38,18 +38,39 @@ pub const LOCK: &str = "\u{E2FA}"; // замок (группы бина)
 pub const ARROWS_OUT: &str = "\u{E0A2}"; // свободная раскладка
 pub const SKIP_FWD: &str = "\u{E5A6}"; // к следующей точке
 
-/// Подключить Phosphor к egui-шрифтам (fallback к proportional).
+/// Вендоренные шрифты: имя в egui и байты. Порядок здесь = порядок фолбэка,
+/// и менять его НЕЛЬЗЯ.
+///
+/// Сабсеты идут ПОСЛЕ дефолтных семей и после Phosphor: латиница и кириллица
+/// обязаны остаться за Ubuntu-Light (Noto Sans CJK содержит и их тоже), а
+/// PUA-иконки — за Phosphor. На этом же порядке держится точность предиката
+/// «атом арабского начертания» в `i18n::bidi` — там он выведен из того, что
+/// арабские кодпоинты есть ровно в одном загруженном шрифте.
+///
+/// Сабсеты собирает `scripts/subset-fonts.py` по символам `i18n/*.toml`
+/// (Р.19): целиком Noto Sans CJK весит ~19 МБ, обрезанный — 75 КБ.
+pub const VENDORED: [(&str, &[u8]); 3] = [
+    ("phosphor", include_bytes!("../assets/Phosphor.ttf")),
+    ("noto_sc", include_bytes!("../assets/NotoSansSC-kt.otf")),
+    ("noto_ar", include_bytes!("../assets/NotoSansArabic-kt.ttf")),
+];
+
+/// Подключить вендоренные шрифты к egui (фолбэком к обеим семьям).
+///
+/// Все языки грузятся ВСЕГДА, а не по текущему: 136 КБ на оба сабсета дешевле,
+/// чем `set_fonts` в пути переключения языка и кадр с квадратами после него.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "phosphor".into(),
-        std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/Phosphor.ttf"))),
-    );
-    if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
-        list.push("phosphor".into());
-    }
-    if let Some(list) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
-        list.push("phosphor".into());
+    for (name, bytes) in VENDORED {
+        fonts
+            .font_data
+            .insert(name.into(), std::sync::Arc::new(egui::FontData::from_static(bytes)));
+        // обе семьи: bin_panel и тулбар строят и моноширинные FontId
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            if let Some(list) = fonts.families.get_mut(&family) {
+                list.push(name.into());
+            }
+        }
     }
     ctx.set_fonts(fonts);
 }

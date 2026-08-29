@@ -21,7 +21,7 @@ pub fn start(
     transport: Arc<Transport>,
 ) -> Result<AudioOutput, String> {
     let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("нет аудио-устройства")?;
+    let device = host.default_output_device().ok_or("no audio output device")?;
 
     // предпочитаем 48k stereo f32 — тогда колбэк вообще без преобразований
     let mut chosen: Option<cpal::SupportedStreamConfig> = None;
@@ -45,7 +45,7 @@ pub fn start(
     let device_channels = config.channels() as usize;
     if config.sample_format() != cpal::SampleFormat::F32 {
         return Err(format!(
-            "формат сэмплов {:?} не поддержан (нужен f32)",
+            "sample format {:?} is not supported (need f32)",
             config.sample_format()
         ));
     }

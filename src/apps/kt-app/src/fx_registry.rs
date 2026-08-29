@@ -5,32 +5,38 @@
 //! категориям. Шаблоны — те же, что были в кнопках/комбо (тест 48).
 
 use crate::fx_editor::video_fx_templates;
+use crate::i18n::{Key, k, tr, tr_en};
 use eframe::egui;
 use kt_model::FxInstance;
 
 pub struct FxEntry {
+    /// Имя эффекта НЕ переводится: это отраслевой термин, по нему эффект ищут
+    /// в любой локали (и он же сверяется с `fx_display_name`, тест 48).
     pub name: &'static str,
-    pub category: &'static str,
+    pub category: Key,
     pub audio: bool,
-    /// Ключевые слова поиска (рус/англ, через пробел, в нижнем регистре).
-    pub keywords: &'static str,
+    /// Ключевые слова поиска. Ключ каталога, а не текст: реестр от языка не
+    /// зависит и `OnceLock` не пересобирается при переключении.
+    pub keywords: Option<Key>,
     pub template: FxInstance,
 }
 
 /// Категория и keywords видео-эффекта по имени из video_fx_templates.
-fn video_meta(name: &str) -> (&'static str, &'static str) {
+fn video_meta(name: &str) -> (Key, Option<Key>) {
+    // Полными путями намеренно: тест 125 ищет ключ каталога по пути `k::…`
+    // и сокращённый `use` спрятал бы использование.
     match name {
-        "Pan" => ("Движение", "пан зум pan zoom кадрирование crop"),
-        "CamMotion" => ("Движение", "камера тряска shake handheld движение"),
-        "Mirror" => ("Геометрия", "зеркало отражение flip mirror"),
-        "Blur" => ("Размытие", "блюр размытие мягкость blur soft"),
-        "Greenscreen" => ("Ключ", "хромакей ключ green chroma key прозрачность"),
-        "Edges" => ("Стилизация", "контуры края edges обводка"),
-        "Noise" => ("Стилизация", "шум зерно noise grain плёнка"),
-        "VHS" => ("Стилизация", "вхс кассета ретро vhs glitch"),
-        "Glow" => ("Свечение", "свечение блум glow bloom"),
-        "EventGrid" => ("Стилизация", "сетка мозаика плитка grid tiles"),
-        _ => ("Видео", ""),
+        "Pan" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::PAN)),
+        "CamMotion" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::CAMMOTION)),
+        "Mirror" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::MIRROR)),
+        "Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::BLUR)),
+        "Greenscreen" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::GREENSCREEN)),
+        "Edges" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EDGES)),
+        "Noise" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::NOISE)),
+        "VHS" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VHS)),
+        "Glow" => (k::fxreg::cat::GLOW, Some(k::fxreg::kw::GLOW)),
+        "EventGrid" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EVENTGRID)),
+        _ => (k::fxreg::cat::VIDEO, None),
     }
 }
 
@@ -40,16 +46,16 @@ pub fn registry() -> &'static [FxEntry] {
         let mut v = vec![
             FxEntry {
                 name: "Gain",
-                category: "Громкость",
+                category: k::fxreg::cat::VOLUME,
                 audio: true,
-                keywords: "громкость усиление volume гейн db",
+                keywords: Some(k::fxreg::kw::GAIN),
                 template: FxInstance::Gain { db: 0.0 },
             },
             FxEntry {
                 name: "Slowed+Reverb",
-                category: "Тайм-стретч",
+                category: k::fxreg::cat::TIMESTRETCH,
                 audio: true,
-                keywords: "замедление реверб слоуед slowed reverb warp скорость эхо",
+                keywords: Some(k::fxreg::kw::SLOWEDREVERB),
                 template: FxInstance::slowed_reverb(0.82, 0.1, 85.0),
             },
         ];
@@ -63,6 +69,10 @@ pub fn registry() -> &'static [FxEntry] {
 
 /// Фильтр реестра: вид (аудио/видео) + подстрока запроса в имени или
 /// keywords, без регистра. Чистая функция — тест 48.
+///
+/// Ищет по ключевым словам ТЕКУЩЕГО языка И по английским: иначе выбравший
+/// китайский не смог бы найти «blur», хотя имя эффекта именно такое.
+/// Значения keywords лежат в каталоге уже в нижнем регистре.
 pub fn filter_entries<'a>(
     entries: &'a [FxEntry],
     audio: bool,
@@ -73,7 +83,11 @@ pub fn filter_entries<'a>(
         .iter()
         .filter(|e| e.audio == audio)
         .filter(|e| {
-            q.is_empty() || e.name.to_lowercase().contains(&q) || e.keywords.contains(&q)
+            q.is_empty()
+                || e.name.to_lowercase().contains(&q)
+                || e.keywords.is_some_and(|kw| {
+                    tr(kw).contains(&q) || tr_en(kw).contains(&q)
+                })
         })
         .collect()
 }
@@ -87,9 +101,9 @@ pub fn fx_picker(
     query: &mut String,
 ) -> Option<FxInstance> {
     let mut picked = None;
-    ui.menu_button("+ эффект…", |ui| {
+    ui.menu_button(tr(k::fxreg::ADD), |ui| {
         ui.set_min_width(230.0);
-        let edit = egui::TextEdit::singleline(query).hint_text("поиск…").desired_width(210.0);
+        let edit = egui::TextEdit::singleline(query).hint_text(tr(k::fxreg::SEARCH)).desired_width(210.0);
         let resp = ui.add(edit);
         // фокус в строку поиска при открытии меню
         if ui.input(|i| i.events.is_empty()) && !resp.has_focus() {
@@ -98,14 +112,14 @@ pub fn fx_picker(
         ui.separator();
         let list = filter_entries(registry(), audio, query);
         if list.is_empty() {
-            ui.weak("ничего не найдено");
+            ui.weak(tr(k::fxreg::NOTHING));
         }
-        let mut last_cat = "";
+        let mut last_cat: Option<Key> = None;
         egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
             for e in list {
-                if e.category != last_cat {
-                    last_cat = e.category;
-                    ui.label(egui::RichText::new(e.category).small().weak());
+                if last_cat != Some(e.category) {
+                    last_cat = Some(e.category);
+                    ui.label(egui::RichText::new(tr(e.category)).small().weak());
                 }
                 if ui.button(e.name).clicked() {
                     picked = Some(e.template.clone());
@@ -159,6 +173,7 @@ mod tests {
             assert_eq!(crate::fx_editor::fx_display_name(&e.template), e.name);
         }
         // фильтр: по имени, по keyword, по виду, регистронезависимо
+        crate::i18n::set_lang(crate::i18n::Lang::Ru);
         assert_eq!(filter_entries(reg, true, "").len(), 2);
         assert_eq!(filter_entries(reg, false, "").len(), old.len());
         assert_eq!(filter_entries(reg, true, "РевЕрб").len(), 1, "кириллический keyword");
@@ -167,5 +182,14 @@ mod tests {
         assert_eq!(filter_entries(reg, false, "blur").len(), 1);
         assert_eq!(filter_entries(reg, true, "gain").len(), 1);
         assert!(filter_entries(reg, true, "vhs").is_empty(), "видео-эффект не в аудио-списке");
+        // Р.19: английские ключевые слова обязаны находить эффект В ЛЮБОМ
+        // языке — имя эффекта не переводится, и искать его будут по нему
+        for lang in crate::i18n::Lang::ALL {
+            crate::i18n::set_lang(lang);
+            assert_eq!(filter_entries(reg, false, "blur").len(), 1, "blur в {}", lang.code());
+            assert_eq!(filter_entries(reg, false, "vhs").len(), 1, "vhs в {}", lang.code());
+            assert_eq!(filter_entries(reg, true, "reverb").len(), 1, "reverb в {}", lang.code());
+        }
+        crate::i18n::set_lang(crate::i18n::Lang::Ru);
     }
 }
