@@ -25,6 +25,7 @@ search_title = "Search the project"
 diag_title = "Diagnostics"
 
 [menu.file]
+import_ktproj = "Import .ktproj…"
 title = "File"
 new = "New"
 open = "Open…"
@@ -334,6 +335,7 @@ clip_at = "{0} @ {1}s"
 # Разовые сообщения note()/warn(). Согласования с числом НЕТ:
 # пишем «существительное: N» (правило Р.19, см. README).
 [msg]
+ktproj_import_only = "Legacy .ktproj opens via File / Import .ktproj… only"
 autosave_failed = "autosave failed: {0}"
 morph_cancelled = "Morpher placement cancelled"
 empty_lanes = "no events on those tracks — the order of empty ones does not matter"
@@ -356,11 +358,12 @@ morph_click_lane = "Morpher: click the purple Morph track (Esc — cancel)"
 nothing_to_cut = "nothing to cut: no clip selected"
 added = "added: {0}"
 autosave_restored = "Restored the autosave of an unnamed project"
-open_a_project = "Open a project: kt-app <file.ktproj> or drop it on the window"
+open_a_project = "Open a project: kt-app <file.otio> or drop it on the window"
 software_render = "No graphics acceleration (software render) — the UI may lag, preview glow is off"
 
 # Заголовки системных файловых диалогов.
 [dialog]
+import_ktproj = "Import a legacy .ktproj project"
 open_project = "Open project"
 save_project = "Save project"
 

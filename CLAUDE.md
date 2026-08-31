@@ -89,7 +89,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-cache | kt-cache unit (t8/t14/t27/t28/t37 no-read drops, t65 пост-FX kind) |
 | kt-media | ffmpeg_conformance (вкл. t34 — персист пакетного индекса), index_db (вкл. t70), kt-app unit t23 |
 | kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30, t89 метки, t90 дорожки), morpher t35 |
-| kt-otio | tests/format.rs (t144-t147: идемпотентность, passthrough, версии, пути) |
+| kt-otio | tests/format.rs (t144-t147: идемпотентность, passthrough, версии, пути), tests/convert.rs (t148 golden легаси-импорта, t152/t153 маппинг), tests/otio_conformance.rs (t149, gated по python opentimelineio) |
 | kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |
 | kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей, t69/t71 негативные кэши тумб, t72/t74, t121 свечение и гашение метров) |
 | kt-app (вёрстка/интеракции) | **обязательно** kt-app `layout_tests.rs` (t76 панели/сепараторы/кромки/верх превью, t83 подсказки, t85 драг сверху, t86 края и минимум окна, t88 подмотка, t95 магнит, t96 грязность/loop, t97 метры и LED, t98 маска таймкода, t99 группы бина, t101 кнопки у краёв окна и сепаратор метров, t102 ярлык дорожки и шлейф курсора, t118 скролл бина, t119 Shift+A/D, t120 разгон пробелом, t122 дорожки из меню) + t77-t87 |

@@ -1,8 +1,11 @@
 # kt-model
 
 Модель таймлайна + команды + undo. Без FFmpeg, без аудио-железа. Формат
-проекта переезжает в kt-otio (Р.24); serde-derive на типах пока живут ради
-интерим-ktproj и будущих kt-конвертов metadata.
+проекта живёт в kt-otio (Р.24): здесь остался ТОЛЬКО ридер легаси-.ktproj
+(from_json/from_json_unvalidated — вход пункта «Импортировать…») и
+serde-derive типов, которые kt-otio возит в metadata.kt (FxInstance,
+MorpherEvent, UiState, BinGroup…) — их схема заморожена golden'ом t148.
+Писателя ktproj больше нет (to_json снесён, п.151).
 
 ## Переходы (Р.24, п.135)
 

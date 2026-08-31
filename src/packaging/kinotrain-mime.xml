@@ -5,4 +5,9 @@
     <comment xml:lang="ru">Проект Kinotrain</comment>
     <glob pattern="*.ktproj"/>
   </mime-type>
+  <mime-type type="application/x-opentimelineio">
+    <comment>OpenTimelineIO timeline</comment>
+    <comment xml:lang="ru">Таймлайн OpenTimelineIO</comment>
+    <glob pattern="*.otio"/>
+  </mime-type>
 </mime-info>

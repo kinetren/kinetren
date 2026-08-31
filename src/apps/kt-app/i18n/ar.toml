@@ -25,6 +25,7 @@ search_title = "البحث في المشروع"
 diag_title = "التشخيص"
 
 [menu.file]
+import_ktproj = "استيراد .ktproj…"
 title = "ملف"
 new = "جديد"
 open = "فتح…"
@@ -334,6 +335,7 @@ clip_at = "{0} @ {1} ثانية"
 # Разовые сообщения note()/warn(). Согласования с числом НЕТ:
 # пишем «существительное: N» (правило Р.19, см. README).
 [msg]
+ktproj_import_only = "يُفتح .ktproj القديم فقط عبر ملف / استيراد .ktproj…"
 autosave_failed = "فشل الحفظ التلقائي: {0}"
 morph_cancelled = "أُلغي وضع morpher"
 empty_lanes = "لا أحداث على هذه المسارات — ترتيب الفارغة لا يهم"
@@ -356,11 +358,12 @@ morph_click_lane = "Morpher: انقر مسار Morph البنفسجي (Esc — �
 nothing_to_cut = "لا شيء للقص: لم يُحدَّد مقطع"
 added = "أُضيف: {0}"
 autosave_restored = "استُعيد الحفظ التلقائي لمشروع بلا اسم"
-open_a_project = "افتح مشروعًا: kt-app <file.ktproj> أو أفلته على النافذة"
+open_a_project = "افتح مشروعًا: kt-app <file.otio> أو أفلته على النافذة"
 software_render = "لا تسريع رسومي (معالجة برمجية) — قد تتباطأ الواجهة، وتوهج المعاينة معطّل"
 
 # Заголовки системных файловых диалогов.
 [dialog]
+import_ktproj = "استيراد مشروع .ktproj قديم"
 open_project = "فتح مشروع"
 save_project = "حفظ المشروع"
 

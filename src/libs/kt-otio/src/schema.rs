@@ -36,10 +36,37 @@ impl RawObject {
 
 // ---- время ------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// Время. Сериализуется С ТЕГОМ `OTIO_SCHEMA` — эталонная библиотека
+/// отвергает вложенные время-объекты без тега («expected SerializableObject,
+/// found AnyDictionary», найдено конформанс-тестом 149). Чтение тег
+/// игнорирует (толерантно к его отсутствию).
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RationalTime {
     pub value: f64,
     pub rate: f64,
+}
+
+impl Serialize for RationalTime {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut m = s.serialize_map(Some(3))?;
+        m.serialize_entry("OTIO_SCHEMA", "RationalTime.1")?;
+        m.serialize_entry("value", &self.value)?;
+        m.serialize_entry("rate", &self.rate)?;
+        m.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for RationalTime {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Repr {
+            value: f64,
+            rate: f64,
+        }
+        let r = Repr::deserialize(d)?;
+        Ok(RationalTime { value: r.value, rate: r.rate })
+    }
 }
 
 impl RationalTime {
@@ -54,10 +81,33 @@ impl RationalTime {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimeRange {
     pub start_time: RationalTime,
     pub duration: RationalTime,
+}
+
+impl Serialize for TimeRange {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut m = s.serialize_map(Some(3))?;
+        m.serialize_entry("OTIO_SCHEMA", "TimeRange.1")?;
+        m.serialize_entry("duration", &self.duration)?;
+        m.serialize_entry("start_time", &self.start_time)?;
+        m.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for TimeRange {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Repr {
+            start_time: RationalTime,
+            duration: RationalTime,
+        }
+        let r = Repr::deserialize(d)?;
+        Ok(TimeRange { start_time: r.start_time, duration: r.duration })
+    }
 }
 
 // ---- листовые схемы ---------------------------------------------------------
@@ -254,9 +304,22 @@ pub struct Timeline {
     pub global_start_time: Option<RationalTime>,
     #[serde(default)]
     pub metadata: Metadata,
+    /// Вложенный Stack обязан нести свой тег (эталон отвергает голый словарь);
+    /// на чтении тег снимается, чтобы не оседать в `extra` и не дублироваться.
+    #[serde(serialize_with = "tracks_ser", deserialize_with = "tracks_de")]
     pub tracks: Stack,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+fn tracks_ser<S: serde::Serializer>(stack: &Stack, ser: S) -> Result<S::Ok, S::Error> {
+    encode("Stack.1", stack).serialize(ser)
+}
+
+fn tracks_de<'de, D: serde::Deserializer<'de>>(de: D) -> Result<Stack, D::Error> {
+    let mut map = Map::<String, Value>::deserialize(de)?;
+    map.shift_remove("OTIO_SCHEMA");
+    serde_json::from_value(Value::Object(map)).map_err(serde::de::Error::custom)
 }
 
 // ---- полиморфные узлы -------------------------------------------------------

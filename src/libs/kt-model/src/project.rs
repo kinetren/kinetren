@@ -1016,14 +1016,6 @@ impl Project {
         Ok(())
     }
 
-    /// Детерминированная сериализация (стабильный порядок полей → тест 12
-    /// «save→load→save байт-стабильно»).
-    pub fn to_json(&self) -> String {
-        let mut s = serde_json::to_string_pretty(self).expect("project serialization is total");
-        s.push('\n');
-        s
-    }
-
     /// Парс без validate() — для легаси-импорта (Р.24): старые .ktproj
     /// законно содержат перекрытия, их конвертирует ops::upgrade_legacy,
     /// и только ПОСЛЕ него проект обязан проходить validate.

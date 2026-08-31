@@ -53,10 +53,9 @@ fn new_fields_round_trip_and_old_json_loads() {
     p.loop_enabled = true;
     p.video_lanes = 2;
     p.audio_lanes = 3;
-    let json = p.to_json();
+    let json = serde_json::to_string(&p).unwrap();
     let p2 = Project::from_json(&json).unwrap();
     assert_eq!(p, p2);
-    assert_eq!(p2.to_json(), json, "байт-стабильность с новыми полями");
 
     // «старый» JSON без новых полей: убираем их и грузим
     let mut v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -272,7 +271,7 @@ fn t24_reversed_roundtrip_and_undo() {
     m.apply(Command::SetReversed { id, reversed: true }).unwrap();
     assert!(m.project().clips[0].reversed);
     // сериализация round-trip
-    let json = m.project().to_json();
+    let json = serde_json::to_string(m.project()).unwrap();
     let p2 = Project::from_json(&json).unwrap();
     assert!(p2.clips[0].reversed);
     // undo/redo
@@ -292,11 +291,9 @@ fn t24_reversed_roundtrip_and_undo() {
 fn ui_state_round_trip_and_old_json() {
     let mut p = base();
     p.ui = Some(UiState { view_start: 12_345.0, ticks_per_px: 450.0, cursor: 90_000, lane_order: vec![], ..Default::default() });
-    let json = p.to_json();
+    let json = serde_json::to_string(&p).unwrap();
     let p2 = Project::from_json(&json).unwrap();
     assert_eq!(p2.ui, p.ui);
-    // save→load→save байт-стабильно
-    assert_eq!(p2.to_json(), json);
     // старый JSON без ui
     let stripped: String = json
         .lines()
@@ -311,7 +308,7 @@ fn ui_state_round_trip_and_old_json() {
     let _ = stripped; // структура json вложенная — надёжнее собрать без ui:
     let mut p3 = base();
     p3.ui = None;
-    let plain = p3.to_json();
+    let plain = serde_json::to_string(&p3).unwrap();
     assert!(!plain.contains("\"ui\""), "None не сериализуется");
     assert_eq!(Project::from_json(&plain).unwrap().ui, None);
 }
@@ -374,7 +371,7 @@ fn t30_lane_delete_via_batch_is_single_undo() {
     p.normalize();
     p.validate().unwrap();
     let mut m = TimelineModel::new(p);
-    let before = m.project().to_json();
+    let before = m.project().clone();
 
     // удаление дорожки A1 (lane 0): её клипы удаляются, верхние съезжают
     let cmds = vec![
@@ -387,7 +384,7 @@ fn t30_lane_delete_via_batch_is_single_undo() {
     assert!(m.project().clips.iter().all(|c| c.kind != ClipKind::Audio || c.lane == 0));
 
     m.undo().unwrap();
-    assert_eq!(m.project().to_json(), before, "один undo возвращает всё");
+    assert_eq!(m.project(), &before, "один undo возвращает всё");
 }
 
 /// Тест 89 (п.1 р.10): метки с именами — старый формат (массив чисел)
@@ -411,11 +408,10 @@ fn t89_named_markers() {
     // новый формат: имя переживает round-trip и не пишется, когда пусто
     p.markers = vec![Marker::named(Tick(1000), "старт"), Marker::at(Tick(5000))];
     p.validate().unwrap();
-    let json = p.to_json();
+    let json = serde_json::to_string(&p).unwrap();
     assert!(json.contains("старт"), "имя должно сериализоваться");
     let back = Project::from_json(&json).unwrap();
     assert_eq!(back.markers, p.markers);
-    assert_eq!(json, back.to_json(), "байт-стабильность");
 
     // дубли по времени схлопываются детерминированно (stable-сортировка)
     let mut p2 = p.clone();
@@ -494,7 +490,7 @@ fn t90_lane_names() {
         sample_rate: 48000,
     });
     p.ui = Some(UiState { lane_names: names.clone(), ..Default::default() });
-    let json = p.to_json();
+    let json = serde_json::to_string(&p).unwrap();
     assert!(json.contains("Титры"));
     assert_eq!(Project::from_json(&json).unwrap().ui.unwrap().lane_names, names);
     let empty = UiState::default();
@@ -535,7 +531,7 @@ fn t141_range_markers() {
     assert_eq!(moved.color.as_deref(), Some("RED"), "цвет переезжает");
 
     // интерим-serde: диапазон/цвет в round-trip, легаси-формы читаются
-    let json = m.project().to_json();
+    let json = serde_json::to_string(m.project()).unwrap();
     let p2 = Project::from_json(&json).unwrap();
     assert_eq!(p2.markers, m.project().markers);
     let legacy = r#"{"format_version":1,

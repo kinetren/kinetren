@@ -9,6 +9,7 @@ publish.workspace = true
 kt-time = { workspace = true }
 kt-version = { workspace = true }
 kt-model = { workspace = true }
+kt-otio = { workspace = true }
 kt-media = { workspace = true }
 kt-cache = { workspace = true }
 kt-engine = { workspace = true }

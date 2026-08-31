@@ -9,7 +9,7 @@ Exec=kt-app %f
 Icon=kinotrain
 Terminal=false
 Categories=AudioVideo;AudioVideoEditing;Video;
-MimeType=application/x-kinotrain-project;
+MimeType=application/x-opentimelineio;application/x-kinotrain-project;
 # WM_CLASS на X11 = имя бинаря (winit не выставляет app_id на X11), иначе
 # таскбар не связывает окно с этим .desktop и показывает заглушку
 StartupWMClass=kt-app

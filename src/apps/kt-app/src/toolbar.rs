@@ -252,6 +252,11 @@ impl KtApp {
                     self.open_project_dialog();
                     ui.close();
                 }
+                if ui.button(tr(k::menu::file::IMPORT_KTPROJ)).clicked() {
+                    // Р.24 п.12: старый формат — только конвертация
+                    self.import_ktproj_dialog();
+                    ui.close();
+                }
                 ui.separator();
                 if Self::menu_btn(ui, tr(k::menu::file::SAVE), "Ctrl+S") {
                     self.save();

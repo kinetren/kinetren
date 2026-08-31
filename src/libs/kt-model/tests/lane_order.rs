@@ -51,14 +51,13 @@ fn t49_lane_order_serde_roundtrip() {
         lane_order: vec![(V, 0), (A, 0), (M, 0)],
         ..Default::default()
     });
-    let json = p.to_json();
+    let json = serde_json::to_string(&p).unwrap();
     let loaded = Project::from_json(&json).unwrap();
     assert_eq!(loaded, p, "round-trip с lane_order");
-    assert_eq!(loaded.to_json(), json, "байт-стабильность (т.12)");
     // старый файл без lane_order: поле по умолчанию пусто
     let mut p2 = p.clone();
     p2.ui = Some(UiState { view_start: 0.0, ticks_per_px: 900.0, cursor: 0, lane_order: vec![], ..Default::default() });
-    let json2 = p2.to_json();
+    let json2 = serde_json::to_string(&p2).unwrap();
     assert!(!json2.contains("lane_order"), "пустой вектор не сериализуется");
     assert_eq!(Project::from_json(&json2).unwrap(), p2);
 }

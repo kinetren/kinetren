@@ -183,6 +183,9 @@ pub struct KtApp {
     pub status: Option<(String, std::time::Instant)>,
     /// Внутренний буфер обмена (блок клипов+переходов, ребейз к нулю).
     pub clipboard: kt_model::ops::ClipBlock,
+    /// Passthrough-остатки загруженного .otio (чужие поля/схемы/metadata):
+    /// пишутся обратно при каждом сохранении, вне undo (Р.24).
+    pub retained: kt_otio::Retained,
     /// Буфер огибающей автоматизации (п.5 v1.3, порт «Copy envelopes»).
     pub automation_clipboard: Option<Vec<SlowedKeyframe>>,
     /// Медиа, чьи файлы сейчас недоступны (watchdog, 900 мс).
@@ -353,6 +356,7 @@ impl KtApp {
             live_gain: None,
             status: error.map(|e| (e, std::time::Instant::now())),
             clipboard: kt_model::ops::ClipBlock::default(),
+            retained: kt_otio::Retained::default(),
             automation_clipboard: None,
             offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
             watchdog: None,
@@ -389,9 +393,8 @@ impl KtApp {
     }
 
     fn open(path: &Path) -> Result<KtApp, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        let project = Project::from_json(&text).map_err(|e| e.to_string())?;
         let base = path.parent();
+        let (project, retained, notices) = load_project_file(path)?;
         let (player, audio, err) =
             Self::build_player(&project, base, Some(&path.with_extension("ktindex.db")));
         let (offline, watchdog) = spawn_media_watchdog(&project, base);
@@ -474,6 +477,7 @@ impl KtApp {
             live_gain: None,
             status: err.map(|e| (e, std::time::Instant::now())),
             clipboard: kt_model::ops::ClipBlock::default(),
+            retained,
             automation_clipboard: None,
             offline,
             watchdog: Some(watchdog),
@@ -517,6 +521,10 @@ impl KtApp {
                 .filter(|_| p.loop_enabled)
                 .map(|r| kt_time::TickRange::new(r.start, r.end));
             app.player.set_loop_region(region);
+        }
+        // замечания импорта/конвертации — пользователю (колокольчик)
+        for n in notices {
+            app.note(n);
         }
         // KT_AUTOPLAY=1 — сразу играть (отладка перф без ввода)
         if std::env::var_os("KT_AUTOPLAY").is_some() {
@@ -839,7 +847,9 @@ impl KtApp {
             let ui = Some(self.ui_state());
             self.model.set_ui_state(ui);
             let target = self.project_path.clone().unwrap_or_else(autosave_path);
-            match write_project_atomic(&target, &self.model.project().to_json()) {
+            let out =
+                kt_otio::save_project(self.model.project(), &self.retained, target.parent());
+            match write_project_atomic(&target, &out) {
                 Ok(()) => {
                     if self.project_path.is_some() {
                         self.dirty_content = false;
@@ -2068,7 +2078,7 @@ impl KtApp {
     pub fn open_project_dialog(&mut self) {
         let Some(p) = rfd::FileDialog::new()
             .set_title(tr(k::dialog::OPEN_PROJECT))
-            .add_filter("Kinotrain project", &["ktproj"])
+            .add_filter("OpenTimelineIO", &["otio"])
             .pick_file()
         else {
             return;
@@ -2097,18 +2107,26 @@ impl KtApp {
             None => {
                 let Some(p) = rfd::FileDialog::new()
                     .set_title(tr(k::dialog::SAVE_PROJECT))
-                    .add_filter("Kinotrain project", &["ktproj"])
-                    .set_file_name("untitled.ktproj")
+                    .add_filter("OpenTimelineIO", &["otio"])
+                    .set_file_name("untitled.otio")
                     .save_file()
                 else {
                     return; // пользователь передумал
                 };
-                let p = if p.extension().is_none() { p.with_extension("ktproj") } else { p };
+                let p = if p.extension().is_none() { p.with_extension("otio") } else { p };
                 self.project_path = Some(p.clone());
                 // индекс-БД и тумбы теперь могут жить рядом с проектом
                 spawn_index_worker(
                     Some(p.with_extension("ktindex.db")),
-                    self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect(),
+                    {
+                        let base = p.parent();
+                        self.model
+                            .project()
+                            .media
+                            .iter()
+                            .map(|m| (m.id, resolve_media_path(base, &m.path)))
+                            .collect()
+                    },
                     self.peaks.clone(),
                 );
                 p
@@ -2116,7 +2134,9 @@ impl KtApp {
         };
         let ui = Some(self.ui_state());
         self.model.set_ui_state(ui);
-        match write_project_atomic(&path, &self.model.project().to_json()) {
+        let out =
+            kt_otio::save_project(self.model.project(), &self.retained, path.parent());
+        match write_project_atomic(&path, &out) {
             Ok(()) => {
                 self.dirty_content = false;
                 self.dirty_ui = false;
@@ -2313,9 +2333,11 @@ impl KtApp {
             Err(e) => self.note(format!("{path}: {e}")),
         }
         self.thumbs.add_media(media_id, resolved.clone());
+        // в индекс-БД — резолвнутый путь (п.150: сырой относительный путь
+        // давал файлу ВТОРОЙ media_id в кэше рядом с резолвнутым)
         spawn_index_worker(
             self.project_path.as_ref().map(|p| p.with_extension("ktindex.db")),
-            vec![(media_id, path.to_string())],
+            vec![(media_id, resolved.clone())],
             self.peaks.clone(),
         );
         self.note(crate::tf!(k::msg::ADDED, path));
@@ -3186,6 +3208,9 @@ impl KtApp {
         };
         for path in dropped {
             if path.extension().map(|e| e == "ktproj").unwrap_or(false) {
+                // Р.24 п.12: .ktproj как проект не открывается
+                self.note(tr(k::msg::KTPROJ_IMPORT_ONLY));
+            } else if path.extension().map(|e| e == "otio").unwrap_or(false) {
                 match KtApp::open(&path) {
                     Ok(app) => *self = app,
                     Err(e) => self.note(format!("{}: {e}", path.display())),
@@ -3976,19 +4001,39 @@ pub fn autosave_path() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("kinotrain").join("autosave-project.ktproj")
+    base.join("kinotrain").join("autosave-project.otio")
 }
 
 /// Запись проекта: сначала во временный файл рядом, потом переименование.
-/// Прямая перезапись живого .ktproj (как было) при обрыве питания/ошибке
-/// на середине оставляла пользователя с обрезанным проектом.
+/// Прямая перезапись живого файла при обрыве питания/ошибке на середине
+/// оставляла пользователя с обрезанным проектом.
 pub fn write_project_atomic(path: &std::path::Path, json: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)?;
     }
-    let tmp = path.with_extension("ktproj.tmp");
+    let tmp = atomic_tmp_path(path);
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, path)
+}
+
+/// Имя временного файла ДОПИСЫВАЕТСЯ к полному имени (тест 150): старый
+/// with_extension("ktproj.tmp") для «a.b.otio» съедал часть имени и был
+/// захардкожен под ktproj.
+pub fn atomic_tmp_path(path: &std::path::Path) -> PathBuf {
+    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    path.with_file_name(format!("{name}.tmp"))
+}
+
+/// Чтение .otio с диска для open() (Р.24 п.12: .ktproj — только импорт).
+pub(crate) fn load_project_file(
+    path: &Path,
+) -> Result<(Project, kt_otio::Retained, Vec<String>), String> {
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    match kt_otio::load_project(&text, path.parent()) {
+        Ok(b) => Ok((b.project, b.retained, b.notices)),
+        Err(kt_otio::Error::NotOtio) => Err(tr(k::msg::KTPROJ_IMPORT_ONLY).to_string()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 fn chrono_like_now() -> String {
@@ -4200,7 +4245,10 @@ impl eframe::App for KtApp {
             let moved = self.model.project().ui.as_ref() != Some(&fresh);
             if self.dirty_content || self.dirty_ui || moved {
                 self.model.set_ui_state(Some(fresh));
-                let _ = write_project_atomic(p, &self.model.project().to_json());
+                let _ = write_project_atomic(
+                    p,
+                    &kt_otio::save_project(self.model.project(), &self.retained, p.parent()),
+                );
             }
         }
     }
@@ -4271,6 +4319,62 @@ pub fn run() -> eframe::Result {
             Ok(Box::new(app))
         }),
     )
+}
+
+impl KtApp {
+    /// Файл → Импортировать .ktproj… (Р.24 п.12: как проект старый формат
+    /// больше не открывается — конвертация в .otio и открытие результата;
+    /// исходный .ktproj не трогается никогда).
+    pub fn import_ktproj_dialog(&mut self) {
+        let Some(src) = rfd::FileDialog::new()
+            .set_title(tr(k::dialog::IMPORT_KTPROJ))
+            .add_filter("Kinotrain legacy project", &["ktproj"])
+            .pick_file()
+        else {
+            return;
+        };
+        let text = match std::fs::read_to_string(&src) {
+            Ok(t) => t,
+            Err(e) => {
+                self.note(crate::tf!(k::msg::OPEN_FAILED, e));
+                return;
+            }
+        };
+        let (project, notices) = match kt_otio::import_legacy(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                self.note(crate::tf!(k::msg::OPEN_FAILED, e));
+                return;
+            }
+        };
+        let default_name = src
+            .file_stem()
+            .map(|s| format!("{}.otio", s.to_string_lossy()))
+            .unwrap_or_else(|| "imported.otio".into());
+        let Some(dst) = rfd::FileDialog::new()
+            .set_title(tr(k::dialog::SAVE_PROJECT))
+            .add_filter("OpenTimelineIO", &["otio"])
+            .set_file_name(&default_name)
+            .save_file()
+        else {
+            return;
+        };
+        let dst = if dst.extension().is_none() { dst.with_extension("otio") } else { dst };
+        let out = kt_otio::save_project(&project, &kt_otio::Retained::default(), dst.parent());
+        if let Err(e) = write_project_atomic(&dst, &out) {
+            self.note(crate::tf!(k::msg::SAVE_FAILED, e));
+            return;
+        }
+        match Self::open(&dst) {
+            Ok(app) => {
+                *self = app;
+                for n in notices {
+                    self.note(n);
+                }
+            }
+            Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
+        }
+    }
 }
 
 #[cfg(test)]

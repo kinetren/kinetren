@@ -25,6 +25,7 @@ search_title = "Buscar en el proyecto"
 diag_title = "Diagnóstico"
 
 [menu.file]
+import_ktproj = "Importar .ktproj…"
 title = "Archivo"
 new = "Nuevo"
 open = "Abrir…"
@@ -334,6 +335,7 @@ clip_at = "{0} @ {1}s"
 # Разовые сообщения note()/warn(). Согласования с числом НЕТ:
 # пишем «существительное: N» (правило Р.19, см. README).
 [msg]
+ktproj_import_only = "El .ktproj antiguo se abre solo con Archivo / Importar .ktproj…"
 autosave_failed = "fallo el autoguardado: {0}"
 morph_cancelled = "Colocación del morpher cancelada"
 empty_lanes = "no hay eventos en esas pistas — el orden de las vacías da igual"
@@ -361,6 +363,7 @@ software_render = "Sin aceleración gráfica (render por software) — la interf
 
 # Заголовки системных файловых диалогов.
 [dialog]
+import_ktproj = "Importar un proyecto .ktproj antiguo"
 open_project = "Abrir proyecto"
 save_project = "Guardar proyecto"
 

@@ -27,6 +27,12 @@
 - **Время**: `RationalTime{value, rate}` — наши тики пишутся value=целое
   (двойная точность точна до 2^53), rate=90000.0; чужие rate квантуются
   `round(value*90000/rate)` — политика всей системы.
+- **`OTIO_SCHEMA` на КАЖДОМ SerializableObject** — эталон отвергает голые
+  словари, включая вложенные RationalTime/TimeRange (ручные Serialize с тегом,
+  duration раньше start_time — порядок эталона) и Stack в `Timeline.tracks`
+  (поле идёт мимо Composable-моста → serialize_with/deserialize_with; на
+  чтении тег снимается, чтобы не оседать в extra). Наши тесты идемпотентности
+  такое НЕ ловят (своё «неполное» прощается) — ловит только конформанс т.149.
 - `metadata.kt.v` — одна версия на ФАЙЛ (Timeline); новее нашей → явный отказ
   `KtMetaTooNew`. Вложенные kt-конверты версий не несут.
 - Upgrade схем: только Clip.1→2 (media_reference → media_references), как в

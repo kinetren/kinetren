@@ -2272,3 +2272,44 @@ fn t142_marker_end_drag() {
     let m = &h.state().model.project().markers[0];
     assert!((m.duration.0 - 50_000).abs() <= 1_000, "длительность ~50000: {:?}", m.duration);
 }
+
+/// Тест 150 (п.150 porting-notes, Р.24): файловый IO приложения — .otio.
+#[test]
+fn t150_project_io_is_otio() {
+    use std::path::Path;
+    // атомарный tmp дописывается к ПОЛНОМУ имени (старый with_extension
+    // был захардкожен под ktproj и съедал многоточечные имена)
+    assert_eq!(
+        crate::app::atomic_tmp_path(Path::new("/x/a.otio")),
+        Path::new("/x/a.otio.tmp")
+    );
+    assert_eq!(
+        crate::app::atomic_tmp_path(Path::new("/x/a.b.otio")),
+        Path::new("/x/a.b.otio.tmp")
+    );
+    // recovery безымянного проекта — тоже .otio
+    assert!(
+        crate::app::autosave_path().to_string_lossy().ends_with("autosave-project.otio")
+    );
+
+    let dir = std::env::temp_dir().join(format!("kt-t150-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // .otio читается
+    let p = kt_model::Project::new(kt_model::ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+    });
+    let otio = dir.join("ok.otio");
+    std::fs::write(&otio, kt_otio::save_project(&p, &kt_otio::Retained::default(), Some(&dir)))
+        .unwrap();
+    let (loaded, _, _) = crate::app::load_project_file(&otio).expect("otio opens");
+    assert_eq!(loaded.settings.fps, 30);
+    // .ktproj как проект НЕ открывается (Р.24 п.12) — честная подсказка
+    let legacy = dir.join("old.ktproj");
+    std::fs::write(&legacy, include_str!("../../../fixtures/demo.ktproj")).unwrap();
+    let err = crate::app::load_project_file(&legacy).unwrap_err();
+    assert!(err.contains("Import .ktproj"), "подсказка на импорт: {err}");
+    std::fs::remove_dir_all(&dir).ok();
+}

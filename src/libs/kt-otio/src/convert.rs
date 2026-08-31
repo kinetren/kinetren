@@ -261,7 +261,15 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             region: p.region.map(|r| (r.start.0, r.end.0)),
             loop_enabled: p.loop_enabled,
         }),
-        ui: p.ui.clone(),
+        // в kt.ui — только morph-имена (v/a живут в Track.name) и без
+        // bin-полей (они в kt.bin_*): единственный источник каждого факта
+        ui: p.ui.clone().map(|mut u| {
+            u.lane_names.retain(|(k, _, _)| *k == kt_model::LaneKind::Morph);
+            u.bin_groups = Vec::new();
+            u.bin_layout = Vec::new();
+            u.bin_free = false;
+            u
+        }),
         bin_media: p
             .media
             .iter()
@@ -596,6 +604,10 @@ pub fn timeline_to_project(
     p.clips.sort_by_key(|c| c.id);
     p.foreign.sort_by_key(|f| f.key);
     p.media.sort_by_key(|m| m.id);
+    if let Some(u) = &mut p.ui {
+        // порядок независим от обхода дорожек (видео идёт низ-вверх)
+        u.lane_names.sort_by_key(|(k, l, _)| (*k as u8, *l));
+    }
     p.normalize();
     p.validate().map_err(|e| Error::UnsupportedSchema(format!("invalid timeline: {e}")))?;
     Ok(ProjectBundle { project: p, retained, notices })

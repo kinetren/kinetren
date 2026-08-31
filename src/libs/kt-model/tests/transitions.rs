@@ -210,20 +210,3 @@ fn t135_split_retargets_outgoing() {
     assert_eq!(t.out_offset, Tick(9_000).min(Tick(24_000)));
 }
 
-#[test]
-fn t135_interim_serde_roundtrip() {
-    // Пока жив ktproj-писатель (до этапа 13), transitions/foreign обязаны
-    // переживать его round-trip: автосейв промежуточных сборок.
-    let mut p = base_project();
-    p.transitions.push(tr(1, 1, 2, 9_000, 4_500));
-    p.foreign.push(ForeignEvent {
-        key: 7,
-        kind: ClipKind::Video,
-        lane: 0,
-        start: Tick(0),
-        duration: Tick(900),
-    });
-    let restored = Project::from_json(&p.to_json()).unwrap();
-    assert_eq!(restored.transitions, p.transitions);
-    assert_eq!(restored.foreign, p.foreign);
-}

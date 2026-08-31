@@ -25,6 +25,7 @@ search_title = "在项目中搜索"
 diag_title = "诊断"
 
 [menu.file]
+import_ktproj = "导入 .ktproj…"
 title = "文件"
 new = "新建"
 open = "打开…"
@@ -334,6 +335,7 @@ clip_at = "{0} @ {1} 秒"
 # Разовые сообщения note()/warn(). Согласования с числом НЕТ:
 # пишем «существительное: N» (правило Р.19, см. README).
 [msg]
+ktproj_import_only = "旧版 .ktproj 只能通过 文件 / 导入 .ktproj… 打开"
 autosave_failed = "自动保存失败：{0}"
 morph_cancelled = "已取消 morpher 的放置"
 empty_lanes = "这些轨道上没有事件 — 空轨道的顺序无所谓"
@@ -361,6 +363,7 @@ software_render = "没有图形加速（软件渲染）— 界面可能卡顿，
 
 # Заголовки системных файловых диалогов.
 [dialog]
+import_ktproj = "导入旧版 .ktproj 项目"
 open_project = "打开项目"
 save_project = "保存项目"
 
