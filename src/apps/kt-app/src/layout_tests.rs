@@ -553,7 +553,7 @@ fn t96_dirty_split_and_loop_survives_esc() {
     assert!(h.state().dirty_ui, "удобства обязаны быть учтены как ui-правки");
 
     // --- содержимое: правка модели
-    h.state_mut().apply(Command::AddMarker { at: Tick(45_000) });
+    h.state_mut().apply(Command::AddMarker { at: Tick(45_000), duration: Tick::ZERO });
     h.step();
     assert!(h.state().dirty_content, "правка содержимого обязана дать звёздочку");
 
@@ -1929,4 +1929,346 @@ fn t128_labels_fit_their_budget() {
             "{code}: чекбокс экономного UI занимает {got:.0} px при бюджете {CHECKBOX_BUDGET}"
         );
     }
+}
+
+/// Тест 139 (п.139 porting-notes, Р.24): план Move-драга. Одиночный
+/// частичный наезд = кроссфейд; мульти-наезд/поглощение/крошечный наезд/
+/// вертикальный перенос в занятое — кламп (решение пользователя п.10).
+#[test]
+fn t139_move_plan_crossfade_and_clamp() {
+    use crate::timeline::{MovePlan, plan_move};
+    use kt_model::*;
+    use kt_time::Tick;
+
+    let clip = |id: u64, lane: u32, start: i64, dur: i64| ClipEvent {
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane,
+        start: Tick(start),
+        duration: Tick(dur),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx: vec![],
+    };
+    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.clips = vec![clip(1, 0, 0, 90_000), clip(2, 0, 200_000, 90_000), clip(3, 0, 400_000, 90_000)];
+    p.validate().unwrap();
+
+    // без коллизий
+    assert_eq!(plan_move(&p, ClipId(2), 100_000, 0), MovePlan::Free);
+    // incoming-наезд: начало клипа 2 в теле клипа 1 → стык в середине наезда
+    match plan_move(&p, ClipId(2), 50_000, 0) {
+        MovePlan::Crossfade { outgoing, incoming, joint, in_off, out_off } => {
+            assert_eq!((outgoing, incoming), (ClipId(1), ClipId(2)));
+            assert_eq!(joint, 70_000, "середина наезда [50000, 90000)");
+            assert_eq!((in_off, out_off), (20_000, 20_000));
+        }
+        other => panic!("ожидался кроссфейд, получен {other:?}"),
+    }
+    // outgoing-наезд: конец клипа 2 в теле клипа 3
+    match plan_move(&p, ClipId(2), 350_000, 0) {
+        MovePlan::Crossfade { outgoing, incoming, joint, .. } => {
+            assert_eq!((outgoing, incoming), (ClipId(2), ClipId(3)));
+            assert_eq!(joint, 420_000, "середина наезда [400000, 440000)");
+        }
+        other => panic!("ожидался кроссфейд, получен {other:?}"),
+    }
+    // полное покрытие соседа (равные длительности, want==n.start) → кламп
+    // (движение влево упирается в его конец)
+    assert_eq!(plan_move(&p, ClipId(2), 0, 0), MovePlan::Clamped { start: 90_000 });
+    // крошечный наезд (< минимума окна) → кламп, не микропереход
+    assert_eq!(plan_move(&p, ClipId(2), 89_960, 0), MovePlan::Clamped { start: 90_000 });
+    // мульти-наезд: сдвинем клип 3 ближе и наедем сразу на двоих
+    let mut p2 = p.clone();
+    p2.clips[2].start = Tick(95_000);
+    assert!(matches!(plan_move(&p2, ClipId(2), 60_000, 0), MovePlan::Clamped { .. }));
+    // вертикальный перенос в занятое место чужой дорожки → кламп, не тримы
+    let mut p3 = p.clone();
+    p3.clips[1].lane = 1;
+    p3.normalize();
+    assert!(matches!(plan_move(&p3, ClipId(2), 50_000, 0), MovePlan::Clamped { .. }));
+    // foreign-плейсхолдер занимает место
+    let mut p4 = p.clone();
+    p4.foreign.push(ForeignEvent {
+        key: 1,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: Tick(120_000),
+        duration: Tick(30_000),
+    });
+    assert!(matches!(plan_move(&p4, ClipId(2), 110_000, 0), MovePlan::Clamped { .. }));
+}
+
+/// Тест 139 (живая часть): наезд драгом создаёт переход, клипы встык.
+#[test]
+fn t139_drag_overlap_creates_crossfade() {
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        for (n, start) in [(1u64, 0i64), (2, 200_000)] {
+            p.clips.push(ClipEvent {
+                id: ClipId(n),
+                link_group: None,
+                kind: ClipKind::Video,
+                lane: 0,
+                start: Tick(start),
+                duration: Tick(90_000),
+                source_in: Tick(0),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx_bypass: vec![],
+                fx: vec![],
+            });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let grab = g.tick_to_x(200_000 + 45_000);
+    h.hover_at(egui::pos2(grab, y));
+    h.step();
+    h.drag_at(egui::pos2(grab, y));
+    h.step();
+    h.hover_at(egui::pos2(grab - 8.0, y));
+    h.step();
+    let grab_dt = match h.state().drag {
+        Some(crate::timeline::Drag::Clip(ref d)) => d.grab_dt,
+        _ => panic!("драг клипа не начался"),
+    };
+    // цель: start = 50000 — частичный наезд на хвост клипа 1
+    let to = g.tick_to_x(50_000 + grab_dt);
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+
+    let p = h.state().model.project().clone();
+    assert_eq!(p.transitions.len(), 1, "наезд обязан создать переход");
+    let t = &p.transitions[0];
+    assert_eq!((t.a, t.b), (ClipId(1), ClipId(2)));
+    // указатель харнесса квантуется пикселем: допуск 1 px = 1000 тиков
+    let near = |a: Tick, want: i64, what: &str| {
+        assert!((a.0 - want).abs() <= 1_000, "{what}: {a:?} vs ~{want}");
+    };
+    near(t.in_offset, 20_000, "in_offset");
+    near(t.out_offset, 20_000, "out_offset");
+    let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    let c2 = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    near(c1.start + c1.duration, 70_000, "стык в середине наезда");
+    assert_eq!(c2.start, c1.start + c1.duration, "клипы строго встык");
+    near(c2.source_in, 20_000, "in-point подрезан тримом");
+    p.validate().expect("итог валиден");
+}
+
+/// Тест 140 (п.140 porting-notes, Р.24): драги краёв/тела перехода и
+/// геометрия отрисовки.
+#[test]
+fn t140_transition_edge_and_body_drags() {
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        for (n, start, src) in [(1u64, 0i64, 0i64), (2, 90_000, 30_000)] {
+            p.clips.push(ClipEvent {
+                id: ClipId(n),
+                link_group: None,
+                kind: ClipKind::Video,
+                lane: 0,
+                start: Tick(start),
+                duration: Tick(90_000),
+                source_in: Tick(src),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx_bypass: vec![],
+                fx: vec![],
+            });
+        }
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: ClipId(1),
+            b: ClipId(2),
+            in_offset: Tick(10_000),
+            out_offset: Tick(10_000),
+            kind: TransitionKind::Crossfade,
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+
+    // драг ЛЕВОГО края окна наружу: in_offset 10000 → 30000
+    let x_edge = g.tick_to_x(90_000 - 10_000);
+    h.hover_at(egui::pos2(x_edge, y));
+    h.step();
+    h.drag_at(egui::pos2(x_edge, y));
+    h.step();
+    h.hover_at(egui::pos2(x_edge - 8.0, y));
+    h.step();
+    assert!(
+        matches!(h.state().drag, Some(crate::timeline::Drag::TransitionEdge { left: true, .. })),
+        "хват края перехода не сработал: {:?}",
+        matches!(h.state().drag, Some(crate::timeline::Drag::Clip(_)))
+    );
+    let to = g.tick_to_x(90_000 - 30_000);
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+    let t0 = h.state().model.project().transitions[0].clone();
+    assert!((t0.in_offset.0 - 30_000).abs() <= 1_000, "in_offset ~30000: {t0:?}");
+    assert_eq!(t0.out_offset, Tick(10_000));
+    // один undo откатывает весь жест (коалесинг)
+    h.state_mut().model.undo().unwrap();
+    assert_eq!(h.state().model.project().transitions[0].in_offset, Tick(10_000));
+    h.step();
+
+    // roll стыка: центр окна тянем на +20000 — стык и клипы едут
+    let xj = g.tick_to_x(90_000);
+    h.hover_at(egui::pos2(xj, y));
+    h.step();
+    h.drag_at(egui::pos2(xj, y));
+    h.step();
+    h.hover_at(egui::pos2(xj + 8.0, y));
+    h.step();
+    assert!(matches!(h.state().drag, Some(crate::timeline::Drag::TransitionBody { .. })));
+    let to = g.tick_to_x(110_000);
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+    let p = h.state().model.project().clone();
+    let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    let c2 = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    let joint = c1.start + c1.duration;
+    assert!((joint.0 - 110_000).abs() <= 2_000, "roll сдвинул стык: {joint:?}");
+    assert_eq!(c2.start, joint, "клипы строго встык");
+    assert_eq!(c2.source_in - Tick(30_000), joint - Tick(90_000), "TrimStart подрезал источник");
+    assert_eq!(p.transitions[0].joint(&p), Some(joint), "окно уехало со стыком");
+
+    // геометрия отрисовки — чистая функция
+    let r = crate::timeline::transition_rect(100.0, 140.0, 50.0, 40.0);
+    assert_eq!((r.left(), r.right()), (100.0, 140.0));
+    assert!(r.top() > 50.0 && r.bottom() < 90.0, "полоса внутри строки дорожки");
+}
+
+/// Тест 142 (п.142 porting-notes, Р.24): метки-диапазоны в UI. Жест M —
+/// дословно по решению пользователя: «при выделенном регионе и курсоре в
+/// нем - m дает marked_range, при курсоре вне региона - одинарная метка по
+/// курсору»; повторное M — toggle; края и snap/stop по обеим граням.
+#[test]
+fn t142_marker_range_gesture_and_edges() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        app.model.set_region(Some(Region { start: Tick(30_000), end: Tick(90_000) }));
+        app.player.seek(Tick(60_000)); // курсор ВНУТРИ региона
+        // зум фиксируем: магнитный порог M зависит от ticks_per_px
+        app.ticks_per_px = 1_000.0;
+    }
+    h.step();
+
+    // M внутри региона → диапазон по региону
+    h.state_mut().marker_toggle_at_cursor();
+    {
+        let p = h.state().model.project();
+        assert_eq!(p.markers.len(), 1);
+        assert_eq!((p.markers[0].t, p.markers[0].duration), (Tick(30_000), Tick(60_000)));
+    }
+    // повторное M там же → toggle (удаление)
+    h.state_mut().marker_edit = None;
+    h.state_mut().marker_toggle_at_cursor();
+    assert!(h.state().model.project().markers.is_empty(), "toggle удаляет диапазон");
+
+    // точечная метка на старте региона растягивается жестом M
+    h.state_mut()
+        .apply(Command::AddMarker { at: Tick(30_000), duration: Tick::ZERO });
+    h.state_mut().marker_toggle_at_cursor();
+    assert_eq!(h.state().model.project().markers[0].duration, Tick(60_000));
+
+    // M вне региона → точечная по курсору (тик кратен 15 — playhead живёт
+    // в аудиокадрах, round-trip точен только на кратных, п.94)
+    h.state_mut().player.seek(Tick(192_000));
+    h.state_mut().marker_edit = None;
+    h.state_mut().marker_toggle_at_cursor();
+    {
+        let p = h.state().model.project();
+        assert!(p.markers.iter().any(|m| m.t == Tick(192_000) && !m.is_range()), "{:?}", p.markers);
+    }
+
+    // snap и stop_points видят ОБЕ грани диапазона
+    let targets = h.state().snap_targets(None);
+    assert!(targets.contains(&30_000) && targets.contains(&90_000), "{targets:?}");
+    let stops = crate::app::stop_points(h.state().model.project());
+    assert!(stops.contains(&30_000) && stops.contains(&90_000), "{stops:?}");
+
+    // лента — чистая геометрия: узкая полоса на строке подписей времени
+    let band = crate::timeline::marker_band_rect(100.0, 160.0, 20.0);
+    assert_eq!((band.left(), band.right()), (100.0, 160.0));
+    assert!(band.height() <= 6.0, "лента не съедает строку времени");
+}
+
+/// Тест 142 (живая часть): драг конца диапазона меняет длительность.
+#[test]
+fn t142_marker_end_drag() {
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let _ = app.model.apply(Command::AddMarker { at: Tick(30_000), duration: Tick(30_000) });
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    // конец диапазона на полосе флажков (верх таймлайна)
+    let y = g.rect.top() + 4.0;
+    let x_end = g.tick_to_x(60_000);
+    h.hover_at(egui::pos2(x_end, y));
+    h.step();
+    h.drag_at(egui::pos2(x_end, y));
+    h.step();
+    h.hover_at(egui::pos2(x_end + 8.0, y));
+    h.step();
+    assert!(
+        matches!(h.state().drag, Some(crate::timeline::Drag::MarkerEdge { left: false, .. })),
+        "хват конца диапазона не сработал"
+    );
+    let to = g.tick_to_x(80_000);
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+    let m = &h.state().model.project().markers[0];
+    assert!((m.duration.0 - 50_000).abs() <= 1_000, "длительность ~50000: {:?}", m.duration);
 }

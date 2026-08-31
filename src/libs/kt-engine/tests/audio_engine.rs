@@ -106,15 +106,27 @@ fn t1_second_clip_reads_its_own_source_window() {
 // ---- Тест 2: кроссфейд ------------------------------------------------------
 
 #[test]
-fn t2_two_clip_overlap_is_equal_power() {
-    // Перекрытие на одной дорожке: ранний √(1−t), поздний √t.
-    let d = 4 * AUDIO_BURST_FRAMES as i64;
-    let ov = AUDIO_BURST_FRAMES as i64 + 336; // ширина перекрытия
-    let start2 = d - ov;
-    let p = project_with_audio_clips(vec![
-        audio_clip(1, 0, 0, d, 0, 1),
-        audio_clip(2, 0, start2, d, 0, 2),
+fn t2_crossfade_transition_is_equal_power() {
+    // Р.24: кроссфейд — явный переход на стыке (перекрытий больше нет,
+    // тест 135 их отвергает). Окно и формулы — те же, что у старого
+    // перекрытия: outgoing √(1−t), incoming √t.
+    let d = 4 * AUDIO_BURST_FRAMES as i64; // 4096 — конец окна
+    let ov = AUDIO_BURST_FRAMES as i64 + 336; // 1360 — ширина окна
+    let start2 = d - ov; // 2736 — начало окна
+    let joint = start2 + ov / 2; // 3416 — стык (середина бывшего наезда)
+    let mut p = project_with_audio_clips(vec![
+        audio_clip(1, 0, 0, joint, 0, 1),
+        audio_clip(2, 0, joint, d + start2 - joint, ov / 2, 2),
     ]);
+    p.transitions.push(kt_model::TransitionEvent {
+        id: kt_model::TransitionId(1),
+        a: kt_model::ClipId(1),
+        b: kt_model::ClipId(2),
+        in_offset: kt_time::Tick::from_audio_frames(ov / 2),
+        out_offset: kt_time::Tick::from_audio_frames(ov / 2),
+        kind: kt_model::TransitionKind::Crossfade,
+    });
+    p.validate().unwrap();
     let r = AudioRenderer::new(&p);
     let mut f =
         direct(&[(1, AudioPattern::Dc { value: 1.0 }), (2, AudioPattern::Dc { value: 1.0 })]);
@@ -123,46 +135,22 @@ fn t2_two_clip_overlap_is_equal_power() {
     assert_eq!(r.render_frames(&mut f, 0, &mut out).underruns, 0);
     for s in 0..total as i64 {
         let expect = if s < start2 {
-            1.0f32 // только ранний
+            1.0f32 // только outgoing
         } else if s < d {
             let t = (s - start2) as f64 / ov as f64;
             ((1.0 - t).sqrt() + t.sqrt()) as f32
         } else {
-            1.0f32 // только поздний
+            1.0f32 // только incoming
         };
         let got = out[s as usize * CH];
         assert!((got - expect).abs() < 1e-6, "сэмпл {s}: got {got}, expect {expect}");
     }
-    // unity power на равных входах в зоне перекрытия: w1²+w2² == 1
+    // unity power на равных входах в окне перехода: w1²+w2² == 1
     for s in start2..d {
         let t = (s - start2) as f64 / ov as f64;
         let pw = (1.0 - t) + t;
         assert!((pw - 1.0).abs() < 1e-12);
     }
-}
-
-#[test]
-fn t2_three_clip_overlap_is_one_over_n() {
-    let d = 2 * AUDIO_BURST_FRAMES as i64;
-    let p = project_with_audio_clips(vec![
-        audio_clip(1, 0, 0, d, 0, 1),
-        audio_clip(2, 0, 96, d, 0, 2),
-        audio_clip(3, 0, 200, d, 0, 3),
-    ]);
-    let r = AudioRenderer::new(&p);
-    let mut f = direct(&[
-        (1, AudioPattern::Dc { value: 0.9 }),
-        (2, AudioPattern::Dc { value: 0.9 }),
-        (3, AudioPattern::Dc { value: 0.9 }),
-    ]);
-    let mut out = vec![0f32; d as usize * CH];
-    r.render_frames(&mut f, 0, &mut out);
-    // на сэмпле 300 активны все три: каждый с весом 1/3
-    let got = out[300 * CH];
-    assert!(
-        (got - 0.9f32).abs() < 1e-6,
-        "1/N микс трёх равных DC должен дать исходный уровень, got {got}"
-    );
 }
 
 #[test]
@@ -198,10 +186,21 @@ fn t3_gain_is_applied_exactly() {
 #[test]
 fn t7_render_is_deterministic_regardless_of_history() {
     let d = 5 * AUDIO_BURST_FRAMES as i64;
-    let p = project_with_audio_clips(vec![
-        audio_clip(1, 0, 0, d, 0, 1),
-        audio_clip(2, 0, d - 496, d, 0, 2),
+    // Р.24: бывший нахлёст 496 конвертирован в стык + переход (окно то же)
+    let joint = d - 248;
+    let mut p = project_with_audio_clips(vec![
+        audio_clip(1, 0, 0, joint, 0, 1),
+        audio_clip(2, 0, joint, d - 248, 248, 2),
     ]);
+    p.transitions.push(kt_model::TransitionEvent {
+        id: kt_model::TransitionId(1),
+        a: kt_model::ClipId(1),
+        b: kt_model::ClipId(2),
+        in_offset: kt_time::Tick::from_audio_frames(248),
+        out_offset: kt_time::Tick::from_audio_frames(248),
+        kind: kt_model::TransitionKind::Crossfade,
+    });
+    p.validate().unwrap();
     let r = AudioRenderer::new(&p);
     let target = d - 1000..d + 1000; // диапазон через шов/кроссфейд
 

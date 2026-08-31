@@ -1,6 +1,6 @@
 //! Типы формата проекта. Источник правды по схеме `.ktproj` v1.
 
-use kt_time::Tick;
+use kt_time::{Tick, TickRange};
 use serde::{Deserialize, Serialize};
 
 pub const FORMAT_VERSION: u32 = 1;
@@ -20,11 +20,76 @@ pub struct GroupId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MorphId(pub u64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipKind {
     Video,
     Audio,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TransitionId(pub u64);
+
+/// Минимальная суммарная ширина окна перехода (1 мс, как MIN_CLIP_DURATION).
+pub const MIN_TRANSITION_DURATION: Tick = Tick(90);
+
+/// Вид перехода. Пока один: аудио — equal-power кроссфейд (формула теста 2),
+/// видео — линейный dissolve. В OTIO пишется как SMPTE_Dissolve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransitionKind {
+    Crossfade,
+}
+
+/// Переход на стыке двух СОСЕДНИХ клипов одной дорожки (Р.24, OTIO
+/// Transition). Позиция НЕ хранится — выводится из клипов: стык == конец `a`
+/// == начало `b`; идентичность по паре ClipId переживает групповые переносы
+/// (стык уехал у обоих — переход жив). Окно: [стык − in_offset,
+/// стык + out_offset); in_offset лежит в теле A (incoming играет левую
+/// «ручку» источника), out_offset — в теле B (outgoing играет правую).
+/// Материал ручек — чтение источника за пределами использованного куска;
+/// за краями материала движок отдаёт тишину/кламп-кадр (существующая
+/// политика, ничего не сериализуется).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TransitionEvent {
+    pub id: TransitionId,
+    /// Уходящий клип (его конец — стык).
+    pub a: ClipId,
+    /// Входящий клип (его начало — стык).
+    pub b: ClipId,
+    pub in_offset: Tick,
+    pub out_offset: Tick,
+    pub kind: TransitionKind,
+}
+
+impl TransitionEvent {
+    /// Стык, резолвнутый по клипу `a` (None — клип пропал; такое состояние
+    /// живёт только внутри мутации до reconcile_transitions).
+    pub fn joint(&self, p: &Project) -> Option<Tick> {
+        let a = p.clips.iter().find(|c| c.id == self.a)?;
+        Some(a.start + a.duration)
+    }
+
+    /// Полуоткрытое окно перехода на таймлайне.
+    pub fn window(&self, p: &Project) -> Option<TickRange> {
+        let at = self.joint(p)?;
+        Some(TickRange::new(at - self.in_offset, at + self.out_offset))
+    }
+}
+
+/// Чужая OTIO-конструкция, которую мы не рендерим (неизвестная схема,
+/// вложенный Stack, выключенный клип) — серый плейсхолдер (Р.24 п.5).
+/// Занимает место на дорожке (участвует в проверке перекрытий), удалять
+/// можно (undo работает), двигать нельзя: сырьё пишется обратно нетронутым.
+/// `key` — ключ сырого JSON в Retained (kt-otio).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ForeignEvent {
+    pub key: u64,
+    pub kind: ClipKind,
+    pub lane: u32,
+    pub start: Tick,
+    pub duration: Tick,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -57,6 +122,13 @@ pub struct Project {
     /// Morph-события. Применяются к клипам в `effective_clips()`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<MorpherEvent>,
+    /// Переходы на стыках клипов (Р.24: кроссфейд — явный объект, не
+    /// перекрытие).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transitions: Vec<TransitionEvent>,
+    /// Плейсхолдеры чужих OTIO-конструкций (появляются только из импорта).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub foreign: Vec<ForeignEvent>,
     /// Состояние вьюпорта редактора (п.13, порт v1: timelineViewStartMs/
     /// zoomLevel/cursorMs). Вне undo-истории (как region); старые файлы
     /// без секции читаются как None.
@@ -142,23 +214,41 @@ fn default_lanes() -> u32 {
 /// Метка на таймлайне: момент и (необязательное) имя.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Marker {
+    /// Начало метки. Идентичность метки — по нему (как раньше по `t`).
     pub t: Tick,
+    /// Диапазонная метка (Р.24, OTIO marked_range): 0 = точечная.
+    #[serde(default, skip_serializing_if = "tick_is_zero")]
+    pub duration: Tick,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub name: String,
+    /// Цвет OTIO Marker.2 — round-trip чужих файлов; UI рисует своим стилем.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+fn tick_is_zero(t: &Tick) -> bool {
+    t.0 == 0
 }
 
 impl Marker {
     pub fn at(t: Tick) -> Marker {
-        Marker { t, name: String::new() }
+        Marker { t, duration: Tick::ZERO, name: String::new(), color: None }
     }
     pub fn named(t: Tick, name: impl Into<String>) -> Marker {
-        Marker { t, name: name.into() }
+        Marker { t, duration: Tick::ZERO, name: name.into(), color: None }
+    }
+    /// Конец диапазона (== началу у точечной).
+    pub fn end(&self) -> Tick {
+        self.t + self.duration
+    }
+    pub fn is_range(&self) -> bool {
+        self.duration.0 > 0
     }
 }
 
 impl<'de> Deserialize<'de> for Marker {
-    /// Принимает и старую форму (число тиков), и новую (объект): проекты,
-    /// сохранённые до появления имён, продолжают открываться.
+    /// Принимает старую форму (число тиков), объект {t, name} и диапазонную
+    /// {t, duration, name, color}: старые проекты продолжают открываться.
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Marker, D::Error> {
         #[derive(Deserialize)]
         #[serde(untagged)]
@@ -167,12 +257,18 @@ impl<'de> Deserialize<'de> for Marker {
             Full {
                 t: i64,
                 #[serde(default)]
+                duration: i64,
+                #[serde(default)]
                 name: String,
+                #[serde(default)]
+                color: Option<String>,
             },
         }
         Ok(match Repr::deserialize(d)? {
             Repr::Bare(t) => Marker::at(Tick(t)),
-            Repr::Full { t, name } => Marker { t: Tick(t), name },
+            Repr::Full { t, duration, name, color } => {
+                Marker { t: Tick(t), duration: Tick(duration.max(0)), name, color }
+            }
         })
     }
 }
@@ -693,6 +789,69 @@ pub enum ProjectError {
     MorphUnknownTarget(MorphId, ClipId),
     #[error("morpher {0:?}: unknown media {1:?}")]
     MorphUnknownMedia(MorphId, MediaId),
+    #[error("duplicate transition id {0:?}")]
+    DuplicateTransitionId(TransitionId),
+    #[error("transition {0:?}: unknown clip {1:?}")]
+    TransitionUnknownClip(TransitionId, ClipId),
+    #[error("transition {0:?}: clips are not butt-joined neighbors")]
+    TransitionNotAtJoint(TransitionId),
+    #[error("transition {0:?}: window exceeds clip bodies")]
+    TransitionTooWide(TransitionId),
+    #[error("transition {0:?}: window below minimal duration")]
+    TransitionTooShort(TransitionId),
+    #[error("two transitions on joint {0:?}->{1:?}")]
+    DuplicateTransitionJoint(ClipId, ClipId),
+    #[error("transition windows overlap on a lane: {0:?}, {1:?}")]
+    TransitionWindowsOverlap(TransitionId, TransitionId),
+    #[error("duplicate foreign key {0}")]
+    DuplicateForeignKey(u64),
+    #[error("clips overlap on a lane: {0:?}, {1:?} (crossfade is an explicit transition)")]
+    ClipOverlap(ClipId, ClipId),
+    #[error("clip {0:?} overlaps a foreign placeholder (key {1})")]
+    ForeignOverlap(ClipId, u64),
+}
+
+/// Полная проверка перехода против проекта: стык, умещаемость, минимум,
+/// уникальность стыка и непересечение окон на дорожке. `ignore` — id самого
+/// перехода при SetTransition (не сравнивать с собой; Add передаёт None,
+/// но self-id тоже пропускается). Используется и validate(), и check_on
+/// команд (тест 135).
+pub fn check_transition_full(
+    p: &Project,
+    t: &TransitionEvent,
+    ignore: Option<TransitionId>,
+) -> Result<(), ProjectError> {
+    let clip = |id: ClipId| p.clips.iter().find(|c| c.id == id);
+    let a = clip(t.a).ok_or(ProjectError::TransitionUnknownClip(t.id, t.a))?;
+    let b = clip(t.b).ok_or(ProjectError::TransitionUnknownClip(t.id, t.b))?;
+    if a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start {
+        return Err(ProjectError::TransitionNotAtJoint(t.id));
+    }
+    if t.in_offset.0 < 0
+        || t.out_offset.0 < 0
+        || t.in_offset > a.duration
+        || t.out_offset > b.duration
+    {
+        return Err(ProjectError::TransitionTooWide(t.id));
+    }
+    if t.in_offset + t.out_offset < MIN_TRANSITION_DURATION {
+        return Err(ProjectError::TransitionTooShort(t.id));
+    }
+    let w = TickRange::new(a.start + a.duration - t.in_offset, a.start + a.duration + t.out_offset);
+    for other in &p.transitions {
+        if other.id == t.id || Some(other.id) == ignore {
+            continue;
+        }
+        if (other.a, other.b) == (t.a, t.b) {
+            return Err(ProjectError::DuplicateTransitionJoint(t.a, t.b));
+        }
+        let Some(oa) = clip(other.a) else { continue };
+        let Some(ow) = other.window(p) else { continue };
+        if oa.kind == a.kind && oa.lane == a.lane && w.start < ow.end && ow.start < w.end {
+            return Err(ProjectError::TransitionWindowsOverlap(t.id, other.id));
+        }
+    }
+    Ok(())
 }
 
 impl Project {
@@ -709,6 +868,8 @@ impl Project {
             audio_lanes: 1,
             morph_lanes: 0,
             morphers: Vec::new(),
+            transitions: Vec::new(),
+            foreign: Vec::new(),
             ui: None,
         }
     }
@@ -808,6 +969,50 @@ impl Project {
                 return Err(ProjectError::MorphUnknownMedia(m.id, *mid));
             }
         }
+        let mut tr_ids = std::collections::HashSet::new();
+        for t in &self.transitions {
+            if !tr_ids.insert(t.id) {
+                return Err(ProjectError::DuplicateTransitionId(t.id));
+            }
+            check_transition_full(self, t, None)?;
+        }
+        let mut foreign_keys = std::collections::HashSet::new();
+        for f in &self.foreign {
+            if !foreign_keys.insert(f.key) {
+                return Err(ProjectError::DuplicateForeignKey(f.key));
+            }
+        }
+        // Инвариант Р.24 (этап 6): клипы одной (kind, lane) НЕ перекрываются —
+        // кроссфейд теперь явный переход, а не наложение. Foreign-плейсхолдеры
+        // занимают место наравне с клипами (их сырьё пишется обратно в OTIO,
+        // где дорожка — строгая последовательность).
+        enum SpanId {
+            Clip(ClipId),
+            Foreign(u64),
+        }
+        let mut spans: Vec<(ClipKind, u32, i64, i64, SpanId)> = self
+            .clips
+            .iter()
+            .map(|c| (c.kind, c.lane, c.start.0, (c.start + c.duration).0, SpanId::Clip(c.id)))
+            .chain(self.foreign.iter().map(|f| {
+                (f.kind, f.lane, f.start.0, (f.start + f.duration).0, SpanId::Foreign(f.key))
+            }))
+            .collect();
+        spans.sort_by_key(|s| (s.0 as u8, s.1, s.2, s.3));
+        for w in spans.windows(2) {
+            let (ka, la, _, end_a, ida) = &w[0];
+            let (kb, lb, start_b, _, idb) = &w[1];
+            if ka == kb && la == lb && *end_a > *start_b {
+                return Err(match (ida, idb) {
+                    (SpanId::Clip(a), SpanId::Clip(b)) => ProjectError::ClipOverlap(*a, *b),
+                    (SpanId::Clip(c), SpanId::Foreign(f))
+                    | (SpanId::Foreign(f), SpanId::Clip(c)) => ProjectError::ForeignOverlap(*c, *f),
+                    (SpanId::Foreign(f), SpanId::Foreign(_)) => {
+                        ProjectError::DuplicateForeignKey(*f)
+                    }
+                });
+            }
+        }
         Ok(())
     }
 
@@ -819,7 +1024,10 @@ impl Project {
         s
     }
 
-    pub fn from_json(s: &str) -> Result<Project, ProjectError> {
+    /// Парс без validate() — для легаси-импорта (Р.24): старые .ktproj
+    /// законно содержат перекрытия, их конвертирует ops::upgrade_legacy,
+    /// и только ПОСЛЕ него проект обязан проходить validate.
+    pub fn from_json_unvalidated(s: &str) -> Result<Project, ProjectError> {
         // format_version проверяем до полного парсинга, чтобы отдавать
         // осмысленную ошибку на файлах будущих версий.
         #[derive(Deserialize)]
@@ -834,6 +1042,11 @@ impl Project {
         let mut p: Project =
             serde_json::from_str(s).map_err(|e| ProjectError::Json(e.to_string()))?;
         p.normalize();
+        Ok(p)
+    }
+
+    pub fn from_json(s: &str) -> Result<Project, ProjectError> {
+        let p = Self::from_json_unvalidated(s)?;
         p.validate()?;
         Ok(p)
     }

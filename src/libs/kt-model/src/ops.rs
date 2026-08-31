@@ -7,10 +7,38 @@ use crate::model::{Command, MIN_CLIP_DURATION};
 use crate::project::*;
 use kt_time::Tick;
 
+/// Блок обмена (Р.24): клипы + переходы, у которых ОБА конца попали в блок
+/// и стык пережил кроп. Времена клипов ребейзнуты к нулю блока.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ClipBlock {
+    pub clips: Vec<ClipEvent>,
+    pub transitions: Vec<TransitionEvent>,
+}
+
+/// Переходы, пережившие копирование: оба клипа в блоке, стык цел (кропы
+/// региона могли съесть край), офсеты клампятся новыми телами.
+fn surviving_transitions(p: &Project, block_clips: &[ClipEvent]) -> Vec<TransitionEvent> {
+    let find = |id: ClipId| block_clips.iter().find(|c| c.id == id);
+    p.transitions
+        .iter()
+        .filter_map(|t| {
+            let a = find(t.a)?;
+            let b = find(t.b)?;
+            if a.start + a.duration != b.start {
+                return None;
+            }
+            let mut t = t.clone();
+            t.in_offset = t.in_offset.min(a.duration);
+            t.out_offset = t.out_offset.min(b.duration);
+            (t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION).then_some(t)
+        })
+        .collect()
+}
+
 /// Copy с регионом: пересекающиеся клипы кропаются по региону и ребейзятся
 /// к нулю (source_in сдвигается на срез слева). Блок готов для paste_block.
-pub fn copy_region_block(p: &Project, r: Region) -> Vec<ClipEvent> {
-    let mut out = Vec::new();
+pub fn copy_region_block(p: &Project, r: Region) -> ClipBlock {
+    let mut clips = Vec::new();
     for c in &p.clips {
         if !r.intersects_clip(c) {
             continue;
@@ -30,15 +58,16 @@ pub fn copy_region_block(p: &Project, r: Region) -> Vec<ClipEvent> {
         };
         copy.start = t0 - r.start; // rebase к нулю региона
         copy.duration = t1 - t0;
-        out.push(copy);
+        clips.push(copy);
     }
-    out
+    let transitions = surviving_transitions(p, &clips);
+    ClipBlock { clips, transitions }
 }
 
 /// Copy без региона: выбранный клип со всей его link-группой,
 /// ребейз к старту самого раннего.
-pub fn copy_group(p: &Project, id: ClipId) -> Vec<ClipEvent> {
-    let Some(sel) = p.clips.iter().find(|c| c.id == id) else { return Vec::new() };
+pub fn copy_group(p: &Project, id: ClipId) -> ClipBlock {
+    let Some(sel) = p.clips.iter().find(|c| c.id == id) else { return ClipBlock::default() };
     let group = sel.link_group;
     let members: Vec<ClipEvent> = p
         .clips
@@ -47,30 +76,37 @@ pub fn copy_group(p: &Project, id: ClipId) -> Vec<ClipEvent> {
         .cloned()
         .collect();
     let base = members.iter().map(|c| c.start).min().unwrap_or(Tick::ZERO);
-    members
+    let clips: Vec<ClipEvent> = members
         .into_iter()
         .map(|mut c| {
             c.start = c.start - base;
             c
         })
-        .collect()
+        .collect();
+    let transitions = surviving_transitions(p, &clips);
+    ClipBlock { clips, transitions }
 }
 
-/// Paste блока в позицию `at`: свежие id, каждая старая группа → одна новая.
-/// Возвращает (команды, конец блока) — курсор прыгает в конец для chain-paste.
+/// Paste блока в позицию `at`: свежие id, каждая старая группа → одна новая,
+/// переходы ретаргетятся на новые id. Возвращает (команды, конец блока) —
+/// курсор прыгает в конец для chain-paste. Вставка с коллизией на дорожке
+/// теперь честно проваливается жёсткой валидацией apply_batch (п.139).
 pub fn paste_block(
-    block: &[ClipEvent],
+    block: &ClipBlock,
     at: Tick,
     next_clip: &mut u64,
     next_group: &mut u64,
+    next_transition: &mut u64,
 ) -> (Vec<Command>, Tick) {
     let mut group_map: std::collections::HashMap<GroupId, GroupId> =
         std::collections::HashMap::new();
+    let mut clip_map: std::collections::HashMap<ClipId, ClipId> = std::collections::HashMap::new();
     let mut cmds = Vec::new();
     let mut end = at;
-    for c in block {
+    for c in &block.clips {
         let mut copy = c.clone();
         copy.id = ClipId(*next_clip);
+        clip_map.insert(c.id, copy.id);
         *next_clip += 1;
         copy.link_group = c.link_group.map(|g| {
             *group_map.entry(g).or_insert_with(|| {
@@ -82,6 +118,15 @@ pub fn paste_block(
         copy.start = at + c.start;
         end = end.max(copy.start + copy.duration);
         cmds.push(Command::AddClip(copy));
+    }
+    for t in &block.transitions {
+        let (Some(&a), Some(&b)) = (clip_map.get(&t.a), clip_map.get(&t.b)) else { continue };
+        let mut copy = t.clone();
+        copy.id = TransitionId(*next_transition);
+        *next_transition += 1;
+        copy.a = a;
+        copy.b = b;
+        cmds.push(Command::AddTransition(copy));
     }
     (cmds, end)
 }
@@ -218,4 +263,195 @@ pub fn magnetize_commands(
     cmds.push(Command::TrimEnd { id: partner.id, new_end: c.start + c.duration });
     cmds.push(Command::LinkClips { ids: vec![c.id, partner.id], group });
     Some(cmds)
+}
+
+// ---- импорт легаси-ktproj: перекрытия → переходы/развод (Р.24, п.143) ------
+
+/// Отчёт конвертации старых перекрытий. Показывается пользователю note'ом.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct UpgradeReport {
+    /// Аудио-пары, ставшие стыком с переходом (звук байт-идентичен, т.136).
+    pub transitions_created: usize,
+    /// Аудио-клипы, разведённые по дорожкам (3+/FX-перекрытия: точной
+    /// компенсации 1/N не существует — решение пользователя п.9 Р.24,
+    /// громкость в зоне бывшего 1/N становится суммой).
+    pub audio_moved: usize,
+    /// Видео-клипы, демоцированные на вставленную дорожку ниже (старое
+    /// видео перекрытия не смешивало — композит байт-идентичен тайбрейку).
+    pub video_moved: usize,
+}
+
+impl UpgradeReport {
+    pub fn is_empty(&self) -> bool {
+        *self == UpgradeReport::default()
+    }
+}
+
+/// Зеркала мутаций тримов (model.rs) для прямого применения к клипу:
+/// у reversed TrimEnd сдвигает source_in, TrimStart — не трогает (п.16).
+fn raw_trim_end(c: &mut ClipEvent, new_end: Tick) {
+    let old = c.duration;
+    c.duration = new_end - c.start;
+    if c.reversed {
+        c.source_in = c.source_in + (old - c.duration);
+    }
+}
+
+fn raw_trim_start(c: &mut ClipEvent, new_start: Tick) {
+    let delta = new_start - c.start;
+    c.start = new_start;
+    c.duration = c.duration - delta;
+    if !c.reversed {
+        c.source_in = c.source_in + delta;
+    }
+}
+
+/// Конвертация legacy-проекта с перекрытиями в Transition-модель (этап 9).
+/// Идемпотентна: на проекте без перекрытий отчёт пуст. После вызова
+/// проект обязан проходить validate().
+pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
+    let mut report = UpgradeReport::default();
+
+    // 1) аудио-пары: ровно два клипа в зоне наезда, оба без активных FX —
+    //    трим до середины наезда + переход тем же окном (байт-идентично)
+    while let Some((a_id, b_id)) = find_audio_pair(p) {
+        let a0 = p.clips.iter().find(|c| c.id == a_id).unwrap().clone();
+        let b0 = p.clips.iter().find(|c| c.id == b_id).unwrap().clone();
+        let (ov0, ov1) = (b0.start, a0.start + a0.duration);
+        let joint = Tick(
+            (ov0.0 + (ov1.0 - ov0.0) / 2).clamp(
+                (a0.start + MIN_CLIP_DURATION).0,
+                (b0.start + b0.duration - MIN_CLIP_DURATION).0,
+            ),
+        );
+        for c in p.clips.iter_mut() {
+            if c.id == a_id {
+                raw_trim_end(c, joint);
+            } else if c.id == b_id {
+                raw_trim_start(c, joint);
+            }
+        }
+        let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(id),
+            a: a_id,
+            b: b_id,
+            in_offset: joint - ov0,
+            out_offset: ov1 - joint,
+            kind: TransitionKind::Crossfade,
+        });
+        report.transitions_created += 1;
+    }
+
+    // 2) оставшиеся аудио-перекрытия (3+, FX, невозможная пара) — развод:
+    //    ранний остаётся, конфликтующий уезжает на свободную дорожку ниже
+    //    (новая в конце при нехватке)
+    while let Some(mover) = find_overlap_mover(p, ClipKind::Audio) {
+        let lane = free_audio_lane_below(p, mover);
+        // счётчик дорожек бампается СРАЗУ: иначе следующий mover считает
+        // добавленную дорожку несуществующей и летит на неё же (вечный цикл)
+        p.audio_lanes = p.audio_lanes.max(lane + 1);
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == mover) {
+            c.lane = lane;
+        }
+        report.audio_moved += 1;
+    }
+
+    // 3) видео-перекрытия: демоция позднего на ВСТАВЛЕННУЮ дорожку сразу
+    //    ниже раннего — старый тайбрейк (сверху тот, у кого start меньше)
+    //    сохраняется байт-в-байт
+    while let Some(mover) = find_overlap_mover(p, ClipKind::Video) {
+        let keeper_lane =
+            p.clips.iter().find(|c| c.id == mover).map(|c| c.lane).unwrap_or(0);
+        for c in p.clips.iter_mut() {
+            if c.kind == ClipKind::Video && c.lane > keeper_lane {
+                c.lane += 1;
+            }
+        }
+        if let Some(c) = p.clips.iter_mut().find(|c| c.id == mover) {
+            c.lane = keeper_lane + 1;
+        }
+        report.video_moved += 1;
+    }
+
+    p.normalize();
+    report
+}
+
+/// Пара для перехода: B — ближайший наезжающий на A, зона наезда покрыта
+/// РОВНО ими двумя, наезд частичный, оба без активных FX, стык умещается.
+fn find_audio_pair(p: &Project) -> Option<(ClipId, ClipId)> {
+    for a in p.clips.iter().filter(|c| c.kind == ClipKind::Audio) {
+        for b in p.clips.iter().filter(|c| c.kind == ClipKind::Audio) {
+            if a.id == b.id || a.lane != b.lane {
+                continue;
+            }
+            let (a1, b1) = (a.start + a.duration, b.start + b.duration);
+            // частичный наезд B на хвост A
+            if !(b.start > a.start && b.start < a1 && b1 > a1) {
+                continue;
+            }
+            if !a.active_fx().is_empty() || !b.active_fx().is_empty() {
+                continue;
+            }
+            // никто третий не задевает зону наезда
+            let zone = (b.start, a1);
+            let third = p.clips.iter().any(|c| {
+                c.id != a.id
+                    && c.id != b.id
+                    && c.kind == ClipKind::Audio
+                    && c.lane == a.lane
+                    && c.start < zone.1
+                    && c.start + c.duration > zone.0
+            });
+            if third {
+                continue;
+            }
+            // окно и стык умещаются в тела
+            if (a1 - b.start) < MIN_TRANSITION_DURATION
+                || a.start + MIN_CLIP_DURATION > b1 - MIN_CLIP_DURATION
+            {
+                continue;
+            }
+            return Some((a.id, b.id));
+        }
+    }
+    None
+}
+
+/// Первый конфликтующий клип вида `kind`: в каждой зоне перекрытия остаётся
+/// самый ранний (по (start, id)), следующий — кандидат на переезд.
+fn find_overlap_mover(p: &Project, kind: ClipKind) -> Option<ClipId> {
+    let mut spans: Vec<(&ClipEvent, Tick)> = p
+        .clips
+        .iter()
+        .filter(|c| c.kind == kind)
+        .map(|c| (c, c.start + c.duration))
+        .collect();
+    spans.sort_by_key(|(c, _)| (c.lane, c.start, c.id));
+    for w in spans.windows(2) {
+        let ((a, a_end), (b, _)) = (&w[0], &w[1]);
+        if a.lane == b.lane && b.start < *a_end {
+            return Some(b.id);
+        }
+    }
+    None
+}
+
+fn free_audio_lane_below(p: &Project, mover: ClipId) -> u32 {
+    let me = p.clips.iter().find(|c| c.id == mover).unwrap();
+    let (m0, m1) = (me.start, me.start + me.duration);
+    for lane in (me.lane + 1)..p.audio_lanes {
+        let busy = p.clips.iter().any(|c| {
+            c.id != mover
+                && c.kind == ClipKind::Audio
+                && c.lane == lane
+                && c.start < m1
+                && c.start + c.duration > m0
+        });
+        if !busy {
+            return lane;
+        }
+    }
+    p.audio_lanes
 }

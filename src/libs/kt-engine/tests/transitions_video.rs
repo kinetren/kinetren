@@ -1,0 +1,153 @@
+//! Тест 137 (п.137 porting-notes, Р.24): видео-dissolve по переходам.
+//!
+//! Пара клипов в окне перехода блендится линейно (целочисленный k/4096) в
+//! один слой; недостающая половина — полный вес присутствующей +
+//! complete=false; ручки продолжают источник линейно (reversed — держит
+//! кламп-кадр). Superset t66-харнесса: кадры — сплошной цвет от pts.
+
+use kt_engine::VideoRenderer;
+use kt_media::synthetic::{AudioPattern, SyntheticSource};
+use kt_model::*;
+use kt_time::Tick;
+
+fn project_pair() -> Project {
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    for id in [1u64, 2] {
+        p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
+    }
+    for (id, start, src_in, media) in [(1u64, 0i64, 0i64, 1u64), (2, 90_000, 30_000, 2)] {
+        p.clips.push(ClipEvent {
+            id: ClipId(id),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(start),
+            duration: Tick(90_000),
+            source_in: Tick(src_in),
+            media: MediaId(media),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+        });
+    }
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: ClipId(1),
+        b: ClipId(2),
+        in_offset: Tick(9_000),
+        out_offset: Tick(9_000),
+        kind: TransitionKind::Crossfade,
+    });
+    p.validate().unwrap();
+    p
+}
+
+fn warm(vr: &VideoRenderer, cache: &kt_cache::BurstCache, t: Tick, q: kt_media::Quality) {
+    use kt_media::MediaSource;
+    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
+    for (media, src_pts) in vr.layers_at(t) {
+        let frame = synth.read_video_frame(src_pts, Some(q)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(q),
+            kt_engine::video_cache_idx(src_pts),
+            std::sync::Arc::new(frame),
+        );
+    }
+}
+
+fn synth_frame(src_pts: Tick, q: kt_media::Quality) -> Vec<u8> {
+    use kt_media::MediaSource;
+    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
+    synth.read_video_frame(src_pts, Some(q)).unwrap().rgba.into_vec()
+}
+
+fn dissolve(a: &[u8], b: &[u8], k: u32) -> Vec<u8> {
+    let ik = 4096 - k;
+    a.iter().zip(b).map(|(&av, &bv)| ((av as u32 * ik + bv as u32 * k + 2048) >> 12) as u8).collect()
+}
+
+#[test]
+fn t137_dissolve_blends_pair_and_is_deterministic() {
+    let p = project_pair();
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let (w0, w1) = (81_000i64, 99_000i64);
+
+    for t in [78_000i64, 81_000, 90_000, 96_000, 99_000] {
+        let t = Tick(t);
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "t {t:?}: all layers warmed");
+        let a = synth_frame(vr.grid.align_floor(Tick(t.0)), q); // A: src = t (src_in 0)
+        let b = synth_frame(vr.grid.align_floor(Tick(30_000 + (t.0 - 90_000))), q);
+        let expect = if t.0 < w0 {
+            a
+        } else if t.0 < w1 {
+            dissolve(&a, &b, (((t.0 - w0) * 4096) / (w1 - w0)).clamp(0, 4096) as u32)
+        } else {
+            b
+        };
+        assert_eq!(out, expect, "t {t:?}: dissolve math");
+        // детерминизм: повторный compose байт-идентичен
+        let (again, _) = vr.compose_from_cache(&cache, t, q);
+        assert_eq!(out, again);
+    }
+}
+
+#[test]
+fn t137_missing_pair_half_gets_full_weight_and_incomplete() {
+    use kt_media::MediaSource;
+    let p = project_pair();
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(90_000);
+    // греем ТОЛЬКО слой A (media 1)
+    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
+    let frame = synth.read_video_frame(vr.grid.align_floor(t), Some(q)).unwrap();
+    cache.insert_video(
+        kt_engine::source_id(MediaId(1)),
+        Some(q),
+        kt_engine::video_cache_idx(vr.grid.align_floor(t)),
+        std::sync::Arc::new(frame),
+    );
+    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    assert!(!complete, "missing half of the pair");
+    assert_eq!(out, synth_frame(vr.grid.align_floor(t), q), "present half at full weight");
+}
+
+#[test]
+fn t137_layers_include_handles_in_window() {
+    let p = project_pair();
+    let vr = VideoRenderer::new(&p);
+    // в окне перехода активны ОБА клипа (ручки), вне — один
+    assert_eq!(vr.layers_at(Tick(84_000)).len(), 2, "handles active inside window");
+    assert_eq!(vr.layers_at(Tick(78_000)).len(), 1);
+    assert_eq!(vr.layers_at(Tick(99_000)).len(), 1);
+    // левая ручка B читает источник ДО куска: src = 30000 + (84000-90000)
+    let layers = vr.layers_at(Tick(84_000));
+    assert!(layers.contains(&(MediaId(2), vr.grid.align_floor(Tick(24_000)))));
+}
+
+#[test]
+fn t137_dissolve_survives_fx_chain_on_pair() {
+    // FX-клип в паре: пост-FX кэш + бленд; повторный compose из кэша
+    // байт-идентичен (наследие t66)
+    let mut p = project_pair();
+    p.clips[0].fx = vec![FxInstance::Noise { amount: 0.3 }];
+    p.validate().unwrap();
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(90_000);
+    warm(&vr, &cache, t, q);
+    let (first, c1) = vr.compose_from_cache(&cache, t, q);
+    assert!(c1);
+    let (second, c2) = vr.compose_from_cache(&cache, t, q);
+    assert!(c2);
+    assert_eq!(first, second, "postfx-cached dissolve is byte-stable");
+}

@@ -40,12 +40,12 @@ fn t19_copy_region_fragment_paste_renders_identically() {
 
     let region = Region { start: Tick(90_000), end: Tick(90_000 * 5 / 2) };
     let block = copy_region_block(&p, region);
-    assert_eq!(block.len(), 1, "регион пересекает один клип");
+    assert_eq!(block.clips.len(), 1, "регион пересекает один клип");
 
     // вставка на 10c (пустое место)
     let paste_at = Tick(90_000 * 10);
-    let (mut next_clip, mut next_group) = (100, 100);
-    let (cmds, _end) = paste_block(&block, paste_at, &mut next_clip, &mut next_group);
+    let (mut next_clip, mut next_group, mut next_tr) = (100, 100, 100);
+    let (cmds, _end) = paste_block(&block, paste_at, &mut next_clip, &mut next_group, &mut next_tr);
     let mut model = kt_model::TimelineModel::new(p);
     model.apply_batch(cmds).expect("paste_block применяется");
     let p2 = model.project().clone();
@@ -92,11 +92,11 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
     let b2 = copy_region_block(&p, r2);
 
     let mut model = kt_model::TimelineModel::new(p);
-    let (mut nc, mut ng) = (100, 100);
+    let (mut nc, mut ng, mut nt) = (100, 100, 100);
     let at1 = Tick(90_000 * 10);
-    let (cmds1, end1) = paste_block(&b1, at1, &mut nc, &mut ng);
+    let (cmds1, end1) = paste_block(&b1, at1, &mut nc, &mut ng, &mut nt);
     model.apply_batch(cmds1).unwrap();
-    let (cmds2, _) = paste_block(&b2, end1, &mut nc, &mut ng);
+    let (cmds2, _) = paste_block(&b2, end1, &mut nc, &mut ng, &mut nt);
     model.apply_batch(cmds2).unwrap();
     let p2 = model.project().clone();
 

@@ -71,8 +71,17 @@ pub enum Command {
     UnlinkClip {
         id: ClipId,
     },
+    /// Переход на стыке двух соседних клипов одной дорожки (Р.24). Undo-able.
+    AddTransition(TransitionEvent),
+    RemoveTransition {
+        id: TransitionId,
+    },
+    /// Полная замена перехода (драг краёв/тела — батчи и apply_coalesced).
+    SetTransition(TransitionEvent),
+    /// Метка; duration > 0 = диапазонная (Р.24, marked_range).
     AddMarker {
         at: Tick,
+        duration: Tick,
     },
     RemoveMarker {
         at: Tick,
@@ -87,6 +96,11 @@ pub enum Command {
     MoveMarker {
         from: Tick,
         to: Tick,
+    },
+    /// Длительность метки (0 = схлопнуть в точечную). Края ленты — жестами.
+    SetMarkerDuration {
+        at: Tick,
+        duration: Tick,
     },
     /// Вставить пустую дорожку типа `kind` в позицию `at`; lane клипов
     /// этого типа >= at сдвигаются на +1.
@@ -140,6 +154,12 @@ pub enum CommandError {
     SplitOutside,
     #[error("invalid clip: {0}")]
     InvalidClip(#[from] ProjectError),
+    #[error("transition {0:?} not found")]
+    TransitionNotFound(TransitionId),
+    #[error("layout invariant violated: {0}")]
+    InvalidLayout(ProjectError),
+    #[error("invalid transition: {0}")]
+    InvalidTransition(ProjectError),
     #[error("marker at {0:?} not found")]
     MarkerNotFound(Tick),
     #[error("marker at {0:?} already exists")]
@@ -204,7 +224,14 @@ impl TimelineModel {
             Self::check_on(&scratch, cmd)?;
             Self::mutate_on(&mut scratch, cmd.clone());
         }
-        debug_assert!(scratch.validate().is_ok());
+        // reconcile — ОДИН раз на весь батч: жест атомарен, и переход не
+        // должен умирать в переходном состоянии между командами (roll стыка
+        // = TrimEnd+TrimStart: между ними стык формально разорван)
+        Self::reconcile_transitions(&mut scratch);
+        // Жёсткая валидация результата (Р.24, этап 6): перекрытия после
+        // групповых мувов/тримов/вставок дешевле отловить одной проверкой,
+        // чем дублировать их логику в check_on. Провал = ноль изменений.
+        scratch.validate().map_err(CommandError::InvalidLayout)?;
         self.push_undo();
         self.project = scratch;
         self.last_gesture = None;
@@ -217,6 +244,8 @@ impl TimelineModel {
         let mut scratch = self.project.clone();
         Self::check_on(&scratch, &cmd)?;
         Self::mutate_on(&mut scratch, cmd);
+        Self::reconcile_transitions(&mut scratch);
+        scratch.validate().map_err(CommandError::InvalidLayout)?;
         if self.last_gesture != Some(gesture) {
             self.push_undo();
         }
@@ -342,14 +371,42 @@ impl TimelineModel {
                     find(*id)?;
                 }
             }
-            Command::AddMarker { at } => {
+            Command::AddTransition(t) => {
+                if p.transitions.iter().any(|x| x.id == t.id) {
+                    return Err(CommandError::IdInUse(t.id.0));
+                }
+                check_transition_full(p, t, None).map_err(CommandError::InvalidTransition)?;
+            }
+            Command::RemoveTransition { id } => {
+                if !p.transitions.iter().any(|t| t.id == *id) {
+                    return Err(CommandError::TransitionNotFound(*id));
+                }
+            }
+            Command::SetTransition(t) => {
+                if !p.transitions.iter().any(|x| x.id == t.id) {
+                    return Err(CommandError::TransitionNotFound(t.id));
+                }
+                check_transition_full(p, t, Some(t.id)).map_err(CommandError::InvalidTransition)?;
+            }
+            Command::AddMarker { at, duration } => {
                 if p.markers.iter().any(|m| m.t == *at) {
                     return Err(CommandError::MarkerExists(*at));
+                }
+                if duration.0 < 0 {
+                    return Err(CommandError::TooShort);
                 }
             }
             Command::RemoveMarker { at } => {
                 if !p.markers.iter().any(|m| m.t == *at) {
                     return Err(CommandError::MarkerNotFound(*at));
+                }
+            }
+            Command::SetMarkerDuration { at, duration } => {
+                if !p.markers.iter().any(|m| m.t == *at) {
+                    return Err(CommandError::MarkerNotFound(*at));
+                }
+                if duration.0 < 0 {
+                    return Err(CommandError::TooShort);
                 }
             }
             Command::SetMarkerName { at, .. } => {
@@ -543,6 +600,14 @@ impl TimelineModel {
                         m.targets.push(new_id);
                     }
                 }
+                // переход, где клип был OUTGOING (стык на прежнем КОНЦЕ),
+                // уезжает к правой половине; incoming-стык (начало) остаётся
+                // за левой — она сохранила id
+                for t in &mut p.transitions {
+                    if t.a == id {
+                        t.a = new_id;
+                    }
+                }
             }
             Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,
             Command::SetReversed { id, reversed } => Self::clip_mut_on(p, id).reversed = reversed,
@@ -556,9 +621,16 @@ impl TimelineModel {
                 }
             }
             Command::UnlinkClip { id } => Self::clip_mut_on(p, id).link_group = None,
-            Command::AddMarker { at } => {
+            Command::AddTransition(t) => p.transitions.push(t),
+            Command::RemoveTransition { id } => p.transitions.retain(|t| t.id != id),
+            Command::SetTransition(t) => {
+                if let Some(slot) = p.transitions.iter_mut().find(|x| x.id == t.id) {
+                    *slot = t;
+                }
+            }
+            Command::AddMarker { at, duration } => {
                 let i = p.markers.partition_point(|m| m.t < at);
-                p.markers.insert(i, Marker::at(at));
+                p.markers.insert(i, Marker { duration, ..Marker::at(at) });
             }
             Command::RemoveMarker { at } => p.markers.retain(|m| m.t != at),
             Command::SetMarkerName { at, name } => {
@@ -567,16 +639,17 @@ impl TimelineModel {
                 }
             }
             Command::MoveMarker { from, to } => {
-                // имя переезжает ВМЕСТЕ с меткой (раньше терялось)
-                let name = p
-                    .markers
-                    .iter()
-                    .find(|m| m.t == from)
-                    .map(|m| m.name.clone())
-                    .unwrap_or_default();
+                // имя, длительность и цвет переезжают ВМЕСТЕ с меткой
+                let moved =
+                    p.markers.iter().find(|m| m.t == from).cloned().unwrap_or(Marker::at(from));
                 p.markers.retain(|m| m.t != from);
                 let i = p.markers.partition_point(|m| m.t < to);
-                p.markers.insert(i, Marker { t: to, name });
+                p.markers.insert(i, Marker { t: to, ..moved });
+            }
+            Command::SetMarkerDuration { at, duration } => {
+                if let Some(m) = p.markers.iter_mut().find(|m| m.t == at) {
+                    m.duration = duration;
+                }
             }
             Command::InsertLane { kind, at } => {
                 match kind {
@@ -633,6 +706,26 @@ impl TimelineModel {
                 p.morph_lanes = p.morph_lanes.saturating_sub(1);
             }
         }
+    }
+
+    /// Судьба переходов после правок геометрии клипов (Р.24, п.135):
+    /// клип пропал или стык разорван (конец `a` != начало `b`, дорожка/вид
+    /// разошлись) — переход умирает; трим укоротил соседа — офсеты клампятся
+    /// телами, схлопнувшееся ниже минимума окно умирает. Групповой перенос
+    /// обоих соседей стык сохраняет — переход живёт (идентичность по ClipId,
+    /// позиция не хранится).
+    fn reconcile_transitions(p: &mut Project) {
+        let Project { clips, transitions, .. } = p;
+        transitions.retain_mut(|t| {
+            let Some(a) = clips.iter().find(|c| c.id == t.a) else { return false };
+            let Some(b) = clips.iter().find(|c| c.id == t.b) else { return false };
+            if a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start {
+                return false;
+            }
+            t.in_offset = t.in_offset.min(a.duration);
+            t.out_offset = t.out_offset.min(b.duration);
+            t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION
+        });
     }
 
     fn clip_mut_on(p: &mut Project, id: ClipId) -> &mut ClipEvent {

@@ -1,0 +1,16 @@
+[package]
+name = "kt-otio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kt-time = { workspace = true }
+kt-model = { workspace = true }
+serde = { workspace = true }
+# preserve_order обязателен: passthrough чужих полей/metadata сохраняет
+# порядок ключей документа, на этом стоит идемпотентность записи
+serde_json = { workspace = true, features = ["preserve_order"] }
+indexmap = { workspace = true }
+thiserror = { workspace = true }

@@ -79,7 +79,7 @@ fn apply_batch_is_atomic_and_single_undo() {
     let before = m.project().clone();
     // 3-я команда провалится (клип не существует)
     let err = m.apply_batch(vec![
-        Command::AddMarker { at: Tick(1) },
+        Command::AddMarker { at: Tick(1), duration: Tick::ZERO },
         Command::SetGain { id: ClipId(10), gain_db: -3.0 },
         Command::RemoveClip { id: ClipId(404) },
     ]);
@@ -119,8 +119,8 @@ fn apply_coalesced_merges_gesture_into_one_undo() {
 #[test]
 fn markers_sorted_and_region_survives_undo() {
     let mut m = TimelineModel::new(base());
-    m.apply(Command::AddMarker { at: Tick(5000) }).unwrap();
-    m.apply(Command::AddMarker { at: Tick(1000) }).unwrap();
+    m.apply(Command::AddMarker { at: Tick(5000), duration: Tick::ZERO }).unwrap();
+    m.apply(Command::AddMarker { at: Tick(1000), duration: Tick::ZERO }).unwrap();
     assert_eq!(m.project().markers, vec![Marker::at(Tick(1000)), Marker::at(Tick(5000))], "сортировка при вставке");
     m.apply(Command::MoveMarker { from: Tick(1000), to: Tick(9000) }).unwrap();
     assert_eq!(m.project().markers, vec![Marker::at(Tick(5000)), Marker::at(Tick(9000))]);
@@ -170,11 +170,12 @@ fn remove_media_refuses_while_in_use() {
 fn paste_block_keeps_pairs_and_chains() {
     let m = TimelineModel::new(base());
     let block = copy_group(m.project(), ClipId(10));
-    assert_eq!(block.len(), 2, "линк-группа целиком");
+    assert_eq!(block.clips.len(), 2, "линк-группа целиком");
 
     let mut next_clip = 100u64;
     let mut next_group = 50u64;
-    let (cmds, end1) = paste_block(&block, Tick(200_000), &mut next_clip, &mut next_group);
+    let mut next_tr = 500u64;
+    let (cmds, end1) = paste_block(&block, Tick(200_000), &mut next_clip, &mut next_group, &mut next_tr);
     let mut m2 = TimelineModel::new(m.project().clone());
     m2.apply_batch(cmds).unwrap();
     let pasted: Vec<&ClipEvent> = m2.project().clips.iter().filter(|c| c.id.0 >= 100).collect();
@@ -184,7 +185,7 @@ fn paste_block_keeps_pairs_and_chains() {
     assert_eq!(end1, Tick(290_000));
 
     // chain-paste: второй блок встык к концу первого
-    let (cmds2, end2) = paste_block(&block, end1, &mut next_clip, &mut next_group);
+    let (cmds2, end2) = paste_block(&block, end1, &mut next_clip, &mut next_group, &mut next_tr);
     m2.apply_batch(cmds2).unwrap();
     assert_eq!(end2, Tick(380_000));
     assert!(m2.project().clips.iter().any(|c| c.start == end1), "встык без зазора");
@@ -196,12 +197,12 @@ fn copy_region_crops_and_rebases() {
     let r = Region { start: Tick(30_000), end: Tick(120_000) };
     let block = copy_region_block(&p, r);
     // клипы 10,11 (0..90000) кропаются справа; клип 12 (90000..180000) — слева
-    assert_eq!(block.len(), 3);
-    let c10 = block.iter().find(|c| c.id == ClipId(10)).unwrap();
+    assert_eq!(block.clips.len(), 3);
+    let c10 = block.clips.iter().find(|c| c.id == ClipId(10)).unwrap();
     assert_eq!(c10.start, Tick(0), "rebase к нулю региона");
     assert_eq!(c10.duration, Tick(60_000));
     assert_eq!(c10.source_in, Tick(30_000), "сдвиг источника на срез слева");
-    let c12 = block.iter().find(|c| c.id == ClipId(12)).unwrap();
+    let c12 = block.clips.iter().find(|c| c.id == ClipId(12)).unwrap();
     assert_eq!(c12.start, Tick(60_000));
     assert_eq!(c12.source_in, Tick(30_000), "кроп слева не было — source_in исходный");
 }
@@ -337,7 +338,9 @@ fn t29_trim_applies_to_link_group() {
 #[test]
 fn t30_magnetize_desynced_pair_converges() {
     let mut p = base();
-    // разъехавшаяся, но слинкованная пара
+    // разъехавшаяся, но слинкованная пара; сосед 12 убран — сдвинутый
+    // клип 11 теперь честно ловил бы ClipOverlap (инвариант Р.24)
+    p.clips.retain(|c| c.id != ClipId(12));
     p.clips.iter_mut().find(|c| c.id == ClipId(11)).unwrap().start = Tick(15_000);
     p.normalize();
     p.validate().unwrap();
@@ -496,4 +499,52 @@ fn t90_lane_names() {
     assert_eq!(Project::from_json(&json).unwrap().ui.unwrap().lane_names, names);
     let empty = UiState::default();
     assert!(!serde_json::to_string(&empty).unwrap().contains("lane_names"));
+}
+
+/// Тест 141 (п.141 porting-notes, Р.24): метки-диапазоны (marked_range).
+#[test]
+fn t141_range_markers() {
+    let mut m = TimelineModel::new(base());
+    // диапазонная метка + точечная
+    m.apply(Command::AddMarker { at: Tick(1_000), duration: Tick(20_000) }).unwrap();
+    m.apply(Command::AddMarker { at: Tick(50_000), duration: Tick::ZERO }).unwrap();
+    let mk = &m.project().markers[0];
+    assert!(mk.is_range());
+    assert_eq!(mk.end(), Tick(21_000));
+    assert!(!m.project().markers[1].is_range());
+
+    // длительность: команда, отрицательная — ошибка, чужая — не найдена
+    m.apply(Command::SetMarkerDuration { at: Tick(50_000), duration: Tick(5_000) }).unwrap();
+    assert_eq!(m.project().markers[1].duration, Tick(5_000));
+    assert!(matches!(
+        m.apply(Command::SetMarkerDuration { at: Tick(50_000), duration: Tick(-1) }),
+        Err(CommandError::TooShort)
+    ));
+    assert!(matches!(
+        m.apply(Command::SetMarkerDuration { at: Tick(777), duration: Tick(1) }),
+        Err(CommandError::MarkerNotFound(_))
+    ));
+
+    // перенос везёт длительность и цвет
+    let mut p = m.project().clone();
+    p.markers[0].color = Some("RED".into());
+    let mut m = TimelineModel::new(p);
+    m.apply(Command::MoveMarker { from: Tick(1_000), to: Tick(9_000) }).unwrap();
+    let moved = m.project().markers.iter().find(|k| k.t == Tick(9_000)).unwrap();
+    assert_eq!(moved.duration, Tick(20_000), "duration переезжает");
+    assert_eq!(moved.color.as_deref(), Some("RED"), "цвет переезжает");
+
+    // интерим-serde: диапазон/цвет в round-trip, легаси-формы читаются
+    let json = m.project().to_json();
+    let p2 = Project::from_json(&json).unwrap();
+    assert_eq!(p2.markers, m.project().markers);
+    let legacy = r#"{"format_version":1,
+        "settings":{"fps":30,"width":64,"height":36,"sample_rate":48000},
+        "media":[],"clips":[],
+        "markers":[700, {"t":1000,"name":"x"}, {"t":2000,"duration":300,"name":"r"}]}"#;
+    let p3 = Project::from_json(legacy).unwrap();
+    assert_eq!(p3.markers.len(), 3);
+    assert_eq!(p3.markers[0], Marker::at(Tick(700)));
+    assert_eq!(p3.markers[1], Marker::named(Tick(1000), "x"));
+    assert!(p3.markers[2].is_range() && p3.markers[2].duration == Tick(300));
 }

@@ -55,6 +55,104 @@ pub enum DragMode {
     TrimEnd,
 }
 
+/// Итог Move-драга (Р.24, п.139). Чистая функция — тест 139.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum MovePlan {
+    /// Коллизий нет — обычный MoveClip.
+    Free,
+    /// Мульти-наезд/поглощение/наезд меньше минимума окна: упор в стык
+    /// (решение пользователя п.10 Р.24 — чужой монтаж не разрушаем молча).
+    Clamped { start: i64 },
+    /// Частичный наезд на ОДНОГО соседа: жест кроссфейда — клипы встык до
+    /// `joint` (середина наезда с клампами тел), окно перехода = наезд.
+    Crossfade { outgoing: ClipId, incoming: ClipId, joint: i64, in_off: i64, out_off: i64 },
+}
+
+pub(crate) fn plan_move(p: &Project, id: ClipId, want: i64, lane: u32) -> MovePlan {
+    let Some(me) = p.clips.iter().find(|c| c.id == id) else { return MovePlan::Free };
+    let dur = me.duration.0;
+    let (w0, w1) = (want, want + dur);
+    let group = me.link_group;
+    let hits: Vec<&ClipEvent> = p
+        .clips
+        .iter()
+        .filter(|c| {
+            c.id != id
+                && c.kind == me.kind
+                && c.lane == lane
+                && !(group.is_some() && c.link_group == group)
+                && c.start.0 < w1
+                && c.start.0 + c.duration.0 > w0
+        })
+        .collect();
+    let foreign: Vec<(i64, i64)> = p
+        .foreign
+        .iter()
+        .filter(|f| f.kind == me.kind && f.lane == lane)
+        .map(|f| (f.start.0, (f.start + f.duration).0))
+        .filter(|(s, e)| *s < w1 && *e > w0)
+        .collect();
+    if hits.is_empty() && foreign.is_empty() {
+        return MovePlan::Free;
+    }
+    // кроссфейд — только одиночный частичный наезд на СВОЕЙ дорожке
+    // (вертикальный перенос с коллизией не режет чужие клипы тримами)
+    if hits.len() == 1 && foreign.is_empty() && lane == me.lane {
+        let n = hits[0];
+        let (n0, n1) = (n.start.0, n.start.0 + n.duration.0);
+        let mid = |ov0: i64, ov1: i64, lo: i64, hi: i64| -> Option<i64> {
+            (lo <= hi).then(|| (ov0 + (ov1 - ov0) / 2).clamp(lo, hi))
+        };
+        if w0 > n0 && w1 > n1 && n1 - w0 >= MIN_TRANSITION_DURATION.0 {
+            // мы incoming: наше начало в его теле, наезд [w0, n1)
+            if let Some(j) = mid(w0, n1, n0 + MIN_CLIP_DURATION.0, w1 - MIN_CLIP_DURATION.0) {
+                return MovePlan::Crossfade {
+                    outgoing: n.id,
+                    incoming: id,
+                    joint: j,
+                    in_off: j - w0,
+                    out_off: n1 - j,
+                };
+            }
+        } else if w0 < n0 && w1 < n1 && w1 - n0 >= MIN_TRANSITION_DURATION.0 {
+            // мы outgoing: наш конец в его теле, наезд [n0, w1)
+            if let Some(j) = mid(n0, w1, w0 + MIN_CLIP_DURATION.0, n1 - MIN_CLIP_DURATION.0) {
+                return MovePlan::Crossfade {
+                    outgoing: id,
+                    incoming: n.id,
+                    joint: j,
+                    in_off: j - n0,
+                    out_off: w1 - j,
+                };
+            }
+        }
+    }
+    // упор: откатываемся к ближайшему стыку по направлению движения
+    let orig = me.start.0;
+    let spans =
+        hits.iter().map(|c| (c.start.0, c.start.0 + c.duration.0)).chain(foreign.iter().copied());
+    let start = if want >= orig {
+        spans.map(|(s, _)| s - dur).min().unwrap_or(want).clamp(orig.min(want), want)
+    } else {
+        spans.map(|(_, e)| e).max().unwrap_or(want).clamp(want, orig)
+    };
+    MovePlan::Clamped { start }
+}
+
+/// Прямоугольник окна перехода в строке дорожки. Чистая функция — тест 140.
+pub(crate) fn transition_rect(x0: f32, x1: f32, lane_top: f32, lane_h: f32) -> egui::Rect {
+    egui::Rect::from_min_max(
+        egui::pos2(x0, lane_top + 1.0),
+        egui::pos2(x1, lane_top + lane_h - 3.0),
+    )
+}
+
+/// Лента диапазонной метки на строке подписей времени (Р.24, п.142).
+/// Чистая функция — тест 142.
+pub(crate) fn marker_band_rect(x0: f32, x1: f32, time_top: f32) -> egui::Rect {
+    egui::Rect::from_min_max(egui::pos2(x0, time_top + 9.0), egui::pos2(x1, time_top + 13.0))
+}
+
 pub struct DragState {
     pub id: ClipId,
     pub mode: DragMode,
@@ -91,6 +189,26 @@ pub enum Drag {
     Marker {
         orig: i64,
         cur: i64,
+    },
+    /// Край диапазонной метки (Р.24, п.142): правый (left=false) меняет
+    /// длительность, левый двигает начало при стоящем конце (батч).
+    MarkerEdge {
+        start: i64,
+        left: bool,
+        cur: i64,
+    },
+    /// Край окна перехода (true = левый/in_offset): live через
+    /// apply_coalesced(SetTransition) — один undo на жест (Р.24, п.140).
+    TransitionEdge {
+        id: TransitionId,
+        left: bool,
+        gesture: u64,
+    },
+    /// Roll стыка перехода: превью-позиция, батч тримов на release.
+    TransitionBody {
+        id: TransitionId,
+        orig_at: i64,
+        cur_at: i64,
     },
     /// Volume rail аудио-клипа: live-громкость, SetGain на отпускании.
     Volume {
@@ -408,6 +526,9 @@ impl KtApp {
         }
         for m in &p.markers {
             t.push(m.t.0);
+            if m.is_range() {
+                t.push(m.end().0);
+            }
         }
         if let Some(r) = p.region {
             t.push(r.start.0);
@@ -1031,6 +1152,25 @@ impl KtApp {
                 .min_by_key(|m| (tick_to_x(*m) - pos.x).abs() as i64)
                 .filter(|m| (tick_to_x(*m) - pos.x).abs() <= EDGE_GRAB_PX)
         };
+        // конец диапазонной метки (Р.24): хват на той же полосе, что флажки
+        let marker_end_at = |app: &KtApp, pos: egui::Pos2| -> Option<i64> {
+            if pos.y > rect.top() + RULER_H {
+                return None;
+            }
+            app.model
+                .project()
+                .markers
+                .iter()
+                .filter(|m| m.is_range())
+                .map(|m| m.t.0)
+                .find(|start| {
+                    let end = start
+                        + app.model.project().markers.iter().find(|m| m.t.0 == *start)
+                            .map(|m| m.duration.0)
+                            .unwrap_or(0);
+                    (tick_to_x(end) - pos.x).abs() <= EDGE_GRAB_PX
+                })
+        };
         // границы региона хватаются на ВСЕЙ высоте (п.14): линии рисуются
         // на всю высоту и должны быть кликабельны везде
         let region_edge_at = |app: &KtApp, pos: egui::Pos2| -> Option<bool> {
@@ -1050,6 +1190,35 @@ impl KtApp {
             TrimEnd,
             VolumeRail,
         }
+        #[derive(PartialEq)]
+        enum TransZone {
+            EdgeLeft,
+            EdgeRight,
+            Joint,
+        }
+        // хват перехода приоритетнее клип-зон: его края лежат В ТЕЛАХ клипов
+        let transition_at = |app: &KtApp, pos: egui::Pos2| -> Option<(TransitionId, TransZone)> {
+            let p = app.model.project();
+            for t in &p.transitions {
+                let Some(a) = p.clips.iter().find(|c| c.id == t.a) else { continue };
+                let top = lane_top(a.kind, a.lane);
+                if pos.y < top || pos.y > top + lane_h - 2.0 {
+                    continue;
+                }
+                let joint = (a.start + a.duration).0;
+                let xj = tick_to_x(joint);
+                if (pos.x - xj).abs() <= EDGE_GRAB_PX {
+                    return Some((t.id, TransZone::Joint));
+                }
+                if (pos.x - tick_to_x(joint - t.in_offset.0)).abs() <= EDGE_GRAB_PX {
+                    return Some((t.id, TransZone::EdgeLeft));
+                }
+                if (pos.x - tick_to_x(joint + t.out_offset.0)).abs() <= EDGE_GRAB_PX {
+                    return Some((t.id, TransZone::EdgeRight));
+                }
+            }
+            None
+        };
         let clip_at = |app: &KtApp, pos: egui::Pos2| -> Option<(ClipId, ClipZone)> {
             for c in app.model.project().clips.iter().rev() {
                 let top = lane_top(c.kind, c.lane);
@@ -1105,6 +1274,12 @@ impl KtApp {
                 } else {
                     zone_hint = Some(tr(k::tl::hint::LANE));
                 }
+            } else if let Some((_, tz)) = transition_at(self, pos) {
+                ui.ctx().set_cursor_icon(match tz {
+                    TransZone::Joint => egui::CursorIcon::Grab,
+                    _ => egui::CursorIcon::ResizeHorizontal,
+                });
+                zone_hint = Some(tr(k::tl::hint::TRANSITION));
             } else {
                 match clip_at(self, pos) {
                     Some((_, ClipZone::TrimStart)) => {
@@ -1173,7 +1348,19 @@ impl KtApp {
         if (response.drag_started() || response.clicked())
             && let Some(pos) = press_pos.or(pointer)
         {
-            if let Some(m) = marker_at(self, pos) {
+            if let Some(start) = marker_end_at(self, pos) {
+                if response.drag_started() {
+                    let end = self
+                        .model
+                        .project()
+                        .markers
+                        .iter()
+                        .find(|m| m.t.0 == start)
+                        .map(|m| m.end().0)
+                        .unwrap_or(start);
+                    self.drag = Some(Drag::MarkerEdge { start, left: false, cur: end });
+                }
+            } else if let Some(m) = marker_at(self, pos) {
                 if response.drag_started() {
                     self.drag = Some(Drag::Marker { orig: m, cur: m });
                 }
@@ -1221,6 +1408,36 @@ impl KtApp {
                         cur_start: orig.start.0,
                         moved: false,
                     });
+                }
+            } else if let Some((tid, tz)) = transition_at(self, pos) {
+                if response.drag_started() {
+                    match tz {
+                        TransZone::Joint => {
+                            let at = {
+                                let p = self.model.project();
+                                p.transitions
+                                    .iter()
+                                    .find(|t| t.id == tid)
+                                    .and_then(|t| t.joint(p))
+                                    .map(|t| t.0)
+                            };
+                            if let Some(at) = at {
+                                self.drag =
+                                    Some(Drag::TransitionBody { id: tid, orig_at: at, cur_at: at });
+                            }
+                        }
+                        TransZone::EdgeLeft | TransZone::EdgeRight => {
+                            self.gesture_counter += 1;
+                            self.drag = Some(Drag::TransitionEdge {
+                                id: tid,
+                                left: tz == TransZone::EdgeLeft,
+                                gesture: self.gesture_counter,
+                            });
+                        }
+                    }
+                } else if response.clicked() {
+                    let t = self.snap(x_to_tick(pos.x).max(0), None);
+                    self.player.seek(Tick(t.max(0)));
                 }
             } else if let Some((id, zone)) = clip_at(self, pos) {
                 self.selected = Some(id);
@@ -1327,6 +1544,31 @@ impl KtApp {
                             let rel = pos.y - geom.lanes_top();
                             let row = (rel / lane_h).floor().max(0.0) as i64;
                             d.cur_lane = geom.nearest_lane(d.orig.kind, row);
+                            // мульти-наезд/поглощение — кламп ещё в превью
+                            // (реш. 10 Р.24); одиночный частичный наезд
+                            // остаётся как есть (release сделает кроссфейд)
+                            if let MovePlan::Clamped { start } =
+                                plan_move(self.model.project(), d.id, d.cur_start, d.cur_lane)
+                            {
+                                if d.cur_lane != d.orig.lane {
+                                    // вертикальный перенос сквозь занятое
+                                    // не проталкиваем — возврат на строку
+                                    d.cur_lane = d.orig.lane;
+                                    if let MovePlan::Clamped { start } = plan_move(
+                                        self.model.project(),
+                                        d.id,
+                                        d.cur_start,
+                                        d.cur_lane,
+                                    ) {
+                                        d.cur_start = start;
+                                    }
+                                } else {
+                                    d.cur_start = start;
+                                }
+                                d.cur_end = d.cur_start + dur;
+                                self.snap_line = None;
+                                self.hover_hint = Some(tr(k::tl::hint::CLAMPED).to_string());
+                            }
                         }
                         DragMode::TrimStart => {
                             let raw = x_to_tick(pos.x);
@@ -1371,6 +1613,53 @@ impl KtApp {
                     let cur = self.snap(raw, None);
                     self.drag = Some(Drag::Marker { orig, cur });
                 }
+                Some(Drag::MarkerEdge { start, left, .. }) => {
+                    let raw = x_to_tick(pos.x).max(0);
+                    let cur = self.snap(raw, None).max(if left { 0 } else { start });
+                    self.drag = Some(Drag::MarkerEdge { start, left, cur });
+                }
+                Some(Drag::TransitionEdge { id, left, gesture }) => {
+                    // live-ресайз окна: SetTransition с коалесингом (один undo)
+                    let cmd = {
+                        let p = self.model.project();
+                        p.transitions.iter().find(|t| t.id == id).cloned().and_then(|mut t| {
+                            let joint = t.joint(p)?.0;
+                            let a = p.clips.iter().find(|c| c.id == t.a)?;
+                            let b = p.clips.iter().find(|c| c.id == t.b)?;
+                            let raw = x_to_tick(pos.x);
+                            if left {
+                                t.in_offset = Tick((joint - raw).clamp(0, a.duration.0));
+                            } else {
+                                t.out_offset = Tick((raw - joint).clamp(0, b.duration.0));
+                            }
+                            (t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION)
+                                .then_some(Command::SetTransition(t))
+                        })
+                    };
+                    if let Some(cmd) = cmd && self.model.apply_coalesced(cmd, gesture).is_ok() {
+                        self.dirty_content = true;
+                    }
+                    self.drag = Some(Drag::TransitionEdge { id, left, gesture });
+                }
+                Some(Drag::TransitionBody { id, orig_at, .. }) => {
+                    // roll стыка: превью-риска, тримы на release
+                    let cur_at = {
+                        let p = self.model.project();
+                        p.transitions
+                            .iter()
+                            .find(|t| t.id == id)
+                            .and_then(|t| {
+                                let a = p.clips.iter().find(|c| c.id == t.a)?;
+                                let b = p.clips.iter().find(|c| c.id == t.b)?;
+                                Some(x_to_tick(pos.x).clamp(
+                                    a.start.0 + MIN_CLIP_DURATION.0,
+                                    b.start.0 + b.duration.0 - MIN_CLIP_DURATION.0,
+                                ))
+                            })
+                            .unwrap_or(orig_at)
+                    };
+                    self.drag = Some(Drag::TransitionBody { id, orig_at, cur_at });
+                }
                 Some(Drag::Morph { id, grab_dt, .. }) => {
                     let raw = x_to_tick(pos.x) - grab_dt;
                     let cur_start = self.snap(raw, None).max(0);
@@ -1402,11 +1691,51 @@ impl KtApp {
             match self.drag.take() {
                 Some(Drag::Clip(d)) if d.moved => match d.mode {
                     DragMode::Move => {
-                        self.apply(Command::MoveClip {
-                            id: d.id,
-                            new_start: Tick(d.cur_start),
-                            new_lane: d.cur_lane,
-                        });
+                        // одиночный частичный наезд = кроссфейд (жест Р.24):
+                        // клипы встык до C, окно перехода = бывший наезд —
+                        // звук байт-идентичен старому перекрытию (т.136)
+                        match plan_move(self.model.project(), d.id, d.cur_start, d.cur_lane) {
+                            MovePlan::Crossfade { outgoing, incoming, joint, in_off, out_off } => {
+                                let existing = self
+                                    .model
+                                    .project()
+                                    .transitions
+                                    .iter()
+                                    .find(|t| t.a == outgoing && t.b == incoming)
+                                    .map(|t| t.id);
+                                let ev = TransitionEvent {
+                                    id: existing
+                                        .unwrap_or(TransitionId(self.next_transition_id())),
+                                    a: outgoing,
+                                    b: incoming,
+                                    in_offset: Tick(in_off),
+                                    out_offset: Tick(out_off),
+                                    kind: TransitionKind::Crossfade,
+                                };
+                                let mut cmds = vec![
+                                    Command::MoveClip {
+                                        id: d.id,
+                                        new_start: Tick(d.cur_start),
+                                        new_lane: d.cur_lane,
+                                    },
+                                    Command::TrimEnd { id: outgoing, new_end: Tick(joint) },
+                                    Command::TrimStart { id: incoming, new_start: Tick(joint) },
+                                ];
+                                cmds.push(if existing.is_some() {
+                                    Command::SetTransition(ev)
+                                } else {
+                                    Command::AddTransition(ev)
+                                });
+                                self.apply_batch(cmds);
+                            }
+                            _ => {
+                                self.apply(Command::MoveClip {
+                                    id: d.id,
+                                    new_start: Tick(d.cur_start),
+                                    new_lane: d.cur_lane,
+                                });
+                            }
+                        }
                     }
                     DragMode::TrimStart => {
                         self.apply(Command::TrimStart { id: d.id, new_start: Tick(d.cur_start) });
@@ -1418,6 +1747,30 @@ impl KtApp {
                 Some(Drag::Marker { orig, cur }) => {
                     if orig != cur {
                         self.apply(Command::MoveMarker { from: Tick(orig), to: Tick(cur) });
+                    }
+                }
+                Some(Drag::MarkerEdge { start, left: false, cur }) => {
+                    // duration = 0 законна: схлопывание диапазона в точку
+                    self.apply(Command::SetMarkerDuration {
+                        at: Tick(start),
+                        duration: Tick((cur - start).max(0)),
+                    });
+                }
+                Some(Drag::TransitionBody { id, orig_at, cur_at }) if cur_at != orig_at => {
+                    // roll: стык едет, окно едет с ним (офсеты не меняются),
+                    // reconcile модели клампит вылезшее
+                    let pair = self
+                        .model
+                        .project()
+                        .transitions
+                        .iter()
+                        .find(|t| t.id == id)
+                        .map(|t| (t.a, t.b));
+                    if let Some((a, b)) = pair {
+                        self.apply_batch(vec![
+                            Command::TrimEnd { id: a, new_end: Tick(cur_at) },
+                            Command::TrimStart { id: b, new_start: Tick(cur_at) },
+                        ]);
                     }
                 }
                 Some(Drag::Volume { id, moved }) => {
@@ -1927,18 +2280,73 @@ impl KtApp {
             );
         }
 
+        // ---- переходы (Р.24, п.140): подложка + X + риска стыка ---------------
+        {
+            let p = self.model.project();
+            for t in &p.transitions {
+                let Some(a) = p.clips.iter().find(|c| c.id == t.a) else { continue };
+                let joint = match &self.drag {
+                    Some(Drag::TransitionBody { id, cur_at, .. }) if *id == t.id => *cur_at,
+                    _ => (a.start + a.duration).0,
+                };
+                let x0 = tick_to_x(joint - t.in_offset.0);
+                let x1 = tick_to_x(joint + t.out_offset.0);
+                if x1 < rect.left() || x0 > rect.right() {
+                    continue;
+                }
+                let top = lane_top(a.kind, a.lane);
+                let r = transition_rect(x0, x1, top, lane_h);
+                painter.rect_filled(
+                    r,
+                    2.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22),
+                );
+                let st =
+                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 130));
+                painter.line_segment([r.left_bottom(), r.right_top()], st);
+                painter.line_segment([r.left_top(), r.right_bottom()], st);
+                let xj = tick_to_x(joint);
+                painter.line_segment(
+                    [egui::pos2(xj, r.top()), egui::pos2(xj, r.bottom())],
+                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
+                );
+            }
+        }
+
         // ---- маркеры ----------------------------------------------------------------
         for m in &self.model.project().markers {
             let mt = match &self.drag {
                 Some(Drag::Marker { orig, cur }) if *orig == m.t.0 => *cur,
                 _ => m.t.0,
             };
+            let mdur = match &self.drag {
+                // правый край диапазона тянется — живой предпросмотр
+                Some(Drag::MarkerEdge { start, left: false, cur }) if *start == m.t.0 => {
+                    (*cur - m.t.0).max(0)
+                }
+                _ => m.duration.0,
+            };
             let x = tick_to_x(mt);
-            if x < rect.left() || x > rect.right() {
+            let xe = tick_to_x(mt + mdur);
+            if xe < rect.left() || x > rect.right() {
                 continue;
             }
             let amber = egui::Color32::from_rgb(255, 195, 0);
             let top = rect.top() + TIME_TOP;
+            // диапазонная метка (Р.24, marked_range): лента на строке
+            // подписей времени (нового места не занимаем, п.13 чек-листа) +
+            // полупрозрачная граница конца
+            if mdur > 0 {
+                full_painter.rect_filled(
+                    marker_band_rect(x, xe, top),
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 195, 0, 70),
+                );
+                full_painter.line_segment(
+                    [egui::pos2(xe, top), egui::pos2(xe, rect.bottom())],
+                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 195, 0, 120)),
+                );
+            }
             full_painter.line_segment(
                 [egui::pos2(x, top), egui::pos2(x, rect.bottom())],
                 egui::Stroke::new(1.0, amber),
@@ -2311,6 +2719,80 @@ impl KtApp {
                     self.apply(Command::SetGain { id, gain_db: 0.0 });
                     ui.close();
                 }
+                // переходы (Р.24): кроссфейд со встык-соседом / убрать
+                {
+                    let p = self.model.project();
+                    let me = p.clips.iter().find(|c| c.id == id).cloned();
+                    if let Some(me) = me {
+                        let neighbor = |incoming: bool| {
+                            p.clips
+                                .iter()
+                                .find(|c| {
+                                    c.kind == me.kind
+                                        && c.lane == me.lane
+                                        && if incoming {
+                                            c.start == me.start + me.duration
+                                        } else {
+                                            c.start + c.duration == me.start
+                                        }
+                                })
+                                .map(|c| c.id)
+                        };
+                        let mut items: Vec<(bool, ClipId)> = Vec::new();
+                        if let Some(n) = neighbor(true)
+                            && !p.transitions.iter().any(|t| (t.a, t.b) == (id, n))
+                        {
+                            items.push((true, n));
+                        }
+                        if let Some(n) = neighbor(false)
+                            && !p.transitions.iter().any(|t| (t.a, t.b) == (n, id))
+                        {
+                            items.push((false, n));
+                        }
+                        let existing: Vec<TransitionId> = p
+                            .transitions
+                            .iter()
+                            .filter(|t| t.a == id || t.b == id)
+                            .map(|t| t.id)
+                            .collect();
+                        for (next, n) in items {
+                            let label = if next {
+                                tr(k::tl::menu::CROSSFADE_NEXT)
+                            } else {
+                                tr(k::tl::menu::CROSSFADE_PREV)
+                            };
+                            if ui.button(label).clicked() {
+                                let (a, b) = if next { (id, n) } else { (n, id) };
+                                let clip = |i: ClipId| {
+                                    self.model.project().clips.iter().find(|c| c.id == i).cloned()
+                                };
+                                if let (Some(ca), Some(cb)) = (clip(a), clip(b)) {
+                                    // окно по умолчанию: до 0.5 c на сторону,
+                                    // клампится телами соседей
+                                    let half = Tick(45_000)
+                                        .min(Tick(ca.duration.0 / 2))
+                                        .min(Tick(cb.duration.0 / 2))
+                                        .max(MIN_TRANSITION_DURATION);
+                                    self.apply(Command::AddTransition(TransitionEvent {
+                                        id: TransitionId(self.next_transition_id()),
+                                        a,
+                                        b,
+                                        in_offset: half,
+                                        out_offset: half,
+                                        kind: TransitionKind::Crossfade,
+                                    }));
+                                }
+                                ui.close();
+                            }
+                        }
+                        for tid in existing {
+                            if ui.button(tr(k::tl::menu::REMOVE_TRANSITION)).clicked() {
+                                self.apply(Command::RemoveTransition { id: tid });
+                                ui.close();
+                            }
+                        }
+                    }
+                }
                 ui.separator();
                 // morpher (H1, порт v1): цели = регион (приоритет) или клип+группа
                 if ui.button(tr(k::tl::menu::ADD_MORPHER)).clicked() {
@@ -2357,7 +2839,7 @@ impl KtApp {
             }
             Some(CtxTarget::RegionEdge(t)) => {
                 if ui.button(tr(k::tl::menu::MARKER_HERE)).clicked() {
-                    self.apply(Command::AddMarker { at: Tick(t) });
+                    self.apply(Command::AddMarker { at: Tick(t), duration: Tick::ZERO });
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::REGION_CLEAR)).clicked() {
@@ -2380,13 +2862,23 @@ impl KtApp {
                     self.marker_edit_focus = true;
                     ui.close();
                 }
+                let is_range = self
+                    .model
+                    .project()
+                    .markers
+                    .iter()
+                    .any(|k| k.t.0 == m && k.is_range());
+                if is_range && ui.button(tr(k::tl::menu::CLEAR_RANGE)).clicked() {
+                    self.apply(Command::SetMarkerDuration { at: Tick(m), duration: Tick::ZERO });
+                    ui.close();
+                }
                 if ui.button(tr(k::tl::menu::REMOVE_MARKER)).clicked() {
                     self.apply(Command::RemoveMarker { at: Tick(m) });
                     ui.close();
                 }
             }
             _ => {
-                if !self.clipboard.is_empty() && ui.button(tr(k::tl::menu::PASTE)).clicked() {
+                if !self.clipboard.clips.is_empty() && ui.button(tr(k::tl::menu::PASTE)).clicked() {
                     self.paste_at_cursor();
                     ui.close();
                 }
@@ -2414,7 +2906,7 @@ impl KtApp {
                         self.clear_region();
                         ui.close();
                     }
-                } else if self.clipboard.is_empty() {
+                } else if self.clipboard.clips.is_empty() {
                     ui.weak(tr(k::tl::menu::PICK_SOMETHING));
                 }
                 // Дорожки добавляются ПОД кликнутой строкой (п.5 р.16):

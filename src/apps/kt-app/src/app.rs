@@ -181,8 +181,8 @@ pub struct KtApp {
     /// Live-громкость volume rail до отпускания (id, dB).
     pub live_gain: Option<(ClipId, f32)>,
     pub status: Option<(String, std::time::Instant)>,
-    /// Внутренний буфер обмена (блок клипов, ребейзнутых к нулю).
-    pub clipboard: Vec<ClipEvent>,
+    /// Внутренний буфер обмена (блок клипов+переходов, ребейз к нулю).
+    pub clipboard: kt_model::ops::ClipBlock,
     /// Буфер огибающей автоматизации (п.5 v1.3, порт «Copy envelopes»).
     pub automation_clipboard: Option<Vec<SlowedKeyframe>>,
     /// Медиа, чьи файлы сейчас недоступны (watchdog, 900 мс).
@@ -352,7 +352,7 @@ impl KtApp {
             ctx_row: None,
             live_gain: None,
             status: error.map(|e| (e, std::time::Instant::now())),
-            clipboard: Vec::new(),
+            clipboard: kt_model::ops::ClipBlock::default(),
             automation_clipboard: None,
             offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
             watchdog: None,
@@ -473,7 +473,7 @@ impl KtApp {
             ctx_row: None,
             live_gain: None,
             status: err.map(|e| (e, std::time::Instant::now())),
-            clipboard: Vec::new(),
+            clipboard: kt_model::ops::ClipBlock::default(),
             automation_clipboard: None,
             offline,
             watchdog: Some(watchdog),
@@ -1707,6 +1707,33 @@ impl KtApp {
 
     pub fn marker_toggle_at_cursor(&mut self) {
         let at = self.player.transport.playhead();
+        // Р.24 (жест пользователя, дословно): «при выделенном регионе и
+        // курсоре в нем - m дает marked_range, при курсоре вне региона -
+        // одинарная метка по курсору». Повторное M на том же регионе — toggle.
+        if let Some(r) = self.model.project().region
+            && r.contains(at)
+        {
+            let dur = r.end - r.start;
+            let at_start =
+                self.model.project().markers.iter().find(|m| m.t == r.start).cloned();
+            match at_start {
+                Some(m) if m.duration == dur => {
+                    self.apply(Command::RemoveMarker { at: r.start });
+                }
+                Some(_) => {
+                    // точечная на старте региона — растягиваем в диапазон
+                    self.apply(Command::SetMarkerDuration { at: r.start, duration: dur });
+                }
+                None => {
+                    if self.apply(Command::AddMarker { at: r.start, duration: dur }) {
+                        self.marker_edit =
+                            Some(MarkerEdit { at: r.start.0, buf: String::new(), is_new: true });
+                        self.marker_edit_focus = true;
+                    }
+                }
+            }
+            return;
+        }
         // магнит как в старом: удалить ближайший в пределах порога, иначе добавить
         let threshold = ((crate::timeline::SNAP_PX * self.ticks_per_px) as i64).max(900);
         let near = self
@@ -1724,7 +1751,7 @@ impl KtApp {
             None => {
                 // новая метка: сразу открываем поле имени (п.1 р.10);
                 // клик мимо/Esc оставит метку без имени
-                if self.apply(Command::AddMarker { at }) {
+                if self.apply(Command::AddMarker { at, duration: Tick::ZERO }) {
                     self.marker_edit =
                         Some(MarkerEdit { at: at.0, buf: String::new(), is_new: true });
                     self.marker_edit_focus = true;
@@ -1798,27 +1825,33 @@ impl KtApp {
             Some(r) => kt_model::ops::copy_region_block(self.model.project(), r),
             None => match self.selected {
                 Some(id) => kt_model::ops::copy_group(self.model.project(), id),
-                None => Vec::new(),
+                None => kt_model::ops::ClipBlock::default(),
             },
         };
-        if block.is_empty() {
+        if block.clips.is_empty() {
             self.note(tr(k::msg::NOTHING_TO_COPY));
         } else {
-            self.note(crate::tf!(k::msg::CLIPS_COPIED, block.len()));
+            self.note(crate::tf!(k::msg::CLIPS_COPIED, block.clips.len()));
             self.clipboard = block;
         }
     }
 
     pub fn paste_at_cursor(&mut self) {
-        if self.clipboard.is_empty() {
+        if self.clipboard.clips.is_empty() {
             self.note(tr(k::msg::CLIPBOARD_EMPTY));
             return;
         }
         let at = self.player.transport.playhead();
         let mut next_clip = self.next_clip_id();
         let mut next_group = self.next_group_id();
-        let (cmds, end) =
-            kt_model::ops::paste_block(&self.clipboard, at, &mut next_clip, &mut next_group);
+        let mut next_transition = self.next_transition_id();
+        let (cmds, end) = kt_model::ops::paste_block(
+            &self.clipboard,
+            at,
+            &mut next_clip,
+            &mut next_group,
+            &mut next_transition,
+        );
         let first = cmds.iter().find_map(|c| match c {
             Command::AddClip(ev) => Some(ev.id),
             _ => None,
@@ -2178,6 +2211,10 @@ impl KtApp {
 
     pub fn next_clip_id(&self) -> u64 {
         self.model.project().clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 1
+    }
+
+    pub fn next_transition_id(&self) -> u64 {
+        self.model.project().transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1
     }
 
     pub fn next_group_id(&self) -> u64 {
@@ -3727,6 +3764,8 @@ pub fn stop_points(p: &kt_model::Project) -> Vec<i64> {
         v.push(r.end.0);
     }
     v.extend(p.markers.iter().map(|m| m.t.0));
+    // конец диапазонной метки — тоже точка остановки (Р.24)
+    v.extend(p.markers.iter().filter(|m| m.is_range()).map(|m| m.end().0));
     // объединяем перекрывающиеся клипы: границей считается смена
     // «пусто ↔ есть материал», а не каждый стык внутри плотного монтажа
     let mut spans: Vec<(i64, i64)> =

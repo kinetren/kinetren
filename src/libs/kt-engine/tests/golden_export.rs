@@ -52,13 +52,16 @@ fn golden_project() -> Project {
             fx_bypass: vec![],
             fx: vec![],
         },
+        // Р.24: бывший нахлёст [1.5c, 2c) конвертирован в стык C = 1.75c +
+        // переход (окно то же) — байты рендера обязаны совпасть со старым
+        // GOLDEN (краеугольная проверка конверсии, т.136)
         ClipEvent {
             id: ClipId(2),
             link_group: None,
             kind: ClipKind::Audio,
             lane: 0,
             start: Tick(sec),
-            duration: Tick(sec),
+            duration: Tick(sec * 3 / 4),
             source_in: Tick(sec),
             media: MediaId(1),
             gain_db: 0.0,
@@ -66,15 +69,15 @@ fn golden_project() -> Project {
             fx_bypass: vec![],
             fx: vec![],
         },
-        // кроссфейд: DC внахлёст на второй ramp-клип
+        // кроссфейд: DC через переход со вторым ramp-клипом
         ClipEvent {
             id: ClipId(3),
             link_group: None,
             kind: ClipKind::Audio,
             lane: 0,
-            start: Tick(sec + sec / 2),
-            duration: Tick(sec),
-            source_in: Tick(0),
+            start: Tick(sec * 7 / 4),
+            duration: Tick(sec * 3 / 4),
+            source_in: Tick(sec / 4),
             media: MediaId(2),
             gain_db: -3.0,
             reversed: false,
@@ -137,6 +140,14 @@ fn golden_project() -> Project {
             fx: vec![],
         },
     ];
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: ClipId(2),
+        b: ClipId(3),
+        in_offset: Tick(sec / 4),
+        out_offset: Tick(sec / 4),
+        kind: TransitionKind::Crossfade,
+    });
     p.validate().unwrap();
     p
 }

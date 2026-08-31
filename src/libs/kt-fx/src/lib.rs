@@ -388,9 +388,12 @@ fn segments(base: f64, kfs: &[SlowedKeyframe]) -> Vec<(f64, f64, f64, f64)> {
 }
 
 /// T(s): выходной прогресс (доли clip_len), при котором потреблена
-/// source-доля s. Строго возрастает.
+/// source-доля s. Строго возрастает. s < 0 — левая «ручка» перехода
+/// (п.138): линейная экстраполяция скоростью первого сегмента.
 pub fn output_time_for_source(base: f64, automation: &[SlowedKeyframe], s: f64) -> f64 {
-    let s = s.max(0.0);
+    if s < 0.0 {
+        return s / segments(base, automation)[0].2;
+    }
     let mut acc = 0.0;
     for (s0, s1, r0, r1) in segments(base, automation) {
         if s <= s0 {
@@ -408,9 +411,14 @@ pub fn output_time_for_source(base: f64, automation: &[SlowedKeyframe], s: f64) 
 }
 
 /// S(t) = T⁻¹: source-доля, потреблённая к выходному прогрессу t
-/// (t может быть > 1 — хвост за клипом; rate за последним kf константен).
+/// (t может быть > 1 — хвост за клипом; rate за последним kf константен;
+/// t < 0 — левая «ручка» перехода, п.138: линейно скоростью первого
+/// сегмента, «за краями — крайние»). Материал ручек НЕ сдвигает
+/// нормировку автоматизации — знаменатель остаётся clip_len.
 pub fn source_progress(base: f64, automation: &[SlowedKeyframe], t: f64) -> f64 {
-    let t = t.max(0.0);
+    if t < 0.0 {
+        return t * segments(base, automation)[0].2;
+    }
     let mut tau_acc = 0.0;
     let mut s_acc = 0.0;
     for (s0, s1, r0, r1) in segments(base, automation) {
@@ -471,10 +479,23 @@ pub fn chain_source_window(
     clip_len_frames: i64,
     local: std::ops::Range<i64>,
 ) -> std::ops::Range<i64> {
+    chain_source_window_ext(fx, clip_len_frames, 0..clip_len_frames.max(1), local)
+}
+
+/// То же, но для клипа с «ручками» перехода (п.138): material — допустимый
+/// клип-локальный диапазон [−head_ext, clip_len + tail_ext); нормировка
+/// автоматизации остаётся по clip_len. Для material = 0..len поведение
+/// байт-идентично chain_source_window (тест 17 не двигается).
+pub fn chain_source_window_ext(
+    fx: &[FxInstance],
+    clip_len_frames: i64,
+    material: std::ops::Range<i64>,
+    local: std::ops::Range<i64>,
+) -> std::ops::Range<i64> {
     let len = clip_len_frames.max(1);
     let preroll = chain_tail(fx).to_audio_frames().max(MIN_PREROLL_FRAMES);
-    let l0 = (local.start - preroll).max(0).min(len);
-    let l1 = local.end.clamp(0, len);
+    let l0 = (local.start - preroll).max(material.start).min(material.end);
+    let l1 = local.end.clamp(material.start, material.end);
     let has_warp = fx.iter().any(|f| matches!(f, FxInstance::SlowedReverb { .. }));
     if !has_warp {
         return l0..l1.max(l0);
@@ -488,11 +509,14 @@ pub fn chain_source_window(
             _ => None,
         })
         .unwrap_or((1.0, &[]));
+    // окно источника не уходит ниже нуля только когда материал начинается
+    // с тела клипа (старое поведение); левая ручка легально отрицательна
+    let s_floor = if material.start >= 0 { 0 } else { i64::MIN };
     let t0 = l0 as f64 / len as f64;
     let t1 = l1 as f64 / len as f64;
     let s0 = ((len as f64 * source_progress(rate, automation, t0)).floor() as i64)
         .saturating_sub(WARP_SOURCE_MARGIN_FRAMES)
-        .max(0);
+        .max(s_floor);
     let s1 = (len as f64 * source_progress(rate, automation, t1)).ceil() as i64
         + WARP_SOURCE_MARGIN_FRAMES;
     s0..s1.max(s0)
@@ -546,6 +570,11 @@ pub struct ClipProcessor {
     automation: Vec<SlowedKeyframe>,
     /// Длина клипа в кадрах — знаменатель прогресса автоматизации.
     clip_len: i64,
+    /// «Ручки» перехода (п.138): материал клип-локально расширен до
+    /// [−head_ext, clip_len + tail_ext). Нормировку автоматизации НЕ
+    /// двигают — знаменатель остаётся clip_len.
+    head_ext: i64,
+    tail_ext: i64,
     /// Курсор источника для пути без варпа (rate == 1, без автоматизации).
     plain_cursor: i64,
 }
@@ -563,6 +592,8 @@ impl ClipProcessor {
             base_mix: 0.0,
             automation: Vec::new(),
             clip_len: clip_len_frames.max(1),
+            head_ext: 0,
+            tail_ext: 0,
             plain_cursor: src_in_frames,
         };
         p.apply_params(fx, true);
@@ -572,6 +603,14 @@ impl ClipProcessor {
     /// Обновить длину клипа (trim) без сброса состояния.
     pub fn set_clip_len(&mut self, clip_len_frames: i64) {
         self.clip_len = clip_len_frames.max(1);
+    }
+
+    /// «Ручки» перехода (п.138): разрешить чтение [−head_ext,
+    /// clip_len + tail_ext). Без сброса состояния (структура цепочки та же);
+    /// dry-гейт сдвигается на tail_ext, нормировка автоматизации — нет.
+    pub fn set_material_ext(&mut self, head_ext: i64, tail_ext: i64) {
+        self.head_ext = head_ext.max(0);
+        self.tail_ext = tail_ext.max(0);
     }
 
     pub fn fingerprint(&self) -> u64 {
@@ -669,7 +708,9 @@ impl ClipProcessor {
         if let Some(r) = &mut self.reverb {
             r.reset();
         }
-        let preroll = self.tail_frames().max(MIN_PREROLL_FRAMES).min(local.max(0));
+        // pre-roll может заходить в левую «ручку», но не раньше начала
+        // материала (−head_ext)
+        let preroll = self.tail_frames().max(MIN_PREROLL_FRAMES).min((local + self.head_ext).max(0));
         let start = local - preroll;
         // позиция источника для local=start (интеграл автоматизации)
         let src_start = self.src_in + self.source_offset(start);
@@ -736,14 +777,15 @@ impl ClipProcessor {
                     self.plain_cursor += n as i64;
                 }
             }
-            // Гейт dry-выхода в OUTPUT-домене: за концом клипа сухой сигнал
-            // обязан быть нулём (в хвосте дозванивает только реверб).
-            // Благодаря этому окно ИСТОЧНИКА можно расширять с запасом на
-            // прайминг rubato, не боясь утечки dry в хвост (дефект «тихий
-            // хвост»: sinc-ресемплер видел нули за жёстко обрезанным окном
-            // и рано глушил конец клипа).
-            if chunk_local + (n as i64) > self.clip_len {
-                let cut = (self.clip_len - chunk_local).clamp(0, n as i64) as usize;
+            // Гейт dry-выхода в OUTPUT-домене: за концом МАТЕРИАЛА (тело +
+            // правая «ручка» перехода, п.138) сухой сигнал обязан быть нулём
+            // (в хвосте дозванивает только реверб). Благодаря этому окно
+            // ИСТОЧНИКА можно расширять с запасом на прайминг rubato, не
+            // боясь утечки dry в хвост (дефект «тихий хвост»: sinc-ресемплер
+            // видел нули за жёстко обрезанным окном и рано глушил конец).
+            let gate_end = self.clip_len + self.tail_ext;
+            if chunk_local + (n as i64) > gate_end {
+                let cut = (gate_end - chunk_local).clamp(0, n as i64) as usize;
                 sub[cut * CH..].fill(0.0);
             }
             if let Some(r) = &mut self.reverb {

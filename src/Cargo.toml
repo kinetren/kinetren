@@ -6,6 +6,7 @@ members = [
     "libs/kt-time",
     "libs/kt-version",
     "libs/kt-model",
+    "libs/kt-otio",
     "libs/kt-ffmpeg",
     "libs/kt-media",
     "libs/kt-cache",
@@ -23,6 +24,7 @@ publish = false
 kt-time = { path = "libs/kt-time" }
 kt-version = { path = "libs/kt-version" }
 kt-model = { path = "libs/kt-model" }
+kt-otio = { path = "libs/kt-otio" }
 kt-ffmpeg = { path = "libs/kt-ffmpeg" }
 kt-media = { path = "libs/kt-media" }
 kt-cache = { path = "libs/kt-cache" }
@@ -31,6 +33,7 @@ kt-engine = { path = "libs/kt-engine" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+indexmap = { version = "2", features = ["serde"] }
 thiserror = "2"
 crossbeam-channel = "0.5"
 rtrb = "0.3"

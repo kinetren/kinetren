@@ -101,6 +101,8 @@ add_morph = "Añadir pista Morph"
 
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
+transition = "Fundido: bordes — ancho, centro — mover el corte"
+clamped = "Tope con el vecino: el fundido cubre un solo clip"
 marker = "Marcador: arrastra — mover, clic derecho — eliminar"
 region_edge = "Borde de región: arrastra (I/O — fijar en el cursor)"
 ruler = "Regla: clic y arrastra — mover el cursor"
@@ -125,6 +127,10 @@ lane_name = "nombre de la pista"
 
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
+clear_range = "Quitar el rango"
+crossfade_next = "Fundido con el siguiente"
+crossfade_prev = "Fundido con el anterior"
+remove_transition = "Quitar el fundido"
 copy = "Copiar (Ctrl+C)"
 paste = "Pegar (Ctrl+V)"
 delete = "Eliminar (Supr)"

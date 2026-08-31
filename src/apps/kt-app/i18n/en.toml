@@ -101,6 +101,8 @@ add_morph = "Add a Morph track"
 
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
+transition = "Crossfade: drag edges — resize, drag the cut — roll"
+clamped = "Stopped at the neighbor — a crossfade spans one clip only"
 marker = "Marker: drag — move, right click — delete"
 region_edge = "Region edge: drag (I/O — set at playhead)"
 ruler = "Ruler: click and drag — scrub the playhead"
@@ -125,6 +127,10 @@ lane_name = "track name"
 
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
+clear_range = "Clear range"
+crossfade_next = "Crossfade with next"
+crossfade_prev = "Crossfade with previous"
+remove_transition = "Remove crossfade"
 copy = "Copy (Ctrl+C)"
 paste = "Paste (Ctrl+V)"
 delete = "Delete (Del)"

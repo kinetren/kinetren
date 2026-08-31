@@ -1,11 +1,11 @@
 //! Аудио-рендер таймлайна: выбор событий, sample-accurate чтение источников,
 //! equal-power кроссфейд, gain, суммирование дорожек, loop-wrap.
 //!
-//! Семантика унаследована от C++ движка (bc_composition.cpp) и закреплена
-//! тестами 1–3, 14:
-//! - перекрытие ровно 2 клипов на ОДНОЙ дорожке → equal-power кроссфейд
-//!   (ранний √(1−t), поздний √t по прогрессу перекрытия);
-//! - 3+ клипов на одной дорожке → равные веса 1/N;
+//! Семантика закреплена тестами 1–3, 14, 136 (Р.24: перекрытий больше нет —
+//! кроссфейд задаётся явным TransitionEvent, инвариант «клипы одной дорожки
+//! встык» держит kt-model):
+//! - переход на стыке → equal-power кроссфейд по окну (outgoing √(1−t),
+//!   incoming √t), «ручки» читают источник за краями использованного куска;
 //! - разные дорожки суммируются без весов;
 //! - gain клипа (dB → линейный) применяется после весов.
 //!
@@ -24,8 +24,8 @@ struct AudioClip {
     id: kt_model::ClipId,
     start: i64,
     end: i64,
-    /// Конец с учётом хвоста FX (реверб дозванивает за границей клипа —
-    /// инвариант «tail», дефект f старого движка).
+    /// Конец с учётом правой «ручки» перехода и хвоста FX (реверб дозванивает
+    /// за границей клипа — инвариант «tail», дефект f старого движка).
     ext_end: i64,
     source_in: i64,
     lane: u32,
@@ -33,6 +33,36 @@ struct AudioClip {
     media: kt_model::MediaId,
     fx: Vec<kt_model::FxInstance>,
     reversed: bool,
+    /// Окна кроссфейда из переходов (Р.24, п.136), [w0, w1) в кадрах:
+    /// клип — incoming (нарастает √t) / outgoing (затухает √(1−t)).
+    /// Дизъюнктны по валидации модели.
+    fade_in: Option<(i64, i64)>,
+    fade_out: Option<(i64, i64)>,
+    /// «Ручки»: материал за краями тела, звучит только под окнами переходов.
+    head_ext: i64,
+    tail_ext: i64,
+}
+
+/// Вес кроссфейда по окнам переходов клипа. Позиционный и направления не
+/// знает (реверс-транспорт использует его же). Формулы — дословно из
+/// weight_at (тест 2): для сконвертированного перекрытия веса бит-в-бит.
+/// За правым краем fade_out — 1.0: там звучит только FX-хвост (реверб),
+/// его не взвешивают (правило render_fx_clip).
+fn fade_weight(clip: &AudioClip, f: i64) -> f32 {
+    if let Some((w0, w1)) = clip.fade_in
+        && f < w1
+    {
+        let t = (f - w0) as f64 / (w1 - w0) as f64;
+        return (t.max(0.0)).sqrt() as f32;
+    }
+    if let Some((w0, w1)) = clip.fade_out
+        && f >= w0
+        && f < w1
+    {
+        let t = (f - w0) as f64 / (w1 - w0) as f64;
+        return ((1.0 - t).max(0.0)).sqrt() as f32;
+    }
+    1.0
 }
 
 /// Результат рендера непрерывного диапазона.
@@ -70,9 +100,38 @@ impl AudioRenderer {
                     media: c.media,
                     fx: active,
                     reversed: c.reversed,
+                    fade_in: None,
+                    fade_out: None,
+                    head_ext: 0,
+                    tail_ext: 0,
                 }
             })
             .collect();
+        // Окна кроссфейда из переходов (Р.24): границы окна флорятся в кадры
+        // ТОЙ ЖЕ конвертацией, что границы клипов, — для сконвертированного
+        // перекрытия окно бит-в-бит совпадает со старым weight_at.
+        for t in &project.transitions {
+            let Some(joint) = t.joint(project) else { continue };
+            let w0 = (joint - t.in_offset).to_audio_frames();
+            let w1 = (joint + t.out_offset).to_audio_frames();
+            if w1 <= w0 {
+                continue;
+            }
+            if let Some(a) = clips.iter_mut().find(|c| c.id == t.a) {
+                // reversed-FX: зеркальный якорь источника завязан на
+                // window_end — ручку не расширяем (ограничение v1, п.136),
+                // фейд-вес применяется как есть
+                let ext = if a.reversed && !a.fx.is_empty() { 0 } else { w1 - a.end };
+                a.fade_out = Some((w0, w1));
+                a.tail_ext = ext.max(0);
+                a.ext_end += a.tail_ext;
+            }
+            if let Some(b) = clips.iter_mut().find(|c| c.id == t.b) {
+                let ext = if b.reversed && !b.fx.is_empty() { 0 } else { b.start - w0 };
+                b.fade_in = Some((w0, w1));
+                b.head_ext = ext.max(0);
+            }
+        }
         // Стабильный порядок — часть детерминизма и правила кроссфейда
         // («ранний» клип определяется по (start, media)).
         clips.sort_by_key(|c| (c.start, c.end, c.lane, c.media));
@@ -121,7 +180,10 @@ impl AudioRenderer {
         let mut stats = RenderStats::default();
 
         let active: Vec<usize> = (0..self.clips.len())
-            .filter(|&i| self.clips[i].start < range.end && self.clips[i].ext_end > range.start)
+            .filter(|&i| {
+                self.clips[i].start - self.clips[i].head_ext < range.end
+                    && self.clips[i].ext_end > range.start
+            })
             .collect();
 
         // Вклад каждого клипа считаем по-бурстово (источника), веса — по-сэмплово.
@@ -148,8 +210,8 @@ impl AudioRenderer {
     ) {
         let clip = &self.clips[ci];
         {
-            let from = clip.start.max(range.start);
-            let to = clip.end.min(range.end);
+            let from = (clip.start - clip.head_ext).max(range.start);
+            let to = (clip.end + clip.tail_ext).min(range.end);
             if from >= to {
                 return;
             }
@@ -157,12 +219,24 @@ impl AudioRenderer {
             let mut cursor: Option<(i64, Arc<AudioBurst>)> = None; // (burst idx, data)
             let clip_len = clip.end - clip.start;
             while f < to {
-                // реверс: локальный кадр k читает источник с конца (п.16)
+                // реверс: локальный кадр k читает источник с конца (п.16);
+                // local за телом («ручки» перехода, п.136) продолжает
+                // формулу линейно в обе стороны
+                let local = f - clip.start;
                 let src = if clip.reversed {
-                    clip.source_in + (clip_len - 1 - (f - clip.start))
+                    clip.source_in + (clip_len - 1 - local)
                 } else {
-                    clip.source_in + (f - clip.start)
+                    clip.source_in + local
                 };
+                // материал левее нуля источника — тишина БЕЗ underrun
+                // (ручка длиннее материала — политика краёв)
+                if src < 0 {
+                    if clip.reversed {
+                        break; // src дальше только убывает
+                    }
+                    f += (-src).min(to - f);
+                    continue;
+                }
                 let bidx = src.div_euclid(AUDIO_BURST_FRAMES as i64);
                 let within = src.rem_euclid(AUDIO_BURST_FRAMES as i64);
                 // сколько кадров можем взять из этого source-burst'а подряд:
@@ -185,7 +259,7 @@ impl AudioRenderer {
                 match burst {
                     Some(b) => {
                         for k in 0..take {
-                            let w = self.weight_at(ci, f + k) * clip.gain;
+                            let w = fade_weight(clip, f + k) * clip.gain;
                             let oi = ((f + k - range.start) as usize) * AUDIO_CHANNELS;
                             let sk = if clip.reversed { within - k } else { within + k };
                             let si = (sk as usize) * AUDIO_CHANNELS;
@@ -194,7 +268,12 @@ impl AudioRenderer {
                             }
                         }
                     }
-                    None => stats.underruns += take as u64,
+                    // недостающий бёрст в зоне РУЧКИ (за краем медиа) —
+                    // не underrun: считаем только кадры тела
+                    None => {
+                        stats.underruns +=
+                            (clip.end.min(f + take) - clip.start.max(f)).max(0) as u64;
+                    }
                 }
                 f += take;
             }
@@ -218,7 +297,9 @@ impl AudioRenderer {
         let range = start_frame..start_frame + frames;
         let mut stats = RenderStats::default();
         for ci in 0..self.clips.len() {
-            if self.clips[ci].start < range.end && self.clips[ci].end > range.start {
+            if self.clips[ci].start - self.clips[ci].head_ext < range.end
+                && self.clips[ci].end + self.clips[ci].tail_ext > range.start
+            {
                 self.render_plain_clip(ci, fetcher, &range, out, &mut stats);
             }
         }
@@ -251,42 +332,6 @@ impl AudioRenderer {
         stats
     }
 
-    /// Вес клипа №`ci` в сэмпле `frame` по правилам одной дорожки.
-    /// «Ранний» из пары — с меньшим индексом (clips отсортированы по start).
-    fn weight_at(&self, ci: usize, frame: i64) -> f32 {
-        let lane = self.clips[ci].lane;
-        let mut overlapping: [usize; 2] = [usize::MAX; 2];
-        let mut n = 0usize;
-        for (i, c) in self.clips.iter().enumerate() {
-            if c.lane == lane && c.start <= frame && frame < c.end {
-                if n < 2 {
-                    overlapping[n] = i;
-                }
-                n += 1;
-            }
-        }
-        match n {
-            0 | 1 => 1.0,
-            2 => {
-                let (a, b) = (&self.clips[overlapping[0]], &self.clips[overlapping[1]]);
-                let ov_start = a.start.max(b.start);
-                let ov_end = a.end.min(b.end);
-                let t = if ov_end > ov_start {
-                    (frame - ov_start) as f64 / (ov_end - ov_start) as f64
-                } else {
-                    0.5
-                };
-                // equal-power: ранний затухает √(1−t), поздний нарастает √t
-                if ci == overlapping[0] {
-                    ((1.0 - t).max(0.0)).sqrt() as f32
-                } else {
-                    (t.max(0.0)).sqrt() as f32
-                }
-            }
-            n => 1.0 / n as f32,
-        }
-    }
-
     /// FX-клип: клип-локальный поток через ClipProcessor (варп+реверб+gain
     /// цепочки), затем веса кроссфейда (в пределах реального клипа) и gain
     /// клипа. В зоне хвоста (за end) вес 1.0 — реверб дозванивает под
@@ -301,21 +346,24 @@ impl AudioRenderer {
         stats: &mut RenderStats,
     ) {
         let clip = &self.clips[ci];
-        let from = clip.start.max(range.start);
+        let from = (clip.start - clip.head_ext).max(range.start);
         let to = clip.ext_end.min(range.end);
         if from >= to {
             return;
         }
         // окно источника клипа: за его пределами — законная тишина.
-        // Единый расчёт с wanted_audio_bursts (chain_source_window); dry за
-        // концом клипа глушит сам ClipProcessor (output-гейт), поэтому запас
-        // окна безопасен.
+        // Единый расчёт с wanted_audio_bursts (chain_source_window_ext); dry
+        // за концом МАТЕРИАЛА глушит сам ClipProcessor (output-гейт, п.138).
+        // У reversed-FX клипов material = телу (ручки отключены, п.136):
+        // зеркальный якорь источника завязан на window_end.
         let clip_len = clip.end - clip.start;
-        let src_window_end =
-            clip.source_in + kt_fx::chain_source_window(&clip.fx, clip_len, 0..clip_len).end;
+        let material = -clip.head_ext..clip_len + clip.tail_ext;
+        let src_window_end = clip.source_in
+            + kt_fx::chain_source_window_ext(&clip.fx, clip_len, material.clone(), material).end;
         let media = clip.media;
         let mut pull_underruns = 0u64;
         let Some(proc) = store.get_mut(clip.id) else { return };
+        proc.set_material_ext(clip.head_ext, clip.tail_ext);
         let local = from - clip.start;
         let count = (to - from) as usize;
         let mut buf = vec![0f32; count * AUDIO_CHANNELS];
@@ -330,7 +378,11 @@ impl AudioRenderer {
         stats.underruns += pull_underruns;
         for k in 0..count as i64 {
             let f = from + k;
-            let w = if f < clip.end { self.weight_at(ci, f) } else { 1.0 } * clip.gain;
+            // веса действуют на теле и ручках (окна переходов); в зоне
+            // FX-хвоста (за материалом) — 1.0: реверб дозванивает под
+            // соседями без взвешивания
+            let w = if f < clip.end + clip.tail_ext { fade_weight(clip, f) } else { 1.0 }
+                * clip.gain;
             let oi = ((f - range.start) as usize) * AUDIO_CHANNELS;
             let bi = (k as usize) * AUDIO_CHANNELS;
             for ch in 0..AUDIO_CHANNELS {
@@ -387,8 +439,9 @@ impl AudioRenderer {
     ) -> Vec<(kt_model::MediaId, std::ops::Range<i64>)> {
         let mut out = Vec::new();
         for c in &self.clips {
-            let from = c.start.max(range.start);
-            let to = c.end.min(range.end);
+            // «ручки» переходов входят в wanted — префетч греет их (п.136)
+            let from = (c.start - c.head_ext).max(range.start);
+            let to = (c.end + c.tail_ext).min(range.end);
             if from >= to {
                 continue;
             }
@@ -402,7 +455,8 @@ impl AudioRenderer {
                     (c.source_in + (from - c.start), c.source_in + (to - c.start))
                 }
             } else if c.reversed {
-                // FX+реверс: окно потребления зеркалится внутри ПОЛНОГО окна
+                // FX+реверс: окно потребления зеркалится внутри ПОЛНОГО окна;
+                // ручки отключены (п.136) — from/to здесь совпадают с телом
                 let len = c.end - c.start;
                 let total = kt_fx::chain_source_window(&c.fx, len, 0..len).end;
                 let w = kt_fx::chain_source_window(&c.fx, len, (from - c.start)..(to - c.start));
@@ -413,9 +467,19 @@ impl AudioRenderer {
                 // (регрессия п.13: линейный маппинг грел не те бёрсты →
                 // глубже в клипе вечный промах кэша → тишина)
                 let len = c.end - c.start;
-                let w = kt_fx::chain_source_window(&c.fx, len, (from - c.start)..(to - c.start));
+                let material = -c.head_ext..len + c.tail_ext;
+                let w = kt_fx::chain_source_window_ext(
+                    &c.fx,
+                    len,
+                    material,
+                    (from - c.start)..(to - c.start),
+                );
                 (c.source_in + w.start, c.source_in + w.end.max(w.start + 1))
             };
+            // ручка может выходить за нулевой кадр источника — там тишина,
+            // бёрсты не заказываем
+            let s0 = s0.max(0);
+            let s1 = s1.max(s0 + 1);
             let b0 = s0.div_euclid(AUDIO_BURST_FRAMES as i64);
             let b1 = (s1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1;
             out.push((c.media, b0..b1));
