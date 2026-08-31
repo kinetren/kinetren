@@ -570,6 +570,13 @@ fn audio_render_loop(ctx: RenderCtx) {
     let mut render_head: i64 = transport.playhead_frames();
     let mut last_generation = transport.generation();
     let mut last_dir: i64 = 1;
+    // «вооружённость» loop-заворота — семантика транспорта (wrap только
+    // изнутри региона, п.132): seek за конец (для реверса — за начало)
+    // развооружает до следующего прыжка, и рендер/префетч/транспорт видят
+    // effective_region = None (линейная игра того, что под курсором)
+    let mut last_region: Option<(i64, i64)> = *loop_region.lock().unwrap();
+    let mut loop_armed = loop_arm_after_jump(render_head, last_region, 1);
+    let mut last_effective_some = loop_armed && last_region.is_some();
     let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
 
     while !stop.load(Ordering::Acquire) {
@@ -578,7 +585,8 @@ fn audio_render_loop(ctx: RenderCtx) {
             renderer.sync_fx(&mut store); // state переживает пересборку (инв. №3)
         }
         let generation = transport.generation();
-        if generation != last_generation {
+        let generation_changed = generation != last_generation;
+        if generation_changed {
             last_generation = generation;
             store.reset_all(); // pre-roll при следующем чтении
             render_head = transport.playhead_frames();
@@ -597,51 +605,101 @@ fn audio_render_loop(ctx: RenderCtx) {
         // render_head (в кольце лежит материал прежнего направления).
         let rate_now = f32::from_bits(shared.playback_rate.load(Ordering::Acquire));
         let dir: i64 = if rate_now < 0.0 { -1 } else { 1 };
-        if dir != last_dir {
+        let dir_changed = dir != last_dir;
+        if dir_changed {
             last_dir = dir;
             store.reset_all();
             render_head = transport.playhead_frames();
             shared.consumed_frames.store(0, Ordering::Release);
             shared.flush.store(true, Ordering::Release);
         }
+        // пересчёт вооружённости — только на прыжках (seek/направление/
+        // регион): при armed-лупе render_head растёт линейно, о
+        // принадлежности региону говорит playhead транспорта
+        if generation_changed || dir_changed || region != last_region {
+            loop_armed = loop_arm_after_jump(transport.playhead_frames(), region, dir);
+            last_region = region;
+        }
+        // единая правда для рендера, префетча и транспорта: развооружённый
+        // loop для всех потребителей выглядит как отсутствие региона
+        let effective_region = if loop_armed { region } else { None };
+        let effective_some = effective_region.is_some();
+        if effective_some != last_effective_some && !generation_changed && !dir_changed {
+            // флип Some↔None на лету (границу региона перетащили через
+            // playhead, Loop выключили/включили при игре) = мини-seek без
+            // бампа generation: кольцо и render_head жили в другой системе
+            // координат (armed render_head опережает playhead на круги)
+            store.reset_all();
+            render_head = transport.playhead_frames();
+            shared.consumed_frames.store(0, Ordering::Release);
+            shared.flush.store(true, Ordering::Release);
+        }
+        last_effective_some = effective_some;
         // продвигаем playhead на потреблённое колбэком (со знаком
         // направления; wrap при loop работает в обе стороны — тест 43)
         let consumed = shared.consumed_frames.swap(0, Ordering::AcqRel);
         if consumed > 0 {
-            transport.advance_frames_wrapped(consumed * dir, region);
+            transport.advance_frames_wrapped(consumed * dir, effective_region);
         }
 
         if transport.is_playing() {
             let gain = f32::from_bits(master_gain.load(Ordering::Acquire));
             // заказ ближайшего аудио с Playback-приоритетом (идемпотентно);
             // при loop заказываем через wrap-отображение
-            match region {
-                Some((rs, re)) if re > rs && render_head >= rs => {
+            match effective_region {
+                Some((rs, re))
+                    if re > rs
+                        && (if dir < 0 { render_head <= re } else { render_head >= rs }) =>
+                {
                     let tl = rs + (render_head - rs).rem_euclid(re - rs);
                     // на скорости >1 окно упреждения растягивается: иначе
                     // при 8× 200 мс превращаются в 25 мс реального времени
                     let look = (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32
                         * rate_now.abs().max(1.0)) as i64;
                     let ahead = look.min(re - rs);
-                    let end1 = (tl + ahead).min(re);
-                    prefetch_audio_pass(
-                        &renderer,
-                        &cache,
-                        &workers.read().unwrap(),
-                        tl..end1,
-                        Priority::Playback,
-                        generation,
-                    );
-                    let rest = ahead - (end1 - tl);
-                    if rest > 0 {
+                    if dir < 0 {
+                        // реверс: греем ПОЗАДИ головы, заворот в хвост региона
+                        let start1 = (tl - ahead).max(rs);
                         prefetch_audio_pass(
                             &renderer,
                             &cache,
                             &workers.read().unwrap(),
-                            rs..rs + rest,
+                            start1..tl,
                             Priority::Playback,
                             generation,
                         );
+                        let rest = ahead - (tl - start1);
+                        if rest > 0 {
+                            prefetch_audio_pass(
+                                &renderer,
+                                &cache,
+                                &workers.read().unwrap(),
+                                re - rest..re,
+                                Priority::Playback,
+                                generation,
+                            );
+                        }
+                    } else {
+                        let end1 = (tl + ahead).min(re);
+                        prefetch_audio_pass(
+                            &renderer,
+                            &cache,
+                            &workers.read().unwrap(),
+                            tl..end1,
+                            Priority::Playback,
+                            generation,
+                        );
+                        let rest = ahead - (end1 - tl);
+                        if rest > 0 {
+                            prefetch_audio_pass(
+                                &renderer,
+                                &cache,
+                                &workers.read().unwrap(),
+                                rs..rs + rest,
+                                Priority::Playback,
+                                generation,
+                            );
+                        }
                     }
                 }
                 _ => {
@@ -676,8 +734,12 @@ fn audio_render_loop(ctx: RenderCtx) {
                     // разворачивается покадрово перед кольцом; FX — dry
                     // (см. render_frames_raw), loop-wrap через rem_euclid
                     let start = render_head - AUDIO_BURST_FRAMES as i64;
-                    let st = match region {
-                        Some((rs, re)) if re > rs && render_head > rs => {
+                    let st = match effective_region {
+                        // зеркало forward-guard'а: реверс входит в регион
+                        // СПРАВА (armed-подход выше re играет линейно), а
+                        // уйдя ниже rs, продолжает фолдиться — guard `> rs`
+                        // здесь гасил луп через круг (п.133)
+                        Some((rs, re)) if re > rs && render_head <= re => {
                             renderer.render_looped_raw(&mut fetcher, rs..re, start, &mut chunk)
                         }
                         _ => renderer.render_frames_raw(&mut fetcher, start, &mut chunk),
@@ -686,7 +748,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                     render_head = start;
                     st
                 } else {
-                    let st = match region {
+                    let st = match effective_region {
                         Some((rs, re)) if re > rs && render_head >= rs => renderer
                             .render_looped_with(
                                 &mut fetcher,
@@ -794,11 +856,33 @@ pub fn video_display_frame(
     let scaled = (latency_frames.max(0) as f64 * rate.abs().max(0.0) as f64) as i64;
     let lat = scaled * dir.signum().clamp(-1, 1);
     match region {
-        Some((rs, re)) if re > rs && playhead >= rs => {
+        // условие двустороннее, как у advance_frames_wrapped (p == e —
+        // внутри): playhead за регионом (seek правее конца, реверс-подход
+        // справа) показывается линейно, а не фолдится в регион (п.132)
+        Some((rs, re)) if re > rs && playhead >= rs && playhead <= re => {
             let span = re - rs;
             rs + (playhead - rs - lat).rem_euclid(span)
         }
         _ => (playhead - lat).max(0),
+    }
+}
+
+/// Вооружён ли loop-заворот после прыжка (seek / смена направления или
+/// региона): true, если движение из `head` в сторону `dir` может естественно
+/// пересечь конец региона ИЗНУТРИ — семантика advance_frames_wrapped
+/// (инклюзивность граней: p == e внутри, для реверса p == s внутри).
+/// Развооружённый loop (seek за конец при forward, за начало при reverse)
+/// играет линейно то, что под курсором, до следующего прыжка (п.132).
+pub fn loop_arm_after_jump(head: i64, region: Option<(i64, i64)>, dir: i64) -> bool {
+    match region {
+        Some((rs, re)) if re > rs => {
+            if dir < 0 {
+                head >= rs
+            } else {
+                head <= re
+            }
+        }
+        _ => true,
     }
 }
 
@@ -911,6 +995,36 @@ mod sync_tests {
         // в loop-регионе wrap в обе стороны
         assert_eq!(video_display_frame(59_500, 1_000, Some((50_000, 60_000)), -1, 1.0), 50_500);
         assert_eq!(video_display_frame(1000, 0, None, -1, 1.0), 1000, "нулевая задержка нейтральна");
+    }
+
+    /// Тест 134 (п.132, Р.23): условия принадлежности loop'у согласованы с
+    /// транспортом — playhead ЗА регионом показывается линейно, а правило
+    /// вооружённости зеркально для реверса.
+    #[test]
+    fn t134_loop_membership_matches_transport() {
+        use super::loop_arm_after_jump;
+        let reg = Some((50_000, 60_000));
+        // правее конца — линейно, не фолдится в регион (сам баг п.132)
+        assert_eq!(video_display_frame(65_000, 1_000, reg, 1, 1.0), 64_000);
+        assert_eq!(video_display_frame(60_001, 0, reg, 1, 1.0), 60_001);
+        // граница включительно, как p <= e у advance_frames_wrapped
+        assert_eq!(video_display_frame(60_000, 0, reg, 1, 1.0), 50_000);
+        // реверс-подход справа — тоже линейно
+        assert_eq!(video_display_frame(62_000, 1_000, reg, -1, 1.0), 63_000);
+        // реверс левее начала — линейно (как и было)
+        assert_eq!(video_display_frame(48_000, 1_000, reg, -1, 1.0), 49_000);
+
+        // правило вооружённости: forward — до конца включительно
+        assert!(loop_arm_after_jump(60_000, reg, 1));
+        assert!(!loop_arm_after_jump(60_001, reg, 1));
+        assert!(loop_arm_after_jump(10_000, reg, 1), "слева — линейный подход и луп");
+        // реверс — зеркало: от начала включительно
+        assert!(loop_arm_after_jump(50_000, reg, -1));
+        assert!(!loop_arm_after_jump(49_999, reg, -1));
+        assert!(loop_arm_after_jump(70_000, reg, -1), "справа — подход и луп");
+        // без региона / вырожденный регион — всегда вооружён
+        assert!(loop_arm_after_jump(0, None, 1));
+        assert!(loop_arm_after_jump(0, Some((5, 5)), 1));
     }
 }
 

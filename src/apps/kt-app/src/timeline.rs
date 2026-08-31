@@ -1184,8 +1184,9 @@ impl KtApp {
             } else if pos.y <= rect.top() + RULER_H {
                 // руллер: захват треугольника playhead = скраб; клик =
                 // постановка курсора (снап к маркерам, п.29); драг =
-                // выделение региона (решение пользователя, п.8)
-                let head_x = tick_to_x(self.player.transport.playhead().0);
+                // выделение региона (решение пользователя, п.8).
+                // Хит-зона — по НАРИСОВАННОМУ треугольнику (часы показа)
+                let head_x = tick_to_x(self.player.video_playhead().0);
                 if response.drag_started() && (pos.x - head_x).abs() <= 8.0 {
                     self.drag = Some(Drag::Scrub);
                 } else if response.drag_started() {
@@ -2198,7 +2199,10 @@ impl KtApp {
                 egui::Stroke::new(1.0, egui::Color32::from_rgb(255, 220, 120)),
             );
         }
-        let ph = self.player.transport.playhead();
+        // курсор — потребитель позиции для ПОКАЗА: часы показа, как превью и
+        // таймкод тулбара (инвариант 12; сырой transport.playhead() при игре
+        // прыгает квантами колбэка и расходится со слышимым на latency)
+        let ph = self.player.video_playhead();
         let x = tick_to_x(ph.0);
         if x >= rect.left() && x <= rect.right() {
             // Свечение курсора (п.4 р.5, переделано п.5 р.13): НЕ заходит на

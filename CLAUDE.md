@@ -81,7 +81,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-fx/video.rs | kt-fx/tests/video_fx.rs (golden 26, t68 пул), kt-engine/tests/reverse.rs::t26, postfx_cache t66, golden_export t67 |
 | kt-engine/audio.rs | audio_engine, warp_prefetch, splice, reverse (вкл. t29), golden_export |
 | kt-engine/worker.rs | scheduler, video_span, video_stall (t27/t28) |
-| kt-engine/player.rs | player_dynamic (t18/t20), audio_engine::t14, unit t22-sync/t32-varispeed |
+| kt-engine/player.rs | player_dynamic (t18/t20), audio_engine::t14, unit t22-sync/t32-varispeed, loop_disarm (t132/t133) + unit t134 |
 | kt-engine/video.rs | viewport, reverse (t24/t26), golden_export (вкл. t67), postfx_cache t66 |
 | kt-engine/export.rs | golden_export (11), export_options (25, 33) |
 | kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg/t34/t37), export_options t33 (муксер) |
