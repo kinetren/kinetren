@@ -246,3 +246,29 @@ fn over_black(src: &[u8], k: u32) -> Vec<u8> {
     }
     out
 }
+
+/// Тест 162 (видео-часть): при перекрытии на ОДНОЙ дорожке сверху остаётся
+/// тот, у кого start меньше — тайбрейк v1, который использует и демоция
+/// клипов при импорте .ktproj.
+#[test]
+fn t162_overlap_keeps_v1_tiebreak() {
+    let mut p = project_pair();
+    p.transitions.clear();
+    // клип 2 наезжает на клип 1 на своей же дорожке
+    for c in &mut p.clips {
+        if c.id == ClipId(2) {
+            c.start = Tick(45_000);
+        }
+    }
+    p.validate().expect("перекрытие законно (переслаивание включено)");
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(60_000); // внутри зоны наезда
+    warm(&vr, &cache, t, q);
+    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    assert!(complete);
+    // сверху — клип 1 (start меньше): кадр равен его источнику
+    let expect = synth_frame(vr.grid.align_floor(t), q);
+    assert_eq!(out, expect, "в зоне наезда сверху клип с меньшим start");
+}

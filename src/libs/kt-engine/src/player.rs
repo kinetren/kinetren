@@ -242,12 +242,13 @@ impl Player {
             let project = project.clone();
             let stop = stop.clone();
             let quality = preview_quality.clone();
+            let region_p = loop_region.clone();
             std::thread::Builder::new()
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, project, quality, stop, wake_p, stats_p,
-                        version_p,
+                        version_p, region_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -886,6 +887,34 @@ pub fn loop_arm_after_jump(head: i64, region: Option<(i64, i64)>, dir: i64) -> b
     }
 }
 
+/// Окно упреждения префетча с учётом loop-региона: за концом региона греть
+/// нечего — воспроизведение туда не пойдёт, а вытесненная голова региона
+/// стоит промахов на каждом круге (prefetch-thrash перф-панели, п.167).
+/// Курсор вне региона — линейное окно. Длина не больше круга: при коротком
+/// регионе 2 с упреждения означали бы десятки заказов одного и того же.
+pub fn lookahead_windows(
+    head: i64,
+    len: i64,
+    region: Option<(i64, i64)>,
+) -> Vec<std::ops::Range<i64>> {
+    match region {
+        Some((rs, re)) if re > rs && head >= rs && head <= re => {
+            let span = re - rs;
+            let h = rs + (head - rs).rem_euclid(span);
+            let want = len.min(span);
+            let first = (re - h).min(want);
+            let mut v: Vec<std::ops::Range<i64>> =
+                std::iter::once(h..h + first).collect();
+            if want > first {
+                v.push(rs..rs + (want - first));
+            }
+            v
+        }
+        // (не `vec![a..b]` — clippy принимает его за диапазон Vec'а)
+        _ => std::iter::once(head..head + len).collect(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn prefetch_loop(
     cache: Arc<BurstCache>,
@@ -897,6 +926,7 @@ fn prefetch_loop(
     wake: Arc<Wake>,
     loop_stats: Arc<LoopStats>,
     project_version: Arc<AtomicU64>,
+    loop_region: Arc<Mutex<Option<(i64, i64)>>>,
 ) {
     // рендереры кэшируются до смены версии проекта: клонировать Project и
     // пересобирать графы каждые 100 мс было дорого даже в простое (п.1)
@@ -906,7 +936,9 @@ fn prefetch_loop(
     // захватов мьютекса кэша даже при полной тишине (п.1 v1.4). Прогрев
     // после seek/правки/смены качества сохраняется: любое изменение
     // состояния снимает пропуск.
-    let mut last_state: Option<(i64, u64, u64, Quality)> = None;
+    // (playhead, версия проекта, generation, качество, loop-регион)
+    type PassState = (i64, u64, u64, Quality, Option<(i64, i64)>);
+    let mut last_state: Option<PassState> = None;
     while !stop.load(Ordering::Acquire) {
         wake.wait_timeout(std::time::Duration::from_millis(100));
         if stop.load(Ordering::Acquire) {
@@ -918,6 +950,7 @@ fn prefetch_loop(
                 project_version.load(Ordering::Acquire),
                 transport.generation(),
                 *preview_quality.lock().unwrap(),
+                *loop_region.lock().unwrap(),
             );
             if !transport.is_playing() && last_state == Some(state) {
                 continue;
@@ -934,22 +967,30 @@ fn prefetch_loop(
         let (_, renderer, video) = cached.as_ref().unwrap();
         let generation = transport.generation();
         let head = transport.playhead_frames();
-        prefetch_audio_pass(
-            renderer,
-            &cache,
-            &workers.read().unwrap(),
-            head..head + PREFETCH_AUDIO_LOOKAHEAD_FRAMES,
-            Priority::NearPrefetch,
-            generation,
-        );
+        let region = *loop_region.lock().unwrap();
+        for win in lookahead_windows(head, PREFETCH_AUDIO_LOOKAHEAD_FRAMES, region) {
+            prefetch_audio_pass(
+                renderer,
+                &cache,
+                &workers.read().unwrap(),
+                win,
+                Priority::NearPrefetch,
+                generation,
+            );
+        }
         // видео-lookahead: 2 c, но не больше половины бюджета кэша (п.19в:
         // 4К-кадры выселяли собственное окно)
         let t0 = transport.playhead();
         let q = *preview_quality.lock().unwrap();
         let step = video.grid.frame_step();
         let ahead = video_lookahead_ticks(q, step, cache.max_video_bytes());
-        let range = TickRange::new(t0, Tick(t0.0 + ahead));
-        for (media, src_pts) in video.wanted_frames(range) {
+        let region_ticks = region
+            .map(|(s, e)| (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0));
+        let ranges: Vec<TickRange> = lookahead_windows(t0.0, ahead, region_ticks)
+            .into_iter()
+            .map(|r| TickRange::new(Tick(r.start), Tick(r.end)))
+            .collect();
+        for (media, src_pts) in ranges.iter().flat_map(|r| video.wanted_frames(*r)) {
             if !cache.contains_video(source_id(media), Some(q), video_cache_idx(src_pts))
                 && let Some(w) = workers.read().unwrap().get(&media)
             {

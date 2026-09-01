@@ -42,9 +42,29 @@ pub struct KtTimelineMeta {
     pub end: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lanes: Option<(u32, u32)>,
+    /// Переслаивание (Р.28): сколько подряд идущих Track'ов занимает каждая
+    /// наша дорожка. В OTIO перекрытие внутри одного Track невыразимо
+    /// (позиция клипа = порядок детей), поэтому слои пишутся соседними
+    /// треками — а по этой карте мы собираем дорожку обратно. Пишется,
+    /// только когда слой не один: файлы без перекрытий байт-в-байт прежние.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layers: Option<KtLayers>,
     /// Сериализуются отсортированными по MorphId (детерминизм применения).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<kt_model::MorpherEvent>,
+}
+
+/// Карта слоёв дорожек (Р.28) + политика переслаивания проекта.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KtLayers {
+    /// Переслаивание выключено для этого проекта (ответ «нет» на плашке).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub off: bool,
+    /// video[lane] = число Track'ов этой видео-дорожки.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub video: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio: Vec<u32>,
 }
 
 fn is_zero_u32(v: &u32) -> bool {

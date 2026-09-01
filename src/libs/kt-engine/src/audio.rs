@@ -70,10 +70,56 @@ fn fade_weight(clip: &AudioClip, f: i64) -> f32 {
 pub struct RenderStats {
     /// Сколько сэмпло-чтений источника не удалось (подставлена тишина).
     pub underruns: u64,
+    /// Промахи ПРЕ-РОЛЛА (прогрев FX после seek) — на выход эти кадры не
+    /// идут, поэтому в `underruns` не входят (п.166). Диагностика:
+    /// систематический рост = префетч не греет зону прогрева.
+    pub warmup_misses: u64,
 }
 
 pub struct AudioRenderer {
     clips: Vec<AudioClip>,
+    /// Переслаивание (Р.28): перекрытия клипов законны и звучат как в v1 —
+    /// equal-power на двоих, 1/N при трёх и более. Выключено — перекрытий в
+    /// модели нет по построению, и вес всегда 1.0.
+    overlap_layers: bool,
+}
+
+/// Вес клипа от ПЕРЕКРЫТИЯ с соседями по дорожке (возврат семантики v1,
+/// снесённой в Р.24 вместе с законностью перекрытий; porting-notes п.2:
+/// «equal-power кроссфейд при перекрытии 2 клипов одной аудио-дорожки, 1/N
+/// при 3+»). На клипах встык инертен — вес 1.0, поэтому проекты с явными
+/// переходами (и GOLDEN-эталоны) не меняются.
+fn overlap_weight(clips: &[AudioClip], ci: usize, frame: i64) -> f32 {
+    let lane = clips[ci].lane;
+    let mut first = usize::MAX;
+    let mut second = usize::MAX;
+    let mut n = 0usize;
+    for (i, c) in clips.iter().enumerate() {
+        if c.lane == lane && c.start <= frame && frame < c.end {
+            if n == 0 {
+                first = i;
+            } else if n == 1 {
+                second = i;
+            }
+            n += 1;
+        }
+    }
+    match n {
+        0 | 1 => 1.0,
+        2 => {
+            let (a, b) = (&clips[first], &clips[second]);
+            let ov_start = a.start.max(b.start);
+            let ov_end = a.end.min(b.end);
+            let t = if ov_end > ov_start {
+                (frame - ov_start) as f64 / (ov_end - ov_start) as f64
+            } else {
+                0.5
+            };
+            // equal-power: ранний затухает √(1−t), поздний нарастает √t
+            if ci == first { ((1.0 - t).max(0.0)).sqrt() as f32 } else { (t.max(0.0)).sqrt() as f32 }
+        }
+        n => 1.0 / n as f32,
+    }
 }
 
 impl AudioRenderer {
@@ -137,7 +183,7 @@ impl AudioRenderer {
         // Стабильный порядок — часть детерминизма и правила кроссфейда
         // («ранний» клип определяется по (start, media)).
         clips.sort_by_key(|c| (c.start, c.end, c.lane, c.media));
-        AudioRenderer { clips }
+        AudioRenderer { clips, overlap_layers: project.overlap_layers }
     }
 
     /// Синхронизировать FX-состояние с этим графом (вызывается владельцем
@@ -202,6 +248,12 @@ impl AudioRenderer {
 
     /// Клип без FX: прямое чтение source-burst'ов с весами кроссфейда.
     /// Общий код render_frames_with и render_frames_raw (реверс-превью).
+    /// Вес перекрытия для клипа `ci` в кадре `f` (1.0, когда переслаивание
+    /// выключено — тогда перекрытий в модели нет по построению).
+    fn overlap_at(&self, ci: usize, f: i64) -> f32 {
+        if self.overlap_layers { overlap_weight(&self.clips, ci, f) } else { 1.0 }
+    }
+
     fn render_plain_clip(
         &self,
         ci: usize,
@@ -261,7 +313,9 @@ impl AudioRenderer {
                 match burst {
                     Some(b) => {
                         for k in 0..take {
-                            let w = fade_weight(clip, f + k) * clip.gain;
+                            let w = fade_weight(clip, f + k)
+                                * self.overlap_at(ci, f + k)
+                                * clip.gain;
                             let oi = ((f + k - range.start) as usize) * AUDIO_CHANNELS;
                             let sk = if clip.reversed { within - k } else { within + k };
                             let si = (sk as usize) * AUDIO_CHANNELS;
@@ -364,6 +418,7 @@ impl AudioRenderer {
             + kt_fx::chain_source_window_ext(&clip.fx, clip_len, material.clone(), material).end;
         let media = clip.media;
         let mut pull_underruns = 0u64;
+        let mut warmup_misses = 0u64;
         let Some(proc) = store.get_mut(clip.id) else { return };
         proc.set_material_ext(clip.head_ext, clip.tail_ext);
         let local = from - clip.start;
@@ -372,18 +427,25 @@ impl AudioRenderer {
         {
             let reversed = clip.reversed;
             let win = (clip.source_in, src_window_end);
-            let mut pull = |src_frame: i64, dst: &mut [f32]| -> bool {
-                fill_source(fetcher, media, src_frame, win, reversed, dst, &mut pull_underruns)
+            let mut pull = |kind: kt_fx::PullKind, src_frame: i64, dst: &mut [f32]| -> bool {
+                // промахи пре-ролла считаются отдельно: их не слышно
+                let n = match kind {
+                    kt_fx::PullKind::Output => &mut pull_underruns,
+                    kt_fx::PullKind::Warmup => &mut warmup_misses,
+                };
+                fill_source(fetcher, media, src_frame, win, reversed, dst, n)
             };
             proc.read(local, &mut buf, &mut pull);
         }
         stats.underruns += pull_underruns;
+        stats.warmup_misses += warmup_misses;
         for k in 0..count as i64 {
             let f = from + k;
             // веса действуют на теле и ручках (окна переходов); в зоне
             // FX-хвоста (за материалом) — 1.0: реверб дозванивает под
             // соседями без взвешивания
             let w = if f < clip.end + clip.tail_ext { fade_weight(clip, f) } else { 1.0 }
+                * self.overlap_at(ci, f)
                 * clip.gain;
             let oi = ((f - range.start) as usize) * AUDIO_CHANNELS;
             let bi = (k as usize) * AUDIO_CHANNELS;
@@ -428,6 +490,7 @@ impl AudioRenderer {
                 [(done as usize) * AUDIO_CHANNELS..((done + chunk) as usize) * AUDIO_CHANNELS];
             let s = self.render_frames_with(fetcher, store, tl, sub);
             stats.underruns += s.underruns;
+            stats.warmup_misses += s.warmup_misses;
             done += chunk;
         }
         stats

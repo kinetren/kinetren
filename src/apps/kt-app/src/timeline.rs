@@ -95,6 +95,16 @@ pub(crate) fn plan_move(p: &Project, id: ClipId, want: i64, lane: u32) -> MovePl
     if hits.is_empty() && foreign.is_empty() {
         return MovePlan::Free;
     }
+    // Переслаивание (Р.28): клипы можно класть друг на друга — жест НИЧЕГО
+    // не режет и ничего не «доправляет». Требование пользователя: «сколько
+    // было столько и должно остаться… НИЧЕГО НИГДЕ НЕ ДОЛЖНО ОТРАСТАТЬ/
+    // ОТРУБАТЬСЯ». Кроссфейд слышен из самого перекрытия (веса v1), поэтому
+    // ни тримов, ни TransitionEvent тут не нужно. Чужие плейсхолдеры
+    // накладывать по-прежнему нельзя — их сырьё пишется обратно в OTIO, где
+    // дорожка строго последовательна.
+    if p.overlap_layers && foreign.is_empty() {
+        return MovePlan::Free;
+    }
     // кроссфейд — только одиночный частичный наезд на СВОЕЙ дорожке
     // (вертикальный перенос с коллизией не режет чужие клипы тримами)
     if hits.len() == 1 && foreign.is_empty() && lane == me.lane {
@@ -422,12 +432,13 @@ pub fn follow_rearm(
 }
 
 impl KtApp {
-    /// Дамп геометрии для живых сценариев (Р.27, `KT_GEOM_DUMP=<файл>`):
-    /// окно, зона дорожек, зум и вертикальные позиции строк — всё в
-    /// экранных координатах, чтобы скрипт целился мышью точно, а не по
-    /// эвристике «примерно треть снизу». Пишется не чаще 10 Гц и только при
+    /// Дамп состояния для живых сценариев (Р.27, `KT_GEOM_DUMP=<файл>`):
+    /// окно, зона дорожек, зум и вертикальные позиции строк — чтобы скрипт
+    /// целился мышью точно, а не по эвристике «примерно треть снизу», плюс
+    /// позиция курсора и признак игры — чтобы сценарии про воспроизведение
+    /// (loop, заворот) читали правду из программы, а не гадали по картинке. Пишется не чаще 10 Гц и только при
     /// заданном env: в обычном запуске ветка стоит один `Option`-чек.
-    fn dump_geom(&mut self, geom: &TlGeom, full: egui::Rect) {
+    fn dump_geom(&mut self, geom: &TlGeom, screen: egui::Rect) {
         let Some(path) = self.geom_dump_path.clone() else { return };
         let now = std::time::Instant::now();
         if self.geom_dumped_at.is_some_and(|t| now.duration_since(t).as_millis() < 100) {
@@ -452,11 +463,14 @@ impl KtApp {
             })
             .collect();
         let json = format!(
-            "{{\"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
+            "{{\"playhead\":{},\"playing\":{},\
+             \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"timeline\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
              \"lane_h\":{:.1},\"ticks_per_px\":{:.3},\"view_start\":{:.1},\"rows\":[{}]}}\n",
-            full.width(),
-            full.height(),
+            self.player.video_playhead().0,
+            self.player.transport.is_playing(),
+            screen.width(),
+            screen.height(),
             geom.rect.left(),
             geom.rect.right(),
             geom.rect.top(),
@@ -965,7 +979,7 @@ impl KtApp {
         // сценариев (Р.27): без неё скрипт вынужден УГАДЫВАТЬ, где дорожка и
         // сколько пикселей в секунде, и ломается от любой правки вёрстки.
         // Только по env, не чаще 10 Гц, атомарной заменой файла.
-        self.dump_geom(&geom, full);
+        self.dump_geom(&geom, ui.ctx().content_rect());
         let lane_top = |kind: ClipKind, lane: u32| -> f32 { geom.lane_top(kind, lane) };
         let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
         let morph_lane_at_y = |y: f32| -> Option<u32> { geom.morph_lane_at_y(y) };

@@ -24,8 +24,9 @@ import subprocess
 import sys
 import time
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-RUST = os.path.join(ROOT, "src")
+# scripts/live/kt_live.py → src/ на два уровня выше
+RUST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+ROOT = os.path.dirname(RUST)
 KT_APP = os.path.join(RUST, "target", "debug", "kt-app")
 KT_CLI = os.path.join(RUST, "target", "debug", "kt-cli")
 
@@ -43,42 +44,67 @@ class Failure(Exception):
 
 
 class Clip:
-    def __init__(self, d, rate):
+    def __init__(self, d, start):
         sr = d.get("source_range") or {}
         self.name = d.get("name", "")
+        self.start = start
         self.duration = _ticks(sr.get("duration"))
         self.source_in = _ticks(sr.get("start_time"))
-        self.kind = d.get("OTIO_SCHEMA", "")
+        self.track = ""
+
+    @property
+    def end(self):
+        return self.start + self.duration
+
+    def mid(self):
+        return self.start + self.duration // 2
 
     def __repr__(self):
-        return f"Clip({self.name!r}, dur={self.duration}, in={self.source_in})"
+        return (
+            f"Clip({self.name!r}, {self.start}..{self.end}, in={self.source_in})"
+        )
 
 
 class Timeline:
-    """Разобранный .otio: то, что реально сохранила программа."""
+    """Разобранный .otio: то, что реально сохранила программа. Позиции
+    считаются по порядку детей дорожки (Gap двигает курсор, Transition —
+    нет), поэтому сценарий может целиться в СТЫК, а не в число из головы."""
 
     def __init__(self, path):
         with open(path) as f:
             self.doc = json.load(f)
         self.clips, self.transitions, self.gaps = [], [], []
-        self._walk(self.doc)
+        for track in self.doc.get("tracks", {}).get("children", []):
+            if not str(track.get("OTIO_SCHEMA", "")).startswith("Track"):
+                continue
+            cursor = 0
+            for item in track.get("children", []):
+                tag = str(item.get("OTIO_SCHEMA", ""))
+                dur = _ticks((item.get("source_range") or {}).get("duration"))
+                if tag.startswith("Clip"):
+                    c = Clip(item, cursor)
+                    c.track = track.get("kind", "")
+                    self.clips.append(c)
+                    cursor += dur
+                elif tag.startswith("Gap"):
+                    self.gaps.append((cursor, dur))
+                    cursor += dur
+                elif tag.startswith("Transition"):
+                    self.transitions.append(
+                        {
+                            "at": cursor,
+                            "in": _ticks(item.get("in_offset")),
+                            "out": _ticks(item.get("out_offset")),
+                        }
+                    )
 
-    def _walk(self, node):
-        if isinstance(node, dict):
-            tag = node.get("OTIO_SCHEMA", "")
-            if tag.startswith("Clip"):
-                self.clips.append(Clip(node, 90000))
-            elif tag.startswith("Transition"):
-                self.transitions.append(
-                    (_ticks(node.get("in_offset")), _ticks(node.get("out_offset")))
-                )
-            elif tag.startswith("Gap"):
-                self.gaps.append(_ticks((node.get("source_range") or {}).get("duration")))
-            for v in node.values():
-                self._walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                self._walk(v)
+    def clip(self, name):
+        return next(c for c in self.clips if c.name == name)
+
+    def joint_after(self, name):
+        """Стык за клипом — то место, где живёт кроссфейд."""
+        c = self.clip(name)
+        return c.start + c.duration
 
 
 def _ticks(t):
@@ -164,15 +190,60 @@ class Live:
         win = geometry()
         return win["x"] + int(g["timeline"]["left"] + (tick - g["view_start"]) / g["ticks_per_px"])
 
-    def lane_y(self, kind="video", lane=0):
-        """Экранный y середины строки дорожки."""
+    def lane_y(self, kind="video", lane=0, frac=0.5):
+        """Экранный y внутри строки дорожки; frac — доля высоты сверху.
+        Замеры цвета лучше брать ниже середины: сверху лежит плашка имени."""
         g = self.geom()
         win = geometry()
         row = next(r for r in g["rows"] if r["kind"] == kind and r["lane"] == lane)
-        return win["y"] + int(row["center"])
+        return win["y"] + int(row["top"] + g["lane_h"] * frac)
 
     def seconds(self, s):
         return round(s * 90000)
+
+    def playhead(self):
+        """Позиция курсора в тиках — из САМОЙ программы, а не по картинке."""
+        return int(self.geom().get("playhead", 0))
+
+    def playing(self):
+        return bool(self.geom().get("playing", False))
+
+    def wait_playhead(self, pred, what, timeout=8.0):
+        """Ждёт, пока курсор не удовлетворит условию; возвращает историю."""
+        deadline = time.time() + timeout
+        seen = []
+        while time.time() < deadline:
+            t = self.playhead()
+            seen.append(t)
+            if pred(t):
+                return seen
+            time.sleep(0.2)
+        self.expect(False, f"{what} (курсор шёл: {seen[-8:]})")
+        return seen
+
+    def ruler_y(self):
+        """Строка времени над дорожками — клик по ней ставит курсор."""
+        g = self.geom()
+        win = geometry()
+        first_row = min(r["top"] for r in g["rows"])
+        return win["y"] + int((g["timeline"]["top"] + first_row) * 0.5)
+
+    def preview_center(self):
+        """Центр окна превью: над таймлайном, по центру окна."""
+        g = self.geom()
+        win = geometry()
+        return (
+            win["x"] + int(g["window"]["w"] * 0.5),
+            win["y"] + int(g["timeline"]["top"] * 0.45),
+        )
+
+    def brightness_red(self, xy):
+        r, g, b = self.pixel(*xy)
+        return r > b + 40 and r > g + 40
+
+    def brightness(self, xy):
+        r, g, b = self.pixel(*xy)
+        return (r + g + b) / 3.0
 
     # ---- действия ----------------------------------------------------------
 
@@ -182,20 +253,42 @@ class Live:
         probe.button(False)
         time.sleep(0.35)
 
-    def drag(self, x0, y0, x1, y1):
-        """Драг КАК ЧЕЛОВЕК: нажать → сдвинуть чуть → вести → отпустить.
-        Прыжок сразу в цель egui засчитывает как начало драга уже в конечной
-        точке, и объект не двигается (правило из apps/kt-app/CLAUDE.md)."""
-        probe.move(x0, y0)
+    def drag(self, x0, y0, x1, y1, steps=6):
+        """Драг КАК ЧЕЛОВЕК: навести → нажать → сдвинуть чуть → вести
+        несколькими шагами → отпустить. Прыжок сразу в цель egui засчитывает
+        как начало драга уже в конечной точке, и объект не двигается (правило
+        из apps/kt-app/CLAUDE.md). Промежуточные шаги нужны ещё и потому, что
+        софт-рендер выдаёт кадры редко: между позициями обязан пройти кадр."""
+        probe.move(x0, y0, pause=0.15)
         probe.button(True)
+        time.sleep(0.2)
         step = 8 if x1 >= x0 else -8
-        probe.move(x0 + step, y0)
-        probe.move((x0 + x1) // 2, (y0 + y1) // 2)
-        probe.move(x1, y1)
+        probe.move(x0 + step, y0, pause=0.15)
+        for i in range(1, steps + 1):
+            probe.move(
+                x0 + step + (x1 - x0 - step) * i // steps,
+                y0 + (y1 - y0) * i // steps,
+                pause=0.12,
+            )
         probe.button(False)
-        time.sleep(0.4)
+        time.sleep(0.6)
+
+    def focus(self):
+        """Отдать окну фокус ввода: XTest-клавиши идут в АКТИВНОЕ окно, и без
+        этого Space/Ctrl+S уходят в пустоту (мышь работает и без фокуса)."""
+        from Xlib import X
+
+        w = probe.window()
+        try:
+            w.set_input_focus(X.RevertToParent, X.CurrentTime)
+            w.configure(stack_mode=X.Above)
+            probe.d.sync()
+        except Exception:
+            pass
+        time.sleep(0.2)
 
     def key(self, spec):
+        self.focus()
         probe.key(spec)
         time.sleep(0.4)
 
@@ -212,7 +305,7 @@ class Live:
         """Цвет пикселя экрана (r, g, b) — «что человек видит»."""
         img = self.shot(f"px-{x}-{y}")
         out = subprocess.run(
-            ["convert", img, "-format", "%[pixel:p{%d,%d}]" % (x, y), "info:-"],
+            ["convert", img, "-format", f"%[pixel:p{{{x},{y}}}]", "info:-"],
             capture_output=True,
             text=True,
             check=True,
@@ -221,6 +314,10 @@ class Live:
         os.unlink(img)
         self._shot_no -= 1
         return tuple(nums[:3])
+
+    def project_now(self):
+        """Проект как он лежит на диске (без сохранения)."""
+        return Timeline(self.project)
 
     def saved_project(self):
         """Ctrl+S и разбор того, что программа записала на диск."""
@@ -257,21 +354,45 @@ def demo_project(dest):
 
 
 def project_with_clips(dest, clips, fps=30, width=1280, height=720):
-    """Минимальный проект: список (start_s, dur_s) видео-клипов одного
-    синтетического источника. Пишется через kt-cli new + правку .otio, чтобы
-    формат оставался за нашей библиотекой."""
+    """Минимальный проект из видео-клипов: список `(start_s, dur_s)` или
+    `(start_s, dur_s, "synth:Pattern")`. Разные источники дают разные цвета
+    плашек — это позволяет сценарию отличать, ЧЕЙ материал нарисован.
+    Пишется через `kt-cli new` + правку .otio: формат остаётся за нашей
+    библиотекой."""
     subprocess.run([KT_CLI, "new", dest], check=True, capture_output=True)
     with open(dest) as f:
         doc = json.load(f)
     doc["metadata"]["kt"]["settings"].update(fps=fps, width=width, height=height)
+    # пустые дорожки в файл не пишутся (Р.25), поэтому видео-дорожку
+    # заводим сами
     track = next(
-        t for t in doc["tracks"]["children"] if t.get("kind") == "Video"
+        (t for t in doc["tracks"]["children"] if t.get("kind") == "Video"), None
     )
+    if track is None:
+        track = {
+            "OTIO_SCHEMA": "Track.1",
+            "name": "",
+            "kind": "Video",
+            "children": [],
+            "source_range": None,
+            "effects": [],
+            "markers": [],
+            "enabled": True,
+            "metadata": {},
+        }
+        doc["tracks"]["children"].append(track)
     track["children"] = []
-    for i, (start_s, dur_s) in enumerate(clips, start=1):
-        if start_s > 0 and not track["children"]:
-            track["children"].append(_gap(start_s))
-        track["children"].append(_clip(i, dur_s))
+    media = {}
+    cursor = 0.0
+    for i, spec in enumerate(clips, start=1):
+        start_s, dur_s = spec[0], spec[1]
+        path = spec[2] if len(spec) > 2 else "synth:Ramp"
+        mid = media.setdefault(path, len(media) + 1)
+        if start_s > cursor + 1e-9:
+            track["children"].append(_gap(start_s - cursor))
+            cursor = start_s
+        track["children"].append(_clip(i, dur_s, path, mid))
+        cursor += dur_s
     doc["metadata"]["kt"]["bin_media"] = []
     with open(dest, "w") as f:
         json.dump(doc, f, indent=4)
@@ -298,7 +419,7 @@ def _gap(dur_s):
     }
 
 
-def _clip(idx, dur_s):
+def _clip(idx, dur_s, path="synth:Ramp", media_id=1):
     return {
         "OTIO_SCHEMA": "Clip.2",
         "name": f"c{idx}",
@@ -307,7 +428,7 @@ def _clip(idx, dur_s):
             "DEFAULT_MEDIA": {
                 "OTIO_SCHEMA": "ExternalReference.1",
                 "name": "",
-                "target_url": "synth:Ramp",
+                "target_url": path,
                 "available_range": None,
                 "available_image_bounds": None,
                 "metadata": {},
@@ -317,16 +438,35 @@ def _clip(idx, dur_s):
         "effects": [],
         "markers": [],
         "enabled": True,
-        "metadata": {"kt": {"id": idx, "media": 1}},
+        "metadata": {"kt": {"id": idx, "media": media_id}},
     }
 
 
+def color_media(out_dir, name, rgb, seconds, fps=30, size="640x360"):
+    """Настоящий mp4 сплошного цвета: `synth:`-источники в приложении дают
+    только звук, а сценариям про превью нужна картинка. Идемпотентно."""
+    path = os.path.join(out_dir, f"{name}.mp4")
+    if os.path.exists(path):
+        return path
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-y",
+            "-f", "lavfi", "-i", f"color=c=0x{rgb}:size={size}:rate={fps}:duration={seconds}",
+            "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+            "-shortest",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "96k",
+            path,
+        ],
+        check=True,
+    )
+    return path
+
+
 def geometry():
-    """Границы окна и полезные координаты таймлайна (в координатах экрана)."""
-    w = probe.window()
-    g = w.get_geometry()
-    x, y = probe.origin(w)
-    return {"x": x, "y": y, "w": g.width, "h": g.height}
+    """Границы окна kt-app в координатах экрана."""
+    x, y, w, h = probe.origin(probe.window())
+    return {"x": x, "y": y, "w": w, "h": h}
 
 
 def require_tools():

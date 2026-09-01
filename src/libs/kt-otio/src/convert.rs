@@ -130,8 +130,72 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         .collect();
 
     let mut children: Vec<Composable> = Vec::new();
-    let mut emit_track = |kind: ClipKind, lane: u32, timeline_end: Tick| {
-        let tx = retained.tracks.get(&(kind, lane)).cloned().unwrap_or_default();
+    // Переслаивание (Р.28): в OTIO позиция клипа определяется ПОРЯДКОМ детей
+    // трека, поэтому перекрытые клипы одной нашей дорожки невыразимы в одном
+    // Track — их пришлось бы писать подряд, и чужой редактор увидел бы
+    // разъехавшийся монтаж. Раскладываем жадно по слоям: клип идёт в первый
+    // слой, где ни с кем не пересекается; каждый слой пишется отдельным
+    // Track, а номер НАШЕЙ дорожки едет в `metadata.kt.lane` трека — по нему
+    // мы собираем дорожку обратно (решение пользователя Р.28).
+    let layers_of = |kind: ClipKind, lane: u32| -> usize {
+        // дорожка без содержимого, которой не было в исходном файле, не
+        // пишется вовсе (Р.25) — в карте слоёв у неё ноль треков, иначе
+        // карта не сойдётся с файлом и при чтении будет отброшена
+        let known = retained.tracks.contains_key(&(kind, lane));
+        let has_content = p.clips.iter().any(|c| c.kind == kind && c.lane == lane)
+            || p.foreign.iter().any(|f| f.kind == kind && f.lane == lane);
+        if !known && !has_content {
+            return 0;
+        }
+        let mut spans: Vec<(i64, i64)> = Vec::new();
+        let mut ends: Vec<i64> = Vec::new();
+        for c in p.clips.iter().filter(|c| c.kind == kind && c.lane == lane) {
+            spans.push((c.start.0, (c.start + c.duration).0));
+        }
+        spans.sort_unstable();
+        for (s, e) in spans {
+            match ends.iter_mut().find(|end| **end <= s) {
+                Some(end) => *end = e,
+                None => ends.push(e),
+            }
+        }
+        ends.len().max(1)
+    };
+    let layer_of = |c: &ClipEvent, kind: ClipKind, lane: u32| -> usize {
+        let mut ends: Vec<i64> = Vec::new();
+        let mut mine = 0usize;
+        let mut spans: Vec<(i64, i64, ClipId)> = p
+            .clips
+            .iter()
+            .filter(|x| x.kind == kind && x.lane == lane)
+            .map(|x| (x.start.0, (x.start + x.duration).0, x.id))
+            .collect();
+        spans.sort_unstable();
+        for (s, e, id) in spans {
+            let idx = match ends.iter().position(|end| *end <= s) {
+                Some(i) => {
+                    ends[i] = e;
+                    i
+                }
+                None => {
+                    ends.push(e);
+                    ends.len() - 1
+                }
+            };
+            if id == c.id {
+                mine = idx;
+            }
+        }
+        mine
+    };
+    let mut emit_track = |kind: ClipKind, lane: u32, layer: usize, timeline_end: Tick| {
+        // чужие extra/metadata/gap'ы принадлежат ИСХОДНОМУ треку — их несёт
+        // слой 0, иначе расслоение продублировало бы их на каждый слой
+        let tx = if layer == 0 {
+            retained.tracks.get(&(kind, lane)).cloned().unwrap_or_default()
+        } else {
+            TrackExtra::default()
+        };
         let known = retained.tracks.contains_key(&(kind, lane));
         let has_content = p.clips.iter().any(|c| c.kind == kind && c.lane == lane)
             || p.foreign.iter().any(|f| f.kind == kind && f.lane == lane);
@@ -141,12 +205,12 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         let mut items: Vec<(Tick, Tick, Result<&ClipEvent, &ForeignEvent>)> = p
             .clips
             .iter()
-            .filter(|c| c.kind == kind && c.lane == lane)
+            .filter(|c| c.kind == kind && c.lane == lane && layer_of(c, kind, lane) == layer)
             .map(|c| (c.start, c.start + c.duration, Ok(c)))
             .chain(
                 p.foreign
                     .iter()
-                    .filter(|f| f.kind == kind && f.lane == lane)
+                    .filter(|f| f.kind == kind && f.lane == lane && layer == 0)
                     .map(|f| (f.start, f.start + f.duration, Err(f))),
             )
             .collect();
@@ -237,7 +301,13 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             })
             .unwrap_or_default();
         children.push(Composable::Track(Track {
-            name: if name.is_empty() { tx.name_foreign.clone().unwrap_or_default() } else { name },
+            name: if layer > 0 {
+                String::new() // имя дорожки несёт слой 0
+            } else if name.is_empty() {
+                tx.name_foreign.clone().unwrap_or_default()
+            } else {
+                name
+            },
             kind: match kind {
                 ClipKind::Video => "Video".into(),
                 ClipKind::Audio => "Audio".into(),
@@ -258,10 +328,14 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
     let timeline_end = p.timeline_end.unwrap_or(Tick::ZERO);
     // видео снизу вверх (OTIO: поздний трек поверх), затем аудио по порядку
     for lane in (0..p.video_lanes).rev() {
-        emit_track(ClipKind::Video, lane, timeline_end);
+        for layer in 0..layers_of(ClipKind::Video, lane) {
+            emit_track(ClipKind::Video, lane, layer, timeline_end);
+        }
     }
     for lane in 0..p.audio_lanes {
-        emit_track(ClipKind::Audio, lane, timeline_end);
+        for layer in 0..layers_of(ClipKind::Audio, lane) {
+            emit_track(ClipKind::Audio, lane, layer, timeline_end);
+        }
     }
 
     // метки — на корневом Stack (наши + чужие passthrough)
@@ -320,6 +394,20 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         // длина сверх материала и число дорожек (пустые в файл не пишем)
         end: p.timeline_end.map(|t| t.0),
         lanes: Some((p.video_lanes, p.audio_lanes)),
+        layers: {
+            let v: Vec<u32> =
+                (0..p.video_lanes).map(|l| layers_of(ClipKind::Video, l) as u32).collect();
+            let a: Vec<u32> =
+                (0..p.audio_lanes).map(|l| layers_of(ClipKind::Audio, l) as u32).collect();
+            // пишем, только когда есть что сказать: без перекрытий и с
+            // включённой опцией файл остаётся байт-в-байт прежним
+            let multi = v.iter().chain(a.iter()).any(|n| *n > 1);
+            (multi || !p.overlap_layers).then(|| crate::meta::KtLayers {
+                off: !p.overlap_layers,
+                video: if multi { v } else { Vec::new() },
+                audio: if multi { a } else { Vec::new() },
+            })
+        },
         morphers,
     };
     kt_set(&mut meta, &kt);
@@ -473,6 +561,45 @@ pub fn timeline_to_project(
     // дорожки: видео нумеруются с ВЕРХНЕЙ (последний видео-трек = lane 0)
     let video_total =
         tl.tracks.children.iter().filter(|c| track_kind(c) == Some(ClipKind::Video)).count() as u32;
+    let audio_total =
+        tl.tracks.children.iter().filter(|c| track_kind(c) == Some(ClipKind::Audio)).count() as u32;
+    // Карта слоёв (Р.28): перекрытые клипы одной НАШЕЙ дорожки лежат в
+    // соседних Track'ах — здесь они собираются обратно. Карта берётся из
+    // нашего конверта; если она не сходится с файлом (чужой редактор
+    // пересобрал треки), она игнорируется и дорожки читаются один к одному.
+    let layer_plan = |kind: ClipKind| -> Option<Vec<u32>> {
+        let l = kt.as_ref()?.layers.as_ref()?;
+        let counts = match kind {
+            ClipKind::Video => &l.video,
+            ClipKind::Audio => &l.audio,
+        };
+        let total = match kind {
+            ClipKind::Video => video_total,
+            ClipKind::Audio => audio_total,
+        };
+        if counts.is_empty() || counts.iter().sum::<u32>() != total {
+            return None;
+        }
+        // видео пишется от НИЖНЕЙ дорожки к верхней — карта разворачивается
+        let mut lanes: Vec<u32> = Vec::with_capacity(total as usize);
+        let order: Vec<u32> = match kind {
+            ClipKind::Video => (0..counts.len() as u32).rev().collect(),
+            ClipKind::Audio => (0..counts.len() as u32).collect(),
+        };
+        for lane in order {
+            for _ in 0..counts[lane as usize] {
+                lanes.push(lane);
+            }
+        }
+        Some(lanes)
+    };
+    let video_lanes_plan = layer_plan(ClipKind::Video);
+    let audio_lanes_plan = layer_plan(ClipKind::Audio);
+    if kt.as_ref().and_then(|k| k.layers.as_ref()).is_some()
+        && (video_lanes_plan.is_none() || audio_lanes_plan.is_none())
+    {
+        notices.push("layer map does not match the tracks — tracks kept separate".into());
+    }
     let mut seen_video = 0u32;
     let mut seen_audio = 0u32;
     let mut next_clip_id = 1u64;
@@ -495,12 +622,20 @@ pub fn timeline_to_project(
         let Composable::Track(track) = child else { unreachable!() };
         let lane = match kind {
             ClipKind::Video => {
+                let idx = seen_video;
                 seen_video += 1;
-                video_total - seen_video
+                match &video_lanes_plan {
+                    Some(plan) => plan[idx as usize],
+                    None => video_total - seen_video,
+                }
             }
             ClipKind::Audio => {
+                let idx = seen_audio;
                 seen_audio += 1;
-                seen_audio - 1
+                match &audio_lanes_plan {
+                    Some(plan) => plan[idx as usize],
+                    None => seen_audio - 1,
+                }
             }
         };
         let mut tx = TrackExtra {
@@ -696,6 +831,9 @@ pub fn timeline_to_project(
         }
         // число дорожек нашего проекта (пустые в файл не пишутся, Р.25);
         // normalize() ниже поднимет его, если клипы требуют больше
+        if let Some(l) = &kt.layers {
+            p.overlap_layers = !l.off;
+        }
         if let Some((v, a)) = kt.lanes {
             p.video_lanes = p.video_lanes.max(v);
             p.audio_lanes = p.audio_lanes.max(a);

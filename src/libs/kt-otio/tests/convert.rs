@@ -286,3 +286,60 @@ fn t154_clip_without_media_reference_survives() {
     assert_eq!(refs.len(), 3);
     assert!(refs.iter().all(|r| r.is_null()), "null-ссылка не должна превращаться в ExternalReference: {refs:?}");
 }
+
+/// Тест 165 (п.165 porting-notes, Р.28): дорожка с ПЕРЕСЛОЕНИЕМ уезжает в
+/// соседние Track'и и собирается обратно в одну. В OTIO позиция клипа — это
+/// порядок детей трека, поэтому иначе перекрытие развалило бы монтаж.
+#[test]
+fn t165_overlapping_lane_survives_layer_roundtrip() {
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "media/a.mp4".into() });
+    // три клипа одной дорожки: два перекрываются, третий встык
+    for (id, start, dur) in [(1u64, 0i64, 90_000i64), (2, 45_000, 90_000), (3, 200_000, 45_000)] {
+        p.clips.push(ClipEvent {
+            id: ClipId(id),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(start),
+            duration: Tick(dur),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+        });
+    }
+    p.normalize();
+    p.validate().expect("перекрытие законно при переслаивании");
+
+    let text = save_project(&p, &Retained::default(), None);
+    let doc = parse_document(&text).expect("наш вывод типизируется");
+    let tracks = doc
+        .tracks
+        .children
+        .iter()
+        .filter(|c| matches!(c, kt_otio::Composable::Track(_)))
+        .count();
+    assert_eq!(tracks, 2, "перекрытая дорожка разложилась на два трека");
+
+    let back = load_project(&text, None).expect("читается обратно").project;
+    assert_eq!(back.clips.len(), 3);
+    assert!(back.clips.iter().all(|c| c.lane == 0), "дорожка собрана обратно: {:?}", back.clips);
+    assert_eq!(back.clips, p.clips, "геометрия клипов не изменилась");
+    assert_eq!(back.video_lanes, p.video_lanes, "дорожек столько же");
+
+    // второй круг байт-в-байт (идемпотентность, расширение т.144)
+    let again = save_project(&back, &Retained::default(), None);
+    assert_eq!(again, text, "save→load→save стабильно");
+}
+
+/// Проект БЕЗ перекрытий пишется как раньше: карта слоёв не появляется.
+#[test]
+fn t165_plain_project_has_no_layer_map() {
+    let p = rich_project();
+    let text = save_project(&p, &Retained::default(), None);
+    assert!(!text.contains("\"layers\""), "без перекрытий карта слоёв не пишется");
+}

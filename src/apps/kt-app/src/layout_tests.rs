@@ -1955,6 +1955,8 @@ fn t139_move_plan_crossfade_and_clamp() {
         fx: vec![],
     };
     let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
+    p.overlap_layers = false;
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips = vec![clip(1, 0, 0, 90_000), clip(2, 0, 200_000, 90_000), clip(3, 0, 400_000, 90_000)];
     p.validate().unwrap();
@@ -2014,6 +2016,8 @@ fn t139_drag_overlap_creates_crossfade() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
+    // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
+    p.overlap_layers = false;
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
             p.clips.push(ClipEvent {
@@ -2177,6 +2181,101 @@ fn t140_transition_edge_and_body_drags() {
     assert!(r.top() > 50.0 && r.bottom() < 90.0, "полоса внутри строки дорожки");
 }
 
+/// Тест 163 (п.163 porting-notes, Р.28): с переслаиванием жест НИЧЕГО не
+/// режет. Требование пользователя дословно: «вот сколько было столько и
+/// должно остаться… НИЧЕГО НИГДЕ НЕ ДОЛЖНО ОТРАСТАТЬ/ОТРУБАТЬСЯ».
+#[test]
+fn t163_overlap_drag_changes_nothing_but_position() {
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        assert!(p.overlap_layers, "переслаивание включено по умолчанию");
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        // A/V-пара + одиночный видео-клип: проверяем и группы, и одиночек
+        for (n, kind, start, group) in [
+            (1u64, ClipKind::Video, 0i64, Some(GroupId(1))),
+            (2, ClipKind::Audio, 0, Some(GroupId(1))),
+            (3, ClipKind::Video, 200_000, None),
+        ] {
+            p.clips.push(ClipEvent {
+                id: ClipId(n),
+                link_group: group,
+                kind,
+                lane: 0,
+                start: Tick(start),
+                duration: Tick(90_000),
+                source_in: Tick(10_000),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx_bypass: vec![],
+                fx: vec![],
+            });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let before: Vec<ClipEvent> = h.state().model.project().clips.clone();
+
+    // наезжаем третьим клипом на первый (перекрытие 40 000 тиков)
+    let from = g.tick_to_x(200_000 + 45_000);
+    let to = g.tick_to_x(50_000 + 45_000);
+    h.hover_at(egui::pos2(from, y));
+    h.step();
+    h.drag_at(egui::pos2(from, y));
+    h.step();
+    h.hover_at(egui::pos2(from - 8.0, y));
+    h.step();
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+
+    let p = h.state().model.project().clone();
+    assert!(p.transitions.is_empty(), "перекрытие звучит само — переход не заводится");
+    for c in &p.clips {
+        let was = before.iter().find(|x| x.id == c.id).unwrap();
+        assert_eq!(c.duration, was.duration, "длительность {:?} не менялась", c.id);
+        assert_eq!(c.source_in, was.source_in, "точка входа {:?} не менялась", c.id);
+        if c.id != ClipId(3) {
+            assert_eq!(c.start, was.start, "чужой клип {:?} не двигался", c.id);
+        }
+    }
+    let moved = p.clips.iter().find(|c| c.id == ClipId(3)).unwrap();
+    assert!((moved.start.0 - 50_000).abs() <= 1_000, "клип встал куда тянули: {moved:?}");
+    p.validate().expect("перекрытие законно");
+
+    // растаскиваем обратно — снова ничего не режется
+    let from = g.tick_to_x(moved.start.0 + 45_000);
+    let to = g.tick_to_x(300_000 + 45_000);
+    h.hover_at(egui::pos2(from, y));
+    h.step();
+    h.drag_at(egui::pos2(from, y));
+    h.step();
+    h.hover_at(egui::pos2(from + 8.0, y));
+    h.step();
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+    let p = h.state().model.project().clone();
+    for c in &p.clips {
+        let was = before.iter().find(|x| x.id == c.id).unwrap();
+        assert_eq!(c.duration, was.duration, "после растаскивания {:?} цел", c.id);
+        assert_eq!(c.source_in, was.source_in, "после растаскивания in-point {:?} цел", c.id);
+    }
+}
+
 /// Тест 160 (п.160 porting-notes, Р.26): наехал — растащил — материал
 /// вернулся. Жалоба пользователя: «в sony vegas если растащить
 /// перекрывающиеся события — остаётся то, что перекрывалось, без обрезки».
@@ -2189,6 +2288,8 @@ fn t160_pulling_apart_restores_trimmed_material() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
+    // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
+    p.overlap_layers = false;
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
             p.clips.push(ClipEvent {

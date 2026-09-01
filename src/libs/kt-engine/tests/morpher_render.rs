@@ -8,6 +8,14 @@ use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, Tick};
 
+/// п.8.1 (Р.28): рендер с ПОЛНОСТЬЮ доступным источником обязан идти без
+/// единого underrun'а — иначе рендер спрашивает материал за пределами
+/// собственного окна, а на живом кэше это тишина и растущий счётчик.
+#[track_caller]
+fn no_underruns(s: kt_engine::RenderStats) {
+    assert_eq!(s.underruns, 0, "underrun при полностью доступном источнике");
+}
+
 const CH: usize = AUDIO_CHANNELS;
 const LEN: Tick = Tick(90_000 * 2);
 
@@ -48,7 +56,7 @@ fn render(p: &Project) -> Vec<f32> {
     let r = AudioRenderer::new(p);
     let frames = LEN.to_audio_frames() as usize;
     let mut out = vec![0f32; frames * CH];
-    r.render_frames(&mut direct(), 0, &mut out);
+    no_underruns(r.render_frames(&mut direct(), 0, &mut out));
     out
 }
 

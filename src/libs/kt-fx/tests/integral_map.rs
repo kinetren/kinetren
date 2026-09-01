@@ -22,7 +22,7 @@ fn clip_processor_follows_integral_map() {
     let len = 20 * 48_000i64;
     let mut p = ClipProcessor::new(&fx, 0, len);
     // источник = ramp (значение = номер кадра * 1e-6)
-    let mut pull = |f0: i64, buf: &mut [f32]| {
+    let mut pull = |_k: kt_fx::PullKind, f0: i64, buf: &mut [f32]| {
         for (i, s) in buf.iter_mut().enumerate() {
             *s = (f0 + (i / CH) as i64) as f32 * 1e-6;
         }
@@ -61,7 +61,7 @@ fn clip_processor_single_big_read_matches() {
     }];
     let len = 20 * 48_000i64;
     let mut p = ClipProcessor::new(&fx, 0, len);
-    let mut pull = |f0: i64, buf: &mut [f32]| {
+    let mut pull = |_k: kt_fx::PullKind, f0: i64, buf: &mut [f32]| {
         for (i, s) in buf.iter_mut().enumerate() {
             *s = (f0 + (i / CH) as i64) as f32 * 1e-6;
         }

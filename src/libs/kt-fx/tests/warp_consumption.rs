@@ -11,18 +11,18 @@ fn warp_consumption_tracks_rate_changes() {
     for &r in &rates {
         w.set_rate(r);
         // прогрев ramp'а: один чанк на переход
-        let mut src = |_f: i64, buf: &mut [f32]| {
+        let mut src = |_k: kt_fx::PullKind, _f: i64, buf: &mut [f32]| {
             buf.fill(0.0);
             true
         };
-        w.produce(&mut out, &mut src);
+        w.produce(kt_fx::PullKind::Output, &mut out, &mut src);
         let before = w.src_cursor();
         for _ in 0..46 {
-            let mut src = |_f: i64, buf: &mut [f32]| {
+            let mut src = |_k: kt_fx::PullKind, _f: i64, buf: &mut [f32]| {
                 buf.fill(0.0);
                 true
             };
-            w.produce(&mut out, &mut src);
+            w.produce(kt_fx::PullKind::Output, &mut out, &mut src);
         }
         let consumed = w.src_cursor() - before;
         let expect = (46.0 * 1024.0 * r) as i64;

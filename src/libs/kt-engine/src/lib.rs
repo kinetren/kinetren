@@ -22,7 +22,9 @@ pub use export::{
 };
 pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
 pub use fxstore::FxStateStore;
-pub use player::{AudioShared, Player, callback_step, reverse_frames, varispeed_fill};
+pub use player::{
+    AudioShared, Player, callback_step, lookahead_windows, reverse_frames, varispeed_fill,
+};
 pub use prefetch::prefetch_audio_pass;
 pub use transport::Transport;
 pub use video::{VideoRenderer, video_cache_idx};

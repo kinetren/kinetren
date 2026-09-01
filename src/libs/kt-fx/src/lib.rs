@@ -23,6 +23,16 @@ pub const CH: usize = AUDIO_CHANNELS;
 /// чтобы состояние (реверб, ресемплер) было прогрето детерминированно.
 pub const MIN_PREROLL_FRAMES: i64 = (AUDIO_SAMPLE_RATE as i64) / 10;
 
+/// Роль обращения к источнику. `Warmup` — пре-ролл после seek: эти кадры
+/// рендерятся в мусор и на выход не идут, поэтому их промах кэша НЕ
+/// underrun. Раньше он им был, и счётчик рос на каждом старте
+/// воспроизведения и на каждом завороте лупа (п.166).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullKind {
+    Output,
+    Warmup,
+}
+
 pub mod video;
 
 /// Сглаженный параметр: one-pole к цели, ~20 мс. Не «телепортируется»
@@ -261,12 +271,17 @@ impl Warp {
     /// Выдать `out.len()/CH` кадров, дотягивая источник через `pull`.
     /// `pull(frame, buf)` заполняет interleaved-кадры источника, начиная с
     /// `frame`; false = не удалось (underrun, будет тишина).
-    pub fn produce(&mut self, out: &mut [f32], pull: &mut dyn FnMut(i64, &mut [f32]) -> bool) {
+    pub fn produce(
+        &mut self,
+        kind: PullKind,
+        out: &mut [f32],
+        pull: &mut dyn FnMut(PullKind, i64, &mut [f32]) -> bool,
+    ) {
         let need_frames = out.len() / CH;
         while self.ready.len() < need_frames * CH {
             let in_frames = self.rs.input_frames_next();
             let mut input = vec![0f32; in_frames * CH];
-            if !pull(self.src_cursor, &mut input) {
+            if !pull(kind, self.src_cursor, &mut input) {
                 self.underruns += 1;
                 input.fill(0.0);
             }
@@ -285,6 +300,15 @@ impl Warp {
         for s in out.iter_mut() {
             *s = self.ready.pop_front().unwrap();
         }
+    }
+
+    /// Переставить источник БЕЗ пересоздания ресемплера — шов заворота
+    /// (см. `ClipProcessor::seam`): внутреннее состояние sinc'а живёт
+    /// дальше, выбрасывается только произведённый, но не отданный выход
+    /// (он посчитан от прежней позиции источника).
+    pub fn seek_source(&mut self, src: i64) {
+        self.src_cursor = src;
+        self.ready.clear();
     }
 
     pub fn underruns(&self) -> u64 {
@@ -684,15 +708,25 @@ impl ClipProcessor {
         &mut self,
         local: i64,
         out: &mut [f32],
-        pull: &mut dyn FnMut(i64, &mut [f32]) -> bool,
+        pull: &mut dyn FnMut(PullKind, i64, &mut [f32]) -> bool,
     ) -> u64 {
         if self.next_local != local {
-            // Разрыв непрерывности (seek/первое чтение): reset + pre-roll,
-            // чтобы реверб и ресемплер были прогреты детерминированно.
-            self.hard_seek(local, pull);
+            if self.next_local == i64::MIN {
+                // Холодный старт или seek (`reset`): reset + pre-roll,
+                // чтобы реверб и ресемплер были прогреты детерминированно.
+                self.hard_seek(local, pull);
+            } else {
+                // ШОВ: позиция прыгнула, а ВЫХОД непрерывен (заворот
+                // loop-региона, сдвиг клипа мышью при игре). Реверб
+                // дозванивает через шов — как в v1; пре-ролла нет, греть
+                // нечего. Это же снимает пересоздание sinc-ресемплера на
+                // каждом круге (при регионе короче бёрста их было
+                // несколько за один callback — «шумит компьютер», п.166).
+                self.seam(local);
+            }
         }
         let before = self.warp.as_ref().map(|w| w.underruns()).unwrap_or(0);
-        self.produce(local, out, pull);
+        self.produce(PullKind::Output, local, out, pull);
         self.next_local = local + (out.len() / CH) as i64;
         self.warp.as_ref().map(|w| w.underruns()).unwrap_or(0) - before
     }
@@ -704,7 +738,27 @@ impl ClipProcessor {
         (self.clip_len as f64 * source_progress(self.rate, &self.automation, t)).round() as i64
     }
 
-    fn hard_seek(&mut self, local: i64, pull: &mut dyn FnMut(i64, &mut [f32]) -> bool) {
+    /// Разрыв ПОЗИЦИИ при непрерывном ВЫХОДЕ: источник переставляется,
+    /// состояние FX живёт. Ни reset'а, ни пре-ролла (см. `read`).
+    fn seam(&mut self, local: i64) {
+        let src_start = self.src_in + self.source_offset(local);
+        if self.has_warp() {
+            let t = local as f64 / self.clip_len as f64;
+            let r = rate_at(self.rate, &self.automation, t);
+            match &mut self.warp {
+                Some(w) => {
+                    w.set_rate(r);
+                    w.seek_source(src_start);
+                }
+                None => self.warp = Some(Warp::new(r, src_start)),
+            }
+        } else {
+            self.warp = None;
+        }
+        self.plain_cursor = src_start;
+    }
+
+    fn hard_seek(&mut self, local: i64, pull: &mut dyn FnMut(PullKind, i64, &mut [f32]) -> bool) {
         if let Some(r) = &mut self.reverb {
             r.reset();
         }
@@ -728,7 +782,7 @@ impl ClipProcessor {
         let mut done = 0i64;
         while done < preroll {
             let n = (preroll - done).min(1024) as usize;
-            self.produce(start + done, &mut scratch[..n * CH], pull);
+            self.produce(PullKind::Warmup, start + done, &mut scratch[..n * CH], pull);
             done += n as i64;
         }
     }
@@ -744,9 +798,10 @@ impl ClipProcessor {
 
     fn produce(
         &mut self,
+        kind: PullKind,
         local: i64,
         out: &mut [f32],
-        pull: &mut dyn FnMut(i64, &mut [f32]) -> bool,
+        pull: &mut dyn FnMut(PullKind, i64, &mut [f32]) -> bool,
     ) {
         let total = out.len() / CH;
         let mut done = 0usize;
@@ -769,9 +824,9 @@ impl ClipProcessor {
             }
             let sub = &mut out[done * CH..(done + n) * CH];
             match &mut self.warp {
-                Some(w) => w.produce(sub, pull),
+                Some(w) => w.produce(kind, sub, pull),
                 None => {
-                    if !pull(self.plain_cursor, sub) {
+                    if !pull(kind, self.plain_cursor, sub) {
                         sub.fill(0.0);
                     }
                     self.plain_cursor += n as i64;

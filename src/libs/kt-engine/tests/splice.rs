@@ -8,6 +8,14 @@ use kt_model::ops::{copy_region_block, paste_block};
 use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, Tick};
 
+/// п.8.1 (Р.28): рендер с ПОЛНОСТЬЮ доступным источником обязан идти без
+/// единого underrun'а — иначе рендер спрашивает материал за пределами
+/// собственного окна, а на живом кэше это тишина и растущий счётчик.
+#[track_caller]
+fn no_underruns(s: kt_engine::RenderStats) {
+    assert_eq!(s.underruns, 0, "underrun при полностью доступном источнике");
+}
+
 const CH: usize = AUDIO_CHANNELS;
 
 fn direct() -> DirectFetcher {
@@ -54,9 +62,9 @@ fn t19_copy_region_fragment_paste_renders_identically() {
     let renderer = AudioRenderer::new(&p2);
     let frames = region.end.to_audio_frames() - region.start.to_audio_frames();
     let mut orig = vec![0f32; frames as usize * CH];
-    renderer.render_frames(&mut direct(), region.start.to_audio_frames(), &mut orig);
+    no_underruns(renderer.render_frames(&mut direct(), region.start.to_audio_frames(), &mut orig));
     let mut pasted = vec![0f32; frames as usize * CH];
-    renderer.render_frames(&mut direct(), paste_at.to_audio_frames(), &mut pasted);
+    no_underruns(renderer.render_frames(&mut direct(), paste_at.to_audio_frames(), &mut pasted));
 
     assert_eq!(orig, pasted, "вставленный кусок должен звучать sample-exact как оригинал");
     assert!(orig.iter().any(|s| *s != 0.0), "рендер не должен быть тишиной");
@@ -103,11 +111,11 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
     let renderer = AudioRenderer::new(&p2);
     let seg = 48_000usize; // 1 c каждый кусок
     let mut spliced = vec![0f32; seg * 2 * CH];
-    renderer.render_frames(&mut direct(), at1.to_audio_frames(), &mut spliced);
+    no_underruns(renderer.render_frames(&mut direct(), at1.to_audio_frames(), &mut spliced));
 
     let mut expected = vec![0f32; seg * 2 * CH];
-    renderer.render_frames(&mut direct(), r1.start.to_audio_frames(), &mut expected[..seg * CH]);
-    renderer.render_frames(&mut direct(), r2.start.to_audio_frames(), &mut expected[seg * CH..]);
+    no_underruns(renderer.render_frames(&mut direct(), r1.start.to_audio_frames(), &mut expected[..seg * CH]));
+    no_underruns(renderer.render_frames(&mut direct(), r2.start.to_audio_frames(), &mut expected[seg * CH..]));
 
     assert_eq!(spliced, expected, "склейка кусков должна быть sample-exact без швов");
 }

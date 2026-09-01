@@ -14,6 +14,14 @@ use kt_model::SlowedKeyframe;
 use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 
+/// п.8.1 (Р.28): рендер с ПОЛНОСТЬЮ доступным источником обязан идти без
+/// единого underrun'а — иначе рендер спрашивает материал за пределами
+/// собственного окна, а на живом кэше это тишина и растущий счётчик.
+#[track_caller]
+fn no_underruns(s: kt_engine::RenderStats) {
+    assert_eq!(s.underruns, 0, "underrun при полностью доступном источнике");
+}
+
 const CH: usize = AUDIO_CHANNELS;
 
 fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Project {
@@ -114,7 +122,7 @@ fn t4_warp_consumes_source_at_rate() {
     let mut store = FxStateStore::new();
     r.sync_fx(&mut store);
     let mut out = vec![0f32; dur as usize * CH];
-    r.render_frames_with(&mut f, &mut store, 0, &mut out);
+    no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
     // последний выходной сэмпл ≈ значение ramp на кадре dur*0.5 источника
     let got = out[(dur as usize - 1) * CH];
     let expect = SyntheticSource::sample_at(AudioPattern::Ramp, dur / 2, 0);
@@ -146,13 +154,13 @@ fn t5_param_step_does_not_click() {
     let p1 = mk(0.1);
     let r1 = AudioRenderer::new(&p1);
     r1.sync_fx(&mut store);
-    r1.render_frames_with(&mut f, &mut store, 0, &mut out[..half * CH]);
+    no_underruns(r1.render_frames_with(&mut f, &mut store, 0, &mut out[..half * CH]));
 
     // ступенька: mix 0.9 (та же структура цепочки → тот же state, сглаживание)
     let p2 = mk(0.9);
     let r2 = AudioRenderer::new(&p2);
     r2.sync_fx(&mut store);
-    r2.render_frames_with(&mut f, &mut store, half as i64, &mut out[half * CH..]);
+    no_underruns(r2.render_frames_with(&mut f, &mut store, half as i64, &mut out[half * CH..]));
 
     // максимальный скачок сэмпл-к-сэмплу вокруг ступеньки не больше, чем
     // естественный наклон синуса с запасом (сглаживание ~20 мс)
@@ -183,7 +191,7 @@ fn t6_reverb_tail_rings_past_clip_end_and_decays() {
     assert!(tail > 0);
     let total = (dur + tail) as usize;
     let mut out = vec![0f32; total * CH];
-    r.render_frames_with(&mut f, &mut store, 0, &mut out);
+    no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
 
     // энергия сразу за границей клипа есть (хвост дозванивает)
     let after: f32 = out[dur as usize * CH..(dur as usize + 4800) * CH]
@@ -211,7 +219,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     r1.sync_fx(&mut store_a);
     let mut fa = direct(AudioPattern::Sine { hz: 330.0 });
     let mut full = vec![0f32; dur as usize * CH];
-    r1.render_frames_with(&mut fa, &mut store_a, 0, &mut full);
+    no_underruns(r1.render_frames_with(&mut fa, &mut store_a, 0, &mut full));
 
     // тот же рендер, но посреди — «правка»: добавлен посторонний клип,
     // граф пересобран, store тот же
@@ -220,7 +228,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     let mut fb = direct(AudioPattern::Sine { hz: 330.0 });
     let half = dur as usize / 2;
     let mut split = vec![0f32; dur as usize * CH];
-    r1.render_frames_with(&mut fb, &mut store_b, 0, &mut split[..half * CH]);
+    no_underruns(r1.render_frames_with(&mut fb, &mut store_b, 0, &mut split[..half * CH]));
 
     let mut p2 = p1.clone();
     p2.media.push(MediaRef { id: MediaId(2), path: "synth:silence".into() });
@@ -240,7 +248,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     });
     let r2 = AudioRenderer::new(&p2);
     r2.sync_fx(&mut store_b); // state клипа 1 обязан пережить пересборку
-    r2.render_frames_with(&mut fb, &mut store_b, half as i64, &mut split[half * CH..]);
+    no_underruns(r2.render_frames_with(&mut fb, &mut store_b, half as i64, &mut split[half * CH..]));
 
     assert_eq!(full, split, "пересборка графа не должна менять звук (state сохранён)");
 }
@@ -358,7 +366,7 @@ fn t4_automation_consumes_source_by_integral() {
     let mut store = FxStateStore::new();
     r.sync_fx(&mut store);
     let mut out = vec![0f32; dur as usize * CH];
-    r.render_frames_with(&mut f, &mut store, 0, &mut out);
+    no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
 
     // пробуем не самый край (последние ~64 сэмпла легально затухают:
     // sinc-ресемплер видит нули за окном источника), а точку чуть раньше

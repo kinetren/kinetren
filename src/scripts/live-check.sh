@@ -30,9 +30,12 @@ if [ ! -x "$root/target/debug/kt-app" ]; then
     exit 2
 fi
 
+mkdir -p "$out"
+
 want=("$@")
 if [ ${#want[@]} -eq 0 ]; then
-    mapfile -t want < <(cd "$scenarios_dir" && ls *.py | sed 's/\.py$//')
+    # kt_live.py — общий каркас, а не сценарий
+    mapfile -t want < <(cd "$scenarios_dir" && ls *.py | grep -v '^kt_live\.py$' | sed 's/\.py$//')
 fi
 
 pids=()
@@ -62,7 +65,6 @@ else
     echo "openbox не найден — окно будет своего размера (maximize не проверить)" >&2
 fi
 
-mkdir -p "$out"
 fail=0
 for name in "${want[@]}"; do
     script="$scenarios_dir/$name.py"

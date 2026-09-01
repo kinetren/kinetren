@@ -13,6 +13,14 @@ use kt_model::*;
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick};
 use std::sync::Arc;
 
+/// п.8.1 (Р.28): рендер с ПОЛНОСТЬЮ доступным источником обязан идти без
+/// единого underrun'а — иначе рендер спрашивает материал за пределами
+/// собственного окна, а на живом кэше это тишина и растущий счётчик.
+#[track_caller]
+fn no_underruns(s: kt_engine::RenderStats) {
+    assert_eq!(s.underruns, 0, "underrun при полностью доступном источнике");
+}
+
 const CH: usize = AUDIO_CHANNELS;
 
 fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
@@ -94,7 +102,7 @@ fn t1_second_clip_reads_its_own_source_window() {
     let mut f = direct(&[(1, AudioPattern::Ramp)]);
     let total = (2 * d) as usize;
     let mut out = vec![0f32; total * CH];
-    r.render_frames(&mut f, 0, &mut out);
+    no_underruns(r.render_frames(&mut f, 0, &mut out));
     for s in 0..d {
         assert_eq!(
             out[(d + s) as usize * CH],
@@ -162,7 +170,7 @@ fn t2_different_lanes_sum_without_weights() {
     let mut f =
         direct(&[(1, AudioPattern::Dc { value: 0.25 }), (2, AudioPattern::Dc { value: 0.5 })]);
     let mut out = vec![0f32; d as usize * CH];
-    r.render_frames(&mut f, 0, &mut out);
+    no_underruns(r.render_frames(&mut f, 0, &mut out));
     assert_eq!(out[0], 0.75);
 }
 
@@ -177,7 +185,7 @@ fn t3_gain_is_applied_exactly() {
     let r = AudioRenderer::new(&p);
     let mut f = direct(&[(1, AudioPattern::Dc { value: 0.8 })]);
     let mut out = vec![0f32; d as usize * CH];
-    r.render_frames(&mut f, 0, &mut out);
+    no_underruns(r.render_frames(&mut f, 0, &mut out));
     assert_eq!(out[0], 0.8 * db_to_linear(-6.0));
 }
 
@@ -207,16 +215,16 @@ fn t7_render_is_deterministic_regardless_of_history() {
     // холодный рендер
     let mut f1 = direct(&[(1, AudioPattern::Sine { hz: 440.0 }), (2, AudioPattern::Ramp)]);
     let mut cold = vec![0f32; (target.end - target.start) as usize * CH];
-    r.render_frames(&mut f1, target.start, &mut cold);
+    no_underruns(r.render_frames(&mut f1, target.start, &mut cold));
 
     // рендер после «скачков» по таймлайну тем же фетчером
     let mut f2 = direct(&[(1, AudioPattern::Sine { hz: 440.0 }), (2, AudioPattern::Ramp)]);
     let mut scratch = vec![0f32; 512 * CH];
     for pos in [7 * d / 2, 0, 3 * d / 2, d, 42] {
-        r.render_frames(&mut f2, pos, &mut scratch);
+        no_underruns(r.render_frames(&mut f2, pos, &mut scratch));
     }
     let mut warm = vec![0f32; cold.len()];
-    r.render_frames(&mut f2, target.start, &mut warm);
+    no_underruns(r.render_frames(&mut f2, target.start, &mut warm));
 
     assert_eq!(cold, warm, "история обращений не должна влиять на результат");
 }
@@ -299,7 +307,7 @@ fn t14_loop_wrap_is_continuous_and_warm_cache_has_no_misses() {
     for o in 0..total as i64 {
         let tl = region.start + (o % region_len);
         let mut one = [0f32; 2];
-        r.render_frames(&mut f, tl, &mut one);
+        no_underruns(r.render_frames(&mut f, tl, &mut one));
         assert_eq!(looped[o as usize * CH], one[0], "wrap разорвал поток на кадре {o}");
     }
 
@@ -390,7 +398,10 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
         Tick::from_audio_frames(region_f.end),
     )));
     player.seek(Tick::from_audio_frames(region_f.start));
-    // ждём прогрева кэша prefetch-потоком (иначе первые чанки — underrun-тишина)
+    // ждём прогрева кэша prefetch-потоком (иначе первые чанки — underrun-тишина).
+    // Ждём РОВНО бёрсты региона: с п.167 префетч за конец региона не заходит
+    // (там ждать нечего — воспроизведение завернётся), запас «+4 бёрста»
+    // за концом теперь не прогревается никогда.
     let b0 = region_f.start.div_euclid(1024);
     let b1 = (region_f.end - 1).div_euclid(1024) + 1;
     let warm_start = std::time::Instant::now();
@@ -398,9 +409,9 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
         let cov = player.cache.coverage(
             kt_engine::source_id(MediaId(1)),
             kt_cache::BurstKind::Audio,
-            b0..b1 + 4,
+            b0..b1,
         );
-        if cov.len() == 1 && cov[0] == (b0..b1 + 4) {
+        if cov.len() == 1 && cov[0] == (b0..b1) {
             break;
         }
         assert!(warm_start.elapsed().as_secs() < 20, "prefetch не прогрел регион: {cov:?}");
@@ -435,7 +446,7 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
     r.sync_fx(&mut store);
     let mut f = direct(&[(1, AudioPattern::Ramp)]);
     let mut expect = vec![0f32; got.len()];
-    r.render_looped_with(&mut f, &mut store, region_f.clone(), region_f.start, &mut expect);
+    no_underruns(r.render_looped_with(&mut f, &mut store, region_f.clone(), region_f.start, &mut expect));
     if let Some(i) = (0..got.len()).find(|&i| got[i] != expect[i]) {
         panic!(
             "расхождение с эталоном на сэмпле {} (кадр {}): got {:?} expect {:?}",
@@ -474,4 +485,81 @@ fn t84_master_gain_is_clamped() {
     // нормальные значения проходят как есть
     player.set_master_gain(0.5);
     assert!((player.master_gain() - 0.5).abs() < 1e-6);
+}
+
+// ---- тест 162: переслаивание клипов (Р.28) -----------------------------------
+
+/// Перекрытие клипов одной дорожки снова законно и звучит как в v1:
+/// equal-power на двоих, 1/N при трёх и более. Требование пользователя:
+/// «опция проекта, которая позволит переслаивать несколько событий одной
+/// дорожки одновременно… включи её по умолчанию».
+#[test]
+fn t162_overlap_mixes_like_v1() {
+    let media = &[(1u64, AudioPattern::Ramp)];
+    // наезд [1000, 2000): equal-power по зоне наезда
+    let p = project_with_audio_clips(vec![
+        audio_clip(1, 0, 0, 2000, 0, 1),
+        audio_clip(2, 0, 1000, 2000, 0, 1),
+    ]);
+    assert!(p.overlap_layers, "переслаивание включено по умолчанию");
+
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(media);
+    let mut out = vec![0f32; 3000 * CH];
+    let stats = r.render_frames(&mut f, 0, &mut out);
+    assert_eq!(stats.underruns, 0);
+
+    let solo = project_with_audio_clips(vec![audio_clip(1, 0, 0, 2000, 0, 1)]);
+    let mut dry = vec![0f32; 3000 * CH];
+    no_underruns(AudioRenderer::new(&solo).render_frames(&mut direct(media), 0, &mut dry));
+
+    for (f_idx, t) in [(1000usize, 0.0f64), (1500, 0.5), (1999, 0.999)] {
+        let w_a = ((1.0 - t).max(0.0)).sqrt() as f32;
+        let w_b = (t.max(0.0)).sqrt() as f32;
+        // ранний играет свой материал, поздний — свой (source_in 0 у обоих)
+        let expect = dry[f_idx * CH] * w_a + dry[(f_idx - 1000) * CH] * w_b;
+        assert!(
+            (out[f_idx * CH] - expect).abs() < 1e-4,
+            "кадр {f_idx}: equal-power микс, ожидалось {expect}, вышло {}",
+            out[f_idx * CH]
+        );
+    }
+
+    // три клипа в одной точке — правило 1/N (v1)
+    let p3 = project_with_audio_clips(vec![
+        audio_clip(1, 0, 0, 3000, 0, 1),
+        audio_clip(2, 0, 0, 3000, 0, 1),
+        audio_clip(3, 0, 0, 3000, 0, 1),
+    ]);
+    let mut out3 = vec![0f32; 3000 * CH];
+    no_underruns(AudioRenderer::new(&p3).render_frames(&mut direct(media), 0, &mut out3));
+    let mut single = vec![0f32; 3000 * CH];
+    AudioRenderer::new(&project_with_audio_clips(vec![audio_clip(1, 0, 0, 3000, 0, 1)]))
+        .render_frames(&mut direct(media), 0, &mut single);
+    for f_idx in [10usize, 1500, 2900] {
+        // три источника с весом 1/3 дают исходный уровень
+        assert!(
+            (out3[f_idx * CH] - single[f_idx * CH]).abs() < 1e-4,
+            "кадр {f_idx}: правило 1/N, ожидалось {}, вышло {}",
+            single[f_idx * CH],
+            out3[f_idx * CH]
+        );
+    }
+}
+
+/// С выключённой опцией перекрытия по-прежнему незаконны (режим Р.24).
+#[test]
+fn t162_overlap_rejected_when_option_off() {
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+    });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.clips = vec![audio_clip(1, 0, 0, 2000, 0, 1), audio_clip(2, 0, 1000, 2000, 0, 1)];
+    p.overlap_layers = false;
+    assert!(matches!(p.validate(), Err(ProjectError::ClipOverlap(..))));
+    p.overlap_layers = true;
+    p.validate().expect("с переслаиванием — законно");
 }

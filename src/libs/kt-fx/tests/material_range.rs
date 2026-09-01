@@ -16,7 +16,7 @@ const CH: usize = 2;
 
 /// Источник-«линейка»: значение кадра = его АБСОЛЮТНЫЙ номер (определён и
 /// для отрицательных — материал левее source_in существует).
-fn ramp_pull(src: i64, buf: &mut [f32]) -> bool {
+fn ramp_pull(_kind: kt_fx::PullKind, src: i64, buf: &mut [f32]) -> bool {
     for (i, frame) in buf.chunks_mut(CH).enumerate() {
         let v = (src + i as i64) as f32 * 1e-6;
         frame.fill(v);

@@ -13,6 +13,14 @@ use kt_model::*;
 use kt_time::{AUDIO_BURST_FRAMES, AUDIO_CHANNELS, Tick, TickRange};
 use std::sync::atomic::Ordering;
 
+/// п.8.1 (Р.28): рендер с ПОЛНОСТЬЮ доступным источником обязан идти без
+/// единого underrun'а — иначе рендер спрашивает материал за пределами
+/// собственного окна, а на живом кэше это тишина и растущий счётчик.
+#[track_caller]
+fn no_underruns(s: kt_engine::RenderStats) {
+    assert_eq!(s.underruns, 0, "underrun при полностью доступном источнике");
+}
+
 const CH: usize = AUDIO_CHANNELS;
 const RS: i64 = 48_000 + 696; // регион не по границе burst'а (как t14)
 const RE: i64 = 2 * 48_000 + 264;
@@ -194,7 +202,7 @@ fn t132_seek_right_of_region_disarms_loop_until_next_jump() {
     r.sync_fx(&mut store);
     let mut f = direct(&[(1, AudioPattern::Ramp)]);
     let mut expect = vec![0f32; got.len()];
-    r.render_frames_with(&mut f, &mut store, target, &mut expect);
+    no_underruns(r.render_frames_with(&mut f, &mut store, target, &mut expect));
     assert_stream_eq(&got, &expect, "фаза B (линейный рендер правее региона)");
 
     // Фаза C: seek внутрь региона — луп снова вооружён.
@@ -209,7 +217,7 @@ fn t132_seek_right_of_region_disarms_loop_until_next_jump() {
     r.sync_fx(&mut store_c);
     let mut fc = direct(&[(1, AudioPattern::Ramp)]);
     let mut expect_c = vec![0f32; got_c.len()];
-    r.render_looped_with(&mut fc, &mut store_c, RS..RE, target_c, &mut expect_c);
+    no_underruns(r.render_looped_with(&mut fc, &mut store_c, RS..RE, target_c, &mut expect_c));
     assert_stream_eq(&got_c, &expect_c, "фаза C (луп после re-arm)");
 
     // Фаза D: цель ровно на конце региона — считается внутри, лупится.
@@ -223,7 +231,7 @@ fn t132_seek_right_of_region_disarms_loop_until_next_jump() {
     r.sync_fx(&mut store_d);
     let mut fd = direct(&[(1, AudioPattern::Ramp)]);
     let mut expect_d = vec![0f32; got_d.len()];
-    r.render_looped_with(&mut fd, &mut store_d, RS..RE, RE, &mut expect_d);
+    no_underruns(r.render_looped_with(&mut fd, &mut store_d, RS..RE, RE, &mut expect_d));
     assert_stream_eq(&got_d, &expect_d, "фаза D (инклюзивная граница)");
     player.pause();
 }
@@ -238,9 +246,9 @@ fn reverse_reference(r: &AudioRenderer, from: i64, frames: usize, looped: bool) 
     while out.len() < frames * CH {
         let start = head - AUDIO_BURST_FRAMES as i64;
         if looped && head <= RE {
-            r.render_looped_raw(&mut f, RS..RE, start, &mut block);
+            no_underruns(r.render_looped_raw(&mut f, RS..RE, start, &mut block));
         } else {
-            r.render_frames_raw(&mut f, start, &mut block);
+            no_underruns(r.render_frames_raw(&mut f, start, &mut block));
         }
         reverse_frames(&mut block);
         out.extend_from_slice(&block);

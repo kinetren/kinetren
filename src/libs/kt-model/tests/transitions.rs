@@ -121,13 +121,16 @@ fn t135_validation_rejects_bad_transitions() {
     p.transitions.push(tr(7, 1, 3, 900, 900));
     assert!(matches!(p.validate(), Err(ProjectError::TransitionNotAtJoint(TransitionId(7)))));
 
-    // Инвариант этапа 6 (реш. 8 Р.24, замена смыслу снесённого t2-1/N):
-    // перекрытие клипов одной дорожки БОЛЬШЕ НЕ ЗАКОННО — и в validate(),
-    // и через жёсткую проверку apply_batch
+    // Инвариант этапа 6 (реш. 8 Р.24) действует, когда переслаивание
+    // ВЫКЛЮЧЕНО (Р.28): тогда перекрытие клипов одной дорожки незаконно — и в
+    // validate(), и через жёсткую проверку apply_batch
     let mut p = base_project();
+    p.overlap_layers = false;
     p.clips[1].start = Tick(40_000); // наезд на клип 1
     assert!(matches!(p.validate(), Err(ProjectError::ClipOverlap(ClipId(1), ClipId(2)))));
-    let mut m = TimelineModel::new(base_project());
+    let mut base = base_project();
+    base.overlap_layers = false;
+    let mut m = TimelineModel::new(base);
     assert!(matches!(
         m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(40_000), new_lane: 0 }),
         Err(CommandError::InvalidLayout(ProjectError::ClipOverlap(_, _)))

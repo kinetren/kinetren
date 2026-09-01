@@ -151,12 +151,24 @@ pub struct Project {
     /// без секции читаются как None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<UiState>,
+    /// Переслаивание клипов на одной дорожке (Р.28, решение пользователя:
+    /// «опция проекта, которая позволит переслаивать несколько событий одной
+    /// дорожки одновременно… включи её по умолчанию»). Включено — перекрытия
+    /// законны и звучат как в v1 (equal-power на двоих, 1/N при 3+), наезд
+    /// драгом НИЧЕГО не режет. Выключено — прежний инвариант Р.24: клипы
+    /// одной (kind, lane) не перекрываются.
+    #[serde(default = "default_true")]
+    pub overlap_layers: bool,
     /// Монтажная длина таймлайна, когда она БОЛЬШЕ материала: чужие файлы
     /// задают её хвостовым Gap'ом после последнего клипа (решение
     /// пользователя Р.25 — «хранить длину, рендерить до конца», иначе
     /// сохранение молча укорачивало чужой монтаж). None — длина по клипам.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline_end: Option<Tick>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn is_zero_u32(v: &u32) -> bool {
@@ -717,9 +729,6 @@ pub struct CamKeyframe {
 fn default_zoom() -> f64 {
     1.0
 }
-fn default_true() -> bool {
-    true
-}
 fn default_one() -> f64 {
     1.0
 }
@@ -912,6 +921,7 @@ impl Project {
             transitions: Vec::new(),
             foreign: Vec::new(),
             ui: None,
+            overlap_layers: true,
             timeline_end: None,
         }
     }
@@ -1024,10 +1034,11 @@ impl Project {
                 return Err(ProjectError::DuplicateForeignKey(f.key));
             }
         }
-        // Инвариант Р.24 (этап 6): клипы одной (kind, lane) НЕ перекрываются —
-        // кроссфейд теперь явный переход, а не наложение. Foreign-плейсхолдеры
-        // занимают место наравне с клипами (их сырьё пишется обратно в OTIO,
-        // где дорожка — строгая последовательность).
+        // Клипы одной (kind, lane) не перекрываются — инвариант Р.24, но
+        // ТОЛЬКО при выключенном переслаивании (Р.28): с включённым перекрытия
+        // законны и звучат кроссфейдом, как в v1. Foreign-плейсхолдеры
+        // занимают место всегда: их сырьё пишется обратно в OTIO, где дорожка
+        // — строгая последовательность, и наложить на них нечего.
         enum SpanId {
             Clip(ClipId),
             Foreign(u64),
@@ -1045,6 +1056,13 @@ impl Project {
             let (ka, la, _, end_a, ida) = &w[0];
             let (kb, lb, start_b, _, idb) = &w[1];
             if ka == kb && la == lb && *end_a > *start_b {
+                // переслаивание разрешает наложение КЛИПОВ, но не чужих
+                // плейсхолдеров
+                if self.overlap_layers
+                    && matches!((ida, idb), (SpanId::Clip(_), SpanId::Clip(_)))
+                {
+                    continue;
+                }
                 return Err(match (ida, idb) {
                     (SpanId::Clip(a), SpanId::Clip(b)) => ProjectError::ClipOverlap(*a, *b),
                     (SpanId::Clip(c), SpanId::Foreign(f))
