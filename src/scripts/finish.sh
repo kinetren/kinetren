@@ -37,6 +37,21 @@ if [ "$RELEASE" = 1 ]; then
     scripts/release-build.sh
 fi
 
+# Живая проверка в виртуальном экране (Р.27): настоящий бинарь, настоящий X,
+# настоящие XTest-жесты. Без Xvfb — просто пропускаем, ничего не ломая;
+# NO_LIVE=1 выключает явно (например когда гоняешь finish.sh в цикле).
+if [ -z "${NO_LIVE:-}" ] && command -v Xvfb > /dev/null; then
+    echo "== живые сценарии =="
+    if ./scripts/live-check.sh; then
+        echo "живые сценарии: ok"
+    else
+        echo "ЖИВЫЕ СЦЕНАРИИ ПРОВАЛИЛИСЬ (скриншоты: target/live-out)" >&2
+        LIVE_FAILED=1
+    fi
+elif [ -z "${NO_LIVE:-}" ]; then
+    echo "живые сценарии пропущены: нет Xvfb (sudo apt install xvfb openbox)"
+fi
+
 echo "== чистка =="
 # старые тарболы и распакованные каталоги: оставляем только текущий
 if [ -d target/dist-out ]; then
@@ -53,6 +68,7 @@ du -sh target/debug target/release target/dist-container target/dist-out 2>/dev/
 mkdir -p target/dist-out
 printf '%s\n%s\n' "$FULL" "$(pwd)/target/debug/kt-app" > target/dist-out/LATEST
 echo
+[ -n "${LIVE_FAILED:-}" ] && echo "ВНИМАНИЕ: живые сценарии красные — см. target/live-out"
 echo "ВЕРСИЯ: $FULL$DIRTY"
 echo "запускать: $(pwd)/target/debug/kt-app"
 [ "$RELEASE" = 1 ] && echo "тарбол:   $(ls -1 target/dist-out/*.tar.gz 2>/dev/null | tail -1)"

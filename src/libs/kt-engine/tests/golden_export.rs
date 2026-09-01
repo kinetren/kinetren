@@ -142,8 +142,8 @@ fn golden_project() -> Project {
     ];
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(2),
-        b: ClipId(3),
+        a: Some(ClipId(2)),
+        b: Some(ClipId(3)),
         in_offset: Tick(sec / 4),
         out_offset: Tick(sec / 4),
         kind: TransitionKind::Crossfade,

@@ -16,7 +16,10 @@ pub mod video;
 pub mod worker;
 
 pub use audio::{AudioRenderer, RenderStats, db_to_linear};
-pub use export::{ExportStats, export_mp4, render_raw_audio, render_raw_video};
+pub use export::{
+    ExportOptions, ExportStats, export_mp4, export_mp4_with, render_raw_audio,
+    render_raw_video,
+};
 pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
 pub use fxstore::FxStateStore;
 pub use player::{AudioShared, Player, callback_step, reverse_frames, varispeed_fill};

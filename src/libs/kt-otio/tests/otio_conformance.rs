@@ -54,8 +54,8 @@ fn sample() -> Project {
     }
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(1),
-        b: ClipId(2),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
         in_offset: Tick(9_000),
         out_offset: Tick(4_500),
         kind: TransitionKind::Crossfade,

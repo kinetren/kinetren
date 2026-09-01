@@ -28,6 +28,11 @@ struct VideoClip {
     /// incoming (нарастает) / outgoing (затухает). Пара блендится линейно.
     fade_in: Option<(Tick, Tick)>,
     fade_out: Option<(Tick, Tick)>,
+    /// Фейд (Р.25): напротив окна пустота (край дорожки/Gap), пары нет и
+    /// ЖДАТЬ её не надо — слой уходит в прозрачность (под ним просвечивает
+    /// нижняя дорожка, а её нет — чёрное).
+    fade_in_solo: bool,
+    fade_out_solo: bool,
     /// «Ручки»: материал за краями тела (тики) — источник продолжается
     /// линейно, за краями материала кадр клампится (политика краёв).
     head_ext: Tick,
@@ -127,6 +132,8 @@ impl VideoRenderer {
                     fx_hash,
                     fade_in: None,
                     fade_out: None,
+                    fade_in_solo: false,
+                    fade_out_solo: false,
                     head_ext: Tick::ZERO,
                     tail_ext: Tick::ZERO,
                 }
@@ -140,12 +147,15 @@ impl VideoRenderer {
             if w1.0 <= w0.0 {
                 continue;
             }
-            if let Some(a) = clips.iter_mut().find(|c| c.id == t.a) {
+            let solo = t.is_fade();
+            if let Some(a) = t.a.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
                 a.fade_out = Some((w0, w1));
+                a.fade_out_solo = solo;
                 a.tail_ext = Tick((w1.0 - a.end.0).max(0));
             }
-            if let Some(b) = clips.iter_mut().find(|c| c.id == t.b) {
+            if let Some(b) = t.b.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
                 b.fade_in = Some((w0, w1));
+                b.fade_in_solo = solo;
                 b.head_ext = Tick((b.start.0 - w0.0).max(0));
             }
         }
@@ -216,6 +226,19 @@ impl VideoRenderer {
         for i in 0..self.clips.len() {
             let clip = &self.clips[i];
             if !clip.active_at(t) {
+                continue;
+            }
+            // фейд у края/Gap (Р.25): пары нет по модели — слой уходит в
+            // прозрачность, ждать нечего (complete не портим)
+            if let Some(k) = solo_fade_scale(clip, t) {
+                match clip_layer(clip, grid, cache, quality, q_key, scratch, t) {
+                    Some(f) if (f.width as usize, f.height as usize) == (w, h) => {
+                        scale_alpha_into(&mut self.blend, &f, k, w * h);
+                        alpha_over(out, &self.blend, true, w * h);
+                    }
+                    Some(_) => {}
+                    None => complete = false,
+                }
                 continue;
             }
             // outgoing половина пары рисуется на итерации incoming
@@ -341,6 +364,45 @@ fn clip_layer(
         }),
     );
     cache.get_postfx_video(sid, q_key, clip.fx_hash, t.0)
+}
+
+/// Доля видимости клипа в его СОЛЬНОМ окне фейда (Р.25), k из 4096 долей:
+/// fade_in нарастает 0→1, fade_out затухает 1→0. None — момент вне сольного
+/// окна (обычный слой или половина настоящей пары).
+fn solo_fade_scale(clip: &VideoClip, t: Tick) -> Option<u32> {
+    let frac = |w: (Tick, Tick)| {
+        (((t.0 - w.0.0) * 4096) / (w.1.0 - w.0.0).max(1)).clamp(0, 4096) as u32
+    };
+    if let Some(w) = clip.fade_in
+        && clip.fade_in_solo
+        && t.0 >= w.0.0
+        && t.0 < w.1.0
+    {
+        return Some(frac(w));
+    }
+    if let Some(w) = clip.fade_out
+        && clip.fade_out_solo
+        && t.0 >= w.0.0
+        && t.0 < w.1.0
+    {
+        return Some(4096 - frac(w));
+    }
+    None
+}
+
+/// Копия кадра с альфой, умноженной на k/4096 (кадр без альфы считается
+/// непрозрачным). Дальше идёт обычный alpha_over — под фейдом просвечивает
+/// нижняя дорожка, а если её нет — чёрный фон композиции.
+fn scale_alpha_into(dst: &mut Vec<u8>, f: &kt_media::VideoFrame, k: u32, pixels: usize) {
+    let n = pixels * 4;
+    dst.clear();
+    dst.resize(n, 0);
+    for p in 0..pixels.min(f.rgba.len() / 4) {
+        let i = p * 4;
+        dst[i..i + 3].copy_from_slice(&f.rgba[i..i + 3]);
+        let a = if f.has_alpha { f.rgba[i + 3] as u32 } else { 255 };
+        dst[i + 3] = ((a * k + 2048) >> 12) as u8;
+    }
 }
 
 /// Линейный dissolve пары (п.137): dst = a·(1−k) + b·k, целочисленно

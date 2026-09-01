@@ -64,6 +64,9 @@ pub struct KtApp {
     pub dnd_hover: Option<egui::Pos2>,
     /// Кэш геометрии таймлайна последнего кадра (дроп, п.2 v1.4).
     pub tl_geom: Option<crate::timeline::TlGeom>,
+    /// KT_GEOM_DUMP — путь для дампа геометрии живым сценариям (Р.27).
+    pub(crate) geom_dump_path: Option<String>,
+    pub(crate) geom_dumped_at: Option<std::time::Instant>,
     /// Display-порядок дорожек (п.6 v1.4); нормализуется каждый кадр,
     /// сохраняется в UiState проекта.
     pub lane_order: Vec<(LaneKind, u32)>,
@@ -304,6 +307,8 @@ impl KtApp {
             preview_click_at: None,
             dnd_hover: None,
             tl_geom: None,
+            geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
+            geom_dumped_at: None,
             lane_order: Vec::new(),
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
@@ -425,6 +430,8 @@ impl KtApp {
             preview_click_at: None,
             dnd_hover: None,
             tl_geom: None,
+            geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
+            geom_dumped_at: None,
             lane_order: Vec::new(),
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
@@ -1697,6 +1704,18 @@ impl KtApp {
         }
     }
 
+    /// Пакет команд + возврат «ручек» кроссфейдов, которые этот жест убивает
+    /// (Р.26): растащил клипы или удалил соседа — срезанный при наезде
+    /// материал возвращается тем же undo-шагом. Все новые пути удаления и
+    /// перемещения клипов обязаны ходить через эту обёртку, а не через
+    /// apply_batch, иначе материал снова начнёт молча теряться.
+    pub fn apply_batch_restoring(&mut self, mut cmds: Vec<Command>) -> bool {
+        if let Ok(after) = self.model.preview(&cmds) {
+            cmds.extend(kt_model::ops::restore_handles(self.model.project(), &after));
+        }
+        self.apply_batch(cmds)
+    }
+
     /// Пакет команд = один undo-снапшот на жест (атомарно).
     pub fn apply_batch(&mut self, cmds: Vec<Command>) -> bool {
         self.model_rev += 1;
@@ -1931,7 +1950,7 @@ impl KtApp {
             if cmds.is_empty() {
                 self.note(tr(k::msg::REGION_MISSES));
             } else {
-                self.apply_batch(cmds);
+                self.apply_batch_restoring(cmds);
                 self.selected = None;
             }
         }
@@ -1952,7 +1971,7 @@ impl KtApp {
             if cmds.is_empty() {
                 self.note(tr(k::msg::REGION_MISSES));
             } else {
-                self.apply_batch(cmds);
+                self.apply_batch_restoring(cmds);
                 self.selected = None;
             }
         } else {
@@ -2302,7 +2321,7 @@ impl KtApp {
             .filter(|c| c.id == sel || (group.is_some() && c.link_group == group))
             .map(|c| c.id)
             .collect();
-        self.apply_batch(ids.into_iter().map(|id| Command::RemoveClip { id }).collect());
+        self.apply_batch_restoring(ids.into_iter().map(|id| Command::RemoveClip { id }).collect());
         self.selected = None;
     }
 

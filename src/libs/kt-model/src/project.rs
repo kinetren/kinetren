@@ -54,21 +54,38 @@ pub enum TransitionKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TransitionEvent {
     pub id: TransitionId,
-    /// Уходящий клип (его конец — стык).
-    pub a: ClipId,
-    /// Входящий клип (его начало — стык).
-    pub b: ClipId,
+    /// Уходящий клип (его конец — стык). `None` — фейд-ин: слева пустота
+    /// (край дорожки или Gap).
+    pub a: Option<ClipId>,
+    /// Входящий клип (его начало — стык). `None` — фейд-аут: справа пустота.
+    pub b: Option<ClipId>,
     pub in_offset: Tick,
     pub out_offset: Tick,
     pub kind: TransitionKind,
 }
 
 impl TransitionEvent {
-    /// Стык, резолвнутый по клипу `a` (None — клип пропал; такое состояние
-    /// живёт только внутри мутации до reconcile_transitions).
+    /// Стык: конец `a`, а для фейд-ина — начало `b` (Р.25). None — оба конца
+    /// пропали; такое состояние живёт только внутри мутации до
+    /// reconcile_transitions.
     pub fn joint(&self, p: &Project) -> Option<Tick> {
-        let a = p.clips.iter().find(|c| c.id == self.a)?;
-        Some(a.start + a.duration)
+        if let Some(a) = self.a.and_then(|id| p.clips.iter().find(|c| c.id == id)) {
+            return Some(a.start + a.duration);
+        }
+        let b = self.b.and_then(|id| p.clips.iter().find(|c| c.id == id))?;
+        Some(b.start)
+    }
+
+    /// Фейд — переход с ОДНИМ живым концом: с той стороны, где `None`,
+    /// пустота (край дорожки или Gap), и слой уходит в прозрачность/тишину.
+    /// Эталонная библиотека трактует такой переход так же (dissolve с Gap).
+    pub fn is_fade(&self) -> bool {
+        self.a.is_none() || self.b.is_none()
+    }
+
+    /// Клип, к телу которого прилегает переход с обеих сторон окна.
+    pub fn touches(&self, id: ClipId) -> bool {
+        self.a == Some(id) || self.b == Some(id)
     }
 
     /// Полуоткрытое окно перехода на таймлайне.
@@ -134,6 +151,12 @@ pub struct Project {
     /// без секции читаются как None.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<UiState>,
+    /// Монтажная длина таймлайна, когда она БОЛЬШЕ материала: чужие файлы
+    /// задают её хвостовым Gap'ом после последнего клипа (решение
+    /// пользователя Р.25 — «хранить длину, рендерить до конца», иначе
+    /// сохранение молча укорачивало чужой монтаж). None — длина по клипам.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeline_end: Option<Tick>,
 }
 
 fn is_zero_u32(v: &u32) -> bool {
@@ -800,7 +823,9 @@ pub enum ProjectError {
     #[error("transition {0:?}: window below minimal duration")]
     TransitionTooShort(TransitionId),
     #[error("two transitions on joint {0:?}->{1:?}")]
-    DuplicateTransitionJoint(ClipId, ClipId),
+    DuplicateTransitionJoint(Option<ClipId>, Option<ClipId>),
+    #[error("transition {0:?}: no clip on either side")]
+    TransitionWithoutClips(TransitionId),
     #[error("transition windows overlap on a lane: {0:?}, {1:?}")]
     TransitionWindowsOverlap(TransitionId, TransitionId),
     #[error("duplicate foreign key {0}")]
@@ -822,22 +847,38 @@ pub fn check_transition_full(
     ignore: Option<TransitionId>,
 ) -> Result<(), ProjectError> {
     let clip = |id: ClipId| p.clips.iter().find(|c| c.id == id);
-    let a = clip(t.a).ok_or(ProjectError::TransitionUnknownClip(t.id, t.a))?;
-    let b = clip(t.b).ok_or(ProjectError::TransitionUnknownClip(t.id, t.b))?;
-    if a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start {
-        return Err(ProjectError::TransitionNotAtJoint(t.id));
-    }
+    let find = |side: Option<ClipId>| -> Result<Option<&ClipEvent>, ProjectError> {
+        match side {
+            None => Ok(None),
+            Some(id) => Ok(Some(clip(id).ok_or(ProjectError::TransitionUnknownClip(t.id, id))?)),
+        }
+    };
+    let a = find(t.a)?;
+    let b = find(t.b)?;
+    // фейд (Р.25): один конец — пустота; офсет в её сторону телом не
+    // ограничен, стык берётся у живого клипа
+    let (kind, lane, joint) = match (a, b) {
+        (Some(a), Some(b)) => {
+            if a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start {
+                return Err(ProjectError::TransitionNotAtJoint(t.id));
+            }
+            (a.kind, a.lane, a.start + a.duration)
+        }
+        (Some(a), None) => (a.kind, a.lane, a.start + a.duration),
+        (None, Some(b)) => (b.kind, b.lane, b.start),
+        (None, None) => return Err(ProjectError::TransitionWithoutClips(t.id)),
+    };
     if t.in_offset.0 < 0
         || t.out_offset.0 < 0
-        || t.in_offset > a.duration
-        || t.out_offset > b.duration
+        || a.is_some_and(|a| t.in_offset > a.duration)
+        || b.is_some_and(|b| t.out_offset > b.duration)
     {
         return Err(ProjectError::TransitionTooWide(t.id));
     }
     if t.in_offset + t.out_offset < MIN_TRANSITION_DURATION {
         return Err(ProjectError::TransitionTooShort(t.id));
     }
-    let w = TickRange::new(a.start + a.duration - t.in_offset, a.start + a.duration + t.out_offset);
+    let w = TickRange::new(joint - t.in_offset, joint + t.out_offset);
     for other in &p.transitions {
         if other.id == t.id || Some(other.id) == ignore {
             continue;
@@ -845,9 +886,9 @@ pub fn check_transition_full(
         if (other.a, other.b) == (t.a, t.b) {
             return Err(ProjectError::DuplicateTransitionJoint(t.a, t.b));
         }
-        let Some(oa) = clip(other.a) else { continue };
+        let Some(oc) = other.a.or(other.b).and_then(clip) else { continue };
         let Some(ow) = other.window(p) else { continue };
-        if oa.kind == a.kind && oa.lane == a.lane && w.start < ow.end && ow.start < w.end {
+        if oc.kind == kind && oc.lane == lane && w.start < ow.end && ow.start < w.end {
             return Err(ProjectError::TransitionWindowsOverlap(t.id, other.id));
         }
     }
@@ -871,6 +912,7 @@ impl Project {
             transitions: Vec::new(),
             foreign: Vec::new(),
             ui: None,
+            timeline_end: None,
         }
     }
 

@@ -34,8 +34,8 @@ fn base_project() -> Project {
 fn tr(id: u64, a: u64, b: u64, in_off: i64, out_off: i64) -> TransitionEvent {
     TransitionEvent {
         id: TransitionId(id),
-        a: ClipId(a),
-        b: ClipId(b),
+        a: Some(ClipId(a)),
+        b: Some(ClipId(b)),
         in_offset: Tick(in_off),
         out_offset: Tick(out_off),
         kind: TransitionKind::Crossfade,
@@ -196,7 +196,7 @@ fn t135_split_retargets_outgoing() {
         .unwrap();
     assert_eq!(m.project().transitions.len(), 1, "transition survives outgoing split");
     let t = &m.project().transitions[0];
-    assert_eq!((t.a, t.b), (ClipId(50), ClipId(2)));
+    assert_eq!((t.a, t.b), (Some(ClipId(50)), Some(ClipId(2))));
     assert_eq!(t.joint(m.project()), Some(Tick(48_000)));
 
     // Split INCOMING-соседа: стык (его начало) остаётся за левой половиной
@@ -205,8 +205,281 @@ fn t135_split_retargets_outgoing() {
     m.apply(Command::Split { id: ClipId(2), at: Tick(72_000), new_id: ClipId(51), new_group: None })
         .unwrap();
     let t = &m.project().transitions[0];
-    assert_eq!((t.a, t.b), (ClipId(1), ClipId(2)), "incoming split keeps ids");
+    assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))), "incoming split keeps ids");
     // тело incoming укоротилось до 24000 — out_offset клампнулся
     assert_eq!(t.out_offset, Tick(9_000).min(Tick(24_000)));
 }
 
+
+// ---- тест 155: фейды у края дорожки (Р.25) -----------------------------------
+
+fn fade(id: u64, a: Option<u64>, b: Option<u64>, in_off: i64, out_off: i64) -> TransitionEvent {
+    TransitionEvent {
+        id: TransitionId(id),
+        a: a.map(ClipId),
+        b: b.map(ClipId),
+        in_offset: Tick(in_off),
+        out_offset: Tick(out_off),
+        kind: TransitionKind::Crossfade,
+    }
+}
+
+/// Переход с ОДНИМ живым концом законен: слева/справа от него пустота
+/// (край дорожки или Gap). Стык — граница живого клипа, окно считается
+/// от неё, офсет в сторону пустоты телом не ограничен.
+#[test]
+fn t155_fade_is_a_transition_with_one_side() {
+    let mut p = base_project();
+    // фейд-ин первого клипа и фейд-аут последнего
+    p.transitions.push(fade(1, None, Some(1), 9_000, 9_000));
+    p.transitions.push(fade(2, Some(3), None, 9_000, 9_000));
+    p.validate().expect("фейды у краёв дорожки законны");
+
+    let fi = &p.transitions[0];
+    assert!(fi.is_fade());
+    assert_eq!(fi.joint(&p), Some(Tick(0)), "стык фейд-ина — начало его клипа");
+    assert_eq!(fi.window(&p).unwrap().start, Tick(-9_000), "часть окна висит в пустоте");
+
+    let fo = &p.transitions[1];
+    assert_eq!(fo.joint(&p), Some(Tick(144_000)), "стык фейд-аута — конец его клипа");
+
+    // офсет В СТОРОНУ КЛИПА по-прежнему ограничен телом
+    let mut bad = p.clone();
+    bad.transitions[0].out_offset = Tick(48_001);
+    assert!(bad.validate().is_err(), "фейд не может быть шире тела своего клипа");
+    // а в сторону пустоты — нет
+    let mut wide = p.clone();
+    wide.transitions[0].in_offset = Tick(500_000);
+    wide.validate().expect("в пустоту фейд тянется свободно");
+
+    // переход без клипов вообще — ошибка
+    let mut orphan = base_project();
+    orphan.transitions.push(fade(9, None, None, 9_000, 9_000));
+    assert!(orphan.validate().is_err());
+}
+
+/// Фейд живёт по тем же правилам, что кроссфейд: трим клампит окно, удаление
+/// клипа уносит переход, копипаст переносит фейд вместе с его клипом.
+#[test]
+fn t155_fade_survives_edits_and_clipboard() {
+    let mut m = TimelineModel::new(base_project());
+    m.apply(Command::AddTransition(fade(1, None, Some(1), 9_000, 9_000))).unwrap();
+
+    // трим клипа укорачивает офсет в его сторону
+    m.apply(Command::TrimEnd { id: ClipId(1), new_end: Tick(4_000) }).unwrap();
+    let t = &m.project().transitions[0];
+    assert_eq!(t.out_offset, Tick(4_000), "офсет в тело клампится тримом");
+    assert_eq!(t.in_offset, Tick(9_000), "офсет в пустоту трим не трогает");
+
+    // удаление клипа уносит и фейд
+    m.apply(Command::RemoveClip { id: ClipId(1) }).unwrap();
+    assert!(m.project().transitions.is_empty());
+
+    // копипаст: фейд едет вместе со своим клипом
+    let mut m = TimelineModel::new(base_project());
+    m.apply(Command::AddTransition(fade(1, None, Some(2), 9_000, 9_000))).unwrap();
+    let block = kt_model::ops::copy_group(m.project(), ClipId(2));
+    assert_eq!(block.transitions.len(), 1, "фейд в блоке");
+    let (mut next_clip, mut next_group, mut next_tr) = (100u64, 100u64, 100u64);
+    let (cmds, _end) = kt_model::ops::paste_block(
+        &block,
+        Tick(300_000),
+        &mut next_clip,
+        &mut next_group,
+        &mut next_tr,
+    );
+    m.apply_batch(cmds).unwrap();
+    let pasted = m.project().transitions.iter().find(|t| t.id == TransitionId(100)).unwrap();
+    assert!(pasted.a.is_none() && pasted.b == Some(ClipId(100)), "вставленный фейд остался фейдом");
+}
+
+// ---- тест 159: возврат «ручек» при разрыве кроссфейда (Р.26) ------------------
+
+/// Наезд режет клипы до стыка; растаскивание обязано вернуть срезанное —
+/// как в Vegas, где перекрытие просто перестаёт быть перекрытием.
+#[test]
+fn t159_restore_handles_after_pulling_apart() {
+    // готовим состояние «после наезда»: клипы встык + переход
+    let mut m = TimelineModel::new(base_project());
+    let before_trim = m.project().clone();
+    // наезд: клип 2 съехал на 20_000 влево, стык — середина наезда
+    m.apply_batch(vec![
+        Command::MoveClip { id: ClipId(2), new_start: Tick(28_000), new_lane: 0 },
+        Command::TrimEnd { id: ClipId(1), new_end: Tick(38_000) },
+        Command::TrimStart { id: ClipId(2), new_start: Tick(38_000) },
+        Command::AddTransition(tr(1, 1, 2, 10_000, 10_000)),
+    ])
+    .unwrap();
+
+    // растаскиваем: клип 2 уезжает далеко вправо
+    let cmds = vec![Command::MoveClip {
+        id: ClipId(2),
+        new_start: Tick(300_000),
+        new_lane: 0,
+    }];
+    let after = m.preview(&cmds).unwrap();
+    assert!(after.transitions.is_empty(), "разорванный стык убивает переход");
+    let restore = kt_model::ops::restore_handles(m.project(), &after);
+    assert_eq!(restore.len(), 2, "по команде на каждый конец: {restore:?}");
+
+    let mut all = cmds;
+    all.extend(restore);
+    m.apply_batch(all).unwrap();
+
+    let p = m.project();
+    let a = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    let b = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    let a0 = before_trim.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    let b0 = before_trim.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    assert_eq!(a.duration, a0.duration, "уходящему вернули хвост");
+    assert_eq!(b.duration, b0.duration, "входящему вернули голову");
+    assert_eq!(b.source_in, b0.source_in, "точка входа тоже вернулась");
+    assert_eq!(b.start, Tick(300_000) - Tick(10_000), "голова растёт влево от нового места");
+}
+
+/// Растащили НЕ полностью — вернётся столько, сколько влезло, и зазор
+/// делится между обоими концами.
+#[test]
+fn t159_restore_is_clamped_by_free_space() {
+    let mut m = TimelineModel::new(base_project());
+    // наезд: клип 2 съехал на 20_000 влево, стык — середина наезда
+    m.apply_batch(vec![
+        Command::MoveClip { id: ClipId(2), new_start: Tick(28_000), new_lane: 0 },
+        Command::TrimEnd { id: ClipId(1), new_end: Tick(38_000) },
+        Command::TrimStart { id: ClipId(2), new_start: Tick(38_000) },
+        Command::AddTransition(tr(1, 1, 2, 10_000, 10_000)),
+    ])
+    .unwrap();
+
+    // зазор всего 6000 тиков против 20000 «хотелок»
+    let cmds =
+        vec![Command::MoveClip { id: ClipId(2), new_start: Tick(44_000), new_lane: 0 }];
+    let after = m.preview(&cmds).unwrap();
+    let mut all = cmds;
+    all.extend(kt_model::ops::restore_handles(m.project(), &after));
+    m.apply_batch(all).unwrap();
+
+    let p = m.project();
+    let a = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    let b = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    assert_eq!((a.start + a.duration).0, 41_000, "уходящему досталась половина зазора");
+    assert_eq!(b.start.0, 41_000, "входящему — вторая половина, клипы сомкнулись");
+    p.validate().expect("перекрытия не появилось");
+}
+
+/// Удалили соседа — выживший клип получает свой кусок обратно (решение
+/// пользователя Р.26 п.1).
+#[test]
+fn t159_restore_after_neighbour_removed() {
+    let mut m = TimelineModel::new(base_project());
+    // наезд: клип 2 съехал на 20_000 влево, стык — середина наезда
+    m.apply_batch(vec![
+        Command::MoveClip { id: ClipId(2), new_start: Tick(28_000), new_lane: 0 },
+        Command::TrimEnd { id: ClipId(1), new_end: Tick(38_000) },
+        Command::TrimStart { id: ClipId(2), new_start: Tick(38_000) },
+        Command::AddTransition(tr(1, 1, 2, 10_000, 10_000)),
+    ])
+    .unwrap();
+
+    let cmds = vec![Command::RemoveClip { id: ClipId(2) }];
+    let after = m.preview(&cmds).unwrap();
+    let restore = kt_model::ops::restore_handles(m.project(), &after);
+    assert_eq!(restore.len(), 1, "восстанавливается только выживший конец");
+    let mut all = cmds;
+    all.extend(restore);
+    m.apply_batch(all).unwrap();
+    let a = m.project().clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    assert_eq!((a.start + a.duration), Tick(48_000), "хвост вернулся целиком");
+}
+
+/// Фейду возвращать нечего: он заводится явной командой, ничего не срезая.
+#[test]
+fn t159_fade_has_nothing_to_restore() {
+    let mut m = TimelineModel::new(base_project());
+    m.apply(Command::AddTransition(fade(7, None, Some(2), 9_000, 9_000))).unwrap();
+    let cmds = vec![Command::RemoveClip { id: ClipId(2) }];
+    let after = m.preview(&cmds).unwrap();
+    assert!(kt_model::ops::restore_handles(m.project(), &after).is_empty());
+}
+
+/// Возврат упирается в препятствия дорожки — включая чужие плейсхолдеры
+/// (инвариант «без перекрытий» считает и их).
+#[test]
+fn t159_restore_stops_at_obstacles() {
+    // состояние «после наезда» собираем сразу: клипы встык + переход,
+    // а в четырёх тысячах тиков за стыком стоит чужая конструкция
+    let mut p = base_project();
+    p.clips.retain(|c| c.id != ClipId(3));
+    let (a, b) = (Tick(0), Tick(38_000));
+    for c in &mut p.clips {
+        if c.id == ClipId(1) {
+            (c.start, c.duration) = (a, b - a);
+        } else {
+            (c.start, c.duration) = (b, Tick(38_000));
+        }
+    }
+    p.foreign.push(ForeignEvent {
+        key: 1,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: Tick(80_000),
+        duration: Tick(4_000),
+    });
+    p.transitions.push(tr(1, 1, 2, 10_000, 10_000));
+    p.validate().unwrap();
+    let mut m = TimelineModel::new(p);
+
+    // клип 2 уезжает за плейсхолдер; клип 1 хочет вернуть 10_000, но
+    // упирается в него уже через 4_000 — впрочем, места до плейсхолдера
+    // хватает: проверяем, что рост остановился ровно на препятствии
+    let cmds = vec![Command::MoveClip { id: ClipId(2), new_start: Tick(90_000), new_lane: 0 }];
+    let after = m.preview(&cmds).unwrap();
+    let mut all = cmds;
+    all.extend(kt_model::ops::restore_handles(m.project(), &after));
+    m.apply_batch(all).unwrap();
+
+    let p = m.project();
+    p.validate().expect("итог валиден");
+    let c2 = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    assert_eq!(c2.start, Tick(84_000), "голова выросла только до плейсхолдера");
+    let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    assert_eq!(c1.start + c1.duration, Tick(48_000), "хвост вернулся целиком");
+}
+
+/// Возврат не имеет права уронить сам жест: у reversed-клипа TrimEnd
+/// ограничен source_in, а у обычного TrimStart — нулём материала. Без
+/// клампа check_on вернёт TooShort и откатит ВЕСЬ батч (перенос вместе с
+/// подарком) — поэтому кламп делает сам restore_handles.
+#[test]
+fn t159_restore_never_breaks_the_gesture() {
+    for reversed in [false, true] {
+        let mut p = base_project();
+        p.clips.retain(|c| c.id != ClipId(3));
+        for c in &mut p.clips {
+            c.reversed = reversed;
+            // материала за краем почти нет: вернуть можно лишь 2000 тиков
+            c.source_in = Tick(2_000);
+        }
+        // состояние «после наезда»: встык + переход
+        p.clips[0].duration = Tick(38_000);
+        p.clips[1].start = Tick(38_000);
+        p.clips[1].duration = Tick(38_000);
+        p.transitions.push(tr(1, 1, 2, 10_000, 10_000));
+        p.validate().unwrap();
+        let mut m = TimelineModel::new(p);
+
+        let cmds =
+            vec![Command::MoveClip { id: ClipId(2), new_start: Tick(300_000), new_lane: 0 }];
+        let after = m.preview(&cmds).unwrap();
+        let mut all = cmds;
+        all.extend(kt_model::ops::restore_handles(m.project(), &after));
+        m.apply_batch(all).unwrap_or_else(|e| panic!("reversed={reversed}: жест провалился: {e}"));
+        let p = m.project();
+        p.validate().unwrap();
+        assert_eq!(
+            p.clips.iter().find(|c| c.id == ClipId(2)).unwrap().start,
+            Tick(300_000 - if reversed { 10_000 } else { 2_000 }),
+            "reversed={reversed}: вернулось столько, сколько есть материала"
+        );
+    }
+}

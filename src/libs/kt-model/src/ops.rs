@@ -15,21 +15,31 @@ pub struct ClipBlock {
     pub transitions: Vec<TransitionEvent>,
 }
 
-/// Переходы, пережившие копирование: оба клипа в блоке, стык цел (кропы
-/// региона могли съесть край), офсеты клампятся новыми телами.
+/// Переходы, пережившие копирование: живые концы в блоке, стык цел (кропы
+/// региона могли съесть край), офсеты клампятся новыми телами. Фейд (Р.25)
+/// переезжает вместе со своим единственным клипом.
 fn surviving_transitions(p: &Project, block_clips: &[ClipEvent]) -> Vec<TransitionEvent> {
     let find = |id: ClipId| block_clips.iter().find(|c| c.id == id);
+    let side = |id: Option<ClipId>| match id {
+        None => Some(None),
+        Some(id) => find(id).map(Some),
+    };
     p.transitions
         .iter()
         .filter_map(|t| {
-            let a = find(t.a)?;
-            let b = find(t.b)?;
-            if a.start + a.duration != b.start {
+            let (a, b) = (side(t.a)?, side(t.b)?);
+            if let (Some(a), Some(b)) = (a, b)
+                && a.start + a.duration != b.start
+            {
                 return None;
             }
             let mut t = t.clone();
-            t.in_offset = t.in_offset.min(a.duration);
-            t.out_offset = t.out_offset.min(b.duration);
+            if let Some(a) = a {
+                t.in_offset = t.in_offset.min(a.duration);
+            }
+            if let Some(b) = b {
+                t.out_offset = t.out_offset.min(b.duration);
+            }
             (t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION).then_some(t)
         })
         .collect()
@@ -120,7 +130,11 @@ pub fn paste_block(
         cmds.push(Command::AddClip(copy));
     }
     for t in &block.transitions {
-        let (Some(&a), Some(&b)) = (clip_map.get(&t.a), clip_map.get(&t.b)) else { continue };
+        let remap = |id: Option<ClipId>| match id {
+            None => Some(None),
+            Some(id) => clip_map.get(&id).copied().map(Some),
+        };
+        let (Some(a), Some(b)) = (remap(t.a), remap(t.b)) else { continue };
         let mut copy = t.clone();
         copy.id = TransitionId(*next_transition);
         *next_transition += 1;
@@ -213,6 +227,133 @@ pub fn trim_group_end_to(p: &Project, sel: ClipId, at: Tick) -> Vec<Command> {
         .filter(|c| at - c.start >= MIN_CLIP_DURATION && at < c.start + c.duration)
         .map(|c| Command::TrimEnd { id: c.id, new_end: at })
         .collect()
+}
+
+/// Возврат «ручек» умерших кроссфейдов (Р.26, решение пользователя: «в sony
+/// vegas если растащить перекрывающиеся события — остаётся то, что
+/// перекрывалось, без обрезки»).
+///
+/// При создании кроссфейда клипы режутся до стыка, и офсеты перехода
+/// ЧИСЛЕННО РАВНЫ срезанному: outgoing потерял справа `out_offset`, incoming
+/// слева — `in_offset` (так считает и plan_move в UI, и upgrade_legacy при
+/// импорте .ktproj). Поэтому разрыв перехода восстановим точно, без хранения
+/// лишнего состояния.
+///
+/// `before` — проект до жеста (там переходы ещё живы), `after` — его
+/// результат (`TimelineModel::preview`). Возврат клампится освободившимся
+/// местом, поэтому батч не может провалиться на перекрытии.
+///
+/// Фейды пропускаются: у них ничего не срезалось (заводятся явной командой).
+pub fn restore_handles(before: &Project, after: &Project) -> Vec<Command> {
+    let mut cmds = Vec::new();
+    for t in &before.transitions {
+        if t.is_fade() || after.transitions.iter().any(|x| x.id == t.id) {
+            continue;
+        }
+        let (Some(a_id), Some(b_id)) = (t.a, t.b) else { continue };
+        let a = after.clips.iter().find(|c| c.id == a_id);
+        let b = after.clips.iter().find(|c| c.id == b_id);
+        let mut want_a = if a.is_some() { t.out_offset.0 } else { 0 };
+        let mut want_b = if b.is_some() { t.in_offset.0 } else { 0 };
+        // место до ближайшего препятствия, с учётом ВСЕХ членов link-группы:
+        // трим двигает группу целиком, и упереться может любой её член
+        let room_a = a.map_or(0, |c| room_right(after, c));
+        let room_b = b.map_or(0, |c| room_left(after, c));
+        want_a = want_a.min(room_a);
+        want_b = want_b.min(room_b);
+        // материал за краем не бесконечен: у reversed TrimEnd тянет source_in
+        // вниз, у обычного TrimStart — тоже, и check_on отвергает уход ниже
+        // нуля. Кламп ОБЯЗАН быть здесь: иначе подарок уронит весь жест
+        // (перенос/удаление откатится вместе с ним).
+        if let Some(a) = a
+            && a.reversed
+        {
+            want_a = want_a.min(a.source_in.0);
+        }
+        if let Some(b) = b
+            && !b.reversed
+        {
+            want_b = want_b.min(b.source_in.0);
+        }
+        // клипы пары могли остаться соседями (растащили чуть-чуть): тогда
+        // общий зазор делится пропорционально тому, кто сколько потерял
+        if let (Some(a), Some(b)) = (a, b)
+            && a.kind == b.kind
+            && a.lane == b.lane
+        {
+            let gap = b.start.0 - (a.start + a.duration).0;
+            if gap >= 0 && want_a + want_b > gap {
+                let total = want_a + want_b;
+                let share = if total > 0 { gap * want_a / total } else { 0 };
+                want_a = share;
+                want_b = gap - share;
+            }
+        }
+        if let Some(a) = a
+            && want_a > 0
+        {
+            cmds.push(Command::TrimEnd { id: a.id, new_end: a.start + a.duration + Tick(want_a) });
+        }
+        if let Some(b) = b
+            && want_b > 0
+        {
+            cmds.push(Command::TrimStart { id: b.id, new_start: b.start - Tick(want_b) });
+        }
+    }
+    cmds
+}
+
+/// Сколько тиков клип (со всей link-группой) может вырасти вправо, не задев
+/// соседей и чужие плейсхолдеры. Край таймлайна справа не ограничивает.
+fn room_right(p: &Project, c: &ClipEvent) -> i64 {
+    group_members(p, c.id)
+        .iter()
+        .map(|m| {
+            let end = (m.start + m.duration).0;
+            obstacles(p, m).filter(|(s, _)| *s >= end).map(|(s, _)| s - end).min().unwrap_or(i64::MAX)
+        })
+        .min()
+        .unwrap_or(0)
+        .max(0)
+}
+
+/// То же влево; слева таймлайн ограничен нулём.
+fn room_left(p: &Project, c: &ClipEvent) -> i64 {
+    group_members(p, c.id)
+        .iter()
+        .map(|m| {
+            let start = m.start.0;
+            obstacles(p, m)
+                .filter(|(_, e)| *e <= start)
+                .map(|(_, e)| start - e)
+                .min()
+                .unwrap_or(start)
+                .min(start)
+        })
+        .min()
+        .unwrap_or(0)
+        .max(0)
+}
+
+/// Занятые интервалы на дорожке клипа: чужие клипы (вне его link-группы) и
+/// плейсхолдеры чужих конструкций — инвариант «без перекрытий» включает их.
+fn obstacles<'a>(p: &'a Project, c: &'a ClipEvent) -> impl Iterator<Item = (i64, i64)> + 'a {
+    let group = c.link_group;
+    p.clips
+        .iter()
+        .filter(move |o| {
+            o.kind == c.kind
+                && o.lane == c.lane
+                && o.id != c.id
+                && (group.is_none() || o.link_group != group)
+        })
+        .map(|o| (o.start.0, (o.start + o.duration).0))
+        .chain(
+            p.foreign
+                .iter()
+                .filter(move |f| f.kind == c.kind && f.lane == c.lane)
+                .map(|f| (f.start.0, (f.start + f.duration).0)),
+        )
 }
 
 fn group_members(p: &Project, sel: ClipId) -> Vec<ClipEvent> {
@@ -334,8 +475,8 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
         let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
         p.transitions.push(TransitionEvent {
             id: TransitionId(id),
-            a: a_id,
-            b: b_id,
+            a: Some(a_id),
+            b: Some(b_id),
             in_offset: joint - ov0,
             out_offset: ov1 - joint,
             kind: TransitionKind::Crossfade,

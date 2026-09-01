@@ -66,7 +66,11 @@ pub fn export_chunk_frames(budget_bytes: usize, width: u32, height: u32) -> i64 
 }
 
 pub fn project_range(project: &Project) -> Tick {
-    project.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO)
+    let material =
+        project.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO);
+    // монтажная длина чужого файла (хвостовой Gap) считается концом: рендер
+    // доходит до неё чёрным/тишиной, как у эталона и melt (Р.25)
+    project.timeline_end.map_or(material, |e| e.max(material))
 }
 
 /// Аудио-поток экспорта: interleaved f32 48k/2ch чанками по burst'у.

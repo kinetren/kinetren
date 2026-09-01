@@ -35,6 +35,13 @@ pub struct KtTimelineMeta {
     pub bin_free: bool,
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub morph_lanes: u32,
+    /// Монтажная длина таймлайна в тиках, когда она БОЛЬШЕ материала
+    /// (хвостовой Gap чужого файла; решение пользователя Р.25). Пустые
+    /// дорожки, которых не было в файле, мы не пишем — их число едет здесь.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lanes: Option<(u32, u32)>,
     /// Сериализуются отсортированными по MorphId (детерминизм применения).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<kt_model::MorpherEvent>,

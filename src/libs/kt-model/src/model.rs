@@ -219,8 +219,24 @@ impl TimelineModel {
         if cmds.is_empty() {
             return Ok(());
         }
+        let scratch = self.simulate(&cmds)?;
+        self.push_undo();
+        self.project = scratch;
+        self.last_gesture = None;
+        Ok(())
+    }
+
+    /// Проект, каким он СТАНЕТ после батча — без записи в undo (Р.26).
+    /// Нужен call-site'ам, которым надо посчитать что-то по будущему
+    /// состоянию: возврат «ручек» кроссфейда считает свободное место уже
+    /// после того, как клип уехал (ops::restore_handles).
+    pub fn preview(&self, cmds: &[Command]) -> Result<Project, CommandError> {
+        self.simulate(cmds)
+    }
+
+    fn simulate(&self, cmds: &[Command]) -> Result<Project, CommandError> {
         let mut scratch = self.project.clone();
-        for cmd in &cmds {
+        for cmd in cmds {
             Self::check_on(&scratch, cmd)?;
             Self::mutate_on(&mut scratch, cmd.clone());
         }
@@ -232,10 +248,7 @@ impl TimelineModel {
         // групповых мувов/тримов/вставок дешевле отловить одной проверкой,
         // чем дублировать их логику в check_on. Провал = ноль изменений.
         scratch.validate().map_err(CommandError::InvalidLayout)?;
-        self.push_undo();
-        self.project = scratch;
-        self.last_gesture = None;
-        Ok(())
+        Ok(scratch)
     }
 
     /// Как apply, но серия вызовов с одним `gesture`-токеном сливается в
@@ -604,8 +617,8 @@ impl TimelineModel {
                 // уезжает к правой половине; incoming-стык (начало) остаётся
                 // за левой — она сохранила id
                 for t in &mut p.transitions {
-                    if t.a == id {
-                        t.a = new_id;
+                    if t.a == Some(id) {
+                        t.a = Some(new_id);
                     }
                 }
             }
@@ -717,13 +730,25 @@ impl TimelineModel {
     fn reconcile_transitions(p: &mut Project) {
         let Project { clips, transitions, .. } = p;
         transitions.retain_mut(|t| {
-            let Some(a) = clips.iter().find(|c| c.id == t.a) else { return false };
-            let Some(b) = clips.iter().find(|c| c.id == t.b) else { return false };
-            if a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start {
+            let side = |id: Option<ClipId>| match id {
+                // сторона-пустота у фейда (Р.25) — законна и остаётся пустой
+                None => Some(None),
+                // клип стороны пропал: переход умирает целиком (фейды
+                // заводятся явно, а не остатками от удаления)
+                Some(id) => clips.iter().find(|c| c.id == id).map(Some),
+            };
+            let (Some(a), Some(b)) = (side(t.a), side(t.b)) else { return false };
+            if let (Some(a), Some(b)) = (a, b)
+                && (a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start)
+            {
                 return false;
             }
-            t.in_offset = t.in_offset.min(a.duration);
-            t.out_offset = t.out_offset.min(b.duration);
+            if let Some(a) = a {
+                t.in_offset = t.in_offset.min(a.duration);
+            }
+            if let Some(b) = b {
+                t.out_offset = t.out_offset.min(b.duration);
+            }
             t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION
         });
     }

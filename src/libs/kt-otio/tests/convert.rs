@@ -52,8 +52,8 @@ fn rich_project() -> Project {
     p.clips.push(a2);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(10),
-        b: ClipId(11),
+        a: Some(ClipId(10)),
+        b: Some(ClipId(11)),
         in_offset: Tick(9_000),
         out_offset: Tick(4_500),
         kind: TransitionKind::Crossfade,
@@ -211,4 +211,78 @@ fn t148_regen() {
     )
     .unwrap();
     println!("regenerated ({} bytes), notices: {notices:?}", out.len());
+}
+
+// ---- тест 154: чужие конструкции, которые формат разрешает --------------------
+
+/// Все закоммиченные сэмплы апстрима (fixtures/otio-samples, пин в README)
+/// обязаны ЧИТАТЬСЯ. Раньше падали три класса: клип без `source_range`,
+/// клип с `media_reference: null`, `name: null` у ссылок.
+#[test]
+fn t154_upstream_samples_load() {
+    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples"));
+    let mut seen = 0;
+    for e in std::fs::read_dir(dir).expect("каталог сэмплов") {
+        let path = e.unwrap().path();
+        if path.extension().and_then(|x| x.to_str()) != Some("otio") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        let bundle = load_project(&text, path.parent())
+            .unwrap_or_else(|e| panic!("{} не читается: {e}", path.display()));
+        // повторная запись обязана быть идемпотентной (инвариант kt-otio)
+        let once = save_project(&bundle.project, &bundle.retained, path.parent());
+        let again = load_project(&once, path.parent()).expect("наш же вывод читается");
+        let twice = save_project(&again.project, &again.retained, path.parent());
+        assert_eq!(once, twice, "{}: пересохранение не идемпотентно", path.display());
+        seen += 1;
+    }
+    assert!(seen >= 9, "сэмплы апстрима пропали из фикстур (нашлось {seen})");
+}
+
+/// Клип без `source_range` берёт материал целиком — длительность и точку
+/// входа из `available_range` активной ссылки (спека OTIO; так живёт
+/// Clip-004 в simple_cut.otio).
+#[test]
+fn t154_clip_without_source_range_uses_available_range() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples/simple_cut.otio");
+    let text = std::fs::read_to_string(path).unwrap();
+    let b = load_project(&text, None).expect("simple_cut читается");
+    assert_eq!(b.project.clips.len(), 4);
+    let last = b.project.clips.iter().max_by_key(|c| c.start).unwrap();
+    // available_range Clip-004: start 100, duration 6 кадров @24 fps
+    assert_eq!(last.duration, Tick(6 * 90_000 / 24));
+    assert_eq!(last.source_in, Tick(100 * 90_000 / 24));
+}
+
+/// Клип с `media_reference: null` законен — это клип без привязки к
+/// материалу. Читается, рендерится чёрным/тишиной, а `null` переживает
+/// пересохранение (ссылку не выдумываем).
+#[test]
+fn t154_clip_without_media_reference_survives() {
+    let path =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples/transition_test.otio");
+    let text = std::fs::read_to_string(path).unwrap();
+    let b = load_project(&text, None).expect("transition_test читается");
+    assert_eq!(b.project.clips.len(), 3);
+    for c in &b.project.clips {
+        let m = b.project.media.iter().find(|m| m.id == c.media).expect("медиа-запись есть");
+        assert_eq!(m.path, "", "у клипа без ссылки нет пути к материалу");
+    }
+    // клипы без ссылки НЕ делят один media_id: общего материала у них нет
+    let ids: std::collections::HashSet<_> = b.project.clips.iter().map(|c| c.media).collect();
+    assert_eq!(ids.len(), 3);
+
+    let out = save_project(&b.project, &b.retained, None);
+    parse_document(&out).expect("наш вывод типизируется");
+    let json: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let refs = json["tracks"]["children"][0]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["OTIO_SCHEMA"] == "Clip.2")
+        .map(|c| c["media_references"]["DEFAULT_MEDIA"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(refs.len(), 3);
+    assert!(refs.iter().all(|r| r.is_null()), "null-ссылка не должна превращаться в ExternalReference: {refs:?}");
 }

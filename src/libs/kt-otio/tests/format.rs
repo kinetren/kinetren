@@ -26,14 +26,14 @@ fn clip(name: &str, url: &str, source_in: i64, dur: i64) -> Composable {
     let mut refs = indexmap::IndexMap::new();
     refs.insert(
         kt_otio::DEFAULT_MEDIA_KEY.to_string(),
-        MediaRefNode::External(kt_otio::ExternalReference {
+        Some(MediaRefNode::External(kt_otio::ExternalReference {
             name: String::new(),
             target_url: url.into(),
             available_range: None,
             available_image_bounds: None,
             metadata: Map::new(),
             extra: Map::new(),
-        }),
+        })),
     );
     Composable::Clip(Clip {
         name: name.into(),

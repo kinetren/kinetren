@@ -147,6 +147,24 @@ pub(crate) fn transition_rect(x0: f32, x1: f32, lane_top: f32, lane_h: f32) -> e
     )
 }
 
+/// «Ручки» в окне перехода (Р.26): слева от стыка играет продолжение
+/// ВХОДЯЩЕГО клипа (его материал до собственного начала), справа — хвост
+/// уходящего. Ровно это и возвращается при растаскивании. Чистая функция —
+/// тест 160.
+pub(crate) fn transition_handle_rects(
+    x0: f32,
+    xj: f32,
+    x1: f32,
+    lane_top: f32,
+    lane_h: f32,
+) -> (egui::Rect, egui::Rect) {
+    let (top, bot) = (lane_top + 1.0, lane_top + lane_h - 3.0);
+    (
+        egui::Rect::from_min_max(egui::pos2(x0, top), egui::pos2(xj, bot)),
+        egui::Rect::from_min_max(egui::pos2(xj, top), egui::pos2(x1, bot)),
+    )
+}
+
 /// Лента диапазонной метки на строке подписей времени (Р.24, п.142).
 /// Чистая функция — тест 142.
 pub(crate) fn marker_band_rect(x0: f32, x1: f32, time_top: f32) -> egui::Rect {
@@ -401,6 +419,58 @@ pub fn follow_rearm(
         && re <= view_start + vis
         && ph >= rs
         && ph < re
+}
+
+impl KtApp {
+    /// Дамп геометрии для живых сценариев (Р.27, `KT_GEOM_DUMP=<файл>`):
+    /// окно, зона дорожек, зум и вертикальные позиции строк — всё в
+    /// экранных координатах, чтобы скрипт целился мышью точно, а не по
+    /// эвристике «примерно треть снизу». Пишется не чаще 10 Гц и только при
+    /// заданном env: в обычном запуске ветка стоит один `Option`-чек.
+    fn dump_geom(&mut self, geom: &TlGeom, full: egui::Rect) {
+        let Some(path) = self.geom_dump_path.clone() else { return };
+        let now = std::time::Instant::now();
+        if self.geom_dumped_at.is_some_and(|t| now.duration_since(t).as_millis() < 100) {
+            return;
+        }
+        self.geom_dumped_at = Some(now);
+        let rows: Vec<String> = geom
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, (kind, lane))| {
+                format!(
+                    "{{\"kind\":\"{}\",\"lane\":{lane},\"top\":{:.1},\"center\":{:.1}}}",
+                    match kind {
+                        kt_model::LaneKind::Video => "video",
+                        kt_model::LaneKind::Audio => "audio",
+                        kt_model::LaneKind::Morph => "morph",
+                    },
+                    geom.row_top(i),
+                    geom.row_top(i) + geom.lane_h * 0.5,
+                )
+            })
+            .collect();
+        let json = format!(
+            "{{\"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
+             \"timeline\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
+             \"lane_h\":{:.1},\"ticks_per_px\":{:.3},\"view_start\":{:.1},\"rows\":[{}]}}\n",
+            full.width(),
+            full.height(),
+            geom.rect.left(),
+            geom.rect.right(),
+            geom.rect.top(),
+            geom.rect.bottom(),
+            geom.lane_h,
+            geom.tpp,
+            geom.view_start,
+            rows.join(",")
+        );
+        let tmp = format!("{path}.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
 }
 
 /// Геометрия таймлайна последнего кадра — маппинг позиций ВНЕ
@@ -891,6 +961,11 @@ impl KtApp {
             tpp: self.ticks_per_px,
         };
         self.tl_geom = Some(geom.clone());
+        // KT_GEOM_DUMP=<файл> — геометрия таймлайна наружу для живых
+        // сценариев (Р.27): без неё скрипт вынужден УГАДЫВАТЬ, где дорожка и
+        // сколько пикселей в секунде, и ломается от любой правки вёрстки.
+        // Только по env, не чаще 10 Гц, атомарной заменой файла.
+        self.dump_geom(&geom, full);
         let lane_top = |kind: ClipKind, lane: u32| -> f32 { geom.lane_top(kind, lane) };
         let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
         let morph_lane_at_y = |y: f32| -> Option<u32> { geom.morph_lane_at_y(y) };
@@ -1200,12 +1275,16 @@ impl KtApp {
         let transition_at = |app: &KtApp, pos: egui::Pos2| -> Option<(TransitionId, TransZone)> {
             let p = app.model.project();
             for t in &p.transitions {
-                let Some(a) = p.clips.iter().find(|c| c.id == t.a) else { continue };
+                // якорь фейда (Р.25) — его единственный живой конец
+                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id))
+                else {
+                    continue;
+                };
                 let top = lane_top(a.kind, a.lane);
                 if pos.y < top || pos.y > top + lane_h - 2.0 {
                     continue;
                 }
-                let joint = (a.start + a.duration).0;
+                let Some(joint) = t.joint(p).map(|j| j.0) else { continue };
                 let xj = tick_to_x(joint);
                 if (pos.x - xj).abs() <= EDGE_GRAB_PX {
                     return Some((t.id, TransZone::Joint));
@@ -1624,13 +1703,20 @@ impl KtApp {
                         let p = self.model.project();
                         p.transitions.iter().find(|t| t.id == id).cloned().and_then(|mut t| {
                             let joint = t.joint(p)?.0;
-                            let a = p.clips.iter().find(|c| c.id == t.a)?;
-                            let b = p.clips.iter().find(|c| c.id == t.b)?;
+                            let body = |side: Option<ClipId>| {
+                                // у фейда сторона-пустота телом не ограничена
+                                side.map_or(i64::MAX, |id| {
+                                    p.clips
+                                        .iter()
+                                        .find(|c| c.id == id)
+                                        .map_or(0, |c| c.duration.0)
+                                })
+                            };
                             let raw = x_to_tick(pos.x);
                             if left {
-                                t.in_offset = Tick((joint - raw).clamp(0, a.duration.0));
+                                t.in_offset = Tick((joint - raw).clamp(0, body(t.a)));
                             } else {
-                                t.out_offset = Tick((raw - joint).clamp(0, b.duration.0));
+                                t.out_offset = Tick((raw - joint).clamp(0, body(t.b)));
                             }
                             (t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION)
                                 .then_some(Command::SetTransition(t))
@@ -1649,8 +1735,8 @@ impl KtApp {
                             .iter()
                             .find(|t| t.id == id)
                             .and_then(|t| {
-                                let a = p.clips.iter().find(|c| c.id == t.a)?;
-                                let b = p.clips.iter().find(|c| c.id == t.b)?;
+                                let a = p.clips.iter().find(|c| Some(c.id) == t.a)?;
+                                let b = p.clips.iter().find(|c| Some(c.id) == t.b)?;
                                 Some(x_to_tick(pos.x).clamp(
                                     a.start.0 + MIN_CLIP_DURATION.0,
                                     b.start.0 + b.duration.0 - MIN_CLIP_DURATION.0,
@@ -1701,13 +1787,13 @@ impl KtApp {
                                     .project()
                                     .transitions
                                     .iter()
-                                    .find(|t| t.a == outgoing && t.b == incoming)
+                                    .find(|t| (t.a, t.b) == (Some(outgoing), Some(incoming)))
                                     .map(|t| t.id);
                                 let ev = TransitionEvent {
                                     id: existing
                                         .unwrap_or(TransitionId(self.next_transition_id())),
-                                    a: outgoing,
-                                    b: incoming,
+                                    a: Some(outgoing),
+                                    b: Some(incoming),
                                     in_offset: Tick(in_off),
                                     out_offset: Tick(out_off),
                                     kind: TransitionKind::Crossfade,
@@ -1726,14 +1812,19 @@ impl KtApp {
                                 } else {
                                     Command::AddTransition(ev)
                                 });
-                                self.apply_batch(cmds);
+                                // клип мог уйти ИЗ другого кроссфейда — его
+                                // осиротевший сосед получает материал обратно
+                                self.apply_batch_restoring(cmds);
                             }
                             _ => {
-                                self.apply(Command::MoveClip {
+                                // растащили клипы (или увели на другую
+                                // дорожку) — переход умирает, и срезанный
+                                // при наезде материал возвращается (Р.26)
+                                self.apply_batch_restoring(vec![Command::MoveClip {
                                     id: d.id,
                                     new_start: Tick(d.cur_start),
                                     new_lane: d.cur_lane,
-                                });
+                                }]);
                             }
                         }
                     }
@@ -1766,7 +1857,8 @@ impl KtApp {
                         .iter()
                         .find(|t| t.id == id)
                         .map(|t| (t.a, t.b));
-                    if let Some((a, b)) = pair {
+                    // roll стыка бывает только у настоящей пары
+                    if let Some((Some(a), Some(b))) = pair {
                         self.apply_batch(vec![
                             Command::TrimEnd { id: a, new_end: Tick(cur_at) },
                             Command::TrimStart { id: b, new_start: Tick(cur_at) },
@@ -2284,10 +2376,15 @@ impl KtApp {
         {
             let p = self.model.project();
             for t in &p.transitions {
-                let Some(a) = p.clips.iter().find(|c| c.id == t.a) else { continue };
+                // якорь фейда (Р.25) — единственный живой конец, стык у него
+                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id))
+                else {
+                    continue;
+                };
+                let Some(base_joint) = t.joint(p).map(|j| j.0) else { continue };
                 let joint = match &self.drag {
                     Some(Drag::TransitionBody { id, cur_at, .. }) if *id == t.id => *cur_at,
-                    _ => (a.start + a.duration).0,
+                    _ => base_joint,
                 };
                 let x0 = tick_to_x(joint - t.in_offset.0);
                 let x1 = tick_to_x(joint + t.out_offset.0);
@@ -2296,6 +2393,30 @@ impl KtApp {
                 }
                 let top = lane_top(a.kind, a.lane);
                 let r = transition_rect(x0, x1, top, lane_h);
+                // ручки (Р.26): материал соседей продолжается за стык и
+                // никуда не делся — растащишь клипы, и он вернётся
+                let xj = tick_to_x(joint);
+                let (left, right) = transition_handle_rects(x0, xj, x1, top, lane_h);
+                let handle_fill = |id: Option<ClipId>| {
+                    let c = id.and_then(|i| p.clips.iter().find(|c| c.id == i))?;
+                    let base = media_paths
+                        .get(&c.media)
+                        .map(|path| clip_color(path, c.kind))
+                        .unwrap_or(egui::Color32::from_gray(80));
+                    Some(egui::Color32::from_rgba_unmultiplied(
+                        base.r(),
+                        base.g(),
+                        base.b(),
+                        70,
+                    ))
+                };
+                // слева от стыка просвечивает ВХОДЯЩИЙ, справа — уходящий
+                if let Some(fill) = handle_fill(t.b) {
+                    painter.rect_filled(left, 2.0, fill);
+                }
+                if let Some(fill) = handle_fill(t.a) {
+                    painter.rect_filled(right, 2.0, fill);
+                }
                 painter.rect_filled(
                     r,
                     2.0,
@@ -2303,9 +2424,22 @@ impl KtApp {
                 );
                 let st =
                     egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 130));
-                painter.line_segment([r.left_bottom(), r.right_top()], st);
-                painter.line_segment([r.left_top(), r.right_bottom()], st);
-                let xj = tick_to_x(joint);
+                // кроссфейд — X (две встречные диагонали), фейд — ОДНА
+                // диагональ по направлению нарастания (Р.25)
+                match (t.a.is_some(), t.b.is_some()) {
+                    (true, true) => {
+                        painter.line_segment([r.left_bottom(), r.right_top()], st);
+                        painter.line_segment([r.left_top(), r.right_bottom()], st);
+                    }
+                    // фейд-ин: пустота слева, картинка проявляется вправо
+                    (false, true) => {
+                        painter.line_segment([r.left_bottom(), r.right_top()], st);
+                    }
+                    // фейд-аут: гаснет вправо
+                    _ => {
+                        painter.line_segment([r.left_top(), r.right_bottom()], st);
+                    }
+                }
                 painter.line_segment(
                     [egui::pos2(xj, r.top()), egui::pos2(xj, r.bottom())],
                     egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
@@ -2740,20 +2874,31 @@ impl KtApp {
                         };
                         let mut items: Vec<(bool, ClipId)> = Vec::new();
                         if let Some(n) = neighbor(true)
-                            && !p.transitions.iter().any(|t| (t.a, t.b) == (id, n))
+                            && !p.transitions.iter().any(|t| (t.a, t.b) == (Some(id), Some(n)))
                         {
                             items.push((true, n));
                         }
                         if let Some(n) = neighbor(false)
-                            && !p.transitions.iter().any(|t| (t.a, t.b) == (n, id))
+                            && !p.transitions.iter().any(|t| (t.a, t.b) == (Some(n), Some(id)))
                         {
                             items.push((false, n));
                         }
                         let existing: Vec<TransitionId> = p
                             .transitions
                             .iter()
-                            .filter(|t| t.a == id || t.b == id)
+                            .filter(|t| t.touches(id))
                             .map(|t| t.id)
+                            .collect();
+                        // фейд у свободного края клипа (Р.25): соседа нет —
+                        // картинка/звук проявляется из пустоты или гаснет в неё
+                        let fades: Vec<bool> = [true, false]
+                            .into_iter()
+                            .filter(|&incoming| {
+                                let occupied = p.transitions.iter().any(|t| {
+                                    if incoming { t.a == Some(id) } else { t.b == Some(id) }
+                                });
+                                neighbor(incoming).is_none() && !occupied
+                            })
                             .collect();
                         for (next, n) in items {
                             let label = if next {
@@ -2775,13 +2920,36 @@ impl KtApp {
                                         .max(MIN_TRANSITION_DURATION);
                                     self.apply(Command::AddTransition(TransitionEvent {
                                         id: TransitionId(self.next_transition_id()),
-                                        a,
-                                        b,
+                                        a: Some(a),
+                                        b: Some(b),
                                         in_offset: half,
                                         out_offset: half,
                                         kind: TransitionKind::Crossfade,
                                     }));
                                 }
+                                ui.close();
+                            }
+                        }
+                        for incoming in fades {
+                            let label = if incoming {
+                                tr(k::tl::menu::FADE_OUT)
+                            } else {
+                                tr(k::tl::menu::FADE_IN)
+                            };
+                            if ui.button(label).clicked() {
+                                let half = Tick(45_000)
+                                    .min(Tick(me.duration.0 / 2))
+                                    .max(MIN_TRANSITION_DURATION);
+                                let (a, b) =
+                                    if incoming { (Some(id), None) } else { (None, Some(id)) };
+                                self.apply(Command::AddTransition(TransitionEvent {
+                                    id: TransitionId(self.next_transition_id()),
+                                    a,
+                                    b,
+                                    in_offset: half,
+                                    out_offset: half,
+                                    kind: TransitionKind::Crossfade,
+                                }));
                                 ui.close();
                             }
                         }

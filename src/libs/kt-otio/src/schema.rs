@@ -116,9 +116,16 @@ fn default_true() -> bool {
     true
 }
 
+/// Строковое поле, у которого в чужом файле может стоять `null` (так пишет
+/// имена, например, апстримовский multitrack.otio). Эталон нормализует такой
+/// null в пустую строку на первом же сохранении — делаем то же самое.
+fn string_or_null<'de, D: serde::Deserializer<'de>>(de: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(de)?.unwrap_or_default())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Marker {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     /// Дефолт эталонной библиотеки.
     #[serde(default = "Marker::default_color")]
@@ -140,7 +147,7 @@ impl Marker {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Effect {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     pub effect_name: String,
     #[serde(default = "default_true")]
@@ -153,7 +160,7 @@ pub struct Effect {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LinearTimeWarp {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     #[serde(default)]
     pub effect_name: String,
@@ -168,7 +175,7 @@ pub struct LinearTimeWarp {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExternalReference {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     pub target_url: String,
     pub available_range: Option<TimeRange>,
@@ -183,7 +190,7 @@ pub struct ExternalReference {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MissingReference {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     pub available_range: Option<TimeRange>,
     #[serde(default)]
@@ -196,7 +203,7 @@ pub struct MissingReference {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Transition {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     pub transition_type: String,
     pub in_offset: RationalTime,
@@ -211,10 +218,15 @@ pub struct Transition {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Clip {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     pub source_range: Option<TimeRange>,
-    pub media_references: IndexMap<String, MediaRefNode>,
+    /// Ссылок может не быть вовсе, а сама ссылка — быть `null`: клип без
+    /// привязки к материалу законен (`media_reference: null` в Clip.1 —
+    /// например tests/sample_data/transition_test.otio апстрима). Возим
+    /// `null` как есть, чтобы пересохранение не выдумывало ссылку.
+    #[serde(default)]
+    pub media_references: IndexMap<String, Option<MediaRefNode>>,
     #[serde(default = "default_media_key")]
     pub active_media_reference_key: String,
     #[serde(default)]
@@ -235,13 +247,28 @@ fn default_media_key() -> String {
 
 impl Clip {
     pub fn active_media(&self) -> Option<&MediaRefNode> {
-        self.media_references.get(&self.active_media_reference_key)
+        self.media_references.get(&self.active_media_reference_key)?.as_ref()
+    }
+
+    /// available_range активной ссылки — источник длительности для клипа без
+    /// `source_range` (спека OTIO: такой клип использует материал целиком).
+    /// У ссылки неизвестной схемы поле читается из сырья: диапазон там лежит
+    /// под тем же именем, а схема ссылки на его смысл не влияет.
+    pub fn active_available_range(&self) -> Option<TimeRange> {
+        match self.active_media()? {
+            MediaRefNode::External(er) => er.available_range,
+            MediaRefNode::Missing(mr) => mr.available_range,
+            MediaRefNode::Unknown(raw) => raw
+                .0
+                .get("available_range")
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Gap {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     pub source_range: Option<TimeRange>,
     #[serde(default)]
@@ -258,7 +285,7 @@ pub struct Gap {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Stack {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     #[serde(default)]
     pub children: Vec<Composable>,
@@ -277,10 +304,10 @@ pub struct Stack {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Track {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     /// "Video" | "Audio" (чужие значения не отвергаем — passthrough).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub kind: String,
     #[serde(default)]
     pub children: Vec<Composable>,
@@ -299,7 +326,7 @@ pub struct Track {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Timeline {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "string_or_null")]
     pub name: String,
     pub global_start_time: Option<RationalTime>,
     #[serde(default)]

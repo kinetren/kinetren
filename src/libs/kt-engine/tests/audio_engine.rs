@@ -120,8 +120,8 @@ fn t2_crossfade_transition_is_equal_power() {
     ]);
     p.transitions.push(kt_model::TransitionEvent {
         id: kt_model::TransitionId(1),
-        a: kt_model::ClipId(1),
-        b: kt_model::ClipId(2),
+        a: Some(kt_model::ClipId(1)),
+        b: Some(kt_model::ClipId(2)),
         in_offset: kt_time::Tick::from_audio_frames(ov / 2),
         out_offset: kt_time::Tick::from_audio_frames(ov / 2),
         kind: kt_model::TransitionKind::Crossfade,
@@ -194,8 +194,8 @@ fn t7_render_is_deterministic_regardless_of_history() {
     ]);
     p.transitions.push(kt_model::TransitionEvent {
         id: kt_model::TransitionId(1),
-        a: kt_model::ClipId(1),
-        b: kt_model::ClipId(2),
+        a: Some(kt_model::ClipId(1)),
+        b: Some(kt_model::ClipId(2)),
         in_offset: kt_time::Tick::from_audio_frames(248),
         out_offset: kt_time::Tick::from_audio_frames(248),
         kind: kt_model::TransitionKind::Crossfade,

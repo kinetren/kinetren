@@ -117,7 +117,9 @@ impl AudioRenderer {
             if w1 <= w0 {
                 continue;
             }
-            if let Some(a) = clips.iter_mut().find(|c| c.id == t.a) {
+            // фейд (Р.25) — переход с одним живым концом: вес считается так
+            // же, «партнёра» просто нет, и материал напротив — тишина
+            if let Some(a) = t.a.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
                 // reversed-FX: зеркальный якорь источника завязан на
                 // window_end — ручку не расширяем (ограничение v1, п.136),
                 // фейд-вес применяется как есть
@@ -126,7 +128,7 @@ impl AudioRenderer {
                 a.tail_ext = ext.max(0);
                 a.ext_end += a.tail_ext;
             }
-            if let Some(b) = clips.iter_mut().find(|c| c.id == t.b) {
+            if let Some(b) = t.b.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
                 let ext = if b.reversed && !b.fx.is_empty() { 0 } else { b.start - w0 };
                 b.fade_in = Some((w0, w1));
                 b.head_ext = ext.max(0);

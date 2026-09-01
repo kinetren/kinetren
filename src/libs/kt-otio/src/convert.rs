@@ -47,11 +47,12 @@ pub struct ClipExtra {
     pub effects_foreign: Vec<(usize, EffectNode)>,
     /// Маркеры, висящие на клипе (мы своих не создаём — passthrough).
     pub markers: Vec<MarkerNode>,
-    /// Прочие media_references (кроме активного) + активный целиком
-    /// (available_range/metadata/extra восстанавливаются, target_url наш).
-    pub media_refs: IndexMap<String, MediaRefNode>,
+    /// ВСЕ media_references клипа как в файле (включая активный и `null`:
+    /// клип без привязки к материалу законен). На записи активный ключ
+    /// подменяется нашим target_url — но только если материал есть; иначе
+    /// карта пишется нетронутой (чужой `null` не превращается в ссылку).
+    pub media_refs: IndexMap<String, Option<MediaRefNode>>,
     pub active_key: String,
-    pub active_ref: Option<ExternalReference>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -78,7 +79,8 @@ pub struct Retained {
     pub tracks: HashMap<(ClipKind, u32), TrackExtra>,
     pub clips: HashMap<ClipId, ClipExtra>,
     /// По паре клипов стыка.
-    pub transitions: HashMap<(ClipId, ClipId), TransitionExtra>,
+    /// Ключ — пара концов перехода; у фейда (Р.25) один конец None.
+    pub transitions: HashMap<(Option<ClipId>, Option<ClipId>), TransitionExtra>,
     /// Сырьё foreign-плейсхолдеров по ForeignEvent.key.
     pub foreign: HashMap<u64, RawObject>,
     /// Чужие маркеры корневого Stack (наши — из модели).
@@ -116,13 +118,26 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
     let media_path =
         |id: MediaId| p.media.iter().find(|m| m.id == id).map(|m| m.path.clone()).unwrap_or_default();
 
-    // переходы по паре и по incoming-клипу
-    let trans_by_b: HashMap<ClipId, &TransitionEvent> =
-        p.transitions.iter().map(|t| (t.b, t)).collect();
+    // переход пишется ПЕРЕД своим incoming-клипом; фейд-аут (правого клипа
+    // нет) — ПОСЛЕ своего outgoing (Р.25)
+    let trans_before: HashMap<ClipId, &TransitionEvent> =
+        p.transitions.iter().filter_map(|t| Some((t.b?, t))).collect();
+    let trans_after: HashMap<ClipId, &TransitionEvent> = p
+        .transitions
+        .iter()
+        .filter(|t| t.b.is_none())
+        .filter_map(|t| Some((t.a?, t)))
+        .collect();
 
     let mut children: Vec<Composable> = Vec::new();
-    let mut emit_track = |kind: ClipKind, lane: u32| {
+    let mut emit_track = |kind: ClipKind, lane: u32, timeline_end: Tick| {
         let tx = retained.tracks.get(&(kind, lane)).cloned().unwrap_or_default();
+        let known = retained.tracks.contains_key(&(kind, lane));
+        let has_content = p.clips.iter().any(|c| c.kind == kind && c.lane == lane)
+            || p.foreign.iter().any(|f| f.kind == kind && f.lane == lane);
+        if !known && !has_content {
+            return; // пустая дорожка, которой не было в исходном файле
+        }
         let mut items: Vec<(Tick, Tick, Result<&ClipEvent, &ForeignEvent>)> = p
             .clips
             .iter()
@@ -160,9 +175,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             }
             match item {
                 Ok(c) => {
-                    if let Some(t) = trans_by_b.get(&c.id)
-                        && p.clips.iter().any(|a| a.id == t.a)
-                    {
+                    let emit_transition = |kids: &mut Vec<Composable>, t: &TransitionEvent| {
                         let (ttype, meta, extra) = retained
                             .transitions
                             .get(&(t.a, t.b))
@@ -176,12 +189,20 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                             metadata: meta,
                             extra,
                         }));
+                    };
+                    if let Some(t) = trans_before.get(&c.id)
+                        && t.a.is_none_or(|a| p.clips.iter().any(|x| x.id == a))
+                    {
+                        emit_transition(&mut kids, t);
                     }
                     kids.push(Composable::Clip(clip_to_otio(
                         c,
                         retained,
                         &url_of(&media_path(c.media)),
                     )));
+                    if let Some(t) = trans_after.get(&c.id) {
+                        emit_transition(&mut kids, t);
+                    }
                 }
                 Err(f) => {
                     if let Some(raw) = retained.foreign.get(&f.key) {
@@ -190,6 +211,17 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 }
             }
             cursor = end;
+        }
+        if timeline_end > cursor {
+            kids.push(Composable::Gap(Gap {
+                name: String::new(),
+                source_range: Some(range(Tick::ZERO, timeline_end - cursor)),
+                effects: vec![],
+                markers: vec![],
+                enabled: true,
+                metadata: Map::new(),
+                extra: Map::new(),
+            }));
         }
         // только ЯВНОЕ имя дорожки (дефолтные ярлыки V1/A1 в файл не пишем —
         // иначе чужой/новый проект после круга обрастает фиктивными именами)
@@ -219,12 +251,17 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             extra: tx.extra.clone(),
         }));
     };
+    // Монтажная длина (Р.25): дорожка короче конца таймлайна дописывается
+    // хвостовым Gap'ом — так чужой файл задаёт длину и так его прочтут
+    // обратно. Дорожку, которой в файле не было и в которой ничего нет,
+    // не пишем вовсе (число дорожек живёт в metadata.kt).
+    let timeline_end = p.timeline_end.unwrap_or(Tick::ZERO);
     // видео снизу вверх (OTIO: поздний трек поверх), затем аудио по порядку
     for lane in (0..p.video_lanes).rev() {
-        emit_track(ClipKind::Video, lane);
+        emit_track(ClipKind::Video, lane, timeline_end);
     }
     for lane in 0..p.audio_lanes {
-        emit_track(ClipKind::Audio, lane);
+        emit_track(ClipKind::Audio, lane, timeline_end);
     }
 
     // метки — на корневом Stack (наши + чужие passthrough)
@@ -280,6 +317,9 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         bin_layout: p.ui.as_ref().map(|u| u.bin_layout.clone()).unwrap_or_default(),
         bin_free: p.ui.as_ref().map(|u| u.bin_free).unwrap_or(false),
         morph_lanes: p.morph_lanes,
+        // длина сверх материала и число дорожек (пустые в файл не пишем)
+        end: p.timeline_end.map(|t| t.0),
+        lanes: Some((p.video_lanes, p.audio_lanes)),
         morphers,
     };
     kt_set(&mut meta, &kt);
@@ -334,18 +374,25 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
     }
 
     let mut media_refs = ex.media_refs.clone();
-    let mut active = ex.active_ref.clone().unwrap_or(ExternalReference {
-        name: String::new(),
-        target_url: String::new(),
-        available_range: None,
-        available_image_bounds: None,
-        metadata: Map::new(),
-        extra: Map::new(),
-    });
-    active.target_url = target_url.to_string();
     let active_key =
         if ex.active_key.is_empty() { DEFAULT_MEDIA_KEY.to_string() } else { ex.active_key };
-    media_refs.insert(active_key.clone(), MediaRefNode::External(active));
+    if !target_url.is_empty() {
+        // available_range/metadata/extra прежней ссылки сохраняются,
+        // подменяется только адрес материала
+        let mut active = match media_refs.get(&active_key) {
+            Some(Some(MediaRefNode::External(er))) => er.clone(),
+            _ => ExternalReference {
+                name: String::new(),
+                target_url: String::new(),
+                available_range: None,
+                available_image_bounds: None,
+                metadata: Map::new(),
+                extra: Map::new(),
+            },
+        };
+        active.target_url = target_url.to_string();
+        media_refs.insert(active_key.clone(), Some(MediaRefNode::External(active)));
+    }
 
     let mut meta = ex.meta_foreign.clone();
     kt_set(
@@ -480,6 +527,22 @@ pub fn timeline_to_project(
                     let dur = item_duration(&g.source_range).ok_or_else(|| {
                         Error::UnsupportedSchema("Gap without source_range".into())
                     })?;
+                    // переход перед Gap — фейд-аут предыдущего клипа (Gap =
+                    // пустота; эталон трактует край дорожки так же)
+                    if let Some((in_off, out_off, (ttype, meta, extra))) = pending_transition.take()
+                        && let Some(a) = prev_clip
+                    {
+                        let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
+                        retained.transitions.insert((Some(a), None), (ttype, meta, extra));
+                        p.transitions.push(TransitionEvent {
+                            id: TransitionId(id),
+                            a: Some(a),
+                            b: None,
+                            in_offset: in_off,
+                            out_offset: out_off,
+                            kind: TransitionKind::Crossfade,
+                        });
+                    }
                     if !g.extra.is_empty() || !g.metadata.is_empty() {
                         tx.gaps.push((gap_ordinal, (g.extra.clone(), g.metadata.clone())));
                     }
@@ -495,8 +558,10 @@ pub fn timeline_to_project(
                     ));
                 }
                 Composable::Clip(c) if c.enabled => {
-                    let dur = item_duration(&c.source_range).ok_or_else(|| {
-                        Error::UnsupportedSchema("Clip without source_range".into())
+                    let dur = clip_duration(c).ok_or_else(|| {
+                        Error::UnsupportedSchema(
+                            "Clip without source_range and without available_range".into(),
+                        )
                     })?;
                     let (ev, ex) = clip_from_otio(
                         c,
@@ -512,28 +577,23 @@ pub fn timeline_to_project(
                         &mut p,
                         &mut notices,
                     );
+                    // переход перед клипом: с живым соседом слева —
+                    // кроссфейд, без него (край дорожки или Gap) — фейд-ин
+                    // (Р.25; эталон трактует так же — dissolve с Gap)
                     if let Some((in_off, out_off, (ttype, meta, extra))) = pending_transition.take() {
-                        if let Some(a) = prev_clip {
-                            let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                            if ttype != "SMPTE_Dissolve" {
-                                notices
-                                    .push(format!("transition '{ttype}' imported as crossfade"));
-                            }
-                            retained.transitions.insert((a, ev.id), (ttype, meta, extra));
-                            p.transitions.push(TransitionEvent {
-                                id: TransitionId(id),
-                                a,
-                                b: ev.id,
-                                in_offset: in_off,
-                                out_offset: out_off,
-                                kind: TransitionKind::Crossfade,
-                            });
-                        } else {
-                            notices.push(
-                                "transition at a track edge is not supported yet; kept none"
-                                    .into(),
-                            );
+                        let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
+                        if ttype != "SMPTE_Dissolve" {
+                            notices.push(format!("transition '{ttype}' imported as crossfade"));
                         }
+                        retained.transitions.insert((prev_clip, Some(ev.id)), (ttype, meta, extra));
+                        p.transitions.push(TransitionEvent {
+                            id: TransitionId(id),
+                            a: prev_clip,
+                            b: Some(ev.id),
+                            in_offset: in_off,
+                            out_offset: out_off,
+                            kind: TransitionKind::Crossfade,
+                        });
                     }
                     prev_clip = Some(ev.id);
                     retained.clips.insert(ev.id, ex);
@@ -549,8 +609,23 @@ pub fn timeline_to_project(
                             composable_tag(other)
                         ))
                     })?;
-                    if pending_transition.take().is_some() {
-                        notices.push("transition next to a foreign object was dropped".into());
+                    // переход перед чужим плейсхолдером: рендерить его пару
+                    // мы не можем, но фейд-аут предыдущего клипа честен
+                    if let Some((in_off, out_off, (ttype, meta, extra))) = pending_transition.take() {
+                        if let Some(a) = prev_clip {
+                            let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
+                            retained.transitions.insert((Some(a), None), (ttype, meta, extra));
+                            p.transitions.push(TransitionEvent {
+                                id: TransitionId(id),
+                                a: Some(a),
+                                b: None,
+                                in_offset: in_off,
+                                out_offset: out_off,
+                                kind: TransitionKind::Crossfade,
+                            });
+                        } else {
+                            notices.push("transition between foreign objects was dropped".into());
+                        }
                     }
                     p.foreign.push(ForeignEvent {
                         key: next_foreign_key,
@@ -566,8 +641,27 @@ pub fn timeline_to_project(
                 }
             }
         }
-        if pending_transition.is_some() {
-            notices.push("transition at a track edge is not supported yet; kept none".into());
+        // переход последним ребёнком дорожки — фейд-аут последнего клипа
+        if let Some((in_off, out_off, (ttype, meta, extra))) = pending_transition.take() {
+            if let Some(a) = prev_clip {
+                let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
+                retained.transitions.insert((Some(a), None), (ttype, meta, extra));
+                p.transitions.push(TransitionEvent {
+                    id: TransitionId(id),
+                    a: Some(a),
+                    b: None,
+                    in_offset: in_off,
+                    out_offset: out_off,
+                    kind: TransitionKind::Crossfade,
+                });
+            } else {
+                notices.push("transition on an empty track was dropped".into());
+            }
+        }
+        // монтажная длина: хвостовой Gap чужого файла (Р.25) — конец
+        // дорожки правее последнего клипа задаёт длину таймлайна
+        if cursor > p.timeline_end.unwrap_or(Tick::ZERO) {
+            p.timeline_end = Some(cursor);
         }
         retained.tracks.insert((kind, lane), tx);
     }
@@ -597,6 +691,15 @@ pub fn timeline_to_project(
         }
         p.morph_lanes = kt.morph_lanes;
         p.morphers = kt.morphers;
+        if let Some(end) = kt.end {
+            p.timeline_end = Some(Tick(end));
+        }
+        // число дорожек нашего проекта (пустые в файл не пишутся, Р.25);
+        // normalize() ниже поднимет его, если клипы требуют больше
+        if let Some((v, a)) = kt.lanes {
+            p.video_lanes = p.video_lanes.max(v);
+            p.audio_lanes = p.audio_lanes.max(a);
+        }
     }
 
     // детерминированный порядок независимо от порядка обхода дорожек
@@ -607,6 +710,12 @@ pub fn timeline_to_project(
     if let Some(u) = &mut p.ui {
         // порядок независим от обхода дорожек (видео идёт низ-вверх)
         u.lane_names.sort_by_key(|(k, l, _)| (*k as u8, *l));
+    }
+    // монтажная длина хранится, ТОЛЬКО когда она больше материала: иначе
+    // наш же файл после круга обрастал бы полем end (t151 байт-стабильность)
+    let material = p.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO);
+    if p.timeline_end.is_some_and(|e| e <= material) {
+        p.timeline_end = None;
     }
     p.normalize();
     p.validate().map_err(|e| Error::UnsupportedSchema(format!("invalid timeline: {e}")))?;
@@ -635,6 +744,14 @@ fn clip_from_otio(
     };
     let media = match meta {
         Some(m) if is_ours => MediaId(m.media),
+        // клип без ссылки (Missing/null) не делит источник с другими такими
+        // же: общего материала у них нет, дедуп по пустому URL склеил бы
+        // независимые клипы в одну запись бина
+        _ if url.is_empty() => {
+            let id = MediaId(*next_media_id);
+            *next_media_id += 1;
+            id
+        }
         _ => *media_by_url.entry(url.clone()).or_insert_with(|| {
             let id = MediaId(*next_media_id);
             *next_media_id += 1;
@@ -666,16 +783,8 @@ fn clip_from_otio(
             m
         },
         markers: c.markers.clone(),
-        media_refs: {
-            let mut refs = c.media_references.clone();
-            refs.shift_remove(&c.active_media_reference_key);
-            refs
-        },
+        media_refs: c.media_references.clone(),
         active_key: c.active_media_reference_key.clone(),
-        active_ref: match c.active_media() {
-            Some(MediaRefNode::External(er)) => Some(er.clone()),
-            _ => None,
-        },
         ..Default::default()
     };
     for (i, e) in c.effects.iter().enumerate() {
@@ -711,7 +820,11 @@ fn clip_from_otio(
     let src_in = c
         .source_range
         .as_ref()
-        .map(|r| Tick(r.start_time.to_ticks().0.max(0)))
+        .map(|r| r.start_time.to_ticks())
+        // без source_range клип берёт материал целиком — от начала
+        // available_range (см. clip_duration)
+        .or_else(|| c.active_available_range().map(|r| r.start_time.to_ticks()))
+        .map(|t| Tick(t.0.max(0)))
         .unwrap_or(Tick::ZERO);
     let ev = ClipEvent {
         id,
@@ -751,6 +864,13 @@ fn composable_tag(c: &Composable) -> String {
 
 fn item_duration(r: &Option<TimeRange>) -> Option<Tick> {
     r.as_ref().map(|r| Tick(r.duration.to_ticks().0.max(0)))
+}
+
+/// Длительность клипа: `source_range`, а без него — весь `available_range`
+/// активной ссылки (спека OTIO; так живёт Clip-004 в simple_cut.otio
+/// апстрима). Соответствующий `source_in` берётся в `clip_from_otio`.
+fn clip_duration(c: &Clip) -> Option<Tick> {
+    item_duration(&c.source_range).or_else(|| item_duration(&c.active_available_range()))
 }
 
 fn composable_duration(c: &Composable) -> Option<Tick> {

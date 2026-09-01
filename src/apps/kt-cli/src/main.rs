@@ -247,9 +247,14 @@ fn run(args: &[String]) -> i32 {
         }
         Some("export") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli export <in.otio> <out.mp4>");
+                eprintln!("usage: kt-cli export <in.otio> <out.mp4> [encoder]");
                 return 2;
             };
+            // третьим аргументом можно закрепить видео-энкодер (иначе
+            // автовыбор: nvenc → vaapi → qsv → libx264). Нужен там, где
+            // рендер обязан быть воспроизводимым — например в кросс-рендер
+            // конформансе (тест 158).
+            let encoder = args.get(3).cloned();
             let project = match load_otio(input) {
                 Ok(p) => p,
                 Err(code) => return code,
@@ -294,7 +299,21 @@ fn run(args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            match kt_engine::export_mp4(&project, audio_sources, video_sources, output) {
+            let opts = kt_engine::ExportOptions {
+                force_encoder: encoder,
+                ..Default::default()
+            };
+            match kt_engine::export_mp4_with(
+                &project,
+                audio_sources,
+                video_sources,
+                output,
+                None,
+                &opts,
+                &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                |_| {},
+            ) {
                 Ok(stats) => {
                     eprintln!(
                         "ok: {} video frames, {} audio frames, underruns {}, missing layers {}, encoder {}",
@@ -417,8 +436,8 @@ fn demo_project() -> Project {
     // бывший нахлёст music-клипов — теперь честный кроссфейд-переход
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(25),
-        b: ClipId(27),
+        a: Some(ClipId(25)),
+        b: Some(ClipId(27)),
         in_offset: t(2.0),
         out_offset: t(2.0),
         kind: TransitionKind::Crossfade,

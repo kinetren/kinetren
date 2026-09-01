@@ -2061,7 +2061,7 @@ fn t139_drag_overlap_creates_crossfade() {
     let p = h.state().model.project().clone();
     assert_eq!(p.transitions.len(), 1, "наезд обязан создать переход");
     let t = &p.transitions[0];
-    assert_eq!((t.a, t.b), (ClipId(1), ClipId(2)));
+    assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))));
     // указатель харнесса квантуется пикселем: допуск 1 px = 1000 тиков
     let near = |a: Tick, want: i64, what: &str| {
         assert!((a.0 - want).abs() <= 1_000, "{what}: {a:?} vs ~{want}");
@@ -2106,8 +2106,8 @@ fn t140_transition_edge_and_body_drags() {
         }
         p.transitions.push(TransitionEvent {
             id: TransitionId(1),
-            a: ClipId(1),
-            b: ClipId(2),
+            a: Some(ClipId(1)),
+            b: Some(ClipId(2)),
             in_offset: Tick(10_000),
             out_offset: Tick(10_000),
             kind: TransitionKind::Crossfade,
@@ -2175,6 +2175,173 @@ fn t140_transition_edge_and_body_drags() {
     let r = crate::timeline::transition_rect(100.0, 140.0, 50.0, 40.0);
     assert_eq!((r.left(), r.right()), (100.0, 140.0));
     assert!(r.top() > 50.0 && r.bottom() < 90.0, "полоса внутри строки дорожки");
+}
+
+/// Тест 160 (п.160 porting-notes, Р.26): наехал — растащил — материал
+/// вернулся. Жалоба пользователя: «в sony vegas если растащить
+/// перекрывающиеся события — остаётся то, что перекрывалось, без обрезки».
+#[test]
+fn t160_pulling_apart_restores_trimmed_material() {
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        for (n, start) in [(1u64, 0i64), (2, 200_000)] {
+            p.clips.push(ClipEvent {
+                id: ClipId(n),
+                link_group: None,
+                kind: ClipKind::Video,
+                lane: 0,
+                start: Tick(start),
+                duration: Tick(90_000),
+                source_in: Tick(0),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx_bypass: vec![],
+                fx: vec![],
+            });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let grab = |h: &mut Harness<KtApp>, from: f32, to: f32, y: f32| {
+        // драг как человек: нажать → сдвинуть чуть → вести дальше
+        h.hover_at(egui::pos2(from, y));
+        h.step();
+        h.drag_at(egui::pos2(from, y));
+        h.step();
+        h.hover_at(egui::pos2(from + 8.0_f32.copysign(to - from), y));
+        h.step();
+        h.hover_at(egui::pos2(to, y));
+        h.step();
+        h.drop_at(egui::pos2(to, y));
+        h.step();
+    };
+
+    // 1. наезжаем клипом 2 на клип 1: [200000..290000) → [50000..140000)
+    let from = g.tick_to_x(200_000 + 45_000);
+    grab(&mut h, from, g.tick_to_x(50_000 + 45_000), y);
+    {
+        let p = h.state().model.project();
+        assert_eq!(p.transitions.len(), 1, "наезд создал кроссфейд");
+        let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+        assert!(c1.duration < Tick(90_000), "уходящий подрезан стыком");
+    }
+
+    // 2. растаскиваем обратно — материал обязан вернуться
+    // хват берём ПОДАЛЬШЕ от окна перехода: его края перехватывают клик
+    let cur = h.state().model.project().clips.iter().find(|c| c.id == ClipId(2)).unwrap().start.0;
+    let grab_dt = 60_000;
+    let from = g.tick_to_x(cur + grab_dt);
+    grab(&mut h, from, g.tick_to_x(300_000 + grab_dt), y);
+
+    let p = h.state().model.project().clone();
+    assert!(p.transitions.is_empty(), "переход умер вместе со стыком");
+    let c1 = p.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    let c2 = p.clips.iter().find(|c| c.id == ClipId(2)).unwrap();
+    assert_eq!(c1.duration, Tick(90_000), "уходящему вернули хвост: {c1:?}");
+    assert_eq!(c2.duration, Tick(90_000), "входящему вернули голову: {c2:?}");
+    assert_eq!(c2.source_in, Tick(0), "точка входа вернулась к нулю");
+    p.validate().expect("итог валиден");
+
+    // геометрия ручек — чистая функция
+    let (l, r) = crate::timeline::transition_handle_rects(100.0, 120.0, 140.0, 50.0, 40.0);
+    assert_eq!((l.left(), l.right()), (100.0, 120.0), "слева — продолжение входящего");
+    assert_eq!((r.left(), r.right()), (120.0, 140.0), "справа — хвост уходящего");
+    assert!(l.top() > 50.0 && r.bottom() < 90.0, "ручки внутри строки дорожки");
+}
+
+/// Тест 157 (п.157 porting-notes, Р.25): фейд у края в UI — хват окна,
+/// живой драг края и отсутствие соседа не мешают ни тому, ни другому.
+#[test]
+fn t157_fade_edge_drag_without_neighbour() {
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.clips.push(ClipEvent {
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(90_000),
+            duration: Tick(90_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx: vec![],
+        });
+        // фейд-ин: соседа слева нет вообще
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: None,
+            b: Some(ClipId(1)),
+            in_offset: Tick(0),
+            out_offset: Tick(10_000),
+            kind: TransitionKind::Crossfade,
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+
+    // ПРАВЫЙ край окна фейда (внутри тела клипа) тянем вправо: 10000 → 40000
+    let x_edge = g.tick_to_x(90_000 + 10_000);
+    h.hover_at(egui::pos2(x_edge, y));
+    h.step();
+    h.drag_at(egui::pos2(x_edge, y));
+    h.step();
+    h.hover_at(egui::pos2(x_edge + 8.0, y));
+    h.step();
+    assert!(
+        matches!(h.state().drag, Some(crate::timeline::Drag::TransitionEdge { left: false, .. })),
+        "край фейда не схватился"
+    );
+    let to = g.tick_to_x(90_000 + 40_000);
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+    let t = h.state().model.project().transitions[0].clone();
+    assert!(t.a.is_none() && t.b == Some(ClipId(1)), "фейд остался фейдом: {t:?}");
+    assert!((t.out_offset.0 - 40_000).abs() <= 1_000, "окно расширилось: {t:?}");
+
+    // окно не может выйти за тело клипа
+    let far = g.tick_to_x(90_000 + 200_000);
+    h.hover_at(egui::pos2(g.tick_to_x(90_000 + 40_000), y));
+    h.step();
+    h.drag_at(egui::pos2(g.tick_to_x(90_000 + 40_000), y));
+    h.step();
+    h.hover_at(egui::pos2(g.tick_to_x(90_000 + 40_000) + 8.0, y));
+    h.step();
+    h.hover_at(egui::pos2(far, y));
+    h.step();
+    h.drop_at(egui::pos2(far, y));
+    h.step();
+    let t = h.state().model.project().transitions[0].clone();
+    assert!(t.out_offset <= Tick(90_000), "окно клампится телом клипа: {t:?}");
 }
 
 /// Тест 142 (п.142 porting-notes, Р.24): метки-диапазоны в UI. Жест M —

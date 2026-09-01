@@ -34,8 +34,8 @@ fn project_pair() -> Project {
     }
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(1),
-        b: ClipId(2),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
         in_offset: Tick(9_000),
         out_offset: Tick(9_000),
         kind: TransitionKind::Crossfade,
@@ -150,4 +150,99 @@ fn t137_dissolve_survives_fx_chain_on_pair() {
     let (second, c2) = vr.compose_from_cache(&cache, t, q);
     assert!(c2);
     assert_eq!(first, second, "postfx-cached dissolve is byte-stable");
+}
+
+// ---- тест 156: фейд у края/Gap (Р.25) ----------------------------------------
+
+/// Фейд-ин: пары нет ПО МОДЕЛИ — слой уходит в прозрачность (под ним
+/// чёрный фон композиции), а `complete` не портится: ждать нечего.
+#[test]
+fn t156_solo_fade_scales_alpha_and_stays_complete() {
+    let mut p = project_pair();
+    p.transitions.clear();
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(2),
+        a: None,
+        b: Some(ClipId(1)),
+        in_offset: Tick(0),
+        out_offset: Tick(18_000), // фейд-ин: первые 0.2 c клипа
+        kind: TransitionKind::Crossfade,
+    });
+    p.validate().unwrap();
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+
+    for t in [0i64, 9_000, 17_999, 18_000] {
+        let t = Tick(t);
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "t {t:?}: фейд — не голод по кадру");
+        let src = synth_frame(vr.grid.align_floor(t), q);
+        let expect = if t.0 < 18_000 {
+            // слой с альфой k/4096 поверх ЧЁРНОГО фона композиции
+            let k = ((t.0 * 4096) / 18_000).clamp(0, 4096) as u32;
+            over_black(&src, k)
+        } else {
+            src
+        };
+        assert_eq!(out, expect, "t {t:?}: фейд-ин");
+    }
+}
+
+/// Фейд-аут — то же зеркально: к концу клипа картинка гаснет в чёрное.
+#[test]
+fn t156_fade_out_goes_dark_at_the_edge() {
+    let mut p = project_pair();
+    p.clips.retain(|c| c.id == ClipId(1));
+    p.transitions.clear();
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(3),
+        a: Some(ClipId(1)),
+        b: None,
+        in_offset: Tick(18_000),
+        out_offset: Tick(0),
+        kind: TransitionKind::Crossfade,
+    });
+    p.validate().unwrap();
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+
+    let mid = Tick(81_000); // середина окна [72000, 90000)
+    warm(&vr, &cache, mid, q);
+    let (out, complete) = vr.compose_from_cache(&cache, mid, q);
+    assert!(complete);
+    let src = synth_frame(vr.grid.align_floor(mid), q);
+    assert_eq!(out, over_black(&src, 4096 - 2048), "в середине фейд-аута — половина яркости");
+
+    // у самого края окна кадр почти погас
+    let late = Tick(89_999);
+    warm(&vr, &cache, late, q);
+    let (out, _) = vr.compose_from_cache(&cache, late, q);
+    let mean: f64 = out.chunks_exact(4).map(|p| p[0] as f64).sum::<f64>() / (out.len() / 4) as f64;
+    assert!(mean < 1.0, "к концу окна фейд-аут гаснет, а вышло {mean}");
+}
+
+/// Слой с альфой k/4096 поверх ЧЁРНОГО прозрачного фона композиции —
+/// дословно арифметика scale_alpha_into + alpha_over движка.
+fn over_black(src: &[u8], k: u32) -> Vec<u8> {
+    let mut out = vec![0u8; src.len()];
+    for p in 0..src.len() / 4 {
+        let i = p * 4;
+        let sa = ((255 * k + 2048) >> 12).min(255);
+        if sa == 255 {
+            out[i..i + 4].copy_from_slice(&src[i..i + 4]);
+            continue;
+        }
+        if sa == 0 {
+            continue;
+        }
+        for ch in 0..3 {
+            // фон нулевой (dst = 0, da = 0) → остаётся только вклад слоя
+            out[i + ch] = ((src[i + ch] as u32 * sa) / 255).min(255) as u8;
+        }
+        out[i + 3] = sa as u8;
+    }
+    out
 }

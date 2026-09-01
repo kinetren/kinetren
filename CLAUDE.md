@@ -16,6 +16,9 @@ cargo clippy --all-targets
 cargo run -p kt-app        # GUI
 cargo run -p kt-cli -- …   # headless-рендер/экспорт
 python3 scripts/subset-fonts.py  # сабсеты шрифтов CJK/арабского по каталогам перевода
+./scripts/live-check.sh    # живые сценарии в виртуальном экране (Xvfb+openbox):
+                           # настоящий kt-app, настоящие жесты, скриншоты в
+                           # target/live-out; finish.sh зовёт их сам
 ./scripts/release-build.sh # релизный тарбол: dist-профиль (strip+LTO) в контейнере
                            # Ubuntu 22.04 → работает на glibc >= 2.35; внутри
                            # проверяются «ldd без libav*» и потолок GLIBC_
@@ -80,17 +83,18 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 |---|---|
 | kt-fx (аудио) | kt-engine/tests/{fx (вкл. t31),warp_prefetch,reverse}.rs, golden_export.rs, kt-fx unit (source-карта) |
 | kt-fx/video.rs | kt-fx/tests/video_fx.rs (golden 26, t68 пул), kt-engine/tests/reverse.rs::t26, postfx_cache t66, golden_export t67 |
-| kt-engine/audio.rs | audio_engine, warp_prefetch, splice, reverse (вкл. t29), golden_export |
+| kt-engine/audio.rs | audio_engine, warp_prefetch, splice, reverse (вкл. t29), golden_export, transitions_audio (t136, t156 фейды) |
 | kt-engine/worker.rs | scheduler, video_span, video_stall (t27/t28) |
 | kt-engine/player.rs | player_dynamic (t18/t20), audio_engine::t14, unit t22-sync/t32-varispeed, loop_disarm (t132/t133) + unit t134 |
-| kt-engine/video.rs | viewport, reverse (t24/t26), golden_export (вкл. t67), postfx_cache t66 |
+| kt-engine/video.rs | viewport, reverse (t24/t26), golden_export (вкл. t67), postfx_cache t66, transitions_video (t137, t156 фейды) |
 | kt-engine/export.rs | golden_export (11), export_options (25, 33) |
 | kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg/t34/t37), export_options t33 (муксер) |
 | kt-cache | kt-cache unit (t8/t14/t27/t28/t37 no-read drops, t65 пост-FX kind) |
 | kt-media | ffmpeg_conformance (вкл. t34 — персист пакетного индекса), index_db (вкл. t70), kt-app unit t23 |
-| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30, t89 метки, t90 дорожки), morpher t35 |
-| kt-otio | tests/format.rs (t144-t147: идемпотентность, passthrough, версии, пути), tests/convert.rs (t148 golden легаси-импорта, t152/t153 маппинг), tests/otio_conformance.rs (t149, gated по python opentimelineio) |
+| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30, t89 метки, t90 дорожки), morpher t35, transitions (t135 переходы, t155 фейды, t159 возврат ручек) |
+| kt-otio | tests/format.rs (t144-t147: идемпотентность, passthrough, версии, пути), tests/convert.rs (t148 golden легаси-импорта, t152/t153 маппинг, t154 чужие сэмплы), tests/otio_conformance.rs (t149, gated по python opentimelineio) |
 | kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |
+| kt-cli / кросс-рендер | apps/kt-cli/tests/cross_render.rs t158 (gated: melt + `scripts/otio-mlt-venv.sh`; `KT_REQUIRE_CROSS_RENDER=1` требует их) |
 | kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей, t69/t71 негативные кэши тумб, t72/t74, t121 свечение и гашение метров) |
 | kt-app (вёрстка/интеракции) | **обязательно** kt-app `layout_tests.rs` (t76 панели/сепараторы/кромки/верх превью, t83 подсказки, t85 драг сверху, t86 края и минимум окна, t88 подмотка, t95 магнит, t96 грязность/loop, t97 метры и LED, t98 маска таймкода, t99 группы бина, t101 кнопки у краёв окна и сепаратор метров, t102 ярлык дорожки и шлейф курсора, t118 скролл бина, t119 Shift+A/D, t120 разгон пробелом, t122 дорожки из меню) + t77-t87 |
 | kt-app (любой текст в UI) | `font_tests.rs` t100 (глифы всех неASCII-символов, включая каталоги `i18n/*.toml`) + `i18n_tests.rs` t125/t126/t130/t131 + `layout_tests.rs` t127/t128/t129 |

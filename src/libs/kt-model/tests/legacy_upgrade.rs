@@ -53,7 +53,7 @@ fn t143_audio_pair_becomes_transition() {
     assert_eq!(b.start, Tick(75_000), "B начинается с C");
     assert_eq!(b.source_in, Tick(7_000 + 15_000), "TrimStart сдвинул источник B");
     let t = &p.transitions[0];
-    assert_eq!((t.a, t.b), (ClipId(1), ClipId(2)));
+    assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))));
     assert_eq!((t.in_offset, t.out_offset), (Tick(15_000), Tick(15_000)), "окно == наезд");
     assert_eq!(t.window(&p).unwrap(), kt_time::TickRange::new(Tick(60_000), Tick(90_000)));
 

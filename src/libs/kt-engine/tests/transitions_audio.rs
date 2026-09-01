@@ -71,8 +71,8 @@ fn t136_converted_overlap_matches_old_crossfade_math() {
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 2_048, 2)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(1),
-        b: ClipId(2),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
@@ -107,8 +107,8 @@ fn t136_fade_math_and_handle_material() {
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 50_000, 2)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(1),
-        b: ClipId(2),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
@@ -148,8 +148,8 @@ fn t136_missing_left_handle_is_silent_without_underruns() {
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 0, 2)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(1),
-        b: ClipId(2),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
@@ -176,8 +176,8 @@ fn t136_fx_path_handles_match_plain() {
         let mut p = project(vec![c1, clip(2, 10_240, 10_240, 2_048, 2)]);
         p.transitions.push(TransitionEvent {
             id: TransitionId(1),
-            a: ClipId(1),
-            b: ClipId(2),
+            a: Some(ClipId(1)),
+            b: Some(ClipId(2)),
             in_offset: Tick::from_audio_frames(2_048),
             out_offset: Tick::from_audio_frames(2_048),
             kind: TransitionKind::Crossfade,
@@ -201,8 +201,8 @@ fn t136_reversed_incoming_handle_mirrors_source() {
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), c2]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(1),
-        b: ClipId(2),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
@@ -231,8 +231,8 @@ fn t136_wanted_covers_handles() {
     let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 2_048, 2)]);
     p.transitions.push(TransitionEvent {
         id: TransitionId(1),
-        a: ClipId(1),
-        b: ClipId(2),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
@@ -246,4 +246,62 @@ fn t136_wanted_covers_handles() {
     // B: левая ручка src от 2048−2048 = 0
     let b = wanted.iter().find(|(m, _)| *m == MediaId(2)).unwrap();
     assert_eq!(b.1.start, 0, "incoming handle must be prefetched: {:?}", b.1);
+}
+
+// ---- тест 156: аудио-фейд у края (Р.25) --------------------------------------
+
+/// Фейд-ин звука: тот же equal-power вес, что у кроссфейда, только напротив
+/// окна пустота — звук поднимается из тишины (и симметрично гаснет в неё).
+#[test]
+fn t156_audio_fade_ramps_from_silence() {
+    let mut p = project(vec![clip(1, 0, 4800, 0, 1)]);
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: None,
+        b: Some(ClipId(1)),
+        in_offset: Tick::ZERO,
+        out_offset: Tick::from_audio_frames(2400), // фейд-ин на 2400 кадров
+        kind: TransitionKind::Crossfade,
+    });
+    p.validate().unwrap();
+    let (out, underruns) = render(&p, &[1], 4800);
+    assert_eq!(underruns, 0);
+
+    // dry-эталон того же клипа без перехода
+    let dry = render(&project(vec![clip(1, 0, 4800, 0, 1)]), &[1], 4800).0;
+    assert_eq!(out[0], 0.0, "в начале окна — тишина");
+    for f in [600usize, 1200, 2399] {
+        let w = (f as f64 / 2400.0).sqrt() as f32; // equal-power, как у кроссфейда
+        let expect = dry[f * CH] * w;
+        assert!(
+            (out[f * CH] - expect).abs() < 1e-6,
+            "кадр {f}: ожидался вес {w}, вышло {} против {expect}",
+            out[f * CH]
+        );
+    }
+    for f in [2400usize, 4000] {
+        assert_eq!(out[f * CH], dry[f * CH], "за окном фейда клип звучит как есть");
+    }
+}
+
+/// Фейд-аут: к концу клипа звук уходит в тишину.
+#[test]
+fn t156_audio_fade_out_ends_in_silence() {
+    let mut p = project(vec![clip(1, 0, 4800, 0, 1)]);
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: Some(ClipId(1)),
+        b: None,
+        in_offset: Tick::from_audio_frames(2400),
+        out_offset: Tick::ZERO,
+        kind: TransitionKind::Crossfade,
+    });
+    p.validate().unwrap();
+    let (out, _) = render(&p, &[1], 4800);
+    let dry = render(&project(vec![clip(1, 0, 4800, 0, 1)]), &[1], 4800).0;
+    assert_eq!(out[100 * CH], dry[100 * CH], "до окна — без изменений");
+    let f = 3600usize; // середина окна [2400, 4800)
+    let w = (1.0 - (f - 2400) as f64 / 2400.0).sqrt() as f32;
+    assert!((out[f * CH] - dry[f * CH] * w).abs() < 1e-6);
+    assert!(out[4799 * CH].abs() < 1e-3, "к концу окна почти тишина");
 }
