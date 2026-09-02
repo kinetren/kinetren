@@ -30,6 +30,7 @@ fn project_pair() -> Project {
             reversed: false,
             fx: vec![],
             fx_bypass: vec![],
+            opacity: 1.0,
         });
     }
     p.transitions.push(TransitionEvent {
@@ -271,4 +272,73 @@ fn t162_overlap_keeps_v1_tiebreak() {
     // сверху — клип 1 (start меньше): кадр равен его источнику
     let expect = synth_frame(vr.grid.align_floor(t), q);
     assert_eq!(out, expect, "в зоне наезда сверху клип с меньшим start");
+}
+
+/// Тест 174 (п.12 Р.28): уровень видео-события — непрозрачность слоя.
+///
+/// «в sony vegas… можно вроде прозрачность менять — мышкой наводишься и
+/// тянешь вверх или вниз». Слой умножается на уровень: под полупрозрачным
+/// клипом просвечивает нижняя дорожка, а её нет — чёрное.
+#[test]
+fn t174_clip_opacity_scales_the_layer() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(45_000);
+    // два слоя: lane 0 (сверху) и lane 1 (снизу), РАЗНЫЕ источники
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    for id in [1u64, 2] {
+        p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
+    }
+    for (id, lane, media) in [(1u64, 0u32, 1u64), (2, 1, 2)] {
+        p.clips.push(ClipEvent {
+            id: ClipId(id),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane,
+            start: Tick(0),
+            duration: Tick(90_000),
+            source_in: Tick(if id == 1 { 0 } else { 900_000 }),
+            media: MediaId(media),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            opacity: 1.0,
+        });
+    }
+    p.validate().unwrap();
+
+    let render = |p: &Project| {
+        let mut vr = VideoRenderer::new(p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "слои прогреты");
+        out
+    };
+
+    let opaque = render(&p);
+    let mut p0 = p.clone();
+    p0.clips[0].opacity = 0.0;
+    let transparent = render(&p0);
+    let mut p5 = p.clone();
+    p5.clips[0].opacity = 0.5;
+    let half = render(&p5);
+
+    assert_ne!(opaque, transparent, "уровень 0 обязан открыть нижний слой");
+    // середина между слоями — попиксельно (alpha_over со straight alpha)
+    for i in (0..opaque.len()).step_by(4) {
+        for ch in 0..3 {
+            let (a, b, m) =
+                (opaque[i + ch] as i32, transparent[i + ch] as i32, half[i + ch] as i32);
+            assert!(
+                (m - (a + b) / 2).abs() <= 2,
+                "пиксель {i} канал {ch}: уровень 0.5 — середина {m} между {a} и {b}"
+            );
+        }
+    }
+    // уровень 1.0 ничего не меняет — байт-в-байт прежний кадр (GOLDEN цел)
+    let mut p1 = p.clone();
+    p1.clips[0].opacity = 1.0;
+    assert_eq!(render(&p1), opaque, "уровень 1.0 — тождество");
 }

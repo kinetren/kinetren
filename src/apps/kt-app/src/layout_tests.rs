@@ -385,6 +385,7 @@ fn t94_forward_navigation_advances() {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         });
         p.markers.push(Marker::at(Tick(7000)));
         p.validate().unwrap();
@@ -463,6 +464,7 @@ fn t95_clip_drag_snaps_to_neighbour() {
                     reversed: false,
                     fx_bypass: vec![],
                     fx: vec![],
+                    opacity: 1.0,
                 });
             }
             p.validate().unwrap();
@@ -1237,6 +1239,7 @@ fn t122_insert_lane_after_clicked_row() {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -1318,6 +1321,7 @@ fn t120_space_hold_boosts_playback() {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -1433,6 +1437,7 @@ fn t119_shift_nav_drags_region() {
                 reversed: false,
                 fx_bypass: vec![],
                 fx: vec![],
+                opacity: 1.0,
             });
         }
         p.validate().unwrap();
@@ -1953,6 +1958,7 @@ fn t139_move_plan_crossfade_and_clamp() {
         reversed: false,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     };
     let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
     // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
@@ -1982,9 +1988,15 @@ fn t139_move_plan_crossfade_and_clamp() {
     }
     // полное покрытие соседа (равные длительности, want==n.start) → кламп
     // (движение влево упирается в его конец)
-    assert_eq!(plan_move(&p, ClipId(2), 0, 0), MovePlan::Clamped { start: 90_000 });
+    assert!(
+        matches!(plan_move(&p, ClipId(2), 0, 0), MovePlan::Clamped { start: 90_000, .. }),
+        "полное покрытие → кламп"
+    );
     // крошечный наезд (< минимума окна) → кламп, не микропереход
-    assert_eq!(plan_move(&p, ClipId(2), 89_960, 0), MovePlan::Clamped { start: 90_000 });
+    assert!(
+        matches!(plan_move(&p, ClipId(2), 89_960, 0), MovePlan::Clamped { start: 90_000, .. }),
+        "крошечный наезд → кламп"
+    );
     // мульти-наезд: сдвинем клип 3 ближе и наедем сразу на двоих
     let mut p2 = p.clone();
     p2.clips[2].start = Tick(95_000);
@@ -2033,6 +2045,7 @@ fn t139_drag_overlap_creates_crossfade() {
                 reversed: false,
                 fx_bypass: vec![],
                 fx: vec![],
+                opacity: 1.0,
             });
         }
         p.validate().unwrap();
@@ -2106,6 +2119,7 @@ fn t140_transition_edge_and_body_drags() {
                 reversed: false,
                 fx_bypass: vec![],
                 fx: vec![],
+                opacity: 1.0,
             });
         }
         p.transitions.push(TransitionEvent {
@@ -2214,6 +2228,7 @@ fn t163_overlap_drag_changes_nothing_but_position() {
                 reversed: false,
                 fx_bypass: vec![],
                 fx: vec![],
+                opacity: 1.0,
             });
         }
         p.validate().unwrap();
@@ -2305,6 +2320,7 @@ fn t160_pulling_apart_restores_trimmed_material() {
                 reversed: false,
                 fx_bypass: vec![],
                 fx: vec![],
+                opacity: 1.0,
             });
         }
         p.validate().unwrap();
@@ -2388,6 +2404,7 @@ fn t157_fade_edge_drag_without_neighbour() {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         });
         // фейд-ин: соседа слева нет вообще
         p.transitions.push(TransitionEvent {
@@ -2580,4 +2597,336 @@ fn t150_project_io_is_otio() {
     let err = crate::app::load_project_file(&legacy).unwrap_err();
     assert!(err.contains("Import .ktproj"), "подсказка на импорт: {err}");
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Тест 169 (п.2 Р.28): превью материала при жестах — «сколько было столько
+/// и должно остаться». Пользователь: «перетаскиваю событие вглубь предыдущего
+/// — превью звука прокручивается влево, хотя при воспроизведении сам звук не
+/// меняется». Материал внутри куска двигает ТОЛЬКО трим левого края.
+#[test]
+fn t169_preview_material_shifts_only_on_trim_start() {
+    use crate::timeline::{Drag, DragMode, DragState, preview_src_shift};
+    use kt_model::*;
+    use kt_time::Tick;
+
+    let orig = ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: Tick(1_000),
+        duration: Tick(10_000),
+        source_in: Tick(500),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx: vec![],
+        opacity: 1.0,
+    };
+    let drag = |mode: DragMode, cur_start: i64, cur_end: i64| {
+        Drag::Clip(DragState {
+            id: ClipId(1),
+            mode,
+            grab_dt: 0,
+            orig: orig.clone(),
+            cur_start,
+            cur_end,
+            cur_lane: 0,
+            moved: true,
+        })
+    };
+
+    // перенос вправо на 4000: кусок едет целиком, материал — вместе с ним
+    let d = drag(DragMode::Move, 5_000, 15_000);
+    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "перенос не крутит материал");
+    // перенос влево — тоже ноль (раньше .max(0) прятал только эту половину)
+    let d = drag(DragMode::Move, -3_000, 7_000);
+    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "перенос влево не крутит");
+    // трим левого края: кусок стоит, край едет ПО материалу
+    let d = drag(DragMode::TrimStart, 5_000, 11_000);
+    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 4_000, "трим начала двигает материал");
+    let d = drag(DragMode::TrimStart, 0, 11_000);
+    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), -1_000, "влево — в обратную сторону");
+    // трим правого края левую границу не трогает
+    let d = drag(DragMode::TrimEnd, 1_000, 20_000);
+    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "трим конца материал не крутит");
+    // соседние клипы жест не касается
+    let d = drag(DragMode::TrimStart, 5_000, 11_000);
+    assert_eq!(preview_src_shift(Some(&d), ClipId(2), 1_000), 0, "чужой клип не трогаем");
+    assert_eq!(preview_src_shift(None, ClipId(1), 1_000), 0, "без жеста сдвига нет");
+}
+
+/// Тест 170 (п.11 Р.28): «marker here при выделенном регионе должен порождать
+/// region marker». Парные способы одного действия обязаны учитывать контекст
+/// одинаково (п.17 чек-листа): жест M и пункт меню — одно тело `marker_here`.
+#[test]
+fn t170_marker_here_matches_the_m_gesture() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        app.model.set_region(Region::normalized(Tick(30_000), Tick(90_000)));
+        // пункт меню на КРОМКЕ региона: тик грани — это «по региону»
+        app.marker_here(Tick(30_000));
+    }
+    h.step();
+    {
+        let m = h.state().model.project().markers.clone();
+        assert_eq!(m.len(), 1, "метка одна: {m:?}");
+        assert_eq!(m[0].t, Tick(30_000), "метка на начале региона");
+        assert_eq!(m[0].duration, Tick(60_000), "это ДИАПАЗОН, а не точка: {:?}", m[0]);
+    }
+    // повторный вызов — toggle, как у жеста M
+    h.state_mut().marker_here(Tick(30_000));
+    h.step();
+    assert!(h.state().model.project().markers.is_empty(), "повтор снимает метку");
+    // вторая кромка ведёт себя так же
+    h.state_mut().marker_here(Tick(90_000));
+    h.step();
+    assert_eq!(
+        h.state().model.project().markers[0].duration,
+        Tick(60_000),
+        "кромка конца — тоже регион"
+    );
+    // вне региона — точечная метка (прежнее поведение)
+    {
+        let app = h.state_mut();
+        app.model.set_region(None);
+        app.marker_here(Tick(200_000));
+    }
+    h.step();
+    let m = h.state().model.project().markers.clone();
+    assert!(
+        m.iter().any(|k| k.t == Tick(200_000) && k.duration == Tick::ZERO),
+        "без региона — одиночная метка: {m:?}"
+    );
+}
+
+/// Тест 172 (п.5 Р.28): невозможность действия показывается КАК ОШИБКА.
+///
+/// Жалоба дословно: «я пока сам туда не промотал — не понял что оказывается
+/// там еще событие есть в конце которое мешает, а еще оказывается есть
+/// подсказка беленькая блеклая, везде в подсказках такие ситуации делаются
+/// как ошибочные». Проверяем всё три требования: препятствие известно
+/// (значит, есть что подсветить), подсказка идёт ошибочным стилем и
+/// перебивает наведение, а за пределами вида говорит, куда смотреть.
+#[test]
+fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
+    use crate::app::HintKind;
+    use crate::timeline::{BlockView, MovePlan, block_view, plan_move};
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+
+    // 1. план знает, ВО ЧТО упёрлись
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    p.overlap_layers = false; // блокировка возможна только в этом режиме
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    // клипы 2 и 3 стоят встык: любое попадание между ними — наезд на ДВОИХ
+    for (n, start) in [(1u64, 0i64), (2, 200_000), (3, 250_000)] {
+        p.clips.push(ClipEvent {
+            id: ClipId(n),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(start),
+            duration: Tick(50_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx: vec![],
+            opacity: 1.0,
+        });
+    }
+    p.validate().unwrap();
+    // клип 1 едет вправо и накрывает СРАЗУ ДВОИХ (одиночный частичный наезд
+    // — это кроссфейд, а не упор): препятствие — первый по ходу движения
+    match plan_move(&p, ClipId(1), 230_000, 0) {
+        MovePlan::Clamped { blocker, .. } => {
+            assert_eq!(blocker, (200_000, 250_000), "по ходу движения первым мешает клип 2");
+        }
+        other => panic!("ожидался упор, получен {other:?}"),
+    }
+    // движение влево в полное покрытие соседа — упор в его правый край
+    match plan_move(&p, ClipId(3), 200_000, 0) {
+        MovePlan::Clamped { start, blocker } => {
+            assert_eq!(blocker, (200_000, 250_000), "слева мешает клип 2");
+            assert_eq!(start, 250_000, "упор — правый край препятствия");
+        }
+        other => panic!("ожидался упор, получен {other:?}"),
+    }
+
+    // 2. «куда смотреть», когда препятствие за пределами вида
+    assert_eq!(block_view((100, 200), (0, 1000)), BlockView::Visible);
+    assert_eq!(block_view((0, 100), (500, 1000)), BlockView::Left(400));
+    assert_eq!(block_view((2000, 2100), (500, 1000)), BlockView::Right(1000));
+    // касание кромки вида — уже видно
+    assert_eq!(block_view((900, 1500), (500, 1000)), BlockView::Visible);
+
+    // 3. живой жест: подсказка ошибочная и перебивает наведение
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        app.model = kt_model::TimelineModel::new(p);
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let grab = g.tick_to_x(25_000);
+    h.hover_at(egui::pos2(grab, y));
+    h.step();
+    h.drag_at(egui::pos2(grab, y));
+    h.step();
+    // тащим клип 1 так, чтобы он накрыл сразу два события — упор
+    let to = g.tick_to_x(230_000 + 25_000);
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.hover_at(egui::pos2(to + 1.0, y));
+    h.step();
+    let blocked = h.state().blocked;
+    assert!(blocked.is_some(), "препятствие обязано быть известно (его подсвечивают)");
+    assert_eq!(blocked.unwrap().span, (200_000, 250_000), "подсвечивается именно клип 2");
+    assert_eq!(
+        h.state().status_line_shown.1,
+        HintKind::Error,
+        "подсказка обязана быть ОШИБОЧНОЙ, а не блёклой: {:?}",
+        h.state().status_line_shown
+    );
+    h.drop_at(egui::pos2(to + 1.0, y));
+    h.step();
+    assert!(h.state().blocked.is_none(), "после жеста подсветка гаснет");
+}
+
+/// Тест 173 (п.12 Р.28): фейд за верхний уголок события и уровень мышью.
+///
+/// Пользователь: «в sony vegas fade можно у событий сделать по краям без еще
+/// одних событий — просто потянув за верхний уголок события, а еще там можно
+/// вроде прозрачность менять… наводишься на фейд и тянешь либо вверх либо
+/// вниз». Уголковый фейд лежит ЦЕЛИКОМ внутри события (внешний офсет 0),
+/// поэтому «ничего не отрастает» (п.6).
+#[test]
+fn t173_corner_fade_and_level_gestures() {
+    use crate::timeline::{corner_fade_len, fade_handle_tick, level_from_y, level_y};
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+
+    // ---- чистые функции ----
+    assert_eq!(fade_handle_tick(1_000, 5_000, 0, true), 1_000, "нет фейда — ручка в углу");
+    assert_eq!(fade_handle_tick(1_000, 5_000, 700, true), 1_700, "ручка на конце фейда");
+    assert_eq!(fade_handle_tick(1_000, 5_000, 0, false), 5_000);
+    assert_eq!(fade_handle_tick(1_000, 5_000, 700, false), 4_300);
+    // уровень: верх строки = 1.0, низ = 0.0, симметрично туда и обратно
+    let (top, h) = (100.0f32, 48.0f32);
+    assert!((level_from_y(top + 3.0, top, h) - 1.0).abs() < 1e-6);
+    assert!((level_from_y(top + 3.0 + (h - 8.0), top, h)).abs() < 1e-6);
+    assert!((level_from_y(top - 50.0, top, h) - 1.0).abs() < 1e-6, "выше строки — кламп");
+    let mid = level_y(0.5, top, h);
+    assert!((level_from_y(mid, top, h) - 0.5).abs() < 1e-3, "прямое и обратное сходятся");
+
+    // ---- живой жест ----
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.clips.push(ClipEvent {
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(100_000),
+            duration: Tick(200_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx: vec![],
+            opacity: 1.0,
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.selected = Some(ClipId(1));
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let top = g.lane_top(ClipKind::Video, 0);
+    let y_strip = top + 3.0;
+
+    // тянем левый уголок вправо на 40 000 тиков
+    let x0 = g.tick_to_x(100_000);
+    h.hover_at(egui::pos2(x0 + 1.0, y_strip));
+    h.step();
+    h.drag_at(egui::pos2(x0 + 1.0, y_strip));
+    h.step();
+    let to = g.tick_to_x(140_000);
+    h.hover_at(egui::pos2(to, y_strip));
+    h.step();
+    h.drop_at(egui::pos2(to, y_strip));
+    h.step();
+    {
+        let p = h.state().model.project();
+        assert_eq!(p.transitions.len(), 1, "уголок завёл ровно один фейд: {:?}", p.transitions);
+        let t = &p.transitions[0];
+        assert!(t.is_fade(), "это фейд, а не кроссфейд");
+        assert_eq!((t.a, t.b), (None, Some(ClipId(1))), "пустота слева, живой конец — клип");
+        assert_eq!(t.in_offset, Tick::ZERO, "внешнего офсета нет — фейд внутри события");
+        assert!(
+            (t.out_offset.0 - 40_000).abs() <= 2_000,
+            "длина фейда ≈ пройденному пути: {:?}",
+            t.out_offset
+        );
+        // событие не тронуто: «сколько было столько и осталось»
+        let c = &p.clips[0];
+        assert_eq!((c.start, c.duration, c.source_in), (Tick(100_000), Tick(200_000), Tick::ZERO));
+        assert_eq!(corner_fade_len(p, ClipId(1), true), Some(t.out_offset.0));
+        assert_eq!(corner_fade_len(p, ClipId(1), false), None, "правого фейда нет");
+    }
+
+    // задвигаем уголок обратно — фейд снимается
+    let from = g.tick_to_x(140_000);
+    h.hover_at(egui::pos2(from, y_strip));
+    h.step();
+    h.drag_at(egui::pos2(from, y_strip));
+    h.step();
+    h.hover_at(egui::pos2(x0 + 1.0, y_strip));
+    h.step();
+    h.drop_at(egui::pos2(x0 + 1.0, y_strip));
+    h.step();
+    assert!(
+        h.state().model.project().transitions.is_empty(),
+        "уголок задвинут — фейда нет: {:?}",
+        h.state().model.project().transitions
+    );
+
+    // уровень: тянем линию вниз до середины строки
+    let ly = level_y(1.0, top, g.lane_h);
+    let xm = g.tick_to_x(200_000);
+    h.hover_at(egui::pos2(xm, ly));
+    h.step();
+    h.drag_at(egui::pos2(xm, ly));
+    h.step();
+    let target_y = level_y(0.4, top, g.lane_h);
+    h.hover_at(egui::pos2(xm, target_y));
+    h.step();
+    h.drop_at(egui::pos2(xm, target_y));
+    h.step();
+    let op = h.state().model.project().clips[0].opacity;
+    assert!((op - 0.4).abs() < 0.05, "уровень доехал до 0.4: {op}");
+    // и это undo-able, как и всё остальное
+    h.state_mut().model.undo().expect("undo уровня доступен");
+    h.step();
+    assert_eq!(h.state().model.project().clips[0].opacity, 1.0, "undo вернул уровень");
 }

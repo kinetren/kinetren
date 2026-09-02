@@ -21,6 +21,7 @@ fn sample_project() -> Project {
         reversed: false,
         fx_bypass: vec![],
         fx: vec![FxInstance::slowed_reverb(0.82, 0.3, 140.0)],
+        opacity: 1.0,
     });
     p.clips.push(ClipEvent {
         id: ClipId(11),
@@ -35,6 +36,7 @@ fn sample_project() -> Project {
         reversed: false,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     });
     p
 }

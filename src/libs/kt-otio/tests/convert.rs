@@ -25,6 +25,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, media: u64) ->
         reversed: false,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     }
 }
 
@@ -310,6 +311,7 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
             reversed: false,
             fx: vec![],
             fx_bypass: vec![],
+            opacity: 1.0,
         });
     }
     p.normalize();

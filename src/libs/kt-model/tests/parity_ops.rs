@@ -40,6 +40,7 @@ fn clip(
         reversed: false,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     }
 }
 

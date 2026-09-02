@@ -25,6 +25,7 @@ fn project_with_fx(fx: Vec<FxInstance>, start_frames: i64) -> Project {
         reversed: false,
         fx_bypass: vec![],
         fx,
+        opacity: 1.0,
     });
     p.validate().unwrap();
     p

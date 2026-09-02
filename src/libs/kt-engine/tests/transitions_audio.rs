@@ -41,6 +41,7 @@ fn clip(id: u64, start_f: i64, dur_f: i64, src_in_f: i64, media: u64) -> ClipEve
         reversed: false,
         fx: vec![],
         fx_bypass: vec![],
+        opacity: 1.0,
     }
 }
 

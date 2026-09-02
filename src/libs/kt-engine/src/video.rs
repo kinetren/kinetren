@@ -33,6 +33,10 @@ struct VideoClip {
     /// нижняя дорожка, а её нет — чёрное).
     fade_in_solo: bool,
     fade_out_solo: bool,
+    /// Непрозрачность слоя 0..4096 (Р.28, п.12: «уровень» события как в
+    /// Vegas). Множится на альфу при композиции — под полупрозрачным
+    /// клипом просвечивает нижняя дорожка.
+    opacity_k: u32,
     /// «Ручки»: материал за краями тела (тики) — источник продолжается
     /// линейно, за краями материала кадр клампится (политика краёв).
     head_ext: Tick,
@@ -134,6 +138,7 @@ impl VideoRenderer {
                     fade_out: None,
                     fade_in_solo: false,
                     fade_out_solo: false,
+                    opacity_k: (c.opacity.clamp(0.0, 1.0) * 4096.0).round() as u32,
                     head_ext: Tick::ZERO,
                     tail_ext: Tick::ZERO,
                 }
@@ -230,7 +235,7 @@ impl VideoRenderer {
             }
             // фейд у края/Gap (Р.25): пары нет по модели — слой уходит в
             // прозрачность, ждать нечего (complete не портим)
-            if let Some(k) = solo_fade_scale(clip, t) {
+            if let Some(k) = solo_fade_scale(clip, t).map(|k| k * clip.opacity_k / 4096) {
                 match clip_layer(clip, grid, cache, quality, q_key, scratch, t) {
                     Some(f) if (f.width as usize, f.height as usize) == (w, h) => {
                         scale_alpha_into(&mut self.blend, &f, k, w * h);
@@ -261,14 +266,25 @@ impl VideoRenderer {
                 let fits = |f: &std::sync::Arc<kt_media::VideoFrame>| {
                     (f.width as usize, f.height as usize) == (w, h)
                 };
+                // уровни соседей смешиваются тем же весом, что и картинка
+                let op = (outgoing.opacity_k * (4096 - k) + clip.opacity_k * k) / 4096;
                 match (fa, fb) {
                     (Some(a), Some(b)) if fits(&a) && fits(&b) => {
-                        let has_alpha =
+                        let mut has_alpha =
                             dissolve_into(&mut self.blend, &a, &b, k, w * h);
+                        if op < 4096 {
+                            scale_alpha_inplace(&mut self.blend, op, w * h);
+                            has_alpha = true;
+                        }
                         alpha_over(out, &self.blend, has_alpha, w * h);
                     }
                     (Some(f), None) | (None, Some(f)) if fits(&f) => {
-                        alpha_over(out, &f.rgba, f.has_alpha, w * h);
+                        if op < 4096 {
+                            scale_alpha_into(&mut self.blend, &f, op, w * h);
+                            alpha_over(out, &self.blend, true, w * h);
+                        } else {
+                            alpha_over(out, &f.rgba, f.has_alpha, w * h);
+                        }
                         complete = false;
                     }
                     _ => complete = false,
@@ -278,7 +294,12 @@ impl VideoRenderer {
             match clip_layer(clip, grid, cache, quality, q_key, scratch, t) {
                 Some(f) => {
                     if (f.width as usize, f.height as usize) == (w, h) {
-                        alpha_over(out, &f.rgba, f.has_alpha, w * h);
+                        if clip.opacity_k < 4096 {
+                            scale_alpha_into(&mut self.blend, &f, clip.opacity_k, w * h);
+                            alpha_over(out, &self.blend, true, w * h);
+                        } else {
+                            alpha_over(out, &f.rgba, f.has_alpha, w * h);
+                        }
                     }
                 }
                 None => complete = false,
@@ -388,6 +409,15 @@ fn solo_fade_scale(clip: &VideoClip, t: Tick) -> Option<u32> {
         return Some(4096 - frac(w));
     }
     None
+}
+
+/// Альфа буфера, умноженная на k/4096 НА МЕСТЕ (уровень поверх готового
+/// блендa пары — см. compose_from_cache_into).
+fn scale_alpha_inplace(buf: &mut [u8], k: u32, pixels: usize) {
+    for p in 0..pixels {
+        let a = buf[p * 4 + 3] as u32;
+        buf[p * 4 + 3] = ((a * k) / 4096) as u8;
+    }
 }
 
 /// Копия кадра с альфой, умноженной на k/4096 (кадр без альфы считается

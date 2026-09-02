@@ -103,7 +103,9 @@ add_morph = "Añadir pista Morph"
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
 transition = "Fundido: bordes — ancho, centro — mover el corte"
-clamped = "Tope con el vecino: el fundido cubre un solo clip"
+clamped = "Bloqueado: un evento de esta pista estorba (resaltado)"
+clamped_far_left = "Bloqueado: el evento que estorba está a {0} s a la izquierda, fuera de vista"
+clamped_far_right = "Bloqueado: el evento que estorba está a {0} s a la derecha, fuera de vista"
 marker = "Marcador: arrastra — mover, clic derecho — eliminar"
 region_edge = "Borde de región: arrastra (I/O — fijar en el cursor)"
 ruler = "Regla: clic y arrastra — mover el cursor"
@@ -112,6 +114,8 @@ lane = "Pista: arrastra — reordenar, clic derecho — añadir/quitar"
 trim_start = "Recortar el inicio del clip"
 trim_end = "Recortar el final del clip"
 volume = "Volumen del clip: arrastra, doble clic — 0 dB"
+fade_handle = "Arrastra la esquina superior: fundido en este borde del clip"
+level = "Arrastra arriba/abajo: opacidad del vídeo del clip"
 clip = "Clip: arrastra — mover (Ctrl — sin imán), doble clic — FX, clic derecho — menú, S — dividir"
 empty = "Clic izq. — cursor, arrastra — región; rueda — desplazar, Ctrl — zoom, Mayús — pistas"
 
@@ -131,9 +135,12 @@ lane_name = "nombre de la pista"
 clear_range = "Quitar el rango"
 crossfade_next = "Fundido con el siguiente"
 crossfade_prev = "Fundido con el anterior"
-remove_transition = "Quitar el fundido"
-fade_in = "Aparición"
-fade_out = "Desvanecido"
+remove_fade_start = "Quitar la aparición al inicio del clip"
+remove_fade_end = "Quitar el desvanecido al final del clip"
+remove_crossfade_next = "Quitar el fundido con el clip siguiente"
+remove_crossfade_prev = "Quitar el fundido con el clip anterior"
+fade_in = "Aparición al inicio del clip"
+fade_out = "Desvanecido al final del clip"
 copy = "Copiar (Ctrl+C)"
 paste = "Pegar (Ctrl+V)"
 delete = "Eliminar (Supr)"
@@ -150,6 +157,7 @@ bake_morph = "Aplicar el morph a los clips"
 remove_morpher = "Eliminar morpher (Supr)"
 morph_editor = "Ventana del editor de morpher…"
 marker_here = "Marcador aquí"
+marker_region = "Marcador sobre la región"
 region_clear = "Quitar la región"
 rename = "Renombrar…"
 remove_marker = "Eliminar marcador"
@@ -323,6 +331,8 @@ smoothing = "Suavizado lineal de la previsualización (off — píxeles duros)"
 economy = "Para GPU modestas: la mitad de repintados al reproducir"
 
 # Палитра поиска по проекту.
+flight = "Anillo compacto de eventos de transporte y contadores: para depurar fallos intermitentes"
+
 [search]
 field = "marcador, medio, pista…"
 marker = "marcador"
@@ -364,6 +374,8 @@ open_a_project = "Abre un proyecto: kt-app <archivo.ktproj> o arrástralo a la v
 software_render = "Sin aceleración gráfica (render por software) — la interfaz puede ir lenta, glow desactivado"
 
 # Заголовки системных файловых диалогов.
+flight_saved = "Registro de reproducción guardado: {0}"
+
 [dialog]
 import_ktproj = "Importar un proyecto .ktproj antiguo"
 open_project = "Abrir proyecto"
@@ -395,6 +407,9 @@ graph_reset = "Reiniciar las gráficas"
 log_empty = "no se han detectado problemas"
 
 # Пороговые предупреждения в журнале проблем.
+flight_save = "Guardar el registro de reproducción"
+flight_stalls = "congelaciones: {0}"
+
 [perf.note]
 render_underruns = "render underruns +{0} (total {1})"
 callback_underruns = "callback underruns +{0} (total {1})"

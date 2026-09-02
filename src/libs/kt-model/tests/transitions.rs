@@ -25,6 +25,7 @@ fn base_project() -> Project {
             reversed: false,
             fx: vec![],
             fx_bypass: vec![],
+            opacity: 1.0,
         });
     }
     p.validate().unwrap();

@@ -27,6 +27,7 @@ fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
         reversed,
         fx_bypass: vec![],
         fx,
+        opacity: 1.0,
     });
     p.validate().unwrap();
     p

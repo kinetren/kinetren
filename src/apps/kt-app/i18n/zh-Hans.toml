@@ -103,7 +103,9 @@ add_morph = "添加 Morph 轨道"
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
 transition = "交叉淡化：拖边缘调宽度，拖切点滚动"
-clamped = "已停在相邻剪辑边缘——交叉淡化只跨一个剪辑"
+clamped = "无法继续：本轨道上有事件挡路（已高亮）"
+clamped_far_left = "无法继续：挡路的事件在左侧 {0} 秒处，不在视野内"
+clamped_far_right = "无法继续：挡路的事件在右侧 {0} 秒处，不在视野内"
 marker = "标记：拖动 — 移动，右键 — 删除"
 region_edge = "区间边缘：拖动（I/O — 在播放头设置）"
 ruler = "标尺：点击并拖动 — 拖动播放头"
@@ -112,6 +114,8 @@ lane = "轨道：拖动 — 调整顺序，右键 — 添加/删除"
 trim_start = "修剪片段入点"
 trim_end = "修剪片段出点"
 volume = "片段音量：拖动，双击 — 0 dB"
+fade_handle = "拖动顶角——在片段这一侧添加淡化"
+level = "上下拖动——该片段的视频不透明度"
 clip = "片段：拖动 — 移动（Ctrl — 关闭吸附），双击 — 特效，右键 — 菜单，S — 切分"
 empty = "左键 — 播放头，拖动 — 区间；滚轮 — 滚动，Ctrl — 缩放，Shift — 轨道"
 
@@ -131,9 +135,12 @@ lane_name = "轨道名称"
 clear_range = "移除范围"
 crossfade_next = "与下一个交叉淡化"
 crossfade_prev = "与上一个交叉淡化"
-remove_transition = "移除交叉淡化"
-fade_in = "淡入"
-fade_out = "淡出"
+remove_fade_start = "移除片段开头的淡入"
+remove_fade_end = "移除片段结尾的淡出"
+remove_crossfade_next = "移除与下一个片段的交叉淡化"
+remove_crossfade_prev = "移除与上一个片段的交叉淡化"
+fade_in = "在片段开头淡入"
+fade_out = "在片段结尾淡出"
 copy = "复制（Ctrl+C）"
 paste = "粘贴（Ctrl+V）"
 delete = "删除（Del）"
@@ -150,6 +157,7 @@ bake_morph = "把变形烘焙进片段"
 remove_morpher = "删除 morpher（Del）"
 morph_editor = "打开 morpher 编辑器窗口…"
 marker_here = "在此添加标记"
+marker_region = "为区间添加标记"
 region_clear = "清除区间"
 rename = "重命名…"
 remove_marker = "删除标记"
@@ -323,6 +331,8 @@ smoothing = "预览线性平滑（关闭 — 硬像素）"
 economy = "适合较弱的 GPU：播放时重绘减半"
 
 # Палитра поиска по проекту.
+flight = "紧凑的传输事件与计数器环形记录——用于排查间歇性播放问题"
+
 [search]
 field = "标记、媒体、轨道…"
 marker = "标记"
@@ -364,6 +374,8 @@ open_a_project = "打开项目：kt-app <文件.ktproj>，或把它拖到窗口�
 software_render = "没有图形加速（软件渲染）— 界面可能卡顿，预览辉光已关闭"
 
 # Заголовки системных файловых диалогов.
+flight_saved = "播放日志已保存：{0}"
+
 [dialog]
 import_ktproj = "导入旧版 .ktproj 项目"
 open_project = "打开项目"
@@ -395,6 +407,9 @@ graph_reset = "重置图表"
 log_empty = "没有发现问题"
 
 # Пороговые предупреждения в журнале проблем.
+flight_save = "保存播放日志"
+flight_stalls = "卡住次数：{0}"
+
 [perf.note]
 render_underruns = "render underruns +{0}（总计 {1}）"
 callback_underruns = "callback underruns +{0}（总计 {1}）"

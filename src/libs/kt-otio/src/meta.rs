@@ -105,10 +105,22 @@ pub struct KtClipMeta {
     pub link_group: Option<u64>,
     #[serde(default, skip_serializing_if = "is_zero_f32")]
     pub gain: f32,
+    /// Непрозрачность видео (Р.28, п.12). 1.0 не пишется — файлы без неё
+    /// байт-стабильны.
+    #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
+    pub opacity: f32,
 }
 
 fn is_zero_f32(v: &f32) -> bool {
     *v == 0.0
+}
+
+fn one_f32() -> f32 {
+    1.0
+}
+
+fn is_one_f32(v: &f32) -> bool {
+    *v == 1.0
 }
 
 pub(crate) fn kt_get<T: for<'de> Deserialize<'de>>(metadata: &Map<String, Value>) -> Option<T> {

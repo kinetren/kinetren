@@ -183,6 +183,8 @@ pub struct KtApp {
     pub ctx_row: Option<(LaneKind, u32)>,
     /// Live-громкость volume rail до отпускания (id, dB).
     pub live_gain: Option<(ClipId, f32)>,
+    /// Живое превью уровня видео при драге линии (Р.28, п.12).
+    pub live_opacity: Option<(ClipId, f32)>,
     pub status: Option<(String, std::time::Instant)>,
     /// Внутренний буфер обмена (блок клипов+переходов, ребейз к нулю).
     pub clipboard: kt_model::ops::ClipBlock,
@@ -206,6 +208,9 @@ pub struct KtApp {
     pub last_autosave: std::time::Instant,
     /// Хинт наведённой кнопки тулбара — дублируется в статусбар (порт).
     pub hover_hint: Option<String>,
+    /// Препятствие текущего жеста (п.5 Р.28): подсвечивается на таймлайне,
+    /// подсказка идёт ОШИБОЧНЫМ стилем и говорит, куда смотреть.
+    pub blocked: Option<crate::timeline::Blocked>,
     /// Прямоугольник строки состояния (заполняется при её отрисовке).
     pub statusbar_rect: egui::Rect,
     /// Что реально показано в строке подсказки (для harness-теста).
@@ -359,6 +364,7 @@ impl KtApp {
             ctx_target: None,
             ctx_row: None,
             live_gain: None,
+            live_opacity: None,
             status: error.map(|e| (e, std::time::Instant::now())),
             clipboard: kt_model::ops::ClipBlock::default(),
             retained: kt_otio::Retained::default(),
@@ -378,6 +384,7 @@ impl KtApp {
             render_setup: Default::default(),
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
+            blocked: None,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -482,6 +489,7 @@ impl KtApp {
             ctx_target: None,
             ctx_row: None,
             live_gain: None,
+            live_opacity: None,
             status: err.map(|e| (e, std::time::Instant::now())),
             clipboard: kt_model::ops::ClipBlock::default(),
             retained,
@@ -501,6 +509,7 @@ impl KtApp {
             render_setup: Default::default(),
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
+            blocked: None,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -1053,7 +1062,9 @@ impl KtApp {
         };
         let status =
             self.status.as_ref().map(|(m, at)| (m.as_str(), at.elapsed().as_millis() as u64));
+        let blocked = self.blocked.map(|b| self.blocked_text(b));
         let (text, kind) = status_line(
+            blocked.as_deref(),
             self.hover_hint.as_deref(),
             mode,
             status,
@@ -1068,6 +1079,7 @@ impl KtApp {
             self.status = None;
         }
         let col = match kind {
+            HintKind::Error => egui::Color32::from_rgb(255, 105, 97),
             HintKind::Status => egui::Color32::from_rgb(255, 210, 120),
             HintKind::Mode => egui::Color32::from_rgb(150, 215, 175),
             HintKind::Hover => egui::Color32::from_gray(205),
@@ -1663,6 +1675,37 @@ impl KtApp {
         self.apply_batch(cmds);
     }
 
+    /// Видимый диапазон таймлайна в тиках (для расчёта «куда смотреть»).
+    pub(crate) fn view_range_ticks(&self) -> (i64, i64) {
+        let w = self.tl_geom.as_ref().map(|g| g.rect.width() as f64).unwrap_or(0.0);
+        (self.view_start as i64, (self.view_start + w * self.ticks_per_px) as i64)
+    }
+
+    /// Текст подсказки о препятствии: внутри вида — просто «мешает
+    /// событие (подсвечено)», за пределами — со стороной и расстоянием,
+    /// чтобы не пришлось «самому туда промотать» (п.5 Р.28).
+    pub(crate) fn blocked_text(&self, b: crate::timeline::Blocked) -> String {
+        use crate::timeline::{BlockView, block_view};
+        let view = self.view_range_ticks();
+        let secs = |ticks: i64| format!("{:.1}", ticks as f64 / 90_000.0);
+        match block_view(b.span, view) {
+            BlockView::Visible => tr(k::tl::hint::CLAMPED).to_string(),
+            BlockView::Left(d) => crate::tf!(k::tl::hint::CLAMPED_FAR_LEFT, secs(d)),
+            BlockView::Right(d) => crate::tf!(k::tl::hint::CLAMPED_FAR_RIGHT, secs(d)),
+        }
+    }
+
+    /// Выложить «чёрный ящик» воспроизведения в файл рядом с проектом
+    /// (безымянный проект — в рабочий каталог). Р.28, п.10.
+    pub(crate) fn save_flight_log(&self) -> std::io::Result<String> {
+        let path = match &self.project_path {
+            Some(p) => p.with_extension("ktflight.log"),
+            None => std::path::PathBuf::from("kt-flight.log"),
+        };
+        std::fs::write(&path, self.player.flight.dump())?;
+        Ok(path.display().to_string())
+    }
+
     pub fn note(&mut self, msg: impl Into<String>) {
         let text = msg.into();
         self.push_notice(Severity::Info, text.clone());
@@ -1736,11 +1779,22 @@ impl KtApp {
 
     pub fn marker_toggle_at_cursor(&mut self) {
         let at = self.player.transport.playhead();
+        self.marker_here(at);
+    }
+
+    /// Метка в точке `at` — ОДНО тело для жеста M и пункта меню «Marker
+    /// here» (п.11 пользователя: «marker here при выделенном регионе должен
+    /// порождать region marker… очевидно что есть парные способы что-то
+    /// сделать»). Парные способы обязаны учитывать контекст одинаково —
+    /// п.17 чек-листа apps/kt-app/CLAUDE.md.
+    pub fn marker_here(&mut self, at: Tick) {
         // Р.24 (жест пользователя, дословно): «при выделенном регионе и
         // курсоре в нем - m дает marked_range, при курсоре вне региона -
         // одинарная метка по курсору». Повторное M на том же регионе — toggle.
+        // Грани региона считаются «внутри»: правый клик по кромке — это
+        // клик ПО региону, а не мимо него.
         if let Some(r) = self.model.project().region
-            && r.contains(at)
+            && (r.contains(at) || at == r.start || at == r.end)
         {
             let dur = r.end - r.start;
             let at_start =
@@ -2252,6 +2306,49 @@ impl KtApp {
         self.model.project().clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 1
     }
 
+    /// Зафиксировать жест ручки фейда (Р.28, п.12). Длина меньше минимума
+    /// окна — фейда нет: уголок задвинут обратно, переход снимается. Иначе
+    /// создаём/правим фейд, целиком лежащий ВНУТРИ события (внешний офсет
+    /// нулевой) — ровно как в Vegas, без второго события рядом.
+    pub(crate) fn commit_fade_handle(&mut self, id: ClipId, left: bool, len: i64) {
+        let existing = self
+            .model
+            .project()
+            .transitions
+            .iter()
+            .find(|t| {
+                t.is_fade()
+                    && match (left, t.a, t.b) {
+                        (true, None, Some(b)) => b == id,
+                        (false, Some(a), None) => a == id,
+                        _ => false,
+                    }
+            })
+            .map(|t| t.id);
+        if len < kt_model::MIN_TRANSITION_DURATION.0 {
+            if let Some(tid) = existing {
+                self.apply(Command::RemoveTransition { id: tid });
+            }
+            return;
+        }
+        let (a, b) = if left { (None, Some(id)) } else { (Some(id), None) };
+        let (in_offset, out_offset) =
+            if left { (Tick::ZERO, Tick(len)) } else { (Tick(len), Tick::ZERO) };
+        let ev = TransitionEvent {
+            id: existing.unwrap_or(TransitionId(self.next_transition_id())),
+            a,
+            b,
+            in_offset,
+            out_offset,
+            kind: TransitionKind::Crossfade,
+        };
+        self.apply(if existing.is_some() {
+            Command::SetTransition(ev)
+        } else {
+            Command::AddTransition(ev)
+        });
+    }
+
     pub fn next_transition_id(&self) -> u64 {
         self.model.project().transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1
     }
@@ -2417,6 +2514,7 @@ impl KtApp {
                 reversed: false,
                 fx_bypass: vec![],
                 fx: vec![],
+                opacity: 1.0,
             }));
             next_id += 1;
         }
@@ -2957,6 +3055,28 @@ impl KtApp {
         }
         let r = ui.checkbox(&mut self.ui_economy, tr(k::perf::ECONOMY));
         self.hint(r, tr(k::hint::ECONOMY));
+        // «Чёрный ящик» воспроизведения (Р.28, п.10): кольцо событий
+        // транспорта и счётчиков живёт всегда, кнопка выкладывает его в
+        // файл — по нему ловят плавающие баги, не заставляя пользователя
+        // ловить момент. Залипание видно прямо здесь.
+        {
+            let recs = self.player.flight.records();
+            let stalls = recs.iter().filter(|r| r.kind == kt_engine::flight::Ev::Stall).count();
+            let btn = ui.button(tr(k::perf::FLIGHT_SAVE));
+            let btn = self.hint(btn, tr(k::hint::FLIGHT));
+            if btn.clicked() {
+                match self.save_flight_log() {
+                    Ok(path) => self.note(crate::tf!(k::msg::FLIGHT_SAVED, path)),
+                    Err(e) => self.warn(e.to_string()),
+                }
+            }
+            if stalls > 0 {
+                ui.colored_label(
+                    egui::Color32::from_rgb(255, 105, 97),
+                    crate::tf!(k::perf::FLIGHT_STALLS, stalls),
+                );
+            }
+        }
         // кумулятивы FFmpeg-слоя (порт строки avcpp open/read/vdec/adec v1)
         let (opens, reads) = kt_media::ffmpeg::io_stats();
         ui.weak(format!(
@@ -3533,6 +3653,8 @@ pub const WIN_CORNER: f32 = 16.0;
 /// Всё в одном месте: ни попапов, ни оверлеев поверх таймлайна.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HintKind {
+    /// Действие невозможно: красный, перебивает всё (п.5 Р.28).
+    Error,
     Hover,
     Mode,
     Status,
@@ -3549,12 +3671,18 @@ pub fn hint_into(out: &mut Option<String>, r: egui::Response, text: &str) -> egu
 }
 
 pub fn status_line(
+    error: Option<&str>,
     hover: Option<&str>,
     mode: Option<&str>,
     status: Option<(&str, u64)>, // (текст, возраст в мс)
     status_ttl_ms: u64,
     idle: &str,
 ) -> (String, HintKind) {
+    // «везде в подсказках такие ситуации делаются как ошибочные» (п.5):
+    // невозможность действия важнее любого hover'а и любого статуса
+    if let Some(e) = error {
+        return (e.to_string(), HintKind::Error);
+    }
     if let Some(h) = hover {
         return (h.to_string(), HintKind::Hover);
     }
@@ -4609,6 +4737,7 @@ mod repaint_tests {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         };
         // два ПЕРЕКРЫВАЮЩИХСЯ клипа: 1000..3000 и 2500..4000 → одна
         // область 1000..4000, стык внутри не считается границей
@@ -4678,20 +4807,27 @@ mod repaint_tests {
     fn t78_status_line_priority() {
         use super::{HintKind as K, STATUS_TTL_MS, status_line};
         let idle = "дежурная";
-        // наведение перебивает всё
-        let (t, k) = status_line(Some("hover"), Some("mode"), Some(("st", 0)), STATUS_TTL_MS, idle);
+        // невозможность действия перебивает даже наведение (п.5 Р.28)
+        let (t, k) =
+            status_line(Some("нельзя"), Some("hover"), Some("mode"), Some(("st", 0)), STATUS_TTL_MS, idle);
+        assert_eq!((t.as_str(), k), ("нельзя", K::Error));
+        // наведение перебивает остальное
+        let (t, k) =
+            status_line(None, Some("hover"), Some("mode"), Some(("st", 0)), STATUS_TTL_MS, idle);
         assert_eq!((t.as_str(), k), ("hover", K::Hover));
         // режим перебивает временное сообщение
-        let (t, k) = status_line(None, Some("mode"), Some(("st", 0)), STATUS_TTL_MS, idle);
+        let (t, k) = status_line(None, None, Some("mode"), Some(("st", 0)), STATUS_TTL_MS, idle);
         assert_eq!((t.as_str(), k), ("mode", K::Mode));
         // временное сообщение живёт до TTL
-        let (t, k) = status_line(None, None, Some(("st", STATUS_TTL_MS - 1)), STATUS_TTL_MS, idle);
+        let (t, k) =
+            status_line(None, None, None, Some(("st", STATUS_TTL_MS - 1)), STATUS_TTL_MS, idle);
         assert_eq!((t.as_str(), k), ("st", K::Status));
         // ...и уступает дежурной строке после
-        let (t, k) = status_line(None, None, Some(("st", STATUS_TTL_MS)), STATUS_TTL_MS, idle);
+        let (t, k) =
+            status_line(None, None, None, Some(("st", STATUS_TTL_MS)), STATUS_TTL_MS, idle);
         assert_eq!((t.as_str(), k), (idle, K::Idle));
         // пусто → дежурная
-        let (t, k) = status_line(None, None, None, STATUS_TTL_MS, idle);
+        let (t, k) = status_line(None, None, None, None, STATUS_TTL_MS, idle);
         assert_eq!((t.as_str(), k), (idle, K::Idle));
     }
 

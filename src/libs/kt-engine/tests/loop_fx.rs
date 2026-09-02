@@ -79,6 +79,7 @@ fn clip(id: u64, media: u64, lane: u32, start: i64, dur: i64, src_in: i64) -> Cl
         reversed: false,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     }
 }
 
@@ -328,4 +329,49 @@ fn t167b_prefetch_lookahead_stays_inside_loop_region() {
     // грань конца региона инклюзивна (семантика транспорта, п.132):
     // курсор на конце — это уже голова следующего круга
     assert_eq!(lookahead_windows(900, 100, Some((500, 900))), vec![500..600]);
+}
+
+// ---- Тест 175: «чёрный ящик» воспроизведения (п.10) ------------------------
+
+/// Пользователь: «нужно продумать хитрую систему логирования, которая
+/// поможет будущим агентам с плавающими багами воспроизведения, нужно
+/// компактно это делать, т.к. я могу взять и попрыгать по нескольким
+/// супер-мелким loop-регионам что могло бы породить тонны логов».
+/// Проверяем ровно это: тысяча событий не рождает тысячу строк.
+#[test]
+fn t175_flight_recorder_stays_compact() {
+    use kt_engine::flight::{CAP, Ev, FlightRecorder, Snap};
+    let f = FlightRecorder::new();
+
+    // 1000 заворотов одного лупа — ОДНА строка со счётчиком
+    for _ in 0..1000 {
+        f.push_at(0, Ev::Wrap, 48_000, 0, Snap::default());
+    }
+    let recs = f.records();
+    assert_eq!(recs.len(), 1, "подряд идущие одинаковые события дедуплицируются");
+    assert_eq!(recs[0].n, 1000);
+    assert!(f.dump().contains("×1000"), "повторы видны числом: {}", f.dump());
+
+    // прыжки по РАЗНЫМ мелким регионам всё равно ограничены кольцом
+    for i in 0..(CAP as i64 * 4) {
+        f.push_at(i as u64, Ev::Region, i * 100, i * 100 + 700, Snap::default());
+    }
+    assert_eq!(f.records().len(), CAP, "кольцо не растёт: {} записей", f.records().len());
+
+    // пустой снимок не пишется вообще (в тишине журнала нет)
+    f.clear();
+    f.push_snap(Snap { head_frames: 48_000, ..Default::default() });
+    assert!(f.records().is_empty(), "снимок без единого промаха не пишется");
+    f.push_snap(Snap { render_underruns: 3, head_frames: 48_000, ..Default::default() });
+    assert_eq!(f.records().len(), 1, "снимок с промахами пишется");
+
+    // дамп читается человеком и содержит суть
+    f.clear();
+    f.push_at(0, Ev::Play, 0, 0, Snap::default());
+    f.push_at(100, Ev::Region, 48_000, 96_000, Snap::default());
+    f.push_at(200, Ev::Stall, 1200, 48_000, Snap::default());
+    let d = f.dump();
+    assert!(d.contains("PLAY"), "{d}");
+    assert!(d.contains("REGION") && d.contains("1.000..2.000"), "регион в секундах: {d}");
+    assert!(d.contains("STALL") && d.contains("1200 ms"), "залипание с длительностью: {d}");
 }

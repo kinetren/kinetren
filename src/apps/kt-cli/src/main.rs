@@ -358,6 +358,7 @@ fn demo_project() -> Project {
         reversed: false,
         fx_bypass: vec![],
         fx,
+        opacity: 1.0,
     };
     let pan = FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.02, pan_y: -0.03, zoom: 1.18 };
     let cam = FxInstance::CamMotion {

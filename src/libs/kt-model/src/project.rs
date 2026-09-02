@@ -578,6 +578,20 @@ pub struct ClipEvent {
     /// fx (индексы); короче fx = хвост включён. Пустой не сериализуется.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fx_bypass: Vec<bool>,
+    /// Непрозрачность видео 0..1 (Р.28, п.12 — «уровень» события как в
+    /// Vegas: линия по верху клипа, тянется мышью). Для аудио роль уровня
+    /// играет `gain_db`. Умолчание 1.0 не сериализуется — старые файлы
+    /// байт-стабильны.
+    #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
+    pub opacity: f32,
+}
+
+fn one_f32() -> f32 {
+    1.0
+}
+
+fn is_one_f32(v: &f32) -> bool {
+    *v == 1.0
 }
 
 impl ClipEvent {

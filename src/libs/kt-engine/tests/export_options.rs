@@ -27,6 +27,7 @@ fn tiny_project() -> Project {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         });
     }
     p.validate().unwrap();
@@ -145,6 +146,7 @@ fn t33_exported_file_contains_every_frame() {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         });
     }
     p.validate().unwrap();

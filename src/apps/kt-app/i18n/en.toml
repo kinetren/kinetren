@@ -103,7 +103,9 @@ add_morph = "Add a Morph track"
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
 transition = "Crossfade: drag edges — resize, drag the cut — roll"
-clamped = "Stopped at the neighbor — a crossfade spans one clip only"
+clamped = "Blocked: an event on this track is in the way (highlighted)"
+clamped_far_left = "Blocked: the event in the way is {0} s to the left, off-screen"
+clamped_far_right = "Blocked: the event in the way is {0} s to the right, off-screen"
 marker = "Marker: drag — move, right click — delete"
 region_edge = "Region edge: drag (I/O — set at playhead)"
 ruler = "Ruler: click and drag — scrub the playhead"
@@ -112,6 +114,8 @@ lane = "Track: drag — reorder, right click — add/remove"
 trim_start = "Trim the clip start"
 trim_end = "Trim the clip end"
 volume = "Clip volume: drag, double click — 0 dB"
+fade_handle = "Drag the top corner — fade at this edge of the clip"
+level = "Drag up/down — video opacity of this clip"
 clip = "Clip: drag — move (Ctrl — no magnet), double click — FX, right click — menu, S — split"
 empty = "LMB — playhead, drag — region; wheel — scroll, Ctrl — zoom, Shift — tracks"
 
@@ -131,9 +135,12 @@ lane_name = "track name"
 clear_range = "Clear range"
 crossfade_next = "Crossfade with next"
 crossfade_prev = "Crossfade with previous"
-remove_transition = "Remove crossfade"
-fade_in = "Fade in"
-fade_out = "Fade out"
+remove_fade_start = "Remove the fade at the clip start"
+remove_fade_end = "Remove the fade at the clip end"
+remove_crossfade_next = "Remove the crossfade with the next clip"
+remove_crossfade_prev = "Remove the crossfade with the previous clip"
+fade_in = "Fade in at the clip start"
+fade_out = "Fade out at the clip end"
 copy = "Copy (Ctrl+C)"
 paste = "Paste (Ctrl+V)"
 delete = "Delete (Del)"
@@ -150,6 +157,7 @@ bake_morph = "Bake the morph (write it into clips)"
 remove_morpher = "Delete morpher (Del)"
 morph_editor = "Morpher editor window…"
 marker_here = "Marker here"
+marker_region = "Marker over the region"
 region_clear = "Clear the region"
 rename = "Rename…"
 remove_marker = "Delete marker"
@@ -323,6 +331,8 @@ smoothing = "Linear preview smoothing (off — hard pixels)"
 economy = "For weak GPUs: half the repaints while playing"
 
 # Палитра поиска по проекту.
+flight = "Compact ring of transport events and counters — for diagnosing floating playback bugs"
+
 [search]
 field = "marker, media, track…"
 marker = "marker"
@@ -364,6 +374,8 @@ open_a_project = "Open a project: kt-app <file.otio> or drop it on the window"
 software_render = "No graphics acceleration (software render) — the UI may lag, preview glow is off"
 
 # Заголовки системных файловых диалогов.
+flight_saved = "Playback journal saved: {0}"
+
 [dialog]
 import_ktproj = "Import a legacy .ktproj project"
 open_project = "Open project"
@@ -395,6 +407,9 @@ graph_reset = "Reset the graphs"
 log_empty = "no problems noticed"
 
 # Пороговые предупреждения в журнале проблем.
+flight_save = "Save the playback journal"
+flight_stalls = "playback froze: {0}"
+
 [perf.note]
 render_underruns = "render underruns +{0} (total {1})"
 callback_underruns = "callback underruns +{0} (total {1})"

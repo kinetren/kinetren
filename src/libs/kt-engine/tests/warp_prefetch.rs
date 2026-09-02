@@ -41,6 +41,7 @@ fn slowed_project() -> Project {
                 SlowedKeyframe { t: 1.0, rate: 0.8, mix: 0.15 },
             ],
         }],
+        opacity: 1.0,
     });
     p.validate().unwrap();
     p

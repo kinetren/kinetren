@@ -51,6 +51,7 @@ fn golden_project() -> Project {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         },
         // Р.24: бывший нахлёст [1.5c, 2c) конвертирован в стык C = 1.75c +
         // переход (окно то же) — байты рендера обязаны совпасть со старым
@@ -68,6 +69,7 @@ fn golden_project() -> Project {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         },
         // кроссфейд: DC через переход со вторым ramp-клипом
         ClipEvent {
@@ -83,6 +85,7 @@ fn golden_project() -> Project {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         },
         // slowed с автоматизацией + реверб на отдельной дорожке
         ClipEvent {
@@ -109,6 +112,7 @@ fn golden_project() -> Project {
                     SlowedKeyframe { t: 0.7, rate: 0.5, mix: 0.1 },
                 ],
             }],
+            opacity: 1.0,
         },
         // видео: два слоя с перекрытием (z-композит)
         ClipEvent {
@@ -124,6 +128,7 @@ fn golden_project() -> Project {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         },
         ClipEvent {
             id: ClipId(6),
@@ -138,6 +143,7 @@ fn golden_project() -> Project {
             reversed: false,
             fx_bypass: vec![],
             fx: vec![],
+            opacity: 1.0,
         },
     ];
     p.transitions.push(TransitionEvent {

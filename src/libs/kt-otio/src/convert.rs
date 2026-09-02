@@ -490,6 +490,7 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
             media: c.media.0,
             link_group: c.link_group.map(|g| g.0),
             gain: c.gain_db,
+            opacity: c.opacity,
         },
     );
 
@@ -974,6 +975,7 @@ fn clip_from_otio(
         source_in: src_in,
         media,
         gain_db: meta.map(|m| m.gain).unwrap_or(0.0),
+        opacity: meta.map(|m| m.opacity).unwrap_or(1.0),
         reversed,
         fx,
         fx_bypass: bypass,

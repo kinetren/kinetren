@@ -33,6 +33,7 @@ fn project(fps: u32, reversed: bool) -> Project {
         reversed,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     });
     p.validate().unwrap();
     p

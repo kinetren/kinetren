@@ -24,6 +24,7 @@ fn base_project() -> Project {
         reversed: false,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     });
     p.validate().unwrap();
     p
@@ -82,6 +83,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         reversed: false,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     });
     p2.validate().unwrap();
     player.set_project(p2);

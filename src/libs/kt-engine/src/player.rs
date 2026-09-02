@@ -126,6 +126,9 @@ pub struct LoopStats {
 
 pub struct Player {
     pub cache: Arc<BurstCache>,
+    /// «Чёрный ящик» воспроизведения (Р.28, п.10): компактное кольцо
+    /// событий транспорта и счётчиков — по нему ловят плавающие баги.
+    pub flight: Arc<crate::flight::FlightRecorder>,
     pub transport: Arc<Transport>,
     pub shared: Arc<AudioShared>,
     pub meters: Arc<Meters>,
@@ -190,6 +193,7 @@ impl Player {
         let loop_stats = Arc::new(LoopStats::default());
         let stop = Arc::new(AtomicBool::new(false));
         let underruns = Arc::new(AtomicU64::new(0));
+        let flight = Arc::new(crate::flight::FlightRecorder::new());
 
         let (producer, consumer) =
             rtrb::RingBuffer::<f32>::new(RING_CAPACITY_FRAMES * AUDIO_CHANNELS);
@@ -208,6 +212,7 @@ impl Player {
             let meters = meters.clone();
             let master_gain = master_gain.clone();
             let loop_region = loop_region.clone();
+            let flight_r = flight.clone();
             std::thread::Builder::new()
                 .name("audio-render".into())
                 .spawn(move || {
@@ -226,6 +231,7 @@ impl Player {
                         meters,
                         master_gain,
                         loop_region,
+                        flight: flight_r,
                     })
                 })
                 .expect("spawn audio render")
@@ -256,6 +262,7 @@ impl Player {
 
         let player = Player {
             cache,
+            flight,
             transport,
             shared,
             meters,
@@ -325,11 +332,13 @@ impl Player {
     }
 
     pub fn play(&self) {
+        self.flight.push(crate::flight::Ev::Play, self.transport.playhead_frames(), 0);
         self.transport.set_playing(true);
         self.wake.notify();
     }
 
     pub fn pause(&self) {
+        self.flight.push(crate::flight::Ev::Pause, self.transport.playhead_frames(), 0);
         self.transport.set_playing(false);
         self.wake.notify();
     }
@@ -538,6 +547,7 @@ struct RenderCtx {
     meters: Arc<Meters>,
     master_gain: Arc<AtomicU32>,
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
+    flight: Arc<crate::flight::FlightRecorder>,
 }
 
 /// Карта воркеров: RwLock, чтобы add_media/remove_media добавляли декодеры
@@ -562,6 +572,7 @@ fn audio_render_loop(ctx: RenderCtx) {
         meters,
         master_gain,
         loop_region,
+        flight,
     } = ctx;
     let mut store = FxStateStore::new();
     let mut renderer = AudioRenderer::new(&project.lock().unwrap().clone());
@@ -579,6 +590,12 @@ fn audio_render_loop(ctx: RenderCtx) {
     let mut loop_armed = loop_arm_after_jump(render_head, last_region, 1);
     let mut last_effective_some = loop_armed && last_region.is_some();
     let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
+    // счётчики «чёрного ящика» (п.10): дельты за секунду, а не абсолюты
+    let (mut last_ru, mut last_cu, mut last_warm) = (0u64, 0u64, 0u64);
+    let mut warmups = 0u64;
+    let mut last_snap_ms = 0u64;
+    let mut last_head_seen = render_head;
+    let mut last_head_ms = 0u64;
 
     while !stop.load(Ordering::Acquire) {
         if dirty.swap(false, Ordering::AcqRel) {
@@ -592,6 +609,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             store.reset_all(); // pre-roll при следующем чтении
             render_head = transport.playhead_frames();
             shared.consumed_frames.store(0, Ordering::Release);
+            flight.push(crate::flight::Ev::Seek, render_head, 0);
         }
 
         {
@@ -608,6 +626,7 @@ fn audio_render_loop(ctx: RenderCtx) {
         let dir: i64 = if rate_now < 0.0 { -1 } else { 1 };
         let dir_changed = dir != last_dir;
         if dir_changed {
+            flight.push(crate::flight::Ev::Dir, dir, 0);
             last_dir = dir;
             store.reset_all();
             render_head = transport.playhead_frames();
@@ -618,6 +637,12 @@ fn audio_render_loop(ctx: RenderCtx) {
         // регион): при armed-лупе render_head растёт линейно, о
         // принадлежности региону говорит playhead транспорта
         if generation_changed || dir_changed || region != last_region {
+            if region != last_region {
+                match region {
+                    Some((rs, re)) => flight.push(crate::flight::Ev::Region, rs, re),
+                    None => flight.push(crate::flight::Ev::Region, -1, 0),
+                }
+            }
             loop_armed = loop_arm_after_jump(transport.playhead_frames(), region, dir);
             last_region = region;
         }
@@ -630,6 +655,7 @@ fn audio_render_loop(ctx: RenderCtx) {
             // playhead, Loop выключили/включили при игре) = мини-seek без
             // бампа generation: кольцо и render_head жили в другой системе
             // координат (armed render_head опережает playhead на круги)
+            flight.push(crate::flight::Ev::Reset, transport.playhead_frames(), 0);
             store.reset_all();
             render_head = transport.playhead_frames();
             shared.consumed_frames.store(0, Ordering::Release);
@@ -640,7 +666,48 @@ fn audio_render_loop(ctx: RenderCtx) {
         // направления; wrap при loop работает в обе стороны — тест 43)
         let consumed = shared.consumed_frames.swap(0, Ordering::AcqRel);
         if consumed > 0 {
+            let before = transport.playhead_frames();
             transport.advance_frames_wrapped(consumed * dir, effective_region);
+            let after = transport.playhead_frames();
+            // заворот региона: голова прыгнула ПРОТИВ направления игры
+            if (dir > 0 && after < before) || (dir < 0 && after > before) {
+                flight.push(crate::flight::Ev::Wrap, after, 0);
+            }
+        }
+        // раз в секунду — снимок дельт счётчиков; в тишине не пишется
+        // ничего (правило 3 «чёрного ящика»)
+        {
+            let now = flight.now_ms();
+            let head = transport.playhead_frames();
+            if now.saturating_sub(last_snap_ms) >= 1000 {
+                last_snap_ms = now;
+                let ru = underruns.load(Ordering::Relaxed);
+                let cu = shared.callback_underruns.load(Ordering::Relaxed);
+                flight.push_snap(crate::flight::Snap {
+                    render_underruns: ru - last_ru,
+                    callback_underruns: cu - last_cu,
+                    warmup_misses: warmups - last_warm,
+                    head_frames: head,
+                });
+                (last_ru, last_cu, last_warm) = (ru, cu, warmups);
+            }
+            // залипание: играем, а голова стоит (дефект 8.3 — «видны
+            // фреймы, звука нет, воспроизведение замирает»)
+            if transport.is_playing() {
+                if head != last_head_seen {
+                    last_head_seen = head;
+                    last_head_ms = now;
+                } else if now.saturating_sub(last_head_ms) >= 1000 {
+                    flight.push(
+                        crate::flight::Ev::Stall,
+                        now.saturating_sub(last_head_ms) as i64,
+                        head,
+                    );
+                }
+            } else {
+                last_head_seen = transport.playhead_frames();
+                last_head_ms = now;
+            }
         }
 
         if transport.is_playing() {
@@ -771,6 +838,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                 if stats.underruns > 0 {
                     underruns.fetch_add(stats.underruns, Ordering::Relaxed);
                 }
+                warmups += stats.warmup_misses;
                 if gain != 1.0 {
                     for s in chunk.iter_mut() {
                         *s *= gain;

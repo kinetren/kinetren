@@ -45,6 +45,12 @@ pub const EDGE_GRAB_PX: f32 = 7.0;
 pub const SNAP_PX: f64 = 10.0;
 pub const REGION_EDGE_PX: f32 = 8.0;
 pub const VOLUME_RAIL_W: f32 = 9.0;
+/// Ширина хвата ручки фейда у верхнего угла события (Р.28, п.12 — жест
+/// Vegas: «fade можно у событий сделать по краям без еще одних событий —
+/// просто потянув за верхний уголок»).
+pub const FADE_HANDLE_PX: f32 = 12.0;
+/// Полувысота хвата линии уровня (непрозрачность видео).
+pub const LEVEL_GRAB_PX: f32 = 5.0;
 /// ±6.02 dB на весь ход рейла: gain = 2^((0.5−t)·2)  (порт старого).
 pub const RAIL_DB_SPAN: f32 = 12.0412;
 
@@ -62,10 +68,104 @@ pub(crate) enum MovePlan {
     Free,
     /// Мульти-наезд/поглощение/наезд меньше минимума окна: упор в стык
     /// (решение пользователя п.10 Р.24 — чужой монтаж не разрушаем молча).
-    Clamped { start: i64 },
+    /// `blocker` — тики того, ВО ЧТО упёрлись: подсвечивается на таймлайне
+    /// и называется в подсказке (п.5 Р.28 — «я пока сам туда не промотал —
+    /// не понял что оказывается там еще событие есть в конце которое мешает»).
+    Clamped { start: i64, blocker: (i64, i64) },
     /// Частичный наезд на ОДНОГО соседа: жест кроссфейда — клипы встык до
     /// `joint` (середина наезда с клампами тел), окно перехода = наезд.
     Crossfade { outgoing: ClipId, incoming: ClipId, joint: i64, in_off: i64, out_off: i64 },
+}
+
+/// Высота верхней полосы события, где живут жесты Vegas (ручки фейда и
+/// линия уровня). Ниже неё всё по-старому: тело, тримы, окна переходов.
+pub(crate) fn top_strip_h(lane_h: f32) -> f32 {
+    (lane_h * 0.35).min(12.0)
+}
+
+/// Длина «уголкового» фейда у края клипа в тиках: у такого фейда внешний
+/// офсет НУЛЕВОЙ — он целиком внутри события, как в Vegas. Переход с
+/// живым соседом (кроссфейд) уголком не считается: у него свои ручки.
+/// Чистая функция — тест 173.
+pub(crate) fn corner_fade_len(p: &Project, id: ClipId, left: bool) -> Option<i64> {
+    p.transitions.iter().find_map(|t| {
+        if !t.is_fade() {
+            return None;
+        }
+        match (left, t.a, t.b) {
+            // фейд в начале: пустота слева, живой конец — мы
+            (true, None, Some(b)) if b == id && t.in_offset.0 == 0 => Some(t.out_offset.0),
+            // фейд в конце: пустота справа
+            (false, Some(a), None) if a == id && t.out_offset.0 == 0 => Some(t.in_offset.0),
+            _ => None,
+        }
+    })
+}
+
+/// Позиция ручки фейда (тик): у края события, когда фейда нет, и на
+/// внутреннем конце фейда, когда он есть. Чистая функция — тест 173.
+pub(crate) fn fade_handle_tick(start: i64, end: i64, len: i64, left: bool) -> i64 {
+    if left { start + len.max(0) } else { end - len.max(0) }
+}
+
+/// Непрозрачность из положения мыши в строке дорожки (верх = 1.0).
+/// Чистая функция — тест 173.
+pub(crate) fn level_from_y(y: f32, top: f32, lane_h: f32) -> f32 {
+    let h = (lane_h - 8.0).max(1.0);
+    (1.0 - (y - (top + 3.0)) / h).clamp(0.0, 1.0)
+}
+
+/// Обратное преобразование: y линии уровня.
+pub(crate) fn level_y(opacity: f32, top: f32, lane_h: f32) -> f32 {
+    let h = (lane_h - 8.0).max(1.0);
+    top + 3.0 + (1.0 - opacity.clamp(0.0, 1.0)) * h
+}
+
+/// Препятствие текущего жеста (п.5 Р.28): что мешает и где оно лежит.
+/// Живёт один кадр — ставится обработчиком драга, гасится в начале
+/// следующего прохода.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Blocked {
+    /// Тики препятствия [start, end).
+    pub span: (i64, i64),
+    pub kind: ClipKind,
+    pub lane: u32,
+}
+
+/// Видно ли препятствие в текущем окне и, если нет, куда смотреть.
+/// Чистая функция — тест 172.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(crate) enum BlockView {
+    Visible,
+    /// Препятствие левее вида; тики до его ПРАВОГО края.
+    Left(i64),
+    /// Препятствие правее вида; тики до его ЛЕВОГО края.
+    Right(i64),
+}
+
+pub(crate) fn block_view(span: (i64, i64), view: (i64, i64)) -> BlockView {
+    if span.1 <= view.0 {
+        BlockView::Left(view.0 - span.1)
+    } else if span.0 >= view.1 {
+        BlockView::Right(span.0 - view.1)
+    } else {
+        BlockView::Visible
+    }
+}
+
+/// Сдвиг материала внутри куска для ПРЕВЬЮ жеста (волноформа и филмстрип).
+/// Его даёт ТОЛЬКО трим левого края: там кусок стоит на месте, а край едет
+/// по материалу. При переносе клип едет целиком — материал обязан ехать
+/// вместе с ним (п.2 Р.28: «перетаскиваю событие вглубь предыдущего — превью
+/// звука прокручивается влево, хотя при воспроизведении сам звук не
+/// меняется»). Трим правого края левой границы не двигает. Тест 169.
+pub(crate) fn preview_src_shift(drag: Option<&Drag>, id: ClipId, clip_start: i64) -> i64 {
+    match drag {
+        Some(Drag::Clip(d)) if d.id == id && d.mode == DragMode::TrimStart => {
+            d.cur_start - clip_start
+        }
+        _ => 0,
+    }
 }
 
 pub(crate) fn plan_move(p: &Project, id: ClipId, want: i64, lane: u32) -> MovePlan {
@@ -139,14 +239,23 @@ pub(crate) fn plan_move(p: &Project, id: ClipId, want: i64, lane: u32) -> MovePl
     }
     // упор: откатываемся к ближайшему стыку по направлению движения
     let orig = me.start.0;
-    let spans =
-        hits.iter().map(|c| (c.start.0, c.start.0 + c.duration.0)).chain(foreign.iter().copied());
-    let start = if want >= orig {
-        spans.map(|(s, _)| s - dur).min().unwrap_or(want).clamp(orig.min(want), want)
+    let spans: Vec<(i64, i64)> = hits
+        .iter()
+        .map(|c| (c.start.0, c.start.0 + c.duration.0))
+        .chain(foreign.iter().copied())
+        .collect();
+    // препятствие — то, что первым встретилось ПО ХОДУ движения
+    let blocker = if want >= orig {
+        spans.iter().copied().min_by_key(|(s, _)| *s)
     } else {
-        spans.map(|(_, e)| e).max().unwrap_or(want).clamp(want, orig)
+        spans.iter().copied().max_by_key(|(_, e)| *e)
     };
-    MovePlan::Clamped { start }
+    let start = match blocker {
+        Some((s, _)) if want >= orig => (s - dur).clamp(orig.min(want), want),
+        Some((_, e)) => e.clamp(want, orig),
+        None => want,
+    };
+    MovePlan::Clamped { start, blocker: blocker.unwrap_or((want, want + dur)) }
 }
 
 /// Прямоугольник окна перехода в строке дорожки. Чистая функция — тест 140.
@@ -197,6 +306,19 @@ pub struct DragState {
 /// Все виды перетаскиваний на таймлайне.
 pub enum Drag {
     Clip(DragState),
+    /// Ручка фейда у края события (Р.28, п.12): длина в тиках, живой
+    /// предпросмотр; на отпускании — AddTransition/SetTransition/Remove.
+    Fade {
+        id: ClipId,
+        left: bool,
+        len: i64,
+        moved: bool,
+    },
+    /// Линия уровня видео — непрозрачность (Р.28, п.12).
+    Level {
+        id: ClipId,
+        moved: bool,
+    },
     /// Перетаскивание заголовка СТРОКИ дорожек (реордер; п.6 v1.4 —
     /// строки в display-порядке, перемешивание V/A/M разрешено).
     LaneRow {
@@ -1226,6 +1348,8 @@ impl KtApp {
         let pointer = response.interact_pointer_pos();
         let hover = response.hover_pos();
         self.snap_line = None;
+        // препятствие живёт РОВНО пока жест в него упирается (п.5)
+        self.blocked = None;
         // магнит включён всегда; Ctrl его снимает (п.2 р.11)
         self.snap_off = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
 
@@ -1278,6 +1402,11 @@ impl KtApp {
             TrimStart,
             TrimEnd,
             VolumeRail,
+            /// Ручка фейда у начала/конца события (п.12).
+            FadeLeft,
+            FadeRight,
+            /// Линия уровня видео — непрозрачность (п.12).
+            Level,
         }
         #[derive(PartialEq)]
         enum TransZone {
@@ -1296,6 +1425,16 @@ impl KtApp {
                 };
                 let top = lane_top(a.kind, a.lane);
                 if pos.y < top || pos.y > top + lane_h - 2.0 {
+                    continue;
+                }
+                // верхняя полоса «уголкового» фейда (п.12) принадлежит ручке
+                // клипа: край окна клампится минимумом, а угол снимает фейд
+                // совсем — иначе задвинуть его обратно было бы нечем.
+                // Ниже полосы окно ловится как прежде (жест Р.25, тест 157).
+                if t.is_fade()
+                    && (t.in_offset.0 == 0 || t.out_offset.0 == 0)
+                    && pos.y <= top + top_strip_h(lane_h)
+                {
                     continue;
                 }
                 let Some(joint) = t.joint(p).map(|j| j.0) else { continue };
@@ -1326,7 +1465,27 @@ impl KtApp {
                 // у узких клипов трим-зоны сжимаются — середина всегда
                 // Body (п.17 р.6, тест 60: клип <14px нельзя было двигать)
                 let grab = edge_grab_for_width(x1 - x0);
-                let zone = if (pos.x - x0).abs() <= grab {
+                // Верхняя полоса события — жесты Vegas (п.12): ручки фейда
+                // по углам и линия уровня. Они перекрывают трим-зоны, но
+                // только в верхних пикселях — тело и края ниже свободны.
+                let strip = top_strip_h(lane_h);
+                let p = app.model.project();
+                let fade_l = corner_fade_len(p, c.id, true).unwrap_or(0);
+                let fade_r = corner_fade_len(p, c.id, false).unwrap_or(0);
+                let hx_l = tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_l, true));
+                let hx_r = tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_r, false));
+                let in_strip = pos.y <= top + strip;
+                let ly = level_y(c.opacity, top, lane_h);
+                let zone = if in_strip && (pos.x - hx_l).abs() <= FADE_HANDLE_PX {
+                    ClipZone::FadeLeft
+                } else if in_strip && (pos.x - hx_r).abs() <= FADE_HANDLE_PX {
+                    ClipZone::FadeRight
+                } else if c.kind == ClipKind::Video
+                    && x1 - x0 > 24.0
+                    && (pos.y - ly).abs() <= LEVEL_GRAB_PX
+                {
+                    ClipZone::Level
+                } else if (pos.x - x0).abs() <= grab {
                     ClipZone::TrimStart
                 } else if (pos.x - x1).abs() <= grab {
                     ClipZone::TrimEnd
@@ -1386,6 +1545,14 @@ impl KtApp {
                     Some((_, ClipZone::VolumeRail)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         zone_hint = Some(tr(k::tl::hint::VOLUME));
+                    }
+                    Some((_, ClipZone::FadeLeft)) | Some((_, ClipZone::FadeRight)) => {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                        zone_hint = Some(tr(k::tl::hint::FADE_HANDLE));
+                    }
+                    Some((_, ClipZone::Level)) => {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                        zone_hint = Some(tr(k::tl::hint::LEVEL));
                     }
                     Some((_, ClipZone::Body)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
@@ -1559,6 +1726,15 @@ impl KtApp {
                         ClipZone::VolumeRail => {
                             self.drag = Some(Drag::Volume { id, moved: false });
                         }
+                        ClipZone::FadeLeft | ClipZone::FadeRight => {
+                            let left = zone == ClipZone::FadeLeft;
+                            let len = corner_fade_len(self.model.project(), id, left)
+                                .unwrap_or(0);
+                            self.drag = Some(Drag::Fade { id, left, len, moved: false });
+                        }
+                        ClipZone::Level => {
+                            self.drag = Some(Drag::Level { id, moved: false });
+                        }
                         zone => {
                             if let Some(orig) = self.model.clip(id).cloned() {
                                 let mode = match zone {
@@ -1640,27 +1816,37 @@ impl KtApp {
                             // мульти-наезд/поглощение — кламп ещё в превью
                             // (реш. 10 Р.24); одиночный частичный наезд
                             // остаётся как есть (release сделает кроссфейд)
-                            if let MovePlan::Clamped { start } =
+                            if let MovePlan::Clamped { start, blocker } =
                                 plan_move(self.model.project(), d.id, d.cur_start, d.cur_lane)
                             {
+                                let mut blocker = blocker;
                                 if d.cur_lane != d.orig.lane {
                                     // вертикальный перенос сквозь занятое
                                     // не проталкиваем — возврат на строку
                                     d.cur_lane = d.orig.lane;
-                                    if let MovePlan::Clamped { start } = plan_move(
+                                    if let MovePlan::Clamped { start, blocker: b } = plan_move(
                                         self.model.project(),
                                         d.id,
                                         d.cur_start,
                                         d.cur_lane,
                                     ) {
                                         d.cur_start = start;
+                                        blocker = b;
                                     }
                                 } else {
                                     d.cur_start = start;
                                 }
                                 d.cur_end = d.cur_start + dur;
                                 self.snap_line = None;
-                                self.hover_hint = Some(tr(k::tl::hint::CLAMPED).to_string());
+                                // невозможность действия — ОШИБКА, а не
+                                // блёклая подсказка (п.5): препятствие
+                                // подсвечивается, а если оно за пределами
+                                // вида — подсказка говорит, куда смотреть
+                                self.blocked = Some(Blocked {
+                                    span: blocker,
+                                    kind: d.orig.kind,
+                                    lane: d.cur_lane,
+                                });
                             }
                         }
                         DragMode::TrimStart => {
@@ -1764,6 +1950,42 @@ impl KtApp {
                     let raw = x_to_tick(pos.x) - grab_dt;
                     let cur_start = self.snap(raw, None).max(0);
                     self.drag = Some(Drag::Morph { id, grab_dt, cur_start, moved: true });
+                }
+                Some(Drag::Fade { id, left, .. }) => {
+                    // длина = расстояние от края события до курсора,
+                    // клампится телом: «сколько выдвигал — столько и фейд»
+                    if let Some(c) = self.model.clip(id) {
+                        let (s0, e0) = (c.start.0, c.start.0 + c.duration.0);
+                        let raw = x_to_tick(pos.x).clamp(s0, e0);
+                        let mut len = if left { raw - s0 } else { e0 - raw };
+                        // мёртвая зона у самого угла: ручка «прилипает» к
+                        // краю, и задвинутый обратно фейд исчезает целиком,
+                        // а не оставляет невидимый огрызок в пару мс
+                        let edge_x = tick_to_x(if left { s0 } else { e0 });
+                        if (pos.x - edge_x).abs() <= 3.0 {
+                            len = 0;
+                        }
+                        self.drag = Some(Drag::Fade {
+                            id,
+                            left,
+                            len: len.clamp(0, c.duration.0),
+                            moved: true,
+                        });
+                    }
+                }
+                Some(Drag::Level { id, .. }) => {
+                    if let Some(c) = self.model.clip(id) {
+                        let top = lane_top(c.kind, c.lane);
+                        let op = level_from_y(pos.y, top, lane_h);
+                        // live-превью без записи в историю (как volume rail)
+                        let mut p = self.model.project().clone();
+                        if let Some(cm) = p.clips.iter_mut().find(|c| c.id == id) {
+                            cm.opacity = op;
+                        }
+                        self.player.set_project(p);
+                        self.live_opacity = Some((id, op));
+                    }
+                    self.drag = Some(Drag::Level { id, moved: true });
                 }
                 Some(Drag::Volume { id, .. }) => {
                     // t: 0 = верх (+6 dB), 1 = низ (−6 dB) — порт рейла
@@ -1879,6 +2101,18 @@ impl KtApp {
                         ]);
                     }
                 }
+                Some(Drag::Fade { id, left, len, moved }) => {
+                    if moved {
+                        self.commit_fade_handle(id, left, len);
+                    }
+                }
+                Some(Drag::Level { id, moved }) => {
+                    if moved
+                        && let Some((oid, op)) = self.live_opacity.take_if(|(o, _)| *o == id)
+                    {
+                        self.apply(Command::SetOpacity { id: oid, opacity: op });
+                    }
+                }
                 Some(Drag::Volume { id, moved }) => {
                     if moved && let Some((gid, gain)) = self.live_gain.take_if(|(g, _)| *g == id) {
                         self.apply(Command::SetGain { id: gid, gain_db: gain });
@@ -1918,6 +2152,7 @@ impl KtApp {
             if x1 < rect.left() || x0 > rect.right() {
                 continue;
             }
+            let src_shift = preview_src_shift(self.drag.as_ref(), c.id, c.start.0);
             let top = lane_top(c.kind, lane);
             // клип тянется ПОД полосу имён дорожек — она полупрозрачная и
             // таймлайн просвечивает (п.4 р.7.1); имя рисуется от СТАРОЙ
@@ -2010,7 +2245,8 @@ impl KtApp {
                         // показывала кадр за 3 секунды ДО начала куска
                         // квантование ОТ НУЛЯ ФАЙЛА — общий кэш с бином
                         // (п.11 р.6, тест 62)
-                        let src_t = crate::thumbs::thumb_key_t(c.source_in.0, tl, step);
+                        let src_t =
+                            crate::thumbs::thumb_key_t(c.source_in.0 + src_shift, tl, step);
                         let key = crate::thumbs::ThumbKey { media: c.media, t: src_t };
                         let tex = match self.thumb_textures.get(&key) {
                             Some(t) => Some(t.clone()),
@@ -2082,7 +2318,7 @@ impl KtApp {
                 let (left_ch, right_ch) = &levels[level];
                 let mid = clip_rect.center().y;
                 let half = (clip_rect.height() - 6.0) * 0.5;
-                let eff_src_in = c.source_in.0 + (start - c.start.0).max(0);
+                let eff_src_in = c.source_in.0 + src_shift;
                 let src_in_frames = Tick(eff_src_in.max(0)).to_audio_frames() as f64;
                 let col_l = egui::Color32::from_rgba_unmultiplied(170, 210, 255, 230);
                 let col_r = egui::Color32::from_rgba_unmultiplied(230, 190, 255, 230);
@@ -2121,6 +2357,24 @@ impl KtApp {
                 if !mesh.is_empty() {
                     painter.add(egui::Shape::mesh(mesh));
                 }
+            }
+
+            // линия уровня видео (п.12): непрозрачность события, как в
+            // Vegas — тянется мышью вверх/вниз
+            if c.kind == ClipKind::Video && clip_rect.width() > 24.0 {
+                let op = match self.live_opacity {
+                    Some((id, o)) if id == c.id => o,
+                    _ => c.opacity,
+                };
+                let ly = level_y(op, top, lane_h);
+                let dim = op < 1.0;
+                painter.line_segment(
+                    [egui::pos2(clip_rect.left(), ly), egui::pos2(clip_rect.right(), ly)],
+                    egui::Stroke::new(
+                        if dim { 2.0 } else { 1.0 },
+                        egui::Color32::from_rgba_unmultiplied(255, 220, 120, if dim { 230 } else { 90 }),
+                    ),
+                );
             }
 
             // volume rail (аудио, ширина > 40)
@@ -2400,8 +2654,19 @@ impl KtApp {
                     Some(Drag::TransitionBody { id, cur_at, .. }) if *id == t.id => *cur_at,
                     _ => base_joint,
                 };
-                let x0 = tick_to_x(joint - t.in_offset.0);
-                let x1 = tick_to_x(joint + t.out_offset.0);
+                // ручка фейда тянется — окно рисуется по ЖИВОЙ длине (п.12)
+                let (in_off, out_off) = match &self.drag {
+                    Some(Drag::Fade { id, left, len, .. })
+                        if t.is_fade()
+                            && ((*left && t.b == Some(*id) && t.a.is_none())
+                                || (!*left && t.a == Some(*id) && t.b.is_none())) =>
+                    {
+                        if *left { (0, *len) } else { (*len, 0) }
+                    }
+                    _ => (t.in_offset.0, t.out_offset.0),
+                };
+                let x0 = tick_to_x(joint - in_off);
+                let x1 = tick_to_x(joint + out_off);
                 if x1 < rect.left() || x0 > rect.right() {
                     continue;
                 }
@@ -2411,6 +2676,7 @@ impl KtApp {
                 // никуда не делся — растащишь клипы, и он вернётся
                 let xj = tick_to_x(joint);
                 let (left, right) = transition_handle_rects(x0, xj, x1, top, lane_h);
+                let _ = (in_off, out_off);
                 let handle_fill = |id: Option<ClipId>| {
                     let c = id.and_then(|i| p.clips.iter().find(|c| c.id == i))?;
                     let base = media_paths
@@ -2458,6 +2724,57 @@ impl KtApp {
                     [egui::pos2(xj, r.top()), egui::pos2(xj, r.bottom())],
                     egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
                 );
+            }
+        }
+
+        // предпросмотр ЕЩЁ НЕ созданного фейда и сами ручки (п.12)
+        {
+            let p = self.model.project();
+            if let Some(Drag::Fade { id, left, len, moved: true }) = &self.drag
+                && *len > 0
+                && corner_fade_len(p, *id, *left).is_none()
+                && let Some(c) = p.clips.iter().find(|c| c.id == *id)
+            {
+                let top = lane_top(c.kind, c.lane);
+                let (s0, e0) = (c.start.0, c.start.0 + c.duration.0);
+                let (a, b) = if *left { (s0, s0 + *len) } else { (e0 - *len, e0) };
+                let r = transition_rect(tick_to_x(a), tick_to_x(b), top, lane_h);
+                painter.rect_filled(r, 2.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22));
+                let st = egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 130),
+                );
+                if *left {
+                    painter.line_segment([r.left_bottom(), r.right_top()], st);
+                } else {
+                    painter.line_segment([r.left_top(), r.right_bottom()], st);
+                }
+            }
+            // ручки видны у ВЫДЕЛЕННОГО события — иначе жест не найти
+            // (п.14 чек-листа: элемент управления обязан быть заметен)
+            if let Some(sel) = self.selected
+                && let Some(c) = p.clips.iter().find(|c| c.id == sel)
+            {
+                let top = lane_top(c.kind, c.lane);
+                let (s0, e0) = (c.start.0, c.start.0 + c.duration.0);
+                if tick_to_x(e0) - tick_to_x(s0) > 24.0 {
+                    for left in [true, false] {
+                        let len = corner_fade_len(p, sel, left).unwrap_or(0);
+                        let x = tick_to_x(fade_handle_tick(s0, e0, len, left));
+                        let y = top + 2.0;
+                        let d = 5.0f32;
+                        let dx = if left { d } else { -d };
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![
+                                egui::pos2(x, y),
+                                egui::pos2(x + dx, y),
+                                egui::pos2(x, y + d),
+                            ],
+                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 190),
+                            egui::Stroke::NONE,
+                        ));
+                    }
+                }
             }
         }
 
@@ -2747,6 +3064,53 @@ impl KtApp {
             }
         }
 
+        // ---- препятствие жеста (п.5) ----------------------------------------------
+        // «я пока сам туда не промотал — не понял что оказывается там еще
+        // событие есть в конце которое мешает»: то, во что упёрлись,
+        // подсвечивается КРАСНЫМ, а если оно за пределами вида — на краю
+        // строки рисуется стрелка в его сторону.
+        if let Some(b) = self.blocked {
+            let top = lane_top(b.kind, b.lane);
+            let y0 = top + 1.0;
+            let y1 = top + lane_h - 3.0;
+            let err = egui::Color32::from_rgb(255, 105, 97);
+            match block_view(b.span, (x_to_tick(rect.left()), x_to_tick(rect.right()))) {
+                BlockView::Visible => {
+                    let bx0 = tick_to_x(b.span.0).max(rect.left());
+                    let bx1 = tick_to_x(b.span.1).min(rect.right());
+                    let r = egui::Rect::from_min_max(egui::pos2(bx0, y0), egui::pos2(bx1, y1));
+                    full_painter.rect_filled(
+                        r,
+                        4.0,
+                        egui::Color32::from_rgba_unmultiplied(255, 105, 97, 48),
+                    );
+                    full_painter.rect(
+                        r,
+                        4.0,
+                        egui::Color32::TRANSPARENT,
+                        egui::Stroke::new(2.0, err),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+                dir => {
+                    // стрелка у края строки: куда смотреть
+                    let left = matches!(dir, BlockView::Left(_));
+                    let cy = (y0 + y1) * 0.5;
+                    let tip = if left { rect.left() + 3.0 } else { rect.right() - 3.0 };
+                    let back = if left { tip + 14.0 } else { tip - 14.0 };
+                    full_painter.add(egui::Shape::convex_polygon(
+                        vec![
+                            egui::pos2(tip, cy),
+                            egui::pos2(back, cy - 7.0),
+                            egui::pos2(back, cy + 7.0),
+                        ],
+                        err,
+                        egui::Stroke::NONE,
+                    ));
+                }
+            }
+        }
+
         // ---- снап-линия / playhead -----------------------------------------------
         if let Some(t) = self.snap_line {
             let x = tick_to_x(t);
@@ -2897,11 +3261,13 @@ impl KtApp {
                         {
                             items.push((false, n));
                         }
-                        let existing: Vec<TransitionId> = p
+                        // (id, фейд ли, я ли уходящая сторона) — по этой
+                        // тройке строится ТОЧНОЕ название пункта (п.4)
+                        let existing: Vec<(TransitionId, bool, bool)> = p
                             .transitions
                             .iter()
                             .filter(|t| t.touches(id))
-                            .map(|t| t.id)
+                            .map(|t| (t.id, t.is_fade(), t.a == Some(id)))
                             .collect();
                         // фейд у свободного края клипа (Р.25): соседа нет —
                         // картинка/звук проявляется из пустоты или гаснет в неё
@@ -2967,8 +3333,18 @@ impl KtApp {
                                 ui.close();
                             }
                         }
-                        for tid in existing {
-                            if ui.button(tr(k::tl::menu::REMOVE_TRANSITION)).clicked() {
+                        for (tid, is_fade, i_am_outgoing) in existing {
+                            // название говорит ЧТО и ГДЕ (п.4 пользователя:
+                            // «Remove crossfade» одной надписью снимал и
+                            // затухание с конца, и кроссфейд с соседом —
+                            // «оказывается она fadeout с конца убирает»)
+                            let label = match (is_fade, i_am_outgoing) {
+                                (true, true) => tr(k::tl::menu::REMOVE_FADE_END),
+                                (true, false) => tr(k::tl::menu::REMOVE_FADE_START),
+                                (false, true) => tr(k::tl::menu::REMOVE_CROSSFADE_NEXT),
+                                (false, false) => tr(k::tl::menu::REMOVE_CROSSFADE_PREV),
+                            };
+                            if ui.button(label).clicked() {
                                 self.apply(Command::RemoveTransition { id: tid });
                                 ui.close();
                             }
@@ -3020,8 +3396,22 @@ impl KtApp {
                 }
             }
             Some(CtxTarget::RegionEdge(t)) => {
-                if ui.button(tr(k::tl::menu::MARKER_HERE)).clicked() {
-                    self.apply(Command::AddMarker { at: Tick(t), duration: Tick::ZERO });
+                // ПАРНОСТЬ с жестом M (п.11 пользователя): при выделенном
+                // регионе оба способа дают маркер-ДИАПАЗОН, а не точку.
+                // Название пункта говорит, что именно получится (п.4).
+                let on_region = self
+                    .model
+                    .project()
+                    .region
+                    .map(|r| r.start.0 <= t && t <= r.end.0)
+                    .unwrap_or(false);
+                let label = if on_region {
+                    tr(k::tl::menu::MARKER_REGION)
+                } else {
+                    tr(k::tl::menu::MARKER_HERE)
+                };
+                if ui.button(label).clicked() {
+                    self.marker_here(Tick(t));
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::REGION_CLEAR)).clicked() {

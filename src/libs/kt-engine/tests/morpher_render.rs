@@ -47,6 +47,7 @@ fn project_with_clip(media: MediaId, source_in: Tick, fx: Vec<FxInstance>) -> Pr
         reversed: false,
         fx,
         fx_bypass: vec![],
+        opacity: 1.0,
     });
     p.validate().unwrap();
     p

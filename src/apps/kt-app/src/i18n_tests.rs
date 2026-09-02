@@ -266,3 +266,46 @@ fn t131_source_language_is_english() {
          everything else is written in English: {bad:?}"
     );
 }
+
+/// Тест 171 (п.4 Р.28): пункт меню говорит, ЧТО и ГДЕ произойдёт.
+///
+/// Жалоба дословно: «fade out — вообще не понятно по названию пункта куда он
+/// добавит этот out… И надпись "Remove crossfade" тоже не очевидно,
+/// оказывается она fadeout с конца убирает». Одна надпись на четыре разных
+/// действия — дефект; тест держит их РАЗЛИЧИМЫМИ в каждом языке, иначе
+/// перевод «в одно слово» вернёт ту же неоднозначность.
+#[test]
+fn t171_transition_menu_labels_say_what_and_where() {
+    use crate::i18n::k;
+    let groups: [[i18n::Key; 4]; 1] = [[
+        k::tl::menu::REMOVE_FADE_START,
+        k::tl::menu::REMOVE_FADE_END,
+        k::tl::menu::REMOVE_CROSSFADE_NEXT,
+        k::tl::menu::REMOVE_CROSSFADE_PREV,
+    ]];
+    for lang in Lang::ALL {
+        for keys in groups {
+            let vals: Vec<&str> =
+                keys.iter().map(|k| tables::TABLES[lang as usize][k.0 as usize]).collect();
+            for (i, a) in vals.iter().enumerate() {
+                for b in vals.iter().skip(i + 1) {
+                    assert_ne!(a, b, "{}: пункты снятия перехода неразличимы", lang.code());
+                }
+            }
+        }
+        // начало и конец события различимы и у пунктов ДОБАВЛЕНИЯ
+        assert_ne!(
+            tables::TABLES[lang as usize][k::tl::menu::FADE_IN.0 as usize],
+            tables::TABLES[lang as usize][k::tl::menu::FADE_OUT.0 as usize],
+            "{}: появление и затухание неразличимы",
+            lang.code()
+        );
+        // «Marker here» и «Marker over the region» — разные действия
+        assert_ne!(
+            tables::TABLES[lang as usize][k::tl::menu::MARKER_HERE.0 as usize],
+            tables::TABLES[lang as usize][k::tl::menu::MARKER_REGION.0 as usize],
+            "{}: точечная метка и метка-диапазон неразличимы",
+            lang.code()
+        );
+    }
+}

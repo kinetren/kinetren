@@ -43,6 +43,7 @@ fn t19_copy_region_fragment_paste_renders_identically() {
         reversed: false,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     });
     p.validate().unwrap();
 
@@ -91,6 +92,7 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
         reversed: false,
         fx_bypass: vec![],
         fx: vec![],
+        opacity: 1.0,
     });
     p.validate().unwrap();
 

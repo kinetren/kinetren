@@ -5,6 +5,7 @@
 //! M6-аудио (FX в графе), M4-ядро (Player + видео-композит).
 //! Впереди: M7 (экспорт). Архитектура и владение потоками — docs/architecture.md.
 
+pub mod flight;
 pub mod audio;
 pub mod export;
 pub mod fetch;
@@ -20,6 +21,7 @@ pub use export::{
     ExportOptions, ExportStats, export_mp4, export_mp4_with, render_raw_audio,
     render_raw_video,
 };
+pub use flight::{FlightRecorder, Snap as FlightSnap};
 pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
 pub use fxstore::FxStateStore;
 pub use player::{

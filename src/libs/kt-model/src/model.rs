@@ -50,6 +50,11 @@ pub enum Command {
         id: ClipId,
         gain_db: f32,
     },
+    /// Уровень (непрозрачность) видео-события 0..1 — Р.28, п.12.
+    SetOpacity {
+        id: ClipId,
+        opacity: f32,
+    },
     /// Реверс события (п.16). Undo-able.
     SetReversed {
         id: ClipId,
@@ -337,6 +342,7 @@ impl TimelineModel {
             }
             Command::RemoveClip { id }
             | Command::SetGain { id, .. }
+            | Command::SetOpacity { id, .. }
             | Command::SetReversed { id, .. }
             | Command::SetFxBypass { id, .. }
             | Command::SetFx { id, .. }
@@ -623,6 +629,9 @@ impl TimelineModel {
                 }
             }
             Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,
+            Command::SetOpacity { id, opacity } => {
+                Self::clip_mut_on(p, id).opacity = opacity.clamp(0.0, 1.0)
+            }
             Command::SetReversed { id, reversed } => Self::clip_mut_on(p, id).reversed = reversed,
             Command::SetFxBypass { id, bypass } => Self::clip_mut_on(p, id).fx_bypass = bypass,
             Command::SetFx { id, fx } => Self::clip_mut_on(p, id).fx = fx,
