@@ -72,7 +72,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 - **Перед любой правкой UI/поведения — `docs/user-feedback.md`**: там история требований пользователя его словами (что просил, какие решения принял, что повторял). Предел, режим или вид, поставленные по его прямой просьбе, не меняются без новой просьбы. После каждого раунда замечаний список дописывается ТУДА ЖЕ, до начала работы.
 - Перед правкой крейта — его `CLAUDE.md`; перед архитектурными изменениями — `docs/architecture.md`.
 - Новый найденный дефект/тонкость → сразу документировать (`docs/porting-notes.md` или CLAUDE.md крейта) и по возможности закрыть регрессионным тестом.
-- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–179 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
+- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–180 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
 - Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine.
 - **Работа заканчивается `./scripts/finish.sh` и версией в отчёте** (требование п.7 р.12). `cargo test` собирает ОТДЕЛЬНЫЙ тест-бинарь и НЕ пересобирает `target/debug/kt-app` — тот, который запускает пользователь: дважды из-за этого он получал устаревшую программу и считал дефекты неисправленными. Скрипт пересобирает kt-app/kt-cli, печатает версию `vYY.MM.DD-hash` и чистит `target/dist-out` от старых тарболов; `--release` добавляет тарбол, `--deep` сносит регенерируемые `target/release` и `target/dist-container`.
 - Версия программы — `kt-version` (build.rs, дата коммита + хэш). В манифестах остаётся `0.1.0`: semver не принимает `v26.08.27-…`. В debug-заголовке видна полная версия, в релизе — короткая `ktYY.MM`.
@@ -92,7 +92,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-cache | kt-cache unit (t8/t14/t27/t28/t37 no-read drops, t65 пост-FX kind) |
 | kt-media | ffmpeg_conformance (вкл. t34 — персист пакетного индекса), index_db (вкл. t70), kt-app unit t23 |
 | kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30, t89 метки, t90 дорожки), morpher t35, transitions (t135 переходы, t155 фейды, t159 возврат ручек), legacy_upgrade (t143 конверсия, t164 импорт как есть) |
-| kt-otio | tests/format.rs (t144-t147: идемпотентность, passthrough, версии, пути), tests/convert.rs (t148 golden легаси-импорта, t152/t153 маппинг, t154 чужие сэмплы, t165 слои), tests/otio_conformance.rs (t149, gated по python opentimelineio) |
+| kt-otio | tests/format.rs (t144-t147: идемпотентность, passthrough, версии, пути), tests/convert.rs (t148 golden легаси-импорта, t152/t153 маппинг, t154 чужие сэмплы, t165 слои, t178 NTSC, t180 таймкод материала), tests/otio_conformance.rs (t149, gated по python opentimelineio) |
 | kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |
 | kt-cli / кросс-рендер | apps/kt-cli/tests/cross_render.rs t158 (gated: melt + `scripts/otio-mlt-venv.sh`; `KT_REQUIRE_CROSS_RENDER=1` требует их), oc_render.rs t179 (настоящий фильм; `scripts/fetch-oc-media.sh`, `KT_REQUIRE_OC_RENDER=1`) |
 | kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей, t69/t71 негативные кэши тумб, t72/t74, t121 свечение и гашение метров) |

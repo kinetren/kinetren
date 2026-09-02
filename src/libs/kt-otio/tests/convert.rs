@@ -241,9 +241,11 @@ fn t154_upstream_samples_load() {
     assert!(seen >= 9, "сэмплы апстрима пропали из фикстур (нашлось {seen})");
 }
 
-/// Клип без `source_range` берёт материал целиком — длительность и точку
-/// входа из `available_range` активной ссылки (спека OTIO; так живёт
-/// Clip-004 в simple_cut.otio).
+/// Клип без `source_range` берёт материал целиком — длительность из
+/// `available_range` активной ссылки (спека OTIO; так живёт Clip-004 в
+/// simple_cut.otio). Точка входа при этом НУЛЕВАЯ: `available_range`
+/// живёт в системе координат материала (его стартовый таймкод), а наш
+/// `source_in` — смещение от первого кадра файла (п.180).
 #[test]
 fn t154_clip_without_source_range_uses_available_range() {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples/simple_cut.otio");
@@ -253,7 +255,7 @@ fn t154_clip_without_source_range_uses_available_range() {
     let last = b.project.clips.iter().max_by_key(|c| c.start).unwrap();
     // available_range Clip-004: start 100, duration 6 кадров @24 fps
     assert_eq!(last.duration, Tick(6 * 90_000 / 24));
-    assert_eq!(last.source_in, Tick(100 * 90_000 / 24));
+    assert_eq!(last.source_in, Tick::ZERO, "старт available_range — таймкод, а не пропуск кадров");
 }
 
 /// Клип с `media_reference: null` законен — это клип без привязки к
@@ -391,4 +393,60 @@ fn t178_ntsc_rates_land_on_the_nearest_grid_fps() {
     );
     let b = kt_otio::load_project(&doc, None).expect("чужой NTSC-файл читается");
     assert_eq!(b.project.settings.fps, 24, "23.976 → сетка 24, а не умолчание 30");
+}
+
+/// Тест 180: стартовый таймкод материала. В OTIO `source_range` живёт в
+/// системе координат самого материала — той же, что `available_range`, а у
+/// вещательных и киношных файлов она начинается со вшитого таймкода (у
+/// «Sol Levante» — ровно час). Наш `source_in` — смещение от ПЕРВОГО кадра
+/// файла, поэтому таймкод вычитается на чтении и возвращается на записи.
+/// Найдено кросс-рендером настоящего фильма (т.179): без вычитания движок
+/// уезжал на час в 162-секундный файл.
+#[test]
+fn t180_media_start_timecode_is_subtracted_and_restored() {
+    let doc = |src_start: f64, avail_start: f64| {
+        format!(
+            r#"{{"OTIO_SCHEMA":"Timeline.1","name":"tc","tracks":{{"OTIO_SCHEMA":"Stack.1",
+        "name":"","children":[{{"OTIO_SCHEMA":"Track.1","name":"V","kind":"Video","children":[
+        {{"OTIO_SCHEMA":"Clip.1","name":"c","source_range":{{"OTIO_SCHEMA":"TimeRange.1",
+        "duration":{{"OTIO_SCHEMA":"RationalTime.1","value":48,"rate":24}},
+        "start_time":{{"OTIO_SCHEMA":"RationalTime.1","value":{src_start},"rate":24}}}},
+        "media_reference":{{"OTIO_SCHEMA":"ExternalReference.1","name":"","target_url":"a.mov",
+        "available_range":{{"OTIO_SCHEMA":"TimeRange.1",
+        "duration":{{"OTIO_SCHEMA":"RationalTime.1","value":3890,"rate":24}},
+        "start_time":{{"OTIO_SCHEMA":"RationalTime.1","value":{avail_start},"rate":24}}}},
+        "available_image_bounds":null,"metadata":{{}}}},
+        "effects":[],"markers":[],"enabled":true,"metadata":{{}}}}],
+        "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{{}}}}],
+        "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{{}}}},
+        "global_start_time":null,"metadata":{{}}}}"#
+        )
+    };
+
+    // час таймкода @24 = 86400 кадров; клип берёт материал с 10-й секунды
+    let hour = 86_400.0;
+    let b = load_project(&doc(hour + 240.0, hour), None).expect("файл с таймкодом читается");
+    let c = &b.project.clips[0];
+    assert_eq!(c.source_in, Tick(240 * 90_000 / 24), "10 c ОТ НАЧАЛА ФАЙЛА, а не от часа");
+    assert_eq!(c.duration, Tick(48 * 90_000 / 24));
+
+    // и обратно: чужой редактор обязан увидеть тот же таймкод
+    let out = save_project(&b.project, &b.retained, None);
+    let back = load_project(&out, None).expect("наш вывод читается");
+    assert_eq!(back.project.clips[0].source_in, c.source_in, "круг не двигает точку входа");
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let st = &v["tracks"]["children"][0]["children"][0]["source_range"]["start_time"];
+    let ticks = st["value"].as_f64().unwrap() * 90_000.0 / st["rate"].as_f64().unwrap();
+    assert_eq!(
+        ticks.round() as i64,
+        (hour as i64 + 240) * 90_000 / 24,
+        "таймкод материала вернулся на место"
+    );
+
+    // файл без таймкода (start 0) ведёт себя как раньше
+    let b0 = load_project(&doc(240.0, 0.0), None).expect("файл без таймкода");
+    assert_eq!(b0.project.clips[0].source_in, Tick(240 * 90_000 / 24));
+    // клип, начинающийся ДО объявленного начала материала, клампится нулём
+    let bn = load_project(&doc(0.0, hour), None).expect("клип левее материала");
+    assert_eq!(bn.project.clips[0].source_in, Tick::ZERO);
 }

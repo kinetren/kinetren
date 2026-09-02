@@ -482,6 +482,22 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
         media_refs.insert(active_key.clone(), Some(MediaRefNode::External(active)));
     }
 
+    // начало available_range активной ссылки — тот самый таймкод, который
+    // был вычтен на чтении (п.180)
+    let media_origin = media_refs
+        .get(&active_key)
+        .and_then(|n| n.as_ref())
+        .and_then(|n| match n {
+            MediaRefNode::External(er) => er.available_range,
+            MediaRefNode::Missing(mr) => mr.available_range,
+            MediaRefNode::Unknown(raw) => raw
+                .0
+                .get("available_range")
+                .and_then(|v| serde_json::from_value(v.clone()).ok()),
+        })
+        .map(|r| r.start_time.to_ticks().0)
+        .unwrap_or(0);
+
     let mut meta = ex.meta_foreign.clone();
     kt_set(
         &mut meta,
@@ -496,7 +512,9 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
 
     Clip {
         name: ex.name,
-        source_range: Some(range(c.source_in, c.duration)),
+        // таймкод материала возвращается на место (п.180): чужой файл
+        // обязан прочитаться другим редактором так же, как пришёл
+        source_range: Some(range(Tick(c.source_in.0 + media_origin), c.duration)),
         media_references: media_refs,
         active_media_reference_key: active_key,
         effects,
@@ -956,15 +974,21 @@ fn clip_from_otio(
         bypass.pop(); // хвост «включено» не сериализуем (форма модели)
     }
 
+    // СТАРТОВЫЙ ТАЙМКОД МАТЕРИАЛА (п.180). В OTIO `source_range` живёт в
+    // системе координат самого материала — той же, что `available_range`.
+    // У вещательных и киношных файлов та начинается не с нуля, а со
+    // вшитого таймкода (у Sol Levante — ровно час, 86160 кадров). Наш
+    // `source_in` — смещение от НУЛЕВОГО кадра файла, поэтому начало
+    // available_range надо вычесть; иначе движок уезжает на час в
+    // 162-секундный файл и рендерит пустоту.
+    let origin = c.active_available_range().map(|r| r.start_time.to_ticks().0).unwrap_or(0);
     let src_in = c
         .source_range
         .as_ref()
-        .map(|r| r.start_time.to_ticks())
-        // без source_range клип берёт материал целиком — от начала
-        // available_range (см. clip_duration)
-        .or_else(|| c.active_available_range().map(|r| r.start_time.to_ticks()))
-        .map(|t| Tick(t.0.max(0)))
-        .unwrap_or(Tick::ZERO);
+        .map(|r| r.start_time.to_ticks().0 - origin)
+        // без source_range клип берёт материал целиком — от его начала
+        .unwrap_or(0);
+    let src_in = Tick(src_in.max(0));
     let ev = ClipEvent {
         id,
         link_group: meta.and_then(|m| m.link_group).map(GroupId),
