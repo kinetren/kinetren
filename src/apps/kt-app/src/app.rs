@@ -3422,6 +3422,12 @@ pub struct CoverageCache {
 #[derive(Default)]
 pub struct NamesCache {
     rev: Option<u64>,
+    /// Порядок отрисовки клипов (индексы в `project().clips`) — тот же
+    /// back-to-front, что у композиции движка: задняя дорожка первой, а
+    /// внутри дорожки раньше начавшийся раньше, чтобы поздний лёг СВЕРХУ
+    /// (правило Vegas, п.177). Считается раз на версию модели: на кадр
+    /// сортировать тысячи клипов нельзя (п.1 v1.4).
+    pub draw_order: Arc<Vec<usize>>,
     /// Arc: снапшоты на кадр — клон указателя, не структур (п.1 v1.4).
     pub names: Arc<HashMap<ClipId, String>>,
     pub suppress: Arc<std::collections::HashSet<ClipId>>,
@@ -3482,8 +3488,15 @@ impl KtApp {
         Arc<HashMap<ClipId, String>>,
         Arc<std::collections::HashSet<ClipId>>,
         Arc<HashMap<MediaId, String>>,
+        Arc<Vec<usize>>,
     ) {
-        if self.names_cache.rev != Some(self.model_rev) {
+        // Сверка длины — страховка: порядок отрисовки теперь ВЛИЯЕТ НА
+        // ХИТ-ТЕСТ (п.177), и устаревший кэш означал бы «клипов нет».
+        // Модель можно подменить целиком, не бампнув model_rev (открытие
+        // проекта, харнесс-тесты) — тогда спасает эта проверка.
+        if self.names_cache.rev != Some(self.model_rev)
+            || self.names_cache.draw_order.len() != self.model.project().clips.len()
+        {
             self.names_cache.rev = Some(self.model_rev);
             let mut names = HashMap::new();
             let mut suppress = std::collections::HashSet::new();
@@ -3517,11 +3530,18 @@ impl KtApp {
             self.names_cache.suppress = Arc::new(suppress);
             self.names_cache.media_paths =
                 Arc::new(p.media.iter().map(|m| (m.id, m.path.clone())).collect());
+            let mut order: Vec<usize> = (0..p.clips.len()).collect();
+            order.sort_by_key(|&i| {
+                let c = &p.clips[i];
+                (std::cmp::Reverse(c.lane), c.start.0)
+            });
+            self.names_cache.draw_order = Arc::new(order);
         }
         (
             self.names_cache.names.clone(),
             self.names_cache.suppress.clone(),
             self.names_cache.media_paths.clone(),
+            self.names_cache.draw_order.clone(),
         )
     }
 }

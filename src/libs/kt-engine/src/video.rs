@@ -164,8 +164,12 @@ impl VideoRenderer {
                 b.head_ext = Tick((b.start.0 - w0.0).max(0));
             }
         }
-        // задний план первым (большая lane), передний (lane 0) — последним
-        clips.sort_by_key(|c| std::cmp::Reverse((c.lane, c.start.0)));
+        // Порядок композиции: задний план первым (большая lane), передний
+        // (lane 0) — последним. Внутри ОДНОЙ дорожки при наезде сверху тот,
+        // кто начался ПОЗЖЕ, — правило Vegas (решение пользователя после
+        // Р.28; до этого работало правило v1 «сверху тот, у кого start
+        // меньше», и полоса таймлайна с ним расходилась). Тест 162.
+        clips.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
         VideoRenderer { clips, grid, fx_scratch: Default::default(), blend: Vec::new() }
     }
 

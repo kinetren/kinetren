@@ -1356,6 +1356,8 @@ impl KtApp {
         }
 
         // ---- хит-тесты --------------------------------------------------------
+        // кэши по model_rev; Arc-снапшоты — клоны указателей (п.1 v1.4)
+        let (media_names, suppress_name, media_paths, draw_order) = self.names();
         let pointer = response.interact_pointer_pos();
         let hover = response.hover_pos();
         self.snap_line = None;
@@ -1463,8 +1465,12 @@ impl KtApp {
             }
             None
         };
-        let clip_at = |app: &KtApp, pos: egui::Pos2| -> Option<(ClipId, ClipZone)> {
-            for c in app.model.project().clips.iter().rev() {
+        // порядок хита — обратный порядку отрисовки: сначала то, что лежит
+        // СВЕРХУ (поздний клип при наезде, п.177), иначе клик выбирал бы не
+        // тот клип, который видно
+        let order = draw_order.clone();
+        let clip_at = move |app: &KtApp, pos: egui::Pos2| -> Option<(ClipId, ClipZone)> {
+            for c in order.iter().rev().filter_map(|&i| app.model.project().clips.get(i)) {
                 let top = lane_top(c.kind, c.lane);
                 if pos.y < top || pos.y > top + lane_h - 2.0 {
                     continue;
@@ -2130,12 +2136,13 @@ impl KtApp {
         }
 
         // ---- клипы -----------------------------------------------------------------
-        // кэши по model_rev; Arc-снапшоты — клоны указателей (п.1 v1.4)
-        let (media_names, suppress_name, media_paths) = self.names();
         let peaks = self.peaks.lock().unwrap();
         let offline = self.offline.lock().unwrap().clone();
 
-        for c in &self.model.project().clips {
+        // порядок = порядок КОМПОЗИЦИИ движка: поздний клип ложится поверх
+        // раннего, как в превью (п.177 — до этого полоса рисовала в порядке
+        // списка проекта и могла показывать не тот источник, что в кадре)
+        for c in draw_order.iter().filter_map(|&i| self.model.project().clips.get(i)) {
             let (start, end, lane) = match &self.drag {
                 Some(Drag::Clip(d)) if d.id == c.id => (d.cur_start, d.cur_end, d.cur_lane),
                 _ => (c.start.0, c.start.0 + c.duration.0, c.lane),

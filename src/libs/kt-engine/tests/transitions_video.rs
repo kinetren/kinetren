@@ -248,11 +248,12 @@ fn over_black(src: &[u8], k: u32) -> Vec<u8> {
     out
 }
 
-/// Тест 162 (видео-часть): при перекрытии на ОДНОЙ дорожке сверху остаётся
-/// тот, у кого start меньше — тайбрейк v1, который использует и демоция
-/// клипов при импорте .ktproj.
+/// Тест 162 (видео-часть): при перекрытии на ОДНОЙ дорожке сверху тот, кто
+/// начался ПОЗЖЕ — правило Vegas (решение пользователя после Р.28: «давай
+/// сделаем как в vegas — сверху тот кто позже»; до этого действовало
+/// правило v1 «сверху тот, у кого start меньше»).
 #[test]
-fn t162_overlap_keeps_v1_tiebreak() {
+fn t162_overlap_puts_the_later_clip_on_top() {
     let mut p = project_pair();
     p.transitions.clear();
     // клип 2 наезжает на клип 1 на своей же дорожке
@@ -269,9 +270,12 @@ fn t162_overlap_keeps_v1_tiebreak() {
     warm(&vr, &cache, t, q);
     let (out, complete) = vr.compose_from_cache(&cache, t, q);
     assert!(complete);
-    // сверху — клип 1 (start меньше): кадр равен его источнику
-    let expect = synth_frame(vr.grid.align_floor(t), q);
-    assert_eq!(out, expect, "в зоне наезда сверху клип с меньшим start");
+    // сверху — клип 2 (начался позже): кадр равен ЕГО источнику
+    // (source_in 30_000, старт 45_000 → pts = 30_000 + (t − 45_000))
+    let expect = synth_frame(vr.grid.align_floor(Tick(30_000 + (t.0 - 45_000))), q);
+    assert_eq!(out, expect, "в зоне наезда сверху клип, начавшийся позже");
+    // и это НЕ кадр раннего клипа — правило действительно сменилось
+    assert_ne!(out, synth_frame(vr.grid.align_floor(t), q), "ранний клип больше не сверху");
 }
 
 /// Тест 174 (п.12 Р.28): уровень видео-события — непрозрачность слоя.
