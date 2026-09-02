@@ -17,3 +17,6 @@ Thumbs.db
 # Python-кэш (site/build.py)
 __pycache__/
 *.pyc
+# настоящий фильм для кросс-рендера (тест 179): 320 МБ, качается
+# скриптом src/scripts/fetch-oc-media.sh
+/src/fixtures/otio-oc/

@@ -1042,8 +1042,16 @@ fn resolve_url(base_dir: Option<&Path>, url: &str) -> String {
     }
 }
 
-/// Эвристика fps чужого файла: самый частый целый rate среди source_range,
-/// делящий 90000; иначе 30.
+/// Эвристика fps чужого файла: самый частый rate среди source_range,
+/// приведённый к сетке 90 кГц; иначе 30.
+///
+/// **NTSC-ряд** (п.178): 23.976/29.97/59.94 на сетку 90 кГц не ложатся
+/// (90000/23.976 = 3753.75), и раньше такой файл молча становился
+/// проектом на 30 fps — при том что настоящая частота ближе к 24.
+/// Теперь дробная частота округляется до ближайшей целой, которая делит
+/// 90000: 23.976→24, 29.97→30, 59.94→60. Остаточный дрейф 0.1 % (pulldown)
+/// никуда не девается — позиции склеек хранятся в ТИКАХ и точны, «плывёт»
+/// только сетка кадров.
 fn guess_fps(tl: &Timeline) -> u32 {
     let mut counts: HashMap<u32, usize> = HashMap::new();
     for child in &tl.tracks.children {
@@ -1051,17 +1059,27 @@ fn guess_fps(tl: &Timeline) -> u32 {
             for item in &t.children {
                 if let Composable::Clip(c) = item
                     && let Some(r) = &c.source_range
+                    && let Some(fps) = grid_fps(r.duration.rate)
                 {
-                    let rate = r.duration.rate;
-                    if rate.fract() == 0.0 && rate > 0.0 {
-                        let rate = rate as u32;
-                        if rate <= 240 && kt_time::TICK_HZ % rate as i64 == 0 {
-                            *counts.entry(rate).or_default() += 1;
-                        }
-                    }
+                    *counts.entry(fps).or_default() += 1;
                 }
             }
         }
     }
     counts.into_iter().max_by_key(|(_, n)| *n).map(|(r, _)| r).unwrap_or(30)
+}
+
+/// Частота кадров, ложащаяся на сетку 90 кГц, ближайшая к `rate`.
+/// None — если не нашлось (слишком большая/нулевая или далеко от целой).
+pub fn grid_fps(rate: f64) -> Option<u32> {
+    if !(rate.is_finite() && rate > 0.0 && rate <= 240.0) {
+        return None;
+    }
+    let r = rate.round();
+    // дальше половины кадра от целой — это не «NTSC-версия» целой частоты
+    if (rate - r).abs() > 0.5 {
+        return None;
+    }
+    let r = r as u32;
+    (r > 0 && kt_time::TICK_HZ % r as i64 == 0).then_some(r)
 }

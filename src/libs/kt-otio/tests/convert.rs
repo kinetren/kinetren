@@ -345,3 +345,50 @@ fn t165_plain_project_has_no_layer_map() {
     let text = save_project(&p, &Retained::default(), None);
     assert!(!text.contains("\"layers\""), "без перекрытий карта слоёв не пишется");
 }
+
+/// Тест 178: NTSC-частоты чужих файлов (23.976/29.97/59.94) не ложатся на
+/// сетку 90 кГц (90000/23.976 = 3753.75) — и раньше такой файл МОЛЧА
+/// становился проектом на 30 fps. Найдено на настоящем фильме: Netflix
+/// «Sol Levante» (аниматик, 63 склейки, 23.976) импортировался как 30.
+/// Теперь дробная частота округляется до ближайшей целой, делящей 90000.
+#[test]
+fn t178_ntsc_rates_land_on_the_nearest_grid_fps() {
+    use kt_otio::grid_fps;
+    assert_eq!(grid_fps(23.976023976023978), Some(24), "NTSC-24");
+    assert_eq!(grid_fps(29.97002997002997), Some(30), "NTSC-30");
+    assert_eq!(grid_fps(59.94005994005994), Some(60), "NTSC-60");
+    assert_eq!(grid_fps(47.952047952047955), Some(48), "NTSC-48");
+    // целые частоты — как были
+    for r in [24.0, 25.0, 30.0, 50.0, 60.0] {
+        assert_eq!(grid_fps(r), Some(r as u32), "целая {r}");
+    }
+    // не делит 90000 — не годится (сетка была бы нецелой в тиках)
+    assert_eq!(grid_fps(23.0), None, "23 не делит 90000");
+    assert_eq!(grid_fps(7.0), None);
+    // мусор и внесистемные значения
+    assert_eq!(grid_fps(0.0), None);
+    assert_eq!(grid_fps(-24.0), None);
+    assert_eq!(grid_fps(1000.0), None);
+    assert_eq!(grid_fps(f64::NAN), None);
+    // «почти целая» — только в пределах половины кадра
+    assert_eq!(grid_fps(24.4), Some(24));
+    assert_eq!(grid_fps(24.6), Some(25));
+
+    // и целиком: таймлайн на 23.976 читается как проект 24 fps
+    let doc = format!(
+        r#"{{"OTIO_SCHEMA":"Timeline.1","name":"ntsc","tracks":{{"OTIO_SCHEMA":"Stack.1",
+        "name":"","children":[{{"OTIO_SCHEMA":"Track.1","name":"V","kind":"Video","children":[
+        {{"OTIO_SCHEMA":"Clip.1","name":"c","source_range":{{"OTIO_SCHEMA":"TimeRange.1",
+        "duration":{{"OTIO_SCHEMA":"RationalTime.1","value":240,"rate":{r}}},
+        "start_time":{{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":{r}}}}},
+        "media_reference":{{"OTIO_SCHEMA":"ExternalReference.1","name":"","target_url":"a.mov",
+        "available_range":null,"available_image_bounds":null,"metadata":{{}}}},
+        "effects":[],"markers":[],"enabled":true,"metadata":{{}}}}],
+        "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{{}}}}],
+        "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{{}}}},
+        "global_start_time":null,"metadata":{{}}}}"#,
+        r = 23.976023976023978f64
+    );
+    let b = kt_otio::load_project(&doc, None).expect("чужой NTSC-файл читается");
+    assert_eq!(b.project.settings.fps, 24, "23.976 → сетка 24, а не умолчание 30");
+}

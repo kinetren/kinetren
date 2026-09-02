@@ -17,7 +17,9 @@ mod meta;
 mod schema;
 mod url;
 
-pub use convert::{Notice, ProjectBundle, Retained, project_to_timeline, timeline_to_project};
+pub use convert::{
+    Notice, ProjectBundle, Retained, grid_fps, project_to_timeline, timeline_to_project,
+};
 pub use io::{parse_document, write_document};
 pub use legacy::import_legacy;
 pub use meta::{KT_META_VERSION, KT_NS, check_kt_version, kt_entry_mut, kt_version};
