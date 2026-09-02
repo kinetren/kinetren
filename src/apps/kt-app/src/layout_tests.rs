@@ -2930,3 +2930,90 @@ fn t173_corner_fade_and_level_gestures() {
     h.step();
     assert_eq!(h.state().model.project().clips[0].opacity, 1.0, "undo вернул уровень");
 }
+
+/// Тест 176: уровень аудио и видео — ОДИН элемент (требование пользователя
+/// «фейды должны быть у аудио и видео одинаково выглядящими»).
+///
+/// Вертикальный рейл громкости v1 стоял ровно в зоне фейда и делал фейд на
+/// аудио непохожим на фейд на видео. Теперь у обоих видов линия по верху;
+/// диапазон громкости остался прежним (±6.02 dB, 0 dB — середина).
+#[test]
+fn t176_audio_and_video_share_one_level_line() {
+    use crate::timeline::{RAIL_DB_SPAN, gain_to_level, level_to_gain, level_y};
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+
+    // диапазон рейла v1 сохранён точь-в-точь
+    assert!((gain_to_level(0.0) - 0.5).abs() < 1e-6, "0 dB — середина");
+    assert!((level_to_gain(1.0) - RAIL_DB_SPAN / 2.0).abs() < 1e-4, "верх — +6.02 dB");
+    assert!((level_to_gain(0.0) + RAIL_DB_SPAN / 2.0).abs() < 1e-4, "низ — −6.02 dB");
+    for db in [-6.0f32, -3.0, 0.0, 2.5, 6.0] {
+        assert!((level_to_gain(gain_to_level(db)) - db).abs() < 1e-3, "круг по {db} dB");
+    }
+
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.clips.push(ClipEvent {
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Audio,
+            lane: 0,
+            start: Tick(100_000),
+            duration: Tick(200_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx: vec![],
+            opacity: 1.0,
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.selected = Some(ClipId(1));
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let top = g.lane_top(ClipKind::Audio, 0);
+
+    // тот же жест, что у видео: тянем линию уровня вверх
+    let x = g.tick_to_x(200_000);
+    let y0 = level_y(0.5, top, g.lane_h); // 0 dB
+    h.hover_at(egui::pos2(x, y0));
+    h.step();
+    h.drag_at(egui::pos2(x, y0));
+    h.step();
+    let y1 = level_y(0.75, top, g.lane_h);
+    h.hover_at(egui::pos2(x, y1));
+    h.step();
+    h.drop_at(egui::pos2(x, y1));
+    h.step();
+    let gain = h.state().model.project().clips[0].gain_db;
+    assert!(
+        (gain - RAIL_DB_SPAN * 0.25).abs() < 0.5,
+        "уровень аудио доехал до +3 dB: {gain}"
+    );
+
+    // у уголка фейда приоритет над линией: верхняя полоса — жест фейда
+    let y_strip = top + 2.0;
+    let x0 = g.tick_to_x(100_000);
+    h.hover_at(egui::pos2(x0 + 1.0, y_strip));
+    h.step();
+    h.drag_at(egui::pos2(x0 + 1.0, y_strip));
+    h.step();
+    h.hover_at(egui::pos2(g.tick_to_x(140_000), y_strip));
+    h.step();
+    h.drop_at(egui::pos2(g.tick_to_x(140_000), y_strip));
+    h.step();
+    let p = h.state().model.project();
+    assert_eq!(p.transitions.len(), 1, "уголок аудио-события тоже заводит фейд");
+    assert_eq!(p.transitions[0].in_offset, Tick::ZERO, "фейд внутри события");
+    assert_eq!(p.clips[0].duration, Tick(200_000), "событие не тронуто");
+}

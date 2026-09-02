@@ -44,14 +44,14 @@ const RULER_LADDER: [i64; 5] = [90_000, 900_000, 5_400_000, 54_000_000, 324_000_
 pub const EDGE_GRAB_PX: f32 = 7.0;
 pub const SNAP_PX: f64 = 10.0;
 pub const REGION_EDGE_PX: f32 = 8.0;
-pub const VOLUME_RAIL_W: f32 = 9.0;
 /// Ширина хвата ручки фейда у верхнего угла события (Р.28, п.12 — жест
 /// Vegas: «fade можно у событий сделать по краям без еще одних событий —
 /// просто потянув за верхний уголок»).
 pub const FADE_HANDLE_PX: f32 = 12.0;
 /// Полувысота хвата линии уровня (непрозрачность видео).
 pub const LEVEL_GRAB_PX: f32 = 5.0;
-/// ±6.02 dB на весь ход рейла: gain = 2^((0.5−t)·2)  (порт старого).
+/// ±6.02 dB на весь ход линии уровня у аудио: gain = 2^((0.5−t)·2) (порт
+/// рейла v1 — диапазон сохранён, сменилось только место элемента).
 pub const RAIL_DB_SPAN: f32 = 12.0412;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -113,6 +113,22 @@ pub(crate) fn fade_handle_tick(start: i64, end: i64, len: i64, left: bool) -> i6
 pub(crate) fn level_from_y(y: f32, top: f32, lane_h: f32) -> f32 {
     let h = (lane_h - 8.0).max(1.0);
     (1.0 - (y - (top + 3.0)) / h).clamp(0.0, 1.0)
+}
+
+/// Уровень события 0..1 для линии: у видео это непрозрачность, у аудио —
+/// громкость в диапазоне рейла v1 (±6.02 dB; 0 dB — середина). Один
+/// элемент на оба вида (требование «фейды у аудио и видео одинаково
+/// выглядящие»: вертикальный рейл стоял внутри зоны фейда).
+pub(crate) fn clip_level(c: &kt_model::ClipEvent) -> f32 {
+    if c.kind == ClipKind::Audio { gain_to_level(c.gain_db) } else { c.opacity }
+}
+
+pub(crate) fn gain_to_level(gain_db: f32) -> f32 {
+    (0.5 + gain_db / RAIL_DB_SPAN).clamp(0.0, 1.0)
+}
+
+pub(crate) fn level_to_gain(level: f32) -> f32 {
+    (level.clamp(0.0, 1.0) - 0.5) * RAIL_DB_SPAN
 }
 
 /// Обратное преобразование: y линии уровня.
@@ -359,11 +375,6 @@ pub enum Drag {
         id: TransitionId,
         orig_at: i64,
         cur_at: i64,
-    },
-    /// Volume rail аудио-клипа: live-громкость, SetGain на отпускании.
-    Volume {
-        id: ClipId,
-        moved: bool,
     },
     /// Перенос morph-блока по времени (H1; в v1 блок был недвижим).
     Morph {
@@ -1401,11 +1412,12 @@ impl KtApp {
             Body,
             TrimStart,
             TrimEnd,
-            VolumeRail,
             /// Ручка фейда у начала/конца события (п.12).
             FadeLeft,
             FadeRight,
-            /// Линия уровня видео — непрозрачность (п.12).
+            /// Линия уровня события: непрозрачность у видео, громкость у
+            /// аудио (Р.28, п.12 + требование «фейды у аудио и видео
+            /// одинаковые» — вертикальный рейл v1 стоял внутри зоны фейда).
             Level,
         }
         #[derive(PartialEq)]
@@ -1475,26 +1487,17 @@ impl KtApp {
                 let hx_l = tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_l, true));
                 let hx_r = tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_r, false));
                 let in_strip = pos.y <= top + strip;
-                let ly = level_y(c.opacity, top, lane_h);
+                let ly = level_y(clip_level(c), top, lane_h);
                 let zone = if in_strip && (pos.x - hx_l).abs() <= FADE_HANDLE_PX {
                     ClipZone::FadeLeft
                 } else if in_strip && (pos.x - hx_r).abs() <= FADE_HANDLE_PX {
                     ClipZone::FadeRight
-                } else if c.kind == ClipKind::Video
-                    && x1 - x0 > 24.0
-                    && (pos.y - ly).abs() <= LEVEL_GRAB_PX
-                {
+                } else if x1 - x0 > 24.0 && (pos.y - ly).abs() <= LEVEL_GRAB_PX {
                     ClipZone::Level
                 } else if (pos.x - x0).abs() <= grab {
                     ClipZone::TrimStart
                 } else if (pos.x - x1).abs() <= grab {
                     ClipZone::TrimEnd
-                } else if c.kind == ClipKind::Audio
-                    && x1 - x0 > 40.0
-                    && pos.x >= x0 + EDGE_GRAB_PX + 3.0
-                    && pos.x <= x0 + EDGE_GRAB_PX + 3.0 + VOLUME_RAIL_W
-                {
-                    ClipZone::VolumeRail
                 } else {
                     ClipZone::Body
                 };
@@ -1542,17 +1545,19 @@ impl KtApp {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                         zone_hint = Some(tr(k::tl::hint::TRIM_END));
                     }
-                    Some((_, ClipZone::VolumeRail)) => {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                        zone_hint = Some(tr(k::tl::hint::VOLUME));
-                    }
                     Some((_, ClipZone::FadeLeft)) | Some((_, ClipZone::FadeRight)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                         zone_hint = Some(tr(k::tl::hint::FADE_HANDLE));
                     }
-                    Some((_, ClipZone::Level)) => {
+                    Some((id, ClipZone::Level)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-                        zone_hint = Some(tr(k::tl::hint::LEVEL));
+                        let audio = self
+                            .model
+                            .clip(id)
+                            .map(|c| c.kind == ClipKind::Audio)
+                            .unwrap_or(false);
+                        zone_hint =
+                            Some(if audio { tr(k::tl::hint::VOLUME) } else { tr(k::tl::hint::LEVEL) });
                     }
                     Some((_, ClipZone::Body)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
@@ -1723,9 +1728,6 @@ impl KtApp {
                     self.on_region_changed();
                 } else if response.drag_started() {
                     match zone {
-                        ClipZone::VolumeRail => {
-                            self.drag = Some(Drag::Volume { id, moved: false });
-                        }
                         ClipZone::FadeLeft | ClipZone::FadeRight => {
                             let left = zone == ClipZone::FadeLeft;
                             let len = corner_fade_len(self.model.project(), id, left)
@@ -1975,34 +1977,27 @@ impl KtApp {
                 }
                 Some(Drag::Level { id, .. }) => {
                     if let Some(c) = self.model.clip(id) {
-                        let top = lane_top(c.kind, c.lane);
-                        let op = level_from_y(pos.y, top, lane_h);
-                        // live-превью без записи в историю (как volume rail)
+                        let (kind, top) = (c.kind, lane_top(c.kind, c.lane));
+                        let lv = level_from_y(pos.y, top, lane_h);
+                        // live-превью без записи в историю: у аудио уровень
+                        // это громкость (диапазон рейла v1), у видео —
+                        // непрозрачность
                         let mut p = self.model.project().clone();
                         if let Some(cm) = p.clips.iter_mut().find(|c| c.id == id) {
-                            cm.opacity = op;
+                            if kind == ClipKind::Audio {
+                                cm.gain_db = level_to_gain(lv);
+                            } else {
+                                cm.opacity = lv;
+                            }
                         }
                         self.player.set_project(p);
-                        self.live_opacity = Some((id, op));
+                        if kind == ClipKind::Audio {
+                            self.live_gain = Some((id, level_to_gain(lv)));
+                        } else {
+                            self.live_opacity = Some((id, lv));
+                        }
                     }
                     self.drag = Some(Drag::Level { id, moved: true });
-                }
-                Some(Drag::Volume { id, .. }) => {
-                    // t: 0 = верх (+6 dB), 1 = низ (−6 dB) — порт рейла
-                    if let Some(c) = self.model.clip(id) {
-                        let top = lane_top(c.kind, c.lane) + 3.0;
-                        let h = lane_h - 8.0;
-                        let t = ((pos.y - top) / h).clamp(0.0, 1.0);
-                        let gain_db = (0.5 - t) * RAIL_DB_SPAN;
-                        // live-превью без записи в историю
-                        let mut p = self.model.project().clone();
-                        if let Some(cm) = p.clips.iter_mut().find(|c| c.id == id) {
-                            cm.gain_db = gain_db;
-                        }
-                        self.player.set_project(p);
-                        self.live_gain = Some((id, gain_db));
-                    }
-                    self.drag = Some(Drag::Volume { id, moved: true });
                 }
                 None => {}
             }
@@ -2107,15 +2102,13 @@ impl KtApp {
                     }
                 }
                 Some(Drag::Level { id, moved }) => {
-                    if moved
-                        && let Some((oid, op)) = self.live_opacity.take_if(|(o, _)| *o == id)
-                    {
-                        self.apply(Command::SetOpacity { id: oid, opacity: op });
-                    }
-                }
-                Some(Drag::Volume { id, moved }) => {
-                    if moved && let Some((gid, gain)) = self.live_gain.take_if(|(g, _)| *g == id) {
-                        self.apply(Command::SetGain { id: gid, gain_db: gain });
+                    if moved {
+                        if let Some((oid, op)) = self.live_opacity.take_if(|(o, _)| *o == id) {
+                            self.apply(Command::SetOpacity { id: oid, opacity: op });
+                        }
+                        if let Some((gid, gain)) = self.live_gain.take_if(|(g, _)| *g == id) {
+                            self.apply(Command::SetGain { id: gid, gain_db: gain });
+                        }
                     }
                 }
                 Some(Drag::Region { .. }) | Some(Drag::RegionEdge { .. }) => {
@@ -2359,40 +2352,33 @@ impl KtApp {
                 }
             }
 
-            // линия уровня видео (п.12): непрозрачность события, как в
-            // Vegas — тянется мышью вверх/вниз
-            if c.kind == ClipKind::Video && clip_rect.width() > 24.0 {
-                let op = match self.live_opacity {
-                    Some((id, o)) if id == c.id => o,
-                    _ => c.opacity,
+            // линия уровня (п.12): у видео непрозрачность, у аудио
+            // громкость — ОДИН элемент на оба вида, как в Vegas (требование
+            // «фейды у аудио и видео одинаково выглядящие»: вертикальный
+            // рейл v1 стоял ровно в зоне фейда и ломал картинку)
+            if clip_rect.width() > 24.0 {
+                let lv = if c.kind == ClipKind::Audio {
+                    match self.live_gain {
+                        Some((id, g)) if id == c.id => gain_to_level(g),
+                        _ => gain_to_level(c.gain_db),
+                    }
+                } else {
+                    match self.live_opacity {
+                        Some((id, o)) if id == c.id => o,
+                        _ => c.opacity,
+                    }
                 };
-                let ly = level_y(op, top, lane_h);
-                let dim = op < 1.0;
+                let op = lv;
+                let ly = level_y(lv, top, lane_h);
+                // «не по умолчанию» — ярче: у видео это op<1, у аудио 0 dB
+                // стоит посередине (диапазон рейла v1 ±6 dB)
+                let dim = if c.kind == ClipKind::Audio { (op - 0.5).abs() > 1e-3 } else { op < 1.0 };
                 painter.line_segment(
                     [egui::pos2(clip_rect.left(), ly), egui::pos2(clip_rect.right(), ly)],
                     egui::Stroke::new(
                         if dim { 2.0 } else { 1.0 },
                         egui::Color32::from_rgba_unmultiplied(255, 220, 120, if dim { 230 } else { 90 }),
                     ),
-                );
-            }
-
-            // volume rail (аудио, ширина > 40)
-            if c.kind == ClipKind::Audio && clip_rect.width() > 40.0 {
-                let rail = egui::Rect::from_min_size(
-                    egui::pos2(x0.max(rect.left()) + EDGE_GRAB_PX + 3.0, top + 3.0),
-                    egui::vec2(VOLUME_RAIL_W, lane_h - 8.0),
-                );
-                painter.rect_filled(rail, 2.0, egui::Color32::from_rgba_unmultiplied(0, 0, 0, 70));
-                let gain = match self.live_gain {
-                    Some((id, g)) if id == c.id => g,
-                    _ => c.gain_db,
-                };
-                let t = (0.5 - gain / RAIL_DB_SPAN).clamp(0.0, 1.0);
-                let y = rail.top() + rail.height() * t;
-                painter.line_segment(
-                    [egui::pos2(rail.left(), y), egui::pos2(rail.right(), y)],
-                    egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 220, 120)),
                 );
             }
 
