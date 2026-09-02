@@ -234,28 +234,58 @@ fn t179_real_film_cross_render() {
     }
     assert!(probes.len() >= 8, "мало точек сверки: {}", probes.len());
 
+    // Сколько кадров разбега терпим. Наша сетка 24, у melt 24000/1001
+    // (п.178): к концу третьей минуты набегает ~4 кадра, на окне 30 с —
+    // не больше двух. Больше — это уже уехавшая склейка, а не дрейф.
+    const MAX_SHIFT: i64 = 2;
+
     let mut bad: Vec<String> = Vec::new();
+    let mut worst = 0i64;
     for &t in &probes {
-        let (Some(a), Some(b)) = (frame_at(&mut ours, t), frame_at(&mut theirs, t)) else {
-            bad.push(format!("{t:.3} c: кадр не прочитался"));
+        let Some(a) = frame_at(&mut ours, t) else {
+            bad.push(format!("{t:.3} c: наш кадр не прочитался"));
             continue;
         };
-        let (sa, sb) = (signature(&a), signature(&b));
-        let same = diff(&sa, &sb);
-        // самокалибровка: кадр melt в полутора секундах оттуда обязан быть
-        // ДАЛЬШЕ. Если ближе — у нас в этот момент играет чужой план.
-        let other = (t + 1.5).min(prep.duration_s - frame);
-        let far = frame_at(&mut theirs, other).map(|f| diff(&sa, &signature(&f)));
-        match far {
-            Some(f) if same >= f => bad.push(format!(
-                "{t:.3} c: наш кадр ближе к melt в {other:.3} c ({f:.1}), чем к своему ({same:.1}) — уехала склейка"
-            )),
-            _ if same > 24.0 => {
-                bad.push(format!("{t:.3} c: кадры не похожи (расхождение {same:.1}/255)"))
+        let sa = signature(&a);
+        // ищем, каким кадром melt наш кадр объясняется ЛУЧШЕ ВСЕГО:
+        // смещение в кадрах — это и есть измеренный разбег
+        let mut best: Option<(i64, f64)> = None;
+        for k in -4i64..=4 {
+            let tt = t + k as f64 * frame;
+            if tt < 0.0 || tt >= prep.duration_s - frame {
+                continue;
             }
-            _ => {}
+            if let Some(f) = frame_at(&mut theirs, tt) {
+                let d = diff(&sa, &signature(&f));
+                if best.is_none_or(|(_, bd)| d < bd) {
+                    best = Some((k, d));
+                }
+            }
+        }
+        match best {
+            None => bad.push(format!("{t:.3} c: кадры melt не прочитались")),
+            Some((k, d)) if d > 24.0 => bad.push(format!(
+                "{t:.3} c: ни один кадр melt не похож на наш (лучший {d:.1}/255 при сдвиге {k})"
+            )),
+            Some((k, _)) if k.abs() > MAX_SHIFT => bad.push(format!(
+                "{t:.3} c: наш кадр совпал с melt только при сдвиге {k} кадров — уехала склейка"
+            )),
+            Some((k, _)) => worst = worst.max(k.abs()),
         }
     }
-    assert!(bad.is_empty(), "точек сверки {}, расхождений {}:\n{}", probes.len(), bad.len(), bad.join("\n"));
-    eprintln!("t179: {} точек сверки на {:.1} c монтажа — сошлись", probes.len(), prep.duration_s);
+    assert!(
+        bad.is_empty(),
+        "точек сверки {}, расхождений {}:\n{}",
+        probes.len(),
+        bad.len(),
+        bad.join("\n")
+    );
+    eprintln!(
+        "t179: {} точек сверки на {:.1} c монтажа — сошлись, худший разбег {worst} кадр(а) \
+         (наша сетка {:.0} против {:.3} у melt, п.178)",
+        probes.len(),
+        prep.duration_s,
+        prep.rate.round(),
+        prep.rate
+    );
 }

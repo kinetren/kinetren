@@ -48,6 +48,27 @@ def main(src, outdir, window_s):
             if url and not os.path.isabs(url):
                 mr.target_url = os.path.join(base, url)
 
+    # СНОС ТАЙМКОДА ИСХОДНИКА. У фильма available_range.start_time = 86160
+    # кадров (час — вшитый стартовый таймкод), и MLT-адаптер пишет это число
+    # прямо в producer in/out. Для MLT это «отмотай файл на 86160-й кадр», а
+    # в файле их 3890 — melt рендерит ЧЁРНОЕ. Наш ридер таймкод учитывает,
+    # но сравнивать надо рендеры, а не конвенции: приводим обе стороны к
+    # нулю, вычитая старт доступного диапазона.
+    for track in tl.tracks:
+        for item in track:
+            mr = getattr(item, "media_reference", None)
+            av = getattr(mr, "available_range", None)
+            if av is None or item.source_range is None:
+                continue
+            off = av.start_time
+            item.source_range = otio.opentime.TimeRange(
+                start_time=item.source_range.start_time - off,
+                duration=item.source_range.duration,
+            )
+            mr.available_range = otio.opentime.TimeRange(
+                start_time=off - off, duration=av.duration
+            )
+
     prepared = os.path.join(outdir, "prepared.otio")
     otio.adapters.write_to_file(tl, prepared)
 
