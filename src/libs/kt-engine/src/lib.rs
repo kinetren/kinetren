@@ -15,6 +15,119 @@ pub mod prefetch;
 pub mod transport;
 pub mod video;
 pub mod video_plan;
+mod video_simd;
+
+/// Явный доступ к обоим путям ядер композита для parity-тестов
+/// (Р.32, t198): тесты зовут скаляр и AVX2 напрямую и сверяют байты.
+#[doc(hidden)]
+#[cfg(target_arch = "x86_64")]
+pub mod simd_testing {
+    fn need_avx2() {
+        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+    }
+
+    /// `x / 255` восемью лейнами — микро-доказательство домена.
+    pub fn div255_avx2(v: [u32; 8]) -> [u32; 8] {
+        need_avx2();
+        // SAFETY: фича проверена
+        unsafe {
+            use std::arch::x86_64::*;
+            let x = _mm256_loadu_si256(v.as_ptr().cast());
+            let r = crate::video_simd::div255(x);
+            let mut out = [0u32; 8];
+            _mm256_storeu_si256(out.as_mut_ptr().cast(), r);
+            out
+        }
+    }
+
+    pub fn alpha_over_avx2(dst: &mut [u8], src: &[u8], pixels: usize) {
+        need_avx2();
+        // SAFETY: фича проверена; длины — на ответственности теста
+        unsafe { crate::video_simd::alpha_over_avx2(dst, src, pixels) };
+    }
+
+    pub fn dissolve_avx2(
+        dst: &mut [u8],
+        a: &[u8],
+        b: &[u8],
+        a_has_alpha: bool,
+        b_has_alpha: bool,
+        k: u32,
+        pixels: usize,
+    ) {
+        need_avx2();
+        // SAFETY: фича проверена
+        unsafe {
+            crate::video_simd::dissolve_avx2(dst, a, b, a_has_alpha, b_has_alpha, k, pixels)
+        };
+    }
+
+    pub fn scale_alpha_avx2(dst: &mut [u8], src: &[u8], has_alpha: bool, k: u32, pixels: usize) {
+        need_avx2();
+        // SAFETY: фича проверена
+        unsafe { crate::video_simd::scale_alpha_avx2(dst, src, has_alpha, k, pixels) };
+    }
+
+    // --- скалярные эталоны (копии тел из video.rs; расхождение с ними
+    // и есть регрессия, которую ловит t198) ---
+
+    pub fn alpha_over_scalar(dst: &mut [u8], src: &[u8], pixels: usize) {
+        for p in 0..pixels {
+            let i = p * 4;
+            let sa = src[i + 3] as u32;
+            if sa == 255 {
+                dst[i..i + 4].copy_from_slice(&src[i..i + 4]);
+                continue;
+            }
+            if sa == 0 {
+                continue;
+            }
+            let da = dst[i + 3] as u32;
+            let inv = 255 - sa;
+            for ch in 0..3 {
+                let s = src[i + ch] as u32;
+                let d = dst[i + ch] as u32;
+                dst[i + ch] = ((s * sa + d * inv * da / 255) / 255).min(255) as u8;
+            }
+            dst[i + 3] = (sa + da * inv / 255).min(255) as u8;
+        }
+    }
+
+    pub fn dissolve_scalar(
+        dst: &mut [u8],
+        a: &[u8],
+        b: &[u8],
+        a_has_alpha: bool,
+        b_has_alpha: bool,
+        k: u32,
+        pixels: usize,
+    ) {
+        let ik = 4096 - k;
+        for p in 0..pixels {
+            let i = p * 4;
+            for ch in 0..4 {
+                let av = if ch == 3 && !a_has_alpha { 255 } else { a[i + ch] } as u32;
+                let bv = if ch == 3 && !b_has_alpha { 255 } else { b[i + ch] } as u32;
+                dst[i + ch] = ((av * ik + bv * k + 2048) >> 12) as u8;
+            }
+        }
+    }
+
+    pub fn scale_alpha_scalar(
+        dst: &mut [u8],
+        src: &[u8],
+        has_alpha: bool,
+        k: u32,
+        pixels: usize,
+    ) {
+        for p in 0..pixels {
+            let i = p * 4;
+            dst[i..i + 3].copy_from_slice(&src[i..i + 3]);
+            let a = if has_alpha { src[i + 3] as u32 } else { 255 };
+            dst[i + 3] = ((a * k + 2048) >> 12) as u8;
+        }
+    }
+}
 pub mod worker;
 
 pub use audio::{AudioRenderer, RenderStats, db_to_linear};

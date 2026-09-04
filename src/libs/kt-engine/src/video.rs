@@ -606,13 +606,24 @@ fn scale_alpha_into(dst: &mut Vec<u8>, f: &kt_media::VideoFrame, k: u32, pixels:
     let n = pixels * 4;
     dst.clear();
     dst.resize(n, 0);
-    for p in 0..pixels.min(f.rgba.len() / 4) {
+    let pixels_avail = pixels.min(f.rgba.len() / 4);
+    let mut start = 0usize;
+    #[cfg(target_arch = "x86_64")]
+    if kt_fx::simd::simd_level() == kt_fx::simd::SimdLevel::Avx2 && pixels_avail >= 8 {
+        // SAFETY: уровень проверен детектом; обе длины >= pixels_avail*4
+        unsafe {
+            crate::video_simd::scale_alpha_avx2(dst, &f.rgba, f.has_alpha, k, pixels_avail);
+        }
+        start = pixels_avail & !7; // хвост — скаляром ниже
+    }
+    for p in start..pixels_avail {
         let i = p * 4;
         dst[i..i + 3].copy_from_slice(&f.rgba[i..i + 3]);
         let a = if f.has_alpha { f.rgba[i + 3] as u32 } else { 255 };
         dst[i + 3] = ((a * k + 2048) >> 12) as u8;
     }
 }
+
 
 /// Линейный dissolve пары (п.137): dst = a·(1−k) + b·k, целочисленно
 /// (k из 4096 долей, округление к ближайшему). Кадр без альфы считается
@@ -628,7 +639,25 @@ fn dissolve_into(
     dst.clear();
     dst.resize(n, 0);
     let ik = 4096 - k;
-    for p in 0..pixels.min(a.rgba.len() / 4).min(b.rgba.len() / 4) {
+    let pixels_avail = pixels.min(a.rgba.len() / 4).min(b.rgba.len() / 4);
+    let mut start = 0usize;
+    #[cfg(target_arch = "x86_64")]
+    if kt_fx::simd::simd_level() == kt_fx::simd::SimdLevel::Avx2 && pixels_avail >= 4 {
+        // SAFETY: уровень проверен детектом; длины >= pixels_avail*4
+        unsafe {
+            crate::video_simd::dissolve_avx2(
+                dst,
+                &a.rgba,
+                &b.rgba,
+                a.has_alpha,
+                b.has_alpha,
+                k,
+                pixels_avail,
+            );
+        }
+        start = pixels_avail & !3;
+    }
+    for p in start..pixels_avail {
         let i = p * 4;
         for ch in 0..4 {
             let av = if ch == 3 && !a.has_alpha { 255 } else { a.rgba[i + ch] } as u32;
@@ -647,7 +676,15 @@ fn alpha_over(dst: &mut [u8], src: &[u8], has_alpha: bool, pixels: usize) {
         dst[..n].copy_from_slice(&src[..n]);
         return;
     }
-    for p in 0..pixels.min(src.len() / 4).min(dst.len() / 4) {
+    let pixels_avail = pixels.min(src.len() / 4).min(dst.len() / 4);
+    let mut start = 0usize;
+    #[cfg(target_arch = "x86_64")]
+    if kt_fx::simd::simd_level() == kt_fx::simd::SimdLevel::Avx2 && pixels_avail >= 8 {
+        // SAFETY: уровень проверен детектом; длины >= pixels_avail*4
+        unsafe { crate::video_simd::alpha_over_avx2(dst, src, pixels_avail) };
+        start = pixels_avail & !7;
+    }
+    for p in start..pixels_avail {
         let i = p * 4;
         let sa = src[i + 3] as u32;
         if sa == 255 {
