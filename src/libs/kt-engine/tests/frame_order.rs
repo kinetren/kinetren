@@ -183,16 +183,19 @@ fn t115_preview_keys_are_monotonic_at_quarter_rate() {
 fn t116_export_has_no_black_frames_at_large_quality() {
     use kt_engine::export::{EXPORT_VIDEO_CACHE_BYTES, export_chunk_frames};
 
-    // чистая функция: пачка не должна превышать половину бюджета
-    for (w, h) in [(320u32, 180u32), (640, 360), (1280, 720), (1920, 1080)] {
-        let n = export_chunk_frames(EXPORT_VIDEO_CACHE_BYTES, w, h);
-        assert!(n >= 1, "{w}×{h}: пачка выродилась в 0 кадров");
-        let bytes = n as usize * w as usize * h as usize * 4;
-        assert!(
-            bytes * 2 <= EXPORT_VIDEO_CACHE_BYTES,
-            "{w}×{h}: пачка {n} кадров = {} МБ не влезает в бюджет кэша",
-            bytes / 1_000_000
-        );
+    // чистая функция: пачка не должна превышать половину бюджета —
+    // с учётом ЧИСЛА СЛОЁВ (Р.31 п.4: кадр на каждый слой момента)
+    for layers in [1usize, 2, 3, 5] {
+        for (w, h) in [(320u32, 180u32), (640, 360), (1280, 720), (1920, 1080)] {
+            let n = export_chunk_frames(EXPORT_VIDEO_CACHE_BYTES, w, h, layers);
+            assert!(n >= 1, "{w}×{h}×{layers}: пачка выродилась в 0 кадров");
+            let bytes = n as usize * w as usize * h as usize * 4 * layers;
+            assert!(
+                bytes * 2 <= EXPORT_VIDEO_CACHE_BYTES || n == 1,
+                "{w}×{h}×{layers}: пачка {n} кадров = {} МБ не влезает в бюджет кэша",
+                bytes / 1_000_000
+            );
+        }
     }
 
     // живой рендер на разрешении, где старый чанк гарантированно не влезал

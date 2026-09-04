@@ -131,3 +131,42 @@ fn t66b_invalidate_source_drops_postfx() {
     let (_, complete_cold) = vr.compose_from_cache(&cache, t, q);
     assert!(!complete_cold, "после инвалидации слоёв нет");
 }
+
+/// Р.31 п.4: экспортный composе НЕ мемоизирует пост-FX кадры — на
+/// многослойном монтаже они вытесняли ещё не использованные пре-кадры
+/// соседних дорожек из экспортного кэша, и рендер терял слои. Байты кадра
+/// при этом обязаны совпадать с превьюшным compose.
+#[test]
+fn t66c_export_compose_skips_postfx_memoization() {
+    let p = project_with_fx(
+        vec![
+            FxInstance::Mirror { horizontal: true, vertical: false },
+            FxInstance::Noise { amount: 0.3 },
+        ],
+        0,
+    );
+    let q = kt_media::Quality { width: 640, height: 360 };
+    let t = Tick(0);
+
+    let cache_a = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut vr_a = VideoRenderer::new(&p);
+    warm_pre_fx(&vr_a, &cache_a, t, q);
+    let bytes_before = cache_a.video_bytes();
+    let mut out_a = Vec::new();
+    let complete = vr_a.compose_export_into(&cache_a, t, q, &mut out_a);
+    assert!(complete);
+    assert_eq!(
+        cache_a.video_bytes(),
+        bytes_before,
+        "экспортный compose не имеет права раздувать кэш пост-FX кадрами"
+    );
+
+    // превьюшный compose на отдельном кэше — байты те же, но мемоизация есть
+    let cache_b = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut vr_b = VideoRenderer::new(&p);
+    warm_pre_fx(&vr_b, &cache_b, t, q);
+    let mut out_b = Vec::new();
+    vr_b.compose_from_cache_into(&cache_b, t, q, &mut out_b);
+    assert_eq!(out_a, out_b, "экспортный и превьюшный compose обязаны совпадать байт-в-байт");
+    assert!(cache_b.video_bytes() > bytes_before, "превью мемоизирует как раньше");
+}

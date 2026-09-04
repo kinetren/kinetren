@@ -88,18 +88,28 @@ pub fn assert_frames_close(cpu: &[u8], gpu: &[u8], w: u32, h: u32, tol: FrameTol
     );
 }
 
-/// Адаптер для тестов: skip с печатью, если wgpu-адаптера нет;
-/// `KT_REQUIRE_GPU=1` превращает пропуск в провал (калька
+/// Адаптер для тестов: skip с печатью, если wgpu-адаптера НЕТ;
+/// `KT_REQUIRE_GPU=1` превращает и этот пропуск в провал (калька
 /// KT_REQUIRE_CROSS_RENDER). lavapipe/llvmpipe — полноценный адаптер.
+///
+/// Адаптер ЕСТЬ, а движок не собрался (шейдер/пайплайн) — это ВСЕГДА
+/// провал, не skip: урок Р.31 — сломанный layout Pan3d ронял создание
+/// движка целиком, а тесты вакуумно зеленели через «skip без адаптера»
+/// и дефект доехал до машины пользователя.
 pub fn test_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
-    match GpuContext::new_headless().and_then(GpuFxEngine::new) {
-        Ok(e) => Some(e),
+    let ctx = match GpuContext::new_headless() {
+        Ok(c) => c,
         Err(err) => {
             if std::env::var("KT_REQUIRE_GPU").as_deref() == Ok("1") {
-                panic!("KT_REQUIRE_GPU=1, but the GPU engine failed to start: {err}");
+                panic!("KT_REQUIRE_GPU=1, but no wgpu adapter: {err}");
             }
             eprintln!("skipped: wgpu adapter unavailable ({err}); apt install mesa-vulkan-drivers");
-            None
+            return None;
         }
+    };
+    let name = ctx.adapter_info.name.clone();
+    match GpuFxEngine::new(ctx) {
+        Ok(e) => Some(e),
+        Err(err) => panic!("adapter '{name}' is present, but the GPU engine failed to build: {err}"),
     }
 }

@@ -3145,3 +3145,64 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
     assert_eq!(c.fx_auto[0][0].keys.len(), 2, "undo вернул кривые тем же шагом");
     h.step();
 }
+
+/// Тест 194 (Р.31 п.2): автосейв идёт В ФОНЕ — UI-поток только снимает
+/// снапшот и позже забирает результат. Правки ПОСЛЕ снапшота не теряют
+/// звёздочку (dirty гасится только при неизменной модели).
+#[test]
+fn t194_autosave_runs_in_background() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t194-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t194.otio");
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    // правка содержимого + «прошло 30 секунд»
+    app.model
+        .apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() })
+        .unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
+    h.step();
+    assert!(h.state().autosave_rx.is_some(), "фоновый автосейв обязан стартовать");
+    // дождаться воркер и забрать результат следующим кадром
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    assert!(h.state().autosave_rx.is_none(), "результат автосейва забран");
+    assert!(!h.state().dirty_content, "успешный автосейв гасит звёздочку");
+    assert!(target.exists(), "файл записан фоновым потоком");
+
+    // правка ПОСЛЕ снапшота не должна терять звёздочку
+    let app = h.state_mut();
+    app.model
+        .apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() })
+        .unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
+    h.step();
+    assert!(h.state().autosave_rx.is_some());
+    // модель меняется, пока запись в полёте
+    let app = h.state_mut();
+    app.model
+        .apply(Command::AddMedia { id: MediaId(3), path: "synth:ramp".into() })
+        .unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    assert!(
+        h.state().dirty_content,
+        "правки после снапшота сохраняют звёздочку (иначе они бы потерялись)"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

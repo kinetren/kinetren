@@ -427,6 +427,7 @@ flight_save = "Guardar el registro de reproducción"
 flight_stalls = "congelaciones: {0}"
 
 [perf.note]
+ui_stall = "el hilo de la interfaz quedó bloqueado {0} ms dentro de un fotograma"
 render_underruns = "render underruns +{0} (total {1})"
 callback_underruns = "callback underruns +{0} (total {1})"
 eviction_spike = "pico de eviction: {0}/s — la caché se queda corta"

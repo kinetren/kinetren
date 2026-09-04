@@ -162,6 +162,12 @@ pub struct KtApp {
     pub gpu_info: Option<String>,
     /// Notice о потере GPU-рендера видео показан (один раз за сессию, Р.29).
     pub gpu_fx_lost_notified: bool,
+    /// Кэш max_source_resolution по model_rev (Р.31 п.3: функция открывает
+    /// ВСЕ медиафайлы — звать её на кадр из окна рендера нельзя).
+    pub max_src_cache: Option<(u64, Option<(u32, u32)>)>,
+    /// Фоновый автосейв (Р.31 п.2): (rev снапшота, результат). UI-поток
+    /// больше не пишет файл сам — только сериализует снапшот и ждёт итог.
+    pub autosave_rx: Option<(u64, std::sync::mpsc::Receiver<std::io::Result<()>>)>,
     pub snap_line: Option<i64>,
     /// (поколение транспорта, число loop-перескоков) на прошлом кадре
     /// превью. Смена любого — законная причина уехать ключу показа назад:
@@ -383,6 +389,8 @@ impl KtApp {
             glow_skip: 0,
             gpu_info: None,
             gpu_fx_lost_notified: false,
+            max_src_cache: None,
+            autosave_rx: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -509,6 +517,8 @@ impl KtApp {
             glow_skip: 0,
             gpu_info: None,
             gpu_fx_lost_notified: false,
+            max_src_cache: None,
+            autosave_rx: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -895,16 +905,45 @@ impl KtApp {
         // UI-потоке. Теперь: раз в 30 с, только от правок СОДЕРЖИМОГО и
         // не во время жеста/игры (страховка — если тихо больше двух
         // интервалов, пишем всё равно: терять правки хуже микрофриза).
-        if self.dirty_content && self.autosave_due() {
+        // Р.31 п.2: сериализация и запись — В ФОНЕ (чек-лист п.12
+        // «фоновая работа не мешает»): на большом проекте/медленном диске
+        // автосейв в UI-потоке ронял FPS в ноль каждые 30 с.
+        // dirty_ui/сдвиг вьюпорта тоже сохраняются попутно (п.5 р.11) —
+        // раньше это делал синхронный сейв из eframe::save каждые 30 с
+        let due = self.autosave_rx.is_none() && self.autosave_due();
+        let moved = self.project_path.is_some()
+            && due
+            && (self.dirty_ui || {
+                let fresh = self.ui_state();
+                self.model.project().ui.as_ref() != Some(&fresh)
+            });
+        if (self.dirty_content || moved) && due {
             self.last_autosave = std::time::Instant::now();
             let ui = Some(self.ui_state());
             self.model.set_ui_state(ui);
             let target = self.project_path.clone().unwrap_or_else(autosave_path);
-            let out =
-                kt_otio::save_project(self.model.project(), &self.retained, target.parent());
-            match write_project_atomic(&target, &out) {
+            let project = self.model.project().clone();
+            let retained = self.retained.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.autosave_rx = Some((self.model_rev, rx));
+            std::thread::Builder::new()
+                .name("autosave".into())
+                .spawn(move || {
+                    let out = kt_otio::save_project(&project, &retained, target.parent());
+                    let _ = tx.send(write_project_atomic(&target, &out));
+                })
+                .ok();
+        }
+        if let Some((snap_rev, rx)) = &self.autosave_rx
+            && let Ok(res) = rx.try_recv()
+        {
+            let snap_rev = *snap_rev;
+            self.autosave_rx = None;
+            match res {
+                // флаги гасим, только если с момента снапшота ничего не
+                // менялось — иначе правки после снапшота потеряли бы след
                 Ok(()) => {
-                    if self.project_path.is_some() {
+                    if self.project_path.is_some() && self.model_rev == snap_rev {
                         self.dirty_content = false;
                         self.dirty_ui = false;
                     }
@@ -1491,6 +1530,18 @@ impl KtApp {
 
     /// Покомпонентный максимум разрешения по видео-источникам проекта
     /// (порт computeMaxSourceVideoResolution; короткоживущие пробы).
+    /// Кэшированный вариант (Р.31 п.3): пересчёт только при смене модели.
+    pub fn max_source_resolution_cached(&mut self) -> Option<(u32, u32)> {
+        if let Some((rev, v)) = self.max_src_cache
+            && rev == self.model_rev
+        {
+            return v;
+        }
+        let v = self.max_source_resolution();
+        self.max_src_cache = Some((self.model_rev, v));
+        v
+    }
+
     pub fn max_source_resolution(&self) -> Option<(u32, u32)> {
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let db = self.index_db_path();
@@ -3022,7 +3073,7 @@ impl KtApp {
                         ui.selectable_value(&mut res, r, format!("{}×{}", r.0, r.1));
                     }
                     // «Max (W×H)» — покомпонентный максимум по источникам (v1)
-                    if let Some((mw, mh)) = self.max_source_resolution() {
+                    if let Some((mw, mh)) = self.max_source_resolution_cached() {
                         ui.selectable_value(&mut res, (mw, mh), format!("Max ({mw}×{mh})"));
                     }
                 })
@@ -4469,19 +4520,39 @@ impl eframe::App for KtApp {
             self.init_video_gpu(_frame);
         }
 
+        // Р.31 п.2: долгие кадры UI-потока — в перф-журнал. Меряется
+        // ДЛИТЕЛЬНОСТЬ кадра (не промежуток между кадрами — idle-repaint
+        // легально редкий): блокировку внутри кадра (запись на диск,
+        // декод в UI-потоке) видно здесь с точной меткой времени.
+        let t0 = std::time::Instant::now();
         self.draw_all(ui);
+        let ms = t0.elapsed().as_millis();
+        if ms >= 100 {
+            self.perf.note(crate::tf!(k::perf::note::UI_STALL, ms));
+        }
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        // язык — настройка пользователя, а не проекта: пишется всегда, даже
-        // когда проект безымянный
+        // Р.31 п.2: eframe зовёт save() КАЖДЫЕ 30 секунд (auto_save_interval)
+        // — здесь остаётся только дешёвое (строки egui-storage). Прежний
+        // синхронный сейв проекта отсюда ронял FPS в ноль каждые 30 с:
+        // «moved» (курсор/вьюпорт сдвинулся) — почти всегда true, и весь
+        // проект сериализовался и писался В UI-ПОТОКЕ даже без правок.
+        // Периодику несёт наш ФОНОВЫЙ автосейв (draw_all), финальную
+        // запись при выходе — on_exit ниже.
         storage.set_string("lang", crate::i18n::choice_code(self.lang_choice).to_string());
-        // последний проект + финальный сейв при выходе
-        if let Some(p) = &self.project_path.clone() {
+        if let Some(p) = &self.project_path {
             storage.set_string("last_project", p.to_string_lossy().to_string());
-            // правки удобства (регион, зум, раскладка, имена дорожек) на
-            // диск попадают именно здесь — попутно, без звёздочки (п.5
-            // р.11). Вьюпорт/курсор флагов не поднимают (менялись бы на
-            // каждом кадре) — сравниваем со снимком в проекте.
+        }
+    }
+
+    fn on_exit(&mut self) {
+        // финальный сейв при выходе — здесь можно синхронно (окна уже нет).
+        // Сначала дожидаемся фоновый автосейв: его rename не должен
+        // перезаписать наш более свежий снапшот старым.
+        if let Some((_, rx)) = self.autosave_rx.take() {
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
+        }
+        if let Some(p) = &self.project_path.clone() {
             let fresh = self.ui_state();
             let moved = self.model.project().ui.as_ref() != Some(&fresh);
             if self.dirty_content || self.dirty_ui || moved {

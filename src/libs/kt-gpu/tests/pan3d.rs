@@ -77,7 +77,7 @@ fn layer<'a>(
 }
 
 fn run(engine: &dyn VideoGpuExec, layers: Vec<PlanLayer<'_>>) -> Vec<u8> {
-    let plan = FramePlan { t: Tick(90_000), out_w: W, out_h: H, layers, has_3d: true };
+    let plan = FramePlan { t: Tick(90_000), out_w: W, out_h: H, layers, has_3d: true, memoize_postfx: true };
     let mut out = Vec::new();
     let complete = engine.execute_into(&plan, &mut out).expect("GPU execute");
     assert!(complete);

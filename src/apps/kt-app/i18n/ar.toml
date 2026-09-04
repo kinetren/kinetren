@@ -427,6 +427,7 @@ flight_save = "حفظ سجل التشغيل"
 flight_stalls = "حالات التجمد: {0}"
 
 [perf.note]
+ui_stall = "انسدّ خيط الواجهة {0} م.ث داخل إطار واحد"
 render_underruns = "render underruns +{0} (المجموع {1})"
 callback_underruns = "callback underruns +{0} (المجموع {1})"
 eviction_spike = "ذروة eviction: {0}/ث — الذاكرة ضيقة"

@@ -427,6 +427,7 @@ flight_save = "保存播放日志"
 flight_stalls = "卡住次数：{0}"
 
 [perf.note]
+ui_stall = "UI 线程在一帧内被阻塞 {0} 毫秒"
 render_underruns = "render underruns +{0}（总计 {1}）"
 callback_underruns = "callback underruns +{0}（总计 {1}）"
 eviction_spike = "eviction 峰值：{0}/秒 — 缓存太小"

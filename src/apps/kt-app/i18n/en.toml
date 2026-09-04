@@ -427,6 +427,7 @@ flight_save = "Save the playback journal"
 flight_stalls = "playback froze: {0}"
 
 [perf.note]
+ui_stall = "the UI thread was blocked for {0} ms inside one frame"
 render_underruns = "render underruns +{0} (total {1})"
 callback_underruns = "callback underruns +{0} (total {1})"
 eviction_spike = "eviction spike: {0}/s — the cache is too small"

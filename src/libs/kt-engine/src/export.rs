@@ -59,10 +59,12 @@ pub const EXPORT_VIDEO_CACHE_BYTES: usize = 192 * 1024 * 1024;
 
 /// Сколько кадров декодировать одной пачкой, чтобы они ГАРАНТИРОВАННО
 /// дожили в кэше до композиции (р.15 п.1). Пачка занимает не больше
-/// половины бюджета: вторая половина — на слои других источников и на
-/// кадры, уже лежащие в кэше с прошлого чанка.
-pub fn export_chunk_frames(budget_bytes: usize, width: u32, height: u32) -> i64 {
-    let frame = (width.max(1) as usize) * (height.max(1) as usize) * 4;
+/// половины бюджета; `layers` — максимум ОДНОВРЕМЕННЫХ видео-слоёв
+/// (Р.31 п.4: каждый момент чанка держит в кэше по кадру НА СЛОЙ —
+/// пачка, посчитанная на один слой, вытесняла пре-кадры соседних дорожек
+/// до композиции, и рендер терял слои).
+pub fn export_chunk_frames(budget_bytes: usize, width: u32, height: u32, layers: usize) -> i64 {
+    let frame = (width.max(1) as usize) * (height.max(1) as usize) * 4 * layers.max(1);
     ((budget_bytes / 2) / frame.max(1)).clamp(1, 120) as i64
 }
 
@@ -212,8 +214,12 @@ pub fn render_raw_video_range_with(
     // выбрасывал их ДО композиции, и рендер выходил чёрным с редкими
     // уцелевшими кадрами. На 320×180 (где я это «проверил») чанк влезал —
     // отсюда и пропущенная регрессия.
-    let chunk_frames =
-        export_chunk_frames(EXPORT_VIDEO_CACHE_BYTES, quality.width, quality.height);
+    let chunk_frames = export_chunk_frames(
+        EXPORT_VIDEO_CACHE_BYTES,
+        quality.width,
+        quality.height,
+        video.max_concurrent_layers(),
+    );
     let mut frame_buf = Vec::new();
     while t < end {
         if cancel.load(Ordering::Acquire) {
@@ -258,7 +264,7 @@ pub fn render_raw_video_range_with(
                     gpu.execute_into(&plan, &mut frame_buf)
                         .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?
                 }
-                None => video.compose_from_cache_into(&cache, t, quality, &mut frame_buf),
+                None => video.compose_export_into(&cache, t, quality, &mut frame_buf),
             };
             if !complete {
                 stats.missing_video_layers += 1;

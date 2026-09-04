@@ -255,8 +255,43 @@ impl VideoRenderer {
             cameras: &self.cameras,
             project_size: self.project_size,
         };
-        let plan = build_plan(&self.clips, &ctx, cache, t, quality);
+        let plan = build_plan(&self.clips, &ctx, cache, t, quality, true);
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
+    }
+
+    /// Экспортный вариант: без пост-FX мемоизации (Р.31 п.4 — см.
+    /// FramePlan::memoize_postfx). Байты кадра идентичны compose_from_cache.
+    pub fn compose_export_into(
+        &mut self,
+        cache: &BurstCache,
+        t: Tick,
+        quality: Quality,
+        out: &mut Vec<u8>,
+    ) -> bool {
+        let ctx = PlanCtx {
+            grid: &self.grid,
+            cameras: &self.cameras,
+            project_size: self.project_size,
+        };
+        let plan = build_plan(&self.clips, &ctx, cache, t, quality, false);
+        execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
+    }
+
+    /// Максимум одновременных видео-слоёв (с ручками переходов) — экспорт
+    /// делит бюджет чанка на это число (Р.31 п.4).
+    pub fn max_concurrent_layers(&self) -> usize {
+        let mut evs: Vec<(i64, i32)> = Vec::with_capacity(self.clips.len() * 2);
+        for c in &self.clips {
+            evs.push((c.start.0 - c.head_ext.0, 1));
+            evs.push((c.end.0 + c.tail_ext.0, -1));
+        }
+        evs.sort();
+        let (mut cur, mut max) = (0i32, 0i32);
+        for (_, d) in evs {
+            cur += d;
+            max = max.max(cur);
+        }
+        max.max(1) as usize
     }
 
     /// План кадра для внешнего исполнителя (GPU в kt-gpu). Пре-FX кадры
@@ -267,7 +302,7 @@ impl VideoRenderer {
             cameras: &self.cameras,
             project_size: self.project_size,
         };
-        build_plan(&self.clips, &ctx, cache, t, quality)
+        build_plan(&self.clips, &ctx, cache, t, quality, true)
     }
 }
 
@@ -340,6 +375,7 @@ fn build_plan<'a>(
     cache: &BurstCache,
     t: Tick,
     quality: Quality,
+    memoize_postfx: bool,
 ) -> FramePlan<'a> {
     let mut layers = Vec::new();
     let mut has_3d = false;
@@ -390,7 +426,7 @@ fn build_plan<'a>(
             scale_alpha: clip.opacity_k < 4096,
         });
     }
-    FramePlan { t, out_w: quality.width, out_h: quality.height, layers, has_3d }
+    FramePlan { t, out_w: quality.width, out_h: quality.height, layers, has_3d, memoize_postfx }
 }
 
 /// CPU-исполнение плана без держателя пулов (parity-тесты kt-gpu:
@@ -421,7 +457,7 @@ fn execute_plan_cpu(
     for layer in &plan.layers {
         match layer {
             PlanLayer::One { src, alpha_k, scale_alpha } => {
-                match layer_frame_cpu(src, cache, q_key, scratch, plan.t) {
+                match layer_frame_cpu(src, cache, q_key, scratch, plan.t, plan.memoize_postfx) {
                     Some(f) if fits(&f) => {
                         if *scale_alpha {
                             scale_alpha_into(blend, &f, *alpha_k, w * h);
@@ -435,8 +471,8 @@ fn execute_plan_cpu(
                 }
             }
             PlanLayer::Dissolve { a, b, k, alpha_k } => {
-                let fa = layer_frame_cpu(a, cache, q_key, scratch, plan.t);
-                let fb = layer_frame_cpu(b, cache, q_key, scratch, plan.t);
+                let fa = layer_frame_cpu(a, cache, q_key, scratch, plan.t, plan.memoize_postfx);
+                let fb = layer_frame_cpu(b, cache, q_key, scratch, plan.t, plan.memoize_postfx);
                 match (fa, fb) {
                     (Some(fa), Some(fb)) if fits(&fa) && fits(&fb) => {
                         let mut has_alpha = dissolve_into(blend, &fa, &fb, *k, w * h);
@@ -486,6 +522,7 @@ fn layer_frame_cpu(
     q_key: (u32, u32),
     scratch: &mut kt_fx::video::FxScratch,
     t: Tick,
+    memoize: bool,
 ) -> Option<Arc<VideoFrame>> {
     if !kt_fx::video::has_video_fx(&src.fx) {
         return src.frame.clone();
@@ -514,19 +551,18 @@ fn layer_frame_cpu(
         &ctx,
         scratch,
     );
-    cache.insert_postfx_video(
-        src.source,
-        q_key,
-        src.fx_hash,
-        t.0,
-        Arc::new(VideoFrame {
-            pts: t,
-            width: f.w,
-            height: f.h,
-            rgba: f.rgba.into_boxed_slice(),
-            has_alpha: f.has_alpha,
-        }),
-    );
+    let frame = Arc::new(VideoFrame {
+        pts: t,
+        width: f.w,
+        height: f.h,
+        rgba: f.rgba.into_boxed_slice(),
+        has_alpha: f.has_alpha,
+    });
+    if !memoize {
+        // экспорт (Р.31 п.4): кадр не переживёт этот t — не выжираем кэш
+        return Some(frame);
+    }
+    cache.insert_postfx_video(src.source, q_key, src.fx_hash, t.0, frame);
     cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0)
 }
 

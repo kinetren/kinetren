@@ -199,7 +199,7 @@ impl KtApp {
         let mut open = true;
         let mut launch = false;
         let proj = self.model.project().settings.clone();
-        let max_src = self.max_source_resolution();
+        let max_src = self.max_source_resolution_cached();
         egui::Window::new(tr(k::render::SETTINGS_TITLE))
             .id(egui::Id::new("kt_render_settings"))
             .open(&mut open)

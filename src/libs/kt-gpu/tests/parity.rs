@@ -89,7 +89,7 @@ fn one(src: &Src, alpha_k: u32, scale_alpha: bool) -> PlanLayer<'_> {
 }
 
 fn plan<'a>(t: i64, layers: Vec<PlanLayer<'a>>) -> FramePlan<'a> {
-    FramePlan { t: Tick(t), out_w: W, out_h: H, layers, has_3d: false }
+    FramePlan { t: Tick(t), out_w: W, out_h: H, layers, has_3d: false, memoize_postfx: true }
 }
 
 /// CPU против GPU на одном плане; возвращает (cpu, gpu, complete_cpu,

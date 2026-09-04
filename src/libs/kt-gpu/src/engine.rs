@@ -439,7 +439,10 @@ impl GpuFxEngine {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    // ВЕРШИННЫЙ стейдж тоже читает униформу (vs3d Pan3d —
+                    // MVP/якорь): FRAGMENT-only валил create_render_pipeline
+                    // на настоящем железе и ронял ВЕСЬ движок в CPU (Р.31 п.1)
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: true,

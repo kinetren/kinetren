@@ -427,6 +427,7 @@ flight_save = "Сохранить журнал воспроизведения"
 flight_stalls = "замираний: {0}"
 
 [perf.note]
+ui_stall = "UI-поток был заблокирован {0} мс внутри одного кадра"
 render_underruns = "render underruns +{0} (итого {1})"
 callback_underruns = "callback underruns +{0} (итого {1})"
 eviction_spike = "всплеск eviction: {0}/с — кэшу тесно"
