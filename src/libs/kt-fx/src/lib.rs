@@ -33,7 +33,68 @@ pub enum PullKind {
     Warmup,
 }
 
+pub mod simd;
 pub mod video;
+mod video_simd;
+
+/// Явный доступ к ОБОИМ путям ядер для parity-тестов (Р.32, t198).
+/// Тесты не трогают env (KT_SIMD читается раз на процесс) — они зовут
+/// скаляр и AVX2 напрямую и сравнивают байты.
+#[doc(hidden)]
+pub mod simd_testing {
+    use crate::video::Frame;
+
+    /// Скалярный эталон билинейки.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bilinear_scalar(
+        src: &Frame,
+        x0: f64,
+        y0: f64,
+        cw: f64,
+        ch: f64,
+        ow: u32,
+        oh: u32,
+        out: &mut [u8],
+    ) {
+        crate::video::bilinear_into_scalar(src, x0, y0, cw, ch, ow, oh, out);
+    }
+
+    /// AVX2-ядро билинейки. Паникует, если фичи нет — вызывающий тест
+    /// обязан сам проверить наличие (skip/KT_REQUIRE_SIMD).
+    #[cfg(target_arch = "x86_64")]
+    #[allow(clippy::too_many_arguments)]
+    pub fn bilinear_avx2(
+        src: &Frame,
+        x0: f64,
+        y0: f64,
+        cw: f64,
+        ch: f64,
+        ow: u32,
+        oh: u32,
+        out: &mut [u8],
+    ) {
+        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+        // SAFETY: фича проверена строкой выше, длины буферов — на
+        // ответственности теста (он их и создаёт)
+        unsafe { crate::video_simd::bilinear_into_avx2(src, x0, y0, cw, ch, ow, oh, out) };
+    }
+
+    /// Округление half-away-from-zero: 4 значения через AVX2-эмуляцию
+    /// (микро-доказательство против `f64::round`).
+    #[cfg(target_arch = "x86_64")]
+    pub fn round_half_away_avx2(v: [f64; 4]) -> [f64; 4] {
+        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+        // SAFETY: фича проверена
+        unsafe {
+            use std::arch::x86_64::*;
+            let x = _mm256_loadu_pd(v.as_ptr());
+            let r = crate::video_simd::round_half_away_nonneg(x);
+            let mut out = [0f64; 4];
+            _mm256_storeu_pd(out.as_mut_ptr(), r);
+            out
+        }
+    }
+}
 
 /// Сглаженный параметр: one-pole к цели, ~20 мс. Не «телепортируется»
 /// при set_target — только в reset().

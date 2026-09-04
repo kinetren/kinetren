@@ -200,8 +200,40 @@ fn pan_zoom(
 }
 
 /// Билинейная выборка рамки [x0,y0,cw,ch] источника в буфер ow×oh.
+///
+/// Диспетчер SIMD-уровня (Р.32): AVX2-ядро обязано быть байт-в-байт
+/// равно скаляру, поэтому выбор пути не влияет ни на один golden.
+/// Ветка стоит на ВЫЗОВ (кадр/слой), не на пиксель.
 #[allow(clippy::too_many_arguments)]
 fn bilinear_into(
+    src: &Frame,
+    x0: f64,
+    y0: f64,
+    cw: f64,
+    ch: f64,
+    ow: u32,
+    oh: u32,
+    out: &mut [u8],
+) {
+    #[cfg(target_arch = "x86_64")]
+    if crate::simd::simd_level() == crate::simd::SimdLevel::Avx2
+        // страховка контракта unsafe-ядра: буферы обязаны быть полными
+        && src.rgba.len() >= (src.w as usize) * (src.h as usize) * 4
+        && out.len() >= (ow as usize) * (oh as usize) * 4
+    {
+        // SAFETY: уровень проверен рантайм-детектом, длины буферов — выше
+        unsafe {
+            crate::video_simd::bilinear_into_avx2(src, x0, y0, cw, ch, ow, oh, out);
+        }
+        return;
+    }
+    bilinear_into_scalar(src, x0, y0, cw, ch, ow, oh, out);
+}
+
+/// Скалярный эталон билинейки. НЕ рефакторится вместе с SIMD-ядром:
+/// он и есть определение байтов CPU-пути (инвариант №11).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn bilinear_into_scalar(
     src: &Frame,
     x0: f64,
     y0: f64,
