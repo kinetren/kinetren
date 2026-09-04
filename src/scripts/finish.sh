@@ -63,6 +63,20 @@ else
     LIVE_FAILED=1
 fi
 
+# SIMD-конформанс (Р.32): AVX2-ядра обязаны быть байт-в-байт со скаляром.
+# KT_REQUIRE_SIMD=1 запрещает вакуумный skip там, где AVX2 есть (урок
+# т.194). Плюс golden'ы на ПРИНУДИТЕЛЬНОМ скаляре: он остаётся эталоном.
+echo "== SIMD-конформанс (t198) =="
+if KT_REQUIRE_SIMD=1 cargo test -p kt-fx --test simd_parity -q 2>&1 | tail -3 \
+    && KT_REQUIRE_SIMD=1 cargo test -p kt-engine --test simd_parity -q 2>&1 | tail -3 \
+    && KT_SIMD=0 cargo test -p kt-fx --test video_fx -q 2>&1 | tail -2 \
+    && KT_SIMD=0 cargo test -p kt-engine --test golden_export -q 2>&1 | tail -2; then
+    echo "simd: ok (AVX2 == скаляр, golden'ы зелены обоими путями)"
+else
+    echo "SIMD-КОНФОРМАНС ПРОВАЛИЛСЯ" >&2
+    LIVE_FAILED=1
+fi
+
 echo "== чистка =="
 # старые тарболы и распакованные каталоги: оставляем только текущий
 if [ -d target/dist-out ]; then

@@ -212,6 +212,40 @@ fn bench_simd_1080p() {
     }
     let ga = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
     println!("glow-add 1080p: scalar {gs:.2} ms, avx2 {ga:.2} ms, ×{:.2}", gs / ga);
+
+    // Сколько вообще стоят ядра, которые ещё НЕ векторизованы (решение
+    // «делать или оставить скаляром» — по этим цифрам, Р.32 шаг 5).
+    use kt_fx::video::{VideoFxCtx, apply_video_chain};
+    use kt_model::FxInstance;
+    let ctx = VideoFxCtx { out_w: 1920, out_h: 1080, u: 0.5, burst_index: 90_000 };
+    for (name, fx) in [
+        (
+            "greenscreen",
+            FxInstance::Greenscreen { key_r: 0, key_g: 255, key_b: 0, tolerance: 70, softness: 25 },
+        ),
+        ("edges", FxInstance::Edges { threshold: 48 }),
+        ("vhs", FxInstance::Vhs { rgb_shift: 4, bleed: 0.4 }),
+        ("mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
+    ] {
+        let t = std::time::Instant::now();
+        for _ in 0..iters {
+            let f = Frame {
+                w: 1920,
+                h: 1080,
+                rgba: src.rgba.clone(),
+                has_alpha: true,
+            };
+            std::hint::black_box(apply_video_chain(std::slice::from_ref(&fx), f, &ctx));
+        }
+        let ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+        // вычитаем стоимость клона кадра (он внутри цикла)
+        let t = std::time::Instant::now();
+        for _ in 0..iters {
+            std::hint::black_box(src.rgba.clone());
+        }
+        let clone_ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+        println!("{name} 1080p (через цепочку, путь по детекту): {:.2} ms", ms - clone_ms);
+    }
 }
 
 /// noise: целочисленное ядро — обязано совпасть БИТ-В-БИТ (включая
@@ -270,6 +304,86 @@ fn t198_glow_add_scalar_eq_avx2() {
                 st::glow_add_scalar(&mut a, &up, s);
                 st::glow_add_avx2(&mut b, &up, s, pixels);
                 assert_eq!(a, b, "glow kind={kind} pixels={pixels} s={s}");
+            }
+        }
+    }
+}
+
+/// edges: люма + Собель + порог. Сверяется ПУБЛИЧНАЯ цепочка (идёт
+/// SIMD-путём по детекту) со скалярным эталоном.
+#[test]
+fn t198_edges_scalar_eq_simd() {
+    if !avx2() {
+        return;
+    }
+    use kt_fx::video::{VideoFxCtx, apply_video_chain};
+    use kt_model::FxInstance;
+    for kind in 0..5u32 {
+        for (w, h) in [(3u32, 3u32), (9, 5), (11, 4), (64, 36), (65, 37), (129, 9)] {
+            for th in [1u32, 48, 255] {
+                let src = frame(w, h, kind);
+                let want = st::edges_scalar(&src.rgba, w as usize, h as usize, th);
+                let ctx = VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: 90_000 };
+                let got = apply_video_chain(&[FxInstance::Edges { threshold: th }], src, &ctx);
+                if got.rgba != want {
+                    let i = got.rgba.iter().zip(&want).position(|(a, b)| a != b).unwrap();
+                    let p = i / 4;
+                    panic!(
+                        "edges kind={kind} {w}x{h} th={th}: пиксель ({}, {}) канал {}: \
+                         скаляр {} != simd {}",
+                        p % w as usize,
+                        p / w as usize,
+                        i % 4,
+                        want[i],
+                        got.rgba[i]
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// vhs: RGB-сдвиг с лерпом и скан-линии. Векторный интерьер + скалярные
+/// кромки обязаны в сумме дать ровно скалярный кадр.
+#[test]
+fn t198_vhs_scalar_eq_simd() {
+    if !avx2() {
+        return;
+    }
+    use kt_fx::video::{VideoFxCtx, apply_video_chain};
+    use kt_model::FxInstance;
+    for kind in 0..5u32 {
+        for (w, h) in [(4u32, 4u32), (13, 5), (33, 4), (64, 36), (65, 9)] {
+            for shift in [0u32, 1, 4, 12] {
+                for bleed in [0.0f64, 0.4, 1.0] {
+                    for burst in [0i64, 90_000, 3000 * 5] {
+                        let src = frame(w, h, kind);
+                        let mut want = src.rgba.clone();
+                        st::vhs_scalar(&mut want, w as usize, h as usize, shift, bleed, burst);
+                        let ctx =
+                            VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: burst };
+                        let got = apply_video_chain(
+                            &[FxInstance::Vhs { rgb_shift: shift, bleed }],
+                            src,
+                            &ctx,
+                        );
+                        if got.rgba != want {
+                            let i =
+                                got.rgba.iter().zip(&want).position(|(a, b)| a != b).unwrap();
+                            let p = i / 4;
+                            panic!(
+                                "vhs kind={kind} {w}x{h} shift={shift} bleed={bleed} \
+                                 burst={burst}: пиксель ({}, {}) канал {}: \
+                                 скаляр {} != simd {}",
+                                p % w as usize,
+                                p / w as usize,
+                                i % 4,
+                                want[i],
+                                got.rgba[i]
+                            );
+                        }
+                    }
+                }
             }
         }
     }

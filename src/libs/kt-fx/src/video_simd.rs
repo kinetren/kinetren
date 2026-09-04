@@ -228,3 +228,218 @@ pub(crate) unsafe fn glow_add_avx2(dst: &mut [u8], up: &[u8], s: f64, pixels: us
         }
     }
 }
+
+/// Люма кадра для `edges`: `(77R + 150G + 29B) >> 8`, 8 пикселей за
+/// итерацию. Целочисленно — байт-в-байт со скаляром.
+///
+/// # Safety
+/// Требует AVX2; `luma` длиной >= pixels, `rgba` >= pixels*4.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn luma_avx2(luma: &mut [i32], rgba: &[u8], pixels: usize) {
+    unsafe {
+        let byte = _mm256_set1_epi32(0xFF);
+        let (c77, c150, c29) =
+            (_mm256_set1_epi32(77), _mm256_set1_epi32(150), _mm256_set1_epi32(29));
+        let (ps, pl) = (rgba.as_ptr(), luma.as_mut_ptr());
+        let n = pixels & !7;
+        let mut p = 0usize;
+        while p < n {
+            let v = _mm256_loadu_si256(ps.add(p * 4).cast());
+            let r = _mm256_mullo_epi32(_mm256_and_si256(v, byte), c77);
+            let g = _mm256_mullo_epi32(
+                _mm256_and_si256(_mm256_srli_epi32::<8>(v), byte),
+                c150,
+            );
+            let b = _mm256_mullo_epi32(
+                _mm256_and_si256(_mm256_srli_epi32::<16>(v), byte),
+                c29,
+            );
+            let l = _mm256_srai_epi32::<8>(_mm256_add_epi32(_mm256_add_epi32(r, g), b));
+            _mm256_storeu_si256(pl.add(p).cast(), l);
+            p += 8;
+        }
+        for p in n..pixels {
+            let i = p * 4;
+            let px = ps.add(i);
+            *pl.add(p) = (77 * (*px) as i32 + 150 * (*px.add(1)) as i32
+                + 29 * (*px.add(2)) as i32)
+                >> 8;
+        }
+    }
+}
+
+/// Собель одной строки `edges` для x ∈ [1, w-1): 8 пикселей за итерацию.
+/// Порог и тираж в RGB — как у скаляра (альфу выставляет вызывающий).
+///
+/// # Safety
+/// Требует AVX2; `luma` содержит >= (y+2)*w значений, `out` >= (y*w+w)*4.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn sobel_row_avx2(
+    out: &mut [u8],
+    luma: &[i32],
+    w: usize,
+    y: usize,
+    th: i32,
+    x_end: usize,
+) -> usize {
+    unsafe {
+        let pl = luma.as_ptr();
+        let po = out.as_mut_ptr();
+        let thv = _mm256_set1_epi32(th);
+        let c255i = _mm256_set1_epi32(255);
+        let c255d = _mm256_set1_pd(255.0);
+        let two = _mm256_set1_epi32(2);
+        let alpha = _mm256_set1_epi32(0xFF00_0000u32 as i32);
+        let mut x = 1usize;
+        // грузим строки y-1, y, y+1 со смещениями -1, 0, +1
+        let ld = |row: usize, dx: i64, x: usize| -> __m256i {
+            _mm256_loadu_si256(pl.add((row * w) as isize as usize + (x as i64 + dx) as usize).cast())
+        };
+        while x + 8 <= x_end {
+            let (ym, yc, yp) = (y - 1, y, y + 1);
+            let a_ul = ld(ym, -1, x);
+            let a_uc = ld(ym, 0, x);
+            let a_ur = ld(ym, 1, x);
+            let a_cl = ld(yc, -1, x);
+            let a_cr = ld(yc, 1, x);
+            let a_dl = ld(yp, -1, x);
+            let a_dc = ld(yp, 0, x);
+            let a_dr = ld(yp, 1, x);
+            // gx = -ul - 2*cl - dl + ur + 2*cr + dr
+            let gx = _mm256_add_epi32(
+                _mm256_sub_epi32(
+                    _mm256_sub_epi32(_mm256_sub_epi32(a_ur, a_ul), _mm256_mullo_epi32(a_cl, two)),
+                    a_dl,
+                ),
+                _mm256_add_epi32(_mm256_mullo_epi32(a_cr, two), a_dr),
+            );
+            // gy = -ul - 2*uc - ur + dl + 2*dc + dr
+            let gy = _mm256_add_epi32(
+                _mm256_sub_epi32(
+                    _mm256_sub_epi32(_mm256_sub_epi32(a_dl, a_ul), _mm256_mullo_epi32(a_uc, two)),
+                    a_ur,
+                ),
+                _mm256_add_epi32(_mm256_mullo_epi32(a_dc, two), a_dr),
+            );
+            let sq = _mm256_add_epi32(
+                _mm256_mullo_epi32(gx, gx),
+                _mm256_mullo_epi32(gy, gy),
+            );
+            // sqrt в f64 двумя половинами, усечение как `as i32`
+            let lo = _mm256_cvttpd_epi32(_mm256_min_pd(
+                _mm256_sqrt_pd(_mm256_cvtepi32_pd(_mm256_castsi256_si128(sq))),
+                c255d,
+            ));
+            let hi = _mm256_cvttpd_epi32(_mm256_min_pd(
+                _mm256_sqrt_pd(_mm256_cvtepi32_pd(_mm256_extracti128_si256::<1>(sq))),
+                c255d,
+            ));
+            let mag = _mm256_min_epi32(
+                _mm256_set_m128i(hi, lo),
+                c255i,
+            );
+            // v = if mag < th { 0 } else { mag }
+            let keep = _mm256_cmpgt_epi32(thv, mag); // th > mag
+            let v = _mm256_andnot_si256(keep, mag);
+            let px = _mm256_or_si256(
+                _mm256_or_si256(v, _mm256_slli_epi32::<8>(v)),
+                _mm256_or_si256(_mm256_slli_epi32::<16>(v), alpha),
+            );
+            _mm256_storeu_si256(po.add((y * w + x) * 4).cast(), px);
+            x += 8;
+        }
+        x
+    }
+}
+
+/// Лерп 8 целых лейнов в f64 с округлением half-away: возвращает
+/// `round(a*(1-bleed) + b*bleed)` — порядок операций скалярный.
+///
+/// # Safety
+/// Требует AVX2.
+#[target_feature(enable = "avx2")]
+#[inline]
+unsafe fn lerp8_round(a: __m256i, b: __m256i, inv: __m256d, bl: __m256d) -> __m256i {
+    unsafe {
+        let mix = |ai: __m128i, bi: __m128i| -> __m128i {
+            let av = _mm256_cvtepi32_pd(ai);
+            let bv = _mm256_cvtepi32_pd(bi);
+            let r = _mm256_add_pd(_mm256_mul_pd(av, inv), _mm256_mul_pd(bv, bl));
+            _mm256_cvttpd_epi32(round_half_away_nonneg(r))
+        };
+        let lo = mix(_mm256_castsi256_si128(a), _mm256_castsi256_si128(b));
+        let hi = mix(
+            _mm256_extracti128_si256::<1>(a),
+            _mm256_extracti128_si256::<1>(b),
+        );
+        _mm256_set_m128i(hi, lo)
+    }
+}
+
+/// AVX2-близнец `vhs` для ИНТЕРЬЕРА строки (где клампы xr/xb неактивны):
+/// RGB-сдвиг с лерпом и скан-линии. Возвращает x, на котором остановился
+/// — хвосты и кромки дорисовывает скалярный цикл вызывающего.
+///
+/// # Safety
+/// Требует AVX2; `row` — копия строки длиной w*4, `dst_row` — та же
+/// строка кадра.
+#[target_feature(enable = "avx2")]
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe fn vhs_row_avx2(
+    dst_row: &mut [u8],
+    row: &[u8],
+    w: usize,
+    d: usize,
+    bleed: f64,
+    scan: bool,
+    x_from: usize,
+) -> usize {
+    unsafe {
+        if w <= 2 * d + 8 {
+            return x_from; // интерьера нет — всё скаляром
+        }
+        let byte = _mm256_set1_epi32(0xFF);
+        let inv = _mm256_set1_pd(1.0 - bleed);
+        let bl = _mm256_set1_pd(bleed);
+        let g_sub = _mm256_set1_epi32(18);
+        let zero = _mm256_setzero_si256();
+        let pr = row.as_ptr();
+        let pd = dst_row.as_mut_ptr();
+        let x_end = w - d; // при x < w-d индекс x+d <= w-1 без клампа
+        let mut x = x_from.max(d);
+        while x + 8 <= x_end {
+            let cur = _mm256_loadu_si256(pr.add(x * 4).cast());
+            let right = _mm256_loadu_si256(pr.add((x + d) * 4).cast());
+            let left = _mm256_loadu_si256(pr.add((x - d) * 4).cast());
+            let r = lerp8_round(
+                _mm256_and_si256(cur, byte),
+                _mm256_and_si256(right, byte),
+                inv,
+                bl,
+            );
+            let b = lerp8_round(
+                _mm256_and_si256(_mm256_srli_epi32::<16>(cur), byte),
+                _mm256_and_si256(_mm256_srli_epi32::<16>(left), byte),
+                inv,
+                bl,
+            );
+            let g0 = _mm256_and_si256(_mm256_srli_epi32::<8>(cur), byte);
+            let g = if scan {
+                _mm256_max_epi32(_mm256_sub_epi32(g0, g_sub), zero) // saturating_sub(18)
+            } else {
+                g0
+            };
+            let out = _mm256_or_si256(
+                _mm256_or_si256(r, _mm256_slli_epi32::<8>(g)),
+                _mm256_or_si256(
+                    _mm256_slli_epi32::<16>(b),
+                    // альфа не трогается — берём из копии строки
+                    _mm256_and_si256(cur, _mm256_set1_epi32(0xFF00_0000u32 as i32)),
+                ),
+            );
+            _mm256_storeu_si256(pd.add(x * 4).cast(), out);
+            x += 8;
+        }
+        x
+    }
+}

@@ -73,7 +73,7 @@ pub mod simd_testing {
         oh: u32,
         out: &mut [u8],
     ) {
-        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+        assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
         // SAFETY: фича проверена строкой выше, длины буферов — на
         // ответственности теста (он их и создаёт)
         unsafe { crate::video_simd::bilinear_into_avx2(src, x0, y0, cw, ch, ow, oh, out) };
@@ -83,7 +83,7 @@ pub mod simd_testing {
     /// трогается — тест дорисовывает его скаляром).
     #[cfg(target_arch = "x86_64")]
     pub fn noise_avx2(rgba: &mut [u8], w: u32, h: u32, seed: u32, k: i64) {
-        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+        assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
         // SAFETY: фича проверена; длины — на ответственности теста
         unsafe { crate::video_simd::noise_avx2(rgba, w, h, seed, k) };
     }
@@ -91,7 +91,7 @@ pub mod simd_testing {
     /// AVX2-ядро аддитива glow.
     #[cfg(target_arch = "x86_64")]
     pub fn glow_add_avx2(dst: &mut [u8], up: &[u8], s: f64, pixels: usize) {
-        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+        assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
         // SAFETY: фича проверена
         unsafe { crate::video_simd::glow_add_avx2(dst, up, s, pixels) };
     }
@@ -109,6 +109,68 @@ pub mod simd_testing {
         }
     }
 
+    /// Скалярный эталон edges целиком (копия тела из video.rs) — t198
+    /// сверяет с ним результат ПУБЛИЧНОЙ цепочки, идущей SIMD-путём.
+    pub fn edges_scalar(rgba: &[u8], w: usize, h: usize, threshold: u32) -> Vec<u8> {
+        let th = threshold.clamp(1, 255) as i32;
+        let luma: Vec<i32> = rgba
+            .chunks_exact(4)
+            .map(|p| (77 * p[0] as i32 + 150 * p[1] as i32 + 29 * p[2] as i32) >> 8)
+            .collect();
+        let mut out = vec![0u8; rgba.len()];
+        for p in out.chunks_exact_mut(4) {
+            p[3] = 255;
+        }
+        for y in 1..h.saturating_sub(1) {
+            for x in 1..w.saturating_sub(1) {
+                let l = |dx: i64, dy: i64| {
+                    luma[(y as i64 + dy) as usize * w + (x as i64 + dx) as usize]
+                };
+                let gx = -l(-1, -1) - 2 * l(-1, 0) - l(-1, 1) + l(1, -1) + 2 * l(1, 0) + l(1, 1);
+                let gy = -l(-1, -1) - 2 * l(0, -1) - l(1, -1) + l(-1, 1) + 2 * l(0, 1) + l(1, 1);
+                let mag = (((gx * gx + gy * gy) as f64).sqrt() as i32).min(255);
+                let v = if mag < th { 0 } else { mag as u8 };
+                let i = (y * w + x) * 4;
+                out[i] = v;
+                out[i + 1] = v;
+                out[i + 2] = v;
+            }
+        }
+        out
+    }
+
+    /// Скалярный эталон vhs целиком (копия тела из video.rs).
+    pub fn vhs_scalar(
+        rgba: &mut [u8],
+        w: usize,
+        h: usize,
+        rgb_shift: u32,
+        bleed: f64,
+        burst_index: i64,
+    ) {
+        let shift = rgb_shift.clamp(0, 12) as i64;
+        let bleed = bleed.clamp(0.0, 1.0);
+        let line_off = ((burst_index / 3000) % 7) as usize;
+        let mut row = vec![0u8; w * 4];
+        for y in 0..h {
+            let scan = if (y + line_off).is_multiple_of(4) { 1i64 } else { 0 };
+            let r0 = y * w * 4;
+            row.copy_from_slice(&rgba[r0..r0 + w * 4]);
+            for x in 0..w {
+                let i = r0 + x * 4;
+                let xr = (x as i64 + shift + scan).clamp(0, w as i64 - 1) as usize;
+                let xb = (x as i64 - shift - scan).clamp(0, w as i64 - 1) as usize;
+                let r = row[xr * 4] as f64;
+                let b = row[xb * 4 + 2] as f64;
+                rgba[i] = (row[x * 4] as f64 * (1.0 - bleed) + r * bleed).round() as u8;
+                rgba[i + 2] = (row[x * 4 + 2] as f64 * (1.0 - bleed) + b * bleed).round() as u8;
+                if scan == 1 {
+                    rgba[i + 1] = row[x * 4 + 1].saturating_sub(18);
+                }
+            }
+        }
+    }
+
     pub fn glow_add_scalar(dst: &mut [u8], up: &[u8], s: f64) {
         for (o, u) in dst.chunks_exact_mut(4).zip(up.chunks_exact(4)) {
             for c in 0..3 {
@@ -121,7 +183,7 @@ pub mod simd_testing {
     /// (микро-доказательство против `f64::round`).
     #[cfg(target_arch = "x86_64")]
     pub fn round_half_away_avx2(v: [f64; 4]) -> [f64; 4] {
-        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+        assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
         // SAFETY: фича проверена
         unsafe {
             use std::arch::x86_64::*;

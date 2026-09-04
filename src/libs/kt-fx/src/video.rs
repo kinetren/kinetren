@@ -330,6 +330,10 @@ fn greenscreen(mut f: Frame, key: [u8; 3], tolerance: u32, softness: u32) -> Fra
     let tol = tolerance.clamp(1, 200) as f64;
     let soft = softness.clamp(0, 100) as f64;
     let hard = (tol - soft).max(0.0);
+    // greenscreen оставлен СКАЛЯРОМ осознанно (Р.32): замер показал
+    // всего ×1.29 при пороге 1.3 — LLVM уже неплохо векторизует этот
+    // цикл сам, а 60 строк интринзиков в месте, где важна побайтовая
+    // точность, того не стоят. Цифры — в porting-notes п.198.
     for px in f.rgba.chunks_exact_mut(4) {
         let d = ((px[0] as f64 - key[0] as f64).powi(2)
             + (px[1] as f64 - key[1] as f64).powi(2)
@@ -350,17 +354,40 @@ fn greenscreen(mut f: Frame, key: [u8; 3], tolerance: u32, softness: u32) -> Fra
 fn edges(f: Frame, threshold: u32, scratch: &mut FxScratch) -> Frame {
     let th = threshold.clamp(1, 255) as i32;
     let (w, h) = (f.w as usize, f.h as usize);
-    let luma: Vec<i32> = f
-        .rgba
-        .chunks_exact(4)
-        .map(|p| (77 * p[0] as i32 + 150 * p[1] as i32 + 29 * p[2] as i32) >> 8)
-        .collect();
+    #[cfg(target_arch = "x86_64")]
+    let simd = crate::simd::simd_level() == crate::simd::SimdLevel::Avx2
+        && f.rgba.len() >= w * h * 4;
+    #[cfg(not(target_arch = "x86_64"))]
+    let simd = false;
+    let luma: Vec<i32> = if simd {
+        let mut v = vec![0i32; w * h];
+        #[cfg(target_arch = "x86_64")]
+        // SAFETY: уровень проверен детектом, длины буферов — выше
+        unsafe {
+            crate::video_simd::luma_avx2(&mut v, &f.rgba, w * h)
+        };
+        v
+    } else {
+        f.rgba
+            .chunks_exact(4)
+            .map(|p| (77 * p[0] as i32 + 150 * p[1] as i32 + 29 * p[2] as i32) >> 8)
+            .collect()
+    };
     let mut out = scratch.take(f.rgba.len());
     for p in out.chunks_exact_mut(4) {
         p[3] = 255;
     }
     for y in 1..h.saturating_sub(1) {
-        for x in 1..w.saturating_sub(1) {
+        // векторная часть строки; скалярный цикл ниже дорисовывает хвост
+        let mut x_from = 1usize;
+        #[cfg(target_arch = "x86_64")]
+        if simd && w > 2 {
+            // SAFETY: уровень проверен; строки y-1..y+1 существуют, out полон
+            x_from = unsafe {
+                crate::video_simd::sobel_row_avx2(&mut out, &luma, w, y, th, w - 1)
+            };
+        }
+        for x in x_from..w.saturating_sub(1) {
             let l =
                 |dx: i64, dy: i64| luma[(y as i64 + dy) as usize * w + (x as i64 + dx) as usize];
             let gx = -l(-1, -1) - 2 * l(-1, 0) - l(-1, 1) + l(1, -1) + 2 * l(1, 0) + l(1, 1);
@@ -456,7 +483,42 @@ fn vhs(mut f: Frame, rgb_shift: u32, bleed: f64, burst_index: i64, scratch: &mut
         let scan = if (y + line_off).is_multiple_of(4) { 1i64 } else { 0 };
         let r0 = y * w * 4;
         row.copy_from_slice(&f.rgba[r0..r0 + w * 4]);
-        for x in 0..w {
+        // векторный интерьер строки; кромки и хвост — скалярным циклом
+        let mut x_from = 0usize;
+        #[cfg(target_arch = "x86_64")]
+        if crate::simd::simd_level() == crate::simd::SimdLevel::Avx2 {
+            let d = (shift + scan) as usize;
+            // SAFETY: уровень проверен; row длиной w*4, срез строки — тоже
+            x_from = unsafe {
+                crate::video_simd::vhs_row_avx2(
+                    &mut f.rgba[r0..r0 + w * 4],
+                    &row,
+                    w,
+                    d,
+                    bleed,
+                    scan == 1,
+                    0,
+                )
+            };
+        }
+        // левая кромка (её пропустил вектор, начав с x = d)
+        #[cfg(target_arch = "x86_64")]
+        if x_from > 0 {
+            for x in 0..(shift + scan) as usize {
+                let i = r0 + x * 4;
+                let xr = (x as i64 + shift + scan).clamp(0, w as i64 - 1) as usize;
+                let xb = (x as i64 - shift - scan).clamp(0, w as i64 - 1) as usize;
+                let r = row[xr * 4] as f64;
+                let b = row[xb * 4 + 2] as f64;
+                f.rgba[i] = (row[x * 4] as f64 * (1.0 - bleed) + r * bleed).round() as u8;
+                f.rgba[i + 2] =
+                    (row[x * 4 + 2] as f64 * (1.0 - bleed) + b * bleed).round() as u8;
+                if scan == 1 {
+                    f.rgba[i + 1] = row[x * 4 + 1].saturating_sub(18);
+                }
+            }
+        }
+        for x in x_from..w {
             let i = r0 + x * 4;
             let xr = (x as i64 + shift + scan).clamp(0, w as i64 - 1) as usize;
             let xb = (x as i64 - shift - scan).clamp(0, w as i64 - 1) as usize;

@@ -23,7 +23,7 @@ mod video_simd;
 #[cfg(target_arch = "x86_64")]
 pub mod simd_testing {
     fn need_avx2() {
-        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+        assert!(std::is_x86_feature_detected!("avx2"), "AVX2 is required");
     }
 
     /// `x / 255` восемью лейнами — микро-доказательство домена.
