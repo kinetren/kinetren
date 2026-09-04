@@ -23,6 +23,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, src: i64) -> C
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     }
@@ -152,6 +153,7 @@ fn t164_legacy_import_keeps_overlaps_and_lanes() {
             reversed: false,
             fx: vec![],
             fx_bypass: vec![],
+            fx_auto: vec![],
             opacity: 1.0,
         });
     };

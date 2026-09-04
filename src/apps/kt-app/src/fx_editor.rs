@@ -13,6 +13,8 @@ pub struct FxEditor {
     pub clip: ClipId,
     pub picker_query: String,
     pub backup: Vec<FxInstance>,
+    /// Кривые автоматизации на момент открытия (Cancel возвращает всё).
+    pub backup_auto: Vec<Vec<kt_model::ParamCurve>>,
     pub gesture: u64,
     pub selected: usize,
     pub sel_kf: Option<usize>,
@@ -30,6 +32,7 @@ impl KtApp {
             clip,
             picker_query: String::new(),
             backup: c.fx.clone(),
+            backup_auto: c.fx_auto.clone(),
             gesture: self.gesture_counter,
             selected: c.fx.len().saturating_sub(1),
             sel_kf: None,
@@ -37,8 +40,25 @@ impl KtApp {
         });
     }
 
-    fn set_fx_coalesced(&mut self, clip: ClipId, fx: Vec<FxInstance>, gesture: u64) {
+    pub(crate) fn set_fx_coalesced(&mut self, clip: ClipId, fx: Vec<FxInstance>, gesture: u64) {
         if self.model.apply_coalesced(Command::SetFx { id: clip, fx }, gesture).is_ok() {
+            self.player.set_project(self.model.project().clone());
+            self.dirty_content = true;
+        }
+    }
+
+    /// Кривые автоматизации (Р.30): тот же gesture, что у SetFx — один
+    /// undo-шаг на сессию окна.
+    pub(crate) fn set_fx_auto_coalesced(
+        &mut self,
+        clip: ClipId,
+        mut auto: Vec<Vec<kt_model::ParamCurve>>,
+        gesture: u64,
+    ) {
+        while auto.last().is_some_and(|v| v.is_empty()) {
+            auto.pop(); // хвост без кривых не сериализуется зря
+        }
+        if self.model.apply_coalesced(Command::SetFxAuto { id: clip, auto }, gesture).is_ok() {
             self.player.set_project(self.model.project().clone());
             self.dirty_content = true;
         }
@@ -84,7 +104,11 @@ impl KtApp {
         let mut fx = clip.fx.clone();
         let mut bypass = clip.fx_bypass.clone();
         bypass.resize(fx.len(), false);
+        // кривые автоматизации (Р.30) двигаются ПАРАЛЛЕЛЬНО слотам
+        let mut auto = clip.fx_auto.clone();
+        auto.resize(fx.len(), Vec::new());
         let mut changed = false;
+        let mut auto_changed = false;
         let mut bypass_changed = false;
         let mut open = ed.open;
         egui::Window::new(title)
@@ -125,6 +149,7 @@ impl KtApp {
                         &mut ed.picker_query,
                     ) {
                         fx.push(tmpl);
+                        auto.push(Vec::new());
                         ed.selected = fx.len() - 1;
                         changed = true;
                     }
@@ -150,6 +175,8 @@ impl KtApp {
                         if ui.button(tr(k::fx::REMOVE_SLOT)).clicked() && ed.selected < fx.len()
                         {
                             fx.remove(ed.selected);
+                            auto.remove(ed.selected);
+                            auto_changed = true;
                             if ed.selected < bypass.len() {
                                 bypass.remove(ed.selected);
                                 bypass_changed = true;
@@ -167,6 +194,8 @@ impl KtApp {
                             && ed.selected > 0
                         {
                             fx.swap(ed.selected, ed.selected - 1);
+                            auto.swap(ed.selected, ed.selected - 1);
+                            auto_changed = true;
                             bypass.swap(ed.selected, ed.selected - 1);
                             bypass_changed = true;
                             ed.selected -= 1;
@@ -181,6 +210,8 @@ impl KtApp {
                             && ed.selected + 1 < fx.len()
                         {
                             fx.swap(ed.selected, ed.selected + 1);
+                            auto.swap(ed.selected, ed.selected + 1);
+                            auto_changed = true;
                             bypass.swap(ed.selected, ed.selected + 1);
                             bypass_changed = true;
                             ed.selected += 1;
@@ -416,6 +447,14 @@ impl KtApp {
                         // видео-FX рисуются draw_video_fx_params выше
                         _ => {}
                     }
+                    // --- автоматизация параметров (Р.30, видео-слоты) ----
+                    auto_changed |= draw_fx_auto_section(
+                        ui,
+                        ed.clip,
+                        ed.selected,
+                        &fx[ed.selected],
+                        &mut auto[ed.selected],
+                    );
                 } else {
                     ui.weak(tr(k::fx::CHAIN_EMPTY));
                 }
@@ -426,7 +465,10 @@ impl KtApp {
                     }
                     if ui.button(tr(k::fx::CANCEL)).clicked() {
                         fx = ed.backup.clone();
+                        auto = ed.backup_auto.clone();
+                        auto.resize(fx.len(), Vec::new());
                         changed = true;
+                        auto_changed = true;
                         ed.open = false;
                     }
                 });
@@ -439,6 +481,15 @@ impl KtApp {
         }
         if changed {
             self.set_fx_coalesced(ed.clip, fx, ed.gesture);
+        }
+        if auto_changed {
+            // ключи держим отсортированными (модель это валидирует)
+            for curves in &mut auto {
+                for c in curves.iter_mut() {
+                    c.keys.sort_by(|a, b| a.t.total_cmp(&b.t));
+                }
+            }
+            self.set_fx_auto_coalesced(ed.clip, auto, ed.gesture);
         }
         if bypass_changed {
             // хвостовые false не сериализуются зря
@@ -453,6 +504,97 @@ impl KtApp {
             self.dirty_content = true;
         }
     }
+}
+
+/// Секция автоматизации параметров слота (Р.30): кривые (t, v) по
+/// прогрессу клипа 0..1. Возвращает true при любой правке. У слота без
+/// автоматизируемых параметров (Mirror, аудио) не рисуется вовсе.
+fn draw_fx_auto_section(
+    ui: &mut egui::Ui,
+    clip: ClipId,
+    slot: usize,
+    f: &FxInstance,
+    curves: &mut Vec<kt_model::ParamCurve>,
+) -> bool {
+    let specs = f.param_specs();
+    if specs.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.label(tr(k::fx::AUTO_CLIP));
+        // параметры без кривой — кандидаты на добавление
+        let free: Vec<(&str, f64, f64)> = specs
+            .iter()
+            .filter(|(n, _, _)| !curves.iter().any(|c| c.param == *n))
+            .copied()
+            .collect();
+        if !free.is_empty() {
+            egui::ComboBox::from_id_salt(("fx_auto_add", clip, slot))
+                .selected_text(tr(k::fx::AUTO_ADD))
+                .show_ui(ui, |ui| {
+                    for (n, _, _) in &free {
+                        if ui.button(*n).clicked() {
+                            // стартовая кривая — константа текущего значения
+                            let v0 = f.get_param(n).unwrap_or(0.0);
+                            curves.push(kt_model::ParamCurve {
+                                param: n.to_string(),
+                                ease: true,
+                                keys: vec![
+                                    kt_model::AutoKey { t: 0.0, v: v0 },
+                                    kt_model::AutoKey { t: 1.0, v: v0 },
+                                ],
+                            });
+                            changed = true;
+                        }
+                    }
+                });
+        }
+    });
+    let mut drop_curve: Option<usize> = None;
+    for (ci, c) in curves.iter_mut().enumerate() {
+        let (_, lo, hi) = *specs
+            .iter()
+            .find(|(n, _, _)| *n == c.param)
+            .unwrap_or(&("", 0.0, 1.0));
+        ui.horizontal(|ui| {
+            ui.strong(&c.param);
+            ui.label("Ease:");
+            changed |= ui.checkbox(&mut c.ease, "").changed();
+            if ui.button(tr(k::fx::ADD_KF)).clicked() {
+                let t = c.keys.last().map(|k| (k.t + 0.25).min(1.0)).unwrap_or(0.0);
+                let v = c.keys.last().map(|k| k.v).unwrap_or(lo);
+                c.keys.push(kt_model::AutoKey { t, v });
+                changed = true;
+            }
+            if !c.keys.is_empty() && ui.button(tr(k::fx::DROP_LAST)).clicked() {
+                c.keys.pop();
+                changed = true;
+            }
+            if ui.button(tr(k::fx::AUTO_REMOVE)).clicked() {
+                drop_curve = Some(ci);
+            }
+        });
+        let speed = ((hi - lo) / 500.0).max(1e-4);
+        for (i, key) in c.keys.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("#{i} t:"));
+                changed |= ui
+                    .add(egui::DragValue::new(&mut key.t).range(0.0..=1.0).speed(0.005))
+                    .changed();
+                ui.label("v:");
+                changed |= ui
+                    .add(egui::DragValue::new(&mut key.v).range(lo..=hi).speed(speed))
+                    .changed();
+            });
+        }
+    }
+    if let Some(ci) = drop_curve {
+        curves.remove(ci);
+        changed = true;
+    }
+    changed
 }
 
 /// Имя эффекта в полосе цепочки.

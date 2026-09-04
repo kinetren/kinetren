@@ -25,6 +25,7 @@ fn base_project() -> Project {
             reversed: false,
             fx: vec![],
             fx_bypass: vec![],
+            fx_auto: vec![],
             opacity: 1.0,
         });
     }

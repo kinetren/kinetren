@@ -76,7 +76,7 @@ impl Src {
             source: self.source,
             cache_idx: 0,
             frame: self.frame.clone(),
-            fx: &self.fx,
+            fx: std::borrow::Cow::Borrowed(&self.fx[..]),
             fx_hash: self.fx_hash,
             u: self.u,
             cam3d: None,

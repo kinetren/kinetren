@@ -40,6 +40,7 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx,
         opacity: 1.0,
     });
@@ -245,6 +246,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     });

@@ -78,6 +78,7 @@ fn clip(id: u64, media: u64, lane: u32, start: i64, dur: i64, src_in: i64) -> Cl
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     }

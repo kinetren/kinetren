@@ -205,7 +205,23 @@
                                         "anchor_x": 0.5,
                                         "anchor_y": 0.5,
                                         "scale": 1.1,
-                                        "camera": 2
+                                        "camera": 2,
+                                        "auto": [
+                                            {
+                                                "param": "rot_y",
+                                                "ease": true,
+                                                "keys": [
+                                                    {
+                                                        "t": 0.0,
+                                                        "v": 0.0
+                                                    },
+                                                    {
+                                                        "t": 1.0,
+                                                        "v": 90.0
+                                                    }
+                                                ]
+                                            }
+                                        ]
                                     }
                                 }
                             }

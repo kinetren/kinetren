@@ -20,6 +20,7 @@ fn sample_project() -> Project {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![FxInstance::slowed_reverb(0.82, 0.3, 140.0)],
         opacity: 1.0,
     });
@@ -35,6 +36,7 @@ fn sample_project() -> Project {
         gain_db: -3.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     });

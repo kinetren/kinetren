@@ -28,6 +28,9 @@ struct VideoClip {
     media: MediaId,
     reversed: bool,
     fx: Vec<kt_model::FxInstance>,
+    /// Кривые автоматизации по слотам (Р.30), выровнены с fx (bypass уже
+    /// отфильтрован вместе — active_fx_auto).
+    auto: Vec<Vec<kt_model::ParamCurve>>,
     /// Ключ пост-FX кэша (п.2 р.7): параметры цепочки + геометрия клипа +
     /// шаг сетки. Любая правка модели пересоздаёт VideoRenderer → хэш
     /// пересчитывается, стейл-кадры не читаются (их ключ не совпадёт).
@@ -64,14 +67,17 @@ impl VideoClip {
 /// frame_step — сетку (смена fps проекта обязана инвалидировать).
 fn fx_chain_hash(
     fx: &[kt_model::FxInstance],
+    auto: &[Vec<kt_model::ParamCurve>],
     start: Tick,
     end: Tick,
     source_in: Tick,
     reversed: bool,
     frame_step: i64,
 ) -> u64 {
+    // кривые автоматизации — часть ключа (Р.30): правка кейфрейма обязана
+    // инвалидировать пост-FX кадры, пережившие пересоздание рендерера
     let repr = format!(
-        "{fx:?}|{}|{}|{}|{reversed}|{frame_step}",
+        "{fx:?}|{auto:?}|{}|{}|{}|{reversed}|{frame_step}",
         start.0,
         end.0 - start.0,
         source_in.0
@@ -129,8 +135,10 @@ impl VideoRenderer {
             .filter(|c| c.kind == ClipKind::Video)
             .map(|c| {
                 let fx = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
+                let auto = c.active_fx_auto();
                 let fx_hash = fx_chain_hash(
                     &fx,
+                    &auto,
                     c.start,
                     c.start + c.duration,
                     c.source_in,
@@ -146,6 +154,7 @@ impl VideoRenderer {
                     media: c.media,
                     reversed: c.reversed,
                     fx,
+                    auto,
                     fx_hash,
                     fade_in: None,
                     fade_out: None,
@@ -285,6 +294,21 @@ fn layer_src<'a>(
     let frame = cache.get_video(source, Some(quality), cache_idx);
     let span = (clip.end.0 - clip.start.0).max(1);
     let u = (t.0 - clip.start.0) as f64 / span as f64;
+    // автоматизация (Р.30): кривые разрешаются ЗДЕСЬ, один раз на кадр —
+    // CPU и GPU получают уже вычисленные параметры (клон цепочки только
+    // при живых кривых)
+    let fx: std::borrow::Cow<'_, [kt_model::FxInstance]> =
+        if clip.auto.iter().any(|c| c.iter().any(|p| !p.keys.is_empty())) {
+            let mut owned = clip.fx.clone();
+            for (i, f) in owned.iter_mut().enumerate() {
+                if let Some(curves) = clip.auto.get(i) {
+                    kt_model::apply_fx_auto(f, curves, u);
+                }
+            }
+            std::borrow::Cow::Owned(owned)
+        } else {
+            std::borrow::Cow::Borrowed(&clip.fx[..])
+        };
     // 3D-эффект → разрешаем камеру: прибитая по id, иначе активная по t,
     // иначе дефолтная «50 мм» (тождество для Pan3d с дефолтами)
     let cam3d = clip
@@ -304,7 +328,7 @@ fn layer_src<'a>(
                 world_scale: quality.width as f64 / ctx.project_size.0.max(1) as f64,
             }
         });
-    LayerSrc { source, cache_idx, frame, fx: &clip.fx, fx_hash: clip.fx_hash, u, cam3d }
+    LayerSrc { source, cache_idx, frame, fx, fx_hash: clip.fx_hash, u, cam3d }
 }
 
 /// Построение плана кадра: какие слои, в каких ролях и с какими весами.
@@ -463,7 +487,7 @@ fn layer_frame_cpu(
     scratch: &mut kt_fx::video::FxScratch,
     t: Tick,
 ) -> Option<Arc<VideoFrame>> {
-    if !kt_fx::video::has_video_fx(src.fx) {
+    if !kt_fx::video::has_video_fx(&src.fx) {
         return src.frame.clone();
     }
     // цепочка видео-FX (п.25): кэш хранит ПРЕ-FX кадры (правда о
@@ -485,7 +509,7 @@ fn layer_frame_cpu(
     let mut rgba = scratch.take(frame.rgba.len());
     rgba.copy_from_slice(&frame.rgba);
     let f = kt_fx::video::apply_video_chain_pooled(
-        src.fx,
+        &src.fx,
         kt_fx::video::Frame { w: frame.width, h: frame.height, rgba, has_alpha: frame.has_alpha },
         &ctx,
         scratch,

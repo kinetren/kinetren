@@ -24,6 +24,7 @@ fn project_with_fx(fx: Vec<FxInstance>, start_frames: i64) -> Project {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx,
         opacity: 1.0,
     });

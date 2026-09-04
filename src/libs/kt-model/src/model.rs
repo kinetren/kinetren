@@ -69,6 +69,12 @@ pub enum Command {
         id: ClipId,
         fx: Vec<FxInstance>,
     },
+    /// Автоматизация параметров видео-FX (Р.30): полная замена кривых
+    /// клипа (параллельно fx, как fx_bypass). UI шлёт coalesced-жестом.
+    SetFxAuto {
+        id: ClipId,
+        auto: Vec<Vec<ParamCurve>>,
+    },
     LinkClips {
         ids: Vec<ClipId>,
         group: GroupId,
@@ -370,6 +376,10 @@ impl TimelineModel {
             | Command::UnlinkClip { id }
             | Command::MoveClip { id, .. } => {
                 find(*id)?;
+            }
+            Command::SetFxAuto { id, auto } => {
+                find(*id)?;
+                check_fx_auto(*id, auto).map_err(CommandError::InvalidClip)?;
             }
             Command::TrimStart { id, new_start } => {
                 let c = find(*id)?;
@@ -697,7 +707,15 @@ impl TimelineModel {
             }
             Command::SetReversed { id, reversed } => Self::clip_mut_on(p, id).reversed = reversed,
             Command::SetFxBypass { id, bypass } => Self::clip_mut_on(p, id).fx_bypass = bypass,
-            Command::SetFx { id, fx } => Self::clip_mut_on(p, id).fx = fx,
+            Command::SetFx { id, fx } => {
+                let c = Self::clip_mut_on(p, id);
+                // цепочка сменилась — кривые лишних слотов отпадают (Р.30);
+                // перестановку слотов редактор ведёт сам и шлёт SetFxAuto
+                // тем же жестом
+                c.fx_auto.truncate(fx.len());
+                c.fx = fx;
+            }
+            Command::SetFxAuto { id, auto } => Self::clip_mut_on(p, id).fx_auto = auto,
             Command::LinkClips { ids, group } => {
                 for c in &mut p.clips {
                     if ids.contains(&c.id) {

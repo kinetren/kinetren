@@ -26,6 +26,7 @@ fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
         gain_db: 0.0,
         reversed,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx,
         opacity: 1.0,
     });

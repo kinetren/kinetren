@@ -29,6 +29,7 @@ fn project() -> Project {
         reversed: false,
         fx: vec![],
         fx_bypass: vec![],
+        fx_auto: vec![],
         opacity: 1.0,
     });
     p.validate().unwrap();

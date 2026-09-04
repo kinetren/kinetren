@@ -30,6 +30,7 @@ fn project_pair() -> Project {
             reversed: false,
             fx: vec![],
             fx_bypass: vec![],
+            fx_auto: vec![],
             opacity: 1.0,
         });
     }
@@ -307,6 +308,7 @@ fn t174_clip_opacity_scales_the_layer() {
             reversed: false,
             fx: vec![],
             fx_bypass: vec![],
+            fx_auto: vec![],
             opacity: 1.0,
         });
     }

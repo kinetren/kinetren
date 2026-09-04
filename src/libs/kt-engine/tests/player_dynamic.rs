@@ -23,6 +23,7 @@ fn base_project() -> Project {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     });
@@ -82,6 +83,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     });

@@ -769,7 +769,7 @@ impl Inner {
             return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
         }
         let (ops, (fw, fh), ha, ha_known) =
-            chain_ops(src.fx, frame.width, frame.height, ow, oh, src.u, t, src.cam3d);
+            chain_ops(&src.fx, frame.width, frame.height, ow, oh, src.u, t, src.cam3d);
         let has_alpha = if ha_known { ha } else { frame.has_alpha };
         let view =
             self.upload

@@ -50,6 +50,7 @@ fn sample() -> Project {
             reversed: id == 2,
             fx: if id == 1 { vec![FxInstance::Gain { db: 1.5 }] } else { vec![] },
             fx_bypass: vec![],
+            fx_auto: vec![],
             opacity: 1.0,
         });
     }

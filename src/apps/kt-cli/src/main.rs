@@ -376,6 +376,7 @@ fn demo_project() -> Project {
         gain_db: gain,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx,
         opacity: 1.0,
     };

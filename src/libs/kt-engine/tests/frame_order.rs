@@ -32,6 +32,7 @@ fn project(fps: u32, reversed: bool) -> Project {
         gain_db: 0.0,
         reversed,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     });

@@ -384,6 +384,7 @@ fn t94_forward_navigation_advances() {
             gain_db: 0.0,
             reversed: false,
             fx_bypass: vec![],
+            fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
         });
@@ -463,6 +464,7 @@ fn t95_clip_drag_snaps_to_neighbour() {
                     gain_db: 0.0,
                     reversed: false,
                     fx_bypass: vec![],
+                    fx_auto: vec![],
                     fx: vec![],
                     opacity: 1.0,
                 });
@@ -1238,6 +1240,7 @@ fn t122_insert_lane_after_clicked_row() {
             gain_db: 0.0,
             reversed: false,
             fx_bypass: vec![],
+            fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
         });
@@ -1320,6 +1323,7 @@ fn t120_space_hold_boosts_playback() {
             gain_db: 0.0,
             reversed: false,
             fx_bypass: vec![],
+            fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
         });
@@ -1436,6 +1440,7 @@ fn t119_shift_nav_drags_region() {
                 gain_db: 0.0,
                 reversed: false,
                 fx_bypass: vec![],
+                fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
             });
@@ -1957,6 +1962,7 @@ fn t139_move_plan_crossfade_and_clamp() {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     };
@@ -2044,6 +2050,7 @@ fn t139_drag_overlap_creates_crossfade() {
                 gain_db: 0.0,
                 reversed: false,
                 fx_bypass: vec![],
+                fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
             });
@@ -2118,6 +2125,7 @@ fn t140_transition_edge_and_body_drags() {
                 gain_db: 0.0,
                 reversed: false,
                 fx_bypass: vec![],
+                fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
             });
@@ -2227,6 +2235,7 @@ fn t163_overlap_drag_changes_nothing_but_position() {
                 gain_db: 0.0,
                 reversed: false,
                 fx_bypass: vec![],
+                fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
             });
@@ -2319,6 +2328,7 @@ fn t160_pulling_apart_restores_trimmed_material() {
                 gain_db: 0.0,
                 reversed: false,
                 fx_bypass: vec![],
+                fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
             });
@@ -2403,6 +2413,7 @@ fn t157_fade_edge_drag_without_neighbour() {
             gain_db: 0.0,
             reversed: false,
             fx_bypass: vec![],
+            fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
         });
@@ -2621,6 +2632,7 @@ fn t169_preview_material_shifts_only_on_trim_start() {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     };
@@ -2739,6 +2751,7 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
             gain_db: 0.0,
             reversed: false,
             fx_bypass: vec![],
+            fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
         });
@@ -2850,6 +2863,7 @@ fn t173_corner_fade_and_level_gestures() {
             gain_db: 0.0,
             reversed: false,
             fx_bypass: vec![],
+            fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
         });
@@ -2969,6 +2983,7 @@ fn t176_audio_and_video_share_one_level_line() {
             gain_db: 0.0,
             reversed: false,
             fx_bypass: vec![],
+            fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
         });
@@ -3062,4 +3077,71 @@ fn t185_gpu_loss_notice_once() {
         .filter(|t| **t == crate::tf!(k::msg::VIDEO_FX_GPU_LOST, "DeviceLost"))
         .count();
     assert_eq!(hits, 1, "предупреждение ровно одно: {texts:?}");
+}
+
+/// Тест 193 (Р.30): редактор FX и автоматизация — окно с кривыми рисуется,
+/// а пара SetFx+SetFxAuto одного жеста коалесцируется в ОДИН undo-шаг
+/// (иначе Ctrl+Z откатывал бы цепочку и кривые вразнобой).
+#[test]
+fn t193_fx_editor_automation_coalesces_into_one_undo() {
+    use kt_model::*;
+    let mut h = harness();
+    // видео-клип с Blur и живой кривой — секция автоматизации рисуется
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(9),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(9),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::Blur { radius: 8 }],
+        fx_bypass: vec![],
+        fx_auto: vec![vec![ParamCurve {
+            param: "radius".into(),
+            ease: false,
+            keys: vec![AutoKey { t: 0.0, v: 1.0 }, AutoKey { t: 1.0, v: 48.0 }],
+        }]],
+        opacity: 1.0,
+    });
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(9));
+    h.step();
+    h.step();
+    assert!(h.state().fx_editors.iter().any(|e| e.open), "окно редактора живо с кривыми");
+
+    // жест редактора: цепочка + кривые ОДНИМ gesture-токеном (как UI)
+    let app = h.state_mut();
+    let depth_before = app.model.undo_depth();
+    let gesture = app.fx_editors[0].gesture;
+    let fx = vec![FxInstance::Blur { radius: 20 }, FxInstance::Glow { strength: 1.0 }];
+    let auto = vec![
+        vec![ParamCurve {
+            param: "radius".into(),
+            ease: false,
+            keys: vec![AutoKey { t: 0.0, v: 2.0 }],
+        }],
+        vec![],
+    ];
+    app.set_fx_coalesced(ClipId(9), fx.clone(), gesture);
+    app.set_fx_auto_coalesced(ClipId(9), auto, gesture);
+    let c = app.model.clip(ClipId(9)).unwrap().clone();
+    assert_eq!(c.fx, fx);
+    assert_eq!(c.fx_auto.len(), 1, "хвост без кривых подрезан");
+    assert_eq!(
+        app.model.undo_depth(),
+        depth_before + 1,
+        "оба изменения жеста — один undo-шаг"
+    );
+    app.model.undo().unwrap();
+    let c = app.model.clip(ClipId(9)).unwrap().clone();
+    assert_eq!(c.fx.len(), 1, "undo вернул цепочку");
+    assert_eq!(c.fx_auto[0][0].keys.len(), 2, "undo вернул кривые тем же шагом");
+    h.step();
 }

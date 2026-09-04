@@ -24,6 +24,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, media: u64) ->
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     }
@@ -313,6 +314,7 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
             reversed: false,
             fx: vec![],
             fx_bypass: vec![],
+            fx_auto: vec![],
             opacity: 1.0,
         });
     }
@@ -468,6 +470,12 @@ fn project_3d() -> Project {
         scale: 1.1,
         camera: Some(CameraId(2)),
     }];
+    // автоматизация (Р.30): кривая поворота — замораживается тем же golden
+    p.clips[0].fx_auto = vec![vec![ParamCurve {
+        param: "rot_y".into(),
+        ease: true,
+        keys: vec![AutoKey { t: 0.0, v: 0.0 }, AutoKey { t: 1.0, v: 90.0 }],
+    }]];
     // две камеры на двух дорожках, с перекрытием по времени и кейфреймами
     p.camera_lanes = 2;
     p.cameras = vec![
@@ -551,6 +559,40 @@ fn t189_matches_committed_golden() {
     let out = save_project(&project_3d(), &Retained::default(), None);
     let golden = include_str!("../../../fixtures/demo-3d.otio");
     assert_eq!(out, golden, "3D-схема (камеры/Pan3d) разошлась с golden");
+}
+
+// ---- тест 192 (Р.30): автоматизация параметров в файле ------------------------
+
+/// Кривые едут внутри kt-конверта эффекта; файл С автоматизацией — v2
+/// (старый ридер потерял бы её молча), без неё — v1. Round-trip и
+/// идемпотентность.
+#[test]
+fn t192_fx_auto_roundtrip_and_v2() {
+    // плоский проект с автоматизацией, БЕЗ камер: v2 даёт именно она
+    let mut p = rich_project();
+    p.clips[0].fx = vec![FxInstance::Blur { radius: 8 }];
+    p.clips[0].fx_auto = vec![vec![ParamCurve {
+        param: "radius".into(),
+        ease: false,
+        keys: vec![AutoKey { t: 0.0, v: 1.0 }, AutoKey { t: 1.0, v: 48.0 }],
+    }]];
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 2, "автоматизация поднимает файл до v2");
+    let b = load_project(&text, None).expect("файл с автоматизацией читается");
+    let c = b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    assert_eq!(c.fx_auto, p.clips[0].fx_auto, "кривые пережили круг");
+    let again = save_project(&b.project, &b.retained, None);
+    assert_eq!(text, again, "идемпотентность записи с автоматизацией");
+    // битые кривые в файле — честный отказ загрузки (validate)
+    let mut broken: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let eff = &mut broken["tracks"]["children"][1]["children"][0]["effects"][0];
+    eff["metadata"]["kt"]["auto"][0]["keys"][0]["t"] = serde_json::json!(2.5);
+    assert!(
+        load_project(&serde_json::to_string_pretty(&broken).unwrap(), None).is_err(),
+        "кейфрейм вне 0..1 обязан валить загрузку явно"
+    );
 }
 
 #[test]

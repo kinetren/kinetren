@@ -66,7 +66,7 @@ fn layer<'a>(
             source: SourceId(id),
             cache_idx: 0,
             frame: Some(frame.clone()),
-            fx,
+            fx: std::borrow::Cow::Borrowed(fx),
             fx_hash: id,
             u: 0.5,
             cam3d: Some(Cam3d { cam: CameraParams::default(), world_scale: 1.0 }),

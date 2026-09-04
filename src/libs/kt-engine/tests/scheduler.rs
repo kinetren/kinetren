@@ -215,6 +215,7 @@ fn t9_prefetch_pass_is_idempotent() {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
     });

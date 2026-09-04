@@ -28,6 +28,7 @@ fn slowed_project() -> Project {
         gain_db: 0.0,
         reversed: false,
         fx_bypass: vec![],
+        fx_auto: vec![],
         fx: vec![FxInstance::SlowedReverb {
             rate: 0.5,
             mix: 0.15,

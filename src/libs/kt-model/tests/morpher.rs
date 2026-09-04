@@ -22,6 +22,7 @@ fn base_project() -> TimelineModel {
         reversed: false,
         fx: vec![FxInstance::Gain { db: -3.0 }],
         fx_bypass: Vec::new(),
+        fx_auto: vec![],
         opacity: 1.0,
     });
     p.clips.push(ClipEvent {
@@ -37,6 +38,7 @@ fn base_project() -> TimelineModel {
         reversed: false,
         fx: Vec::new(),
         fx_bypass: Vec::new(),
+        fx_auto: vec![],
         opacity: 1.0,
     });
     TimelineModel::new(p)

@@ -84,8 +84,9 @@
   бампает (foreign-passthrough у старого ридера). Неизвестные поля НАШЕГО
   конверта (kt) — flatten-extra в KtTimelineMeta/KtClipMeta, passthrough
   через Retained (timeline_kt_extra / ClipExtra.kt_extra): добавкам v3
-  жёсткий отказ не понадобится. Golden v2-схемы — fixtures/demo-3d.otio
-  (t189_regen).
+  жёсткий отказ не понадобится. Автоматизация FX (Р.30) — ключ `auto` внутри kt-конверта
+  эффекта; её наличие тоже поднимает файл до v2. Golden v2-схемы —
+  fixtures/demo-3d.otio (t189_regen; замораживает и камеры, и кривые).
 
 ## Ограничения v1 (задокументированы, не реализуются)
 

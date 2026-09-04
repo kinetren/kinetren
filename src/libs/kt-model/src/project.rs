@@ -607,6 +607,14 @@ pub struct ClipEvent {
     /// байт-стабильны.
     #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
     pub opacity: f32,
+    /// Автоматизация параметров видео-FX (Р.30): кривые по слотам,
+    /// параллельно `fx` (как fx_bypass; короче fx = хвост без кривых).
+    /// Домен t — прогресс клипа 0..1 (как CamMotion и камеры). Пустой
+    /// вектор не сериализуется — старые файлы байт-стабильны; в .otio
+    /// кривые едут внутри kt-конверта эффекта и поднимают файл до v2
+    /// (старый ридер потерял бы их молча — правило Р.29).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fx_auto: Vec<Vec<ParamCurve>>,
 }
 
 fn one_f32() -> f32 {
@@ -628,6 +636,92 @@ impl ClipEvent {
             .map(|(_, f)| f.clone())
             .collect()
     }
+
+    /// Кривые автоматизации, выровненные с active_fx(): bypass-слоты
+    /// выпадают ВМЕСТЕ со своими кривыми (Р.30) — иначе кривая приклеилась
+    /// бы к чужому слоту.
+    pub fn active_fx_auto(&self) -> Vec<Vec<ParamCurve>> {
+        self.fx
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !self.fx_bypass.get(*i).copied().unwrap_or(false))
+            .map(|(i, _)| self.fx_auto.get(i).cloned().unwrap_or_default())
+            .collect()
+    }
+}
+
+/// Кейфрейм автоматизации параметра (Р.30): t — прогресс клипа 0..1.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AutoKey {
+    pub t: f64,
+    pub v: f64,
+}
+
+/// Кривая одного параметра одного FX-слота. Между точками — линейная
+/// интерполяция (smoothstep при ease, как CamMotion), за краями — крайние
+/// значения. Имя параметра — snake_case поля варианта (как в файле);
+/// кривая-сирота (имя не подходит варианту) молча не действует —
+/// валидация ловит её при загрузке/командах.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParamCurve {
+    pub param: String,
+    #[serde(default = "default_true")]
+    pub ease: bool,
+    pub keys: Vec<AutoKey>,
+}
+
+/// Структурная проверка кривых автоматизации клипа (Р.30): t
+/// отсортированы в [0,1], значения конечны. Имя параметра НЕ проверяется
+/// жёстко: кривая-сирота (переименованный/чужой параметр) молча не
+/// действует — будущие правки схемы не должны валить загрузку файла.
+pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), ProjectError> {
+    for curves in auto {
+        for c in curves {
+            let sorted = c.keys.windows(2).all(|w| w[0].t <= w[1].t);
+            let in_range =
+                c.keys.iter().all(|k| (0.0..=1.0).contains(&k.t) && k.v.is_finite());
+            if !sorted || !in_range {
+                return Err(ProjectError::BadFxAuto(id));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Значение кривой в точке u (домен 0..1, кламп краёв — как cam_at).
+pub fn curve_value(keys: &[AutoKey], ease: bool, u: f64) -> f64 {
+    let Some(first) = keys.first() else { return 0.0 };
+    let u = u.clamp(0.0, 1.0);
+    if u <= first.t {
+        return first.v;
+    }
+    for w in keys.windows(2) {
+        let (a, b) = (&w[0], &w[1]);
+        if u <= b.t {
+            let span = (b.t - a.t).max(1e-9);
+            let mut s = ((u - a.t) / span).clamp(0.0, 1.0);
+            if ease {
+                s = s * s * (3.0 - 2.0 * s); // smoothstep01
+            }
+            return a.v + (b.v - a.v) * s;
+        }
+    }
+    keys.last().unwrap().v
+}
+
+/// Применить кривые слота к эффекту в момент u. Возвращает число
+/// сработавших кривых (сироты не считаются).
+pub fn apply_fx_auto(fx: &mut FxInstance, curves: &[ParamCurve], u: f64) -> usize {
+    let mut applied = 0;
+    for c in curves {
+        if c.keys.is_empty() {
+            continue;
+        }
+        if fx.set_param(&c.param, curve_value(&c.keys, c.ease, u)) {
+            applied += 1;
+        }
+    }
+    applied
 }
 
 /// Типизированные FX (не opaque JSON — валидация на загрузке, тест 12).
@@ -793,6 +887,122 @@ impl FxInstance {
     /// Эффект существует только на GPU (Video3d).
     pub fn requires_gpu(&self) -> bool {
         self.class() == FxClass::Video3d
+    }
+
+    /// Автоматизируемые параметры варианта (Р.30): (имя поля как в файле,
+    /// min, max). Пустой список — вариант не автоматизируется (bools,
+    /// аудио-FX — их автоматизация живёт своей механикой).
+    pub fn param_specs(&self) -> &'static [(&'static str, f64, f64)] {
+        match self {
+            FxInstance::Pan { .. } => {
+                &[("pan_x", -4.0, 4.0), ("pan_y", -4.0, 4.0), ("zoom", 0.05, 32.0)]
+            }
+            FxInstance::CamMotion { .. } => &[("time_scale", 0.05, 8.0)],
+            FxInstance::Blur { .. } => &[("radius", 1.0, 48.0)],
+            FxInstance::Greenscreen { .. } => &[
+                ("key_r", 0.0, 255.0),
+                ("key_g", 0.0, 255.0),
+                ("key_b", 0.0, 255.0),
+                ("tolerance", 1.0, 200.0),
+                ("softness", 0.0, 100.0),
+            ],
+            FxInstance::Edges { .. } => &[("threshold", 1.0, 255.0)],
+            FxInstance::Noise { .. } => &[("amount", 0.0, 1.0)],
+            FxInstance::Vhs { .. } => &[("rgb_shift", 0.0, 12.0), ("bleed", 0.0, 1.0)],
+            FxInstance::Glow { .. } => &[("strength", 0.0, 2.0)],
+            FxInstance::EventGrid { .. } => {
+                &[("cols", 1.0, 512.0), ("rows", 1.0, 512.0)]
+            }
+            FxInstance::Pan3d { .. } => &[
+                ("pos_x", -100_000.0, 100_000.0),
+                ("pos_y", -100_000.0, 100_000.0),
+                ("pos_z", -100_000.0, 100_000.0),
+                ("rot_x", -1440.0, 1440.0),
+                ("rot_y", -1440.0, 1440.0),
+                ("rot_z", -1440.0, 1440.0),
+                ("anchor_x", 0.0, 1.0),
+                ("anchor_y", 0.0, 1.0),
+                ("scale", 0.01, 32.0),
+            ],
+            _ => &[],
+        }
+    }
+
+    /// Установить параметр по имени (Р.30, автоматизация). Значение
+    /// клампится диапазоном param_specs; целочисленные поля округляются.
+    /// false — имя не подходит варианту (кривая-сирота).
+    pub fn set_param(&mut self, name: &str, v: f64) -> bool {
+        let Some(&(_, lo, hi)) = self.param_specs().iter().find(|(n, _, _)| *n == name)
+        else {
+            return false;
+        };
+        let v = v.clamp(lo, hi);
+        let vu32 = v.round() as u32;
+        let vu8 = v.round().clamp(0.0, 255.0) as u8;
+        match (self, name) {
+            (FxInstance::Pan { pan_x, .. }, "pan_x") => *pan_x = v,
+            (FxInstance::Pan { pan_y, .. }, "pan_y") => *pan_y = v,
+            (FxInstance::Pan { zoom, .. }, "zoom") => *zoom = v,
+            (FxInstance::CamMotion { time_scale, .. }, "time_scale") => *time_scale = v,
+            (FxInstance::Blur { radius }, "radius") => *radius = vu32,
+            (FxInstance::Greenscreen { key_r, .. }, "key_r") => *key_r = vu8,
+            (FxInstance::Greenscreen { key_g, .. }, "key_g") => *key_g = vu8,
+            (FxInstance::Greenscreen { key_b, .. }, "key_b") => *key_b = vu8,
+            (FxInstance::Greenscreen { tolerance, .. }, "tolerance") => *tolerance = vu32,
+            (FxInstance::Greenscreen { softness, .. }, "softness") => *softness = vu32,
+            (FxInstance::Edges { threshold }, "threshold") => *threshold = vu32,
+            (FxInstance::Noise { amount }, "amount") => *amount = v,
+            (FxInstance::Vhs { rgb_shift, .. }, "rgb_shift") => *rgb_shift = vu32,
+            (FxInstance::Vhs { bleed, .. }, "bleed") => *bleed = v,
+            (FxInstance::Glow { strength }, "strength") => *strength = v,
+            (FxInstance::EventGrid { cols, .. }, "cols") => *cols = vu32,
+            (FxInstance::EventGrid { rows, .. }, "rows") => *rows = vu32,
+            (FxInstance::Pan3d { pos_x, .. }, "pos_x") => *pos_x = v,
+            (FxInstance::Pan3d { pos_y, .. }, "pos_y") => *pos_y = v,
+            (FxInstance::Pan3d { pos_z, .. }, "pos_z") => *pos_z = v,
+            (FxInstance::Pan3d { rot_x, .. }, "rot_x") => *rot_x = v,
+            (FxInstance::Pan3d { rot_y, .. }, "rot_y") => *rot_y = v,
+            (FxInstance::Pan3d { rot_z, .. }, "rot_z") => *rot_z = v,
+            (FxInstance::Pan3d { anchor_x, .. }, "anchor_x") => *anchor_x = v,
+            (FxInstance::Pan3d { anchor_y, .. }, "anchor_y") => *anchor_y = v,
+            (FxInstance::Pan3d { scale, .. }, "scale") => *scale = v,
+            _ => return false,
+        }
+        true
+    }
+
+    /// Текущее значение параметра по имени (для UI автоматизации).
+    pub fn get_param(&self, name: &str) -> Option<f64> {
+        let v = match (self, name) {
+            (FxInstance::Pan { pan_x, .. }, "pan_x") => *pan_x,
+            (FxInstance::Pan { pan_y, .. }, "pan_y") => *pan_y,
+            (FxInstance::Pan { zoom, .. }, "zoom") => *zoom,
+            (FxInstance::CamMotion { time_scale, .. }, "time_scale") => *time_scale,
+            (FxInstance::Blur { radius }, "radius") => *radius as f64,
+            (FxInstance::Greenscreen { key_r, .. }, "key_r") => *key_r as f64,
+            (FxInstance::Greenscreen { key_g, .. }, "key_g") => *key_g as f64,
+            (FxInstance::Greenscreen { key_b, .. }, "key_b") => *key_b as f64,
+            (FxInstance::Greenscreen { tolerance, .. }, "tolerance") => *tolerance as f64,
+            (FxInstance::Greenscreen { softness, .. }, "softness") => *softness as f64,
+            (FxInstance::Edges { threshold }, "threshold") => *threshold as f64,
+            (FxInstance::Noise { amount }, "amount") => *amount,
+            (FxInstance::Vhs { rgb_shift, .. }, "rgb_shift") => *rgb_shift as f64,
+            (FxInstance::Vhs { bleed, .. }, "bleed") => *bleed,
+            (FxInstance::Glow { strength }, "strength") => *strength,
+            (FxInstance::EventGrid { cols, .. }, "cols") => *cols as f64,
+            (FxInstance::EventGrid { rows, .. }, "rows") => *rows as f64,
+            (FxInstance::Pan3d { pos_x, .. }, "pos_x") => *pos_x,
+            (FxInstance::Pan3d { pos_y, .. }, "pos_y") => *pos_y,
+            (FxInstance::Pan3d { pos_z, .. }, "pos_z") => *pos_z,
+            (FxInstance::Pan3d { rot_x, .. }, "rot_x") => *rot_x,
+            (FxInstance::Pan3d { rot_y, .. }, "rot_y") => *rot_y,
+            (FxInstance::Pan3d { rot_z, .. }, "rot_z") => *rot_z,
+            (FxInstance::Pan3d { anchor_x, .. }, "anchor_x") => *anchor_x,
+            (FxInstance::Pan3d { anchor_y, .. }, "anchor_y") => *anchor_y,
+            (FxInstance::Pan3d { scale, .. }, "scale") => *scale,
+            _ => return None,
+        };
+        Some(v)
     }
 }
 
@@ -1087,6 +1297,8 @@ pub enum ProjectError {
     CameraBadFov(CameraId),
     #[error("camera {0:?}: keyframes must be sorted within [0, 1]")]
     CameraBadKeyframes(CameraId),
+    #[error("clip {0:?}: fx automation keys must be finite and sorted within [0, 1]")]
+    BadFxAuto(ClipId),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,
@@ -1258,6 +1470,7 @@ impl Project {
             if !media_ids.contains(&c.media) {
                 return Err(ProjectError::UnknownMedia(c.id, c.media));
             }
+            check_fx_auto(c.id, &c.fx_auto)?;
         }
         if let Some(r) = &self.region
             && r.end <= r.start

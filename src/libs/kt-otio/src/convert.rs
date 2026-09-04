@@ -368,12 +368,17 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
     cameras.sort_by_key(|c| c.id);
     let used: std::collections::HashSet<MediaId> = p.clips.iter().map(|c| c.media).collect();
     let kt = KtTimelineMeta {
-        // версия ПО СОДЕРЖИМОМУ (Р.29): камеры поднимают до v2 (старый
-        // ридер молча потерял бы 3D-сцену при перезаписи), без них — v1
-        v: if cameras.is_empty() && p.camera_lanes == 0 {
-            crate::meta::KT_META_V1
-        } else {
-            KT_META_VERSION
+        // версия ПО СОДЕРЖИМОМУ (Р.29/Р.30): камеры и автоматизация
+        // параметров поднимают до v2 (старый ридер молча потерял бы их
+        // при перезаписи), без них — v1
+        v: {
+            let has_auto =
+                p.clips.iter().any(|c| c.fx_auto.iter().any(|v| !v.is_empty()));
+            if cameras.is_empty() && p.camera_lanes == 0 && !has_auto {
+                crate::meta::KT_META_V1
+            } else {
+                KT_META_VERSION
+            }
         },
         settings: Some(KtSettings {
             fps: p.settings.fps,
@@ -467,6 +472,15 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
     for (i, fx) in c.fx.iter().enumerate() {
         let mut md = Map::new();
         kt_set(&mut md, fx);
+        // автоматизация (Р.30): кривые слота едут ключом "auto" внутри
+        // kt-конверта эффекта; FxInstance незнакомые поля игнорирует,
+        // старый ридер потерял бы их молча → файл поднимается до v2
+        if let Some(curves) = c.fx_auto.get(i).filter(|v| !v.is_empty()) {
+            crate::meta::kt_entry_mut(&mut md).insert(
+                "auto".into(),
+                serde_json::to_value(curves).expect("curves are serializable"),
+            );
+        }
         effects.push(EffectNode::Effect(Effect {
             name: String::new(),
             effect_name: format!("kt:{}", fx_tag(fx)),
@@ -955,6 +969,7 @@ fn clip_from_otio(
 
     // эффекты: kt:* → цепочка, LTW ±1 → reversed/no-op, прочее → foreign
     let mut fx = Vec::new();
+    let mut fx_auto: Vec<Vec<kt_model::ParamCurve>> = Vec::new();
     let mut bypass = Vec::new();
     let mut reversed = false;
     let mut ex = ClipExtra {
@@ -976,7 +991,16 @@ fn clip_from_otio(
             EffectNode::Effect(eff) if eff.effect_name.starts_with("kt:") => {
                 match kt_get::<kt_model::FxInstance>(&eff.metadata) {
                     Some(inst) => {
+                        // автоматизация (Р.30): ключ "auto" рядом с
+                        // параметрами; битые кривые валит validate ниже
+                        let curves: Vec<kt_model::ParamCurve> = eff
+                            .metadata
+                            .get(crate::meta::KT_NS)
+                            .and_then(|kt| kt.get("auto"))
+                            .and_then(|v| serde_json::from_value(v.clone()).ok())
+                            .unwrap_or_default();
                         fx.push(inst);
+                        fx_auto.push(curves);
                         bypass.push(!eff.enabled);
                     }
                     None => {
@@ -996,6 +1020,9 @@ fn clip_from_otio(
             }
             other => ex.effects_foreign.push((i, other.clone())),
         }
+    }
+    while fx_auto.last().is_some_and(|v| v.is_empty()) {
+        fx_auto.pop(); // хвост без кривых не сериализуем (форма модели)
     }
     while bypass.last() == Some(&false) {
         bypass.pop(); // хвост «включено» не сериализуем (форма модели)
@@ -1029,6 +1056,7 @@ fn clip_from_otio(
         opacity: meta.as_ref().map(|m| m.opacity).unwrap_or(1.0),
         reversed,
         fx,
+        fx_auto,
         fx_bypass: bypass,
     };
     (ev, ex)
