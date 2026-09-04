@@ -168,6 +168,11 @@ pub struct KtApp {
     /// Фоновый автосейв (Р.31 п.2): (rev снапшота, результат). UI-поток
     /// больше не пишет файл сам — только сериализует снапшот и ждёт итог.
     pub autosave_rx: Option<(u64, std::sync::mpsc::Receiver<std::io::Result<()>>)>,
+    /// Сторож записи проекта (Р.32): ревизия модели, ЗАПИСАННАЯ на диск
+    /// последней. Фоновый автосейв обязан свериться с ним перед подменой
+    /// файла — иначе он перетирает более свежий Ctrl+S своим устаревшим
+    /// снапшотом (гонка, найденная живыми сценариями).
+    pub saved_rev: std::sync::Arc<std::sync::Mutex<u64>>,
     pub snap_line: Option<i64>,
     /// (поколение транспорта, число loop-перескоков) на прошлом кадре
     /// превью. Смена любого — законная причина уехать ключу показа назад:
@@ -391,6 +396,7 @@ impl KtApp {
             gpu_fx_lost_notified: false,
             max_src_cache: None,
             autosave_rx: None,
+            saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -519,6 +525,7 @@ impl KtApp {
             gpu_fx_lost_notified: false,
             max_src_cache: None,
             autosave_rx: None,
+            saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -925,12 +932,19 @@ impl KtApp {
             let project = self.model.project().clone();
             let retained = self.retained.clone();
             let (tx, rx) = std::sync::mpsc::channel();
-            self.autosave_rx = Some((self.model_rev, rx));
+            let snap_rev = self.model_rev;
+            self.autosave_rx = Some((snap_rev, rx));
+            let guard = self.saved_rev.clone();
             std::thread::Builder::new()
                 .name("autosave".into())
                 .spawn(move || {
                     let out = kt_otio::save_project(&project, &retained, target.parent());
-                    let _ = tx.send(write_project_atomic(&target, &out));
+                    // подмена файла — под сторожем: если пока мы
+                    // сериализовали, на диск лёг БОЛЕЕ СВЕЖИЙ снимок
+                    // (Ctrl+S), свой устаревший не пишем вовсе
+                    let _ = tx.send(
+                        write_project_guarded(&guard, &target, snap_rev, &out).map(|_| ()),
+                    );
                 })
                 .ok();
         }
@@ -2299,7 +2313,11 @@ impl KtApp {
         self.model.set_ui_state(ui);
         let out =
             kt_otio::save_project(self.model.project(), &self.retained, path.parent());
-        match write_project_atomic(&path, &out) {
+        // под сторожем: фоновый автосейв не должен перетереть нашу
+        // запись своим более старым снапшотом (Р.32)
+        let res = write_project_guarded(&self.saved_rev, &path, self.model_rev, &out)
+            .map(|_| ());
+        match res {
             Ok(()) => {
                 self.dirty_content = false;
                 self.dirty_ui = false;
@@ -4296,6 +4314,26 @@ pub fn autosave_path() -> PathBuf {
 /// Запись проекта: сначала во временный файл рядом, потом переименование.
 /// Прямая перезапись живого файла при обрыве питания/ошибке на середине
 /// оставляла пользователя с обрезанным проектом.
+/// Запись проекта ПОД СТОРОЖЕМ (Р.32): `rev` — ревизия модели, которую
+/// несёт `json`. Если на диск уже лёг снимок НОВЕЕ (`*guard > rev`) —
+/// не пишем вовсе и возвращаем `Ok(false)`: иначе фоновый автосейв
+/// перетирал более свежий Ctrl+S своим устаревшим снапшотом, и правки
+/// пользователя терялись (гонку нашли живые сценарии).
+pub fn write_project_guarded(
+    guard: &std::sync::Mutex<u64>,
+    path: &std::path::Path,
+    rev: u64,
+    json: &str,
+) -> std::io::Result<bool> {
+    let mut last = guard.lock().unwrap();
+    if *last > rev {
+        return Ok(false);
+    }
+    write_project_atomic(path, json)?;
+    *last = rev;
+    Ok(true)
+}
+
 pub fn write_project_atomic(path: &std::path::Path, json: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)?;
@@ -4557,8 +4595,11 @@ impl eframe::App for KtApp {
             let moved = self.model.project().ui.as_ref() != Some(&fresh);
             if self.dirty_content || self.dirty_ui || moved {
                 self.model.set_ui_state(Some(fresh));
-                let _ = write_project_atomic(
+                // под тем же сторожем, что и Ctrl+S (Р.32)
+                let _ = write_project_guarded(
+                    &self.saved_rev,
                     p,
+                    self.model_rev,
                     &kt_otio::save_project(self.model.project(), &self.retained, p.parent()),
                 );
             }

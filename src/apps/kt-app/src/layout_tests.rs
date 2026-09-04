@@ -3206,3 +3206,74 @@ fn t194_autosave_runs_in_background() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Тест 199 (Р.32): ПРАВИЛО сторожа — запись со СТАРОЙ ревизией не
+/// трогает файл, с новой — пишет. Именно так фоновый автосейв перестаёт
+/// перетирать свежий Ctrl+S (гонку нашли живые сценарии: они читают
+/// сохранённый .otio и видели устаревшую модель — у пользователя так же
+/// терялись бы правки).
+#[test]
+fn t199_guarded_write_never_goes_backwards() {
+    let dir = std::env::temp_dir().join(format!("kt-t199g-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("p.otio");
+    let guard = std::sync::Mutex::new(0u64);
+
+    // первая запись (ревизия 5) проходит
+    assert!(crate::app::write_project_guarded(&guard, &f, 5, "rev5").unwrap());
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev5");
+    // «опоздавший» фоновый снапшот ревизии 3 — файл не трогает
+    assert!(!crate::app::write_project_guarded(&guard, &f, 3, "rev3").unwrap());
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev5", "старый снимок перетёр свежий");
+    // повтор той же ревизии допустим (идемпотентно), новее — пишется
+    assert!(crate::app::write_project_guarded(&guard, &f, 5, "rev5b").unwrap());
+    assert!(crate::app::write_project_guarded(&guard, &f, 9, "rev9").unwrap());
+    assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev9");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тот же инвариант в живом потоке приложения: фоновая запись в полёте +
+/// немедленный Ctrl+S следующей ревизии → на диске остаётся свежее.
+#[test]
+fn t199_background_autosave_never_overwrites_newer_save() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t199-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t199.otio");
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    // ревизия 1: медиа A, фоновый автосейв стартует с ЭТИМ снапшотом
+    app.model
+        .apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() })
+        .unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
+    h.step();
+    assert!(h.state().autosave_rx.is_some(), "фоновая запись в полёте");
+
+    // ревизия 2 + немедленный Ctrl+S, пока фоновая ещё не финишировала
+    let app = h.state_mut();
+    app.model
+        .apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() })
+        .unwrap();
+    app.model_rev += 1;
+    app.save();
+
+    // дожидаемся фоновую и убеждаемся, что она НЕ откатила файл
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    let text = std::fs::read_to_string(&target).unwrap();
+    let saved = kt_otio::load_project(&text, target.parent()).unwrap().project;
+    assert_eq!(
+        saved.media.len(),
+        2,
+        "на диске обязана остаться СВЕЖАЯ версия (2 медиа), а не снимок автосейва"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
