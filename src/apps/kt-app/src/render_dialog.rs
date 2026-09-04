@@ -145,13 +145,20 @@ impl KtApp {
                         }
                     };
                     let txp = tx.clone();
-                    let res = kt_engine::export::export_mp4_with(
+                    // Р.29: GPU-рендер по умолчанию — свой headless-девайс
+                    // на джоб (очередь UI не делит время с экспортом);
+                    // движка нет → CPU (для 2D это полноценный путь)
+                    let backends = kt_engine::ExportBackends {
+                        video_gpu: crate::app::export_video_gpu(),
+                    };
+                    let res = kt_engine::export::export_mp4_with_backends(
                         &project,
                         a,
                         v,
                         &out_path,
                         range,
                         &opts_thread,
+                        &backends,
                         &cancel,
                         &pause_thread,
                         move |p| {

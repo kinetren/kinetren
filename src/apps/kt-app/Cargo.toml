@@ -13,6 +13,7 @@ kt-otio = { workspace = true }
 kt-media = { workspace = true }
 kt-cache = { workspace = true }
 kt-engine = { workspace = true }
+kt-gpu = { workspace = true }
 eframe = { workspace = true }
 cpal = { workspace = true }
 rtrb = { workspace = true }

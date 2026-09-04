@@ -53,6 +53,8 @@ pub struct ClipExtra {
     /// карта пишется нетронутой (чужой `null` не превращается в ссылку).
     pub media_refs: IndexMap<String, Option<MediaRefNode>>,
     pub active_key: String,
+    /// Неизвестные поля НАШЕГО клип-конверта kt (будущие версии, Р.29).
+    pub kt_extra: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -85,6 +87,9 @@ pub struct Retained {
     pub foreign: HashMap<u64, RawObject>,
     /// Чужие маркеры корневого Stack (наши — из модели).
     pub stack_markers_foreign: Vec<MarkerNode>,
+    /// Неизвестные поля НАШЕГО конверта kt (будущие версии, Р.29):
+    /// passthrough — v2-сборка не теряет добавки v3.
+    pub timeline_kt_extra: Map<String, Value>,
 }
 
 pub struct ProjectBundle {
@@ -359,9 +364,17 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
     let mut meta = retained.timeline_meta_foreign.clone();
     let mut morphers = p.morphers.clone();
     morphers.sort_by_key(|m| m.id);
+    let mut cameras = p.cameras.clone();
+    cameras.sort_by_key(|c| c.id);
     let used: std::collections::HashSet<MediaId> = p.clips.iter().map(|c| c.media).collect();
     let kt = KtTimelineMeta {
-        v: KT_META_VERSION,
+        // версия ПО СОДЕРЖИМОМУ (Р.29): камеры поднимают до v2 (старый
+        // ридер молча потерял бы 3D-сцену при перезаписи), без них — v1
+        v: if cameras.is_empty() && p.camera_lanes == 0 {
+            crate::meta::KT_META_V1
+        } else {
+            KT_META_VERSION
+        },
         settings: Some(KtSettings {
             fps: p.settings.fps,
             width: p.settings.width,
@@ -372,10 +385,13 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             region: p.region.map(|r| (r.start.0, r.end.0)),
             loop_enabled: p.loop_enabled,
         }),
-        // в kt.ui — только morph-имена (v/a живут в Track.name) и без
-        // bin-полей (они в kt.bin_*): единственный источник каждого факта
+        // в kt.ui — только morph/camera-имена (v/a живут в Track.name) и
+        // без bin-полей (они в kt.bin_*): единственный источник каждого
+        // факта
         ui: p.ui.clone().map(|mut u| {
-            u.lane_names.retain(|(k, _, _)| *k == kt_model::LaneKind::Morph);
+            u.lane_names.retain(|(k, _, _)| {
+                matches!(k, kt_model::LaneKind::Morph | kt_model::LaneKind::Camera)
+            });
             u.bin_groups = Vec::new();
             u.bin_layout = Vec::new();
             u.bin_free = false;
@@ -409,6 +425,9 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             })
         },
         morphers,
+        camera_lanes: p.camera_lanes,
+        cameras,
+        extra: retained.timeline_kt_extra.clone(),
     };
     kt_set(&mut meta, &kt);
 
@@ -507,6 +526,7 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
             link_group: c.link_group.map(|g| g.0),
             gain: c.gain_db,
             opacity: c.opacity,
+            extra: ex.kt_extra.clone(),
         },
     );
 
@@ -820,8 +840,10 @@ pub fn timeline_to_project(
         retained.tracks.insert((kind, lane), tx);
     }
 
-    // конверт kt: транспорт/ui/бин/морферы
+    // конверт kt: транспорт/ui/бин/морферы/камеры
     if let Some(kt) = kt {
+        // неизвестные kt-поля будущих версий — passthrough (Р.29)
+        retained.timeline_kt_extra = kt.extra.clone();
         if let Some(tr) = kt.transport {
             p.region = tr.region.and_then(|(s, e)| {
                 kt_model::Region::normalized(Tick(s), Tick(e))
@@ -829,9 +851,11 @@ pub fn timeline_to_project(
             p.loop_enabled = tr.loop_enabled;
         }
         if let Some(mut ui) = kt.ui {
-            // имена дорожек v/a приезжают из Track.name; morph — из ui
+            // имена дорожек v/a приезжают из Track.name; morph/camera — из ui
             let mut names = p.ui.take().map(|u| u.lane_names).unwrap_or_default();
-            ui.lane_names.retain(|(k, _, _)| *k == kt_model::LaneKind::Morph);
+            ui.lane_names.retain(|(k, _, _)| {
+                matches!(k, kt_model::LaneKind::Morph | kt_model::LaneKind::Camera)
+            });
             names.extend(ui.lane_names.clone());
             ui.lane_names = names;
             ui.bin_groups = kt.bin_groups;
@@ -845,6 +869,8 @@ pub fn timeline_to_project(
         }
         p.morph_lanes = kt.morph_lanes;
         p.morphers = kt.morphers;
+        p.camera_lanes = kt.camera_lanes;
+        p.cameras = kt.cameras;
         if let Some(end) = kt.end {
             p.timeline_end = Some(Tick(end));
         }
@@ -899,7 +925,7 @@ fn clip_from_otio(
         Some(MediaRefNode::External(er)) => er.target_url.clone(),
         _ => String::new(),
     };
-    let media = match meta {
+    let media = match &meta {
         Some(m) if is_ours => MediaId(m.media),
         // клип без ссылки (Missing/null) не делит источник с другими такими
         // же: общего материала у них нет, дедуп по пустому URL склеил бы
@@ -918,7 +944,7 @@ fn clip_from_otio(
     if !p.media.iter().any(|m| m.id == media) {
         p.media.push(MediaRef { id: media, path: resolve_url(base_dir, &url) });
     }
-    let id = match meta {
+    let id = match &meta {
         Some(m) if is_ours => ClipId(m.id),
         _ => {
             let id = ClipId(*next_clip_id);
@@ -942,6 +968,7 @@ fn clip_from_otio(
         markers: c.markers.clone(),
         media_refs: c.media_references.clone(),
         active_key: c.active_media_reference_key.clone(),
+        kt_extra: meta.as_ref().map(|m| m.extra.clone()).unwrap_or_default(),
         ..Default::default()
     };
     for (i, e) in c.effects.iter().enumerate() {
@@ -991,15 +1018,15 @@ fn clip_from_otio(
     let src_in = Tick(src_in.max(0));
     let ev = ClipEvent {
         id,
-        link_group: meta.and_then(|m| m.link_group).map(GroupId),
+        link_group: meta.as_ref().and_then(|m| m.link_group).map(GroupId),
         kind,
         lane,
         start,
         duration: dur,
         source_in: src_in,
         media,
-        gain_db: meta.map(|m| m.gain).unwrap_or(0.0),
-        opacity: meta.map(|m| m.opacity).unwrap_or(1.0),
+        gain_db: meta.as_ref().map(|m| m.gain).unwrap_or(0.0),
+        opacity: meta.as_ref().map(|m| m.opacity).unwrap_or(1.0),
         reversed,
         fx,
         fx_bypass: bypass,

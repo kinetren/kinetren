@@ -99,6 +99,11 @@ insert_morph_below = "Insertar pista morph abajo"
 add_video = "Añadir pista de vídeo"
 add_audio = "Añadir pista de audio"
 add_morph = "Añadir pista Morph"
+camera_title = "Pista de cámara C{0}"
+delete_camera_n = "Eliminar pista ({0} cámaras)"
+insert_camera_below = "Insertar pista de cámara abajo"
+add_camera = "Añadir pista de cámara"
+add_camera_here = "Añadir cámara en el cursor"
 
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
@@ -220,6 +225,7 @@ nothing = "no se encontró nada"
 
 # Категории эффектов в пикере.
 [fxreg.cat]
+three_d = "3D"
 motion = "Movimiento"
 geometry = "Geometría"
 blur = "Desenfoque"
@@ -233,6 +239,7 @@ timestretch = "Estiramiento de tiempo"
 # Ключевые слова поиска. НЕ переупорядочиваются для арабского
 # (сравниваются с вводом пользователя), пишутся в нижнем регистре.
 [fxreg.kw]
+pan3d = "pan 3d perspectiva cámara capa"
 pan = "pan zoom recorte encuadre crop"
 cammotion = "camara temblor movimiento shake handheld"
 mirror = "espejo reflejo volteo mirror flip"
@@ -266,6 +273,8 @@ chain_empty = "La cadena está vacía — añade un efecto"
 done = "Hecho"
 cancel = "Cancelar (revertir)"
 mode = "Modo:"
+camera = "Cámara:"
+camera_active = "Cámara activa"
 keyframes_n = "Fotogramas clave: {0} (vacío = zoom 1.0 a 1.35 como en v1)"
 add_kf = "+ fotograma clave"
 drop_last = "- el último"
@@ -372,6 +381,8 @@ added = "añadido: {0}"
 autosave_restored = "Se restauró el autoguardado de un proyecto sin nombre"
 open_a_project = "Abre un proyecto: kt-app <archivo.ktproj> o arrástralo a la ventana"
 software_render = "Sin aceleración gráfica (render por software) — la interfaz puede ir lenta, glow desactivado"
+video_fx_cpu = "Los efectos de vídeo se calculan en la CPU (sin GPU): {0}"
+video_fx_gpu_lost = "Se perdió el renderizador de vídeo en GPU ({0}) — cambiado a la CPU"
 
 # Заголовки системных файловых диалогов.
 flight_saved = "Registro de reproducción guardado: {0}"
@@ -395,6 +406,8 @@ v_shown = "V-mostrados {0}"
 v_skipped = "V-salt/atr {0}/{1}"
 region_s = "región {0}–{1}s"
 cache_short = "caché: {0}/{1} MB"
+video_fx_gpu = "FX: GPU ({0})"
+video_fx_cpu = "FX: CPU"
 rate_stop = "0 (parado)"
 graph_quality = "Calidad (FPS / hit%)"
 graph_decode = "Actividad de FFmpeg (/s)"

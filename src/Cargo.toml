@@ -12,6 +12,7 @@ members = [
     "libs/kt-cache",
     "libs/kt-fx",
     "libs/kt-engine",
+    "libs/kt-gpu",
 ]
 
 [workspace.package]
@@ -30,6 +31,7 @@ kt-media = { path = "libs/kt-media" }
 kt-cache = { path = "libs/kt-cache" }
 kt-fx = { path = "libs/kt-fx" }
 kt-engine = { path = "libs/kt-engine" }
+kt-gpu = { path = "libs/kt-gpu" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -38,6 +40,11 @@ thiserror = "2"
 crossbeam-channel = "0.5"
 rtrb = "0.3"
 eframe = { version = "0.36", features = ["persistence"] }
+# ЖЁСТКО синхронно с wgpu внутри eframe (kt-gpu делит Arc<wgpu::Device>
+# с egui-wgpu — другой мажор = несовместимые типы). Апгрейд только парой.
+wgpu = "30"
+pollster = "0.4"
+glam = "0.30"
 cpal = "0.16"
 rubato = "0.16"
 rusqlite = { version = "0.37", features = ["bundled"] }

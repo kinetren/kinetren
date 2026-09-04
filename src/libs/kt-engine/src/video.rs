@@ -1,14 +1,22 @@
-//! Видео-путь: выбор активных клипов, ключи кадров, CPU-композит.
+//! Видео-путь: выбор активных клипов, ключи кадров, построение плана
+//! кадра (video_plan) и CPU-исполнитель композиции.
 //!
-//! Инвариант №7: этот же композит питает и превью, и экспорт — отличаются
-//! только clock и Quality. Слои запрашиваются в ОДНОМ качестве и
-//! складываются alpha-over по z (lane: меньше = выше, как в старом движке,
-//! где меньший индекс дорожки был передним планом).
+//! Инвариант №7 (ред. Р.29): код композиции ОДИН — build_plan решает слои,
+//! порядок, веса переходов и уровни для превью и экспорта; бэкенд
+//! (CPU здесь / GPU в kt-gpu) — параметр исполнения, не второй путь.
+//! CPU-исполнитель — байт-эталон (инвариант №11) и фолбэк. Слои
+//! запрашиваются в ОДНОМ качестве и складываются alpha-over по z
+//! (lane: меньше = выше, как в старом движке, где меньший индекс дорожки
+//! был передним планом).
+
+use std::sync::Arc;
 
 use kt_cache::{BurstCache, SourceId};
-use kt_media::Quality;
+use kt_media::{Quality, VideoFrame};
 use kt_model::{ClipKind, MediaId, Project};
 use kt_time::{FpsGrid, Tick};
+
+use crate::video_plan::{Cam3d, FramePlan, LayerSrc, PlanLayer};
 
 #[derive(Debug, Clone)]
 struct VideoClip {
@@ -99,6 +107,11 @@ pub struct VideoRenderer {
     /// Переиспользуемый буфер бленда пары перехода (п.137): аллокация
     /// один раз, не на кадр.
     blend: Vec<u8>,
+    /// Снапшот камер проекта (Р.29): активная/прибитая камера Pan3d
+    /// разрешается при построении плана тем же правилом, что в модели.
+    cameras: Vec<kt_model::CameraEvent>,
+    /// Размер проекта в px — мировая система координат 3D-эффектов.
+    project_size: (u32, u32),
 }
 
 /// Ключ кадра в кэше: idx = pts источника в тиках (выравнен по сетке проекта).
@@ -170,7 +183,14 @@ impl VideoRenderer {
         // Р.28; до этого работало правило v1 «сверху тот, у кого start
         // меньше», и полоса таймлайна с ним расходилась). Тест 162.
         clips.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
-        VideoRenderer { clips, grid, fx_scratch: Default::default(), blend: Vec::new() }
+        VideoRenderer {
+            clips,
+            grid,
+            fx_scratch: Default::default(),
+            blend: Vec::new(),
+            cameras: project.cameras.clone(),
+            project_size: (project.settings.width, project.settings.height),
+        }
     }
 
     /// Кадры, нужные для композиции момента `t` (выравненного вызывающим):
@@ -213,10 +233,7 @@ impl VideoRenderer {
 
     /// Вариант с переиспользуемым буфером (превью 60 раз/с: аллокация
     /// полного RGBA-кадра на каждый кадр была заметной, п.1 раунда 5).
-    /// Пара клипов в окне перехода блендится линейным dissolve в ОДИН слой
-    /// (п.137), затем alpha_over как обычно; недостающая половина пары →
-    /// присутствующая с полным весом + complete=false (playback не ждёт,
-    /// инвариант №5).
+    /// Строит план кадра и исполняет его CPU-исполнителем (Р.29).
     pub fn compose_from_cache_into(
         &mut self,
         cache: &BurstCache,
@@ -224,68 +241,191 @@ impl VideoRenderer {
         quality: Quality,
         out: &mut Vec<u8>,
     ) -> bool {
-        let w = quality.width as usize;
-        let h = quality.height as usize;
-        out.clear();
-        out.resize(w * h * 4, 0);
-        let mut complete = true;
-        let q_key = (quality.width, quality.height);
-        let scratch = &mut self.fx_scratch;
-        let grid = &self.grid;
-        for i in 0..self.clips.len() {
-            let clip = &self.clips[i];
-            if !clip.active_at(t) {
-                continue;
+        let ctx = PlanCtx {
+            grid: &self.grid,
+            cameras: &self.cameras,
+            project_size: self.project_size,
+        };
+        let plan = build_plan(&self.clips, &ctx, cache, t, quality);
+        execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
+    }
+
+    /// План кадра для внешнего исполнителя (GPU в kt-gpu). Пре-FX кадры
+    /// уже прочитаны из кэша (recency бампнут), структура слоёв решена.
+    pub fn frame_plan(&self, cache: &BurstCache, t: Tick, quality: Quality) -> FramePlan<'_> {
+        let ctx = PlanCtx {
+            grid: &self.grid,
+            cameras: &self.cameras,
+            project_size: self.project_size,
+        };
+        build_plan(&self.clips, &ctx, cache, t, quality)
+    }
+}
+
+/// Контекст построения плана: сетка, камеры и мировой размер проекта.
+struct PlanCtx<'a> {
+    grid: &'a FpsGrid,
+    cameras: &'a [kt_model::CameraEvent],
+    project_size: (u32, u32),
+}
+
+/// Источник слоя: pts, пре-FX кадр (читается ВСЕГДА — бамп recency, чтобы
+/// полоски прогретости и prefetch не «остывали» под живым пост-FX кэшем),
+/// цепочка и прогресс клипа.
+fn layer_src<'a>(
+    clip: &'a VideoClip,
+    ctx: &PlanCtx<'_>,
+    cache: &BurstCache,
+    quality: Quality,
+    t: Tick,
+) -> LayerSrc<'a> {
+    let src_pts = clip_source_pts(clip, t, ctx.grid);
+    let cache_idx = video_cache_idx(src_pts);
+    let source = SourceId(clip.media.0);
+    let frame = cache.get_video(source, Some(quality), cache_idx);
+    let span = (clip.end.0 - clip.start.0).max(1);
+    let u = (t.0 - clip.start.0) as f64 / span as f64;
+    // 3D-эффект → разрешаем камеру: прибитая по id, иначе активная по t,
+    // иначе дефолтная «50 мм» (тождество для Pan3d с дефолтами)
+    let cam3d = clip
+        .fx
+        .iter()
+        .find_map(|f| match f {
+            kt_model::FxInstance::Pan3d { camera, .. } => Some(*camera),
+            _ => None,
+        })
+        .map(|pinned| {
+            let ev = pinned
+                .and_then(|id| ctx.cameras.iter().find(|c| c.id == id))
+                .or_else(|| kt_model::active_camera_in(ctx.cameras, t));
+            let cam = ev.map(|e| e.params_at(t)).unwrap_or_default();
+            Cam3d {
+                cam,
+                world_scale: quality.width as f64 / ctx.project_size.0.max(1) as f64,
             }
-            // фейд у края/Gap (Р.25): пары нет по модели — слой уходит в
-            // прозрачность, ждать нечего (complete не портим)
-            if let Some(k) = solo_fade_scale(clip, t).map(|k| k * clip.opacity_k / 4096) {
-                match clip_layer(clip, grid, cache, quality, q_key, scratch, t) {
-                    Some(f) if (f.width as usize, f.height as usize) == (w, h) => {
-                        scale_alpha_into(&mut self.blend, &f, k, w * h);
-                        alpha_over(out, &self.blend, true, w * h);
+        });
+    LayerSrc { source, cache_idx, frame, fx: &clip.fx, fx_hash: clip.fx_hash, u, cam3d }
+}
+
+/// Построение плана кадра: какие слои, в каких ролях и с какими весами.
+/// Пара клипов в окне перехода блендится линейным dissolve в ОДИН слой
+/// (п.137); фейд у края/Gap (Р.25) — соло-слой, уходящий в прозрачность.
+fn build_plan<'a>(
+    clips: &'a [VideoClip],
+    ctx: &PlanCtx<'_>,
+    cache: &BurstCache,
+    t: Tick,
+    quality: Quality,
+) -> FramePlan<'a> {
+    let mut layers = Vec::new();
+    let mut has_3d = false;
+    for (i, clip) in clips.iter().enumerate() {
+        if !clip.active_at(t) {
+            continue;
+        }
+        has_3d |= clip.fx.iter().any(|f| f.requires_gpu());
+        // фейд у края/Gap: пары нет по модели, слой всегда идёт через
+        // масштабирование альфы (scale_alpha)
+        if let Some(k) = solo_fade_scale(clip, t).map(|k| k * clip.opacity_k / 4096) {
+            layers.push(PlanLayer::One {
+                src: layer_src(clip, ctx, cache, quality, t),
+                alpha_k: k,
+                scale_alpha: true,
+            });
+            continue;
+        }
+        // outgoing половина пары рисуется в слое incoming
+        if let Some(win) = clip.fade_out
+            && t.0 >= win.0.0
+            && t.0 < win.1.0
+            && find_pair(clips, clip.lane, win, true).is_some()
+        {
+            continue;
+        }
+        if let Some(win) = clip.fade_in
+            && t.0 >= win.0.0
+            && t.0 < win.1.0
+            && let Some(pi) = find_pair(clips, clip.lane, win, false)
+        {
+            let outgoing = &clips[pi];
+            debug_assert_ne!(pi, i);
+            let k = (((t.0 - win.0.0) * 4096) / (win.1.0 - win.0.0)).clamp(0, 4096) as u32;
+            // уровни соседей смешиваются тем же весом, что и картинка
+            let op = (outgoing.opacity_k * (4096 - k) + clip.opacity_k * k) / 4096;
+            layers.push(PlanLayer::Dissolve {
+                a: layer_src(outgoing, ctx, cache, quality, t),
+                b: layer_src(clip, ctx, cache, quality, t),
+                k,
+                alpha_k: op,
+            });
+            continue;
+        }
+        layers.push(PlanLayer::One {
+            src: layer_src(clip, ctx, cache, quality, t),
+            alpha_k: clip.opacity_k,
+            scale_alpha: clip.opacity_k < 4096,
+        });
+    }
+    FramePlan { t, out_w: quality.width, out_h: quality.height, layers, has_3d }
+}
+
+/// CPU-исполнение плана без держателя пулов (parity-тесты kt-gpu:
+/// GPU-выход сверяется с этим эталоном; пулы одноразовые).
+pub fn compose_plan_cpu(plan: &FramePlan<'_>, cache: &BurstCache, out: &mut Vec<u8>) -> bool {
+    let mut scratch = kt_fx::video::FxScratch::default();
+    let mut blend = Vec::new();
+    execute_plan_cpu(plan, cache, &mut scratch, &mut blend, out)
+}
+
+/// CPU-исполнитель плана: недостающая половина пары → присутствующая с
+/// полным весом + complete=false (playback не ждёт, инвариант №5); слой
+/// чужого размера молча пропускается (контракт «декодер отдаёт Quality»).
+fn execute_plan_cpu(
+    plan: &FramePlan<'_>,
+    cache: &BurstCache,
+    scratch: &mut kt_fx::video::FxScratch,
+    blend: &mut Vec<u8>,
+    out: &mut Vec<u8>,
+) -> bool {
+    let w = plan.out_w as usize;
+    let h = plan.out_h as usize;
+    out.clear();
+    out.resize(w * h * 4, 0);
+    let mut complete = true;
+    let q_key = (plan.out_w, plan.out_h);
+    let fits = |f: &Arc<VideoFrame>| (f.width as usize, f.height as usize) == (w, h);
+    for layer in &plan.layers {
+        match layer {
+            PlanLayer::One { src, alpha_k, scale_alpha } => {
+                match layer_frame_cpu(src, cache, q_key, scratch, plan.t) {
+                    Some(f) if fits(&f) => {
+                        if *scale_alpha {
+                            scale_alpha_into(blend, &f, *alpha_k, w * h);
+                            alpha_over(out, blend, true, w * h);
+                        } else {
+                            alpha_over(out, &f.rgba, f.has_alpha, w * h);
+                        }
                     }
                     Some(_) => {}
                     None => complete = false,
                 }
-                continue;
             }
-            // outgoing половина пары рисуется на итерации incoming
-            if let Some(win) = clip.fade_out
-                && t.0 >= win.0.0
-                && t.0 < win.1.0
-                && find_pair(&self.clips, clip.lane, win, true).is_some()
-            {
-                continue;
-            }
-            if let Some(win) = clip.fade_in
-                && t.0 >= win.0.0
-                && t.0 < win.1.0
-                && let Some(pi) = find_pair(&self.clips, clip.lane, win, false)
-            {
-                let outgoing = &self.clips[pi];
-                let fa = clip_layer(outgoing, grid, cache, quality, q_key, scratch, t);
-                let fb = clip_layer(clip, grid, cache, quality, q_key, scratch, t);
-                let k = (((t.0 - win.0.0) * 4096) / (win.1.0 - win.0.0)).clamp(0, 4096) as u32;
-                let fits = |f: &std::sync::Arc<kt_media::VideoFrame>| {
-                    (f.width as usize, f.height as usize) == (w, h)
-                };
-                // уровни соседей смешиваются тем же весом, что и картинка
-                let op = (outgoing.opacity_k * (4096 - k) + clip.opacity_k * k) / 4096;
+            PlanLayer::Dissolve { a, b, k, alpha_k } => {
+                let fa = layer_frame_cpu(a, cache, q_key, scratch, plan.t);
+                let fb = layer_frame_cpu(b, cache, q_key, scratch, plan.t);
                 match (fa, fb) {
-                    (Some(a), Some(b)) if fits(&a) && fits(&b) => {
-                        let mut has_alpha =
-                            dissolve_into(&mut self.blend, &a, &b, k, w * h);
-                        if op < 4096 {
-                            scale_alpha_inplace(&mut self.blend, op, w * h);
+                    (Some(fa), Some(fb)) if fits(&fa) && fits(&fb) => {
+                        let mut has_alpha = dissolve_into(blend, &fa, &fb, *k, w * h);
+                        if *alpha_k < 4096 {
+                            scale_alpha_inplace(blend, *alpha_k, w * h);
                             has_alpha = true;
                         }
-                        alpha_over(out, &self.blend, has_alpha, w * h);
+                        alpha_over(out, blend, has_alpha, w * h);
                     }
                     (Some(f), None) | (None, Some(f)) if fits(&f) => {
-                        if op < 4096 {
-                            scale_alpha_into(&mut self.blend, &f, op, w * h);
-                            alpha_over(out, &self.blend, true, w * h);
+                        if *alpha_k < 4096 {
+                            scale_alpha_into(blend, &f, *alpha_k, w * h);
+                            alpha_over(out, blend, true, w * h);
                         } else {
                             alpha_over(out, &f.rgba, f.has_alpha, w * h);
                         }
@@ -293,24 +433,10 @@ impl VideoRenderer {
                     }
                     _ => complete = false,
                 }
-                continue;
-            }
-            match clip_layer(clip, grid, cache, quality, q_key, scratch, t) {
-                Some(f) => {
-                    if (f.width as usize, f.height as usize) == (w, h) {
-                        if clip.opacity_k < 4096 {
-                            scale_alpha_into(&mut self.blend, &f, clip.opacity_k, w * h);
-                            alpha_over(out, &self.blend, true, w * h);
-                        } else {
-                            alpha_over(out, &f.rgba, f.has_alpha, w * h);
-                        }
-                    }
-                }
-                None => complete = false,
             }
         }
-        complete
     }
+    complete
 }
 
 /// Партнёр по переходу: клип той же дорожки с ТЕМ ЖЕ окном на противоположной
@@ -326,61 +452,50 @@ fn find_pair(
     })
 }
 
-/// Слой одного клипа для момента t: пре-FX кадр из кэша либо результат
+/// Кадр слоя для CPU-исполнителя: пре-FX кадр из плана либо результат
 /// FX-цепочки (мемоизированный пост-FX кэшем). None — кадра нет (голод).
-/// Логика — бывшее тело цикла compose_from_cache_into, вынесена ради
-/// бленда пары перехода (п.137); свежий пост-FX кадр возвращается ЧЕРЕЗ
-/// кэш (одна лишняя выборка на холодную цепочку — дешевле клона кадра).
-fn clip_layer(
-    clip: &VideoClip,
-    grid: &FpsGrid,
+/// Свежий пост-FX кадр возвращается ЧЕРЕЗ кэш (одна лишняя выборка на
+/// холодную цепочку — дешевле клона кадра).
+fn layer_frame_cpu(
+    src: &LayerSrc<'_>,
     cache: &BurstCache,
-    quality: Quality,
     q_key: (u32, u32),
     scratch: &mut kt_fx::video::FxScratch,
     t: Tick,
-) -> Option<std::sync::Arc<kt_media::VideoFrame>> {
-    let src_pts = clip_source_pts(clip, t, grid);
-    let key_idx = video_cache_idx(src_pts);
-    let sid = SourceId(clip.media.0);
-    // пре-FX кадр читается ВСЕГДА (бамп recency: полоски прогретости
-    // и prefetch не «остывают» под живым пост-FX кэшем)
-    let pre = cache.get_video(sid, Some(quality), key_idx);
-    if !kt_fx::video::has_video_fx(&clip.fx) {
-        return pre;
+) -> Option<Arc<VideoFrame>> {
+    if !kt_fx::video::has_video_fx(src.fx) {
+        return src.frame.clone();
     }
     // цепочка видео-FX (п.25): кэш хранит ПРЕ-FX кадры (правда о
     // coverage), пост-FX кадр мемоизируется отдельным kind'ом
     // (п.2 р.7 — иначе цепочка платится на КАЖДЫЙ compose и loop
-    // играет 6.8 fps даже прогретым); один код для превью и
-    // экспорта (инвариант №7), эффекты детерминированы по
-    // (t, fx_hash) → байт-идентичность сохранена.
-    if let Some(f) = cache.get_postfx_video(sid, q_key, clip.fx_hash, t.0) {
+    // играет 6.8 fps даже прогретым); эффекты детерминированы по
+    // (t, fx_hash) → байт-идентичность сохранена. GPU-исполнитель эту
+    // мемоизацию не трогает (у него свой ReadbackCache в kt-gpu).
+    if let Some(f) = cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0) {
         return Some(f);
     }
-    let frame = pre?;
-    let span = (clip.end.0 - clip.start.0).max(1);
-    let u = (t.0 - clip.start.0) as f64 / span as f64;
+    let frame = src.frame.as_ref()?;
     let ctx = kt_fx::video::VideoFxCtx {
-        out_w: quality.width,
-        out_h: quality.height,
-        u,
+        out_w: q_key.0,
+        out_h: q_key.1,
+        u: src.u,
         burst_index: t.0,
     };
     let mut rgba = scratch.take(frame.rgba.len());
     rgba.copy_from_slice(&frame.rgba);
     let f = kt_fx::video::apply_video_chain_pooled(
-        &clip.fx,
+        src.fx,
         kt_fx::video::Frame { w: frame.width, h: frame.height, rgba, has_alpha: frame.has_alpha },
         &ctx,
         scratch,
     );
     cache.insert_postfx_video(
-        sid,
+        src.source,
         q_key,
-        clip.fx_hash,
+        src.fx_hash,
         t.0,
-        std::sync::Arc::new(kt_media::VideoFrame {
+        Arc::new(VideoFrame {
             pts: t,
             width: f.w,
             height: f.h,
@@ -388,7 +503,7 @@ fn clip_layer(
             has_alpha: f.has_alpha,
         }),
     );
-    cache.get_postfx_video(sid, q_key, clip.fx_hash, t.0)
+    cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0)
 }
 
 /// Доля видимости клипа в его СОЛЬНОМ окне фейда (Р.25), k из 4096 долей:

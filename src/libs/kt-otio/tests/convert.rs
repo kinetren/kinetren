@@ -450,3 +450,114 @@ fn t180_media_start_timecode_is_subtracted_and_restored() {
     let bn = load_project(&doc(0.0, hour), None).expect("клип левее материала");
     assert_eq!(bn.project.clips[0].source_in, Tick::ZERO);
 }
+
+// ---- тест 189 (Р.29): камеры и версия файла ПО СОДЕРЖИМОМУ -------------------
+
+fn project_3d() -> Project {
+    let mut p = rich_project();
+    // Pan3d на верхнем видео-клипе: обычный kt-эффект, версию НЕ бампает
+    p.clips[0].fx = vec![FxInstance::Pan3d {
+        pos_x: 10.0,
+        pos_y: -4.0,
+        pos_z: 120.0,
+        rot_x: 0.0,
+        rot_y: 25.0,
+        rot_z: 0.0,
+        anchor_x: 0.5,
+        anchor_y: 0.5,
+        scale: 1.1,
+        camera: Some(CameraId(2)),
+    }];
+    // две камеры на двух дорожках, с перекрытием по времени и кейфреймами
+    p.camera_lanes = 2;
+    p.cameras = vec![
+        CameraEvent {
+            id: CameraId(1),
+            lane: 0,
+            start: Tick(0),
+            duration: Tick(90_000),
+            name: "main".into(),
+            cam: CameraParams { pos_z: -900.0, ..Default::default() },
+            keyframes: vec![
+                CameraKeyframe { t: 0.0, cam: CameraParams::default() },
+                CameraKeyframe {
+                    t: 1.0,
+                    cam: CameraParams { pos_x: 60.0, fov_deg: 30.0, ..Default::default() },
+                },
+            ],
+            ease: true,
+        },
+        CameraEvent {
+            id: CameraId(2),
+            lane: 1,
+            start: Tick(45_000),
+            duration: Tick(90_000),
+            name: String::new(),
+            cam: CameraParams {
+                target: Some((0.0, 0.0, 0.0)),
+                fov_deg: 55.0,
+                ..Default::default()
+            },
+            keyframes: vec![],
+            ease: false,
+        },
+    ];
+    p.normalize();
+    p.validate().unwrap();
+    p
+}
+
+/// Версия файла по содержимому: без камер v=1 (байт-стабильность старых
+/// файлов), с камерами v=2 (старый ридер отказывает KtMetaTooNew, а не
+/// молча теряет 3D-сцену при перезаписи). Round-trip и идемпотентность.
+#[test]
+fn t189_cameras_roundtrip_and_conditional_v2() {
+    // без камер — v=1, никаких камерных ключей
+    let flat = save_project(&rich_project(), &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&flat).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 1, "без камер файл остаётся v1");
+    assert!(!flat.contains("camera"), "камерные ключи не пишутся впустую");
+
+    // с камерами — v=2, полный round-trip, идемпотентность
+    let p = project_3d();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 2, "камеры поднимают версию файла");
+    let b = load_project(&text, None).expect("наш 3D-файл читается");
+    assert_eq!(b.project.camera_lanes, 2);
+    assert_eq!(b.project.cameras, p.cameras, "камеры пережили круг");
+    assert_eq!(b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap().fx, p.clips[0].fx);
+    let again = save_project(&b.project, &b.retained, None);
+    assert_eq!(text, again, "идемпотентность записи с камерами");
+}
+
+/// Неизвестные kt-поля будущих версий (v3+) возятся passthrough'ом:
+/// v2-сборка ничего не теряет — и потому будущим добавкам не понадобится
+/// жёсткий отказ.
+#[test]
+fn t189b_future_kt_fields_pass_through() {
+    let text = save_project(&project_3d(), &Retained::default(), None);
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    v["metadata"]["kt"]["future_field"] = serde_json::json!({"x": 1});
+    let b = load_project(&serde_json::to_string_pretty(&v).unwrap(), None).unwrap();
+    let out = save_project(&b.project, &b.retained, None);
+    assert!(out.contains("future_field"), "неизвестное kt-поле не потерялось");
+}
+
+/// Golden 3D-файла: замораживает serde-схему камер/Pan3d (как t148 — v1).
+/// Регенерация: `cargo test -p kt-otio --test convert -- --ignored t189_regen`
+#[test]
+fn t189_matches_committed_golden() {
+    let out = save_project(&project_3d(), &Retained::default(), None);
+    let golden = include_str!("../../../fixtures/demo-3d.otio");
+    assert_eq!(out, golden, "3D-схема (камеры/Pan3d) разошлась с golden");
+}
+
+#[test]
+#[ignore = "генератор эталона: cargo test -p kt-otio --test convert -- --ignored t189_regen"]
+fn t189_regen() {
+    let out = save_project(&project_3d(), &Retained::default(), None);
+    std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/demo-3d.otio"), &out)
+        .unwrap();
+    println!("regenerated ({} bytes)", out.len());
+}

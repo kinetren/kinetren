@@ -19,6 +19,7 @@ use crate::fxstore::FxStateStore;
 use crate::prefetch::prefetch_audio_pass;
 use crate::transport::Transport;
 use crate::video::{VideoRenderer, video_cache_idx};
+use crate::video_plan::{GpuBackendInfo, GpuExecError, VideoGpuExec};
 use crate::worker::{DecodeRequest, DecodeStats, MediaWorker, RequestKind};
 use crate::{Priority, source_id};
 use kt_cache::{BurstCache, CacheConfig};
@@ -143,6 +144,11 @@ pub struct Player {
     project: Arc<Mutex<Project>>,
     model_dirty: Arc<AtomicBool>,
     video: Mutex<VideoRenderer>,
+    /// GPU-исполнитель видео-композита (Р.29): инжектится сверху
+    /// (kt-app), живёт отдельно от VideoRenderer — пересоздание рендерера
+    /// при правках модели его не теряет. DeviceLost «отравляет» до конца
+    /// сессии → CPU-фолбэк + notice.
+    video_gpu: Mutex<VideoGpuState>,
     preview_quality: Arc<Mutex<Quality>>,
     stop: Arc<AtomicBool>,
     render_thread: Option<std::thread::JoinHandle<()>>,
@@ -155,6 +161,23 @@ pub struct Player {
     /// Кэш графа для sample_levels_at (п.1): (версия, renderer, store).
     levels_probe: Mutex<Option<(u64, AudioRenderer, FxStateStore)>>,
     pub loop_stats: Arc<LoopStats>,
+}
+
+/// Состояние GPU-исполнителя превью (Р.29).
+#[derive(Default)]
+struct VideoGpuState {
+    exec: Option<Arc<dyn VideoGpuExec>>,
+    /// Some(причина) — DeviceLost/Validation: GPU отравлен до конца
+    /// сессии, превью идёт CPU-фолбэком, UI показывает notice.
+    poisoned: Option<String>,
+}
+
+/// Статус видео-бэкенда (для notice и строки перф-панели).
+#[derive(Debug, Clone)]
+pub enum VideoBackendStatus {
+    Cpu,
+    Gpu(GpuBackendInfo),
+    Poisoned { info: GpuBackendInfo, reason: String },
 }
 
 impl Player {
@@ -186,6 +209,7 @@ impl Player {
         }
         let workers: Workers = Arc::new(std::sync::RwLock::new(workers));
         let video = Mutex::new(VideoRenderer::new(&project));
+        let video_gpu = Mutex::new(VideoGpuState::default());
         let project = Arc::new(Mutex::new(project));
         let model_dirty = Arc::new(AtomicBool::new(true));
         let wake = Arc::new(Wake { lock: Mutex::new(()), cv: std::sync::Condvar::new() });
@@ -273,6 +297,7 @@ impl Player {
             project,
             model_dirty,
             video,
+            video_gpu,
             preview_quality,
             stop,
             render_thread: Some(render_thread),
@@ -479,6 +504,26 @@ impl Player {
         self.video.lock().unwrap().grid
     }
 
+    /// Инжекция GPU-исполнителя видео (Р.29). None — принудительный CPU.
+    /// Снимает «отравление» (новый движок = новая попытка).
+    pub fn set_video_gpu(&self, exec: Option<Arc<dyn VideoGpuExec>>) {
+        let mut g = self.video_gpu.lock().unwrap();
+        g.exec = exec;
+        g.poisoned = None;
+    }
+
+    /// Статус видео-бэкенда для notice/перф-панели.
+    pub fn video_backend(&self) -> VideoBackendStatus {
+        let g = self.video_gpu.lock().unwrap();
+        match (&g.exec, &g.poisoned) {
+            (Some(e), None) => VideoBackendStatus::Gpu(e.info().clone()),
+            (Some(e), Some(r)) => {
+                VideoBackendStatus::Poisoned { info: e.info().clone(), reason: r.clone() }
+            }
+            (None, _) => VideoBackendStatus::Cpu,
+        }
+    }
+
     /// Вариант compose_preview с переиспользуемым буфером (превью 60 раз/с:
     /// две аллокации полного RGBA-кадра на каждый кадр — заметная часть
     /// стоимости кадра UI, п.1 раунда 5).
@@ -499,6 +544,24 @@ impl Player {
                     prio: Priority::Playback,
                     generation,
                 });
+            }
+        }
+        // GPU-исполнитель по умолчанию (Р.29); TooLarge — CPU только на
+        // этот план, DeviceLost/Validation — «отравить» до конца сессии
+        if let Some(exec) = {
+            let g = self.video_gpu.lock().unwrap();
+            if g.poisoned.is_none() { g.exec.clone() } else { None }
+        } {
+            let gone = {
+                let plan = video.frame_plan(&self.cache, aligned, q);
+                match exec.execute_into(&plan, out) {
+                    Ok(complete) => return (q, complete),
+                    Err(GpuExecError::TooLarge { .. }) => None,
+                    Err(e) => Some(format!("{e:?}")),
+                }
+            };
+            if let Some(reason) = gone {
+                self.video_gpu.lock().unwrap().poisoned = Some(reason);
             }
         }
         let complete = video.compose_from_cache_into(&self.cache, aligned, q, out);

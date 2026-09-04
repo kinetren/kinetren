@@ -52,6 +52,17 @@ elif [ -z "${NO_LIVE:-}" ]; then
     echo "живые сценарии пропущены: нет Xvfb (sudo apt install xvfb openbox)"
 fi
 
+# GPU-конформанс (Р.29): parity-тесты kt-gpu на НАСТОЯЩЕМ адаптере этой
+# машины (дискретная карта/железный драйвер, а не только lavapipe из CI).
+# Без адаптера тесты скипаются сами с печатью причины.
+echo "== GPU-конформанс (kt-gpu) =="
+if cargo test -p kt-gpu -q 2>&1 | tail -4; then
+    echo "kt-gpu: ok"
+else
+    echo "KT-GPU ТЕСТЫ ПРОВАЛИЛИСЬ" >&2
+    LIVE_FAILED=1
+fi
+
 echo "== чистка =="
 # старые тарболы и распакованные каталоги: оставляем только текущий
 if [ -d target/dist-out ]; then

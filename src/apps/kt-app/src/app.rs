@@ -160,6 +160,8 @@ pub struct KtApp {
     glow_skip: u8,
     /// Имя адаптера/бэкенда wgpu (диагностика перф-панели).
     pub gpu_info: Option<String>,
+    /// Notice о потере GPU-рендера видео показан (один раз за сессию, Р.29).
+    pub gpu_fx_lost_notified: bool,
     pub snap_line: Option<i64>,
     /// (поколение транспорта, число loop-перескоков) на прошлом кадре
     /// превью. Смена любого — законная причина уехать ключу показа назад:
@@ -263,6 +265,30 @@ impl KtApp {
         Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000 })
     }
 
+    /// Р.29: собрать GPU-движок видео-FX на живом устройстве eframe и
+    /// инжектировать в плеер. Зовётся из первого кадра ui() — и потому
+    /// повторяется для каждого нового KtApp (открытие проекта пересоздаёт
+    /// и плеер, и настоящий детект). `KT_VIDEO_GPU=0` — принудительный
+    /// CPU (отладка/сравнение); неудача создания — notice + CPU.
+    fn init_video_gpu(&mut self, frame: &eframe::Frame) {
+        if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
+            return;
+        }
+        let built = match frame.wgpu_render_state() {
+            None => Err("no wgpu render state".to_string()),
+            Some(rs) => kt_gpu::GpuFxEngine::new(kt_gpu::GpuContext::from_parts(
+                std::sync::Arc::new(rs.device.clone()),
+                std::sync::Arc::new(rs.queue.clone()),
+                rs.adapter.get_info(),
+            ))
+            .map_err(|e| e.to_string()),
+        };
+        match built {
+            Ok(engine) => self.player.set_video_gpu(Some(engine)),
+            Err(e) => self.warn(crate::tf!(k::msg::VIDEO_FX_CPU, e)),
+        }
+    }
+
     fn build_player(
         project: &Project,
         base: Option<&Path>,
@@ -356,6 +382,7 @@ impl KtApp {
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
+            gpu_fx_lost_notified: false,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -481,6 +508,7 @@ impl KtApp {
             preview_buf: Vec::new(),
             glow_skip: 0,
             gpu_info: None,
+            gpu_fx_lost_notified: false,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -593,6 +621,15 @@ impl KtApp {
     /// интеракции проверяются egui_kittest, не только скриншотом).
     pub(crate) fn draw_all(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        // Потеря GPU-исполнителя видео посреди сессии (DeviceLost) —
+        // превью уже на CPU-фолбэке, notice один раз (п.2 Р.29, тест 185)
+        if !self.gpu_fx_lost_notified
+            && let kt_engine::VideoBackendStatus::Poisoned { reason, .. } =
+                self.player.video_backend()
+        {
+            self.gpu_fx_lost_notified = true;
+            self.warn(crate::tf!(k::msg::VIDEO_FX_GPU_LOST, reason));
+        }
         // Корневой Ui, который отдаёт eframe, обрамлён дефолтными 8 px —
         // из-за них ВЕСЬ интерфейс не доходил до краёв окна (жалоба п.3
         // р.9 про «отступ метров справа» — на самом деле отступала каждая
@@ -1551,6 +1588,7 @@ impl KtApp {
             LaneKind::Video => self.apply(Command::InsertLane { kind: ClipKind::Video, at }),
             LaneKind::Audio => self.apply(Command::InsertLane { kind: ClipKind::Audio, at }),
             LaneKind::Morph => self.apply(Command::InsertMorphLane { at }),
+            LaneKind::Camera => self.apply(Command::InsertCameraLane { at }),
         };
         if ok {
             kt_model::lane_order_insert(&mut self.lane_order, kind, at);
@@ -1570,6 +1608,7 @@ impl KtApp {
             LaneKind::Video => p.video_lanes,
             LaneKind::Audio => p.audio_lanes,
             LaneKind::Morph => p.morph_lanes,
+            LaneKind::Camera => p.camera_lanes,
         };
         let at = match after {
             Some((k, l)) if k == kind => l + 1,
@@ -2224,6 +2263,28 @@ impl KtApp {
 
     pub fn next_morph_id(&self) -> u64 {
         self.model.project().morphers.iter().map(|m| m.id.0).max().unwrap_or(0) + 1
+    }
+
+    /// Камера под курсором воспроизведения (Р.29): дефолтная «50 мм»,
+    /// 5 секунд — параметры правятся в окне камеры (двойной клик).
+    pub fn add_camera_at_playhead(&mut self, lane: u32) {
+        let id = kt_model::CameraId(
+            self.model.project().cameras.iter().map(|c| c.id.0).max().unwrap_or(0) + 1,
+        );
+        let start = self.player.transport.playhead();
+        let cam = kt_model::CameraEvent {
+            id,
+            lane,
+            start,
+            duration: Tick(5 * 90_000),
+            name: String::new(),
+            cam: kt_model::CameraParams::default(),
+            keyframes: vec![],
+            ease: true,
+        };
+        if self.apply(Command::AddCamera(cam)) {
+            self.dirty_content = true;
+        }
     }
 
     /// Сбор целей morpher'а (порт collectMorpherTargetClipIds v1): регион
@@ -3052,6 +3113,15 @@ impl KtApp {
         });
         if let Some(g) = &self.gpu_info {
             ui.weak(format!("GPU: {g}"));
+        }
+        // бэкенд видео-FX (Р.29): GPU по умолчанию, CPU — фолбэк с notice
+        match self.player.video_backend() {
+            kt_engine::VideoBackendStatus::Gpu(info) => {
+                ui.weak(crate::tf!(k::perf::VIDEO_FX_GPU, info.name));
+            }
+            _ => {
+                ui.weak(tr(k::perf::VIDEO_FX_CPU));
+            }
         }
         let r = ui.checkbox(&mut self.ui_economy, tr(k::perf::ECONOMY));
         self.hint(r, tr(k::hint::ECONOMY));
@@ -4393,6 +4463,9 @@ impl eframe::App for KtApp {
             if sw {
                 self.warn(tr(k::msg::SOFTWARE_RENDER));
             }
+            // Р.29: видео-FX и композит на GPU по умолчанию — движок на
+            // устройстве eframe. Софт-рендер (llvmpipe) — тоже «GPU есть».
+            self.init_video_gpu(_frame);
         }
 
         self.draw_all(ui);
@@ -4417,6 +4490,22 @@ impl eframe::App for KtApp {
                     &kt_otio::save_project(self.model.project(), &self.retained, p.parent()),
                 );
             }
+        }
+    }
+}
+
+/// GPU-движок для экспорта (Р.29): свой headless-девайс на джоб — kt-cli
+/// окна не имеет, а очередь UI не делит время с 4K-экспортом. None → CPU
+/// (для 2D-проекта это полноценный путь; `KT_VIDEO_GPU=0` — принудительно).
+pub(crate) fn export_video_gpu() -> Option<std::sync::Arc<dyn kt_engine::VideoGpuExec>> {
+    if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
+        return None;
+    }
+    match kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new) {
+        Ok(e) => Some(e),
+        Err(err) => {
+            eprintln!("video export on CPU (no GPU): {err}");
+            None
         }
     }
 }

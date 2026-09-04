@@ -107,7 +107,8 @@ pub fn has_video_fx(fx: &[FxInstance]) -> bool {
 // ---- пан/зум ---------------------------------------------------------------
 
 /// Интерполяция кейфреймов CamMotion (v1: smoothstep внутри сегмента).
-fn cam_at(keys: &[CamKeyframe], u: f64, ease: bool, time_scale: f64) -> (f64, f64, f64) {
+/// Pub (Р.29): GPU-путь считает рамку тем же кодом, в шейдер — юниформы.
+pub fn cam_at(keys: &[CamKeyframe], u: f64, ease: bool, time_scale: f64) -> (f64, f64, f64) {
     // дефолт v1: наезд 1.0 → 1.35
     let default = [
         CamKeyframe { t: 0.0, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 },
@@ -138,20 +139,23 @@ fn cam_at(keys: &[CamKeyframe], u: f64, ease: bool, time_scale: f64) -> (f64, f6
     (k.pan_x, k.pan_y, k.zoom)
 }
 
-/// Кроп-рамка + билинейный ресемпл в out (v1 composePanZoomOutput).
+/// Кроп-рамка Pan/CamMotion в координатах источника: (x0, y0, cw, ch).
+/// Pub (Р.29): ОБЩАЯ математика CPU- и GPU-путей — GPU считает рамку этой
+/// же функцией и передаёт её в шейдер юниформами.
 #[allow(clippy::too_many_arguments)]
-fn pan_zoom(
-    src: &Frame,
-    ctx: &VideoFxCtx,
+pub fn pan_frame(
+    src_w: u32,
+    src_h: u32,
+    out_w: u32,
+    out_h: u32,
     mode: PanMode,
     pan_x: f64,
     pan_y: f64,
     zoom: f64,
-    scratch: &mut FxScratch,
-) -> Frame {
-    let (ow, oh) = (ctx.out_w.max(2), ctx.out_h.max(2));
+) -> (f64, f64, f64, f64) {
+    let (ow, oh) = (out_w.max(2), out_h.max(2));
     let zoom = zoom.clamp(0.05, 32.0);
-    let (sw, sh) = (src.w as f64, src.h as f64);
+    let (sw, sh) = (src_w as f64, src_h as f64);
     let ar_out = ow as f64 / oh as f64;
 
     // базовая рамка в координатах источника
@@ -175,7 +179,21 @@ fn pan_zoom(
     let cy = sh / 2.0 + pan_y.clamp(-4.0, 4.0) * max_dy;
     let x0 = (cx - cw / 2.0).clamp(0.0, sw - cw.min(sw));
     let y0 = (cy - ch / 2.0).clamp(0.0, sh - ch.min(sh));
+    (x0, y0, cw, ch)
+}
 
+/// Кроп-рамка + билинейный ресемпл в out (v1 composePanZoomOutput).
+fn pan_zoom(
+    src: &Frame,
+    ctx: &VideoFxCtx,
+    mode: PanMode,
+    pan_x: f64,
+    pan_y: f64,
+    zoom: f64,
+    scratch: &mut FxScratch,
+) -> Frame {
+    let (ow, oh) = (ctx.out_w.max(2), ctx.out_h.max(2));
+    let (x0, y0, cw, ch) = pan_frame(src.w, src.h, ctx.out_w, ctx.out_h, mode, pan_x, pan_y, zoom);
     let mut out = scratch.take((ow * oh * 4) as usize);
     bilinear_into(src, x0, y0, cw, ch, ow, oh, &mut out);
     Frame { w: ow, h: oh, rgba: out, has_alpha: src.has_alpha }
@@ -327,16 +345,40 @@ fn edges(f: Frame, threshold: u32, scratch: &mut FxScratch) -> Frame {
     Frame { w: f.w, h: f.h, rgba: out, has_alpha: false }
 }
 
-/// Детерминированное зерно (v1 LCG: seed от позиции таймлайна).
+/// Финализатор lowbias32 (Chris Wellons): целочисленный avalanche-хэш,
+/// побитно воспроизводимый в WGSL (u32-арифметика без float).
+#[inline]
+pub fn noise_hash(mut x: u32) -> u32 {
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846ca68b);
+    x ^= x >> 16;
+    x
+}
+
+/// Зерно кадра для noise: одна величина на кадр, в GPU-путь уходит юниформой.
+#[inline]
+pub fn noise_seed(burst_index: i64) -> u32 {
+    noise_hash(burst_index as u32)
+}
+
+/// Детерминированное зерно. Р.29: counter-based hash вместо
+/// последовательного LCG v1 — зерно каждого пикселя считается из (x, y,
+/// seed) независимо, порядок обхода не важен → та же формула в WGSL даёт
+/// байт-в-байт тот же шум на GPU. Санкционированная смена картинки шума
+/// (перегенерирован только noise-эталон t26).
 fn noise(mut f: Frame, amount: f64, burst_index: i64) -> Frame {
     let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
     if k == 0 {
         return f;
     }
-    let mut rng: u32 = (burst_index as u32).wrapping_mul(1103515245).wrapping_add(12345);
-    for px in f.rgba.chunks_exact_mut(4) {
-        rng = rng.wrapping_mul(1664525).wrapping_add(1013904223);
-        let n = ((rng >> 16) & 0x7fff) as i64 - 16384;
+    let seed = noise_seed(burst_index);
+    let w = f.w;
+    for (p, px) in f.rgba.chunks_exact_mut(4).enumerate() {
+        let (x, y) = (p as u32 % w, p as u32 / w);
+        let h = noise_hash(x ^ noise_hash(y ^ seed));
+        let n = ((h >> 16) & 0x7fff) as i64 - 16384;
         let off = (n * k / 32767) as i32;
         for c in px.iter_mut().take(3) {
             *c = (*c as i32 + off).clamp(0, 255) as u8;

@@ -143,6 +143,21 @@ pub enum Command {
     RemoveMorphLane {
         at: u32,
     },
+    /// Камеры (Р.29, 3D-композитинг) — по образцу морферных команд.
+    AddCamera(CameraEvent),
+    /// Полная замена события (окно параметров; в UI — coalesced-жест).
+    SetCamera(CameraEvent),
+    RemoveCamera {
+        id: CameraId,
+    },
+    /// Вставить камерную дорожку в позицию `at`.
+    InsertCameraLane {
+        at: u32,
+    },
+    /// Удалить камерную дорожку вместе с её событиями.
+    RemoveCameraLane {
+        at: u32,
+    },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -179,6 +194,12 @@ pub enum CommandError {
     MorpherNoTargets,
     #[error("morph lane {0} not found")]
     MorphLaneNotFound(u32),
+    #[error("camera {0:?} not found")]
+    CameraNotFound(CameraId),
+    #[error("invalid camera: {0}")]
+    InvalidCamera(ProjectError),
+    #[error("camera lane {0} not found")]
+    CameraLaneNotFound(u32),
     #[error("nothing to undo")]
     NothingToUndo,
     #[error("nothing to redo")]
@@ -488,6 +509,29 @@ impl TimelineModel {
                 }
             }
             Command::InsertMorphLane { .. } => {}
+            Command::AddCamera(c) => {
+                if p.cameras.iter().any(|x| x.id == c.id) {
+                    return Err(CommandError::IdInUse(c.id.0));
+                }
+                Self::check_camera_on(c)?;
+            }
+            Command::SetCamera(c) => {
+                if !p.cameras.iter().any(|x| x.id == c.id) {
+                    return Err(CommandError::CameraNotFound(c.id));
+                }
+                Self::check_camera_on(c)?;
+            }
+            Command::RemoveCamera { id } => {
+                if !p.cameras.iter().any(|x| x.id == *id) {
+                    return Err(CommandError::CameraNotFound(*id));
+                }
+            }
+            Command::InsertCameraLane { .. } => {}
+            Command::RemoveCameraLane { at } => {
+                if *at >= p.camera_lanes {
+                    return Err(CommandError::CameraLaneNotFound(*at));
+                }
+            }
             Command::RemoveMorphLane { at } => {
                 if *at >= p.morph_lanes {
                     return Err(CommandError::MorphLaneNotFound(*at));
@@ -510,6 +554,25 @@ impl TimelineModel {
             && !p.media.iter().any(|x| x.id == *mid)
         {
             return Err(CommandError::MediaNotFound(*mid));
+        }
+        Ok(())
+    }
+
+    /// Проверка камеры-события теми же правилами, что validate() (Р.29):
+    /// команда не имеет права провести в проект то, что он потом отвергнет.
+    fn check_camera_on(c: &CameraEvent) -> Result<(), CommandError> {
+        if c.duration.0 <= 0 {
+            return Err(CommandError::InvalidCamera(ProjectError::CameraBadDuration(c.id)));
+        }
+        let fovs = std::iter::once(c.cam.fov_deg).chain(c.keyframes.iter().map(|k| k.cam.fov_deg));
+        for fov in fovs {
+            if !(fov > 0.0 && fov < 180.0) {
+                return Err(CommandError::InvalidCamera(ProjectError::CameraBadFov(c.id)));
+            }
+        }
+        let sorted = c.keyframes.windows(2).all(|w| w[0].t <= w[1].t);
+        if !sorted || c.keyframes.iter().any(|k| !(0.0..=1.0).contains(&k.t)) {
+            return Err(CommandError::InvalidCamera(ProjectError::CameraBadKeyframes(c.id)));
         }
         Ok(())
     }
@@ -726,6 +789,30 @@ impl TimelineModel {
                     }
                 }
                 p.morph_lanes = p.morph_lanes.saturating_sub(1);
+            }
+            Command::AddCamera(c) => p.cameras.push(c),
+            Command::SetCamera(c) => {
+                if let Some(x) = p.cameras.iter_mut().find(|x| x.id == c.id) {
+                    *x = c;
+                }
+            }
+            Command::RemoveCamera { id } => p.cameras.retain(|c| c.id != id),
+            Command::InsertCameraLane { at } => {
+                p.camera_lanes = (p.camera_lanes.max(at) + 1).max(1);
+                for c in &mut p.cameras {
+                    if c.lane >= at {
+                        c.lane += 1;
+                    }
+                }
+            }
+            Command::RemoveCameraLane { at } => {
+                p.cameras.retain(|c| c.lane != at);
+                for c in &mut p.cameras {
+                    if c.lane > at {
+                        c.lane -= 1;
+                    }
+                }
+                p.camera_lanes = p.camera_lanes.saturating_sub(1);
             }
         }
     }

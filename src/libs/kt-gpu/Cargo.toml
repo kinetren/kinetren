@@ -1,0 +1,20 @@
+[package]
+name = "kt-gpu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+kt-time.workspace = true
+kt-model.workspace = true
+kt-media.workspace = true
+kt-cache.workspace = true
+kt-fx.workspace = true
+kt-engine.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+glam.workspace = true
+xxhash-rust.workspace = true
+
+[dev-dependencies]

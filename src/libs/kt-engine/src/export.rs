@@ -13,6 +13,7 @@ use crate::fetch::DirectFetcher;
 use crate::fxstore::FxStateStore;
 use crate::source_id;
 use crate::video::{VideoRenderer, video_cache_idx};
+use crate::video_plan::VideoGpuExec;
 use kt_cache::{BurstCache, CacheConfig};
 use kt_media::{MediaSource, Quality};
 use kt_model::{MediaId, Project};
@@ -122,8 +123,17 @@ pub fn render_raw_audio_range(
     Ok(stats)
 }
 
+/// Бэкенды рендера экспорта (Р.29). Тестовые/старые вызовы идут без них
+/// (CPU — байт-эталон, golden-тесты нетронуты); продукт (kt-app/kt-cli)
+/// передаёт GPU-исполнитель явно.
+#[derive(Default, Clone)]
+pub struct ExportBackends {
+    pub video_gpu: Option<Arc<dyn VideoGpuExec>>,
+}
+
 /// Видео-поток экспорта: RGBA-кадры по сетке fps проекта. Композит —
-/// ТОТ ЖЕ `VideoRenderer::compose_from_cache`, что рисует превью.
+/// ТОТ ЖЕ план кадра (`VideoRenderer::frame_plan`), что у превью;
+/// исполнитель — CPU (этот вариант) или GPU (`_with` c backends).
 pub fn render_raw_video(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
@@ -141,12 +151,38 @@ pub fn render_raw_video(
     )
 }
 
-/// Полный вариант: диапазон, отмена, прогресс.
+/// Полный вариант: диапазон, отмена, прогресс. CPU-исполнитель.
 pub fn render_raw_video_range(
     project: &Project,
     sources: Vec<(MediaId, Box<dyn MediaSource>)>,
     quality: Quality,
     range: Option<(Tick, Tick)>,
+    cancel: &Arc<AtomicBool>,
+    progress: impl FnMut(u64),
+    emit: impl FnMut(&[u8]) -> std::io::Result<()>,
+) -> std::io::Result<ExportStats> {
+    render_raw_video_range_with(
+        project,
+        sources,
+        quality,
+        range,
+        &ExportBackends::default(),
+        cancel,
+        progress,
+        emit,
+    )
+}
+
+/// Вариант с выбором бэкенда. Ошибка GPU ПОСРЕДИ экспорта — ошибка
+/// экспорта, а не молчаливый переход на CPU: начатый файл обязан быть
+/// отрендерен одним бэкендом (ред. инварианта №7, Р.29).
+#[allow(clippy::too_many_arguments)]
+pub fn render_raw_video_range_with(
+    project: &Project,
+    sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    quality: Quality,
+    range: Option<(Tick, Tick)>,
+    backends: &ExportBackends,
     cancel: &Arc<AtomicBool>,
     mut progress: impl FnMut(u64),
     mut emit: impl FnMut(&[u8]) -> std::io::Result<()>,
@@ -178,6 +214,7 @@ pub fn render_raw_video_range(
     // отсюда и пропущенная регрессия.
     let chunk_frames =
         export_chunk_frames(EXPORT_VIDEO_CACHE_BYTES, quality.width, quality.height);
+    let mut frame_buf = Vec::new();
     while t < end {
         if cancel.load(Ordering::Acquire) {
             return Err(std::io::Error::other("cancelled"));
@@ -215,11 +252,18 @@ pub fn render_raw_video_range(
                 return Err(std::io::Error::other("cancelled"));
             }
             progress(stats.video_frames);
-            let (rgba, complete) = video.compose_from_cache(&cache, t, quality);
+            let complete = match &backends.video_gpu {
+                Some(gpu) => {
+                    let plan = video.frame_plan(&cache, t, quality);
+                    gpu.execute_into(&plan, &mut frame_buf)
+                        .map_err(|e| std::io::Error::other(format!("gpu render: {e:?}")))?
+                }
+                None => video.compose_from_cache_into(&cache, t, quality, &mut frame_buf),
+            };
             if !complete {
                 stats.missing_video_layers += 1;
             }
-            emit(&rgba)?;
+            emit(&frame_buf)?;
             stats.video_frames += 1;
             t = Tick(t.0 + step);
         }
@@ -237,6 +281,21 @@ pub enum ExportError {
     AudioThread,
     #[error("export cancelled")]
     Cancelled,
+    /// Р.29: в проекте 3D-эффекты, а GPU-движка нет. Отказ ДО старта —
+    /// тихо испорченный файл (клипы без 3D) хуже честной ошибки.
+    #[error("project uses 3D effects on {0} clip(s), but no GPU is available")]
+    GpuRequired(usize),
+}
+
+/// Клипы, чей рендер требует GPU (3D-эффекты, Р.29). Считается по
+/// effective_clips — morpher-батчи тоже учитываются.
+pub fn gpu_required_clips(project: &Project) -> Vec<kt_model::ClipId> {
+    project
+        .effective_clips()
+        .iter()
+        .filter(|c| c.active_fx().iter().any(|f| f.requires_gpu()))
+        .map(|c| c.id)
+        .collect()
 }
 
 /// Потоковый экспорт в mp4 (h264+aac). `audio_sources`/`video_sources` —
@@ -302,6 +361,42 @@ pub fn export_mp4_with(
     pause: &Arc<AtomicBool>,
     progress: impl Fn(ExportProgress) + Send + Sync + 'static,
 ) -> Result<ExportStats, ExportError> {
+    export_mp4_with_backends(
+        project,
+        audio_sources,
+        video_sources,
+        out_path,
+        range,
+        opts,
+        &ExportBackends::default(),
+        cancel,
+        pause,
+        progress,
+    )
+}
+
+/// Продуктовый вариант (kt-app/kt-cli): бэкенды рендера передаются явно —
+/// GPU по умолчанию, CPU когда движка нет (Р.29).
+#[allow(clippy::too_many_arguments)]
+pub fn export_mp4_with_backends(
+    project: &Project,
+    audio_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    video_sources: Vec<(MediaId, Box<dyn MediaSource>)>,
+    out_path: &str,
+    range: Option<(Tick, Tick)>,
+    opts: &ExportOptions,
+    backends: &ExportBackends,
+    cancel: &Arc<AtomicBool>,
+    pause: &Arc<AtomicBool>,
+    progress: impl Fn(ExportProgress) + Send + Sync + 'static,
+) -> Result<ExportStats, ExportError> {
+    // preflight (Р.29): 3D-эффекты без GPU — явный отказ до создания файла
+    if backends.video_gpu.is_none() {
+        let need = gpu_required_clips(project);
+        if !need.is_empty() {
+            return Err(ExportError::GpuRequired(need.len()));
+        }
+    }
     // пауза (порт v1 waitWhilePaused): кооперативный wait 40 мс,
     // отменяемый; проверяется на каждом кадре/чанке через progress-обёртки
     let wait_paused = {
@@ -367,11 +462,12 @@ pub fn export_mp4_with(
     let vstats = {
         let v_done = v_done.clone();
         let report = report.clone();
-        render_raw_video_range(
+        render_raw_video_range_with(
             project,
             video_sources,
             quality,
             range,
+            backends,
             cancel,
             |done| {
                 wait_paused();

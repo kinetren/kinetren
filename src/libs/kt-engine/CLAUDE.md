@@ -7,7 +7,7 @@ Render graph, планировщик декода, transport, prefetch, эксп
 - Playback не блокируется на декоде: промах к дедлайну → тишина/последний кадр + underrun-флаг (дефект l).
 - FxStateStore — только у аудио-render-потока; diff цепочек по clip id при правках модели (инварианты №2–3, дефекты b, f).
 - Transport: playhead продвигает аудио-render-поток ровно на потреблённые колбэком кадры; wall-clock в путях рендера запрещён (детерминизм, инвариант №10).
-- Путь рендеринга ОДИН: экспорт = офлайн-прогон того же графа (инвариант №7, дефект n). Экспорт стримит в пайпы ffmpeg-процесса, ноль temp-файлов (инвариант №9, дефект o).
+- Код композиции ОДИН (ред. Р.29): `VideoRenderer` строит `FramePlan` (video_plan.rs) для превью И экспорта; исполнителей два — CPU (`compose_from_cache*`, байт-эталон, все тесты) и GPU (`dyn VideoGpuExec` из kt-gpu, инжектится `Player::set_video_gpu`/`ExportBackends` — kt-engine от kt-gpu НЕ зависит). Тестовые конструкторы = CPU; продукт передаёт GPU явно. DeviceLost «отравляет» GPU до конца сессии (CPU-фолбэк + notice, t185); в экспорте ошибка GPU = ошибка экспорта (файл не смешивает бэкенды). 3D-эффекты (`FxInstance::requires_gpu`) CPU не считает; экспорт без GPU при 3D — отказ `ExportError::GpuRequired` (preflight `gpu_required_clips`). Экспорт стримит в пайпы ffmpeg-процесса, ноль temp-файлов (инвариант №9, дефект o).
 - Seek: reset FX + pre-roll max(tail, 100 мс) в мусор (тест 7).
 - Prefetch идемпотентен: wanted − coverage() → submit; ключи строго по сетке воспроизведения (дефект i); голова loop-региона — pin в кэше (тест 14).
 

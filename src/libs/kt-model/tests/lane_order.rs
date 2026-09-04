@@ -4,24 +4,24 @@
 //! синхронизация вектора при вставке/удалении дорожки. Serde-roundtrip
 //! UiState.lane_order; старые файлы без поля читаются (default пусто).
 
-use kt_model::LaneKind::{Audio as A, Morph as M, Video as V};
+use kt_model::LaneKind::{Audio as A, Camera as C, Morph as M, Video as V};
 use kt_model::*;
 
 #[test]
 fn t49_normalize_lane_order() {
     // пусто → блочный дефолт
     assert_eq!(
-        normalize_lane_order(&[], 2, 2, 1),
+        normalize_lane_order(&[], 2, 2, 1, 0),
         vec![(V, 0), (V, 1), (A, 0), (A, 1), (M, 0)]
     );
     // произвольный валидный порядок сохраняется
     let mixed = vec![(V, 0), (A, 0), (V, 1), (M, 0), (A, 1)];
-    assert_eq!(normalize_lane_order(&mixed, 2, 2, 1), mixed);
+    assert_eq!(normalize_lane_order(&mixed, 2, 2, 1, 0), mixed);
     // дубли и несуществующие вычищаются, недостающие дописываются в хвост
     let dirty = vec![(V, 0), (V, 0), (A, 7), (M, 0), (V, 1)];
-    assert_eq!(normalize_lane_order(&dirty, 2, 1, 1), vec![(V, 0), (M, 0), (V, 1), (A, 0)]);
+    assert_eq!(normalize_lane_order(&dirty, 2, 1, 1, 0), vec![(V, 0), (M, 0), (V, 1), (A, 0)]);
     // сжатие числа дорожек выбрасывает хвостовые
-    assert_eq!(normalize_lane_order(&mixed, 1, 1, 0), vec![(V, 0), (A, 0)]);
+    assert_eq!(normalize_lane_order(&mixed, 1, 1, 0, 0), vec![(V, 0), (A, 0)]);
 }
 
 #[test]
@@ -38,7 +38,7 @@ fn t49_insert_remove_shift_aware() {
     lane_order_remove(&mut rows, V, 1);
     assert_eq!(rows, vec![(V, 0), (A, 0), (V, 1), (M, 0), (A, 1)]);
     // нормализация после операций — идемпотентна (вектор уже корректен)
-    assert_eq!(normalize_lane_order(&rows, 2, 2, 1), rows);
+    assert_eq!(normalize_lane_order(&rows, 2, 2, 1, 0), rows);
 }
 
 #[test]
@@ -60,4 +60,24 @@ fn t49_lane_order_serde_roundtrip() {
     let json2 = serde_json::to_string(&p2).unwrap();
     assert!(!json2.contains("lane_order"), "пустой вектор не сериализуется");
     assert_eq!(Project::from_json(&json2).unwrap(), p2);
+}
+
+/// Р.29: камерные дорожки — четвёртый вид в display-порядке (хвост блока
+/// V..A..M..C), insert/remove работают той же машинерией.
+#[test]
+fn t188_camera_lanes_in_display_order() {
+    assert_eq!(
+        normalize_lane_order(&[], 1, 1, 1, 2),
+        vec![(V, 0), (A, 0), (M, 0), (C, 0), (C, 1)]
+    );
+    // произвольный валидный порядок с камерами сохраняется
+    let mixed = vec![(C, 0), (V, 0), (A, 0)];
+    assert_eq!(normalize_lane_order(&mixed, 1, 1, 0, 1), mixed);
+    // несуществующая камера вычищается
+    assert_eq!(normalize_lane_order(&mixed, 1, 1, 0, 0), vec![(V, 0), (A, 0)]);
+    let mut rows = vec![(V, 0), (C, 0)];
+    lane_order_insert(&mut rows, C, 0);
+    assert_eq!(rows, vec![(V, 0), (C, 0), (C, 1)]);
+    lane_order_remove(&mut rows, C, 0);
+    assert_eq!(rows, vec![(V, 0), (C, 0)]);
 }

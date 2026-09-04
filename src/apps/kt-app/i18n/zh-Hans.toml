@@ -99,6 +99,11 @@ insert_morph_below = "在下方插入 Morph 轨道"
 add_video = "添加视频轨道"
 add_audio = "添加音频轨道"
 add_morph = "添加 Morph 轨道"
+camera_title = "摄像机轨道 C{0}"
+delete_camera_n = "删除轨道（{0} 台摄像机）"
+insert_camera_below = "在下方插入摄像机轨道"
+add_camera = "添加摄像机轨道"
+add_camera_here = "在播放头处添加摄像机"
 
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
@@ -220,6 +225,7 @@ nothing = "没有找到"
 
 # Категории эффектов в пикере.
 [fxreg.cat]
+three_d = "3D"
 motion = "运动"
 geometry = "几何"
 blur = "模糊"
@@ -233,6 +239,7 @@ timestretch = "时间伸缩"
 # Ключевые слова поиска. НЕ переупорядочиваются для арабского
 # (сравниваются с вводом пользователя), пишутся в нижнем регистре.
 [fxreg.kw]
+pan3d = "pan 3d 透视 摄像机 图层"
 pan = "pan zoom 平移 缩放 裁剪 构图 crop"
 cammotion = "camera shake 摄像机 抖动 手持 运动"
 mirror = "mirror flip 镜像 翻转 反射"
@@ -266,6 +273,8 @@ chain_empty = "特效链为空 — 请添加特效"
 done = "完成"
 cancel = "取消（还原）"
 mode = "模式："
+camera = "摄像机："
+camera_active = "活动摄像机"
 keyframes_n = "关键帧：{0}（留空 = 与 v1 相同的 1.0 到 1.35 推近）"
 add_kf = "+ 关键帧"
 drop_last = "- 最后一个"
@@ -372,6 +381,8 @@ added = "已添加：{0}"
 autosave_restored = "已恢复未命名项目的自动保存"
 open_a_project = "打开项目：kt-app <文件.ktproj>，或把它拖到窗口上"
 software_render = "没有图形加速（软件渲染）— 界面可能卡顿，预览辉光已关闭"
+video_fx_cpu = "视频特效在 CPU 上计算（无 GPU）：{0}"
+video_fx_gpu_lost = "GPU 视频渲染器已丢失（{0}）— 已切换到 CPU"
 
 # Заголовки системных файловых диалогов.
 flight_saved = "播放日志已保存：{0}"
@@ -395,6 +406,8 @@ v_shown = "V-已显示 {0}"
 v_skipped = "V-跳过/回退 {0}/{1}"
 region_s = "区间 {0}–{1} 秒"
 cache_short = "缓存：{0}/{1} MB"
+video_fx_gpu = "特效：GPU（{0}）"
+video_fx_cpu = "特效：CPU"
 rate_stop = "0（停止）"
 graph_quality = "质量（FPS / hit%）"
 graph_decode = "FFmpeg 活动（/秒）"

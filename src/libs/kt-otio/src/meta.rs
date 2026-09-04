@@ -8,7 +8,14 @@ use serde_json::{Map, Value};
 use crate::{Error, Timeline};
 
 pub const KT_NS: &str = "kt";
-pub const KT_META_VERSION: u32 = 1;
+/// Максимальная ПОНИМАЕМАЯ версия конверта. Писатель ставит версию ПО
+/// СОДЕРЖИМОМУ (Р.29): v=2 ⇔ файл несёт камеры/камерные дорожки (старый
+/// ридер молча потерял бы их при перезаписи → штатный отказ KtMetaTooNew,
+/// правило р.24 «наше чтобы никто не ломал»); иначе v=1 — файлы без 3D
+/// байт-стабильны и открываются старыми сборками. Один Pan3d версию НЕ
+/// бампает: неизвестный эффект деградирует в foreign-passthrough.
+pub const KT_META_VERSION: u32 = 2;
+pub const KT_META_V1: u32 = 1;
 
 // ---- типизированные конверты metadata.kt (приём otio-types) -----------------
 // Структурно-мелкое — СВОИ типы (эволюция модели не двигает схему файла
@@ -52,6 +59,18 @@ pub struct KtTimelineMeta {
     /// Сериализуются отсортированными по MorphId (детерминизм применения).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<kt_model::MorpherEvent>,
+    /// Камерные дорожки и камеры (Р.29, 3D-композитинг). Наличие любого
+    /// из них поднимает версию файла до v2 (см. KT_META_VERSION).
+    /// Камеры сортируются по CameraId (детерминизм, тест 144).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub camera_lanes: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cameras: Vec<kt_model::CameraEvent>,
+    /// Форвард-милосердие к будущим версиям (Р.29): неизвестные kt-поля
+    /// v3+ возятся passthrough'ом — следующие добавки не потребуют
+    /// жёсткого отказа, если старый ридер ничего из них не теряет.
+    #[serde(default, flatten)]
+    pub extra: Map<String, Value>,
 }
 
 /// Карта слоёв дорожек (Р.28) + политика переслаивания проекта.
@@ -97,7 +116,7 @@ pub struct KtBinMedia {
 }
 
 /// Конверт клипа: наши идентификаторы и громкость.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KtClipMeta {
     pub id: u64,
     pub media: u64,
@@ -109,6 +128,9 @@ pub struct KtClipMeta {
     /// байт-стабильны.
     #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
     pub opacity: f32,
+    /// Форвард-милосердие (Р.29): неизвестные kt-поля будущих версий.
+    #[serde(default, flatten)]
+    pub extra: Map<String, Value>,
 }
 
 fn is_zero_f32(v: &f32) -> bool {

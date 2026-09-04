@@ -3017,3 +3017,49 @@ fn t176_audio_and_video_share_one_level_line() {
     assert_eq!(p.transitions[0].in_offset, Tick::ZERO, "фейд внутри события");
     assert_eq!(p.clips[0].duration, Tick(200_000), "событие не тронуто");
 }
+
+/// Тест 185 (Р.29): потеря GPU-исполнителя видео — предупреждение ровно
+/// один раз, дальше CPU-фолбэк работает молча; статус бэкенда честный.
+#[test]
+fn t185_gpu_loss_notice_once() {
+    struct DeadGpu(kt_engine::GpuBackendInfo);
+    impl kt_engine::VideoGpuExec for DeadGpu {
+        fn execute_into(
+            &self,
+            _p: &kt_engine::FramePlan<'_>,
+            _o: &mut Vec<u8>,
+        ) -> Result<bool, kt_engine::GpuExecError> {
+            Err(kt_engine::GpuExecError::DeviceLost)
+        }
+        fn info(&self) -> &kt_engine::GpuBackendInfo {
+            &self.0
+        }
+    }
+    let mut h = harness();
+    assert!(
+        matches!(h.state().player.video_backend(), kt_engine::VideoBackendStatus::Cpu),
+        "в харнессе без wgpu бэкенд честно CPU"
+    );
+    h.state_mut().player.set_video_gpu(Some(std::sync::Arc::new(DeadGpu(
+        kt_engine::GpuBackendInfo { name: "test".into(), backend: "Test".into(), software: true },
+    ))));
+    // форсируем перекомпозицию (ключ превью уже устоялся на прошлых
+    // кадрах): сброс ключа → compose зовёт исполнитель → DeviceLost →
+    // отравление; следующий кадр показывает notice
+    h.state_mut().preview_key = None;
+    h.step();
+    h.step();
+    h.step();
+    let app = h.state();
+    assert!(app.gpu_fx_lost_notified, "notice о потере GPU обязан показаться");
+    assert!(
+        matches!(app.player.video_backend(), kt_engine::VideoBackendStatus::Poisoned { .. }),
+        "бэкенд отравлен до конца сессии"
+    );
+    let texts: Vec<&str> = app.notices.iter().map(|n| n.text.as_str()).collect();
+    let hits = texts
+        .iter()
+        .filter(|t| **t == crate::tf!(k::msg::VIDEO_FX_GPU_LOST, "DeviceLost"))
+        .count();
+    assert_eq!(hits, 1, "предупреждение ровно одно: {texts:?}");
+}

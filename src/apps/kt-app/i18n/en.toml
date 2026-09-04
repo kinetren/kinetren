@@ -99,6 +99,11 @@ insert_morph_below = "Insert morph track below"
 add_video = "Add a video track"
 add_audio = "Add an audio track"
 add_morph = "Add a Morph track"
+camera_title = "Camera track C{0}"
+delete_camera_n = "Delete track ({0} cameras)"
+insert_camera_below = "Insert camera track below"
+add_camera = "Add a Camera track"
+add_camera_here = "Add camera at the playhead"
 
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
@@ -220,6 +225,7 @@ nothing = "nothing found"
 
 # Категории эффектов в пикере.
 [fxreg.cat]
+three_d = "3D"
 motion = "Motion"
 geometry = "Geometry"
 blur = "Blur"
@@ -233,6 +239,7 @@ timestretch = "Time stretch"
 # Ключевые слова поиска. НЕ переупорядочиваются для арабского
 # (сравниваются с вводом пользователя), пишутся в нижнем регистре.
 [fxreg.kw]
+pan3d = "pan 3d perspective camera layer"
 pan = "pan zoom crop framing"
 cammotion = "camera shake handheld motion"
 mirror = "mirror flip reflection"
@@ -266,6 +273,8 @@ chain_empty = "Chain is empty — add an effect"
 done = "Done"
 cancel = "Cancel (revert)"
 mode = "Mode:"
+camera = "Camera:"
+camera_active = "Active camera"
 keyframes_n = "Keyframes: {0} (empty = a 1.0 to 1.35 push as in v1)"
 add_kf = "+ keyframe"
 drop_last = "- last"
@@ -372,6 +381,8 @@ added = "added: {0}"
 autosave_restored = "Restored the autosave of an unnamed project"
 open_a_project = "Open a project: kt-app <file.otio> or drop it on the window"
 software_render = "No graphics acceleration (software render) — the UI may lag, preview glow is off"
+video_fx_cpu = "Video effects run on the CPU (no GPU): {0}"
+video_fx_gpu_lost = "GPU video renderer lost ({0}) — switched to the CPU"
 
 # Заголовки системных файловых диалогов.
 flight_saved = "Playback journal saved: {0}"
@@ -395,6 +406,8 @@ v_shown = "V-shown {0}"
 v_skipped = "V-skip/back {0}/{1}"
 region_s = "region {0}–{1}s"
 cache_short = "cache: {0}/{1} MB"
+video_fx_gpu = "FX: GPU ({0})"
+video_fx_cpu = "FX: CPU"
 rate_stop = "0 (stop)"
 graph_quality = "Quality (FPS / hit%)"
 graph_decode = "FFmpeg activity (/s)"

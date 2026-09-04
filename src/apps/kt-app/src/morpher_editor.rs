@@ -56,6 +56,16 @@ impl KtApp {
             return;
         };
         let is_batch = matches!(orig.kind, MorphKind::EffectBatch { .. });
+        // камеры для комбо Pan3d в FX-батче (Р.29)
+        let cameras: Vec<(u64, String)> = self
+            .model
+            .project()
+            .cameras
+            .iter()
+            .map(|c| {
+                (c.id.0, if c.name.is_empty() { format!("C{}", c.id.0) } else { c.name.clone() })
+            })
+            .collect();
         let title = if is_batch {
             crate::tf!(k::mrph::TITLE_BATCH, ed.id.0)
         } else {
@@ -189,6 +199,7 @@ impl KtApp {
                             &mut ed.sel.0,
                             true,
                             &mut ed.picker_query,
+                            &cameras,
                         );
                         ui.separator();
                         changed |= chain_section(
@@ -199,6 +210,7 @@ impl KtApp {
                             &mut ed.sel.1,
                             false,
                             &mut ed.picker_query,
+                            &cameras,
                         );
                     }
                 }
@@ -255,6 +267,7 @@ fn short_name(path: &str) -> String {
 
 /// Секция одной цепочки батча: полоса слотов + добавление + параметры
 /// выбранного слота. Возвращает true при изменении.
+#[allow(clippy::too_many_arguments)]
 fn chain_section(
     ui: &mut egui::Ui,
     win_id: u64,
@@ -263,6 +276,7 @@ fn chain_section(
     sel: &mut usize,
     video: bool,
     query: &mut String,
+    cameras: &[(u64, String)],
 ) -> bool {
     let mut changed = false;
     ui.label(egui::RichText::new(title).strong());
@@ -338,7 +352,7 @@ fn chain_section(
                 });
             }
             other => {
-                changed |= crate::fx_editor::draw_video_fx_params(ui, other);
+                changed |= crate::fx_editor::draw_video_fx_params(ui, other, cameras);
             }
         }
     }

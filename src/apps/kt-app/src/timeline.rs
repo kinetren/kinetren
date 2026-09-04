@@ -401,6 +401,8 @@ pub enum CtxTarget {
     Morpher(MorphId),
     /// Правый клик по заголовку morph-дорожки (H1).
     MorphLane(u32),
+    /// Правый клик по заголовку камерной дорожки (Р.29).
+    CameraLane(u32),
     Empty,
 }
 
@@ -589,6 +591,7 @@ impl KtApp {
                         kt_model::LaneKind::Video => "video",
                         kt_model::LaneKind::Audio => "audio",
                         kt_model::LaneKind::Morph => "morph",
+                        kt_model::LaneKind::Camera => "camera",
                     },
                     geom.row_top(i),
                     geom.row_top(i) + geom.lane_h * 0.5,
@@ -663,12 +666,12 @@ impl TlGeom {
         self.rows.get(self.row_at_y(y)?).copied()
     }
 
-    /// Дорожка КЛИПОВ под y (morph-строка/руллер → None).
+    /// Дорожка КЛИПОВ под y (morph/camera-строка/руллер → None).
     pub fn lane_at_y(&self, y: f32) -> Option<(ClipKind, u32)> {
         match self.key_at_y(y)? {
             (LaneKind::Video, l) => Some((ClipKind::Video, l)),
             (LaneKind::Audio, l) => Some((ClipKind::Audio, l)),
-            (LaneKind::Morph, _) => None,
+            (LaneKind::Morph | LaneKind::Camera, _) => None,
         }
     }
 
@@ -1084,19 +1087,21 @@ impl KtApp {
         // ---- дорожки ---------------------------------------------------------
         let (video_lanes, audio_lanes) = self.lane_counts();
         let morph_lanes = self.model.project().morph_lanes;
-        let lanes_total = (video_lanes + audio_lanes).max(1) + morph_lanes;
+        let camera_lanes = self.model.project().camera_lanes;
+        let lanes_total = (video_lanes + audio_lanes).max(1) + morph_lanes + camera_lanes;
         let vl = vertical_layout(rect.height(), lanes_total as usize, self.tl_v_zoom);
         let lane_h = vl.lane_h;
         // кламп скролла каждый кадр (удаление дорожек/ресайз панели)
         self.tl_scroll = self.tl_scroll.clamp(0.0, vl.scroll_max);
         // display-порядок строк (п.6 v1.4): произвольное перемешивание
-        // V/A/M; нормализация каждый кадр — вставки/удаления дорожек
+        // V/A/M/C; нормализация каждый кадр — вставки/удаления дорожек
         // подтягиваются автоматически
         self.lane_order = kt_model::normalize_lane_order(
             &self.lane_order,
             video_lanes,
             audio_lanes,
             morph_lanes,
+            camera_lanes,
         );
         // кэш геометрии для маппинга вне draw_timeline (дроп п.2, строки п.6)
         let geom = TlGeom {
@@ -1133,6 +1138,7 @@ impl KtApp {
                 LaneKind::Video => crate::theme::LANE_VIDEO,
                 LaneKind::Audio => crate::theme::LANE_AUDIO,
                 LaneKind::Morph => crate::theme::LANE_MORPH,
+                LaneKind::Camera => crate::theme::LANE_CAMERA,
             };
             // подпись: пользовательское имя либо формула V1/A1/M1 (п.2 р.10)
             let label = kt_model::lane_label(&self.lane_names, kind, lane);
@@ -1216,6 +1222,9 @@ impl KtApp {
                     Some((LaneKind::Morph, lane)) => {
                         self.ctx_target = Some(CtxTarget::MorphLane(lane));
                     }
+                    Some((LaneKind::Camera, lane)) => {
+                        self.ctx_target = Some(CtxTarget::CameraLane(lane));
+                    }
                     None => {}
                 }
             }
@@ -1296,6 +1305,43 @@ impl KtApp {
                     }
                     if ui.button(tr(k::tl::lane::INSERT_MORPH_BELOW)).clicked() {
                         self.insert_lane_at(LaneKind::Morph, lane + 1);
+                        ui.close();
+                    }
+                }
+                if let Some(CtxTarget::CameraLane(lane)) = self.ctx_target {
+                    let n =
+                        self.model.project().cameras.iter().filter(|c| c.lane == lane).count();
+                    ui.label(
+                        egui::RichText::new(crate::tf!(k::tl::lane::CAMERA_TITLE, lane + 1))
+                            .strong(),
+                    );
+                    // камера ставится под курсор ВОСПРОИЗВЕДЕНИЯ (как метка)
+                    if ui.button(tr(k::tl::lane::ADD_CAMERA_HERE)).clicked() {
+                        self.add_camera_at_playhead(lane);
+                        ui.close();
+                    }
+                    let del_label = if n > 0 {
+                        crate::tf!(k::tl::lane::DELETE_CAMERA_N, n)
+                    } else {
+                        tr(k::tl::lane::DELETE).to_string()
+                    };
+                    if ui.button(del_label).clicked() {
+                        if self.apply(Command::RemoveCameraLane { at: lane }) {
+                            kt_model::lane_order_remove(
+                                &mut self.lane_order,
+                                LaneKind::Camera,
+                                lane,
+                            );
+                            kt_model::lane_names_remove(
+                                &mut self.lane_names,
+                                LaneKind::Camera,
+                                lane,
+                            );
+                        }
+                        ui.close();
+                    }
+                    if ui.button(tr(k::tl::lane::INSERT_CAMERA_BELOW)).clicked() {
+                        self.insert_lane_at(LaneKind::Camera, lane + 1);
                         ui.close();
                     }
                 }
@@ -2519,6 +2565,40 @@ impl KtApp {
                 );
             }
         }
+        // ---- камеры-события (Р.29): бирюзовый блок на камерной дорожке ------
+        for c in &self.model.project().cameras {
+            let x0 = tick_to_x(c.start.0);
+            let x1 = tick_to_x((c.start + c.duration).0).max(x0 + 8.0);
+            if x1 < rect.left() || x0 > rect.right() {
+                continue;
+            }
+            let top = geom.row_top(geom.row_of((LaneKind::Camera, c.lane)).unwrap_or(0));
+            let r = egui::Rect::from_min_max(
+                egui::pos2(x0.max(rect.left()), top + 3.0),
+                egui::pos2(x1.min(rect.right()), top + lane_h - 5.0),
+            );
+            painter.rect(
+                r,
+                4.0,
+                egui::Color32::from_rgba_unmultiplied(60, 150, 160, 200),
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(24, 52, 58)),
+                egui::StrokeKind::Inside,
+            );
+            if r.width() > 46.0 {
+                let label = if c.name.is_empty() {
+                    format!("C{}", c.id.0)
+                } else {
+                    c.name.clone()
+                };
+                painter.text(
+                    egui::pos2(r.left() + 6.0, r.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    egui::FontId::proportional(11.0),
+                    egui::Color32::WHITE,
+                );
+            }
+        }
         // режим размещения: подсветка morph-дорожек + строка-подсказка (v1)
         if self.pending_morpher.is_some() {
             for lane in 0..morph_lanes {
@@ -3483,6 +3563,7 @@ impl KtApp {
                     (tr(k::tl::lane::ADD_VIDEO), LaneKind::Video),
                     (tr(k::tl::lane::ADD_AUDIO), LaneKind::Audio),
                     (tr(k::tl::lane::ADD_MORPH), LaneKind::Morph),
+                    (tr(k::tl::lane::ADD_CAMERA), LaneKind::Camera),
                 ] {
                     if ui.button(label).clicked() {
                         self.insert_lane_after_row(kind, row);

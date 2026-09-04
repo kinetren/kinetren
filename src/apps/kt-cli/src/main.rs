@@ -303,13 +303,32 @@ fn run(args: &[String]) -> i32 {
                 force_encoder: encoder,
                 ..Default::default()
             };
-            match kt_engine::export_mp4_with(
+            // Р.29: рендер на GPU по умолчанию (headless-девайс, тот же
+            // код композиции); адаптера нет → CPU с пометкой в stderr,
+            // KT_VIDEO_GPU=0 — принудительный CPU
+            let video_gpu = if std::env::var("KT_VIDEO_GPU").as_deref() == Ok("0") {
+                None
+            } else {
+                match kt_gpu::GpuContext::new_headless().and_then(kt_gpu::GpuFxEngine::new) {
+                    Ok(e) => {
+                        use kt_engine::VideoGpuExec as _;
+                        eprintln!("video: GPU ({})", e.info().name);
+                        Some(e as std::sync::Arc<dyn kt_engine::VideoGpuExec>)
+                    }
+                    Err(err) => {
+                        eprintln!("video: CPU (no GPU: {err})");
+                        None
+                    }
+                }
+            };
+            match kt_engine::export_mp4_with_backends(
                 &project,
                 audio_sources,
                 video_sources,
                 output,
                 None,
                 &opts,
+                &kt_engine::ExportBackends { video_gpu },
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 &std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 |_| {},

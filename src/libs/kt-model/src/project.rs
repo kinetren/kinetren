@@ -20,6 +20,12 @@ pub struct GroupId(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MorphId(pub u64);
 
+/// Идентификатор камеры-события (Р.29). serde(transparent) — в файле
+/// просто число, как MediaId.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CameraId(pub u64);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipKind {
@@ -165,6 +171,13 @@ pub struct Project {
     /// сохранение молча укорачивало чужой монтаж). None — длина по клипам.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline_end: Option<Tick>,
+    /// Камерные дорожки (Р.29, 3D-композитинг): отдельный тип дорожек,
+    /// как морф-дорожки. 0 = дорожек нет (старые файлы байт-стабильны).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub camera_lanes: u32,
+    /// Камеры-события. Активную в момент t выбирает `active_camera_at`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cameras: Vec<CameraEvent>,
 }
 
 fn default_true() -> bool {
@@ -379,38 +392,47 @@ pub fn prune_bin_groups(groups: &mut Vec<BinGroup>, alive: &[MediaId]) {
     groups.retain(|g| !g.members.is_empty());
 }
 
-/// Вид дорожки в display-порядке (ClipKind не годится: нет Morph).
+/// Вид дорожки в display-порядке (ClipKind не годится: нет Morph/Camera).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LaneKind {
     Video,
     Audio,
     Morph,
+    /// Камерные дорожки (Р.29): живут только камеры-события.
+    Camera,
 }
 
 /// Нормализация display-порядка дорожек к фактическим счётчикам (тест 49):
 /// дубли и несуществующие (kind, lane) выбрасываются, недостающие
-/// дописываются в конец в блочном порядке V..A..M. Пустой вход даёт
+/// дописываются в конец в блочном порядке V..A..M..C. Пустой вход даёт
 /// дефолтный блочный порядок.
 pub fn normalize_lane_order(
     order: &[(LaneKind, u32)],
     video: u32,
     audio: u32,
     morph: u32,
+    camera: u32,
 ) -> Vec<(LaneKind, u32)> {
     let valid = |&(k, l): &(LaneKind, u32)| match k {
         LaneKind::Video => l < video,
         LaneKind::Audio => l < audio,
         LaneKind::Morph => l < morph,
+        LaneKind::Camera => l < camera,
     };
-    let mut out: Vec<(LaneKind, u32)> = Vec::with_capacity((video + audio + morph) as usize);
+    let mut out: Vec<(LaneKind, u32)> =
+        Vec::with_capacity((video + audio + morph + camera) as usize);
     for &e in order.iter().filter(|e| valid(e)) {
         if !out.contains(&e) {
             out.push(e);
         }
     }
-    for (kind, n) in [(LaneKind::Video, video), (LaneKind::Audio, audio), (LaneKind::Morph, morph)]
-    {
+    for (kind, n) in [
+        (LaneKind::Video, video),
+        (LaneKind::Audio, audio),
+        (LaneKind::Morph, morph),
+        (LaneKind::Camera, camera),
+    ] {
         for l in 0..n {
             if !out.contains(&(kind, l)) {
                 out.push((kind, l));
@@ -512,6 +534,7 @@ pub fn lane_label(names: &[(LaneKind, u32, String)], kind: LaneKind, lane: u32) 
         LaneKind::Video => "V",
         LaneKind::Audio => "A",
         LaneKind::Morph => "M",
+        LaneKind::Camera => "C",
     };
     format!("{p}{}", lane + 1)
 }
@@ -708,13 +731,68 @@ pub enum FxInstance {
         #[serde(default = "default_true")]
         center: bool,
     },
+    // ---- 3D-эффекты (Р.29: категория Video3d, считаются ТОЛЬКО на GPU) ----
+    /// Слой в перспективе: кадр клипа — квад в 3D-сцене, рендерится
+    /// активной (или прибитой) камерой в размер проекта. Все дефолты —
+    /// тождество: без камеры и с нулевыми параметрами кадр совпадает с
+    /// кадром без эффекта. Единицы заморожены форматом: позиция в мировых
+    /// px (X вправо, Y вниз, Z вглубь, начало — центр кадра проекта),
+    /// повороты в градусах (порядок ZXY, как orientation в AE), якорь в
+    /// долях слоя (0.5, 0.5 — центр).
+    Pan3d {
+        #[serde(default)]
+        pos_x: f64,
+        #[serde(default)]
+        pos_y: f64,
+        #[serde(default)]
+        pos_z: f64,
+        #[serde(default)]
+        rot_x: f64,
+        #[serde(default)]
+        rot_y: f64,
+        #[serde(default)]
+        rot_z: f64,
+        #[serde(default = "default_half")]
+        anchor_x: f64,
+        #[serde(default = "default_half")]
+        anchor_y: f64,
+        #[serde(default = "default_one")]
+        scale: f64,
+        /// None — активная по времени камера (умолчание, как в AE);
+        /// Some(id) — прибитая камера (камер может быть несколько — Р.29).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        camera: Option<CameraId>,
+    },
+}
+
+/// Класс эффекта (Р.29): свойство КОДА варианта, не данных — в формат
+/// не сериализуется. Video3d считается только на GPU; CPU-фолбэк рисует
+/// клип без таких эффектов (+notice), экспорт без GPU — явный отказ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FxClass {
+    Audio,
+    Video2d,
+    Video3d,
 }
 
 impl FxInstance {
+    pub fn class(&self) -> FxClass {
+        match self {
+            FxInstance::Gain { .. } | FxInstance::SlowedReverb { .. } => FxClass::Audio,
+            FxInstance::Pan3d { .. } => FxClass::Video3d,
+            _ => FxClass::Video2d,
+        }
+    }
+
     /// Аудио-эффект? (видео-FX живут в той же цепочке клипа, но
     /// обрабатываются VideoRenderer'ом)
     pub fn is_audio(&self) -> bool {
-        matches!(self, FxInstance::Gain { .. } | FxInstance::SlowedReverb { .. })
+        self.class() == FxClass::Audio
+    }
+
+    /// Эффект существует только на GPU (Video3d).
+    pub fn requires_gpu(&self) -> bool {
+        self.class() == FxClass::Video3d
     }
 }
 
@@ -738,6 +816,150 @@ pub struct CamKeyframe {
     pub pan_y: f64,
     #[serde(default = "default_zoom")]
     pub zoom: f64,
+}
+
+/// Камера-событие на камерной дорожке (Р.29, образец — морф-дорожка):
+/// событие само является и камерой, и её «включением по времени» (как
+/// camera layer в AE). Камер может быть несколько — активную в момент t
+/// выбирает `Project::active_camera_at` детерминированным правилом.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CameraEvent {
+    pub id: CameraId,
+    /// Индекс камерной дорожки (0..camera_lanes).
+    pub lane: u32,
+    pub start: Tick,
+    pub duration: Tick,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// Базовые параметры (кейфреймы их перекрывают).
+    pub cam: CameraParams,
+    /// Анимация по прогрессу события t∈[0,1] (образец CamMotion:
+    /// линейная интерполяция, smoothstep при ease, за краями — крайние).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keyframes: Vec<CameraKeyframe>,
+    #[serde(default = "default_true")]
+    pub ease: bool,
+}
+
+/// Параметры камеры. Дефолт — «50 мм»: перспектива с fov ≈ 39.6°, авто-
+/// дистанция (pos_z = 0 трактуется движком как −(H/2)/tan(fov/2)) — слой
+/// в z=0 с тождественным Pan3d рендерится 1:1, 2D-проекты не меняются
+/// ни на пиксель. Единицы — мировые px и градусы (ZXY), как у Pan3d.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CameraParams {
+    #[serde(default)]
+    pub pos_x: f64,
+    #[serde(default)]
+    pub pos_y: f64,
+    /// 0 = «авто» (дефолтная дистанция 50 мм).
+    #[serde(default)]
+    pub pos_z: f64,
+    /// Точка интереса (two-node camera, как в AE). None — one-node:
+    /// смотрит вдоль +Z.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<(f64, f64, f64)>,
+    /// Доворот ПОСЛЕ target (AE orientation), градусы, ZXY.
+    #[serde(default)]
+    pub rot_x: f64,
+    #[serde(default)]
+    pub rot_y: f64,
+    #[serde(default)]
+    pub rot_z: f64,
+    /// Вертикальный FOV в градусах.
+    #[serde(default = "default_fov")]
+    pub fov_deg: f64,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ortho: bool,
+}
+
+impl Default for CameraParams {
+    fn default() -> CameraParams {
+        CameraParams {
+            pos_x: 0.0,
+            pos_y: 0.0,
+            pos_z: 0.0,
+            target: None,
+            rot_x: 0.0,
+            rot_y: 0.0,
+            rot_z: 0.0,
+            fov_deg: default_fov(),
+            ortho: false,
+        }
+    }
+}
+
+/// Кейфрейм камеры по прогрессу события t∈[0,1].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct CameraKeyframe {
+    pub t: f64,
+    pub cam: CameraParams,
+}
+
+impl CameraEvent {
+    /// Параметры камеры в момент таймлайна t (образец cam_at из kt-fx):
+    /// прогресс события 0..1, линейная интерполяция скалярных полей между
+    /// кейфреймами, smoothstep при ease, за краями — крайние. `target`
+    /// интерполируется, только когда задан у обеих точек сегмента (иначе
+    /// держится значение левой); `ortho` — от левой точки.
+    pub fn params_at(&self, t: Tick) -> CameraParams {
+        if self.keyframes.is_empty() {
+            return self.cam;
+        }
+        let span = self.duration.0.max(1);
+        let u = ((t.0 - self.start.0) as f64 / span as f64).clamp(0.0, 1.0);
+        let keys = &self.keyframes;
+        if u <= keys[0].t {
+            return keys[0].cam;
+        }
+        for w in keys.windows(2) {
+            let (a, b) = (&w[0], &w[1]);
+            if u <= b.t {
+                let seg = (b.t - a.t).max(1e-9);
+                let mut s = ((u - a.t) / seg).clamp(0.0, 1.0);
+                if self.ease {
+                    s = s * s * (3.0 - 2.0 * s); // smoothstep01
+                }
+                let l = |x: f64, y: f64| x + (y - x) * s;
+                return CameraParams {
+                    pos_x: l(a.cam.pos_x, b.cam.pos_x),
+                    pos_y: l(a.cam.pos_y, b.cam.pos_y),
+                    pos_z: l(a.cam.pos_z, b.cam.pos_z),
+                    target: match (a.cam.target, b.cam.target) {
+                        (Some(ta), Some(tb)) => {
+                            Some((l(ta.0, tb.0), l(ta.1, tb.1), l(ta.2, tb.2)))
+                        }
+                        _ => a.cam.target,
+                    },
+                    rot_x: l(a.cam.rot_x, b.cam.rot_x),
+                    rot_y: l(a.cam.rot_y, b.cam.rot_y),
+                    rot_z: l(a.cam.rot_z, b.cam.rot_z),
+                    fov_deg: l(a.cam.fov_deg, b.cam.fov_deg),
+                    ortho: a.cam.ortho,
+                };
+            }
+        }
+        keys.last().unwrap().cam
+    }
+}
+
+/// Активная камера из списка (правило Р.29 — см. Project::active_camera_at;
+/// pub-функция, чтобы движок применял ТО ЖЕ правило к своему снапшоту).
+pub fn active_camera_in(cameras: &[CameraEvent], t: Tick) -> Option<&CameraEvent> {
+    cameras
+        .iter()
+        .filter(|c| c.start.0 <= t.0 && t.0 < (c.start + c.duration).0)
+        .max_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0, c.id.0))
+}
+
+/// Вертикальный FOV умолчания — умеренная перспектива в духе 50-мм
+/// камеры AE; точная эквивалентность миллиметрам не обещается (киношную
+/// арифметику в модель не тащим).
+fn default_fov() -> f64 {
+    39.6
+}
+
+fn default_half() -> f64 {
+    0.5
 }
 
 fn default_zoom() -> f64 {
@@ -857,6 +1079,14 @@ pub enum ProjectError {
     ClipOverlap(ClipId, ClipId),
     #[error("clip {0:?} overlaps a foreign placeholder (key {1})")]
     ForeignOverlap(ClipId, u64),
+    #[error("duplicate camera id {0:?}")]
+    DuplicateCameraId(CameraId),
+    #[error("camera {0:?}: duration must be positive")]
+    CameraBadDuration(CameraId),
+    #[error("camera {0:?}: fov must be in (0, 180)")]
+    CameraBadFov(CameraId),
+    #[error("camera {0:?}: keyframes must be sorted within [0, 1]")]
+    CameraBadKeyframes(CameraId),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,
@@ -937,7 +1167,19 @@ impl Project {
             ui: None,
             overlap_layers: true,
             timeline_end: None,
+            camera_lanes: 0,
+            cameras: Vec::new(),
         }
+    }
+
+    /// Активная камера в момент t: событие, чьё [start, start+duration)
+    /// накрывает t; приоритет — меньшая lane (как z-order видео), при
+    /// равной — больший start («сверху тот, кто позже», правило Vegas
+    /// Р.28/п.177), затем больший id. Правило детерминировано — рендер
+    /// от него зависит (тест 188). None — камер нет, движок берёт
+    /// дефолтную «50 мм» (тождество для Pan3d с дефолтами).
+    pub fn active_camera_at(&self, t: Tick) -> Option<&CameraEvent> {
+        active_camera_in(&self.cameras, t)
     }
 
     /// Клипы после применения morpher'ов — ЕДИНСТВЕННАЯ точка выдачи клипов
@@ -976,6 +1218,9 @@ impl Project {
         self.audio_lanes = self.audio_lanes.max(1);
         for m in &self.morphers {
             self.morph_lanes = self.morph_lanes.max(m.lane + 1);
+        }
+        for c in &self.cameras {
+            self.camera_lanes = self.camera_lanes.max(c.lane + 1);
         }
         // ВАЖНО: stable-сортировка и дедуп по времени — при двух метках на
         // один тик с разными именами unstable дал бы недетерминированный
@@ -1033,6 +1278,34 @@ impl Project {
                 && !media_ids.contains(mid)
             {
                 return Err(ProjectError::MorphUnknownMedia(m.id, *mid));
+            }
+        }
+        // Камеры (Р.29): дубли id, длительность, fov, отсортированные
+        // кейфреймы в [0,1]. Перекрытия камер-событий на одной дорожке
+        // ЗАКОННЫ (разруливает active_camera_at) — к ClipOverlap не
+        // подключаются.
+        let mut cam_ids = std::collections::HashSet::new();
+        for c in &self.cameras {
+            if !cam_ids.insert(c.id) {
+                return Err(ProjectError::DuplicateCameraId(c.id));
+            }
+            if c.duration.0 <= 0 {
+                return Err(ProjectError::CameraBadDuration(c.id));
+            }
+            let fovs =
+                std::iter::once(c.cam.fov_deg).chain(c.keyframes.iter().map(|k| k.cam.fov_deg));
+            for fov in fovs {
+                if !(fov > 0.0 && fov < 180.0) {
+                    return Err(ProjectError::CameraBadFov(c.id));
+                }
+            }
+            for w in c.keyframes.windows(2) {
+                if w[1].t < w[0].t {
+                    return Err(ProjectError::CameraBadKeyframes(c.id));
+                }
+            }
+            if c.keyframes.iter().any(|k| !(0.0..=1.0).contains(&k.t)) {
+                return Err(ProjectError::CameraBadKeyframes(c.id));
             }
         }
         let mut tr_ids = std::collections::HashSet::new();

@@ -76,6 +76,17 @@
 - **Уровень события (Р.28, п.174)**: `metadata.kt.opacity` у клипа; 1.0 не
   пишется — файлы без уровня байт-стабильны.
 
+- **Камеры и версия ПО СОДЕРЖИМОМУ (Р.29, п.189)**: `KT_META_VERSION = 2`,
+  но писатель ставит v=2 только когда файл несёт камеры/камерные дорожки
+  (`metadata.kt.cameras`/`camera_lanes`, сортировка по CameraId) — старый
+  ридер молча потерял бы 3D-сцену при перезаписи. Файлы без камер — v1
+  байт-в-байт (t144/t148 не перегенерировались). Один Pan3d версию не
+  бампает (foreign-passthrough у старого ридера). Неизвестные поля НАШЕГО
+  конверта (kt) — flatten-extra в KtTimelineMeta/KtClipMeta, passthrough
+  через Retained (timeline_kt_extra / ClipExtra.kt_extra): добавкам v3
+  жёсткий отказ не понадобится. Golden v2-схемы — fixtures/demo-3d.otio
+  (t189_regen).
+
 ## Ограничения v1 (задокументированы, не реализуются)
 
 SerializableCollection-корень → ошибка; .otioz/.otiod — нет; Retained-привязка
@@ -87,5 +98,6 @@ SerializableCollection-корень → ошибка; .otioz/.otiod — нет; 
 144 (roundtrip+идемпотентность), 145 (passthrough), 146 (версии/upgrade/kt.v),
 147 (пути/URL), 148 golden легаси-импорта, 149 конформанс с python
 opentimelineio (gated), 152-153 маппинг/чужой импорт, 154 чужие сэмплы
-апстрима (`fixtures/otio-samples`). Кросс-рендер против melt — тест 158
+апстрима (`fixtures/otio-samples`), 189 (камеры/условный v2/flatten-extra +
+golden demo-3d.otio). Кросс-рендер против melt — тест 158
 (`apps/kt-cli/tests/cross_render.rs`).

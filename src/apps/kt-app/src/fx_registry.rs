@@ -36,6 +36,7 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         "VHS" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VHS)),
         "Glow" => (k::fxreg::cat::GLOW, Some(k::fxreg::kw::GLOW)),
         "EventGrid" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EVENTGRID)),
+        "Pan 3D" => (k::fxreg::cat::THREE_D, Some(k::fxreg::kw::PAN3D)),
         _ => (k::fxreg::cat::VIDEO, None),
     }
 }

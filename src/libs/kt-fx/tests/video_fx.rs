@@ -43,8 +43,24 @@ fn mean_rgb(f: &Frame) -> f64 {
     s as f64 / (f.rgba.len() as f64 * 3.0 / 4.0)
 }
 
-/// Golden-хэши: фиксируют текущее поведение всех 10 эффектов. Менять
-/// эталон можно ТОЛЬКО при осознанном изменении алгоритма.
+/// Golden-хэши: фиксируют текущее поведение всех 10 эффектов ПОИМЁННО
+/// (Р.29: одна сумма на всех прятала, какой именно эффект уехал). Менять
+/// эталон можно ТОЛЬКО при осознанном изменении алгоритма конкретного
+/// эффекта. Последняя санкционированная правка: noise → counter-based hash
+/// (Р.29, параллелизуемый RNG для GPU); остальные 9 не менялись с v1.
+const GOLDEN: [(&str, u64); 10] = [
+    ("pan", 0x40755635c15a2c4a),
+    ("cammotion", 0x796fb338df86d795),
+    ("mirror", 0x6e6b11df22c1c072),
+    ("blur", 0xec8d2f412f21f555),
+    ("greenscreen", 0x18dd7db23eb92552),
+    ("edges", 0x35521b30cd97497e),
+    ("noise", 0x2c1bd320d47c00c6), // Р.29: counter-based hash
+    ("vhs", 0xd82252c584915e16),
+    ("glow", 0x32647b93a6a84eb2),
+    ("eventgrid", 0x0f78a8817bcf1bbe),
+];
+
 #[test]
 fn t26_golden_hashes_all_effects() {
     let cases: Vec<(&str, FxInstance)> = vec![
@@ -73,20 +89,19 @@ fn t26_golden_hashes_all_effects() {
         ("glow", FxInstance::Glow { strength: 0.65 }),
         ("eventgrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
     ];
-    let mut lines = Vec::new();
-    for (name, fx) in cases {
+    let mut failures = Vec::new();
+    for ((name, fx), (gname, golden)) in cases.into_iter().zip(GOLDEN) {
+        assert_eq!(name, gname, "порядок cases и GOLDEN обязан совпадать");
         let f = run(fx);
-        lines.push(format!("{name}: 0x{:016x} ({}x{})", xxh3_64(&f.rgba), f.w, f.h));
+        let h = xxh3_64(&f.rgba);
+        // при осознанной смене алгоритма: cargo test -- --nocapture, взять
+        // новый хэш из вывода и обновить ТОЛЬКО строку этого эффекта
+        println!("(\"{name}\", 0x{h:016x}), // {}x{}", f.w, f.h);
+        if golden != 0 && h != golden {
+            failures.push(format!("{name}: 0x{h:016x} != golden 0x{golden:016x}"));
+        }
     }
-    let combined = lines.join("\n");
-    let total = xxh3_64(combined.as_bytes());
-    // при осознанной смене алгоритма: cargo test -- --nocapture, взять новую
-    // сумму из вывода и обновить константу вместе с описанием изменения
-    println!("{combined}\nTOTAL: 0x{total:016x}");
-    const GOLDEN_TOTAL: u64 = 0xf069de998f74eed4;
-    if GOLDEN_TOTAL != 0 {
-        assert_eq!(total, GOLDEN_TOTAL, "видео-FX изменили поведение:\n{combined}");
-    }
+    assert!(failures.is_empty(), "видео-FX изменили поведение:\n{}", failures.join("\n"));
 }
 
 #[test]

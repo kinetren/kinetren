@@ -62,6 +62,16 @@ impl KtApp {
             ed.open = false;
             return;
         };
+        // камеры для комбо Pan3d (Р.29): id + подпись
+        let cameras: Vec<(u64, String)> = self
+            .model
+            .project()
+            .cameras
+            .iter()
+            .map(|c| {
+                (c.id.0, if c.name.is_empty() { format!("C{}", c.id.0) } else { c.name.clone() })
+            })
+            .collect();
         let title = crate::tf!(
             k::fx::TITLE,
             if clip.kind == ClipKind::Audio {
@@ -182,7 +192,7 @@ impl KtApp {
 
                 // --- параметры выбранного слота ---------------------------------
                 if let Some(f) = fx.get_mut(ed.selected) {
-                    changed |= draw_video_fx_params(ui, f);
+                    changed |= draw_video_fx_params(ui, f, &cameras);
                     #[allow(clippy::single_match)]
                     match f {
                         FxInstance::Gain { db } => {
@@ -460,6 +470,7 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Vhs { .. } => "VHS",
         FxInstance::Glow { .. } => "Glow",
         FxInstance::EventGrid { .. } => "EventGrid",
+        FxInstance::Pan3d { .. } => "Pan 3D",
     }
 }
 
@@ -487,12 +498,33 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         ("Noise", FxInstance::Noise { amount: 0.08 }),
         ("VHS", FxInstance::Vhs { rgb_shift: 4, bleed: 0.4 }),
         ("Glow", FxInstance::Glow { strength: 0.65 }),
+        (
+            // Р.29: первый 3D-эффект; дефолты — тождество (слой 1:1)
+            "Pan 3D",
+            FxInstance::Pan3d {
+                pos_x: 0.0,
+                pos_y: 0.0,
+                pos_z: 0.0,
+                rot_x: 0.0,
+                rot_y: 0.0,
+                rot_z: 0.0,
+                anchor_x: 0.5,
+                anchor_y: 0.5,
+                scale: 1.0,
+                camera: None,
+            },
+        ),
         ("EventGrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
     ]
 }
 
 /// Параметры видео-FX (компактная сетка). true = изменилось.
-pub(crate) fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> bool {
+/// `cameras` — (id, подпись) для комбо Pan3d: активная камера / прибитая.
+pub(crate) fn draw_video_fx_params(
+    ui: &mut egui::Ui,
+    f: &mut FxInstance,
+    cameras: &[(u64, String)],
+) -> bool {
     use kt_model::PanMode;
     let mut ch = false;
     let mode_ui = |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut bool| {
@@ -570,6 +602,80 @@ pub(crate) fn draw_video_fx_params(ui: &mut egui::Ui, f: &mut FxInstance) -> boo
             ui.horizontal(|ui| {
                 ch |= ui.checkbox(horizontal, tr(k::fx::HORIZONTAL)).changed();
                 ch |= ui.checkbox(vertical, tr(k::fx::VERTICAL)).changed();
+            });
+        }
+        FxInstance::Pan3d {
+            pos_x,
+            pos_y,
+            pos_z,
+            rot_x,
+            rot_y,
+            rot_z,
+            anchor_x,
+            anchor_y,
+            scale,
+            camera,
+        } => {
+            // единицы формата (Р.29): позиции в px проекта, углы в градусах
+            egui::Grid::new("vfx").num_columns(6).show(ui, |ui| {
+                ui.label("X:");
+                ch |= ui.add(egui::DragValue::new(pos_x).speed(1.0)).changed();
+                ui.label("Y:");
+                ch |= ui.add(egui::DragValue::new(pos_y).speed(1.0)).changed();
+                ui.label("Z:");
+                ch |= ui.add(egui::DragValue::new(pos_z).speed(1.0)).changed();
+                ui.end_row();
+                ui.label("Rot X:");
+                ch |= ui
+                    .add(egui::DragValue::new(rot_x).range(-360.0..=360.0).speed(0.5))
+                    .changed();
+                ui.label("Rot Y:");
+                ch |= ui
+                    .add(egui::DragValue::new(rot_y).range(-360.0..=360.0).speed(0.5))
+                    .changed();
+                ui.label("Rot Z:");
+                ch |= ui
+                    .add(egui::DragValue::new(rot_z).range(-360.0..=360.0).speed(0.5))
+                    .changed();
+                ui.end_row();
+                ui.label("Anchor X:");
+                ch |= ui
+                    .add(egui::DragValue::new(anchor_x).range(0.0..=1.0).speed(0.005))
+                    .changed();
+                ui.label("Anchor Y:");
+                ch |= ui
+                    .add(egui::DragValue::new(anchor_y).range(0.0..=1.0).speed(0.005))
+                    .changed();
+                ui.label("Scale:");
+                ch |= ui
+                    .add(egui::DragValue::new(scale).range(0.01..=32.0).speed(0.01))
+                    .changed();
+                ui.end_row();
+            });
+            ui.horizontal(|ui| {
+                ui.label(tr(k::fx::CAMERA));
+                let sel = match camera {
+                    None => tr(k::fx::CAMERA_ACTIVE).to_string(),
+                    Some(id) => cameras
+                        .iter()
+                        .find(|(cid, _)| *cid == id.0)
+                        .map(|(_, n)| n.clone())
+                        .unwrap_or_else(|| format!("C{}", id.0)),
+                };
+                egui::ComboBox::from_id_salt("pan3dcam").selected_text(sel).show_ui(ui, |ui| {
+                    ch |= ui
+                        .selectable_value(camera, None, tr(k::fx::CAMERA_ACTIVE))
+                        .changed();
+                    for (cid, name) in cameras {
+                        ch |= ui
+                            .selectable_value(
+                                camera,
+                                Some(kt_model::CameraId(*cid)),
+                                name.clone(),
+                            )
+                            .changed();
+                    }
+                });
             });
         }
         FxInstance::Blur { radius } => {
