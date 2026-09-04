@@ -181,4 +181,96 @@ fn bench_simd_1080p() {
         &mut out,
     );
     println!("bilinear 1080p: scalar {ms_s:.2} ms, avx2 {ms_a:.2} ms, ×{:.2}", ms_s / ms_a);
+
+    // noise (целочисленный) и glow-аддитив (f64)
+    let pixels = 1920 * 1080;
+    let mut nb = src.rgba.clone();
+    let t = std::time::Instant::now();
+    for _ in 0..iters {
+        st::noise_scalar(&mut nb, 1920, 0xdead, 10);
+    }
+    let ns = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+    let mut nb2 = src.rgba.clone();
+    let t = std::time::Instant::now();
+    for _ in 0..iters {
+        st::noise_avx2(&mut nb2, 1920, 1080, 0xdead, 10);
+    }
+    let na = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+    println!("noise 1080p: scalar {ns:.2} ms, avx2 {na:.2} ms, ×{:.2}", ns / na);
+
+    let up = src.rgba.clone();
+    let mut gb = src.rgba.clone();
+    let t = std::time::Instant::now();
+    for _ in 0..iters {
+        st::glow_add_scalar(&mut gb, &up, 0.35);
+    }
+    let gs = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+    let mut gb2 = src.rgba.clone();
+    let t = std::time::Instant::now();
+    for _ in 0..iters {
+        st::glow_add_avx2(&mut gb2, &up, 0.35, pixels);
+    }
+    let ga = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
+    println!("glow-add 1080p: scalar {gs:.2} ms, avx2 {ga:.2} ms, ×{:.2}", gs / ga);
+}
+
+/// noise: целочисленное ядро — обязано совпасть БИТ-В-БИТ (включая
+/// деление n*k/32767 с усечением к нулю у отрицательных n).
+#[test]
+fn t198_noise_scalar_eq_avx2() {
+    if !avx2() {
+        return;
+    }
+    for kind in 0..5u32 {
+        for (w, h) in [(8u32, 4u32), (9, 3), (64, 36), (641, 7), (1, 1)] {
+            for k in [1i64, 7, 16, 32] {
+                for seed in [0u32, 1, 0xdead_beef, 0x9e37_79b9] {
+                    let base = frame(w, h, kind);
+                    let mut a = base.rgba.clone();
+                    let mut b = base.rgba.clone();
+                    st::noise_scalar(&mut a, w, seed, k);
+                    if w >= 8 {
+                        st::noise_avx2(&mut b, w, h, seed, k);
+                    }
+                    // хвост столбцов SIMD не трогает — дорисовываем скаляром
+                    let vec_w = if w >= 8 { w & !7 } else { 0 };
+                    for y in 0..h {
+                        for x in vec_w..w {
+                            let i = ((y * w + x) * 4) as usize;
+                            let hh = kt_fx::video::noise_hash(
+                                x ^ kt_fx::video::noise_hash(y ^ seed),
+                            );
+                            let n = ((hh >> 16) & 0x7fff) as i64 - 16384;
+                            let off = (n * k / 32767) as i32;
+                            for c in 0..3 {
+                                b[i + c] = (b[i + c] as i32 + off).clamp(0, 255) as u8;
+                            }
+                        }
+                    }
+                    assert_eq!(a, b, "noise kind={kind} {w}x{h} k={k} seed={seed:#x}");
+                }
+            }
+        }
+    }
+}
+
+/// glow-аддитив: f64 mul+add с потолком и УСЕЧЕНИЕМ (не round).
+#[test]
+fn t198_glow_add_scalar_eq_avx2() {
+    if !avx2() {
+        return;
+    }
+    for kind in 0..5u32 {
+        for pixels in [1usize, 7, 64, 1000] {
+            let up = frame(pixels as u32, 1, (kind + 1) % 5).rgba;
+            for s in [0.001f64, 0.35, 0.7, 2.0 * 0.35] {
+                let base = frame(pixels as u32, 1, kind).rgba;
+                let mut a = base.clone();
+                let mut b = base.clone();
+                st::glow_add_scalar(&mut a, &up, s);
+                st::glow_add_avx2(&mut b, &up, s, pixels);
+                assert_eq!(a, b, "glow kind={kind} pixels={pixels} s={s}");
+            }
+        }
+    }
 }

@@ -407,6 +407,30 @@ fn noise(mut f: Frame, amount: f64, burst_index: i64) -> Frame {
     }
     let seed = noise_seed(burst_index);
     let w = f.w;
+    #[cfg(target_arch = "x86_64")]
+    if crate::simd::simd_level() == crate::simd::SimdLevel::Avx2
+        && w >= 8
+        && f.rgba.len() >= (w as usize) * (f.h as usize) * 4
+    {
+        // SAFETY: уровень проверен детектом, длина буфера — выше
+        unsafe { crate::video_simd::noise_avx2(&mut f.rgba, w, f.h, seed, k) };
+        // хвост столбцов (w % 8) — той же формулой, что скаляр ниже
+        let vec_w = w & !7;
+        if vec_w < w {
+            for y in 0..f.h {
+                for x in vec_w..w {
+                    let i = ((y * w + x) * 4) as usize;
+                    let h = noise_hash(x ^ noise_hash(y ^ seed));
+                    let n = ((h >> 16) & 0x7fff) as i64 - 16384;
+                    let off = (n * k / 32767) as i32;
+                    for c in 0..3 {
+                        f.rgba[i + c] = (f.rgba[i + c] as i32 + off).clamp(0, 255) as u8;
+                    }
+                }
+            }
+        }
+        return f;
+    }
     for (p, px) in f.rgba.chunks_exact_mut(4).enumerate() {
         let (x, y) = (p as u32 % w, p as u32 / w);
         let h = noise_hash(x ^ noise_hash(y ^ seed));
@@ -462,7 +486,17 @@ fn glow(mut f: Frame, strength: f64, scratch: &mut FxScratch) -> Frame {
     let mut up = scratch.take(f.rgba.len());
     bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut up);
     // аддитив in-place: читается только сам пиксель + up (п.2 р.7)
-    for (o, u) in f.rgba.chunks_exact_mut(4).zip(up.chunks_exact(4)) {
+    let pixels = f.rgba.len().min(up.len()) / 4;
+    let mut done = 0usize;
+    #[cfg(target_arch = "x86_64")]
+    if crate::simd::simd_level() == crate::simd::SimdLevel::Avx2 {
+        // SAFETY: уровень проверен детектом; pixels не выходит за оба буфера
+        unsafe { crate::video_simd::glow_add_avx2(&mut f.rgba, &up, s, pixels) };
+        done = pixels;
+    }
+    for (o, u) in
+        f.rgba.chunks_exact_mut(4).zip(up.chunks_exact(4)).skip(done)
+    {
         for c in 0..3 {
             o[c] = (o[c] as f64 + u[c] as f64 * s).min(255.0) as u8;
         }

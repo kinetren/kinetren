@@ -79,6 +79,44 @@ pub mod simd_testing {
         unsafe { crate::video_simd::bilinear_into_avx2(src, x0, y0, cw, ch, ow, oh, out) };
     }
 
+    /// AVX2-ядро noise (in-place по всему кадру, хвост столбцов не
+    /// трогается — тест дорисовывает его скаляром).
+    #[cfg(target_arch = "x86_64")]
+    pub fn noise_avx2(rgba: &mut [u8], w: u32, h: u32, seed: u32, k: i64) {
+        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+        // SAFETY: фича проверена; длины — на ответственности теста
+        unsafe { crate::video_simd::noise_avx2(rgba, w, h, seed, k) };
+    }
+
+    /// AVX2-ядро аддитива glow.
+    #[cfg(target_arch = "x86_64")]
+    pub fn glow_add_avx2(dst: &mut [u8], up: &[u8], s: f64, pixels: usize) {
+        assert!(std::is_x86_feature_detected!("avx2"), "нет AVX2");
+        // SAFETY: фича проверена
+        unsafe { crate::video_simd::glow_add_avx2(dst, up, s, pixels) };
+    }
+
+    /// Скалярные эталоны noise/glow (копии тел из video.rs).
+    pub fn noise_scalar(rgba: &mut [u8], w: u32, seed: u32, k: i64) {
+        for (p, px) in rgba.chunks_exact_mut(4).enumerate() {
+            let (x, y) = (p as u32 % w, p as u32 / w);
+            let h = crate::video::noise_hash(x ^ crate::video::noise_hash(y ^ seed));
+            let n = ((h >> 16) & 0x7fff) as i64 - 16384;
+            let off = (n * k / 32767) as i32;
+            for c in px.iter_mut().take(3) {
+                *c = (*c as i32 + off).clamp(0, 255) as u8;
+            }
+        }
+    }
+
+    pub fn glow_add_scalar(dst: &mut [u8], up: &[u8], s: f64) {
+        for (o, u) in dst.chunks_exact_mut(4).zip(up.chunks_exact(4)) {
+            for c in 0..3 {
+                o[c] = (o[c] as f64 + u[c] as f64 * s).min(255.0) as u8;
+            }
+        }
+    }
+
     /// Округление half-away-from-zero: 4 значения через AVX2-эмуляцию
     /// (микро-доказательство против `f64::round`).
     #[cfg(target_arch = "x86_64")]

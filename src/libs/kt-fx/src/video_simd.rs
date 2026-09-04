@@ -127,3 +127,104 @@ pub(crate) unsafe fn bilinear_into_avx2(
         }
     }
 }
+
+/// AVX2-близнец `noise`: counter-based hash по (x, y, seed) и смещение
+/// RGB с клампом. Всё целочисленное — байт-в-байт со скаляром на любом
+/// CPU. 8 пикселей за итерацию; хвост строки дорисовывает вызывающий.
+///
+/// Деление `n*k/32767` (усечение К НУЛЮ, n бывает отрицательным)
+/// считается как `sign(v) * ((|v| + (|v|>>15) + 1) >> 15)` — тождество
+/// проверено перебором всего домена (n ∈ ±16384, k ≤ 32) в t198.
+///
+/// # Safety
+/// Требует AVX2; `rgba` длиной >= `w*h*4`.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn noise_avx2(rgba: &mut [u8], w: u32, h: u32, seed: u32, k: i64) {
+    unsafe {
+        let kv = _mm256_set1_epi32(k as i32);
+        let byte = _mm256_set1_epi32(0xFF);
+        let c255 = _mm256_set1_epi32(255);
+        let zero = _mm256_setzero_si256();
+        let lane_x = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+        let p = rgba.as_mut_ptr();
+        let vec_w = (w & !7) as usize;
+        for y in 0..h {
+            let rowh = crate::video::noise_hash(y ^ seed);
+            let rowh_v = _mm256_set1_epi32(rowh as i32);
+            let row = (y as usize) * (w as usize) * 4;
+            let mut x = 0usize;
+            while x < vec_w {
+                // h = noise_hash(x ^ rowh) — lowbias32 в векторе
+                let mut hv = _mm256_xor_si256(
+                    _mm256_add_epi32(_mm256_set1_epi32(x as i32), lane_x),
+                    rowh_v,
+                );
+                hv = _mm256_xor_si256(hv, _mm256_srli_epi32::<16>(hv));
+                hv = _mm256_mullo_epi32(hv, _mm256_set1_epi32(0x7feb_352du32 as i32));
+                hv = _mm256_xor_si256(hv, _mm256_srli_epi32::<15>(hv));
+                hv = _mm256_mullo_epi32(hv, _mm256_set1_epi32(0x846c_a68bu32 as i32));
+                hv = _mm256_xor_si256(hv, _mm256_srli_epi32::<16>(hv));
+                // n = ((h >> 16) & 0x7fff) - 16384; v = n * k
+                let n = _mm256_sub_epi32(
+                    _mm256_and_si256(_mm256_srli_epi32::<16>(hv), _mm256_set1_epi32(0x7fff)),
+                    _mm256_set1_epi32(16384),
+                );
+                let v = _mm256_mullo_epi32(n, kv);
+                let a = _mm256_abs_epi32(v);
+                let q = _mm256_srli_epi32::<15>(_mm256_add_epi32(
+                    _mm256_add_epi32(a, _mm256_srli_epi32::<15>(a)),
+                    _mm256_set1_epi32(1),
+                ));
+                // sign_epi32(q, v) = q * sign(v), и 0 при v == 0
+                let off = _mm256_sign_epi32(q, v);
+                let px = _mm256_loadu_si256(p.add(row + x * 4).cast());
+                let clamp = |c: __m256i| {
+                    _mm256_min_epi32(_mm256_max_epi32(_mm256_add_epi32(c, off), zero), c255)
+                };
+                let r = clamp(_mm256_and_si256(px, byte));
+                let g = clamp(_mm256_and_si256(_mm256_srli_epi32::<8>(px), byte));
+                let b = clamp(_mm256_and_si256(_mm256_srli_epi32::<16>(px), byte));
+                let out = _mm256_or_si256(
+                    _mm256_or_si256(r, _mm256_slli_epi32::<8>(g)),
+                    _mm256_or_si256(
+                        _mm256_slli_epi32::<16>(b),
+                        // альфа не трогается (скаляр правит только RGB)
+                        _mm256_and_si256(px, _mm256_set1_epi32(0xFF00_0000u32 as i32)),
+                    ),
+                );
+                _mm256_storeu_si256(p.add(row + x * 4).cast(), out);
+                x += 8;
+            }
+        }
+    }
+}
+
+/// AVX2-близнец аддитивного финала `glow`: `o + u*s` с потолком 255 и
+/// УСЕЧЕНИЕМ (скаляр делает `as u8` без round). Лейны = 4 канала
+/// пикселя; альфа-байт возвращается из оригинала (скаляр её не трогает).
+///
+/// # Safety
+/// Требует AVX2; `dst`/`up` длиной >= `pixels*4`.
+#[target_feature(enable = "avx2")]
+pub(crate) unsafe fn glow_add_avx2(dst: &mut [u8], up: &[u8], s: f64, pixels: usize) {
+    unsafe {
+        let sv = _mm256_set1_pd(s);
+        let max255 = _mm256_set1_pd(255.0);
+        let (pd, pu) = (dst.as_mut_ptr(), up.as_ptr());
+        for p in 0..pixels {
+            let off = p * 4;
+            let orig = pd.add(off).cast::<u32>().read_unaligned();
+            let o = _mm256_cvtepi32_pd(_mm_cvtepu8_epi32(_mm_cvtsi32_si128(orig as i32)));
+            let u = _mm256_cvtepi32_pd(_mm_cvtepu8_epi32(_mm_cvtsi32_si128(
+                pu.add(off).cast::<u32>().read_unaligned() as i32,
+            )));
+            // порядок скаляра: сначала u*s, потом o + ...
+            let r = _mm256_min_pd(_mm256_add_pd(o, _mm256_mul_pd(u, sv)), max255);
+            let packed = pack_rgba(r);
+            // альфа — из оригинала
+            pd.add(off)
+                .cast::<u32>()
+                .write_unaligned((packed & 0x00FF_FFFF) | (orig & 0xFF00_0000));
+        }
+    }
+}
