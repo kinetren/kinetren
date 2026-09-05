@@ -144,7 +144,7 @@ impl PlaceholderSource {
         if self.cache.as_ref().is_none_or(|(cq, _)| *cq != q) {
             self.cache = Some((q, render(&self.label, q.width, q.height)));
         }
-        &self.cache.as_ref().expect("кадр только что построен").1
+        &self.cache.as_ref().expect("frame was just built").1
     }
 }
 

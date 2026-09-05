@@ -3401,6 +3401,72 @@ fn t203_selection_tool_button_switches_drag() {
     assert!(h.state().model.project().region.is_some(), "режим выключен — вернулся регион");
 }
 
+/// Тест 209 (Р.33 п.10): проект с ПРОПАВШИМ исходником открывается,
+/// каждый недоступный файл называется в уведомлениях, а вместо кадров
+/// встаёт плейсхолдер — превью укомплектовано, а не висит в «Loading».
+#[test]
+fn t209_missing_source_opens_with_placeholder_and_notices() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let dir = std::env::temp_dir().join(format!("kt-t209-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t209.otio");
+
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "no-such-clip.mp4".into() });
+    p.media.push(MediaRef { id: MediaId(2), path: "also-gone.wav".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+    });
+    p.validate().unwrap();
+    let text = kt_otio::save_project(&p, &Default::default(), path.parent());
+    std::fs::write(&path, text).unwrap();
+
+    let app = KtApp::open(&path).expect("проект с пропавшим исходником обязан открыться");
+    assert_eq!(app.placeholder_media.len(), 2, "оба недоступных медиа обязаны получить заглушку");
+    let named: Vec<&String> = app.notices.iter().map(|n| &n.text).collect();
+    assert!(
+        named.iter().any(|t| t.contains("no-such-clip.mp4")),
+        "первый пропавший файл не назван: {named:?}"
+    );
+    assert!(
+        named.iter().any(|t| t.contains("also-gone.wav")),
+        "второй пропавший файл потерялся — раньше выживала только последняя ошибка: {named:?}"
+    );
+
+    // и кадр реально приходит: композиция укомплектовывается
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(W, H))
+        .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    crate::icons::install_fonts(&h.ctx);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut complete = false;
+    while std::time::Instant::now() < deadline {
+        h.step();
+        if h.state().incomplete_since.is_none() && h.state().preview_key.is_some() {
+            complete = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(complete, "превью так и не укомплектовалось — заглушка не доехала до композиции");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Тест 206 (Р.33 п.4): двойной клик по событию открывает FX — ровно то,
 /// что подсказка клипа обещает с Р.18 и чего не делала (ставила регион, а
 /// FX прятались в ПКМ-меню; дефект записан в user-feedback ещё тогда).

@@ -205,6 +205,9 @@ pub struct KtApp {
     /// Живое превью уровня видео при драге линии (Р.28, п.12).
     pub live_opacity: Option<(ClipId, f32)>,
     pub status: Option<(String, std::time::Instant)>,
+    /// Медиа, вместо которых сейчас стоит плейсхолдер (Р.33 п.10): файл не
+    /// открылся при загрузке проекта. Пустеет, когда файл возвращается.
+    pub placeholder_media: std::collections::HashSet<MediaId>,
     /// Внутренний буфер обмена (блок клипов+переходов, ребейз к нулю).
     pub clipboard: kt_model::ops::ClipBlock,
     /// Passthrough-остатки загруженного .otio (чужие поля/схемы/metadata):
@@ -306,18 +309,29 @@ impl KtApp {
         }
     }
 
+    /// Плеер + список НЕДОСТУПНЫХ медиа (id, имя, ошибка). Недоступный
+    /// файл получает плейсхолдер и едет дальше: проект открывается, превью
+    /// и рендер работают (Р.33 п.10). Раньше здесь терялись все ошибки,
+    /// кроме последней, и клип оставался вообще без источника — превью
+    /// показывало вечное «Loading».
     fn build_player(
         project: &Project,
         base: Option<&Path>,
         index_db: Option<&Path>,
-    ) -> (Player, Option<audio_out::AudioOutput>, Option<String>) {
+    ) -> (Player, Option<audio_out::AudioOutput>, Vec<(MediaId, String, String)>) {
         let mut sources = Vec::new();
-        let mut err = None;
+        let mut missing = Vec::new();
         for m in &project.media {
-            match open_source_indexed(&resolve_media_path(base, &m.path), index_db) {
-                Ok(s) => sources.push((m.id, s)),
-                Err(e) => err = Some(format!("{}: {e}", m.path)),
+            let label = crate::util::media_label(&m.path);
+            let (src, err) = crate::util::open_source_or_placeholder(
+                &resolve_media_path(base, &m.path),
+                index_db,
+                &label,
+            );
+            if let Some(e) = err {
+                missing.push((m.id, label, e));
             }
+            sources.push((m.id, src));
         }
         let (player, ring) = Player::new(project.clone(), sources);
         let audio = match audio_out::start(ring, player.shared.clone(), player.transport.clone()) {
@@ -327,7 +341,7 @@ impl KtApp {
                 None
             }
         };
-        (player, audio, err)
+        (player, audio, missing)
     }
 
     pub(crate) fn new_empty(error: Option<String>) -> KtApp {
@@ -414,6 +428,7 @@ impl KtApp {
             live_gain: None,
             live_opacity: None,
             status: error.map(|e| (e, std::time::Instant::now())),
+            placeholder_media: Default::default(),
             clipboard: kt_model::ops::ClipBlock::default(),
             retained: kt_otio::Retained::default(),
             automation_clipboard: None,
@@ -452,7 +467,7 @@ impl KtApp {
         }
     }
 
-    fn open(path: &Path) -> Result<KtApp, String> {
+    pub(crate) fn open(path: &Path) -> Result<KtApp, String> {
         let base = path.parent();
         let (project, retained, notices) = load_project_file(path)?;
         let (player, audio, err) =
@@ -543,7 +558,8 @@ impl KtApp {
             ctx_row: None,
             live_gain: None,
             live_opacity: None,
-            status: err.map(|e| (e, std::time::Instant::now())),
+            status: None,
+            placeholder_media: err.iter().map(|(id, _, _)| *id).collect(),
             clipboard: kt_model::ops::ClipBlock::default(),
             retained,
             automation_clipboard: None,
@@ -594,6 +610,15 @@ impl KtApp {
         // замечания импорта/конвертации — пользователю (колокольчик)
         for n in notices {
             app.note(n);
+        }
+        // недоступные исходники: КАЖДЫЙ отдельной строкой в колокольчике и
+        // счётчик в статусе. Проект при этом открыт, монтаж цел, вместо
+        // кадров стоят плашки с именами файлов (Р.33 п.10)
+        for (_, label, e) in &err {
+            app.warn(crate::tf!(k::msg::MEDIA_MISSING, label, e));
+        }
+        if !err.is_empty() {
+            app.note(crate::tf!(k::msg::MEDIA_MISSING_COUNT, err.len()));
         }
         // KT_AUTOPLAY=1 — сразу играть (отладка перф без ввода)
         if std::env::var_os("KT_AUTOPLAY").is_some() {

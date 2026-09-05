@@ -392,6 +392,8 @@ video_fx_gpu_lost = "Se perdió el renderizador de vídeo en GPU ({0}) — cambi
 # Заголовки системных файловых диалогов.
 flight_saved = "Registro de reproducción guardado: {0}"
 
+media_missing = "{0}: fuente no disponible, se muestra un marcador ({1})"
+media_missing_count = "fuentes no disponibles: {0}"
 [dialog]
 import_ktproj = "Importar un proyecto .ktproj antiguo"
 open_project = "Abrir proyecto"

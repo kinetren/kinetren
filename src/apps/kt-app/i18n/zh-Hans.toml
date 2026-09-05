@@ -392,6 +392,8 @@ video_fx_gpu_lost = "GPU 视频渲染器已丢失（{0}）— 已切换到 CPU"
 # Заголовки системных файловых диалогов.
 flight_saved = "播放日志已保存：{0}"
 
+media_missing = "{0}：素材不可用，显示占位画面（{1}）"
+media_missing_count = "不可用素材：{0}"
 [dialog]
 import_ktproj = "导入旧版 .ktproj 项目"
 open_project = "打开项目"

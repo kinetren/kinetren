@@ -392,6 +392,8 @@ video_fx_gpu_lost = "فُقد مُصيِّر الفيديو على GPU ({0}) —
 # Заголовки системных файловых диалогов.
 flight_saved = "تم حفظ سجل التشغيل: {0}"
 
+media_missing = "{0}: المصدر غير متاح، يُعرض بديل مؤقت ({1})"
+media_missing_count = "مصادر غير متاحة: {0}"
 [dialog]
 import_ktproj = "استيراد مشروع .ktproj قديم"
 open_project = "فتح مشروع"

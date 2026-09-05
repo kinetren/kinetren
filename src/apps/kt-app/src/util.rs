@@ -44,6 +44,33 @@ pub fn open_source_indexed(
         .map_err(|e| e.to_string())
 }
 
+/// Источник или ПЛЕЙСХОЛДЕР вместо него (Р.33 п.10): недоступный файл не
+/// должен мешать открыть проект, играть и рендерить. Возвращает вторым
+/// значением текст ошибки — вызывающий решает, как о ней сказать.
+///
+/// Сам `open_source_indexed` не трогаем: его «ошибка = ошибка» нужна там,
+/// где плейсхолдер вреден — добавление медиа в проект (опечатка в пути
+/// молча превратилась бы в заглушку) и опрос настоящих разрешений
+/// источников для меню рендера.
+pub fn open_source_or_placeholder(
+    path: &str,
+    db_path: Option<&Path>,
+    label: &str,
+) -> (Box<dyn MediaSource>, Option<String>) {
+    match open_source_indexed(path, db_path) {
+        Ok(s) => (s, None),
+        Err(e) => (Box::new(kt_media::placeholder::PlaceholderSource::new(label)), Some(e)),
+    }
+}
+
+/// Имя файла для подписи плейсхолдера и уведомлений.
+pub fn media_label(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
 pub fn resolve_media_path(base: Option<&Path>, path: &str) -> String {
     if path.starts_with("synth:") || Path::new(path).is_absolute() {
         return path.to_string();

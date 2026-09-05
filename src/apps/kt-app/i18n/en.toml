@@ -392,6 +392,8 @@ video_fx_gpu_lost = "GPU video renderer lost ({0}) — switched to the CPU"
 # Заголовки системных файловых диалогов.
 flight_saved = "Playback journal saved: {0}"
 
+media_missing = "{0}: source unavailable, a placeholder is shown ({1})"
+media_missing_count = "sources unavailable: {0}"
 [dialog]
 import_ktproj = "Import a legacy .ktproj project"
 open_project = "Open project"
