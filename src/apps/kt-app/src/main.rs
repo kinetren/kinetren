@@ -25,6 +25,7 @@ mod thumbs;
 mod timeline;
 mod toolbar;
 mod util;
+mod widgets;
 
 fn main() -> eframe::Result {
     app::run()

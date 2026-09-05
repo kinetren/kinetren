@@ -505,6 +505,8 @@ fn demo_project() -> Project {
         kind: MorphKind::EffectBatch {
             video_fx: vec![FxInstance::Glow { strength: 0.5 }],
             audio_fx: vec![],
+            video_bypass: vec![],
+            audio_bypass: vec![],
         },
         enabled: true,
     }];

@@ -221,7 +221,11 @@ pub struct KtApp {
     /// пишутся обратно при каждом сохранении, вне undo (Р.24).
     pub retained: kt_otio::Retained,
     /// Буфер огибающей автоматизации (п.5 v1.3, порт «Copy envelopes»).
-    pub automation_clipboard: Option<Vec<SlowedKeyframe>>,
+    /// Буфер огибающих (Р.33): кривые одного слота. Модель блока —
+    /// `kt_model::ops::EnvelopeBlock`, ею же пользуется системный буфер.
+    pub env_clipboard: Option<kt_model::ops::EnvelopeBlock>,
+    /// Буфер FX-цепочки/слота.
+    pub fx_clipboard: Option<kt_model::ops::FxChainBlock>,
     /// Медиа, чьи файлы сейчас недоступны (watchdog, 900 мс).
     pub offline: Arc<Mutex<std::collections::HashSet<MediaId>>>,
     /// Drop останавливает watchdog-поток (переоткрытие без утечек).
@@ -439,7 +443,8 @@ impl KtApp {
             reopen_rx: None,
             clipboard: kt_model::ops::ClipBlock::default(),
             retained: kt_otio::Retained::default(),
-            automation_clipboard: None,
+            env_clipboard: None,
+            fx_clipboard: None,
             offline: Arc::new(Mutex::new(std::collections::HashSet::new())),
             watchdog: None,
             meter: Default::default(),
@@ -571,7 +576,8 @@ impl KtApp {
             reopen_rx: None,
             clipboard: kt_model::ops::ClipBlock::default(),
             retained,
-            automation_clipboard: None,
+            env_clipboard: None,
+            fx_clipboard: None,
             offline,
             watchdog: Some(watchdog),
             meter: Default::default(),
@@ -2637,7 +2643,12 @@ impl KtApp {
         let id = MorphId(self.next_morph_id());
         let mut cmds = Vec::new();
         let kind = if pm.batch {
-            MorphKind::EffectBatch { video_fx: Vec::new(), audio_fx: Vec::new() }
+            MorphKind::EffectBatch {
+                video_fx: Vec::new(),
+                audio_fx: Vec::new(),
+                video_bypass: Vec::new(),
+                audio_bypass: Vec::new(),
+            }
         } else {
             let media = drop_path.map(|path| {
                 let mid = MediaId(self.next_media_id());

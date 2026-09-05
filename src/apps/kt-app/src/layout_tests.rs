@@ -3105,6 +3105,110 @@ fn t185_gpu_loss_notice_once() {
     assert_eq!(hits, 1, "предупреждение ровно одно: {texts:?}");
 }
 
+/// Тест 217 (Р.33 С2, требования пользователя: «у морферов fx-chain имеет
+/// крестики, можно и галочки добавить включения-выключения эффектов и
+/// возможность перемещения порядка мышкой. Ну и заменить fx-chain у
+/// событийных эффектов, а то в двух местах один и тот же смысл, а сделано
+/// у обоих не до конца»). Полоса цепочки теперь ОДНА: и окно события, и
+/// обе секции морфера рисуют её одним кодом.
+#[test]
+fn t217_one_chain_widget_for_events_and_morphers() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(9),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(9),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::Blur { radius: 8 }, FxInstance::Glow { strength: 1.0 }],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    // морфер-батч с двумя эффектами — вторая цепочка тем же виджетом
+    p.morph_lanes = 1;
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        targets: vec![ClipId(9)],
+        kind: MorphKind::EffectBatch {
+            video_fx: vec![
+                FxInstance::Mirror { horizontal: true, vertical: false },
+                FxInstance::Edges { threshold: 48 },
+            ],
+            audio_fx: vec![],
+            video_bypass: vec![],
+            audio_bypass: vec![],
+        },
+        enabled: true,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(9));
+    h.step();
+    h.step();
+
+    // 1) мастер-галка цепочки есть в ОБОИХ окнах — она одна и та же
+    let chain_label = tr(k::fx::CHAIN_ON).to_string();
+    assert!(
+        h.query_by_label(&chain_label).is_some(),
+        "в окне события нет мастер-галки цепочки"
+    );
+    h.state_mut().open_morph_editor(MorphId(1));
+    h.step();
+    h.step();
+    assert!(
+        h.state().morph_editors.iter().any(|e| e.open),
+        "окно морфера не открылось"
+    );
+    // у морфера мастер-галка тоже есть (их теперь две — по одной на окно)
+    assert!(
+        h.get_all_by_label(&chain_label).count() >= 2,
+        "у морфера нет мастер-галки цепочки — виджет не общий"
+    );
+
+    // 2) выключатели слотов есть и у морфера (раньше были только крестики)
+    let app = h.state_mut();
+    let ev = app.model.project().morphers[0].clone();
+    let MorphKind::EffectBatch { video_bypass, .. } = &ev.kind else { panic!("батч") };
+    assert!(video_bypass.is_empty(), "стартовое состояние — всё включено");
+
+    // 3) выключение слота батча убирает эффект из целей, не теряя его
+    let mut ev2 = ev.clone();
+    if let MorphKind::EffectBatch { video_bypass, .. } = &mut ev2.kind {
+        *video_bypass = vec![true, false];
+    }
+    assert!(app.apply(Command::SetMorpher(ev2)), "команда не прошла");
+    let eff = app.model.project().effective_clips();
+    let c = eff.iter().find(|c| c.id == ClipId(9)).unwrap();
+    assert!(
+        !c.fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })),
+        "выключенный слот батча не должен доезжать до клипа"
+    );
+    assert!(
+        c.fx.iter().any(|f| matches!(f, FxInstance::Edges { .. })),
+        "включённый слот батча обязан остаться"
+    );
+    let MorphKind::EffectBatch { video_fx, .. } = &app.model.project().morphers[0].kind else {
+        panic!("батч")
+    };
+    assert_eq!(video_fx.len(), 2, "сам эффект из батча не пропадает");
+    h.step();
+}
+
 /// Тест 193 (Р.30): редактор FX и автоматизация — окно с кривыми рисуется,
 /// а пара SetFx+SetFxAuto одного жеста коалесцируется в ОДИН undo-шаг
 /// (иначе Ctrl+Z откатывал бы цепочку и кривые вразнобой).

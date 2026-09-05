@@ -230,7 +230,17 @@ pub enum MorphKind {
     },
     /// Дописать FX в конец цепочек целевых клипов. В отличие от v1
     /// (дефект D1) действует live — bake лишь материализует то же самое.
-    EffectBatch { video_fx: Vec<FxInstance>, audio_fx: Vec<FxInstance> },
+    EffectBatch {
+        video_fx: Vec<FxInstance>,
+        audio_fx: Vec<FxInstance>,
+        /// Выключатели слотов батча (Р.33: «у морферов… можно и галочки
+        /// добавить включения-выключения эффектов»). Параллельны своим
+        /// цепочкам; пустые не сериализуются — файлы байт-стабильны.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        video_bypass: Vec<bool>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        audio_bypass: Vec<bool>,
+    },
 }
 
 impl MorpherEvent {
@@ -249,15 +259,23 @@ impl MorpherEvent {
                     None => Tick((c.source_in + *source_in_delta).0.max(0)),
                 };
             }
-            MorphKind::EffectBatch { video_fx, audio_fx } => {
-                let extra = match c.kind {
-                    ClipKind::Video => video_fx,
-                    ClipKind::Audio => audio_fx,
+            MorphKind::EffectBatch { video_fx, audio_fx, video_bypass, audio_bypass } => {
+                let (extra, off) = match c.kind {
+                    ClipKind::Video => (video_fx, video_bypass),
+                    ClipKind::Audio => (audio_fx, audio_bypass),
                 };
-                if !extra.is_empty() {
+                // выключенный слот батча просто не дописывается: у клипа
+                // своя нумерация bypass, и смешивать их нельзя
+                let add: Vec<FxInstance> = extra
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !off.get(*i).copied().unwrap_or(false))
+                    .map(|(_, f)| f.clone())
+                    .collect();
+                if !add.is_empty() {
                     // fx_bypass короче цепочки = дописанные слоты включены
                     // (active_fx трактует отсутствующий флаг как false)
-                    c.fx.extend(extra.iter().cloned());
+                    c.fx.extend(add);
                 }
             }
         }

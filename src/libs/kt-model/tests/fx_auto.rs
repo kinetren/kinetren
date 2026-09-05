@@ -365,6 +365,8 @@ fn t214_master_switch_disables_chain_without_losing_it() {
         kind: MorphKind::EffectBatch {
             video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
             audio_fx: vec![],
+            video_bypass: vec![],
+            audio_bypass: vec![],
         },
         enabled: true,
     });

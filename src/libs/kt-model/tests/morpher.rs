@@ -111,6 +111,8 @@ fn t35_effect_batch_live_and_typed() {
         kind: MorphKind::EffectBatch {
             video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
             audio_fx: vec![FxInstance::Gain { db: 6.0 }],
+            video_bypass: vec![],
+            audio_bypass: vec![],
         },
         enabled: true,
     }))

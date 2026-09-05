@@ -17,7 +17,6 @@ pub struct FxEditor {
     pub backup_auto: Vec<Vec<kt_model::ParamCurve>>,
     pub gesture: u64,
     pub selected: usize,
-    pub sel_kf: Option<usize>,
     pub open: bool,
 }
 
@@ -35,7 +34,6 @@ impl KtApp {
             backup_auto: c.fx_auto.clone(),
             gesture: self.gesture_counter,
             selected: c.fx.len().saturating_sub(1),
-            sel_kf: None,
             open: true,
         });
     }
@@ -106,6 +104,11 @@ impl KtApp {
         let mut bypass_changed = false;
         let mut chain_on = !clip.fx_off;
         let mut off_changed = false;
+        let playhead = self.player.transport.playhead();
+        // буфер огибающих живёт в приложении; в окно отдаём его на время
+        // кадра, чтобы не держать &mut self внутри ui-замыкания
+        let mut env_clip = self.env_clipboard.clone();
+        let mut fx_clip = self.fx_clipboard.clone();
         let mut open = ed.open;
         egui::Window::new(title)
             .id(egui::Id::new(("fx", ed.clip)))
@@ -115,352 +118,45 @@ impl KtApp {
             .resizable(true)
             .vscroll(true)
             .show(ctx, |ui| {
-                // --- полоса цепочки -------------------------------------------
-                ui.horizontal(|ui| {
-                    // мастер-галка цепочки (Р.33): выключает ВСЮ цепочку,
-                    // не трогая состояние слотов
-                    if ui.checkbox(&mut chain_on, "").changed() {
-                        off_changed = true;
-                    }
-                    crate::app::hint_into(
-                        &mut hover_out,
-                        ui.label(tr(k::fx::CHAIN_ON)),
-                        tr(k::fx::CHAIN_ON_HINT),
-                    );
-                    ui.add_enabled(false, egui::Button::new("Media"));
-                    for (i, f) in fx.iter().enumerate() {
-                        ui.label(crate::icons::CARET_RIGHT);
-                        let off = bypass.get(i).copied().unwrap_or(false);
-                        let name = if off {
-                            crate::tf!(k::fx::OFF_SUFFIX, fx_display_name(f))
-                        } else {
-                            fx_display_name(f).to_string()
-                        };
-                        let mut text = egui::RichText::new(name);
-                        if off {
-                            text = text.weak().strikethrough();
-                        }
-                        if ui.selectable_label(ed.selected == i, text).clicked() {
-                            ed.selected = i;
-                            ed.sel_kf = None;
-                        }
-                    }
-                });
-                ui.horizontal(|ui| {
-                    // единый пикер с поиском (п.3 v1.4), фильтр по виду клипа
-                    if let Some(tmpl) = crate::fx_registry::fx_picker(
-                        ui,
-                        ("fx_add", ed.clip),
-                        clip.kind == ClipKind::Audio,
-                        &mut ed.picker_query,
-                    ) {
-                        fx.push(tmpl);
-                        auto.push(Vec::new());
-                        ed.selected = fx.len() - 1;
-                        changed = true;
-                    }
-                    if !fx.is_empty() {
-                        // bypass выбранного слота (п.2)
-                        if let Some(b) = bypass.get_mut(ed.selected) {
-                            let label = egui::RichText::new(crate::icons::POWER).color(if *b {
-                                egui::Color32::from_gray(110)
-                            } else {
-                                egui::Color32::from_rgb(120, 230, 120)
-                            });
-                            if crate::app::hint_into(
-                                &mut hover_out,
-                                ui.button(label),
-                                if *b { tr(k::fx::ENABLE) } else { tr(k::fx::DISABLE) },
-                            )
-                            .clicked()
-                            {
-                                *b = !*b;
-                                bypass_changed = true;
-                            }
-                        }
-                        if ui.button(tr(k::fx::REMOVE_SLOT)).clicked() && ed.selected < fx.len()
-                        {
-                            fx.remove(ed.selected);
-                            auto.remove(ed.selected);
-                            auto_changed = true;
-                            if ed.selected < bypass.len() {
-                                bypass.remove(ed.selected);
-                                bypass_changed = true;
-                            }
-                            ed.selected = ed.selected.saturating_sub(1);
-                            ed.sel_kf = None;
-                            changed = true;
-                        }
-                        if crate::app::hint_into(
-                            &mut hover_out,
-                            ui.button(crate::icons::CARET_LEFT),
-                            tr(k::fx::MOVE_LEFT),
-                        )
-                        .clicked()
-                            && ed.selected > 0
-                        {
-                            fx.swap(ed.selected, ed.selected - 1);
-                            auto.swap(ed.selected, ed.selected - 1);
-                            auto_changed = true;
-                            bypass.swap(ed.selected, ed.selected - 1);
-                            bypass_changed = true;
-                            ed.selected -= 1;
-                            changed = true;
-                        }
-                        if crate::app::hint_into(
-                            &mut hover_out,
-                            ui.button(crate::icons::CARET_RIGHT),
-                            tr(k::fx::MOVE_RIGHT),
-                        )
-                        .clicked()
-                            && ed.selected + 1 < fx.len()
-                        {
-                            fx.swap(ed.selected, ed.selected + 1);
-                            auto.swap(ed.selected, ed.selected + 1);
-                            auto_changed = true;
-                            bypass.swap(ed.selected, ed.selected + 1);
-                            bypass_changed = true;
-                            ed.selected += 1;
-                            changed = true;
-                        }
-                    }
-                });
+                // --- полоса цепочки: ОДИН виджет на события и морферы ----
+                let ch = crate::widgets::chain_strip(
+                    ui,
+                    ("fxchain", ed.clip.0),
+                    crate::widgets::ChainEdit {
+                        fx: &mut fx,
+                        bypass: &mut bypass,
+                        auto: Some(&mut auto),
+                        selected: &mut ed.selected,
+                        master_on: &mut chain_on,
+                    },
+                    clip.kind == ClipKind::Audio,
+                    &mut ed.picker_query,
+                    &mut fx_clip,
+                    clip.source_in,
+                    &mut hover_out,
+                );
+                changed |= ch.fx;
+                bypass_changed |= ch.bypass;
+                auto_changed |= ch.auto;
+                off_changed |= ch.master;
                 ui.separator();
 
                 // --- параметры выбранного слота ---------------------------------
                 if let Some(f) = fx.get_mut(ed.selected) {
+                    // параметры рисуются ОДНИМ кодом по спекам модели
+                    // (Р.33): диапазоны, шаг и единицы больше не могут
+                    // разойтись между окнами, а подписи идут из каталога
                     changed |= draw_video_fx_params(ui, f, &cameras);
-                    #[allow(clippy::single_match)]
-                    match f {
-                        FxInstance::Gain { db } => {
-                            ui.horizontal(|ui| {
-                                ui.label("Gain, dB:");
-                                changed |= ui
-                                    .add(egui::DragValue::new(db).range(-24.0..=24.0).speed(0.1))
-                                    .changed();
-                            });
-                        }
-                        FxInstance::SlowedReverb {
-                            rate,
-                            mix,
-                            reverb_delay_ms,
-                            damp,
-                            decay,
-                            wet_gain,
-                            automation,
-                        } => {
-                            egui::Grid::new("srv").num_columns(4).show(ui, |ui| {
-                                ui.label("Rate:");
-                                changed |= ui
-                                    .add(egui::DragValue::new(rate).range(0.25..=4.0).speed(0.005))
-                                    .changed();
-                                ui.label("Mix:");
-                                changed |= ui
-                                    .add(egui::DragValue::new(mix).range(0.0..=1.0).speed(0.005))
-                                    .changed();
-                                ui.end_row();
-                                ui.label("Delay, ms:");
-                                changed |= ui
-                                    .add(
-                                        egui::DragValue::new(reverb_delay_ms)
-                                            .range(10.0..=500.0)
-                                            .speed(0.5),
-                                    )
-                                    .changed();
-                                ui.label("Decay:");
-                                changed |= ui
-                                    .add(egui::DragValue::new(decay).range(0.0..=0.98).speed(0.005))
-                                    .changed();
-                                ui.end_row();
-                                ui.label("Damp:");
-                                changed |= ui
-                                    .add(egui::DragValue::new(damp).range(0.0..=0.99).speed(0.005))
-                                    .changed();
-                                ui.label("Wet gain:");
-                                changed |= ui
-                                    .add(
-                                        egui::DragValue::new(wet_gain).range(0.0..=2.0).speed(0.01),
-                                    )
-                                    .changed();
-                                ui.end_row();
-                            });
-
-                            // --- автоматизация ---------------------------------
-                            ui.add_space(4.0);
-                            ui.label(
-                                tr(k::fx::AUTOMATION),
-                            );
-                            let (rect, resp) = ui.allocate_exact_size(
-                                egui::vec2(ui.available_width(), 90.0),
-                                egui::Sense::click_and_drag(),
-                            );
-                            let p = ui.painter_at(rect);
-                            p.rect_filled(rect, 3.0, egui::Color32::from_gray(18));
-                            // границы клипа t=0/t=1 — зелёный пунктир (порт)
-                            for tx in [0.0f32, 1.0] {
-                                let x = rect.left() + tx * rect.width();
-                                p.line_segment(
-                                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
-                                    egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 160, 90)),
-                                );
-                            }
-                            let rate_to_y = |r: f64| -> f32 {
-                                let t = ((r - 0.25) / (2.0 - 0.25)).clamp(0.0, 1.0) as f32;
-                                rect.bottom() - 8.0 - t * (rect.height() - 16.0)
-                            };
-                            // ломаная профиля
-                            if automation.len() > 1 {
-                                let pts: Vec<egui::Pos2> = automation
-                                    .iter()
-                                    .map(|k| {
-                                        egui::pos2(
-                                            rect.left() + k.t as f32 * rect.width(),
-                                            rate_to_y(k.rate),
-                                        )
-                                    })
-                                    .collect();
-                                p.add(egui::Shape::line(
-                                    pts,
-                                    egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
-                                ));
-                            }
-                            // ромбы
-                            let mut hit: Option<usize> = None;
-                            for (i, k) in automation.iter().enumerate() {
-                                let x = rect.left() + k.t as f32 * rect.width();
-                                let y = rate_to_y(k.rate);
-                                let selected = ed.sel_kf == Some(i);
-                                let col = if selected {
-                                    egui::Color32::from_rgb(120, 180, 255)
-                                } else {
-                                    egui::Color32::from_gray(220)
-                                };
-                                p.add(egui::Shape::convex_polygon(
-                                    vec![
-                                        egui::pos2(x, y - 5.0),
-                                        egui::pos2(x + 5.0, y),
-                                        egui::pos2(x, y + 5.0),
-                                        egui::pos2(x - 5.0, y),
-                                    ],
-                                    col,
-                                    egui::Stroke::NONE,
-                                ));
-                                if let Some(pos) = resp.interact_pointer_pos()
-                                    && (pos - egui::pos2(x, y)).length() < 8.0
-                                {
-                                    hit = Some(i);
-                                }
-                            }
-                            if resp.double_clicked() {
-                                if let Some(i) = hit
-                                    && automation.len() > 1
-                                {
-                                    automation.remove(i);
-                                    ed.sel_kf = None;
-                                    changed = true;
-                                }
-                            } else if resp.drag_started() || resp.clicked() {
-                                if let Some(i) = hit {
-                                    ed.sel_kf = Some(i);
-                                }
-                            } else if resp.dragged()
-                                && let (Some(i), Some(pos)) =
-                                    (ed.sel_kf, resp.interact_pointer_pos())
-                                && i < automation.len()
-                            {
-                                let t = ((pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
-                                automation[i].t = t as f64;
-                                let r = 0.25
-                                    + ((rect.bottom() - 8.0 - pos.y) / (rect.height() - 16.0))
-                                        .clamp(0.0, 1.0)
-                                        as f64
-                                        * (2.0 - 0.25);
-                                automation[i].rate = r;
-                                // сортировка может переставить точки —
-                                // выбор следует за СВОЕЙ (по t), а не за
-                                // индексом (уезжал на чужой кейфрейм)
-                                let moved_t = automation[i].t;
-                                automation.sort_by(|a, b| a.t.total_cmp(&b.t));
-                                ed.sel_kf =
-                                    automation.iter().position(|k| (k.t - moved_t).abs() < 1e-12);
-                                changed = true;
-                            }
-                            ui.horizontal(|ui| {
-                                // копипаст огибающей (п.5, порт v1
-                                // «Copy/Paste envelopes» + JSON в системный
-                                // клипборд для интеропа)
-                                if ui.button(tr(k::fx::COPY_ENV)).clicked() {
-                                    self.automation_clipboard = Some(automation.clone());
-                                    if let Ok(json) = serde_json::to_string_pretty(&automation) {
-                                        ui.ctx().copy_text(json);
-                                    }
-                                }
-                                let can_paste = self.automation_clipboard.is_some();
-                                if crate::app::hint_into(
-                                    &mut hover_out,
-                                    ui.add_enabled(
-                                        can_paste,
-                                        egui::Button::new(tr(k::fx::PASTE_ENV)),
-                                    ),
-                                    tr(k::fx::PASTE_ENV_HINT),
-                                )
-                                .clicked()
-                                    && let Some(kfs) = self.automation_clipboard.clone()
-                                {
-                                    *automation = kfs;
-                                    ed.sel_kf = None;
-                                    changed = true;
-                                }
-                                if ui.button(tr(k::fx::KF_AT_CURSOR)).clicked() {
-                                    let ph = self.player.transport.playhead();
-                                    let t = ((ph.0 - clip.start.0) as f64
-                                        / clip.duration.0.max(1) as f64)
-                                        .clamp(0.0, 1.0);
-                                    automation.push(SlowedKeyframe { t, rate: *rate, mix: *mix });
-                                    automation.sort_by(|a, b| a.t.total_cmp(&b.t));
-                                    changed = true;
-                                }
-                                if let Some(i) = ed.sel_kf
-                                    && i < automation.len()
-                                {
-                                    ui.label("t:");
-                                    changed |= ui
-                                        .add(
-                                            egui::DragValue::new(&mut automation[i].t)
-                                                .range(0.0..=1.0)
-                                                .speed(0.002),
-                                        )
-                                        .changed();
-                                    ui.label("rate:");
-                                    changed |= ui
-                                        .add(
-                                            egui::DragValue::new(&mut automation[i].rate)
-                                                .range(0.25..=4.0)
-                                                .speed(0.005),
-                                        )
-                                        .changed();
-                                    ui.label("mix:");
-                                    changed |= ui
-                                        .add(
-                                            egui::DragValue::new(&mut automation[i].mix)
-                                                .range(0.0..=1.0)
-                                                .speed(0.005),
-                                        )
-                                        .changed();
-                                }
-                            });
-                        }
-                        // видео-FX рисуются draw_video_fx_params выше
-                        _ => {}
-                    }
                     // --- автоматизация параметров (Р.30, видео-слоты) ----
                     auto_changed |= draw_fx_auto_section(
                         ui,
-                        ed.clip,
+                        &clip,
                         ed.selected,
                         &fx[ed.selected],
                         &mut auto[ed.selected],
-                        (clip.source_in, clip.duration),
+                        playhead,
+                        &mut env_clip,
+                        &mut hover_out,
                     );
                 } else {
                     ui.weak(tr(k::fx::CHAIN_EMPTY));
@@ -498,6 +194,8 @@ impl KtApp {
             }
             self.set_fx_auto_coalesced(ed.clip, auto, ed.gesture);
         }
+        self.env_clipboard = env_clip;
+        self.fx_clipboard = fx_clip;
         if off_changed {
             self.apply_coalesced(
                 Command::SetFxOff { id: ed.clip, off: !chain_on },
@@ -522,16 +220,19 @@ impl KtApp {
 /// Вид секции здесь временный: единый виджет автоматизации (график ↔
 /// таблица, мини-таймлайн) — следующая стадия раунда; сейчас нужно, чтобы
 /// правки жили в новом домене.
+#[allow(clippy::too_many_arguments)]
 fn draw_fx_auto_section(
     ui: &mut egui::Ui,
-    clip: ClipId,
+    clip: &kt_model::ClipEvent,
     slot: usize,
     f: &FxInstance,
     curves: &mut Vec<kt_model::ParamCurve>,
-    material: (kt_time::Tick, kt_time::Tick),
+    playhead: kt_time::Tick,
+    env_clip: &mut Option<kt_model::ops::EnvelopeBlock>,
+    hover_out: &mut Option<String>,
 ) -> bool {
     // кусок материала, который показывает событие: в нём и живут ключи
-    let (src_in, dur) = material;
+    let (src_in, dur) = (clip.source_in, clip.duration);
     let mat_end = src_in.0 + dur.0;
     // только Smooth-параметры: структурные (длина линий реверба) кривой
     // не подлежат — их смена пересобирает DSP (Р.33)
@@ -550,7 +251,7 @@ fn draw_fx_auto_section(
             .filter(|s| !curves.iter().any(|c| c.param == s.name))
             .collect();
         if !free.is_empty() {
-            egui::ComboBox::from_id_salt(("fx_auto_add", clip, slot))
+            egui::ComboBox::from_id_salt(("fx_auto_add", clip.id, slot))
                 .selected_text(tr(k::fx::AUTO_ADD))
                 .show_ui(ui, |ui| {
                     for spec in &free {
@@ -570,6 +271,62 @@ fn draw_fx_auto_section(
                         }
                     }
                 });
+        }
+    });
+    ui.horizontal(|ui| {
+        // копипаст огибающих (Р.33, модель — kt_model::ops): раньше это
+        // умел только slowed&reverb своим отдельным виджетом
+        if !curves.is_empty() && ui.button(tr(k::fx::COPY_ENV)).clicked() {
+            let block = kt_model::ops::EnvelopeBlock {
+                fx_tag: kt_model::ops::fx_tag(f),
+                curves: curves.clone(),
+                src_in,
+            };
+            if let Ok(json) = serde_json::to_string_pretty(&block) {
+                ui.ctx().copy_text(json);
+            }
+            *env_clip = Some(block);
+        }
+        let same_kind = env_clip.as_ref().is_some_and(|b| b.fx_tag == kt_model::ops::fx_tag(f));
+        if crate::app::hint_into(
+            hover_out,
+            ui.add_enabled(same_kind, egui::Button::new(tr(k::fx::PASTE_ENV))),
+            tr(k::fx::PASTE_ENV_HINT),
+        )
+        .clicked()
+            && let Some(b) = env_clip.clone()
+        {
+            // ключи живут в тиках МАТЕРИАЛА: переносим их на точку входа
+            // этого события, иначе кривая уехала бы на чужой кусок
+            let d = src_in.0 - b.src_in.0;
+            for mut c in b.curves {
+                for kf in &mut c.keys {
+                    kf.t = kt_time::Tick((kf.t.0 + d).max(0));
+                }
+                curves.retain(|old| old.param != c.param);
+                curves.push(c);
+            }
+            changed = true;
+        }
+        // ключ по курсору: позиция считается ТЕМ ЖЕ правилом, что у
+        // рендера (Р.33) — до этого сюда клали прогресс таймлайна, и при
+        // скорости ≠ 1 точка вставала не под курсором
+        if !curves.is_empty() && ui.button(tr(k::fx::KF_AT_CURSOR)).clicked() {
+            let at = kt_model::clip_material_at(
+                clip.source_in,
+                clip.start,
+                clip.duration,
+                clip.reversed,
+                0,
+                playhead,
+            );
+            for c in curves.iter_mut() {
+                let v = kt_model::curve_value(&c.keys, c.ease, at);
+                c.keys.retain(|kf| kf.t != at);
+                c.keys.push(kt_model::AutoKey { t: at, v });
+                c.keys.sort_by_key(|kf| kf.t.0);
+            }
+            changed = true;
         }
     });
     let mut drop_curve: Option<usize> = None;
@@ -701,8 +458,15 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
     ]
 }
 
-/// Параметры видео-FX (компактная сетка). true = изменилось.
-/// `cameras` — (id, подпись) для комбо Pan3d: активная камера / прибитая.
+/// Параметры эффекта: числовые — ЕДИНОЙ сеткой по спекам модели
+/// (`widgets::params_grid`), а рядом — то, что числом не выражается:
+/// режим кроп-рамки, флаги зеркала, пипетка ключевого цвета, выбор
+/// камеры, кейфреймы CamMotion. `cameras` — (id, подпись) для комбо Pan3d.
+///
+/// До Р.33 у каждого варианта была своя ручная форма: одни и те же
+/// величины рисовались слайдером в одном окне и drag-полем в другом, а
+/// диапазоны расходились между окнами и спекой. Теперь диапазон, шаг и
+/// единица приходят из одного места.
 pub(crate) fn draw_video_fx_params(
     ui: &mut egui::Ui,
     f: &mut FxInstance,
@@ -710,44 +474,90 @@ pub(crate) fn draw_video_fx_params(
 ) -> bool {
     use kt_model::PanMode;
     let mut ch = false;
-    let mode_ui = |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut bool| {
-        egui::ComboBox::from_id_salt("panmode").selected_text(format!("{mode:?}")).show_ui(
-            ui,
-            |ui| {
+    // ключевой цвет удобнее пипеткой, чем тремя числами
+    let skip: &[&str] =
+        if matches!(f, FxInstance::Greenscreen { .. }) { &["key_r", "key_g", "key_b"] } else { &[] };
+
+    // --- нечисловые контролы варианта ------------------------------------
+    let mode_row = |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut bool| {
+        ui.horizontal(|ui| {
+            ui.label(tr(k::fx::MODE));
+            egui::ComboBox::from_id_salt("panmode")
+            .selected_text(format!("{mode:?}"))
+            .show_ui(ui, |ui| {
                 for m in [PanMode::Fit, PanMode::Fill, PanMode::Stretch] {
                     *ch |= ui.selectable_value(mode, m, format!("{m:?}")).changed();
                 }
-            },
-        );
+            });
+        });
     };
     match f {
-        FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
-            egui::Grid::new("vfx").num_columns(4).show(ui, |ui| {
-                ui.label(tr(k::fx::MODE));
-                mode_ui(ui, mode, &mut ch);
-                ui.label("Zoom:");
-                ch |= ui.add(egui::DragValue::new(zoom).range(0.05..=32.0).speed(0.01)).changed();
-                ui.end_row();
-                ui.label("Pan X:");
-                ch |= ui.add(egui::DragValue::new(pan_x).range(-4.0..=4.0).speed(0.01)).changed();
-                ui.label("Pan Y:");
-                ch |= ui.add(egui::DragValue::new(pan_y).range(-4.0..=4.0).speed(0.01)).changed();
-                ui.end_row();
+        FxInstance::Pan { mode, .. } => mode_row(ui, mode, &mut ch),
+        FxInstance::CamMotion { mode, ease, .. } => {
+            let mut e = *ease;
+            mode_row(ui, mode, &mut ch);
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut e, tr(k::fx::EASE)).changed() {
+                    ch = true;
+                }
+            });
+            if let FxInstance::CamMotion { ease, .. } = f {
+                *ease = e;
+            }
+        }
+        FxInstance::Mirror { horizontal, vertical } => {
+            ui.horizontal(|ui| {
+                ch |= ui.checkbox(horizontal, tr(k::fx::HORIZONTAL)).changed();
+                ch |= ui.checkbox(vertical, tr(k::fx::VERTICAL)).changed();
             });
         }
-        FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
-            egui::Grid::new("vfx").num_columns(4).show(ui, |ui| {
-                ui.label(tr(k::fx::MODE));
-                mode_ui(ui, mode, &mut ch);
-                ui.label("Ease:");
-                ch |= ui.checkbox(ease, "").changed();
-                ui.end_row();
-                ui.label("Time scale:");
-                ch |= ui
-                    .add(egui::DragValue::new(time_scale).range(0.05..=8.0).speed(0.01))
-                    .changed();
-                ui.end_row();
+        FxInstance::Greenscreen { key_r, key_g, key_b, .. } => {
+            ui.horizontal(|ui| {
+                let mut col = [*key_r as f32 / 255.0, *key_g as f32 / 255.0, *key_b as f32 / 255.0];
+                ui.label(tr(k::fx::KEY_COLOR));
+                if ui.color_edit_button_rgb(&mut col).changed() {
+                    *key_r = (col[0] * 255.0) as u8;
+                    *key_g = (col[1] * 255.0) as u8;
+                    *key_b = (col[2] * 255.0) as u8;
+                    ch = true;
+                }
             });
+        }
+        FxInstance::EventGrid { center, .. } => {
+            ui.horizontal(|ui| {
+                ch |= ui.checkbox(center, tr(k::fx::CENTER)).changed();
+            });
+        }
+        _ => {}
+    }
+
+    // --- числовые параметры: одна сетка на все варианты -------------------
+    ch |= crate::widgets::params_grid(ui, ("fxp", fx_display_name(f)), f, skip);
+
+    // --- хвост: камера Pan3d и кейфреймы CamMotion ------------------------
+    match f {
+        FxInstance::Pan3d { camera, .. } => {
+            ui.horizontal(|ui| {
+                ui.label(tr(k::fx::CAMERA));
+                let sel = match camera {
+                    None => tr(k::fx::CAMERA_ACTIVE).to_string(),
+                    Some(id) => cameras
+                        .iter()
+                        .find(|(cid, _)| *cid == id.0)
+                        .map(|(_, n)| n.clone())
+                        .unwrap_or_else(|| format!("C{}", id.0)),
+                };
+                egui::ComboBox::from_id_salt("pan3dcam").selected_text(sel).show_ui(ui, |ui| {
+                    ch |= ui.selectable_value(camera, None, tr(k::fx::CAMERA_ACTIVE)).changed();
+                    for (cid, name) in cameras {
+                        ch |= ui
+                            .selectable_value(camera, Some(kt_model::CameraId(*cid)), name.clone())
+                            .changed();
+                    }
+                });
+            });
+        }
+        FxInstance::CamMotion { keyframes, .. } => {
             ui.weak(crate::tf!(k::fx::KEYFRAMES_N, keyframes.len()));
             ui.horizontal(|ui| {
                 if ui.button(tr(k::fx::ADD_KF)).clicked() {
@@ -760,163 +570,26 @@ pub(crate) fn draw_video_fx_params(
                     ch = true;
                 }
             });
-            for (i, k) in keyframes.iter_mut().enumerate() {
+            for (i, kf) in keyframes.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.label(format!("#{i} t:"));
+                    ui.label(format!("#{i}"));
                     ch |= ui
-                        .add(egui::DragValue::new(&mut k.t).range(0.0..=1.0).speed(0.005))
+                        .add(egui::DragValue::new(&mut kf.t).range(0.0..=1.0).speed(0.005))
                         .changed();
-                    ui.label("x:");
+                    ui.label(tr(k::fxp::PAN_X));
                     ch |= ui
-                        .add(egui::DragValue::new(&mut k.pan_x).range(-4.0..=4.0).speed(0.01))
+                        .add(egui::DragValue::new(&mut kf.pan_x).range(-4.0..=4.0).speed(0.01))
                         .changed();
-                    ui.label("y:");
+                    ui.label(tr(k::fxp::PAN_Y));
                     ch |= ui
-                        .add(egui::DragValue::new(&mut k.pan_y).range(-4.0..=4.0).speed(0.01))
+                        .add(egui::DragValue::new(&mut kf.pan_y).range(-4.0..=4.0).speed(0.01))
                         .changed();
-                    ui.label("zoom:");
+                    ui.label(tr(k::fxp::ZOOM));
                     ch |= ui
-                        .add(egui::DragValue::new(&mut k.zoom).range(0.05..=32.0).speed(0.01))
+                        .add(egui::DragValue::new(&mut kf.zoom).range(0.05..=32.0).speed(0.01))
                         .changed();
                 });
             }
-        }
-        FxInstance::Mirror { horizontal, vertical } => {
-            ui.horizontal(|ui| {
-                ch |= ui.checkbox(horizontal, tr(k::fx::HORIZONTAL)).changed();
-                ch |= ui.checkbox(vertical, tr(k::fx::VERTICAL)).changed();
-            });
-        }
-        FxInstance::Pan3d {
-            pos_x,
-            pos_y,
-            pos_z,
-            rot_x,
-            rot_y,
-            rot_z,
-            anchor_x,
-            anchor_y,
-            scale,
-            camera,
-        } => {
-            // единицы формата (Р.29): позиции в px проекта, углы в градусах
-            egui::Grid::new("vfx").num_columns(6).show(ui, |ui| {
-                ui.label("X:");
-                ch |= ui.add(egui::DragValue::new(pos_x).speed(1.0)).changed();
-                ui.label("Y:");
-                ch |= ui.add(egui::DragValue::new(pos_y).speed(1.0)).changed();
-                ui.label("Z:");
-                ch |= ui.add(egui::DragValue::new(pos_z).speed(1.0)).changed();
-                ui.end_row();
-                ui.label("Rot X:");
-                ch |= ui
-                    .add(egui::DragValue::new(rot_x).range(-360.0..=360.0).speed(0.5))
-                    .changed();
-                ui.label("Rot Y:");
-                ch |= ui
-                    .add(egui::DragValue::new(rot_y).range(-360.0..=360.0).speed(0.5))
-                    .changed();
-                ui.label("Rot Z:");
-                ch |= ui
-                    .add(egui::DragValue::new(rot_z).range(-360.0..=360.0).speed(0.5))
-                    .changed();
-                ui.end_row();
-                ui.label("Anchor X:");
-                ch |= ui
-                    .add(egui::DragValue::new(anchor_x).range(0.0..=1.0).speed(0.005))
-                    .changed();
-                ui.label("Anchor Y:");
-                ch |= ui
-                    .add(egui::DragValue::new(anchor_y).range(0.0..=1.0).speed(0.005))
-                    .changed();
-                ui.label("Scale:");
-                ch |= ui
-                    .add(egui::DragValue::new(scale).range(0.01..=32.0).speed(0.01))
-                    .changed();
-                ui.end_row();
-            });
-            ui.horizontal(|ui| {
-                ui.label(tr(k::fx::CAMERA));
-                let sel = match camera {
-                    None => tr(k::fx::CAMERA_ACTIVE).to_string(),
-                    Some(id) => cameras
-                        .iter()
-                        .find(|(cid, _)| *cid == id.0)
-                        .map(|(_, n)| n.clone())
-                        .unwrap_or_else(|| format!("C{}", id.0)),
-                };
-                egui::ComboBox::from_id_salt("pan3dcam").selected_text(sel).show_ui(ui, |ui| {
-                    ch |= ui
-                        .selectable_value(camera, None, tr(k::fx::CAMERA_ACTIVE))
-                        .changed();
-                    for (cid, name) in cameras {
-                        ch |= ui
-                            .selectable_value(
-                                camera,
-                                Some(kt_model::CameraId(*cid)),
-                                name.clone(),
-                            )
-                            .changed();
-                    }
-                });
-            });
-        }
-        FxInstance::Blur { radius } => {
-            ui.horizontal(|ui| {
-                ui.label(tr(k::fx::RADIUS));
-                ch |= ui.add(egui::Slider::new(radius, 1..=48)).changed();
-            });
-        }
-        FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness } => {
-            ui.horizontal(|ui| {
-                let mut col = [*key_r as f32 / 255.0, *key_g as f32 / 255.0, *key_b as f32 / 255.0];
-                ui.label(tr(k::fx::KEY_COLOR));
-                if ui.color_edit_button_rgb(&mut col).changed() {
-                    *key_r = (col[0] * 255.0) as u8;
-                    *key_g = (col[1] * 255.0) as u8;
-                    *key_b = (col[2] * 255.0) as u8;
-                    ch = true;
-                }
-                ui.label(tr(k::fx::TOLERANCE));
-                ch |= ui.add(egui::Slider::new(tolerance, 1..=200)).changed();
-                ui.label(tr(k::fx::SOFTNESS));
-                ch |= ui.add(egui::Slider::new(softness, 0..=100)).changed();
-            });
-        }
-        FxInstance::Edges { threshold } => {
-            ui.horizontal(|ui| {
-                ui.label(tr(k::fx::THRESHOLD));
-                ch |= ui.add(egui::Slider::new(threshold, 1..=255)).changed();
-            });
-        }
-        FxInstance::Noise { amount } => {
-            ui.horizontal(|ui| {
-                ui.label("Amount:");
-                ch |= ui.add(egui::Slider::new(amount, 0.0..=1.0)).changed();
-            });
-        }
-        FxInstance::Vhs { rgb_shift, bleed } => {
-            ui.horizontal(|ui| {
-                ui.label(tr(k::fx::RGB_SHIFT));
-                ch |= ui.add(egui::Slider::new(rgb_shift, 0..=12)).changed();
-                ui.label("Bleed:");
-                ch |= ui.add(egui::Slider::new(bleed, 0.0..=1.0)).changed();
-            });
-        }
-        FxInstance::Glow { strength } => {
-            ui.horizontal(|ui| {
-                ui.label(tr(k::fx::STRENGTH));
-                ch |= ui.add(egui::Slider::new(strength, 0.0..=2.0)).changed();
-            });
-        }
-        FxInstance::EventGrid { cols, rows, center } => {
-            ui.horizontal(|ui| {
-                ui.label(tr(k::fx::COLUMNS));
-                ch |= ui.add(egui::DragValue::new(cols).range(1..=512)).changed();
-                ui.label(tr(k::fx::ROWS));
-                ch |= ui.add(egui::DragValue::new(rows).range(1..=512)).changed();
-                ch |= ui.checkbox(center, tr(k::fx::CENTER)).changed();
-            });
         }
         _ => {}
     }

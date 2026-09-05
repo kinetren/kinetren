@@ -75,7 +75,9 @@ pub fn install_fonts(ctx: &egui::Context) {
     }
     ctx.set_fonts(fonts);
 }
+#[allow(dead_code)] // перестановка слотов теперь мышью (Р.33)
 pub const CARET_LEFT: &str = "\u{E138}";
 pub const CARET_RIGHT: &str = "\u{E13A}";
+#[allow(dead_code)] // слоты выключаются галкой (Р.33)
 pub const POWER: &str = "\u{E3DA}";
 pub const BELL: &str = "\u{E0CE}";

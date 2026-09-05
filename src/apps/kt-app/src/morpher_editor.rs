@@ -76,6 +76,12 @@ impl KtApp {
         let mut bake = false;
         let mut delete = false;
         let mut open = ed.open;
+        // выключатель события (Р.33) — та же мастер-галка, что у цепочки
+        // события; буфер FX общий с окном событий
+        let mut enabled = ev.enabled;
+        let mut fx_clip = self.fx_clipboard.clone();
+        // подсказки — в статусбар, как везде (попапов в программе нет)
+        let mut hover_out: Option<String> = None;
         egui::Window::new(title)
             .id(egui::Id::new(("morph", ed.id.0)))
             .open(&mut open)
@@ -183,7 +189,12 @@ impl KtApp {
                             });
                         }
                     }
-                    MorphKind::EffectBatch { video_fx, audio_fx } => {
+                    MorphKind::EffectBatch {
+                        video_fx,
+                        audio_fx,
+                        video_bypass,
+                        audio_bypass,
+                    } => {
                         ui.label(
                             egui::RichText::new(
                                 tr(k::mrph::LIVE_NOTE),
@@ -191,26 +202,37 @@ impl KtApp {
                             .weak()
                             .small(),
                         );
+                        // ОДИН виджет цепочки на события и морферы (Р.33):
+                        // галки, крестики, перестановка мышью, мастер-галка
+                        // и копипаст — одинаково в обоих местах
                         changed |= chain_section(
                             ui,
-                            ed.id.0,
+                            (ed.id.0, true),
                             tr(k::mrph::VIDEO_FX),
                             video_fx,
+                            video_bypass,
                             &mut ed.sel.0,
                             true,
                             &mut ed.picker_query,
                             &cameras,
+                            &mut enabled,
+                            &mut fx_clip,
+                            &mut hover_out,
                         );
                         ui.separator();
                         changed |= chain_section(
                             ui,
-                            ed.id.0,
+                            (ed.id.0, false),
                             tr(k::mrph::AUDIO_FX),
                             audio_fx,
+                            audio_bypass,
                             &mut ed.sel.1,
                             false,
                             &mut ed.picker_query,
                             &cameras,
+                            &mut enabled,
+                            &mut fx_clip,
+                            &mut hover_out,
                         );
                     }
                 }
@@ -248,6 +270,12 @@ impl KtApp {
             ed.open = false;
             return;
         }
+        self.fx_clipboard = fx_clip;
+        if let Some(h) = hover_out {
+            self.hover_hint = Some(h);
+        }
+        ev.enabled = enabled;
+        changed |= ev.enabled != orig.enabled;
         if changed && ev != orig {
             self.apply_coalesced(Command::SetMorpher(ev), ed.gesture);
         }
@@ -266,91 +294,43 @@ fn short_name(path: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 fn chain_section(
     ui: &mut egui::Ui,
-    win_id: u64,
+    win_id: (u64, bool),
     title: &str,
     fx: &mut Vec<FxInstance>,
+    bypass: &mut Vec<bool>,
     sel: &mut usize,
     video: bool,
     query: &mut String,
     cameras: &[(u64, String)],
+    enabled: &mut bool,
+    clipboard: &mut Option<kt_model::ops::FxChainBlock>,
+    hover: &mut Option<String>,
 ) -> bool {
     let mut changed = false;
     ui.label(egui::RichText::new(title).strong());
-    ui.horizontal_wrapped(|ui| {
-        let mut remove: Option<usize> = None;
-        for (i, f) in fx.iter().enumerate() {
-            if ui
-                .selectable_label(*sel == i, crate::fx_editor::fx_display_name(f))
-                .clicked()
-            {
-                *sel = i;
-            }
-            if ui.small_button("×").clicked() {
-                remove = Some(i);
-            }
-            if i + 1 < fx.len() {
-                ui.label(crate::icons::CARET_RIGHT);
-            }
-        }
-        if let Some(i) = remove {
-            fx.remove(i);
-            *sel = (*sel).min(fx.len().saturating_sub(1));
-            changed = true;
-        }
-        // единый пикер с поиском (п.3 v1.4)
-        if let Some(tmpl) =
-            crate::fx_registry::fx_picker(ui, ("morph_add", win_id, video), !video, query)
-        {
-            fx.push(tmpl);
-            *sel = fx.len() - 1;
-            changed = true;
-        }
-    });
+    // морфер не хранит кривых: у батча автоматизации нет (она живёт на
+    // событии), поэтому auto = None
+    let ch = crate::widgets::chain_strip(
+        ui,
+        win_id,
+        crate::widgets::ChainEdit {
+            fx,
+            bypass,
+            auto: None,
+            selected: sel,
+            master_on: enabled,
+        },
+        !video,
+        query,
+        clipboard,
+        kt_time::Tick(0),
+        hover,
+    );
+    changed |= ch.any();
     if let Some(f) = fx.get_mut(*sel) {
-        match f {
-            FxInstance::Gain { db } => {
-                ui.horizontal(|ui| {
-                    ui.label("Gain, dB:");
-                    changed |= ui
-                        .add(egui::DragValue::new(db).speed(0.1).range(-48.0..=24.0))
-                        .changed();
-                });
-            }
-            FxInstance::SlowedReverb { rate, mix, reverb_delay_ms, damp, decay, wet_gain, .. } => {
-                egui::Grid::new(("morph_sr", win_id, video)).num_columns(2).show(ui, |ui| {
-                    ui.label("Rate:");
-                    changed |= ui
-                        .add(egui::DragValue::new(rate).speed(0.01).range(0.25..=4.0))
-                        .changed();
-                    ui.end_row();
-                    ui.label("Mix:");
-                    changed |=
-                        ui.add(egui::DragValue::new(mix).speed(0.01).range(0.0..=1.0)).changed();
-                    ui.end_row();
-                    ui.label(tr(k::mrph::DELAY_MS));
-                    changed |= ui
-                        .add(egui::DragValue::new(reverb_delay_ms).speed(1.0).range(1.0..=500.0))
-                        .changed();
-                    ui.end_row();
-                    ui.label("Damp:");
-                    changed |=
-                        ui.add(egui::DragValue::new(damp).speed(0.01).range(0.0..=1.0)).changed();
-                    ui.end_row();
-                    ui.label("Decay:");
-                    changed |=
-                        ui.add(egui::DragValue::new(decay).speed(0.01).range(0.0..=0.98)).changed();
-                    ui.end_row();
-                    ui.label("Wet gain:");
-                    changed |= ui
-                        .add(egui::DragValue::new(wet_gain).speed(0.01).range(0.0..=4.0))
-                        .changed();
-                    ui.end_row();
-                });
-            }
-            other => {
-                changed |= crate::fx_editor::draw_video_fx_params(ui, other, cameras);
-            }
-        }
+        // те же параметры тем же кодом, что в окне событий (Р.33):
+        // раньше здесь была вторая форма со СВОИМИ диапазонами
+        changed |= crate::fx_editor::draw_video_fx_params(ui, f, cameras);
     }
     changed
 }
