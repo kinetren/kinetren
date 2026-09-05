@@ -375,3 +375,93 @@ fn t214_master_switch_disables_chain_without_losing_it() {
     assert!(on > off, "выключенный морфер не должен добавлять эффекты: {on} vs {off}");
     assert_eq!(p.morphers.len(), 1, "и при этом остаётся на дорожке");
 }
+
+/// Тест 215 (Р.33 С1, требование пользователя: «Не хватает копипастинга —
+/// как отдельных эффектов так и fx-chain. так и автоматизации»).
+/// Блоки живут в модели: их же формой (JSON) пользуется системный буфер.
+#[test]
+fn t215_fx_clipboard_slot_chain_and_envelope() {
+    use kt_model::ops;
+    let mut m = model_with_clip();
+    let auto = vec![
+        vec![ParamCurve {
+            param: "radius".into(),
+            ease: false,
+            keys: vec![key(0, 1.0), key(90_000, 48.0)],
+        }],
+        vec![ParamCurve {
+            param: "strength".into(),
+            ease: true,
+            keys: vec![key(0, 0.0), key(90_000, 2.0)],
+        }],
+    ];
+    m.apply(Command::SetFxAuto { id: ClipId(1), auto }).unwrap();
+    m.apply(Command::SetFxBypass { id: ClipId(1), bypass: vec![false, true] }).unwrap();
+    let src = m.clip(ClipId(1)).unwrap().clone();
+
+    // цель: ДРУГАЯ точка входа — ключи обязаны перевеситься на её материал
+    let mut target = src.clone();
+    target.id = ClipId(2);
+    target.start = Tick(180_000);
+    target.source_in = Tick(45_000);
+    target.fx = vec![];
+    target.fx_auto = vec![];
+    target.fx_bypass = vec![];
+    let mut p = m.project().clone();
+    p.clips.push(target.clone());
+    p.validate().unwrap();
+    let mut m = TimelineModel::new(p);
+
+    // 1) цепочка целиком: слоты, bypass и кривые переезжают
+    let block = ops::copy_fx_chain(&src);
+    let target = m.clip(ClipId(2)).unwrap().clone();
+    m.apply_batch(ops::paste_fx_chain(&target, &block)).unwrap();
+    let got = m.clip(ClipId(2)).unwrap().clone();
+    assert_eq!(got.fx, src.fx, "цепочка не переехала");
+    assert_eq!(got.fx_bypass, src.fx_bypass, "состояние слотов не переехало");
+    assert_eq!(
+        got.fx_auto[0][0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![45_000, 135_000],
+        "ключи обязаны встать на тот же кусок материала цели"
+    );
+    // undo — один шаг на весь жест
+    let depth = m.undo_depth();
+    m.undo().unwrap();
+    assert!(m.clip(ClipId(2)).unwrap().fx.is_empty(), "undo снял вставленную цепочку");
+    assert_eq!(m.undo_depth(), depth - 1, "вставка цепочки — один undo-шаг");
+    m.redo().unwrap();
+
+    // 2) отдельный слот дописывается В КОНЕЦ существующей цепочки
+    let one = ops::copy_fx_slot(&src, 0).expect("слот есть");
+    let target = m.clip(ClipId(2)).unwrap().clone();
+    let before = target.fx.len();
+    m.apply_batch(ops::paste_fx_slots(&target, &one)).unwrap();
+    assert_eq!(m.clip(ClipId(2)).unwrap().fx.len(), before + 1, "слот не добавился");
+
+    // 3) огибающие: вставка в СВОЙ вид эффекта работает, в чужой — отказ
+    let env = ops::copy_envelope(&src, 0, Some("radius")).expect("огибающая есть");
+    let target = m.clip(ClipId(2)).unwrap().clone();
+    let cmds = ops::paste_envelope(&target, 0, &env).expect("тот же вид эффекта");
+    m.apply_batch(cmds).unwrap();
+    assert_eq!(
+        m.clip(ClipId(2)).unwrap().fx_auto[0]
+            .iter()
+            .find(|c| c.param == "radius")
+            .unwrap()
+            .keys
+            .iter()
+            .map(|k| k.t.0)
+            .collect::<Vec<_>>(),
+        vec![45_000, 135_000]
+    );
+    let alien = ops::copy_envelope(&src, 1, None).expect("огибающая второго слота");
+    assert!(
+        ops::paste_envelope(&m.clip(ClipId(2)).unwrap().clone(), 0, &alien).is_none(),
+        "огибающая чужого вида эффекта вставляться не должна"
+    );
+
+    // 4) блок переживает системный буфер (JSON) без потерь
+    let json = serde_json::to_string(&block).unwrap();
+    let back: ops::FxChainBlock = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, block, "блок обязан переживать круг через системный буфер");
+}

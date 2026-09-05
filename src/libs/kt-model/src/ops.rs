@@ -641,3 +641,172 @@ fn free_audio_lane_below(p: &Project, mover: ClipId) -> u32 {
     }
     p.audio_lanes
 }
+
+// ---- буфер обмена FX (Р.33) --------------------------------------------
+// Требование пользователя: «Не хватает копипастинга — как отдельных
+// эффектов так и fx-chain. так и автоматизации». Блоки живут в модели, а
+// не в UI: их же формой пользуется системный буфер (JSON), поэтому копия
+// переживает перезапуск и переезжает между окнами программы.
+
+/// Один слот цепочки со всем, что к нему относится.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FxSlotBlock {
+    pub fx: FxInstance,
+    #[serde(default)]
+    pub bypass: bool,
+    #[serde(default)]
+    pub curves: Vec<ParamCurve>,
+}
+
+/// Цепочка целиком либо её огибающие. `src_in` — точка входа события, из
+/// которого копировали: ключи лежат в тиках МАТЕРИАЛА, и при вставке в
+/// другое событие их надо перевесить относительно его собственной точки
+/// входа («точка входа к точке входа», как в Premiere).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FxChainBlock {
+    pub slots: Vec<FxSlotBlock>,
+    pub src_in: Tick,
+    #[serde(default)]
+    pub fx_off: bool,
+}
+
+/// Огибающие одного слота (кривые без самого эффекта).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EnvelopeBlock {
+    /// Тег варианта эффекта-источника: вставка в чужой вид эффекта
+    /// бессмысленна (кривые адресуются именами его полей).
+    pub fx_tag: String,
+    pub curves: Vec<ParamCurve>,
+    pub src_in: Tick,
+}
+
+/// Тег варианта (`kind` в файле) — по нему проверяется совместимость
+/// огибающих при вставке.
+pub fn fx_tag(f: &FxInstance) -> String {
+    serde_json::to_value(f)
+        .ok()
+        .and_then(|v| v.get("kind").and_then(|k| k.as_str().map(str::to_string)))
+        .unwrap_or_default()
+}
+
+/// Сдвиг ключей при переносе в другое событие: материал адресуется от
+/// точки входа, поэтому кривая встаёт «на то же место куска».
+fn rebase(curves: &[ParamCurve], from: Tick, to: Tick) -> Vec<ParamCurve> {
+    let d = to.0 - from.0;
+    curves
+        .iter()
+        .map(|c| ParamCurve {
+            param: c.param.clone(),
+            ease: c.ease,
+            keys: c.keys.iter().map(|k| AutoKey { t: Tick((k.t.0 + d).max(0)), v: k.v }).collect(),
+        })
+        .collect()
+}
+
+pub fn copy_fx_slot(c: &ClipEvent, slot: usize) -> Option<FxChainBlock> {
+    let fx = c.fx.get(slot)?.clone();
+    Some(FxChainBlock {
+        slots: vec![FxSlotBlock {
+            fx,
+            bypass: c.fx_bypass.get(slot).copied().unwrap_or(false),
+            curves: c.fx_auto.get(slot).cloned().unwrap_or_default(),
+        }],
+        src_in: c.source_in,
+        fx_off: false,
+    })
+}
+
+pub fn copy_fx_chain(c: &ClipEvent) -> FxChainBlock {
+    FxChainBlock {
+        slots: c
+            .fx
+            .iter()
+            .enumerate()
+            .map(|(i, f)| FxSlotBlock {
+                fx: f.clone(),
+                bypass: c.fx_bypass.get(i).copied().unwrap_or(false),
+                curves: c.fx_auto.get(i).cloned().unwrap_or_default(),
+            })
+            .collect(),
+        src_in: c.source_in,
+        fx_off: c.fx_off,
+    }
+}
+
+/// Огибающие слота: все кривые или одна названная.
+pub fn copy_envelope(c: &ClipEvent, slot: usize, param: Option<&str>) -> Option<EnvelopeBlock> {
+    let fx = c.fx.get(slot)?;
+    let all = c.fx_auto.get(slot).cloned().unwrap_or_default();
+    let curves = match param {
+        None => all,
+        Some(p) => all.into_iter().filter(|c| c.param == p).collect(),
+    };
+    Some(EnvelopeBlock { fx_tag: fx_tag(fx), curves, src_in: c.source_in })
+}
+
+/// Вставка цепочки: заменяет цепочку события целиком. Один батч — один
+/// undo-шаг.
+pub fn paste_fx_chain(c: &ClipEvent, b: &FxChainBlock) -> Vec<Command> {
+    let mut auto: Vec<Vec<ParamCurve>> =
+        b.slots.iter().map(|s| rebase(&s.curves, b.src_in, c.source_in)).collect();
+    while auto.last().is_some_and(|v| v.is_empty()) {
+        auto.pop();
+    }
+    let mut bypass: Vec<bool> = b.slots.iter().map(|s| s.bypass).collect();
+    while bypass.last() == Some(&false) {
+        bypass.pop();
+    }
+    vec![
+        Command::SetFx { id: c.id, fx: b.slots.iter().map(|s| s.fx.clone()).collect() },
+        Command::SetFxAuto { id: c.id, auto },
+        Command::SetFxBypass { id: c.id, bypass },
+        Command::SetFxOff { id: c.id, off: b.fx_off },
+    ]
+}
+
+/// Вставка слотов в КОНЕЦ цепочки события (копирование эффекта туда, где
+/// уже что-то есть).
+pub fn paste_fx_slots(c: &ClipEvent, b: &FxChainBlock) -> Vec<Command> {
+    let mut fx = c.fx.clone();
+    let mut auto = c.fx_auto.clone();
+    let mut bypass = c.fx_bypass.clone();
+    auto.resize(fx.len(), Vec::new());
+    bypass.resize(fx.len(), false);
+    for s in &b.slots {
+        fx.push(s.fx.clone());
+        auto.push(rebase(&s.curves, b.src_in, c.source_in));
+        bypass.push(s.bypass);
+    }
+    while auto.last().is_some_and(|v| v.is_empty()) {
+        auto.pop();
+    }
+    while bypass.last() == Some(&false) {
+        bypass.pop();
+    }
+    vec![
+        Command::SetFx { id: c.id, fx },
+        Command::SetFxAuto { id: c.id, auto },
+        Command::SetFxBypass { id: c.id, bypass },
+    ]
+}
+
+/// Вставка огибающих в слот. Чужой вид эффекта — отказ (None): кривые
+/// адресуются именами полей своего варианта.
+pub fn paste_envelope(c: &ClipEvent, slot: usize, b: &EnvelopeBlock) -> Option<Vec<Command>> {
+    let fx = c.fx.get(slot)?;
+    if fx_tag(fx) != b.fx_tag {
+        return None;
+    }
+    let mut auto = c.fx_auto.clone();
+    if auto.len() <= slot {
+        auto.resize(slot + 1, Vec::new());
+    }
+    for curve in rebase(&b.curves, b.src_in, c.source_in) {
+        auto[slot].retain(|old| old.param != curve.param);
+        auto[slot].push(curve);
+    }
+    while auto.last().is_some_and(|v| v.is_empty()) {
+        auto.pop();
+    }
+    Some(vec![Command::SetFxAuto { id: c.id, auto }])
+}
