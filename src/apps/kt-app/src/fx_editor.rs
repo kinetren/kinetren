@@ -226,9 +226,9 @@ impl KtApp {
                                     );
                                 }
                                 ch.auto |= auto_ch;
-                            } else {
-                                ui.weak(tr(k::fx::CHAIN_EMPTY));
                             }
+                            // про пустую цепочку говорит сама полоса —
+                            // второй раз повторять не надо
                         });
                     if ch.any() || params_changed {
                         edits.push(Edited {

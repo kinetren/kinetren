@@ -13,7 +13,11 @@ pub type Peaks = Vec<(Vec<(i16, i16)>, Vec<(i16, i16)>)>; // [level] -> (L, R) �
 pub fn synth_pattern(path: &str) -> Option<AudioPattern> {
     let rest = path.strip_prefix("synth:")?;
     let mut it = rest.split(':');
-    match it.next()? {
+    // имя образца регистронезависимо: живые сценарии пишут «synth:Ramp»,
+    // а тесты и kt-cli — «synth:ramp». До Р.33 разница делала источник
+    // «отсутствующим» молча (превью висело в «Loading»), а с заглушкой
+    // (п.207) стала видна сразу — на превью появилась плашка
+    match it.next()?.to_ascii_lowercase().as_str() {
         "silence" => Some(AudioPattern::Silence),
         "ramp" => Some(AudioPattern::Ramp),
         "impulse" => Some(AudioPattern::Impulse),

@@ -275,6 +275,17 @@ class Live:
         if mods:
             self._mods(mods, False)
 
+    def double_click(self, x, y):
+        """Двойной клик: у egui это ВРЕМЕННОЙ жест (два клика ближе 0.3 с),
+        поэтому между ними нельзя ни поднимать окно, ни спать по 0.35 с —
+        два обычных click() подряд складываются в два одиночных."""
+        self.focus()
+        probe.move(x, y, pause=0.12)
+        for _ in range(2):
+            probe.button(True)
+            probe.button(False)
+        time.sleep(0.45)
+
     def drag(self, x0, y0, x1, y1, steps=6, mods=()):
         """Драг КАК ЧЕЛОВЕК: навести → нажать → сдвинуть чуть → вести
         несколькими шагами → отпустить. Прыжок сразу в цель egui засчитывает
@@ -344,6 +355,22 @@ class Live:
         nums = [int(v) for v in out.replace("(", ",").replace(")", ",").split(",") if v.strip().isdigit()]
         os.unlink(img)
         self._shot_no -= 1
+        return tuple(nums[:3])
+
+    def pixel_of(self, image, x, y):
+        """Цвет пикселя РАНЕЕ снятого скриншота — сравнение «до и после»
+        без повторного снимка экрана."""
+        out = subprocess.run(
+            ["convert", image, "-format", f"%[pixel:p{{{x},{y}}}]", "info:-"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        nums = [
+            int(v)
+            for v in out.replace("(", ",").replace(")", ",").split(",")
+            if v.strip().isdigit()
+        ]
         return tuple(nums[:3])
 
     def project_now(self):
