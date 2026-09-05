@@ -889,121 +889,211 @@ impl FxInstance {
         self.class() == FxClass::Video3d
     }
 
-    /// Автоматизируемые параметры варианта (Р.30): (имя поля как в файле,
-    /// min, max). Пустой список — вариант не автоматизируется (bools,
-    /// аудио-FX — их автоматизация живёт своей механикой).
-    pub fn param_specs(&self) -> &'static [(&'static str, f64, f64)] {
-        match self {
-            FxInstance::Pan { .. } => {
-                &[("pan_x", -4.0, 4.0), ("pan_y", -4.0, 4.0), ("zoom", 0.05, 32.0)]
-            }
-            FxInstance::CamMotion { .. } => &[("time_scale", 0.05, 8.0)],
-            FxInstance::Blur { .. } => &[("radius", 1.0, 48.0)],
-            FxInstance::Greenscreen { .. } => &[
-                ("key_r", 0.0, 255.0),
-                ("key_g", 0.0, 255.0),
-                ("key_b", 0.0, 255.0),
-                ("tolerance", 1.0, 200.0),
-                ("softness", 0.0, 100.0),
-            ],
-            FxInstance::Edges { .. } => &[("threshold", 1.0, 255.0)],
-            FxInstance::Noise { .. } => &[("amount", 0.0, 1.0)],
-            FxInstance::Vhs { .. } => &[("rgb_shift", 0.0, 12.0), ("bleed", 0.0, 1.0)],
-            FxInstance::Glow { .. } => &[("strength", 0.0, 2.0)],
-            FxInstance::EventGrid { .. } => {
-                &[("cols", 1.0, 512.0), ("rows", 1.0, 512.0)]
-            }
-            FxInstance::Pan3d { .. } => &[
-                ("pos_x", -100_000.0, 100_000.0),
-                ("pos_y", -100_000.0, 100_000.0),
-                ("pos_z", -100_000.0, 100_000.0),
-                ("rot_x", -1440.0, 1440.0),
-                ("rot_y", -1440.0, 1440.0),
-                ("rot_z", -1440.0, 1440.0),
-                ("anchor_x", 0.0, 1.0),
-                ("anchor_y", 0.0, 1.0),
-                ("scale", 0.01, 32.0),
-            ],
-            _ => &[],
-        }
+    /// Параметры варианта (Р.33): ОДИН источник правды для автоматизации,
+    /// клампа и UI. Раньше их описывали три ручные таблицы (`param_specs`,
+    /// `set_param`, `get_param`), которые надо было править синхронно;
+    /// теперь все три генерятся из одной декларации `fx_params!`.
+    pub fn param_specs(&self) -> &'static [ParamSpec] {
+        fx_specs(self)
     }
 
-    /// Установить параметр по имени (Р.30, автоматизация). Значение
-    /// клампится диапазоном param_specs; целочисленные поля округляются.
-    /// false — имя не подходит варианту (кривая-сирота).
+    /// Только автоматизируемые параметры (`ParamKind::Smooth`). Кривая на
+    /// структурном параметре бессмысленна: его смена пересобирает DSP
+    /// (реверб пересоздаёт comb-линии), а автоматизация обязана быть
+    /// плавной — поэтому UI такие параметры не предлагает.
+    pub fn auto_params(&self) -> impl Iterator<Item = &'static ParamSpec> {
+        self.param_specs().iter().filter(|s| s.kind == ParamKind::Smooth)
+    }
+
+    pub fn param_spec(&self, name: &str) -> Option<&'static ParamSpec> {
+        self.param_specs().iter().find(|s| s.name == name)
+    }
+
+    /// Установить параметр по имени. Значение клампится диапазоном спеки;
+    /// целочисленные поля округляются. false — имя не подходит варианту
+    /// (кривая-сирота).
     pub fn set_param(&mut self, name: &str, v: f64) -> bool {
-        let Some(&(_, lo, hi)) = self.param_specs().iter().find(|(n, _, _)| *n == name)
-        else {
-            return false;
-        };
-        let v = v.clamp(lo, hi);
-        let vu32 = v.round() as u32;
-        let vu8 = v.round().clamp(0.0, 255.0) as u8;
-        match (self, name) {
-            (FxInstance::Pan { pan_x, .. }, "pan_x") => *pan_x = v,
-            (FxInstance::Pan { pan_y, .. }, "pan_y") => *pan_y = v,
-            (FxInstance::Pan { zoom, .. }, "zoom") => *zoom = v,
-            (FxInstance::CamMotion { time_scale, .. }, "time_scale") => *time_scale = v,
-            (FxInstance::Blur { radius }, "radius") => *radius = vu32,
-            (FxInstance::Greenscreen { key_r, .. }, "key_r") => *key_r = vu8,
-            (FxInstance::Greenscreen { key_g, .. }, "key_g") => *key_g = vu8,
-            (FxInstance::Greenscreen { key_b, .. }, "key_b") => *key_b = vu8,
-            (FxInstance::Greenscreen { tolerance, .. }, "tolerance") => *tolerance = vu32,
-            (FxInstance::Greenscreen { softness, .. }, "softness") => *softness = vu32,
-            (FxInstance::Edges { threshold }, "threshold") => *threshold = vu32,
-            (FxInstance::Noise { amount }, "amount") => *amount = v,
-            (FxInstance::Vhs { rgb_shift, .. }, "rgb_shift") => *rgb_shift = vu32,
-            (FxInstance::Vhs { bleed, .. }, "bleed") => *bleed = v,
-            (FxInstance::Glow { strength }, "strength") => *strength = v,
-            (FxInstance::EventGrid { cols, .. }, "cols") => *cols = vu32,
-            (FxInstance::EventGrid { rows, .. }, "rows") => *rows = vu32,
-            (FxInstance::Pan3d { pos_x, .. }, "pos_x") => *pos_x = v,
-            (FxInstance::Pan3d { pos_y, .. }, "pos_y") => *pos_y = v,
-            (FxInstance::Pan3d { pos_z, .. }, "pos_z") => *pos_z = v,
-            (FxInstance::Pan3d { rot_x, .. }, "rot_x") => *rot_x = v,
-            (FxInstance::Pan3d { rot_y, .. }, "rot_y") => *rot_y = v,
-            (FxInstance::Pan3d { rot_z, .. }, "rot_z") => *rot_z = v,
-            (FxInstance::Pan3d { anchor_x, .. }, "anchor_x") => *anchor_x = v,
-            (FxInstance::Pan3d { anchor_y, .. }, "anchor_y") => *anchor_y = v,
-            (FxInstance::Pan3d { scale, .. }, "scale") => *scale = v,
-            _ => return false,
-        }
-        true
+        let Some(spec) = self.param_spec(name) else { return false };
+        fx_set_param(self, name, v.clamp(spec.min, spec.max))
     }
 
     /// Текущее значение параметра по имени (для UI автоматизации).
     pub fn get_param(&self, name: &str) -> Option<f64> {
-        let v = match (self, name) {
-            (FxInstance::Pan { pan_x, .. }, "pan_x") => *pan_x,
-            (FxInstance::Pan { pan_y, .. }, "pan_y") => *pan_y,
-            (FxInstance::Pan { zoom, .. }, "zoom") => *zoom,
-            (FxInstance::CamMotion { time_scale, .. }, "time_scale") => *time_scale,
-            (FxInstance::Blur { radius }, "radius") => *radius as f64,
-            (FxInstance::Greenscreen { key_r, .. }, "key_r") => *key_r as f64,
-            (FxInstance::Greenscreen { key_g, .. }, "key_g") => *key_g as f64,
-            (FxInstance::Greenscreen { key_b, .. }, "key_b") => *key_b as f64,
-            (FxInstance::Greenscreen { tolerance, .. }, "tolerance") => *tolerance as f64,
-            (FxInstance::Greenscreen { softness, .. }, "softness") => *softness as f64,
-            (FxInstance::Edges { threshold }, "threshold") => *threshold as f64,
-            (FxInstance::Noise { amount }, "amount") => *amount,
-            (FxInstance::Vhs { rgb_shift, .. }, "rgb_shift") => *rgb_shift as f64,
-            (FxInstance::Vhs { bleed, .. }, "bleed") => *bleed,
-            (FxInstance::Glow { strength }, "strength") => *strength,
-            (FxInstance::EventGrid { cols, .. }, "cols") => *cols as f64,
-            (FxInstance::EventGrid { rows, .. }, "rows") => *rows as f64,
-            (FxInstance::Pan3d { pos_x, .. }, "pos_x") => *pos_x,
-            (FxInstance::Pan3d { pos_y, .. }, "pos_y") => *pos_y,
-            (FxInstance::Pan3d { pos_z, .. }, "pos_z") => *pos_z,
-            (FxInstance::Pan3d { rot_x, .. }, "rot_x") => *rot_x,
-            (FxInstance::Pan3d { rot_y, .. }, "rot_y") => *rot_y,
-            (FxInstance::Pan3d { rot_z, .. }, "rot_z") => *rot_z,
-            (FxInstance::Pan3d { anchor_x, .. }, "anchor_x") => *anchor_x,
-            (FxInstance::Pan3d { anchor_y, .. }, "anchor_y") => *anchor_y,
-            (FxInstance::Pan3d { scale, .. }, "scale") => *scale,
-            _ => return None,
-        };
-        Some(v)
+        fx_get_param(self, name)
     }
+}
+
+/// Как параметр ведёт себя при автоматизации.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamKind {
+    /// Меняется плавно на ходу — автоматизируется.
+    Smooth,
+    /// Смена пересобирает состояние DSP (геометрия линий задержки) —
+    /// автоматизации не подлежит, руками менять можно.
+    Structural,
+}
+
+/// Единица измерения — для подписи и шага в UI (перевод подписи живёт в
+/// каталогах kt-app: kt-model про язык интерфейса ничего не знает).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamUnit {
+    None,
+    Db,
+    /// Доля 0..1.
+    Norm,
+    /// Множитель (скорость, зум).
+    Ratio,
+    Px,
+    Deg,
+    Ms,
+    /// Компонента цвета 0..255.
+    Rgb8,
+    /// Счётное число (колонки, строки).
+    Count,
+}
+
+/// Описание одного параметра эффекта.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParamSpec {
+    /// Имя поля snake_case — оно же ключ в файле и в `ParamCurve.param`.
+    pub name: &'static str,
+    pub min: f64,
+    pub max: f64,
+    pub default: f64,
+    /// Шаг для колеса/драга в UI.
+    pub step: f64,
+    pub unit: ParamUnit,
+    pub kind: ParamKind,
+}
+
+/// Приведение f64 к типу поля варианта.
+macro_rules! fx_cast {
+    (f64, $v:expr) => {
+        $v
+    };
+    (f32, $v:expr) => {
+        $v as f32
+    };
+    (u32, $v:expr) => {
+        $v.round() as u32
+    };
+    (u8, $v:expr) => {
+        $v.round().clamp(0.0, 255.0) as u8
+    };
+}
+
+/// ЕДИНСТВЕННАЯ декларация параметров эффектов: спеки, запись и чтение
+/// генерятся из неё, поэтому рассинхрон трёх таблиц невозможен.
+macro_rules! fx_params {
+    ($(
+        $variant:ident { $( $field:ident : $ty:ident, $lo:expr, $hi:expr, $def:expr, $step:expr, $unit:ident, $kind:ident );+ $(;)? }
+    ),* $(,)?) => {
+        fn fx_specs(fx: &FxInstance) -> &'static [ParamSpec] {
+            match fx {
+                $( FxInstance::$variant { .. } => &[
+                    $( ParamSpec {
+                        name: stringify!($field),
+                        min: $lo, max: $hi, default: $def, step: $step,
+                        unit: ParamUnit::$unit, kind: ParamKind::$kind,
+                    } ),+
+                ], )*
+                #[allow(unreachable_patterns)]
+                _ => &[],
+            }
+        }
+
+        fn fx_set_param(fx: &mut FxInstance, name: &str, v: f64) -> bool {
+            match fx {
+                $( FxInstance::$variant { $($field,)+ .. } => {
+                    $( if name == stringify!($field) {
+                        *$field = fx_cast!($ty, v);
+                        return true;
+                    } )+
+                    false
+                } )*
+                #[allow(unreachable_patterns)]
+                _ => false,
+            }
+        }
+
+        fn fx_get_param(fx: &FxInstance, name: &str) -> Option<f64> {
+            match fx {
+                $( FxInstance::$variant { $($field,)+ .. } => {
+                    $( if name == stringify!($field) {
+                        return Some(*$field as f64);
+                    } )+
+                    None
+                } )*
+                #[allow(unreachable_patterns)]
+                _ => None,
+            }
+        }
+    };
+}
+
+fx_params! {
+    // ---- аудио (Р.33: автоматизируются общим механизмом) ----------------
+    Gain {
+        db: f32, -60.0, 12.0, 0.0, 0.1, Db, Smooth;
+    },
+    SlowedReverb {
+        // потолок скорости — RATE_CLAMP движка (kt-fx)
+        rate: f64, 0.25, 32.0, 1.0, 0.01, Ratio, Smooth;
+        mix: f32, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
+        // смена длины comb-линий пересоздаёт реверб — не автоматизируется
+        reverb_delay_ms: f32, 1.0, 500.0, 60.0, 1.0, Ms, Structural;
+        damp: f32, 0.0, 0.99, 0.2, 0.01, Norm, Smooth;
+        decay: f32, 0.0, 0.98, 0.84, 0.01, Norm, Smooth;
+        wet_gain: f32, 0.0, 2.0, 1.0, 0.01, Ratio, Smooth;
+    },
+    // ---- видео 2D --------------------------------------------------------
+    Pan {
+        pan_x: f64, -4.0, 4.0, 0.0, 0.01, Norm, Smooth;
+        pan_y: f64, -4.0, 4.0, 0.0, 0.01, Norm, Smooth;
+        zoom: f64, 0.05, 32.0, 1.0, 0.01, Ratio, Smooth;
+    },
+    CamMotion {
+        time_scale: f64, 0.05, 8.0, 1.0, 0.01, Ratio, Smooth;
+    },
+    Blur {
+        radius: u32, 1.0, 48.0, 8.0, 1.0, Px, Smooth;
+    },
+    Greenscreen {
+        key_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        key_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        key_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        tolerance: u32, 1.0, 200.0, 70.0, 1.0, None, Smooth;
+        softness: u32, 0.0, 100.0, 25.0, 1.0, None, Smooth;
+    },
+    Edges {
+        threshold: u32, 1.0, 255.0, 48.0, 1.0, None, Smooth;
+    },
+    Noise {
+        amount: f64, 0.0, 1.0, 0.08, 0.01, Norm, Smooth;
+    },
+    Vhs {
+        rgb_shift: u32, 0.0, 12.0, 4.0, 1.0, Px, Smooth;
+        bleed: f64, 0.0, 1.0, 0.4, 0.01, Norm, Smooth;
+    },
+    Glow {
+        strength: f64, 0.0, 2.0, 0.65, 0.01, Ratio, Smooth;
+    },
+    EventGrid {
+        cols: u32, 1.0, 512.0, 1.0, 1.0, Count, Smooth;
+        rows: u32, 1.0, 512.0, 1.0, 1.0, Count, Smooth;
+    },
+    // ---- видео 3D (Р.29) -------------------------------------------------
+    Pan3d {
+        pos_x: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
+        pos_y: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
+        pos_z: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
+        rot_x: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
+        rot_y: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
+        rot_z: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
+        anchor_x: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        anchor_y: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        scale: f64, 0.01, 32.0, 1.0, 0.01, Ratio, Smooth;
+    },
 }
 
 /// Режим кроп-рамки пан/зума (v1: fit/fill/stretch).

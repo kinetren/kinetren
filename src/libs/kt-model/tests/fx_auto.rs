@@ -63,8 +63,16 @@ fn t190_set_get_param_all_specs() {
     ];
     let mut specs_total = 0;
     for mut f in variants {
-        for &(name, lo, hi) in f.param_specs() {
+        for spec in f.param_specs() {
             specs_total += 1;
+            let (name, lo, hi) = (spec.name, spec.min, spec.max);
+            // дефолт спеки обязан лежать в её же диапазоне
+            assert!(
+                (lo..=hi).contains(&spec.default),
+                "{name}: дефолт {} вне [{lo}, {hi}]",
+                spec.default
+            );
+            assert!(spec.step > 0.0, "{name}: шаг обязан быть положительным");
             // середина диапазона ставится и читается (с точностью до
             // округления целочисленных полей)
             let mid = (lo + hi) / 2.0;
@@ -82,9 +90,25 @@ fn t190_set_get_param_all_specs() {
         assert_eq!(f.get_param("no_such_param"), None);
     }
     assert!(specs_total >= 20, "спеки покрывают все видео-варианты: {specs_total}");
-    // у зеркала и аудио автоматизируемых параметров нет
+    // у зеркала числовых параметров нет вовсе
     assert!(FxInstance::Mirror { horizontal: true, vertical: false }.param_specs().is_empty());
-    assert!(FxInstance::Gain { db: 0.0 }.param_specs().is_empty());
+    // Р.33: аудио получило спеки — автоматизируется тем же механизмом
+    let gain = FxInstance::Gain { db: 0.0 };
+    assert_eq!(gain.auto_params().count(), 1, "громкость обязана автоматизироваться");
+    let slowed = FxInstance::slowed_reverb(1.0, 0.3, 60.0);
+    assert!(
+        slowed.auto_params().any(|s| s.name == "rate"),
+        "скорость slowed&reverb обязана быть автоматизируемой"
+    );
+    assert_eq!(
+        slowed.param_spec("reverb_delay_ms").map(|s| s.kind),
+        Some(ParamKind::Structural),
+        "длина линий реверба — структурный параметр, кривой не подлежит"
+    );
+    assert!(
+        !slowed.auto_params().any(|s| s.name == "reverb_delay_ms"),
+        "структурный параметр не предлагается для автоматизации"
+    );
 }
 
 #[test]

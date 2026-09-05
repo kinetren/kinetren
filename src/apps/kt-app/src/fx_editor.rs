@@ -506,7 +506,9 @@ fn draw_fx_auto_section(
     f: &FxInstance,
     curves: &mut Vec<kt_model::ParamCurve>,
 ) -> bool {
-    let specs = f.param_specs();
+    // только Smooth-параметры: структурные (длина линий реверба) кривой
+    // не подлежат — их смена пересобирает DSP (Р.33)
+    let specs: Vec<&kt_model::ParamSpec> = f.auto_params().collect();
     if specs.is_empty() {
         return false;
     }
@@ -515,19 +517,20 @@ fn draw_fx_auto_section(
     ui.horizontal(|ui| {
         ui.label(tr(k::fx::AUTO_CLIP));
         // параметры без кривой — кандидаты на добавление
-        let free: Vec<(&str, f64, f64)> = specs
+        let free: Vec<&kt_model::ParamSpec> = specs
             .iter()
-            .filter(|(n, _, _)| !curves.iter().any(|c| c.param == *n))
             .copied()
+            .filter(|s| !curves.iter().any(|c| c.param == s.name))
             .collect();
         if !free.is_empty() {
             egui::ComboBox::from_id_salt(("fx_auto_add", clip, slot))
                 .selected_text(tr(k::fx::AUTO_ADD))
                 .show_ui(ui, |ui| {
-                    for (n, _, _) in &free {
-                        if ui.button(*n).clicked() {
+                    for spec in &free {
+                        let n = spec.name;
+                        if ui.button(n).clicked() {
                             // стартовая кривая — константа текущего значения
-                            let v0 = f.get_param(n).unwrap_or(0.0);
+                            let v0 = f.get_param(n).unwrap_or(spec.default);
                             curves.push(kt_model::ParamCurve {
                                 param: n.to_string(),
                                 ease: true,
@@ -544,10 +547,10 @@ fn draw_fx_auto_section(
     });
     let mut drop_curve: Option<usize> = None;
     for (ci, c) in curves.iter_mut().enumerate() {
-        let (_, lo, hi) = *specs
+        let (lo, hi) = specs
             .iter()
-            .find(|(n, _, _)| *n == c.param)
-            .unwrap_or(&("", 0.0, 1.0));
+            .find(|s| s.name == c.param)
+            .map_or((0.0, 1.0), |s| (s.min, s.max));
         ui.horizontal(|ui| {
             ui.strong(&c.param);
             ui.label("Ease:");
