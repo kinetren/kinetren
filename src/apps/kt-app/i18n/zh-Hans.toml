@@ -139,6 +139,7 @@ lane_name = "轨道名称"
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
 clear_range = "移除范围"
+region_from_event = "按此事件设区间（Shift+双击）"
 crossfade_next = "与下一个交叉淡化"
 crossfade_prev = "与上一个交叉淡化"
 remove_fade_start = "移除片段开头的淡入"

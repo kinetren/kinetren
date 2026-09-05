@@ -1979,6 +1979,56 @@ impl KtApp {
         self.marker_here(at);
     }
 
+    /// Регион по span link-группы события — ОДНО тело для Shift+двойного
+    /// клика и пункта меню (п.17 чек-листа: парные способы ведут себя
+    /// одинаково).
+    pub fn region_from_event(&mut self, id: ClipId) {
+        let span = {
+            let p = self.model.project();
+            let group = p.clips.iter().find(|c| c.id == id).and_then(|c| c.link_group);
+            let members: Vec<&ClipEvent> = p
+                .clips
+                .iter()
+                .filter(|c| c.id == id || (group.is_some() && c.link_group == group))
+                .collect();
+            members
+                .iter()
+                .map(|c| c.start)
+                .min()
+                .zip(members.iter().map(|c| c.start + c.duration).max())
+        };
+        if let Some((start, end)) = span {
+            self.model.set_region(Region::normalized(start, end));
+            self.on_region_changed();
+        }
+    }
+
+    /// Регион по метке-диапазону + выделение её событий (Р.33 п.8): ОДНО
+    /// тело для двойного клика по ленте и любого будущего пункта меню.
+    pub fn region_from_marked_range(&mut self, marker_start: i64) {
+        let Some(m) =
+            self.model.project().markers.iter().find(|m| m.t.0 == marker_start && m.is_range())
+        else {
+            return;
+        };
+        let Some(r) = Region::normalized(m.t, m.end()) else { return };
+        let ids: Vec<ClipId> = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .filter(|c| r.intersects_clip(c))
+            .map(|c| c.id)
+            .collect();
+        self.model.set_region(Some(r));
+        self.on_region_changed();
+        self.selected.clear();
+        self.selected.extend(ids);
+        if !self.selected.is_empty() {
+            self.selected_morph = None;
+        }
+    }
+
     /// Метка в точке `at` — ОДНО тело для жеста M и пункта меню «Marker
     /// here» (п.11 пользователя: «marker here при выделенном регионе должен
     /// порождать region marker… очевидно что есть парные способы что-то

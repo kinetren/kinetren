@@ -274,6 +274,26 @@ pub(crate) fn plan_move(p: &Project, id: ClipId, want: i64, lane: u32) -> MovePl
     MovePlan::Clamped { start, blocker: blocker.unwrap_or((want, want + dur)) }
 }
 
+/// Метка-диапазон под кликом в руллере (Р.33 п.8). Сперва флажок/имя в
+/// пределах `tol` — «по названию региона», как просил пользователь; иначе
+/// покрывающий диапазон с БЛИЖАЙШИМ флажком слева: при наложении
+/// нескольких берётся тот, чью подпись видно в этом месте ленты.
+/// Возвращает начало метки (её идентичность в модели). Чистая — тест 207.
+pub(crate) fn pick_range_marker(markers: &[Marker], click: i64, tol: i64) -> Option<i64> {
+    let by_flag = markers
+        .iter()
+        .filter(|m| m.is_range() && (m.t.0 - click).abs() <= tol)
+        .min_by_key(|m| (m.t.0 - click).abs());
+    if let Some(m) = by_flag {
+        return Some(m.t.0);
+    }
+    markers
+        .iter()
+        .filter(|m| m.is_range() && m.t.0 <= click && click <= m.end().0)
+        .max_by_key(|m| m.t.0)
+        .map(|m| m.t.0)
+}
+
 /// План переноса ПАЧКИ событий (Р.33 п.7): общий сдвиг по времени и
 /// препятствие, если блок в него упёрся. `delta == want` — путь свободен.
 #[derive(Debug, Clone, PartialEq)]
@@ -1516,6 +1536,7 @@ impl KtApp {
         // (Р.33 п.7) — на переносе события магнит от этого не страдает
         self.snap_off = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
         let ctrl_held = self.snap_off;
+        let shift_held = ui.input(|i| i.modifiers.shift);
 
         let marker_at = |app: &KtApp, pos: egui::Pos2| -> Option<i64> {
             if pos.y > rect.top() + RULER_H {
@@ -1799,7 +1820,18 @@ impl KtApp {
                 // выделение региона (решение пользователя, п.8).
                 // Хит-зона — по НАРИСОВАННОМУ треугольнику (часы показа)
                 let head_x = tick_to_x(self.player.video_playhead().0);
-                if response.drag_started() && (pos.x - head_x).abs() <= 8.0 {
+                if response.double_clicked()
+                    && let Some(start) = pick_range_marker(
+                        &self.model.project().markers,
+                        x_to_tick(pos.x),
+                        (EDGE_GRAB_PX as f64 * tpp) as i64,
+                    )
+                {
+                    // «при двойном клике на marked_region он выделяется весь»
+                    // (Р.33 п.8): регион по границам метки + её события —
+                    // сразу и рендер по имени, и операции над содержимым
+                    self.region_from_marked_range(start);
+                } else if response.drag_started() && (pos.x - head_x).abs() <= 8.0 {
                     self.drag = Some(Drag::Scrub);
                 } else if response.drag_started() {
                     // снап и при СОЗДАНИИ региона (п.13 р.6, тест 59)
@@ -1881,19 +1913,15 @@ impl KtApp {
                     self.select_only(id);
                 }
                 if response.double_clicked() {
-                    // регион на span всей link-группы (порт double-click)
-                    let group = self.model.clip(id).and_then(|c| c.link_group);
-                    let members: Vec<&ClipEvent> = self
-                        .model
-                        .project()
-                        .clips
-                        .iter()
-                        .filter(|c| c.id == id || (group.is_some() && c.link_group == group))
-                        .collect();
-                    let start = members.iter().map(|c| c.start).min().unwrap();
-                    let end = members.iter().map(|c| c.start + c.duration).max().unwrap();
-                    self.model.set_region(Region::normalized(start, end));
-                    self.on_region_changed();
+                    // двойной клик открывает FX — ровно то, что обещает
+                    // подсказка клипа с Р.18 (до Р.33 она врала: клик ставил
+                    // регион, а FX прятались в ПКМ-меню). Регион по событию
+                    // остался на Shift+двойном клике и в меню
+                    if shift_held {
+                        self.region_from_event(id);
+                    } else {
+                        self.open_fx_editor(id);
+                    }
                 } else if response.drag_started() {
                     match zone {
                         ClipZone::FadeLeft | ClipZone::FadeRight => {
@@ -3489,7 +3517,9 @@ impl KtApp {
                     .map(|c| (c.kind == ClipKind::Audio, c.link_group.is_some()))
                     .unwrap_or((false, false));
                 if ui.button(tr(k::tl::menu::COPY)).clicked() {
-                    self.select_only(id);
+                    if !self.is_selected(id) {
+                        self.select_only(id);
+                    }
                     self.copy_selection();
                     ui.close();
                 }
@@ -3498,18 +3528,26 @@ impl KtApp {
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::DELETE)).clicked() {
-                    self.select_only(id);
+                    if !self.is_selected(id) {
+                        self.select_only(id);
+                    }
                     // именно ЭТОТ клип (+группа), а не содержимое региона (п.10)
                     self.delete_selected();
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::SPLIT)).clicked() {
-                    self.select_only(id);
+                    if !self.is_selected(id) {
+                        self.select_only(id);
+                    }
                     self.cut_action();
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::FX)).clicked() {
                     self.open_fx_editor(id);
+                    ui.close();
+                }
+                if ui.button(tr(k::tl::menu::REGION_FROM_EVENT)).clicked() {
+                    self.region_from_event(id);
                     ui.close();
                 }
                 let is_rev = self.model.clip(id).map(|c| c.reversed).unwrap_or(false);
@@ -3525,12 +3563,16 @@ impl KtApp {
                 ui.separator();
                 if has_group {
                     if ui.button(tr(k::tl::menu::UNLINK)).clicked() {
-                        self.select_only(id);
+                        if !self.is_selected(id) {
+                            self.select_only(id);
+                        }
                         self.unlink_selected();
                         ui.close();
                     }
                 } else if ui.button(tr(k::tl::menu::LINK)).clicked() {
-                    self.select_only(id);
+                    if !self.is_selected(id) {
+                        self.select_only(id);
+                    }
                     self.magnetize_selected();
                     ui.close();
                 }
@@ -3661,12 +3703,16 @@ impl KtApp {
                 ui.separator();
                 // morpher (H1, порт v1): цели = регион (приоритет) или клип+группа
                 if ui.button(tr(k::tl::menu::ADD_MORPHER)).clicked() {
-                    self.select_only(id);
+                    if !self.is_selected(id) {
+                        self.select_only(id);
+                    }
                     self.begin_morph_placement(false);
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::ADD_FX_BATCH)).clicked() {
-                    self.select_only(id);
+                    if !self.is_selected(id) {
+                        self.select_only(id);
+                    }
                     self.begin_morph_placement(true);
                     ui.close();
                 }

@@ -139,6 +139,7 @@ lane_name = "track name"
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
 clear_range = "Clear range"
+region_from_event = "Region over this event (Shift+double click)"
 crossfade_next = "Crossfade with next"
 crossfade_prev = "Crossfade with previous"
 remove_fade_start = "Remove the fade at the clip start"

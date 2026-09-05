@@ -26,11 +26,21 @@ fn harness() -> Harness<'static, KtApp> {
 /// замеры ширин делались на дефолтном наборе egui, то есть не на той
 /// программе, которую запускает пользователь.
 fn harness_lang(lang: crate::i18n::Lang) -> Harness<'static, KtApp> {
+    harness_lang_dt(lang, None)
+}
+
+/// Тот же харнесс с управляемым шагом времени. Двойной клик у egui —
+/// ВРЕМЕННОЙ жест (два клика ближе 0.3 с), а шаг харнесса по умолчанию
+/// 0.25 с: события в соседних кадрах не складываются в двойной клик, и
+/// тест «двойной клик» проверял бы одиночный.
+fn harness_lang_dt(lang: crate::i18n::Lang, step_dt: Option<f32>) -> Harness<'static, KtApp> {
     crate::i18n::set_lang(lang);
     let app = KtApp::new_empty(None);
-    let mut h = Harness::builder()
-        .with_size(egui::vec2(W, H))
-        .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    let mut b = Harness::builder().with_size(egui::vec2(W, H));
+    if let Some(dt) = step_dt {
+        b = b.with_step_dt(dt);
+    }
+    let mut h = b.build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
     crate::icons::install_fonts(&h.ctx);
     h.step();
     h.step();
@@ -3212,9 +3222,16 @@ fn t194_autosave_runs_in_background() {
 /// зазорами (зазор нужен, чтобы рамке было с чего начаться).
 #[cfg(test)]
 fn harness_three_clips() -> (Harness<'static, KtApp>, crate::timeline::TlGeom) {
+    harness_three_clips_dt(None)
+}
+
+#[cfg(test)]
+fn harness_three_clips_dt(
+    step_dt: Option<f32>,
+) -> (Harness<'static, KtApp>, crate::timeline::TlGeom) {
     use kt_model::*;
     use kt_time::Tick;
-    let mut h = harness();
+    let mut h = harness_lang_dt(crate::i18n::Lang::Ru, step_dt);
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
@@ -3382,6 +3399,127 @@ fn t203_selection_tool_button_switches_drag() {
     assert!(!h.state().sel_tool);
     rubber_drag(&mut h, at(70_000), at(260_000), false);
     assert!(h.state().model.project().region.is_some(), "режим выключен — вернулся регион");
+}
+
+/// Тест 206 (Р.33 п.4): двойной клик по событию открывает FX — ровно то,
+/// что подсказка клипа обещает с Р.18 и чего не делала (ставила регион, а
+/// FX прятались в ПКМ-меню; дефект записан в user-feedback ещё тогда).
+/// Регион по событию переехал на Shift+двойной клик и пункт меню, и оба
+/// пути дают ОДИН результат (п.17 чек-листа — парность способов).
+#[test]
+fn t206_double_click_opens_fx_shift_makes_region() {
+    use kt_model::*;
+    let (mut h, g) = harness_three_clips_dt(Some(0.02));
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.6;
+    let pos = egui::pos2(g.tick_to_x(125_000), y);
+
+    let dbl = |h: &mut Harness<'_, KtApp>, pos: egui::Pos2, modifiers: egui::Modifiers| {
+        h.event(egui::Event::ModifiersChanged(modifiers));
+        h.hover_at(pos);
+        h.step();
+        for _ in 0..2 {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers,
+            });
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers,
+            });
+        }
+        h.step();
+        h.step();
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        h.step();
+    };
+
+    dbl(&mut h, pos, egui::Modifiers::NONE);
+    assert_eq!(h.state().fx_editors.len(), 1, "двойной клик не открыл FX-редактор");
+    assert_eq!(h.state().fx_editors[0].clip, ClipId(2), "открылось окно не того события");
+    assert!(h.state().model.project().region.is_none(), "двойной клик больше не ставит регион");
+
+    // Shift+двойной клик — регион по событию. Свой харнесс: история кликов
+    // у egui общая, и повтор жеста в том же окне сложился бы в тройной клик
+    let (mut h2, g2) = harness_three_clips_dt(Some(0.02));
+    let pos2 = egui::pos2(g2.tick_to_x(125_000), g2.lane_top(ClipKind::Video, 0) + g2.lane_h * 0.6);
+    dbl(&mut h2, pos2, egui::Modifiers::SHIFT);
+    let by_gesture = h2.state().model.project().region.expect("Shift+двойной клик не дал регион");
+    assert_eq!((by_gesture.start.0, by_gesture.end.0), (100_000, 150_000));
+    assert!(h2.state().fx_editors.is_empty(), "Shift+двойной клик не должен открывать FX");
+
+    // тот же результат из меню — одно тело на оба пути
+    h2.state_mut().model.set_region(None);
+    h2.state_mut().region_from_event(ClipId(2));
+    let by_menu = h2.state().model.project().region.expect("пункт меню не дал регион");
+    assert_eq!(by_menu, by_gesture, "жест и пункт меню обязаны совпадать");
+}
+
+/// Тест 207 (Р.33 п.8, дословно: «нужно чтобы при двойном клике на
+/// marked_region он выделялся весь, если там пересечение нескольких — то
+/// по названию региона»).
+#[test]
+fn t207_double_click_on_marked_range_selects_it() {
+    use crate::timeline::pick_range_marker;
+    use kt_model::*;
+    use kt_time::Tick;
+
+    // ---- чистая часть: какой диапазон под кликом ----
+    let markers = vec![
+        Marker { t: Tick(30_000), duration: Tick(60_000), name: "a".into(), color: None },
+        Marker { t: Tick(60_000), duration: Tick(60_000), name: "b".into(), color: None },
+        Marker { t: Tick(500_000), duration: Tick::ZERO, name: "точка".into(), color: None },
+    ];
+    let tol = 4_000;
+    assert_eq!(pick_range_marker(&markers, 70_000, tol), Some(60_000), "общая часть — ближний флажок слева");
+    assert_eq!(pick_range_marker(&markers, 31_000, tol), Some(30_000), "клик по флажку берёт свою метку");
+    assert_eq!(pick_range_marker(&markers, 200_000, tol), None, "мимо лент — ничего");
+    assert_eq!(pick_range_marker(&markers, 500_000, tol), None, "точечная метка регионом не становится");
+
+    // ---- живой двойной клик по ленте ----
+    let (mut h, g) = harness_three_clips_dt(Some(0.02));
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.markers = vec![Marker {
+            t: Tick(90_000),
+            duration: Tick(130_000),
+            name: "chorus".into(),
+            color: None,
+        }];
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    let band_y = g.rect.top() + crate::timeline::TIME_TOP + 11.0;
+    let pos = egui::pos2(g.tick_to_x(150_000), band_y);
+    h.hover_at(pos);
+    h.step();
+    for _ in 0..2 {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    let r = h.state().model.project().region.expect("двойной клик по ленте не дал регион");
+    assert_eq!((r.start.0, r.end.0), (90_000, 220_000), "регион не по границам метки");
+    assert_eq!(
+        h.state().selected.iter().copied().collect::<Vec<_>>(),
+        vec![ClipId(2), ClipId(3)],
+        "события внутри диапазона обязаны выделиться («выделялся весь»)"
+    );
 }
 
 /// Тест 204 (Р.33 п.7): пачка едет драгом ЦЕЛИКОМ и одним undo-шагом, а
