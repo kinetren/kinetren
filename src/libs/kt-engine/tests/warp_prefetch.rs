@@ -43,6 +43,7 @@ fn slowed_project() -> Project {
             ],
         }],
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     p

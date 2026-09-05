@@ -56,6 +56,7 @@ fn audio_clip(id: u64, lane: u32, start_f: i64, dur_f: i64, src_in_f: i64, media
         fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
+        fx_off: false,
     }
 }
 

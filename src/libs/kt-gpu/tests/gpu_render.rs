@@ -41,6 +41,7 @@ fn project() -> Project {
             FxInstance::Vhs { rgb_shift: 2, bleed: 0.4 },
         ],
         opacity,
+        fx_off: false,
     };
     p.clips = vec![
         clip(1, 0, 0, 2 * sec, 1, 1.0),

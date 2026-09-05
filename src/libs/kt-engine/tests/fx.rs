@@ -42,6 +42,7 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
         fx_auto: vec![],
         fx,
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     p
@@ -277,6 +278,7 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
         fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     let r2 = AudioRenderer::new(&p2);
     r2.sync_fx(&mut store_b); // state клипа 1 обязан пережить пересборку

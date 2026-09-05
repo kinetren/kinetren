@@ -104,6 +104,8 @@ impl KtApp {
         let mut changed = false;
         let mut auto_changed = false;
         let mut bypass_changed = false;
+        let mut chain_on = !clip.fx_off;
+        let mut off_changed = false;
         let mut open = ed.open;
         egui::Window::new(title)
             .id(egui::Id::new(("fx", ed.clip)))
@@ -115,6 +117,16 @@ impl KtApp {
             .show(ctx, |ui| {
                 // --- полоса цепочки -------------------------------------------
                 ui.horizontal(|ui| {
+                    // мастер-галка цепочки (Р.33): выключает ВСЮ цепочку,
+                    // не трогая состояние слотов
+                    if ui.checkbox(&mut chain_on, "").changed() {
+                        off_changed = true;
+                    }
+                    crate::app::hint_into(
+                        &mut hover_out,
+                        ui.label(tr(k::fx::CHAIN_ON)),
+                        tr(k::fx::CHAIN_ON_HINT),
+                    );
                     ui.add_enabled(false, egui::Button::new("Media"));
                     for (i, f) in fx.iter().enumerate() {
                         ui.label(crate::icons::CARET_RIGHT);
@@ -485,6 +497,12 @@ impl KtApp {
                 }
             }
             self.set_fx_auto_coalesced(ed.clip, auto, ed.gesture);
+        }
+        if off_changed {
+            self.apply_coalesced(
+                Command::SetFxOff { id: ed.clip, off: !chain_on },
+                ed.gesture,
+            );
         }
         if bypass_changed {
             // хвостовые false не сериализуются зря

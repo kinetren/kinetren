@@ -297,6 +297,8 @@ rows = "Rows:"
 center = "Center"
 
 # Диалог настроек рендера и окно прогресса.
+chain_on = "Chain"
+chain_on_hint = "Master switch: turns the whole chain off without touching the slots"
 [render]
 already_running = "a render is already running"
 summary = "{0} video frames, {1} audio frames, underruns {2}, encoder {3}"

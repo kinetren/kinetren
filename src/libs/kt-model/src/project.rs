@@ -205,6 +205,15 @@ pub struct MorpherEvent {
     /// (в v1 висячие id жили вечно — дефект D5 разведки).
     pub targets: Vec<ClipId>,
     pub kind: MorphKind,
+    /// Выключатель события целиком (Р.33: «в морферах и fx batch
+    /// аналогично, всё унифицируется»). Выключенный морфер не применяется
+    /// к целям, но живёт на дорожке и включается обратно как был.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -615,6 +624,13 @@ pub struct ClipEvent {
     /// (старый ридер потерял бы их молча — правило Р.29).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fx_auto: Vec<Vec<ParamCurve>>,
+    /// Мастер-выключатель ВСЕЙ цепочки события (Р.33, требование
+    /// пользователя: «не хватает мастер-галки отключить текущий
+    /// fx-chain»). Отличается от bypass слотов тем, что не трогает их
+    /// состояние: включил обратно — цепочка та же. Умолчание (включено)
+    /// не сериализуется, файлы байт-стабильны.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fx_off: bool,
 }
 
 fn one_f32() -> f32 {
@@ -629,6 +645,9 @@ impl ClipEvent {
     /// Активная FX-цепочка (без bypass-слотов) — единственный вид цепочки,
     /// который видят движок и рендереры.
     pub fn active_fx(&self) -> Vec<FxInstance> {
+        if self.fx_off {
+            return Vec::new();
+        }
         self.fx
             .iter()
             .enumerate()
@@ -641,6 +660,9 @@ impl ClipEvent {
     /// выпадают ВМЕСТЕ со своими кривыми (Р.30) — иначе кривая приклеилась
     /// бы к чужому слоту.
     pub fn active_fx_auto(&self) -> Vec<Vec<ParamCurve>> {
+        if self.fx_off {
+            return Vec::new();
+        }
         self.fx
             .iter()
             .enumerate()
@@ -1589,6 +1611,9 @@ impl Project {
         let mut ms: Vec<&MorpherEvent> = self.morphers.iter().collect();
         ms.sort_by_key(|m| m.id);
         for m in ms {
+            if !m.enabled {
+                continue; // выключенный морфер не трогает цели
+            }
             for c in out.iter_mut() {
                 if m.targets.contains(&c.id) {
                     m.apply_to(c);

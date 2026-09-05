@@ -297,6 +297,8 @@ rows = "行数："
 center = "居中"
 
 # Диалог настроек рендера и окно прогресса.
+chain_on = "效果链"
+chain_on_hint = "总开关：关闭整条效果链，不改动各个槽位的状态"
 [render]
 already_running = "已经在导出了"
 summary = "{0} 个视频帧，{1} 个音频帧，underruns {2}，编码器 {3}"

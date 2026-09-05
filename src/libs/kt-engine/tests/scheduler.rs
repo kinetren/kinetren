@@ -218,6 +218,7 @@ fn t9_prefetch_pass_is_idempotent() {
         fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     let renderer = AudioRenderer::new(&p);
     let mut workers = HashMap::new();

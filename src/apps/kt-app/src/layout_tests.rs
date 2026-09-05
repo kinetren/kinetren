@@ -397,6 +397,7 @@ fn t94_forward_navigation_advances() {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
         p.markers.push(Marker::at(Tick(7000)));
         p.validate().unwrap();
@@ -477,6 +478,7 @@ fn t95_clip_drag_snaps_to_neighbour() {
                     fx_auto: vec![],
                     fx: vec![],
                     opacity: 1.0,
+                    fx_off: false,
                 });
             }
             p.validate().unwrap();
@@ -1253,6 +1255,7 @@ fn t122_insert_lane_after_clicked_row() {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -1336,6 +1339,7 @@ fn t120_space_hold_boosts_playback() {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -1453,6 +1457,7 @@ fn t119_shift_nav_drags_region() {
                 fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
+                fx_off: false,
             });
         }
         p.validate().unwrap();
@@ -1975,6 +1980,7 @@ fn t139_move_plan_crossfade_and_clamp() {
         fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
+        fx_off: false,
     };
     let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
     // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
@@ -2063,6 +2069,7 @@ fn t139_drag_overlap_creates_crossfade() {
                 fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
+                fx_off: false,
             });
         }
         p.validate().unwrap();
@@ -2138,6 +2145,7 @@ fn t140_transition_edge_and_body_drags() {
                 fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
+                fx_off: false,
             });
         }
         p.transitions.push(TransitionEvent {
@@ -2248,6 +2256,7 @@ fn t163_overlap_drag_changes_nothing_but_position() {
                 fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
+                fx_off: false,
             });
         }
         p.validate().unwrap();
@@ -2341,6 +2350,7 @@ fn t160_pulling_apart_restores_trimmed_material() {
                 fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
+                fx_off: false,
             });
         }
         p.validate().unwrap();
@@ -2426,6 +2436,7 @@ fn t157_fade_edge_drag_without_neighbour() {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
         // фейд-ин: соседа слева нет вообще
         p.transitions.push(TransitionEvent {
@@ -2645,6 +2656,7 @@ fn t169_preview_material_shifts_only_on_trim_start() {
         fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
+        fx_off: false,
     };
     let drag = |mode: DragMode, cur_start: i64, cur_end: i64| {
         Drag::Clip(DragState {
@@ -2765,6 +2777,7 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
     }
     p.validate().unwrap();
@@ -2877,6 +2890,7 @@ fn t173_corner_fade_and_level_gestures() {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -2997,6 +3011,7 @@ fn t176_audio_and_video_share_one_level_line() {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -3123,6 +3138,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
             ],
         }]],
         opacity: 1.0,
+        fx_off: false,
     });
     app.model = kt_model::TimelineModel::new(p);
     app.open_fx_editor(ClipId(9));
@@ -3255,6 +3271,7 @@ fn harness_three_clips_dt(
                 fx_bypass: vec![],
                 fx_auto: vec![],
                 opacity: 1.0,
+                fx_off: false,
             });
         }
         p.validate().unwrap();
@@ -3436,6 +3453,7 @@ fn t211_returned_source_replaces_its_placeholder() {
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     std::fs::write(&path, kt_otio::save_project(&p, &Default::default(), path.parent())).unwrap();
@@ -3513,6 +3531,7 @@ fn t210_render_with_missing_sources_warns_and_runs() {
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
 
@@ -3582,6 +3601,7 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     let text = kt_otio::save_project(&p, &Default::default(), path.parent());
@@ -3768,6 +3788,7 @@ fn t204_multi_drag_moves_the_whole_block() {
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
+        fx_off: false,
     };
     p.clips = vec![clip(1, 0), clip(2, 100_000), clip(3, 400_000)];
     p.overlap_layers = false; // режим без переслаивания: упор настоящий
@@ -3938,6 +3959,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     app.model = kt_model::TimelineModel::new(p);
     app.model_rev += 1;

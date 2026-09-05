@@ -26,6 +26,7 @@ fn base_project() -> Project {
         fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     p
@@ -86,6 +87,7 @@ fn t18_add_media_preserves_cache_coverage_and_transport() {
         fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     p2.validate().unwrap();
     player.set_project(p2);

@@ -42,6 +42,7 @@ fn clip(
         fx_auto: vec![],
         fx: vec![],
         opacity: 1.0,
+        fx_off: false,
     }
 }
 

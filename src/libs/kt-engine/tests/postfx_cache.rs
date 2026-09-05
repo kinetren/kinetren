@@ -27,6 +27,7 @@ fn project_with_fx(fx: Vec<FxInstance>, start_frames: i64) -> Project {
         fx_auto: vec![],
         fx,
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     p

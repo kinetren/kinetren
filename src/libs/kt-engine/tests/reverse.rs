@@ -29,6 +29,7 @@ fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
         fx_auto: vec![],
         fx,
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     p

@@ -29,6 +29,7 @@ fn tiny_project() -> Project {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
     }
     p.validate().unwrap();
@@ -149,6 +150,7 @@ fn t33_exported_file_contains_every_frame() {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
     }
     p.validate().unwrap();

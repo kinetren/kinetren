@@ -27,6 +27,7 @@ fn base_project() -> Project {
             fx_bypass: vec![],
             fx_auto: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
     }
     p.validate().unwrap();

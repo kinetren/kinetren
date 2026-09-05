@@ -297,6 +297,8 @@ rows = "Filas:"
 center = "Centrar"
 
 # Диалог настроек рендера и окно прогресса.
+chain_on = "Cadena"
+chain_on_hint = "Interruptor maestro: apaga toda la cadena sin tocar los slots"
 [render]
 already_running = "ya hay un render en curso"
 summary = "{0} fotogramas de vídeo, {1} de audio, underruns {2}, codificador {3}"

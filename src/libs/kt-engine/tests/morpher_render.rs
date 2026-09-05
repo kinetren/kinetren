@@ -49,6 +49,7 @@ fn project_with_clip(media: MediaId, source_in: Tick, fx: Vec<FxInstance>) -> Pr
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     p
@@ -78,6 +79,7 @@ fn t36_replace_renders_as_new_source_and_bake_is_noop_for_render() {
             source_in_delta: Tick(4_500),
             absolute_source_in: None,
         },
+        enabled: true,
     });
     p.morph_lanes = 1;
     p.validate().unwrap();
@@ -105,6 +107,7 @@ fn t36_effect_batch_is_live() {
         duration: Tick(90 * 1500),
         targets: vec![ClipId(1)],
         kind: MorphKind::EffectBatch { video_fx: vec![], audio_fx: vec![gain.clone()] },
+        enabled: true,
     });
     p.morph_lanes = 1;
     p.validate().unwrap();

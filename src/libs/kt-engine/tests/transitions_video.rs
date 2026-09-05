@@ -32,6 +32,7 @@ fn project_pair() -> Project {
             fx_bypass: vec![],
             fx_auto: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
     }
     p.transitions.push(TransitionEvent {
@@ -310,6 +311,7 @@ fn t174_clip_opacity_scales_the_layer() {
             fx_bypass: vec![],
             fx_auto: vec![],
             opacity: 1.0,
+            fx_off: false,
         });
     }
     p.validate().unwrap();

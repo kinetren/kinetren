@@ -52,6 +52,7 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> Project {
         fx_bypass: vec![],
         fx_auto: auto,
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     p

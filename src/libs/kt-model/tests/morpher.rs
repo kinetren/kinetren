@@ -24,6 +24,7 @@ fn base_project() -> TimelineModel {
         fx_bypass: Vec::new(),
         fx_auto: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     p.clips.push(ClipEvent {
         id: ClipId(11),
@@ -40,6 +41,7 @@ fn base_project() -> TimelineModel {
         fx_bypass: Vec::new(),
         fx_auto: vec![],
         opacity: 1.0,
+        fx_off: false,
     });
     TimelineModel::new(p)
 }
@@ -56,6 +58,7 @@ fn replace_morpher(id: u64, targets: Vec<ClipId>) -> MorpherEvent {
             source_in_delta: Tick(4_500),
             absolute_source_in: None,
         },
+        enabled: true,
     }
 }
 
@@ -109,6 +112,7 @@ fn t35_effect_batch_live_and_typed() {
             video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
             audio_fx: vec![FxInstance::Gain { db: 6.0 }],
         },
+        enabled: true,
     }))
     .unwrap();
 

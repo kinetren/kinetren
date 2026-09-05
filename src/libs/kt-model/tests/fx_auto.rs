@@ -73,6 +73,7 @@ fn t212_keys_stick_to_material_through_edits() {
             keys: vec![key(0, 1.0), key(45_000, 40.0), key(90_000, 10.0)],
         }]],
         opacity: 1.0,
+        fx_off: false,
     });
     p.validate().unwrap();
     let mut m = TimelineModel::new(p);
@@ -245,6 +246,7 @@ fn clip_with_fx() -> ClipEvent {
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
+        fx_off: false,
     }
 }
 
@@ -316,4 +318,60 @@ fn t190_files_without_auto_are_byte_stable() {
     assert_eq!(fx.len(), 1);
     assert_eq!(auto.len(), 1);
     assert_eq!(auto[0][0].param, "strength", "кривая уехала ВМЕСТЕ со своим слотом");
+}
+
+/// Тест 214 (Р.33 С1, требование пользователя: «не хватает мастер-галки
+/// отключить текущий fx-chain, в морферах и fx batch аналогично, всё
+/// унифицируется»). Выключатель гасит цепочку ЦЕЛИКОМ, не трогая
+/// состояние слотов, и не пишется в файл, пока включён.
+#[test]
+fn t214_master_switch_disables_chain_without_losing_it() {
+    let mut m = model_with_clip();
+    let auto = vec![vec![ParamCurve {
+        param: "radius".into(),
+        ease: false,
+        keys: vec![key(0, 1.0), key(90_000, 48.0)],
+    }]];
+    m.apply(Command::SetFxAuto { id: ClipId(1), auto: auto.clone() }).unwrap();
+    m.apply(Command::SetFxBypass { id: ClipId(1), bypass: vec![false, true] }).unwrap();
+    let before = m.clip(ClipId(1)).unwrap().clone();
+    assert_eq!(before.active_fx().len(), 1, "второй слот выключен bypass'ом");
+
+    // мастер-выключатель: движок не видит НИЧЕГО
+    m.apply(Command::SetFxOff { id: ClipId(1), off: true }).unwrap();
+    let c = m.clip(ClipId(1)).unwrap();
+    assert!(c.active_fx().is_empty(), "выключенная цепочка не доезжает до движка");
+    assert!(c.active_fx_auto().is_empty(), "кривые выключенной цепочки тоже");
+    // но сама цепочка, bypass и кривые целы
+    assert_eq!(c.fx, before.fx, "цепочка обязана уцелеть");
+    assert_eq!(c.fx_bypass, before.fx_bypass, "состояние слотов не трогается");
+    assert_eq!(c.fx_auto, before.fx_auto, "кривые не трогаются");
+
+    // обратно — как было; undo работает
+    m.apply(Command::SetFxOff { id: ClipId(1), off: false }).unwrap();
+    assert_eq!(m.clip(ClipId(1)).unwrap().active_fx().len(), 1);
+    m.undo().unwrap();
+    assert!(m.clip(ClipId(1)).unwrap().fx_off, "undo вернул выключенное состояние");
+
+    // выключенный морфер не применяется к целям, но остаётся на дорожке
+    let mut p = m.project().clone();
+    p.morph_lanes = 1;
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        targets: vec![ClipId(1)],
+        kind: MorphKind::EffectBatch {
+            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            audio_fx: vec![],
+        },
+        enabled: true,
+    });
+    p.validate().unwrap();
+    let on = p.effective_clips()[0].fx.len();
+    p.morphers[0].enabled = false;
+    let off = p.effective_clips()[0].fx.len();
+    assert!(on > off, "выключенный морфер не должен добавлять эффекты: {on} vs {off}");
+    assert_eq!(p.morphers.len(), 1, "и при этом остаётся на дорожке");
 }

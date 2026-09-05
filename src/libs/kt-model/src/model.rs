@@ -55,6 +55,12 @@ pub enum Command {
         id: ClipId,
         opacity: f32,
     },
+    /// Мастер-выключатель FX-цепочки события (Р.33). Состояние слотов не
+    /// трогает: включил обратно — цепочка та же.
+    SetFxOff {
+        id: ClipId,
+        off: bool,
+    },
     /// Реверс события (п.16). Undo-able.
     SetReversed {
         id: ClipId,
@@ -370,6 +376,7 @@ impl TimelineModel {
             Command::RemoveClip { id }
             | Command::SetGain { id, .. }
             | Command::SetOpacity { id, .. }
+            | Command::SetFxOff { id, .. }
             | Command::SetReversed { id, .. }
             | Command::SetFxBypass { id, .. }
             | Command::SetFx { id, .. }
@@ -705,6 +712,7 @@ impl TimelineModel {
             Command::SetOpacity { id, opacity } => {
                 Self::clip_mut_on(p, id).opacity = opacity.clamp(0.0, 1.0)
             }
+            Command::SetFxOff { id, off } => Self::clip_mut_on(p, id).fx_off = off,
             Command::SetReversed { id, reversed } => Self::clip_mut_on(p, id).reversed = reversed,
             Command::SetFxBypass { id, bypass } => Self::clip_mut_on(p, id).fx_bypass = bypass,
             Command::SetFx { id, fx } => {

@@ -376,11 +376,15 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 .clips
                 .iter()
                 .any(|c| c.fx_auto.iter().any(|v| v.iter().any(|c| !c.keys.is_empty())));
+            // выключатели тоже v3: старая сборка не знает про них и
+            // сыграла бы выключенное (правило «молчаливой потери», Р.29)
+            let has_off =
+                p.clips.iter().any(|c| c.fx_off) || p.morphers.iter().any(|m| !m.enabled);
             let has_cams = !cameras.is_empty() || p.camera_lanes > 0;
             // версия ПО СОДЕРЖИМОМУ: кривые нового домена — v3, камеры —
             // v2, иначе v1 (файл без наших новшеств открывается старыми
             // сборками и остаётся байт-стабильным)
-            if has_auto {
+            if has_auto || has_off {
                 crate::meta::KT_META_V3
             } else if has_cams {
                 crate::meta::KT_META_V2
@@ -548,6 +552,7 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
             link_group: c.link_group.map(|g| g.0),
             gain: c.gain_db,
             opacity: c.opacity,
+            fx_off: c.fx_off,
             extra: ex.kt_extra.clone(),
         },
     );
@@ -1139,6 +1144,7 @@ fn clip_from_otio(
         media,
         gain_db: meta.as_ref().map(|m| m.gain).unwrap_or(0.0),
         opacity: meta.as_ref().map(|m| m.opacity).unwrap_or(1.0),
+        fx_off: meta.as_ref().is_some_and(|m| m.fx_off),
         reversed,
         fx,
         fx_auto,

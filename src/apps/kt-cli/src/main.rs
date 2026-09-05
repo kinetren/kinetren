@@ -379,6 +379,7 @@ fn demo_project() -> Project {
         fx_auto: vec![],
         fx,
         opacity: 1.0,
+        fx_off: false,
     };
     let pan = FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.02, pan_y: -0.03, zoom: 1.18 };
     let cam = FxInstance::CamMotion {
@@ -398,13 +399,36 @@ fn demo_project() -> Project {
         damp: 0.28,
         decay: 0.86,
         wet_gain: 1.1,
-        automation: vec![
-            SlowedKeyframe { t: 0.0, rate: 1.0, mix: 0.12 },
-            SlowedKeyframe { t: 0.28, rate: 0.86, mix: 0.34 },
-            SlowedKeyframe { t: 0.62, rate: 0.72, mix: 0.55 },
-            SlowedKeyframe { t: 0.84, rate: 0.9, mix: 0.3 },
-            SlowedKeyframe { t: 1.0, rate: 0.66, mix: 0.62 },
-        ],
+        automation: vec![],
+    };
+    // автоматизация slowed — общими кривыми (Р.33): ключи в тиках
+    // МАТЕРИАЛА клипа 25 (source_in = 0, длина 74 с)
+    let slowed_auto = |dur: f64| -> Vec<Vec<ParamCurve>> {
+        let key = |u: f64, v: f64| AutoKey { t: t(u * dur), v };
+        vec![vec![
+            ParamCurve {
+                param: "rate".into(),
+                ease: false,
+                keys: vec![
+                    key(0.0, 1.0),
+                    key(0.28, 0.86),
+                    key(0.62, 0.72),
+                    key(0.84, 0.9),
+                    key(1.0, 0.66),
+                ],
+            },
+            ParamCurve {
+                param: "mix".into(),
+                ease: false,
+                keys: vec![
+                    key(0.0, 0.12),
+                    key(0.28, 0.34),
+                    key(0.62, 0.55),
+                    key(0.84, 0.3),
+                    key(1.0, 0.62),
+                ],
+            },
+        ]]
     };
     let mut p =
         Project::new(ProjectSettings { fps: 30, width: 1920, height: 1080, sample_rate: 48000 });
@@ -439,7 +463,11 @@ fn demo_project() -> Project {
                   FxInstance::Edges { threshold: 42 }]),
         clip(21, ClipKind::Audio, 0, 12.0, 22.0, 2.0, 7, -1.5, vec![]),
         clip(23, ClipKind::Audio, 0, 80.0, 20.0, 28.0, 7, -1.5, vec![]),
-        clip(25, ClipKind::Audio, 1, 0.0, 74.0, 0.0, 6, -8.0, vec![slowed]),
+        {
+            let mut c = clip(25, ClipKind::Audio, 1, 0.0, 74.0, 0.0, 6, -8.0, vec![slowed]);
+            c.fx_auto = slowed_auto(74.0);
+            c
+        },
         clip(27, ClipKind::Audio, 1, 74.0, 31.0, 20.0, 6, -10.0, vec![]),
         clip(29, ClipKind::Audio, 2, 0.0, 30.0, 0.0, 8, -18.0, vec![]),
         clip(31, ClipKind::Audio, 2, 45.0, 30.0, 0.0, 8, -18.0, vec![]),
@@ -478,6 +506,7 @@ fn demo_project() -> Project {
             video_fx: vec![FxInstance::Glow { strength: 0.5 }],
             audio_fx: vec![],
         },
+        enabled: true,
     }];
     p.ui = Some(UiState {
         view_start: 0.0,

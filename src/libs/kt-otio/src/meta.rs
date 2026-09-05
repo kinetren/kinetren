@@ -133,6 +133,10 @@ pub struct KtClipMeta {
     /// байт-стабильны.
     #[serde(default = "one_f32", skip_serializing_if = "is_one_f32")]
     pub opacity: f32,
+    /// Мастер-выключатель FX-цепочки события (Р.33). Умолчание
+    /// (включено) не пишется — файлы без него байт-стабильны.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fx_off: bool,
     /// Форвард-милосердие (Р.29): неизвестные kt-поля будущих версий.
     #[serde(default, flatten)]
     pub extra: Map<String, Value>,

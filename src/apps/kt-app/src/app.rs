@@ -2653,6 +2653,7 @@ impl KtApp {
             duration: Tick(90 * 1500), // v1: 1500 мс
             targets: pm.targets,
             kind,
+            enabled: true,
         }));
         if self.apply_batch(cmds) {
             self.selected_morph = Some(id);
@@ -2877,6 +2878,7 @@ impl KtApp {
                 fx_auto: vec![],
                 fx: vec![],
                 opacity: 1.0,
+                fx_off: false,
             }));
             next_id += 1;
         }
@@ -5192,6 +5194,7 @@ mod repaint_tests {
             fx_auto: vec![],
             fx: vec![],
             opacity: 1.0,
+            fx_off: false,
         };
         // два ПЕРЕКРЫВАЮЩИХСЯ клипа: 1000..3000 и 2500..4000 → одна
         // область 1000..4000, стык внутри не считается границей
