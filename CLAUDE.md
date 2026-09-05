@@ -72,7 +72,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 - **Перед любой правкой UI/поведения — `docs/user-feedback.md`**: там история требований пользователя его словами (что просил, какие решения принял, что повторял). Предел, режим или вид, поставленные по его прямой просьбе, не меняются без новой просьбы. После каждого раунда замечаний список дописывается ТУДА ЖЕ, до начала работы.
 - Перед правкой крейта — его `CLAUDE.md`; перед архитектурными изменениями — `docs/architecture.md`.
 - Новый найденный дефект/тонкость → сразу документировать (`docs/porting-notes.md` или CLAUDE.md крейта) и по возможности закрыть регрессионным тестом.
-- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–211 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
+- `cargo test` обязан быть зелёным на каждый коммит; тесты 1–215 из `docs/porting-notes.md` — регрессионные, их нельзя ослаблять/удалять без явного решения пользователя.
 - Не добавлять зависимость от FFmpeg/аудио-железа в kt-time/kt-model/kt-fx/kt-cache/ядро kt-engine. GPU (wgpu) живёт ТОЛЬКО в kt-gpu; kt-engine знает лишь трейт `VideoGpuExec` (исполнитель инжектится из kt-app/kt-cli).
 - **Работа заканчивается `./scripts/finish.sh` и версией в отчёте** (требование п.7 р.12). `cargo test` собирает ОТДЕЛЬНЫЙ тест-бинарь и НЕ пересобирает `target/debug/kt-app` — тот, который запускает пользователь: дважды из-за этого он получал устаревшую программу и считал дефекты неисправленными. Скрипт пересобирает kt-app/kt-cli, печатает версию `vYY.MM.DD-hash` и чистит `target/dist-out` от старых тарболов; `--release` добавляет тарбол, `--deep` сносит регенерируемые `target/release` и `target/dist-container`.
 - Версия программы — `kt-version` (build.rs, дата коммита + хэш). В манифестах остаётся `0.1.0`: semver не принимает `v26.08.27-…`. В debug-заголовке видна полная версия, в релизе — короткая `ktYY.MM`.
@@ -81,7 +81,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 
 | Правишь | Обязательно зелёные |
 |---|---|
-| kt-fx (аудио) | kt-engine/tests/{fx (вкл. t31),warp_prefetch,reverse,loop_fx (t166 шов)}.rs, golden_export.rs, kt-fx unit (source-карта) |
+| kt-fx (аудио) | kt-engine/tests/{fx (вкл. t31, **t213 автоматизация аудио**),warp_prefetch,reverse,loop_fx (t166 шов)}.rs, golden_export.rs, kt-fx unit (source-карта), kt-fx/tests/{integral_map,material_range}.rs |
 | kt-fx/video.rs | kt-fx/tests/video_fx.rs (golden 26 поимённо, t68 пул), kt-engine/tests/reverse.rs::t26, postfx_cache t66 (вкл. t66c экспорт без мемоизации), golden_export t67, **kt-gpu/tests/parity.rs t181** (GPU-зеркала ядер) |
 | kt-gpu | tests/parity.rs (t181 конформанс, t182 композит байт-в-байт, t183 детерминизм/пул), tests/gpu_render.rs (t184 GPU превью==экспорт), tests/pan3d.rs (t187); без адаптера — skip, `KT_REQUIRE_GPU=1` требует; wgpu ЖЁСТКО той же версии, что в eframe |
 | kt-engine/audio.rs | audio_engine, warp_prefetch, splice, reverse (вкл. t29), golden_export, transitions_audio (t136, t156 фейды), loop_fx (t166-t168 шов заворота) |
@@ -92,8 +92,8 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-ffmpeg | kt-media/tests/ffmpeg_conformance.rs (t10/t21/ogg/t34/t37), export_options t33 (муксер) |
 | kt-cache | kt-cache unit (t8/t14/t27/t28/t37 no-read drops, t65 пост-FX kind) |
 | kt-media | ffmpeg_conformance (вкл. t34 — персист пакетного индекса), index_db (вкл. t70), unit `placeholder` (t208 — детерминизм кадра-заглушки), kt-app unit t23 |
-| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30, t89 метки, t90 дорожки), ops-клипборд (t205 копирование выделения), morpher t35, transitions (t135 переходы, t155 фейды, t159 возврат ручек), legacy_upgrade (t143 конверсия, t164 импорт как есть), cameras t188 (камеры Р.29), lane_order (t49 + t188 камерные дорожки), fx_auto t190 (автоматизация Р.30) |
-| kt-otio | tests/format.rs (t144-t147: идемпотентность, passthrough, версии, пути), tests/convert.rs (t148 golden легаси-импорта, t152/t153 маппинг, t154 чужие сэмплы, t165 слои, t178 NTSC, t180 таймкод материала, **t189 камеры/v2 + golden demo-3d.otio, t192 автоматизация в файле**), tests/otio_conformance.rs (t149, gated по python opentimelineio) |
+| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30, t89 метки, t90 дорожки), ops-клипборд (t205 копирование выделения), morpher t35, transitions (t135 переходы, t155 фейды, t159 возврат ручек), legacy_upgrade (t143 конверсия, t164 импорт как есть), cameras t188 (камеры Р.29), lane_order (t49 + t188 камерные дорожки), fx_auto t190 (автоматизация), **t212 домен ключей = материал, t214 мастер-выключатель, t215 копипаст FX** |
+| kt-otio | tests/format.rs (t144-t147: идемпотентность, passthrough, версии, пути), tests/convert.rs (t148 golden легаси-импорта, t152/t153 маппинг, t154 чужие сэмплы, t165 слои, t178 NTSC, t180 таймкод материала, **t189 камеры + golden demo-3d.otio, t192 автоматизация в файле (v3), t212 чтение файлов до v3**), tests/otio_conformance.rs (t149, gated по python opentimelineio) |
 | kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |
 | kt-cli / кросс-рендер | apps/kt-cli/tests/cross_render.rs t158 (gated: melt + `scripts/otio-mlt-venv.sh`; `KT_REQUIRE_CROSS_RENDER=1` требует их), oc_render.rs t179 (настоящий фильм; `scripts/fetch-oc-media.sh`, `KT_REQUIRE_OC_RENDER=1`) |
 | kt-app (util/thumbs) | kt-app unit-тесты (t20-repaint, t23, регион-плей, t69/t71 негативные кэши тумб, t72/t74, t121 свечение и гашение метров) |
