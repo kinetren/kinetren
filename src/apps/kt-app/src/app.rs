@@ -25,6 +25,10 @@ pub struct Notice {
     pub text: String,
 }
 
+/// Результат фонового переоткрытия: медиа, имя для сообщения и источник
+/// (None — файл снова не открылся, заглушка остаётся).
+pub type ReopenedMedia = (MediaId, String, Option<Box<dyn kt_media::MediaSource>>);
+
 pub struct KtApp {
     pub model: TimelineModel,
     pub project_path: Option<PathBuf>,
@@ -208,6 +212,9 @@ pub struct KtApp {
     /// Медиа, вместо которых сейчас стоит плейсхолдер (Р.33 п.10): файл не
     /// открылся при загрузке проекта. Пустеет, когда файл возвращается.
     pub placeholder_media: std::collections::HashSet<MediaId>,
+    /// Переоткрытие вернувшегося файла идёт в фоне (открытие FFmpeg
+    /// блокирующее — в UI-потоке это заметная пауза).
+    pub reopen_rx: Option<std::sync::mpsc::Receiver<ReopenedMedia>>,
     /// Внутренний буфер обмена (блок клипов+переходов, ребейз к нулю).
     pub clipboard: kt_model::ops::ClipBlock,
     /// Passthrough-остатки загруженного .otio (чужие поля/схемы/metadata):
@@ -429,6 +436,7 @@ impl KtApp {
             live_opacity: None,
             status: error.map(|e| (e, std::time::Instant::now())),
             placeholder_media: Default::default(),
+            reopen_rx: None,
             clipboard: kt_model::ops::ClipBlock::default(),
             retained: kt_otio::Retained::default(),
             automation_clipboard: None,
@@ -560,6 +568,7 @@ impl KtApp {
             live_opacity: None,
             status: None,
             placeholder_media: err.iter().map(|(id, _, _)| *id).collect(),
+            reopen_rx: None,
             clipboard: kt_model::ops::ClipBlock::default(),
             retained,
             automation_clipboard: None,
@@ -981,6 +990,7 @@ impl KtApp {
                 })
                 .ok();
         }
+        self.poll_returned_sources();
         if let Some((snap_rev, rx)) = &self.autosave_rx
             && let Ok(res) = rx.try_recv()
         {
@@ -2026,6 +2036,61 @@ impl KtApp {
             self.model.set_region(Region::normalized(start, end));
             self.on_region_changed();
         }
+    }
+
+    /// Вернувшийся на диск исходник заменяет свою заглушку (Р.33 п.10).
+    /// Watchdog уже следит за существованием файлов, поэтому здесь только
+    /// реакция: файл больше не offline, а на его месте стоит плейсхолдер —
+    /// открываем ЗАНОВО в фоне и подменяем источник у плеера. Позиция,
+    /// транспорт и кэш прочих источников не трогаются.
+    pub(crate) fn poll_returned_sources(&mut self) {
+        if let Some(rx) = self.reopen_rx.take() {
+            let mut ready = Vec::new();
+            while let Ok(msg) = rx.try_recv() {
+                ready.push(msg);
+            }
+            if ready.is_empty() {
+                self.reopen_rx = Some(rx); // ещё открывается — ждём
+            }
+            for (id, label, src) in ready {
+                // не открылся снова — заглушка остаётся, шуметь не о чем
+                if let Some(s) = src {
+                    self.player.replace_media(id, s);
+                    self.placeholder_media.remove(&id);
+                    self.note(crate::tf!(k::msg::MEDIA_ONLINE, label));
+                }
+            }
+        }
+        if self.placeholder_media.is_empty() || self.reopen_rx.is_some() {
+            return;
+        }
+        let offline = self.offline.lock().unwrap().clone();
+        let base = self.project_path.as_deref().and_then(|p| p.parent());
+        let db = self.project_path.as_deref().map(|p| p.with_extension("ktindex.db"));
+        let back: Vec<(MediaId, String, String)> = self
+            .model
+            .project()
+            .media
+            .iter()
+            .filter(|m| self.placeholder_media.contains(&m.id) && !offline.contains(&m.id))
+            .map(|m| {
+                (m.id, crate::util::media_label(&m.path), resolve_media_path(base, &m.path))
+            })
+            .collect();
+        if back.is_empty() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.reopen_rx = Some(rx);
+        std::thread::Builder::new()
+            .name("reopen-media".into())
+            .spawn(move || {
+                for (id, label, path) in back {
+                    let src = open_source_indexed(&path, db.as_deref()).ok();
+                    let _ = tx.send((id, label, src));
+                }
+            })
+            .ok();
     }
 
     /// Регион по метке-диапазону + выделение её событий (Р.33 п.8): ОДНО

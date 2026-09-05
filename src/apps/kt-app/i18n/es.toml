@@ -331,6 +331,9 @@ error_msg = "Error: {0}"
 close = "Cerrar"
 
 # Подсказки главного окна (правый низ статусбара).
+missing_warn = "fuentes no disponibles ({0}), se renderizan como marcadores: {1}"
+missing_after = "renderizado con marcadores ({0}): {1}"
+missing_layers = "capas de vídeo perdidas: {0}"
 [hint]
 preview_detached = "la previsualización está en otra ventana (ciérrala para devolverla)"
 morph_place = "Morpher: haz clic en la pista Morph morada para colocar el bloque (Esc — cancelar)"
@@ -394,6 +397,7 @@ flight_saved = "Registro de reproducción guardado: {0}"
 
 media_missing = "{0}: fuente no disponible, se muestra un marcador ({1})"
 media_missing_count = "fuentes no disponibles: {0}"
+media_online = "{0}: la fuente ha vuelto, recargada"
 [dialog]
 import_ktproj = "Importar un proyecto .ktproj antiguo"
 open_project = "Abrir proyecto"

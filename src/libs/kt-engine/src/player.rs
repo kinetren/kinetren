@@ -454,6 +454,31 @@ impl Player {
         }
     }
 
+    /// Заменить источник медиа НА ХОДУ (Р.33 п.10: пропавший файл вернулся
+    /// на диск — плейсхолдер уступает место настоящему). Порядок важен:
+    /// сперва гасим воркер, потом выбиваем его кадры из кэша, и только
+    /// после этого поднимаем новый — иначе старый успел бы дописать в кэш
+    /// кадр заглушки уже после инвалидации. Транспорт, позиция и кэш
+    /// прочих источников не трогаются.
+    pub fn replace_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
+        if let Some(old) = self.workers.write().unwrap().remove(&media) {
+            old.shutdown();
+        }
+        self.cache.invalidate_source(kt_cache::SourceId(media.0));
+        let w = MediaWorker::spawn_with_stats(
+            media,
+            source,
+            self.cache.clone(),
+            self.decode_stats.clone(),
+        );
+        self.workers.write().unwrap().insert(media, w);
+        // состав источников изменился — префетч обязан проснуться и
+        // прогреть кэш заново (в простое он пропускает проходы, пока
+        // сигнатура состояния та же, и без бампа версии не заметил бы)
+        self.project_version.fetch_add(1, Ordering::AcqRel);
+        self.wake.notify();
+    }
+
     /// Убрать медиа (симметрия RemoveMedia): воркер гасится, кэш других
     /// источников не трогается.
     pub fn remove_media(&self, media: kt_model::MediaId) {

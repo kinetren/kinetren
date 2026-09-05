@@ -331,6 +331,9 @@ error_msg = "Error: {0}"
 close = "Close"
 
 # Подсказки главного окна (правый низ статусбара).
+missing_warn = "sources unavailable ({0}), they render as placeholders: {1}"
+missing_after = "rendered as placeholders ({0}): {1}"
+missing_layers = "video layers lost: {0}"
 [hint]
 preview_detached = "preview is in a separate window (close it to bring it back)"
 morph_place = "Morpher: click the purple Morph track to place the block (Esc — cancel)"
@@ -394,6 +397,7 @@ flight_saved = "Playback journal saved: {0}"
 
 media_missing = "{0}: source unavailable, a placeholder is shown ({1})"
 media_missing_count = "sources unavailable: {0}"
+media_online = "{0}: the source is back, reloaded"
 [dialog]
 import_ktproj = "Import a legacy .ktproj project"
 open_project = "Open project"

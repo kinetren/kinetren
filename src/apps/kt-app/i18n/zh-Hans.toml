@@ -331,6 +331,9 @@ error_msg = "错误：{0}"
 close = "关闭"
 
 # Подсказки главного окна (правый низ статусбара).
+missing_warn = "不可用素材（{0}），将以占位画面写入文件：{1}"
+missing_after = "以占位画面渲染（{0}）：{1}"
+missing_layers = "丢失的视频层：{0}"
 [hint]
 preview_detached = "预览在独立窗口里（关掉它就会回来）"
 morph_place = "Morpher：点击紫色的 Morph 轨道放置区块（Esc — 取消）"
@@ -394,6 +397,7 @@ flight_saved = "播放日志已保存：{0}"
 
 media_missing = "{0}：素材不可用，显示占位画面（{1}）"
 media_missing_count = "不可用素材：{0}"
+media_online = "{0}：素材已恢复，已重新加载"
 [dialog]
 import_ktproj = "导入旧版 .ktproj 项目"
 open_project = "打开项目"

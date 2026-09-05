@@ -38,6 +38,8 @@ pub struct RenderJob {
     pub speed_n: u64,
     pub last_frames: u64,
     pub last_tick: std::time::Instant,
+    /// Исходники, отрендеренные заглушкой (Р.33 п.10).
+    pub missing: Vec<String>,
 }
 
 /// Диалог НАСТРОЕК рендера (п.5): кодек, качество, битрейт, разрешение.
@@ -49,6 +51,9 @@ pub struct RenderSetup {
     pub audio_bitrate: u32,
     pub resolution: Option<(u32, u32)>,
     pub open: bool,
+    /// Недоступные исходники на момент открытия настроек: показываются
+    /// предупреждением ДО запуска, а не сюрпризом в готовом файле.
+    pub missing: Vec<String>,
 }
 
 impl Default for RenderSetup {
@@ -60,27 +65,47 @@ impl Default for RenderSetup {
             audio_bitrate: 192_000,
             resolution: None,
             open: false,
+            missing: Vec::new(),
         }
     }
 }
 
 type Sources = Vec<(MediaId, Box<dyn MediaSource>)>;
 
-fn open_all(project: &Project, base: Option<&std::path::Path>) -> Result<Sources, String> {
+/// Источники для рендера. Недоступный файл НЕ отменяет экспорт (Р.33
+/// п.10): вместо него встаёт плейсхолдер, а имя попадает в список —
+/// пользователь предупреждён до старта и видит счёт после.
+pub(crate) fn open_all(project: &Project, base: Option<&std::path::Path>) -> (Sources, Vec<String>) {
     let mut out = Vec::new();
+    let mut missing = Vec::new();
     for m in &project.media {
         let src: Box<dyn MediaSource> = if let Some(p) = synth_pattern(&m.path) {
             Box::new(SyntheticSource::new(Tick(90_000 * 3600), p))
         } else {
             let resolved = resolve_media_path(base, &m.path);
-            Box::new(
-                kt_media::ffmpeg::FfmpegSource::open(&resolved)
-                    .map_err(|e| format!("{resolved}: {e}"))?,
-            )
+            match kt_media::ffmpeg::FfmpegSource::open(&resolved) {
+                Ok(s) => Box::new(s),
+                Err(e) => {
+                    let label = crate::util::media_label(&m.path);
+                    missing.push(format!("{label}: {e}"));
+                    Box::new(kt_media::placeholder::PlaceholderSource::new(label))
+                }
+            }
         };
         out.push((m.id, src));
     }
-    Ok(out)
+    (out, missing)
+}
+
+/// Недоступные исходники проекта — для предупреждения ДО старта рендера.
+pub(crate) fn missing_sources(project: &Project, base: Option<&std::path::Path>) -> Vec<String> {
+    project
+        .media
+        .iter()
+        .filter(|m| synth_pattern(&m.path).is_none())
+        .filter(|m| !std::path::Path::new(&resolve_media_path(base, &m.path)).exists())
+        .map(|m| crate::util::media_label(&m.path))
+        .collect()
 }
 
 /// Кусок имени файла из пользовательского текста: пробелы — дефисом,
@@ -146,6 +171,8 @@ impl KtApp {
             self.note(tr(k::render::ALREADY_RUNNING));
             return;
         }
+        let base = self.project_path.as_deref().and_then(|p| p.parent());
+        self.render_setup.missing = missing_sources(self.model.project(), base);
         self.render_setup.open = true;
     }
 
@@ -186,14 +213,8 @@ impl KtApp {
             std::thread::Builder::new()
                 .name("render".into())
                 .spawn(move || {
-                    let sources = || open_all(&project, base.as_deref());
-                    let (a, v) = match (sources(), sources()) {
-                        (Ok(a), Ok(v)) => (a, v),
-                        (Err(e), _) | (_, Err(e)) => {
-                            let _ = tx.send(RenderMsg::Done(Err(e)));
-                            return;
-                        }
-                    };
+                    let (a, _) = open_all(&project, base.as_deref());
+                    let (v, _) = open_all(&project, base.as_deref());
                     let txp = tx.clone();
                     // Р.29: GPU-рендер по умолчанию — свой headless-девайс
                     // на джоб (очередь UI не делит время с экспортом);
@@ -237,6 +258,7 @@ impl KtApp {
             speed_n: 0,
             last_frames: 0,
             last_tick: std::time::Instant::now(),
+            missing: self.render_setup.missing.clone(),
         });
         self.render_setup.open = false;
     }
@@ -375,6 +397,17 @@ impl KtApp {
                         ui.end_row();
                     },
                 );
+                if !self.render_setup.missing.is_empty() {
+                    ui.add_space(4.0);
+                    ui.colored_label(
+                        egui::Color32::from_rgb(255, 190, 120),
+                        crate::tf!(
+                            k::render::MISSING_WARN,
+                            self.render_setup.missing.len(),
+                            self.render_setup.missing.join(", ")
+                        ),
+                    );
+                }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui.button(tr(k::render::START)).clicked() {
@@ -512,6 +545,28 @@ impl KtApp {
                             egui::Color32::from_rgb(120, 230, 120),
                             crate::tf!(k::render::DONE_MSG, msg),
                         );
+                        // неполный рендер больше не выглядит успехом (Р.33
+                        // п.10): заглушки и потерянные слои названы прямо
+                        // в сводке, а не только в выводе kt-cli
+                        if !job.missing.is_empty() {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(255, 190, 120),
+                                crate::tf!(
+                                    k::render::MISSING_AFTER,
+                                    job.missing.len(),
+                                    job.missing.join(", ")
+                                ),
+                            );
+                        }
+                        if stats.missing_video_layers > 0 {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(255, 190, 120),
+                                crate::tf!(
+                                    k::render::MISSING_LAYERS,
+                                    stats.missing_video_layers
+                                ),
+                            );
+                        }
                         if ui.button("OK").clicked() {
                             close = true;
                         }

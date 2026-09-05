@@ -3401,6 +3401,154 @@ fn t203_selection_tool_button_switches_drag() {
     assert!(h.state().model.project().region.is_some(), "режим выключен — вернулся регион");
 }
 
+/// Тест 211 (Р.33 п.10, живая половина): вернувшийся на диск файл
+/// подменяет свою заглушку сам — без переоткрытия проекта и без потери
+/// позиции. Движковая половина теста — в kt-engine (замена источника
+/// выбивает его кадры из кэша).
+#[test]
+fn t211_returned_source_replaces_its_placeholder() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let dir = std::env::temp_dir().join(format!("kt-t211-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t211.otio");
+
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000 });
+    // «пропавший» файл: имя synth-источника, которого нет на диске — при
+    // открытии он не откроется, а к моменту возврата станет валидным
+    p.media.push(MediaRef { id: MediaId(1), path: "later.mp4".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+    });
+    p.validate().unwrap();
+    std::fs::write(&path, kt_otio::save_project(&p, &Default::default(), path.parent())).unwrap();
+
+    let app = KtApp::open(&path).expect("проект обязан открыться");
+    assert_eq!(app.placeholder_media.len(), 1, "заглушка не подставилась");
+    let pos_before = app.player.transport.playhead();
+
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(W, H))
+        .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+    crate::icons::install_fonts(&h.ctx);
+    h.step();
+    // файл «вернулся»: подменяем путь на синтетический источник и гасим
+    // offline-набор руками, чтобы не ждать 900 мс сторожа
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media[0].path = "synth:ramp".into();
+        app.model = kt_model::TimelineModel::new(p);
+        app.offline.lock().unwrap().clear();
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !h.state().placeholder_media.is_empty() && std::time::Instant::now() < deadline {
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        h.state().placeholder_media.is_empty(),
+        "вернувшийся файл так и не заменил заглушку"
+    );
+    assert!(
+        h.state().notices.iter().any(|n| n.text.contains("later.mp4")),
+        "о возврате исходника не сказано"
+    );
+    assert_eq!(
+        h.state().player.transport.playhead(),
+        pos_before,
+        "подмена источника не должна двигать курсор"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 210 (Р.33 п.10, про рендер): недоступный исходник больше не
+/// отменяет экспорт — он идёт заглушкой, о чём сказано ДО старта (в окне
+/// настроек) и ПОСЛЕ (в сводке). Раньше рендер просто не запускался, а
+/// потерянные слои движка в GUI не показывались вовсе.
+#[test]
+fn t210_render_with_missing_sources_warns_and_runs() {
+    use crate::render_dialog::{missing_sources, open_all};
+    use kt_model::*;
+    use kt_time::Tick;
+
+    let dir = std::env::temp_dir().join(format!("kt-t210-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let present = dir.join("here.wav");
+    std::fs::write(&present, b"not a real media file").unwrap();
+
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef { id: MediaId(2), path: "gone.mp4".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(2),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+    });
+    p.validate().unwrap();
+
+    // предупреждение ДО старта: назван только пропавший, синтетика не в счёт
+    let warn = missing_sources(&p, Some(dir.as_path()));
+    assert_eq!(warn, vec!["gone.mp4".to_string()], "список для предупреждения неверный: {warn:?}");
+
+    // источники для рендера собираются ВСЕ: экспорт стартует
+    let (sources, missing) = open_all(&p, Some(dir.as_path()));
+    assert_eq!(sources.len(), 2, "рендер обязан получить источник на каждое медиа");
+    assert_eq!(missing.len(), 1, "заглушка обязана быть названа");
+    assert!(missing[0].contains("gone.mp4"), "в списке нет имени файла: {missing:?}");
+    // и заглушка реально отдаёт кадры, а не пустоту
+    let mut sources = sources;
+    let (_, src) = sources.iter_mut().find(|(id, _)| *id == MediaId(2)).unwrap();
+    let f = src
+        .read_video_frame(Tick(0), Some(kt_media::Quality { width: 320, height: 180 }))
+        .expect("заглушка обязана отдавать кадр");
+    assert!(f.rgba.iter().any(|b| *b != 0), "кадр заглушки пустой");
+
+    // в живом приложении список доезжает до окна настроек
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        app.model = kt_model::TimelineModel::new(p);
+        app.project_path = Some(dir.join("t210.otio"));
+        app.start_render();
+    }
+    h.step();
+    assert_eq!(
+        h.state().render_setup.missing,
+        vec!["gone.mp4".to_string()],
+        "окно настроек не знает о недоступных исходниках"
+    );
+    h.state_mut().render_setup.open = false;
+    h.step();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Тест 209 (Р.33 п.10): проект с ПРОПАВШИМ исходником открывается,
 /// каждый недоступный файл называется в уведомлениях, а вместо кадров
 /// встаёт плейсхолдер — превью укомплектовано, а не висит в «Loading».

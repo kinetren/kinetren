@@ -194,3 +194,54 @@ fn t20_pause_resume_still_streams() {
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(drain(&mut consumer) > 0, "после resume рендер обязан проснуться (condvar)");
 }
+
+/// Тест 211 (Р.33 п.10): вернувшийся на диск исходник подменяет свою
+/// заглушку НА ХОДУ. Кадры старого источника обязаны уйти из кэша —
+/// иначе после возврата файла в превью ещё долго висела бы плашка.
+#[test]
+fn t211_replace_media_swaps_source_and_drops_its_cache() {
+    let project = base_project();
+    let dc = |v: f32| -> Box<SyntheticSource> {
+        Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Dc { value: v }))
+    };
+    let (player, _consumer) = Player::new(project, vec![(MediaId(1), dc(1.0))]);
+
+    // прогрев кэша первого источника
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let cov = player.cache.coverage(
+            kt_engine::source_id(MediaId(1)),
+            kt_cache::BurstKind::Audio,
+            0..1_000_000,
+        );
+        let covered: i64 = cov.iter().map(|r| r.end - r.start).sum();
+        if covered >= 40 {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "кэш не прогрелся за 10 с");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let old = player
+        .cache
+        .get_audio(kt_engine::source_id(MediaId(1)), 0)
+        .expect("burst источника обязан лежать в кэше");
+    assert!((old.data[0] - 1.0).abs() < 1e-6, "прогрели не тот сигнал");
+
+    // подмена источника: кэш ЭТОГО медиа выброшен
+    player.replace_media(MediaId(1), dc(0.25));
+    assert!(
+        player.cache.get_audio(kt_engine::source_id(MediaId(1)), 0).is_none(),
+        "кадры прежнего источника остались в кэше — превью показывало бы заглушку"
+    );
+
+    // новый источник наполняет кэш своими значениями
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Some(b) = player.cache.get_audio(kt_engine::source_id(MediaId(1)), 0) {
+            assert!((b.data[0] - 0.25).abs() < 1e-6, "в кэше значения старого источника");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "новый источник не наполнил кэш");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
