@@ -101,4 +101,5 @@ pub mod ffmpeg;
 pub mod index;
 #[cfg(feature = "ffmpeg")]
 pub mod muxer;
+pub mod placeholder;
 pub mod synthetic;
