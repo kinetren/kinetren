@@ -83,7 +83,63 @@ fn open_all(project: &Project, base: Option<&std::path::Path>) -> Result<Sources
     Ok(out)
 }
 
+/// Кусок имени файла из пользовательского текста: пробелы — дефисом,
+/// запрещённые файловой системой символы — подчёркиванием (Р.33 п.9).
+fn sanitize_name_part(s: &str) -> String {
+    s.trim()
+        .chars()
+        .map(|c| match c {
+            c if c.is_whitespace() => '-',
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if (c as u32) < 0x20 => '_',
+            c => c,
+        })
+        .collect()
+}
+
+/// Имя выходного файла по шаблону пользователя (Р.33 п.9):
+/// `kt-<проект>-<регион>-<длина в секундах>s.mp4`. Проекта нет — `untitled`;
+/// регион не совпал с именованной меткой (или имя пустое) — сегмент региона
+/// опускается, чтобы имя не врало про содержимое.
+pub(crate) fn render_file_name(
+    project_stem: Option<&str>,
+    region_name: Option<&str>,
+    len_ticks: i64,
+) -> String {
+    let mut name = String::from("kt-");
+    let proj = project_stem.map(sanitize_name_part).filter(|s| !s.is_empty());
+    name.push_str(&proj.unwrap_or_else(|| "untitled".into()));
+    if let Some(r) = region_name.map(sanitize_name_part).filter(|s| !s.is_empty()) {
+        name.push('-');
+        name.push_str(&r);
+    }
+    let secs = (len_ticks.max(0) as f64 / 90_000.0).round() as i64;
+    format!("{name}-{secs}s.mp4")
+}
+
 impl KtApp {
+    /// Имя, подставляемое в диалог сохранения рендера.
+    pub(crate) fn default_render_name(&self) -> String {
+        let project = self.model.project();
+        let (start, end) = project.region.map_or_else(
+            || (Tick::ZERO, kt_engine::export::project_range(project)),
+            |r| (r.start, r.end),
+        );
+        // имя берём только у метки-диапазона, СОВПАДАЮЩЕЙ с регионом: иначе
+        // в имени файла оказался бы чужой кусок таймлайна
+        let region_name = project
+            .markers
+            .iter()
+            .find(|m| m.is_range() && m.t == start && m.end() == end && !m.name.is_empty())
+            .map(|m| m.name.clone());
+        let stem = self
+            .project_path
+            .as_deref()
+            .and_then(|p| p.file_stem())
+            .map(|s| s.to_string_lossy().to_string());
+        render_file_name(stem.as_deref(), region_name.as_deref(), (end - start).0)
+    }
+
     /// Кнопка «Рендер»: открыть панель настроек (п.5 — выбор кодека и пр.).
     pub fn start_render(&mut self) {
         if self.render_job.is_some() {
@@ -98,13 +154,7 @@ impl KtApp {
         if self.render_job.is_some() {
             return;
         }
-        let default_name = format!(
-            "kp-render-{}.mp4",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0)
-        );
+        let default_name = self.default_render_name();
         let Some(path) = rfd::FileDialog::new()
             .set_file_name(&default_name)
             .add_filter("MP4 Video", &["mp4"])

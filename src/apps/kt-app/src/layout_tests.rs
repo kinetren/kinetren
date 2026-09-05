@@ -3207,6 +3207,47 @@ fn t194_autosave_runs_in_background() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Тест 201 (Р.33 п.9, требование пользователя: «шаблон для всех рендеров
+/// всегда kt-<projectname>-<region_name>-<его длинна в секундах>»). Было
+/// `kp-render-<unix-время>.mp4` — ни проекта, ни региона, ни длины.
+#[test]
+fn t201_render_file_name_follows_template() {
+    use crate::render_dialog::render_file_name;
+    use kt_model::*;
+    // чистая часть шаблона
+    assert_eq!(render_file_name(Some("movie"), Some("intro"), 90_000 * 12), "kt-movie-intro-12s.mp4");
+    assert_eq!(render_file_name(Some("movie"), None, 90_000 * 3), "kt-movie-3s.mp4");
+    assert_eq!(render_file_name(Some("movie"), Some("  "), 90_000), "kt-movie-1s.mp4");
+    assert_eq!(render_file_name(None, None, 0), "kt-untitled-0s.mp4");
+    assert_eq!(
+        render_file_name(Some("my project"), Some("scene 2: take?"), 90_000 * 5 / 2),
+        "kt-my-project-scene-2_-take_-3s.mp4",
+        "пробелы дефисом, запрещённые ФС-символы подчёркиванием, длина округляется"
+    );
+
+    // живая часть: имя берётся у метки-диапазона, СОВПАДАЮЩЕЙ с регионом
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.markers.push(Marker {
+        t: kt_time::Tick(90_000),
+        duration: kt_time::Tick(90_000 * 4),
+        name: "chorus".into(),
+        color: None,
+    });
+    p.region = Some(Region { start: kt_time::Tick(90_000), end: kt_time::Tick(90_000 * 5) });
+    app.model = kt_model::TimelineModel::new(p);
+    app.project_path = Some(std::path::PathBuf::from("/tmp/kt-t201/song.otio"));
+    assert_eq!(app.default_render_name(), "kt-song-chorus-4s.mp4");
+
+    // регион не совпал с меткой — сегмент региона опускается (имя не врёт)
+    let mut p = app.model.project().clone();
+    p.region = Some(Region { start: kt_time::Tick(0), end: kt_time::Tick(90_000 * 5) });
+    app.model = kt_model::TimelineModel::new(p);
+    assert_eq!(app.default_render_name(), "kt-song-5s.mp4");
+    h.step();
+}
+
 /// Тест 200 (Р.33, п.К1): правки ВНУТРИ жеста (окно FX, драг края
 /// перехода, окно морфера) обязаны двигать ревизию модели. Пока они
 /// звали `model.apply_coalesced` мимо обёртки приложения, ревизия стояла
