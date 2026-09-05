@@ -3207,6 +3207,77 @@ fn t194_autosave_runs_in_background() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Тест 200 (Р.33, п.К1): правки ВНУТРИ жеста (окно FX, драг края
+/// перехода, окно морфера) обязаны двигать ревизию модели. Пока они
+/// звали `model.apply_coalesced` мимо обёртки приложения, ревизия стояла
+/// на месте — и фоновый автосейв гасил звёздочку по гейту «ревизия та
+/// же», хотя цепочка эффектов уже изменилась ПОСЛЕ снимка: правки
+/// выглядели сохранёнными и терялись при выходе.
+#[test]
+fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t200-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t200.otio");
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(9),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(9),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::Blur { radius: 8 }],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+    });
+    app.model = kt_model::TimelineModel::new(p);
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
+    h.step();
+    assert!(h.state().autosave_rx.is_some(), "фоновая запись в полёте");
+
+    // правка цепочки жестом окна FX, пока запись не финишировала
+    let app = h.state_mut();
+    let rev_before = app.model_rev;
+    app.open_fx_editor(ClipId(9));
+    let gesture = app.fx_editors[0].gesture;
+    app.set_fx_coalesced(
+        ClipId(9),
+        vec![FxInstance::Blur { radius: 20 }, FxInstance::Glow { strength: 1.0 }],
+        gesture,
+    );
+    assert!(app.model_rev > rev_before, "правка жеста двигает ревизию модели");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    assert!(h.state().autosave_rx.is_none(), "результат автосейва забран");
+    assert!(
+        h.state().dirty_content,
+        "цепочка изменена ПОСЛЕ снимка — звёздочка обязана остаться"
+    );
+    assert_eq!(
+        h.state().model.clip(ClipId(9)).unwrap().fx.len(),
+        2,
+        "правка на месте (не откачена автосейвом)"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Тест 199 (Р.32): ПРАВИЛО сторожа — запись со СТАРОЙ ревизией не
 /// трогает файл, с новой — пишет. Именно так фоновый автосейв перестаёт
 /// перетирать свежий Ctrl+S (гонку нашли живые сценарии: они читают

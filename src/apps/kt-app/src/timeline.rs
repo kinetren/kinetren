@@ -1957,6 +1957,7 @@ impl KtApp {
                         let p = self.model.project();
                         p.transitions.iter().find(|t| t.id == id).cloned().and_then(|mut t| {
                             let joint = t.joint(p)?.0;
+                            let was = (t.in_offset, t.out_offset);
                             let body = |side: Option<ClipId>| {
                                 // у фейда сторона-пустота телом не ограничена
                                 side.map_or(i64::MAX, |id| {
@@ -1972,12 +1973,16 @@ impl KtApp {
                             } else {
                                 t.out_offset = Tick((raw - joint).clamp(0, body(t.b)));
                             }
-                            (t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION)
+                            // кадр без движения мыши команду не шлёт: иначе
+                            // ревизия модели растёт каждый кадр драга и зря
+                            // сбрасывает кэши, ключёванные по ней
+                            ((t.in_offset, t.out_offset) != was
+                                && t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION)
                                 .then_some(Command::SetTransition(t))
                         })
                     };
-                    if let Some(cmd) = cmd && self.model.apply_coalesced(cmd, gesture).is_ok() {
-                        self.dirty_content = true;
+                    if let Some(cmd) = cmd {
+                        self.apply_coalesced(cmd, gesture);
                     }
                     self.drag = Some(Drag::TransitionEdge { id, left, gesture });
                 }

@@ -41,10 +41,7 @@ impl KtApp {
     }
 
     pub(crate) fn set_fx_coalesced(&mut self, clip: ClipId, fx: Vec<FxInstance>, gesture: u64) {
-        if self.model.apply_coalesced(Command::SetFx { id: clip, fx }, gesture).is_ok() {
-            self.player.set_project(self.model.project().clone());
-            self.dirty_content = true;
-        }
+        self.apply_coalesced(Command::SetFx { id: clip, fx }, gesture);
     }
 
     /// Кривые автоматизации (Р.30): тот же gesture, что у SetFx — один
@@ -58,10 +55,7 @@ impl KtApp {
         while auto.last().is_some_and(|v| v.is_empty()) {
             auto.pop(); // хвост без кривых не сериализуется зря
         }
-        if self.model.apply_coalesced(Command::SetFxAuto { id: clip, auto }, gesture).is_ok() {
-            self.player.set_project(self.model.project().clone());
-            self.dirty_content = true;
-        }
+        self.apply_coalesced(Command::SetFxAuto { id: clip, auto }, gesture);
     }
 
     pub fn draw_fx_editors(&mut self, ctx: &egui::Context) {
@@ -497,11 +491,7 @@ impl KtApp {
             while b.last() == Some(&false) {
                 b.pop();
             }
-            let _ = self
-                .model
-                .apply_coalesced(Command::SetFxBypass { id: ed.clip, bypass: b }, ed.gesture);
-            self.player.set_project(self.model.project().clone());
-            self.dirty_content = true;
+            self.apply_coalesced(Command::SetFxBypass { id: ed.clip, bypass: b }, ed.gesture);
         }
     }
 }
