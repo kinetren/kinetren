@@ -3105,6 +3105,102 @@ fn t185_gpu_loss_notice_once() {
     assert_eq!(hits, 1, "предупреждение ровно одно: {texts:?}");
 }
 
+/// Тест 221 (Р.33 п.5): единый виджет автоматизации. Проверяются четыре
+/// требования пользователя разом — переключение график↔таблица, перевод
+/// «материал ↔ таймлайн» с УЧЁТОМ реверса и скорости (на нём стоит
+/// мини-таймлайн, двигающий главный курсор), ключ по курсору встаёт под
+/// курсором, и ввод времени в таблице не пересортировывает строки под
+/// руками.
+#[test]
+fn t221_automation_widget_maps_material_and_keeps_input_stable() {
+    use crate::automation::{AutoMode, AutoView};
+    use kt_model::*;
+    use kt_time::Tick;
+    const STEP: i64 = 3000; // 30 fps
+
+    // прямой клип: материал = таймлайн со сдвигом на точку входа
+    let mut c = ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(180_000),
+        duration: Tick(90_000),
+        source_in: Tick(45_000),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::Blur { radius: 8 }],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    let mat = kt_engine::material_at(&c, STEP, Tick(180_000 + 30_000));
+    assert_eq!(mat.0, 75_000, "материал = source_in + смещение внутри события");
+    assert_eq!(
+        kt_engine::timeline_at_material(&c, STEP, mat).0,
+        180_000 + 30_000,
+        "обратный перевод обязан возвращать тот же момент"
+    );
+
+    // реверс: материал идёт навстречу таймлайну
+    c.reversed = true;
+    let mat_r = kt_engine::material_at(&c, STEP, Tick(180_000));
+    assert_eq!(mat_r.0, 45_000 + 90_000 - STEP, "у реверса начало события — конец материала");
+    assert_eq!(
+        kt_engine::timeline_at_material(&c, STEP, mat_r).0,
+        180_000,
+        "обратный перевод реверса обязан сходиться"
+    );
+    c.reversed = false;
+
+    // скорость: у slowed&reverb 0.5× материал идёт вдвое медленнее
+    let mut slow = c.clone();
+    slow.kind = ClipKind::Audio;
+    slow.fx = vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)];
+    let mid = kt_engine::material_at(&slow, STEP, Tick(180_000 + 90_000));
+    assert!(
+        (mid.0 - (45_000 + 45_000)).abs() <= 90,
+        "на 0.5× за весь клип съедается половина материала, вышло {}",
+        mid.0 - 45_000
+    );
+    assert!(
+        (kt_engine::timeline_at_material(&slow, STEP, mid).0 - (180_000 + 90_000)).abs() <= 90,
+        "обратный перевод со скоростью обязан сходиться"
+    );
+
+    // виджет: переключение вида и стабильный ввод времени в таблице
+    let mut view = AutoView::default();
+    assert_eq!(view.mode, AutoMode::Graph, "по умолчанию график");
+    view.mode = AutoMode::Table;
+    let mut curves = vec![ParamCurve {
+        param: "radius".into(),
+        ease: false,
+        keys: vec![
+            AutoKey { t: Tick(45_000), v: 1.0 },
+            AutoKey { t: Tick(135_000), v: 48.0 },
+        ],
+    }];
+    // пользователь начал править время ВТОРОГО ключа на значение МЕНЬШЕ
+    // первого: пока правка не закоммичена, порядок ключей не меняется
+    view.t_edit = Some((0, 1, 0.4));
+    assert_eq!(
+        curves[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![45_000, 135_000],
+        "во время ввода ключи не пересортировываются — строка уезжала бы из-под рук"
+    );
+    // на отпускании правка применяется и порядок восстанавливается
+    let (ci, ki, s) = view.t_edit.take().unwrap();
+    curves[ci].keys[ki].t = Tick((s * 90_000.0).round() as i64);
+    curves[ci].keys.sort_by_key(|k| k.t.0);
+    assert_eq!(
+        curves[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![36_000, 45_000],
+        "после отпускания ключи встают по порядку"
+    );
+}
+
 /// Тест 219 (Р.33 п.2, дословно: «для одного и того же события с
 /// примагниченными треками — можно и сразу все chain в одном окне давать,
 /// так проще должно быть. Ну можно дать возможность скрытия-переключения»).

@@ -9,6 +9,11 @@ use crate::app::KtApp;
 use eframe::egui;
 use kt_model::*;
 
+/// Снимок одной цепочки на момент открытия окна: сама цепочка, кривые,
+/// выключатели слотов и мастер-выключатель.
+pub type ChainSnapshot =
+    (ClipId, Vec<FxInstance>, Vec<Vec<kt_model::ParamCurve>>, Vec<bool>, bool);
+
 pub struct FxEditor {
     /// Якорь окна: событие, по которому его открыли (его id — id окна).
     pub clip: ClipId,
@@ -19,17 +24,14 @@ pub struct FxEditor {
     pub picker_query: String,
     /// Состояние КАЖДОЙ цепочки на момент открытия — «Отмена» откатывает
     /// всё окно, а не только якорь.
-    pub backup: Vec<(ClipId, Vec<FxInstance>, Vec<Vec<kt_model::ParamCurve>>, Vec<bool>, bool)>,
+    pub backup: Vec<ChainSnapshot>,
     pub gesture: u64,
     /// Выбранный слот в каждой цепочке.
     pub selected: std::collections::HashMap<ClipId, usize>,
+    /// Состояние виджета автоматизации на каждую (цепочку, слот):
+    /// вид, выбранный ключ, незакоммиченный ввод времени.
+    pub auto_views: std::collections::HashMap<(ClipId, usize), crate::automation::AutoView>,
     pub open: bool,
-}
-
-impl FxEditor {
-    fn sel(&mut self, id: ClipId) -> &mut usize {
-        self.selected.entry(id).or_default()
-    }
 }
 
 impl KtApp {
@@ -70,6 +72,7 @@ impl KtApp {
             backup,
             gesture: self.gesture_counter,
             selected,
+            auto_views: std::collections::HashMap::new(),
             open: true,
         });
     }
@@ -150,6 +153,9 @@ impl KtApp {
         }
         let mut edits: Vec<Edited> = Vec::new();
         let mut revert = false;
+        // мини-таймлайн виджета автоматизации двигает ГЛАВНЫЙ курсор
+        let mut seek: Option<kt_time::Tick> = None;
+        let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
         let mut open = ed.open;
         let members = ed.members.clone();
         egui::Window::new(title)
@@ -214,7 +220,8 @@ impl KtApp {
                                 params_changed |= draw_video_fx_params(ui, f, &cameras);
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
-                                    auto_ch = draw_fx_auto_section(
+                                    let view = ed.auto_views.entry((*id, sel)).or_default();
+                                    let (c, s) = draw_fx_auto_section(
                                         ui,
                                         &clip,
                                         sel,
@@ -222,8 +229,14 @@ impl KtApp {
                                         curves,
                                         playhead,
                                         &mut env_clip,
+                                        view,
+                                        frame_step,
                                         &mut hover_out,
                                     );
+                                    auto_ch = c;
+                                    if let Some(t) = s {
+                                        seek = Some(t);
+                                    }
                                 }
                                 ch.auto |= auto_ch;
                             }
@@ -253,6 +266,11 @@ impl KtApp {
             });
         if let Some(h) = hover_out {
             self.hover_hint = Some(h); // подсказка едет в строку состояния
+        }
+        if let Some(t) = seek {
+            // «курсор внутри мини-таймлайна двигает курсор в основном
+            // таймлайне, чтобы сразу видеть к чему относится» (Р.33 п.5)
+            self.player.seek(kt_time::Tick(t.0.max(0)));
         }
         if !open {
             ed.open = false;
@@ -298,13 +316,10 @@ impl KtApp {
     }
 }
 
-/// Секция автоматизации параметров слота: кривые (позиция в МАТЕРИАЛЕ,
-/// значение). Возвращает true при любой правке. У слота без
-/// автоматизируемых параметров (Mirror) не рисуется вовсе.
-///
-/// Вид секции здесь временный: единый виджет автоматизации (график ↔
-/// таблица, мини-таймлайн) — следующая стадия раунда; сейчас нужно, чтобы
-/// правки жили в новом домене.
+/// Секция автоматизации слота: выбор кривых, копипаст огибающих, ключ по
+/// курсору — и сам виджет (`automation::draw`: график ↔ таблица).
+/// Возвращает (было ли изменение, куда двинуть главный курсор).
+/// У слота без автоматизируемых параметров (Mirror) не рисуется вовсе.
 #[allow(clippy::too_many_arguments)]
 fn draw_fx_auto_section(
     ui: &mut egui::Ui,
@@ -314,21 +329,21 @@ fn draw_fx_auto_section(
     curves: &mut Vec<kt_model::ParamCurve>,
     playhead: kt_time::Tick,
     env_clip: &mut Option<kt_model::ops::EnvelopeBlock>,
+    view: &mut crate::automation::AutoView,
+    frame_step: i64,
     hover_out: &mut Option<String>,
-) -> bool {
-    // кусок материала, который показывает событие: в нём и живут ключи
+) -> (bool, Option<kt_time::Tick>) {
     let (src_in, dur) = (clip.source_in, clip.duration);
     let mat_end = src_in.0 + dur.0;
     // только Smooth-параметры: структурные (длина линий реверба) кривой
     // не подлежат — их смена пересобирает DSP (Р.33)
     let specs: Vec<&kt_model::ParamSpec> = f.auto_params().collect();
     if specs.is_empty() {
-        return false;
+        return (false, None);
     }
     let mut changed = false;
     ui.separator();
     ui.horizontal(|ui| {
-        ui.label(tr(k::fx::AUTO_CLIP));
         // параметры без кривой — кандидаты на добавление
         let free: Vec<&kt_model::ParamSpec> = specs
             .iter()
@@ -341,7 +356,7 @@ fn draw_fx_auto_section(
                 .show_ui(ui, |ui| {
                     for spec in &free {
                         let n = spec.name;
-                        if ui.button(n).clicked() {
+                        if ui.button(crate::widgets::param_label(n)).clicked() {
                             // стартовая кривая — константа текущего значения
                             let v0 = f.get_param(n).unwrap_or(spec.default);
                             curves.push(kt_model::ParamCurve {
@@ -357,10 +372,29 @@ fn draw_fx_auto_section(
                     }
                 });
         }
+        // выбор активной кривой (в неё кладёт ключ клик по графику) и её
+        // удаление; сглаживание — свойство кривой
+        for (ci, c) in curves.iter().enumerate() {
+            if ui
+                .selectable_label(view.active == ci, crate::widgets::param_label(&c.param))
+                .clicked()
+            {
+                view.active = ci;
+            }
+        }
+        if let Some(c) = curves.get_mut(view.active) {
+            changed |= ui.checkbox(&mut c.ease, tr(k::fx::EASE)).changed();
+            if ui.button(tr(k::fx::AUTO_REMOVE)).clicked() {
+                let i = view.active;
+                curves.remove(i);
+                view.active = 0;
+                view.sel = None;
+                changed = true;
+            }
+        }
     });
     ui.horizontal(|ui| {
-        // копипаст огибающих (Р.33, модель — kt_model::ops): раньше это
-        // умел только slowed&reverb своим отдельным виджетом
+        // копипаст огибающих (модель — kt_model::ops, Р.33)
         if !curves.is_empty() && ui.button(tr(k::fx::COPY_ENV)).clicked() {
             let block = kt_model::ops::EnvelopeBlock {
                 fx_tag: kt_model::ops::fx_tag(f),
@@ -394,17 +428,10 @@ fn draw_fx_auto_section(
             changed = true;
         }
         // ключ по курсору: позиция считается ТЕМ ЖЕ правилом, что у
-        // рендера (Р.33) — до этого сюда клали прогресс таймлайна, и при
-        // скорости ≠ 1 точка вставала не под курсором
+        // рендера, и с учётом скорости — до Р.33 сюда клали прогресс
+        // таймлайна, и при rate ≠ 1 точка вставала не под курсором
         if !curves.is_empty() && ui.button(tr(k::fx::KF_AT_CURSOR)).clicked() {
-            let at = kt_model::clip_material_at(
-                clip.source_in,
-                clip.start,
-                clip.duration,
-                clip.reversed,
-                0,
-                playhead,
-            );
+            let at = kt_engine::material_at(clip, frame_step, playhead);
             for c in curves.iter_mut() {
                 let v = kt_model::curve_value(&c.keys, c.ease, at);
                 c.keys.retain(|kf| kf.t != at);
@@ -414,73 +441,19 @@ fn draw_fx_auto_section(
             changed = true;
         }
     });
-    let mut drop_curve: Option<usize> = None;
-    for (ci, c) in curves.iter_mut().enumerate() {
-        let (lo, hi) = specs
-            .iter()
-            .find(|s| s.name == c.param)
-            .map_or((0.0, 1.0), |s| (s.min, s.max));
-        ui.horizontal(|ui| {
-            ui.strong(&c.param);
-            ui.label("Ease:");
-            changed |= ui.checkbox(&mut c.ease, "").changed();
-            if ui.button(tr(k::fx::ADD_KF)).clicked() {
-                // четверть куска дальше последнего ключа, но не за конец
-                let step = (dur.0 / 4).max(1);
-                let t = c.keys.last().map_or(src_in.0, |k| (k.t.0 + step).min(mat_end));
-                let v = c.keys.last().map(|k| k.v).unwrap_or(lo);
-                c.keys.push(kt_model::AutoKey { t: kt_time::Tick(t), v });
-                changed = true;
-            }
-            if !c.keys.is_empty() && ui.button(tr(k::fx::DROP_LAST)).clicked() {
-                c.keys.pop();
-                changed = true;
-            }
-            if ui.button(tr(k::fx::AUTO_REMOVE)).clicked() {
-                drop_curve = Some(ci);
-            }
-        });
-        let speed = ((hi - lo) / 500.0).max(1e-4);
-        for (i, key) in c.keys.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                // позиция ключа — секунды МАТЕРИАЛА (домен Р.33); доля
-                // куска показана рядом, чтобы не гадать «где это в клипе»
-                ui.label(format!("#{i}"));
-                let mut secs = key.t.0 as f64 / 90_000.0;
-                let lo_s = 0.0f64;
-                let hi_s = (mat_end as f64 / 90_000.0).max(lo_s);
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut secs)
-                            .range(lo_s..=hi_s)
-                            .speed(0.01)
-                            .suffix(" s"),
-                    )
-                    .changed()
-                {
-                    key.t = kt_time::Tick((secs * 90_000.0).round() as i64);
-                    changed = true;
-                }
-                let frac = if dur.0 > 0 {
-                    ((key.t.0 - src_in.0) as f64 / dur.0 as f64).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                ui.weak(format!("{:.0}%", frac * 100.0));
-                changed |= ui
-                    .add(egui::DragValue::new(&mut key.v).range(lo..=hi).speed(speed))
-                    .changed();
-            });
-        }
-    }
-    if let Some(ci) = drop_curve {
-        curves.remove(ci);
-        changed = true;
-    }
-    changed
+    // единый виджет: график ↔ таблица (Р.33 С3)
+    let ctx = crate::automation::AutoCtx { clip, fx: f, frame_step };
+    let res = crate::automation::draw(
+        ui,
+        ("auto", clip.id.0, slot),
+        &ctx,
+        curves,
+        view,
+        playhead,
+        hover_out,
+    );
+    (changed || res.changed, res.seek)
 }
-
-/// Имя эффекта в полосе цепочки.
 pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
     match f {
         FxInstance::Gain { .. } => "Gain",

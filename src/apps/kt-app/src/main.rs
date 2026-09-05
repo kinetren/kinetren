@@ -5,6 +5,7 @@
 
 mod app;
 mod audio_out;
+mod automation;
 mod bin_panel;
 mod fx_editor;
 #[cfg(test)]

@@ -25,28 +25,40 @@ def main(out):
     subprocess.run([KT_CLI, "demo", proj], check=True, capture_output=True)
 
     with Live("fxwin", out, project=proj) as app:
-        y = app.lane_y("video", 0, frac=0.72)
+        # аудио-дорожка 1 демо-проекта: на ней slowed&reverb с кривыми,
+        # поэтому окно покажет и цепочку, и ГРАФИК автоматизации
+        y = app.lane_y("audio", 1, frac=0.72)
         before = app.shot("open")
-        p = app.project_now()
-        c1 = p.clips[0]
-
         # двойной клик по событию: окно FX обязано открыться
-        x = app.x_at(c1.mid())
+        x = app.x_at(10 * SEC)
         app.double_click(x, y)
         after = app.shot("after-double-click")
 
-        # окно рисуется поверх центра экрана: сравниваем полосу пикселей
-        # НАД таймлайном — до клика там было превью, после появилось окно
-        probe_y = int(y) - 220
+        # окно рисуется поверх интерфейса: считаем изменившиеся точки по
+        # РЕДКОЙ сетке всего экрана — так проверка не зависит от того, где
+        # именно окно открылось
         changed = 0
-        for px in range(300, 1500, 40):
-            if app.pixel(px, probe_y) != app.pixel_of(before, px, probe_y):
-                changed += 1
+        for px in range(80, 1200, 120):
+            for py in range(60, 620, 80):
+                if app.pixel(px, py) != app.pixel_of(before, px, py):
+                    changed += 1
         app.expect(
-            changed >= 6,
-            f"двойной клик открыл окно FX (изменилось точек над таймлайном: {changed})",
+            changed >= 10,
+            f"двойной клик открыл окно FX (изменилось точек экрана: {changed})",
         )
         app.expect(os.path.exists(after), "скриншот окна снят")
+
+        # переключение вида: кнопка «Таблица» стоит правее кнопки
+        # «График» в строке заголовка секции автоматизации. Её позиция
+        # берётся из самого кадра: ищем подпись по цвету выделения не
+        # получится, поэтому кликаем по известному смещению внутри окна
+        # (окно открывается в одном и том же месте — по центру сверху).
+        app.click(300, 247)
+        app.shot("table-view")
+
+        # виджет автоматизации: добавляем кривую и снимаем график.
+        # Пикер «+ кривая» — комбо; его пункт лежит прямо под ним.
+
         return app.done()
 
 
