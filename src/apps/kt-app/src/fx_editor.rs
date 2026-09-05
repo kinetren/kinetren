@@ -10,30 +10,66 @@ use eframe::egui;
 use kt_model::*;
 
 pub struct FxEditor {
+    /// Якорь окна: событие, по которому его открыли (его id — id окна).
     pub clip: ClipId,
+    /// Все цепочки, которые показывает окно: якорь и его link-партнёры
+    /// (Р.33 п.2 — «для одного и того же события с примагниченными треками
+    /// можно и сразу все chain в одном окне давать»).
+    pub members: Vec<ClipId>,
     pub picker_query: String,
-    pub backup: Vec<FxInstance>,
-    /// Кривые автоматизации на момент открытия (Cancel возвращает всё).
-    pub backup_auto: Vec<Vec<kt_model::ParamCurve>>,
+    /// Состояние КАЖДОЙ цепочки на момент открытия — «Отмена» откатывает
+    /// всё окно, а не только якорь.
+    pub backup: Vec<(ClipId, Vec<FxInstance>, Vec<Vec<kt_model::ParamCurve>>, Vec<bool>, bool)>,
     pub gesture: u64,
-    pub selected: usize,
+    /// Выбранный слот в каждой цепочке.
+    pub selected: std::collections::HashMap<ClipId, usize>,
     pub open: bool,
 }
 
+impl FxEditor {
+    fn sel(&mut self, id: ClipId) -> &mut usize {
+        self.selected.entry(id).or_default()
+    }
+}
+
 impl KtApp {
+    /// Открыть окно FX. Окно, которое уже показывает эту цепочку (своим
+    /// якорем или как партнёра), второй раз не открывается: у A/V-пары
+    /// одно окно на обе дорожки.
     pub fn open_fx_editor(&mut self, clip: ClipId) {
-        if self.fx_editors.iter().any(|e| e.clip == clip) {
+        if self.fx_editors.iter().any(|e| e.members.contains(&clip)) {
             return;
         }
-        let Some(c) = self.model.clip(clip) else { return };
+        let Some(c) = self.model.clip(clip).cloned() else { return };
+        let members: Vec<ClipId> = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .filter(|m| m.id == clip || (c.link_group.is_some() && m.link_group == c.link_group))
+            // якорь первым, дальше по виду и id — порядок стабилен
+            .map(|m| (m.id != clip, m.kind == ClipKind::Audio, m.id.0, m.id))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|(_, _, _, id)| id)
+            .collect();
         self.gesture_counter += 1;
+        let backup = members
+            .iter()
+            .filter_map(|id| self.model.clip(*id))
+            .map(|m| (m.id, m.fx.clone(), m.fx_auto.clone(), m.fx_bypass.clone(), m.fx_off))
+            .collect();
+        let selected = members
+            .iter()
+            .filter_map(|id| self.model.clip(*id).map(|m| (m.id, m.fx.len().saturating_sub(1))))
+            .collect();
         self.fx_editors.push(FxEditor {
             clip,
+            members,
             picker_query: String::new(),
-            backup: c.fx.clone(),
-            backup_auto: c.fx_auto.clone(),
+            backup,
             gesture: self.gesture_counter,
-            selected: c.fx.len().saturating_sub(1),
+            selected,
             open: true,
         });
     }
@@ -42,8 +78,8 @@ impl KtApp {
         self.apply_coalesced(Command::SetFx { id: clip, fx }, gesture);
     }
 
-    /// Кривые автоматизации (Р.30): тот же gesture, что у SetFx — один
-    /// undo-шаг на сессию окна.
+    /// Кривые автоматизации: тот же gesture, что у SetFx — один undo-шаг
+    /// на сессию окна.
     pub(crate) fn set_fx_auto_coalesced(
         &mut self,
         clip: ClipId,
@@ -70,7 +106,9 @@ impl KtApp {
         // подсказки из ui-замыканий (там `self` занят) — в накопитель
         // кадра, потом в hover_hint: попапов нет (п.14 р.8)
         let mut hover_out: Option<String> = None;
-        let Some(clip) = self.model.clip(ed.clip).cloned() else {
+        // окно живёт, пока жива хоть одна его цепочка
+        ed.members.retain(|id| self.model.clip(*id).is_some());
+        let Some(anchor) = self.model.clip(ed.clip).cloned() else {
             ed.open = false;
             return;
         };
@@ -84,32 +122,36 @@ impl KtApp {
                 (c.id.0, if c.name.is_empty() { format!("C{}", c.id.0) } else { c.name.clone() })
             })
             .collect();
-        let title = crate::tf!(
-            k::fx::TITLE,
-            if clip.kind == ClipKind::Audio {
-                tr(k::fx::KIND_AUDIO)
-            } else {
-                tr(k::fx::KIND_VIDEO)
-            },
-            ed.clip.0
-        );
-        let mut fx = clip.fx.clone();
-        let mut bypass = clip.fx_bypass.clone();
-        bypass.resize(fx.len(), false);
-        // кривые автоматизации (Р.30) двигаются ПАРАЛЛЕЛЬНО слотам
-        let mut auto = clip.fx_auto.clone();
-        auto.resize(fx.len(), Vec::new());
-        let mut changed = false;
-        let mut auto_changed = false;
-        let mut bypass_changed = false;
-        let mut chain_on = !clip.fx_off;
-        let mut off_changed = false;
+        let title = if ed.members.len() > 1 {
+            crate::tf!(k::fx::TITLE_GROUP, ed.clip.0)
+        } else {
+            crate::tf!(
+                k::fx::TITLE,
+                if anchor.kind == ClipKind::Audio {
+                    tr(k::fx::KIND_AUDIO)
+                } else {
+                    tr(k::fx::KIND_VIDEO)
+                },
+                ed.clip.0
+            )
+        };
         let playhead = self.player.transport.playhead();
-        // буфер огибающих живёт в приложении; в окно отдаём его на время
-        // кадра, чтобы не держать &mut self внутри ui-замыкания
+        // буферы живут в приложении; в окно отдаём их на время кадра,
+        // чтобы не держать &mut self внутри ui-замыкания
         let mut env_clip = self.env_clipboard.clone();
         let mut fx_clip = self.fx_clipboard.clone();
+        // что окно наредактировало за кадр: применяем ПОСЛЕ отрисовки
+        struct Edited {
+            clip: ClipId,
+            fx: Option<Vec<FxInstance>>,
+            auto: Option<Vec<Vec<kt_model::ParamCurve>>>,
+            bypass: Option<Vec<bool>>,
+            off: Option<bool>,
+        }
+        let mut edits: Vec<Edited> = Vec::new();
+        let mut revert = false;
         let mut open = ed.open;
+        let members = ed.members.clone();
         egui::Window::new(title)
             .id(egui::Id::new(("fx", ed.clip)))
             .open(&mut open)
@@ -118,48 +160,85 @@ impl KtApp {
             .resizable(true)
             .vscroll(true)
             .show(ctx, |ui| {
-                // --- полоса цепочки: ОДИН виджет на события и морферы ----
-                let ch = crate::widgets::chain_strip(
-                    ui,
-                    ("fxchain", ed.clip.0),
-                    crate::widgets::ChainEdit {
-                        fx: &mut fx,
-                        bypass: &mut bypass,
-                        auto: Some(&mut auto),
-                        selected: &mut ed.selected,
-                        master_on: &mut chain_on,
-                    },
-                    clip.kind == ClipKind::Audio,
-                    &mut ed.picker_query,
-                    &mut fx_clip,
-                    clip.source_in,
-                    &mut hover_out,
-                );
-                changed |= ch.fx;
-                bypass_changed |= ch.bypass;
-                auto_changed |= ch.auto;
-                off_changed |= ch.master;
-                ui.separator();
-
-                // --- параметры выбранного слота ---------------------------------
-                if let Some(f) = fx.get_mut(ed.selected) {
-                    // параметры рисуются ОДНИМ кодом по спекам модели
-                    // (Р.33): диапазоны, шаг и единицы больше не могут
-                    // разойтись между окнами, а подписи идут из каталога
-                    changed |= draw_video_fx_params(ui, f, &cameras);
-                    // --- автоматизация параметров (Р.30, видео-слоты) ----
-                    auto_changed |= draw_fx_auto_section(
-                        ui,
-                        &clip,
-                        ed.selected,
-                        &fx[ed.selected],
-                        &mut auto[ed.selected],
-                        playhead,
-                        &mut env_clip,
-                        &mut hover_out,
+                for (n, id) in members.iter().enumerate() {
+                    let Some(clip) = self.model.clip(*id).cloned() else { continue };
+                    let mut fx = clip.fx.clone();
+                    let mut bypass = clip.fx_bypass.clone();
+                    bypass.resize(fx.len(), false);
+                    let mut auto = clip.fx_auto.clone();
+                    auto.resize(fx.len(), Vec::new());
+                    let mut chain_on = !clip.fx_off;
+                    let mut ch = crate::widgets::ChainChanged::default();
+                    let mut params_changed = false;
+                    let head = crate::tf!(
+                        k::fx::CHAIN_OF,
+                        if clip.kind == ClipKind::Audio {
+                            tr(k::fx::KIND_AUDIO)
+                        } else {
+                            tr(k::fx::KIND_VIDEO)
+                        },
+                        id.0
                     );
-                } else {
-                    ui.weak(tr(k::fx::CHAIN_EMPTY));
+                    // свёртка на цепочку: у пары видно обе, лишнюю можно
+                    // свернуть («можно дать возможность скрытия-переключения»)
+                    egui::CollapsingHeader::new(head)
+                        .id_salt(("fxgrp", id.0))
+                        .default_open(n == 0 || members.len() <= 2)
+                        .show(ui, |ui| {
+                            // выбранный слот и строку поиска берём в
+                            // локальные переменные: иначе два поля одного
+                            // и того же `ed` одолжены одновременно
+                            let mut sel_slot = *ed.selected.get(id).unwrap_or(&0);
+                            let mut query = std::mem::take(&mut ed.picker_query);
+                            ch = crate::widgets::chain_strip(
+                                ui,
+                                ("fxchain", id.0),
+                                crate::widgets::ChainEdit {
+                                    fx: &mut fx,
+                                    bypass: &mut bypass,
+                                    auto: Some(&mut auto),
+                                    selected: &mut sel_slot,
+                                    master_on: &mut chain_on,
+                                },
+                                clip.kind == ClipKind::Audio,
+                                &mut query,
+                                &mut fx_clip,
+                                clip.source_in,
+                                &mut hover_out,
+                            );
+                            ed.picker_query = query;
+                            ed.selected.insert(*id, sel_slot);
+                            let sel = sel_slot;
+                            if let Some(f) = fx.get_mut(sel) {
+                                // параметры — ОДНИМ кодом по спекам модели
+                                params_changed |= draw_video_fx_params(ui, f, &cameras);
+                                let mut auto_ch = false;
+                                if let Some(curves) = auto.get_mut(sel) {
+                                    auto_ch = draw_fx_auto_section(
+                                        ui,
+                                        &clip,
+                                        sel,
+                                        f,
+                                        curves,
+                                        playhead,
+                                        &mut env_clip,
+                                        &mut hover_out,
+                                    );
+                                }
+                                ch.auto |= auto_ch;
+                            } else {
+                                ui.weak(tr(k::fx::CHAIN_EMPTY));
+                            }
+                        });
+                    if ch.any() || params_changed {
+                        edits.push(Edited {
+                            clip: *id,
+                            fx: (ch.fx || params_changed).then_some(fx),
+                            auto: ch.auto.then_some(auto),
+                            bypass: ch.bypass.then_some(bypass),
+                            off: ch.master.then_some(!chain_on),
+                        });
+                    }
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -167,11 +246,7 @@ impl KtApp {
                         ed.open = false;
                     }
                     if ui.button(tr(k::fx::CANCEL)).clicked() {
-                        fx = ed.backup.clone();
-                        auto = ed.backup_auto.clone();
-                        auto.resize(fx.len(), Vec::new());
-                        changed = true;
-                        auto_changed = true;
+                        revert = true;
                         ed.open = false;
                     }
                 });
@@ -182,33 +257,43 @@ impl KtApp {
         if !open {
             ed.open = false;
         }
-        if changed {
-            self.set_fx_coalesced(ed.clip, fx, ed.gesture);
-        }
-        if auto_changed {
-            // ключи держим отсортированными (модель это валидирует)
-            for curves in &mut auto {
-                for c in curves.iter_mut() {
-                    c.keys.sort_by_key(|k| k.t.0);
-                }
-            }
-            self.set_fx_auto_coalesced(ed.clip, auto, ed.gesture);
-        }
         self.env_clipboard = env_clip;
         self.fx_clipboard = fx_clip;
-        if off_changed {
-            self.apply_coalesced(
-                Command::SetFxOff { id: ed.clip, off: !chain_on },
-                ed.gesture,
-            );
-        }
-        if bypass_changed {
-            // хвостовые false не сериализуются зря
-            let mut b = bypass;
-            while b.last() == Some(&false) {
-                b.pop();
+        if revert {
+            // «Отмена» откатывает ВСЁ окно: у пары обе цепочки
+            for (id, fx, auto, bypass, off) in ed.backup.clone() {
+                self.set_fx_coalesced(id, fx, ed.gesture);
+                self.set_fx_auto_coalesced(id, auto, ed.gesture);
+                self.apply_coalesced(Command::SetFxBypass { id, bypass }, ed.gesture);
+                self.apply_coalesced(Command::SetFxOff { id, off }, ed.gesture);
             }
-            self.apply_coalesced(Command::SetFxBypass { id: ed.clip, bypass: b }, ed.gesture);
+            return;
+        }
+        for e in edits {
+            if let Some(fx) = e.fx {
+                self.set_fx_coalesced(e.clip, fx, ed.gesture);
+            }
+            if let Some(mut auto) = e.auto {
+                // ключи держим отсортированными (модель это валидирует)
+                for curves in &mut auto {
+                    for c in curves.iter_mut() {
+                        c.keys.sort_by_key(|k| k.t.0);
+                    }
+                }
+                self.set_fx_auto_coalesced(e.clip, auto, ed.gesture);
+            }
+            if let Some(mut b) = e.bypass {
+                while b.last() == Some(&false) {
+                    b.pop(); // хвостовые false не сериализуются зря
+                }
+                self.apply_coalesced(
+                    Command::SetFxBypass { id: e.clip, bypass: b },
+                    ed.gesture,
+                );
+            }
+            if let Some(off) = e.off {
+                self.apply_coalesced(Command::SetFxOff { id: e.clip, off }, ed.gesture);
+            }
         }
     }
 }

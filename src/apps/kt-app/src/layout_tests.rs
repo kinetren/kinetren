@@ -3105,6 +3105,81 @@ fn t185_gpu_loss_notice_once() {
     assert_eq!(hits, 1, "предупреждение ровно одно: {texts:?}");
 }
 
+/// Тест 219 (Р.33 п.2, дословно: «для одного и того же события с
+/// примагниченными треками — можно и сразу все chain в одном окне давать,
+/// так проще должно быть. Ну можно дать возможность скрытия-переключения»).
+/// У A/V-пары теперь ОДНО окно с обеими цепочками в свёртках, а не два
+/// независимых окна, у каждого из которых своя кнопка «Отмена».
+#[test]
+fn t219_one_window_for_the_whole_link_group() {
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    let clip = |id: u64, kind: ClipKind, lane: u32| ClipEvent {
+        id: ClipId(id),
+        link_group: Some(GroupId(7)),
+        kind,
+        lane,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::Blur { radius: 8 }],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    p.clips.push(clip(1, ClipKind::Video, 0));
+    let mut a = clip(2, ClipKind::Audio, 0);
+    a.fx = vec![FxInstance::Gain { db: 0.0 }];
+    p.clips.push(a);
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+
+    // окно открыто по видео — оно же показывает и аудио-цепочку
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    assert_eq!(h.state().fx_editors.len(), 1, "окно одно");
+    assert_eq!(
+        h.state().fx_editors[0].members,
+        vec![ClipId(1), ClipId(2)],
+        "окно обязано вести обе цепочки пары"
+    );
+    // повторное открытие ПАРТНЁРА не плодит второе окно
+    h.state_mut().open_fx_editor(ClipId(2));
+    h.step();
+    assert_eq!(h.state().fx_editors.len(), 1, "у пары не должно быть двух окон");
+
+    // «Отмена» откатывает ОБЕ цепочки, а не только якорь
+    let app = h.state_mut();
+    let g = app.fx_editors[0].gesture;
+    app.set_fx_coalesced(ClipId(1), vec![FxInstance::Glow { strength: 1.0 }], g);
+    app.set_fx_coalesced(ClipId(2), vec![], g);
+    let backup = app.fx_editors[0].backup.clone();
+    assert_eq!(backup.len(), 2, "снимок обязан покрывать обе цепочки");
+    for (id, fx, auto, bypass, off) in backup {
+        app.set_fx_coalesced(id, fx, g);
+        app.set_fx_auto_coalesced(id, auto, g);
+        app.apply_coalesced(Command::SetFxBypass { id, bypass }, g);
+        app.apply_coalesced(Command::SetFxOff { id, off }, g);
+    }
+    assert!(
+        matches!(app.model.clip(ClipId(1)).unwrap().fx.as_slice(), [FxInstance::Blur { .. }]),
+        "видео-цепочка не откатилась"
+    );
+    assert!(
+        matches!(app.model.clip(ClipId(2)).unwrap().fx.as_slice(), [FxInstance::Gain { .. }]),
+        "аудио-цепочка не откатилась — окно вело только якорь"
+    );
+    h.step();
+}
+
 /// Тест 218 (Р.33 п.2, требование пользователя про поле «New source»:
 /// «хотелось бы чтобы можно было и dnd туда делать файла и dnd из сурсов
 /// проекта или выбор через открытие виджета медиа»). Плюс «Отмена» у

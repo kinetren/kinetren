@@ -289,6 +289,8 @@ slowedreverb = "slowed reverb warp 减速 混响 速度 回声"
 # Редактор FX клипа.
 [fx]
 title = "{0}特效 — 片段 {1}"
+title_group = "效果 — 事件 {0} 及其吸附轨道"
+chain_of = "{0} — 事件 {1}"
 kind_audio = "音频"
 kind_video = "视频"
 enable = "启用特效"

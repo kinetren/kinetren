@@ -289,6 +289,8 @@ slowedreverb = "slowed reverb warp إبطاء صدى سرعة"
 # Редактор FX клипа.
 [fx]
 title = "مؤثرات {0} — المقطع {1}"
+title_group = "المؤثرات — الحدث {0} ومساراته المرتبطة"
+chain_of = "{0} — الحدث {1}"
 kind_audio = "الصوت"
 kind_video = "الفيديو"
 enable = "تفعيل المؤثر"

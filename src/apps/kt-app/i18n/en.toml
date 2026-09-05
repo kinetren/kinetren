@@ -289,6 +289,8 @@ slowedreverb = "slowed reverb warp speed echo"
 # Редактор FX клипа.
 [fx]
 title = "{0} effects — clip {1}"
+title_group = "Effects — event {0} and its linked tracks"
+chain_of = "{0} — clip {1}"
 kind_audio = "Audio"
 kind_video = "Video"
 enable = "Enable the effect"

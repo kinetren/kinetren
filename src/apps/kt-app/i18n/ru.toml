@@ -289,6 +289,8 @@ slowedreverb = "замедление реверб слоуед slowed reverb war
 # Редактор FX клипа.
 [fx]
 title = "{0} эффекты — клип {1}"
+title_group = "Эффекты — событие {0} и примагниченные дорожки"
+chain_of = "{0} — событие {1}"
 kind_audio = "Аудио"
 kind_video = "Видео"
 enable = "Включить эффект"

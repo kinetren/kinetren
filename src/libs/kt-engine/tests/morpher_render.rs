@@ -106,7 +106,12 @@ fn t36_effect_batch_is_live() {
         start: Tick(0),
         duration: Tick(90 * 1500),
         targets: vec![ClipId(1)],
-        kind: MorphKind::EffectBatch { video_fx: vec![], audio_fx: vec![gain.clone()] },
+        kind: MorphKind::EffectBatch {
+            video_fx: vec![],
+            audio_fx: vec![gain.clone()],
+            video_bypass: vec![],
+            audio_bypass: vec![],
+        },
         enabled: true,
     });
     p.morph_lanes = 1;
