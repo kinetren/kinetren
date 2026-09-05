@@ -32,6 +32,9 @@ struct AudioClip {
     gain: f32,
     media: kt_model::MediaId,
     fx: Vec<kt_model::FxInstance>,
+    /// Кривые автоматизации клипа в SOURCE-домене (Р.33): вход для
+    /// процессора и для расчёта окна источника.
+    auto: kt_fx::AutoProfiles,
     reversed: bool,
     /// Окна кроссфейда из переходов (Р.24, п.136), [w0, w1) в кадрах:
     /// клип — incoming (нарастает √t) / outgoing (затухает √(1−t)).
@@ -134,7 +137,14 @@ impl AudioRenderer {
                 let start = c.start.to_audio_frames();
                 let end = (c.start + c.duration).to_audio_frames();
                 let active = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
-                let tail = kt_fx::chain_tail(&active).to_audio_frames();
+                // кривые клипа в SOURCE-домен: аудио-поток дальше видит
+                // только числа (Р.33)
+                let auto = kt_fx::AutoProfiles::from_curves(
+                    &c.active_fx_auto(),
+                    c.source_in.to_audio_frames(),
+                    (end - start).max(1),
+                );
+                let tail = kt_fx::chain_tail(&active, &auto).to_audio_frames();
                 AudioClip {
                     id: c.id,
                     start,
@@ -145,6 +155,7 @@ impl AudioRenderer {
                     gain: db_to_linear(c.gain_db),
                     media: c.media,
                     fx: active,
+                    auto,
                     reversed: c.reversed,
                     fade_in: None,
                     fade_out: None,
@@ -190,7 +201,7 @@ impl AudioRenderer {
     /// стора — аудио-render-потоком — после каждой пересборки графа).
     pub fn sync_fx(&self, store: &mut crate::fxstore::FxStateStore) {
         for c in &self.clips {
-            store.sync_clip(c.id, &c.fx, c.source_in, c.end - c.start);
+            store.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.end - c.start);
         }
         let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();
         store.retain_clips(&|id| alive.contains(&id));
@@ -415,7 +426,8 @@ impl AudioRenderer {
         let clip_len = clip.end - clip.start;
         let material = -clip.head_ext..clip_len + clip.tail_ext;
         let src_window_end = clip.source_in
-            + kt_fx::chain_source_window_ext(&clip.fx, clip_len, material.clone(), material).end;
+            + kt_fx::chain_source_window_ext(&clip.fx, &clip.auto, clip_len, material.clone(), material)
+                .end;
         let media = clip.media;
         let mut pull_underruns = 0u64;
         let mut warmup_misses = 0u64;
@@ -523,8 +535,8 @@ impl AudioRenderer {
                 // FX+реверс: окно потребления зеркалится внутри ПОЛНОГО окна;
                 // ручки отключены (п.136) — from/to здесь совпадают с телом
                 let len = c.end - c.start;
-                let total = kt_fx::chain_source_window(&c.fx, len, 0..len).end;
-                let w = kt_fx::chain_source_window(&c.fx, len, (from - c.start)..(to - c.start));
+                let total = kt_fx::chain_source_window(&c.fx, &c.auto, len, 0..len).end;
+                let w = kt_fx::chain_source_window(&c.fx, &c.auto, len, (from - c.start)..(to - c.start));
                 (c.source_in + (total - w.end).max(0), c.source_in + (total - w.start).max(1))
             } else {
                 // с FX: варп потребляет источник по rate_integral, а не
@@ -535,6 +547,7 @@ impl AudioRenderer {
                 let material = -c.head_ext..len + c.tail_ext;
                 let w = kt_fx::chain_source_window_ext(
                     &c.fx,
+                    &c.auto,
                     len,
                     material,
                     (from - c.start)..(to - c.start),

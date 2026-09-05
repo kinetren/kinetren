@@ -1128,7 +1128,7 @@ fn clip_from_otio(
     while fx_auto.last().is_some_and(|v| v.is_empty()) {
         fx_auto.pop(); // хвост без кривых не сериализуем (форма модели)
     }
-    let ev = ClipEvent {
+    let mut ev = ClipEvent {
         id,
         link_group: meta.as_ref().and_then(|m| m.link_group).map(GroupId),
         kind,
@@ -1144,6 +1144,9 @@ fn clip_from_otio(
         fx_auto,
         fx_bypass: bypass,
     };
+    // кейфреймы slowed&reverb старого образца — в общий механизм (Р.33):
+    // собственного домена у них больше нет
+    kt_model::migrate_legacy_slowed(&mut ev);
     (ev, ex)
 }
 

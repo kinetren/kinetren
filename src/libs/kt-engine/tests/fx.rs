@@ -10,7 +10,6 @@
 
 use kt_engine::{AudioRenderer, DirectFetcher, FxStateStore};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
-use kt_model::SlowedKeyframe;
 use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 
@@ -44,6 +43,35 @@ fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Proje
         fx,
         opacity: 1.0,
     });
+    p.validate().unwrap();
+    p
+}
+
+/// Кривая скорости в НОВОМ домене (Р.33): точки (доля материала, rate)
+/// переводятся в тики материала клипа `0..dur_frames` с `source_in = 0`.
+fn rate_curve(points: &[(f64, f64)], dur_frames: i64) -> Vec<Vec<ParamCurve>> {
+    vec![vec![ParamCurve {
+        param: "rate".into(),
+        ease: false,
+        keys: points
+            .iter()
+            .map(|(s, r)| AutoKey {
+                t: Tick::from_audio_frames((s * dur_frames as f64).round() as i64),
+                v: *r,
+            })
+            .collect(),
+    }]]
+}
+
+/// Проект с автоматизацией на единственном слоте.
+fn fx_project_auto(
+    fx: Vec<FxInstance>,
+    auto: Vec<Vec<ParamCurve>>,
+    pattern_path: &str,
+    dur_frames: i64,
+) -> Project {
+    let mut p = fx_project(fx, pattern_path, dur_frames);
+    p.clips[0].fx_auto = auto;
     p.validate().unwrap();
     p
 }
@@ -281,12 +309,6 @@ fn t4_automation_changes_rate_over_time() {
     // профилю: на выходном времени τ звучит rate(S(τ)). Чек-точки выходного
     // времени вычисляются через T(s) = output_time_for_source.
     let dur = 40 * AUDIO_SAMPLE_RATE as i64;
-    let automation = vec![
-        SlowedKeyframe { t: 0.20, rate: 1.0, mix: 0.0 },
-        SlowedKeyframe { t: 0.40, rate: 0.5, mix: 0.0 },
-        SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 },
-        SlowedKeyframe { t: 0.65, rate: 1.0, mix: 0.0 },
-    ];
     let fx = vec![FxInstance::SlowedReverb {
         rate: 1.0,
         mix: 0.0,
@@ -294,9 +316,14 @@ fn t4_automation_changes_rate_over_time() {
         damp: 0.32,
         decay: 0.58,
         wet_gain: 0.95,
-        automation,
+        automation: vec![],
     }];
-    let p = fx_project(fx, "synth:sine:240", dur);
+    let p = fx_project_auto(
+        fx,
+        rate_curve(&automation_rate_profile(), dur),
+        "synth:sine:240",
+        dur,
+    );
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Sine { hz: 240.0 });
     let mut store = FxStateStore::new();
@@ -308,6 +335,7 @@ fn t4_automation_changes_rate_over_time() {
     let win = AUDIO_SAMPLE_RATE as usize; // окно 1 c
     // выходные позиции чек-точек — через T(s) от source-позиций профиля
     let t_of_s = |s: f64| kt_fx::output_time_for_source(1.0, &automation_rate_profile(), s);
+    // (профиль здесь и в кривой клипа — один и тот же)
     let checks = [
         (0.10, 1.0),          // материал до первой точки
         (t_of_s(0.30), 0.75), // середина спада (материал s=0.30)
@@ -326,34 +354,19 @@ fn t4_automation_changes_rate_over_time() {
     }
 }
 
-fn automation_rate_profile() -> Vec<SlowedKeyframe> {
-    vec![
-        SlowedKeyframe { t: 0.20, rate: 1.0, mix: 0.0 },
-        SlowedKeyframe { t: 0.40, rate: 0.5, mix: 0.0 },
-        SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 },
-        SlowedKeyframe { t: 0.65, rate: 1.0, mix: 0.0 },
-    ]
+fn automation_rate_profile() -> Vec<(f64, f64)> {
+    vec![(0.20, 1.0), (0.40, 0.5), (0.50, 0.5), (0.65, 1.0)]
 }
 
-fn automation_probe() -> &'static [SlowedKeyframe] {
-    use std::sync::OnceLock;
-    static A: OnceLock<Vec<SlowedKeyframe>> = OnceLock::new();
-    A.get_or_init(|| {
-        vec![
-            SlowedKeyframe { t: 0.2, rate: 1.0, mix: 0.0 },
-            SlowedKeyframe { t: 0.3, rate: 0.35, mix: 0.0 },
-            SlowedKeyframe { t: 0.7, rate: 0.6, mix: 0.0 },
-            SlowedKeyframe { t: 0.8, rate: 1.0, mix: 0.0 },
-        ]
-    })
+fn automation_probe() -> &'static [(f64, f64)] {
+    &[(0.2, 1.0), (0.3, 0.35), (0.7, 0.6), (0.8, 1.0)]
 }
 
 #[test]
 fn t4_automation_consumes_source_by_integral() {
     // «Оборванный конец»: при duration = src/avg_rate источник обязан быть
     // дочитан до конца (± задержка ресемплера), а не до avg-доли константы.
-    let automation = automation_probe().to_vec();
-    let avg = kt_fx::avg_rate(1.0, &automation);
+    let avg = kt_fx::avg_rate(1.0, automation_probe());
     let dur = 20 * AUDIO_SAMPLE_RATE as i64;
     let fx = vec![FxInstance::SlowedReverb {
         rate: 1.0,
@@ -362,9 +375,9 @@ fn t4_automation_consumes_source_by_integral() {
         damp: 0.32,
         decay: 0.58,
         wet_gain: 0.95,
-        automation,
+        automation: vec![],
     }];
-    let p = fx_project(fx, "synth:ramp", dur);
+    let p = fx_project_auto(fx, rate_curve(automation_probe(), dur), "synth:ramp", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Ramp);
     let mut store = FxStateStore::new();
@@ -398,21 +411,12 @@ fn t4_automation_consumes_source_by_integral() {
 #[test]
 fn t31_keyframes_anchor_to_source_material() {
     let dur = 20 * AUDIO_SAMPLE_RATE as i64; // L, кадры
-    let profile_a = vec![
-        SlowedKeyframe { t: 0.40, rate: 1.0, mix: 0.0 },
-        SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 },
-        SlowedKeyframe { t: 0.70, rate: 0.5, mix: 0.0 },
-        SlowedKeyframe { t: 0.75, rate: 1.0, mix: 0.0 },
-    ];
-    let mut profile_b = vec![
-        SlowedKeyframe { t: 0.10, rate: 1.0, mix: 0.0 },
-        SlowedKeyframe { t: 0.18, rate: 2.0, mix: 0.0 },
-        SlowedKeyframe { t: 0.26, rate: 2.0, mix: 0.0 },
-        SlowedKeyframe { t: 0.34, rate: 1.0, mix: 0.0 },
-    ];
-    profile_b.extend(profile_a.iter().cloned());
+    let profile_a: Vec<(f64, f64)> = vec![(0.40, 1.0), (0.50, 0.5), (0.70, 0.5), (0.75, 1.0)];
+    let mut profile_b: Vec<(f64, f64)> =
+        vec![(0.10, 1.0), (0.18, 2.0), (0.26, 2.0), (0.34, 1.0)];
+    profile_b.extend(profile_a.iter().copied());
 
-    let render = |automation: Vec<SlowedKeyframe>| -> Vec<f32> {
+    let render = |profile: Vec<(f64, f64)>| -> Vec<f32> {
         let fx = vec![FxInstance::SlowedReverb {
             rate: 1.0,
             mix: 0.0, // ramp не должен загрязняться ревербом
@@ -420,9 +424,9 @@ fn t31_keyframes_anchor_to_source_material() {
             damp: 0.32,
             decay: 0.58,
             wet_gain: 0.95,
-            automation,
+            automation: vec![],
         }];
-        let p = fx_project(fx, "synth:ramp", dur);
+        let p = fx_project_auto(fx, rate_curve(&profile, dur), "synth:ramp", dur);
         let r = AudioRenderer::new(&p);
         let mut f = direct(AudioPattern::Ramp);
         let mut store = FxStateStore::new();
@@ -470,31 +474,132 @@ fn t31_keyframes_anchor_to_source_material() {
     assert!(xa > xb, "с ранним ускорением материал s=0.5 достигается РАНЬШЕ: xa={xa}, xb={xb}");
     let shift = (xa - xb) as f64 / dur as f64;
     // предсказание: T_A(0.5) − T_B(0.5)
-    let ta = {
-        let a = vec![
-            SlowedKeyframe { t: 0.40, rate: 1.0, mix: 0.0 },
-            SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 },
-            SlowedKeyframe { t: 0.70, rate: 0.5, mix: 0.0 },
-            SlowedKeyframe { t: 0.75, rate: 1.0, mix: 0.0 },
-        ];
-        kt_fx::output_time_for_source(1.0, &a, 0.5)
-    };
-    let tb = {
-        let mut b = vec![
-            SlowedKeyframe { t: 0.10, rate: 1.0, mix: 0.0 },
-            SlowedKeyframe { t: 0.18, rate: 2.0, mix: 0.0 },
-            SlowedKeyframe { t: 0.26, rate: 2.0, mix: 0.0 },
-            SlowedKeyframe { t: 0.34, rate: 1.0, mix: 0.0 },
-        ];
-        b.push(SlowedKeyframe { t: 0.40, rate: 1.0, mix: 0.0 });
-        b.push(SlowedKeyframe { t: 0.50, rate: 0.5, mix: 0.0 });
-        b.push(SlowedKeyframe { t: 0.70, rate: 0.5, mix: 0.0 });
-        b.push(SlowedKeyframe { t: 0.75, rate: 1.0, mix: 0.0 });
-        kt_fx::output_time_for_source(1.0, &b, 0.5)
-    };
+    let a: Vec<(f64, f64)> = vec![(0.40, 1.0), (0.50, 0.5), (0.70, 0.5), (0.75, 1.0)];
+    let mut b: Vec<(f64, f64)> = vec![(0.10, 1.0), (0.18, 2.0), (0.26, 2.0), (0.34, 1.0)];
+    b.extend(a.iter().copied());
+    let ta = kt_fx::output_time_for_source(1.0, &a, 0.5);
+    let tb = kt_fx::output_time_for_source(1.0, &b, 0.5);
     let pred = ta - tb;
     assert!(
         (shift - pred).abs() < 8192.0 / dur as f64,
         "сдвиг времени {shift:.5} должен совпадать с предсказанием карты {pred:.5}"
+    );
+}
+
+/// Тест 213 (Р.33 С1): АУДИО-параметры автоматизируются общим механизмом.
+/// До этого раунда кривые существовали только у видео-FX, а из аудио —
+/// лишь собственная механика slowed&reverb; громкость автоматизировать
+/// было нечем (требование пользователя: «нужна автоматизация всех
+/// параметров всех эффектов»).
+#[test]
+fn t213_audio_gain_follows_its_curve() {
+    let dur = 4 * AUDIO_SAMPLE_RATE as i64;
+    let fx = vec![FxInstance::Gain { db: 0.0 }];
+    // кривая громкости: тишина → 0 dB → тишина, ключи в тиках материала
+    let auto = vec![vec![ParamCurve {
+        param: "db".into(),
+        ease: false,
+        keys: vec![
+            AutoKey { t: Tick::from_audio_frames(0), v: -60.0 },
+            AutoKey { t: Tick::from_audio_frames(dur / 2), v: 0.0 },
+            AutoKey { t: Tick::from_audio_frames(dur), v: -60.0 },
+        ],
+    }]];
+    let p = fx_project_auto(fx, auto, "synth:sine:440", dur);
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Sine { hz: 440.0 });
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut out = vec![0f32; dur as usize * CH];
+    no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
+
+    let rms = |from: usize, n: usize| -> f64 {
+        let s: f64 = out[from * CH..(from + n) * CH].iter().map(|v| (*v as f64) * (*v as f64)).sum();
+        (s / (n * CH) as f64).sqrt()
+    };
+    let win = AUDIO_SAMPLE_RATE as usize / 4;
+    let head = rms(win / 2, win);
+    let mid = rms(dur as usize / 2 - win / 2, win);
+    let tail = rms(dur as usize - win * 2, win);
+    assert!(mid > head * 8.0, "громкость обязана расти к середине: {head:.4} → {mid:.4}");
+    assert!(mid > tail * 8.0, "и падать к концу: {mid:.4} → {tail:.4}");
+    // на самом пике — примерно исходная амплитуда синуса (0 dB): 0.5/√2.
+    // Окно узкое: широкое усредняет склон вокруг пика и занижает RMS, а
+    // сглаживание параметра (one-pole ~20 мс) чуть отстаёт от кривой —
+    // это не дефект, а то, ради чего оно и стоит (без него тут щёлкало бы)
+    let peak = rms(dur as usize / 2 - 375, 750);
+    assert!(
+        (peak - 0.3536).abs() < 0.03,
+        "в 0 dB ожидается исходный уровень, вышло {peak:.4}"
+    );
+
+    // без кривой звук байт-в-байт прежний (константный путь не тронут)
+    let plain = fx_project(vec![FxInstance::Gain { db: 0.0 }], "synth:sine:440", dur);
+    let r2 = AudioRenderer::new(&plain);
+    let mut f2 = direct(AudioPattern::Sine { hz: 440.0 });
+    let mut store2 = FxStateStore::new();
+    r2.sync_fx(&mut store2);
+    let mut out2 = vec![0f32; dur as usize * CH];
+    no_underruns(r2.render_frames_with(&mut f2, &mut store2, 0, &mut out2));
+    let src: Vec<f32> = (0..dur)
+        .flat_map(|i| {
+            let v = SyntheticSource::sample_at(AudioPattern::Sine { hz: 440.0 }, i, 0);
+            [v, v]
+        })
+        .collect();
+    assert_eq!(out2, src, "без кривой громкость не должна трогать сигнал вовсе");
+}
+
+/// Кейфреймы slowed&reverb старого образца переезжают в общий механизм
+/// (Р.33): собственного домена у них больше нет, но проект пользователя
+/// обязан звучать так же.
+#[test]
+fn t213_legacy_slowed_automation_migrates_to_curves() {
+    let dur = 20 * AUDIO_SAMPLE_RATE as i64;
+    let mut p = fx_project(
+        vec![FxInstance::SlowedReverb {
+            rate: 1.0,
+            mix: 0.0,
+            reverb_delay_ms: 85.0,
+            damp: 0.32,
+            decay: 0.58,
+            wet_gain: 0.95,
+            automation: vec![
+                SlowedKeyframe { t: 0.2, rate: 1.0, mix: 0.0 },
+                SlowedKeyframe { t: 0.8, rate: 0.5, mix: 0.0 },
+            ],
+        }],
+        "synth:ramp",
+        dur,
+    );
+    assert!(kt_model::migrate_legacy_slowed(&mut p.clips[0]), "миграция обязана сработать");
+    let c = &p.clips[0];
+    // легаси-поле опустело, кривые встали в тиках материала
+    assert!(
+        matches!(&c.fx[0], FxInstance::SlowedReverb { automation, .. } if automation.is_empty()),
+        "старое поле обязано опустеть — иначе оно уедет обратно в файл"
+    );
+    let rate = c.fx_auto[0].iter().find(|k| k.param == "rate").expect("кривая rate");
+    assert_eq!(
+        rate.keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![
+            (0.2 * c.duration.0 as f64).round() as i64,
+            (0.8 * c.duration.0 as f64).round() as i64
+        ],
+        "доли материала обязаны стать тиками материала"
+    );
+    assert!(c.fx_auto[0].iter().any(|k| k.param == "mix"), "mix тоже переезжает");
+    // и проект играет: профиль скорости продолжает действовать
+    p.validate().unwrap();
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Ramp);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut out = vec![0f32; dur as usize * CH];
+    no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
+    let end_src = out[(dur as usize - 1) * CH] as f64 / 1e-6;
+    assert!(
+        end_src < dur as f64 * 0.95,
+        "замедление обязано остаться: съедено {end_src:.0} из {dur}"
     );
 }

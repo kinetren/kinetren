@@ -103,7 +103,28 @@ fn golden_project() -> Project {
             gain_db: 0.0,
             reversed: false,
             fx_bypass: vec![],
-            fx_auto: vec![],
+            // автоматизация slowed — общими кривыми (Р.33): ключи в тиках
+            // МАТЕРИАЛА. Доли 0.3/0.7 прежнего домена при source_in = 0 и
+            // длине 2 с дают ровно эти тики, поэтому звук байт-в-байт
+            // прежний и GOLDEN_AUDIO не перегенерировался
+            fx_auto: vec![vec![
+                ParamCurve {
+                    param: "rate".into(),
+                    ease: false,
+                    keys: vec![
+                        AutoKey { t: Tick(2 * sec * 3 / 10), v: 1.0 },
+                        AutoKey { t: Tick(2 * sec * 7 / 10), v: 0.5 },
+                    ],
+                },
+                ParamCurve {
+                    param: "mix".into(),
+                    ease: false,
+                    keys: vec![
+                        AutoKey { t: Tick(2 * sec * 3 / 10), v: 0.4 },
+                        AutoKey { t: Tick(2 * sec * 7 / 10), v: 0.1 },
+                    ],
+                },
+            ]],
             fx: vec![FxInstance::SlowedReverb {
                 rate: 0.7,
                 mix: 0.4,
@@ -111,10 +132,7 @@ fn golden_project() -> Project {
                 damp: 0.32,
                 decay: 0.58,
                 wet_gain: 0.95,
-                automation: vec![
-                    SlowedKeyframe { t: 0.3, rate: 1.0, mix: 0.4 },
-                    SlowedKeyframe { t: 0.7, rate: 0.5, mix: 0.1 },
-                ],
+                automation: vec![],
             }],
             opacity: 1.0,
         },

@@ -10,7 +10,7 @@ use kt_fx::{
     ClipProcessor, chain_source_window, chain_source_window_ext, output_time_for_source,
     source_progress,
 };
-use kt_model::{FxInstance, SlowedKeyframe};
+use kt_model::FxInstance;
 
 const CH: usize = 2;
 
@@ -36,11 +36,12 @@ fn read_span(p: &mut ClipProcessor, from: i64, to: i64) -> Vec<f32> {
     out
 }
 
+
 #[test]
 fn t138_plain_chain_reads_handles_and_gates_at_material_end() {
     let fx = [FxInstance::Gain { db: 0.0 }];
     let (src_in, len, head, tail) = (10_000i64, 4_096i64, 1_024i64, 2_048i64);
-    let mut p = ClipProcessor::new(&fx, src_in, len);
+    let mut p = ClipProcessor::new(&fx, &Default::default(), src_in, len);
     p.set_material_ext(head, tail);
 
     let out = read_span(&mut p, -head, len + tail + 512);
@@ -58,7 +59,7 @@ fn t138_default_material_keeps_old_gate() {
     // без set_material_ext поведение прежнее: dry-гейт ровно на clip_len
     let fx = [FxInstance::Gain { db: 0.0 }];
     let (src_in, len) = (5_000i64, 2_000i64);
-    let mut p = ClipProcessor::new(&fx, src_in, len);
+    let mut p = ClipProcessor::new(&fx, &Default::default(), src_in, len);
     let out = read_span(&mut p, 0, len + 512);
     assert_eq!(out[((len - 1) as usize) * CH], (src_in + len - 1) as f32 * 1e-6);
     assert_eq!(out[(len as usize) * CH], 0.0, "beyond clip_len dry must be zero");
@@ -71,8 +72,8 @@ fn t138_source_map_extrapolates_left_linearly() {
     assert_eq!(output_time_for_source(0.5, &[], -0.125), -0.25);
     // с автоматизацией: слева — скорость ПЕРВОГО сегмента (за краями крайние)
     let kfs = [
-        SlowedKeyframe { t: 0.0, rate: 0.5, mix: 0.0 },
-        SlowedKeyframe { t: 1.0, rate: 2.0, mix: 0.0 },
+        (0.0, 0.5),
+        (1.0, 2.0),
     ];
     assert_eq!(source_progress(1.0, &kfs, -0.1), -0.05);
     assert_eq!(output_time_for_source(1.0, &kfs, -0.05), -0.1);
@@ -86,7 +87,7 @@ fn t138_warp_reads_left_handle_without_reset_glitches() {
     // не паникует, не даёт underrun'ов и продолжается непрерывно в тело
     let fx = [FxInstance::slowed_reverb(0.5, 0.0, 85.0)];
     let (src_in, len, head) = (48_000i64, 8_192i64, 2_048i64);
-    let mut p = ClipProcessor::new(&fx, src_in, len);
+    let mut p = ClipProcessor::new(&fx, &Default::default(), src_in, len);
     p.set_material_ext(head, 0);
     let mut out = vec![0f32; ((head + 4_096) as usize) * CH];
     let mut underruns = 0u64;
@@ -111,15 +112,15 @@ fn t138_source_window_ext_and_compat() {
     for fx in [&warp[..], &plain[..]] {
         for local in [0..1024i64, 3_000..9_000, 7_000..8_000] {
             assert_eq!(
-                chain_source_window(fx, 8_192, local.clone()),
-                chain_source_window_ext(fx, 8_192, 0..8_192, local),
+                chain_source_window(fx, &Default::default(), 8_192, local.clone()),
+                chain_source_window_ext(fx, &Default::default(), 8_192, 0..8_192, local),
             );
         }
     }
     // ручки: окно источника уходит в отрицательные смещения (левее source_in);
     // pre-roll клампится началом материала, не нулём
-    let w = chain_source_window_ext(&plain, 8_192, -2_048..10_240, -2_048..-1_000);
+    let w = chain_source_window_ext(&plain, &Default::default(), 8_192, -2_048..10_240, -2_048..-1_000);
     assert_eq!(w, -2_048..-1_000, "material start bounds the window, no zero clamp");
-    let ww = chain_source_window_ext(&warp, 8_192, -2_048..10_240, -2_048..0);
+    let ww = chain_source_window_ext(&warp, &Default::default(), 8_192, -2_048..10_240, -2_048..0);
     assert!(ww.start < 0, "warp window may reach left of source_in for handles");
 }

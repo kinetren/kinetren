@@ -26,6 +26,7 @@ impl FxStateStore {
         &mut self,
         id: ClipId,
         fx: &[FxInstance],
+        auto: &kt_fx::AutoProfiles,
         src_in_frames: i64,
         clip_len_frames: i64,
     ) {
@@ -37,10 +38,14 @@ impl FxStateStore {
         match self.map.get_mut(&id) {
             Some(p) if p.fingerprint() == fp => {
                 p.set_clip_len(clip_len_frames);
+                // кривые доносятся ДО параметров: apply_params смотрит,
+                // у каких слотов есть кривая (громкость, скорость)
+                p.set_auto(auto);
                 p.apply_params(fx, false);
             }
             _ => {
-                self.map.insert(id, ClipProcessor::new(fx, src_in_frames, clip_len_frames));
+                self.map
+                    .insert(id, ClipProcessor::new(fx, auto, src_in_frames, clip_len_frames));
             }
         }
     }

@@ -481,6 +481,12 @@ fn raw_trim_start(c: &mut ClipEvent, new_start: Tick) {
 pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
     let mut report = UpgradeReport::default();
 
+    // кейфреймы slowed&reverb старого образца — в общий механизм (Р.33):
+    // легаси-проект их точно несёт в собственном домене
+    for c in &mut p.clips {
+        crate::project::migrate_legacy_slowed(c);
+    }
+
     // Переслаивание (Р.28): старый проект открывается КАК БЫЛ — перекрытия
     // остаются перекрытиями, дорожки не плодятся, ничего не режется.
     // Решение пользователя после того, как его настоящий проект (1952 клипа,

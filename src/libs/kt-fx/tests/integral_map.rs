@@ -1,14 +1,31 @@
 //! Диагностика: позиция источника на выходе vs интеграл профиля.
 use kt_fx::{CH, ClipProcessor, source_progress};
-use kt_model::{FxInstance, SlowedKeyframe};
+use kt_model::FxInstance;
+
+
+/// Профиль (доля материала, rate) → кривые клипа и профили kt-fx.
+fn profiles(points: &[(f64, f64)], len_frames: i64) -> kt_fx::AutoProfiles {
+    let curves = vec![vec![kt_model::ParamCurve {
+        param: "rate".into(),
+        ease: false,
+        keys: points
+            .iter()
+            .map(|(s, r)| kt_model::AutoKey {
+                t: kt_time::Tick::from_audio_frames((s * len_frames as f64).round() as i64),
+                v: *r,
+            })
+            .collect(),
+    }]];
+    kt_fx::AutoProfiles::from_curves(&curves, 0, len_frames)
+}
 
 #[test]
 fn clip_processor_follows_integral_map() {
     let automation = vec![
-        SlowedKeyframe { t: 0.2, rate: 1.0, mix: 0.0 },
-        SlowedKeyframe { t: 0.3, rate: 0.35, mix: 0.0 },
-        SlowedKeyframe { t: 0.7, rate: 0.6, mix: 0.0 },
-        SlowedKeyframe { t: 0.8, rate: 1.0, mix: 0.0 },
+        (0.2, 1.0),
+        (0.3, 0.35),
+        (0.7, 0.6),
+        (0.8, 1.0),
     ];
     let fx = vec![FxInstance::SlowedReverb {
         rate: 1.0,
@@ -17,10 +34,11 @@ fn clip_processor_follows_integral_map() {
         damp: 0.32,
         decay: 0.58,
         wet_gain: 0.95,
-        automation: automation.clone(),
+        automation: vec![],
     }];
     let len = 20 * 48_000i64;
-    let mut p = ClipProcessor::new(&fx, 0, len);
+    let auto = profiles(&automation, len);
+    let mut p = ClipProcessor::new(&fx, &auto, 0, len);
     // источник = ramp (значение = номер кадра * 1e-6)
     let mut pull = |_k: kt_fx::PullKind, f0: i64, buf: &mut [f32]| {
         for (i, s) in buf.iter_mut().enumerate() {
@@ -45,10 +63,10 @@ fn clip_processor_follows_integral_map() {
 #[test]
 fn clip_processor_single_big_read_matches() {
     let automation = vec![
-        SlowedKeyframe { t: 0.2, rate: 1.0, mix: 0.0 },
-        SlowedKeyframe { t: 0.3, rate: 0.35, mix: 0.0 },
-        SlowedKeyframe { t: 0.7, rate: 0.6, mix: 0.0 },
-        SlowedKeyframe { t: 0.8, rate: 1.0, mix: 0.0 },
+        (0.2, 1.0),
+        (0.3, 0.35),
+        (0.7, 0.6),
+        (0.8, 1.0),
     ];
     let fx = vec![FxInstance::SlowedReverb {
         rate: 1.0,
@@ -57,10 +75,11 @@ fn clip_processor_single_big_read_matches() {
         damp: 0.32,
         decay: 0.58,
         wet_gain: 0.95,
-        automation: automation.clone(),
+        automation: vec![],
     }];
     let len = 20 * 48_000i64;
-    let mut p = ClipProcessor::new(&fx, 0, len);
+    let auto = profiles(&automation, len);
+    let mut p = ClipProcessor::new(&fx, &auto, 0, len);
     let mut pull = |_k: kt_fx::PullKind, f0: i64, buf: &mut [f32]| {
         for (i, s) in buf.iter_mut().enumerate() {
             *s = (f0 + (i / CH) as i64) as f32 * 1e-6;

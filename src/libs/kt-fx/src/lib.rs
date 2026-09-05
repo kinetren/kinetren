@@ -11,7 +11,7 @@
 //!   буферы; полный сброс — только reset() при разрыве непрерывности (e);
 //! - tail() сообщает хвост реверба — граф продлевает окно клипа (f).
 
-use kt_model::{FxInstance, SlowedKeyframe};
+use kt_model::FxInstance;
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
 use rubato::{
     Resampler, SincFixedOut, SincInterpolationParameters, SincInterpolationType, WindowFunction,
@@ -492,31 +492,41 @@ fn tail_frames_for(max_comb_len: f32, feedback: f32) -> Tick {
     Tick::from_audio_frames((max_comb_len.max(8.0) * (60.0 / db_per_pass)) as i64)
 }
 
-/// Значение rate в прогрессе t (линейная интерполяция, края зажаты).
-pub fn rate_at(base: f64, automation: &[SlowedKeyframe], t: f64) -> f64 {
-    interp(automation, t, base, |k| k.rate)
-}
+/// Профиль одного параметра в SOURCE-домене: (доля материала 0..1,
+/// значение). Строится из кривых клипа (`ParamCurve`, ключи в тиках
+/// материала) один раз при сборке процессора — дальше аудио-поток работает
+/// только с числами и ничего не аллоцирует.
+pub type ParamPoints = [(f64, f64)];
 
-/// Значение mix в прогрессе t.
-pub fn mix_at(base: f32, automation: &[SlowedKeyframe], t: f64) -> f32 {
-    interp(automation, t, base as f64, |k| k.mix as f64) as f32
-}
-
-fn interp(kfs: &[SlowedKeyframe], t: f64, base: f64, get: impl Fn(&SlowedKeyframe) -> f64) -> f64 {
-    if kfs.is_empty() {
+/// Значение профиля в позиции s (линейная интерполяция, края зажаты).
+/// `base` возвращается только у ПУСТОГО профиля: непустой перекрывает
+/// параметр целиком (семантика v1 — кривая главнее ручки).
+pub fn param_at(base: f64, points: &ParamPoints, s: f64, ease: bool) -> f64 {
+    if points.is_empty() {
         return base;
     }
-    if t <= kfs[0].t {
-        return get(&kfs[0]);
+    if s <= points[0].0 {
+        return points[0].1;
     }
-    for w in kfs.windows(2) {
-        if t <= w[1].t {
-            let span = (w[1].t - w[0].t).max(1e-12);
-            let a = (t - w[0].t) / span;
-            return get(&w[0]) * (1.0 - a) + get(&w[1]) * a;
+    for w in points.windows(2) {
+        if s <= w[1].0 {
+            let span = (w[1].0 - w[0].0).max(1e-12);
+            let mut a = (s - w[0].0) / span;
+            if ease {
+                a = a * a * (3.0 - 2.0 * a);
+            }
+            return w[0].1 * (1.0 - a) + w[1].1 * a;
         }
     }
-    get(&kfs[kfs.len() - 1])
+    points[points.len() - 1].1
+}
+
+/// Значение rate в позиции материала s. Профиль rate ВСЕГДА кусочно
+/// линеен: на этом стоят аналитические ln/expm1-формулы карты варпа, и
+/// сглаживание (`ease`) на нём игнорируется — иначе карта разошлась бы с
+/// фактическим потреблением источника.
+pub fn rate_at(base: f64, points: &ParamPoints, s: f64) -> f64 {
+    param_at(base, points, s, false)
 }
 
 // ---------------------------------------------------------------------------
@@ -535,8 +545,8 @@ fn interp(kfs: &[SlowedKeyframe], t: f64, base: f64, get: impl Fn(&SlowedKeyfram
 
 const RATE_CLAMP: (f64, f64) = (0.25, 32.0);
 
-fn eff_rate(base: f64, automation: &[SlowedKeyframe], s: f64) -> f64 {
-    rate_at(base, automation, s).clamp(RATE_CLAMP.0, RATE_CLAMP.1)
+fn eff_rate(base: f64, points: &ParamPoints, s: f64) -> f64 {
+    rate_at(base, points, s).clamp(RATE_CLAMP.0, RATE_CLAMP.1)
 }
 
 /// Δτ на сегменте [s0,s1] с линейным rate r0→r1: ∫ds/rate.
@@ -552,35 +562,35 @@ fn seg_ds(dt: f64, r0: f64, b: f64) -> f64 {
 
 /// Сегменты (s0, s1, r0, r1) профиля по source-домену; последний — хвост
 /// с константным rate до бесконечности (s1 = f64::INFINITY).
-fn segments(base: f64, kfs: &[SlowedKeyframe]) -> Vec<(f64, f64, f64, f64)> {
+fn segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     let cl = |r: f64| r.clamp(RATE_CLAMP.0, RATE_CLAMP.1);
-    if kfs.is_empty() {
+    if points.is_empty() {
         return vec![(0.0, f64::INFINITY, cl(base), cl(base))];
     }
-    let mut out = Vec::with_capacity(kfs.len() + 1);
-    let first = cl(kfs[0].rate);
-    if kfs[0].t > 0.0 {
-        out.push((0.0, kfs[0].t, first, first));
+    let mut out = Vec::with_capacity(points.len() + 1);
+    let first = cl(points[0].1);
+    if points[0].0 > 0.0 {
+        out.push((0.0, points[0].0, first, first));
     }
-    for w in kfs.windows(2) {
-        if w[1].t > w[0].t {
-            out.push((w[0].t, w[1].t, cl(w[0].rate), cl(w[1].rate)));
+    for w in points.windows(2) {
+        if w[1].0 > w[0].0 {
+            out.push((w[0].0, w[1].0, cl(w[0].1), cl(w[1].1)));
         }
     }
-    let last = cl(kfs[kfs.len() - 1].rate);
-    out.push((kfs[kfs.len() - 1].t, f64::INFINITY, last, last));
+    let last = cl(points[points.len() - 1].1);
+    out.push((points[points.len() - 1].0, f64::INFINITY, last, last));
     out
 }
 
 /// T(s): выходной прогресс (доли clip_len), при котором потреблена
 /// source-доля s. Строго возрастает. s < 0 — левая «ручка» перехода
 /// (п.138): линейная экстраполяция скоростью первого сегмента.
-pub fn output_time_for_source(base: f64, automation: &[SlowedKeyframe], s: f64) -> f64 {
+pub fn output_time_for_source(base: f64, points: &ParamPoints, s: f64) -> f64 {
     if s < 0.0 {
-        return s / segments(base, automation)[0].2;
+        return s / segments(base, points)[0].2;
     }
     let mut acc = 0.0;
-    for (s0, s1, r0, r1) in segments(base, automation) {
+    for (s0, s1, r0, r1) in segments(base, points) {
         if s <= s0 {
             break;
         }
@@ -600,13 +610,13 @@ pub fn output_time_for_source(base: f64, automation: &[SlowedKeyframe], s: f64) 
 /// t < 0 — левая «ручка» перехода, п.138: линейно скоростью первого
 /// сегмента, «за краями — крайние»). Материал ручек НЕ сдвигает
 /// нормировку автоматизации — знаменатель остаётся clip_len.
-pub fn source_progress(base: f64, automation: &[SlowedKeyframe], t: f64) -> f64 {
+pub fn source_progress(base: f64, points: &ParamPoints, t: f64) -> f64 {
     if t < 0.0 {
-        return t * segments(base, automation)[0].2;
+        return t * segments(base, points)[0].2;
     }
     let mut tau_acc = 0.0;
     let mut s_acc = 0.0;
-    for (s0, s1, r0, r1) in segments(base, automation) {
+    for (s0, s1, r0, r1) in segments(base, points) {
         let seg_span = s1 - s0;
         let seg_tau = if s1.is_finite() { seg_dt(seg_span, r0, r1) } else { f64::INFINITY };
         if tau_acc + seg_tau >= t {
@@ -621,8 +631,107 @@ pub fn source_progress(base: f64, automation: &[SlowedKeyframe], t: f64) -> f64 
 }
 
 /// Средняя скорость = потреблённая доля источника за весь клип: S(1).
-pub fn avg_rate(base: f64, automation: &[SlowedKeyframe]) -> f64 {
-    source_progress(base, automation, 1.0)
+pub fn avg_rate(base: f64, points: &ParamPoints) -> f64 {
+    source_progress(base, points, 1.0)
+}
+
+/// Кривые автоматизации КЛИПА, переведённые в SOURCE-домен (Р.33).
+///
+/// Ключи в модели живут в тиках материала; аудио-путь считает в долях
+/// материала (`s`), потому что на них построена карта варпа. Перевод
+/// делается ОДИН раз при сборке процессора, дальше аудио-поток видит
+/// только числа: ни аллокаций, ни обращений к модели в render-потоке.
+/// Кривая одного параметра слота: имя, сглаживание, точки (s, значение).
+#[derive(Debug, Clone, PartialEq)]
+struct SlotCurve {
+    param: String,
+    ease: bool,
+    points: Vec<(f64, f64)>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AutoProfiles {
+    /// По слоту цепочки — его кривые.
+    slots: Vec<Vec<SlotCurve>>,
+}
+
+impl AutoProfiles {
+    /// Из кривых клипа (`ClipEvent::active_fx_auto`) в доли материала.
+    /// `src_in_frames`/`clip_len_frames` — те же величины, которыми
+    /// нормировалась автоматизация slowed&reverb до Р.33, поэтому
+    /// профиль старых проектов численно совпадает с прежним.
+    pub fn from_curves(
+        auto: &[Vec<kt_model::ParamCurve>],
+        src_in_frames: i64,
+        clip_len_frames: i64,
+    ) -> AutoProfiles {
+        let len = clip_len_frames.max(1) as f64;
+        AutoProfiles {
+            slots: auto
+                .iter()
+                .map(|curves| {
+                    curves
+                        .iter()
+                        .filter(|c| !c.keys.is_empty())
+                        .map(|c| {
+                            // rate обязан остаться кусочно-линейным: на нём
+                            // стоят аналитические формулы карты варпа
+                            let ease = c.ease && c.param != "rate";
+                            let pts = c
+                                .keys
+                                .iter()
+                                .map(|k| {
+                                    let f = k.t.to_audio_frames() - src_in_frames;
+                                    (f as f64 / len, k.v)
+                                })
+                                .collect();
+                            SlotCurve { param: c.param.clone(), ease, points: pts }
+                        })
+                        .collect()
+                })
+                .collect(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots.iter().all(|s| s.is_empty())
+    }
+
+    /// Профиль параметра слота (пустой срез — кривой нет).
+    pub fn points(&self, slot: usize, param: &str) -> &ParamPoints {
+        self.slots
+            .get(slot)
+            .and_then(|s| s.iter().find(|c| c.param == param))
+            .map_or(&[], |c| c.points.as_slice())
+    }
+
+    fn ease(&self, slot: usize, param: &str) -> bool {
+        self.slots
+            .get(slot)
+            .and_then(|s| s.iter().find(|c| c.param == param))
+            .is_some_and(|c| c.ease)
+    }
+
+    /// Значение параметра слота в позиции материала s.
+    pub fn value(&self, slot: usize, param: &str, base: f64, s: f64) -> f64 {
+        param_at(base, self.points(slot, param), s, self.ease(slot, param))
+    }
+
+    /// Индекс слота с варпом и его профиль скорости — на нём стоит вся
+    /// аналитика источника (сколько материала съест клип).
+    fn warp_slot(fx: &[FxInstance]) -> Option<usize> {
+        fx.iter().position(|f| matches!(f, FxInstance::SlowedReverb { .. }))
+    }
+
+    /// Профиль скорости цепочки (пустой — варпа нет или он без кривой).
+    pub fn rate_points(&self, fx: &[FxInstance]) -> &ParamPoints {
+        Self::warp_slot(fx).map_or(&[], |i| self.points(i, "rate"))
+    }
+
+    /// Профиль mix цепочки — нужен, чтобы знать, звенит ли реверб.
+    pub fn mix_points(&self, fx: &[FxInstance]) -> &ParamPoints {
+        Self::warp_slot(fx).map_or(&[], |i| self.points(i, "mix"))
+    }
 }
 
 /// Скорость воспроизведения цепочки (1.0 = без варпа).
@@ -637,10 +746,12 @@ pub fn chain_rate(fx: &[FxInstance]) -> f64 {
 
 /// Средняя скорость цепочки с учётом автоматизации: определяет, сколько
 /// источника съедает клип (для source-окна и длительности).
-pub fn chain_avg_rate(fx: &[FxInstance]) -> f64 {
+pub fn chain_avg_rate(fx: &[FxInstance], auto: &AutoProfiles) -> f64 {
     fx.iter()
         .find_map(|f| match f {
-            FxInstance::SlowedReverb { rate, automation, .. } => Some(avg_rate(*rate, automation)),
+            FxInstance::SlowedReverb { rate, .. } => {
+                Some(avg_rate(*rate, auto.rate_points(fx)))
+            }
             _ => None,
         })
         .unwrap_or(1.0)
@@ -661,10 +772,11 @@ pub const WARP_SOURCE_MARGIN_FRAMES: i64 = 8192;
 /// тишина (регрессия п.13, тест 17).
 pub fn chain_source_window(
     fx: &[FxInstance],
+    auto: &AutoProfiles,
     clip_len_frames: i64,
     local: std::ops::Range<i64>,
 ) -> std::ops::Range<i64> {
-    chain_source_window_ext(fx, clip_len_frames, 0..clip_len_frames.max(1), local)
+    chain_source_window_ext(fx, auto, clip_len_frames, 0..clip_len_frames.max(1), local)
 }
 
 /// То же, но для клипа с «ручками» перехода (п.138): material — допустимый
@@ -673,27 +785,27 @@ pub fn chain_source_window(
 /// байт-идентично chain_source_window (тест 17 не двигается).
 pub fn chain_source_window_ext(
     fx: &[FxInstance],
+    auto: &AutoProfiles,
     clip_len_frames: i64,
     material: std::ops::Range<i64>,
     local: std::ops::Range<i64>,
 ) -> std::ops::Range<i64> {
     let len = clip_len_frames.max(1);
-    let preroll = chain_tail(fx).to_audio_frames().max(MIN_PREROLL_FRAMES);
+    let preroll = chain_tail(fx, auto).to_audio_frames().max(MIN_PREROLL_FRAMES);
     let l0 = (local.start - preroll).max(material.start).min(material.end);
     let l1 = local.end.clamp(material.start, material.end);
     let has_warp = fx.iter().any(|f| matches!(f, FxInstance::SlowedReverb { .. }));
     if !has_warp {
         return l0..l1.max(l0);
     }
-    let (rate, automation) = fx
+    let rate = fx
         .iter()
         .find_map(|f| match f {
-            FxInstance::SlowedReverb { rate, automation, .. } => {
-                Some((*rate, automation.as_slice()))
-            }
+            FxInstance::SlowedReverb { rate, .. } => Some(*rate),
             _ => None,
         })
-        .unwrap_or((1.0, &[]));
+        .unwrap_or(1.0);
+    let automation = auto.rate_points(fx);
     // окно источника не уходит ниже нуля только когда материал начинается
     // с тела клипа (старое поведение); левая ручка легально отрицательна
     let s_floor = if material.start >= 0 { 0 } else { i64::MIN };
@@ -707,11 +819,12 @@ pub fn chain_source_window_ext(
     s0..s1.max(s0)
 }
 
-pub fn chain_tail(fx: &[FxInstance]) -> Tick {
+pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
+    let wet = auto.mix_points(fx);
     fx.iter()
         .map(|f| match f {
-            FxInstance::SlowedReverb { mix, reverb_delay_ms, decay, automation, .. }
-                if *mix > 0.0 || automation.iter().any(|k| k.mix > 0.0) =>
+            FxInstance::SlowedReverb { mix, reverb_delay_ms, decay, .. }
+                if *mix > 0.0 || wet.iter().any(|(_, v)| *v > 0.0) =>
             {
                 reverb_tail_for_delay(*reverb_delay_ms, *decay)
             }
@@ -749,10 +862,23 @@ pub struct ClipProcessor {
     src_in: i64,
     warp: Option<Warp>,
     reverb: Option<Freeverb>,
+    /// Множитель Gain-слотов БЕЗ кривой (константный путь — байт-в-байт
+    /// как до Р.33, на нём стоит GOLDEN_AUDIO).
     static_gain: f32,
+    /// Сглаженная громкость автоматизированных Gain-слотов: цель ставится
+    /// раз в чанк, к ней едем one-pole — шаг чанка не щёлкает.
+    auto_gain: SmoothedParam,
+    /// Есть хоть один Gain-слот с кривой?
+    gain_automated: bool,
+    /// Автоматизированные Gain-слоты: (индекс, базовое значение db).
+    gain_slots: Vec<(usize, f64)>,
     rate: f64,
     base_mix: f32,
-    automation: Vec<SlowedKeyframe>,
+    /// Кривые клипа в SOURCE-домене. Владеет ими аудио-render-поток
+    /// (инвариант №2): ни локов, ни обращений к модели на кадре.
+    auto: AutoProfiles,
+    /// Индекс слота с варпом — по нему берутся профили rate/mix.
+    warp_slot: usize,
     /// Длина клипа в кадрах — знаменатель прогресса автоматизации.
     clip_len: i64,
     /// «Ручки» перехода (п.138): материал клип-локально расширен до
@@ -765,7 +891,12 @@ pub struct ClipProcessor {
 }
 
 impl ClipProcessor {
-    pub fn new(fx: &[FxInstance], src_in_frames: i64, clip_len_frames: i64) -> ClipProcessor {
+    pub fn new(
+        fx: &[FxInstance],
+        auto: &AutoProfiles,
+        src_in_frames: i64,
+        clip_len_frames: i64,
+    ) -> ClipProcessor {
         let mut p = ClipProcessor {
             fingerprint: chain_fingerprint(fx),
             next_local: i64::MIN,
@@ -773,9 +904,16 @@ impl ClipProcessor {
             warp: None,
             reverb: None,
             static_gain: 1.0,
+            auto_gain: SmoothedParam::new(1.0),
+            gain_automated: false,
+            gain_slots: Vec::new(),
             rate: 1.0,
             base_mix: 0.0,
-            automation: Vec::new(),
+            auto: auto.clone(),
+            warp_slot: fx
+                .iter()
+                .position(|f| matches!(f, FxInstance::SlowedReverb { .. }))
+                .unwrap_or(0),
             clip_len: clip_len_frames.max(1),
             head_ext: 0,
             tail_ext: 0,
@@ -783,6 +921,19 @@ impl ClipProcessor {
         };
         p.apply_params(fx, true);
         p
+    }
+
+    /// Профиль скорости этого клипа (пустой — варпа/кривой нет).
+    fn rate_points(&self) -> &ParamPoints {
+        self.auto.points(self.warp_slot, "rate")
+    }
+
+    /// Обновить кривые БЕЗ сброса состояния: правка кейфрейма не должна
+    /// глушить хвост реверба (инвариант №3).
+    pub fn set_auto(&mut self, auto: &AutoProfiles) {
+        if &self.auto != auto {
+            self.auto = auto.clone();
+        }
     }
 
     /// Обновить длину клипа (trim) без сброса состояния.
@@ -805,9 +956,18 @@ impl ClipProcessor {
     /// Донести параметры. `structural` = первый раз (создание объектов).
     pub fn apply_params(&mut self, fx: &[FxInstance], structural: bool) {
         let mut gain = 1.0f32;
-        for f in fx {
+        self.gain_automated = false;
+        for (slot, f) in fx.iter().enumerate() {
             match f {
-                FxInstance::Gain { db } => gain *= 10f32.powf(db / 20.0),
+                // громкость с кривой считается по материалу в produce();
+                // без кривой — прежним одним множителем на весь буфер
+                FxInstance::Gain { db } => {
+                    if self.auto.points(slot, "db").is_empty() {
+                        gain *= 10f32.powf(db / 20.0);
+                    } else {
+                        self.gain_automated = true;
+                    }
+                }
                 FxInstance::SlowedReverb {
                     rate,
                     mix,
@@ -815,19 +975,19 @@ impl ClipProcessor {
                     damp,
                     decay,
                     wet_gain,
-                    automation,
+                    ..
                 } => {
                     self.rate = rate.clamp(0.25, 32.0);
                     self.base_mix = *mix;
-                    self.automation = automation.clone();
                     if structural {
                         self.reverb =
                             Some(Freeverb::new(*mix, *reverb_delay_ms, *damp, *decay, *wet_gain));
                     } else if let Some(rv) = &mut self.reverb {
                         rv.set_params(*mix, *reverb_delay_ms, *damp, *decay, *wet_gain);
                     }
+                    let has_rate_curve = !self.rate_points().is_empty();
                     if let Some(w) = &mut self.warp
-                        && self.automation.is_empty()
+                        && !has_rate_curve
                     {
                         // с автоматизацией produce() выставит по позиции сам
                         w.set_rate(self.rate);
@@ -838,11 +998,31 @@ impl ClipProcessor {
             }
         }
         self.static_gain = gain;
+        self.gain_slots = fx
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| match f {
+                FxInstance::Gain { db } if !self.auto.points(i, "db").is_empty() => {
+                    Some((i, *db as f64))
+                }
+                _ => None,
+            })
+            .collect();
+    }
+
+    /// Множитель автоматизированных Gain-слотов в позиции материала s.
+    fn gain_at(&self, s: f64) -> f32 {
+        let mut g = 1.0f32;
+        for (slot, base_db) in &self.gain_slots {
+            let db = self.auto.value(*slot, "db", *base_db, s);
+            g *= 10f32.powf(db as f32 / 20.0);
+        }
+        g
     }
 
     fn has_warp(&self) -> bool {
         (self.rate - 1.0).abs() > 1e-9
-            || self.automation.iter().any(|k| (k.rate - 1.0).abs() > 1e-9)
+            || self.rate_points().iter().any(|(_, r)| (r - 1.0).abs() > 1e-9)
     }
 
     pub fn tail(&self) -> Tick {
@@ -896,7 +1076,7 @@ impl ClipProcessor {
     /// S(t) — инверсия карты source-домена (см. output_time_for_source).
     fn source_offset(&self, local: i64) -> i64 {
         let t = local as f64 / self.clip_len as f64;
-        (self.clip_len as f64 * source_progress(self.rate, &self.automation, t)).round() as i64
+        (self.clip_len as f64 * source_progress(self.rate, self.rate_points(), t)).round() as i64
     }
 
     /// Разрыв ПОЗИЦИИ при непрерывном ВЫХОДЕ: источник переставляется,
@@ -905,7 +1085,7 @@ impl ClipProcessor {
         let src_start = self.src_in + self.source_offset(local);
         if self.has_warp() {
             let t = local as f64 / self.clip_len as f64;
-            let r = rate_at(self.rate, &self.automation, t);
+            let r = rate_at(self.rate, self.rate_points(), t);
             match &mut self.warp {
                 Some(w) => {
                     w.set_rate(r);
@@ -931,8 +1111,8 @@ impl ClipProcessor {
         let src_start = self.src_in + self.source_offset(start);
         if self.has_warp() {
             let t = start as f64 / self.clip_len as f64;
-            let mut w = Warp::new(rate_at(self.rate, &self.automation, t), src_start);
-            w.set_rate(rate_at(self.rate, &self.automation, t));
+            let mut w = Warp::new(rate_at(self.rate, self.rate_points(), t), src_start);
+            w.set_rate(rate_at(self.rate, self.rate_points(), t));
             self.warp = Some(w);
         } else {
             self.warp = None;
@@ -970,17 +1150,25 @@ impl ClipProcessor {
             let n = (total - done).min(Self::AUTOMATION_STEP_FRAMES);
             let chunk_local = local + done as i64;
             // автоматизация: цели на середину чанка; rubato/one-pole сглаживают
-            if !self.automation.is_empty() {
-                // source-домен (п.1): цель чанка — по ПОЗИЦИИ В МАТЕРИАЛЕ,
-                // а не по выходному времени; ранние кейфреймы не сдвигают
+            if !self.auto.is_empty() {
+                // SOURCE-домен: цель чанка — по ПОЗИЦИИ В МАТЕРИАЛЕ, а не
+                // по выходному времени; ранние кейфреймы не сдвигают
                 // материал поздних
                 let tau = (chunk_local as f64 + n as f64 * 0.5) / self.clip_len as f64;
-                let s = source_progress(self.rate, &self.automation, tau);
+                let s = source_progress(self.rate, self.rate_points(), tau);
+                let target_rate = eff_rate(self.rate, self.rate_points(), s);
                 if let Some(w) = &mut self.warp {
-                    w.set_rate(eff_rate(self.rate, &self.automation, s));
+                    w.set_rate(target_rate);
                 }
                 if let Some(r) = &mut self.reverb {
-                    r.set_mix(mix_at(self.base_mix, &self.automation, s));
+                    // mix сглаживается one-pole внутри реверба; остальные
+                    // параметры реверба — тем же чанком
+                    let slot = self.warp_slot;
+                    r.set_mix(self.auto.value(slot, "mix", self.base_mix as f64, s) as f32);
+                }
+                // громкость: кривая на любом Gain-слоте цепочки
+                if self.gain_automated {
+                    self.auto_gain.set_target(self.gain_at(s));
                 }
             }
             let sub = &mut out[done * CH..(done + n) * CH];
@@ -1007,6 +1195,16 @@ impl ClipProcessor {
             if let Some(r) = &mut self.reverb {
                 r.process(sub);
             }
+            // автоматизированная громкость — ПОСЛЕ реверба, как и
+            // константная: цепочка кончается уровнем события
+            if self.gain_automated {
+                for f in 0..n {
+                    let g = self.auto_gain.tick();
+                    for ch in 0..CH {
+                        sub[f * CH + ch] *= g;
+                    }
+                }
+            }
             done += n;
         }
         if self.static_gain != 1.0 {
@@ -1021,8 +1219,9 @@ impl ClipProcessor {
 mod automation_tests {
     use super::*;
 
-    fn kf(t: f64, rate: f64) -> SlowedKeyframe {
-        SlowedKeyframe { t, rate, mix: 0.1 }
+    /// Точка профиля скорости: (доля материала, rate).
+    fn kf(t: f64, rate: f64) -> (f64, f64) {
+        (t, rate)
     }
 
     #[test]

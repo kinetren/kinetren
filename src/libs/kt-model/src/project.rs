@@ -761,6 +761,46 @@ pub fn clip_material_at(
     }
 }
 
+/// Кейфреймы slowed&reverb СТАРОГО образца (`SlowedReverb.automation`,
+/// доли материала) → обычные кривые `rate`/`mix` в тиках материала.
+/// Возвращает true, если клип менялся. Зовётся ридерами формата: с Р.33
+/// автоматизация у всех эффектов одна, и собственного домена у slowed
+/// больше нет.
+pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
+    let mut touched = false;
+    for (i, f) in c.fx.iter_mut().enumerate() {
+        let FxInstance::SlowedReverb { automation, .. } = f else { continue };
+        if automation.is_empty() {
+            continue;
+        }
+        let legacy = std::mem::take(automation);
+        if c.fx_auto.len() <= i {
+            c.fx_auto.resize(i + 1, Vec::new());
+        }
+        // доля материала у slowed считалась ОТ source_in — зеркало реверса
+        // ей не нужно (в отличие от видео-кривых прежнего домена)
+        let key = |u: f64, v: f64| AutoKey {
+            t: material_from_progress(u, c.source_in, c.duration, false),
+            v,
+        };
+        for (param, pick) in [
+            ("rate", Box::new(|k: &SlowedKeyframe| k.rate) as Box<dyn Fn(&SlowedKeyframe) -> f64>),
+            ("mix", Box::new(|k: &SlowedKeyframe| k.mix as f64)),
+        ] {
+            if c.fx_auto[i].iter().any(|c| c.param == param) {
+                continue; // кривая нового домена уже есть — она главнее
+            }
+            c.fx_auto[i].push(ParamCurve {
+                param: param.into(),
+                ease: false,
+                keys: legacy.iter().map(|k| key(k.t, pick(k))).collect(),
+            });
+        }
+        touched = true;
+    }
+    touched
+}
+
 /// Позиция ключа из СТАРОГО домена (доля 0..1 от длины события) в
 /// материальные тики. Домен сменился в Р.33; ридер формата зовёт это
 /// для файлов до v3, иначе анимация старых проектов уехала бы.
