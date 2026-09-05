@@ -3716,6 +3716,9 @@ impl KtApp {
         if !dnd_keep_hover(hovering, !dropped.is_empty()) {
             self.dnd_hover = None;
         }
+        // позиция дропа нужна и полю источника морфера, и таймлайну:
+        // берём её ДО того, как её заберёт расчёт цели на дорожке
+        let drop_pos = if dropped.is_empty() { None } else { self.dnd_hover };
         let target = if dropped.is_empty() {
             None
         } else {
@@ -3738,6 +3741,15 @@ impl KtApp {
                     Ok(app) => *self = app,
                     Err(e) => self.note(format!("{}: {e}", path.display())),
                 }
+            } else if let Some(id) = self.morph_editors.iter().find_map(|e| {
+                let r = e.src_rect?;
+                let pos = drop_pos?;
+                (e.open && r.contains(pos)).then_some(e.id)
+            }) {
+                // файл брошен В ПОЛЕ ИСТОЧНИКА открытого морфера (Р.33
+                // п.2): он и становится новым источником, а не новым
+                // клипом на таймлайне
+                self.set_morph_source_file(id, &path.to_string_lossy());
             } else if self
                 .pending_morpher
                 .as_ref()

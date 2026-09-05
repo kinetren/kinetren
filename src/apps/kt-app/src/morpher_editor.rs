@@ -15,10 +15,19 @@ use kt_time::{TICK_HZ, Tick};
 pub struct MorphEditor {
     pub id: MorphId,
     pub picker_query: String,
+    /// Поиск в пикере источника (Replace-морфер).
+    pub src_query: String,
     pub gesture: u64,
     pub open: bool,
     /// Выбранные слоты цепочек батча (видео, аудио).
     pub sel: (usize, usize),
+    /// Прямоугольник поля источника на экране: по нему `handle_drops`
+    /// узнаёт, что файл бросили ИМЕННО СЮДА (Р.33 п.2 — «хотелось бы
+    /// чтобы можно было и dnd туда делать файла»).
+    pub src_rect: Option<egui::Rect>,
+    /// Снимок состояния на момент открытия — для «Отмена» (в окне FX
+    /// откат был, у морфера его не было вовсе).
+    pub backup: Option<kt_model::MorpherEvent>,
 }
 
 const MS: i64 = TICK_HZ / 1000; // тиков в мс
@@ -29,13 +38,43 @@ impl KtApp {
             return;
         }
         self.gesture_counter += 1;
+        let backup = self.model.project().morphers.iter().find(|m| m.id == id).cloned();
         self.morph_editors.push(MorphEditor {
             id,
             picker_query: String::new(),
+            src_query: String::new(),
             gesture: self.gesture_counter,
             open: true,
             sel: (0, 0),
+            src_rect: None,
+            backup,
         });
+    }
+
+    /// Новый источник Replace-морфера из ФАЙЛА: медиа добавляется в
+    /// проект (если его там не было) и подставляется морферу — одним
+    /// undo-шагом. Общая точка для системного диалога и дропа файла в
+    /// поле источника (Р.33 п.2).
+    pub(crate) fn set_morph_source_file(&mut self, id: MorphId, path: &str) {
+        let Some(mut ev) = self.model.project().morphers.iter().find(|m| m.id == id).cloned()
+        else {
+            return;
+        };
+        let existing = self.model.project().media.iter().find(|m| m.path == path).map(|m| m.id);
+        let mut cmds = Vec::new();
+        let mid = match existing {
+            Some(mid) => mid,
+            None => {
+                let mid = MediaId(self.next_media_id());
+                cmds.push(Command::AddMedia { id: mid, path: path.to_string() });
+                mid
+            }
+        };
+        if let MorphKind::Replace { media, .. } = &mut ev.kind {
+            *media = Some(mid);
+        }
+        cmds.push(Command::SetMorpher(ev));
+        self.apply_batch(cmds);
     }
 
     pub fn draw_morph_editors(&mut self, ctx: &egui::Context) {
@@ -75,6 +114,10 @@ impl KtApp {
         let mut changed = false;
         let mut bake = false;
         let mut delete = false;
+        // «Отмена» откатывает сессию окна (в окне FX так было всегда, у
+        // морфера отката не было вовсе — Р.33)
+        let mut revert = false;
+        let mut pick_file = false;
         let mut open = ed.open;
         // выключатель события (Р.33) — та же мастер-галка, что у цепочки
         // события; буфер FX общий с окном событий
@@ -121,40 +164,58 @@ impl KtApp {
                                 media_list.iter().find(|(i, _)| *i == id).map(|(_, p)| p.clone())
                             })
                             .unwrap_or_else(|| tr(k::mrph::KEEP_SOURCE).to_string());
-                        ui.horizontal(|ui| {
-                            ui.label(tr(k::mrph::NEW_SOURCE));
-                            egui::ComboBox::from_id_salt(("morph_src", ed.id.0))
-                                .width(240.0)
-                                .selected_text(short_name(&cur_name))
-                                .show_ui(ui, |ui| {
-                                    if ui
-                                        .selectable_label(media.is_none(), tr(k::mrph::KEEP_SOURCE))
-                                        .clicked()
-                                    {
-                                        *media = None;
+                        // Поле источника (Р.33 п.2): принимает дроп файла
+                        // из системы и карточки из медиа-бина, открывает
+                        // список медиа проекта с поиском и системный диалог
+                        // файла. Раньше это был ComboBox, а на «файла нет в
+                        // проекте» отвечала блёклая строчка-инструкция.
+                        let frame = egui::Frame::group(ui.style())
+                            .fill(ui.visuals().extreme_bg_color)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(tr(k::mrph::NEW_SOURCE));
+                                    ui.strong(short_name(&cur_name));
+                                    // выбор из медиа проекта — тем же
+                                    // пикером с поиском, что у эффектов
+                                    if let Some(id) = crate::widgets::media_picker(
+                                        ui,
+                                        ("morph_src", ed.id.0),
+                                        &media_list,
+                                        &mut ed.src_query,
+                                    ) {
+                                        *media = id;
                                         changed = true;
                                     }
-                                    for (mid, path) in &media_list {
-                                        if ui
-                                            .selectable_label(
-                                                *media == Some(*mid),
-                                                short_name(path),
-                                            )
-                                            .clicked()
-                                        {
-                                            *media = Some(*mid);
-                                            changed = true;
-                                        }
+                                    if ui.button(tr(k::mrph::BROWSE)).clicked() {
+                                        pick_file = true;
                                     }
                                 });
-                        });
-                        ui.label(
-                            egui::RichText::new(
-                                tr(k::mrph::NOT_IN_BIN),
-                            )
-                            .weak()
-                            .small(),
-                        );
+                                ui.weak(tr(k::mrph::SOURCE_DROP));
+                            });
+                        let rect = frame.response.rect;
+                        ed.src_rect = Some(rect);
+                        // карточка из бина: тот же payload, что несёт
+                        // перетаскивание на таймлайн
+                        if ui.rect_contains_pointer(rect)
+                            && let Some(id) =
+                                egui::DragAndDrop::payload::<crate::bin_panel::BinDrag>(ui.ctx())
+                        {
+                            {
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    3.0,
+                                    egui::Stroke::new(2.0, crate::theme::ACCENT),
+                                    egui::StrokeKind::Inside,
+                                );
+                                if ui.input(|i| i.pointer.any_released()) {
+                                    *media = Some(id.0);
+                                    changed = true;
+                                    let _ = egui::DragAndDrop::take_payload::<
+                                        crate::bin_panel::BinDrag,
+                                    >(ui.ctx());
+                                }
+                            }
+                        }
                         ui.separator();
                         // --- сдвиг source-in (delta / absolute, D4) ---------
                         let mut absolute = absolute_source_in.is_some();
@@ -252,10 +313,34 @@ impl KtApp {
                     if ui.button(tr(k::mrph::REMOVE)).clicked() {
                         delete = true;
                     }
+                    if crate::app::hint_into(
+                        &mut hover_out,
+                        ui.button(tr(k::fx::CANCEL)),
+                        tr(k::mrph::REVERT_HINT),
+                    )
+                    .clicked()
+                    {
+                        revert = true;
+                    }
                 });
             });
         ed.open = open;
 
+        // системный диалог файла: новый источник может не быть в проекте
+        if pick_file
+            && let Some(path) = rfd::FileDialog::new().pick_file()
+        {
+            // окно остаётся открытым: пользователь видит новый источник
+            self.set_morph_source_file(ed.id, &path.to_string_lossy());
+            return;
+        }
+        if revert {
+            if let Some(b) = ed.backup.clone() {
+                self.apply_coalesced(Command::SetMorpher(b), ed.gesture);
+            }
+            ed.open = false;
+            return;
+        }
         if bake {
             if self.apply(Command::BakeMorpher { id: ed.id }) {
                 self.selected_morph = None;

@@ -3105,6 +3105,84 @@ fn t185_gpu_loss_notice_once() {
     assert_eq!(hits, 1, "предупреждение ровно одно: {texts:?}");
 }
 
+/// Тест 218 (Р.33 п.2, требование пользователя про поле «New source»:
+/// «хотелось бы чтобы можно было и dnd туда делать файла и dnd из сурсов
+/// проекта или выбор через открытие виджета медиа»). Плюс «Отмена» у
+/// морфера, которой не было вовсе (в окне FX она была всегда).
+#[test]
+fn t218_morpher_source_field_takes_files_and_reverts() {
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.morph_lanes = 1;
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        targets: vec![ClipId(1)],
+        kind: MorphKind::Replace {
+            media: None,
+            source_in_delta: kt_time::Tick(0),
+            absolute_source_in: None,
+        },
+        enabled: true,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_morph_editor(MorphId(1));
+    h.step();
+    h.step();
+    // поле источника знает своё место на экране — по нему ловится дроп
+    assert!(
+        h.state().morph_editors[0].src_rect.is_some(),
+        "поле источника не сообщило свой прямоугольник — дроп файла в него не поймать"
+    );
+
+    // файл, которого нет в проекте, становится источником ОДНИМ шагом
+    let app = h.state_mut();
+    let depth = app.model.undo_depth();
+    app.set_morph_source_file(MorphId(1), "synth:dc");
+    let ev = app.model.project().morphers[0].clone();
+    let MorphKind::Replace { media, .. } = ev.kind else { panic!("replace") };
+    let mid = media.expect("источник обязан подставиться");
+    assert_eq!(
+        app.model.project().media.iter().find(|m| m.id == mid).map(|m| m.path.as_str()),
+        Some("synth:dc"),
+        "медиа обязано появиться в проекте"
+    );
+    assert_eq!(app.model.undo_depth(), depth + 1, "добавление медиа и подмена — один шаг");
+
+    // «Отмена» возвращает морфер к состоянию на момент открытия окна
+    let app = h.state_mut();
+    let ed_gesture = app.morph_editors[0].gesture;
+    let backup = app.morph_editors[0].backup.clone().expect("снимок на открытии");
+    app.apply_coalesced(Command::SetMorpher(backup), ed_gesture);
+    let ev = app.model.project().morphers[0].clone();
+    let MorphKind::Replace { media, .. } = ev.kind else { panic!("replace") };
+    assert!(media.is_none(), "откат обязан вернуть «источник не менять»");
+    h.step();
+}
+
 /// Тест 217 (Р.33 С2, требования пользователя: «у морферов fx-chain имеет
 /// крестики, можно и галочки добавить включения-выключения эффектов и
 /// возможность перемещения порядка мышкой. Ну и заменить fx-chain у

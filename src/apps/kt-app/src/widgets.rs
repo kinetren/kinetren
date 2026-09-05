@@ -333,3 +333,48 @@ pub fn chain_strip(
     }
     ch
 }
+
+/// Пикер медиа проекта с поиском — тот же жест, что у пикера эффектов.
+/// `media` — (id, путь). Возвращает выбор: `Some(None)` — «оставить
+/// источник», `Some(Some(id))` — конкретное медиа.
+pub fn media_picker(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    media: &[(kt_model::MediaId, String)],
+    query: &mut String,
+) -> Option<Option<kt_model::MediaId>> {
+    let mut picked = None;
+    ui.menu_button(tr(k::mrph::CHOOSE), |ui| {
+        let resp = ui.add(
+            egui::TextEdit::singleline(query)
+                .hint_text(tr(k::mrph::SEARCH_MEDIA))
+                .desired_width(220.0),
+        );
+        if ui.memory(|m| m.focused().is_none()) {
+            resp.request_focus();
+        }
+        ui.separator();
+        if ui.button(tr(k::mrph::KEEP_SOURCE)).clicked() {
+            picked = Some(None);
+            ui.close();
+        }
+        let q = query.to_lowercase();
+        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+            for (mid, path) in media {
+                if !q.is_empty() && !path.to_lowercase().contains(&q) {
+                    continue;
+                }
+                let name = std::path::Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.clone());
+                if ui.button(name).clicked() {
+                    picked = Some(Some(*mid));
+                    ui.close();
+                }
+            }
+        });
+    });
+    let _ = id;
+    picked
+}
