@@ -2640,6 +2640,7 @@ fn t169_preview_material_shifts_only_on_trim_start() {
         Drag::Clip(DragState {
             id: ClipId(1),
             mode,
+            extra: Vec::new(),
             grab_dt: 0,
             orig: orig.clone(),
             cur_start,
@@ -3381,6 +3382,100 @@ fn t203_selection_tool_button_switches_drag() {
     assert!(!h.state().sel_tool);
     rubber_drag(&mut h, at(70_000), at(260_000), false);
     assert!(h.state().model.project().region.is_some(), "режим выключен — вернулся регион");
+}
+
+/// Тест 204 (Р.33 п.7): пачка едет драгом ЦЕЛИКОМ и одним undo-шагом, а
+/// упор считается по первому контакту любого её участника. Взаимные
+/// сдвиги внутри блока при этом не меняются — «ничего не отрастает и не
+/// отрубается» (п.6 Р.28).
+#[test]
+fn t204_multi_drag_moves_the_whole_block() {
+    use crate::timeline::plan_move_block;
+    use kt_model::*;
+    use kt_time::Tick;
+
+    // ---- чистая часть: кламп блока о препятствие ----
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    let clip = |id: u64, start: i64| ClipEvent {
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(start),
+        duration: Tick(50_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+    };
+    p.clips = vec![clip(1, 0), clip(2, 100_000), clip(3, 400_000)];
+    p.overlap_layers = false; // режим без переслаивания: упор настоящий
+    let moving = [ClipId(1), ClipId(2)];
+    // блок [0..50k]+[100k..150k] едет вправо к препятствию на 400k:
+    // передний участник (2) касается его через 250 000 тиков
+    let plan = plan_move_block(&p, &moving, 400_000);
+    assert_eq!(plan.delta, 250_000, "блок не остановился у препятствия");
+    assert_eq!(plan.blocker.map(|(s, _, _)| s), Some((400_000, 450_000)));
+    // влево блок упирается в ноль (за начало таймлайна не уезжает)
+    assert_eq!(plan_move_block(&p, &moving, -80_000).delta, 0);
+    // свободный ход не трогается
+    let free = plan_move_block(&p, &moving, 100_000);
+    assert_eq!((free.delta, free.blocker.is_none()), (100_000, true), "свободный ход зажали");
+    // при переслаивании (умолчание проекта) упора нет вовсе
+    p.overlap_layers = true;
+    assert_eq!(plan_move_block(&p, &moving, 400_000).delta, 400_000);
+
+    // ---- живой жест ----
+    let (mut h, g) = harness_three_clips();
+    {
+        let app = h.state_mut();
+        app.select_only(ClipId(1));
+        app.selected.insert(ClipId(2));
+    }
+    h.step();
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.6;
+    let grab = egui::pos2(g.tick_to_x(25_000), y);
+    let to = egui::pos2(g.tick_to_x(325_000), y);
+    h.hover_at(grab);
+    h.step();
+    h.drag_at(grab);
+    h.step();
+    h.hover_at(grab + egui::vec2(8.0, 0.0));
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.drop_at(to);
+    h.step();
+    let starts: Vec<i64> = {
+        let p = h.state().model.project();
+        [ClipId(1), ClipId(2), ClipId(3)]
+            .iter()
+            .map(|id| p.clips.iter().find(|c| c.id == *id).unwrap().start.0)
+            .collect()
+    };
+    assert_eq!(starts[0], 300_000, "якорь пачки не доехал: {starts:?}");
+    assert_eq!(starts[1], 400_000, "второе событие пачки обязано ехать тем же сдвигом");
+    assert_eq!(starts[2], 200_000, "невыделенное событие двигать нельзя");
+    let durs: Vec<i64> = {
+        let p = h.state().model.project();
+        p.clips.iter().map(|c| c.duration.0).collect()
+    };
+    assert!(durs.iter().all(|d| *d == 50_000), "длительности изменились: {durs:?}");
+    h.state_mut().undo();
+    let after_undo: Vec<i64> = {
+        let p = h.state().model.project();
+        [ClipId(1), ClipId(2)]
+            .iter()
+            .map(|id| p.clips.iter().find(|c| c.id == *id).unwrap().start.0)
+            .collect()
+    };
+    assert_eq!(after_undo, vec![0, 100_000], "перенос пачки — один undo-шаг");
 }
 
 /// Тест 205 (Р.33 п.7, «ну и это естественно везде учесть, в том же

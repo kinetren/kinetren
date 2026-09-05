@@ -274,6 +274,63 @@ pub(crate) fn plan_move(p: &Project, id: ClipId, want: i64, lane: u32) -> MovePl
     MovePlan::Clamped { start, blocker: blocker.unwrap_or((want, want + dur)) }
 }
 
+/// План переноса ПАЧКИ событий (Р.33 п.7): общий сдвиг по времени и
+/// препятствие, если блок в него упёрся. `delta == want` — путь свободен.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct BlockPlan {
+    pub delta: i64,
+    pub blocker: Option<((i64, i64), ClipKind, u32)>,
+}
+
+/// Кламп переноса пачки: блок едет ЦЕЛИКОМ, взаимные сдвиги внутри него не
+/// меняются (требование п.6 Р.28 — «ничего не отрастает и не отрубается»),
+/// поэтому упор считается по первому контакту любого участника с чужим
+/// событием своей дорожки. При переслаивании (умолчание проекта) мешают
+/// только чужие плейсхолдеры — их накладывать нельзя никогда.
+pub(crate) fn plan_move_block(p: &Project, moving: &[ClipId], want: i64) -> BlockPlan {
+    let block: Vec<&ClipEvent> = p.clips.iter().filter(|c| moving.contains(&c.id)).collect();
+    if block.is_empty() {
+        return BlockPlan { delta: want, blocker: None };
+    }
+    // за ноль блок не уезжает
+    let min_start = block.iter().map(|c| c.start.0).min().unwrap_or(0);
+    let mut delta = want.max(-min_start);
+    let mut blocker = None;
+    for m in &block {
+        let (s, e) = (m.start.0, m.start.0 + m.duration.0);
+        let others = p
+            .clips
+            .iter()
+            .filter(|c| !moving.contains(&c.id) && c.kind == m.kind && c.lane == m.lane)
+            .map(|c| (c.start.0, c.start.0 + c.duration.0, false))
+            .chain(
+                p.foreign
+                    .iter()
+                    .filter(|f| f.kind == m.kind && f.lane == m.lane)
+                    .map(|f| (f.start.0, (f.start + f.duration).0, true)),
+            );
+        for (o0, o1, foreign) in others {
+            if p.overlap_layers && !foreign {
+                continue; // перекрытия законны — упора нет
+            }
+            if delta > 0 && o0 >= e {
+                let cap = o0 - e;
+                if cap < delta {
+                    delta = cap;
+                    blocker = Some(((o0, o1), m.kind, m.lane));
+                }
+            } else if delta < 0 && o1 <= s {
+                let cap = o1 - s;
+                if cap > delta {
+                    delta = cap;
+                    blocker = Some(((o0, o1), m.kind, m.lane));
+                }
+            }
+        }
+    }
+    BlockPlan { delta, blocker }
+}
+
 /// Прямоугольник окна перехода в строке дорожки. Чистая функция — тест 140.
 pub(crate) fn transition_rect(x0: f32, x1: f32, lane_top: f32, lane_h: f32) -> egui::Rect {
     egui::Rect::from_min_max(
@@ -309,6 +366,10 @@ pub(crate) fn marker_band_rect(x0: f32, x1: f32, time_top: f32) -> egui::Rect {
 pub struct DragState {
     pub id: ClipId,
     pub mode: DragMode,
+    /// Прочие выделенные события (Р.33 п.7): id и ИСХОДНЫЙ старт. Пусто —
+    /// обычный одиночный драг со всей его семантикой (кроссфейд из наезда,
+    /// перенос по дорожкам). Непусто — блок едет только по времени.
+    pub extra: Vec<(ClipId, i64)>,
     /// Тики от начала клипа до точки захвата (для Move).
     pub grab_dt: i64,
     pub orig: ClipEvent,
@@ -751,6 +812,21 @@ pub fn rubber_hits(geom: &TlGeom, p: &Project, band: egui::Rect) -> Vec<ClipId> 
 }
 
 impl KtApp {
+    /// Все события, которые едут с этим драгом: якорь, его прочие
+    /// выделенные соседи и link-партнёры всех перечисленных.
+    pub(crate) fn moving_block_ids(&self, d: &DragState) -> Vec<ClipId> {
+        let p = self.model.project();
+        let seeds: Vec<ClipId> =
+            std::iter::once(d.id).chain(d.extra.iter().map(|(id, _)| *id)).collect();
+        let groups: Vec<GroupId> =
+            p.clips.iter().filter(|c| seeds.contains(&c.id)).filter_map(|c| c.link_group).collect();
+        p.clips
+            .iter()
+            .filter(|c| seeds.contains(&c.id) || c.link_group.is_some_and(|g| groups.contains(&g)))
+            .map(|c| c.id)
+            .collect()
+    }
+
     /// Магнитные цели: границы чужих клипов, маркеры, границы региона,
     /// playhead, ноль (порт snapTimeMs).
     ///
@@ -1836,9 +1912,29 @@ impl KtApp {
                                     ClipZone::TrimEnd => DragMode::TrimEnd,
                                     _ => DragMode::Move,
                                 };
+                                // пачка едет вместе с якорем: сюда попадают
+                                // прочие выделенные (свои link-партнёры
+                                // двигаются самой командой MoveClip)
+                                let extra: Vec<(ClipId, i64)> = if self.selected.len() > 1 {
+                                    let group = orig.link_group;
+                                    self.model
+                                        .project()
+                                        .clips
+                                        .iter()
+                                        .filter(|c| {
+                                            self.selected.contains(&c.id)
+                                                && c.id != id
+                                                && !(group.is_some() && c.link_group == group)
+                                        })
+                                        .map(|c| (c.id, c.start.0))
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                };
                                 self.drag = Some(Drag::Clip(DragState {
                                     id,
                                     mode,
+                                    extra,
                                     grab_dt: x_to_tick(pos.x) - orig.start.0,
                                     cur_start: orig.start.0,
                                     cur_end: orig.start.0 + orig.duration.0,
@@ -1916,17 +2012,37 @@ impl KtApp {
                             // упор в ноль ломает примагничивание — линию гасим
                             self.snap_line = if d.cur_start == snapped { line } else { None };
                             d.cur_end = d.cur_start + dur;
-                            // строки перемешаны (п.6): прилипаем к
-                            // ближайшей строке СВОЕГО вида (тест 50)
-                            let rel = pos.y - geom.lanes_top();
-                            let row = (rel / lane_h).floor().max(0.0) as i64;
-                            d.cur_lane = geom.nearest_lane(d.orig.kind, row);
+                            if d.extra.is_empty() {
+                                // строки перемешаны (п.6): прилипаем к
+                                // ближайшей строке СВОЕГО вида (тест 50)
+                                let rel = pos.y - geom.lanes_top();
+                                let row = (rel / lane_h).floor().max(0.0) as i64;
+                                d.cur_lane = geom.nearest_lane(d.orig.kind, row);
+                            } else {
+                                // пачка едет только по времени: у её событий
+                                // разные виды и дорожки, «ближайшая строка»
+                                // для блока не определена
+                                d.cur_lane = d.orig.lane;
+                                let moving = self.moving_block_ids(&d);
+                                let plan = plan_move_block(
+                                    self.model.project(),
+                                    &moving,
+                                    d.cur_start - d.orig.start.0,
+                                );
+                                d.cur_start = d.orig.start.0 + plan.delta;
+                                d.cur_end = d.cur_start + dur;
+                                if let Some((span, kind, lane)) = plan.blocker {
+                                    self.snap_line = None;
+                                    self.blocked = Some(Blocked { span, kind, lane });
+                                }
+                            }
                             // мульти-наезд/поглощение — кламп ещё в превью
                             // (реш. 10 Р.24); одиночный частичный наезд
                             // остаётся как есть (release сделает кроссфейд)
-                            if let MovePlan::Clamped { start, blocker } =
-                                plan_move(self.model.project(), d.id, d.cur_start, d.cur_lane)
-                            {
+                            if let (true, MovePlan::Clamped { start, blocker }) = (
+                                d.extra.is_empty(),
+                                plan_move(self.model.project(), d.id, d.cur_start, d.cur_lane),
+                            ) {
                                 let mut blocker = blocker;
                                 if d.cur_lane != d.orig.lane {
                                     // вертикальный перенос сквозь занятое
@@ -2117,6 +2233,27 @@ impl KtApp {
         // ---- release -------------------------------------------------------------
         if response.drag_stopped() {
             match self.drag.take() {
+                // пачка: общий сдвиг одним батчем, никаких кроссфейдов из
+                // наезда — блок переезжает как есть (Р.33 п.7)
+                Some(Drag::Clip(d)) if d.moved && !d.extra.is_empty() => {
+                    let delta = d.cur_start - d.orig.start.0;
+                    if delta != 0 {
+                        let cmds: Vec<Command> = std::iter::once((d.id, d.orig.start.0))
+                            .chain(d.extra.iter().copied())
+                            .map(|(id, orig_start)| Command::MoveClip {
+                                id,
+                                // от ОРИГИНАЛЬНЫХ стартов: команда двигает всю
+                                // link-группу, и повтор по её члену — no-op
+                                new_start: Tick(orig_start + delta),
+                                new_lane: self
+                                    .model
+                                    .clip(id)
+                                    .map_or(d.orig.lane, |c| c.lane),
+                            })
+                            .collect();
+                        self.apply_batch_restoring(cmds);
+                    }
+                }
                 Some(Drag::Clip(d)) if d.moved => match d.mode {
                     DragMode::Move => {
                         // одиночный частичный наезд = кроссфейд (жест Р.24):
@@ -2263,6 +2400,13 @@ impl KtApp {
         for c in draw_order.iter().filter_map(|&i| self.model.project().clips.get(i)) {
             let (start, end, lane) = match &self.drag {
                 Some(Drag::Clip(d)) if d.id == c.id => (d.cur_start, d.cur_end, d.cur_lane),
+                // прочие события пачки едут тем же сдвигом (Р.33 п.7)
+                Some(Drag::Clip(d))
+                    if d.extra.iter().any(|(id, _)| *id == c.id) =>
+                {
+                    let delta = d.cur_start - d.orig.start.0;
+                    (c.start.0 + delta, c.start.0 + c.duration.0 + delta, c.lane)
+                }
                 _ => (c.start.0, c.start.0 + c.duration.0, c.lane),
             };
             let x0 = tick_to_x(start);
