@@ -247,18 +247,40 @@ class Live:
 
     # ---- действия ----------------------------------------------------------
 
-    def click(self, x, y):
+    def _mods(self, names, pressed):
+        """Зажать/отпустить модификаторы вокруг жеста мыши: у egui они
+        читаются из СОСТОЯНИЯ ввода кадра, а не из события кнопки."""
+        from Xlib import X, XK
+
+        table = {"ctrl": "Control_L", "shift": "Shift_L", "alt": "Alt_L"}
+        for n in names:
+            code = probe.d.keysym_to_keycode(XK.string_to_keysym(table[n]))
+            probe.xtest.fake_input(
+                probe.d, X.KeyPress if pressed else X.KeyRelease, code
+            )
+        probe.d.sync()
+        time.sleep(0.08)
+
+    def click(self, x, y, mods=()):
+        if mods:
+            self.focus()
+            self._mods(mods, True)
         probe.move(x, y)
         probe.button(True)
         probe.button(False)
         time.sleep(0.35)
+        if mods:
+            self._mods(mods, False)
 
-    def drag(self, x0, y0, x1, y1, steps=6):
+    def drag(self, x0, y0, x1, y1, steps=6, mods=()):
         """Драг КАК ЧЕЛОВЕК: навести → нажать → сдвинуть чуть → вести
         несколькими шагами → отпустить. Прыжок сразу в цель egui засчитывает
         как начало драга уже в конечной точке, и объект не двигается (правило
         из apps/kt-app/CLAUDE.md). Промежуточные шаги нужны ещё и потому, что
         софт-рендер выдаёт кадры редко: между позициями обязан пройти кадр."""
+        if mods:
+            self.focus()
+            self._mods(mods, True)
         probe.move(x0, y0, pause=0.15)
         probe.button(True)
         time.sleep(0.2)
@@ -272,6 +294,8 @@ class Live:
             )
         probe.button(False)
         time.sleep(0.6)
+        if mods:
+            self._mods(mods, False)
 
     def focus(self):
         """Отдать окну фокус ввода: XTest-клавиши идут в АКТИВНОЕ окно, и без
