@@ -650,10 +650,22 @@ impl ClipEvent {
     }
 }
 
-/// Кейфрейм автоматизации параметра (Р.30): t — прогресс клипа 0..1.
+/// Кейфрейм автоматизации параметра.
+///
+/// `t` — позиция В МАТЕРИАЛЕ источника (тики в системе координат
+/// `source_in`), а не прогресс клипа (Р.33, решение пользователя «ключи
+/// приклеены к материалу, как в Premiere/AE»). Из этого следует всё
+/// остальное поведение: обрезка прячет и открывает ключи, не искажая
+/// анимацию; разрез отдаёт каждой половине её кусок кривой; реверс
+/// зеркалит анимацию вместе с материалом; смена скорости у аудио тянет
+/// ключи за собой. Ни одна геометрическая команда ключи не трогает —
+/// приклеенность обеспечена ПРЕДСТАВЛЕНИЕМ, а не кодом команд.
+///
+/// До Р.33 здесь была доля 0..1 от длины события: обрезка растягивала
+/// анимацию, а `Split` копировал кривую целиком в обе половины.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct AutoKey {
-    pub t: f64,
+    pub t: Tick,
     pub v: f64,
 }
 
@@ -670,17 +682,18 @@ pub struct ParamCurve {
     pub keys: Vec<AutoKey>,
 }
 
-/// Структурная проверка кривых автоматизации клипа (Р.30): t
-/// отсортированы в [0,1], значения конечны. Имя параметра НЕ проверяется
-/// жёстко: кривая-сирота (переименованный/чужой параметр) молча не
-/// действует — будущие правки схемы не должны валить загрузку файла.
+/// Структурная проверка кривых автоматизации клипа: ключи отсортированы
+/// по материальной позиции, позиция неотрицательна, значения конечны.
+/// Ключ ВНЕ куска, используемого клипом, законен — это спрятанный
+/// обрезкой ключ, он вернётся, если событие снова растянуть. Имя
+/// параметра НЕ проверяется жёстко: кривая-сирота (переименованный/чужой
+/// параметр) молча не действует — правки схемы не валят загрузку файла.
 pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), ProjectError> {
     for curves in auto {
         for c in curves {
             let sorted = c.keys.windows(2).all(|w| w[0].t <= w[1].t);
-            let in_range =
-                c.keys.iter().all(|k| (0.0..=1.0).contains(&k.t) && k.v.is_finite());
-            if !sorted || !in_range {
+            let ok = c.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
+            if !sorted || !ok {
                 return Err(ProjectError::BadFxAuto(id));
             }
         }
@@ -688,18 +701,20 @@ pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), Project
     Ok(())
 }
 
-/// Значение кривой в точке u (домен 0..1, кламп краёв — как cam_at).
-pub fn curve_value(keys: &[AutoKey], ease: bool, u: f64) -> f64 {
+/// Значение кривой в материальной позиции `at`. За крайними ключами —
+/// их значения (кламп краёв, как cam_at). Домен НЕ клампится: позиция за
+/// телом клипа (ручка перехода, пре-ролл) законна и честно продолжает
+/// кривую её крайним значением.
+pub fn curve_value(keys: &[AutoKey], ease: bool, at: Tick) -> f64 {
     let Some(first) = keys.first() else { return 0.0 };
-    let u = u.clamp(0.0, 1.0);
-    if u <= first.t {
+    if at <= first.t {
         return first.v;
     }
     for w in keys.windows(2) {
         let (a, b) = (&w[0], &w[1]);
-        if u <= b.t {
-            let span = (b.t - a.t).max(1e-9);
-            let mut s = ((u - a.t) / span).clamp(0.0, 1.0);
+        if at <= b.t {
+            let span = (b.t.0 - a.t.0).max(1) as f64;
+            let mut s = (((at.0 - a.t.0) as f64) / span).clamp(0.0, 1.0);
             if ease {
                 s = s * s * (3.0 - 2.0 * s); // smoothstep01
             }
@@ -709,19 +724,55 @@ pub fn curve_value(keys: &[AutoKey], ease: bool, u: f64) -> f64 {
     keys.last().unwrap().v
 }
 
-/// Применить кривые слота к эффекту в момент u. Возвращает число
-/// сработавших кривых (сироты не считаются).
-pub fn apply_fx_auto(fx: &mut FxInstance, curves: &[ParamCurve], u: f64) -> usize {
+/// Применить кривые слота к эффекту в материальной позиции `at`.
+/// Возвращает число сработавших кривых (сироты не считаются).
+pub fn apply_fx_auto(fx: &mut FxInstance, curves: &[ParamCurve], at: Tick) -> usize {
     let mut applied = 0;
     for c in curves {
         if c.keys.is_empty() {
             continue;
         }
-        if fx.set_param(&c.param, curve_value(&c.keys, c.ease, u)) {
+        if fx.set_param(&c.param, curve_value(&c.keys, c.ease, at)) {
             applied += 1;
         }
     }
     applied
+}
+
+/// Материальная позиция момента таймлайна внутри клипа — ЕДИНОЕ правило
+/// для рендера, автоматизации и UI (движок потом ещё выравнивает её по
+/// сетке кадров, `frame_step` нужен зеркалу реверса). За телом клипа
+/// значение продолжается линейно и клампится нижней границей материала:
+/// ручка перехода «держит кадр», как и раньше.
+pub fn clip_material_at(
+    source_in: Tick,
+    start: Tick,
+    duration: Tick,
+    reversed: bool,
+    frame_step: i64,
+    t: Tick,
+) -> Tick {
+    if reversed {
+        // зеркало: последний кадр клипа показывает source_in, первый —
+        // конец использованного куска источника (минус шаг кадра)
+        Tick((source_in.0 + duration.0 - frame_step - (t.0 - start.0)).max(source_in.0))
+    } else {
+        Tick((source_in.0 + (t.0 - start.0)).max(0))
+    }
+}
+
+/// Позиция ключа из СТАРОГО домена (доля 0..1 от длины события) в
+/// материальные тики. Домен сменился в Р.33; ридер формата зовёт это
+/// для файлов до v3, иначе анимация старых проектов уехала бы.
+///
+/// `mirror` = true для кривых, чья доля считалась по прогрессу ТАЙМЛАЙНА
+/// (видео-`ParamCurve` до Р.33): у реверсированного клипа она зеркальна
+/// материалу. У кейфреймов slowed&reverb доля с самого начала считалась
+/// ПО МАТЕРИАЛУ, им зеркало не нужно.
+pub fn material_from_progress(u: f64, source_in: Tick, duration: Tick, mirror: bool) -> Tick {
+    let u = u.clamp(0.0, 1.0);
+    let u = if mirror { 1.0 - u } else { u };
+    Tick(source_in.0 + (u * duration.0 as f64).round() as i64)
 }
 
 /// Типизированные FX (не opaque JSON — валидация на загрузке, тест 12).

@@ -4,7 +4,7 @@
     "global_start_time": null,
     "metadata": {
         "kt": {
-            "v": 2,
+            "v": 3,
             "settings": {
                 "fps": 30,
                 "width": 1280,
@@ -212,11 +212,11 @@
                                                 "ease": true,
                                                 "keys": [
                                                     {
-                                                        "t": 0.0,
+                                                        "t": 0,
                                                         "v": 0.0
                                                     },
                                                     {
-                                                        "t": 1.0,
+                                                        "t": 90000,
                                                         "v": 90.0
                                                     }
                                                 ]

@@ -88,20 +88,21 @@ fn fx_chain_hash(
 /// pts источника для момента таймлайна `t` внутри клипа: прямой или
 /// зеркальный (п.16 реверс). Чистая функция — тест 24.
 fn clip_source_pts(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
-    let src = if c.reversed {
-        // зеркало: последний кадр клипа показывает source_in, первый —
-        // конец использованного куска источника (минус шаг кадра).
-        // Правая ручка перехода (t за концом) упирается в кламп source_in —
-        // «держим кадр» (политика краёв, п.137)
-        let span = c.end.0 - c.start.0;
-        let step = grid.frame_step();
-        Tick((c.source_in.0 + span - step - (t.0 - c.start.0)).max(c.source_in.0))
-    } else {
-        // левая ручка (t до начала) может выйти за нулевой кадр источника —
-        // кламп-кадр 0
-        Tick((c.source_in.0 + (t.0 - c.start.0)).max(0))
-    };
-    grid.align_floor(src)
+    grid.align_floor(clip_material_pos(c, t, grid))
+}
+
+/// Материальная позиция момента `t` БЕЗ выравнивания по сетке — в ней
+/// живут ключи автоматизации (Р.33). Правило одно на движок, модель и UI
+/// (`kt_model::clip_material_at`): зеркало реверса, кламп краёв — там же.
+fn clip_material_pos(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
+    kt_model::clip_material_at(
+        c.source_in,
+        c.start,
+        Tick(c.end.0 - c.start.0),
+        c.reversed,
+        grid.frame_step(),
+        t,
+    )
 }
 
 pub struct VideoRenderer {
@@ -324,6 +325,9 @@ fn layer_src<'a>(
     t: Tick,
 ) -> LayerSrc<'a> {
     let src_pts = clip_source_pts(clip, t, ctx.grid);
+    // кривые сэмплируются по ВЫРОВНЕННОЙ материальной позиции — по тому
+    // самому кадру источника, который сейчас на экране (Р.33)
+    let mat = src_pts;
     let cache_idx = video_cache_idx(src_pts);
     let source = SourceId(clip.media.0);
     let frame = cache.get_video(source, Some(quality), cache_idx);
@@ -337,7 +341,7 @@ fn layer_src<'a>(
             let mut owned = clip.fx.clone();
             for (i, f) in owned.iter_mut().enumerate() {
                 if let Some(curves) = clip.auto.get(i) {
-                    kt_model::apply_fx_auto(f, curves, u);
+                    kt_model::apply_fx_auto(f, curves, mat);
                 }
             }
             std::borrow::Cow::Owned(owned)

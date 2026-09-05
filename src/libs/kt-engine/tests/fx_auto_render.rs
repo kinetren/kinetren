@@ -78,19 +78,22 @@ fn t191_animated_equals_static_at_each_moment() {
         vec![ParamCurve {
             param: "radius".into(),
             ease: false,
-            keys: vec![AutoKey { t: 0.0, v: 1.0 }, AutoKey { t: 1.0, v: 47.0 }],
+            keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(SPAN), v: 47.0 }],
         }],
         vec![ParamCurve {
             param: "strength".into(),
             ease: false,
-            keys: vec![AutoKey { t: 0.0, v: 0.0 }, AutoKey { t: 1.0, v: 2.0 }],
+            keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(SPAN), v: 2.0 }],
         }],
     ];
     let animated = project(base.clone(), auto);
     // моменты по сетке 30 fps (шаг 3000 тиков): начало, середина, у конца
     for t in [Tick(0), Tick(SPAN / 2), Tick(87_000)] {
-        // статический эквивалент: значения кривых в этот момент
-        let u = t.0 as f64 / SPAN as f64;
+        // статический эквивалент: значения кривых в этот момент. Кривая
+        // сэмплируется по кадру ИСТОЧНИКА, который показан в этот тик, —
+        // поэтому и здесь берём позицию, выровненную по сетке проекта
+        let step = 90_000 / 30;
+        let u = (t.0 / step * step) as f64 / SPAN as f64;
         let r = 1.0 + (47.0 - 1.0) * u;
         let s = 2.0 * u;
         let static_p = project(
@@ -116,7 +119,7 @@ fn t191_postfx_cache_no_stale_across_time_and_curve_edits() {
         vec![vec![ParamCurve {
             param: "radius".into(),
             ease: false,
-            keys: vec![AutoKey { t: 0.0, v: 1.0 }, AutoKey { t: 1.0, v: v1 }],
+            keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(SPAN), v: v1 }],
         }]]
     };
     let p = project(base.clone(), curve(47.0));

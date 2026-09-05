@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::meta::{
-    KT_META_VERSION, KT_NS, KtBinMedia, KtClipMeta, KtSettings, KtTimelineMeta, KtTransport,
+    KT_NS, KtBinMedia, KtClipMeta, KtSettings, KtTimelineMeta, KtTransport,
     kt_get, kt_set,
 };
 use crate::schema::{
@@ -372,12 +372,20 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         // параметров поднимают до v2 (старый ридер молча потерял бы их
         // при перезаписи), без них — v1
         v: {
-            let has_auto =
-                p.clips.iter().any(|c| c.fx_auto.iter().any(|v| !v.is_empty()));
-            if cameras.is_empty() && p.camera_lanes == 0 && !has_auto {
-                crate::meta::KT_META_V1
+            let has_auto = p
+                .clips
+                .iter()
+                .any(|c| c.fx_auto.iter().any(|v| v.iter().any(|c| !c.keys.is_empty())));
+            let has_cams = !cameras.is_empty() || p.camera_lanes > 0;
+            // версия ПО СОДЕРЖИМОМУ: кривые нового домена — v3, камеры —
+            // v2, иначе v1 (файл без наших новшеств открывается старыми
+            // сборками и остаётся байт-стабильным)
+            if has_auto {
+                crate::meta::KT_META_V3
+            } else if has_cams {
+                crate::meta::KT_META_V2
             } else {
-                KT_META_VERSION
+                crate::meta::KT_META_V1
             }
         },
         settings: Some(KtSettings {
@@ -567,8 +575,13 @@ pub fn timeline_to_project(
 ) -> Result<ProjectBundle, Error> {
     crate::meta::check_kt_version(tl)?;
     let mut notices: Vec<Notice> = Vec::new();
+    // нечитаемые кривые автоматизации: копим и валим загрузку в конце
+    let mut bad_auto: Vec<String> = Vec::new();
     let kt: Option<KtTimelineMeta> = kt_get(&tl.metadata);
     let is_ours = kt.is_some();
+    // версия конверта файла: до v3 кривые автоматизации лежали в долях
+    // длины события, теперь — в тиках материала (Р.33)
+    let file_v = crate::meta::kt_version(tl).unwrap_or(crate::meta::KT_META_V1);
     let settings = kt
         .as_ref()
         .and_then(|k| k.settings)
@@ -758,12 +771,14 @@ pub fn timeline_to_project(
                         cursor,
                         dur,
                         is_ours,
+                        file_v,
                         &mut next_clip_id,
                         &mut media_by_url,
                         &mut next_media_id,
                         base_dir,
                         &mut p,
                         &mut notices,
+                        &mut bad_auto,
                     );
                     // переход перед клипом: с живым соседом слева —
                     // кроссфейд, без него (край дорожки или Gap) — фейд-ин
@@ -916,7 +931,56 @@ pub fn timeline_to_project(
     }
     p.normalize();
     p.validate().map_err(|e| Error::UnsupportedSchema(format!("invalid timeline: {e}")))?;
+    if let Some(first) = bad_auto.first() {
+        return Err(Error::UnsupportedSchema(first.clone()));
+    }
     Ok(ProjectBundle { project: p, retained, notices })
+}
+
+/// Кривые файла ДО v3: ключи лежат в долях длины события (домен Р.30),
+/// переводим их в тики материала по геометрии клипа. Дробное значение в
+/// новую схему не парсится вовсе, поэтому разбираем старую форму явной
+/// структурой — так же, как читаются прочие легаси-формы (метки).
+fn curves_from_progress(
+    v: &serde_json::Value,
+    source_in: Tick,
+    duration: Tick,
+    reversed: bool,
+) -> Vec<kt_model::ParamCurve> {
+    #[derive(serde::Deserialize)]
+    struct LegacyKey {
+        t: f64,
+        v: f64,
+    }
+    #[derive(serde::Deserialize)]
+    struct LegacyCurve {
+        param: String,
+        #[serde(default = "yes")]
+        ease: bool,
+        keys: Vec<LegacyKey>,
+    }
+    fn yes() -> bool {
+        true
+    }
+    let legacy: Vec<LegacyCurve> = serde_json::from_value(v.clone()).unwrap_or_default();
+    legacy
+        .into_iter()
+        .map(|c| kt_model::ParamCurve {
+            param: c.param,
+            ease: c.ease,
+            keys: c
+                .keys
+                .into_iter()
+                .map(|k| kt_model::AutoKey {
+                    // старый домен видео-кривых считался по прогрессу
+                    // ТАЙМЛАЙНА — у реверсированного клипа он зеркален
+                    // материалу
+                    t: kt_model::material_from_progress(k.t, source_in, duration, reversed),
+                    v: k.v,
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -927,12 +991,14 @@ fn clip_from_otio(
     start: Tick,
     dur: Tick,
     is_ours: bool,
+    file_v: u32,
     next_clip_id: &mut u64,
     media_by_url: &mut HashMap<String, MediaId>,
     next_media_id: &mut u64,
     base_dir: Option<&Path>,
     p: &mut Project,
     notices: &mut Vec<Notice>,
+    bad_auto: &mut Vec<String>,
 ) -> (ClipEvent, ClipExtra) {
     let meta: Option<KtClipMeta> = kt_get(&c.metadata);
     let url = match c.active_media() {
@@ -969,7 +1035,7 @@ fn clip_from_otio(
 
     // эффекты: kt:* → цепочка, LTW ±1 → reversed/no-op, прочее → foreign
     let mut fx = Vec::new();
-    let mut fx_auto: Vec<Vec<kt_model::ParamCurve>> = Vec::new();
+    let mut fx_auto: Vec<Option<serde_json::Value>> = Vec::new();
     let mut bypass = Vec::new();
     let mut reversed = false;
     let mut ex = ClipExtra {
@@ -991,16 +1057,17 @@ fn clip_from_otio(
             EffectNode::Effect(eff) if eff.effect_name.starts_with("kt:") => {
                 match kt_get::<kt_model::FxInstance>(&eff.metadata) {
                     Some(inst) => {
-                        // автоматизация (Р.30): ключ "auto" рядом с
-                        // параметрами; битые кривые валит validate ниже
-                        let curves: Vec<kt_model::ParamCurve> = eff
-                            .metadata
-                            .get(crate::meta::KT_NS)
-                            .and_then(|kt| kt.get("auto"))
-                            .and_then(|v| serde_json::from_value(v.clone()).ok())
-                            .unwrap_or_default();
+                        // автоматизация: ключ "auto" рядом с параметрами.
+                        // Разбираем ПОСЛЕ цикла: домен ключей у файлов до
+                        // v3 зависит от source_in и reversed, а реверс
+                        // приезжает отдельным эффектом ниже
                         fx.push(inst);
-                        fx_auto.push(curves);
+                        fx_auto.push(
+                            eff.metadata
+                                .get(crate::meta::KT_NS)
+                                .and_then(|kt| kt.get("auto"))
+                                .cloned(),
+                        );
                         bypass.push(!eff.enabled);
                     }
                     None => {
@@ -1021,9 +1088,6 @@ fn clip_from_otio(
             other => ex.effects_foreign.push((i, other.clone())),
         }
     }
-    while fx_auto.last().is_some_and(|v| v.is_empty()) {
-        fx_auto.pop(); // хвост без кривых не сериализуем (форма модели)
-    }
     while bypass.last() == Some(&false) {
         bypass.pop(); // хвост «включено» не сериализуем (форма модели)
     }
@@ -1043,6 +1107,27 @@ fn clip_from_otio(
         // без source_range клип берёт материал целиком — от его начала
         .unwrap_or(0);
     let src_in = Tick(src_in.max(0));
+    // домен ключей: v3+ — тики материала как есть, старее — доли длины
+    // события, которые переводим по геометрии ЭТОГО клипа (Р.33)
+    let mut fx_auto: Vec<Vec<kt_model::ParamCurve>> = fx_auto
+        .iter()
+        .map(|raw| match raw {
+            None => Vec::new(),
+            Some(v) if file_v >= crate::meta::KT_META_V3 => {
+                // битые кривые НЕ проглатываем: молча потерять анимацию
+                // хуже, чем отказать (правило Р.24 «не ломать чужое и не
+                // терять своё»)
+                serde_json::from_value(v.clone()).unwrap_or_else(|e| {
+                    bad_auto.push(format!("clip {}: unreadable automation ({e})", id.0));
+                    Vec::new()
+                })
+            }
+            Some(v) => curves_from_progress(v, src_in, dur, reversed),
+        })
+        .collect();
+    while fx_auto.last().is_some_and(|v| v.is_empty()) {
+        fx_auto.pop(); // хвост без кривых не сериализуем (форма модели)
+    }
     let ev = ClipEvent {
         id,
         link_group: meta.as_ref().and_then(|m| m.link_group).map(GroupId),

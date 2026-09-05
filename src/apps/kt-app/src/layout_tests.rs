@@ -3117,7 +3117,10 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
         fx_auto: vec![vec![ParamCurve {
             param: "radius".into(),
             ease: false,
-            keys: vec![AutoKey { t: 0.0, v: 1.0 }, AutoKey { t: 1.0, v: 48.0 }],
+            keys: vec![
+                AutoKey { t: kt_time::Tick(0), v: 1.0 },
+                AutoKey { t: kt_time::Tick(90_000), v: 48.0 },
+            ],
         }]],
         opacity: 1.0,
     });
@@ -3136,7 +3139,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
         vec![ParamCurve {
             param: "radius".into(),
             ease: false,
-            keys: vec![AutoKey { t: 0.0, v: 2.0 }],
+            keys: vec![AutoKey { t: kt_time::Tick(0), v: 2.0 }],
         }],
         vec![],
     ];

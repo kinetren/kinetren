@@ -448,6 +448,7 @@ impl KtApp {
                         ed.selected,
                         &fx[ed.selected],
                         &mut auto[ed.selected],
+                        (clip.source_in, clip.duration),
                     );
                 } else {
                     ui.weak(tr(k::fx::CHAIN_EMPTY));
@@ -480,7 +481,7 @@ impl KtApp {
             // ключи держим отсортированными (модель это валидирует)
             for curves in &mut auto {
                 for c in curves.iter_mut() {
-                    c.keys.sort_by(|a, b| a.t.total_cmp(&b.t));
+                    c.keys.sort_by_key(|k| k.t.0);
                 }
             }
             self.set_fx_auto_coalesced(ed.clip, auto, ed.gesture);
@@ -496,16 +497,24 @@ impl KtApp {
     }
 }
 
-/// Секция автоматизации параметров слота (Р.30): кривые (t, v) по
-/// прогрессу клипа 0..1. Возвращает true при любой правке. У слота без
-/// автоматизируемых параметров (Mirror, аудио) не рисуется вовсе.
+/// Секция автоматизации параметров слота: кривые (позиция в МАТЕРИАЛЕ,
+/// значение). Возвращает true при любой правке. У слота без
+/// автоматизируемых параметров (Mirror) не рисуется вовсе.
+///
+/// Вид секции здесь временный: единый виджет автоматизации (график ↔
+/// таблица, мини-таймлайн) — следующая стадия раунда; сейчас нужно, чтобы
+/// правки жили в новом домене.
 fn draw_fx_auto_section(
     ui: &mut egui::Ui,
     clip: ClipId,
     slot: usize,
     f: &FxInstance,
     curves: &mut Vec<kt_model::ParamCurve>,
+    material: (kt_time::Tick, kt_time::Tick),
 ) -> bool {
+    // кусок материала, который показывает событие: в нём и живут ключи
+    let (src_in, dur) = material;
+    let mat_end = src_in.0 + dur.0;
     // только Smooth-параметры: структурные (длина линий реверба) кривой
     // не подлежат — их смена пересобирает DSP (Р.33)
     let specs: Vec<&kt_model::ParamSpec> = f.auto_params().collect();
@@ -535,8 +544,8 @@ fn draw_fx_auto_section(
                                 param: n.to_string(),
                                 ease: true,
                                 keys: vec![
-                                    kt_model::AutoKey { t: 0.0, v: v0 },
-                                    kt_model::AutoKey { t: 1.0, v: v0 },
+                                    kt_model::AutoKey { t: src_in, v: v0 },
+                                    kt_model::AutoKey { t: kt_time::Tick(mat_end), v: v0 },
                                 ],
                             });
                             changed = true;
@@ -556,9 +565,11 @@ fn draw_fx_auto_section(
             ui.label("Ease:");
             changed |= ui.checkbox(&mut c.ease, "").changed();
             if ui.button(tr(k::fx::ADD_KF)).clicked() {
-                let t = c.keys.last().map(|k| (k.t + 0.25).min(1.0)).unwrap_or(0.0);
+                // четверть куска дальше последнего ключа, но не за конец
+                let step = (dur.0 / 4).max(1);
+                let t = c.keys.last().map_or(src_in.0, |k| (k.t.0 + step).min(mat_end));
                 let v = c.keys.last().map(|k| k.v).unwrap_or(lo);
-                c.keys.push(kt_model::AutoKey { t, v });
+                c.keys.push(kt_model::AutoKey { t: kt_time::Tick(t), v });
                 changed = true;
             }
             if !c.keys.is_empty() && ui.button(tr(k::fx::DROP_LAST)).clicked() {
@@ -572,11 +583,30 @@ fn draw_fx_auto_section(
         let speed = ((hi - lo) / 500.0).max(1e-4);
         for (i, key) in c.keys.iter_mut().enumerate() {
             ui.horizontal(|ui| {
-                ui.label(format!("#{i} t:"));
-                changed |= ui
-                    .add(egui::DragValue::new(&mut key.t).range(0.0..=1.0).speed(0.005))
-                    .changed();
-                ui.label("v:");
+                // позиция ключа — секунды МАТЕРИАЛА (домен Р.33); доля
+                // куска показана рядом, чтобы не гадать «где это в клипе»
+                ui.label(format!("#{i}"));
+                let mut secs = key.t.0 as f64 / 90_000.0;
+                let lo_s = 0.0f64;
+                let hi_s = (mat_end as f64 / 90_000.0).max(lo_s);
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut secs)
+                            .range(lo_s..=hi_s)
+                            .speed(0.01)
+                            .suffix(" s"),
+                    )
+                    .changed()
+                {
+                    key.t = kt_time::Tick((secs * 90_000.0).round() as i64);
+                    changed = true;
+                }
+                let frac = if dur.0 > 0 {
+                    ((key.t.0 - src_in.0) as f64 / dur.0 as f64).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                ui.weak(format!("{:.0}%", frac * 100.0));
                 changed |= ui
                     .add(egui::DragValue::new(&mut key.v).range(lo..=hi).speed(speed))
                     .changed();

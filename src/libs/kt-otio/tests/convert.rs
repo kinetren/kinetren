@@ -474,7 +474,7 @@ fn project_3d() -> Project {
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "rot_y".into(),
         ease: true,
-        keys: vec![AutoKey { t: 0.0, v: 0.0 }, AutoKey { t: 1.0, v: 90.0 }],
+        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(90_000), v: 90.0 }],
     }]];
     // две камеры на двух дорожках, с перекрытием по времени и кейфреймами
     p.camera_lanes = 2;
@@ -519,18 +519,25 @@ fn project_3d() -> Project {
 /// файлов), с камерами v=2 (старый ридер отказывает KtMetaTooNew, а не
 /// молча теряет 3D-сцену при перезаписи). Round-trip и идемпотентность.
 #[test]
-fn t189_cameras_roundtrip_and_conditional_v2() {
+fn t189_cameras_roundtrip_and_conditional_version() {
     // без камер — v=1, никаких камерных ключей
     let flat = save_project(&rich_project(), &Retained::default(), None);
     let v: serde_json::Value = serde_json::from_str(&flat).unwrap();
     assert_eq!(v["metadata"]["kt"]["v"], 1, "без камер файл остаётся v1");
     assert!(!flat.contains("camera"), "камерные ключи не пишутся впустую");
 
-    // с камерами — v=2, полный round-trip, идемпотентность
+    // только камеры (без кривых) — v=2
+    let mut cams_only = project_3d();
+    cams_only.clips[0].fx_auto.clear();
+    let text = save_project(&cams_only, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 2, "камеры поднимают версию файла до v2");
+
+    // камеры + автоматизация — v=3, полный round-trip, идемпотентность
     let p = project_3d();
     let text = save_project(&p, &Retained::default(), None);
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["metadata"]["kt"]["v"], 2, "камеры поднимают версию файла");
+    assert_eq!(v["metadata"]["kt"]["v"], 3, "кривые нового домена поднимают до v3");
     let b = load_project(&text, None).expect("наш 3D-файл читается");
     assert_eq!(b.project.camera_lanes, 2);
     assert_eq!(b.project.cameras, p.cameras, "камеры пережили круг");
@@ -563,36 +570,79 @@ fn t189_matches_committed_golden() {
 
 // ---- тест 192 (Р.30): автоматизация параметров в файле ------------------------
 
-/// Кривые едут внутри kt-конверта эффекта; файл С автоматизацией — v2
-/// (старый ридер потерял бы её молча), без неё — v1. Round-trip и
-/// идемпотентность.
+/// Кривые едут внутри kt-конверта эффекта; файл С автоматизацией — v3
+/// (Р.33: ключи в тиках материала, старый ридер прочёл бы их как доли и
+/// испортил анимацию), без неё — v1. Round-trip и идемпотентность.
 #[test]
-fn t192_fx_auto_roundtrip_and_v2() {
-    // плоский проект с автоматизацией, БЕЗ камер: v2 даёт именно она
+fn t192_fx_auto_roundtrip_and_v3() {
+    // плоский проект с автоматизацией, БЕЗ камер: v3 даёт именно она
     let mut p = rich_project();
     p.clips[0].fx = vec![FxInstance::Blur { radius: 8 }];
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "radius".into(),
         ease: false,
-        keys: vec![AutoKey { t: 0.0, v: 1.0 }, AutoKey { t: 1.0, v: 48.0 }],
+        keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(90_000), v: 48.0 }],
     }]];
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["metadata"]["kt"]["v"], 2, "автоматизация поднимает файл до v2");
+    assert_eq!(v["metadata"]["kt"]["v"], 3, "автоматизация поднимает файл до v3");
     let b = load_project(&text, None).expect("файл с автоматизацией читается");
     let c = b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
     assert_eq!(c.fx_auto, p.clips[0].fx_auto, "кривые пережили круг");
     let again = save_project(&b.project, &b.retained, None);
     assert_eq!(text, again, "идемпотентность записи с автоматизацией");
-    // битые кривые в файле — честный отказ загрузки (validate)
+    // ключ с отрицательной позицией — честный отказ загрузки (validate)
     let mut broken: serde_json::Value = serde_json::from_str(&text).unwrap();
     let eff = &mut broken["tracks"]["children"][1]["children"][0]["effects"][0];
-    eff["metadata"]["kt"]["auto"][0]["keys"][0]["t"] = serde_json::json!(2.5);
+    eff["metadata"]["kt"]["auto"][0]["keys"][0]["t"] = serde_json::json!(-5);
     assert!(
         load_project(&serde_json::to_string_pretty(&broken).unwrap(), None).is_err(),
-        "кейфрейм вне 0..1 обязан валить загрузку явно"
+        "ключ до начала материала обязан валить загрузку явно"
     );
+    // нечитаемая кривая тоже валит загрузку: молча потерять анимацию хуже
+    let mut broken: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let eff = &mut broken["tracks"]["children"][1]["children"][0]["effects"][0];
+    eff["metadata"]["kt"]["auto"] = serde_json::json!("мусор");
+    assert!(
+        load_project(&serde_json::to_string_pretty(&broken).unwrap(), None).is_err(),
+        "нечитаемая автоматизация не должна теряться молча"
+    );
+}
+
+/// Файл СТАРОГО домена (кривые в долях длины события) читается и
+/// переводится в тики материала по геометрии клипа — иначе анимация
+/// рабочих проектов пользователя уехала бы (Р.33).
+#[test]
+fn t212_pre_v3_curves_migrate_to_material_ticks() {
+    let mut p = rich_project();
+    p.clips[0].fx = vec![FxInstance::Blur { radius: 8 }];
+    p.clips[0].fx_auto = vec![vec![ParamCurve {
+        param: "radius".into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(90_000), v: 48.0 }],
+    }]];
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    // делаем из него файл ПРОШЛОГО формата: версия v2, ключи в долях
+    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+    old["metadata"]["kt"]["v"] = serde_json::json!(2);
+    let eff = &mut old["tracks"]["children"][1]["children"][0]["effects"][0];
+    eff["metadata"]["kt"]["auto"][0]["keys"][0]["t"] = serde_json::json!(0.0);
+    eff["metadata"]["kt"]["auto"][0]["keys"][1]["t"] = serde_json::json!(0.5);
+    let b = load_project(&serde_json::to_string_pretty(&old).unwrap(), None)
+        .expect("файл старого формата обязан открываться");
+    let c = b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    // клип 0..90_000 с source_in=0: доли 0 и 0.5 → тики 0 и 45_000
+    assert_eq!(
+        c.fx_auto[0][0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![0, 45_000],
+        "старые доли не переведены в тики материала"
+    );
+    // и следующая запись уже в новом домене (v3)
+    let again = save_project(&b.project, &b.retained, None);
+    let v: serde_json::Value = serde_json::from_str(&again).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 3, "перезапись поднимает файл до v3");
 }
 
 #[test]
