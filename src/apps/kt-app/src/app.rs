@@ -43,7 +43,13 @@ pub struct KtApp {
     pub texture: Option<egui::TextureHandle>,
     pub view_start: f64, // тики
     pub ticks_per_px: f64,
-    pub selected: Option<ClipId>,
+    /// Выделенные события (Р.33 п.7): множество, а не одно — рамка,
+    /// Ctrl+клик и двойной клик по метке-диапазону выделяют пачками.
+    pub selected: std::collections::BTreeSet<ClipId>,
+    /// Режим-инструмент выделения (кнопка тулбара, как в Vegas): обычный
+    /// драг по пустому месту рисует рамку вместо региона. Сессионный —
+    /// в проект не пишется.
+    pub sel_tool: bool,
     /// Выделенный morph-блок (H1; приоритет над клипом при Del).
     pub selected_morph: Option<MorphId>,
     /// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
@@ -339,7 +345,8 @@ impl KtApp {
             texture: None,
             view_start: 0.0,
             ticks_per_px: 900.0,
-            selected: None,
+            selected: std::collections::BTreeSet::new(),
+            sel_tool: false,
             selected_morph: None,
             pending_morpher: None,
             drag: None,
@@ -468,7 +475,8 @@ impl KtApp {
             texture: None,
             view_start: 0.0,
             ticks_per_px: 900.0,
-            selected: None,
+            selected: std::collections::BTreeSet::new(),
+            sel_tool: false,
             selected_morph: None,
             pending_morpher: None,
             drag: None,
@@ -1295,7 +1303,10 @@ impl KtApp {
                 _ => {
                     self.player.seek(Tick(h.at));
                     self.pending_reveal = Some(h.at);
-                    self.selected = h.clip;
+                    match h.clip {
+                        Some(id) => self.select_only(id),
+                        None => self.selected.clear(),
+                    }
                 }
             }
         }
@@ -1616,7 +1627,7 @@ impl KtApp {
         if self.model.project().region.is_some() {
             self.clear_region_keep_loop();
         }
-        self.selected = None;
+        self.selected.clear();
         self.selected_morph = None;
     }
 
@@ -1851,6 +1862,67 @@ impl KtApp {
         }
     }
 
+    // ---- выделение событий (Р.33 п.7) ---------------------------------------
+
+    /// Выделить ровно это событие (обычный клик).
+    pub fn select_only(&mut self, id: ClipId) {
+        self.selected.clear();
+        self.selected.insert(id);
+    }
+
+    /// Ctrl+клик: добавить/убрать из выделения.
+    pub fn toggle_selected(&mut self, id: ClipId) {
+        if !self.selected.remove(&id) {
+            self.selected.insert(id);
+        }
+    }
+
+    pub fn is_selected(&self, id: ClipId) -> bool {
+        self.selected.contains(&id)
+    }
+
+    /// Единственное выделенное событие — для операций, у которых на
+    /// множестве нет определённого смысла (магнит A/V, разрыв связи,
+    /// перенос на соседнюю дорожку, трим к курсору).
+    pub fn selected_one(&self) -> Option<ClipId> {
+        (self.selected.len() == 1).then(|| self.selected.iter().copied().next()).flatten()
+    }
+
+    /// То же, но молчание заменяется внятным сообщением: «выбери событие»
+    /// (п.16 чек-листа — невозможность действия видна, а не проглатывается).
+    fn require_one_selected(&mut self) -> Option<ClipId> {
+        match self.selected_one() {
+            Some(id) => Some(id),
+            None => {
+                self.note(tr(k::msg::PICK_CLIP));
+                None
+            }
+        }
+    }
+
+    /// Выделенные события вместе с их link-группами (перенос, удаление,
+    /// копирование, цели морфера — всё работает по этому набору).
+    pub fn selected_with_groups(&self) -> Vec<ClipId> {
+        let p = self.model.project();
+        let groups: Vec<GroupId> = p
+            .clips
+            .iter()
+            .filter(|c| self.selected.contains(&c.id))
+            .filter_map(|c| c.link_group)
+            .collect();
+        let mut ids: Vec<ClipId> = p
+            .clips
+            .iter()
+            .filter(|c| {
+                self.selected.contains(&c.id) || c.link_group.is_some_and(|g| groups.contains(&g))
+            })
+            .map(|c| c.id)
+            .collect();
+        ids.sort_by_key(|i| i.0);
+        ids.dedup();
+        ids
+    }
+
     /// Живая правка ВНУТРИ жеста: команды с одним `gesture` схлопываются в
     /// один undo-шаг (драг края перехода, сессия окна FX/морфера).
     ///
@@ -2031,10 +2103,8 @@ impl KtApp {
     pub fn copy_selection(&mut self) {
         let block = match self.model.project().region {
             Some(r) => kt_model::ops::copy_region_block(self.model.project(), r),
-            None => match self.selected {
-                Some(id) => kt_model::ops::copy_group(self.model.project(), id),
-                None => kt_model::ops::ClipBlock::default(),
-            },
+            // без региона — всё выделенное (каждое со своей link-группой)
+            None => kt_model::ops::copy_clips(self.model.project(), &self.selected_with_groups()),
         };
         if block.clips.is_empty() {
             self.note(tr(k::msg::NOTHING_TO_COPY));
@@ -2065,7 +2135,10 @@ impl KtApp {
             _ => None,
         });
         if self.apply_batch(cmds) {
-            self.selected = first;
+            match first {
+                Some(id) => self.select_only(id),
+                None => self.selected.clear(),
+            }
             // курсор в конец блока — chain-paste (семантика старого)
             self.player.seek(end);
         }
@@ -2075,7 +2148,7 @@ impl KtApp {
     /// выделения — все события под курсором. Вырезка региона — только из
     /// контекст-меню (punch_out_action).
     pub fn cut_action(&mut self) {
-        if self.selected.is_some() {
+        if !self.selected.is_empty() {
             self.split_selected();
         } else {
             self.split_all_at_cursor();
@@ -2130,7 +2203,7 @@ impl KtApp {
                 self.note(tr(k::msg::REGION_MISSES));
             } else {
                 self.apply_batch_restoring(cmds);
-                self.selected = None;
+                self.selected.clear();
             }
         }
     }
@@ -2151,7 +2224,7 @@ impl KtApp {
                 self.note(tr(k::msg::REGION_MISSES));
             } else {
                 self.apply_batch_restoring(cmds);
-                self.selected = None;
+                self.selected.clear();
             }
         } else {
             self.delete_selected();
@@ -2159,7 +2232,7 @@ impl KtApp {
     }
 
     pub fn trim_selected_start_to_cursor(&mut self) {
-        let Some(sel) = self.selected else { return };
+        let Some(sel) = self.require_one_selected() else { return };
         let at = self.player.transport.playhead();
         let cmds = kt_model::ops::trim_group_start_to(self.model.project(), sel, at);
         if cmds.is_empty() {
@@ -2170,7 +2243,7 @@ impl KtApp {
     }
 
     pub fn trim_selected_end_to_cursor(&mut self) {
-        let Some(sel) = self.selected else { return };
+        let Some(sel) = self.require_one_selected() else { return };
         let at = self.player.transport.playhead();
         let cmds = kt_model::ops::trim_group_end_to(self.model.project(), sel, at);
         if cmds.is_empty() {
@@ -2182,7 +2255,7 @@ impl KtApp {
 
     /// Перенос выделенного на соседнюю дорожку своего типа (партнёр на месте).
     pub fn move_selected_lane(&mut self, delta: i32) {
-        let Some(sel) = self.selected else { return };
+        let Some(sel) = self.require_one_selected() else { return };
         let Some(c) = self.model.clip(sel).cloned() else { return };
         let lanes = match c.kind {
             ClipKind::Video => self.model.project().video_lanes,
@@ -2214,10 +2287,7 @@ impl KtApp {
     /// Магнит A/V: ближайший клип противоположного типа того же медиа
     /// в пределах 2×порога → общий старт/длительность/линк (старый magnetize).
     pub fn magnetize_selected(&mut self) {
-        let Some(sel) = self.selected else {
-            self.note(tr(k::msg::PICK_CLIP));
-            return;
-        };
+        let Some(sel) = self.require_one_selected() else { return };
         let mut next_group = self.next_group_id();
         match kt_model::ops::magnetize_commands(
             self.model.project(),
@@ -2236,7 +2306,7 @@ impl KtApp {
     }
 
     pub fn unlink_selected(&mut self) {
-        let Some(sel) = self.selected else { return };
+        let Some(sel) = self.require_one_selected() else { return };
         let group = self.model.clip(sel).and_then(|c| c.link_group);
         let ids: Vec<ClipId> = self
             .model
@@ -2382,10 +2452,9 @@ impl KtApp {
     /// иначе выделенный клип; в обоих случаях цели расширяются link-группами.
     pub fn morph_target_ids(&self) -> Vec<ClipId> {
         let p = self.model.project();
-        let mut ids: Vec<ClipId> = match (p.region, self.selected) {
-            (Some(r), _) => p.clips.iter().filter(|c| r.intersects_clip(c)).map(|c| c.id).collect(),
-            (None, Some(sel)) => vec![sel],
-            (None, None) => Vec::new(),
+        let mut ids: Vec<ClipId> = match p.region {
+            Some(r) => p.clips.iter().filter(|c| r.intersects_clip(c)).map(|c| c.id).collect(),
+            None => self.selected.iter().copied().collect(),
         };
         let groups: Vec<GroupId> = p
             .clips
@@ -2447,7 +2516,7 @@ impl KtApp {
         }));
         if self.apply_batch(cmds) {
             self.selected_morph = Some(id);
-            self.selected = None;
+            self.selected.clear();
             // v1: окно редактора открывается сразу после размещения
             self.open_morph_editor(id);
         }
@@ -2520,57 +2589,58 @@ impl KtApp {
     }
 
     pub fn split_selected(&mut self) {
-        let Some(sel) = self.selected else {
+        if self.selected.is_empty() {
             self.note(tr(k::msg::NOTHING_TO_CUT));
             return;
-        };
+        }
         let at = self.player.transport.playhead();
-        let Some(clip) = self.model.clip(sel).cloned() else { return };
-        let group = clip.link_group;
-        let new_group = group.map(|_| GroupId(self.next_group_id()));
-        // linked-партнёры, содержащие точку разреза, режутся тем же разрезом
-        let targets: Vec<ClipId> = self
-            .model
-            .project()
-            .clips
-            .iter()
-            .filter(|c| {
-                (c.id == sel || (group.is_some() && c.link_group == group))
-                    && c.start < at
-                    && at < c.start + c.duration
-            })
-            .map(|c| c.id)
-            .collect();
+        // режутся все выделенные (и их link-партнёры), которых курсор реально
+        // пересекает; тем, кого не пересекает, разрез не навязываем
+        let targets: Vec<ClipId> = {
+            let ids = self.selected_with_groups();
+            self.model
+                .project()
+                .clips
+                .iter()
+                .filter(|c| ids.contains(&c.id) && c.start < at && at < c.start + c.duration)
+                .map(|c| c.id)
+                .collect()
+        };
         if targets.is_empty() {
             self.note(tr(k::msg::CURSOR_OUTSIDE));
             return;
         }
         let mut next_id = self.next_clip_id();
-        let cmds: Vec<Command> = targets
-            .into_iter()
-            .map(|id| {
-                let cmd = Command::Split { id, at, new_id: ClipId(next_id), new_group };
-                next_id += 1;
-                cmd
-            })
-            .collect();
+        let mut next_group = self.next_group_id();
+        // одна новая группа на каждую старую — правые половины пар остаются
+        // парами (та же схема, что у разреза без выделения)
+        let mut group_map: std::collections::HashMap<GroupId, GroupId> =
+            std::collections::HashMap::new();
+        let mut cmds = Vec::new();
+        #[allow(clippy::explicit_counter_loop)]
+        for id in targets {
+            let new_group = self.model.clip(id).and_then(|c| c.link_group).map(|g| {
+                *group_map.entry(g).or_insert_with(|| {
+                    let ng = GroupId(next_group);
+                    next_group += 1;
+                    ng
+                })
+            });
+            cmds.push(Command::Split { id, at, new_id: ClipId(next_id), new_group });
+            next_id += 1;
+        }
         self.apply_batch(cmds);
     }
 
     pub fn delete_selected(&mut self) {
-        let Some(sel) = self.selected else { return };
-        // удаляем весь link-групп (как Del по A/V-паре в старом редакторе)
-        let group = self.model.clip(sel).and_then(|c| c.link_group);
-        let ids: Vec<ClipId> = self
-            .model
-            .project()
-            .clips
-            .iter()
-            .filter(|c| c.id == sel || (group.is_some() && c.link_group == group))
-            .map(|c| c.id)
-            .collect();
+        // удаляем выделенное вместе с link-группами (как Del по A/V-паре
+        // в старом редакторе, только теперь пачкой)
+        let ids = self.selected_with_groups();
+        if ids.is_empty() {
+            return;
+        }
         self.apply_batch_restoring(ids.into_iter().map(|id| Command::RemoveClip { id }).collect());
-        self.selected = None;
+        self.selected.clear();
     }
 
     pub fn add_media_clip(&mut self, path: &str) {

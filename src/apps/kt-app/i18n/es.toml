@@ -76,6 +76,7 @@ zoom_in = "Acercar"
 region_in = "Región: inicio en el cursor (I)"
 region_out = "Región: final en el cursor (O)"
 region_clear = "Quitar la región"
+select_tool = "Herramienta de selección: arrastrar selecciona eventos (Ctrl+arrastrar siempre)"
 loop_armed = "Bucle armado — selecciona una región (L)"
 loop = "Bucle de la región (L)"
 undo = "Deshacer (Ctrl+Z)"
@@ -121,8 +122,8 @@ trim_end = "Recortar el final del clip"
 volume = "Volumen del clip: arrastra, doble clic — 0 dB"
 fade_handle = "Arrastra la esquina superior: fundido en este borde del clip"
 level = "Arrastra arriba/abajo: opacidad del vídeo del clip"
-clip = "Clip: arrastra — mover (Ctrl — sin imán), doble clic — FX, clic derecho — menú, S — dividir"
-empty = "Clic izq. — cursor, arrastra — región; rueda — desplazar, Ctrl — zoom, Mayús — pistas"
+clip = "Clip: arrastrar — mover (Ctrl — sin imán), Ctrl+clic — seleccionar, doble clic — FX, clic derecho — menú, S — cortar"
+empty = "Clic izq. — cursor, arrastrar — región, Ctrl+arrastrar — seleccionar eventos; rueda — desplazar, Ctrl — zoom, Shift — pistas"
 
 # Таймлайн: подписи на morph-событиях.
 [tl.morph]

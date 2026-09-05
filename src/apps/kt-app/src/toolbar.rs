@@ -604,6 +604,17 @@ impl KtApp {
         if self.tb(ui, crate::icons::CLEAR, tr(k::tb::REGION_CLEAR)) {
             self.clear_region();
         }
+        // режим-инструмент выделения (Р.33 п.7, «как в vegas —
+        // toggle-button»): в нём обычный драг по пустому месту рисует рамку
+        // вместо региона. Ctrl+драг рисует её и без режима.
+        let sel_tool = self.sel_tool;
+        let r = ui.add_sized(
+            [30.0, 26.0],
+            egui::Button::selectable(sel_tool, egui::RichText::new(crate::icons::SELECTION)),
+        );
+        if self.hint(r, tr(k::tb::SELECT_TOOL)).clicked() {
+            self.sel_tool = !sel_tool;
+        }
         // три состояния (п.3 р.11): выключен / включён с регионом /
         // ВЗВЕДЁН без региона (Esc снял регион, намерение осталось) —
         // приглушённый значок, подсказка объясняет, чего не хватает

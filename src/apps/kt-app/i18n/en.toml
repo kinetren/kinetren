@@ -76,6 +76,7 @@ zoom_in = "Zoom in"
 region_in = "Region: start at playhead (I)"
 region_out = "Region: end at playhead (O)"
 region_clear = "Clear the region"
+select_tool = "Selection tool: drag selects events (Ctrl+drag works always)"
 loop_armed = "Loop is armed — select a region (L)"
 loop = "Loop the region (L)"
 undo = "Undo (Ctrl+Z)"
@@ -121,8 +122,8 @@ trim_end = "Trim the clip end"
 volume = "Clip volume: drag, double click — 0 dB"
 fade_handle = "Drag the top corner — fade at this edge of the clip"
 level = "Drag up/down — video opacity of this clip"
-clip = "Clip: drag — move (Ctrl — no magnet), double click — FX, right click — menu, S — split"
-empty = "LMB — playhead, drag — region; wheel — scroll, Ctrl — zoom, Shift — tracks"
+clip = "Clip: drag — move (Ctrl — no magnet), Ctrl+click — select, double click — FX, right click — menu, S — split"
+empty = "LMB — playhead, drag — region, Ctrl+drag — select events; wheel — scroll, Ctrl — zoom, Shift — tracks"
 
 # Таймлайн: подписи на morph-событиях.
 [tl.morph]

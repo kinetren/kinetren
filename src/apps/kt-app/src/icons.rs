@@ -22,6 +22,7 @@ pub const REGION_IN: &str = "\u{E85E}"; // brackets-square
 pub const REGION_OUT: &str = "\u{E862}"; // brackets-angle
 pub const CLEAR: &str = "\u{E4F6}"; // x
 pub const LOOP: &str = "\u{E3F6}"; // repeat
+pub const SELECTION: &str = "\u{E69A}"; // selection (рамка выделения событий)
 pub const UNDO: &str = "\u{E08A}"; // arrow-u-up-left
 pub const REDO: &str = "\u{E08C}"; // arrow-u-up-right
 pub const RENDER: &str = "\u{E8C2}"; // film-slate

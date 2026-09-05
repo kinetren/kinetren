@@ -97,6 +97,34 @@ pub fn copy_group(p: &Project, id: ClipId) -> ClipBlock {
     ClipBlock { clips, transitions }
 }
 
+/// Copy множества выделенных событий (Р.33): каждое тянет за собой свою
+/// link-группу, ребейз к старту самого раннего. `copy_group` — частный
+/// случай с одним id; отдельная функция нужна, чтобы блок из нескольких
+/// событий сохранял их взаимные СДВИГИ (вставка кладёт их той же фигурой).
+pub fn copy_clips(p: &Project, ids: &[ClipId]) -> ClipBlock {
+    let groups: Vec<GroupId> =
+        p.clips.iter().filter(|c| ids.contains(&c.id)).filter_map(|c| c.link_group).collect();
+    let members: Vec<ClipEvent> = p
+        .clips
+        .iter()
+        .filter(|c| ids.contains(&c.id) || c.link_group.is_some_and(|g| groups.contains(&g)))
+        .cloned()
+        .collect();
+    if members.is_empty() {
+        return ClipBlock::default();
+    }
+    let base = members.iter().map(|c| c.start).min().unwrap_or(Tick::ZERO);
+    let clips: Vec<ClipEvent> = members
+        .into_iter()
+        .map(|mut c| {
+            c.start = c.start - base;
+            c
+        })
+        .collect();
+    let transitions = surviving_transitions(p, &clips);
+    ClipBlock { clips, transitions }
+}
+
 /// Paste блока в позицию `at`: свежие id, каждая старая группа → одна новая,
 /// переходы ретаргетятся на новые id. Возвращает (команды, конец блока) —
 /// курсор прыгает в конец для chain-paste. Вставка с коллизией на дорожке

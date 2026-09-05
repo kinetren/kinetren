@@ -76,6 +76,7 @@ zoom_in = "放大"
 region_in = "区间：从播放头设入点（I）"
 region_out = "区间：从播放头设出点（O）"
 region_clear = "清除区间"
+select_tool = "选择工具：拖动框选事件（Ctrl+拖动始终可用）"
 loop_armed = "循环已就绪 — 请先选区间（L）"
 loop = "区间循环（L）"
 undo = "撤销（Ctrl+Z）"
@@ -121,8 +122,8 @@ trim_end = "修剪片段出点"
 volume = "片段音量：拖动，双击 — 0 dB"
 fade_handle = "拖动顶角——在片段这一侧添加淡化"
 level = "上下拖动——该片段的视频不透明度"
-clip = "片段：拖动 — 移动（Ctrl — 关闭吸附），双击 — 特效，右键 — 菜单，S — 切分"
-empty = "左键 — 播放头，拖动 — 区间；滚轮 — 滚动，Ctrl — 缩放，Shift — 轨道"
+clip = "事件：拖动 — 移动（Ctrl — 关闭吸附），Ctrl+单击 — 选择，双击 — FX，右键 — 菜单，S — 切分"
+empty = "左键 — 播放头，拖动 — 区间，Ctrl+拖动 — 框选事件；滚轮 — 滚动，Ctrl — 缩放，Shift — 轨道"
 
 # Таймлайн: подписи на morph-событиях.
 [tl.morph]

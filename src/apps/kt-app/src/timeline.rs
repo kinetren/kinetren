@@ -347,6 +347,13 @@ pub enum Drag {
     Region {
         anchor: i64,
     },
+    /// Рамка выделения событий (Р.33 п.7): Ctrl+драг с пустого места, а в
+    /// режиме-инструменте — обычный драг. `add` = добавлять к выделению,
+    /// иначе рамка заменяет его целиком.
+    Rubber {
+        anchor: egui::Pos2,
+        add: bool,
+    },
     /// Перетаскивание границы региона (true = start).
     RegionEdge {
         start_edge: bool,
@@ -722,6 +729,25 @@ impl TlGeom {
     pub fn in_lanes(&self, pos: egui::Pos2) -> bool {
         self.rect.contains(pos) && pos.y > self.rect.top() + RULER_H
     }
+}
+
+/// События, попавшие в рамку выделения (Р.33 п.7). Чистая функция: рамка
+/// в координатах окна, геометрия — только через `TlGeom`, как требует
+/// инвариант маппинга. Событие берётся при ЛЮБОМ пересечении с рамкой —
+/// целиться в него целиком пользователь не обязан (п.1 чек-листа).
+pub fn rubber_hits(geom: &TlGeom, p: &Project, band: egui::Rect) -> Vec<ClipId> {
+    p.clips
+        .iter()
+        .filter(|c| {
+            let top = geom.lane_top(c.kind, c.lane);
+            let r = egui::Rect::from_min_max(
+                egui::pos2(geom.tick_to_x(c.start.0), top),
+                egui::pos2(geom.tick_to_x((c.start + c.duration).0), top + geom.lane_h),
+            );
+            band.intersects(r)
+        })
+        .map(|c| c.id)
+        .collect()
 }
 
 impl KtApp {
@@ -1409,8 +1435,11 @@ impl KtApp {
         self.snap_line = None;
         // препятствие живёт РОВНО пока жест в него упирается (п.5)
         self.blocked = None;
-        // магнит включён всегда; Ctrl его снимает (п.2 р.11)
+        // магнит включён всегда; Ctrl его снимает (п.2 р.11). Тот же Ctrl,
+        // нажатый ДО захвата пустого места, начинает рамку выделения
+        // (Р.33 п.7) — на переносе события магнит от этого не страдает
         self.snap_off = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+        let ctrl_held = self.snap_off;
 
         let marker_at = |app: &KtApp, pos: egui::Pos2| -> Option<i64> {
             if pos.y > rect.top() + RULER_H {
@@ -1644,12 +1673,15 @@ impl KtApp {
                 let r = self.model.project().region.unwrap();
                 CtxTarget::RegionEdge(if start_edge { r.start.0 } else { r.end.0 })
             } else if let Some((id, _)) = clip_at(self, pos) {
-                self.selected = Some(id);
+                // ПКМ по члену выделения не рушит пачку: меню про неё
+                if !self.is_selected(id) {
+                    self.select_only(id);
+                }
                 self.selected_morph = None;
                 CtxTarget::Clip(id)
             } else if let Some(mid) = morpher_at(self, pos) {
                 self.selected_morph = Some(mid);
-                self.selected = None;
+                self.selected.clear();
                 CtxTarget::Morpher(mid)
             } else {
                 CtxTarget::Empty
@@ -1712,7 +1744,7 @@ impl KtApp {
                 }
             } else if let Some(mid) = morpher_at(self, pos) {
                 self.selected_morph = Some(mid);
-                self.selected = None;
+                self.selected.clear();
                 if response.double_clicked() {
                     self.open_morph_editor(mid);
                 } else if response.drag_started()
@@ -1757,12 +1789,20 @@ impl KtApp {
                     self.player.seek(Tick(t.max(0)));
                 }
             } else if let Some((id, zone)) = clip_at(self, pos) {
-                self.selected = Some(id);
                 self.selected_morph = None;
-                // клик по СОБЫТИЮ тоже ставит курсор (v1, п.7)
-                if response.clicked() {
+                if ctrl_held && response.clicked() {
+                    // Ctrl+клик набирает выделение: курсор при этом стоит на
+                    // месте, иначе набор пачки утаскивал бы playhead за собой
+                    self.toggle_selected(id);
+                } else if response.clicked() {
+                    self.select_only(id);
+                    // клик по СОБЫТИЮ тоже ставит курсор (v1, п.7)
                     let t = self.snap(x_to_tick(pos.x).max(0), None);
                     self.player.seek(Tick(t.max(0)));
+                } else if !self.is_selected(id) {
+                    // драг по чужому событию берёт его одно; драг по члену
+                    // пачки тащит всю пачку (выделение не рушим)
+                    self.select_only(id);
                 }
                 if response.double_clicked() {
                     // регион на span всей link-группы (порт double-click)
@@ -1821,12 +1861,21 @@ impl KtApp {
                     + heat.signum() as f64 * (heat.abs() as f64).powi(2) * vis * 0.6)
                     .max(-(tpp * 40.0));
             } else if response.drag_started() {
-                // пустое место: выделение региона (порт RegionSelect)
-                // снап и при создании региона с пустого места (п.13 р.6)
-                let anchor = self.snap(x_to_tick(pos.x).max(0), None);
-                self.drag = Some(Drag::Region { anchor });
+                if ctrl_held || self.sel_tool {
+                    // рамка выделения (Р.33 п.7): Ctrl+драг всегда, а в
+                    // режиме-инструменте — обычный драг. Начинается с
+                    // ПУСТОГО места: драг по событию остаётся переносом, и
+                    // Ctrl в нём по-прежнему снимает магнит (п.2 р.11)
+                    self.drag =
+                        Some(Drag::Rubber { anchor: pos, add: ctrl_held && self.sel_tool });
+                } else {
+                    // пустое место: выделение региона (порт RegionSelect)
+                    // снап и при создании региона с пустого места (п.13 р.6)
+                    let anchor = self.snap(x_to_tick(pos.x).max(0), None);
+                    self.drag = Some(Drag::Region { anchor });
+                }
             } else {
-                self.selected = None;
+                self.selected.clear();
                 let t = self.snap(x_to_tick(pos.x).max(0), None);
                 self.player.seek(Tick(t.max(0)));
             }
@@ -1840,6 +1889,11 @@ impl KtApp {
                 Some(Drag::LaneRow { from, cur }) => {
                     // обрабатывается gutter-областью; здесь просто держим
                     self.drag = Some(Drag::LaneRow { from, cur });
+                }
+                Some(Drag::Rubber { anchor, add }) => {
+                    // рамка рисуется в слое клипов по текущему указателю,
+                    // выделение забирается на отпускании
+                    self.drag = Some(Drag::Rubber { anchor, add });
                 }
                 Some(Drag::Clip(mut d)) => {
                     d.moved = true;
@@ -2168,6 +2222,19 @@ impl KtApp {
                         }
                     }
                 }
+                Some(Drag::Rubber { anchor, add }) => {
+                    // точка отпускания: interact_pointer_pos живёт до конца
+                    // кадра релиза, hover — страховка
+                    let band = egui::Rect::from_two_pos(anchor, pointer.or(hover).unwrap_or(anchor));
+                    let hits = rubber_hits(&geom, self.model.project(), band);
+                    if !add {
+                        self.selected.clear();
+                    }
+                    if !hits.is_empty() {
+                        self.selected_morph = None;
+                    }
+                    self.selected.extend(hits);
+                }
                 Some(Drag::Region { .. }) | Some(Drag::RegionEdge { .. }) => {
                     self.on_region_changed();
                     // играем — курсор немедленно в начало нового региона (п.4)
@@ -2212,7 +2279,7 @@ impl KtApp {
                 egui::pos2(x0.max(full.left()), top + 1.0),
                 egui::pos2(x1.min(rect.right()), top + lane_h - 3.0),
             );
-            let selected = self.selected == Some(c.id);
+            let selected = self.is_selected(c.id);
             let dragging = matches!(&self.drag, Some(Drag::Clip(d)) if d.id == c.id);
             let is_offline = offline.contains(&c.media);
 
@@ -2529,6 +2596,24 @@ impl KtApp {
         }
         drop(peaks);
 
+        // ---- рамка выделения (Р.33 п.7): тот же вид, что в медиа-бине ------
+        if let Some(Drag::Rubber { anchor, .. }) = &self.drag
+            && let Some(cur) = pointer.or(hover)
+        {
+            let band = egui::Rect::from_two_pos(*anchor, cur);
+            painter.rect_filled(
+                band,
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(90, 140, 220, 40),
+            );
+            painter.rect_stroke(
+                band,
+                0.0,
+                egui::Stroke::new(1.0, crate::theme::ACCENT),
+                egui::StrokeKind::Middle,
+            );
+        }
+
         // ---- morph-блоки (H1, порт v1: фиолетовый скруглённый блок) ---------
         for m in &self.model.project().morphers {
             let start = match &self.drag {
@@ -2830,7 +2915,7 @@ impl KtApp {
             }
             // ручки видны у ВЫДЕЛЕННОГО события — иначе жест не найти
             // (п.14 чек-листа: элемент управления обязан быть заметен)
-            if let Some(sel) = self.selected
+            if let Some(sel) = self.selected_one()
                 && let Some(c) = p.clips.iter().find(|c| c.id == sel)
             {
                 let top = lane_top(c.kind, c.lane);
@@ -3260,7 +3345,7 @@ impl KtApp {
                     .map(|c| (c.kind == ClipKind::Audio, c.link_group.is_some()))
                     .unwrap_or((false, false));
                 if ui.button(tr(k::tl::menu::COPY)).clicked() {
-                    self.selected = Some(id);
+                    self.select_only(id);
                     self.copy_selection();
                     ui.close();
                 }
@@ -3269,13 +3354,13 @@ impl KtApp {
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::DELETE)).clicked() {
-                    self.selected = Some(id);
+                    self.select_only(id);
                     // именно ЭТОТ клип (+группа), а не содержимое региона (п.10)
                     self.delete_selected();
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::SPLIT)).clicked() {
-                    self.selected = Some(id);
+                    self.select_only(id);
                     self.cut_action();
                     ui.close();
                 }
@@ -3296,12 +3381,12 @@ impl KtApp {
                 ui.separator();
                 if has_group {
                     if ui.button(tr(k::tl::menu::UNLINK)).clicked() {
-                        self.selected = Some(id);
+                        self.select_only(id);
                         self.unlink_selected();
                         ui.close();
                     }
                 } else if ui.button(tr(k::tl::menu::LINK)).clicked() {
-                    self.selected = Some(id);
+                    self.select_only(id);
                     self.magnetize_selected();
                     ui.close();
                 }
@@ -3432,12 +3517,12 @@ impl KtApp {
                 ui.separator();
                 // morpher (H1, порт v1): цели = регион (приоритет) или клип+группа
                 if ui.button(tr(k::tl::menu::ADD_MORPHER)).clicked() {
-                    self.selected = Some(id);
+                    self.select_only(id);
                     self.begin_morph_placement(false);
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::ADD_FX_BATCH)).clicked() {
-                    self.selected = Some(id);
+                    self.select_only(id);
                     self.begin_morph_placement(true);
                     ui.close();
                 }

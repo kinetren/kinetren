@@ -2869,7 +2869,7 @@ fn t173_corner_fade_and_level_gestures() {
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
-        app.selected = Some(ClipId(1));
+        app.select_only(ClipId(1));
         app.view_start = 0.0;
         app.ticks_per_px = TPP;
         app.player.seek(Tick(0));
@@ -2989,7 +2989,7 @@ fn t176_audio_and_video_share_one_level_line() {
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
-        app.selected = Some(ClipId(1));
+        app.select_only(ClipId(1));
         app.view_start = 0.0;
         app.ticks_per_px = TPP;
         app.player.seek(Tick(0));
@@ -3205,6 +3205,213 @@ fn t194_autosave_runs_in_background() {
         "правки после снапшота сохраняют звёздочку (иначе они бы потерялись)"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Проект под тесты выделения: три видео-события на одной дорожке с
+/// зазорами (зазор нужен, чтобы рамке было с чего начаться).
+#[cfg(test)]
+fn harness_three_clips() -> (Harness<'static, KtApp>, crate::timeline::TlGeom) {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        for (i, start) in [0i64, 100_000, 200_000].iter().enumerate() {
+            p.clips.push(ClipEvent {
+                id: ClipId(i as u64 + 1),
+                link_group: None,
+                kind: ClipKind::Video,
+                lane: 0,
+                start: Tick(*start),
+                duration: Tick(50_000),
+                source_in: Tick(0),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx: vec![],
+                fx_bypass: vec![],
+                fx_auto: vec![],
+                opacity: 1.0,
+            });
+        }
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.view_start = 0.0;
+        app.ticks_per_px = 1000.0;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    (h, g)
+}
+
+/// Драг рамкой В ТРИ ШАГА (порог драга egui) с зажатым Ctrl.
+#[cfg(test)]
+fn rubber_drag(h: &mut Harness<'_, KtApp>, from: egui::Pos2, to: egui::Pos2, ctrl: bool) {
+    let m = if ctrl { egui::Modifiers::CTRL } else { egui::Modifiers::NONE };
+    h.event(egui::Event::ModifiersChanged(m));
+    h.hover_at(from);
+    h.step();
+    h.drag_at(from);
+    h.step();
+    h.hover_at(from + egui::vec2(8.0, 0.0));
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.drop_at(to);
+    h.step();
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.step();
+}
+
+/// Тест 202 (Р.33 п.7, требование пользователя: «на основном таймлайне не
+/// хватает area-selection… можно по зажатию ctrl выделять через area»).
+/// Выделение стало МНОЖЕСТВОМ: Ctrl+клик набирает пачку, Ctrl+драг с
+/// пустого места ловит события рамкой и региона при этом не создаёт.
+#[test]
+fn t202_ctrl_click_and_rubber_band_select() {
+    use kt_model::*;
+    let (mut h, g) = harness_three_clips();
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.6;
+    let at = |t: i64| egui::pos2(g.tick_to_x(t), y);
+
+    // обычный клик — одно событие; Ctrl+клик добавляет второе
+    h.hover_at(at(25_000));
+    h.step();
+    h.drag_at(at(25_000));
+    h.step();
+    h.drop_at(at(25_000));
+    h.step();
+    assert_eq!(h.state().selected.iter().copied().collect::<Vec<_>>(), vec![ClipId(1)]);
+
+    let node_click_ctrl = |h: &mut Harness<'_, KtApp>, pos: egui::Pos2| {
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
+        h.hover_at(pos);
+        h.step();
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::CTRL,
+        });
+        h.step();
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::CTRL,
+        });
+        h.step();
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        h.step();
+    };
+    let cursor_before = h.state().player.transport.playhead();
+    node_click_ctrl(&mut h, at(125_000));
+    assert_eq!(
+        h.state().selected.iter().copied().collect::<Vec<_>>(),
+        vec![ClipId(1), ClipId(2)],
+        "Ctrl+клик обязан ДОБАВЛЯТЬ к выделению"
+    );
+    assert_eq!(
+        h.state().player.transport.playhead(),
+        cursor_before,
+        "набор пачки не должен таскать курсор"
+    );
+    node_click_ctrl(&mut h, at(125_000));
+    assert_eq!(
+        h.state().selected.iter().copied().collect::<Vec<_>>(),
+        vec![ClipId(1)],
+        "повторный Ctrl+клик снимает выделение с события"
+    );
+
+    // Ctrl+драг с ПУСТОГО места: рамка забирает второе и третье событие
+    h.state_mut().model.set_region(None);
+    h.step();
+    rubber_drag(&mut h, at(70_000), at(260_000), true);
+    assert_eq!(
+        h.state().selected.iter().copied().collect::<Vec<_>>(),
+        vec![ClipId(2), ClipId(3)],
+        "рамка не собрала события"
+    );
+    assert!(
+        h.state().model.project().region.is_none(),
+        "Ctrl+драг обязан рисовать рамку, а не регион"
+    );
+
+    // без Ctrl тот же драг по-прежнему делает регион (старый жест цел)
+    rubber_drag(&mut h, at(70_000), at(260_000), false);
+    assert!(
+        h.state().model.project().region.is_some(),
+        "обычный драг с пустого места обязан остаться выделением региона"
+    );
+}
+
+/// Тест 203 (Р.33 п.7, вторая половина требования: «а можно как в vegas —
+/// toggle-button»). Кнопка-инструмент включается КЛИКОМ и меняет смысл
+/// обычного драга по пустому месту.
+#[test]
+fn t203_selection_tool_button_switches_drag() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, g) = harness_three_clips();
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.6;
+    let at = |t: i64| egui::pos2(g.tick_to_x(t), y);
+
+    assert!(!h.state().sel_tool, "режим выключен по умолчанию");
+    h.get_by_label(crate::icons::SELECTION).click();
+    h.step();
+    assert!(h.state().sel_tool, "клик по кнопке не включил инструмент выделения");
+
+    // в режиме ОБЫЧНЫЙ драг рисует рамку и региона не создаёт
+    h.state_mut().model.set_region(None);
+    h.step();
+    rubber_drag(&mut h, at(70_000), at(260_000), false);
+    assert_eq!(
+        h.state().selected.iter().copied().collect::<Vec<_>>(),
+        vec![ClipId(2), ClipId(3)],
+        "в режиме выделения драг обязан ловить события"
+    );
+    assert!(h.state().model.project().region.is_none(), "в режиме выделения регион не ставится");
+
+    // выключили — драг снова делает регион
+    h.get_by_label(crate::icons::SELECTION).click();
+    h.step();
+    assert!(!h.state().sel_tool);
+    rubber_drag(&mut h, at(70_000), at(260_000), false);
+    assert!(h.state().model.project().region.is_some(), "режим выключен — вернулся регион");
+}
+
+/// Тест 205 (Р.33 п.7, «ну и это естественно везде учесть, в том же
+/// создании морферов»): операции работают по ВСЕМУ выделению, а не по
+/// одному событию.
+#[test]
+fn t205_operations_run_over_whole_selection() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips();
+    let app = h.state_mut();
+    app.select_only(ClipId(1));
+    app.selected.insert(ClipId(3));
+
+    // цели морфера = всё выделение
+    assert_eq!(app.morph_target_ids(), vec![ClipId(1), ClipId(3)]);
+
+    // копирование забирает оба события, вставка кладёт оба
+    app.copy_selection();
+    assert_eq!(app.clipboard.clips.len(), 2, "копируется всё выделение");
+    app.player.seek(kt_time::Tick(400_000));
+    app.paste_at_cursor();
+    assert_eq!(app.model.project().clips.len(), 5, "вставились оба события");
+
+    // удаление сносит оба и откатывается одним undo
+    app.select_only(ClipId(1));
+    app.selected.insert(ClipId(3));
+    let before = app.model.project().clips.len();
+    app.delete_selected();
+    assert_eq!(app.model.project().clips.len(), before - 2, "Del удалил не всё выделение");
+    app.undo();
+    assert_eq!(app.model.project().clips.len(), before, "undo вернул оба одним шагом");
 }
 
 /// Тест 201 (Р.33 п.9, требование пользователя: «шаблон для всех рендеров
