@@ -1136,13 +1136,6 @@ fn t122_insert_lane_after_clicked_row() {
         p.audio_lanes = 2;
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
-        app.lane_order = vec![
-            (LaneKind::Video, 0),
-            (LaneKind::Video, 1),
-            (LaneKind::Video, 2),
-            (LaneKind::Audio, 0),
-            (LaneKind::Audio, 1),
-        ];
         app.lane_names = vec![
             (LaneKind::Video, 1, "Титры".into()),
             (LaneKind::Audio, 1, "Голос".into()),
@@ -1156,10 +1149,10 @@ fn t122_insert_lane_after_clicked_row() {
     h.step();
     assert_eq!(h.state().model.project().video_lanes, 4, "дорожка не добавилась");
     assert_eq!(
-        h.state().lane_order[1],
+        h.state().model.project().rows()[1],
         (LaneKind::Video, 1),
         "новая дорожка не встала под кликнутой: {:?}",
-        h.state().lane_order
+        h.state().model.project().rows()
     );
     // имя «Титры» ехало на V2 (индекс 1) — обязано уехать на индекс 2
     assert_eq!(
@@ -1181,33 +1174,37 @@ fn t122_insert_lane_after_clicked_row() {
     // при порядке V1,V2,A1,A2 давал V1,V2,A1,A2,V3.
     let last_video = h
         .state()
-        .lane_order
+        .model
+        .project()
+        .rows()
         .iter()
         .position(|&e| e == (LaneKind::Video, 3))
         .expect("последняя видео-строка");
     h.state_mut().insert_lane_after_row(LaneKind::Video, Some((LaneKind::Video, 3)));
     h.step();
     assert_eq!(
-        h.state().lane_order[last_video + 1],
+        h.state().model.project().rows()[last_video + 1],
         (LaneKind::Video, 4),
         "новая строка уехала в самый низ вместо места под кликнутой: {:?}",
-        h.state().lane_order
+        h.state().model.project().rows()
     );
 
     // --- клик по строке ДРУГОГО вида: аудио-дорожка встаёт под ней же
     let audio_row = h
         .state()
-        .lane_order
+        .model
+        .project()
+        .rows()
         .iter()
         .position(|&e| e == (LaneKind::Video, 3))
         .expect("строка V4 пропала");
     h.state_mut().insert_lane_after_row(LaneKind::Audio, Some((LaneKind::Video, 3)));
     h.step();
     assert_eq!(
-        h.state().lane_order[audio_row + 1].0,
+        h.state().model.project().rows()[audio_row + 1].0,
         LaneKind::Audio,
         "аудио-дорожка не встала под кликнутой видео-строкой: {:?}",
-        h.state().lane_order
+        h.state().model.project().rows()
     );
 
     // --- morph тоже добавляется из меню

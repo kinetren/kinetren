@@ -52,6 +52,11 @@ pub struct KtTimelineMeta {
     pub bin_free: bool,
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub morph_lanes: u32,
+    /// Порядок строк дорожек (Р.35): переехал из `ui.lane_order` в
+    /// модель, потому что морфер-слой сделал его частью КАРТИНКИ.
+    /// Пусто = естественный блочный порядок.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lane_order: Vec<(kt_model::LaneKind, u32)>,
     /// Монтажная длина таймлайна в тиках, когда она БОЛЬШЕ материала
     /// (хвостовой Gap чужого файла; решение пользователя Р.25). Пустые
     /// дорожки, которых не было в файле, мы не пишем — их число едет здесь.

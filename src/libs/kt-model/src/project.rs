@@ -473,6 +473,16 @@ pub struct Project {
     /// живут — только morph-события. 0 = дорожек нет (старые файлы).
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub morph_lanes: u32,
+    /// Порядок строк дорожек сверху вниз (Р.35). ПЕРЕЕХАЛ СЮДА ИЗ
+    /// `UiState`: морфер-слой действует «на всё, что ниже», значит
+    /// порядок влияет на картинку — а всё, что влияет на картинку,
+    /// обязано ходить через undo и жить в модели.
+    ///
+    /// Инвариант: либо ПУСТО (естественный блочный порядок V..A..M..C),
+    /// либо ПОЛНЫЙ нормализованный вектор. Иначе проект после первого же
+    /// открытия обрастал бы полем и терял байт-стабильность.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lane_order: Vec<(LaneKind, u32)>,
     /// Morph-события. Применяются к клипам в `effective_clips()`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub morphers: Vec<MorpherEvent>,
@@ -937,12 +947,12 @@ pub struct UiState {
     pub ticks_per_px: f64,
     /// Позиция курсора (тики).
     pub cursor: i64,
-    /// Порядок отображения дорожек сверху вниз (п.6 v1.4): произвольное
-    /// перемешивание V/A/M. Пусто (старые файлы) = блочный V..A..M.
-    /// Чисто визуальное свойство: семантика ClipEvent.lane (z-order видео,
-    /// микс-шина аудио) НЕ зависит от порядка строк. Вне undo, как весь
-    /// UiState; нормализация — normalize_lane_order (тест 49).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// ЛЕГАСИ-вход (до Р.35 порядок строк был чисто визуальным и жил
+    /// здесь). Теперь он в модели (`Project.lane_order`) и ходит через
+    /// undo — морфер-слой действует «на всё, что ниже», значит порядок
+    /// влияет на картинку. Ридер переносит это поле в модель; писатель
+    /// сюда больше не пишет.
+    #[serde(default, skip_serializing)]
     pub lane_order: Vec<(LaneKind, u32)>,
     /// Медиа-бин: режим свободной раскладки (п.7 р.8). По умолчанию
     /// включён — пользователь сам группирует карточки.
@@ -2545,6 +2555,7 @@ impl Project {
             video_lanes: 1,
             audio_lanes: 1,
             morph_lanes: 0,
+            lane_order: Vec::new(),
             morphers: Vec::new(),
             transitions: Vec::new(),
             foreign: Vec::new(),
@@ -2564,6 +2575,43 @@ impl Project {
     /// дефолтную «50 мм» (тождество для Pan3d с дефолтами).
     pub fn active_camera_at(&self, t: Tick) -> Option<&CameraEvent> {
         active_camera_in(&self.cameras, t)
+    }
+
+    /// Порядок строк сверху вниз, нормализованный к фактическим
+    /// счётчикам дорожек. Единственный способ узнать, что «ниже».
+    pub fn rows(&self) -> Vec<(LaneKind, u32)> {
+        normalize_lane_order(
+            &self.lane_order,
+            self.video_lanes,
+            self.audio_lanes,
+            self.morph_lanes,
+            self.camera_lanes,
+        )
+    }
+
+    /// Индекс строки в порядке дорожек; None — такой дорожки нет.
+    pub fn row_of(&self, key: (LaneKind, u32)) -> Option<usize> {
+        self.rows().iter().position(|&k| k == key)
+    }
+
+    /// Записать порядок строк, схлопнув естественный в пусто (инвариант
+    /// поля `lane_order`).
+    pub fn set_lane_order(&mut self, order: &[(LaneKind, u32)]) {
+        let norm = normalize_lane_order(
+            order,
+            self.video_lanes,
+            self.audio_lanes,
+            self.morph_lanes,
+            self.camera_lanes,
+        );
+        let natural = normalize_lane_order(
+            &[],
+            self.video_lanes,
+            self.audio_lanes,
+            self.morph_lanes,
+            self.camera_lanes,
+        );
+        self.lane_order = if norm == natural { Vec::new() } else { norm };
     }
 
     /// Клипы после применения morpher'ов — ЕДИНСТВЕННАЯ точка выдачи клипов

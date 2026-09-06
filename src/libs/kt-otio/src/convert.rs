@@ -486,6 +486,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         bin_layout: p.ui.as_ref().map(|u| u.bin_layout.clone()).unwrap_or_default(),
         bin_free: p.ui.as_ref().map(|u| u.bin_free).unwrap_or(false),
         morph_lanes: p.morph_lanes,
+        lane_order: p.lane_order.clone(),
         // длина сверх материала и число дорожек (пустые в файл не пишем)
         end: p.timeline_end.map(|t| t.0),
         lanes: Some((p.video_lanes, p.audio_lanes)),
@@ -957,6 +958,14 @@ pub fn timeline_to_project(
                 kt_model::Region::normalized(Tick(s), Tick(e))
             });
             p.loop_enabled = tr.loop_enabled;
+        }
+        // порядок строк: своё поле, а из ui.lane_order — только апгрейд
+        // старого файла (односторонний, поле больше не пишется)
+        p.lane_order = kt.lane_order;
+        if p.lane_order.is_empty()
+            && let Some(u) = &kt.ui
+        {
+            p.lane_order = u.lane_order.clone();
         }
         if let Some(mut ui) = kt.ui {
             // имена дорожек v/a приезжают из Track.name; morph/camera — из ui

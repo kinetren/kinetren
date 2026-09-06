@@ -1231,21 +1231,15 @@ impl KtApp {
         let lane_h = vl.lane_h;
         // кламп скролла каждый кадр (удаление дорожек/ресайз панели)
         self.tl_scroll = self.tl_scroll.clamp(0.0, vl.scroll_max);
-        // display-порядок строк (п.6 v1.4): произвольное перемешивание
-        // V/A/M/C; нормализация каждый кадр — вставки/удаления дорожек
-        // подтягиваются автоматически
-        self.lane_order = kt_model::normalize_lane_order(
-            &self.lane_order,
-            video_lanes,
-            audio_lanes,
-            morph_lanes,
-            camera_lanes,
-        );
+        // display-порядок строк: с Р.35 он живёт в МОДЕЛИ (морфер-слой
+        // действует «на всё, что ниже»), а `rows()` нормализует его к
+        // фактическим счётчикам дорожек на каждый кадр
+        let rows = self.model.project().rows();
         // кэш геометрии для маппинга вне draw_timeline (дроп п.2, строки п.6)
         let geom = TlGeom {
             rect,
             lane_h,
-            rows: std::sync::Arc::new(self.lane_order.clone()),
+            rows: std::sync::Arc::new(rows),
             view_top: self.tl_scroll,
             view_start: self.view_start,
             tpp: self.ticks_per_px,
@@ -1412,7 +1406,6 @@ impl KtApp {
                     };
                     if ui.add_enabled(lanes_of_kind > 1, egui::Button::new(del_label)).clicked() {
                         self.delete_lane(kind, lane);
-                        kt_model::lane_order_remove(&mut self.lane_order, lk, lane);
                         ui.close();
                     }
                     if ui.button(tr(k::tl::lane::RENAME)).clicked() {
@@ -1445,11 +1438,6 @@ impl KtApp {
                     };
                     if ui.button(del_label).clicked() {
                         if self.apply(Command::RemoveMorphLane { at: lane }) {
-                            kt_model::lane_order_remove(
-                                &mut self.lane_order,
-                                LaneKind::Morph,
-                                lane,
-                            );
                             kt_model::lane_names_remove(
                                 &mut self.lane_names,
                                 LaneKind::Morph,
@@ -1482,11 +1470,6 @@ impl KtApp {
                     };
                     if ui.button(del_label).clicked() {
                         if self.apply(Command::RemoveCameraLane { at: lane }) {
-                            kt_model::lane_order_remove(
-                                &mut self.lane_order,
-                                LaneKind::Camera,
-                                lane,
-                            );
                             kt_model::lane_names_remove(
                                 &mut self.lane_names,
                                 LaneKind::Camera,

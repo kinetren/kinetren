@@ -43,23 +43,66 @@ fn t49_insert_remove_shift_aware() {
 
 #[test]
 fn t49_lane_order_serde_roundtrip() {
+    // с Р.35 порядок строк живёт В МОДЕЛИ (морфер-слой действует «на всё,
+    // что ниже», значит порядок влияет на картинку), а `ui.lane_order`
+    // остался легаси-входом и больше не пишется
     let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
-    p.ui = Some(UiState {
-        view_start: 0.0,
-        ticks_per_px: 900.0,
-        cursor: 0,
-        lane_order: vec![(V, 0), (A, 0), (M, 0)],
-        ..Default::default()
-    });
+    p.morph_lanes = 1;
+    p.set_lane_order(&[(M, 0), (V, 0), (A, 0)]);
+    assert_eq!(p.lane_order, vec![(M, 0), (V, 0), (A, 0)]);
     let json = serde_json::to_string(&p).unwrap();
     let loaded = Project::from_json(&json).unwrap();
-    assert_eq!(loaded, p, "round-trip с lane_order");
-    // старый файл без lane_order: поле по умолчанию пусто
-    let mut p2 = p.clone();
-    p2.ui = Some(UiState { view_start: 0.0, ticks_per_px: 900.0, cursor: 0, lane_order: vec![], ..Default::default() });
-    let json2 = serde_json::to_string(&p2).unwrap();
+    assert_eq!(loaded, p, "round-trip порядка строк");
+    assert_eq!(loaded.rows(), vec![(M, 0), (V, 0), (A, 0)], "строки в том же порядке");
+
+    // ЕСТЕСТВЕННЫЙ порядок схлопывается в пусто: иначе проект после
+    // первого же открытия обрастал бы полем и терял байт-стабильность
+    let mut nat = p.clone();
+    nat.set_lane_order(&[(V, 0), (A, 0), (M, 0)]);
+    assert!(nat.lane_order.is_empty(), "естественный порядок не хранится");
+    let json2 = serde_json::to_string(&nat).unwrap();
     assert!(!json2.contains("lane_order"), "пустой вектор не сериализуется");
-    assert_eq!(Project::from_json(&json2).unwrap(), p2);
+    assert_eq!(Project::from_json(&json2).unwrap(), nat);
+    assert_eq!(nat.rows(), vec![(V, 0), (A, 0), (M, 0)], "и всё равно даёт порядок");
+
+    // строка дорожки: row_of по порядку, а не по номеру дорожки
+    assert_eq!(p.row_of((M, 0)), Some(0));
+    assert_eq!(p.row_of((A, 0)), Some(2));
+    assert_eq!(p.row_of((C, 0)), None, "камерных дорожек нет");
+}
+
+/// Тест 241 (Р.35 С1): порядок строк — состояние МОДЕЛИ и ходит через
+/// undo; вставка и удаление дорожки двигают его ВНУТРИ своей команды.
+#[test]
+fn t241_lane_order_is_model_state() {
+    use kt_model::{Command, TimelineModel};
+    let mut m = TimelineModel::new(Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+    }));
+    // вставка morph-дорожки САМА кладёт строку в порядок
+    m.apply(Command::InsertMorphLane { at: 0 }).unwrap();
+    assert_eq!(m.project().rows(), vec![(V, 0), (A, 0), (M, 0)]);
+
+    // перестановка — команда, и она откатывается
+    let want = vec![(M, 0), (V, 0), (A, 0)];
+    m.apply(Command::SetLaneOrder { order: want.clone() }).unwrap();
+    assert_eq!(m.project().rows(), want, "порядок применился");
+    m.undo().unwrap();
+    assert_eq!(m.project().rows(), vec![(V, 0), (A, 0), (M, 0)], "undo вернул порядок");
+    m.redo().unwrap();
+    assert_eq!(m.project().rows(), want, "redo вернул перестановку");
+
+    // удаление дорожки уносит её строку без ручной синхронизации
+    m.apply(Command::RemoveMorphLane { at: 0 }).unwrap();
+    assert_eq!(m.project().rows(), vec![(V, 0), (A, 0)]);
+    assert!(m.project().lane_order.is_empty(), "остался естественный порядок");
+
+    // мусор в команде нормализуется, а не проходит в модель
+    m.apply(Command::SetLaneOrder { order: vec![(V, 0), (V, 0), (M, 7), (A, 0)] }).unwrap();
+    assert_eq!(m.project().rows(), vec![(V, 0), (A, 0)], "дубли и небылицы выброшены");
 }
 
 /// Р.29: камерные дорожки — четвёртый вид в display-порядке (хвост блока

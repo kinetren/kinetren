@@ -864,3 +864,38 @@ fn t240_morpher_schema_v4_and_legacy_read() {
     let v: serde_json::Value = serde_json::from_str(&plain).unwrap();
     assert_ne!(v["metadata"]["kt"]["v"], 4, "без морферов версия не растёт");
 }
+
+/// Тест 241b (Р.35 С1): порядок строк переехал из `ui.lane_order` в
+/// модель. Файл со старым полем апгрейдится односторонне, новый пишет
+/// своё, а проект с естественным порядком остаётся байт-стабильным.
+#[test]
+fn t241_lane_order_moved_into_model() {
+    let mut p = rich_project();
+    p.morph_lanes = 1;
+    p.set_lane_order(&[(kt_model::LaneKind::Morph, 0)]);
+    assert!(!p.lane_order.is_empty(), "перемешанный порядок хранится");
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(v["metadata"]["kt"]["lane_order"].is_array(), "порядок пишется своим полем");
+    assert!(
+        v["metadata"]["kt"]["ui"].get("lane_order").is_none(),
+        "в ui порядок больше не пишется"
+    );
+    let b = load_project(&text, None).expect("файл с порядком строк читается");
+    assert_eq!(b.project.rows(), p.rows(), "порядок пережил круг");
+    assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность");
+
+    // СТАРЫЙ файл: порядок лежал в ui.lane_order — читается оттуда
+    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let order = old["metadata"]["kt"]["lane_order"].clone();
+    old["metadata"]["kt"].as_object_mut().unwrap().remove("lane_order");
+    old["metadata"]["kt"]["ui"]["lane_order"] = order;
+    let b = load_project(&serde_json::to_string_pretty(&old).unwrap(), None)
+        .expect("файл со старым местом порядка обязан открываться");
+    assert_eq!(b.project.rows(), p.rows(), "порядок переехал из ui в модель");
+
+    // естественный порядок поля не заводит
+    let plain = save_project(&rich_project(), &Retained::default(), None);
+    assert!(!plain.contains("lane_order"), "естественный порядок не хранится");
+}

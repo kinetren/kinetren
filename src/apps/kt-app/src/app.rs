@@ -79,7 +79,6 @@ pub struct KtApp {
     pub(crate) geom_dumped_at: Option<std::time::Instant>,
     /// Display-порядок дорожек (п.6 v1.4); нормализуется каждый кадр,
     /// сохраняется в UiState проекта.
-    pub lane_order: Vec<(LaneKind, u32)>,
     /// Превью отделено в собственное окно (п.7 v1.4, второй монитор).
     pub preview_detached: bool,
     /// Экономный UI: 30 fps при воспроизведении (п.1 раунда 5, слабые GPU).
@@ -387,7 +386,6 @@ impl KtApp {
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
-            lane_order: Vec::new(),
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
@@ -522,7 +520,6 @@ impl KtApp {
             tl_geom: None,
             geom_dump_path: std::env::var("KT_GEOM_DUMP").ok(),
             geom_dumped_at: None,
-            lane_order: Vec::new(),
             // KT_DETACH_PREVIEW=1 — старт с отделённым превью (отладка)
             preview_detached: std::env::var_os("KT_DETACH_PREVIEW").is_some(),
             ui_economy: false,
@@ -656,7 +653,8 @@ impl KtApp {
                 ui.ticks_per_px.clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
             app.view_start = ui.view_start.max(-40.0 * app.ticks_per_px);
             app.player.seek(Tick(ui.cursor.max(0)));
-            app.lane_order = ui.lane_order; // п.6 v1.4 (нормализуется в draw)
+            // порядок строк с Р.35 приезжает в модели; ui.lane_order —
+            // легаси-вход, его переносит ридер формата
             app.bin_free = ui.bin_free; // п.7 р.8
             app.bin_layout =
                 ui.bin_layout.iter().map(|(id, x, y)| (*id, egui::pos2(*x, *y))).collect();
@@ -680,7 +678,7 @@ impl KtApp {
             view_start: self.view_start,
             ticks_per_px: self.ticks_per_px,
             cursor: self.player.transport.playhead().0,
-            lane_order: self.lane_order.clone(),
+            lane_order: Vec::new(), // порядок строк живёт в модели (Р.35)
             bin_free: self.bin_free,
             bin_layout: self.bin_layout.iter().map(|(id, p)| (*id, p.x, p.y)).collect(),
             bin_groups: self.bin_groups.clone(),
@@ -1689,17 +1687,21 @@ impl KtApp {
     /// в остальных случаях (перемешивание видов, morph) — чисто
     /// визуальный сдвиг элемента вектора.
     pub fn reorder_rows(&mut self, from: usize, to: usize) {
-        if from == to || from >= self.lane_order.len() || to >= self.lane_order.len() {
+        let mut rows = self.model.project().rows();
+        if from == to || from >= rows.len() || to >= rows.len() {
             return;
         }
-        let (a, b) = (self.lane_order[from], self.lane_order[to]);
+        let (a, b) = (rows[from], rows[to]);
         match (a.0, b.0) {
             (LaneKind::Video, LaneKind::Video) => self.reorder_lane(ClipKind::Video, a.1, b.1),
             (LaneKind::Audio, LaneKind::Audio) => self.reorder_lane(ClipKind::Audio, a.1, b.1),
             _ => {
-                let e = self.lane_order.remove(from);
-                self.lane_order.insert(to, e);
-                self.dirty_ui = true;
+                // с Р.35 перестановка строк — правка СОДЕРЖИМОГО: морфер
+                // действует «на всё, что ниже», значит порядок меняет
+                // картинку и обязан ходить через undo
+                let e = rows.remove(from);
+                rows.insert(to, e);
+                self.apply(Command::SetLaneOrder { order: rows });
             }
         }
     }
@@ -1718,7 +1720,8 @@ impl KtApp {
             LaneKind::Camera => self.apply(Command::InsertCameraLane { at }),
         };
         if ok {
-            kt_model::lane_order_insert(&mut self.lane_order, kind, at);
+            // строку в порядке двигает САМА команда (Р.35) — снаружи её
+            // звали руками и половину случаев забывали (п.122)
             kt_model::lane_names_insert(&mut self.lane_names, kind, at);
             self.dirty_ui = true;
         }
@@ -1749,17 +1752,15 @@ impl KtApp {
         // дорожкой СВОЕГО вида, а если такой нет — в самый конец списка.
         // Живая проверка: клик по V2 при порядке V1,V2,A1,A2 давал
         // V1,V2,A1,A2,V3 — то самое «в самый низ», на которое жаловались.
-        if let Some(row) = after
-            && let Some(f) = self.lane_order.iter().position(|&e| e == (kind, at))
-        {
-            let e = self.lane_order.remove(f);
-            let to = self
-                .lane_order
-                .iter()
-                .position(|&x| x == row)
-                .map(|i| i + 1)
-                .unwrap_or(self.lane_order.len());
-            self.lane_order.insert(to, e);
+        if let Some(row) = after {
+            let mut rows = self.model.project().rows();
+            if let Some(f) = rows.iter().position(|&e| e == (kind, at)) {
+                let e = rows.remove(f);
+                let to =
+                    rows.iter().position(|&x| x == row).map(|i| i + 1).unwrap_or(rows.len());
+                rows.insert(to, e);
+                self.apply(Command::SetLaneOrder { order: rows });
+            }
         }
     }
 

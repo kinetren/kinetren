@@ -147,6 +147,13 @@ pub enum Command {
     BakeMorpher {
         id: MorphId,
     },
+    /// Порядок строк дорожек сверху вниз (Р.35). С переездом морфера в
+    /// слой он влияет на КАРТИНКУ, поэтому живёт в модели и ходит через
+    /// undo: перетащил дорожку — изменил монтаж. Полная замена; вектор
+    /// нормализуется мутацией, проверять его не нужно.
+    SetLaneOrder {
+        order: Vec<(LaneKind, u32)>,
+    },
     /// Вставить morph-дорожку в позицию `at` (lane событий >= at сдвигается).
     InsertMorphLane {
         at: u32,
@@ -523,7 +530,7 @@ impl TimelineModel {
                     return Err(CommandError::MorpherNotFound(*id));
                 }
             }
-            Command::InsertMorphLane { .. } => {}
+            Command::SetLaneOrder { .. } | Command::InsertMorphLane { .. } => {}
             Command::AddCamera(c) => {
                 if p.cameras.iter().any(|x| x.id == c.id) {
                     return Err(CommandError::IdInUse(c.id.0));
@@ -770,6 +777,7 @@ impl TimelineModel {
                 }
             }
             Command::InsertLane { kind, at } => {
+                let mut rows = p.rows();
                 match kind {
                     ClipKind::Video => p.video_lanes = (p.video_lanes.max(at) + 1).max(1),
                     ClipKind::Audio => p.audio_lanes = (p.audio_lanes.max(at) + 1).max(1),
@@ -779,16 +787,29 @@ impl TimelineModel {
                         c.lane += 1;
                     }
                 }
+                let lk = match kind {
+                    ClipKind::Video => LaneKind::Video,
+                    ClipKind::Audio => LaneKind::Audio,
+                };
+                lane_order_insert(&mut rows, lk, at);
+                p.set_lane_order(&rows);
             }
             Command::SetLanes { video, audio } => {
+                // порядок строк подтягивается сам: normalize_lane_order
+                // выбрасывает исчезнувшие и дописывает появившиеся
                 p.video_lanes = video.max(1);
                 p.audio_lanes = audio.max(1);
+                let cur = p.lane_order.clone();
+                p.set_lane_order(&cur);
             }
+            Command::SetLaneOrder { order } => p.set_lane_order(&order),
             Command::RemoveMedia { id } => p.media.retain(|m| m.id != id),
             Command::SetSettings { settings } => p.settings = settings,
             Command::AddMorpher(m) => {
                 p.morph_lanes = p.morph_lanes.max(m.lane + 1);
                 p.morphers.push(m);
+                let cur = p.lane_order.clone();
+                p.set_lane_order(&cur); // новая дорожка попадает в порядок
             }
             Command::SetMorpher(m) => {
                 p.morph_lanes = p.morph_lanes.max(m.lane + 1);
@@ -808,14 +829,20 @@ impl TimelineModel {
                 }
             }
             Command::InsertMorphLane { at } => {
+                let mut rows = p.rows();
                 p.morph_lanes = (p.morph_lanes.max(at) + 1).max(1);
                 for m in &mut p.morphers {
                     if m.lane >= at {
                         m.lane += 1;
                     }
                 }
+                // сдвиг display-строк — ВНУТРИ команды, которая знает `at`
+                // (снаружи его звали руками, и половину случаев забывали)
+                lane_order_insert(&mut rows, LaneKind::Morph, at);
+                p.set_lane_order(&rows);
             }
             Command::RemoveMorphLane { at } => {
+                let mut rows = p.rows();
                 p.morphers.retain(|m| m.lane != at);
                 for m in &mut p.morphers {
                     if m.lane > at {
@@ -823,6 +850,8 @@ impl TimelineModel {
                     }
                 }
                 p.morph_lanes = p.morph_lanes.saturating_sub(1);
+                lane_order_remove(&mut rows, LaneKind::Morph, at);
+                p.set_lane_order(&rows);
             }
             Command::AddCamera(c) => p.cameras.push(c),
             Command::SetCamera(c) => {
@@ -832,14 +861,18 @@ impl TimelineModel {
             }
             Command::RemoveCamera { id } => p.cameras.retain(|c| c.id != id),
             Command::InsertCameraLane { at } => {
+                let mut rows = p.rows();
                 p.camera_lanes = (p.camera_lanes.max(at) + 1).max(1);
                 for c in &mut p.cameras {
                     if c.lane >= at {
                         c.lane += 1;
                     }
                 }
+                lane_order_insert(&mut rows, LaneKind::Camera, at);
+                p.set_lane_order(&rows);
             }
             Command::RemoveCameraLane { at } => {
+                let mut rows = p.rows();
                 p.cameras.retain(|c| c.lane != at);
                 for c in &mut p.cameras {
                     if c.lane > at {
@@ -847,6 +880,8 @@ impl TimelineModel {
                     }
                 }
                 p.camera_lanes = p.camera_lanes.saturating_sub(1);
+                lane_order_remove(&mut rows, LaneKind::Camera, at);
+                p.set_lane_order(&rows);
             }
         }
     }
