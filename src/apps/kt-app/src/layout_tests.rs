@@ -4658,17 +4658,17 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
 
     // режим целей виден и объяснён, а не спрятан в коде
     assert!(
-        h.query_by_label(&crate::i18n::tr(crate::i18n::k::mrph::ON).to_string()).is_some(),
+        h.query_by_label(crate::i18n::tr(crate::i18n::k::mrph::ON)).is_some(),
         "строка «действует на» обязана быть в окне"
     );
     assert!(
-        h.query_by_label(&crate::i18n::tr(crate::i18n::k::mrph::BELOW_NOTE).to_string()).is_some(),
+        h.query_by_label(crate::i18n::tr(crate::i18n::k::mrph::BELOW_NOTE)).is_some(),
         "и сказано, что именно слой накрывает"
     );
 
     // галка «по времени» правит МОДЕЛЬ и укладывается в один undo-шаг
     let depth = h.state().model.undo_depth();
-    h.get_by_label(&crate::i18n::tr(crate::i18n::k::mrph::TIMED).to_string()).click();
+    h.get_by_label(crate::i18n::tr(crate::i18n::k::mrph::TIMED)).click();
     h.step();
     h.step();
     assert!(!h.state().model.project().morphers[0].timed, "галка сняла действие по времени");
@@ -4683,7 +4683,7 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
     h.step();
     h.step();
     assert!(
-        h.query_by_label(&crate::i18n::tr(crate::i18n::k::mrph::BELOW_NOTE).to_string()).is_none(),
+        h.query_by_label(crate::i18n::tr(crate::i18n::k::mrph::BELOW_NOTE)).is_none(),
         "у замороженного списка объяснению слоя не место"
     );
     assert!(
