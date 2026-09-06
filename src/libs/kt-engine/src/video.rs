@@ -213,13 +213,21 @@ impl VideoRenderer {
                 continue;
             }
             let solo = t.is_fade();
-            if let Some(a) = t.a.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
+            // морфер-слой мог разрезать цель (Р.35): id остался у куска
+            // №0, а стык достался тому куску, чья граница на нём стоит —
+            // без этого переход на разрезанном клипе молча исчезал
+            if let Some(a) =
+                t.a.and_then(|id| clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.end == joint))
+            {
                 a.fade_out = Some((w0, w1));
                 a.fade_out_solo = solo;
                 a.fade_out_trans = Some(TransAnim::of(t, w0));
                 a.tail_ext = Tick((w1.0 - a.end.0).max(0));
             }
-            if let Some(b) = t.b.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
+            if let Some(b) = t
+                .b
+                .and_then(|id| clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.start == joint))
+            {
                 b.fade_in = Some((w0, w1));
                 b.fade_in_solo = solo;
                 b.fade_in_trans = Some(TransAnim::of(t, w0));

@@ -296,12 +296,16 @@ pub enum ExportError {
 /// Клипы, чей рендер требует GPU (3D-эффекты, Р.29). Считается по
 /// effective_clips — morpher-батчи тоже учитываются.
 pub fn gpu_required_clips(project: &Project) -> Vec<kt_model::ClipId> {
-    project
+    // куски морфер-слоя схлопываются в оригинал (Р.35): иначе preflight
+    // назвал бы синтетические id, которых пользователь в проекте не видит
+    let mut out: Vec<kt_model::ClipId> = project
         .effective_clips()
         .iter()
         .filter(|c| c.active_fx().iter().any(|f| f.requires_gpu()))
-        .map(|c| c.id)
-        .collect()
+        .map(|c| kt_model::slice_origin(c.id).unwrap_or(c.id))
+        .collect();
+    out.dedup();
+    out
 }
 
 /// Потоковый экспорт в mp4 (h264+aac). `audio_sources`/`video_sources` —

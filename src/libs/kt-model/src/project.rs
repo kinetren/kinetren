@@ -37,7 +37,7 @@ pub enum ClipKind {
 #[serde(transparent)]
 pub struct TransitionId(pub u64);
 
-/// Минимальная суммарная ширина окна перехода (1 мс, как MIN_CLIP_DURATION).
+/// Минимальная суммарная ширина окна перехода (1 мс, как crate::MIN_CLIP_DURATION).
 pub const MIN_TRANSITION_DURATION: Tick = Tick(90);
 
 /// Направление жеста перехода. Одно поле вместо четырёх видов: ядро у
@@ -858,6 +858,149 @@ impl MorpherEvent {
     pub fn window(&self) -> TickRange {
         TickRange::new(self.start, self.start + self.duration)
     }
+
+    /// Цель ли этот клип. `Below`/`Marks`/`Areas` появятся в следующих
+    /// кусках Р.35; сейчас работает замороженный список.
+    pub fn covers(&self, c: &ClipEvent, _p: &Project) -> bool {
+        match &self.targets {
+            MorphTargets::Clips { ids } => ids.contains(&c.id),
+            // ЗАМЕТКА (Р.35): режим слоя включается куском «Слой»,
+            // именованные ссылки — стадией С4. До тех пор — не цель.
+            _ => false,
+        }
+    }
+
+    /// Окна, в которых морфер РЕАЛЬНО меняет ЭТОТ клип. Пусто — клип не
+    /// трогается и (важно!) не режется. Порядок проверок объясняет всю
+    /// стоимость решения:
+    ///
+    /// 1. цель ли клип;
+    /// 2. **меняет ли патч клип ЭТОГО вида** — слой с одними видео-FX не
+    ///    должен оставлять шов на аудио под собой;
+    /// 3. `timed = false` (файлы до v4) — патч на всё тело, как в v1;
+    /// 4. клип, который резать НЕЛЬЗЯ (варп потребления источника —
+    ///    находка 2 Р.35), патчится целиком;
+    /// 5. запретные зоны (окна переходов и наезды соседей) выталкивают
+    ///    границу наружу: слой «липнет» к краю кроссфейда, зато соседи по
+    ///    дорожке не переслаиваются от резки (находка 1 Р.35);
+    /// 6. огрызок короче `crate::MIN_CLIP_DURATION` схлопывается к краю тела.
+    pub fn windows_on(&self, c: &ClipEvent, p: &Project) -> Vec<TickRange> {
+        let body = TickRange::new(c.start, c.start + c.duration);
+        if !self.enabled || !self.covers(c, p) || !self.patch.affects(c) {
+            return Vec::new();
+        }
+        if !self.timed {
+            return vec![body]; // v1: время блока не действует
+        }
+        let w = self.window().intersect(&body);
+        if w.len() < crate::MIN_CLIP_DURATION {
+            return Vec::new();
+        }
+        // варп времени (свой у клипа или дописанный патчем) делает
+        // линейный source_in куска неверным — режем только целиком
+        let warps = |fx: &[FxInstance]| fx.iter().any(|f| f.warps_time());
+        if c.kind == ClipKind::Audio
+            && (warps(&c.active_fx()) || warps(&self.patch.chain_for(c.kind)))
+        {
+            return vec![body];
+        }
+        // Граница садится на сетку МАТЕРИАЛА клипа: кадр — у видео, 8
+        // сэмплов (15 тиков) — у аудио. Иначе точка входа куска считалась
+        // бы дробным кадром: у прямого клипа это стоило бы сэмпла на шве,
+        // у reversed — кадра (кламп зеркального якоря). Отсчёт от начала
+        // тела, а у reversed — от КОНЦА: там якорь материала.
+        let step = match c.kind {
+            ClipKind::Video => kt_time::TICK_HZ / p.settings.fps.max(1) as i64,
+            ClipKind::Audio => kt_time::TICK_HZ * 8 / kt_time::AUDIO_SAMPLE_RATE as i64,
+        };
+        let grid = |t: Tick| {
+            if c.reversed {
+                Tick(body.end.0 - (body.end.0 - t.0) / step * step)
+            } else {
+                Tick(body.start.0 + (t.0 - body.start.0) / step * step)
+            }
+        };
+        // ПОРЯДОК ВАЖЕН: сетка сначала, зоны после. Край зоны бывает не на
+        // сетке (клип соседа начался между кадрами), и тогда выбор один:
+        // либо кадр материала, либо неразрезанное окружение. Дороже стоит
+        // окружение — кусок с бо́льшим `start` вылезает над соседом и
+        // меняет веса кроссфейда, а сетка стоит одного кадра на шве.
+        let zones = p.forbidden_zones(c);
+        let mut s = snap_out_of(grid(w.start), &zones);
+        let mut e = snap_out_of(grid(w.end), &zones);
+        s = Tick(s.0.clamp(body.start.0, body.end.0));
+        e = Tick(e.0.clamp(body.start.0, body.end.0));
+        // огрызок, который всё равно нельзя было бы получить командой
+        // (Split запрещает куски короче минимума), липнет к краю тела
+        if (s - body.start) < crate::MIN_CLIP_DURATION {
+            s = body.start;
+        }
+        if (body.end - e) < crate::MIN_CLIP_DURATION {
+            e = body.end;
+        }
+        if (e - s) < crate::MIN_CLIP_DURATION {
+            return Vec::new();
+        }
+        vec![TickRange::new(s, e)]
+    }
+}
+
+/// Вытолкнуть точку из запретных зон к ближайшему их краю. Зоны могут
+/// перекрываться и примыкать, поэтому проход повторяется до сходимости
+/// (не более чем по числу зон — каждый шаг выводит точку из очередной).
+fn snap_out_of(t: Tick, zones: &[TickRange]) -> Tick {
+    let mut t = t;
+    for _ in 0..=zones.len() {
+        let Some(z) = zones.iter().find(|z| z.start < t && t < z.end) else { return t };
+        t = if (t - z.start) <= (z.end - t) { z.start } else { z.end };
+    }
+    t
+}
+
+/// Старший бит id — признак КУСКА клипа, порождённого морфер-слоем.
+/// Настоящие клипы в этот диапазон не попадают (проверяет `validate`),
+/// поэтому оригинал восстанавливается из самого id и побочные таблицы не
+/// нужны.
+pub const SLICE_TAG: u64 = 1 << 63;
+/// Столько младших бит id отдано номеру куска.
+const SLICE_IDX_BITS: u32 = 16;
+/// Потолок id настоящего клипа (всё выше зарезервировано под куски).
+pub const MAX_REAL_CLIP_ID: u64 = 1 << (63 - SLICE_IDX_BITS);
+
+/// Id куска — чистая функция от (оригинал, номер). Ни счётчиков, ни
+/// хэшей: id не должен двигаться от правки соседнего клипа или переноса
+/// блока морфера мышью, иначе аудио-FX сбрасывались бы на каждый чих
+/// (инвариант №3).
+pub fn slice_id(origin: ClipId, idx: u32) -> ClipId {
+    ClipId(SLICE_TAG | (origin.0 << SLICE_IDX_BITS) | idx as u64)
+}
+
+/// Оригинал куска — ИЗ САМОГО id. `None` — это не кусок.
+pub fn slice_origin(id: ClipId) -> Option<ClipId> {
+    (id.0 & SLICE_TAG != 0).then_some(ClipId((id.0 & !SLICE_TAG) >> SLICE_IDX_BITS))
+}
+
+/// Тот же клип или его кусок. Всё, что адресует клип по id СРЕДИ
+/// effective (концы переходов в движке), обязано спрашивать это.
+pub fn same_clip(eff_id: ClipId, origin: ClipId) -> bool {
+    eff_id == origin || slice_origin(eff_id) == Some(origin)
+}
+
+/// Кусок клипа на окне `w`. Правило source_in — ТО ЖЕ, что у
+/// `Command::Split` (который с Р.35 сам зовёт эту функцию): у прямого
+/// клипа точка входа едет с началом куска, у reversed — с его концом,
+/// потому что материал у него зеркальный (п.16).
+pub fn clip_slice(c: &ClipEvent, w: TickRange, id: ClipId) -> ClipEvent {
+    let mut s = c.clone();
+    s.id = id;
+    s.start = w.start;
+    s.duration = w.len();
+    s.source_in = if c.reversed {
+        c.source_in + ((c.start + c.duration) - w.end)
+    } else {
+        c.source_in + (w.start - c.start)
+    };
+    s
 }
 
 /// Морфер из файла ДО Р.35: прежняя семантика — патч действует на цели
@@ -1790,6 +1933,13 @@ impl FxInstance {
         self.class() == FxClass::Video3d
     }
 
+    /// Эффект ВАРПИТ время: потребление источника перестаёт быть равным
+    /// длине события. Такой клип морфер-слой не режет вовсе (находка 2
+    /// Р.35) — линейно посчитанный `source_in` куска указал бы не туда.
+    pub fn warps_time(&self) -> bool {
+        matches!(self, FxInstance::SlowedReverb { .. })
+    }
+
     /// Параметры варианта (Р.33): ОДИН источник правды для автоматизации,
     /// клампа и UI. Раньше их описывали три ручные таблицы (`param_specs`,
     /// `set_param`, `get_param`), которые надо было править синхронно;
@@ -2427,6 +2577,8 @@ pub enum ProjectError {
     UnknownMedia(ClipId, MediaId),
     #[error("duplicate clip id {0:?}")]
     DuplicateClipId(ClipId),
+    #[error("clip {0:?}: id is in the range reserved for morpher slices")]
+    ReservedClipId(ClipId),
     #[error("duplicate media id {0:?}")]
     DuplicateMediaId(MediaId),
     #[error("settings: fps must divide {tick_hz}", tick_hz = kt_time::TICK_HZ)]
@@ -2621,21 +2773,71 @@ impl Project {
     /// негласным — дефект D11 разведки). Несколько morpher'ов на клип
     /// применяются кумулятивно.
     pub fn effective_clips(&self) -> Vec<ClipEvent> {
-        let mut out = self.clips.clone();
         if self.morphers.is_empty() {
-            return out;
+            return self.clips.clone(); // быстрый путь: GOLDEN держится на нём
         }
-        let mut ms: Vec<&MorpherEvent> = self.morphers.iter().collect();
+        let mut ms: Vec<&MorpherEvent> = self.morphers.iter().filter(|m| m.enabled).collect();
         ms.sort_by_key(|m| m.id);
-        for m in ms {
-            if !m.enabled {
-                continue; // выключенный морфер не трогает цели
-            }
-            let ids = m.targets.clip_ids();
-            for c in out.iter_mut() {
-                if ids.contains(&c.id) {
-                    m.patch.apply_to(c);
+        let mut out = Vec::with_capacity(self.clips.len());
+        for c in &self.clips {
+            let wins: Vec<Vec<TickRange>> = ms.iter().map(|m| m.windows_on(c, self)).collect();
+            let body = TickRange::new(c.start, c.start + c.duration);
+            // точки реза — ВНУТРЕННИЕ края окон; общий набор на все
+            // морферы, чтобы они не резали куски друг друга
+            let mut cuts: Vec<i64> = wins
+                .iter()
+                .flatten()
+                .flat_map(|w| [w.start.0, w.end.0])
+                .filter(|&x| x > body.start.0 && x < body.end.0)
+                .collect();
+            cuts.sort_unstable();
+            cuts.dedup();
+            let mut bounds = Vec::with_capacity(cuts.len() + 2);
+            bounds.push(body.start.0);
+            bounds.extend(cuts);
+            bounds.push(body.end.0);
+            for (idx, pair) in bounds.windows(2).enumerate() {
+                let w = TickRange::new(Tick(pair[0]), Tick(pair[1]));
+                // кусок №0 держит id оригинала — правило `Split`; при
+                // отсутствии резки это тождественная копия клипа
+                let id = if idx == 0 { c.id } else { slice_id(c.id, idx as u32) };
+                let mut piece = clip_slice(c, w, id);
+                for (m, ws) in ms.iter().zip(&wins) {
+                    if ws.iter().any(|x| x.start <= w.start && w.end <= x.end) {
+                        m.patch.apply_to(&mut piece);
+                    }
                 }
+                out.push(piece);
+            }
+        }
+        out
+    }
+
+    /// Зоны клипа, внутри которых граница морфер-слоя ставиться не может
+    /// (находка 1 Р.35): окна переходов и наезды соседей по дорожке. Резка
+    /// там сломала бы НЕ цель, а окружение — у видео порядок композиции
+    /// `(Reverse(lane), start)`, и кусок с бо́льшим start вылез бы над
+    /// соседом; у аудио `overlap_weight` считает рампу из геометрии клипов.
+    pub fn forbidden_zones(&self, c: &ClipEvent) -> Vec<TickRange> {
+        let body = TickRange::new(c.start, c.start + c.duration);
+        let mut out = Vec::new();
+        for t in &self.transitions {
+            if t.a != Some(c.id) && t.b != Some(c.id) {
+                continue;
+            }
+            let Some(j) = t.joint(self) else { continue };
+            let z = TickRange::new(j - t.in_offset, j + t.out_offset).intersect(&body);
+            if !z.is_empty() {
+                out.push(z);
+            }
+        }
+        for o in &self.clips {
+            if o.id == c.id || o.kind != c.kind || o.lane != c.lane {
+                continue;
+            }
+            let z = TickRange::new(o.start, o.start + o.duration).intersect(&body);
+            if !z.is_empty() {
+                out.push(z);
             }
         }
         out
@@ -2684,6 +2886,11 @@ impl Project {
         for c in &self.clips {
             if !clip_ids.insert(c.id) {
                 return Err(ProjectError::DuplicateClipId(c.id));
+            }
+            // старший диапазон отдан кускам морфер-слоя (Р.35): настоящий
+            // клип с таким id столкнулся бы с синтетическим
+            if c.id.0 >= MAX_REAL_CLIP_ID {
+                return Err(ProjectError::ReservedClipId(c.id));
             }
             if c.duration.0 <= 0 {
                 return Err(ProjectError::NonPositiveDuration(c.id));

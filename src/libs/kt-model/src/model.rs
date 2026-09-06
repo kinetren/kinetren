@@ -688,22 +688,14 @@ impl TimelineModel {
                 }
             }
             Command::Split { id, at, new_id, new_group } => {
-                let left = Self::clip_mut_on(p, id);
-                let left_len = at - left.start;
-                let right_len = left.duration - left_len;
-                let mut right = left.clone();
-                left.duration = left_len;
-                right.id = new_id;
+                // правило кусков ОДНО на весь проект — `clip_slice`
+                // (реверс, п.16: левая половина играет ХВОСТ источника)
+                let c = Self::clip_mut_on(p, id).clone();
+                let body = TickRange::new(c.start, c.start + c.duration);
+                *Self::clip_mut_on(p, id) =
+                    clip_slice(&c, TickRange::new(body.start, at), id);
+                let mut right = clip_slice(&c, TickRange::new(at, body.end), new_id);
                 right.link_group = new_group;
-                right.start = at;
-                right.duration = right_len;
-                if left.reversed {
-                    // реверс (п.16): левая половина играет ХВОСТ источника,
-                    // правая — начало; right.source_in остаётся
-                    left.source_in = left.source_in + right_len;
-                } else {
-                    right.source_in = right.source_in + left_len;
-                }
                 p.clips.push(right);
                 // D5 (v1): правая половина наследует таргетинг morpher'ов
                 for m in &mut p.morphers {

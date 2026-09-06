@@ -179,12 +179,17 @@ impl AudioRenderer {
             let Some(joint) = t.joint(project) else { continue };
             let w0 = (joint - t.in_offset).to_audio_frames();
             let w1 = (joint + t.out_offset).to_audio_frames();
+            let jf = joint.to_audio_frames();
             if w1 <= w0 {
                 continue;
             }
             // фейд (Р.25) — переход с одним живым концом: вес считается так
             // же, «партнёра» просто нет, и материал напротив — тишина
-            if let Some(a) = t.a.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
+            // разрезанная морфером цель (Р.35): стык у того куска, чья
+            // граница на нём стоит; id оригинала носит кусок №0
+            if let Some(a) =
+                t.a.and_then(|id| clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.end == jf))
+            {
                 // reversed-FX: зеркальный якорь источника завязан на
                 // window_end — ручку не расширяем (ограничение v1, п.136),
                 // фейд-вес применяется как есть
@@ -194,7 +199,10 @@ impl AudioRenderer {
                 a.tail_ext = ext.max(0);
                 a.ext_end += a.tail_ext;
             }
-            if let Some(b) = t.b.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
+            if let Some(b) = t
+                .b
+                .and_then(|id| clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.start == jf))
+            {
                 let ext = if b.reversed && !b.fx.is_empty() { 0 } else { b.start - w0 };
                 b.fade_in = Some((w0, w1));
                 b.fade_in_curve = t.audio;
