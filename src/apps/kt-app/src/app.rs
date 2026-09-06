@@ -2654,28 +2654,24 @@ impl KtApp {
         let Some(pm) = self.pending_morpher.take() else { return };
         let id = MorphId(self.next_morph_id());
         let mut cmds = Vec::new();
-        let kind = if pm.batch {
-            MorphKind::EffectBatch {
-                video_fx: Vec::new(),
-                audio_fx: Vec::new(),
-                video_bypass: Vec::new(),
-                audio_bypass: Vec::new(),
-            }
-        } else {
-            let media = drop_path.map(|path| {
-                let mid = MediaId(self.next_media_id());
-                cmds.push(Command::AddMedia { id: mid, path });
-                mid
-            });
-            MorphKind::Replace { media, source_in_delta: Tick(0), absolute_source_in: None }
-        };
+        // патч несёт и подмену источника, и цепочки (Р.35): пункт меню
+        // больше не выбирает вид, он выбирает только начальное
+        // содержимое — дальше всё правится в одном окне
+        let media = drop_path.map(|path| {
+            let mid = MediaId(self.next_media_id());
+            cmds.push(Command::AddMedia { id: mid, path });
+            mid
+        });
         cmds.push(Command::AddMorpher(MorpherEvent {
             id,
             lane,
             start: Tick(at.0.max(0)),
             duration: Tick(90 * 1500), // v1: 1500 мс
-            targets: pm.targets,
-            kind,
+            targets: kt_model::MorphTargets::Clips { ids: pm.targets },
+            patch: kt_model::MorphPatch { media, ..Default::default() },
+            // пока пункт меню замораживает цели, семантика прежняя;
+            // режим слоя включается в С2 (единый пункт «Добавить морфер»)
+            timed: false,
             enabled: true,
         }));
         if self.apply_batch(cmds) {

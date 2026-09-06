@@ -2888,9 +2888,12 @@ impl KtApp {
                 egui::StrokeKind::Inside,
             );
             if r.width() > 46.0 {
-                let label = match &m.kind {
-                    MorphKind::EffectBatch { .. } => crate::tf!(k::tl::morph::BATCH, m.targets.len()),
-                    MorphKind::Replace { .. } => crate::tf!(k::tl::morph::REPLACE, m.targets.len()),
+                // подпись по СОДЕРЖИМОМУ патча (Р.35: вида больше нет)
+                let n = m.targets.clip_ids().len();
+                let label = if m.patch.video_fx.is_empty() && m.patch.audio_fx.is_empty() {
+                    crate::tf!(k::tl::morph::REPLACE, n)
+                } else {
+                    crate::tf!(k::tl::morph::BATCH, n)
                 };
                 painter.text(
                     egui::pos2(r.left() + 6.0, r.center().y),
@@ -3876,7 +3879,7 @@ impl KtApp {
                     .morphers
                     .iter()
                     .find(|m| m.id == mid)
-                    .map(|m| matches!(m.kind, MorphKind::EffectBatch { .. }))
+                    .map(|m| !m.patch.video_fx.is_empty() || !m.patch.audio_fx.is_empty())
                     .unwrap_or(false);
                 let bake_label = if is_batch {
                     tr(k::tl::menu::BAKE_BATCH)

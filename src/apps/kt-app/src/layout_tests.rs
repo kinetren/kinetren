@@ -3314,12 +3314,14 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
         lane: 0,
         start: kt_time::Tick(0),
         duration: kt_time::Tick(90_000),
-        targets: vec![ClipId(1)],
-        kind: MorphKind::Replace {
+        targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
+        patch: MorphPatch {
             media: None,
             source_in_delta: kt_time::Tick(0),
             absolute_source_in: None,
+            ..Default::default()
         },
+        timed: false,
         enabled: true,
     });
     p.validate().unwrap();
@@ -3338,7 +3340,7 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
     let depth = app.model.undo_depth();
     app.set_morph_source_file(MorphId(1), "synth:dc");
     let ev = app.model.project().morphers[0].clone();
-    let MorphKind::Replace { media, .. } = ev.kind else { panic!("replace") };
+    let media = ev.patch.media;
     let mid = media.expect("источник обязан подставиться");
     assert_eq!(
         app.model.project().media.iter().find(|m| m.id == mid).map(|m| m.path.as_str()),
@@ -3353,7 +3355,7 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
     let backup = app.morph_editors[0].backup.clone().expect("снимок на открытии");
     app.apply_coalesced(Command::SetMorpher(backup), ed_gesture);
     let ev = app.model.project().morphers[0].clone();
-    let MorphKind::Replace { media, .. } = ev.kind else { panic!("replace") };
+    let media = ev.patch.media;
     assert!(media.is_none(), "откат обязан вернуть «источник не менять»");
     h.step();
 }
@@ -3396,16 +3398,15 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         lane: 0,
         start: kt_time::Tick(0),
         duration: kt_time::Tick(90_000),
-        targets: vec![ClipId(9)],
-        kind: MorphKind::EffectBatch {
+        targets: MorphTargets::Clips { ids: vec![ClipId(9)] },
+        patch: MorphPatch {
             video_fx: vec![
                 FxInstance::Mirror { horizontal: true, vertical: false },
                 FxInstance::edges(48),
             ],
-            audio_fx: vec![],
-            video_bypass: vec![],
-            audio_bypass: vec![],
+            ..Default::default()
         },
+        timed: false,
         enabled: true,
     });
     p.validate().unwrap();
@@ -3436,14 +3437,12 @@ fn t217_one_chain_widget_for_events_and_morphers() {
     // 2) выключатели слотов есть и у морфера (раньше были только крестики)
     let app = h.state_mut();
     let ev = app.model.project().morphers[0].clone();
-    let MorphKind::EffectBatch { video_bypass, .. } = &ev.kind else { panic!("батч") };
+    let video_bypass = &ev.patch.video_bypass;
     assert!(video_bypass.is_empty(), "стартовое состояние — всё включено");
 
     // 3) выключение слота батча убирает эффект из целей, не теряя его
     let mut ev2 = ev.clone();
-    if let MorphKind::EffectBatch { video_bypass, .. } = &mut ev2.kind {
-        *video_bypass = vec![true, false];
-    }
+    ev2.patch.video_bypass = vec![true, false];
     assert!(app.apply(Command::SetMorpher(ev2)), "команда не прошла");
     let eff = app.model.project().effective_clips();
     let c = eff.iter().find(|c| c.id == ClipId(9)).unwrap();
@@ -3455,10 +3454,11 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         c.fx.iter().any(|f| matches!(f, FxInstance::Edges { .. })),
         "включённый слот батча обязан остаться"
     );
-    let MorphKind::EffectBatch { video_fx, .. } = &app.model.project().morphers[0].kind else {
-        panic!("батч")
-    };
-    assert_eq!(video_fx.len(), 2, "сам эффект из батча не пропадает");
+    assert_eq!(
+        app.model.project().morphers[0].patch.video_fx.len(),
+        2,
+        "сам эффект из батча не пропадает"
+    );
     h.step();
 }
 

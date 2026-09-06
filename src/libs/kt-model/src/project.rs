@@ -543,11 +543,14 @@ fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
 
-/// Morpher (порт v1): непрозрачный «патч» на фиолетовой morph-дорожке.
-/// Действует на ЗАМОРОЖЕННЫЙ при создании список клипов (`targets`) —
-/// целиком, независимо от времени: `start`/`duration` только позиционируют
-/// блок на таймлайне (v1-семантика, осознанно сохранена: подмена источника
-/// посреди клипа невыразима без его разреза).
+/// Морфер (Р.35): непрозрачный «патч» на фиолетовой morph-дорожке —
+/// СЛОЙ, а не пометка. Действует там, где его блок накрывает цель
+/// (`timed`), и по умолчанию — на всё, что НИЖЕ его строки.
+///
+/// До Р.35 это был «патч на замороженный список целей, целиком и вне
+/// времени»: `start`/`duration` только позиционировали блок. Файлы того
+/// времени читаются с `timed = false` и рендерятся в точности как
+/// раньше (`migrate_legacy_morpher`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MorpherEvent {
     pub id: MorphId,
@@ -555,86 +558,308 @@ pub struct MorpherEvent {
     pub lane: u32,
     pub start: Tick,
     pub duration: Tick,
-    /// Замороженные цели. Команды модели поддерживают список актуальным:
-    /// удаление клипа вычищает id, split добавляет правую половину
-    /// (в v1 висячие id жили вечно — дефект D5 разведки).
-    pub targets: Vec<ClipId>,
-    pub kind: MorphKind,
-    /// Выключатель события целиком (Р.33: «в морферах и fx batch
-    /// аналогично, всё унифицируется»). Выключенный морфер не применяется
-    /// к целям, но живёт на дорожке и включается обратно как был.
+    /// Кого накрывает. Умолчание — «всё, что ниже строки морфера».
+    #[serde(default, skip_serializing_if = "MorphTargets::is_default")]
+    pub targets: MorphTargets,
+    /// Что делает: подмена источника И цепочки эффектов — одно событие
+    /// несёт оба (до Р.35 это были взаимоисключающие `MorphKind`).
+    /// `alias = "kind"` — вход старых файлов.
+    #[serde(
+        rename = "patch",
+        alias = "kind",
+        default,
+        skip_serializing_if = "MorphPatch::is_empty"
+    )]
+    pub patch: MorphPatch,
+    /// Выключатель события целиком (Р.33). Выключенный морфер не
+    /// применяется к целям, но живёт на дорожке и включается как был.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub enabled: bool,
+    /// Действие ограничено ОКНОМ блока (умолчание, Р.35 п.1: «если их
+    /// проигрываем — то и морфируем»). `false` — прежняя семантика:
+    /// патч на цели целиком, время блока ни на что не влияет.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub timed: bool,
 }
 
 fn is_true(v: &bool) -> bool {
     *v
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum MorphKind {
-    /// Подмена источника и/или сдвиг точки входа у целевых клипов.
-    Replace {
-        /// None = источник не менять (только сдвиг точки входа).
-        media: Option<MediaId>,
-        /// Сдвиг source_in (тики); применяется, если absolute не задан.
-        source_in_delta: Tick,
-        /// Абсолютный source_in — приоритетнее delta (в v1 поле было
-        /// недостижимо из UI — дефект D4 разведки).
-        absolute_source_in: Option<Tick>,
-    },
-    /// Дописать FX в конец цепочек целевых клипов. В отличие от v1
-    /// (дефект D1) действует live — bake лишь материализует то же самое.
-    EffectBatch {
-        video_fx: Vec<FxInstance>,
-        audio_fx: Vec<FxInstance>,
-        /// Выключатели слотов батча (Р.33: «у морферов… можно и галочки
-        /// добавить включения-выключения эффектов»). Параллельны своим
-        /// цепочкам; пустые не сериализуются — файлы байт-стабильны.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        video_bypass: Vec<bool>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        audio_bypass: Vec<bool>,
-    },
+/// Кого накрывает морфер (Р.35). Пространство и время разведены:
+/// `Below`/`Clips` выбирают ПРОСТРАНСТВО (окно берётся из блока),
+/// `Marks`/`Areas` — именованные диапазоны и области (Р.35 п.2).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(tag = "on", rename_all = "snake_case")]
+pub enum MorphTargets {
+    /// Всё, что НИЖЕ строки морфера в порядке дорожек (adjustment layer).
+    #[default]
+    Below,
+    /// Замороженный при создании список — прежнее поведение.
+    Clips { ids: Vec<ClipId> },
+    /// Именованные метки-диапазоны: окна берутся из них.
+    Marks { names: Vec<String> },
+    /// Именованные области (время × дорожки).
+    Areas { names: Vec<String> },
 }
 
-impl MorpherEvent {
+impl MorphTargets {
+    pub fn is_default(&self) -> bool {
+        matches!(self, MorphTargets::Below)
+    }
+
+    /// Замороженные id — пусто у всех режимов, кроме `Clips`.
+    pub fn clip_ids(&self) -> &[ClipId] {
+        match self {
+            MorphTargets::Clips { ids } => ids,
+            _ => &[],
+        }
+    }
+
+    /// Замороженные id для правки (RemoveClip/Split держат их живыми).
+    pub fn clip_ids_mut(&mut self) -> Option<&mut Vec<ClipId>> {
+        match self {
+            MorphTargets::Clips { ids } => Some(ids),
+            _ => None,
+        }
+    }
+}
+
+/// Ручной `Deserialize`: файлы до Р.35 несут ГОЛЫЙ массив id
+/// (`"targets": [1, 2]`) — он читается как `Clips`. Прецедент — `Marker`.
+impl<'de> Deserialize<'de> for MorphTargets {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "on", rename_all = "snake_case")]
+        enum Tagged {
+            Below,
+            Clips { ids: Vec<ClipId> },
+            Marks { names: Vec<String> },
+            Areas { names: Vec<String> },
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Legacy(Vec<ClipId>),
+            Tagged(Tagged),
+        }
+        Ok(match Repr::deserialize(d)? {
+            Repr::Legacy(ids) => MorphTargets::Clips { ids },
+            Repr::Tagged(Tagged::Below) => MorphTargets::Below,
+            Repr::Tagged(Tagged::Clips { ids }) => MorphTargets::Clips { ids },
+            Repr::Tagged(Tagged::Marks { names }) => MorphTargets::Marks { names },
+            Repr::Tagged(Tagged::Areas { names }) => MorphTargets::Areas { names },
+        })
+    }
+}
+
+/// Что морфер делает с целью. Все поля — «ничего не делать» по
+/// умолчанию, поэтому пустой патч не сериализуется вовсе.
+///
+/// Подмена источника и цепочки эффектов живут ВМЕСТЕ (Р.35 п.3: «в ui
+/// морфера их объединить») — в интерфейсе это одна fx-полоса, где
+/// подмена нарисована фиолетовым слотом первой.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct MorphPatch {
+    /// `None` = источник не менять (только сдвиг точки входа).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<MediaId>,
+    /// Сдвиг source_in (тики); применяется, если `absolute` не задан.
+    #[serde(default, skip_serializing_if = "tick_is_zero")]
+    pub source_in_delta: Tick,
+    /// Абсолютный source_in — приоритетнее delta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub absolute_source_in: Option<Tick>,
+    /// Выключатель морф-слота: настройки подмены целы, но она не
+    /// действует (галка у фиолетового слота).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub src_off: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub video_fx: Vec<FxInstance>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_fx: Vec<FxInstance>,
+    /// Выключатели слотов, параллельны своим цепочкам.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub video_bypass: Vec<bool>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_bypass: Vec<bool>,
+}
+
+/// Ручной `Deserialize`: принимает три формы — плоскую (Р.35) и обе
+/// старых (`{"Replace": …}` / `{"EffectBatch": …}`), потому что до Р.35
+/// это был внешне-тегированный enum `MorphKind`.
+impl<'de> Deserialize<'de> for MorphPatch {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        enum Legacy {
+            Replace {
+                #[serde(default)]
+                media: Option<MediaId>,
+                #[serde(default)]
+                source_in_delta: Tick,
+                #[serde(default)]
+                absolute_source_in: Option<Tick>,
+            },
+            EffectBatch {
+                #[serde(default)]
+                video_fx: Vec<FxInstance>,
+                #[serde(default)]
+                audio_fx: Vec<FxInstance>,
+                #[serde(default)]
+                video_bypass: Vec<bool>,
+                #[serde(default)]
+                audio_bypass: Vec<bool>,
+            },
+        }
+        #[derive(Deserialize)]
+        struct Flat {
+            #[serde(default)]
+            media: Option<MediaId>,
+            #[serde(default)]
+            source_in_delta: Tick,
+            #[serde(default)]
+            absolute_source_in: Option<Tick>,
+            #[serde(default)]
+            src_off: bool,
+            #[serde(default)]
+            video_fx: Vec<FxInstance>,
+            #[serde(default)]
+            audio_fx: Vec<FxInstance>,
+            #[serde(default)]
+            video_bypass: Vec<bool>,
+            #[serde(default)]
+            audio_bypass: Vec<bool>,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Legacy(Legacy),
+            Flat(Flat),
+        }
+        Ok(match Repr::deserialize(d)? {
+            Repr::Legacy(Legacy::Replace { media, source_in_delta, absolute_source_in }) => {
+                MorphPatch { media, source_in_delta, absolute_source_in, ..Default::default() }
+            }
+            Repr::Legacy(Legacy::EffectBatch {
+                video_fx,
+                audio_fx,
+                video_bypass,
+                audio_bypass,
+            }) => MorphPatch {
+                video_fx,
+                audio_fx,
+                video_bypass,
+                audio_bypass,
+                ..Default::default()
+            },
+            Repr::Flat(f) => MorphPatch {
+                media: f.media,
+                source_in_delta: f.source_in_delta,
+                absolute_source_in: f.absolute_source_in,
+                src_off: f.src_off,
+                video_fx: f.video_fx,
+                audio_fx: f.audio_fx,
+                video_bypass: f.video_bypass,
+                audio_bypass: f.audio_bypass,
+            },
+        })
+    }
+}
+
+impl MorphPatch {
+    /// Пустой патч ничего не делает — такой не сериализуется.
+    pub fn is_empty(&self) -> bool {
+        self.media.is_none()
+            && self.source_in_delta.0 == 0
+            && self.absolute_source_in.is_none()
+            && self.video_fx.is_empty()
+            && self.audio_fx.is_empty()
+    }
+
+    /// Меняет ли патч ЭТОТ клип. Ответ «нет» — причина не резать его
+    /// вовсе: слой с одними видео-эффектами не должен трогать аудио под
+    /// собой (и уж тем более оставлять на нём шов).
+    pub fn affects(&self, c: &ClipEvent) -> bool {
+        self.replaces_source() || !self.chain_for(c.kind).is_empty()
+    }
+
+    /// Подменяет ли патч источник (с учётом выключателя морф-слота).
+    pub fn replaces_source(&self) -> bool {
+        !self.src_off
+            && (self.media.is_some()
+                || self.absolute_source_in.is_some()
+                || self.source_in_delta.0 != 0)
+    }
+
+    /// ВКЛЮЧЁННЫЕ эффекты патча для клипа этого вида. Выключенный слот
+    /// просто не дописывается: у клипа своя нумерация bypass, и
+    /// смешивать их нельзя.
+    pub fn chain_for(&self, kind: ClipKind) -> Vec<FxInstance> {
+        let (fx, off) = match kind {
+            ClipKind::Video => (&self.video_fx, &self.video_bypass),
+            ClipKind::Audio => (&self.audio_fx, &self.audio_bypass),
+        };
+        fx.iter()
+            .enumerate()
+            .filter(|(i, _)| !off.get(*i).copied().unwrap_or(false))
+            .map(|(_, f)| f.clone())
+            .collect()
+    }
+
+    /// Все медиа, которые держит патч (гард `RemoveMedia`).
+    pub fn media_refs(&self) -> impl Iterator<Item = MediaId> + '_ {
+        self.media.into_iter()
+    }
+
     /// Применить патч к копии клипа (v1 applyMorpherPatchToClipCopy).
     /// Верхнего клампа source_in по длительности источника нет намеренно:
     /// модель не знает длительностей медиа (никакого FFmpeg в kt-model);
     /// чтение за концом источника движок отдаёт тишиной/последним кадром.
     pub fn apply_to(&self, c: &mut ClipEvent) {
-        match &self.kind {
-            MorphKind::Replace { media, source_in_delta, absolute_source_in } => {
-                if let Some(m) = media {
-                    c.media = *m;
-                }
-                c.source_in = match absolute_source_in {
-                    Some(abs) => Tick(abs.0.max(0)),
-                    None => Tick((c.source_in + *source_in_delta).0.max(0)),
-                };
+        if self.replaces_source() {
+            if let Some(m) = self.media {
+                c.media = m;
             }
-            MorphKind::EffectBatch { video_fx, audio_fx, video_bypass, audio_bypass } => {
-                let (extra, off) = match c.kind {
-                    ClipKind::Video => (video_fx, video_bypass),
-                    ClipKind::Audio => (audio_fx, audio_bypass),
-                };
-                // выключенный слот батча просто не дописывается: у клипа
-                // своя нумерация bypass, и смешивать их нельзя
-                let add: Vec<FxInstance> = extra
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| !off.get(*i).copied().unwrap_or(false))
-                    .map(|(_, f)| f.clone())
-                    .collect();
-                if !add.is_empty() {
-                    // fx_bypass короче цепочки = дописанные слоты включены
-                    // (active_fx трактует отсутствующий флаг как false)
-                    c.fx.extend(add);
-                }
-            }
+            c.source_in = match self.absolute_source_in {
+                Some(abs) => Tick(abs.0.max(0)),
+                None => Tick((c.source_in + self.source_in_delta).0.max(0)),
+            };
         }
+        let add = self.chain_for(c.kind);
+        if add.is_empty() {
+            return;
+        }
+        // ЗАМЕТКА (Р.35): мастер-выключатель цепочки события (`fx_off`)
+        // сейчас гасит и эти эффекты — для слоя это неверно, чинится в
+        // куске «Слой» вместе с t237. Здесь поведение прежнее дословно.
+        // fx_bypass короче цепочки = дописанные слоты включены
+        // (active_fx трактует отсутствующий флаг как false)
+        c.fx.extend(add);
     }
+}
+
+impl MorpherEvent {
+    /// Все медиа, которые держит морфер.
+    pub fn media_refs(&self) -> impl Iterator<Item = MediaId> + '_ {
+        self.patch.media_refs()
+    }
+
+    /// Окно блока на таймлайне.
+    pub fn window(&self) -> TickRange {
+        TickRange::new(self.start, self.start + self.duration)
+    }
+}
+
+/// Морфер из файла ДО Р.35: прежняя семантика — патч действует на цели
+/// целиком, время блока ни на что не влияет. Зовут ридер OTIO и
+/// `ops::upgrade_legacy`; тот же приём, что `migrate_legacy_cammotion`
+/// (п.230) — односторонний апгрейд, а не «совместимость».
+pub fn migrate_legacy_morpher(m: &mut MorpherEvent) -> bool {
+    if !m.timed {
+        return false;
+    }
+    m.timed = false;
+    true
 }
 
 fn default_lanes() -> u32 {
@@ -2358,9 +2583,10 @@ impl Project {
             if !m.enabled {
                 continue; // выключенный морфер не трогает цели
             }
+            let ids = m.targets.clip_ids();
             for c in out.iter_mut() {
-                if m.targets.contains(&c.id) {
-                    m.apply_to(c);
+                if ids.contains(&c.id) {
+                    m.patch.apply_to(c);
                 }
             }
         }
@@ -2432,15 +2658,15 @@ impl Project {
             if !morph_ids.insert(m.id) {
                 return Err(ProjectError::DuplicateMorphId(m.id));
             }
-            for t in &m.targets {
+            for t in m.targets.clip_ids() {
                 if !clip_ids.contains(t) {
                     return Err(ProjectError::MorphUnknownTarget(m.id, *t));
                 }
             }
-            if let MorphKind::Replace { media: Some(mid), .. } = &m.kind
-                && !media_ids.contains(mid)
-            {
-                return Err(ProjectError::MorphUnknownMedia(m.id, *mid));
+            for mid in m.media_refs() {
+                if !media_ids.contains(&mid) {
+                    return Err(ProjectError::MorphUnknownMedia(m.id, mid));
+                }
             }
         }
         // Камеры (Р.29): дубли id, длительность, fov, отсортированные

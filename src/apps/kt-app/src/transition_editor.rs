@@ -12,7 +12,7 @@ use crate::app::KtApp;
 use crate::i18n::{Key, k, tr};
 use crate::widgets;
 use eframe::egui;
-use kt_model::{AudioCurve, Command, HasParams, TransitionEvent, TransitionId, TransitionKind};
+use kt_model::{AudioCurve, Command, TransitionEvent, TransitionId, TransitionKind};
 
 pub struct TransitionEditor {
     pub id: TransitionId,

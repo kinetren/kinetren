@@ -520,13 +520,15 @@ fn demo_project() -> Project {
         lane: 0,
         start: t(48.0),
         duration: t(32.0),
-        targets: vec![ClipId(7), ClipId(9)],
-        kind: MorphKind::EffectBatch {
+        targets: MorphTargets::Clips { ids: vec![ClipId(7), ClipId(9)] },
+        patch: MorphPatch {
             video_fx: vec![FxInstance::glow(0.5)],
             audio_fx: vec![],
             video_bypass: vec![],
             audio_bypass: vec![],
+            ..Default::default()
         },
+        timed: false,
         enabled: true,
     }];
     p.ui = Some(UiState {

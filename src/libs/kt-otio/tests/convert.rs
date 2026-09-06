@@ -814,3 +814,53 @@ fn t189_regen() {
         .unwrap();
     println!("regenerated ({} bytes)", out.len());
 }
+
+/// Тест 240a (Р.35 С1): схема морфера сменилась — вид (`Replace`/
+/// `EffectBatch`) схлопнулся в один патч, цели стали режимом. Файл ДО v4
+/// читается с прежней семантикой (`timed: false`), слой поднимает файл до
+/// v4, а проект без морферов остаётся байт-стабильным.
+#[test]
+fn t240_morpher_schema_v4_and_legacy_read() {
+    // старый файл: голый массив целей и внешне-тегированный вид
+    let base = save_project(&rich_project(), &Retained::default(), None);
+    let mut old: serde_json::Value = serde_json::from_str(&base).unwrap();
+    old["metadata"]["kt"]["morph_lanes"] = serde_json::json!(1);
+    old["metadata"]["kt"]["morphers"] = serde_json::json!([{
+        "id": 1, "lane": 0, "start": 0, "duration": 45000,
+        "targets": [1],
+        "kind": { "Replace": { "media": 2, "source_in_delta": 4500 } },
+    }]);
+    let b = load_project(&serde_json::to_string_pretty(&old).unwrap(), None)
+        .expect("файл со старым морфером обязан открываться");
+    let m = &b.project.morphers[0];
+    assert!(!m.timed, "морфер до v4 действует вне времени — как раньше");
+    assert_eq!(m.targets.clip_ids(), &[ClipId(1)], "голый массив целей прочитан");
+    assert_eq!(m.patch.media, Some(MediaId(2)), "вид Replace прочитан в патч");
+    assert_eq!(m.patch.source_in_delta, Tick(4_500));
+
+    // такой морфер файл до v4 не поднимает
+    let text = save_project(&b.project, &b.retained, None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_ne!(v["metadata"]["kt"]["v"], 4, "прежняя семантика — прежняя версия");
+    assert_eq!(text, save_project(&load_project(&text, None).unwrap().project,
+        &b.retained, None), "идемпотентность записи морфера");
+
+    // слой поднимает до v4 и переживает круг
+    let mut p = b.project.clone();
+    p.morphers[0].timed = true;
+    p.morphers[0].targets = MorphTargets::Below;
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 4, "слой поднимает файл до v4");
+    let m = &v["metadata"]["kt"]["morphers"][0];
+    assert!(m.get("targets").is_none(), "умолчание «ниже» не сериализуется");
+    assert!(m.get("timed").is_none(), "умолчание «по времени» не сериализуется");
+    let b2 = load_project(&text, None).expect("файл v4 читается");
+    assert_eq!(b2.project.morphers, p.morphers, "морфер пережил круг");
+
+    // проект БЕЗ морферов версию не двигает
+    let plain = save_project(&rich_project(), &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&plain).unwrap();
+    assert_ne!(v["metadata"]["kt"]["v"], 4, "без морферов версия не растёт");
+}

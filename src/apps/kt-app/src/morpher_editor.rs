@@ -70,9 +70,7 @@ impl KtApp {
                 mid
             }
         };
-        if let MorphKind::Replace { media, .. } = &mut ev.kind {
-            *media = Some(mid);
-        }
+        ev.patch.media = Some(mid);
         cmds.push(Command::SetMorpher(ev));
         self.apply_batch(cmds);
     }
@@ -94,7 +92,9 @@ impl KtApp {
             ed.open = false;
             return;
         };
-        let is_batch = matches!(orig.kind, MorphKind::EffectBatch { .. });
+        // с Р.35 морфер несёт и подмену, и цепочки — окно показывает всё
+        // сразу; подпись выбирается по СОДЕРЖИМОМУ, а не по «виду»
+        let is_batch = !orig.patch.video_fx.is_empty() || !orig.patch.audio_fx.is_empty();
         // камеры для комбо Pan3d в FX-батче (Р.29)
         let cameras: Vec<(u64, String)> = self
             .model
@@ -134,23 +134,29 @@ impl KtApp {
             .vscroll(true)
             .show(ctx, |ui| {
                 // --- замороженные цели (v1: morpherTargetsDescription) -------
+                let frozen = ev.targets.clip_ids().to_vec();
                 let mut ids: Vec<String> =
-                    ev.targets.iter().take(4).map(|t| format!("#{}", t.0)).collect();
-                if ev.targets.len() > 4 {
+                    frozen.iter().take(4).map(|t| format!("#{}", t.0)).collect();
+                if frozen.len() > 4 {
                     ids.push("…".into());
                 }
                 ui.label(
                     egui::RichText::new(crate::tf!(
                         k::mrph::FROZEN,
-                        ev.targets.len(),
+                        frozen.len(),
                         ids.join(", ")
                     ))
                     .weak(),
                 );
                 ui.separator();
 
-                match &mut ev.kind {
-                    MorphKind::Replace { media, source_in_delta, absolute_source_in } => {
+                // Р.35: подмена источника и цепочки живут ВМЕСТЕ, поэтому
+                // окно показывает обе секции подряд, а не одну из двух
+                {
+                    {
+                        let media = &mut ev.patch.media;
+                        let source_in_delta = &mut ev.patch.source_in_delta;
+                        let absolute_source_in = &mut ev.patch.absolute_source_in;
                         // --- подмена источника ------------------------------
                         let media_list: Vec<(MediaId, String)> = self
                             .model
@@ -250,12 +256,12 @@ impl KtApp {
                             });
                         }
                     }
-                    MorphKind::EffectBatch {
-                        video_fx,
-                        audio_fx,
-                        video_bypass,
-                        audio_bypass,
-                    } => {
+                    ui.separator();
+                    {
+                        let patch = &mut ev.patch;
+                        let (video_fx, audio_fx) = (&mut patch.video_fx, &mut patch.audio_fx);
+                        let (video_bypass, audio_bypass) =
+                            (&mut patch.video_bypass, &mut patch.audio_bypass);
                         ui.label(
                             egui::RichText::new(
                                 tr(k::mrph::LIVE_NOTE),

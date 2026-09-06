@@ -52,12 +52,14 @@ fn replace_morpher(id: u64, targets: Vec<ClipId>) -> MorpherEvent {
         lane: 0,
         start: Tick(0),
         duration: Tick(90 * 1500),
-        targets,
-        kind: MorphKind::Replace {
+        targets: MorphTargets::Clips { ids: targets },
+        patch: MorphPatch {
             media: Some(MediaId(2)),
             source_in_delta: Tick(4_500),
             absolute_source_in: None,
+            ..Default::default()
         },
+        timed: false,
         enabled: true,
     }
 }
@@ -80,18 +82,14 @@ fn t35_replace_flatten() {
 
     // absolute приоритетнее delta (D4: поле полноценно)
     let mut abs = replace_morpher(1, vec![ClipId(10)]);
-    if let MorphKind::Replace { absolute_source_in, .. } = &mut abs.kind {
-        *absolute_source_in = Some(Tick(1_000));
-    }
+    abs.patch.absolute_source_in = Some(Tick(1_000));
     m.apply(Command::SetMorpher(abs)).unwrap();
     let eff = m.project().effective_clips();
     assert_eq!(eff.iter().find(|c| c.id == ClipId(10)).unwrap().source_in, Tick(1_000));
 
     // отрицательный итог клампится в 0
     let mut neg = replace_morpher(1, vec![ClipId(10)]);
-    if let MorphKind::Replace { source_in_delta, .. } = &mut neg.kind {
-        *source_in_delta = Tick(-90_000);
-    }
+    neg.patch.source_in_delta = Tick(-90_000);
     m.apply(Command::SetMorpher(neg)).unwrap();
     let eff = m.project().effective_clips();
     assert_eq!(eff.iter().find(|c| c.id == ClipId(10)).unwrap().source_in, Tick(0));
@@ -107,13 +105,13 @@ fn t35_effect_batch_live_and_typed() {
         lane: 0,
         start: Tick(0),
         duration: Tick(90 * 1500),
-        targets: vec![ClipId(10), ClipId(11)],
-        kind: MorphKind::EffectBatch {
+        targets: MorphTargets::Clips { ids: vec![ClipId(10), ClipId(11)] },
+        patch: MorphPatch {
             video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
             audio_fx: vec![FxInstance::gain(6.0)],
-            video_bypass: vec![],
-            audio_bypass: vec![],
+            ..Default::default()
         },
+        timed: false,
         enabled: true,
     }))
     .unwrap();
@@ -153,10 +151,8 @@ fn t35_bake_equals_flatten_and_undo() {
 fn t35_deterministic_order_by_id() {
     let mut m = base_project();
     let mut late = replace_morpher(7, vec![ClipId(10)]);
-    if let MorphKind::Replace { media, absolute_source_in, .. } = &mut late.kind {
-        *media = None;
-        *absolute_source_in = Some(Tick(777));
-    }
+    late.patch.media = None;
+    late.patch.absolute_source_in = Some(Tick(777));
     // добавляем ПОЗДНИЙ id первым — порядок вектора обратный
     m.apply(Command::AddMorpher(late)).unwrap();
     m.apply(Command::AddMorpher(replace_morpher(3, vec![ClipId(10)]))).unwrap();
@@ -177,14 +173,14 @@ fn t35_targets_follow_clip_edits() {
     m.apply(Command::Split { id: ClipId(10), at: Tick(45_000), new_id: ClipId(12), new_group: None })
         .unwrap();
     assert!(
-        m.project().morphers[0].targets.contains(&ClipId(12)),
+        m.project().morphers[0].targets.clip_ids().contains(&ClipId(12)),
         "правая половина унаследовала таргетинг"
     );
     let eff = m.project().effective_clips();
     assert_eq!(eff.iter().find(|c| c.id == ClipId(12)).unwrap().media, MediaId(2));
 
     m.apply(Command::RemoveClip { id: ClipId(10) }).unwrap();
-    assert!(!m.project().morphers[0].targets.contains(&ClipId(10)), "удалённый вычищен");
+    assert!(!m.project().morphers[0].targets.clip_ids().contains(&ClipId(10)), "удалённый вычищен");
     assert!(m.project().validate().is_ok(), "модель валидна после правок");
 }
 

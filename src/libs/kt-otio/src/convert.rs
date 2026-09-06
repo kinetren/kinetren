@@ -438,7 +438,15 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             // версия ПО СОДЕРЖИМОМУ: кривые нового домена — v3, камеры —
             // v2, иначе v1 (файл без наших новшеств открывается старыми
             // сборками и остаётся байт-стабильным)
-            if has_auto || has_off || has_tr {
+            // морфер-слой (Р.35): действует по времени или целится не
+            // замороженным списком — старая сборка сыграла бы не то
+            let has_layer = p
+                .morphers
+                .iter()
+                .any(|m| m.timed || !matches!(m.targets, kt_model::MorphTargets::Clips { .. }));
+            if has_layer {
+                crate::meta::KT_META_V4
+            } else if has_auto || has_off || has_tr {
                 crate::meta::KT_META_V3
             } else if has_cams {
                 crate::meta::KT_META_V2
@@ -969,6 +977,13 @@ pub fn timeline_to_project(
         }
         p.morph_lanes = kt.morph_lanes;
         p.morphers = kt.morphers;
+        // морферы файла ДО v4 — прежняя семантика: патч на цели целиком,
+        // время блока не действует (Р.35, односторонний апгрейд)
+        if file_v < crate::meta::KT_META_V4 {
+            for m in &mut p.morphers {
+                kt_model::migrate_legacy_morpher(m);
+            }
+        }
         p.camera_lanes = kt.camera_lanes;
         p.cameras = kt.cameras;
         // кейфреймы камер старого домена → общие кривые (Р.34 К3)

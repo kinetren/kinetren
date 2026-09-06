@@ -73,12 +73,14 @@ fn t36_replace_renders_as_new_source_and_bake_is_noop_for_render() {
         lane: 0,
         start: Tick(0),
         duration: Tick(90 * 1500),
-        targets: vec![ClipId(1)],
-        kind: MorphKind::Replace {
+        targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
+        patch: MorphPatch {
             media: Some(MediaId(2)),
             source_in_delta: Tick(4_500),
             absolute_source_in: None,
+            ..Default::default()
         },
+        timed: false,
         enabled: true,
     });
     p.morph_lanes = 1;
@@ -105,13 +107,15 @@ fn t36_effect_batch_is_live() {
         lane: 0,
         start: Tick(0),
         duration: Tick(90 * 1500),
-        targets: vec![ClipId(1)],
-        kind: MorphKind::EffectBatch {
+        targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
+        patch: MorphPatch {
             video_fx: vec![],
             audio_fx: vec![gain.clone()],
             video_bypass: vec![],
             audio_bypass: vec![],
+            ..Default::default()
         },
+        timed: false,
         enabled: true,
     });
     p.morph_lanes = 1;

@@ -497,9 +497,7 @@ impl TimelineModel {
                     return Err(CommandError::MediaInUse(*id));
                 }
                 // morpher с подменой на это медиа тоже держит его
-                if p.morphers.iter().any(|m| {
-                    matches!(&m.kind, MorphKind::Replace { media: Some(x), .. } if x == id)
-                }) {
+                if p.morphers.iter().any(|m| m.media_refs().any(|x| x == *id)) {
                     return Err(CommandError::MediaInUse(*id));
                 }
             }
@@ -559,18 +557,23 @@ impl TimelineModel {
     }
 
     fn check_morpher_on(p: &Project, m: &MorpherEvent) -> Result<(), CommandError> {
-        if m.targets.is_empty() {
-            return Err(CommandError::MorpherNoTargets);
-        }
-        for t in &m.targets {
-            if !p.clips.iter().any(|c| c.id == *t) {
-                return Err(CommandError::ClipNotFound(*t));
+        // пустой список запрещён ТОЛЬКО в режиме замороженных целей: у
+        // слоя («всё, что ниже») и у ссылок пустое множество законно —
+        // просто сейчас под морфером ничего нет
+        if let MorphTargets::Clips { ids } = &m.targets {
+            if ids.is_empty() {
+                return Err(CommandError::MorpherNoTargets);
+            }
+            for t in ids {
+                if !p.clips.iter().any(|c| c.id == *t) {
+                    return Err(CommandError::ClipNotFound(*t));
+                }
             }
         }
-        if let MorphKind::Replace { media: Some(mid), .. } = &m.kind
-            && !p.media.iter().any(|x| x.id == *mid)
-        {
-            return Err(CommandError::MediaNotFound(*mid));
+        for mid in m.media_refs() {
+            if !p.media.iter().any(|x| x.id == mid) {
+                return Err(CommandError::MediaNotFound(mid));
+            }
         }
         Ok(())
     }
@@ -610,7 +613,9 @@ impl TimelineModel {
                 p.clips.retain(|c| c.id != id);
                 // D5 (v1): вычищаем id из замороженных целей morpher'ов
                 for m in &mut p.morphers {
-                    m.targets.retain(|t| *t != id);
+                    if let Some(ids) = m.targets.clip_ids_mut() {
+                        ids.retain(|t| *t != id);
+                    }
                 }
             }
             Command::MoveClip { id, new_start, new_lane } => {
@@ -695,8 +700,10 @@ impl TimelineModel {
                 p.clips.push(right);
                 // D5 (v1): правая половина наследует таргетинг morpher'ов
                 for m in &mut p.morphers {
-                    if m.targets.contains(&id) {
-                        m.targets.push(new_id);
+                    if let Some(ids) = m.targets.clip_ids_mut()
+                        && ids.contains(&id)
+                    {
+                        ids.push(new_id);
                     }
                 }
                 // переход, где клип был OUTGOING (стык на прежнем КОНЦЕ),
@@ -793,9 +800,10 @@ impl TimelineModel {
             Command::BakeMorpher { id } => {
                 let Some(pos) = p.morphers.iter().position(|m| m.id == id) else { return };
                 let m = p.morphers.remove(pos);
+                let ids = m.targets.clip_ids().to_vec();
                 for c in &mut p.clips {
-                    if m.targets.contains(&c.id) {
-                        m.apply_to(c);
+                    if ids.contains(&c.id) {
+                        m.patch.apply_to(c);
                     }
                 }
             }

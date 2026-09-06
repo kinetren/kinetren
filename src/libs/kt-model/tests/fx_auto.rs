@@ -365,13 +365,12 @@ fn t214_master_switch_disables_chain_without_losing_it() {
         lane: 0,
         start: Tick(0),
         duration: Tick(90_000),
-        targets: vec![ClipId(1)],
-        kind: MorphKind::EffectBatch {
+        targets: MorphTargets::Clips { ids: vec![ClipId(1)] },
+        patch: MorphPatch {
             video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
-            audio_fx: vec![],
-            video_bypass: vec![],
-            audio_bypass: vec![],
+            ..Default::default()
         },
+        timed: false,
         enabled: true,
     });
     p.validate().unwrap();
