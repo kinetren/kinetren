@@ -61,11 +61,53 @@ fn win_of(c: &ParamCurve, spec: &ParamSpec, view: &AutoView, ci: usize) -> (f64,
 }
 
 /// Что виджету нужно знать о событии.
+/// Владелец кривых глазами виджета (Р.34 К1). Виджет больше НЕ знает про
+/// клип: ему нужны только спеки параметров, диапазон оси времени и
+/// перевод «позиция кривой ↔ тик таймлайна». Благодаря этому один и тот
+/// же виджет обслуживает слот эффекта, камеру и переход — иначе у каждого
+/// нового носителя параметров заводился бы свой редактор кейфреймов, а
+/// именно так и разъехались slowed с pan3d (п.221).
 pub struct AutoCtx<'a> {
-    pub clip: &'a ClipEvent,
-    pub fx: &'a FxInstance,
-    /// Шаг кадра проекта — им выравнивается материальная позиция.
+    /// Спеки параметров носителя (min/max/шаг/единица).
+    pub specs: &'a [ParamSpec],
+    /// Видимый диапазон оси времени В ДОМЕНЕ КРИВОЙ.
+    pub range: (Tick, Tick),
+    /// Домен кривой → тик таймлайна (мини-таймлайн двигает главный курсор).
+    pub to_timeline: &'a dyn Fn(Tick) -> Tick,
+    /// Тик таймлайна → домен кривой (позиция курсора на графике).
+    pub to_curve: &'a dyn Fn(Tick) -> Tick,
+    /// Шаг кадра проекта — им выравнивается позиция ключа.
     pub frame_step: i64,
+}
+
+impl AutoCtx<'_> {
+    /// Доля диапазона (вторая подпись времени: «секунды и проценты»).
+    fn frac(&self, t: Tick) -> f64 {
+        let span = (self.range.1.0 - self.range.0.0).max(1);
+        ((t.0 - self.range.0.0) as f64 / span as f64).clamp(0.0, 1.0)
+    }
+
+    fn spec(&self, param: &str) -> Option<&ParamSpec> {
+        self.specs.iter().find(|s| s.name == param)
+    }
+}
+
+/// Контекст для слота эффекта на событии — прежнее поведение виджета
+/// одной строкой (домен = материал клипа).
+pub fn clip_ctx<'a>(
+    clip: &'a ClipEvent,
+    fx: &'a FxInstance,
+    frame_step: i64,
+    to_tl: &'a dyn Fn(Tick) -> Tick,
+    to_mat: &'a dyn Fn(Tick) -> Tick,
+) -> AutoCtx<'a> {
+    AutoCtx {
+        specs: fx.param_specs(),
+        range: (clip.source_in, Tick(clip.source_in.0 + clip.duration.0.max(1))),
+        to_timeline: to_tl,
+        to_curve: to_mat,
+        frame_step,
+    }
 }
 
 #[derive(Default)]
@@ -79,14 +121,6 @@ fn secs(t: Tick) -> f64 {
     t.0 as f64 / 90_000.0
 }
 
-/// Доля куска материала, который показывает событие (для второй подписи).
-fn frac(clip: &ClipEvent, mat: Tick) -> f64 {
-    if clip.duration.0 <= 0 {
-        return 0.0;
-    }
-    ((mat.0 - clip.source_in.0) as f64 / clip.duration.0 as f64).clamp(0.0, 1.0)
-}
-
 fn curve_color(i: usize) -> egui::Color32 {
     const C: [egui::Color32; 6] = [
         egui::Color32::from_rgb(120, 180, 255),
@@ -97,10 +131,6 @@ fn curve_color(i: usize) -> egui::Color32 {
         egui::Color32::from_rgb(160, 200, 220),
     ];
     C[i % C.len()]
-}
-
-fn spec_of<'a>(fx: &'a FxInstance, param: &str) -> Option<&'a ParamSpec> {
-    fx.param_spec(param)
 }
 
 /// Окно значений кривой по ВЕРТИКАЛИ. Берётся по её собственным ключам с
@@ -152,7 +182,7 @@ pub fn draw(
             ui.weak(crate::tf!(
                 k::fx::KEY_AT,
                 format!("{:.3}", secs(key.t)),
-                format!("{:.0}", frac(ctx.clip, key.t) * 100.0)
+                format!("{:.0}", ctx.frac(key.t) * 100.0)
             ));
         }
     });
@@ -185,7 +215,7 @@ fn graph(
     p.rect_filled(rect, 3.0, egui::Color32::from_gray(18));
 
     // ось X — материал события; шкала и снап взяты у таймлайна проекта
-    let (m0, m1) = (ctx.clip.source_in.0, ctx.clip.source_in.0 + ctx.clip.duration.0.max(1));
+    let (m0, m1) = (ctx.range.0.0, ctx.range.1.0);
     let tpp = (m1 - m0) as f64 / rect.width().max(1.0) as f64;
     let x_of = |t: i64| rect.left() + ((t - m0) as f64 / tpp) as f32;
     let t_of = |x: f32| m0 + ((x - rect.left()) as f64 * tpp) as i64;
@@ -222,7 +252,7 @@ fn graph(
     }
 
     // курсор главного таймлайна в координатах материала
-    let ph_mat = kt_engine::material_at(ctx.clip, ctx.frame_step, playhead);
+    let ph_mat = (ctx.to_curve)(playhead);
     if ph_mat.0 >= m0 && ph_mat.0 <= m1 {
         let x = x_of(ph_mat.0);
         p.line_segment(
@@ -234,7 +264,7 @@ fn graph(
     // кривые и ключи
     let mut hit: Option<(usize, usize)> = None;
     for (ci, c) in curves.iter().enumerate() {
-        let Some(spec) = spec_of(ctx.fx, &c.param) else { continue };
+        let Some(spec) = ctx.spec(&c.param) else { continue };
         let (lo, hi) = win_of(c, spec, view, ci);
         let y_of = |v: f64| -> f32 {
             let u = ((v - lo) / (hi - lo).max(1e-9)).clamp(0.0, 1.0) as f32;
@@ -269,7 +299,7 @@ fn graph(
     }
     // подпись активной кривой (в неё кладёт ключ клик по пустому месту)
     if let Some(c) = curves.get(view.active)
-        && let Some(spec) = spec_of(ctx.fx, &c.param)
+        && let Some(spec) = ctx.spec(&c.param)
     {
         let (lo, hi) = win_of(c, spec, view, view.active);
         let col = curve_color(view.active);
@@ -299,7 +329,7 @@ fn graph(
     // видно, к чему относится» (реверс и скорость учитывает обратный
     // перевод материал → таймлайн)
     if on_ruler && (resp.clicked() || resp.dragged()) {
-        out.seek = Some(kt_engine::timeline_at_material(ctx.clip, ctx.frame_step, Tick(t_of(pos.x))));
+        out.seek = Some((ctx.to_timeline)(Tick(t_of(pos.x))));
         crate::app::hint_into(hover, resp.clone(), tr(k::fx::GRAPH_RULER_HINT));
         return;
     }
@@ -316,7 +346,7 @@ fn graph(
             view.sel = Some((ci, ki));
             view.active = ci;
             view.drag = Some((ci, ki));
-            if let Some(spec) = spec_of(ctx.fx, &curves[ci].param) {
+            if let Some(spec) = ctx.spec(&curves[ci].param) {
                 let (lo, hi) = value_window(&curves[ci], spec);
                 view.drag_win = Some((ci, lo, hi));
             }
@@ -324,7 +354,7 @@ fn graph(
             // клик по пустому месту — новый ключ активной кривой
             if let Some(spec) = curves
                 .get(view.active)
-                .and_then(|c| spec_of(ctx.fx, &c.param))
+                .and_then(|c| ctx.spec(&c.param))
                 .copied()
             {
                 let (lo, hi) = win_of(&curves[view.active], &spec, view, view.active);
@@ -345,7 +375,7 @@ fn graph(
         && ci < curves.len()
         && ki < curves[ci].keys.len()
     {
-        let Some(spec) = spec_of(ctx.fx, &curves[ci].param).copied() else { return };
+        let Some(spec) = ctx.spec(&curves[ci].param).copied() else { return };
         // снап по сетке кадров: ключ садится на кадр, а не «около»
         let raw = t_of(pos.x).clamp(m0, m1);
         let step = ctx.frame_step.max(1);
@@ -414,9 +444,9 @@ fn table(
                 if resp.drag_stopped() || resp.lost_focus() {
                     commit = true;
                 }
-                ui.weak(format!("{:.0}%", frac(ctx.clip, tick) * 100.0));
+                ui.weak(format!("{:.0}%", ctx.frac(tick) * 100.0));
                 for (ci, c) in curves.iter_mut().enumerate() {
-                    let Some(spec) = spec_of(ctx.fx, &c.param).copied() else {
+                    let Some(spec) = ctx.spec(&c.param).copied() else {
                         ui.label("");
                         continue;
                     };

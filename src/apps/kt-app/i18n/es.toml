@@ -287,7 +287,6 @@ timestretch = "Estiramiento de tiempo"
 [fxreg.kw]
 pan3d = "pan 3d perspectiva cámara capa"
 pan = "pan zoom recorte encuadre crop"
-cammotion = "camara temblor movimiento shake handheld"
 mirror = "espejo reflejo volteo mirror flip"
 blur = "desenfoque suavizado blur soft"
 greenscreen = "croma clave verde transparencia chroma key green"

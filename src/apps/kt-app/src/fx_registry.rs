@@ -27,7 +27,6 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
     // и сокращённый `use` спрятал бы использование.
     match name {
         "Pan" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::PAN)),
-        "CamMotion" => (k::fxreg::cat::MOTION, Some(k::fxreg::kw::CAMMOTION)),
         "Mirror" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::MIRROR)),
         "Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::BLUR)),
         "Greenscreen" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::GREENSCREEN)),

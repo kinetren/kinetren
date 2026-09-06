@@ -485,6 +485,7 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
     // легаси-проект их точно несёт в собственном домене
     for c in &mut p.clips {
         crate::project::migrate_legacy_slowed(c);
+        crate::project::migrate_legacy_cammotion(c);
     }
 
     // Переслаивание (Р.28): старый проект открывается КАК БЫЛ — перекрытия

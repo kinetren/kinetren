@@ -441,8 +441,11 @@ fn draw_fx_auto_section(
             changed = true;
         }
     });
-    // единый виджет: график ↔ таблица (Р.33 С3)
-    let ctx = crate::automation::AutoCtx { clip, fx: f, frame_step };
+    // единый виджет: график ↔ таблица (Р.33 С3). Домен слота — материал
+    // события; перевод в обе стороны учитывает реверс и скорость (Р.34 К1)
+    let to_tl = |t: kt_time::Tick| kt_engine::timeline_at_material(clip, frame_step, t);
+    let to_mat = |t: kt_time::Tick| kt_engine::material_at(clip, frame_step, t);
+    let ctx = crate::automation::clip_ctx(clip, f, frame_step, &to_tl, &to_mat);
     let res = crate::automation::draw(
         ui,
         ("auto", clip.id.0, slot),
@@ -476,16 +479,9 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
 pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
     use kt_model::PanMode;
     vec![
+        // CamMotion из списка убран (Р.34 К2): его кейфреймы — это Pan
+        // с кривыми, и старые проекты конвертируются при чтении.
         ("Pan", FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }),
-        (
-            "CamMotion",
-            FxInstance::CamMotion {
-                mode: PanMode::Fit,
-                ease: true,
-                time_scale: 1.0,
-                keyframes: vec![],
-            },
-        ),
         ("Mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
         ("Blur", FxInstance::blur(8)),
         (

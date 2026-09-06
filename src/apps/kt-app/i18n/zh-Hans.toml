@@ -287,7 +287,6 @@ timestretch = "时间伸缩"
 [fxreg.kw]
 pan3d = "pan 3d 透视 摄像机 图层"
 pan = "pan zoom 平移 缩放 裁剪 构图 crop"
-cammotion = "camera shake 摄像机 抖动 手持 运动"
 mirror = "mirror flip 镜像 翻转 反射"
 blur = "blur 模糊 柔化 虚化"
 greenscreen = "chroma key green 绿幕 抠像 键控 透明"

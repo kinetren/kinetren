@@ -137,3 +137,86 @@ fn t191_postfx_cache_no_stale_across_time_and_curve_edits() {
     let (a1c, _) = compose(&p2, t1, &cache);
     assert_ne!(a1, a1c, "правка кейфрейма обязана инвалидировать кадры");
 }
+
+/// Тест 230 (Р.34 К2): CamMotion сконвертирован в Pan с кривыми и рисует
+/// ТО ЖЕ САМОЕ. Проверяется рендером, а не сравнением чисел: миграция
+/// затрагивает и домен позиции ключа, и форму хранения, и `time_scale`, —
+/// сойтись должны пиксели.
+#[test]
+fn t230_cammotion_migrates_to_pan_curves() {
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let keys = vec![
+        CamKeyframe { t: 0.0, pan_x: -0.2, pan_y: 0.1, zoom: 1.0 },
+        CamKeyframe { t: 0.5, pan_x: 0.0, pan_y: 0.0, zoom: 1.3 },
+        CamKeyframe { t: 1.0, pan_x: 0.25, pan_y: -0.15, zoom: 1.6 },
+    ];
+    for (label, scale) in [("scale=1", 1.0f64), ("scale=2", 2.0)] {
+        let cam = FxInstance::CamMotion {
+            mode: PanMode::Fit,
+            ease: true,
+            time_scale: scale,
+            keyframes: keys.clone(),
+        };
+        let before = project(vec![cam], vec![]);
+        let mut after = before.clone();
+        assert!(
+            kt_model::migrate_legacy_cammotion(&mut after.clips[0]),
+            "{label}: миграция обязана сработать"
+        );
+        assert!(
+            matches!(after.clips[0].fx[0], FxInstance::Pan { .. }),
+            "{label}: CamMotion обязан стать Pan"
+        );
+        assert_eq!(after.clips[0].fx_auto[0].len(), 3, "{label}: три кривые");
+        after.validate().unwrap();
+        // моменты ПО СЕТКЕ кадров (шаг 3000): старый путь читал сырой
+        // прогресс клипа, новый — выровненную позицию материала
+        for t in [Tick(0), Tick(21_000), Tick(45_000), Tick(69_000)] {
+            let (a, ca) = compose(&before, t, &cache);
+            let (b, cb) = compose(&after, t, &cache);
+            assert!(ca && cb, "{label}: кадры прогреты");
+            assert_eq!(a, b, "{label}: кадр в {t:?} обязан совпасть до байта");
+        }
+    }
+
+    // ПУСТЫЕ кейфреймы у CamMotion означали не статику, а пресет v1
+    // «наезд 1.0 → 1.35»: движение обязано пережить миграцию
+    let empty = FxInstance::CamMotion {
+        mode: PanMode::Fit,
+        ease: true,
+        time_scale: 1.0,
+        keyframes: vec![],
+    };
+    let before = project(vec![empty], vec![]);
+    let mut after = before.clone();
+    assert!(kt_model::migrate_legacy_cammotion(&mut after.clips[0]));
+    let zoom = after.clips[0].fx_auto[0]
+        .iter()
+        .find(|c| c.param == "zoom")
+        .expect("кривая наезда");
+    assert_eq!(zoom.keys.len(), 2);
+    assert!((zoom.keys[1].v - 1.35).abs() < 1e-9, "пресет v1 сохранён: {:?}", zoom.keys);
+    for t in [Tick(0), Tick(SPAN / 2), Tick(69_000)] {
+        let (a, _) = compose(&before, t, &cache);
+        let (b, _) = compose(&after, t, &cache);
+        assert_eq!(a, b, "пресет без кейфреймов: кадр в {t:?} совпадает");
+    }
+
+    // кривая НОВОГО домена главнее легаси-кейфреймов
+    let cam = FxInstance::CamMotion {
+        mode: PanMode::Fit,
+        ease: true,
+        time_scale: 1.0,
+        keyframes: keys.clone(),
+    };
+    let mut c = project(vec![cam], vec![]).clips[0].clone();
+    c.fx_auto = vec![vec![ParamCurve {
+        param: "zoom".into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(0), v: 4.0 }],
+    }]];
+    kt_model::migrate_legacy_cammotion(&mut c);
+    let zoom = c.fx_auto[0].iter().find(|c| c.param == "zoom").unwrap();
+    assert_eq!(zoom.keys.len(), 1, "существующую кривую миграция не трогает");
+    assert_eq!(zoom.keys[0].v, 4.0);
+}

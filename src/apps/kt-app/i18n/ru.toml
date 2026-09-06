@@ -287,7 +287,6 @@ timestretch = "Тайм-стретч"
 [fxreg.kw]
 pan3d = "пан 3d перспектива камера слой"
 pan = "пан зум pan zoom кадрирование crop"
-cammotion = "камера тряска shake handheld движение"
 mirror = "зеркало отражение flip mirror"
 blur = "блюр размытие мягкость blur soft"
 greenscreen = "хромакей ключ green chroma key прозрачность"

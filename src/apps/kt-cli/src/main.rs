@@ -382,16 +382,9 @@ fn demo_project() -> Project {
         fx_off: false,
     };
     let pan = FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.02, pan_y: -0.03, zoom: 1.18 };
-    let cam = FxInstance::CamMotion {
-        mode: PanMode::Fill,
-        ease: true,
-        time_scale: 1.0,
-        keyframes: vec![
-            CamKeyframe { t: 0.0, pan_x: -0.12, pan_y: 0.05, zoom: 1.05 },
-            CamKeyframe { t: 0.55, pan_x: 0.0, pan_y: 0.0, zoom: 1.28 },
-            CamKeyframe { t: 1.0, pan_x: 0.14, pan_y: -0.06, zoom: 1.45 },
-        ],
-    };
+    // тот же ход камеры, что был кейфреймами CamMotion, — теперь кривыми
+    // на Pan (Р.34 К2: механизм анимации в программе один)
+    let cam = FxInstance::Pan { mode: PanMode::Fill, pan_x: -0.12, pan_y: 0.05, zoom: 1.05 };
     let slowed = FxInstance::SlowedReverb {
         rate: 0.86,
         mix: 0.34,
@@ -474,6 +467,28 @@ fn demo_project() -> Project {
         clip(29, ClipKind::Audio, 2, 0.0, 30.0, 0.0, 8, -18.0, vec![]),
         clip(31, ClipKind::Audio, 2, 45.0, 30.0, 0.0, 8, -18.0, vec![]),
     ];
+    // ход камеры демо-клипа — кривыми Pan (было тремя кейфреймами
+    // CamMotion; Р.34 К2: механизм анимации один на программу)
+    if let Some(c) = p.clips.iter_mut().find(|c| c.id == ClipId(5)) {
+        let key = |u: f64, v: f64| AutoKey { t: t(20.0 + u * 14.0), v };
+        c.fx_auto = vec![vec![
+            ParamCurve {
+                param: "pan_x".into(),
+                ease: true,
+                keys: vec![key(0.0, -0.12), key(0.55, 0.0), key(1.0, 0.14)],
+            },
+            ParamCurve {
+                param: "pan_y".into(),
+                ease: true,
+                keys: vec![key(0.0, 0.05), key(0.55, 0.0), key(1.0, -0.06)],
+            },
+            ParamCurve {
+                param: "zoom".into(),
+                ease: true,
+                keys: vec![key(0.0, 1.05), key(0.55, 1.28), key(1.0, 1.45)],
+            },
+        ]];
+    }
     for (at, name) in [
         (0.0, "COLD OPEN"),
         (12.0, "INTERVIEW IN"),

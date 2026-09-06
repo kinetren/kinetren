@@ -1174,6 +1174,68 @@ pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
     touched
 }
 
+/// CamMotion → Pan + кривые (Р.34 К2). У Pan те же три параметра уже
+/// есть в спеках, то есть «CamMotion с кейфреймами» — это в точности
+/// «Pan с кривыми»; конверсия убирает дублирующий механизм анимации, а
+/// не портирует его.
+///
+/// Тонкости, которые легко потерять: (1) пустые кейфреймы у CamMotion
+/// означали НЕ статику, а v1-пресет «наезд 1.0 → 1.35» — он
+/// материализуется явно, иначе старые проекты потеряли бы движение;
+/// (2) `time_scale` разгонял чтение кейфреймов (`u_eff = u · scale`),
+/// поэтому позиция ключа делится на него; (3) `ease` жил на эффекте, а в
+/// новом домене он у каждой кривой свой.
+pub fn migrate_legacy_cammotion(c: &mut ClipEvent) -> bool {
+    let mut touched = false;
+    for i in 0..c.fx.len() {
+        let FxInstance::CamMotion { mode, ease, time_scale, keyframes } = &c.fx[i] else {
+            continue;
+        };
+        let (mode, ease, scale) = (*mode, *ease, time_scale.clamp(0.05, 8.0));
+        let keys: Vec<CamKeyframe> = if keyframes.is_empty() {
+            vec![
+                CamKeyframe { t: 0.0, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 },
+                CamKeyframe { t: 1.0, pan_x: 0.0, pan_y: 0.0, zoom: 1.35 },
+            ]
+        } else {
+            keyframes.clone()
+        };
+        let first = keys[0];
+        c.fx[i] = FxInstance::Pan {
+            mode,
+            pan_x: first.pan_x,
+            pan_y: first.pan_y,
+            zoom: first.zoom,
+        };
+        if c.fx_auto.len() <= i {
+            c.fx_auto.resize(i + 1, Vec::new());
+        }
+        for (param, pick) in [
+            ("pan_x", Box::new(|k: &CamKeyframe| k.pan_x) as Box<dyn Fn(&CamKeyframe) -> f64>),
+            ("pan_y", Box::new(|k: &CamKeyframe| k.pan_y)),
+            ("zoom", Box::new(|k: &CamKeyframe| k.zoom)),
+        ] {
+            if c.fx_auto[i].iter().any(|c| c.param == param) {
+                continue; // кривая нового домена уже есть — она главнее
+            }
+            c.fx_auto[i].push(ParamCurve {
+                param: param.into(),
+                ease,
+                keys: keys
+                    .iter()
+                    .map(|k| AutoKey {
+                        // u_eff = u·scale ⇒ ключ достигается при u = t/scale
+                        t: material_from_progress(k.t / scale, c.source_in, c.duration, false),
+                        v: pick(k),
+                    })
+                    .collect(),
+            });
+        }
+        touched = true;
+    }
+    touched
+}
+
 /// Позиция ключа из СТАРОГО домена (доля 0..1 от длины события) в
 /// материальные тики. Домен сменился в Р.33; ридер формата зовёт это
 /// для файлов до v3, иначе анимация старых проектов уехала бы.

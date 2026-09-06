@@ -1230,6 +1230,7 @@ fn clip_from_otio(
     // кейфреймы slowed&reverb старого образца — в общий механизм (Р.33):
     // собственного домена у них больше нет
     kt_model::migrate_legacy_slowed(&mut ev);
+    kt_model::migrate_legacy_cammotion(&mut ev);
     (ev, ex)
 }
 
