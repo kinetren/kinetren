@@ -177,7 +177,18 @@ fn paste_block_keeps_pairs_and_chains() {
     let mut next_clip = 100u64;
     let mut next_group = 50u64;
     let mut next_tr = 500u64;
-    let (cmds, end1) = paste_block(&block, Tick(200_000), &mut next_clip, &mut next_group, &mut next_tr);
+    let mut next_morph = 1u64;
+    let (cmds, end1, _) = paste_block(
+        &block,
+        Tick(200_000),
+        PasteIds {
+            clip: &mut next_clip,
+            group: &mut next_group,
+            transition: &mut next_tr,
+            morph: &mut next_morph,
+        },
+        &PasteNames::default(),
+    );
     let mut m2 = TimelineModel::new(m.project().clone());
     m2.apply_batch(cmds).unwrap();
     let pasted: Vec<&ClipEvent> = m2.project().clips.iter().filter(|c| c.id.0 >= 100).collect();
@@ -187,7 +198,17 @@ fn paste_block_keeps_pairs_and_chains() {
     assert_eq!(end1, Tick(290_000));
 
     // chain-paste: второй блок встык к концу первого
-    let (cmds2, end2) = paste_block(&block, end1, &mut next_clip, &mut next_group, &mut next_tr);
+    let (cmds2, end2, _) = paste_block(
+        &block,
+        end1,
+        PasteIds {
+            clip: &mut next_clip,
+            group: &mut next_group,
+            transition: &mut next_tr,
+            morph: &mut next_morph,
+        },
+        &PasteNames::default(),
+    );
     m2.apply_batch(cmds2).unwrap();
     assert_eq!(end2, Tick(380_000));
     assert!(m2.project().clips.iter().any(|c| c.start == end1), "встык без зазора");

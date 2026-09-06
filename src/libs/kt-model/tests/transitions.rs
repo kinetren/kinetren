@@ -290,13 +290,17 @@ fn t155_fade_survives_edits_and_clipboard() {
     m.apply(Command::AddTransition(fade(1, None, Some(2), 9_000, 9_000))).unwrap();
     let block = kt_model::ops::copy_group(m.project(), ClipId(2));
     assert_eq!(block.transitions.len(), 1, "фейд в блоке");
-    let (mut next_clip, mut next_group, mut next_tr) = (100u64, 100u64, 100u64);
-    let (cmds, _end) = kt_model::ops::paste_block(
+    let (mut next_clip, mut next_group, mut next_tr, mut next_morph) = (100u64, 100u64, 100u64, 1u64);
+    let (cmds, _end, _) = kt_model::ops::paste_block(
         &block,
         Tick(300_000),
-        &mut next_clip,
-        &mut next_group,
-        &mut next_tr,
+        kt_model::ops::PasteIds {
+            clip: &mut next_clip,
+            group: &mut next_group,
+            transition: &mut next_tr,
+            morph: &mut next_morph,
+        },
+        &kt_model::ops::PasteNames::default(),
     );
     m.apply_batch(cmds).unwrap();
     let pasted = m.project().transitions.iter().find(|t| t.id == TransitionId(100)).unwrap();

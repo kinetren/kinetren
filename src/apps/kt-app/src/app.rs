@@ -29,6 +29,16 @@ pub struct Notice {
 /// (None — файл снова не открылся, заглушка остаётся).
 pub type ReopenedMedia = (MediaId, String, Option<Box<dyn kt_media::MediaSource>>);
 
+/// Окно «как назвать вставленное» (Р.35 п.4).
+pub struct PasteNamesDialog {
+    /// Позиция вставки, замороженная на момент Ctrl+V.
+    pub at: kt_time::Tick,
+    pub prefix: String,
+    /// Забрать фокус в поле на первом кадре — и ОТДАТЬ при закрытии
+    /// (правило 14: фича обязана работать повторно).
+    pub focus: bool,
+}
+
 /// Рамка выделения в домене модели: [начало, конец) и задетые дорожки.
 pub type Band = (kt_time::Tick, kt_time::Tick, Vec<(LaneKind, u32)>);
 
@@ -253,6 +263,9 @@ pub struct KtApp {
     /// — из неё делается именованная область (Р.35 п.2). Сессионное:
     /// пережить перезапуск ему незачем.
     pub last_band: Option<Band>,
+    /// Окно префикса вставки (Р.35 п.4). Неблокирующее, с ЗАМОРОЖЕННОЙ
+    /// позицией вставки: курсор под окном её не уводит.
+    pub paste_names: Option<PasteNamesDialog>,
     /// Прямоугольник строки состояния (заполняется при её отрисовке).
     pub statusbar_rect: egui::Rect,
     /// Что реально показано в строке подсказки (для harness-теста).
@@ -471,6 +484,7 @@ impl KtApp {
             hover_hint: None,
             blocked: None,
             last_band: None,
+            paste_names: None,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -605,6 +619,7 @@ impl KtApp {
             hover_hint: None,
             blocked: None,
             last_band: None,
+            paste_names: None,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -964,6 +979,7 @@ impl KtApp {
         self.draw_transition_editors(&ctx);
         self.draw_camera_editors(&ctx);
         self.draw_morph_editors(&ctx);
+        self.draw_paste_names(&ctx);
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
 
@@ -1644,6 +1660,10 @@ impl KtApp {
             self.search_open = false;
             return;
         }
+        // 0) окно префикса вставки (Р.35 п.4)
+        if self.paste_names.take().is_some() {
+            return;
+        }
         // 1) закрыть верхнее наше окно
         if self.render_setup.open {
             self.render_setup.open = false;
@@ -2270,22 +2290,149 @@ impl KtApp {
         }
     }
 
+    /// Окно префикса вставки (Р.35 п.4). Неблокирующее: позиция вставки
+    /// заморожена, Enter вставляет, Esc отменяет (он же в Esc-каскаде),
+    /// при закрытии фокус ОТДАЁТСЯ — иначе горячие клавиши умрут до
+    /// клика мимо (правило 14, дефект п.8 р.12).
+    fn draw_paste_names(&mut self, ctx: &egui::Context) {
+        let Some(mut d) = self.paste_names.take() else { return };
+        let mut go = false;
+        let mut cancel = false;
+        let mut open = true;
+        egui::Window::new(tr(k::msg::PASTE_PREFIX_TITLE))
+            .id(egui::Id::new("paste_names"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(tr(k::msg::PASTE_PREFIX_LABEL));
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut d.prefix)
+                            .desired_width(180.0)
+                            .hint_text(tr(k::msg::PASTE_PREFIX_DEFAULT)),
+                    );
+                    if d.focus {
+                        resp.request_focus();
+                        d.focus = false;
+                    }
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        go = true;
+                    }
+                });
+                // живой предпросмотр: пользователь видит имя ДО вставки
+                let sample = self
+                    .clipboard
+                    .areas
+                    .first()
+                    .map(|a| a.name.clone())
+                    .or_else(|| {
+                        self.clipboard
+                            .markers
+                            .iter()
+                            .find(|m| !m.name.is_empty())
+                            .map(|m| m.name.clone())
+                    })
+                    .unwrap_or_default();
+                if !sample.is_empty() {
+                    let shown = if d.prefix.trim().is_empty() {
+                        sample.clone()
+                    } else {
+                        format!("{} {sample}", d.prefix.trim())
+                    };
+                    ui.label(
+                        egui::RichText::new(kt_model::unique_name(
+                            &self.model.project().taken_names(),
+                            &shown,
+                            "copy",
+                        ))
+                        .strong(),
+                    );
+                }
+                ui.label(egui::RichText::new(tr(k::msg::PASTE_PREFIX_NOTE)).weak().small());
+                ui.horizontal(|ui| {
+                    if ui.button(tr(k::msg::PASTE_DO)).clicked() {
+                        go = true;
+                    }
+                    if ui.button(tr(k::fx::CANCEL)).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
+        if go {
+            let (at, prefix) = (d.at, d.prefix.trim().to_string());
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("paste_names")));
+            self.paste_here(at, prefix);
+            return;
+        }
+        if cancel || !open {
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("paste_names")));
+            return;
+        }
+        self.paste_names = Some(d);
+    }
+
+    /// Есть ли в буфере ИМЕНОВАННОЕ — только тогда спрашиваем префикс
+    /// (иначе вставка идёт молча, как раньше).
+    pub(crate) fn clipboard_has_names(&self) -> bool {
+        !self.clipboard.areas.is_empty()
+            || self.clipboard.markers.iter().any(|m| !m.name.is_empty())
+    }
+
     pub fn paste_at_cursor(&mut self) {
         if self.clipboard.clips.is_empty() {
             self.note(tr(k::msg::CLIPBOARD_EMPTY));
             return;
         }
-        let at = self.player.transport.playhead();
+        // именованное в буфере — спрашиваем префикс окном (Р.35 п.4);
+        // позиция вставки ЗАМОРАЖИВАЕТСЯ, чтобы курсор под окном её не
+        // увёл
+        if self.clipboard_has_names() && self.paste_names.is_none() {
+            let at = self.player.transport.playhead();
+            self.paste_names = Some(crate::app::PasteNamesDialog {
+                at,
+                prefix: tr(k::msg::PASTE_PREFIX_DEFAULT).to_string(),
+                focus: true,
+            });
+            return;
+        }
+        let at = match self.paste_names.take() {
+            Some(d) => d.at,
+            None => self.player.transport.playhead(),
+        };
+        self.paste_here(at, String::new())
+    }
+
+    /// Собственно вставка: ОДИН `paste_block` → ОДИН `apply_batch`.
+    pub(crate) fn paste_here(&mut self, at: Tick, prefix: String) {
         let mut next_clip = self.next_clip_id();
         let mut next_group = self.next_group_id();
         let mut next_transition = self.next_transition_id();
-        let (cmds, end) = kt_model::ops::paste_block(
+        let mut next_morph = self.next_morph_id();
+        let names = kt_model::ops::PasteNames {
+            prefix,
+            taken: self.model.project().taken_names(),
+        };
+        let (cmds, end, skipped) = kt_model::ops::paste_block(
             &self.clipboard,
             at,
-            &mut next_clip,
-            &mut next_group,
-            &mut next_transition,
+            kt_model::ops::PasteIds {
+                clip: &mut next_clip,
+                group: &mut next_group,
+                transition: &mut next_transition,
+                morph: &mut next_morph,
+            },
+            &names,
         );
+        if skipped.morphers > 0 {
+            self.note(crate::tf!(k::msg::PASTE_SKIPPED_MORPHERS, skipped.morphers));
+        }
+        if skipped.markers > 0 {
+            self.note(crate::tf!(k::msg::PASTE_SKIPPED_MARKERS, skipped.markers));
+        }
         let first = cmds.iter().find_map(|c| match c {
             Command::AddClip(ev) => Some(ev.id),
             _ => None,

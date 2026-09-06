@@ -4971,3 +4971,74 @@ fn t248_band_becomes_named_area() {
         "мёртвая ссылка ОСТАЁТСЯ на виду: её не выкидывают молча"
     );
 }
+
+/// Тест 250 (Р.35 С5): окно префикса вставки. Открывается ТОЛЬКО когда в
+/// буфере есть именованное, вставляет одним undo-шагом, Esc не оставляет
+/// следов, а ВТОРОЙ Ctrl+V подряд открывает его снова (правило 14 —
+/// фича обязана работать повторно, дефект п.8 р.12).
+#[test]
+fn t250_paste_prefix_dialog() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips();
+
+    // без именованного вставка идёт МОЛЧА — старые сценарии целы
+    let app = h.state_mut();
+    app.select_only(ClipId(1));
+    app.copy_selection();
+    app.player.seek(kt_time::Tick(400_000));
+    let n = app.model.project().clips.len();
+    app.paste_at_cursor();
+    assert!(app.paste_names.is_none(), "окна быть не должно: имён в буфере нет");
+    assert_eq!(app.model.project().clips.len(), n + 1, "и вставка прошла сразу");
+
+    // область в буфере — окно появляется
+    let mut p = app.model.project().clone();
+    p.areas.push(MarkedArea {
+        name: "финал".into(),
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        lanes: vec![],
+        color: None,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.select_only(ClipId(1));
+    app.copy_selection();
+    assert!(!app.clipboard.areas.is_empty(), "область обязана попасть в буфер");
+    app.player.seek(kt_time::Tick(700_000));
+    app.paste_at_cursor();
+    assert!(app.paste_names.is_some(), "окно префикса не открылось");
+    let frozen = app.paste_names.as_ref().unwrap().at;
+    h.step();
+    h.step();
+    assert!(
+        h.query_by_label(tr(k::msg::PASTE_PREFIX_LABEL)).is_some(),
+        "окно нарисовалось, а не только завелось в состоянии"
+    );
+
+    // Esc отменяет и следов не оставляет
+    let before = h.state().model.project().clone();
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+    assert!(h.state().paste_names.is_none(), "Esc обязан закрыть окно");
+    assert_eq!(h.state().model.project().areas, before.areas, "и ничего не вставить");
+
+    // ВТОРОЙ Ctrl+V подряд открывает окно снова
+    let app = h.state_mut();
+    app.paste_at_cursor();
+    assert!(app.paste_names.is_some(), "повторная вставка обязана открыть окно опять");
+    assert_eq!(app.paste_names.as_ref().unwrap().at, frozen, "позиция вставки заморожена");
+
+    // подтверждение — ОДИН шаг истории
+    let depth = app.model.undo_depth();
+    let at = app.paste_names.as_ref().unwrap().at;
+    app.paste_names = None;
+    app.paste_here(at, "копия".into());
+    assert_eq!(app.model.undo_depth(), depth + 1, "вставка — один шаг истории");
+    let names: Vec<String> = app.model.project().areas.iter().map(|a| a.name.clone()).collect();
+    assert!(names.contains(&"копия финал".to_string()), "префикс применён: {names:?}");
+    app.model.undo().unwrap();
+    assert_eq!(app.model.project().areas.len(), 1, "и одним undo откатилась");
+}

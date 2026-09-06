@@ -4,7 +4,7 @@
 
 use kt_engine::{AudioRenderer, DirectFetcher};
 use kt_media::synthetic::{AudioPattern, SyntheticSource};
-use kt_model::ops::{copy_region_block, paste_block};
+use kt_model::ops::{PasteIds, PasteNames, copy_region_block, paste_block};
 use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, Tick};
 
@@ -56,7 +56,18 @@ fn t19_copy_region_fragment_paste_renders_identically() {
     // вставка на 10c (пустое место)
     let paste_at = Tick(90_000 * 10);
     let (mut next_clip, mut next_group, mut next_tr) = (100, 100, 100);
-    let (cmds, _end) = paste_block(&block, paste_at, &mut next_clip, &mut next_group, &mut next_tr);
+    let mut next_morph = 1u64;
+    let (cmds, _end, _) = paste_block(
+        &block,
+        paste_at,
+        PasteIds {
+            clip: &mut next_clip,
+            group: &mut next_group,
+            transition: &mut next_tr,
+            morph: &mut next_morph,
+        },
+        &PasteNames::default(),
+    );
     let mut model = kt_model::TimelineModel::new(p);
     model.apply_batch(cmds).expect("paste_block применяется");
     let p2 = model.project().clone();
@@ -108,9 +119,20 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
     let mut model = kt_model::TimelineModel::new(p);
     let (mut nc, mut ng, mut nt) = (100, 100, 100);
     let at1 = Tick(90_000 * 10);
-    let (cmds1, end1) = paste_block(&b1, at1, &mut nc, &mut ng, &mut nt);
+    let mut nm = 1u64;
+    let (cmds1, end1, _) = paste_block(
+        &b1,
+        at1,
+        PasteIds { clip: &mut nc, group: &mut ng, transition: &mut nt, morph: &mut nm },
+        &PasteNames::default(),
+    );
     model.apply_batch(cmds1).unwrap();
-    let (cmds2, _) = paste_block(&b2, end1, &mut nc, &mut ng, &mut nt);
+    let (cmds2, _, _) = paste_block(
+        &b2,
+        end1,
+        PasteIds { clip: &mut nc, group: &mut ng, transition: &mut nt, morph: &mut nm },
+        &PasteNames::default(),
+    );
     model.apply_batch(cmds2).unwrap();
     let p2 = model.project().clone();
 

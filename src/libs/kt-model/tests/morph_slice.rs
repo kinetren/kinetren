@@ -576,3 +576,105 @@ fn t247_marks_give_windows_and_merge() {
     q.morphers.push(m);
     assert_eq!(q.effective_clips(), q.clips, "точечная метка не диапазон");
 }
+
+/// Тест 249 (Р.35 С5, дословно: «При выделении на таймлайне всего подряд
+/// и ctrl+c ctrl+v я хочу чтобы у меня проставлялись связи и для морферов
+/// тоже… и marked_area-ы тоже при выделении и копировании копируются, и
+/// marked_region тоже вместе с теми что внутри него. Имена — уникальные,
+/// и можно попросить пользователя ввести префикс»).
+#[test]
+fn t249_clipboard_carries_morphers_areas_and_marks() {
+    use kt_model::ops::*;
+    let mut p = base();
+    p.clips.push(clip(11, ClipKind::Video, 0, LEN, LEN));
+    p.areas.push(MarkedArea {
+        name: "финал".into(),
+        start: Tick(0),
+        duration: Tick(45_000),
+        lanes: vec![(LaneKind::Video, 0)],
+        color: None,
+    });
+    p.markers.push(Marker {
+        t: Tick(10_000),
+        duration: Tick(20_000),
+        name: "врез".into(),
+        color: None,
+    });
+    // морфер на ПЕРВЫЙ клип и морфер-ссылка на область
+    p.morphers.push(layer(Tick(0), Tick(45_000)));
+    let mut byref = layer(Tick(0), Tick(45_000));
+    byref.id = MorphId(2);
+    byref.targets = MorphTargets::Areas { names: vec!["финал".into(), "чужая".into()] };
+    p.morphers.push(byref);
+    // морфер, чьи цели ВНЕ блока — его вставка обязана пропустить
+    let mut orphan = layer(Tick(0), Tick(45_000));
+    orphan.id = MorphId(3);
+    orphan.targets = MorphTargets::Clips { ids: vec![ClipId(11)] };
+    p.morphers.push(orphan);
+    p.validate().unwrap();
+
+    // копируем ПЕРВЫЙ клип: с ним едут его морфер, область и метка
+    let block = copy_clips(&p, &[ClipId(10)]);
+    assert_eq!(block.clips.len(), 1);
+    assert_eq!(block.areas.len(), 1, "область в окне блока копируется");
+    assert_eq!(block.markers.len(), 1, "метка-диапазон тоже");
+    assert_eq!(block.morphers.len(), 2, "морфер, чьи цели ВНЕ блока, не копируется вовсе");
+    // ...а если блок пришёл со стороны (системный буфер — это JSON) и
+    // ссылается на клип, которого в нём нет, вставка ПРОПУСКАЕТ такой
+    // морфер и считает его: батч атомарен, и один плохой элемент уронил
+    // бы всю вставку, а выглядело бы это как «копипаст не работает»
+    let mut block = block;
+    let mut foreign = block.morphers[0].clone();
+    foreign.id = MorphId(9);
+    foreign.targets = MorphTargets::Clips { ids: vec![ClipId(777)] };
+    block.morphers.push(foreign);
+
+    let mut m = TimelineModel::new(p);
+    let (mut nc, mut ng, mut nt, mut nm) = (100u64, 100u64, 100u64, 100u64);
+    let names = PasteNames { prefix: "копия".into(), taken: m.project().taken_names() };
+    let (cmds, _end, skipped) = paste_block(
+        &block,
+        Tick(300_000),
+        PasteIds { clip: &mut nc, group: &mut ng, transition: &mut nt, morph: &mut nm },
+        &names,
+    );
+    assert_eq!(skipped.morphers, 1, "морфер без уцелевших целей пропущен");
+    m.apply_batch(cmds).expect("батч обязан пройти, а не упасть из-за пропущенного");
+
+    // имена уникальны и с префиксом
+    let a = m.project().areas.iter().find(|a| a.name != "финал").expect("копия области");
+    assert_eq!(a.name, "копия финал");
+    assert_eq!(a.start, Tick(300_000), "область ребейзнута к точке вставки");
+    assert!(
+        m.project().markers.iter().any(|k| k.name == "копия врез" && k.t == Tick(310_000)),
+        "метка тоже переименована и переехала"
+    );
+
+    // цели скопированного морфера указывают ТОЛЬКО на новые id
+    let pasted: Vec<&MorpherEvent> = m.project().morphers.iter().filter(|x| x.id.0 >= 100).collect();
+    assert_eq!(pasted.len(), 2, "два морфера доехали, третий пропущен");
+    let frozen = pasted.iter().find(|x| !x.targets.clip_ids().is_empty()).unwrap();
+    assert_eq!(frozen.targets.clip_ids(), &[ClipId(100)], "цель — новый клип, а не старый");
+    // ссылка на СКОПИРОВАННОЕ имя переехала, на нескопированное — нет
+    let byref = pasted.iter().find(|x| x.targets.clip_ids().is_empty()).unwrap();
+    assert_eq!(
+        byref.targets,
+        MorphTargets::Areas { names: vec!["копия финал".into(), "чужая".into()] }
+    );
+    m.project().validate().unwrap();
+
+    // ВТОРАЯ вставка тем же префиксом даёт « 2» — имена остаются адресами
+    let names = PasteNames { prefix: "копия".into(), taken: m.project().taken_names() };
+    let (cmds, _end, _) = paste_block(
+        &block,
+        Tick(600_000),
+        PasteIds { clip: &mut nc, group: &mut ng, transition: &mut nt, morph: &mut nm },
+        &names,
+    );
+    m.apply_batch(cmds).unwrap();
+    assert!(
+        m.project().areas.iter().any(|a| a.name == "копия финал 2"),
+        "вторая вставка обязана дать уникальное имя: {:?}",
+        m.project().areas.iter().map(|a| &a.name).collect::<Vec<_>>()
+    );
+}

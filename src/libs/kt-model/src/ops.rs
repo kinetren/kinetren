@@ -9,10 +9,129 @@ use kt_time::Tick;
 
 /// Блок обмена (Р.24): клипы + переходы, у которых ОБА конца попали в блок
 /// и стык пережил кроп. Времена клипов ребейзнуты к нулю блока.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ClipBlock {
     pub clips: Vec<ClipEvent>,
     pub transitions: Vec<TransitionEvent>,
+    /// Морферы, чьи цели попали в блок (Р.35 п.4). Цели за пределами
+    /// блока выброшены ещё при захвате.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub morphers: Vec<MorpherEvent>,
+    /// Именованные области, пересёкшие окно блока (кроп + ребейз).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub areas: Vec<MarkedArea>,
+    /// Метки: диапазонные — по пересечению с кропом, точечные — если
+    /// внутри окна.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<Marker>,
+}
+
+/// Свежие id для вставки — растущий список аргументов `paste_block`
+/// перестал читаться уже на четвёртом.
+pub struct PasteIds<'a> {
+    pub clip: &'a mut u64,
+    pub group: &'a mut u64,
+    pub transition: &'a mut u64,
+    pub morph: &'a mut u64,
+}
+
+/// Как называть вставленное именованное (Р.35 п.4: «Имена — уникальные,
+/// и можно попросить пользователя ввести префикс, а можно и сгенерировать
+/// в поле его»). `taken` — занятые имена ПРОЕКТА.
+#[derive(Default)]
+pub struct PasteNames {
+    pub prefix: String,
+    pub taken: Vec<String>,
+}
+
+/// Что вставка пропустила. Батч атомарен, поэтому один плохой элемент
+/// уронил бы ВСЮ вставку — а выглядело бы это как «копипаст не работает».
+/// Пропущенное считается и уходит в сообщение, а не «доправляется»
+/// (правило 20).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PasteSkipped {
+    /// Морферы, у которых не уцелело ни одной цели.
+    pub morphers: usize,
+    /// Метки на уже занятый тик.
+    pub markers: usize,
+}
+
+/// Длина блока по клипам (окно, в котором ловятся области и метки).
+fn block_len(clips: &[ClipEvent]) -> Tick {
+    clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO)
+}
+
+/// Морферы, области и метки, попавшие в блок (Р.35 п.4, дословно: «При
+/// выделении на таймлайне всего подряд и ctrl+c ctrl+v я хочу чтобы у
+/// меня проставлялись связи и для морферов тоже… и marked_area-ы тоже
+/// при выделении и копировании копируются, и marked_region тоже вместе с
+/// теми что внутри него»).
+///
+/// `base` — начало окна на таймлайне (для ребейза), `len` — его длина.
+/// Морфер едет, если в блоке ХОТЯ БЫ ОДНА его цель; цели снаружи
+/// выбрасываются. Область и метка-диапазон — по пересечению, с кропом;
+/// точечная метка — если внутри окна.
+fn block_extras(p: &Project, clips: &[ClipEvent], base: Option<Tick>, len: Tick) -> ClipBlock {
+    let base = base.unwrap_or(Tick::ZERO);
+    let win = kt_time::TickRange::new(base, base + len);
+    let ids: Vec<ClipId> = clips.iter().map(|c| c.id).collect();
+    let morphers = p
+        .morphers
+        .iter()
+        .filter_map(|m| {
+            let kept: Vec<ClipId> = match &m.targets {
+                MorphTargets::Clips { ids: t } => {
+                    t.iter().copied().filter(|i| ids.contains(i)).collect()
+                }
+                // слой и ссылки целей не морозят: они едут, если сам блок
+                // морфера попал в окно
+                _ => {
+                    return m
+                        .window()
+                        .overlaps(&win)
+                        .then(|| rebase_morpher(m, base));
+                }
+            };
+            (!kept.is_empty()).then(|| {
+                let mut copy = rebase_morpher(m, base);
+                copy.targets = MorphTargets::Clips { ids: kept };
+                copy
+            })
+        })
+        .collect();
+    let areas = p
+        .areas
+        .iter()
+        .filter_map(|a| {
+            let r = a.range().intersect(&win);
+            (!r.is_empty()).then(|| MarkedArea {
+                start: r.start - base,
+                duration: r.len(),
+                ..a.clone()
+            })
+        })
+        .collect();
+    let markers = p
+        .markers
+        .iter()
+        .filter_map(|m| {
+            if m.duration.0 > 0 {
+                let r = kt_time::TickRange::new(m.t, m.t + m.duration).intersect(&win);
+                (!r.is_empty()).then(|| Marker {
+                    t: r.start - base,
+                    duration: r.len(),
+                    ..m.clone()
+                })
+            } else {
+                win.contains(m.t).then(|| Marker { t: m.t - base, ..m.clone() })
+            }
+        })
+        .collect();
+    ClipBlock { morphers, areas, markers, ..Default::default() }
+}
+
+fn rebase_morpher(m: &MorpherEvent, base: Tick) -> MorpherEvent {
+    MorpherEvent { start: m.start - base, ..m.clone() }
 }
 
 /// Переходы, пережившие копирование: живые концы в блоке, стык цел (кропы
@@ -71,7 +190,8 @@ pub fn copy_region_block(p: &Project, r: Region) -> ClipBlock {
         clips.push(copy);
     }
     let transitions = surviving_transitions(p, &clips);
-    ClipBlock { clips, transitions }
+    let extras = block_extras(p, &clips, Some(r.start), r.end - r.start);
+    ClipBlock { clips, transitions, ..extras }
 }
 
 /// Copy без региона: выбранный клип со всей его link-группой,
@@ -94,7 +214,8 @@ pub fn copy_group(p: &Project, id: ClipId) -> ClipBlock {
         })
         .collect();
     let transitions = surviving_transitions(p, &clips);
-    ClipBlock { clips, transitions }
+    let extras = block_extras(p, &clips, Some(base), block_len(&clips));
+    ClipBlock { clips, transitions, ..extras }
 }
 
 /// Copy множества выделенных событий (Р.33): каждое тянет за собой свою
@@ -122,7 +243,8 @@ pub fn copy_clips(p: &Project, ids: &[ClipId]) -> ClipBlock {
         })
         .collect();
     let transitions = surviving_transitions(p, &clips);
-    ClipBlock { clips, transitions }
+    let extras = block_extras(p, &clips, Some(base), block_len(&clips));
+    ClipBlock { clips, transitions, ..extras }
 }
 
 /// Paste блока в позицию `at`: свежие id, каждая старая группа → одна новая,
@@ -132,10 +254,26 @@ pub fn copy_clips(p: &Project, ids: &[ClipId]) -> ClipBlock {
 pub fn paste_block(
     block: &ClipBlock,
     at: Tick,
-    next_clip: &mut u64,
-    next_group: &mut u64,
-    next_transition: &mut u64,
-) -> (Vec<Command>, Tick) {
+    ids: PasteIds<'_>,
+    names: &PasteNames,
+) -> (Vec<Command>, Tick, PasteSkipped) {
+    let PasteIds { clip: next_clip, group: next_group, transition: next_transition, morph } = ids;
+    let mut skipped = PasteSkipped::default();
+    let mut taken = names.taken.clone();
+    // имена вставленного: префикс + уникализация ТОЙ ЖЕ функцией, что у
+    // команд — разойдись они, батч упал бы на собственных суффиксах
+    let mut name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut rename = |old: &str| -> String {
+        if let Some(n) = name_map.get(old) {
+            return n.clone();
+        }
+        let wanted =
+            if names.prefix.is_empty() { old.to_string() } else { format!("{} {old}", names.prefix) };
+        let fresh = unique_name(&taken, &wanted, "copy");
+        taken.push(fresh.clone());
+        name_map.insert(old.to_string(), fresh.clone());
+        fresh
+    };
     let mut group_map: std::collections::HashMap<GroupId, GroupId> =
         std::collections::HashMap::new();
     let mut clip_map: std::collections::HashMap<ClipId, ClipId> = std::collections::HashMap::new();
@@ -170,7 +308,58 @@ pub fn paste_block(
         copy.b = b;
         cmds.push(Command::AddTransition(copy));
     }
-    (cmds, end)
+    // области и метки: имена переименовываются ПЕРВЫМИ — ссылки морферов
+    // ниже смотрят в уже готовую карту
+    for a in &block.areas {
+        let mut copy = a.clone();
+        copy.name = rename(&a.name);
+        copy.start = at + a.start;
+        cmds.push(Command::AddArea(copy));
+    }
+    for m in &block.markers {
+        let t = at + m.t;
+        if block.markers.iter().any(|o| !std::ptr::eq(o, m) && at + o.t == t) {
+            skipped.markers += 1;
+            continue;
+        }
+        cmds.push(Command::AddMarker { at: t, duration: m.duration });
+        if !m.name.is_empty() {
+            cmds.push(Command::SetMarkerName { at: t, name: rename(&m.name) });
+        }
+    }
+    for m in &block.morphers {
+        let mut copy = m.clone();
+        copy.id = MorphId(*morph);
+        copy.start = at + m.start;
+        match &mut copy.targets {
+            MorphTargets::Clips { ids } => {
+                // цель, не пережившая копирование, тянет за собой весь
+                // морфер: батч атомарен, а морфер без целей бессмыслен
+                ids.retain(|i| clip_map.contains_key(i));
+                if ids.is_empty() {
+                    skipped.morphers += 1;
+                    continue;
+                }
+                for i in ids.iter_mut() {
+                    *i = clip_map[i];
+                }
+            }
+            // ссылка на СКОПИРОВАННОЕ имя переезжает на копию, на
+            // нескопированное — остаётся на оригинале (он никуда не делся)
+            MorphTargets::Areas { names } | MorphTargets::Marks { names } => {
+                for n in names.iter_mut() {
+                    if let Some(new) = name_map.get(n.as_str()) {
+                        *n = new.clone();
+                    }
+                }
+            }
+            MorphTargets::Below => {}
+        }
+        *morph += 1;
+        end = end.max(copy.start + copy.duration);
+        cmds.push(Command::AddMorpher(copy));
+    }
+    (cmds, end, skipped)
 }
 
 /// Punch-out (старый splitDeleteRegionInterior): у каждого пересекающего
