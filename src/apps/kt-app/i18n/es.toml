@@ -321,6 +321,10 @@ slowedreverb = "ralentizado reverb warp velocidad eco slowed"
 
 # Редактор FX клипа.
 [fx]
+frames = "Fotogramas:"
+frames_nearest = "más cercano"
+frames_blend = "mezcla"
+rate_linked = "La velocidad es común con el socio enlazado."
 tint = "Tinte:"
 line_color = "Color de línea:"
 color_noise = "Ruido de color"

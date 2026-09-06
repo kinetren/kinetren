@@ -321,6 +321,10 @@ slowedreverb = "slowed reverb warp إبطاء صدى سرعة"
 
 # Редактор FX клипа.
 [fx]
+frames = "الإطارات:"
+frames_nearest = "الأقرب"
+frames_blend = "مزج"
+rate_linked = "السرعة مشتركة مع الشريك المرتبط."
 tint = "الصبغة:"
 line_color = "لون الخطوط:"
 color_noise = "ضجيج ملون"

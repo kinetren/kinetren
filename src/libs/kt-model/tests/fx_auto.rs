@@ -477,3 +477,113 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
     let back: ops::FxChainBlock = serde_json::from_str(&json).unwrap();
     assert_eq!(back, block, "блок обязан переживать круг через системный буфер");
 }
+
+/// Тест 248 (Р.37 С3, требование пользователя: «Эффект для аудио/видео
+/// можно объединять сразу, а не добавлять по отдельности»). Правило живёт
+/// в МОДЕЛИ, а не в окне FX: `SetFx` прилетает ещё из вставки цепочки, из
+/// bake морфера, из ридера формата и из kt-cli.
+#[test]
+fn t248_warp_rate_is_shared_by_the_link_group() {
+    use kt_time::Tick;
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    let mk = |id: u64, kind: ClipKind| ClipEvent {
+        id: ClipId(id),
+        link_group: Some(GroupId(1)),
+        kind,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    p.clips.push(mk(1, ClipKind::Video));
+    p.clips.push(mk(2, ClipKind::Audio));
+    p.validate().unwrap();
+    let mut m = TimelineModel::new(p);
+    let slot = |m: &TimelineModel, id: u64| -> Option<FxInstance> {
+        m.clip(ClipId(id)).unwrap().fx.iter().find(|f| f.warps_time()).cloned()
+    };
+    let rate_of = |f: &FxInstance| match f {
+        FxInstance::SlowedReverb { rate, .. } => *rate,
+        _ => unreachable!(),
+    };
+
+    // одна добавка кладёт экземпляр на ОБА события пары
+    let depth = m.undo_depth();
+    m.apply(Command::SetFx {
+        id: ClipId(2),
+        fx: vec![FxInstance::gain(0.0), FxInstance::slowed_reverb(0.5, 0.2, 85.0)],
+    })
+    .unwrap();
+    assert_eq!(m.undo_depth(), depth + 1, "пара правится ОДНИМ шагом истории");
+    let v = slot(&m, 1).expect("видео-экземпляр заведён сам");
+    assert_eq!(rate_of(&v), 0.5, "и с той же скоростью");
+    assert_eq!(m.clip(ClipId(1)).unwrap().fx.len(), 1, "у видео только он");
+
+    // правка rate у ВИДЕО едет аудио-партнёру
+    let mut vfx = m.clip(ClipId(1)).unwrap().fx.clone();
+    if let FxInstance::SlowedReverb { rate, .. } = &mut vfx[0] {
+        *rate = 0.25;
+    }
+    m.apply(Command::SetFx { id: ClipId(1), fx: vfx }).unwrap();
+    assert_eq!(rate_of(&slot(&m, 2).unwrap()), 0.25, "скорость общая в обе стороны");
+
+    // слот ищется ПО ВИДУ, а не по индексу: у аудио он второй
+    assert!(matches!(m.clip(ClipId(2)).unwrap().fx[0], FxInstance::Gain { .. }));
+
+    // кривая rate тоже синхронна, а кривые ДРУГИХ параметров — нет
+    let curve = ParamCurve {
+        param: "rate".into(),
+        ease: false,
+        keys: vec![key(0, 1.0), key(90_000, 2.0)],
+    };
+    let mix = ParamCurve { param: "mix".into(), ease: false, keys: vec![key(0, 0.9)] };
+    m.apply(Command::SetFxAuto { id: ClipId(2), auto: vec![vec![], vec![curve, mix]] }).unwrap();
+    let va = &m.clip(ClipId(1)).unwrap().fx_auto[0];
+    assert_eq!(va.len(), 1, "к партнёру едет ТОЛЬКО кривая скорости: {va:?}");
+    assert_eq!(va[0].param, "rate");
+    assert_eq!(va[0].keys.len(), 2);
+
+    // реверб у видео-экземпляра свой и партнёру не навязывается
+    let mut vfx = m.clip(ClipId(1)).unwrap().fx.clone();
+    if let FxInstance::SlowedReverb { mix, .. } = &mut vfx[0] {
+        *mix = 0.0;
+    }
+    m.apply(Command::SetFx { id: ClipId(1), fx: vfx }).unwrap();
+    assert!(
+        matches!(slot(&m, 2).unwrap(), FxInstance::SlowedReverb { mix, .. } if mix == 0.2),
+        "реверб партнёра не тронут"
+    );
+
+    // удаление у одного убирает у обоих
+    m.apply(Command::SetFx { id: ClipId(2), fx: vec![FxInstance::gain(0.0)] }).unwrap();
+    assert!(slot(&m, 1).is_none(), "снял у одного — ушло у обоих");
+    assert!(m.clip(ClipId(1)).unwrap().fx_auto.iter().all(|c| c.is_empty()));
+
+    // РАЗРЫВ ГРУППЫ прекращает синхронизацию
+    m.apply(Command::UnlinkClip { id: ClipId(1) }).unwrap();
+    m.apply(Command::SetFx { id: ClipId(2), fx: vec![FxInstance::slowed_reverb(0.5, 0.2, 85.0)] })
+        .unwrap();
+    assert!(slot(&m, 1).is_none(), "развязанный клип больше не подхватывает");
+    m.project().validate().unwrap();
+}
+
+/// Тест 248b: одиночный клип БЕЗ пары правило не трогает — на этом стоит
+/// golden-проект теста 11 (там slowed на аудио-клипе без link-группы).
+#[test]
+fn t248_lone_clip_is_untouched_by_the_rule() {
+    let mut m = model_with_clip();
+    let id = m.project().clips[0].id;
+    assert!(m.project().clips[0].link_group.is_none());
+    m.apply(Command::SetFx { id, fx: vec![FxInstance::slowed_reverb(0.5, 0.2, 85.0)] }).unwrap();
+    assert_eq!(m.project().clips.iter().filter(|c| !c.fx.is_empty()).count(), 1);
+}

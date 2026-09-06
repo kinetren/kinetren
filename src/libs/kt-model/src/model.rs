@@ -11,6 +11,87 @@ use kt_time::{Tick, TickRange};
 pub const MAX_UNDO: usize = 80;
 
 /// Минимальная длительность клипа. 1 мс, как в старом редакторе.
+/// Выровнять СКОРОСТЬ варпа у link-партнёров (Р.37 п.2, решение
+/// пользователя: «эффект для аудио/видео можно объединять сразу»).
+///
+/// Правило живёт в МОДЕЛИ, а не в окне FX, потому что `SetFx` прилетает
+/// ещё из вставки цепочки из буфера, из bake морфера, из ридера формата и
+/// из kt-cli. «Пара A/V потребляет источник с одной скоростью» — это
+/// инвариант монтажа: разъедутся скорости, разъедутся картинка и звук.
+/// Прецедент — `reconcile_transitions` после каждой геометрической
+/// мутации. Внутри `mutate_on` зеркалирование попадает в ТОТ ЖЕ undo-шаг
+/// по построению, даже под `apply_coalesced`.
+///
+/// Синхронно: наличие слота, `rate` и его кривая. Своё у каждого:
+/// параметры реверба, режим кадров, bypass слота (галка на видео-слоте —
+/// это и есть «отключить замедление картинки»).
+fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
+    let Some(src) = p.clips.iter().find(|c| c.id == id) else { return };
+    let Some(group) = src.link_group else { return };
+    // слот ищется ПО ВИДУ, а не по индексу: у аудио может быть
+    // [Gain, Slowed], у видео [Blur, Slowed, Mirror]
+    let warp_slot = |c: &ClipEvent| c.fx.iter().position(|f| f.warps_time());
+    let mine = warp_slot(src);
+    let (tmpl, rate_curve) = match mine {
+        Some(i) => (
+            Some(src.fx[i].clone()),
+            src.fx_auto.get(i).and_then(|cs| cs.iter().find(|c| c.param == "rate").cloned()),
+        ),
+        None => (None, None),
+    };
+    let partners: Vec<ClipId> = p
+        .clips
+        .iter()
+        .filter(|c| c.id != id && c.link_group == Some(group))
+        .map(|c| c.id)
+        .collect();
+    for pid in partners {
+        let Some(c) = p.clips.iter_mut().find(|c| c.id == pid) else { continue };
+        match (warp_slot(c), &tmpl) {
+            // у обоих есть — переносим ТОЛЬКО скорость и её кривую
+            (Some(j), Some(t)) => {
+                if let (FxInstance::SlowedReverb { rate, .. }, FxInstance::SlowedReverb { rate: r0, .. }) =
+                    (&mut c.fx[j], t)
+                {
+                    *rate = *r0;
+                }
+                if c.fx_auto.len() <= j {
+                    c.fx_auto.resize(j + 1, Vec::new());
+                }
+                c.fx_auto[j].retain(|cu| cu.param != "rate");
+                if let Some(rc) = &rate_curve {
+                    c.fx_auto[j].push(rc.clone());
+                }
+            }
+            // появился у одного — заводим у партнёра (одна добавка кладёт
+            // экземпляр на ОБА события пары)
+            (None, Some(t)) => {
+                c.fx.push(t.clone());
+                let mut curves = Vec::new();
+                if let Some(rc) = &rate_curve {
+                    curves.push(rc.clone());
+                }
+                c.fx_auto.resize(c.fx.len(), Vec::new());
+                // слот только что добавлен — last_mut есть по построению
+                if let Some(slot) = c.fx_auto.last_mut() {
+                    *slot = curves;
+                }
+            }
+            // исчез у одного — убираем у партнёра вместе с его кривыми
+            (Some(j), None) => {
+                c.fx.remove(j);
+                if j < c.fx_auto.len() {
+                    c.fx_auto.remove(j);
+                }
+                if j < c.fx_bypass.len() {
+                    c.fx_bypass.remove(j);
+                }
+            }
+            (None, None) => {}
+        }
+    }
+}
+
 pub const MIN_CLIP_DURATION: Tick = Tick(90);
 
 #[derive(Debug, Clone, PartialEq)]
@@ -789,7 +870,10 @@ impl TimelineModel {
             }
             Command::SetFxOff { id, off } => Self::clip_mut_on(p, id).fx_off = off,
             Command::SetReversed { id, reversed } => Self::clip_mut_on(p, id).reversed = reversed,
-            Command::SetFxBypass { id, bypass } => Self::clip_mut_on(p, id).fx_bypass = bypass,
+            Command::SetFxBypass { id, bypass } => {
+                Self::clip_mut_on(p, id).fx_bypass = bypass;
+                sync_warp_to_link_group(p, id);
+            }
             Command::SetFx { id, fx } => {
                 let c = Self::clip_mut_on(p, id);
                 // цепочка сменилась — кривые лишних слотов отпадают (Р.30);
@@ -797,8 +881,12 @@ impl TimelineModel {
                 // тем же жестом
                 c.fx_auto.truncate(fx.len());
                 c.fx = fx;
+                sync_warp_to_link_group(p, id);
             }
-            Command::SetFxAuto { id, auto } => Self::clip_mut_on(p, id).fx_auto = auto,
+            Command::SetFxAuto { id, auto } => {
+                Self::clip_mut_on(p, id).fx_auto = auto;
+                sync_warp_to_link_group(p, id);
+            }
             Command::LinkClips { ids, group } => {
                 for c in &mut p.clips {
                     if ids.contains(&c.id) {

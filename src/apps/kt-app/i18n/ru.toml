@@ -321,6 +321,10 @@ slowedreverb = "замедление реверб слоуед slowed reverb war
 
 # Редактор FX клипа.
 [fx]
+frames = "Кадры:"
+frames_nearest = "ближайший"
+frames_blend = "смешивание"
+rate_linked = "Скорость общая со связанным партнёром."
 tint = "Оттенок:"
 line_color = "Цвет линий:"
 color_noise = "Цветной шум"

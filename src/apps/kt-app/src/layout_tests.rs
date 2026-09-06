@@ -5048,3 +5048,60 @@ fn t250_paste_prefix_dialog() {
     app.model.undo().unwrap();
     assert_eq!(app.model.project().areas.len(), 1, "и одним undo откатилась");
 }
+
+/// Тест 248c (Р.37 С3): окно FX пары показывает у ВИДЕО-экземпляра варпа
+/// только то, что для него значит. Реверб на видео не звучит, и его ручки
+/// там — враньё пользователю (п.9 чек-листа).
+#[test]
+fn t248_video_warp_shows_only_what_matters() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    for (id, kind) in [(1u64, ClipKind::Video), (2, ClipKind::Audio)] {
+        p.clips.push(ClipEvent {
+            id: ClipId(id),
+            link_group: Some(GroupId(1)),
+            kind,
+            lane: 0,
+            start: kt_time::Tick(0),
+            duration: kt_time::Tick(90_000),
+            source_in: kt_time::Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![FxInstance::slowed_reverb(0.5, 0.2, 85.0)],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
+    }
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+
+    // окно у пары ОДНО, и в нём обе цепочки
+    assert_eq!(h.state().fx_editors.len(), 1, "у пары одно окно");
+    assert_eq!(h.state().fx_editors[0].members.len(), 2);
+    // режим кадров есть (он значим только на видео)
+    assert!(
+        h.query_by_label(crate::i18n::tr(crate::i18n::k::fx::FRAMES)).is_some(),
+        "у видео-экземпляра обязан быть выбор режима кадров"
+    );
+    assert!(
+        h.query_by_label(crate::i18n::tr(crate::i18n::k::fx::RATE_LINKED)).is_some(),
+        "и сказано, что скорость общая с партнёром"
+    );
+    // а ручка предзадержки реверба — только у аудио-экземпляра, один раз
+    let predelay = crate::widgets::param_label("predelay_ms").to_string();
+    assert_eq!(
+        h.get_all_by_label(&predelay).count(),
+        1,
+        "ручки реверба показываются ровно один раз — у аудио"
+    );
+}

@@ -321,6 +321,10 @@ slowedreverb = "slowed reverb warp speed echo"
 
 # Редактор FX клипа.
 [fx]
+frames = "Frames:"
+frames_nearest = "nearest"
+frames_blend = "blend"
+rate_linked = "Speed is shared with the linked partner."
 tint = "Tint:"
 line_color = "Line color:"
 color_noise = "Color noise"

@@ -321,6 +321,10 @@ slowedreverb = "slowed reverb warp 减速 混响 速度 回声"
 
 # Редактор FX клипа.
 [fx]
+frames = "帧："
+frames_nearest = "最近帧"
+frames_blend = "混合"
+rate_linked = "速度与关联的伙伴共用。"
 tint = "色调："
 line_color = "线条颜色："
 color_noise = "彩色噪点"

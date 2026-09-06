@@ -222,7 +222,8 @@ impl KtApp {
                             ed.selected.insert(*id, sel);
                             if let Some(f) = fx.get_mut(sel) {
                                 // параметры — ОДНИМ кодом по спекам модели
-                                params_changed |= draw_video_fx_params(ui, f, &cameras);
+                                params_changed |=
+                                    draw_video_fx_params(ui, f, &cameras, clip.kind == ClipKind::Video);
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
                                     let view = ed.auto_views.entry((*id, sel)).or_default();
@@ -557,6 +558,7 @@ pub(crate) fn draw_video_fx_params(
     ui: &mut egui::Ui,
     f: &mut FxInstance,
     cameras: &[(u64, String)],
+    on_video: bool,
 ) -> bool {
     use kt_model::PanMode;
     let mut ch = false;
@@ -566,6 +568,11 @@ pub(crate) fn draw_video_fx_params(
         // цвет линий контура и оттенок свечения — тоже пипеткой (Р.33 С5)
         FxInstance::Edges { .. } => &["color_r", "color_g", "color_b"],
         FxInstance::Glow { .. } => &["tint_r", "tint_g", "tint_b"],
+        // на ВИДЕО-экземпляре у варпа значит только скорость: реверб там
+        // не звучит, и показывать его ручки — врать пользователю (Р.37)
+        FxInstance::SlowedReverb { .. } if on_video => {
+            &["mix", "reverb_delay_ms", "damp", "decay", "wet_gain", "predelay_ms", "width"]
+        }
         _ => &[],
     };
 
@@ -595,6 +602,25 @@ pub(crate) fn draw_video_fx_params(
             if let FxInstance::CamMotion { ease, .. } = f {
                 *ease = e;
             }
+        }
+        FxInstance::SlowedReverb { frames, .. } if on_video => {
+            ui.horizontal(|ui| {
+                ui.label(tr(k::fx::FRAMES));
+                egui::ComboBox::from_id_salt("slowedframes")
+                    .selected_text(tr(match frames {
+                        kt_model::FrameMode::Nearest => k::fx::FRAMES_NEAREST,
+                        kt_model::FrameMode::Blend => k::fx::FRAMES_BLEND,
+                    }))
+                    .show_ui(ui, |ui| {
+                        for (m, key) in [
+                            (kt_model::FrameMode::Nearest, k::fx::FRAMES_NEAREST),
+                            (kt_model::FrameMode::Blend, k::fx::FRAMES_BLEND),
+                        ] {
+                            ch |= ui.selectable_value(frames, m, tr(key)).changed();
+                        }
+                    });
+            });
+            ui.label(egui::RichText::new(tr(k::fx::RATE_LINKED)).weak().small());
         }
         FxInstance::Mirror { horizontal, vertical } => {
             ui.horizontal(|ui| {
