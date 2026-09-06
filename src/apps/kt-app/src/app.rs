@@ -29,6 +29,9 @@ pub struct Notice {
 /// (None — файл снова не открылся, заглушка остаётся).
 pub type ReopenedMedia = (MediaId, String, Option<Box<dyn kt_media::MediaSource>>);
 
+/// Рамка выделения в домене модели: [начало, конец) и задетые дорожки.
+pub type Band = (kt_time::Tick, kt_time::Tick, Vec<(LaneKind, u32)>);
+
 pub struct KtApp {
     pub model: TimelineModel,
     pub project_path: Option<PathBuf>,
@@ -249,7 +252,7 @@ pub struct KtApp {
     /// Последняя рамка выделения в ДОМЕНЕ МОДЕЛИ (время × ключи дорожек)
     /// — из неё делается именованная область (Р.35 п.2). Сессионное:
     /// пережить перезапуск ему незачем.
-    pub last_band: Option<(kt_time::Tick, kt_time::Tick, Vec<(LaneKind, u32)>)>,
+    pub last_band: Option<Band>,
     /// Прямоугольник строки состояния (заполняется при её отрисовке).
     pub statusbar_rect: egui::Rect,
     /// Что реально показано в строке подсказки (для harness-теста).

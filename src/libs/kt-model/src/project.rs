@@ -1174,7 +1174,7 @@ pub fn unique_name(taken: &[String], wanted: &str, stem: &str) -> String {
     }
     for n in 2..10_000 {
         let cand = format!("{base} {n}");
-        if !taken.iter().any(|t| *t == cand) {
+        if !taken.contains(&cand) {
             return cand;
         }
     }
