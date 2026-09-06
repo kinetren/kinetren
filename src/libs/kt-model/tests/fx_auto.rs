@@ -65,7 +65,7 @@ fn t212_keys_stick_to_material_through_edits() {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Blur { radius: 8 }],
+        fx: vec![FxInstance::blur(8)],
         fx_bypass: vec![],
         fx_auto: vec![vec![ParamCurve {
             param: "radius".into(),
@@ -139,12 +139,12 @@ fn t190_set_get_param_all_specs() {
         FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 },
         FxInstance::CamMotion { mode: PanMode::Fit, ease: true, time_scale: 1.0, keyframes: vec![] },
         FxInstance::Mirror { horizontal: true, vertical: false },
-        FxInstance::Blur { radius: 8 },
-        FxInstance::Greenscreen { key_r: 0, key_g: 255, key_b: 0, tolerance: 70, softness: 25 },
-        FxInstance::Edges { threshold: 48 },
-        FxInstance::Noise { amount: 0.1 },
-        FxInstance::Vhs { rgb_shift: 4, bleed: 0.4 },
-        FxInstance::Glow { strength: 0.65 },
+        FxInstance::blur(8),
+        FxInstance::greenscreen([0, 255, 0], 70, 25 ),
+        FxInstance::edges(48),
+        FxInstance::noise(0.1),
+        FxInstance::vhs(4, 0.4),
+        FxInstance::glow(0.65),
         FxInstance::EventGrid { cols: 2, rows: 2, center: true },
         FxInstance::Pan3d {
             pos_x: 0.0,
@@ -158,7 +158,7 @@ fn t190_set_get_param_all_specs() {
             scale: 1.0,
             camera: None,
         },
-        FxInstance::Gain { db: 0.0 },
+        FxInstance::gain(0.0),
     ];
     let mut specs_total = 0;
     for mut f in variants {
@@ -192,8 +192,12 @@ fn t190_set_get_param_all_specs() {
     // у зеркала числовых параметров нет вовсе
     assert!(FxInstance::Mirror { horizontal: true, vertical: false }.param_specs().is_empty());
     // Р.33: аудио получило спеки — автоматизируется тем же механизмом
-    let gain = FxInstance::Gain { db: 0.0 };
-    assert_eq!(gain.auto_params().count(), 1, "громкость обязана автоматизироваться");
+    let gain = FxInstance::gain(0.0);
+    assert_eq!(
+        gain.auto_params().count(),
+        2,
+        "громкость и баланс обязаны автоматизироваться (Р.33 С5)"
+    );
     let slowed = FxInstance::slowed_reverb(1.0, 0.3, 60.0);
     assert!(
         slowed.auto_params().any(|s| s.name == "rate"),
@@ -212,7 +216,7 @@ fn t190_set_get_param_all_specs() {
 
 #[test]
 fn t190_apply_fx_auto() {
-    let mut f = FxInstance::Blur { radius: 8 };
+    let mut f = FxInstance::blur(8);
     let curves = vec![
         ParamCurve {
             param: "radius".into(),
@@ -242,7 +246,7 @@ fn clip_with_fx() -> ClipEvent {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Blur { radius: 8 }, FxInstance::Glow { strength: 0.5 }],
+        fx: vec![FxInstance::blur(8), FxInstance::glow(0.5)],
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
@@ -291,7 +295,7 @@ fn t190_commands_undo_and_truncation() {
     }
     // SetFx с укороченной цепочкой подрезает кривые лишних слотов
     assert!(m
-        .apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::Blur { radius: 8 }] })
+        .apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::blur(8)] })
         .is_ok());
     assert_eq!(m.project().clips[0].fx_auto.len(), 1, "кривые второго слота отпали");
     assert_eq!(m.project().clips[0].fx_auto[0][0].param, "radius");

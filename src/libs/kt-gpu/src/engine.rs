@@ -69,12 +69,12 @@ enum FxOp {
     /// Билинейная рамка (Pan/CamMotion/Blur down+up): выход tw×th.
     Resample { tw: u32, th: u32, frame: (f64, f64, f64, f64) },
     Mirror { h: bool, v: bool },
-    Noise { seed: u32, k: u32 },
-    Greenscreen { key: [f32; 3], tol: f32, hard: f32 },
-    Edges { th: u32 },
-    Vhs { shift: u32, line_off: u32, bleed: f32 },
+    Noise { seed: u32, k: u32, size: u32, color: bool },
+    Greenscreen { key: [f32; 3], tol: f32, hard: f32, spill: f32, kc: u32 },
+    Edges { th: u32, d: u32, color: [u32; 3] },
+    Vhs { shift: u32, line_off: u32, bleed: f32, jq: i32, step: u32, seed: u32 },
     /// Bloom: даунскейл dw×dh → апскейл → аддитив ×s (3 пасса).
-    Glow { dw: u32, dh: u32, s: f32 },
+    Glow { dw: u32, dh: u32, s: f32, th: u32, tint: [f32; 3] },
     /// Мозаика: ячейка cw×ch + тираж в tw×th (2 пасса).
     Grid { cw: u32, ch: u32, offx: u32, offy: u32, gw: u32, gh: u32, tw: u32, th: u32 },
     /// Слой-квад в 3D (Р.29): MVP собрана на CPU, цель tw×th прозрачная.
@@ -157,10 +157,12 @@ fn chain_ops(
                     ops.push(FxOp::Mirror { h: *horizontal, v: *vertical });
                 }
             }
-            FxInstance::Blur { radius } => {
+            FxInstance::Blur { radius, radius_y } => {
                 let radius = (*radius).clamp(1, 48);
                 let step = (radius / 3).max(1) + 1;
-                let (dw, dh) = ((w / step).max(1), (h / step).max(1));
+                let step_y =
+                    if *radius_y == 0 { step } else { ((*radius_y).clamp(1, 48) / 3).max(1) + 1 };
+                let (dw, dh) = ((w / step).max(1), (h / step_y).max(1));
                 ops.push(FxOp::Resample {
                     tw: dw,
                     th: dh,
@@ -172,46 +174,62 @@ fn chain_ops(
                     frame: (0.0, 0.0, dw as f64, dh as f64),
                 });
             }
-            FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness } => {
+            FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
                 let tol = (*tolerance).clamp(1, 200);
                 let soft = (*softness).clamp(0, 100);
                 let hard = (tol as f64 - soft as f64).max(0.0);
+                let key = [*key_r, *key_g, *key_b];
                 ops.push(FxOp::Greenscreen {
-                    key: [*key_r as f32, *key_g as f32, *key_b as f32],
+                    key: [key[0] as f32, key[1] as f32, key[2] as f32],
                     tol: tol as f32,
                     hard: hard as f32,
+                    spill: spill.clamp(0.0, 1.0) as f32,
+                    kc: (0..3).max_by_key(|&i| key[i]).unwrap_or(1) as u32,
                 });
                 has_alpha_known = true;
                 has_alpha = true;
             }
-            FxInstance::Edges { threshold } => {
-                ops.push(FxOp::Edges { th: (*threshold).clamp(1, 255) });
+            FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => {
+                ops.push(FxOp::Edges {
+                    th: (*threshold).clamp(1, 255),
+                    d: (*thickness).clamp(1, 8),
+                    color: [*color_r as u32, *color_g as u32, *color_b as u32],
+                });
                 has_alpha_known = true;
                 has_alpha = false;
             }
-            FxInstance::Noise { amount } => {
+            FxInstance::Noise { amount, size, color } => {
                 let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
                 if k > 0 {
                     ops.push(FxOp::Noise {
                         seed: kt_fx::video::noise_seed(t.0),
                         k: k as u32,
+                        size: (*size).clamp(1, 64),
+                        color: *color,
                     });
                 }
             }
-            FxInstance::Vhs { rgb_shift, bleed } => {
+            FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
                 ops.push(FxOp::Vhs {
                     shift: (*rgb_shift).clamp(0, 12),
                     line_off: ((t.0 / 3000) % 7) as u32,
                     bleed: bleed.clamp(0.0, 1.0) as f32,
+                    step: (*scan_step).clamp(0, 32),
+                    // квант дрожания — тот же, что считает CPU-ядро
+                    jq: (jitter.clamp(0.0, 1.0) * 1024.0).round() as i32,
+                    seed: kt_fx::video::noise_seed(t.0),
                 });
             }
-            FxInstance::Glow { strength } => {
+            FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
                 let s = strength.clamp(0.0, 2.0) * 0.35;
                 if s > 0.0 {
+                    let r = (*radius).clamp(1, 32);
                     ops.push(FxOp::Glow {
-                        dw: (w / 4).max(1),
-                        dh: (h / 4).max(1),
+                        dw: (w / r).max(1),
+                        dh: (h / r).max(1),
                         s: s as f32,
+                        th: (*threshold).min(255),
+                        tint: [*tint_r as f32, *tint_g as f32, *tint_b as f32],
                     });
                 }
             }
@@ -860,10 +878,12 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Noise { seed, k } => {
+                FxOp::Noise { seed, k, size, color } => {
                     let dst = self.pool.acquire(&self.device, w, h);
-                    let u =
-                        UniformData { u: [*seed, *k, 0, 0, 0, 0, 0, 0], ..Default::default() };
+                    let u = UniformData {
+                        u: [*seed, *k, *size, *color as u32, 0, 0, 0, 0],
+                        ..Default::default()
+                    };
                     self.pass(enc, Pipe::Noise, &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
@@ -871,10 +891,11 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Greenscreen { key, tol, hard } => {
+                FxOp::Greenscreen { key, tol, hard, spill, kc } => {
                     let dst = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
-                        f: [key[0], key[1], key[2], *tol, *hard, 0.0, 0.0, 0.0],
+                        u: [*kc, 0, 0, 0, 0, 0, 0, 0],
+                        f: [key[0], key[1], key[2], *tol, *hard, *spill, 0.0, 0.0],
                         ..Default::default()
                     };
                     self.pass(enc, Pipe::Greenscreen, &dst.view, &view, &dummy, &dummy, u);
@@ -884,9 +905,12 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Edges { th } => {
+                FxOp::Edges { th, d, color } => {
                     let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData { u: [w, h, *th, 0, 0, 0, 0, 0], ..Default::default() };
+                    let u = UniformData {
+                        u: [w, h, *th, *d, color[0], color[1], color[2], 0],
+                        ..Default::default()
+                    };
                     self.pass(enc, Pipe::Edges, &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
@@ -894,10 +918,10 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Vhs { shift, line_off, bleed } => {
+                FxOp::Vhs { shift, line_off, bleed, jq, step, seed } => {
                     let dst = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
-                        u: [w, *shift, *line_off, 0, 0, 0, 0, 0],
+                        u: [w, *shift, *line_off, *step, *seed, *jq as u32, 0, 0],
                         f: [*bleed, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                         ..Default::default()
                     };
@@ -908,7 +932,7 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Glow { dw, dh, s } => {
+                FxOp::Glow { dw, dh, s, th, tint } => {
                     let small = self.pool.acquire(&self.device, *dw, *dh);
                     let u = UniformData {
                         u: [*dw, *dh, w, h, 0, 0, 0, 0],
@@ -926,7 +950,8 @@ impl Inner {
                     self.pool.release(small);
                     let dst = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
-                        f: [*s, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        u: [*th, 0, 0, 0, 0, 0, 0, 0],
+                        f: [*s, tint[0], tint[1], tint[2], 0.0, 0.0, 0.0, 0.0],
                         ..Default::default()
                     };
                     self.pass(enc, Pipe::GlowAdd, &dst.view, &view, &up.view, &dummy, u);

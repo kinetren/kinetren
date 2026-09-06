@@ -193,7 +193,7 @@ fn t136_fx_path_handles_match_plain() {
         p
     };
     let (plain, _) = render(&mk(vec![]), &[1, 2], 14_336);
-    let (fxed, u) = render(&mk(vec![FxInstance::Gain { db: 0.0 }]), &[1, 2], 14_336);
+    let (fxed, u) = render(&mk(vec![FxInstance::gain(0.0)]), &[1, 2], 14_336);
     assert_eq!(u, 0);
     if let Some(i) = (0..plain.len()).find(|&i| plain[i] != fxed[i]) {
         panic!("fx-path handle differs from plain at sample {i}");

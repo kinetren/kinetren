@@ -37,8 +37,8 @@ fn project() -> Project {
         fx_auto: vec![],
         fx: vec![
             FxInstance::Mirror { horizontal: true, vertical: false },
-            FxInstance::Glow { strength: 1.0 },
-            FxInstance::Vhs { rgb_shift: 2, bleed: 0.4 },
+            FxInstance::glow(1.0),
+            FxInstance::vhs(2, 0.4),
         ],
         opacity,
         fx_off: false,

@@ -487,15 +487,15 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
             },
         ),
         ("Mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
-        ("Blur", FxInstance::Blur { radius: 8 }),
+        ("Blur", FxInstance::blur(8)),
         (
             "Greenscreen",
-            FxInstance::Greenscreen { key_r: 0, key_g: 255, key_b: 0, tolerance: 70, softness: 25 },
+            FxInstance::greenscreen([0, 255, 0], 70, 25 ),
         ),
-        ("Edges", FxInstance::Edges { threshold: 48 }),
-        ("Noise", FxInstance::Noise { amount: 0.08 }),
-        ("VHS", FxInstance::Vhs { rgb_shift: 4, bleed: 0.4 }),
-        ("Glow", FxInstance::Glow { strength: 0.65 }),
+        ("Edges", FxInstance::edges(48)),
+        ("Noise", FxInstance::noise(0.08)),
+        ("VHS", FxInstance::vhs(4, 0.4)),
+        ("Glow", FxInstance::glow(0.65)),
         (
             // Р.29: первый 3D-эффект; дефолты — тождество (слой 1:1)
             "Pan 3D",
@@ -533,8 +533,13 @@ pub(crate) fn draw_video_fx_params(
     use kt_model::PanMode;
     let mut ch = false;
     // ключевой цвет удобнее пипеткой, чем тремя числами
-    let skip: &[&str] =
-        if matches!(f, FxInstance::Greenscreen { .. }) { &["key_r", "key_g", "key_b"] } else { &[] };
+    let skip: &[&str] = match f {
+        FxInstance::Greenscreen { .. } => &["key_r", "key_g", "key_b"],
+        // цвет линий контура и оттенок свечения — тоже пипеткой (Р.33 С5)
+        FxInstance::Edges { .. } => &["color_r", "color_g", "color_b"],
+        FxInstance::Glow { .. } => &["tint_r", "tint_g", "tint_b"],
+        _ => &[],
+    };
 
     // --- нечисловые контролы варианта ------------------------------------
     let mode_row = |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut bool| {
@@ -584,6 +589,37 @@ pub(crate) fn draw_video_fx_params(
         FxInstance::EventGrid { center, .. } => {
             ui.horizontal(|ui| {
                 ch |= ui.checkbox(center, tr(k::fx::CENTER)).changed();
+            });
+        }
+        FxInstance::Edges { color_r, color_g, color_b, .. } => {
+            ui.horizontal(|ui| {
+                let mut col =
+                    [*color_r as f32 / 255.0, *color_g as f32 / 255.0, *color_b as f32 / 255.0];
+                ui.label(tr(k::fx::LINE_COLOR));
+                if ui.color_edit_button_rgb(&mut col).changed() {
+                    *color_r = (col[0] * 255.0) as u8;
+                    *color_g = (col[1] * 255.0) as u8;
+                    *color_b = (col[2] * 255.0) as u8;
+                    ch = true;
+                }
+            });
+        }
+        FxInstance::Glow { tint_r, tint_g, tint_b, .. } => {
+            ui.horizontal(|ui| {
+                let mut col =
+                    [*tint_r as f32 / 255.0, *tint_g as f32 / 255.0, *tint_b as f32 / 255.0];
+                ui.label(tr(k::fx::TINT));
+                if ui.color_edit_button_rgb(&mut col).changed() {
+                    *tint_r = (col[0] * 255.0) as u8;
+                    *tint_g = (col[1] * 255.0) as u8;
+                    *tint_b = (col[2] * 255.0) as u8;
+                    ch = true;
+                }
+            });
+        }
+        FxInstance::Noise { color, .. } => {
+            ui.horizontal(|ui| {
+                ch |= ui.checkbox(color, tr(k::fx::COLOR_NOISE)).changed();
             });
         }
         _ => {}

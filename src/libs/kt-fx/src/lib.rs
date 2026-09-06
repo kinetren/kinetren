@@ -285,10 +285,27 @@ pub struct Freeverb {
     damp: f32,
     feedback: f32,
     wet_gain: f32,
+    /// Пред-задержка входа реверба (Р.33 С5): кольцо на канал. Пустое —
+    /// прежний путь байт-в-байт.
+    predelay: [Vec<f32>; CH],
+    pre_pos: usize,
+    predelay_ms: f32,
+    /// Ширина стерео-хвоста 0..1: 1 — прежний «настоящий» стереореверб,
+    /// 0 — общий моно-хвост на оба канала.
+    width: f32,
 }
 
 impl Freeverb {
-    pub fn new(mix: f32, delay_ms: f32, damp: f32, decay: f32, wet_gain: f32) -> Freeverb {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        mix: f32,
+        delay_ms: f32,
+        damp: f32,
+        decay: f32,
+        wet_gain: f32,
+        predelay_ms: f32,
+        width: f32,
+    ) -> Freeverb {
         let scale = |base: usize, extra: usize| -> usize {
             let s = base as f32 * (AUDIO_SAMPLE_RATE as f32 / 44_100.0) * (delay_ms / 100.0);
             (s as usize + extra).max(8)
@@ -305,6 +322,7 @@ impl Freeverb {
                 .map(|&t| Allpass::new(scale(t, ch * STEREO_SPREAD)))
                 .collect::<Vec<_>>()
         });
+        let pre = (predelay_ms.clamp(0.0, 200.0) / 1000.0 * AUDIO_SAMPLE_RATE as f32) as usize;
         Freeverb {
             combs,
             allpasses,
@@ -313,20 +331,38 @@ impl Freeverb {
             damp: damp.clamp(0.0, 0.99),
             feedback: decay.clamp(0.0, 0.98),
             wet_gain: wet_gain.max(0.0),
+            predelay: std::array::from_fn(|_| vec![0.0; pre]),
+            pre_pos: 0,
+            predelay_ms: predelay_ms.clamp(0.0, 200.0),
+            width: width.clamp(0.0, 1.0),
         }
     }
 
-    pub fn set_params(&mut self, mix: f32, delay_ms: f32, damp: f32, decay: f32, wet_gain: f32) {
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_params(
+        &mut self,
+        mix: f32,
+        delay_ms: f32,
+        damp: f32,
+        decay: f32,
+        wet_gain: f32,
+        predelay_ms: f32,
+        width: f32,
+    ) {
         self.wet.set_target(mix.clamp(0.0, 1.0));
         self.damp = damp.clamp(0.0, 0.99);
         self.feedback = decay.clamp(0.0, 0.98);
         self.wet_gain = wet_gain.max(0.0);
+        self.width = width.clamp(0.0, 1.0);
         // структурная смена геометрии: пересоздание допускается только при
         // реально другом delay (порог 0.5 мс, как в старом коде, но wet/dry
-        // это не трогает)
-        if (delay_ms - self.delay_ms).abs() > 0.5 {
+        // это не трогает); пред-задержка — такая же геометрия
+        if (delay_ms - self.delay_ms).abs() > 0.5
+            || (predelay_ms - self.predelay_ms).abs() > 0.5
+        {
             let keep_wet = self.wet;
-            *self = Freeverb::new(keep_wet.target, delay_ms, damp, decay, wet_gain);
+            *self =
+                Freeverb::new(keep_wet.target, delay_ms, damp, decay, wet_gain, predelay_ms, width);
             self.wet = keep_wet;
         }
     }
@@ -343,11 +379,34 @@ impl Freeverb {
     }
 
     pub fn process(&mut self, samples: &mut [f32]) {
+        // прежний путь (без пред-задержки, полная ширина) остаётся
+        // ДОСЛОВНЫМ: на нём стоит GOLDEN_AUDIO
+        let plain = self.predelay[0].is_empty() && self.width >= 1.0;
         for frame in samples.chunks_exact_mut(CH) {
             let wet_gain = self.wet.tick();
-            for (ch, s) in frame.iter_mut().enumerate() {
-                let dry = *s;
-                let input = dry * 0.015;
+            if plain {
+                for (ch, s) in frame.iter_mut().enumerate() {
+                    let dry = *s;
+                    let input = dry * 0.015;
+                    let mut wet = 0.0;
+                    for comb in &mut self.combs[ch] {
+                        wet += comb.process(input, self.damp, self.feedback);
+                    }
+                    for ap in &mut self.allpasses[ch] {
+                        wet = ap.process(wet);
+                    }
+                    *s = dry * (1.0 - wet_gain) + wet * self.wet_gain * wet_gain;
+                }
+                continue;
+            }
+            let mut wets = [0.0f32; CH];
+            for ch in 0..CH {
+                let dry = frame[ch];
+                let mut input = dry * 0.015;
+                if !self.predelay[ch].is_empty() {
+                    let pos = self.pre_pos % self.predelay[ch].len();
+                    input = std::mem::replace(&mut self.predelay[ch][pos], input);
+                }
                 let mut wet = 0.0;
                 for comb in &mut self.combs[ch] {
                     wet += comb.process(input, self.damp, self.feedback);
@@ -355,7 +414,16 @@ impl Freeverb {
                 for ap in &mut self.allpasses[ch] {
                     wet = ap.process(wet);
                 }
-                *s = dry * (1.0 - wet_gain) + wet * self.wet_gain * wet_gain;
+                wets[ch] = wet;
+            }
+            self.pre_pos = self.pre_pos.wrapping_add(1);
+            // ширина: 1 — каналы как есть, 0 — общий моно-хвост
+            let (a, b) = (0.5 + 0.5 * self.width, 0.5 - 0.5 * self.width);
+            for ch in 0..CH {
+                let other = wets[(ch + 1) % CH];
+                let wet = wets[ch] * a + other * b;
+                let dry = frame[ch];
+                frame[ch] = dry * (1.0 - wet_gain) + wet * self.wet_gain * wet_gain;
             }
         }
     }
@@ -865,6 +933,15 @@ pub struct ClipProcessor {
     /// Множитель Gain-слотов БЕЗ кривой (константный путь — байт-в-байт
     /// как до Р.33, на нём стоит GOLDEN_AUDIO).
     static_gain: f32,
+    /// Баланс каналов (Р.33 С5): множители левого и правого. Оба 1.0 —
+    /// прежний путь, цикл не выполняется вовсе.
+    pan_l: f32,
+    pan_r: f32,
+    /// Слоты Gain с КРИВОЙ баланса и сглаживание их множителей.
+    pan_automated: bool,
+    pan_slots: Vec<(usize, f64)>,
+    auto_pan_l: SmoothedParam,
+    auto_pan_r: SmoothedParam,
     /// Сглаженная громкость автоматизированных Gain-слотов: цель ставится
     /// раз в чанк, к ней едем one-pole — шаг чанка не щёлкает.
     auto_gain: SmoothedParam,
@@ -904,6 +981,12 @@ impl ClipProcessor {
             warp: None,
             reverb: None,
             static_gain: 1.0,
+            pan_l: 1.0,
+            pan_r: 1.0,
+            pan_automated: false,
+            pan_slots: Vec::new(),
+            auto_pan_l: SmoothedParam::new(1.0),
+            auto_pan_r: SmoothedParam::new(1.0),
             auto_gain: SmoothedParam::new(1.0),
             gain_automated: false,
             gain_slots: Vec::new(),
@@ -956,16 +1039,27 @@ impl ClipProcessor {
     /// Донести параметры. `structural` = первый раз (создание объектов).
     pub fn apply_params(&mut self, fx: &[FxInstance], structural: bool) {
         let mut gain = 1.0f32;
+        let (mut pan_l, mut pan_r) = (1.0f32, 1.0f32);
         self.gain_automated = false;
+        self.pan_automated = false;
         for (slot, f) in fx.iter().enumerate() {
             match f {
                 // громкость с кривой считается по материалу в produce();
                 // без кривой — прежним одним множителем на весь буфер
-                FxInstance::Gain { db } => {
+                FxInstance::Gain { db, pan } => {
                     if self.auto.points(slot, "db").is_empty() {
                         gain *= 10f32.powf(db / 20.0);
                     } else {
                         self.gain_automated = true;
+                    }
+                    // баланс: линейный закон, на нуле оба множителя ровно
+                    // 1.0 — прежний путь байт-в-байт
+                    if self.auto.points(slot, "pan").is_empty() {
+                        let p = pan.clamp(-1.0, 1.0);
+                        pan_l *= (1.0 - p).min(1.0);
+                        pan_r *= (1.0 + p).min(1.0);
+                    } else {
+                        self.pan_automated = true;
                     }
                 }
                 FxInstance::SlowedReverb {
@@ -975,15 +1069,33 @@ impl ClipProcessor {
                     damp,
                     decay,
                     wet_gain,
+                    predelay_ms,
+                    width,
                     ..
                 } => {
                     self.rate = rate.clamp(0.25, 32.0);
                     self.base_mix = *mix;
                     if structural {
                         self.reverb =
-                            Some(Freeverb::new(*mix, *reverb_delay_ms, *damp, *decay, *wet_gain));
+                            Some(Freeverb::new(
+                            *mix,
+                            *reverb_delay_ms,
+                            *damp,
+                            *decay,
+                            *wet_gain,
+                            *predelay_ms,
+                            *width,
+                        ));
                     } else if let Some(rv) = &mut self.reverb {
-                        rv.set_params(*mix, *reverb_delay_ms, *damp, *decay, *wet_gain);
+                        rv.set_params(
+                            *mix,
+                            *reverb_delay_ms,
+                            *damp,
+                            *decay,
+                            *wet_gain,
+                            *predelay_ms,
+                            *width,
+                        );
                     }
                     let has_rate_curve = !self.rate_points().is_empty();
                     if let Some(w) = &mut self.warp
@@ -998,16 +1110,41 @@ impl ClipProcessor {
             }
         }
         self.static_gain = gain;
+        self.pan_l = pan_l;
+        self.pan_r = pan_r;
         self.gain_slots = fx
             .iter()
             .enumerate()
             .filter_map(|(i, f)| match f {
-                FxInstance::Gain { db } if !self.auto.points(i, "db").is_empty() => {
+                FxInstance::Gain { db, .. } if !self.auto.points(i, "db").is_empty() => {
                     Some((i, *db as f64))
                 }
                 _ => None,
             })
             .collect();
+        self.pan_slots = fx
+            .iter()
+            .enumerate()
+            .filter_map(|(i, f)| match f {
+                FxInstance::Gain { pan, .. } if !self.auto.points(i, "pan").is_empty() => {
+                    Some((i, *pan as f64))
+                }
+                _ => None,
+            })
+            .collect();
+    }
+
+    /// Баланс автоматизированных Gain-слотов в позиции материала s.
+    /// Возвращает пару множителей (левый, правый) — тот же линейный
+    /// закон, что у константного пути.
+    fn pan_at(&self, s: f64) -> (f32, f32) {
+        let (mut l, mut r) = (1.0f32, 1.0f32);
+        for (slot, base) in &self.pan_slots {
+            let p = self.auto.value(*slot, "pan", *base, s).clamp(-1.0, 1.0) as f32;
+            l *= (1.0 - p).min(1.0);
+            r *= (1.0 + p).min(1.0);
+        }
+        (l, r)
     }
 
     /// Множитель автоматизированных Gain-слотов в позиции материала s.
@@ -1170,6 +1307,11 @@ impl ClipProcessor {
                 if self.gain_automated {
                     self.auto_gain.set_target(self.gain_at(s));
                 }
+                if self.pan_automated {
+                    let (l, r) = self.pan_at(s);
+                    self.auto_pan_l.set_target(l);
+                    self.auto_pan_r.set_target(r);
+                }
             }
             let sub = &mut out[done * CH..(done + n) * CH];
             match &mut self.warp {
@@ -1205,11 +1347,29 @@ impl ClipProcessor {
                     }
                 }
             }
+            if self.pan_automated {
+                for f in sub.chunks_exact_mut(CH) {
+                    let (l, r) = (self.auto_pan_l.tick(), self.auto_pan_r.tick());
+                    f[0] *= l;
+                    if CH > 1 {
+                        f[1] *= r;
+                    }
+                }
+            }
             done += n;
         }
         if self.static_gain != 1.0 {
             for s in out.iter_mut() {
                 *s *= self.static_gain;
+            }
+        }
+        // баланс — последним: на нуле множители 1.0 и цикл не идёт вовсе
+        if self.pan_l != 1.0 || self.pan_r != 1.0 {
+            for f in out.chunks_exact_mut(CH) {
+                f[0] *= self.pan_l;
+                if CH > 1 {
+                    f[1] *= self.pan_r;
+                }
             }
         }
     }

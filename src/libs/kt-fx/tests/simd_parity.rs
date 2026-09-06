@@ -221,10 +221,10 @@ fn bench_simd_1080p() {
     for (name, fx) in [
         (
             "greenscreen",
-            FxInstance::Greenscreen { key_r: 0, key_g: 255, key_b: 0, tolerance: 70, softness: 25 },
+            FxInstance::greenscreen([0, 255, 0], 70, 25 ),
         ),
-        ("edges", FxInstance::Edges { threshold: 48 }),
-        ("vhs", FxInstance::Vhs { rgb_shift: 4, bleed: 0.4 }),
+        ("edges", FxInstance::edges(48)),
+        ("vhs", FxInstance::vhs(4, 0.4)),
         ("mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
     ] {
         let t = std::time::Instant::now();
@@ -324,7 +324,7 @@ fn t198_edges_scalar_eq_simd() {
                 let src = frame(w, h, kind);
                 let want = st::edges_scalar(&src.rgba, w as usize, h as usize, th);
                 let ctx = VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: 90_000 };
-                let got = apply_video_chain(&[FxInstance::Edges { threshold: th }], src, &ctx);
+                let got = apply_video_chain(&[FxInstance::edges(th)], src, &ctx);
                 if got.rgba != want {
                     let i = got.rgba.iter().zip(&want).position(|(a, b)| a != b).unwrap();
                     let p = i / 4;
@@ -363,7 +363,7 @@ fn t198_vhs_scalar_eq_simd() {
                         let ctx =
                             VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: burst };
                         let got = apply_video_chain(
-                            &[FxInstance::Vhs { rgb_shift: shift, bleed }],
+                            &[FxInstance::vhs(shift, bleed)],
                             src,
                             &ctx,
                         );

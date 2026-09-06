@@ -399,6 +399,8 @@ fn demo_project() -> Project {
         damp: 0.28,
         decay: 0.86,
         wet_gain: 1.1,
+        predelay_ms: 0.0,
+        width: 1.0,
         automation: vec![],
     };
     // автоматизация slowed — общими кривыми (Р.33): ключи в тиках
@@ -447,7 +449,7 @@ fn demo_project() -> Project {
     p.clips = vec![
         clip(1, ClipKind::Video, 0, 0.0, 12.0, 2.0, 1, 0.0, vec![pan.clone()]),
         clip(3, ClipKind::Video, 0, 12.0, 22.0, 3.0, 3, 0.0,
-             vec![pan.clone(), FxInstance::Noise { amount: 0.05 }]),
+             vec![pan.clone(), FxInstance::noise(0.05)]),
         clip(5, ClipKind::Video, 0, 34.0, 14.0, 20.0, 1, 0.0, vec![cam]),
         clip(7, ClipKind::Video, 0, 48.0, 18.0, 4.0, 2, 0.0, vec![]),
         clip(9, ClipKind::Video, 0, 66.0, 14.0, 2.0, 5, 0.0, vec![]),
@@ -455,12 +457,12 @@ fn demo_project() -> Project {
         clip(13, ClipKind::Video, 1, 6.0, 6.0, 1.0, 4, 0.0,
              vec![FxInstance::EventGrid { cols: 3, rows: 2, center: true }]),
         clip(15, ClipKind::Video, 1, 26.0, 8.0, 10.0, 2, 0.0,
-             vec![FxInstance::Glow { strength: 0.72 }]),
+             vec![FxInstance::glow(0.72)]),
         clip(17, ClipKind::Video, 1, 55.0, 7.0, 8.0, 5, 0.0,
-             vec![FxInstance::Vhs { rgb_shift: 6, bleed: 0.5 }]),
+             vec![FxInstance::vhs(6, 0.5)]),
         clip(19, ClipKind::Video, 2, 88.0, 6.0, 6.0, 4, 0.0,
              vec![FxInstance::Mirror { horizontal: true, vertical: false },
-                  FxInstance::Edges { threshold: 42 }]),
+                  FxInstance::edges(42)]),
         clip(21, ClipKind::Audio, 0, 12.0, 22.0, 2.0, 7, -1.5, vec![]),
         clip(23, ClipKind::Audio, 0, 80.0, 20.0, 28.0, 7, -1.5, vec![]),
         {
@@ -504,7 +506,7 @@ fn demo_project() -> Project {
         duration: t(32.0),
         targets: vec![ClipId(7), ClipId(9)],
         kind: MorphKind::EffectBatch {
-            video_fx: vec![FxInstance::Glow { strength: 0.5 }],
+            video_fx: vec![FxInstance::glow(0.5)],
             audio_fx: vec![],
             video_bypass: vec![],
             audio_bypass: vec![],

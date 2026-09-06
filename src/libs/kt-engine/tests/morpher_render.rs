@@ -98,7 +98,7 @@ fn t36_replace_renders_as_new_source_and_bake_is_noop_for_render() {
 /// дописанным прямо в цепочку (в v1 batch без bake не звучал — дефект D1).
 #[test]
 fn t36_effect_batch_is_live() {
-    let gain = FxInstance::Gain { db: 6.0 };
+    let gain = FxInstance::gain(6.0);
     let mut p = project_with_clip(MediaId(1), Tick(0), vec![]);
     p.morphers.push(MorpherEvent {
         id: MorphId(1),

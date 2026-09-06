@@ -92,7 +92,7 @@ fn every_command_round_trips_via_undo() {
             new_group: Some(GroupId(2)),
         },
         Command::SetGain { id: ClipId(10), gain_db: 6.0 },
-        Command::SetFx { id: ClipId(10), fx: vec![FxInstance::Gain { db: -1.5 }] },
+        Command::SetFx { id: ClipId(10), fx: vec![FxInstance::gain(-1.5)] },
         Command::LinkClips { ids: vec![ClipId(10), ClipId(11)], group: GroupId(9) },
         Command::UnlinkClip { id: ClipId(10) },
     ];

@@ -226,6 +226,15 @@ remove = "删除 morpher"
 # Реестр FX и пикер с поиском.
 # Подписи параметров эффектов (Р.33): один источник — спека kt-model.
 [fxp]
+scan_step = "扫描线间隔："
+jitter = "抖动："
+spill = "去溢色："
+pan = "声道平衡："
+predelay_ms = "预延迟："
+width = "宽度："
+radius_y = "纵向模糊（0＝同横向）："
+thickness = "粗细："
+size = "颗粒："
 angle = "角度："
 turns = "圈数："
 blur = "模糊："
@@ -292,6 +301,9 @@ slowedreverb = "slowed reverb warp 减速 混响 速度 回声"
 
 # Редактор FX клипа.
 [fx]
+tint = "色调："
+line_color = "线条颜色："
+color_noise = "彩色噪点"
 title = "{0}特效 — 片段 {1}"
 title_group = "效果 — 事件 {0} 及其吸附轨道"
 chain_of = "{0} — 事件 {1}"

@@ -50,7 +50,7 @@ pub fn registry() -> &'static [FxEntry] {
                 category: k::fxreg::cat::VOLUME,
                 audio: true,
                 keywords: Some(k::fxreg::kw::GAIN),
-                template: FxInstance::Gain { db: 0.0 },
+                template: FxInstance::gain(0.0),
             },
             FxEntry {
                 name: "Slowed+Reverb",
@@ -161,7 +161,7 @@ mod tests {
         assert!(gain.audio);
         assert_eq!(
             serde_json::to_string(&gain.template).unwrap(),
-            serde_json::to_string(&FxInstance::Gain { db: 0.0 }).unwrap()
+            serde_json::to_string(&FxInstance::gain(0.0)).unwrap()
         );
         let sr = reg.iter().find(|e| e.name == "Slowed+Reverb").unwrap();
         assert!(sr.audio);

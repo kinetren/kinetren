@@ -82,7 +82,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | Правишь | Обязательно зелёные |
 |---|---|
 | kt-fx (аудио) | kt-engine/tests/{fx (вкл. t31, **t213 автоматизация аудио**),warp_prefetch,reverse,loop_fx (t166 шов)}.rs, golden_export.rs, kt-fx unit (source-карта), kt-fx/tests/{integral_map,material_range}.rs |
-| kt-fx/video.rs | kt-fx/tests/video_fx.rs (golden 26 поимённо, t68 пул), kt-engine/tests/reverse.rs::t26, postfx_cache t66 (вкл. t66c экспорт без мемоизации), golden_export t67, **kt-gpu/tests/parity.rs t181** (GPU-зеркала ядер) |
+| kt-fx/video.rs | kt-fx/tests/video_fx.rs (golden 26 поимённо, t68 пул, t228 новые параметры), kt-engine/tests/reverse.rs::t26, postfx_cache t66 (вкл. t66c экспорт без мемоизации), golden_export t67, **kt-gpu/tests/parity.rs t181** (GPU-зеркала ядер) |
 | kt-engine/transitions.rs + composite.wgsl | **правятся ТОЛЬКО ПАРОЙ**: kt-gpu t224 (конформанс всех видов), kt-engine transitions_video t225, transitions_audio t226 |
 | kt-gpu | tests/parity.rs (t181 конформанс, t182 композит байт-в-байт, t183 детерминизм/пул, t224 виды переходов), tests/gpu_render.rs (t184 GPU превью==экспорт), tests/pan3d.rs (t187); без адаптера — skip, `KT_REQUIRE_GPU=1` требует; wgpu ЖЁСТКО той же версии, что в eframe |
 | kt-engine/audio.rs | audio_engine, warp_prefetch, splice, reverse (вкл. t29), golden_export, transitions_audio (t136, t156 фейды, t226 кривые кроссфейда), loop_fx (t166-t168 шов заворота) |

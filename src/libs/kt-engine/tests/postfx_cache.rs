@@ -59,7 +59,7 @@ fn t66_postfx_cached_and_no_stale() {
     // вырождаются в identity, стейл по байтам не отличить)
     let chain = vec![
         FxInstance::Mirror { horizontal: true, vertical: false },
-        FxInstance::Noise { amount: 0.3 },
+        FxInstance::noise(0.3),
     ];
     let p = project_with_fx(chain.clone(), 48_000);
     let mut vr = VideoRenderer::new(&p);
@@ -86,7 +86,7 @@ fn t66_postfx_cached_and_no_stale() {
     let p2 = project_with_fx(
         vec![
             FxInstance::Mirror { horizontal: true, vertical: false },
-            FxInstance::Noise { amount: 0.9 },
+            FxInstance::noise(0.9),
         ],
         48_000,
     );
@@ -118,7 +118,7 @@ fn t66_postfx_cached_and_no_stale() {
 /// стейлов при смене файла на диске).
 #[test]
 fn t66b_invalidate_source_drops_postfx() {
-    let p = project_with_fx(vec![FxInstance::Glow { strength: 1.0 }], 48_000);
+    let p = project_with_fx(vec![FxInstance::glow(1.0)], 48_000);
     let mut vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = kt_media::Quality { width: 64, height: 36 };
@@ -142,7 +142,7 @@ fn t66c_export_compose_skips_postfx_memoization() {
     let p = project_with_fx(
         vec![
             FxInstance::Mirror { horizontal: true, vertical: false },
-            FxInstance::Noise { amount: 0.3 },
+            FxInstance::noise(0.3),
         ],
         0,
     );

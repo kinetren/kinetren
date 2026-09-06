@@ -318,6 +318,8 @@ fn t4_automation_changes_rate_over_time() {
         damp: 0.32,
         decay: 0.58,
         wet_gain: 0.95,
+        predelay_ms: 0.0,
+        width: 1.0,
         automation: vec![],
     }];
     let p = fx_project_auto(
@@ -377,6 +379,8 @@ fn t4_automation_consumes_source_by_integral() {
         damp: 0.32,
         decay: 0.58,
         wet_gain: 0.95,
+        predelay_ms: 0.0,
+        width: 1.0,
         automation: vec![],
     }];
     let p = fx_project_auto(fx, rate_curve(automation_probe(), dur), "synth:ramp", dur);
@@ -426,6 +430,8 @@ fn t31_keyframes_anchor_to_source_material() {
             damp: 0.32,
             decay: 0.58,
             wet_gain: 0.95,
+            predelay_ms: 0.0,
+            width: 1.0,
             automation: vec![],
         }];
         let p = fx_project_auto(fx, rate_curve(&profile, dur), "synth:ramp", dur);
@@ -496,7 +502,7 @@ fn t31_keyframes_anchor_to_source_material() {
 #[test]
 fn t213_audio_gain_follows_its_curve() {
     let dur = 4 * AUDIO_SAMPLE_RATE as i64;
-    let fx = vec![FxInstance::Gain { db: 0.0 }];
+    let fx = vec![FxInstance::gain(0.0)];
     // кривая громкости: тишина → 0 dB → тишина, ключи в тиках материала
     let auto = vec![vec![ParamCurve {
         param: "db".into(),
@@ -536,7 +542,7 @@ fn t213_audio_gain_follows_its_curve() {
     );
 
     // без кривой звук байт-в-байт прежний (константный путь не тронут)
-    let plain = fx_project(vec![FxInstance::Gain { db: 0.0 }], "synth:sine:440", dur);
+    let plain = fx_project(vec![FxInstance::gain(0.0)], "synth:sine:440", dur);
     let r2 = AudioRenderer::new(&plain);
     let mut f2 = direct(AudioPattern::Sine { hz: 440.0 });
     let mut store2 = FxStateStore::new();
@@ -566,6 +572,8 @@ fn t213_legacy_slowed_automation_migrates_to_curves() {
             damp: 0.32,
             decay: 0.58,
             wet_gain: 0.95,
+            predelay_ms: 0.0,
+            width: 1.0,
             automation: vec![
                 SlowedKeyframe { t: 0.2, rate: 1.0, mix: 0.0 },
                 SlowedKeyframe { t: 0.8, rate: 0.5, mix: 0.0 },
@@ -603,5 +611,100 @@ fn t213_legacy_slowed_automation_migrates_to_curves() {
     assert!(
         end_src < dur as f64 * 0.95,
         "замедление обязано остаться: съедено {end_src:.0} из {dur}"
+    );
+}
+
+/// Тест 229 (Р.33 С5): новые параметры АУДИО-эффектов. Умолчания
+/// байт-в-байт держит GOLDEN_AUDIO; здесь — что сдвинутый параметр
+/// действительно слышен и слышен правильно.
+#[test]
+fn t229_new_audio_params() {
+    let dur = 2 * AUDIO_SAMPLE_RATE as i64;
+    let render = |fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>| -> Vec<f32> {
+        let p = fx_project_auto(fx, auto, "synth:sine:440", dur);
+        let r = AudioRenderer::new(&p);
+        let mut f = direct(AudioPattern::Sine { hz: 440.0 });
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; dur as usize * CH];
+        no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
+        out
+    };
+    let rms = |out: &[f32], ch: usize| -> f64 {
+        let mut s = 0.0;
+        for f in out.chunks_exact(CH) {
+            s += (f[ch] as f64).powi(2);
+        }
+        (s / (out.len() / CH) as f64).sqrt()
+    };
+
+    // ---- Gain.pan: баланс ------------------------------------------------
+    let flat = render(vec![FxInstance::gain(0.0)], vec![]);
+    assert_eq!(
+        flat,
+        render(vec![FxInstance::Gain { db: 0.0, pan: 0.0 }], vec![]),
+        "баланс 0 — прежний путь байт-в-байт"
+    );
+    let left = render(vec![FxInstance::Gain { db: 0.0, pan: -1.0 }], vec![]);
+    assert!(rms(&left, 1) < 1e-9, "полный сдвиг влево гасит правый канал");
+    assert!((rms(&left, 0) - rms(&flat, 0)).abs() < 1e-6, "левый канал не тронут");
+    let half = render(vec![FxInstance::Gain { db: 0.0, pan: 0.5 }], vec![]);
+    assert!(
+        (rms(&half, 0) / rms(&flat, 0) - 0.5).abs() < 0.01,
+        "баланс +0.5 обязан вдвое приглушить левый: {}",
+        rms(&half, 0) / rms(&flat, 0)
+    );
+
+    // ---- Gain.pan автоматизируется тем же механизмом ---------------------
+    let curve = vec![vec![ParamCurve {
+        param: "pan".into(),
+        ease: false,
+        keys: vec![
+            AutoKey { t: Tick(0), v: -1.0 },
+            AutoKey { t: Tick::from_audio_frames(dur), v: 1.0 },
+        ],
+    }]];
+    let swept = render(vec![FxInstance::Gain { db: 0.0, pan: 0.0 }], curve);
+    let half_len = swept.len() / 2;
+    let (l1, r1) = (rms(&swept[..half_len], 0), rms(&swept[..half_len], 1));
+    let (l2, r2) = (rms(&swept[half_len..], 0), rms(&swept[half_len..], 1));
+    assert!(l1 > r1 && l2 < r2, "кривая баланса обязана переехать слева направо");
+
+    // ---- SlowedReverb: пред-задержка и ширина ----------------------------
+    let rev = |predelay_ms: f32, width: f32| {
+        vec![FxInstance::SlowedReverb {
+            rate: 1.0,
+            mix: 1.0,
+            reverb_delay_ms: 85.0,
+            damp: 0.2,
+            decay: 0.84,
+            wet_gain: 1.0,
+            predelay_ms,
+            width,
+            automation: vec![],
+        }]
+    };
+    let plain = render(rev(0.0, 1.0), vec![]);
+    // хвост слышен ПОСЛЕ конца материала — сравниваем начало отклика
+    let onset = |out: &[f32]| -> usize {
+        out.chunks_exact(CH).position(|f| f[0].abs() > 0.02).unwrap_or(usize::MAX)
+    };
+    let delayed = render(rev(100.0, 1.0), vec![]);
+    assert!(
+        onset(&delayed) > onset(&plain),
+        "пред-задержка обязана сдвинуть отклик: {} vs {}",
+        onset(&delayed),
+        onset(&plain)
+    );
+    // ширина 0 — каналы хвоста совпадают (моно), 1 — расходятся
+    let mono = render(rev(0.0, 0.0), vec![]);
+    let diff = |out: &[f32]| -> f64 {
+        out.chunks_exact(CH).map(|f| (f[0] - f[1]).abs() as f64).sum::<f64>()
+    };
+    assert!(
+        diff(&mono) < diff(&plain) * 0.5,
+        "ширина 0 обязана свести хвост в моно: {} vs {}",
+        diff(&mono),
+        diff(&plain)
     );
 }

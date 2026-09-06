@@ -74,7 +74,7 @@ fn compose(p: &Project, t: Tick, cache: &kt_cache::BurstCache) -> (Vec<u8>, bool
 
 #[test]
 fn t191_animated_equals_static_at_each_moment() {
-    let base = vec![FxInstance::Blur { radius: 8 }, FxInstance::Glow { strength: 0.5 }];
+    let base = vec![FxInstance::blur(8), FxInstance::glow(0.5)];
     let auto = vec![
         vec![ParamCurve {
             param: "radius".into(),
@@ -99,8 +99,8 @@ fn t191_animated_equals_static_at_each_moment() {
         let s = 2.0 * u;
         let static_p = project(
             vec![
-                FxInstance::Blur { radius: r.round() as u32 },
-                FxInstance::Glow { strength: s },
+                FxInstance::blur(r.round() as u32),
+                FxInstance::glow(s),
             ],
             vec![],
         );
@@ -115,7 +115,7 @@ fn t191_animated_equals_static_at_each_moment() {
 
 #[test]
 fn t191_postfx_cache_no_stale_across_time_and_curve_edits() {
-    let base = vec![FxInstance::Blur { radius: 8 }];
+    let base = vec![FxInstance::blur(8)];
     let curve = |v1: f64| {
         vec![vec![ParamCurve {
             param: "radius".into(),

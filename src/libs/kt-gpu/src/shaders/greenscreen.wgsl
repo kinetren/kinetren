@@ -1,7 +1,9 @@
 // Хромакей — зеркало greenscreen (kt-fx/src/video.rs): евклидова дистанция
 // до ключа, жёсткий порог hard, мягкий спад до tol. f32 вместо f64 —
 // у жёсткой границы законные точечные выбросы (конформанс t181).
-// f0 = (key_r, key_g, key_b, tol); f1 = (hard, 0, 0, 0).
+// f0 = (key_r, key_g, key_b, tol); f1 = (hard, spill, 0, 0);
+// u0 = (kc, 0, 0, 0) — доминирующий канал ключа (Р.33 С5, despill).
+// spill = 0 — прежний путь байт-в-байт.
 
 @fragment
 fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
@@ -15,5 +17,15 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         let t = (d - P.f1.x) / max(P.f0.w - P.f1.x, 1e-9);
         a = u32(round(f32(c.a) * t));
     }
-    return vec4<u32>(c.rgb, a);
+    var rgb = c.rgb;
+    let spill = P.f1.y;
+    if (spill > 0.0 && a > 0u) {
+        let kc = P.u0.x % 3u;
+        let other = max(rgb[(kc + 1u) % 3u], rgb[(kc + 2u) % 3u]);
+        if (rgb[kc] > other) {
+            let v = f32(rgb[kc]);
+            rgb[kc] = u32(round(v - (v - f32(other)) * spill));
+        }
+    }
+    return vec4<u32>(rgb, a);
 }

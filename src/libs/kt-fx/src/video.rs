@@ -78,16 +78,31 @@ pub fn apply_video_chain_pooled(
                 nf
             }
             FxInstance::Mirror { horizontal, vertical } => mirror(frame, *horizontal, *vertical),
-            FxInstance::Blur { radius } => blur(frame, *radius, scratch),
-            FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness } => {
-                greenscreen(frame, [*key_r, *key_g, *key_b], *tolerance, *softness)
+            FxInstance::Blur { radius, radius_y } => blur(frame, *radius, *radius_y, scratch),
+            FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
+                greenscreen(frame, [*key_r, *key_g, *key_b], *tolerance, *softness, *spill)
             }
-            FxInstance::Edges { threshold } => edges(frame, *threshold, scratch),
-            FxInstance::Noise { amount } => noise(frame, *amount, ctx.burst_index),
-            FxInstance::Vhs { rgb_shift, bleed } => {
-                vhs(frame, *rgb_shift, *bleed, ctx.burst_index, scratch)
+            FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => edges(
+                frame,
+                *threshold,
+                *thickness,
+                [*color_r, *color_g, *color_b],
+                scratch,
+            ),
+            FxInstance::Noise { amount, size, color } => {
+                noise(frame, *amount, *size, *color, ctx.burst_index)
             }
-            FxInstance::Glow { strength } => glow(frame, *strength, scratch),
+            FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
+                vhs(frame, *rgb_shift, *bleed, *scan_step, *jitter, ctx.burst_index, scratch)
+            }
+            FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => glow(
+                frame,
+                *strength,
+                *radius,
+                *threshold,
+                [*tint_r, *tint_g, *tint_b],
+                scratch,
+            ),
             FxInstance::EventGrid { cols, rows, center } => {
                 let nf = event_grid(&frame, ctx, *cols, *rows, *center, scratch);
                 scratch.put(frame.rgba);
@@ -312,10 +327,14 @@ fn mirror(mut f: Frame, h: bool, v: bool) -> Frame {
 }
 
 /// «Дешёвое» размытие v1: даунскейл в step раз и обратно (билинейно).
-fn blur(f: Frame, radius: u32, scratch: &mut FxScratch) -> Frame {
+/// Размытие даунскейлом. `radius_y == 0` — «как по горизонтали»: ровно
+/// прежний путь (один шаг на обе оси), поэтому golden'ы не двигаются;
+/// разные радиусы дают смаз по одной оси (Р.33 С5).
+fn blur(f: Frame, radius: u32, radius_y: u32, scratch: &mut FxScratch) -> Frame {
     let radius = radius.clamp(1, 48);
     let step = (radius / 3).max(1) + 1;
-    let (dw, dh) = ((f.w / step).max(1), (f.h / step).max(1));
+    let step_y = if radius_y == 0 { step } else { (radius_y.clamp(1, 48) / 3).max(1) + 1 };
+    let (dw, dh) = ((f.w / step).max(1), (f.h / step_y).max(1));
     let mut small = scratch.take((dw * dh * 4) as usize);
     bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
     let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: f.has_alpha };
@@ -326,10 +345,20 @@ fn blur(f: Frame, radius: u32, scratch: &mut FxScratch) -> Frame {
     Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha }
 }
 
-fn greenscreen(mut f: Frame, key: [u8; 3], tolerance: u32, softness: u32) -> Frame {
+fn greenscreen(
+    mut f: Frame,
+    key: [u8; 3],
+    tolerance: u32,
+    softness: u32,
+    spill: f64,
+) -> Frame {
     let tol = tolerance.clamp(1, 200) as f64;
     let soft = softness.clamp(0, 100) as f64;
     let hard = (tol - soft).max(0.0);
+    // подавление засветки (Р.33 С5): доминирующий канал КЛЮЧА тянется к
+    // большему из соседних. spill = 0 — прежний путь байт-в-байт
+    let spill = spill.clamp(0.0, 1.0);
+    let kc = (0..3).max_by_key(|&i| key[i]).unwrap_or(1);
     // greenscreen оставлен СКАЛЯРОМ осознанно (Р.32): замер показал
     // всего ×1.29 при пороге 1.3 — LLVM уже неплохо векторизует этот
     // цикл сам, а 60 строк интринзиков в месте, где важна побайтовая
@@ -345,14 +374,31 @@ fn greenscreen(mut f: Frame, key: [u8; 3], tolerance: u32, softness: u32) -> Fra
             let a = (d - hard) / (tol - hard).max(1e-9);
             px[3] = (px[3] as f64 * a).round() as u8;
         }
+        if spill > 0.0 && px[3] > 0 {
+            let other = px[(kc + 1) % 3].max(px[(kc + 2) % 3]) as f64;
+            let v = px[kc] as f64;
+            if v > other {
+                px[kc] = (v - (v - other) * spill).round() as u8;
+            }
+        }
     }
     f.has_alpha = true;
     f
 }
 
 /// Собель по яркости (v1: (77R+150G+29B)>>8, порог, серый выход).
-fn edges(f: Frame, threshold: u32, scratch: &mut FxScratch) -> Frame {
+fn edges(
+    f: Frame,
+    threshold: u32,
+    thickness: u32,
+    color: [u8; 3],
+    scratch: &mut FxScratch,
+) -> Frame {
     let th = threshold.clamp(1, 255) as i32;
+    // толщина = шаг выборки Собеля; 1 и белый цвет — прежнее ядро 3×3
+    // байт-в-байт (в том числе AVX2-путь)
+    let d = thickness.clamp(1, 8) as i64;
+    let plain = d == 1 && color == [255, 255, 255];
     let (w, h) = (f.w as usize, f.h as usize);
     #[cfg(target_arch = "x86_64")]
     let simd = crate::simd::simd_level() == crate::simd::SimdLevel::Avx2
@@ -377,27 +423,30 @@ fn edges(f: Frame, threshold: u32, scratch: &mut FxScratch) -> Frame {
     for p in out.chunks_exact_mut(4) {
         p[3] = 255;
     }
-    for y in 1..h.saturating_sub(1) {
+    let m = d as usize; // кайма шире при толстой линии
+    for y in m..h.saturating_sub(m) {
         // векторная часть строки; скалярный цикл ниже дорисовывает хвост
-        let mut x_from = 1usize;
+        let mut x_from = m;
         #[cfg(target_arch = "x86_64")]
-        if simd && w > 2 {
+        if plain && simd && w > 2 {
             // SAFETY: уровень проверен; строки y-1..y+1 существуют, out полон
             x_from = unsafe {
                 crate::video_simd::sobel_row_avx2(&mut out, &luma, w, y, th, w - 1)
             };
         }
-        for x in x_from..w.saturating_sub(1) {
-            let l =
-                |dx: i64, dy: i64| luma[(y as i64 + dy) as usize * w + (x as i64 + dx) as usize];
+        for x in x_from..w.saturating_sub(m) {
+            let l = |dx: i64, dy: i64| {
+                luma[(y as i64 + dy * d) as usize * w + (x as i64 + dx * d) as usize]
+            };
             let gx = -l(-1, -1) - 2 * l(-1, 0) - l(-1, 1) + l(1, -1) + 2 * l(1, 0) + l(1, 1);
             let gy = -l(-1, -1) - 2 * l(0, -1) - l(1, -1) + l(-1, 1) + 2 * l(0, 1) + l(1, 1);
             let mag = (((gx * gx + gy * gy) as f64).sqrt() as i32).min(255);
             let v = if mag < th { 0 } else { mag as u8 };
             let i = (y * w + x) * 4;
-            out[i] = v;
-            out[i + 1] = v;
-            out[i + 2] = v;
+            // цвет линий: серая величина домножается на него (255 — прежний)
+            for c in 0..3 {
+                out[i + c] = ((v as u32 * color[c] as u32) / 255) as u8;
+            }
         }
     }
     scratch.put(f.rgba);
@@ -427,13 +476,37 @@ pub fn noise_seed(burst_index: i64) -> u32 {
 /// seed) независимо, порядок обхода не важен → та же формула в WGSL даёт
 /// байт-в-байт тот же шум на GPU. Санкционированная смена картинки шума
 /// (перегенерирован только noise-эталон t26).
-fn noise(mut f: Frame, amount: f64, burst_index: i64) -> Frame {
+/// Зерно. `size == 1` и `color == false` — прежняя формула байт-в-байт
+/// (в том числе AVX2-путь); крупное зерно и цветной шум идут скаляром.
+fn noise(mut f: Frame, amount: f64, size: u32, color: bool, burst_index: i64) -> Frame {
     let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
     if k == 0 {
         return f;
     }
     let seed = noise_seed(burst_index);
     let w = f.w;
+    let size = size.clamp(1, 64);
+    if size > 1 || color {
+        let off_at = |x: u32, y: u32, ch: u32| -> i32 {
+            let h = noise_hash(x ^ noise_hash(y ^ noise_hash(ch ^ seed)));
+            let n = ((h >> 16) & 0x7fff) as i64 - 16384;
+            (n * k / 32767) as i32
+        };
+        for (p, px) in f.rgba.chunks_exact_mut(4).enumerate() {
+            let (x, y) = (p as u32 % w / size, p as u32 / w / size);
+            if color {
+                for (c, v) in px.iter_mut().take(3).enumerate() {
+                    *v = (*v as i32 + off_at(x, y, c as u32 + 1)).clamp(0, 255) as u8;
+                }
+            } else {
+                let off = off_at(x, y, 0);
+                for v in px.iter_mut().take(3) {
+                    *v = (*v as i32 + off).clamp(0, 255) as u8;
+                }
+            }
+        }
+        return f;
+    }
     #[cfg(target_arch = "x86_64")]
     if crate::simd::simd_level() == crate::simd::SimdLevel::Avx2
         && w >= 8
@@ -471,22 +544,50 @@ fn noise(mut f: Frame, amount: f64, burst_index: i64) -> Frame {
 }
 
 /// VHS: RGB-сдвиг + скан-линии (v1: строки каждые 4, дрожание от времени).
-fn vhs(mut f: Frame, rgb_shift: u32, bleed: f64, burst_index: i64, scratch: &mut FxScratch) -> Frame {
+#[allow(clippy::too_many_arguments)]
+fn vhs(
+    mut f: Frame,
+    rgb_shift: u32,
+    bleed: f64,
+    scan_step: u32,
+    jitter: f64,
+    burst_index: i64,
+    scratch: &mut FxScratch,
+) -> Frame {
     let shift = rgb_shift.clamp(0, 12) as i64;
     let bleed = bleed.clamp(0.0, 1.0);
     let line_off = ((burst_index / 3000) % 7) as usize;
     let (w, h) = (f.w as usize, f.h as usize);
+    // scan_step = 4 и jitter = 0 — прежнее поведение байт-в-байт (в том
+    // числе AVX2-путь); всё остальное считается скаляром
+    let step = scan_step.clamp(0, 32) as usize;
+    let jitter = jitter.clamp(0.0, 1.0);
+    let plain = step == 4 && jitter == 0.0;
+    let jq = (jitter * 1024.0).round() as i64;
+    let seed = noise_seed(burst_index);
     // читаются только пиксели ТЕКУЩЕЙ строки → строковый scratch вместо
     // полного clone (п.2 р.7); арифметика не изменена
     let mut row = scratch.take(w * 4);
     for y in 0..h {
-        let scan = if (y + line_off).is_multiple_of(4) { 1i64 } else { 0 };
+        let scan =
+            if step > 0 && (y + line_off).is_multiple_of(step) { 1i64 } else { 0 };
+        // дрожание строки: сдвиг всей строки на долю ширины
+        // ЦЕЛОЧИСЛЕННО: у GPU round() округляет половины к чётному, и на
+        // дробном пути строка иногда уезжала на пиксель мимо CPU (t181).
+        // Квантование параметра одно на оба пути.
+        let jx = if jq == 0 {
+            0i64
+        } else {
+            let hsh = noise_hash(y as u32 ^ noise_hash(seed));
+            let n = ((hsh >> 16) & 0x7fff) as i64 - 16384;
+            (n * jq / 32767) * w as i64 / 4096
+        };
         let r0 = y * w * 4;
         row.copy_from_slice(&f.rgba[r0..r0 + w * 4]);
         // векторный интерьер строки; кромки и хвост — скалярным циклом
         let mut x_from = 0usize;
         #[cfg(target_arch = "x86_64")]
-        if crate::simd::simd_level() == crate::simd::SimdLevel::Avx2 {
+        if plain && crate::simd::simd_level() == crate::simd::SimdLevel::Avx2 {
             let d = (shift + scan) as usize;
             // SAFETY: уровень проверен; row длиной w*4, срез строки — тоже
             x_from = unsafe {
@@ -520,14 +621,21 @@ fn vhs(mut f: Frame, rgb_shift: u32, bleed: f64, burst_index: i64, scratch: &mut
         }
         for x in x_from..w {
             let i = r0 + x * 4;
-            let xr = (x as i64 + shift + scan).clamp(0, w as i64 - 1) as usize;
-            let xb = (x as i64 - shift - scan).clamp(0, w as i64 - 1) as usize;
+            // база строки уезжает на jx (0 — прежняя формула дословно)
+            let xj = (x as i64 + jx).clamp(0, w as i64 - 1) as usize;
+            let xr = (xj as i64 + shift + scan).clamp(0, w as i64 - 1) as usize;
+            let xb = (xj as i64 - shift - scan).clamp(0, w as i64 - 1) as usize;
             let r = row[xr * 4] as f64;
             let b = row[xb * 4 + 2] as f64;
-            f.rgba[i] = (row[x * 4] as f64 * (1.0 - bleed) + r * bleed).round() as u8;
-            f.rgba[i + 2] = (row[x * 4 + 2] as f64 * (1.0 - bleed) + b * bleed).round() as u8;
+            f.rgba[i] = (row[xj * 4] as f64 * (1.0 - bleed) + r * bleed).round() as u8;
+            f.rgba[i + 2] = (row[xj * 4 + 2] as f64 * (1.0 - bleed) + b * bleed).round() as u8;
             if scan == 1 {
-                f.rgba[i + 1] = row[x * 4 + 1].saturating_sub(18);
+                f.rgba[i + 1] = row[xj * 4 + 1].saturating_sub(18);
+            } else if jx != 0 {
+                // при дрожании едет ВСЯ строка, включая зелёный: без
+                // этого он оставался бы от несдвинутого пикселя (артефакт
+                // in-place, из-за него расходились CPU и GPU)
+                f.rgba[i + 1] = row[xj * 4 + 1];
             }
         }
     }
@@ -536,12 +644,23 @@ fn vhs(mut f: Frame, rgb_shift: u32, bleed: f64, burst_index: i64, scratch: &mut
 }
 
 /// Bloom: даунскейл ×1/4 → апскейл, аддитивно ×strength×0.35 (v1).
-fn glow(mut f: Frame, strength: f64, scratch: &mut FxScratch) -> Frame {
+fn glow(
+    mut f: Frame,
+    strength: f64,
+    radius: u32,
+    threshold: u32,
+    tint: [u8; 3],
+    scratch: &mut FxScratch,
+) -> Frame {
     let s = strength.clamp(0.0, 2.0) * 0.35;
     if s <= 0.0 {
         return f;
     }
-    let (dw, dh) = ((f.w / 4).max(1), (f.h / 4).max(1));
+    // радиус 4, порог 0 и белый оттенок — прежний путь байт-в-байт
+    let r = radius.clamp(1, 32);
+    let th = threshold.min(255) as i32;
+    let plain = th == 0 && tint == [255, 255, 255];
+    let (dw, dh) = ((f.w / r).max(1), (f.h / r).max(1));
     let mut small = scratch.take((dw * dh * 4) as usize);
     bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
     let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: false };
@@ -551,7 +670,7 @@ fn glow(mut f: Frame, strength: f64, scratch: &mut FxScratch) -> Frame {
     let pixels = f.rgba.len().min(up.len()) / 4;
     let mut done = 0usize;
     #[cfg(target_arch = "x86_64")]
-    if crate::simd::simd_level() == crate::simd::SimdLevel::Avx2 {
+    if plain && crate::simd::simd_level() == crate::simd::SimdLevel::Avx2 {
         // SAFETY: уровень проверен детектом; pixels не выходит за оба буфера
         unsafe { crate::video_simd::glow_add_avx2(&mut f.rgba, &up, s, pixels) };
         done = pixels;
@@ -559,8 +678,16 @@ fn glow(mut f: Frame, strength: f64, scratch: &mut FxScratch) -> Frame {
     for (o, u) in
         f.rgba.chunks_exact_mut(4).zip(up.chunks_exact(4)).skip(done)
     {
+        // порог по яркости РАЗМЫТОГО кадра: мягкое колено шириной th
+        let w = if th == 0 {
+            1.0
+        } else {
+            let luma = (77 * u[0] as i32 + 150 * u[1] as i32 + 29 * u[2] as i32) >> 8;
+            (((luma - th) as f64) / th as f64).clamp(0.0, 1.0)
+        };
         for c in 0..3 {
-            o[c] = (o[c] as f64 + u[c] as f64 * s).min(255.0) as u8;
+            let k = s * w * tint[c] as f64 / 255.0;
+            o[c] = (o[c] as f64 + u[c] as f64 * k).min(255.0) as u8;
         }
     }
     scratch.put(small_f.rgba);

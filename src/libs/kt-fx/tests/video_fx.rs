@@ -78,15 +78,15 @@ fn t26_golden_hashes_all_effects() {
             },
         ),
         ("mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
-        ("blur", FxInstance::Blur { radius: 8 }),
+        ("blur", FxInstance::blur(8)),
         (
             "greenscreen",
-            FxInstance::Greenscreen { key_r: 0, key_g: 255, key_b: 0, tolerance: 70, softness: 25 },
+            FxInstance::greenscreen([0, 255, 0], 70, 25 ),
         ),
-        ("edges", FxInstance::Edges { threshold: 48 }),
-        ("noise", FxInstance::Noise { amount: 0.3 }),
-        ("vhs", FxInstance::Vhs { rgb_shift: 4, bleed: 0.4 }),
-        ("glow", FxInstance::Glow { strength: 0.65 }),
+        ("edges", FxInstance::edges(48)),
+        ("noise", FxInstance::noise(0.3)),
+        ("vhs", FxInstance::vhs(4, 0.4)),
+        ("glow", FxInstance::glow(0.65)),
         ("eventgrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
     ];
     let mut failures = Vec::new();
@@ -115,7 +115,7 @@ fn t26_mirror_is_involution() {
 #[test]
 fn t26_blur_preserves_mean_and_reduces_variance() {
     let src = test_frame();
-    let out = run(FxInstance::Blur { radius: 12 });
+    let out = run(FxInstance::blur(12));
     assert!((mean_rgb(&src) - mean_rgb(&out)).abs() < 8.0, "blur сохраняет среднюю яркость");
     let var = |f: &Frame| {
         let m = mean_rgb(f);
@@ -132,13 +132,7 @@ fn t26_blur_preserves_mean_and_reduces_variance() {
 
 #[test]
 fn t26_greenscreen_keys_out_green_corner() {
-    let out = run(FxInstance::Greenscreen {
-        key_r: 0,
-        key_g: 255,
-        key_b: 0,
-        tolerance: 70,
-        softness: 25,
-    });
+    let out = run(FxInstance::greenscreen([0, 255, 0], 70, 25));
     assert!(out.has_alpha);
     // центр зелёного угла прозрачен
     let (x, y) = (W * 3 / 4, H * 3 / 4);
@@ -149,11 +143,11 @@ fn t26_greenscreen_keys_out_green_corner() {
 
 #[test]
 fn t26_noise_is_deterministic_per_position() {
-    let a = run(FxInstance::Noise { amount: 0.3 });
-    let b = run(FxInstance::Noise { amount: 0.3 });
+    let a = run(FxInstance::noise(0.3));
+    let b = run(FxInstance::noise(0.3));
     assert_eq!(a.rgba, b.rgba, "одна позиция таймлайна = одно зерно");
     let other = apply_video_chain(
-        &[FxInstance::Noise { amount: 0.3 }],
+        &[FxInstance::noise(0.3)],
         test_frame(),
         &VideoFxCtx { burst_index: 180_000, ..ctx() },
     );
@@ -209,31 +203,25 @@ fn t68_pooled_chain_identical_with_dirty_scratch() {
         }],
         vec![FxInstance::Mirror { horizontal: true, vertical: false }],
         vec![FxInstance::Mirror { horizontal: true, vertical: true }],
-        vec![FxInstance::Blur { radius: 9 }],
-        vec![FxInstance::Greenscreen {
-            key_r: 0,
-            key_g: 255,
-            key_b: 0,
-            tolerance: 90,
-            softness: 30,
-        }],
-        vec![FxInstance::Edges { threshold: 40 }],
-        vec![FxInstance::Noise { amount: 0.5 }],
-        vec![FxInstance::Vhs { rgb_shift: 3, bleed: 0.4 }],
-        vec![FxInstance::Glow { strength: 1.2 }],
+        vec![FxInstance::blur(9)],
+        vec![FxInstance::greenscreen([0, 255, 0], 90, 30)],
+        vec![FxInstance::edges(40)],
+        vec![FxInstance::noise(0.5)],
+        vec![FxInstance::vhs(3, 0.4)],
+        vec![FxInstance::glow(1.2)],
         vec![FxInstance::EventGrid { cols: 3, rows: 2, center: true }],
         // цепочка из жалобы пользователя (п.2 р.7)
         vec![
             FxInstance::Mirror { horizontal: true, vertical: false },
             FxInstance::EventGrid { cols: 2, rows: 2, center: false },
-            FxInstance::Glow { strength: 1.0 },
-            FxInstance::Vhs { rgb_shift: 2, bleed: 0.5 },
+            FxInstance::glow(1.0),
+            FxInstance::vhs(2, 0.5),
         ],
     ];
     let mut dirty = FxScratch::default();
     // испачкать пул чужими данными разных размеров
     let junk = apply_video_chain_pooled(
-        &[FxInstance::Blur { radius: 5 }],
+        &[FxInstance::blur(5)],
         test_frame(),
         &ctx(),
         &mut dirty,
@@ -248,4 +236,220 @@ fn t68_pooled_chain_identical_with_dirty_scratch() {
         let again = apply_video_chain_pooled(fx, test_frame(), &ctx(), &mut dirty);
         assert_eq!(fresh.rgba, again.rgba);
     }
+}
+
+/// Тест 228 (Р.33 С5): новые параметры эффектов. Правило раунда — «дефолт
+/// нового параметра = прежнее поведение БАЙТ-В-БАЙТ» (его держат golden'ы
+/// t26 выше), поэтому здесь проверяется вторая половина: параметр,
+/// сдвинутый с умолчания, обязан РЕАЛЬНО менять картинку и менять её
+/// осмысленно.
+#[test]
+fn t228_new_fx_params_change_the_picture() {
+    let hash = |f: Frame| xxh3_64(&f.rgba);
+    // ---- Blur: раздельные оси -------------------------------------------
+    let base = run(FxInstance::blur(12));
+    let plain = hash(run(FxInstance::blur(12)));
+    assert_eq!(
+        plain,
+        hash(run(FxInstance::Blur { radius: 12, radius_y: 0 })),
+        "radius_y = 0 обязан быть тождеством прежнему размытию"
+    );
+    let wide = run(FxInstance::Blur { radius: 12, radius_y: 1 });
+    assert_ne!(plain, hash(wide), "радиус по Y обязан менять картинку");
+    // размытие только по X: вертикальные соседи различаются СИЛЬНЕЕ, чем
+    // при размытии по обеим осям (по Y кадр остался резким)
+    // метрика — по ЗЕЛЁНОМУ каналу: в тестовом кадре по вертикали меняется
+    // именно он (R = x*4 от y не зависит вовсе, и на нём метрика слепа)
+    let var_y = |f: &Frame| {
+        let mut s = 0u64;
+        for y in 1..f.h as usize {
+            for x in 0..f.w as usize {
+                let a = f.rgba[(y * f.w as usize + x) * 4 + 1] as i64;
+                let b = f.rgba[((y - 1) * f.w as usize + x) * 4 + 1] as i64;
+                s += (a - b).unsigned_abs();
+            }
+        }
+        s
+    };
+    let x_only = run(FxInstance::Blur { radius: 48, radius_y: 1 });
+    let both = run(FxInstance::Blur { radius: 48, radius_y: 0 });
+    assert!(
+        var_y(&x_only) > var_y(&both),
+        "смаз по одной оси обязан оставить вертикальный контраст: {} vs {}",
+        var_y(&x_only),
+        var_y(&both)
+    );
+    drop(base);
+
+    // ---- Edges: толщина и цвет ------------------------------------------
+    let thin = run(FxInstance::edges(48));
+    let lit = |f: &Frame| f.rgba.chunks_exact(4).filter(|p| p[0] > 0 || p[1] > 0).count();
+    let thick = run(FxInstance::Edges {
+        threshold: 48,
+        thickness: 3,
+        color_r: 255,
+        color_g: 255,
+        color_b: 255,
+    });
+    assert!(
+        lit(&thick) > lit(&thin),
+        "толстая линия обязана зажигать больше пикселей: {} vs {}",
+        lit(&thick),
+        lit(&thin)
+    );
+    let red = run(FxInstance::Edges {
+        threshold: 48,
+        thickness: 1,
+        color_r: 255,
+        color_g: 0,
+        color_b: 0,
+    });
+    let (mut any_r, mut green) = (false, 0usize);
+    for p in red.rgba.chunks_exact(4) {
+        any_r |= p[0] > 0;
+        green += (p[1] > 0) as usize;
+    }
+    assert!(any_r && green == 0, "красные линии: зелёного канала быть не должно ({green})");
+
+    // ---- Noise: размер зерна и цвет -------------------------------------
+    let fine = run(FxInstance::noise(0.5));
+    assert_eq!(
+        hash(run(FxInstance::noise(0.5))),
+        hash(run(FxInstance::Noise { amount: 0.5, size: 1, color: false })),
+        "size = 1, mono — прежняя формула"
+    );
+    let coarse = run(FxInstance::Noise { amount: 0.5, size: 8, color: false });
+    assert_ne!(hash(fine), xxh3_64(&coarse.rgba), "крупное зерно обязано отличаться");
+    // крупное зерно: внутри блока 8×8 сдвиг ОДИН, значит соседние пиксели
+    // блока отличаются ровно как в исходнике
+    let src = test_frame();
+    let d_at = |f: &Frame, x: usize, y: usize| {
+        let i = (y * f.w as usize + x) * 4;
+        f.rgba[i] as i32 - src.rgba[i] as i32
+    };
+    assert_eq!(d_at(&coarse, 0, 0), d_at(&coarse, 3, 3), "внутри зерна сдвиг один");
+    assert_ne!(d_at(&coarse, 0, 0), d_at(&coarse, 9, 9), "у соседнего зерна он свой");
+    // цветной шум: у каналов свои сдвиги
+    let col = run(FxInstance::Noise { amount: 0.5, size: 1, color: true });
+    let mut differs = 0;
+    for (p, s) in col.rgba.chunks_exact(4).zip(src.rgba.chunks_exact(4)) {
+        let dr = p[0] as i32 - s[0] as i32;
+        let dg = p[1] as i32 - s[1] as i32;
+        if dr != dg {
+            differs += 1;
+        }
+    }
+    assert!(differs > 100, "у цветного шума каналы обязаны расходиться: {differs}");
+}
+
+/// Тест 228b (Р.33 С5): вторая пачка параметров — свечение, VHS, хромакей.
+#[test]
+fn t228_glow_vhs_greenscreen_params() {
+    let hash = |f: &Frame| xxh3_64(&f.rgba);
+    let mean = |f: &Frame| {
+        f.rgba.chunks_exact(4).map(|p| p[0] as u64 + p[1] as u64 + p[2] as u64).sum::<u64>()
+    };
+    // ---- Glow: радиус, порог, оттенок -----------------------------------
+    let plain = run(FxInstance::glow(1.0));
+    assert_eq!(
+        hash(&plain),
+        hash(&run(FxInstance::Glow {
+            strength: 1.0,
+            radius: 4,
+            threshold: 0,
+            tint_r: 255,
+            tint_g: 255,
+            tint_b: 255
+        })),
+        "радиус 4, порог 0 и белый оттенок — прежнее свечение"
+    );
+    let wide = run(FxInstance::Glow {
+        strength: 1.0,
+        radius: 16,
+        threshold: 0,
+        tint_r: 255,
+        tint_g: 255,
+        tint_b: 255,
+    });
+    assert_ne!(hash(&plain), hash(&wide), "радиус свечения обязан менять картинку");
+    let gated = run(FxInstance::Glow {
+        strength: 1.0,
+        radius: 4,
+        threshold: 200,
+        tint_r: 255,
+        tint_g: 255,
+        tint_b: 255,
+    });
+    assert!(
+        mean(&gated) < mean(&plain),
+        "порог обязан убрать свечение с тёмных мест: {} vs {}",
+        mean(&gated),
+        mean(&plain)
+    );
+    let tinted = run(FxInstance::Glow {
+        strength: 1.0,
+        radius: 4,
+        threshold: 0,
+        tint_r: 255,
+        tint_g: 0,
+        tint_b: 0,
+    });
+    let src = test_frame();
+    let (mut dr, mut dg) = (0i64, 0i64);
+    for (p, s) in tinted.rgba.chunks_exact(4).zip(src.rgba.chunks_exact(4)) {
+        dr += p[0] as i64 - s[0] as i64;
+        dg += p[1] as i64 - s[1] as i64;
+    }
+    assert!(dr > 0 && dg == 0, "красный оттенок светит только в красный: {dr}/{dg}");
+
+    // ---- VHS: шаг скан-линий и дрожание ---------------------------------
+    let vplain = run(FxInstance::vhs(4, 0.4));
+    assert_eq!(
+        hash(&vplain),
+        hash(&run(FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 4, jitter: 0.0 })),
+        "шаг 4 и нулевое дрожание — прежний VHS"
+    );
+    // строк со скан-линией: считаем ряды, где зелёный просел
+    let dark_rows = |f: &Frame| {
+        (0..f.h as usize)
+            .filter(|&y| {
+                let i = (y * f.w as usize + 5) * 4 + 1;
+                let j = (y * src.w as usize + 5) * 4 + 1;
+                f.rgba[i] < src.rgba[j]
+            })
+            .count()
+    };
+    let sparse = run(FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 12, jitter: 0.0 });
+    let none = run(FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 0, jitter: 0.0 });
+    assert!(
+        dark_rows(&sparse) < dark_rows(&vplain),
+        "редкие скан-линии: {} против {}",
+        dark_rows(&sparse),
+        dark_rows(&vplain)
+    );
+    assert_eq!(dark_rows(&none), 0, "шаг 0 — скан-линий нет вовсе");
+    let jit = run(FxInstance::Vhs { rgb_shift: 0, bleed: 0.0, scan_step: 0, jitter: 0.8 });
+    assert_ne!(hash(&jit), hash(&src), "дрожание обязано сдвигать строки");
+
+    // ---- Greenscreen: подавление засветки --------------------------------
+    let key = [0u8, 255, 0];
+    let keyed = run(FxInstance::greenscreen(key, 70, 25));
+    let despilled = run(FxInstance::Greenscreen {
+        key_r: 0,
+        key_g: 255,
+        key_b: 0,
+        tolerance: 70,
+        softness: 25,
+        spill: 1.0,
+    });
+    // у видимых пикселей зелёный обязан просесть, альфа — не измениться
+    let (mut lower, mut alpha_same) = (0usize, true);
+    for (a, b) in keyed.rgba.chunks_exact(4).zip(despilled.rgba.chunks_exact(4)) {
+        alpha_same &= a[3] == b[3];
+        if b[1] < a[1] {
+            lower += 1;
+        }
+    }
+    assert!(lower > 50, "подавление обязано убрать зелёную засветку: {lower}");
+    assert!(alpha_same, "подавление засветки не трогает альфу");
 }

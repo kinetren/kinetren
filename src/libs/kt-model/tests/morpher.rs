@@ -20,7 +20,7 @@ fn base_project() -> TimelineModel {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Gain { db: -3.0 }],
+        fx: vec![FxInstance::gain(-3.0)],
         fx_bypass: Vec::new(),
         fx_auto: vec![],
         opacity: 1.0,
@@ -110,7 +110,7 @@ fn t35_effect_batch_live_and_typed() {
         targets: vec![ClipId(10), ClipId(11)],
         kind: MorphKind::EffectBatch {
             video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
-            audio_fx: vec![FxInstance::Gain { db: 6.0 }],
+            audio_fx: vec![FxInstance::gain(6.0)],
             video_bypass: vec![],
             audio_bypass: vec![],
         },
@@ -121,7 +121,7 @@ fn t35_effect_batch_live_and_typed() {
     let eff = m.project().effective_clips();
     let a = eff.iter().find(|c| c.id == ClipId(10)).unwrap();
     assert_eq!(a.fx.len(), 2, "аудио-клип: исходный Gain + дописанный");
-    assert!(matches!(a.fx[1], FxInstance::Gain { db } if db == 6.0));
+    assert!(matches!(a.fx[1], FxInstance::Gain { db, .. } if db == 6.0));
     let v = eff.iter().find(|c| c.id == ClipId(11)).unwrap();
     assert_eq!(v.fx.len(), 1);
     assert!(matches!(v.fx[0], FxInstance::Mirror { .. }));

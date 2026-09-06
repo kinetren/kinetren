@@ -44,7 +44,7 @@ fn rich_project() -> Project {
     a1.gain_db = -3.0;
     a1.link_group = Some(GroupId(5));
     a1.fx = vec![
-        FxInstance::Gain { db: 1.5 },
+        FxInstance::gain(1.5),
         FxInstance::slowed_reverb(0.8, 0.2, 85.0),
     ];
     a1.fx_bypass = vec![true];
@@ -580,7 +580,7 @@ fn t189_matches_committed_golden() {
 fn t192_fx_auto_roundtrip_and_v3() {
     // плоский проект с автоматизацией, БЕЗ камер: v3 даёт именно она
     let mut p = rich_project();
-    p.clips[0].fx = vec![FxInstance::Blur { radius: 8 }];
+    p.clips[0].fx = vec![FxInstance::blur(8)];
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "radius".into(),
         ease: false,
@@ -619,7 +619,7 @@ fn t192_fx_auto_roundtrip_and_v3() {
 #[test]
 fn t212_pre_v3_curves_migrate_to_material_ticks() {
     let mut p = rich_project();
-    p.clips[0].fx = vec![FxInstance::Blur { radius: 8 }];
+    p.clips[0].fx = vec![FxInstance::blur(8)];
     p.clips[0].fx_auto = vec![vec![ParamCurve {
         param: "radius".into(),
         ease: false,

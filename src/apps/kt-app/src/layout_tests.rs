@@ -3132,7 +3132,7 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Blur { radius: 8 }],
+        fx: vec![FxInstance::blur(8)],
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
@@ -3226,7 +3226,7 @@ fn t219_one_window_for_the_whole_link_group() {
         media: MediaId(1),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Blur { radius: 8 }],
+        fx: vec![FxInstance::blur(8)],
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
@@ -3234,7 +3234,7 @@ fn t219_one_window_for_the_whole_link_group() {
     };
     p.clips.push(clip(1, ClipKind::Video, 0));
     let mut a = clip(2, ClipKind::Audio, 0);
-    a.fx = vec![FxInstance::Gain { db: 0.0 }];
+    a.fx = vec![FxInstance::gain(0.0)];
     p.clips.push(a);
     p.validate().unwrap();
     app.model = kt_model::TimelineModel::new(p);
@@ -3257,7 +3257,7 @@ fn t219_one_window_for_the_whole_link_group() {
     // «Отмена» откатывает ОБЕ цепочки, а не только якорь
     let app = h.state_mut();
     let g = app.fx_editors[0].gesture;
-    app.set_fx_coalesced(ClipId(1), vec![FxInstance::Glow { strength: 1.0 }], g);
+    app.set_fx_coalesced(ClipId(1), vec![FxInstance::glow(1.0)], g);
     app.set_fx_coalesced(ClipId(2), vec![], g);
     let backup = app.fx_editors[0].backup.clone();
     assert_eq!(backup.len(), 2, "снимок обязан покрывать обе цепочки");
@@ -3381,7 +3381,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         media: MediaId(9),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Blur { radius: 8 }, FxInstance::Glow { strength: 1.0 }],
+        fx: vec![FxInstance::blur(8), FxInstance::glow(1.0)],
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
@@ -3398,7 +3398,7 @@ fn t217_one_chain_widget_for_events_and_morphers() {
         kind: MorphKind::EffectBatch {
             video_fx: vec![
                 FxInstance::Mirror { horizontal: true, vertical: false },
-                FxInstance::Edges { threshold: 48 },
+                FxInstance::edges(48),
             ],
             audio_fx: vec![],
             video_bypass: vec![],
@@ -3482,7 +3482,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
         media: MediaId(9),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Blur { radius: 8 }],
+        fx: vec![FxInstance::blur(8)],
         fx_bypass: vec![],
         fx_auto: vec![vec![ParamCurve {
             param: "radius".into(),
@@ -3505,7 +3505,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
     let app = h.state_mut();
     let depth_before = app.model.undo_depth();
     let gesture = app.fx_editors[0].gesture;
-    let fx = vec![FxInstance::Blur { radius: 20 }, FxInstance::Glow { strength: 1.0 }];
+    let fx = vec![FxInstance::blur(20), FxInstance::glow(1.0)];
     let auto = vec![
         vec![ParamCurve {
             param: "radius".into(),
@@ -4310,7 +4310,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
         media: MediaId(9),
         gain_db: 0.0,
         reversed: false,
-        fx: vec![FxInstance::Blur { radius: 8 }],
+        fx: vec![FxInstance::blur(8)],
         fx_bypass: vec![],
         fx_auto: vec![],
         opacity: 1.0,
@@ -4330,7 +4330,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
     let gesture = app.fx_editors[0].gesture;
     app.set_fx_coalesced(
         ClipId(9),
-        vec![FxInstance::Blur { radius: 20 }, FxInstance::Glow { strength: 1.0 }],
+        vec![FxInstance::blur(20), FxInstance::glow(1.0)],
         gesture,
     );
     assert!(app.model_rev > rev_before, "правка жеста двигает ревизию модели");

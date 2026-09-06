@@ -142,7 +142,7 @@ fn t137_dissolve_survives_fx_chain_on_pair() {
     // FX-клип в паре: пост-FX кэш + бленд; повторный compose из кэша
     // байт-идентичен (наследие t66)
     let mut p = project_pair();
-    p.clips[0].fx = vec![FxInstance::Noise { amount: 0.3 }];
+    p.clips[0].fx = vec![FxInstance::noise(0.3)];
     p.validate().unwrap();
     let mut vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());

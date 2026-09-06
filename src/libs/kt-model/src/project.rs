@@ -489,6 +489,30 @@ fn default_true() -> bool {
     true
 }
 
+fn default_scan_step() -> u32 {
+    4
+}
+
+fn default_glow_radius() -> u32 {
+    4
+}
+
+fn is_four_u32(v: &u32) -> bool {
+    *v == 4
+}
+
+fn is_zero_f64(v: &f64) -> bool {
+    *v == 0.0
+}
+
+fn is_one_u32_v(v: &u32) -> bool {
+    *v == 1
+}
+
+fn is_255(v: &u8) -> bool {
+    *v == 255
+}
+
 fn is_zero_u32(v: &u32) -> bool {
     *v == 0
 }
@@ -960,6 +984,10 @@ fn one_f32() -> f32 {
     1.0
 }
 
+fn default_one_f32() -> f32 {
+    1.0
+}
+
 fn is_one_f32(v: &f32) -> bool {
     *v == 1.0
 }
@@ -1166,6 +1194,10 @@ pub fn material_from_progress(u: f64, source_in: Tick, duration: Tick, mirror: b
 pub enum FxInstance {
     Gain {
         db: f32,
+        /// Баланс каналов −1…+1 (Р.33 С5). 0 — прежний путь байт-в-байт:
+        /// множители обоих каналов ровно 1.0.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        pan: f32,
     },
     SlowedReverb {
         /// Базовая скорость (0.25–32); автоматизация её перекрывает.
@@ -1182,6 +1214,14 @@ pub enum FxInstance {
         /// Множитель wet-выхода (старый reverbGain).
         #[serde(default = "default_wet_gain")]
         wet_gain: f32,
+        /// Пред-задержка входа реверба, мс (Р.33 С5): хвост отстаёт от
+        /// звука. 0 — прежнее поведение байт-в-байт; структурная (меняет
+        /// длину линии), поэтому автоматизации не подлежит.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        predelay_ms: f32,
+        /// Ширина стерео-хвоста 0..1. 1 — прежний стереореверб.
+        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
+        width: f32,
         /// Keyframe-автоматизация: t — позиция В МАТЕРИАЛЕ ИСТОЧНИКА
         /// (кадры от source_in, нормированные длительностью клипа), НЕ
         /// выходное время. Кейфрейм приклеен к материалу: ранние правки
@@ -1222,6 +1262,11 @@ pub enum FxInstance {
     Blur {
         #[serde(default = "default_blur_radius")]
         radius: u32,
+        /// Вертикальный радиус (Р.33 С5). `0` — «как горизонтальный»:
+        /// умолчание не пишется в файл и даёт прежнее размытие
+        /// байт-в-байт. Раздельные оси дают «смаз» по одной оси.
+        #[serde(default, skip_serializing_if = "is_zero_u32")]
+        radius_y: u32,
     },
     Greenscreen {
         #[serde(default)]
@@ -1234,24 +1279,70 @@ pub enum FxInstance {
         tolerance: u32,
         #[serde(default = "default_softness")]
         softness: u32,
+        /// Подавление засветки ключевым цветом (Р.33 С5): доминирующий
+        /// канал ключа притягивается к соседним. 0 — прежнее поведение.
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        spill: f64,
     },
     Edges {
         #[serde(default = "default_edges_threshold")]
         threshold: u32,
+        /// Толщина линии = шаг выборки Собеля (Р.33 С5). 1 — прежнее
+        /// ядро 3×3 байт-в-байт.
+        #[serde(default = "default_one_u32", skip_serializing_if = "is_one_u32_v")]
+        thickness: u32,
+        /// Цвет линий: серый выход домножается на него. 255,255,255 —
+        /// прежний белый.
+        #[serde(default = "default_255", skip_serializing_if = "is_255")]
+        color_r: u8,
+        #[serde(default = "default_255", skip_serializing_if = "is_255")]
+        color_g: u8,
+        #[serde(default = "default_255", skip_serializing_if = "is_255")]
+        color_b: u8,
     },
     Noise {
         #[serde(default = "default_noise_amount")]
         amount: f64,
+        /// Размер зерна в пикселях (Р.33 С5). 1 — прежнее пиксельное
+        /// зерно байт-в-байт; больше — крупная «плёночная» крупа.
+        #[serde(default = "default_one_u32", skip_serializing_if = "is_one_u32_v")]
+        size: u32,
+        /// Цветной шум: у каждого канала своё смещение. `false` —
+        /// прежний монохромный (один сдвиг на все три канала).
+        #[serde(default, skip_serializing_if = "is_false")]
+        color: bool,
     },
     Vhs {
         #[serde(default = "default_rgb_shift")]
         rgb_shift: u32,
         #[serde(default = "default_bleed")]
         bleed: f64,
+        /// Шаг скан-линий (Р.33 С5): каждая N-я строка гасится. 4 —
+        /// прежнее поведение байт-в-байт, 0 — скан-линий нет вовсе.
+        #[serde(default = "default_scan_step", skip_serializing_if = "is_four_u32")]
+        scan_step: u32,
+        /// Дрожание строк по горизонтали, доля кадра. 0 — прежний
+        /// ровный кадр.
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        jitter: f64,
     },
     Glow {
         #[serde(default = "default_glow_strength")]
         strength: f64,
+        /// Радиус свечения = делитель мипа (Р.33 С5). 4 — прежний.
+        #[serde(default = "default_glow_radius", skip_serializing_if = "is_four_u32")]
+        radius: u32,
+        /// Порог яркости РАЗМЫТОГО кадра: ниже него свечения нет. 0 —
+        /// порога нет (прежнее поведение байт-в-байт).
+        #[serde(default, skip_serializing_if = "is_zero_u32")]
+        threshold: u32,
+        /// Оттенок свечения; 255,255,255 — прежний нейтральный.
+        #[serde(default = "default_255", skip_serializing_if = "is_255")]
+        tint_r: u8,
+        #[serde(default = "default_255", skip_serializing_if = "is_255")]
+        tint_g: u8,
+        #[serde(default = "default_255", skip_serializing_if = "is_255")]
+        tint_b: u8,
     },
     EventGrid {
         #[serde(default = "default_one_u32")]
@@ -1471,6 +1562,7 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     // ---- аудио (Р.33: автоматизируются общим механизмом) ----------------
     Gain {
         db: f32, -60.0, 12.0, 0.0, 0.1, Db, Smooth;
+        pan: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
     },
     SlowedReverb {
         // потолок скорости — RATE_CLAMP движка (kt-fx)
@@ -1481,6 +1573,9 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
         damp: f32, 0.0, 0.99, 0.2, 0.01, Norm, Smooth;
         decay: f32, 0.0, 0.98, 0.84, 0.01, Norm, Smooth;
         wet_gain: f32, 0.0, 2.0, 1.0, 0.01, Ratio, Smooth;
+        // длина линии пред-задержки — та же геометрия, что reverb_delay_ms
+        predelay_ms: f32, 0.0, 200.0, 0.0, 1.0, Ms, Structural;
+        width: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
     // ---- видео 2D --------------------------------------------------------
     Pan {
@@ -1493,6 +1588,7 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     },
     Blur {
         radius: u32, 1.0, 48.0, 8.0, 1.0, Px, Smooth;
+        radius_y: u32, 0.0, 48.0, 0.0, 1.0, Px, Smooth;
     },
     Greenscreen {
         key_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
@@ -1500,19 +1596,32 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
         key_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
         tolerance: u32, 1.0, 200.0, 70.0, 1.0, None, Smooth;
         softness: u32, 0.0, 100.0, 25.0, 1.0, None, Smooth;
+        spill: f64, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
     },
     Edges {
         threshold: u32, 1.0, 255.0, 48.0, 1.0, None, Smooth;
+        thickness: u32, 1.0, 8.0, 1.0, 1.0, Px, Smooth;
+        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
     },
     Noise {
         amount: f64, 0.0, 1.0, 0.08, 0.01, Norm, Smooth;
+        size: u32, 1.0, 64.0, 1.0, 1.0, Px, Smooth;
     },
     Vhs {
         rgb_shift: u32, 0.0, 12.0, 4.0, 1.0, Px, Smooth;
         bleed: f64, 0.0, 1.0, 0.4, 0.01, Norm, Smooth;
+        scan_step: u32, 0.0, 32.0, 4.0, 1.0, Px, Smooth;
+        jitter: f64, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
     },
     Glow {
         strength: f64, 0.0, 2.0, 0.65, 0.01, Ratio, Smooth;
+        radius: u32, 1.0, 32.0, 4.0, 1.0, Px, Smooth;
+        threshold: u32, 0.0, 255.0, 0.0, 1.0, None, Smooth;
+        tint_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        tint_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        tint_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
     },
     EventGrid {
         cols: u32, 1.0, 512.0, 1.0, 1.0, Count, Smooth;
@@ -1805,6 +1914,57 @@ pub struct SlowedKeyframe {
 
 impl FxInstance {
     /// Конструктор с дефолтными параметрами реверба (для тестов/простых случаев).
+    /// Конструкторы эффектов с УМОЛЧАНИЯМИ добавленных полей (Р.33 С5).
+    /// Струкурные литералы в вызывающем коде заменены на них, чтобы
+    /// следующий параметр не требовал править полсотни мест.
+    pub fn blur(radius: u32) -> FxInstance {
+        FxInstance::Blur { radius, radius_y: 0 }
+    }
+
+    pub fn edges(threshold: u32) -> FxInstance {
+        FxInstance::Edges {
+            threshold,
+            thickness: 1,
+            color_r: 255,
+            color_g: 255,
+            color_b: 255,
+        }
+    }
+
+    pub fn gain(db: f32) -> FxInstance {
+        FxInstance::Gain { db, pan: 0.0 }
+    }
+
+    pub fn vhs(rgb_shift: u32, bleed: f64) -> FxInstance {
+        FxInstance::Vhs { rgb_shift, bleed, scan_step: 4, jitter: 0.0 }
+    }
+
+    pub fn glow(strength: f64) -> FxInstance {
+        FxInstance::Glow {
+            strength,
+            radius: 4,
+            threshold: 0,
+            tint_r: 255,
+            tint_g: 255,
+            tint_b: 255,
+        }
+    }
+
+    pub fn greenscreen(key: [u8; 3], tolerance: u32, softness: u32) -> FxInstance {
+        FxInstance::Greenscreen {
+            key_r: key[0],
+            key_g: key[1],
+            key_b: key[2],
+            tolerance,
+            softness,
+            spill: 0.0,
+        }
+    }
+
+    pub fn noise(amount: f64) -> FxInstance {
+        FxInstance::Noise { amount, size: 1, color: false }
+    }
+
     pub fn slowed_reverb(rate: f64, mix: f32, reverb_delay_ms: f32) -> FxInstance {
         FxInstance::SlowedReverb {
             rate,
@@ -1813,6 +1973,8 @@ impl FxInstance {
             damp: default_damp(),
             decay: default_decay(),
             wet_gain: default_wet_gain(),
+            predelay_ms: 0.0,
+            width: 1.0,
             automation: Vec::new(),
         }
     }

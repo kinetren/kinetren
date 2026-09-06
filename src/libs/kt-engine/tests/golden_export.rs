@@ -135,6 +135,8 @@ fn golden_project() -> Project {
                 damp: 0.32,
                 decay: 0.58,
                 wet_gain: 0.95,
+                predelay_ms: 0.0,
+                width: 1.0,
                 automation: vec![],
             }],
             opacity: 1.0,
@@ -319,8 +321,8 @@ fn t67_preview_equals_export_with_fx_cold_and_warm() {
     for c in p.clips.iter_mut().filter(|c| c.kind == ClipKind::Video) {
         c.fx = vec![
             FxInstance::Mirror { horizontal: true, vertical: false },
-            FxInstance::Glow { strength: 1.0 },
-            FxInstance::Vhs { rgb_shift: 2, bleed: 0.4 },
+            FxInstance::glow(1.0),
+            FxInstance::vhs(2, 0.4),
         ];
     }
     p.validate().unwrap();

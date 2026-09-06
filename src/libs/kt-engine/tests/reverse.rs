@@ -95,6 +95,8 @@ fn t24_reversed_with_slowed_fx_is_deterministic_and_not_silent() {
         damp: 0.32,
         decay: 0.58,
         wet_gain: 0.95,
+        predelay_ms: 0.0,
+        width: 1.0,
         automation: vec![],
     }];
     let rev = clip(true, fx, ClipKind::Audio);

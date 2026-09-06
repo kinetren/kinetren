@@ -48,7 +48,7 @@ fn sample() -> Project {
             media: MediaId(media),
             gain_db: if id == 1 { -3.0 } else { 0.0 },
             reversed: id == 2,
-            fx: if id == 1 { vec![FxInstance::Gain { db: 1.5 }] } else { vec![] },
+            fx: if id == 1 { vec![FxInstance::gain(1.5)] } else { vec![] },
             fx_bypass: vec![],
             fx_auto: vec![],
             opacity: 1.0,

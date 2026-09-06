@@ -133,22 +133,89 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![FxInstance::Mirror { horizontal: true, vertical: false }],
             FrameTol::EXACT,
         ),
-        ("blur", vec![FxInstance::Blur { radius: 8 }], FrameTol::BILINEAR),
+        ("blur", vec![FxInstance::blur(8)], FrameTol::BILINEAR),
         (
             "greenscreen",
+            vec![FxInstance::greenscreen([0, 255, 0], 70, 25)],
+            FrameTol::THRESHOLD,
+        ),
+        ("edges", vec![FxInstance::edges(48)], FrameTol::THRESHOLD),
+        ("noise", vec![FxInstance::noise(0.3)], FrameTol::EXACT),
+        // новые параметры Р.33 С5 — зеркала обязаны сойтись и на них
+        (
+            "blur-xy",
+            vec![FxInstance::Blur { radius: 24, radius_y: 4 }],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "edges-thick-color",
+            vec![FxInstance::Edges {
+                threshold: 48,
+                thickness: 3,
+                color_r: 255,
+                color_g: 90,
+                color_b: 0,
+            }],
+            FrameTol::THRESHOLD,
+        ),
+        (
+            "noise-coarse",
+            vec![FxInstance::Noise { amount: 0.3, size: 8, color: false }],
+            FrameTol::EXACT,
+        ),
+        (
+            "noise-color",
+            vec![FxInstance::Noise { amount: 0.3, size: 3, color: true }],
+            FrameTol::EXACT,
+        ),
+        (
+            "vhs-scan-jitter",
+            vec![FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 7, jitter: 0.5 }],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "vhs-no-scan",
+            vec![FxInstance::Vhs { rgb_shift: 2, bleed: 0.2, scan_step: 0, jitter: 0.0 }],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "glow-radius-tint",
+            vec![FxInstance::Glow {
+                strength: 0.9,
+                radius: 8,
+                threshold: 0,
+                tint_r: 255,
+                tint_g: 120,
+                tint_b: 40,
+            }],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "glow-threshold",
+            vec![FxInstance::Glow {
+                strength: 1.2,
+                radius: 4,
+                threshold: 90,
+                tint_r: 255,
+                tint_g: 255,
+                tint_b: 255,
+            }],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "greenscreen-spill",
             vec![FxInstance::Greenscreen {
                 key_r: 0,
                 key_g: 255,
                 key_b: 0,
                 tolerance: 70,
                 softness: 25,
+                spill: 0.8,
             }],
             FrameTol::THRESHOLD,
         ),
-        ("edges", vec![FxInstance::Edges { threshold: 48 }], FrameTol::THRESHOLD),
-        ("noise", vec![FxInstance::Noise { amount: 0.3 }], FrameTol::EXACT),
-        ("vhs", vec![FxInstance::Vhs { rgb_shift: 4, bleed: 0.4 }], FrameTol::BILINEAR),
-        ("glow", vec![FxInstance::Glow { strength: 0.65 }], FrameTol::BILINEAR),
+        ("vhs", vec![FxInstance::vhs(4, 0.4)], FrameTol::BILINEAR),
+        ("glow", vec![FxInstance::glow(0.65)], FrameTol::BILINEAR),
         (
             "eventgrid",
             vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }],
@@ -159,22 +226,16 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![
                 FxInstance::Mirror { horizontal: true, vertical: false },
                 FxInstance::EventGrid { cols: 2, rows: 2, center: false },
-                FxInstance::Glow { strength: 1.0 },
-                FxInstance::Vhs { rgb_shift: 2, bleed: 0.5 },
+                FxInstance::glow(1.0),
+                FxInstance::vhs(2, 0.5),
             ],
             FrameTol::BILINEAR,
         ),
         (
             "chain-key",
             vec![
-                FxInstance::Greenscreen {
-                    key_r: 0,
-                    key_g: 255,
-                    key_b: 0,
-                    tolerance: 70,
-                    softness: 25,
-                },
-                FxInstance::Noise { amount: 0.5 },
+                FxInstance::greenscreen([0, 255, 0], 70, 25),
+                FxInstance::noise(0.5),
             ],
             FrameTol::THRESHOLD,
         ),
@@ -277,7 +338,7 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
     // движка, но не байты → форсит пересчёт «грязным» пулом
     let src = Src::new(10, Some(frame(96, 54, false, 3)), vec![
         FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.2, pan_y: 0.1, zoom: 1.3 },
-        FxInstance::Glow { strength: 1.2 },
+        FxInstance::glow(1.2),
     ]);
     let bg = Src::new(11, Some(frame(W, H, false, 0)), vec![]);
     let mk = |t: i64| plan(t, vec![one(&bg, 4096, false), one(&src, 3000, true)]);
@@ -291,7 +352,7 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
 
     // испачкать пулы e1 другими планами
     let junk = Src::new(12, Some(frame(W, H, false, 9)), vec![
-        FxInstance::Blur { radius: 12 },
+        FxInstance::blur(12),
         FxInstance::EventGrid { cols: 3, rows: 2, center: true },
     ]);
     let mut _j = Vec::new();

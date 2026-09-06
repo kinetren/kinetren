@@ -39,7 +39,7 @@ fn read_span(p: &mut ClipProcessor, from: i64, to: i64) -> Vec<f32> {
 
 #[test]
 fn t138_plain_chain_reads_handles_and_gates_at_material_end() {
-    let fx = [FxInstance::Gain { db: 0.0 }];
+    let fx = [FxInstance::gain(0.0)];
     let (src_in, len, head, tail) = (10_000i64, 4_096i64, 1_024i64, 2_048i64);
     let mut p = ClipProcessor::new(&fx, &Default::default(), src_in, len);
     p.set_material_ext(head, tail);
@@ -57,7 +57,7 @@ fn t138_plain_chain_reads_handles_and_gates_at_material_end() {
 #[test]
 fn t138_default_material_keeps_old_gate() {
     // без set_material_ext поведение прежнее: dry-гейт ровно на clip_len
-    let fx = [FxInstance::Gain { db: 0.0 }];
+    let fx = [FxInstance::gain(0.0)];
     let (src_in, len) = (5_000i64, 2_000i64);
     let mut p = ClipProcessor::new(&fx, &Default::default(), src_in, len);
     let out = read_span(&mut p, 0, len + 512);
@@ -108,7 +108,7 @@ fn t138_warp_reads_left_handle_without_reset_glitches() {
 fn t138_source_window_ext_and_compat() {
     // делегат: material = 0..len байт-совместим со старой сигнатурой
     let warp = [FxInstance::slowed_reverb(0.82, 0.1, 85.0)];
-    let plain = [FxInstance::Gain { db: 0.0 }];
+    let plain = [FxInstance::gain(0.0)];
     for fx in [&warp[..], &plain[..]] {
         for local in [0..1024i64, 3_000..9_000, 7_000..8_000] {
             assert_eq!(
