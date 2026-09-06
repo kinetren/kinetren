@@ -1681,6 +1681,29 @@ pub fn clip_material_at(
     }
 }
 
+/// Обратная к `clip_material_at`: момент таймлайна, в который событие
+/// играет материальную позицию `mat`. Пара обязана жить РЯДОМ — они верны
+/// только вместе, а `clip_material_at` ещё и клампит края.
+///
+/// Р.37: раньше обратная была открыта в kt-engine и умела варп скорости
+/// (`material_at`/`timeline_at_material`). Теперь перевод «материал ↔
+/// таймлайн» НЕ ЗАВИСИТ от цепочки эффектов: скорость сжимает материал, но
+/// не ось автоматизации (решение пользователя, п.1 Р.37).
+pub fn clip_timeline_at(
+    source_in: Tick,
+    start: Tick,
+    duration: Tick,
+    reversed: bool,
+    frame_step: i64,
+    mat: Tick,
+) -> Tick {
+    if reversed {
+        Tick(start.0 + (source_in.0 + duration.0 - frame_step - mat.0))
+    } else {
+        Tick(start.0 + (mat.0 - source_in.0))
+    }
+}
+
 /// Кейфреймы slowed&reverb СТАРОГО образца (`SlowedReverb.automation`,
 /// доли материала) → обычные кривые `rate`/`mix` в тиках материала.
 /// Возвращает true, если клип менялся. Зовётся ридерами формата: с Р.33

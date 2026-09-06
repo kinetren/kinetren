@@ -1,9 +1,14 @@
-//! Диагностика: позиция источника на выходе vs интеграл профиля.
+//! Позиция источника на выходе == интеграл профиля скорости (Р.37).
+//!
+//! До этого раунда файл только ПЕЧАТАЛ расхождение и не утверждал ничего —
+//! то есть «DSP следует карте» неявно сторожил только GOLDEN_AUDIO. Теперь
+//! это проверяется прямо: карта в домене события (`S(tau) = ∫rate`), и
+//! процессор обязан идти по ней на каждом чанке.
 use kt_fx::{CH, ClipProcessor, source_progress};
 use kt_model::FxInstance;
 
 
-/// Профиль (доля материала, rate) → кривые клипа и профили kt-fx.
+/// Профиль (доля ВЫХОДНОГО времени, rate) → кривые клипа и профили kt-fx.
 fn profiles(points: &[(f64, f64)], len_frames: i64) -> kt_fx::AutoProfiles {
     let curves = vec![vec![kt_model::ParamCurve {
         param: "rate".into(),
@@ -55,8 +60,15 @@ fn clip_processor_follows_integral_map() {
         let t = (local + 1024) as f64 / len as f64;
         let expect = len as f64 * source_progress(1.0, &automation, t.min(1.0));
         let got = out[(1023) * CH] as f64 / 1e-6;
-        if (local / 1024) % 200 == 0 || local + 1024 >= len {
-            println!("t={t:.3} src_got={got:.0} src_expect={expect:.0} diff={:.0}", got - expect);
+        // допуск — групповая задержка sinc-ресемплера (~3к кадров) плюс
+        // квантование чанка; тот же порядок, что WARP_SOURCE_MARGIN_FRAMES
+        // последний чанк выходит ЗА тело события — там источник кончился,
+        // и сверять нечего (за краем клипа выход законно нулевой)
+        if local + 1024 <= len {
+            assert!(
+                (got - expect).abs() < 4096.0,
+                "t={t:.3}: позиция источника {got:.0} разошлась с интегралом {expect:.0}"
+            );
         }
         local += 1024;
     }

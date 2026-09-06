@@ -3137,38 +3137,44 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
         opacity: 1.0,
         fx_off: false,
     };
-    let mat = kt_engine::material_at(&c, STEP, Tick(180_000 + 30_000));
+    let m = |c: &ClipEvent, t: Tick| {
+        clip_material_at(c.source_in, c.start, c.duration, c.reversed, STEP, t)
+    };
+    let tl = |c: &ClipEvent, mat: Tick| {
+        clip_timeline_at(c.source_in, c.start, c.duration, c.reversed, STEP, mat)
+    };
+    let mat = m(&c, Tick(180_000 + 30_000));
     assert_eq!(mat.0, 75_000, "материал = source_in + смещение внутри события");
     assert_eq!(
-        kt_engine::timeline_at_material(&c, STEP, mat).0,
+        tl(&c, mat).0,
         180_000 + 30_000,
         "обратный перевод обязан возвращать тот же момент"
     );
 
     // реверс: материал идёт навстречу таймлайну
     c.reversed = true;
-    let mat_r = kt_engine::material_at(&c, STEP, Tick(180_000));
+    let mat_r = m(&c, Tick(180_000));
     assert_eq!(mat_r.0, 45_000 + 90_000 - STEP, "у реверса начало события — конец материала");
-    assert_eq!(
-        kt_engine::timeline_at_material(&c, STEP, mat_r).0,
-        180_000,
-        "обратный перевод реверса обязан сходиться"
-    );
+    assert_eq!(tl(&c, mat_r).0, 180_000, "обратный перевод реверса обязан сходиться");
     c.reversed = false;
 
-    // скорость: у slowed&reverb 0.5× материал идёт вдвое медленнее
+    // СКОРОСТЬ ОСЬ НЕ СЖИМАЕТ (Р.37, п.1 пользователя): у клипа на 0.5×
+    // ось кривой по-прежнему размах СОБЫТИЯ. Раньше здесь было
+    // 45_000 + 45_000 — правая половина графика была недостижима, и
+    // автоключ, который редактор сеет в конец, никогда не срабатывал.
     let mut slow = c.clone();
     slow.kind = ClipKind::Audio;
     slow.fx = vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)];
-    let mid = kt_engine::material_at(&slow, STEP, Tick(180_000 + 90_000));
-    assert!(
-        (mid.0 - (45_000 + 45_000)).abs() <= 90,
-        "на 0.5× за весь клип съедается половина материала, вышло {}",
-        mid.0 - 45_000
+    let mid = m(&slow, Tick(180_000 + 90_000));
+    assert_eq!(
+        mid.0,
+        45_000 + 90_000,
+        "ось кривой — собственный размах события, скорость её не сжимает"
     );
-    assert!(
-        (kt_engine::timeline_at_material(&slow, STEP, mid).0 - (180_000 + 90_000)).abs() <= 90,
-        "обратный перевод со скоростью обязан сходиться"
+    assert_eq!(
+        tl(&slow, mid).0,
+        180_000 + 90_000,
+        "и обратный перевод теперь ТОЧЕН, а не в пределах кадра"
     );
 
     // виджет: переключение вида и стабильный ввод времени в таблице

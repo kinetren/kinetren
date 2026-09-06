@@ -433,10 +433,17 @@ fn draw_fx_auto_section(
             changed = true;
         }
         // ключ по курсору: позиция считается ТЕМ ЖЕ правилом, что у
-        // рендера, и с учётом скорости — до Р.33 сюда клали прогресс
-        // таймлайна, и при rate ≠ 1 точка вставала не под курсором
+        // рендера — `clip_material_at`. Скорость на ось НЕ влияет (Р.37):
+        // иначе ось кривой rate зависела бы от самой кривой rate.
         if !curves.is_empty() && ui.button(tr(k::fx::KF_AT_CURSOR)).clicked() {
-            let at = kt_engine::material_at(clip, frame_step, playhead);
+            let at = kt_model::clip_material_at(
+                clip.source_in,
+                clip.start,
+                clip.duration,
+                clip.reversed,
+                frame_step,
+                playhead,
+            );
             for c in curves.iter_mut() {
                 let v = kt_model::curve_value(&c.keys, c.ease, at);
                 c.keys.retain(|kf| kf.t != at);
@@ -447,9 +454,29 @@ fn draw_fx_auto_section(
         }
     });
     // единый виджет: график ↔ таблица (Р.33 С3). Домен слота — материал
-    // события; перевод в обе стороны учитывает реверс и скорость (Р.34 К1)
-    let to_tl = |t: kt_time::Tick| kt_engine::timeline_at_material(clip, frame_step, t);
-    let to_mat = |t: kt_time::Tick| kt_engine::material_at(clip, frame_step, t);
+    // события; перевод в обе стороны учитывает РЕВЕРС и больше ничего
+    // (Р.37: скорость ось не сжимает, и правая часть графика перестала
+    // быть недостижимой)
+    let to_tl = |t: kt_time::Tick| {
+        kt_model::clip_timeline_at(
+            clip.source_in,
+            clip.start,
+            clip.duration,
+            clip.reversed,
+            frame_step,
+            t,
+        )
+    };
+    let to_mat = |t: kt_time::Tick| {
+        kt_model::clip_material_at(
+            clip.source_in,
+            clip.start,
+            clip.duration,
+            clip.reversed,
+            frame_step,
+            t,
+        )
+    };
     let ctx = crate::automation::clip_ctx(clip, f, frame_step, &to_tl, &to_mat);
     let res = crate::automation::draw(
         ui,

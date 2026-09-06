@@ -560,16 +560,22 @@ fn tail_frames_for(max_comb_len: f32, feedback: f32) -> Tick {
     Tick::from_audio_frames((max_comb_len.max(8.0) * (60.0 / db_per_pass)) as i64)
 }
 
-/// Профиль одного параметра в SOURCE-домене: (доля материала 0..1,
-/// значение). Строится из кривых клипа (`ParamCurve`, ключи в тиках
+/// Профиль одного параметра в ДОМЕНЕ СОБЫТИЯ: (доля выходного времени
+/// 0..1, значение). Строится из кривых клипа (`ParamCurve`, ключи в тиках
 /// материала) один раз при сборке процессора — дальше аудио-поток работает
 /// только с числами и ничего не аллоцирует.
+///
+/// Р.37: доля считается ЛИНЕЙНО от начала события, скорость её не сжимает
+/// (требование пользователя: «t — временной промежуток, вырезанный текущим
+/// событием, БЕЗ учёта замедления-ускорения»). Арифметика построения та же,
+/// изменилась ТРАКТОВКА числа.
 pub type ParamPoints = [(f64, f64)];
 
-/// Значение профиля в позиции s (линейная интерполяция, края зажаты).
+/// Значение профиля в позиции tau (линейная интерполяция, края зажаты).
 /// `base` возвращается только у ПУСТОГО профиля: непустой перекрывает
 /// параметр целиком (семантика v1 — кривая главнее ручки).
-pub fn param_at(base: f64, points: &ParamPoints, s: f64, ease: bool) -> f64 {
+pub fn param_at(base: f64, points: &ParamPoints, tau: f64, ease: bool) -> f64 {
+    let s = tau;
     if points.is_empty() {
         return base;
     }
@@ -589,24 +595,33 @@ pub fn param_at(base: f64, points: &ParamPoints, s: f64, ease: bool) -> f64 {
     points[points.len() - 1].1
 }
 
-/// Значение rate в позиции материала s. Профиль rate ВСЕГДА кусочно
-/// линеен: на этом стоят аналитические ln/expm1-формулы карты варпа, и
-/// сглаживание (`ease`) на нём игнорируется — иначе карта разошлась бы с
-/// фактическим потреблением источника.
-pub fn rate_at(base: f64, points: &ParamPoints, s: f64) -> f64 {
-    param_at(base, points, s, false)
+/// Значение rate в выходной позиции tau. Профиль rate ВСЕГДА кусочно
+/// линеен: на этом стоит аналитическая форма карты варпа (S — парабола,
+/// T — корень квадратного), и сглаживание (`ease`) на нём игнорируется —
+/// интеграл от smoothstep был бы четвёртой степени. Р.37 сделал ease
+/// принципиально считаемым, но выигрыша в нём нет.
+pub fn rate_at(base: f64, points: &ParamPoints, tau: f64) -> f64 {
+    param_at(base, points, tau, false)
 }
 
 // ---------------------------------------------------------------------------
-// SOURCE-домен автоматизации (п.1, решение пользователя): kf.t — позиция
-// В МАТЕРИАЛЕ (кадры источника от source_in, нормированные clip_len).
-// Кейфрейм приклеен к материалу: добавление РАННЕГО кейфрейма меняет
-// момент выходного времени, но не материал, на котором срабатывают поздние.
+// ДОМЕН СОБЫТИЯ (Р.37, решение пользователя): кривая rate — функция
+// ВЫХОДНОГО прогресса tau (доли длины события), а не потреблённого
+// материала. Ключ приклеен к материалу по-прежнему (обрезка/Split/реверс
+// работают как с Р.33), но ось ЛИНЕЙНА: скорость её не сжимает.
 //
-// Карта: rate(s) кусочно-линеен по s; T(s) = ∫₀ˢ ds′/rate(s′) — выходной
-// прогресс (доли clip_len), при котором варп доиграл до source-доли s.
-// S(t) = T⁻¹(t). Кусочно-аналитические формы (ln/expm1) — без итераций,
-// точность ~1e-15, детерминизм libm (golden закреплён на linux x86_64).
+// Зачем: домен по материалу делал ось кривой rate зависящей ОТ САМОЙ
+// кривой rate (подвинул значение — точка уехала по экрану), заставлял
+// ранний ключ скорости сдвигать момент срабатывания поздних ключей ДРУГИХ
+// параметров и оставлял недостижимой правую часть графика (доехать можно
+// было лишь до duration·avg_rate).
+//
+// Карта: rate(tau) кусочно-линеен; S(tau) = ∫₀^tau rate(u)du — доля
+// материала, потреблённая к выходному прогрессу tau; T(s) = S⁻¹.
+// S кусочно-КВАДРАТИЧНА (трапеция), T — корень квадратного уравнения.
+// Ни ln, ни expm1: только + − × ÷ √, все корректно округлены по IEEE-754,
+// то есть карта бит-переносима между платформами (golden всё ещё пришпилен
+// к linux x86_64 синк-ресемплером, но уже не картой).
 // Rate внутри карты зажат тем же клампом, что и Warp — иначе карта
 // разошлась бы с фактическим потреблением.
 // ---------------------------------------------------------------------------
@@ -617,19 +632,33 @@ fn eff_rate(base: f64, points: &ParamPoints, s: f64) -> f64 {
     rate_at(base, points, s).clamp(RATE_CLAMP.0, RATE_CLAMP.1)
 }
 
-/// Δτ на сегменте [s0,s1] с линейным rate r0→r1: ∫ds/rate.
-fn seg_dt(ds: f64, r0: f64, r1: f64) -> f64 {
-    if (r1 - r0).abs() < 1e-9 { ds * 2.0 / (r0 + r1) } else { ds * (r1.ln() - r0.ln()) / (r1 - r0) }
+/// Δτ, за которое сегмент со стартовым rate r0 и наклоном b = dr/dτ
+/// съедает Δs материала — корень (b/2)·dt² + r0·dt − ds = 0.
+///
+/// Форма citardauq (умноженная на сопряжённое), а НЕ школьная
+/// (−r0+√…)/b: она устойчива численно И не требует ветки b ≈ 0 —
+/// при b = 0 сама сворачивается в ds/r0. Знаменатель ≥ r0 ≥ RATE_CLAMP.0,
+/// нулём не бывает; дискриминант в точке решения равен rate(τ)², то есть
+/// неотрицателен по построению (max(0) — только от арифметики).
+fn seg_dt(ds: f64, r0: f64, b: f64) -> f64 {
+    2.0 * ds / (r0 + (r0 * r0 + 2.0 * b * ds).max(0.0).sqrt())
 }
 
-/// Δs, потребляемая за Δτ на сегменте, начинающемся с rate r0 и наклоном
-/// b = dr/ds: s(τ) = r0·(e^{bτ} − 1)/b.
+/// Δs, потребляемая за Δτ на сегменте со стартовым rate r0 и наклоном
+/// b = dr/dτ: трапеция ∫(r0 + b·u)du = r0·dt + b·dt²/2. Точно, без веток.
 fn seg_ds(dt: f64, r0: f64, b: f64) -> f64 {
-    if (b * dt).abs() < 1e-12 { r0 * dt } else { r0 * (b * dt).exp_m1() / b }
+    r0 * dt + 0.5 * b * dt * dt
 }
 
-/// Сегменты (s0, s1, r0, r1) профиля по source-домену; последний — хвост
-/// с константным rate до бесконечности (s1 = f64::INFINITY).
+/// Сегменты (t0, t1, r0, r1) профиля по домену СОБЫТИЯ; последний — хвост
+/// с константным rate до бесконечности (t1 = f64::INFINITY). Тело
+/// доменно-нейтрально: оно просто идёт по массиву точек.
+///
+/// ВАЖНО: концы клампятся ДО интерполяции, а `eff_rate` клампит ПОСЛЕ —
+/// значения расходятся, если ключ лежит вне RATE_CLAMP. Из UI такой ключ
+/// не поставить (`set_param` клампит по спеке), но `migrate_legacy_slowed`
+/// копирует легаси-значение как есть, поэтому клампим и на входе профиля
+/// (`AutoProfiles::from_curves`).
 fn segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     let cl = |r: f64| r.clamp(RATE_CLAMP.0, RATE_CLAMP.1);
     if points.is_empty() {
@@ -650,31 +679,33 @@ fn segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
     out
 }
 
-/// T(s): выходной прогресс (доли clip_len), при котором потреблена
-/// source-доля s. Строго возрастает. s < 0 — левая «ручка» перехода
-/// (п.138): линейная экстраполяция скоростью первого сегмента.
+/// T(s) = S⁻¹: выходной прогресс (доли длины события), при котором
+/// потреблена source-доля s. Строго возрастает (rate ≥ RATE_CLAMP.0 > 0).
+/// s < 0 — левая «ручка» перехода (п.138): линейная экстраполяция
+/// скоростью первого сегмента.
 pub fn output_time_for_source(base: f64, points: &ParamPoints, s: f64) -> f64 {
     if s < 0.0 {
         return s / segments(base, points)[0].2;
     }
-    let mut acc = 0.0;
-    for (s0, s1, r0, r1) in segments(base, points) {
-        if s <= s0 {
-            break;
+    let (mut acc_t, mut acc_s) = (0.0, 0.0);
+    for (t0, t1, r0, r1) in segments(base, points) {
+        let (seg_t, b) = if t1.is_finite() && t1 > t0 {
+            (t1 - t0, (r1 - r0) / (t1 - t0))
+        } else {
+            (f64::INFINITY, 0.0)
+        };
+        let seg_s = if seg_t.is_finite() { seg_ds(seg_t, r0, b) } else { f64::INFINITY };
+        if acc_s + seg_s >= s {
+            return acc_t + seg_dt(s - acc_s, r0, b);
         }
-        let hi = s.min(s1);
-        let frac = if s1.is_finite() && s1 > s0 { (hi - s0) / (s1 - s0) } else { 0.0 };
-        let r_hi = if s1.is_finite() { r0 + (r1 - r0) * frac } else { r0 };
-        acc += seg_dt(hi - s0, r0, r_hi);
-        if hi >= s {
-            break;
-        }
+        acc_t += seg_t;
+        acc_s += seg_s;
     }
-    acc
+    acc_t
 }
 
-/// S(t) = T⁻¹: source-доля, потреблённая к выходному прогрессу t
-/// (t может быть > 1 — хвост за клипом; rate за последним kf константен;
+/// S(t) = ∫₀ᵗ rate(u)du: source-доля, потреблённая к выходному прогрессу
+/// t (t может быть > 1 — хвост за клипом; rate за последним kf константен;
 /// t < 0 — левая «ручка» перехода, п.138: линейно скоростью первого
 /// сегмента, «за краями — крайние»). Материал ручек НЕ сдвигает
 /// нормировку автоматизации — знаменатель остаётся clip_len.
@@ -682,20 +713,19 @@ pub fn source_progress(base: f64, points: &ParamPoints, t: f64) -> f64 {
     if t < 0.0 {
         return t * segments(base, points)[0].2;
     }
-    let mut tau_acc = 0.0;
-    let mut s_acc = 0.0;
-    for (s0, s1, r0, r1) in segments(base, points) {
-        let seg_span = s1 - s0;
-        let seg_tau = if s1.is_finite() { seg_dt(seg_span, r0, r1) } else { f64::INFINITY };
-        if tau_acc + seg_tau >= t {
-            let rest = t - tau_acc;
-            let b = if s1.is_finite() && seg_span > 0.0 { (r1 - r0) / seg_span } else { 0.0 };
-            return s_acc + seg_ds(rest, r0, b);
+    let mut acc_s = 0.0;
+    for (t0, t1, r0, r1) in segments(base, points) {
+        if t <= t0 {
+            break;
         }
-        tau_acc += seg_tau;
-        s_acc += seg_span;
+        let hi = if t1.is_finite() { t.min(t1) } else { t };
+        let b = if t1.is_finite() && t1 > t0 { (r1 - r0) / (t1 - t0) } else { 0.0 };
+        acc_s += seg_ds(hi - t0, r0, b);
+        if hi >= t {
+            break;
+        }
     }
-    s_acc
+    acc_s
 }
 
 /// Средняя скорость = потреблённая доля источника за весь клип: S(1).
@@ -745,12 +775,25 @@ impl AutoProfiles {
                             // rate обязан остаться кусочно-линейным: на нём
                             // стоят аналитические формулы карты варпа
                             let ease = c.ease && c.param != "rate";
+                            // значение клампится ЗДЕСЬ: `segments` клампит
+                            // концы до интерполяции, а `eff_rate` — после,
+                            // и на ключе вне RATE_CLAMP они разъезжались.
+                            // Из UI такой ключ не поставить, но
+                            // `migrate_legacy_slowed` копирует легаси-число
+                            // как есть, а расхождение карты с DSP — это
+                            // промахи префетча и тишина (п.13/t17).
+                            let clamp = c.param == "rate";
                             let pts = c
                                 .keys
                                 .iter()
                                 .map(|k| {
                                     let f = k.t.to_audio_frames() - src_in_frames;
-                                    (f as f64 / len, k.v)
+                                    let v = if clamp {
+                                        k.v.clamp(RATE_CLAMP.0, RATE_CLAMP.1)
+                                    } else {
+                                        k.v
+                                    };
+                                    (f as f64 / len, v)
                                 })
                                 .collect();
                             SlotCurve { param: c.param.clone(), ease, points: pts }
@@ -1288,11 +1331,15 @@ impl ClipProcessor {
             let chunk_local = local + done as i64;
             // автоматизация: цели на середину чанка; rubato/one-pole сглаживают
             if !self.auto.is_empty() {
-                // SOURCE-домен: цель чанка — по ПОЗИЦИИ В МАТЕРИАЛЕ, а не
-                // по выходному времени; ранние кейфреймы не сдвигают
-                // материал поздних
+                // ДОМЕН СОБЫТИЯ (Р.37): цель чанка — по ВЫХОДНОМУ времени,
+                // а не по позиции в материале. Ранний кейфрейм скорости
+                // больше не сдвигает МОМЕНТ срабатывания поздних ключей —
+                // ни своих, ни чужих (mix/gain/pan индексировались тем же
+                // `s`). Правило середины чанка при этом стало ТОЧНЫМ:
+                // подынтегральная функция линейна, а середина трапеции —
+                // её точное среднее.
                 let tau = (chunk_local as f64 + n as f64 * 0.5) / self.clip_len as f64;
-                let s = source_progress(self.rate, self.rate_points(), tau);
+                let s = tau;
                 let target_rate = eff_rate(self.rate, self.rate_points(), s);
                 if let Some(w) = &mut self.warp {
                     w.set_rate(target_rate);
@@ -1414,27 +1461,36 @@ mod automation_tests {
             let back = output_time_for_source(1.0, &a, s);
             assert!((back - t).abs() < 1e-9, "T(S({t})) = {back}");
         }
-        // независимый численный интегратор: τ(s) трапециями по 1/rate
-        let numeric_t_of_s = |s_target: f64| -> f64 {
+        // независимый численный интегратор: S(τ) трапециями ПО rate
+        // (Р.37: интегрируем скорость по выходному времени, а не 1/rate
+        // по материалу)
+        let numeric_s_of_t = |t_target: f64| -> f64 {
             let n = 200_000;
             let mut acc = 0.0;
-            let mut prev_inv = 1.0 / rate_at(1.0, &a, 0.0).clamp(0.25, 32.0);
+            let mut prev = rate_at(1.0, &a, 0.0).clamp(0.25, 32.0);
             for i in 1..=n {
-                let s = s_target * i as f64 / n as f64;
-                let inv = 1.0 / rate_at(1.0, &a, s).clamp(0.25, 32.0);
-                acc += (s_target / n as f64) * (prev_inv + inv) / 2.0;
-                prev_inv = inv;
+                let t = t_target * i as f64 / n as f64;
+                let r = rate_at(1.0, &a, t).clamp(0.25, 32.0);
+                acc += (t_target / n as f64) * (prev + r) / 2.0;
+                prev = r;
             }
             acc
         };
-        for s in [0.1f64, 0.3, 0.5, 0.7] {
-            let analytic = output_time_for_source(1.0, &a, s);
-            let numeric = numeric_t_of_s(s);
+        for t in [0.1f64, 0.3, 0.5, 0.7] {
+            let analytic = source_progress(1.0, &a, t);
+            let numeric = numeric_s_of_t(t);
             assert!(
                 (analytic - numeric).abs() < 1e-6,
-                "T({s}): аналитика {analytic} vs численно {numeric}"
+                "S({t}): аналитика {analytic} vs численно {numeric}"
             );
         }
+        // S — ПАРАБОЛА, а не экспонента: на линейном разгоне 1→2 за всё
+        // событие интеграл равен ровно средней скорости. Без ln это
+        // считается точно, поэтому и сверяем точно.
+        let ramp = vec![kf(0.0, 1.0), kf(1.0, 2.0)];
+        assert!((source_progress(1.0, &ramp, 1.0) - 1.5).abs() < 1e-15);
+        assert!((source_progress(1.0, &ramp, 0.5) - 0.625).abs() < 1e-15);
+        assert!((output_time_for_source(1.0, &ramp, 1.5) - 1.0).abs() < 1e-12);
     }
 
     #[test]
@@ -1444,23 +1500,24 @@ mod automation_tests {
         assert!((output_time_for_source(0.5, &[], 0.25) - 0.5).abs() < 1e-12);
     }
 
-    /// Якорь к материалу (чистая функция): ранний бамп меняет ВРЕМЯ
-    /// достижения материала, но не rate НА материале.
+    /// Якорь к ВЫХОДНОМУ ВРЕМЕНИ (Р.37, зеркало прежнего теста): ранний
+    /// бамп скорости меняет МАТЕРИАЛ, играющий в поздний момент, но не
+    /// момент, в который срабатывают поздние ключи.
     #[test]
-    fn early_keyframe_shifts_time_not_material() {
+    fn early_keyframe_shifts_material_not_time() {
         let a = vec![kf(0.4, 1.0), kf(0.5, 0.5), kf(0.7, 0.5), kf(0.75, 1.0)];
         let mut b = vec![kf(0.1, 1.0), kf(0.18, 2.0), kf(0.26, 2.0), kf(0.34, 1.0)];
         b.extend(a.iter().cloned());
-        for s in [0.45f64, 0.55, 0.65, 0.72] {
+        for t in [0.45f64, 0.55, 0.65, 0.72, 0.90] {
             assert_eq!(
-                rate_at(1.0, &a, s),
-                rate_at(1.0, &b, s),
-                "rate на материале s={s} не должен зависеть от раннего бампа"
+                rate_at(1.0, &a, t),
+                rate_at(1.0, &b, t),
+                "rate в момент t={t} не должен зависеть от раннего бампа"
             );
         }
-        // а выходное время достижения s=0.5 при бампе меньше
-        let ta = output_time_for_source(1.0, &a, 0.5);
-        let tb = output_time_for_source(1.0, &b, 0.5);
-        assert!(tb < ta, "ускорение раньше = материал достигается раньше: {tb} vs {ta}");
+        // а МАТЕРИАЛ, доигранный к t=0.5, при бампе больше
+        let sa = source_progress(1.0, &a, 0.5);
+        let sb = source_progress(1.0, &b, 0.5);
+        assert!(sb > sa, "ускорение раньше = материала съедено больше: {sb} vs {sa}");
     }
 }

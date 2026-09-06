@@ -307,9 +307,9 @@ fn window_freq_hz(out: &[f32], from_frame: usize, frames: usize) -> f64 {
 
 #[test]
 fn t4_automation_changes_rate_over_time() {
-    // SOURCE-домен (п.1): kf.t — позиция в МАТЕРИАЛЕ. Выход обязан следовать
-    // профилю: на выходном времени τ звучит rate(S(τ)). Чек-точки выходного
-    // времени вычисляются через T(s) = output_time_for_source.
+    // ДОМЕН СОБЫТИЯ (Р.37): kf.t — позиция в материале, но ОСЬ линейна, то
+    // есть на выходном времени τ звучит ровно rate(τ). Чек-точки берутся
+    // прямо из профиля — тесту больше не нужна карта, которую он сторожит.
     let dur = 40 * AUDIO_SAMPLE_RATE as i64;
     let fx = vec![FxInstance::SlowedReverb {
         rate: 1.0,
@@ -337,14 +337,12 @@ fn t4_automation_changes_rate_over_time() {
     assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
 
     let win = AUDIO_SAMPLE_RATE as usize; // окно 1 c
-    // выходные позиции чек-точек — через T(s) от source-позиций профиля
-    let t_of_s = |s: f64| kt_fx::output_time_for_source(1.0, &automation_rate_profile(), s);
     // (профиль здесь и в кривой клипа — один и тот же)
     let checks = [
-        (0.10, 1.0),          // материал до первой точки
-        (t_of_s(0.30), 0.75), // середина спада (материал s=0.30)
-        (t_of_s(0.45), 0.5),  // центр плато (материал s=0.45)
-        (0.95, 1.0),          // далеко после последнего kf
+        (0.10, 1.0),  // до первой точки профиля
+        (0.30, 0.75), // середина спада
+        (0.45, 0.5),  // центр плато
+        (0.95, 1.0),  // далеко после последнего kf
     ];
     for (t, expected_rate) in checks {
         let center = (dur as f64 * t) as usize;
@@ -410,12 +408,18 @@ fn t4_automation_consumes_source_by_integral() {
     let _ = avg;
 }
 
-/// Тест 31 (п.1): кейфреймы приклеены к МАТЕРИАЛУ. Добавление РАННЕГО
-/// кейфрейма (ускорение) сдвигает выходное время, но не материал, на
-/// котором срабатывает поздний кейфрейм замедления. При старой (выходной)
-/// семантике материал точки замедления в сценарии B другой — тест падает.
+/// Тест 31 (Р.33; ПЕРЕВЁРНУТ в Р.37 по решению пользователя). Раньше он
+/// утверждал обратное: «ранний бамп скорости не двигает МАТЕРИАЛ, на
+/// котором срабатывают поздние ключи, но двигает ВРЕМЯ». С Р.37 ось
+/// автоматизации — собственный размах события, поэтому верно зеркальное:
+/// **ранний бамп не двигает МОМЕНТ срабатывания поздних ключей, но
+/// двигает материал, играющий в этот момент.**
+///
+/// Тест не ослаблен, а перевёрнут: проверок столько же, и добавлена проба
+/// в ХВОСТЕ. Проба только на плато (τ=0.55) давала бы ложно-зелёное — там
+/// старая и новая семантика совпадают; расходятся они на τ=0.90.
 #[test]
-fn t31_keyframes_anchor_to_source_material() {
+fn t31_keyframes_anchor_to_event_time() {
     let dur = 20 * AUDIO_SAMPLE_RATE as i64; // L, кадры
     let profile_a: Vec<(f64, f64)> = vec![(0.40, 1.0), (0.50, 0.5), (0.70, 0.5), (0.75, 1.0)];
     let mut profile_b: Vec<(f64, f64)> =
@@ -443,55 +447,62 @@ fn t31_keyframes_anchor_to_source_material() {
         assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
         out
     };
-    let out_a = render(profile_a);
-    let out_b = render(profile_b);
+    let out_a = render(profile_a.clone());
+    let out_b = render(profile_b.clone());
 
-    // выходной кадр, где играет материал src (ramp кодирует source-кадр)
-    let x_of_material = |out: &[f32], src: f64| -> usize {
-        let target = (src * 1e-6) as f32;
-        out.chunks_exact(CH).position(|fr| fr[0] >= target).expect("материал достижим")
+    // материал, играющий на ВЫХОДНОМ прогрессе τ (ramp кодирует кадр)
+    let material_at_out = |out: &[f32], tau: f64| -> f64 {
+        out[((tau * dur as f64) as usize) * CH] as f64 / 1e-6
     };
-    // фактическая скорость НА материале: сколько источника за окно выхода
-    let rate_at_material = |out: &[f32], src: f64| -> f64 {
-        let x = x_of_material(out, src);
-        let w = AUDIO_SAMPLE_RATE as usize; // 1 c
-        let v0 = out[x * CH] as f64;
-        let v1 = out[(x + w) * CH] as f64;
-        (v1 - v0) / (w as f64 * 1e-6)
+    // фактическая скорость на ВЫХОДНОМ прогрессе τ (окно 0.5 c)
+    let rate_at_out = |out: &[f32], tau: f64| -> f64 {
+        let x = (tau * dur as f64) as usize;
+        let w = AUDIO_SAMPLE_RATE as usize / 2;
+        (out[(x + w) * CH] as f64 - out[x * CH] as f64) / (w as f64 * 1e-6)
     };
 
-    // 1) ЯКОРЬ: материал за кейфреймом s=0.5 замедлен в ОБОИХ сценариях
-    let m = 0.55 * dur as f64;
-    let ra = rate_at_material(&out_a, m);
-    let rb = rate_at_material(&out_b, m);
-    assert!((ra - 0.5).abs() < 0.05, "A:材 s=0.55 обязан играть на 0.5, вышло {ra:.3}");
+    // 1) ЯКОРЬ: на одном и том же выходном времени играет одна и та же
+    //    скорость — ранний бамп момент НЕ сдвинул
+    for (tau, want) in [(0.55, 0.5), (0.60, 0.5), (0.64, 0.5), (0.85, 1.0), (0.90, 1.0)] {
+        let ra = rate_at_out(&out_a, tau);
+        let rb = rate_at_out(&out_b, tau);
+        assert!(
+            (ra - want).abs() < 0.06,
+            "A: на τ={tau} обязана играть скорость {want}, вышло {ra:.3}"
+        );
+        assert!(
+            (rb - want).abs() < 0.06,
+            "B: ранний кейфрейм НЕ должен сдвигать МОМЕНТ срабатывания, вышло {rb:.3}"
+        );
+    }
+
+    // 2) бамп активен на СВОЁМ выходном времени, и только у B
+    assert!((rate_at_out(&out_b, 0.22) - 2.0).abs() < 0.2, "B: τ=0.22 ускорено ×2");
+    assert!((rate_at_out(&out_a, 0.22) - 1.0).abs() < 0.1, "A: τ=0.22 без ускорения");
+
+    // 3) ускорение сдвигает МАТЕРИАЛ, играющий в этот момент, а не момент;
+    //    величина сдвига предсказывается картой: S_B(τ) − S_A(τ)
+    let ma = material_at_out(&out_a, 0.5);
+    let mb = material_at_out(&out_b, 0.5);
+    assert!(mb > ma, "с ранним ускорением к τ=0.5 съедено БОЛЬШЕ материала: {mb} vs {ma}");
+    let pred = kt_fx::source_progress(1.0, &profile_b, 0.5)
+        - kt_fx::source_progress(1.0, &profile_a, 0.5);
+    let got = (mb - ma) / dur as f64;
     assert!(
-        (rb - 0.5).abs() < 0.05,
-        "B: ранний кейфрейм НЕ должен сдвигать материал замедления, вышло {rb:.3}"
+        (got - pred).abs() < 8192.0 / dur as f64,
+        "сдвиг материала {got:.5} должен совпадать с предсказанием карты {pred:.5}"
     );
 
-    // 2) бамп активен на своём материале
-    let r_bump = rate_at_material(&out_b, 0.22 * dur as f64);
-    assert!((r_bump - 2.0).abs() < 0.2, "материал s=0.22 ускорен ×2, вышло {r_bump:.3}");
-
-    // 3) ускорение сдвигает ВРЕМЯ достижения материала, не материал
-    let xa = x_of_material(&out_a, 0.5 * dur as f64);
-    let xb = x_of_material(&out_b, 0.5 * dur as f64);
-    let dt_pred = kt_fx::output_time_for_source(1.0, &[], 0.0); // 0 — только для типа
-    let _ = dt_pred;
-    assert!(xa > xb, "с ранним ускорением материал s=0.5 достигается РАНЬШЕ: xa={xa}, xb={xb}");
-    let shift = (xa - xb) as f64 / dur as f64;
-    // предсказание: T_A(0.5) − T_B(0.5)
-    let a: Vec<(f64, f64)> = vec![(0.40, 1.0), (0.50, 0.5), (0.70, 0.5), (0.75, 1.0)];
-    let mut b: Vec<(f64, f64)> = vec![(0.10, 1.0), (0.18, 2.0), (0.26, 2.0), (0.34, 1.0)];
-    b.extend(a.iter().copied());
-    let ta = kt_fx::output_time_for_source(1.0, &a, 0.5);
-    let tb = kt_fx::output_time_for_source(1.0, &b, 0.5);
-    let pred = ta - tb;
-    assert!(
-        (shift - pred).abs() < 8192.0 / dur as f64,
-        "сдвиг времени {shift:.5} должен совпадать с предсказанием карты {pred:.5}"
-    );
+    // 4) к концу события съедено ровно avg_rate материала — на этом стоят
+    //    окно источника и префетч
+    for (out, prof) in [(&out_a, &profile_a), (&out_b, &profile_b)] {
+        let end = material_at_out(out, 0.995) / dur as f64;
+        let want = kt_fx::avg_rate(1.0, prof);
+        assert!(
+            (end - want).abs() < 0.03,
+            "потреблено {end:.4} материала, карта обещает {want:.4}"
+        );
+    }
 }
 
 /// Тест 213 (Р.33 С1): АУДИО-параметры автоматизируются общим механизмом.
@@ -706,5 +717,102 @@ fn t229_new_audio_params() {
         "ширина 0 обязана свести хвост в моно: {} vs {}",
         diff(&mono),
         diff(&plain)
+    );
+}
+
+/// Тест 246 (Р.37 С1): потребление источника — ИНТЕГРАЛ кривой скорости по
+/// ВЫХОДНОМУ времени. Прямая проверка новой семантики, независимая от
+/// GOLDEN_AUDIO: раньше эталон был единственным, кто это сторожил.
+#[test]
+fn t246_consumption_is_the_integral_over_event_time() {
+    let dur = 10 * AUDIO_SAMPLE_RATE as i64;
+    // разгон 1.0 → 2.0 ровно за событие: интеграл = средняя скорость = 1.5
+    let profile: Vec<(f64, f64)> = vec![(0.0, 1.0), (1.0, 2.0)];
+    assert!(
+        (kt_fx::avg_rate(1.0, &profile) - 1.5).abs() < 1e-15,
+        "карта: линейный разгон 1→2 съедает ровно 1.5 длины события"
+    );
+
+    let fx = vec![FxInstance::SlowedReverb {
+        rate: 1.0,
+        mix: 0.0,
+        reverb_delay_ms: 85.0,
+        damp: 0.32,
+        decay: 0.58,
+        wet_gain: 0.95,
+        predelay_ms: 0.0,
+        width: 1.0,
+        automation: vec![],
+    }];
+    let p = fx_project_auto(fx, rate_curve(&profile, dur), "synth:ramp", dur);
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Ramp);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut out = vec![0f32; dur as usize * CH];
+    assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
+
+    // ramp кодирует номер кадра источника — читаем его прямо с выхода
+    let src_at = |tau: f64| out[((tau * dur as f64) as usize) * CH] as f64 / 1e-6;
+    for tau in [0.25f64, 0.5, 0.75, 0.99] {
+        let want = dur as f64 * kt_fx::source_progress(1.0, &profile, tau);
+        let got = src_at(tau);
+        assert!(
+            (got - want).abs() < 8192.0,
+            "τ={tau}: съедено {got:.0} материала, интеграл обещает {want:.0}"
+        );
+    }
+    // квадратичность видна невооружённо: к половине события съедено 0.625
+    // длины (парабола), а не 0.75 (что дала бы линейная интерполяция)
+    assert!((src_at(0.5) / dur as f64 - 0.625).abs() < 0.01);
+}
+
+/// Тест 246b (Р.37 С1): кривая ЛЮБОГО параметра тоже живёт в выходном
+/// времени. Раньше `mix`/`gain`/`pan` индексировались по потреблённому
+/// материалу, и ранний ключ скорости сдвигал момент их срабатывания —
+/// эту половину сторожил только GOLDEN_AUDIO.
+#[test]
+fn t246_gain_curve_peaks_at_event_middle_under_warp() {
+    let dur = 8 * AUDIO_SAMPLE_RATE as i64;
+    let t = |frac: f64| Tick::from_audio_frames((dur as f64 * frac) as i64);
+    // клип замедлен вдвое; громкость — треугольник с пиком в СЕРЕДИНЕ
+    let fx = vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0), FxInstance::gain(0.0)];
+    let auto = vec![
+        vec![],
+        vec![ParamCurve {
+            param: "db".into(),
+            ease: false,
+            keys: vec![
+                AutoKey { t: t(0.0), v: -60.0 },
+                AutoKey { t: t(0.5), v: 0.0 },
+                AutoKey { t: t(1.0), v: -60.0 },
+            ],
+        }],
+    ];
+    let p = fx_project_auto(fx, auto, "synth:sine:440", dur);
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Sine { hz: 440.0 });
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut out = vec![0f32; dur as usize * CH];
+    assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
+
+    let win = AUDIO_SAMPLE_RATE as usize / 2;
+    let rms = |center: usize| -> f64 {
+        let (a, b) = (center.saturating_sub(win / 2), (center + win / 2).min(dur as usize));
+        let s: f64 = out[a * CH..b * CH].iter().map(|v| (*v as f64).powi(2)).sum();
+        (s / ((b - a) * CH) as f64).sqrt()
+    };
+    let mid = rms(dur as usize / 2);
+    let quarter = rms(dur as usize / 4);
+    let three_q = rms(dur as usize * 3 / 4);
+    // пик — в СЕРЕДИНЕ СОБЫТИЯ. На прежней семантике ключ «середина
+    // материала» приходился на КОНЕЦ события (0.5 материала при 0.5×
+    // съедается за всё событие), и здесь была бы монотонно растущая рампа
+    assert!(mid > quarter * 3.0, "пик громкости обязан быть в середине: {mid:.4} vs {quarter:.4}");
+    assert!(mid > three_q * 3.0, "и спадать к концу: {mid:.4} vs {three_q:.4}");
+    assert!(
+        (quarter / three_q).ln().abs() < 0.7,
+        "треугольник симметричен: {quarter:.5} vs {three_q:.5}"
     );
 }
