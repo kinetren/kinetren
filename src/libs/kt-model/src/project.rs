@@ -839,9 +839,16 @@ impl MorphPatch {
         if add.is_empty() {
             return;
         }
-        // ЗАМЕТКА (Р.35): мастер-выключатель цепочки события (`fx_off`)
-        // сейчас гасит и эти эффекты — для слоя это неверно, чинится в
-        // куске «Слой» вместе с t237. Здесь поведение прежнее дословно.
+        // Мастер-выключатель гасит цепочку СОБЫТИЯ, а не слой над ним
+        // (Р.35): своя цепочка уезжает целиком, эффекты слоя действуют.
+        // Иначе выключенная цепочка события молча убивала бы слой,
+        // который к ней никакого отношения не имеет.
+        if c.fx_off {
+            c.fx.clear();
+            c.fx_bypass.clear();
+            c.fx_auto.clear();
+            c.fx_off = false;
+        }
         // fx_bypass короче цепочки = дописанные слоты включены
         // (active_fx трактует отсутствующий флаг как false)
         c.fx.extend(add);
@@ -859,15 +866,24 @@ impl MorpherEvent {
         TickRange::new(self.start, self.start + self.duration)
     }
 
-    /// Цель ли этот клип. `Below`/`Marks`/`Areas` появятся в следующих
-    /// кусках Р.35; сейчас работает замороженный список.
-    pub fn covers(&self, c: &ClipEvent, _p: &Project) -> bool {
+    /// Цель ли этот клип. `Below` — умолчание: всё, что НИЖЕ строки
+    /// морфера в порядке дорожек (adjustment layer). Именованные ссылки
+    /// (`Marks`/`Areas`) появятся стадией С4 Р.35.
+    pub fn covers(&self, c: &ClipEvent, rows: &[(LaneKind, u32)]) -> bool {
         match &self.targets {
             MorphTargets::Clips { ids } => ids.contains(&c.id),
-            // ЗАМЕТКА (Р.35): режим слоя включается куском «Слой»,
-            // именованные ссылки — стадией С4. До тех пор — не цель.
+            MorphTargets::Below => {
+                let mine = rows.iter().position(|&k| k == (LaneKind::Morph, self.lane));
+                let his = rows.iter().position(|&k| k == lane_key(c));
+                matches!((mine, his), (Some(a), Some(b)) if b > a)
+            }
             _ => false,
         }
+    }
+
+    /// Индекс строки морфера — ключ порядка наложения слоёв.
+    pub fn row_in(&self, rows: &[(LaneKind, u32)]) -> usize {
+        rows.iter().position(|&k| k == (LaneKind::Morph, self.lane)).unwrap_or(0)
     }
 
     /// Окна, в которых морфер РЕАЛЬНО меняет ЭТОТ клип. Пусто — клип не
@@ -884,9 +900,9 @@ impl MorpherEvent {
     ///    границу наружу: слой «липнет» к краю кроссфейда, зато соседи по
     ///    дорожке не переслаиваются от резки (находка 1 Р.35);
     /// 6. огрызок короче `crate::MIN_CLIP_DURATION` схлопывается к краю тела.
-    pub fn windows_on(&self, c: &ClipEvent, p: &Project) -> Vec<TickRange> {
+    pub fn windows_on(&self, c: &ClipEvent, p: &Project, rows: &[(LaneKind, u32)]) -> Vec<TickRange> {
         let body = TickRange::new(c.start, c.start + c.duration);
-        if !self.enabled || !self.covers(c, p) || !self.patch.affects(c) {
+        if !self.enabled || !self.covers(c, rows) || !self.patch.affects(c) {
             return Vec::new();
         }
         if !self.timed {
@@ -955,6 +971,15 @@ fn snap_out_of(t: Tick, zones: &[TickRange]) -> Tick {
         t = if (t - z.start) <= (z.end - t) { z.start } else { z.end };
     }
     t
+}
+
+/// Ключ строки события: вид дорожки и её номер. Отображение было
+/// продублировано четырежды в `timeline.rs` и дважды в `convert.rs`.
+pub fn lane_key(c: &ClipEvent) -> (LaneKind, u32) {
+    match c.kind {
+        ClipKind::Video => (LaneKind::Video, c.lane),
+        ClipKind::Audio => (LaneKind::Audio, c.lane),
+    }
 }
 
 /// Старший бит id — признак КУСКА клипа, порождённого морфер-слоем.
@@ -2776,11 +2801,14 @@ impl Project {
         if self.morphers.is_empty() {
             return self.clips.clone(); // быстрый путь: GOLDEN держится на нём
         }
+        let rows = self.rows();
         let mut ms: Vec<&MorpherEvent> = self.morphers.iter().filter(|m| m.enabled).collect();
-        ms.sort_by_key(|m| m.id);
+        // Порядок наложения — СНИЗУ ВВЕРХ (нижний слой первым, как
+        // adjustment layer в AE); внутри строки прежнее правило по id.
+        ms.sort_by_key(|m| (std::cmp::Reverse(m.row_in(&rows)), m.id));
         let mut out = Vec::with_capacity(self.clips.len());
         for c in &self.clips {
-            let wins: Vec<Vec<TickRange>> = ms.iter().map(|m| m.windows_on(c, self)).collect();
+            let wins: Vec<Vec<TickRange>> = ms.iter().map(|m| m.windows_on(c, self, &rows)).collect();
             let body = TickRange::new(c.start, c.start + c.duration);
             // точки реза — ВНУТРЕННИЕ края окон; общий набор на все
             // морферы, чтобы они не резали куски друг друга

@@ -262,7 +262,7 @@ fn t236_untimed_morpher_ignores_block_position() {
     let eff = p.effective_clips();
     assert_eq!(eff.len(), 1, "старый морфер не режет");
     assert_eq!(eff[0].media, MediaId(2), "и действует независимо от времени блока");
-    assert_eq!(p.morphers[0].windows_on(&p.clips[0], &p), vec![TickRange::new(Tick(0), LEN)]);
+    assert_eq!(p.morphers[0].windows_on(&p.clips[0], &p, &p.rows()), vec![TickRange::new(Tick(0), LEN)]);
 
     // выключенный морфер не действует и не режет
     p.morphers[0].timed = true;
@@ -270,4 +270,145 @@ fn t236_untimed_morpher_ignores_block_position() {
     p.morphers[0].duration = Tick(30_000);
     p.morphers[0].enabled = false;
     assert_eq!(p.effective_clips(), p.clips, "выключенный морфер прозрачен");
+}
+
+/// Тест 235 (Р.35 С1, кусок 4): режим СЛОЯ. Морфер без выделения
+/// действует на всё, что НИЖЕ его строки; порядок наложения — снизу
+/// вверх (нижний слой первым, как adjustment layer в AE); перестановка
+/// строк меняет порядок эффектов и откатывается undo.
+#[test]
+fn t235_below_layer_and_bottom_up_order() {
+    let mut p = base();
+    p.video_lanes = 2;
+    p.audio_lanes = 1;
+    p.clips.push(clip(20, ClipKind::Video, 1, Tick(0), LEN));
+    p.clips.push(clip(30, ClipKind::Audio, 0, Tick(0), LEN));
+    let mut m = layer(Tick(0), LEN);
+    m.targets = MorphTargets::Below;
+    m.patch = MorphPatch {
+        video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+        ..Default::default()
+    };
+    p.morphers.push(m);
+    // морф-строка по умолчанию САМАЯ НИЖНЯЯ — «ниже» её пусто
+    assert_eq!(p.effective_clips(), p.clips, "снизу списка слой ничего не накрывает");
+
+    // поднимаем морф-строку наверх — накрывает всё видео под собой
+    let mut order = p.rows();
+    let morph = order.remove(order.iter().position(|&k| k.0 == LaneKind::Morph).unwrap());
+    order.insert(0, morph);
+    p.set_lane_order(&order);
+    let eff = p.effective_clips();
+    assert_eq!(eff.len(), 3, "слой накрывает целиком — резки нет");
+    for c in eff.iter().filter(|c| c.kind == ClipKind::Video) {
+        assert_eq!(c.fx.len(), 1, "видео под слоем получило эффект");
+    }
+    assert!(
+        eff.iter().find(|c| c.id == ClipId(30)).unwrap().fx.is_empty(),
+        "видео-слой не трогает аудио"
+    );
+
+    // слой видит ровно то, что НИЖЕ: между двумя видео-дорожками
+    let mut order = p.rows();
+    let morph = order.remove(order.iter().position(|&k| k.0 == LaneKind::Morph).unwrap());
+    order.insert(1, morph);
+    p.set_lane_order(&order);
+    let eff = p.effective_clips();
+    let above = eff.iter().find(|c| c.id == ClipId(10)).unwrap();
+    let below = eff.iter().find(|c| c.id == ClipId(20)).unwrap();
+    assert!(above.fx.is_empty(), "то, что ВЫШЕ слоя, не трогается");
+    assert_eq!(below.fx.len(), 1, "то, что ниже, — трогается");
+}
+
+/// Тест 235b: порядок наложения снизу вверх и его откат undo.
+#[test]
+fn t235_layer_order_is_bottom_up_and_undoable() {
+    let mut p = base();
+    p.morph_lanes = 2;
+    for (id, lane, fx) in [
+        (1u64, 0u32, FxInstance::Mirror { horizontal: true, vertical: false }),
+        (2, 1, FxInstance::Mirror { horizontal: false, vertical: true }),
+    ] {
+        let mut m = layer(Tick(0), LEN);
+        m.id = MorphId(id);
+        m.lane = lane;
+        m.targets = MorphTargets::Below;
+        m.patch = MorphPatch { video_fx: vec![fx], ..Default::default() };
+        p.morphers.push(m);
+    }
+    // обе морф-строки — над видео
+    let mut order = p.rows();
+    order.retain(|k| k.0 != LaneKind::Morph);
+    order.insert(0, (LaneKind::Morph, 0));
+    order.insert(1, (LaneKind::Morph, 1));
+    p.set_lane_order(&order);
+    let mut m = TimelineModel::new(p);
+    let chain = |m: &TimelineModel| m.project().effective_clips()[0].fx.clone();
+    let first = chain(&m);
+    assert_eq!(first.len(), 2, "оба слоя действуют");
+    assert!(
+        matches!(first[0], FxInstance::Mirror { vertical: true, .. }),
+        "НИЖНИЙ слой (строка 1) применён первым"
+    );
+
+    // меняем строки местами — порядок эффектов обязан перевернуться
+    let mut order = m.project().rows();
+    order.swap(0, 1);
+    m.apply(Command::SetLaneOrder { order }).unwrap();
+    let swapped = chain(&m);
+    assert!(
+        matches!(swapped[0], FxInstance::Mirror { horizontal: true, .. }),
+        "перестановка строк перевернула порядок наложения"
+    );
+    m.undo().unwrap();
+    assert_eq!(chain(&m), first, "undo вернул и порядок строк, и порядок эффектов");
+}
+
+/// Тест 239 (Р.35 С1, кусок 4): bake РЕЖЕТ честно. Рендер-вид до bake и
+/// содержимое клипов после совпадают, куски получают настоящие id,
+/// переход перевешивается на кусок со стыком, всё — одним undo-шагом.
+#[test]
+fn t239_bake_materializes_slices() {
+    let mut p = base();
+    p.clips.push(clip(11, ClipKind::Video, 0, LEN, LEN));
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: Some(ClipId(10)),
+        b: Some(ClipId(11)),
+        in_offset: Tick(9_000),
+        out_offset: Tick(9_000),
+        kind: Default::default(),
+        audio: Default::default(),
+        auto: vec![],
+    });
+    p.morphers.push(layer(Tick(30_000), Tick(30_000)));
+    p.validate().unwrap();
+    let before = p.effective_clips();
+    assert_eq!(before.len(), 4, "три куска первого клипа + сосед");
+
+    let mut m = TimelineModel::new(p);
+    m.apply(Command::BakeMorpher { id: MorphId(1) }).unwrap();
+    assert!(m.project().morphers.is_empty(), "bake убрал событие");
+    assert_eq!(m.project().clips.len(), 4, "куски стали настоящими клипами");
+    assert!(
+        m.project().clips.iter().all(|c| slice_origin(c.id).is_none()),
+        "синтетических id в проекте не остаётся"
+    );
+    // геометрия и материал — те же, что рисовались
+    for (a, b) in m.project().clips.iter().zip(&before) {
+        assert_eq!((a.start, a.duration, a.source_in, a.media), (b.start, b.duration, b.source_in, b.media));
+        assert_eq!(a.fx, b.fx);
+    }
+    assert_eq!(m.project().effective_clips().len(), 4, "рендер не изменился");
+    // переход уехал на кусок, которому достался стык
+    let t = &m.project().transitions[0];
+    let a = m.project().clips.iter().find(|c| Some(c.id) == t.a).unwrap();
+    assert_eq!(a.start + a.duration, LEN, "конец перехода — у куска со стыком");
+    assert_ne!(t.a, Some(ClipId(10)), "а не у куска №0");
+    m.project().validate().unwrap();
+
+    m.undo().unwrap();
+    assert_eq!(m.project().clips.len(), 2, "один undo вернул монтаж");
+    assert_eq!(m.project().morphers.len(), 1, "и морфер");
+    assert_eq!(m.project().transitions[0].a, Some(ClipId(10)));
 }

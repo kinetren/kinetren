@@ -374,10 +374,17 @@ fn t214_master_switch_disables_chain_without_losing_it() {
         enabled: true,
     });
     p.validate().unwrap();
-    let on = p.effective_clips()[0].fx.len();
+    // Мастер-выключатель гасит цепочку СОБЫТИЯ, а не слой над ним
+    // (Р.35): своя цепочка уезжает, эффект морфера действует.
+    let layered = p.effective_clips().remove(0);
+    assert_eq!(layered.active_fx().len(), 1, "слой поверх выключенной цепочки события");
+    assert!(!layered.fx_off, "и сам выключатель к слою не относится");
+    // выключенный морфер не применяется к целям, но остаётся на дорожке
     p.morphers[0].enabled = false;
-    let off = p.effective_clips()[0].fx.len();
-    assert!(on > off, "выключенный морфер не должен добавлять эффекты: {on} vs {off}");
+    let off = p.effective_clips().remove(0);
+    assert!(off.active_fx().is_empty(), "выключенный морфер не добавляет эффектов");
+    assert_eq!(off.fx, before.fx, "и не трогает цепочку события");
+    assert!(off.fx_off, "выключатель события остался выключателем");
     assert_eq!(p.morphers.len(), 1, "и при этом остаётся на дорожке");
 }
 

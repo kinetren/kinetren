@@ -812,11 +812,54 @@ impl TimelineModel {
             Command::RemoveMorpher { id } => p.morphers.retain(|m| m.id != id),
             Command::BakeMorpher { id } => {
                 let Some(pos) = p.morphers.iter().position(|m| m.id == id) else { return };
-                let m = p.morphers.remove(pos);
-                let ids = m.targets.clip_ids().to_vec();
-                for c in &mut p.clips {
-                    if ids.contains(&c.id) {
-                        m.patch.apply_to(c);
+                // «bake == то, что рисовалось» — значит РЕЗКА тоже
+                // материализуется. Считаем ровно этот морфер: остальные
+                // остаются жить и режут по-прежнему.
+                let baked = {
+                    let mut q = p.clone();
+                    q.morphers.retain(|m| m.id == id);
+                    q.effective_clips()
+                };
+                p.morphers.remove(pos);
+                // синтетические id кусков → настоящие; кусок №0 держит id
+                // оригинала (правило `Split`), остальные получают max+1…
+                let mut next = p.clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 1;
+                // (оригинал, новый id, конец куска) — для перевешивания
+                let mut born: Vec<(ClipId, ClipId, Tick)> = Vec::new();
+                let mut clips = Vec::with_capacity(baked.len());
+                for mut c in baked {
+                    if let Some(origin) = slice_origin(c.id) {
+                        c.id = ClipId(next);
+                        next += 1;
+                        born.push((origin, c.id, c.start + c.duration));
+                    }
+                    clips.push(c);
+                }
+                let ends: Vec<(ClipId, Tick)> =
+                    p.clips.iter().map(|c| (c.id, c.start + c.duration)).collect();
+                p.clips = clips;
+                if born.is_empty() {
+                    return;
+                }
+                // переход, где разрезанный клип был OUTGOING, уезжает к
+                // куску, которому достался стык (прежний КОНЕЦ тела)
+                for t in &mut p.transitions {
+                    let Some(a) = t.a else { continue };
+                    let Some(&(_, end)) = ends.iter().find(|(i, _)| *i == a) else { continue };
+                    if let Some(&(_, new, _)) =
+                        born.iter().find(|(o, _, e)| *o == a && *e == end)
+                    {
+                        t.a = Some(new);
+                    }
+                }
+                // куски наследуют таргетинг ОСТАЛЬНЫХ морферов (D5 v1)
+                for m in &mut p.morphers {
+                    if let Some(ids) = m.targets.clip_ids_mut() {
+                        for (origin, new, _) in &born {
+                            if ids.contains(origin) {
+                                ids.push(*new);
+                            }
+                        }
                     }
                 }
             }
