@@ -2713,6 +2713,7 @@ impl KtApp {
             in_offset,
             out_offset,
             kind: TransitionKind::Crossfade,
+            audio: Default::default(),
         };
         self.apply(if existing.is_some() {
             Command::SetTransition(ev)

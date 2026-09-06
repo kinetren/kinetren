@@ -183,6 +183,7 @@ fn golden_project() -> Project {
         in_offset: Tick(sec / 4),
         out_offset: Tick(sec / 4),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     p

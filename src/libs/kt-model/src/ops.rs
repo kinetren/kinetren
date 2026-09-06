@@ -525,6 +525,7 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
             in_offset: joint - ov0,
             out_offset: ov1 - joint,
             kind: TransitionKind::Crossfade,
+            audio: Default::default(),
         });
         report.transitions_created += 1;
     }

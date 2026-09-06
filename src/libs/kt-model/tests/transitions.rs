@@ -42,6 +42,7 @@ fn tr(id: u64, a: u64, b: u64, in_off: i64, out_off: i64) -> TransitionEvent {
         in_offset: Tick(in_off),
         out_offset: Tick(out_off),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     }
 }
 
@@ -227,6 +228,7 @@ fn fade(id: u64, a: Option<u64>, b: Option<u64>, in_off: i64, out_off: i64) -> T
         in_offset: Tick(in_off),
         out_offset: Tick(out_off),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     }
 }
 
@@ -488,4 +490,80 @@ fn t159_restore_never_breaks_the_gesture() {
             "reversed={reversed}: вернулось столько, сколько есть материала"
         );
     }
+}
+
+/// Р.33 С4: у каждого вида перехода — полная спека параметров (та же, что
+/// у эффектов), значения ставятся/читаются/клампятся, теги уникальны, а
+/// умолчания конструктора совпадают с умолчаниями спеки. Без этого UI
+/// перехода пришлось бы писать руками — ровно тот разнобой, на который
+/// жаловался пользователь.
+#[test]
+fn t223_transition_kind_specs() {
+    let all = TransitionKind::ALL;
+    assert_eq!(all.len(), 16, "16 видов по решению пользователя");
+    let mut tags: Vec<&str> = all.iter().map(|k| k.tag()).collect();
+    tags.sort_unstable();
+    let uniq = tags.len();
+    tags.dedup();
+    assert_eq!(tags.len(), uniq, "теги видов уникальны: {tags:?}");
+
+    let mut with_params = 0;
+    for k in TransitionKind::ALL {
+        let mut k = k.clone();
+        for spec in k.param_specs() {
+            with_params += 1;
+            let (name, lo, hi) = (spec.name, spec.min, spec.max);
+            assert!(
+                (lo..=hi).contains(&spec.default),
+                "{}.{name}: дефолт {} вне [{lo}, {hi}]",
+                k.tag(),
+                spec.default
+            );
+            assert!(spec.step > 0.0, "{}.{name}: шаг обязан быть положительным", k.tag());
+            // умолчание вида == умолчание спеки: иначе «сбросить» в UI
+            // даёт не то, что даёт создание перехода
+            let fresh = TransitionKind::ALL.iter().find(|x| x.tag() == k.tag()).unwrap().clone();
+            let got = fresh.get_param(name).unwrap();
+            assert!(
+                (got - spec.default).abs() <= 1e-9,
+                "{}.{name}: конструктор даёт {got}, спека — {}",
+                k.tag(),
+                spec.default
+            );
+            let mid = (lo + hi) / 2.0;
+            assert!(k.set_param(name, mid), "{}.{name} не установился", k.tag());
+            let got = k.get_param(name).unwrap();
+            assert!((got - mid).abs() <= 0.5, "{}.{name}: {got} vs {mid}", k.tag());
+            assert!(k.set_param(name, hi + 1e6));
+            assert!(k.get_param(name).unwrap() <= hi + 1e-9, "{}.{name} не клампится", k.tag());
+            assert!(k.set_param(name, lo - 1e6));
+            assert!(k.get_param(name).unwrap() >= lo - 1e-9);
+        }
+        assert!(!k.set_param("no_such_param", 1.0), "{}: чужое имя — отказ", k.tag());
+    }
+    assert!(with_params >= 20, "параметров у видов: {with_params}");
+    assert!(
+        TransitionKind::Crossfade.param_specs().is_empty(),
+        "у кроссфейда числовых параметров нет — он остаётся прежним"
+    );
+
+    // кривые аудио: монотонны, края точные, сумма мощностей не проваливается
+    for c in [AudioCurve::EqualPower, AudioCurve::Linear, AudioCurve::SCurve, AudioCurve::Exponential] {
+        assert!((c.rise(0.0)).abs() < 1e-12, "{c:?}: старт с нуля");
+        assert!((c.rise(1.0) - 1.0).abs() < 1e-12, "{c:?}: конец в единице");
+        let mut prev = -1.0;
+        for i in 0..=100 {
+            let v = c.rise(i as f64 / 100.0);
+            assert!(v >= prev - 1e-12, "{c:?}: не монотонна в {i}");
+            prev = v;
+        }
+    }
+    // характер кривых по сумме МОЩНОСТЕЙ в середине стыка (обе половины
+    // считаются одной формулой, поэтому вклад каждой — rise(0.5)^2)
+    let mid = |c: AudioCurve| 2.0 * c.rise(0.5) * c.rise(0.5);
+    assert!((mid(AudioCurve::EqualPower) - 1.0).abs() < 1e-12, "equal-power держит мощность");
+    assert!((mid(AudioCurve::SCurve) - 1.0).abs() < 1e-12, "S-кривая тоже держит мощность");
+    assert!((mid(AudioCurve::Linear) - 0.5).abs() < 1e-12, "линейная даёт классический −3 dB");
+    assert!(mid(AudioCurve::Exponential) < 0.5, "экспонента — намеренно глубокий провал");
+    assert_eq!(AudioCurve::default(), AudioCurve::EqualPower, "умолчание — прежняя формула");
 }

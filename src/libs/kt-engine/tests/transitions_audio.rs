@@ -79,6 +79,7 @@ fn t136_converted_overlap_matches_old_crossfade_math() {
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
 
@@ -115,6 +116,7 @@ fn t136_fade_math_and_handle_material() {
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     let (out, underruns) = render(&p, &[1, 2], 14_336);
@@ -156,6 +158,7 @@ fn t136_missing_left_handle_is_silent_without_underruns() {
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     let (out, underruns) = render(&p, &[1, 2], 12_288);
@@ -184,6 +187,7 @@ fn t136_fx_path_handles_match_plain() {
             in_offset: Tick::from_audio_frames(2_048),
             out_offset: Tick::from_audio_frames(2_048),
             kind: TransitionKind::Crossfade,
+            audio: Default::default(),
         });
         p.validate().unwrap();
         p
@@ -209,6 +213,7 @@ fn t136_reversed_incoming_handle_mirrors_source() {
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     let (out, underruns) = render(&p, &[1, 2], 14_336);
@@ -239,6 +244,7 @@ fn t136_wanted_covers_handles() {
         in_offset: Tick::from_audio_frames(2_048),
         out_offset: Tick::from_audio_frames(2_048),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);
@@ -265,6 +271,7 @@ fn t156_audio_fade_ramps_from_silence() {
         in_offset: Tick::ZERO,
         out_offset: Tick::from_audio_frames(2400), // фейд-ин на 2400 кадров
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     let (out, underruns) = render(&p, &[1], 4800);
@@ -298,6 +305,7 @@ fn t156_audio_fade_out_ends_in_silence() {
         in_offset: Tick::from_audio_frames(2400),
         out_offset: Tick::ZERO,
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     let (out, _) = render(&p, &[1], 4800);

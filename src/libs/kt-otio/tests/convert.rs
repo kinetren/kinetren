@@ -60,6 +60,7 @@ fn rich_project() -> Project {
         in_offset: Tick(9_000),
         out_offset: Tick(4_500),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.markers.push(Marker { t: Tick(15_000), duration: Tick(30_000), name: "range".into(), color: None });
     p.markers.push(Marker::named(Tick(120_000), "point"));
@@ -645,6 +646,106 @@ fn t212_pre_v3_curves_migrate_to_material_ticks() {
     let again = save_project(&b.project, &b.retained, None);
     let v: serde_json::Value = serde_json::from_str(&again).unwrap();
     assert_eq!(v["metadata"]["kt"]["v"], 3, "перезапись поднимает файл до v3");
+}
+
+/// Вид перехода и кривая его аудио живут в файле (Р.33 С4): вайп остаётся
+/// вайпом после круга, наружу уходит осмысленный `transition_type`, файл
+/// поднимается до v3, а обычный кроссфейд байт-стабилен и остаётся v1.
+#[test]
+fn t222_transition_kind_roundtrip_and_version() {
+    // 1. обычный кроссфейд ничего не меняет в файле
+    let plain = rich_project();
+    let text = save_project(&plain, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 1, "кроссфейд по умолчанию не бампит версию");
+    let tr = find_transition(&v);
+    assert_eq!(tr["transition_type"], "SMPTE_Dissolve");
+    assert!(tr["metadata"].get("kt").is_none(), "у кроссфейда наш конверт не пишется");
+
+    // 2. вайп с параметрами и не-дефолтной кривой аудио
+    let mut p = rich_project();
+    p.transitions[0].kind = TransitionKind::Wipe {
+        dir: Dir::Up,
+        softness: 0.25,
+        angle: 12.0,
+    };
+    p.transitions[0].audio = AudioCurve::SCurve;
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 3, "вид перехода поднимает файл до v3");
+    let tr = find_transition(&v);
+    assert_eq!(tr["transition_type"], "SMPTE_Wipe", "вайп наружу — стандартным типом");
+    assert_eq!(tr["metadata"]["kt"]["kind"]["kind"], "wipe");
+    assert_eq!(tr["metadata"]["kt"]["audio"], "s_curve");
+
+    let b = load_project(&text, None).expect("файл с вайпом читается");
+    assert_eq!(b.project.transitions, p.transitions, "вид и кривая пережили круг");
+    let again = save_project(&b.project, &b.retained, None);
+    assert_eq!(text, again, "идемпотентность записи с видом перехода");
+
+    // 3. возврат к кроссфейду ЧИСТИТ наш конверт: устаревшее «wipe» из
+    // retained не должно уехать обратно в файл
+    let mut back = b.project.clone();
+    back.transitions[0].kind = TransitionKind::Crossfade;
+    back.transitions[0].audio = AudioCurve::EqualPower;
+    let text = save_project(&back, &b.retained, None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 1, "без вида перехода файл снова v1");
+    let tr = find_transition(&v);
+    assert!(tr["metadata"].get("kt").is_none(), "конверт вида убран целиком");
+
+    // 4. чужой transition_type не подменяется нашим (passthrough, т.152)
+    let mut alien: serde_json::Value = serde_json::from_str(&text).unwrap();
+    *find_transition_mut(&mut alien) = {
+        let mut t = find_transition(&alien).clone();
+        t["transition_type"] = serde_json::json!("Vendor_Fancy");
+        t
+    };
+    let src = serde_json::to_string_pretty(&alien).unwrap();
+    let b = load_project(&src, None).expect("чужой тип перехода читается");
+    let out = save_project(&b.project, &b.retained, None);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(
+        find_transition(&v)["transition_type"],
+        "Vendor_Fancy",
+        "чужой тип возвращается как был"
+    );
+
+    // 5. нечитаемый вид — не молчание: замечание и честный кроссфейд
+    let mut broken: serde_json::Value = serde_json::from_str(&text).unwrap();
+    find_transition_mut(&mut broken)["metadata"]["kt"] = serde_json::json!({ "kind": "чепуха" });
+    let b = load_project(&serde_json::to_string_pretty(&broken).unwrap(), None)
+        .expect("битый вид не валит файл целиком");
+    assert_eq!(b.project.transitions[0].kind, TransitionKind::Crossfade);
+    assert!(
+        b.notices.iter().any(|n| n.contains("transition kind")),
+        "битый вид обязан дать замечание, а не тишину: {:?}",
+        b.notices
+    );
+}
+
+/// Первый Transition в дереве дорожек (в rich_project он один).
+fn find_transition(v: &serde_json::Value) -> &serde_json::Value {
+    for tr in v["tracks"]["children"].as_array().unwrap() {
+        for k in tr["children"].as_array().unwrap() {
+            if k["OTIO_SCHEMA"].as_str().is_some_and(|s| s.starts_with("Transition.")) {
+                return k;
+            }
+        }
+    }
+    panic!("в файле нет перехода");
+}
+
+fn find_transition_mut(v: &mut serde_json::Value) -> &mut serde_json::Value {
+    for tr in v["tracks"]["children"].as_array_mut().unwrap() {
+        for k in tr["children"].as_array_mut().unwrap() {
+            if k["OTIO_SCHEMA"].as_str().is_some_and(|s| s.starts_with("Transition.")) {
+                return k;
+            }
+        }
+    }
+    panic!("в файле нет перехода");
 }
 
 #[test]

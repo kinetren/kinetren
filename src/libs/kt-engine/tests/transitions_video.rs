@@ -42,6 +42,7 @@ fn project_pair() -> Project {
         in_offset: Tick(9_000),
         out_offset: Tick(9_000),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     p
@@ -170,6 +171,7 @@ fn t156_solo_fade_scales_alpha_and_stays_complete() {
         in_offset: Tick(0),
         out_offset: Tick(18_000), // фейд-ин: первые 0.2 c клипа
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     let mut vr = VideoRenderer::new(&p);
@@ -206,6 +208,7 @@ fn t156_fade_out_goes_dark_at_the_edge() {
         in_offset: Tick(18_000),
         out_offset: Tick(0),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     let mut vr = VideoRenderer::new(&p);

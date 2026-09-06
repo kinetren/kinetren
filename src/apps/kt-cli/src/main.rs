@@ -490,6 +490,7 @@ fn demo_project() -> Project {
         in_offset: t(2.0),
         out_offset: t(2.0),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.region = Some(Region { start: t(34.0), end: t(66.0) });
     p.loop_enabled = true;

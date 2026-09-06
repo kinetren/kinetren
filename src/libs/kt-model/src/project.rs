@@ -40,12 +40,274 @@ pub struct TransitionId(pub u64);
 /// Минимальная суммарная ширина окна перехода (1 мс, как MIN_CLIP_DURATION).
 pub const MIN_TRANSITION_DURATION: Tick = Tick(90);
 
-/// Вид перехода. Пока один: аудио — equal-power кроссфейд (формула теста 2),
-/// видео — линейный dissolve. В OTIO пишется как SMPTE_Dissolve.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Направление жеста перехода. Одно поле вместо четырёх видов: ядро у
+/// «влево/вправо/вверх/вниз» одно, а пресеты в UI разные.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum Dir {
+    #[default]
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+impl Dir {
+    /// Единичный вектор направления в координатах кадра (X вправо, Y вниз).
+    pub fn vec(self) -> (f64, f64) {
+        match self {
+            Dir::Left => (-1.0, 0.0),
+            Dir::Right => (1.0, 0.0),
+            Dir::Up => (0.0, -1.0),
+            Dir::Down => (0.0, 1.0),
+        }
+    }
+}
+
+/// Вид перехода (Р.33 п.1: «переходы хотелось бы разные сделать, накидай
+/// там разных 10-20 современных, управление ими надо унифицировать как
+/// fx-chain»). Устроен как `FxInstance`: тег + поля-параметры, спеки
+/// параметров общие с эффектами — поэтому переход получает и единый UI
+/// полей, и, когда дойдут руки, автоматизацию тем же механизмом.
+///
+/// `Crossfade` — умолчание и ровно прежний путь рендера: файлы без
+/// параметров байт-стабильны, а GOLDEN не двигается.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TransitionKind {
+    /// Линейный dissolve (видео) + кроссфейд (аудио).
+    #[default]
     Crossfade,
+    /// Край едет по кадру: линейный вайп, `angle` даёт диагональ.
+    Wipe {
+        #[serde(default)]
+        dir: Dir,
+        #[serde(default)]
+        angle: f64,
+        #[serde(default = "default_soft")]
+        softness: f64,
+    },
+    /// Раскрытие из центра: круг/ромб/прямоугольник.
+    Iris {
+        #[serde(default)]
+        shape: IrisShape,
+        #[serde(default = "default_soft")]
+        softness: f64,
+    },
+    /// Стрелка часов вокруг центра.
+    Clock {
+        #[serde(default)]
+        reverse: bool,
+        #[serde(default = "default_soft")]
+        softness: f64,
+    },
+    /// Шторки: две створки расходятся от центра.
+    Barn {
+        #[serde(default)]
+        vertical: bool,
+        #[serde(default = "default_soft")]
+        softness: f64,
+    },
+    /// Вайп по ЯРКОСТИ уходящего кадра — «проявление» по картинке.
+    Luma {
+        #[serde(default)]
+        invert: bool,
+        #[serde(default = "default_soft")]
+        softness: f64,
+    },
+    /// Входящий выталкивает уходящий за край.
+    Push {
+        #[serde(default)]
+        dir: Dir,
+    },
+    /// Входящий наезжает поверх, уходящий стоит.
+    Slide {
+        #[serde(default)]
+        dir: Dir,
+    },
+    /// Наплыв с приближением: уходящий разъезжается, входящий налетает.
+    Zoom {
+        #[serde(default = "default_zoom_amount")]
+        amount: f64,
+    },
+    /// Поворот с наплывом.
+    Spin {
+        #[serde(default = "default_one")]
+        turns: f64,
+        #[serde(default = "default_zoom_amount")]
+        amount: f64,
+    },
+    /// Резкий пролёт камерой со смазом.
+    Whip {
+        #[serde(default)]
+        dir: Dir,
+        #[serde(default = "default_whip_blur")]
+        blur: f64,
+    },
+    /// Растворение через размытие обоих кадров.
+    BlurDissolve {
+        #[serde(default = "default_blur_amount")]
+        amount: f64,
+    },
+    /// Растворение через укрупнение пикселей.
+    Pixelate {
+        #[serde(default = "default_pixelate")]
+        amount: f64,
+    },
+    /// Цифровой сбой: сдвиги строк и разъезд каналов.
+    Glitch {
+        #[serde(default = "default_glitch")]
+        amount: f64,
+    },
+    /// Засветка: кадр уходит в цвет и возвращается.
+    Flash {
+        #[serde(default = "default_255")]
+        color_r: u8,
+        #[serde(default = "default_255")]
+        color_g: u8,
+        #[serde(default = "default_255")]
+        color_b: u8,
+        #[serde(default = "default_one")]
+        strength: f64,
+    },
+    /// Через цвет: уходящий гаснет в цвет, из него проявляется входящий.
+    Dip {
+        #[serde(default)]
+        color_r: u8,
+        #[serde(default)]
+        color_g: u8,
+        #[serde(default)]
+        color_b: u8,
+    },
+}
+
+/// Форма раскрытия у Iris.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IrisShape {
+    #[default]
+    Circle,
+    Diamond,
+    Box,
+}
+
+fn default_soft() -> f64 {
+    0.15
+}
+
+fn default_zoom_amount() -> f64 {
+    0.4
+}
+
+fn default_whip_blur() -> f64 {
+    0.6
+}
+
+fn default_blur_amount() -> f64 {
+    24.0
+}
+
+fn default_pixelate() -> f64 {
+    48.0
+}
+
+fn default_glitch() -> f64 {
+    0.5
+}
+
+impl TransitionKind {
+    /// Все виды с УМОЛЧАНИЯМИ параметров — единственный реестр: по нему
+    /// строится меню выбора в UI и по нему же тесты проверяют полноту
+    /// спек. Новый вид, не попавший сюда, тестом виден сразу.
+    pub const ALL: &'static [TransitionKind] = &[
+        TransitionKind::Crossfade,
+        TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.15 },
+        TransitionKind::Iris { shape: IrisShape::Circle, softness: 0.15 },
+        TransitionKind::Clock { reverse: false, softness: 0.15 },
+        TransitionKind::Barn { vertical: false, softness: 0.15 },
+        TransitionKind::Luma { invert: false, softness: 0.15 },
+        TransitionKind::Push { dir: Dir::Left },
+        TransitionKind::Slide { dir: Dir::Left },
+        TransitionKind::Zoom { amount: 0.4 },
+        TransitionKind::Spin { turns: 1.0, amount: 0.4 },
+        TransitionKind::Whip { dir: Dir::Left, blur: 0.6 },
+        TransitionKind::BlurDissolve { amount: 24.0 },
+        TransitionKind::Pixelate { amount: 48.0 },
+        TransitionKind::Glitch { amount: 0.5 },
+        TransitionKind::Flash { color_r: 255, color_g: 255, color_b: 255, strength: 1.0 },
+        TransitionKind::Dip { color_r: 0, color_g: 0, color_b: 0 },
+    ];
+
+    /// Тег вида, как он лежит в файле (для UI и сравнения).
+    pub fn tag(&self) -> &'static str {
+        match self {
+            TransitionKind::Crossfade => "crossfade",
+            TransitionKind::Wipe { .. } => "wipe",
+            TransitionKind::Iris { .. } => "iris",
+            TransitionKind::Clock { .. } => "clock",
+            TransitionKind::Barn { .. } => "barn",
+            TransitionKind::Luma { .. } => "luma",
+            TransitionKind::Push { .. } => "push",
+            TransitionKind::Slide { .. } => "slide",
+            TransitionKind::Zoom { .. } => "zoom",
+            TransitionKind::Spin { .. } => "spin",
+            TransitionKind::Whip { .. } => "whip",
+            TransitionKind::BlurDissolve { .. } => "blur_dissolve",
+            TransitionKind::Pixelate { .. } => "pixelate",
+            TransitionKind::Glitch { .. } => "glitch",
+            TransitionKind::Flash { .. } => "flash",
+            TransitionKind::Dip { .. } => "dip",
+        }
+    }
+
+    /// Числовые параметры вида — та же спека, что у эффектов, поэтому UI
+    /// рисует их тем же кодом.
+    pub fn param_specs(&self) -> &'static [ParamSpec] {
+        transition_specs(self)
+    }
+
+    pub fn param_spec(&self, name: &str) -> Option<&'static ParamSpec> {
+        self.param_specs().iter().find(|s| s.name == name)
+    }
+
+    pub fn set_param(&mut self, name: &str, v: f64) -> bool {
+        let Some(spec) = self.param_spec(name) else { return false };
+        transition_set_param(self, name, v.clamp(spec.min, spec.max))
+    }
+
+    pub fn get_param(&self, name: &str) -> Option<f64> {
+        transition_get_param(self, name)
+    }
+}
+
+/// Кривая аудио-кроссфейда (Р.33 п.1, решение пользователя: у
+/// «вайпов/глитчей» звукового смысла нет, поэтому звук всегда
+/// кроссфейдится, но кривую можно выбрать). Умолчание — equal-power:
+/// ровно прежняя формула, GOLDEN_AUDIO не двигается.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioCurve {
+    #[default]
+    EqualPower,
+    Linear,
+    SCurve,
+    Exponential,
+}
+
+impl AudioCurve {
+    /// Вес НАРАСТАЮЩЕЙ стороны в позиции t ∈ [0,1]. Затухающая сторона
+    /// считается тем же кодом от (1 − t) — иначе половинки разъезжаются.
+    pub fn rise(self, t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            AudioCurve::EqualPower => t.sqrt(),
+            AudioCurve::Linear => t,
+            // S-кривая: мягкий старт и мягкий конец, сумма мощностей ровнее
+            AudioCurve::SCurve => (t * t * (3.0 - 2.0 * t)).sqrt(),
+            // экспонента: долгий тихий вход, резкий подъём в конце
+            AudioCurve::Exponential => t * t,
+        }
+    }
 }
 
 /// Переход на стыке двух СОСЕДНИХ клипов одной дорожки (Р.24, OTIO
@@ -67,7 +329,16 @@ pub struct TransitionEvent {
     pub b: Option<ClipId>,
     pub in_offset: Tick,
     pub out_offset: Tick,
+    #[serde(default)]
     pub kind: TransitionKind,
+    /// Кривая аудио-кроссфейда (Р.33). Умолчание equal-power не
+    /// сериализуется — файлы прежних версий байт-стабильны.
+    #[serde(default, skip_serializing_if = "is_default_curve")]
+    pub audio: AudioCurve,
+}
+
+fn is_default_curve(c: &AudioCurve) -> bool {
+    *c == AudioCurve::EqualPower
 }
 
 impl TransitionEvent {
@@ -1115,13 +1386,13 @@ macro_rules! fx_cast {
 
 /// ЕДИНСТВЕННАЯ декларация параметров эффектов: спеки, запись и чтение
 /// генерятся из неё, поэтому рассинхрон трёх таблиц невозможен.
-macro_rules! fx_params {
-    ($(
+macro_rules! params_for {
+    ($enum:ident, $specs:ident, $set:ident, $get:ident, {$(
         $variant:ident { $( $field:ident : $ty:ident, $lo:expr, $hi:expr, $def:expr, $step:expr, $unit:ident, $kind:ident );+ $(;)? }
-    ),* $(,)?) => {
-        fn fx_specs(fx: &FxInstance) -> &'static [ParamSpec] {
+    ),* $(,)?}) => {
+        fn $specs(fx: &$enum) -> &'static [ParamSpec] {
             match fx {
-                $( FxInstance::$variant { .. } => &[
+                $( $enum::$variant { .. } => &[
                     $( ParamSpec {
                         name: stringify!($field),
                         min: $lo, max: $hi, default: $def, step: $step,
@@ -1133,9 +1404,9 @@ macro_rules! fx_params {
             }
         }
 
-        fn fx_set_param(fx: &mut FxInstance, name: &str, v: f64) -> bool {
+        fn $set(fx: &mut $enum, name: &str, v: f64) -> bool {
             match fx {
-                $( FxInstance::$variant { $($field,)+ .. } => {
+                $( $enum::$variant { $($field,)+ .. } => {
                     $( if name == stringify!($field) {
                         *$field = fx_cast!($ty, v);
                         return true;
@@ -1147,9 +1418,9 @@ macro_rules! fx_params {
             }
         }
 
-        fn fx_get_param(fx: &FxInstance, name: &str) -> Option<f64> {
+        fn $get(fx: &$enum, name: &str) -> Option<f64> {
             match fx {
-                $( FxInstance::$variant { $($field,)+ .. } => {
+                $( $enum::$variant { $($field,)+ .. } => {
                     $( if name == stringify!($field) {
                         return Some(*$field as f64);
                     } )+
@@ -1162,7 +1433,7 @@ macro_rules! fx_params {
     };
 }
 
-fx_params! {
+params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     // ---- аудио (Р.33: автоматизируются общим механизмом) ----------------
     Gain {
         db: f32, -60.0, 12.0, 0.0, 0.1, Db, Smooth;
@@ -1225,7 +1496,58 @@ fx_params! {
         anchor_y: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
         scale: f64, 0.01, 32.0, 1.0, 0.01, Ratio, Smooth;
     },
-}
+}}
+
+// Параметры переходов — та же декларация, что у эффектов: UI полей,
+// кламп и (в будущем) автоматизация приходят к ним бесплатно.
+params_for! { TransitionKind, transition_specs, transition_set_param, transition_get_param, {
+    Wipe {
+        angle: f64, -180.0, 180.0, 0.0, 1.0, Deg, Smooth;
+        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
+    },
+    Iris {
+        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
+    },
+    Clock {
+        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
+    },
+    Barn {
+        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
+    },
+    Luma {
+        softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
+    },
+    Zoom {
+        amount: f64, 0.0, 4.0, 0.4, 0.01, Ratio, Smooth;
+    },
+    Spin {
+        turns: f64, -4.0, 4.0, 1.0, 0.05, Ratio, Smooth;
+        amount: f64, 0.0, 4.0, 0.4, 0.01, Ratio, Smooth;
+    },
+    Whip {
+        blur: f64, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
+    },
+    BlurDissolve {
+        amount: f64, 0.0, 64.0, 24.0, 1.0, Px, Smooth;
+    },
+    Pixelate {
+        amount: f64, 1.0, 256.0, 48.0, 1.0, Px, Smooth;
+    },
+    Glitch {
+        amount: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+    },
+    Flash {
+        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        strength: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
+    },
+    Dip {
+        color_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        color_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        color_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+    },
+}}
 
 /// Режим кроп-рамки пан/зума (v1: fit/fill/stretch).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

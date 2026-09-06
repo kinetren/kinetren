@@ -270,6 +270,7 @@ fn t168_complex_montage_plays_without_underruns() {
         in_offset: Tick::ZERO,
         out_offset: Tick::from_audio_frames(2000),
         kind: TransitionKind::Crossfade,
+        audio: Default::default(),
     });
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);

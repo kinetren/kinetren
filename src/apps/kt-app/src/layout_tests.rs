@@ -2155,6 +2155,7 @@ fn t140_transition_edge_and_body_drags() {
             in_offset: Tick(10_000),
             out_offset: Tick(10_000),
             kind: TransitionKind::Crossfade,
+            audio: Default::default(),
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -2446,6 +2447,7 @@ fn t157_fade_edge_drag_without_neighbour() {
             in_offset: Tick(0),
             out_offset: Tick(10_000),
             kind: TransitionKind::Crossfade,
+            audio: Default::default(),
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
