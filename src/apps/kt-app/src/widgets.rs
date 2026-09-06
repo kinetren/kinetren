@@ -12,7 +12,7 @@
 
 use crate::i18n::{k, tr};
 use eframe::egui;
-use kt_model::{FxInstance, ParamSpec, ParamUnit};
+use kt_model::{FxInstance, HasParams, ParamSpec, ParamUnit};
 
 /// Суффикс единицы: значение с единицей само себя объясняет, поэтому
 /// подпись остаётся короткой (правило «очевидных надписей не делать»).
@@ -51,6 +51,10 @@ pub fn param_label(name: &str) -> String {
         "softness" => tr(k::fx::SOFTNESS),
         "threshold" => tr(k::fx::THRESHOLD),
         "amount" => tr(k::fxp::AMOUNT),
+        // параметры видов переходов (Р.33 С4)
+        "angle" => tr(k::fxp::ANGLE),
+        "turns" => tr(k::fxp::TURNS),
+        "blur" => tr(k::fxp::BLUR),
         "rgb_shift" => tr(k::fx::RGB_SHIFT),
         "bleed" => tr(k::fxp::BLEED),
         "strength" => tr(k::fx::STRENGTH),
@@ -88,7 +92,11 @@ pub fn param_value(ui: &mut egui::Ui, spec: &ParamSpec, v: &mut f64) -> egui::Re
 /// Строка «подпись + значение» прямо по эффекту: чтение и запись идут
 /// через `get_param`/`set_param`, поэтому кламп и округление те же, что у
 /// автоматизации. true — значение изменилось.
-pub fn param_row(ui: &mut egui::Ui, f: &mut FxInstance, spec: &ParamSpec) -> bool {
+pub fn param_row<P: HasParams + ?Sized>(
+    ui: &mut egui::Ui,
+    f: &mut P,
+    spec: &ParamSpec,
+) -> bool {
     let Some(mut v) = f.get_param(spec.name) else { return false };
     ui.label(param_label(spec.name));
     if param_value(ui, spec, &mut v).changed() {
@@ -101,10 +109,10 @@ pub fn param_row(ui: &mut egui::Ui, f: &mut FxInstance, spec: &ParamSpec) -> boo
 /// Сетка ВСЕХ числовых параметров эффекта в две пары «подпись/значение».
 /// `skip` — параметры, у которых есть свой контрол (цвет ключа рисуется
 /// пипеткой, а не тремя числами).
-pub fn params_grid(
+pub fn params_grid<P: HasParams + ?Sized>(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
-    f: &mut FxInstance,
+    f: &mut P,
     skip: &[&str],
 ) -> bool {
     let specs: Vec<&ParamSpec> =

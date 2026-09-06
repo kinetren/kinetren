@@ -316,3 +316,75 @@ fn t156_audio_fade_out_ends_in_silence() {
     assert!((out[f * CH] - dry[f * CH] * w).abs() < 1e-6);
     assert!(out[4799 * CH].abs() < 1e-3, "к концу окна почти тишина");
 }
+
+/// Тест 226 (Р.33 С4): кривая аудио-кроссфейда выбирается пользователем и
+/// доезжает до сэмплов. Equal-power обязан остаться ПРЕЖНЕЙ формулой
+/// (GOLDEN_AUDIO), остальные три — считаться своей.
+#[test]
+fn t226_audio_crossfade_curve_is_applied() {
+    let (w0, w1) = (8_192i64, 12_288i64);
+    let render_with = |curve: AudioCurve| {
+        let mut p = project(vec![clip(1, 0, 10_240, 0, 1), clip(2, 10_240, 10_240, 50_000, 2)]);
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: Some(ClipId(1)),
+            b: Some(ClipId(2)),
+            in_offset: Tick::from_audio_frames(2_048),
+            out_offset: Tick::from_audio_frames(2_048),
+            kind: TransitionKind::Crossfade,
+            audio: curve,
+        });
+        p.validate().unwrap();
+        let (out, underruns) = render(&p, &[1, 2], 14_336);
+        assert_eq!(underruns, 0, "{curve:?}: ручки не должны голодать");
+        out
+    };
+    let expect = |curve: AudioCurve, f: i64| {
+        let a_val = SyntheticSource::sample_at(AudioPattern::Ramp, f, 0);
+        let b_val = SyntheticSource::sample_at(AudioPattern::Ramp, 50_000 + (f - 10_240), 0);
+        let t = ((f - w0) as f64 / (w1 - w0) as f64).clamp(0.0, 1.0);
+        a_val * (curve.rise(1.0 - t) as f32) + b_val * (curve.rise(t) as f32)
+    };
+    let probes = [8_192i64, 9_000, 10_240, 11_000, 12_287];
+    for curve in [
+        AudioCurve::EqualPower,
+        AudioCurve::Linear,
+        AudioCurve::SCurve,
+        AudioCurve::Exponential,
+    ] {
+        let out = render_with(curve);
+        for f in probes {
+            let got = out[f as usize * CH];
+            let want = expect(curve, f);
+            assert!(
+                (got - want).abs() < 1e-6,
+                "{curve:?} @{f}: {got} vs {want}"
+            );
+        }
+    }
+    // equal-power — прежняя формула БАЙТ-в-байт: иначе поехал бы GOLDEN
+    let eq = render_with(AudioCurve::EqualPower);
+    let mut old = eq.clone();
+    for (f, s) in old.chunks_exact_mut(CH).enumerate() {
+        let f = f as i64;
+        if f < w0 || f >= w1 {
+            continue;
+        }
+        let t = (f - w0) as f64 / (w1 - w0) as f64;
+        let a_val = SyntheticSource::sample_at(AudioPattern::Ramp, f, 0);
+        let b_val = SyntheticSource::sample_at(AudioPattern::Ramp, 50_000 + (f - 10_240), 0);
+        s[0] = a_val * (((1.0 - t).max(0.0)).sqrt() as f32) + b_val * ((t.max(0.0)).sqrt() as f32);
+    }
+    for (i, (g, w)) in eq.chunks_exact(CH).zip(old.chunks_exact(CH)).enumerate() {
+        assert_eq!(g[0].to_bits(), w[0].to_bits(), "equal-power сдвинулся на кадре {i}");
+    }
+    // кривые обязаны РАЗЛИЧАТЬСЯ: одинаковый выход = поле не доехало
+    let lin = render_with(AudioCurve::Linear);
+    let mid = 10_240usize * CH;
+    assert!(
+        (eq[mid] - lin[mid]).abs() > 1e-4,
+        "линейная кривая обязана звучать иначе equal-power: {} vs {}",
+        eq[mid],
+        lin[mid]
+    );
+}

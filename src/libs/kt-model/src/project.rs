@@ -215,6 +215,40 @@ fn default_glitch() -> f64 {
     0.5
 }
 
+/// Общий интерфейс «числовые параметры со спеками». Его реализуют и
+/// эффекты, и виды переходов — поэтому UI полей у них ОДИН (требование
+/// Р.33 п.1: «управление ими надо унифицировать как fx-chain»), и любой
+/// новый носитель параметров получает готовую сетку полей даром.
+pub trait HasParams {
+    fn param_specs(&self) -> &'static [ParamSpec];
+    fn get_param(&self, name: &str) -> Option<f64>;
+    fn set_param(&mut self, name: &str, v: f64) -> bool;
+}
+
+impl HasParams for FxInstance {
+    fn param_specs(&self) -> &'static [ParamSpec] {
+        FxInstance::param_specs(self)
+    }
+    fn get_param(&self, name: &str) -> Option<f64> {
+        FxInstance::get_param(self, name)
+    }
+    fn set_param(&mut self, name: &str, v: f64) -> bool {
+        FxInstance::set_param(self, name, v)
+    }
+}
+
+impl HasParams for TransitionKind {
+    fn param_specs(&self) -> &'static [ParamSpec] {
+        TransitionKind::param_specs(self)
+    }
+    fn get_param(&self, name: &str) -> Option<f64> {
+        TransitionKind::get_param(self, name)
+    }
+    fn set_param(&mut self, name: &str, v: f64) -> bool {
+        TransitionKind::set_param(self, name, v)
+    }
+}
+
 impl TransitionKind {
     /// Все виды с УМОЛЧАНИЯМИ параметров — единственный реестр: по нему
     /// строится меню выбора в UI и по нему же тесты проверяют полноту

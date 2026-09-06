@@ -3176,7 +3176,7 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
     let mut view = AutoView::default();
     assert_eq!(view.mode, AutoMode::Graph, "по умолчанию график");
     view.mode = AutoMode::Table;
-    let mut curves = vec![ParamCurve {
+    let mut curves = [ParamCurve {
         param: "radius".into(),
         ease: false,
         keys: vec![
@@ -4422,4 +4422,102 @@ fn t199_background_autosave_never_overwrites_newer_save() {
         "на диске обязана остаться СВЕЖАЯ версия (2 медиа), а не снимок автосейва"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 227 (Р.33 С4): у перехода появилось окно свойств. Двойной клик по
+/// его окну на полосе открывает редактор, вид меняется пикером и сразу
+/// уезжает в модель, «Отмена» возвращает прежний.
+#[test]
+fn t227_transition_editor_opens_and_sets_kind() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, g) = harness_three_clips_dt(Some(0.02));
+    // склеиваем клипы 1 и 2 встык и вешаем переход
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.clips[1].start = Tick(50_000);
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: Some(ClipId(1)),
+            b: Some(ClipId(2)),
+            in_offset: Tick(9_000),
+            out_offset: Tick(9_000),
+            kind: TransitionKind::Crossfade,
+            audio: Default::default(),
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().unwrap_or(g);
+    // окно перехода [41_000, 59_000): целимся в его середину, НИЖЕ
+    // верхней полосы жестов (там живут ручки фейда)
+    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.75;
+    let pos = egui::pos2(g.tick_to_x(46_000), y);
+    for _ in 0..2 {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().transition_editors.len(),
+        1,
+        "двойной клик по окну перехода обязан открыть его свойства"
+    );
+    assert_eq!(h.state().transition_editors[0].id, TransitionId(1));
+
+    // смена вида через модель редактора: окно пишет команду тем же
+    // gesture-токеном, поэтому вся сессия — один шаг undo
+    let gesture = h.state().transition_editors[0].gesture;
+    {
+        let app = h.state_mut();
+        let mut t = app.model.project().transitions[0].clone();
+        t.kind = TransitionKind::Wipe { dir: Dir::Up, angle: 0.0, softness: 0.2 };
+        t.audio = AudioCurve::SCurve;
+        assert!(app.apply_coalesced(Command::SetTransition(t), gesture));
+    }
+    h.step();
+    let t = &h.state().model.project().transitions[0];
+    assert_eq!(t.kind.tag(), "wipe", "вид не доехал до модели");
+    assert_eq!(t.audio, AudioCurve::SCurve);
+
+    // «Отмена» окна возвращает исходный вид ОДНИМ шагом undo
+    let backup = h.state().transition_editors[0].backup.clone();
+    {
+        let app = h.state_mut();
+        assert!(app.apply_coalesced(Command::SetTransition(backup), gesture));
+    }
+    h.step();
+    assert_eq!(h.state().model.project().transitions[0].kind, TransitionKind::Crossfade);
+    let _ = h.state_mut().model.undo();
+    h.step();
+    assert_eq!(
+        h.state().model.project().transitions[0].kind,
+        TransitionKind::Crossfade,
+        "вся сессия окна — один шаг истории"
+    );
+
+    // окно закрывается вместе со смертью перехода
+    {
+        let app = h.state_mut();
+        let _ = app.apply(Command::RemoveTransition { id: TransitionId(1) });
+    }
+    h.step();
+    h.step();
+    assert!(
+        h.state().transition_editors.is_empty(),
+        "окно мёртвого перехода обязано закрыться само"
+    );
 }

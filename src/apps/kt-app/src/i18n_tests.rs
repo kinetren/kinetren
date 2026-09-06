@@ -280,8 +280,8 @@ fn t171_transition_menu_labels_say_what_and_where() {
     let groups: [[i18n::Key; 4]; 1] = [[
         k::tl::menu::REMOVE_FADE_START,
         k::tl::menu::REMOVE_FADE_END,
-        k::tl::menu::REMOVE_CROSSFADE_NEXT,
-        k::tl::menu::REMOVE_CROSSFADE_PREV,
+        k::tl::menu::REMOVE_TRANSITION_NEXT,
+        k::tl::menu::REMOVE_TRANSITION_PREV,
     ]];
     for lang in Lang::ALL {
         for keys in groups {

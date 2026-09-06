@@ -140,12 +140,13 @@ lane_name = "track name"
 [tl.menu]
 clear_range = "Clear range"
 region_from_event = "Region over this event (Shift+double click)"
-crossfade_next = "Crossfade with next"
-crossfade_prev = "Crossfade with previous"
+transition_props = "Transition properties…"
+transition_next = "Transition with next"
+transition_prev = "Transition with previous"
 remove_fade_start = "Remove the fade at the clip start"
 remove_fade_end = "Remove the fade at the clip end"
-remove_crossfade_next = "Remove the crossfade with the next clip"
-remove_crossfade_prev = "Remove the crossfade with the previous clip"
+remove_transition_next = "Remove the transition with the next clip"
+remove_transition_prev = "Remove the transition with the previous clip"
 fade_in = "Fade in at the clip start"
 fade_out = "Fade out at the clip end"
 copy = "Copy (Ctrl+C)"
@@ -225,6 +226,9 @@ remove = "Delete morpher"
 # Реестр FX и пикер с поиском.
 # Подписи параметров эффектов (Р.33): один источник — спека kt-model.
 [fxp]
+angle = "Angle:"
+turns = "Turns:"
+blur = "Blur:"
 db = "Gain:"
 rate = "Rate:"
 mix = "Mix:"
@@ -485,3 +489,59 @@ eviction_spike = "eviction spike: {0}/s — the cache is too small"
 prefetch_thrash = "{0} cache entries dropped before the first read (prefetch thrash)"
 low_video_hit = "video hit {0}% while playing — decoding cannot keep up"
 offline_changed = "media availability changed: offline {0}"
+
+# Переходы (Р.33 С4): вид, его параметры и кривая аудио.
+[trn]
+title = "Transition {0}"
+kind = "Kind:"
+dir = "Direction:"
+shape = "Shape:"
+reverse = "Counterclockwise"
+vertical = "Vertical doors"
+invert = "Invert the luma"
+color = "Color:"
+audio = "Sound:"
+audio_note = "The sound always crossfades — only its curve changes"
+length = "Length: {0} s"
+is_fade = "fade at the edge"
+
+[trn.cat]
+basic = "Basic"
+wipe = "Wipes"
+motion = "Motion"
+style = "Stylized"
+
+[trn.kind]
+crossfade = "Crossfade"
+wipe = "Wipe"
+iris = "Iris"
+clock = "Clock"
+barn = "Barn doors"
+luma = "Luma wipe"
+push = "Push"
+slide = "Slide"
+zoom = "Cross zoom"
+spin = "Spin"
+whip = "Whip pan"
+blur = "Blur dissolve"
+pixelate = "Pixelate"
+glitch = "Glitch"
+flash = "Flash"
+dip = "Dip to color"
+
+[trn.curve]
+equal_power = "Equal power"
+linear = "Linear"
+s_curve = "S-curve"
+exponential = "Exponential"
+
+[trn.dir]
+left = "Left"
+right = "Right"
+up = "Up"
+down = "Down"
+
+[trn.shape]
+circle = "Circle"
+diamond = "Diamond"
+box = "Box"

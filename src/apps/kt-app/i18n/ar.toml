@@ -140,12 +140,13 @@ lane_name = "اسم المسار"
 [tl.menu]
 clear_range = "إزالة النطاق"
 region_from_event = "منطقة على هذا الحدث (Shift+نقر مزدوج)"
-crossfade_next = "تلاش متقاطع مع التالي"
-crossfade_prev = "تلاش متقاطع مع السابق"
+transition_props = "خصائص الانتقال…"
+transition_next = "انتقال مع التالي"
+transition_prev = "انتقال مع السابق"
 remove_fade_start = "إزالة الظهور في بداية المقطع"
 remove_fade_end = "إزالة التلاشي في نهاية المقطع"
-remove_crossfade_next = "إزالة التلاشي المتقاطع مع المقطع التالي"
-remove_crossfade_prev = "إزالة التلاشي المتقاطع مع المقطع السابق"
+remove_transition_next = "إزالة الانتقال مع المقطع التالي"
+remove_transition_prev = "إزالة الانتقال مع المقطع السابق"
 fade_in = "ظهور تدريجي في بداية المقطع"
 fade_out = "تلاش تدريجي في نهاية المقطع"
 copy = "نسخ (Ctrl+C)"
@@ -225,6 +226,9 @@ remove = "حذف morpher"
 # Реестр FX и пикер с поиском.
 # Подписи параметров эффектов (Р.33): один источник — спека kt-model.
 [fxp]
+angle = "الزاوية:"
+turns = "اللفات:"
+blur = "الضباب:"
 db = "الكسب:"
 rate = "السرعة:"
 mix = "المزج:"
@@ -485,3 +489,59 @@ eviction_spike = "ذروة eviction: {0}/ث — الذاكرة ضيقة"
 prefetch_thrash = "{0} مدخلات ذاكرة أُسقطت قبل أول قراءة (prefetch thrash)"
 low_video_hit = "إصابة الفيديو {0}% أثناء التشغيل — فك الترميز لا يلحق"
 offline_changed = "تغيّر توفر الوسائط: غير متصل {0}"
+
+# Переходы (Р.33 С4): вид, его параметры и кривая аудио.
+[trn]
+title = "انتقال {0}"
+kind = "النوع:"
+dir = "الاتجاه:"
+shape = "الشكل:"
+reverse = "عكس عقارب الساعة"
+vertical = "مصاريع رأسية"
+invert = "اعكس السطوع"
+color = "اللون:"
+audio = "الصوت:"
+audio_note = "الصوت يتلاشى تقاطعيا دائما، ويتغير المنحنى فقط"
+length = "الطول: {0} ث"
+is_fade = "تلاش عند الحافة"
+
+[trn.cat]
+basic = "أساسية"
+wipe = "مسح"
+motion = "حركة"
+style = "مؤثرة"
+
+[trn.kind]
+crossfade = "ذوبان متقاطع"
+wipe = "مسح"
+iris = "حدقة"
+clock = "ساعة"
+barn = "مصاريع"
+luma = "مسح بالسطوع"
+push = "دفع"
+slide = "انزلاق"
+zoom = "تقريب متقاطع"
+spin = "دوران"
+whip = "مرور سريع"
+blur = "ذوبان بالضباب"
+pixelate = "تبقيع"
+glitch = "خلل"
+flash = "ومضة"
+dip = "عبور بلون"
+
+[trn.curve]
+equal_power = "قدرة متساوية"
+linear = "خطي"
+s_curve = "منحنى S"
+exponential = "أسي"
+
+[trn.dir]
+left = "يسار"
+right = "يمين"
+up = "أعلى"
+down = "أسفل"
+
+[trn.shape]
+circle = "دائرة"
+diamond = "معين"
+box = "مستطيل"

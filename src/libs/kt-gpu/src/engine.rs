@@ -6,7 +6,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use kt_engine::{Cam3d, FramePlan, GpuBackendInfo, GpuExecError, LayerSrc, PlanLayer, VideoGpuExec};
+use kt_engine::{
+    Cam3d, FramePlan, GpuBackendInfo, GpuExecError, LayerSrc, PlanLayer, TransMix, VideoGpuExec,
+    video_plan::SoloFade,
+};
 use kt_model::FxInstance;
 use kt_time::Tick;
 use xxhash_rust::xxh3::Xxh3;
@@ -367,8 +370,8 @@ impl ChainSpec {
 }
 
 enum Job {
-    Single { chain: ChainSpec, alpha_k: u32, scale: bool },
-    Dissolve { a: ChainSpec, b: ChainSpec, k: u32, alpha_k: u32 },
+    Single { chain: ChainSpec, alpha_k: u32, scale: bool, fade: Option<SoloFade> },
+    Dissolve { a: ChainSpec, b: ChainSpec, k: u32, alpha_k: u32, mix: TransMix },
 }
 
 impl Job {
@@ -572,7 +575,7 @@ impl Inner {
         let mut jobs: Vec<Job> = Vec::new();
         for layer in &plan.layers {
             match layer {
-                PlanLayer::One { src, alpha_k, scale_alpha } => {
+                PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
                     match self.resolve_chain(src, ow, oh, plan.t)? {
                         None => complete = false,
                         Some((chain, fits)) => {
@@ -581,23 +584,25 @@ impl Inner {
                                     chain,
                                     alpha_k: *alpha_k,
                                     scale: *scale_alpha,
+                                    fade: *fade,
                                 });
                             } // чужой размер — молча пропускается
                         }
                     }
                 }
-                PlanLayer::Dissolve { a, b, k, alpha_k } => {
+                PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
                     let ca = self.resolve_chain(a, ow, oh, plan.t)?;
                     let cb = self.resolve_chain(b, ow, oh, plan.t)?;
                     match (ca, cb) {
                         (Some((a, true)), Some((b, true))) => {
-                            jobs.push(Job::Dissolve { a, b, k: *k, alpha_k: *alpha_k });
+                            jobs.push(Job::Dissolve { a, b, k: *k, alpha_k: *alpha_k, mix: *mix });
                         }
                         (Some((c, true)), None) | (None, Some((c, true))) => {
                             jobs.push(Job::Single {
                                 chain: c,
                                 alpha_k: *alpha_k,
                                 scale: *alpha_k < 4096,
+                                fade: None,
                             });
                             complete = false;
                         }
@@ -640,29 +645,47 @@ impl Inner {
             let first = (ji == 0) as u32;
             let target = 1 - cur;
             match job {
-                Job::Single { chain, alpha_k, scale } => {
+                Job::Single { chain, alpha_k, scale, fade } => {
                     let (view, owned) = self.encode_chain(&mut enc, chain);
-                    let mode = if *scale { 1u32 } else { 0u32 };
+                    let mode = if fade.is_some() {
+                        3
+                    } else if *scale {
+                        1
+                    } else {
+                        0
+                    };
+                    // сольный фейд с видом: кадр стоит на своей стороне
+                    // пары, вторая помечена пустой (clear-бит) — ядро её
+                    // не читает вовсе (зеркало Img::Clear)
+                    let has = chain.has_alpha as u32;
+                    let (u0z, u0w, clear, swap) = match fade {
+                        Some(f) if f.incoming => (0, has, 1u32, true),
+                        Some(_) => (has, 0, 2u32, false),
+                        None => (has, 0, 0, false),
+                    };
                     let u = UniformData {
-                        u: [mode, *alpha_k, chain.has_alpha as u32, 0, first, 0, 0, 0],
+                        u: [
+                            mode,
+                            *alpha_k,
+                            u0z,
+                            u0w,
+                            first,
+                            fade.map(|f| f.k).unwrap_or(0),
+                            fade.map(|f| f.mix.mode).unwrap_or(0),
+                            clear,
+                        ],
+                        f: fade.map(|f| f.mix.p).unwrap_or_default(),
                         ..Default::default()
                     };
                     let acc_in = acc[cur].view.clone();
                     let dummy = self.dummy.view.clone();
-                    self.pass(
-                        &mut enc,
-                        Pipe::Composite,
-                        &acc[target].view,
-                        &acc_in,
-                        &view,
-                        &dummy,
-                        u,
-                    );
+                    let (t1, t2) = if swap { (&dummy, &view) } else { (&view, &dummy) };
+                    self.pass(&mut enc, Pipe::Composite, &acc[target].view, &acc_in, t1, t2, u);
                     for t in owned {
                         self.pool.release(t);
                     }
                 }
-                Job::Dissolve { a, b, k, alpha_k } => {
+                Job::Dissolve { a, b, k, alpha_k, mix } => {
                     let (va, oa) = self.encode_chain(&mut enc, a);
                     let (vb, ob) = self.encode_chain(&mut enc, b);
                     let u = UniformData {
@@ -673,9 +696,10 @@ impl Inner {
                             b.has_alpha as u32,
                             first,
                             *k,
-                            0,
+                            mix.mode,
                             0,
                         ],
+                        f: mix.p,
                         ..Default::default()
                     };
                     let acc_in = acc[cur].view.clone();
@@ -1034,21 +1058,38 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
             }
         }
     }
+    /// Параметры перехода — В КЛЮЧ: без них ReadbackCache отдал бы кадр
+    /// другого вида перехода (Р.33 С4).
+    fn put_mix(h: &mut Xxh3, m: &TransMix) {
+        h.update(&m.mode.to_le_bytes());
+        for v in m.p {
+            h.update(&v.to_bits().to_le_bytes());
+        }
+    }
     let mut h = Xxh3::new();
     h.update(&plan.t.0.to_le_bytes());
     h.update(&plan.out_w.to_le_bytes());
     h.update(&plan.out_h.to_le_bytes());
     for layer in &plan.layers {
         match layer {
-            PlanLayer::One { src, alpha_k, scale_alpha } => {
+            PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
                 h.update(&[1u8, *scale_alpha as u8]);
                 h.update(&alpha_k.to_le_bytes());
+                match fade {
+                    None => h.update(&[0u8]),
+                    Some(f) => {
+                        h.update(&[1u8, f.incoming as u8]);
+                        h.update(&f.k.to_le_bytes());
+                        put_mix(&mut h, &f.mix);
+                    }
+                }
                 put_src(&mut h, src);
             }
-            PlanLayer::Dissolve { a, b, k, alpha_k } => {
+            PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
                 h.update(&[2u8]);
                 h.update(&k.to_le_bytes());
                 h.update(&alpha_k.to_le_bytes());
+                put_mix(&mut h, mix);
                 put_src(&mut h, a);
                 put_src(&mut h, b);
             }

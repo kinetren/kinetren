@@ -24,6 +24,7 @@ mod render_dialog;
 mod theme;
 mod thumbs;
 mod timeline;
+mod transition_editor;
 mod toolbar;
 mod util;
 mod widgets;

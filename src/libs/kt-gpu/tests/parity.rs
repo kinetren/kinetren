@@ -15,7 +15,7 @@ use kt_cache::{BurstCache, CacheConfig, SourceId};
 use kt_engine::{FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
-use kt_model::{CamKeyframe, FxInstance, PanMode};
+use kt_model::{CamKeyframe, Dir, FxInstance, IrisShape, PanMode, TransitionKind};
 use kt_time::Tick;
 
 const W: u32 = 64;
@@ -85,7 +85,7 @@ impl Src {
 }
 
 fn one(src: &Src, alpha_k: u32, scale_alpha: bool) -> PlanLayer<'_> {
-    PlanLayer::One { src: src.layer(), alpha_k, scale_alpha }
+    PlanLayer::One { src: src.layer(), alpha_k, scale_alpha, fade: None }
 }
 
 fn plan<'a>(t: i64, layers: Vec<PlanLayer<'a>>) -> FramePlan<'a> {
@@ -223,6 +223,7 @@ fn t182_composite_parity_byte_exact() {
                     b: top_alpha.layer(),
                     k: 1000,
                     alpha_k: 4096,
+                    mix: Default::default(),
                 },
             ],
             true,
@@ -236,6 +237,7 @@ fn t182_composite_parity_byte_exact() {
                     b: top_alpha.layer(),
                     k: 3000,
                     alpha_k: 2000,
+                    mix: Default::default(),
                 },
             ],
             true,
@@ -249,6 +251,7 @@ fn t182_composite_parity_byte_exact() {
                     b: missing.layer(),
                     k: 2048,
                     alpha_k: 3000,
+                    mix: Default::default(),
                 },
             ],
             false,
@@ -305,4 +308,114 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
     let mut a3 = Vec::new();
     e1.execute_into(&mk(90_000), &mut a3).unwrap();
     assert_eq!(a1, a3, "ReadbackCache вернул не те байты");
+}
+
+
+/// Тест 224 (Р.33 С4): КАЖДЫЙ вид перехода считается на GPU так же, как на
+/// CPU. Ядра переходов — единственное место, где одну формулу пришлось
+/// написать дважды (Rust и WGSL), поэтому расхождение здесь означает, что
+/// у пользователя превью и экспорт покажут РАЗНОЕ — ровно то, что
+/// запрещает инвариант 7.
+#[test]
+fn t224_transition_parity_gpu_vs_cpu() {
+    let Some(engine) = test_engine() else { return };
+    let a = Src::new(1, Some(frame(W, H, false, 0)), vec![]);
+    let b = Src::new(2, Some(frame(W, H, false, 0x5a)), vec![]);
+    // допуск: ядра переходов считаются в f32 на обоих путях, но выборка
+    // и тригонометрия у драйвера своя — берём билинейный допуск, а
+    // маскам с резкой кромкой разрешаем полосу пикселей на границе
+    let soft = FrameTol { max_lsb: 2, outlier_frac: 0.01, outlier_max: 4, mean_lsb: 0.05 };
+    // ВАРИАЦИИ, а не только умолчания: у вайпа/сдвига дефолт — Dir::Left,
+    // то есть вектор (−1, 0). На нём ошибка в Y-члене формулы не видна
+    // вовсе — именно так первая версия этого теста прозевала намеренно
+    // сломанное зеркало. Каждая ось и каждый флаг обязаны быть в списке.
+    let cases: Vec<TransitionKind> = vec![
+        TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.15 },
+        TransitionKind::Wipe { dir: Dir::Up, angle: 0.0, softness: 0.0 },
+        TransitionKind::Wipe { dir: Dir::Right, angle: 37.0, softness: 0.3 },
+        TransitionKind::Iris { shape: IrisShape::Circle, softness: 0.15 },
+        TransitionKind::Iris { shape: IrisShape::Diamond, softness: 0.0 },
+        TransitionKind::Iris { shape: IrisShape::Box, softness: 0.4 },
+        TransitionKind::Clock { reverse: false, softness: 0.1 },
+        TransitionKind::Clock { reverse: true, softness: 0.0 },
+        TransitionKind::Barn { vertical: false, softness: 0.2 },
+        TransitionKind::Barn { vertical: true, softness: 0.0 },
+        TransitionKind::Luma { invert: false, softness: 0.2 },
+        TransitionKind::Luma { invert: true, softness: 0.05 },
+        TransitionKind::Push { dir: Dir::Left },
+        TransitionKind::Push { dir: Dir::Down },
+        TransitionKind::Slide { dir: Dir::Right },
+        TransitionKind::Slide { dir: Dir::Up },
+        TransitionKind::Zoom { amount: 0.4 },
+        TransitionKind::Spin { turns: 1.0, amount: 0.4 },
+        TransitionKind::Spin { turns: -0.5, amount: 0.0 },
+        TransitionKind::Whip { dir: Dir::Left, blur: 0.6 },
+        TransitionKind::Whip { dir: Dir::Down, blur: 1.0 },
+        TransitionKind::BlurDissolve { amount: 24.0 },
+        TransitionKind::Pixelate { amount: 48.0 },
+        TransitionKind::Glitch { amount: 0.5 },
+        TransitionKind::Flash { color_r: 255, color_g: 200, color_b: 40, strength: 1.0 },
+        TransitionKind::Dip { color_r: 0, color_g: 0, color_b: 0 },
+    ];
+    let mut seen = std::collections::BTreeSet::new();
+    for kind in &cases {
+        if matches!(kind, TransitionKind::Crossfade) {
+            continue; // целочисленный путь, его держит t182
+        }
+        let mix = kt_engine::TransMix::of(kind);
+        seen.insert(mix.mode);
+        // несколько фаз: у переходов формула зависит от k нелинейно.
+        // 1800 = 0.44 — фаза МЕЖДУ четвертью и серединой: без неё
+        // мутация «порог фазы dip сдвинут с 0.5 на 0.4» проходила мимо.
+        for k in [200u32, 1024, 1800, 2048, 3600] {
+            let p = plan(
+                k as i64,
+                vec![PlanLayer::Dissolve {
+                    a: a.layer(),
+                    b: b.layer(),
+                    k,
+                    alpha_k: 4096,
+                    mix,
+                }],
+            );
+            let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+            assert!(cc && cg, "{}: план обязан быть полным", kind.tag());
+            assert_frames_close(&cpu, &gpu, W, H, soft, &format!("{}@{k}", kind.tag()));
+        }
+    }
+    assert_eq!(seen.len(), 15, "все 15 не-кроссфейдных режимов проверены: {seen:?}");
+    assert_eq!(
+        seen.len() + 1,
+        TransitionKind::ALL.len(),
+        "новый вид перехода обязан появиться и в этом списке"
+    );
+
+    // сольный фейд С ВИДОМ: вторая сторона — пустота, тот же код
+    for (incoming, kind) in [
+        (true, TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.2 }),
+        (false, TransitionKind::Iris { shape: IrisShape::Circle, softness: 0.1 }),
+        (true, TransitionKind::Push { dir: Dir::Up }),
+    ] {
+        let mix = kt_engine::TransMix::of(&kind);
+        let p = plan(
+            7,
+            vec![PlanLayer::One {
+                src: a.layer(),
+                alpha_k: 4096,
+                scale_alpha: true,
+                fade: Some(kt_engine::video_plan::SoloFade { k: 1500, mix, incoming }),
+            }],
+        );
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert!(cc && cg, "{}: сольный фейд обязан быть полным", kind.tag());
+        assert_frames_close(&cpu, &gpu, W, H, soft, &format!("solo-{}", kind.tag()));
+        // фейд обязан ЧТО-ТО скрывать: иначе тест зелен на «вида нет»
+        let opaque = cpu.chunks_exact(4).filter(|p| p[3] > 250).count();
+        let clear = cpu.chunks_exact(4).filter(|p| p[3] < 5).count();
+        assert!(
+            opaque > 100 && clear > 100,
+            "{}: у сольного фейда обязаны быть и открытая, и пустая части ({opaque}/{clear})",
+            kind.tag()
+        );
+    }
 }

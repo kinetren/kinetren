@@ -353,3 +353,110 @@ fn t174_clip_opacity_scales_the_layer() {
     p1.clips[0].opacity = 1.0;
     assert_eq!(render(&p1), opaque, "уровень 1.0 — тождество");
 }
+
+/// Тест 225 (Р.33 С4): вид перехода доезжает до КАРТИНКИ, а не только до
+/// файла. Кадры синтетического источника — сплошной цвет, поэтому
+/// «вайп» обязан дать ровно две однотонные области с резкой границей,
+/// а кроссфейд в тот же момент — один смешанный цвет на весь кадр.
+#[test]
+fn t225_transition_kind_reaches_the_picture() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(90_000); // середина окна 81_000..99_000
+    let render = |kind: TransitionKind| {
+        let mut p = project_pair();
+        p.transitions[0].kind = kind.clone();
+        p.validate().unwrap();
+        let mut vr = VideoRenderer::new(&p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "{kind:?}: слои прогреты");
+        // детерминизм: повторный проход байт-в-байт
+        let (again, _) = vr.compose_from_cache(&cache, t, q);
+        assert_eq!(out, again, "{kind:?}: повторный composite обязан совпасть");
+        out
+    };
+    let px = |buf: &[u8], x: usize, y: usize| {
+        let i = (y * q.width as usize + x) * 4;
+        [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
+    };
+    let a = synth_frame(Tick(90_000), q);
+    let b = synth_frame(Tick(30_000), q);
+    let (ca, cb) = (px(&a, 0, 0), px(&b, 0, 0));
+    assert_ne!(ca, cb, "цвета половин обязаны различаться, иначе тест слеп");
+
+    // кроссфейд: смесь ВЕЗДЕ, обеих исходных красок в кадре нет
+    let cross = render(TransitionKind::Crossfade);
+    let mix = px(&cross, 5, 5);
+    assert_eq!(mix, px(&cross, 58, 30), "кроссфейд однороден по кадру");
+    assert_ne!(mix, ca);
+    assert_ne!(mix, cb);
+
+    // вайп влево без размытия: B открывается СПРАВА, граница резкая
+    let wipe = render(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 });
+    assert_eq!(px(&wipe, 2, 18), ca, "слева ещё уходящий кадр");
+    assert_eq!(px(&wipe, 61, 18), cb, "справа уже входящий");
+    let blended = (0..q.width as usize)
+        .filter(|&x| {
+            let p = px(&wipe, x, 18);
+            p != ca && p != cb
+        })
+        .count();
+    assert!(blended <= 1, "у резкого вайпа смешанных пикселей нет: {blended}");
+
+    // шторки по вертикали: одинаково у ОБОИХ краёв, чужой цвет в центре
+    let barn = render(TransitionKind::Barn { vertical: false, softness: 0.0 });
+    assert_eq!(px(&barn, 32, 1), ca, "у верхней кромки ещё уходящий");
+    assert_eq!(px(&barn, 32, 34), ca, "и у нижней тоже — створки симметричны");
+    assert_eq!(px(&barn, 32, 18), cb, "в центре уже входящий");
+
+    // сдвиг вниз: половины меняются местами по вертикали
+    let push = render(TransitionKind::Push { dir: Dir::Down });
+    assert_eq!(px(&push, 32, 30), ca, "низ — уходящий, его вытолкнуло вниз");
+    assert_eq!(px(&push, 32, 4), cb, "сверху въехал входящий");
+
+    // через чёрный: в середине перехода кадр гаснет целиком
+    let dip = render(TransitionKind::Dip { color_r: 0, color_g: 0, color_b: 0 });
+    let mid = px(&dip, 32, 18);
+    assert!(mid[0] < 4 && mid[1] < 4 && mid[2] < 4, "середина dip'а — цвет: {mid:?}");
+    assert_eq!(mid[3], 255, "альфа при dip'е не теряется");
+}
+
+/// Тест 225b: сольный фейд (край дорожки) с видом — форма живёт в АЛЬФЕ,
+/// а не в равномерной прозрачности. Кроссфейд-фейд остаётся прежним.
+#[test]
+fn t225_solo_fade_with_kind_shapes_alpha() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let render = |kind: TransitionKind, t: Tick| {
+        let mut p = project_pair();
+        // убираем пару: у клипа 1 остаётся фейд-аут в пустоту
+        p.transitions.clear();
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: Some(ClipId(1)),
+            b: None,
+            in_offset: Tick(18_000),
+            out_offset: Tick(0),
+            kind,
+            audio: Default::default(),
+        });
+        p.clips.retain(|c| c.id == ClipId(1));
+        p.validate().unwrap();
+        let mut vr = VideoRenderer::new(&p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        warm(&vr, &cache, t, q);
+        let (out, _) = vr.compose_from_cache(&cache, t, q);
+        out
+    };
+    let alpha = |buf: &[u8], x: usize, y: usize| buf[(y * q.width as usize + x) * 4 + 3];
+    let t = Tick(81_000); // середина окна 72_000..90_000
+
+    // кроссфейд-фейд: альфа ОДНА на весь кадр (прежнее поведение)
+    let cross = render(TransitionKind::Crossfade, t);
+    assert_eq!(alpha(&cross, 2, 18), alpha(&cross, 61, 18), "фейд однороден");
+
+    // вайп-фейд: одна сторона ещё непрозрачна, другая уже пуста
+    let wipe = render(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 }, t);
+    let (l, r) = (alpha(&wipe, 2, 18), alpha(&wipe, 61, 18));
+    assert!(l > 250 && r < 5, "вайп-фейд обязан резать кадр по альфе: {l}/{r}");
+}

@@ -234,6 +234,8 @@ pub struct KtApp {
     pub meter: crate::meters::MeterState,
     pub smooth_scaling: bool,
     pub fx_editors: Vec<crate::fx_editor::FxEditor>,
+    /// Окна переходов (Р.33 С4) — по одному на переход.
+    pub transition_editors: Vec<crate::transition_editor::TransitionEditor>,
     pub morph_editors: Vec<crate::morpher_editor::MorphEditor>,
     pub gesture_counter: u64,
     pub render_job: Option<crate::render_dialog::RenderJob>,
@@ -454,6 +456,7 @@ impl KtApp {
             meter_glow: None,
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
             fx_editors: Vec::new(),
+            transition_editors: Vec::new(),
             morph_editors: Vec::new(),
             gesture_counter: 0,
             render_job: None,
@@ -587,6 +590,7 @@ impl KtApp {
             meter_glow: None,
             thumbs: thumbs_svc,
             fx_editors: Vec::new(),
+            transition_editors: Vec::new(),
             morph_editors: Vec::new(),
             gesture_counter: 0,
             render_job: None,
@@ -949,6 +953,7 @@ impl KtApp {
         self.sample_perf();
         self.draw_search(&ctx);
         self.draw_fx_editors(&ctx);
+        self.draw_transition_editors(&ctx);
         self.draw_morph_editors(&ctx);
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);

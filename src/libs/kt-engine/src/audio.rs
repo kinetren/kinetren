@@ -41,6 +41,11 @@ struct AudioClip {
     /// Дизъюнктны по валидации модели.
     fade_in: Option<(i64, i64)>,
     fade_out: Option<(i64, i64)>,
+    /// Кривая кроссфейда перехода (Р.33): equal-power — прежняя формула,
+    /// поэтому GOLDEN_AUDIO не двигается. Хранится по одной на сторону:
+    /// у клипа могут быть разные переходы слева и справа.
+    fade_in_curve: kt_model::AudioCurve,
+    fade_out_curve: kt_model::AudioCurve,
     /// «Ручки»: материал за краями тела, звучит только под окнами переходов.
     head_ext: i64,
     tail_ext: i64,
@@ -56,14 +61,15 @@ fn fade_weight(clip: &AudioClip, f: i64) -> f32 {
         && f < w1
     {
         let t = (f - w0) as f64 / (w1 - w0) as f64;
-        return (t.max(0.0)).sqrt() as f32;
+        return clip.fade_in_curve.rise(t.max(0.0)) as f32;
     }
     if let Some((w0, w1)) = clip.fade_out
         && f >= w0
         && f < w1
     {
         let t = (f - w0) as f64 / (w1 - w0) as f64;
-        return ((1.0 - t).max(0.0)).sqrt() as f32;
+        // затухающая сторона — та же формула от (1 − t)
+        return clip.fade_out_curve.rise((1.0 - t).max(0.0)) as f32;
     }
     1.0
 }
@@ -159,6 +165,8 @@ impl AudioRenderer {
                     reversed: c.reversed,
                     fade_in: None,
                     fade_out: None,
+                    fade_in_curve: Default::default(),
+                    fade_out_curve: Default::default(),
                     head_ext: 0,
                     tail_ext: 0,
                 }
@@ -182,12 +190,14 @@ impl AudioRenderer {
                 // фейд-вес применяется как есть
                 let ext = if a.reversed && !a.fx.is_empty() { 0 } else { w1 - a.end };
                 a.fade_out = Some((w0, w1));
+                a.fade_out_curve = t.audio;
                 a.tail_ext = ext.max(0);
                 a.ext_end += a.tail_ext;
             }
             if let Some(b) = t.b.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
                 let ext = if b.reversed && !b.fx.is_empty() { 0 } else { b.start - w0 };
                 b.fade_in = Some((w0, w1));
+                b.fade_in_curve = t.audio;
                 b.head_ext = ext.max(0);
             }
         }

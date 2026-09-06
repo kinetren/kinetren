@@ -12,6 +12,7 @@ pub mod fetch;
 pub mod fxstore;
 pub mod player;
 pub mod prefetch;
+pub mod transitions;
 pub mod transport;
 pub mod video;
 pub mod video_plan;
@@ -143,6 +144,7 @@ pub use player::{
     varispeed_fill,
 };
 pub use prefetch::prefetch_audio_pass;
+pub use transitions::TransMix;
 pub use transport::Transport;
 pub use video::{VideoRenderer, compose_plan_cpu, video_cache_idx};
 pub use video_plan::{

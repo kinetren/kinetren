@@ -39,6 +39,10 @@ struct VideoClip {
     /// incoming (нарастает) / outgoing (затухает). Пара блендится линейно.
     fade_in: Option<(Tick, Tick)>,
     fade_out: Option<(Tick, Tick)>,
+    /// Вид перехода со стороны INCOMING (пара считается в его слое) и
+    /// вид сольного фейда — Р.33 С4. Кроссфейд = прежний путь.
+    fade_in_mix: crate::TransMix,
+    fade_out_mix: crate::TransMix,
     /// Фейд (Р.25): напротив окна пустота (край дорожки/Gap), пары нет и
     /// ЖДАТЬ её не надо — слой уходит в прозрачность (под ним просвечивает
     /// нижняя дорожка, а её нет — чёрное).
@@ -159,6 +163,8 @@ impl VideoRenderer {
                     fx_hash,
                     fade_in: None,
                     fade_out: None,
+                    fade_in_mix: Default::default(),
+                    fade_out_mix: Default::default(),
                     fade_in_solo: false,
                     fade_out_solo: false,
                     opacity_k: (c.opacity.clamp(0.0, 1.0) * 4096.0).round() as u32,
@@ -179,11 +185,13 @@ impl VideoRenderer {
             if let Some(a) = t.a.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
                 a.fade_out = Some((w0, w1));
                 a.fade_out_solo = solo;
+                a.fade_out_mix = crate::TransMix::of(&t.kind);
                 a.tail_ext = Tick((w1.0 - a.end.0).max(0));
             }
             if let Some(b) = t.b.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
                 b.fade_in = Some((w0, w1));
                 b.fade_in_solo = solo;
+                b.fade_in_mix = crate::TransMix::of(&t.kind);
                 b.head_ext = Tick((b.start.0 - w0.0).max(0));
             }
         }
@@ -390,11 +398,21 @@ fn build_plan<'a>(
         has_3d |= clip.fx.iter().any(|f| f.requires_gpu());
         // фейд у края/Gap: пары нет по модели, слой всегда идёт через
         // масштабирование альфы (scale_alpha)
-        if let Some(k) = solo_fade_scale(clip, t).map(|k| k * clip.opacity_k / 4096) {
+        if let Some((w, incoming, mix)) = solo_fade(clip, t) {
+            // кроссфейд — прежний путь (вес прямо в альфе, байты те же);
+            // любой другой вид форму даёт ядром, а уровень остаётся
+            // уровнем события
+            let (alpha_k, fade) = if mix.is_crossfade() {
+                (w * clip.opacity_k / 4096, None)
+            } else {
+                let k = if incoming { w } else { 4096 - w };
+                (clip.opacity_k, Some(crate::video_plan::SoloFade { k, mix, incoming }))
+            };
             layers.push(PlanLayer::One {
                 src: layer_src(clip, ctx, cache, quality, t),
-                alpha_k: k,
+                alpha_k,
                 scale_alpha: true,
+                fade,
             });
             continue;
         }
@@ -421,6 +439,7 @@ fn build_plan<'a>(
                 b: layer_src(clip, ctx, cache, quality, t),
                 k,
                 alpha_k: op,
+                mix: clip.fade_in_mix,
             });
             continue;
         }
@@ -428,6 +447,7 @@ fn build_plan<'a>(
             src: layer_src(clip, ctx, cache, quality, t),
             alpha_k: clip.opacity_k,
             scale_alpha: clip.opacity_k < 4096,
+            fade: None,
         });
     }
     FramePlan { t, out_w: quality.width, out_h: quality.height, layers, has_3d, memoize_postfx }
@@ -460,10 +480,19 @@ fn execute_plan_cpu(
     let fits = |f: &Arc<VideoFrame>| (f.width as usize, f.height as usize) == (w, h);
     for layer in &plan.layers {
         match layer {
-            PlanLayer::One { src, alpha_k, scale_alpha } => {
+            PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
                 match layer_frame_cpu(src, cache, q_key, scratch, plan.t, plan.memoize_postfx) {
                     Some(f) if fits(&f) => {
-                        if *scale_alpha {
+                        if let Some(sf) = fade {
+                            // сольный фейд с видом: вторая сторона — пустота
+                            let (fa, fb) =
+                                if sf.incoming { (None, Some(&*f)) } else { (Some(&*f), None) };
+                            crate::transitions::mix_into(blend, fa, fb, sf.k, sf.mix, w, h);
+                            if *alpha_k < 4096 {
+                                scale_alpha_inplace(blend, *alpha_k, w * h);
+                            }
+                            alpha_over(out, blend, true, w * h);
+                        } else if *scale_alpha {
                             scale_alpha_into(blend, &f, *alpha_k, w * h);
                             alpha_over(out, blend, true, w * h);
                         } else {
@@ -474,12 +503,24 @@ fn execute_plan_cpu(
                     None => complete = false,
                 }
             }
-            PlanLayer::Dissolve { a, b, k, alpha_k } => {
+            PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
                 let fa = layer_frame_cpu(a, cache, q_key, scratch, plan.t, plan.memoize_postfx);
                 let fb = layer_frame_cpu(b, cache, q_key, scratch, plan.t, plan.memoize_postfx);
                 match (fa, fb) {
                     (Some(fa), Some(fb)) if fits(&fa) && fits(&fb) => {
-                        let mut has_alpha = dissolve_into(blend, &fa, &fb, *k, w * h);
+                        let mut has_alpha = if mix.is_crossfade() {
+                            dissolve_into(blend, &fa, &fb, *k, w * h)
+                        } else {
+                            crate::transitions::mix_into(
+                                blend,
+                                Some(&fa),
+                                Some(&fb),
+                                *k,
+                                *mix,
+                                w,
+                                h,
+                            )
+                        };
                         if *alpha_k < 4096 {
                             scale_alpha_inplace(blend, *alpha_k, w * h);
                             has_alpha = true;
@@ -570,10 +611,10 @@ fn layer_frame_cpu(
     cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0)
 }
 
-/// Доля видимости клипа в его СОЛЬНОМ окне фейда (Р.25), k из 4096 долей:
-/// fade_in нарастает 0→1, fade_out затухает 1→0. None — момент вне сольного
-/// окна (обычный слой или половина настоящей пары).
-fn solo_fade_scale(clip: &VideoClip, t: Tick) -> Option<u32> {
+/// Сольный фейд (Р.25) в момент t: (вес 0..4096, клип ПОЯВЛЯЕТСЯ, вид).
+/// fade_in нарастает 0→1, fade_out затухает 1→0. None — момент вне
+/// сольного окна (обычный слой или половина настоящей пары).
+fn solo_fade(clip: &VideoClip, t: Tick) -> Option<(u32, bool, crate::TransMix)> {
     let frac = |w: (Tick, Tick)| {
         (((t.0 - w.0.0) * 4096) / (w.1.0 - w.0.0).max(1)).clamp(0, 4096) as u32
     };
@@ -582,14 +623,14 @@ fn solo_fade_scale(clip: &VideoClip, t: Tick) -> Option<u32> {
         && t.0 >= w.0.0
         && t.0 < w.1.0
     {
-        return Some(frac(w));
+        return Some((frac(w), true, clip.fade_in_mix));
     }
     if let Some(w) = clip.fade_out
         && clip.fade_out_solo
         && t.0 >= w.0.0
         && t.0 < w.1.0
     {
-        return Some(4096 - frac(w));
+        return Some((4096 - frac(w), false, clip.fade_out_mix));
     }
     None
 }

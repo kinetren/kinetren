@@ -140,12 +140,13 @@ lane_name = "轨道名称"
 [tl.menu]
 clear_range = "移除范围"
 region_from_event = "按此事件设区间（Shift+双击）"
-crossfade_next = "与下一个交叉淡化"
-crossfade_prev = "与上一个交叉淡化"
+transition_props = "转场属性…"
+transition_next = "与下一个的转场"
+transition_prev = "与上一个的转场"
 remove_fade_start = "移除片段开头的淡入"
 remove_fade_end = "移除片段结尾的淡出"
-remove_crossfade_next = "移除与下一个片段的交叉淡化"
-remove_crossfade_prev = "移除与上一个片段的交叉淡化"
+remove_transition_next = "移除与下一个片段的转场"
+remove_transition_prev = "移除与上一个片段的转场"
 fade_in = "在片段开头淡入"
 fade_out = "在片段结尾淡出"
 copy = "复制（Ctrl+C）"
@@ -225,6 +226,9 @@ remove = "删除 morpher"
 # Реестр FX и пикер с поиском.
 # Подписи параметров эффектов (Р.33): один источник — спека kt-model.
 [fxp]
+angle = "角度："
+turns = "圈数："
+blur = "模糊："
 db = "增益："
 rate = "速度："
 mix = "混合："
@@ -485,3 +489,59 @@ eviction_spike = "eviction 峰值：{0}/秒 — 缓存太小"
 prefetch_thrash = "{0} 条缓存在第一次读取前就被丢弃（prefetch thrash）"
 low_video_hit = "播放时视频 hit {0}% — 解码跟不上"
 offline_changed = "媒体可用性变了：离线 {0}"
+
+# Переходы (Р.33 С4): вид, его параметры и кривая аудио.
+[trn]
+title = "转场 {0}"
+kind = "类型："
+dir = "方向："
+shape = "形状："
+reverse = "逆时针"
+vertical = "竖向开门"
+invert = "反转亮度"
+color = "颜色："
+audio = "声音："
+audio_note = "声音始终交叉淡化，只改变曲线"
+length = "长度：{0} 秒"
+is_fade = "边缘淡化"
+
+[trn.cat]
+basic = "基本"
+wipe = "划像"
+motion = "位移"
+style = "风格化"
+
+[trn.kind]
+crossfade = "交叉溶解"
+wipe = "划像"
+iris = "光圈"
+clock = "时钟"
+barn = "开门"
+luma = "亮度划像"
+push = "推移"
+slide = "滑入"
+zoom = "交叉缩放"
+spin = "旋转"
+whip = "甩镜"
+blur = "模糊溶解"
+pixelate = "像素化"
+glitch = "故障"
+flash = "闪白"
+dip = "渐变到色"
+
+[trn.curve]
+equal_power = "等功率"
+linear = "线性"
+s_curve = "S 曲线"
+exponential = "指数"
+
+[trn.dir]
+left = "向左"
+right = "向右"
+up = "向上"
+down = "向下"
+
+[trn.shape]
+circle = "圆形"
+diamond = "菱形"
+box = "矩形"

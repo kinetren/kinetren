@@ -48,15 +48,27 @@ pub struct LayerSrc<'a> {
     pub cam3d: Option<Cam3d>,
 }
 
+/// Сольный фейд С ВИДОМ (Р.33 С4): вторая сторона — прозрачность, поэтому
+/// кадр один, а форму даёт то же ядро перехода. `incoming` — клип
+/// ПОЯВЛЯЕТСЯ (a = пустота, b = кадр); иначе уходит.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SoloFade {
+    pub k: u32,
+    pub mix: crate::TransMix,
+    pub incoming: bool,
+}
+
 pub enum PlanLayer<'a> {
     /// Обычный слой или соло-фейд. `alpha_k` (0..4096) — уровень × вес
     /// фейда; `scale_alpha` — прогонять через масштабирование альфы даже
     /// при 4096 (v1-семантика соло-фейда: кадр без альфы получает A=255,
-    /// а не копию сырых байт альфы).
-    One { src: LayerSrc<'a>, alpha_k: u32, scale_alpha: bool },
-    /// Пара перехода: dst = a·(1−k) + b·k (k из 4096 долей), затем альфа
-    /// × alpha_k (уровни соседей уже смешаны тем же весом при построении).
-    Dissolve { a: LayerSrc<'a>, b: LayerSrc<'a>, k: u32, alpha_k: u32 },
+    /// а не копию сырых байт альфы). `fade` — сольный фейд НЕ-кроссфейдом
+    /// (Р.33): вес тогда не в alpha_k, а в ядре.
+    One { src: LayerSrc<'a>, alpha_k: u32, scale_alpha: bool, fade: Option<SoloFade> },
+    /// Пара перехода: при кроссфейде dst = a·(1−k) + b·k (k из 4096
+    /// долей), иначе форму задаёт `mix`; затем альфа × alpha_k (уровни
+    /// соседей уже смешаны тем же весом при построении).
+    Dissolve { a: LayerSrc<'a>, b: LayerSrc<'a>, k: u32, alpha_k: u32, mix: crate::TransMix },
 }
 
 /// План композиции кадра момента t: слои back-to-front (порядок Vegas

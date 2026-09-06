@@ -1867,7 +1867,13 @@ impl KtApp {
                     });
                 }
             } else if let Some((tid, tz)) = transition_at(self, pos) {
-                if response.drag_started() {
+                if response.double_clicked() {
+                    // двойной клик по окну перехода = его свойства
+                    // (паритет со способом «двойной клик по событию =
+                    // окно FX», п.17 р.28: парные способы ведут себя
+                    // одинаково)
+                    self.open_transition_editor(tid);
+                } else if response.drag_started() {
                     match tz {
                         TransZone::Joint => {
                             let at = {
@@ -3056,6 +3062,40 @@ impl KtApp {
                         painter.line_segment([r.left_top(), r.right_bottom()], st);
                     }
                 }
+                // вид перехода виден НА ПОЛОСЕ (Р.33 С4): без этого 16
+                // видов различались бы только по окну свойств. Имя
+                // пишется в само окно перехода — своей полосы под него
+                // не заводим (правило «не тратить место впустую»)
+                if t.kind != TransitionKind::Crossfade {
+                    let name = crate::transition_editor::kind_name(&t.kind);
+                    let font = egui::FontId::proportional((lane_h * 0.32).clamp(8.0, 11.0));
+                    let g = painter.layout_no_wrap(
+                        name.to_string(),
+                        font,
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 210),
+                    );
+                    if g.size().x + 6.0 <= r.width() {
+                        // подложка под текстом: диагонали перехода иначе
+                        // читаются сквозь буквы
+                        let at = egui::pos2(
+                            r.center().x - g.size().x / 2.0,
+                            r.center().y - g.size().y / 2.0,
+                        );
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(at, g.size()).expand(2.0),
+                            2.0,
+                            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 150),
+                        );
+                        painter.galley(at, g, egui::Color32::WHITE);
+                    } else {
+                        // не влезло — точка-метка «здесь не растворение»
+                        painter.circle_filled(
+                            r.center(),
+                            2.0,
+                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 210),
+                        );
+                    }
+                }
                 painter.line_segment(
                     [egui::pos2(xj, r.top()), egui::pos2(xj, r.bottom())],
                     egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
@@ -3632,11 +3672,33 @@ impl KtApp {
                             .collect();
                         for (next, n) in items {
                             let label = if next {
-                                tr(k::tl::menu::CROSSFADE_NEXT)
+                                tr(k::tl::menu::TRANSITION_NEXT)
                             } else {
-                                tr(k::tl::menu::CROSSFADE_PREV)
+                                tr(k::tl::menu::TRANSITION_PREV)
                             };
-                            if ui.button(label).clicked() {
+                            // ВИД выбирается сразу, а не «сначала fade,
+                            // потом переделай» — претензия п.1 Р.33.
+                            // Подменю: первым идёт растворение (прежний
+                            // однокликовый путь остаётся коротким).
+                            ui.menu_button(label, |ui| {
+                                let mut pick: Option<TransitionKind> = None;
+                                let mut cat: Option<crate::i18n::Key> = None;
+                                for kind in TransitionKind::ALL {
+                                    let c = crate::transition_editor::kind_category(kind);
+                                    if cat != Some(c) {
+                                        if cat.is_some() {
+                                            ui.separator();
+                                        }
+                                        cat = Some(c);
+                                    }
+                                    if ui
+                                        .button(crate::transition_editor::kind_name(kind))
+                                        .clicked()
+                                    {
+                                        pick = Some(kind.clone());
+                                    }
+                                }
+                                let Some(kind) = pick else { return };
                                 let (a, b) = if next { (id, n) } else { (n, id) };
                                 let clip = |i: ClipId| {
                                     self.model.project().clips.iter().find(|c| c.id == i).cloned()
@@ -3654,12 +3716,12 @@ impl KtApp {
                                         b: Some(b),
                                         in_offset: half,
                                         out_offset: half,
-                                        kind: TransitionKind::Crossfade,
+                                        kind,
                                         audio: Default::default(),
                                     }));
                                 }
                                 ui.close();
-                            }
+                            });
                         }
                         for incoming in fades {
                             let label = if incoming {
@@ -3693,9 +3755,16 @@ impl KtApp {
                             let label = match (is_fade, i_am_outgoing) {
                                 (true, true) => tr(k::tl::menu::REMOVE_FADE_END),
                                 (true, false) => tr(k::tl::menu::REMOVE_FADE_START),
-                                (false, true) => tr(k::tl::menu::REMOVE_CROSSFADE_NEXT),
-                                (false, false) => tr(k::tl::menu::REMOVE_CROSSFADE_PREV),
+                                (false, true) => tr(k::tl::menu::REMOVE_TRANSITION_NEXT),
+                                (false, false) => tr(k::tl::menu::REMOVE_TRANSITION_PREV),
                             };
+                            // свойства ПЕРЕД удалением: вид перехода
+                            // выбирается здесь и двойным кликом по его
+                            // окну (парные способы — п.17 р.28)
+                            if ui.button(tr(k::tl::menu::TRANSITION_PROPS)).clicked() {
+                                self.open_transition_editor(tid);
+                                ui.close();
+                            }
                             if ui.button(label).clicked() {
                                 self.apply(Command::RemoveTransition { id: tid });
                                 ui.close();

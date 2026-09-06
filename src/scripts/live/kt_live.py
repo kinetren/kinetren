@@ -161,12 +161,36 @@ class Live:
                 raise Failure(f"kt-app упал на старте, см. {self.out}/kt-app.log")
             try:
                 probe.window()
-                # окно появилось — даём кадрам устояться (софт-рендер медленный)
-                time.sleep(2.0)
-                return
             except SystemExit:
                 time.sleep(0.4)
+                continue
+            # окно ЕСТЬ — но кадра в нём может ещё не быть: в софт-рендере
+            # первая отрисовка идёт секунды, а сценарий, снявший чёрный
+            # экран, сравнивает чёрное с чёрным и «проходит» (Р.33 п.228).
+            # Ждём НАСТОЯЩИЙ кадр: разброс яркости перестал быть нулевым.
+            while time.time() < deadline:
+                if self._screen_painted():
+                    time.sleep(0.5)
+                    return
+                time.sleep(0.4)
+            raise Failure("окно kt-app осталось чёрным — программа не нарисовала кадр")
         raise Failure("окно kt-app не появилось")
+
+    def _screen_painted(self):
+        """Экран уже не однотонный? (первый кадр приложения нарисован)"""
+        img = self.shot("wait")
+        out = subprocess.run(
+            ["convert", img, "-format", "%[standard-deviation]", "info:-"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        os.unlink(img)
+        self._shot_no -= 1
+        try:
+            return float(out) > 100.0
+        except ValueError:
+            return False
 
     # ---- геометрия из САМОЙ программы --------------------------------------
 
@@ -335,12 +359,21 @@ class Live:
         time.sleep(0.4)
 
     def shot(self, tag):
+        """Снимок ЭКРАНА через xwd.
+
+        `import -window root` (ImageMagick) на окне eframe отдаёт чёрный
+        кадр: GL-окно живёт в 32-битном визуале, и XGetImage корневого
+        окна глубины 24 содержимого ребёнка не видит. Симптом коварный —
+        сценарий не падает, а сравнивает чёрное с чёрным и «проходит».
+        xwd читает то же корневое окно правильно (Р.33 п.228)."""
         self._shot_no += 1
         path = os.path.join(self.out, f"{self._shot_no:02d}-{tag}.png")
-        subprocess.run(
-            ["import", "-window", "root", "-display", os.environ["DISPLAY"], path],
+        xwd = subprocess.run(
+            ["xwd", "-root", "-display", os.environ["DISPLAY"]],
             check=True,
-        )
+            capture_output=True,
+        ).stdout
+        subprocess.run(["convert", "xwd:-", path], input=xwd, check=True)
         return path
 
     def pixel(self, x, y):
@@ -528,6 +561,6 @@ def geometry():
 
 
 def require_tools():
-    for tool in ("import", "convert"):
+    for tool in ("xwd", "convert"):
         if not shutil.which(tool):
-            raise Failure(f"нет {tool} (ImageMagick) — скриншоты не снять")
+            raise Failure(f"нет {tool} (x11-apps/ImageMagick) — скриншоты не снять")

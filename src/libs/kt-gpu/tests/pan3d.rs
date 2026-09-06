@@ -73,6 +73,7 @@ fn layer<'a>(
         },
         alpha_k: 4096,
         scale_alpha: false,
+        fade: None,
     }
 }
 

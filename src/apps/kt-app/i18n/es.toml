@@ -140,12 +140,13 @@ lane_name = "nombre de la pista"
 [tl.menu]
 clear_range = "Quitar el rango"
 region_from_event = "Región sobre este evento (Shift+doble clic)"
-crossfade_next = "Fundido con el siguiente"
-crossfade_prev = "Fundido con el anterior"
+transition_props = "Propiedades de la transición…"
+transition_next = "Transición con el siguiente"
+transition_prev = "Transición con el anterior"
 remove_fade_start = "Quitar la aparición al inicio del clip"
 remove_fade_end = "Quitar el desvanecido al final del clip"
-remove_crossfade_next = "Quitar el fundido con el clip siguiente"
-remove_crossfade_prev = "Quitar el fundido con el clip anterior"
+remove_transition_next = "Quitar la transición con el clip siguiente"
+remove_transition_prev = "Quitar la transición con el clip anterior"
 fade_in = "Aparición al inicio del clip"
 fade_out = "Desvanecido al final del clip"
 copy = "Copiar (Ctrl+C)"
@@ -225,6 +226,9 @@ remove = "Eliminar morpher"
 # Реестр FX и пикер с поиском.
 # Подписи параметров эффектов (Р.33): один источник — спека kt-model.
 [fxp]
+angle = "Ángulo:"
+turns = "Vueltas:"
+blur = "Desenfoque:"
 db = "Ganancia:"
 rate = "Velocidad:"
 mix = "Mezcla:"
@@ -485,3 +489,59 @@ eviction_spike = "pico de eviction: {0}/s — la caché se queda corta"
 prefetch_thrash = "{0} entradas de caché descartadas antes de la primera lectura (prefetch thrash)"
 low_video_hit = "hit de vídeo {0}% al reproducir — la decodificación no llega"
 offline_changed = "cambió la disponibilidad de medios: offline {0}"
+
+# Переходы (Р.33 С4): вид, его параметры и кривая аудио.
+[trn]
+title = "Transición {0}"
+kind = "Tipo:"
+dir = "Dirección:"
+shape = "Forma:"
+reverse = "Antihorario"
+vertical = "Puertas verticales"
+invert = "Invertir la luminancia"
+color = "Color:"
+audio = "Sonido:"
+audio_note = "El sonido siempre se funde en cruz — solo cambia su curva"
+length = "Duración: {0} s"
+is_fade = "fundido en el borde"
+
+[trn.cat]
+basic = "Básicas"
+wipe = "Cortinillas"
+motion = "Movimiento"
+style = "Estilizadas"
+
+[trn.kind]
+crossfade = "Fundido cruzado"
+wipe = "Cortinilla"
+iris = "Iris"
+clock = "Reloj"
+barn = "Puertas"
+luma = "Cortinilla por luma"
+push = "Empuje"
+slide = "Deslizamiento"
+zoom = "Zoom cruzado"
+spin = "Giro"
+whip = "Barrido"
+blur = "Disolución con desenfoque"
+pixelate = "Pixelado"
+glitch = "Fallo"
+flash = "Destello"
+dip = "Paso por color"
+
+[trn.curve]
+equal_power = "Potencia igual"
+linear = "Lineal"
+s_curve = "Curva en S"
+exponential = "Exponencial"
+
+[trn.dir]
+left = "Izquierda"
+right = "Derecha"
+up = "Arriba"
+down = "Abajo"
+
+[trn.shape]
+circle = "Círculo"
+diamond = "Rombo"
+box = "Rectángulo"
