@@ -19,8 +19,9 @@ pub struct MorphEditor {
     pub src_query: String,
     pub gesture: u64,
     pub open: bool,
-    /// Выбранные слоты цепочек батча (видео, аудио).
-    pub sel: (usize, usize),
+    /// Выбранное в ОДНОЙ полосе цепочки (Р.35 п.3): голова —
+    /// подмена источника, дальше эффекты обоих видов подряд.
+    pub sel: crate::widgets::ChainSel,
     /// Прямоугольник поля источника на экране: по нему `handle_drops`
     /// узнаёт, что файл бросили ИМЕННО СЮДА (Р.33 п.2 — «хотелось бы
     /// чтобы можно было и dnd туда делать файла»).
@@ -45,7 +46,7 @@ impl KtApp {
             src_query: String::new(),
             gesture: self.gesture_counter,
             open: true,
-            sel: (0, 0),
+            sel: Default::default(),
             src_rect: None,
             backup,
         });
@@ -73,6 +74,95 @@ impl KtApp {
         ev.patch.media = Some(mid);
         cmds.push(Command::SetMorpher(ev));
         self.apply_batch(cmds);
+    }
+
+    /// Поле источника морф-слота: пикер медиа проекта с поиском, дроп
+    /// файла из системы, карточка из бина и сдвиг точки входа. Показано,
+    /// когда в полосе выбрана ГОЛОВА (Р.35 п.3).
+    fn morph_source_section(
+        &self,
+        ui: &mut egui::Ui,
+        ed: &mut MorphEditor,
+        ev: &mut MorpherEvent,
+        pick_file: &mut bool,
+    ) -> bool {
+        let mut changed = false;
+        let media_list: Vec<(MediaId, String)> =
+            self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect();
+        let cur_name = ev
+            .patch
+            .media
+            .and_then(|id| media_list.iter().find(|(i, _)| *i == id).map(|(_, p)| p.clone()))
+            .unwrap_or_else(|| tr(k::mrph::KEEP_SOURCE).to_string());
+        // Поле источника (Р.33 п.2): принимает дроп файла из системы и
+        // карточки из медиа-бина, открывает список медиа проекта с
+        // поиском и системный диалог файла.
+        let frame = egui::Frame::group(ui.style())
+            .fill(ui.visuals().extreme_bg_color)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(tr(k::mrph::NEW_SOURCE));
+                    ui.strong(short_name(&cur_name));
+                    if let Some(id) = crate::widgets::media_picker(
+                        ui,
+                        ("morph_src", ed.id.0),
+                        &media_list,
+                        &mut ed.src_query,
+                    ) {
+                        ev.patch.media = id;
+                        changed = true;
+                    }
+                    if ui.button(tr(k::mrph::BROWSE)).clicked() {
+                        *pick_file = true;
+                    }
+                });
+                ui.weak(tr(k::mrph::SOURCE_DROP));
+            });
+        let rect = frame.response.rect;
+        ed.src_rect = Some(rect);
+        // карточка из бина: тот же payload, что несёт перетаскивание на таймлайн
+        if ui.rect_contains_pointer(rect)
+            && let Some(id) = egui::DragAndDrop::payload::<crate::bin_panel::BinDrag>(ui.ctx())
+        {
+            ui.painter().rect_stroke(
+                rect,
+                3.0,
+                egui::Stroke::new(2.0, crate::theme::ACCENT),
+                egui::StrokeKind::Inside,
+            );
+            if ui.input(|i| i.pointer.any_released()) {
+                ev.patch.media = Some(id.0);
+                changed = true;
+                let _ = egui::DragAndDrop::take_payload::<crate::bin_panel::BinDrag>(ui.ctx());
+            }
+        }
+        ui.separator();
+        // --- сдвиг source-in (delta / absolute, D4) ---------
+        let mut absolute = ev.patch.absolute_source_in.is_some();
+        if ui.checkbox(&mut absolute, tr(k::mrph::ABSOLUTE_IN)).changed() {
+            ev.patch.absolute_source_in = absolute.then_some(Tick(0));
+            changed = true;
+        }
+        if let Some(abs) = &mut ev.patch.absolute_source_in {
+            let mut ms = abs.0 / MS;
+            ui.horizontal(|ui| {
+                ui.label(tr(k::mrph::SOURCE_IN_MS));
+                if ui.add(egui::DragValue::new(&mut ms).speed(10).range(0..=i64::MAX)).changed() {
+                    *abs = Tick(ms * MS);
+                    changed = true;
+                }
+            });
+        } else {
+            let mut ms = ev.patch.source_in_delta.0 / MS;
+            ui.horizontal(|ui| {
+                ui.label(tr(k::mrph::SOURCE_IN_DELTA_MS));
+                if ui.add(egui::DragValue::new(&mut ms).speed(10)).changed() {
+                    ev.patch.source_in_delta = Tick(ms * MS);
+                    changed = true;
+                }
+            });
+        }
+        changed
     }
 
     pub fn draw_morph_editors(&mut self, ctx: &egui::Context) {
@@ -105,6 +195,14 @@ impl KtApp {
                 (c.id.0, if c.name.is_empty() { format!("C{}", c.id.0) } else { c.name.clone() })
             })
             .collect();
+        // имена медиа для подписи морф-слота
+        let media_names: Vec<(MediaId, String)> = self
+            .model
+            .project()
+            .media
+            .iter()
+            .map(|m| (m.id, m.path.clone()))
+            .collect();
         let title = if is_batch {
             crate::tf!(k::mrph::TITLE_BATCH, ed.id.0)
         } else {
@@ -119,8 +217,10 @@ impl KtApp {
         let mut revert = false;
         let mut pick_file = false;
         let mut open = ed.open;
-        // выделение на таймлайне — им заполняется замороженный список
-        let selection: Vec<ClipId> = self.selected_with_groups();
+        // чем заполняется замороженный список: регион приоритетнее
+        // выделения, оба расширяются link-группами (правило v1 —
+        // единственная точка сбора целей на всю программу)
+        let selection: Vec<ClipId> = self.morph_target_ids();
         let mut need_selection = false;
         // выключатель события (Р.33) — та же мастер-галка, что у цепочки
         // события; буфер FX общий с окном событий
@@ -204,157 +304,54 @@ impl KtApp {
                 }
                 ui.separator();
 
-                // Р.35: подмена источника и цепочки живут ВМЕСТЕ, поэтому
-                // окно показывает обе секции подряд, а не одну из двух
-                {
-                    {
-                        let media = &mut ev.patch.media;
-                        let source_in_delta = &mut ev.patch.source_in_delta;
-                        let absolute_source_in = &mut ev.patch.absolute_source_in;
-                        // --- подмена источника ------------------------------
-                        let media_list: Vec<(MediaId, String)> = self
-                            .model
-                            .project()
-                            .media
-                            .iter()
-                            .map(|m| (m.id, m.path.clone()))
-                            .collect();
-                        let cur_name = media
-                            .and_then(|id| {
-                                media_list.iter().find(|(i, _)| *i == id).map(|(_, p)| p.clone())
-                            })
-                            .unwrap_or_else(|| tr(k::mrph::KEEP_SOURCE).to_string());
-                        // Поле источника (Р.33 п.2): принимает дроп файла
-                        // из системы и карточки из медиа-бина, открывает
-                        // список медиа проекта с поиском и системный диалог
-                        // файла. Раньше это был ComboBox, а на «файла нет в
-                        // проекте» отвечала блёклая строчка-инструкция.
-                        let frame = egui::Frame::group(ui.style())
-                            .fill(ui.visuals().extreme_bg_color)
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(tr(k::mrph::NEW_SOURCE));
-                                    ui.strong(short_name(&cur_name));
-                                    // выбор из медиа проекта — тем же
-                                    // пикером с поиском, что у эффектов
-                                    if let Some(id) = crate::widgets::media_picker(
-                                        ui,
-                                        ("morph_src", ed.id.0),
-                                        &media_list,
-                                        &mut ed.src_query,
-                                    ) {
-                                        *media = id;
-                                        changed = true;
-                                    }
-                                    if ui.button(tr(k::mrph::BROWSE)).clicked() {
-                                        pick_file = true;
-                                    }
-                                });
-                                ui.weak(tr(k::mrph::SOURCE_DROP));
-                            });
-                        let rect = frame.response.rect;
-                        ed.src_rect = Some(rect);
-                        // карточка из бина: тот же payload, что несёт
-                        // перетаскивание на таймлайн
-                        if ui.rect_contains_pointer(rect)
-                            && let Some(id) =
-                                egui::DragAndDrop::payload::<crate::bin_panel::BinDrag>(ui.ctx())
+                // Р.35 п.3: ОДНА полоса цепочки, в которой первым
+                // стоит фиолетовый морф-слот (подмена источника). Виды
+                // эффектов в патче лежат раздельно (video/audio), но
+                // пользователю это не показываем: полоса склеивает их и
+                // раскладывает обратно по `FxInstance::class()`.
+                let (mut fx, mut bypass, split) = merge_chains(&ev.patch);
+                let mut src_on = !ev.patch.src_off;
+                let ch = crate::widgets::chain_strip(
+                    ui,
+                    ("morphchain", ed.id.0),
+                    crate::widgets::ChainEdit {
+                        fx: &mut fx,
+                        bypass: &mut bypass,
+                        auto: None,
+                        selected: &mut ed.sel,
+                        master_on: &mut enabled,
+                        head: Some(crate::widgets::HeadSlot {
+                            label: head_label(&ev.patch, &media_names),
+                            on: &mut src_on,
+                            hint: tr(k::mrph::SRC_SLOT_HINT),
+                        }),
+                    },
+                    false,
+                    &mut ed.picker_query,
+                    &mut fx_clip,
+                    kt_time::Tick(0),
+                    &mut hover_out,
+                );
+                if ch.any() {
+                    ev.patch.src_off = !src_on;
+                    split_chains(&mut ev.patch, &fx, &bypass, split);
+                    changed = true;
+                }
+                ui.label(egui::RichText::new(tr(k::mrph::LIVE_NOTE)).weak().small());
+                ui.separator();
+
+                match ed.sel {
+                    crate::widgets::ChainSel::Head => {
+                        changed |= self.morph_source_section(ui, ed, &mut ev, &mut pick_file);
+                    }
+                    crate::widgets::ChainSel::Fx(i) => {
+                        // параметры — ТЕМ ЖЕ кодом, что в окне события
+                        if let Some(f) = fx.get_mut(i)
+                            && crate::fx_editor::draw_video_fx_params(ui, f, &cameras)
                         {
-                            {
-                                ui.painter().rect_stroke(
-                                    rect,
-                                    3.0,
-                                    egui::Stroke::new(2.0, crate::theme::ACCENT),
-                                    egui::StrokeKind::Inside,
-                                );
-                                if ui.input(|i| i.pointer.any_released()) {
-                                    *media = Some(id.0);
-                                    changed = true;
-                                    let _ = egui::DragAndDrop::take_payload::<
-                                        crate::bin_panel::BinDrag,
-                                    >(ui.ctx());
-                                }
-                            }
-                        }
-                        ui.separator();
-                        // --- сдвиг source-in (delta / absolute, D4) ---------
-                        let mut absolute = absolute_source_in.is_some();
-                        if ui
-                            .checkbox(&mut absolute, tr(k::mrph::ABSOLUTE_IN))
-                            .changed()
-                        {
-                            *absolute_source_in =
-                                if absolute { Some(Tick(0)) } else { None };
+                            split_chains(&mut ev.patch, &fx, &bypass, split);
                             changed = true;
                         }
-                        if let Some(abs) = absolute_source_in {
-                            let mut ms = abs.0 / MS;
-                            ui.horizontal(|ui| {
-                                ui.label(tr(k::mrph::SOURCE_IN_MS));
-                                if ui
-                                    .add(egui::DragValue::new(&mut ms).speed(10).range(0..=i64::MAX))
-                                    .changed()
-                                {
-                                    *abs = Tick(ms * MS);
-                                    changed = true;
-                                }
-                            });
-                        } else {
-                            let mut ms = source_in_delta.0 / MS;
-                            ui.horizontal(|ui| {
-                                ui.label(tr(k::mrph::SOURCE_IN_DELTA_MS));
-                                if ui.add(egui::DragValue::new(&mut ms).speed(10)).changed() {
-                                    *source_in_delta = Tick(ms * MS);
-                                    changed = true;
-                                }
-                            });
-                        }
-                    }
-                    ui.separator();
-                    {
-                        let patch = &mut ev.patch;
-                        let (video_fx, audio_fx) = (&mut patch.video_fx, &mut patch.audio_fx);
-                        let (video_bypass, audio_bypass) =
-                            (&mut patch.video_bypass, &mut patch.audio_bypass);
-                        ui.label(
-                            egui::RichText::new(
-                                tr(k::mrph::LIVE_NOTE),
-                            )
-                            .weak()
-                            .small(),
-                        );
-                        // ОДИН виджет цепочки на события и морферы (Р.33):
-                        // галки, крестики, перестановка мышью, мастер-галка
-                        // и копипаст — одинаково в обоих местах
-                        changed |= chain_section(
-                            ui,
-                            (ed.id.0, true),
-                            tr(k::mrph::VIDEO_FX),
-                            video_fx,
-                            video_bypass,
-                            &mut ed.sel.0,
-                            true,
-                            &mut ed.picker_query,
-                            &cameras,
-                            &mut enabled,
-                            &mut fx_clip,
-                            &mut hover_out,
-                        );
-                        ui.separator();
-                        changed |= chain_section(
-                            ui,
-                            (ed.id.0, false),
-                            tr(k::mrph::AUDIO_FX),
-                            audio_fx,
-                            audio_bypass,
-                            &mut ed.sel.1,
-                            false,
-                            &mut ed.picker_query,
-                            &cameras,
-                            &mut enabled,
-                            &mut fx_clip,
-                            &mut hover_out,
-                        );
                     }
                 }
 
@@ -438,48 +435,56 @@ fn short_name(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-/// Секция одной цепочки батча: полоса слотов + добавление + параметры
-/// выбранного слота. Возвращает true при изменении.
-#[allow(clippy::too_many_arguments)]
-fn chain_section(
-    ui: &mut egui::Ui,
-    win_id: (u64, bool),
-    title: &str,
-    fx: &mut Vec<FxInstance>,
-    bypass: &mut Vec<bool>,
-    sel: &mut usize,
-    video: bool,
-    query: &mut String,
-    cameras: &[(u64, String)],
-    enabled: &mut bool,
-    clipboard: &mut Option<kt_model::ops::FxChainBlock>,
-    hover: &mut Option<String>,
-) -> bool {
-    let mut changed = false;
-    ui.label(egui::RichText::new(title).strong());
-    // морфер не хранит кривых: у батча автоматизации нет (она живёт на
-    // событии), поэтому auto = None
-    let ch = crate::widgets::chain_strip(
-        ui,
-        win_id,
-        crate::widgets::ChainEdit {
-            fx,
-            bypass,
-            auto: None,
-            selected: sel,
-            master_on: enabled,
-        },
-        !video,
-        query,
-        clipboard,
-        kt_time::Tick(0),
-        hover,
-    );
-    changed |= ch.any();
-    if let Some(f) = fx.get_mut(*sel) {
-        // те же параметры тем же кодом, что в окне событий (Р.33):
-        // раньше здесь была вторая форма со СВОИМИ диапазонами
-        changed |= crate::fx_editor::draw_video_fx_params(ui, f, cameras);
+/// Подпись фиолетового морф-слота: что подмена ДЕЛАЕТ. «Источник не
+/// менять» — честное состояние, а не пустое место: слот приколот всегда.
+fn head_label(patch: &MorphPatch, media: &[(MediaId, String)]) -> String {
+    match patch.media {
+        Some(id) => {
+            let name = media
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, p)| short_name(p))
+                .unwrap_or_else(|| format!("#{}", id.0));
+            crate::tf!(k::mrph::SRC_SLOT, name)
+        }
+        None if patch.absolute_source_in.is_some() || patch.source_in_delta.0 != 0 => {
+            tr(k::mrph::SRC_SLOT_SHIFT).to_string()
+        }
+        None => tr(k::mrph::SRC_SLOT_NONE).to_string(),
     }
-    changed
+}
+
+/// Склеить обе цепочки патча в ОДНУ полосу. `split` запоминает, сколько
+/// слотов было видео: обратная раскладка идёт по `FxInstance::class()`,
+/// а число нужно только для проверки, что порядок не потерялся.
+fn merge_chains(patch: &MorphPatch) -> (Vec<FxInstance>, Vec<bool>, usize) {
+    let mut fx = patch.video_fx.clone();
+    let mut bypass = patch.video_bypass.clone();
+    bypass.resize(fx.len(), false);
+    let n = fx.len();
+    fx.extend(patch.audio_fx.iter().cloned());
+    let mut ab = patch.audio_bypass.clone();
+    ab.resize(patch.audio_fx.len(), false);
+    bypass.extend(ab);
+    (fx, bypass, n)
+}
+
+/// Разложить полосу обратно по видам. Вид слота — функция от самого
+/// эффекта (`is_audio`), поэтому склейка обратима без побочных таблиц;
+/// относительный порядок внутри каждого вида сохраняется.
+fn split_chains(patch: &mut MorphPatch, fx: &[FxInstance], bypass: &[bool], _was_video: usize) {
+    patch.video_fx.clear();
+    patch.video_bypass.clear();
+    patch.audio_fx.clear();
+    patch.audio_bypass.clear();
+    for (i, f) in fx.iter().enumerate() {
+        let off = bypass.get(i).copied().unwrap_or(false);
+        if f.is_audio() {
+            patch.audio_fx.push(f.clone());
+            patch.audio_bypass.push(off);
+        } else {
+            patch.video_fx.push(f.clone());
+            patch.video_bypass.push(off);
+        }
+    }
 }

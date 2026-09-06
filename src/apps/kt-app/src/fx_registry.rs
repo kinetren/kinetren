@@ -93,13 +93,23 @@ pub fn filter_entries<'a>(
 }
 
 /// Кнопка «+ эффект…» с popup: поиск + список по категориям.
-/// Возвращает шаблон выбранного эффекта.
-pub fn fx_picker(
+/// Что выбрали в пикере.
+pub enum Picked {
+    /// Приколотая голова полосы (у морфера — подмена источника).
+    Head,
+    Fx(FxInstance),
+}
+
+/// Пикер, у которого ПЕРВОЙ строкой стоит голова полосы. В `registry()`
+/// её нет намеренно: t48 сверяет реестр с шаблонами эффектов, а у
+/// псевдо-слота шаблона не бывает — он не эффект, а часть морфера.
+pub fn fx_picker_with_head(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,
     audio: bool,
     query: &mut String,
-) -> Option<FxInstance> {
+    head: Option<&str>,
+) -> Option<Picked> {
     let mut picked = None;
     ui.menu_button(tr(k::fxreg::ADD), |ui| {
         ui.set_min_width(230.0);
@@ -110,8 +120,21 @@ pub fn fx_picker(
             resp.request_focus();
         }
         ui.separator();
+        // голова — своим цветом и ПЕРВОЙ («поднять в списке fx»);
+        // ищется той же строкой поиска, что и эффекты
+        if let Some(h) = head
+            && (query.is_empty() || h.to_lowercase().contains(&query.to_lowercase()))
+        {
+            let text = egui::RichText::new(h).color(crate::theme::MORPH_SLOT);
+            if ui.button(text).clicked() {
+                picked = Some(Picked::Head);
+                query.clear();
+                ui.close();
+            }
+            ui.separator();
+        }
         let list = filter_entries(registry(), audio, query);
-        if list.is_empty() {
+        if list.is_empty() && head.is_none() {
             ui.weak(tr(k::fxreg::NOTHING));
         }
         let mut last_cat: Option<Key> = None;
@@ -122,7 +145,7 @@ pub fn fx_picker(
                     ui.label(egui::RichText::new(tr(e.category)).small().weak());
                 }
                 if ui.button(e.name).clicked() {
-                    picked = Some(e.template.clone());
+                    picked = Some(Picked::Fx(e.template.clone()));
                     query.clear();
                     ui.close();
                 }
@@ -167,6 +190,13 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&sr.template).unwrap(),
             serde_json::to_string(&FxInstance::slowed_reverb(0.82, 0.1, 85.0)).unwrap()
+        );
+        // морф-слот в реестре НЕ живёт и жить не может (Р.35): у
+        // псевдо-слота нет шаблона, а этот тест сверяет реестр именно с
+        // шаблонами — «просто дописать его в реестр» обязано краснеть
+        assert!(
+            !reg.iter().any(|e| e.name.to_lowercase().contains("source")),
+            "подмена источника — не эффект: её место в голове полосы, не в реестре"
         );
         // имена согласованы с fx_display_name
         for e in reg {

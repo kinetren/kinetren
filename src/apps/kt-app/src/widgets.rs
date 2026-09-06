@@ -155,9 +155,40 @@ pub struct ChainEdit<'a> {
     pub fx: &'a mut Vec<FxInstance>,
     pub bypass: &'a mut Vec<bool>,
     pub auto: Option<&'a mut Vec<Vec<kt_model::ParamCurve>>>,
-    pub selected: &'a mut usize,
+    pub selected: &'a mut ChainSel,
     /// Мастер-выключатель цепочки (у морфера — выключатель события).
     pub master_on: &'a mut bool,
+    /// Приколотый ПЕРВЫЙ слот, эффектом не являющийся (Р.35): у морфера
+    /// это подмена источника. Своя галка, фиолетовая подпись, мышью не
+    /// переставляется и крестика не имеет.
+    pub head: Option<HeadSlot<'a>>,
+}
+
+/// Псевдо-слот в начале полосы.
+pub struct HeadSlot<'a> {
+    pub label: String,
+    /// Включён ли (у морфера — `!patch.src_off`).
+    pub on: &'a mut bool,
+    pub hint: &'a str,
+}
+
+/// Что выбрано в полосе. Отдельный тип, а не «голова = 0» — иначе
+/// смещение индексов эффектов на единицу гарантированно даёт off-by-one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ChainSel {
+    #[default]
+    Head,
+    Fx(usize),
+}
+
+impl ChainSel {
+    /// Индекс слота эффекта, если выбран именно он.
+    pub fn fx(self) -> Option<usize> {
+        match self {
+            ChainSel::Fx(i) => Some(i),
+            ChainSel::Head => None,
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, Copy, PartialEq)]
@@ -166,11 +197,13 @@ pub struct ChainChanged {
     pub bypass: bool,
     pub auto: bool,
     pub master: bool,
+    /// Тронут приколотый слот (галка морф-слота).
+    pub head: bool,
 }
 
 impl ChainChanged {
     pub fn any(self) -> bool {
-        self.fx || self.bypass || self.auto || self.master
+        self.fx || self.bypass || self.auto || self.master || self.head
     }
 }
 
@@ -207,6 +240,27 @@ pub fn chain_strip(
             ch.master = true;
         }
         ui.separator();
+        // приколотая голова: своя галка, фиолетовая подпись, ни драга,
+        // ни крестика — она не эффект
+        if let Some(h) = edit.head.as_mut() {
+            if crate::app::hint_into(hover, ui.checkbox(h.on, ""), h.hint).changed() {
+                ch.head = true;
+            }
+            let text = egui::RichText::new(h.label.clone()).color(crate::theme::MORPH_SLOT);
+            let text = if *h.on { text } else { text.weak().strikethrough() };
+            if crate::app::hint_into(
+                hover,
+                ui.selectable_label(*edit.selected == ChainSel::Head, text),
+                h.hint,
+            )
+            .clicked()
+            {
+                *edit.selected = ChainSel::Head;
+            }
+            if !edit.fx.is_empty() {
+                ui.label(crate::icons::CARET_RIGHT);
+            }
+        }
         for i in 0..edit.fx.len() {
             let off = edit.bypass[i];
             // галка включения слота (у морферов её не было вовсе)
@@ -230,8 +284,8 @@ pub fn chain_strip(
             }
             let resp = ui
                 .dnd_drag_source(slot_id, i, |ui| {
-                    if ui.selectable_label(*edit.selected == i, text).clicked() {
-                        *edit.selected = i;
+                    if ui.selectable_label(*edit.selected == ChainSel::Fx(i), text).clicked() {
+                        *edit.selected = ChainSel::Fx(i);
                     }
                 })
                 .response;
@@ -253,14 +307,27 @@ pub fn chain_strip(
     });
 
     ui.horizontal_wrapped(|ui| {
-        if let Some(tmpl) = crate::fx_registry::fx_picker(ui, (&id, "add"), audio, query) {
-            edit.fx.push(tmpl);
-            edit.bypass.push(false);
-            if let Some(a) = edit.auto.as_deref_mut() {
-                a.push(Vec::new());
+        let head_name = edit.head.as_ref().map(|h| h.label.clone());
+        match crate::fx_registry::fx_picker_with_head(
+            ui,
+            (&id, "add"),
+            audio,
+            query,
+            head_name.as_deref(),
+        ) {
+            Some(crate::fx_registry::Picked::Fx(tmpl)) => {
+                edit.fx.push(tmpl);
+                edit.bypass.push(false);
+                if let Some(a) = edit.auto.as_deref_mut() {
+                    a.push(Vec::new());
+                }
+                *edit.selected = ChainSel::Fx(edit.fx.len() - 1);
+                ch.fx = true;
             }
-            *edit.selected = edit.fx.len() - 1;
-            ch.fx = true;
+            // голову не «добавляют» — она приколота; пикер лишь помогает
+            // её НАЙТИ поиском наравне с эффектами
+            Some(crate::fx_registry::Picked::Head) => *edit.selected = ChainSel::Head,
+            None => {}
         }
         // копипаст цепочки (модель — kt_model::ops, Р.33)
         if !edit.fx.is_empty()
@@ -313,7 +380,7 @@ pub fn chain_strip(
                     a.push(curves);
                 }
             }
-            *edit.selected = edit.fx.len().saturating_sub(1);
+            *edit.selected = ChainSel::Fx(edit.fx.len().saturating_sub(1));
             ch.fx = true;
             ch.bypass = true;
             ch.auto = true;
@@ -330,7 +397,7 @@ pub fn chain_strip(
             a.insert(to, c);
             ch.auto = true;
         }
-        *edit.selected = to;
+        *edit.selected = ChainSel::Fx(to);
         ch.fx = true;
         ch.bypass = true;
     }
@@ -343,7 +410,14 @@ pub fn chain_strip(
             a.remove(i);
             ch.auto = true;
         }
-        *edit.selected = (*edit.selected).min(edit.fx.len().saturating_sub(1));
+        // выбор съезжает на уцелевший слот, а голова остаётся головой
+        if let Some(sel) = edit.selected.fx() {
+            *edit.selected = if edit.fx.is_empty() {
+                ChainSel::Head
+            } else {
+                ChainSel::Fx(sel.min(edit.fx.len() - 1))
+            };
+        }
         ch.fx = true;
         ch.bypass = true;
     }

@@ -29,6 +29,10 @@ pub const TL_BG: Color32 = Color32::from_rgb(11, 12, 14);
 pub const LANE_VIDEO: Color32 = Color32::from_rgb(19, 24, 32);
 pub const LANE_AUDIO: Color32 = Color32::from_rgb(26, 20, 20);
 pub const LANE_MORPH: Color32 = Color32::from_rgb(28, 20, 42);
+/// Фиолетовый морф-слота в полосе цепочки (Р.35 п.3: «его пункты
+/// пометить фиолетовым и поднять в списке fx») — тот же тон, что у
+/// блока морфера на таймлайне, только светлее для читаемости на фоне.
+pub const MORPH_SLOT: Color32 = Color32::from_rgb(190, 150, 255);
 /// Камерные дорожки (Р.29): тёмный бирюзовый — отличим и от видео, и от morph.
 pub const LANE_CAMERA: Color32 = Color32::from_rgb(16, 34, 38);
 /// Левый (непрозрачный) конец градиента gutter'а (п.20 р.6).

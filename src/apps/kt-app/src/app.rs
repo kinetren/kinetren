@@ -58,7 +58,6 @@ pub struct KtApp {
     pub selected_morph: Option<MorphId>,
     /// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
     /// замороженные цели + вид; Esc — отмена.
-    pub pending_morpher: Option<PendingMorph>,
     pub drag: Option<Drag>,
     /// Основная (зафиксированная) скорость воспроизведения (пп.4-5 v1.4).
     pub base_rate: f32,
@@ -376,7 +375,6 @@ impl KtApp {
             selected: std::collections::BTreeSet::new(),
             sel_tool: false,
             selected_morph: None,
-            pending_morpher: None,
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
@@ -510,7 +508,6 @@ impl KtApp {
             selected: std::collections::BTreeSet::new(),
             sel_tool: false,
             selected_morph: None,
-            pending_morpher: None,
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
@@ -1200,9 +1197,7 @@ impl KtApp {
         if !strip.is_finite() || strip.width() < 1.0 {
             return;
         }
-        let mode = if self.pending_morpher.is_some() {
-            Some(tr(k::hint::MORPH_PLACE))
-        } else if self.dnd_hover.is_some() {
+        let mode = if self.dnd_hover.is_some() {
             Some(tr(k::hint::DROP_HERE))
         } else {
             None
@@ -1638,11 +1633,6 @@ impl KtApp {
     pub fn escape_action(&mut self) {
         if self.search_open {
             self.search_open = false;
-            return;
-        }
-        // 0) отмена размещения morpher'а (v1: Esc cancels placement)
-        if self.pending_morpher.take().is_some() {
-            self.note(tr(k::msg::MORPH_CANCELLED));
             return;
         }
         // 1) закрыть верхнее наше окно
@@ -2634,45 +2624,39 @@ impl KtApp {
         ids
     }
 
-    /// Запуск режима размещения morpher'а (v1: beginMorpherPlacementCommon).
-    /// Morph-дорожка создаётся автоматически, если её нет.
-    pub fn begin_morph_placement(&mut self, batch: bool) {
-        let targets = self.morph_target_ids();
-        if targets.is_empty() {
-            self.note(tr(k::msg::NOTHING_TO_MORPH));
-            return;
-        }
-        if self.model.project().morph_lanes == 0 {
-            self.apply(Command::InsertMorphLane { at: 0 });
-        }
-        self.pending_morpher = Some(PendingMorph { targets, batch });
-        self.note(tr(k::msg::MORPH_CLICK_LANE));
-    }
-
-    /// Коммит размещения (v1: commitPendingMorpherPlacement + фикс D3:
-    /// дропнутый файл становится новым источником Replace-morpher'а).
-    pub fn commit_morph_placement(&mut self, lane: u32, at: Tick, drop_path: Option<String>) {
-        let Some(pm) = self.pending_morpher.take() else { return };
+    /// Добавить морфер-СЛОЙ (Р.35 п.3 и п.5). Четыре пункта меню («Add
+    /// morpher», «Add FX batch», те же по региону) схлопнулись в один, и
+    /// он не спрашивает ни вид (видов больше нет), ни цели: слой
+    /// действует на всё, что НИЖЕ.
+    ///
+    /// Две вещи делаются здесь ОДНИМ шагом истории, потому что порознь
+    /// они бессмысленны: заводится морф-дорожка И поднимается строкой 0.
+    /// Умолчание `normalize_lane_order` кладёт морф-строки ПОД видео и
+    /// аудио, то есть «всё, что ниже» было бы пусто, — а пользователь
+    /// просил ровно обратного: «треки морфера по умолчанию создаём
+    /// сверху над всеми».
+    pub fn add_morph_layer(&mut self) {
         let id = MorphId(self.next_morph_id());
-        let mut cmds = Vec::new();
-        // патч несёт и подмену источника, и цепочки (Р.35): пункт меню
-        // больше не выбирает вид, он выбирает только начальное
-        // содержимое — дальше всё правится в одном окне
-        let media = drop_path.map(|path| {
-            let mid = MediaId(self.next_media_id());
-            cmds.push(Command::AddMedia { id: mid, path });
-            mid
-        });
+        let at = self.player.transport.playhead();
+        let mut cmds = vec![Command::InsertMorphLane { at: 0 }];
+        // порядок строк: новая морф-строка наверх, остальные как были
+        let mut order: Vec<(LaneKind, u32)> = self
+            .model
+            .project()
+            .rows()
+            .into_iter()
+            .map(|(k, l)| if k == LaneKind::Morph { (k, l + 1) } else { (k, l) })
+            .collect();
+        order.insert(0, (LaneKind::Morph, 0));
+        cmds.push(Command::SetLaneOrder { order });
         cmds.push(Command::AddMorpher(MorpherEvent {
             id,
-            lane,
+            lane: 0,
             start: Tick(at.0.max(0)),
             duration: Tick(90 * 1500), // v1: 1500 мс
-            targets: kt_model::MorphTargets::Clips { ids: pm.targets },
-            patch: kt_model::MorphPatch { media, ..Default::default() },
-            // пока пункт меню замораживает цели, семантика прежняя;
-            // режим слоя включается в С2 (единый пункт «Добавить морфер»)
-            timed: false,
+            targets: kt_model::MorphTargets::Below,
+            patch: kt_model::MorphPatch::default(),
+            timed: true,
             enabled: true,
         }));
         if self.apply_batch(cmds) {
@@ -3761,17 +3745,6 @@ impl KtApp {
                 // п.2): он и становится новым источником, а не новым
                 // клипом на таймлайне
                 self.set_morph_source_file(id, &path.to_string_lossy());
-            } else if self
-                .pending_morpher
-                .as_ref()
-                .map(|p| !p.batch)
-                .unwrap_or(false)
-            {
-                // дроп файла в режиме размещения Replace-morpher'а: файл
-                // становится новым источником (фикс D3 v1: там путь терялся).
-                // Блок ставится на первую Morph-дорожку к плейхеду.
-                let at = self.player.transport.playhead();
-                self.commit_morph_placement(0, at, Some(path.to_string_lossy().to_string()));
             } else if let Some((at, lane)) = target {
                 self.add_media_clip_at(&path.to_string_lossy(), at, Some(lane));
             } else {
@@ -3805,12 +3778,6 @@ pub const SPACE_BOOST_MAX: f32 = 4.0;
 /// НЕ ускорять без новой просьбы.
 pub const SPACE_BOOST_SECS: f32 = 5.0;
 
-/// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
-/// цели заморожены в момент запуска, kind выбран пунктом меню.
-pub struct PendingMorph {
-    pub targets: Vec<ClipId>,
-    pub batch: bool,
-}
 
 /// Состояние перф-панели: rolling-графики, дельты счётчиков, журнал проблем.
 /// Кэш coverage-опросов таймлайна (п.1).

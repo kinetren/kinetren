@@ -560,6 +560,11 @@ impl KtApp {
         if self.tb(ui, "+A", tr(k::tb::ADD_AUDIO_LANE)) {
             self.add_track(ClipKind::Audio);
         }
+        // морфер-слой (Р.35 п.5): дорожка заводится СВЕРХУ над всеми —
+        // иначе «всё, что ниже» было бы пусто
+        if self.tb(ui, "+M", tr(k::tb::ADD_MORPHER)) {
+            self.add_morph_layer();
+        }
         ui.separator();
         if self.tb(ui, crate::icons::SCISSORS, tr(k::tb::CUT)) {
             self.cut_action();

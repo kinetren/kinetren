@@ -4691,3 +4691,87 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
         "замороженный список обязан быть виден поимённо"
     );
 }
+
+/// Тест 244 (Р.35 С2, дословно: «Пункт "Add morpher" (и у clips и у
+/// региона) можно сократить с двух до одного и в ui морфера их
+/// объединить — может быть сразу fx-chain делать, в котором помимо
+/// остальных fx есть fx для морфинга, его пункты пометить фиолетовым и
+/// поднять в списке fx»). Полоса в окне морфера ОДНА, морф-слот в ней
+/// первый и не переставляется, а «+M» в тулбаре заводит слой сверху.
+#[test]
+fn t244_morpher_has_one_chain_with_pinned_head() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+
+    // «+M»: морф-дорожка заводится СВЕРХУ над всеми — иначе «всё, что
+    // ниже» было бы пусто (умолчание порядка кладёт морф-строки вниз)
+    let depth = app.model.undo_depth();
+    app.add_morph_layer();
+    let pr = app.model.project();
+    assert_eq!(pr.morphers.len(), 1, "слой создан");
+    assert_eq!(pr.rows()[0], (LaneKind::Morph, 0), "и поднят строкой 0");
+    assert!(matches!(pr.morphers[0].targets, MorphTargets::Below), "режим — «всё, что ниже»");
+    assert!(pr.morphers[0].timed, "и по времени");
+    assert_eq!(app.model.undo_depth(), depth + 1, "дорожка, порядок и событие — один шаг");
+    assert!(!pr.effective_clips()[0].fx.is_empty() || pr.morphers[0].patch.is_empty());
+    h.step();
+    h.step();
+
+    // окно открылось само; полоса ОДНА (одна мастер-галка), и первым в
+    // ней стоит морф-слот
+    assert!(h.state().morph_editors.iter().any(|e| e.open), "окно морфера не открылось");
+    let chain_label = tr(k::fx::CHAIN_ON).to_string();
+    assert_eq!(
+        h.get_all_by_label(&chain_label).count(),
+        1,
+        "полос цепочки в окне морфера должна быть ОДНА (было две: видео и аудио)"
+    );
+    let head = tr(k::mrph::SRC_SLOT_NONE).to_string();
+    assert!(h.query_by_label(&head).is_some(), "морф-слот обязан быть виден в полосе");
+
+    // выбран он же — значит окно сразу показывает поле источника
+    assert_eq!(h.state().morph_editors[0].sel, crate::widgets::ChainSel::Head);
+    assert!(
+        h.state().morph_editors[0].src_rect.is_some(),
+        "поле источника показано при выбранной голове"
+    );
+
+    // эффекты ОБОИХ видов живут в одной полосе и раскладываются обратно
+    let app = h.state_mut();
+    let mut ev = app.model.project().morphers[0].clone();
+    ev.patch.video_fx = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
+    ev.patch.audio_fx = vec![FxInstance::gain(3.0)];
+    assert!(app.apply(Command::SetMorpher(ev)));
+    h.step();
+    h.step();
+    assert!(
+        h.query_by_label(crate::fx_editor::fx_display_name(&FxInstance::gain(3.0))).is_some(),
+        "аудио-эффект обязан быть в ТОЙ ЖЕ полосе"
+    );
+    let ev = h.state().model.project().morphers[0].clone();
+    assert_eq!(ev.patch.video_fx.len(), 1, "и раскладываться обратно по видам");
+    assert_eq!(ev.patch.audio_fx.len(), 1);
+}

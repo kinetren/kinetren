@@ -194,7 +194,11 @@ impl KtApp {
                             // выбранный слот и строку поиска берём в
                             // локальные переменные: иначе два поля одного
                             // и того же `ed` одолжены одновременно
-                            let mut sel_slot = *ed.selected.get(id).unwrap_or(&0);
+                            // у цепочки события головы нет: выбор всегда
+                            // слот эффекта, поэтому индекс хранится как был
+                            let mut sel_slot = crate::widgets::ChainSel::Fx(
+                                *ed.selected.get(id).unwrap_or(&0),
+                            );
                             let mut query = std::mem::take(&mut ed.picker_query);
                             ch = crate::widgets::chain_strip(
                                 ui,
@@ -205,6 +209,7 @@ impl KtApp {
                                     auto: Some(&mut auto),
                                     selected: &mut sel_slot,
                                     master_on: &mut chain_on,
+                                    head: None,
                                 },
                                 clip.kind == ClipKind::Audio,
                                 &mut query,
@@ -213,8 +218,8 @@ impl KtApp {
                                 &mut hover_out,
                             );
                             ed.picker_query = query;
-                            ed.selected.insert(*id, sel_slot);
-                            let sel = sel_slot;
+                            let sel = sel_slot.fx().unwrap_or(0);
+                            ed.selected.insert(*id, sel);
                             if let Some(f) = fx.get_mut(sel) {
                                 // параметры — ОДНИМ кодом по спекам модели
                                 params_changed |= draw_video_fx_params(ui, f, &cameras);

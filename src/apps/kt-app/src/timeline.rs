@@ -1252,7 +1252,6 @@ impl KtApp {
         self.dump_geom(&geom, ui.ctx().content_rect());
         let lane_top = |kind: ClipKind, lane: u32| -> f32 { geom.lane_top(kind, lane) };
         let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
-        let morph_lane_at_y = |y: f32| -> Option<u32> { geom.morph_lane_at_y(y) };
         // (подпись, центр строки, верх строки) — верх нужен, чтобы длинный
         // ярлык встал ПОД именем клипа, а не поверх него
         let mut gutter_labels: Vec<(String, f32, f32)> = Vec::with_capacity(geom.rows.len());
@@ -1858,15 +1857,6 @@ impl KtApp {
                 } else {
                     let t = self.snap(x_to_tick(pos.x).max(0), None);
                     self.player.seek(Tick(t.max(0)));
-                }
-            } else if self.pending_morpher.is_some() && morph_lane_at_y(pos.y).is_some() {
-                // режим размещения morpher'а (H1): клик по Morph-дорожке =
-                // создать событие тут; прочие клики проходят как обычно
-                if response.clicked()
-                    && let Some(lane) = morph_lane_at_y(pos.y)
-                {
-                    let at = self.snap(x_to_tick(pos.x).max(0), None);
-                    self.commit_morph_placement(lane, Tick(at), None);
                 }
             } else if let Some(cid) = camera_at(self, pos) {
                 if response.double_clicked() {
@@ -2921,23 +2911,6 @@ impl KtApp {
                 );
             }
         }
-        // режим размещения: подсветка morph-дорожек + строка-подсказка (v1)
-        if self.pending_morpher.is_some() {
-            for lane in 0..morph_lanes {
-                let y = morph_lane_top(lane);
-                let lr = egui::Rect::from_min_max(
-                    egui::pos2(rect.left(), y),
-                    egui::pos2(rect.right(), y + lane_h - 2.0),
-                );
-                painter.rect(
-                    lr,
-                    0.0,
-                    egui::Color32::from_rgba_unmultiplied(96, 200, 140, 52),
-                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(140, 235, 170, 200)),
-                    egui::StrokeKind::Inside,
-                );
-            }
-        }
 
         // ---- силуэт дропа файла (п.2 v1.4): подсветка дорожки + призрак --
         // Тот же силуэт обслуживает перетаскивание карточки ИЗ БИНА
@@ -2959,7 +2932,6 @@ impl KtApp {
             }
         }
         if let Some(pos) = self.dnd_hover
-            && self.pending_morpher.is_none()
             && let Some(g) = self.tl_geom.clone()
             && g.in_lanes(pos)
             && let Some((kind, lane)) = g.lane_at_y(pos.y)
@@ -3828,19 +3800,10 @@ impl KtApp {
                     }
                 }
                 ui.separator();
-                // morpher (H1, порт v1): цели = регион (приоритет) или клип+группа
+                // морфер-слой (Р.35): один пункт вместо четырёх, целей
+                // не спрашивает — действует на всё, что НИЖЕ
                 if ui.button(tr(k::tl::menu::ADD_MORPHER)).clicked() {
-                    if !self.is_selected(id) {
-                        self.select_only(id);
-                    }
-                    self.begin_morph_placement(false);
-                    ui.close();
-                }
-                if ui.button(tr(k::tl::menu::ADD_FX_BATCH)).clicked() {
-                    if !self.is_selected(id) {
-                        self.select_only(id);
-                    }
-                    self.begin_morph_placement(true);
+                    self.add_morph_layer();
                     ui.close();
                 }
             }
@@ -3952,16 +3915,6 @@ impl KtApp {
                     }
                     if ui.button(tr(k::tl::menu::PUNCH_OUT)).clicked() {
                         self.punch_out_action();
-                        ui.close();
-                    }
-                    ui.separator();
-                    // v1: «Add morpher (clips in region)…» / FX batch
-                    if ui.button(tr(k::tl::menu::ADD_MORPHER_REGION)).clicked() {
-                        self.begin_morph_placement(false);
-                        ui.close();
-                    }
-                    if ui.button(tr(k::tl::menu::ADD_FX_BATCH_REGION)).clicked() {
-                        self.begin_morph_placement(true);
                         ui.close();
                     }
                     ui.separator();

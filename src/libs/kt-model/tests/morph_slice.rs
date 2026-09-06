@@ -412,3 +412,40 @@ fn t239_bake_materializes_slices() {
     assert_eq!(m.project().morphers.len(), 1, "и морфер");
     assert_eq!(m.project().transitions[0].a, Some(ClipId(10)));
 }
+
+/// Тест 243 (Р.35 С2): патч несёт И подмену источника, И цепочки — это
+/// одно событие, а не два взаимоисключающих вида (`MorphKind` удалён).
+/// Выключатель морф-слота гасит ТОЛЬКО подмену; гард `RemoveMedia`
+/// спрашивает `media_refs`, а не паттерн-матч по виду (компилятор такие
+/// места не ловит — на этом и держался прежний дефект).
+#[test]
+fn t243_patch_carries_source_and_chains() {
+    let mut p = base();
+    let mut m = layer(Tick(0), LEN);
+    m.patch.source_in_delta = Tick(4_500);
+    m.patch.video_fx = vec![FxInstance::Mirror { horizontal: true, vertical: false }];
+    p.morphers.push(m);
+    p.validate().unwrap();
+
+    let eff = p.effective_clips();
+    assert_eq!(eff.len(), 1, "накрыт целиком — не режется");
+    assert_eq!(eff[0].media, MediaId(2), "подмена источника действует");
+    assert_eq!(eff[0].source_in, Tick(7_500), "и сдвиг точки входа тоже");
+    assert_eq!(eff[0].fx.len(), 1, "и цепочка — одним и тем же событием");
+
+    // галка морф-слота гасит ТОЛЬКО подмену, эффекты остаются
+    p.morphers[0].patch.src_off = true;
+    let eff = p.effective_clips();
+    assert_eq!(eff[0].media, MediaId(1), "выключенный морф-слот возвращает исходный источник");
+    assert_eq!(eff[0].source_in, Tick(3_000), "и исходную точку входа");
+    assert_eq!(eff[0].fx.len(), 1, "эффекты слоя к морф-слоту отношения не имеют");
+    assert!(!p.morphers[0].patch.is_empty(), "настройки подмены целы");
+
+    // медиа, которое держит ТОЛЬКО морфер, из проекта не выкинуть
+    let mut mm = TimelineModel::new(p);
+    assert!(
+        mm.apply(Command::RemoveMedia { id: MediaId(2) }).is_err(),
+        "гард обязан отбить удаление медиа, которое держит морфер"
+    );
+    assert!(mm.project().media.iter().any(|m| m.id == MediaId(2)));
+}
