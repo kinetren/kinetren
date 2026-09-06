@@ -223,6 +223,26 @@ pub struct VideoRenderer {
     project_size: (u32, u32),
 }
 
+/// Кадр(ы) источника для момента `t`: основной и, в режиме «смешивание»,
+/// сосед с весом (Р.37 С5). ЕДИНСТВЕННОЕ место, где решается пара —
+/// `layers_at` и `layer_src` обязаны звать именно её, иначе префетч греет
+/// не то, что читает композит, и это вечный промах кэша.
+///
+/// `k == 0` (позиция ровно на сетке: целые скорости, rate = 1, кламп у
+/// края) пары НЕ даёт — путь остаётся байт-в-байт прежним.
+fn clip_frame_keys(c: &VideoClip, t: Tick, grid: &FpsGrid) -> (Tick, Option<(Tick, u32)>) {
+    let a = clip_source_pts(c, t, grid);
+    if !c.warp.as_ref().is_some_and(|w| w.blend) {
+        return (a, None);
+    }
+    let m = clip_material_pos(c, t, grid);
+    let step = grid.frame_step().max(1);
+    let k = (((m.0 - a.0) * 4096) / step).clamp(0, 4096) as u32;
+    // сосед — ВПЕРЁД по индексу материала; у reversed материал идёт
+    // навстречу, но дробная часть по-прежнему меряется вперёд
+    if k == 0 { (a, None) } else { (a, Some((Tick(a.0 + step), k))) }
+}
+
 /// Ключ кадра в кэше: idx = pts источника в тиках (выравнен по сетке проекта).
 pub fn video_cache_idx(source_pts: Tick) -> i64 {
     source_pts.0
@@ -325,7 +345,12 @@ impl VideoRenderer {
         self.clips
             .iter()
             .filter(|c| c.active_at(t))
-            .map(|c| (c.media, clip_source_pts(c, t, &self.grid)))
+            .flat_map(|c| {
+                // в режиме «смешивание» слой читает ДВА кадра — префетч
+                // обязан согреть оба, иначе второй не запросят никогда
+                let (a, b) = clip_frame_keys(c, t, &self.grid);
+                std::iter::once((c.media, a)).chain(b.map(|(p, _)| (c.media, p)))
+            })
             .collect()
     }
 
@@ -399,8 +424,13 @@ impl VideoRenderer {
     pub fn max_concurrent_layers(&self) -> usize {
         let mut evs: Vec<(i64, i32)> = Vec::with_capacity(self.clips.len() * 2);
         for c in &self.clips {
-            evs.push((c.start.0 - c.head_ext.0, 1));
-            evs.push((c.end.0 + c.tail_ext.0, -1));
+            // смешивающий слой держит ДВА кадра сразу (Р.37 С5). Не учесть
+            // это — чанк экспорта вытеснит соседа до композиции, сработает
+            // ветка голода, и БАЙТЫ ЭКСПОРТА станут зависеть от тайминга
+            // кэша.
+            let w = if c.warp.as_ref().is_some_and(|w| w.blend) { 2 } else { 1 };
+            evs.push((c.start.0 - c.head_ext.0, w));
+            evs.push((c.end.0 + c.tail_ext.0, -w));
         }
         evs.sort();
         let (mut cur, mut max) = (0i32, 0i32);
@@ -440,13 +470,29 @@ fn layer_src<'a>(
     quality: Quality,
     t: Tick,
 ) -> LayerSrc<'a> {
-    let src_pts = clip_source_pts(clip, t, ctx.grid);
+    let (src_pts, pair) = clip_frame_keys(clip, t, ctx.grid);
     // кривые сэмплируются по ВЫРОВНЕННОЙ материальной позиции — по тому
     // самому кадру источника, который сейчас на экране (Р.33)
     let mat = src_pts;
     let cache_idx = video_cache_idx(src_pts);
     let source = SourceId(clip.media.0);
     let frame = cache.get_video(source, Some(quality), cache_idx);
+    // СМЕШИВАНИЕ (Р.37 С5) делается ЗДЕСЬ, в общем коде плана: оба
+    // исполнителя получают уже смешанный пре-FX кадр, и держать одну и ту
+    // же арифметику синхронной в CPU-ядре и в WGSL не приходится
+    // (инвариант №7). Ядро — готовый `dissolve_into`: байт-заморожено,
+    // с AVX2-близнецом.
+    let (frame, blend) = match pair {
+        None => (frame, None),
+        Some((pts, k)) => {
+            let idx = video_cache_idx(pts);
+            let nb = cache.get_video(source, Some(quality), idx);
+            (
+                blend_frames(frame, nb, k),
+                Some(crate::video_plan::LayerBlend { cache_idx: idx, k }),
+            )
+        }
+    };
     let span = (clip.end.0 - clip.start.0).max(1);
     let u = (t.0 - clip.start.0) as f64 / span as f64;
     // автоматизация (Р.30): кривые разрешаются ЗДЕСЬ, один раз на кадр —
@@ -483,7 +529,7 @@ fn layer_src<'a>(
                 world_scale: quality.width as f64 / ctx.project_size.0.max(1) as f64,
             }
         });
-    LayerSrc { source, cache_idx, frame, fx, fx_hash: clip.fx_hash, u, cam3d }
+    LayerSrc { source, cache_idx, frame, fx, fx_hash: clip.fx_hash, u, cam3d, blend }
 }
 
 /// Построение плана кадра: какие слои, в каких ролях и с какими весами.
@@ -680,17 +726,20 @@ fn layer_frame_cpu(
     t: Tick,
     memoize: bool,
 ) -> Option<Arc<VideoFrame>> {
-    if !kt_fx::video::has_video_fx(&src.fx) {
-        return src.frame.clone();
-    }
     // цепочка видео-FX (п.25): кэш хранит ПРЕ-FX кадры (правда о
     // coverage), пост-FX кадр мемоизируется отдельным kind'ом
     // (п.2 р.7 — иначе цепочка платится на КАЖДЫЙ compose и loop
     // играет 6.8 fps даже прогретым); эффекты детерминированы по
     // (t, fx_hash) → байт-идентичность сохранена. GPU-исполнитель эту
     // мемоизацию не трогает (у него свой ReadbackCache в kt-gpu).
-    if let Some(f) = cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0) {
+    let has_fx = kt_fx::video::has_video_fx(&src.fx);
+    if has_fx
+        && let Some(f) = cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0)
+    {
         return Some(f);
+    }
+    if !has_fx {
+        return src.frame.clone();
     }
     let frame = src.frame.as_ref()?;
     let ctx = kt_fx::video::VideoFxCtx {
@@ -792,6 +841,29 @@ fn scale_alpha_into(dst: &mut Vec<u8>, f: &kt_media::VideoFrame, k: u32, pixels:
 /// Линейный dissolve пары (п.137): dst = a·(1−k) + b·k, целочисленно
 /// (k из 4096 долей, округление к ближайшему). Кадр без альфы считается
 /// непрозрачным (A=255). Возвращает has_alpha результата.
+/// Смешать пару кадров (Р.37 С5). Голод любой стороны — берём имеющуюся
+/// с полным весом: то же правило, что у пары `PlanLayer::Dissolve`.
+fn blend_frames(
+    a: Option<Arc<VideoFrame>>,
+    b: Option<Arc<VideoFrame>>,
+    k: u32,
+) -> Option<Arc<VideoFrame>> {
+    let (Some(fa), Some(fb)) = (a.as_ref(), b.as_ref()) else { return a.or(b) };
+    if (fa.width, fa.height) != (fb.width, fb.height) {
+        return a;
+    }
+    let pixels = fa.width as usize * fa.height as usize;
+    let mut buf = Vec::new();
+    let has_alpha = dissolve_into(&mut buf, fa, fb, k, pixels);
+    Some(Arc::new(VideoFrame {
+        width: fa.width,
+        height: fa.height,
+        rgba: buf.into(),
+        has_alpha,
+        pts: fa.pts,
+    }))
+}
+
 fn dissolve_into(
     dst: &mut Vec<u8>,
     a: &kt_media::VideoFrame,

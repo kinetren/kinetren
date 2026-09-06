@@ -192,3 +192,107 @@ fn t247_layer_never_slices_a_stretched_clip() {
         );
     }
 }
+
+/// Тест 250 (Р.37 С5): режим кадров «смешивание». Пре-FX кадр слоя —
+/// линейная смесь двух соседних исходных, сделанная ТЕМ ЖЕ
+/// `dissolve_into`, что кроссфейд. Смешивание живёт в ОБЩЕМ коде плана,
+/// поэтому оба исполнителя получают один и тот же кадр (инвариант №7).
+#[test]
+fn t250_blend_mode_mixes_neighbouring_frames() {
+    use kt_media::MediaSource;
+    use kt_media::synthetic::{AudioPattern, SyntheticSource};
+
+    let blend_fx = || {
+        vec![FxInstance::SlowedReverb {
+            rate: 0.5,
+            mix: 0.0,
+            reverb_delay_ms: 85.0,
+            damp: 0.32,
+            decay: 0.58,
+            wet_gain: 0.95,
+            predelay_ms: 0.0,
+            frames: FrameMode::Blend,
+            width: 1.0,
+            automation: vec![],
+        }]
+    };
+    let p = project(blend_fx(), vec![], false);
+    let mut vr = VideoRenderer::new(&p);
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
+    // греем ровно то, что просит план
+    for (media, pts) in vr.wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC))) {
+        let f = synth.read_video_frame(pts, Some(q)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(q),
+            kt_engine::video_cache_idx(pts),
+            std::sync::Arc::new(f),
+        );
+    }
+
+    // на 0.5× нечётные выходные кадры стоят ровно посередине между
+    // исходными: вес 2048/4096
+    let t = Tick(STEP); // второй кадр события
+    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    assert!(complete, "оба кадра пары прогреты");
+    let a = synth.read_video_frame(Tick(SEC), Some(q)).unwrap().rgba.into_vec();
+    let b = synth.read_video_frame(Tick(SEC + STEP), Some(q)).unwrap().rgba.into_vec();
+    let want: Vec<u8> = a
+        .iter()
+        .zip(&b)
+        .map(|(&x, &y)| ((x as u32 * 2048 + y as u32 * 2048 + 2048) >> 12) as u8)
+        .collect();
+    assert_eq!(out, want, "смесь считается тем же целочисленным ядром, что кроссфейд");
+
+    // чётные кадры стоят НА сетке — вес 0, пары нет, путь прежний
+    let (on_grid, _) = vr.compose_from_cache(&cache, Tick(0), q);
+    assert_eq!(on_grid, a, "на сетке смешивать нечего");
+
+    // «ближайший» на тех же данных даёт ЧИСТЫЙ кадр, а не смесь
+    let mut near = VideoRenderer::new(&project(
+        vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)],
+        vec![],
+        false,
+    ));
+    let (n, _) = near.compose_from_cache(&cache, t, q);
+    assert_eq!(n, a, "режим «ближайший» держит кадр");
+    assert_ne!(n, out, "и отличается от смешивания");
+}
+
+/// Тест 250b: префетч греет ОБА кадра пары. Не согреет — второй не
+/// запросят никогда, и слой вечно голодает.
+#[test]
+fn t250_blend_prefetches_both_sides() {
+    let p = project(
+        vec![FxInstance::SlowedReverb {
+            rate: 0.5,
+            mix: 0.0,
+            reverb_delay_ms: 85.0,
+            damp: 0.32,
+            decay: 0.58,
+            wet_gain: 0.95,
+            predelay_ms: 0.0,
+            frames: FrameMode::Blend,
+            width: 1.0,
+            automation: vec![],
+        }],
+        vec![],
+        false,
+    );
+    let vr = VideoRenderer::new(&p);
+    let wanted: std::collections::BTreeSet<i64> = vr
+        .wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)))
+        .into_iter()
+        .map(|(_, s)| s.0)
+        .collect();
+    // соседи добавили по кадру справа: 61 вместо 60
+    assert_eq!(wanted.len(), 61, "греются обе стороны смеси, а не одна");
+    let keys: Vec<i64> = wanted.iter().copied().collect();
+    assert!(keys.windows(2).all(|w| w[0] < w[1]), "ключи по-прежнему строго возрастают");
+
+    // смешивающий слой держит ДВА кадра — экспорт обязан это учитывать,
+    // иначе чанк вытеснит соседа и байты станут зависеть от кэша
+    assert_eq!(vr.max_concurrent_layers(), 2, "смешивающий слой весит два кадра");
+}

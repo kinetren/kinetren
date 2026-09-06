@@ -80,6 +80,7 @@ impl Src {
             fx_hash: self.fx_hash,
             u: self.u,
             cam3d: None,
+            blend: None,
         }
     }
 }

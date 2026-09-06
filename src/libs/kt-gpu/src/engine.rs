@@ -1071,6 +1071,17 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
     fn put_src(h: &mut Xxh3, s: &LayerSrc<'_>) {
         h.update(&s.source.0.to_le_bytes());
         h.update(&s.cache_idx.to_le_bytes());
+        // смешивание кадров (Р.37 С5) — В КЛЮЧ: те же два кадра с другим
+        // весом дают ДРУГУЮ картинку, и без этого ReadbackCache отдал бы
+        // чужой смес (та же причина, что у put_mix)
+        match &s.blend {
+            None => h.update(&[0u8]),
+            Some(b) => {
+                h.update(&[1u8]);
+                h.update(&b.cache_idx.to_le_bytes());
+                h.update(&b.k.to_le_bytes());
+            }
+        }
         h.update(&s.fx_hash.to_le_bytes());
         h.update(&s.u.to_bits().to_le_bytes());
         put_cam3d(h, &s.cam3d);

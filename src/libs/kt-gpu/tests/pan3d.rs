@@ -70,6 +70,7 @@ fn layer<'a>(
             fx_hash: id,
             u: 0.5,
             cam3d: Some(Cam3d { cam: CameraParams::default(), world_scale: 1.0 }),
+            blend: None,
         },
         alpha_k: 4096,
         scale_alpha: false,
