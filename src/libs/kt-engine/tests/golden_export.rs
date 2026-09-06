@@ -186,6 +186,7 @@ fn golden_project() -> Project {
         out_offset: Tick(sec / 4),
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
+        auto: vec![],
     });
     p.validate().unwrap();
     p

@@ -2156,6 +2156,7 @@ fn t140_transition_edge_and_body_drags() {
             out_offset: Tick(10_000),
             kind: TransitionKind::Crossfade,
             audio: Default::default(),
+            auto: vec![],
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -2448,6 +2449,7 @@ fn t157_fade_edge_drag_without_neighbour() {
             out_offset: Tick(10_000),
             kind: TransitionKind::Crossfade,
             audio: Default::default(),
+            auto: vec![],
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -4445,6 +4447,7 @@ fn t227_transition_editor_opens_and_sets_kind() {
             out_offset: Tick(9_000),
             kind: TransitionKind::Crossfade,
             audio: Default::default(),
+            auto: vec![],
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);

@@ -63,6 +63,7 @@ fn sample() -> Project {
         out_offset: Tick(4_500),
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
+        auto: vec![],
     });
     p.markers.push(Marker { t: Tick(15_000), duration: Tick(30_000), name: "range".into(), color: None });
     p.region = Some(Region { start: Tick(10_000), end: Tick(60_000) });

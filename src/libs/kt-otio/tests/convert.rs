@@ -61,6 +61,7 @@ fn rich_project() -> Project {
         out_offset: Tick(4_500),
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
+        auto: vec![],
     });
     p.markers.push(Marker { t: Tick(15_000), duration: Tick(30_000), name: "range".into(), color: None });
     p.markers.push(Marker::named(Tick(120_000), "point"));
@@ -752,6 +753,22 @@ fn t222_transition_kind_roundtrip_and_version() {
         "Vendor_Fancy",
         "чужой тип возвращается как был"
     );
+
+    // 4b. кривые параметров вида (Р.34 К4) ездят в том же конверте
+    let mut p = rich_project();
+    p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.2 };
+    p.transitions[0].auto = vec![ParamCurve {
+        param: "angle".into(),
+        ease: true,
+        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(13_500), v: 45.0 }],
+    }];
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 3, "кривые перехода — тоже v3");
+    let b = load_project(&text, None).expect("файл с кривыми перехода читается");
+    assert_eq!(b.project.transitions[0].auto, p.transitions[0].auto, "кривые пережили круг");
+    assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность");
 
     // 5. нечитаемый вид — не молчание: замечание и честный кроссфейд
     let mut broken: serde_json::Value = serde_json::from_str(&text).unwrap();

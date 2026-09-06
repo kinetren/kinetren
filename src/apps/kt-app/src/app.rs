@@ -2726,6 +2726,7 @@ impl KtApp {
             out_offset,
             kind: TransitionKind::Crossfade,
             audio: Default::default(),
+            auto: vec![],
         };
         self.apply(if existing.is_some() {
             Command::SetTransition(ev)

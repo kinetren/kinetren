@@ -2365,6 +2365,7 @@ impl KtApp {
                                     out_offset: Tick(out_off),
                                     kind: TransitionKind::Crossfade,
                                     audio: Default::default(),
+                                    auto: vec![],
                                 };
                                 let mut cmds = vec![
                                     Command::MoveClip {
@@ -3784,6 +3785,7 @@ impl KtApp {
                                         out_offset: half,
                                         kind,
                                         audio: Default::default(),
+                                        auto: vec![],
                                     }));
                                 }
                                 ui.close();
@@ -3809,6 +3811,7 @@ impl KtApp {
                                     out_offset: half,
                                     kind: TransitionKind::Crossfade,
                                     audio: Default::default(),
+                                    auto: vec![],
                                 }));
                                 ui.close();
                             }

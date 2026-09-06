@@ -272,6 +272,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                         // пишутся, поэтому обычный кроссфейд байт-стабилен
                         if t.kind != TransitionKind::Crossfade
                             || t.audio != AudioCurve::EqualPower
+                            || !t.auto.is_empty()
                         {
                             let e = crate::meta::kt_entry_mut(&mut meta);
                             e.insert(
@@ -282,6 +283,12 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                                 e.insert(
                                     "audio".into(),
                                     serde_json::to_value(t.audio).unwrap_or(Value::Null),
+                                );
+                            }
+                            if !t.auto.is_empty() {
+                                e.insert(
+                                    "auto".into(),
+                                    serde_json::to_value(&t.auto).unwrap_or(Value::Null),
                                 );
                             }
                         }
@@ -422,7 +429,11 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             let has_tr = p
                 .transitions
                 .iter()
-                .any(|t| t.kind != TransitionKind::Crossfade || t.audio != AudioCurve::default());
+                .any(|t| {
+                    t.kind != TransitionKind::Crossfade
+                        || t.audio != AudioCurve::default()
+                        || !t.auto.is_empty()
+                });
             let has_cams = !cameras.is_empty() || p.camera_lanes > 0;
             // версия ПО СОДЕРЖИМОМУ: кривые нового домена — v3, камеры —
             // v2, иначе v1 (файл без наших новшеств открывается старыми
@@ -782,7 +793,7 @@ pub fn timeline_to_project(
                         && let Some(a) = prev_clip
                     {
                         let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                        let (kind, audio) = take_transition_kt(&mut meta, &mut notices);
+                        let (kind, audio, auto) = take_transition_kt(&mut meta, &mut notices);
                         retained.transitions.insert((Some(a), None), (ttype, meta, extra));
                         p.transitions.push(TransitionEvent {
                             id: TransitionId(id),
@@ -792,6 +803,7 @@ pub fn timeline_to_project(
                             out_offset: out_off,
                             kind,
                             audio,
+                            auto,
                         });
                     }
                     if !g.extra.is_empty() || !g.metadata.is_empty() {
@@ -835,7 +847,7 @@ pub fn timeline_to_project(
                     // (Р.25; эталон трактует так же — dissolve с Gap)
                     if let Some((in_off, out_off, (ttype, mut meta, extra))) = pending_transition.take() {
                         let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                        let (kind, audio) = take_transition_kt(&mut meta, &mut notices);
+                        let (kind, audio, auto) = take_transition_kt(&mut meta, &mut notices);
                         if ttype != "SMPTE_Dissolve" {
                             notices.push(format!("transition '{ttype}' imported as crossfade"));
                         }
@@ -848,6 +860,7 @@ pub fn timeline_to_project(
                             out_offset: out_off,
                             kind,
                             audio,
+                            auto,
                         });
                     }
                     prev_clip = Some(ev.id);
@@ -869,7 +882,7 @@ pub fn timeline_to_project(
                     if let Some((in_off, out_off, (ttype, mut meta, extra))) = pending_transition.take() {
                         if let Some(a) = prev_clip {
                             let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                            let (kind, audio) = take_transition_kt(&mut meta, &mut notices);
+                            let (kind, audio, auto) = take_transition_kt(&mut meta, &mut notices);
                             retained.transitions.insert((Some(a), None), (ttype, meta, extra));
                             p.transitions.push(TransitionEvent {
                                 id: TransitionId(id),
@@ -879,6 +892,7 @@ pub fn timeline_to_project(
                                 out_offset: out_off,
                                 kind,
                                 audio,
+                                auto,
                             });
                         } else {
                             notices.push("transition between foreign objects was dropped".into());
@@ -902,7 +916,7 @@ pub fn timeline_to_project(
         if let Some((in_off, out_off, (ttype, mut meta, extra))) = pending_transition.take() {
             if let Some(a) = prev_clip {
                 let id = p.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                let (kind, audio) = take_transition_kt(&mut meta, &mut notices);
+                let (kind, audio, auto) = take_transition_kt(&mut meta, &mut notices);
                 retained.transitions.insert((Some(a), None), (ttype, meta, extra));
                 p.transitions.push(TransitionEvent {
                     id: TransitionId(id),
@@ -912,6 +926,7 @@ pub fn timeline_to_project(
                     out_offset: out_off,
                     kind,
                     audio,
+                    auto,
                 });
             } else {
                 notices.push("transition on an empty track was dropped".into());
@@ -1004,7 +1019,7 @@ pub fn timeline_to_project(
 fn take_transition_kt(
     meta: &mut Map<String, Value>,
     notices: &mut Vec<Notice>,
-) -> (TransitionKind, AudioCurve) {
+) -> (TransitionKind, AudioCurve, Vec<kt_model::ParamCurve>) {
     let Some(Value::Object(kt)) = meta.get_mut(crate::meta::KT_NS) else {
         return Default::default();
     };
@@ -1019,10 +1034,18 @@ fn take_transition_kt(
         .shift_remove("audio")
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
+    // кривые параметров вида (Р.34 К4) — тот же конверт
+    let auto: Vec<kt_model::ParamCurve> = match kt.shift_remove("auto") {
+        Some(v) => serde_json::from_value(v).unwrap_or_else(|e| {
+            notices.push(format!("unreadable transition curves ({e})"));
+            Vec::new()
+        }),
+        None => Vec::new(),
+    };
     if kt.is_empty() {
         meta.shift_remove(crate::meta::KT_NS);
     }
-    (kind, audio)
+    (kind, audio, auto)
 }
 
 /// Кривые файла ДО v3: ключи лежат в долях длины события (домен Р.30),

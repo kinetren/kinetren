@@ -508,6 +508,7 @@ fn demo_project() -> Project {
         out_offset: t(2.0),
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
+        auto: vec![],
     });
     p.region = Some(Region { start: t(34.0), end: t(66.0) });
     p.loop_enabled = true;

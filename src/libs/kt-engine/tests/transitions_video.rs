@@ -43,6 +43,7 @@ fn project_pair() -> Project {
         out_offset: Tick(9_000),
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
+        auto: vec![],
     });
     p.validate().unwrap();
     p
@@ -172,6 +173,7 @@ fn t156_solo_fade_scales_alpha_and_stays_complete() {
         out_offset: Tick(18_000), // фейд-ин: первые 0.2 c клипа
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
+        auto: vec![],
     });
     p.validate().unwrap();
     let mut vr = VideoRenderer::new(&p);
@@ -209,6 +211,7 @@ fn t156_fade_out_goes_dark_at_the_edge() {
         out_offset: Tick(0),
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
+        auto: vec![],
     });
     p.validate().unwrap();
     let mut vr = VideoRenderer::new(&p);
@@ -439,6 +442,7 @@ fn t225_solo_fade_with_kind_shapes_alpha() {
             out_offset: Tick(0),
             kind,
             audio: Default::default(),
+            auto: vec![],
         });
         p.clips.retain(|c| c.id == ClipId(1));
         p.validate().unwrap();
@@ -459,4 +463,65 @@ fn t225_solo_fade_with_kind_shapes_alpha() {
     let wipe = render(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 }, t);
     let (l, r) = (alpha(&wipe, 2, 18), alpha(&wipe, 61, 18));
     assert!(l > 250 && r < 5, "вайп-фейд обязан резать кадр по альфе: {l}/{r}");
+}
+
+/// Тест 232 (Р.34 К4): параметры вида перехода анимируются тем же
+/// механизмом, что и у эффектов. Ключи живут в тиках ОТ НАЧАЛА окна;
+/// вид разрешается на каждый момент, поэтому картинка обязана меняться
+/// не только по прогрессу перехода, но и по кривой.
+#[test]
+fn t232_transition_params_animate() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let render = |auto: Vec<ParamCurve>, t: Tick| {
+        let mut p = project_pair();
+        // вайп без размытия: угол кромки виден по форме границы
+        p.transitions[0].kind = TransitionKind::Wipe {
+            dir: Dir::Left,
+            angle: 0.0,
+            softness: 0.0,
+        };
+        p.transitions[0].auto = auto;
+        p.validate().unwrap();
+        let mut vr = VideoRenderer::new(&p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "слои прогреты");
+        out
+    };
+    // окно перехода — [81_000, 99_000): кривая угла от 0° к 80°
+    let curve = vec![ParamCurve {
+        param: "angle".into(),
+        ease: false,
+        keys: vec![
+            AutoKey { t: Tick(0), v: 0.0 },
+            AutoKey { t: Tick(18_000), v: 80.0 },
+        ],
+    }];
+    let t = Tick(96_000); // ближе к концу окна — угол уже большой
+    let plain = render(vec![], t);
+    let animated = render(curve.clone(), t);
+    assert_ne!(plain, animated, "кривая угла обязана менять картинку");
+
+    // в САМОМ начале окна кривая ещё в нуле — кадр как без неё
+    let t0 = Tick(81_000);
+    assert_eq!(
+        render(vec![], t0),
+        render(curve.clone(), t0),
+        "в начале окна значение кривой равно статическому"
+    );
+
+    // ключ вне окна законен (спрятан правкой края), загрузка не падает
+    let mut p = project_pair();
+    p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 };
+    p.transitions[0].auto = vec![ParamCurve {
+        param: "angle".into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(900_000), v: 80.0 }],
+    }];
+    p.validate().expect("ключ за краем окна — законный спрятанный ключ");
+
+    // кривая на чужой параметр — отказ валидации, а не тишина
+    p.transitions[0].auto[0].param = "no_such".into();
+    assert!(p.validate().is_err(), "кривая-сирота обязана валить загрузку");
 }

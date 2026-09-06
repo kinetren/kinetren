@@ -39,10 +39,12 @@ struct VideoClip {
     /// incoming (нарастает) / outgoing (затухает). Пара блендится линейно.
     fade_in: Option<(Tick, Tick)>,
     fade_out: Option<(Tick, Tick)>,
-    /// Вид перехода со стороны INCOMING (пара считается в его слое) и
-    /// вид сольного фейда — Р.33 С4. Кроссфейд = прежний путь.
-    fade_in_mix: crate::TransMix,
-    fade_out_mix: crate::TransMix,
+    /// Переход со стороны INCOMING (пара считается в его слое) и
+    /// сольный фейд — Р.33 С4. Вид разрешается ПО ВРЕМЕНИ (Р.34 К4:
+    /// у параметров вида есть кривые), поэтому здесь лежит не готовый
+    /// `TransMix`, а вид с кривыми и начало окна.
+    fade_in_trans: Option<TransAnim>,
+    fade_out_trans: Option<TransAnim>,
     /// Фейд (Р.25): напротив окна пустота (край дорожки/Gap), пары нет и
     /// ЖДАТЬ её не надо — слой уходит в прозрачность (под ним просвечивает
     /// нижняя дорожка, а её нет — чёрное).
@@ -56,6 +58,35 @@ struct VideoClip {
     /// линейно, за краями материала кадр клампится (политика краёв).
     head_ext: Tick,
     tail_ext: Tick,
+}
+
+/// Переход, привязанный к клипу: вид, его кривые и начало окна. Вид
+/// разрешается на КАЖДЫЙ момент — иначе анимация параметров не дошла бы
+/// до картинки (Р.34 К4).
+#[derive(Debug, Clone)]
+struct TransAnim {
+    kind: kt_model::TransitionKind,
+    auto: Vec<kt_model::ParamCurve>,
+    w0: Tick,
+}
+
+impl TransAnim {
+    fn of(t: &kt_model::TransitionEvent, w0: Tick) -> TransAnim {
+        TransAnim { kind: t.kind.clone(), auto: t.auto.clone(), w0 }
+    }
+
+    fn mix_at(&self, t: Tick) -> crate::TransMix {
+        if self.auto.is_empty() {
+            return crate::TransMix::of(&self.kind);
+        }
+        let mut k = self.kind.clone();
+        for c in &self.auto {
+            if !c.keys.is_empty() {
+                k.set_param(&c.param, kt_model::curve_value(&c.keys, c.ease, Tick(t.0 - self.w0.0)));
+            }
+        }
+        crate::TransMix::of(&k)
+    }
 }
 
 impl VideoClip {
@@ -163,8 +194,8 @@ impl VideoRenderer {
                     fx_hash,
                     fade_in: None,
                     fade_out: None,
-                    fade_in_mix: Default::default(),
-                    fade_out_mix: Default::default(),
+                    fade_in_trans: None,
+                    fade_out_trans: None,
                     fade_in_solo: false,
                     fade_out_solo: false,
                     opacity_k: (c.opacity.clamp(0.0, 1.0) * 4096.0).round() as u32,
@@ -185,13 +216,13 @@ impl VideoRenderer {
             if let Some(a) = t.a.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
                 a.fade_out = Some((w0, w1));
                 a.fade_out_solo = solo;
-                a.fade_out_mix = crate::TransMix::of(&t.kind);
+                a.fade_out_trans = Some(TransAnim::of(t, w0));
                 a.tail_ext = Tick((w1.0 - a.end.0).max(0));
             }
             if let Some(b) = t.b.and_then(|id| clips.iter_mut().find(|c| c.id == id)) {
                 b.fade_in = Some((w0, w1));
                 b.fade_in_solo = solo;
-                b.fade_in_mix = crate::TransMix::of(&t.kind);
+                b.fade_in_trans = Some(TransAnim::of(t, w0));
                 b.head_ext = Tick((b.start.0 - w0.0).max(0));
             }
         }
@@ -432,6 +463,9 @@ fn build_plan<'a>(
             let outgoing = &clips[pi];
             debug_assert_ne!(pi, i);
             let k = (((t.0 - win.0.0) * 4096) / (win.1.0 - win.0.0)).clamp(0, 4096) as u32;
+            // вид разрешается по позиции ВНУТРИ окна: у его параметров
+            // могут быть кривые (Р.34 К4)
+            let mix = clip.fade_in_trans.as_ref().map(|a| a.mix_at(t)).unwrap_or_default();
             // уровни соседей смешиваются тем же весом, что и картинка
             let op = (outgoing.opacity_k * (4096 - k) + clip.opacity_k * k) / 4096;
             layers.push(PlanLayer::Dissolve {
@@ -439,7 +473,7 @@ fn build_plan<'a>(
                 b: layer_src(clip, ctx, cache, quality, t),
                 k,
                 alpha_k: op,
-                mix: clip.fade_in_mix,
+                mix,
             });
             continue;
         }
@@ -623,14 +657,22 @@ fn solo_fade(clip: &VideoClip, t: Tick) -> Option<(u32, bool, crate::TransMix)> 
         && t.0 >= w.0.0
         && t.0 < w.1.0
     {
-        return Some((frac(w), true, clip.fade_in_mix));
+        return Some((
+            frac(w),
+            true,
+            clip.fade_in_trans.as_ref().map(|a| a.mix_at(t)).unwrap_or_default(),
+        ));
     }
     if let Some(w) = clip.fade_out
         && clip.fade_out_solo
         && t.0 >= w.0.0
         && t.0 < w.1.0
     {
-        return Some((4096 - frac(w), false, clip.fade_out_mix));
+        return Some((
+            4096 - frac(w),
+            false,
+            clip.fade_out_trans.as_ref().map(|a| a.mix_at(t)).unwrap_or_default(),
+        ));
     }
     None
 }

@@ -12,10 +12,12 @@ use crate::app::KtApp;
 use crate::i18n::{Key, k, tr};
 use crate::widgets;
 use eframe::egui;
-use kt_model::{AudioCurve, Command, TransitionEvent, TransitionId, TransitionKind};
+use kt_model::{AudioCurve, Command, HasParams, TransitionEvent, TransitionId, TransitionKind};
 
 pub struct TransitionEditor {
     pub id: TransitionId,
+    /// Состояние виджета кривых (Р.34 К4).
+    pub view: crate::automation::AutoView,
     /// Состояние на момент открытия — «Отмена» возвращает его.
     pub backup: TransitionEvent,
     pub gesture: u64,
@@ -96,6 +98,7 @@ impl KtApp {
         self.gesture_counter += 1;
         self.transition_editors.push(TransitionEditor {
             id,
+            view: Default::default(),
             backup: t,
             gesture: self.gesture_counter,
             open: true,
@@ -120,6 +123,12 @@ impl KtApp {
         let mut hover_out: Option<String> = None;
         let mut edited: Option<TransitionEvent> = None;
         let mut revert = false;
+        let mut seek: Option<kt_time::Tick> = None;
+        let playhead = self.player.transport.playhead();
+        let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
+        // окно перехода на таймлайне: домен кривых — тик от его начала
+        let w0 = cur.window(self.model.project()).map(|w| w.start).unwrap_or(kt_time::Tick::ZERO);
+        let win_len = (cur.in_offset + cur.out_offset).0.max(1);
         let mut open = ed.open;
         let is_fade = cur.is_fade();
         // переход на АУДИО-дорожке: вид картинки ему не нужен вовсе —
@@ -231,6 +240,55 @@ impl KtApp {
                         });
                     }
                     changed |= widgets::params_grid(ui, ("trp", ed.id), &mut t.kind, skip);
+
+                    // ---- кривые параметров вида (Р.34 К4) --------------
+                    if !t.kind.param_specs().is_empty() {
+                        ui.horizontal(|ui| {
+                            let specs = t.kind.param_specs();
+                            let mut add: Option<&str> = None;
+                            egui::ComboBox::from_id_salt(("trauto", ed.id))
+                                .selected_text(tr(k::fx::AUTO_ADD))
+                                .show_ui(ui, |ui| {
+                                    for s in specs {
+                                        if t.auto.iter().any(|c| c.param == s.name) {
+                                            continue;
+                                        }
+                                        if ui.button(widgets::param_label(s.name)).clicked() {
+                                            add = Some(s.name);
+                                        }
+                                    }
+                                });
+                            if let Some(name) = add {
+                                let v = t.kind.get_param(name).unwrap_or(0.0);
+                                t.auto.push(kt_model::ParamCurve {
+                                    param: name.into(),
+                                    ease: true,
+                                    keys: vec![kt_model::AutoKey { t: kt_time::Tick::ZERO, v }],
+                                });
+                                changed = true;
+                            }
+                        });
+                        let to_tl = move |x: kt_time::Tick| kt_time::Tick(w0.0 + x.0);
+                        let to_cur = move |x: kt_time::Tick| kt_time::Tick(x.0 - w0.0);
+                        let actx = crate::automation::AutoCtx {
+                            specs: t.kind.param_specs(),
+                            range: (kt_time::Tick::ZERO, kt_time::Tick(win_len)),
+                            to_timeline: &to_tl,
+                            to_curve: &to_cur,
+                            frame_step,
+                        };
+                        let res = crate::automation::draw(
+                            ui,
+                            ("trauto", ed.id.0),
+                            &actx,
+                            &mut t.auto,
+                            &mut ed.view,
+                            playhead,
+                            &mut hover_out,
+                        );
+                        changed |= res.changed;
+                        seek = res.seek;
+                    }
                 }
 
                 // ---- звук ----------------------------------------------
@@ -292,6 +350,9 @@ impl KtApp {
         if revert {
             self.apply_coalesced(Command::SetTransition(ed.backup.clone()), ed.gesture);
             ed.open = false;
+        }
+        if let Some(t) = seek {
+            self.player.seek(t);
         }
         if let Some(h) = hover_out {
             self.hover_hint = Some(h);

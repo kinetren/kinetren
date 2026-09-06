@@ -374,6 +374,12 @@ pub struct TransitionEvent {
     /// сериализуется — файлы прежних версий байт-стабильны.
     #[serde(default, skip_serializing_if = "is_default_curve")]
     pub audio: AudioCurve,
+    /// Кривые ПАРАМЕТРОВ вида (Р.34 К4) — тот же механизм, что у
+    /// эффектов и камер. Позиция ключа — тик от НАЧАЛА окна перехода
+    /// (`joint − in_offset`): правка края окна открывает/прячет ключи,
+    /// как обрезка клипа, а не растягивает анимацию.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto: Vec<ParamCurve>,
 }
 
 fn is_default_curve(c: &AudioCurve) -> bool {
@@ -381,6 +387,21 @@ fn is_default_curve(c: &AudioCurve) -> bool {
 }
 
 impl TransitionEvent {
+    /// Вид с УЧЁТОМ кривых в позиции `local` (тик от начала окна).
+    /// Единственная точка разрешения — её зовут оба исполнителя рендера.
+    pub fn kind_at(&self, local: Tick) -> TransitionKind {
+        if self.auto.is_empty() {
+            return self.kind.clone();
+        }
+        let mut k = self.kind.clone();
+        for c in &self.auto {
+            if !c.keys.is_empty() {
+                k.set_param(&c.param, curve_value(&c.keys, c.ease, local));
+            }
+        }
+        k
+    }
+
     /// Стык: конец `a`, а для фейд-ина — начало `b` (Р.25). None — оба конца
     /// пропали; такое состояние живёт только внутри мутации до
     /// reconcile_transitions.
@@ -2215,6 +2236,8 @@ pub enum ProjectError {
     CameraBadKeyframes(CameraId),
     #[error("clip {0:?}: fx automation keys must be finite and sorted within [0, 1]")]
     BadFxAuto(ClipId),
+    #[error("transition {0:?}: parameter curves must be finite, sorted and known")]
+    BadTransitionAuto(TransitionId),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,
@@ -2258,6 +2281,14 @@ pub fn check_transition_full(
     }
     if t.in_offset + t.out_offset < MIN_TRANSITION_DURATION {
         return Err(ProjectError::TransitionTooShort(t.id));
+    }
+    // кривые параметров вида — те же правила, что у кривых эффектов
+    for c in &t.auto {
+        let sorted = c.keys.windows(2).all(|w| w[0].t <= w[1].t);
+        let ok = c.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
+        if !sorted || !ok || t.kind.param_spec(&c.param).is_none() {
+            return Err(ProjectError::BadTransitionAuto(t.id));
+        }
     }
     let w = TickRange::new(joint - t.in_offset, joint + t.out_offset);
     for other in &p.transitions {
