@@ -119,6 +119,9 @@ impl KtApp {
         let mut revert = false;
         let mut pick_file = false;
         let mut open = ed.open;
+        // выделение на таймлайне — им заполняется замороженный список
+        let selection: Vec<ClipId> = self.selected_with_groups();
+        let mut need_selection = false;
         // выключатель события (Р.33) — та же мастер-галка, что у цепочки
         // события; буфер FX общий с окном событий
         let mut enabled = ev.enabled;
@@ -133,21 +136,72 @@ impl KtApp {
             .resizable(true)
             .vscroll(true)
             .show(ctx, |ui| {
-                // --- замороженные цели (v1: morpherTargetsDescription) -------
+                // --- на кого и когда действует (Р.35) ------------------------
                 let frozen = ev.targets.clip_ids().to_vec();
-                let mut ids: Vec<String> =
-                    frozen.iter().take(4).map(|t| format!("#{}", t.0)).collect();
-                if frozen.len() > 4 {
-                    ids.push("…".into());
+                ui.horizontal(|ui| {
+                    ui.label(tr(k::mrph::ON));
+                    let cur = match &ev.targets {
+                        MorphTargets::Clips { ids } => {
+                            crate::tf!(k::mrph::ON_CLIPS, ids.len())
+                        }
+                        _ => tr(k::mrph::ON_BELOW).to_string(),
+                    };
+                    egui::ComboBox::from_id_salt(("morph_on", ed.id.0))
+                        .selected_text(cur)
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_label(false, tr(k::mrph::ON_BELOW)).clicked()
+                                && !matches!(ev.targets, MorphTargets::Below)
+                            {
+                                ev.targets = MorphTargets::Below;
+                                changed = true;
+                            }
+                            // замораживаем ТЕКУЩЕЕ выделение; пустой
+                            // список у Clips запрещён моделью, поэтому
+                            // отказ показывается ошибкой, а не молчанием
+                            let sel: Vec<ClipId> = if frozen.is_empty() {
+                                selection.clone()
+                            } else {
+                                frozen.clone()
+                            };
+                            let label = crate::tf!(k::mrph::ON_CLIPS, sel.len());
+                            if ui.selectable_label(false, label).clicked() {
+                                if sel.is_empty() {
+                                    need_selection = true;
+                                } else if ev.targets.clip_ids() != sel.as_slice() {
+                                    ev.targets = MorphTargets::Clips { ids: sel };
+                                    changed = true;
+                                }
+                            }
+                        });
+                    let mut timed = ev.timed;
+                    if crate::app::hint_into(
+                        &mut hover_out,
+                        ui.checkbox(&mut timed, tr(k::mrph::TIMED)),
+                        tr(k::mrph::TIMED_HINT),
+                    )
+                    .changed()
+                    {
+                        ev.timed = timed;
+                        changed = true;
+                    }
+                });
+                if matches!(ev.targets, MorphTargets::Below) {
+                    ui.label(egui::RichText::new(tr(k::mrph::BELOW_NOTE)).weak().small());
+                } else {
+                    let mut ids: Vec<String> =
+                        frozen.iter().take(4).map(|t| format!("#{}", t.0)).collect();
+                    if frozen.len() > 4 {
+                        ids.push("…".into());
+                    }
+                    ui.label(
+                        egui::RichText::new(crate::tf!(
+                            k::mrph::FROZEN,
+                            frozen.len(),
+                            ids.join(", ")
+                        ))
+                        .weak(),
+                    );
                 }
-                ui.label(
-                    egui::RichText::new(crate::tf!(
-                        k::mrph::FROZEN,
-                        frozen.len(),
-                        ids.join(", ")
-                    ))
-                    .weak(),
-                );
                 ui.separator();
 
                 // Р.35: подмена источника и цепочки живут ВМЕСТЕ, поэтому
@@ -362,6 +416,10 @@ impl KtApp {
             return;
         }
         self.fx_clipboard = fx_clip;
+        if need_selection {
+            // невозможность действия — ошибкой, а не блёклой строкой (п.16 р.28)
+            self.note(tr(k::mrph::NEED_SELECTION));
+        }
         if let Some(h) = hover_out {
             self.hover_hint = Some(h);
         }

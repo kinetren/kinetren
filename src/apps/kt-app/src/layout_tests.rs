@@ -4609,3 +4609,85 @@ fn t231_camera_editor_opens_and_edits() {
     h.step();
     assert!(h.state().camera_editors.is_empty(), "окно мёртвой камеры закрывается");
 }
+
+/// Тест 242 (Р.35 С1, кусок 5): окно морфера показывает, НА КОГО и КОГДА
+/// он действует. До этого раунда цели были заморожены навсегда и не
+/// показывались иначе как строкой «#1, #2», а времени у морфера не было
+/// вовсе — блок можно было двигать, и это ничего не значило.
+#[test]
+fn t242_morph_editor_shows_target_mode_and_timing() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.morph_lanes = 1;
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(45_000),
+        targets: MorphTargets::Below,
+        patch: MorphPatch { media: Some(MediaId(1)), ..Default::default() },
+        timed: true,
+        enabled: true,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_morph_editor(MorphId(1));
+    h.step();
+    h.step();
+
+    // режим целей виден и объяснён, а не спрятан в коде
+    assert!(
+        h.query_by_label(&crate::i18n::tr(crate::i18n::k::mrph::ON).to_string()).is_some(),
+        "строка «действует на» обязана быть в окне"
+    );
+    assert!(
+        h.query_by_label(&crate::i18n::tr(crate::i18n::k::mrph::BELOW_NOTE).to_string()).is_some(),
+        "и сказано, что именно слой накрывает"
+    );
+
+    // галка «по времени» правит МОДЕЛЬ и укладывается в один undo-шаг
+    let depth = h.state().model.undo_depth();
+    h.get_by_label(&crate::i18n::tr(crate::i18n::k::mrph::TIMED).to_string()).click();
+    h.step();
+    h.step();
+    assert!(!h.state().model.project().morphers[0].timed, "галка сняла действие по времени");
+    assert_eq!(h.state().model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
+
+    // второй режим окно показывает ДРУГИМ: вместо объяснения слоя —
+    // сам замороженный список (иначе «на кого действует» не увидеть)
+    let app = h.state_mut();
+    let mut ev = app.model.project().morphers[0].clone();
+    ev.targets = MorphTargets::Clips { ids: vec![ClipId(1)] };
+    assert!(app.apply(Command::SetMorpher(ev)));
+    h.step();
+    h.step();
+    assert!(
+        h.query_by_label(&crate::i18n::tr(crate::i18n::k::mrph::BELOW_NOTE).to_string()).is_none(),
+        "у замороженного списка объяснению слоя не место"
+    );
+    assert!(
+        h.query_by_label_contains("#1").is_some(),
+        "замороженный список обязан быть виден поимённо"
+    );
+}

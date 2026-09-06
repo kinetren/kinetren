@@ -127,8 +127,8 @@ empty = "LMB — playhead, drag — region, Ctrl+drag — select events; wheel �
 
 # Таймлайн: подписи на morph-событиях.
 [tl.morph]
-batch = "FX batch ({0})"
-replace = "Morpher ({0})"
+layer = "Layer"
+clips = "Events: {0}"
 
 # Таймлайн: подсказки полей ввода.
 [tl.field]
@@ -206,6 +206,13 @@ peak = "Master peak level, dBFS"
 title_batch = "Morpher FX batch — event {0}"
 title = "Morpher — event {0}"
 frozen = "Frozen at creation: {0} clip(s). {1}"
+timed = "Timed"
+timed_hint = "The morpher acts only inside its block. Off — it patches its targets whole, wherever the block sits."
+on = "Acts on:"
+on_below = "Everything below"
+on_clips = "Frozen list: {0}"
+need_selection = "Select the events to freeze first"
+below_note = "A layer patches every clip on the rows BELOW it. Source replacement applies to both video and audio; effects go to clips of their own kind."
 choose = "Choose…"
 browse = "File…"
 search_media = "media name"

@@ -2871,12 +2871,12 @@ impl KtApp {
                 egui::StrokeKind::Inside,
             );
             if r.width() > 46.0 {
-                // подпись по СОДЕРЖИМОМУ патча (Р.35: вида больше нет)
-                let n = m.targets.clip_ids().len();
-                let label = if m.patch.video_fx.is_empty() && m.patch.audio_fx.is_empty() {
-                    crate::tf!(k::tl::morph::REPLACE, n)
-                } else {
-                    crate::tf!(k::tl::morph::BATCH, n)
+                // подпись по РЕЖИМУ ЦЕЛЕЙ (Р.35): вида у морфера больше
+                // нет, а «на кого действует» — единственное, чего не
+                // видно по самому блоку
+                let label = match &m.targets {
+                    MorphTargets::Clips { ids } => crate::tf!(k::tl::morph::CLIPS, ids.len()),
+                    _ => tr(k::tl::morph::LAYER).to_string(),
                 };
                 painter.text(
                     egui::pos2(r.left() + 6.0, r.center().y),

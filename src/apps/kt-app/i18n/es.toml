@@ -127,8 +127,8 @@ empty = "Clic izq. — cursor, arrastrar — región, Ctrl+arrastrar — selecci
 
 # Таймлайн: подписи на morph-событиях.
 [tl.morph]
-batch = "Lote FX ({0})"
-replace = "Morpher ({0})"
+layer = "Capa"
+clips = "Eventos: {0}"
 
 # Таймлайн: подсказки полей ввода.
 [tl.field]
@@ -206,6 +206,13 @@ peak = "Nivel de pico del máster, dBFS"
 title_batch = "Lote FX de morpher — evento {0}"
 title = "Morpher — evento {0}"
 frozen = "Congelado al crear: {0} clip(s). {1}"
+timed = "Por tiempo"
+timed_hint = "El morpher actúa solo dentro de su bloque. Desactivado: parchea sus objetivos enteros, esté donde esté."
+on = "Actúa sobre:"
+on_below = "Todo lo de abajo"
+on_clips = "Lista congelada: {0}"
+need_selection = "Selecciona primero los eventos que quieres congelar"
+below_note = "Una capa parchea todos los clips de las pistas de ABAJO. La sustitución de fuente afecta a vídeo y audio; los efectos van a los clips de su tipo."
 choose = "Elegir…"
 browse = "Archivo…"
 search_media = "nombre del medio"

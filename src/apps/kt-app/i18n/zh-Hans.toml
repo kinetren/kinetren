@@ -127,8 +127,8 @@ empty = "左键 — 播放头，拖动 — 区间，Ctrl+拖动 — 框选事件
 
 # Таймлайн: подписи на morph-событиях.
 [tl.morph]
-batch = "特效批次（{0}）"
-replace = "Morpher（{0}）"
+layer = "图层"
+clips = "事件：{0}"
 
 # Таймлайн: подсказки полей ввода.
 [tl.field]
@@ -206,6 +206,13 @@ peak = "主输出峰值电平，dBFS"
 title_batch = "Morpher 特效批次 — 事件 {0}"
 title = "Morpher — 事件 {0}"
 frozen = "创建时冻结：{0} 个片段。{1}"
+timed = "按时间"
+timed_hint = "变形器只在自己的块内生效。关闭后，无论块放在哪里都会整体修补目标。"
+on = "作用于："
+on_below = "下方全部"
+on_clips = "冻结列表：{0}"
+need_selection = "请先选择要冻结的事件"
+below_note = "图层会修补其下方所有轨道上的片段。源替换同时作用于视频和音频；效果只进入同类片段。"
 choose = "选择…"
 browse = "文件…"
 search_media = "素材名称"
