@@ -311,6 +311,11 @@ pub struct KtApp {
     /// Кэш имён/подавления имён клипов по model_rev (были 2 HashMap +
     /// O(n²) на каждый кадр).
     pub names_cache: NamesCache,
+    /// Карты растяжения времени по клипам, по model_rev (Р.37 п.3).
+    /// Превью обязано считать позицию ТОЙ ЖЕ картой, что рендер, но
+    /// строить профиль на каждый пиксельный столбец — аллокация в
+    /// draw-пути (инвариант №12), поэтому раз на ревизию.
+    pub warp_cache: WarpCache,
 }
 
 impl KtApp {
@@ -501,6 +506,7 @@ impl KtApp {
             model_rev: 0,
             coverage_cache: Default::default(),
             names_cache: Default::default(),
+            warp_cache: Default::default(),
         }
     }
 
@@ -636,6 +642,7 @@ impl KtApp {
             model_rev: 0,
             coverage_cache: Default::default(),
             names_cache: Default::default(),
+            warp_cache: Default::default(),
         };
         // loop-регион загруженного проекта — в плеер сразу (раньше
         // синхронизация была только в on_region_changed, т.е. только при
@@ -3985,6 +3992,18 @@ pub struct CoverageCache {
 }
 
 /// Кэш имён клипов (п.1: HashMap'ы и O(n²) suppress пересобирались кадр).
+/// Растяжения времени клипов, посчитанные раз на версию модели.
+#[derive(Default)]
+pub struct WarpCache {
+    /// Ключ — (версия модели, число клипов): модель можно подменить
+    /// ЦЕЛИКОМ, не бампнув `model_rev` (открытие проекта, харнесс-тесты),
+    /// и тогда спасает второе число — та же страховка, что у `names_cache`.
+    rev: Option<(u64, usize)>,
+    /// Только клипы С варпом: у остальных отображение линейно, и хранить
+    /// про них нечего.
+    maps: Arc<HashMap<ClipId, kt_engine::ClipWarp>>,
+}
+
 #[derive(Default)]
 pub struct NamesCache {
     rev: Option<u64>,
@@ -4001,6 +4020,25 @@ pub struct NamesCache {
 }
 
 impl KtApp {
+    /// Карты растяжения времени клипов (Р.37 п.3): превью считает позицию
+    /// материала ТОЙ ЖЕ картой, что рендер. Пересчёт — раз на версию
+    /// модели; на кадр отдаётся клон указателя.
+    pub fn warp_maps(&mut self) -> Arc<HashMap<ClipId, kt_engine::ClipWarp>> {
+        let stamp = (self.model_rev, self.model.project().clips.len());
+        if self.warp_cache.rev != Some(stamp) {
+            self.warp_cache.rev = Some(stamp);
+            let maps: HashMap<ClipId, kt_engine::ClipWarp> = self
+                .model
+                .project()
+                .clips
+                .iter()
+                .filter_map(|c| kt_engine::clip_warp_map(c).map(|w| (c.id, w)))
+                .collect();
+            self.warp_cache.maps = Arc::new(maps);
+        }
+        self.warp_cache.maps.clone()
+    }
+
     /// Runs покрытия per-clip; пересчёт только при смене epoch кэша,
     /// версии модели или качества превью.
     pub fn coverage_runs(&mut self) -> Arc<HashMap<ClipId, Vec<std::ops::Range<i64>>>> {

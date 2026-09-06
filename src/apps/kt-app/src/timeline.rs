@@ -2638,6 +2638,8 @@ impl KtApp {
         }
 
         // ---- клипы -----------------------------------------------------------------
+        // карты растяжения — раз на версию модели (Р.37 п.3)
+        let warps = self.warp_maps();
         let peaks = self.peaks.lock().unwrap();
         let offline = self.offline.lock().unwrap().clone();
 
@@ -2733,13 +2735,29 @@ impl KtApp {
                 );
             }
 
+            // Растяжение времени (Р.37 п.3): превью обязано считать
+            // позицию материала ТОЙ ЖЕ картой, что рендер, иначе
+            // замедленный клип рисует не то, что играет. Карта — из кэша
+            // по model_rev; строить её на столбец нельзя (аллокация в
+            // draw-пути, инвариант №12).
+            let warp = warps.get(&c.id);
+            let dur = c.duration.0.max(1);
+            // тик таймлайна внутри события → СМЕЩЕНИЕ В МАТЕРИАЛЕ
+            let material_off = |tl: i64| -> i64 {
+                warp.map_or(tl, |w| w.material_off(c.duration, c.reversed, tl))
+            };
+            // фактически потреблённый пролёт источника: по нему выбирается
+            // ступень филмстрипа, иначе замедленный клип берёт вдвое более
+            // грубый шаг и вырождается в повторяющиеся бакеты
+            let used_span = warp.map_or(dur, |w| w.used().max(1));
+
             // филмстрип видео-клипа: тумбы из индекс-БД/сервиса, отрисовка
             // никогда не блокируется и не трогает декодеры плеера
             if c.kind == ClipKind::Video && !is_offline && clip_rect.width() > 30.0 {
                 let thumb_h = clip_rect.height() - 2.0;
                 let thumb_w = (thumb_h * 16.0 / 9.0).max(28.0);
                 let step = crate::thumbs::thumb_source_step(
-                    Tick(end - start),
+                    Tick(used_span),
                     (x1 - x0).max(1.0) * 1.0,
                     thumb_w,
                 );
@@ -2754,8 +2772,11 @@ impl KtApp {
                         // показывала кадр за 3 секунды ДО начала куска
                         // квантование ОТ НУЛЯ ФАЙЛА — общий кэш с бином
                         // (п.11 р.6, тест 62)
-                        let src_t =
-                            crate::thumbs::thumb_key_t(c.source_in.0 + src_shift, tl, step);
+                        let src_t = crate::thumbs::thumb_key_t(
+                            c.source_in.0 + src_shift,
+                            material_off(tl),
+                            step,
+                        );
                         let key = crate::thumbs::ThumbKey { media: c.media, t: src_t };
                         let tex = match self.thumb_textures.get(&key) {
                             Some(t) => Some(t.clone()),
@@ -2836,7 +2857,7 @@ impl KtApp {
                 let mut mesh = egui::Mesh::default();
                 let mut x = clip_rect.left();
                 while x < clip_rect.right() {
-                    let tl0 = x_to_tick(x) - start;
+                    let tl0 = material_off(x_to_tick(x) - start);
                     let f0 = src_in_frames + tl0 as f64 * 48_000.0 / 90_000.0;
                     if f0 >= 0.0 {
                         let bi = (f0 / block) as usize;

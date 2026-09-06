@@ -67,20 +67,20 @@ struct VideoClip {
 /// Разрешённый варп клипа: базовая скорость, профиль её кривой в домене
 /// СОБЫТИЯ и фактически потреблённый материал (якорь зеркала реверса).
 #[derive(Debug, Clone)]
-struct VideoWarp {
-    base: f64,
-    prof: Vec<(f64, f64)>,
-    used: i64,
+pub(crate) struct VideoWarp {
+    pub(crate) base: f64,
+    pub(crate) prof: Vec<(f64, f64)>,
+    pub(crate) used: i64,
     /// Режим «смешивание» (Р.37 С5): читается исполнителем слоя.
     #[allow(dead_code)]
-    blend: bool,
+    pub(crate) blend: bool,
 }
 
 /// Варп видео-клипа из его АКТИВНОЙ цепочки. `active_fx`/`active_fx_auto`
 /// уже отбросили выключенные слоты и мастер-выключатель, поэтому галка
 /// слота на видео-экземпляре — это и есть «отключить замедление картинки»
 /// (Р.37: второго выключателя того же смысла не заводим).
-fn clip_video_warp(
+pub(crate) fn clip_video_warp(
     fx: &[kt_model::FxInstance],
     auto: &[Vec<kt_model::ParamCurve>],
     source_in: Tick,

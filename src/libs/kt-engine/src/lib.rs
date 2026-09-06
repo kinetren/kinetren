@@ -153,6 +153,48 @@ pub use video_plan::{
 pub use worker::{DecodeRequest, MediaWorker, RequestKind};
 
 /// Приоритеты запросов к MediaWorker. Порядок значим (инвариант №5).
+/// Растяжение времени клипа для ЧУЖИХ потребителей (Р.37 п.3).
+///
+/// Превью таймлайна — волноформа и филмстрип — обязано считать позицию
+/// материала ТОЙ ЖЕ картой, что рендер: иначе замедленный клип рисует не
+/// то, что играет. Формула живёт здесь, а не в kt-app, по тому же правилу,
+/// что и остальная геометрия: своей формулы в UI не заводить.
+///
+/// Строить это на каждый пиксельный столбец нельзя — вызывающий обязан
+/// кэшировать (в kt-app это `warp_maps()` по `model_rev`).
+#[derive(Debug, Clone)]
+pub struct ClipWarp {
+    base: f64,
+    prof: Vec<(f64, f64)>,
+    /// Фактически потреблённый материал в тиках.
+    used: i64,
+}
+
+impl ClipWarp {
+    /// Сколько материала съедено к моменту `tl` тиков от начала события.
+    /// Реверс — «варп, ПОТОМ зеркало», как в движке.
+    pub fn material_off(&self, duration: kt_time::Tick, reversed: bool, tl: i64) -> i64 {
+        let dur = duration.0.max(1);
+        let consumed = kt_fx::warp_material_ticks(self.base, &self.prof, dur, tl as f64 / dur as f64);
+        if reversed { (self.used - consumed).max(0) } else { consumed }
+    }
+
+    /// Пролёт источника, который событие реально проходит. По нему
+    /// выбирается ступень филмстрипа: возьми длину события — замедленный
+    /// клип получит вдвое более грубый шаг и выродится в повторы.
+    pub fn used(&self) -> i64 {
+        self.used
+    }
+}
+
+/// Карта растяжения клипа; `None` — варпа нет, отображение линейно.
+pub fn clip_warp_map(c: &kt_model::ClipEvent) -> Option<ClipWarp> {
+    let fx = c.active_fx();
+    let auto = c.active_fx_auto();
+    crate::video::clip_video_warp(&fx, &auto, c.source_in, c.duration)
+        .map(|w| ClipWarp { base: w.base, prof: w.prof, used: w.used })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
     Playback = 0,

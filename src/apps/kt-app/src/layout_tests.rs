@@ -5105,3 +5105,75 @@ fn t248_video_warp_shows_only_what_matters() {
         "ручки реверба показываются ровно один раз — у аудио"
     );
 }
+
+/// Тест 249 (Р.37 С4, требование пользователя: «slowed&reverb должен
+/// учитываться в превью аудио/видео в событиях»). Волноформа и филмстрип
+/// переводили пиксель в материал ЛИНЕЙНО и игнорировали даже реверс —
+/// замедленный клип рисовал не то, что играет.
+#[test]
+fn t249_previews_follow_the_warp() {
+    use kt_model::*;
+    use kt_time::Tick;
+    const SEC: i64 = 90_000;
+
+    let clip = |fx: Vec<FxInstance>, reversed: bool| ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(4 * SEC),
+        source_in: Tick(SEC),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed,
+        fx,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+
+    // без варпа карта не заводится вовсе — отображение линейно, как было
+    assert!(kt_engine::clip_warp_map(&clip(vec![], false)).is_none());
+
+    // 0.5×: к середине события съедена ЧЕТВЕРТЬ материала, а не половина
+    let slow = clip(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], false);
+    let w = kt_engine::clip_warp_map(&slow).expect("карта варпа есть");
+    assert_eq!(w.used(), 2 * SEC, "за 4 с события съедается 2 с материала");
+    assert_eq!(w.material_off(slow.duration, false, 2 * SEC), SEC, "середина — четверть материала");
+    assert_eq!(w.material_off(slow.duration, false, 0), 0);
+    assert_eq!(w.material_off(slow.duration, false, 4 * SEC), 2 * SEC);
+
+    // реверс — «варп, потом зеркало»: то же правило, что в движке
+    let rev = clip(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], true);
+    let wr = kt_engine::clip_warp_map(&rev).expect("карта");
+    assert_eq!(wr.material_off(rev.duration, true, 0), 2 * SEC, "реверс начинается с конца");
+    assert_eq!(wr.material_off(rev.duration, true, 4 * SEC), 0, "и кончается началом");
+
+    // ВЫКЛЮЧЕННЫЙ слот = «не замедлять картинку» (Р.37: это и есть та
+    // самая отдельная галочка, второго выключателя не заводим)
+    let mut off = slow.clone();
+    off.fx_bypass = vec![true];
+    assert!(kt_engine::clip_warp_map(&off).is_none(), "галка слота снимает растяжение");
+
+    // ступень филмстрипа берётся из ПОТРЕБЛЁННОГО пролёта, иначе
+    // замедленный клип получает вдвое более грубый шаг и вырождается
+    // в повторяющиеся бакеты
+    let by_event = crate::thumbs::thumb_source_step(Tick(4 * SEC), 800.0, 48.0);
+    let by_used = crate::thumbs::thumb_source_step(Tick(w.used()), 800.0, 48.0);
+    assert!(by_used <= by_event, "шаг по потреблённому не грубее: {by_used} vs {by_event}");
+
+    // и кэш карт живёт по ревизии модели, а не строится на кадр
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(slow);
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    let a = app.warp_maps();
+    let b = app.warp_maps();
+    assert!(std::sync::Arc::ptr_eq(&a, &b), "на кадр карта не пересобирается");
+    assert_eq!(a.len(), 1, "в кэше только клипы С варпом");
+}
