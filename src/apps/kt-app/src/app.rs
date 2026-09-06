@@ -246,6 +246,10 @@ pub struct KtApp {
     /// Препятствие текущего жеста (п.5 Р.28): подсвечивается на таймлайне,
     /// подсказка идёт ОШИБОЧНЫМ стилем и говорит, куда смотреть.
     pub blocked: Option<crate::timeline::Blocked>,
+    /// Последняя рамка выделения в ДОМЕНЕ МОДЕЛИ (время × ключи дорожек)
+    /// — из неё делается именованная область (Р.35 п.2). Сессионное:
+    /// пережить перезапуск ему незачем.
+    pub last_band: Option<(kt_time::Tick, kt_time::Tick, Vec<(LaneKind, u32)>)>,
     /// Прямоугольник строки состояния (заполняется при её отрисовке).
     pub statusbar_rect: egui::Rect,
     /// Что реально показано в строке подсказки (для harness-теста).
@@ -463,6 +467,7 @@ impl KtApp {
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
             blocked: None,
+            last_band: None,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -596,6 +601,7 @@ impl KtApp {
             last_autosave: std::time::Instant::now(),
             hover_hint: None,
             blocked: None,
+            last_band: None,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -2664,6 +2670,42 @@ impl KtApp {
             self.selected.clear();
             // v1: окно редактора открывается сразу после размещения
             self.open_morph_editor(id);
+        }
+    }
+
+    /// Сохранить область (Р.35 п.2). ОДНА функция на все три способа —
+    /// отпускание рамки, пункт меню, кнопка тулбара (правило 17): иначе
+    /// они разойдутся в том, что именно попадает в область.
+    ///
+    /// Геометрия берётся из последней рамки выделения, а если её не было
+    /// — из региона на всех дорожках. Имя генерится уникальным ТУТ ЖЕ,
+    /// чтобы пользователь увидел готовое имя, а не получил отказ.
+    pub fn save_marked_area(&mut self) {
+        let p = self.model.project();
+        let (start, end, lanes) = match self.last_band.clone() {
+            Some((a, b, lanes)) if b.0 > a.0 => (a, b, lanes),
+            _ => match p.region {
+                Some(r) => (r.start, r.end, Vec::new()),
+                None => {
+                    self.note(tr(k::msg::AREA_NEEDS_BAND));
+                    return;
+                }
+            },
+        };
+        if (end - start).0 < kt_model::MIN_CLIP_DURATION.0 {
+            self.note(tr(k::msg::AREA_NEEDS_BAND));
+            return;
+        }
+        let name = kt_model::unique_name(&p.taken_names(), "", tr(k::msg::AREA_STEM));
+        let area = kt_model::MarkedArea {
+            name: name.clone(),
+            start,
+            duration: end - start,
+            lanes,
+            color: None,
+        };
+        if self.apply(Command::AddArea(area)) {
+            self.note(crate::tf!(k::msg::AREA_SAVED, name));
         }
     }
 

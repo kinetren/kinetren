@@ -519,6 +519,10 @@ pub struct Project {
     /// Камеры-события. Активную в момент t выбирает `active_camera_at`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cameras: Vec<CameraEvent>,
+    /// Именованные области «время × дорожки» (Р.35 п.2): рамка выделения,
+    /// сохранённая под именем. Морфер ссылается на них ПО ИМЕНИ.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub areas: Vec<MarkedArea>,
 }
 
 fn default_true() -> bool {
@@ -867,8 +871,8 @@ impl MorpherEvent {
     }
 
     /// Цель ли этот клип. `Below` — умолчание: всё, что НИЖЕ строки
-    /// морфера в порядке дорожек (adjustment layer). Именованные ссылки
-    /// (`Marks`/`Areas`) появятся стадией С4 Р.35.
+    /// морфера в порядке дорожек (adjustment layer); `Marks`/`Areas` —
+    /// именованные диапазоны и области (Р.35 п.2), они же задают ОКНА.
     pub fn covers(&self, c: &ClipEvent, rows: &[(LaneKind, u32)]) -> bool {
         match &self.targets {
             MorphTargets::Clips { ids } => ids.contains(&c.id),
@@ -877,8 +881,30 @@ impl MorpherEvent {
                 let his = rows.iter().position(|&k| k == lane_key(c));
                 matches!((mine, his), (Some(a), Some(b)) if b > a)
             }
-            _ => false,
+            // ссылку резолвит `ref_windows`: мёртвая ссылка = пустое
+            // множество, а не ошибка (файл её не теряет)
+            MorphTargets::Marks { .. } | MorphTargets::Areas { .. } => true,
         }
+    }
+
+    /// Окна именованных ссылок, ограниченные телом клипа. Пусто — режим
+    /// не ссылочный либо ссылки никуда не ведут.
+    pub fn ref_windows(&self, c: &ClipEvent, p: &Project) -> Vec<TickRange> {
+        let body = TickRange::new(c.start, c.start + c.duration);
+        let key = lane_key(c);
+        let ranges: Vec<TickRange> = match &self.targets {
+            MorphTargets::Marks { names } => {
+                names.iter().filter_map(|n| p.named_range(n)).collect()
+            }
+            MorphTargets::Areas { names } => names
+                .iter()
+                .filter_map(|n| p.area(n))
+                .filter(|a| a.covers_lane(key))
+                .map(|a| a.range())
+                .collect(),
+            _ => return Vec::new(),
+        };
+        merge_ranges(ranges.into_iter().map(|r| r.intersect(&body)).filter(|r| !r.is_empty()))
     }
 
     /// Индекс строки морфера — ключ порядка наложения слоёв.
@@ -905,6 +931,17 @@ impl MorpherEvent {
         if !self.enabled || !self.covers(c, rows) || !self.patch.affects(c) {
             return Vec::new();
         }
+        // ссылочные режимы: ВРЕМЯ задаёт сама ссылка, блок его не
+        // ограничивает — иначе пользователь ткнул бы в дальний диапазон и
+        // не понял, почему ничего не произошло. Галка «по времени» в этих
+        // режимах гаснет (окно и так пришло из ссылки).
+        let refs = self.ref_windows(c, p);
+        if matches!(self.targets, MorphTargets::Marks { .. } | MorphTargets::Areas { .. }) {
+            return refs
+                .into_iter()
+                .filter_map(|w| self.fit_window(w, c, p, body))
+                .collect();
+        }
         if !self.timed {
             return vec![body]; // v1: время блока не действует
         }
@@ -920,11 +957,29 @@ impl MorpherEvent {
         {
             return vec![body];
         }
+        match self.fit_window(w, c, p, body) {
+            Some(w) => vec![w],
+            None => Vec::new(),
+        }
+    }
+
+    /// Посадить окно на сетку материала, вытолкнуть из запретных зон и
+    /// схлопнуть огрызки к краям тела. `None` — окна не осталось.
+    fn fit_window(
+        &self,
+        w: TickRange,
+        c: &ClipEvent,
+        p: &Project,
+        body: TickRange,
+    ) -> Option<TickRange> {
+        if w.len() < crate::MIN_CLIP_DURATION {
+            return None;
+        }
         // Граница садится на сетку МАТЕРИАЛА клипа: кадр — у видео, 8
-        // сэмплов (15 тиков) — у аудио. Иначе точка входа куска считалась
-        // бы дробным кадром: у прямого клипа это стоило бы сэмпла на шве,
-        // у reversed — кадра (кламп зеркального якоря). Отсчёт от начала
-        // тела, а у reversed — от КОНЦА: там якорь материала.
+        // сэмплов (15 тиков) — у аудио. Иначе точка входа куска пришлась
+        // бы на дробный кадр: у прямого клипа это стоило бы сэмпла на
+        // шве, у reversed — кадра (кламп зеркального якоря). Отсчёт от
+        // начала тела, а у reversed — от КОНЦА: там якорь материала.
         let step = match c.kind {
             ClipKind::Video => kt_time::TICK_HZ / p.settings.fps.max(1) as i64,
             ClipKind::Audio => kt_time::TICK_HZ * 8 / kt_time::AUDIO_SAMPLE_RATE as i64,
@@ -936,11 +991,11 @@ impl MorpherEvent {
                 Tick(body.start.0 + (t.0 - body.start.0) / step * step)
             }
         };
-        // ПОРЯДОК ВАЖЕН: сетка сначала, зоны после. Край зоны бывает не на
-        // сетке (клип соседа начался между кадрами), и тогда выбор один:
-        // либо кадр материала, либо неразрезанное окружение. Дороже стоит
-        // окружение — кусок с бо́льшим `start` вылезает над соседом и
-        // меняет веса кроссфейда, а сетка стоит одного кадра на шве.
+        // ПОРЯДОК ВАЖЕН: сетка сначала, зоны после. Край зоны бывает не
+        // на сетке (клип соседа начался между кадрами), и тогда выбор
+        // один: либо кадр материала, либо неразрезанное окружение. Дороже
+        // стоит окружение — кусок с бо́льшим `start` вылезает над соседом
+        // и меняет веса кроссфейда, а сетка стоит одного кадра на шве.
         let zones = p.forbidden_zones(c);
         let mut s = snap_out_of(grid(w.start), &zones);
         let mut e = snap_out_of(grid(w.end), &zones);
@@ -954,11 +1009,25 @@ impl MorpherEvent {
         if (body.end - e) < crate::MIN_CLIP_DURATION {
             e = body.end;
         }
-        if (e - s) < crate::MIN_CLIP_DURATION {
-            return Vec::new();
-        }
-        vec![TickRange::new(s, e)]
+        (e - s >= crate::MIN_CLIP_DURATION).then_some(TickRange::new(s, e))
     }
+}
+
+/// Слить пересекающиеся и примыкающие диапазоны в непересекающийся набор
+/// (ссылок у морфера может быть несколько, и они могут накладываться).
+fn merge_ranges(it: impl Iterator<Item = TickRange>) -> Vec<TickRange> {
+    let mut v: Vec<TickRange> = it.collect();
+    v.sort_by_key(|r| r.start.0);
+    let mut out: Vec<TickRange> = Vec::with_capacity(v.len());
+    for r in v {
+        match out.last_mut() {
+            Some(last) if r.start.0 <= last.end.0 => {
+                last.end = Tick(last.end.0.max(r.end.0));
+            }
+            _ => out.push(r),
+        }
+    }
+    out
 }
 
 /// Вытолкнуть точку из запретных зон к ближайшему их краю. Зоны могут
@@ -1061,6 +1130,55 @@ pub struct Marker {
 
 fn tick_is_zero(t: &Tick) -> bool {
     t.0 == 0
+}
+
+/// Именованная область таймлайна: время × набор дорожек (Р.35 п.2,
+/// дословно: «area-selection сделать сохраняемой как marked_region в
+/// виде marked_area, и тоже на неё ссылаться»).
+///
+/// Имя — это АДРЕС: непустое и уникальное в одном пространстве имён с
+/// метками-диапазонами («область „финал“ и метка „финал“» в одном пикере
+/// — ловушка). Переименование правит ссылки морферов.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarkedArea {
+    pub name: String,
+    pub start: Tick,
+    pub duration: Tick,
+    /// СЕМАНТИЧЕСКИЕ ключи дорожек, не номера строк: перестановка строк
+    /// область не двигает. Пусто = все дорожки.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lanes: Vec<(LaneKind, u32)>,
+    /// Цвет OTIO-совместимых меток; UI рисует своим стилем.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+impl MarkedArea {
+    pub fn range(&self) -> TickRange {
+        TickRange::new(self.start, self.start + self.duration)
+    }
+
+    /// Накрывает ли область эту дорожку (пустой список = все).
+    pub fn covers_lane(&self, key: (LaneKind, u32)) -> bool {
+        self.lanes.is_empty() || self.lanes.contains(&key)
+    }
+}
+
+/// Уникальное имя в занятом пространстве: `wanted`, если свободно, иначе
+/// «wanted 2», «wanted 3»… ОДНА функция на проверку команд и на вставку —
+/// разойдись они, батч вставки падал бы на собственных суффиксах.
+pub fn unique_name(taken: &[String], wanted: &str, stem: &str) -> String {
+    let base = if wanted.trim().is_empty() { stem } else { wanted.trim() };
+    if !taken.iter().any(|t| t == base) {
+        return base.to_string();
+    }
+    for n in 2..10_000 {
+        let cand = format!("{base} {n}");
+        if !taken.iter().any(|t| *t == cand) {
+            return cand;
+        }
+    }
+    format!("{base} {}", taken.len() + 1)
 }
 
 impl Marker {
@@ -2604,6 +2722,12 @@ pub enum ProjectError {
     DuplicateClipId(ClipId),
     #[error("clip {0:?}: id is in the range reserved for morpher slices")]
     ReservedClipId(ClipId),
+    #[error("marked area: name must not be empty")]
+    AreaUnnamed,
+    #[error("marked area {0:?}: duration must be positive")]
+    AreaEmpty(String),
+    #[error("duplicate name {0:?} (areas and named ranges share one namespace)")]
+    DuplicateName(String),
     #[error("duplicate media id {0:?}")]
     DuplicateMediaId(MediaId),
     #[error("settings: fps must divide {tick_hz}", tick_hz = kt_time::TICK_HZ)]
@@ -2741,6 +2865,7 @@ impl Project {
             timeline_end: None,
             camera_lanes: 0,
             cameras: Vec::new(),
+            areas: Vec::new(),
         }
     }
 
@@ -2764,6 +2889,29 @@ impl Project {
             self.morph_lanes,
             self.camera_lanes,
         )
+    }
+
+    /// Все занятые имена ОДНОГО пространства: области и метки-диапазоны.
+    /// Пустые имена меток законны и в пространство не входят.
+    pub fn taken_names(&self) -> Vec<String> {
+        self.areas
+            .iter()
+            .map(|a| a.name.clone())
+            .chain(self.markers.iter().filter(|m| !m.name.is_empty()).map(|m| m.name.clone()))
+            .collect()
+    }
+
+    /// Область по имени.
+    pub fn area(&self, name: &str) -> Option<&MarkedArea> {
+        self.areas.iter().find(|a| a.name == name)
+    }
+
+    /// Метка-диапазон по имени (точечные метки окна не задают).
+    pub fn named_range(&self, name: &str) -> Option<TickRange> {
+        self.markers
+            .iter()
+            .find(|m| m.name == name && m.duration.0 > 0)
+            .map(|m| TickRange::new(m.t, m.t + m.duration))
     }
 
     /// Индекс строки в порядке дорожек; None — такой дорожки нет.
@@ -2908,6 +3056,26 @@ impl Project {
         for m in &self.media {
             if !media_ids.insert(m.id) {
                 return Err(ProjectError::DuplicateMediaId(m.id));
+            }
+        }
+        // область: имя — это АДРЕС, поэтому непустое и уникальное в
+        // ОДНОМ пространстве с метками-диапазонами (иначе «область финал»
+        // и «метка финал» в одном пикере — ловушка)
+        let mut names = std::collections::HashSet::new();
+        for a in &self.areas {
+            if a.name.trim().is_empty() {
+                return Err(ProjectError::AreaUnnamed);
+            }
+            if a.duration.0 <= 0 {
+                return Err(ProjectError::AreaEmpty(a.name.clone()));
+            }
+            if !names.insert(a.name.clone()) {
+                return Err(ProjectError::DuplicateName(a.name.clone()));
+            }
+        }
+        for m in &self.markers {
+            if !m.name.is_empty() && m.duration.0 > 0 && !names.insert(m.name.clone()) {
+                return Err(ProjectError::DuplicateName(m.name.clone()));
             }
         }
         let mut clip_ids = std::collections::HashSet::new();

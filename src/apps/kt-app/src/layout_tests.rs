@@ -4914,3 +4914,60 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     assert!(g2.lane_h() > g.lane_h(), "зум применился");
     assert!((g2.row_h(mrow) / g2.lane_h() - 1.0 / 3.0).abs() < 0.05, "отношение 3 держится");
 }
+
+/// Тест 248 (Р.35 С4): рамка выделения превращается в именованную
+/// область с ТЕМИ ЖЕ дорожками и временем, а окно морфера показывает
+/// ссылку на неё чипом и находит её поиском.
+#[test]
+fn t248_band_becomes_named_area() {
+    use kt_model::*;
+    let (mut h, g) = harness_three_clips();
+    // рамка (Ctrl+драг с пустого места) по ПЕРВОЙ видео-дорожке
+    let y = g.lane_y(ClipKind::Video, 0, 0.6);
+    let at = |t: i64| egui::pos2(g.tick_to_x(t), y);
+    rubber_drag(&mut h, at(70_000), at(260_000), true);
+    assert!(h.state().last_band.is_some(), "рамка обязана запомниться в домене модели");
+
+    let app = h.state_mut();
+    let depth = app.model.undo_depth();
+    app.save_marked_area();
+    let p = app.model.project();
+    assert_eq!(p.areas.len(), 1, "область сохранена");
+    let a = &p.areas[0];
+    assert!(!a.name.trim().is_empty(), "имя генерится готовым, а не спрашивается отказом");
+    assert!((a.start.0 - 70_000).abs() < 3_000, "время из рамки: {:?}", a.start);
+    assert!(((a.start + a.duration).0 - 260_000).abs() < 3_000, "и её конец");
+    assert_eq!(a.lanes, vec![(LaneKind::Video, 0)], "и ТЕ ЖЕ дорожки");
+    assert_eq!(app.model.undo_depth(), depth + 1, "один шаг истории");
+
+    // второе сохранение той же рамки даёт ДРУГОЕ имя (имя — это адрес)
+    app.save_marked_area();
+    let names: Vec<String> = app.model.project().areas.iter().map(|a| a.name.clone()).collect();
+    assert_eq!(names.len(), 2);
+    assert_ne!(names[0], names[1], "имена уникальны без вопросов пользователю");
+
+    // окно морфера: ссылка на область рисуется чипом
+    let mut p = app.model.project().clone();
+    p.morph_lanes = 1;
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        targets: MorphTargets::Areas { names: vec![names[0].clone(), "нет такой".into()] },
+        patch: MorphPatch::default(),
+        timed: true,
+        enabled: true,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_morph_editor(MorphId(1));
+    h.step();
+    h.step();
+    use egui_kittest::kittest::Queryable;
+    assert!(h.query_by_label(&names[0]).is_some(), "живая ссылка видна чипом");
+    assert!(
+        h.query_by_label("нет такой").is_some(),
+        "мёртвая ссылка ОСТАЁТСЯ на виду: её не выкидывают молча"
+    );
+}

@@ -440,10 +440,10 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             // сборками и остаётся байт-стабильным)
             // морфер-слой (Р.35): действует по времени или целится не
             // замороженным списком — старая сборка сыграла бы не то
-            let has_layer = p
-                .morphers
-                .iter()
-                .any(|m| m.timed || !matches!(m.targets, kt_model::MorphTargets::Clips { .. }));
+            let has_layer = !p.areas.is_empty()
+                || p.morphers
+                    .iter()
+                    .any(|m| m.timed || !matches!(m.targets, kt_model::MorphTargets::Clips { .. }));
             if has_layer {
                 crate::meta::KT_META_V4
             } else if has_auto || has_off || has_tr {
@@ -487,6 +487,7 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         bin_free: p.ui.as_ref().map(|u| u.bin_free).unwrap_or(false),
         morph_lanes: p.morph_lanes,
         lane_order: p.lane_order.clone(),
+        areas: p.areas.clone(),
         // длина сверх материала и число дорожек (пустые в файл не пишем)
         end: p.timeline_end.map(|t| t.0),
         lanes: Some((p.video_lanes, p.audio_lanes)),
@@ -961,6 +962,7 @@ pub fn timeline_to_project(
         }
         // порядок строк: своё поле, а из ui.lane_order — только апгрейд
         // старого файла (односторонний, поле больше не пишется)
+        p.areas = kt.areas;
         p.lane_order = kt.lane_order;
         if p.lane_order.is_empty()
             && let Some(u) = &kt.ui

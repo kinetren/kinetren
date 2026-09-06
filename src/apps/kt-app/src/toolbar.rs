@@ -565,6 +565,10 @@ impl KtApp {
         if self.tb(ui, "+M", tr(k::tb::ADD_MORPHER)) {
             self.add_morph_layer();
         }
+        // именованная область из последней рамки выделения (Р.35 п.2)
+        if self.tb(ui, crate::icons::AREA_SAVE, tr(k::tb::SAVE_AREA)) {
+            self.save_marked_area();
+        }
         ui.separator();
         if self.tb(ui, crate::icons::SCISSORS, tr(k::tb::CUT)) {
             self.cut_action();

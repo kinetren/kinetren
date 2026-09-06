@@ -221,6 +221,28 @@ impl KtApp {
         // выделения, оба расширяются link-группами (правило v1 —
         // единственная точка сбора целей на всю программу)
         let selection: Vec<ClipId> = self.morph_target_ids();
+        // имена ОДНОГО пространства: области и метки-диапазоны. `live` —
+        // те, что реально существуют: мёртвая ссылка остаётся в файле и
+        // рисуется ошибочным стилем (правило 16), а не выкидывается
+        let areas_mode = matches!(orig.targets, MorphTargets::Areas { .. });
+        let (all_names, live_names): (Vec<String>, Vec<(String, Tick)>) = {
+            let p = self.model.project();
+            if areas_mode {
+                (
+                    p.areas.iter().map(|a| a.name.clone()).collect(),
+                    p.areas.iter().map(|a| (a.name.clone(), a.start)).collect(),
+                )
+            } else {
+                let ranges: Vec<(String, Tick)> = p
+                    .markers
+                    .iter()
+                    .filter(|m| !m.name.is_empty() && m.duration.0 > 0)
+                    .map(|m| (m.name.clone(), m.t))
+                    .collect();
+                (ranges.iter().map(|(n, _)| n.clone()).collect(), ranges)
+            }
+        };
+        let mut seek_to: Option<Tick> = None;
         let mut need_selection = false;
         // выключатель события (Р.33) — та же мастер-галка, что у цепочки
         // события; буфер FX общий с окном событий
@@ -241,10 +263,14 @@ impl KtApp {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::mrph::ON));
                     let cur = match &ev.targets {
-                        MorphTargets::Clips { ids } => {
-                            crate::tf!(k::mrph::ON_CLIPS, ids.len())
+                        MorphTargets::Clips { ids } => crate::tf!(k::mrph::ON_CLIPS, ids.len()),
+                        MorphTargets::Areas { names } => {
+                            crate::tf!(k::mrph::ON_AREAS_N, names.len())
                         }
-                        _ => tr(k::mrph::ON_BELOW).to_string(),
+                        MorphTargets::Marks { names } => {
+                            crate::tf!(k::mrph::ON_MARKS_N, names.len())
+                        }
+                        MorphTargets::Below => tr(k::mrph::ON_BELOW).to_string(),
                     };
                     egui::ComboBox::from_id_salt(("morph_on", ed.id.0))
                         .selected_text(cur)
@@ -253,6 +279,22 @@ impl KtApp {
                                 && !matches!(ev.targets, MorphTargets::Below)
                             {
                                 ev.targets = MorphTargets::Below;
+                                changed = true;
+                            }
+                            // именованные ссылки (Р.35 п.2): область и
+                            // метка-диапазон живут в ОДНОМ пространстве
+                            // имён, поэтому и режимов ровно два, а не
+                            // «выберите сначала вид ссылки»
+                            if ui.selectable_label(false, tr(k::mrph::ON_AREAS)).clicked()
+                                && !matches!(ev.targets, MorphTargets::Areas { .. })
+                            {
+                                ev.targets = MorphTargets::Areas { names: Vec::new() };
+                                changed = true;
+                            }
+                            if ui.selectable_label(false, tr(k::mrph::ON_MARKS)).clicked()
+                                && !matches!(ev.targets, MorphTargets::Marks { .. })
+                            {
+                                ev.targets = MorphTargets::Marks { names: Vec::new() };
                                 changed = true;
                             }
                             // замораживаем ТЕКУЩЕЕ выделение; пустой
@@ -274,10 +316,14 @@ impl KtApp {
                             }
                         });
                     let mut timed = ev.timed;
+                    // в ссылочных режимах время задаёт САМА ссылка —
+                    // галка тут ничего не решает и честно гаснет
+                    let by_ref =
+                        matches!(ev.targets, MorphTargets::Areas { .. } | MorphTargets::Marks { .. });
                     if crate::app::hint_into(
                         &mut hover_out,
-                        ui.checkbox(&mut timed, tr(k::mrph::TIMED)),
-                        tr(k::mrph::TIMED_HINT),
+                        ui.add_enabled(!by_ref, egui::Checkbox::new(&mut timed, tr(k::mrph::TIMED))),
+                        if by_ref { tr(k::mrph::TIMED_BY_REF) } else { tr(k::mrph::TIMED_HINT) },
                     )
                     .changed()
                     {
@@ -285,7 +331,22 @@ impl KtApp {
                         changed = true;
                     }
                 });
-                if matches!(ev.targets, MorphTargets::Below) {
+                if let MorphTargets::Areas { names } | MorphTargets::Marks { names } =
+                    &mut ev.targets
+                {
+                    let areas = matches!(orig.targets, MorphTargets::Areas { .. });
+                    changed |= refs_row(
+                        ui,
+                        ed.id.0,
+                        names,
+                        &all_names,
+                        &live_names,
+                        areas,
+                        &mut ed.src_query,
+                        &mut seek_to,
+                        &mut hover_out,
+                    );
+                } else if matches!(ev.targets, MorphTargets::Below) {
                     ui.label(egui::RichText::new(tr(k::mrph::BELOW_NOTE)).weak().small());
                 } else {
                     let mut ids: Vec<String> =
@@ -417,6 +478,10 @@ impl KtApp {
             // невозможность действия — ошибкой, а не блёклой строкой (п.16 р.28)
             self.note(tr(k::mrph::NEED_SELECTION));
         }
+        if let Some(t) = seek_to {
+            // клик по чипу подматывает таймлайн к этому месту
+            self.player.seek(t);
+        }
         if let Some(h) = hover_out {
             self.hover_hint = Some(h);
         }
@@ -487,4 +552,75 @@ fn split_chains(patch: &mut MorphPatch, fx: &[FxInstance], bypass: &[bool], _was
             patch.video_bypass.push(off);
         }
     }
+}
+
+/// Строка ссылок морфера: чипы с крестиками и `[+ ссылка]` тем же
+/// popup'ом с поиском, что медиа-пикер. Мёртвая ссылка (имя, которого в
+/// проекте нет) рисуется ошибочным стилем — это не «пусто», а «сломано»
+/// (п.16 р.28). Клик по живому чипу подматывает таймлайн.
+#[allow(clippy::too_many_arguments)]
+fn refs_row(
+    ui: &mut egui::Ui,
+    id: u64,
+    names: &mut Vec<String>,
+    all: &[String],
+    live: &[(String, Tick)],
+    areas: bool,
+    query: &mut String,
+    seek: &mut Option<Tick>,
+    hover: &mut Option<String>,
+) -> bool {
+    let mut changed = false;
+    let mut remove: Option<usize> = None;
+    ui.horizontal_wrapped(|ui| {
+        for (i, n) in names.iter().enumerate() {
+            let at = live.iter().find(|(ln, _)| ln == n).map(|(_, t)| *t);
+            let text = egui::RichText::new(n.clone()).color(match at {
+                Some(_) => crate::theme::AREA,
+                None => egui::Color32::from_rgb(255, 105, 97),
+            });
+            let resp = crate::app::hint_into(
+                hover,
+                ui.selectable_label(false, text),
+                match at {
+                    Some(_) => tr(k::mrph::REF_GOTO),
+                    None => tr(k::mrph::REF_DEAD),
+                },
+            );
+            if resp.clicked()
+                && let Some(t) = at
+            {
+                *seek = Some(t);
+            }
+            if ui.small_button(crate::icons::CLEAR).clicked() {
+                remove = Some(i);
+            }
+        }
+        // добавление — тот же popup с поиском, что у медиа-пикера
+        let free: Vec<(u64, String)> = all
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| !names.contains(n))
+            .map(|(i, n)| (i as u64, n.clone()))
+            .collect();
+        if let Some(i) = crate::widgets::media_picker_raw(
+            ui,
+            ("morph_refs", id),
+            &free,
+            query,
+            tr(if areas { k::mrph::ADD_AREA_REF } else { k::mrph::ADD_MARK_REF }),
+        ) && let Some((_, n)) = free.iter().find(|(j, _)| *j == i)
+        {
+            names.push(n.clone());
+            changed = true;
+        }
+        if all.is_empty() {
+            ui.weak(tr(if areas { k::mrph::NO_AREAS } else { k::mrph::NO_MARKS }));
+        }
+    });
+    if let Some(i) = remove {
+        names.remove(i);
+        changed = true;
+    }
+    changed
 }

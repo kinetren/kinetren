@@ -950,6 +950,19 @@ impl TlGeom {
             .unwrap_or(0)
     }
 
+    /// Ключи строк, задетых вертикальным отрезком [y0, y1].
+    pub fn rows_in_band(&self, y0: f32, y1: f32) -> Vec<(LaneKind, u32)> {
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                let top = self.row_top(*i);
+                top < y1 && top + self.row_h(*i) > y0
+            })
+            .map(|(_, k)| *k)
+            .collect()
+    }
+
     /// Точка внутри полосы дорожек (не gutter/не руллер)?
     pub fn in_lanes(&self, pos: egui::Pos2) -> bool {
         self.rect.contains(pos) && pos.y > self.rect.top() + RULER_H
@@ -2576,6 +2589,15 @@ impl KtApp {
                     // точка отпускания: interact_pointer_pos живёт до конца
                     // кадра релиза, hover — страховка
                     let band = egui::Rect::from_two_pos(anchor, pointer.or(hover).unwrap_or(anchor));
+                    // рамка запоминается В ДОМЕНЕ МОДЕЛИ (время × ключи
+                    // дорожек): из неё делается именованная область
+                    // (Р.35 п.2) — пунктом меню или кнопкой, уже после
+                    // того, как пользователь отпустил мышь
+                    self.last_band = Some((
+                        Tick(x_to_tick(band.left()).max(0)),
+                        Tick(x_to_tick(band.right()).max(0)),
+                        geom.rows_in_band(band.top(), band.bottom()),
+                    ));
                     let hits = rubber_hits(&geom, self.model.project(), band);
                     if !add {
                         self.selected.clear();
@@ -2964,6 +2986,54 @@ impl KtApp {
             }
         }
         drop(peaks);
+
+        // ---- именованные области (Р.35 п.2) --------------------------------
+        // Своей полосы НЕ заводим (правило 13): область рисуется контуром
+        // прямо по своим строкам, а имя — В РАЗРЫВЕ верхней линии (тот же
+        // приём, что у имени группы бина).
+        for a in &self.model.project().areas {
+            let x0 = tick_to_x(a.start.0);
+            let x1 = tick_to_x((a.start + a.duration).0).max(x0 + 6.0);
+            if x1 < rect.left() || x0 > rect.right() {
+                continue;
+            }
+            let keys: Vec<(LaneKind, u32)> =
+                if a.lanes.is_empty() { geom.rows.to_vec() } else { a.lanes.clone() };
+            let (mut top, mut bot) = (f32::MAX, f32::MIN);
+            for k in &keys {
+                if let Some(row) = geom.row_of(*k) {
+                    top = top.min(geom.row_top(row));
+                    bot = bot.max(geom.row_top(row) + geom.row_h(row));
+                }
+            }
+            if top > bot {
+                continue;
+            }
+            let r = egui::Rect::from_min_max(
+                egui::pos2(x0.max(rect.left()), top + 1.0),
+                egui::pos2(x1.min(rect.right()), bot - 1.0),
+            );
+            let col = crate::theme::AREA;
+            // разрыв верхней линии под имя
+            let font = egui::FontId::proportional(11.0);
+            let galley = painter.layout_no_wrap(a.name.clone(), font.clone(), col);
+            let gap = (galley.size().x + 8.0).min((r.width() - 8.0).max(0.0));
+            let stroke = egui::Stroke::new(1.0, col);
+            painter.line_segment([r.left_bottom(), r.right_bottom()], stroke);
+            painter.line_segment([r.left_top(), r.left_bottom()], stroke);
+            painter.line_segment([r.right_top(), r.right_bottom()], stroke);
+            painter.line_segment(
+                [r.left_top(), egui::pos2((r.left() + 6.0).min(r.right()), r.top())],
+                stroke,
+            );
+            painter.line_segment(
+                [egui::pos2((r.left() + 6.0 + gap).min(r.right()), r.top()), r.right_top()],
+                stroke,
+            );
+            if gap > 12.0 {
+                painter.galley(egui::pos2(r.left() + 10.0, r.top() - galley.size().y * 0.5), galley, col);
+            }
+        }
 
         // ---- рамка выделения (Р.33 п.7): тот же вид, что в медиа-бине ------
         if let Some(Drag::Rubber { anchor, .. }) = &self.drag
@@ -3972,6 +4042,10 @@ impl KtApp {
                     self.add_morph_layer();
                     ui.close();
                 }
+                if ui.button(tr(k::tl::menu::SAVE_AREA)).clicked() {
+                    self.save_marked_area();
+                    ui.close();
+                }
             }
             Some(CtxTarget::Camera(cid)) => {
                 // камера наконец редактируема (Р.34 К3): свойства и удаление
@@ -4084,6 +4158,10 @@ impl KtApp {
                         ui.close();
                     }
                     ui.separator();
+                    if ui.button(tr(k::tl::menu::SAVE_AREA)).clicked() {
+                        self.save_marked_area();
+                        ui.close();
+                    }
                     if ui.button(tr(k::tl::menu::REGION_CLEAR)).clicked() {
                         self.clear_region();
                         ui.close();

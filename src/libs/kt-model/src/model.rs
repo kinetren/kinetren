@@ -154,6 +154,26 @@ pub enum Command {
     SetLaneOrder {
         order: Vec<(LaneKind, u32)>,
     },
+    /// Именованные области (Р.35 п.2). Адресация ПО ИМЕНИ: индексы
+    /// разъезжаются под undo/redo, а имя — это адрес.
+    AddArea(MarkedArea),
+    RemoveArea {
+        name: String,
+    },
+    /// Переименование правит и ССЫЛКИ морферов — одним шагом истории.
+    RenameArea {
+        from: String,
+        to: String,
+    },
+    SetAreaRange {
+        name: String,
+        start: Tick,
+        duration: Tick,
+    },
+    SetAreaLanes {
+        name: String,
+        lanes: Vec<(LaneKind, u32)>,
+    },
     /// Вставить morph-дорожку в позицию `at` (lane событий >= at сдвигается).
     InsertMorphLane {
         at: u32,
@@ -189,6 +209,12 @@ pub enum CommandError {
     IdInUse(u64),
     #[error("result would violate minimal duration")]
     TooShort,
+    #[error("marked area {0:?} not found")]
+    AreaNotFound(String),
+    #[error("marked area: name must not be empty")]
+    AreaUnnamed,
+    #[error("name {0:?} is already taken (areas and named ranges share one namespace)")]
+    NameTaken(String),
     #[error("split point outside clip")]
     SplitOutside,
     #[error("invalid clip: {0}")]
@@ -473,7 +499,15 @@ impl TimelineModel {
                     return Err(CommandError::TooShort);
                 }
             }
-            Command::SetMarkerName { at, .. } => {
+            Command::SetMarkerName { at, name } => {
+                // одно пространство имён с областями (Р.35 п.2)
+                if !name.is_empty()
+                    && p.markers.iter().any(|m| m.t == *at && m.duration.0 > 0)
+                    && p.taken_names().iter().any(|t| t == name)
+                    && !p.markers.iter().any(|m| m.t == *at && m.name == *name)
+                {
+                    return Err(CommandError::NameTaken(name.clone()));
+                }
                 if !p.markers.iter().any(|m| m.t == *at) {
                     return Err(CommandError::MarkerNotFound(*at));
                 }
@@ -531,6 +565,41 @@ impl TimelineModel {
                 }
             }
             Command::SetLaneOrder { .. } | Command::InsertMorphLane { .. } => {}
+            Command::AddArea(a) => {
+                if a.name.trim().is_empty() {
+                    return Err(CommandError::AreaUnnamed);
+                }
+                if p.taken_names().contains(&a.name) {
+                    return Err(CommandError::NameTaken(a.name.clone()));
+                }
+                if a.duration.0 <= 0 {
+                    return Err(CommandError::TooShort);
+                }
+            }
+            Command::RemoveArea { name } | Command::SetAreaLanes { name, .. } => {
+                if p.area(name).is_none() {
+                    return Err(CommandError::AreaNotFound(name.clone()));
+                }
+            }
+            Command::SetAreaRange { name, duration, .. } => {
+                if p.area(name).is_none() {
+                    return Err(CommandError::AreaNotFound(name.clone()));
+                }
+                if duration.0 <= 0 {
+                    return Err(CommandError::TooShort);
+                }
+            }
+            Command::RenameArea { from, to } => {
+                if p.area(from).is_none() {
+                    return Err(CommandError::AreaNotFound(from.clone()));
+                }
+                if to.trim().is_empty() {
+                    return Err(CommandError::AreaUnnamed);
+                }
+                if to != from && p.taken_names().contains(to) {
+                    return Err(CommandError::NameTaken(to.clone()));
+                }
+            }
             Command::AddCamera(c) => {
                 if p.cameras.iter().any(|x| x.id == c.id) {
                     return Err(CommandError::IdInUse(c.id.0));
@@ -861,6 +930,36 @@ impl TimelineModel {
                             }
                         }
                     }
+                }
+            }
+            Command::AddArea(a) => p.areas.push(a),
+            Command::RemoveArea { name } => {
+                p.areas.retain(|a| a.name != name);
+                // ссылка на удалённую область остаётся в файле и
+                // резолвится в ничто: молча выкидывать её нельзя —
+                // пользователь вернёт область тем же именем (правило 20)
+            }
+            Command::RenameArea { from, to } => {
+                if let Some(a) = p.areas.iter_mut().find(|a| a.name == from) {
+                    a.name = to.clone();
+                }
+                for m in &mut p.morphers {
+                    if let MorphTargets::Areas { names } = &mut m.targets {
+                        for n in names.iter_mut().filter(|n| **n == from) {
+                            *n = to.clone();
+                        }
+                    }
+                }
+            }
+            Command::SetAreaRange { name, start, duration } => {
+                if let Some(a) = p.areas.iter_mut().find(|a| a.name == name) {
+                    a.start = Tick(start.0.max(0));
+                    a.duration = duration;
+                }
+            }
+            Command::SetAreaLanes { name, lanes } => {
+                if let Some(a) = p.areas.iter_mut().find(|a| a.name == name) {
+                    a.lanes = lanes;
                 }
             }
             Command::InsertMorphLane { at } => {

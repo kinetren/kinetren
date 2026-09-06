@@ -471,3 +471,42 @@ pub fn media_picker(
     let _ = id;
     picked
 }
+
+/// Тот же popup с поиском, но по произвольному списку «id → подпись»
+/// (Р.35 п.2: ссылки морфера на области и метки-диапазоны). Подписи —
+/// готовые имена, файловых путей тут нет.
+pub fn media_picker_raw(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    items: &[(u64, String)],
+    query: &mut String,
+    label: &str,
+) -> Option<u64> {
+    let mut picked = None;
+    ui.menu_button(label, |ui| {
+        let resp = ui.add(
+            egui::TextEdit::singleline(query)
+                .hint_text(tr(k::mrph::SEARCH_MEDIA))
+                .desired_width(220.0),
+        );
+        if ui.memory(|m| m.focused().is_none()) {
+            resp.request_focus();
+        }
+        ui.separator();
+        let q = query.to_lowercase();
+        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+            for (i, name) in items {
+                if !q.is_empty() && !name.to_lowercase().contains(&q) {
+                    continue;
+                }
+                if ui.button(name).clicked() {
+                    picked = Some(*i);
+                    query.clear();
+                    ui.close();
+                }
+            }
+        });
+    });
+    let _ = id;
+    picked
+}

@@ -449,3 +449,130 @@ fn t243_patch_carries_source_and_chains() {
     );
     assert!(mm.project().media.iter().any(|m| m.id == MediaId(2)));
 }
+
+/// Тест 247 (Р.35 С4, дословно: «можно area-selection сделать сохраняемой
+/// как marked_region в виде marked_area, и тоже на неё ссылаться… если
+/// юзер передумал он может в виджете морфера поменять/удалить/добавить
+/// регион/area на другие»). Ссылка ПО ИМЕНИ: имена уникальны в одном
+/// пространстве с метками-диапазонами, переименование правит ссылки,
+/// удаление оставляет ссылку мёртвой, а не молча её выкидывает.
+#[test]
+fn t247_named_areas_and_references() {
+    // `unique_name` — одна функция на проверку и на вставку
+    let taken = vec!["финал".to_string(), "финал 2".to_string()];
+    assert_eq!(unique_name(&taken, "финал", "область"), "финал 3");
+    assert_eq!(unique_name(&taken, "начало", "область"), "начало");
+    assert_eq!(unique_name(&taken, "  ", "область"), "область");
+
+    let mut p = base();
+    p.video_lanes = 2;
+    p.clips.push(clip(20, ClipKind::Video, 1, Tick(0), LEN));
+    p.areas.push(MarkedArea {
+        name: "финал".into(),
+        start: Tick(30_000),
+        duration: Tick(30_000),
+        lanes: vec![(LaneKind::Video, 0)],
+        color: None,
+    });
+    let mut m = layer(Tick(0), Tick(1)); // блок КРОШЕЧНЫЙ и не там
+    m.targets = MorphTargets::Areas { names: vec!["финал".into()] };
+    p.morphers.push(m);
+    p.validate().unwrap();
+
+    // окно взято из ОБЛАСТИ, а не из блока
+    let eff = p.effective_clips();
+    let first: Vec<&ClipEvent> = eff.iter().filter(|c| same_clip(c.id, ClipId(10))).collect();
+    assert_eq!(first.len(), 3, "клип на дорожке области разрезан по её границам");
+    assert_eq!(first[1].start, Tick(30_000));
+    assert_eq!(first[1].media, MediaId(2), "внутри области патч действует");
+    assert_eq!(first[0].media, MediaId(1), "снаружи — нет");
+    // область назвала ДОРОЖКИ: соседняя не тронута
+    let other: Vec<&ClipEvent> = eff.iter().filter(|c| same_clip(c.id, ClipId(20))).collect();
+    assert_eq!(other.len(), 1, "дорожка вне области не режется");
+    assert_eq!(other[0].media, MediaId(1));
+
+    // одно пространство имён: метка-диапазон с тем же именем незаконна
+    let mut bad = p.clone();
+    bad.markers.push(Marker {
+        t: Tick(0),
+        duration: Tick(1_000),
+        name: "финал".into(),
+        color: None,
+    });
+    assert!(matches!(bad.validate(), Err(ProjectError::DuplicateName(..))));
+
+    let mut mm = TimelineModel::new(p);
+    // команда тоже отбивает занятое имя, и своё пустое
+    assert!(matches!(
+        mm.apply(Command::AddArea(MarkedArea {
+            name: "финал".into(),
+            start: Tick(0),
+            duration: Tick(1_000),
+            lanes: vec![],
+            color: None,
+        })),
+        Err(CommandError::NameTaken(..))
+    ));
+
+    // переименование правит ССЫЛКИ и откатывается ОДНИМ undo
+    mm.apply(Command::RenameArea { from: "финал".into(), to: "конец".into() }).unwrap();
+    assert_eq!(mm.project().areas[0].name, "конец");
+    assert_eq!(
+        mm.project().morphers[0].targets,
+        MorphTargets::Areas { names: vec!["конец".into()] },
+        "ссылка морфера переехала вместе с именем"
+    );
+    assert_eq!(mm.project().effective_clips().len(), 4, "и продолжает работать");
+    mm.undo().unwrap();
+    assert_eq!(mm.project().areas[0].name, "финал");
+    assert_eq!(mm.project().morphers[0].targets, MorphTargets::Areas { names: vec!["финал".into()] });
+
+    // удаление области оставляет ссылку МЁРТВОЙ: пользователь вернёт
+    // область тем же именем, и всё оживёт (правило 20 — ничего не
+    // отрубается само)
+    mm.apply(Command::RemoveArea { name: "финал".into() }).unwrap();
+    assert!(mm.project().areas.is_empty());
+    assert_eq!(
+        mm.project().morphers[0].targets,
+        MorphTargets::Areas { names: vec!["финал".into()] },
+        "ссылка осталась в модели"
+    );
+    assert_eq!(mm.project().effective_clips(), mm.project().clips, "но никуда не ведёт");
+    mm.project().validate().unwrap();
+}
+
+/// Тест 247b: ссылка на метку-ДИАПАЗОН даёт то же окно, что область на
+/// всех дорожках; несколько пересекающихся ссылок сливаются в одну.
+#[test]
+fn t247_marks_give_windows_and_merge() {
+    let mut p = base();
+    p.markers.push(Marker {
+        t: Tick(30_000),
+        duration: Tick(20_000),
+        name: "a".into(),
+        color: None,
+    });
+    p.markers.push(Marker {
+        t: Tick(45_000),
+        duration: Tick(15_000),
+        name: "b".into(),
+        color: None,
+    });
+    let mut m = layer(Tick(0), Tick(1));
+    m.targets = MorphTargets::Marks { names: vec!["a".into(), "b".into(), "нет такой".into()] };
+    p.morphers.push(m);
+    p.validate().unwrap();
+
+    let eff = p.effective_clips();
+    assert_eq!(eff.len(), 3, "две пересекающиеся ссылки слились в ОДНО окно");
+    assert_eq!(eff[1].start, Tick(30_000));
+    assert_eq!(eff[1].duration, Tick(30_000), "[30000,60000) — объединение");
+    assert_eq!(eff[1].media, MediaId(2));
+    // точечная метка окна не задаёт
+    let mut q = base();
+    q.markers.push(Marker { t: Tick(30_000), duration: Tick::ZERO, name: "t".into(), color: None });
+    let mut m = layer(Tick(0), Tick(1));
+    m.targets = MorphTargets::Marks { names: vec!["t".into()] };
+    q.morphers.push(m);
+    assert_eq!(q.effective_clips(), q.clips, "точечная метка не диапазон");
+}

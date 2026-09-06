@@ -899,3 +899,27 @@ fn t241_lane_order_moved_into_model() {
     let plain = save_project(&rich_project(), &Retained::default(), None);
     assert!(!plain.contains("lane_order"), "естественный порядок не хранится");
 }
+
+/// Тест 248b (Р.35 С4): именованные области ездят в файле и поднимают
+/// версию до v4; проект без них байт-стабилен.
+#[test]
+fn t248_areas_round_trip() {
+    let mut p = rich_project();
+    p.areas.push(kt_model::MarkedArea {
+        name: "финал".into(),
+        start: Tick(30_000),
+        duration: Tick(90_000),
+        lanes: vec![(kt_model::LaneKind::Video, 0)],
+        color: None,
+    });
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 4, "область — новшество v4");
+    assert_eq!(v["metadata"]["kt"]["areas"][0]["name"], "финал");
+    let b = load_project(&text, None).expect("файл с областями читается");
+    assert_eq!(b.project.areas, p.areas, "область пережила круг");
+    assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность");
+    // проект БЕЗ областей поля не заводит
+    assert!(!save_project(&rich_project(), &Retained::default(), None).contains("areas"));
+}
