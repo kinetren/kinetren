@@ -58,6 +58,56 @@ struct VideoClip {
     /// линейно, за краями материала кадр клампится (политика краёв).
     head_ext: Tick,
     tail_ext: Tick,
+    /// Растяжение времени (Slowed+Reverb на ВИДЕО-клипе, Р.37 п.2).
+    /// `None` — линейный путь БАЙТ-В-БАЙТ прежний, и на этом стоит
+    /// GOLDEN_VIDEO.
+    warp: Option<VideoWarp>,
+}
+
+/// Разрешённый варп клипа: базовая скорость, профиль её кривой в домене
+/// СОБЫТИЯ и фактически потреблённый материал (якорь зеркала реверса).
+#[derive(Debug, Clone)]
+struct VideoWarp {
+    base: f64,
+    prof: Vec<(f64, f64)>,
+    used: i64,
+    /// Режим «смешивание» (Р.37 С5): читается исполнителем слоя.
+    #[allow(dead_code)]
+    blend: bool,
+}
+
+/// Варп видео-клипа из его АКТИВНОЙ цепочки. `active_fx`/`active_fx_auto`
+/// уже отбросили выключенные слоты и мастер-выключатель, поэтому галка
+/// слота на видео-экземпляре — это и есть «отключить замедление картинки»
+/// (Р.37: второго выключателя того же смысла не заводим).
+fn clip_video_warp(
+    fx: &[kt_model::FxInstance],
+    auto: &[Vec<kt_model::ParamCurve>],
+    source_in: Tick,
+    duration: Tick,
+) -> Option<VideoWarp> {
+    let span = duration.0.max(1);
+    let (base, blend) = fx.iter().find_map(|f| match f {
+        kt_model::FxInstance::SlowedReverb { rate, frames, .. } => {
+            Some((*rate, *frames == kt_model::FrameMode::Blend))
+        }
+        _ => None,
+    })?;
+    // Профиль строится ТОЙ ЖЕ функцией, что у аудио: домен один на оба
+    // вида, иначе картинка и звук разъехались бы на кривой скорости.
+    // Позиция ключа нормируется в АУДИО-КАДРАХ (как у аудио) — доля
+    // безразмерна, и обе стороны получают одно число. В ТИКАХ считается
+    // только ВЫХОД карты (`warp_material_ticks`): там сетка 48 кГц
+    // промахнулась бы мимо границы кадра.
+    let prof = kt_fx::AutoProfiles::from_curves(
+        auto,
+        source_in.to_audio_frames(),
+        duration.to_audio_frames().max(1),
+    )
+    .rate_points(fx)
+    .to_vec();
+    let used = kt_fx::warp_material_ticks(base, &prof, span, 1.0);
+    Some(VideoWarp { base, prof, used, blend })
 }
 
 /// Переход, привязанный к клипу: вид, его кривые и начало окна. Вид
@@ -130,14 +180,31 @@ fn clip_source_pts(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
 /// живут ключи автоматизации (Р.33). Правило одно на движок, модель и UI
 /// (`kt_model::clip_material_at`): зеркало реверса, кламп краёв — там же.
 fn clip_material_pos(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
-    kt_model::clip_material_at(
-        c.source_in,
-        c.start,
-        Tick(c.end.0 - c.start.0),
-        c.reversed,
-        grid.frame_step(),
-        t,
-    )
+    let span = (c.end.0 - c.start.0).max(1);
+    let Some(w) = &c.warp else {
+        return kt_model::clip_material_at(
+            c.source_in,
+            c.start,
+            Tick(span),
+            c.reversed,
+            grid.frame_step(),
+            t,
+        );
+    };
+    // Растяжение (Р.37 п.2): материал идёт по интегралу скорости. За телом
+    // (ручки перехода) tau уходит из [0,1] — карта продолжает крайним
+    // сегментом, ровно как chain_source_window_ext у аудио.
+    let tau = (t.0 - c.start.0) as f64 / span as f64;
+    let consumed = kt_fx::warp_material_ticks(w.base, &w.prof, span, tau);
+    if c.reversed {
+        // ВАРП, ПОТОМ ЗЕРКАЛО — не наоборот. Аудио-путь (`fill_source`)
+        // зеркалит УЖЕ потреблённый прямой поток; зеркало до варпа гнало бы
+        // кривую скорости задом наперёд и рассинхронило A/V. Якорь —
+        // фактически потреблённое `used`, а не длина события.
+        Tick((c.source_in.0 + w.used - grid.frame_step() - consumed).max(c.source_in.0))
+    } else {
+        Tick((c.source_in.0 + consumed).max(0))
+    }
 }
 
 pub struct VideoRenderer {
@@ -172,6 +239,7 @@ impl VideoRenderer {
             .map(|c| {
                 let fx = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
                 let auto = c.active_fx_auto();
+                let warp = clip_video_warp(&fx, &auto, c.source_in, c.duration);
                 let fx_hash = fx_chain_hash(
                     &fx,
                     &auto,
@@ -201,6 +269,7 @@ impl VideoRenderer {
                     opacity_k: (c.opacity.clamp(0.0, 1.0) * 4096.0).round() as u32,
                     head_ext: Tick::ZERO,
                     tail_ext: Tick::ZERO,
+                    warp,
                 }
             })
             .collect();

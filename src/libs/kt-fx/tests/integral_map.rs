@@ -41,6 +41,7 @@ fn clip_processor_follows_integral_map() {
         wet_gain: 0.95,
         predelay_ms: 0.0,
         width: 1.0,
+        frames: Default::default(),
         automation: vec![],
     }];
     let len = 20 * 48_000i64;
@@ -91,6 +92,7 @@ fn clip_processor_single_big_read_matches() {
         wet_gain: 0.95,
         predelay_ms: 0.0,
         width: 1.0,
+        frames: Default::default(),
         automation: vec![],
     }];
     let len = 20 * 48_000i64;

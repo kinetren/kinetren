@@ -394,6 +394,7 @@ fn demo_project() -> Project {
         wet_gain: 1.1,
         predelay_ms: 0.0,
         width: 1.0,
+        frames: Default::default(),
         automation: vec![],
     };
     // автоматизация slowed — общими кривыми (Р.33): ключи в тиках

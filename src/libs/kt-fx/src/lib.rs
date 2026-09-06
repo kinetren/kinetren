@@ -728,6 +728,14 @@ pub fn source_progress(base: f64, points: &ParamPoints, t: f64) -> f64 {
     acc_s
 }
 
+/// Потреблённый материал В ТИКАХ к выходному прогрессу `tau` (Р.37 п.2).
+/// Единственный вход в карту для ВИДЕО: считать через `to_audio_frames`
+/// нельзя — 1 кадр 48 кГц = 1.875 тика, и округление промахивается мимо
+/// границы КАДРА; у аудио это невидимо, у видео — сразу не тот кадр.
+pub fn warp_material_ticks(base: f64, points: &ParamPoints, span_ticks: i64, tau: f64) -> i64 {
+    (span_ticks as f64 * source_progress(base, points, tau)).round() as i64
+}
+
 /// Средняя скорость = потреблённая доля источника за весь клип: S(1).
 pub fn avg_rate(base: f64, points: &ParamPoints) -> f64 {
     source_progress(base, points, 1.0)

@@ -813,11 +813,29 @@ impl MorphPatch {
             ClipKind::Video => (&self.video_fx, &self.video_bypass),
             ClipKind::Audio => (&self.audio_fx, &self.audio_bypass),
         };
-        fx.iter()
+        let mut out: Vec<FxInstance> = fx
+            .iter()
             .enumerate()
             .filter(|(i, _)| !off.get(*i).copied().unwrap_or(false))
             .map(|(_, f)| f.clone())
-            .collect()
+            .collect();
+        // ВАРП ВРЕМЕНИ достаётся ОБОИМ видам (Р.37 п.2). Он живёт в
+        // `audio_fx` — там его канонический дом, `merge_chains`/
+        // `split_chains` в UI на этом стоят, — но он не пиксельный фильтр,
+        // а правило выбора исходного кадра. Без этого слой замедлял бы
+        // звук и не замедлял картинку: рассинхрон, которого никто не просил.
+        if kind == ClipKind::Video {
+            out.extend(
+                self.audio_fx
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, f)| {
+                        f.warps_time() && !self.audio_bypass.get(*i).copied().unwrap_or(false)
+                    })
+                    .map(|(_, f)| f.clone()),
+            );
+        }
+        out
     }
 
     /// Все медиа, которые держит патч (гард `RemoveMedia`).
@@ -931,6 +949,16 @@ impl MorpherEvent {
         if !self.enabled || !self.covers(c, rows) || !self.patch.affects(c) {
             return Vec::new();
         }
+        // ВАРП ВРЕМЕНИ — вето на резку, и оно ПЕРВОЕ (Р.37): линейно
+        // посчитанный `source_in` куска у растянутого клипа указывает не
+        // туда. Проверка была ниже ссылочных режимов, поэтому в режимах
+        // `Marks`/`Areas` варпнутые клипы резались (дефект до Р.37), и
+        // была оговорка `kind == Audio`, которая перестала быть верной,
+        // как только растягиваться научилось видео.
+        let warps = |fx: &[FxInstance]| fx.iter().any(|f| f.warps_time());
+        if warps(&c.active_fx()) || warps(&self.patch.chain_for(c.kind)) {
+            return vec![body];
+        }
         // ссылочные режимы: ВРЕМЯ задаёт сама ссылка, блок его не
         // ограничивает — иначе пользователь ткнул бы в дальний диапазон и
         // не понял, почему ничего не произошло. Галка «по времени» в этих
@@ -948,14 +976,6 @@ impl MorpherEvent {
         let w = self.window().intersect(&body);
         if w.len() < crate::MIN_CLIP_DURATION {
             return Vec::new();
-        }
-        // варп времени (свой у клипа или дописанный патчем) делает
-        // линейный source_in куска неверным — режем только целиком
-        let warps = |fx: &[FxInstance]| fx.iter().any(|f| f.warps_time());
-        if c.kind == ClipKind::Audio
-            && (warps(&c.active_fx()) || warps(&self.patch.chain_for(c.kind)))
-        {
-            return vec![body];
         }
         match self.fit_window(w, c, p, body) {
             Some(w) => vec![w],
@@ -1531,6 +1551,10 @@ fn one_f32() -> f32 {
     1.0
 }
 
+fn is_default_frame_mode(m: &FrameMode) -> bool {
+    *m == FrameMode::Nearest
+}
+
 fn default_one_f32() -> f32 {
     1.0
 }
@@ -1902,6 +1926,11 @@ pub enum FxInstance {
         /// длину линии), поэтому автоматизации не подлежит.
         #[serde(default, skip_serializing_if = "is_zero")]
         predelay_ms: f32,
+        /// Как добывать промежуточный кадр, когда эффект стоит на ВИДЕО
+        /// (Р.37 п.2). У аудио-экземпляра поля не видно — оно ему не
+        /// значит ничего. Умолчание не сериализуется: файлы байт-стабильны.
+        #[serde(default, skip_serializing_if = "is_default_frame_mode")]
+        frames: FrameMode,
         /// Ширина стерео-хвоста 0..1. 1 — прежний стереореверб.
         #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
         width: f32,
@@ -2431,6 +2460,18 @@ pub enum PanMode {
     Stretch,
 }
 
+/// Как добывать кадр, которого в источнике нет (Р.37 п.2): растянутое
+/// видео просит материал между кадрами. `Nearest` — держим ближайший
+/// (детерминизм, ноль лишнего декода); `Blend` — линейно смешиваем два
+/// соседних. Третьим сюда встанет fruc_vulkan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FrameMode {
+    #[default]
+    Nearest,
+    Blend,
+}
+
 /// Кейфрейм CamMotion по прогрессу клипа t∈[0,1].
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct CamKeyframe {
@@ -2723,6 +2764,7 @@ impl FxInstance {
             decay: default_decay(),
             wet_gain: default_wet_gain(),
             predelay_ms: 0.0,
+            frames: FrameMode::Nearest,
             width: 1.0,
             automation: Vec::new(),
         }

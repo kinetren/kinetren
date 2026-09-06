@@ -137,6 +137,7 @@ fn golden_project() -> Project {
                 wet_gain: 0.95,
                 predelay_ms: 0.0,
                 width: 1.0,
+                frames: Default::default(),
                 automation: vec![],
             }],
             opacity: 1.0,

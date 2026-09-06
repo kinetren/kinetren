@@ -38,6 +38,7 @@ fn slowed_project() -> Project {
             wet_gain: 0.95,
             predelay_ms: 0.0,
             width: 1.0,
+            frames: Default::default(),
             automation: vec![
                 SlowedKeyframe { t: 0.0, rate: 0.9, mix: 0.15 },
                 SlowedKeyframe { t: 0.5, rate: 0.4, mix: 0.15 },

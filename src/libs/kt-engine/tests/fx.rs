@@ -320,6 +320,7 @@ fn t4_automation_changes_rate_over_time() {
         wet_gain: 0.95,
         predelay_ms: 0.0,
         width: 1.0,
+        frames: Default::default(),
         automation: vec![],
     }];
     let p = fx_project_auto(
@@ -379,6 +380,7 @@ fn t4_automation_consumes_source_by_integral() {
         wet_gain: 0.95,
         predelay_ms: 0.0,
         width: 1.0,
+        frames: Default::default(),
         automation: vec![],
     }];
     let p = fx_project_auto(fx, rate_curve(automation_probe(), dur), "synth:ramp", dur);
@@ -436,6 +438,7 @@ fn t31_keyframes_anchor_to_event_time() {
             wet_gain: 0.95,
             predelay_ms: 0.0,
             width: 1.0,
+            frames: Default::default(),
             automation: vec![],
         }];
         let p = fx_project_auto(fx, rate_curve(&profile, dur), "synth:ramp", dur);
@@ -585,6 +588,7 @@ fn t213_legacy_slowed_automation_migrates_to_curves() {
             wet_gain: 0.95,
             predelay_ms: 0.0,
             width: 1.0,
+            frames: Default::default(),
             automation: vec![
                 SlowedKeyframe { t: 0.2, rate: 1.0, mix: 0.0 },
                 SlowedKeyframe { t: 0.8, rate: 0.5, mix: 0.0 },
@@ -692,6 +696,7 @@ fn t229_new_audio_params() {
             wet_gain: 1.0,
             predelay_ms,
             width,
+            frames: Default::default(),
             automation: vec![],
         }]
     };
@@ -742,6 +747,7 @@ fn t246_consumption_is_the_integral_over_event_time() {
         wet_gain: 0.95,
         predelay_ms: 0.0,
         width: 1.0,
+        frames: Default::default(),
         automation: vec![],
     }];
     let p = fx_project_auto(fx, rate_curve(&profile, dur), "synth:ramp", dur);

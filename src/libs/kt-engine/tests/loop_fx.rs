@@ -95,6 +95,7 @@ fn slowed_reverb(rate: f64, mix: f32) -> FxInstance {
         wet_gain: 1.0,
         predelay_ms: 0.0,
         width: 1.0,
+        frames: Default::default(),
         automation: vec![],
     }
 }
