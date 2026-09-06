@@ -228,7 +228,9 @@ class Live:
         g = self.geom()
         win = geometry()
         row = next(r for r in g["rows"] if r["kind"] == kind and r["lane"] == lane)
-        return win["y"] + int(row["top"] + g["lane_h"] * frac)
+        # высота у КАЖДОЙ строки своя: служебные (morph/camera) втрое
+        # ниже дорожек клипов (Р.35 п.1)
+        return win["y"] + int(row["top"] + row.get("h", g["lane_h"]) * frac)
 
     def seconds(self, s):
         return round(s * 90000)

@@ -490,7 +490,7 @@ fn t95_clip_drag_snaps_to_neighbour() {
         h.step();
 
         let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
-        let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+        let y = g.lane_y(ClipKind::Video, 0, 0.5);
         let grab = g.tick_to_x(FAR + DUR / 2);
         if ctrl {
             h.event(egui::Event::ModifiersChanged(egui::Modifiers::CTRL));
@@ -2077,7 +2077,7 @@ fn t139_drag_overlap_creates_crossfade() {
     }
     h.step();
     let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let y = g.lane_y(ClipKind::Video, 0, 0.5);
     let grab = g.tick_to_x(200_000 + 45_000);
     h.hover_at(egui::pos2(grab, y));
     h.step();
@@ -2163,7 +2163,7 @@ fn t140_transition_edge_and_body_drags() {
     }
     h.step();
     let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let y = g.lane_y(ClipKind::Video, 0, 0.5);
 
     // драг ЛЕВОГО края окна наружу: in_offset 10000 → 30000
     let x_edge = g.tick_to_x(90_000 - 10_000);
@@ -2266,7 +2266,7 @@ fn t163_overlap_drag_changes_nothing_but_position() {
     }
     h.step();
     let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let y = g.lane_y(ClipKind::Video, 0, 0.5);
     let before: Vec<ClipEvent> = h.state().model.project().clips.clone();
 
     // наезжаем третьим клипом на первый (перекрытие 40 000 тиков)
@@ -2360,7 +2360,7 @@ fn t160_pulling_apart_restores_trimmed_material() {
     }
     h.step();
     let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let y = g.lane_y(ClipKind::Video, 0, 0.5);
     let grab = |h: &mut Harness<KtApp>, from: f32, to: f32, y: f32| {
         // драг как человек: нажать → сдвинуть чуть → вести дальше
         h.hover_at(egui::pos2(from, y));
@@ -2456,7 +2456,7 @@ fn t157_fade_edge_drag_without_neighbour() {
     }
     h.step();
     let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let y = g.lane_y(ClipKind::Video, 0, 0.5);
 
     // ПРАВЫЙ край окна фейда (внутри тела клипа) тянем вправо: 10000 → 40000
     let x_edge = g.tick_to_x(90_000 + 10_000);
@@ -2817,7 +2817,7 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
     }
     h.step();
     let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.5;
+    let y = g.lane_y(ClipKind::Video, 0, 0.5);
     let grab = g.tick_to_x(25_000);
     h.hover_at(egui::pos2(grab, y));
     h.step();
@@ -2952,13 +2952,13 @@ fn t173_corner_fade_and_level_gestures() {
     );
 
     // уровень: тянем линию вниз до середины строки
-    let ly = level_y(1.0, top, g.lane_h);
+    let ly = level_y(1.0, top, g.lane_h());
     let xm = g.tick_to_x(200_000);
     h.hover_at(egui::pos2(xm, ly));
     h.step();
     h.drag_at(egui::pos2(xm, ly));
     h.step();
-    let target_y = level_y(0.4, top, g.lane_h);
+    let target_y = level_y(0.4, top, g.lane_h());
     h.hover_at(egui::pos2(xm, target_y));
     h.step();
     h.drop_at(egui::pos2(xm, target_y));
@@ -3027,12 +3027,12 @@ fn t176_audio_and_video_share_one_level_line() {
 
     // тот же жест, что у видео: тянем линию уровня вверх
     let x = g.tick_to_x(200_000);
-    let y0 = level_y(0.5, top, g.lane_h); // 0 dB
+    let y0 = level_y(0.5, top, g.lane_h()); // 0 dB
     h.hover_at(egui::pos2(x, y0));
     h.step();
     h.drag_at(egui::pos2(x, y0));
     h.step();
-    let y1 = level_y(0.75, top, g.lane_h);
+    let y1 = level_y(0.75, top, g.lane_h());
     h.hover_at(egui::pos2(x, y1));
     h.step();
     h.drop_at(egui::pos2(x, y1));
@@ -3666,7 +3666,7 @@ fn rubber_drag(h: &mut Harness<'_, KtApp>, from: egui::Pos2, to: egui::Pos2, ctr
 fn t202_ctrl_click_and_rubber_band_select() {
     use kt_model::*;
     let (mut h, g) = harness_three_clips();
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.6;
+    let y = g.lane_y(ClipKind::Video, 0, 0.6);
     let at = |t: i64| egui::pos2(g.tick_to_x(t), y);
 
     // обычный клик — одно событие; Ctrl+клик добавляет второе
@@ -3748,7 +3748,7 @@ fn t203_selection_tool_button_switches_drag() {
     use egui_kittest::kittest::Queryable;
     use kt_model::*;
     let (mut h, g) = harness_three_clips();
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.6;
+    let y = g.lane_y(ClipKind::Video, 0, 0.6);
     let at = |t: i64| egui::pos2(g.tick_to_x(t), y);
 
     assert!(!h.state().sel_tool, "режим выключен по умолчанию");
@@ -4001,7 +4001,7 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
 fn t206_double_click_opens_fx_shift_makes_region() {
     use kt_model::*;
     let (mut h, g) = harness_three_clips_dt(Some(0.02));
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.6;
+    let y = g.lane_y(ClipKind::Video, 0, 0.6);
     let pos = egui::pos2(g.tick_to_x(125_000), y);
 
     let dbl = |h: &mut Harness<'_, KtApp>, pos: egui::Pos2, modifiers: egui::Modifiers| {
@@ -4036,7 +4036,7 @@ fn t206_double_click_opens_fx_shift_makes_region() {
     // Shift+двойной клик — регион по событию. Свой харнесс: история кликов
     // у egui общая, и повтор жеста в том же окне сложился бы в тройной клик
     let (mut h2, g2) = harness_three_clips_dt(Some(0.02));
-    let pos2 = egui::pos2(g2.tick_to_x(125_000), g2.lane_top(ClipKind::Video, 0) + g2.lane_h * 0.6);
+    let pos2 = egui::pos2(g2.tick_to_x(125_000), g2.lane_y(ClipKind::Video, 0, 0.6));
     dbl(&mut h2, pos2, egui::Modifiers::SHIFT);
     let by_gesture = h2.state().model.project().region.expect("Shift+двойной клик не дал регион");
     assert_eq!((by_gesture.start.0, by_gesture.end.0), (100_000, 150_000));
@@ -4169,7 +4169,7 @@ fn t204_multi_drag_moves_the_whole_block() {
         app.selected.insert(ClipId(2));
     }
     h.step();
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.6;
+    let y = g.lane_y(ClipKind::Video, 0, 0.6);
     let grab = egui::pos2(g.tick_to_x(25_000), y);
     let to = egui::pos2(g.tick_to_x(325_000), y);
     h.hover_at(grab);
@@ -4453,7 +4453,7 @@ fn t227_transition_editor_opens_and_sets_kind() {
     let g = h.state().tl_geom.clone().unwrap_or(g);
     // окно перехода [41_000, 59_000): целимся в его середину, НИЖЕ
     // верхней полосы жестов (там живут ручки фейда)
-    let y = g.lane_top(ClipKind::Video, 0) + g.lane_h * 0.75;
+    let y = g.lane_y(ClipKind::Video, 0, 0.75);
     let pos = egui::pos2(g.tick_to_x(46_000), y);
     for _ in 0..2 {
         h.event(egui::Event::PointerButton {
@@ -4552,7 +4552,9 @@ fn t231_camera_editor_opens_and_edits() {
     h.step();
     let g = h.state().tl_geom.clone().expect("геометрия");
     let row = g.row_of((LaneKind::Camera, 0)).expect("камерная дорожка есть в строках");
-    let pos = egui::pos2(g.tick_to_x(60_000), g.row_top(row) + g.lane_h * 0.5);
+    // ЦЕНТР строки, а не «полбазовой высоты»: камерная строка втрое ниже
+    // (Р.35 п.1), и старая формула била мимо неё
+    let pos = egui::pos2(g.tick_to_x(60_000), g.row_center_y(row));
     for _ in 0..2 {
         h.event(egui::Event::PointerButton {
             pos,
@@ -4774,4 +4776,141 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
     let ev = h.state().model.project().morphers[0].clone();
     assert_eq!(ev.patch.video_fx.len(), 1, "и раскладываться обратно по видам");
     assert_eq!(ev.patch.audio_fx.len(), 1);
+}
+
+/// Тест 245 (Р.35 С3, дословно: «чтобы не терять место — треки-морферы
+/// можно уменьшить по высоте в три раза»). Чистая геометрия строк:
+/// отношение 3, пол высоты, префиксные суммы, биекция `row_at_y` на
+/// смешанном наборе и якорь зума.
+#[test]
+fn t245_thin_service_rows_geometry() {
+    use crate::timeline::{TlGeom, THIN_ROW_MIN, row_height, row_offsets};
+    use kt_model::{ClipKind, LaneKind};
+    let rows = vec![
+        (LaneKind::Morph, 0),
+        (LaneKind::Video, 0),
+        (LaneKind::Camera, 0),
+        (LaneKind::Audio, 0),
+        (LaneKind::Morph, 1),
+    ];
+    // отношение ровно 3, пол — 10 px (в строку в 5 px мышью не попасть)
+    assert_eq!(row_height(LaneKind::Morph, 60.0), 20.0);
+    assert_eq!(row_height(LaneKind::Camera, 60.0), 20.0);
+    assert_eq!(row_height(LaneKind::Video, 60.0), 60.0);
+    assert_eq!(row_height(LaneKind::Morph, 18.0), THIN_ROW_MIN);
+
+    // префиксные суммы: длина n+1, последний — полная высота
+    let offs = row_offsets(&rows, 60.0);
+    assert_eq!(offs.len(), rows.len() + 1);
+    assert_eq!(offs, vec![0.0, 20.0, 80.0, 100.0, 160.0, 180.0]);
+
+    let g = TlGeom::new(
+        egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 600.0)),
+        60.0,
+        rows.clone(),
+        0.0,
+        0.0,
+        900.0,
+    );
+    // биекция: центр каждой строки попадает в неё саму
+    for (i, &key) in rows.iter().enumerate() {
+        assert_eq!(g.row_at_y(g.row_center_y(i)), Some(i), "строка {i}");
+        assert_eq!(g.key_at_y(g.row_center_y(i)), Some(key));
+        assert_eq!(g.row_h(i), row_height(key.0, 60.0));
+    }
+    // границы строк: верх принадлежит строке, низ — уже следующей
+    assert_eq!(g.row_at_y(g.row_top(1)), Some(1));
+    assert_eq!(g.row_at_y(g.row_top(1) - 0.5), Some(0));
+    assert_eq!(g.row_at_y(g.row_top(0) - 1.0), None, "выше первой строки — не строка");
+    assert_eq!(g.row_at_y(g.row_top(rows.len() - 1) + 100.0), None, "ниже последней — тоже");
+
+    // «сколько строк проехали» при драге: считается ПО СТРОКАМ, а не
+    // делением на одну высоту — на старой формуле тонкая строка стоила
+    // бы столько же, сколько дорожка клипов
+    assert_eq!(g.row_at_y_unbounded(g.row_center_y(0)), 0);
+    assert_eq!(g.row_at_y_unbounded(g.row_center_y(2)), 2);
+    assert_eq!(g.row_at_y_unbounded(g.row_center_y(4)), 4);
+    assert!(g.row_at_y_unbounded(g.row_top(0) - 1.0) < 0, "выше первой — отрицательная строка");
+    // прилипание к своему виду считает те же строки
+    assert_eq!(g.nearest_lane(ClipKind::Video, g.row_at_y_unbounded(g.row_center_y(2))), 0);
+
+    // якорь зума: целая часть — строка, дробная — место внутри неё
+    let a = g.anchor_at(g.row_top(2) + g.row_h(2) * 0.5);
+    assert!((a - 2.5).abs() < 0.01, "якорь в середине третьей строки: {a}");
+    let a0 = g.anchor_at(g.row_top(0));
+    assert!(a0.abs() < 0.01, "верх первой строки — ровно 0");
+
+    // lane_y: доли считаются от высоты СТРОКИ КЛИПОВ
+    assert_eq!(g.lane_y(ClipKind::Video, 0, 0.5), g.row_top(1) + 30.0);
+}
+
+/// Тест 246 (Р.35 С3): в ТОНКУЮ служебную строку попадают мышью, и якорь
+/// вертикального зума не уезжает. Харнесс, а не чистая функция: именно
+/// здесь ловится «геометрия посчитана правильно, а кликнуть некуда»
+/// (урок п.7 р.11).
+#[test]
+fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(180_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.morph_lanes = 1;
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        targets: MorphTargets::Below,
+        patch: MorphPatch::default(),
+        timed: true,
+        enabled: true,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    h.step();
+
+    let g = h.state().tl_geom.clone().expect("геометрия");
+    let mrow = g.row_of((LaneKind::Morph, 0)).expect("морф-строка есть");
+    // строка действительно втрое ниже дорожки клипов — и всё же нажимаема
+    assert!(g.row_h(mrow) < g.lane_h(), "служебная строка обязана быть ниже");
+    assert!(g.row_h(mrow) >= crate::timeline::THIN_ROW_MIN, "но не ниже пола нажимаемости");
+
+    // клик по блоку в тонкой строке выделяет морфер
+    let pos = egui::pos2(g.tick_to_x(45_000), g.row_center_y(mrow));
+    h.drag_at(pos);
+    h.step();
+    h.drop_at(pos);
+    h.step();
+    assert_eq!(
+        h.state().selected_morph,
+        Some(MorphId(1)),
+        "в тонкую морф-строку не попасть мышью — считать её сделанной нельзя"
+    );
+
+    // вертикальный зум не ломает отношение высот
+    let g = h.state().tl_geom.clone().unwrap();
+    let app = h.state_mut();
+    app.tl_v_zoom = Some(g.lane_h() * 1.5);
+    h.step();
+    let g2 = h.state().tl_geom.clone().unwrap();
+    assert!(g2.lane_h() > g.lane_h(), "зум применился");
+    assert!((g2.row_h(mrow) / g2.lane_h() - 1.0 / 3.0).abs() < 0.05, "отношение 3 держится");
 }

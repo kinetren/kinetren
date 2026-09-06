@@ -525,20 +525,60 @@ pub fn clip_color(path: &str, kind: ClipKind) -> egui::Color32 {
 /// строки не плющит — появляется вертикальный скролл. Явный v_zoom
 /// (Shift+Ctrl+колесо) задаёт высоту строки напрямую.
 pub struct VLayout {
-    pub lane_h: f32,
+    /// Высота строки КЛИПОВ (видео/аудио). Служебные строки ниже втрое.
+    pub base_h: f32,
     pub content_h: f32,
     pub scroll_max: f32,
 }
 
-pub fn vertical_layout(avail_h: f32, lanes: usize, v_zoom: Option<f32>) -> VLayout {
-    let lanes = lanes.max(1) as f32;
+/// Во столько раз служебная строка (morph/camera) ниже строки клипов —
+/// просьба пользователя Р.35 п.1: «чтобы не терять место — треки-морферы
+/// можно уменьшить по высоте в три раза».
+pub const THIN_ROW_DIV: f32 = 3.0;
+/// Пол высоты служебной строки: 84/3 = 28 нормально, а 16/3 = 5 — в такую
+/// строку мышью не попасть (п.1 чек-листа UI).
+pub const THIN_ROW_MIN: f32 = 10.0;
+
+/// Высота строки по её виду. ЕДИНСТВЕННОЕ место, где живёт это правило.
+pub fn row_height(kind: LaneKind, base_h: f32) -> f32 {
+    match kind {
+        LaneKind::Video | LaneKind::Audio => base_h,
+        LaneKind::Morph | LaneKind::Camera => (base_h / THIN_ROW_DIV).max(THIN_ROW_MIN),
+    }
+}
+
+/// Префиксные суммы верхов строк; длина — `rows.len() + 1`, последний
+/// элемент = полная высота содержимого.
+pub fn row_offsets(rows: &[(LaneKind, u32)], base_h: f32) -> Vec<f32> {
+    let mut out = Vec::with_capacity(rows.len() + 1);
+    let mut y = 0.0;
+    out.push(0.0);
+    for (kind, _) in rows {
+        y += row_height(*kind, base_h);
+        out.push(y);
+    }
+    out
+}
+
+/// `clip_lanes` — строки клипов, `thin_lanes` — служебные (они дают
+/// втрое меньший вклад, иначе десяток морф-дорожек плющил бы видео).
+pub fn vertical_layout(
+    avail_h: f32,
+    clip_lanes: usize,
+    thin_lanes: usize,
+    v_zoom: Option<f32>,
+) -> VLayout {
+    let clip_lanes = clip_lanes.max(1) as f32;
     let usable = (avail_h - RULER_H - 6.0).max(0.0);
-    let lane_h = match v_zoom {
+    // вес служебных строк в делителе — их доля от строки клипов
+    let weight = clip_lanes + thin_lanes as f32 / THIN_ROW_DIV;
+    let base_h = match v_zoom {
         Some(z) => z.clamp(16.0, 120.0),
-        None => (usable / lanes).clamp(30.0, 84.0),
+        None => (usable / weight).clamp(30.0, 84.0),
     };
-    let content_h = lanes * lane_h;
-    VLayout { lane_h, content_h, scroll_max: (content_h - usable).max(0.0) }
+    let content_h =
+        clip_lanes * base_h + thin_lanes as f32 * (base_h / THIN_ROW_DIV).max(THIN_ROW_MIN);
+    VLayout { base_h, content_h, scroll_max: (content_h - usable).max(0.0) }
 }
 
 /// Шаги руллера для зума (п.17 р.6, тест 60): минорные риски — минимальная
@@ -683,7 +723,7 @@ impl KtApp {
             .enumerate()
             .map(|(i, (kind, lane))| {
                 format!(
-                    "{{\"kind\":\"{}\",\"lane\":{lane},\"top\":{:.1},\"center\":{:.1}}}",
+                    "{{\"kind\":\"{}\",\"lane\":{lane},\"top\":{:.1},\"center\":{:.1},\"h\":{:.1}}}",
                     match kind {
                         kt_model::LaneKind::Video => "video",
                         kt_model::LaneKind::Audio => "audio",
@@ -691,7 +731,8 @@ impl KtApp {
                         kt_model::LaneKind::Camera => "camera",
                     },
                     geom.row_top(i),
-                    geom.row_top(i) + geom.lane_h * 0.5,
+                    geom.row_center_y(i),
+                    geom.row_h(i),
                 )
             })
             .collect();
@@ -708,7 +749,7 @@ impl KtApp {
             geom.rect.right(),
             geom.rect.top(),
             geom.rect.bottom(),
-            geom.lane_h,
+            geom.base_h,
             geom.tpp,
             geom.view_start,
             rows.join(",")
@@ -727,9 +768,14 @@ impl KtApp {
 pub struct TlGeom {
     /// Зона отрисовки дорожек (правее gutter, включая руллер сверху).
     pub rect: egui::Rect,
-    pub lane_h: f32,
+    /// Высота строки КЛИПОВ. Высота КОНКРЕТНОЙ строки — `row_h`:
+    /// служебные (morph/camera) втрое ниже (Р.35 п.1).
+    pub base_h: f32,
     /// Display-порядок строк сверху вниз (нормализован).
     pub rows: std::sync::Arc<Vec<(LaneKind, u32)>>,
+    /// Верхи строк (префиксные суммы). Приватное: разойтись с `rows` оно
+    /// физически не может — обе заполняет `new`.
+    offs: std::sync::Arc<Vec<f32>>,
     /// Вертикальный скролл-офсет зоны дорожек (п.12 р.6).
     pub view_top: f32,
     pub view_start: f64,
@@ -737,6 +783,77 @@ pub struct TlGeom {
 }
 
 impl TlGeom {
+    pub fn new(
+        rect: egui::Rect,
+        base_h: f32,
+        rows: Vec<(LaneKind, u32)>,
+        view_top: f32,
+        view_start: f64,
+        tpp: f64,
+    ) -> TlGeom {
+        let offs = row_offsets(&rows, base_h);
+        TlGeom {
+            rect,
+            base_h,
+            rows: std::sync::Arc::new(rows),
+            offs: std::sync::Arc::new(offs),
+            view_top,
+            view_start,
+            tpp,
+        }
+    }
+
+    /// Высота строки по индексу.
+    pub fn row_h(&self, row: usize) -> f32 {
+        self.rows.get(row).map(|(k, _)| row_height(*k, self.base_h)).unwrap_or(self.base_h)
+    }
+
+    /// Высота строки дорожки клипов (её вид — всегда базовый).
+    pub fn lane_h(&self) -> f32 {
+        self.base_h
+    }
+
+    /// Середина строки — куда садятся подписи gutter'а.
+    pub fn row_center_y(&self, row: usize) -> f32 {
+        self.row_top(row) + self.row_h(row) * 0.5
+    }
+
+    /// Точка внутри строки дорожки клипов в долях её высоты. Тесты и
+    /// живые сценарии обязаны считать y ИМЕННО так: своя формула
+    /// «lane_top + lane_h*f» ломается на строках разной высоты.
+    pub fn lane_y(&self, kind: ClipKind, lane: u32, frac: f32) -> f32 {
+        self.lane_top(kind, lane) + self.base_h * frac
+    }
+
+    /// Индекс строки под y БЕЗ ограничения снизу: строки перебираются
+    /// сверху вниз, а всё, что ниже последней, продолжается её высотой.
+    /// Нужен драгу клипа — там «сколько строк проехали» считалось
+    /// делением на `lane_h`, и на строках разной высоты оно врало.
+    pub fn row_at_y_unbounded(&self, y: f32) -> i64 {
+        let rel = y - self.lanes_top();
+        if rel < 0.0 {
+            let last = self.base_h.max(1.0);
+            return (rel / last).floor() as i64;
+        }
+        match self.offs.partition_point(|&o| o <= rel) {
+            0 => 0,
+            i if i <= self.rows.len() => i as i64 - 1,
+            _ => {
+                let over = rel - self.offs[self.rows.len()];
+                self.rows.len() as i64 + (over / self.base_h.max(1.0)).floor() as i64
+            }
+        }
+    }
+
+    /// Строка, в которую упирается вертикальный зум (якорь под курсором),
+    /// в ДОЛЯХ строк: целая часть — индекс, дробная — место внутри.
+    pub fn anchor_at(&self, y: f32) -> f32 {
+        let rel = (y - self.lanes_top()).max(0.0);
+        let i = self.row_at_y_unbounded(y).max(0) as usize;
+        let top = self.offs.get(i).copied().unwrap_or(rel);
+        let h = self.row_h(i).max(1.0);
+        i as f32 + (rel - top) / h
+    }
     pub fn x_to_tick(&self, x: f32) -> i64 {
         (self.view_start + (x - self.rect.left()) as f64 * self.tpp) as i64
     }
@@ -745,18 +862,17 @@ impl TlGeom {
         self.rect.left() + ((t as f64 - self.view_start) / self.tpp) as f32
     }
 
-    fn lanes_top(&self) -> f32 {
+    pub fn lanes_top(&self) -> f32 {
         self.rect.top() + RULER_H + 3.0 - self.view_top
     }
 
     /// Индекс строки под y (в пределах rows).
     pub fn row_at_y(&self, y: f32) -> Option<usize> {
         let rel = y - self.lanes_top();
-        if rel < 0.0 {
+        if rel < 0.0 || rel >= *self.offs.last().unwrap_or(&0.0) {
             return None;
         }
-        let idx = (rel / self.lane_h).floor() as usize;
-        (idx < self.rows.len()).then_some(idx)
+        Some(self.offs.partition_point(|&o| o <= rel).saturating_sub(1))
     }
 
     pub fn key_at_y(&self, y: f32) -> Option<(LaneKind, u32)> {
@@ -791,7 +907,15 @@ impl TlGeom {
     }
 
     pub fn row_top(&self, row: usize) -> f32 {
-        self.lanes_top() + row as f32 * self.lane_h
+        let off = match self.offs.get(row) {
+            Some(o) => *o,
+            // за последней строкой продолжаем базовой высотой
+            None => {
+                self.offs.last().copied().unwrap_or(0.0)
+                    + (row.saturating_sub(self.rows.len())) as f32 * self.base_h
+            }
+        };
+        self.lanes_top() + off
     }
 
     pub fn lane_top(&self, kind: ClipKind, lane: u32) -> f32 {
@@ -839,7 +963,7 @@ pub fn rubber_hits(geom: &TlGeom, p: &Project, band: egui::Rect) -> Vec<ClipId> 
             let top = geom.lane_top(c.kind, c.lane);
             let r = egui::Rect::from_min_max(
                 egui::pos2(geom.tick_to_x(c.start.0), top),
-                egui::pos2(geom.tick_to_x((c.start + c.duration).0), top + geom.lane_h),
+                egui::pos2(geom.tick_to_x((c.start + c.duration).0), top + geom.lane_h()),
             );
             band.intersects(r)
         })
@@ -932,9 +1056,13 @@ impl KtApp {
             ui.interact(gutter, ui.id().with("lane-gutter"), egui::Sense::click_and_drag());
 
         // число строк заранее — вертикальному зуму колесом нужно до layout
-        let lanes_hint = {
+        // ДВА счётчика: строки клипов и служебные (они втрое ниже).
+        // Раньше камерные дорожки тут не считались вовсе, а в layout
+        // считались — вертикальный зум колесом брал не ту высоту.
+        let (clip_hint, thin_hint) = {
             let (v, a) = self.lane_counts();
-            (v + a).max(1) as usize + self.model.project().morph_lanes as usize
+            let p = self.model.project();
+            ((v + a).max(1) as usize, (p.morph_lanes + p.camera_lanes) as usize)
         };
         // ---- зум/пан + edge-autoscroll при драге --------------------------
         let mut view_start = self.view_start;
@@ -980,12 +1108,20 @@ impl KtApp {
                 let cur_h = self
                     .tl_v_zoom
                     .unwrap_or_else(|| {
-                        vertical_layout(rect.height(), lanes_hint.max(1), None).lane_h
+                        vertical_layout(rect.height(), clip_hint, thin_hint, None).base_h
                     });
                 let factor = if raw_y > 0.0 { 1.15 } else { 1.0 / 1.15 };
                 let new_h = (cur_h * factor).clamp(16.0, 120.0);
-                let rel = pos.y - (rect.top() + RULER_H + 3.0) + self.tl_scroll;
-                let row = (rel / cur_h).max(0.0);
+                // якорь — строка ПОД КУРСОРОМ в долях строк; делением на
+                // одну высоту его не посчитать: строки разной высоты
+                let row = self
+                    .tl_geom
+                    .as_ref()
+                    .map(|g| g.anchor_at(pos.y))
+                    .unwrap_or_else(|| {
+                        ((pos.y - (rect.top() + RULER_H + 3.0) + self.tl_scroll) / cur_h).max(0.0)
+                    })
+                    .max(0.0);
                 self.tl_v_zoom = Some(new_h);
                 self.tl_scroll =
                     (row * new_h - (pos.y - (rect.top() + RULER_H + 3.0))).max(0.0);
@@ -1226,9 +1362,16 @@ impl KtApp {
         let (video_lanes, audio_lanes) = self.lane_counts();
         let morph_lanes = self.model.project().morph_lanes;
         let camera_lanes = self.model.project().camera_lanes;
-        let lanes_total = (video_lanes + audio_lanes).max(1) + morph_lanes + camera_lanes;
-        let vl = vertical_layout(rect.height(), lanes_total as usize, self.tl_v_zoom);
-        let lane_h = vl.lane_h;
+        let vl = vertical_layout(
+            rect.height(),
+            (video_lanes + audio_lanes).max(1) as usize,
+            (morph_lanes + camera_lanes) as usize,
+            self.tl_v_zoom,
+        );
+        let lane_h = vl.base_h;
+        // высота служебной строки (morph/camera): втрое меньше, но не ниже
+        // пола — в строку в 5 px мышью не попасть
+        let thin_h = row_height(LaneKind::Morph, lane_h);
         // кламп скролла каждый кадр (удаление дорожек/ресайз панели)
         self.tl_scroll = self.tl_scroll.clamp(0.0, vl.scroll_max);
         // display-порядок строк: с Р.35 он живёт в МОДЕЛИ (морфер-слой
@@ -1236,14 +1379,14 @@ impl KtApp {
         // фактическим счётчикам дорожек на каждый кадр
         let rows = self.model.project().rows();
         // кэш геометрии для маппинга вне draw_timeline (дроп п.2, строки п.6)
-        let geom = TlGeom {
+        let geom = TlGeom::new(
             rect,
             lane_h,
-            rows: std::sync::Arc::new(rows),
-            view_top: self.tl_scroll,
-            view_start: self.view_start,
-            tpp: self.ticks_per_px,
-        };
+            rows,
+            self.tl_scroll,
+            self.view_start,
+            self.ticks_per_px,
+        );
         self.tl_geom = Some(geom.clone());
         // KT_GEOM_DUMP=<файл> — геометрия таймлайна наружу для живых
         // сценариев (Р.27): без неё скрипт вынужден УГАДЫВАТЬ, где дорожка и
@@ -1254,14 +1397,17 @@ impl KtApp {
         let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
         // (подпись, центр строки, верх строки) — верх нужен, чтобы длинный
         // ярлык встал ПОД именем клипа, а не поверх него
-        let mut gutter_labels: Vec<(String, f32, f32)> = Vec::with_capacity(geom.rows.len());
+        let mut gutter_labels: Vec<(String, f32, f32, f32)> =
+            Vec::with_capacity(geom.rows.len());
         for (row, &(kind, lane)) in geom.rows.iter().enumerate() {
             let y = geom.row_top(row);
+            // высота ЭТОЙ строки: служебные втрое ниже (Р.35 п.1)
+            let rh = geom.row_h(row);
             // фон дорожки тянется ПОД gutter — градиент ниже «растворяет»
             // номерную полосу в дорожках (п.20 р.6)
             let lane_rect = egui::Rect::from_min_max(
                 egui::pos2(full.left(), y),
-                egui::pos2(rect.right(), y + lane_h - 2.0),
+                egui::pos2(rect.right(), y + rh - 2.0),
             );
             // фоны дорожек в тонах старого: видео синеватый, аудио тёплый,
             // morph фиолетовый (темнее — тема р.6)
@@ -1274,7 +1420,7 @@ impl KtApp {
             // подпись: пользовательское имя либо формула V1/A1/M1 (п.2 р.10)
             let label = kt_model::lane_label(&self.lane_names, kind, lane);
             painter.rect_filled(lane_rect, 0.0, fill);
-            gutter_labels.push((label, y + lane_h * 0.5, y));
+            gutter_labels.push((label, y + rh * 0.5, y, rh));
         }
         // хит-тест morph-блока (нужен и press-обработке, и ПКМ ниже)
         let morpher_at = |slf: &KtApp, pos: egui::Pos2| -> Option<MorphId> {
@@ -1350,7 +1496,7 @@ impl KtApp {
                 painter.rect_filled(
                     egui::Rect::from_min_max(
                         egui::pos2(gutter.left(), y),
-                        egui::pos2(rect.right(), y + lane_h - 2.0),
+                        egui::pos2(rect.right(), y + geom.row_h(cur) - 2.0),
                     ),
                     0.0,
                     egui::Color32::from_rgba_unmultiplied(120, 160, 255, 26),
@@ -2071,8 +2217,8 @@ impl KtApp {
                             if d.extra.is_empty() {
                                 // строки перемешаны (п.6): прилипаем к
                                 // ближайшей строке СВОЕГО вида (тест 50)
-                                let rel = pos.y - geom.lanes_top();
-                                let row = (rel / lane_h).floor().max(0.0) as i64;
+                                // строк разной высоты деление не считает
+                                let row = geom.row_at_y_unbounded(pos.y).max(0);
                                 d.cur_lane = geom.nearest_lane(d.orig.kind, row);
                             } else {
                                 // пачка едет только по времени: у её событий
@@ -2845,9 +2991,13 @@ impl KtApp {
                 continue;
             }
             let top = morph_lane_top(m.lane);
+            // служебная строка втрое ниже (Р.35 п.1): поля ужимаются, но
+            // ХВАТ шире рисунка на 2 px наружу — правило 1 чек-листа
+            let rh = thin_h;
+            let pad = (rh * 0.12).clamp(1.0, 3.0);
             let r = egui::Rect::from_min_max(
-                egui::pos2(x0.max(rect.left()), top + 3.0),
-                egui::pos2(x1.min(rect.right()), top + lane_h - 5.0),
+                egui::pos2(x0.max(rect.left()), top + pad),
+                egui::pos2(x1.min(rect.right()), top + rh - pad - 2.0),
             );
             let selected = self.selected_morph == Some(m.id);
             painter.rect(
@@ -2860,21 +3010,25 @@ impl KtApp {
                 ),
                 egui::StrokeKind::Inside,
             );
-            if r.width() > 46.0 {
-                // подпись по РЕЖИМУ ЦЕЛЕЙ (Р.35): вида у морфера больше
-                // нет, а «на кого действует» — единственное, чего не
-                // видно по самому блоку
-                let label = match &m.targets {
-                    MorphTargets::Clips { ids } => crate::tf!(k::tl::morph::CLIPS, ids.len()),
-                    _ => tr(k::tl::morph::LAYER).to_string(),
-                };
+            // подпись по РЕЖИМУ ЦЕЛЕЙ (Р.35): вида у морфера больше нет,
+            // а «на кого действует» — единственное, чего не видно по
+            // самому блоку. Не влезла — уходит в подсказку (правило 7).
+            let label = match &m.targets {
+                MorphTargets::Clips { ids } => crate::tf!(k::tl::morph::CLIPS, ids.len()),
+                _ => tr(k::tl::morph::LAYER).to_string(),
+            };
+            let font = egui::FontId::proportional((rh * 0.5).clamp(8.0, 11.0));
+            let galley = painter.layout_no_wrap(label.clone(), font.clone(), egui::Color32::WHITE);
+            if galley.size().x + 10.0 <= r.width() && galley.size().y <= r.height() {
                 painter.text(
                     egui::pos2(r.left() + 6.0, r.center().y),
                     egui::Align2::LEFT_CENTER,
                     label,
-                    egui::FontId::proportional(11.0),
+                    font,
                     egui::Color32::WHITE,
                 );
+            } else if ui.ctx().pointer_hover_pos().is_some_and(|p| r.contains(p)) {
+                self.hover_hint = Some(label);
             }
         }
         // ---- камеры-события (Р.29): бирюзовый блок на камерной дорожке ------
@@ -2885,9 +3039,10 @@ impl KtApp {
                 continue;
             }
             let top = geom.row_top(geom.row_of((LaneKind::Camera, c.lane)).unwrap_or(0));
+            let pad = (thin_h * 0.12).clamp(1.0, 3.0);
             let r = egui::Rect::from_min_max(
-                egui::pos2(x0.max(rect.left()), top + 3.0),
-                egui::pos2(x1.min(rect.right()), top + lane_h - 5.0),
+                egui::pos2(x0.max(rect.left()), top + pad),
+                egui::pos2(x1.min(rect.right()), top + thin_h - pad - 2.0),
             );
             painter.rect(
                 r,
@@ -3429,7 +3584,14 @@ impl KtApp {
             // края поверх НАЧАЛА дорожки, на своей подложке, с усечением.
             let col = egui::Color32::from_gray(175);
             let font = egui::FontId::proportional(12.0);
-            for (label, cy, row_top) in &gutter_labels {
+            for (label, cy, row_top, row_h) in &gutter_labels {
+                let font = if *row_h < 20.0 {
+                    // тонкая служебная строка: шрифт по её высоте, иначе
+                    // подпись не влезает и наезжает на соседнюю
+                    egui::FontId::proportional((row_h * 0.62).clamp(7.0, 12.0))
+                } else {
+                    font.clone()
+                };
                 let fit = full_painter.layout_no_wrap(label.clone(), font.clone(), col);
                 if fit.size().x <= gutter.width() - 4.0 {
                     full_painter.text(
@@ -3455,7 +3617,7 @@ impl KtApp {
                 let x = gutter.left() + 3.0;
                 // строкой НИЖЕ имени клипа; на низкой дорожке прижимаемся к
                 // её низу, но всё равно под именем клипа (п.2 р.13)
-                let y = lane_label_y(*row_top, lane_h, galley.size().y);
+                let y = lane_label_y(*row_top, *row_h, galley.size().y);
                 let plate = egui::Rect::from_min_size(
                     egui::pos2(x - 3.0, y - 1.0),
                     egui::vec2(galley.size().x + 12.0, galley.size().y + 2.0),
@@ -3955,25 +4117,39 @@ mod geom_tests {
     /// уважает клампы.
     #[test]
     fn t61_vertical_layout() {
-        // 3 дорожки в высокой панели: высота из панели, скролла нет
-        let v = vertical_layout(400.0, 3, None);
-        assert_eq!(v.lane_h, 84.0, "кламп сверху");
+        // 3 дорожки клипов в высокой панели: высота из панели, скролла нет
+        let v = vertical_layout(400.0, 3, 0, None);
+        assert_eq!(v.base_h, 84.0, "кламп сверху");
         assert_eq!(v.scroll_max, 0.0);
         // сжатие панели поджимает (как раньше)
-        let v = vertical_layout(160.0, 3, None);
-        assert!(v.lane_h < 84.0 && v.lane_h >= 30.0);
+        let v = vertical_layout(160.0, 3, 0, None);
+        assert!(v.base_h < 84.0 && v.base_h >= 30.0);
         // много дорожек: строки НЕ тоньше 30 — появляется скролл
-        let v = vertical_layout(300.0, 12, None);
-        assert_eq!(v.lane_h, 30.0);
+        let v = vertical_layout(300.0, 12, 0, None);
+        assert_eq!(v.base_h, 30.0);
         assert!(v.scroll_max > 0.0);
-        let v13 = vertical_layout(300.0, 13, None);
+        let v13 = vertical_layout(300.0, 13, 0, None);
         assert!(v13.scroll_max > v.scroll_max, "ещё дорожка — больше скролл");
         // v_zoom задаёт высоту явно, с клампами
-        assert_eq!(vertical_layout(300.0, 12, Some(50.0)).lane_h, 50.0);
-        assert_eq!(vertical_layout(300.0, 12, Some(4.0)).lane_h, 16.0);
-        assert_eq!(vertical_layout(300.0, 12, Some(500.0)).lane_h, 120.0);
+        assert_eq!(vertical_layout(300.0, 12, 0, Some(50.0)).base_h, 50.0);
+        assert_eq!(vertical_layout(300.0, 12, 0, Some(4.0)).base_h, 16.0);
+        assert_eq!(vertical_layout(300.0, 12, 0, Some(500.0)).base_h, 120.0);
         // при v_zoom, помещающемся целиком, скролла нет
-        assert_eq!(vertical_layout(800.0, 3, Some(40.0)).scroll_max, 0.0);
+        assert_eq!(vertical_layout(800.0, 3, 0, Some(40.0)).scroll_max, 0.0);
+        // служебные строки (Р.35 п.1) весят ВТРОЕ меньше: три морф-дорожки
+        // отнимают у видео столько же, сколько одна дорожка клипов
+        let a = vertical_layout(300.0, 4, 3, None);
+        let b = vertical_layout(300.0, 5, 0, None);
+        assert!((a.base_h - b.base_h).abs() < 0.01, "вес служебных строк = 1/3");
+        assert!((a.content_h - b.content_h).abs() < 0.01, "три тонкие == одна дорожка клипов");
+        // и они не съедают высоту у видео: с тремя морф-дорожками строка
+        // клипов ровно та же, что была бы с одной лишней дорожкой клипов
+        let plain = vertical_layout(300.0, 4, 0, None);
+        assert!(a.base_h < plain.base_h, "служебные строки всё же место занимают");
+        // пол высоты: на мелком зуме тонкая строка не тоньше 10 px
+        assert_eq!(row_height(LaneKind::Morph, 16.0), THIN_ROW_MIN);
+        assert_eq!(row_height(LaneKind::Video, 16.0), 16.0);
+        assert!((row_height(LaneKind::Camera, 84.0) - 28.0).abs() < 0.01);
     }
 
     /// Тест 60 (п.17 р.6): глубокий зум-аут — лестница руллера, формат
@@ -4055,20 +4231,20 @@ mod geom_tests {
     #[test]
     fn t47_tl_geom_mapping() {
         use kt_model::LaneKind;
-        let g = TlGeom {
-            rect: egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 500.0)),
-            lane_h: 50.0,
-            rows: std::sync::Arc::new(vec![
+        let g = TlGeom::new(
+            egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 500.0)),
+            50.0,
+            vec![
                 (LaneKind::Video, 0),
                 (LaneKind::Video, 1),
                 (LaneKind::Audio, 0),
                 (LaneKind::Audio, 1),
                 (LaneKind::Morph, 0),
-            ]),
-            view_top: 0.0,
-            view_start: 90_000.0,
-            tpp: 900.0,
-        };
+            ],
+            0.0,
+            90_000.0,
+            900.0,
+        );
         for t in [90_000i64, 180_000, 900_000] {
             let x = g.tick_to_x(t);
             assert!((g.x_to_tick(x) - t).abs() <= (g.tpp as i64), "round-trip тика {t}");
@@ -4100,14 +4276,14 @@ mod geom_tests {
             (LaneKind::Morph, 0),
             (LaneKind::Audio, 1),
         ];
-        let g = TlGeom {
-            rect: egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 500.0)),
-            lane_h: 40.0,
-            rows: std::sync::Arc::new(rows.clone()),
-            view_top: 0.0,
-            view_start: 0.0,
-            tpp: 900.0,
-        };
+        let g = TlGeom::new(
+            egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 500.0)),
+            40.0,
+            rows.clone(),
+            0.0,
+            0.0,
+            900.0,
+        );
         // биекция row_of ↔ key_at_y по центру каждой строки
         for (row, &key) in rows.iter().enumerate() {
             assert_eq!(g.row_of(key), Some(row));
