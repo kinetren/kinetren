@@ -412,6 +412,28 @@ class Live:
         self._shot_no -= 1
         return tuple(nums[:3])
 
+    def screen_diff(self, before):
+        """Доля изменившегося на экране относительно снимка `before`
+        (0..1). Надёжнее редкой сетки точек: окно могло открыться там,
+        где сетка его не задела, — так проверка «окно появилось» ломалась
+        на ровном месте (Р.34)."""
+        after = self.shot("diff")
+        out = subprocess.run(
+            ["compare", "-metric", "AE", "-fuzz", "3%", before, after, "null:"],
+            capture_output=True,
+            text=True,
+        ).stderr.strip()
+        os.unlink(after)
+        self._shot_no -= 1
+        # ImageMagick печатает «12345» или «1.2345e+07» — второе ломало
+        # наивную выборку цифр и давало «изменилось 514%»
+        try:
+            px = float(out.split()[0]) if out else 0.0
+        except ValueError:
+            px = 0.0
+        g = geometry()
+        return min(px / float(max(g["w"] * g["h"], 1)), 1.0)
+
     def pixel_of(self, image, x, y):
         """Цвет пикселя РАНЕЕ снятого скриншота — сравнение «до и после»
         без повторного снимка экрана."""

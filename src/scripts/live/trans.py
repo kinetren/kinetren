@@ -63,14 +63,10 @@ def main(out):
                 before = app.shot("before-dblclick")
                 y = app.lane_y("video", 0, frac=0.8)
                 app.double_click(app.x_at(int(4 * SEC)), y)
-                changed = 0
-                for px in range(80, 1200, 120):
-                    for py in range(60, 620, 80):
-                        if app.pixel(px, py) != app.pixel_of(before, px, py):
-                            changed += 1
+                d = app.screen_diff(before)
                 app.expect(
-                    changed >= 10,
-                    f"двойной клик открыл окно перехода (изменилось точек: {changed})",
+                    d > 0.01,
+                    f"двойной клик открыл окно перехода (экран изменился на {d:.1%})",
                 )
                 app.shot("props")
             code = app.done()
