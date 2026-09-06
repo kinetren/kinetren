@@ -50,30 +50,34 @@
                         "rot_z": 0.0,
                         "fov_deg": 39.6
                     },
-                    "keyframes": [
+                    "auto": [
                         {
-                            "t": 0.0,
-                            "cam": {
-                                "pos_x": 0.0,
-                                "pos_y": 0.0,
-                                "pos_z": 0.0,
-                                "rot_x": 0.0,
-                                "rot_y": 0.0,
-                                "rot_z": 0.0,
-                                "fov_deg": 39.6
-                            }
+                            "param": "pos_x",
+                            "ease": true,
+                            "keys": [
+                                {
+                                    "t": 0,
+                                    "v": 0.0
+                                },
+                                {
+                                    "t": 90000,
+                                    "v": 60.0
+                                }
+                            ]
                         },
                         {
-                            "t": 1.0,
-                            "cam": {
-                                "pos_x": 60.0,
-                                "pos_y": 0.0,
-                                "pos_z": 0.0,
-                                "rot_x": 0.0,
-                                "rot_y": 0.0,
-                                "rot_z": 0.0,
-                                "fov_deg": 30.0
-                            }
+                            "param": "fov_deg",
+                            "ease": true,
+                            "keys": [
+                                {
+                                    "t": 0,
+                                    "v": 39.6
+                                },
+                                {
+                                    "t": 90000,
+                                    "v": 30.0
+                                }
+                            ]
                         }
                     ],
                     "ease": true

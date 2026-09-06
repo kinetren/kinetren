@@ -226,6 +226,7 @@ remove = "删除 morpher"
 # Реестр FX и пикер с поиском.
 # Подписи параметров эффектов (Р.33): один источник — спека kt-model.
 [fxp]
+fov_deg = "视场角："
 scan_step = "扫描线间隔："
 jitter = "抖动："
 spill = "去溢色："
@@ -556,3 +557,14 @@ down = "向下"
 circle = "圆形"
 diamond = "菱形"
 box = "矩形"
+
+# Окно камеры (Р.34 К3).
+[cam]
+props = "摄像机属性…"
+title = "摄像机 {0}"
+title_named = "摄像机「{0}」"
+name = "名称："
+ortho = "正交"
+look_at = "注视一点"
+look_at_hint = "双节点摄像机：始终对准该点（如 After Effects）"
+length = "长度：{0} 秒"

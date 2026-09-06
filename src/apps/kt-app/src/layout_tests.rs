@@ -4521,3 +4521,91 @@ fn t227_transition_editor_opens_and_sets_kind() {
         "окно мёртвого перехода обязано закрыться само"
     );
 }
+
+/// Тест 231b (Р.34 К3): камера наконец редактируема. Двойной клик по её
+/// блоку открывает окно (до этого раунда редактора не было вовсе, а
+/// комментарий в коде обещал его с Р.29), правки идут одним undo-шагом,
+/// окно удалённой камеры закрывается само.
+#[test]
+fn t231_camera_editor_opens_and_edits() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips_dt(Some(0.02));
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.camera_lanes = 1;
+        p.cameras.push(CameraEvent {
+            id: CameraId(1),
+            lane: 0,
+            start: Tick(0),
+            duration: Tick(120_000),
+            name: String::new(),
+            cam: CameraParams::default(),
+            keyframes: vec![],
+            auto: vec![],
+            ease: true,
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("геометрия");
+    let row = g.row_of((LaneKind::Camera, 0)).expect("камерная дорожка есть в строках");
+    let pos = egui::pos2(g.tick_to_x(60_000), g.row_top(row) + g.lane_h * 0.5);
+    for _ in 0..2 {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().camera_editors.len(),
+        1,
+        "двойной клик по камере обязан открыть её окно"
+    );
+
+    // правка через сессию окна: один gesture — один шаг истории
+    let gesture = h.state().camera_editors[0].gesture;
+    {
+        let app = h.state_mut();
+        let mut c = app.model.project().cameras[0].clone();
+        c.name = "main".into();
+        c.auto = vec![ParamCurve {
+            param: "pos_z".into(),
+            ease: true,
+            keys: vec![
+                AutoKey { t: Tick(0), v: -900.0 },
+                AutoKey { t: Tick(120_000), v: -300.0 },
+            ],
+        }];
+        assert!(app.apply_coalesced(Command::SetCamera(c), gesture));
+    }
+    h.step();
+    assert_eq!(h.state().model.project().cameras[0].auto.len(), 1, "кривая доехала до модели");
+    let _ = h.state_mut().model.undo();
+    h.step();
+    assert!(
+        h.state().model.project().cameras[0].auto.is_empty(),
+        "вся сессия окна — один шаг истории"
+    );
+
+    // камеру удалили — окно уходит само
+    {
+        let app = h.state_mut();
+        let _ = app.apply(Command::RemoveCamera { id: CameraId(1) });
+    }
+    h.step();
+    h.step();
+    assert!(h.state().camera_editors.is_empty(), "окно мёртвой камеры закрывается");
+}

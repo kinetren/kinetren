@@ -14,6 +14,7 @@ fn cam(id: u64, lane: u32, start: i64, dur: i64) -> CameraEvent {
         name: String::new(),
         cam: CameraParams::default(),
         keyframes: vec![],
+        auto: vec![],
         ease: true,
     }
 }
@@ -98,4 +99,70 @@ fn t188_project_without_cameras_is_byte_stable() {
     let json2 = serde_json::to_string(&p2).unwrap();
     let back: Project = serde_json::from_str(&json2).unwrap();
     assert_eq!(back, p2);
+}
+
+/// Тест 231 (Р.34 К3): камера анимируется ОБЩИМ механизмом. Кейфреймы
+/// прежнего домена (доля события) конвертируются в кривые (тики от начала
+/// события), кривые считаются `params_at`, перенос камеры везёт анимацию
+/// с собой, а битая кривая валит валидацию, а не молчит.
+#[test]
+fn t231_camera_curves_replace_keyframes() {
+    let mut p = project();
+    p.camera_lanes = 1;
+    let mut c = cam(1, 0, 90_000, 90_000);
+    c.ease = false;
+    c.keyframes = vec![
+        CameraKeyframe { t: 0.0, cam: CameraParams { pos_x: 0.0, ..Default::default() } },
+        CameraKeyframe {
+            t: 1.0,
+            cam: CameraParams { pos_x: 100.0, fov_deg: 39.6, ..Default::default() },
+        },
+    ];
+    let mut legacy = c.clone();
+    assert!(kt_model::migrate_legacy_camera(&mut legacy), "миграция обязана сработать");
+    assert!(legacy.keyframes.is_empty(), "легаси-кейфреймы съедены");
+    // ровные параметры кривых не заводят: семь прямых линий в редакторе — мусор
+    assert_eq!(legacy.auto.len(), 1, "кривая только у изменившегося: {:?}", legacy.auto);
+    let px = &legacy.auto[0];
+    assert_eq!(px.param, "pos_x");
+    assert_eq!(
+        px.keys.iter().map(|k| (k.t.0, k.v)).collect::<Vec<_>>(),
+        vec![(0, 0.0), (90_000, 100.0)],
+        "доля события переведена в тики ОТ НАЧАЛА"
+    );
+
+    // значения совпадают со старым механизмом в тех же точках
+    for (t, want) in [(90_000i64, 0.0), (135_000, 50.0), (180_000, 100.0)] {
+        let old = c.params_at(Tick(t)).pos_x;
+        let new = legacy.params_at(Tick(t)).pos_x;
+        assert!((old - want).abs() < 1e-9, "старый механизм в {t}: {old}");
+        assert!((new - want).abs() < 1e-9, "новый механизм в {t}: {new}");
+    }
+
+    // ПЕРЕНОС камеры везёт анимацию с собой (домен — от начала события)
+    let mut moved = legacy.clone();
+    moved.start = Tick(270_000);
+    assert!(
+        (moved.params_at(Tick(315_000)).pos_x - 50.0).abs() < 1e-9,
+        "середина анимации переехала вместе с камерой"
+    );
+
+    // кривая на несуществующий параметр — отказ валидации, а не тишина
+    p.cameras = vec![legacy.clone()];
+    p.validate().expect("камера с кривыми валидна");
+    p.cameras[0].auto[0].param = "no_such".into();
+    assert!(p.validate().is_err(), "кривая-сирота обязана валить загрузку");
+    p.cameras[0].auto[0].param = "pos_x".into();
+    p.cameras[0].auto[0].keys[0].t = Tick(-5);
+    assert!(p.validate().is_err(), "ключ до начала события — отказ");
+
+    // кривые НОВОГО домена главнее легаси-кейфреймов
+    let mut both = c.clone();
+    both.auto = vec![ParamCurve {
+        param: "pos_x".into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(0), v: 7.0 }],
+    }];
+    assert!(!kt_model::migrate_legacy_camera(&mut both), "миграция не трогает готовые кривые");
+    assert!((both.params_at(Tick(135_000)).pos_x - 7.0).abs() < 1e-9);
 }

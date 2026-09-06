@@ -471,6 +471,13 @@ pub enum Drag {
         cur_start: i64,
         moved: bool,
     },
+    /// Перенос камеры-события (Р.34 К3) — по образцу Morph.
+    Camera {
+        id: kt_model::CameraId,
+        grab_dt: i64,
+        cur_start: i64,
+        moved: bool,
+    },
 }
 
 /// Цель контекст-меню, захваченная на right-click.
@@ -491,6 +498,8 @@ pub enum CtxTarget {
     MorphLane(u32),
     /// Правый клик по заголовку камерной дорожки (Р.29).
     CameraLane(u32),
+    /// Правый клик по камере-событию (Р.34 К3).
+    Camera(kt_model::CameraId),
     Empty,
 }
 
@@ -766,6 +775,13 @@ impl TlGeom {
     pub fn morph_lane_at_y(&self, y: f32) -> Option<u32> {
         match self.key_at_y(y)? {
             (LaneKind::Morph, l) => Some(l),
+            _ => None,
+        }
+    }
+
+    pub fn camera_lane_at_y(&self, y: f32) -> Option<u32> {
+        match self.key_at_y(y)? {
+            (LaneKind::Camera, l) => Some(l),
             _ => None,
         }
     }
@@ -1283,6 +1299,23 @@ impl KtApp {
                 })
                 .map(|m| m.id)
         };
+        // хит-тест камеры-события (Р.34 К3): до этого раунда камеру нельзя
+        // было ни выделить, ни перенести, ни открыть — она рисовалась и всё
+        let camera_at = |slf: &KtApp, pos: egui::Pos2| -> Option<kt_model::CameraId> {
+            let lane = geom.camera_lane_at_y(pos.y)?;
+            slf.model
+                .project()
+                .cameras
+                .iter()
+                .rev()
+                .filter(|c| c.lane == lane)
+                .find(|c| {
+                    let x0 = tick_to_x(c.start.0);
+                    let x1 = tick_to_x((c.start + c.duration).0).max(x0 + 8.0);
+                    pos.x >= x0 && pos.x <= x1
+                })
+                .map(|c| c.id)
+        };
 
         // ---- дорожки: реордер драгом и меню (пп. 7-8; п.6 v1.4: строки) ----
         {
@@ -1780,6 +1813,8 @@ impl KtApp {
                 self.selected_morph = Some(mid);
                 self.selected.clear();
                 CtxTarget::Morpher(mid)
+            } else if let Some(cid) = camera_at(self, pos) {
+                CtxTarget::Camera(cid)
             } else {
                 CtxTarget::Empty
             });
@@ -1849,6 +1884,20 @@ impl KtApp {
                 {
                     let at = self.snap(x_to_tick(pos.x).max(0), None);
                     self.commit_morph_placement(lane, Tick(at), None);
+                }
+            } else if let Some(cid) = camera_at(self, pos) {
+                if response.double_clicked() {
+                    self.open_camera_editor(cid);
+                } else if response.drag_started()
+                    && let Some(orig) =
+                        self.model.project().cameras.iter().find(|c| c.id == cid)
+                {
+                    self.drag = Some(Drag::Camera {
+                        id: cid,
+                        grab_dt: x_to_tick(pos.x) - orig.start.0,
+                        cur_start: orig.start.0,
+                        moved: false,
+                    });
                 }
             } else if let Some(mid) = morpher_at(self, pos) {
                 self.selected_morph = Some(mid);
@@ -2214,6 +2263,11 @@ impl KtApp {
                     let cur_start = self.snap(raw, None).max(0);
                     self.drag = Some(Drag::Morph { id, grab_dt, cur_start, moved: true });
                 }
+                Some(Drag::Camera { id, grab_dt, .. }) => {
+                    let raw = x_to_tick(pos.x) - grab_dt;
+                    let cur_start = self.snap(raw, None).max(0);
+                    self.drag = Some(Drag::Camera { id, grab_dt, cur_start, moved: true });
+                }
                 Some(Drag::Fade { id, left, .. }) => {
                     // длина = расстояние от края события до курсора,
                     // клампится телом: «сколько выдвигал — столько и фейд»
@@ -2411,6 +2465,18 @@ impl KtApp {
                     self.on_region_changed();
                     // играем — курсор немедленно в начало нового региона (п.4)
                     self.on_region_released();
+                }
+                Some(Drag::Camera { id, cur_start, moved, .. }) => {
+                    // перенос камеры везёт её кривые с собой: их домен —
+                    // тики ОТ НАЧАЛА события, трогать нечего (Р.34 К3)
+                    if moved
+                        && let Some(mut ev) =
+                            self.model.project().cameras.iter().find(|c| c.id == id).cloned()
+                        && ev.start.0 != cur_start
+                    {
+                        ev.start = Tick(cur_start);
+                        self.apply(Command::SetCamera(ev));
+                    }
                 }
                 Some(Drag::Morph { id, cur_start, moved, .. }) => {
                     if moved
@@ -3786,6 +3852,17 @@ impl KtApp {
                         self.select_only(id);
                     }
                     self.begin_morph_placement(true);
+                    ui.close();
+                }
+            }
+            Some(CtxTarget::Camera(cid)) => {
+                // камера наконец редактируема (Р.34 К3): свойства и удаление
+                if ui.button(tr(k::cam::PROPS)).clicked() {
+                    self.open_camera_editor(cid);
+                    ui.close();
+                }
+                if ui.button(tr(k::tl::menu::DELETE)).clicked() {
+                    self.apply(Command::RemoveCamera { id: cid });
                     ui.close();
                 }
             }

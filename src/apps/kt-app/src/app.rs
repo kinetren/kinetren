@@ -236,6 +236,8 @@ pub struct KtApp {
     pub fx_editors: Vec<crate::fx_editor::FxEditor>,
     /// Окна переходов (Р.33 С4) — по одному на переход.
     pub transition_editors: Vec<crate::transition_editor::TransitionEditor>,
+    /// Окна камер (Р.34 К3).
+    pub camera_editors: Vec<crate::camera_editor::CameraEditor>,
     pub morph_editors: Vec<crate::morpher_editor::MorphEditor>,
     pub gesture_counter: u64,
     pub render_job: Option<crate::render_dialog::RenderJob>,
@@ -457,6 +459,7 @@ impl KtApp {
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
+            camera_editors: Vec::new(),
             morph_editors: Vec::new(),
             gesture_counter: 0,
             render_job: None,
@@ -591,6 +594,7 @@ impl KtApp {
             thumbs: thumbs_svc,
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
+            camera_editors: Vec::new(),
             morph_editors: Vec::new(),
             gesture_counter: 0,
             render_job: None,
@@ -954,6 +958,7 @@ impl KtApp {
         self.draw_search(&ctx);
         self.draw_fx_editors(&ctx);
         self.draw_transition_editors(&ctx);
+        self.draw_camera_editors(&ctx);
         self.draw_morph_editors(&ctx);
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
@@ -2577,7 +2582,8 @@ impl KtApp {
     }
 
     /// Камера под курсором воспроизведения (Р.29): дефолтная «50 мм»,
-    /// 5 секунд — параметры правятся в окне камеры (двойной клик).
+    /// 5 секунд. Параметры и кривые — в окне камеры (двойной клик по
+    /// блоку; до Р.34 этот комментарий врал — окна не было вовсе).
     pub fn add_camera_at_playhead(&mut self, lane: u32) {
         let id = kt_model::CameraId(
             self.model.project().cameras.iter().map(|c| c.id.0).max().unwrap_or(0) + 1,
@@ -2591,6 +2597,7 @@ impl KtApp {
             name: String::new(),
             cam: kt_model::CameraParams::default(),
             keyframes: vec![],
+            auto: vec![],
             ease: true,
         };
         if self.apply(Command::AddCamera(cam)) {

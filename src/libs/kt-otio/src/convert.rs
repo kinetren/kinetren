@@ -410,7 +410,9 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             let has_auto = p
                 .clips
                 .iter()
-                .any(|c| c.fx_auto.iter().any(|v| v.iter().any(|c| !c.keys.is_empty())));
+                .any(|c| c.fx_auto.iter().any(|v| v.iter().any(|c| !c.keys.is_empty())))
+                // кривые камер — тот же механизм и та же версия
+                || cameras.iter().any(|c| !c.auto.is_empty());
             // выключатели тоже v3: старая сборка не знает про них и
             // сыграла бы выключенное (правило «молчаливой потери», Р.29)
             let has_off =
@@ -954,6 +956,10 @@ pub fn timeline_to_project(
         p.morphers = kt.morphers;
         p.camera_lanes = kt.camera_lanes;
         p.cameras = kt.cameras;
+        // кейфреймы камер старого домена → общие кривые (Р.34 К3)
+        for c in &mut p.cameras {
+            kt_model::migrate_legacy_camera(c);
+        }
         if let Some(end) = kt.end {
             p.timeline_end = Some(Tick(end));
         }

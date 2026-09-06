@@ -79,6 +79,7 @@ pub fn param_label(name: &str) -> String {
         "anchor_x" => tr(k::fxp::ANCHOR_X),
         "anchor_y" => tr(k::fxp::ANCHOR_Y),
         "scale" => tr(k::fxp::SCALE),
+        "fov_deg" => tr(k::fxp::FOV_DEG),
         // параметр без подписи в каталоге — видно сразу, а не молча
         other => return other.to_string(),
     };

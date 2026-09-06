@@ -226,6 +226,7 @@ remove = "Delete morpher"
 # Реестр FX и пикер с поиском.
 # Подписи параметров эффектов (Р.33): один источник — спека kt-model.
 [fxp]
+fov_deg = "FOV:"
 scan_step = "Scan lines every:"
 jitter = "Jitter:"
 spill = "Despill:"
@@ -556,3 +557,14 @@ down = "Down"
 circle = "Circle"
 diamond = "Diamond"
 box = "Box"
+
+# Окно камеры (Р.34 К3).
+[cam]
+props = "Camera properties…"
+title = "Camera {0}"
+title_named = "Camera “{0}”"
+name = "Name:"
+ortho = "Orthographic"
+look_at = "Look at a point"
+look_at_hint = "Two-node camera: it always aims at the point (as in After Effects)"
+length = "Length: {0} s"

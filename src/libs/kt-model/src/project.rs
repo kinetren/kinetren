@@ -223,6 +223,11 @@ pub trait HasParams {
     fn param_specs(&self) -> &'static [ParamSpec];
     fn get_param(&self, name: &str) -> Option<f64>;
     fn set_param(&mut self, name: &str, v: f64) -> bool;
+
+    /// Спека параметра по имени (кривая-сирота видна сразу).
+    fn param_spec(&self, name: &str) -> Option<&'static ParamSpec> {
+        self.param_specs().iter().find(|s| s.name == name)
+    }
 }
 
 impl HasParams for FxInstance {
@@ -1174,6 +1179,57 @@ pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
     touched
 }
 
+/// Кейфреймы камеры → общие кривые (Р.34 К3). Домен меняется с доли
+/// события на тики ОТ ЕГО НАЧАЛА, форма — с «строка со всеми полями» на
+/// «кривая на параметр»; `ease` переезжает с события на каждую кривую.
+/// Конверсия односторонняя (у независимых кривых ключи стоят в разное
+/// время, обратно в строки они не собираются) — поэтому `keyframes`
+/// становится read-only легаси-входом, как `SlowedReverb.automation`.
+pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
+    if c.keyframes.is_empty() || !c.auto.is_empty() {
+        return false;
+    }
+    let keys = std::mem::take(&mut c.keyframes);
+    let dur = c.duration.0.max(1) as f64;
+    let ease = c.ease;
+    /// (имя параметра, как достать его из снимка камеры)
+    type Pick = (&'static str, fn(&CameraParams) -> f64);
+    let params: &[Pick] = &[
+        ("pos_x", |p| p.pos_x),
+        ("pos_y", |p| p.pos_y),
+        ("pos_z", |p| p.pos_z),
+        ("rot_x", |p| p.rot_x),
+        ("rot_y", |p| p.rot_y),
+        ("rot_z", |p| p.rot_z),
+        ("fov_deg", |p| p.fov_deg),
+    ];
+    // базовые параметры берутся у ПЕРВОГО ключа: кривая перекрывает их
+    // целиком, но неавтоматизируемые поля (target/ortho) должны остаться
+    // теми, что были в анимации
+    c.cam = keys[0].cam;
+    for (name, pick) in params {
+        // ровные кривые не заводим: у камеры семь параметров, и семь
+        // прямых линий в редакторе — мусор
+        let vals: Vec<f64> = keys.iter().map(|k| pick(&k.cam)).collect();
+        if vals.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-12) {
+            continue;
+        }
+        c.auto.push(ParamCurve {
+            param: (*name).into(),
+            ease,
+            keys: keys
+                .iter()
+                .zip(&vals)
+                .map(|(k, v)| AutoKey {
+                    t: Tick((k.t.clamp(0.0, 1.0) * dur).round() as i64),
+                    v: *v,
+                })
+                .collect(),
+        });
+    }
+    true
+}
+
 /// CamMotion → Pan + кривые (Р.34 К2). У Pan те же три параметра уже
 /// есть в спеках, то есть «CamMotion с кейфреймами» — это в точности
 /// «Pan с кривыми»; конверсия убирает дублирующий механизм анимации, а
@@ -1573,6 +1629,34 @@ macro_rules! fx_cast {
 
 /// ЕДИНСТВЕННАЯ декларация параметров эффектов: спеки, запись и чтение
 /// генерятся из неё, поэтому рассинхрон трёх таблиц невозможен.
+/// Тот же паспорт параметров, но для СТРУКТУРЫ (Р.34 К3: камере нужны
+/// спеки, чтобы попасть в общую сетку полей и в общий виджет кривых).
+/// Одна декларация — спеки, чтение и запись с клампом.
+macro_rules! params_for_struct {
+    ($ty:ident { $( $field:ident : $t:ident, $lo:expr, $hi:expr, $def:expr, $step:expr, $unit:ident, $kind:ident );+ $(;)? }) => {
+        impl HasParams for $ty {
+            fn param_specs(&self) -> &'static [ParamSpec] {
+                &[ $( ParamSpec {
+                    name: stringify!($field),
+                    min: $lo, max: $hi, default: $def, step: $step,
+                    unit: ParamUnit::$unit, kind: ParamKind::$kind,
+                } ),+ ]
+            }
+            fn get_param(&self, name: &str) -> Option<f64> {
+                $( if name == stringify!($field) { return Some(self.$field as f64); } )+
+                None
+            }
+            fn set_param(&mut self, name: &str, v: f64) -> bool {
+                $( if name == stringify!($field) {
+                    self.$field = fx_cast!($t, v.clamp($lo, $hi));
+                    return true;
+                } )+
+                false
+            }
+        }
+    };
+}
+
 macro_rules! params_for {
     ($enum:ident, $specs:ident, $set:ident, $get:ident, {$(
         $variant:ident { $( $field:ident : $ty:ident, $lo:expr, $hi:expr, $def:expr, $step:expr, $unit:ident, $kind:ident );+ $(;)? }
@@ -1705,6 +1789,17 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
 
 // Параметры переходов — та же декларация, что у эффектов: UI полей,
 // кламп и (в будущем) автоматизация приходят к ним бесплатно.
+// Единицы камеры заморожены форматом (Р.29): мировые px и градусы ZXY.
+params_for_struct! { CameraParams {
+    pos_x: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
+    pos_y: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
+    pos_z: f64, -100_000.0, 100_000.0, 0.0, 1.0, Px, Smooth;
+    rot_x: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
+    rot_y: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
+    rot_z: f64, -1440.0, 1440.0, 0.0, 0.5, Deg, Smooth;
+    fov_deg: f64, 1.0, 179.0, 39.6, 0.5, Deg, Smooth;
+}}
+
 params_for! { TransitionKind, transition_specs, transition_set_param, transition_get_param, {
     Wipe {
         angle: f64, -180.0, 180.0, 0.0, 1.0, Deg, Smooth;
@@ -1791,10 +1886,17 @@ pub struct CameraEvent {
     pub name: String,
     /// Базовые параметры (кейфреймы их перекрывают).
     pub cam: CameraParams,
-    /// Анимация по прогрессу события t∈[0,1] (образец CamMotion:
-    /// линейная интерполяция, smoothstep при ease, за краями — крайние).
+    /// ЛЕГАСИ-вход (Р.34 К3): анимация по прогрессу события t∈[0,1].
+    /// Читается из старых файлов и переводится в `auto`; новые кривые
+    /// сюда не пишутся.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keyframes: Vec<CameraKeyframe>,
+    /// Кривые параметров камеры — ТОТ ЖЕ механизм, что у эффектов
+    /// (Р.34 К3). Позиция ключа — тик ОТ НАЧАЛА события: перенос камеры
+    /// везёт анимацию с собой, а правка длины открывает/прячет ключи,
+    /// как обрезка клипа («ничего не отрастает само», п.20 р.28).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto: Vec<ParamCurve>,
     #[serde(default = "default_true")]
     pub ease: bool,
 }
@@ -1860,6 +1962,19 @@ impl CameraEvent {
     /// интерполируется, только когда задан у обеих точек сегмента (иначе
     /// держится значение левой); `ortho` — от левой точки.
     pub fn params_at(&self, t: Tick) -> CameraParams {
+        if !self.auto.is_empty() {
+            // общий механизм (Р.34 К3): кривая на параметр, позиция —
+            // тик от начала события
+            let local = Tick(t.0 - self.start.0);
+            let mut cam = self.cam;
+            for c in &self.auto {
+                if c.keys.is_empty() {
+                    continue;
+                }
+                cam.set_param(&c.param, curve_value(&c.keys, c.ease, local));
+            }
+            return cam;
+        }
         if self.keyframes.is_empty() {
             return self.cam;
         }
@@ -2318,6 +2433,15 @@ impl Project {
             }
             for w in c.keyframes.windows(2) {
                 if w[1].t < w[0].t {
+                    return Err(ProjectError::CameraBadKeyframes(c.id));
+                }
+            }
+            // кривые камеры — те же правила, что у кривых эффектов
+            for cur in &c.auto {
+                let sorted = cur.keys.windows(2).all(|w| w[0].t <= w[1].t);
+                let ok = cur.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
+                let known = c.cam.param_spec(&cur.param).is_some();
+                if !sorted || !ok || !known {
                     return Err(ProjectError::CameraBadKeyframes(c.id));
                 }
             }

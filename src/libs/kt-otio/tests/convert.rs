@@ -489,11 +489,24 @@ fn project_3d() -> Project {
             duration: Tick(90_000),
             name: "main".into(),
             cam: CameraParams { pos_z: -900.0, ..Default::default() },
-            keyframes: vec![
-                CameraKeyframe { t: 0.0, cam: CameraParams::default() },
-                CameraKeyframe {
-                    t: 1.0,
-                    cam: CameraParams { pos_x: 60.0, fov_deg: 30.0, ..Default::default() },
+            keyframes: vec![],
+            // домен кривых камеры — тики от начала события (Р.34 К3)
+            auto: vec![
+                ParamCurve {
+                    param: "pos_x".into(),
+                    ease: true,
+                    keys: vec![
+                        AutoKey { t: Tick(0), v: 0.0 },
+                        AutoKey { t: Tick(90_000), v: 60.0 },
+                    ],
+                },
+                ParamCurve {
+                    param: "fov_deg".into(),
+                    ease: true,
+                    keys: vec![
+                        AutoKey { t: Tick(0), v: 39.6 },
+                        AutoKey { t: Tick(90_000), v: 30.0 },
+                    ],
                 },
             ],
             ease: true,
@@ -510,6 +523,7 @@ fn project_3d() -> Project {
                 ..Default::default()
             },
             keyframes: vec![],
+            auto: vec![],
             ease: false,
         },
     ];
@@ -532,6 +546,9 @@ fn t189_cameras_roundtrip_and_conditional_version() {
     // только камеры (без кривых) — v=2
     let mut cams_only = project_3d();
     cams_only.clips[0].fx_auto.clear();
+    for c in &mut cams_only.cameras {
+        c.auto.clear(); // кривые камеры — тоже v3
+    }
     let text = save_project(&cams_only, &Retained::default(), None);
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(v["metadata"]["kt"]["v"], 2, "камеры поднимают версию файла до v2");
@@ -547,6 +564,30 @@ fn t189_cameras_roundtrip_and_conditional_version() {
     assert_eq!(b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap().fx, p.clips[0].fx);
     let again = save_project(&b.project, &b.retained, None);
     assert_eq!(text, again, "идемпотентность записи с камерами");
+
+    // ЛЕГАСИ-кейфреймы камеры (домен «доля события») конвертируются при
+    // чтении в общие кривые — Р.34 К3, односторонний апгрейд
+    let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let cam = &mut old["metadata"]["kt"]["cameras"][0];
+    cam["auto"] = serde_json::json!([]);
+    cam["keyframes"] = serde_json::json!([
+        { "t": 0.0, "cam": { "pos_x": 0.0, "fov_deg": 39.6 } },
+        { "t": 1.0, "cam": { "pos_x": 60.0, "fov_deg": 30.0 } },
+    ]);
+    let b = load_project(&serde_json::to_string_pretty(&old).unwrap(), None)
+        .expect("файл со старыми кейфреймами камеры обязан открываться");
+    let c = &b.project.cameras[0];
+    assert!(c.keyframes.is_empty(), "легаси-кейфреймы съедены миграцией");
+    let px = c.auto.iter().find(|c| c.param == "pos_x").expect("кривая pos_x");
+    assert_eq!(
+        px.keys.iter().map(|k| (k.t.0, k.v)).collect::<Vec<_>>(),
+        vec![(0, 0.0), (90_000, 60.0)],
+        "доля события переведена в тики от начала"
+    );
+    assert!(
+        c.auto.iter().all(|c| c.param != "pos_y"),
+        "ровные параметры кривых не заводят"
+    );
 }
 
 /// Неизвестные kt-поля будущих версий (v3+) возятся passthrough'ом:
