@@ -52,6 +52,11 @@ pub enum Error {
     /// Файл написан более новым Kinotrain (metadata.kt.v выше нашей).
     #[error("project written by a newer Kinotrain (kt.v = {0})")]
     KtMetaTooNew(u32),
+    /// Секция metadata.kt есть, но не читается. Молчать нельзя: с ней
+    /// уехали бы настройки проекта, дорожки, морферы и раскладка, а файл
+    /// открылся бы как чужой (Р.35 — нашлось живым сценарием).
+    #[error("metadata.kt is unreadable: {0}")]
+    KtMetaBroken(String),
     #[error("non-finite number in {0}")]
     NonFinite(&'static str),
     #[error(transparent)]

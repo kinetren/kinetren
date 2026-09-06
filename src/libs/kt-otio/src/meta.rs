@@ -173,6 +173,20 @@ pub(crate) fn kt_get<T: for<'de> Deserialize<'de>>(metadata: &Map<String, Value>
     serde_json::from_value(metadata.get(KT_NS)?.clone()).ok()
 }
 
+/// То же, но с РАЗЛИЧЕНИЕМ «секции нет» и «секция битая». Первое —
+/// нормальный чужой файл, второе — ошибка: `.ok()` там выбрасывал ВЕСЬ
+/// конверт молча, и проект открывался как чужой — без настроек, дорожек,
+/// морферов и раскладки. Ровно тот класс дефектов, что запрещён
+/// инвариантом «ошибки загрузки ЯВНЫЕ» (дефект p старого формата).
+pub(crate) fn kt_get_checked<T: for<'de> Deserialize<'de>>(
+    metadata: &Map<String, Value>,
+) -> Result<Option<T>, serde_json::Error> {
+    match metadata.get(KT_NS) {
+        None => Ok(None),
+        Some(v) => serde_json::from_value(v.clone()).map(Some),
+    }
+}
+
 pub(crate) fn kt_set<T: Serialize>(metadata: &mut Map<String, Value>, v: &T) {
     let val = serde_json::to_value(v).expect("kt envelope is always serializable");
     match metadata.get_mut(KT_NS) {

@@ -16,7 +16,7 @@ use std::path::Path;
 
 use crate::meta::{
     KT_NS, KtBinMedia, KtClipMeta, KtSettings, KtTimelineMeta, KtTransport,
-    kt_get, kt_set,
+    kt_get, kt_get_checked, kt_set,
 };
 use crate::schema::{
     Clip, Composable, Effect, EffectNode, ExternalReference, Gap, LinearTimeWarp, Marker,
@@ -646,7 +646,10 @@ pub fn timeline_to_project(
     let mut notices: Vec<Notice> = Vec::new();
     // нечитаемые кривые автоматизации: копим и валим загрузку в конце
     let mut bad_auto: Vec<String> = Vec::new();
-    let kt: Option<KtTimelineMeta> = kt_get(&tl.metadata);
+    // битая kt-секция — ОШИБКА, а не «чужой файл»: молчаливое выбрасывание
+    // конверта уносило с собой настройки, дорожки, морферы и раскладку
+    let kt: Option<KtTimelineMeta> =
+        kt_get_checked(&tl.metadata).map_err(|e| Error::KtMetaBroken(e.to_string()))?;
     let is_ours = kt.is_some();
     // версия конверта файла: до v3 кривые автоматизации лежали в долях
     // длины события, теперь — в тиках материала (Р.33)

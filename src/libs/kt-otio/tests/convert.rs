@@ -923,3 +923,31 @@ fn t248_areas_round_trip() {
     // проект БЕЗ областей поля не заводит
     assert!(!save_project(&rich_project(), &Retained::default(), None).contains("areas"));
 }
+
+/// Тест 251 (Р.35, нашлось живым сценарием): БИТАЯ секция `metadata.kt`
+/// — ошибка загрузки, а не «чужой файл». `kt_get` глотал ошибку через
+/// `.ok()`, и один неверный байт в морфере уносил ВЕСЬ конверт: проект
+/// открывался без настроек, дорожек, морферов и раскладки — молча.
+#[test]
+fn t251_broken_kt_meta_is_an_error() {
+    let p = rich_project();
+    let text = save_project(&p, &Retained::default(), None);
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    // ломаем ОДНО поле в конверте
+    v["metadata"]["kt"]["morph_lanes"] = serde_json::json!("не число");
+    let bad = serde_json::to_string_pretty(&v).unwrap();
+    match load_project(&bad, None) {
+        Err(kt_otio::Error::KtMetaBroken(_)) => {}
+        Err(e) => panic!("не тот отказ: {e}"),
+        Ok(b) => panic!(
+            "битый конверт открылся молча: {} клипов, {} дорожек",
+            b.project.clips.len(),
+            b.project.video_lanes
+        ),
+    }
+    // чужой файл БЕЗ нашей секции по-прежнему открывается
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    v["metadata"].as_object_mut().unwrap().remove("kt");
+    let foreign = serde_json::to_string_pretty(&v).unwrap();
+    assert!(load_project(&foreign, None).is_ok(), "чужой OTIO обязан открываться");
+}
