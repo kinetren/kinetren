@@ -107,9 +107,11 @@ delete_camera_n = "Eliminar pista ({0} cámaras)"
 insert_camera_below = "Insertar pista de cámara abajo"
 add_camera = "Añadir pista de cámara"
 add_camera_here = "Añadir cámara en el cursor"
+add_morpher_here = "Añadir mórfer aquí"
 
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
+area = "Área: los bordes cambian la duración, clic derecho — menú"
 transition = "Fundido: bordes — ancho, centro — mover el corte"
 clamped = "Bloqueado: un evento de esta pista estorba (resaltado)"
 clamped_far_left = "Bloqueado: el evento que estorba está a {0} s a la izquierda, fuera de vista"
@@ -125,6 +127,8 @@ volume = "Volumen del clip: arrastra, doble clic — 0 dB"
 fade_handle = "Arrastra la esquina superior: fundido en este borde del clip"
 level = "Arrastra arriba/abajo: opacidad del vídeo del clip"
 clip = "Clip: arrastrar — mover (Ctrl — sin imán), Ctrl+clic — seleccionar, doble clic — FX, clic derecho — menú, S — cortar"
+morpher = "Mórfer: arrastra para mover, bordes cambian la duración, clic derecho — menú"
+camera = "Cámara: arrastra para mover, bordes cambian la duración, clic derecho — menú"
 empty = "Clic izq. — cursor, arrastrar — región, Ctrl+arrastrar — seleccionar eventos; rueda — desplazar, Ctrl — zoom, Shift — pistas"
 
 # Таймлайн: подписи на morph-событиях.
@@ -134,12 +138,17 @@ clips = "Eventos: {0}"
 
 # Таймлайн: подсказки полей ввода.
 [tl.field]
+area_name = "Nombre del área"
 marker_name_new = "nombre del marcador (opcional)"
 marker_name = "nombre del marcador"
 lane_name = "nombre de la pista"
 
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
+area_title = "Área: {0}"
+area_from_region = "Ajustar al región"
+area_lanes_from_band = "Pistas según la última selección"
+area_color = "Color"
 clear_range = "Quitar el rango"
 region_from_event = "Región sobre este evento (Shift+doble clic)"
 transition_props = "Propiedades de la transición…"
@@ -321,6 +330,7 @@ slowedreverb = "ralentizado reverb warp velocidad eco slowed"
 
 # Редактор FX клипа.
 [fx]
+slot_hint = "Ranura de la cadena: clic selecciona, arrastra reordena"
 frames = "Fotogramas:"
 frames_nearest = "más cercano"
 frames_blend = "mezcla"

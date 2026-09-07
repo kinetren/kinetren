@@ -107,9 +107,11 @@ delete_camera_n = "Delete track ({0} cameras)"
 insert_camera_below = "Insert camera track below"
 add_camera = "Add a Camera track"
 add_camera_here = "Add camera at the playhead"
+add_morpher_here = "Add morpher here"
 
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
+area = "Area: edges resize it, RMB — rename, colour, delete"
 transition = "Crossfade: drag edges — resize, drag the cut — roll"
 clamped = "Blocked: an event on this track is in the way (highlighted)"
 clamped_far_left = "Blocked: the event in the way is {0} s to the left, off-screen"
@@ -125,6 +127,8 @@ volume = "Clip volume: drag, double click — 0 dB"
 fade_handle = "Drag the top corner — fade at this edge of the clip"
 level = "Drag up/down — video opacity of this clip"
 clip = "Clip: drag — move (Ctrl — no magnet), Ctrl+click — select, double click — FX, right click — menu, S — split"
+morpher = "Morpher: drag to move, edges resize, RMB — menu, double click — editor"
+camera = "Camera: drag to move, edges resize, RMB — menu, double click — properties"
 empty = "LMB — playhead, drag — region, Ctrl+drag — select events; wheel — scroll, Ctrl — zoom, Shift — tracks"
 
 # Таймлайн: подписи на morph-событиях.
@@ -134,12 +138,17 @@ clips = "Events: {0}"
 
 # Таймлайн: подсказки полей ввода.
 [tl.field]
+area_name = "Area name"
 marker_name_new = "marker name (optional)"
 marker_name = "marker name"
 lane_name = "track name"
 
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
+area_title = "Area: {0}"
+area_from_region = "Set range from the region"
+area_lanes_from_band = "Set tracks from the last selection"
+area_color = "Colour"
 clear_range = "Clear range"
 region_from_event = "Region over this event (Shift+double click)"
 transition_props = "Transition properties…"
@@ -321,6 +330,7 @@ slowedreverb = "slowed reverb warp speed echo"
 
 # Редактор FX клипа.
 [fx]
+slot_hint = "Chain slot: click selects, drag reorders, cross removes"
 frames = "Frames:"
 frames_nearest = "nearest"
 frames_blend = "blend"

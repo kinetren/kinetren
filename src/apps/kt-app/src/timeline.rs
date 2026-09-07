@@ -44,6 +44,10 @@ const RULER_LADDER: [i64; 5] = [90_000, 900_000, 5_400_000, 54_000_000, 324_000_
 pub const EDGE_GRAB_PX: f32 = 7.0;
 pub const SNAP_PX: f64 = 10.0;
 pub const REGION_EDGE_PX: f32 = 8.0;
+/// Полоса хвата контура именованной области (Р.38 п.1). Шире рисунка
+/// (линия в 1 px), но уже региона: контур области пересекает дорожки, и
+/// широкая полоса воровала бы клики по событиям.
+pub const AREA_GRAB_PX: f32 = 5.0;
 /// Ширина хвата ручки фейда у верхнего угла события (Р.28, п.12 — жест
 /// Vegas: «fade можно у событий сделать по краям без еще одних событий —
 /// просто потянув за верхний уголок»).
@@ -500,7 +504,75 @@ pub enum CtxTarget {
     CameraLane(u32),
     /// Правый клик по камере-событию (Р.34 К3).
     Camera(kt_model::CameraId),
+    /// Правый клик по именованной области (Р.38 п.1). Индекс в
+    /// `project().areas`, а не имя: цель обязана оставаться `Copy`.
+    /// Читается через `get` — область могли удалить из-под меню.
+    Area(usize),
     Empty,
+}
+
+/// Сущность таймлайна, которой пользователь управляет мышью (Р.38 п.253).
+///
+/// Существует ради одной цели: заставить КОМПИЛЯТОР спросить про новую
+/// сущность «а какими глаголами ей управляют?». Массив `ALL` фиксированной
+/// длины ломает СБОРКУ при добавлении варианта, а `verbs()` в тесте 253 —
+/// исчерпывающий `match`, поэтому строку про глаголы не пропустить молча.
+/// Повод — Р.35: именованные области нарисовали, а удалить и переименовать
+/// их было нечем, и все тесты были зелёными.
+// Тип живёт ради КОМПИЛЯТОРА (см. доккомментарий) и читается тестом
+// достижимости 253 — в продуктовом пути его никто не зовёт, и это норма.
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(usize)]
+pub enum TlEntity {
+    Clip = 0,
+    Marker,
+    Area,
+    Morpher,
+    Camera,
+    ClipLane,
+    MorphLane,
+    CameraLane,
+    Region,
+}
+
+#[allow(dead_code)]
+impl TlEntity {
+    pub const N: usize = TlEntity::Region as usize + 1;
+    /// Длина массива задана `N`: добавил вариант — литерал перестал
+    /// соответствовать длине, и не собирается ВСЁ приложение, а не только
+    /// тесты.
+    pub const ALL: [TlEntity; Self::N] = [
+        TlEntity::Clip,
+        TlEntity::Marker,
+        TlEntity::Area,
+        TlEntity::Morpher,
+        TlEntity::Camera,
+        TlEntity::ClipLane,
+        TlEntity::MorphLane,
+        TlEntity::CameraLane,
+        TlEntity::Region,
+    ];
+}
+
+#[allow(dead_code)]
+impl CtxTarget {
+    /// Какой сущности принадлежит цель меню. Match исчерпывающий: завёл
+    /// новую цель — обязан назвать её сущность (или явно сказать «ничья»).
+    pub fn entity(self) -> Option<TlEntity> {
+        match self {
+            CtxTarget::Clip(_) => Some(TlEntity::Clip),
+            CtxTarget::Marker(_) => Some(TlEntity::Marker),
+            CtxTarget::RegionEdge(_) => Some(TlEntity::Region),
+            CtxTarget::Lane { .. } => Some(TlEntity::ClipLane),
+            CtxTarget::Morpher(_) => Some(TlEntity::Morpher),
+            CtxTarget::MorphLane(_) => Some(TlEntity::MorphLane),
+            CtxTarget::CameraLane(_) => Some(TlEntity::CameraLane),
+            CtxTarget::Camera(_) => Some(TlEntity::Camera),
+            CtxTarget::Area(_) => Some(TlEntity::Area),
+            CtxTarget::Empty => None,
+        }
+    }
 }
 
 /// Цвет клипа из хэша пути (порт colorFromPath: r=80+h%120 ...).
@@ -904,6 +976,34 @@ impl TlGeom {
             (LaneKind::Camera, l) => Some(l),
             _ => None,
         }
+    }
+
+    /// Прямоугольник именованной области на экране. Одна формула на
+    /// отрисовку И хит-тест: разойдись они — контур рисуется в одном
+    /// месте, а хватается в другом (правило «геометрия только через
+    /// TlGeom»). `None` — область целиком за пределами вида.
+    pub fn area_rect(&self, a: &kt_model::MarkedArea) -> Option<egui::Rect> {
+        let x0 = self.tick_to_x(a.start.0);
+        let x1 = self.tick_to_x((a.start + a.duration).0).max(x0 + 6.0);
+        if x1 < self.rect.left() || x0 > self.rect.right() {
+            return None;
+        }
+        let keys: Vec<(LaneKind, u32)> =
+            if a.lanes.is_empty() { self.rows.to_vec() } else { a.lanes.clone() };
+        let (mut top, mut bot) = (f32::MAX, f32::MIN);
+        for k in &keys {
+            if let Some(row) = self.row_of(*k) {
+                top = top.min(self.row_top(row));
+                bot = bot.max(self.row_top(row) + self.row_h(row));
+            }
+        }
+        if top > bot {
+            return None;
+        }
+        Some(egui::Rect::from_min_max(
+            egui::pos2(x0.max(self.rect.left()), top + 1.0),
+            egui::pos2(x1.min(self.rect.right()), bot - 1.0),
+        ))
     }
 
     pub fn row_of(&self, key: (LaneKind, u32)) -> Option<usize> {
@@ -1593,6 +1693,24 @@ impl KtApp {
                     let n =
                         self.model.project().morphers.iter().filter(|m| m.lane == lane).count();
                     ui.label(egui::RichText::new(crate::tf!(k::tl::lane::MORPH_TITLE, lane + 1)).strong());
+                    // симметрично камерной дорожке (правило 17): парные
+                    // способы одного действия ведут себя одинаково, а до
+                    // Р.38 морфер на существующую дорожку положить было
+                    // НЕЧЕМ — «add morpher layer» всегда заводил новую
+                    if ui.button(tr(k::tl::lane::ADD_MORPHER_HERE)).clicked() {
+                        self.add_morpher_at(lane);
+                        ui.close();
+                    }
+                    // переименование — как у обычной дорожки (правило 17):
+                    // двойной клик по заголовку переименовывает СТРОКУ
+                    // ЛЮБОГО вида, а пункта меню у служебных не было
+                    if ui.button(tr(k::tl::lane::RENAME)).clicked() {
+                        let cur = kt_model::lane_label(&self.lane_names, LaneKind::Morph, lane);
+                        self.lane_edit =
+                            Some(crate::app::LaneEdit { kind: LaneKind::Morph, lane, buf: cur });
+                        self.lane_edit_focus = true;
+                        ui.close();
+                    }
                     let del_label = if n > 0 {
                         crate::tf!(k::tl::lane::DELETE_MORPH_N, n)
                     } else {
@@ -1623,6 +1741,16 @@ impl KtApp {
                     // камера ставится под курсор ВОСПРОИЗВЕДЕНИЯ (как метка)
                     if ui.button(tr(k::tl::lane::ADD_CAMERA_HERE)).clicked() {
                         self.add_camera_at_playhead(lane);
+                        ui.close();
+                    }
+                    // переименование — как у обычной дорожки (правило 17):
+                    // двойной клик по заголовку переименовывает СТРОКУ
+                    // ЛЮБОГО вида, а пункта меню у служебных не было
+                    if ui.button(tr(k::tl::lane::RENAME)).clicked() {
+                        let cur = kt_model::lane_label(&self.lane_names, LaneKind::Camera, lane);
+                        self.lane_edit =
+                            Some(crate::app::LaneEdit { kind: LaneKind::Camera, lane, buf: cur });
+                        self.lane_edit_focus = true;
                         ui.close();
                     }
                     let del_label = if n > 0 {
@@ -1746,6 +1874,22 @@ impl KtApp {
                             .unwrap_or(0);
                     (tick_to_x(end) - pos.x).abs() <= EDGE_GRAB_PX
                 })
+        };
+        // Именованная область (Р.38 п.1: «не понимаю как удалить saved
+        // area region… пкм ничего не дает»). Хватается КОНТУР — тело
+        // отдано событиям под ним, иначе область украла бы все клики на
+        // своих дорожках. Полоса хвата шире рисунка (правило 1): линия
+        // в 1 px мышью не ловится.
+        let area_at = |app: &KtApp, pos: egui::Pos2| -> Option<(usize, bool)> {
+            app.model.project().areas.iter().enumerate().find_map(|(i, a)| {
+                let r = geom.area_rect(a)?;
+                let band = r.expand(AREA_GRAB_PX);
+                if !band.contains(pos) || r.shrink(AREA_GRAB_PX).contains(pos) {
+                    return None;
+                }
+                // левая кромка или всё остальное (правая/верх/низ)
+                Some((i, (pos.x - r.left()).abs() <= AREA_GRAB_PX))
+            })
         };
         // границы региона хватаются на ВСЕЙ высоте (п.14): линии рисуются
         // на всю высоту и должны быть кликабельны везде
@@ -1922,9 +2066,22 @@ impl KtApp {
                         );
                     }
                     None => {
-                        zone_hint = Some(
-                            tr(k::tl::hint::EMPTY),
-                        );
+                        // «пустое место» говорилось и НАД морф/камера-блоком:
+                        // `clip_at` на служебной строке всегда None, а
+                        // отдельной ветки не было. Подсказка, которая врёт,
+                        // хуже отсутствующей (правило 10 чек-листа).
+                        zone_hint = Some(if area_at(self, pos).is_some() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                            tr(k::tl::hint::AREA)
+                        } else if morpher_at(self, pos).is_some() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                            tr(k::tl::hint::MORPHER)
+                        } else if camera_at(self, pos).is_some() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                            tr(k::tl::hint::CAMERA)
+                        } else {
+                            tr(k::tl::hint::EMPTY)
+                        });
                     }
                 }
             }
@@ -1960,6 +2117,8 @@ impl KtApp {
                 CtxTarget::Morpher(mid)
             } else if let Some(cid) = camera_at(self, pos) {
                 CtxTarget::Camera(cid)
+            } else if let Some((i, _)) = area_at(self, pos) {
+                CtxTarget::Area(i)
             } else {
                 CtxTarget::Empty
             });
@@ -3013,28 +3172,12 @@ impl KtApp {
         // прямо по своим строкам, а имя — В РАЗРЫВЕ верхней линии (тот же
         // приём, что у имени группы бина).
         for a in &self.model.project().areas {
-            let x0 = tick_to_x(a.start.0);
-            let x1 = tick_to_x((a.start + a.duration).0).max(x0 + 6.0);
-            if x1 < rect.left() || x0 > rect.right() {
-                continue;
-            }
-            let keys: Vec<(LaneKind, u32)> =
-                if a.lanes.is_empty() { geom.rows.to_vec() } else { a.lanes.clone() };
-            let (mut top, mut bot) = (f32::MAX, f32::MIN);
-            for k in &keys {
-                if let Some(row) = geom.row_of(*k) {
-                    top = top.min(geom.row_top(row));
-                    bot = bot.max(geom.row_top(row) + geom.row_h(row));
-                }
-            }
-            if top > bot {
-                continue;
-            }
-            let r = egui::Rect::from_min_max(
-                egui::pos2(x0.max(rect.left()), top + 1.0),
-                egui::pos2(x1.min(rect.right()), bot - 1.0),
-            );
-            let col = crate::theme::AREA;
+            let Some(r) = geom.area_rect(a) else { continue };
+            let col = a
+                .color
+                .as_deref()
+                .and_then(crate::theme::parse_hex)
+                .unwrap_or(crate::theme::AREA);
             // разрыв верхней линии под имя
             let font = egui::FontId::proportional(11.0);
             let galley = painter.layout_no_wrap(a.name.clone(), font.clone(), col);
@@ -3593,6 +3736,59 @@ impl KtApp {
             }
         }
 
+        // ---- переименование области (Р.38 п.1) -----------------------------
+        // Тот же виджет и то же поведение, что у имени дорожки: поле у
+        // самой сущности, Enter применяет, Esc отменяет, фокус ОТДАЁТСЯ
+        // при закрытии (правило 14 — иначе умрут горячие клавиши).
+        if let Some(ed) = self.area_edit.clone() {
+            let anchor = self
+                .model
+                .project()
+                .areas
+                .iter()
+                .find(|a| a.name == ed.name)
+                .and_then(|a| geom.area_rect(a))
+                .map(|r| r.left_top())
+                .unwrap_or(rect.left_top());
+            let mut buf = ed.buf.clone();
+            let mut done: Option<bool> = None;
+            egui::Area::new(egui::Id::new("area-name-edit"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(anchor + egui::vec2(2.0, 2.0))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        let r = ui.add(
+                            egui::TextEdit::singleline(&mut buf)
+                                .hint_text(tr(k::tl::field::AREA_NAME))
+                                .desired_width(140.0),
+                        );
+                        if !r.has_focus() && self.area_edit_focus {
+                            r.request_focus();
+                            self.area_edit_focus = false;
+                        }
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            done = Some(true);
+                        } else if ui.input(|i| i.key_pressed(egui::Key::Escape))
+                            || (r.lost_focus() && !r.has_focus())
+                        {
+                            done = Some(false);
+                        }
+                    });
+                });
+            match done {
+                Some(true) => {
+                    let to = buf.trim().to_string();
+                    if !to.is_empty() && to != ed.name {
+                        self.apply(Command::RenameArea { from: ed.name.clone(), to });
+                    }
+                    ui.ctx().memory_mut(|m| m.surrender_focus(egui::Id::new("area-name-edit")));
+                    self.area_edit = None;
+                }
+                Some(false) => self.area_edit = None,
+                None => self.area_edit = Some(crate::app::AreaEdit { buf, ..ed }),
+            }
+        }
+
         // ---- heat-зоны прыжка/edge-scroll: градиент при наведении ------------------
         if let Some(pos) = hover {
             let boost = if self.drag.is_some() { 1.0f32 } else { 0.6 };
@@ -4076,6 +4272,66 @@ impl KtApp {
                 }
                 if ui.button(tr(k::tl::menu::DELETE)).clicked() {
                     self.apply(Command::RemoveCamera { id: cid });
+                    ui.close();
+                }
+            }
+            // Область (Р.38 п.1). До этого раунда меню у неё не было
+            // ВООБЩЕ: команды RemoveArea/RenameArea/SetAreaRange/
+            // SetAreaLanes лежали в модели написанными, покрытыми
+            // юнит-тестами и не вызванными ни разу.
+            Some(CtxTarget::Area(i)) => {
+                let Some(a) = self.model.project().areas.get(i).cloned() else {
+                    ui.close();
+                    return;
+                };
+                ui.label(egui::RichText::new(crate::tf!(k::tl::menu::AREA_TITLE, a.name)).strong());
+                if ui.button(tr(k::tl::menu::RENAME)).clicked() {
+                    self.area_edit =
+                        Some(crate::app::AreaEdit { name: a.name.clone(), buf: a.name.clone() });
+                    self.area_edit_focus = true;
+                    ui.close();
+                }
+                let has_region = self.model.project().region.is_some();
+                if ui
+                    .add_enabled(has_region, egui::Button::new(tr(k::tl::menu::AREA_FROM_REGION)))
+                    .clicked()
+                {
+                    if let Some(r) = self.model.project().region {
+                        self.apply(Command::SetAreaRange {
+                            name: a.name.clone(),
+                            start: r.start,
+                            duration: r.end - r.start,
+                        });
+                    }
+                    ui.close();
+                }
+                // дорожки области — по текущему региону выделения строк:
+                // «если юзер передумал, он может поменять/удалить/добавить»
+                if !self.last_band.as_ref().map(|b| b.2.is_empty()).unwrap_or(true)
+                    && ui.button(tr(k::tl::menu::AREA_LANES_FROM_BAND)).clicked()
+                {
+                    let lanes = self.last_band.clone().map(|b| b.2).unwrap_or_default();
+                    self.apply(Command::SetAreaLanes { name: a.name.clone(), lanes });
+                    ui.close();
+                }
+                ui.menu_button(tr(k::tl::menu::AREA_COLOR), |ui| {
+                    for (hex, col) in crate::theme::AREA_PALETTE {
+                        let (rect, resp) =
+                            ui.allocate_exact_size(egui::vec2(96.0, 16.0), egui::Sense::click());
+                        ui.painter().rect_filled(rect.shrink(2.0), 3.0, col);
+                        if resp.clicked() {
+                            let mut na = a.clone();
+                            na.color = Some(hex.to_string());
+                            self.apply_batch(vec![
+                                Command::RemoveArea { name: a.name.clone() },
+                                Command::AddArea(na),
+                            ]);
+                            ui.close();
+                        }
+                    }
+                });
+                if ui.button(tr(k::tl::menu::DELETE)).clicked() {
+                    self.apply(Command::RemoveArea { name: a.name.clone() });
                     ui.close();
                 }
             }

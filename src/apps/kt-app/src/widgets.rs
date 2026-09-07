@@ -207,6 +207,64 @@ impl ChainChanged {
     }
 }
 
+/// Потолок подписи слота в символах (Р.38 пп.7-8, дословно: «если в кроше
+/// Source указать сурс с длинным именем — то весь чейн разлетается по
+/// длинне» и «если накидать много крошек — то последняя надпись упирается
+/// в край»).
+///
+/// Причина была не в длине как таковой: полоса живёт в
+/// `horizontal_wrapped`, а он ставит `TextWrapMode::Wrap`, и подпись
+/// переносится ВНУТРИ СЕБЯ — в имени файла пробелов нет, поэтому по
+/// буквам. На новую строку крошка при этом целиком не уходила: она
+/// заранее ужималась под остаток ширины.
+pub const SLOT_NAME_CHARS: usize = 22;
+/// Хват подписи слота выше и ниже рисунка (правило 1 чек-листа).
+pub const SLOT_GRAB_PAD: f32 = 2.0;
+
+/// Имя, усечённое одной строкой с многоточием, а не перенесённое.
+///
+/// ОДНА функция на все места, где показывается имя пользователя: подпись
+/// слота, голова полосы, поле источника морфера. Разойдись они — половина
+/// мест снова начала бы разъезжаться, а это и была претензия пп.7-8.
+pub fn elided_name(
+    ui: &egui::Ui,
+    name: &str,
+    color: egui::Color32,
+    off: bool,
+) -> egui::WidgetText {
+    let mut job = egui::text::LayoutJob::single_section(
+        name.to_string(),
+        egui::TextFormat {
+            font_id: egui::TextStyle::Button.resolve(ui.style()),
+            color,
+            strikethrough: if off {
+                egui::Stroke::new(1.0, color)
+            } else {
+                egui::Stroke::NONE
+            },
+            ..Default::default()
+        },
+    );
+    // предел в ШИРИНЕ, а не «сколько влезет в остаток строки»: иначе
+    // последняя крошка снова ужимается под край вместо переноса целиком
+    job.wrap = egui::text::TextWrapping {
+        max_width: ui.fonts_mut(|f| {
+            let fid = egui::TextStyle::Button.resolve(ui.style());
+            f.glyph_width(&fid, 'M') * SLOT_NAME_CHARS as f32
+        }),
+        max_rows: 1,
+        overflow_character: Some('…'),
+        ..Default::default()
+    };
+    // ГОТОВАЯ галлея, а не job: виджет переложил бы job под доступную
+    // ширину строки и вернул бы перенос — то самое «разлетается»
+    egui::WidgetText::Galley(ui.fonts_mut(|f| f.layout_job(job)))
+}
+
+fn slot_text(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -> egui::WidgetText {
+    elided_name(ui, name, color, off)
+}
+
 /// Полоса цепочки: мастер-галка, слоты (галка вкл/выкл, имя, крестик),
 /// перестановка мышью, пикер и копипаст. `audio` — фильтр пикера.
 #[allow(clippy::too_many_arguments)]
@@ -246,16 +304,19 @@ pub fn chain_strip(
             if crate::app::hint_into(hover, ui.checkbox(h.on, ""), h.hint).changed() {
                 ch.head = true;
             }
-            let text = egui::RichText::new(h.label.clone()).color(crate::theme::MORPH_SLOT);
-            let text = if *h.on { text } else { text.weak().strikethrough() };
-            if crate::app::hint_into(
+            let text = slot_text(ui, &h.label, crate::theme::MORPH_SLOT, !*h.on);
+            let resp = crate::app::hint_into(
                 hover,
                 ui.selectable_label(*edit.selected == ChainSel::Head, text),
                 h.hint,
-            )
-            .clicked()
-            {
+            );
+            if resp.clicked() {
                 *edit.selected = ChainSel::Head;
+            }
+            // полное имя — в подсказке: усечённое видно, а какой файл
+            // подставлен, узнать иначе негде
+            if h.label.chars().count() > SLOT_NAME_CHARS {
+                resp.on_hover_text(h.label.clone());
             }
             if !edit.fx.is_empty() {
                 ui.label(crate::icons::CARET_RIGHT);
@@ -275,20 +336,41 @@ pub fn chain_strip(
                 edit.bypass[i] = !on;
                 ch.bypass = true;
             }
-            // имя слота — источник перетаскивания: порядок меняется мышью
+            // Имя слота: и выбор кликом, и источник перетаскивания.
+            //
+            // ОДНА интеракция `click_and_drag`, а не `dnd_drag_source`
+            // вокруг метки (Р.38 п.6, дословно: «в fx-chain виджетах
+            // проблематично активировать ввод параметров»). В egui 0.36
+            // `dnd_drag_source` регистрирует ПОВЕРХ содержимого
+            // прямоугольник с `Sense::drag()` и делает это ПОСЛЕ него —
+            // `hit_test` отдаёт `click: None`, и `.clicked()` внутри не
+            // наступает НИКОГДА. Идиома репозитория (bin_panel.rs,
+            // automation.rs, meters.rs, timeline.rs) — разбирать
+            // `drag_started()`/`clicked()` у одной интеракции.
             let slot_id = egui::Id::new((&id, "slot", i));
             let name = crate::fx_editor::fx_display_name(&edit.fx[i]);
-            let mut text = egui::RichText::new(name);
-            if off {
-                text = text.weak().strikethrough();
+            let text = slot_text(ui, name, ui.visuals().text_color(), off);
+            let drawn = ui.selectable_label(*edit.selected == ChainSel::Fx(i), text);
+            // хват шире рисунка (правило 1 чек-листа): в подпись высотой
+            // в строку целиться не должно быть нужно
+            let resp = crate::app::hint_into(
+                hover,
+                ui.interact(
+                    drawn.rect.expand2(egui::vec2(0.0, SLOT_GRAB_PAD)),
+                    slot_id,
+                    egui::Sense::click_and_drag(),
+                ),
+                tr(k::fx::SLOT_HINT),
+            );
+            if resp.clicked() {
+                *edit.selected = ChainSel::Fx(i);
             }
-            let resp = ui
-                .dnd_drag_source(slot_id, i, |ui| {
-                    if ui.selectable_label(*edit.selected == ChainSel::Fx(i), text).clicked() {
-                        *edit.selected = ChainSel::Fx(i);
-                    }
-                })
-                .response;
+            if resp.drag_started() {
+                egui::DragAndDrop::set_payload(ui.ctx(), i);
+            }
+            if name.chars().count() > SLOT_NAME_CHARS {
+                resp.clone().on_hover_text(name.to_string());
+            }
             // отпустили чужой слот над этим — переставляем
             if let Some(from) = resp.dnd_release_payload::<usize>()
                 && *from != i

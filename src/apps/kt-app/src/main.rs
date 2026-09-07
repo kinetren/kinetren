@@ -20,6 +20,8 @@ mod icons;
 #[cfg(test)]
 mod layout_tests;
 mod meters;
+#[cfg(test)]
+mod reach_tests;
 mod morpher_editor;
 mod render_dialog;
 mod theme;

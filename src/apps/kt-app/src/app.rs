@@ -124,6 +124,8 @@ pub struct KtApp {
     pub marker_edit_focus: bool,
     /// Активный инлайн-ввод имени дорожки (п.2 р.10).
     pub lane_edit: Option<LaneEdit>,
+    pub area_edit: Option<AreaEdit>,
+    pub area_edit_focus: bool,
     /// Запросить фокус полю имени дорожки.
     pub lane_edit_focus: bool,
     /// Ввод тайм-кода в тулбаре (п.4 р.10): Some — поле открыто.
@@ -424,6 +426,8 @@ impl KtApp {
             marker_edit: None,
             marker_edit_focus: false,
             lane_edit: None,
+            area_edit: None,
+            area_edit_focus: false,
             lane_edit_focus: false,
             tc_edit: None,
             tc_edit_focus: false,
@@ -560,6 +564,8 @@ impl KtApp {
             marker_edit: None,
             marker_edit_focus: false,
             lane_edit: None,
+            area_edit: None,
+            area_edit_focus: false,
             lane_edit_focus: false,
             tc_edit: None,
             tc_edit_focus: false,
@@ -2798,9 +2804,46 @@ impl KtApp {
     /// аудио, то есть «всё, что ниже» было бы пусто, — а пользователь
     /// просил ровно обратного: «треки морфера по умолчанию создаём
     /// сверху над всеми».
+    /// Где встанет новый морф-блок: ЕСТЬ РЕГИОН — по региону, нет — от
+    /// курсора на 1.5 с (решение п.3 Р.38, дословно «есть регион — по
+    /// региону; нет — от курсора»). Правило одно на все способы создания,
+    /// иначе меню и кнопка разойдутся, как жест M с пунктом «Marker here»
+    /// (правило 17 чек-листа).
+    pub fn morph_span(&self) -> (Tick, Tick) {
+        match self.model.project().region {
+            Some(r) if (r.end - r.start).0 >= kt_model::MIN_CLIP_DURATION.0 => {
+                (r.start, r.end - r.start)
+            }
+            _ => (Tick(self.player.transport.playhead().0.max(0)), Tick(90 * 1500)),
+        }
+    }
+
+    /// Морфер на УЖЕ СУЩЕСТВУЮЩУЮ морф-дорожку — симметрично
+    /// `add_camera_at_playhead` (претензия п.2 Р.38: «я не могу никак
+    /// добавить морфер-событие на морфер трек»).
+    pub fn add_morpher_at(&mut self, lane: u32) {
+        let id = MorphId(self.next_morph_id());
+        let (start, duration) = self.morph_span();
+        let ev = MorpherEvent {
+            id,
+            lane,
+            start,
+            duration,
+            targets: kt_model::MorphTargets::Below,
+            patch: kt_model::MorphPatch::default(),
+            timed: true,
+            enabled: true,
+        };
+        if self.apply(Command::AddMorpher(ev)) {
+            self.selected_morph = Some(id);
+            self.selected.clear();
+            self.open_morph_editor(id);
+        }
+    }
+
     pub fn add_morph_layer(&mut self) {
         let id = MorphId(self.next_morph_id());
-        let at = self.player.transport.playhead();
+        let (start, duration) = self.morph_span();
         let mut cmds = vec![Command::InsertMorphLane { at: 0 }];
         // порядок строк: новая морф-строка наверх, остальные как были
         let mut order: Vec<(LaneKind, u32)> = self
@@ -2815,8 +2858,8 @@ impl KtApp {
         cmds.push(Command::AddMorpher(MorpherEvent {
             id,
             lane: 0,
-            start: Tick(at.0.max(0)),
-            duration: Tick(90 * 1500), // v1: 1500 мс
+            start,
+            duration,
             targets: kt_model::MorphTargets::Below,
             patch: kt_model::MorphPatch::default(),
             timed: true,
@@ -4546,6 +4589,15 @@ pub struct MarkerEdit {
 pub struct LaneEdit {
     pub kind: kt_model::LaneKind,
     pub lane: u32,
+    pub buf: String,
+}
+
+/// Переименование именованной области (Р.38 п.1). Отдельно от `LaneEdit`:
+/// у области ключ — ИМЯ, и старое имя надо помнить, чтобы команда знала,
+/// что именно переименовывают.
+#[derive(Clone)]
+pub struct AreaEdit {
+    pub name: String,
     pub buf: String,
 }
 

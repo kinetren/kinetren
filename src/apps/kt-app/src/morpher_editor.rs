@@ -102,7 +102,19 @@ impl KtApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::mrph::NEW_SOURCE));
-                    ui.strong(short_name(&cur_name));
+                    // то же усечение, что в полосе: имя файла тут ровно
+                    // то же самое, и без предела оно растягивало окно
+                    let nm = short_name(&cur_name);
+                    let txt = crate::widgets::elided_name(
+                        ui,
+                        &nm,
+                        ui.visuals().strong_text_color(),
+                        false,
+                    );
+                    let r = ui.label(txt);
+                    if nm.chars().count() > crate::widgets::SLOT_NAME_CHARS {
+                        r.on_hover_text(nm.clone());
+                    }
                     if let Some(id) = crate::widgets::media_picker(
                         ui,
                         ("morph_src", ed.id.0),

@@ -107,9 +107,11 @@ delete_camera_n = "删除轨道（{0} 台摄像机）"
 insert_camera_below = "在下方插入摄像机轨道"
 add_camera = "添加摄像机轨道"
 add_camera_here = "在播放头处添加摄像机"
+add_morpher_here = "在此添加变形器"
 
 # Таймлайн: подсказки зон (правый низ статусбара).
 [tl.hint]
+area = "区域：边缘改长度，右键重命名、改色、删除"
 transition = "交叉淡化：拖边缘调宽度，拖切点滚动"
 clamped = "无法继续：本轨道上有事件挡路（已高亮）"
 clamped_far_left = "无法继续：挡路的事件在左侧 {0} 秒处，不在视野内"
@@ -125,6 +127,8 @@ volume = "片段音量：拖动，双击 — 0 dB"
 fade_handle = "拖动顶角——在片段这一侧添加淡化"
 level = "上下拖动——该片段的视频不透明度"
 clip = "事件：拖动 — 移动（Ctrl — 关闭吸附），Ctrl+单击 — 选择，双击 — FX，右键 — 菜单，S — 切分"
+morpher = "变形器：拖动移动，边缘改长度，右键菜单，双击打开窗口"
+camera = "摄像机：拖动移动，边缘改长度，右键菜单，双击查看属性"
 empty = "左键 — 播放头，拖动 — 区间，Ctrl+拖动 — 框选事件；滚轮 — 滚动，Ctrl — 缩放，Shift — 轨道"
 
 # Таймлайн: подписи на morph-событиях.
@@ -134,12 +138,17 @@ clips = "事件：{0}"
 
 # Таймлайн: подсказки полей ввода.
 [tl.field]
+area_name = "区域名称"
 marker_name_new = "标记名称（可留空）"
 marker_name = "标记名称"
 lane_name = "轨道名称"
 
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
+area_title = "区域：{0}"
+area_from_region = "按选区设定范围"
+area_lanes_from_band = "按上次框选设定轨道"
+area_color = "颜色"
 clear_range = "移除范围"
 region_from_event = "按此事件设区间（Shift+双击）"
 transition_props = "转场属性…"
@@ -321,6 +330,7 @@ slowedreverb = "slowed reverb warp 减速 混响 速度 回声"
 
 # Редактор FX клипа.
 [fx]
+slot_hint = "链槽：单击选择，拖动排序，叉号删除"
 frames = "帧："
 frames_nearest = "最近帧"
 frames_blend = "混合"

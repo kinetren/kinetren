@@ -17,7 +17,7 @@ use egui_kittest::Harness;
 const W: f32 = 1440.0;
 const H: f32 = 860.0;
 
-fn harness() -> Harness<'static, KtApp> {
+pub fn harness() -> Harness<'static, KtApp> {
     harness_lang(crate::i18n::Lang::Ru)
 }
 
