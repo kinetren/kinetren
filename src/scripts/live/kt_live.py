@@ -309,6 +309,15 @@ class Live:
         if mods:
             self._mods(mods, False)
 
+    def right_click(self, x, y):
+        """ПКМ: цель контекст-меню и само меню. Отдельный метод, потому что
+        `click` жмёт кнопку 1, а меню открывает третья."""
+        self.focus()
+        probe.move(x, y)
+        probe.button(True, 3)
+        probe.button(False, 3)
+        time.sleep(0.45)
+
     def double_click(self, x, y):
         """Двойной клик: у egui это ВРЕМЕННОЙ жест (два клика ближе 0.3 с),
         поэтому между ними нельзя ни поднимать окно, ни спать по 0.35 с —
