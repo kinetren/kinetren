@@ -183,8 +183,12 @@ def check():
             bad(f"«Фишка фишки» короче {GIMMICK_MIN} символов ({len(gimmick)}) — "
                 "это пересказ, а не находка")
         feedback = sec.get("Что говорят пользователи", "")
-        if not (re.search(r"^>", feedback, re.M) and "http" in feedback):
-            bad("«Что говорят пользователи»: нужна дословная цитата (строка с >) и ссылка")
+        has_quote = re.search(r"^>", feedback, re.M) and "http" in feedback
+        # Честный пробел лучше выдуманной цитаты: площадка бывает недоступна.
+        gap = re.search(r"НЕТ ЦИТАТ:\s*(.{80,})", feedback, re.S)
+        if not (has_quote or gap):
+            bad("«Что говорят пользователи»: нужна дословная цитата (строка с >) "
+                "и ссылка, либо пометка «НЕТ ЦИТАТ:» с объяснением, что искали")
         fits = sec.get("Как ложится на Kinotrain", "")
         if "src/" not in fits:
             bad("«Как ложится на Kinotrain»: нет ни одного пути вида src/… — "
