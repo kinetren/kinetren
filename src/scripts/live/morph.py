@@ -24,7 +24,7 @@ from kt_live import Live, project_with_clips, require_tools  # noqa: E402
 SEC = 90000
 
 
-def with_layer(dest, clips, win_s, win_len_s):
+def with_layer(dest, clips, win_s, win_len_s, strength=None):
     """Проект с клипом и морфером-слоем НАД ним: окно [win_s, +win_len_s),
     в патче — Edges (сильно меняет яркость, видно на скриншоте)."""
     project_with_clips(dest, clips)
@@ -35,16 +35,17 @@ def with_layer(dest, clips, win_s, win_len_s):
     # морф-строка СВЕРХУ: умолчание кладёт её вниз, и «всё, что ниже»
     # было бы пусто (находка 3 Р.35)
     kt["lane_order"] = [["morph", 0], ["video", 0], ["audio", 0]]
-    kt["morphers"] = [
-        {
-            "id": 1,
-            "lane": 0,
-            "start": int(win_s * SEC),
-            "duration": int(win_len_s * SEC),
-            # targets по умолчанию — «всё, что ниже», в файл не пишется
-            "patch": {"video_fx": [{"kind": "edges", "threshold": 24}]},
-        }
-    ]
+    m = {
+        "id": 1,
+        "lane": 0,
+        "start": int(win_s * SEC),
+        "duration": int(win_len_s * SEC),
+        # targets по умолчанию — «всё, что ниже», в файл не пишется
+        "patch": {"video_fx": [{"kind": "edges", "threshold": 24}]},
+    }
+    if strength is not None:
+        m["strength"] = strength
+    kt["morphers"] = [m]
     # версия конверта: до v4 морфер читается как «вне времени» (миграция)
     kt["v"] = 4
     with open(dest, "w") as f:
@@ -113,5 +114,42 @@ def main(out):
         return app.done()
 
 
+def strength_probe(out):
+    """Сила слоя (Р.38 п.12) в НАСТОЯЩЕМ окне: половинная сила обязана дать
+    картинку МЕЖДУ «без слоя» и «слой целиком».
+
+    Своя сессия на каждую силу: сила живёт в файле, а перечитывать проект
+    на лету сценарий не умеет — четыре Live в одном сценарии когда-то
+    убили дисплей (Р.37), поэтому сессия ровно одна на прогон."""
+    vals = {}
+    for tag, strength in (("off", 0.0), ("half", 0.5), ("full", 1.0)):
+        proj = with_layer(
+            os.path.join(out, f"morph-{tag}.otio"),
+            [(0.0, 8.0, "synth:Ramp")],
+            win_s=3.0,
+            win_len_s=3.0,
+            strength=strength,
+        )
+        with Live(f"morph-{tag}", out, project=proj) as app:
+            app.click(app.x_at(int(4.5 * SEC)), app.ruler_y())
+            app.shot(tag)
+            vals[tag] = app.brightness(app.preview_center())
+            app.expect(True, f"сила {strength}: яркость {vals[tag]:.1f}")
+            rc = app.done()
+        if rc:
+            return rc
+    print(f"   яркости: off={vals['off']:.1f} half={vals['half']:.1f} full={vals['full']:.1f}")
+    if not (vals["full"] < vals["half"] < vals["off"]):
+        print(
+            "   ПРОВАЛ половинная сила обязана быть МЕЖДУ «без слоя» и «слой целиком»: "
+            f"{vals}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else "."))
+    d = sys.argv[1] if len(sys.argv) > 1 else "."
+    rc = main(d)
+    sys.exit(rc or strength_probe(d))
