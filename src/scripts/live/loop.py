@@ -47,20 +47,21 @@ def main(out):
         app.shot("looping")
 
         # 2. клик ПРАВЕЕ региона во время игры — играем то, что под курсором
+        before_right = app.pixel(*app.preview_center())
         app.click(app.x_at(11 * SEC), app.ruler_y())
         moved = app.wait_playhead(lambda t: t > 11 * SEC, "курсор пошёл от места клика")
         app.expect(
             all(t > 6 * SEC for t in moved[1:]),
             f"курсор НЕ вернулся в регион: {moved[:6]}",
         )
-        r, g, b = app.pixel(*app.preview_center())
+        r, g, b = app.pixel_settled(app.preview_center(), differs_from=before_right)
         app.expect(b > r + 40, f"справа от региона играет синий клип: RGB {r},{g},{b}")
         app.shot("after-click-right")
 
         # 3. клик ЛЕВЕЕ региона — то же самое зеркально
         app.click(app.x_at(1 * SEC), app.ruler_y())
         app.wait_playhead(lambda t: t > 1 * SEC, "курсор пошёл слева")
-        r, g, b = app.pixel(*app.preview_center())
+        r, g, b = app.pixel_settled(app.preview_center(), differs_from=(r, g, b))
         app.expect(r > b + 40, f"слева от региона играет красный клип: RGB {r},{g},{b}")
         app.key("space")
         app.shot("after-click-left")
