@@ -732,6 +732,20 @@ impl KtApp {
         self.dirty_ui = true;
     }
 
+    /// Видимое окно главного таймлайна в тиках (Р.38 п.14): по нему
+    /// график автоматизации строит ось, пока не сняли замок. Одна
+    /// функция на все окна с кривыми — иначе у слота, камеры и перехода
+    /// зум разъедется, как когда-то разъехались их редакторы ключей.
+    pub fn tl_view(&self) -> (kt_time::Tick, kt_time::Tick) {
+        let w = self
+            .tl_geom
+            .as_ref()
+            .map(|g| g.rect.width() as f64 * g.tpp)
+            .unwrap_or(10.0 * 90_000.0);
+        let s = self.view_start;
+        (kt_time::Tick(s.max(0.0) as i64), kt_time::Tick((s + w) as i64))
+    }
+
     /// Снимок вьюпорта для записи в проект (п.13).
     fn ui_state(&self) -> kt_model::UiState {
         kt_model::UiState {

@@ -41,6 +41,14 @@ REQUIRED_FIELDS = ["id", "title", "status", "priority", "cost", "category",
 GIMMICK_MIN = 200
 STALE_DAYS = 548  # 18 месяцев
 
+# Вторая волна (Р.39, категория help/). Вывод «нам нужна справка» известен ДО
+# разведки, поэтому вердикт получает форму, а его обещание — адрес. Без этого
+# 33 заметки написали бы одно и то же, и волна не стоила бы прочтения.
+HELP_CAT = "help"
+VERDICT_SHAPES = ("ТЕСТ:", "ПРОВЕРКА:", "ОТВЕРГНУТО:", "УЖЕ-ЕСТЬ:", "ОТЛОЖЕНО:")
+VERDICT_TAIL_MIN = 60
+TEMPLATE = FEATURES / "_template.md"
+
 
 def parse_front(text):
     """Frontmatter → dict. Значение: список [a, b], null, либо строка."""
@@ -96,7 +104,8 @@ def read_categories():
 
 
 def read_editor_keys():
-    return set(re.findall(r"^\|\s*`([a-z0-9-]+)`\s*\|", EDITORS.read_text(encoding="utf-8"), re.M))
+    # Точка законна: ключ несёт версию (blender-5.2, vscode-1.136, jetbrains-2026.2).
+    return set(re.findall(r"^\|\s*`([a-z0-9.-]+)`\s*\|", EDITORS.read_text(encoding="utf-8"), re.M))
 
 
 def load_notes():
@@ -109,6 +118,7 @@ def check():
     cats = read_categories()
     editor_keys = read_editor_keys()
     seen_ids = {}
+    help_promises = {}
     today = datetime.date.today()
 
     if not cats:
@@ -210,7 +220,53 @@ def check():
             except ValueError:
                 bad(f"checked=«{front.get('checked')}» не дата в формате ГГГГ-ММ-ДД")
 
+        # --- вторая волна: категория help/ (Р.39) --------------------------
+        if len(parts) == 3 and parts[0] == HELP_CAT:
+            verdict = sec.get("Вердикт", "")
+            shaped = [l.strip() for l in verdict.splitlines()
+                      if l.strip().startswith(VERDICT_SHAPES)]
+            if not shaped:
+                bad("«Вердикт»: нужна строка вида ТЕСТ:/ПРОВЕРКА:/ОТВЕРГНУТО:/"
+                    "УЖЕ-ЕСТЬ:/ОТЛОЖЕНО: — «нам нужна справка» выводом не считается")
+            else:
+                head = shaped[0]
+                kind, tail = head.split(":", 1)
+                if len(tail.strip()) < VERDICT_TAIL_MIN:
+                    bad(f"«Вердикт»: после «{kind}:» меньше {VERDICT_TAIL_MIN} символов")
+                m = re.search(r"\bt\d+[a-z]?\b"
+                              r"|(?:src|site|docs)/[\w./-]+"
+                              r"|--check\b[\w -]*"
+                              r"|\b\w+::\w+\b", head)
+                if not m:
+                    bad("«Вердикт»: обещание не адресуемо — назови тест, путь "
+                        "или клаузулу --check")
+                else:
+                    help_promises.setdefault(m.group(0), []).append(str(rel))
+
+            # Спор про всплывающие подсказки разрешён (Р.39), но только глядя
+            # в глаза стражу: t83 держит запрет, правило 10 — его формулировка.
+            if "tooltip_delay" in body or "Order::Tooltip" in body:
+                if "t83" not in fits:
+                    bad("спор про всплывающие подсказки без разбора t83 в «Как ложится» "
+                        "— регресс-страж не назван")
+                if 10 not in [int(x) for x in (front.get("ui_rules") or [])
+                              if str(x).isdigit()]:
+                    bad("спор про всплывающие подсказки без ui_rules: [10] в шапке")
+
         notes.append((front, rel))
+
+    # Обещание, повторённое дважды, — это дублированный вывод.
+    for token, where in sorted(help_promises.items()):
+        if len(where) > 1:
+            errors.append(f"help/: обещание «{token}» стоит ПЕРВЫМ в {len(where)} "
+                          f"заметках ({', '.join(where)}) — вывод дублируется")
+
+    # _template.md исключён из load_notes() (имя на «_»), поэтому его слаги
+    # однажды протухли молча и сломали бы каждую скопированную заметку.
+    tfront, _ = parse_front(TEMPLATE.read_text(encoding="utf-8"))
+    for e in (tfront or {}).get("editors") or []:
+        if e not in editor_keys:
+            errors.append(f"_template.md: редактор «{e}» не объявлен в _editors.md")
 
     # Таблица покрытия в README не должна врать.
     actual = {}

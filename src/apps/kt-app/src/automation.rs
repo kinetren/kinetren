@@ -32,7 +32,7 @@ pub enum AutoMode {
 }
 
 /// Состояние виджета (живёт в окне, не в модели).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AutoView {
     pub mode: AutoMode,
     /// Выбранный ключ: (кривая, индекс).
@@ -41,6 +41,14 @@ pub struct AutoView {
     pub drag: Option<(usize, usize)>,
     /// Кривая, в которую кладёт ключ клик по пустому месту графика.
     pub active: usize,
+    /// Ось времени графика СВЯЗАНА с окном главного таймлайна (Р.38 п.14,
+    /// дословно: «в таймлайне автоматизации я не понимаю как зазумится»).
+    /// По умолчанию включено — решение пользователя: зум один на оба, и
+    /// специально настраивать программу, чтобы она вела себя нормально, не
+    /// нужно (правило 4 чек-листа). Колесо над графиком замок снимает.
+    pub linked: bool,
+    /// Собственное окно оси (домен кривой), когда замок снят.
+    pub win: Option<(i64, i64)>,
     /// Незакоммиченный ввод времени в таблице: (кривая, ключ, секунды).
     /// Пока строка редактируется, ключи НЕ пересортировываются — иначе
     /// строка уезжает из-под рук на каждой цифре.
@@ -49,6 +57,40 @@ pub struct AutoView {
     /// Без заморозки шкала пересчитывалась бы по самим же ключам и
     /// «дышала» под курсором.
     pub drag_win: Option<(usize, f64, f64)>,
+}
+
+impl Default for AutoView {
+    fn default() -> Self {
+        AutoView {
+            mode: AutoMode::default(),
+            sel: None,
+            drag: None,
+            active: 0,
+            // замок ВКЛЮЧЁН по умолчанию (решение пользователя, п.14)
+            linked: true,
+            win: None,
+            t_edit: None,
+            drag_win: None,
+        }
+    }
+}
+
+impl AutoView {
+    /// Видимое окно оси времени в домене кривой. Связанный график
+    /// показывает то же, что главный таймлайн; отвязанный — своё окно.
+    /// И то и другое клампится диапазоном носителя: за его пределами
+    /// кривой нет, и пустое поле только путает.
+    pub fn axis(&self, ctx: &AutoCtx<'_>) -> (i64, i64) {
+        let (r0, r1) = (ctx.range.0.0, ctx.range.1.0.max(ctx.range.0.0 + 1));
+        let (a, b) = match (self.linked, self.win) {
+            (true, _) => (ctx.view.0.0, ctx.view.1.0),
+            (false, Some(w)) => w,
+            (false, None) => (r0, r1),
+        };
+        let (a, b) = (a.clamp(r0, r1), b.clamp(r0, r1));
+        // окно уже кадра бессмысленно и делает деление на ноль
+        if b - a < ctx.frame_step.max(1) { (r0, r1) } else { (a, b) }
+    }
 }
 
 /// Окно значений кривой: замороженное на время драга или посчитанное по
@@ -70,8 +112,11 @@ fn win_of(c: &ParamCurve, spec: &ParamSpec, view: &AutoView, ci: usize) -> (f64,
 pub struct AutoCtx<'a> {
     /// Спеки параметров носителя (min/max/шаг/единица).
     pub specs: &'a [ParamSpec],
-    /// Видимый диапазон оси времени В ДОМЕНЕ КРИВОЙ.
+    /// ПОЛНЫЙ диапазон оси времени в домене кривой (границы носителя).
     pub range: (Tick, Tick),
+    /// Окно ГЛАВНОГО таймлайна в домене кривой — то, что график
+    /// показывает при включённом замке (Р.38 п.14).
+    pub view: (Tick, Tick),
     /// Домен кривой → тик таймлайна (мини-таймлайн двигает главный курсор).
     pub to_timeline: &'a dyn Fn(Tick) -> Tick,
     /// Тик таймлайна → домен кривой (позиция курсора на графике).
@@ -92,6 +137,17 @@ impl AutoCtx<'_> {
     }
 }
 
+/// Окно главного таймлайна в домене кривой. Переводится ТЕМ ЖЕ
+/// отображением, что и всё остальное; у реверснутого носителя концы
+/// меняются местами — поэтому min/max, а не «первый-второй».
+pub fn view_in_curve(
+    to_curve: &dyn Fn(Tick) -> Tick,
+    tl_view: (Tick, Tick),
+) -> (Tick, Tick) {
+    let (a, b) = (to_curve(tl_view.0).0, to_curve(tl_view.1).0);
+    (Tick(a.min(b)), Tick(a.max(b)))
+}
+
 /// Контекст для слота эффекта на событии — прежнее поведение виджета
 /// одной строкой (домен = материал клипа).
 pub fn clip_ctx<'a>(
@@ -100,10 +156,12 @@ pub fn clip_ctx<'a>(
     frame_step: i64,
     to_tl: &'a dyn Fn(Tick) -> Tick,
     to_mat: &'a dyn Fn(Tick) -> Tick,
+    tl_view: (Tick, Tick),
 ) -> AutoCtx<'a> {
     AutoCtx {
         specs: fx.param_specs(),
         range: (clip.source_in, Tick(clip.source_in.0 + clip.duration.0.max(1))),
+        view: view_in_curve(to_mat, tl_view),
         to_timeline: to_tl,
         to_curve: to_mat,
         frame_step,
@@ -121,7 +179,7 @@ fn secs(t: Tick) -> f64 {
     t.0 as f64 / 90_000.0
 }
 
-fn curve_color(i: usize) -> egui::Color32 {
+pub fn curve_color(i: usize) -> egui::Color32 {
     const C: [egui::Color32; 6] = [
         egui::Color32::from_rgb(120, 180, 255),
         egui::Color32::from_rgb(255, 190, 120),
@@ -189,11 +247,130 @@ pub fn draw(
     if curves.is_empty() {
         return out;
     }
+    // активная кривая могла исчезнуть (удалили параметр) — иначе клик по
+    // пустому месту молча ушёл бы в никуда
+    view.active = view.active.min(curves.len() - 1);
+    toolbar(ui, ctx, curves, view, playhead, &mut out, hover);
     match view.mode {
         AutoMode::Graph => graph(ui, id, ctx, curves, view, playhead, &mut out, hover),
         AutoMode::Table => table(ui, id, ctx, curves, view, &mut out),
     }
     out
+}
+
+/// Кнопки управления элементами графика (Р.38 п.18, дословно: «еще не
+/// хватает кнопок управления элементами таймлайна автоматизации»).
+///
+/// Живут В САМОМ ВИДЖЕТЕ, а не в окне FX: их получают все носители кривых
+/// разом — слот эффекта, камера, переход, морфер. Именно так разъехались
+/// slowed с pan3d, когда у каждого был свой редактор ключей (п.221).
+#[allow(clippy::too_many_arguments)]
+fn toolbar(
+    ui: &mut egui::Ui,
+    ctx: &AutoCtx<'_>,
+    curves: &mut [ParamCurve],
+    view: &mut AutoView,
+    playhead: Tick,
+    out: &mut AutoResult,
+    hover: &mut Option<String>,
+) {
+    ui.horizontal(|ui| {
+        // выбор активной кривой — ЦВЕТОМ её линии на графике: иначе
+        // «добавил второй параметр, а редактируется первый» (п.17). До
+        // Р.38 новый параметр не становился активным вовсе.
+        for (ci, c) in curves.iter().enumerate() {
+            let name = crate::widgets::param_label(&c.param);
+            let text = egui::RichText::new(name).color(curve_color(ci));
+            if crate::app::hint_into(
+                hover,
+                ui.selectable_label(view.active == ci, text),
+                tr(k::fx::ACTIVE_CURVE_HINT),
+            )
+            .clicked()
+            {
+                view.active = ci;
+                view.sel = None;
+            }
+        }
+        ui.separator();
+        // ---- ключи ----
+        let ph = (ctx.to_curve)(playhead);
+        if crate::app::hint_into(
+            hover,
+            ui.small_button(crate::icons::PLUS),
+            tr(k::fx::KEY_ADD_HINT),
+        )
+        .clicked()
+        {
+            let c = &mut curves[view.active];
+            let v = kt_model::curve_value(&c.keys, c.ease, ph);
+            c.keys.retain(|k| k.t != ph);
+            c.keys.push(kt_model::AutoKey { t: ph, v });
+            c.keys.sort_by_key(|k| k.t.0);
+            view.sel = c.keys.iter().position(|k| k.t == ph).map(|ki| (view.active, ki));
+            out.changed = true;
+        }
+        // прыжок по ключам активной кривой двигает ГЛАВНЫЙ курсор: «сразу
+        // видно, к чему относится»
+        for (icon, fwd, hint) in [
+            (crate::icons::SKIP_BACK, false, tr(k::fx::KEY_PREV_HINT)),
+            (crate::icons::SKIP_FWD, true, tr(k::fx::KEY_NEXT_HINT)),
+        ] {
+            if crate::app::hint_into(hover, ui.small_button(icon), hint).clicked() {
+                let c = &curves[view.active];
+                let next = if fwd {
+                    c.keys.iter().position(|k| k.t.0 > ph.0)
+                } else {
+                    c.keys.iter().rposition(|k| k.t.0 < ph.0)
+                };
+                if let Some(ki) = next {
+                    view.sel = Some((view.active, ki));
+                    out.seek = Some((ctx.to_timeline)(c.keys[ki].t));
+                }
+            }
+        }
+        let has_sel = view
+            .sel
+            .is_some_and(|(c, k)| curves.get(c).is_some_and(|c| k < c.keys.len()));
+        if crate::app::hint_into(
+            hover,
+            ui.add_enabled(has_sel, egui::Button::new(crate::icons::TRASH).small()),
+            tr(k::fx::KEY_DEL_HINT),
+        )
+        .clicked()
+            && let Some((ci, ki)) = view.sel
+        {
+            curves[ci].keys.remove(ki);
+            view.sel = None;
+            out.changed = true;
+        }
+        ui.separator();
+        // ---- ось времени (п.14) ----
+        if crate::app::hint_into(
+            hover,
+            ui.selectable_label(view.linked, crate::icons::LOCK),
+            tr(k::fx::AXIS_LINK_HINT),
+        )
+        .clicked()
+        {
+            view.linked = !view.linked;
+            if !view.linked {
+                // снимая замок, оставляем ТО ЖЕ окно, что было видно:
+                // «ничего не скачет» (правило 3 чек-листа)
+                view.win = Some(view.axis(ctx));
+            }
+        }
+        if crate::app::hint_into(
+            hover,
+            ui.small_button(crate::icons::ARROWS_OUT),
+            tr(k::fx::AXIS_FIT_HINT),
+        )
+        .clicked()
+        {
+            view.linked = false;
+            view.win = None;
+        }
+    });
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -214,9 +391,43 @@ fn graph(
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 3.0, egui::Color32::from_gray(18));
 
-    // ось X — материал события; шкала и снап взяты у таймлайна проекта
-    let (m0, m1) = (ctx.range.0.0, ctx.range.1.0);
+    // ось X — ВИДИМОЕ окно (замок к таймлайну или своё); шкала и снап
+    // взяты у таймлайна проекта
+    let (m0, m1) = view.axis(ctx);
     let tpp = (m1 - m0) as f64 / rect.width().max(1.0) as f64;
+
+    // колесо над графиком: скролл — пан, Ctrl — зум с якорем под
+    // указателем. Те же жесты, что на главном таймлайне (правило 17:
+    // парные способы ведут себя одинаково), и любой из них снимает замок.
+    if resp.hovered() {
+        let (scroll, zoom) = ui.input(|i| {
+            let mut dx = 0.0f32;
+            let mut z = 1.0f32;
+            for e in &i.events {
+                if let egui::Event::MouseWheel { delta, modifiers, .. } = e {
+                    if modifiers.ctrl || modifiers.command {
+                        z *= (1.0 + delta.y * 0.15).clamp(0.2, 5.0);
+                    } else {
+                        dx += delta.x + delta.y;
+                    }
+                }
+            }
+            (dx, z)
+        });
+        if scroll != 0.0 || zoom != 1.0 {
+            let anchor = ui
+                .input(|i| i.pointer.hover_pos())
+                .map(|p| ((p.x - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0) as f64)
+                .unwrap_or(0.5);
+            let span = (m1 - m0) as f64;
+            let at = m0 as f64 + span * anchor;
+            let ns = (span / zoom as f64).max(ctx.frame_step.max(1) as f64);
+            let shift = -scroll as f64 * tpp * 8.0;
+            let a = at - ns * anchor + shift;
+            view.linked = false;
+            view.win = Some((a.round() as i64, (a + ns).round() as i64));
+        }
+    }
     let x_of = |t: i64| rect.left() + ((t - m0) as f64 / tpp) as f32;
     let t_of = |x: f32| m0 + ((x - rect.left()) as f64 * tpp) as i64;
     let plot = egui::Rect::from_min_max(

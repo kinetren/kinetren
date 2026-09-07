@@ -333,6 +333,13 @@ slowedreverb = "ralentizado reverb warp velocidad eco slowed"
 
 # Редактор FX клипа.
 [fx]
+active_curve_hint = "Curva activa: al hacer clic en el gráfico vacío se añade una clave"
+key_add_hint = "Añadir una clave en la curva activa bajo el cursor"
+key_prev_hint = "Clave anterior de la curva activa"
+key_next_hint = "Clave siguiente de la curva activa"
+key_del_hint = "Eliminar la clave seleccionada"
+axis_link_hint = "Vincular el eje de tiempo a la línea de tiempo"
+axis_fit_hint = "Mostrar todo el rango"
 slot_hint = "Ranura de la cadena: clic selecciona, arrastra reordena"
 frames = "Fotogramas:"
 frames_nearest = "más cercano"

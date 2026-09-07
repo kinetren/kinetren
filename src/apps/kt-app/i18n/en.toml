@@ -333,6 +333,13 @@ slowedreverb = "slowed reverb warp speed echo"
 
 # Редактор FX клипа.
 [fx]
+active_curve_hint = "Active curve: clicking empty graph space adds a key to it"
+key_add_hint = "Add a key on the active curve at the playhead"
+key_prev_hint = "Previous key of the active curve (moves the playhead)"
+key_next_hint = "Next key of the active curve (moves the playhead)"
+key_del_hint = "Delete the selected key"
+axis_link_hint = "Link the time axis to the timeline; scrolling the graph unlinks it"
+axis_fit_hint = "Fit the whole range"
 slot_hint = "Chain slot: click selects, drag reorders, cross removes"
 frames = "Frames:"
 frames_nearest = "nearest"

@@ -143,6 +143,7 @@ impl KtApp {
                         changed = true;
                     }
                 });
+                let tl_view = self.tl_view();
                 // домен кривых камеры — тики ОТ НАЧАЛА события
                 let start = c.start;
                 let to_tl = move |t: Tick| Tick(start.0 + t.0);
@@ -150,6 +151,7 @@ impl KtApp {
                 let actx = crate::automation::AutoCtx {
                     specs: c.cam.param_specs(),
                     range: (Tick(0), Tick(c.duration.0.max(1))),
+                    view: crate::automation::view_in_curve(&to_cur, tl_view),
                     to_timeline: &to_tl,
                     to_curve: &to_cur,
                     frame_step,

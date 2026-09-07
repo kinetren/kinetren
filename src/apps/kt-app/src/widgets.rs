@@ -100,21 +100,107 @@ pub fn param_value(ui: &mut egui::Ui, spec: &ParamSpec, v: &mut f64) -> egui::Re
     ui.add(dv)
 }
 
-/// Строка «подпись + значение» прямо по эффекту: чтение и запись идут
-/// через `get_param`/`set_param`, поэтому кламп и округление те же, что у
-/// автоматизации. true — значение изменилось.
-pub fn param_row<P: HasParams + ?Sized>(
+/// Связь полей параметров с кривыми (Р.38 пп.15-16).
+///
+/// Претензии дословно: «при нажатии на ключ — чтобы значения которые
+/// прописаны в полях — имели связь с ключем» и «ощущение что у эффектов
+/// есть какое-то отдельное "дефолтное" состояние значений».
+///
+/// Второе — следствие первого: при живой кривой поле правило БАЗУ, а
+/// движок брал значение кривой. База оставалась невидимой, всплывала при
+/// снятии кривой и выглядела как «отдельное состояние».
+pub struct CurveBind<'a> {
+    pub curves: &'a mut Vec<kt_model::ParamCurve>,
+    /// Выбранный ключ виджета автоматизации: (кривая, индекс).
+    pub sel: Option<(usize, usize)>,
+    /// Позиция курсора В ДОМЕНЕ КРИВОЙ — сюда садится ключ, когда ни один
+    /// не выбран.
+    pub at: kt_time::Tick,
+}
+
+impl CurveBind<'_> {
+    fn index_of(&self, param: &str) -> Option<usize> {
+        self.curves.iter().position(|c| c.param == param)
+    }
+}
+
+/// Та же строка, но знающая про кривые.
+///
+/// Правило одно: **поле правит ровно то, что показывает.**
+/// - кривой нет → база эффекта, как раньше;
+/// - кривая есть и выбран ЕЁ ключ → этот ключ;
+/// - кривая есть, ключ не выбран → значение кривой под курсором, а правка
+///   ставит там ключ (то же делает «+» в панели автоматизации).
+pub fn param_row_bound<P: HasParams + ?Sized>(
     ui: &mut egui::Ui,
     f: &mut P,
     spec: &ParamSpec,
+    bind: Option<&mut CurveBind<'_>>,
 ) -> bool {
-    let Some(mut v) = f.get_param(spec.name) else { return false };
-    ui.label(param_label(spec.name));
+    let Some(base) = f.get_param(spec.name) else { return false };
+    let Some(bind) = bind else {
+        ui.label(param_label(spec.name));
+        let mut v = base;
+        if param_value(ui, spec, &mut v).changed() {
+            f.set_param(spec.name, v);
+            return true;
+        }
+        return false;
+    };
+    let Some(ci) = bind.index_of(spec.name) else {
+        ui.label(param_label(spec.name));
+        let mut v = base;
+        if param_value(ui, spec, &mut v).changed() {
+            f.set_param(spec.name, v);
+            return true;
+        }
+        return false;
+    };
+    // подпись ЦВЕТОМ кривой — видно, что поле правит именно её (и какую
+    // линию на графике искать глазами)
+    let key = match bind.sel {
+        Some((c, k)) if c == ci && k < bind.curves[ci].keys.len() => Some(k),
+        _ => None,
+    };
+    ui.label(
+        egui::RichText::new(param_label(spec.name)).color(crate::automation::curve_color(ci)),
+    );
+    let c = &mut bind.curves[ci];
+    let mut v = bound_value(c, key, bind.at);
     if param_value(ui, spec, &mut v).changed() {
-        f.set_param(spec.name, v);
+        bound_apply(c, key, bind.at, v);
         return true;
     }
     false
+}
+
+/// Что ПОКАЗЫВАЕТ поле параметра с живой кривой: значение выбранного
+/// ключа, а нет выбранного — значение кривой под курсором. Базы эффекта
+/// тут нет вовсе: именно её невидимость и была «отдельным дефолтным
+/// состоянием» (Р.38 п.16).
+pub fn bound_value(c: &kt_model::ParamCurve, key: Option<usize>, at: kt_time::Tick) -> f64 {
+    match key.filter(|k| *k < c.keys.len()) {
+        Some(k) => c.keys[k].v,
+        None => kt_model::curve_value(&c.keys, c.ease, at),
+    }
+}
+
+/// Что поле ПРАВИТ. Ровно то же, что показывает (Р.38 п.15): выбранный
+/// ключ либо новый ключ под курсором.
+pub fn bound_apply(
+    c: &mut kt_model::ParamCurve,
+    key: Option<usize>,
+    at: kt_time::Tick,
+    v: f64,
+) {
+    match key.filter(|k| *k < c.keys.len()) {
+        Some(k) => c.keys[k].v = v,
+        None => {
+            c.keys.retain(|k| k.t != at);
+            c.keys.push(kt_model::AutoKey { t: at, v });
+            c.keys.sort_by_key(|k| k.t.0);
+        }
+    }
 }
 
 /// Сетка ВСЕХ числовых параметров эффекта в две пары «подпись/значение».
@@ -126,6 +212,17 @@ pub fn params_grid<P: HasParams + ?Sized>(
     f: &mut P,
     skip: &[&str],
 ) -> bool {
+    params_grid_bound(ui, id, f, skip, None)
+}
+
+/// Та же сетка, но связанная с кривыми (Р.38 пп.15-16).
+pub fn params_grid_bound<P: HasParams + ?Sized>(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    f: &mut P,
+    skip: &[&str],
+    mut bind: Option<&mut CurveBind<'_>>,
+) -> bool {
     let specs: Vec<&ParamSpec> =
         f.param_specs().iter().filter(|s| !skip.contains(&s.name)).collect();
     if specs.is_empty() {
@@ -135,7 +232,7 @@ pub fn params_grid<P: HasParams + ?Sized>(
     egui::Grid::new(id).num_columns(4).spacing([8.0, 4.0]).show(ui, |ui| {
         for pair in specs.chunks(2) {
             for spec in pair {
-                changed |= param_row(ui, f, spec);
+                changed |= param_row_bound(ui, f, spec, bind.as_deref_mut());
             }
             ui.end_row();
         }

@@ -5472,3 +5472,132 @@ fn t262_per_track_height() {
     app.set_row_height(g0.rows[0], None);
     assert!(app.lane_heights.is_empty(), "сброс убирает переопределение");
 }
+
+/// Тест 265 (Р.38 пп.14-18): панель автоматизации.
+///
+/// Претензии дословно: «в таймлайне автоматизации я не понимаю как
+/// зазумится», «при нажатии на ключ - чтобы значения которые прописаны в
+/// полях - имели связь с ключем», «ощущение что у эффектов есть какое-то
+/// отдельное "дефолтное" состояние значений», «я добавил второй параметр
+/// автоматизации - но редактируется только первый», «еще не хватает
+/// кнопок управления элементами таймлайна автоматизации».
+#[test]
+fn t265_automation_axis_and_field_bind() {
+    use crate::automation::{AutoCtx, AutoView};
+    use crate::widgets::{bound_apply, bound_value};
+    use kt_model::{AutoKey, ParamCurve};
+    use kt_time::Tick;
+
+    // ---- п.14: ось времени ------------------------------------------
+    let id = |t: Tick| t;
+    let ctx = AutoCtx {
+        specs: &[],
+        range: (Tick(0), Tick(90_000 * 10)),
+        view: (Tick(90_000 * 2), Tick(90_000 * 4)),
+        to_timeline: &id,
+        to_curve: &id,
+        frame_step: 3000,
+    };
+    let mut v = AutoView::default();
+    assert!(v.linked, "замок «связать с таймлайном» включён по умолчанию (решение п.14)");
+    assert_eq!(v.axis(&ctx), (90_000 * 2, 90_000 * 4), "связанный график показывает окно таймлайна");
+    v.linked = false;
+    assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "без своего окна отвязанный показывает всё");
+    v.win = Some((90_000, 90_000 * 3));
+    assert_eq!(v.axis(&ctx), (90_000, 90_000 * 3), "и своё окно, когда оно есть");
+    v.win = Some((-90_000, 90_000 * 99));
+    assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "окно клампится диапазоном носителя");
+    v.win = Some((5000, 5001));
+    assert_eq!(
+        v.axis(&ctx),
+        (0, 90_000 * 10),
+        "вырожденное окно (уже кадра) откатывается к полному: делить на ноль нечем"
+    );
+
+    // ---- пп.15-16: поле правит ровно то, что показывает --------------
+    let mut c = ParamCurve {
+        param: "db".into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(90_000), v: 6.0 }],
+    };
+    // выбран ключ — поле показывает и правит ЕГО
+    assert_eq!(bound_value(&c, Some(1), Tick(45_000)), 6.0);
+    bound_apply(&mut c, Some(1), Tick(45_000), 3.0);
+    assert_eq!(c.keys[1].v, 3.0, "правка поля ушла в выбранный ключ");
+    assert_eq!(c.keys.len(), 2, "и лишнего ключа не появилось");
+    // ключ не выбран — поле показывает значение кривой ПОД КУРСОРОМ
+    let mid = bound_value(&c, None, Tick(45_000));
+    assert!((mid - 1.5).abs() < 1e-9, "показано значение кривой под курсором: {mid}");
+    bound_apply(&mut c, None, Tick(45_000), 4.0);
+    assert_eq!(c.keys.len(), 3, "правка без выбранного ключа ставит ключ под курсором");
+    assert_eq!(c.keys[1], AutoKey { t: Tick(45_000), v: 4.0 });
+    assert!(c.keys.windows(2).all(|w| w[0].t.0 <= w[1].t.0), "порядок ключей не нарушен");
+    // выбор за пределами кривой не роняет и трактуется как «не выбран»
+    assert_eq!(bound_value(&c, Some(99), Tick(0)), c.keys[0].v);
+
+    // ---- пп.17-18: активная кривая и кнопки в живом окне -------------
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000 * 4),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::slowed_reverb(0.5, 0.3, 85.0)],
+        fx_bypass: vec![false],
+        fx_auto: vec![vec![]],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+
+    // добавляем ДВА параметра автоматизации подряд
+    let names: Vec<String> = {
+        let f = h.state().model.project().clips[0].fx[0].clone();
+        f.auto_params().take(2).map(|s| crate::widgets::param_label(s.name)).collect()
+    };
+    assert_eq!(names.len(), 2, "у slowed+reverb есть хотя бы два автоматизируемых параметра");
+
+
+    for n in &names {
+        h.get_by_label(tr(k::fx::AUTO_ADD)).click();
+        h.step();
+        h.step();
+        // подпись параметра есть и в сетке значений, и в открывшемся
+        // меню — жмём ПОСЛЕДНЮЮ: меню рисуется поверх
+        h.get_all_by_label(n.as_str()).last().expect("пункт меню параметра").click();
+        h.step();
+        h.step();
+    }
+    let curves = h.state().model.project().clips[0].fx_auto[0].clone();
+    assert_eq!(curves.len(), 2, "обе кривые заведены: {curves:?}");
+    assert_eq!(
+        h.state().fx_editors[0].auto_views[&(ClipId(1), 0)].active,
+        1,
+        "ВТОРОЙ добавленный параметр обязан стать активным — иначе клик по графику \
+         продолжает класть ключи в первую кривую, и вторая выглядит мёртвой (п.17)"
+    );
+
+    // кнопки управления ключами и осью на месте (п.18)
+    for icon in [crate::icons::PLUS, crate::icons::SKIP_BACK, crate::icons::SKIP_FWD,
+                 crate::icons::TRASH, crate::icons::LOCK, crate::icons::ARROWS_OUT] {
+        assert!(
+            h.query_all_by_label(icon).count() >= 1,
+            "в панели автоматизации нет кнопки {icon:?} (п.18)"
+        );
+    }
+}

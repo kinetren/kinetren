@@ -333,6 +333,13 @@ slowedreverb = "slowed reverb warp 减速 混响 速度 回声"
 
 # Редактор FX клипа.
 [fx]
+active_curve_hint = "活动曲线：点击图表空白处会为它添加关键帧"
+key_add_hint = "在光标处为活动曲线添加关键帧"
+key_prev_hint = "活动曲线的上一个关键帧"
+key_next_hint = "活动曲线的下一个关键帧"
+key_del_hint = "删除所选关键帧"
+axis_link_hint = "将时间轴与主时间线关联；在图表上滚轮会解除关联"
+axis_fit_hint = "显示完整范围"
 slot_hint = "链槽：单击选择，拖动排序，叉号删除"
 frames = "帧："
 frames_nearest = "最近帧"

@@ -268,11 +268,13 @@ impl KtApp {
                                 changed = true;
                             }
                         });
+                        let tl_view = self.tl_view();
                         let to_tl = move |x: kt_time::Tick| kt_time::Tick(w0.0 + x.0);
                         let to_cur = move |x: kt_time::Tick| kt_time::Tick(x.0 - w0.0);
                         let actx = crate::automation::AutoCtx {
                             specs: t.kind.param_specs(),
                             range: (kt_time::Tick::ZERO, kt_time::Tick(win_len)),
+                            view: crate::automation::view_in_curve(&to_cur, tl_view),
                             to_timeline: &to_tl,
                             to_curve: &to_cur,
                             frame_step,

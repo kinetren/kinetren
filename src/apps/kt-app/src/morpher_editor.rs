@@ -420,7 +420,7 @@ impl KtApp {
                     crate::widgets::ChainSel::Fx(i) => {
                         // параметры — ТЕМ ЖЕ кодом, что в окне события
                         if let Some(f) = fx.get_mut(i)
-                            && crate::fx_editor::draw_video_fx_params(ui, f, &cameras, false)
+                            && crate::fx_editor::draw_video_fx_params(ui, f, None, &cameras, false)
                         {
                             split_chains(&mut ev.patch, &fx, &bypass, split);
                             changed = true;

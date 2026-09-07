@@ -156,6 +156,9 @@ impl KtApp {
         // мини-таймлайн виджета автоматизации двигает ГЛАВНЫЙ курсор
         let mut seek: Option<kt_time::Tick> = None;
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
+        // окно главного таймлайна: график автоматизации показывает то же
+        // самое, пока не сняли замок (Р.38 п.14)
+        let tl_view = self.tl_view();
         let mut open = ed.open;
         let members = ed.members.clone();
         egui::Window::new(title)
@@ -222,8 +225,29 @@ impl KtApp {
                             ed.selected.insert(*id, sel);
                             if let Some(f) = fx.get_mut(sel) {
                                 // параметры — ОДНИМ кодом по спекам модели
-                                params_changed |=
-                                    draw_video_fx_params(ui, f, &cameras, clip.kind == ClipKind::Video);
+                                // позиция курсора в домене кривой слота —
+                                // материал события (Р.37: скорость ось не
+                                // сжимает)
+                                let at = kt_model::clip_material_at(
+                                    clip.source_in,
+                                    clip.start,
+                                    clip.duration,
+                                    clip.reversed,
+                                    frame_step,
+                                    playhead,
+                                );
+                                let view_sel =
+                                    ed.auto_views.get(&(*id, sel)).and_then(|v| v.sel);
+                                let mut bind = auto.get_mut(sel).map(|curves| {
+                                    crate::widgets::CurveBind { curves, sel: view_sel, at }
+                                });
+                                params_changed |= draw_video_fx_params(
+                                    ui,
+                                    f,
+                                    bind.as_mut(),
+                                    &cameras,
+                                    clip.kind == ClipKind::Video,
+                                );
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
                                     let view = ed.auto_views.entry((*id, sel)).or_default();
@@ -237,6 +261,7 @@ impl KtApp {
                                         &mut env_clip,
                                         view,
                                         frame_step,
+                                        tl_view,
                                         &mut hover_out,
                                     );
                                     auto_ch = c;
@@ -337,6 +362,9 @@ fn draw_fx_auto_section(
     env_clip: &mut Option<kt_model::ops::EnvelopeBlock>,
     view: &mut crate::automation::AutoView,
     frame_step: i64,
+    // видимое окно ГЛАВНОГО таймлайна — по нему график строит ось при
+    // включённом замке (Р.38 п.14)
+    tl_view: (kt_time::Tick, kt_time::Tick),
     hover_out: &mut Option<String>,
 ) -> (bool, Option<kt_time::Tick>) {
     let (src_in, dur) = (clip.source_in, clip.duration);
@@ -357,9 +385,12 @@ fn draw_fx_auto_section(
             .filter(|s| !curves.iter().any(|c| c.param == s.name))
             .collect();
         if !free.is_empty() {
-            egui::ComboBox::from_id_salt(("fx_auto_add", clip.id, slot))
-                .selected_text(tr(k::fx::AUTO_ADD))
-                .show_ui(ui, |ui| {
+            // МЕНЮ, а не ComboBox: выбранный текст у него никогда не
+            // менялся (это список действий, а не селектор), и заодно у
+            // кнопки появляется имя для доступности — ComboBox отдавал
+            // пустое, и до пункта нельзя было добраться иначе как мышью
+            ui.menu_button(tr(k::fx::AUTO_ADD), |ui| {
+                {
                     for spec in &free {
                         let n = spec.name;
                         if ui.button(crate::widgets::param_label(n)).clicked() {
@@ -373,21 +404,22 @@ fn draw_fx_auto_section(
                                     kt_model::AutoKey { t: kt_time::Tick(mat_end), v: v0 },
                                 ],
                             });
+                            // новый параметр становится АКТИВНЫМ (Р.38
+                            // п.17: «добавил второй параметр — но
+                            // редактируется только первый»): раньше клик
+                            // по графику продолжал класть ключи в первую
+                            // кривую, и вторая выглядела мёртвой
+                            view.active = curves.len() - 1;
+                            view.sel = None;
                             changed = true;
                         }
                     }
-                });
+                }
+            });
         }
-        // выбор активной кривой (в неё кладёт ключ клик по графику) и её
-        // удаление; сглаживание — свойство кривой
-        for (ci, c) in curves.iter().enumerate() {
-            if ui
-                .selectable_label(view.active == ci, crate::widgets::param_label(&c.param))
-                .clicked()
-            {
-                view.active = ci;
-            }
-        }
+        // выбор активной кривой и кнопки ключей — В САМОМ ВИДЖЕТЕ
+        // (automation::toolbar): их получают все носители кривых разом.
+        // Здесь остаётся то, что про КРИВУЮ как параметр слота.
         if let Some(c) = curves.get_mut(view.active) {
             changed |= ui.checkbox(&mut c.ease, tr(k::fx::EASE)).changed();
             if ui.button(tr(k::fx::AUTO_REMOVE)).clicked() {
@@ -478,7 +510,7 @@ fn draw_fx_auto_section(
             t,
         )
     };
-    let ctx = crate::automation::clip_ctx(clip, f, frame_step, &to_tl, &to_mat);
+    let ctx = crate::automation::clip_ctx(clip, f, frame_step, &to_tl, &to_mat, tl_view);
     let res = crate::automation::draw(
         ui,
         ("auto", clip.id.0, slot),
@@ -557,6 +589,7 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
 pub(crate) fn draw_video_fx_params(
     ui: &mut egui::Ui,
     f: &mut FxInstance,
+    bind: Option<&mut crate::widgets::CurveBind<'_>>,
     cameras: &[(u64, String)],
     on_video: bool,
 ) -> bool {
@@ -680,7 +713,9 @@ pub(crate) fn draw_video_fx_params(
     }
 
     // --- числовые параметры: одна сетка на все варианты -------------------
-    ch |= crate::widgets::params_grid(ui, ("fxp", fx_display_name(f)), f, skip);
+    // связанная с кривыми (Р.38 пп.15-16): у параметра с живой кривой поле
+    // правит ВЫБРАННЫЙ КЛЮЧ, а не невидимую базу
+    ch |= crate::widgets::params_grid_bound(ui, ("fxp", fx_display_name(f)), f, skip, bind);
 
     // --- хвост: камера Pan3d и кейфреймы CamMotion ------------------------
     match f {
