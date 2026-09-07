@@ -4799,16 +4799,18 @@ fn t245_thin_service_rows_geometry() {
         (LaneKind::Audio, 0),
         (LaneKind::Morph, 1),
     ];
-    // отношение ровно 3, пол — 10 px (в строку в 5 px мышью не попасть)
-    assert_eq!(row_height(LaneKind::Morph, 60.0), 20.0);
+    // камерная — ровно втрое ниже (Р.35 п.1), морф-строка ВДВОЕ выше
+    // камерной (Р.38 п.10: «увеличь высоту морфер трека по дефолту на 2»),
+    // пол — 10 px (в строку в 5 px мышью не попасть)
+    assert_eq!(row_height(LaneKind::Morph, 60.0), 40.0);
     assert_eq!(row_height(LaneKind::Camera, 60.0), 20.0);
     assert_eq!(row_height(LaneKind::Video, 60.0), 60.0);
-    assert_eq!(row_height(LaneKind::Morph, 18.0), THIN_ROW_MIN);
+    assert_eq!(row_height(LaneKind::Morph, 12.0), THIN_ROW_MIN);
 
     // префиксные суммы: длина n+1, последний — полная высота
     let offs = row_offsets(&rows, 60.0);
     assert_eq!(offs.len(), rows.len() + 1);
-    assert_eq!(offs, vec![0.0, 20.0, 80.0, 100.0, 160.0, 180.0]);
+    assert_eq!(offs, vec![0.0, 40.0, 100.0, 120.0, 180.0, 220.0]);
 
     let g = TlGeom::new(
         egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 600.0)),
@@ -4918,7 +4920,10 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     h.step();
     let g2 = h.state().tl_geom.clone().unwrap();
     assert!(g2.lane_h() > g.lane_h(), "зум применился");
-    assert!((g2.row_h(mrow) / g2.lane_h() - 1.0 / 3.0).abs() < 0.05, "отношение 3 держится");
+    assert!(
+        (g2.row_h(mrow) / g2.lane_h() - 1.0 / crate::timeline::MORPH_ROW_DIV).abs() < 0.05,
+        "отношение высоты морф-строки держится при зуме"
+    );
 }
 
 /// Тест 248 (Р.35 С4): рамка выделения превращается в именованную
@@ -5176,4 +5181,219 @@ fn t249_previews_follow_the_warp() {
     let b = app.warp_maps();
     assert!(std::sync::Arc::ptr_eq(&a, &b), "на кадр карта не пересобирается");
     assert_eq!(a.len(), 1, "в кэше только клипы С варпом");
+}
+
+/// Тест 258 (Р.38 пп.3-4). Претензии дословно: «add morpher layer тоже
+/// странно работает» и «если я жму тот же add morpher layer в другой
+/// области - он мне создает еще один трек».
+///
+/// «Слой» — про слой правок, а не про дорожку: повторное «+M»
+/// ПЕРЕИСПОЛЬЗУЕТ верхнюю морф-дорожку. Место блока считает одна
+/// `morph_span` (есть регион — по региону, нет — от курсора), и её же
+/// зовут оба способа создания: жест и пункт меню дорожки (правило 17).
+#[test]
+fn t258_morph_layer_reuses_lane_and_honours_region() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(900_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+
+    // без региона — блок от курсора, 1.5 с
+    app.player.seek(Tick(180_000));
+    app.add_morph_layer();
+    let pr = app.model.project().clone();
+    assert_eq!(pr.morph_lanes, 1, "первая морф-дорожка заведена");
+    assert_eq!(pr.morphers.len(), 1);
+    assert_eq!(pr.morphers[0].start, Tick(180_000), "блок встал под курсором");
+    assert_eq!(pr.morphers[0].duration, Tick(90 * 1500), "и на 1.5 с");
+
+    // повторное «+M» в другом месте — ТА ЖЕ дорожка, новый блок
+    app.player.seek(Tick(495_000)); // кратно 15: playhead живёт в аудиокадрах
+    app.add_morph_layer();
+    let pr = app.model.project().clone();
+    assert_eq!(pr.morph_lanes, 1, "вторая морф-дорожка НЕ заводится: «слой» — не «дорожка»");
+    assert_eq!(pr.morphers.len(), 2, "а блок добавился");
+    assert_eq!(pr.morphers[1].lane, 0, "на ту же дорожку");
+    assert_eq!(pr.morphers[1].start, Tick(495_000));
+
+    // с регионом — блок ПО РЕГИОНУ, и у обоих способов создания одинаково
+    let mut pr = app.model.project().clone();
+    pr.region = Some(kt_model::Region { start: Tick(700_000), end: Tick(760_000) });
+    app.model = kt_model::TimelineModel::new(pr);
+    app.add_morph_layer();
+    let by_gesture = app.model.project().morphers.last().cloned().unwrap();
+    assert_eq!(by_gesture.start, Tick(700_000), "есть регион — блок по региону");
+    assert_eq!(by_gesture.duration, Tick(60_000));
+    app.add_morpher_at(0);
+    let by_menu = app.model.project().morphers.last().cloned().unwrap();
+    assert_eq!(
+        (by_menu.start, by_menu.duration),
+        (by_gesture.start, by_gesture.duration),
+        "пункт меню дорожки обязан ставить блок так же, как жест (правило 17)"
+    );
+}
+
+/// Тест 259 (Р.38 п.9, дословно: «я не понимаю как менять длинну у морфер
+/// события»). Кромки блока тянутся: правая меняет длительность, левая
+/// двигает начало при СТОЯЩЕМ конце — как у метки-диапазона.
+#[test]
+fn t259_morph_block_edges_resize() {
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips();
+    {
+        let app = h.state_mut();
+        app.player.seek(Tick(100_000));
+        app.add_morph_layer();
+        app.morph_editors.clear();
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().unwrap();
+    let m = h.state().model.project().morphers[0].clone();
+    let row = g.row_of((kt_model::LaneKind::Morph, 0)).unwrap();
+    let y = g.row_center_y(row);
+    let end_x = g.tick_to_x((m.start + m.duration).0);
+
+    // правая кромка: тянем вправо — растёт длительность, начало стоит
+    let to = end_x + 60.0;
+    h.hover_at(egui::pos2(end_x, y));
+    h.step();
+    h.drag_at(egui::pos2(end_x, y));
+    h.step();
+    h.hover_at(egui::pos2(end_x + 8.0, y));
+    h.step();
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+    let m2 = h.state().model.project().morphers[0].clone();
+    assert_eq!(m2.start, m.start, "правая кромка не двигает начало");
+    assert!(
+        m2.duration > m.duration,
+        "правая кромка обязана удлинять блок: было {:?}, стало {:?}",
+        m.duration,
+        m2.duration
+    );
+
+    // левая кромка: конец СТОИТ на месте
+    let end_before = (m2.start + m2.duration).0;
+    let sx = g.tick_to_x(m2.start.0);
+    let to = sx + 40.0;
+    h.hover_at(egui::pos2(sx, y));
+    h.step();
+    h.drag_at(egui::pos2(sx, y));
+    h.step();
+    h.hover_at(egui::pos2(sx + 8.0, y));
+    h.step();
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+    let m3 = h.state().model.project().morphers[0].clone();
+    assert!(m3.start > m2.start, "левая кромка сдвинула начало");
+    assert_eq!(
+        (m3.start + m3.duration).0,
+        end_before,
+        "и конец остался на месте (правило 20: ничего не отрастает само)"
+    );
+}
+
+/// Тест 260 (Р.38 п.5 «не понимаю как работает камерный трек» + подметание
+/// того же класса). Камера выделяется кликом, удаляется с клавиатуры и
+/// меняет длину кромками; левая кромка диапазонной метки наконец работает.
+///
+/// `Drag::MarkerEdge.left` был описан в комментарии как рабочий, и на этот
+/// вариант даже матчился тест — но конструировался ТОЛЬКО `left: false`, а
+/// жест уходил в `_ => {}` и пропадал молча.
+#[test]
+fn t260_camera_and_marker_left_edge_are_reachable() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips();
+    {
+        let app = h.state_mut();
+        assert!(app.apply(Command::InsertCameraLane { at: 0 }));
+        app.player.seek(Tick(90_000));
+        app.add_camera_at_playhead(0);
+        assert!(app.apply(Command::AddMarker { at: Tick(45_000), duration: Tick(30_000) }));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().unwrap();
+    let c = h.state().model.project().cameras[0].clone();
+    let row = g.row_of((LaneKind::Camera, 0)).unwrap();
+    let y = g.row_center_y(row);
+
+    // клик по камере — выделение (до Р.38 поля `selected_camera` не было)
+    let mid = egui::pos2(g.tick_to_x(c.start.0 + c.duration.0 / 2), y);
+    h.hover_at(mid);
+    h.step();
+    h.drag_at(mid);
+    h.step();
+    h.drop_at(mid);
+    h.step();
+    assert_eq!(h.state().selected_camera, Some(c.id), "клик по камере обязан её выделить");
+
+    // правая кромка меняет длину
+    let ex = g.tick_to_x((c.start + c.duration).0);
+    let to = ex - 40.0;
+    h.hover_at(egui::pos2(ex, y));
+    h.step();
+    h.drag_at(egui::pos2(ex, y));
+    h.step();
+    h.hover_at(egui::pos2(ex - 8.0, y));
+    h.step();
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+    let c2 = h.state().model.project().cameras[0].clone();
+    assert_eq!(c2.start, c.start, "кромка не двигает начало");
+    assert!(c2.duration < c.duration, "правая кромка обязана менять длительность камеры");
+
+    // Del удаляет выделенную камеру
+    let app = h.state_mut();
+    app.selected_camera = Some(c.id);
+    app.delete_action();
+    assert!(h.state().model.project().cameras.is_empty(), "Del обязан удалять камеру");
+
+    // ЛЕВАЯ кромка диапазонной метки: конец стоит, начало едет
+    let m = h.state().model.project().markers[0].clone();
+    assert!(m.is_range(), "сцена: диапазонная метка");
+    let end0 = m.end().0;
+    let ry = g.rect.top() + 6.0;
+    let sx = g.tick_to_x(m.t.0);
+    let to = sx + 30.0;
+    h.hover_at(egui::pos2(sx, ry));
+    h.step();
+    h.drag_at(egui::pos2(sx, ry));
+    h.step();
+    h.hover_at(egui::pos2(sx + 8.0, ry));
+    h.step();
+    h.hover_at(egui::pos2(to, ry));
+    h.step();
+    h.drop_at(egui::pos2(to, ry));
+    h.step();
+    let m2 = h.state().model.project().markers[0].clone();
+    assert!(m2.t.0 > m.t.0, "левая кромка сдвинула начало метки: {:?} → {:?}", m.t, m2.t);
+    assert_eq!(m2.end().0, end0, "а конец остался на месте");
 }

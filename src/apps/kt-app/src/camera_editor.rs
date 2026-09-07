@@ -168,10 +168,24 @@ impl KtApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    ui.label(crate::tf!(
-                        k::cam::LENGTH,
-                        format!("{:.2}", cur.duration.0 as f64 / 90_000.0)
-                    ));
+                    // ДЛИНА ПРАВИТСЯ (Р.38 п.5): была read-only подписью,
+                    // а кромок у блока не было — изменить её было нечем
+                    ui.label(crate::tf!(k::cam::LENGTH, ""));
+                    let mut secs = cur.duration.0 as f64 / 90_000.0;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut secs)
+                                .range(0.04..=3600.0)
+                                .speed(0.05)
+                                .suffix(" s"),
+                        )
+                        .changed()
+                    {
+                        c.duration = kt_time::Tick(
+                            ((secs * 90_000.0) as i64).max(kt_model::MIN_CLIP_DURATION.0),
+                        );
+                        changed = true;
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(tr(k::fx::CANCEL)).clicked() {
                             revert = true;

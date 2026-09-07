@@ -69,6 +69,10 @@ pub struct KtApp {
     pub sel_tool: bool,
     /// Выделенный morph-блок (H1; приоритет над клипом при Del).
     pub selected_morph: Option<MorphId>,
+    /// Выделенная камера (Р.38 п.5, «не понимаю как работает камерный
+    /// трек»): до этого раунда камеру нельзя было ни выделить, ни удалить
+    /// с клавиатуры — только через контекст-меню.
+    pub selected_camera: Option<kt_model::CameraId>,
     /// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
     /// замороженные цели + вид; Esc — отмена.
     pub drag: Option<Drag>,
@@ -402,6 +406,7 @@ impl KtApp {
             selected: std::collections::BTreeSet::new(),
             sel_tool: false,
             selected_morph: None,
+            selected_camera: None,
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
@@ -540,6 +545,7 @@ impl KtApp {
             selected: std::collections::BTreeSet::new(),
             sel_tool: false,
             selected_morph: None,
+            selected_camera: None,
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
@@ -2534,6 +2540,12 @@ impl KtApp {
             }
             return;
         }
+        if let Some(id) = self.selected_camera {
+            if self.apply(Command::RemoveCamera { id }) {
+                self.selected_camera = None;
+            }
+            return;
+        }
         if let Some(r) = self.model.project().region {
             let cmds = kt_model::ops::delete_region(self.model.project(), r);
             if cmds.is_empty() {
@@ -2841,7 +2853,27 @@ impl KtApp {
         }
     }
 
+    /// «+M»: морф-слой в проект.
+    ///
+    /// Дорожка ПЕРЕИСПОЛЬЗУЕТСЯ (Р.38 п.4, дословно: «если я жму тот же
+    /// add morpher layer в другой области — он мне создает еще один
+    /// трек»). Новая заводится, только если морф-дорожек нет вовсе:
+    /// «добавить слой» — про слой правок, а не про дорожку. Дорожки
+    /// заводятся своим пунктом меню, и это разные действия.
     pub fn add_morph_layer(&mut self) {
+        // верхняя морф-строка в display-порядке: слой действует «на всё,
+        // что ниже», и пользователь ждёт его над своим монтажом
+        let reuse = self
+            .model
+            .project()
+            .rows()
+            .into_iter()
+            .find(|(k, _)| *k == LaneKind::Morph)
+            .map(|(_, l)| l);
+        if let Some(lane) = reuse {
+            self.add_morpher_at(lane);
+            return;
+        }
         let id = MorphId(self.next_morph_id());
         let (start, duration) = self.morph_span();
         let mut cmds = vec![Command::InsertMorphLane { at: 0 }];

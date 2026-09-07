@@ -475,6 +475,21 @@ pub enum Drag {
         cur_start: i64,
         moved: bool,
     },
+    /// Край morph-блока (Р.38 п.9, дословно: «я не понимаю как менять
+    /// длинну у морфер события»). Левый двигает начало при стоящем
+    /// конце, правый меняет длительность — как у метки-диапазона.
+    MorphEdge {
+        id: MorphId,
+        left: bool,
+        cur: i64,
+    },
+    /// Край камеры-события (Р.38 п.5): до этого раунда длительность
+    /// камеры была read-only подписью в окне и менять её было нечем.
+    CameraEdge {
+        id: kt_model::CameraId,
+        left: bool,
+        cur: i64,
+    },
     /// Перенос камеры-события (Р.34 К3) — по образцу Morph.
     Camera {
         id: kt_model::CameraId,
@@ -607,6 +622,11 @@ pub struct VLayout {
 /// просьба пользователя Р.35 п.1: «чтобы не терять место — треки-морферы
 /// можно уменьшить по высоте в три раза».
 pub const THIN_ROW_DIV: f32 = 3.0;
+/// Делитель МОРФ-строки (Р.38 п.10, дословно: «увеличь высоту морфер
+/// трека по дефолту на 2»). Морф-блок несёт цепочку эффектов и подпись,
+/// камерный — только имя, поэтому втрое ниже осталась камерная строка.
+/// Индивидуальную высоту можно задать каждой дорожке (п.11).
+pub const MORPH_ROW_DIV: f32 = 1.5;
 /// Пол высоты служебной строки: 84/3 = 28 нормально, а 16/3 = 5 — в такую
 /// строку мышью не попасть (п.1 чек-листа UI).
 pub const THIN_ROW_MIN: f32 = 10.0;
@@ -615,7 +635,8 @@ pub const THIN_ROW_MIN: f32 = 10.0;
 pub fn row_height(kind: LaneKind, base_h: f32) -> f32 {
     match kind {
         LaneKind::Video | LaneKind::Audio => base_h,
-        LaneKind::Morph | LaneKind::Camera => (base_h / THIN_ROW_DIV).max(THIN_ROW_MIN),
+        LaneKind::Morph => (base_h / MORPH_ROW_DIV).max(THIN_ROW_MIN),
+        LaneKind::Camera => (base_h / THIN_ROW_DIV).max(THIN_ROW_MIN),
     }
 }
 
@@ -637,19 +658,24 @@ pub fn row_offsets(rows: &[(LaneKind, u32)], base_h: f32) -> Vec<f32> {
 pub fn vertical_layout(
     avail_h: f32,
     clip_lanes: usize,
-    thin_lanes: usize,
+    morph_lanes: usize,
+    camera_lanes: usize,
     v_zoom: Option<f32>,
 ) -> VLayout {
     let clip_lanes = clip_lanes.max(1) as f32;
     let usable = (avail_h - RULER_H - 6.0).max(0.0);
-    // вес служебных строк в делителе — их доля от строки клипов
-    let weight = clip_lanes + thin_lanes as f32 / THIN_ROW_DIV;
+    // вес служебных строк в делителе — их доля от строки клипов; у морф-
+    // и камерных строк доли РАЗНЫЕ (п.10 Р.38)
+    let weight = clip_lanes
+        + morph_lanes as f32 / MORPH_ROW_DIV
+        + camera_lanes as f32 / THIN_ROW_DIV;
     let base_h = match v_zoom {
         Some(z) => z.clamp(16.0, 120.0),
         None => (usable / weight).clamp(30.0, 84.0),
     };
-    let content_h =
-        clip_lanes * base_h + thin_lanes as f32 * (base_h / THIN_ROW_DIV).max(THIN_ROW_MIN);
+    let content_h = clip_lanes * base_h
+        + morph_lanes as f32 * (base_h / MORPH_ROW_DIV).max(THIN_ROW_MIN)
+        + camera_lanes as f32 * (base_h / THIN_ROW_DIV).max(THIN_ROW_MIN);
     VLayout { base_h, content_h, scroll_max: (content_h - usable).max(0.0) }
 }
 
@@ -1176,10 +1202,10 @@ impl KtApp {
         // ДВА счётчика: строки клипов и служебные (они втрое ниже).
         // Раньше камерные дорожки тут не считались вовсе, а в layout
         // считались — вертикальный зум колесом брал не ту высоту.
-        let (clip_hint, thin_hint) = {
+        let (clip_hint, morph_hint, cam_hint) = {
             let (v, a) = self.lane_counts();
             let p = self.model.project();
-            ((v + a).max(1) as usize, (p.morph_lanes + p.camera_lanes) as usize)
+            ((v + a).max(1) as usize, p.morph_lanes as usize, p.camera_lanes as usize)
         };
         // ---- зум/пан + edge-autoscroll при драге --------------------------
         let mut view_start = self.view_start;
@@ -1225,7 +1251,7 @@ impl KtApp {
                 let cur_h = self
                     .tl_v_zoom
                     .unwrap_or_else(|| {
-                        vertical_layout(rect.height(), clip_hint, thin_hint, None).base_h
+                        vertical_layout(rect.height(), clip_hint, morph_hint, cam_hint, None).base_h
                     });
                 let factor = if raw_y > 0.0 { 1.15 } else { 1.0 / 1.15 };
                 let new_h = (cur_h * factor).clamp(16.0, 120.0);
@@ -1482,7 +1508,8 @@ impl KtApp {
         let vl = vertical_layout(
             rect.height(),
             (video_lanes + audio_lanes).max(1) as usize,
-            (morph_lanes + camera_lanes) as usize,
+            morph_lanes as usize,
+            camera_lanes as usize,
             self.tl_v_zoom,
         );
         let lane_h = vl.base_h;
@@ -1540,6 +1567,35 @@ impl KtApp {
             gutter_labels.push((label, y + rh * 0.5, y, rh));
         }
         // хит-тест morph-блока (нужен и press-обработке, и ПКМ ниже)
+        // кромка morph-блока: та же зона хвата, что у тримов клипа
+        let morph_edge_at = |slf: &KtApp, pos: egui::Pos2| -> Option<(MorphId, bool)> {
+            let lane = geom.morph_lane_at_y(pos.y)?;
+            slf.model.project().morphers.iter().rev().filter(|m| m.lane == lane).find_map(|m| {
+                let x0 = tick_to_x(m.start.0);
+                let x1 = tick_to_x((m.start + m.duration).0).max(x0 + 8.0);
+                if (pos.x - x0).abs() <= EDGE_GRAB_PX {
+                    Some((m.id, true))
+                } else if (pos.x - x1).abs() <= EDGE_GRAB_PX {
+                    Some((m.id, false))
+                } else {
+                    None
+                }
+            })
+        };
+        let camera_edge_at = |slf: &KtApp, pos: egui::Pos2| -> Option<(kt_model::CameraId, bool)> {
+            let lane = geom.camera_lane_at_y(pos.y)?;
+            slf.model.project().cameras.iter().rev().filter(|c| c.lane == lane).find_map(|c| {
+                let x0 = tick_to_x(c.start.0);
+                let x1 = tick_to_x((c.start + c.duration).0).max(x0 + 8.0);
+                if (pos.x - x0).abs() <= EDGE_GRAB_PX {
+                    Some((c.id, true))
+                } else if (pos.x - x1).abs() <= EDGE_GRAB_PX {
+                    Some((c.id, false))
+                } else {
+                    None
+                }
+            })
+        };
         let morpher_at = |slf: &KtApp, pos: egui::Pos2| -> Option<MorphId> {
             let lane = geom.morph_lane_at_y(pos.y)?;
             slf.model
@@ -1857,6 +1913,21 @@ impl KtApp {
                 .filter(|m| (tick_to_x(*m) - pos.x).abs() <= EDGE_GRAB_PX)
         };
         // конец диапазонной метки (Р.24): хват на той же полосе, что флажки
+        // ЛЕВЫЙ край диапазонной метки (Р.38, подметание). `Drag::MarkerEdge`
+        // с `left: true` был описан в комментарии как рабочий, но никогда не
+        // конструировался: жест уходил в `_ => {}` и пропадал молча.
+        let marker_start_at = |app: &KtApp, pos: egui::Pos2| -> Option<i64> {
+            if pos.y > rect.top() + RULER_H {
+                return None;
+            }
+            app.model
+                .project()
+                .markers
+                .iter()
+                .filter(|m| m.is_range())
+                .map(|m| m.t.0)
+                .find(|start| (tick_to_x(*start) - pos.x).abs() <= EDGE_GRAB_PX)
+        };
         let marker_end_at = |app: &KtApp, pos: egui::Pos2| -> Option<i64> {
             if pos.y > rect.top() + RULER_H {
                 return None;
@@ -2070,7 +2141,12 @@ impl KtApp {
                         // `clip_at` на служебной строке всегда None, а
                         // отдельной ветки не было. Подсказка, которая врёт,
                         // хуже отсутствующей (правило 10 чек-листа).
-                        zone_hint = Some(if area_at(self, pos).is_some() {
+                        zone_hint = Some(if morph_edge_at(self, pos).is_some()
+                            || camera_edge_at(self, pos).is_some()
+                        {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                            tr(k::tl::hint::MORPH_EDGE)
+                        } else if area_at(self, pos).is_some() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                             tr(k::tl::hint::AREA)
                         } else if morpher_at(self, pos).is_some() {
@@ -2101,6 +2177,16 @@ impl KtApp {
             self.ctx_row = geom.key_at_y(pos.y);
             self.ctx_target = Some(if let Some(m) = marker_at(self, pos) {
                 CtxTarget::Marker(m)
+            } else if let Some(mid) = morpher_at(self, pos) {
+                // служебные блоки проверяются РАНЬШЕ границы региона:
+                // линия региона идёт на всю высоту, и блок, чья кромка на
+                // неё попала, иначе не схватить вовсе
+                self.selected_morph = Some(mid);
+                self.selected.clear();
+                CtxTarget::Morpher(mid)
+            } else if let Some(cid) = camera_at(self, pos) {
+                self.selected_camera = Some(cid);
+                CtxTarget::Camera(cid)
             } else if let Some(start_edge) = region_edge_at(self, pos) {
                 let r = self.model.project().region.unwrap();
                 CtxTarget::RegionEdge(if start_edge { r.start.0 } else { r.end.0 })
@@ -2111,12 +2197,6 @@ impl KtApp {
                 }
                 self.selected_morph = None;
                 CtxTarget::Clip(id)
-            } else if let Some(mid) = morpher_at(self, pos) {
-                self.selected_morph = Some(mid);
-                self.selected.clear();
-                CtxTarget::Morpher(mid)
-            } else if let Some(cid) = camera_at(self, pos) {
-                CtxTarget::Camera(cid)
             } else if let Some((i, _)) = area_at(self, pos) {
                 CtxTarget::Area(i)
             } else {
@@ -2144,6 +2224,10 @@ impl KtApp {
                         .map(|m| m.end().0)
                         .unwrap_or(start);
                     self.drag = Some(Drag::MarkerEdge { start, left: false, cur: end });
+                }
+            } else if let Some(start) = marker_start_at(self, pos) {
+                if response.drag_started() {
+                    self.drag = Some(Drag::MarkerEdge { start, left: true, cur: start });
                 }
             } else if let Some(m) = marker_at(self, pos) {
                 if response.drag_started() {
@@ -2180,7 +2264,21 @@ impl KtApp {
                     let t = self.snap(x_to_tick(pos.x).max(0), None);
                     self.player.seek(Tick(t.max(0)));
                 }
+            } else if let Some((cid, left)) =
+                camera_edge_at(self, pos).filter(|_| !response.double_clicked())
+                && response.drag_started()
+            {
+                self.selected_camera = Some(cid);
+                self.selected.clear();
+                self.selected_morph = None;
+                if let Some(orig) = self.model.project().cameras.iter().find(|c| c.id == cid) {
+                    let cur = if left { orig.start.0 } else { (orig.start + orig.duration).0 };
+                    self.drag = Some(Drag::CameraEdge { id: cid, left, cur });
+                }
             } else if let Some(cid) = camera_at(self, pos) {
+                self.selected_camera = Some(cid);
+                self.selected.clear();
+                self.selected_morph = None;
                 if response.double_clicked() {
                     self.open_camera_editor(cid);
                 } else if response.drag_started()
@@ -2193,6 +2291,17 @@ impl KtApp {
                         cur_start: orig.start.0,
                         moved: false,
                     });
+                }
+            } else if let Some((mid, left)) = morph_edge_at(self, pos).filter(|_| {
+                // двойной клик по кромке — это всё-таки «открыть окно»
+                !response.double_clicked()
+            }) && response.drag_started()
+            {
+                self.selected_morph = Some(mid);
+                self.selected.clear();
+                if let Some(orig) = self.model.project().morphers.iter().find(|m| m.id == mid) {
+                    let cur = if left { orig.start.0 } else { (orig.start + orig.duration).0 };
+                    self.drag = Some(Drag::MorphEdge { id: mid, left, cur });
                 }
             } else if let Some(mid) = morpher_at(self, pos) {
                 self.selected_morph = Some(mid);
@@ -2553,6 +2662,14 @@ impl KtApp {
                     };
                     self.drag = Some(Drag::TransitionBody { id, orig_at, cur_at });
                 }
+                Some(Drag::CameraEdge { id, left, .. }) => {
+                    let cur = x_to_tick(pos.x).max(0);
+                    self.drag = Some(Drag::CameraEdge { id, left, cur });
+                }
+                Some(Drag::MorphEdge { id, left, .. }) => {
+                    let cur = x_to_tick(pos.x).max(0);
+                    self.drag = Some(Drag::MorphEdge { id, left, cur });
+                }
                 Some(Drag::Morph { id, grab_dt, .. }) => {
                     let raw = x_to_tick(pos.x) - grab_dt;
                     let cur_start = self.snap(raw, None).max(0);
@@ -2711,6 +2828,28 @@ impl KtApp {
                         duration: Tick((cur - start).max(0)),
                     });
                 }
+                Some(Drag::MarkerEdge { start, left: true, cur }) => {
+                    // конец стоит, начало едет: MoveMarker + новая длина
+                    // одним шагом истории (правило 20 — ничего не отрастает)
+                    let end = self
+                        .model
+                        .project()
+                        .markers
+                        .iter()
+                        .find(|m| m.t.0 == start)
+                        .map(|m| m.end().0)
+                        .unwrap_or(start);
+                    let ns = cur.clamp(0, end);
+                    if ns != start {
+                        self.apply_batch(vec![
+                            Command::MoveMarker { from: Tick(start), to: Tick(ns) },
+                            Command::SetMarkerDuration {
+                                at: Tick(ns),
+                                duration: Tick(end - ns),
+                            },
+                        ]);
+                    }
+                }
                 Some(Drag::TransitionBody { id, orig_at, cur_at }) if cur_at != orig_at => {
                     // roll: стык едет, окно едет с ним (офсеты не меняются),
                     // reconcile модели клампит вылезшее
@@ -2781,6 +2920,38 @@ impl KtApp {
                     {
                         ev.start = Tick(cur_start);
                         self.apply(Command::SetCamera(ev));
+                    }
+                }
+                Some(Drag::CameraEdge { id, left, cur }) => {
+                    if let Some(mut ev) =
+                        self.model.project().cameras.iter().find(|c| c.id == id).cloned()
+                    {
+                        let (s0, e0) = (ev.start.0, (ev.start + ev.duration).0);
+                        let min = kt_model::MIN_CLIP_DURATION.0;
+                        if left {
+                            let ns = cur.min(e0 - min).max(0);
+                            ev.start = Tick(ns);
+                            ev.duration = Tick(e0 - ns);
+                        } else {
+                            ev.duration = Tick((cur - s0).max(min));
+                        }
+                        self.apply(Command::SetCamera(ev));
+                    }
+                }
+                Some(Drag::MorphEdge { id, left, cur }) => {
+                    if let Some(mut ev) =
+                        self.model.project().morphers.iter().find(|m| m.id == id).cloned()
+                    {
+                        let (s0, e0) = (ev.start.0, (ev.start + ev.duration).0);
+                        let min = kt_model::MIN_CLIP_DURATION.0;
+                        if left {
+                            let ns = cur.min(e0 - min).max(0);
+                            ev.start = Tick(ns);
+                            ev.duration = Tick(e0 - ns);
+                        } else {
+                            ev.duration = Tick((cur - s0).max(min));
+                        }
+                        self.apply(Command::SetMorpher(ev));
                     }
                 }
                 Some(Drag::Morph { id, cur_start, moved, .. }) => {
@@ -3219,12 +3390,19 @@ impl KtApp {
 
         // ---- morph-блоки (H1, порт v1: фиолетовый скруглённый блок) ---------
         for m in &self.model.project().morphers {
-            let start = match &self.drag {
-                Some(Drag::Morph { id, cur_start, .. }) if *id == m.id => *cur_start,
-                _ => m.start.0,
+            let (start, end) = match &self.drag {
+                Some(Drag::Morph { id, cur_start, .. }) if *id == m.id => {
+                    (*cur_start, *cur_start + m.duration.0)
+                }
+                Some(Drag::MorphEdge { id, left, cur }) if *id == m.id => {
+                    let min = kt_model::MIN_CLIP_DURATION.0;
+                    let (s0, e0) = (m.start.0, (m.start + m.duration).0);
+                    if *left { ((*cur).min(e0 - min).max(0), e0) } else { (s0, (*cur).max(s0 + min)) }
+                }
+                _ => (m.start.0, (m.start + m.duration).0),
             };
             let x0 = tick_to_x(start);
-            let x1 = tick_to_x(start + m.duration.0).max(x0 + 8.0);
+            let x1 = tick_to_x(end).max(x0 + 8.0);
             if x1 < rect.left() || x0 > rect.right() {
                 continue;
             }
@@ -3271,8 +3449,21 @@ impl KtApp {
         }
         // ---- камеры-события (Р.29): бирюзовый блок на камерной дорожке ------
         for c in &self.model.project().cameras {
-            let x0 = tick_to_x(c.start.0);
-            let x1 = tick_to_x((c.start + c.duration).0).max(x0 + 8.0);
+            // живое превью жеста: до Р.38 камера при драге стояла на месте
+            // до отпускания — жест выглядел мёртвым
+            let (start, end) = match &self.drag {
+                Some(Drag::Camera { id, cur_start, .. }) if *id == c.id => {
+                    (*cur_start, *cur_start + c.duration.0)
+                }
+                Some(Drag::CameraEdge { id, left, cur }) if *id == c.id => {
+                    let min = kt_model::MIN_CLIP_DURATION.0;
+                    let (s0, e0) = (c.start.0, (c.start + c.duration).0);
+                    if *left { ((*cur).min(e0 - min).max(0), e0) } else { (s0, (*cur).max(s0 + min)) }
+                }
+                _ => (c.start.0, (c.start + c.duration).0),
+            };
+            let x0 = tick_to_x(start);
+            let x1 = tick_to_x(end).max(x0 + 8.0);
             if x1 < rect.left() || x0 > rect.right() {
                 continue;
             }
@@ -3282,11 +3473,16 @@ impl KtApp {
                 egui::pos2(x0.max(rect.left()), top + pad),
                 egui::pos2(x1.min(rect.right()), top + thin_h - pad - 2.0),
             );
+            let selected = self.selected_camera == Some(c.id);
             painter.rect(
                 r,
                 4.0,
                 egui::Color32::from_rgba_unmultiplied(60, 150, 160, 200),
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(24, 52, 58)),
+                if selected {
+                    egui::Stroke::new(2.0, crate::theme::ACCENT)
+                } else {
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(24, 52, 58))
+                },
                 egui::StrokeKind::Inside,
             );
             if r.width() > 46.0 {
@@ -3576,12 +3772,18 @@ impl KtApp {
         for m in &self.model.project().markers {
             let mt = match &self.drag {
                 Some(Drag::Marker { orig, cur }) if *orig == m.t.0 => *cur,
+                Some(Drag::MarkerEdge { start, left: true, cur }) if *start == m.t.0 => {
+                    (*cur).clamp(0, m.end().0)
+                }
                 _ => m.t.0,
             };
             let mdur = match &self.drag {
-                // правый край диапазона тянется — живой предпросмотр
+                // край диапазона тянется — живой предпросмотр
                 Some(Drag::MarkerEdge { start, left: false, cur }) if *start == m.t.0 => {
                     (*cur - m.t.0).max(0)
+                }
+                Some(Drag::MarkerEdge { start, left: true, cur }) if *start == m.t.0 => {
+                    m.end().0 - (*cur).clamp(0, m.end().0)
                 }
                 _ => m.duration.0,
             };
@@ -4477,36 +4679,48 @@ mod geom_tests {
     #[test]
     fn t61_vertical_layout() {
         // 3 дорожки клипов в высокой панели: высота из панели, скролла нет
-        let v = vertical_layout(400.0, 3, 0, None);
+        let v = vertical_layout(400.0, 3, 0, 0, None);
         assert_eq!(v.base_h, 84.0, "кламп сверху");
         assert_eq!(v.scroll_max, 0.0);
         // сжатие панели поджимает (как раньше)
-        let v = vertical_layout(160.0, 3, 0, None);
+        let v = vertical_layout(160.0, 3, 0, 0, None);
         assert!(v.base_h < 84.0 && v.base_h >= 30.0);
         // много дорожек: строки НЕ тоньше 30 — появляется скролл
-        let v = vertical_layout(300.0, 12, 0, None);
+        let v = vertical_layout(300.0, 12, 0, 0, None);
         assert_eq!(v.base_h, 30.0);
         assert!(v.scroll_max > 0.0);
-        let v13 = vertical_layout(300.0, 13, 0, None);
+        let v13 = vertical_layout(300.0, 13, 0, 0, None);
         assert!(v13.scroll_max > v.scroll_max, "ещё дорожка — больше скролл");
         // v_zoom задаёт высоту явно, с клампами
-        assert_eq!(vertical_layout(300.0, 12, 0, Some(50.0)).base_h, 50.0);
-        assert_eq!(vertical_layout(300.0, 12, 0, Some(4.0)).base_h, 16.0);
-        assert_eq!(vertical_layout(300.0, 12, 0, Some(500.0)).base_h, 120.0);
+        assert_eq!(vertical_layout(300.0, 12, 0, 0, Some(50.0)).base_h, 50.0);
+        assert_eq!(vertical_layout(300.0, 12, 0, 0, Some(4.0)).base_h, 16.0);
+        assert_eq!(vertical_layout(300.0, 12, 0, 0, Some(500.0)).base_h, 120.0);
         // при v_zoom, помещающемся целиком, скролла нет
-        assert_eq!(vertical_layout(800.0, 3, 0, Some(40.0)).scroll_max, 0.0);
-        // служебные строки (Р.35 п.1) весят ВТРОЕ меньше: три морф-дорожки
-        // отнимают у видео столько же, сколько одна дорожка клипов
-        let a = vertical_layout(300.0, 4, 3, None);
-        let b = vertical_layout(300.0, 5, 0, None);
-        assert!((a.base_h - b.base_h).abs() < 0.01, "вес служебных строк = 1/3");
-        assert!((a.content_h - b.content_h).abs() < 0.01, "три тонкие == одна дорожка клипов");
-        // и они не съедают высоту у видео: с тремя морф-дорожками строка
+        assert_eq!(vertical_layout(800.0, 3, 0, 0, Some(40.0)).scroll_max, 0.0);
+        // КАМЕРНЫЕ строки весят втрое меньше (Р.35 п.1): три камерные
+        // дорожки отнимают у видео столько же, сколько одна дорожка клипов
+        let a = vertical_layout(300.0, 4, 0, 3, None);
+        let b = vertical_layout(300.0, 5, 0, 0, None);
+        assert!((a.base_h - b.base_h).abs() < 0.01, "вес камерных строк = 1/3");
+        assert!((a.content_h - b.content_h).abs() < 0.01, "три камерные == одна дорожка клипов");
+        // морф-строка ВДВОЕ выше камерной (Р.38 п.10): полторы морф-дорожки
+        // весят как одна дорожка клипов
+        // сравнивать надо base_h, а не content_h: без клампа содержимое по
+        // построению заполняет доступную высоту в ОБОИХ случаях
+        let m = vertical_layout(300.0, 4, 3, 0, None);
+        assert!(m.base_h < a.base_h, "морф-строки отнимают у клипов больше, чем камерные");
+        assert!(
+            (row_height(LaneKind::Morph, 60.0) / row_height(LaneKind::Camera, 60.0) - 2.0).abs()
+                < 0.01,
+            "морф-строка ровно вдвое выше камерной"
+        );
+        // и они не съедают высоту у видео: с тремя камерными строка
         // клипов ровно та же, что была бы с одной лишней дорожкой клипов
-        let plain = vertical_layout(300.0, 4, 0, None);
+        let plain = vertical_layout(300.0, 4, 0, 0, None);
         assert!(a.base_h < plain.base_h, "служебные строки всё же место занимают");
         // пол высоты: на мелком зуме тонкая строка не тоньше 10 px
-        assert_eq!(row_height(LaneKind::Morph, 16.0), THIN_ROW_MIN);
+        assert_eq!(row_height(LaneKind::Morph, 12.0), THIN_ROW_MIN);
+        assert_eq!(row_height(LaneKind::Camera, 16.0), THIN_ROW_MIN);
         assert_eq!(row_height(LaneKind::Video, 16.0), 16.0);
         assert!((row_height(LaneKind::Camera, 84.0) - 28.0).abs() < 0.01);
     }

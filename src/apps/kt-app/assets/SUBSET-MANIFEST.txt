@@ -3,9 +3,9 @@ fontTools 4.63.0
 
 NotoSansSC-kt.otf
   source   /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc (face 2, sha256:b76b0433203017ca)
-  codepoints 524 (from i18n/*.toml)
+  codepoints 525 (from i18n/*.toml)
   features ''
-  size     98776 bytes, sha256:9388590aa54fb384
+  size     98980 bytes, sha256:d164ecc8a9da444d
 
 NotoSansArabic-kt.ttf
   source   /usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf (face 0, sha256:504d7407d86875ac)
