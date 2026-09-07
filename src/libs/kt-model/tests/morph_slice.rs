@@ -679,3 +679,95 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
         m.project().areas.iter().map(|a| &a.name).collect::<Vec<_>>()
     );
 }
+
+/// Тест 266 (Р.38 п.13, дословно: «у морфера я не могу задавать
+/// автоматизацию эффектов»). Кривые слоя живут в его патче в домене
+/// БЛОКА (у морфера нет материала), а `apply_to` переводит их в материал
+/// цели — тем же отображением, что и всё остальное.
+#[test]
+fn t266_morph_layer_curves_rebase_to_target_material() {
+    use kt_model::*;
+    use kt_time::Tick;
+
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(90_000),
+        duration: Tick(90_000 * 4),
+        // точка входа НЕ нулевая: иначе «материал» и «таймлайн» совпали бы
+        // и тест не отличил бы правильный перевод от его отсутствия
+        source_in: Tick(90_000 * 10),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.morph_lanes = 1;
+    p.lane_order = vec![(LaneKind::Morph, 0), (LaneKind::Video, 0), (LaneKind::Audio, 0)];
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        // блок начинается ПОЗЖЕ клипа — сдвиг обязан войти в перевод
+        start: Tick(90_000 * 2),
+        duration: Tick(90_000 * 2),
+        targets: MorphTargets::Below,
+        patch: MorphPatch {
+            video_fx: vec![FxInstance::blur(4)],
+            video_auto: vec![vec![ParamCurve {
+                param: "radius".into(),
+                ease: false,
+                keys: vec![
+                    AutoKey { t: Tick(0), v: 2.0 },
+                    AutoKey { t: Tick(90_000 * 2), v: 9.0 },
+                ],
+            }]],
+            ..Default::default()
+        },
+        enabled: true,
+        timed: true,
+    });
+    p.validate().unwrap();
+
+    let eff = p.effective_clips();
+    let patched: Vec<&ClipEvent> = eff.iter().filter(|c| !c.fx.is_empty()).collect();
+    assert_eq!(patched.len(), 1, "накрыт ровно один кусок: {:?}", eff.len());
+    let c = patched[0];
+    assert_eq!(c.fx_auto.len(), c.fx.len(), "кривые параллельны цепочке");
+    let keys = &c.fx_auto[0][0].keys;
+    assert_eq!(keys.len(), 2);
+    // блок 2..4 c таймлайна = материал 11..13 c (source_in = 10 c,
+    // клип начинается в 1 c)
+    assert_eq!(keys[0].t, Tick(90_000 * 11), "начало блока → материал цели");
+    assert_eq!(keys[1].t, Tick(90_000 * 13), "конец блока → материал цели");
+    assert_eq!(keys[0].v, 2.0);
+    assert_eq!(keys[1].v, 9.0);
+
+    // выключенный слот кривую с собой не тащит: `auto_for` идёт тем же
+    // порядком, что `chain_for`, иначе кривая уехала бы на чужой эффект
+    let mut p2 = p.clone();
+    p2.morphers[0].patch.video_bypass = vec![true];
+    let eff2 = p2.effective_clips();
+    assert!(
+        eff2.iter().all(|c| c.fx.is_empty() && c.fx_auto.iter().all(|a| a.is_empty())),
+        "выключенный слот не приносит ни эффекта, ни кривой"
+    );
+
+    // и патч с одними кривыми не считается пустым: «пустой» не пишется в файл
+    let mut only = MorphPatch::default();
+    assert!(only.is_empty());
+    only.video_auto = vec![vec![ParamCurve {
+        param: "radius".into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(0), v: 1.0 }],
+    }]];
+    assert!(!only.is_empty(), "патч с кривыми обязан сериализоваться");
+}

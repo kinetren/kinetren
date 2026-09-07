@@ -29,6 +29,8 @@ pub struct MorphEditor {
     /// Снимок состояния на момент открытия — для «Отмена» (в окне FX
     /// откат был, у морфера его не было вовсе).
     pub backup: Option<kt_model::MorpherEvent>,
+    /// Состояние виджета автоматизации на каждый слот (Р.38 п.13).
+    pub auto_views: std::collections::HashMap<usize, crate::automation::AutoView>,
 }
 
 const MS: i64 = TICK_HZ / 1000; // тиков в мс
@@ -49,6 +51,7 @@ impl KtApp {
             sel: Default::default(),
             src_rect: None,
             backup,
+            auto_views: std::collections::HashMap::new(),
         });
     }
 
@@ -256,10 +259,15 @@ impl KtApp {
         };
         let mut seek_to: Option<Tick> = None;
         let mut need_selection = false;
+        // всё, что нужно автоматизации слоя (Р.38 п.13)
+        let playhead = self.player.transport.playhead();
+        let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
+        let tl_view = self.tl_view();
         // выключатель события (Р.33) — та же мастер-галка, что у цепочки
         // события; буфер FX общий с окном событий
         let mut enabled = ev.enabled;
         let mut fx_clip = self.fx_clipboard.clone();
+        let mut env_clip = self.env_clipboard.clone();
         // подсказки — в статусбар, как везде (попапов в программе нет)
         let mut hover_out: Option<String> = None;
         egui::Window::new(title)
@@ -382,7 +390,7 @@ impl KtApp {
                 // эффектов в патче лежат раздельно (video/audio), но
                 // пользователю это не показываем: полоса склеивает их и
                 // раскладывает обратно по `FxInstance::class()`.
-                let (mut fx, mut bypass, split) = merge_chains(&ev.patch);
+                let (mut fx, mut bypass, mut auto, split) = merge_chains(&ev.patch);
                 let mut src_on = !ev.patch.src_off;
                 let ch = crate::widgets::chain_strip(
                     ui,
@@ -390,7 +398,7 @@ impl KtApp {
                     crate::widgets::ChainEdit {
                         fx: &mut fx,
                         bypass: &mut bypass,
-                        auto: None,
+                        auto: Some(&mut auto),
                         selected: &mut ed.sel,
                         master_on: &mut enabled,
                         head: Some(crate::widgets::HeadSlot {
@@ -407,7 +415,7 @@ impl KtApp {
                 );
                 if ch.any() {
                     ev.patch.src_off = !src_on;
-                    split_chains(&mut ev.patch, &fx, &bypass, split);
+                    split_chains(&mut ev.patch, &fx, &bypass, &auto, split);
                     changed = true;
                 }
                 ui.label(egui::RichText::new(tr(k::mrph::LIVE_NOTE)).weak().small());
@@ -418,11 +426,63 @@ impl KtApp {
                         changed |= self.morph_source_section(ui, ed, &mut ev, &mut pick_file);
                     }
                     crate::widgets::ChainSel::Fx(i) => {
-                        // параметры — ТЕМ ЖЕ кодом, что в окне события
-                        if let Some(f) = fx.get_mut(i)
-                            && crate::fx_editor::draw_video_fx_params(ui, f, None, &cameras, false)
-                        {
-                            split_chains(&mut ev.patch, &fx, &bypass, split);
+                        // Параметры и АВТОМАТИЗАЦИЯ — тем же кодом, что в
+                        // окне события (Р.38 п.13). Домен кривых слоя —
+                        // время БЛОКА: у морфера нет материала, он слой
+                        // правок. Тот же домен, что у камеры и перехода.
+                        let at = kt_time::Tick((playhead.0 - ev.start.0).clamp(0, ev.duration.0));
+                        let view_sel = ed.auto_views.get(&i).and_then(|v| v.sel);
+                        let mut slot_auto =
+                            auto.get(i).cloned().unwrap_or_default();
+                        let mut bind = crate::widgets::CurveBind {
+                            curves: &mut slot_auto,
+                            sel: view_sel,
+                            at,
+                        };
+                        let mut slot_changed = false;
+                        if let Some(f) = fx.get_mut(i) {
+                            slot_changed |= crate::fx_editor::draw_video_fx_params(
+                                ui,
+                                f,
+                                Some(&mut bind),
+                                &cameras,
+                                false,
+                            );
+                            let start = ev.start;
+                            let to_tl = move |t: kt_time::Tick| kt_time::Tick(start.0 + t.0);
+                            let to_cur = move |t: kt_time::Tick| kt_time::Tick(t.0 - start.0);
+                            let view = ed.auto_views.entry(i).or_default();
+                            let (c, auto_seek) = crate::fx_editor::draw_auto_for(
+                                ui,
+                                f,
+                                &mut slot_auto,
+                                view,
+                                crate::automation::AutoCtx {
+                                    specs: f.param_specs(),
+                                    range: (
+                                        kt_time::Tick::ZERO,
+                                        kt_time::Tick(ev.duration.0.max(1)),
+                                    ),
+                                    view: crate::automation::view_in_curve(&to_cur, tl_view),
+                                    to_timeline: &to_tl,
+                                    to_curve: &to_cur,
+                                    frame_step,
+                                },
+                                playhead,
+                                &mut env_clip,
+                                (ed.id.0, i),
+                                &mut hover_out,
+                            );
+                            slot_changed |= c;
+                            if let Some(t) = auto_seek {
+                                seek_to = Some(t);
+                            }
+                        }
+                        if slot_changed {
+                            if let Some(a) = auto.get_mut(i) {
+                                *a = slot_auto;
+                            }
+                            split_chains(&mut ev.patch, &fx, &bypass, &auto, split);
                             changed = true;
                         }
                     }
@@ -486,6 +546,7 @@ impl KtApp {
             return;
         }
         self.fx_clipboard = fx_clip;
+        self.env_clipboard = env_clip;
         if need_selection {
             // невозможность действия — ошибкой, а не блёклой строкой (п.16 р.28)
             self.note(tr(k::mrph::NEED_SELECTION));
@@ -534,34 +595,54 @@ fn head_label(patch: &MorphPatch, media: &[(MediaId, String)]) -> String {
 /// Склеить обе цепочки патча в ОДНУ полосу. `split` запоминает, сколько
 /// слотов было видео: обратная раскладка идёт по `FxInstance::class()`,
 /// а число нужно только для проверки, что порядок не потерялся.
-fn merge_chains(patch: &MorphPatch) -> (Vec<FxInstance>, Vec<bool>, usize) {
+type Merged = (Vec<FxInstance>, Vec<bool>, Vec<Vec<kt_model::ParamCurve>>, usize);
+
+fn merge_chains(patch: &MorphPatch) -> Merged {
     let mut fx = patch.video_fx.clone();
     let mut bypass = patch.video_bypass.clone();
     bypass.resize(fx.len(), false);
+    // кривые едут вместе со слотами (Р.38 п.13) — иначе перестановка
+    // мышью в полосе увозила бы эффект без его автоматизации
+    let mut auto = patch.video_auto.clone();
+    auto.resize(fx.len(), Vec::new());
     let n = fx.len();
     fx.extend(patch.audio_fx.iter().cloned());
     let mut ab = patch.audio_bypass.clone();
     ab.resize(patch.audio_fx.len(), false);
     bypass.extend(ab);
-    (fx, bypass, n)
+    let mut aa = patch.audio_auto.clone();
+    aa.resize(patch.audio_fx.len(), Vec::new());
+    auto.extend(aa);
+    (fx, bypass, auto, n)
 }
 
 /// Разложить полосу обратно по видам. Вид слота — функция от самого
 /// эффекта (`is_audio`), поэтому склейка обратима без побочных таблиц;
 /// относительный порядок внутри каждого вида сохраняется.
-fn split_chains(patch: &mut MorphPatch, fx: &[FxInstance], bypass: &[bool], _was_video: usize) {
+fn split_chains(
+    patch: &mut MorphPatch,
+    fx: &[FxInstance],
+    bypass: &[bool],
+    auto: &[Vec<kt_model::ParamCurve>],
+    _was_video: usize,
+) {
     patch.video_fx.clear();
     patch.video_bypass.clear();
+    patch.video_auto.clear();
     patch.audio_fx.clear();
     patch.audio_bypass.clear();
+    patch.audio_auto.clear();
     for (i, f) in fx.iter().enumerate() {
         let off = bypass.get(i).copied().unwrap_or(false);
+        let cur = auto.get(i).cloned().unwrap_or_default();
         if f.is_audio() {
             patch.audio_fx.push(f.clone());
             patch.audio_bypass.push(off);
+            patch.audio_auto.push(cur);
         } else {
             patch.video_fx.push(f.clone());
             patch.video_bypass.push(off);
+            patch.video_auto.push(cur);
         }
     }
 }

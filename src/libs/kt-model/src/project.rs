@@ -697,6 +697,19 @@ pub struct MorphPatch {
     pub video_bypass: Vec<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio_bypass: Vec<bool>,
+    /// Кривые параметров слоя (Р.38 п.13: «у морфера я не могу задавать
+    /// автоматизацию эффектов»). Параллельны своим цепочкам, как и
+    /// выключатели.
+    ///
+    /// **Домен — время БЛОКА морфера, 0..duration.** У морфера нет
+    /// материала: он слой правок, а не событие с исходником. Тот же
+    /// домен, что у камеры и у перехода, и то же правило, что Р.37 задал
+    /// событиям: «временной промежуток, вырезанный этим элементом».
+    /// В `apply_to` ключи пересчитываются в материал ЦЕЛИ.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub video_auto: Vec<Vec<ParamCurve>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio_auto: Vec<Vec<ParamCurve>>,
 }
 
 /// Ручной `Deserialize`: принимает три формы — плоскую (Р.35) и обе
@@ -743,6 +756,10 @@ impl<'de> Deserialize<'de> for MorphPatch {
             video_bypass: Vec<bool>,
             #[serde(default)]
             audio_bypass: Vec<bool>,
+            #[serde(default)]
+            video_auto: Vec<Vec<ParamCurve>>,
+            #[serde(default)]
+            audio_auto: Vec<Vec<ParamCurve>>,
         }
         #[derive(Deserialize)]
         #[serde(untagged)]
@@ -775,6 +792,8 @@ impl<'de> Deserialize<'de> for MorphPatch {
                 audio_fx: f.audio_fx,
                 video_bypass: f.video_bypass,
                 audio_bypass: f.audio_bypass,
+                video_auto: f.video_auto,
+                audio_auto: f.audio_auto,
             },
         })
     }
@@ -788,6 +807,10 @@ impl MorphPatch {
             && self.absolute_source_in.is_none()
             && self.video_fx.is_empty()
             && self.audio_fx.is_empty()
+            // кривые без слотов невозможны, но «пустой» патч НЕ
+            // сериализуется — молча потерять их нельзя (Р.38)
+            && self.video_auto.iter().all(|a| a.is_empty())
+            && self.audio_auto.iter().all(|a| a.is_empty())
     }
 
     /// Меняет ли патч ЭТОТ клип. Ответ «нет» — причина не резать его
@@ -838,6 +861,35 @@ impl MorphPatch {
         out
     }
 
+    /// Кривые в том же порядке, в каком `chain_for` отдаёт слоты:
+    /// выключенные пропущены, у видео в хвосте — варп-слоты из аудио.
+    /// Разойдись порядок — кривая уехала бы на чужой эффект.
+    pub fn auto_for(&self, kind: ClipKind) -> Vec<Vec<ParamCurve>> {
+        let (fx, off, auto) = match kind {
+            ClipKind::Video => (&self.video_fx, &self.video_bypass, &self.video_auto),
+            ClipKind::Audio => (&self.audio_fx, &self.audio_bypass, &self.audio_auto),
+        };
+        let pick = |i: usize| auto.get(i).cloned().unwrap_or_default();
+        let mut out: Vec<Vec<ParamCurve>> = fx
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !off.get(*i).copied().unwrap_or(false))
+            .map(|(i, _)| pick(i))
+            .collect();
+        if kind == ClipKind::Video {
+            out.extend(
+                self.audio_fx
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, f)| {
+                        f.warps_time() && !self.audio_bypass.get(*i).copied().unwrap_or(false)
+                    })
+                    .map(|(i, _)| self.audio_auto.get(i).cloned().unwrap_or_default()),
+            );
+        }
+        out
+    }
+
     /// Все медиа, которые держит патч (гард `RemoveMedia`).
     pub fn media_refs(&self) -> impl Iterator<Item = MediaId> + '_ {
         self.media.into_iter()
@@ -847,7 +899,11 @@ impl MorphPatch {
     /// Верхнего клампа source_in по длительности источника нет намеренно:
     /// модель не знает длительностей медиа (никакого FFmpeg в kt-model);
     /// чтение за концом источника движок отдаёт тишиной/последним кадром.
-    pub fn apply_to(&self, c: &mut ClipEvent) {
+    /// `anchor` — начало блока морфера на таймлайне, `frame_step` — шаг
+    /// кадра проекта: по ним ключи слоя переводятся из времени БЛОКА в
+    /// материал цели тем же отображением, что и всё остальное
+    /// (`clip_material_at` учитывает реверс).
+    pub fn apply_to(&self, c: &mut ClipEvent, anchor: Tick, frame_step: i64) {
         if self.replaces_source() {
             if let Some(m) = self.media {
                 c.media = m;
@@ -873,7 +929,34 @@ impl MorphPatch {
         }
         // fx_bypass короче цепочки = дописанные слоты включены
         // (active_fx трактует отсутствующий флаг как false)
+        let auto = self.auto_for(c.kind);
         c.fx.extend(add);
+        // кривые слоя (Р.38 п.13) — в домен МАТЕРИАЛА цели: у слоя своё
+        // время (0..duration блока), у события — материал, и движок
+        // сэмплирует именно материал
+        if auto.iter().any(|a| !a.is_empty()) {
+            c.fx_auto.resize(c.fx.len(), Vec::new());
+            let base = c.fx.len() - auto.len();
+            for (j, curves) in auto.into_iter().enumerate() {
+                c.fx_auto[base + j] = curves
+                    .into_iter()
+                    .map(|mut cur| {
+                        for k in &mut cur.keys {
+                            k.t = crate::clip_material_at(
+                                c.source_in,
+                                c.start,
+                                c.duration,
+                                c.reversed,
+                                frame_step,
+                                Tick(anchor.0 + k.t.0),
+                            );
+                        }
+                        cur.keys.sort_by_key(|k| k.t.0);
+                        cur
+                    })
+                    .collect();
+            }
+        }
     }
 }
 
@@ -3023,6 +3106,8 @@ impl Project {
             return self.clips.clone(); // быстрый путь: GOLDEN держится на нём
         }
         let rows = self.rows();
+        // шаг кадра нужен для перевода ключей слоя в материал цели
+        let frame_step = 90_000 / self.settings.fps.max(1) as i64;
         let mut ms: Vec<&MorpherEvent> = self.morphers.iter().filter(|m| m.enabled).collect();
         // Порядок наложения — СНИЗУ ВВЕРХ (нижний слой первым, как
         // adjustment layer в AE); внутри строки прежнее правило по id.
@@ -3053,7 +3138,7 @@ impl Project {
                 let mut piece = clip_slice(c, w, id);
                 for (m, ws) in ms.iter().zip(&wins) {
                     if ws.iter().any(|x| x.start <= w.start && w.end <= x.end) {
-                        m.patch.apply_to(&mut piece);
+                        m.patch.apply_to(&mut piece, m.start, frame_step);
                     }
                 }
                 out.push(piece);

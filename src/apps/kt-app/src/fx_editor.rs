@@ -251,17 +251,42 @@ impl KtApp {
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
                                     let view = ed.auto_views.entry((*id, sel)).or_default();
-                                    let (c, s) = draw_fx_auto_section(
+                                    // домен слота события — материал;
+                                    // перевод учитывает РЕВЕРС и больше
+                                    // ничего (Р.37: скорость ось не
+                                    // сжимает)
+                                    let to_tl = |t: kt_time::Tick| {
+                                        kt_model::clip_timeline_at(
+                                            clip.source_in,
+                                            clip.start,
+                                            clip.duration,
+                                            clip.reversed,
+                                            frame_step,
+                                            t,
+                                        )
+                                    };
+                                    let to_mat = |t: kt_time::Tick| {
+                                        kt_model::clip_material_at(
+                                            clip.source_in,
+                                            clip.start,
+                                            clip.duration,
+                                            clip.reversed,
+                                            frame_step,
+                                            t,
+                                        )
+                                    };
+                                    let actx = crate::automation::clip_ctx(
+                                        &clip, f, frame_step, &to_tl, &to_mat, tl_view,
+                                    );
+                                    let (c, s) = draw_auto_for(
                                         ui,
-                                        &clip,
-                                        sel,
                                         f,
                                         curves,
+                                        view,
+                                        actx,
                                         playhead,
                                         &mut env_clip,
-                                        view,
-                                        frame_step,
-                                        tl_view,
+                                        (id.0, sel),
                                         &mut hover_out,
                                     );
                                     auto_ch = c;
@@ -352,23 +377,18 @@ impl KtApp {
 /// Возвращает (было ли изменение, куда двинуть главный курсор).
 /// У слота без автоматизируемых параметров (Mirror) не рисуется вовсе.
 #[allow(clippy::too_many_arguments)]
-fn draw_fx_auto_section(
+pub(crate) fn draw_auto_for(
     ui: &mut egui::Ui,
-    clip: &kt_model::ClipEvent,
-    slot: usize,
     f: &FxInstance,
     curves: &mut Vec<kt_model::ParamCurve>,
+    view: &mut crate::automation::AutoView,
+    ctx: crate::automation::AutoCtx<'_>,
     playhead: kt_time::Tick,
     env_clip: &mut Option<kt_model::ops::EnvelopeBlock>,
-    view: &mut crate::automation::AutoView,
-    frame_step: i64,
-    // видимое окно ГЛАВНОГО таймлайна — по нему график строит ось при
-    // включённом замке (Р.38 п.14)
-    tl_view: (kt_time::Tick, kt_time::Tick),
+    id: impl std::hash::Hash + std::fmt::Debug + Copy,
     hover_out: &mut Option<String>,
 ) -> (bool, Option<kt_time::Tick>) {
-    let (src_in, dur) = (clip.source_in, clip.duration);
-    let mat_end = src_in.0 + dur.0;
+    let (src_in, mat_end) = (ctx.range.0, ctx.range.1.0);
     // только Smooth-параметры: структурные (длина линий реверба) кривой
     // не подлежат — их смена пересобирает DSP (Р.33)
     let specs: Vec<&kt_model::ParamSpec> = f.auto_params().collect();
@@ -469,14 +489,7 @@ fn draw_fx_auto_section(
         // рендера — `clip_material_at`. Скорость на ось НЕ влияет (Р.37):
         // иначе ось кривой rate зависела бы от самой кривой rate.
         if !curves.is_empty() && ui.button(tr(k::fx::KF_AT_CURSOR)).clicked() {
-            let at = kt_model::clip_material_at(
-                clip.source_in,
-                clip.start,
-                clip.duration,
-                clip.reversed,
-                frame_step,
-                playhead,
-            );
+            let at = (ctx.to_curve)(playhead);
             for c in curves.iter_mut() {
                 let v = kt_model::curve_value(&c.keys, c.ease, at);
                 c.keys.retain(|kf| kf.t != at);
@@ -486,40 +499,8 @@ fn draw_fx_auto_section(
             changed = true;
         }
     });
-    // единый виджет: график ↔ таблица (Р.33 С3). Домен слота — материал
-    // события; перевод в обе стороны учитывает РЕВЕРС и больше ничего
-    // (Р.37: скорость ось не сжимает, и правая часть графика перестала
-    // быть недостижимой)
-    let to_tl = |t: kt_time::Tick| {
-        kt_model::clip_timeline_at(
-            clip.source_in,
-            clip.start,
-            clip.duration,
-            clip.reversed,
-            frame_step,
-            t,
-        )
-    };
-    let to_mat = |t: kt_time::Tick| {
-        kt_model::clip_material_at(
-            clip.source_in,
-            clip.start,
-            clip.duration,
-            clip.reversed,
-            frame_step,
-            t,
-        )
-    };
-    let ctx = crate::automation::clip_ctx(clip, f, frame_step, &to_tl, &to_mat, tl_view);
-    let res = crate::automation::draw(
-        ui,
-        ("auto", clip.id.0, slot),
-        &ctx,
-        curves,
-        view,
-        playhead,
-        hover_out,
-    );
+    // единый виджет: график ↔ таблица (Р.33 С3)
+    let res = crate::automation::draw(ui, ("auto", id), &ctx, curves, view, playhead, hover_out);
     (changed || res.changed, res.seek)
 }
 pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
