@@ -299,3 +299,118 @@ fn t250_blend_prefetches_both_sides() {
     // иначе чанк вытеснит соседа и байты станут зависеть от кэша
     assert_eq!(vr.max_concurrent_layers(), 2, "смешивающий слой весит два кадра");
 }
+
+// ---------------------------------------------------------------------------
+// Тесты 272 (Р.39): резка и домен автоматизации на растянутом клипе.
+// ---------------------------------------------------------------------------
+
+/// Тест 272: разрезанный проект рендерит ТЕ ЖЕ кадры, что неразрезанный.
+///
+/// Это и есть тот самый «скачок на стыке», о котором шла речь: до Р.39
+/// `clip_slice` считал `source_in` линейно, и последовательность исходных
+/// pts расходилась НА КАЖДОМ кадре после разреза.
+#[test]
+fn t272_split_renders_the_same_frames() {
+    for (name, fx, auto, reversed) in [
+        ("0.5x", vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], false),
+        ("2x", vec![FxInstance::slowed_reverb(2.0, 0.0, 85.0)], vec![], false),
+        ("0.5x rev", vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], true),
+        (
+            "кривая",
+            vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)],
+            vec![vec![ParamCurve {
+                param: "rate".into(),
+                ease: false,
+                keys: vec![
+                    AutoKey { t: Tick(SEC), v: 1.0 },
+                    AutoKey { t: Tick(SEC + 4 * SEC), v: 2.0 },
+                ],
+            }]],
+            false,
+        ),
+    ] {
+        let whole = project(fx.clone(), auto.clone(), reversed);
+        let before = pts_track(&whole);
+        for at in [2 * SEC, SEC * 17 / 10] {
+            let mut m = TimelineModel::new(whole.clone());
+            m.apply(Command::Split {
+                id: ClipId(1),
+                at: Tick(at),
+                new_id: ClipId(2),
+                new_group: None,
+            })
+            .expect("разрез проходит");
+            let after = pts_track(m.project());
+            let bad = before
+                .iter()
+                .zip(&after)
+                .enumerate()
+                .filter(|(_, (a, b))| (*a - *b).abs() > STEP)
+                .count();
+            assert_eq!(
+                bad, 0,
+                "{name}, разрез на {at}: {bad} кадров из {} разошлись — резка попала не в тот \
+                 материал",
+                before.len()
+            );
+        }
+    }
+}
+
+/// Тест 272б: кривая ВИДЕО-FX сэмплируется в том же домене, что звук и UI.
+///
+/// До Р.39 `layer_src` брал варп-зависимую позицию кадра, то есть на
+/// замедленном клипе картинка анимировалась по своему расписанию. Ось
+/// линейна по решению Р.37 («БЕЗ учёта замедления-ускорения»).
+#[test]
+fn t272b_video_curves_use_the_linear_axis() {
+    // Blur с кривой радиуса + замедление вдвое. Ключ ровно на середине
+    // события: значение под ним обязано совпасть со значением, которое
+    // покажет UI (тот же `clip_material_at`).
+    let mut p = project(
+        vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0), FxInstance::blur(1)],
+        vec![
+            vec![],
+            vec![ParamCurve {
+                param: "radius".into(),
+                ease: false,
+                keys: vec![
+                    AutoKey { t: Tick(SEC), v: 1.0 },
+                    AutoKey { t: Tick(SEC + 2 * SEC), v: 48.0 },
+                ],
+            }],
+        ],
+        false,
+    );
+    p.clips[0].fx_bypass = vec![false, false];
+    p.validate().unwrap();
+
+    let mid = Tick(2 * SEC); // середина события
+    let want_at = kt_model::clip_material_at(
+        p.clips[0].source_in,
+        p.clips[0].start,
+        p.clips[0].duration,
+        false,
+        STEP,
+        mid,
+    );
+    // ключи покрывают [SEC, 3·SEC]; линейная ось ставит середину события в
+    // материал 3·SEC — то есть конец кривой
+    assert_eq!(want_at, Tick(SEC + 2 * SEC), "линейная ось: середина события = середина материала");
+
+    let vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let plan = vr.frame_plan(&cache, mid, kt_media::Quality { width: 64, height: 36 });
+    let radius = plan.layers.iter().find_map(|l| match l {
+        kt_engine::PlanLayer::One { src, .. } => src.fx.iter().find_map(|f| match f {
+            FxInstance::Blur { radius, .. } => Some(*radius),
+            _ => None,
+        }),
+        _ => None,
+    });
+    assert_eq!(
+        radius,
+        Some(48),
+        "радиус обязан быть взят по ЛИНЕЙНОЙ оси (конец кривой), а не по варп-позиции"
+    );
+}

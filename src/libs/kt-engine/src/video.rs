@@ -64,51 +64,11 @@ struct VideoClip {
     warp: Option<VideoWarp>,
 }
 
-/// Разрешённый варп клипа: базовая скорость, профиль её кривой в домене
-/// СОБЫТИЯ и фактически потреблённый материал (якорь зеркала реверса).
-#[derive(Debug, Clone)]
-pub(crate) struct VideoWarp {
-    pub(crate) base: f64,
-    pub(crate) prof: Vec<(f64, f64)>,
-    pub(crate) used: i64,
-    /// Режим «смешивание» (Р.37 С5): читается исполнителем слоя.
-    #[allow(dead_code)]
-    pub(crate) blend: bool,
-}
+// Карта варпа клипа переехала в kt-model (Р.39): конструктор один на
+// всех — рендер, превью и правило куска клипа берут её оттуда, поэтому
+// разойтись «какой кадр показать» и «где режем» больше не могут.
+use kt_model::ClipWarp as VideoWarp;
 
-/// Варп видео-клипа из его АКТИВНОЙ цепочки. `active_fx`/`active_fx_auto`
-/// уже отбросили выключенные слоты и мастер-выключатель, поэтому галка
-/// слота на видео-экземпляре — это и есть «отключить замедление картинки»
-/// (Р.37: второго выключателя того же смысла не заводим).
-pub(crate) fn clip_video_warp(
-    fx: &[kt_model::FxInstance],
-    auto: &[Vec<kt_model::ParamCurve>],
-    source_in: Tick,
-    duration: Tick,
-) -> Option<VideoWarp> {
-    let span = duration.0.max(1);
-    let (base, blend) = fx.iter().find_map(|f| match f {
-        kt_model::FxInstance::SlowedReverb { rate, frames, .. } => {
-            Some((*rate, *frames == kt_model::FrameMode::Blend))
-        }
-        _ => None,
-    })?;
-    // Профиль строится ТОЙ ЖЕ функцией, что у аудио: домен один на оба
-    // вида, иначе картинка и звук разъехались бы на кривой скорости.
-    // Позиция ключа нормируется в АУДИО-КАДРАХ (как у аудио) — доля
-    // безразмерна, и обе стороны получают одно число. В ТИКАХ считается
-    // только ВЫХОД карты (`warp_material_ticks`): там сетка 48 кГц
-    // промахнулась бы мимо границы кадра.
-    let prof = kt_fx::AutoProfiles::from_curves(
-        auto,
-        source_in.to_audio_frames(),
-        duration.to_audio_frames().max(1),
-    )
-    .rate_points(fx)
-    .to_vec();
-    let used = kt_fx::warp_material_ticks(base, &prof, span, 1.0);
-    Some(VideoWarp { base, prof, used, blend })
-}
 
 /// Переход, привязанный к клипу: вид, его кривые и начало окна. Вид
 /// разрешается на КАЖДЫЙ момент — иначе анимация параметров не дошла бы
@@ -195,13 +155,13 @@ fn clip_material_pos(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
     // (ручки перехода) tau уходит из [0,1] — карта продолжает крайним
     // сегментом, ровно как chain_source_window_ext у аудио.
     let tau = (t.0 - c.start.0) as f64 / span as f64;
-    let consumed = kt_fx::warp_material_ticks(w.base, &w.prof, span, tau);
+    let consumed = kt_fx::warp_material_ticks(w.base(), w.prof(), span, tau);
     if c.reversed {
         // ВАРП, ПОТОМ ЗЕРКАЛО — не наоборот. Аудио-путь (`fill_source`)
         // зеркалит УЖЕ потреблённый прямой поток; зеркало до варпа гнало бы
         // кривую скорости задом наперёд и рассинхронило A/V. Якорь —
         // фактически потреблённое `used`, а не длина события.
-        Tick((c.source_in.0 + w.used - grid.frame_step() - consumed).max(c.source_in.0))
+        Tick((c.source_in.0 + w.used() - grid.frame_step() - consumed).max(c.source_in.0))
     } else {
         Tick((c.source_in.0 + consumed).max(0))
     }
@@ -232,7 +192,7 @@ pub struct VideoRenderer {
 /// края) пары НЕ даёт — путь остаётся байт-в-байт прежним.
 fn clip_frame_keys(c: &VideoClip, t: Tick, grid: &FpsGrid) -> (Tick, Option<(Tick, u32)>) {
     let a = clip_source_pts(c, t, grid);
-    if !c.warp.as_ref().is_some_and(|w| w.blend) {
+    if !c.warp.as_ref().is_some_and(|w| w.blend()) {
         return (a, None);
     }
     let m = clip_material_pos(c, t, grid);
@@ -259,7 +219,7 @@ impl VideoRenderer {
             .map(|c| {
                 let fx = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
                 let auto = c.active_fx_auto();
-                let warp = clip_video_warp(&fx, &auto, c.source_in, c.duration);
+                let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
                 let fx_hash = fx_chain_hash(
                     &fx,
                     &auto,
@@ -428,7 +388,7 @@ impl VideoRenderer {
             // это — чанк экспорта вытеснит соседа до композиции, сработает
             // ветка голода, и БАЙТЫ ЭКСПОРТА станут зависеть от тайминга
             // кэша.
-            let w = if c.warp.as_ref().is_some_and(|w| w.blend) { 2 } else { 1 };
+            let w = if c.warp.as_ref().is_some_and(|w| w.blend()) { 2 } else { 1 };
             evs.push((c.start.0 - c.head_ext.0, w));
             evs.push((c.end.0 + c.tail_ext.0, -w));
         }
@@ -471,9 +431,22 @@ fn layer_src<'a>(
     t: Tick,
 ) -> LayerSrc<'a> {
     let (src_pts, pair) = clip_frame_keys(clip, t, ctx.grid);
-    // кривые сэмплируются по ВЫРОВНЕННОЙ материальной позиции — по тому
-    // самому кадру источника, который сейчас на экране (Р.33)
-    let mat = src_pts;
+    // Кривые сэмплируются по ЛИНЕЙНОЙ материальной позиции — по той же,
+    // которой рисует ось UI и по которой считает звук (Р.37: «БЕЗ учёта
+    // замедления-ускорения»). До Р.39 здесь стоял `src_pts` — ВАРП-
+    // зависимая позиция кадра, — и на замедленном клипе картинка
+    // анимировалась по своему расписанию, а звук и UI по своему.
+    //
+    // Это разные вопросы, и путать их нельзя: «какой кадр показать» —
+    // карта варпа (`clip_frame_keys`), «где мы на оси анимации» — линейка.
+    let mat = kt_model::clip_material_at(
+        clip.source_in,
+        clip.start,
+        clip.end - clip.start,
+        clip.reversed,
+        ctx.grid.frame_step(),
+        t,
+    );
     let cache_idx = video_cache_idx(src_pts);
     let source = SourceId(clip.media.0);
     let frame = cache.get_video(source, Some(quality), cache_idx);

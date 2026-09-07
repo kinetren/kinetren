@@ -250,6 +250,23 @@ impl AutoProfiles {
         src_in_frames: i64,
         clip_len_frames: i64,
     ) -> AutoProfiles {
+        Self::from_curves_rev(auto, src_in_frames, clip_len_frames, false)
+    }
+
+    /// То же с учётом РЕВЕРСА (Р.39).
+    ///
+    /// Нормировка `(k.t − src_in)/len` равна выходной доле ключа только
+    /// потому, что UI пишет ключ в `src_in + p·duration`. У зеркального
+    /// клипа UI пишет его ЗЕРКАЛЬНО (`clip_material_at` учитывает реверс),
+    /// и равенство ломается: ключ, поставленный в начале события, DSP
+    /// отрабатывал в конце. Дожило до Р.39 потому, что ни один тест во
+    /// всём репозитории не сочетал `reversed` с непустым `fx_auto`.
+    pub fn from_curves_rev(
+        auto: &[Vec<ParamCurve>],
+        src_in_frames: i64,
+        clip_len_frames: i64,
+        reversed: bool,
+    ) -> AutoProfiles {
         let len = clip_len_frames.max(1) as f64;
         AutoProfiles {
             slots: auto
@@ -270,7 +287,7 @@ impl AutoProfiles {
                             // как есть, а расхождение карты с DSP — это
                             // промахи префетча и тишина (п.13/t17).
                             let clamp = c.param == "rate";
-                            let pts = c
+                            let pts: Vec<(f64, f64)> = c
                                 .keys
                                 .iter()
                                 .map(|k| {
@@ -280,9 +297,19 @@ impl AutoProfiles {
                                     } else {
                                         k.v
                                     };
-                                    (f as f64 / len, v)
+                                    let u = f as f64 / len;
+                                    (if reversed { 1.0 - u } else { u }, v)
                                 })
                                 .collect();
+                            // зеркало переворачивает порядок точек, а
+                            // карта идёт по массиву слева направо
+                            let pts: Vec<(f64, f64)> = if reversed {
+                                let mut v = pts;
+                                v.reverse();
+                                v
+                            } else {
+                                pts
+                            };
                             SlotCurve { param: c.param.clone(), ease, points: pts }
                         })
                         .collect()
@@ -557,6 +584,7 @@ pub fn clip_warp_of(
     auto: &[Vec<ParamCurve>],
     source_in: Tick,
     duration: Tick,
+    reversed: bool,
 ) -> Option<ClipWarp> {
     let span = duration.0.max(1);
     let (base, blend) = fx.iter().find_map(|f| match f {
@@ -571,10 +599,11 @@ pub fn clip_warp_of(
     // безразмерна, и обе стороны получают одно число. В ТИКАХ считается
     // только ВЫХОД карты (`warp_material_ticks`): там сетка 48 кГц
     // промахнулась бы мимо границы кадра.
-    let prof = AutoProfiles::from_curves(
+    let prof = AutoProfiles::from_curves_rev(
         auto,
         source_in.to_audio_frames(),
         duration.to_audio_frames().max(1),
+        reversed,
     )
     .rate_points(fx)
     .to_vec();
@@ -591,5 +620,55 @@ pub fn clip_warp(c: &crate::ClipEvent) -> Option<ClipWarp> {
     }) {
         return None;
     }
-    clip_warp_of(&c.active_fx(), &c.active_fx_auto(), c.source_in, c.duration)
+    clip_warp_of(&c.active_fx(), &c.active_fx_auto(), c.source_in, c.duration, c.reversed)
+}
+
+#[cfg(test)]
+mod reversed_tests {
+    use super::*;
+    use crate::{AutoKey, ParamCurve};
+
+    /// Тест 271 (Р.39, Д2): у зеркального клипа кривая не переворачивается.
+    ///
+    /// Нормировка `(k.t − src_in)/len` равна выходной доле ключа только
+    /// потому, что UI пишет ключ в `src_in + p·duration`. У реверснутого
+    /// клипа UI пишет зеркально — и без зеркала ЗДЕСЬ ключ, поставленный
+    /// в начале события, отрабатывался в конце.
+    ///
+    /// Ни один тест в репозитории не сочетал `reversed` с непустым
+    /// `fx_auto` — поэтому дефект и дожил.
+    #[test]
+    fn t271_reversed_curve_is_not_played_backwards() {
+        // клип: source_in 0, длина 1 с; ключ на 0.25 материала = 0.75
+        // выходной доли у зеркального клипа
+        let len = kt_time::Tick(90_000).to_audio_frames();
+        let curves = vec![vec![ParamCurve {
+            param: "db".into(),
+            ease: false,
+            keys: vec![
+                AutoKey { t: kt_time::Tick(0), v: 0.0 },
+                AutoKey { t: kt_time::Tick(90_000 / 4), v: 10.0 },
+                AutoKey { t: kt_time::Tick(90_000), v: 0.0 },
+            ],
+        }]];
+
+        let fwd = AutoProfiles::from_curves_rev(&curves, 0, len, false);
+        let rev = AutoProfiles::from_curves_rev(&curves, 0, len, true);
+
+        // прямой клип: пик на выходной доле 0.25
+        assert!((fwd.value(0, "db", 0.0, 0.25) - 10.0).abs() < 1e-9);
+        // зеркальный: ТОТ ЖЕ материал проигрывается в 0.75 выхода
+        assert!(
+            (rev.value(0, "db", 0.0, 0.75) - 10.0).abs() < 1e-9,
+            "пик обязан прийтись на зеркальную долю: {}",
+            rev.value(0, "db", 0.0, 0.75)
+        );
+        assert!(
+            rev.value(0, "db", 0.0, 0.25) < 5.0,
+            "и НЕ на прямую: {}",
+            rev.value(0, "db", 0.0, 0.25)
+        );
+        // прямой путь не тронут: from_curves == from_curves_rev(false)
+        assert_eq!(AutoProfiles::from_curves(&curves, 0, len), fwd);
+    }
 }

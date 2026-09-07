@@ -145,10 +145,14 @@ impl AudioRenderer {
                 let active = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
                 // кривые клипа в SOURCE-домен: аудио-поток дальше видит
                 // только числа (Р.33)
-                let auto = kt_fx::AutoProfiles::from_curves(
+                // РЕВЕРС входит в нормировку (Р.39): UI пишет ключ
+                // зеркально (`clip_material_at`), и без зеркала здесь DSP
+                // отрабатывал бы кривую задом наперёд
+                let auto = kt_model::AutoProfiles::from_curves_rev(
                     &c.active_fx_auto(),
                     c.source_in.to_audio_frames(),
                     (end - start).max(1),
+                    c.reversed,
                 );
                 let tail = kt_fx::chain_tail(&active, &auto).to_audio_frames();
                 AudioClip {
