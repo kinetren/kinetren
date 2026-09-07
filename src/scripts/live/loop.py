@@ -9,6 +9,7 @@
 """
 import json
 import os
+import time
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -58,9 +59,27 @@ def main(out):
         app.expect(b > r + 40, f"справа от региона играет синий клип: RGB {r},{g},{b}")
         app.shot("after-click-right")
 
-        # 3. клик ЛЕВЕЕ региона — то же самое зеркально
-        app.click(app.x_at(1 * SEC), app.ruler_y())
-        app.wait_playhead(lambda t: t > 1 * SEC, "курсор пошёл слева")
+        # 3. клик ЛЕВЕЕ региона — то же самое зеркально.
+        #
+        # Вид СЛЕДУЕТ за курсором, поэтому к этому моменту начало проекта
+        # уехало за левый край: `x_at(1 c)` отдавал x = −613, клик уходил
+        # МИМО ОКНА, а проверка зеленела на устаревшем пикселе. Возвращаем
+        # начало в вид (Home = nav_prev) и убеждаемся, что момент правда
+        # виден — иначе проверка снова будет мерить не то.
+        app.key("Home")
+        time.sleep(0.6)
+        geom = app.geom()
+        target = 1 * SEC
+        app.expect(
+            geom["view_start"] <= target,
+            f"начало проекта вернулось в вид: view_start={geom['view_start']}",
+        )
+        app.click(app.x_at(target), app.ruler_y())
+        left = app.wait_playhead(lambda t: t < 3 * SEC, "курсор ушёл ЛЕВЕЕ региона")
+        app.expect(
+            all(t < 3 * SEC for t in left[1:]),
+            f"курсор не остался слева от региона: {left[:6]}",
+        )
         r, g, b = app.pixel_settled(app.preview_center(), differs_from=(r, g, b))
         app.expect(r > b + 40, f"слева от региона играет красный клип: RGB {r},{g},{b}")
         app.key("space")

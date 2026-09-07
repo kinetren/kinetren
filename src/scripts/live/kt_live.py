@@ -434,7 +434,12 @@ class Live:
         for _ in range(tries):
             px = self.pixel(*xy)
             fresh = differs_from is None or px != tuple(differs_from)
-            if fresh and px == prev:
+            # ЧЁРНОЕ — не кадр, а «композит ещё не полон»: движок штатно
+            # отдаёт пустой слой, пока кадр не приехал (инвариант «промах к
+            # дедлайну → последний кадр/тишина»). Не отсеять его — и
+            # ожидание СМЕНЫ радостно устоится на этой черноте, объявив
+            # «слева от региона чёрный клип».
+            if fresh and px == prev and sum(px) > 24:
                 return px
             prev = px
             time.sleep(0.3)
