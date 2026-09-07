@@ -371,6 +371,9 @@ fn t214_master_switch_disables_chain_without_losing_it() {
             ..Default::default()
         },
         timed: false,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
         enabled: true,
     });
     p.validate().unwrap();

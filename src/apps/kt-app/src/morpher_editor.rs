@@ -418,6 +418,49 @@ impl KtApp {
                     split_chains(&mut ev.patch, &fx, &bypass, &auto, split);
                     changed = true;
                 }
+                // СИЛА и ФЕЙДЫ слоя (Р.38 п.12, дословно: «у морфера нет
+                // возможности применить fade и opacity — план не
+                // соблюден»). Одна строка на всё: сила — доля наложения,
+                // фейды — её нарастание и затухание у краёв блока.
+                ui.horizontal(|ui| {
+                    ui.label(tr(k::mrph::STRENGTH));
+                    let mut s = ev.strength;
+                    if crate::app::hint_into(
+                        &mut hover_out,
+                        ui.add(
+                            egui::DragValue::new(&mut s)
+                                .range(0.0..=1.0)
+                                .speed(0.01)
+                                .fixed_decimals(2),
+                        ),
+                        tr(k::mrph::STRENGTH_HINT),
+                    )
+                    .changed()
+                    {
+                        ev.strength = s;
+                        changed = true;
+                    }
+                    let max = ev.duration.0 as f64 / 90_000.0;
+                    for (label, cur) in [
+                        (tr(k::mrph::FADE_IN), &mut ev.fade_in),
+                        (tr(k::mrph::FADE_OUT), &mut ev.fade_out),
+                    ] {
+                        ui.label(label);
+                        let mut v = cur.0 as f64 / 90_000.0;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut v)
+                                    .range(0.0..=max)
+                                    .speed(0.05)
+                                    .suffix(" s"),
+                            )
+                            .changed()
+                        {
+                            *cur = kt_time::Tick((v * 90_000.0).round() as i64);
+                            changed = true;
+                        }
+                    }
+                });
                 ui.label(egui::RichText::new(tr(k::mrph::LIVE_NOTE)).weak().small());
                 ui.separator();
 

@@ -594,7 +594,19 @@ pub struct MorpherEvent {
     /// патч на цели целиком, время блока ни на что не влияет.
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub timed: bool,
+    /// Сила наложения слоя 0..1 (Р.38 п.12: «у морфера нет возможности
+    /// применить fade и opacity»). 1.0 — слой действует полностью, и это
+    /// прежний путь БАЙТ-В-БАЙТ: слот смешения не появляется вовсе.
+    #[serde(default = "default_one", skip_serializing_if = "is_one")]
+    pub strength: f64,
+    /// Нарастание и затухание силы у краёв блока. Ноль — жёсткие края.
+    #[serde(default, skip_serializing_if = "tick_is_zero")]
+    pub fade_in: Tick,
+    #[serde(default, skip_serializing_if = "tick_is_zero")]
+    pub fade_out: Tick,
 }
+
+
 
 fn is_true(v: &bool) -> bool {
     *v
@@ -857,6 +869,19 @@ impl MorphPatch {
                     })
                     .map(|(_, f)| f.clone()),
             );
+        } else {
+            // СИЛА СЛОЯ достаётся и звуку (Р.38 п.12, решение «видео и
+            // аудио сразу»). Живёт она в `video_fx` — там её канонический
+            // дом, — но приглушать обязана оба вида.
+            out.extend(
+                self.video_fx
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, f)| {
+                        f.is_layer_mix() && !self.video_bypass.get(*i).copied().unwrap_or(false)
+                    })
+                    .map(|(_, f)| f.clone()),
+            );
         }
         out
     }
@@ -885,6 +910,16 @@ impl MorphPatch {
                         f.warps_time() && !self.audio_bypass.get(*i).copied().unwrap_or(false)
                     })
                     .map(|(i, _)| self.audio_auto.get(i).cloned().unwrap_or_default()),
+            );
+        } else {
+            out.extend(
+                self.video_fx
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, f)| {
+                        f.is_layer_mix() && !self.video_bypass.get(*i).copied().unwrap_or(false)
+                    })
+                    .map(|(i, _)| self.video_auto.get(i).cloned().unwrap_or_default()),
             );
         }
         out
@@ -961,6 +996,72 @@ impl MorphPatch {
 }
 
 impl MorpherEvent {
+    /// Нужен ли слот смешения: сила меньше единицы или есть фейды.
+    /// На умолчаниях (1.0 и нули) слота НЕТ — путь байт-в-байт прежний, и
+    /// на этом стоят GOLDEN_VIDEO и GOLDEN_AUDIO.
+    pub fn mixes(&self) -> bool {
+        self.strength < 1.0 || self.fade_in.0 > 0 || self.fade_out.0 > 0
+    }
+
+    /// Кривая силы в домене БЛОКА: 0 на самом краю, `strength` на плато.
+    /// `None` — фейдов нет, хватает базового значения слота.
+    pub fn mix_curve(&self) -> Option<ParamCurve> {
+        if self.fade_in.0 <= 0 && self.fade_out.0 <= 0 {
+            return None;
+        }
+        let d = self.duration.0.max(1);
+        // фейды не налезают друг на друга: сумма клампится длиной блока
+        let fi = self.fade_in.0.clamp(0, d);
+        let fo = self.fade_out.0.clamp(0, d - fi);
+        let s = self.strength;
+        let mut keys = Vec::with_capacity(4);
+        if fi > 0 {
+            keys.push(AutoKey { t: Tick(0), v: 0.0 });
+        }
+        keys.push(AutoKey { t: Tick(fi), v: s });
+        keys.push(AutoKey { t: Tick(d - fo), v: s });
+        if fo > 0 {
+            keys.push(AutoKey { t: Tick(d), v: 0.0 });
+        }
+        keys.dedup_by_key(|k| k.t.0);
+        Some(ParamCurve { param: "amount".into(), ease: false, keys })
+    }
+
+    /// Наложить слой на кусок цели: патч плюс слот СИЛЫ (Р.38 п.12).
+    ///
+    /// Сила — последний слот цепочки: она смешивает ВХОД цепочки с её
+    /// результатом, поэтому обязана стоять после всего, что слой делает.
+    pub fn apply_to(&self, c: &mut ClipEvent, frame_step: i64) {
+        self.patch.apply_to(c, self.start, frame_step);
+        if !self.mixes() {
+            return;
+        }
+        // с какого слота начинается вклад ИМЕННО этого слоя
+        let from = c.fx.len().saturating_sub(self.patch.chain_for(c.kind).len()) as u32;
+        let mut mix = FxInstance::LayerMix { amount: self.strength, from };
+        mix.set_param("amount", self.strength);
+        let curve = self.mix_curve().map(|mut cur| {
+            for k in &mut cur.keys {
+                k.t = crate::clip_material_at(
+                    c.source_in,
+                    c.start,
+                    c.duration,
+                    c.reversed,
+                    frame_step,
+                    Tick(self.start.0 + k.t.0),
+                );
+            }
+            cur.keys.sort_by_key(|k| k.t.0);
+            cur
+        });
+        c.fx.push(mix);
+        c.fx_auto.resize(c.fx.len(), Vec::new());
+        if let Some(cur) = curve {
+            let last = c.fx.len() - 1;
+            c.fx_auto[last] = vec![cur];
+        }
+    }
+
     /// Все медиа, которые держит морфер.
     pub fn media_refs(&self) -> impl Iterator<Item = MediaId> + '_ {
         self.patch.media_refs()
@@ -1997,6 +2098,27 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "is_zero")]
         pan: f32,
     },
+    /// Сила наложения СЛОЯ (Р.38 п.12): смешение входа цепочки с её
+    /// результатом. Не пользовательский эффект — его нет в реестре и не
+    /// выбрать в пикере; его дописывает `MorphPatch::apply_to`, когда у
+    /// морфера сила < 1 или заданы фейды.
+    ///
+    /// Почему операция ЦЕПОЧКИ, а не поле клипа: «непрозрачность слоя
+    /// бесплатно работает как ползунок силы эффекта — 60 % это кроссфейд
+    /// обработанной картинки с необработанной» (разведка Р.36,
+    /// `docs/features/morpher/analogues/premiere-adjustment-layer.md`).
+    /// Как слот цепочки она бесплатно получает автоматизацию (фейды — это
+    /// её кривая), входит в `fx_chain_hash` (иначе 60 % и 100 %
+    /// схлопнулись бы в один кадр пост-FX кэша) и едет через копипаст.
+    LayerMix {
+        amount: f64,
+        /// Индекс слота, С КОТОРОГО начинается вклад этого слоя. Смешение
+        /// идёт с состоянием ДО него, а не со входом всей цепочки: иначе
+        /// сила слоя откатывала бы заодно СОБСТВЕННЫЕ эффекты события,
+        /// к которым слой отношения не имеет.
+        #[serde(default)]
+        from: u32,
+    },
     SlowedReverb {
         /// Базовая скорость (0.25–32); автоматизация её перекрывает.
         rate: f64,
@@ -2219,6 +2341,14 @@ impl FxInstance {
         self.class() == FxClass::Video3d
     }
 
+    /// Сила наложения слоя — не фильтр, а правило СМЕШЕНИЯ входа цепочки
+    /// с её выходом. Как и варп, достаётся ОБОИМ видам: слой на 30 %
+    /// обязан одинаково приглушать и картинку, и звук («видео и аудио
+    /// сразу» — решение пользователя по п.12).
+    pub fn is_layer_mix(&self) -> bool {
+        matches!(self, FxInstance::LayerMix { .. })
+    }
+
     /// Эффект ВАРПИТ время: потребление источника перестаёт быть равным
     /// длине события. Такой клип морфер-слой не режет вовсе (находка 2
     /// Р.35) — линейно посчитанный `source_in` куска указал бы не туда.
@@ -2401,6 +2531,9 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     Gain {
         db: f32, -60.0, 12.0, 0.0, 0.1, Db, Smooth;
         pan: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
+    },
+    LayerMix {
+        amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
     SlowedReverb {
         // потолок скорости — RATE_CLAMP движка (kt-fx)
@@ -2744,6 +2877,9 @@ fn default_zoom() -> f64 {
 }
 fn default_one() -> f64 {
     1.0
+}
+fn is_one(v: &f64) -> bool {
+    *v == 1.0
 }
 fn default_one_u32() -> u32 {
     1
@@ -3138,7 +3274,7 @@ impl Project {
                 let mut piece = clip_slice(c, w, id);
                 for (m, ws) in ms.iter().zip(&wins) {
                     if ws.iter().any(|x| x.start <= w.start && w.end <= x.end) {
-                        m.patch.apply_to(&mut piece, m.start, frame_step);
+                        m.apply_to(&mut piece, frame_step);
                     }
                 }
                 out.push(piece);

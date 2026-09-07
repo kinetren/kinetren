@@ -215,6 +215,10 @@ peak = "Nivel de pico del máster, dBFS"
 
 # Редактор morpher'а.
 [mrph]
+strength = "Fuerza"
+strength_hint = "Cuánto se aplica la capa: 1.0 — del todo, 0 — como si no existiera"
+fade_in = "entrada"
+fade_out = "salida"
 title_batch = "Lote FX de morpher — evento {0}"
 title = "Morpher — evento {0}"
 frozen = "Congelado al crear: {0} clip(s). {1}"

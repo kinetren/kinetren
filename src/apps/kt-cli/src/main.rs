@@ -530,6 +530,9 @@ fn demo_project() -> Project {
             ..Default::default()
         },
         timed: false,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
         enabled: true,
     }];
     p.ui = Some(UiState {

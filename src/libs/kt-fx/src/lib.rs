@@ -984,6 +984,19 @@ pub struct ClipProcessor {
     /// Множитель Gain-слотов БЕЗ кривой (константный путь — байт-в-байт
     /// как до Р.33, на нём стоит GOLDEN_AUDIO).
     static_gain: f32,
+    /// СИЛА СЛОЯ (Р.38 п.12): слот смешения, индекс начала вклада слоя и
+    /// базовое значение. `None` — слоя с силой нет, и весь путь ниже
+    /// байт-в-байт прежний (на нём стоит GOLDEN_AUDIO).
+    mix_slot: Option<usize>,
+    mix_from: usize,
+    base_layer_mix: f64,
+    /// Реверб принадлежит СОБЫТИЮ, а не слою: тогда он звучит и в сухой
+    /// стороне смешения. Движок держит ровно один реверб на цепочку,
+    /// поэтому выбор сводится к одному флагу.
+    reverb_is_layer: bool,
+    /// Множитель Gain-слотов СЛОЯ без кривой: он идёт только в мокрую
+    /// сторону. Без слоя равен 1.0 — цикл не выполняется вовсе.
+    layer_gain: f32,
     /// Баланс каналов (Р.33 С5): множители левого и правого. Оба 1.0 —
     /// прежний путь, цикл не выполняется вовсе.
     pan_l: f32,
@@ -1032,6 +1045,11 @@ impl ClipProcessor {
             warp: None,
             reverb: None,
             static_gain: 1.0,
+            mix_slot: None,
+            mix_from: usize::MAX,
+            base_layer_mix: 1.0,
+            reverb_is_layer: false,
+            layer_gain: 1.0,
             pan_l: 1.0,
             pan_r: 1.0,
             pan_automated: false,
@@ -1093,13 +1111,35 @@ impl ClipProcessor {
         let (mut pan_l, mut pan_r) = (1.0f32, 1.0f32);
         self.gain_automated = false;
         self.pan_automated = false;
+        // слот СИЛЫ слоя (Р.38 п.12) ищется до всего остального: от него
+        // зависит, что попадёт в сухую сторону смешения
+        self.mix_slot = fx.iter().position(|f| f.is_layer_mix());
+        (self.mix_from, self.base_layer_mix) = match self.mix_slot {
+            Some(i) => match &fx[i] {
+                FxInstance::LayerMix { amount, from } => ((*from as usize).min(i), *amount),
+                _ => (usize::MAX, 1.0),
+            },
+            None => (usize::MAX, 1.0),
+        };
+        self.reverb_is_layer = fx
+            .iter()
+            .position(|f| matches!(f, FxInstance::SlowedReverb { .. }))
+            .map(|i| i >= self.mix_from)
+            .unwrap_or(true);
+        let mut layer_gain = 1.0f32;
         for (slot, f) in fx.iter().enumerate() {
             match f {
                 // громкость с кривой считается по материалу в produce();
                 // без кривой — прежним одним множителем на весь буфер
                 FxInstance::Gain { db, pan } => {
                     if self.auto.points(slot, "db").is_empty() {
-                        gain *= 10f32.powf(db / 20.0);
+                        // громкость СЛОЯ идёт только в мокрую сторону:
+                        // сила 0 обязана вернуть событие как было
+                        if slot >= self.mix_from {
+                            layer_gain *= 10f32.powf(db / 20.0);
+                        } else {
+                            gain *= 10f32.powf(db / 20.0);
+                        }
                     } else {
                         self.gain_automated = true;
                     }
@@ -1161,6 +1201,7 @@ impl ClipProcessor {
             }
         }
         self.static_gain = gain;
+        self.layer_gain = layer_gain;
         self.pan_l = pan_l;
         self.pan_r = pan_r;
         self.gain_slots = fx
@@ -1368,6 +1409,12 @@ impl ClipProcessor {
                     self.auto_pan_r.set_target(r);
                 }
             }
+            // цель силы слоя на середину чанка — тем же правилом, что и
+            // остальные параметры (Р.38 п.12: фейды это её кривая)
+            let mix_k = self.mix_slot.map(|slot| {
+                let tau = (chunk_local as f64 + n as f64 * 0.5) / self.clip_len as f64;
+                self.auto.value(slot, "amount", self.base_layer_mix, tau).clamp(0.0, 1.0) as f32
+            });
             let sub = &mut out[done * CH..(done + n) * CH];
             match &mut self.warp {
                 Some(w) => w.produce(kind, sub, pull),
@@ -1389,8 +1436,24 @@ impl ClipProcessor {
                 let cut = (gate_end - chunk_local).clamp(0, n as i64) as usize;
                 sub[cut * CH..].fill(0.0);
             }
+            // СУХАЯ сторона смешения (Р.38 п.12): состояние ДО вклада
+            // слоя. Реверб у движка ровно один на цепочку, поэтому вопрос
+            // «чей он» решается одним флагом: реверб СОБЫТИЯ звучит и в
+            // сухой стороне, реверб СЛОЯ — только в мокрой.
+            // реверб СОБЫТИЯ звучит и в сухой стороне (снимок после
+            // него), реверб СЛОЯ — только в мокрой (снимок до)
+            let mut dry: Option<Vec<f32>> = match mix_k {
+                Some(_) if self.reverb_is_layer => Some(sub.to_vec()),
+                Some(_) => Some(Vec::new()),
+                None => None,
+            };
             if let Some(r) = &mut self.reverb {
                 r.process(sub);
+            }
+            if let Some(d) = dry.as_mut()
+                && d.is_empty()
+            {
+                *d = sub.to_vec();
             }
             // автоматизированная громкость — ПОСЛЕ реверба, как и
             // константная: цепочка кончается уровнем события
@@ -1408,6 +1471,20 @@ impl ClipProcessor {
                     f[0] *= l;
                     if CH > 1 {
                         f[1] *= r;
+                    }
+                }
+            }
+            // громкость СЛОЯ — только на мокрую сторону, потом смешение
+            if let Some(k) = mix_k {
+                if self.layer_gain != 1.0 {
+                    for v in sub.iter_mut() {
+                        *v *= self.layer_gain;
+                    }
+                }
+                if let Some(d) = &dry {
+                    let ik = 1.0 - k;
+                    for (v, dv) in sub.iter_mut().zip(d.iter()) {
+                        *v = dv * ik + *v * k;
                     }
                 }
             }

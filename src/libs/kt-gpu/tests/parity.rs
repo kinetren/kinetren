@@ -240,6 +240,46 @@ fn t181_effect_parity_gpu_vs_cpu() {
             ],
             FrameTol::THRESHOLD,
         ),
+        // СИЛА СЛОЯ (Р.38 п.12): смешение сухой и мокрой сторон. Ядро
+        // целочисленное (зеркало dissolve_into), поэтому байт-в-байт —
+        // но вход мокрой стороны билинейный, отсюда общий допуск.
+        (
+            "layer-mix-half",
+            vec![
+                FxInstance::Mirror { horizontal: true, vertical: false },
+                FxInstance::blur(8),
+                FxInstance::LayerMix { amount: 0.5, from: 1 },
+            ],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "layer-mix-zero",
+            vec![
+                FxInstance::edges(48),
+                FxInstance::LayerMix { amount: 0.0, from: 1 },
+            ],
+            FrameTol::THRESHOLD,
+        ),
+        // сила ПОСЛЕ ресемплящего эффекта: сухая сторона обязана быть
+        // вписана той же билинейкой, что и на CPU
+        (
+            "layer-mix-after-resize",
+            vec![
+                FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.2, pan_y: 0.0, zoom: 1.4 },
+                FxInstance::blur(6),
+                FxInstance::LayerMix { amount: 0.35, from: 1 },
+            ],
+            FrameTol::BILINEAR,
+        ),
+        // сила НУЛЬ поверх всего: обязана вернуть состояние до слоя
+        (
+            "layer-mix-whole-chain",
+            vec![
+                FxInstance::vhs(4, 0.4),
+                FxInstance::LayerMix { amount: 0.25, from: 0 },
+            ],
+            FrameTol::BILINEAR,
+        ),
     ];
     for (i, (name, fx, tol)) in cases.into_iter().enumerate() {
         let src = Src::new(1000 + i as u64, Some(frame(W, H, false, 0)), fx);

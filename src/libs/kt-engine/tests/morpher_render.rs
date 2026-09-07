@@ -81,6 +81,9 @@ fn t36_replace_renders_as_new_source_and_bake_is_noop_for_render() {
             ..Default::default()
         },
         timed: false,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
         enabled: true,
     });
     p.morph_lanes = 1;
@@ -116,6 +119,9 @@ fn t36_effect_batch_is_live() {
             ..Default::default()
         },
         timed: false,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
         enabled: true,
     });
     p.morph_lanes = 1;

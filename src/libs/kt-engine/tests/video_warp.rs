@@ -182,6 +182,9 @@ fn t247_layer_never_slices_a_stretched_clip() {
                 ..Default::default()
             },
             timed: true,
+            strength: 1.0,
+            fade_in: Tick::ZERO,
+            fade_out: Tick::ZERO,
             enabled: true,
         });
         p.validate().unwrap();

@@ -60,6 +60,9 @@ fn replace_morpher(id: u64, targets: Vec<ClipId>) -> MorpherEvent {
             ..Default::default()
         },
         timed: false,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
         enabled: true,
     }
 }
@@ -112,6 +115,9 @@ fn t35_effect_batch_live_and_typed() {
             ..Default::default()
         },
         timed: false,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
         enabled: true,
     }))
     .unwrap();

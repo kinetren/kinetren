@@ -55,6 +55,9 @@ fn layer(start: Tick, dur: Tick) -> MorpherEvent {
             ..Default::default()
         },
         timed: true,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
         enabled: true,
     }
 }
@@ -734,6 +737,9 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
         },
         enabled: true,
         timed: true,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
     });
     p.validate().unwrap();
 

@@ -215,6 +215,10 @@ peak = "主输出峰值电平，dBFS"
 
 # Редактор morpher'а.
 [mrph]
+strength = "强度"
+strength_hint = "图层的作用程度：1.0 完全生效，0 相当于关闭"
+fade_in = "淡入"
+fade_out = "淡出"
 title_batch = "Morpher 特效批次 — 事件 {0}"
 title = "Morpher — 事件 {0}"
 frozen = "创建时冻结：{0} 个片段。{1}"

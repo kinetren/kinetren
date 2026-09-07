@@ -444,12 +444,18 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                 || p.morphers
                     .iter()
                     .any(|m| m.timed || !matches!(m.targets, kt_model::MorphTargets::Clips { .. }));
-            // кривые слоя (Р.38 п.13): старая сборка отрендерила бы слой
-            // с постоянными параметрами вместо анимированных
-            let has_morph_auto = p.morphers.iter().any(|m| {
-                m.patch.video_auto.iter().chain(m.patch.audio_auto.iter()).any(|a| !a.is_empty())
+            // кривые слоя (Р.38 п.13) и его сила с фейдами (п.12): старая
+            // сборка отрендерила бы слой с постоянными параметрами вместо
+            // анимированных, а «слой на 30 %» — целиком
+            let has_morph_v5 = p.morphers.iter().any(|m| {
+                m.mixes()
+                    || m.patch
+                        .video_auto
+                        .iter()
+                        .chain(m.patch.audio_auto.iter())
+                        .any(|a| !a.is_empty())
             });
-            if has_morph_auto {
+            if has_morph_v5 {
                 crate::meta::KT_META_V5
             } else if has_layer {
                 crate::meta::KT_META_V4

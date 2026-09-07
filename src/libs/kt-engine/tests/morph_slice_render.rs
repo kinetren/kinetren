@@ -69,6 +69,9 @@ fn layer(patch: MorphPatch) -> MorpherEvent {
         targets: MorphTargets::Clips { ids: vec![ClipId(10)] },
         patch,
         timed: true,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
         enabled: true,
     }
 }
@@ -243,5 +246,147 @@ fn t238_warped_clip_is_never_sliced() {
         q.effective_clips().iter().filter(|c| same_clip(c.id, ClipId(10))).count(),
         1,
         "слой, добавляющий варп, тоже не режет"
+    );
+}
+
+/// Тест 267 (Р.38 п.12, дословно: «у морфера нет возможности применить
+/// fade и opacity — план не соблюден»).
+///
+/// Сила слоя — кроссфейд обработанной картинки с необработанной (вердикт
+/// разведки Р.36: «непрозрачность слоя бесплатно работает как ползунок
+/// силы эффекта»). Три вещи, которые обязаны выполняться ТОЧНО:
+///
+/// 1. сила 1.0 — прежний кадр БАЙТ-В-БАЙТ (слота смешения нет вовсе);
+/// 2. сила 0.0 — кадр как БЕЗ СЛОЯ, но с собственными эффектами события:
+///    сила откатывает вклад слоя, а не всю цепочку;
+/// 3. промежуточная сила — ровно линейная смесь этих двух.
+#[test]
+fn t267_layer_strength_blends_only_the_layer() {
+    let t = Tick(45_000); // середина окна слоя
+    let own = FxInstance::Mirror { horizontal: true, vertical: false };
+    let layer_fx = FxInstance::edges(24);
+
+    // событие со СВОИМ эффектом; слой добавляет сверху свой
+    let with_own = |strength: f64, layered: bool| {
+        let mut p = base(ClipKind::Video);
+        p.clips[0].fx = vec![own.clone()];
+        p.clips[0].fx_bypass = vec![false];
+        p.clips[0].fx_auto = vec![vec![]];
+        if layered {
+            let mut m = layer(MorphPatch {
+                video_fx: vec![layer_fx.clone()],
+                ..Default::default()
+            });
+            m.strength = strength;
+            p.morphers.push(m);
+        }
+        p.validate().unwrap();
+        p
+    };
+
+    let full = render_frame(&with_own(1.0, true), t);
+    let none = render_frame(&with_own(0.0, true), t);
+    let no_layer = render_frame(&with_own(1.0, false), t);
+
+    assert_ne!(full, no_layer, "при силе 1.0 слой обязан менять картинку");
+    assert_eq!(
+        none, no_layer,
+        "при силе 0.0 кадр обязан совпасть с кадром БЕЗ СЛОЯ: сила откатывает вклад слоя, \
+         а не собственные эффекты события (для этого у слота смешения и есть `from`)"
+    );
+
+    // половина — точная линейная смесь тех же двух кадров
+    let half = render_frame(&with_own(0.5, true), t);
+    let k = (0.5f64 * 4096.0).round() as u32;
+    let ik = 4096 - k;
+    let want: Vec<u8> = none
+        .iter()
+        .zip(full.iter())
+        .map(|(a, b)| (((*a as u32) * ik + (*b as u32) * k + 2048) >> 12) as u8)
+        .collect();
+    assert_eq!(half, want, "сила 0.5 — ровно кроссфейд «без слоя» и «со слоем»");
+}
+
+/// Тест 267б: фейды у краёв блока — это КРИВАЯ силы, а не отдельный
+/// механизм. У самой кромки слой не действует, в середине действует
+/// полностью.
+#[test]
+fn t267b_layer_fades_are_the_strength_curve() {
+    let scene = || {
+        let mut p = base(ClipKind::Video);
+        let mut m = layer(MorphPatch {
+            video_fx: vec![FxInstance::edges(24)],
+            ..Default::default()
+        });
+        // блок 30_000..60_000; фейды по трети с каждой стороны
+        m.fade_in = Tick(10_000);
+        m.fade_out = Tick(10_000);
+        p.morphers.push(m);
+        p.validate().unwrap();
+        p
+    };
+    let plain = {
+        let p = base(ClipKind::Video);
+        p.validate().unwrap();
+        p
+    };
+    let s = scene();
+    // у самого начала блока слой ещё не действует
+    let edge = render_frame(&s, Tick(30_000));
+    assert_eq!(edge, render_frame(&plain, Tick(30_000)), "на кромке блока сила ноль");
+    // в середине плато — действует полностью
+    let mid = render_frame(&s, Tick(45_000));
+    assert_ne!(mid, render_frame(&plain, Tick(45_000)), "в середине слой действует");
+    // а внутри фейда — где-то посередине между ними
+    let inside = render_frame(&s, Tick(35_000));
+    assert_ne!(inside, edge, "внутри фейда слой уже действует");
+    assert_ne!(inside, mid, "но ещё не в полную силу");
+}
+
+/// Тест 268 (Р.38 п.12, вторая половина решения «видео и аудио сразу»).
+/// Сила слоя приглушает вклад слоя И в звуке, и точно так же не трогает
+/// собственные эффекты события.
+#[test]
+fn t268_layer_strength_blends_audio_too() {
+    let scene = |strength: f64, layered: bool| {
+        let mut p = base(ClipKind::Audio);
+        // СОБСТВЕННЫЙ уровень события: сила слоя обязана его сохранить
+        p.clips[0].fx = vec![FxInstance::gain(-6.0)];
+        p.clips[0].fx_bypass = vec![false];
+        p.clips[0].fx_auto = vec![vec![]];
+        if layered {
+            let mut m = layer(MorphPatch {
+                audio_fx: vec![FxInstance::gain(12.0)],
+                ..Default::default()
+            });
+            m.strength = strength;
+            p.morphers.push(m);
+        }
+        p.validate().unwrap();
+        p
+    };
+    let len = Tick(60_000);
+    let full = render_audio(&scene(1.0, true), len);
+    let none = render_audio(&scene(0.0, true), len);
+    let no_layer = render_audio(&scene(1.0, false), len);
+
+    let close = |a: &[f32], b: &[f32]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6);
+    assert!(!close(&full, &no_layer), "при силе 1.0 слой обязан менять звук");
+    assert!(
+        close(&none, &no_layer),
+        "при силе 0.0 звук обязан совпасть со звуком БЕЗ СЛОЯ: сила откатывает вклад слоя, \
+         а собственный уровень события (-6 dB) остаётся"
+    );
+
+    // половина — линейная смесь тех же двух (в окне слоя, вне краёв чанка)
+    let half = render_audio(&scene(0.5, true), len);
+    let probe = 35_000i64 as usize; // внутри окна слоя
+    let i = (Tick(probe as i64).to_audio_frames() as usize) * CH;
+    let want = none[i] * 0.5 + full[i] * 0.5;
+    assert!(
+        (half[i] - want).abs() < 1e-4,
+        "сила 0.5 — линейная смесь: {} против {}",
+        half[i],
+        want
     );
 }

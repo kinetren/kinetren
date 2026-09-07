@@ -3325,6 +3325,9 @@ fn t218_morpher_source_field_takes_files_and_reverts() {
             ..Default::default()
         },
         timed: false,
+        strength: 1.0,
+        fade_in: kt_time::Tick::ZERO,
+        fade_out: kt_time::Tick::ZERO,
         enabled: true,
     });
     p.validate().unwrap();
@@ -3410,6 +3413,9 @@ fn t217_one_chain_widget_for_events_and_morphers() {
             ..Default::default()
         },
         timed: false,
+        strength: 1.0,
+        fade_in: kt_time::Tick::ZERO,
+        fade_out: kt_time::Tick::ZERO,
         enabled: true,
     });
     p.validate().unwrap();
@@ -4656,6 +4662,9 @@ fn t242_morph_editor_shows_target_mode_and_timing() {
         targets: MorphTargets::Below,
         patch: MorphPatch { media: Some(MediaId(1)), ..Default::default() },
         timed: true,
+        strength: 1.0,
+        fade_in: kt_time::Tick::ZERO,
+        fade_out: kt_time::Tick::ZERO,
         enabled: true,
     });
     p.validate().unwrap();
@@ -4890,6 +4899,9 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
         targets: MorphTargets::Below,
         patch: MorphPatch::default(),
         timed: true,
+        strength: 1.0,
+        fade_in: kt_time::Tick::ZERO,
+        fade_out: kt_time::Tick::ZERO,
         enabled: true,
     });
     p.validate().unwrap();
@@ -4969,6 +4981,9 @@ fn t248_band_becomes_named_area() {
         targets: MorphTargets::Areas { names: vec![names[0].clone(), "нет такой".into()] },
         patch: MorphPatch::default(),
         timed: true,
+        strength: 1.0,
+        fade_in: kt_time::Tick::ZERO,
+        fade_out: kt_time::Tick::ZERO,
         enabled: true,
     });
     p.validate().unwrap();
@@ -5600,4 +5615,75 @@ fn t265_automation_axis_and_field_bind() {
             "в панели автоматизации нет кнопки {icon:?} (п.18)"
         );
     }
+}
+
+/// Тест 269 (Р.38 п.12): сила и фейды слоя правятся В ОКНЕ морфера и
+/// доезжают до модели. До этого раунда в патче не было ни одного поля
+/// силы, а `enabled` был бинарным — ровно расхождение, с которого начался
+/// Р.36 («морфер в Vegas позволяет ползунком управлять прозрачностью
+/// наложения эффектов, а у нас — нет»).
+#[test]
+fn t269_morph_strength_and_fades_reach_the_model() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    use kt_time::Tick;
+
+    let (mut h, _) = harness_three_clips();
+    {
+        let app = h.state_mut();
+        app.player.seek(Tick(90_000));
+        app.add_morph_layer();
+    }
+    h.step();
+    h.step();
+    assert!(h.state().morph_editors.iter().any(|e| e.open), "окно морфера открылось");
+    // подпись силы видна — значит контрол дошёл до пользователя
+    assert!(
+        h.query_by_label(tr(k::mrph::STRENGTH)).is_some(),
+        "в окне морфера нет поля силы (п.12)"
+    );
+
+    // ставим силу и фейды через модель и проверяем, что движок их видит
+    let app = h.state_mut();
+    let mut ev = app.model.project().morphers[0].clone();
+    ev.patch.video_fx = vec![FxInstance::edges(24)];
+    ev.strength = 0.4;
+    ev.fade_in = Tick(9_000);
+    assert!(app.apply(Command::SetMorpher(ev)));
+    let eff = app.model.project().effective_clips();
+    let mixed: Vec<&ClipEvent> = eff
+        .iter()
+        .filter(|c| c.fx.iter().any(|f| matches!(f, FxInstance::LayerMix { .. })))
+        .collect();
+    // блок накрывает несколько событий — слот силы дописан КАЖДОМУ
+    assert!(!mixed.is_empty(), "слот силы дописан накрытым кускам");
+    let c = mixed[0];
+    let mix_at = c.fx.iter().position(|f| matches!(f, FxInstance::LayerMix { .. })).unwrap();
+    match &c.fx[mix_at] {
+        FxInstance::LayerMix { amount, from } => {
+            assert!((amount - 0.4).abs() < 1e-9, "сила доехала: {amount}");
+            assert_eq!(*from as usize, mix_at.saturating_sub(1), "вклад слоя начинается с его эффекта");
+        }
+        _ => unreachable!(),
+    }
+    assert!(
+        !c.fx_auto[mix_at].is_empty(),
+        "фейд — это КРИВАЯ силы, а не отдельный механизм"
+    );
+
+    // сила 1.0 без фейдов слота НЕ создаёт: прежний путь байт-в-байт
+    let app = h.state_mut();
+    let mut ev = app.model.project().morphers[0].clone();
+    ev.strength = 1.0;
+    ev.fade_in = Tick::ZERO;
+    ev.fade_out = Tick::ZERO;
+    assert!(app.apply(Command::SetMorpher(ev)));
+    assert!(
+        app.model
+            .project()
+            .effective_clips()
+            .iter()
+            .all(|c| !c.fx.iter().any(|f| matches!(f, FxInstance::LayerMix { .. }))),
+        "на умолчаниях слота смешения нет вовсе — на этом стоят GOLDEN'ы"
+    );
 }

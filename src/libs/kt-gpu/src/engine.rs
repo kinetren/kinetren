@@ -59,9 +59,11 @@ enum Pipe {
     GridTile,
     Composite,
     Pan3d,
+    /// Сила наложения слоя (Р.38 п.12): смешение сухой и мокрой сторон.
+    LayerMix,
 }
 
-const PIPE_COUNT: usize = 10;
+const PIPE_COUNT: usize = 11;
 
 /// Один шаг цепочки, предвычисленный на CPU (общая математика — kt-fx:
 /// pan_frame/cam_at/noise_seed). Кол-во пассов и размеры известны заранее.
@@ -77,6 +79,13 @@ enum FxOp {
     Glow { dw: u32, dh: u32, s: f32, th: u32, tint: [f32; 3] },
     /// Мозаика: ячейка cw×ch + тираж в tw×th (2 пасса).
     Grid { cw: u32, ch: u32, offx: u32, offy: u32, gw: u32, gh: u32, tw: u32, th: u32 },
+    /// Снимок состояния ДО вклада слоя (Р.38 п.12): сухая сторона
+    /// будущего смешения. Только маркер — пассов не порождает.
+    Snapshot,
+    /// Смешать текущий результат со снимком весом `k` (0..4096).
+    /// Размеры могли разойтись (Pan/CamMotion ресемплят) — тогда сухая
+    /// сторона вписывается ТОЙ ЖЕ билинейкой, что и на CPU.
+    Mix { k: u32 },
     /// Слой-квад в 3D (Р.29): MVP собрана на CPU, цель tw×th прозрачная.
     Pan3d { m: [f32; 16], qw: f32, qh: f32, ax: f32, ay: f32, tw: u32, th: u32 },
 }
@@ -86,6 +95,10 @@ impl FxOp {
         match self {
             FxOp::Glow { .. } => 3,
             FxOp::Grid { .. } => 2,
+            // снимок пассов не порождает; смешение при разошедшихся
+            // размерах добирает ресемпл сухой стороны
+            FxOp::Snapshot => 0,
+            FxOp::Mix { .. } => 2,
             _ => 1,
         }
     }
@@ -136,7 +149,20 @@ fn chain_ops(
     let mut has_alpha = false;
     let mut ops = Vec::new();
     let (mow, moh) = (out_w.max(2), out_h.max(2));
-    for f in fx {
+    // границы вклада слоёв (Р.38 п.12): на них делается снимок сухой
+    // стороны будущего смешения
+    let froms: Vec<usize> = fx
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| match f {
+            FxInstance::LayerMix { from, .. } => Some((*from as usize).min(i)),
+            _ => None,
+        })
+        .collect();
+    for (idx, f) in fx.iter().enumerate() {
+        if froms.contains(&idx) {
+            ops.push(FxOp::Snapshot);
+        }
         match f {
             FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
                 let frame =
@@ -283,6 +309,12 @@ fn chain_ops(
                 // вне квада слой прозрачен
                 has_alpha_known = true;
                 has_alpha = true;
+            }
+            FxInstance::LayerMix { amount, .. } => {
+                let k = (amount.clamp(0.0, 1.0) * 4096.0).round() as u32;
+                if k < 4096 {
+                    ops.push(FxOp::Mix { k });
+                }
             }
             _ => {} // аудио-FX
         }
@@ -433,6 +465,7 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("grid_tile", include_str!("shaders/grid_tile.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
     ("pan3d", include_str!("shaders/pan3d.wgsl")),
+    ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
 ];
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
@@ -838,8 +871,51 @@ impl Inner {
         let mut owned: Option<Tex> = None;
         let mut retired: Vec<Tex> = Vec::new();
         let dummy = self.dummy.view.clone();
+        // сухая сторона смешения (Р.38 п.12): снимок состояния ДО вклада
+        // слоя. Текстуру снимка нельзя вернуть в пул до самого смешения.
+        let mut snap: Option<(wgpu::TextureView, u32, u32)> = None;
         for op in &chain.ops {
             match op {
+                FxOp::Snapshot => {
+                    // текущий результат ещё живёт в `owned` (или это сам
+                    // источник) — придерживаем его до конца цепочки
+                    if let Some(t) = owned.take() {
+                        snap = Some((t.view.clone(), w, h));
+                        retired.push(t);
+                    } else {
+                        snap = Some((view.clone(), w, h));
+                    }
+                }
+                FxOp::Mix { k } => {
+                    let Some((dry_view, dw, dh)) = snap.clone() else { continue };
+                    // размеры могли разойтись — вписываем сухую сторону
+                    // ТОЙ ЖЕ билинейкой, что и на CPU (fit_into)
+                    let dry_fit = if (dw, dh) == (w, h) {
+                        dry_view
+                    } else {
+                        let fit = self.pool.acquire(&self.device, w, h);
+                        let u = UniformData {
+                            u: [w, h, dw, dh, 0, 0, 0, 0],
+                            f: [0.0, 0.0, dw as f32, dh as f32, 0.0, 0.0, 0.0, 0.0],
+                            ..Default::default()
+                        };
+                        self.pass(enc, Pipe::Resample, &fit.view, &dry_view, &dummy, &dummy, u);
+                        let v = fit.view.clone();
+                        retired.push(fit);
+                        v
+                    };
+                    let dst = self.pool.acquire(&self.device, w, h);
+                    let u = UniformData {
+                        u: [*k, chain.has_alpha as u32, chain.has_alpha as u32, 0, 0, 0, 0, 0],
+                        ..Default::default()
+                    };
+                    self.pass(enc, Pipe::LayerMix, &dst.view, &dry_fit, &view, &dummy, u);
+                    if let Some(t) = owned.take() {
+                        retired.push(t);
+                    }
+                    view = dst.view.clone();
+                    owned = Some(dst);
+                }
                 FxOp::Resample { tw, th, frame } => {
                     let dst = self.pool.acquire(&self.device, *tw, *th);
                     let u = UniformData {

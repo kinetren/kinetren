@@ -215,6 +215,10 @@ peak = "مستوى الذروة للمخرج الرئيسي، dBFS"
 
 # Редактор morpher'а.
 [mrph]
+strength = "القوة"
+strength_hint = "مقدار تطبيق الطبقة: 1.0 كاملًا، 0 كأنها مُطفأة"
+fade_in = "دخول"
+fade_out = "خروج"
 title_batch = "دفعة مؤثرات morpher — الحدث {0}"
 title = "Morpher — الحدث {0}"
 frozen = "مُجمَّد عند الإنشاء: {0} مقطع. {1}"

@@ -506,6 +506,9 @@ pub(crate) fn draw_auto_for(
 pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
     match f {
         FxInstance::Gain { .. } => "Gain",
+        // сила слоя не пользовательский эффект: в пикере её нет, а в
+        // полосе морфера она подписана как «Сила» (Р.38 п.12)
+        FxInstance::LayerMix { .. } => "Layer mix",
         FxInstance::SlowedReverb { .. } => "Slowed+Reverb",
         FxInstance::Pan { .. } => "Pan",
         FxInstance::CamMotion { .. } => "CamMotion",

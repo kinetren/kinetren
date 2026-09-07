@@ -2892,6 +2892,9 @@ impl KtApp {
             targets: kt_model::MorphTargets::Below,
             patch: kt_model::MorphPatch::default(),
             timed: true,
+            strength: 1.0,
+            fade_in: Tick::ZERO,
+            fade_out: Tick::ZERO,
             enabled: true,
         };
         if self.apply(Command::AddMorpher(ev)) {
@@ -2943,6 +2946,9 @@ impl KtApp {
             targets: kt_model::MorphTargets::Below,
             patch: kt_model::MorphPatch::default(),
             timed: true,
+            strength: 1.0,
+            fade_in: Tick::ZERO,
+            fade_out: Tick::ZERO,
             enabled: true,
         }));
         if self.apply_batch(cmds) {

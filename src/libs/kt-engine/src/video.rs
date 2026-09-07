@@ -733,12 +733,19 @@ fn layer_frame_cpu(
     // (t, fx_hash) → байт-идентичность сохранена. GPU-исполнитель эту
     // мемоизацию не трогает (у него свой ReadbackCache в kt-gpu).
     let has_fx = kt_fx::video::has_video_fx(&src.fx);
+    // СИЛА СЛОЯ (Р.38 п.12): слот `LayerMix` смешивает состояние ДО
+    // вклада слоя с состоянием после него. Значение уже разрешено
+    // автоматизацией при построении плана, а `fx_hash` хэширует всю
+    // цепочку — 60 % и 100 % не схлопнутся в один кадр пост-FX кэша.
+    let mixes = layer_mixes(&src.fx);
     if has_fx
         && let Some(f) = cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0)
     {
         return Some(f);
     }
     if !has_fx {
+        // цепочка из одной силы пикселей не трогает: смешивать вход с
+        // самим собой нечего
         return src.frame.clone();
     }
     let frame = src.frame.as_ref()?;
@@ -750,12 +757,14 @@ fn layer_frame_cpu(
     };
     let mut rgba = scratch.take(frame.rgba.len());
     rgba.copy_from_slice(&frame.rgba);
-    let f = kt_fx::video::apply_video_chain_pooled(
-        &src.fx,
-        kt_fx::video::Frame { w: frame.width, h: frame.height, rgba, has_alpha: frame.has_alpha },
-        &ctx,
-        scratch,
-    );
+    let start =
+        kt_fx::video::Frame { w: frame.width, h: frame.height, rgba, has_alpha: frame.has_alpha };
+    let f = if mixes.is_empty() {
+        // ПРЕЖНИЙ путь, байт-в-байт: на нём стоит GOLDEN_VIDEO
+        kt_fx::video::apply_video_chain_pooled(&src.fx, start, &ctx, scratch)
+    } else {
+        apply_chain_with_mixes(&src.fx, &mixes, start, &ctx, scratch)
+    };
     let frame = Arc::new(VideoFrame {
         pts: t,
         width: f.w,
@@ -769,6 +778,113 @@ fn layer_frame_cpu(
     }
     cache.insert_postfx_video(src.source, q_key, src.fx_hash, t.0, frame);
     cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0)
+}
+
+/// Слоты смешения цепочки: (индекс слота, индекс начала вклада слоя,
+/// вес 0..4096). Пусто — прежний путь БАЙТ-В-БАЙТ.
+fn layer_mixes(fx: &[kt_model::FxInstance]) -> Vec<(usize, usize, u32)> {
+    fx.iter()
+        .enumerate()
+        .filter_map(|(i, f)| match f {
+            kt_model::FxInstance::LayerMix { amount, from } => Some((
+                i,
+                (*from as usize).min(i),
+                (amount.clamp(0.0, 1.0) * 4096.0).round() as u32,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Цепочка со слотами СИЛЫ (Р.38 п.12): считается посегментно.
+///
+/// Слой дописывает свои эффекты в хвост цепочки цели, поэтому «сухая»
+/// сторона смешения — состояние ДО его первого слота, а не вход всей
+/// цепочки: иначе сила слоя откатывала бы и собственные эффекты события.
+/// Снимок делается ровно на границе `from`, и на каждый слот силы он
+/// ровно один.
+fn apply_chain_with_mixes(
+    fx: &[kt_model::FxInstance],
+    mixes: &[(usize, usize, u32)],
+    start: kt_fx::video::Frame,
+    ctx: &kt_fx::video::VideoFxCtx,
+    scratch: &mut kt_fx::video::FxScratch,
+) -> kt_fx::video::Frame {
+    let mut frame = start;
+    let mut snaps: std::collections::HashMap<usize, kt_fx::video::Frame> =
+        std::collections::HashMap::new();
+    let mut i = 0usize;
+    while i < fx.len() {
+        if mixes.iter().any(|(_, from, _)| *from == i) {
+            snaps.insert(
+                i,
+                kt_fx::video::Frame {
+                    w: frame.w,
+                    h: frame.h,
+                    rgba: frame.rgba.clone(),
+                    has_alpha: frame.has_alpha,
+                },
+            );
+        }
+        match mixes.iter().find(|(at, _, _)| *at == i) {
+            Some((_, from, k)) if *k < 4096 => {
+                if let Some(dry) = snaps.remove(from) {
+                    frame = blend_frames_cpu(dry, frame, *k);
+                }
+            }
+            // сила 100 % — смешивать нечего, снимок просто выбрасывается
+            Some((_, from, _)) => {
+                snaps.remove(from);
+            }
+            None => {
+                frame = kt_fx::video::apply_video_chain_pooled(
+                    std::slice::from_ref(&fx[i]),
+                    frame,
+                    ctx,
+                    scratch,
+                );
+            }
+        }
+        i += 1;
+    }
+    frame
+}
+
+/// Смешать «сухой» кадр с «мокрым» весом `k` (0..4096).
+///
+/// Размеры могут не совпасть: Pan/CamMotion ресемплят кадр в размер
+/// вывода. Тогда сухая сторона вписывается ТОЙ ЖЕ билинейкой
+/// (`kt_fx::video::fit_into`), что и все остальные ресемплы, — её зеркало
+/// в kt-gpu считает то же самое, поэтому бэкенды сходятся в допуске.
+fn blend_frames_cpu(
+    dry: kt_fx::video::Frame,
+    wet: kt_fx::video::Frame,
+    k: u32,
+) -> kt_fx::video::Frame {
+    let pixels = (wet.w as usize) * (wet.h as usize);
+    let dry = if (dry.w, dry.h) == (wet.w, wet.h) {
+        dry
+    } else {
+        let mut out = vec![0u8; pixels * 4];
+        kt_fx::video::fit_into(&dry, wet.w, wet.h, &mut out);
+        kt_fx::video::Frame { w: wet.w, h: wet.h, rgba: out, has_alpha: dry.has_alpha }
+    };
+    let as_vf = |f: &kt_fx::video::Frame| VideoFrame {
+        pts: Tick::ZERO,
+        width: f.w,
+        height: f.h,
+        rgba: f.rgba.clone().into_boxed_slice(),
+        has_alpha: f.has_alpha,
+    };
+    let (a, b) = (as_vf(&dry), as_vf(&wet));
+    let mut buf = Vec::new();
+    dissolve_into(&mut buf, &a, &b, k, pixels);
+    kt_fx::video::Frame {
+        w: wet.w,
+        h: wet.h,
+        rgba: buf,
+        has_alpha: wet.has_alpha || dry.has_alpha,
+    }
 }
 
 /// Сольный фейд (Р.25) в момент t: (вес 0..4096, клип ПОЯВЛЯЕТСЯ, вид).

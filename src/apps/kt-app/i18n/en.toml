@@ -215,6 +215,10 @@ peak = "Master peak level, dBFS"
 
 # Редактор morpher'а.
 [mrph]
+strength = "Strength"
+strength_hint = "How much of the layer is applied: 1.0 — fully, 0 — as if the layer were off"
+fade_in = "in"
+fade_out = "out"
 title_batch = "Morpher FX batch — event {0}"
 title = "Morpher — event {0}"
 frozen = "Frozen at creation: {0} clip(s). {1}"
