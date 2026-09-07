@@ -509,8 +509,10 @@ impl TimelineModel {
                     return Err(CommandError::TooShort);
                 }
                 // source_in не может уйти в минус (у reversed левый трим
-                // source_in не трогает — п.16)
-                if !c.reversed && (c.source_in + (*new_start - c.start)).0 < 0 {
+                // source_in не трогает — п.16). Считает ТА ЖЕ функция, что
+                // и мутация: иначе валидация и правка разойдутся на
+                // растянутом клипе (Р.39).
+                if !slice_fits_source(c, TickRange::new(*new_start, end)) {
                     return Err(CommandError::TooShort);
                 }
             }
@@ -806,15 +808,11 @@ impl TimelineModel {
                         continue;
                     }
                     let max_start = c.start + c.duration - MIN_CLIP_DURATION;
-                    let min_start =
-                        if c.reversed { Tick(0) } else { Tick((c.start - c.source_in).0.max(0)) };
-                    let ns = Tick(new_start.0.clamp(min_start.0, max_start.0));
-                    let delta = ns - c.start;
-                    c.start = ns;
-                    c.duration = c.duration - delta;
-                    if !c.reversed {
-                        c.source_in = c.source_in + delta;
-                    }
+                    let ns = Tick(new_start.0.clamp(trim_min_start(c).0, max_start.0));
+                    // геометрия и материал — ОДНИМ правилом (Р.39):
+                    // у растянутого клипа `source_in` едет по интегралу
+                    // скорости, а не на длину куска
+                    *c = clip_slice(c, TickRange::new(ns, c.start + c.duration), c.id);
                 }
             }
             Command::TrimEnd { id, new_end } => {
@@ -824,17 +822,8 @@ impl TimelineModel {
                         continue;
                     }
                     let min_end = c.start + MIN_CLIP_DURATION;
-                    let mut ne = Tick(new_end.0.max(min_end.0));
-                    if c.reversed {
-                        // расширение вправо тянет source_in вниз — клэмп в 0
-                        let max_end = c.start + c.duration + c.source_in;
-                        ne = Tick(ne.0.min(max_end.0));
-                        let old_dur = c.duration;
-                        c.duration = ne - c.start;
-                        c.source_in = c.source_in + (old_dur - c.duration);
-                    } else {
-                        c.duration = ne - c.start;
-                    }
+                    let ne = Tick(new_end.0.max(min_end.0).min(trim_max_end(c).0));
+                    *c = clip_slice(c, TickRange::new(c.start, ne), c.id);
                 }
             }
             Command::Split { id, at, new_id, new_group } => {

@@ -777,3 +777,165 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
     }]];
     assert!(!only.is_empty(), "патч с кривыми обязан сериализоваться");
 }
+
+// ---------------------------------------------------------------------------
+// Тесты 270 (Р.39): резка РАСТЯНУТОГО клипа попадает в тот материал.
+// ---------------------------------------------------------------------------
+
+fn warped(rate: f64, keys: Vec<AutoKey>, reversed: bool) -> ClipEvent {
+    ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(4 * 90_000),
+        source_in: Tick(90_000),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed,
+        fx: vec![FxInstance::slowed_reverb(rate, 0.0, 85.0)],
+        fx_bypass: vec![false],
+        fx_auto: if keys.is_empty() {
+            vec![vec![]]
+        } else {
+            vec![vec![ParamCurve { param: "rate".into(), ease: false, keys }]]
+        },
+        opacity: 1.0,
+        fx_off: false,
+    }
+}
+
+/// Тест 270: половинная скорость — половина материала.
+#[test]
+fn t270_split_half_speed_in_the_middle() {
+    let c = warped(0.5, vec![], false);
+    let half = TickRange::new(Tick(2 * 90_000), Tick(4 * 90_000));
+    let right = clip_slice(&c, half, ClipId(2));
+    assert_eq!(
+        right.source_in,
+        Tick(90_000 + 90_000),
+        "за 2 с выхода на 0.5× съедена 1 с материала, а не 2 (до Р.39 было 270_000)"
+    );
+    // левый кусок начинается там же, где родитель
+    let left = clip_slice(&c, TickRange::new(Tick(0), Tick(2 * 90_000)), ClipId(1));
+    assert_eq!(left.source_in, c.source_in, "разрез в начале материал не двигает");
+}
+
+/// Тест 270б: то же зеркально. «ВАРП, ПОТОМ ЗЕРКАЛО» — якорь считается от
+/// фактически потреблённого материала, а не от длины события.
+#[test]
+fn t270b_split_reversed_half_speed() {
+    let c = warped(0.5, vec![], true);
+    // всего съедается 2 с материала
+    let first = clip_slice(&c, TickRange::new(Tick(0), Tick(2 * 90_000)), ClipId(1));
+    assert_eq!(
+        first.source_in,
+        Tick(90_000 + 90_000),
+        "зеркальный клип начинает с ХВОСТА потреблённого: 1 с, а не 2"
+    );
+    let last = clip_slice(&c, TickRange::new(Tick(2 * 90_000), Tick(4 * 90_000)), ClipId(2));
+    assert_eq!(last.source_in, c.source_in, "последний кусок играет начало источника");
+}
+
+/// Тест 270в: КРИВАЯ скорости — интеграл, а не умножение. Плюс главное:
+/// ключи едут вместе с якорем, иначе за ним уезжает вся кривая.
+#[test]
+fn t270c_split_on_a_rate_curve_moves_keys_with_the_anchor() {
+    // рампа 1.0 → 2.0 по всему событию; ключи в тиках материала от source_in
+    let c = warped(
+        1.0,
+        vec![
+            AutoKey { t: Tick(90_000), v: 1.0 },
+            AutoKey { t: Tick(90_000 + 4 * 90_000), v: 2.0 },
+        ],
+        false,
+    );
+    let at = Tick(2 * 90_000);
+    let right = clip_slice(&c, TickRange::new(at, Tick(4 * 90_000)), ClipId(2));
+
+    // S(0.5) для рампы 1→2 = 0.5·1 + 0.5²·0.5/… — трапеция: (1 + 1.5)/2 · 0.5 = 0.625
+    let want = Tick(90_000 + (4.0f64 * 90_000.0 * 0.625).round() as i64);
+    assert_eq!(right.source_in, want, "якорь — интеграл скорости, а не 2 с");
+
+    // ключи сдвинулись на ТУ ЖЕ дельту: разность (k.t − source_in) цела
+    let d = (want - c.source_in).0 - (at - c.start).0;
+    assert_ne!(d, 0, "сцена должна быть варпнутой, иначе тест ничего не проверяет");
+    for (before, after) in c.fx_auto[0][0].keys.iter().zip(&right.fx_auto[0][0].keys) {
+        assert_eq!(
+            after.t.0 - right.source_in.0,
+            before.t.0 - c.source_in.0 - (at - c.start).0,
+            "ось автоматизации куска обязана остаться линейной (Р.37), \
+             а сдвинуться обязан только материал"
+        );
+    }
+}
+
+/// Тест 270г: шов. Конец первого куска и начало второго — один и тот же
+/// материал; сумма потреблённого равна родительской.
+#[test]
+fn t270d_slice_seam_has_no_gap() {
+    for (rate, rev) in [(0.5, false), (2.0, false), (0.5, true), (2.0, true)] {
+        let c = warped(rate, vec![], rev);
+        let at = Tick(90_000 * 3 / 2); // не на круглой границе
+        let l = clip_slice(&c, TickRange::new(Tick(0), at), ClipId(1));
+        let r = clip_slice(&c, TickRange::new(at, Tick(4 * 90_000)), ClipId(2));
+        let used = |x: &ClipEvent| {
+            kt_model::clip_warp(x).map(|w| w.used()).unwrap_or(x.duration.0)
+        };
+        let (near, far) = if rev { (&r, &l) } else { (&l, &r) };
+        let seam = near.source_in.0 + used(near);
+        assert!(
+            (seam - far.source_in.0).abs() <= 1,
+            "rate {rate} rev {rev}: шов расходится на {} тиков",
+            seam - far.source_in.0
+        );
+        assert!(
+            (used(&l) + used(&r) - used(&c)).abs() <= 2,
+            "rate {rate} rev {rev}: суммарно съедено не столько, сколько родителем"
+        );
+    }
+}
+
+/// Тест 270д: на клипе БЕЗ варпа правило прежнее байт-в-байт — на этом
+/// стоят GOLDEN'ы и все старые тесты.
+#[test]
+fn t270e_unwarped_slice_is_unchanged() {
+    for reversed in [false, true] {
+        for fx in [vec![], vec![FxInstance::blur(4)]] {
+            let mut c = warped(1.0, vec![], reversed);
+            c.fx = fx.clone();
+            c.fx_bypass = vec![false; fx.len()];
+            c.fx_auto = vec![vec![]; fx.len()];
+            for w in [(0, 2), (1, 3), (2, 4)] {
+                let win = TickRange::new(Tick(w.0 * 90_000), Tick(w.1 * 90_000));
+                let want = if reversed {
+                    c.source_in + ((c.start + c.duration) - win.end)
+                } else {
+                    c.source_in + (win.start - c.start)
+                };
+                assert_eq!(
+                    clip_slice(&c, win, ClipId(9)).source_in,
+                    want,
+                    "без варпа — прежняя линейная формула, reversed={reversed}"
+                );
+            }
+        }
+    }
+    // и выключенный слот варпа тоже не варп
+    let mut off = warped(0.5, vec![], false);
+    off.fx_bypass = vec![true];
+    assert_eq!(
+        clip_slice(&off, TickRange::new(Tick(2 * 90_000), Tick(4 * 90_000)), ClipId(9)).source_in,
+        Tick(90_000 + 2 * 90_000),
+        "выключенный слот варпа резку не искривляет"
+    );
+    let mut master = warped(0.5, vec![], false);
+    master.fx_off = true;
+    assert_eq!(
+        clip_slice(&master, TickRange::new(Tick(2 * 90_000), Tick(4 * 90_000)), ClipId(9))
+            .source_in,
+        Tick(90_000 + 2 * 90_000),
+        "мастер-выключатель цепочки — тоже"
+    );
+}

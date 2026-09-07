@@ -1288,16 +1288,104 @@ pub fn same_clip(eff_id: ClipId, origin: ClipId) -> bool {
 /// `Command::Split` (который с Р.35 сам зовёт эту функцию): у прямого
 /// клипа точка входа едет с началом куска, у reversed — с его концом,
 /// потому что материал у него зеркальный (п.16).
+/// Пара якорей куска: ЛИНЕЙНЫЙ и МАТЕРИАЛЬНЫЙ (Р.39).
+///
+/// У `source_in` две работы сразу: он якорь ЧТЕНИЯ МАТЕРИАЛА и начало ОСИ
+/// АВТОМАТИЗАЦИИ — время события ключа есть ровно `start + (k.t −
+/// source_in)` (это и считает `clip_timeline_at`). При линейной карте обе
+/// совпадают; под варпом расходятся, и якорь обязан ехать по интегралу
+/// скорости, а ось — остаться линейной (решение Р.37: «БЕЗ учёта
+/// замедления-ускорения»).
+fn slice_anchors(c: &ClipEvent, w: TickRange) -> (Tick, Tick) {
+    let linear = if c.reversed {
+        c.source_in + ((c.start + c.duration) - w.end)
+    } else {
+        c.source_in + (w.start - c.start)
+    };
+    let Some(warp) = crate::clip_warp(c) else { return (linear, linear) };
+    // ВАРП, ПОТОМ ЗЕРКАЛО (Р.37 п.247) — тем же выражением, каким кадр
+    // выбирает рендер: у прямого клипа якорь на НАЧАЛЕ окна, у зеркального
+    // на его КОНЦЕ, отсчитанном от фактически потреблённого `used`, а не
+    // от длины события.
+    let tl = if c.reversed { w.end - c.start } else { w.start - c.start };
+    (linear, c.source_in + Tick(warp.material_off(c.duration, c.reversed, tl.0)))
+}
+
+/// Насколько влево можно утащить НАЧАЛО клипа: дальше кончается материал.
+///
+/// У растянутого клипа это НЕ `start − source_in`: расширение влево на δ
+/// съедает `rate·δ` материала, поэтому у ускоренного клипа предел ближе,
+/// а у замедленного дальше. Инверсия карты — `output_time_for_source`.
+pub fn trim_min_start(c: &ClipEvent) -> Tick {
+    if c.reversed {
+        // у зеркального клипа левый трим source_in не трогает (п.16)
+        return Tick(0);
+    }
+    let Some(warp) = crate::clip_warp(c) else {
+        return Tick((c.start - c.source_in).0.max(0));
+    };
+    // сколько ВЫХОДНОГО времени соответствует материалу, лежащему левее
+    // точки входа: s < 0, карта экстраполирует скоростью в нуле
+    let span = c.duration.0.max(1) as f64;
+    let s = -(c.source_in.0 as f64) / span;
+    let dt = crate::output_time_for_source(warp.base(), warp.prof(), s) * span;
+    Tick((c.start.0 + dt.round() as i64).max(0))
+}
+
+/// Насколько вправо можно утащить КОНЕЦ клипа. Симметрично: у зеркального
+/// клипа расширение вправо тянет `source_in` вниз, и предел ставит материал.
+pub fn trim_max_end(c: &ClipEvent) -> Tick {
+    if !c.reversed {
+        return Tick(i64::MAX / 4);
+    }
+    let Some(warp) = crate::clip_warp(c) else {
+        return c.start + c.duration + c.source_in;
+    };
+    let span = c.duration.0.max(1) as f64;
+    let s = -(c.source_in.0 as f64) / span;
+    let dt = crate::output_time_for_source(warp.base(), warp.prof(), s) * span;
+    Tick(c.start.0 + c.duration.0 - dt.round() as i64)
+}
+
+/// Материальная точка входа куска — ЕДИНСТВЕННОЕ правило проекта.
+pub fn slice_source_in(c: &ClipEvent, w: TickRange) -> Tick {
+    slice_anchors(c, w).1
+}
+
+/// Хватает ли материала слева от окна. ОДНА функция на команду, её
+/// `check_on` и предфильтры в `ops`: разойдись они — жест то падал бы, то
+/// молча не доезжал.
+pub fn slice_fits_source(c: &ClipEvent, w: TickRange) -> bool {
+    slice_source_in(c, w).0 >= 0
+}
+
 pub fn clip_slice(c: &ClipEvent, w: TickRange, id: ClipId) -> ClipEvent {
     let mut s = c.clone();
     s.id = id;
     s.start = w.start;
     s.duration = w.len();
-    s.source_in = if c.reversed {
-        c.source_in + ((c.start + c.duration) - w.end)
-    } else {
-        c.source_in + (w.start - c.start)
-    };
+    let (linear, material) = slice_anchors(c, w);
+    s.source_in = material;
+    // Ключи едут на ТУ ЖЕ дельту: разность `(k.t − source_in)` обязана
+    // остаться прежней, иначе за якорем уедет вся кривая. Проверка на
+    // числах: клип 4 с, рампа 1.0→2.0, разрез на 2 с — без компенсации
+    // первая точка профиля правого куска встаёт в −1.25 вместо −1.0, и
+    // его скорость в начале читается 1.625 вместо 1.5: стык без скачка
+    // МАТЕРИАЛА, но со скачком СКОРОСТИ. Меняется только материал.
+    //
+    // Р.33 обещал, что команды ключей не трогают вовсе. Обещание держалось
+    // тем, что при линейной карте дельта РОВНО НОЛЬ — так и осталось:
+    // на клипе без варпа этот блок не исполняется.
+    let shift = material - linear;
+    if shift.0 != 0 {
+        for slot in &mut s.fx_auto {
+            for cur in slot {
+                for k in &mut cur.keys {
+                    k.t = k.t + shift;
+                }
+            }
+        }
+    }
     s
 }
 

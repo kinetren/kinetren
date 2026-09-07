@@ -5,7 +5,7 @@
 
 use crate::model::{Command, MIN_CLIP_DURATION};
 use crate::project::*;
-use kt_time::Tick;
+use kt_time::{Tick, TickRange};
 
 /// Блок обмена (Р.24): клипы + переходы, у которых ОБА конца попали в блок
 /// и стык пережил кроп. Времена клипов ребейзнуты к нулю блока.
@@ -184,16 +184,10 @@ pub fn copy_region_block(p: &Project, r: Region) -> ClipBlock {
         if t1 - t0 < MIN_CLIP_DURATION {
             continue;
         }
-        let mut copy = c.clone();
-        // реверс (п.16): кроп слева таймлайна режет ХВОСТ источника,
-        // source_in двигается только от кропа СПРАВА
-        copy.source_in = if c.reversed {
-            c.source_in + ((c.start + c.duration) - t1)
-        } else {
-            c.source_in + (t0 - c.start)
-        };
+        // кроп — тот же кусок, что у Split и punch-out (Р.39): реверс,
+        // материальный якорь и сдвиг ключей считает `clip_slice`
+        let mut copy = clip_slice(c, TickRange::new(t0, t1), c.id);
         copy.start = t0 - r.start; // rebase к нулю региона
-        copy.duration = t1 - t0;
         clips.push(copy);
     }
     let transitions = surviving_transitions(p, &clips);
@@ -386,30 +380,20 @@ pub fn punch_out_region(p: &Project, r: Region, next_clip: &mut u64) -> Vec<Comm
         }
         cmds.push(Command::RemoveClip { id: c.id });
         let end = c.start + c.duration;
-        // левый остаток
+        // Оба остатка — через ОДНО правило куска (Р.39). Раньше здесь была
+        // своя копия линейной формулы (по ветке на каждый остаток), и на
+        // растянутом клипе она уезжала так же, как уезжал `Split`.
+        // Реверс, `source_in` и сдвиг ключей — забота `clip_slice`.
         if r.start - c.start >= MIN_CLIP_DURATION {
-            let mut left = c.clone();
-            left.id = ClipId(*next_clip);
+            let mut left = clip_slice(c, TickRange::new(c.start, r.start), ClipId(*next_clip));
             *next_clip += 1;
             left.link_group = None;
-            left.duration = r.start - c.start;
-            if c.reversed {
-                // реверс (п.16): левый кусок играет хвост источника
-                left.source_in = c.source_in + (end - r.start);
-            }
             cmds.push(Command::AddClip(left));
         }
-        // правый остаток
         if end - r.end >= MIN_CLIP_DURATION {
-            let mut right = c.clone();
-            right.id = ClipId(*next_clip);
+            let mut right = clip_slice(c, TickRange::new(r.end, end), ClipId(*next_clip));
             *next_clip += 1;
             right.link_group = None;
-            if !c.reversed {
-                right.source_in = c.source_in + (r.end - c.start);
-            } // reversed: правый кусок играет НАЧАЛО источника — source_in как есть
-            right.start = r.end;
-            right.duration = end - r.end;
             cmds.push(Command::AddClip(right));
         }
     }
@@ -446,7 +430,9 @@ pub fn trim_group_start_to(p: &Project, sel: ClipId, at: Tick) -> Vec<Command> {
     group_members(p, sel)
         .into_iter()
         .filter(|c| c.start < at && at < c.start + c.duration - MIN_CLIP_DURATION + Tick(1))
-        .filter(|c| c.reversed || (c.source_in + (at - c.start)).0 >= 0)
+        // предел трима считает та же функция, что и команда: разойдись
+        // они — жест то падал бы, то молча не доезжал (Р.39)
+        .filter(|c| slice_fits_source(c, TickRange::new(at, c.start + c.duration)))
         .map(|c| Command::TrimStart { id: c.id, new_start: at })
         .collect()
 }
@@ -661,20 +647,11 @@ impl UpgradeReport {
 /// Зеркала мутаций тримов (model.rs) для прямого применения к клипу:
 /// у reversed TrimEnd сдвигает source_in, TrimStart — не трогает (п.16).
 fn raw_trim_end(c: &mut ClipEvent, new_end: Tick) {
-    let old = c.duration;
-    c.duration = new_end - c.start;
-    if c.reversed {
-        c.source_in = c.source_in + (old - c.duration);
-    }
+    *c = clip_slice(c, TickRange::new(c.start, new_end), c.id);
 }
 
 fn raw_trim_start(c: &mut ClipEvent, new_start: Tick) {
-    let delta = new_start - c.start;
-    c.start = new_start;
-    c.duration = c.duration - delta;
-    if !c.reversed {
-        c.source_in = c.source_in + delta;
-    }
+    *c = clip_slice(c, TickRange::new(new_start, c.start + c.duration), c.id);
 }
 
 /// Конвертация legacy-проекта с перекрытиями в Transition-модель (этап 9).

@@ -13,6 +13,7 @@
 //! зовут её отсюда, публичные имена сохранены реэкспортом.
 
 use crate::{FxInstance, ParamCurve};
+use kt_time::Tick;
 
 /// Профиль одного параметра в ДОМЕНЕ СОБЫТИЯ: (доля выходного времени
 /// 0..1, значение). Строится из кривых клипа (`ParamCurve`, ключи в тиках
@@ -501,4 +502,94 @@ mod zero_start_tests {
         let s = source_progress(1.0, &plain, 1.0);
         assert!((s - 0.75).abs() < 1e-12, "0.3·1 + 0.4·0.75 + 0.3·0.5 = 0.75, а не {s}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Карта КОНКРЕТНОГО клипа (Р.39). Раньше жила в kt-engine тремя почти
+// одинаковыми структурами (`VideoWarp`, `ClipWarp` и неявная внутри
+// `clip_material_pos`); теперь конструктор один, а движок берёт его отсюда.
+// ---------------------------------------------------------------------------
+
+/// Растяжение времени клипа: база, профиль скорости и фактически
+/// потреблённый материал.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipWarp {
+    base: f64,
+    prof: Vec<(f64, f64)>,
+    /// Материал в тиках, который событие реально проходит: S(1)·span.
+    used: i64,
+    /// Режим «смешивание» (Р.37 С5): читается исполнителем слоя.
+    blend: bool,
+}
+
+impl ClipWarp {
+    pub fn base(&self) -> f64 {
+        self.base
+    }
+    pub fn prof(&self) -> &ParamPoints {
+        &self.prof
+    }
+    pub fn used(&self) -> i64 {
+        self.used
+    }
+    pub fn blend(&self) -> bool {
+        self.blend
+    }
+
+    /// Сколько материала съедено к моменту `tl` тиков от начала события.
+    /// Реверс — «ВАРП, ПОТОМ ЗЕРКАЛО» (Р.37 п.247): зеркало ДО варпа гнало
+    /// бы кривую скорости задом наперёд и рассинхронило A/V.
+    pub fn material_off(&self, duration: Tick, reversed: bool, tl: i64) -> i64 {
+        let dur = duration.0.max(1);
+        let consumed = warp_material_ticks(self.base, &self.prof, dur, tl as f64 / dur as f64);
+        if reversed { (self.used - consumed).max(0) } else { consumed }
+    }
+}
+
+/// Карта по ЦЕПОЧКЕ И КРИВЫМ. `None` — варпа нет, отображение линейно.
+///
+/// Вход обязан быть АКТИВНЫМ (`active_fx`/`active_fx_auto`): выключенные
+/// слоты и мастер-выключатель уже отброшены. `AutoProfiles::warp_slot`
+/// ищет слот ПО ВИДУ, поэтому на неотфильтрованных кривых профиль скорости
+/// считался бы с чужого слота.
+pub fn clip_warp_of(
+    fx: &[FxInstance],
+    auto: &[Vec<ParamCurve>],
+    source_in: Tick,
+    duration: Tick,
+) -> Option<ClipWarp> {
+    let span = duration.0.max(1);
+    let (base, blend) = fx.iter().find_map(|f| match f {
+        FxInstance::SlowedReverb { rate, frames, .. } => {
+            Some((*rate, *frames == crate::FrameMode::Blend))
+        }
+        _ => None,
+    })?;
+    // Профиль строится ТОЙ ЖЕ функцией, что у аудио: домен один на оба
+    // вида, иначе картинка и звук разъехались бы на кривой скорости.
+    // Позиция ключа нормируется в АУДИО-КАДРАХ (как у аудио) — доля
+    // безразмерна, и обе стороны получают одно число. В ТИКАХ считается
+    // только ВЫХОД карты (`warp_material_ticks`): там сетка 48 кГц
+    // промахнулась бы мимо границы кадра.
+    let prof = AutoProfiles::from_curves(
+        auto,
+        source_in.to_audio_frames(),
+        duration.to_audio_frames().max(1),
+    )
+    .rate_points(fx)
+    .to_vec();
+    let used = warp_material_ticks(base, &prof, span, 1.0);
+    Some(ClipWarp { base, prof, used, blend })
+}
+
+/// Карта клипа из его активной цепочки.
+pub fn clip_warp(c: &crate::ClipEvent) -> Option<ClipWarp> {
+    // дешёвый отсев ДО аллокаций `active_fx`/`active_fx_auto`:
+    // `effective_clips` зовёт это на каждый кусок каждого клипа
+    if c.fx_off || !c.fx.iter().enumerate().any(|(i, f)| {
+        f.warps_time() && !c.fx_bypass.get(i).copied().unwrap_or(false)
+    }) {
+        return None;
+    }
+    clip_warp_of(&c.active_fx(), &c.active_fx_auto(), c.source_in, c.duration)
 }

@@ -152,8 +152,16 @@ fn split_semantics() {
     assert_eq!(left.start + left.duration, Tick(300_000));
     assert_eq!(right.start, Tick(300_000));
     assert_eq!(right.start + right.duration, before.start + before.duration);
-    // source_in правой половины продолжает источник без разрыва
-    assert_eq!(right.source_in, before.source_in + (Tick(300_000) - before.start));
+    // source_in правой половины продолжает источник БЕЗ РАЗРЫВА.
+    //
+    // У клипа фикстуры rate 0.82 (`slowed_reverb`), поэтому «без разрыва»
+    // это НЕ длина куска, а съеденный материал: 291000 · 0.82 = 238620.
+    // До Р.39 здесь стояло линейное ожидание — то есть тест утверждал сам
+    // дефект: разрез замедленного события уезжал на 52380 тиков (0.58 с)
+    // и давал слышимый скачок.
+    let elapsed = (Tick(300_000) - before.start).0 as f64;
+    let want = before.source_in + Tick((elapsed * 0.82).round() as i64);
+    assert_eq!(right.source_in, want, "правая половина продолжает МАТЕРИАЛ, а не длину");
     assert_eq!(right.link_group, Some(GroupId(7)));
 }
 
@@ -164,7 +172,15 @@ fn trim_start_keeps_source_alignment() {
     let c = m.clip(ClipId(10)).unwrap();
     assert_eq!(c.start, Tick(90_000));
     assert_eq!(c.duration, Tick(810_000));
-    assert_eq!(c.source_in, Tick(90_000), "материал под курсором не должен сдвигаться");
+    // Смысл теста («материал под курсором не должен сдвигаться») до Р.39
+    // был записан ЛИНЕЙНЫМ числом, хотя у клипа фикстуры rate 0.82: в
+    // момент 90_000 под курсором стоит материал 73_800, а не 90_000.
+    // Теперь утверждение соответствует собственному названию.
+    assert_eq!(
+        c.source_in,
+        Tick((90_000.0f64 * 0.82).round() as i64),
+        "материал под курсором не должен сдвигаться"
+    );
 }
 
 #[test]
