@@ -122,6 +122,27 @@ def main(out):
         near_px(app, frame_at(app, 8.0 + 0.5), a, "выключенный слот: +0.5 c = кадр 0.5 c")
         near_px(app, frame_at(app, 8.0 + 1.5), b, "и +1.5 c = кадр 1.5 c")
         app.shot("bypass")
+
+        # --- РАЗРЕЗ замедленного события (Р.39) --------------------------
+        # До Р.39 `clip_slice` считал source_in линейно, и правая половина
+        # начиналась не с того материала: на 0.5× ошибка равна половине
+        # отрезанного. Проверяем на КАРТИНКЕ: кадр в одной и той же точке
+        # обязан остаться тем же, что и до разреза.
+        probe = 4.0 + 3.0  # внутри замедленного события, правее будущего реза
+        before = frame_at(app, probe)
+        app.click(app.x_at(int(6.0 * SEC)), app.ruler_y())
+        app.key("s")
+        saved = app.saved_project()
+        n = len([c for c in saved.clips])
+        app.expect(n == 4, f"событие разрезано: клипов стало {n}")
+        after = frame_at(app, probe, prev=before)
+        near_px(
+            app,
+            after,
+            before,
+            "после разреза замедленного события кадр на том же месте — ТОТ ЖЕ",
+        )
+        app.shot("split")
         return app.done()
 
 

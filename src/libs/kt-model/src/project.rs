@@ -2624,7 +2624,8 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
         amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
     SlowedReverb {
-        // потолок скорости — RATE_CLAMP движка (kt-fx)
+        // потолок скорости — RATE_CLAMP карты варпа (warp.rs, Р.39:
+        // раньше он жил в kt-fx и был обещанием через границу крейта)
         rate: f64, 0.25, 32.0, 1.0, 0.01, Ratio, Smooth;
         mix: f32, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
         // смена длины comb-линий пересоздаёт реверб — не автоматизируется

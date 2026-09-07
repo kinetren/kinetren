@@ -846,3 +846,43 @@ fn t254b_no_dnd_drag_source_over_clickables() {
          drag_started() начинает перетаскивание, clicked() выбирает"
     );
 }
+
+/// Тест 273 (Р.39): арифметики над `source_in` вне ОДНОГО правила не бывает.
+///
+/// Повод: комментарий над `clip_slice` обещал «правило кусков ОДНО на весь
+/// проект», а линейная формула была выписана руками ещё в шести местах —
+/// поэтому починка `Split` не чинила ни тримы, ни punch-out, ни кроп
+/// копируемого блока. Тот же приём, что t252 для осиротевших команд:
+/// обещание, которое нечем проверить, перестаёт выполняться.
+#[test]
+fn t273_source_in_arithmetic_lives_in_one_place() {
+    let root = workspace_root();
+    // где правилу и место: сама функция и её помощники
+    const HOME: &str = "libs/kt-model/src/project.rs";
+    let mut bad: Vec<String> = Vec::new();
+    for rel in ["libs/kt-model/src/model.rs", "libs/kt-model/src/ops.rs", HOME] {
+        let src = strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+        for (n, line) in src.lines().enumerate() {
+            // присваивание source_in из выражения с ним же — это и есть
+            // «своя формула куска»
+            let t = line.trim();
+            let assigns = t.contains("source_in =") || t.contains("source_in +=");
+            if !assigns {
+                continue;
+            }
+            // в доме правила такие строки законны
+            if rel == HOME {
+                continue;
+            }
+            bad.push(format!("{rel}:{}: {t}", n + 1));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "материальная точка входа куска считается ВНЕ единственного правила \
+         (`clip_slice`/`slice_source_in` в {HOME}). На растянутом клипе своя формула \
+         уезжает, и починка одного жеста не чинит соседние — ровно так Split, тримы, \
+         punch-out и кроп разъехались до Р.39:\n  {}",
+        bad.join("\n  ")
+    );
+}
