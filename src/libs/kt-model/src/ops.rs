@@ -37,10 +37,17 @@ pub struct PasteIds<'a> {
 
 /// Как называть вставленное именованное (Р.35 п.4: «Имена — уникальные,
 /// и можно попросить пользователя ввести префикс, а можно и сгенерировать
-/// в поле его»). `taken` — занятые имена ПРОЕКТА.
+/// в поле его»; Р.38 п.19 — умолчание стало СУФФИКСОМ). `taken` — занятые
+/// имена ПРОЕКТА.
 #[derive(Default)]
 pub struct PasteNames {
-    pub prefix: String,
+    /// Слово, которым помечается копия.
+    pub affix: String,
+    /// Ставить его СПЕРЕДИ. Умолчание — сзади (Р.38 п.19, дословно: «при
+    /// копировании элементов - надо по дефолту проставлять не префикс а
+    /// суффикс»): так копии сортируются рядом с оригиналом, а не
+    /// собираются в отдельную кучу по первой букве.
+    pub before: bool,
     pub taken: Vec<String>,
 }
 
@@ -260,15 +267,21 @@ pub fn paste_block(
     let PasteIds { clip: next_clip, group: next_group, transition: next_transition, morph } = ids;
     let mut skipped = PasteSkipped::default();
     let mut taken = names.taken.clone();
-    // имена вставленного: префикс + уникализация ТОЙ ЖЕ функцией, что у
+    // имена вставленного: приставка + уникализация ТОЙ ЖЕ функцией, что у
     // команд — разойдись они, батч упал бы на собственных суффиксах
     let mut name_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut rename = |old: &str| -> String {
         if let Some(n) = name_map.get(old) {
             return n.clone();
         }
-        let wanted =
-            if names.prefix.is_empty() { old.to_string() } else { format!("{} {old}", names.prefix) };
+        let a = names.affix.trim();
+        let wanted = if a.is_empty() {
+            old.to_string()
+        } else if names.before {
+            format!("{a} {old}")
+        } else {
+            format!("{old} {a}")
+        };
         let fresh = unique_name(&taken, &wanted, "copy");
         taken.push(fresh.clone());
         name_map.insert(old.to_string(), fresh.clone());

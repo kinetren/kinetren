@@ -4808,7 +4808,7 @@ fn t245_thin_service_rows_geometry() {
     assert_eq!(row_height(LaneKind::Morph, 12.0), THIN_ROW_MIN);
 
     // префиксные суммы: длина n+1, последний — полная высота
-    let offs = row_offsets(&rows, 60.0);
+    let offs = row_offsets(&rows, 60.0, &[]);
     assert_eq!(offs.len(), rows.len() + 1);
     assert_eq!(offs, vec![0.0, 40.0, 100.0, 120.0, 180.0, 220.0]);
 
@@ -4816,6 +4816,7 @@ fn t245_thin_service_rows_geometry() {
         egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 600.0)),
         60.0,
         rows.clone(),
+            &[],
         0.0,
         0.0,
         900.0,
@@ -5046,10 +5047,17 @@ fn t250_paste_prefix_dialog() {
     let depth = app.model.undo_depth();
     let at = app.paste_names.as_ref().unwrap().at;
     app.paste_names = None;
-    app.paste_here(at, "копия".into());
+    app.paste_here(at, "копия".into(), false);
     assert_eq!(app.model.undo_depth(), depth + 1, "вставка — один шаг истории");
     let names: Vec<String> = app.model.project().areas.iter().map(|a| a.name.clone()).collect();
-    assert!(names.contains(&"копия финал".to_string()), "префикс применён: {names:?}");
+    // Р.38 п.19: «надо по дефолту проставлять не префикс а суффикс» —
+    // копии сортируются рядом с оригиналом, а не по первой букве слова
+    assert!(names.contains(&"финал копия".to_string()), "суффикс применён: {names:?}");
+    // а префикс остаётся возможностью того же окна
+    app.model.undo().unwrap();
+    app.paste_here(at, "копия".into(), true);
+    let names: Vec<String> = app.model.project().areas.iter().map(|a| a.name.clone()).collect();
+    assert!(names.contains(&"копия финал".to_string()), "префикс всё ещё доступен: {names:?}");
     app.model.undo().unwrap();
     assert_eq!(app.model.project().areas.len(), 1, "и одним undo откатилась");
 }
@@ -5396,4 +5404,71 @@ fn t260_camera_and_marker_left_edge_are_reachable() {
     let m2 = h.state().model.project().markers[0].clone();
     assert!(m2.t.0 > m.t.0, "левая кромка сдвинула начало метки: {:?} → {:?}", m.t, m2.t);
     assert_eq!(m2.end().0, end0, "а конец остался на месте");
+}
+
+/// Тест 262 (Р.38 п.11, дословно: «разреши менять высоту каждого трека
+/// индивидуально»). Нижняя кромка строки в gutter'е тянет её высоту,
+/// пункт меню сбрасывает, и это УДОБСТВО — звёздочку не зажигает.
+#[test]
+fn t262_per_track_height() {
+    use crate::timeline::{ROW_H_MAX, THIN_ROW_MIN, TlGeom, row_height_of};
+    use kt_model::LaneKind;
+
+    // чистая геометрия: переопределение бьёт расчётную высоту и клампится
+    let over = vec![(LaneKind::Video, 0, 150.0), (LaneKind::Morph, 0, 5.0)];
+    assert_eq!(row_height_of(LaneKind::Video, 0, 60.0, &over), 150.0);
+    assert_eq!(row_height_of(LaneKind::Video, 1, 60.0, &over), 60.0, "чужая дорожка не тронута");
+    assert_eq!(
+        row_height_of(LaneKind::Morph, 0, 60.0, &over),
+        THIN_ROW_MIN,
+        "предел снизу: в строку в 5 px мышью не попасть"
+    );
+    assert_eq!(
+        row_height_of(LaneKind::Video, 0, 60.0, &[(LaneKind::Video, 0, 9999.0)]),
+        ROW_H_MAX,
+        "предел сверху есть у всего, что тянется мышью (правило 6)"
+    );
+    // верхи строк согласованы с высотами
+    let rows = vec![(LaneKind::Video, 0), (LaneKind::Video, 1)];
+    let g = TlGeom::new(
+        egui::Rect::from_min_max(egui::pos2(50.0, 0.0), egui::pos2(1000.0, 500.0)),
+        60.0,
+        rows,
+        &over,
+        0.0,
+        0.0,
+        1000.0,
+    );
+    assert_eq!(g.row_h(0), 150.0);
+    assert_eq!(g.row_top(1) - g.row_top(0), 150.0, "верх второй строки поехал за высотой первой");
+
+    // жест: тянем нижнюю кромку первой строки в gutter'е
+    let (mut h, g0) = harness_three_clips();
+    let row0_bottom = g0.row_top(0) + g0.row_h(0);
+    // x берётся В СЕРЕДИНЕ gutter'а, а не у самого края окна: первые 16 px
+    // — зона ресайза окна, она забирает нажатие себе (правило 15)
+    let gx = g0.rect.left() - 12.0;
+    let want = g0.row_h(0) + 40.0;
+    h.hover_at(egui::pos2(gx, row0_bottom));
+    h.step();
+    h.drag_at(egui::pos2(gx, row0_bottom));
+    h.step();
+    h.hover_at(egui::pos2(gx, row0_bottom + 8.0));
+    h.step();
+    h.hover_at(egui::pos2(gx, row0_bottom + 40.0));
+    h.step();
+    h.drop_at(egui::pos2(gx, row0_bottom + 40.0));
+    h.step();
+    let app = h.state();
+    assert_eq!(app.lane_heights.len(), 1, "высота дорожки запомнена: {:?}", app.lane_heights);
+    let (k, l, hh) = app.lane_heights[0];
+    assert_eq!((k, l), g0.rows[0], "запомнена ИМЕННО та строка, за кромку которой тянули");
+    assert!((hh - want).abs() < 3.0, "высота {hh} ≈ {want}");
+    assert!(!app.dirty_content, "высота — удобство, а не содержимое: звёздочка не зажигается");
+    assert!(app.dirty_ui, "но записать её при следующем сохранении надо");
+
+    // и сброс возвращает расчётную
+    let app = h.state_mut();
+    app.set_row_height(g0.rows[0], None);
+    assert!(app.lane_heights.is_empty(), "сброс убирает переопределение");
 }

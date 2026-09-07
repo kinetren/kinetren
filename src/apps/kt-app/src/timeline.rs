@@ -420,6 +420,12 @@ pub enum Drag {
         id: ClipId,
         moved: bool,
     },
+    /// Нижняя кромка строки в gutter'е (Р.38 п.11): индивидуальная
+    /// высота дорожки, как в Vegas. `cur` — высота в пикселях.
+    LaneHeight {
+        row: usize,
+        cur: f32,
+    },
     /// Перетаскивание заголовка СТРОКИ дорожек (реордер; п.6 v1.4 —
     /// строки в display-порядке, перемешивание V/A/M разрешено).
     LaneRow {
@@ -631,6 +637,12 @@ pub const MORPH_ROW_DIV: f32 = 1.5;
 /// строку мышью не попасть (п.1 чек-листа UI).
 pub const THIN_ROW_MIN: f32 = 10.0;
 
+/// Потолок индивидуальной высоты строки (Р.38 п.11). Предел есть у
+/// всего, что тянется мышью (правило 6 чек-листа).
+pub const ROW_H_MAX: f32 = 400.0;
+/// Полоса хвата нижней кромки строки в gutter'е. Шире рисунка (правило 1).
+pub const ROW_EDGE_PX: f32 = 5.0;
+
 /// Высота строки по её виду. ЕДИНСТВЕННОЕ место, где живёт это правило.
 pub fn row_height(kind: LaneKind, base_h: f32) -> f32 {
     match kind {
@@ -640,14 +652,34 @@ pub fn row_height(kind: LaneKind, base_h: f32) -> f32 {
     }
 }
 
+/// Высота строки с учётом ИНДИВИДУАЛЬНОЙ (Р.38 п.11, дословно: «разреши
+/// менять высоту каждого трека индивидуально»). Переопределение — в
+/// пикселях и абсолютное: вертикальный зум его не трогает, иначе
+/// «поставил дорожке высоту» переставало держаться при первом же зуме.
+pub fn row_height_of(
+    kind: LaneKind,
+    lane: u32,
+    base_h: f32,
+    over: &[(LaneKind, u32, f32)],
+) -> f32 {
+    match over.iter().find(|(k, l, _)| *k == kind && *l == lane) {
+        Some((_, _, h)) => h.clamp(THIN_ROW_MIN, ROW_H_MAX),
+        None => row_height(kind, base_h),
+    }
+}
+
 /// Префиксные суммы верхов строк; длина — `rows.len() + 1`, последний
 /// элемент = полная высота содержимого.
-pub fn row_offsets(rows: &[(LaneKind, u32)], base_h: f32) -> Vec<f32> {
+pub fn row_offsets(
+    rows: &[(LaneKind, u32)],
+    base_h: f32,
+    over: &[(LaneKind, u32, f32)],
+) -> Vec<f32> {
     let mut out = Vec::with_capacity(rows.len() + 1);
     let mut y = 0.0;
     out.push(0.0);
-    for (kind, _) in rows {
-        y += row_height(*kind, base_h);
+    for (kind, lane) in rows {
+        y += row_height_of(*kind, *lane, base_h, over);
         out.push(y);
     }
     out
@@ -874,6 +906,10 @@ pub struct TlGeom {
     /// Верхи строк (префиксные суммы). Приватное: разойтись с `rows` оно
     /// физически не может — обе заполняет `new`.
     offs: std::sync::Arc<Vec<f32>>,
+    /// Высоты строк с учётом индивидуальных (Р.38 п.11). Тоже приватное и
+    /// тоже из `new`: «сколько строка занимает» обязано быть согласовано
+    /// с её верхом.
+    hs: std::sync::Arc<Vec<f32>>,
     /// Вертикальный скролл-офсет зоны дорожек (п.12 р.6).
     pub view_top: f32,
     pub view_start: f64,
@@ -885,16 +921,19 @@ impl TlGeom {
         rect: egui::Rect,
         base_h: f32,
         rows: Vec<(LaneKind, u32)>,
+        over: &[(LaneKind, u32, f32)],
         view_top: f32,
         view_start: f64,
         tpp: f64,
     ) -> TlGeom {
-        let offs = row_offsets(&rows, base_h);
+        let offs = row_offsets(&rows, base_h, over);
+        let hs = rows.iter().map(|(k, l)| row_height_of(*k, *l, base_h, over)).collect();
         TlGeom {
             rect,
             base_h,
             rows: std::sync::Arc::new(rows),
             offs: std::sync::Arc::new(offs),
+            hs: std::sync::Arc::new(hs),
             view_top,
             view_start,
             tpp,
@@ -903,7 +942,7 @@ impl TlGeom {
 
     /// Высота строки по индексу.
     pub fn row_h(&self, row: usize) -> f32 {
-        self.rows.get(row).map(|(k, _)| row_height(*k, self.base_h)).unwrap_or(self.base_h)
+        self.hs.get(row).copied().unwrap_or(self.base_h)
     }
 
     /// Высота строки дорожки клипов (её вид — всегда базовый).
@@ -924,7 +963,12 @@ impl TlGeom {
     /// геометрию ЧИТАЕТ снаружи.)
     #[allow(dead_code)]
     pub fn lane_y(&self, kind: ClipKind, lane: u32, frac: f32) -> f32 {
-        self.lane_top(kind, lane) + self.base_h * frac
+        let lk = match kind {
+            ClipKind::Video => LaneKind::Video,
+            ClipKind::Audio => LaneKind::Audio,
+        };
+        let h = self.row_of((lk, lane)).map(|r| self.row_h(r)).unwrap_or(self.base_h);
+        self.lane_top(kind, lane) + h * frac
     }
 
     /// Индекс строки под y БЕЗ ограничения снизу: строки перебираются
@@ -1523,10 +1567,12 @@ impl KtApp {
         // фактическим счётчикам дорожек на каждый кадр
         let rows = self.model.project().rows();
         // кэш геометрии для маппинга вне draw_timeline (дроп п.2, строки п.6)
+        let row_over = self.lane_heights.clone();
         let geom = TlGeom::new(
             rect,
             lane_h,
             rows,
+            &row_over,
             self.tl_scroll,
             self.view_start,
             self.ticks_per_px,
@@ -1643,12 +1689,49 @@ impl KtApp {
             }
             // пока идёт ввод имени — драг-реордер выключен, иначе «кликнул
             // в поле — уехала дорожка»
+            // нижняя кромка строки в gutter'е тянет её ВЫСОТУ (Р.38 п.11).
+            // Проверяется РАНЬШЕ реордера: кромка узкая, и реордер, начатый
+            // с неё, забрал бы жест себе.
+            let row_edge_at = |g: &TlGeom, y: f32| -> Option<usize> {
+                (0..g.rows.len()).find(|r| (g.row_top(*r) + g.row_h(*r) - y).abs() <= ROW_EDGE_PX)
+            };
+            if self.lane_edit.is_none()
+                && let Some(pos) = gutter_resp.hover_pos()
+                && row_edge_at(&geom, pos.y).is_some()
+            {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                self.hover_hint = Some(tr(k::tl::hint::ROW_HEIGHT).to_string());
+            }
+            // Зона берётся по точке НАЖАТИЯ, а не по текущему указателю:
+            // `drag_started` приходит уже после сдвига на порог, и указатель
+            // успевает выползти из узкой полосы кромки — жест превращался бы
+            // в реордер. Тот же урок, что у тримов клипа (п.28).
+            let gutter_press = ui.input(|i| i.pointer.press_origin());
             if self.lane_edit.is_none()
                 && gutter_resp.drag_started()
-                && let Some(pos) = gutter_resp.interact_pointer_pos()
+                && let Some(pos) = gutter_press.or_else(|| gutter_resp.interact_pointer_pos())
+                && let Some(row) = row_edge_at(&geom, pos.y)
+            {
+                self.drag = Some(Drag::LaneHeight { row, cur: geom.row_h(row) });
+            } else if self.lane_edit.is_none()
+                && gutter_resp.drag_started()
+                && let Some(pos) = gutter_press.or_else(|| gutter_resp.interact_pointer_pos())
                 && let Some(row) = geom.row_at_y(pos.y)
             {
                 self.drag = Some(Drag::LaneRow { from: row, cur: row });
+            }
+            if gutter_resp.dragged()
+                && let Some(pos) = gutter_resp.interact_pointer_pos()
+                && let Some(Drag::LaneHeight { row, .. }) = self.drag
+            {
+                let cur = (pos.y - geom.row_top(row)).clamp(THIN_ROW_MIN, ROW_H_MAX);
+                self.drag = Some(Drag::LaneHeight { row, cur });
+            }
+            if gutter_resp.drag_stopped()
+                && let Some(Drag::LaneHeight { row, cur }) = self.drag.take()
+                && let Some(key) = geom.rows.get(row).copied()
+            {
+                self.set_row_height(key, Some(cur));
             }
             if gutter_resp.dragged()
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
@@ -1727,13 +1810,15 @@ impl KtApp {
                         ui.close();
                     }
                     if ui.button(tr(k::tl::lane::RENAME)).clicked() {
-                    let lk = match kind {
-                        ClipKind::Video => LaneKind::Video,
-                        ClipKind::Audio => LaneKind::Audio,
-                    };
                     let cur = kt_model::lane_label(&self.lane_names, lk, lane);
                     self.lane_edit = Some(crate::app::LaneEdit { kind: lk, lane, buf: cur });
                     self.lane_edit_focus = true;
+                    ui.close();
+                }
+                if self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (lk, lane))
+                    && ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked()
+                {
+                    self.set_row_height((lk, lane), None);
                     ui.close();
                 }
                 if ui.button(tr(k::tl::lane::INSERT_ABOVE)).clicked() {
@@ -1755,6 +1840,12 @@ impl KtApp {
                     // НЕЧЕМ — «add morpher layer» всегда заводил новую
                     if ui.button(tr(k::tl::lane::ADD_MORPHER_HERE)).clicked() {
                         self.add_morpher_at(lane);
+                        ui.close();
+                    }
+                    if !self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (LaneKind::Morph, lane)) {
+                        // сбрасывать нечего — пункт молча ничего не сделал бы
+                    } else if ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked() {
+                        self.set_row_height((LaneKind::Morph, lane), None);
                         ui.close();
                     }
                     // переименование — как у обычной дорожки (правило 17):
@@ -1797,6 +1888,12 @@ impl KtApp {
                     // камера ставится под курсор ВОСПРОИЗВЕДЕНИЯ (как метка)
                     if ui.button(tr(k::tl::lane::ADD_CAMERA_HERE)).clicked() {
                         self.add_camera_at_playhead(lane);
+                        ui.close();
+                    }
+                    if !self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (LaneKind::Camera, lane)) {
+                        // сбрасывать нечего — пункт молча ничего не сделал бы
+                    } else if ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked() {
+                        self.set_row_height((LaneKind::Camera, lane), None);
                         ui.close();
                     }
                     // переименование — как у обычной дорожки (правило 17):
@@ -2472,6 +2569,10 @@ impl KtApp {
                 Some(Drag::LaneRow { from, cur }) => {
                     // обрабатывается gutter-областью; здесь просто держим
                     self.drag = Some(Drag::LaneRow { from, cur });
+                }
+                Some(Drag::LaneHeight { row, cur }) => {
+                    // тоже жест gutter'а — держим, чтобы не потерять
+                    self.drag = Some(Drag::LaneHeight { row, cur });
                 }
                 Some(Drag::Rubber { anchor, add }) => {
                     // рамка рисуется в слое клипов по текущему указателю,
@@ -4814,6 +4915,7 @@ mod geom_tests {
                 (LaneKind::Audio, 1),
                 (LaneKind::Morph, 0),
             ],
+            &[],
             0.0,
             90_000.0,
             900.0,
@@ -4853,6 +4955,7 @@ mod geom_tests {
             egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 500.0)),
             40.0,
             rows.clone(),
+            &[],
             0.0,
             0.0,
             900.0,

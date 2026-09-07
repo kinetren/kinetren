@@ -631,7 +631,7 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
 
     let mut m = TimelineModel::new(p);
     let (mut nc, mut ng, mut nt, mut nm) = (100u64, 100u64, 100u64, 100u64);
-    let names = PasteNames { prefix: "копия".into(), taken: m.project().taken_names() };
+    let names = PasteNames { affix: "копия".into(), before: false, taken: m.project().taken_names() };
     let (cmds, _end, skipped) = paste_block(
         &block,
         Tick(300_000),
@@ -641,12 +641,13 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
     assert_eq!(skipped.morphers, 1, "морфер без уцелевших целей пропущен");
     m.apply_batch(cmds).expect("батч обязан пройти, а не упасть из-за пропущенного");
 
-    // имена уникальны и с префиксом
+    // имена уникальны и с приставкой; умолчание — СУФФИКС (Р.38 п.19:
+    // «надо по дефолту проставлять не префикс а суффикс»)
     let a = m.project().areas.iter().find(|a| a.name != "финал").expect("копия области");
-    assert_eq!(a.name, "копия финал");
+    assert_eq!(a.name, "финал копия");
     assert_eq!(a.start, Tick(300_000), "область ребейзнута к точке вставки");
     assert!(
-        m.project().markers.iter().any(|k| k.name == "копия врез" && k.t == Tick(310_000)),
+        m.project().markers.iter().any(|k| k.name == "врез копия" && k.t == Tick(310_000)),
         "метка тоже переименована и переехала"
     );
 
@@ -659,12 +660,12 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
     let byref = pasted.iter().find(|x| x.targets.clip_ids().is_empty()).unwrap();
     assert_eq!(
         byref.targets,
-        MorphTargets::Areas { names: vec!["копия финал".into(), "чужая".into()] }
+        MorphTargets::Areas { names: vec!["финал копия".into(), "чужая".into()] }
     );
     m.project().validate().unwrap();
 
-    // ВТОРАЯ вставка тем же префиксом даёт « 2» — имена остаются адресами
-    let names = PasteNames { prefix: "копия".into(), taken: m.project().taken_names() };
+    // ВТОРАЯ вставка тем же словом даёт « 2» — имена остаются адресами
+    let names = PasteNames { affix: "копия".into(), before: false, taken: m.project().taken_names() };
     let (cmds, _end, _) = paste_block(
         &block,
         Tick(600_000),
@@ -673,7 +674,7 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
     );
     m.apply_batch(cmds).unwrap();
     assert!(
-        m.project().areas.iter().any(|a| a.name == "копия финал 2"),
+        m.project().areas.iter().any(|a| a.name == "финал копия 2"),
         "вторая вставка обязана дать уникальное имя: {:?}",
         m.project().areas.iter().map(|a| &a.name).collect::<Vec<_>>()
     );

@@ -33,7 +33,9 @@ pub type ReopenedMedia = (MediaId, String, Option<Box<dyn kt_media::MediaSource>
 pub struct PasteNamesDialog {
     /// Позиция вставки, замороженная на момент Ctrl+V.
     pub at: kt_time::Tick,
-    pub prefix: String,
+    /// Слово-приставка и сторона (Р.38 п.19: умолчание — СУФФИКС).
+    pub affix: String,
+    pub before: bool,
     /// Забрать фокус в поле на первом кадре — и ОТДАТЬ при закрытии
     /// (правило 14: фича обязана работать повторно).
     pub focus: bool,
@@ -122,6 +124,9 @@ pub struct KtApp {
     pub pending_reveal: Option<i64>,
     /// Имена дорожек (п.2 р.10) — зеркало UiState.lane_names.
     pub lane_names: Vec<(kt_model::LaneKind, u32, String)>,
+    /// Индивидуальные высоты строк (Р.38 п.11) — зеркало
+    /// UiState.lane_heights. Удобство: `dirty_ui`, не `dirty_content`.
+    pub lane_heights: Vec<(kt_model::LaneKind, u32, f32)>,
     /// Активный инлайн-ввод имени метки (п.1 р.10).
     pub marker_edit: Option<MarkerEdit>,
     /// Запросить фокус полю имени метки (один раз при открытии).
@@ -428,6 +433,7 @@ impl KtApp {
             pending_unmax_drag: false,
             pending_reveal: None,
             lane_names: Vec::new(),
+            lane_heights: Vec::new(),
             marker_edit: None,
             marker_edit_focus: false,
             lane_edit: None,
@@ -567,6 +573,7 @@ impl KtApp {
             pending_unmax_drag: false,
             pending_reveal: None,
             lane_names: Vec::new(),
+            lane_heights: Vec::new(),
             marker_edit: None,
             marker_edit_focus: false,
             lane_edit: None,
@@ -703,6 +710,7 @@ impl KtApp {
                 app.meters_w = ui.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
             }
             app.lane_names = ui.lane_names;
+            app.lane_heights = ui.lane_heights;
         }
         Ok(app)
     }
@@ -710,6 +718,18 @@ impl KtApp {
     #[cfg(test)]
     pub(crate) fn ui_state_for_test(&self) -> kt_model::UiState {
         self.ui_state()
+    }
+
+    /// Индивидуальная высота строки (Р.38 п.11). `None` — сбросить к
+    /// расчётной. Это УДОБСТВО: `dirty_ui`, звёздочку не зажигает и
+    /// автосейв не запускает (правило «правки содержимого ≠ правки
+    /// удобства», п.5 р.11).
+    pub fn set_row_height(&mut self, key: (kt_model::LaneKind, u32), h: Option<f32>) {
+        self.lane_heights.retain(|(k, l, _)| (*k, *l) != key);
+        if let Some(h) = h {
+            self.lane_heights.push((key.0, key.1, h));
+        }
+        self.dirty_ui = true;
     }
 
     /// Снимок вьюпорта для записи в проект (п.13).
@@ -724,6 +744,7 @@ impl KtApp {
             bin_groups: self.bin_groups.clone(),
             meters_w: self.meters_w,
             lane_names: self.lane_names.clone(),
+            lane_heights: self.lane_heights.clone(),
         }
     }
 
@@ -2327,9 +2348,9 @@ impl KtApp {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::msg::PASTE_PREFIX_LABEL));
                     let resp = ui.add(
-                        egui::TextEdit::singleline(&mut d.prefix)
+                        egui::TextEdit::singleline(&mut d.affix)
                             .desired_width(180.0)
-                            .hint_text(tr(k::msg::PASTE_PREFIX_DEFAULT)),
+                            .hint_text(tr(k::msg::PASTE_AFFIX_DEFAULT)),
                     );
                     if d.focus {
                         resp.request_focus();
@@ -2337,6 +2358,14 @@ impl KtApp {
                     }
                     if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         go = true;
+                    }
+                    // сторона — переключателем рядом с полем, а не вторым
+                    // окном: это тот же выбор, а не отдельная настройка
+                    if ui
+                        .selectable_label(d.before, tr(k::msg::PASTE_AFFIX_BEFORE))
+                        .clicked()
+                    {
+                        d.before = !d.before;
                     }
                 });
                 // живой предпросмотр: пользователь видит имя ДО вставки
@@ -2354,10 +2383,13 @@ impl KtApp {
                     })
                     .unwrap_or_default();
                 if !sample.is_empty() {
-                    let shown = if d.prefix.trim().is_empty() {
+                    let a = d.affix.trim();
+                    let shown = if a.is_empty() {
                         sample.clone()
+                    } else if d.before {
+                        format!("{a} {sample}")
                     } else {
-                        format!("{} {sample}", d.prefix.trim())
+                        format!("{sample} {a}")
                     };
                     ui.label(
                         egui::RichText::new(kt_model::unique_name(
@@ -2382,9 +2414,9 @@ impl KtApp {
             cancel = true;
         }
         if go {
-            let (at, prefix) = (d.at, d.prefix.trim().to_string());
+            let (at, affix, before) = (d.at, d.affix.trim().to_string(), d.before);
             ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("paste_names")));
-            self.paste_here(at, prefix);
+            self.paste_here(at, affix, before);
             return;
         }
         if cancel || !open {
@@ -2413,7 +2445,8 @@ impl KtApp {
             let at = self.player.transport.playhead();
             self.paste_names = Some(crate::app::PasteNamesDialog {
                 at,
-                prefix: tr(k::msg::PASTE_PREFIX_DEFAULT).to_string(),
+                affix: tr(k::msg::PASTE_AFFIX_DEFAULT).to_string(),
+                before: false,
                 focus: true,
             });
             return;
@@ -2422,17 +2455,18 @@ impl KtApp {
             Some(d) => d.at,
             None => self.player.transport.playhead(),
         };
-        self.paste_here(at, String::new())
+        self.paste_here(at, String::new(), false)
     }
 
     /// Собственно вставка: ОДИН `paste_block` → ОДИН `apply_batch`.
-    pub(crate) fn paste_here(&mut self, at: Tick, prefix: String) {
+    pub(crate) fn paste_here(&mut self, at: Tick, affix: String, before: bool) {
         let mut next_clip = self.next_clip_id();
         let mut next_group = self.next_group_id();
         let mut next_transition = self.next_transition_id();
         let mut next_morph = self.next_morph_id();
         let names = kt_model::ops::PasteNames {
-            prefix,
+            affix,
+            before,
             taken: self.model.project().taken_names(),
         };
         let (cmds, end, skipped) = kt_model::ops::paste_block(
