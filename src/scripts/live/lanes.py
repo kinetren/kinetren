@@ -33,9 +33,18 @@ def build(dest):
     kt = doc["metadata"]["kt"]
     kt["v"] = 4
     kt["morph_lanes"] = 2
-    kt["lane_order"] = [["morph", 0], ["morph", 1], ["video", 0], ["audio", 0]]
     kt["morphers"] = [
         {"id": 1, "lane": 0, "start": 2 * SEC, "duration": 2 * SEC, "patch": {}}
+    ]
+    # камерные дорожки и камера на верхней (п.5: «я не понимаю как что-то
+    # добавить на камерный трек - для чего он?????»)
+    kt["camera_lanes"] = 2
+    kt["lane_order"] = [
+        ["morph", 0], ["morph", 1], ["camera", 0], ["camera", 1],
+        ["video", 0], ["audio", 0],
+    ]
+    kt["cameras"] = [
+        {"id": 1, "lane": 0, "start": 2 * SEC, "duration": 2 * SEC, "cam": {}}
     ]
     with open(dest, "w") as f:
         json.dump(doc, f, indent=2)
@@ -131,6 +140,34 @@ def main(out):
             f"рамка обязана выделять морфер, а Del — убирать пойманное; осталось {left}",
         )
         app.shot("rubber-deleted")
+
+        # --- 5. камерная дорожка тоже отвечает на ПКМ и возит блок --------
+        # претензия дословно: «я не понимаю как что-то добавить на камерный
+        # трек - для чего он?????». До Р.40 ПКМ по камерной строке давал
+        # меню пустого места, а завести камеру можно было только из ПКМ по
+        # 34-пиксельному заголовку ЧУЖОЙ строки.
+        cy = app.lane_y("camera", 1, frac=0.5)
+        before = app.shot("before-camera-menu")
+        app.right_click(app.x_at(6 * SEC), cy)
+        app.shot("camera-menu")
+        d = app.screen_diff(before)
+        app.expect(
+            d > 0.001,
+            f"ПКМ по камерной дорожке обязан открыть меню (экран изменился на {d:.1%})",
+        )
+        app.key("Escape")
+
+        cy0 = app.lane_y("camera", 0, frac=0.5)
+        cy1 = app.lane_y("camera", 1, frac=0.5)
+        cx = app.x_at(3 * SEC)
+        app.drag(cx, cy0, cx, cy1)
+        saved = app.saved_project()
+        cam = saved.doc["metadata"]["kt"]["cameras"][0]
+        app.expect(
+            cam["lane"] == 1,
+            f"камерный блок обязан переезжать на дорожку под курсором, а он на {cam['lane']}",
+        )
+        app.shot("camera-moved")
         return app.done()
 
 
