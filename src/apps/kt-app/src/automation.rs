@@ -453,13 +453,34 @@ fn graph(
                 p.text(
                     egui::pos2(x + 3.0, rect.top() + 1.0),
                     egui::Align2::LEFT_TOP,
-                    crate::timeline::format_ruler_time(t),
+                    crate::timeline::format_ruler_time_step(t, label),
                     egui::FontId::proportional(10.0),
                     egui::Color32::from_gray(150),
                 );
             }
         }
         t += minor;
+    }
+    // подпись ушедшей влево риски — прижата к краю (Р.40 п.14): ось графика
+    // это МАТЕРИАЛ события, при зуме её начало уезжает, и без этого на
+    // линейке не оставалось ни одного времени
+    {
+        let pinned = crate::timeline::ruler_pinned_label(m0, label);
+        if x_of(pinned) < rect.left() {
+            let next = x_of(pinned + label);
+            let g = p.layout_no_wrap(
+                crate::timeline::format_ruler_time_step(pinned, label),
+                egui::FontId::proportional(10.0),
+                egui::Color32::from_gray(120),
+            );
+            if g.size().x + 6.0 <= next - rect.left() {
+                p.galley(
+                    egui::pos2(rect.left() + 2.0, rect.top() + 1.0),
+                    g,
+                    egui::Color32::from_gray(120),
+                );
+            }
+        }
     }
 
     // курсор главного таймлайна в координатах материала
