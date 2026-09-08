@@ -250,9 +250,15 @@ def coverage(data, lex):
 
 def main():
     args = sys.argv[1:]
+    # --corpus вынимается ДО выбора режима: иначе, поставленный первым, он сам
+    # принимается за режим и печатается справка (Р.42).
+    corpus = DEFAULT_CORPUS
+    if "--corpus" in args:
+        i = args.index("--corpus")
+        corpus = args[i + 1] if i + 1 < len(args) else DEFAULT_CORPUS
+        del args[i:i + 2]
     mode = args[0] if args else "--themes"
     lex = read_lexicon()
-    corpus = args[args.index("--corpus") + 1] if "--corpus" in args else DEFAULT_CORPUS
     raw_all = load(None)
     data = weights(load(None if mode == "--check" else corpus))
     if not data:
