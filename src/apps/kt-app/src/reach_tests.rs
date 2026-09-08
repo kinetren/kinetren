@@ -297,14 +297,21 @@ fn t252_no_orphan_commands() {
     );
 }
 
-/// Проект со ВСЕМИ сущностями таймлайна и экранная точка одной из них.
+/// Проект со ВСЕМИ сущностями таймлайна и ВСЕ экранные точки, откуда
+/// человек действует над одной из них.
 ///
 /// Сцена своя на каждую сущность: программа гасит регион и выделение по
 /// Esc, а меню иначе не закрыть — общий харнесс молча ломал бы сцену
 /// следующей проверки.
+///
+/// **Точек несколько, и это главная правка Р.40.** До неё дорожки
+/// щупались ТОЛЬКО в заголовке строки (`gutter_x`) — полосе шириной 34 px,
+/// куда я сам положил пункт «добавить морфер сюда». Тест был зелёным, а
+/// человек, жавший ПКМ по самой дорожке, получал меню пустого места:
+/// проверено было место, куда я клал, а не место, куда он тычет.
 fn scene(
     e: crate::timeline::TlEntity,
-) -> (egui_kittest::Harness<'static, crate::app::KtApp>, egui::Pos2) {
+) -> (egui_kittest::Harness<'static, crate::app::KtApp>, Vec<(&'static str, egui::Pos2)>) {
     use crate::timeline::TlEntity as E;
     use kt_model::*;
     use kt_time::Tick;
@@ -351,6 +358,11 @@ fn scene(
         assert!(app.apply(Command::InsertCameraLane { at: 0 }));
         app.player.seek(Tick(250_000));
         app.add_camera_at_playhead(0);
+        // камера покороче: сцене нужно СВОБОДНОЕ место на её строке —
+        // без него «ПКМ по дорожке» щупал бы сам блок камеры
+        let mut cam = app.model.project().cameras[0].clone();
+        cam.duration = Tick(50_000);
+        assert!(app.apply(Command::SetCamera(cam)));
         // окна редакторов, которые размещение открывает само, закрываем:
         // их подписи попали бы в счёт пунктов меню
         app.morph_editors.clear();
@@ -372,21 +384,58 @@ fn scene(
     let m = &pr.morphers[0];
     let c = &pr.cameras[0];
 
+    // пустое место НА дорожке — правее всех событий сцены, но в её строке
+    // и НА ЭКРАНЕ: точка вне видимой полосы «проверяла» бы пустоту за краем
+    let free_t = 500_000;
+    let free_x = g.tick_to_x(free_t);
+    assert!(
+        free_x > g.rect.left() && free_x < g.rect.right(),
+        "точка «свободное место» ({free_x}) вне полосы дорожек {:?} — сцена сломана",
+        g.rect
+    );
+    for (a, b) in pr
+        .clips
+        .iter()
+        .map(|c| (c.start.0, (c.start + c.duration).0))
+        .chain(pr.morphers.iter().map(|m| (m.start.0, (m.start + m.duration).0)))
+        .chain(pr.cameras.iter().map(|c| (c.start.0, (c.start + c.duration).0)))
+    {
+        assert!(
+            free_t < a || free_t >= b,
+            "точка «свободное место» попала в событие {a}..{b} — сцена сломана"
+        );
+    }
     let pos = match e {
-        E::Clip => egui::pos2(g.tick_to_x(25_000), g.lane_y(ClipKind::Video, 0, 0.6)),
-        E::Marker => egui::pos2(g.tick_to_x(60_000), ruler_y),
+        E::Clip => vec![(
+            "тело события",
+            egui::pos2(g.tick_to_x(25_000), g.lane_y(ClipKind::Video, 0, 0.6)),
+        )],
+        E::Marker => vec![("флажок на линейке", egui::pos2(g.tick_to_x(60_000), ruler_y))],
         // верхний контур области на её дорожке
-        E::Area => egui::pos2(g.tick_to_x(145_000), g.row_top(video_row) + 1.0),
-        E::Morpher => {
-            egui::pos2(g.tick_to_x(m.start.0 + m.duration.0 / 2), g.row_center_y(morph_row))
+        E::Area => {
+            vec![("контур области", egui::pos2(g.tick_to_x(145_000), g.row_top(video_row) + 1.0))]
         }
-        E::Camera => {
-            egui::pos2(g.tick_to_x(c.start.0 + c.duration.0 / 2), g.row_center_y(cam_row))
-        }
-        E::ClipLane => egui::pos2(gutter_x, g.row_center_y(video_row)),
-        E::MorphLane => egui::pos2(gutter_x, g.row_center_y(morph_row)),
-        E::CameraLane => egui::pos2(gutter_x, g.row_center_y(cam_row)),
-        E::Region => egui::pos2(g.tick_to_x(300_000), ruler_y),
+        E::Morpher => vec![(
+            "тело морф-блока",
+            egui::pos2(g.tick_to_x(m.start.0 + m.duration.0 / 2), g.row_center_y(morph_row)),
+        )],
+        E::Camera => vec![(
+            "тело камерного блока",
+            egui::pos2(g.tick_to_x(c.start.0 + c.duration.0 / 2), g.row_center_y(cam_row)),
+        )],
+        E::ClipLane => vec![
+            ("заголовок строки", egui::pos2(gutter_x, g.row_center_y(video_row))),
+            ("свободное место НА дорожке", egui::pos2(free_x, g.row_center_y(video_row))),
+        ],
+        E::MorphLane => vec![
+            ("заголовок строки", egui::pos2(gutter_x, g.row_center_y(morph_row))),
+            ("свободное место НА дорожке", egui::pos2(free_x, g.row_center_y(morph_row))),
+        ],
+        E::CameraLane => vec![
+            ("заголовок строки", egui::pos2(gutter_x, g.row_center_y(cam_row))),
+            ("свободное место НА дорожке", egui::pos2(free_x, g.row_center_y(cam_row))),
+        ],
+        E::Region => vec![("грань региона", egui::pos2(g.tick_to_x(300_000), ruler_y))],
     };
     (h, pos)
 }
@@ -425,72 +474,77 @@ fn t253_every_entity_has_its_verbs() {
 
     let mut problems: Vec<String> = Vec::new();
     for e in E::ALL {
-        // СВОЙ харнесс на каждую сущность: Esc в этой программе гасит и
+        // СВОЙ харнесс на каждое МЕСТО: Esc в этой программе гасит и
         // регион, и выделение, поэтому закрытие меню одной сущности молча
         // ломало сцену следующей (регион исчезал — и «границы региона не
         // существует для хит-теста» было артефактом теста, а не дефектом)
-        let (mut h, pos) = scene(e);
+        let places = scene(e).1.len();
+        for place_i in 0..places {
+            let (mut h, all) = scene(e);
+            let (place, pos) = all[place_i];
 
-        // сколько раз каждая нужная подпись видна ДО меню (та же надпись
-        // может жить в тулбаре — считаем прирост, а не наличие)
-        let want = verbs(e);
-        let before: Vec<usize> = want
-            .iter()
-            .map(|(_, r)| match r {
-                Reach::Menu(l) => h.query_all_by_label_contains(l.as_str()).count(),
-                _ => 0,
-            })
-            .collect();
+            // сколько раз каждая нужная подпись видна ДО меню (та же надпись
+            // может жить в тулбаре — считаем прирост, а не наличие)
+            let want = verbs(e);
+            let before: Vec<usize> = want
+                .iter()
+                .map(|(_, r)| match r {
+                    Reach::Menu(l) => h.query_all_by_label_contains(l.as_str()).count(),
+                    _ => 0,
+                })
+                .collect();
 
-        right_click(&mut h, pos);
+            right_click(&mut h, pos);
 
-        let got = h.state().ctx_target.and_then(|t| t.entity());
-        if got != Some(e) {
-            problems.push(format!(
-                "{e:?}: правый клик по сущности дал цель {got:?} — сущность рисуется, но \
-                 для хит-теста её не существует. Нарисовать мало: нужен вариант CtxTarget \
-                 и хит-тест по ней"
-            ));
-            // меню всё равно открылось (пустой целью) — закрыть, иначе
-            // следующий правый клик его ЗАКРОЕТ вместо того чтобы открыть
-            // своё, и остальные сущности «потеряют» все пункты разом
-            continue;
-        }
+            let got = h.state().ctx_target.and_then(|t| t.entity());
+            if got != Some(e) {
+                problems.push(format!(
+                    "{e:?} / {place}: правый клик дал цель {got:?} — отсюда сущности не \
+                 существует. Нарисовать мало: нужен вариант CtxTarget и хит-тест ИЗ \
+                 КАЖДОГО места, откуда человек действует, а не только из того, куда \
+                 положили пункт меню"
+                ));
+                // меню всё равно открылось (пустой целью) — закрыть, иначе
+                // следующий правый клик его ЗАКРОЕТ вместо того чтобы открыть
+                // своё, и остальные сущности «потеряют» все пункты разом
+                continue;
+            }
 
-        for ((verb, reach), n0) in want.iter().zip(before) {
-            match reach {
-                Reach::Menu(label) => {
-                    // «по вхождению»: у дорожек подпись удаления несёт счётчик
-                    // («Удалить дорожку (2 событ.)»), и точное сравнение
-                    // потребовало бы повторить форматирование в тесте
-                    if h.query_all_by_label_contains(label.as_str()).count() <= n0 {
-                        problems.push(format!(
-                            "{e:?} / {verb:?}: пункта «{label}» нет в меню сущности. \
+            for ((verb, reach), n0) in want.iter().zip(before) {
+                match reach {
+                    Reach::Menu(label) => {
+                        // «по вхождению»: у дорожек подпись удаления несёт счётчик
+                        // («Удалить дорожку (2 событ.)»), и точное сравнение
+                        // потребовало бы повторить форматирование в тесте
+                        if h.query_all_by_label_contains(label.as_str()).count() <= n0 {
+                            problems.push(format!(
+                                "{e:?} / {verb:?} / {place}: пункта «{label}» нет в меню. \
                              Создать её можно, а управлять — нет: это тупик"
-                        ));
+                            ));
+                        }
                     }
-                }
-                Reach::Absent(why) | Reach::Elsewhere(why) => {
-                    assert!(
-                        why.trim().chars().count() >= 25,
-                        "{e:?} / {verb:?}: объяснение «{why}» короче 25 символов. \
+                    Reach::Absent(why) | Reach::Elsewhere(why) => {
+                        assert!(
+                            why.trim().chars().count() >= 25,
+                            "{e:?} / {verb:?}: объяснение «{why}» короче 25 символов. \
                          «Нет глагола» и «он в другом месте» принимаются только с \
                          причиной-предложением, иначе таблица станет отговоркой"
-                    );
+                        );
+                    }
                 }
             }
-        }
 
-        // и подсказка над сущностью не врёт «пустое место»
-        h.hover_at(pos);
-        h.step();
-        h.step();
-        let hint = h.state().status_line_shown.clone();
-        if hint.0 == crate::i18n::tr(crate::i18n::k::tl::hint::EMPTY) {
-            problems.push(format!(
-                "{e:?}: указатель стоит НА сущности, а строка состояния говорит «пустое \
-                 место» — подсказка врёт (правило 10 чек-листа)"
-            ));
+            // и подсказка над сущностью не врёт «пустое место»
+            h.hover_at(pos);
+            h.step();
+            h.step();
+            let hint = h.state().status_line_shown.clone();
+            if hint.0 == crate::i18n::tr(crate::i18n::k::tl::hint::EMPTY) {
+                problems.push(format!(
+                    "{e:?} / {place}: указатель стоит НА сущности, а строка состояния говорит \
+                 «пустое место» — подсказка врёт (правило 10 чек-листа)"
+                ));
+            }
         }
     }
 

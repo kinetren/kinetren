@@ -565,6 +565,12 @@ impl KtApp {
         if self.tb(ui, "+M", tr(k::tb::ADD_MORPHER)) {
             self.add_morph_layer();
         }
+        // камера (Р.40 п.5): до этого раунда камерную дорожку нельзя было
+        // ни завести, ни наполнить ничем, кроме ПКМ по 34-пиксельному
+        // заголовку ЧУЖОЙ строки — «для чего он?????»
+        if self.tb(ui, "+C", tr(k::tb::ADD_CAMERA)) {
+            self.add_camera_layer();
+        }
         // именованная область из последней рамки выделения (Р.35 п.2)
         if self.tb(ui, crate::icons::AREA_SAVE, tr(k::tb::SAVE_AREA)) {
             self.save_marked_area();

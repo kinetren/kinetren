@@ -64,6 +64,7 @@ marker = "Marcador en el cursor (M)"
 add_video_lane = "Añadir pista de vídeo"
 add_audio_lane = "Añadir pista de audio"
 add_morpher = "Capa de morpher: actúa sobre todo lo que está debajo"
+add_camera = "Cámara: mira las capas 3D de abajo"
 save_area = "Guardar la selección como área con nombre"
 cut = "Dividir / cortar región (S)"
 copy = "Copiar (Ctrl+C)"
@@ -132,6 +133,9 @@ morpher = "Mórfer: arrastra para mover, bordes cambian la duración, clic derec
 morph_edge = "Borde del mórfer: arrastra para cambiar su inicio o su final"
 row_height = "Borde inferior de la pista: arrastra para fijar su altura"
 camera = "Cámara: arrastra para mover, bordes cambian la duración, clic derecho — menú"
+lane_free = "{0}: clic izq. — cabezal, arrastrar — región, Ctrl+arrastrar — seleccionar; clic der. — menú de esta pista"
+morph_lane = "Pista de morfismo: clic derecho — añadir un mórfer aquí; la capa edita todo lo que está en las pistas de abajo"
+camera_lane = "Pista de cámara: clic derecho — añadir una cámara aquí; la cámara mira las capas 3D de las pistas de abajo"
 empty = "Clic izq. — cursor, arrastrar — región, Ctrl+arrastrar — seleccionar eventos; rueda — desplazar, Ctrl — zoom, Shift — pistas"
 
 # Таймлайн: подписи на morph-событиях.

@@ -2952,13 +2952,13 @@ fn t173_corner_fade_and_level_gestures() {
     );
 
     // уровень: тянем линию вниз до середины строки
-    let ly = level_y(1.0, top, g.lane_h());
+    let ly = level_y(1.0, top, g.lane_h_of(ClipKind::Video, 0));
     let xm = g.tick_to_x(200_000);
     h.hover_at(egui::pos2(xm, ly));
     h.step();
     h.drag_at(egui::pos2(xm, ly));
     h.step();
-    let target_y = level_y(0.4, top, g.lane_h());
+    let target_y = level_y(0.4, top, g.lane_h_of(ClipKind::Video, 0));
     h.hover_at(egui::pos2(xm, target_y));
     h.step();
     h.drop_at(egui::pos2(xm, target_y));
@@ -3027,12 +3027,12 @@ fn t176_audio_and_video_share_one_level_line() {
 
     // тот же жест, что у видео: тянем линию уровня вверх
     let x = g.tick_to_x(200_000);
-    let y0 = level_y(0.5, top, g.lane_h()); // 0 dB
+    let y0 = level_y(0.5, top, g.lane_h_of(ClipKind::Audio, 0)); // 0 dB
     h.hover_at(egui::pos2(x, y0));
     h.step();
     h.drag_at(egui::pos2(x, y0));
     h.step();
-    let y1 = level_y(0.75, top, g.lane_h());
+    let y1 = level_y(0.75, top, g.lane_h_of(ClipKind::Audio, 0));
     h.hover_at(egui::pos2(x, y1));
     h.step();
     h.drop_at(egui::pos2(x, y1));
@@ -4911,7 +4911,7 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     let g = h.state().tl_geom.clone().expect("геометрия");
     let mrow = g.row_of((LaneKind::Morph, 0)).expect("морф-строка есть");
     // строка действительно втрое ниже дорожки клипов — и всё же нажимаема
-    assert!(g.row_h(mrow) < g.lane_h(), "служебная строка обязана быть ниже");
+    assert!(g.row_h(mrow) < g.lane_h_of(ClipKind::Video, 0), "служебная строка обязана быть ниже");
     assert!(g.row_h(mrow) >= crate::timeline::THIN_ROW_MIN, "но не ниже пола нажимаемости");
 
     // клик по блоку в тонкой строке выделяет морфер
@@ -4920,21 +4920,24 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     h.step();
     h.drop_at(pos);
     h.step();
-    assert_eq!(
-        h.state().selected_morph,
-        Some(MorphId(1)),
+    assert!(
+        h.state().selected_morph.contains(&MorphId(1)),
         "в тонкую морф-строку не попасть мышью — считать её сделанной нельзя"
     );
 
     // вертикальный зум не ломает отношение высот
     let g = h.state().tl_geom.clone().unwrap();
     let app = h.state_mut();
-    app.tl_v_zoom = Some(g.lane_h() * 1.5);
+    app.tl_v_zoom = Some(g.lane_h_of(ClipKind::Video, 0) * 1.5);
     h.step();
     let g2 = h.state().tl_geom.clone().unwrap();
-    assert!(g2.lane_h() > g.lane_h(), "зум применился");
     assert!(
-        (g2.row_h(mrow) / g2.lane_h() - 1.0 / crate::timeline::MORPH_ROW_DIV).abs() < 0.05,
+        g2.lane_h_of(ClipKind::Video, 0) > g.lane_h_of(ClipKind::Video, 0),
+        "зум применился"
+    );
+    assert!(
+        (g2.row_h(mrow) / g2.lane_h_of(ClipKind::Video, 0) - 1.0 / crate::timeline::MORPH_ROW_DIV).abs()
+            < 0.05,
         "отношение высоты морф-строки держится при зуме"
     );
 }
@@ -5374,7 +5377,7 @@ fn t260_camera_and_marker_left_edge_are_reachable() {
     h.step();
     h.drop_at(mid);
     h.step();
-    assert_eq!(h.state().selected_camera, Some(c.id), "клик по камере обязан её выделить");
+    assert!(h.state().selected_camera.contains(&c.id), "клик по камере обязан её выделить");
 
     // правая кромка меняет длину
     let ex = g.tick_to_x((c.start + c.duration).0);
@@ -5395,7 +5398,7 @@ fn t260_camera_and_marker_left_edge_are_reachable() {
 
     // Del удаляет выделенную камеру
     let app = h.state_mut();
-    app.selected_camera = Some(c.id);
+    app.select_camera_only(c.id);
     app.delete_action();
     assert!(h.state().model.project().cameras.is_empty(), "Del обязан удалять камеру");
 
@@ -5686,4 +5689,262 @@ fn t269_morph_strength_and_fades_reach_the_model() {
             .all(|c| !c.fx.iter().any(|f| matches!(f, FxInstance::LayerMix { .. }))),
         "на умолчаниях слота смешения нет вовсе — на этом стоят GOLDEN'ы"
     );
+}
+
+
+/// Тест 274 (Р.40 п.11): высота дорожки доходит до СОБЫТИЯ.
+///
+/// Претензия дословно: «дорожка меняет высоту а события до сих пор мелкие —
+/// ты нихуя не проверял». И правда: t262 проверял, что поле `lane_heights`
+/// получило значение и `row_h` изменился, а во всём `draw_timeline` стояла
+/// ОДНА переменная `lane_h = vl.base_h` на 36 использований — событие как
+/// рисовалось базовой высотой, так и рисовалось.
+///
+/// Поэтому этот тест утверждает НАБЛЮДАЕМОЕ СЛЕДСТВИЕ: прямоугольник
+/// события вырос, и мышь попадает в него ТАМ, где он теперь нарисован.
+#[test]
+fn t274_row_height_reaches_the_clip() {
+    use kt_model::{ClipKind, LaneKind};
+
+    let (mut h, g0) = harness_three_clips();
+    let key = (LaneKind::Video, 0u32);
+    let before = g0.lane_h_of(ClipKind::Video, 0);
+
+    // ставим строке высоту вдвое больше базовой
+    let want = before * 2.0;
+    {
+        let app = h.state_mut();
+        app.set_row_height(key, Some(want));
+    }
+    h.step();
+    h.step();
+    let g = h.state().tl_geom.clone().unwrap();
+
+    assert!(
+        (g.lane_h_of(ClipKind::Video, 0) - want).abs() < 1.0,
+        "СОБЫТИЕ обязано считаться высотой своей строки: {} вместо {want}",
+        g.lane_h_of(ClipKind::Video, 0)
+    );
+    assert!(
+        (g.row_h(g.row_of(key).unwrap()) - want).abs() < 1.0,
+        "и строка тоже (это и раньше работало)"
+    );
+
+    // СЛЕДСТВИЕ: мышь попадает в событие НИЖЕ прежней границы —
+    // там, где до Р.40 была голая подложка дорожки
+    let c = h.state().model.project().clips[0].clone();
+    let x = g.tick_to_x(c.start.0 + c.duration.0 / 2);
+    let deep_y = g.lane_top(ClipKind::Video, 0) + before + (want - before) * 0.5;
+    h.hover_at(egui::pos2(x, deep_y));
+    h.step();
+    h.drag_at(egui::pos2(x, deep_y));
+    h.step();
+    h.drop_at(egui::pos2(x, deep_y));
+    h.step();
+    assert!(
+        h.state().is_selected(c.id),
+        "клик в нижнюю половину выросшей строки обязан попасть в событие \
+         (y = {deep_y}, прежняя граница была {})",
+        g.lane_top(ClipKind::Video, 0) + before
+    );
+
+    // соседняя дорожка не поехала
+    let audio_h = g.lane_h_of(ClipKind::Audio, 0);
+    assert!(
+        (audio_h - before).abs() < 1.0,
+        "чужая дорожка сохраняет свою высоту: {audio_h} вместо {before}"
+    );
+}
+
+/// Тест 275 (Р.40 п.4, дословно: «можно сто раз добавить морфер слой, и он
+/// будет каждый раз его создавать на одном и том же треке — в итоге там
+/// может быть куча морферов скрыта за одним и тем же местом»).
+///
+/// Р.38 переиспользовал ПЕРВУЮ морф-строку всегда. Пользователь ответил,
+/// что делать: «но надо проверить — может ещё одна дорожка уже свободная
+/// есть». Свободная — значит свободная НА ЭТОМ ПРОМЕЖУТКЕ.
+///
+/// Тест утверждает НАБЛЮДАЕМОЕ СЛЕДСТВИЕ: два блока не лежат друг на
+/// друге, то есть каждый можно схватить мышью.
+#[test]
+fn t275_morph_layer_never_hides_a_block_under_another() {
+    use kt_model::LaneKind;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips();
+    {
+        let app = h.state_mut();
+        app.player.seek(Tick(100_000));
+        app.add_morph_layer();
+        // второе «+M» РОВНО ТАМ ЖЕ: место занято
+        app.add_morph_layer();
+        app.morph_editors.clear();
+    }
+    h.step();
+    let pr = h.state().model.project().clone();
+    assert_eq!(pr.morphers.len(), 2, "оба блока созданы");
+    assert_eq!(pr.morph_lanes, 2, "занятое место обязано увести блок на новую дорожку");
+    assert_ne!(pr.morphers[0].lane, pr.morphers[1].lane, "и они не на одной дорожке");
+
+    // третье «+M» в СВОБОДНОЕ время: новой дорожки быть не должно —
+    // «слой» не про дорожки, дорожки заводятся своим пунктом меню
+    {
+        let app = h.state_mut();
+        app.player.seek(Tick(600_000));
+        app.add_morph_layer();
+        app.morph_editors.clear();
+    }
+    h.step();
+    let pr = h.state().model.project().clone();
+    assert_eq!(pr.morph_lanes, 2, "свободное время — дорожка переиспользуется");
+    assert_eq!(pr.morphers.len(), 3);
+
+    // и следствие, ради которого всё: каждый блок ловится мышью в СВОЕЙ
+    // строке — ни один не спрятан под другим
+    let g = h.state().tl_geom.clone().unwrap();
+    for m in &pr.morphers {
+        let row = g.row_of((LaneKind::Morph, m.lane)).expect("строка блока");
+        let pos = egui::pos2(g.tick_to_x(m.start.0 + m.duration.0 / 2), g.row_center_y(row));
+        h.hover_at(pos);
+        h.step();
+        h.drag_at(pos);
+        h.step();
+        h.drop_at(pos);
+        h.step();
+        assert!(
+            h.state().selected_morph.contains(&m.id),
+            "блок {:?} на дорожке {} не ловится мышью — он спрятан под другим",
+            m.id,
+            m.lane
+        );
+    }
+}
+
+/// Тест 276 (Р.40 п.2, дословно: «я не могу перемещать морферы по разным
+/// дорожкам»). Морф- и камера-блок ездят между своими строками мышью —
+/// как клип.
+#[test]
+fn t276_service_blocks_move_between_lanes() {
+    use kt_model::{Command, LaneKind};
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips();
+    {
+        let app = h.state_mut();
+        app.player.seek(Tick(100_000));
+        app.add_morph_layer();
+        app.add_morph_layer(); // вторая строка (место занято) — есть куда везти
+        app.morph_editors.clear();
+        assert!(app.apply(Command::InsertCameraLane { at: 0 }));
+        assert!(app.apply(Command::InsertCameraLane { at: 1 }));
+        app.player.seek(Tick(300_000));
+        app.add_camera_at_playhead(0);
+    }
+    h.step();
+    h.step();
+
+    // ---- морфер: с дорожки 0 на дорожку 1 ----
+    let g = h.state().tl_geom.clone().unwrap();
+    let m = h.state().model.project().morphers[0].clone();
+    let from_row = g.row_of((LaneKind::Morph, m.lane)).unwrap();
+    let to_lane = if m.lane == 0 { 1 } else { 0 };
+    let to_row = g.row_of((LaneKind::Morph, to_lane)).unwrap();
+    let x = g.tick_to_x(m.start.0 + m.duration.0 / 2);
+    let from = egui::pos2(x, g.row_center_y(from_row));
+    let to = egui::pos2(x, g.row_center_y(to_row));
+    h.hover_at(from);
+    h.step();
+    h.drag_at(from);
+    h.step();
+    // порог драга: сначала маленький сдвиг, потом цель (правило харнесса)
+    h.hover_at(egui::pos2(x + 8.0, from.y));
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.drop_at(to);
+    h.step();
+    let m2 = h.state().model.project().morphers.iter().find(|z| z.id == m.id).unwrap().clone();
+    assert_eq!(m2.lane, to_lane, "морф-блок обязан переезжать на строку под курсором");
+
+    // ---- камера: то же самое ----
+    let g = h.state().tl_geom.clone().unwrap();
+    let c = h.state().model.project().cameras[0].clone();
+    let from_row = g.row_of((LaneKind::Camera, c.lane)).unwrap();
+    let to_lane = if c.lane == 0 { 1 } else { 0 };
+    let to_row = g.row_of((LaneKind::Camera, to_lane)).unwrap();
+    let x = g.tick_to_x(c.start.0 + c.duration.0 / 2);
+    let from = egui::pos2(x, g.row_center_y(from_row));
+    let to = egui::pos2(x, g.row_center_y(to_row));
+    h.hover_at(from);
+    h.step();
+    h.drag_at(from);
+    h.step();
+    h.hover_at(egui::pos2(x + 8.0, from.y));
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.drop_at(to);
+    h.step();
+    let c2 = h.state().model.project().cameras.iter().find(|z| z.id == c.id).unwrap().clone();
+    assert_eq!(c2.lane, to_lane, "камерный блок обязан переезжать на строку под курсором");
+}
+
+/// Тест 277 (Р.40, дословно: «Морферы почему-то не выделяются через
+/// area-select, нихуя ты не проверял»).
+///
+/// Рамка ловила ТОЛЬКО клипы — её улов был `Vec<ClipId>`, тип сам это
+/// заявлял, — а поймав клипы, ещё и ГАСИЛА выделенный морфер.
+#[test]
+fn t277_rubber_band_catches_service_blocks() {
+    use kt_model::{Command, LaneKind};
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips();
+    {
+        let app = h.state_mut();
+        app.player.seek(Tick(100_000));
+        app.add_morph_layer();
+        app.morph_editors.clear();
+        assert!(app.apply(Command::InsertCameraLane { at: 0 }));
+        app.player.seek(Tick(100_000));
+        app.add_camera_at_playhead(0);
+        app.sel_tool = true; // рамка обычным драгом
+    }
+    h.step();
+    h.step();
+
+    let g = h.state().tl_geom.clone().unwrap();
+    let pr = h.state().model.project().clone();
+    let m = pr.morphers[0].clone();
+    let c = pr.cameras[0].clone();
+    let m_row = g.row_of((LaneKind::Morph, m.lane)).unwrap();
+    let c_row = g.row_of((LaneKind::Camera, c.lane)).unwrap();
+    // рамка от верха верхней служебной строки до низа нижней, по времени —
+    // поверх обоих блоков
+    let top = g.row_top(m_row.min(c_row)) - 2.0;
+    let bot = g.row_top(m_row.max(c_row)) + g.row_h(m_row.max(c_row)) - 2.0;
+    let x0 = g.tick_to_x(m.start.0.min(c.start.0)) + 2.0;
+    let x1 = g.tick_to_x((m.start + m.duration).0.min((c.start + c.duration).0)) - 2.0;
+    assert!(x1 > x0 + 10.0, "сцена: блоки перекрываются по времени");
+
+    let from = egui::pos2(x0, top);
+    h.hover_at(from);
+    h.step();
+    h.drag_at(from);
+    h.step();
+    h.hover_at(egui::pos2(x0 + 8.0, top + 4.0));
+    h.step();
+    h.hover_at(egui::pos2(x1, bot));
+    h.step();
+    h.drop_at(egui::pos2(x1, bot));
+    h.step();
+
+    assert!(
+        h.state().selected_morph.contains(&m.id),
+        "рамка обязана выделять морфер: она рисуется поверх него и «ловит» — а ловила нет"
+    );
+    assert!(h.state().selected_camera.contains(&c.id), "и камеру — тем же жестом");
+
+    // и следствие: Del убирает ровно пойманное
+    h.state_mut().delete_action();
+    h.step();
+    let pr = h.state().model.project().clone();
+    assert!(pr.morphers.is_empty() && pr.cameras.is_empty(), "Del убирает всё пойманное рамкой");
 }

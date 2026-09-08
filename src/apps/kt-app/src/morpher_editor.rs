@@ -576,14 +576,14 @@ impl KtApp {
         }
         if bake {
             if self.apply(Command::BakeMorpher { id: ed.id }) {
-                self.selected_morph = None;
+                self.selected_morph.clear();
             }
             ed.open = false;
             return;
         }
         if delete {
             if self.apply(Command::RemoveMorpher { id: ed.id }) {
-                self.selected_morph = None;
+                self.selected_morph.clear();
             }
             ed.open = false;
             return;

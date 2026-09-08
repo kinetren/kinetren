@@ -64,6 +64,7 @@ marker = "Marker at playhead (M)"
 add_video_lane = "Add a video track"
 add_audio_lane = "Add an audio track"
 add_morpher = "Morpher layer: acts on everything below it"
+add_camera = "Camera: views the 3D layers below"
 save_area = "Save the selection as a named area"
 cut = "Split / cut region (S)"
 copy = "Copy (Ctrl+C)"
@@ -132,6 +133,9 @@ morpher = "Morpher: drag to move, edges resize, RMB — menu, double click — e
 morph_edge = "Morpher edge: drag to change where the layer starts or ends"
 row_height = "Track bottom edge: drag to set this track height, RMB — reset"
 camera = "Camera: drag to move, edges resize, RMB — menu, double click — properties"
+lane_free = "{0}: LMB — playhead, drag — region, Ctrl+drag — select; RMB — this track's menu"
+morph_lane = "Morph track: RMB — add a morpher here; a morpher layer edits everything on the tracks below"
+camera_lane = "Camera track: RMB — add a camera here; the camera views 3D layers on the tracks below"
 empty = "LMB — playhead, drag — region, Ctrl+drag — select events; wheel — scroll, Ctrl — zoom, Shift — tracks"
 
 # Таймлайн: подписи на morph-событиях.

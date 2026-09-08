@@ -8,7 +8,7 @@ use eframe::egui;
 use kt_engine::Player;
 use kt_model::*;
 use kt_time::Tick;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -69,12 +69,16 @@ pub struct KtApp {
     /// драг по пустому месту рисует рамку вместо региона. Сессионный —
     /// в проект не пишется.
     pub sel_tool: bool,
-    /// Выделенный morph-блок (H1; приоритет над клипом при Del).
-    pub selected_morph: Option<MorphId>,
-    /// Выделенная камера (Р.38 п.5, «не понимаю как работает камерный
-    /// трек»): до этого раунда камеру нельзя было ни выделить, ни удалить
-    /// с клавиатуры — только через контекст-меню.
-    pub selected_camera: Option<kt_model::CameraId>,
+    /// Выделенные morph-блоки (H1; приоритет над клипом при Del).
+    ///
+    /// МНОЖЕСТВО с Р.40: было `Option`, и рамка выделения физически не
+    /// могла поймать больше одного морфера — а ловила ноль, потому что
+    /// сам её улов был `Vec<ClipId>`.
+    pub selected_morph: BTreeSet<MorphId>,
+    /// Выделенные камеры (Р.38 п.5, «не понимаю как работает камерный
+    /// трек»): до того раунда камеру нельзя было ни выделить, ни удалить
+    /// с клавиатуры — только через контекст-меню. Множество — с Р.40.
+    pub selected_camera: BTreeSet<kt_model::CameraId>,
     /// Режим размещения morpher'а (порт pendingMorpherPlacement v1):
     /// замороженные цели + вид; Esc — отмена.
     pub drag: Option<Drag>,
@@ -410,8 +414,8 @@ impl KtApp {
             ticks_per_px: 900.0,
             selected: std::collections::BTreeSet::new(),
             sel_tool: false,
-            selected_morph: None,
-            selected_camera: None,
+            selected_morph: BTreeSet::new(),
+            selected_camera: BTreeSet::new(),
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
@@ -550,8 +554,8 @@ impl KtApp {
             ticks_per_px: 900.0,
             selected: std::collections::BTreeSet::new(),
             sel_tool: false,
-            selected_morph: None,
-            selected_camera: None,
+            selected_morph: BTreeSet::new(),
+            selected_camera: BTreeSet::new(),
             drag: None,
             base_rate: 1.0,
             shuttle_override: None,
@@ -1750,7 +1754,8 @@ impl KtApp {
             self.clear_region_keep_loop();
         }
         self.selected.clear();
-        self.selected_morph = None;
+        self.selected_morph.clear();
+        self.selected_camera.clear();
     }
 
     /// Перестановка display-строк дорожек (п.6 v1.4): между строками
@@ -2205,7 +2210,8 @@ impl KtApp {
         self.selected.clear();
         self.selected.extend(ids);
         if !self.selected.is_empty() {
-            self.selected_morph = None;
+            self.selected_morph.clear();
+            self.selected_camera.clear();
         }
     }
 
@@ -2582,15 +2588,18 @@ impl KtApp {
     pub fn delete_action(&mut self) {
         // выделенный morph-блок — приоритет (фикс D6 v1: при нарисованном
         // регионе morpher было не удалить с клавиатуры)
-        if let Some(id) = self.selected_morph {
-            if self.apply(Command::RemoveMorpher { id }) {
-                self.selected_morph = None;
-            }
-            return;
-        }
-        if let Some(id) = self.selected_camera {
-            if self.apply(Command::RemoveCamera { id }) {
-                self.selected_camera = None;
+        if !self.selected_morph.is_empty() || !self.selected_camera.is_empty() {
+            // пачкой: рамка теперь ловит служебные блоки, и удаление
+            // обязано снимать РОВНО то, что подсвечено (Р.40)
+            let cmds: Vec<Command> = self
+                .selected_morph
+                .iter()
+                .map(|id| Command::RemoveMorpher { id: *id })
+                .chain(self.selected_camera.iter().map(|id| Command::RemoveCamera { id: *id }))
+                .collect();
+            if self.apply_batch(cmds) {
+                self.selected_morph.clear();
+                self.selected_camera.clear();
             }
             return;
         }
@@ -2825,6 +2834,71 @@ impl KtApp {
         }
     }
 
+    /// Первая СВОБОДНАЯ на промежутке служебная строка вида `kind`
+    /// (Р.40 п.4). Порядок — display, сверху вниз: слой действует «на всё,
+    /// что ниже», и верхняя свободная строка накрывает больше всего.
+    /// `None` — свободной нет, зовущий заводит новую.
+    ///
+    /// Одна функция на морфер и камеру: «положить поверх уже лежащего» —
+    /// один дефект, а не два (правило «замечание = КЛАСС проблем»).
+    pub fn free_service_lane(&self, kind: LaneKind, start: Tick, duration: Tick) -> Option<u32> {
+        let (s0, e0) = (start.0, (start + duration).0);
+        let p = self.model.project();
+        p.rows().into_iter().filter(|(k, _)| *k == kind).map(|(_, l)| l).find(|lane| match kind {
+            LaneKind::Morph => !p
+                .morphers
+                .iter()
+                .any(|m| m.lane == *lane && m.start.0 < e0 && (m.start + m.duration).0 > s0),
+            LaneKind::Camera => !p
+                .cameras
+                .iter()
+                .any(|c| c.lane == *lane && c.start.0 < e0 && (c.start + c.duration).0 > s0),
+            _ => false,
+        })
+    }
+
+    /// «+C»: камера в проект (Р.40 п.5, дословно: «я не понимаю как
+    /// что-то добавить на камерный трек — для чего он?????»).
+    ///
+    /// До этого раунда единственным входом был ПКМ по ЗАГОЛОВКУ камерной
+    /// строки — полосе шириной 34 px, — а самой строки могло не быть
+    /// вовсе: завести её было нечем, кроме того же меню другой строки.
+    /// Симметрично «+M» (правило 17: парные способы одного действия).
+    pub fn add_camera_layer(&mut self) {
+        let start = Tick(self.player.transport.playhead().0.max(0));
+        let duration = Tick(5 * 90_000);
+        if let Some(lane) = self.free_service_lane(LaneKind::Camera, start, duration) {
+            self.add_camera_at_playhead(lane);
+            return;
+        }
+        // свободной строки нет — заводим новую. Место в display-порядке
+        // выбирает сама `InsertCameraLane` (`lane_order_insert`): рядом с
+        // прочими камерными строками. Своей раскладки тут не считаем —
+        // разошлась бы с меню строки, которое зовёт ту же команду.
+        let lane = self.model.project().camera_lanes;
+        if self.apply(Command::InsertCameraLane { at: lane }) {
+            self.add_camera_at_playhead(lane);
+        }
+    }
+
+    /// Выделить РОВНО этот морфер (и снять всё прочее). Отдельная
+    /// функция, потому что «выделить» — это три поля, и забытое четвёртое
+    /// место уже стоило раунда.
+    pub fn select_morph_only(&mut self, id: MorphId) {
+        self.selected.clear();
+        self.selected_camera.clear();
+        self.selected_morph.clear();
+        self.selected_morph.insert(id);
+    }
+
+    /// То же для камеры.
+    pub fn select_camera_only(&mut self, id: kt_model::CameraId) {
+        self.selected.clear();
+        self.selected_morph.clear();
+        self.selected_camera.clear();
+        self.selected_camera.insert(id);
+    }
+
     /// Сбор целей morpher'а (порт collectMorpherTargetClipIds v1): регион
     /// приоритетнее выделения (клипы всех дорожек, пересекающие регион),
     /// иначе выделенный клип; в обоих случаях цели расширяются link-группами.
@@ -2898,7 +2972,7 @@ impl KtApp {
             enabled: true,
         };
         if self.apply(Command::AddMorpher(ev)) {
-            self.selected_morph = Some(id);
+            self.select_morph_only(id);
             self.selected.clear();
             self.open_morph_editor(id);
         }
@@ -2908,25 +2982,24 @@ impl KtApp {
     ///
     /// Дорожка ПЕРЕИСПОЛЬЗУЕТСЯ (Р.38 п.4, дословно: «если я жму тот же
     /// add morpher layer в другой области — он мне создает еще один
-    /// трек»). Новая заводится, только если морф-дорожек нет вовсе:
-    /// «добавить слой» — про слой правок, а не про дорожку. Дорожки
-    /// заводятся своим пунктом меню, и это разные действия.
+    /// трек»), но только СВОБОДНАЯ НА ЭТОМ ПРОМЕЖУТКЕ (Р.40, дословно:
+    /// «можно сто раз добавить морфер слой, и он будет каждый раз его
+    /// создавать на одном и том же треке — в итоге там может быть куча
+    /// морферов скрыта за одним и тем же местом»). Р.38 переиспользовал
+    /// ПЕРВУЮ строку всегда — и клал блок поверх уже лежащего, где его
+    /// нечем было схватить.
+    ///
+    /// Порядок поиска — сверху вниз по display-строкам: слой действует
+    /// «на всё, что ниже», и верхняя свободная строка накрывает больше
+    /// всего. Свободной нет — заводится новая, наверх.
     pub fn add_morph_layer(&mut self) {
-        // верхняя морф-строка в display-порядке: слой действует «на всё,
-        // что ниже», и пользователь ждёт его над своим монтажом
-        let reuse = self
-            .model
-            .project()
-            .rows()
-            .into_iter()
-            .find(|(k, _)| *k == LaneKind::Morph)
-            .map(|(_, l)| l);
+        let (start, duration) = self.morph_span();
+        let reuse = self.free_service_lane(LaneKind::Morph, start, duration);
         if let Some(lane) = reuse {
             self.add_morpher_at(lane);
             return;
         }
         let id = MorphId(self.next_morph_id());
-        let (start, duration) = self.morph_span();
         let mut cmds = vec![Command::InsertMorphLane { at: 0 }];
         // порядок строк: новая морф-строка наверх, остальные как были
         let mut order: Vec<(LaneKind, u32)> = self
@@ -2952,7 +3025,7 @@ impl KtApp {
             enabled: true,
         }));
         if self.apply_batch(cmds) {
-            self.selected_morph = Some(id);
+            self.select_morph_only(id);
             self.selected.clear();
             // v1: окно редактора открывается сразу после размещения
             self.open_morph_editor(id);

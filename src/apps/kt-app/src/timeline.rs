@@ -479,6 +479,10 @@ pub enum Drag {
         id: MorphId,
         grab_dt: i64,
         cur_start: i64,
+        /// Строка под курсором (Р.40 п.2): морф-блок ездит по дорожкам,
+        /// как клип. До этого раунда `lane` жеста не менялся вовсе, и
+        /// разложить слои по строкам было нечем.
+        cur_lane: u32,
         moved: bool,
     },
     /// Край morph-блока (Р.38 п.9, дословно: «я не понимаю как менять
@@ -501,6 +505,8 @@ pub enum Drag {
         id: kt_model::CameraId,
         grab_dt: i64,
         cur_start: i64,
+        /// см. `Drag::Morph::cur_lane`
+        cur_lane: u32,
         moved: bool,
     },
 }
@@ -945,9 +951,25 @@ impl TlGeom {
         self.hs.get(row).copied().unwrap_or(self.base_h)
     }
 
-    /// Высота строки дорожки клипов (её вид — всегда базовый).
-    pub fn lane_h(&self) -> f32 {
-        self.base_h
+    /// Высота строки дорожки клипов — ЕЁ СОБСТВЕННАЯ (Р.40 п.11).
+    ///
+    /// До Р.40 здесь стояло `self.base_h`, и вся отрисовка событий шла по
+    /// базовой высоте: строку можно было растянуть, а событие оставалось
+    /// прежним. Индивидуальная высота (Р.38 п.11) доезжала только до
+    /// верхов строк и фона дорожки.
+    pub fn lane_h_of(&self, kind: ClipKind, lane: u32) -> f32 {
+        let lk = match kind {
+            ClipKind::Video => LaneKind::Video,
+            ClipKind::Audio => LaneKind::Audio,
+        };
+        self.row_of((lk, lane)).map(|r| self.row_h(r)).unwrap_or(self.base_h)
+    }
+
+    /// Высота служебной строки (морф/камера) — тоже своя.
+    pub fn thin_h_of(&self, kind: LaneKind, lane: u32) -> f32 {
+        self.row_of((kind, lane)).map(|r| self.row_h(r)).unwrap_or_else(|| {
+            crate::timeline::row_height(kind, self.base_h)
+        })
     }
 
     /// Середина строки — куда садятся подписи gutter'а.
@@ -1107,10 +1129,18 @@ impl TlGeom {
     /// Ближайшая к строке `row` дорожка вида `kind` (drag клипа через
     /// чужие строки «прилипает» к своему виду, п.6 v1.4, тест 50).
     pub fn nearest_lane(&self, kind: ClipKind, row: i64) -> u32 {
-        let want = match kind {
-            ClipKind::Video => LaneKind::Video,
-            ClipKind::Audio => LaneKind::Audio,
-        };
+        self.nearest_lane_of(
+            match kind {
+                ClipKind::Video => LaneKind::Video,
+                ClipKind::Audio => LaneKind::Audio,
+            },
+            row,
+        )
+    }
+
+    /// То же для ЛЮБОГО вида строк: морф- и камера-блоки переносятся между
+    /// своими дорожками ровно тем же правилом, что клипы (Р.40 п.2).
+    pub fn nearest_lane_of(&self, want: LaneKind, row: i64) -> u32 {
         self.rows
             .iter()
             .enumerate()
@@ -1143,19 +1173,70 @@ impl TlGeom {
 /// в координатах окна, геометрия — только через `TlGeom`, как требует
 /// инвариант маппинга. Событие берётся при ЛЮБОМ пересечении с рамкой —
 /// целиться в него целиком пользователь не обязан (п.1 чек-листа).
-pub fn rubber_hits(geom: &TlGeom, p: &Project, band: egui::Rect) -> Vec<ClipId> {
-    p.clips
-        .iter()
-        .filter(|c| {
-            let top = geom.lane_top(c.kind, c.lane);
-            let r = egui::Rect::from_min_max(
-                egui::pos2(geom.tick_to_x(c.start.0), top),
-                egui::pos2(geom.tick_to_x((c.start + c.duration).0), top + geom.lane_h()),
-            );
-            band.intersects(r)
-        })
-        .map(|c| c.id)
-        .collect()
+pub fn rubber_hits(geom: &TlGeom, p: &Project, band: egui::Rect) -> RubberHits {
+    let hit = |top: f32, h: f32, a: i64, b: i64| {
+        band.intersects(egui::Rect::from_min_max(
+            egui::pos2(geom.tick_to_x(a), top),
+            egui::pos2(geom.tick_to_x(b), top + h),
+        ))
+    };
+    RubberHits {
+        clips: p
+            .clips
+            .iter()
+            .filter(|c| {
+                hit(
+                    geom.lane_top(c.kind, c.lane),
+                    geom.lane_h_of(c.kind, c.lane),
+                    c.start.0,
+                    (c.start + c.duration).0,
+                )
+            })
+            .map(|c| c.id)
+            .collect(),
+        // Р.40, дословно: «Морферы почему-то не выделяются через
+        // area-select, нихуя ты не проверял». Рамка ловила ТОЛЬКО клипы,
+        // а поймав их — ещё и ГАСИЛА выделенный морфер.
+        morphers: p
+            .morphers
+            .iter()
+            .filter(|m| {
+                hit(
+                    geom.morph_lane_top(m.lane),
+                    geom.thin_h_of(LaneKind::Morph, m.lane),
+                    m.start.0,
+                    (m.start + m.duration).0,
+                )
+            })
+            .map(|m| m.id)
+            .collect(),
+        cameras: p
+            .cameras
+            .iter()
+            .filter(|c| {
+                let row = geom.row_of((LaneKind::Camera, c.lane));
+                row.is_some_and(|r| {
+                    hit(
+                        geom.row_top(r),
+                        geom.thin_h_of(LaneKind::Camera, c.lane),
+                        c.start.0,
+                        (c.start + c.duration).0,
+                    )
+                })
+            })
+            .map(|c| c.id)
+            .collect(),
+    }
+}
+
+/// Улов рамки выделения. Раньше это был `Vec<ClipId>`, и тип сам по себе
+/// заявлял, что рамка — про клипы: морфер и камера в неё попасть не могли
+/// (Р.40).
+#[derive(Default, Clone, Debug)]
+pub struct RubberHits {
+    pub clips: Vec<ClipId>,
+    pub morphers: Vec<MorphId>,
+    pub cameras: Vec<kt_model::CameraId>,
 }
 
 impl KtApp {
@@ -1226,6 +1307,208 @@ impl KtApp {
         let p = self.model.project();
         (p.video_lanes.max(1), p.audio_lanes.max(1))
     }
+
+    /// Меню строки КЛИПОВ — одно на заголовок строки и на саму дорожку
+    /// (Р.40, правило С0). Раньше оно жило только в `gutter_resp`, и
+    /// переименовать или удалить дорожку человек мог лишь из полосы
+    /// шириной 34 px.
+    fn clip_lane_menu(&mut self, ui: &mut egui::Ui, video_lanes: u32, audio_lanes: u32) {
+        if let Some(CtxTarget::Lane { kind, lane }) = self.ctx_target {
+            let n = self
+                .model
+                .project()
+                .clips
+                .iter()
+                .filter(|c| c.kind == kind && c.lane == lane)
+                .count();
+            let name = match kind {
+                ClipKind::Video => format!("V{}", lane + 1),
+                ClipKind::Audio => format!("A{}", lane + 1),
+            };
+            ui.label(egui::RichText::new(crate::tf!(k::tl::lane::TITLE, name)).strong());
+            let del_label = if n > 0 {
+                crate::tf!(k::tl::lane::DELETE_N, n)
+            } else {
+                tr(k::tl::lane::DELETE).to_string()
+            };
+            let lanes_of_kind = match kind {
+                ClipKind::Video => video_lanes,
+                ClipKind::Audio => audio_lanes,
+            };
+            let lk = match kind {
+                ClipKind::Video => LaneKind::Video,
+                ClipKind::Audio => LaneKind::Audio,
+            };
+            if ui.add_enabled(lanes_of_kind > 1, egui::Button::new(del_label)).clicked() {
+                self.delete_lane(kind, lane);
+                ui.close();
+            }
+            if ui.button(tr(k::tl::lane::RENAME)).clicked() {
+                let cur = kt_model::lane_label(&self.lane_names, lk, lane);
+                self.lane_edit = Some(crate::app::LaneEdit { kind: lk, lane, buf: cur });
+                self.lane_edit_focus = true;
+                ui.close();
+            }
+            if self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (lk, lane))
+                && ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked()
+            {
+                self.set_row_height((lk, lane), None);
+                ui.close();
+            }
+            if ui.button(tr(k::tl::lane::INSERT_ABOVE)).clicked() {
+                self.insert_lane_at(lk, lane);
+                ui.close();
+            }
+            if ui.button(tr(k::tl::lane::INSERT_BELOW)).clicked() {
+                self.insert_lane_at(lk, lane + 1);
+                ui.close();
+            }
+        }
+    }
+
+    /// Меню ПУСТОГО МЕСТА таймлайна — вставка, операции по региону,
+    /// добавление дорожки. Дописывается к меню строки (Р.40): человек,
+    /// нажавший ПКМ по дорожке, теперь получает и её глаголы, и эти —
+    /// раньше он получал ТОЛЬКО эти, а строку было нечем ни переименовать,
+    /// ни удалить, кроме 34-пиксельного заголовка.
+    fn empty_place_menu(&mut self, ui: &mut egui::Ui) {
+        if !self.clipboard.clips.is_empty() && ui.button(tr(k::tl::menu::PASTE)).clicked() {
+            self.paste_at_cursor();
+            ui.close();
+        }
+        if self.model.project().region.is_some() {
+            if ui.button(tr(k::tl::menu::DELETE_IN_REGION)).clicked() {
+                self.delete_action();
+                ui.close();
+            }
+            if ui.button(tr(k::tl::menu::PUNCH_OUT)).clicked() {
+                self.punch_out_action();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button(tr(k::tl::menu::SAVE_AREA)).clicked() {
+                self.save_marked_area();
+                ui.close();
+            }
+            if ui.button(tr(k::tl::menu::REGION_CLEAR)).clicked() {
+                self.clear_region();
+                ui.close();
+            }
+        } else if self.clipboard.clips.is_empty() {
+            ui.weak(tr(k::tl::menu::PICK_SOMETHING));
+        }
+        // Дорожки добавляются ПОД кликнутой строкой (п.5 р.16):
+        // «не в самый низ, а после той дорожки по которой кликнули».
+        // Если кликнули по пустому месту — в конец своего вида.
+        ui.separator();
+        let row = self.ctx_row;
+        for (label, kind) in [
+            (tr(k::tl::lane::ADD_VIDEO), LaneKind::Video),
+            (tr(k::tl::lane::ADD_AUDIO), LaneKind::Audio),
+            (tr(k::tl::lane::ADD_MORPH), LaneKind::Morph),
+            (tr(k::tl::lane::ADD_CAMERA), LaneKind::Camera),
+        ] {
+            if ui.button(label).clicked() {
+                self.insert_lane_after_row(kind, row);
+                ui.close();
+            }
+        }
+    }
+
+    /// Меню СЛУЖЕБНОЙ строки (морф/камера) — ОДНО на оба места, откуда его
+    /// открывают: заголовок строки в gutter'е и сама дорожка (Р.40 п.2).
+    ///
+    /// До Р.40 блок жил только внутри `gutter_resp.context_menu`, то есть
+    /// в полосе шириной 34 px. Пункт «добавить морфер сюда» существовал и
+    /// был покрыт тестом — а человек, жавший ПКМ по дорожке, получал меню
+    /// пустого места. Разнести это по двум копиям значило бы завести
+    /// второй источник правды ровно там, где уже обожглись.
+    fn service_lane_menu(&mut self, ui: &mut egui::Ui) {
+        if let Some(CtxTarget::MorphLane(lane)) = self.ctx_target {
+            let n = self.model.project().morphers.iter().filter(|m| m.lane == lane).count();
+            ui.label(egui::RichText::new(crate::tf!(k::tl::lane::MORPH_TITLE, lane + 1)).strong());
+            // симметрично камерной дорожке (правило 17): парные
+            // способы одного действия ведут себя одинаково, а до
+            // Р.38 морфер на существующую дорожку положить было
+            // НЕЧЕМ — «add morpher layer» всегда заводил новую
+            if ui.button(tr(k::tl::lane::ADD_MORPHER_HERE)).clicked() {
+                self.add_morpher_at(lane);
+                ui.close();
+            }
+            if !self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (LaneKind::Morph, lane)) {
+                // сбрасывать нечего — пункт молча ничего не сделал бы
+            } else if ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked() {
+                self.set_row_height((LaneKind::Morph, lane), None);
+                ui.close();
+            }
+            // переименование — как у обычной дорожки (правило 17):
+            // двойной клик по заголовку переименовывает СТРОКУ
+            // ЛЮБОГО вида, а пункта меню у служебных не было
+            if ui.button(tr(k::tl::lane::RENAME)).clicked() {
+                let cur = kt_model::lane_label(&self.lane_names, LaneKind::Morph, lane);
+                self.lane_edit =
+                    Some(crate::app::LaneEdit { kind: LaneKind::Morph, lane, buf: cur });
+                self.lane_edit_focus = true;
+                ui.close();
+            }
+            let del_label = if n > 0 {
+                crate::tf!(k::tl::lane::DELETE_MORPH_N, n)
+            } else {
+                tr(k::tl::lane::DELETE).to_string()
+            };
+            if ui.button(del_label).clicked() {
+                if self.apply(Command::RemoveMorphLane { at: lane }) {
+                    kt_model::lane_names_remove(&mut self.lane_names, LaneKind::Morph, lane);
+                }
+                ui.close();
+            }
+            if ui.button(tr(k::tl::lane::INSERT_MORPH_BELOW)).clicked() {
+                self.insert_lane_at(LaneKind::Morph, lane + 1);
+                ui.close();
+            }
+        }
+        if let Some(CtxTarget::CameraLane(lane)) = self.ctx_target {
+            let n = self.model.project().cameras.iter().filter(|c| c.lane == lane).count();
+            ui.label(egui::RichText::new(crate::tf!(k::tl::lane::CAMERA_TITLE, lane + 1)).strong());
+            // камера ставится под курсор ВОСПРОИЗВЕДЕНИЯ (как метка)
+            if ui.button(tr(k::tl::lane::ADD_CAMERA_HERE)).clicked() {
+                self.add_camera_at_playhead(lane);
+                ui.close();
+            }
+            if !self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (LaneKind::Camera, lane)) {
+                // сбрасывать нечего — пункт молча ничего не сделал бы
+            } else if ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked() {
+                self.set_row_height((LaneKind::Camera, lane), None);
+                ui.close();
+            }
+            // переименование — как у обычной дорожки (правило 17):
+            // двойной клик по заголовку переименовывает СТРОКУ
+            // ЛЮБОГО вида, а пункта меню у служебных не было
+            if ui.button(tr(k::tl::lane::RENAME)).clicked() {
+                let cur = kt_model::lane_label(&self.lane_names, LaneKind::Camera, lane);
+                self.lane_edit =
+                    Some(crate::app::LaneEdit { kind: LaneKind::Camera, lane, buf: cur });
+                self.lane_edit_focus = true;
+                ui.close();
+            }
+            let del_label = if n > 0 {
+                crate::tf!(k::tl::lane::DELETE_CAMERA_N, n)
+            } else {
+                tr(k::tl::lane::DELETE).to_string()
+            };
+            if ui.button(del_label).clicked() {
+                if self.apply(Command::RemoveCameraLane { at: lane }) {
+                    kt_model::lane_names_remove(&mut self.lane_names, LaneKind::Camera, lane);
+                }
+                ui.close();
+            }
+            if ui.button(tr(k::tl::lane::INSERT_CAMERA_BELOW)).clicked() {
+                self.insert_lane_at(LaneKind::Camera, lane + 1);
+                ui.close();
+            }
+        }
+    }
+
     pub fn draw_timeline(&mut self, ui: &mut egui::Ui) {
         // один проход coverage-опросов на кадр (кэш по epoch, п.1);
         // Arc-снапшот — клон указателя, не карты (п.1 v1.4)
@@ -1556,10 +1839,11 @@ impl KtApp {
             camera_lanes as usize,
             self.tl_v_zoom,
         );
-        let lane_h = vl.base_h;
-        // высота служебной строки (morph/camera): втрое меньше, но не ниже
-        // пола — в строку в 5 px мышью не попасть
-        let thin_h = row_height(LaneKind::Morph, lane_h);
+        // ВЫСОТА — ПОСТРОЧНАЯ (Р.40 п.11). До этого раунда здесь стояло
+        // `let lane_h = vl.base_h;` — одна переменная на все строки, 36
+        // использований: прямоугольник события, зоны, верхняя полоса,
+        // ручки, линия уровня, хит-тест. Строка росла, событие — нет.
+        let base_h = vl.base_h;
         // кламп скролла каждый кадр (удаление дорожек/ресайз панели)
         self.tl_scroll = self.tl_scroll.clamp(0.0, vl.scroll_max);
         // display-порядок строк: с Р.35 он живёт в МОДЕЛИ (морфер-слой
@@ -1570,13 +1854,19 @@ impl KtApp {
         let row_over = self.lane_heights.clone();
         let geom = TlGeom::new(
             rect,
-            lane_h,
+            base_h,
             rows,
             &row_over,
             self.tl_scroll,
             self.view_start,
             self.ticks_per_px,
         );
+        // высоты берутся ПОСТРОЧНО через геометрию: у каждой дорожки своя
+        // замыкания берут геометрию ССЫЛКОЙ — тогда они `Copy` и их
+        // можно раздать всем `move`-замыканиям хит-тестов
+        let gref = &geom;
+        let lane_h_at = move |kind: ClipKind, lane: u32| gref.lane_h_of(kind, lane);
+        let thin_h_at = move |kind: LaneKind, lane: u32| gref.thin_h_of(kind, lane);
         self.tl_geom = Some(geom.clone());
         // KT_GEOM_DUMP=<файл> — геометрия таймлайна наружу для живых
         // сценариев (Р.27): без неё скрипт вынужден УГАДЫВАТЬ, где дорожка и
@@ -1610,6 +1900,33 @@ impl KtApp {
             // подпись: пользовательское имя либо формула V1/A1/M1 (п.2 р.10)
             let label = kt_model::lane_label(&self.lane_names, kind, lane);
             painter.rect_filled(lane_rect, 0.0, fill);
+            // ПУСТАЯ служебная строка сама говорит, что на неё класть
+            // (Р.40 п.5). Своей полосы под это не заводим — надпись живёт
+            // ВНУТРИ пустой строки, которая и так занимает место
+            // (правило 13 чек-листа); появилось событие — надписи нет.
+            let empty_svc = match kind {
+                LaneKind::Morph
+                    if !self.model.project().morphers.iter().any(|m| m.lane == lane) =>
+                {
+                    Some(k::tl::lane::ADD_MORPHER_HERE)
+                }
+                LaneKind::Camera
+                    if !self.model.project().cameras.iter().any(|c| c.lane == lane) =>
+                {
+                    Some(k::tl::lane::ADD_CAMERA_HERE)
+                }
+                _ => None,
+            };
+            if let Some(key) = empty_svc {
+                let fs = (rh * 0.55).clamp(8.0, 12.0);
+                painter.text(
+                    egui::pos2(rect.left() + 6.0, y + rh * 0.5),
+                    egui::Align2::LEFT_CENTER,
+                    tr(key),
+                    egui::FontId::proportional(fs),
+                    egui::Color32::from_rgb(112, 118, 132),
+                );
+            }
             gutter_labels.push((label, y + rh * 0.5, y, rh));
         }
         // хит-тест morph-блока (нужен и press-обработке, и ПКМ ниже)
@@ -1779,153 +2096,8 @@ impl KtApp {
                 }
             }
             gutter_resp.context_menu(|ui| {
-                if let Some(CtxTarget::Lane { kind, lane }) = self.ctx_target {
-                    let n = self
-                        .model
-                        .project()
-                        .clips
-                        .iter()
-                        .filter(|c| c.kind == kind && c.lane == lane)
-                        .count();
-                    let name = match kind {
-                        ClipKind::Video => format!("V{}", lane + 1),
-                        ClipKind::Audio => format!("A{}", lane + 1),
-                    };
-                    ui.label(egui::RichText::new(crate::tf!(k::tl::lane::TITLE, name)).strong());
-                    let del_label = if n > 0 {
-                        crate::tf!(k::tl::lane::DELETE_N, n)
-                    } else {
-                        tr(k::tl::lane::DELETE).to_string()
-                    };
-                    let lanes_of_kind = match kind {
-                        ClipKind::Video => video_lanes,
-                        ClipKind::Audio => audio_lanes,
-                    };
-                    let lk = match kind {
-                        ClipKind::Video => LaneKind::Video,
-                        ClipKind::Audio => LaneKind::Audio,
-                    };
-                    if ui.add_enabled(lanes_of_kind > 1, egui::Button::new(del_label)).clicked() {
-                        self.delete_lane(kind, lane);
-                        ui.close();
-                    }
-                    if ui.button(tr(k::tl::lane::RENAME)).clicked() {
-                    let cur = kt_model::lane_label(&self.lane_names, lk, lane);
-                    self.lane_edit = Some(crate::app::LaneEdit { kind: lk, lane, buf: cur });
-                    self.lane_edit_focus = true;
-                    ui.close();
-                }
-                if self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (lk, lane))
-                    && ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked()
-                {
-                    self.set_row_height((lk, lane), None);
-                    ui.close();
-                }
-                if ui.button(tr(k::tl::lane::INSERT_ABOVE)).clicked() {
-                        self.insert_lane_at(lk, lane);
-                        ui.close();
-                    }
-                    if ui.button(tr(k::tl::lane::INSERT_BELOW)).clicked() {
-                        self.insert_lane_at(lk, lane + 1);
-                        ui.close();
-                    }
-                }
-                if let Some(CtxTarget::MorphLane(lane)) = self.ctx_target {
-                    let n =
-                        self.model.project().morphers.iter().filter(|m| m.lane == lane).count();
-                    ui.label(egui::RichText::new(crate::tf!(k::tl::lane::MORPH_TITLE, lane + 1)).strong());
-                    // симметрично камерной дорожке (правило 17): парные
-                    // способы одного действия ведут себя одинаково, а до
-                    // Р.38 морфер на существующую дорожку положить было
-                    // НЕЧЕМ — «add morpher layer» всегда заводил новую
-                    if ui.button(tr(k::tl::lane::ADD_MORPHER_HERE)).clicked() {
-                        self.add_morpher_at(lane);
-                        ui.close();
-                    }
-                    if !self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (LaneKind::Morph, lane)) {
-                        // сбрасывать нечего — пункт молча ничего не сделал бы
-                    } else if ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked() {
-                        self.set_row_height((LaneKind::Morph, lane), None);
-                        ui.close();
-                    }
-                    // переименование — как у обычной дорожки (правило 17):
-                    // двойной клик по заголовку переименовывает СТРОКУ
-                    // ЛЮБОГО вида, а пункта меню у служебных не было
-                    if ui.button(tr(k::tl::lane::RENAME)).clicked() {
-                        let cur = kt_model::lane_label(&self.lane_names, LaneKind::Morph, lane);
-                        self.lane_edit =
-                            Some(crate::app::LaneEdit { kind: LaneKind::Morph, lane, buf: cur });
-                        self.lane_edit_focus = true;
-                        ui.close();
-                    }
-                    let del_label = if n > 0 {
-                        crate::tf!(k::tl::lane::DELETE_MORPH_N, n)
-                    } else {
-                        tr(k::tl::lane::DELETE).to_string()
-                    };
-                    if ui.button(del_label).clicked() {
-                        if self.apply(Command::RemoveMorphLane { at: lane }) {
-                            kt_model::lane_names_remove(
-                                &mut self.lane_names,
-                                LaneKind::Morph,
-                                lane,
-                            );
-                        }
-                        ui.close();
-                    }
-                    if ui.button(tr(k::tl::lane::INSERT_MORPH_BELOW)).clicked() {
-                        self.insert_lane_at(LaneKind::Morph, lane + 1);
-                        ui.close();
-                    }
-                }
-                if let Some(CtxTarget::CameraLane(lane)) = self.ctx_target {
-                    let n =
-                        self.model.project().cameras.iter().filter(|c| c.lane == lane).count();
-                    ui.label(
-                        egui::RichText::new(crate::tf!(k::tl::lane::CAMERA_TITLE, lane + 1))
-                            .strong(),
-                    );
-                    // камера ставится под курсор ВОСПРОИЗВЕДЕНИЯ (как метка)
-                    if ui.button(tr(k::tl::lane::ADD_CAMERA_HERE)).clicked() {
-                        self.add_camera_at_playhead(lane);
-                        ui.close();
-                    }
-                    if !self.lane_heights.iter().any(|(k, l, _)| (*k, *l) == (LaneKind::Camera, lane)) {
-                        // сбрасывать нечего — пункт молча ничего не сделал бы
-                    } else if ui.button(tr(k::tl::lane::RESET_HEIGHT)).clicked() {
-                        self.set_row_height((LaneKind::Camera, lane), None);
-                        ui.close();
-                    }
-                    // переименование — как у обычной дорожки (правило 17):
-                    // двойной клик по заголовку переименовывает СТРОКУ
-                    // ЛЮБОГО вида, а пункта меню у служебных не было
-                    if ui.button(tr(k::tl::lane::RENAME)).clicked() {
-                        let cur = kt_model::lane_label(&self.lane_names, LaneKind::Camera, lane);
-                        self.lane_edit =
-                            Some(crate::app::LaneEdit { kind: LaneKind::Camera, lane, buf: cur });
-                        self.lane_edit_focus = true;
-                        ui.close();
-                    }
-                    let del_label = if n > 0 {
-                        crate::tf!(k::tl::lane::DELETE_CAMERA_N, n)
-                    } else {
-                        tr(k::tl::lane::DELETE).to_string()
-                    };
-                    if ui.button(del_label).clicked() {
-                        if self.apply(Command::RemoveCameraLane { at: lane }) {
-                            kt_model::lane_names_remove(
-                                &mut self.lane_names,
-                                LaneKind::Camera,
-                                lane,
-                            );
-                        }
-                        ui.close();
-                    }
-                    if ui.button(tr(k::tl::lane::INSERT_CAMERA_BELOW)).clicked() {
-                        self.insert_lane_at(LaneKind::Camera, lane + 1);
-                        ui.close();
-                    }
-                }
+                self.clip_lane_menu(ui, video_lanes, audio_lanes);
+                self.service_lane_menu(ui);
             });
         }
 
@@ -2100,6 +2272,7 @@ impl KtApp {
                     continue;
                 };
                 let top = lane_top(a.kind, a.lane);
+                let lane_h = lane_h_at(a.kind, a.lane);
                 if pos.y < top || pos.y > top + lane_h - 2.0 {
                     continue;
                 }
@@ -2134,6 +2307,7 @@ impl KtApp {
         let clip_at = move |app: &KtApp, pos: egui::Pos2| -> Option<(ClipId, ClipZone)> {
             for c in order.iter().rev().filter_map(|&i| app.model.project().clips.get(i)) {
                 let top = lane_top(c.kind, c.lane);
+                let lane_h = lane_h_at(c.kind, c.lane);
                 if pos.y < top || pos.y > top + lane_h - 2.0 {
                     continue;
                 }
@@ -2252,6 +2426,27 @@ impl KtApp {
                         } else if camera_at(self, pos).is_some() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                             tr(k::tl::hint::CAMERA)
+                        } else if let Some((lk @ (LaneKind::Video | LaneKind::Audio), l)) =
+                            geom.key_at_y(pos.y)
+                        {
+                            // на дорожке подсказка НАЗЫВАЕТ дорожку и говорит
+                            // про её меню: с Р.40 ПКМ здесь даёт меню строки,
+                            // а не одну лишь вставку
+                            hint_owned = Some(crate::tf!(
+                                k::tl::hint::LANE_FREE,
+                                kt_model::lane_label(&self.lane_names, lk, l)
+                            ));
+                            ""
+                        } else if geom.morph_lane_at_y(pos.y).is_some() {
+                            // ПУСТАЯ служебная строка говорит, ЧТО на неё
+                            // класть (Р.40 п.5, дословно: «я не понимаю как
+                            // что-то добавить на камерный трек — для чего
+                            // он?????»). Раньше тут была подсказка пустого
+                            // места про регион и выделение — про строку, где
+                            // ни того, ни другого не бывает.
+                            tr(k::tl::hint::MORPH_LANE)
+                        } else if geom.camera_lane_at_y(pos.y).is_some() {
+                            tr(k::tl::hint::CAMERA_LANE)
                         } else {
                             tr(k::tl::hint::EMPTY)
                         });
@@ -2278,11 +2473,15 @@ impl KtApp {
                 // служебные блоки проверяются РАНЬШЕ границы региона:
                 // линия региона идёт на всю высоту, и блок, чья кромка на
                 // неё попала, иначе не схватить вовсе
-                self.selected_morph = Some(mid);
-                self.selected.clear();
+                // ПКМ по ЧЛЕНУ выделения не рушит пачку — как у клипов
+                if !self.selected_morph.contains(&mid) {
+                    self.select_morph_only(mid);
+                }
                 CtxTarget::Morpher(mid)
             } else if let Some(cid) = camera_at(self, pos) {
-                self.selected_camera = Some(cid);
+                if !self.selected_camera.contains(&cid) {
+                    self.select_camera_only(cid);
+                }
                 CtxTarget::Camera(cid)
             } else if let Some(start_edge) = region_edge_at(self, pos) {
                 let r = self.model.project().region.unwrap();
@@ -2292,10 +2491,30 @@ impl KtApp {
                 if !self.is_selected(id) {
                     self.select_only(id);
                 }
-                self.selected_morph = None;
+                self.selected_morph.clear();
+                self.selected_camera.clear();
                 CtxTarget::Clip(id)
             } else if let Some((i, _)) = area_at(self, pos) {
                 CtxTarget::Area(i)
+            } else if let Some((LaneKind::Video | LaneKind::Audio, _)) = geom.key_at_y(pos.y) {
+                // ПКМ по САМОЙ дорожке клипов (Р.40, правило С0): раньше
+                // это была «пустота», и переименовать или удалить строку
+                // можно было только из её 34-пиксельного заголовка. Пункты
+                // пустого места никуда не делись — они ниже, за чертой.
+                let (kind, lane) = match geom.key_at_y(pos.y) {
+                    Some((LaneKind::Audio, l)) => (ClipKind::Audio, l),
+                    _ => (ClipKind::Video, geom.key_at_y(pos.y).map(|k| k.1).unwrap_or(0)),
+                };
+                CtxTarget::Lane { kind, lane }
+            } else if let Some(lane) = geom.morph_lane_at_y(pos.y) {
+                // ПКМ по САМОЙ морф-дорожке (Р.40 п.2). До этого раунда
+                // пункт «добавить морфер сюда» лежал только в меню
+                // ЗАГОЛОВКА строки — полосы шириной 34 px, — а клик по
+                // дорожке давал меню пустого места. Пункт был, добраться
+                // до него человек не мог.
+                CtxTarget::MorphLane(lane)
+            } else if let Some(lane) = geom.camera_lane_at_y(pos.y) {
+                CtxTarget::CameraLane(lane)
             } else {
                 CtxTarget::Empty
             });
@@ -2365,17 +2584,13 @@ impl KtApp {
                 camera_edge_at(self, pos).filter(|_| !response.double_clicked())
                 && response.drag_started()
             {
-                self.selected_camera = Some(cid);
-                self.selected.clear();
-                self.selected_morph = None;
+                self.select_camera_only(cid);
                 if let Some(orig) = self.model.project().cameras.iter().find(|c| c.id == cid) {
                     let cur = if left { orig.start.0 } else { (orig.start + orig.duration).0 };
                     self.drag = Some(Drag::CameraEdge { id: cid, left, cur });
                 }
             } else if let Some(cid) = camera_at(self, pos) {
-                self.selected_camera = Some(cid);
-                self.selected.clear();
-                self.selected_morph = None;
+                self.select_camera_only(cid);
                 if response.double_clicked() {
                     self.open_camera_editor(cid);
                 } else if response.drag_started()
@@ -2386,6 +2601,7 @@ impl KtApp {
                         id: cid,
                         grab_dt: x_to_tick(pos.x) - orig.start.0,
                         cur_start: orig.start.0,
+                        cur_lane: orig.lane,
                         moved: false,
                     });
                 }
@@ -2394,15 +2610,13 @@ impl KtApp {
                 !response.double_clicked()
             }) && response.drag_started()
             {
-                self.selected_morph = Some(mid);
-                self.selected.clear();
+                self.select_morph_only(mid);
                 if let Some(orig) = self.model.project().morphers.iter().find(|m| m.id == mid) {
                     let cur = if left { orig.start.0 } else { (orig.start + orig.duration).0 };
                     self.drag = Some(Drag::MorphEdge { id: mid, left, cur });
                 }
             } else if let Some(mid) = morpher_at(self, pos) {
-                self.selected_morph = Some(mid);
-                self.selected.clear();
+                self.select_morph_only(mid);
                 if response.double_clicked() {
                     self.open_morph_editor(mid);
                 } else if response.drag_started()
@@ -2413,6 +2627,7 @@ impl KtApp {
                         id: mid,
                         grab_dt: x_to_tick(pos.x) - orig.start.0,
                         cur_start: orig.start.0,
+                        cur_lane: orig.lane,
                         moved: false,
                     });
                 }
@@ -2453,7 +2668,8 @@ impl KtApp {
                     self.player.seek(Tick(t.max(0)));
                 }
             } else if let Some((id, zone)) = clip_at(self, pos) {
-                self.selected_morph = None;
+                self.selected_morph.clear();
+                self.selected_camera.clear();
                 if ctrl_held && response.clicked() {
                     // Ctrl+клик набирает выделение: курсор при этом стоит на
                     // месте, иначе набор пачки утаскивал бы playhead за собой
@@ -2774,12 +2990,18 @@ impl KtApp {
                 Some(Drag::Morph { id, grab_dt, .. }) => {
                     let raw = x_to_tick(pos.x) - grab_dt;
                     let cur_start = self.snap(raw, None).max(0);
-                    self.drag = Some(Drag::Morph { id, grab_dt, cur_start, moved: true });
+                    // строка под курсором — тем же правилом, что у клипа
+                    let row = geom.row_at_y_unbounded(pos.y).max(0);
+                    let cur_lane = geom.nearest_lane_of(LaneKind::Morph, row);
+                    self.drag = Some(Drag::Morph { id, grab_dt, cur_start, cur_lane, moved: true });
                 }
                 Some(Drag::Camera { id, grab_dt, .. }) => {
                     let raw = x_to_tick(pos.x) - grab_dt;
                     let cur_start = self.snap(raw, None).max(0);
-                    self.drag = Some(Drag::Camera { id, grab_dt, cur_start, moved: true });
+                    let row = geom.row_at_y_unbounded(pos.y).max(0);
+                    let cur_lane = geom.nearest_lane_of(LaneKind::Camera, row);
+                    self.drag =
+                        Some(Drag::Camera { id, grab_dt, cur_start, cur_lane, moved: true });
                 }
                 Some(Drag::Fade { id, left, .. }) => {
                     // длина = расстояние от края события до курсора,
@@ -2806,7 +3028,7 @@ impl KtApp {
                 Some(Drag::Level { id, .. }) => {
                     if let Some(c) = self.model.clip(id) {
                         let (kind, top) = (c.kind, lane_top(c.kind, c.lane));
-                        let lv = level_from_y(pos.y, top, lane_h);
+                        let lv = level_from_y(pos.y, top, lane_h_at(c.kind, c.lane));
                         // live-превью без записи в историю: у аудио уровень
                         // это громкость (диапазон рейла v1), у видео —
                         // непрозрачность
@@ -3000,26 +3222,31 @@ impl KtApp {
                     let hits = rubber_hits(&geom, self.model.project(), band);
                     if !add {
                         self.selected.clear();
+                        self.selected_morph.clear();
+                        self.selected_camera.clear();
                     }
-                    if !hits.is_empty() {
-                        self.selected_morph = None;
-                    }
-                    self.selected.extend(hits);
+                    // строки «поймали клипы → погасить морфер» больше нет:
+                    // рамка ловит ВСЁ, что под ней, и гасит только то, что
+                    // под неё не попало (Р.40)
+                    self.selected.extend(hits.clips);
+                    self.selected_morph.extend(hits.morphers);
+                    self.selected_camera.extend(hits.cameras);
                 }
                 Some(Drag::Region { .. }) | Some(Drag::RegionEdge { .. }) => {
                     self.on_region_changed();
                     // играем — курсор немедленно в начало нового региона (п.4)
                     self.on_region_released();
                 }
-                Some(Drag::Camera { id, cur_start, moved, .. }) => {
+                Some(Drag::Camera { id, cur_start, cur_lane, moved, .. }) => {
                     // перенос камеры везёт её кривые с собой: их домен —
                     // тики ОТ НАЧАЛА события, трогать нечего (Р.34 К3)
                     if moved
                         && let Some(mut ev) =
                             self.model.project().cameras.iter().find(|c| c.id == id).cloned()
-                        && ev.start.0 != cur_start
+                        && (ev.start.0 != cur_start || ev.lane != cur_lane)
                     {
                         ev.start = Tick(cur_start);
+                        ev.lane = cur_lane;
                         self.apply(Command::SetCamera(ev));
                     }
                 }
@@ -3055,12 +3282,14 @@ impl KtApp {
                         self.apply(Command::SetMorpher(ev));
                     }
                 }
-                Some(Drag::Morph { id, cur_start, moved, .. }) => {
+                Some(Drag::Morph { id, cur_start, cur_lane, moved, .. }) => {
                     if moved
                         && let Some(mut ev) =
                             self.model.project().morphers.iter().find(|m| m.id == id).cloned()
+                        && (ev.start.0 != cur_start || ev.lane != cur_lane)
                     {
                         ev.start = Tick(cur_start);
+                        ev.lane = cur_lane;
                         self.apply(Command::SetMorpher(ev));
                     }
                 }
@@ -3096,6 +3325,7 @@ impl KtApp {
             }
             let src_shift = preview_src_shift(self.drag.as_ref(), c.id, c.start.0);
             let top = lane_top(c.kind, lane);
+            let lane_h = lane_h_at(c.kind, lane);
             // клип тянется ПОД полосу имён дорожек — она полупрозрачная и
             // таймлайн просвечивает (п.4 р.7.1); имя рисуется от СТАРОЙ
             // границы (rect.left()), чтобы текст не лез под градиент
@@ -3491,8 +3721,12 @@ impl KtApp {
 
         // ---- morph-блоки (H1, порт v1: фиолетовый скруглённый блок) ---------
         for m in &self.model.project().morphers {
+            // строка превью: при переносе блок обязан ЕХАТЬ ЗА КУРСОРОМ по
+            // строкам, иначе смены дорожки не видно до отпускания (Р.40 п.2)
+            let mut lane = m.lane;
             let (start, end) = match &self.drag {
-                Some(Drag::Morph { id, cur_start, .. }) if *id == m.id => {
+                Some(Drag::Morph { id, cur_start, cur_lane, .. }) if *id == m.id => {
+                    lane = *cur_lane;
                     (*cur_start, *cur_start + m.duration.0)
                 }
                 Some(Drag::MorphEdge { id, left, cur }) if *id == m.id => {
@@ -3507,16 +3741,16 @@ impl KtApp {
             if x1 < rect.left() || x0 > rect.right() {
                 continue;
             }
-            let top = morph_lane_top(m.lane);
+            let top = morph_lane_top(lane);
             // служебная строка втрое ниже (Р.35 п.1): поля ужимаются, но
             // ХВАТ шире рисунка на 2 px наружу — правило 1 чек-листа
-            let rh = thin_h;
+            let rh = thin_h_at(LaneKind::Morph, lane);
             let pad = (rh * 0.12).clamp(1.0, 3.0);
             let r = egui::Rect::from_min_max(
                 egui::pos2(x0.max(rect.left()), top + pad),
                 egui::pos2(x1.min(rect.right()), top + rh - pad - 2.0),
             );
-            let selected = self.selected_morph == Some(m.id);
+            let selected = self.selected_morph.contains(&m.id);
             painter.rect(
                 r,
                 4.0,
@@ -3552,8 +3786,10 @@ impl KtApp {
         for c in &self.model.project().cameras {
             // живое превью жеста: до Р.38 камера при драге стояла на месте
             // до отпускания — жест выглядел мёртвым
+            let mut lane = c.lane;
             let (start, end) = match &self.drag {
-                Some(Drag::Camera { id, cur_start, .. }) if *id == c.id => {
+                Some(Drag::Camera { id, cur_start, cur_lane, .. }) if *id == c.id => {
+                    lane = *cur_lane;
                     (*cur_start, *cur_start + c.duration.0)
                 }
                 Some(Drag::CameraEdge { id, left, cur }) if *id == c.id => {
@@ -3568,13 +3804,17 @@ impl KtApp {
             if x1 < rect.left() || x0 > rect.right() {
                 continue;
             }
-            let top = geom.row_top(geom.row_of((LaneKind::Camera, c.lane)).unwrap_or(0));
-            let pad = (thin_h * 0.12).clamp(1.0, 3.0);
+            let top = geom.row_top(geom.row_of((LaneKind::Camera, lane)).unwrap_or(0));
+            // КАМЕРНЫМ делителем, а не морферным (Р.40): до этого блок
+            // камеры рисовался высотой морф-строки (base/1.5) на строке
+            // высотой base/3 и вылезал за неё вдвое
+            let cam_h = thin_h_at(LaneKind::Camera, lane);
+            let pad = (cam_h * 0.12).clamp(1.0, 3.0);
             let r = egui::Rect::from_min_max(
                 egui::pos2(x0.max(rect.left()), top + pad),
-                egui::pos2(x1.min(rect.right()), top + thin_h - pad - 2.0),
+                egui::pos2(x1.min(rect.right()), top + cam_h - pad - 2.0),
             );
-            let selected = self.selected_camera == Some(c.id);
+            let selected = self.selected_camera.contains(&c.id);
             painter.rect(
                 r,
                 4.0,
@@ -3627,6 +3867,7 @@ impl KtApp {
             && let Some((kind, lane)) = g.lane_at_y(pos.y)
         {
             let top = g.lane_top(kind, lane);
+            let lane_h = g.lane_h_of(kind, lane);
             let lane_rect = egui::Rect::from_min_max(
                 egui::pos2(rect.left(), top),
                 egui::pos2(rect.right(), top + lane_h - 2.0),
@@ -3728,6 +3969,7 @@ impl KtApp {
                     continue;
                 }
                 let top = lane_top(a.kind, a.lane);
+                let lane_h = lane_h_at(a.kind, a.lane);
                 let r = transition_rect(x0, x1, top, lane_h);
                 // ручки (Р.26): материал соседей продолжается за стык и
                 // никуда не делся — растащишь клипы, и он вернётся
@@ -3827,6 +4069,7 @@ impl KtApp {
                 && let Some(c) = p.clips.iter().find(|c| c.id == *id)
             {
                 let top = lane_top(c.kind, c.lane);
+                let lane_h = lane_h_at(c.kind, c.lane);
                 let (s0, e0) = (c.start.0, c.start.0 + c.duration.0);
                 let (a, b) = if *left { (s0, s0 + *len) } else { (e0 - *len, e0) };
                 let r = transition_rect(tick_to_x(a), tick_to_x(b), top, lane_h);
@@ -4229,7 +4472,7 @@ impl KtApp {
         if let Some(b) = self.blocked {
             let top = lane_top(b.kind, b.lane);
             let y0 = top + 1.0;
-            let y1 = top + lane_h - 3.0;
+            let y1 = top + lane_h_at(b.kind, b.lane) - 3.0;
             let err = egui::Color32::from_rgb(255, 105, 97);
             match block_view(b.span, (x_to_tick(rect.left()), x_to_tick(rect.right()))) {
                 BlockView::Visible => {
@@ -4654,13 +4897,13 @@ impl KtApp {
                 };
                 if ui.button(bake_label).clicked() {
                     if self.apply(Command::BakeMorpher { id: mid }) {
-                        self.selected_morph = None;
+                        self.selected_morph.clear();
                     }
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::REMOVE_MORPHER)).clicked() {
                     if self.apply(Command::RemoveMorpher { id: mid }) {
-                        self.selected_morph = None;
+                        self.selected_morph.clear();
                     }
                     ui.close();
                 }
@@ -4723,49 +4966,20 @@ impl KtApp {
                     ui.close();
                 }
             }
-            _ => {
-                if !self.clipboard.clips.is_empty() && ui.button(tr(k::tl::menu::PASTE)).clicked() {
-                    self.paste_at_cursor();
-                    ui.close();
-                }
-                if self.model.project().region.is_some() {
-                    if ui.button(tr(k::tl::menu::DELETE_IN_REGION)).clicked() {
-                        self.delete_action();
-                        ui.close();
-                    }
-                    if ui.button(tr(k::tl::menu::PUNCH_OUT)).clicked() {
-                        self.punch_out_action();
-                        ui.close();
-                    }
-                    ui.separator();
-                    if ui.button(tr(k::tl::menu::SAVE_AREA)).clicked() {
-                        self.save_marked_area();
-                        ui.close();
-                    }
-                    if ui.button(tr(k::tl::menu::REGION_CLEAR)).clicked() {
-                        self.clear_region();
-                        ui.close();
-                    }
-                } else if self.clipboard.clips.is_empty() {
-                    ui.weak(tr(k::tl::menu::PICK_SOMETHING));
-                }
-                // Дорожки добавляются ПОД кликнутой строкой (п.5 р.16):
-                // «не в самый низ, а после той дорожки по которой кликнули».
-                // Если кликнули по пустому месту — в конец своего вида.
+            Some(CtxTarget::Lane { .. }) => {
+                self.clip_lane_menu(ui, video_lanes, audio_lanes);
                 ui.separator();
-                let row = self.ctx_row;
-                for (label, kind) in [
-                    (tr(k::tl::lane::ADD_VIDEO), LaneKind::Video),
-                    (tr(k::tl::lane::ADD_AUDIO), LaneKind::Audio),
-                    (tr(k::tl::lane::ADD_MORPH), LaneKind::Morph),
-                    (tr(k::tl::lane::ADD_CAMERA), LaneKind::Camera),
-                ] {
-                    if ui.button(label).clicked() {
-                        self.insert_lane_after_row(kind, row);
-                        ui.close();
-                    }
-                }
+                self.empty_place_menu(ui);
             }
+            Some(CtxTarget::MorphLane(_)) | Some(CtxTarget::CameraLane(_)) => {
+                // Р.40 п.2: то же меню, что у заголовка строки. ПКМ по самой
+                // дорожке раньше падал в ветку пустого места, и «добавить
+                // морфер сюда» человек не находил.
+                self.service_lane_menu(ui);
+                ui.separator();
+                self.empty_place_menu(ui);
+            }
+            _ => self.empty_place_menu(ui),
         });
     }
 }
