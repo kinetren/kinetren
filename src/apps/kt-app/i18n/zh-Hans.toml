@@ -152,6 +152,7 @@ lane_name = "轨道名称"
 
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
+level = "电平"
 area_title = "区域：{0}"
 area_from_region = "按选区设定范围"
 area_lanes_from_band = "按上次框选设定轨道"

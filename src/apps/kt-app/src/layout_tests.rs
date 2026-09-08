@@ -5948,3 +5948,83 @@ fn t277_rubber_band_catches_service_blocks() {
     let pr = h.state().model.project().clone();
     assert!(pr.morphers.is_empty() && pr.cameras.is_empty(), "Del убирает всё пойманное рамкой");
 }
+
+/// Тест 278 (Р.40 п.12, дословно: «я у мелкого события пытаюсь там выловить
+/// opacity но не получается»).
+///
+/// Замков было два, и оба подтверждались арифметикой:
+///   * `ClipZone::Level` требовал `x1 − x0 > 24.0` — на коротком событии
+///     уровня не было ни при каком y;
+///   * ручка фейда ловилась на ±12 px от УГЛА всегда, поэтому на событии
+///     уже 24 px обе ручки перекрывали его целиком и середины не
+///     оставалось.
+///
+/// Тест утверждает СЛЕДСТВИЕ: на коротком событии тянут вниз в середине
+/// верхней полосы — и непрозрачность падает.
+#[test]
+fn t278_opacity_reachable_on_a_short_event() {
+    use crate::timeline::{fade_grab_for_width, level_y, top_strip_h};
+    use kt_model::ClipKind;
+    use kt_time::Tick;
+
+    // чистая арифметика: середина узкого события не принадлежит ручкам
+    for w in [10.0f32, 18.0, 24.0, 40.0] {
+        let g = fade_grab_for_width(w);
+        assert!(
+            2.0 * g < w,
+            "при ширине {w} ручки фейда (±{g}) перекрывают событие целиком — \
+             середины, где живёт уровень, не остаётся"
+        );
+    }
+
+    let (mut h, _) = harness_three_clips();
+    // укоротим первое событие до ~20 px: ровно тот случай, о котором речь
+    let (id, x0, y_line) = {
+        let g0 = h.state().tl_geom.clone().unwrap();
+        let px = 20.0 * g0.tpp;
+        let c = h.state().model.project().clips[0].clone();
+        let app = h.state_mut();
+        assert!(app.apply(kt_model::Command::TrimEnd {
+            id: c.id,
+            new_end: c.start + Tick(px as i64),
+        }));
+        (c.id, c.start.0, 0.0)
+    };
+    let _ = y_line;
+    h.step();
+    h.step();
+
+    let g = h.state().tl_geom.clone().unwrap();
+    let c = h.state().model.project().clips.iter().find(|z| z.id == id).unwrap().clone();
+    let wide = g.tick_to_x((c.start + c.duration).0) - g.tick_to_x(c.start.0);
+    assert!(wide < 24.0, "сцена: событие короче старого порога, {wide} px");
+    assert_eq!(c.opacity, 1.0, "старт с умолчания — с него и начинают тянуть");
+
+    let top = g.lane_top(ClipKind::Video, c.lane);
+    let lane_h = g.lane_h_of(ClipKind::Video, c.lane);
+    let mid_x = (g.tick_to_x(x0) + g.tick_to_x((c.start + c.duration).0)) * 0.5;
+    let ly = level_y(1.0, top, lane_h);
+    assert!(
+        ly <= top + top_strip_h(lane_h),
+        "линия уровня при opacity = 1.0 лежит внутри полосы фейда — \
+         именно поэтому первый захват и не удавался"
+    );
+
+    // и жест доводит дело до модели
+    let from = egui::pos2(mid_x, ly);
+    h.hover_at(from);
+    h.step();
+    h.drag_at(from);
+    h.step();
+    h.hover_at(egui::pos2(mid_x, ly + 8.0));
+    h.step();
+    h.hover_at(egui::pos2(mid_x, ly + lane_h * 0.4));
+    h.step();
+    h.drop_at(egui::pos2(mid_x, ly + lane_h * 0.4));
+    h.step();
+    let after = h.state().model.project().clips.iter().find(|z| z.id == id).unwrap().opacity;
+    assert!(
+        after < 0.95,
+        "тянули линию уровня вниз — непрозрачность обязана упасть, а она {after}"
+    );
+}

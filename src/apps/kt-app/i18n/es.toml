@@ -152,6 +152,7 @@ lane_name = "nombre de la pista"
 
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
+level = "Nivel"
 area_title = "Área: {0}"
 area_from_region = "Ajustar al región"
 area_lanes_from_band = "Pistas según la última selección"

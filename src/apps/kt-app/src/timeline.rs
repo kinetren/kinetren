@@ -794,6 +794,21 @@ pub fn edge_grab_for_width(w: f32) -> f32 {
     if w >= 3.0 * EDGE_GRAB_PX { EDGE_GRAB_PX } else { (w / 4.0).max(2.0) }
 }
 
+/// Хват УГОЛКОВОЙ РУЧКИ ФЕЙДА по ширине события (Р.40 п.12).
+///
+/// Претензия дословно: «я у мелкого события пытаюсь там выловить opacity но
+/// не получается». Ручка ловилась на ±12 px от угла ВСЕГДА — на событии
+/// уже 24 px обе ручки перекрывали его целиком, и середины, где живёт
+/// линия уровня, не оставалось ни одного пикселя. Плюс сама зона уровня
+/// была заперта отдельным условием `ширина > 24`.
+///
+/// Правило то же, что у трим-зон (`edge_grab_for_width`): у узкого события
+/// зона сжимается, СЕРЕДИНА остаётся свободной. Треть ширины на ручку —
+/// значит средняя треть принадлежит уровню при любой ширине.
+pub fn fade_grab_for_width(w: f32) -> f32 {
+    FADE_HANDLE_PX.min(w / 3.0).max(1.0)
+}
+
 /// Возврат окна к playhead при игре (п.14 р.6, тест 59): только в
 /// follow-режиме (Play включает, ручной пан/зум выключает), не во время
 /// драга; окно возвращается, когда курсор вышел из зоны [2%, 85%].
@@ -2330,11 +2345,12 @@ impl KtApp {
                 let hx_r = tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_r, false));
                 let in_strip = pos.y <= top + strip;
                 let ly = level_y(clip_level(c), top, lane_h);
-                let zone = if in_strip && (pos.x - hx_l).abs() <= FADE_HANDLE_PX {
+                let fgrab = fade_grab_for_width(x1 - x0);
+                let zone = if in_strip && (pos.x - hx_l).abs() <= fgrab {
                     ClipZone::FadeLeft
-                } else if in_strip && (pos.x - hx_r).abs() <= FADE_HANDLE_PX {
+                } else if in_strip && (pos.x - hx_r).abs() <= fgrab {
                     ClipZone::FadeRight
-                } else if x1 - x0 > 24.0 && (pos.y - ly).abs() <= LEVEL_GRAB_PX {
+                } else if (pos.y - ly).abs() <= LEVEL_GRAB_PX {
                     ClipZone::Level
                 } else if (pos.x - x0).abs() <= grab {
                     ClipZone::TrimStart
@@ -2350,6 +2366,7 @@ impl KtApp {
 
         // курсор-иконка + КОНТЕКСТНАЯ ПОДСКАЗКА зоны (п.1 р.9: у таймлайна
         // не было ни одной подсказки — а это самая большая площадь окна)
+        let mut hover_clip: Option<ClipId> = None;
         if self.drag.is_none()
             && let Some(pos) = hover
         {
@@ -2378,6 +2395,9 @@ impl KtApp {
                 });
                 zone_hint = Some(tr(k::tl::hint::TRANSITION));
             } else {
+                // событие под указателем: у него рисуются ручки фейда
+                // (Р.40 п.12) — жест, которого не видно, не существует
+                hover_clip = clip_at(self, pos).map(|(id, _)| id);
                 match clip_at(self, pos) {
                     Some((_, ClipZone::TrimStart)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -2464,6 +2484,10 @@ impl KtApp {
         if response.secondary_clicked()
             && let Some(pos) = response.interact_pointer_pos()
         {
+            // токен жеста на КАЖДОЕ открытие меню: правки числового поля
+            // внутри одного меню схлопываются в один шаг истории, а
+            // следующее открытие начинает новый
+            self.gesture_counter += 1;
             // строка под кликом нужна и для пустого места: «добавить
             // дорожку» из меню встаёт СРАЗУ ПОД ней (п.5 р.16)
             self.ctx_row = geom.key_at_y(pos.y);
@@ -3554,7 +3578,12 @@ impl KtApp {
             // громкость — ОДИН элемент на оба вида, как в Vegas (требование
             // «фейды у аудио и видео одинаково выглядящие»: вертикальный
             // рейл v1 стоял ровно в зоне фейда и ломал картинку)
-            if clip_rect.width() > 24.0 {
+            // порог тот же, что у ХИТ-ТЕСТА (Р.40 п.12): раньше линия
+            // рисовалась при ширине > 24 px, а зона уровня требовала того
+            // же — и ниже этой ширины непрозрачность была недостижима
+            // вовсе. Теперь предел один: событие, в котором есть что
+            // показать.
+            if clip_rect.width() > 6.0 {
                 let lv = if c.kind == ClipKind::Audio {
                     match self.live_gain {
                         Some((id, g)) if id == c.id => gain_to_level(g),
@@ -3761,6 +3790,24 @@ impl KtApp {
                 ),
                 egui::StrokeKind::Inside,
             );
+            // СИЛА слоя и его фейды видны на самом блоке (Р.40 п.12):
+            // до этого раунда они жили ТОЛЬКО в окне морфера, и по
+            // таймлайну нельзя было понять, что слой ослаблен. Своей
+            // полосы под это не заводим — рисуем внутри блока
+            // (правило 13); линия темнеет по краям ровно там, где
+            // работают фейды.
+            if (m.strength as f32) < 1.0 || m.fade_in.0 > 0 || m.fade_out.0 > 0 {
+                let h = (r.height() - 4.0).max(1.0);
+                let ly = r.top() + 2.0 + (1.0 - m.strength.clamp(0.0, 1.0) as f32) * h;
+                let dur = m.duration.0.max(1) as f32;
+                let fi = r.left() + r.width() * (m.fade_in.0 as f32 / dur).clamp(0.0, 1.0);
+                let fo = r.right() - r.width() * (m.fade_out.0 as f32 / dur).clamp(0.0, 1.0);
+                let col = egui::Color32::from_rgba_unmultiplied(255, 220, 120, 220);
+                let st = egui::Stroke::new(1.6, col);
+                painter.line_segment([egui::pos2(r.left(), r.bottom() - 1.0), egui::pos2(fi, ly)], st);
+                painter.line_segment([egui::pos2(fi, ly), egui::pos2(fo.max(fi), ly)], st);
+                painter.line_segment([egui::pos2(fo.max(fi), ly), egui::pos2(r.right(), r.bottom() - 1.0)], st);
+            }
             // подпись по РЕЖИМУ ЦЕЛЕЙ (Р.35): вида у морфера больше нет,
             // а «на кого действует» — единственное, чего не видно по
             // самому блоку. Не влезла — уходит в подсказку (правило 7).
@@ -4084,16 +4131,23 @@ impl KtApp {
                     painter.line_segment([r.left_top(), r.right_bottom()], st);
                 }
             }
-            // ручки видны у ВЫДЕЛЕННОГО события — иначе жест не найти
-            // (п.14 чек-листа: элемент управления обязан быть заметен)
-            if let Some(sel) = self.selected_one()
-                && let Some(c) = p.clips.iter().find(|c| c.id == sel)
-            {
+            // Ручки видны у ВЫДЕЛЕННОГО события и у того, НАД КОТОРЫМ
+            // указатель (Р.40 п.12): зона фейда работает у любого события
+            // всегда, а рисовались ручки только у выделенного — человек
+            // видел линию уровня, не видел ручек, целился в линию и попадал
+            // в невидимую зону. Порог ширины снят: ручка сжимается вместе с
+            // хватом (`fade_grab_for_width`), а не пропадает.
+            let handle_on: Vec<ClipId> = self
+                .selected_one()
+                .into_iter()
+                .chain(hover_clip)
+                .collect();
+            for c in p.clips.iter().filter(|c| handle_on.contains(&c.id)) {
                 let top = lane_top(c.kind, c.lane);
                 let (s0, e0) = (c.start.0, c.start.0 + c.duration.0);
-                if tick_to_x(e0) - tick_to_x(s0) > 24.0 {
+                {
                     for left in [true, false] {
-                        let len = corner_fade_len(p, sel, left).unwrap_or(0);
+                        let len = corner_fade_len(p, c.id, left).unwrap_or(0);
                         let x = tick_to_x(fade_handle_tick(s0, e0, len, left));
                         let y = top + 2.0;
                         let d = 5.0f32;
@@ -4581,6 +4635,47 @@ impl KtApp {
                     .clip(id)
                     .map(|c| (c.kind == ClipKind::Audio, c.link_group.is_some()))
                     .unwrap_or((false, false));
+                // ЧИСЛОМ — второй путь к уровню (Р.40 п.12, дословно: «я у
+                // мелкого события пытаюсь там выловить opacity но не
+                // получается»). До этого раунда пятипиксельная линия была
+                // ЕДИНСТВЕННЫМ способом задать непрозрачность во всей
+                // программе. Поле показывает и правит РОВНО то же, что
+                // линия: у видео — opacity, у звука — усиление в dB.
+                if let Some(c) = self.model.clip(id).cloned() {
+                    ui.horizontal(|ui| {
+                        if is_audio {
+                            let mut db = c.gain_db as f64;
+                            ui.label(tr(k::tl::menu::LEVEL));
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut db)
+                                        .range(-(RAIL_DB_SPAN as f64) / 2.0..=RAIL_DB_SPAN as f64 / 2.0)
+                                        .speed(0.1)
+                                        .suffix(" dB"),
+                                )
+                                .changed()
+                            {
+                                self.apply_coalesced(
+                                    Command::SetGain { id, gain_db: db as f32 },
+                                    self.gesture_counter,
+                                );
+                            }
+                        } else {
+                            let mut op = c.opacity as f64;
+                            ui.label(tr(k::tl::menu::LEVEL));
+                            if ui
+                                .add(egui::DragValue::new(&mut op).range(0.0..=1.0).speed(0.01))
+                                .changed()
+                            {
+                                self.apply_coalesced(
+                                    Command::SetOpacity { id, opacity: op as f32 },
+                                    self.gesture_counter,
+                                );
+                            }
+                        }
+                    });
+                    ui.separator();
+                }
                 if ui.button(tr(k::tl::menu::COPY)).clicked() {
                     if !self.is_selected(id) {
                         self.select_only(id);
@@ -4882,6 +4977,32 @@ impl KtApp {
                 }
             }
             Some(CtxTarget::Morpher(mid)) => {
+                // сила слоя ЧИСЛОМ (Р.40 п.12, тот же второй путь, что у
+                // события). Тянуть линию уровня внутри морф-блока нельзя
+                // намеренно: служебная строка втрое ниже дорожки, и туда
+                // уже сходятся две кромки и перенос — третья зона в 5 px
+                // сделала бы промах правилом (п.1 чек-листа). Показываем
+                // силу на самом блоке, правим числом или в окне.
+                if let Some(m) =
+                    self.model.project().morphers.iter().find(|m| m.id == mid).cloned()
+                {
+                    ui.horizontal(|ui| {
+                        let mut v = m.strength;
+                        ui.label(tr(k::tl::menu::LEVEL));
+                        if ui
+                            .add(egui::DragValue::new(&mut v).range(0.0..=1.0).speed(0.01))
+                            .changed()
+                        {
+                            let mut ev = m.clone();
+                            ev.strength = v;
+                            self.apply_coalesced(
+                                Command::SetMorpher(ev),
+                                self.gesture_counter,
+                            );
+                        }
+                    });
+                    ui.separator();
+                }
                 let is_batch = self
                     .model
                     .project()

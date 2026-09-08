@@ -152,6 +152,7 @@ lane_name = "track name"
 
 # Таймлайн: контекстные меню клипа, метки, региона.
 [tl.menu]
+level = "Level"
 area_title = "Area: {0}"
 area_from_region = "Set range from the region"
 area_lanes_from_band = "Set tracks from the last selection"
