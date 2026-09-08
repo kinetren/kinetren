@@ -20,23 +20,41 @@
 не дублирует его в коде. Пин выгрузки — тройка «дата + число задач + sha256
 нормализованного `.jsonl`»; дрейф ловит `tracker-rank.py --check`.
 
-| Ключ | Движок | Запрос | Задач | Дамп от | sha256 |
-|---|---|---|---|---|---|
-| `kde-bugzilla` | bugzilla | `https://bugs.kde.org/rest/bug?product=kdenlive&limit=0` | 6346 | 2026-09-08 | `8b7608e9c1038d07` |
-| `kde-invent` | gitlab | `https://invent.kde.org/api/v4/projects/multimedia%2Fkdenlive/issues` | 2217 | 2026-09-08 | `94c2d87c52449f19` |
-| `pitivi` | gitlab | `https://gitlab.gnome.org/api/v4/projects/GNOME%2Fpitivi/issues` | 2672 | 2026-09-08 | `33e354f8d834b837` |
-| `shotcut` | github | `https://api.github.com/repos/mltframework/shotcut/issues` | 1368 | 2026-09-08 | `da38f084020cbacc` |
-| `mlt` | github | `https://api.github.com/repos/mltframework/mlt/issues` | 601 | 2026-09-08 | `3e1d460a91c3b21d` |
-| `otio` | github | `https://api.github.com/repos/AcademySoftwareFoundation/OpenTimelineIO/issues` | 680 | 2026-09-08 | `a6a428b122058c54` |
-| `olive` | github | `https://api.github.com/repos/olive-editor/olive/issues` | 1853 | 2026-09-08 | `78fd2ebfa068b81e` |
-| `losslesscut` | github | `https://api.github.com/repos/mifi/lossless-cut/issues` | 1920 | 2026-09-08 | `a078275dc3bd98fe` |
-| `flowblade` | github | `https://api.github.com/repos/jliljebl/flowblade/issues` | 981 | 2026-09-08 | `543779eee959c1f1` |
-| `openshot` | github | `https://api.github.com/repos/OpenShot/openshot-qt/issues` | 4907 | 2026-09-08 | `5fff45b0cdccee1d` |
-| `blender-vse` | gitea | `https://projects.blender.org/api/v1/repos/blender/blender/issues?labels=Interest%2FVideo%20Sequencer` | 3992 | 2026-09-08 | `bef31a931da614e2` |
-| `ffmpeg-trac` | trac | `https://trac.ffmpeg.org/query?status=!closed&format=csv&col=id&col=summary&col=type&col=component&col=priority&col=time&col=changetime&max=0` | 3095 | 2026-09-08 | `9fad84cabc92b2d3` |
+| Ключ | Движок | Запрос | Задач | Дамп от | sha256 | Корпус |
+|---|---|---|---|---|---|---|
+| `kde-bugzilla` | bugzilla | `https://bugs.kde.org/rest/bug?product=kdenlive&limit=0` | 6346 | 2026-09-08 | `8b7608e9c1038d07` | nle |
+| `kde-invent` | gitlab | `https://invent.kde.org/api/v4/projects/multimedia%2Fkdenlive/issues` | 2217 | 2026-09-08 | `94c2d87c52449f19` | nle |
+| `pitivi` | gitlab | `https://gitlab.gnome.org/api/v4/projects/GNOME%2Fpitivi/issues` | 2672 | 2026-09-08 | `33e354f8d834b837` | nle |
+| `shotcut` | github | `https://api.github.com/repos/mltframework/shotcut/issues` | 1368 | 2026-09-08 | `da38f084020cbacc` | nle |
+| `mlt` | github | `https://api.github.com/repos/mltframework/mlt/issues` | 601 | 2026-09-08 | `3e1d460a91c3b21d` | nle |
+| `otio` | github | `https://api.github.com/repos/AcademySoftwareFoundation/OpenTimelineIO/issues` | 680 | 2026-09-08 | `a6a428b122058c54` | nle |
+| `olive` | github | `https://api.github.com/repos/olive-editor/olive/issues` | 1853 | 2026-09-08 | `78fd2ebfa068b81e` | nle |
+| `losslesscut` | github | `https://api.github.com/repos/mifi/lossless-cut/issues` | 1920 | 2026-09-08 | `a078275dc3bd98fe` | nle |
+| `flowblade` | github | `https://api.github.com/repos/jliljebl/flowblade/issues` | 981 | 2026-09-08 | `543779eee959c1f1` | nle |
+| `openshot` | github | `https://api.github.com/repos/OpenShot/openshot-qt/issues` | 4907 | 2026-09-08 | `5fff45b0cdccee1d` | nle |
+| `blender-vse` | gitea | `https://projects.blender.org/api/v1/repos/blender/blender/issues?labels=Interest%2FVideo%20Sequencer` | 3992 | 2026-09-08 | `bef31a931da614e2` | nle |
+| `ffmpeg-trac` | trac | `https://trac.ffmpeg.org/query?status=!closed&format=csv&col=id&col=summary&col=type&col=component&col=priority&col=time&col=changetime&max=0` | 3095 | 2026-09-08 | `9fad84cabc92b2d3` | формат |
+| `syncthing` | github | `https://api.github.com/repos/syncthing/syncthing/issues` | 5946 | — | — | collab |
+| `opencue` | github | `https://api.github.com/repos/AcademySoftwareFoundation/OpenCue/issues` | 834 | — | — | collab |
+| `kitsu` | github | `https://api.github.com/repos/cgwire/kitsu/issues` | 741 | — | — | collab |
+| `ayon-core` | github | `https://api.github.com/repos/ynput/ayon-core/issues` | 527 | — | — | collab |
+| `flamenco` | gitea | `https://projects.blender.org/api/v1/repos/studio/flamenco/issues?type=issues` | 351 | — | — | collab |
 
-Числа в колонке «Задач» — оценка, снятая при планировании волны (07.09.2026); фактическое
-число после выгрузки записывается туда же вместе с датой и sha256.
+Числа в колонке «Задач» — оценка, снятая при планировании волны; фактическое число после
+выгрузки записывается туда же вместе с датой и sha256.
+
+**Колонка «Корпус» — не украшение, а знаменатель.** Корпуса между собой НЕ сравниваются:
+доли считаются внутри своего. `nle` — двенадцать монтажных программ, корпус третьей волны.
+`формат` — FFmpeg trac: у Trac нет ни голосов, ни счётчика комментариев, вес несравним.
+`collab` — пять проектов четвёртой волны, взятых потому, что у пяти редакторов ядра
+публичного трекера нет вовсе, а механики совместной работы обсуждаются счётно только здесь.
+`tracker-rank.py --corpus <имя>` (умолчание `nle`) читает эту колонку; раньше на её месте
+в скрипте стоял хардкод `OUT_OF_RANK`, то есть ровно то дублирование реестра в коде,
+которое этот файл сам себе запрещает.
+
+Колонка дописана ПОСЛЕДНЕЙ сознательно: `read_registry()` в `tracker-fetch.py` и
+`read_tracker_keys()` в `features-index.py` якорятся на первые три колонки, и перестановка
+сломает оба. `read_corpora()` ищет колонку по ЗАГОЛОВКУ, а не по позиции.
 
 ## Кого НЕ берём — и почему
 

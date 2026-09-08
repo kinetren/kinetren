@@ -201,6 +201,13 @@ def norm(tracker, engine, raw):
             comments=0, reactions=0, upvotes=0,
             cc=len(g("cc", []) or []), dupe_of=g("dupe_of"))
     if engine == "gitea":
+        # Gitea, как и GitHub, кладёт пул-реквесты в /issues. Фильтр был написан
+        # только для github, и в дамп blender-vse попало 100 PR (Р.42).
+        # ВНИМАНИЕ: проверять ЗНАЧЕНИЕ, а не наличие ключа. GitHub поле
+        # pull_request у задач не отдаёт вовсе, а Gitea отдаёт его равным null —
+        # проверка "in raw" отсеяла бы весь дамп до последней записи.
+        if g("pull_request") or "/pulls/" in (g("html_url") or ""):
+            return None
         labels = [l["name"] for l in g("labels", [])]
         return dict(
             tracker=tracker, id=g("number"), url=g("html_url"), title=g("title") or "",
@@ -209,11 +216,22 @@ def norm(tracker, engine, raw):
             labels=labels, severity_raw="", component="",
             comments=g("comments", 0) or 0, reactions=0, upvotes=0, cc=0, dupe_of=None)
     if engine == "trac":
+        # csv.DictReader молча разбирает ЛЮБОЙ текст: если ответ не тот CSV, что мы
+        # ждём, получаются строки с id=None и пустым summary. Дамп ffmpeg-trac был
+        # 3095 таких пустышек, и никто этого не заметил (Р.42).
+        # Trac отдаёт колонки с ЗАГЛАВНОЙ буквы (Summary, Created, Modified), хотя
+        # в запросе они строчные, и предваряет файл BOM — из-за чего первая колонка
+        # звалась "\ufeffid". Оба промаха давали пустые записи (Р.42).
+        raw = {k.lstrip("\ufeff").strip().lower(): v for k, v in raw.items() if k}
+        rid = raw.get("id")
+        if not rid or not (raw.get("summary") or "").strip():
+            return None
         return dict(
-            tracker=tracker, id=raw.get("id"),
-            url=f"https://trac.ffmpeg.org/ticket/{raw.get('id')}",
+            tracker=tracker, id=rid,
+            url=f"https://trac.ffmpeg.org/ticket/{rid}",
             title=raw.get("summary", ""), body="", state="open", closed_reason=None,
-            created=raw.get("time"), updated=raw.get("changetime"), closed=None,
+            created=raw.get("created") or raw.get("time"),
+            updated=raw.get("modified") or raw.get("changetime"), closed=None,
             labels=[raw.get("priority", "")], severity_raw=raw.get("type", "") or "",
             component=raw.get("component", "") or "",
             comments=0, reactions=0, upvotes=0, cc=0, dupe_of=None)
@@ -240,8 +258,31 @@ def fetch(key, info, budget):
         return n, True
 
     mode = "a" if st.get("next") else "w"
+    # Возобновление ДОПИСЫВАЕТ файл, а счётчик берётся из state — без дедупликации
+    # второй проход кладёт весь дамп повторно. Так blender-vse стал 3992 строками
+    # на 1996 задач, по две копии каждой (Р.42).
+    seen = set()
+    if mode == "a" and out_path(key).exists():
+        with open(out_path(key), encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    seen.add(json.loads(line).get("id"))
+                except json.JSONDecodeError:
+                    pass
     fh = open(out_path(key), mode, encoding="utf-8")
     total = st.get("count", 0)
+
+    def emit(r):
+        """Единственное место записи: отбрасывает None и повторы."""
+        nonlocal total
+        if not r or r.get("id") in seen:
+            return
+        seen.add(r.get("id"))
+        fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        total += 1
     hdrs = {}
     tok = token()
 
@@ -254,20 +295,21 @@ def fetch(key, info, budget):
             if code != 200:
                 print(f"    HTTP {code}"); return total, False
             for b in json.loads(body).get("bugs", []):
-                r = norm(key, engine, b)
-                if r:
-                    fh.write(json.dumps(r, ensure_ascii=False) + "\n"); total += 1
+                emit(norm(key, engine, b))
             st = {"done": True, "count": total}
 
         elif engine == "trac":
             code, body, _ = get(base, budget=budget)
             if code != 200:
                 print(f"    HTTP {code}"); return total, False
-            rd = csv.DictReader(io.StringIO(body.decode("utf-8", "replace")))
+            rd = csv.DictReader(io.StringIO(body.decode("utf-8-sig", "replace")))
+            cols = {(c or "").strip().lower() for c in (rd.fieldnames or [])}
+            if not {"id", "summary"} <= cols:
+                print(f"    ОТВЕТ НЕ ТОТ CSV: колонки {sorted(cols)[:6]} — "
+                      "ни одной записи не взято")
+                return total, False
             for row in rd:
-                r = norm(key, engine, row)
-                if r:
-                    fh.write(json.dumps(r, ensure_ascii=False) + "\n"); total += 1
+                emit(norm(key, engine, row))
             st = {"done": True, "count": total}
 
         else:
@@ -304,9 +346,7 @@ def fetch(key, info, budget):
                 if not items:
                     break
                 for it in items:
-                    r = norm(key, engine, it)
-                    if r:
-                        fh.write(json.dumps(r, ensure_ascii=False) + "\n"); total += 1
+                    emit(norm(key, engine, it))
                 page += 1
                 nxt = None
                 if engine == "github":
@@ -396,6 +436,12 @@ def main():
         print(f"[{k}] {reg[k]['engine']}", flush=True)
         n, done = fetch(k, reg[k], budget)
         print(f"    {n} записей, {'готов' if done else 'НЕ ДОКАЧАН'}", flush=True)
+        # Дамп, законченный нулём, — почти всегда сломанный разбор, а не пустой
+        # трекер. Фильтр пул-реквестов, написанный как «ключ есть», однажды отсёк
+        # весь gitea до последней записи, и это прошло молча (Р.42).
+        if done and n == 0:
+            print("    ВНИМАНИЕ: ноль записей при успешном ответе — почти наверняка "
+                  "сломан разбор, а не пустой трекер", flush=True)
         if not done:
             incomplete += 1
     print(f"запросов израсходовано: {budget.used}")

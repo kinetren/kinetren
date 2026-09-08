@@ -42,7 +42,11 @@ ROOT = Path(__file__).resolve().parents[2]
 TRACKERS = ROOT / "docs" / "features" / "_trackers.md"
 CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "kinotrain" / "trackers"
 
-OUT_OF_RANK = {"ffmpeg-trac"}  # знаменатель несравним, см. docstring
+# Корпус читается из колонки «Корпус» реестра, а НЕ из кода: раньше здесь стоял
+# OUT_OF_RANK = {"ffmpeg-trac"}, и это ровно то дублирование реестра в скрипте,
+# которое _trackers.md сам себе запрещает. Корпуса между собой не сравниваются —
+# у них разные знаменатели (Р.42).
+DEFAULT_CORPUS = "nle"
 
 WISH_LABELS = re.compile(r"enhancement|feature|idea|rfe|type/design|type/to do", re.I)
 BUG_LABELS = re.compile(r"\bbug\b|crash|regression|type/bug|defect", re.I)
@@ -67,12 +71,39 @@ def read_lexicon():
     return out
 
 
-def load():
-    """{ключ: [записи]} из кэша."""
+def read_corpora():
+    """{ключ: корпус} из колонки «Корпус» реестра.
+
+    Разбор по ЗАГОЛОВКУ, а не по позиции: колонка дописана последней, и
+    read_registry()/read_tracker_keys() якорятся на первые три — их порядок
+    трогать нельзя.
+    """
+    out, idx = {}, None
+    for line in TRACKERS.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("|"):
+            idx = None
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if "Ключ" in cells and "Корпус" in cells:
+            idx = cells.index("Корпус")
+            continue
+        if idx is None or len(cells) <= idx:
+            continue
+        k = re.match(r"^`([a-z0-9-]+)`$", cells[0])
+        if k:
+            out[k.group(1)] = cells[idx].strip("` ")
+    return out
+
+
+def load(corpus=None):
+    """{ключ: [записи]} из кэша; corpus=None — все дампы без разбора."""
     data = {}
     if not CACHE.exists():
         return data
+    cor = read_corpora()
     for p in sorted(CACHE.glob("*.jsonl")):
+        if corpus is not None and cor.get(p.stem, DEFAULT_CORPUS) != corpus:
+            continue
         rows = []
         with open(p, encoding="utf-8") as f:
             for line in f:
@@ -173,7 +204,7 @@ def match(r, rx):
 
 
 def themes_table(data, lex, only_wish=False):
-    rank = [k for k in data if k not in OUT_OF_RANK]
+    rank = list(data)  # корпус уже отфильтрован в load()
     rows = []
     for name, rx in lex:
         per, tot, wish, bug, opn, fixed, closed, dup, w = {}, 0, 0, 0, 0, 0, 0, 0, 0.0
@@ -207,7 +238,7 @@ def themes_table(data, lex, only_wish=False):
 
 
 def coverage(data, lex):
-    rank = [k for k in data if k not in OUT_OF_RANK]
+    rank = list(data)  # корпус уже отфильтрован в load()
     tot = sum(len(data[k]) for k in rank)
     hit = 0
     for k in rank:
@@ -221,24 +252,42 @@ def main():
     args = sys.argv[1:]
     mode = args[0] if args else "--themes"
     lex = read_lexicon()
-    data = weights(load())
+    corpus = args[args.index("--corpus") + 1] if "--corpus" in args else DEFAULT_CORPUS
+    raw_all = load(None)
+    data = weights(load(None if mode == "--check" else corpus))
     if not data:
-        sys.exit(f"дампов нет в {CACHE} — сначала tracker-fetch.py --all")
+        known = sorted(set(read_corpora().values())) or ["(колонки «Корпус» в реестре нет)"]
+        sys.exit(f"в корпусе «{corpus}» дампов нет; есть корпуса: {', '.join(known)}")
 
     if mode == "--check":
+        cor = read_corpora()
         print(f"{len(data)} дампов, {sum(len(v) for v in data.values())} записей, "
               f"{len(lex)} тем в лексиконе")
+        bad = 0
         for k in sorted(data):
             p = CACHE / f"{k}.jsonl"
             h = hashlib.sha256(p.read_bytes()).hexdigest()[:16]
-            print(f"  {k:<14} {len(data[k]):>6} записей  sha256:{h}")
-        return 0
+            rows = raw_all.get(k, [])
+            empty = sum(1 for r in rows if not (r.get("title") or "").strip())
+            dup = len(rows) - len({r.get("id") for r in rows})
+            flag = ""
+            # Дамп ffmpeg-trac был 3095 записями с id=None и пустым title и прошёл
+            # молча. Проверка, которой нет, — не проверка (Р.42).
+            if rows and empty / len(rows) > 0.05:
+                flag += f"  ПУСТЫХ {100*empty/len(rows):.0f}%"; bad += 1
+            if dup:
+                flag += f"  ПОВТОРОВ {dup}"; bad += 1
+            print(f"  {k:<14} {len(rows):>6} записей  {cor.get(k,'?'):<8}"
+                  f"sha256:{h}{flag}")
+        if bad:
+            print(f"\nдампов с браком: {bad} — перевыгрузить "
+                  "(tracker-fetch.py удалит state и начнёт заново)")
+        return 1 if bad else 0
 
     if mode in ("--themes", "--wishes", "--table"):
         rows, rank = themes_table(data, lex, only_wish=(mode == "--wishes"))
         hit, tot = coverage(data, lex)
-        print(f"# трекеров в рейтинге: {len(rank)} ({', '.join(rank)}); "
-              f"вне рейтинга: {', '.join(OUT_OF_RANK & set(data))}")
+        print(f"# корпус «{corpus}»: {len(rank)} трекеров ({', '.join(rank)})")
         print(f"# покрытие лексикона: {hit}/{tot} = {100*hit/max(1,tot):.1f}%"
               + ("  (только запросы)" if mode == "--wishes" else ""))
         print()
@@ -284,7 +333,7 @@ def main():
         return 0
 
     if mode == "--unmatched":
-        rank = [k for k in data if k not in OUT_OF_RANK]
+        rank = list(data)
         un = [r for k in rank for r in data[k]
               if not any(match(r, rx) for _, rx in lex)]
         hit, tot = coverage(data, lex)

@@ -55,6 +55,23 @@ TEMPLATE = FEATURES / "_template.md"
 TRACKERS = FEATURES / "_trackers.md"
 SIGNAL_CAT = "resilience"
 
+# Четвёртая волна (Р.42, категория collab/). Тема — облачные возможности чужих
+# редакторов, а сети у нас нет ни в одном виде: 0 совпадений по
+# std::net|TcpStream|reqwest|hyper|tokio во всём src/ и ни одного HTTP/TLS-крейта
+# среди 505 пакетов Cargo.lock. Значит вывод «сети нет, поэтому не берём» известен
+# ДО разведки и написался бы сам собой сорок пять раз. Заметка обязана разделить
+# фишку надвое: что остаётся на ОДНОЙ машине — и чем именно платят за вторую половину.
+SERVICES = FEATURES / "_services.md"
+OFFLINE_CAT = "collab"
+OFFLINE_SHAPES = ("ОСТАЁТСЯ", "ВЫРОЖДАЕТСЯ", "НЕ ОСТАЁТСЯ")
+OFFLINE_TAIL_MIN = 80  # считается БЕЗ якоря: иначе длинный путь сам добирает минимум
+# Закрытый словарь «чего у нас нет сверх сокета». Слова «сеть» здесь нет
+# СОЗНАТЕЛЬНО: её отсутствие — не находка.
+NET_COSTS = ("учётная запись", "общие часы", "журнал правок", "права доступа",
+             "проект-как-база", "хранилище между проектами", "внешний исполнитель",
+             "адрес материала")
+ANCHOR_RE = re.compile(r"^(src/[\w./-]+?)(?::\d+(?:-\d+)?|::[\w:]+)?$")
+
 
 def parse_front(text):
     """Frontmatter → dict. Значение: список [a, b], null, либо строка."""
@@ -127,6 +144,29 @@ def load_notes():
                   if p.name != "README.md" and not p.name.startswith("_"))
 
 
+def read_service_keys():
+    """Ключи из таблицы «## Реестр» в _services.md.
+
+    ОТДЕЛЬНЫЙ файл, а не третья таблица _editors.md: read_editor_keys() берёт любую
+    строку файла со слагом в первой клетке, и `frame-io` молча стал бы законным
+    значением поля editors: — то есть сервис попал бы в таблицу, где живёт вердикт.
+    """
+    if not SERVICES.exists():
+        return set()
+    m = re.search(r"## Реестр(.*?)(?=\n## |\Z)", SERVICES.read_text(encoding="utf-8"), re.S)
+    return set(re.findall(r"^\|\s*`([a-z0-9.-]+)`\s*\|", m.group(1), re.M)) if m else set()
+
+
+def anchor_ok(anchor):
+    """Правило 8 механически: адрес — это код, который есть СЕГОДНЯ.
+
+    Первая в базе проверка адреса ПО ДЕРЕВУ, а не по форме: якорь на
+    src/libs/kt-collab/src/session.rs — уже схема реализации, и она не соберётся.
+    """
+    m = ANCHOR_RE.match(anchor.strip())
+    return bool(m) and (ROOT / m.group(1)).exists()
+
+
 def check():
     errors, notes = [], []
     cats = read_categories()
@@ -134,6 +174,9 @@ def check():
     seen_ids = {}
     help_promises = {}
     signal_filters = {}
+    service_keys = read_service_keys()
+    offline_anchors = {}
+    offline_shapes_seen = {}
     tracker_keys = read_tracker_keys()
     today = datetime.date.today()
 
@@ -304,6 +347,69 @@ def check():
             elif "src/" not in addr[0]:
                 bad("«АДРЕС:» без пути src/… — привязка к нашему коду не названа")
 
+        # --- четвёртая волна: категория collab/ (Р.42) ------------------
+        if len(parts) == 3 and parts[0] == OFFLINE_CAT:
+            svc = front.get("services") or []
+            if not svc:
+                bad("категория collab/ заведена под облачные возможности: поле "
+                    "services: обязано быть непустым — заметка обязана назвать, "
+                    "что именно стоит по ту сторону сети")
+            for sv in svc:
+                if sv not in service_keys:
+                    bad(f"сервис «{sv}» не объявлен в _services.md")
+
+            off = [l.strip() for l in fits.splitlines()
+                   if l.strip().startswith("БЕЗ СЕТИ:")]
+            if not off:
+                bad("«Как ложится»: нет строки «БЕЗ СЕТИ:» — «у нас нет сети, "
+                    "поэтому не берём» выводом волны не считается")
+            else:
+                tail = off[0].split(":", 1)[1].strip()
+                shape = next((x for x in OFFLINE_SHAPES if tail.startswith(x)), None)
+                if shape is None:
+                    bad("«БЕЗ СЕТИ:» без маркера — нужен ОСТАЁТСЯ / ВЫРОЖДАЕТСЯ / "
+                        "НЕ ОСТАЁТСЯ первым словом")
+                else:
+                    offline_shapes_seen.setdefault(shape, []).append(str(rel))
+                    a = re.search(r"`([^`]+)`", tail)
+                    if not a:
+                        bad("«БЕЗ СЕТИ:» без якоря в обратных кавычках — остаток "
+                            "не адресуем (якорь обязателен и в ветке НЕ ОСТАЁТСЯ: "
+                            "там он указывает на место, где отсутствие видно)")
+                    elif not anchor_ok(a.group(1)):
+                        bad(f"«БЕЗ СЕТИ:» якорь «{a.group(1)}» не указывает на "
+                            "существующий файл src/… — заметка проектирует "
+                            "реализацию (правило 8), а не описывает наш код")
+                    else:
+                        offline_anchors.setdefault(a.group(1), []).append(str(rel))
+                    prose = re.sub(r"`[^`]*`", "", tail[len(shape):]).strip(" —–-:")
+                    if len(prose) < OFFLINE_TAIL_MIN:
+                        bad(f"«БЕЗ СЕТИ: {shape}» — прозы {len(prose)} символов при "
+                            f"минимуме {OFFLINE_TAIL_MIN}: не сказано, ЧТО именно "
+                            "остаётся (или где видно, что не остаётся ничего)")
+
+            price = [l.strip() for l in fits.splitlines()
+                     if l.strip().startswith("ЦЕНА СЕТИ:")]
+            if not price:
+                bad("«Как ложится»: нет строки «ЦЕНА СЕТИ:» — не названо, за что "
+                    "именно платят той стороной")
+            else:
+                head = price[0]
+                inv = [int(x) for x in re.findall(r"инвариант\w*\s+(\d{1,2})", head)]
+                named = [c for c in NET_COSTS if c in head]
+                if not inv and not named:
+                    bad("«ЦЕНА СЕТИ:» обязана назвать инвариант N либо механизм из "
+                        f"словаря: {', '.join(NET_COSTS)}. Слова «сеть» в словаре "
+                        "нет: её отсутствие известно и без заметки")
+                declared = [int(x) for x in (front.get("invariants") or [])
+                            if str(x).isdigit()]
+                for n in inv:
+                    if not 1 <= n <= 12:
+                        bad(f"«ЦЕНА СЕТИ:»: инварианта {n} не существует, их двенадцать")
+                    elif n not in declared:
+                        bad(f"«ЦЕНА СЕТИ:» называет инвариант {n}, а в шапке "
+                            f"invariants: {declared} — проза и шапка разошлись")
+
         notes.append((front, rel))
 
     # Обещание, повторённое дважды, — это дублированный вывод.
@@ -313,6 +419,22 @@ def check():
                           f"заметках ({', '.join(where)}) — вывод дублируется")
 
     # Один и тот же фильтр в двух заметках — это одна находка, посчитанная дважды.
+    # Остаток, названный дважды, — это один и тот же остаток.
+    for a, where in sorted(offline_anchors.items()):
+        if len(where) > 1:
+            errors.append(f"БЕЗ СЕТИ: якорь «{a}» стоит в {len(where)} заметках "
+                          f"({', '.join(where)}) — остаток задвоен")
+
+    # Балансир уровня КАТЕГОРИИ. Где всё ОСТАЁТСЯ — выдуманное локальное ядро;
+    # где ничего не остаётся — тот самый брак, ради которого правило заведено.
+    n_collab = sum(1 for f, _ in notes
+                   if str(f.get("category", "")).startswith(OFFLINE_CAT + "/"))
+    if n_collab >= 10:
+        for sh in OFFLINE_SHAPES:
+            if sh not in offline_shapes_seen:
+                errors.append(f"collab/: {n_collab} заметок и ни одной с маркером "
+                              f"«{sh}» — классификатор выродился, проверь ось")
+
     for f, where in sorted(signal_filters.items()):
         if len(where) > 1:
             errors.append(f"СИГНАЛ: фильтр «{f}» повторяется в {len(where)} заметках "
@@ -324,6 +446,9 @@ def check():
     for e in (tfront or {}).get("editors") or []:
         if e not in editor_keys:
             errors.append(f"_template.md: редактор «{e}» не объявлен в _editors.md")
+    for sv in (tfront or {}).get("services") or []:
+        if sv not in service_keys:
+            errors.append(f"_template.md: сервис «{sv}» не объявлен в _services.md")
 
     # Таблица покрытия в README не должна врать.
     actual = {}
