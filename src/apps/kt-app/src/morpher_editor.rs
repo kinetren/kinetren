@@ -258,6 +258,8 @@ impl KtApp {
             }
         };
         let mut seek_to: Option<Tick> = None;
+        // просьбы про ось: замок один на программу (Р.40 п.15)
+        let mut axis_req = crate::automation::AxisReq::default();
         let mut need_selection = false;
         // всё, что нужно автоматизации слоя (Р.38 п.13)
         let playhead = self.player.transport.playhead();
@@ -495,7 +497,7 @@ impl KtApp {
                             let to_tl = move |t: kt_time::Tick| kt_time::Tick(start.0 + t.0);
                             let to_cur = move |t: kt_time::Tick| kt_time::Tick(t.0 - start.0);
                             let view = ed.auto_views.entry(i).or_default();
-                            let (c, auto_seek) = crate::fx_editor::draw_auto_for(
+                            let r = crate::fx_editor::draw_auto_for(
                                 ui,
                                 f,
                                 &mut slot_auto,
@@ -510,16 +512,18 @@ impl KtApp {
                                     to_timeline: &to_tl,
                                     to_curve: &to_cur,
                                     frame_step,
+                                    linked: self.auto_axis_linked,
                                 },
                                 playhead,
                                 &mut env_clip,
                                 (ed.id.0, i),
                                 &mut hover_out,
                             );
-                            slot_changed |= c;
-                            if let Some(t) = auto_seek {
+                            slot_changed |= r.changed;
+                            if let Some(t) = r.seek {
                                 seek_to = Some(t);
                             }
+                            axis_req = axis_req.merge(&r);
                         }
                         if slot_changed {
                             if let Some(a) = auto.get_mut(i) {
@@ -594,6 +598,8 @@ impl KtApp {
             // невозможность действия — ошибкой, а не блёклой строкой (п.16 р.28)
             self.note(tr(k::mrph::NEED_SELECTION));
         }
+        // просьбы графика про ОСЬ применяет одно место (Р.40 п.15)
+        self.apply_axis_req(axis_req);
         if let Some(t) = seek_to {
             // клик по чипу подматывает таймлайн к этому месту
             self.player.seek(t);

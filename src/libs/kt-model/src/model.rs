@@ -127,6 +127,12 @@ pub enum Command {
         new_id: ClipId,
         new_group: Option<GroupId>,
     },
+    /// Опция «трим растягивает анимацию вместе с событием» (Р.40).
+    /// Выключена по умолчанию: ключ остаётся на своём кадре материала,
+    /// куда бы ни ехал край события.
+    SetTrimStretchesAuto {
+        on: bool,
+    },
     SetGain {
         id: ClipId,
         gain_db: f32,
@@ -647,7 +653,9 @@ impl TimelineModel {
                     return Err(CommandError::MorpherNotFound(*id));
                 }
             }
-            Command::SetLaneOrder { .. } | Command::InsertMorphLane { .. } => {}
+            Command::SetLaneOrder { .. }
+            | Command::InsertMorphLane { .. }
+            | Command::SetTrimStretchesAuto { .. } => {}
             Command::AddArea(a) => {
                 if a.name.trim().is_empty() {
                     return Err(CommandError::AreaUnnamed);
@@ -802,6 +810,9 @@ impl TimelineModel {
             // Реверс (п.16): у reversed клипа source_in живёт «с другого
             // конца» — TrimStart его НЕ трогает, TrimEnd сдвигает.
             Command::TrimStart { id, new_start } => {
+                // опция «растягивать анимацию вместе с событием» (Р.40):
+                // ВЫКЛЮЧЕНА по умолчанию — ключ остаётся на своём кадре
+                let stretch = p.trim_stretches_auto;
                 let group = p.clips.iter().find(|c| c.id == id).and_then(|c| c.link_group);
                 for c in &mut p.clips {
                     if c.id != id && (group.is_none() || c.link_group != group) {
@@ -812,10 +823,16 @@ impl TimelineModel {
                     // геометрия и материал — ОДНИМ правилом (Р.39):
                     // у растянутого клипа `source_in` едет по интегралу
                     // скорости, а не на длину куска
+                    let (span_old, anchor_old) = (crate::clip_material_span(c), c.source_in);
                     *c = clip_slice(c, TickRange::new(ns, c.start + c.duration), c.id);
+                    if stretch {
+                        let span_new = crate::clip_material_span(c);
+                        crate::stretch_auto_span(c, anchor_old, span_old, span_new);
+                    }
                 }
             }
             Command::TrimEnd { id, new_end } => {
+                let stretch = p.trim_stretches_auto;
                 let group = p.clips.iter().find(|c| c.id == id).and_then(|c| c.link_group);
                 for c in &mut p.clips {
                     if c.id != id && (group.is_none() || c.link_group != group) {
@@ -823,7 +840,12 @@ impl TimelineModel {
                     }
                     let min_end = c.start + MIN_CLIP_DURATION;
                     let ne = Tick(new_end.0.max(min_end.0).min(trim_max_end(c).0));
+                    let (span_old, anchor_old) = (crate::clip_material_span(c), c.source_in);
                     *c = clip_slice(c, TickRange::new(c.start, ne), c.id);
+                    if stretch {
+                        let span_new = crate::clip_material_span(c);
+                        crate::stretch_auto_span(c, anchor_old, span_old, span_new);
+                    }
                 }
             }
             Command::Split { id, at, new_id, new_group } => {
@@ -853,6 +875,7 @@ impl TimelineModel {
                     }
                 }
             }
+            Command::SetTrimStretchesAuto { on } => p.trim_stretches_auto = on,
             Command::SetGain { id, gain_db } => Self::clip_mut_on(p, id).gain_db = gain_db,
             Command::SetOpacity { id, opacity } => {
                 Self::clip_mut_on(p, id).opacity = opacity.clamp(0.0, 1.0)

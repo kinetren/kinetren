@@ -159,6 +159,9 @@ impl KtApp {
         // окно главного таймлайна: график автоматизации показывает то же
         // самое, пока не сняли замок (Р.38 п.14)
         let tl_view = self.tl_view();
+        // замок оси один на программу (Р.40 п.15)
+        let axis_linked = self.auto_axis_linked;
+        let mut axis_req = crate::automation::AxisReq::default();
         let mut open = ed.open;
         let members = ed.members.clone();
         egui::Window::new(title)
@@ -277,8 +280,9 @@ impl KtApp {
                                     };
                                     let actx = crate::automation::clip_ctx(
                                         &clip, f, frame_step, &to_tl, &to_mat, tl_view,
+                                        axis_linked,
                                     );
-                                    let (c, s) = draw_auto_for(
+                                    let r = draw_auto_for(
                                         ui,
                                         f,
                                         curves,
@@ -289,10 +293,11 @@ impl KtApp {
                                         (id.0, sel),
                                         &mut hover_out,
                                     );
-                                    auto_ch = c;
-                                    if let Some(t) = s {
+                                    auto_ch = r.changed;
+                                    if let Some(t) = r.seek {
                                         seek = Some(t);
                                     }
+                                    axis_req = axis_req.merge(&r);
                                 }
                                 ch.auto |= auto_ch;
                             }
@@ -323,6 +328,8 @@ impl KtApp {
         if let Some(h) = hover_out {
             self.hover_hint = Some(h); // подсказка едет в строку состояния
         }
+        // просьбы графика про ОСЬ применяет одно место (Р.40 п.15)
+        self.apply_axis_req(axis_req);
         if let Some(t) = seek {
             // «курсор внутри мини-таймлайна двигает курсор в основном
             // таймлайне, чтобы сразу видеть к чему относится» (Р.33 п.5)
@@ -374,8 +381,12 @@ impl KtApp {
 
 /// Секция автоматизации слота: выбор кривых, копипаст огибающих, ключ по
 /// курсору — и сам виджет (`automation::draw`: график ↔ таблица).
-/// Возвращает (было ли изменение, куда двинуть главный курсор).
 /// У слота без автоматизируемых параметров (Mirror) не рисуется вовсе.
+///
+/// Возвращает `AutoResult` целиком (Р.40 п.15): кроме «изменилось» и «куда
+/// двинуть курсор» в нём едут просьбы про ось — переключить замок и
+/// подвинуть окно ГЛАВНОГО таймлайна. Пара `(bool, Option<Tick>)` их
+/// молча теряла бы, а замок теперь один на всю программу.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_auto_for(
     ui: &mut egui::Ui,
@@ -387,13 +398,13 @@ pub(crate) fn draw_auto_for(
     env_clip: &mut Option<kt_model::ops::EnvelopeBlock>,
     id: impl std::hash::Hash + std::fmt::Debug + Copy,
     hover_out: &mut Option<String>,
-) -> (bool, Option<kt_time::Tick>) {
+) -> crate::automation::AutoResult {
     let (src_in, mat_end) = (ctx.range.0, ctx.range.1.0);
     // только Smooth-параметры: структурные (длина линий реверба) кривой
     // не подлежат — их смена пересобирает DSP (Р.33)
     let specs: Vec<&kt_model::ParamSpec> = f.auto_params().collect();
     if specs.is_empty() {
-        return (false, None);
+        return crate::automation::AutoResult::default();
     }
     let mut changed = false;
     ui.separator();
@@ -485,23 +496,18 @@ pub(crate) fn draw_auto_for(
             }
             changed = true;
         }
-        // ключ по курсору: позиция считается ТЕМ ЖЕ правилом, что у
-        // рендера — `clip_material_at`. Скорость на ось НЕ влияет (Р.37):
-        // иначе ось кривой rate зависела бы от самой кривой rate.
-        if !curves.is_empty() && ui.button(tr(k::fx::KF_AT_CURSOR)).clicked() {
-            let at = (ctx.to_curve)(playhead);
-            for c in curves.iter_mut() {
-                let v = kt_model::curve_value(&c.keys, c.ease, at);
-                c.keys.retain(|kf| kf.t != at);
-                c.keys.push(kt_model::AutoKey { t: at, v });
-                c.keys.sort_by_key(|kf| kf.t.0);
-            }
-            changed = true;
-        }
+        // Кнопка «+ keyframe at playhead» отсюда УБРАНА (Р.40 п.18,
+        // дословно: «а еще получается "+keyframe at playhead" кнопка
+        // лишняя т.к. есть в таймлайне автоматизации "+"»). Её
+        // единственное отличие от «+» — она писала во ВСЕ кривые слота, о
+        // чём подпись не говорила ни слова. Это поведение переехало на
+        // «+» модификатором Ctrl, и подсказка о нём говорит (правило 18).
     });
     // единый виджет: график ↔ таблица (Р.33 С3)
-    let res = crate::automation::draw(ui, ("auto", id), &ctx, curves, view, playhead, hover_out);
-    (changed || res.changed, res.seek)
+    let mut res =
+        crate::automation::draw(ui, ("auto", id), &ctx, curves, view, playhead, hover_out);
+    res.changed |= changed;
+    res
 }
 pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
     match f {

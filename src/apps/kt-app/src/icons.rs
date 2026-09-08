@@ -18,6 +18,10 @@ pub const LANE_UP: &str = "\u{E522}"; // arrow-fat-line-up
 pub const LANE_DOWN: &str = "\u{E51C}"; // arrow-fat-line-down
 pub const MINUS: &str = "\u{E32A}";
 pub const PLUS: &str = "\u{E3D4}";
+/// «Ключ ДО курсора» / «ключ ПОСЛЕ курсора» (Р.40 п.18): ставят ключ на
+/// соседний кадр, закрепляя предыдущий или следующий участок кривой.
+pub const KEY_BEFORE: &str = "\u{E062}"; // arrow-line-left
+pub const KEY_AFTER: &str = "\u{E064}"; // arrow-line-right
 pub const REGION_IN: &str = "\u{E85E}"; // brackets-square
 pub const REGION_OUT: &str = "\u{E862}"; // brackets-angle
 pub const CLEAR: &str = "\u{E4F6}"; // x

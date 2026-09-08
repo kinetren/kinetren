@@ -32,7 +32,10 @@ pub enum AutoMode {
 }
 
 /// Состояние виджета (живёт в окне, не в модели).
-#[derive(Debug, Clone)]
+///
+/// Замка среди полей больше нет: он один на всю программу и живёт в
+/// `UiState` (Р.40 п.15) — окно его только читает через `AutoCtx`.
+#[derive(Debug, Clone, Default)]
 pub struct AutoView {
     pub mode: AutoMode,
     /// Выбранный ключ: (кривая, индекс).
@@ -41,12 +44,6 @@ pub struct AutoView {
     pub drag: Option<(usize, usize)>,
     /// Кривая, в которую кладёт ключ клик по пустому месту графика.
     pub active: usize,
-    /// Ось времени графика СВЯЗАНА с окном главного таймлайна (Р.38 п.14,
-    /// дословно: «в таймлайне автоматизации я не понимаю как зазумится»).
-    /// По умолчанию включено — решение пользователя: зум один на оба, и
-    /// специально настраивать программу, чтобы она вела себя нормально, не
-    /// нужно (правило 4 чек-листа). Колесо над графиком замок снимает.
-    pub linked: bool,
     /// Собственное окно оси (домен кривой), когда замок снят.
     pub win: Option<(i64, i64)>,
     /// Незакоммиченный ввод времени в таблице: (кривая, ключ, секунды).
@@ -59,35 +56,27 @@ pub struct AutoView {
     pub drag_win: Option<(usize, f64, f64)>,
 }
 
-impl Default for AutoView {
-    fn default() -> Self {
-        AutoView {
-            mode: AutoMode::default(),
-            sel: None,
-            drag: None,
-            active: 0,
-            // замок ВКЛЮЧЁН по умолчанию (решение пользователя, п.14)
-            linked: true,
-            win: None,
-            t_edit: None,
-            drag_win: None,
-        }
-    }
-}
-
 impl AutoView {
-    /// Видимое окно оси времени в домене кривой. Связанный график
-    /// показывает то же, что главный таймлайн; отвязанный — своё окно.
-    /// И то и другое клампится диапазоном носителя: за его пределами
-    /// кривой нет, и пустое поле только путает.
+    /// Видимое окно оси времени в домене кривой.
+    ///
+    /// **Связанный график показывает окно таймлайна КАК ЕСТЬ** (Р.40).
+    /// Раньше оно клампилось диапазоном носителя — и в этом был дефект,
+    /// на который пожаловался пользователь: «когда я оттягиваю левый край
+    /// события — у меня ключи автоматизации тоже сдвигаются к началу».
+    /// Ключ НЕ двигался (`clip_slice` его не трогает, он остаётся на том
+    /// же кадре материала и в том же моменте таймлайна) — врала ОСЬ: она
+    /// нормировалась на событие, событие укорачивалось, и ключ переезжал,
+    /// скажем, с половины графика на треть. Чинится осью, а не данными.
+    ///
+    /// Отвязанный график по-прежнему живёт своим окном, а без окна
+    /// показывает носитель целиком.
     pub fn axis(&self, ctx: &AutoCtx<'_>) -> (i64, i64) {
         let (r0, r1) = (ctx.range.0.0, ctx.range.1.0.max(ctx.range.0.0 + 1));
-        let (a, b) = match (self.linked, self.win) {
+        let (a, b) = match (ctx.linked, self.win) {
             (true, _) => (ctx.view.0.0, ctx.view.1.0),
-            (false, Some(w)) => w,
+            (false, Some(w)) => (w.0.clamp(r0, r1), w.1.clamp(r0, r1)),
             (false, None) => (r0, r1),
         };
-        let (a, b) = (a.clamp(r0, r1), b.clamp(r0, r1));
         // окно уже кадра бессмысленно и делает деление на ноль
         if b - a < ctx.frame_step.max(1) { (r0, r1) } else { (a, b) }
     }
@@ -117,6 +106,11 @@ pub struct AutoCtx<'a> {
     /// Окно ГЛАВНОГО таймлайна в домене кривой — то, что график
     /// показывает при включённом замке (Р.38 п.14).
     pub view: (Tick, Tick),
+    /// Замок оси. ОДИН НА ВСЮ ПРОГРАММУ и живёт в `UiState` (Р.40 п.15):
+    /// раньше он был полем `AutoView` и умирал вместе с окном. Виджет его
+    /// только ЧИТАЕТ, а просьбу переключить возвращает в `AutoResult` —
+    /// иначе одно окно молча правило бы состояние всех остальных.
+    pub linked: bool,
     /// Домен кривой → тик таймлайна (мини-таймлайн двигает главный курсор).
     pub to_timeline: &'a dyn Fn(Tick) -> Tick,
     /// Тик таймлайна → домен кривой (позиция курсора на графике).
@@ -157,6 +151,7 @@ pub fn clip_ctx<'a>(
     to_tl: &'a dyn Fn(Tick) -> Tick,
     to_mat: &'a dyn Fn(Tick) -> Tick,
     tl_view: (Tick, Tick),
+    linked: bool,
 ) -> AutoCtx<'a> {
     AutoCtx {
         specs: fx.param_specs(),
@@ -165,6 +160,7 @@ pub fn clip_ctx<'a>(
         to_timeline: to_tl,
         to_curve: to_mat,
         frame_step,
+        linked,
     }
 }
 
@@ -173,6 +169,32 @@ pub struct AutoResult {
     pub changed: bool,
     /// Куда двинуть ГЛАВНЫЙ курсор (жест по линейке мини-таймлайна).
     pub seek: Option<Tick>,
+    /// Просьба переключить замок оси (Р.40 п.15). Пишет её ТОЛЬКО кнопка
+    /// замка: «надо сделать так чтобы его надо было СНЯТЬ чтобы
+    /// отключилась синхронизация таймлайнов» — дословно.
+    pub set_linked: Option<bool>,
+    /// Просьба изменить окно ГЛАВНОГО таймлайна: при ВКЛЮЧЁННОМ замке
+    /// колесо над графиком зумит и панорамирует именно его — оси остаются
+    /// синхронными, а жест не пропадает.
+    pub set_view: Option<(Tick, Tick)>,
+}
+
+/// Просьбы виджета про ОСЬ, собранные с нескольких графиков одного окна
+/// (Р.40 п.15). Замок один на программу, поэтому окно с несколькими
+/// слотами обязано слить их и применить один раз.
+#[derive(Default, Clone, Copy)]
+pub struct AxisReq {
+    pub set_linked: Option<bool>,
+    pub set_view: Option<(Tick, Tick)>,
+}
+
+impl AxisReq {
+    pub fn merge(self, r: &AutoResult) -> Self {
+        AxisReq {
+            set_linked: r.set_linked.or(self.set_linked),
+            set_view: r.set_view.or(self.set_view),
+        }
+    }
 }
 
 fn secs(t: Tick) -> f64 {
@@ -294,20 +316,43 @@ fn toolbar(
         }
         ui.separator();
         // ---- ключи ----
+        //
+        // ТРИ кнопки (Р.40 п.18, дословно: «не хватает по мимо кнопки
+        // установки ключа - двух кнопок ключ ДО и ключ ПОСЛЕ текущей
+        // позиции (чтобы зафиксировать предыдущие и следующие
+        // параметры)»). «До» и «после» ставят ключ на СОСЕДНИЙ КАДР со
+        // значением кривой в этой точке: форма кривой не меняется, но
+        // участок слева (или справа) от курсора становится закреплён — и
+        // дальнейшая правка ключа под курсором его уже не тянет.
+        //
+        // Ctrl — во ВСЕ кривые слота сразу. Это бывшая кнопка
+        // «+ keyframe at playhead» из окна FX: она отличалась от «+»
+        // ровно этим и ни словом об этом не говорила (правило 18:
+        // название пункта говорит, ЧТО произойдёт).
         let ph = (ctx.to_curve)(playhead);
-        if crate::app::hint_into(
-            hover,
-            ui.small_button(crate::icons::PLUS),
-            tr(k::fx::KEY_ADD_HINT),
-        )
-        .clicked()
-        {
-            let c = &mut curves[view.active];
-            let v = kt_model::curve_value(&c.keys, c.ease, ph);
-            c.keys.retain(|k| k.t != ph);
-            c.keys.push(kt_model::AutoKey { t: ph, v });
-            c.keys.sort_by_key(|k| k.t.0);
-            view.sel = c.keys.iter().position(|k| k.t == ph).map(|ki| (view.active, ki));
+        let step = ctx.frame_step.max(1);
+        let all = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        for (icon, at, hint) in [
+            (crate::icons::KEY_BEFORE, Tick(ph.0 - step), tr(k::fx::KEY_BEFORE_HINT)),
+            (crate::icons::PLUS, ph, tr(k::fx::KEY_ADD_HINT)),
+            (crate::icons::KEY_AFTER, Tick(ph.0 + step), tr(k::fx::KEY_AFTER_HINT)),
+        ] {
+            if !crate::app::hint_into(hover, ui.small_button(icon), hint).clicked() {
+                continue;
+            }
+            let active = view.active;
+            let targets: Vec<usize> =
+                if all { (0..curves.len()).collect() } else { vec![active] };
+            for ci in targets {
+                let Some(c) = curves.get_mut(ci) else { continue };
+                let v = kt_model::curve_value(&c.keys, c.ease, at);
+                c.keys.retain(|k| k.t != at);
+                c.keys.push(kt_model::AutoKey { t: at, v });
+                c.keys.sort_by_key(|k| k.t.0);
+            }
+            if let Some(c) = curves.get(active) {
+                view.sel = c.keys.iter().position(|k| k.t == at).map(|ki| (active, ki));
+            }
             out.changed = true;
         }
         // прыжок по ключам активной кривой двигает ГЛАВНЫЙ курсор: «сразу
@@ -346,20 +391,28 @@ fn toolbar(
         }
         ui.separator();
         // ---- ось времени (п.14) ----
+        // ЕДИНСТВЕННОЕ место, снимающее замок (Р.40 п.15, дословно: «надо
+        // сделать так чтобы его надо было СНЯТЬ чтобы отключилась
+        // синхронизация таймлайнов»). Прежде его снимало ЛЮБОЕ колесо над
+        // графиком — включая прокрутку самого окна FX мимо графика.
         if crate::app::hint_into(
             hover,
-            ui.selectable_label(view.linked, crate::icons::LOCK),
+            ui.selectable_label(ctx.linked, crate::icons::LOCK),
             tr(k::fx::AXIS_LINK_HINT),
         )
         .clicked()
         {
-            view.linked = !view.linked;
-            if !view.linked {
+            out.set_linked = Some(!ctx.linked);
+            if ctx.linked {
                 // снимая замок, оставляем ТО ЖЕ окно, что было видно:
                 // «ничего не скачет» (правило 3 чек-листа)
-                view.win = Some(view.axis(ctx));
+                let (a, b) = view.axis(ctx);
+                view.win = Some((a, b));
             }
         }
+        // «вписать» показывает носитель целиком — это ЯВНАЯ просьба про
+        // ось графика, поэтому она замок снимает, и снимает ВИДИМО
+        // (кнопка замка тут же гаснет), а не молча по дороге
         if crate::app::hint_into(
             hover,
             ui.small_button(crate::icons::ARROWS_OUT),
@@ -367,7 +420,7 @@ fn toolbar(
         )
         .clicked()
         {
-            view.linked = false;
+            out.set_linked = Some(false);
             view.win = None;
         }
     });
@@ -424,8 +477,16 @@ fn graph(
             let ns = (span / zoom as f64).max(ctx.frame_step.max(1) as f64);
             let shift = -scroll as f64 * tpp * 8.0;
             let a = at - ns * anchor + shift;
-            view.linked = false;
-            view.win = Some((a.round() as i64, (a + ns).round() as i64));
+            let (na, nb) = (a.round() as i64, (a + ns).round() as i64);
+            if ctx.linked {
+                // ЗАМОК НАДЕТ — жест едет в ГЛАВНЫЙ таймлайн, оси остаются
+                // синхронными (Р.40 п.15). Раньше он молча снимал замок, и
+                // снимала его даже прокрутка самого окна FX колесом над
+                // графиком: «замочек не до конца работает».
+                out.set_view = Some(((ctx.to_timeline)(Tick(na)), (ctx.to_timeline)(Tick(nb))));
+            } else {
+                view.win = Some((na, nb));
+            }
         }
     }
     let x_of = |t: i64| rect.left() + ((t - m0) as f64 / tpp) as f32;

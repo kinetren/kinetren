@@ -69,6 +69,11 @@ pub struct KtApp {
     /// драг по пустому месту рисует рамку вместо региона. Сессионный —
     /// в проект не пишется.
     pub sel_tool: bool,
+    /// Замок оси графиков автоматизации — ОДИН НА ВСЮ ПРОГРАММУ и
+    /// помнится в проекте (Р.40 п.15, решение пользователя дословно:
+    /// «Один на всю программу, помнится в проекте»). До этого он жил в
+    /// `AutoView` каждого окна и умирал вместе с окном.
+    pub auto_axis_linked: bool,
     /// Выделенные morph-блоки (H1; приоритет над клипом при Del).
     ///
     /// МНОЖЕСТВО с Р.40: было `Option`, и рамка выделения физически не
@@ -414,6 +419,7 @@ impl KtApp {
             ticks_per_px: 900.0,
             selected: std::collections::BTreeSet::new(),
             sel_tool: false,
+            auto_axis_linked: Self::default_axis_linked(),
             selected_morph: BTreeSet::new(),
             selected_camera: BTreeSet::new(),
             drag: None,
@@ -554,6 +560,7 @@ impl KtApp {
             ticks_per_px: 900.0,
             selected: std::collections::BTreeSet::new(),
             sel_tool: false,
+            auto_axis_linked: Self::default_axis_linked(),
             selected_morph: BTreeSet::new(),
             selected_camera: BTreeSet::new(),
             drag: None,
@@ -710,6 +717,9 @@ impl KtApp {
             app.bin_layout =
                 ui.bin_layout.iter().map(|(id, x, y)| (*id, egui::pos2(*x, *y))).collect();
             app.bin_groups = ui.bin_groups;
+            // замок оси графиков (Р.40 п.15): в файле лежит ОБРАТНОЕ, чтобы
+            // serde-умолчание `false` означало включённый замок
+            app.auto_axis_linked = !ui.auto_axis_unlinked;
             if ui.meters_w > 0.0 {
                 app.meters_w = ui.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
             }
@@ -763,6 +773,7 @@ impl KtApp {
             meters_w: self.meters_w,
             lane_names: self.lane_names.clone(),
             lane_heights: self.lane_heights.clone(),
+            auto_axis_unlinked: !self.auto_axis_linked,
         }
     }
 
@@ -2897,6 +2908,34 @@ impl KtApp {
         self.selected_morph.clear();
         self.selected_camera.clear();
         self.selected_camera.insert(id);
+    }
+
+    /// Умолчание замка оси: ВКЛЮЧЁН (правило 4 чек-листа — полезный режим
+    /// по умолчанию, настраивать программу под нормальное поведение
+    /// пользователь не должен). Одно место на продукт и тест.
+    pub fn default_axis_linked() -> bool {
+        true
+    }
+
+    /// Применить просьбы графика автоматизации про ОСЬ (Р.40 п.15).
+    ///
+    /// Замок один на всю программу, а окон с графиками несколько — значит
+    /// применять его обязано ОДНО место, а не каждое окно по-своему.
+    /// `set_view` приезжает при НАДЕТОМ замке: колесо над графиком зумит
+    /// главный таймлайн, и оси остаются синхронными.
+    pub fn apply_axis_req(&mut self, req: crate::automation::AxisReq) {
+        if let Some(v) = req.set_linked {
+            self.auto_axis_linked = v;
+            self.dirty_ui = true;
+        }
+        if let Some((a, b)) = req.set_view {
+            let w = (b.0 - a.0).max(1) as f64;
+            // ширина полосы дорожек — из геометрии кадра, своей не заводим
+            let px = self.tl_geom.as_ref().map(|g| g.rect.width() as f64).unwrap_or(800.0).max(1.0);
+            self.view_start = a.0.max(0) as f64;
+            self.ticks_per_px = (w / px).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
+            self.dirty_ui = true;
+        }
     }
 
     /// Сбор целей morpher'а (порт collectMorpherTargetClipIds v1): регион

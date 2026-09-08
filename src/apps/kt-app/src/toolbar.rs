@@ -298,6 +298,15 @@ impl KtApp {
                     self.delete_action();
                     ui.close();
                 }
+                // Опция «трим растягивает анимацию вместе с событием»
+                // (Р.40). Живёт в меню ПРАВКИ, а не вида: она меняет
+                // результат редактирования, а не то, как он показан.
+                // Выключена по умолчанию — ключ остаётся на своём кадре.
+                let mut stretch = self.model.project().trim_stretches_auto;
+                if ui.checkbox(&mut stretch, tr(k::menu::edit::TRIM_STRETCHES_AUTO)).changed() {
+                    self.apply(kt_model::Command::SetTrimStretchesAuto { on: stretch });
+                }
+                ui.separator();
                 if Self::menu_btn(ui, tr(k::menu::edit::CUT_REGION), "S") {
                     self.cut_action();
                     ui.close();

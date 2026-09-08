@@ -64,6 +64,7 @@ impl KtApp {
         let mut edited: Option<CameraEvent> = None;
         let mut revert = false;
         let mut seek: Option<Tick> = None;
+        let mut axis_req = crate::automation::AxisReq::default();
         let mut open = ed.open;
         let playhead = self.player.transport.playhead();
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
@@ -155,6 +156,7 @@ impl KtApp {
                     to_timeline: &to_tl,
                     to_curve: &to_cur,
                     frame_step,
+                    linked: self.auto_axis_linked,
                 };
                 let res = crate::automation::draw(
                     ui,
@@ -167,6 +169,8 @@ impl KtApp {
                 );
                 changed |= res.changed;
                 seek = res.seek;
+                // замок оси один на программу (Р.40 п.15)
+                axis_req = axis_req.merge(&res);
 
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -206,6 +210,8 @@ impl KtApp {
             self.apply_coalesced(Command::SetCamera(ed.backup.clone()), ed.gesture);
             ed.open = false;
         }
+        // просьбы графика про ОСЬ применяет одно место (Р.40 п.15)
+        self.apply_axis_req(axis_req);
         if let Some(t) = seek {
             self.player.seek(t);
         }

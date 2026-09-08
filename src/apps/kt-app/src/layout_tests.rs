@@ -5508,23 +5508,41 @@ fn t265_automation_axis_and_field_bind() {
 
     // ---- п.14: ось времени ------------------------------------------
     let id = |t: Tick| t;
-    let ctx = AutoCtx {
+    // замок с Р.40 живёт в UiState (один на программу), а не в AutoView
+    let mut ctx = AutoCtx {
         specs: &[],
         range: (Tick(0), Tick(90_000 * 10)),
         view: (Tick(90_000 * 2), Tick(90_000 * 4)),
         to_timeline: &id,
         to_curve: &id,
         frame_step: 3000,
+        linked: true,
     };
+    assert!(
+        crate::app::KtApp::default_axis_linked(),
+        "замок «связать с таймлайном» включён по умолчанию (решение п.14)"
+    );
     let mut v = AutoView::default();
-    assert!(v.linked, "замок «связать с таймлайном» включён по умолчанию (решение п.14)");
     assert_eq!(v.axis(&ctx), (90_000 * 2, 90_000 * 4), "связанный график показывает окно таймлайна");
-    v.linked = false;
+    ctx.linked = false;
     assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "без своего окна отвязанный показывает всё");
     v.win = Some((90_000, 90_000 * 3));
     assert_eq!(v.axis(&ctx), (90_000, 90_000 * 3), "и своё окно, когда оно есть");
     v.win = Some((-90_000, 90_000 * 99));
-    assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "окно клампится диапазоном носителя");
+    assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "СВОЁ окно клампится диапазоном носителя");
+    // Р.40: СВЯЗАННАЯ ось окном носителя НЕ клампится. Претензия дословно:
+    // «когда я оттягиваю левый край события — у меня ключи автоматизации
+    // тоже сдвигаются к началу». Ключ не двигался: врала ось, нормированная
+    // на событие. Смотрим то же, что таймлайн, — и ключ стоит на месте.
+    ctx.linked = true;
+    ctx.view = (Tick(-90_000), Tick(90_000 * 99));
+    assert_eq!(
+        v.axis(&ctx),
+        (-90_000, 90_000 * 99),
+        "связанный график показывает окно ТАЙМЛАЙНА как есть, включая место за краями события"
+    );
+    ctx.view = (Tick(90_000 * 2), Tick(90_000 * 4));
+    ctx.linked = false;
     v.win = Some((5000, 5001));
     assert_eq!(
         v.axis(&ctx),
@@ -6027,4 +6045,101 @@ fn t278_opacity_reachable_on_a_short_event() {
         after < 0.95,
         "тянули линию уровня вниз — непрозрачность обязана упасть, а она {after}"
     );
+}
+
+/// Тест 279 (Р.40 пп.15/18 и «ключи съезжают»).
+///
+/// Три претензии одного семейства:
+///   * «замочек не до конца работает, надо сделать так чтобы его надо было
+///     СНЯТЬ чтобы отключилась синхронизация таймлайнов, и замочек надо
+///     чтобы запоминал свое состояние»;
+///   * «не хватает по мимо кнопки установки ключа - двух кнопок ключ ДО и
+///     ключ ПОСЛЕ текущей позиции»;
+///   * «когда я оттягиваю левый край события - у меня ключи автоматизации
+///     тоже сдвигаются к началу, и это поведение никак не поменять».
+///
+/// Последняя — не про данные: ключ НЕ двигается, врала ось. Тест
+/// утверждает обе половины: ключ на месте, и ось его показывает на месте.
+#[test]
+fn t279_axis_lock_and_keys_that_stay() {
+    use kt_model::{AutoKey, Command, FxInstance, ParamCurve};
+    use kt_time::Tick;
+
+    // ---- замок помнится в проекте и один на программу ----------------
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        assert!(app.auto_axis_linked, "умолчание — замок НАДЕТ (правило 4 чек-листа)");
+        app.auto_axis_linked = false;
+        let ui = app.ui_state_for_test();
+        assert!(ui.auto_axis_unlinked, "снятый замок обязан попадать в проект");
+        let back = kt_model::UiState { auto_axis_unlinked: true, ..Default::default() };
+        assert!(!(!back.auto_axis_unlinked), "и читаться обратно снятым");
+    }
+
+    // ---- ключ при триме остаётся на СВОЁМ кадре ----------------------
+    let (mut h, _) = harness_three_clips();
+    let id = h.state().model.project().clips[0].id;
+    {
+        let app = h.state_mut();
+        let mut c = app.model.project().clips[0].clone();
+        c.fx = vec![FxInstance::blur(4)];
+        c.fx_auto = vec![vec![ParamCurve {
+            param: "radius".into(),
+            ease: false,
+            keys: vec![
+                AutoKey { t: Tick(10_000), v: 1.0 },
+                AutoKey { t: Tick(40_000), v: 9.0 },
+            ],
+        }]];
+        let mut p = app.model.project().clone();
+        p.clips[0] = c;
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    let before: Vec<i64> = h.state().model.project().clips[0].fx_auto[0][0]
+        .keys
+        .iter()
+        .map(|k| k.t.0)
+        .collect();
+    // левый край вправо на 20 000 тиков
+    let start = h.state().model.project().clips[0].start;
+    assert!(h.state_mut().apply(Command::TrimStart { id, new_start: start + Tick(20_000) }));
+    let after: Vec<i64> = h.state().model.project().clips[0].fx_auto[0][0]
+        .keys
+        .iter()
+        .map(|k| k.t.0)
+        .collect();
+    assert_eq!(
+        after, before,
+        "ключ обязан остаться на ТОМ ЖЕ кадре материала: «вот как сделать так чтобы \
+         он НЕ съезжал никуда хоть я левый край двигаю влево хоть в право»"
+    );
+
+    // ---- и опция, которая делает ОБРАТНОЕ, выключена по умолчанию ----
+    {
+        let app = h.state_mut();
+        assert!(
+            !app.model.project().trim_stretches_auto,
+            "растягивание анимации вместе с событием — НЕ умолчание"
+        );
+        assert!(app.apply(Command::SetTrimStretchesAuto { on: true }));
+    }
+    let c0 = h.state().model.project().clips[0].clone();
+    let span_old = kt_model::clip_material_span(&c0);
+    let offs_old: Vec<i64> = c0.fx_auto[0][0].keys.iter().map(|k| k.t.0 - c0.source_in.0).collect();
+    let start = c0.start;
+    assert!(h.state_mut().apply(Command::TrimStart { id, new_start: start + Tick(10_000) }));
+    let c1 = h.state().model.project().clips[0].clone();
+    let stretched: Vec<i64> = c1.fx_auto[0][0].keys.iter().map(|k| k.t.0).collect();
+    assert_ne!(stretched, after, "с включённой опцией ключи обязаны поехать");
+    // и поехать РОВНО пропорционально: доля ключа внутри события сохранена
+    let span_new = kt_model::clip_material_span(&c1);
+    for (k, off0) in stretched.iter().zip(&offs_old) {
+        let want = c1.source_in.0 + (*off0 as f64 * span_new as f64 / span_old as f64).round() as i64;
+        assert_eq!(
+            *k, want,
+            "доля ключа внутри события обязана сохраниться: {span_old} → {span_new}"
+        );
+    }
 }
