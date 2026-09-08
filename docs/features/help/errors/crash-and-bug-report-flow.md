@@ -14,7 +14,8 @@ round: null
 point: null
 tests: []
 depends_on: [F-HLP-013, F-HLP-026, F-HLP-033]
-checked: 2026-09-07
+trackers: [kde-invent, kde-bugzilla]
+checked: 2026-09-08
 ---
 
 # F-HLP-014 — Восстановление после падения и отчёт о проблеме
@@ -135,6 +136,22 @@ Apple уводит в Feedback Assistant. У нас этот вопрос реш
 - Сбор диагностики руками у нас дороже, чем у VEGAS: у того хотя бы есть
   окно «О программе», из которого переписывают версию (F-HLP-026), а у нас
   версия в релизе не показана нигде, кроме `kt-cli`.
+- Цена, которой в заметке не было и которую показал трекер: наша поставка —
+  самая недружелюбная к backtrace конфигурация из возможных. `[profile.dist]`
+  (`src/Cargo.toml:63`) ставит `strip = "symbols"`, и это то самое, на что
+  жалуются kde-invent #1535 (Flatpak) и #1560 (Mac без символов). Смягчение у
+  нас есть и оно бесплатное — паническому хуку символы не нужны,
+  `PanicHookInfo` сам несёт файл и строку, — но работает оно ТОЛЬКО для паник
+  Rust. Сегфолт в чужом коде (системный FFmpeg через dlopen по инварианту 10,
+  драйвер GPU) не даст ни хука, ни строки, и в этом единственном классе
+  падений мы окажемся ровно там же, где Flatpak-сборка Kdenlive.
+- Отличить «вышел сам» от «упало» мы не умеем вовсе: цепочка восстановления
+  (`src/apps/kt-app/src/app.rs:5274`) отрабатывает одинаково в обоих случаях,
+  флага прошлого запуска (приём kde-invent #899) нет. Приём при этом дешёвый и
+  ложится на уже написанное: файл создаёт `run()`, удаляет `on_exit`
+  (`app.rs:5188`) — а раз при падении `on_exit` не вызывается, оставшийся файл
+  и ЕСТЬ признак падения. Сегодня же молчаливое восстановление автосейва
+  выглядит одинаково после штатного выхода и после катастрофы.
 
 ## Что говорят пользователи
 
@@ -161,18 +178,64 @@ Timeline backups и явно выбранной папкой не знает, ч
 > — Marco, тред «Project Backups», форум Blackmagic Design, 21.07.2025,
 > https://forum.blackmagicdesign.com/viewtopic.php?f=21&t=224766
 
-НЕТ ЦИТАТ: живого отзыва именно про «собрать диагностику одной кнопкой» найти
-не удалось. Искал в Discourse-API форума Boris FX (`/search.json` по «crash
-recovery autosave», «recover project after crash», «auto save recover»), в
-поиске форума Blackmagic (`search.php` с рабочим `sid`, запросы «crash log
-files support diagnostics», «live save project backups»), пробовал
-`helpx.adobe.com` и его зеркало `/in/` через текст-прокси `r.jina.ai`, а
-`html.duckduckgo.com`, `lite.duckduckgo.com` и `search.yahoo.com` из этого
-окружения отдают заглушку. Бюджет `WebSearch` сессии был исчерпан до начала
-работы (200 из 200). Тема из тех, о которых пишут не отзывы, а инструкции:
-хвалить нечего, ругать нечего — либо приложил, либо нет.
+Третья волна дала то, чего форумы вендоров дать не могли: счёт.
+
+СИГНАЛ: журнал падения как приложение к отчёту — 80 задач в kde-bugzilla, `crash (log|dump|report)|backtrace|stack ?trace|core dump|\bgdb\b|drkonqi`; доля 1.3% против 0.3% в kde-invent
+
+Разница вчетверо — не про качество кода, а про наличие МЕХАНИЗМА. В старом
+трекере Kdenlive 54 отчёта несут метку `drkonqi`: их оформил не человек
+вручную, а системный обработчик падений KDE — он поймал сигнал, приложил
+backtrace и подал человеку готовую форму, тому осталось нажать. В новом
+трекере такой метки нет вовсе, и из шести попаданий
+четыре — служебные задачи самих сопровождающих о том, что backtrace не достать
+в принципе. Одна из них открыта четвёртый год:
+
+> Currently, it's not possible to get backtraces in multiple types of our
+> releases, and even where it's possible to get backtraces, we're asking the
+> users to run gdb manually.
+> — kde-invent #1531, «Better crash logging (tracking task)», 28.09.2022,
+> открыта, метки `Crash Reporting`, `Code Quality`,
+> https://invent.kde.org/multimedia/kdenlive/-/work_items/1531
+
+Как то же самое выглядит со стороны монтажёра — там же, в отчёте о падении на
+диалоге «Missing Clips or Files»:
+
+> After a few seconds kdenlive ends without any message or crash dump.
+> — kde-invent #1437, 19.05.2022, метка `Crash`,
+> https://invent.kde.org/multimedia/kdenlive/-/work_items/1437
+
+Соседняя задача #1535 («Flatpak build doesn't show backtrace on SIGSEGV»,
+01.10.2022, открыта, https://invent.kde.org/multimedia/kdenlive/-/work_items/1535)
+описывает предельный случай — «No crash handler is triggered and nothing is
+printed in the terminal» — и формулирует нужное решение теми же словами, что
+мы сами: `ideally copied to a file`. Это ровно наша конфигурация поставки, и
+ровно наш вывод из «Фишки фишки»: файл, а не сокет.
+
+Есть в том же трекере и готовый дешёвый приём «узнать при СТАРТЕ, что прошлый
+запуск упал» — пустой файл-флаг, создаваемый на сплэше и удаляемый после
+успешной загрузки:
+
+> what about creating a "flag file" when the splash screen appears … and
+> delete this file when the opengl and everything else is loaded successfully
+> (timeline displayed)?
+> — kde-invent #899, 29.12.2020, метки `Crash Reporting`, `Feature Request`,
+> https://invent.kde.org/multimedia/kdenlive/-/work_items/899
+
+НЕТ ЦИТАТ: по пяти редакторам ЯДРА — VEGAS, Premiere, Resolve, Final Cut,
+After Effects — живого отзыва именно про «собрать диагностику одной кнопкой»
+по-прежнему нет, и трекеры этого не исправят: публичного трекера нет ни у
+одного из пяти (`_trackers.md`, раздел «Кого НЕ берём»), а форум вендора
+трекером не является — нет ни состояния, ни дедупликации, ни даты решения. Что
+и где искалось на форумах, записано в «Источниках».
 
 ## Как ложится на Kinotrain
+
+АДРЕС: src/apps/kt-app/src/main.rs — класс «падение не оставило ничего»
+возможен и у нас, и его не ловит ничто: `panic::set_hook` не встречается в
+`src/` ни разу, `src/Cargo.toml:61` сознательно сохраняет раскрутку стека
+(`panic=abort` не ставим), а `[profile.dist]` (`src/Cargo.toml:63`) несёт
+`strip = "symbols"` — то есть в релизной поставке нет ни файла, ни символов,
+ровно как в kde-invent #1535.
 
 ### Что уже есть
 
@@ -346,6 +409,17 @@ files support diagnostics», «live save project backups»), пробовал
 
 ## Источники
 
+- Трекер `kde-invent` (GitLab Kdenlive, `_trackers.md`), задачи #899, #1437,
+  #1531, #1535, #1560 — https://invent.kde.org/multimedia/kdenlive/-/work_items/1531
+  и соседние (выгрузка 2217 задач,
+  `~/.cache/kinotrain/trackers/kde-invent.jsonl`, sha256 `94c2d87c52449f19`;
+  обращение 2026-09-08)
+- Трекер `kde-bugzilla` (bugs.kde.org, product=kdenlive, 6346 задач, sha256
+  `8b7608e9c1038d07`) — число строки `СИГНАЛ:` воспроизводится
+  `python3 src/scripts/tracker-rank.py --query 'crash (log|dump|report)|backtrace|stack ?trace|core dump|\bgdb\b|drkonqi'`;
+  54 из 80 попаданий приходят из метки `drkonqi`, то есть заведены системным
+  обработчиком падений, а не человеком. Дампы в репозиторий не попадают
+  (лицензии нет, `_trackers.md`, раздел «Лицензии»)
 - Форум Boris FX (VEGAS), тред «V26 crashed and deleted the .veg file!»,
   24–25.06.2026 — https://forum.borisfx.com/t/v26-crashed-and-deleted-the-veg-file/24325 (прочитан
   через Discourse API, `/t/24325.json`, обращение 2026-09-07)

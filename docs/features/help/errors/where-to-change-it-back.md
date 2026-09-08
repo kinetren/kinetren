@@ -14,7 +14,8 @@ round: null
 point: null
 tests: []
 depends_on: [F-HLP-010, F-HLP-033]
-checked: 2026-09-07
+trackers: [openshot, kde-bugzilla, kde-invent, losslesscut]
+checked: 2026-09-08
 ---
 
 # F-HLP-009 — «Где это потом изменить обратно» — плашка, называющая место возврата
@@ -211,8 +212,43 @@ API, а не UX.
   FCP называют адрес настройки в руководстве десятками раз («You can change
   this behavior in Preferences ▸ User ▸ UI Settings…») — и ноль раз в самих
   диалогах. Пользователь читает диалог, а не главу про него.
+- **Второе обещание в окне — вторая точка молчаливого отказа.** Трекер даёт
+  случай, которого в этой заметке не было: у Kdenlive сломался сам чекбокс
+  подавления (kde-invent #36, «"Do not ask again" doesn't work»), и заметил
+  это пользователь, а не сборка. Диалог, который сегодня обещает одно
+  («больше не спрошу»), после правила 19 обещает два, и второе — чужой
+  адрес. Кнопка, ведущая не туда, не роняет ни сборку, ни существующий тест;
+  роняет она доверие ко всему окну, а вернуть его дороже, чем один раз найти
+  настройку.
+- **Выключатель и дорога назад нужны разным людям, и первый мешает второму.**
+  Счёт из «Что говорят пользователи» разводит их прямо: у losslesscut просьб
+  «уберите вопрос совсем» втрое больше, чем «как вернуть», у openshot — ровно
+  наоборот. Указатель места возврата обслуживает новичка и оплачивается
+  строкой в окне того, кто просил противоположного — чтобы этого окна не было
+  вовсе. Правило 19 добавляет текста ровно туда, где вторая половина
+  аудитории уже требует тишины.
 
 ## Что говорят пользователи
+
+СИГНАЛ: «выключил сам — и спрашиваю чужих, где вернуть» — 5 задач в openshot, `(can.?t|cannot|unable|do ?n.?t know how|how (do i|to)|no way)[^.]{0,35}(get|bring|restore|re.?enable|turn|switch)[^.]{0,22}(it|them|this|that|the \w+)? ?back`; доля 0.1% против 0.0% (ни одной из 6346) в kde-bugzilla
+
+СИГНАЛ: «уберите этот вопрос навсегда» — 3 задачи в losslesscut, `(disable|remove|get rid of|hide|suppress|stop|turn off|avoid|skip|do ?n.?t (show|ask))[^.]{0,30}(warning|confirmation|dialog|prompt|popup|pop.?up|message ?box|notification|nag)`; доля 0.2% против 0.0% (3 из 6346) в kde-bugzilla
+
+Два счёта смотрят на одну механику с разных концов, и внутри своих трекеров
+они меняются местами. У losslesscut просьб «уберите вопрос» три, а жалоб
+«верните, что я убрал» — одна; у openshot ровно наоборот: одна просьба убрать
+против пяти «как вернуть». Это не разница продуктов, а разница пришедших:
+кто уже знает программу, требует выключатель, а кто её осваивает — ищет дорогу
+назад. Механизм правила 19 обслуживает второго за счёт первого, и обе стороны
+в счёте видны.
+
+Третий счёт объясняет, почему первые два малы. Фильтр
+`(do ?n.?t|never|not) (show|ask|display|remind)[^.]{0,12}again` даёт **три
+задачи на 27 537 записей одиннадцати трекеров рейтинга**, и из этих трёх одна — просьба
+чекбокс ЗАВЕСТИ (openshot #5489, 03.04.2024), вторая — жалоба, что он не
+работает (kde-invent #36). То есть у опенсорсных монтажок подавляемого диалога
+почти нет как класса, и это подтверждает вывод раздела «У кого и как» с другой
+стороны: не «механизм есть, и о нём молчат», а «механизма нет вовсе».
 
 Все найденные живые цитаты — об одном и том же: человек нажал «больше не
 показывать» и потерял поведение, а путь возврата узнал у постороннего. Из
@@ -272,17 +308,53 @@ API, а не UX.
 > — GitLab UX issue #213344,
 > https://gitlab.com/gitlab-org/gitlab/-/issues/213344
 
-НЕТ ЦИТАТ: не нашлась цитата, ХВАЛЯЩАЯ диплинк-кнопку. Искали: «took me
-straight to the setting», «nice touch / love that» рядом с VS Code
-notification, «why don't more apps» + settings deep link, «instead of hunting
-through menus» + permission settings, GitHub-issues «please add a link to open
-the setting», Hacker News про «dialog should link directly to the setting»,
-хвалебные упоминания Configure Trusted Domains. Reddit из окружения
-по-прежнему не открывается, а бюджет `WebSearch` сессии был исчерпан
-(200/200) до начала этой заметки. Похоже, у отсутствия таких цитат есть и
-содержательная причина: про сработавшую кнопку не пишут.
+Трекеры, недоступные при первом написании заметки, дали тот же сюжет уже не в
+проприетарном софте, а в открытом, и в самой чистой форме: одно нажатие убрало
+часть интерфейса, места возврата никто не назвал, и человек идёт спрашивать
+посторонних.
+
+> «So.. I pressed on one of those toolbar buttons where you see an icon of
+> fullscreen and delete and i accidentaly pressed delete. now i can't get it
+> back.»
+> — issue #615, OpenShot, 02.05.2017,
+> https://github.com/OpenShot/openshot-qt/issues/615
+
+> «So i was on open shot and i pressed the x on the window of filters/effects.
+> Anyone know how to get it back?»
+> — issue #1825, OpenShot, 10.07.2018,
+> https://github.com/OpenShot/openshot-qt/issues/1825
+
+Обе задачи закрыты состоянием `completed` — то есть и панель, и окно вернуть
+было можно. Значит место возврата в программе существовало, и цена его
+безымянности измерена точно: заведённая задача в чужом багтрекере вместо одной
+строки в интерфейсе. Тот же сюжет, что у Photoshop с его двадцатипятилетней
+кнопкой «Reset All Warning Dialogs», но записанный номером, датой и
+состоянием, а не воспоминанием.
+
+И оборотная сторона: механизм подавления, о котором в интерфейсе не сказано
+ничего, ломается молча — первым это замечает не тест, а пользователь.
+
+> «If you press "do not ask again" for a warning message it doesn't work.»
+> — issue #36, Kdenlive (invent.kde.org), 12.02.2019,
+> https://invent.kde.org/multimedia/kdenlive/-/work_items/36
+
+Цитаты, ХВАЛЯЩЕЙ диплинк-кнопку, не нашлось и в трекерах — как не нашлось её
+раньше в поиске («took me straight to the setting», «nice touch» рядом с VS
+Code notification, «instead of hunting through menus» + permission settings).
+Причина, похоже, содержательная и уже названа в «Фишке фишки»: про сработавшую
+кнопку не пишут.
 
 ## Как ложится на Kinotrain
+
+АДРЕС: src/libs/kt-model/src/project.rs:3306 — класс «нажал один раз и не
+нашёл, где вернуть» у нас ВОЗМОЖЕН, и в форме хуже чужой: `overlap_layers:
+true` — единственное однократное решение проекта, и переключить его нечем
+вовсе. Присваивание вне тестов ровно одно — чтение из файла,
+`src/libs/kt-otio/src/convert.rs:1026`; `Command` для него в
+`src/libs/kt-model/src/model.rs` нет, пункта меню нет, плашки нет, а руками
+флаг ставится только в тестах пяти файлов. У OpenShot из issue #615 панель
+вернуть было можно, и вопрос закрылся одним ответом; у нас возвращать нечем и
+негде, и ни один тест этого не видит.
 
 ### Что уже есть
 
@@ -560,6 +632,31 @@ allow-list по идиоме `NOT_FROM_UI` обязан остаться пус�
   User Guide 12.3, https://help.apple.com/pdf/final-cut-pro/en_US/final-cut-pro-user-guide.pdf
 - VEGAS Pro 2026, Preferences ▸ General —
   https://cdn.borisfx.com/borisfx/Documentation/vegas/2026/en/content/topics/12-preferences/prefgeneraltab.htm
+
+Трекеры (Р.41; дампы живут в `~/.cache/kinotrain/trackers/` и в репозиторий не
+попадают — `_trackers.md`, раздел «Лицензии»). Именно они закрыли пробел,
+из-за которого в этой заметке раньше стояла честная пометка о ненайденной
+цитате:
+
+- https://github.com/OpenShot/openshot-qt/issues/615 — «I removed some
+  toolbars and can't get them back», 02.05.2017, closed/completed
+  (обращение 2026-09-08)
+- https://github.com/OpenShot/openshot-qt/issues/1825 — «i "x"'d out a window
+  and i dont know how to get it back», 10.07.2018, closed/completed
+  (обращение 2026-09-08)
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/36 — «"Do not ask
+  again" doesn't work.», 12.02.2019 (обращение 2026-09-08)
+- https://github.com/OpenShot/openshot-qt/issues/5489 — просьба ЗАВЕСТИ
+  чекбокс «Don't show this again», 03.04.2024 (обращение 2026-09-08)
+- https://github.com/mifi/lossless-cut/issues/847 — «I always want to "merge"
+  how do I disable pointless dialog?», 01.09.2021 — сторона «уберите вопрос»
+  (обращение 2026-09-08)
+
+Обе строки `СИГНАЛ:` воспроизводятся командой `python3
+src/scripts/tracker-rank.py --query '<фильтр из обратных кавычек>'` на
+выгрузке от 08.09.2026: 12 дампов, 30 632 записи (11 в рейтинге — 27 537; ffmpeg-trac вне рейтинга). `blender-vse` и
+`ffmpeg-trac` на момент работы ещё качались (файлы пустые) и в процентных
+сравнениях не участвуют.
 
 **Что осталось непроверенным** (чтобы следующая волна не искала заново):
 дословная формулировка диалога VEGAS «match project settings to media» и

@@ -14,7 +14,8 @@ round: null
 point: null
 tests: []
 depends_on: [F-UI-002, F-HLP-016, F-HLP-017, F-HLP-033]
-checked: 2026-09-07
+trackers: [kde-invent, kde-bugzilla, pitivi, openshot]
+checked: 2026-09-08
 ---
 
 # F-HLP-018 — Подпись, которая сама себя объясняет — «что» и «где» прямо в названии
@@ -175,8 +176,38 @@ apparent from context» — с тремя ступенями `Add` (acceptable) 
 - Акселератор, вписанный в переводимую фразу, едет вместе с ней при
   переиспользовании ключа — и приезжает туда, где он неверен. Это цена не
   подписи как таковой, а решения хранить аккорд внутри текста (F-HLP-017).
+- **Переписать подпись — это войти в очередь, а не выйти из неё.** Трекер
+  показал цену на одном слове: у Kdenlive подпись `Wipe` просили переименовать
+  дважды и в РАЗНОЕ — #329 (2019) в «wipe/fade», #605 в «TRANSITION», обе
+  закрыты; в 2026-м #2219 просит расщепить `Image Sequence` на два имени, а
+  #2128 показывает третий ход, когда уже сделанное переименование портит
+  чужую подпись. Спор о названии не разрешается однократно, и «домести класс»
+  означает согласиться платить по нему повторно.
+- **Обратной связи по этому классу не будет.** Восемь задач на 27 537 записей
+  одиннадцати трекеров рейтинга (0.03 %) — значит, ждать жалоб бесполезно: неверная подпись
+  не оставляет следа, по которому пишут баг. Отсюда следствие, неприятное для
+  оценки объёма: без машинного предиката мы не узнаем ни что класс есть, ни
+  что он выметен, — «сколько ещё осталось» не измеряется ничем внешним.
 
 ## Что говорят пользователи
+
+СИГНАЛ: «подпись непонятна» как зарегистрированный дефект — 2 задачи в kde-invent, `(menu|label|button|command|option|item|wording|caption|entry|name)[^.]{0,30}(confus|misleading|unclear|ambiguous|not obvious|misnomer|misnamed)|(confus|misleading|unclear|ambiguous|misnamed)[^.]{0,30}(menu|label|button|command|option|item|wording|caption|entry|name)`; доля 0.1% против 0.0% (1 задача из 6346) в kde-bugzilla
+
+СИГНАЛ: «переименовать X в Y» как самостоятельная просьба — 4 задачи в kde-invent, `renam\w*[^.]{0,40}\bto\b`; доля 0.2% против 0.0% (1 задача из 6346) в kde-bugzilla и 0.4% (3 из 680) в otio
+
+Первый счёт нужно читать как отрицательный результат, и он важнее любого
+положительного: на 27 537 записей одиннадцати трекеров рейтинга по этому фильтру нашлось
+**восемь** задач (0.03 %), из них две — ложные срабатывания. Класс существует —
+и почти не регистрируется. Причина видна из его же устройства: неверная подпись
+не оставляет следа, по которому пишут баг, — человек нажал, получил не то,
+нажал undo и пошёл дальше. Значит внешней обратной связи по этому классу не
+будет ни у кого, включая нас, и единственный доступный сторож — машина.
+
+Второй счёт объясняет, где такие задачи всё-таки заводятся. Два трекера ОДНОГО
+продукта: в пользовательской Bugzilla просьба «переименовать X в Y» — одна
+задача из 6346, в разработческом invent — четыре из 2217. Переименование
+подписи заводит не пострадавший, а сопровождающий; вершина списка — otio (0.4 %,
+3 из 680), где имя типа И ЕСТЬ API, то есть цена ошибки в названии максимальна.
 
 Самый точный документ по теме — наш собственный: претензия владельца Р.28 п.4,
 из которой родилось правило 18. Она ценна тем, что человек описывает не вкус, а
@@ -196,7 +227,9 @@ apparent from context» — с тремя ступенями `Add` (acceptable) 
 > — Apple, Final Cut Pro release notes, раздел версии 10.4.1, https://support.apple.com/en-us/102825 (обращение 2026-09-07)
 
 А вот наш дефект слово в слово, у чужого NLE: подпись не говорит, НАД ЧЕМ
-сработает, потому что один термин достался двум разным сущностям.
+сработает, потому что один термин достался двум разным сущностям. Это одна из
+тех восьми задач, что дал первый счёт, — и вес у неё соответствующий: заведена
+21.01.2026, закрыта через 24 дня, 3 комментария и 2 голоса.
 
 > «Do we want to implement a feature that deletes all timeline markers?
 > `Delete All Markers` only works on (clip) markers.»
@@ -206,8 +239,30 @@ apparent from context» — с тремя ступенями `Add` (acceptable) 
 после прошлого переименования (`Guides` → `Markers`), то есть одна правка
 подписи сделала двусмысленной чужую, которую никто не трогал.
 
-НЕТ ЦИТАТ: от пользователей четырёх остальных редакторов. Искал форумные жалобы
-на неоднозначные подписи и документированные переименования — `helpx.adobe.com`
+Вторая из тех восьми — тоже Kdenlive и тоже про «где», причём пользователь сам
+формулирует требование правила 18: подпись обязана сказать, над КАКОЙ точкой
+сработает.
+
+> «for EXAMPLE the **ADD/REMOVE GUIDE** option is creating a guide where the
+> CURSOR is ..and not where the mouse pointer is. … or "explain" WHERE the
+> action is supposed to be placed ( MOUSE POINTER or TIMELINE CURSOR ? )»
+> — Kdenlive, issue #1666 «right mouse button menus on timeline are
+> "confusional"», 10.04.2023,
+> https://invent.kde.org/multimedia/kdenlive/-/work_items/1666 (обращение 2026-09-08)
+
+Третья — половина «что», у третьего редактора: подпись называет величину, а не
+то, на что она влияет, и человек перебирает четыре надписи, пока не найдёт
+пятую.
+
+> «…I'm messing with `Duration`, `End`, `Start`, `Time`, only to eventually
+> discover that Position was the property I needed to adjust to change the start
+> time!»
+> — OpenShot, issue #1339 «Confusing Properties Labels», 05.03.2018,
+> https://github.com/OpenShot/openshot-qt/issues/1339 (обращение 2026-09-08)
+
+Чего найти не удалось: жалоб пользователей платной пятёрки. Искал форумные
+жалобы на неоднозначные подписи и документированные переименования —
+`helpx.adobe.com`
 не отвечает вовсе (таймаут и HTTP 000), `forum.blackmagicdesign.com` отдаёт
 Cloudflare-челлендж на поисковый URL, `vegascreativesoftware.com/version-history`
 — JS-оболочку без текста, `reddit.com` и `web.archive.org` из этого окружения не
@@ -218,6 +273,19 @@ v26.9.6) нет ни одной строки со словами `renam`/`now ca
 жалоба, а не в release notes как правка.
 
 ## Как ложится на Kinotrain
+
+АДРЕС: `src/apps/kt-app/src/timeline.rs` — класс возможен, и его не ловит
+ничто: один ключ `tl.menu.delete` = «Удалить (Del)» стоит на трёх РАЗНЫХ
+командах — `delete_selected()`, `Command::RemoveCamera`, `Command::RemoveArea`
+(три вызова `ui.button(tr(k::tl::menu::DELETE))`, сегодня строки 4761, 4985 и
+5045; номера в тексте ниже — прошлой ревизии), тогда как вся машинная
+различимость подписей в программе — три `assert_ne!` в
+`src/apps/kt-app/src/i18n_tests.rs` (t171) на 8 значений из 522. Трекер
+добавляет к этому механизм появления: у Kdenlive коллизия #2128 родилась не из
+плохой подписи, а из ПЕРЕИМЕНОВАНИЯ (`Guides` → `Markers`), после которого
+безупречная вчера `Delete All Markers` стала двусмысленной, — то есть регресс
+такого рода приходит из правки соседней строки, и поймать его может только
+предикат над готовым каталогом, а не ревью автора.
 
 ### Что уже есть
 
@@ -416,6 +484,10 @@ View).
 - https://support.apple.com/en-us/102825 — Final Cut Pro release notes, переименование `Reset Point of View` → `Reset Angle` в 10.4.1 (дата обращения 2026-09-07)
 - https://invent.kde.org/multimedia/kdenlive/-/work_items/2128 — Kdenlive, «Marker Menu Confusing» (дата обращения 2026-09-07)
 - https://invent.kde.org/multimedia/kdenlive/-/work_items/2219 — Kdenlive, «Rename "Image Sequence" to "Image Slideshow"»: один термин на две разные операции импорта (дата обращения 2026-09-07)
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/1666 — Kdenlive, «right mouse button menus on timeline are "confusional"»: пользователь требует, чтобы подпись сказала «где» (дата обращения 2026-09-08)
+- https://github.com/OpenShot/openshot-qt/issues/1339 — OpenShot, «Confusing Properties Labels»: подпись называет величину, а не то, на что она влияет (дата обращения 2026-09-08)
+- https://invent.kde.org/multimedia/kdenlive/-/work_items/329 и https://invent.kde.org/multimedia/kdenlive/-/work_items/605 — две несовместимые просьбы переименовать одну и ту же подпись `Wipe` (дата обращения 2026-09-08)
+- Трекеры (третья волна, Р.41): выгрузки из `~/.cache/kinotrain/trackers/{kde-invent,kde-bugzilla,pitivi,openshot}.jsonl`; оба счёта воспроизводятся `python3 src/scripts/tracker-rank.py --query …` с фильтрами из строк `СИГНАЛ:` (2026-09-08)
 - https://code.visualstudio.com/api/ux-guidelines/command-palette — VS Code UX Guidelines: «Use clear names for commands», «Group commands together in the same category» (дата обращения 2026-09-07)
 - https://plugins.jetbrains.com/docs/intellij/button.html — IntelliJ Platform UI Guidelines, раздел Button: «Prefer clear labels to short ones» (дата обращения 2026-09-07; прежний адрес `jetbrains.github.io/ui/` отдаёт 404)
 - https://developer.apple.com/design/human-interface-guidelines/alerts — Apple HIG про `OK` (дата обращения 2026-09-07)

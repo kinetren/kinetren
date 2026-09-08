@@ -14,7 +14,8 @@ round: null
 point: null
 tests: []
 depends_on: [F-UI-002]
-checked: 2026-09-07
+trackers: [losslesscut, kde-bugzilla, shotcut, kde-invent, openshot]
+checked: 2026-09-08
 ---
 
 # F-HLP-017 — Видимость горячей клавиши — акселератор рядом с командой
@@ -187,8 +188,60 @@ checked: 2026-09-07
 - Учит клавише, но не учит СМЫСЛУ: колонка говорит «это `S`», и ничего не
   говорит о том, что `S` режет по курсору, а не по выделению. Абзац «зачем» на
   эту поверхность не помещается и уезжает в подсказку и на сайт.
+- **Показ порождает свой класс жалоб — на непоследовательность, и жалоба
+  приходит как БАГ.** Shotcut #1821 заведён не из-за отсутствия клавиш, а
+  из-за того, что аккорд стоит у «Lift (Z)» и не стоит у Properties, Files,
+  Mute и замка дорожки. Пока не показано нигде, цена нулевая; как только
+  колонка появилась на одной поверхности, каждая поверхность без неё
+  становится дефектом — а у нас таких поверхностей больше, чем меню: тулбар,
+  ярлыки дорожек, зоны таймлайна, ручки перехода. Это обязательство держать
+  ОДНУ форму на всех, и оно бессрочное.
+- **Показ немедленно создаёт спрос на переназначение.** В тех же трекерах
+  просьба «сделайте клавиши настраиваемыми» — самостоятельный жанр (flowblade
+  #364, losslesscut #492, pitivi #1824, olive #2158): увидев аккорд, человек
+  сразу спрашивает, можно ли другой. Колонка без реестра (F-UI-002) отвечает
+  «нет» молчанием, и цена этого ответа приходит не в эту заметку, а в
+  следующую.
 
 ## Что говорят пользователи
+
+СИГНАЛ: «дайте клавишу этому действию» — 11 задач в losslesscut, `(add|allow|provide|please|need|request|suggest|make|missing|no)[^.]{0,25}(keyboard short|hot ?key|key ?bind|shortcut key)|(keyboard short ?cut|hot ?key)s? (for|to) \w`; доля 0.6% против 0.1% в kde-bugzilla
+
+СИГНАЛ: «покажите клавишу, которая уже есть» — 4 задачи в losslesscut, `(show|display|indicate|reveal)[^.]{0,25}(keyboard )?(short ?cut|hot ?key)|list of[^.]{0,15}(short ?cut|hot ?key)|(short ?cut|hot ?key)s?[^.]{0,40}(hover text|hover description|tooltip|menu entr|in parenthes)`; доля 0.2% против 0.0% (1 из 6346) в kde-bugzilla
+
+**Гипотезу проверяет отношение этих двух счётов, а не каждый по отдельности.**
+Просьб ДАТЬ клавишу — 42 на восемь трекеров (flowblade 3, kde-bugzilla 7,
+kde-invent 4, losslesscut 11, olive 4, openshot 3, pitivi 8, shotcut 2);
+просьб ПОКАЗАТЬ существующую — 6. Семикратный перекос сам по себе ничего не
+доказывает: часть просьб честно про отсутствующие клавиши. Доказательство даёт
+пара задач в одном трекере с разницей в два месяца.
+
+02.07.2019 в Bugzilla Kdenlive заводят «Need hot key for Enable / Disable clip
+toggle» (#409409) — и задача закрывается **INVALID**. 31.08.2019 другой
+человек заводит «Hotkey for enable / disable clip works only for audio track»
+(#411466) — и она закрывается **FIXED**. Вторая задача доказывает первую:
+чтобы жаловаться, что клавиша РАБОТАЕТ ТОЛЬКО для аудио, клавиша должна
+существовать, — а значит она существовала и двумя месяцами раньше, когда её
+просили завести. Разница между двумя людьми — только знание, и взяться ему в
+интерфейсе было неоткуда. Рядом —
+«[Feature Request] Shortcuts for multicam editing» (#403532, 23.01.2019),
+закрытая **WORKSFORME**: тот же ответ, тот же класс.
+
+Цену класса подтверждает и сопровождающий, который довёл её до формы. Шаблон
+задачи LosslessCut открывается пунктом-галочкой:
+
+> Check out all the menus and keyboard shortcuts. Maybe the feature already
+> exists?
+> — шаблон обращения LosslessCut, виден в теле каждой из #2032 (12.06.2024),
+> #2154, #2407 и #2744, https://github.com/mifi/lossless-cut/issues/2032
+
+Пункт стоит первым в списке из четырёх и предваряется прямым объяснением
+(«The fewer issues I have to read, the more new features I will have time to
+implement»). То есть просьбы о том, что уже есть, приходят достаточно часто,
+чтобы вендор оплатил их строкой в шаблоне; это его собственная оценка размера
+класса, а не наша. И галочка не помогает: во всех четырёх задачах она
+проставлена, а задачи заведены — потому что проверить «нет ли уже клавиши»
+можно только там, где клавиша написана рядом с командой.
 
 Самый точный документ по теме — тред, где пользователь спрашивает список
 клавиш, а разработчик отвечает, что списка нет и не нужно, потому что список —
@@ -226,18 +279,75 @@ https://forum.borisfx.com/t/01-sep-06-motor-v1-1-0b4/1372). Строчка пр�
 подпись теперь показывает клавишу, стоит в списке новшеств рядом с
 исправлениями рендера.
 
-НЕТ ЦИТАТ: по самим пяти редакторам ядра живой цитаты именно про ВИДИМОСТЬ
-акселератора найти не удалось. В этой сессии бюджет `WebSearch` был исчерпан
-до начала работы; `helpx.adobe.com` не открылся ни напрямую, ни через
-`r.jina.ai` (HTTP 422 и «Stream error in the HTTP/2 framing layer»),
-`documents.blackmagicdesign.com` оборвал загрузку мануала по таймауту,
-`www.vegascreativesoftware.info` теперь редиректит на forum.borisfx.com. Через
-Discourse-API форума Boris FX (`/search.json`) отработаны запросы «Customize
-Keyboard Vegas», «shortcut not listed in menu», «learn keyboard shortcuts
-Vegas», «shortcut keys tooltips», «didn't know there was a shortcut» — треды
-выше найдены там, но все они про Sapphire/Silhouette/Motor, а не про VEGAS Pro.
+Цитаты именно про ВИДИМОСТЬ акселератора дали трекеры, недоступные при первом
+написании заметки. Публичного трекера нет ни у одного из пяти редакторов ядра
+(`_trackers.md`, раздел «Кого НЕ берём»), поэтому счёт и цитаты идут по
+открытым монтажкам; механизм там тот же самый.
+
+Первая описывает наш собственный дефект чужими словами — аккорд показан у
+части элементов и не показан у остальных — и заведена как БАГ, а не как
+пожелание:
+
+> Unexpectedly, no keyboard shortcuts are displayed for these controls,
+> whereas the keyboard shortcuts *are* displayed for other controls and
+> buttons such as "Lift (**Z**)" in their hover text.
+> — issue #1821, Shotcut, 30.04.2026, закрыта completed,
+> https://github.com/mltframework/shotcut/issues/1821
+
+Вторая просит ровно нашу идиому `[tb]` — аккорд в скобках внутри подписи — и
+называет цену незнания временем. Закрыта как ДУБЛИКАТ, то есть просили и до
+неё:
+
+> Would be nice if keyboard shortcuts would be added in parentheses - "One
+> frame forward (Shortcut)", otherwise it takes more time to learn the
+> specific shortcuts.
+> — issue #2407, LosslessCut, 07.04.2025,
+> https://github.com/mifi/lossless-cut/issues/2407
+
+Третья — обратная сторона того же: команда, у которой клавиша есть, а пункта
+меню нет, не находится вообще.
+
+> The step (b) I only found by accident because it seems that it is only
+> available as a keyboard short cut. Surely it is so useful and important that
+> it should be in the File or Edit menu?!
+> — issue #876, LosslessCut, 02.10.2021,
+> https://github.com/mifi/lossless-cut/issues/876
+
+Это ровно наш случай с `Ctrl+Y` и `Backspace`: обработчик клавишу знает, а ни
+меню, ни один из пяти каталогов её не называет, и найти её можно только
+случайно — как «by accident» у автора #876.
+
+Отдельно стоит возраст запроса: «показывать аккорд в подсказке» просили у
+Kdenlive ещё в 2015 году («SUGGESTION - 15.08 Show keyboard shortcuts in
+tooltip pop-ups when mouse hovers over», #351721, 24.08.2015, RESOLVED FIXED),
+а к Shotcut тот же запрос пришёл в 2026-м. Одиннадцать лет — достаточный срок,
+чтобы считать невидимость акселератора не недоработкой одного продукта.
+
+О пяти редакторах ядра прежний пробел остаётся: `helpx.adobe.com` не открылся
+ни напрямую, ни через `r.jina.ai` (HTTP 422 и «Stream error in the HTTP/2
+framing layer»), `documents.blackmagicdesign.com` оборвал загрузку мануала по
+таймауту, `www.vegascreativesoftware.info` редиректит на forum.borisfx.com.
+Через Discourse-API форума Boris FX (`/search.json`) отработаны запросы
+«Customize Keyboard Vegas», «shortcut not listed in menu», «learn keyboard
+shortcuts Vegas», «shortcut keys tooltips», «didn't know there was a shortcut»
+— треды выше найдены там, но все они про Sapphire/Silhouette/Motor, а не про
+VEGAS Pro.
 
 ## Как ложится на Kinotrain
+
+АДРЕС: src/apps/kt-app/src/toolbar.rs:239 — класс из shotcut #1821 («аккорд
+показан у одних элементов и не показан у других») у нас ВОЗМОЖЕН и не ловится
+ничем. `menu_btn` склеивает `"{label}\t{accel}"` для семи пунктов главного
+меню, а контекстное меню таймлайна рисуется голым
+`ui.button(tr(k::tl::menu::COPY))` (`src/apps/kt-app/src/timeline.rs:4750`),
+где аккорд стоит внутри переведённой подписи, в скобках: две разные формы
+одного знания на одном экране — ровно то, на что заведена #1821. Стережёт эту
+поверхность одна проверка, t129 (`src/apps/kt-app/src/i18n_tests.rs:134`), и
+смотрит она только на то, что табуляция не уехала внутрь арабской фразы.
+Класс из losslesscut #876 («команда доступна только под клавишей») у нас в
+чистом виде: `Ctrl+Y` и `Backspace` (`src/apps/kt-app/src/app.rs:4045` и
+`:4041`) не встречаются ни в одном значении ни одного из пяти каталогов
+(проверено грепом 08.09.2026; значений в каталоге сегодня 529).
 
 **Что видимость акселератора добавляет СВЕРХ реестра команд (F-UI-002).** Реестр
 отвечает на вопрос «какая клавиша у этой команды» тому, кто уже пришёл его
@@ -490,7 +600,44 @@ F-HLP-005, здесь он только сосчитан). Восьмой, `Esc`
 - https://forum.borisfx.com/t/01-sep-06-motor-v1-1-0b4/1372 (обращение
   2026-09-07) — «hotkey … now shown in Tools menu» как строка чейнджлога
 
-Внутренние источники (проверено грепом и чтением 2026-09-07):
+Трекеры (Р.41; дампы живут в `~/.cache/kinotrain/trackers/` и в репозиторий не
+попадают — `_trackers.md`, раздел «Лицензии»). Ими закрыта стоявшая здесь
+честная пометка о ненайденной цитате: цитаты именно про ВИДИМОСТЬ акселератора
+нашлись, только не у пяти редакторов ядра — публичного трекера нет ни у одного
+из них.
+
+- https://github.com/mltframework/shotcut/issues/1821 — «Toolbar entries and
+  track controls unexpectedly do not show keyboard shortcuts in their hover
+  texts», 30.04.2026, closed/completed (обращение 2026-09-08)
+- https://github.com/mifi/lossless-cut/issues/2407 — «Add shortcut in hover
+  descriptions», 07.04.2025, закрыта как дубликат (обращение 2026-09-08)
+- https://github.com/mifi/lossless-cut/issues/876 — «Shortcut(s) don't have
+  menu entries», 02.10.2021 (обращение 2026-09-08)
+- https://github.com/mifi/lossless-cut/issues/2032 — в теле стоит шаблон
+  обращения LosslessCut с первым пунктом «Check out all the menus and keyboard
+  shortcuts. Maybe the feature already exists?», 12.06.2024; тот же шаблон
+  виден в #2154, #2407 и #2744 (обращение 2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=409409 — «Need hot key for Enable /
+  Disable clip toggle», 02.07.2019, RESOLVED **INVALID**, в паре с
+  https://bugs.kde.org/show_bug.cgi?id=411466 — «Hotkey for enable / disable
+  clip works only for audio track», 31.08.2019, RESOLVED FIXED: одна и та же
+  клавиша, два месяца, два прямо противоположных вывода (обращение 2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=403532 — «[Feature Request] Shortcuts
+  for multicam editing», 23.01.2019, RESOLVED WORKSFORME (обращение
+  2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=351721 — «SUGGESTION - 15.08 Show
+  keyboard shortcuts in tooltip pop-ups when mouse hovers over», 24.08.2015,
+  RESOLVED FIXED (обращение 2026-09-08)
+
+Обе строки `СИГНАЛ:` и разбивка «42 просьбы на восемь трекеров»
+воспроизводятся командой `python3 src/scripts/tracker-rank.py --query
+'<фильтр из обратных кавычек>'` на выгрузке от 08.09.2026: 12 дампов, 30 632
+записи. `blender-vse` и `ffmpeg-trac` на тот момент ещё качались (файлы
+пустые) и в процентных сравнениях не участвуют. Состояния задач
+(INVALID/WORKSFORME/duplicate) взяты из полей дампа, а не из чтения тредов.
+
+Внутренние источники (проверено грепом и чтением 2026-09-07; ссылки на
+`toolbar.rs`, `timeline.rs`, `app.rs` и каталоги перепроверены 2026-09-08):
 `src/apps/kt-app/src/toolbar.rs:239-345`, `src/apps/kt-app/src/app.rs:3890-4020`
 и `:4101`, `src/apps/kt-app/src/timeline.rs:1258-1320` и `:4341-4732`,
 `src/apps/kt-app/src/i18n_tests.rs:134`, `src/apps/kt-app/i18n/*.toml` (522

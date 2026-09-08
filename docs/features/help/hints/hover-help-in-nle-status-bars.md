@@ -14,6 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-HLP-001, F-HLP-002]
+trackers: [kde-invent, kde-bugzilla, openshot]
 checked: 2026-09-07
 ---
 
@@ -148,6 +149,25 @@ Notifications, ПКМ по нему — копирует текст в буфе�
 - **Что можно закрыть — закрывают.** Пользователь Vegas в августе 2026 пишет о
   закрытии Status Bar как о рутине. Всё, что жило только в полосе, при этом
   исчезает; у нас в этом положении зум и границы региона.
+- **Цена «одного экземпляра» подтверждается трекером в чистом виде.** Автор
+  kde-invent #1744 спрятал полосу ради лишней дорожки и был вынужден включить её
+  обратно — не потому, что полоса нужна, а потому, что одно показание не
+  существует больше нигде. Это тот самый сценарий, который у нас недостижим
+  выключателем (его нет) и достижим плитой подсказки: результат для зума и
+  границ региона одинаковый, отличается только способ.
+- **20 px — это не «мало места», это отдельный класс дефектов.** У Kdenlive
+  четыре обращения к полосе из семи — про непоместившийся текст, на трёх
+  платформах и за десять лет (kde-bugzilla #353657, #437113, #471252, #501571;
+  последний открыт с 16.03.2025). У нас в полосе уже есть расхождение того же
+  класса: плита подсказки строится по прямоугольнику высотой 22 px, а панель
+  заведена `exact_size(20.0)`.
+- **Полоса мигает, пока водят мышью, и это чинят как баг.** Kdenlive закрывал
+  фиксом «Visual jitter in statusbar when move cursor over timeline»
+  (kde-bugzilla #356661, 14.12.2015,
+  https://bugs.kde.org/show_bug.cgi?id=356661). У нас источник дрожания тот же и
+  сильнее: таймлайн даёт подсказку в каждой своей точке (F-HLP-001), поэтому
+  плита появляется и исчезает на каждом входе курсора в таймлайн и обратно, а
+  вместе с ней мигают пять приборов.
 
 ## Что говорят пользователи
 
@@ -171,17 +191,76 @@ Notifications, ПКМ по нему — копирует текст в буфе�
 have to move your attention and eyes takes you away from the very button or
 area you're interested in», forum.ableton.com, 25.10.2019).
 
-НЕТ ЦИТАТ: жалобы монтажёров именно на нижнюю полосу («не смотрю туда», «далеко
-от таймлайна») найти не удалось. Искал: Discourse-поиск форума Boris FX
-(`/search.json` по «status bar», «status bar tooltip», «status bar missing»,
-«status bar font small», «bottom of the screen eyes») — выдаёт только
-релиз-ноты и пост hb2k; поиск форума Blackmagic (`search.php`) без сессии
-отдаёт страницу «Information»; reddit и `discussions.apple.com` из окружения не
-открываются; бюджет `WebSearch` сессии исчерпан на 200 из 200 запросов. Отдельно
-показательно, что искать почти нечего: у трёх NLE из пяти полосы нет, и
-жаловаться на её расстояние там некому.
+Багтрекер Kdenlive — единственный NLE с публичной перепиской именно об этой
+полосе, и там спор идёт ровно между двумя нашими назначениями. За справочную
+зону — просьба сделать её ПОСТОЯННОЙ, и просят буквально Blender, которого
+разбирает таблица выше:
+
+> Other Applications like Blender, Inkscape and many more show "Keymap
+> Infromation" permanently in the status bar. The information depends on the
+> current selected tool.
+> — kde-invent #916, 08.01.2021 (2 голоса, 14 комментариев),
+> https://invent.kde.org/multimedia/kdenlive/-/work_items/916
+
+Автор там же называет цену совмещения ровно нашим языком: сегодня Kdenlive пишет
+это в общий `statusbarmessagelabel`, где текст «visible for a few seconds after
+the tool is activated and they shared the label with other status messages», —
+то есть справка и приборы делят одну надпись, и справка её выигрывает.
+
+Против — просьба вынести показание ИЗ полосы, и мотив редкий: полосу спрятали
+ради лишней дорожки, а значение, живущее только в ней, заставило вернуть полосу
+обратно.
+
+> a way to move this displayed value on other position? or maybe display the
+> value as a textual popup if the status bar is hidden?
+> — kde-invent #1744, 15.08.2023 («i started to not use anymore the status bar
+> to gain the space for another track… but this value make me forced to display
+> it again»), https://invent.kde.org/multimedia/kdenlive/-/work_items/1744
+
+И третья сторона — «полоса есть, но пустая», список пожеланий совпадает с нашим
+составом почти построчно (клавиши инструмента, значения параметров, прогресс):
+
+> OpenShot does have a status bar but it isn't used. It would be nice if we
+> could make extensive use of the status bar.
+> — openshot #1858, 16.07.2018,
+> https://github.com/OpenShot/openshot-qt/issues/1858
+
+Просьбу «убрать» тоже видно, и она про справочную половину: kde-bugzilla #496054
+«Disable tutorial info in Statusbar» (10.11.2024, `wishlist`, подтверждена
+триажем, https://bugs.kde.org/show_bug.cgi?id=496054).
+
+СИГНАЛ: нижняя полоса как предмет — 7 задач в kde-bugzilla, `status ?bar|statusbar`; доля 0.1% против 0.0% (1 задача из 4516) в openshot
+
+СИГНАЛ: текст, не поместившийся в полосу — 4 задачи в kde-bugzilla, `(status ?bar|statusbar)[^.]{0,40}(cut off|cropped|crop|truncat|spacing|too narrow|not be read|cannot be read)`; доля 0.1% против 0.0% (ни одной из 2217) в kde-invent
+
+Второй счёт и есть находка: больше половины обращений к полосе в `kde-bugzilla`
+(4 из 7) — не про содержание, а про то, что текст в неё не влез. Три из
+четырёх — на трёх разных платформах и с интервалом в годы (#437113, 14.05.2021,
+«wrong spacing (horizontally cut off)»; #471252, 20.06.2023, macOS, «strings
+are cropped»; #501571, 16.03.2025, Windows, «vertically cut off», не закрыта),
+четвёртая — #353657 (07.10.2015, HiDPI 2880×1620, кнопки полосы слишком узкие).
+У полосы в одну строку главный дефект — не «не туда смотрят», а «не
+поместилось», и это ровно правило 7 чек-листа.
+
+Жалобы монтажёров в словах «не смотрю туда» / «далеко от таймлайна» по-прежнему
+нет: у трёх NLE ядра из пяти полосы нет вовсе, а у оставшихся двух публичного
+трекера нет (`_trackers.md`, «Кого НЕ берём»). Отработаны Discourse-поиск форума
+Boris FX (`/search.json` по «status bar», «status bar tooltip», «status bar
+missing», «status bar font small», «bottom of the screen eyes») — только
+релиз-ноты и пост hb2k; поиск форума Blackmagic (`search.php`) без сессии отдаёт
+страницу «Information».
 
 ## Как ложится на Kinotrain
+
+АДРЕС: src/apps/kt-app/src/app.rs (`egui::Panel::bottom("status")` и
+`draw_statusbar`) — половина класса kde-invent #1744 у нас невозможна, потому
+что полосу нельзя спрятать: панель заводится безусловно каждым кадром, ни в
+одном из трёх корневых меню выключателя нет, и запоминать нечего. Вторая
+половина возможна, и её не ловит ничто: `draw_status_hint` заливает полосу
+цветом панели от правого края до `strip.left()`, а единственное измерение полосы
+— t128 в `src/apps/kt-app/src/layout_tests.rs:1899` — гоняет `REGION_S` и
+`CACHE_SHORT` по бюджету `PERF_COLUMN = 190.0`, то есть по ширине ЧУЖОЙ панели;
+ни один тест не спрашивает, что осталось видно под плитой.
 
 ### Что уже есть
 
@@ -333,6 +412,19 @@ Resolve на странице Fusion и, в мягком виде, Vegas. Но �
   VCS-виджета в тулбар) —
   https://www.jetbrains.com/help/idea/guided-tour-around-the-user-interface.html
   (07.09.2026)
+- Трекеры (дампы `~/.cache/kinotrain/trackers/`, в репозиторий не попадают —
+  `_trackers.md`, раздел лицензий; оба числа строк `СИГНАЛ:` воспроизводятся
+  `python3 src/scripts/tracker-rank.py --query '<фильтр>'` с фильтрами из
+  обратных кавычек, обращение 08.09.2026):
+  `kde-invent` — work_items 916 (08.01.2021, постоянная зона клавиш в полосе) и
+  1744 (15.08.2023, вынести показание из полосы);
+  `kde-bugzilla` — 496054 (10.11.2024, `wishlist`, убрать обучающий текст),
+  356661 (14.12.2015, дрожание полосы при движении курсора по таймлайну),
+  353657 / 437113 / 471252 / 501571 (2015-2025, текст не помещается);
+  `openshot` — 1858 (16.07.2018, «полоса есть, но не используется»).
+  Публичного трекера нет ни у одного из пяти редакторов ядра (`_trackers.md`,
+  «Кого НЕ берём — и почему»), поэтому счёт снят по открытым редакторам, а
+  таблица «У кого и как» остаётся на документации вендоров
 - Код: `src/apps/kt-app/src/app.rs` (`draw_statusbar`, `draw_status_hint`,
   `draw_perf_box`), `timeline.rs`, `layout_tests.rs` (t83, t128),
   `render_dialog.rs`; `docs/user-feedback.md` (Р.7, Р.7.1, Р.9 п.1, Р.40) —

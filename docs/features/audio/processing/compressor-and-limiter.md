@@ -14,7 +14,8 @@ round: null
 point: null
 tests: []
 depends_on: [F-AUT-002, F-CLR-006]
-checked: 2026-09-07
+trackers: [kde-bugzilla, kde-invent, olive, openshot, mlt, pitivi]
+checked: 2026-09-08
 ---
 
 # F-AUD-002 — Динамическая обработка — компрессор, лимитер, гейт, экспандер
@@ -131,6 +132,21 @@ the music clip, and no keyframes are generated» (то есть в норме ф
   см. цитаты), а у части пользователей роняет приложение.
 - Динамика на уровне дорожки/шины невидима на клипе: смотришь на событие и не
   понимаешь, почему оно тише, чем в бине.
+- Сайдчейн стоит не в приборе, а в ХОСТЕ: Olive умеет загрузить чужой
+  sidechain-компрессор, и он всё равно бесполезен, потому что направить в него
+  сигнал другой дорожки нечем (Olive #1753). Прибор без адресации второго входа
+  — это не половина фичи, а ноль.
+- Приборы динамики ломаются не алгоритмом, а стыком с трактом. У Kdenlive из
+  четырёх задач про существующую динамику две подряд — «Cannot set sink channel
+  counts» у Compressor/Expander (#489276, #490884): компрессор обязан
+  договориться о числе каналов, и это отказывает чаще, чем сам DSP.
+- Цена динамики взимается разрядностью цепочки, а не эффектом: у MLT звук
+  внутри цепочки молча сводился в 16 бит, и та же самая компрессия звучала
+  «грязно» в Kdenlive и чисто в Audacity (#1284). Прибор нельзя оценивать в
+  отрыве от точки суммирования.
+- Лимитер просят не как эффект на клипе, а как свойство ЭКСПОРТА («чтобы
+  экспорт не клиппил») — то есть просьба приходит на уровень, которого у
+  редактора может не быть вовсе.
 
 ## Что говорят пользователи
 
@@ -161,13 +177,76 @@ the music clip, and no keyframes are generated» (то есть в норме ф
 советует вырезать эквалайзером НОТЧ вместо приседания — потому что механизма
 приседания у Vegas нет до сих пор, и обходят его вручную.
 
-НЕТ ЦИТАТ: живого отрицательного фидбека по Resolve Ducker и по задержке
-лимитера в NLE набрать не удалось. reddit.com и web.archive.org из окружения
-не открываются вовсе, forum.blackmagicdesign.com в этой сессии отдаёт 403 на
-все URL (проверены viewforum.php, viewtopic.php и search.php), поисковый
-бюджет WebSearch исчерпан, а через Yahoo/Brave находились только вторичные
-блоги и youtube. Тред 145413 форума BMD про VST delay compensation виден в
-сниппете, но не читается — поэтому факт про Flexi Bus помечен «не проверено».
+Живого отрицательного фидбека по Resolve Ducker и по задержке лимитера собрать
+не удалось (форум BMD в этой сессии отдавал 403), зато трекеры опенсорсных
+редакторов отвечают на тот же вопрос счётом — и отвечают резче, потому что там
+видно не мнение, а состояние задачи.
+
+Мастер-лимитер просят не как эффект, а как свойство ЭКСПОРТА:
+
+> I really miss a master limiter effect that'd allow to export videos without
+> clipping in case something gets too loud.
+> — Olive #2064, 14.10.2022, закрыта,
+> https://github.com/olive-editor/olive/issues/2064
+
+Живой сайдчейн, у которого нет адресации второго входа, бесполезен вместе со
+всем плагином — и это ровно тот упор, о который встала F-CLR-006:
+
+> However, there is no way to direct the sidechain from one of the other audio
+> tracks into the plugin, thus rendering it useless.
+> — Olive #1753, 29.09.2021, закрыта,
+> https://github.com/olive-editor/olive/issues/1753
+
+Приборы динамики просят там, где их нет, ровно теми же словами, что и в
+форумных тредах 2010 года, — только с готовым обходом через чужую программу:
+
+> I miss a great feature in all NLE about audio, is the audio "autoduck"
+> functionality. […] Is available in Audacity but I need to do the process OUT
+> of the video editor and incorporate the result to the project.
+> — OpenShot #2813, 29.05.2019, закрыта,
+> https://github.com/OpenShot/openshot-qt/issues/2813
+
+А там, где дакинг делают руками, он делается ИМЕННО огибающей — то есть тем
+путём, который у нас дешевле всего:
+
+> This way the super frequent performed manual audio ducking with keyframes, to
+> lower e.g. music when a speaker is speaking […] would benefit from a massive
+> workflow speed boost […]
+> — Kdenlive (kde-invent) #1958, 27.01.2025, открыта,
+> https://invent.kde.org/multimedia/kdenlive/-/work_items/1958
+
+Уровень применения — отдельная просьба, и звучит она про динамику дословно:
+
+> It would be very useful to be able to add effects on full layers for instance
+> using one track for chroma-keying or compressor /limiter on audio track etc
+> and not worry about adding effect to all clips in same track.
+> — Pitivi #2472, 19.05.2020, открыта,
+> https://gitlab.gnome.org/GNOME/pitivi/-/work_items/2472
+
+И цена, которую платит тракт, а не алгоритм (инвариант №1 нашего движка — про
+это буквально):
+
+> I'd noticed that Kdenlive was producing quite rough audio output when applying
+> effects (e.g. fade out / compression). The same compression algorithm was
+> sounding clean on Audacity.
+> — MLT #1284, 29.08.2026, закрыта,
+> https://github.com/mltframework/mlt/issues/1284
+
+СИГНАЛ: приборы динамики — 6 задач в kde-bugzilla, `auto.?duck|\bducking\b|\blimiter\b|\bcompressor\b|noise gate|side.?chain`; доля 0.1% против 0.2% в olive
+
+Число мелкое, и мелкое оно честно: тема «звук» — 2522 задачи на одиннадцать
+трекеров рейтинга, динамика внутри неё это 12 задач, то есть 0.5 % темы. Находка не в
+величине, а в РАЗНИЦЕ СОСТАВА при вдвое большей доле там, где прибора нет. У
+Olive (динамики нет вовсе) все три задачи — «дайте»: лимитер, автодакер,
+сайдчейн. У Kdenlive (динамика есть, через MLT/avfilter) две задачи — просьбы
+про автодакинг (одна из них, #392623, висит CONFIRMED с 2018 года), а
+остальные четыре — поломки уже существующего: компрессор «explodes when
+attributes changed» (#403650), дважды подряд «Cannot set sink channel counts»
+у Compressor/Expander (#489276 и #490884) и искажение на целом наборе приборов,
+включая лимитер (#513447). То есть класс ведёт себя не как «редкая экзотика», а
+как «пока прибора нет — просят, как только появился — ломается на стыке с
+трактом, а не в самом DSP». Именно поэтому единственная жалоба про звучание
+(MLT #1284) оказалась не про алгоритм, а про разрядность цепочки.
 
 ## Как ложится на Kinotrain
 
@@ -295,6 +374,20 @@ F-CLR-006, только со стороны звука: второму вход�
   не должен стать вторым способом делать то же самое), 20 (дакинг
   перегенерируется ТОЛЬКО по команде, сам не отрастает).
 
+АДРЕС: `src/libs/kt-engine/src/player.rs:375` — класс MLT #1284 («цепочка
+молча свелась в 16 бит, и компрессия звучит грязно при чистом алгоритме») у нас
+невозможен, потому что инвариант №1 держит f32/48k/2ch от декода до выхода, и
+любое отступление ловится побайтовым golden_export. А вот класс Olive #2064
+(«экспорт клиппит, и положить лимитер некуда») возможен, и его не ловит ничто:
+единственный объект с именем «мастер» — это МОНИТОРНЫЙ фейдер превью,
+`Player::set_master_gain` с комментарием «Мастер-громкость превью»
+(`player.rs:375`), живущий в атомике для cpal-колбэка; экспорт собирает тот же
+`AudioRenderer` вообще без него (`src/libs/kt-engine/src/export.rs:81`,
+`:103`). То есть в модели нет НИ ОДНОГО уровня, общего для превью и экспорта,
+куда лимитер защиты от клиппинга можно было бы приложить, — а golden_export
+стережёт байты того, что мы посчитали, и про существование потолка не знает.
+Именно поэтому мастер-лимитер в «Оценке» стоит L, а не M: цена не в DSP.
+
 ## Оценка
 
 | Что | Ответ |
@@ -329,6 +422,15 @@ DSP, а в то, что мастер-фейдер сегодня существ�
 
 ## Источники
 
+- Трекеры (дампы от 08.09.2026 в `~/.cache/kinotrain/trackers/`, в репозиторий
+  не попадают — лицензии нет, см. `_trackers.md`): `kde-bugzilla` 6346 задач,
+  `kde-invent` 2217, `olive` 1853, `openshot` 4516 (выгрузка ещё шла, в реестре
+  4907), `mlt` 601, `pitivi` 2672. Число и доли строки `СИГНАЛ:`
+  воспроизводятся `python3 src/scripts/tracker-rank.py --query
+  'auto.?duck|\bducking\b|\blimiter\b|\bcompressor\b|noise gate|side.?chain'` на
+  этом составе; `match()` смотрит заголовок, метки и компонент, поэтому
+  совпадения только в теле задачи в счёт не идут (цитаты из тел приведены
+  поимённо со ссылками).
 - https://www.blackmagicdesign.com/products/davinciresolve/fairlight — Fairlight:
   динамика в канальной полоске, Ducker как Track FX (дата обращения 2026-09-07)
 - https://support.apple.com/en-lamr/guide/final-cut-pro-logic-effects/lgex931a007e/mac —

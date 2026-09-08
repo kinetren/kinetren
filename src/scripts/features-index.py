@@ -49,6 +49,12 @@ VERDICT_SHAPES = ("ТЕСТ:", "ПРОВЕРКА:", "ОТВЕРГНУТО:", "У
 VERDICT_TAIL_MIN = 60
 TEMPLATE = FEATURES / "_template.md"
 
+# Третья волна (Р.41): трекер — источник, а не ось. Заметка, объявившая trackers:,
+# обязана нести СЧЁТ (сравнение долей двух трекеров) и АДРЕС (наш код). «В Kdenlive
+# N багов про прокси» — статистика; находка начинается там, где число упёрто в src/.
+TRACKERS = FEATURES / "_trackers.md"
+SIGNAL_CAT = "resilience"
+
 
 def parse_front(text):
     """Frontmatter → dict. Значение: список [a, b], null, либо строка."""
@@ -108,6 +114,14 @@ def read_editor_keys():
     return set(re.findall(r"^\|\s*`([a-z0-9.-]+)`\s*\|", EDITORS.read_text(encoding="utf-8"), re.M))
 
 
+def read_tracker_keys():
+    """Ключи из таблицы «## Реестр» в _trackers.md — источник правды один."""
+    if not TRACKERS.exists():
+        return set()
+    return set(re.findall(r"^\|\s*`([a-z0-9-]+)`\s*\|\s*\w+\s*\|\s*`",
+                          TRACKERS.read_text(encoding="utf-8"), re.M))
+
+
 def load_notes():
     return sorted(p for p in FEATURES.rglob("*.md")
                   if p.name != "README.md" and not p.name.startswith("_"))
@@ -119,6 +133,8 @@ def check():
     editor_keys = read_editor_keys()
     seen_ids = {}
     help_promises = {}
+    signal_filters = {}
+    tracker_keys = read_tracker_keys()
     today = datetime.date.today()
 
     if not cats:
@@ -253,6 +269,41 @@ def check():
                               if str(x).isdigit()]:
                     bad("спор про всплывающие подсказки без ui_rules: [10] в шапке")
 
+        # --- третья волна: трекеры как источник (Р.41) ------------------
+        trk = front.get("trackers") or []
+        if len(parts) == 3 and parts[0] == SIGNAL_CAT and not trk:
+            bad("категория resilience/ заведена под счётные находки: "
+                "поле trackers: обязано быть непустым")
+        if trk:
+            for t in trk:
+                if t not in tracker_keys:
+                    bad(f"трекер «{t}» не объявлен в _trackers.md")
+
+            sig = [l.strip() for l in feedback.splitlines()
+                   if l.strip().startswith("СИГНАЛ:")]
+            if not sig:
+                bad("объявлен trackers:, но в «Что говорят пользователи» нет строки "
+                    "«СИГНАЛ:» — статистика без сравнения находкой не считается")
+            else:
+                head = sig[0]
+                if len(re.findall(r"\d", head)) < 2 or "%" not in head:
+                    bad("«СИГНАЛ:» обязан нести два числа и долю в процентах "
+                        "(число одного трекера против доли другого)")
+                f = re.search(r"`([^`]+)`", head)
+                if not f:
+                    bad("«СИГНАЛ:» без точного фильтра в обратных кавычках — "
+                        "число невоспроизводимо")
+                else:
+                    signal_filters.setdefault(f.group(1), []).append(str(rel))
+
+            addr = [l.strip() for l in fits.splitlines()
+                    if l.strip().startswith("АДРЕС:")]
+            if not addr:
+                bad("объявлен trackers:, но в «Как ложится» нет строки «АДРЕС:» — "
+                    "чужая боль не привязана к нашему коду")
+            elif "src/" not in addr[0]:
+                bad("«АДРЕС:» без пути src/… — привязка к нашему коду не названа")
+
         notes.append((front, rel))
 
     # Обещание, повторённое дважды, — это дублированный вывод.
@@ -260,6 +311,12 @@ def check():
         if len(where) > 1:
             errors.append(f"help/: обещание «{token}» стоит ПЕРВЫМ в {len(where)} "
                           f"заметках ({', '.join(where)}) — вывод дублируется")
+
+    # Один и тот же фильтр в двух заметках — это одна находка, посчитанная дважды.
+    for f, where in sorted(signal_filters.items()):
+        if len(where) > 1:
+            errors.append(f"СИГНАЛ: фильтр «{f}» повторяется в {len(where)} заметках "
+                          f"({', '.join(where)}) — находка задвоена")
 
     # _template.md исключён из load_notes() (имя на «_»), поэтому его слаги
     # однажды протухли молча и сломали бы каждую скопированную заметку.

@@ -14,6 +14,7 @@ round: null
 point: null
 tests: []
 depends_on: [F-UI-002]
+trackers: [losslesscut, openshot, flowblade]
 checked: 2026-09-07
 ---
 
@@ -191,6 +192,17 @@ checked: 2026-09-07
   что испанская политика «переводить ИМЕНА клавиш» (`Supr`, `Mayús`, `Inicio`,
   `Fin` — F-HLP-017) с этой таблицей несовместима: одну из двух политик
   придётся похоронить сознательно.
+- **Окно ПРО клавиши съедает клавиши — и это не гипотеза правила 14, а самый
+  частый способ сломать именно эту фичу.** Трекер показал цену формы 2 живьём:
+  «I want to learn keyboard shortcuts, but with the Keyboard Shortcuts dialog
+  open I can not apply any of these keyboard shortcuts, as the dialog seems to
+  intercept all of them» (flowblade #620, 14.02.2019,
+  https://github.com/jliljebl/flowblade/issues/620; закрыта фиксом). Тот же
+  дефект пришёл в LosslessCut с другой стороны — там из-за него просят вынести
+  справку ВНАРУЖУ, потому что внутреннюю «has to be dismissed in order to start
+  using a key command» (losslesscut #726). То есть у формы 2 есть цена, которой
+  нет ни у одной из остальных трёх: пока шпаргалка открыта, по ней нельзя
+  тренироваться.
 
 ## Что говорят пользователи
 
@@ -224,21 +236,53 @@ working on adding long-press support». Против — цена перекры
 > — jungletek, 17.08.2026,
 > https://github.com/microsoft/PowerToys/issues/49975
 
-НЕТ ЦИТАТ: по пяти редакторам ядра живой цитаты именно про ШПАРГАЛКУ (а не про
-переназначение клавиш) найти не удалось. Бюджет `WebSearch` в этой сессии был
-исчерпан до начала работы (200 из 200), `helpx.adobe.com` не открылся ни
-напрямую, ни через `r.jina.ai` (та же ошибка HTTP/2, что у F-HLP-017), зеркало
-справки VEGAS `vegaspro.helpmax.net` отвечает «Error establishing a database
-connection», `help.magix-hub.com` даёт 404 на все пять угаданных имён темы
-(`keyboard_shortcuts`, `default_keyboard_shortcuts`, `keyboard_shortcuts_reference`,
-`shortcuts`, `vegas_pro_keyboard_shortcuts`), `html.duckduckgo.com` и
-`search.yahoo.com` из этого окружения отдают заглушку. Через Discourse-API
-форума Boris FX отработаны запросы «cheat sheet shortcuts», «printable keyboard
-shortcuts», «shortcut list pdf», «keyboard shortcuts chart», «list of hotkeys»,
-«shortcuts reference document», «print shortcuts», «quick reference guide
-keyboard», «where is the list of shortcuts», «learn shortcuts faster»,
-«memorize shortcuts» — единственный тред по существу приведён выше, и он про
-SynthEyes, а не про VEGAS.
+В багтрекерах открытых редакторов та же просьба лежит своими словами. Первая —
+ровно форма 1 (печатная карточка) и ровно та цена, которой платит JetBrains:
+шпаргалка нужна ПОСЛЕ переназначения, а печатается только предустановленная
+раскладка.
+
+> It helps to create a cheat sheet from the list and display it till muscle
+> memory develops. Let the user export the "command vs hotkey" text from the
+> **Preferences** dialog.
+> — openshot #5447, 20.02.2024 (открыта до сих пор),
+> https://github.com/OpenShot/openshot-qt/issues/5447
+
+Вторая — прямое противопоставление форм 1 и 2, и обоснование ровно то, что в
+«Минусах» стоит у формы 2:
+
+> It would be helpful to have a keyboard shortcut reference sheet available
+> outside of the app (rather than only as a help menu within the app that has to
+> be dismissed in order to start using a key command).
+> — losslesscut #726, 18.04.2021 (открыта, 6 комментариев),
+> https://github.com/mifi/lossless-cut/issues/726
+
+Третья — про точку входа, которая в этой заметке стоит дороже самого окна, и
+пользователь называет сразу оба парных способа (правило 17):
+
+> It would be nice to be able to press <kbd>?</kbd> and have the list of
+> shortcuts appear. It could also be an option in the top menu.
+> — losslesscut #19, 04.01.2017, https://github.com/mifi/lossless-cut/issues/19
+
+СИГНАЛ: список клавиш как ДОКУМЕНТ — 2 задачи в losslesscut, `cheat ?sheet|(shortcut|hotkey|keybinding)s?[^.]{0,20}(\breference|cheat|chart|\bdocumentation|documented)|(print|export)\w*( the| your| current| all| custom){0,2}( keyboard| key)? (shortcut|hotkey|keybinding)|(list|overview) of[^.]{0,20}(shortcut|hotkey)|show shortcuts`; доля 0.1% против 0.0% (1 задача из 4516) в openshot
+
+СИГНАЛ: клавиши как тема вообще — 41 задача в losslesscut, `(shortcut|hotkey|keybinding|keymap)`; доля 2.1% против 0.4% в openshot
+
+Два счёта рядом и дают находку, которой нет в документации: тема клавиш горячая
+везде (1.0–2.1 % у семи трекеров из восьми), а «список клавиш как документ» —
+0.1 % в лучшем случае. Просят не шпаргалку, а РЕДАКТОР раскладки, и это тот же
+результат, что дал обход пяти редакторов ядра выше, только счётом. Причём обе
+задачи losslesscut пришли туда, где окно со списком УЖЕ есть (`HelpSheet`,
+пункт Help и клавиша `H`): шпаргалку там просят не вместо окна, а сверх него —
+потому что окно приходится закрыть, чтобы нажать клавишу.
+
+Про пять редакторов ядра цитаты по-прежнему нет и быть не может: публичного
+трекера нет ни у одного (`_trackers.md`, «Кого НЕ берём»), а форум вендора
+трекером не является. Через Discourse-API форума Boris FX отработаны запросы
+«cheat sheet shortcuts», «printable keyboard shortcuts», «shortcut list pdf»,
+«keyboard shortcuts chart», «list of hotkeys», «shortcuts reference document»,
+«print shortcuts», «quick reference guide keyboard», «where is the list of
+shortcuts», «learn shortcuts faster», «memorize shortcuts» — единственный тред
+по существу приведён выше, и он про SynthEyes, а не про VEGAS.
 
 ## Как ложится на Kinotrain
 
@@ -261,6 +305,16 @@ SynthEyes, а не про VEGAS.
 Это и есть предмет здесь. Разошедшиеся четыре источника аккорда (обработчик,
 литерал меню, фраза каталога, таблица сайта) и испанские `Supr`/`Mayús` —
 находка F-HLP-017, она цитируется, а не переоткрывается.
+
+АДРЕС: src/apps/kt-app/src/app.rs (`handle_keys`, гейт
+`ctx.egui_wants_keyboard_input()`) — класс flowblade #620 («окно про клавиши
+перехватило клавиши») у нас возможен, и его не ловит ничто: гейт глушит все 27
+аккордных форм разом, пока фокус держит любой виджет, а единственный сторож
+отданного фокуса — t98 в `src/apps/kt-app/src/layout_tests.rs` — проверяет
+ровно одну поверхность, маску таймкода, и про окна («Уведомления»,
+«Диагностика») не знает ничего. Половина класса losslesscut #726 у нас, наоборот,
+невозможна: печатная форма уже живёт вне программы (`site/build.py`), закрывать
+её, чтобы нажать клавишу, не требуется.
 
 ### Что уже есть
 
@@ -524,6 +578,26 @@ t20). Отвергнутая форма 3 (оверлей по удержани�
   purpose of the key command»: платформенный API под форму 3 существует, но
   описания поведения «удержать ⌘ → список» в текущей версии страницы нет —
   [НЕ ПРОВЕРЕНО], поэтому в таблицы эта площадка не внесена
+
+Трекеры (дампы `~/.cache/kinotrain/trackers/`, в репозиторий не попадают —
+`_trackers.md`, раздел лицензий; оба числа строк `СИГНАЛ:` воспроизводятся
+`python3 src/scripts/tracker-rank.py --query '<фильтр>'` с фильтрами из
+обратных кавычек, обращение 08.09.2026):
+
+- `losslesscut` — https://github.com/mifi/lossless-cut/issues/726 (18.04.2021,
+  открыта), `/19` (04.01.2017, закрыта реализацией), `/1996` (14.05.2024) и
+  `/549` (13.12.2020) — из последних двух видно, что окно «Keyboard & Mouse
+  Shortcuts» вызывается пунктом Help и клавишей `H`, то есть форма 2 там уже
+  была, когда просили форму 1
+- `openshot` — https://github.com/OpenShot/openshot-qt/issues/5447 (20.02.2024,
+  открыта): экспорт «command vs hotkey» из диалога Preferences
+- `flowblade` — https://github.com/jliljebl/flowblade/issues/620 (14.02.2019,
+  закрыта фиксом): диалог раскладки перехватывает весь ввод; и `/1199`
+  (28.08.2025, открыта) — `Backspace` в редакторе раскладки роняет Flowblade
+  трейсбеком: та самая вторая привязка удаления, которой у нас нет ни в
+  шпаргалке, ни в каталогах
+- Пяти редакторов ядра здесь нет и быть не может: публичного трекера нет ни у
+  одного (`_trackers.md`, «Кого НЕ берём — и почему»)
 
 Внутренние источники (проверено грепом и чтением 2026-09-07):
 `src/apps/kt-app/src/app.rs:1103-1127`, `:1712-1752`, `:3344`, `:3546`,

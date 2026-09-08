@@ -14,7 +14,8 @@ round: null
 point: null
 tests: []
 depends_on: [F-HLP-032]
-checked: 2026-09-07
+trackers: [kde-bugzilla, kde-invent, openshot]
+checked: 2026-09-08
 ---
 
 # F-HLP-033 — Цена строки справки на пяти языках
@@ -145,8 +146,34 @@ user interface» и разрешает при расхождении остав�
 - Сабсет считается по каталогам ПРОГРАММЫ. Иероглиф, появившийся только в
   `site/content/zh-Hans.toml`, в шрифт программы не попадёт — у сайта свой
   набор шрифтов.
+- **Фолбэк «нет перевода → английский» стоит не меньше, чем его отсутствие.**
+  Трекер показал цену прямо: Kdenlive #510090 «Kdenlive incorrectly uses English
+  as fallback language for Chinese interface elements» закрыт WORKSFORME, то
+  есть смешанный язык пользователь читает как дефект, а сопровождающий — как
+  норму, и спор не разрешается. Наше «нет ключа — нет сборки» покупает именно
+  отсутствие этого класса; заводить фолбэк — значит заводить и его.
+- **Порог покрытия наказывает переводчика, а не автора.** Kdenlive #463084:
+  «Slovenian help for KDEnlive is not built, even if translation exists» —
+  перевод справки был, а сборки на язык не было. Наш `translated_min = 0.9`
+  устроен так же: язык с 89 % получает `noindex`, и переводчик узнаёт об этом
+  не от инструмента, а по отсутствию своей страницы в `sitemap.xml`.
 
 ## Что говорят пользователи
+
+СИГНАЛ: перевод и справка как отдельная статья расхода — 131 задача в kde-bugzilla, `translat|locale|language|i18n|l10n|\brtl\b|documentation|\bdocs\b|user guide|\bmanual\b`; доля 2.1% против 1.2% в kde-invent (26 задач из 2217)
+
+СИГНАЛ: цена не в починке, а в объёме — 89 задач в kde-bugzilla, `\b(translation|documentation)\b`; доля 1.4% против 0.4% в kde-invent, а настоящих фиксов среди закрытых 57% против 47% по всему трекеру
+
+Второй счёт — тот, ради которого заметка вообще смотрит в трекер. У Kdenlive
+перевод и документация — не тема, а **два отдельных компонента** Bugzilla:
+`Translation` (38 задач) и `Documentation` (45), вместе 83 из 6346. Их
+устройство противоположно всему остальному трекеру: открытыми висят **3 задачи
+из 83 = 3.6% против 14.0%** (891 из 6346) по трекеру, а настоящих фиксов среди
+закрытых 56% против 47%. То есть перевод чинят охотно и не копят — цена лежит
+не в починке, а в объёме и в том, что объём возвращается с каждой новой
+строкой. Сравнивать доли фиксов при этом можно только внутри Bugzilla: у
+GitHub/GitLab-дампов закрытие без пометки неотличимо от фикса, и база у них
+1.00 — счёт «фиксы» там ничего не измеряет.
 
 Дословно — из руководства переводчикам самого Blender, то есть от тех, кто
 эту работу и делает:
@@ -160,8 +187,27 @@ user interface» и разрешает при расхождении остав�
 translation as in Blender's user interface. If the UI element has not yet been
 translated, keep the English term and add the translation in parentheses.»
 
-НЕТ ЦИТАТ: живой жалобы пользователя на расхождение справки и интерфейса
-найти не удалось. Бюджет `WebSearch` в сессии исчерпан (200 из 200);
+Живая жалоба ровно на тот разрыв, который считает эта заметка, нашлась в
+трекере OpenShot: интерфейс переведён, справка нет, и списки поддерживаемых
+языков у программы и у сайта — разные. Шаг воспроизведения там записан одной
+строкой: «Click on 'support>User guide' … User guide remains in English».
+
+> «There seems to be inconsistency between which languages are supported. …
+> Expect the manual to be in selected language (Dutch/French/?)»
+> — OpenShot, issue #3406 «Language of Program vs website vs listed as
+> supported», 24.04.2020,
+> https://github.com/OpenShot/openshot-qt/issues/3406 (обращение 2026-09-08)
+
+Заголовки компонента `Translation` у Kdenlive читаются как список наших
+собственных рисков, и все три — дословно: `Slovenian help for KDEnlive is not
+built, even if translation exists` (#463084, FIXED — перевод справки на язык
+существовал, а сборка на этот язык не выходила), `Kdenlive incorrectly uses
+English as fallback language for Chinese interface elements` (#510090, закрыта
+WORKSFORME), `Some effects/composite descriptions, option names and option
+tooltips show always in English` (#512355, FIXED).
+
+Чего найти не удалось: живой жалобы на расхождение справки и интерфейса у
+Blender и у платной пятёрки. Бюджет `WebSearch` в сессии исчерпан (200 из 200);
 `helpx.adobe.com` не открывается ни напрямую, ни через текст-прокси
 `r.jina.ai` (HTTP/2 framing error), `docs.blender.org` и `translate.blender.org`
 отдают Cloudflare-заглушку на прямой `curl`; Discourse-API `blenderartists.org`
@@ -171,6 +217,17 @@ english tutorials», «interface language english easier find», «english manua
 difficult language documentation») — релевантных тредов в выдаче нет.
 
 ## Как ложится на Kinotrain
+
+АДРЕС: `src/apps/kt-app/src/i18n_tests.rs` (t131) — класс «интерфейс переведён,
+а часть текста всё равно английская» у нас ВОЗМОЖЕН, и его не ловит ничто: t131
+роняет тест только на КИРИЛЛИЦУ в литерале `.rs`, поэтому английская строка,
+показанная пользователю мимо каталога, проходит насквозь во всех пяти языках —
+ровно так доезжают `#[error("project uses 3D effects on {0} clip(s), but no GPU
+is available")]` (`src/libs/kt-engine/src/export.rs:292`) и
+`Error::KtMetaBroken` (`src/libs/kt-otio/src/lib.rs:59`). У Kdenlive это не
+гипотеза, а три отдельные задачи компонента `Translation` (#502594, #512355,
+#473086 — описания эффектов, имена опций и тултипы «show always in English»),
+и все три закрыты FIXED: класс реален, чинится и возвращается.
 
 ### Что уже есть
 
@@ -331,6 +388,23 @@ difficult language documentation») — релевантных тредов в �
 - DaVinci Resolve, состав изданий справки:
   https://www.blackmagicdesign.com/support/family/davinci-resolve-and-fusion
   (дата обращения 2026-09-07)
+- Трекеры (третья волна, Р.41): выгрузки из
+  `~/.cache/kinotrain/trackers/{kde-bugzilla,kde-invent,openshot}.jsonl`, счёт
+  воспроизводится `python3 src/scripts/tracker-rank.py --query …` с фильтрами
+  из строк `СИГНАЛ:`; компоненты `Translation` (38) и `Documentation` (45)
+  считаны по полю `component` дампа kde-bugzilla (2026-09-08)
+- https://github.com/OpenShot/openshot-qt/issues/3406 — OpenShot, «Language of
+  Program vs website vs listed as supported»: интерфейс переведён, `User guide
+  remains in English` (обращение 2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=463084 — Kdenlive, «Slovenian help for
+  KDEnlive is not built, even if translation exists» (обращение 2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=510090 — Kdenlive, «Kdenlive incorrectly
+  uses English as fallback language for Chinese interface elements», закрыта
+  WORKSFORME (обращение 2026-09-08)
+- https://bugs.kde.org/show_bug.cgi?id=512355 — Kdenlive, «Some
+  effects/composite descriptions, option names and option tooltips show always
+  in English» (обращение 2026-09-08). Тела задач Bugzilla в дампе пусты — REST
+  `/bug` их не отдаёт, поэтому дословно цитируются заголовки
 - Premiere, After Effects и VEGAS Pro: **по документации, живьём не
   проверялось** — `helpx.adobe.com` недоступен из этого окружения ни
   напрямую, ни через `r.jina.ai`, `vegascreativesoftware.com` отдаёт 301 без
