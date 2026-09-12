@@ -15,6 +15,11 @@ cargo test                 # conformance на реальных фикстура�
 cargo clippy --all-targets
 cargo run -p kt-app        # GUI
 cargo run -p kt-cli -- …   # headless-рендер/экспорт
+cargo run -p kt-cli -- probe <проект.otio> <от_с> <до_с>
+                           # «что звучит в этом месте» (Р.43): эффективные события
+                           # ПОСЛЕ морфер-слоёв, заказ префетча, чужое медиа в нём
+                           # и стоимость сборки движка. Первое, что надо спросить
+                           # по жалобе «тут звук/картинка от другого события».
 python3 scripts/subset-fonts.py  # сабсеты шрифтов CJK/арабского по каталогам перевода
 ./scripts/live-check.sh    # живые сценарии в виртуальном экране (Xvfb+openbox):
                            # настоящий kt-app, настоящие жесты, скриншоты в
@@ -96,7 +101,7 @@ src/libs/kt-engine  render graph, MediaWorker-планировщик, transport,
 | kt-engine/fxstore.rs | reverse t283 (геометрия доносится в переиспользуемый процессор), fx, warp_prefetch, loop_fx |
 | kt-engine/prefetch.rs | scheduler (t9, **t287 микрособытия — один заказ**), warp_prefetch (t17, **t285 сырой реверс-путь**) |
 | kt-media | ffmpeg_conformance (вкл. t34 — персист пакетного индекса), index_db (вкл. t70), unit `placeholder` (t208 — детерминизм кадра-заглушки), kt-app unit t23 |
-| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30, t89 метки, t90 дорожки), ops-клипборд (t205 копирование выделения), morpher t35, **morph_slice (t233 резка, t234 id кусков, t235 слой, t236 вырождения и запретные зоны, t239 bake, t243 патч, t247 области и ссылки, t249 копипаст)**, **fx_auto t248 синхрон скорости у пары A/V**, transitions (t135 переходы, t155 фейды, t159 возврат ручек, **t223 спеки 16 видов**), legacy_upgrade (t143 конверсия, t164 импорт как есть), cameras t188 (камеры Р.29) + t231 (кривые камер), lane_order (t49 + t188 камерные дорожки, **t241 порядок строк в модели**), fx_auto t190 (автоматизация), **t212 домен ключей = материал, t214 мастер-выключатель, t215 копипаст FX, t263 суффикс при вставке (morph_slice t249), t269-t270 карта варпа и одно правило куска (warp.rs + morph_slice)** |
+| kt-model | model_roundtrip, parity_ops (вкл. t24/t29/t30, t89 метки, t90 дорожки), ops-клипборд (t205 копирование выделения), morpher t35, **morph_slice (t233 резка, t234 id кусков, t235 слой, t236 вырождения и запретные зоны, t239 bake, t243 патч, t247 области и ссылки, t249 копипаст, t288 слой не дотягивается до варпнутого клипа вне окна)**, **fx_auto t248 синхрон скорости у пары A/V**, transitions (t135 переходы, t155 фейды, t159 возврат ручек, **t223 спеки 16 видов**), legacy_upgrade (t143 конверсия, t164 импорт как есть), cameras t188 (камеры Р.29) + t231 (кривые камер), lane_order (t49 + t188 камерные дорожки, **t241 порядок строк в модели**), fx_auto t190 (автоматизация), **t212 домен ключей = материал, t214 мастер-выключатель, t215 копипаст FX, t263 суффикс при вставке (morph_slice t249), t269-t270 карта варпа и одно правило куска (warp.rs + morph_slice)** |
 | kt-otio | tests/format.rs (t144-t147: идемпотентность, passthrough, версии, пути), tests/convert.rs (t148 golden легаси-импорта, t152/t153 маппинг, t154 чужие сэмплы, t165 слои, t178 NTSC, t180 таймкод материала, **t189 камеры + golden demo-3d.otio, t192 автоматизация в файле (v3), t212 чтение файлов до v3, t222 вид перехода и кривая аудио, t240 схема морфера v4, t241 порядок строк, t248 области, t251 битая kt-секция = ошибка**), tests/otio_conformance.rs (t149, gated по python opentimelineio) |
 | kt-engine (morpher-flatten) | morpher_render t36 (рендер с morpher == bake) |
 | kt-cli / кросс-рендер | apps/kt-cli/tests/cross_render.rs t158 (gated: melt + `scripts/otio-mlt-venv.sh`; `KT_REQUIRE_CROSS_RENDER=1` требует их), oc_render.rs t179 (настоящий фильм; `scripts/fetch-oc-media.sh`, `KT_REQUIRE_OC_RENDER=1`) |

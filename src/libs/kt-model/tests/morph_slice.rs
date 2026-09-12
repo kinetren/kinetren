@@ -939,3 +939,114 @@ fn t270e_unwarped_slice_is_unchanged() {
         "мастер-выключатель цепочки — тоже"
     );
 }
+
+/// Тест 288 (Р.43, п.298): вето «варпнутый клип не резать» не отменяет
+/// ВРЕМЯ блока.
+///
+/// Претензия пользователя на реальном проекте: «в problems1 … звук от
+/// другого события откуда-то взялся», «в rendereg на самом верхнем
+/// событии кривые автоматизации не работают», «регион зацикленность_5
+/// какой-то поломанный», — и решающая подсказка: «есть немного ранняя
+/// версия проекта где как минимум rendereg работает правильно». В ней НЕ
+/// БЫЛО НИ ОДНОГО МОРФЕРА.
+///
+/// Причина: `windows_on` проверял вето ПЕРВЫМ и возвращал всё тело клипа,
+/// ни разу не спросив, дотягивается ли блок до этого клипа по времени.
+/// «Целиком» — это про ГРАНИЦЫ куска, а не про ДОСЯГАЕМОСТЬ. В проекте
+/// пользователя морф-блок длиной 0.6 с на 5020-й секунде подменял
+/// источник у событий на 148-й («Салют» вместо «далеко»), а блок со
+/// slowed&reverb на 169-й секунде раздавал ВАРП ВРЕМЕНИ всем событиям
+/// проекта ниже своей строки — включая звук, у которого его в файле нет.
+#[test]
+fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
+    let warp = FxInstance::SlowedReverb {
+        rate: 0.5,
+        mix: 0.0,
+        reverb_delay_ms: 60.0,
+        damp: 0.4,
+        decay: 0.7,
+        wet_gain: 1.0,
+        predelay_ms: 0.0,
+        width: 1.0,
+        frames: Default::default(),
+        automation: vec![],
+    };
+
+    // строка слоя обязана быть ВЫШЕ дорожки клипа, иначе `Below` не
+    // накрывает его и тест зеленел бы по совсем другой причине
+    let above = |p: &mut Project| {
+        p.lane_order = vec![
+            (LaneKind::Morph, 0),
+            (LaneKind::Video, 0),
+            (LaneKind::Audio, 0),
+        ];
+    };
+
+    // --- 1. варп у САМОГО КЛИПА: блок далеко, трогать нечего -------------
+    let mut p = base();
+    above(&mut p);
+    p.clips[0].fx = vec![warp.clone()];
+    // цель — `Below`, то есть «всё, что ниже строки слоя»; блок стоит
+    // ДАЛЕКО от клипа по времени
+    let mut m = layer(Tick(10 * 90_000), Tick(90_000));
+    m.targets = MorphTargets::Below;
+    p.morphers.push(m);
+    p.validate().unwrap();
+
+    let rows = p.rows();
+    assert!(
+        p.morphers[0].covers(&p.clips[0], &rows),
+        "слой обязан накрывать клип ПО ПРОСТРАНСТВУ — иначе проверка про ВРЕМЯ          выполнялась бы сама собой"
+    );
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &rows);
+    assert!(
+        wins.is_empty(),
+        "блок на 10-й секунде не имеет отношения к клипу 0..1 с, даже если тот \
+         растянут: {wins:?}"
+    );
+    let eff = p.effective_clips();
+    assert_eq!(eff.len(), 1, "клип не режется");
+    assert_eq!(eff[0].media, MediaId(1), "источник обязан остаться своим");
+    assert_eq!(eff[0].fx.len(), 1, "чужих эффектов у клипа не появилось");
+
+    // --- 2. варп в ПАТЧЕ слоя: тот же запрет ------------------------------
+    let mut p = base();
+    above(&mut p);
+    let mut m = layer(Tick(10 * 90_000), Tick(90_000));
+    m.targets = MorphTargets::Below;
+    m.patch = MorphPatch { audio_fx: vec![warp.clone()], ..Default::default() };
+    p.morphers.push(m);
+    p.clips.push(clip(11, ClipKind::Audio, 0, Tick(0), LEN));
+    p.audio_lanes = 1;
+    p.validate().unwrap();
+
+    let eff = p.effective_clips();
+    for c in &eff {
+        assert!(
+            c.fx.is_empty(),
+            "слой со slowed&reverb раздал варп событию {:?} за 10 секунд от себя: {:?}",
+            c.id,
+            c.fx
+        );
+    }
+
+    // --- 3. а ВНУТРИ окна варпнутый клип по-прежнему патчится ЦЕЛИКОМ -----
+    let mut p = base();
+    above(&mut p);
+    p.clips[0].fx = vec![warp];
+    let mut m = layer(Tick(30_000), Tick(30_000)); // середина клипа
+    m.targets = MorphTargets::Below;
+    p.morphers.push(m);
+    p.validate().unwrap();
+
+    let rows = p.rows();
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &rows);
+    assert_eq!(
+        wins,
+        vec![TickRange::new(Tick(0), LEN)],
+        "накрытый растянутый клип патчится целиком и НЕ режется (Р.37)"
+    );
+    let eff = p.effective_clips();
+    assert_eq!(eff.len(), 1, "растянутый клип резать нельзя");
+    assert_eq!(eff[0].media, MediaId(2), "и патч на нём действует");
+}

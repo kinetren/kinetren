@@ -1145,22 +1145,33 @@ impl MorpherEvent {
         if !self.enabled || !self.covers(c, rows) || !self.patch.affects(c) {
             return Vec::new();
         }
-        // ВАРП ВРЕМЕНИ — вето на резку, и оно ПЕРВОЕ (Р.37): линейно
-        // посчитанный `source_in` куска у растянутого клипа указывает не
-        // туда. Проверка была ниже ссылочных режимов, поэтому в режимах
-        // `Marks`/`Areas` варпнутые клипы резались (дефект до Р.37), и
-        // была оговорка `kind == Audio`, которая перестала быть верной,
-        // как только растягиваться научилось видео.
+        // ВАРП ВРЕМЕНИ — вето на РЕЗКУ (Р.37): линейно посчитанный
+        // `source_in` куска у растянутого клипа указывает не туда, поэтому
+        // такой клип патчится ЦЕЛИКОМ. Но «целиком» — это про ГРАНИЦЫ, а
+        // не про ДОСЯГАЕМОСТЬ: вето стояло ПЕРВЫМ и возвращало всё тело,
+        // ни разу не спросив, дотягивается ли блок до клипа ПО ВРЕМЕНИ.
+        //
+        // Цена ошибки (Р.43, п.298): морф-блок длиной 0.6 с на 5020-й
+        // секунде патчил КАЖДОЕ событие проекта, у которого есть
+        // slowed&reverb, — в реальном проекте пользователя это подменило
+        // источник у аудио на 148-й секунде («звук от другого события»),
+        // а морфер со slowed&reverb в патче раздал варп ВСЕМ событиям
+        // ниже своей строки (`chain_for` отдаёт варп обоим видам).
+        // Поэтому сначала считаем ДОСЯГАЕМОСТЬ, и только потом вето.
         let warps = |fx: &[FxInstance]| fx.iter().any(|f| f.warps_time());
-        if warps(&c.active_fx()) || warps(&self.patch.chain_for(c.kind)) {
-            return vec![body];
-        }
+        let no_cut = warps(&c.active_fx()) || warps(&self.patch.chain_for(c.kind));
         // ссылочные режимы: ВРЕМЯ задаёт сама ссылка, блок его не
         // ограничивает — иначе пользователь ткнул бы в дальний диапазон и
         // не понял, почему ничего не произошло. Галка «по времени» в этих
         // режимах гаснет (окно и так пришло из ссылки).
-        let refs = self.ref_windows(c, p);
         if matches!(self.targets, MorphTargets::Marks { .. } | MorphTargets::Areas { .. }) {
+            let refs = self.ref_windows(c, p);
+            if refs.is_empty() {
+                return Vec::new(); // ссылки сюда не дотянулись
+            }
+            if no_cut {
+                return vec![body];
+            }
             return refs
                 .into_iter()
                 .filter_map(|w| self.fit_window(w, c, p, body))
@@ -1171,7 +1182,10 @@ impl MorpherEvent {
         }
         let w = self.window().intersect(&body);
         if w.len() < crate::MIN_CLIP_DURATION {
-            return Vec::new();
+            return Vec::new(); // блок сюда не дотянулся
+        }
+        if no_cut {
+            return vec![body];
         }
         match self.fit_window(w, c, p, body) {
             Some(w) => vec![w],

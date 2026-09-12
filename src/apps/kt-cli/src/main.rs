@@ -3,6 +3,12 @@
 //!
 //! Медиа-пути вида `synth:<pattern>` (sine:HZ, ramp, dc:V, impulse, silence)
 //! резолвятся в SyntheticSource — рендер без FFmpeg. Реальные файлы — с M3.
+//!
+//! `probe <проект.otio> <от_с> <до_с>` (Р.43) отвечает на вопрос «что
+//! звучит в этом месте»: эффективные события ПОСЛЕ морфер-слоёв, заказ
+//! префетча и отдельной строкой чужое медиа в нём. Считается чисто
+//! моделью — ни декода, ни FFmpeg, ни звукового железа. По жалобе «тут
+//! звук от другого события» запускается ПЕРВЫМ: так найден п.298.
 
 mod wav;
 
@@ -29,6 +35,126 @@ fn synth_pattern(path: &str) -> Option<AudioPattern> {
         "dc" => Some(AudioPattern::Dc { value: it.next()?.parse().ok()? }),
         _ => None,
     }
+}
+
+/// Что движок читает в диапазоне [from, to) секунд таймлайна.
+///
+/// Печатает ДВЕ вещи, и расхождение между ними само по себе диагноз:
+/// эффективные события (после морфер-слоёв) и заказ префетча — тот самый
+/// список `(медиа, бёрсты)`, по которому греется кэш и читается источник.
+fn probe_range(project: &Project, from: f64, to: f64) -> i32 {
+    let names: std::collections::HashMap<u64, &str> =
+        project.media.iter().map(|m| (m.id.0, m.path.as_str())).collect();
+    let short = |id: u64| -> String {
+        names
+            .get(&id)
+            .map(|p| p.rsplit('/').next().unwrap_or(p).chars().take(46).collect())
+            .unwrap_or_else(|| format!("<no media {id}>"))
+    };
+    let t0 = Tick((from * kt_time::TICK_HZ as f64) as i64);
+    let t1 = Tick((to * kt_time::TICK_HZ as f64) as i64);
+    println!(
+        "project: {} clips, {} morphers, {} media",
+        project.clips.len(),
+        project.morphers.len(),
+        project.media.len()
+    );
+    println!("range {from:.3}..{to:.3} s");
+
+    println!("\n-- effective clips (after morph layers) --");
+    let eff = project.effective_clips();
+    let mut shown = 0;
+    for c in &eff {
+        let end = c.start + c.duration;
+        if c.start >= t1 || end <= t0 {
+            continue;
+        }
+        shown += 1;
+        println!(
+            "  {:?} {:?} lane {} {:.3}..{:.3} s  media {} ({})  in {:.3} s{}{}",
+            c.id,
+            c.kind,
+            c.lane,
+            c.start.as_secs_f64(),
+            end.as_secs_f64(),
+            c.media.0,
+            short(c.media.0),
+            c.source_in.as_secs_f64(),
+            if c.reversed { "  REVERSED" } else { "" },
+            if c.fx.is_empty() { String::new() } else { format!("  fx {}", c.fx.len()) }
+        );
+    }
+    if shown == 0 {
+        println!("  (none)");
+    }
+
+    // Стоимость сборки движка и число событий с ВАРПОМ (Р.43, п.298):
+    // слой со slowed&reverb, дотянувшийся до всего проекта, раздаёт варп
+    // каждому событию ниже своей строки — а варп у аудио это ресемплер и
+    // пре-ролл на КАЖДОМ событии. Именно так render-поток и вставал.
+    let t = std::time::Instant::now();
+    let eff_all = project.effective_clips();
+    let eff_ms = t.elapsed().as_secs_f64() * 1e3;
+    let warped_file = project.clips.iter().filter(|c| c.fx.iter().any(|f| f.warps_time())).count();
+    let warped_eff = eff_all.iter().filter(|c| c.fx.iter().any(|f| f.warps_time())).count();
+    let t = std::time::Instant::now();
+    let built = AudioRenderer::new(project);
+    let new_ms = t.elapsed().as_secs_f64() * 1e3;
+    // `sync_fx` заводит по процессору на КАЖДОЕ событие с цепочкой, а у
+    // варпа внутри sinc-ресемплер: именно на этом вставал render-поток.
+    let mut store = kt_engine::FxStateStore::new();
+    let t = std::time::Instant::now();
+    built.sync_fx(&mut store);
+    let sync_ms = t.elapsed().as_secs_f64() * 1e3;
+    println!("\n-- build cost --");
+    println!("  effective_clips: {} clips in {eff_ms:.0} ms", eff_all.len());
+    println!("  AudioRenderer::new: {new_ms:.0} ms");
+    println!("  sync_fx (FX processors): {sync_ms:.0} ms");
+    println!("  clips with a time warp: {warped_file} in the file, {warped_eff} after layers");
+
+    println!("\n-- prefetch order (what is actually read) --");
+    let r = AudioRenderer::new(project);
+    let frames = t0.to_audio_frames()..t1.to_audio_frames();
+    // это считается на КАЖДОМ проходе префетча, то есть постоянно во
+    // время игры — а не один раз при открытии
+    let t = std::time::Instant::now();
+    let want = r.wanted_audio_bursts(frames.clone());
+    let want_ms = t.elapsed().as_secs_f64() * 1e3;
+    println!("  wanted_audio_bursts (every prefetch pass): {want_ms:.1} ms");
+    if want.is_empty() {
+        println!("  (empty)");
+    }
+    for (media, bursts) in &want {
+        let s0 = bursts.start * kt_time::AUDIO_BURST_FRAMES as i64;
+        let s1 = bursts.end * kt_time::AUDIO_BURST_FRAMES as i64;
+        println!(
+            "  media {} ({}): bursts {}..{} = source {:.3}..{:.3} s",
+            media.0,
+            short(media.0),
+            bursts.start,
+            bursts.end,
+            s0 as f64 / AUDIO_SAMPLE_RATE as f64,
+            s1 as f64 / AUDIO_SAMPLE_RATE as f64
+        );
+    }
+
+    // главный вопрос жалобы: не заказано ли медиа, которого в этом месте
+    // нет ни у одного события
+    let placed: std::collections::BTreeSet<u64> = eff
+        .iter()
+        .filter(|c| c.start < t1 && c.start + c.duration > t0)
+        .map(|c| c.media.0)
+        .collect();
+    let foreign: Vec<u64> =
+        want.iter().map(|(m, _)| m.0).filter(|m| !placed.contains(m)).collect();
+    if foreign.is_empty() {
+        println!("\nno foreign media in the order");
+    } else {
+        for m in foreign {
+            println!("\nFOREIGN MEDIA IN THE ORDER: {} ({})", m, short(m));
+        }
+    }
+    0
 }
 
 fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
@@ -234,6 +360,26 @@ fn run(args: &[String]) -> i32 {
             );
             0
         }
+        // Диагностика «что звучит в этом месте» (Р.43): по жалобе вида
+        // «тут звук от другого события» первым делом надо узнать, какое
+        // МЕДИА движок вообще собирается читать в этом диапазоне. Ответ
+        // чисто модельный — ни декода, ни FFmpeg, ни звукового железа.
+        Some("probe") => {
+            let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
+            else {
+                eprintln!("usage: kt-cli probe <in.otio> <from_s> <to_s>");
+                return 2;
+            };
+            let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
+                eprintln!("from/to are seconds");
+                return 2;
+            };
+            let project = match load_otio(input) {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            probe_range(&project, from, to)
+        }
         Some("render") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
                 eprintln!("usage: kt-cli render <in.otio> <out.wav>");
@@ -351,7 +497,7 @@ fn run(args: &[String]) -> i32 {
             }
         }
         Some(cmd) => {
-            eprintln!("unknown command: {cmd} (available: version, new, roundtrip, render, export)");
+            eprintln!("unknown command: {cmd} (available: version, new, roundtrip, probe, render, export)");
             2
         }
     }
