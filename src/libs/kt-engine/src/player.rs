@@ -328,6 +328,14 @@ impl Player {
         self.project.lock().unwrap().clone()
     }
 
+    /// Сколько раз проект подменялся целиком. Каждая подмена — клон всего
+    /// проекта и пересборка обоих рендереров, то есть остановка
+    /// аудио-render-потока; на большом монтаже это слышно (Р.43, п.296).
+    /// Наружу отдаётся ради теста «правка удобства не пересобирает движок».
+    pub fn project_version(&self) -> u64 {
+        self.project_version.load(Ordering::Acquire)
+    }
+
     /// Скорость воспроизведения (п.4, ползунок как в Vegas).
     /// Смена скорости сбрасывает окно экстраполяции: оно выучено на
     /// шагах ПРЕЖНЕЙ скорости и после входа в слоу-мо ещё ~170 мс
@@ -823,6 +831,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                             start1..tl,
                             Priority::Playback,
                             generation,
+                            dir < 0,
                         );
                         let rest = ahead - (tl - start1);
                         if rest > 0 {
@@ -833,6 +842,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                                 re - rest..re,
                                 Priority::Playback,
                                 generation,
+                                dir < 0,
                             );
                         }
                     } else {
@@ -844,6 +854,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                             tl..end1,
                             Priority::Playback,
                             generation,
+                            dir < 0,
                         );
                         let rest = ahead - (end1 - tl);
                         if rest > 0 {
@@ -854,6 +865,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                                 rs..rs + rest,
                                 Priority::Playback,
                                 generation,
+                                dir < 0,
                             );
                         }
                     }
@@ -879,6 +891,7 @@ fn audio_render_loop(ctx: RenderCtx) {
                         win,
                         Priority::Playback,
                         generation,
+                        dir < 0,
                     );
                 }
             }
@@ -1132,6 +1145,7 @@ fn prefetch_loop(
                 win,
                 Priority::NearPrefetch,
                 generation,
+                false,
             );
         }
         // видео-lookahead: 2 c, но не больше половины бюджета кэша (п.19в:
@@ -1260,8 +1274,27 @@ pub fn varispeed_fill(
             *cur = next_frame().inspect(|_| consumed += 1).unwrap_or(f);
             *primed = true;
             *phase = 0.0;
+        } else {
+            // Поток ещё не начался (старт игры, кольцо после flush'а):
+            // первого кадра не было, часам не от чего идти, а prev/cur
+            // держат материал ДО seek'а — выдавать их нельзя. Это
+            // единственный случай, когда время стоит (Р.43, п.294).
+            for i in 0..out_frames {
+                emit(i, (0.0, 0.0));
+            }
+            return 0;
         }
     }
+    // ВРЕМЯ ИДЁТ ПО ВЫДАННЫМ КАДРАМ, а не по успешно прочитанным (Р.43,
+    // п.294). Раньше голодание кольца не увеличивало `consumed`, а
+    // playhead двигается ровно на `consumed` (`advance_frames_wrapped`) —
+    // значит каждый кадр underrun'а был кадром, на который таймлайн НЕ
+    // проехал, и программа физически играла медленнее реального времени.
+    // Симптом пользователя: «кстати M3TEOR замедленн почему-то» и «потом
+    // там вообще нет ни звука ни видео у основного события». Слышимая
+    // тишина от этого не исчезает — она честно считается в
+    // `callback_underruns`, — но часы больше не отстают от звуковой карты.
+    let mut starved = 0i64;
     for i in 0..out_frames {
         *phase += step;
         while *phase >= 1.0 {
@@ -1273,15 +1306,17 @@ pub fn varispeed_fill(
                     consumed += 1;
                 }
                 None => {
-                    // underrun: тянем последний кадр (без щелчка)
+                    // underrun: тянем последний кадр (без щелчка), но кадр
+                    // ПРОЗВУЧАЛ — время на него продвигается
                     *cur = *prev;
+                    starved += 1;
                 }
             }
         }
         let a = *phase as f32;
         emit(i, (prev.0 + (cur.0 - prev.0) * a, prev.1 + (cur.1 - prev.1) * a));
     }
-    consumed
+    consumed + starved
 }
 
 /// Интерполяция позиции ПОКАЗА между шагами аудио-часов (п.1 раунда 5,
@@ -1461,10 +1496,101 @@ mod varispeed_tests {
         let (_, consumed) = run(2.0, 100, 1000);
         assert!((consumed - 202).abs() <= 1, "2×100 + прайминг, вышло {consumed}");
 
-        // источник иссяк: не паникуем, тянем последний кадр
+        // источник иссяк: не паникуем, тянем последний кадр — но ВРЕМЯ
+        // идёт (Р.43, п.294). Прежнее `consumed == 20` утверждало ДЕФЕКТ:
+        // на нём playhead замирал, и вся программа играла медленнее
+        // реального времени.
         let (out, consumed) = run(1.0, 100, 20);
-        assert_eq!(consumed, 20);
+        assert_eq!(consumed, 102, "часы идут по ВЫДАННЫМ кадрам, а не по прочитанным");
         assert_eq!(out[99].0, 19.0, "после конца — последний кадр");
+    }
+
+    /// Тест 284 (Р.43 п.294): голодание кольца НЕ останавливает часы.
+    ///
+    /// Претензия дословно: «underruns растут… а потом там вообще нет ни
+    /// звука ни видео у основного события, только у M3TEOR появляется
+    /// следующего, кстати M3TEOR замедленн почему-то».
+    ///
+    /// Механизм: playhead двигается ровно на `consumed`
+    /// (`advance_frames_wrapped`), а `consumed` считал только УСПЕШНО
+    /// прочитанные из кольца кадры. Значит каждый кадр callback-underrun'а
+    /// — кадр, на который таймлайн не проехал, и всё, что играет после
+    /// такого места, отстаёт от реального времени. Замедлялся не M3TEOR:
+    /// замедлялась ВСЯ программа.
+    #[test]
+    fn t284_starved_ring_does_not_stop_the_clock() {
+        let t = super::Transport::new();
+        t.set_playing(true);
+        let out_frames = 512usize;
+        let callbacks = 8i64;
+        let mut underruns = 0u64;
+
+        // кольцо пусто ПОСЛЕ прайминга: поток начался и оборвался
+        let mut left = 2i64;
+        let mut next = || {
+            if left > 0 {
+                left -= 1;
+                Some((0.5f32, 0.5f32))
+            } else {
+                underruns += 1;
+                None
+            }
+        };
+        let (mut prev, mut cur, mut primed, mut phase) = ((0.0, 0.0), (0.0, 0.0), false, 0.0);
+        let mut total = 0i64;
+        for _ in 0..callbacks {
+            let mut sink = |_: usize, _: (f32, f32)| {};
+            total += varispeed_fill(
+                &mut next,
+                1.0,
+                out_frames,
+                &mut prev,
+                &mut cur,
+                &mut primed,
+                &mut phase,
+                &mut sink,
+            );
+        }
+        t.advance_frames_wrapped(total, None);
+
+        // +2 — кадры прайминга интерполяции, как в t32
+        let want = out_frames as i64 * callbacks + 2;
+        assert_eq!(
+            t.playhead_frames(),
+            want,
+            "часы обязаны идти по ВЫДАННЫМ кадрам: устройство сыграло {}, \
+             playhead уехал на {} (до Р.43 было 2 — ровно столько, сколько \
+             успели прочитать)",
+            out_frames as i64 * callbacks,
+            t.playhead_frames()
+        );
+        assert!(underruns > 0, "тишина обязана честно считаться underrun'ами");
+    }
+
+    /// Тест 284b (Р.43 п.294): пока ПЕРВОГО кадра не было — часы стоят.
+    /// Это единственное исключение: на старте игры и сразу после seek'а
+    /// кольцо законно пусто, и продвигать playhead не от чего.
+    #[test]
+    fn t284b_clock_waits_for_the_first_frame() {
+        let mut next = || None;
+        let (mut prev, mut cur, mut primed, mut phase) =
+            ((7.0f32, 7.0f32), (9.0f32, 9.0f32), false, 0.0);
+        let mut out = vec![(1.0f32, 1.0f32); 64];
+        let consumed = varispeed_fill(
+            &mut next,
+            1.0,
+            out.len(),
+            &mut prev,
+            &mut cur,
+            &mut primed,
+            &mut phase,
+            |i, f| out[i] = f,
+        );
+        assert_eq!(consumed, 0, "потока ещё нет — время не идёт");
+        assert!(
+            out.iter().all(|&(l, r)| l == 0.0 && r == 0.0),
+            "и материал ДО seek'а наружу не выдаётся"
+        );
     }
 
     /// Тест 114 (п.14 р.14): показ на МЕДЛЕННОЙ скорости не откатывается.

@@ -486,13 +486,16 @@ impl KtApp {
                         };
                         let mut slot_changed = false;
                         if let Some(f) = fx.get_mut(i) {
+                            // у морфера обе правки едут одной командой
+                            // SetMorpher, поэтому флаги схлопываются
                             slot_changed |= crate::fx_editor::draw_video_fx_params(
                                 ui,
                                 f,
                                 Some(&mut bind),
                                 &cameras,
                                 false,
-                            );
+                            )
+                            .any();
                             let start = ev.start;
                             let to_tl = move |t: kt_time::Tick| kt_time::Tick(start.0 + t.0);
                             let to_cur = move |t: kt_time::Tick| kt_time::Tick(t.0 - start.0);

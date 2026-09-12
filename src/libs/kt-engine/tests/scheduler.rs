@@ -226,13 +226,13 @@ fn t9_prefetch_pass_is_idempotent() {
 
     let n1 = {
         workers.insert(MediaId(1), worker);
-        prefetch_audio_pass(&renderer, &cache, &workers, range.clone(), Priority::FarPrefetch, 0)
+        prefetch_audio_pass(&renderer, &cache, &workers, range.clone(), Priority::FarPrefetch, 0, false)
     };
     assert!(n1 > 0);
     wait_idle(&workers[&MediaId(1)]);
 
     let n2 =
-        prefetch_audio_pass(&renderer, &cache, &workers, range.clone(), Priority::FarPrefetch, 0);
+        prefetch_audio_pass(&renderer, &cache, &workers, range.clone(), Priority::FarPrefetch, 0, false);
     assert_eq!(n2, 0, "по тёплому кэшу prefetch не должен сабмитить ничего");
 
     // coverage совпадает с wanted
@@ -241,4 +241,49 @@ fn t9_prefetch_pass_is_idempotent() {
     assert_eq!(cov, vec![want.clone()]);
 
     workers.remove(&MediaId(1)).unwrap().shutdown();
+}
+
+/// Тест 287 (Р.43 п.297): сотни микрособытий не превращаются в сотни
+/// одинаковых заказов префетча.
+///
+/// Пользователь строит стоп-кадр из микрособытий и подтвердил, что это
+/// намеренный приём: в его проекте 885 аудио-событий длиной 90 тиков
+/// (4.8 сэмпла) стоят встык на 0.88 с и читают ОДИН И ТОТ ЖЕ кадр
+/// источника. Каждое клало в `wanted` свою пару, и на них делалось 885
+/// запросов `coverage` под мьютексом кэша — при том, что бёрст там ровно
+/// один.
+#[test]
+fn t287_stutter_of_micro_clips_asks_for_one_burst() {
+    let mut p = Project::new(ProjectSettings { fps: 60, width: 640, height: 360, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    // 400 событий по 90 тиков встык, все с одной точки материала
+    let step = kt_time::Tick(90);
+    for i in 0..400u64 {
+        p.clips.push(ClipEvent {
+            id: ClipId(i + 1),
+            link_group: None,
+            kind: ClipKind::Audio,
+            lane: 0,
+            start: kt_time::Tick(step.0 * i as i64),
+            duration: step,
+            source_in: kt_time::Tick(4_500_000),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
+    }
+    p.validate().unwrap();
+    let r = AudioRenderer::new(&p);
+    let span = kt_time::Tick(step.0 * 400).to_audio_frames();
+    let wanted = r.wanted_audio_bursts(0..span);
+    assert_eq!(
+        wanted.len(),
+        1,
+        "400 микрособытий на одном кадре источника — один заказ, а не 400: {wanted:?}"
+    );
 }

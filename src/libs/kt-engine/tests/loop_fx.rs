@@ -382,3 +382,66 @@ fn t175_flight_recorder_stays_compact() {
     assert!(d.contains("REGION") && d.contains("1.000..2.000"), "регион в секундах: {d}");
     assert!(d.contains("STALL") && d.contains("1200 ms"), "залипание с длительностью: {d}");
 }
+
+// ---- Тест 280: единица underrun'ов одна на оба пути (Р.43, п.289) ----------
+
+/// Претензия пользователя: «конкретно в этом месте underruns очень давно
+/// сломался, мы не будем bisect делать».
+///
+/// Bisect и не нужен: это не регресс, а РАЗНЫЕ ЕДИНИЦЫ с самого начала.
+/// `render_plain_clip` (клип без FX) считал промах КАДРАМИ тела, а
+/// `fill_source` (клип с FX) — по единице за промах БЁРСТА. Одно и то же
+/// голодание давало числа, различающиеся в `AUDIO_BURST_FRAMES` = 1024 раза,
+/// и сравнивать их было нельзя ни между событиями, ни во времени.
+///
+/// Тест утверждает СЛЕДСТВИЕ: два одинаковых события на полностью холодном
+/// источнике дают сопоставимые числа. Точного равенства не требуем — путь с
+/// FX тянет источник через варп и режет чтения иначе, — но разница обязана
+/// быть в разы, а не в тысячу раз.
+#[test]
+fn t280_underruns_are_counted_in_frames_on_both_paths() {
+    let sr = AUDIO_SAMPLE_RATE as i64;
+    let span = sr / 2; // полсекунды тела
+
+    let mut plain = base_project();
+    plain.clips.push(clip(1, 1, 0, 0, span, 0));
+    plain.validate().unwrap();
+
+    let mut fxp = base_project();
+    let mut c = clip(1, 1, 0, 0, span, 0);
+    c.fx = vec![slowed_reverb(1.0, 0.0)];
+    fxp.clips.push(c);
+    fxp.validate().unwrap();
+
+    // источник недоступен ЦЕЛИКОМ: floor выше любого бёрста
+    let run = |p: &Project| -> u64 {
+        let r = AudioRenderer::new(p);
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut f = Probe::new(AudioPattern::Ramp, i64::MAX);
+        let mut out = vec![0f32; BURST as usize * CH];
+        let mut total = 0u64;
+        let mut pos = 0i64;
+        while pos < span {
+            total += r.render_frames_with(&mut f, &mut store, pos, &mut out).underruns;
+            pos += BURST;
+        }
+        total
+    };
+
+    let a = run(&plain);
+    let b = run(&fxp);
+    assert!(a > 0 && b > 0, "полностью холодный источник обязан дать underrun'ы: {a} и {b}");
+    // оба — в кадрах, поэтому оба одного порядка с длиной тела
+    let (lo, hi) = (a.min(b), a.max(b));
+    assert!(
+        hi <= lo * 4,
+        "единица счётчика одна на оба пути: без FX {a}, с FX {b} \
+         (до Р.43 было ~{span} против ~{}, разница в 1024 раза)",
+        span / BURST
+    );
+    assert!(
+        lo >= span as u64 / 4,
+        "счётчик в КАДРАХ: на {span} кадрах тела ожидаем сотни, а не единицы — {a}/{b}"
+    );
+}

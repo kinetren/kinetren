@@ -189,3 +189,53 @@ fn t17_slowed_clip_end_has_no_silent_tail() {
         "последний burst клипа спал больше чем на 6 dB против середины: mid={rm:.4} end={re:.4}"
     );
 }
+
+/// Тест 285 (Р.43 п.295): у РЕВЕРС-ТРАНСПОРТА префетч греет то же, что
+/// читает рендер.
+///
+/// Претензия пользователя про реверсы шла в одном ряду с underrun'ами.
+/// Причина отдельная от зеркала (п.292): реверс-транспорт играет ВСЕ
+/// события через `render_plain_clip` — dry и ЛИНЕЙНО, варпа этот путь не
+/// знает вовсе («как Vegas»), — а `wanted_audio_bursts` считал окно ПО
+/// ВАРПУ. На замедленном событии это два разных пролёта источника: префетч
+/// грел одни бёрсты, рендер просил другие, и промах был вечным. Считается
+/// он там в КАДРАХ, до 1024 за один пропущенный бёрст, — отсюда и скорость
+/// роста счётчика.
+///
+/// Утверждение то же, что у t17, но для сырого пути: wanted ⊇ consumed.
+#[test]
+fn t285_raw_reverse_prefetch_covers_what_raw_render_reads() {
+    let project = slowed_project();
+    let renderer = AudioRenderer::new(&project);
+    let frames = 48_000usize / 2;
+
+    for &pos in &[0i64, CLIP_FRAMES / 3, CLIP_FRAMES / 2, (CLIP_FRAMES as f64 * 0.9) as i64] {
+        let mut fetcher = Recording { inner: direct(), log: Vec::new() };
+        let mut out = vec![0f32; frames * CH];
+        renderer.render_frames_raw(&mut fetcher, pos, &mut out);
+
+        let raw = renderer.wanted_audio_bursts_raw(pos..pos + frames as i64);
+        for &(media, idx) in &fetcher.log {
+            assert!(
+                raw.iter().any(|(m, r)| *m == media && r.contains(&idx)),
+                "pos {pos}: бёрст {idx} прочитан сырым рендером, но не входит в \
+                 wanted_audio_bursts_raw — префетч грел бы не те бёрсты"
+            );
+        }
+
+        // и показываем, ЧТО ИМЕННО было сломано: варп-окно этот бёрст не
+        // покрывает, значит на реверсе промах был неизбежен
+        let warped = renderer.wanted_audio_bursts(pos..pos + frames as i64);
+        let missed = fetcher
+            .log
+            .iter()
+            .filter(|(m, idx)| !warped.iter().any(|(wm, r)| wm == m && r.contains(idx)))
+            .count();
+        if pos > 0 {
+            assert!(
+                missed > 0,
+                "pos {pos}: если варп-окно и так всё покрывает, тест ничего не сторожит"
+            );
+        }
+    }
+}

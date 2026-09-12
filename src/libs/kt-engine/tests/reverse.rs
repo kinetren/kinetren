@@ -221,3 +221,114 @@ fn t29_reversed_audio_trim_end_left_edge_exact() {
 
     assert_eq!(before, after, "начало reversed аудио-события не должно сдвигаться при TrimEnd");
 }
+
+/// Ramp-паттерн кодирует НОМЕР КАДРА ИСТОЧНИКА в самом сэмпле
+/// (`n * 1e-6`, левый канал). Средний номер кадра по куску выхода —
+/// прямой ответ на вопрос «какой материал сейчас звучит».
+fn mean_source_frame(out: &[f32], from: usize, n: usize) -> f64 {
+    let mut sum = 0f64;
+    for k in from..from + n {
+        sum += out[k * CH] as f64;
+    }
+    (sum / n as f64) / 1e-6
+}
+
+fn slowed_dry(rate: f64) -> FxInstance {
+    FxInstance::SlowedReverb {
+        rate,
+        mix: 0.0,
+        reverb_delay_ms: 85.0,
+        damp: 0.32,
+        decay: 0.58,
+        wet_gain: 1.0,
+        predelay_ms: 0.0,
+        width: 1.0,
+        frames: Default::default(),
+        automation: vec![],
+    }
+}
+
+/// Тест 282 (Р.43 п.2/п.292): зеркальное событие с варпом читает РОВНО свой
+/// материал.
+///
+/// Претензия дословно: «в problems1 есть тройка событий с реверсами, и там
+/// вообще звук от другого события откуда-то взялся», «а еще там из-за slowd
+/// картинка поломанная».
+///
+/// Причина: осью зеркала служил КОНЕЦ ОКНА источника, а туда входит запас
+/// ресемплера `WARP_SOURCE_MARGIN_FRAMES` = 8192 кадра (170.7 мс). Видео на
+/// том же событии якорится на фактически потреблённом `ClipWarp::used` без
+/// запаса — то есть A и V честно показывали РАЗНЫЙ материал. На событии
+/// пользователя длиной 0.36 с сдвиг составлял 63 % его длины.
+///
+/// Ни один тест репозитория не сочетал `reversed` с варпом и не проверял
+/// ПОЗИЦИЮ материала: t24 требует лишь детерминизма и «не тишины».
+#[test]
+fn t282_reversed_warped_clip_reads_its_own_material() {
+    let src_in = 9_600i64;
+    let len = 96_000i64;
+    let rev = {
+        let mut p = clip(true, vec![slowed_dry(1.0)], ClipKind::Audio);
+        p.clips[0].duration = Tick::from_audio_frames(len);
+        p.validate().unwrap();
+        p
+    };
+    let n = 4096usize;
+    let mut out = vec![0f32; n * CH];
+    AudioRenderer::new(&rev).render_frames(&mut direct(), 48_000, &mut out);
+
+    // при rate = 1 потреблённый пролёт равен длине события, значит первый
+    // выходной кадр обязан читать ПОСЛЕДНИЙ кадр этого пролёта
+    let axis = (src_in + len) as f64;
+    let got = mean_source_frame(&out, 0, n);
+    let want = axis - n as f64 / 2.0;
+    assert!(
+        (got - want).abs() < 1_000.0,
+        "зеркало обязано считаться от потреблённого конца {axis}: \
+         звучит кадр ≈{got:.0}, ожидался ≈{want:.0} \
+         (до Р.43 ось включала запас ресемплера 8192 кадра и звучало ≈{:.0})",
+        want + 8_192.0
+    );
+}
+
+/// Тест 283 (Р.43 п.293): смена `source_in` при ТОЙ ЖЕ структуре цепочки
+/// слышна.
+///
+/// `chain_fingerprint` хэширует только ВИДЫ слотов, а `FxStateStore` на
+/// ветке переиспользования доносил в процессор параметры и кривые, но не
+/// ГЕОМЕТРИЮ. Поэтому трим, разрез, punch-out и переанкоринг морф-куска
+/// оставляли процессор со старым материальным якорем: событие продолжало
+/// звучать материалом с прежнего места файла. `reset()` не помогал —
+/// `hard_seek`/`seam` считают позицию от того же поля.
+#[test]
+fn t283_source_in_change_is_heard_with_the_same_chain() {
+    let mut p = clip(false, vec![slowed_dry(1.0)], ClipKind::Audio);
+    p.clips[0].duration = Tick::from_audio_frames(96_000);
+    p.validate().unwrap();
+
+    let n = 4096usize;
+    let mut store = kt_engine::FxStateStore::new();
+    let r = AudioRenderer::new(&p);
+    r.sync_fx(&mut store);
+    let mut before = vec![0f32; n * CH];
+    r.render_frames_with(&mut direct(), &mut store, 48_000, &mut before);
+
+    // «трим слева»: точка входа уехала, структура цепочки та же
+    let delta = 24_000i64;
+    let mut p2 = p.clone();
+    p2.clips[0].source_in = p2.clips[0].source_in + Tick::from_audio_frames(delta);
+    p2.validate().unwrap();
+    let r2 = AudioRenderer::new(&p2);
+    r2.sync_fx(&mut store); // ТОТ ЖЕ store — состояние FX не пересоздаётся
+    let mut after = vec![0f32; n * CH];
+    r2.render_frames_with(&mut direct(), &mut store, 48_000, &mut after);
+
+    let a = mean_source_frame(&before, 0, n);
+    let b = mean_source_frame(&after, 0, n);
+    assert!(
+        (b - a - delta as f64).abs() < 1_000.0,
+        "правка source_in на {delta} кадров обязана двигать ЗВУЧАЩИЙ материал: \
+         было ≈{a:.0}, стало ≈{b:.0} (до Р.43 процессор держал старый якорь \
+         и разница была ≈0)"
+    );
+}

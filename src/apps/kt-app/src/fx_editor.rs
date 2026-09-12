@@ -181,7 +181,7 @@ impl KtApp {
                     auto.resize(fx.len(), Vec::new());
                     let mut chain_on = !clip.fx_off;
                     let mut ch = crate::widgets::ChainChanged::default();
-                    let mut params_changed = false;
+                    let mut params_changed = crate::widgets::ParamsChanged::default();
                     let head = crate::tf!(
                         k::fx::CHAIN_OF,
                         if clip.kind == ClipKind::Audio {
@@ -244,6 +244,12 @@ impl KtApp {
                                 let mut bind = auto.get_mut(sel).map(|curves| {
                                     crate::widgets::CurveBind { curves, sel: view_sel, at }
                                 });
+                                // Р.43 п.291: правка ключа ЧИСЛОМ уходит в
+                                // `auto`, а не в `fx` — и коммититься обязана
+                                // командой SetFxAuto. Пока флаг был один,
+                                // локальный клон `auto` умирал вместе с
+                                // кадром, и поле «скидывалось на предыдущее
+                                // значение».
                                 params_changed |= draw_video_fx_params(
                                     ui,
                                     f,
@@ -294,6 +300,17 @@ impl KtApp {
                                         &mut hover_out,
                                     );
                                     auto_ch = r.changed;
+                                    // Поле параметра читает выбранный ключ
+                                    // ДО отрисовки графика, поэтому смена
+                                    // выбора видна ему только следующим
+                                    // кадром. В простое следующего кадра
+                                    // может не быть (repaint = движение,
+                                    // п.38), и поле застревало на значении
+                                    // прошлого ключа — просим кадр явно
+                                    // (Р.43 п.291).
+                                    if view.sel != view_sel {
+                                        ui.ctx().request_repaint();
+                                    }
                                     if let Some(t) = r.seek {
                                         seek = Some(t);
                                     }
@@ -304,11 +321,11 @@ impl KtApp {
                             // про пустую цепочку говорит сама полоса —
                             // второй раз повторять не надо
                         });
-                    if ch.any() || params_changed {
+                    if ch.any() || params_changed.any() {
                         edits.push(Edited {
                             clip: *id,
-                            fx: (ch.fx || params_changed).then_some(fx),
-                            auto: ch.auto.then_some(auto),
+                            fx: (ch.fx || params_changed.base).then_some(fx),
+                            auto: (ch.auto || params_changed.curve).then_some(auto),
                             bypass: ch.bypass.then_some(bypass),
                             off: ch.master.then_some(!chain_on),
                         });
@@ -582,9 +599,11 @@ pub(crate) fn draw_video_fx_params(
     bind: Option<&mut crate::widgets::CurveBind<'_>>,
     cameras: &[(u64, String)],
     on_video: bool,
-) -> bool {
+) -> crate::widgets::ParamsChanged {
     use kt_model::PanMode;
-    let mut ch = false;
+    // Р.43 п.291: правка БАЗЫ и правка КРИВОЙ — разные команды. Всё
+    // нечисловое (галки, режимы, пипетки, выбор камеры) — всегда база.
+    let mut ch = crate::widgets::ParamsChanged::default();
     // ключевой цвет удобнее пипеткой, чем тремя числами
     let skip: &[&str] = match f {
         FxInstance::Greenscreen { .. } => &["key_r", "key_g", "key_b"],
@@ -600,14 +619,14 @@ pub(crate) fn draw_video_fx_params(
     };
 
     // --- нечисловые контролы варианта ------------------------------------
-    let mode_row = |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut bool| {
+    let mode_row = |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut crate::widgets::ParamsChanged| {
         ui.horizontal(|ui| {
             ui.label(tr(k::fx::MODE));
             egui::ComboBox::from_id_salt("panmode")
             .selected_text(format!("{mode:?}"))
             .show_ui(ui, |ui| {
                 for m in [PanMode::Fit, PanMode::Fill, PanMode::Stretch] {
-                    *ch |= ui.selectable_value(mode, m, format!("{m:?}")).changed();
+                    ch.base |= ui.selectable_value(mode, m, format!("{m:?}")).changed();
                 }
             });
         });
@@ -619,7 +638,7 @@ pub(crate) fn draw_video_fx_params(
             mode_row(ui, mode, &mut ch);
             ui.horizontal(|ui| {
                 if ui.checkbox(&mut e, tr(k::fx::EASE)).changed() {
-                    ch = true;
+                    ch.base = true;
                 }
             });
             if let FxInstance::CamMotion { ease, .. } = f {
@@ -639,7 +658,7 @@ pub(crate) fn draw_video_fx_params(
                             (kt_model::FrameMode::Nearest, k::fx::FRAMES_NEAREST),
                             (kt_model::FrameMode::Blend, k::fx::FRAMES_BLEND),
                         ] {
-                            ch |= ui.selectable_value(frames, m, tr(key)).changed();
+                            ch.base |= ui.selectable_value(frames, m, tr(key)).changed();
                         }
                     });
             });
@@ -647,8 +666,8 @@ pub(crate) fn draw_video_fx_params(
         }
         FxInstance::Mirror { horizontal, vertical } => {
             ui.horizontal(|ui| {
-                ch |= ui.checkbox(horizontal, tr(k::fx::HORIZONTAL)).changed();
-                ch |= ui.checkbox(vertical, tr(k::fx::VERTICAL)).changed();
+                ch.base |= ui.checkbox(horizontal, tr(k::fx::HORIZONTAL)).changed();
+                ch.base |= ui.checkbox(vertical, tr(k::fx::VERTICAL)).changed();
             });
         }
         FxInstance::Greenscreen { key_r, key_g, key_b, .. } => {
@@ -659,13 +678,13 @@ pub(crate) fn draw_video_fx_params(
                     *key_r = (col[0] * 255.0) as u8;
                     *key_g = (col[1] * 255.0) as u8;
                     *key_b = (col[2] * 255.0) as u8;
-                    ch = true;
+                    ch.base = true;
                 }
             });
         }
         FxInstance::EventGrid { center, .. } => {
             ui.horizontal(|ui| {
-                ch |= ui.checkbox(center, tr(k::fx::CENTER)).changed();
+                ch.base |= ui.checkbox(center, tr(k::fx::CENTER)).changed();
             });
         }
         FxInstance::Edges { color_r, color_g, color_b, .. } => {
@@ -677,7 +696,7 @@ pub(crate) fn draw_video_fx_params(
                     *color_r = (col[0] * 255.0) as u8;
                     *color_g = (col[1] * 255.0) as u8;
                     *color_b = (col[2] * 255.0) as u8;
-                    ch = true;
+                    ch.base = true;
                 }
             });
         }
@@ -690,13 +709,13 @@ pub(crate) fn draw_video_fx_params(
                     *tint_r = (col[0] * 255.0) as u8;
                     *tint_g = (col[1] * 255.0) as u8;
                     *tint_b = (col[2] * 255.0) as u8;
-                    ch = true;
+                    ch.base = true;
                 }
             });
         }
         FxInstance::Noise { color, .. } => {
             ui.horizontal(|ui| {
-                ch |= ui.checkbox(color, tr(k::fx::COLOR_NOISE)).changed();
+                ch.base |= ui.checkbox(color, tr(k::fx::COLOR_NOISE)).changed();
             });
         }
         _ => {}
@@ -721,9 +740,9 @@ pub(crate) fn draw_video_fx_params(
                         .unwrap_or_else(|| format!("C{}", id.0)),
                 };
                 egui::ComboBox::from_id_salt("pan3dcam").selected_text(sel).show_ui(ui, |ui| {
-                    ch |= ui.selectable_value(camera, None, tr(k::fx::CAMERA_ACTIVE)).changed();
+                    ch.base |= ui.selectable_value(camera, None, tr(k::fx::CAMERA_ACTIVE)).changed();
                     for (cid, name) in cameras {
-                        ch |= ui
+                        ch.base |= ui
                             .selectable_value(camera, Some(kt_model::CameraId(*cid)), name.clone())
                             .changed();
                     }
@@ -736,29 +755,29 @@ pub(crate) fn draw_video_fx_params(
                 if ui.button(tr(k::fx::ADD_KF)).clicked() {
                     let t = keyframes.last().map(|k| (k.t + 0.25).min(1.0)).unwrap_or(0.0);
                     keyframes.push(kt_model::CamKeyframe { t, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 });
-                    ch = true;
+                    ch.base = true;
                 }
                 if !keyframes.is_empty() && ui.button(tr(k::fx::DROP_LAST)).clicked() {
                     keyframes.pop();
-                    ch = true;
+                    ch.base = true;
                 }
             });
             for (i, kf) in keyframes.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     ui.label(format!("#{i}"));
-                    ch |= ui
+                    ch.base |= ui
                         .add(egui::DragValue::new(&mut kf.t).range(0.0..=1.0).speed(0.005))
                         .changed();
                     ui.label(tr(k::fxp::PAN_X));
-                    ch |= ui
+                    ch.base |= ui
                         .add(egui::DragValue::new(&mut kf.pan_x).range(-4.0..=4.0).speed(0.01))
                         .changed();
                     ui.label(tr(k::fxp::PAN_Y));
-                    ch |= ui
+                    ch.base |= ui
                         .add(egui::DragValue::new(&mut kf.pan_y).range(-4.0..=4.0).speed(0.01))
                         .changed();
                     ui.label(tr(k::fxp::ZOOM));
-                    ch |= ui
+                    ch.base |= ui
                         .add(egui::DragValue::new(&mut kf.zoom).range(0.05..=32.0).speed(0.01))
                         .changed();
                 });

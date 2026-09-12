@@ -75,12 +75,20 @@ fn fade_weight(clip: &AudioClip, f: i64) -> f32 {
 }
 
 /// Результат рендера непрерывного диапазона.
+///
+/// **Единица обоих счётчиков — КАДРЫ 48 кГц** (Р.43, п.289). До этого путь
+/// без FX считал кадры, а путь с FX — промахи БЁРСТОВ, то есть одно и то же
+/// голодание давало числа, различающиеся в `AUDIO_BURST_FRAMES` = 1024 раза.
+/// Пользователь читал их как одну величину и был прав, что «счётчик сломан».
+/// Кадры выбраны потому, что они сравнимы с длиной события и с задержкой
+/// вывода; бёрсты не сравнимы ни с чем.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RenderStats {
-    /// Сколько сэмпло-чтений источника не удалось (подставлена тишина).
+    /// Сколько КАДРОВ выхода не удалось прочитать из источника (подставлена
+    /// тишина).
     pub underruns: u64,
-    /// Промахи ПРЕ-РОЛЛА (прогрев FX после seek) — на выход эти кадры не
-    /// идут, поэтому в `underruns` не входят (п.166). Диагностика:
+    /// Промахи ПРЕ-РОЛЛА в КАДРАХ (прогрев FX после seek) — на выход эти
+    /// кадры не идут, поэтому в `underruns` не входят (п.166). Диагностика:
     /// систематический рост = префетч не греет зону прогрева.
     pub warmup_misses: u64,
 }
@@ -450,6 +458,15 @@ impl AudioRenderer {
         let src_window_end = clip.source_in
             + kt_fx::chain_source_window_ext(&clip.fx, &clip.auto, clip_len, material.clone(), material)
                 .end;
+        // ОСЬ ЗЕРКАЛА ≠ конец окна (Р.43, п.292). Окно включает запас
+        // ресемплера (`WARP_SOURCE_MARGIN_FRAMES`, 8192 кадра = 170.7 мс) —
+        // это правильная граница «дальше тишина», но негодная ось: зеркаля
+        // от неё, замедленный reversed-клип играл материал, сдвинутый на
+        // эти 170 мс. Ось — фактически потреблённое `used`, ТА ЖЕ величина,
+        // что у видео (`ClipWarp::used`). У цепочки без варпа обе совпадают,
+        // поэтому GOLDEN_AUDIO не двигается.
+        let src_mirror_end =
+            clip.source_in + kt_fx::chain_source_used(&clip.fx, &clip.auto, clip_len);
         let media = clip.media;
         let mut pull_underruns = 0u64;
         let mut warmup_misses = 0u64;
@@ -460,7 +477,11 @@ impl AudioRenderer {
         let mut buf = vec![0f32; count * AUDIO_CHANNELS];
         {
             let reversed = clip.reversed;
-            let win = (clip.source_in, src_window_end);
+            let win = SrcWindow {
+                start: clip.source_in,
+                end: src_window_end,
+                mirror_end: src_mirror_end,
+            };
             let mut pull = |kind: kt_fx::PullKind, src_frame: i64, dst: &mut [f32]| -> bool {
                 // промахи пре-ролла считаются отдельно: их не слышно
                 let n = match kind {
@@ -536,6 +557,31 @@ impl AudioRenderer {
         &self,
         range: std::ops::Range<i64>,
     ) -> Vec<(kt_model::MediaId, std::ops::Range<i64>)> {
+        self.wanted_audio_bursts_for(range, false)
+    }
+
+    /// То же для СЫРОГО пути (реверс-транспорт, `render_frames_raw`).
+    ///
+    /// Р.43, п.295: сырой путь играет ВСЕ события через `render_plain_clip`,
+    /// то есть читает источник ЛИНЕЙНО и варпа не знает вовсе (решение
+    /// «dry, как Vegas», audio.rs). А префетч считал окно ПО ВАРПУ — и на
+    /// каждом замедленном событии грел не те бёрсты. Промах при этом
+    /// считается в КАДРАХ (`render_plain_clip`), то есть до 1024 за раз:
+    /// именно так «underruns растут» на реверсе. Единый источник правды у
+    /// префетча и рендера — то же правило, что у обычного пути (регрессия
+    /// п.13, тест 17).
+    pub fn wanted_audio_bursts_raw(
+        &self,
+        range: std::ops::Range<i64>,
+    ) -> Vec<(kt_model::MediaId, std::ops::Range<i64>)> {
+        self.wanted_audio_bursts_for(range, true)
+    }
+
+    fn wanted_audio_bursts_for(
+        &self,
+        range: std::ops::Range<i64>,
+        raw: bool,
+    ) -> Vec<(kt_model::MediaId, std::ops::Range<i64>)> {
         let mut out = Vec::new();
         for c in &self.clips {
             // «ручки» переходов входят в wanted — префетч греет их (п.136)
@@ -544,7 +590,7 @@ impl AudioRenderer {
             if from >= to {
                 continue;
             }
-            let (s0, s1) = if c.fx.is_empty() {
+            let (s0, s1) = if raw || c.fx.is_empty() {
                 if c.reversed {
                     // зеркало: конец таймлайн-диапазона читает НАЧАЛО куска
                     let len = c.end - c.start;
@@ -554,12 +600,15 @@ impl AudioRenderer {
                     (c.source_in + (from - c.start), c.source_in + (to - c.start))
                 }
             } else if c.reversed {
-                // FX+реверс: окно потребления зеркалится внутри ПОЛНОГО окна;
-                // ручки отключены (п.136) — from/to здесь совпадают с телом
+                // FX+реверс: окно потребления зеркалится вокруг ПОТРЕБЛЁННОГО
+                // конца — той же оси, что у рендера (Р.43, п.292); ручки
+                // отключены (п.136), from/to здесь совпадают с телом.
+                // Абсолютный кламп ниже (`s0.max(0)`) режет заход за нулевой
+                // кадр файла: расходись эти два расчёта — вечный промах кэша.
                 let len = c.end - c.start;
-                let total = kt_fx::chain_source_window(&c.fx, &c.auto, len, 0..len).end;
+                let used = kt_fx::chain_source_used(&c.fx, &c.auto, len);
                 let w = kt_fx::chain_source_window(&c.fx, &c.auto, len, (from - c.start)..(to - c.start));
-                (c.source_in + (total - w.end).max(0), c.source_in + (total - w.start).max(1))
+                (c.source_in + used - w.end, c.source_in + used - w.start)
             } else {
                 // с FX: варп потребляет источник по rate_integral, а не
                 // линейно; wanted обязан покрывать РЕАЛЬНОЕ потребление
@@ -584,12 +633,53 @@ impl AudioRenderer {
             let b1 = (s1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1;
             out.push((c.media, b0..b1));
         }
-        out
+        merge_burst_ranges(out)
     }
+}
+
+/// Схлопнуть перекрывающиеся и соприкасающиеся диапазоны бёрстов одного
+/// медиа (Р.43, п.297).
+///
+/// Пользователь строит стоп-кадр из СОТЕН микрособытий: в его проекте 885
+/// аудио-событий по 90 тиков (4.8 сэмпла) стоят встык на 0.88 с и читают
+/// ОДИН И ТОТ ЖЕ кадр источника. Каждое клало в `wanted` свою пару, и
+/// `prefetch_audio_pass` делал на них 885 запросов `coverage` под мьютексом
+/// кэша и submit'ил дубликаты — при том, что бёрст там ровно один.
+/// Схлопывание ничего не меняет по смыслу (объединение множеств то же) и
+/// снимает контеншен, о котором предупреждает `apps/kt-app/CLAUDE.md`.
+fn merge_burst_ranges(
+    mut v: Vec<(kt_model::MediaId, std::ops::Range<i64>)>,
+) -> Vec<(kt_model::MediaId, std::ops::Range<i64>)> {
+    if v.len() < 2 {
+        return v;
+    }
+    v.sort_by_key(|(m, r)| (m.0, r.start, r.end));
+    let mut out: Vec<(kt_model::MediaId, std::ops::Range<i64>)> = Vec::with_capacity(v.len());
+    for (m, r) in v {
+        match out.last_mut() {
+            // соприкасающиеся тоже сливаем: между b1 и b1 дырки нет
+            Some((pm, pr)) if *pm == m && r.start <= pr.end => pr.end = pr.end.max(r.end),
+            _ => out.push((m, r)),
+        }
+    }
+    out
 }
 
 pub fn db_to_linear(db: f32) -> f32 {
     10f32.powf(db / 20.0)
+}
+
+/// Окно источника, в котором живёт событие (кадры от нуля файла).
+///
+/// `end` — граница «дальше тишина» (включает запас ресемплера), `mirror_end`
+/// — ОСЬ ЗЕРКАЛА у reversed-события: фактически потреблённый конец, без
+/// запаса. До Р.43 это была одна величина, и зеркало уезжало на 170.7 мс
+/// (п.292).
+#[derive(Debug, Clone, Copy)]
+struct SrcWindow {
+    start: i64,
+    end: i64,
+    mirror_end: i64,
 }
 
 /// Заполнить `dst` кадрами источника [src_frame, +len): читает burst'ы через
@@ -600,13 +690,13 @@ fn fill_source(
     fetcher: &mut dyn AudioFetcher,
     media: kt_model::MediaId,
     src_frame: i64,
-    window: (i64, i64), // (start=source_in, end) — окно потребления клипа
+    window: SrcWindow,
     reversed: bool,
     dst: &mut [f32],
     underruns: &mut u64,
 ) -> bool {
     dst.fill(0.0);
-    let (win_start, window_end) = window;
+    let SrcWindow { start: win_start, end: window_end, mirror_end } = window;
     let frames = (dst.len() / AUDIO_CHANNELS) as i64;
     let mut f = 0i64;
     while f < frames {
@@ -617,7 +707,8 @@ fn fill_source(
         if virt >= window_end {
             break; // дальше только тишина
         }
-        let src = if reversed { win_start + (window_end - 1 - virt) } else { virt };
+        // зеркало считается от ПОТРЕБЛЁННОГО конца, а не от конца окна
+        let src = if reversed { win_start + (mirror_end - 1 - virt) } else { virt };
         if src < 0 || virt < 0 {
             f += 1;
             continue;
@@ -645,7 +736,9 @@ fn fill_source(
                     dst[d0..d0 + n].copy_from_slice(&b.data[s0..s0 + n]);
                 }
             }
-            None => *underruns += 1,
+            // единица — КАДРЫ, как у пути без FX (Р.43, п.289): «1 за
+            // промах бёрста» давало 1024-кратное расхождение счётчиков
+            None => *underruns += take.max(0) as u64,
         }
         f += take;
     }

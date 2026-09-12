@@ -6143,3 +6143,176 @@ fn t279_axis_lock_and_keys_that_stay() {
         );
     }
 }
+
+/// Тест 281 (Р.43 п.1): значение ключа, НАПЕЧАТАННОЕ в поле параметра,
+/// доезжает до модели.
+///
+/// Претензия дословно: «в таймлайне автоматизации для ключей slowed-reverb я
+/// например проставляю в поле ввода rate а он скидывается на предыдущее
+/// значение, а если на графике сдвину ключ - то значение меняется как надо.
+/// Кстати - в морфере это работает хорошо».
+///
+/// Причина: у поля и у графика был ОДИН флаг на двоих, а окно FX клало
+/// `auto` в команду только по флагу графика. Правка поля уходила в локальный
+/// клон `auto`, который умирал вместе с кадром, и на следующем кадре поле
+/// читало старое значение из модели.
+///
+/// Тест утверждает СЛЕДСТВИЕ (кривая в МОДЕЛИ) и щупает ИЗ ТОЧКИ, ОТКУДА
+/// ДЕЙСТВУЕТ ЧЕЛОВЕК (символы в поле рядом с подписью параметра) — этого не
+/// делал t265, который проверял `bound_value`/`bound_apply` как чистые
+/// функции и был зелёным на сломанной программе.
+#[test]
+fn t281_typed_key_value_reaches_the_model() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(9), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(9),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(9),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::slowed_reverb(1.0, 0.2, 60.0)],
+        fx_bypass: vec![],
+        fx_auto: vec![vec![ParamCurve {
+            param: "rate".into(),
+            ease: false,
+            keys: vec![
+                AutoKey { t: kt_time::Tick(0), v: 1.0 },
+                AutoKey { t: kt_time::Tick(90_000), v: 2.0 },
+            ],
+        }]],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(9));
+    h.step();
+    h.step();
+
+    // поле ЖИВОГО параметра стоит в сетке между своей подписью и подписью
+    // следующего параметра — целимся туда же, куда человек. `DragValue`
+    // своего узла в дереве доступности не заводит, поэтому по подписи его
+    // не найти: берём координату из РЕАЛЬНОЙ вёрстки.
+    let (lbl_rate, lbl_mix) =
+        (crate::widgets::param_label("rate"), crate::widgets::param_label("mix"));
+    // подпись параметра встречается дважды: в сетке значений и кнопкой
+    // выбора кривой в панели автоматизации НИЖЕ. Нам нужна ВЕРХНЯЯ — сетка
+    // рисуется до графика.
+    let top_label = |h: &Harness<'_, KtApp>, lbl: &str| -> egui::Rect {
+        h.query_all_by_label(lbl)
+            .map(|n| n.rect())
+            .min_by(|a, b| a.top().total_cmp(&b.top()))
+            .unwrap_or_else(|| panic!("подпись параметра {lbl:?} не нарисована"))
+    };
+    let r = top_label(&h, &lbl_rate);
+    let (x0, y) = (r.right(), r.center().y);
+    let x1 = top_label(&h, &lbl_mix).left();
+    assert!(x1 > x0 + 8.0, "между подписями параметров обязано быть место под поле");
+    let pos = egui::pos2((x0 + x1) * 0.5, y);
+
+    // клик по полю переводит его в режим ввода; дальше — символы и Enter
+    h.hover_at(pos);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.event(egui::Event::Text("3".into()));
+    h.step();
+    h.key_press(egui::Key::Enter);
+    h.step();
+    h.step();
+
+    let curves = h.state().model.project().clips[0].fx_auto[0].clone();
+    let key = curves
+        .iter()
+        .find(|c| c.param == "rate")
+        .and_then(|c| c.keys.iter().find(|k| k.t == kt_time::Tick(0)))
+        .expect("ключ кривой rate в нуле материала");
+    assert_eq!(
+        key.v, 3.0,
+        "напечатанное значение обязано доехать до МОДЕЛИ, а не откатиться \
+         (кривая: {curves:?})"
+    );
+    // и правка кривой не выдумывает шагов истории на каждый символ
+    assert_eq!(
+        h.state().model.project().clips[0].fx_auto[0][0].keys.len(),
+        2,
+        "поле правит существующий ключ, а не плодит новые"
+    );
+}
+
+/// Тест 286 (Р.43 п.296): правка «удобства» не пересобирает движок.
+///
+/// Претензия: «регион "зацикленность_5" какой-то поломанный при
+/// воспроизведении, underruns растут». `on_region_changed` звала
+/// `Player::set_project` — клон всего проекта плюс `VideoRenderer::new` и
+/// пересборка `AudioRenderer` в render-потоке. На монтаже пользователя это
+/// 1961 событие НА КАЖДОЕ движение границы региона и на каждое нажатие
+/// Loop: аудио-поток вставал, кольцо пустело, начинались
+/// callback-underrun'ы — а после п.294 они больше не тормозят часы, но
+/// слышны тишиной.
+///
+/// Регион и `loop_enabled` живут в «удобстве» (`apps/kt-app/CLAUDE.md`), и
+/// движок их из проекта не читает: луп доезжает `set_loop_region`.
+#[test]
+fn t286_region_edits_do_not_rebuild_the_engine() {
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.player.set_project(app.model.project().clone());
+
+    let before = app.player.project_version();
+    app.model.set_region(Region::normalized(kt_time::Tick(0), kt_time::Tick(45_000)));
+    app.on_region_changed();
+    app.toggle_loop();
+    app.clear_region();
+    assert_eq!(
+        app.player.project_version(),
+        before,
+        "регион и loop — «удобство»: движок пересобирать не за чем"
+    );
+
+    // а правка СОДЕРЖИМОГО обязана доехать до плеера тем же путём, что и была
+    app.apply(Command::SetGain { id: ClipId(1), gain_db: -3.0 });
+    assert!(
+        app.player.project_version() > before,
+        "правка содержимого обязана доносить проект до движка"
+    );
+}

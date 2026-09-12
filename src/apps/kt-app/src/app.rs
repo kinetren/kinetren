@@ -2338,8 +2338,17 @@ impl KtApp {
     }
 
     /// Синхронизация региона/loop с плеером.
+    ///
+    /// `set_project` здесь НЕ зовём (Р.43, п.296): регион и `loop_enabled`
+    /// живут в «удобстве», движок их из проекта не читает вовсе — луп
+    /// доезжает отдельным `set_loop_region`. А `set_project` — это клон
+    /// всего проекта плюс пересборка обоих рендереров: на монтаже
+    /// пользователя (1961 событие) каждый сдвиг границы региона и каждое
+    /// нажатие Loop останавливали аудио-render-поток, кольцо пустело, и
+    /// начинались callback-underrun'ы — «регион какой-то поломанный при
+    /// воспроизведении». Правки СОДЕРЖИМОГО ходят через `apply`/
+    /// `apply_batch`, и проект плееру доносят они.
     pub fn on_region_changed(&mut self) {
-        self.player.set_project(self.model.project().clone());
         let p = self.model.project();
         let region =
             p.region.filter(|_| p.loop_enabled).map(|r| kt_time::TickRange::new(r.start, r.end));
@@ -3822,8 +3831,12 @@ impl KtApp {
                     format!("{:.0}", self.player.cache.audio_bytes() as f64 / 1e6),
                     format!("{:.0}", self.player.cache.video_bytes() as f64 / 1e6)
                 ),
-                format!(
-                    "Underruns {}/{}",
+                // ЧТО ЭТО ЗА ДВА ЧИСЛА (Р.43, п.289): левое — промахи
+                // РЕНДЕРА (кэш не отдал бёрст), правое — голодание
+                // КОЛБЭКА (кольцо пустое). Пользователь читал их как
+                // «левый/правый канал» — и был вправе: подписи не было.
+                crate::tf!(
+                    k::perf::UNDERRUNS,
                     self.player.underruns.load(ord),
                     self.player.shared.callback_underruns.load(ord)
                 ),
@@ -3977,10 +3990,14 @@ impl KtApp {
                 format!("{:.0}", self.player.cache.video_bytes() as f64 / 1e6),
             ));
             ui.separator();
-            ui.weak(format!(
-                "underruns: {}/{}",
+            // голодание колбэка — это КАДРЫ, которых не было на выходе;
+            // в миллисекундах видно, сколько тишины набежало (Р.43 п.290)
+            let cu = self.player.shared.callback_underruns.load(ord);
+            ui.weak(crate::tf!(
+                k::perf::UNDERRUNS_SHORT,
                 self.player.underruns.load(ord),
-                self.player.shared.callback_underruns.load(ord)
+                cu,
+                cu / (kt_time::AUDIO_SAMPLE_RATE as u64 / 1000).max(1)
             ));
             ui.separator();
             // п.1 р.7.1: V-fps (показанные НОВЫЕ кадры) — здесь, не в тулбаре

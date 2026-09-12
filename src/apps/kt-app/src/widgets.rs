@@ -124,6 +124,78 @@ impl CurveBind<'_> {
     }
 }
 
+/// Что именно тронуло поле параметра (Р.43, п.291).
+///
+/// Прежде обе правки возвращались ОДНИМ `bool`, и вызывающий не мог знать,
+/// куда писать результат: в `SetFx` или в `SetFxAuto`. `fx_editor` писал
+/// только в `SetFx`, поэтому правка ключа ЧИСЛОМ умирала вместе с кадром и
+/// поле «скидывалось на предыдущее значение» — претензия пользователя
+/// Р.43 п.1. У морфера флаг был один на оба источника правки, и потому там
+/// это работало.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ParamsChanged {
+    /// Тронута БАЗА эффекта (параметр без живой кривой) → `SetFx`.
+    pub base: bool,
+    /// Тронута КРИВАЯ (ключ параметра с живой кривой) → `SetFxAuto`.
+    pub curve: bool,
+}
+
+impl ParamsChanged {
+    pub fn any(self) -> bool {
+        self.base || self.curve
+    }
+    fn base() -> ParamsChanged {
+        ParamsChanged { base: true, curve: false }
+    }
+    fn curve() -> ParamsChanged {
+        ParamsChanged { base: false, curve: true }
+    }
+}
+
+impl std::ops::BitOrAssign for ParamsChanged {
+    fn bitor_assign(&mut self, o: ParamsChanged) {
+        self.base |= o.base;
+        self.curve |= o.curve;
+    }
+}
+
+/// Прямоугольники полей параметров последнего кадра — ТОЛЬКО для живых
+/// сценариев (`KT_GEOM_DUMP`, правило Р.27 «координаты берутся из САМОЙ
+/// программы»). У `egui::DragValue` нет узла в дереве доступности, и по
+/// подписи его не найти ни харнессу, ни скрипту: без этого списка сценарий
+/// на поле параметра пришлось бы писать угаданными смещениями внутри окна.
+/// В обычном запуске ветка стоит один `OnceLock`-чек.
+pub(crate) mod field_probe {
+    use eframe::egui;
+    use std::cell::RefCell;
+    use std::sync::OnceLock;
+
+    thread_local! {
+        static RECTS: RefCell<Vec<(String, egui::Rect)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(crate) fn on() -> bool {
+        static ON: OnceLock<bool> = OnceLock::new();
+        *ON.get_or_init(|| std::env::var("KT_GEOM_DUMP").is_ok())
+    }
+
+    pub(crate) fn note(name: &str, r: egui::Rect) {
+        if !on() {
+            return;
+        }
+        RECTS.with(|v| {
+            let mut v = v.borrow_mut();
+            v.retain(|(n, _)| n != name);
+            v.push((name.to_string(), r));
+        });
+    }
+
+    /// Забрать накопленное (дамп геометрии пишется раз в 100 мс).
+    pub(crate) fn take() -> Vec<(String, egui::Rect)> {
+        RECTS.with(|v| std::mem::take(&mut *v.borrow_mut()))
+    }
+}
+
 /// Та же строка, но знающая про кривые.
 ///
 /// Правило одно: **поле правит ровно то, что показывает.**
@@ -136,25 +208,30 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     f: &mut P,
     spec: &ParamSpec,
     bind: Option<&mut CurveBind<'_>>,
-) -> bool {
-    let Some(base) = f.get_param(spec.name) else { return false };
+) -> ParamsChanged {
+    let none = ParamsChanged::default();
+    let Some(base) = f.get_param(spec.name) else { return none };
     let Some(bind) = bind else {
         ui.label(param_label(spec.name));
         let mut v = base;
-        if param_value(ui, spec, &mut v).changed() {
+        let r = param_value(ui, spec, &mut v);
+        field_probe::note(spec.name, r.rect);
+        if r.changed() {
             f.set_param(spec.name, v);
-            return true;
+            return ParamsChanged::base();
         }
-        return false;
+        return none;
     };
     let Some(ci) = bind.index_of(spec.name) else {
         ui.label(param_label(spec.name));
         let mut v = base;
-        if param_value(ui, spec, &mut v).changed() {
+        let r = param_value(ui, spec, &mut v);
+        field_probe::note(spec.name, r.rect);
+        if r.changed() {
             f.set_param(spec.name, v);
-            return true;
+            return ParamsChanged::base();
         }
-        return false;
+        return none;
     };
     // подпись ЦВЕТОМ кривой — видно, что поле правит именно её (и какую
     // линию на графике искать глазами)
@@ -167,11 +244,14 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     );
     let c = &mut bind.curves[ci];
     let mut v = bound_value(c, key, bind.at);
-    if param_value(ui, spec, &mut v).changed() {
+    let r = param_value(ui, spec, &mut v);
+    field_probe::note(spec.name, r.rect);
+    if r.changed() {
         bound_apply(c, key, bind.at, v);
-        return true;
+        // правка ушла в КРИВУЮ — значит и команда обязана быть SetFxAuto
+        return ParamsChanged::curve();
     }
-    false
+    none
 }
 
 /// Что ПОКАЗЫВАЕТ поле параметра с живой кривой: значение выбранного
@@ -212,7 +292,7 @@ pub fn params_grid<P: HasParams + ?Sized>(
     f: &mut P,
     skip: &[&str],
 ) -> bool {
-    params_grid_bound(ui, id, f, skip, None)
+    params_grid_bound(ui, id, f, skip, None).base
 }
 
 /// Та же сетка, но связанная с кривыми (Р.38 пп.15-16).
@@ -222,13 +302,13 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     f: &mut P,
     skip: &[&str],
     mut bind: Option<&mut CurveBind<'_>>,
-) -> bool {
+) -> ParamsChanged {
     let specs: Vec<&ParamSpec> =
         f.param_specs().iter().filter(|s| !skip.contains(&s.name)).collect();
     if specs.is_empty() {
-        return false;
+        return ParamsChanged::default();
     }
-    let mut changed = false;
+    let mut changed = ParamsChanged::default();
     egui::Grid::new(id).num_columns(4).spacing([8.0, 4.0]).show(ui, |ui| {
         for pair in specs.chunks(2) {
             for spec in pair {

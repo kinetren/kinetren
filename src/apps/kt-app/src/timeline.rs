@@ -934,13 +934,29 @@ impl KtApp {
                 )
             })
             .collect();
+        // поля параметров окна FX — из САМОЙ программы (Р.43): у DragValue
+        // нет узла в дереве доступности, угадывать его смещение внутри окна
+        // сценарий не должен
+        let fields: Vec<String> = crate::widgets::field_probe::take()
+            .into_iter()
+            .map(|(name, r)| {
+                format!(
+                    "{{\"param\":\"{name}\",\"x\":{:.1},\"y\":{:.1},\"w\":{:.1},\"h\":{:.1}}}",
+                    r.left(),
+                    r.top(),
+                    r.width(),
+                    r.height()
+                )
+            })
+            .collect();
         let json = format!(
-            "{{\"playhead\":{},\"playing\":{},\
+            "{{\"playhead\":{},\"playing\":{},\"fields\":[{}],\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"timeline\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
              \"lane_h\":{:.1},\"ticks_per_px\":{:.3},\"view_start\":{:.1},\"rows\":[{}]}}\n",
             self.player.video_playhead().0,
             self.player.transport.is_playing(),
+            fields.join(","),
             screen.width(),
             screen.height(),
             geom.rect.left(),

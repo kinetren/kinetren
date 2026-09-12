@@ -22,9 +22,17 @@ pub fn prefetch_audio_pass(
     range: std::ops::Range<i64>,
     prio: Priority,
     generation: u64,
+    // Сырой (реверс-транспортный) путь рендера: окно источника считается
+    // линейно, как его читает `render_plain_clip` (Р.43, п.295).
+    raw: bool,
 ) -> usize {
     let mut submitted = 0;
-    for (media, bursts) in renderer.wanted_audio_bursts(range) {
+    let wanted = if raw {
+        renderer.wanted_audio_bursts_raw(range)
+    } else {
+        renderer.wanted_audio_bursts(range)
+    };
+    for (media, bursts) in wanted {
         let Some(worker) = workers.get(&media) else { continue };
         let covered = cache.coverage(source_id(media), BurstKind::Audio, bursts.clone());
         let mut cursor = bursts.start;

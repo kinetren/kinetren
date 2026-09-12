@@ -632,6 +632,27 @@ pub fn chain_source_window_ext(
     s0..s1.max(s0)
 }
 
+/// Сколько кадров источника событие потребляет ЦЕЛИКОМ: S(1)·len, без
+/// запаса ресемплера и без пре-ролла.
+///
+/// Это **ОСЬ ЗЕРКАЛА** у reversed-клипа (Р.43, п.292) — ровно та же
+/// величина, что `ClipWarp::used` у видео. До Р.43 аудио зеркалило от
+/// `chain_source_window_ext(..).end`, а туда входит
+/// `WARP_SOURCE_MARGIN_FRAMES` = 8192 кадра (170.7 мс): зеркальный
+/// замедленный клип играл материал, сдвинутый на эти 170 мс, и звучал
+/// «звуком от другого события» (претензия Р.43 п.3), а картинка на том же
+/// событии оставалась на месте — A/V расходились.
+pub fn chain_source_used(fx: &[FxInstance], auto: &AutoProfiles, clip_len_frames: i64) -> i64 {
+    let len = clip_len_frames.max(1);
+    let Some(rate) = fx.iter().find_map(|f| match f {
+        FxInstance::SlowedReverb { rate, .. } => Some(*rate),
+        _ => None,
+    }) else {
+        return len;
+    };
+    (len as f64 * source_progress(rate, auto.rate_points(fx), 1.0)).ceil() as i64
+}
+
 pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
     let wet = auto.mix_points(fx);
     fx.iter()
@@ -963,6 +984,33 @@ impl ClipProcessor {
             r.reset();
         }
         self.next_local = i64::MIN;
+    }
+
+    /// Материальный якорь события (кадры от нуля файла).
+    pub fn src_in(&self) -> i64 {
+        self.src_in
+    }
+
+    /// Переставить материальный якорь, СОХРАНИВ состояние FX (Р.43, п.293).
+    ///
+    /// `chain_fingerprint` знает только ВИДЫ слотов, поэтому трим, разрез,
+    /// punch-out и переанкоринг морф-куска меняли `source_in` при том же
+    /// `ClipId` и той же структуре цепочки — и процессор продолжал читать
+    /// от СТАРОГО якоря. `reset()` не помогал: `hard_seek`/`seam` считают
+    /// позицию как `self.src_in + source_offset(local)`. Симптом —
+    /// «звук от другого события откуда-то взялся».
+    ///
+    /// Это ШОВ, а не seek: выход непрерывен, реверб обязан дозвонить
+    /// (инвариант №3).
+    pub fn set_src_in(&mut self, src_in: i64) {
+        if self.src_in == src_in {
+            return;
+        }
+        self.src_in = src_in;
+        if self.next_local != i64::MIN {
+            let local = self.next_local;
+            self.seam(local);
+        }
     }
 
     /// Прочитать кадры [local, local + out/CH) клип-локального потока.

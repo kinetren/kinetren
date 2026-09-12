@@ -38,6 +38,12 @@ impl FxStateStore {
         match self.map.get_mut(&id) {
             Some(p) if p.fingerprint() == fp => {
                 p.set_clip_len(clip_len_frames);
+                // ГЕОМЕТРИЯ доносится тоже (Р.43, п.293): `chain_fingerprint`
+                // хэширует только ВИДЫ слотов, поэтому трим/разрез/punch-out/
+                // переанкоринг морф-куска меняли `source_in` при том же id и
+                // той же структуре цепочки — и процессор читал от старого
+                // якоря, то есть «звук от другого события».
+                p.set_src_in(src_in_frames);
                 // кривые доносятся ДО параметров: apply_params смотрит,
                 // у каких слотов есть кривая (громкость, скорость)
                 p.set_auto(auto);
