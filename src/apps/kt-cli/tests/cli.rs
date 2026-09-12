@@ -59,3 +59,56 @@ fn t151_cli_otio_workflows() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// Тест 290 (Р.43, п.298): дымовой тест инструмента `probe`.
+///
+/// Разбор жалобы пользователя («до проблем там был звук из сурса
+/// "далеко" а при проблемах "салют"») занял бы минуты вместо часов, если
+/// бы такой ответ можно было получить одной командой. Здесь держится сам
+/// инструмент — все четыре его раздела на месте и он не падает на
+/// настоящем проекте. САМО ПОВЕДЕНИЕ (слой не дотягивается до события вне
+/// своего окна) сторожит t288 в kt-model: тест на печать не может его
+/// заменить.
+#[test]
+fn t290_probe_reports_what_layers_changed() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t290-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("probe.otio");
+
+    // демо-проект несёт морфер; заменяем его на слой ДАЛЕКО от события
+    let st = cli().args(["demo", path.to_str().unwrap()]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+
+    let probe = |from: &str, to: &str| -> String {
+        let out = cli()
+            .args(["probe", path.to_str().unwrap(), from, to])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).to_string()
+    };
+
+    // у демо-проекта на первой секунде есть события и нет чужого медиа
+    let head = probe("0", "2");
+    assert!(head.contains("effective clips"), "probe обязан показать события:\n{head}");
+    assert!(
+        head.contains("no foreign media in the order"),
+        "в исправном месте чужого медиа быть не должно:\n{head}"
+    );
+    assert!(
+        head.contains("clips with a time warp"),
+        "probe обязан называть число событий с варпом — им и виден чужой слой:\n{head}"
+    );
+
+    // слой демо-проекта целится в события 7 и 9; в конце таймлайна их
+    // нет, значит правок быть не должно — а события быть должны, иначе
+    // «ничего не изменено» выполнялось бы само собой
+    let far = probe("95", "99");
+    assert!(far.contains("ClipId("), "в этом месте обязаны быть события:\n{far}");
+    let changed = far.split("what morph layers changed here").nth(1).unwrap_or("");
+    let changed = changed.split("\n\n").next().unwrap_or("");
+    assert!(
+        changed.contains("(nothing)"),
+        "слой не имеет отношения к этому месту, а probe показал правки: {changed:?}"
+    );
+}

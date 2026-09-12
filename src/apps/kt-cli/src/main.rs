@@ -88,6 +88,55 @@ fn probe_range(project: &Project, from: f64, to: f64) -> i32 {
         println!("  (none)");
     }
 
+    // Что морфер-слои ИЗМЕНИЛИ против файла (Р.43, п.298): подменённый
+    // источник и чужой варп — ровно те две беды, которые пользователь
+    // слышал как «звук от другого события» и видел как «кривые не
+    // работают». Сверяем кусок с его оригиналом по `slice_origin`.
+    let orig: std::collections::HashMap<u64, &kt_model::ClipEvent> =
+        project.clips.iter().map(|c| (c.id.0, c)).collect();
+    let mut changed = Vec::new();
+    for c in &eff {
+        let end = c.start + c.duration;
+        if c.start >= t1 || end <= t0 {
+            continue;
+        }
+        let key = kt_model::slice_origin(c.id).unwrap_or(c.id);
+        let Some(o) = orig.get(&key.0) else { continue };
+        // сравниваем с НЕПРОПАТЧЕННЫМ куском того же окна, а не с целым
+        // событием: резка сама по себе двигает `source_in`, и без этого
+        // каждый кусок выглядел бы «изменённым»
+        let plain = kt_model::slice_source_in(o, kt_time::TickRange::new(c.start, end));
+        let mut what = Vec::new();
+        if c.media != o.media {
+            what.push(format!("media {} -> {}", o.media.0, c.media.0));
+        }
+        if c.source_in != plain {
+            what.push(format!(
+                "in {:.3} -> {:.3} s",
+                plain.as_secs_f64(),
+                c.source_in.as_secs_f64()
+            ));
+        }
+        let w = |f: &[kt_model::FxInstance]| f.iter().filter(|f| f.warps_time()).count();
+        if w(&c.fx) > w(&o.fx) {
+            what.push("time warp added by a layer".into());
+        }
+        if c.fx.len() != o.fx.len() {
+            what.push(format!("fx {} -> {}", o.fx.len(), c.fx.len()));
+        }
+        if !what.is_empty() {
+            changed.push(format!("  {:?}: {}", c.id, what.join(", ")));
+        }
+    }
+    println!("\n-- what morph layers changed here --");
+    if changed.is_empty() {
+        println!("  (nothing)");
+    } else {
+        for line in &changed {
+            println!("{line}");
+        }
+    }
+
     // Стоимость сборки движка и число событий с ВАРПОМ (Р.43, п.298):
     // слой со slowed&reverb, дотянувшийся до всего проекта, раздаёт варп
     // каждому событию ниже своей строки — а варп у аудио это ресемплер и

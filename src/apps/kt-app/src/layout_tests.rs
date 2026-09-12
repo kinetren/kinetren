@@ -6316,3 +6316,75 @@ fn t286_region_edits_do_not_rebuild_the_engine() {
         "правка содержимого обязана доносить проект до движка"
     );
 }
+
+/// Тест 289 (Р.43 п.290): два числа underrun'ов подписаны, а тишина
+/// показана в МИЛЛИСЕКУНДАХ.
+///
+/// Претензия пользователя была написана так: «левый underruns растет, и
+/// правый тоже начинает чуть позже». Левое число — промахи РЕНДЕРА,
+/// правое — голодание КОЛБЭКА, и это каскад «кэш не отдал бёрст → кольцо
+/// опустело», а вовсе не левый и правый каналы. В интерфейсе стояло голое
+/// `Underruns X/Y` без единого слова о том, что есть что, — читать их как
+/// L/R было совершенно законно.
+///
+/// Отдельно: голодание колбэка — это КАДРЫ, которых не было на выходе.
+/// В кадрах число человеку ни о чём не говорит; в строке состояния оно
+/// показано ещё и миллисекундами тишины.
+#[test]
+fn t289_underrun_counters_are_labelled_and_silence_is_in_ms() {
+    use egui_kittest::kittest::Queryable;
+    use std::sync::atomic::Ordering;
+
+    let mut h = harness();
+    // различимые числа: перепутать местами не выйдет
+    const RENDER: u64 = 7;
+    const CALLBACK: u64 = 96_000; // ровно 2000 мс тишины при 48 кГц
+    {
+        let app = h.state();
+        app.player.underruns.store(RENDER, Ordering::Relaxed);
+        app.player.shared.callback_underruns.store(CALLBACK, Ordering::Relaxed);
+    }
+    h.step();
+    h.step();
+
+    // берём НАСТОЯЩИЙ текст надписи, а не Debug узла: в дампе узла полно
+    // букв от служебных полей, и проверка «между числами есть слово»
+    // выполнялась бы сама собой
+    use egui_kittest::kittest::NodeT;
+    let texts: Vec<String> = h
+        .query_all_by_label_contains("")
+        .filter_map(|n| {
+            let a = n.accesskit_node();
+            a.value().map(|v| v.to_string()).or_else(|| a.label().map(|l| l.to_string()))
+        })
+        .filter(|t| t.to_lowercase().contains("underrun"))
+        .collect();
+    let all = texts.join("\n").to_lowercase();
+    assert!(
+        !texts.is_empty(),
+        "счётчики underrun'ов обязаны быть видны — их не нашлось вовсе"
+    );
+    assert!(
+        all.contains(&RENDER.to_string()) && all.contains(&CALLBACK.to_string()),
+        "оба числа обязаны быть показаны: {texts:?}"
+    );
+    // и хотя бы в одном месте они РАЗЛИЧЕНЫ СЛОВАМИ, а не только косой
+    // чертой: «7/96000» не говорит, где рендер, а где колбэк
+    let labelled = texts.iter().any(|t| {
+        let (Some(a), Some(b)) = (t.find(&RENDER.to_string()), t.find(&CALLBACK.to_string()))
+        else {
+            return false;
+        };
+        a < b && t[a + 1..b].chars().any(char::is_alphabetic)
+    });
+    assert!(
+        labelled,
+        "между числами обязано стоять слово (рендер/колбэк), а не только «/»: {texts:?}"
+    );
+    // тишина — в миллисекундах, а не в кадрах
+    let ms = CALLBACK / (kt_time::AUDIO_SAMPLE_RATE as u64 / 1000);
+    assert!(
+        all.contains(&ms.to_string()),
+        "голодание колбэка обязано быть показано и в миллисекундах ({ms} мс): {texts:?}"
+    );
+}
