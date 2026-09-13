@@ -270,6 +270,28 @@ fn t181_effect_parity_gpu_vs_cpu() {
             ],
             FrameTol::BILINEAR,
         ),
+        // Поглощённые поточечные (Р.45, п.312): Greenscreen/Noise на
+        // сабтапе внутри серии. Пороговые (мягкий ключ) и ячеистые (сетка
+        // зерна) решения законно флипают на f32/f64-границах — THRESHOLD
+        // (прецедент edges/greenscreen).
+        (
+            "tap-gs-in-run",
+            vec![
+                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                FxInstance::greenscreen([0, 255, 0], 70, 25),
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+            ],
+            FrameTol::THRESHOLD,
+        ),
+        (
+            "tap-noise-in-run",
+            vec![
+                FxInstance::EventGrid { cols: 2, rows: 2, center: true },
+                FxInstance::Noise { amount: 0.6, size: 2, color: true },
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.1, pan_y: 0.0, zoom: 1.8 },
+            ],
+            FrameTol::THRESHOLD,
+        ),
         (
             "chain-user",
             vec![

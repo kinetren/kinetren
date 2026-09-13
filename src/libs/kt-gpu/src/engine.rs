@@ -114,13 +114,41 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
         };
         kinds |= kind << (i * 4);
     }
-    debug_assert!(cur <= 62, "geom program exceeds uniform slots");
+    debug_assert!(cur <= 46, "geom prims exceed uniform slots (tap table at 46+)");
+    // tap-таблица поглощённых поточечных (Р.45, п.312): оп i — слоты
+    // 46+2i; meta = kind | after_prim<<2 | color<<7 | special<<8
+    debug_assert!(prog.tap_ops.len() <= kt_fx::geom::MAX_TAP_OPS);
+    for (i, op) in prog.tap_ops.iter().enumerate() {
+        let base = 46 + i * 2;
+        match op.kind {
+            kt_fx::geom::TapKind::Gs { key, tol, hard, spill, kc } => {
+                let meta = (op.after_prim as u32) << 2;
+                u.p[base] =
+                    [f32::from_bits(meta), key[0] as f32, key[1] as f32, key[2] as f32];
+                u.p[base + 1] = [tol as f32, hard as f32, spill as f32, kc as f32];
+            }
+            kt_fx::geom::TapKind::Noise { seed, k, cell, color, special, stage_w, stage_h } => {
+                let meta = 1u32
+                    | ((op.after_prim as u32) << 2)
+                    | ((color as u32) << 7)
+                    | ((special as u32) << 8);
+                u.p[base] = [
+                    f32::from_bits(meta),
+                    f32::from_bits(seed),
+                    f32::from_bits(k as u32),
+                    cell as f32,
+                ];
+                u.p[base + 1] = [stage_w as f32, stage_h as f32, 0.0, 0.0];
+            }
+        }
+    }
     // суперсемплинг (п.309): тапы аффинных серий посчитаны на CPU и едут
-    // числом; Proj-серии меряют якобиан по-пиксельно ТОЙ ЖЕ формулой
+    // числом; Proj-серии меряют якобиан по-пиксельно ТОЙ ЖЕ формулой.
+    // Биты 24..31 — счётчик tap-опов.
     let ss = match prog.ss {
         kt_fx::geom::SsSpec::Const { nx, ny } => (nx << 8) | (ny << 16),
         kt_fx::geom::SsSpec::PerPixel => 1,
-    };
+    } | ((prog.tap_ops.len() as u32) << 24);
     u.h = [prog.prims.len() as u32, kinds as u32, (kinds >> 32) as u32, ss];
     u.d = [prog.in_w, prog.in_h, prog.out_w, prog.out_h];
     u
@@ -247,7 +275,7 @@ fn chain_ops(
         .collect();
     // План цепочки строит kt-fx (Р.45, п.311) — ОБЩИЙ код обоих бэкендов
     // (инвариант №7); здесь опы только транслируются в FxOp.
-    let plan = kt_fx::plan::plan_chain(fx, src_w, src_h, out_w, out_h, u, cam3d, &froms);
+    let plan = kt_fx::plan::plan_chain(fx, src_w, src_h, out_w, out_h, u, cam3d, t.0, &froms);
     for op in plan.ops {
         match op {
             kt_fx::plan::PlanOp::Snapshot => ops.push(FxOp::Snapshot),

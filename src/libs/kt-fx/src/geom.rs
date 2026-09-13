@@ -54,37 +54,6 @@ pub fn is_geo(f: &FxInstance) -> bool {
     )
 }
 
-/// Конец гео-рана, начатого на гео-эффекте `i`: индекс сразу ЗА последним
-/// гео-шагом рана. Аудио-FX прозрачны ВНУТРИ рана (не рвут серию — GPU их
-/// тоже пропускает); любой другой эффект, стоп-индекс (снапшоты силы слоя)
-/// или потолок MAX_GEO_STEPS завершают ран. Оба бэкенда обязаны звать
-/// ЭТУ функцию — расхождение сегментации = расхождение картинок.
-pub fn geo_run_end(fx: &[FxInstance], i: usize, stops: &[usize]) -> usize {
-    debug_assert!(is_geo(&fx[i]));
-    let mut j = i;
-    let mut end = i;
-    let mut geo = 0usize;
-    while j < fx.len() {
-        if j > i && stops.contains(&j) {
-            break;
-        }
-        let f = &fx[j];
-        if is_geo(f) {
-            geo += 1;
-            if geo > MAX_GEO_STEPS {
-                break;
-            }
-            j += 1;
-            end = j;
-        } else if f.is_audio() {
-            j += 1; // прозрачен; войдёт в ран, только если дальше ещё гео
-        } else {
-            break;
-        }
-    }
-    end
-}
-
 /// Диагональная аффинная карта index-space: `x_in = ax·x + bx` (линейная
 /// часть всех наших 2D-гео-FX осе-выровнена, поворотов нет).
 #[derive(Debug, Clone, Copy)]
@@ -144,6 +113,41 @@ pub enum GeomPrim {
 /// Сентинел отключённой оси Clamp (влезает в f32 юниформы без inf).
 pub const CLAMP_OFF: f64 = 1.0e30;
 
+/// Потолок поточечных tap-опов в одной программе (таблица в юниформе GPU:
+/// 8 × 2 vec4-слота за примами).
+pub const MAX_TAP_OPS: usize = 8;
+/// Потолок vec4-слотов примов (за ними в юниформе живёт tap-таблица).
+pub const MAX_PRIM_SLOTS: usize = 46;
+
+/// Поточечный ли эффект (цвет пикселя без соседей) — кандидат на
+/// поглощение внутрь слитого прохода (Р.45, п.312). Поглощаются только
+/// ВНУТРЕННИЕ (между гео-шагами рана): ведущие/замыкающие остаются
+/// барьерами — их байты при K=1 неотличимы от прежних.
+pub fn is_pointwise(f: &FxInstance) -> bool {
+    matches!(f, FxInstance::Greenscreen { .. } | FxInstance::Noise { .. })
+}
+
+/// Поточечный оп, применяемый к ЗНАЧЕНИЮ САБТАПА (после билинейки, до
+/// box-среднего), в цепочечном порядке (Р.45, п.312).
+#[derive(Debug, Clone, Copy)]
+pub enum TapKind {
+    /// Greenscreen: f64/f32-континуум целочисленной формулы ядра.
+    Gs { key: [f64; 3], tol: f64, hard: f64, spill: f64, kc: usize },
+    /// Noise: зерно прибито к сетке СВОЕГО шага (решение Р.45) — офсет
+    /// считается от floor координаты стадии; `special` — особая формула
+    /// пользовательского `size == 1 && !color` (у неё другое зерно).
+    Noise { seed: u32, k: i64, cell: u32, color: bool, special: bool, stage_w: u32, stage_h: u32 },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TapOp {
+    /// Координата опа записывается после применения этого числа примов
+    /// обратного прохода (построитель разрезает склейки аффин на стадиях
+    /// опов). При коротком замыкании на приме d жив оп с after_prim ≤ d.
+    pub after_prim: usize,
+    pub kind: TapKind,
+}
+
 /// Потолок тапов суперсемплинга на ось (максимум 4×4 = 16 сабтапов).
 pub const SS_MAX: u32 = 4;
 
@@ -185,6 +189,25 @@ pub struct GeomProgram {
     pub has_alpha: bool,
     /// Суперсемплинг при минификации (п.309).
     pub ss: SsSpec,
+    /// Поглощённые поточечные опы (Р.45, п.312) в цепочечном порядке;
+    /// их after_prim идут по УБЫВАНИЮ (ранний в цепочке — глубже в
+    /// обратном проходе).
+    pub tap_ops: Vec<TapOp>,
+}
+
+impl GeomProgram {
+    /// vec4-слоты примов в юниформе GPU (лимит MAX_PRIM_SLOTS; бюджет
+    /// проверяет планировщик — при превышении ран режется по гео-границе).
+    pub fn prim_slots(&self) -> usize {
+        self.prims
+            .iter()
+            .map(|p| match p {
+                GeomPrim::Affine(_) | GeomPrim::Clamp { .. } => 1,
+                GeomPrim::Fold { .. } => 2,
+                GeomPrim::Proj { .. } => 3,
+            })
+            .sum()
+    }
 }
 
 /// Решение исполнения гео-рана. Принимается ЗДЕСЬ и только здесь — оба
@@ -199,6 +222,7 @@ pub enum GeomExec {
 
 /// Построить решение для гео-шагов рана (`steps` — ТОЛЬКО гео, в порядке
 /// применения; прозрачные аудио уже выброшены сборщиком).
+#[allow(clippy::too_many_arguments)]
 pub fn build_geom_exec(
     steps: &[&FxInstance],
     in_w: u32,
@@ -207,8 +231,9 @@ pub fn build_geom_exec(
     out_h: u32,
     u: f64,
     cam3d: Option<Cam3d>,
+    burst_index: i64,
 ) -> GeomExec {
-    debug_assert!(!steps.is_empty() && steps.len() <= MAX_GEO_STEPS);
+    debug_assert!(!steps.is_empty());
     if steps.len() == 1 {
         // одиночное зеркало ресемпла не делает — всегда старое ядро
         if matches!(steps[0], FxInstance::Mirror { .. }) {
@@ -217,14 +242,14 @@ pub fn build_geom_exec(
         // одиночный Pan/CamMotion БЕЗ минификации — старое ядро байт-в-байт;
         // с минификацией — слитый проход ради суперсемплинга (п.309)
         if matches!(steps[0], FxInstance::Pan { .. } | FxInstance::CamMotion { .. }) {
-            let prog = build_program(steps, in_w, in_h, out_w, out_h, u, cam3d);
+            let prog = build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index);
             if prog.ss == (SsSpec::Const { nx: 1, ny: 1 }) {
                 return GeomExec::Legacy;
             }
             return GeomExec::Fused(prog);
         }
     }
-    GeomExec::Fused(build_program(steps, in_w, in_h, out_w, out_h, u, cam3d))
+    GeomExec::Fused(build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index))
 }
 
 /// Прямые параметры одного шага (собираются проходом вперёд — размеры
@@ -236,8 +261,12 @@ enum Step {
     Grid { offx: u32, offy: u32, gw: u32, gh: u32, cw: u32, ch: u32, iw: u32, ih: u32 },
     /// Pan3d: ОБРАТНАЯ гомография (центр-space выхода → uv квада).
     Proj { m: [[f64; 3]; 3], iw: u32, ih: u32 },
+    /// Поглощённый поточечный оп (Р.45): применяется к значению сабтапа
+    /// на координате СВОЕЙ стадии.
+    Tap(TapKind),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_program(
     steps: &[&FxInstance],
     in_w: u32,
@@ -246,6 +275,7 @@ fn build_program(
     out_h: u32,
     u: f64,
     cam3d: Option<Cam3d>,
+    burst_index: i64,
 ) -> GeomProgram {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
     // --- вперёд: размеры и прямые параметры каждого шага ---
@@ -327,11 +357,42 @@ fn build_program(
                 has_alpha_known = true;
                 has_alpha = true;
             }
+            FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
+                let tol = (*tolerance).clamp(1, 200) as f64;
+                let soft = (*softness).clamp(0, 100) as f64;
+                let key = [*key_r, *key_g, *key_b];
+                fw.push(Step::Tap(TapKind::Gs {
+                    key: [key[0] as f64, key[1] as f64, key[2] as f64],
+                    tol,
+                    hard: (tol - soft).max(0.0),
+                    spill: spill.clamp(0.0, 1.0),
+                    kc: (0..3).max_by_key(|&i| key[i]).unwrap_or(1),
+                }));
+                has_alpha_known = true;
+                has_alpha = true;
+            }
+            FxInstance::Noise { amount, size, color } => {
+                let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
+                // k == 0 — эффект пуст (как ранний выход ядра и ветка GPU)
+                if k > 0 {
+                    let size = (*size).clamp(1, 64);
+                    fw.push(Step::Tap(TapKind::Noise {
+                        seed: crate::video::noise_seed(burst_index),
+                        k,
+                        cell: size,
+                        color: *color,
+                        special: size == 1 && !*color,
+                        stage_w: w,
+                        stage_h: h,
+                    }));
+                }
+            }
             _ => debug_assert!(false, "non-geo step in build_program"),
         }
     }
     // --- назад: обратные карты, соседние аффинные ПЕРЕМНОЖЕНЫ в f64 ---
     let mut prims: Vec<GeomPrim> = Vec::new();
+    let mut taps_rev: Vec<TapOp> = Vec::new();
     let mut pending = Aff::IDENTITY;
     let flush = |pending: &mut Aff, prims: &mut Vec<GeomPrim>| {
         if !pending.is_identity() {
@@ -396,10 +457,21 @@ fn build_program(
                 // uv → index-space входа: sx = q·in − 0.5 (как pan3d.wgsl)
                 pending = Aff { ax: *iw as f64, bx: -0.5, ay: *ih as f64, by: -0.5 };
             }
+            Step::Tap(kind) => {
+                // стадия опа: текущая координата обратного прохода — это
+                // растр его шага; склейка аффин разрезается здесь
+                flush(&mut pending, &mut prims);
+                taps_rev.push(TapOp { after_prim: prims.len(), kind: *kind });
+            }
         }
     }
     flush(&mut pending, &mut prims);
-    debug_assert!(prims.len() <= MAX_PRIMS, "geom program exceeds MAX_PRIMS: {}", prims.len());
+    // цепочечный порядок опов (обратный проход собрал их с конца);
+    // after_prim при этом убывают
+    taps_rev.reverse();
+    let tap_ops = taps_rev;
+    // бюджеты (MAX_PRIMS/MAX_PRIM_SLOTS/MAX_TAP_OPS) проверяет
+    // планировщик и при превышении режет ран по гео-границе
     // Суперсемплинг (п.309): у аффинной программы (в т.ч. с Fold) якобиан
     // КОНСТАНТЕН — тапы считаются один раз здесь, в f64, и едут в юниформу;
     // Proj (перспектива) делает его по-пиксельным.
@@ -424,7 +496,7 @@ fn build_program(
     };
     // выход серии — фактические размеры после шагов: серия из одних
     // Mirror (или Pan3d без камеры) размеров НЕ меняет — как старый путь
-    GeomProgram { prims, in_w, in_h, out_w: w, out_h: h, has_alpha_known, has_alpha, ss }
+    GeomProgram { prims, in_w, in_h, out_w: w, out_h: h, has_alpha_known, has_alpha, ss, tap_ops }
 }
 
 // ---- Pan3d: гомография (Р.44) ----------------------------------------------
@@ -701,15 +773,165 @@ fn sample_bilinear_f64(src: &Frame, sx: f64, sy: f64) -> [f64; 4] {
     px
 }
 
+/// Обратный проход С ЗАПИСЬЮ координат tap-стадий (Р.45, п.312).
+/// Возвращает результат и число ПРИМЕНЁННЫХ примов: при коротком
+/// замыкании на приме d жив оп с after_prim ≤ d («noise поверх чёрного
+/// холста сетки» работает, «noise до сетки в вырезанной зоне» — нет).
+#[inline]
+fn map_pos_rec(
+    prims: &[GeomPrim],
+    taps: &[TapOp],
+    ox: f64,
+    oy: f64,
+    rec: &mut [(f64, f64); MAX_TAP_OPS],
+) -> (Mapped, usize) {
+    let (mut x, mut y) = (ox, oy);
+    // tap'ы лежат в цепочечном порядке с УБЫВАЮЩИМИ after_prim — курсор
+    // идёт с конца списка (возрастание after_prim) вместе с проходом
+    let mut cursor = taps.len();
+    while cursor > 0 && taps[cursor - 1].after_prim == 0 {
+        rec[cursor - 1] = (x, y);
+        cursor -= 1;
+    }
+    for (pi, p) in prims.iter().enumerate() {
+        match p {
+            GeomPrim::Affine(a) => {
+                x = a.ax * x + a.bx;
+                y = a.ay * y + a.by;
+            }
+            GeomPrim::Clamp { x0, x1, y0, y1 } => {
+                x = x.clamp(*x0, *x1);
+                y = y.clamp(*y0, *y1);
+            }
+            GeomPrim::Fold { gw, gh, cw, ch, in_w, in_h } => {
+                if x < 0.0 || y < 0.0 || x >= *gw || y >= *gh {
+                    return (Mapped::Black, pi);
+                }
+                let kx = (x / cw).floor();
+                x = (x - kx * cw) / cw * in_w - 0.5;
+                let ky = (y / ch).floor();
+                y = (y - ky * ch) / ch * in_h - 0.5;
+            }
+            GeomPrim::Proj { m } => {
+                let tx = m[0][0] * x + m[0][1] * y + m[0][2];
+                let ty = m[1][0] * x + m[1][1] * y + m[1][2];
+                let tz = m[2][0] * x + m[2][1] * y + m[2][2];
+                if tz <= 0.0 {
+                    return (Mapped::Transparent, pi);
+                }
+                let qx = tx / tz;
+                let qy = ty / tz;
+                if !(0.0..=1.0).contains(&qx) || !(0.0..=1.0).contains(&qy) {
+                    return (Mapped::Transparent, pi);
+                }
+                x = qx;
+                y = qy;
+            }
+        }
+        while cursor > 0 && taps[cursor - 1].after_prim == pi + 1 {
+            rec[cursor - 1] = (x, y);
+            cursor -= 1;
+        }
+    }
+    (Mapped::At(x, y), prims.len())
+}
+
+/// Greenscreen на значении сабтапа: f64-континуум целочисленной формулы
+/// ядра (round происходит один раз в конце пайплайна).
+#[inline]
+fn tap_gs(v: &mut [f64; 4], key: &[f64; 3], tol: f64, hard: f64, spill: f64, kc: usize) {
+    let d = ((v[0] - key[0]).powi(2) + (v[1] - key[1]).powi(2) + (v[2] - key[2]).powi(2)).sqrt();
+    if d <= hard {
+        v[3] = 0.0;
+    } else if d < tol {
+        v[3] *= (d - hard) / (tol - hard).max(1e-9);
+    }
+    if spill > 0.0 && v[3] > 0.0 {
+        let other = v[(kc + 1) % 3].max(v[(kc + 2) % 3]);
+        if v[kc] > other {
+            v[kc] -= (v[kc] - other) * spill;
+        }
+    }
+}
+
+/// Noise на значении сабтапа: офсет от floor координаты СВОЕЙ стадии
+/// (зерно прибито к её сетке, решение Р.45); формулы хэша — дословно
+/// ядро noise (обе ветки).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+fn tap_noise(
+    v: &mut [f64; 4],
+    coord: (f64, f64),
+    seed: u32,
+    k: i64,
+    cell: u32,
+    color: bool,
+    special: bool,
+    stage_w: u32,
+    stage_h: u32,
+) {
+    use crate::video::noise_hash as nh;
+    let xi = (coord.0.floor() as i64).clamp(0, stage_w as i64 - 1) as u32;
+    let yi = (coord.1.floor() as i64).clamp(0, stage_h as i64 - 1) as u32;
+    if special {
+        let hsh = nh(xi ^ nh(yi ^ seed));
+        let n = ((hsh >> 16) & 0x7fff) as i64 - 16384;
+        let off = (n * k / 32767) as f64;
+        for c in v.iter_mut().take(3) {
+            *c += off;
+        }
+    } else {
+        let (gx, gy) = (xi / cell, yi / cell);
+        let off_at = |ch: u32| -> f64 {
+            let hsh = nh(gx ^ nh(gy ^ nh(ch ^ seed)));
+            let n = ((hsh >> 16) & 0x7fff) as i64 - 16384;
+            (n * k / 32767) as f64
+        };
+        if color {
+            for (c, val) in v.iter_mut().take(3).enumerate() {
+                *val += off_at(c as u32 + 1);
+            }
+        } else {
+            let off = off_at(0);
+            for c in v.iter_mut().take(3) {
+                *c += off;
+            }
+        }
+    }
+}
+
 /// Один сабтап: обратная цепочка целиком + тап (кайма Fold и силуэт Proj
-/// анти-алиасятся честно — каждый сабтап решает короткие замыкания сам).
+/// анти-алиасятся честно — каждый сабтап решает короткие замыкания сам);
+/// затем поглощённые поточечные опы в порядке цепочки (Р.45, п.312).
 #[inline]
 fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
-    match map_pos(&p.prims, x, y) {
+    if p.tap_ops.is_empty() {
+        // быстрый путь — в точности Р.44
+        return match map_pos(&p.prims, x, y) {
+            Mapped::At(sx, sy) => sample_bilinear_f64(src, sx, sy),
+            Mapped::Black => [0.0, 0.0, 0.0, 255.0],
+            Mapped::Transparent => [0.0, 0.0, 0.0, 0.0],
+        };
+    }
+    let mut rec = [(0.0f64, 0.0f64); MAX_TAP_OPS];
+    let (mapped, applied) = map_pos_rec(&p.prims, &p.tap_ops, x, y, &mut rec);
+    let mut v = match mapped {
         Mapped::At(sx, sy) => sample_bilinear_f64(src, sx, sy),
         Mapped::Black => [0.0, 0.0, 0.0, 255.0],
         Mapped::Transparent => [0.0, 0.0, 0.0, 0.0],
+    };
+    for (ti, op) in p.tap_ops.iter().enumerate() {
+        if op.after_prim > applied {
+            continue; // стадия опа отрезана коротким замыканием
+        }
+        match op.kind {
+            TapKind::Gs { key, tol, hard, spill, kc } => tap_gs(&mut v, &key, tol, hard, spill, kc),
+            TapKind::Noise { seed, k, cell, color, special, stage_w, stage_h } => {
+                tap_noise(&mut v, rec[ti], seed, k, cell, color, special, stage_w, stage_h)
+            }
+        }
     }
+    v
 }
 
 /// Координатная проба (без тапа) для по-пиксельного якобиана Proj-серий.

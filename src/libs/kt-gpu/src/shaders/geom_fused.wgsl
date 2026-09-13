@@ -14,6 +14,11 @@
 //   3 Proj:   три строки обратной гомографии Pan3d      — 3 слота;
 //     вход — центр-space; t.z ≤ 0 (за камерой) и uv вне [0,1]² — прозрачно.
 //
+// Tap-таблица (Р.45, п.312): поглощённые поточечные опы (Greenscreen/
+// Noise) — слоты 46+2i (meta|params, params2), счётчик в h.w битах 24..31;
+// применяются к значению сабтапа в порядке цепочки, координата стадии
+// записывается обратным проходом (зеркало kt_fx::geom::map_pos_rec).
+//
 // Суперсемплинг (п.309): h.w = mode | nx<<8 | ny<<16. mode 0 — тапы
 // посчитаны на CPU (аффинная программа, якобиан константен); mode 1 —
 // по-пиксельно конечными разностями, ФОРМУЛА тапов та же, что в kt-fx
@@ -104,20 +109,14 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
     return vec3<f32>(x, y, dead);
 }
 
-// Сабтап БЕЗ округления — финальная билинейка дословно как resample.wgsl.
-fn geo_tap(m: vec3<f32>) -> vec4<f32> {
-    if (m.z == 1.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 255.0);
-    }
-    if (m.z == 2.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    }
+// Финальная билинейка БЕЗ округления — дословно как resample.wgsl.
+fn bilin(mx: f32, my: f32) -> vec4<f32> {
     let sw = i32(G.d.x);
     let sh = i32(G.d.y);
-    let xf = floor(m.x);
-    let yf = floor(m.y);
-    let fx = m.x - xf;
-    let fy = m.y - yf;
+    let xf = floor(mx);
+    let yf = floor(my);
+    let fx = mx - xf;
+    let fy = my - yf;
     let xi0 = i32(xf);
     let yi0 = i32(yf);
     var acc = vec4<f32>(0.0);
@@ -131,6 +130,198 @@ fn geo_tap(m: vec3<f32>) -> vec4<f32> {
         }
     }
     return acc;
+}
+
+// Сабтап без округления: короткие замыкания либо билинейка.
+fn geo_tap(m: vec3<f32>) -> vec4<f32> {
+    if (m.z == 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 255.0);
+    }
+    if (m.z == 2.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    return bilin(m.x, m.y);
+}
+
+// lowbias32 — копия noise.wgsl (зеркало kt_fx::video::noise_hash).
+fn nh(v: u32) -> u32 {
+    var x = v;
+    x = x ^ (x >> 16u);
+    x = x * 0x7feb352du;
+    x = x ^ (x >> 15u);
+    x = x * 0x846ca68bu;
+    x = x ^ (x >> 16u);
+    return x;
+}
+
+// Офсет зерна общей формулы noise (целочисленное деление — как i64 в Rust).
+fn noff(gx: u32, gy: u32, ch: u32, seed: u32, k: i32) -> f32 {
+    let h = nh(gx ^ nh(gy ^ nh(ch ^ seed)));
+    let n = i32((h >> 16u) & 0x7fffu) - 16384;
+    return f32(n * k / 32767);
+}
+
+// meta i-го tap-опа: kind | after_prim<<2 | color<<7 | special<<8.
+fn tap_meta(i: u32) -> u32 {
+    return bitcast<u32>(G.p[46u + i * 2u].x);
+}
+
+// Сабтап С ПОГЛОЩЁННЫМИ поточечными опами (Р.45, п.312): обратный проход
+// записывает координаты tap-стадий, после билинейки опы применяются к
+// значению в порядке цепочки. Зеркало kt_fx::geom::{map_pos_rec,sample_at}.
+fn geo_sample(px: f32, py: f32) -> vec4<f32> {
+    let tap_count = (G.h.w >> 24u) & 0xffu;
+    var rec: array<vec2<f32>, 8>;
+    var x = px;
+    var y = py;
+    var dead = 0.0;
+    var cur = 0u;
+    // tap'ы лежат с УБЫВАЮЩИМИ after_prim — курсор идёт с конца списка
+    var tcur = tap_count;
+    loop {
+        if (tcur == 0u) { break; }
+        if (((tap_meta(tcur - 1u) >> 2u) & 0x1fu) != 0u) { break; }
+        rec[tcur - 1u] = vec2<f32>(x, y);
+        tcur = tcur - 1u;
+    }
+    var applied = 0u;
+    let n = G.h.x;
+    for (var i = 0u; i < n; i = i + 1u) {
+        let kind = (select(G.h.z, G.h.y, i < 8u) >> ((i % 8u) * 4u)) & 0xfu;
+        if (kind == 0u) {
+            let a = G.p[cur];
+            cur = cur + 1u;
+            if (dead == 0.0) {
+                x = a.x * x + a.y;
+                y = a.z * y + a.w;
+            }
+        } else if (kind == 1u) {
+            let c = G.p[cur];
+            cur = cur + 1u;
+            if (dead == 0.0) {
+                x = clamp(x, c.x, c.y);
+                y = clamp(y, c.z, c.w);
+            }
+        } else if (kind == 2u) {
+            let g = G.p[cur];
+            let sdim = G.p[cur + 1u];
+            cur = cur + 2u;
+            if (dead == 0.0) {
+                if (x < 0.0 || y < 0.0 || x >= g.x || y >= g.y) {
+                    dead = 1.0;
+                } else {
+                    let kx = floor(x / g.z);
+                    x = (x - kx * g.z) / g.z * sdim.x - 0.5;
+                    let ky = floor(y / g.w);
+                    y = (y - ky * g.w) / g.w * sdim.y - 0.5;
+                }
+            }
+        } else {
+            let r0 = G.p[cur];
+            let r1 = G.p[cur + 1u];
+            let r2 = G.p[cur + 2u];
+            cur = cur + 3u;
+            if (dead == 0.0) {
+                let tx = r0.x * x + r0.y * y + r0.z;
+                let ty = r1.x * x + r1.y * y + r1.z;
+                let tz = r2.x * x + r2.y * y + r2.z;
+                if (tz <= 0.0) {
+                    dead = 2.0;
+                } else {
+                    let qx = tx / tz;
+                    let qy = ty / tz;
+                    if (qx < 0.0 || qx > 1.0 || qy < 0.0 || qy > 1.0) {
+                        dead = 2.0;
+                    } else {
+                        x = qx;
+                        y = qy;
+                    }
+                }
+            }
+        }
+        if (dead == 0.0) {
+            applied = i + 1u;
+            loop {
+                if (tcur == 0u) { break; }
+                if (((tap_meta(tcur - 1u) >> 2u) & 0x1fu) != applied) { break; }
+                rec[tcur - 1u] = vec2<f32>(x, y);
+                tcur = tcur - 1u;
+            }
+        }
+    }
+    var v: vec4<f32>;
+    if (dead == 1.0) {
+        v = vec4<f32>(0.0, 0.0, 0.0, 255.0);
+    } else if (dead == 2.0) {
+        v = vec4<f32>(0.0);
+    } else {
+        v = bilin(x, y);
+    }
+    // опы в порядке цепочки; при коротком замыкании на приме d живы опы
+    // с after_prim <= d
+    for (var t = 0u; t < tap_count; t = t + 1u) {
+        let tm = tap_meta(t);
+        if (((tm >> 2u) & 0x1fu) > applied) { continue; }
+        let a = G.p[46u + t * 2u];
+        let b = G.p[47u + t * 2u];
+        if ((tm & 0x3u) == 0u) { // Greenscreen (континуум формулы ядра)
+            let key = a.yzw;
+            let tol = b.x;
+            let hard = b.y;
+            let spill = b.z;
+            let kc = u32(b.w);
+            let dd = distance(v.xyz, key);
+            if (dd <= hard) {
+                v.w = 0.0;
+            } else if (dd < tol) {
+                v.w = v.w * (dd - hard) / max(tol - hard, 1e-9);
+            }
+            if (spill > 0.0 && v.w > 0.0) {
+                var vc = 0.0;
+                var o1 = 0.0;
+                var o2 = 0.0;
+                if (kc == 0u) { vc = v.x; o1 = v.y; o2 = v.z; }
+                else if (kc == 1u) { vc = v.y; o1 = v.z; o2 = v.x; }
+                else { vc = v.z; o1 = v.x; o2 = v.y; }
+                let other = max(o1, o2);
+                if (vc > other) {
+                    vc = vc - (vc - other) * spill;
+                    if (kc == 0u) { v.x = vc; }
+                    else if (kc == 1u) { v.y = vc; }
+                    else { v.z = vc; }
+                }
+            }
+        } else { // Noise: зерно прибито к сетке своей стадии
+            let seed = bitcast<u32>(a.y);
+            let k = i32(bitcast<u32>(a.z));
+            let cell = u32(a.w);
+            let sw = i32(b.x);
+            let sh = i32(b.y);
+            let c = rec[t];
+            let xi = u32(clamp(i32(floor(c.x)), 0, sw - 1));
+            let yi = u32(clamp(i32(floor(c.y)), 0, sh - 1));
+            if (((tm >> 8u) & 1u) == 1u) { // особая формула size==1 && !color
+                let hsh = nh(xi ^ nh(yi ^ seed));
+                let nn = i32((hsh >> 16u) & 0x7fffu) - 16384;
+                let off = f32(nn * k / 32767);
+                v = vec4<f32>(v.xyz + vec3<f32>(off), v.w);
+            } else {
+                let gx = xi / cell;
+                let gy = yi / cell;
+                if (((tm >> 7u) & 1u) == 1u) { // цветное зерно
+                    v = vec4<f32>(
+                        v.x + noff(gx, gy, 1u, seed, k),
+                        v.y + noff(gx, gy, 2u, seed, k),
+                        v.z + noff(gx, gy, 3u, seed, k),
+                        v.w,
+                    );
+                } else {
+                    v = vec4<f32>(v.xyz + vec3<f32>(noff(gx, gy, 0u, seed, k)), v.w);
+                }
+            }
+        }
+    }
+    return v;
 }
 
 // Число сабтапов на ось — ФОРМУЛА kt_fx::geom::ss_taps один в один.
@@ -168,12 +359,18 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
         nx = ss_taps(probe_axis(c0, o.x, o.y, 1.0, 0.0));
         ny = ss_taps(probe_axis(c0, o.x, o.y, 0.0, 1.0));
     }
+    let tap_count = (G.h.w >> 24u) & 0xffu;
     var acc = vec4<f32>(0.0);
     for (var j = 0u; j < ny; j = j + 1u) {
         let sy = o.y - 0.5 + (f32(j) + 0.5) / f32(ny);
         for (var i = 0u; i < nx; i = i + 1u) {
             let sx = o.x - 0.5 + (f32(i) + 0.5) / f32(nx);
-            acc = acc + geo_tap(geo_map(sx, sy));
+            if (tap_count == 0u) {
+                // путь Р.44 — без поглощённых опов, байт-в-байт прежний
+                acc = acc + geo_tap(geo_map(sx, sy));
+            } else {
+                acc = acc + geo_sample(sx, sy);
+            }
         }
     }
     acc = acc / f32(nx * ny);

@@ -4,7 +4,7 @@
 //! слитые серии обязаны совпадать с точной перестановкой там, где она
 //! математически точна, и не зависеть от прозрачных аудио-FX в цепочке.
 
-use kt_fx::geom::{GeomExec, build_geom_exec, geo_run_end, is_geo};
+use kt_fx::geom::{GeomExec, build_geom_exec, is_geo};
 use kt_fx::video::{Frame, VideoFxCtx, apply_video_chain};
 use kt_model::{FxInstance, PanMode};
 
@@ -60,11 +60,11 @@ fn t297_routing_single_legacy_multi_fused() {
     let pan = FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.3, pan_y: -0.2, zoom: 1.5 };
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
-    assert!(matches!(build_geom_exec(&[&pan], W, H, W, H, 0.5, None), GeomExec::Legacy));
-    assert!(matches!(build_geom_exec(&[&mir], W, H, W, H, 0.5, None), GeomExec::Legacy));
-    assert!(matches!(build_geom_exec(&[&grid], W, H, W, H, 0.5, None), GeomExec::Fused(_)));
-    assert!(matches!(build_geom_exec(&[&grid, &pan], W, H, W, H, 0.5, None), GeomExec::Fused(_)));
-    assert!(matches!(build_geom_exec(&[&mir, &grid], W, H, W, H, 0.5, None), GeomExec::Fused(_)));
+    assert!(matches!(build_geom_exec(&[&pan], W, H, W, H, 0.5, None, 90_000), GeomExec::Legacy));
+    assert!(matches!(build_geom_exec(&[&mir], W, H, W, H, 0.5, None, 90_000), GeomExec::Legacy));
+    assert!(matches!(build_geom_exec(&[&grid], W, H, W, H, 0.5, None, 90_000), GeomExec::Fused(_)));
+    assert!(matches!(build_geom_exec(&[&grid, &pan], W, H, W, H, 0.5, None, 90_000), GeomExec::Fused(_)));
+    assert!(matches!(build_geom_exec(&[&mir, &grid], W, H, W, H, 0.5, None, 90_000), GeomExec::Fused(_)));
 }
 
 /// Зеркало ПОСЛЕ сетки — точная перестановка: слитая серия обязана дать
@@ -162,9 +162,11 @@ fn t298_pan3d_cpu_edges() {
     assert_eq!(noop.rgba, test_frame().rgba, "без камеры — как раньше");
 }
 
-/// Сегментация: барьер (blur) рвёт серию, аудио — нет.
+/// Сегментация: жёсткий барьер (blur) рвёт серию, аудио — нет; стоп-индекс
+/// силы слоя рвёт (с Р.45 сегментация живёт в plan_chain — п.311/т306).
 #[test]
 fn t297e_run_end_stops_at_barriers_only() {
+    use kt_fx::plan::{PlanOp, plan_chain};
     let fx = vec![
         FxInstance::EventGrid { cols: 2, rows: 2, center: false },
         FxInstance::Gain { db: 0.0, pan: 0.0 },
@@ -174,9 +176,15 @@ fn t297e_run_end_stops_at_barriers_only() {
     ];
     assert!(is_geo(&fx[0]));
     // ран накрывает grid + (прозрачный gain) + mirror, но не blur
-    assert_eq!(geo_run_end(&fx, 0, &[]), 3);
+    let p = plan_chain(&fx, W, H, W, H, 0.5, None, 90_000, &[]);
+    assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
+    assert!(matches!(p.ops[1], PlanOp::Barrier { idx: 3, .. }));
+    assert!(matches!(p.ops[2], PlanOp::Run { i: 4, j: 5, .. }));
     // стоп-индекс (снапшот силы слоя) рвёт ран
-    assert_eq!(geo_run_end(&fx, 0, &[2]), 1);
+    let ps = plan_chain(&fx, W, H, W, H, 0.5, None, 90_000, &[2]);
+    assert!(matches!(ps.ops[0], PlanOp::Run { i: 0, j: 1, .. }));
+    assert!(matches!(ps.ops[1], PlanOp::Snapshot));
+    assert!(matches!(ps.ops[2], PlanOp::Run { i: 2, j: 3, .. }));
 }
 
 /// Шахматка 1×1 px — самый хрупкий к ресемплингу узор.
@@ -323,8 +331,8 @@ fn t300_ss_taps_and_routing_boundary() {
     // слитый проход ради суперсемплинга
     let pan1 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 };
     let pan_min = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.9 };
-    assert!(matches!(build_geom_exec(&[&pan1], W, H, W, H, 0.5, None), GeomExec::Legacy));
-    assert!(matches!(build_geom_exec(&[&pan_min], W, H, W, H, 0.5, None), GeomExec::Fused(_)));
+    assert!(matches!(build_geom_exec(&[&pan1], W, H, W, H, 0.5, None, 90_000), GeomExec::Legacy));
+    assert!(matches!(build_geom_exec(&[&pan_min], W, H, W, H, 0.5, None, 90_000), GeomExec::Fused(_)));
 
     // детерминизм слитого суперсемплинга
     let a = run(std::slice::from_ref(&pan_min));
@@ -410,7 +418,7 @@ fn t306_chain_plan_segmentation() {
 
     // ран (grid + прозрачный аудио + mirror), барьер, ран
     let fx = vec![grid.clone(), gain.clone(), mir.clone(), blur.clone(), grid.clone()];
-    let p = plan_chain(&fx, W, H, W, H, 0.5, None, &[]);
+    let p = plan_chain(&fx, W, H, W, H, 0.5, None, 90_000, &[]);
     assert_eq!(p.ops.len(), 3);
     assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
     assert!(matches!(p.ops[1], PlanOp::Barrier { idx: 3, res_scale: 1 }));
@@ -418,7 +426,7 @@ fn t306_chain_plan_segmentation() {
 
     // сила слоя: снапшот-точка рвёт ран, слот — маркер Mix
     let fxm = vec![grid.clone(), FxInstance::LayerMix { amount: 0.5, from: 0 }, mir.clone()];
-    let pm = plan_chain(&fxm, W, H, W, H, 0.5, None, &[0]);
+    let pm = plan_chain(&fxm, W, H, W, H, 0.5, None, 90_000, &[0]);
     assert!(matches!(pm.ops[0], PlanOp::Snapshot));
     assert!(matches!(pm.ops[1], PlanOp::Run { i: 0, j: 1, .. }));
     assert!(matches!(pm.ops[2], PlanOp::Mix { idx: 1 }));
@@ -426,16 +434,105 @@ fn t306_chain_plan_segmentation() {
     assert_eq!(pm.ops.len(), 4);
 
     // «план слайса ≡ кусок плана целого»: не-маркерные опы совпадают
-    let s1 = plan_chain(&fxm[0..1], W, H, W, H, 0.5, None, &[]);
-    let s2 = plan_chain(&fxm[2..3], W, H, W, H, 0.5, None, &[]);
+    let s1 = plan_chain(&fxm[0..1], W, H, W, H, 0.5, None, 90_000, &[]);
+    let s2 = plan_chain(&fxm[2..3], W, H, W, H, 0.5, None, 90_000, &[]);
     assert!(matches!(s1.ops[..], [PlanOp::Run { i: 0, j: 1, .. }]));
     assert!(matches!(s2.ops[..], [PlanOp::Run { i: 0, j: 1, .. }]));
 
     // бюджет гео-шагов: 7 подряд режутся на 6 + 1 (в точке разреза
     // качество = сегодняшнее)
     let seven: Vec<FxInstance> = (0..7).map(|_| mir.clone()).collect();
-    let p7 = plan_chain(&seven, W, H, W, H, 0.5, None, &[]);
+    let p7 = plan_chain(&seven, W, H, W, H, 0.5, None, 90_000, &[]);
     assert_eq!(p7.ops.len(), 2);
     assert!(matches!(p7.ops[0], PlanOp::Run { i: 0, j: 6, .. }));
     assert!(matches!(p7.ops[1], PlanOp::Run { i: 6, j: 7, .. }));
+}
+
+/// Тест 305 (п.312, Р.45): поточечные Greenscreen/Noise ВНУТРИ гео-серии
+/// перестают рвать слияние. (а) grid → greenscreen → zoom: ключ работает
+/// (зелёный вырезан), а резкость шахматки не потеряна — до Р.45 барьер
+/// растеризовал сетку в 1× и зум мылил. (б) grid → noise → zoom: зерно
+/// детерминировано и прибито к сетке СВОЕГО шага (зумится с картинкой).
+#[test]
+fn t305_pointwise_inside_run() {
+    use kt_fx::plan::{PlanOp, plan_chain};
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let gs = FxInstance::greenscreen([0, 255, 0], 70, 25);
+
+    // (0) сегментация: внутренний поточечный поглощён — ран ОДИН
+    let fx = vec![grid.clone(), gs.clone(), zoom2.clone()];
+    let p = plan_chain(&fx, W, H, W, H, 0.5, None, 90_000, &[]);
+    assert_eq!(p.ops.len(), 1, "внутренний greenscreen поглощён в ран");
+    assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
+    // ведущий поточечный НЕ поглощается (байты K=1-цепочек)
+    let lead = vec![gs.clone(), zoom2.clone()];
+    let pl = plan_chain(&lead, W, H, W, H, 0.5, None, 90_000, &[]);
+    assert!(matches!(pl.ops[0], PlanOp::Barrier { idx: 0, .. }));
+
+    // (а) шахматка с зелёным: ключ вырезает зелёные клетки, резкость
+    // остальных сохранена (нетто-единица grid ×0.5 → zoom ×2)
+    let mut cb = checkerboard();
+    for y in 0..H {
+        for x in 0..W {
+            let i = ((y * W + x) * 4) as usize;
+            if cb.rgba[i] == 255 {
+                cb.rgba[i] = 0;
+                cb.rgba[i + 1] = 255; // белые клетки становятся зелёным ключом
+                cb.rgba[i + 2] = 0;
+            }
+        }
+    }
+    let out = apply_video_chain(&[grid.clone(), gs, zoom2.clone()], cb, &ctx());
+    assert!(out.has_alpha, "greenscreen объявил альфу и в слитом проходе");
+    let mut keyed = 0usize;
+    let mut kept = 0usize;
+    for px in out.rgba.chunks_exact(4) {
+        if px[3] == 0 {
+            keyed += 1;
+        } else if px[3] == 255 {
+            kept += 1;
+        }
+    }
+    let total = (W * H) as usize;
+    assert!(keyed > total / 3, "зелёные клетки вырезаны ({keyed}/{total})");
+    assert!(kept > total / 3, "тёмные клетки целы ({kept}/{total})");
+
+    // (б) зерно: детерминизм и привязка к шагу — зерно size=1 на стадии
+    // ПЕРЕД зумом растягивается им в блоки 2×2 выходных пикселя
+    let noise = FxInstance::Noise { amount: 0.9, size: 1, color: false };
+    let grey = Frame { w: W, h: H, rgba: vec![128u8; (W * H * 4) as usize], has_alpha: false };
+    let mk = || Frame { w: W, h: H, rgba: grey.rgba.clone(), has_alpha: false };
+    let a = apply_video_chain(&[grid.clone(), noise.clone(), zoom2.clone()], mk(), &ctx());
+    let b = apply_video_chain(&[grid.clone(), noise.clone(), zoom2.clone()], mk(), &ctx());
+    assert_eq!(a.rgba, b.rgba, "зерно детерминировано");
+    // блочность ~2×2 (фаза блоков смещена кропом зума — сравниваем
+    // СОСЕДЕЙ): зерно стадии до зума растянуто ×2, поэтому около половины
+    // горизонтальных и вертикальных пар пикселей совпадают; у экранного
+    // зерна size=1 совпадений почти нет
+    let px = |f: &Frame, x: u32, y: u32| f.rgba[((y * W + x) * 4) as usize];
+    let (mut eq_h, mut n_h) = (0usize, 0usize);
+    let (mut eq_v, mut n_v) = (0usize, 0usize);
+    for y in 0..H {
+        for x in 0..W - 1 {
+            n_h += 1;
+            if px(&a, x, y) == px(&a, x + 1, y) {
+                eq_h += 1;
+            }
+        }
+    }
+    for y in 0..H - 1 {
+        for x in 0..W {
+            n_v += 1;
+            if px(&a, x, y) == px(&a, x, y + 1) {
+                eq_v += 1;
+            }
+        }
+    }
+    assert!(
+        eq_h * 100 >= n_h * 35 && eq_v * 100 >= n_v * 35,
+        "зерно прибито к шагу (растянуто зумом): равных соседей {eq_h}/{n_h} по X, {eq_v}/{n_v} по Y"
+    );
+    // и зерно РЕАЛЬНО есть (не съедено усреднением)
+    assert!(a.rgba.chunks_exact(4).any(|p| p[0] != 128), "зерно видно");
 }

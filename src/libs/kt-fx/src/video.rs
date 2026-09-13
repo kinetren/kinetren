@@ -83,6 +83,7 @@ pub fn apply_video_chain_pooled(
         ctx.out_h,
         ctx.u,
         ctx.cam3d,
+        ctx.burst_index,
         &[],
     );
     for op in plan.ops {
