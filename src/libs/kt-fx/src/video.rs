@@ -15,6 +15,9 @@ pub struct VideoFxCtx {
     pub u: f64,
     /// Абсолютная позиция таймлайна в тиках (для noise/vhs).
     pub burst_index: i64,
+    /// Разрешённая 3D-камера слоя (Р.44: Pan3d считается и на CPU).
+    /// None — Pan3d в цепочке пропускается, как раньше без камеры.
+    pub cam3d: Option<crate::geom::Cam3d>,
 }
 
 /// Кадр в работе.

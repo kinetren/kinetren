@@ -134,7 +134,7 @@ pub mod worker;
 pub use audio::{AudioRenderer, RenderStats, db_to_linear};
 pub use export::{
     ExportBackends, ExportOptions, ExportStats, export_mp4, export_mp4_with,
-    export_mp4_with_backends, gpu_required_clips, render_raw_audio, render_raw_video,
+    export_mp4_with_backends, render_raw_audio, render_raw_video,
 };
 pub use flight::{FlightRecorder, Snap as FlightSnap};
 pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};

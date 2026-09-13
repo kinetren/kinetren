@@ -157,12 +157,20 @@ fn t184b_gpu_export_deterministic_and_close_to_cpu() {
     }
 }
 
-/// Р.29: экспорт проекта с 3D-эффектами БЕЗ GPU обязан отказать ДО
-/// создания файла (тихо испорченный файл — клипы без 3D — хуже ошибки).
+/// Тест 301 (Р.44; бывший t187c наоборот): экспорт-рендер БЕЗ GPU больше
+/// НЕ отказывает — Pan3d считается на CPU (обратная гомография в слитом
+/// гео-проходе), отказ GpuRequired удалён. Кадры реально несут эффект, а
+/// при живом адаптере CPU и GPU сходятся в допуске GEOM.
 #[test]
-fn t187c_export_without_gpu_refuses_3d() {
-    let mut p = project();
-    p.clips[0].fx = vec![FxInstance::Pan3d {
+fn t301_export_without_gpu_renders_3d() {
+    let with_fx = |fx: Vec<FxInstance>| {
+        let mut p = project();
+        p.clips[0].fx = fx;
+        p.clips[1].fx = vec![];
+        p.validate().unwrap();
+        p
+    };
+    let pan3d = FxInstance::Pan3d {
         pos_x: 0.0,
         pos_y: 0.0,
         pos_z: 0.0,
@@ -171,30 +179,39 @@ fn t187c_export_without_gpu_refuses_3d() {
         rot_z: 0.0,
         anchor_x: 0.5,
         anchor_y: 0.5,
-        scale: 1.0,
+        scale: 0.8,
         camera: None,
-    }];
-    p.validate().unwrap();
-    assert_eq!(kt_engine::gpu_required_clips(&p).len(), 1);
-    // CPU-обёртка (без бэкендов) — preflight срабатывает до муксера
-    let err = kt_engine::export_mp4_with(
-        &p,
-        vec![],
-        vec![],
-        "/nonexistent/dir/out.mp4",
-        None,
-        &kt_engine::ExportOptions::default(),
-        &Arc::new(AtomicBool::new(false)),
-        &Arc::new(AtomicBool::new(false)),
-        |_| {},
-    )
-    .unwrap_err();
-    assert!(
-        matches!(err, kt_engine::export::ExportError::GpuRequired(1)),
-        "ожидался GpuRequired: {err}"
-    );
-    assert!(
-        !std::path::Path::new("/nonexistent/dir/out.mp4").exists(),
-        "файл не должен был появиться"
-    );
+    };
+    let q = Quality { width: 128, height: 72 };
+    let render = |p: &kt_model::Project, backends: &ExportBackends| -> Vec<u8> {
+        let mut got = Vec::new();
+        let mut n = 0usize;
+        kt_engine::export::render_raw_video_range_with(
+            p,
+            sources(),
+            q,
+            None,
+            backends,
+            &Arc::new(AtomicBool::new(false)),
+            |_| {},
+            |rgba| {
+                if n == 10 {
+                    got = rgba.to_vec();
+                }
+                n += 1;
+                Ok(())
+            },
+        )
+        .expect("экспорт-рендер без GPU обязан работать с 3D");
+        got
+    };
+    let cpu_only = ExportBackends::default();
+    let cpu3d = render(&with_fx(vec![pan3d.clone()]), &cpu_only);
+    let cpu_plain = render(&with_fx(vec![]), &cpu_only);
+    assert_ne!(cpu3d, cpu_plain, "Pan3d на CPU обязан менять картинку");
+    if let Some(e) = test_engine() {
+        let gpu = ExportBackends { video_gpu: Some(e) };
+        let gpu3d = render(&with_fx(vec![pan3d]), &gpu);
+        assert_frames_close(&cpu3d, &gpu3d, q.width, q.height, FrameTol::GEOM, "t301-cpu-vs-gpu");
+    }
 }

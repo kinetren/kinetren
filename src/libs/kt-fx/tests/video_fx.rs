@@ -10,7 +10,7 @@ const W: u32 = 64;
 const H: u32 = 36;
 
 fn ctx() -> VideoFxCtx {
-    VideoFxCtx { out_w: W, out_h: H, u: 0.5, burst_index: 90_000 }
+    VideoFxCtx { out_w: W, out_h: H, u: 0.5, burst_index: 90_000, cam3d: None }
 }
 
 /// Детерминированный кадр: градиенты + «зелёный экран» в правом нижнем углу.

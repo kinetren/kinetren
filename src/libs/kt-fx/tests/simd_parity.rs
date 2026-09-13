@@ -217,7 +217,7 @@ fn bench_simd_1080p() {
     // «делать или оставить скаляром» — по этим цифрам, Р.32 шаг 5).
     use kt_fx::video::{VideoFxCtx, apply_video_chain};
     use kt_model::FxInstance;
-    let ctx = VideoFxCtx { out_w: 1920, out_h: 1080, u: 0.5, burst_index: 90_000 };
+    let ctx = VideoFxCtx { out_w: 1920, out_h: 1080, u: 0.5, burst_index: 90_000, cam3d: None };
     for (name, fx) in [
         (
             "greenscreen",
@@ -323,7 +323,7 @@ fn t198_edges_scalar_eq_simd() {
             for th in [1u32, 48, 255] {
                 let src = frame(w, h, kind);
                 let want = st::edges_scalar(&src.rgba, w as usize, h as usize, th);
-                let ctx = VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: 90_000 };
+                let ctx = VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: 90_000, cam3d: None };
                 let got = apply_video_chain(&[FxInstance::edges(th)], src, &ctx);
                 if got.rgba != want {
                     let i = got.rgba.iter().zip(&want).position(|(a, b)| a != b).unwrap();
@@ -361,7 +361,7 @@ fn t198_vhs_scalar_eq_simd() {
                         let mut want = src.rgba.clone();
                         st::vhs_scalar(&mut want, w as usize, h as usize, shift, bleed, burst);
                         let ctx =
-                            VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: burst };
+                            VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: burst, cam3d: None };
                         let got = apply_video_chain(
                             &[FxInstance::vhs(shift, bleed)],
                             src,

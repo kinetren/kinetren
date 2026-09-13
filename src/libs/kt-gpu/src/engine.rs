@@ -104,6 +104,13 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
                 cur += 2;
                 2
             }
+            GeomPrim::Proj { m } => {
+                for (r, row) in m.iter().enumerate() {
+                    u.p[cur + r] = [row[0] as f32, row[1] as f32, row[2] as f32, 0.0];
+                }
+                cur += 3;
+                3
+            }
         };
         kinds |= kind << (i * 4);
     }
@@ -123,12 +130,11 @@ enum Pipe {
     Vhs,
     GlowAdd,
     Composite,
-    Pan3d,
     /// Сила наложения слоя (Р.38 п.12): смешение сухой и мокрой сторон.
     LayerMix,
 }
 
-const PIPE_COUNT: usize = 10;
+const PIPE_COUNT: usize = 9;
 
 /// Один шаг цепочки, предвычисленный на CPU (общая математика — kt-fx:
 /// pan_frame/cam_at/noise_seed). Кол-во пассов и размеры известны заранее.
@@ -153,8 +159,6 @@ enum FxOp {
     /// Размеры могли разойтись (Pan/CamMotion ресемплят) — тогда сухая
     /// сторона вписывается ТОЙ ЖЕ билинейкой, что и на CPU.
     Mix { k: u32 },
-    /// Слой-квад в 3D (Р.29): MVP собрана на CPU, цель tw×th прозрачная.
-    Pan3d { m: [f32; 16], qw: f32, qh: f32, ax: f32, ay: f32, tw: u32, th: u32 },
 }
 
 impl FxOp {
@@ -247,7 +251,7 @@ fn chain_ops(
             let end = kt_fx::geom::geo_run_end(fx, idx, &froms);
             let steps: Vec<&FxInstance> =
                 fx[idx..end].iter().filter(|f| kt_fx::geom::is_geo(f)).collect();
-            match kt_fx::geom::build_geom_exec(&steps, w, h, out_w, out_h, u) {
+            match kt_fx::geom::build_geom_exec(&steps, w, h, out_w, out_h, u, cam3d) {
                 kt_fx::geom::GeomExec::Legacy => match steps[0] {
                     FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
                         let frame = kt_fx::video::pan_frame(
@@ -363,41 +367,6 @@ fn chain_ops(
                     });
                 }
             }
-            FxInstance::Pan3d {
-                pos_x,
-                pos_y,
-                pos_z,
-                rot_x,
-                rot_y,
-                rot_z,
-                anchor_x,
-                anchor_y,
-                scale,
-                camera: _, // камера уже разрешена движком в cam3d
-            } => {
-                let Some(c3) = cam3d else { continue }; // нет камеры — нет 3D
-                let m = pan3d_mvp(
-                    &c3,
-                    (mow, moh),
-                    [*pos_x, *pos_y, *pos_z],
-                    [*rot_x, *rot_y, *rot_z],
-                    *scale,
-                );
-                ops.push(FxOp::Pan3d {
-                    m,
-                    qw: w as f32,
-                    qh: h as f32,
-                    ax: *anchor_x as f32,
-                    ay: *anchor_y as f32,
-                    tw: mow,
-                    th: moh,
-                });
-                w = mow;
-                h = moh;
-                // вне квада слой прозрачен
-                has_alpha_known = true;
-                has_alpha = true;
-            }
             FxInstance::LayerMix { amount, .. } => {
                 let k = (amount.clamp(0.0, 1.0) * 4096.0).round() as u32;
                 if k < 4096 {
@@ -409,89 +378,6 @@ fn chain_ops(
         idx += 1;
     }
     (ops, (w, h), has_alpha, has_alpha_known)
-}
-
-/// MVP Pan3d: мир — px проекта × world_scale (X вправо, Y вниз, Z вглубь),
-/// повороты в градусах (порядок Rz·Rx·Ry — «ZXY», как orientation AE),
-/// камера — активная/прибитая (двухузловая при target). Дефолты дают
-/// тождество: слой W×H в нуле с камерой «50 мм» на авто-дистанции
-/// рендерится 1:1 (t187).
-fn pan3d_mvp(
-    c3: &Cam3d,
-    out: (u32, u32),
-    pos: [f64; 3],
-    rot: [f64; 3],
-    scale: f64,
-) -> [f32; 16] {
-    use glam::{Mat4, Vec3};
-    let s = c3.world_scale as f32;
-    let cam = &c3.cam;
-    let (ow, oh) = (out.0 as f32, out.1 as f32);
-
-    // модель: якорь слоя в (pos·s), повороты вокруг якоря
-    let model = Mat4::from_translation(Vec3::new(
-        pos[0] as f32 * s,
-        pos[1] as f32 * s,
-        pos[2] as f32 * s,
-    )) * Mat4::from_rotation_z((rot[2] as f32).to_radians())
-        * Mat4::from_rotation_x((rot[0] as f32).to_radians())
-        * Mat4::from_rotation_y((rot[1] as f32).to_radians())
-        * Mat4::from_scale(Vec3::splat(scale.max(1e-6) as f32));
-
-    // камера: авто-дистанция «50 мм» — слой в z=0 рендерится 1:1
-    let fov = (cam.fov_deg.clamp(1.0, 179.0) as f32).to_radians();
-    let f = 1.0 / (fov * 0.5).tan();
-    let auto_z = -(oh * 0.5) * f;
-    let eye = Vec3::new(
-        cam.pos_x as f32 * s,
-        cam.pos_y as f32 * s,
-        if cam.pos_z == 0.0 { auto_z } else { cam.pos_z as f32 * s },
-    );
-    // взгляд: на target (two-node) либо вдоль +Z; up экрана в мире — −Y
-    // (Y мира направлен вниз). Оси камеры: x вправо, y ВНИЗ (как мир,
-    // знак разворачивает проекция), z вперёд.
-    let dir = match cam.target {
-        Some((tx, ty, tz)) => {
-            let d = Vec3::new(tx as f32 * s, ty as f32 * s, tz as f32 * s) - eye;
-            if d.length_squared() < 1e-9 { Vec3::Z } else { d.normalize() }
-        }
-        None => Vec3::Z,
-    };
-    let up = Vec3::new(0.0, -1.0, 0.0);
-    let right = dir.cross(up).try_normalize().unwrap_or(Vec3::X);
-    let cdown = dir.cross(right);
-    // view = базис камеры^T · translate(−eye), затем orientation-доворот
-    let basis = Mat4::from_cols(
-        glam::Vec4::new(right.x, cdown.x, dir.x, 0.0),
-        glam::Vec4::new(right.y, cdown.y, dir.y, 0.0),
-        glam::Vec4::new(right.z, cdown.z, dir.z, 0.0),
-        glam::Vec4::W,
-    );
-    let orient = Mat4::from_rotation_z(-(cam.rot_z as f32).to_radians())
-        * Mat4::from_rotation_x(-(cam.rot_x as f32).to_radians())
-        * Mat4::from_rotation_y(-(cam.rot_y as f32).to_radians());
-    let view = orient * basis * Mat4::from_translation(-eye);
-
-    // проекция: x_ndc = x·f·(oh/ow)/z? нет: вертикальный fov →
-    // x_ndc = x·f/aspect/z, y_ndc = −y·f/z (Y мира вниз, NDC вверх),
-    // w_clip = z (глубины нет — z_clip = 0)
-    let aspect = ow / oh;
-    let proj = if cam.ortho {
-        Mat4::from_cols(
-            glam::Vec4::new(2.0 / ow, 0.0, 0.0, 0.0),
-            glam::Vec4::new(0.0, -2.0 / oh, 0.0, 0.0),
-            glam::Vec4::ZERO,
-            glam::Vec4::W,
-        )
-    } else {
-        Mat4::from_cols(
-            glam::Vec4::new(f / aspect, 0.0, 0.0, 0.0),
-            glam::Vec4::new(0.0, -f, 0.0, 0.0),
-            glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
-            glam::Vec4::ZERO,
-        )
-    };
-    (proj * view * model).to_cols_array()
 }
 
 struct ChainSpec {
@@ -556,7 +442,6 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("vhs", include_str!("shaders/vhs.wgsl")),
     ("glow_add", include_str!("shaders/glow_add.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
-    ("pan3d", include_str!("shaders/pan3d.wgsl")),
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
 ];
 
@@ -618,8 +503,7 @@ impl GpuFxEngine {
                     layout: Some(&pipe_layout),
                     vertex: wgpu::VertexState {
                         module: &module,
-                        // 3D-пассы несут свой квад-вертекс (pan3d.wgsl)
-                        entry_point: Some(if *name == "pan3d" { "vs3d" } else { "vs" }),
+                        entry_point: Some("vs"),
                         compilation_options: Default::default(),
                         buffers: &[],
                     },
@@ -1197,22 +1081,6 @@ impl Inner {
                     h = prog.out_h;
                     owned = Some(dst);
                 }
-                FxOp::Pan3d { m, qw, qh, ax, ay, tw, th } => {
-                    let dst = self.pool.acquire(&self.device, *tw, *th);
-                    let u = UniformData {
-                        u: [w, h, 0, 0, 0, 0, 0, 0],
-                        f: [*qw, *qh, *ax, *ay, 0.0, 0.0, 0.0, 0.0],
-                        m: *m,
-                    };
-                    self.pass(enc, Pipe::Pan3d, &dst.view, &view, &dummy, &dummy, u);
-                    if let Some(t) = owned.take() {
-                        self.pool.release(t);
-                    }
-                    view = dst.view.clone();
-                    w = *tw;
-                    h = *th;
-                    owned = Some(dst);
-                }
             }
         }
         if let Some(t) = owned {
@@ -1323,9 +1191,7 @@ impl Inner {
         });
         rp.set_pipeline(&self.pipes[pipe as usize]);
         rp.set_bind_group(0, &bg, &[offset as u32]);
-        // fullscreen-треугольник; квад Pan3d — 6 вершин (два треугольника)
-        let verts = if matches!(pipe, Pipe::Pan3d) { 6 } else { 3 };
-        rp.draw(0..verts, 0..1);
+        rp.draw(0..3, 0..1);
     }
 }
 

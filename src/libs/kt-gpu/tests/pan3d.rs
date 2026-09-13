@@ -1,17 +1,16 @@
-//! Тест 187 (Р.29): Pan 3D — первый 3D-эффект. Свойства:
+//! Тест 187 (Р.29, ред. Р.44): Pan 3D. Свойства:
 //! - тождество: дефолтные параметры + дефолтная камера «50 мм» на
 //!   авто-дистанции дают кадр 1:1 (в допуске f32-матрицы);
 //! - геометрия: сдвиг pos_x перемещает маркер ровно на столько px;
 //! - масштаб < 1 открывает прозрачные поля — снизу просвечивает фон;
-//! - детерминизм на устройстве (два движка байт-в-байт).
-//!
-//! CPU-эталона нет: Pan3d — GPU-only (решение Р.29), CPU рисует клип без
-//! эффекта.
+//! - детерминизм на устройстве (два движка байт-в-байт);
+//! - с Р.44 CPU — снова ЭТАЛОН и для Pan3d (обратная гомография в слитом
+//!   гео-проходе): каждый GPU-кадр сверяется с compose_plan_cpu в GEOM.
 
 use std::sync::Arc;
 
-use kt_cache::SourceId;
-use kt_engine::{Cam3d, FramePlan, LayerSrc, PlanLayer, VideoGpuExec};
+use kt_cache::{BurstCache, CacheConfig, SourceId};
+use kt_engine::{Cam3d, FramePlan, LayerSrc, PlanLayer, VideoGpuExec, compose_plan_cpu};
 use kt_gpu::{FrameTol, assert_frames_close, test_engine};
 use kt_media::VideoFrame;
 use kt_model::{CameraParams, FxInstance};
@@ -79,10 +78,17 @@ fn layer<'a>(
 }
 
 fn run(engine: &dyn VideoGpuExec, layers: Vec<PlanLayer<'_>>) -> Vec<u8> {
-    let plan = FramePlan { t: Tick(90_000), out_w: W, out_h: H, layers, has_3d: true, memoize_postfx: true };
+    let plan = FramePlan { t: Tick(90_000), out_w: W, out_h: H, layers, memoize_postfx: true };
     let mut out = Vec::new();
     let complete = engine.execute_into(&plan, &mut out).expect("GPU execute");
     assert!(complete);
+    // Р.44: CPU-эталон считает ТОТ ЖЕ план (Pan3d — обратная гомография);
+    // сверка на каждом прогоне — GPU-кадры pan3d больше не бесхозные
+    let cache = BurstCache::new(CacheConfig::default());
+    let mut cpu = Vec::new();
+    let complete_cpu = compose_plan_cpu(&plan, &cache, &mut cpu);
+    assert_eq!(complete_cpu, complete, "complete CPU vs GPU");
+    assert_frames_close(&cpu, &out, W, H, FrameTol::GEOM, "pan3d-cpu-vs-gpu");
     out
 }
 

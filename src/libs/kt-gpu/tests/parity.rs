@@ -55,6 +55,7 @@ struct Src {
     fx: Vec<FxInstance>,
     fx_hash: u64,
     u: f64,
+    cam3d: Option<kt_engine::Cam3d>,
 }
 
 impl Src {
@@ -68,6 +69,7 @@ impl Src {
             fx,
             fx_hash: xxhash_rust::xxh3::xxh3_64(repr.as_bytes()),
             u: 0.5,
+            cam3d: None,
         }
     }
 
@@ -79,7 +81,7 @@ impl Src {
             fx: std::borrow::Cow::Borrowed(&self.fx[..]),
             fx_hash: self.fx_hash,
             u: self.u,
-            cam3d: None,
+            cam3d: self.cam3d,
             blend: None,
         }
     }
@@ -90,7 +92,7 @@ fn one(src: &Src, alpha_k: u32, scale_alpha: bool) -> PlanLayer<'_> {
 }
 
 fn plan<'a>(t: i64, layers: Vec<PlanLayer<'a>>) -> FramePlan<'a> {
-    FramePlan { t: Tick(t), out_w: W, out_h: H, layers, has_3d: false, memoize_postfx: true }
+    FramePlan { t: Tick(t), out_w: W, out_h: H, layers, memoize_postfx: true }
 }
 
 /// CPU против GPU на одном плане; возвращает (cpu, gpu, complete_cpu,
@@ -344,6 +346,43 @@ fn t181_effect_parity_gpu_vs_cpu() {
     let p = plan(90_000, vec![one(&src, 4096, false)]);
     let (cpu, gpu, _, _) = run_both(engine.as_ref(), &p);
     assert_frames_close(&cpu, &gpu, W, H, FrameTol::BILINEAR, "pan-resize");
+
+    // Pan3d-серии (Р.44): CPU-эталон появился (обратная гомография);
+    // допуск GEOM — силуэт квада законно флипает единичные пиксели
+    // (f32-предикаты против f64), внутри — билинейная точность.
+    let p3 = |pos_x: f64, rot_y: f64, scale: f64| FxInstance::Pan3d {
+        pos_x,
+        pos_y: 0.0,
+        pos_z: 0.0,
+        rot_x: 0.0,
+        rot_y,
+        rot_z: 0.0,
+        anchor_x: 0.5,
+        anchor_y: 0.5,
+        scale,
+        camera: None,
+    };
+    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
+    let geo3d: Vec<(&str, Vec<FxInstance>)> = vec![
+        ("pan3d-alone", vec![p3(4.0, 20.0, 0.9)]),
+        ("grid-pan3d", vec![grid2.clone(), p3(0.0, 35.0, 1.0)]),
+        ("pan3d-grid", vec![p3(0.0, 0.0, 0.7), grid2.clone()]),
+        // ЦЕПОЧКА ПОЛЬЗОВАТЕЛЯ (Р.44): grid → pan3d → grid → pan3d-зум,
+        // нетто-масштаб ≈ 1 — слитый проход сэмплирует исходник
+        (
+            "user-grid-pan3d-x2",
+            vec![grid2.clone(), p3(2.0, 15.0, 1.0), grid2, p3(0.0, 0.0, 4.0)],
+        ),
+    ];
+    for (i, (name, fx)) in geo3d.into_iter().enumerate() {
+        let mut src = Src::new(3000 + i as u64, Some(frame(W, H, false, 0)), fx);
+        src.cam3d =
+            Some(kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert_eq!(cc, cg, "{name}: complete разошёлся");
+        assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, name);
+    }
 }
 
 #[test]

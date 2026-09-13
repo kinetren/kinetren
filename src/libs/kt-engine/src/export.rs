@@ -287,26 +287,10 @@ pub enum ExportError {
     AudioThread,
     #[error("export cancelled")]
     Cancelled,
-    /// Р.29: в проекте 3D-эффекты, а GPU-движка нет. Отказ ДО старта —
-    /// тихо испорченный файл (клипы без 3D) хуже честной ошибки.
-    #[error("project uses 3D effects on {0} clip(s), but no GPU is available")]
-    GpuRequired(usize),
 }
-
-/// Клипы, чей рендер требует GPU (3D-эффекты, Р.29). Считается по
-/// effective_clips — morpher-батчи тоже учитываются.
-pub fn gpu_required_clips(project: &Project) -> Vec<kt_model::ClipId> {
-    // куски морфер-слоя схлопываются в оригинал (Р.35): иначе preflight
-    // назвал бы синтетические id, которых пользователь в проекте не видит
-    let mut out: Vec<kt_model::ClipId> = project
-        .effective_clips()
-        .iter()
-        .filter(|c| c.active_fx().iter().any(|f| f.requires_gpu()))
-        .map(|c| kt_model::slice_origin(c.id).unwrap_or(c.id))
-        .collect();
-    out.dedup();
-    out
-}
+// Отказ GpuRequired (Р.29) снят в Р.44: Pan3d считается и на CPU
+// (обратная гомография в слитом гео-проходе) — экспорт без GPU легален,
+// просто медленнее. Тест 301.
 
 /// Потоковый экспорт в mp4 (h264+aac). `audio_sources`/`video_sources` —
 /// независимые наборы (пишутся из двух потоков в два пайпа параллельно,
@@ -400,13 +384,6 @@ pub fn export_mp4_with_backends(
     pause: &Arc<AtomicBool>,
     progress: impl Fn(ExportProgress) + Send + Sync + 'static,
 ) -> Result<ExportStats, ExportError> {
-    // preflight (Р.29): 3D-эффекты без GPU — явный отказ до создания файла
-    if backends.video_gpu.is_none() {
-        let need = gpu_required_clips(project);
-        if !need.is_empty() {
-            return Err(ExportError::GpuRequired(need.len()));
-        }
-    }
     // пауза (порт v1 waitWhilePaused): кооперативный wait 40 мс,
     // отменяемый; проверяется на каждом кадре/чанке через progress-обёртки
     let wait_paused = {

@@ -10,6 +10,8 @@
 //   2 Fold:   (gw, gh, cw, ch) + (in_w, in_h, 0, 0)     — 2 слота;
 //     вне [0,gw)×[0,gh) — чёрный непрозрачный, внутри — тайл-локальная
 //     фаза `(r / cell) * in − 0.5` (дословно старое ядро event_grid).
+//   3 Proj:   три строки обратной гомографии Pan3d     — 3 слота;
+//     вход — центр-space; t.z ≤ 0 (за камерой) и uv вне [0,1]² — прозрачно.
 
 struct GeomParams {
     // x: число примитивов, y|z: kinds (4 бита на примитив, до 16), w: флаги
@@ -35,7 +37,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let o = floor(pos.xy);
     var x = o.x;
     var y = o.y;
-    var dead = 0u; // 1 = чёрный непрозрачный (вне сетки Fold)
+    var dead = 0u; // 1 = чёрный непрозрачный (вне сетки Fold); 2 = прозрачный (Proj)
     var cur = 0u;  // курсор vec4-слотов; зависит только от юниформы и i
     let n = G.h.x;
     for (var i = 0u; i < n; i = i + 1u) {
@@ -54,7 +56,7 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
                 x = clamp(x, c.x, c.y);
                 y = clamp(y, c.z, c.w);
             }
-        } else { // Fold (EventGrid)
+        } else if (kind == 2u) { // Fold (EventGrid)
             let g = G.p[cur];
             let s = G.p[cur + 1u];
             cur = cur + 2u;
@@ -68,10 +70,35 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
                     y = (y - ky * g.w) / g.w * s.y - 0.5;
                 }
             }
+        } else { // Proj (Pan3d): вход — центр-space, зеркало kt_fx::geom
+            let r0 = G.p[cur];
+            let r1 = G.p[cur + 1u];
+            let r2 = G.p[cur + 2u];
+            cur = cur + 3u;
+            if (dead == 0u) {
+                let tx = r0.x * x + r0.y * y + r0.z;
+                let ty = r1.x * x + r1.y * y + r1.z;
+                let tz = r2.x * x + r2.y * y + r2.z;
+                if (tz <= 0.0) { // за камерой (клиппинг растеризатора)
+                    dead = 2u;
+                } else {
+                    let qx = tx / tz;
+                    let qy = ty / tz;
+                    if (qx < 0.0 || qx > 1.0 || qy < 0.0 || qy > 1.0) {
+                        dead = 2u; // вне квада — прозрачно
+                    } else {
+                        x = qx;
+                        y = qy;
+                    }
+                }
+            }
         }
     }
     if (dead == 1u) {
         return vec4<u32>(0u, 0u, 0u, 255u);
+    }
+    if (dead == 2u) {
+        return vec4<u32>(0u, 0u, 0u, 0u);
     }
     // финальный тап — дословно resample.wgsl (зеркало bilinear_into)
     let sw = i32(G.d.x);

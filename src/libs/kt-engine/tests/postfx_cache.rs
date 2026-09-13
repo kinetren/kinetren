@@ -171,3 +171,70 @@ fn t66c_export_compose_skips_postfx_memoization() {
     assert_eq!(out_a, out_b, "экспортный и превьюшный compose обязаны совпадать байт-в-байт");
     assert!(cache_b.video_bytes() > bytes_before, "превью мемоизирует как раньше");
 }
+
+/// Тест 66d (Р.44): КАМЕРА — в ключе пост-FX мемоизации. CPU считает
+/// Pan3d, а камера разрешается по-кадрово (правило активной камеры,
+/// анимация) — статический fx_hash её не видит: без камеры в ключе правка
+/// или перенос камеры отдавали бы стейл-кадр (GPU от этого защищён
+/// put_cam3d в plan_key с Р.29).
+#[test]
+fn t66d_camera_edit_invalidates_postfx() {
+    let pan3d = FxInstance::Pan3d {
+        pos_x: 0.0,
+        pos_y: 0.0,
+        pos_z: 0.0,
+        rot_x: 0.0,
+        rot_y: 0.0,
+        rot_z: 0.0,
+        anchor_x: 0.5,
+        anchor_y: 0.5,
+        scale: 0.5, // прозрачные поля: сдвиг квада виден и на плоском кадре
+        camera: None,
+    };
+    let cam_at = |pos_x: f64, start: i64| CameraEvent {
+        id: CameraId(1),
+        lane: 0,
+        start: Tick(start),
+        duration: Tick(90_000 * 4),
+        name: String::new(),
+        cam: CameraParams { pos_x, ..CameraParams::default() },
+        keyframes: vec![],
+        auto: vec![],
+        ease: true,
+    };
+    let with_cam = |cam: CameraEvent| {
+        let mut p = project_with_fx(vec![pan3d.clone()], 48_000);
+        p.camera_lanes = 1;
+        p.cameras = vec![cam];
+        p.validate().unwrap();
+        p
+    };
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(90_000 + 3000);
+
+    let p1 = with_cam(cam_at(0.0, 0));
+    let mut vr1 = VideoRenderer::new(&p1);
+    warm_pre_fx(&vr1, &cache, t, q);
+    let (a, c1) = vr1.compose_from_cache(&cache, t, q);
+    assert!(c1);
+
+    // правка ПАРАМЕТРА камеры (fx_hash клипа НЕ меняется, кэш пережил
+    // пересоздание рендерера) → кадр обязан пересчитаться
+    let p2 = with_cam(cam_at(20.0, 0));
+    let mut vr2 = VideoRenderer::new(&p2);
+    let (b, c2) = vr2.compose_from_cache(&cache, t, q);
+    assert!(c2);
+    assert_ne!(a, b, "правка камеры не должна читать стейл пост-FX");
+
+    // ПЕРЕНОС камерного события за пределы t: активной камеры нет —
+    // дефолтная «50 мм»; кадр снова другой (не стейл от p2)
+    let p3 = with_cam(cam_at(20.0, 90_000 * 10));
+    let mut vr3 = VideoRenderer::new(&p3);
+    let (c, c3) = vr3.compose_from_cache(&cache, t, q);
+    assert!(c3);
+    assert_ne!(b, c, "перенос камеры (смена активной) не должен читать стейл");
+    // дефолтная камера == камера p1 (pos_x 0) → кадры равны, И это хит
+    // мемоизации (тот же ключ) — камера в ключе не мешает переиспользованию
+    assert_eq!(a, c, "дефолтная камера воспроизводит p1");
+}

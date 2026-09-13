@@ -517,12 +517,10 @@ fn build_plan<'a>(
     memoize_postfx: bool,
 ) -> FramePlan<'a> {
     let mut layers = Vec::new();
-    let mut has_3d = false;
     for (i, clip) in clips.iter().enumerate() {
         if !clip.active_at(t) {
             continue;
         }
-        has_3d |= clip.fx.iter().any(|f| f.requires_gpu());
         // фейд у края/Gap: пары нет по модели, слой всегда идёт через
         // масштабирование альфы (scale_alpha)
         if let Some((w, incoming, mix)) = solo_fade(clip, t) {
@@ -580,7 +578,7 @@ fn build_plan<'a>(
             fade: None,
         });
     }
-    FramePlan { t, out_w: quality.width, out_h: quality.height, layers, has_3d, memoize_postfx }
+    FramePlan { t, out_w: quality.width, out_h: quality.height, layers, memoize_postfx }
 }
 
 /// CPU-исполнение плана без держателя пулов (parity-тесты kt-gpu:
@@ -711,8 +709,13 @@ fn layer_frame_cpu(
     // автоматизацией при построении плана, а `fx_hash` хэширует всю
     // цепочку — 60 % и 100 % не схлопнутся в один кадр пост-FX кэша.
     let mixes = layer_mixes(&src.fx);
+    // Камера — В КЛЮЧ мемоизации (Р.44): CPU считает Pan3d, а камера
+    // разрешается ПО-КАДРОВО (анимация, правило активной камеры) — статика
+    // fx_hash её не видит, и правка/перенос камеры отдавали бы стейл.
+    // Зеркало put_cam3d в plan_key GPU-пути.
+    let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d);
     if has_fx
-        && let Some(f) = cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0)
+        && let Some(f) = cache.get_postfx_video(src.source, q_key, key_hash, t.0)
     {
         return Some(f);
     }
@@ -727,6 +730,7 @@ fn layer_frame_cpu(
         out_h: q_key.1,
         u: src.u,
         burst_index: t.0,
+        cam3d: src.cam3d,
     };
     let mut rgba = scratch.take(frame.rgba.len());
     rgba.copy_from_slice(&frame.rgba);
@@ -749,8 +753,41 @@ fn layer_frame_cpu(
         // экспорт (Р.31 п.4): кадр не переживёт этот t — не выжираем кэш
         return Some(frame);
     }
-    cache.insert_postfx_video(src.source, q_key, src.fx_hash, t.0, frame);
-    cache.get_postfx_video(src.source, q_key, src.fx_hash, t.0)
+    cache.insert_postfx_video(src.source, q_key, key_hash, t.0, frame);
+    cache.get_postfx_video(src.source, q_key, key_hash, t.0)
+}
+
+/// Ключ пост-FX мемоизации: статический хэш цепочки + разрешённая камера
+/// момента (Р.44, t66d). None — константное слагаемое: 2D-цепочки
+/// по-прежнему различаются только fx_hash.
+fn postfx_key_hash(fx_hash: u64, cam3d: &Option<Cam3d>) -> u64 {
+    use xxhash_rust::xxh3::Xxh3;
+    let mut h = Xxh3::new();
+    h.update(&fx_hash.to_le_bytes());
+    match cam3d {
+        None => h.update(&[0u8]),
+        Some(c) => {
+            h.update(&[1u8, c.cam.ortho as u8]);
+            for v in [
+                c.cam.pos_x,
+                c.cam.pos_y,
+                c.cam.pos_z,
+                c.cam.rot_x,
+                c.cam.rot_y,
+                c.cam.rot_z,
+                c.cam.fov_deg,
+                c.world_scale,
+            ] {
+                h.update(&v.to_bits().to_le_bytes());
+            }
+            if let Some((x, y, z)) = c.cam.target {
+                for v in [x, y, z] {
+                    h.update(&v.to_bits().to_le_bytes());
+                }
+            }
+        }
+    }
+    h.digest()
 }
 
 /// Слоты смешения цепочки: (индекс слота, индекс начала вклада слоя,
