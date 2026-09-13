@@ -244,11 +244,44 @@ fn probe_range(project: &Project, from: f64, to: f64, time_with: Option<&str>) -
         let span_ms = (to - from) * 1000.0;
         println!("\n-- audio render cost (warm cache, no UI) --");
         println!(
-            "  {ms:.0} ms for {:.3} s = {:.0}% of real time, underruns {under}",
+            "  linear: {ms:.0} ms for {:.3} s = {:.0}% of real time, underruns {under}",
             to - from,
             ms / span_ms * 100.0
         );
-        if ms > span_ms {
+
+        // ТО ЖЕ МЕСТО НА ПОВТОРЕ: регион играется через `render_looped_with`,
+        // и заворот стоит своего (Р.43). Короткий регион заворачивается чаще,
+        // поэтому «сколько стоит секунда» у него может отличаться от
+        // линейного прогона — именно на это жаловался пользователь
+        // («регион больше реверсов — как по маслу, регион внутри события —
+        // растут underruns»).
+        let laps = 4i64;
+        let mut store = kt_engine::FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut pos = fa;
+        let total = (fb - fa) * laps;
+        let mut done = 0i64;
+        while done < total.min(fb - fa) {
+            r.render_looped_with(&mut fetcher, &mut store, fa..fb, pos, &mut out);
+            pos = fa + (pos - fa + step).rem_euclid(fb - fa);
+            done += step;
+        }
+        let start = std::time::Instant::now();
+        let mut under_l = 0u64;
+        let mut done = 0i64;
+        while done < total {
+            under_l += r.render_looped_with(&mut fetcher, &mut store, fa..fb, pos, &mut out).underruns;
+            pos = fa + (pos - fa + step).rem_euclid(fb - fa);
+            done += step;
+        }
+        let ms_l = start.elapsed().as_secs_f64() * 1e3;
+        let span_l = span_ms * laps as f64;
+        println!(
+            "  looped ({laps} laps): {ms_l:.0} ms for {:.3} s = {:.0}% of real time, underruns {under_l}",
+            (to - from) * laps as f64,
+            ms_l / span_l * 100.0
+        );
+        if ms > span_ms || ms_l > span_l {
             println!("  OVER BUDGET: audio alone cannot keep up here");
         }
     }
