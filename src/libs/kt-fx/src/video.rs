@@ -58,26 +58,27 @@ pub fn apply_video_chain(fx: &[FxInstance], frame: Frame, ctx: &VideoFxCtx) -> F
 
 /// Вариант с переиспользуемым пулом буферов (превью зовёт цепочку на каждый
 /// новый кадр — держатель пула живёт в VideoRenderer).
+///
+/// С Р.44 подряд идущие ГЕОМЕТРИЧЕСКИЕ эффекты (Pan/CamMotion/Mirror/
+/// EventGrid) исполняются одним слитым проходом обратных отображений
+/// (`crate::geom`, конкатенация трансформов) — без промежуточных растров.
+/// Серия длины 1 идёт старыми ядрами байт-в-байт (t297); барьеры
+/// (Blur/Glow/Edges/VHS/Noise/Greenscreen) — как раньше.
 pub fn apply_video_chain_pooled(
     fx: &[FxInstance],
     mut frame: Frame,
     ctx: &VideoFxCtx,
     scratch: &mut FxScratch,
 ) -> Frame {
-    for f in fx {
-        frame = match f {
-            FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
-                let nf = pan_zoom(&frame, ctx, *mode, *pan_x, *pan_y, *zoom, scratch);
-                scratch.put(frame.rgba);
-                nf
-            }
-            FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
-                let (px, py, z) = cam_at(keyframes, ctx.u, *ease, *time_scale);
-                let nf = pan_zoom(&frame, ctx, *mode, px, py, z, scratch);
-                scratch.put(frame.rgba);
-                nf
-            }
-            FxInstance::Mirror { horizontal, vertical } => mirror(frame, *horizontal, *vertical),
+    let mut i = 0usize;
+    while i < fx.len() {
+        if crate::geom::is_geo(&fx[i]) {
+            let j = crate::geom::geo_run_end(fx, i, &[]);
+            frame = crate::geom::apply_geo_run(&fx[i..j], frame, ctx, scratch);
+            i = j;
+            continue;
+        }
+        frame = match &fx[i] {
             FxInstance::Blur { radius, radius_y } => blur(frame, *radius, *radius_y, scratch),
             FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
                 greenscreen(frame, [*key_r, *key_g, *key_b], *tolerance, *softness, *spill)
@@ -103,15 +104,40 @@ pub fn apply_video_chain_pooled(
                 [*tint_r, *tint_g, *tint_b],
                 scratch,
             ),
-            FxInstance::EventGrid { cols, rows, center } => {
-                let nf = event_grid(&frame, ctx, *cols, *rows, *center, scratch);
-                scratch.put(frame.rgba);
-                nf
-            }
-            _ => frame, // аудио-FX
+            _ => frame, // аудио-FX и LayerMix (сила — уровнем выше)
         };
+        i += 1;
     }
     frame
+}
+
+/// Одиночный гео-эффект СТАРЫМИ ядрами (`GeomExec::Legacy`): байты как до
+/// Р.44 — на этом стоят голдены pan/cammotion/mirror t26 и правило «серия
+/// длины 1 — прежний проход». Зовётся только из `geom::apply_geo_run`.
+pub(crate) fn apply_legacy_geo(
+    f: &FxInstance,
+    frame: Frame,
+    ctx: &VideoFxCtx,
+    scratch: &mut FxScratch,
+) -> Frame {
+    match f {
+        FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
+            let nf = pan_zoom(&frame, ctx, *mode, *pan_x, *pan_y, *zoom, scratch);
+            scratch.put(frame.rgba);
+            nf
+        }
+        FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
+            let (px, py, z) = cam_at(keyframes, ctx.u, *ease, *time_scale);
+            let nf = pan_zoom(&frame, ctx, *mode, px, py, z, scratch);
+            scratch.put(frame.rgba);
+            nf
+        }
+        FxInstance::Mirror { horizontal, vertical } => mirror(frame, *horizontal, *vertical),
+        _ => {
+            debug_assert!(false, "apply_legacy_geo: not a legacy geo fx");
+            frame
+        }
+    }
 }
 
 /// Есть ли в цепочке видео-эффекты (иначе композит идёт без копий).
@@ -706,50 +732,7 @@ fn glow(
     f
 }
 
-/// Мозаика cols×rows (v1 eventgrid): кадр тиражируется по ячейкам.
-fn event_grid(
-    src: &Frame,
-    ctx: &VideoFxCtx,
-    cols: u32,
-    rows: u32,
-    center: bool,
-    scratch: &mut FxScratch,
-) -> Frame {
-    let cols = cols.clamp(1, 512);
-    let rows = rows.clamp(1, 512);
-    let (ow, oh) = (ctx.out_w.max(2), ctx.out_h.max(2));
-    let (cw, chh) = ((ow / cols).max(1), (oh / rows).max(1));
-    // одна ячейка
-    let mut cell = scratch.take((cw * chh * 4) as usize);
-    bilinear_into(src, 0.0, 0.0, src.w as f64, src.h as f64, cw, chh, &mut cell);
-    let mut out = scratch.take((ow * oh * 4) as usize);
-    for p in out.chunks_exact_mut(4) {
-        p[3] = 255; // чёрный холст
-    }
-    let (grid_w, grid_h) = (cw * cols, chh * rows);
-    // сетка крупнее кадра (cols > ow при клампе ячейки в 1 px) не центрируется:
-    // без гарда `ow - grid_w` уходит в u32-underflow (п.306, зеркало kt-gpu)
-    let (offx, offy) = if center && grid_w <= ow && grid_h <= oh {
-        ((ow - grid_w) / 2, (oh - grid_h) / 2)
-    } else {
-        (0, 0)
-    };
-    for ry in 0..rows {
-        for rx in 0..cols {
-            for y in 0..chh {
-                let dy = offy + ry * chh + y;
-                if dy >= oh {
-                    continue;
-                }
-                let d0 = ((dy * ow + offx + rx * cw) * 4) as usize;
-                let s0 = ((y * cw) * 4) as usize;
-                let n = (cw * 4) as usize;
-                if d0 + n <= out.len() {
-                    out[d0..d0 + n].copy_from_slice(&cell[s0..s0 + n]);
-                }
-            }
-        }
-    }
-    scratch.put(cell);
-    Frame { w: ow, h: oh, rgba: out, has_alpha: false }
-}
+// Мозаика EventGrid с Р.44 считается слитым гео-проходом (`crate::geom`,
+// Fold-примитив): тайл-локальная фаза воспроизводит прежнее ядро дословно —
+// голден t26 «eventgrid» не изменился. Гард «сетка крупнее кадра» (п.306)
+// живёт в builder'е программы.

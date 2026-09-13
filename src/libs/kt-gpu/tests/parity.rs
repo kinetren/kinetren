@@ -222,6 +222,52 @@ fn t181_effect_parity_gpu_vs_cpu() {
             vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }],
             FrameTol::BILINEAR,
         ),
+        // Слитые гео-серии (Р.44): один проход обратных отображений на
+        // обоих бэкендах (программа общая, kt-fx::geom); допуск билинейный —
+        // f32 против f64 в композиции карт и тапах.
+        (
+            "geo-mirror-grid",
+            vec![
+                FxInstance::Mirror { horizontal: true, vertical: false },
+                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+            ],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "geo-grid-mirror",
+            vec![
+                FxInstance::EventGrid { cols: 2, rows: 2, center: true },
+                FxInstance::Mirror { horizontal: true, vertical: true },
+            ],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "geo-pan-pan",
+            vec![
+                FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.3, pan_y: -0.2, zoom: 1.5 },
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: -0.1, pan_y: 0.1, zoom: 1.2 },
+            ],
+            FrameTol::BILINEAR,
+        ),
+        // ядро сценария Р.44: сетка уменьшила, зум вернул — слитый проход
+        // сэмплирует ИСХОДНИК, а не растр сетки
+        (
+            "geo-grid-pan-zoomback",
+            vec![
+                FxInstance::EventGrid { cols: 2, rows: 2, center: true },
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+            ],
+            FrameTol::BILINEAR,
+        ),
+        // zoom<1: рамка шире входа — «плато» (Clamp-prim) на обоих путях
+        (
+            "geo-pan-shrink-clamp",
+            vec![
+                FxInstance::Mirror { horizontal: false, vertical: true },
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.6 },
+            ],
+            FrameTol::BILINEAR,
+        ),
         (
             "chain-user",
             vec![
@@ -391,10 +437,11 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
     e2.execute_into(&mk(90_000), &mut b1).unwrap();
     assert_eq!(a1, b1, "два движка на одном устройстве разошлись");
 
-    // испачкать пулы e1 другими планами
+    // испачкать пулы e1 другими планами (вкл. слитую гео-серию Р.44)
     let junk = Src::new(12, Some(frame(W, H, false, 9)), vec![
         FxInstance::blur(12),
         FxInstance::EventGrid { cols: 3, rows: 2, center: true },
+        FxInstance::Mirror { horizontal: true, vertical: false },
     ]);
     let mut _j = Vec::new();
     e1.execute_into(&plan(1920, vec![one(&junk, 4096, false)]), &mut _j).unwrap();

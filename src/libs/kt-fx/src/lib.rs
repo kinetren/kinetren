@@ -33,6 +33,7 @@ pub enum PullKind {
     Warmup,
 }
 
+pub mod geom;
 pub mod simd;
 pub mod video;
 mod video_simd;

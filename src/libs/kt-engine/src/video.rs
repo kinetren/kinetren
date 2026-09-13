@@ -786,6 +786,13 @@ fn apply_chain_with_mixes(
     let mut frame = start;
     let mut snaps: std::collections::HashMap<usize, kt_fx::video::Frame> =
         std::collections::HashMap::new();
+    // Границы (снимки сухой стороны и слоты силы) режут цепочку; МЕЖДУ ними
+    // она подаётся ЦЕЛЬНЫМИ слайсами — иначе слияние гео-серий (Р.44) не
+    // случалось бы у клипов с силой слоя. GPU-зеркало режет там же
+    // (Snapshot-точки в chain_ops).
+    let mut stops: Vec<usize> = mixes.iter().flat_map(|(at, from, _)| [*at, *from]).collect();
+    stops.sort_unstable();
+    stops.dedup();
     let mut i = 0usize;
     while i < fx.len() {
         if mixes.iter().any(|(_, from, _)| *from == i) {
@@ -804,21 +811,19 @@ fn apply_chain_with_mixes(
                 if let Some(dry) = snaps.remove(from) {
                     frame = blend_frames_cpu(dry, frame, *k);
                 }
+                i += 1;
             }
             // сила 100 % — смешивать нечего, снимок просто выбрасывается
             Some((_, from, _)) => {
                 snaps.remove(from);
+                i += 1;
             }
             None => {
-                frame = kt_fx::video::apply_video_chain_pooled(
-                    std::slice::from_ref(&fx[i]),
-                    frame,
-                    ctx,
-                    scratch,
-                );
+                let j = stops.iter().copied().find(|s| *s > i).unwrap_or(fx.len());
+                frame = kt_fx::video::apply_video_chain_pooled(&fx[i..j], frame, ctx, scratch);
+                i = j;
             }
         }
-        i += 1;
     }
     frame
 }

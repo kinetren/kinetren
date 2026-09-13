@@ -18,6 +18,10 @@ use crate::context::{GpuContext, GpuInitError};
 use crate::pool::{FORMAT, ReadbackCache, Tex, TexturePool, UploadCache, create_tex};
 
 const SLOT: u64 = 256; // выравнивание dynamic offset (максимум по спеке)
+/// Юниформа слитого гео-пасса (Р.44): программа примитивов не влезает в
+/// общие 128 Б — свой bind group layout и 4 слота арены на пасс.
+const GEOM_UNIFORM_BYTES: usize = 1024;
+const GEOM_SLOT_UNITS: u32 = (GEOM_UNIFORM_BYTES as u64 / SLOT) as u32;
 const UPLOAD_BUDGET: u64 = 256 * 1024 * 1024;
 const TRANSIENT_BUDGET: u64 = 128 * 1024 * 1024;
 const READBACK_BUDGET: u64 = 64 * 1024 * 1024;
@@ -47,6 +51,68 @@ impl UniformData {
     }
 }
 
+/// Юниформа geom_fused.wgsl (зеркало структуры GeomParams): заголовок +
+/// vec4-слоты примитивов. 1024 Б = GEOM_SLOT_UNITS слотов арены.
+struct GeomUniform {
+    h: [u32; 4],
+    d: [u32; 4],
+    p: [[f32; 4]; 62],
+}
+
+impl GeomUniform {
+    fn bytes(&self) -> [u8; GEOM_UNIFORM_BYTES] {
+        let mut b = [0u8; GEOM_UNIFORM_BYTES];
+        for (i, v) in self.h.iter().enumerate() {
+            b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        for (i, v) in self.d.iter().enumerate() {
+            b[16 + i * 4..16 + i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        for (s, sl) in self.p.iter().enumerate() {
+            for (c, v) in sl.iter().enumerate() {
+                let o = 32 + s * 16 + c * 4;
+                b[o..o + 4].copy_from_slice(&v.to_le_bytes());
+            }
+        }
+        b
+    }
+}
+
+/// Упаковка программы kt-fx в юниформу: коэффициенты уже перемножены в f64
+/// при построении — здесь ОДНОКРАТНОЕ округление f64→f32 каждого числа.
+fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
+    use kt_fx::geom::GeomPrim;
+    let mut u = GeomUniform { h: [0; 4], d: [0; 4], p: [[0.0; 4]; 62] };
+    let mut kinds: u64 = 0;
+    let mut cur = 0usize;
+    debug_assert!(prog.prims.len() <= kt_fx::geom::MAX_PRIMS);
+    for (i, p) in prog.prims.iter().enumerate() {
+        let kind: u64 = match p {
+            GeomPrim::Affine(a) => {
+                u.p[cur] = [a.ax as f32, a.bx as f32, a.ay as f32, a.by as f32];
+                cur += 1;
+                0
+            }
+            GeomPrim::Clamp { x0, x1, y0, y1 } => {
+                u.p[cur] = [*x0 as f32, *x1 as f32, *y0 as f32, *y1 as f32];
+                cur += 1;
+                1
+            }
+            GeomPrim::Fold { gw, gh, cw, ch, in_w, in_h } => {
+                u.p[cur] = [*gw as f32, *gh as f32, *cw as f32, *ch as f32];
+                u.p[cur + 1] = [*in_w as f32, *in_h as f32, 0.0, 0.0];
+                cur += 2;
+                2
+            }
+        };
+        kinds |= kind << (i * 4);
+    }
+    debug_assert!(cur <= 62, "geom program exceeds uniform slots");
+    u.h = [prog.prims.len() as u32, kinds as u32, (kinds >> 32) as u32, 0];
+    u.d = [prog.in_w, prog.in_h, prog.out_w, prog.out_h];
+    u
+}
+
 #[derive(Clone, Copy)]
 enum Pipe {
     Resample,
@@ -56,14 +122,13 @@ enum Pipe {
     Edges,
     Vhs,
     GlowAdd,
-    GridTile,
     Composite,
     Pan3d,
     /// Сила наложения слоя (Р.38 п.12): смешение сухой и мокрой сторон.
     LayerMix,
 }
 
-const PIPE_COUNT: usize = 11;
+const PIPE_COUNT: usize = 10;
 
 /// Один шаг цепочки, предвычисленный на CPU (общая математика — kt-fx:
 /// pan_frame/cam_at/noise_seed). Кол-во пассов и размеры известны заранее.
@@ -77,8 +142,10 @@ enum FxOp {
     Vhs { shift: u32, line_off: u32, bleed: f32, jq: i32, step: u32, seed: u32 },
     /// Bloom: даунскейл dw×dh → апскейл → аддитив ×s (3 пасса).
     Glow { dw: u32, dh: u32, s: f32, th: u32, tint: [f32; 3] },
-    /// Мозаика: ячейка cw×ch + тираж в tw×th (2 пасса).
-    Grid { cw: u32, ch: u32, offx: u32, offy: u32, gw: u32, gh: u32, tw: u32, th: u32 },
+    /// Слитая гео-серия (Р.44): программа обратных отображений строится в
+    /// kt-fx (общий код с CPU-исполнителем), один пасс, юниформа 1024 Б.
+    /// EventGrid — всегда этим путём (мозаика прежних 2 пассов удалена).
+    GeomFused { prog: kt_fx::geom::GeomProgram },
     /// Снимок состояния ДО вклада слоя (Р.38 п.12): сухая сторона
     /// будущего смешения. Только маркер — пассов не порождает.
     Snapshot,
@@ -94,12 +161,21 @@ impl FxOp {
     fn passes(&self) -> u32 {
         match self {
             FxOp::Glow { .. } => 3,
-            FxOp::Grid { .. } => 2,
             // снимок пассов не порождает; смешение при разошедшихся
             // размерах добирает ресемпл сухой стороны
             FxOp::Snapshot => 0,
             FxOp::Mix { .. } => 2,
             _ => 1,
+        }
+    }
+
+    /// Слоты юниформ-арены (SLOT = 256 Б): обычный пасс — один слот,
+    /// слитый гео-пасс — GEOM_SLOT_UNITS. Сумма обязана ТОЧНО предсказывать
+    /// потребление арены (debug_assert в pass/pass_geom).
+    fn slot_units(&self) -> u32 {
+        match self {
+            FxOp::GeomFused { .. } => GEOM_SLOT_UNITS,
+            _ => self.passes(),
         }
     }
 }
@@ -159,30 +235,58 @@ fn chain_ops(
             _ => None,
         })
         .collect();
-    for (idx, f) in fx.iter().enumerate() {
+    let mut idx = 0usize;
+    while idx < fx.len() {
         if froms.contains(&idx) {
             ops.push(FxOp::Snapshot);
         }
-        match f {
-            FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
-                let frame =
-                    kt_fx::video::pan_frame(w, h, out_w, out_h, *mode, *pan_x, *pan_y, *zoom);
-                ops.push(FxOp::Resample { tw: mow, th: moh, frame });
-                w = mow;
-                h = moh;
-            }
-            FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
-                let (px, py, z) = kt_fx::video::cam_at(keyframes, u, *ease, *time_scale);
-                let frame = kt_fx::video::pan_frame(w, h, out_w, out_h, *mode, px, py, z);
-                ops.push(FxOp::Resample { tw: mow, th: moh, frame });
-                w = mow;
-                h = moh;
-            }
-            FxInstance::Mirror { horizontal, vertical } => {
-                if *horizontal || *vertical {
-                    ops.push(FxOp::Mirror { h: *horizontal, v: *vertical });
+        // Гео-серия (Р.44): сегментацию и выбор legacy/fused делает kt-fx —
+        // ОБЩИЙ код обоих бэкендов (инвариант №7). Снапшот-точки силы слоя
+        // рвут серию так же, как apply_chain_with_mixes на CPU.
+        if kt_fx::geom::is_geo(&fx[idx]) {
+            let end = kt_fx::geom::geo_run_end(fx, idx, &froms);
+            let steps: Vec<&FxInstance> =
+                fx[idx..end].iter().filter(|f| kt_fx::geom::is_geo(f)).collect();
+            match kt_fx::geom::build_geom_exec(&steps, w, h, out_w, out_h, u) {
+                kt_fx::geom::GeomExec::Legacy => match steps[0] {
+                    FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
+                        let frame = kt_fx::video::pan_frame(
+                            w, h, out_w, out_h, *mode, *pan_x, *pan_y, *zoom,
+                        );
+                        ops.push(FxOp::Resample { tw: mow, th: moh, frame });
+                        w = mow;
+                        h = moh;
+                    }
+                    FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
+                        let (px, py, z) =
+                            kt_fx::video::cam_at(keyframes, u, *ease, *time_scale);
+                        let frame =
+                            kt_fx::video::pan_frame(w, h, out_w, out_h, *mode, px, py, z);
+                        ops.push(FxOp::Resample { tw: mow, th: moh, frame });
+                        w = mow;
+                        h = moh;
+                    }
+                    FxInstance::Mirror { horizontal, vertical } => {
+                        if *horizontal || *vertical {
+                            ops.push(FxOp::Mirror { h: *horizontal, v: *vertical });
+                        }
+                    }
+                    _ => debug_assert!(false, "legacy geo must be Pan/CamMotion/Mirror"),
+                },
+                kt_fx::geom::GeomExec::Fused(prog) => {
+                    w = prog.out_w;
+                    h = prog.out_h;
+                    if prog.has_alpha_known {
+                        has_alpha_known = true;
+                        has_alpha = prog.has_alpha;
+                    }
+                    ops.push(FxOp::GeomFused { prog });
                 }
             }
+            idx = end;
+            continue;
+        }
+        match &fx[idx] {
             FxInstance::Blur { radius, radius_y } => {
                 let radius = (*radius).clamp(1, 48);
                 let step = (radius / 3).max(1) + 1;
@@ -259,22 +363,6 @@ fn chain_ops(
                     });
                 }
             }
-            FxInstance::EventGrid { cols, rows, center } => {
-                let cols = (*cols).clamp(1, 512);
-                let rows = (*rows).clamp(1, 512);
-                let (cw, ch) = ((mow / cols).max(1), (moh / rows).max(1));
-                let (gw, gh) = (cw * cols, ch * rows);
-                let (offx, offy) = if *center && gw <= mow && gh <= moh {
-                    ((mow - gw) / 2, (moh - gh) / 2)
-                } else {
-                    (0, 0)
-                };
-                ops.push(FxOp::Grid { cw, ch, offx, offy, gw, gh, tw: mow, th: moh });
-                w = mow;
-                h = moh;
-                has_alpha_known = true;
-                has_alpha = false;
-            }
             FxInstance::Pan3d {
                 pos_x,
                 pos_y,
@@ -318,6 +406,7 @@ fn chain_ops(
             }
             _ => {} // аудио-FX
         }
+        idx += 1;
     }
     (ops, (w, h), has_alpha, has_alpha_known)
 }
@@ -414,8 +503,8 @@ struct ChainSpec {
 }
 
 impl ChainSpec {
-    fn passes(&self) -> u32 {
-        self.ops.iter().map(|o| o.passes()).sum()
+    fn slot_units(&self) -> u32 {
+        self.ops.iter().map(|o| o.slot_units()).sum()
     }
 }
 
@@ -425,10 +514,11 @@ enum Job {
 }
 
 impl Job {
-    fn passes(&self) -> u32 {
+    /// Слоты юниформ-арены на джоб: композит-пасс + цепочки слоёв.
+    fn slot_units(&self) -> u32 {
         1 + match self {
-            Job::Single { chain, .. } => chain.passes(),
-            Job::Dissolve { a, b, .. } => a.passes() + b.passes(),
+            Job::Single { chain, .. } => chain.slot_units(),
+            Job::Dissolve { a, b, .. } => a.slot_units() + b.slot_units(),
         }
     }
 }
@@ -438,6 +528,9 @@ struct Inner {
     queue: Arc<wgpu::Queue>,
     layout: wgpu::BindGroupLayout,
     pipes: [wgpu::RenderPipeline; PIPE_COUNT],
+    /// Слитый гео-пасс (Р.44): своя юниформа 1024 Б → свой layout/пайп.
+    geom_layout: wgpu::BindGroupLayout,
+    geom_pipe: wgpu::RenderPipeline,
     arena: wgpu::Buffer,
     arena_slots: u32,
     slot: u32,
@@ -462,7 +555,6 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("edges", include_str!("shaders/edges.wgsl")),
     ("vhs", include_str!("shaders/vhs.wgsl")),
     ("glow_add", include_str!("shaders/glow_add.wgsl")),
-    ("grid_tile", include_str!("shaders/grid_tile.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
     ("pan3d", include_str!("shaders/pan3d.wgsl")),
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
@@ -549,6 +641,58 @@ impl GpuFxEngine {
                 })
             })
             .collect();
+        // Слитый гео-пасс (Р.44): юниформа GEOM_UNIFORM_BYTES не влезает в
+        // общий layout (128 Б) — свой layout и пайп из того же буфера-арены.
+        let geom_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("kt-gpu geom layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(GEOM_UNIFORM_BYTES as u64),
+                    },
+                    count: None,
+                },
+                texture_entry(1),
+            ],
+        });
+        let geom_pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("kt-gpu geom pipeline layout"),
+            bind_group_layouts: &[Some(&geom_layout)],
+            immediate_size: 0,
+        });
+        let geom_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("geom_fused"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/geom_fused.wgsl").into()),
+        });
+        let geom_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("geom_fused"),
+            layout: Some(&geom_pipe_layout),
+            vertex: wgpu::VertexState {
+                module: &geom_module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &geom_module,
+                entry_point: Some("fs"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
         if let Some(e) = pollster::block_on(err_scope.pop()) {
             return Err(GpuInitError::Pipeline(e.to_string()));
         }
@@ -571,6 +715,8 @@ impl GpuFxEngine {
                 queue,
                 layout,
                 pipes,
+                geom_layout,
+                geom_pipe,
                 arena,
                 arena_slots,
                 slot: 0,
@@ -670,8 +816,8 @@ impl Inner {
             return Ok(complete);
         }
 
-        // --- uniform-арена под все пассы ---
-        let total: u32 = jobs.iter().map(|j| j.passes()).sum();
+        // --- uniform-арена под все пассы (в слот-юнитах: гео-пасс = 4) ---
+        let total: u32 = jobs.iter().map(|j| j.slot_units()).sum();
         if total > self.arena_slots {
             let slots = total.next_power_of_two();
             self.arena = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -1038,27 +1184,17 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Grid { cw, ch, offx, offy, gw, gh, tw, th } => {
-                    let cell = self.pool.acquire(&self.device, *cw, *ch);
-                    let u = UniformData {
-                        u: [*cw, *ch, w, h, 0, 0, 0, 0],
-                        f: [0.0, 0.0, w as f32, h as f32, 0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::Resample, &cell.view, &view, &dummy, &dummy, u);
-                    let dst = self.pool.acquire(&self.device, *tw, *th);
-                    let u = UniformData {
-                        u: [*cw, *ch, *offx, *offy, *gw, *gh, 0, 0],
-                        ..Default::default()
-                    };
-                    self.pass(enc, Pipe::GridTile, &dst.view, &cell.view, &dummy, &dummy, u);
-                    self.pool.release(cell);
+                FxOp::GeomFused { prog } => {
+                    debug_assert_eq!((prog.in_w, prog.in_h), (w, h), "geom run input dims");
+                    let dst = self.pool.acquire(&self.device, prog.out_w, prog.out_h);
+                    let u = encode_geom(prog);
+                    self.pass_geom(enc, &dst.view, &view, &u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }
                     view = dst.view.clone();
-                    w = *tw;
-                    h = *th;
+                    w = prog.out_w;
+                    h = prog.out_h;
                     owned = Some(dst);
                 }
                 FxOp::Pan3d { m, qw, qh, ax, ay, tw, th } => {
@@ -1083,6 +1219,58 @@ impl Inner {
             retired.push(t);
         }
         (view, retired)
+    }
+
+    /// Пасс слитой гео-серии: юниформа GEOM_UNIFORM_BYTES (4 слота арены),
+    /// свой layout — остальная механика как у `pass`.
+    fn pass_geom(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        t0: &wgpu::TextureView,
+        u: &GeomUniform,
+    ) {
+        let offset = self.slot as u64 * SLOT;
+        debug_assert!(
+            self.slot + GEOM_SLOT_UNITS <= self.arena_slots,
+            "uniform arena overflow (geom)"
+        );
+        self.slot += GEOM_SLOT_UNITS;
+        self.queue.write_buffer(&self.arena, offset, &u.bytes());
+        let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.geom_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.arena,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(GEOM_UNIFORM_BYTES as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(t0) },
+            ],
+        });
+        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        rp.set_pipeline(&self.geom_pipe);
+        rp.set_bind_group(0, &bg, &[offset as u32]);
+        rp.draw(0..3, 0..1);
     }
 
     #[allow(clippy::too_many_arguments)]
