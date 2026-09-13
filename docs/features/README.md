@@ -203,7 +203,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-MED-004 | Правило приведения кадра — вписать, заполнить, растянуть или оставить | кандидат | A | L | частично | `media/sources/import-scaling-policy.md` |
 | F-TL-001 | Ripple — правка со сдвигом всего, что правее | кандидат | A | L | нет | `timeline/trimming/ripple-delete.md` |
 | F-TXT-001 | Текст в кадре: титры, подписи, нижние трети | кандидат | A | L | нет | `titles/text/text-generator.md` |
-| F-CMP-001 | Конкатенация трансформов | в-работе | A | XL | нет | `compositing/transforms/transform-concatenation.md` |
+| F-CMP-001 | Конкатенация трансформов | сделано | A | XL | да | `compositing/transforms/transform-concatenation.md` |
 | F-TL-004 | Вложенные секвенции — монтаж, который ведёт себя как клип | кандидат | A | XL | нет | `timeline/structure/nested-sequences.md` |
 | F-COL-002 | Служебное рядом с проектом — кэш, индекс и замок на общем диске | кандидат | B | S | частично | `collab/assets/sidecar-on-a-share.md` |
 | F-COL-006 | Кто имеет право удалить материал | кандидат | B | S | частично | `collab/assets/who-may-delete.md` |
