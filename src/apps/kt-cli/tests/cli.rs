@@ -132,3 +132,75 @@ fn t290_probe_reports_what_layers_changed() {
         "синтетический демо-проект обязан укладываться в бюджет:\n{timed}"
     );
 }
+
+/// Тест 307 (п.316, Р.45): относительные пути медиа НЕ удваиваются.
+/// `kt_otio::load_project` уже разрешает target_url от каталога проекта;
+/// kt-cli поверх этого джойнил базу ВТОРОЙ раз, и вызов с относительным
+/// путём к .otio (`kt-cli export sub/p.otio …`) терял медиа
+/// («sub/sub/clip.mp4: decode failed»), тихо рендеря пустые слои.
+#[test]
+fn t307_relative_media_paths_resolve_once() {
+    if !Command::new("ffmpeg").arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    {
+        eprintln!("skipped: ffmpeg binary unavailable");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("kt-cli-t307-{}", std::process::id()));
+    let sub = dir.join("sub");
+    std::fs::create_dir_all(&sub).unwrap();
+    let st = Command::new("ffmpeg")
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30"])
+        .args(["-t", "1", "-pix_fmt", "yuv420p", "-c:v", "libx264"])
+        .arg(sub.join("clip.mp4"))
+        .output()
+        .unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+
+    let mut p = kt_model::Project::new(kt_model::ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+    });
+    p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "clip.mp4".into() });
+    p.clips.push(kt_model::ClipEvent {
+        id: kt_model::ClipId(1),
+        link_group: None,
+        kind: kt_model::ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: kt_model::MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    std::fs::write(
+        sub.join("p.otio"),
+        kt_otio::save_project(&p, &Default::default(), None),
+    )
+    .unwrap();
+
+    // ОТНОСИТЕЛЬНЫЙ путь к проекту из каталога НАД ним — до правки медиа
+    // резолвилось в sub/sub/clip.mp4 и слой молча пропадал
+    let out = cli()
+        .current_dir(&dir)
+        .args(["export", "sub/p.otio", "sub/out.mp4", "libx264"])
+        .output()
+        .unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "{all}");
+    assert!(!all.contains("decode failed"), "медиа потеряно: {all}");
+    assert!(all.contains("missing layers 0"), "пустые слои: {all}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

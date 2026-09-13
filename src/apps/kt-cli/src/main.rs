@@ -300,21 +300,16 @@ fn open_sources(
     strict: bool,
     cache: Option<std::sync::Arc<kt_cache::BurstCache>>,
 ) -> Result<DirectFetcher, String> {
-    let base = std::path::Path::new(project_path)
-        .parent()
-        .unwrap_or(std::path::Path::new("."))
-        .to_path_buf();
     let mut fetcher = DirectFetcher::new(cache);
     for m in &project.media {
         if let Some(pattern) = synth_pattern(&m.path) {
             fetcher.add_source(m.id, Box::new(SyntheticSource::new(Tick(90_000 * 3600), pattern)));
             continue;
         }
-        let resolved = if std::path::Path::new(&m.path).is_absolute() {
-            m.path.clone()
-        } else {
-            base.join(&m.path).to_string_lossy().to_string()
-        };
+        // путь УЖЕ разрешён при загрузке (kt_otio::load_project резолвит
+        // относительные target_url от каталога проекта, п.316) — второй
+        // join удваивал префикс и «терял» файл при относительном вызове
+        let resolved = m.path.clone();
         let mut idx_db = kt_media::index::MediaIndexDb::open(
             &std::path::Path::new(project_path).with_extension("ktindex.db"),
         )
@@ -329,10 +324,6 @@ fn open_sources(
 }
 
 fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
-    let base = std::path::Path::new(project_path)
-        .parent()
-        .unwrap_or(std::path::Path::new("."))
-        .to_path_buf();
     let mut fetcher = DirectFetcher::new(None);
     for m in &project.media {
         if let Some(pattern) = synth_pattern(&m.path) {
@@ -340,11 +331,10 @@ fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
             continue;
         }
         // относительные пути — от файла проекта (как в kt-app)
-        let resolved = if std::path::Path::new(&m.path).is_absolute() {
-            m.path.clone()
-        } else {
-            base.join(&m.path).to_string_lossy().to_string()
-        };
+        // путь УЖЕ разрешён при загрузке (kt_otio::load_project резолвит
+        // относительные target_url от каталога проекта, п.316) — второй
+        // join удваивал префикс и «терял» файл при относительном вызове
+        let resolved = m.path.clone();
         // sidecar-БД проекта: пакетный индекс вместо полного скана (тест 34)
         let mut idx_db = kt_media::index::MediaIndexDb::open(
             &std::path::Path::new(project_path).with_extension("ktindex.db"),
@@ -579,19 +569,14 @@ fn run(args: &[String]) -> i32 {
             };
             type Sources = Vec<(kt_model::MediaId, Box<dyn kt_media::MediaSource>)>;
             let open_all = || -> Result<Sources, String> {
-                let base =
-                    std::path::Path::new(input).parent().unwrap_or(std::path::Path::new("."));
                 let mut out = Vec::new();
                 for m in &project.media {
                     let src: Box<dyn kt_media::MediaSource> =
                         if let Some(p) = synth_pattern(&m.path) {
                             Box::new(SyntheticSource::new(Tick(90_000 * 3600), p))
                         } else {
-                            let resolved = if std::path::Path::new(&m.path).is_absolute() {
-                                m.path.clone()
-                            } else {
-                                base.join(&m.path).to_string_lossy().to_string()
-                            };
+                            // путь уже разрешён при загрузке (п.316)
+                            let resolved = m.path.clone();
                             {
                                 let mut idx_db = kt_media::index::MediaIndexDb::open(
                                     &std::path::Path::new(input).with_extension("ktindex.db"),
