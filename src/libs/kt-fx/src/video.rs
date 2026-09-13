@@ -102,8 +102,8 @@ pub fn apply_video_chain_pooled(
                     nf
                 }
             },
-            crate::plan::PlanOp::Barrier { idx, res_scale: _ } => {
-                apply_barrier(&fx[idx], frame, ctx, scratch)
+            crate::plan::PlanOp::Barrier { idx, res_scale } => {
+                apply_barrier(&fx[idx], frame, ctx, scratch, res_scale)
             }
             // сила слоя применяется уровнем выше (apply_chain_with_mixes в
             // kt-engine); в плоской цепочке слот — passthrough, как раньше
@@ -114,29 +114,35 @@ pub fn apply_video_chain_pooled(
 }
 
 /// Один барьерный эффект (нелокальный/поточечный вне серий) — прежние
-/// ядра. Зовётся только исполнителем плана.
-fn apply_barrier(
+/// ядра; `res_scale` — K×-исполнение (Р.45 п.313: пиксельная геометрия
+/// ядра ×K, вид инвариантен; K=1 — дословно прежний код). Pub — для
+/// t303 (ядёрная инвариантность вида без цепочек); продуктовый вызов —
+/// только исполнитель плана.
+pub fn apply_barrier(
     f: &FxInstance,
     frame: Frame,
     ctx: &VideoFxCtx,
     scratch: &mut FxScratch,
+    res_scale: u32,
 ) -> Frame {
+    let rs = res_scale.max(1);
     match f {
-        FxInstance::Blur { radius, radius_y } => blur(frame, *radius, *radius_y, scratch),
+        FxInstance::Blur { radius, radius_y } => blur(frame, *radius, *radius_y, scratch, rs),
+        // greenscreen поточечный — разрешение его не касается
         FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
             greenscreen(frame, [*key_r, *key_g, *key_b], *tolerance, *softness, *spill)
         }
         FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => {
-            edges(frame, *threshold, *thickness, [*color_r, *color_g, *color_b], scratch)
+            edges(frame, *threshold, *thickness, [*color_r, *color_g, *color_b], scratch, rs)
         }
         FxInstance::Noise { amount, size, color } => {
-            noise(frame, *amount, *size, *color, ctx.burst_index)
+            noise(frame, *amount, *size, *color, ctx.burst_index, rs)
         }
         FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
-            vhs(frame, *rgb_shift, *bleed, *scan_step, *jitter, ctx.burst_index, scratch)
+            vhs(frame, *rgb_shift, *bleed, *scan_step, *jitter, ctx.burst_index, scratch, rs)
         }
         FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
-            glow(frame, *strength, *radius, *threshold, [*tint_r, *tint_g, *tint_b], scratch)
+            glow(frame, *strength, *radius, *threshold, [*tint_r, *tint_g, *tint_b], scratch, rs)
         }
         _ => {
             debug_assert!(false, "barrier op on non-barrier fx");
@@ -401,10 +407,13 @@ fn mirror(mut f: Frame, h: bool, v: bool) -> Frame {
 /// Размытие даунскейлом. `radius_y == 0` — «как по горизонтали»: ровно
 /// прежний путь (один шаг на обе оси), поэтому golden'ы не двигаются;
 /// разные радиусы дают смаз по одной оси (Р.33 С5).
-fn blur(f: Frame, radius: u32, radius_y: u32, scratch: &mut FxScratch) -> Frame {
+fn blur(f: Frame, radius: u32, radius_y: u32, scratch: &mut FxScratch, res_scale: u32) -> Frame {
     let radius = radius.clamp(1, 48);
-    let step = (radius / 3).max(1) + 1;
-    let step_y = if radius_y == 0 { step } else { (radius_y.clamp(1, 48) / 3).max(1) + 1 };
+    // Р.45 (п.313): K×-исполнение масштабирует ШАГ — floor(K·w/(K·step))
+    // == floor(w/step), мип тот же, вид инвариантен точно; K=1 — ×1
+    let step = ((radius / 3).max(1) + 1) * res_scale;
+    let step_y =
+        if radius_y == 0 { step } else { ((radius_y.clamp(1, 48) / 3).max(1) + 1) * res_scale };
     let (dw, dh) = ((f.w / step).max(1), (f.h / step_y).max(1));
     let mut small = scratch.take((dw * dh * 4) as usize);
     bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
@@ -464,11 +473,14 @@ fn edges(
     thickness: u32,
     color: [u8; 3],
     scratch: &mut FxScratch,
+    res_scale: u32,
 ) -> Frame {
     let th = threshold.clamp(1, 255) as i32;
     // толщина = шаг выборки Собеля; 1 и белый цвет — прежнее ядро 3×3
     // байт-в-байт (в том числе AVX2-путь)
-    let d = thickness.clamp(1, 8) as i64;
+    // Р.45 (п.313): страйд Собеля и кайма ×K; plain-гейт (d == 1)
+    // при K > 1 гаснет сам — эффективный страйд ≥ 2
+    let d = thickness.clamp(1, 8) as i64 * res_scale as i64;
     let plain = d == 1 && color == [255, 255, 255];
     let (w, h) = (f.w as usize, f.h as usize);
     #[cfg(target_arch = "x86_64")]
@@ -549,7 +561,14 @@ pub fn noise_seed(burst_index: i64) -> u32 {
 /// (перегенерирован только noise-эталон t26).
 /// Зерно. `size == 1` и `color == false` — прежняя формула байт-в-байт
 /// (в том числе AVX2-путь); крупное зерно и цветной шум идут скаляром.
-fn noise(mut f: Frame, amount: f64, size: u32, color: bool, burst_index: i64) -> Frame {
+fn noise(
+    mut f: Frame,
+    amount: f64,
+    size: u32,
+    color: bool,
+    burst_index: i64,
+    res_scale: u32,
+) -> Frame {
     let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
     if k == 0 {
         return f;
@@ -557,6 +576,11 @@ fn noise(mut f: Frame, amount: f64, size: u32, color: bool, burst_index: i64) ->
     let seed = noise_seed(burst_index);
     let w = f.w;
     let size = size.clamp(1, 64);
+    // Р.45 (п.313): ячейка ×K — floor((K·p+i)/(K·size)) == floor(p/size),
+    // узор зерна ПОБИТНО совпадает с 1×. Ветка формулы (особая при
+    // size==1 && !color) выбирается по ПОЛЬЗОВАТЕЛЬСКОМУ size — у формул
+    // разное зерно, и K не смеет молча подменять одну другой.
+    let cell = size * res_scale;
     if size > 1 || color {
         let off_at = |x: u32, y: u32, ch: u32| -> i32 {
             let h = noise_hash(x ^ noise_hash(y ^ noise_hash(ch ^ seed)));
@@ -564,7 +588,7 @@ fn noise(mut f: Frame, amount: f64, size: u32, color: bool, burst_index: i64) ->
             (n * k / 32767) as i32
         };
         for (p, px) in f.rgba.chunks_exact_mut(4).enumerate() {
-            let (x, y) = (p as u32 % w / size, p as u32 / w / size);
+            let (x, y) = (p as u32 % w / cell, p as u32 / w / cell);
             if color {
                 for (c, v) in px.iter_mut().take(3).enumerate() {
                     *v = (*v as i32 + off_at(x, y, c as u32 + 1)).clamp(0, 255) as u8;
@@ -574,6 +598,20 @@ fn noise(mut f: Frame, amount: f64, size: u32, color: bool, burst_index: i64) ->
                 for v in px.iter_mut().take(3) {
                     *v = (*v as i32 + off).clamp(0, 255) as u8;
                 }
+            }
+        }
+        return f;
+    }
+    if res_scale > 1 {
+        // особая формула на K×-растре: координаты делятся на K — узор
+        // зерна 1× воспроизводится поблочно (AVX2-путь остаётся за K=1)
+        for (p, px) in f.rgba.chunks_exact_mut(4).enumerate() {
+            let (x, y) = (p as u32 % w / res_scale, p as u32 / w / res_scale);
+            let h = noise_hash(x ^ noise_hash(y ^ seed));
+            let n = ((h >> 16) & 0x7fff) as i64 - 16384;
+            let off = (n * k / 32767) as i32;
+            for c in px.iter_mut().take(3) {
+                *c = (*c as i32 + off).clamp(0, 255) as u8;
             }
         }
         return f;
@@ -624,8 +662,14 @@ fn vhs(
     jitter: f64,
     burst_index: i64,
     scratch: &mut FxScratch,
+    res_scale: u32,
 ) -> Frame {
-    let shift = rgb_shift.clamp(0, 12) as i64;
+    // Р.45 (п.313): сдвиг ×K, весь СТРОЧНЫЙ контекст (скан-линии и хэш
+    // дрожания) — от логической строки y/K: скан-условие само красит K
+    // строк блока, line_off и scan_step остаются ЛОГИЧЕСКИМИ; амплитуда
+    // дрожания jx масштабируется сама (она в долях ширины). K=1 — y/1.
+    let rs = res_scale as usize;
+    let shift = rgb_shift.clamp(0, 12) as i64 * res_scale as i64;
     let bleed = bleed.clamp(0.0, 1.0);
     let line_off = ((burst_index / 3000) % 7) as usize;
     let (w, h) = (f.w as usize, f.h as usize);
@@ -641,7 +685,7 @@ fn vhs(
     let mut row = scratch.take(w * 4);
     for y in 0..h {
         let scan =
-            if step > 0 && (y + line_off).is_multiple_of(step) { 1i64 } else { 0 };
+            if step > 0 && (y / rs + line_off).is_multiple_of(step) { 1i64 } else { 0 };
         // дрожание строки: сдвиг всей строки на долю ширины
         // ЦЕЛОЧИСЛЕННО: у GPU round() округляет половины к чётному, и на
         // дробном пути строка иногда уезжала на пиксель мимо CPU (t181).
@@ -649,7 +693,7 @@ fn vhs(
         let jx = if jq == 0 {
             0i64
         } else {
-            let hsh = noise_hash(y as u32 ^ noise_hash(seed));
+            let hsh = noise_hash((y / rs) as u32 ^ noise_hash(seed));
             let n = ((hsh >> 16) & 0x7fff) as i64 - 16384;
             (n * jq / 32767) * w as i64 / 4096
         };
@@ -722,13 +766,15 @@ fn glow(
     threshold: u32,
     tint: [u8; 3],
     scratch: &mut FxScratch,
+    res_scale: u32,
 ) -> Frame {
     let s = strength.clamp(0.0, 2.0) * 0.35;
     if s <= 0.0 {
         return f;
     }
     // радиус 4, порог 0 и белый оттенок — прежний путь байт-в-байт
-    let r = radius.clamp(1, 32);
+    // Р.45 (п.313): делитель мипа ×K — мип тот же, вид инвариантен
+    let r = radius.clamp(1, 32) * res_scale;
     let th = threshold.min(255) as i32;
     let plain = th == 0 && tint == [255, 255, 255];
     let (dw, dh) = ((f.w / r).max(1), (f.h / r).max(1));

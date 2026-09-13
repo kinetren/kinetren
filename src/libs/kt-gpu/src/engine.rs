@@ -176,10 +176,10 @@ enum FxOp {
     /// Билинейная рамка (Pan/CamMotion/Blur down+up): выход tw×th.
     Resample { tw: u32, th: u32, frame: (f64, f64, f64, f64) },
     Mirror { h: bool, v: bool },
-    Noise { seed: u32, k: u32, size: u32, color: bool },
+    Noise { seed: u32, k: u32, size: u32, color: bool, res_scale: u32 },
     Greenscreen { key: [f32; 3], tol: f32, hard: f32, spill: f32, kc: u32 },
     Edges { th: u32, d: u32, color: [u32; 3] },
-    Vhs { shift: u32, line_off: u32, bleed: f32, jq: i32, step: u32, seed: u32 },
+    Vhs { shift: u32, line_off: u32, bleed: f32, jq: i32, step: u32, seed: u32, res_scale: u32 },
     /// Bloom: даунскейл dw×dh → апскейл → аддитив ×s (3 пасса).
     Glow { dw: u32, dh: u32, s: f32, th: u32, tint: [f32; 3] },
     /// Слитая гео-серия (Р.44): программа обратных отображений строится в
@@ -327,12 +327,16 @@ fn chain_ops(
                     ops.push(FxOp::GeomFused { prog });
                 }
             },
-            kt_fx::plan::PlanOp::Barrier { idx, res_scale: _ } => match &fx[idx] {
+            kt_fx::plan::PlanOp::Barrier { idx, res_scale } => match &fx[idx] {
             FxInstance::Blur { radius, radius_y } => {
+                // Р.45 (п.313): шаги ×K — мип тот же, вид инвариантен
                 let radius = (*radius).clamp(1, 48);
-                let step = (radius / 3).max(1) + 1;
-                let step_y =
-                    if *radius_y == 0 { step } else { ((*radius_y).clamp(1, 48) / 3).max(1) + 1 };
+                let step = ((radius / 3).max(1) + 1) * res_scale;
+                let step_y = if *radius_y == 0 {
+                    step
+                } else {
+                    (((*radius_y).clamp(1, 48) / 3).max(1) + 1) * res_scale
+                };
                 let (dw, dh) = ((w / step).max(1), (h / step_y).max(1));
                 ops.push(FxOp::Resample {
                     tw: dw,
@@ -363,7 +367,8 @@ fn chain_ops(
             FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => {
                 ops.push(FxOp::Edges {
                     th: (*threshold).clamp(1, 255),
-                    d: (*thickness).clamp(1, 8),
+                    // Р.45 (п.313): страйд Собеля ×K
+                    d: (*thickness).clamp(1, 8) * res_scale,
                     color: [*color_r as u32, *color_g as u32, *color_b as u32],
                 });
                 has_alpha_known = true;
@@ -377,24 +382,29 @@ fn chain_ops(
                         k: k as u32,
                         size: (*size).clamp(1, 64),
                         color: *color,
+                        res_scale,
                     });
                 }
             }
             FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
                 ops.push(FxOp::Vhs {
-                    shift: (*rgb_shift).clamp(0, 12),
+                    // Р.45 (п.313): сдвиг ×K; строчный контекст (скан и
+                    // дрожание) шейдер ведёт от логической строки y/K
+                    shift: (*rgb_shift).clamp(0, 12) * res_scale,
                     line_off: ((t.0 / 3000) % 7) as u32,
                     bleed: bleed.clamp(0.0, 1.0) as f32,
                     step: (*scan_step).clamp(0, 32),
                     // квант дрожания — тот же, что считает CPU-ядро
                     jq: (jitter.clamp(0.0, 1.0) * 1024.0).round() as i32,
                     seed: kt_fx::video::noise_seed(t.0),
+                    res_scale,
                 });
             }
             FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
                 let s = strength.clamp(0.0, 2.0) * 0.35;
                 if s > 0.0 {
-                    let r = (*radius).clamp(1, 32);
+                    // Р.45 (п.313): делитель мипа ×K — мип тот же
+                    let r = (*radius).clamp(1, 32) * res_scale;
                     ops.push(FxOp::Glow {
                         dw: (w / r).max(1),
                         dh: (h / r).max(1),
@@ -1015,10 +1025,10 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Noise { seed, k, size, color } => {
+                FxOp::Noise { seed, k, size, color, res_scale } => {
                     let dst = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
-                        u: [*seed, *k, *size, *color as u32, 0, 0, 0, 0],
+                        u: [*seed, *k, *size, *color as u32, *res_scale, 0, 0, 0],
                         ..Default::default()
                     };
                     self.pass(enc, Pipe::Noise, &dst.view, &view, &dummy, &dummy, u);
@@ -1055,10 +1065,10 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Vhs { shift, line_off, bleed, jq, step, seed } => {
+                FxOp::Vhs { shift, line_off, bleed, jq, step, seed, res_scale } => {
                     let dst = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
-                        u: [w, *shift, *line_off, *step, *seed, *jq as u32, 0, 0],
+                        u: [w, *shift, *line_off, *step, *seed, *jq as u32, *res_scale, 0],
                         f: [*bleed, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                         ..Default::default()
                     };

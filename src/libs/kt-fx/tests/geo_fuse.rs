@@ -536,3 +536,83 @@ fn t305_pointwise_inside_run() {
     // и зерно РЕАЛЬНО есть (не съедено усреднением)
     assert!(a.rgba.chunks_exact(4).any(|p| p[0] != 128), "зерно видно");
 }
+
+/// Тест 303 (п.313, Р.45): ядёрная инвариантность вида барьеров к
+/// разрешению БЕЗ цепочек: `down_K(kernel_K(up_K(F))) ≈ kernel_1(F)`
+/// (up/down — та же билинейка fit_into, что и все ресемплы). Пороги ×2 от
+/// замера (правило kt-gpu/CLAUDE.md); edges — пороговый класс (бинарные
+/// решения на интерполированной люме законно флипают).
+#[test]
+fn t303_barrier_kernels_res_invariant() {
+    use kt_fx::video::{FxScratch, apply_barrier, fit_into};
+    // Замер (K=2 и K=4, кадр t26): worst mean 1.04 (vhs), worst p99 24
+    // (vhs K=2); пороги ×2.
+    let cases: Vec<(&str, FxInstance)> = vec![
+        ("blur", FxInstance::blur(8)),
+        ("glow", FxInstance::glow(0.9)),
+        ("vhs", FxInstance::Vhs { rgb_shift: 4, bleed: 0.4, scan_step: 5, jitter: 0.5 }),
+        ("noise", FxInstance::Noise { amount: 0.5, size: 2, color: true }),
+        ("noise-special", FxInstance::noise(0.5)),
+    ];
+    let mut scratch = FxScratch::default();
+    for k in [2u32, 4] {
+        for (name, fx) in &cases {
+            let base = apply_barrier(fx, test_frame(), &ctx(), &mut scratch, 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&test_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
+            let kf = apply_barrier(fx, upf, &ctx(), &mut scratch, k);
+            assert_eq!((kf.w, kf.h), (kw, kh), "{name}: ядро не меняет размер");
+            let mut down = vec![0u8; (W * H * 4) as usize];
+            fit_into(&kf, W, H, &mut down);
+            let mut diffs: Vec<u32> = base
+                .rgba
+                .iter()
+                .zip(&down)
+                .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs())
+                .collect();
+            diffs.sort_unstable();
+            let mean = diffs.iter().map(|&d| d as u64).sum::<u64>() as f64 / diffs.len() as f64;
+            let p99 = diffs[diffs.len() * 99 / 100] as f64;
+            println!("t303 {name} K={k}: mean {mean:.2}, p99 {p99}");
+            assert!(
+                mean <= 2.5 && p99 <= 48.0,
+                "{name} K={k}: вид уехал (mean {mean:.2}, p99 {p99})"
+            );
+        }
+        // edges — пороговый класс: сравниваем ДОЛЮ разъехавшихся пикселей
+        for (name, fx) in [
+            ("edges", FxInstance::edges(48)),
+            (
+                "edges-thick",
+                FxInstance::Edges {
+                    threshold: 48,
+                    thickness: 2,
+                    color_r: 255,
+                    color_g: 255,
+                    color_b: 255,
+                },
+            ),
+        ] {
+            let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&test_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
+            let kf = apply_barrier(&fx, upf, &ctx(), &mut scratch, k);
+            let mut down = vec![0u8; (W * H * 4) as usize];
+            fit_into(&kf, W, H, &mut down);
+            let over = base
+                .rgba
+                .iter()
+                .zip(&down)
+                .filter(|(a, b)| (**a as i32 - **b as i32).unsigned_abs() > 16)
+                .count();
+            let frac = over as f64 / base.rgba.len() as f64;
+            println!("t303 {name} K={k}: |Δ|>16 у {:.2}%", frac * 100.0);
+            // замер: 0.88 % (K=2); порог ×2
+            assert!(frac <= 0.02, "{name} K={k}: контуры разъехались ({:.2}%)", frac * 100.0);
+        }
+    }
+}

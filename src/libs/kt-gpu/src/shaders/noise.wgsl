@@ -1,6 +1,9 @@
 // Зерно — counter-based hash (Р.29): та же целочисленная формула, что
 // noise/noise_hash в kt-fx/src/video.rs → байт-в-байт с CPU на любом
-// железе. u0 = (seed, k, size, color).
+// железе. u0 = (seed, k, size, color); u1 = (res_scale, 0, 0, 0).
+// Р.45 (п.313): при K× ячейка = size·K и координаты особой формулы
+// делятся на K — узор зерна побитно совпадает с 1×; ветка формулы —
+// по ПОЛЬЗОВАТЕЛЬСКОМУ size.
 //
 // size — размер зерна в пикселях, color — своё смещение на канал
 // (Р.33 С5). ВАЖНО: при size == 1 и color == 0 считается ПРЕЖНЯЯ формула
@@ -29,13 +32,16 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let k = P.u0.y;
     let size = max(P.u0.z, 1u);
     let color = P.u0.w == 1u;
+    let rs = max(P.u1.x, 1u);
     if (size == 1u && !color) {
-        // прежняя формула: seed идёт в хэш строки без обёртки
-        let off = off_of(nh(p.x ^ nh(p.y ^ P.u0.x)), k);
+        // прежняя формула: seed идёт в хэш строки без обёртки; при K×
+        // координаты делятся на K (узор 1× поблочно)
+        let q = p / rs;
+        let off = off_of(nh(q.x ^ nh(q.y ^ P.u0.x)), k);
         let rgb = clamp(vec3<i32>(c.rgb) + vec3<i32>(off), vec3<i32>(0), vec3<i32>(255));
         return vec4<u32>(vec3<u32>(rgb), c.a);
     }
-    let g = p / size;
+    let g = p / (size * rs);
     if (!color) {
         let off = off_of(nh(g.x ^ nh(g.y ^ nh(P.u0.x))), k);
         let rgb = clamp(vec3<i32>(c.rgb) + vec3<i32>(off), vec3<i32>(0), vec3<i32>(255));

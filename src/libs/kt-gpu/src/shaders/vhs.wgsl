@@ -1,7 +1,10 @@
 // VHS — зеркало vhs (kt-fx/src/video.rs): RGB-сдвиг + скан-линии, шаг
 // которых задаётся (Р.33 С5), и дрожание строк. Читается только исходная
 // строка (у CPU — её копия) — GPU не in-place по построению.
-// u0 = (w, shift, line_off, scan_step); u1 = (seed, jq, 0, 0);
+// u0 = (w, shift, line_off, scan_step); u1 = (seed, jq, res_scale, 0);
+// Р.45 (п.313): shift приезжает уже ×K, а скан-линии и хэш дрожания
+// считаются от ЛОГИЧЕСКОЙ строки y/K (блок из K строк). K=1 — прежний
+// кадр байт-в-байт (y/1).
 // f0 = (bleed, 0, 0, 0). scan_step = 4 и jq = 0 — прежний кадр
 // байт-в-байт. jq — КВАНТ дрожания (jitter×1024): смещение строки
 // считается целыми числами, потому что round() у WGSL округляет
@@ -23,13 +26,15 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let w = i32(P.u0.x);
     let shift = i32(P.u0.y);
     let step = i32(P.u0.w);
+    let rs = max(i32(P.u1.z), 1);
+    let yl = p.y / rs; // логическая строка (Р.45)
     var scan = 0;
-    if (step > 0 && (p.y + i32(P.u0.z)) % step == 0) { scan = 1; }
+    if (step > 0 && (yl + i32(P.u0.z)) % step == 0) { scan = 1; }
     // дрожание строки: та же формула, что у CPU (хэш строки от seed)
     var jx = 0;
     let jq = i32(P.u1.y);
     if (jq != 0) {
-        let hsh = nh(u32(p.y) ^ nh(P.u1.x));
+        let hsh = nh(u32(yl) ^ nh(P.u1.x));
         let n = i32((hsh >> 16u) & 0x7fffu) - 16384;
         jx = ((n * jq) / 32767) * w / 4096;
     }
