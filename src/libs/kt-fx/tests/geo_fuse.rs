@@ -402,6 +402,20 @@ fn bench_geom_1080p() {
         p3(4.0),
     ], &ctx3d);
     bench("pan3d одиночный (perpixel-пробы)", &[p3(0.9)], &ctx3d);
+    // K×-барьеры (п.314): на 1080p k_cap = 4096/1920 = 2 — барьер-сегмент
+    // работает в 3840×2160
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    bench("grid→vhs(K=2)→zoom, барьер в 3840×2160", &[
+        grid.clone(),
+        FxInstance::Vhs { rgb_shift: 2, bleed: 0.3, scan_step: 5, jitter: 0.4 },
+        zoom2.clone(),
+    ], &bctx);
+    bench("grid→blur(K=2)→zoom", &[grid.clone(), FxInstance::blur(8), zoom2.clone()], &bctx);
+    bench("grid→greenscreen(tap)→zoom", &[
+        grid,
+        FxInstance::greenscreen([0, 255, 0], 70, 25),
+        zoom2,
+    ], &bctx);
 }
 
 /// Тест 306 (п.311, Р.45): план цепочки — единственное место сегментации.
