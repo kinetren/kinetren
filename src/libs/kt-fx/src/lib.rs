@@ -1158,15 +1158,6 @@ impl ClipProcessor {
                 self.auto.value(slot, "amount", self.base_layer_mix, tau).clamp(0.0, 1.0) as f32
             });
             let sub = &mut out[done * CH..(done + n) * CH];
-            match &mut self.warp {
-                Some(w) => w.produce(kind, sub, pull),
-                None => {
-                    if !pull(kind, self.plain_cursor, sub) {
-                        sub.fill(0.0);
-                    }
-                    self.plain_cursor += n as i64;
-                }
-            }
             // Гейт dry-выхода в OUTPUT-домене: за концом МАТЕРИАЛА (тело +
             // правая «ручка» перехода, п.138) сухой сигнал обязан быть нулём
             // (в хвосте дозванивает только реверб). Благодаря этому окно
@@ -1174,9 +1165,34 @@ impl ClipProcessor {
             // боясь утечки dry в хвост (дефект «тихий хвост»: sinc-ресемплер
             // видел нули за жёстко обрезанным окном и рано глушил конец).
             let gate_end = self.clip_len + self.tail_ext;
-            if chunk_local + (n as i64) > gate_end {
-                let cut = (gate_end - chunk_local).clamp(0, n as i64) as usize;
-                sub[cut * CH..].fill(0.0);
+            if chunk_local >= gate_end {
+                // ЧАНК ЦЕЛИКОМ В ХВОСТЕ (Р.43, п.304): что бы ни выдал
+                // варп, гейт ниже обнулит это ПОЛНОСТЬЮ — значит считать
+                // нечего. Пропуск байт-идентичен ПО ПОСТРОЕНИЮ: результат
+                // тот же `fill(0.0)`, только без sinc-ресемплера и без
+                // чтения источника. В хвосте живёт один реверб, а он
+                // получает те же нули.
+                //
+                // Состояние варпа при этом «отстаёт», и это безопасно:
+                // вернуться в материал можно только прыжком `local`, а его
+                // ловит `read` и переставляет источник через `seam`/
+                // `hard_seek`. Непрерывное чтение `local` только растёт.
+                sub.fill(0.0);
+                self.plain_cursor += n as i64;
+            } else {
+                match &mut self.warp {
+                    Some(w) => w.produce(kind, sub, pull),
+                    None => {
+                        if !pull(kind, self.plain_cursor, sub) {
+                            sub.fill(0.0);
+                        }
+                        self.plain_cursor += n as i64;
+                    }
+                }
+                if chunk_local + (n as i64) > gate_end {
+                    let cut = (gate_end - chunk_local).clamp(0, n as i64) as usize;
+                    sub[cut * CH..].fill(0.0);
+                }
             }
             // СУХАЯ сторона смешения (Р.38 п.12): состояние ДО вклада
             // слоя. Реверб у движка ровно один на цепочку, поэтому вопрос

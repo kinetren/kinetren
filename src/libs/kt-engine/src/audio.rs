@@ -93,12 +93,121 @@ pub struct RenderStats {
     pub warmup_misses: u64,
 }
 
+/// Корзина индекса времени — одна секунда выхода.
+const INDEX_BUCKET_FRAMES: i64 = kt_time::AUDIO_SAMPLE_RATE as i64;
+
 pub struct AudioRenderer {
     clips: Vec<AudioClip>,
+    /// Индекс «какие события живут в этой секунде» (Р.43, п.305).
+    ///
+    /// Без него каждый бёрст перебирал ВЕСЬ монтаж: на проекте пользователя
+    /// (1973 события) это 0.4 мкс на событие × 1973 × 107 бёрстов в секунду,
+    /// то есть цена МЕСТА росла линейно с размером ПРОЕКТА, даже если
+    /// соседние события стоят за час оттуда. Замер: 7 событий — 3.8 мс/с,
+    /// те же 7 плюс 2000 далёких — 91.7 мс/с.
+    ///
+    /// Корзины хранят индексы В ВОЗРАСТАЮЩЕМ ПОРЯДКЕ, и выборка идёт по
+    /// ним же: порядок суммирования клипов обязан остаться прежним —
+    /// сложение f32 не ассоциативно, и на нём стоит GOLDEN_AUDIO.
+    index: Vec<Vec<u32>>,
+    /// Начало первой корзины в кадрах (события бывают и левее нуля из-за
+    /// «ручек» переходов).
+    index_from: i64,
+    /// Кто кого накрывает на каждой дорожке — строится раз (п.305).
+    /// Пусто при выключенном переслаивании: тогда вес тождественно 1.0.
+    covers: OverlapMap,
     /// Переслаивание (Р.28): перекрытия клипов законны и звучат как в v1 —
     /// equal-power на двоих, 1/N при трёх и более. Выключено — перекрытий в
     /// модели нет по построению, и вес всегда 1.0.
     overlap_layers: bool,
+}
+
+/// Карты перекрытий ПО НОМЕРУ ДОРОЖКИ: обращение идёт на каждый кадр,
+/// поэтому здесь массив, а не хэш-таблица.
+type OverlapMap = Vec<LaneCover>;
+
+/// Карта перекрытий одной дорожки (Р.43, п.305).
+///
+/// `overlap_weight` спрашивает одно: какие события ЭТОЙ дорожки накрывают
+/// кадр. Набор меняется только на границах событий, поэтому его можно
+/// посчитать РАЗ подметанием и дальше отвечать двоичным поиском. Раньше
+/// функция перебирала ВЕСЬ монтаж НА КАЖДЫЙ КАДР: на проекте пользователя
+/// (1973 события) это 1973 × 48000 × число активных клипов проверок в
+/// секунду, и цена МЕСТА росла линейно с размером ПРОЕКТА — события за час
+/// оттуда стоили столько же, сколько соседние. Замер: 7 событий — 3.6 мс
+/// на секунду звука, те же 7 плюс 2000 далёких — 92 мс.
+///
+/// Наборы хранятся в ВОЗРАСТАЮЩЕМ порядке индексов: `overlap_weight`
+/// берёт «первые два» именно в нём, и на этом стоит GOLDEN_AUDIO.
+#[derive(Default)]
+struct LaneCover {
+    /// Границы интервалов, возрастающие; интервалов на один меньше.
+    bounds: Vec<i64>,
+    /// Накрывающие события каждого интервала.
+    cover: Vec<Vec<u32>>,
+}
+
+impl LaneCover {
+    fn at(&self, frame: i64) -> &[u32] {
+        if self.bounds.len() < 2 {
+            return &[];
+        }
+        match self.bounds.binary_search(&frame) {
+            Ok(i) if i + 1 < self.bounds.len() => &self.cover[i],
+            Ok(_) => &[],
+            Err(0) => &[],
+            Err(i) if i < self.bounds.len() => &self.cover[i - 1],
+            Err(_) => &[],
+        }
+    }
+}
+
+/// Подмести дорожку и записать, кто кого накрывает.
+fn build_lane_covers(clips: &[AudioClip]) -> OverlapMap {
+    let mut by_lane: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+    for (i, c) in clips.iter().enumerate() {
+        by_lane.entry(c.lane).or_default().push(i as u32);
+    }
+    let lanes = clips.iter().map(|c| c.lane).max().map(|m| m as usize + 1).unwrap_or(0);
+    let mut out: OverlapMap = (0..lanes).map(|_| LaneCover::default()).collect();
+    for (lane, idx) in by_lane {
+        // события подметания: конец раньше начала в одной точке —
+        // интервал события полуоткрытый [start, end)
+        let mut ev: Vec<(i64, i8, u32)> = Vec::with_capacity(idx.len() * 2);
+        for &i in &idx {
+            let c = &clips[i as usize];
+            if c.end > c.start {
+                ev.push((c.start, 1, i));
+                ev.push((c.end, 0, i));
+            }
+        }
+        ev.sort_unstable_by_key(|&(p, kind, i)| (p, kind, i));
+        let mut cover: Vec<Vec<u32>> = Vec::new();
+        let mut bounds: Vec<i64> = Vec::new();
+        let mut active: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+        let mut k = 0usize;
+        while k < ev.len() {
+            let pos = ev[k].0;
+            if let Some(&last) = bounds.last() {
+                debug_assert!(pos >= last);
+                cover.push(active.iter().copied().collect());
+            }
+            bounds.push(pos);
+            while k < ev.len() && ev[k].0 == pos {
+                if ev[k].1 == 1 {
+                    active.insert(ev[k].2);
+                } else {
+                    active.remove(&ev[k].2);
+                }
+                k += 1;
+            }
+        }
+        if bounds.len() >= 2 {
+            debug_assert_eq!(cover.len() + 1, bounds.len());
+            out[lane as usize] = LaneCover { bounds, cover };
+        }
+    }
+    out
 }
 
 /// Вес клипа от ПЕРЕКРЫТИЯ с соседями по дорожке (возврат семантики v1,
@@ -106,13 +215,17 @@ pub struct AudioRenderer {
 /// «equal-power кроссфейд при перекрытии 2 клипов одной аудио-дорожки, 1/N
 /// при 3+»). На клипах встык инертен — вес 1.0, поэтому проекты с явными
 /// переходами (и GOLDEN-эталоны) не меняются.
-fn overlap_weight(clips: &[AudioClip], ci: usize, frame: i64) -> f32 {
+fn overlap_weight(clips: &[AudioClip], covers: &OverlapMap, ci: usize, frame: i64) -> f32 {
     let lane = clips[ci].lane;
     let mut first = usize::MAX;
     let mut second = usize::MAX;
     let mut n = 0usize;
-    for (i, c) in clips.iter().enumerate() {
-        if c.lane == lane && c.start <= frame && frame < c.end {
+    let here = covers.get(lane as usize).map(|m| m.at(frame)).unwrap_or(&[]);
+    for &i in here {
+        let i = i as usize;
+        let c = &clips[i];
+        {
+            debug_assert!(c.lane == lane && c.start <= frame && frame < c.end);
             if n == 0 {
                 first = i;
             } else if n == 1 {
@@ -224,7 +337,74 @@ impl AudioRenderer {
         // Стабильный порядок — часть детерминизма и правила кроссфейда
         // («ранний» клип определяется по (start, media)).
         clips.sort_by_key(|c| (c.start, c.end, c.lane, c.media));
-        AudioRenderer { clips, overlap_layers: project.overlap_layers }
+        let (index, index_from) = Self::build_index(&clips);
+        let covers =
+            if project.overlap_layers { build_lane_covers(&clips) } else { OverlapMap::new() };
+        AudioRenderer {
+            clips,
+            index,
+            index_from,
+            covers,
+            overlap_layers: project.overlap_layers,
+        }
+    }
+
+    /// Разложить события по секундным корзинам. Событие попадает в каждую
+    /// корзину, которую задевает ЕГО ПОЛНЫЙ пролёт — тело, левая «ручка» и
+    /// хвост FX: ровно то, что проверяет фильтр в `render_frames_with`.
+    fn build_index(clips: &[AudioClip]) -> (Vec<Vec<u32>>, i64) {
+        if clips.is_empty() {
+            return (Vec::new(), 0);
+        }
+        let lo = clips.iter().map(|c| c.start - c.head_ext).min().unwrap_or(0);
+        let hi = clips.iter().map(|c| c.ext_end).max().unwrap_or(0);
+        let from = lo.div_euclid(INDEX_BUCKET_FRAMES) * INDEX_BUCKET_FRAMES;
+        let n = ((hi - from).max(0) / INDEX_BUCKET_FRAMES + 1) as usize;
+        let mut index = vec![Vec::new(); n];
+        for (i, c) in clips.iter().enumerate() {
+            let a = ((c.start - c.head_ext - from) / INDEX_BUCKET_FRAMES).max(0) as usize;
+            let b = (((c.ext_end - 1 - from) / INDEX_BUCKET_FRAMES).max(0) as usize).min(n - 1);
+            for bucket in index.iter_mut().take(b + 1).skip(a) {
+                bucket.push(i as u32);
+            }
+        }
+        (index, from)
+    }
+
+    /// Индексы событий, задевающих `range`, В ВОЗРАСТАЮЩЕМ ПОРЯДКЕ —
+    /// тот же набор и тот же порядок, что дал бы перебор всех клипов
+    /// (сторож — тест 292).
+    fn active_clips(&self, range: &std::ops::Range<i64>) -> Vec<usize> {
+        let hit = |i: usize| {
+            let c = &self.clips[i];
+            c.start - c.head_ext < range.end && c.ext_end > range.start
+        };
+        if self.index.is_empty() {
+            return Vec::new();
+        }
+        let a = (range.start - self.index_from).div_euclid(INDEX_BUCKET_FRAMES);
+        let b = (range.end - 1 - self.index_from).div_euclid(INDEX_BUCKET_FRAMES);
+        let (a, b) = (a.max(0) as usize, (b.max(0) as usize).min(self.index.len() - 1));
+        if a >= self.index.len() {
+            return Vec::new();
+        }
+        if a == b {
+            return self.index[a].iter().map(|&i| i as usize).filter(|&i| hit(i)).collect();
+        }
+        // несколько корзин: слияние отсортированных списков с дедупом —
+        // порядок обязан остаться возрастающим
+        let mut out: Vec<usize> = Vec::new();
+        for bucket in &self.index[a..=b] {
+            for &i in bucket {
+                let i = i as usize;
+                if out.last() != Some(&i) && hit(i) {
+                    out.push(i);
+                }
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
     }
 
     /// Синхронизировать FX-состояние с этим графом (вызывается владельцем
@@ -268,12 +448,7 @@ impl AudioRenderer {
         let range = start_frame..start_frame + frames;
         let mut stats = RenderStats::default();
 
-        let active: Vec<usize> = (0..self.clips.len())
-            .filter(|&i| {
-                self.clips[i].start - self.clips[i].head_ext < range.end
-                    && self.clips[i].ext_end > range.start
-            })
-            .collect();
+        let active = self.active_clips(&range);
 
         // Вклад каждого клипа считаем по-бурстово (источника), веса — по-сэмплово.
         for &ci in &active {
@@ -292,7 +467,7 @@ impl AudioRenderer {
     /// Вес перекрытия для клипа `ci` в кадре `f` (1.0, когда переслаивание
     /// выключено — тогда перекрытий в модели нет по построению).
     fn overlap_at(&self, ci: usize, f: i64) -> f32 {
-        if self.overlap_layers { overlap_weight(&self.clips, ci, f) } else { 1.0 }
+        if self.overlap_layers { overlap_weight(&self.clips, &self.covers, ci, f) } else { 1.0 }
     }
 
     fn render_plain_clip(
@@ -393,10 +568,9 @@ impl AudioRenderer {
         let frames = (out.len() / AUDIO_CHANNELS) as i64;
         let range = start_frame..start_frame + frames;
         let mut stats = RenderStats::default();
-        for ci in 0..self.clips.len() {
-            if self.clips[ci].start - self.clips[ci].head_ext < range.end
-                && self.clips[ci].end + self.clips[ci].tail_ext > range.start
-            {
+        for ci in self.active_clips(&range) {
+            // сырой путь смотрит на ТЕЛО с ручками, а не на хвост FX
+            if self.clips[ci].end + self.clips[ci].tail_ext > range.start {
                 self.render_plain_clip(ci, fetcher, &range, out, &mut stats);
             }
         }
