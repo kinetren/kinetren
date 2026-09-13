@@ -111,4 +111,24 @@ fn t290_probe_reports_what_layers_changed() {
         changed.contains("(nothing)"),
         "слой не имеет отношения к этому месту, а probe показал правки: {changed:?}"
     );
+
+    // --time отвечает на вопрос «успевает ли движок ЗДЕСЬ» (Р.43, п.301):
+    // после п.294 голодание кольца слышно тишиной, а не замедлением, и без
+    // числа его не с чем сравнить
+    let timed = cli()
+        .args(["probe", path.to_str().unwrap(), "0", "2", "--time"])
+        .output()
+        .unwrap();
+    assert!(timed.status.success(), "{}", String::from_utf8_lossy(&timed.stderr));
+    let timed = String::from_utf8_lossy(&timed.stdout);
+    assert!(
+        timed.contains("% of real time"),
+        "probe --time обязан назвать долю реального времени:\n{timed}"
+    );
+    // синтетика заведомо дешевле реального времени — «не успеваем» тут не
+    // должно печататься, иначе строка ничего не значит
+    assert!(
+        !timed.contains("OVER BUDGET"),
+        "синтетический демо-проект обязан укладываться в бюджет:\n{timed}"
+    );
 }

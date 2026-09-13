@@ -96,5 +96,14 @@ echo
 [ -n "${LIVE_FAILED:-}" ] && echo "ВНИМАНИЕ: живые сценарии красные — см. target/live-out"
 echo "ВЕРСИЯ: $FULL$DIRTY"
 echo "запускать: $(pwd)/target/debug/kt-app"
+# Р.43 п.301: debug-сборка честно считает, но в 9 раз медленнее. На плотном
+# монтаже аудио-рендер там уходит за 100 % реального времени, кольцо пустеет
+# и растут callback-underrun'ы — их слышно тишиной. Это цена профиля, а не
+# дефект, и судить о скорости по debug нельзя.
+if [ ! -x target/release/kt-app ]; then
+    echo "о СКОРОСТИ судить только по релизу: cargo build --release -p kt-app"
+else
+    echo "для замеров скорости: $(pwd)/target/release/kt-app"
+fi
 [ "$RELEASE" = 1 ] && echo "тарбол:   $(ls -1 target/dist-out/*.tar.gz 2>/dev/null | tail -1)"
 exit 0

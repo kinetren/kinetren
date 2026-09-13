@@ -949,14 +949,21 @@ impl KtApp {
                 )
             })
             .collect();
+        // счётчики голодания — сюда же (Р.43): живому сценарию иначе
+        // нечем отличить «играет ровно» от «играет ровно, но с тишиной»,
+        // а после п.294 часы под голоданием идут и симптом не виден
+        let ord = std::sync::atomic::Ordering::Relaxed;
         let json = format!(
             "{{\"playhead\":{},\"playing\":{},\"fields\":[{}],\
+             \"underruns\":{},\"callback_underruns\":{},\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"timeline\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
              \"lane_h\":{:.1},\"ticks_per_px\":{:.3},\"view_start\":{:.1},\"rows\":[{}]}}\n",
             self.player.video_playhead().0,
             self.player.transport.is_playing(),
             fields.join(","),
+            self.player.underruns.load(ord),
+            self.player.shared.callback_underruns.load(ord),
             screen.width(),
             screen.height(),
             geom.rect.left(),

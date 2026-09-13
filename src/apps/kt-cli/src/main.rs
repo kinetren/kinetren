@@ -42,7 +42,7 @@ fn synth_pattern(path: &str) -> Option<AudioPattern> {
 /// Печатает ДВЕ вещи, и расхождение между ними само по себе диагноз:
 /// эффективные события (после морфер-слоёв) и заказ префетча — тот самый
 /// список `(медиа, бёрсты)`, по которому греется кэш и читается источник.
-fn probe_range(project: &Project, from: f64, to: f64) -> i32 {
+fn probe_range(project: &Project, from: f64, to: f64, time_with: Option<&str>) -> i32 {
     let names: std::collections::HashMap<u64, &str> =
         project.media.iter().map(|m| (m.id.0, m.path.as_str())).collect();
     let short = |id: u64| -> String {
@@ -203,7 +203,90 @@ fn probe_range(project: &Project, from: f64, to: f64) -> i32 {
             println!("\nFOREIGN MEDIA IN THE ORDER: {} ({})", m, short(m));
         }
     }
+
+    // --time: УСПЕВАЕТ ЛИ движок отрендерить это место (Р.43, п.301).
+    // После п.294 голодание кольца («правый underrun») больше не тормозит
+    // часы — оно слышно тишиной, и без числа его не с чем сравнить. Здесь
+    // это число: доля реального времени, которую съедает ОДИН аудио-рендер
+    // этого места, на прогретом кэше и без UI.
+    if let Some(path) = time_with {
+        let mut fetcher = match open_sources(project, path, false) {
+            Ok(f) => f,
+            Err(e) => {
+                eprintln!("{e}");
+                return 1;
+            }
+        };
+        let (fa, fb) = (t0.to_audio_frames(), t1.to_audio_frames());
+        let mut store = kt_engine::FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; kt_time::AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
+        let step = kt_time::AUDIO_BURST_FRAMES as i64;
+        // первый круг греет кэш и заводит состояния FX
+        let mut pos = fa;
+        while pos < fb {
+            r.render_frames_with(&mut fetcher, &mut store, pos, &mut out);
+            pos += step;
+        }
+        let start = std::time::Instant::now();
+        let mut under = 0u64;
+        let mut pos = fa;
+        while pos < fb {
+            under += r.render_frames_with(&mut fetcher, &mut store, pos, &mut out).underruns;
+            pos += step;
+        }
+        let ms = start.elapsed().as_secs_f64() * 1e3;
+        let span_ms = (to - from) * 1000.0;
+        println!("\n-- audio render cost (warm cache, no UI) --");
+        println!(
+            "  {ms:.0} ms for {:.3} s = {:.0}% of real time, underruns {under}",
+            to - from,
+            ms / span_ms * 100.0
+        );
+        if ms > span_ms {
+            println!("  OVER BUDGET: audio alone cannot keep up here");
+        }
+    }
     0
+}
+
+/// Открыть все источники проекта. Общее у офлайн-рендера и `probe --time`.
+///
+/// `strict` — недоступный файл это ошибка (рендер: молчаливая тишина в
+/// выходном файле хуже отказа). Диагностика ходит сюда с `false`: в бине
+/// проекта могут лежать медиа, которых на этой машине нет, а замеряемый
+/// диапазон их не касается.
+fn open_sources(
+    project: &Project,
+    project_path: &str,
+    strict: bool,
+) -> Result<DirectFetcher, String> {
+    let base = std::path::Path::new(project_path)
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .to_path_buf();
+    let mut fetcher = DirectFetcher::new(None);
+    for m in &project.media {
+        if let Some(pattern) = synth_pattern(&m.path) {
+            fetcher.add_source(m.id, Box::new(SyntheticSource::new(Tick(90_000 * 3600), pattern)));
+            continue;
+        }
+        let resolved = if std::path::Path::new(&m.path).is_absolute() {
+            m.path.clone()
+        } else {
+            base.join(&m.path).to_string_lossy().to_string()
+        };
+        let mut idx_db = kt_media::index::MediaIndexDb::open(
+            &std::path::Path::new(project_path).with_extension("ktindex.db"),
+        )
+        .ok();
+        match kt_media::ffmpeg::FfmpegSource::open_indexed(&resolved, idx_db.as_mut()) {
+            Ok(src) => fetcher.add_source(m.id, Box::new(src)),
+            Err(e) if strict => return Err(format!("{resolved}: {e}")),
+            Err(e) => eprintln!("  skipped (not on this machine): {resolved}: {e}"),
+        }
+    }
+    Ok(fetcher)
 }
 
 fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
@@ -416,7 +499,7 @@ fn run(args: &[String]) -> i32 {
         Some("probe") => {
             let (Some(input), Some(from), Some(to)) = (args.get(1), args.get(2), args.get(3))
             else {
-                eprintln!("usage: kt-cli probe <in.otio> <from_s> <to_s>");
+                eprintln!("usage: kt-cli probe <in.otio> <from_s> <to_s> [--time]");
                 return 2;
             };
             let (Ok(from), Ok(to)) = (from.parse::<f64>(), to.parse::<f64>()) else {
@@ -427,7 +510,8 @@ fn run(args: &[String]) -> i32 {
                 Ok(p) => p,
                 Err(code) => return code,
             };
-            probe_range(&project, from, to)
+            let timed = args.iter().any(|a| a == "--time");
+            probe_range(&project, from, to, timed.then_some(input.as_str()))
         }
         Some("render") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
