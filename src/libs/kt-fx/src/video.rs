@@ -18,6 +18,9 @@ pub struct VideoFxCtx {
     /// Разрешённая 3D-камера слоя (Р.44: Pan3d считается и на CPU).
     /// None — Pan3d в цепочке пропускается, как раньше без камеры.
     pub cam3d: Option<crate::geom::Cam3d>,
+    /// Ступень декода кадра (Р.46, п.318): входной кадр в in_scale раз
+    /// крупнее логического размера цепочки. 1 — как было всегда.
+    pub in_scale: u32,
 }
 
 /// Кадр в работе.
@@ -79,6 +82,7 @@ pub fn apply_video_chain_pooled(
         fx,
         frame.w,
         frame.h,
+        ctx.in_scale,
         ctx.out_w,
         ctx.out_h,
         ctx.u,

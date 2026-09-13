@@ -12,7 +12,7 @@ const W: u32 = 64;
 const H: u32 = 36;
 
 fn ctx() -> VideoFxCtx {
-    VideoFxCtx { out_w: W, out_h: H, u: 0.5, burst_index: 90_000, cam3d: None }
+    VideoFxCtx { out_w: W, out_h: H, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 }
 }
 
 /// Кадр как в t26: градиенты + зелёный угол.
@@ -176,12 +176,12 @@ fn t297e_run_end_stops_at_barriers_only() {
     ];
     assert!(is_geo(&fx[0]));
     // ран накрывает grid + (прозрачный gain) + mirror, но не blur
-    let p = plan_chain(&fx, W, H, W, H, 0.5, None, 90_000, &[]);
+    let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
     assert!(matches!(p.ops[1], PlanOp::Barrier { idx: 3, .. }));
     assert!(matches!(p.ops[2], PlanOp::Run { i: 4, j: 5, .. }));
     // стоп-индекс (снапшот силы слоя) рвёт ран
-    let ps = plan_chain(&fx, W, H, W, H, 0.5, None, 90_000, &[2]);
+    let ps = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[2]);
     assert!(matches!(ps.ops[0], PlanOp::Run { i: 0, j: 1, .. }));
     assert!(matches!(ps.ops[1], PlanOp::Snapshot));
     assert!(matches!(ps.ops[2], PlanOp::Run { i: 2, j: 3, .. }));
@@ -357,7 +357,7 @@ fn bench_geom_1080p() {
         px[3] = 255;
     }
     let mk = || Frame { w: bw, h: bh, rgba: rgba.clone(), has_alpha: false };
-    let bctx = VideoFxCtx { out_w: bw, out_h: bh, u: 0.5, burst_index: 90_000, cam3d: None };
+    let bctx = VideoFxCtx { out_w: bw, out_h: bh, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 };
     let ctx3d = VideoFxCtx {
         cam3d: Some(Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 }),
         ..bctx
@@ -432,7 +432,7 @@ fn t306_chain_plan_segmentation() {
 
     // ран (grid + прозрачный аудио + mirror), барьер, ран
     let fx = vec![grid.clone(), gain.clone(), mir.clone(), blur.clone(), grid.clone()];
-    let p = plan_chain(&fx, W, H, W, H, 0.5, None, 90_000, &[]);
+    let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert_eq!(p.ops.len(), 3);
     assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
     assert!(matches!(p.ops[1], PlanOp::Barrier { idx: 3, res_scale: 1 }));
@@ -440,7 +440,7 @@ fn t306_chain_plan_segmentation() {
 
     // сила слоя: снапшот-точка рвёт ран, слот — маркер Mix
     let fxm = vec![grid.clone(), FxInstance::LayerMix { amount: 0.5, from: 0 }, mir.clone()];
-    let pm = plan_chain(&fxm, W, H, W, H, 0.5, None, 90_000, &[0]);
+    let pm = plan_chain(&fxm, W, H, 1, W, H, 0.5, None, 90_000, &[0]);
     assert!(matches!(pm.ops[0], PlanOp::Snapshot));
     assert!(matches!(pm.ops[1], PlanOp::Run { i: 0, j: 1, .. }));
     assert!(matches!(pm.ops[2], PlanOp::Mix { idx: 1 }));
@@ -448,15 +448,15 @@ fn t306_chain_plan_segmentation() {
     assert_eq!(pm.ops.len(), 4);
 
     // «план слайса ≡ кусок плана целого»: не-маркерные опы совпадают
-    let s1 = plan_chain(&fxm[0..1], W, H, W, H, 0.5, None, 90_000, &[]);
-    let s2 = plan_chain(&fxm[2..3], W, H, W, H, 0.5, None, 90_000, &[]);
+    let s1 = plan_chain(&fxm[0..1], W, H, 1, W, H, 0.5, None, 90_000, &[]);
+    let s2 = plan_chain(&fxm[2..3], W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert!(matches!(s1.ops[..], [PlanOp::Run { i: 0, j: 1, .. }]));
     assert!(matches!(s2.ops[..], [PlanOp::Run { i: 0, j: 1, .. }]));
 
     // бюджет гео-шагов: 7 подряд режутся на 6 + 1 (в точке разреза
     // качество = сегодняшнее)
     let seven: Vec<FxInstance> = (0..7).map(|_| mir.clone()).collect();
-    let p7 = plan_chain(&seven, W, H, W, H, 0.5, None, 90_000, &[]);
+    let p7 = plan_chain(&seven, W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert_eq!(p7.ops.len(), 2);
     assert!(matches!(p7.ops[0], PlanOp::Run { i: 0, j: 6, .. }));
     assert!(matches!(p7.ops[1], PlanOp::Run { i: 6, j: 7, .. }));
@@ -476,12 +476,12 @@ fn t305_pointwise_inside_run() {
 
     // (0) сегментация: внутренний поточечный поглощён — ран ОДИН
     let fx = vec![grid.clone(), gs.clone(), zoom2.clone()];
-    let p = plan_chain(&fx, W, H, W, H, 0.5, None, 90_000, &[]);
+    let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert_eq!(p.ops.len(), 1, "внутренний greenscreen поглощён в ран");
     assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
     // ведущий поточечный НЕ поглощается (байты K=1-цепочек)
     let lead = vec![gs.clone(), zoom2.clone()];
-    let pl = plan_chain(&lead, W, H, W, H, 0.5, None, 90_000, &[]);
+    let pl = plan_chain(&lead, W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert!(matches!(pl.ops[0], PlanOp::Barrier { idx: 0, .. }));
 
     // (а) шахматка с зелёным: ключ вырезает зелёные клетки, резкость
@@ -659,7 +659,7 @@ fn t304_k_only_with_squeeze_and_zoom() {
     let zoom05 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.5 };
     let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
     let k_of = |fx: &[FxInstance]| -> Vec<u32> {
-        plan_chain(fx, W, H, W, H, 0.5, None, 90_000, &[])
+        plan_chain(fx, W, H, 1, W, H, 0.5, None, 90_000, &[])
             .ops
             .iter()
             .filter_map(|op| match op {
@@ -671,8 +671,8 @@ fn t304_k_only_with_squeeze_and_zoom() {
     assert_eq!(k_of(&[grid.clone(), vhs.clone()]), vec![1], "хвост пуст");
     assert_eq!(k_of(&[grid.clone(), vhs.clone(), mir.clone()]), vec![1], "хвост без зума");
     assert_eq!(k_of(&[grid.clone(), vhs.clone(), zoom05.clone()]), vec![1], "хвост сжимает");
-    // squeeze-cap: без сжатия выше деталей взять неоткуда (декод>Quality —
-    // отдельный заход) — K=1, лишний буфер не покупается
+    // squeeze-cap: при входе 1× деталей выше взять неоткуда — K=1, лишний
+    // буфер не покупается (источник деталей — ступень декода, t308)
     assert_eq!(k_of(&[vhs.clone(), zoom2.clone()]), vec![1], "сжатия выше нет");
     assert_eq!(k_of(&[grid.clone(), vhs.clone(), zoom2.clone()]), vec![2], "сжатие+зум → K=2");
     // соседние барьеры — один K (ресемплов между барьерами не бывает)
@@ -697,4 +697,52 @@ fn t304_k_only_with_squeeze_and_zoom() {
     let hash = xxhash_rust::xxh3::xxh3_64(&f.rgba);
     println!("t304 anchor: 0x{hash:016x}");
     assert_eq!(hash, 0x1a3aad166d0a0c18, "K=1-байты уехали");
+}
+
+/// Тест 308 (п.317, Р.46): ступень декода кормит бюджет сжатия. Кадр,
+/// пришедший в S× логического размера, — это РЕАЛЬНО стиснутая деталь:
+/// squeeze-cap перестаёт резать K там, где сетки выше по цепочке нет, а
+/// ведущий барьер (ресемпла до него не было) считается прямо в S×.
+#[test]
+fn t308_in_scale_feeds_the_squeeze_budget() {
+    use kt_fx::plan::{PlanOp, plan_chain};
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let vhs = FxInstance::vhs(4, 0.4);
+    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let zoom12 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.2 };
+    let k_of = |fx: &[FxInstance], s: u32| -> Vec<u32> {
+        plan_chain(fx, W * s, H * s, s, W, H, 0.5, None, 90_000, &[])
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                PlanOp::Barrier { res_scale, .. } => Some(*res_scale),
+                _ => None,
+            })
+            .collect()
+    };
+    // ровно тот случай, ради которого делался раунд: зум без сетки выше
+    assert_eq!(k_of(&[vhs.clone(), zoom2.clone()], 2), vec![2], "ступень = живая деталь");
+    assert_eq!(k_of(&[vhs.clone(), zoom2.clone()], 1), vec![1], "без ступени — прежний K");
+    // ведущий барьер исполняется в разрешении кадра, а не по benefit:
+    // зум 1.2 сам по себе K не дал бы (квант), но кадр физически 2×
+    assert_eq!(k_of(&[vhs.clone(), zoom12], 2), vec![2], "ведущий барьер по физике кадра");
+    // сетка выше по цепочке ступень не отменяет и не удваивает сверх потолка
+    assert_eq!(k_of(&[grid.clone(), vhs.clone(), zoom2.clone()], 1), vec![2], "прежний путь цел");
+    // зеркало на равных краях остаётся старым ядром и на ступени
+    assert_eq!(k_of(&[mir, vhs, zoom2], 2), vec![2], "Mirror-ран не ломает сегмент");
+}
+
+/// Тест 308b (п.317): гео-ран МЕЖДУ двумя K×-барьерами. Одиночное зеркало
+/// маршрутизировалось в Legacy безусловно, а сборка плана требует 1×-краёв
+/// — цепочка «сетка → vhs → зеркало → blur → зум» валила debug_assert ещё
+/// до Р.46 (латентный дефект Р.45). Правило: Legacy только при k_in==k_out.
+#[test]
+fn t308b_mirror_run_between_k_segments() {
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let vhs = FxInstance::vhs(4, 0.4);
+    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let out = run(&[grid, vhs, mir, FxInstance::blur(8), zoom2]);
+    assert_eq!((out.w, out.h), (W, H), "chain must land in Quality");
 }

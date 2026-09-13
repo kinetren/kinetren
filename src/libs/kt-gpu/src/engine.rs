@@ -256,6 +256,7 @@ fn chain_ops(
     fx: &[FxInstance],
     src_w: u32,
     src_h: u32,
+    src_scale: u32,
     out_w: u32,
     out_h: u32,
     u: f64,
@@ -283,7 +284,8 @@ fn chain_ops(
         .collect();
     // План цепочки строит kt-fx (Р.45, п.311) — ОБЩИЙ код обоих бэкендов
     // (инвариант №7); здесь опы только транслируются в FxOp.
-    let plan = kt_fx::plan::plan_chain(fx, src_w, src_h, out_w, out_h, u, cam3d, t.0, &froms);
+    let plan =
+        kt_fx::plan::plan_chain(fx, src_w, src_h, src_scale, out_w, out_h, u, cam3d, t.0, &froms);
     for op in plan.ops {
         match op {
             kt_fx::plan::PlanOp::Snapshot => ops.push(FxOp::Snapshot),
@@ -928,7 +930,7 @@ impl Inner {
             return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
         }
         let (ops, (fw, fh), ha, ha_known, (mw, mh)) =
-            chain_ops(&src.fx, frame.width, frame.height, ow, oh, src.u, t, src.cam3d);
+            chain_ops(&src.fx, frame.width, frame.height, 1, ow, oh, src.u, t, src.cam3d);
         // K×-промежутки плана (п.314) обязаны влезать в лимит текстур
         // устройства; не влезли — аккуратный TooLarge (весь план уходит на
         // CPU, который считает ТОТ ЖЕ план — семантика одна)

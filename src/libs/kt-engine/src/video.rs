@@ -731,6 +731,7 @@ fn layer_frame_cpu(
         u: src.u,
         burst_index: t.0,
         cam3d: src.cam3d,
+        in_scale: 1,
     };
     let mut rgba = scratch.take(frame.rgba.len());
     rgba.copy_from_slice(&frame.rgba);

@@ -114,12 +114,10 @@ enum RawKind {
     Mix { idx: usize },
 }
 
-/// Построить план цепочки для входного кадра `in_w×in_h` и выхода
-/// `out_w×out_h` (Quality). Детерминированная чистая функция — оба
-/// бэкенда обязаны получать ОДИН план. `burst_index` — абсолютный тик
-/// (seed поглощённого Noise, как у ядра).
+/// Фаза A: сегментация цепочки и 1×-программы (пп.311-312). `in_w/in_h` —
+/// ЛОГИЧЕСКИЕ размеры входа (физические поделены на ступень in_scale).
 #[allow(clippy::too_many_arguments)]
-pub fn plan_chain(
+fn segment(
     fx: &[FxInstance],
     in_w: u32,
     in_h: u32,
@@ -129,10 +127,8 @@ pub fn plan_chain(
     cam3d: Option<Cam3d>,
     burst_index: i64,
     stops: &[usize],
-) -> ChainPlan {
+) -> Vec<RawKind> {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
-
-    // --- A: сегментация и 1×-программы (пп.311-312) ---
     let (mut w, mut h) = (in_w, in_h);
     let mut raw: Vec<RawKind> = Vec::new();
     let mut idx = 0usize;
@@ -198,8 +194,13 @@ pub fn plan_chain(
         } // аудио-FX прозрачны
         idx += 1;
     }
+    raw
+}
 
-    // --- B: назад — нетто-зум хвоста на каждый барьер ---
+/// Фаза B: назад — нетто-зум хвоста на каждый барьер. Второй результат —
+/// зум ПРЕФИКСА (значение аккумулятора в позиции 0): «во сколько раз
+/// цепочке нужен вход крупнее», источник ступени декода (Р.46).
+fn tail_zooms(raw: &[RawKind]) -> (Vec<(f64, f64)>, (f64, f64)) {
     let mut tail: Vec<(f64, f64)> = vec![(1.0, 1.0); raw.len()];
     let mut tm = (1.0f64, 1.0f64);
     for (ri, r) in raw.iter().enumerate().rev() {
@@ -212,28 +213,105 @@ pub fn plan_chain(
             RawKind::Snapshot | RawKind::Mix { .. } => tm = (1.0, 1.0),
         }
     }
+    (tail, tm)
+}
+
+/// Нетто-зум ПРЕФИКСА цепочки (до первого стопа силы слоя) на логическом
+/// размере `out_w×out_h` — «во сколько раз цепочке нужен вход крупнее»
+/// (Р.46, п.318: ступень декода клипа). Чистая функция; стопы выводятся из
+/// цепочки так же, как их выводит GPU-путь. Возврат ≥ 1.
+pub fn chain_head_zoom(
+    fx: &[FxInstance],
+    out_w: u32,
+    out_h: u32,
+    u: f64,
+    cam3d: Option<Cam3d>,
+) -> f64 {
+    let stops: Vec<usize> = fx
+        .iter()
+        .enumerate()
+        .filter_map(|(i, f)| match f {
+            FxInstance::LayerMix { from, .. } => Some((*from as usize).min(i)),
+            _ => None,
+        })
+        .collect();
+    let raw = segment(fx, out_w, out_h, out_w, out_h, u, cam3d, 0, &stops);
+    let (_, head) = tail_zooms(&raw);
+    head.0.max(head.1).max(1.0)
+}
+
+/// Построить план цепочки для входного кадра `in_w×in_h` и выхода
+/// `out_w×out_h` (Quality). Детерминированная чистая функция — оба
+/// бэкенда обязаны получать ОДИН план. `burst_index` — абсолютный тик
+/// (seed поглощённого Noise, как у ядра).
+///
+/// `in_scale` (Р.46, п.318) — ступень декода: физический кадр в in_scale
+/// раз крупнее логического размера цепочки. Вся арифметика шагов живёт в
+/// логике (конъюгация п.314), а детали, стиснутые в крупном входе,
+/// доносятся до барьеров и хвоста. При in_scale = 1 план — прежний.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_chain(
+    fx: &[FxInstance],
+    in_w: u32,
+    in_h: u32,
+    in_scale: u32,
+    out_w: u32,
+    out_h: u32,
+    u: f64,
+    cam3d: Option<Cam3d>,
+    burst_index: i64,
+    stops: &[usize],
+) -> ChainPlan {
+    let (mow, moh) = (out_w.max(2), out_h.max(2));
+    let s = in_scale.max(1);
+    debug_assert!(
+        in_w.is_multiple_of(s) && in_h.is_multiple_of(s),
+        "physical input is in_scale x logical"
+    );
+    // стоп в нуле обнуляет зум префикса ⇒ ступень там всегда 1
+    debug_assert!(s == 1 || !stops.contains(&0), "leading stop forbids a decode stage");
+
+    // --- A: сегментация и 1×-программы (пп.311-312) ---
+    let raw = segment(fx, in_w / s, in_h / s, out_w, out_h, u, cam3d, burst_index, stops);
+
+    // --- B: назад — нетто-зум хвоста на каждый барьер ---
+    let (tail, _) = tail_zooms(&raw);
 
     // --- C: вперёд — нетто-сжатие; K = квант(min(зум хвоста, сжатие)) ---
     let k_cap = (MAX_INTER_DIM / mow.max(moh)).max(1);
+    debug_assert!(s <= k_cap, "decode stage above the intermediate ceiling");
     let mut kmap: Vec<u32> = vec![1; raw.len()];
-    let mut sq = (1.0f64, 1.0f64);
+    // ступень входа — уже стиснутая деталь: она и есть стартовое «сжатие»
+    let mut sq = (s as f64, s as f64);
+    let mut resampled = false;
     for (ri, r) in raw.iter().enumerate() {
         match r {
             RawKind::Run { lens, .. } => {
+                resampled = true;
                 sq.0 *= lens.0;
                 sq.1 *= lens.1;
             }
             RawKind::Barrier { .. } => {
-                let benefit = tail[ri].0.max(tail[ri].1).min(sq.0.max(sq.1));
-                kmap[ri] = ss_taps(benefit).min(k_cap);
+                if resampled {
+                    let benefit = tail[ri].0.max(tail[ri].1).min(sq.0.max(sq.1));
+                    kmap[ri] = ss_taps(benefit).min(k_cap);
+                } else {
+                    // ВЕДУЩИЙ барьер (ресемпла до него не было): кадр под
+                    // ним физически S×, вид обязан считаться в этом
+                    // разрешении — benefit-формула здесь не голосует
+                    kmap[ri] = s;
+                }
             }
-            RawKind::Snapshot | RawKind::Mix { .. } => sq = (1.0, 1.0),
+            RawKind::Snapshot | RawKind::Mix { .. } => {
+                resampled = true; // стопы всегда на 1× — ведущих барьеров дальше нет
+                sq = (1.0, 1.0);
+            }
         }
     }
 
-    // --- D: сборка. Все K == 1 — готовые 1×-программы (байты пп.311-313);
-    // иначе пересборка ранов с конъюгацией (k_in, k_out).
-    if kmap.iter().all(|&k| k == 1) {
+    // --- D: сборка. Вход 1× и все K == 1 — готовые 1×-программы (байты
+    // пп.311-313); иначе пересборка ранов с конъюгацией (k_in, k_out).
+    if s == 1 && kmap.iter().all(|&k| k == 1) {
         let ops = raw
             .into_iter()
             .map(|r| match r {
@@ -247,7 +325,7 @@ pub fn plan_chain(
     }
     let mut ops = Vec::with_capacity(raw.len());
     let (mut w, mut h) = (in_w, in_h);
-    let mut cur_k = 1u32;
+    let mut cur_k = s;
     for ri in 0..raw.len() {
         match &raw[ri] {
             RawKind::Run { i, j, .. } => {
@@ -270,9 +348,9 @@ pub fn plan_chain(
                         h = p.out_h;
                     }
                     GeomExec::Legacy => {
-                        // Legacy при K≠1 невозможен (форс Fused);
-                        // здесь — одиночное зеркало на 1×-краях
-                        debug_assert!(cur_k == 1 && k_out == 1);
+                        // Legacy со СМЕНОЙ масштаба невозможен (форс
+                        // Fused); здесь — зеркало на равных краях
+                        debug_assert!(cur_k == k_out, "legacy run must not change scale");
                     }
                 }
                 cur_k = k_out;
