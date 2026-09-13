@@ -1050,3 +1050,91 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     assert_eq!(eff.len(), 1, "растянутый клип резать нельзя");
     assert_eq!(eff[0].media, MediaId(2), "и патч на нём действует");
 }
+
+/// Тест 291 (Р.43, п.300): подмена источника слоем НЕ теряет собственную
+/// анимацию события.
+///
+/// Претензия дословно: «в rendereg почему-то на самое верхнее событие не
+/// применяется pan3d пока я в морфере не отключу замену сурса, что
+/// странно».
+///
+/// Ключ автоматизации приклеен к МАТЕРИАЛУ (t212) — и это верно, пока
+/// материал тот же: обрезка прячет и открывает ключи, разрез делит кривую.
+/// Но подмена источника слоем меняет саму систему координат: у события
+/// пользователя `source_in` уезжал с 47.0 с на 99.0 с, а ключи оставались
+/// на 47.0..59.6 с — то есть ЦЕЛИКОМ левее нового окна. Кривая зажималась
+/// последним ключом, и pan3d становился постоянным: rot_y = 0, rot_z = 0.
+/// Со стороны это ровно «pan3d не применяется».
+///
+/// Правило то же, что у `clip_slice`: якорь и ключи едут ОДНОЙ дельтой.
+#[test]
+fn t291_source_replacement_carries_the_clips_own_curves() {
+    const STEP: i64 = 90_000 / 30;
+    let peak = Tick(3_000 + LEN.0 / 2);
+
+    let make = |replace: bool| -> ClipEvent {
+        let mut p = base();
+        p.clips[0].fx = vec![FxInstance::Pan3d {
+            pos_x: 0.0,
+            pos_y: 0.0,
+            pos_z: 0.0,
+            rot_x: 0.0,
+            rot_y: 0.0,
+            rot_z: 0.0,
+            anchor_x: 0.5,
+            anchor_y: 0.5,
+            scale: 1.0,
+            camera: None,
+        }];
+        p.clips[0].fx_auto = vec![vec![ParamCurve {
+            param: "rot_y".into(),
+            ease: false,
+            keys: vec![
+                AutoKey { t: Tick(3_000), v: 0.0 },
+                AutoKey { t: peak, v: 30.0 },
+                AutoKey { t: Tick(3_000 + LEN.0), v: 0.0 },
+            ],
+        }]];
+        let mut m = layer(Tick(0), LEN);
+        m.patch = MorphPatch {
+            media: replace.then_some(MediaId(2)),
+            source_in_delta: if replace { Tick(50 * 90_000) } else { Tick::ZERO },
+            ..Default::default()
+        };
+        // слой, который вообще ничего не делает, до цели не доходит —
+        // при `replace == false` патч пустой, и это законно
+        if replace {
+            p.morphers.push(m);
+        }
+        p.validate().unwrap();
+        let eff = p.effective_clips();
+        assert_eq!(eff.len(), 1, "событие не режется");
+        eff.into_iter().next().unwrap()
+    };
+
+    let plain = make(false);
+    let patched = make(true);
+    assert_eq!(patched.media, MediaId(2), "источник обязан быть подменён");
+    assert_ne!(patched.source_in, plain.source_in, "точка входа обязана уехать");
+
+    // значение кривой в СЕРЕДИНЕ события — там, где пользователь поставил
+    // пик, — обязано остаться тем же: анимация приклеена к событию, а не
+    // к номеру кадра чужого файла
+    let at = |c: &ClipEvent| {
+        let mid = Tick(c.start.0 + c.duration.0 / 2);
+        let mat =
+            kt_model::clip_material_at(c.source_in, c.start, c.duration, c.reversed, STEP, mid);
+        kt_model::curve_value(&c.fx_auto[0][0].keys, false, mat)
+    };
+    let (a, b) = (at(&plain), at(&patched));
+    assert!(
+        (a - 30.0).abs() < 1e-6,
+        "без подмены в середине события стоит пик кривой, а не {a}"
+    );
+    assert!(
+        (b - a).abs() < 1e-6,
+        "после подмены источника кривая обязана давать то же самое: было {a}, стало {b} \
+         (до Р.43 ключи оставались в СТАРОМ домене материала и кривая зажималась \
+          последним ключом — «pan3d не применяется»)"
+    );
+}

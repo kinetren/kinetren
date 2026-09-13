@@ -955,10 +955,32 @@ impl MorphPatch {
             if let Some(m) = self.media {
                 c.media = m;
             }
+            let was = c.source_in;
             c.source_in = match self.absolute_source_in {
                 Some(abs) => Tick(abs.0.max(0)),
                 None => Tick((c.source_in + self.source_in_delta).0.max(0)),
             };
+            // ЯКОРЬ И КЛЮЧИ ЕДУТ ОДНОЙ ДЕЛЬТОЙ (Р.43, п.300) — то же
+            // правило, что у `clip_slice`.
+            //
+            // Ключ приклеен к материалу (t212), и это верно, пока материал
+            // ТОТ ЖЕ: обрезка прячет и открывает ключи, разрез делит кривую.
+            // Подмена источника меняет саму систему координат, и кривая,
+            // оставшаяся в старой, уезжает из окна события целиком: она
+            // зажимается последним ключом и выглядит как «эффект перестал
+            // применяться». У пользователя `source_in` уезжал с 47.0 с на
+            // 99.0 с при ключах на 47.0..59.6 с — pan3d становился
+            // тождественным (rot_y = rot_z = 0).
+            let shift = c.source_in - was;
+            if shift.0 != 0 {
+                for slot in &mut c.fx_auto {
+                    for cur in slot {
+                        for k in &mut cur.keys {
+                            k.t = k.t + shift;
+                        }
+                    }
+                }
+            }
         }
         let add = self.chain_for(c.kind);
         if add.is_empty() {
