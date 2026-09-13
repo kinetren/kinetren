@@ -210,7 +210,12 @@ fn probe_range(project: &Project, from: f64, to: f64, time_with: Option<&str>) -
     // это число: доля реального времени, которую съедает ОДИН аудио-рендер
     // этого места, на прогретом кэше и без UI.
     if let Some(path) = time_with {
-        let mut fetcher = match open_sources(project, path, false) {
+        // ЧЕРЕЗ КЭШ, как в программе: без него замер считал бы декод
+        // заново на каждый бёрст, а у реверса чтение идёт НАЗАД по файлу —
+        // это совсем другой порядок цены и совсем не то, что переживает
+        // пользователь на повторе (Р.43, п.302).
+        let cache = std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig::default()));
+        let mut fetcher = match open_sources(project, path, false, Some(cache)) {
             Ok(f) => f,
             Err(e) => {
                 eprintln!("{e}");
@@ -260,12 +265,13 @@ fn open_sources(
     project: &Project,
     project_path: &str,
     strict: bool,
+    cache: Option<std::sync::Arc<kt_cache::BurstCache>>,
 ) -> Result<DirectFetcher, String> {
     let base = std::path::Path::new(project_path)
         .parent()
         .unwrap_or(std::path::Path::new("."))
         .to_path_buf();
-    let mut fetcher = DirectFetcher::new(None);
+    let mut fetcher = DirectFetcher::new(cache);
     for m in &project.media {
         if let Some(pattern) = synth_pattern(&m.path) {
             fetcher.add_source(m.id, Box::new(SyntheticSource::new(Tick(90_000 * 3600), pattern)));

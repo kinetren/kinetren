@@ -1970,6 +1970,7 @@ dependencies = [
 name = "kt-cli"
 version = "0.1.0"
 dependencies = [
+ "kt-cache",
  "kt-engine",
  "kt-gpu",
  "kt-media",
