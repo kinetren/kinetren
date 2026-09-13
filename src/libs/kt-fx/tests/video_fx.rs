@@ -104,6 +104,24 @@ fn t26_golden_hashes_all_effects() {
     assert!(failures.is_empty(), "видео-FX изменили поведение:\n{}", failures.join("\n"));
 }
 
+/// Тест 299 (п.306): сетка крупнее кадра не паникует и не смещается.
+/// До правки `center: true` при `cols > out_w` уводил `ow - grid_w` в
+/// u32-underflow (паника в debug); гард — зеркало kt-gpu `chain_ops`.
+#[test]
+fn t299_eventgrid_larger_than_frame_is_guarded() {
+    for center in [false, true] {
+        let f = run(FxInstance::EventGrid { cols: 1000, rows: 1000, center });
+        assert_eq!((f.w, f.h), (W, H));
+        let again = run(FxInstance::EventGrid { cols: 1000, rows: 1000, center });
+        assert_eq!(f.rgba, again.rgba, "детерминизм (center={center})");
+    }
+    // сетка шире кадра по X (cols→кламп 512 > W): center с гардом не смещает,
+    // по Y grid_h == oh даёт offy = 0 — кадры обязаны совпасть байт-в-байт
+    let a = run(FxInstance::EventGrid { cols: 1000, rows: 4, center: true });
+    let b = run(FxInstance::EventGrid { cols: 1000, rows: 4, center: false });
+    assert_eq!(a.rgba, b.rgba, "гард обязан зеркалить GPU: вне кадра — от нуля");
+}
+
 #[test]
 fn t26_mirror_is_involution() {
     let m = FxInstance::Mirror { horizontal: true, vertical: true };

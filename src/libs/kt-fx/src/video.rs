@@ -727,7 +727,13 @@ fn event_grid(
         p[3] = 255; // чёрный холст
     }
     let (grid_w, grid_h) = (cw * cols, chh * rows);
-    let (offx, offy) = if center { ((ow - grid_w) / 2, (oh - grid_h) / 2) } else { (0, 0) };
+    // сетка крупнее кадра (cols > ow при клампе ячейки в 1 px) не центрируется:
+    // без гарда `ow - grid_w` уходит в u32-underflow (п.306, зеркало kt-gpu)
+    let (offx, offy) = if center && grid_w <= ow && grid_h <= oh {
+        ((ow - grid_w) / 2, (oh - grid_h) / 2)
+    } else {
+        (0, 0)
+    };
     for ry in 0..rows {
         for rx in 0..cols {
             for y in 0..chh {
