@@ -147,10 +147,13 @@ fn t298_pan3d_cpu_edges() {
     assert_eq!(a(&half, W / 2, H / 2), 255, "центр непрозрачен");
 
     // поворот к ребру: часть плоскости за камерой (w ≤ 0) — прозрачно,
-    // без NaN/паники; альфа строго 0 или 255, детерминировано
+    // без NaN/паники и детерминировано. Кромка силуэта с п.309
+    // анти-алиасится (сабтапы мешают прозрачное с контентом), поэтому
+    // альфа на контуре дробная — но есть и чистая прозрачность, и
+    // чистый контент.
     let edge = apply_video_chain(&[p3(110.0, 1.0)], test_frame(), &ctx3d);
-    assert!(edge.rgba.chunks_exact(4).all(|p| p[3] == 0 || p[3] == 255));
     assert!(edge.rgba.chunks_exact(4).any(|p| p[3] == 0), "за камерой — прозрачность");
+    assert!(edge.rgba.chunks_exact(4).any(|p| p[3] == 255), "контент остался");
     let again = apply_video_chain(&[p3(110.0, 1.0)], test_frame(), &ctx3d);
     assert_eq!(edge.rgba, again.rgba, "детерминизм");
 
@@ -174,4 +177,221 @@ fn t297e_run_end_stops_at_barriers_only() {
     assert_eq!(geo_run_end(&fx, 0, &[]), 3);
     // стоп-индекс (снапшот силы слоя) рвёт ран
     assert_eq!(geo_run_end(&fx, 0, &[2]), 1);
+}
+
+/// Шахматка 1×1 px — самый хрупкий к ресемплингу узор.
+fn checkerboard() -> Frame {
+    let mut rgba = vec![0u8; (W * H * 4) as usize];
+    for y in 0..H {
+        for x in 0..W {
+            let i = ((y * W + x) * 4) as usize;
+            let v = if (x + y) % 2 == 0 { 0 } else { 255 };
+            rgba[i] = v;
+            rgba[i + 1] = v;
+            rgba[i + 2] = v;
+            rgba[i + 3] = 255;
+        }
+    }
+    Frame { w: W, h: H, rgba, has_alpha: false }
+}
+
+/// Средний горизонтальный контраст красного канала (0..255).
+fn contrast(f: &Frame) -> f64 {
+    let mut sum = 0u64;
+    let mut n = 0u64;
+    for y in 0..f.h {
+        for x in 1..f.w {
+            let i = ((y * f.w + x) * 4) as usize;
+            let j = ((y * f.w + x - 1) * 4) as usize;
+            sum += (f.rgba[i] as i64 - f.rgba[j] as i64).unsigned_abs();
+            n += 1;
+        }
+    }
+    sum as f64 / n as f64
+}
+
+/// Тест 296 (п.307/п.309, Р.44): нетто-единичная гео-цепочка ВОЗВРАЩАЕТ
+/// детализацию. Сетка 2×2 уменьшила вдвое, зум ×2 вернул — слитый проход
+/// сэмплирует ИСХОДНИК (позиции выходят точно на текселя), и шахматка
+/// приходит целой. Пошаговый путь (до Р.44) растеризовал сетку в
+/// полутекстельной фазе: шахматка усреднялась в ровный серый, и зум
+/// увеличивал кашу — контраст падал до нуля. Тест ОБЯЗАН падать на
+/// старом коде (проверено на коммите К2 в worktree — контраст 0.0).
+#[test]
+fn t296_net_identity_chain_preserves_detail() {
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let out = apply_video_chain(&[grid, zoom2], checkerboard(), &ctx());
+    let c = contrast(&out);
+    assert!(c >= 250.0, "шахматка обязана вернуться целой, контраст {c:.1}");
+
+    // тот же принцип с перспективой (PerPixel-суперсемплинг): сетка →
+    // pan3d-тождество → сетка → pan3d-зум ×4; нетто ≈ 1, центр кадра
+    // обязан сохранить высокий контраст (кайма сеток размывает края)
+    use kt_fx::geom::Cam3d;
+    let ctx3d = VideoFxCtx {
+        cam3d: Some(Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 }),
+        ..ctx()
+    };
+    let p3 = |scale: f64| FxInstance::Pan3d {
+        pos_x: 0.0,
+        pos_y: 0.0,
+        pos_z: 0.0,
+        rot_x: 0.0,
+        rot_y: 0.0,
+        rot_z: 0.0,
+        anchor_x: 0.5,
+        anchor_y: 0.5,
+        scale,
+        camera: None,
+    };
+    let grid_c = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
+    let out3d = apply_video_chain(
+        &[grid_c.clone(), p3(1.0), grid_c, p3(4.0)],
+        checkerboard(),
+        &ctx3d,
+    );
+    // контраст по центральной трети кадра
+    let mut sum = 0u64;
+    let mut n = 0u64;
+    for y in H / 3..2 * H / 3 {
+        for x in W / 3 + 1..2 * W / 3 {
+            let i = ((y * W + x) * 4) as usize;
+            let j = ((y * W + x - 1) * 4) as usize;
+            sum += (out3d.rgba[i] as i64 - out3d.rgba[j] as i64).unsigned_abs();
+            n += 1;
+        }
+    }
+    let c3 = sum as f64 / n as f64;
+    assert!(c3 >= 150.0, "нетто-единица с pan3d сохраняет детализацию, контраст {c3:.1}");
+}
+
+/// Суперсемплинг реально включён: сетка 4×4 (минификация ×4) на шумовом
+/// кадре обязана дать НИЗКУЮ дисперсию (16-таповое box-среднее), а не
+/// дисперсию точечной билинейки (2 тапа из 4 столбцов).
+#[test]
+fn t296b_supersampling_tames_minification_noise() {
+    let mut rgba = vec![0u8; (W * H * 4) as usize];
+    for (p, px) in rgba.chunks_exact_mut(4).enumerate() {
+        // детерминированный «шум» — мультипликативный хэш позиции
+        let v = ((p as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 56) as u8;
+        px[0] = v;
+        px[1] = v;
+        px[2] = v;
+        px[3] = 255;
+    }
+    let src = Frame { w: W, h: H, rgba, has_alpha: false };
+    let var = |f: &Frame, x0: u32, x1: u32, y0: u32, y1: u32| {
+        let mut vals = Vec::new();
+        for y in y0..y1 {
+            for x in x0..x1 {
+                vals.push(f.rgba[((y * f.w + x) * 4) as usize] as f64);
+            }
+        }
+        let m = vals.iter().sum::<f64>() / vals.len() as f64;
+        vals.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / vals.len() as f64
+    };
+    let src_var = var(&src, 0, W, 0, H);
+    let out = apply_video_chain(
+        &[FxInstance::EventGrid { cols: 4, rows: 4, center: false }],
+        src,
+        &ctx(),
+    );
+    // первая плитка (16×9) — уменьшенный вчетверо кадр
+    let out_var = var(&out, 0, 16, 0, 9);
+    assert!(
+        out_var < src_var / 6.0,
+        "box-суперсемплинг обязан гасить шум: {out_var:.0} против {src_var:.0} у источника"
+    );
+}
+
+/// Тест 300 (п.309): формула тапов и граница включения суперсемплинга.
+#[test]
+fn t300_ss_taps_and_routing_boundary() {
+    use kt_fx::geom::ss_taps;
+    // квант 1/32: включение строго при len > 1 + 1/64
+    assert_eq!(ss_taps(1.0), 1);
+    assert_eq!(ss_taps(1.01), 1);
+    assert_eq!(ss_taps(1.015624), 1);
+    assert_eq!(ss_taps(1.015625), 2); // ровно 1 + 1/64
+    assert_eq!(ss_taps(2.0), 2);
+    assert_eq!(ss_taps(2.04), 3);
+    assert_eq!(ss_taps(3.97), 4);
+    assert_eq!(ss_taps(100.0), 4); // потолок
+
+    // Pan без минификации — старое ядро (байты до Р.44); с минификацией —
+    // слитый проход ради суперсемплинга
+    let pan1 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 };
+    let pan_min = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.9 };
+    assert!(matches!(build_geom_exec(&[&pan1], W, H, W, H, 0.5, None), GeomExec::Legacy));
+    assert!(matches!(build_geom_exec(&[&pan_min], W, H, W, H, 0.5, None), GeomExec::Fused(_)));
+
+    // детерминизм слитого суперсемплинга
+    let a = run(std::slice::from_ref(&pan_min));
+    let b = run(std::slice::from_ref(&pan_min));
+    assert_eq!(a.rgba, b.rgba);
+}
+
+/// Замер (не тест): нс/px слитого прохода на 1080p. Запуск:
+/// `cargo test -p kt-fx --release --test geo_fuse -- --ignored --nocapture`
+/// О скорости судить ТОЛЬКО по релизу (п.301).
+#[test]
+#[ignore]
+fn bench_geom_1080p() {
+    use kt_fx::geom::Cam3d;
+    use std::time::Instant;
+    let (bw, bh) = (1920u32, 1080u32);
+    let mut rgba = vec![0u8; (bw * bh * 4) as usize];
+    for (p, px) in rgba.chunks_exact_mut(4).enumerate() {
+        px[0] = (p % 251) as u8;
+        px[1] = (p % 241) as u8;
+        px[2] = (p % 239) as u8;
+        px[3] = 255;
+    }
+    let mk = || Frame { w: bw, h: bh, rgba: rgba.clone(), has_alpha: false };
+    let bctx = VideoFxCtx { out_w: bw, out_h: bh, u: 0.5, burst_index: 90_000, cam3d: None };
+    let ctx3d = VideoFxCtx {
+        cam3d: Some(Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 }),
+        ..bctx
+    };
+    let p3 = |scale: f64| FxInstance::Pan3d {
+        pos_x: 0.0,
+        pos_y: 0.0,
+        pos_z: 0.0,
+        rot_x: 0.0,
+        rot_y: 10.0,
+        rot_z: 0.0,
+        anchor_x: 0.5,
+        anchor_y: 0.5,
+        scale,
+        camera: None,
+    };
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
+    let npx = (bw * bh) as f64;
+    let bench = |name: &str, fx: &[FxInstance], c: &VideoFxCtx| {
+        let t0 = Instant::now();
+        let out = apply_video_chain(fx, mk(), c);
+        let dt = t0.elapsed();
+        println!(
+            "{name}: {:.1} мс/кадр 1080p, {:.1} нс/px (выход {}x{})",
+            dt.as_secs_f64() * 1e3,
+            dt.as_secs_f64() * 1e9 / npx,
+            out.w,
+            out.h
+        );
+    };
+    bench("pan legacy (zoom 1.5)", &[FxInstance::Pan {
+        mode: PanMode::Stretch,
+        pan_x: 0.0,
+        pan_y: 0.0,
+        zoom: 1.5,
+    }], &bctx);
+    bench("grid 2x2 слитый + SS 2x2", std::slice::from_ref(&grid), &bctx);
+    bench("цепочка пользователя grid→pan3d→grid→pan3d(зум)", &[
+        grid.clone(),
+        p3(1.0),
+        grid.clone(),
+        p3(4.0),
+    ], &ctx3d);
+    bench("pan3d одиночный (perpixel-пробы)", &[p3(0.9)], &ctx3d);
 }

@@ -115,7 +115,13 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
         kinds |= kind << (i * 4);
     }
     debug_assert!(cur <= 62, "geom program exceeds uniform slots");
-    u.h = [prog.prims.len() as u32, kinds as u32, (kinds >> 32) as u32, 0];
+    // суперсемплинг (п.309): тапы аффинных серий посчитаны на CPU и едут
+    // числом; Proj-серии меряют якобиан по-пиксельно ТОЙ ЖЕ формулой
+    let ss = match prog.ss {
+        kt_fx::geom::SsSpec::Const { nx, ny } => (nx << 8) | (ny << 16),
+        kt_fx::geom::SsSpec::PerPixel => 1,
+    };
+    u.h = [prog.prims.len() as u32, kinds as u32, (kinds >> 32) as u32, ss];
     u.d = [prog.in_w, prog.in_h, prog.out_w, prog.out_h];
     u
 }

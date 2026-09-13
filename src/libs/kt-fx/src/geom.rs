@@ -144,6 +144,32 @@ pub enum GeomPrim {
 /// Сентинел отключённой оси Clamp (влезает в f32 юниформы без inf).
 pub const CLAMP_OFF: f64 = 1.0e30;
 
+/// Потолок тапов суперсемплинга на ось (максимум 4×4 = 16 сабтапов).
+pub const SS_MAX: u32 = 4;
+
+/// Суперсемплинг по якобиану (Р.44, п.309): сколько сабтапов на ось.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SsSpec {
+    /// Аффинная программа (в т.ч. с Fold): якобиан КОНСТАНТЕН по кадру —
+    /// число тапов посчитано один раз в f64 при построении и едет в
+    /// юниформу. Паритетный риск CPU/GPU нулевой по построению.
+    Const { nx: u32, ny: u32 },
+    /// В программе есть Proj (перспектива): якобиан меняется по кадру —
+    /// оба исполнителя меряют его конечными разностями (две координатные
+    /// пробы на пиксель) и считают тапы ОДНОЙ формулой `ss_taps`.
+    PerPixel,
+}
+
+/// Число сабтапов на ось из длины образа единичного выходного шага в
+/// пространстве источника. Квант 1/32 px гасит float-шум на тождестве:
+/// суперсемплинг включается строго при len > 1 + 1/64 (len == 1.0 —
+/// ровно один тап, прежний путь байт-в-байт; сторожит t26
+/// pan-stretch-identity и t300).
+pub fn ss_taps(len: f64) -> u32 {
+    let q = (len * 32.0 + 0.5).floor() / 32.0;
+    (q.ceil() as u32).clamp(1, SS_MAX)
+}
+
 /// Слитая программа гео-серии.
 #[derive(Debug, Clone)]
 pub struct GeomProgram {
@@ -157,6 +183,8 @@ pub struct GeomProgram {
     /// Свёртка правил альфы по шагам (EventGrid ⇒ known, непрозрачный).
     pub has_alpha_known: bool,
     pub has_alpha: bool,
+    /// Суперсемплинг при минификации (п.309).
+    pub ss: SsSpec,
 }
 
 /// Решение исполнения гео-рана. Принимается ЗДЕСЬ и только здесь — оба
@@ -181,13 +209,20 @@ pub fn build_geom_exec(
     cam3d: Option<Cam3d>,
 ) -> GeomExec {
     debug_assert!(!steps.is_empty() && steps.len() <= MAX_GEO_STEPS);
-    if steps.len() == 1
-        && matches!(
-            steps[0],
-            FxInstance::Pan { .. } | FxInstance::CamMotion { .. } | FxInstance::Mirror { .. }
-        )
-    {
-        return GeomExec::Legacy;
+    if steps.len() == 1 {
+        // одиночное зеркало ресемпла не делает — всегда старое ядро
+        if matches!(steps[0], FxInstance::Mirror { .. }) {
+            return GeomExec::Legacy;
+        }
+        // одиночный Pan/CamMotion БЕЗ минификации — старое ядро байт-в-байт;
+        // с минификацией — слитый проход ради суперсемплинга (п.309)
+        if matches!(steps[0], FxInstance::Pan { .. } | FxInstance::CamMotion { .. }) {
+            let prog = build_program(steps, in_w, in_h, out_w, out_h, u, cam3d);
+            if prog.ss == (SsSpec::Const { nx: 1, ny: 1 }) {
+                return GeomExec::Legacy;
+            }
+            return GeomExec::Fused(prog);
+        }
     }
     GeomExec::Fused(build_program(steps, in_w, in_h, out_w, out_h, u, cam3d))
 }
@@ -365,9 +400,31 @@ fn build_program(
     }
     flush(&mut pending, &mut prims);
     debug_assert!(prims.len() <= MAX_PRIMS, "geom program exceeds MAX_PRIMS: {}", prims.len());
+    // Суперсемплинг (п.309): у аффинной программы (в т.ч. с Fold) якобиан
+    // КОНСТАНТЕН — тапы считаются один раз здесь, в f64, и едут в юниформу;
+    // Proj (перспектива) делает его по-пиксельным.
+    let ss = if prims.iter().any(|p| matches!(p, GeomPrim::Proj { .. })) {
+        SsSpec::PerPixel
+    } else {
+        let (mut lx, mut ly) = (1.0f64, 1.0f64);
+        for p in &prims {
+            match p {
+                GeomPrim::Affine(a) => {
+                    lx *= a.ax.abs();
+                    ly *= a.ay.abs();
+                }
+                GeomPrim::Fold { cw, ch, in_w, in_h, .. } => {
+                    lx *= in_w / cw;
+                    ly *= in_h / ch;
+                }
+                GeomPrim::Clamp { .. } | GeomPrim::Proj { .. } => {}
+            }
+        }
+        SsSpec::Const { nx: ss_taps(lx), ny: ss_taps(ly) }
+    };
     // выход серии — фактические размеры после шагов: серия из одних
     // Mirror (или Pan3d без камеры) размеров НЕ меняет — как старый путь
-    GeomProgram { prims, in_w, in_h, out_w: w, out_h: h, has_alpha_known, has_alpha }
+    GeomProgram { prims, in_w, in_h, out_w: w, out_h: h, has_alpha_known, has_alpha, ss }
 }
 
 // ---- Pan3d: гомография (Р.44) ----------------------------------------------
@@ -618,12 +675,12 @@ fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
     Mapped::At(x, y)
 }
 
-/// Финальный тап: та же арифметика, что внутренний цикл
-/// `bilinear_into_scalar` (f64-аккумулятор, кламп тапов к краям, round
-/// half-away). Дублирование сознательное: скаляр билинейки НЕ рефакторится
+/// Финальный тап БЕЗ округления: та же арифметика, что внутренний цикл
+/// `bilinear_into_scalar` (f64-аккумулятор, кламп тапов к краям).
+/// Дублирование сознательное: скаляр билинейки НЕ рефакторится
 /// (kt-fx/CLAUDE.md) — оба текста и есть определение байтов.
 #[inline]
-fn sample_bilinear(src: &Frame, sx: f64, sy: f64) -> [u8; 4] {
+fn sample_bilinear_f64(src: &Frame, sx: f64, sy: f64) -> [f64; 4] {
     let (sw, sh) = (src.w as i64, src.h as i64);
     let y = sy.floor() as i64;
     let fy = sy - y as f64;
@@ -641,28 +698,86 @@ fn sample_bilinear(src: &Frame, sx: f64, sy: f64) -> [u8; 4] {
             }
         }
     }
-    let mut out = [0u8; 4];
-    for (c, o) in out.iter_mut().enumerate() {
-        *o = px[c].round().clamp(0.0, 255.0) as u8;
+    px
+}
+
+/// Один сабтап: обратная цепочка целиком + тап (кайма Fold и силуэт Proj
+/// анти-алиасятся честно — каждый сабтап решает короткие замыкания сам).
+#[inline]
+fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
+    match map_pos(&p.prims, x, y) {
+        Mapped::At(sx, sy) => sample_bilinear_f64(src, sx, sy),
+        Mapped::Black => [0.0, 0.0, 0.0, 255.0],
+        Mapped::Transparent => [0.0, 0.0, 0.0, 0.0],
     }
-    out
+}
+
+/// Координатная проба (без тапа) для по-пиксельного якобиана Proj-серий.
+#[inline]
+fn coords_at(p: &GeomProgram, x: f64, y: f64) -> Option<(f64, f64)> {
+    match map_pos(&p.prims, x, y) {
+        Mapped::At(sx, sy) => Some((sx, sy)),
+        _ => None,
+    }
+}
+
+/// Тапы по-пиксельно: конечные разности (координатные пробы). Мёртвая
+/// прямая проба (сосед за силуэтом/краем) заменяется ОБРАТНОЙ — иначе
+/// последний живой столбец тождественной карты получал бы лишние тапы и
+/// терял байт-точность (t298). Обе пробы мертвы или мёртв центр — один
+/// тап: цвет там всё равно решают короткие замыкания сабтапов.
+#[inline]
+fn probe_taps(p: &GeomProgram, ox: f64, oy: f64) -> (u32, u32) {
+    let c0 = coords_at(p, ox, oy);
+    let axis = |dx: f64, dy: f64| -> f64 {
+        let Some(a) = c0 else { return 1.0 };
+        let dist = |b: (f64, f64)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt();
+        if let Some(b) = coords_at(p, ox + dx, oy + dy) {
+            return dist(b);
+        }
+        if let Some(b) = coords_at(p, ox - dx, oy - dy) {
+            return dist(b);
+        }
+        1.0
+    };
+    (ss_taps(axis(1.0, 0.0)), ss_taps(axis(0.0, 1.0)))
 }
 
 /// CPU-исполнитель слитой программы: скалярный f64-эталон (инвариант №11).
 /// SIMD у слитого прохода в этом раунде НЕТ (замер и порог 1.3× — отдельная
-/// работа, kt-fx/CLAUDE.md).
+/// работа, kt-fx/CLAUDE.md). Один тап (нет минификации) — прежние байты;
+/// суперсемплинг — box-среднее сабтапов без промежуточных округлений,
+/// round один раз (п.309).
 pub fn exec_geom_cpu(p: &GeomProgram, src: &Frame, scratch: &mut FxScratch) -> Frame {
     let (ow, oh) = (p.out_w, p.out_h);
     let mut out = scratch.take((ow * oh * 4) as usize);
     for oy in 0..oh {
         for ox in 0..ow {
-            let px = match map_pos(&p.prims, ox as f64, oy as f64) {
-                Mapped::At(sx, sy) => sample_bilinear(src, sx, sy),
-                Mapped::Black => [0, 0, 0, 255],
-                Mapped::Transparent => [0, 0, 0, 0],
+            let (nx, ny) = match p.ss {
+                SsSpec::Const { nx, ny } => (nx, ny),
+                SsSpec::PerPixel => probe_taps(p, ox as f64, oy as f64),
+            };
+            let px = if nx == 1 && ny == 1 {
+                sample_at(p, src, ox as f64, oy as f64)
+            } else {
+                let mut acc = [0f64; 4];
+                for j in 0..ny {
+                    let sy = oy as f64 - 0.5 + (j as f64 + 0.5) / ny as f64;
+                    for i in 0..nx {
+                        let sx = ox as f64 - 0.5 + (i as f64 + 0.5) / nx as f64;
+                        let s = sample_at(p, src, sx, sy);
+                        for (c, a) in acc.iter_mut().enumerate() {
+                            *a += s[c];
+                        }
+                    }
+                }
+                let n = (nx * ny) as f64;
+                [acc[0] / n, acc[1] / n, acc[2] / n, acc[3] / n]
             };
             let oi = ((oy * ow + ox) * 4) as usize;
-            out[oi..oi + 4].copy_from_slice(&px);
+            for c in 0..4 {
+                out[oi + c] = px[c].round().clamp(0.0, 255.0) as u8;
+            }
         }
     }
     let has_alpha = if p.has_alpha_known { p.has_alpha } else { src.has_alpha };
