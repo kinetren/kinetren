@@ -73,45 +73,75 @@ pub fn apply_video_chain_pooled(
     ctx: &VideoFxCtx,
     scratch: &mut FxScratch,
 ) -> Frame {
-    let mut i = 0usize;
-    while i < fx.len() {
-        if crate::geom::is_geo(&fx[i]) {
-            let j = crate::geom::geo_run_end(fx, i, &[]);
-            frame = crate::geom::apply_geo_run(&fx[i..j], frame, ctx, scratch);
-            i = j;
-            continue;
-        }
-        frame = match &fx[i] {
-            FxInstance::Blur { radius, radius_y } => blur(frame, *radius, *radius_y, scratch),
-            FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
-                greenscreen(frame, [*key_r, *key_g, *key_b], *tolerance, *softness, *spill)
+    // План строится ОБЩИМ кодом (crate::plan, п.311) — тем же, что зовёт
+    // GPU-путь; здесь только исполнение опов.
+    let plan = crate::plan::plan_chain(
+        fx,
+        frame.w,
+        frame.h,
+        ctx.out_w,
+        ctx.out_h,
+        ctx.u,
+        ctx.cam3d,
+        &[],
+    );
+    for op in plan.ops {
+        frame = match op {
+            crate::plan::PlanOp::Run { i, j, exec } => match exec {
+                crate::geom::GeomExec::Legacy => {
+                    let step = fx[i..j]
+                        .iter()
+                        .find(|f| crate::geom::is_geo(f))
+                        .expect("legacy run has a geo step");
+                    apply_legacy_geo(step, frame, ctx, scratch)
+                }
+                crate::geom::GeomExec::Fused(prog) => {
+                    let nf = crate::geom::exec_geom_cpu(&prog, &frame, scratch);
+                    scratch.put(frame.rgba);
+                    nf
+                }
+            },
+            crate::plan::PlanOp::Barrier { idx, res_scale: _ } => {
+                apply_barrier(&fx[idx], frame, ctx, scratch)
             }
-            FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => edges(
-                frame,
-                *threshold,
-                *thickness,
-                [*color_r, *color_g, *color_b],
-                scratch,
-            ),
-            FxInstance::Noise { amount, size, color } => {
-                noise(frame, *amount, *size, *color, ctx.burst_index)
-            }
-            FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
-                vhs(frame, *rgb_shift, *bleed, *scan_step, *jitter, ctx.burst_index, scratch)
-            }
-            FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => glow(
-                frame,
-                *strength,
-                *radius,
-                *threshold,
-                [*tint_r, *tint_g, *tint_b],
-                scratch,
-            ),
-            _ => frame, // аудио-FX и LayerMix (сила — уровнем выше)
+            // сила слоя применяется уровнем выше (apply_chain_with_mixes в
+            // kt-engine); в плоской цепочке слот — passthrough, как раньше
+            crate::plan::PlanOp::Snapshot | crate::plan::PlanOp::Mix { .. } => frame,
         };
-        i += 1;
     }
     frame
+}
+
+/// Один барьерный эффект (нелокальный/поточечный вне серий) — прежние
+/// ядра. Зовётся только исполнителем плана.
+fn apply_barrier(
+    f: &FxInstance,
+    frame: Frame,
+    ctx: &VideoFxCtx,
+    scratch: &mut FxScratch,
+) -> Frame {
+    match f {
+        FxInstance::Blur { radius, radius_y } => blur(frame, *radius, *radius_y, scratch),
+        FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
+            greenscreen(frame, [*key_r, *key_g, *key_b], *tolerance, *softness, *spill)
+        }
+        FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => {
+            edges(frame, *threshold, *thickness, [*color_r, *color_g, *color_b], scratch)
+        }
+        FxInstance::Noise { amount, size, color } => {
+            noise(frame, *amount, *size, *color, ctx.burst_index)
+        }
+        FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
+            vhs(frame, *rgb_shift, *bleed, *scan_step, *jitter, ctx.burst_index, scratch)
+        }
+        FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
+            glow(frame, *strength, *radius, *threshold, [*tint_r, *tint_g, *tint_b], scratch)
+        }
+        _ => {
+            debug_assert!(false, "barrier op on non-barrier fx");
+            frame
+        }
+    }
 }
 
 /// Одиночный гео-эффект СТАРЫМИ ядрами (`GeomExec::Legacy`): байты как до

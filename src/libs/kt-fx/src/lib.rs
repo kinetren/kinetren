@@ -34,6 +34,7 @@ pub enum PullKind {
 }
 
 pub mod geom;
+pub mod plan;
 pub mod simd;
 pub mod video;
 mod video_simd;

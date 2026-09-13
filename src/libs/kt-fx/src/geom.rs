@@ -16,7 +16,7 @@
 //! Мульти-шаговые серии дают НОВЫЕ байты (лучше: без потерь) — это
 //! санкционировано владельцем (docs/user-feedback.md Р.44).
 
-use crate::video::{Frame, FxScratch, VideoFxCtx};
+use crate::video::{Frame, FxScratch};
 use kt_model::FxInstance;
 
 /// Потолок гео-шагов в одном слитом проходе: длиннее — серия режется на
@@ -784,20 +784,5 @@ pub fn exec_geom_cpu(p: &GeomProgram, src: &Frame, scratch: &mut FxScratch) -> F
     Frame { w: ow, h: oh, rgba: out, has_alpha }
 }
 
-/// Применить гео-ран `fx[i..j)` на CPU: решение (legacy/fused) — общее.
-pub fn apply_geo_run(
-    run: &[FxInstance],
-    frame: Frame,
-    ctx: &VideoFxCtx,
-    scratch: &mut FxScratch,
-) -> Frame {
-    let steps: Vec<&FxInstance> = run.iter().filter(|f| is_geo(f)).collect();
-    match build_geom_exec(&steps, frame.w, frame.h, ctx.out_w, ctx.out_h, ctx.u, ctx.cam3d) {
-        GeomExec::Legacy => crate::video::apply_legacy_geo(steps[0], frame, ctx, scratch),
-        GeomExec::Fused(prog) => {
-            let nf = exec_geom_cpu(&prog, &frame, scratch);
-            scratch.put(frame.rgba);
-            nf
-        }
-    }
-}
+// Исполнение гео-рана живёт в исполнителях плана (video.rs / kt-gpu):
+// решение legacy/fused уже принято `plan_chain` (Р.45, п.311).

@@ -395,3 +395,47 @@ fn bench_geom_1080p() {
     ], &ctx3d);
     bench("pan3d одиночный (perpixel-пробы)", &[p3(0.9)], &ctx3d);
 }
+
+/// Тест 306 (п.311, Р.45): план цепочки — единственное место сегментации.
+/// Раны/барьеры/маркеры силы, бюджет шагов, и «план слайса ≡ кусок плана
+/// целого» (CPU режет по стопам уровнем выше, GPU планирует целиком со
+/// stops — картинки обязаны совпасть).
+#[test]
+fn t306_chain_plan_segmentation() {
+    use kt_fx::plan::{PlanOp, plan_chain};
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let gain = FxInstance::Gain { db: 0.0, pan: 0.0 };
+    let blur = FxInstance::blur(8);
+
+    // ран (grid + прозрачный аудио + mirror), барьер, ран
+    let fx = vec![grid.clone(), gain.clone(), mir.clone(), blur.clone(), grid.clone()];
+    let p = plan_chain(&fx, W, H, W, H, 0.5, None, &[]);
+    assert_eq!(p.ops.len(), 3);
+    assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
+    assert!(matches!(p.ops[1], PlanOp::Barrier { idx: 3, res_scale: 1 }));
+    assert!(matches!(p.ops[2], PlanOp::Run { i: 4, j: 5, .. }));
+
+    // сила слоя: снапшот-точка рвёт ран, слот — маркер Mix
+    let fxm = vec![grid.clone(), FxInstance::LayerMix { amount: 0.5, from: 0 }, mir.clone()];
+    let pm = plan_chain(&fxm, W, H, W, H, 0.5, None, &[0]);
+    assert!(matches!(pm.ops[0], PlanOp::Snapshot));
+    assert!(matches!(pm.ops[1], PlanOp::Run { i: 0, j: 1, .. }));
+    assert!(matches!(pm.ops[2], PlanOp::Mix { idx: 1 }));
+    assert!(matches!(pm.ops[3], PlanOp::Run { i: 2, j: 3, .. }));
+    assert_eq!(pm.ops.len(), 4);
+
+    // «план слайса ≡ кусок плана целого»: не-маркерные опы совпадают
+    let s1 = plan_chain(&fxm[0..1], W, H, W, H, 0.5, None, &[]);
+    let s2 = plan_chain(&fxm[2..3], W, H, W, H, 0.5, None, &[]);
+    assert!(matches!(s1.ops[..], [PlanOp::Run { i: 0, j: 1, .. }]));
+    assert!(matches!(s2.ops[..], [PlanOp::Run { i: 0, j: 1, .. }]));
+
+    // бюджет гео-шагов: 7 подряд режутся на 6 + 1 (в точке разреза
+    // качество = сегодняшнее)
+    let seven: Vec<FxInstance> = (0..7).map(|_| mir.clone()).collect();
+    let p7 = plan_chain(&seven, W, H, W, H, 0.5, None, &[]);
+    assert_eq!(p7.ops.len(), 2);
+    assert!(matches!(p7.ops[0], PlanOp::Run { i: 0, j: 6, .. }));
+    assert!(matches!(p7.ops[1], PlanOp::Run { i: 6, j: 7, .. }));
+}

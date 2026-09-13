@@ -245,20 +245,26 @@ fn chain_ops(
             _ => None,
         })
         .collect();
-    let mut idx = 0usize;
-    while idx < fx.len() {
-        if froms.contains(&idx) {
-            ops.push(FxOp::Snapshot);
-        }
-        // Гео-серия (Р.44): сегментацию и выбор legacy/fused делает kt-fx —
-        // ОБЩИЙ код обоих бэкендов (инвариант №7). Снапшот-точки силы слоя
-        // рвут серию так же, как apply_chain_with_mixes на CPU.
-        if kt_fx::geom::is_geo(&fx[idx]) {
-            let end = kt_fx::geom::geo_run_end(fx, idx, &froms);
-            let steps: Vec<&FxInstance> =
-                fx[idx..end].iter().filter(|f| kt_fx::geom::is_geo(f)).collect();
-            match kt_fx::geom::build_geom_exec(&steps, w, h, out_w, out_h, u, cam3d) {
-                kt_fx::geom::GeomExec::Legacy => match steps[0] {
+    // План цепочки строит kt-fx (Р.45, п.311) — ОБЩИЙ код обоих бэкендов
+    // (инвариант №7); здесь опы только транслируются в FxOp.
+    let plan = kt_fx::plan::plan_chain(fx, src_w, src_h, out_w, out_h, u, cam3d, &froms);
+    for op in plan.ops {
+        match op {
+            kt_fx::plan::PlanOp::Snapshot => ops.push(FxOp::Snapshot),
+            kt_fx::plan::PlanOp::Mix { idx } => {
+                if let FxInstance::LayerMix { amount, .. } = &fx[idx] {
+                    let k = (amount.clamp(0.0, 1.0) * 4096.0).round() as u32;
+                    if k < 4096 {
+                        ops.push(FxOp::Mix { k });
+                    }
+                }
+            }
+            kt_fx::plan::PlanOp::Run { i, j, exec } => match exec {
+                kt_fx::geom::GeomExec::Legacy => match fx[i..j]
+                    .iter()
+                    .find(|f| kt_fx::geom::is_geo(f))
+                    .expect("legacy run has a geo step")
+                {
                     FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
                         let frame = kt_fx::video::pan_frame(
                             w, h, out_w, out_h, *mode, *pan_x, *pan_y, *zoom,
@@ -292,11 +298,8 @@ fn chain_ops(
                     }
                     ops.push(FxOp::GeomFused { prog });
                 }
-            }
-            idx = end;
-            continue;
-        }
-        match &fx[idx] {
+            },
+            kt_fx::plan::PlanOp::Barrier { idx, res_scale: _ } => match &fx[idx] {
             FxInstance::Blur { radius, radius_y } => {
                 let radius = (*radius).clamp(1, 48);
                 let step = (radius / 3).max(1) + 1;
@@ -373,15 +376,9 @@ fn chain_ops(
                     });
                 }
             }
-            FxInstance::LayerMix { amount, .. } => {
-                let k = (amount.clamp(0.0, 1.0) * 4096.0).round() as u32;
-                if k < 4096 {
-                    ops.push(FxOp::Mix { k });
-                }
-            }
-            _ => {} // аудио-FX
+            _ => debug_assert!(false, "barrier op on non-barrier fx"),
+            },
         }
-        idx += 1;
     }
     (ops, (w, h), has_alpha, has_alpha_known)
 }
