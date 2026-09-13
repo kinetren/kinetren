@@ -193,6 +193,10 @@ pub struct GeomProgram {
     /// их after_prim идут по УБЫВАНИЮ (ранний в цепочке — глубже в
     /// обратном проходе).
     pub tap_ops: Vec<TapOp>,
+    /// Абсолютная длина образа единичного выходного шага по осям (лупа
+    /// планировщика K×-барьеров, п.314): для аффинных программ — точная
+    /// (та же, что у ss-тапов); для Proj — оценка пробами (центр + углы).
+    pub lens: (f64, f64),
 }
 
 impl GeomProgram {
@@ -232,24 +236,34 @@ pub fn build_geom_exec(
     u: f64,
     cam3d: Option<Cam3d>,
     burst_index: i64,
+    k_in: u32,
+    k_out: u32,
 ) -> GeomExec {
     debug_assert!(!steps.is_empty());
     if steps.len() == 1 {
         // одиночное зеркало ресемпла не делает — всегда старое ядро
+        // (in-place перестановка верна на любом физическом размере)
         if matches!(steps[0], FxInstance::Mirror { .. }) {
             return GeomExec::Legacy;
         }
-        // одиночный Pan/CamMotion БЕЗ минификации — старое ядро байт-в-байт;
-        // с минификацией — слитый проход ради суперсемплинга (п.309)
-        if matches!(steps[0], FxInstance::Pan { .. } | FxInstance::CamMotion { .. }) {
-            let prog = build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index);
+        // одиночный Pan/CamMotion БЕЗ минификации И БЕЗ K×-краёв — старое
+        // ядро байт-в-байт; иначе — слитый проход (суперсемплинг п.309 /
+        // конъюгация п.314; legacy pan_zoom умеет только 1×-выход)
+        if k_in == 1
+            && k_out == 1
+            && matches!(steps[0], FxInstance::Pan { .. } | FxInstance::CamMotion { .. })
+        {
+            let prog =
+                build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, 1, 1);
             if prog.ss == (SsSpec::Const { nx: 1, ny: 1 }) {
                 return GeomExec::Legacy;
             }
             return GeomExec::Fused(prog);
         }
     }
-    GeomExec::Fused(build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index))
+    GeomExec::Fused(build_program(
+        steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, k_in, k_out,
+    ))
 }
 
 /// Прямые параметры одного шага (собираются проходом вперёд — размеры
@@ -276,10 +290,24 @@ fn build_program(
     u: f64,
     cam3d: Option<Cam3d>,
     burst_index: i64,
+    k_in: u32,
+    k_out: u32,
 ) -> GeomProgram {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
-    // --- вперёд: размеры и прямые параметры каждого шага ---
-    let (mut w, mut h) = (in_w, in_h);
+    // Конъюгация K× (Р.45, п.314): ВСЯ арифметика шагов живёт в
+    // 1×-семантике (pan_frame, целочисленная сетка EventGrid,
+    // pan3d_forward — нетронуты); физические масштабы вносят два аффина
+    // по краям, вливаемые в существующие композиции. При K=1 оба —
+    // тождество (умножение на 1.0 и сложение с 0.0 точны в f64 — байты
+    // Р.44 нетронуты). in_w/in_h приходят ФИЗИЧЕСКИМИ (k_in×логика).
+    let (k_in, k_out) = (k_in.max(1), k_out.max(1));
+    debug_assert!(
+        in_w.is_multiple_of(k_in) && in_h.is_multiple_of(k_in),
+        "physical input is k_in x logical"
+    );
+    let (lin_w, lin_h) = (in_w / k_in, in_h / k_in);
+    // --- вперёд: ЛОГИЧЕСКИЕ размеры и прямые параметры каждого шага ---
+    let (mut w, mut h) = (lin_w, lin_h);
     let mut fw: Vec<Step> = Vec::with_capacity(steps.len());
     let mut has_alpha_known = false;
     let mut has_alpha = false;
@@ -393,7 +421,15 @@ fn build_program(
     // --- назад: обратные карты, соседние аффинные ПЕРЕМНОЖЕНЫ в f64 ---
     let mut prims: Vec<GeomPrim> = Vec::new();
     let mut taps_rev: Vec<TapOp> = Vec::new();
-    let mut pending = Aff::IDENTITY;
+    // S_out: физический индекс K×-выхода → логический (полутексельная
+    // конвенция, как bilinear_into); k_out=1 → тождество точно
+    let ko = k_out as f64;
+    let mut pending = Aff {
+        ax: 1.0 / ko,
+        bx: 0.5 / ko - 0.5,
+        ay: 1.0 / ko,
+        by: 0.5 / ko - 0.5,
+    };
     let flush = |pending: &mut Aff, prims: &mut Vec<GeomPrim>| {
         if !pending.is_identity() {
             prims.push(GeomPrim::Affine(*pending));
@@ -465,6 +501,15 @@ fn build_program(
             }
         }
     }
+    // S_in⁻¹: логический входной индекс → физический K_in×-буфер;
+    // k_in=1 → тождество точно
+    let ki = k_in as f64;
+    pending = pending.then(&Aff {
+        ax: ki,
+        bx: (ki - 1.0) / 2.0,
+        ay: ki,
+        by: (ki - 1.0) / 2.0,
+    });
     flush(&mut pending, &mut prims);
     // цепочечный порядок опов (обратный проход собрал их с конца);
     // after_prim при этом убывают
@@ -472,11 +517,16 @@ fn build_program(
     let tap_ops = taps_rev;
     // бюджеты (MAX_PRIMS/MAX_PRIM_SLOTS/MAX_TAP_OPS) проверяет
     // планировщик и при превышении режет ран по гео-границе
+    // Физический выход = k_out × логический (серия из одних Mirror / Pan3d
+    // без камеры логических размеров не меняет — как старый путь).
+    let (pout_w, pout_h) = (w * k_out, h * k_out);
     // Суперсемплинг (п.309): у аффинной программы (в т.ч. с Fold) якобиан
-    // КОНСТАНТЕН — тапы считаются один раз здесь, в f64, и едут в юниформу;
+    // КОНСТАНТЕН — тапы считаются один раз здесь, в f64, и едут в юниформу
+    // (конъюгационные аффины уже в примах — лупа автоматически физическая);
     // Proj (перспектива) делает его по-пиксельным.
-    let ss = if prims.iter().any(|p| matches!(p, GeomPrim::Proj { .. })) {
-        SsSpec::PerPixel
+    let (ss, lens) = if prims.iter().any(|p| matches!(p, GeomPrim::Proj { .. })) {
+        // лупа для планировщика K× — оценка пробами обратной карты
+        (SsSpec::PerPixel, probe_program_lens(&prims, pout_w, pout_h))
     } else {
         let (mut lx, mut ly) = (1.0f64, 1.0f64);
         for p in &prims {
@@ -492,11 +542,51 @@ fn build_program(
                 GeomPrim::Clamp { .. } | GeomPrim::Proj { .. } => {}
             }
         }
-        SsSpec::Const { nx: ss_taps(lx), ny: ss_taps(ly) }
+        (SsSpec::Const { nx: ss_taps(lx), ny: ss_taps(ly) }, (lx, ly))
     };
-    // выход серии — фактические размеры после шагов: серия из одних
-    // Mirror (или Pan3d без камеры) размеров НЕ меняет — как старый путь
-    GeomProgram { prims, in_w, in_h, out_w: w, out_h: h, has_alpha_known, has_alpha, ss, tap_ops }
+    GeomProgram {
+        prims,
+        in_w,
+        in_h,
+        out_w: pout_w,
+        out_h: pout_h,
+        has_alpha_known,
+        has_alpha,
+        ss,
+        tap_ops,
+        lens,
+    }
+}
+
+/// Оценка лупы Proj-программы для планировщика K× (п.314): длины образов
+/// единичных шагов в пяти точках (центр + окрестности углов), максимум по
+/// валидным пробам. Неточность даёт мягче/дороже, но ОДИНАКОВО на обоих
+/// бэкендах — K в плане один.
+fn probe_program_lens(prims: &[GeomPrim], out_w: u32, out_h: u32) -> (f64, f64) {
+    let (ow, oh) = (out_w.max(2) as f64, out_h.max(2) as f64);
+    let pts = [
+        (ow * 0.5, oh * 0.5),
+        (1.0, 1.0),
+        (ow - 2.0, 1.0),
+        (1.0, oh - 2.0),
+        (ow - 2.0, oh - 2.0),
+    ];
+    let coords = |x: f64, y: f64| -> Option<(f64, f64)> {
+        match map_pos(prims, x, y) {
+            Mapped::At(sx, sy) => Some((sx, sy)),
+            _ => None,
+        }
+    };
+    let (mut lx, mut ly) = (1.0f64, 1.0f64);
+    for (px, py) in pts {
+        if let (Some(a), Some(bx)) = (coords(px, py), coords(px + 1.0, py)) {
+            lx = lx.max(((a.0 - bx.0).powi(2) + (a.1 - bx.1).powi(2)).sqrt());
+        }
+        if let (Some(a), Some(by)) = (coords(px, py), coords(px, py + 1.0)) {
+            ly = ly.max(((a.0 - by.0).powi(2) + (a.1 - by.1).powi(2)).sqrt());
+        }
+    }
+    (lx, ly)
 }
 
 // ---- Pan3d: гомография (Р.44) ----------------------------------------------

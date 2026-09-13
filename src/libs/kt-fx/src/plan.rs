@@ -1,20 +1,37 @@
-//! План исполнения FX-цепочки (Р.45, пп.311-312): решения о сегментации,
-//! legacy/fused, поглощении поточечных и (с п.314) разрешении барьеров
+//! План исполнения FX-цепочки (Р.45, пп.311-314): решения о сегментации,
+//! legacy/fused, поглощении поточечных и K×-разрешении барьеров
 //! принимаются ЗДЕСЬ ровно один раз — CPU (`apply_video_chain_pooled` в
 //! video.rs) и GPU (`chain_ops` в kt-gpu) исполняют ГОТОВЫЙ план. Это
 //! инвариант №7 на уровне цепочки: расхождение сегментации = расхождение
 //! картинок.
 //!
+//! K×-барьеры (п.314): нелокальный эффект между сжимающей гео-серией и
+//! зумящим хвостом исполняется в K× разрешении — деталь, стиснутая
+//! сеткой, доносится сквозь барьер. K = ss_taps(min(нетто-зум хвоста,
+//! нетто-сжатие до барьера)): второй множитель — «сколько деталей реально
+//! стиснуто»; без сжатия выше K=1 — взять детали неоткуда (их источник,
+//! «декод крупнее Quality», — отдельный заход). Потолок — MAX_INTER_DIM
+//! (ПРОЕКТ-константа, не лимит устройства: иначе экспорт зависел бы от
+//! машины). Гео-раны рендерятся сразу в K×-цель (конъюгация в geom.rs) —
+//! ресемплов между сегментами нет вовсе.
+//!
 //! Сила слоя: GPU передаёт снапшот-точки (`from`-индексы LayerMix) в
 //! `stops` и получает маркеры Snapshot/Mix; CPU режет цепочку по стопам
 //! уровнем выше (`apply_chain_with_mixes`) и планирует слайсы — план
-//! слайса обязан совпадать с куском плана целого (t306).
+//! слайса обязан совпадать с куском плана целого (t306). Стопы обнуляют
+//! оба аккумулятора K (смешение всегда на 1×).
 
 use crate::geom::{
     Cam3d, GeomExec, MAX_GEO_STEPS, MAX_PRIM_SLOTS, MAX_PRIMS, MAX_TAP_OPS, build_geom_exec,
-    is_geo, is_pointwise,
+    is_geo, is_pointwise, ss_taps,
 };
 use kt_model::FxInstance;
+
+/// Потолок стороны K×-буфера, px. ПРОЕКТ-константа (п.314): превью
+/// 640×360 получает полный K=4, экспорт 1080p — до K=2, 4K — без K×.
+/// Поднимается одной константой; устройства со слабым max_dim уводят
+/// такие планы в CPU целиком (гард в kt-gpu resolve_chain).
+pub const MAX_INTER_DIM: u32 = 4096;
 
 /// Один оп плана. Аудио-FX в план не попадают вовсе (прозрачны и для
 /// сегментации, и для исполнения).
@@ -22,8 +39,7 @@ pub enum PlanOp {
     /// Гео-ран `fx[i..j)` (внутри — гео, прозрачные аудио и поглощённые
     /// ВНУТРЕННИЕ поточечные, п.312) с уже принятым решением исполнения.
     Run { i: usize, j: usize, exec: GeomExec },
-    /// Барьерный эффект `fx[idx]`; `res_scale` — разрешение исполнения
-    /// (Р.45 п.314: K× при зумящем хвосте; пока всегда 1).
+    /// Барьерный эффект `fx[idx]` в разрешении `res_scale`× (п.314).
     Barrier { idx: usize, res_scale: u32 },
     /// Снимок сухой стороны силы слоя (позиция из `stops`).
     Snapshot,
@@ -65,6 +81,39 @@ fn run_window_end(fx: &[FxInstance], i: usize, stops: &[usize], max_geo: usize) 
     end
 }
 
+/// Лупа Legacy-рана (одиночный Pan/CamMotion/Mirror) для аккумуляторов
+/// K×: рамка pan_frame в долях выхода; Mirror — тождество.
+fn legacy_lens(
+    step: &FxInstance,
+    lw: u32,
+    lh: u32,
+    out_w: u32,
+    out_h: u32,
+    u: f64,
+) -> (f64, f64) {
+    let (mow, moh) = (out_w.max(2) as f64, out_h.max(2) as f64);
+    match step {
+        FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
+            let (_, _, cw, ch) =
+                crate::video::pan_frame(lw, lh, out_w, out_h, *mode, *pan_x, *pan_y, *zoom);
+            (cw / mow, ch / moh)
+        }
+        FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
+            let (px, py, z) = crate::video::cam_at(keyframes, u, *ease, *time_scale);
+            let (_, _, cw, ch) = crate::video::pan_frame(lw, lh, out_w, out_h, *mode, px, py, z);
+            (cw / mow, ch / moh)
+        }
+        _ => (1.0, 1.0),
+    }
+}
+
+enum RawKind {
+    Run { i: usize, j: usize, exec: GeomExec, lens: (f64, f64) },
+    Barrier { idx: usize },
+    Snapshot,
+    Mix { idx: usize },
+}
+
 /// Построить план цепочки для входного кадра `in_w×in_h` и выхода
 /// `out_w×out_h` (Quality). Детерминированная чистая функция — оба
 /// бэкенда обязаны получать ОДИН план. `burst_index` — абсолютный тик
@@ -82,12 +131,14 @@ pub fn plan_chain(
     stops: &[usize],
 ) -> ChainPlan {
     let (mow, moh) = (out_w.max(2), out_h.max(2));
+
+    // --- A: сегментация и 1×-программы (пп.311-312) ---
     let (mut w, mut h) = (in_w, in_h);
-    let mut ops = Vec::new();
+    let mut raw: Vec<RawKind> = Vec::new();
     let mut idx = 0usize;
     while idx < fx.len() {
         if stops.contains(&idx) {
-            ops.push(PlanOp::Snapshot);
+            raw.push(RawKind::Snapshot);
         }
         let f = &fx[idx];
         if is_geo(f) {
@@ -102,7 +153,8 @@ pub fn plan_chain(
                     .iter()
                     .filter(|g| is_geo(g) || is_pointwise(g))
                     .collect();
-                let exec = build_geom_exec(&steps, w, h, out_w, out_h, u, cam3d, burst_index);
+                let exec =
+                    build_geom_exec(&steps, w, h, out_w, out_h, u, cam3d, burst_index, 1, 1);
                 let fits = match &exec {
                     GeomExec::Legacy => true,
                     GeomExec::Fused(p) => {
@@ -117,33 +169,128 @@ pub fn plan_chain(
                 }
                 max_geo -= 1;
             };
-            match &exec {
-                GeomExec::Fused(prog) => {
-                    w = prog.out_w;
-                    h = prog.out_h;
+            let lens = match &exec {
+                GeomExec::Fused(p) => {
+                    w = p.out_w;
+                    h = p.out_h;
+                    p.lens
                 }
-                // Legacy: одиночный Pan/CamMotion ресемплит в выход,
-                // одиночное зеркало размеров не меняет
                 GeomExec::Legacy => {
                     let step =
                         fx[idx..j].iter().find(|g| is_geo(g)).expect("legacy run has a geo step");
+                    let l = legacy_lens(step, w, h, out_w, out_h, u);
                     if !matches!(step, FxInstance::Mirror { .. }) {
                         w = mow;
                         h = moh;
                     }
+                    l
                 }
-            }
-            ops.push(PlanOp::Run { i: idx, j, exec });
+            };
+            raw.push(RawKind::Run { i: idx, j, exec, lens });
             idx = j;
             continue;
         }
         if f.is_layer_mix() {
-            ops.push(PlanOp::Mix { idx });
+            raw.push(RawKind::Mix { idx });
         } else if !f.is_audio() {
             // барьер: нелокальный эффект либо ведущий/замыкающий поточечный
-            ops.push(PlanOp::Barrier { idx, res_scale: 1 });
+            raw.push(RawKind::Barrier { idx });
         } // аудио-FX прозрачны
         idx += 1;
+    }
+
+    // --- B: назад — нетто-зум хвоста на каждый барьер ---
+    let mut tail: Vec<(f64, f64)> = vec![(1.0, 1.0); raw.len()];
+    let mut tm = (1.0f64, 1.0f64);
+    for (ri, r) in raw.iter().enumerate().rev() {
+        match r {
+            RawKind::Run { lens, .. } => {
+                tm.0 *= 1.0 / lens.0.max(1e-9);
+                tm.1 *= 1.0 / lens.1.max(1e-9);
+            }
+            RawKind::Barrier { .. } => tail[ri] = tm,
+            RawKind::Snapshot | RawKind::Mix { .. } => tm = (1.0, 1.0),
+        }
+    }
+
+    // --- C: вперёд — нетто-сжатие; K = квант(min(зум хвоста, сжатие)) ---
+    let k_cap = (MAX_INTER_DIM / mow.max(moh)).max(1);
+    let mut kmap: Vec<u32> = vec![1; raw.len()];
+    let mut sq = (1.0f64, 1.0f64);
+    for (ri, r) in raw.iter().enumerate() {
+        match r {
+            RawKind::Run { lens, .. } => {
+                sq.0 *= lens.0;
+                sq.1 *= lens.1;
+            }
+            RawKind::Barrier { .. } => {
+                let benefit = tail[ri].0.max(tail[ri].1).min(sq.0.max(sq.1));
+                kmap[ri] = ss_taps(benefit).min(k_cap);
+            }
+            RawKind::Snapshot | RawKind::Mix { .. } => sq = (1.0, 1.0),
+        }
+    }
+
+    // --- D: сборка. Все K == 1 — готовые 1×-программы (байты пп.311-313);
+    // иначе пересборка ранов с конъюгацией (k_in, k_out).
+    if kmap.iter().all(|&k| k == 1) {
+        let ops = raw
+            .into_iter()
+            .map(|r| match r {
+                RawKind::Run { i, j, exec, .. } => PlanOp::Run { i, j, exec },
+                RawKind::Barrier { idx } => PlanOp::Barrier { idx, res_scale: 1 },
+                RawKind::Snapshot => PlanOp::Snapshot,
+                RawKind::Mix { idx } => PlanOp::Mix { idx },
+            })
+            .collect();
+        return ChainPlan { ops };
+    }
+    let mut ops = Vec::with_capacity(raw.len());
+    let (mut w, mut h) = (in_w, in_h);
+    let mut cur_k = 1u32;
+    for ri in 0..raw.len() {
+        match &raw[ri] {
+            RawKind::Run { i, j, .. } => {
+                // цель рана: K следующего барьера; разрез бюджета, стоп и
+                // конец цепочки — 1×
+                let k_out = match raw.get(ri + 1) {
+                    Some(RawKind::Barrier { .. }) => kmap[ri + 1],
+                    _ => 1,
+                };
+                let steps: Vec<&FxInstance> = fx[*i..*j]
+                    .iter()
+                    .filter(|g| is_geo(g) || is_pointwise(g))
+                    .collect();
+                let exec = build_geom_exec(
+                    &steps, w, h, out_w, out_h, u, cam3d, burst_index, cur_k, k_out,
+                );
+                match &exec {
+                    GeomExec::Fused(p) => {
+                        w = p.out_w;
+                        h = p.out_h;
+                    }
+                    GeomExec::Legacy => {
+                        // Legacy при K≠1 невозможен (форс Fused);
+                        // здесь — одиночное зеркало на 1×-краях
+                        debug_assert!(cur_k == 1 && k_out == 1);
+                    }
+                }
+                cur_k = k_out;
+                ops.push(PlanOp::Run { i: *i, j: *j, exec });
+            }
+            RawKind::Barrier { idx } => {
+                debug_assert_eq!(cur_k, kmap[ri], "barrier not at its segment resolution");
+                ops.push(PlanOp::Barrier { idx: *idx, res_scale: kmap[ri] });
+            }
+            RawKind::Snapshot => {
+                debug_assert_eq!(cur_k, 1, "layer-mix snapshot must be 1x");
+                ops.push(PlanOp::Snapshot);
+            }
+            RawKind::Mix { idx } => {
+                debug_assert_eq!(cur_k, 1, "layer-mix blend must be 1x");
+                ops.push(PlanOp::Mix { idx: *idx });
+            }
+        }
     }
     ChainPlan { ops }
 }

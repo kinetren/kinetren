@@ -292,6 +292,56 @@ fn t181_effect_parity_gpu_vs_cpu() {
             ],
             FrameTol::THRESHOLD,
         ),
+        // K×-барьеры (Р.45, п.314): сетка стиснула → барьер в K=2 →
+        // зум вернул. CPU-ядро и GPU-пасс работают на K×-буферах.
+        (
+            "k2-vhs",
+            vec![
+                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                FxInstance::Vhs { rgb_shift: 2, bleed: 0.3, scan_step: 5, jitter: 0.4 },
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+            ],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "k2-blur",
+            vec![
+                FxInstance::EventGrid { cols: 2, rows: 2, center: true },
+                FxInstance::blur(8),
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+            ],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "k2-glow",
+            vec![
+                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                FxInstance::glow(0.9),
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.1, pan_y: 0.0, zoom: 1.8 },
+            ],
+            FrameTol::BILINEAR,
+        ),
+        (
+            "k2-edges",
+            vec![
+                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                FxInstance::edges(48),
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+            ],
+            FrameTol::THRESHOLD,
+        ),
+        // Noise-БАРЬЕР в K× (не поглощён: стоит сразу за жёстким барьером,
+        // ведущий для следующего рана)
+        (
+            "k2-noise-barrier",
+            vec![
+                FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+                FxInstance::blur(4),
+                FxInstance::Noise { amount: 0.5, size: 2, color: true },
+                FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+            ],
+            FrameTol::THRESHOLD,
+        ),
         (
             "chain-user",
             vec![
@@ -498,11 +548,13 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
     e2.execute_into(&mk(90_000), &mut b1).unwrap();
     assert_eq!(a1, b1, "два движка на одном устройстве разошлись");
 
-    // испачкать пулы e1 другими планами (вкл. слитую гео-серию Р.44)
+    // испачкать пулы e1 другими планами (вкл. слитую гео-серию Р.44 и
+    // K×-барьер Р.45: сетка стиснула → blur в 2× → зум)
     let junk = Src::new(12, Some(frame(W, H, false, 9)), vec![
-        FxInstance::blur(12),
         FxInstance::EventGrid { cols: 3, rows: 2, center: true },
+        FxInstance::blur(12),
         FxInstance::Mirror { horizontal: true, vertical: false },
+        FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
     ]);
     let mut _j = Vec::new();
     e1.execute_into(&plan(1920, vec![one(&junk, 4096, false)]), &mut _j).unwrap();

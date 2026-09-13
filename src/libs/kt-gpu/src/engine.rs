@@ -245,6 +245,10 @@ fn put_cam3d(h: &mut Xxh3, c: &Option<Cam3d>) {
     }
 }
 
+/// Результат chain_ops: опы, финальные размеры, альфа (значение/известна),
+/// максимум промежуточных размеров (гард max_dim, п.314).
+type ChainOps = (Vec<FxOp>, (u32, u32), bool, bool, (u32, u32));
+
 /// Цепочка одного слоя: ops + предсказанные выходные размеры/альфа.
 /// Зеркало трансформаций apply_video_chain_pooled (kt-fx/src/video.rs).
 #[allow(clippy::too_many_arguments)]
@@ -257,8 +261,12 @@ fn chain_ops(
     u: f64,
     t: Tick,
     cam3d: Option<Cam3d>,
-) -> (Vec<FxOp>, (u32, u32), bool, bool) {
+) -> ChainOps {
     let (mut w, mut h) = (src_w, src_h);
+    // максимум ПРОМЕЖУТОЧНЫХ размеров (K×-сегменты п.314): resolve_chain
+    // сверяет его с max_dim устройства — иначе create_texture упал бы
+    // валидацией и отравил device вместо аккуратного TooLarge
+    let (mut mw, mut mh) = (src_w, src_h);
     let mut has_alpha_known = false; // выставлял ли эффект альфу явно
     let mut has_alpha = false;
     let mut ops = Vec::new();
@@ -320,6 +328,8 @@ fn chain_ops(
                 kt_fx::geom::GeomExec::Fused(prog) => {
                     w = prog.out_w;
                     h = prog.out_h;
+                    mw = mw.max(w);
+                    mh = mh.max(h);
                     if prog.has_alpha_known {
                         has_alpha_known = true;
                         has_alpha = prog.has_alpha;
@@ -418,7 +428,7 @@ fn chain_ops(
             },
         }
     }
-    (ops, (w, h), has_alpha, has_alpha_known)
+    (ops, (w, h), has_alpha, has_alpha_known, (mw, mh))
 }
 
 struct ChainSpec {
@@ -917,8 +927,14 @@ impl Inner {
         if frame.width > self.max_dim || frame.height > self.max_dim {
             return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
         }
-        let (ops, (fw, fh), ha, ha_known) =
+        let (ops, (fw, fh), ha, ha_known, (mw, mh)) =
             chain_ops(&src.fx, frame.width, frame.height, ow, oh, src.u, t, src.cam3d);
+        // K×-промежутки плана (п.314) обязаны влезать в лимит текстур
+        // устройства; не влезли — аккуратный TooLarge (весь план уходит на
+        // CPU, который считает ТОТ ЖЕ план — семантика одна)
+        if mw > self.max_dim || mh > self.max_dim {
+            return Err(GpuExecError::TooLarge { w: mw, h: mh });
+        }
         let has_alpha = if ha_known { ha } else { frame.has_alpha };
         let view =
             self.upload

@@ -60,11 +60,11 @@ fn t297_routing_single_legacy_multi_fused() {
     let pan = FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.3, pan_y: -0.2, zoom: 1.5 };
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
-    assert!(matches!(build_geom_exec(&[&pan], W, H, W, H, 0.5, None, 90_000), GeomExec::Legacy));
-    assert!(matches!(build_geom_exec(&[&mir], W, H, W, H, 0.5, None, 90_000), GeomExec::Legacy));
-    assert!(matches!(build_geom_exec(&[&grid], W, H, W, H, 0.5, None, 90_000), GeomExec::Fused(_)));
-    assert!(matches!(build_geom_exec(&[&grid, &pan], W, H, W, H, 0.5, None, 90_000), GeomExec::Fused(_)));
-    assert!(matches!(build_geom_exec(&[&mir, &grid], W, H, W, H, 0.5, None, 90_000), GeomExec::Fused(_)));
+    assert!(matches!(build_geom_exec(&[&pan], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Legacy));
+    assert!(matches!(build_geom_exec(&[&mir], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Legacy));
+    assert!(matches!(build_geom_exec(&[&grid], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Fused(_)));
+    assert!(matches!(build_geom_exec(&[&grid, &pan], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Fused(_)));
+    assert!(matches!(build_geom_exec(&[&mir, &grid], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Fused(_)));
 }
 
 /// Зеркало ПОСЛЕ сетки — точная перестановка: слитая серия обязана дать
@@ -331,8 +331,8 @@ fn t300_ss_taps_and_routing_boundary() {
     // слитый проход ради суперсемплинга
     let pan1 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 };
     let pan_min = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.9 };
-    assert!(matches!(build_geom_exec(&[&pan1], W, H, W, H, 0.5, None, 90_000), GeomExec::Legacy));
-    assert!(matches!(build_geom_exec(&[&pan_min], W, H, W, H, 0.5, None, 90_000), GeomExec::Fused(_)));
+    assert!(matches!(build_geom_exec(&[&pan1], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Legacy));
+    assert!(matches!(build_geom_exec(&[&pan_min], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Fused(_)));
 
     // детерминизм слитого суперсемплинга
     let a = run(std::slice::from_ref(&pan_min));
@@ -615,4 +615,72 @@ fn t303_barrier_kernels_res_invariant() {
             assert!(frac <= 0.02, "{name} K={k}: контуры разъехались ({:.2}%)", frac * 100.0);
         }
     }
+}
+
+/// Тест 302 (п.314, Р.45): БАРЬЕР между сеткой и зумом больше не убивает
+/// детализацию — vhs с нулевыми параметрами (identity-ядро) исполняется
+/// в K×, и шахматка проходит цепочку [grid 2×2 → vhs → zoom ×2] целой.
+/// До включения K (п.311-п.313) тот же тест давал контраст ~0 — сетка
+/// растеризовалась в 1× перед барьером (red-proof прогнан на этом же
+/// дереве до коммита п.314).
+#[test]
+fn t302_barrier_no_longer_kills_detail() {
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let vhs0 = FxInstance::Vhs { rgb_shift: 0, bleed: 0.0, scan_step: 0, jitter: 0.0 };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let out = apply_video_chain(&[grid, vhs0, zoom2], checkerboard(), &ctx());
+    let c = contrast(&out);
+    assert!(c >= 200.0, "шахматка сквозь K×-барьер, контраст {c:.1}");
+}
+
+/// Тест 304 (п.314): правило K. Без нетто-зума хвоста ИЛИ без сжатия выше
+/// по цепочке — K=1 (байты пп.311-313 включение K не трогает); сжатие +
+/// зум — K>1; соседние барьеры делят один K; слот силы рвёт.
+#[test]
+fn t304_k_only_with_squeeze_and_zoom() {
+    use kt_fx::plan::{PlanOp, plan_chain};
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let vhs = FxInstance::vhs(4, 0.4);
+    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+    let zoom05 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.5 };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let k_of = |fx: &[FxInstance]| -> Vec<u32> {
+        plan_chain(fx, W, H, W, H, 0.5, None, 90_000, &[])
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                PlanOp::Barrier { res_scale, .. } => Some(*res_scale),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(k_of(&[grid.clone(), vhs.clone()]), vec![1], "хвост пуст");
+    assert_eq!(k_of(&[grid.clone(), vhs.clone(), mir.clone()]), vec![1], "хвост без зума");
+    assert_eq!(k_of(&[grid.clone(), vhs.clone(), zoom05.clone()]), vec![1], "хвост сжимает");
+    // squeeze-cap: без сжатия выше деталей взять неоткуда (декод>Quality —
+    // отдельный заход) — K=1, лишний буфер не покупается
+    assert_eq!(k_of(&[vhs.clone(), zoom2.clone()]), vec![1], "сжатия выше нет");
+    assert_eq!(k_of(&[grid.clone(), vhs.clone(), zoom2.clone()]), vec![2], "сжатие+зум → K=2");
+    // соседние барьеры — один K (ресемплов между барьерами не бывает)
+    assert_eq!(
+        k_of(&[grid.clone(), vhs.clone(), FxInstance::blur(8), zoom2.clone()]),
+        vec![2, 2]
+    );
+    // t68-цепочка пользователя: хвост после барьеров не зумит — K=1
+    assert_eq!(
+        k_of(&[mir.clone(), grid.clone(), FxInstance::glow(1.0), FxInstance::vhs(2, 0.5)]),
+        vec![1, 1]
+    );
+    // слот силы рвёт оба аккумулятора: барьер до Mix остаётся 1×
+    assert_eq!(
+        k_of(&[grid.clone(), vhs.clone(), FxInstance::LayerMix { amount: 0.5, from: 0 }, zoom2]),
+        vec![1]
+    );
+    // байтовый якорь: K=1-цепочка с барьером байт-в-байт с пп.311-313
+    // (включение K её не тронуло); при осознанной смене — новый хэш из
+    // вывода, как у t26
+    let f = run(&[grid, vhs]);
+    let hash = xxhash_rust::xxh3::xxh3_64(&f.rgba);
+    println!("t304 anchor: 0x{hash:016x}");
+    assert_eq!(hash, 0x1a3aad166d0a0c18, "K=1-байты уехали");
 }
