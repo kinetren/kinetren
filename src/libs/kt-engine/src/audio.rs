@@ -116,6 +116,15 @@ pub struct AudioRenderer {
     /// Кто кого накрывает на каждой дорожке — строится раз (п.305).
     /// Пусто при выключенном переслаивании: тогда вес тождественно 1.0.
     covers: OverlapMap,
+    /// «Это событие вообще с кем-нибудь пересекается?» — по событию.
+    ///
+    /// Двоичный поиск по карте дёшев против перебора, но он всё равно
+    /// работа НА КАЖДЫЙ КАДР, и на простом монтаже съедал половину времени
+    /// рендера (2.32 против 1.09 мс/с). У события, которое ни с кем не
+    /// перекрывается, `overlap_weight` всё равно вернул бы 1.0 — значит
+    /// искать незачем, и один bool закрывает весь путь. Такими в реальном
+    /// монтаже оказывается подавляющее большинство событий.
+    overlaps: Vec<bool>,
     /// Переслаивание (Р.28): перекрытия клипов законны и звучат как в v1 —
     /// equal-power на двоих, 1/N при трёх и более. Выключено — перекрытий в
     /// модели нет по построению, и вес всегда 1.0.
@@ -205,6 +214,22 @@ fn build_lane_covers(clips: &[AudioClip]) -> OverlapMap {
         if bounds.len() >= 2 {
             debug_assert_eq!(cover.len() + 1, bounds.len());
             out[lane as usize] = LaneCover { bounds, cover };
+        }
+    }
+    out
+}
+
+/// У каких событий вообще есть с кем перекрываться: событие попадает сюда,
+/// если хоть один интервал его дорожки накрыт им И кем-то ещё.
+fn overlapping_clips(clips: &[AudioClip], covers: &OverlapMap) -> Vec<bool> {
+    let mut out = vec![false; clips.len()];
+    for lane in covers {
+        for set in &lane.cover {
+            if set.len() > 1 {
+                for &i in set {
+                    out[i as usize] = true;
+                }
+            }
         }
     }
     out
@@ -340,11 +365,13 @@ impl AudioRenderer {
         let (index, index_from) = Self::build_index(&clips);
         let covers =
             if project.overlap_layers { build_lane_covers(&clips) } else { OverlapMap::new() };
+        let overlaps = overlapping_clips(&clips, &covers);
         AudioRenderer {
             clips,
             index,
             index_from,
             covers,
+            overlaps,
             overlap_layers: project.overlap_layers,
         }
     }
@@ -467,7 +494,11 @@ impl AudioRenderer {
     /// Вес перекрытия для клипа `ci` в кадре `f` (1.0, когда переслаивание
     /// выключено — тогда перекрытий в модели нет по построению).
     fn overlap_at(&self, ci: usize, f: i64) -> f32 {
-        if self.overlap_layers { overlap_weight(&self.clips, &self.covers, ci, f) } else { 1.0 }
+        if self.overlap_layers && self.overlaps[ci] {
+            overlap_weight(&self.clips, &self.covers, ci, f)
+        } else {
+            1.0
+        }
     }
 
     fn render_plain_clip(
