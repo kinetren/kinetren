@@ -306,7 +306,7 @@ fn t11_preview_equals_export_frame() {
     let t = Tick(target as i64 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         all_sources().into_iter().collect();
-    for (media, src_pts) in video.layers_at(t) {
+    for (media, src_pts, q) in video.layers_at(t, q) {
         let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(q)).unwrap();
         cache.insert_video(
             kt_engine::source_id(media),
@@ -355,7 +355,7 @@ fn t67_preview_equals_export_with_fx_cold_and_warm() {
     let t = Tick(target as i64 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         all_sources().into_iter().collect();
-    for (media, src_pts) in video.layers_at(t) {
+    for (media, src_pts, q) in video.layers_at(t, q) {
         let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(q)).unwrap();
         cache.insert_video(
             kt_engine::source_id(media),

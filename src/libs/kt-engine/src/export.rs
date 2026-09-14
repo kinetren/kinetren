@@ -214,10 +214,14 @@ pub fn render_raw_video_range_with(
     // выбрасывал их ДО композиции, и рендер выходил чёрным с редкими
     // уцелевшими кадрами. На 320×180 (где я это «проверил») чанк влезал —
     // отсюда и пропущенная регрессия.
+    // Считается по САМОМУ КРУПНОМУ качеству декода (Р.46, п.318): клип,
+    // который берётся крупнее Quality, занимает в кэше в S^2 раз больше —
+    // на Quality чанк был бы недооценён и вернул бы ту же регрессию.
+    let dq_max = video.max_decode_quality(quality);
     let chunk_frames = export_chunk_frames(
         EXPORT_VIDEO_CACHE_BYTES,
-        quality.width,
-        quality.height,
+        dq_max.width,
+        dq_max.height,
         video.max_concurrent_layers(),
     );
     let mut frame_buf = Vec::new();
@@ -227,11 +231,15 @@ pub fn render_raw_video_range_with(
         }
         let chunk_end = Tick((t.0 + chunk_frames * step).min(end.0));
         // ключи чанка по каждому источнику: строго возрастают, дубли сняты
-        let mut per_src: std::collections::BTreeMap<MediaId, Vec<Tick>> = Default::default();
-        for (media, src_pts) in video.wanted_frames(kt_time::TickRange::new(t, chunk_end)) {
-            per_src.entry(media).or_default().push(src_pts);
+        // ключ группы — (медиа, КАЧЕСТВО ДЕКОДА): спан декодера не смешивает
+        // размеры (kt-media), и заказ приходит уже с качеством (Р.46)
+        let mut per_src: std::collections::BTreeMap<(MediaId, Quality), Vec<Tick>> =
+            Default::default();
+        for (media, src_pts, dq) in video.wanted_frames(kt_time::TickRange::new(t, chunk_end), quality)
+        {
+            per_src.entry((media, dq)).or_default().push(src_pts);
         }
-        for (media, keys) in per_src {
+        for ((media, dq), keys) in per_src {
             let Some(s) = src.get_mut(&media) else {
                 stats.missing_video_layers += keys.len() as u64;
                 continue;
@@ -239,14 +247,14 @@ pub fn render_raw_video_range_with(
             let sid = source_id(media);
             let missing: Vec<Tick> = keys
                 .into_iter()
-                .filter(|k| cache.get_video(sid, Some(quality), video_cache_idx(*k)).is_none())
+                .filter(|k| cache.get_video(sid, Some(dq), video_cache_idx(*k)).is_none())
                 .collect();
             if missing.is_empty() {
                 continue;
             }
             let ok = s
-                .read_video_span(&missing, Some(quality), &mut |k, frame| {
-                    cache.insert_video(sid, Some(quality), video_cache_idx(k), frame.into());
+                .read_video_span(&missing, Some(dq), &mut |k, frame| {
+                    cache.insert_video(sid, Some(dq), video_cache_idx(k), frame.into());
                 })
                 .is_ok();
             if !ok {

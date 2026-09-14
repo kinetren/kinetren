@@ -566,14 +566,16 @@ impl Player {
         let aligned = video.grid.align_floor(t);
         let generation = self.transport.generation();
         let step = video.grid.frame_step();
-        for (media, src_pts) in video.layers_at(aligned) {
+        // качество декода приходит ИЗ ЗАКАЗА (Р.46, п.318): клип с зумящей
+        // цепочкой греется крупнее Quality, и просить надо ровно это
+        for (media, src_pts, dq) in video.layers_at(aligned, q) {
             let idx = video_cache_idx(src_pts);
             // contains, не get: проба не должна освежать LRU (п.19)
-            if !self.cache.contains_video(source_id(media), Some(q), idx)
+            if !self.cache.contains_video(source_id(media), Some(dq), idx)
                 && let Some(w) = self.workers.read().unwrap().get(&media)
             {
                 w.submit(DecodeRequest {
-                    kind: RequestKind::video_on_grid(src_pts, Some(q), step),
+                    kind: RequestKind::video_on_grid(src_pts, Some(dq), step),
                     prio: Priority::Playback,
                     generation,
                 });
@@ -1153,19 +1155,21 @@ fn prefetch_loop(
         let t0 = transport.playhead();
         let q = *preview_quality.lock().unwrap();
         let step = video.grid.frame_step();
-        let ahead = video_lookahead_ticks(q, step, cache.max_video_bytes());
+        // бюджет окна — по САМОМУ КРУПНОМУ качеству декода (Р.46, п.318):
+        // на Quality окно переливало бы кэш ровно в S^2 раз
+        let ahead = video_lookahead_ticks(video.max_decode_quality(q), step, cache.max_video_bytes());
         let region_ticks = region
             .map(|(s, e)| (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0));
         let ranges: Vec<TickRange> = lookahead_windows(t0.0, ahead, region_ticks)
             .into_iter()
             .map(|r| TickRange::new(Tick(r.start), Tick(r.end)))
             .collect();
-        for (media, src_pts) in ranges.iter().flat_map(|r| video.wanted_frames(*r)) {
-            if !cache.contains_video(source_id(media), Some(q), video_cache_idx(src_pts))
+        for (media, src_pts, dq) in ranges.iter().flat_map(|r| video.wanted_frames(*r, q)) {
+            if !cache.contains_video(source_id(media), Some(dq), video_cache_idx(src_pts))
                 && let Some(w) = workers.read().unwrap().get(&media)
             {
                 w.submit(DecodeRequest {
-                    kind: RequestKind::video_on_grid(src_pts, Some(q), step),
+                    kind: RequestKind::video_on_grid(src_pts, Some(dq), step),
                     prio: Priority::NearPrefetch,
                     generation,
                 });

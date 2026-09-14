@@ -208,6 +208,25 @@ pub fn video_cache_idx(source_pts: Tick) -> i64 {
     source_pts.0
 }
 
+/// Ступень декода клипа (Р.46, п.318): во сколько ЦЕЛЫХ раз пре-FX кадр
+/// берётся крупнее Quality. Чистая функция от клипа и Quality —
+/// детерминирована, от устройства и бюджетов не зависит (иначе экспорт
+/// зависел бы от машины). Включение — п.321.
+fn clip_decode_scale(_clip: &VideoClip, _quality: Quality) -> u32 {
+    1
+}
+
+/// Качество декода клипа. ЕДИНСТВЕННОЕ место решения: заказ префетча,
+/// чтение композита и полоски прогретости обязаны спрашивать его — иначе
+/// греется не то, что читается (t247d по оси размера, t312).
+fn clip_decode_quality(clip: &VideoClip, quality: Quality) -> Quality {
+    let s = clip_decode_scale(clip, quality);
+    if s == 1 {
+        return quality;
+    }
+    Quality { width: quality.width * s, height: quality.height * s }
+}
+
 impl VideoRenderer {
     pub fn new(project: &Project) -> VideoRenderer {
         // effective_clips: morpher'ы применены здесь, движок их не видит (H1)
@@ -300,32 +319,53 @@ impl VideoRenderer {
     }
 
     /// Кадры, нужные для композиции момента `t` (выравненного вызывающим):
-    /// (media, pts источника). Порядок — back-to-front.
-    pub fn layers_at(&self, t: Tick) -> Vec<(MediaId, Tick)> {
+    /// (media, pts источника, КАЧЕСТВО ДЕКОДА). Порядок — back-to-front.
+    ///
+    /// Качество — часть заказа (Р.46, п.318), а не свойство сессии: клип с
+    /// зумящей цепочкой декодируется крупнее Quality. Вызывающий обязан
+    /// греть и читать РОВНО это качество — иначе вечный промах кэша
+    /// (t247d), теперь и по оси размера (t312).
+    pub fn layers_at(&self, t: Tick, quality: Quality) -> Vec<(MediaId, Tick, Quality)> {
         self.clips
             .iter()
             .filter(|c| c.active_at(t))
             .flat_map(|c| {
+                let dq = clip_decode_quality(c, quality);
                 // в режиме «смешивание» слой читает ДВА кадра — префетч
                 // обязан согреть оба, иначе второй не запросят никогда
                 let (a, b) = clip_frame_keys(c, t, &self.grid);
-                std::iter::once((c.media, a)).chain(b.map(|(p, _)| (c.media, p)))
+                std::iter::once((c.media, a, dq)).chain(b.map(|(p, _)| (c.media, p, dq)))
             })
             .collect()
     }
 
     /// Все ключи кадров для диапазона таймлайна (prefetch/экспорт).
-    pub fn wanted_frames(&self, range: kt_time::TickRange) -> Vec<(MediaId, Tick)> {
+    pub fn wanted_frames(
+        &self,
+        range: kt_time::TickRange,
+        quality: Quality,
+    ) -> Vec<(MediaId, Tick, Quality)> {
         let mut out = Vec::new();
         let step = self.grid.frame_step();
         let mut t = self.grid.align_floor(range.start);
         while t < range.end {
-            out.extend(self.layers_at(t));
+            out.extend(self.layers_at(t, quality));
             t = Tick(t.0 + step);
         }
         out.sort();
         out.dedup();
         out
+    }
+
+    /// Максимальное качество декода среди клипов (Р.46, п.318): бюджеты
+    /// кэша и лукахеда считают память по НЕМУ, а не по Quality — иначе
+    /// чанк экспорта недооценён в S² раз (п.15: «чёрный рендер»).
+    pub fn max_decode_quality(&self, quality: Quality) -> Quality {
+        self.clips
+            .iter()
+            .map(|c| clip_decode_quality(c, quality))
+            .max()
+            .unwrap_or(quality)
     }
 
     /// Композит момента `t` из кэша в RGBA-буфер `quality`-размера.
@@ -449,7 +489,11 @@ fn layer_src<'a>(
     );
     let cache_idx = video_cache_idx(src_pts);
     let source = SourceId(clip.media.0);
-    let frame = cache.get_video(source, Some(quality), cache_idx);
+    // Р.46 (п.318): слой читает кадр СВОЕГО качества декода — того же,
+    // которое заказал префетч через layers_at.
+    let src_scale = clip_decode_scale(clip, quality);
+    let dq = clip_decode_quality(clip, quality);
+    let frame = cache.get_video(source, Some(dq), cache_idx);
     // СМЕШИВАНИЕ (Р.37 С5) делается ЗДЕСЬ, в общем коде плана: оба
     // исполнителя получают уже смешанный пре-FX кадр, и держать одну и ту
     // же арифметику синхронной в CPU-ядре и в WGSL не приходится
@@ -459,7 +503,7 @@ fn layer_src<'a>(
         None => (frame, None),
         Some((pts, k)) => {
             let idx = video_cache_idx(pts);
-            let nb = cache.get_video(source, Some(quality), idx);
+            let nb = cache.get_video(source, Some(dq), idx);
             (
                 blend_frames(frame, nb, k),
                 Some(crate::video_plan::LayerBlend { cache_idx: idx, k }),
@@ -502,7 +546,11 @@ fn layer_src<'a>(
                 world_scale: quality.width as f64 / ctx.project_size.0.max(1) as f64,
             }
         });
-    LayerSrc { source, cache_idx, frame, fx, fx_hash: clip.fx_hash, u, cam3d, blend }
+    debug_assert!(
+        src_scale == 1 || kt_fx::video::has_video_fx(&fx),
+        "a clip without video fx never gets a decode stage"
+    );
+    LayerSrc { source, cache_idx, src_scale, frame, fx, fx_hash: clip.fx_hash, u, cam3d, blend }
 }
 
 /// Построение плана кадра: какие слои, в каких ролях и с какими весами.
@@ -713,7 +761,11 @@ fn layer_frame_cpu(
     // разрешается ПО-КАДРОВО (анимация, правило активной камеры) — статика
     // fx_hash её не видит, и правка/перенос камеры отдавали бы стейл.
     // Зеркало put_cam3d в plan_key GPU-пути.
-    let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d);
+    // Ступень декода — тоже В КЛЮЧ (Р.46, п.318): один и тот же клип на
+    // одном Quality даёт РАЗНЫЕ пост-FX байты при разном размере входа
+    // (натив появился/исчез, сменилась кривая зума) — без неё кэш отдал бы
+    // стейл (t313).
+    let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d, src.src_scale);
     if has_fx
         && let Some(f) = cache.get_postfx_video(src.source, q_key, key_hash, t.0)
     {
@@ -731,7 +783,7 @@ fn layer_frame_cpu(
         u: src.u,
         burst_index: t.0,
         cam3d: src.cam3d,
-        in_scale: 1,
+        in_scale: src.src_scale,
     };
     let mut rgba = scratch.take(frame.rgba.len());
     rgba.copy_from_slice(&frame.rgba);
@@ -761,10 +813,11 @@ fn layer_frame_cpu(
 /// Ключ пост-FX мемоизации: статический хэш цепочки + разрешённая камера
 /// момента (Р.44, t66d). None — константное слагаемое: 2D-цепочки
 /// по-прежнему различаются только fx_hash.
-fn postfx_key_hash(fx_hash: u64, cam3d: &Option<Cam3d>) -> u64 {
+fn postfx_key_hash(fx_hash: u64, cam3d: &Option<Cam3d>, src_scale: u32) -> u64 {
     use xxhash_rust::xxh3::Xxh3;
     let mut h = Xxh3::new();
     h.update(&fx_hash.to_le_bytes());
+    h.update(&src_scale.to_le_bytes());
     match cam3d {
         None => h.update(&[0u8]),
         Some(c) => {
@@ -822,6 +875,10 @@ fn apply_chain_with_mixes(
     scratch: &mut kt_fx::video::FxScratch,
 ) -> kt_fx::video::Frame {
     let mut frame = start;
+    // Ступень — свойство ВХОДНОГО кадра, а не цепочки (Р.46, п.318):
+    // первый слайс получает крупный кадр, все последующие работают с уже
+    // сведённым в Quality растром (стопы силы всегда на 1×).
+    let entry_dims = (frame.w, frame.h);
     let mut snaps: std::collections::HashMap<usize, kt_fx::video::Frame> =
         std::collections::HashMap::new();
     // Границы (снимки сухой стороны и слоты силы) режут цепочку; МЕЖДУ ними
@@ -858,7 +915,11 @@ fn apply_chain_with_mixes(
             }
             None => {
                 let j = stops.iter().copied().find(|s| *s > i).unwrap_or(fx.len());
-                frame = kt_fx::video::apply_video_chain_pooled(&fx[i..j], frame, ctx, scratch);
+                let sctx = kt_fx::video::VideoFxCtx {
+                    in_scale: if (frame.w, frame.h) == entry_dims { ctx.in_scale } else { 1 },
+                    ..*ctx
+                };
+                frame = kt_fx::video::apply_video_chain_pooled(&fx[i..j], frame, &sctx, scratch);
                 i = j;
             }
         }

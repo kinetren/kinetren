@@ -61,7 +61,7 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> Project {
 fn compose(p: &Project, t: Tick, cache: &kt_cache::BurstCache) -> (Vec<u8>, bool) {
     let mut vr = VideoRenderer::new(p);
     let q = kt_media::Quality { width: W, height: H };
-    for (media, src_pts) in vr.layers_at(t) {
+    for (media, src_pts, q) in vr.layers_at(t, q) {
         cache.insert_video(
             kt_engine::source_id(media),
             Some(q),

@@ -106,7 +106,7 @@ fn render_frame(p: &Project, t: Tick) -> Vec<u8> {
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let q = kt_media::Quality { width: 64, height: 36 };
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
-    for (media, src_pts) in vr.layers_at(t) {
+    for (media, src_pts, q) in vr.layers_at(t, q) {
         let frame = synth.read_video_frame(src_pts, Some(q)).unwrap();
         cache.insert_video(
             kt_engine::source_id(media),

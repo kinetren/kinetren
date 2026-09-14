@@ -77,6 +77,7 @@ impl Src {
         LayerSrc {
             source: self.source,
             cache_idx: 0,
+            src_scale: 1,
             frame: self.frame.clone(),
             fx: std::borrow::Cow::Borrowed(&self.fx[..]),
             fx_hash: self.fx_hash,

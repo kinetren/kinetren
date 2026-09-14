@@ -930,7 +930,7 @@ impl Inner {
             return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
         }
         let (ops, (fw, fh), ha, ha_known, (mw, mh)) =
-            chain_ops(&src.fx, frame.width, frame.height, 1, ow, oh, src.u, t, src.cam3d);
+            chain_ops(&src.fx, frame.width, frame.height, src.src_scale, ow, oh, src.u, t, src.cam3d);
         // K×-промежутки плана (п.314) обязаны влезать в лимит текстур
         // устройства; не влезли — аккуратный TooLarge (весь план уходит на
         // CPU, который считает ТОТ ЖЕ план — семантика одна)
@@ -1272,6 +1272,9 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
             }
         }
         h.update(&s.fx_hash.to_le_bytes());
+        // ступень декода (Р.46, п.318): кадр того же ключа в другом
+        // размере даёт другую картинку — план обязан различаться
+        h.update(&s.src_scale.to_le_bytes());
         h.update(&s.u.to_bits().to_le_bytes());
         put_cam3d(h, &s.cam3d);
         match &s.frame {

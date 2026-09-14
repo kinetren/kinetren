@@ -9,6 +9,8 @@ use kt_model::*;
 use kt_time::{AUDIO_CHANNELS, TICK_HZ, Tick};
 
 const CH: usize = AUDIO_CHANNELS;
+/// Качество превью тестов: ступень декода (Р.46) на нём — 1.
+const Q: kt_media::Quality = kt_media::Quality { width: 64, height: 36 };
 
 fn clip(reversed: bool, fx: Vec<FxInstance>, kind: ClipKind) -> Project {
     let mut p =
@@ -75,10 +77,10 @@ fn t24_reversed_video_maps_to_mirrored_pts() {
 
     for i in [0i64, 1, 7, 29, 59] {
         let t = Tick(start + i * step);
-        let f = vf.layers_at(t)[0].1;
-        let r = vr.layers_at(t)[0].1;
+        let f = vf.layers_at(t, Q)[0].1;
+        let r = vr.layers_at(t, Q)[0].1;
         // зеркало: f и r симметричны внутри куска источника
-        let mirrored = vf.layers_at(Tick(start + span - step - i * step))[0].1;
+        let mirrored = vf.layers_at(Tick(start + span - step - i * step), Q)[0].1;
         assert_eq!(
             r, mirrored,
             "кадр {i}: реверс обязан показывать зеркальный pts (fwd {f:?}, rev {r:?})"
@@ -125,7 +127,7 @@ fn t26_video_fx_applied_in_compose_and_deterministic() {
     let q = kt_media::Quality { width: 64, height: 36 };
     // прогреть кадр клипа в кэш напрямую (пре-FX)
     let t = Tick(90_000);
-    let src_pts = vr.layers_at(t)[0].1;
+    let src_pts = vr.layers_at(t, Q)[0].1;
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
     use kt_media::MediaSource;
     let frame = synth.read_video_frame(src_pts, Some(q)).unwrap();
@@ -154,7 +156,7 @@ fn t29_reversed_trim_end_preserves_left_edge_frames() {
     let vr_before = VideoRenderer::new(&p);
     let step = TICK_HZ / 30;
     let probes: Vec<Tick> = (0..10).map(|i| Tick(90_000 + i * step)).collect();
-    let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t)[0].1).collect();
+    let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t, Q)[0].1).collect();
 
     // TrimEnd: укоротить на 0.5 c справа
     let mut m = kt_model::TimelineModel::new(p);
@@ -162,7 +164,7 @@ fn t29_reversed_trim_end_preserves_left_edge_frames() {
     let old_end = m.project().clips[0].start + m.project().clips[0].duration;
     m.apply(Command::TrimEnd { id, new_end: Tick(old_end.0 - 45_000) }).unwrap();
     let vr_after = VideoRenderer::new(m.project());
-    let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t)[0].1).collect();
+    let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t, Q)[0].1).collect();
 
     assert_eq!(before, after, "кадры у ЛЕВОГО края reversed клипа не должны меняться при TrimEnd");
 }
@@ -174,14 +176,14 @@ fn t29_reversed_trim_start_preserves_surviving_frames() {
     let step = TICK_HZ / 30;
     // пробы в интервале, который переживёт трим
     let probes: Vec<Tick> = (0..8).map(|i| Tick(90_000 + 45_000 + i * step)).collect();
-    let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t)[0].1).collect();
+    let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t, Q)[0].1).collect();
 
     let mut m = kt_model::TimelineModel::new(p);
     let id = m.project().clips[0].id;
     let old_start = m.project().clips[0].start;
     m.apply(Command::TrimStart { id, new_start: Tick(old_start.0 + 45_000) }).unwrap();
     let vr_after = VideoRenderer::new(m.project());
-    let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t)[0].1).collect();
+    let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t, Q)[0].1).collect();
 
     assert_eq!(before, after, "выжившие кадры reversed клипа не должны меняться при TrimStart");
 }
@@ -192,14 +194,14 @@ fn t29_reversed_split_is_visually_seamless() {
     let vr_before = VideoRenderer::new(&p);
     let step = TICK_HZ / 30;
     let probes: Vec<Tick> = (0..20).map(|i| Tick(90_000 + i * step * 3)).collect();
-    let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t)[0].1).collect();
+    let before: Vec<Tick> = probes.iter().map(|&t| vr_before.layers_at(t, Q)[0].1).collect();
 
     let mut m = kt_model::TimelineModel::new(p);
     let id = m.project().clips[0].id;
     let at = Tick(90_000 + 90_000); // середина
     m.apply(Command::Split { id, at, new_id: ClipId(99), new_group: None }).unwrap();
     let vr_after = VideoRenderer::new(m.project());
-    let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t)[0].1).collect();
+    let after: Vec<Tick> = probes.iter().map(|&t| vr_after.layers_at(t, Q)[0].1).collect();
 
     assert_eq!(before, after, "сплит reversed клипа обязан быть бесшовным по содержимому");
 }

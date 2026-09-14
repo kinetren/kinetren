@@ -12,6 +12,8 @@ use kt_time::{Tick, TickRange};
 
 const SEC: i64 = 90_000;
 const STEP: i64 = SEC / 30; // 3000, 30 fps
+/// Quality тестов; ступень декода (Р.46) без нативов источников — 1.
+const Q: kt_media::Quality = kt_media::Quality { width: 64, height: 36 };
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> Project {
     let mut p =
@@ -44,7 +46,7 @@ fn pts_track(p: &Project) -> Vec<i64> {
     (0..4 * 30)
         .map(|i| {
             let t = Tick(i * STEP);
-            vr.layers_at(t).first().map(|(_, s)| s.0).expect("слой есть")
+            vr.layers_at(t, Q).first().map(|(_, s, _)| s.0).expect("слой есть")
         })
         .collect()
 }
@@ -138,16 +140,20 @@ fn t247_reverse_and_stretch_compose() {
 fn t247_prefetch_matches_what_render_reads() {
     let p = project(vec![FxInstance::slowed_reverb(0.5, 0.0, 85.0)], vec![], false);
     let vr = VideoRenderer::new(&p);
-    let wanted: std::collections::BTreeSet<i64> = vr
-        .wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)))
+    // сравниваются ПАРЫ (кадр, качество декода): с Р.46 размер — часть
+    // заказа, и разойтись по нему так же смертельно, как по pts (п.318)
+    let wanted: std::collections::BTreeSet<(i64, kt_media::Quality)> = vr
+        .wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)), Q)
         .into_iter()
-        .map(|(_, s)| s.0)
+        .map(|(_, s, q)| (s.0, q))
         .collect();
-    let read: std::collections::BTreeSet<i64> =
-        pts_track(&p).into_iter().collect();
+    let read: std::collections::BTreeSet<(i64, kt_media::Quality)> = (0..4 * 30)
+        .flat_map(|i| vr.layers_at(Tick(i * STEP), Q))
+        .map(|(_, s, q)| (s.0, q))
+        .collect();
     assert_eq!(read, wanted, "префетч и рендер обязаны просить один и тот же набор кадров");
     // ключи строго возрастают и без дублей — предусловие read_video_span
-    let keys: Vec<i64> = wanted.iter().copied().collect();
+    let keys: Vec<i64> = wanted.iter().map(|(k, _)| *k).collect();
     assert!(keys.windows(2).all(|w| w[0] < w[1]), "ключи строго возрастают");
     // на 0.5× кадров вдвое меньше, чем выходных — повторы схлопнулись
     assert_eq!(keys.len(), 60, "за 4 с на 0.5× нужно 60 исходных кадров, а не 120");
@@ -225,7 +231,7 @@ fn t250_blend_mode_mixes_neighbouring_frames() {
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
     // греем ровно то, что просит план
-    for (media, pts) in vr.wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC))) {
+    for (media, pts, _q) in vr.wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)), Q) {
         let f = synth.read_video_frame(pts, Some(q)).unwrap();
         cache.insert_video(
             kt_engine::source_id(media),
@@ -286,9 +292,9 @@ fn t250_blend_prefetches_both_sides() {
     );
     let vr = VideoRenderer::new(&p);
     let wanted: std::collections::BTreeSet<i64> = vr
-        .wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)))
+        .wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)), Q)
         .into_iter()
-        .map(|(_, s)| s.0)
+        .map(|(_, s, _)| s.0)
         .collect();
     // соседи добавили по кадру справа: 61 вместо 60
     assert_eq!(wanted.len(), 61, "греются обе стороны смеси, а не одна");

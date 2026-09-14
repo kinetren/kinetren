@@ -108,7 +108,7 @@ fn t184_gpu_preview_equals_gpu_export_cold_and_warm() {
     let t = Tick(target as i64 * 3000);
     let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources().into_iter().collect();
-    for (media, src_pts) in video.layers_at(t) {
+    for (media, src_pts, q) in video.layers_at(t, q) {
         let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(q)).unwrap();
         cache.insert_video(
             kt_engine::source_id(media),

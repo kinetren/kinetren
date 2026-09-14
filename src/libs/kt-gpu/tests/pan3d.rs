@@ -64,6 +64,7 @@ fn layer<'a>(
         src: LayerSrc {
             source: SourceId(id),
             cache_idx: 0,
+            src_scale: 1,
             frame: Some(frame.clone()),
             fx: std::borrow::Cow::Borrowed(fx),
             fx_hash: id,

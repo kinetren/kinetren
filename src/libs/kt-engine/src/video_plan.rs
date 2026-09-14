@@ -26,6 +26,9 @@ pub struct LayerSrc<'a> {
     pub source: SourceId,
     /// Индекс пре-FX кадра в кэше (pts источника в тиках).
     pub cache_idx: i64,
+    /// Ступень декода слоя (Р.46, п.318): пре-FX кадр в `src_scale` раз
+    /// крупнее Quality. 1 — кадр ровно в Quality, как было всегда.
+    pub src_scale: u32,
     /// Пре-FX кадр; None — голод. Исполнители решают сами: CPU может
     /// вернуть мемоизированный пост-FX кадр и без него, GPU — нет.
     pub frame: Option<Arc<VideoFrame>>,

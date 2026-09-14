@@ -52,7 +52,7 @@ fn project_pair() -> Project {
 fn warm(vr: &VideoRenderer, cache: &kt_cache::BurstCache, t: Tick, q: kt_media::Quality) {
     use kt_media::MediaSource;
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
-    for (media, src_pts) in vr.layers_at(t) {
+    for (media, src_pts, q) in vr.layers_at(t, q) {
         let frame = synth.read_video_frame(src_pts, Some(q)).unwrap();
         cache.insert_video(
             kt_engine::source_id(media),
@@ -129,13 +129,14 @@ fn t137_missing_pair_half_gets_full_weight_and_incomplete() {
 fn t137_layers_include_handles_in_window() {
     let p = project_pair();
     let vr = VideoRenderer::new(&p);
+    let q = kt_media::Quality { width: 64, height: 36 };
     // в окне перехода активны ОБА клипа (ручки), вне — один
-    assert_eq!(vr.layers_at(Tick(84_000)).len(), 2, "handles active inside window");
-    assert_eq!(vr.layers_at(Tick(78_000)).len(), 1);
-    assert_eq!(vr.layers_at(Tick(99_000)).len(), 1);
+    assert_eq!(vr.layers_at(Tick(84_000), q).len(), 2, "handles active inside window");
+    assert_eq!(vr.layers_at(Tick(78_000), q).len(), 1);
+    assert_eq!(vr.layers_at(Tick(99_000), q).len(), 1);
     // левая ручка B читает источник ДО куска: src = 30000 + (84000-90000)
-    let layers = vr.layers_at(Tick(84_000));
-    assert!(layers.contains(&(MediaId(2), vr.grid.align_floor(Tick(24_000)))));
+    let layers = vr.layers_at(Tick(84_000), q);
+    assert!(layers.contains(&(MediaId(2), vr.grid.align_floor(Tick(24_000)), q)));
 }
 
 #[test]

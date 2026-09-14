@@ -27,7 +27,7 @@ pub struct MediaInfo {
 
 /// Запрошенное качество видео (размер, в который декодер отдаёт кадр).
 /// `None` = полное разрешение источника. Входит в ключ кэша.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Quality {
     pub width: u32,
     pub height: u32,
