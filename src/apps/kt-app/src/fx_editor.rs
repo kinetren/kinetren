@@ -569,6 +569,11 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::RadialBlur { .. } => "Radial Blur",
         FxInstance::DropShadow { .. } => "Drop Shadow",
         FxInstance::Halftone { .. } => "Halftone",
+        FxInstance::LensDistort { .. } => "Lens Distort",
+        FxInstance::Twirl { .. } => "Twirl",
+        FxInstance::Ripple { .. } => "Ripple",
+        FxInstance::Kaleidoscope { .. } => "Kaleidoscope",
+        FxInstance::Cylinder3d { .. } => "Cylinder 3D",
     }
 }
 
@@ -619,6 +624,12 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         ("Radial Blur", FxInstance::radial_blur()),
         ("Drop Shadow", FxInstance::drop_shadow()),
         ("Halftone", FxInstance::halftone()),
+        // Р.47 Кв4: нелинейные гео (Warp-прим) + цилиндр
+        ("Lens Distort", FxInstance::lens_distort()),
+        ("Twirl", FxInstance::twirl()),
+        ("Ripple", FxInstance::ripple()),
+        ("Kaleidoscope", FxInstance::kaleidoscope()),
+        ("Cylinder 3D", FxInstance::cylinder3d()),
     ]
 }
 

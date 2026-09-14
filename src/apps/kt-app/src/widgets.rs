@@ -127,6 +127,13 @@ pub fn param_label(name: &str) -> String {
         "opacity" => tr(k::fxp::OPACITY),
         "center_x" => tr(k::fxp::CENTER_X),
         "center_y" => tr(k::fxp::CENTER_Y),
+        // гео Р.47 (Кв4)
+        "k1" => tr(k::fxp::K1),
+        "k2" => tr(k::fxp::K2),
+        "freq" => tr(k::fxp::FREQ),
+        "phase" => tr(k::fxp::PHASE),
+        "segments" => tr(k::fxp::SEGMENTS),
+        "curvature" => tr(k::fxp::CURVATURE),
         // параметр без подписи в каталоге — видно сразу, а не молча
         other => return other.to_string(),
     };

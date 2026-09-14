@@ -1209,3 +1209,158 @@ fn t332_barrier_semantics() {
         "darker area must grow bigger dots: {dark_dots} vs {light_dots}"
     );
 }
+
+/// Тест 333 (Р.47 Кв4): Warp-прим — LensDistort/Twirl/Ripple/
+/// Kaleidoscope/Cylinder3d. Нейтральные параметры — пропуск шага
+/// (identity байт); смысл каждого режима; PerPixel-суперсемплинг;
+/// детерминизм; серия варпов — один ран.
+#[test]
+fn t333_warp_prims() {
+    use kt_fx::geom::SsSpec;
+    use kt_fx::plan::{PlanOp, plan_chain};
+    let src = test_frame();
+
+    // (1) нейтральные параметры каждого варпа — тождество байт-в-байт
+    for f in [
+        FxInstance::LensDistort { k1: 0.0, k2: 0.0 },
+        FxInstance::Twirl { angle: 0.0, radius: 0.8 },
+        FxInstance::Ripple { amount: 0.0, freq: 10.0, phase: 0.0 },
+        FxInstance::Cylinder3d { curvature: 0.0 },
+    ] {
+        let out = run(std::slice::from_ref(&f));
+        assert_eq!(out.rgba, src.rgba, "{}: neutral params are a byte identity", f.tag());
+    }
+
+    // (2) PerPixel-суперсемплинг включён у программы с варпом
+    let twirl = FxInstance::twirl();
+    match build_geom_exec(&[&twirl], W, H, W, H, 0.5, None, 90_000, 1, 1) {
+        GeomExec::Fused(prog) => {
+            assert_eq!(prog.ss, SsSpec::PerPixel, "warp jacobian varies per pixel");
+        }
+        GeomExec::Legacy => panic!("warp must go fused"),
+    }
+
+    // (3) детерминизм: два прогона байт-в-байт
+    let hard = [
+        FxInstance::Twirl { angle: 540.0, radius: 1.2 },
+        FxInstance::Ripple { amount: 0.3, freq: 30.0, phase: 137.0 },
+    ];
+    assert_eq!(run(&hard).rgba, run(&hard).rgba, "warp chain must be deterministic");
+
+    // (4) twirl: центр — неподвижная точка; точка на радиусе повёрнута.
+    // Маркерный кадр: белое поле, чёрный блок справа от центра.
+    let marker_at = |mx: u32, my: u32| {
+        let mut f =
+            Frame { w: W, h: H, rgba: vec![255u8; (W * H * 4) as usize], has_alpha: false };
+        for y in my.saturating_sub(1)..(my + 2).min(H) {
+            for x in mx.saturating_sub(1)..(mx + 2).min(W) {
+                let i = ((y * W + x) * 4) as usize;
+                f.rgba[i] = 0;
+                f.rgba[i + 1] = 0;
+                f.rgba[i + 2] = 0;
+            }
+        }
+        f
+    };
+    let centroid = |f: &Frame| {
+        let (mut sx, mut sy, mut n) = (0.0f64, 0.0f64, 0.0f64);
+        for y in 0..f.h {
+            for x in 0..f.w {
+                let i = ((y * f.w + x) * 4) as usize;
+                if f.rgba[i + 3] == 255 && f.rgba[i] < 128 {
+                    sx += x as f64;
+                    sy += y as f64;
+                    n += 1.0;
+                }
+            }
+        }
+        assert!(n > 0.0, "marker must survive");
+        (sx / n, sy / n)
+    };
+    // центр: маркер в центре кадра не двигается
+    let tw = FxInstance::Twirl { angle: 180.0, radius: 1.0 };
+    let out = apply_video_chain(std::slice::from_ref(&tw), marker_at(W / 2, H / 2), &ctx());
+    let (cx, cy) = centroid(&out);
+    assert!(
+        (cx - (W / 2) as f64).abs() <= 1.5 && (cy - (H / 2) as f64).abs() <= 1.5,
+        "twirl center is a fixed point: ({cx:.1}, {cy:.1})"
+    );
+    // точка на полурадиусе: обратная карта поворачивает НА θ — маркер
+    // видимо уезжает с исходного места
+    let out = apply_video_chain(std::slice::from_ref(&tw), marker_at(W / 2 + 9, H / 2), &ctx());
+    let (mx, my) = centroid(&out);
+    let moved =
+        ((mx - (W / 2 + 9) as f64).powi(2) + (my - (H / 2) as f64).powi(2)).sqrt();
+    assert!(moved > 4.0, "twirl must move an off-center marker: ({mx:.1}, {my:.1})");
+
+    // (5) lens: сдвиг маркера по формуле. Обратная карта: выходной r
+    // сэмплит источник в r·(1+k1·r²) — маркер источника на радиусе rs
+    // виден на выходе там, где rs = r·(1+k1·r²).
+    let k1 = 0.5f64;
+    let lens = FxInstance::LensDistort { k1: k1 as f32, k2: 0.0 };
+    let rr = (H / 2 - 4) as f64; // радиус маркера в px (по Y, короткая ось)
+    let rn = rr / (H as f64 / 2.0); // нормализованный
+    let out =
+        apply_video_chain(std::slice::from_ref(&lens), marker_at(W / 2, H / 2 - rr as u32), &ctx());
+    let (_, my) = centroid(&out);
+    // решить rs = r·(1+k1·r²) относительно r (выходной радиус маркера)
+    let mut r_out = rn;
+    for _ in 0..40 {
+        r_out = rn / (1.0 + k1 * r_out * r_out);
+    }
+    let expect_y = H as f64 / 2.0 - r_out * H as f64 / 2.0;
+    assert!(
+        (my - expect_y).abs() <= 1.5,
+        "lens marker at formula position: got y {my:.1}, expect {expect_y:.1}"
+    );
+
+    // (6) kaleidoscope: точки первого клина остаются собой (≤1 LSB)
+    let kal = FxInstance::Kaleidoscope { segments: 6, angle: 0.0 };
+    let out = apply_video_chain(std::slice::from_ref(&kal), test_frame(), &ctx());
+    let tau = std::f64::consts::TAU / 6.0;
+    let mut checked = 0;
+    for y in 0..H {
+        for x in 0..W {
+            let (dx, dy) = (
+                x as f64 + 0.5 - W as f64 / 2.0,
+                y as f64 + 0.5 - H as f64 / 2.0,
+            );
+            let phi = dy.atan2(dx);
+            let r = (dx * dx + dy * dy).sqrt() / (H as f64 / 2.0);
+            // глубоко внутри первой ПОЛОВИНЫ клина (там m == q — тождество)
+            if r < 0.9 && phi > 0.1 && phi < tau / 2.0 - 0.1 {
+                let i = ((y * W + x) * 4) as usize;
+                for c in 0..4 {
+                    let d = (out.rgba[i + c] as i32 - src.rgba[i + c] as i32).abs();
+                    assert!(d <= 1, "first wedge must be itself at ({x},{y}): d {d}");
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 20, "wedge probe must cover pixels: {checked}");
+
+    // (7) cylinder: края и центральный столбец на месте, сжатие к краям
+    let cyl = FxInstance::Cylinder3d { curvature: 0.9 };
+    let out = apply_video_chain(std::slice::from_ref(&cyl), marker_at(W / 2, H / 4), &ctx());
+    let (mx, _) = centroid(&out);
+    assert!((mx - (W / 2) as f64).abs() <= 1.5, "cylinder center column fixed: {mx:.1}");
+    // маркер на 3/4 ширины уезжает НАРУЖУ (сжатие у краёв: источник
+    // там семплится ближе к центру, картинка распухает к краю)
+    let out = apply_video_chain(std::slice::from_ref(&cyl), marker_at(3 * W / 4, H / 2), &ctx());
+    let (mx, _) = centroid(&out);
+    assert!(
+        mx > (3 * W / 4) as f64 + 2.0,
+        "cylinder must push mid-side content outward: {mx:.1}"
+    );
+
+    // (8) серия варпов + зум — ОДИН ран
+    let fx = vec![
+        FxInstance::lens_distort(),
+        FxInstance::twirl(),
+        FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+    ];
+    let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
+    assert_eq!(p.ops.len(), 1, "warp series stays one fused run");
+    assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
+}

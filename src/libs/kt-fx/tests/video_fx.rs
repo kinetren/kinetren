@@ -514,6 +514,12 @@ fn t328_golden_cycle_over_the_registry() {
         ("radial_blur", 0xcf33730d85dc9c70),
         ("drop_shadow", 0x05719cf53332c61a),
         ("halftone", 0x7a640931274d6e24),
+        // Р.47 Кв4: у всех пяти дефолт видим (нейтральных нет)
+        ("lens_distort", 0x580537c8e0f3badf),
+        ("twirl", 0x0955aa3873066955),
+        ("ripple", 0xaf7efc91f739ccf0),
+        ("kaleidoscope", 0x9d601aeee14f4062),
+        ("cylinder3d", 0x9178d747ce3f9976),
     ];
     let video: Vec<&FxInstance> = FxInstance::all()
         .iter()

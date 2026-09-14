@@ -111,6 +111,12 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
                 cur += 3;
                 3
             }
+            GeomPrim::Warp { mode, p } => {
+                u.p[cur] = [*mode as f32, p[0] as f32, p[1] as f32, p[2] as f32];
+                u.p[cur + 1] = [p[3] as f32, p[4] as f32, p[5] as f32, p[6] as f32];
+                cur += 2;
+                4
+            }
         };
         kinds |= kind << (i * 4);
     }

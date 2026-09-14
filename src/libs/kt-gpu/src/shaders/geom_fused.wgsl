@@ -104,6 +104,47 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
                     }
                 }
             }
+        } else if (kind == 4u) { // Warp (Р.47): зеркало kt_fx::geom::warp_map
+            let a = G.p[cur];
+            let b = G.p[cur + 1u];
+            cur = cur + 2u;
+            if (dead == 0.0) {
+                let mode = u32(a.x);
+                if (mode == 0u) { // lens: полином
+                    let r2 = x * x + y * y;
+                    let sc = 1.0 + a.y * r2 + a.z * r2 * r2;
+                    x = x * sc;
+                    y = y * sc;
+                } else if (mode == 1u) { // twirl
+                    let r = sqrt(x * x + y * y);
+                    if (r < a.z) {
+                        let t = 1.0 - r / a.z;
+                        let th = a.y * t * t;
+                        let sn = sin(th);
+                        let cs = cos(th);
+                        let nx = x * cs - y * sn;
+                        y = x * sn + y * cs;
+                        x = nx;
+                    }
+                } else if (mode == 2u) { // ripple
+                    let r = sqrt(x * x + y * y);
+                    if (r > 1e-9) {
+                        let k = (r + a.y * sin(a.z * r - a.w)) / r;
+                        x = x * k;
+                        y = y * k;
+                    }
+                } else if (mode == 3u) { // kaleidoscope: треугольная волна
+                    let r = sqrt(x * x + y * y);
+                    let q = (atan2(y, x) - a.z) / a.y;
+                    let hh = q / 2.0 - floor(q / 2.0);
+                    let m = 1.0 - abs(2.0 * hh - 1.0);
+                    let ang = a.z + m * a.y;
+                    x = r * cos(ang);
+                    y = r * sin(ang);
+                } else { // cylinder: asin(u·sin a)/a по X
+                    x = asin(clamp(x * a.y, -1.0, 1.0)) * a.z;
+                }
+            }
         }
     }
     return vec3<f32>(x, y, dead);
@@ -236,6 +277,47 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                         x = qx;
                         y = qy;
                     }
+                }
+            }
+        } else if (kind == 4u) { // Warp (Р.47): зеркало kt_fx::geom::warp_map
+            let a = G.p[cur];
+            let b = G.p[cur + 1u];
+            cur = cur + 2u;
+            if (dead == 0.0) {
+                let mode = u32(a.x);
+                if (mode == 0u) { // lens: полином
+                    let r2 = x * x + y * y;
+                    let sc = 1.0 + a.y * r2 + a.z * r2 * r2;
+                    x = x * sc;
+                    y = y * sc;
+                } else if (mode == 1u) { // twirl
+                    let r = sqrt(x * x + y * y);
+                    if (r < a.z) {
+                        let t = 1.0 - r / a.z;
+                        let th = a.y * t * t;
+                        let sn = sin(th);
+                        let cs = cos(th);
+                        let nx = x * cs - y * sn;
+                        y = x * sn + y * cs;
+                        x = nx;
+                    }
+                } else if (mode == 2u) { // ripple
+                    let r = sqrt(x * x + y * y);
+                    if (r > 1e-9) {
+                        let k = (r + a.y * sin(a.z * r - a.w)) / r;
+                        x = x * k;
+                        y = y * k;
+                    }
+                } else if (mode == 3u) { // kaleidoscope: треугольная волна
+                    let r = sqrt(x * x + y * y);
+                    let q = (atan2(y, x) - a.z) / a.y;
+                    let hh = q / 2.0 - floor(q / 2.0);
+                    let m = 1.0 - abs(2.0 * hh - 1.0);
+                    let ang = a.z + m * a.y;
+                    x = r * cos(ang);
+                    y = r * sin(ang);
+                } else { // cylinder: asin(u·sin a)/a по X
+                    x = asin(clamp(x * a.y, -1.0, 1.0)) * a.z;
                 }
             }
         }

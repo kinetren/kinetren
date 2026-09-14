@@ -52,6 +52,11 @@ pub fn is_geo(f: &FxInstance) -> bool {
             | FxInstance::EventGrid { .. }
             | FxInstance::Pan3d { .. }
             | FxInstance::CornerPin { .. }
+            | FxInstance::LensDistort { .. }
+            | FxInstance::Twirl { .. }
+            | FxInstance::Ripple { .. }
+            | FxInstance::Kaleidoscope { .. }
+            | FxInstance::Cylinder3d { .. }
     )
 }
 
@@ -109,6 +114,13 @@ pub enum GeomPrim {
     /// вне [0,1]² — вне квада → прозрачно; иначе выход = q (uv), пост-аффин
     /// `q·in − 0.5` скомпонован построителем (дословно старый pan3d.wgsl).
     Proj { m: [[f64; 3]; 3] },
+    /// Нелинейный варп (Р.47 Кв4): вход и выход — НОРМАЛИЗОВАННОЕ
+    /// центрированное пространство стадии (пред/пост-аффины строит
+    /// builder; r=1 — короткая полуось, cylinder нормируется по X на
+    /// w/2). mode: 0 lens (полином), 1 twirl, 2 ripple, 3 kaleidoscope,
+    /// 4 cylinder; предвычислимое (радианы, 2π·freq, sin a, 1/a) — f64
+    /// на CPU, в юниформу — однократно.
+    Warp { mode: u32, p: [f64; 7] },
 }
 
 /// Сентинел отключённой оси Clamp (влезает в f32 юниформы без inf).
@@ -228,6 +240,7 @@ impl GeomProgram {
                 GeomPrim::Affine(_) | GeomPrim::Clamp { .. } => 1,
                 GeomPrim::Fold { .. } => 2,
                 GeomPrim::Proj { .. } => 3,
+                GeomPrim::Warp { .. } => 2,
             })
             .sum()
     }
@@ -297,6 +310,9 @@ enum Step {
     Grid { offx: u32, offy: u32, gw: u32, gh: u32, cw: u32, ch: u32, iw: u32, ih: u32 },
     /// Pan3d: ОБРАТНАЯ гомография (центр-space выхода → uv квада).
     Proj { m: [[f64; 3]; 3], iw: u32, ih: u32 },
+    /// Нелинейный варп Р.47: растр не меняет, работает в нормализованном
+    /// центрированном пространстве своей стадии.
+    Warp { mode: u32, p: [f64; 7], iw: u32, ih: u32 },
     /// Поглощённый поточечный оп (Р.45): применяется к значению сабтапа
     /// на координате СВОЕЙ стадии.
     Tap(TapKind),
@@ -492,6 +508,64 @@ fn build_program(
                     h = moh;
                 }
             }
+            FxInstance::LensDistort { k1, k2 } => {
+                let (k1, k2) = ((*k1 as f64).clamp(-1.0, 1.0), (*k2 as f64).clamp(-1.0, 1.0));
+                if k1 != 0.0 || k2 != 0.0 {
+                    fw.push(Step::Warp {
+                        mode: 0,
+                        p: [k1, k2, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        iw: w,
+                        ih: h,
+                    });
+                }
+            }
+            FxInstance::Twirl { angle, radius } => {
+                let a = (*angle as f64).clamp(-720.0, 720.0).to_radians();
+                let rad = (*radius as f64).clamp(0.1, 1.5);
+                if a != 0.0 {
+                    fw.push(Step::Warp {
+                        mode: 1,
+                        p: [a, rad, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        iw: w,
+                        ih: h,
+                    });
+                }
+            }
+            FxInstance::Ripple { amount, freq, phase } => {
+                let amp = (*amount as f64).clamp(0.0, 0.5);
+                let k = 2.0 * std::f64::consts::PI * (*freq as f64).clamp(1.0, 40.0);
+                let ph = (*phase as f64).to_radians();
+                if amp != 0.0 {
+                    fw.push(Step::Warp {
+                        mode: 2,
+                        p: [amp, k, ph, 0.0, 0.0, 0.0, 0.0],
+                        iw: w,
+                        ih: h,
+                    });
+                }
+            }
+            FxInstance::Kaleidoscope { segments, angle } => {
+                let tau = 2.0 * std::f64::consts::PI / (*segments).clamp(2, 32) as f64;
+                let a0 = (*angle as f64).clamp(-180.0, 180.0).to_radians();
+                fw.push(Step::Warp {
+                    mode: 3,
+                    p: [tau, a0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    iw: w,
+                    ih: h,
+                });
+            }
+            FxInstance::Cylinder3d { curvature } => {
+                let curv = (*curvature as f64).clamp(0.0, 1.0);
+                if curv >= 1e-3 {
+                    let a = curv * std::f64::consts::FRAC_PI_2 * 0.999;
+                    fw.push(Step::Warp {
+                        mode: 4,
+                        p: [a.sin(), 1.0 / a, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        iw: w,
+                        ih: h,
+                    });
+                }
+            }
             _ => debug_assert!(false, "non-geo step in build_program"),
         }
     }
@@ -570,6 +644,22 @@ fn build_program(
                 // uv → index-space входа: sx = q·in − 0.5 (как pan3d.wgsl)
                 pending = Aff { ax: *iw as f64, bx: -0.5, ay: *ih as f64, by: -0.5 };
             }
+            Step::Warp { mode, p, iw, ih } => {
+                let (rw, rh) = (*iw as f64, *ih as f64);
+                // r = 1 — короткая полуось; cylinder нормируется по X
+                let r = if *mode == 4 { rw / 2.0 } else { rw.min(rh) / 2.0 };
+                // индекс → нормализованное центрированное
+                pending = pending.then(&Aff {
+                    ax: 1.0 / r,
+                    bx: (0.5 - rw / 2.0) / r,
+                    ay: 1.0 / r,
+                    by: (0.5 - rh / 2.0) / r,
+                });
+                flush(&mut pending, &mut prims);
+                prims.push(GeomPrim::Warp { mode: *mode, p: *p });
+                // нормализованное → индекс того же растра
+                pending = Aff { ax: r, bx: rw / 2.0 - 0.5, ay: r, by: rh / 2.0 - 0.5 };
+            }
             Step::Tap(kind) => {
                 // стадия опа: текущая координата обратного прохода — это
                 // растр его шага; склейка аффин разрезается здесь
@@ -601,7 +691,10 @@ fn build_program(
     // КОНСТАНТЕН — тапы считаются один раз здесь, в f64, и едут в юниформу
     // (конъюгационные аффины уже в примах — лупа автоматически физическая);
     // Proj (перспектива) делает его по-пиксельным.
-    let (ss, lens) = if prims.iter().any(|p| matches!(p, GeomPrim::Proj { .. })) {
+    let (ss, lens) = if prims
+        .iter()
+        .any(|p| matches!(p, GeomPrim::Proj { .. } | GeomPrim::Warp { .. }))
+    {
         // лупа для планировщика K× — оценка пробами обратной карты
         (SsSpec::PerPixel, probe_program_lens(&prims, pout_w, pout_h))
     } else {
@@ -616,7 +709,7 @@ fn build_program(
                     lx *= in_w / cw;
                     ly *= in_h / ch;
                 }
-                GeomPrim::Clamp { .. } | GeomPrim::Proj { .. } => {}
+                GeomPrim::Clamp { .. } | GeomPrim::Proj { .. } | GeomPrim::Warp { .. } => {}
             }
         }
         (SsSpec::Const { nx: ss_taps(lx), ny: ss_taps(ly) }, (lx, ly))
@@ -910,6 +1003,55 @@ enum Mapped {
     Transparent,
 }
 
+/// Обратная карта нелинейного варпа (Р.47): ОДИН f64-текст, читаемый
+/// обоими циклами CPU; WGSL-зеркало — geom_fused.wgsl (той же строкой).
+/// Вход/выход — нормализованное центрированное пространство стадии.
+#[inline]
+fn warp_map(mode: u32, p: &[f64; 7], x: f64, y: f64) -> (f64, f64) {
+    match mode {
+        0 => {
+            // lens: полином s = 1 + k1·r² + k2·r⁴ (без тригонометрии)
+            let r2 = x * x + y * y;
+            let s = 1.0 + p[0] * r2 + p[1] * r2 * r2;
+            (x * s, y * s)
+        }
+        1 => {
+            // twirl: поворот на a·(1 − r/rad)² внутри радиуса
+            let r = (x * x + y * y).sqrt();
+            if r >= p[1] {
+                return (x, y);
+            }
+            let t = 1.0 - r / p[1];
+            let (sn, cs) = (p[0] * t * t).sin_cos();
+            (x * cs - y * sn, x * sn + y * cs)
+        }
+        2 => {
+            // ripple: r' = r + amp·sin(k·r − φ)
+            let r = (x * x + y * y).sqrt();
+            if r <= 1e-9 {
+                return (x, y);
+            }
+            let k = (r + p[0] * (p[1] * r - p[2]).sin()) / r;
+            (x * k, y * k)
+        }
+        3 => {
+            // kaleidoscope: треугольная волна по сектору (зеркальный
+            // повтор без int-модуло — floor одинаков в обоих текстах)
+            let r = (x * x + y * y).sqrt();
+            let q = (y.atan2(x) - p[1]) / p[0];
+            let h = q / 2.0 - (q / 2.0).floor();
+            let m = 1.0 - (2.0 * h - 1.0).abs();
+            let (sn, cs) = (p[1] + m * p[0]).sin_cos();
+            (r * cs, r * sn)
+        }
+        _ => {
+            // cylinder: u' = asin(u·sin a)/a по X, края → края
+            let u = (x * p[0]).clamp(-1.0, 1.0).asin() * p[1];
+            (u, y)
+        }
+    }
+}
+
 #[inline]
 fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
     let (mut x, mut y) = (ox, oy);
@@ -947,6 +1089,11 @@ fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
                 }
                 x = qx;
                 y = qy;
+            }
+            GeomPrim::Warp { mode, p } => {
+                let (nx, ny) = warp_map(*mode, p, x, y);
+                x = nx;
+                y = ny;
             }
         }
     }
@@ -1032,6 +1179,11 @@ fn map_pos_rec(
                 }
                 x = qx;
                 y = qy;
+            }
+            GeomPrim::Warp { mode, p } => {
+                let (nx, ny) = warp_map(*mode, p, x, y);
+                x = nx;
+                y = ny;
             }
         }
         while cursor > 0 && taps[cursor - 1].after_prim == pi + 1 {

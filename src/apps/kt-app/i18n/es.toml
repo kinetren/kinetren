@@ -349,6 +349,12 @@ offset_y = "Desplaz. Y"
 opacity = "Opacidad"
 center_x = "Centro X"
 center_y = "Centro Y"
+k1 = "K1"
+k2 = "K2"
+freq = "Frecuencia"
+phase = "Fase"
+segments = "Segmentos"
+curvature = "Curvatura"
 
 [fxreg]
 add = "+ efecto…"
@@ -415,6 +421,11 @@ chromatic_aberration = "aberracion cromatica franja lente chromatic"
 radial_blur = "desenfoque radial zoom giro radial"
 drop_shadow = "sombra paralela drop shadow"
 halftone = "semitono puntos imprenta halftone"
+lens_distort = "lente distorsion barril fisheye lens"
+twirl = "remolino espiral vortice twirl"
+ripple = "ondas agua anillos ripple"
+kaleidoscope = "caleidoscopio espejo mandala kaleidoscope"
+cylinder3d = "cilindro curva 3d cylinder"
 
 # Редактор FX клипа.
 [fx]

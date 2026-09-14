@@ -349,6 +349,12 @@ offset_y = "إزاحة Y"
 opacity = "العتامة"
 center_x = "المركز X"
 center_y = "المركز Y"
+k1 = "K1"
+k2 = "K2"
+freq = "التردد"
+phase = "الطور"
+segments = "القطاعات"
+curvature = "الانحناء"
 
 [fxreg]
 add = "+ مؤثر…"
@@ -415,6 +421,11 @@ chromatic_aberration = "زيغ لوني عدسة chromatic"
 radial_blur = "ضبابية شعاعية دوران radial"
 drop_shadow = "ظل خلفي drop shadow"
 halftone = "نقاط طباعة halftone"
+lens_distort = "تشوه عدسة برميل lens"
+twirl = "دوامة لولب twirl"
+ripple = "تموج ماء ripple"
+kaleidoscope = "مشكال مرايا kaleidoscope"
+cylinder3d = "أسطوانة انحناء cylinder"
 
 # Редактор FX клипа.
 [fx]

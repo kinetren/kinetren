@@ -55,6 +55,12 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         "Radial Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::RADIAL_BLUR)),
         "Drop Shadow" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::DROP_SHADOW)),
         "Halftone" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::HALFTONE)),
+        // Р.47 Кв4: Warp-семейство и цилиндр
+        "Lens Distort" => (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::LENS_DISTORT)),
+        "Twirl" => (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::TWIRL)),
+        "Ripple" => (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::RIPPLE)),
+        "Kaleidoscope" => (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::KALEIDOSCOPE)),
+        "Cylinder 3D" => (k::fxreg::cat::THREE_D, Some(k::fxreg::kw::CYLINDER3D)),
         _ => (k::fxreg::cat::VIDEO, None),
     }
 }

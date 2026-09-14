@@ -803,6 +803,12 @@ fn t329_parity_cycle_over_the_registry() {
         ("radial_blur", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("drop_shadow", FrameTol::EXACT, FrameTol::BILINEAR),
         ("halftone", FrameTol::THRESHOLD, FrameTol::THRESHOLD),
+        // Р.47 Кв4: гео Warp-прима
+        ("lens_distort", FrameTol::GEOM, FrameTol::GEOM),
+        ("twirl", FrameTol::GEOM, FrameTol::GEOM),
+        ("ripple", FrameTol::GEOM, FrameTol::GEOM),
+        ("kaleidoscope", FrameTol::GEOM, FrameTol::GEOM),
+        ("cylinder3d", FrameTol::GEOM, FrameTol::GEOM),
     ];
     let table: std::collections::BTreeMap<&str, (FrameTol, FrameTol)> =
         classes.iter().map(|(t, a, b)| (*t, (*a, *b))).collect();
@@ -911,6 +917,40 @@ fn t329_parity_cycle_over_the_registry() {
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
         assert_eq!(cc, cg, "tuned {}: complete diverged (sandwich)", f.tag());
         assert_frames_close(&cpu, &gpu, W, H, *tol_sand, &format!("tuned-sandwich-{}", f.tag()));
+    }
+    // Р.47 Кв4: жёсткие варпы — f32-тригонометрия под максимальной
+    // нагрузкой (замер: оба бэкенда сессии держат GEOM; провал здесь —
+    // расследование и, при подтверждении, ввод класса WARP ×2 от замера,
+    // НЕ подкрутка GEOM)
+    for (i, f) in [
+        FxInstance::LensDistort { k1: -0.8, k2: 0.5 },
+        FxInstance::Twirl { angle: 540.0, radius: 1.2 },
+        FxInstance::Ripple { amount: 0.3, freq: 30.0, phase: 137.0 },
+        FxInstance::Kaleidoscope { segments: 12, angle: 30.0 },
+        FxInstance::Cylinder3d { curvature: 0.95 },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let src = Src::new(9800 + i as u64 * 2, Some(frame(W, H, false, 0)), vec![f.clone()]);
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);
+        assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, &format!("warp-hard-{}", f.tag()));
+        let src = Src::new(
+            9801 + i as u64 * 2,
+            Some(frame(W, H, false, 0)),
+            vec![grid2.clone(), f.clone(), zoom2.clone()],
+        );
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);
+        assert_frames_close(
+            &cpu,
+            &gpu,
+            W,
+            H,
+            FrameTol::GEOM,
+            &format!("warp-hard-sandwich-{}", f.tag()),
+        );
     }
     // Р.47 Кв3: spin-ветка радиального размытия (дуга — тригонометрия
     // f32 против f64) и тень на НАСТОЯЩЕЙ альфе (после greenscreen —

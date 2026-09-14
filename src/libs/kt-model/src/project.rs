@@ -2095,6 +2095,30 @@ fn is_zero_u8(v: &u8) -> bool {
     *v == 0
 }
 
+fn default_lens_k1() -> f32 {
+    0.35
+}
+
+fn default_twirl_angle() -> f32 {
+    120.0
+}
+
+fn default_twirl_radius() -> f32 {
+    0.8
+}
+
+fn default_ripple_amount() -> f32 {
+    0.08
+}
+
+fn default_ripple_freq() -> f32 {
+    10.0
+}
+
+fn default_kaleido_segments() -> u32 {
+    6
+}
+
 fn default_levels() -> u32 {
     6
 }
@@ -2788,6 +2812,44 @@ pub enum FxInstance {
         #[serde(default = "default_halftone_angle")]
         angle: f32,
     },
+    /// Линзовая дисторсия (Р.47, F-FX-002): полином k1·r²+k2·r⁴ —
+    /// бочка/подушка. Гео (Warp-прим), конкатенируется.
+    LensDistort {
+        #[serde(default = "default_lens_k1")]
+        k1: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        k2: f32,
+    },
+    /// Водоворот (Р.47): поворот, затухающий к радиусу. Гео.
+    Twirl {
+        #[serde(default = "default_twirl_angle")]
+        angle: f32,
+        #[serde(default = "default_twirl_radius")]
+        radius: f32,
+    },
+    /// Круговая волна (Р.47): r += amp·sin(k·r − φ), phase анимируема.
+    /// Гео.
+    Ripple {
+        #[serde(default = "default_ripple_amount")]
+        amount: f32,
+        #[serde(default = "default_ripple_freq")]
+        freq: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        phase: f32,
+    },
+    /// Калейдоскоп (Р.47): зеркальный повтор сектора. Гео.
+    Kaleidoscope {
+        #[serde(default = "default_kaleido_segments")]
+        segments: u32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        angle: f32,
+    },
+    /// Цилиндр (Р.47, F-FX-004): изгиб по X, края остаются краями. Гео,
+    /// категория 3D.
+    Cylinder3d {
+        #[serde(default = "default_half_f32")]
+        curvature: f32,
+    },
     /// Кроп-рамка + пан/зум в размер проекта.
     Pan {
         #[serde(default)]
@@ -2973,7 +3035,7 @@ impl FxInstance {
         | FxInstance::Delay { .. }
         | FxInstance::Compressor { .. }
         | FxInstance::Gate { .. } => FxClass::Audio,
-            FxInstance::Pan3d { .. } => FxClass::Video3d,
+            FxInstance::Pan3d { .. } | FxInstance::Cylinder3d { .. } => FxClass::Video3d,
             _ => FxClass::Video2d,
         }
     }
@@ -3026,6 +3088,11 @@ impl FxInstance {
             FxInstance::RadialBlur { .. } => "radial_blur",
             FxInstance::DropShadow { .. } => "drop_shadow",
             FxInstance::Halftone { .. } => "halftone",
+            FxInstance::LensDistort { .. } => "lens_distort",
+            FxInstance::Twirl { .. } => "twirl",
+            FxInstance::Ripple { .. } => "ripple",
+            FxInstance::Kaleidoscope { .. } => "kaleidoscope",
+            FxInstance::Cylinder3d { .. } => "cylinder3d",
             FxInstance::Pan { .. } => "pan",
             FxInstance::CamMotion { .. } => "cam_motion",
             FxInstance::Mirror { .. } => "mirror",
@@ -3077,6 +3144,11 @@ impl FxInstance {
                 FxInstance::radial_blur(),
                 FxInstance::drop_shadow(),
                 FxInstance::halftone(),
+                FxInstance::lens_distort(),
+                FxInstance::twirl(),
+                FxInstance::ripple(),
+                FxInstance::kaleidoscope(),
+                FxInstance::cylinder3d(),
                 FxInstance::pan(),
                 FxInstance::cam_motion(),
                 FxInstance::mirror(),
@@ -3425,6 +3497,26 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     Halftone {
         size: u32, 2.0, 64.0, 8.0, 1.0, Px, Smooth;
         angle: f32, -90.0, 90.0, 45.0, 1.0, Deg, Smooth;
+    },
+    LensDistort {
+        k1: f32, -1.0, 1.0, 0.35, 0.01, Norm, Smooth;
+        k2: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
+    },
+    Twirl {
+        angle: f32, -720.0, 720.0, 120.0, 1.0, Deg, Smooth;
+        radius: f32, 0.1, 1.5, 0.8, 0.01, Norm, Smooth;
+    },
+    Ripple {
+        amount: f32, 0.0, 0.5, 0.08, 0.005, Norm, Smooth;
+        freq: f32, 1.0, 40.0, 10.0, 0.5, Count, Smooth;
+        phase: f32, 0.0, 360.0, 0.0, 1.0, Deg, Smooth;
+    },
+    Kaleidoscope {
+        segments: u32, 2.0, 32.0, 6.0, 1.0, Count, Smooth;
+        angle: f32, -180.0, 180.0, 0.0, 1.0, Deg, Smooth;
+    },
+    Cylinder3d {
+        curvature: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
     },
     CornerPin {
         x0: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
@@ -3970,6 +4062,26 @@ impl FxInstance {
 
     pub fn halftone() -> FxInstance {
         FxInstance::Halftone { size: 8, angle: 45.0 }
+    }
+
+    pub fn lens_distort() -> FxInstance {
+        FxInstance::LensDistort { k1: 0.35, k2: 0.0 }
+    }
+
+    pub fn twirl() -> FxInstance {
+        FxInstance::Twirl { angle: 120.0, radius: 0.8 }
+    }
+
+    pub fn ripple() -> FxInstance {
+        FxInstance::Ripple { amount: 0.08, freq: 10.0, phase: 0.0 }
+    }
+
+    pub fn kaleidoscope() -> FxInstance {
+        FxInstance::Kaleidoscope { segments: 6, angle: 0.0 }
+    }
+
+    pub fn cylinder3d() -> FxInstance {
+        FxInstance::Cylinder3d { curvature: 0.5 }
     }
 
     pub fn pan() -> FxInstance {

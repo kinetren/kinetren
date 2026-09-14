@@ -349,6 +349,12 @@ offset_y = "偏移 Y"
 opacity = "不透明度"
 center_x = "中心 X"
 center_y = "中心 Y"
+k1 = "K1"
+k2 = "K2"
+freq = "频率"
+phase = "相位"
+segments = "段数"
+curvature = "弯曲度"
 
 [fxreg]
 add = "+ 特效…"
@@ -415,6 +421,11 @@ chromatic_aberration = "色差 镜头 紫边 chromatic"
 radial_blur = "径向模糊 缩放 旋转 radial"
 drop_shadow = "投影 阴影 drop shadow"
 halftone = "半调 网点 印刷 halftone"
+lens_distort = "镜头畸变 桶形 鱼眼 lens"
+twirl = "旋转扭曲 漩涡 twirl"
+ripple = "波纹 水波 ripple"
+kaleidoscope = "万花筒 镜像 kaleidoscope"
+cylinder3d = "圆柱 弯曲 3d cylinder"
 
 # Редактор FX клипа.
 [fx]
