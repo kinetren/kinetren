@@ -427,3 +427,63 @@ fn t326_delay_and_dynamics_behave() {
     assert!(loud > 0.2, "loud sine passes the gate: {loud}");
     assert!(quiet < 1e-4, "quiet sine is gated: {quiet}");
 }
+
+/// Тест 327 (Р.47, п.330): цена плотной цепочки — ПЕЧАТЬ, не ассерт
+/// (о скорости судят по release-прогону: п.301). Семь событий, у каждого
+/// цепочка из шести узлов.
+#[test]
+#[ignore]
+fn t327_print_dense_chain_cost() {
+    let chain = || {
+        vec![
+            FxInstance::filter(),
+            FxInstance::eq(),
+            FxInstance::chorus(),
+            FxInstance::delay(),
+            FxInstance::compressor(),
+            FxInstance::gain(-3.0),
+        ]
+    };
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
+    for i in 0..7 {
+        p.clips.push(ClipEvent {
+            id: ClipId(i + 1),
+            link_group: None,
+            kind: ClipKind::Audio,
+            lane: i as u32 % 3,
+            start: Tick((i as i64) * 90_000 / 2),
+            duration: Tick(90_000 * 8),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: chain(),
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
+    }
+    p.validate().unwrap();
+    let r = AudioRenderer::new(&p);
+    let mut f = DirectFetcher::new(None);
+    f.add_source(
+        MediaId(1),
+        Box::new(SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Clicks)),
+    );
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let secs = 10i64;
+    let mut out = vec![0f32; (48_000 * secs) as usize * CH];
+    let t = std::time::Instant::now();
+    let stats = r.render_frames_with(&mut f, &mut store, 0, &mut out);
+    let ms = t.elapsed().as_secs_f64() * 1e3;
+    assert_eq!(stats.underruns, 0);
+    println!(
+        "t327: 7 events x 6-node chains, {secs} s of audio in {ms:.1} ms ({:.1} ms per second, {:.1}% of realtime)",
+        ms / secs as f64,
+        ms / (secs as f64 * 1000.0) * 100.0
+    );
+}
