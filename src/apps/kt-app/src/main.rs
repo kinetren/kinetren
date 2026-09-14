@@ -30,6 +30,7 @@ mod timeline;
 mod transition_editor;
 mod toolbar;
 mod util;
+mod user_store;
 mod widgets;
 
 fn main() -> eframe::Result {

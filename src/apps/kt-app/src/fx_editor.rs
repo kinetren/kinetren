@@ -115,6 +115,33 @@ impl KtApp {
             ed.open = false;
             return;
         };
+        // пресеты: показываем только те, что законны для ЭТОГО вида
+        // события (совместимость считается по реестру эффектов)
+        let is_audio_anchor = anchor.kind == ClipKind::Audio;
+        let preset_rows: Vec<crate::user_store::PresetRow> = self
+            .presets
+            .rows()
+            .iter()
+            .filter(|r| if is_audio_anchor { r.audio_ok } else { r.video_ok })
+            .cloned()
+            .collect();
+        // состояние библиотеки сообщается ОДИН раз за сессию окна: файл
+        // битый, файл новее нас, часть записей не разобралась
+        if !self.presets_reported {
+            self.presets_reported = true;
+            if self.presets.is_broken() {
+                self.note(tr(k::msg::PRESETS_BROKEN));
+            }
+            if self.presets.is_readonly() {
+                self.note(tr(k::msg::PRESETS_READONLY));
+            }
+            let skipped = self.presets.skipped();
+            if skipped > 0 {
+                self.note(format!("{} {skipped}", tr(k::msg::PRESETS_SKIPPED)));
+            }
+        }
+        let mut preset_save: Option<kt_model::ops::FxChainBlock> = None;
+        let mut preset_action: Option<crate::widgets::PresetAction> = None;
         // камеры для комбо Pan3d (Р.29): id + подпись
         let cameras: Vec<(u64, String)> = self
             .model
@@ -216,6 +243,11 @@ impl KtApp {
                                     selected: &mut sel_slot,
                                     master_on: &mut chain_on,
                                     head: None,
+                                    presets: crate::widgets::ChainPresets {
+                                        rows: &preset_rows,
+                                        save: &mut preset_save,
+                                        action: &mut preset_action,
+                                    },
                                 },
                                 clip.kind == ClipKind::Audio,
                                 &mut query,
@@ -342,6 +374,39 @@ impl KtApp {
                     }
                 });
             });
+
+        // запросы полосы по пресетам (Р.48): полоса их только кладёт —
+        // файл пишет окно, потому что диалог имени живёт у приложения
+        if let Some(block) = preset_save.take() {
+            self.preset_save = Some(crate::app::PresetSaveDialog {
+                block,
+                name: String::new(),
+                rename_of: None,
+                focus: true,
+            });
+        }
+        match preset_action.take() {
+            Some(crate::widgets::PresetAction::Rename(old)) => {
+                self.preset_save = Some(crate::app::PresetSaveDialog {
+                    // переименование блок не использует
+                    block: kt_model::ops::FxChainBlock {
+                        slots: vec![],
+                        src_in: kt_time::Tick(0),
+                        fx_off: false,
+                    },
+                    name: old.clone(),
+                    rename_of: Some(old),
+                    focus: true,
+                });
+            }
+            Some(crate::widgets::PresetAction::Delete(name)) => {
+                match self.presets.remove(&name) {
+                    Ok(()) => self.note(format!("{} {name}", tr(k::msg::PRESET_DELETED))),
+                    Err(e) => self.note(format!("{}: {e}", tr(k::msg::PRESET_SAVE_FAILED))),
+                }
+            }
+            None => {}
+        }
         if let Some(h) = hover_out {
             self.hover_hint = Some(h); // подсказка едет в строку состояния
         }

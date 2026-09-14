@@ -6460,3 +6460,169 @@ fn t343_paste_chain_into_morpher_carries_curves() {
         "и пересчитаться в домен морфера (отступ от точки входа донора)"
     );
 }
+
+/// Проект с одним видео-событием и открытым окном FX — общая обвязка
+/// тестов пресетов.
+#[cfg(test)]
+fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp> {
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(180_000),
+        source_in: kt_time::Tick(30_000),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::blur(8)],
+        fx_bypass: vec![false],
+        fx_auto: vec![vec![ParamCurve {
+            param: "radius".into(),
+            ease: false,
+            keys: vec![
+                AutoKey { t: kt_time::Tick(30_000), v: 1.0 },
+                AutoKey { t: kt_time::Tick(120_000), v: 48.0 },
+            ],
+        }]],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    h
+}
+
+/// Тест 345 (Р.48, п.344): окно «сохранить пресетом» по чек-листу t250.
+///
+/// Окно не открывается само, реально рисуется по кнопке, Esc закрывает
+/// начисто, повторный вызов работает, а ПОДТВЕРЖДЕНИЕ не трогает модель:
+/// пресет — файл пользователя, и undo проекта его не касается.
+#[test]
+fn t345_preset_save_dialog_follows_the_rules() {
+    use egui_kittest::kittest::Queryable;
+    let mut h = harness_with_fx_window();
+    let title = tr(k::msg::PRESET_SAVE_TITLE).to_string();
+    assert!(h.query_by_label(&title).is_none(), "окно не должно открываться само");
+
+    // кнопка в полосе цепочки
+    h.get_by_label(tr(k::fx::SAVE_PRESET)).click();
+    h.step();
+    h.step();
+    assert!(h.query_by_label(&title).is_some(), "окно обязано быть НАРИСОВАНО");
+
+    // Esc закрывает и не оставляет следов
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+    assert!(h.query_by_label(&title).is_none(), "Esc обязан закрыть окно");
+    assert!(h.state().preset_save.is_none(), "и не оставить состояния");
+
+    // повторный вызов работает (правило 14)
+    h.get_by_label(tr(k::fx::SAVE_PRESET)).click();
+    h.step();
+    h.step();
+    assert!(h.query_by_label(&title).is_some(), "фича обязана работать повторно");
+
+    // подтверждение: пресет в библиотеке, модель НЕ тронута
+    let undo_before = h.state().model.undo_depth();
+    let rev_before = h.state().model_rev;
+    h.state_mut().preset_save.as_mut().unwrap().name = "My chain".into();
+    // имя набрано → появился живой предпросмотр → окно стало выше, и
+    // кнопки уехали вниз: щупать надо ПОСЛЕ перерисовки, иначе клик
+    // уйдёт по старым координатам (та же ловушка, что с драгом в три шага)
+    h.step();
+    h.step();
+    h.get_by_label(tr(k::msg::PRESET_SAVE_DO)).click();
+    h.step();
+    h.step();
+    let app = h.state_mut();
+    assert!(app.preset_save.is_none(), "после сохранения окно закрывается");
+    assert!(
+        app.presets.rows().iter().any(|r| r.name == "My chain" && !r.factory),
+        "пресет обязан появиться в библиотеке"
+    );
+    assert_eq!(app.model.undo_depth(), undo_before, "пресет — файл, а не правка проекта");
+    assert_eq!(app.model_rev, rev_before, "и модель он не двигает");
+    // ключи хранятся от нуля: пресет не помнит донора (вход был 30_000)
+    let saved = app.presets.rows().iter().find(|r| r.name == "My chain").unwrap().clone();
+    assert_eq!(
+        saved.block.slots[0].curves[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![0, 90_000]
+    );
+}
+
+/// Тест 346 (Р.48, п.345): вставка пресета из пикера.
+///
+/// Пресет дописывается в конец цепочки, кривые переезжают на материал
+/// приёмника, и всё это — обычная правка события: одна ступень undo.
+#[test]
+fn t346_preset_insert_appends_chain_with_curves() {
+    use kt_model::*;
+    let mut h = harness_with_fx_window();
+    // в библиотеке — пресет с кривой (кладём прямо в стор: пикер —
+    // меню egui, его раскрытие проверяет t345-часть про кнопку)
+    let block = kt_model::ops::FxChainBlock {
+        slots: vec![kt_model::ops::FxSlotBlock {
+            fx: FxInstance::glow(0.7),
+            bypass: false,
+            curves: vec![ParamCurve {
+                param: "strength".into(),
+                ease: true,
+                keys: vec![
+                    AutoKey { t: kt_time::Tick(0), v: 0.2 },
+                    AutoKey { t: kt_time::Tick(90_000), v: 1.5 },
+                ],
+            }],
+        }],
+        src_in: kt_time::Tick(0),
+        fx_off: false,
+    };
+    let app = h.state_mut();
+    app.presets.add("Glow ramp", &block).expect("add");
+    let row = app.presets.rows().iter().find(|r| r.name == "Glow ramp").unwrap().clone();
+    assert!(row.video_ok && !row.audio_ok, "свечение — видео-пресет");
+
+    // вставка идёт тем же путём, что из пикера: append_chain_block с
+    // точкой входа приёмника
+    let clip = app.model.clip(ClipId(1)).unwrap().clone();
+    let (mut fx, mut bypass, mut auto) =
+        (clip.fx.clone(), clip.fx_bypass.clone(), clip.fx_auto.clone());
+    kt_model::ops::append_chain_block(&mut fx, &mut bypass, &mut auto, &row.block, clip.source_in);
+    let undo_before = app.model.undo_depth();
+    app.apply_batch(vec![
+        Command::SetFx { id: ClipId(1), fx },
+        Command::SetFxBypass { id: ClipId(1), bypass },
+        Command::SetFxAuto { id: ClipId(1), auto },
+    ]);
+    h.step();
+
+    let clip = h.state().model.clip(ClipId(1)).unwrap().clone();
+    assert_eq!(clip.fx.len(), 2, "пресет дописывается в конец, а не заменяет цепочку");
+    assert!(matches!(clip.fx[1], FxInstance::Glow { .. }));
+    assert_eq!(
+        clip.fx_auto[1][0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![30_000, 120_000],
+        "кривая обязана переехать на материал приёмника (вход 30_000)"
+    );
+    assert_eq!(
+        h.state().model.undo_depth(),
+        undo_before + 1,
+        "вставка пресета — одна ступень истории"
+    );
+    h.state_mut().model.undo().expect("undo");
+    assert_eq!(
+        h.state().model.clip(ClipId(1)).unwrap().fx.len(),
+        1,
+        "undo снимает вставленный пресет"
+    );
+}

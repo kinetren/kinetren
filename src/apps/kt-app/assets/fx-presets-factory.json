@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "name": "Dream blur",
+      "slots": [
+        {
+          "fx": {
+            "kind": "blur",
+            "radius": 4
+          },
+          "curves": [
+            {
+              "param": "radius",
+              "ease": true,
+              "keys": [
+                {
+                  "t": 0,
+                  "v": 1.0
+                },
+                {
+                  "t": 180000,
+                  "v": 24.0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fx": {
+            "kind": "vignette",
+            "strength": 0.45,
+            "radius": 0.65,
+            "softness": 0.5
+          }
+        }
+      ]
+    },
+    {
+      "name": "Old film",
+      "slots": [
+        {
+          "fx": {
+            "kind": "color_grade",
+            "contrast": 0.18,
+            "saturation": 0.35,
+            "hue": 8.0
+          }
+        },
+        {
+          "fx": {
+            "kind": "noise",
+            "amount": 0.12,
+            "size": 2
+          }
+        },
+        {
+          "fx": {
+            "kind": "vignette",
+            "strength": 0.7,
+            "radius": 0.5,
+            "softness": 0.45
+          },
+          "curves": [
+            {
+              "param": "strength",
+              "ease": true,
+              "keys": [
+                {
+                  "t": 0,
+                  "v": 0.45
+                },
+                {
+                  "t": 270000,
+                  "v": 0.8
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Punch in",
+      "slots": [
+        {
+          "fx": {
+            "kind": "pan",
+            "mode": "stretch",
+            "zoom": 1.0
+          },
+          "curves": [
+            {
+              "param": "zoom",
+              "ease": true,
+              "keys": [
+                {
+                  "t": 0,
+                  "v": 1.0
+                },
+                {
+                  "t": 90000,
+                  "v": 1.35
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fx": {
+            "kind": "sharpen",
+            "amount": 0.8,
+            "radius": 3
+          }
+        }
+      ]
+    },
+    {
+      "name": "Voice up front",
+      "slots": [
+        {
+          "fx": {
+            "kind": "eq",
+            "low_gain_db": -3.0,
+            "low_freq_hz": 160.0,
+            "mid_gain_db": 2.5,
+            "mid_freq_hz": 2600.0,
+            "mid_q": 1.2,
+            "high_gain_db": 2.0,
+            "high_freq_hz": 9000.0
+          }
+        },
+        {
+          "fx": {
+            "kind": "compressor",
+            "threshold_db": -20.0,
+            "ratio": 3.0,
+            "attack_ms": 8.0,
+            "release_ms": 160.0,
+            "makeup_db": 4.0
+          },
+          "curves": [
+            {
+              "param": "threshold_db",
+              "ease": true,
+              "keys": [
+                {
+                  "t": 0,
+                  "v": -14.0
+                },
+                {
+                  "t": 240000,
+                  "v": -24.0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fx": {
+            "kind": "limiter",
+            "threshold_db": -6.0,
+            "ceiling_db": -1.0,
+            "lookahead_ms": 5.0,
+            "release_ms": 90.0
+          }
+        }
+      ]
+    },
+    {
+      "name": "Wide dub echo",
+      "slots": [
+        {
+          "fx": {
+            "kind": "delay",
+            "time_ms": 420.0,
+            "feedback": 0.45,
+            "mix": 0.3
+          },
+          "curves": [
+            {
+              "param": "mix",
+              "ease": true,
+              "keys": [
+                {
+                  "t": 0,
+                  "v": 0.12
+                },
+                {
+                  "t": 240000,
+                  "v": 0.42
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fx": {
+            "kind": "stereo_width",
+            "width": 1.4
+          }
+        }
+      ]
+    }
+  ]
+}

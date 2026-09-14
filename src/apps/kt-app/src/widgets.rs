@@ -403,6 +403,9 @@ pub struct ChainEdit<'a> {
     pub bypass: &'a mut Vec<bool>,
     pub auto: &'a mut Vec<Vec<kt_model::ParamCurve>>,
     pub selected: &'a mut ChainSel,
+    /// Библиотека пресетов (Р.48): строки для пикера и «почтовый ящик»
+    /// запроса на сохранение — саму запись делает владелец окна.
+    pub presets: ChainPresets<'a>,
     /// Мастер-выключатель цепочки (у морфера — выключатель события).
     pub master_on: &'a mut bool,
     /// Приколотый ПЕРВЫЙ слот, эффектом не являющийся (Р.35): у морфера
@@ -421,6 +424,24 @@ pub struct HeadSlot<'a> {
 
 /// Что выбрано в полосе. Отдельный тип, а не «голова = 0» — иначе
 /// смещение индексов эффектов на единицу гарантированно даёт off-by-one.
+/// Связка полосы с библиотекой пресетов (Р.48).
+pub struct ChainPresets<'a> {
+    /// Что показать в пикере (уже отфильтровано по виду события).
+    pub rows: &'a [crate::user_store::PresetRow],
+    /// Запрос «сохранить эту цепочку»: полоса кладёт блок, владелец окна
+    /// открывает диалог имени и пишет файл.
+    pub save: &'a mut Option<kt_model::ops::FxChainBlock>,
+    /// Запрос на управление пресетом (переименовать/удалить).
+    pub action: &'a mut Option<PresetAction>,
+}
+
+/// Что сделать с пользовательским пресетом.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PresetAction {
+    Rename(String),
+    Delete(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChainSel {
     #[default]
@@ -641,7 +662,28 @@ pub fn chain_strip(
             audio,
             query,
             head_name.as_deref(),
+            edit.presets.rows,
         ) {
+            Some(crate::fx_registry::Picked::Preset(i)) => {
+                if let Some(row) = edit.presets.rows.get(i) {
+                    // вставка пресета — ТА ЖЕ функция, что вставка из
+                    // буфера: ключи переезжают «вход к входу»
+                    kt_model::ops::append_chain_block(
+                        edit.fx,
+                        edit.bypass,
+                        edit.auto,
+                        &row.block,
+                        src_in,
+                    );
+                    *edit.selected = ChainSel::Fx(edit.fx.len().saturating_sub(1));
+                    ch.fx = true;
+                    ch.bypass = true;
+                    ch.auto = true;
+                }
+            }
+            Some(crate::fx_registry::Picked::PresetAction(a)) => {
+                *edit.presets.action = Some(a);
+            }
             Some(crate::fx_registry::Picked::Fx(tmpl)) => {
                 edit.fx.push(tmpl);
                 edit.bypass.push(false);
@@ -653,6 +695,31 @@ pub fn chain_strip(
             // её НАЙТИ поиском наравне с эффектами
             Some(crate::fx_registry::Picked::Head) => *edit.selected = ChainSel::Head,
             None => {}
+        }
+        // сохранить цепочку пресетом (Р.48): сам файл пишет владелец
+        // окна — полоса лишь передаёт ему блок
+        if !edit.fx.is_empty()
+            && crate::app::hint_into(
+                hover,
+                ui.button(tr(k::fx::SAVE_PRESET)),
+                tr(k::fx::SAVE_PRESET_HINT),
+            )
+            .clicked()
+        {
+            *edit.presets.save = Some(kt_model::ops::FxChainBlock {
+                slots: edit
+                    .fx
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| kt_model::ops::FxSlotBlock {
+                        fx: f.clone(),
+                        bypass: edit.bypass[i],
+                        curves: edit.auto.get(i).cloned().unwrap_or_default(),
+                    })
+                    .collect(),
+                src_in,
+                fx_off: !*edit.master_on,
+            });
         }
         // копипаст цепочки (модель — kt_model::ops, Р.33)
         if !edit.fx.is_empty()

@@ -191,6 +191,10 @@ impl KtApp {
 
     #[allow(clippy::too_many_lines)]
     fn draw_one_morph_editor(&mut self, ctx: &egui::Context, ed: &mut MorphEditor) {
+        // морферу законны обе стороны — показываем всю библиотеку
+        let preset_rows: Vec<crate::user_store::PresetRow> = self.presets.rows().to_vec();
+        let mut preset_save: Option<kt_model::ops::FxChainBlock> = None;
+        let mut preset_action: Option<crate::widgets::PresetAction> = None;
         // событие исчезло (undo/удаление) — окно закрывается само (v1)
         let Some(orig) = self.model.project().morphers.iter().find(|m| m.id == ed.id).cloned()
         else {
@@ -401,6 +405,13 @@ impl KtApp {
                         fx: &mut fx,
                         bypass: &mut bypass,
                         auto: &mut auto,
+                        // морферу показываем ВСЕ пресеты: в патче законны
+                        // цепочки обоих видов (split_chains разложит)
+                        presets: crate::widgets::ChainPresets {
+                            rows: &preset_rows,
+                            save: &mut preset_save,
+                            action: &mut preset_action,
+                        },
                         selected: &mut ed.sel,
                         master_on: &mut enabled,
                         head: Some(crate::widgets::HeadSlot {
@@ -615,6 +626,40 @@ impl KtApp {
         if changed && ev != orig {
             self.apply_coalesced(Command::SetMorpher(ev), ed.gesture);
         }
+
+        // запросы полосы по пресетам (Р.48): полоса их только кладёт —
+        // файл пишет окно, потому что диалог имени живёт у приложения
+        if let Some(block) = preset_save.take() {
+            self.preset_save = Some(crate::app::PresetSaveDialog {
+                block,
+                name: String::new(),
+                rename_of: None,
+                focus: true,
+            });
+        }
+        match preset_action.take() {
+            Some(crate::widgets::PresetAction::Rename(old)) => {
+                self.preset_save = Some(crate::app::PresetSaveDialog {
+                    // переименование блок не использует
+                    block: kt_model::ops::FxChainBlock {
+                        slots: vec![],
+                        src_in: kt_time::Tick(0),
+                        fx_off: false,
+                    },
+                    name: old.clone(),
+                    rename_of: Some(old),
+                    focus: true,
+                });
+            }
+            Some(crate::widgets::PresetAction::Delete(name)) => {
+                match self.presets.remove(&name) {
+                    Ok(()) => self.note(format!("{} {name}", tr(k::msg::PRESET_DELETED))),
+                    Err(e) => self.note(format!("{}: {e}", tr(k::msg::PRESET_SAVE_FAILED))),
+                }
+            }
+            None => {}
+        }
+
     }
 }
 

@@ -33,6 +33,17 @@ pub type ReopenedMedia = (MediaId, String, Option<Box<dyn kt_media::MediaSource>
 /// Диалог автодакинга (Р.48, п.341): по какой дорожке считать паузы и
 /// насколько приглушать. Снимок, а не живой сайдчейн — поэтому это
 /// обычная правка модели с одним undo-шагом.
+/// Диалог «сохранить цепочку пресетом» (Р.48, п.344). Пресет — файл
+/// ПОЛЬЗОВАТЕЛЯ, а не модель: undo проекта его не откатывает.
+pub struct PresetSaveDialog {
+    /// Что сохраняем (цепочка на момент нажатия).
+    pub block: kt_model::ops::FxChainBlock,
+    pub name: String,
+    /// Переименование существующего вместо создания нового.
+    pub rename_of: Option<String>,
+    pub focus: bool,
+}
+
 pub struct DuckDialog {
     /// События, к которым применится кривая (выделение на момент вызова).
     pub targets: Vec<kt_model::ClipId>,
@@ -298,6 +309,12 @@ pub struct KtApp {
     /// позицией вставки: курсор под окном её не уводит.
     pub paste_names: Option<PasteNamesDialog>,
     pub duck: Option<DuckDialog>,
+    pub preset_save: Option<PresetSaveDialog>,
+    /// Библиотека FX-пресетов (Р.48): файл пользователя, общий на все
+    /// проекты. Загружается лениво при первом обращении.
+    pub presets: crate::user_store::FxPresetStore,
+    /// Состояние библиотеки пресетов уже показано (один раз за сессию).
+    pub presets_reported: bool,
     /// Прямоугольник строки состояния (заполняется при её отрисовке).
     pub statusbar_rect: egui::Rect,
     /// Что реально показано в строке подсказки (для harness-теста).
@@ -528,6 +545,9 @@ impl KtApp {
             last_band: None,
             paste_names: None,
             duck: None,
+            preset_save: None,
+            presets: Default::default(),
+            presets_reported: false,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -670,6 +690,9 @@ impl KtApp {
             last_band: None,
             paste_names: None,
             duck: None,
+            preset_save: None,
+            presets: Default::default(),
+            presets_reported: false,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -1064,6 +1087,7 @@ impl KtApp {
         self.draw_morph_editors(&ctx);
         self.draw_paste_names(&ctx);
         self.draw_duck_dialog(&ctx);
+        self.draw_preset_save(&ctx);
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
 
@@ -1745,6 +1769,9 @@ impl KtApp {
             return;
         }
         // 0) окно префикса вставки (Р.35 п.4)
+        if self.preset_save.take().is_some() {
+            return;
+        }
         if self.duck.take().is_some() {
             return;
         }
@@ -2482,6 +2509,86 @@ impl KtApp {
             return;
         }
         self.paste_names = Some(d);
+    }
+
+    /// Окно имени пресета (эталон — окно префикса вставки, t250):
+    /// живой предпросмотр итогового имени, Enter/Esc, фокус отдаётся при
+    /// закрытии. Модель НЕ трогается — это запись в файл пользователя.
+    fn draw_preset_save(&mut self, ctx: &egui::Context) {
+        let Some(mut d) = self.preset_save.take() else { return };
+        let mut go = false;
+        let mut cancel = false;
+        let mut open = true;
+        let taken = self.presets.taken_names();
+        egui::Window::new(tr(k::msg::PRESET_SAVE_TITLE))
+            .id(egui::Id::new("preset_save"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(tr(k::msg::PRESET_NAME_LABEL));
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut d.name)
+                            .desired_width(200.0)
+                            .hint_text(tr(k::msg::PRESET_NAME_HINT)),
+                    );
+                    if d.focus {
+                        resp.request_focus();
+                        d.focus = false;
+                    }
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        go = true;
+                    }
+                });
+                // живой предпросмотр: пользователь видит ИТОГОВОЕ имя до
+                // сохранения (занятое получит суффикс)
+                let wanted = d.name.trim();
+                if !wanted.is_empty() {
+                    let taken_now: Vec<String> = taken
+                        .iter()
+                        .filter(|n| Some(n.as_str()) != d.rename_of.as_deref())
+                        .cloned()
+                        .collect();
+                    let shown = kt_model::unique_name(&taken_now, wanted, "copy");
+                    ui.label(egui::RichText::new(shown).strong());
+                }
+                ui.label(egui::RichText::new(tr(k::msg::PRESET_SAVE_NOTE)).weak().small());
+                ui.horizontal(|ui| {
+                    if ui.button(tr(k::msg::PRESET_SAVE_DO)).clicked() {
+                        go = true;
+                    }
+                    if ui.button(tr(k::fx::CANCEL)).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
+        if go && !d.name.trim().is_empty() {
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("preset_save")));
+            let taken_now: Vec<String> = taken
+                .iter()
+                .filter(|n| Some(n.as_str()) != d.rename_of.as_deref())
+                .cloned()
+                .collect();
+            let name = kt_model::unique_name(&taken_now, d.name.trim(), "copy");
+            let res = match &d.rename_of {
+                Some(old) => self.presets.rename(old, &name),
+                None => self.presets.add(&name, &d.block),
+            };
+            match res {
+                Ok(()) => self.note(format!("{} {name}", tr(k::msg::PRESET_SAVED))),
+                Err(e) => self.note(format!("{}: {e}", tr(k::msg::PRESET_SAVE_FAILED))),
+            }
+            return;
+        }
+        if cancel || !open {
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("preset_save")));
+            return;
+        }
+        self.preset_save = Some(d);
     }
 
     /// Окно автодакинга. По кнопке считает огибающую дорожки-источника

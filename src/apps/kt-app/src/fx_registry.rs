@@ -252,6 +252,10 @@ pub fn filter_entries<'a>(
 /// Кнопка «+ эффект…» с popup: поиск + список по категориям.
 /// Что выбрали в пикере.
 pub enum Picked {
+    /// Пресет из библиотеки пользователя (индекс в переданном срезе).
+    Preset(usize),
+    /// Управление пользовательским пресетом из его контекст-меню.
+    PresetAction(crate::widgets::PresetAction),
     /// Приколотая голова полосы (у морфера — подмена источника).
     Head,
     Fx(FxInstance),
@@ -266,6 +270,7 @@ pub fn fx_picker_with_head(
     audio: bool,
     query: &mut String,
     head: Option<&str>,
+    presets: &[crate::user_store::PresetRow],
 ) -> Option<Picked> {
     let mut picked = None;
     ui.menu_button(tr(k::fxreg::ADD), |ui| {
@@ -287,6 +292,65 @@ pub fn fx_picker_with_head(
                 picked = Some(Picked::Head);
                 query.clear();
                 ui.close();
+            }
+            ui.separator();
+        }
+        // Пресеты (Р.48) — СВОЕЙ секцией сразу после головы: это не
+        // виды эффектов, и в статический реестр они не попадают (t48
+        // сверяет его с шаблонами). Ищутся той же строкой — и по имени
+        // пресета, и по именам эффектов внутри него.
+        let q = query.to_lowercase();
+        let shown: Vec<(usize, &crate::user_store::PresetRow)> = presets
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                q.is_empty()
+                    || r.name.to_lowercase().contains(&q)
+                    || r.block.slots.iter().any(|sl| {
+                        crate::fx_editor::fx_display_name(&sl.fx).to_lowercase().contains(&q)
+                    })
+            })
+            .collect();
+        if !shown.is_empty() {
+            ui.label(egui::RichText::new(tr(k::fx::PRESETS)).small().weak());
+            for (i, r) in shown {
+                let label = crate::widgets::elided_name(
+                    ui,
+                    &r.name,
+                    ui.visuals().text_color(),
+                    false,
+                );
+                let resp = ui.button(label);
+                if resp.clicked() {
+                    picked = Some(Picked::Preset(i));
+                    query.clear();
+                    ui.close();
+                }
+                // заводские не переименовываются и не удаляются — и это
+                // видно: у них нет меню, а подсказка говорит почему
+                if r.factory {
+                    resp.on_hover_text(tr(k::msg::PRESET_FACTORY));
+                } else {
+                    let name = r.name.clone();
+                    resp.context_menu(|ui| {
+                        if ui.button(tr(k::fx::RENAME_PRESET)).clicked() {
+                            picked = Some(Picked::PresetAction(
+                                crate::widgets::PresetAction::Rename(name.clone()),
+                            ));
+                            ui.close();
+                        }
+                        if ui
+                            .button(tr(k::fx::DELETE_PRESET))
+                            .on_hover_text(tr(k::fx::DELETE_PRESET_HINT))
+                            .clicked()
+                        {
+                            picked = Some(Picked::PresetAction(
+                                crate::widgets::PresetAction::Delete(name.clone()),
+                            ));
+                            ui.close();
+                        }
+                    });
+                }
             }
             ui.separator();
         }
