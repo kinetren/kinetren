@@ -1,18 +1,18 @@
 ---
 id: F-AUD-011
 title: Distortion / сатурация и Bitcrusher
-status: в-работе
+status: сделано
 priority: B
 cost: S
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-model, kt-fx, kt-app]
 invariants: [1, 11]
 ui_rules: []
 round: "Р.47"
-point: null
-tests: []
+point: 327
+tests: [322, 323, 324]
 depends_on: []
 trackers: []
 services: []
@@ -123,3 +123,5 @@ downsample обязана быть привязана к материалу, н�
 - https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (дата обращения 2026-09-14)
 - https://support.apple.com/guide/logicpro/welcome/mac (дата обращения 2026-09-14)
 - https://www.ableton.com/en/live-manual/ (дата обращения 2026-09-14)
+
+**Реализовано в Р.47** — docs/porting-notes.md п.327 (t323/t324); дальнейшая жизнь фичи там.

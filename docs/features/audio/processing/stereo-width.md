@@ -1,18 +1,18 @@
 ---
 id: F-AUD-012
 title: Stereo Width (mid/side-ширина)
-status: в-работе
+status: сделано
 priority: B
 cost: S
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: да
 crates: [kt-model, kt-fx, kt-app]
 invariants: [1]
 ui_rules: []
 round: "Р.47"
-point: null
-tests: []
+point: 327
+tests: [322, 324]
 depends_on: []
 trackers: []
 services: []
@@ -109,3 +109,5 @@ checked: 2026-09-14
 
 - https://www.blackmagicdesign.com/products/davinciresolve/fairlight (дата обращения 2026-09-14)
 - https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (дата обращения 2026-09-14)
+
+**Реализовано в Р.47** — docs/porting-notes.md п.327 (t324); дальнейшая жизнь фичи там.

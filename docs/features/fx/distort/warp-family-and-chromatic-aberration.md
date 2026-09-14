@@ -1,18 +1,18 @@
 ---
 id: F-FX-002
 title: Искажения — Lens, Twirl, Ripple, Kaleidoscope, Chromatic Aberration
-status: в-работе
+status: сделано
 priority: A
 cost: L
 category: fx/distort
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-model, kt-fx, kt-gpu, kt-app]
 invariants: [7, 11]
 ui_rules: []
 round: "Р.47"
-point: null
-tests: []
+point: 335
+tests: [328, 329, 332, 333]
 depends_on: []
 trackers: []
 services: []
@@ -136,3 +136,5 @@ Twirl (квадратичное затухание), Ripple (анимируем�
 - https://helpx.adobe.com/after-effects/using/distort-effects.html (дата обращения 2026-09-14)
 - https://helpx.adobe.com/premiere/using/effects-reference.html (дата обращения 2026-09-14)
 - https://www.blackmagicdesign.com/products/davinciresolve (дата обращения 2026-09-14)
+
+**Реализовано в Р.47** — docs/porting-notes.md пп.334-335 (t332/t333); дальнейшая жизнь фичи там.

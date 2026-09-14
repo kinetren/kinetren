@@ -1,18 +1,18 @@
 ---
 id: F-FX-001
 title: Стилизация — Vignette, Pixelate, Halftone, Sharpen
-status: в-работе
+status: сделано
 priority: A
 cost: M
 category: fx/stylize
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-model, kt-fx, kt-gpu, kt-app]
 invariants: [7, 11]
 ui_rules: []
 round: "Р.47"
-point: null
-tests: []
+point: 334
+tests: [328, 329, 330, 332]
 depends_on: []
 trackers: []
 services: []
@@ -127,3 +127,5 @@ Pixelate — барьер EXACT (ячейка ×K); Halftone — барьер с
 - https://www.blackmagicdesign.com/products/davinciresolve (дата обращения 2026-09-14)
 - https://helpx.adobe.com/premiere/using/effects-reference.html (дата обращения 2026-09-14)
 - https://support.apple.com/guide/final-cut-pro/welcome/mac (дата обращения 2026-09-14)
+
+**Реализовано в Р.47** — docs/porting-notes.md пп.332/334 (t330/t332); дальнейшая жизнь фичи там.

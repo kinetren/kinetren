@@ -1,18 +1,18 @@
 ---
 id: F-CLR-007
 title: Базовая цветокоррекция событием — ColorGrade, Duotone, Posterize
-status: в-работе
+status: сделано
 priority: A
 cost: M
 category: color/grading
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-model, kt-fx, kt-gpu, kt-app]
 invariants: [7, 11]
 ui_rules: []
 round: "Р.47"
-point: null
-tests: []
+point: 332
+tests: [328, 329, 330]
 depends_on: []
 trackers: []
 services: []
@@ -130,3 +130,5 @@ F-CLR-001/002/003 — эта заметка им не конкурент, а «�
 - https://helpx.adobe.com/premiere/using/color-workflows.html (дата обращения 2026-09-14)
 - https://helpx.adobe.com/after-effects/using/color-correction-effects.html (дата обращения 2026-09-14)
 - https://www.blackmagicdesign.com/products/davinciresolve (дата обращения 2026-09-14)
+
+**Реализовано в Р.47** — docs/porting-notes.md п.332 (t330); дальнейшая жизнь фичи там.

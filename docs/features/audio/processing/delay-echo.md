@@ -1,18 +1,18 @@
 ---
 id: F-AUD-009
 title: Delay / Echo на событии
-status: в-работе
+status: сделано
 priority: A
 cost: M
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-model, kt-fx, kt-engine, kt-app]
 invariants: [1, 2, 3, 11]
 ui_rules: []
 round: "Р.47"
-point: null
-tests: []
+point: 329
+tests: [322, 326]
 depends_on: []
 trackers: []
 services: []
@@ -134,3 +134,5 @@ lowpass (наследие фишки «хвост темнеет»). Темпо-
 - https://helpx.adobe.com/premiere/using/audio-effects-transitions.html (дата обращения 2026-09-14)
 - https://www.blackmagicdesign.com/products/davinciresolve/fairlight (дата обращения 2026-09-14)
 - https://support.apple.com/guide/final-cut-pro/welcome/mac (дата обращения 2026-09-14)
+
+**Реализовано в Р.47** — docs/porting-notes.md пп.329 (t326); дальнейшая жизнь фичи там.

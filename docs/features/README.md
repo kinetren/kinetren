@@ -196,23 +196,23 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 |---|---|---|---|---|---|---|
 | F-AUD-001 | Параметрический эквалайзер | в-работе | A | S | нет | `audio/processing/eq-parametric.md` |
 | F-RES-007 | «В превью было одно, а в экспорте другое» | уже-есть | A | S | да | `resilience/environment/preview-vs-export-mismatch.md` |
-| F-AUD-009 | Delay / Echo на событии | в-работе | A | M | нет | `audio/processing/delay-echo.md` |
-| F-CLR-007 | Базовая цветокоррекция событием — ColorGrade, Duotone, Posterize | в-работе | A | M | нет | `color/grading/basic-color-fx.md` |
-| F-FX-001 | Стилизация — Vignette, Pixelate, Halftone, Sharpen | в-работе | A | M | нет | `fx/stylize/vignette-pixelate-halftone-sharpen.md` |
-| F-FX-004 | 3D-трансформы — Corner Pin и Cylinder | в-работе | A | M | частично | `fx/three-d/corner-pin-and-cylinder.md` |
+| F-AUD-009 | Delay / Echo на событии | сделано | A | M | да | `audio/processing/delay-echo.md` |
+| F-CLR-007 | Базовая цветокоррекция событием — ColorGrade, Duotone, Posterize | сделано | A | M | да | `color/grading/basic-color-fx.md` |
+| F-FX-001 | Стилизация — Vignette, Pixelate, Halftone, Sharpen | сделано | A | M | да | `fx/stylize/vignette-pixelate-halftone-sharpen.md` |
+| F-FX-004 | 3D-трансформы — Corner Pin и Cylinder | сделано | A | M | да | `fx/three-d/corner-pin-and-cylinder.md` |
 | F-RES-008 | Установка и упаковка: приложение, которое не запустилось | кандидат | A | M | частично | `resilience/environment/packaging-and-install.md` |
 | F-RES-009 | Кодек и формат: «он не открывает мой файл» | кандидат | A | M | частично | `resilience/environment/codec-and-format-availability.md` |
 | F-CLR-001 | Колёса Lift / Gamma / Gain (и Offset) | кандидат | A | L | нет | `color/primary/lift-gamma-gain-wheels.md` |
 | F-CLR-002 | Кривые RGB/Luma и кривые «по признаку» | кандидат | A | L | нет | `color/primary/curves-rgb-and-luma.md` |
-| F-FX-002 | Искажения — Lens, Twirl, Ripple, Kaleidoscope, Chromatic Aberration | в-работе | A | L | нет | `fx/distort/warp-family-and-chromatic-aberration.md` |
+| F-FX-002 | Искажения — Lens, Twirl, Ripple, Kaleidoscope, Chromatic Aberration | сделано | A | L | да | `fx/distort/warp-family-and-chromatic-aberration.md` |
 | F-MED-003 | Картинки, секвенции кадров и материал с альфой | кандидат | A | L | частично | `media/sources/image-sequences-and-alpha.md` |
 | F-MED-004 | Правило приведения кадра — вписать, заполнить, растянуть или оставить | кандидат | A | L | частично | `media/sources/import-scaling-policy.md` |
 | F-TL-001 | Ripple — правка со сдвигом всего, что правее | кандидат | A | L | нет | `timeline/trimming/ripple-delete.md` |
 | F-TXT-001 | Текст в кадре: титры, подписи, нижние трети | кандидат | A | L | нет | `titles/text/text-generator.md` |
 | F-CMP-001 | Конкатенация трансформов | сделано | A | XL | да | `compositing/transforms/transform-concatenation.md` |
 | F-TL-004 | Вложенные секвенции — монтаж, который ведёт себя как клип | кандидат | A | XL | нет | `timeline/structure/nested-sequences.md` |
-| F-AUD-011 | Distortion / сатурация и Bitcrusher | в-работе | B | S | нет | `audio/processing/distortion-and-bitcrush.md` |
-| F-AUD-012 | Stereo Width (mid/side-ширина) | в-работе | B | S | частично | `audio/processing/stereo-width.md` |
+| F-AUD-011 | Distortion / сатурация и Bitcrusher | сделано | B | S | да | `audio/processing/distortion-and-bitcrush.md` |
+| F-AUD-012 | Stereo Width (mid/side-ширина) | сделано | B | S | да | `audio/processing/stereo-width.md` |
 | F-COL-002 | Служебное рядом с проектом — кэш, индекс и замок на общем диске | кандидат | B | S | частично | `collab/assets/sidecar-on-a-share.md` |
 | F-COL-006 | Кто имеет право удалить материал | кандидат | B | S | частично | `collab/assets/who-may-delete.md` |
 | F-COL-008 | Что теряет чужой файл, пройдя через нас | кандидат | B | S | частично | `collab/handoff/foreign-file-round-trip.md` |
@@ -254,7 +254,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-AUD-005 | Нормализация громкости по стандартам — LUFS, EBU R128, true peak | кандидат | B | M | нет | `audio/mixing/loudness-r128-and-lufs.md` |
 | F-AUD-006 | Маршрутизация и раскладка аудиоканалов | кандидат | B | M | нет | `audio/mixing/channel-routing-and-mapping.md` |
 | F-AUD-008 | Автоматическая нарезка по тишине | кандидат | B | M | нет | `audio/processing/silence-detection-and-auto-cut.md` |
-| F-AUD-010 | Модуляции — chorus, flanger, phaser, tremolo, autopan, vibrato | в-работе | B | M | нет | `audio/processing/modulation-family.md` |
+| F-AUD-010 | Модуляции — chorus, flanger, phaser, tremolo, autopan, vibrato | сделано | B | M | да | `audio/processing/modulation-family.md` |
 | F-AUT-002 | Домен ключа — материал источника или время таймлайна | уже-есть | B | M | да | `automation/keyframes/keyframe-domain-source-vs-timeline.md` |
 | F-AUT-004 | Пресеты эффектов, которые несут анимацию | исследовано | B | M | частично | `automation/presets/presets-carrying-automation.md` |
 | F-AUT-005 | Ловушки правки ключевых кадров | кандидат | B | M | частично | `automation/keyframes/inserting-and-editing-pitfalls.md` |
@@ -277,7 +277,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-COL-042 | Отдавать надо не рендер, а анализ | кандидат | B | M | частично | `collab/offload/offload-the-analysis-not-the-render.md` |
 | F-EXP-001 | Библиотека экспорт-пресетов | кандидат | B | M | нет | `export/presets/preset-library.md` |
 | F-EXP-002 | Очередь рендера и фоновый экспорт | кандидат | B | M | частично | `export/pipeline/render-queue-and-batch.md` |
-| F-FX-003 | Radial/Zoom Blur и Drop Shadow | в-работе | B | M | нет | `fx/blur/radial-blur-and-drop-shadow.md` |
+| F-FX-003 | Radial/Zoom Blur и Drop Shadow | сделано | B | M | да | `fx/blur/radial-blur-and-drop-shadow.md` |
 | F-HLP-004 | Анатомия всплывающей подсказки: задержка, содержимое, богатые тултипы | исследовано | B | M | нет | `help/hints/tooltip-anatomy-and-delay.md` |
 | F-HLP-006 | Объяснение параметра там, где его крутят | кандидат | B | M | нет | `help/hints/parameter-help-in-effect-ui.md` |
 | F-HLP-007 | Обратная связь во время жеста — дельта трима, смещение, новый таймкод | кандидат | B | M | частично | `help/hints/hints-during-a-gesture.md` |

@@ -1,18 +1,18 @@
 ---
 id: F-FX-003
 title: Radial/Zoom Blur и Drop Shadow
-status: в-работе
+status: сделано
 priority: B
 cost: M
 category: fx/blur
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-model, kt-fx, kt-gpu, kt-app]
 invariants: [7, 11]
 ui_rules: []
 round: "Р.47"
-point: null
-tests: []
+point: 334
+tests: [328, 329, 332]
 depends_on: []
 trackers: []
 services: []
@@ -129,3 +129,5 @@ VHS-jitter): дробный сдвиг дал бы вторую билинейк
 - https://helpx.adobe.com/after-effects/using/blur-sharpen-effects.html (дата обращения 2026-09-14)
 - https://helpx.adobe.com/premiere/using/effects-reference.html (дата обращения 2026-09-14)
 - https://www.blackmagicdesign.com/products/davinciresolve (дата обращения 2026-09-14)
+
+**Реализовано в Р.47** — docs/porting-notes.md п.334 (t332); дальнейшая жизнь фичи там.
