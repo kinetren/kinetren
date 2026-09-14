@@ -31,7 +31,7 @@ fn limiter_linear() -> FxInstance {
 
 fn project(fx: Vec<FxInstance>, pattern: &str) -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: pattern.into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

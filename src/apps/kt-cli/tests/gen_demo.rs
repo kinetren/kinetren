@@ -10,7 +10,7 @@ const SEC: i64 = 90_000;
 
 fn project() -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "detail.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "green.mp4".into() });
     p

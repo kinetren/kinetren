@@ -357,6 +357,8 @@ segments = "القطاعات"
 curvature = "الانحناء"
 ceiling_db = "السقف"
 lookahead_ms = "الاستباق"
+semitones = "أنصاف النغمات"
+cents = "السنتات"
 
 [fxreg]
 add = "+ مؤثر…"
@@ -429,6 +431,7 @@ ripple = "تموج ماء ripple"
 kaleidoscope = "مشكال مرايا kaleidoscope"
 cylinder3d = "أسطوانة انحناء cylinder"
 limiter = "محدد ذروة سقف limiter"
+pitch_shift = "تغيير النغمة درجة الصوت pitch"
 
 # Редактор FX клипа.
 [fx]
@@ -507,6 +510,9 @@ chain_on_hint = "مفتاح رئيسي: يوقف السلسلة كاملة دو�
 shadow_color = "الظلال"
 high_color = "الإضاءات"
 spin = "دوران"
+pitch_wsola = "النغمة: WSOLA"
+pitch_vocoder = "النغمة: مرمّز صوتي"
+pitch_engine_note = "يُختار المحرك للمشروع كله من الشريط العلوي"
 
 [render]
 already_running = "هناك تصدير جارٍ بالفعل"
@@ -559,6 +565,7 @@ economy = "لبطاقات الرسوم الضعيفة: نصف عدد عمليا�
 
 # Палитра поиска по проекту.
 flight = "حلقة مدمجة لأحداث التشغيل والعدادات — لتشخيص أعطال التشغيل المتقطعة"
+pitch_engine = "محرك النغمة للمشروع كله: يحافظ WSOLA على النبرات، والمرمّز أنعم مع التناغم"
 
 [search]
 field = "علامة، وسائط، مسار…"

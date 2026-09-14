@@ -33,7 +33,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, src: i64) -> C
 fn raw_project(clips: Vec<ClipEvent>) -> Project {
     // НЕ validate: легаси-перекрытия до апгрейда инвариант нарушают
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips = clips;
     // тесты t143 закрепляют конверсию наездов в переходы/дорожки — она живёт
@@ -134,7 +134,7 @@ fn t143_video_overlap_demotes_later_clip_below() {
 #[test]
 fn t164_legacy_import_keeps_overlaps_and_lanes() {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.video_lanes = 2;
     p.audio_lanes = 2;

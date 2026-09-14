@@ -357,6 +357,8 @@ segments = "Segmentos"
 curvature = "Curvatura"
 ceiling_db = "Techo"
 lookahead_ms = "Anticipación"
+semitones = "Semitonos"
+cents = "Centésimas"
 
 [fxreg]
 add = "+ efecto…"
@@ -429,6 +431,7 @@ ripple = "ondas agua anillos ripple"
 kaleidoscope = "caleidoscopio espejo mandala kaleidoscope"
 cylinder3d = "cilindro curva 3d cylinder"
 limiter = "limitador techo pico limiter"
+pitch_shift = "tono altura semitonos transponer pitch"
 
 # Редактор FX клипа.
 [fx]
@@ -507,6 +510,9 @@ chain_on_hint = "Interruptor maestro: apaga toda la cadena sin tocar los slots"
 shadow_color = "Sombras"
 high_color = "Luces"
 spin = "Giro"
+pitch_wsola = "Tono: WSOLA"
+pitch_vocoder = "Tono: vocoder"
+pitch_engine_note = "El motor se elige para todo el proyecto, en la barra superior"
 
 [render]
 already_running = "ya hay un render en curso"
@@ -559,6 +565,7 @@ economy = "Para GPU modestas: la mitad de repintados al reproducir"
 
 # Палитра поиска по проекту.
 flight = "Anillo compacto de eventos de transporte y contadores: para depurar fallos intermitentes"
+pitch_engine = "Motor de tono para todo el proyecto: WSOLA conserva los transitorios, el vocoder suaviza las armonías"
 
 [search]
 field = "marcador, medio, pista…"

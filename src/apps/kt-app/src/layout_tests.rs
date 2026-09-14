@@ -1979,7 +1979,7 @@ fn t139_move_plan_crossfade_and_clamp() {
         opacity: 1.0,
         fx_off: false,
     };
-    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
     p.overlap_layers = false;
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
@@ -2617,8 +2617,7 @@ fn t150_project_io_is_otio() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000,
-    });
+        sample_rate: 48000, pitch_engine: Default::default() });
     let otio = dir.join("ok.otio");
     std::fs::write(&otio, kt_otio::save_project(&p, &kt_otio::Retained::default(), Some(&dir)))
         .unwrap();
@@ -2758,7 +2757,7 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
 
     // 1. план знает, ВО ЧТО упёрлись
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.overlap_layers = false; // блокировка возможна только в этом режиме
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     // клипы 2 и 3 стоят встык: любое попадание между ними — наезд на ДВОИХ
@@ -3800,7 +3799,7 @@ fn t211_returned_source_replaces_its_placeholder() {
     let path = dir.join("t211.otio");
 
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000, pitch_engine: Default::default() });
     // «пропавший» файл: имя synth-источника, которого нет на диске — при
     // открытии он не откроется, а к моменту возврата станет валидным
     p.media.push(MediaRef { id: MediaId(1), path: "later.mp4".into() });
@@ -3879,7 +3878,7 @@ fn t210_render_with_missing_sources_warns_and_runs() {
     std::fs::write(&present, b"not a real media file").unwrap();
 
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "gone.mp4".into() });
     p.clips.push(ClipEvent {
@@ -3949,7 +3948,7 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
     let path = dir.join("t209.otio");
 
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "no-such-clip.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "also-gone.wav".into() });
     p.clips.push(ClipEvent {
@@ -4137,7 +4136,7 @@ fn t204_multi_drag_moves_the_whole_block() {
 
     // ---- чистая часть: кламп блока о препятствие ----
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     let clip = |id: u64, start: i64| ClipEvent {
         id: ClipId(id),

@@ -365,7 +365,9 @@ impl AutoProfiles {
             .map_or(&[], |c| c.points.as_slice())
     }
 
-    fn ease(&self, slot: usize, param: &str) -> bool {
+    /// Сглаживание кривой параметра: узлам, читающим значение ПО
+    /// ПОЗИЦИИ (LFO, питч), нужен тот же флаг, что и `value`.
+    pub fn ease_of(&self, slot: usize, param: &str) -> bool {
         self.slots
             .get(slot)
             .and_then(|s| s.iter().find(|c| c.param == param))
@@ -374,7 +376,7 @@ impl AutoProfiles {
 
     /// Значение параметра слота в позиции материала s.
     pub fn value(&self, slot: usize, param: &str, base: f64, s: f64) -> f64 {
-        param_at(base, self.points(slot, param), s, self.ease(slot, param))
+        param_at(base, self.points(slot, param), s, self.ease_of(slot, param))
     }
 
     /// Индекс слота с варпом и его профиль скорости — на нём стоит вся

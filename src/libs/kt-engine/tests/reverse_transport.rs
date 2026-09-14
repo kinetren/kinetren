@@ -14,7 +14,7 @@ const N: usize = 1024; // кадров в блоке (как AUDIO_BURST_FRAMES)
 
 fn project() -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

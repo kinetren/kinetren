@@ -18,7 +18,7 @@ use kt_time::Tick;
 const DUR: Tick = Tick(90_000 * 3); // 3 с
 
 fn project(fps: u32, reversed: bool) -> Project {
-    let mut p = Project::new(ProjectSettings { fps, width: 64, height: 36, sample_rate: 48000 });
+    let mut p = Project::new(ProjectSettings { fps, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

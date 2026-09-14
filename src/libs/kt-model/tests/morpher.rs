@@ -6,7 +6,7 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn base_project() -> TimelineModel {
-    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {

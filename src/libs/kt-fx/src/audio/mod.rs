@@ -118,17 +118,32 @@ pub fn chain_source_used(fx: &[FxInstance], auto: &AutoProfiles, clip_len_frames
 /// Формула вида обязана совпадать с `AudioNode::lookahead` того же вида —
 /// согласие сторожит t322ж.
 pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
-    // auto читают армы, у которых нейтраль зависит от кривых: база «ноль»
-    // при живой кривой нейтралью не является
-    let _ = auto;
     fx.iter()
-        .map(|f| match f {
-            FxInstance::Limiter { lookahead_ms, .. } => {
-                nodes::limiter_la_frames(*lookahead_ms)
+        .enumerate()
+        .map(|(slot, f)| match f {
+            FxInstance::Limiter { lookahead_ms, .. } => nodes::limiter_la_frames(*lookahead_ms),
+            // у питча нейтраль зависит от КРИВЫХ: база «ноль» при живой
+            // кривой нейтралью не является
+            FxInstance::PitchShift { semitones, cents } => {
+                let neutral = nodes::pitch_is_neutral(
+                    *semitones,
+                    *cents,
+                    auto.points(slot, "semitones"),
+                    auto.points(slot, "cents"),
+                );
+                if neutral { 0 } else { nodes::PITCH_LOOKAHEAD_FRAMES }
             }
             _ => 0i64,
         })
         .sum()
+}
+
+/// Настройки ПРОЕКТА, влияющие на исполнение цепочки (Р.48): движок
+/// питча один на весь монтаж. Не значение параметра, а устройство узла —
+/// смена пересобирает процессор (сверка в `FxStateStore`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChainOpts {
+    pub pitch_engine: kt_model::PitchEngine,
 }
 
 pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
@@ -223,6 +238,8 @@ pub struct ClipProcessor {
     tail_ext: i64,
     /// Курсор источника для пути без варпа (rate == 1, без автоматизации).
     plain_cursor: i64,
+    /// Настройки проекта, влияющие на устройство узлов (движок питча).
+    opts: ChainOpts,
     /// Упреждение цепочки (Р.48, п.337): вход обгоняет выход на столько
     /// кадров. 0 — путь арифметически тождествен доpdc-версии.
     la: i64,
@@ -274,6 +291,18 @@ impl ClipProcessor {
         src_in_frames: i64,
         clip_len_frames: i64,
     ) -> ClipProcessor {
+        Self::new_with_opts(fx, auto, src_in_frames, clip_len_frames, ChainOpts::default())
+    }
+
+    /// То же, но с настройками проекта (движок питча). Продукт зовёт
+    /// именно её; короткая `new` остаётся для тестов и офлайн-путей.
+    pub fn new_with_opts(
+        fx: &[FxInstance],
+        auto: &AutoProfiles,
+        src_in_frames: i64,
+        clip_len_frames: i64,
+        opts: ChainOpts,
+    ) -> ClipProcessor {
         let mut p = ClipProcessor {
             fingerprint: chain_fingerprint(fx),
             next_local: i64::MIN,
@@ -291,6 +320,7 @@ impl ClipProcessor {
             head_ext: 0,
             tail_ext: 0,
             plain_cursor: src_in_frames,
+            opts,
             la: 0,
             ahead: Vec::new(),
             mix_ahead: 0,
@@ -366,6 +396,12 @@ impl ClipProcessor {
         self.la
     }
 
+    /// Настройки проекта, с которыми процессор построен: разошлись с
+    /// моделью — процессор пересобирается (`FxStateStore`).
+    pub fn opts(&self) -> ChainOpts {
+        self.opts
+    }
+
     /// Обновить длину клипа (trim) без сброса состояния.
     pub fn set_clip_len(&mut self, clip_len_frames: i64) {
         self.clip_len = clip_len_frames.max(1);
@@ -410,6 +446,9 @@ impl ClipProcessor {
             _ => MixCfg { slot: i, from: usize::MAX, base_amount: 1.0 },
         });
         for (slot, node) in &mut self.nodes {
+            if structural {
+                node.set_engine(self.opts.pitch_engine);
+            }
             node.apply(&fx[*slot], structural);
             if let AudioNode::Gain(g) = node {
                 g.bind_curves(&self.auto, *slot);

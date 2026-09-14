@@ -201,7 +201,7 @@ fn t9_prefetch_pass_is_idempotent() {
     let (worker, _served) = slow_worker(1, 0, &cache);
 
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -254,7 +254,7 @@ fn t9_prefetch_pass_is_idempotent() {
 /// один.
 #[test]
 fn t287_stutter_of_micro_clips_asks_for_one_burst() {
-    let mut p = Project::new(ProjectSettings { fps: 60, width: 640, height: 360, sample_rate: 48000 });
+    let mut p = Project::new(ProjectSettings { fps: 60, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     // 400 событий по 90 тиков встык, все с одной точки материала
     let step = kt_time::Tick(90);

@@ -200,6 +200,14 @@ pub fn registry() -> &'static [FxEntry] {
                 template: FxInstance::limiter(),
             },
             FxEntry {
+                name: "Pitch Shift",
+                category: k::fxreg::cat::TIMESTRETCH,
+                audio: true,
+                video: false,
+                keywords: Some(k::fxreg::kw::PITCH_SHIFT),
+                template: FxInstance::pitch_shift(),
+            },
+            FxEntry {
                 name: "Stereo Width",
                 category: k::fxreg::cat::STEREO,
                 audio: true,

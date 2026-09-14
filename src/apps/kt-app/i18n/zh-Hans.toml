@@ -357,6 +357,8 @@ segments = "段数"
 curvature = "弯曲度"
 ceiling_db = "上限"
 lookahead_ms = "前瞻"
+semitones = "半音"
+cents = "音分"
 
 [fxreg]
 add = "+ 特效…"
@@ -429,6 +431,7 @@ ripple = "波纹 水波 ripple"
 kaleidoscope = "万花筒 镜像 kaleidoscope"
 cylinder3d = "圆柱 弯曲 3d cylinder"
 limiter = "限制器 峰值 上限 limiter"
+pitch_shift = "变调 音高 半音 pitch"
 
 # Редактор FX клипа.
 [fx]
@@ -507,6 +510,9 @@ chain_on_hint = "总开关：关闭整条效果链，不改动各个槽位的状
 shadow_color = "阴影"
 high_color = "高光"
 spin = "旋转"
+pitch_wsola = "变调：WSOLA"
+pitch_vocoder = "变调：声码器"
+pitch_engine_note = "引擎为整个项目设置，见顶部工具栏"
 
 [render]
 already_running = "已经在导出了"
@@ -559,6 +565,7 @@ economy = "适合较弱的 GPU：播放时重绘减半"
 
 # Палитра поиска по проекту.
 flight = "紧凑的传输事件与计数器环形记录——用于排查间歇性播放问题"
+pitch_engine = "整个项目的变调引擎：WSOLA 保留瞬态，声码器在和声上更平滑"
 
 [search]
 field = "标记、媒体、轨道…"

@@ -1862,12 +1862,34 @@ impl Region {
     }
 }
 
+/// Движок смены высоты (Р.48, F-AUD-013). Выбор один на весь монтаж:
+/// алгоритм — это ВЫБОР ПОД МАТЕРИАЛ, и слышен он на транзиентах.
+/// `Wsola` — время-домен: удар остаётся ударом, плотная полифония даёт
+/// лёгкий «шелест» на стыках зёрен. `Vocoder` — спектральный: подклад и
+/// синты едут чисто, удар размазывается. Дефолт — Wsola: он дешевле и
+/// безопаснее на речи, с которой чаще работают.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PitchEngine {
+    #[default]
+    Wsola,
+    Vocoder,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProjectSettings {
     pub fps: u32,
     pub width: u32,
     pub height: u32,
     pub sample_rate: u32,
+    /// Движок питча (Р.48): дефолт в файл не пишется — старые проекты
+    /// байт-стабильны.
+    #[serde(default, skip_serializing_if = "is_default_pitch_engine")]
+    pub pitch_engine: PitchEngine,
+}
+
+fn is_default_pitch_engine(e: &PitchEngine) -> bool {
+    *e == PitchEngine::default()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2844,6 +2866,16 @@ pub enum FxInstance {
         #[serde(default = "default_limiter_release")]
         release_ms: f32,
     },
+    /// Смена высоты без смены длительности (Р.48, F-AUD-013). Движок
+    /// (WSOLA или фазовый вокодер) — НАСТРОЙКА ПРОЕКТА: выбор один на
+    /// весь монтаж. Нейтраль (ноль полутонов и центов, без кривых) —
+    /// байт-в-байт прежний звук.
+    PitchShift {
+        #[serde(default, skip_serializing_if = "is_zero")]
+        semitones: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        cents: f32,
+    },
     /// Линзовая дисторсия (Р.47, F-FX-002): полином k1·r²+k2·r⁴ —
     /// бочка/подушка. Гео (Warp-прим), конкатенируется.
     LensDistort {
@@ -3067,7 +3099,8 @@ impl FxInstance {
         | FxInstance::Delay { .. }
         | FxInstance::Compressor { .. }
         | FxInstance::Gate { .. }
-        | FxInstance::Limiter { .. } => FxClass::Audio,
+        | FxInstance::Limiter { .. }
+        | FxInstance::PitchShift { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } | FxInstance::Cylinder3d { .. } => FxClass::Video3d,
             _ => FxClass::Video2d,
         }
@@ -3111,6 +3144,7 @@ impl FxInstance {
             FxInstance::Compressor { .. } => "compressor",
             FxInstance::Gate { .. } => "gate",
             FxInstance::Limiter { .. } => "limiter",
+            FxInstance::PitchShift { .. } => "pitch_shift",
             FxInstance::ColorGrade { .. } => "color_grade",
             FxInstance::Duotone { .. } => "duotone",
             FxInstance::Posterize { .. } => "posterize",
@@ -3168,6 +3202,7 @@ impl FxInstance {
                 FxInstance::compressor(),
                 FxInstance::gate(),
                 FxInstance::limiter(),
+                FxInstance::pitch_shift(),
                 FxInstance::color_grade(),
                 FxInstance::duotone(),
                 FxInstance::posterize(),
@@ -3265,6 +3300,8 @@ pub enum ParamUnit {
     Ms,
     /// Частота, герцы (Р.47: фильтры/EQ/LFO).
     Hz,
+    /// Полутон (Р.48: питч).
+    St,
     /// Компонента цвета 0..255.
     Rgb8,
     /// Счётное число (колонки, строки).
@@ -3538,6 +3575,10 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
         ceiling_db: f32, -24.0, 0.0, -0.3, 0.1, Db, Smooth;
         lookahead_ms: f32, 1.0, 20.0, 5.0, 0.5, Ms, Structural;
         release_ms: f32, 5.0, 1000.0, 80.0, 1.0, Ms, Smooth;
+    },
+    PitchShift {
+        semitones: f32, -24.0, 24.0, 0.0, 1.0, St, Smooth;
+        cents: f32, -100.0, 100.0, 0.0, 1.0, None, Smooth;
     },
     LensDistort {
         k1: f32, -1.0, 1.0, 0.35, 0.01, Norm, Smooth;
@@ -4043,6 +4084,10 @@ impl FxInstance {
             lookahead_ms: 5.0,
             release_ms: 80.0,
         }
+    }
+
+    pub fn pitch_shift() -> FxInstance {
+        FxInstance::PitchShift { semitones: 0.0, cents: 0.0 }
     }
 
     pub fn color_grade() -> FxInstance {

@@ -559,6 +559,7 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Compressor { .. } => "Compressor",
         FxInstance::Gate { .. } => "Gate",
         FxInstance::Limiter { .. } => "Limiter",
+        FxInstance::PitchShift { .. } => "Pitch Shift",
         FxInstance::ColorGrade { .. } => "Color Grade",
         FxInstance::Duotone { .. } => "Duotone",
         FxInstance::Posterize { .. } => "Posterize",
@@ -834,6 +835,11 @@ pub(crate) fn draw_video_fx_params(
             ui.horizontal(|ui| {
                 ch.base |= ui.checkbox(spin, tr(k::fx::SPIN)).changed();
             });
+        }
+        FxInstance::PitchShift { .. } => {
+            // правило 19: диалог обязан сказать, ГДЕ менять то, чего в нём
+            // нет — движок питча живёт в настройках проекта
+            ui.label(tr(k::fx::PITCH_ENGINE_NOTE));
         }
         FxInstance::Noise { color, .. } => {
             ui.horizontal(|ui| {

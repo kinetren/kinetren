@@ -29,6 +29,7 @@ impl FxStateStore {
         auto: &kt_fx::AutoProfiles,
         src_in_frames: i64,
         clip_len_frames: i64,
+        opts: kt_fx::ChainOpts,
     ) {
         if fx.is_empty() {
             self.map.remove(&id);
@@ -54,16 +55,24 @@ impl FxStateStore {
                 // (правка окна лимитера, нейтраль питча ↔ актив) —
                 // пересборка процессора: следующий read сделает hard_seek
                 // с прогревом, как настоящий seek.
-                if p.lookahead_frames() != kt_fx::chain_lookahead(fx, auto) {
+                if p.lookahead_frames() != kt_fx::chain_lookahead(fx, auto) || p.opts() != opts {
                     self.map.insert(
                         id,
-                        ClipProcessor::new(fx, auto, src_in_frames, clip_len_frames),
+                        ClipProcessor::new_with_opts(
+                            fx,
+                            auto,
+                            src_in_frames,
+                            clip_len_frames,
+                            opts,
+                        ),
                     );
                 }
             }
             _ => {
-                self.map
-                    .insert(id, ClipProcessor::new(fx, auto, src_in_frames, clip_len_frames));
+                self.map.insert(
+                    id,
+                    ClipProcessor::new_with_opts(fx, auto, src_in_frames, clip_len_frames, opts),
+                );
             }
         }
     }

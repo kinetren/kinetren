@@ -9,7 +9,7 @@ use kt_time::Tick;
 
 fn base_project() -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:Ramp".into() });
     for (id, start) in [(1u64, 0i64), (2, 48_000), (3, 96_000)] {
         p.clips.push(ClipEvent {

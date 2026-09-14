@@ -129,6 +129,10 @@ pub struct AudioRenderer {
     /// equal-power на двоих, 1/N при трёх и более. Выключено — перекрытий в
     /// модели нет по построению, и вес всегда 1.0.
     overlap_layers: bool,
+    /// Настройки проекта, влияющие на устройство цепочек (Р.48: движок
+    /// питча). Донести их сглаживанием нельзя — смена пересобирает
+    /// процессоры (сверка в FxStateStore).
+    opts: kt_fx::ChainOpts,
 }
 
 /// Карты перекрытий ПО НОМЕРУ ДОРОЖКИ: обращение идёт на каждый кадр,
@@ -373,6 +377,7 @@ impl AudioRenderer {
             covers,
             overlaps,
             overlap_layers: project.overlap_layers,
+            opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine },
         }
     }
 
@@ -438,7 +443,7 @@ impl AudioRenderer {
     /// стора — аудио-render-потоком — после каждой пересборки графа).
     pub fn sync_fx(&self, store: &mut crate::fxstore::FxStateStore) {
         for c in &self.clips {
-            store.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.end - c.start);
+            store.sync_clip(c.id, &c.fx, &c.auto, c.source_in, c.end - c.start, self.opts);
         }
         let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();
         store.retain_clips(&|id| alive.contains(&id));

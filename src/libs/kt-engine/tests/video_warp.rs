@@ -17,7 +17,7 @@ const Q: kt_media::Quality = kt_media::Quality { width: 64, height: 36 };
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

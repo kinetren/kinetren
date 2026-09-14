@@ -340,7 +340,7 @@ pub struct KtApp {
 
 impl KtApp {
     fn empty_project() -> Project {
-        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000 })
+        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000, pitch_engine: Default::default() })
     }
 
     /// Р.29: собрать GPU-движок видео-FX на живом устройстве eframe и
@@ -3795,6 +3795,36 @@ impl KtApp {
                 self.player.set_preview_quality(q_for(res.0, res.1, fracs[frac_idx]));
             }
             ui.separator();
+            // движок питча — настройка ПРОЕКТА (Р.48): выбор один на весь
+            // монтаж, поэтому он стоит рядом с fps и разрешением, а не в
+            // параметрах эффекта
+            let mut engine = proj.pitch_engine;
+            let before_engine = engine;
+            let eng_resp = egui::ComboBox::from_id_salt("pitch_engine")
+                .selected_text(match engine {
+                    kt_model::PitchEngine::Wsola => tr(k::fx::PITCH_WSOLA),
+                    kt_model::PitchEngine::Vocoder => tr(k::fx::PITCH_VOCODER),
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut engine,
+                        kt_model::PitchEngine::Wsola,
+                        tr(k::fx::PITCH_WSOLA),
+                    );
+                    ui.selectable_value(
+                        &mut engine,
+                        kt_model::PitchEngine::Vocoder,
+                        tr(k::fx::PITCH_VOCODER),
+                    );
+                })
+                .response;
+            self.hint(eng_resp, tr(k::hint::PITCH_ENGINE));
+            if engine != before_engine {
+                let mut st = proj.clone();
+                st.pitch_engine = engine;
+                self.apply(Command::SetSettings { settings: st });
+            }
+            ui.separator();
             let labels = ["1/16", "1/8", "1/4", "1/2", "1/1"];
             let before = frac_idx;
             let q_resp = egui::ComboBox::from_id_salt("quality")
@@ -5670,8 +5700,7 @@ mod repaint_tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000,
-        });
+            sample_rate: 48000, pitch_engine: Default::default() });
         p.media.push(MediaRef { id: MediaId(1), path: "/tmp/Интервью.mp4".into() });
         p.markers.push(Marker::named(Tick(5000), "Интро"));
         p.markers.push(Marker::named(Tick(9000), "интервью — начало"));
@@ -5724,8 +5753,7 @@ mod repaint_tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000,
-        });
+            sample_rate: 48000, pitch_engine: Default::default() });
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         let clip = |id: u64, start: i64, dur: i64| ClipEvent {
             id: ClipId(id),
@@ -5776,8 +5804,7 @@ mod repaint_tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000,
-        });
+            sample_rate: 48000, pitch_engine: Default::default() });
         assert_eq!(stop_points(&empty), vec![0]);
     }
 

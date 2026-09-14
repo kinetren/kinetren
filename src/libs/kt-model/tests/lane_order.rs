@@ -46,7 +46,7 @@ fn t49_lane_order_serde_roundtrip() {
     // с Р.35 порядок строк живёт В МОДЕЛИ (морфер-слой действует «на всё,
     // что ниже», значит порядок влияет на картинку), а `ui.lane_order`
     // остался легаси-входом и больше не пишется
-    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.morph_lanes = 1;
     p.set_lane_order(&[(M, 0), (V, 0), (A, 0)]);
     assert_eq!(p.lane_order, vec![(M, 0), (V, 0), (A, 0)]);
@@ -80,8 +80,7 @@ fn t241_lane_order_is_model_state() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000,
-    }));
+        sample_rate: 48000, pitch_engine: Default::default() }));
     // вставка morph-дорожки САМА кладёт строку в порядок
     m.apply(Command::InsertMorphLane { at: 0 }).unwrap();
     assert_eq!(m.project().rows(), vec![(V, 0), (A, 0), (M, 0)]);

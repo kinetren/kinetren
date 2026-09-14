@@ -25,7 +25,7 @@ const CH: usize = AUDIO_CHANNELS;
 
 fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: pattern_path.into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

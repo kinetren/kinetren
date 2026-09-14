@@ -17,7 +17,7 @@ use kt_time::Tick;
 
 fn project() -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 128, height: 72, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 128, height: 72, sample_rate: 48000, pitch_engine: Default::default() });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
     }

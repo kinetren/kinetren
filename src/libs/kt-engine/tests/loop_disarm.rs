@@ -28,7 +28,7 @@ const SPAN: i64 = RE - RS;
 
 fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     let mut media_ids: Vec<MediaId> = clips.iter().map(|c| c.media).collect();
     media_ids.sort();
     media_ids.dedup();

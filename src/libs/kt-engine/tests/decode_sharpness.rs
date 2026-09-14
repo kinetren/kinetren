@@ -95,7 +95,7 @@ fn contrast(rgba: &[u8], w: u32, h: u32) -> f64 {
 }
 
 fn project(fx: Vec<FxInstance>) -> Project {
-    let mut p = Project::new(ProjectSettings { fps: 30, width: W, height: H, sample_rate: 48000 });
+    let mut p = Project::new(ProjectSettings { fps: 30, width: W, height: H, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

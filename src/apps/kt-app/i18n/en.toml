@@ -357,6 +357,8 @@ segments = "Segments"
 curvature = "Curvature"
 ceiling_db = "Ceiling"
 lookahead_ms = "Lookahead"
+semitones = "Semitones"
+cents = "Cents"
 
 [fxreg]
 add = "+ effect…"
@@ -429,6 +431,7 @@ ripple = "ripple wave water rings"
 kaleidoscope = "kaleidoscope mirror segments mandala"
 cylinder3d = "cylinder 3d bend curve wrap"
 limiter = "limiter ceiling peak loud master"
+pitch_shift = "pitch shift semitones transpose key voice"
 
 # Редактор FX клипа.
 [fx]
@@ -507,6 +510,9 @@ chain_on_hint = "Master switch: turns the whole chain off without touching the s
 shadow_color = "Shadows"
 high_color = "Highlights"
 spin = "Spin"
+pitch_wsola = "Pitch: WSOLA"
+pitch_vocoder = "Pitch: vocoder"
+pitch_engine_note = "Engine: set for the whole project in the toolbar"
 
 [render]
 already_running = "a render is already running"
@@ -559,6 +565,7 @@ economy = "For weak GPUs: half the repaints while playing"
 
 # Палитра поиска по проекту.
 flight = "Compact ring of transport events and counters — for diagnosing floating playback bugs"
+pitch_engine = "Pitch engine for the whole project: WSOLA keeps transients, the vocoder is smoother on harmonies"
 
 [search]
 field = "marker, media, track…"

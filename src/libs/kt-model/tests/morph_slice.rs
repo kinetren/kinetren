@@ -33,7 +33,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick) -> ClipEvent
 
 fn base() -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(clip(10, ClipKind::Video, 0, Tick(0), LEN));
@@ -693,7 +693,7 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
     use kt_time::Tick;
 
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

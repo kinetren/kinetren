@@ -15,7 +15,7 @@ const CH: usize = AUDIO_CHANNELS;
 
 fn project(clips: Vec<ClipEvent>) -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     let mut ids: Vec<MediaId> = clips.iter().map(|c| c.media).collect();
     ids.sort();
     ids.dedup();

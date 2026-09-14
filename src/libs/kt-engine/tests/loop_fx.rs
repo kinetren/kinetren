@@ -59,7 +59,7 @@ impl AudioFetcher for Probe {
 
 fn base_project() -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:sine".into() });
     p

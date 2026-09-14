@@ -7,7 +7,7 @@ use kt_time::Tick;
 
 fn base() -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "a.mp4".into() });
     // A/V-пара 0..90000 + одиночный аудио 90000..180000
     p.clips.push(clip(10, Some(1), ClipKind::Video, 0, 0, 90_000, 0));
@@ -420,8 +420,7 @@ fn t89_named_markers() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000,
-    });
+        sample_rate: 48000, pitch_engine: Default::default() });
     // старый проект: markers — просто числа
     p.markers = vec![Marker::at(Tick(5000)), Marker::at(Tick(1000))];
     let old_json = r#"{"format_version":1,"settings":{"fps":30,"width":640,"height":360,"sample_rate":48000},"media":[],"clips":[],"markers":[1000,5000]}"#;
@@ -511,8 +510,7 @@ fn t90_lane_names() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000,
-    });
+        sample_rate: 48000, pitch_engine: Default::default() });
     p.ui = Some(UiState { lane_names: names.clone(), ..Default::default() });
     let json = serde_json::to_string(&p).unwrap();
     assert!(json.contains("Титры"));

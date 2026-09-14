@@ -168,8 +168,7 @@ fn t307_relative_media_paths_resolve_once() {
         fps: 30,
         width: 320,
         height: 180,
-        sample_rate: 48000,
-    });
+        sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "clip.mp4".into() });
     p.clips.push(kt_model::ClipEvent {
         id: kt_model::ClipId(1),

@@ -33,7 +33,7 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, media: u64) ->
 
 fn rich_project() -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000, pitch_engine: Default::default() });
     for id in [1u64, 2, 3] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("media/m{id}.mp4") });
     }
@@ -300,7 +300,7 @@ fn t154_clip_without_media_reference_survives() {
 #[test]
 fn t165_overlapping_lane_survives_layer_roundtrip() {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "media/a.mp4".into() });
     // три клипа одной дорожки: два перекрываются, третий встык
     for (id, start, dur) in [(1u64, 0i64, 90_000i64), (2, 45_000, 90_000), (3, 200_000, 45_000)] {

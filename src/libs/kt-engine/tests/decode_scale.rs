@@ -17,7 +17,7 @@ const SEC: i64 = 90_000;
 const STEP: i64 = SEC / 30;
 
 fn project(w: u32, h: u32, fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> Project {
-    let mut p = Project::new(ProjectSettings { fps: 30, width: w, height: h, sample_rate: 48000 });
+    let mut p = Project::new(ProjectSettings { fps: 30, width: w, height: h, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

@@ -28,7 +28,7 @@ fn direct() -> DirectFetcher {
 fn t19_copy_region_fragment_paste_renders_identically() {
     // клип 0..4c, регион вырезает [1c, 2.5c) из его СЕРЕДИНЫ
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -90,7 +90,7 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
     // ожидание: выход на стыке равен прямому чтению источника без щелчка,
     // т.е. рендер == конкатенация двух эталонных кусков.
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

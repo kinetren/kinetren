@@ -12,7 +12,7 @@ use kt_time::Tick;
 
 fn project_pair() -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }
@@ -298,7 +298,7 @@ fn t174_clip_opacity_scales_the_layer() {
     let t = Tick(45_000);
     // два слоя: lane 0 (сверху) и lane 1 (снизу), РАЗНЫЕ источники
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }

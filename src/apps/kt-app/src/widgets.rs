@@ -23,6 +23,7 @@ fn unit_suffix(u: ParamUnit) -> &'static str {
         ParamUnit::Hz => " Hz",
         ParamUnit::Deg => "°",
         ParamUnit::Px => " px",
+        ParamUnit::St => " st",
         ParamUnit::None | ParamUnit::Norm | ParamUnit::Ratio | ParamUnit::Rgb8 | ParamUnit::Count => {
             ""
         }
@@ -69,6 +70,9 @@ pub fn param_label(name: &str) -> String {
         // лимитер Р.48
         "ceiling_db" => tr(k::fxp::CEILING_DB),
         "lookahead_ms" => tr(k::fxp::LOOKAHEAD_MS),
+        // питч Р.48
+        "semitones" => tr(k::fxp::SEMITONES),
+        "cents" => tr(k::fxp::CENTS),
         "pan_x" => tr(k::fxp::PAN_X),
         "pan_y" => tr(k::fxp::PAN_Y),
         "zoom" => tr(k::fxp::ZOOM),

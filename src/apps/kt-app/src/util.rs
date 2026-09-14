@@ -414,8 +414,7 @@ mod tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000,
-        });
+            sample_rate: 48000, pitch_engine: Default::default() });
         let svc = crate::thumbs::ThumbService::start(&project, None);
         svc.add_media(MediaId(3), fixture("testsrc_h264.mp4"));
         let key = crate::thumbs::ThumbKey { media: MediaId(3), t: 0 };

@@ -51,8 +51,7 @@ fn t212_keys_stick_to_material_through_edits() {
         fps: 30,
         width: 320,
         height: 180,
-        sample_rate: 48000,
-    });
+        sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -239,7 +238,7 @@ fn clip_with_fx() -> ClipEvent {
 
 fn model_with_clip() -> TimelineModel {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(clip_with_fx());
     p.validate().unwrap();
@@ -472,7 +471,7 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
 fn t248_warp_rate_is_shared_by_the_link_group() {
     use kt_time::Tick;
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     let mk = |id: u64, kind: ClipKind| ClipEvent {
         id: ClipId(id),

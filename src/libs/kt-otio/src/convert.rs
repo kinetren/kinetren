@@ -472,6 +472,9 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             width: p.settings.width,
             height: p.settings.height,
             sample_rate: p.settings.sample_rate,
+            // дефолт в файл не пишется (skip_serializing_if)
+            pitch_engine: (p.settings.pitch_engine != Default::default())
+                .then_some(p.settings.pitch_engine),
         }),
         transport: (p.region.is_some() || p.loop_enabled).then(|| KtTransport {
             region: p.region.map(|r| (r.start.0, r.end.0)),
@@ -675,10 +678,11 @@ pub fn timeline_to_project(
             width: s.width,
             height: s.height,
             sample_rate: s.sample_rate,
+            pitch_engine: s.pitch_engine.unwrap_or_default(),
         })
         .unwrap_or_else(|| {
             notices.push("imported with default project settings".into());
-            ProjectSettings { fps: guess_fps(tl), width: 1920, height: 1080, sample_rate: 48000 }
+            ProjectSettings { fps: guess_fps(tl), width: 1920, height: 1080, sample_rate: 48000, pitch_engine: Default::default() }
         });
     let mut p = Project::new(settings);
     let mut retained = Retained {

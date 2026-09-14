@@ -121,6 +121,11 @@ pub struct KtSettings {
     pub width: u32,
     pub height: u32,
     pub sample_rate: u32,
+    /// Движок питча (Р.48). Дефолт не пишется — файлы до Р.48
+    /// байт-стабильны, а старая сборка прочтёт файл, просто не зная
+    /// про выбор.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch_engine: Option<kt_model::PitchEngine>,
 }
 
 /// Регион/loop — транспорт-удобство вне OTIO-семантики (тики).

@@ -50,7 +50,7 @@ fn clip(id: u64, kind: ClipKind, start: Tick, dur: Tick) -> ClipEvent {
 
 fn base(kind: ClipKind) -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(clip(10, kind, Tick(0), LEN));

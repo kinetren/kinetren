@@ -496,8 +496,7 @@ fn run(args: &[String]) -> i32 {
                 fps: 30,
                 width: 1920,
                 height: 1080,
-                sample_rate: 48000,
-            });
+                sample_rate: 48000, pitch_engine: Default::default() });
             let base = std::path::Path::new(path).parent().map(|d| d.to_path_buf());
             let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
             if let Err(e) = std::fs::write(path, out) {
@@ -800,7 +799,7 @@ fn demo_project() -> Project {
         ]]
     };
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 1920, height: 1080, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 1920, height: 1080, sample_rate: 48000, pitch_engine: Default::default() });
     for (id, path) in [
         (1u64, "media/drone_coast.mp4"),
         (2, "media/city_night_broll.mp4"),

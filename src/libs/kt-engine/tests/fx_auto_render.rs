@@ -35,7 +35,7 @@ fn frame() -> Arc<kt_media::VideoFrame> {
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: W, height: H, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: W, height: H, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

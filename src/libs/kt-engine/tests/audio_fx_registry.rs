@@ -17,7 +17,7 @@ const DUR: i64 = 48_000 * 2;
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -476,7 +476,7 @@ fn t327_print_dense_chain_cost() {
         ]
     };
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
     for i in 0..7 {
         p.clips.push(ClipEvent {

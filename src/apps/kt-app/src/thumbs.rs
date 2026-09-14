@@ -621,8 +621,7 @@ mod key_tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000,
-        });
+            sample_rate: 48000, pitch_engine: Default::default() });
         let svc = ThumbService::start(&project, None);
         let id = MediaId(99); // медиа НЕТ в карте сервиса
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

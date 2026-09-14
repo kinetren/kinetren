@@ -31,7 +31,7 @@ fn direct() -> DirectFetcher {
 
 fn project_with_clip(media: MediaId, source_in: Tick, fx: Vec<FxInstance>) -> Project {
     let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000 });
+        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {

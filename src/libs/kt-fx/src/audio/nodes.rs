@@ -221,6 +221,7 @@ pub enum AudioNode {
     Compressor(CompNode),
     Gate(GateNode),
     Limiter(Box<LimiterNode>),
+    Pitch(Box<PitchNode>),
 }
 
 impl AudioNode {
@@ -248,6 +249,7 @@ impl AudioNode {
             FxInstance::Limiter { .. } => {
                 Some(AudioNode::Limiter(Box::new(LimiterNode::new())))
             }
+            FxInstance::PitchShift { .. } => Some(AudioNode::Pitch(Box::new(PitchNode::new()))),
             _ => None,
         }
     }
@@ -322,6 +324,12 @@ impl AudioNode {
                 AudioNode::Limiter(n),
                 FxInstance::Limiter { threshold_db, ceiling_db, lookahead_ms, release_ms },
             ) => n.apply(*threshold_db, *ceiling_db, *lookahead_ms, *release_ms, structural),
+            // движок питча — настройка ПРОЕКТА: он приезжает не из слота,
+            // а из ChainOpts (см. ClipProcessor::new_with_opts)
+            (AudioNode::Pitch(n), FxInstance::PitchShift { semitones, cents }) => {
+                let engine = n.engine;
+                n.apply(*semitones, *cents, engine);
+            }
             // отпечаток цепочки совпал — виды по слотам совпадают по
             // построению; сюда можно попасть только ошибкой сопоставления
             _ => debug_assert!(false, "node/slot kind mismatch"),
@@ -341,6 +349,8 @@ impl AudioNode {
             AudioNode::Tremolo(n) => n.set_targets(auto, slot, s),
             AudioNode::AutoPan(n) => n.set_targets(auto, slot, s),
             AudioNode::Limiter(n) => n.set_targets(auto, slot, s),
+            // питч читает кривые ПО ПОЗИЦИИ ЗЕРНА (bind), цели ему не нужны
+            AudioNode::Pitch(_) => {}
             AudioNode::Vibrato(n) => n.set_targets(auto, slot, s),
             AudioNode::Chorus(n) => n.set_targets(auto, slot, s),
             AudioNode::Flanger(n) => n.set_targets(auto, slot, s),
@@ -362,6 +372,7 @@ impl AudioNode {
             AudioNode::Chorus(n) => n.lfo.bind(auto, slot, clip_len),
             AudioNode::Flanger(n) => n.lfo.bind(auto, slot, clip_len),
             AudioNode::Phaser(n) => n.lfo.bind(auto, slot, clip_len),
+            AudioNode::Pitch(n) => n.bind(auto, slot, clip_len),
             _ => {}
         }
     }
@@ -386,6 +397,7 @@ impl AudioNode {
             AudioNode::Compressor(n) => n.process(buf),
             AudioNode::Gate(n) => n.process(buf),
             AudioNode::Limiter(n) => n.process(buf),
+            AudioNode::Pitch(n) => n.process(buf, _pos),
         }
     }
 
@@ -398,9 +410,24 @@ impl AudioNode {
     /// Упреждение — НЕ хвост: оно входит в прогрев seek и в окно
     /// источника, но НЕ продлевает `ext_end` (иначе клип звучал бы
     /// после собственного конца).
+    /// Донести движок питча (настройка ПРОЕКТА, а не слота): узел
+    /// получает его при создании процессора; смена движка — пересборка
+    /// процессора целиком (сторожит сверка opts в FxStateStore).
+    pub(crate) fn set_engine(&mut self, engine: kt_model::PitchEngine) {
+        if let AudioNode::Pitch(n) = self {
+            n.engine = engine;
+            n.pv = None;
+            n.refresh_la();
+            if engine == kt_model::PitchEngine::Vocoder && n.la > 0 {
+                n.pv = Some(Box::new(PvState::new()));
+            }
+        }
+    }
+
     pub(crate) fn lookahead(&self) -> i64 {
         match self {
             AudioNode::Limiter(n) => n.la,
+            AudioNode::Pitch(n) => n.la,
             _ => 0,
         }
     }
@@ -437,6 +464,7 @@ impl AudioNode {
             AudioNode::Compressor(n) => n.reset(),
             AudioNode::Gate(n) => n.reset(),
             AudioNode::Limiter(n) => n.reset(),
+            AudioNode::Pitch(n) => n.reset(),
         }
     }
 }
@@ -1581,6 +1609,404 @@ impl LimiterNode {
         self.threshold_db.reset_to_target();
         self.ceiling_db.reset_to_target();
     }
+}
+
+
+/// Упреждение питча (Р.48, п.339): грейн повышения на две октавы читает
+/// вход вчетверо быстрее выхода, и к концу грейна ему нужен материал на
+/// `LG·4` кадров вперёд плюс окно WSOLA-поиска. Константа ОДНА на оба
+/// движка: вокодеру хватает меньшего, лишнее для него — просто история.
+/// Меньше `MIN_PREROLL_FRAMES` (4800) — прогрев seek'а всегда заполняет
+/// кольцо настоящим материалом.
+pub(crate) const PITCH_LOOKAHEAD_FRAMES: i64 = 4608;
+
+/// Шаг синтез-грида WSOLA и хоп вокодера (абсолютный, от нуля клипа —
+/// поэтому нарезка буферов на результат не влияет).
+const PITCH_HOP: i64 = 512;
+/// Длина зерна WSOLA (окно Ханна, перекрытие 50 %: сумма окон ≡ 1).
+const PITCH_GRAIN: usize = 1024;
+/// Полуширина WSOLA-поиска и его шаг (кандидаты перебираются по
+/// возрастанию |off| — тай-брейк детерминирован).
+const PITCH_SEARCH: i64 = 256;
+const PITCH_SEARCH_STEP: i64 = 8;
+/// Размер кадра фазового вокодера.
+const PV_N: usize = 2048;
+/// Кольца: вход обязан покрывать [выход − поиск, вход + чанк].
+const PITCH_RING: usize = 8192;
+/// Аккумулятор OLA: обязан вмещать чанк процессора (1024) ПЛЮС полное
+/// окно синтеза (2048 у вокодера) — иначе зерно, синтезированное
+/// вперёд, затирало бы ещё не отданные кадры, и результат зависел бы от
+/// нарезки буферов (ровно это поймал t338 на кольце 2048).
+const PITCH_ACC: usize = 4096;
+
+/// Нейтраль питча: и база, и кривые на нуле. Нейтральный узел не трогает
+/// буфер вовсе (байт-в-байт прежний звук) и не требует упреждения.
+pub(crate) fn pitch_is_neutral(
+    semitones: f32,
+    cents: f32,
+    st_points: &[(f64, f64)],
+    ct_points: &[(f64, f64)],
+) -> bool {
+    semitones == 0.0
+        && cents == 0.0
+        && st_points.iter().all(|(_, v)| *v == 0.0)
+        && ct_points.iter().all(|(_, v)| *v == 0.0)
+}
+
+/// Состояние фазового вокодера: планы FFT и фазовые аккумуляторы.
+struct PvState {
+    fwd: std::sync::Arc<dyn realfft::RealToComplex<f32>>,
+    inv: std::sync::Arc<dyn realfft::ComplexToReal<f32>>,
+    /// Фазы по КАНАЛАМ: стерео-стороны не должны интерферировать.
+    prev_phase: [Vec<f32>; CH],
+    synth_phase: [Vec<f32>; CH],
+    window: Vec<f32>,
+    time: Vec<f32>,
+    spec: Vec<realfft::num_complex::Complex<f32>>,
+    out_spec: Vec<realfft::num_complex::Complex<f32>>,
+    mag: Vec<f32>,
+    freq: Vec<f32>,
+}
+
+impl PvState {
+    fn new() -> PvState {
+        let mut planner = realfft::RealFftPlanner::<f32>::new();
+        let fwd = planner.plan_fft_forward(PV_N);
+        let inv = planner.plan_fft_inverse(PV_N);
+        let bins = PV_N / 2 + 1;
+        PvState {
+            window: (0..PV_N)
+                .map(|i| {
+                    let x = std::f32::consts::TAU * i as f32 / PV_N as f32;
+                    0.5 - 0.5 * x.cos()
+                })
+                .collect(),
+            prev_phase: std::array::from_fn(|_| vec![0.0; bins]),
+            synth_phase: std::array::from_fn(|_| vec![0.0; bins]),
+            time: vec![0.0; PV_N],
+            spec: fwd.make_output_vec(),
+            out_spec: inv.make_input_vec(),
+            mag: vec![0.0; bins],
+            freq: vec![0.0; bins],
+            fwd,
+            inv,
+        }
+    }
+
+    fn reset(&mut self) {
+        for p in &mut self.prev_phase {
+            p.fill(0.0);
+        }
+        for p in &mut self.synth_phase {
+            p.fill(0.0);
+        }
+    }
+}
+
+/// Смена высоты без смены длительности (Р.48, п.339). Узел УПРЕЖДАЮЩИЙ:
+/// читает вход с опережением `PITCH_LOOKAHEAD_FRAMES` и отдаёт выход
+/// выровненным — задержки для движка нет (п.337).
+///
+/// Оба движка синтезируют на АБСОЛЮТНОМ гриде позиции клипа: зерно
+/// номер g всегда покрывает выходные кадры [g·HOP, g·HOP + GRAIN), а
+/// коэффициент высоты берётся по позиции ЗЕРНА — поэтому результат не
+/// зависит ни от нарезки буферов, ни от числа вызовов (класс t325а).
+pub struct PitchNode {
+    engine: kt_model::PitchEngine,
+    semitones: f32,
+    cents: f32,
+    st_points: Vec<(f64, f64)>,
+    ct_points: Vec<(f64, f64)>,
+    st_ease: bool,
+    ct_ease: bool,
+    clip_len: i64,
+    /// 0 — нейтраль (узел прозрачен).
+    la: i64,
+    /// Входное кольцо по абсолютным позициям клипа.
+    ring: Vec<f32>,
+    /// Позиция следующего кадра записи; `i64::MIN` — потока ещё не было.
+    written: i64,
+    /// OLA-аккумулятор выхода (тоже по абсолютным позициям).
+    acc: Vec<f32>,
+    /// Номер следующего зерна к синтезу.
+    next_grain: i64,
+    pv: Option<Box<PvState>>,
+}
+
+impl PitchNode {
+    fn new() -> PitchNode {
+        PitchNode {
+            engine: kt_model::PitchEngine::default(),
+            semitones: 0.0,
+            cents: 0.0,
+            st_points: Vec::new(),
+            ct_points: Vec::new(),
+            st_ease: true,
+            ct_ease: true,
+            clip_len: 1,
+            la: 0,
+            ring: vec![0.0; PITCH_RING * CH],
+            written: i64::MIN,
+            acc: vec![0.0; PITCH_ACC * CH],
+            next_grain: 0,
+            pv: None,
+        }
+    }
+
+    fn apply(&mut self, semitones: f32, cents: f32, engine: kt_model::PitchEngine) {
+        self.semitones = semitones.clamp(-24.0, 24.0);
+        self.cents = cents.clamp(-100.0, 100.0);
+        self.engine = engine;
+        self.refresh_la();
+    }
+
+    /// Кривые питча (тот же паттерн, что у LFO-узлов): значение берётся
+    /// по позиции ЗЕРНА, а не тиками сглаживания — иначе результат зависел
+    /// бы от числа вызовов.
+    fn bind(&mut self, auto: &AutoProfiles, slot: usize, clip_len: i64) {
+        self.st_points = auto.points(slot, "semitones").to_vec();
+        self.ct_points = auto.points(slot, "cents").to_vec();
+        self.st_ease = auto.ease_of(slot, "semitones");
+        self.ct_ease = auto.ease_of(slot, "cents");
+        self.clip_len = clip_len.max(1);
+        self.refresh_la();
+    }
+
+    fn refresh_la(&mut self) {
+        let neutral =
+            pitch_is_neutral(self.semitones, self.cents, &self.st_points, &self.ct_points);
+        let la = if neutral { 0 } else { PITCH_LOOKAHEAD_FRAMES };
+        if la != self.la {
+            self.la = la;
+            self.reset();
+        }
+        if la > 0 && self.engine == kt_model::PitchEngine::Vocoder && self.pv.is_none() {
+            self.pv = Some(Box::new(PvState::new()));
+        }
+    }
+
+    /// Коэффициент высоты на позиции `p` (клип-локальный кадр).
+    fn ratio_at(&self, p: i64) -> f64 {
+        let tau = p as f64 / self.clip_len as f64;
+        let st = kt_model::param_at(self.semitones as f64, &self.st_points, tau, self.st_ease);
+        let ct = kt_model::param_at(self.cents as f64, &self.ct_points, tau, self.ct_ease);
+        (2f64).powf((st + ct / 100.0) / 12.0).clamp(0.25, 4.0)
+    }
+
+    #[inline]
+    fn ring_at(&self, frame: i64, ch: usize) -> f32 {
+        let i = frame.rem_euclid(PITCH_RING as i64) as usize;
+        self.ring[i * CH + ch]
+    }
+
+    /// Линейная интерполяция входа на дробной позиции.
+    #[inline]
+    fn ring_frac(&self, pos: f64, ch: usize) -> f32 {
+        let i = pos.floor();
+        let f = (pos - i) as f32;
+        let a = self.ring_at(i as i64, ch);
+        let b = self.ring_at(i as i64 + 1, ch);
+        a * (1.0 - f) + b * f
+    }
+
+    #[inline]
+    fn acc_at(&mut self, frame: i64, ch: usize) -> &mut f32 {
+        let i = frame.rem_euclid(PITCH_ACC as i64) as usize;
+        &mut self.acc[i * CH + ch]
+    }
+
+    /// Разрыв потока (шов, seek): кольца и грид переинициализируются от
+    /// новой позиции — узел переживает шов, как реверб, просто без хвоста.
+    fn restart(&mut self, in_pos: i64) {
+        self.ring.fill(0.0);
+        self.acc.fill(0.0);
+        self.written = in_pos;
+        self.next_grain = (in_pos - self.la).div_euclid(PITCH_HOP);
+        if let Some(pv) = &mut self.pv {
+            pv.reset();
+        }
+    }
+
+    fn process(&mut self, buf: &mut [f32], in_pos: i64) {
+        if self.la == 0 {
+            return; // нейтраль: буфер не трогаем вовсе
+        }
+        let n = (buf.len() / CH) as i64;
+        if self.written != in_pos {
+            self.restart(in_pos);
+        }
+        // 1) вход в кольцо
+        for (i, fr) in buf.chunks_exact(CH).enumerate() {
+            let idx = (in_pos + i as i64).rem_euclid(PITCH_RING as i64) as usize;
+            for (ch, v) in fr.iter().enumerate() {
+                self.ring[idx * CH + ch] = *v;
+            }
+        }
+        self.written = in_pos + n;
+        // 2) синтез зёрен, покрывающих нужный выход
+        let out_pos = in_pos - self.la;
+        let out_end = out_pos + n;
+        while self.next_grain * PITCH_HOP < out_end {
+            let g = self.next_grain;
+            match self.engine {
+                kt_model::PitchEngine::Wsola => self.grain_wsola(g),
+                kt_model::PitchEngine::Vocoder => self.grain_vocoder(g),
+            }
+            self.next_grain += 1;
+        }
+        // 3) выход из аккумулятора (прочитанное обнуляется — кольцо
+        //    переиспользуется следующими зёрнами)
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+            let t = out_pos + i as i64;
+            for (ch, v) in fr.iter_mut().enumerate() {
+                let a = self.acc_at(t, ch);
+                *v = *a;
+                *a = 0.0;
+            }
+        }
+    }
+
+    /// Зерно WSOLA: читает вход со скоростью `r` от позиции зерна и
+    /// подмешивает в аккумулятор с окном Ханна. Сдвиг чтения выбирается
+    /// кросс-корреляцией с уже синтезированным перекрытием — это и
+    /// сохраняет форму удара (в отличие от вокодера).
+    fn grain_wsola(&mut self, g: i64) {
+        let start = g * PITCH_HOP;
+        let r = self.ratio_at(start);
+        let off = self.best_offset(start, r);
+        let base = (start + off) as f64;
+        for k in 0..PITCH_GRAIN {
+            let w = hann(k, PITCH_GRAIN);
+            let src = base + k as f64 * r;
+            for ch in 0..CH {
+                let v = self.ring_frac(src, ch) * w;
+                *self.acc_at(start + k as i64, ch) += v;
+            }
+        }
+    }
+
+    /// WSOLA-поиск: кандидаты перебираются по возрастанию |off|, побеждает
+    /// строго больший счёт — значит при равенстве остаётся меньший сдвиг
+    /// (детерминизм без зависимости от порядка обхода).
+    fn best_offset(&self, start: i64, r: f64) -> i64 {
+        let mut cands: Vec<i64> = vec![0];
+        let mut d = PITCH_SEARCH_STEP;
+        while d <= PITCH_SEARCH {
+            cands.push(-d);
+            cands.push(d);
+            d += PITCH_SEARCH_STEP;
+        }
+        let overlap = PITCH_HOP as usize;
+        let mut best = 0i64;
+        let mut best_score = f64::NEG_INFINITY;
+        for off in cands {
+            let base = (start + off) as f64;
+            let (mut num, mut den) = (0f64, 0f64);
+            for k in (0..overlap).step_by(2) {
+                let src = base + k as f64 * r;
+                let cand = (self.ring_frac(src, 0) + self.ring_frac(src, 1)) as f64;
+                let i = (start + k as i64).rem_euclid(PITCH_ACC as i64) as usize;
+                let prev = (self.acc[i * CH] + self.acc[i * CH + 1]) as f64;
+                num += cand * prev;
+                den += cand * cand;
+            }
+            let score = num / (den.sqrt() + 1e-9);
+            if score > best_score {
+                best_score = score;
+                best = off;
+            }
+        }
+        best
+    }
+
+    /// Зерно фазового вокодера: спектр кадра переносится в бины `k·r` с
+    /// пересчётом фазы по мгновенной частоте. Гармоники едут чисто,
+    /// транзиент размазывается — цена спектрального метода.
+    fn grain_vocoder(&mut self, g: i64) {
+        let start = g * PITCH_HOP;
+        let r = self.ratio_at(start) as f32;
+        let bins = PV_N / 2 + 1;
+        let hop = PITCH_HOP as f32;
+        let expected = std::f32::consts::TAU * hop / PV_N as f32;
+        for ch in 0..CH {
+            {
+                let pv = self.pv.as_deref_mut().expect("vocoder state");
+                for i in 0..PV_N {
+                    pv.time[i] = 0.0;
+                }
+            }
+            // анализ: окно из кольца
+            for i in 0..PV_N {
+                let v = self.ring_at(start + i as i64, ch);
+                let pv = self.pv.as_deref_mut().expect("vocoder state");
+                pv.time[i] = v * pv.window[i];
+            }
+            let pv = self.pv.as_deref_mut().expect("vocoder state");
+            pv.fwd.process(&mut pv.time, &mut pv.spec).expect("fft");
+            // Анализ: магнитуда и МГНОВЕННАЯ частота каждого бина
+            // (принципальная девиация фазы против ожидаемой за хоп).
+            for k in 0..bins {
+                let c = pv.spec[k];
+                let m = (c.re * c.re + c.im * c.im).sqrt();
+                let phase = c.im.atan2(c.re);
+                let mut dp = phase - pv.prev_phase[ch][k] - k as f32 * expected;
+                dp -= std::f32::consts::TAU * (dp / std::f32::consts::TAU).round();
+                pv.prev_phase[ch][k] = phase;
+                pv.mag[k] = m;
+                pv.freq[k] = k as f32 * expected + dp;
+            }
+            // Синтез ОБРАТНЫМ отображением (как в геометрии видео):
+            // целевой бин j спрашивает источник в позиции j/r и получает
+            // единственную частоту — при прямом переносе k → round(k·r)
+            // несколько источников делили бы один бин, и высота уезжала
+            // (замер: 612 Гц вместо 659 на +7 полутонах).
+            for j in 0..bins {
+                let src = j as f32 / r;
+                let k0 = src.floor() as usize;
+                if k0 + 1 >= bins {
+                    pv.out_spec[j] = realfft::num_complex::Complex::new(0.0, 0.0);
+                    continue;
+                }
+                let f = src - k0 as f32;
+                let m = pv.mag[k0] * (1.0 - f) + pv.mag[k0 + 1] * f;
+                let w = (pv.freq[k0] * (1.0 - f) + pv.freq[k0 + 1] * f) * r;
+                pv.synth_phase[ch][j] += w;
+                let (sn, cs) = pv.synth_phase[ch][j].sin_cos();
+                pv.out_spec[j] = realfft::num_complex::Complex::new(m * cs, m * sn);
+            }
+            // DC и Найквист у вещественного сигнала вещественны —
+            // realfft это проверяет и иначе отказывается считать
+            pv.out_spec[0].im = 0.0;
+            let last = bins - 1;
+            pv.out_spec[last].im = 0.0;
+            pv.inv.process(&mut pv.out_spec, &mut pv.time).expect("ifft");
+            let norm = 1.0 / PV_N as f32;
+            for i in 0..PV_N {
+                pv.time[i] *= pv.window[i] * norm;
+            }
+            for i in 0..PV_N {
+                let v = self.pv.as_deref().expect("vocoder state").time[i];
+                *self.acc_at(start + i as i64, ch) += v;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.ring.fill(0.0);
+        self.acc.fill(0.0);
+        self.written = i64::MIN;
+        self.next_grain = 0;
+        if let Some(pv) = &mut self.pv {
+            pv.reset();
+        }
+    }
+}
+
+/// Окно Ханна с перекрытием 50 %: сумма двух соседних окон ≡ 1.
+#[inline]
+fn hann(i: usize, n: usize) -> f32 {
+    let x = std::f32::consts::TAU * i as f32 / n as f32;
+    0.5 - 0.5 * x.cos()
 }
 
 /// Гейт: быстрый детектор (~0.5 мс) + гистерезис −6 дБ + hold-счётчик
