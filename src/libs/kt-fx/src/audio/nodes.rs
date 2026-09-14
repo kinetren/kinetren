@@ -211,6 +211,12 @@ pub enum AudioNode {
     Distortion(DistNode),
     Bitcrusher(CrushNode),
     StereoWidth(WidthNode),
+    Tremolo(TremoloNode),
+    AutoPan(AutoPanNode),
+    Vibrato(Box<VibratoNode>),
+    Chorus(Box<ChorusNode>),
+    Flanger(Box<FlangerNode>),
+    Phaser(Box<PhaserNode>),
 }
 
 impl AudioNode {
@@ -226,6 +232,12 @@ impl AudioNode {
             FxInstance::Distortion { .. } => Some(AudioNode::Distortion(DistNode::new())),
             FxInstance::Bitcrusher { .. } => Some(AudioNode::Bitcrusher(CrushNode::new())),
             FxInstance::StereoWidth { .. } => Some(AudioNode::StereoWidth(WidthNode::new())),
+            FxInstance::Tremolo { .. } => Some(AudioNode::Tremolo(TremoloNode::new())),
+            FxInstance::AutoPan { .. } => Some(AudioNode::AutoPan(AutoPanNode::new())),
+            FxInstance::Vibrato { .. } => Some(AudioNode::Vibrato(Box::new(VibratoNode::new()))),
+            FxInstance::Chorus { .. } => Some(AudioNode::Chorus(Box::new(ChorusNode::new()))),
+            FxInstance::Flanger { .. } => Some(AudioNode::Flanger(Box::new(FlangerNode::new()))),
+            FxInstance::Phaser { .. } => Some(AudioNode::Phaser(Box::new(PhaserNode::new()))),
             _ => None,
         }
     }
@@ -265,6 +277,26 @@ impl AudioNode {
                 n.apply(*bits, *rate_hz, *mix)
             }
             (AudioNode::StereoWidth(n), FxInstance::StereoWidth { width }) => n.apply(*width),
+            (AudioNode::Tremolo(n), FxInstance::Tremolo { rate_hz, depth }) => {
+                n.apply(*rate_hz, *depth)
+            }
+            (AudioNode::AutoPan(n), FxInstance::AutoPan { rate_hz, depth }) => {
+                n.apply(*rate_hz, *depth)
+            }
+            (AudioNode::Vibrato(n), FxInstance::Vibrato { rate_hz, depth_ms }) => {
+                n.apply(*rate_hz, *depth_ms)
+            }
+            (AudioNode::Chorus(n), FxInstance::Chorus { rate_hz, depth_ms, mix, voices }) => {
+                n.apply(*rate_hz, *depth_ms, *mix, *voices)
+            }
+            (
+                AudioNode::Flanger(n),
+                FxInstance::Flanger { rate_hz, depth_ms, feedback, mix },
+            ) => n.apply(*rate_hz, *depth_ms, *feedback, *mix),
+            (
+                AudioNode::Phaser(n),
+                FxInstance::Phaser { rate_hz, depth, feedback, stages, mix },
+            ) => n.apply(*rate_hz, *depth, *feedback, *stages, *mix),
             // отпечаток цепочки совпал — виды по слотам совпадают по
             // построению; сюда можно попасть только ошибкой сопоставления
             _ => debug_assert!(false, "node/slot kind mismatch"),
@@ -281,6 +313,27 @@ impl AudioNode {
             AudioNode::Distortion(n) => n.set_targets(auto, slot, s),
             AudioNode::Bitcrusher(n) => n.set_targets(auto, slot, s),
             AudioNode::StereoWidth(n) => n.set_targets(auto, slot, s),
+            AudioNode::Tremolo(n) => n.set_targets(auto, slot, s),
+            AudioNode::AutoPan(n) => n.set_targets(auto, slot, s),
+            AudioNode::Vibrato(n) => n.set_targets(auto, slot, s),
+            AudioNode::Chorus(n) => n.set_targets(auto, slot, s),
+            AudioNode::Flanger(n) => n.set_targets(auto, slot, s),
+            AudioNode::Phaser(n) => n.set_targets(auto, slot, s),
+        }
+    }
+
+    /// Привязать LFO-узлы к их кривым частоты и длине клипа (копия точек —
+    /// в process модель не читается). Зовётся из apply_params/set_auto/
+    /// set_clip_len процессора.
+    pub(crate) fn bind_lfo(&mut self, auto: &AutoProfiles, slot: usize, clip_len: i64) {
+        match self {
+            AudioNode::Tremolo(n) => n.lfo.bind(auto, slot, clip_len),
+            AudioNode::AutoPan(n) => n.lfo.bind(auto, slot, clip_len),
+            AudioNode::Vibrato(n) => n.lfo.bind(auto, slot, clip_len),
+            AudioNode::Chorus(n) => n.lfo.bind(auto, slot, clip_len),
+            AudioNode::Flanger(n) => n.lfo.bind(auto, slot, clip_len),
+            AudioNode::Phaser(n) => n.lfo.bind(auto, slot, clip_len),
+            _ => {}
         }
     }
 
@@ -294,6 +347,12 @@ impl AudioNode {
             AudioNode::Distortion(n) => n.process(buf),
             AudioNode::Bitcrusher(n) => n.process(buf, _pos),
             AudioNode::StereoWidth(n) => n.process(buf),
+            AudioNode::Tremolo(n) => n.process(buf, _pos),
+            AudioNode::AutoPan(n) => n.process(buf, _pos),
+            AudioNode::Vibrato(n) => n.process(buf, _pos),
+            AudioNode::Chorus(n) => n.process(buf, _pos),
+            AudioNode::Flanger(n) => n.process(buf, _pos),
+            AudioNode::Phaser(n) => n.process(buf, _pos),
         }
     }
 
@@ -301,6 +360,9 @@ impl AudioNode {
         match self {
             AudioNode::Reverb(n) => n.rv.tail(),
             AudioNode::Filter(n) => n.tail(),
+            AudioNode::Vibrato(n) => n.tail(),
+            AudioNode::Chorus(n) => n.tail(),
+            AudioNode::Flanger(n) => n.tail(),
             _ => kt_time::Tick::ZERO,
         }
     }
@@ -315,6 +377,12 @@ impl AudioNode {
             AudioNode::Distortion(n) => n.reset(),
             AudioNode::Bitcrusher(n) => n.reset(),
             AudioNode::StereoWidth(n) => n.reset(),
+            AudioNode::Tremolo(n) => n.reset(),
+            AudioNode::AutoPan(n) => n.reset(),
+            AudioNode::Vibrato(n) => n.reset(),
+            AudioNode::Chorus(n) => n.reset(),
+            AudioNode::Flanger(n) => n.reset(),
+            AudioNode::Phaser(n) => n.reset(),
         }
     }
 }
@@ -799,5 +867,383 @@ impl WidthNode {
 
     fn reset(&mut self) {
         self.width.reset_to_target();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Узлы Ка3 (Р.47, п.328): LFO-семейство
+// ---------------------------------------------------------------------------
+
+use super::primitives::{DelayLine, lfo_phase};
+
+/// Общая LFO-половина модуляционных узлов: фаза — интеграл кривой частоты
+/// по позиции клипа (`lfo_phase`), НЕ счётчик — seek/шов/заворот дают ту
+/// же фазу, что холодный рендер (инвариант №11). Узел держит КОПИЮ точек
+/// кривой rate_hz (bind при apply_params/set_auto): в process модель не
+/// читается (инвариант №2).
+struct LfoDrive {
+    base_hz: f64,
+    points: Vec<(f64, f64)>,
+    clip_len: i64,
+}
+
+impl LfoDrive {
+    fn new(base_hz: f64) -> LfoDrive {
+        LfoDrive { base_hz, points: Vec::new(), clip_len: 1 }
+    }
+
+    fn bind(&mut self, auto: &AutoProfiles, slot: usize, clip_len: i64) {
+        self.points = auto.points(slot, "rate_hz").to_vec();
+        self.clip_len = clip_len.max(1);
+    }
+
+    /// Фаза в радианах на кадре `p` (клип-локально).
+    #[inline]
+    fn phase(&self, p: i64) -> f64 {
+        let tau = p as f64 / self.clip_len as f64;
+        lfo_phase(self.base_hz, &self.points, tau, self.clip_len) * std::f64::consts::TAU
+    }
+}
+
+/// Тремоло: g = 1 − depth·(0.5 + 0.5·sin φ).
+pub struct TremoloNode {
+    lfo: LfoDrive,
+    depth: SmoothedParam,
+}
+
+impl TremoloNode {
+    fn new() -> TremoloNode {
+        TremoloNode { lfo: LfoDrive::new(5.0), depth: SmoothedParam::with_ms(0.6, 20.0) }
+    }
+
+    fn apply(&mut self, rate_hz: f32, depth: f32) {
+        self.lfo.base_hz = rate_hz as f64;
+        self.depth.set_target(depth.clamp(0.0, 1.0));
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.depth.set_target(auto.value(slot, "depth", self.depth.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32], pos: i64) {
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+            let d = self.depth.tick().clamp(0.0, 1.0);
+            let g = 1.0 - d * (0.5 + 0.5 * self.lfo.phase(pos + i as i64).sin() as f32);
+            for s in fr.iter_mut() {
+                *s *= g;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.depth.reset_to_target();
+    }
+}
+
+/// Автопан: p = depth·sin φ, закон панорамы — как у Gain.
+pub struct AutoPanNode {
+    lfo: LfoDrive,
+    depth: SmoothedParam,
+}
+
+impl AutoPanNode {
+    fn new() -> AutoPanNode {
+        AutoPanNode { lfo: LfoDrive::new(1.0), depth: SmoothedParam::with_ms(0.8, 20.0) }
+    }
+
+    fn apply(&mut self, rate_hz: f32, depth: f32) {
+        self.lfo.base_hz = rate_hz as f64;
+        self.depth.set_target(depth.clamp(0.0, 1.0));
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.depth.set_target(auto.value(slot, "depth", self.depth.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32], pos: i64) {
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+            let d = self.depth.tick().clamp(0.0, 1.0);
+            let p = d * self.lfo.phase(pos + i as i64).sin() as f32;
+            fr[0] *= (1.0 - p).min(1.0);
+            if CH > 1 {
+                fr[1] *= (1.0 + p).min(1.0);
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.depth.reset_to_target();
+    }
+}
+
+/// Вибрато: 100 % wet, delay = 1 мс + depth·(0.5+0.5·sin φ).
+pub struct VibratoNode {
+    lfo: LfoDrive,
+    depth_ms: SmoothedParam,
+    lines: [DelayLine; CH],
+}
+
+/// Максимум задержки вибрато: 1 мс базы + 5 мс глубины + запас.
+const VIB_MAX_FRAMES: usize = (48_000.0 * 0.008) as usize;
+
+impl VibratoNode {
+    fn new() -> VibratoNode {
+        VibratoNode {
+            lfo: LfoDrive::new(5.0),
+            depth_ms: SmoothedParam::with_ms(0.5, 20.0),
+            lines: std::array::from_fn(|_| DelayLine::new(VIB_MAX_FRAMES)),
+        }
+    }
+
+    fn apply(&mut self, rate_hz: f32, depth_ms: f32) {
+        self.lfo.base_hz = rate_hz as f64;
+        self.depth_ms.set_target(depth_ms.clamp(0.05, 5.0));
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.depth_ms
+            .set_target(auto.value(slot, "depth_ms", self.depth_ms.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32], pos: i64) {
+        let sr = AUDIO_SAMPLE_RATE as f32;
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+            let d = self.depth_ms.tick().clamp(0.05, 5.0);
+            let ph = self.lfo.phase(pos + i as i64).sin() as f32;
+            let delay = (1.0 + d * (0.5 + 0.5 * ph)) * sr / 1000.0;
+            for (ch, s) in fr.iter_mut().enumerate() {
+                self.lines[ch].write(*s);
+                *s = self.lines[ch].read_frac(delay);
+            }
+        }
+    }
+
+    fn tail(&self) -> Tick {
+        Tick::from_audio_frames(VIB_MAX_FRAMES as i64)
+    }
+
+    fn reset(&mut self) {
+        for l in &mut self.lines {
+            l.reset();
+        }
+        self.depth_ms.reset_to_target();
+    }
+}
+
+/// Хорус: base 15 мс, голос k — фаза +k·2π/voices, правый канал +90°.
+pub struct ChorusNode {
+    lfo: LfoDrive,
+    depth_ms: SmoothedParam,
+    mix: SmoothedParam,
+    voices: u32,
+    lines: [DelayLine; CH],
+}
+
+const CHORUS_BASE_MS: f32 = 15.0;
+const CHORUS_MAX_FRAMES: usize = (48_000.0 * 0.030) as usize;
+
+impl ChorusNode {
+    fn new() -> ChorusNode {
+        ChorusNode {
+            lfo: LfoDrive::new(0.8),
+            depth_ms: SmoothedParam::with_ms(3.5, 20.0),
+            mix: SmoothedParam::with_ms(0.5, 20.0),
+            voices: 2,
+            lines: std::array::from_fn(|_| DelayLine::new(CHORUS_MAX_FRAMES)),
+        }
+    }
+
+    fn apply(&mut self, rate_hz: f32, depth_ms: f32, mix: f32, voices: u32) {
+        self.lfo.base_hz = rate_hz as f64;
+        self.depth_ms.set_target(depth_ms.clamp(0.0, 12.0));
+        self.mix.set_target(mix.clamp(0.0, 1.0));
+        self.voices = voices.clamp(1, 3);
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.depth_ms
+            .set_target(auto.value(slot, "depth_ms", self.depth_ms.target as f64, s) as f32);
+        self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32], pos: i64) {
+        let sr = AUDIO_SAMPLE_RATE as f32;
+        let nv = self.voices.max(1);
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+            let d = self.depth_ms.tick().clamp(0.0, 12.0);
+            let k = self.mix.tick().clamp(0.0, 1.0);
+            let phi = self.lfo.phase(pos + i as i64);
+            for (ch, s) in fr.iter_mut().enumerate() {
+                let dry = *s;
+                self.lines[ch].write(dry);
+                let mut wet = 0.0f32;
+                for v in 0..nv {
+                    let ph = phi
+                        + v as f64 * std::f64::consts::TAU / nv as f64
+                        + if ch == 1 { std::f64::consts::FRAC_PI_2 } else { 0.0 };
+                    let delay =
+                        (CHORUS_BASE_MS + d * (0.5 + 0.5 * ph.sin() as f32)) * sr / 1000.0;
+                    wet += self.lines[ch].read_frac(delay);
+                }
+                wet /= nv as f32;
+                *s = dry * (1.0 - k) + wet * k;
+            }
+        }
+    }
+
+    fn tail(&self) -> Tick {
+        Tick::from_audio_frames(CHORUS_MAX_FRAMES as i64)
+    }
+
+    fn reset(&mut self) {
+        for l in &mut self.lines {
+            l.reset();
+        }
+        self.depth_ms.reset_to_target();
+        self.mix.reset_to_target();
+    }
+}
+
+/// Флэнжер: base 0.5 мс, обратная связь в кольцо (знак = инверсия фазы).
+pub struct FlangerNode {
+    lfo: LfoDrive,
+    depth_ms: SmoothedParam,
+    feedback: SmoothedParam,
+    mix: SmoothedParam,
+    lines: [DelayLine; CH],
+}
+
+const FLANGER_BASE_MS: f32 = 0.5;
+const FLANGER_MAX_FRAMES: usize = (48_000.0 * 0.010) as usize;
+
+impl FlangerNode {
+    fn new() -> FlangerNode {
+        FlangerNode {
+            lfo: LfoDrive::new(0.25),
+            depth_ms: SmoothedParam::with_ms(2.0, 20.0),
+            feedback: SmoothedParam::with_ms(0.5, 20.0),
+            mix: SmoothedParam::with_ms(0.5, 20.0),
+            lines: std::array::from_fn(|_| DelayLine::new(FLANGER_MAX_FRAMES)),
+        }
+    }
+
+    fn apply(&mut self, rate_hz: f32, depth_ms: f32, feedback: f32, mix: f32) {
+        self.lfo.base_hz = rate_hz as f64;
+        self.depth_ms.set_target(depth_ms.clamp(0.1, 8.0));
+        self.feedback.set_target(feedback.clamp(-0.9, 0.9));
+        self.mix.set_target(mix.clamp(0.0, 1.0));
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.depth_ms
+            .set_target(auto.value(slot, "depth_ms", self.depth_ms.target as f64, s) as f32);
+        self.feedback
+            .set_target(auto.value(slot, "feedback", self.feedback.target as f64, s) as f32);
+        self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32], pos: i64) {
+        let sr = AUDIO_SAMPLE_RATE as f32;
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+            let d = self.depth_ms.tick().clamp(0.1, 8.0);
+            let fb = self.feedback.tick().clamp(-0.9, 0.9);
+            let k = self.mix.tick().clamp(0.0, 1.0);
+            let ph = self.lfo.phase(pos + i as i64).sin() as f32;
+            let delay = (FLANGER_BASE_MS + d * (0.5 + 0.5 * ph)) * sr / 1000.0;
+            for (ch, s) in fr.iter_mut().enumerate() {
+                let dry = *s;
+                let wet = self.lines[ch].read_frac(delay);
+                self.lines[ch].write(dry + wet * fb);
+                *s = dry * (1.0 - k) + wet * k;
+            }
+        }
+    }
+
+    fn tail(&self) -> Tick {
+        tail_frames_for(FLANGER_MAX_FRAMES as f32, 0.9)
+    }
+
+    fn reset(&mut self) {
+        for l in &mut self.lines {
+            l.reset();
+        }
+        self.depth_ms.reset_to_target();
+        self.feedback.reset_to_target();
+        self.mix.reset_to_target();
+    }
+}
+
+/// Фейзер: каскад 1-полюсных allpass, свип центра 200..2000 Гц (exp).
+pub struct PhaserNode {
+    lfo: LfoDrive,
+    depth: SmoothedParam,
+    feedback: SmoothedParam,
+    mix: SmoothedParam,
+    stages: u32,
+    z: [[f32; 8]; CH],
+    fb_state: [f32; CH],
+}
+
+impl PhaserNode {
+    fn new() -> PhaserNode {
+        PhaserNode {
+            lfo: LfoDrive::new(0.4),
+            depth: SmoothedParam::with_ms(0.7, 20.0),
+            feedback: SmoothedParam::with_ms(0.3, 20.0),
+            mix: SmoothedParam::with_ms(0.5, 20.0),
+            stages: 4,
+            z: [[0.0; 8]; CH],
+            fb_state: [0.0; CH],
+        }
+    }
+
+    fn apply(&mut self, rate_hz: f32, depth: f32, feedback: f32, stages: u32, mix: f32) {
+        self.lfo.base_hz = rate_hz as f64;
+        self.depth.set_target(depth.clamp(0.0, 1.0));
+        self.feedback.set_target(feedback.clamp(0.0, 0.9));
+        self.mix.set_target(mix.clamp(0.0, 1.0));
+        self.stages = stages.clamp(2, 8);
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.depth.set_target(auto.value(slot, "depth", self.depth.target as f64, s) as f32);
+        self.feedback
+            .set_target(auto.value(slot, "feedback", self.feedback.target as f64, s) as f32);
+        self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32], pos: i64) {
+        let sr = AUDIO_SAMPLE_RATE as f32;
+        let n = self.stages.clamp(2, 8) as usize;
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+            let d = self.depth.tick().clamp(0.0, 1.0);
+            let fb = self.feedback.tick().clamp(0.0, 0.9);
+            let k = self.mix.tick().clamp(0.0, 1.0);
+            let ph = 0.5 + 0.5 * self.lfo.phase(pos + i as i64).sin() as f32;
+            // свип центра: 200..2000 Гц exp, глубина сжимает диапазон
+            let f = 200.0 * (10.0f32).powf(ph * d);
+            let t = (std::f32::consts::PI * f / sr).tan();
+            let ap = (t - 1.0) / (t + 1.0);
+            for (ch, s) in fr.iter_mut().enumerate() {
+                let dry = *s;
+                let mut x = dry + self.fb_state[ch] * fb;
+                for st in 0..n {
+                    // 1-полюсный allpass: y = a·x + z; z = x − a·y
+                    let y = ap * x + self.z[ch][st];
+                    self.z[ch][st] = x - ap * y;
+                    x = y;
+                }
+                self.fb_state[ch] = x;
+                *s = dry * (1.0 - k) + x * k;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.z = [[0.0; 8]; CH];
+        self.fb_state = [0.0; CH];
+        self.depth.reset_to_target();
+        self.feedback.reset_to_target();
+        self.mix.reset_to_target();
     }
 }

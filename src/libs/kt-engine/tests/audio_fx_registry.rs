@@ -219,3 +219,81 @@ fn t322_audio_registry_contract() {
     let covered: std::collections::BTreeSet<&str> = covered.into_iter().collect();
     assert_eq!(covered, all_tags, "every audio kind of all() must pass this contract");
 }
+
+/// Тест 325 (Р.47, п.328): детерминизм фазы LFO. Фаза — интеграл кривой
+/// частоты по ПОЗИЦИИ клипа, не счётчик обработанного: рендер одним
+/// куском равен рендеру кусками, seek равен холодному рендеру, а кривая
+/// частоты ускоряет модуляцию к концу клипа.
+#[test]
+fn t325_lfo_phase_is_a_function_of_position() {
+    let trem = vec![FxInstance::Tremolo { rate_hz: 5.0, depth: 1.0 }];
+
+    // (а) куском == кусками: фаза не зависит от нарезки буферов
+    let whole = render(trem.clone(), vec![], false, 0);
+    let p = project(trem.clone(), vec![], false);
+    let r = AudioRenderer::new(&p);
+    let mut f = DirectFetcher::new(None);
+    f.add_source(
+        MediaId(1),
+        Box::new(SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Clicks)),
+    );
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut pieces = vec![0f32; DUR as usize * CH];
+    let third = (DUR / 3) as usize * CH;
+    let n0 = r.render_frames_with(&mut f, &mut store, 0, &mut pieces[..third]);
+    assert_eq!(n0.underruns, 0);
+    let n1 =
+        r.render_frames_with(&mut f, &mut store, DUR / 3, &mut pieces[third..2 * third]);
+    assert_eq!(n1.underruns, 0);
+    let n2 = r.render_frames_with(&mut f, &mut store, 2 * (DUR / 3), &mut pieces[2 * third..]);
+    assert_eq!(n2.underruns, 0);
+    assert_eq!(whole, pieces, "LFO phase must not depend on buffer slicing");
+
+    // (б) синус под тремоло: кривая rate_hz 2 -> 8 Гц ускоряет модуляцию
+    // (счёт минимумов огибающей во второй половине больше, чем в первой)
+    let sine_render = |auto: Vec<Vec<ParamCurve>>| -> Vec<f32> {
+        let mut p = project(vec![FxInstance::Tremolo { rate_hz: 2.0, depth: 1.0 }], auto, false);
+        p.media[0].path = "synth:sine:440".into();
+        let r = AudioRenderer::new(&p);
+        let mut f = DirectFetcher::new(None);
+        f.add_source(
+            MediaId(1),
+            Box::new(SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Sine { hz: 440.0 })),
+        );
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; DUR as usize * CH];
+        assert_eq!(r.render_frames_with(&mut f, &mut store, 0, &mut out).underruns, 0);
+        out
+    };
+    let curve = vec![vec![ParamCurve {
+        param: "rate_hz".into(),
+        ease: false,
+        keys: vec![
+            AutoKey { t: Tick(0), v: 2.0 },
+            AutoKey { t: Tick::from_audio_frames(DUR), v: 8.0 },
+        ],
+    }]];
+    let swept = sine_render(curve);
+    // огибающая по окнам 4 мс; минимумы = провалы тремоло
+    let env: Vec<f64> = swept
+        .chunks(192 * CH)
+        .map(|w| w.iter().map(|v| (*v as f64).abs()).fold(0.0, f64::max))
+        .collect();
+    let dips = |e: &[f64]| -> usize {
+        let mut n = 0;
+        for i in 1..e.len() - 1 {
+            if e[i] < 0.2 && e[i] <= e[i - 1] && e[i] < e[i + 1] {
+                n += 1;
+            }
+        }
+        n
+    };
+    let half = env.len() / 2;
+    let (d1, d2) = (dips(&env[..half]), dips(&env[half..]));
+    assert!(
+        d2 > d1 + 1,
+        "rate curve 2->8 Hz must speed the modulation up: {d1} dips then {d2}"
+    );
+}

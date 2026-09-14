@@ -1959,6 +1959,51 @@ fn default_bits() -> f32 {
 fn default_crush_rate() -> f32 {
     12000.0
 }
+fn default_trem_rate() -> f32 {
+    5.0
+}
+fn default_trem_depth() -> f32 {
+    0.6
+}
+fn default_autopan_depth() -> f32 {
+    0.8
+}
+fn default_vib_rate() -> f32 {
+    5.0
+}
+fn default_vib_depth() -> f32 {
+    0.5
+}
+fn default_chorus_rate() -> f32 {
+    0.8
+}
+fn default_chorus_depth() -> f32 {
+    3.5
+}
+fn default_voices() -> u32 {
+    2
+}
+fn default_flanger_rate() -> f32 {
+    0.25
+}
+fn default_flanger_depth() -> f32 {
+    2.0
+}
+fn default_flanger_fb() -> f32 {
+    0.5
+}
+fn default_phaser_rate() -> f32 {
+    0.4
+}
+fn default_phaser_depth() -> f32 {
+    0.7
+}
+fn default_phaser_fb() -> f32 {
+    0.3
+}
+fn default_stages() -> u32 {
+    4
+}
 fn default_one_f32() -> f32 {
     1.0
 }
@@ -2416,6 +2461,66 @@ pub enum FxInstance {
         #[serde(default = "default_one_f32")]
         width: f32,
     },
+    /// Тремоло (Р.47): LFO громкости; фаза — интеграл кривой частоты по
+    /// позиции клипа (детерминизм без прогрева).
+    Tremolo {
+        #[serde(default = "default_trem_rate")]
+        rate_hz: f32,
+        #[serde(default = "default_trem_depth")]
+        depth: f32,
+    },
+    /// Автопан (Р.47): LFO баланса, закон панорамы — как у Gain.pan.
+    AutoPan {
+        #[serde(default = "default_one_f32")]
+        rate_hz: f32,
+        #[serde(default = "default_autopan_depth")]
+        depth: f32,
+    },
+    /// Вибрато (Р.47): модулируемая задержка, 100 % wet (с сухим это был
+    /// бы chorus) — параметра mix нет осознанно.
+    Vibrato {
+        #[serde(default = "default_vib_rate")]
+        rate_hz: f32,
+        #[serde(default = "default_vib_depth")]
+        depth_ms: f32,
+    },
+    /// Хорус (Р.47): 1-3 голоса на модулируемых задержках, стерео —
+    /// сдвиг фазы LFO на 90° в правом канале.
+    Chorus {
+        #[serde(default = "default_chorus_rate")]
+        rate_hz: f32,
+        #[serde(default = "default_chorus_depth")]
+        depth_ms: f32,
+        #[serde(default = "default_half_f32")]
+        mix: f32,
+        #[serde(default = "default_voices")]
+        voices: u32,
+    },
+    /// Флэнжер (Р.47): короткая модулируемая задержка с обратной связью
+    /// (отрицательная — инверсия фазы).
+    Flanger {
+        #[serde(default = "default_flanger_rate")]
+        rate_hz: f32,
+        #[serde(default = "default_flanger_depth")]
+        depth_ms: f32,
+        #[serde(default = "default_flanger_fb")]
+        feedback: f32,
+        #[serde(default = "default_half_f32")]
+        mix: f32,
+    },
+    /// Фейзер (Р.47): каскад 1-полюсных allpass со свипом 200..2000 Гц.
+    Phaser {
+        #[serde(default = "default_phaser_rate")]
+        rate_hz: f32,
+        #[serde(default = "default_phaser_depth")]
+        depth: f32,
+        #[serde(default = "default_phaser_fb")]
+        feedback: f32,
+        #[serde(default = "default_stages")]
+        stages: u32,
+        #[serde(default = "default_half_f32")]
+        mix: f32,
+    },
     // ---- видео-FX (порт bc_fx.cpp, п.25; параметры и дефолты v1) ----------
     /// Кроп-рамка + пан/зум в размер проекта.
     Pan {
@@ -2592,7 +2697,13 @@ impl FxInstance {
         | FxInstance::Eq { .. }
         | FxInstance::Distortion { .. }
         | FxInstance::Bitcrusher { .. }
-        | FxInstance::StereoWidth { .. } => FxClass::Audio,
+        | FxInstance::StereoWidth { .. }
+        | FxInstance::Tremolo { .. }
+        | FxInstance::AutoPan { .. }
+        | FxInstance::Vibrato { .. }
+        | FxInstance::Chorus { .. }
+        | FxInstance::Flanger { .. }
+        | FxInstance::Phaser { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } => FxClass::Video3d,
             _ => FxClass::Video2d,
         }
@@ -2626,6 +2737,12 @@ impl FxInstance {
             FxInstance::Distortion { .. } => "distortion",
             FxInstance::Bitcrusher { .. } => "bitcrusher",
             FxInstance::StereoWidth { .. } => "stereo_width",
+            FxInstance::Tremolo { .. } => "tremolo",
+            FxInstance::AutoPan { .. } => "auto_pan",
+            FxInstance::Vibrato { .. } => "vibrato",
+            FxInstance::Chorus { .. } => "chorus",
+            FxInstance::Flanger { .. } => "flanger",
+            FxInstance::Phaser { .. } => "phaser",
             FxInstance::Pan { .. } => "pan",
             FxInstance::CamMotion { .. } => "cam_motion",
             FxInstance::Mirror { .. } => "mirror",
@@ -2657,6 +2774,12 @@ impl FxInstance {
                 FxInstance::distortion(),
                 FxInstance::bitcrusher(),
                 FxInstance::stereo_width(),
+                FxInstance::tremolo(),
+                FxInstance::auto_pan(),
+                FxInstance::vibrato(),
+                FxInstance::chorus(),
+                FxInstance::flanger(),
+                FxInstance::phaser(),
                 FxInstance::pan(),
                 FxInstance::cam_motion(),
                 FxInstance::mirror(),
@@ -2899,6 +3022,39 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     },
     StereoWidth {
         width: f32, 0.0, 2.0, 1.0, 0.01, Ratio, Smooth;
+    },
+    Tremolo {
+        rate_hz: f32, 0.1, 20.0, 5.0, 0.01, Hz, Smooth;
+        depth: f32, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
+    },
+    AutoPan {
+        rate_hz: f32, 0.05, 10.0, 1.0, 0.01, Hz, Smooth;
+        depth: f32, 0.0, 1.0, 0.8, 0.01, Norm, Smooth;
+    },
+    Vibrato {
+        rate_hz: f32, 0.1, 12.0, 5.0, 0.01, Hz, Smooth;
+        depth_ms: f32, 0.05, 5.0, 0.5, 0.05, Ms, Smooth;
+    },
+    Chorus {
+        rate_hz: f32, 0.05, 8.0, 0.8, 0.01, Hz, Smooth;
+        depth_ms: f32, 0.0, 12.0, 3.5, 0.1, Ms, Smooth;
+        mix: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        // число голосов пересоздаёт линии — кривой не подлежит
+        voices: u32, 1.0, 3.0, 2.0, 1.0, Count, Structural;
+    },
+    Flanger {
+        rate_hz: f32, 0.05, 4.0, 0.25, 0.01, Hz, Smooth;
+        depth_ms: f32, 0.1, 8.0, 2.0, 0.1, Ms, Smooth;
+        feedback: f32, -0.9, 0.9, 0.5, 0.01, Norm, Smooth;
+        mix: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+    },
+    Phaser {
+        rate_hz: f32, 0.05, 4.0, 0.4, 0.01, Hz, Smooth;
+        depth: f32, 0.0, 1.0, 0.7, 0.01, Norm, Smooth;
+        feedback: f32, 0.0, 0.9, 0.3, 0.01, Norm, Smooth;
+        // число каскадов пересоздаёт состояние — кривой не подлежит
+        stages: u32, 2.0, 8.0, 4.0, 1.0, Count, Structural;
+        mix: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
     },
     // ---- видео 2D --------------------------------------------------------
     Pan {
@@ -3324,6 +3480,30 @@ impl FxInstance {
 
     pub fn stereo_width() -> FxInstance {
         FxInstance::StereoWidth { width: 1.0 }
+    }
+
+    pub fn tremolo() -> FxInstance {
+        FxInstance::Tremolo { rate_hz: 5.0, depth: 0.6 }
+    }
+
+    pub fn auto_pan() -> FxInstance {
+        FxInstance::AutoPan { rate_hz: 1.0, depth: 0.8 }
+    }
+
+    pub fn vibrato() -> FxInstance {
+        FxInstance::Vibrato { rate_hz: 5.0, depth_ms: 0.5 }
+    }
+
+    pub fn chorus() -> FxInstance {
+        FxInstance::Chorus { rate_hz: 0.8, depth_ms: 3.5, mix: 0.5, voices: 2 }
+    }
+
+    pub fn flanger() -> FxInstance {
+        FxInstance::Flanger { rate_hz: 0.25, depth_ms: 2.0, feedback: 0.5, mix: 0.5 }
+    }
+
+    pub fn phaser() -> FxInstance {
+        FxInstance::Phaser { rate_hz: 0.4, depth: 0.7, feedback: 0.3, stages: 4, mix: 0.5 }
     }
 
     pub fn pan() -> FxInstance {

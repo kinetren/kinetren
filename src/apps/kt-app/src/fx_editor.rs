@@ -549,6 +549,12 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Distortion { .. } => "Distortion",
         FxInstance::Bitcrusher { .. } => "Bitcrusher",
         FxInstance::StereoWidth { .. } => "Stereo Width",
+        FxInstance::Tremolo { .. } => "Tremolo",
+        FxInstance::AutoPan { .. } => "AutoPan",
+        FxInstance::Vibrato { .. } => "Vibrato",
+        FxInstance::Chorus { .. } => "Chorus",
+        FxInstance::Flanger { .. } => "Flanger",
+        FxInstance::Phaser { .. } => "Phaser",
     }
 }
 

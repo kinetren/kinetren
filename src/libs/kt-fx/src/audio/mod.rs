@@ -112,6 +112,13 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
             }
             // звон резонансного среза: t60 = 6.9*Q/(pi*f0) — та же
             // формула, что у FilterNode::tail (согласие сторожит t322е)
+            // модуляции с памятью: максимум их задержек (те же константы,
+            // что в узлах — согласие сторожит t322е)
+            FxInstance::Vibrato { .. } => Tick::from_audio_frames((48_000.0 * 0.008) as i64),
+            FxInstance::Chorus { .. } => Tick::from_audio_frames((48_000.0 * 0.030) as i64),
+            FxInstance::Flanger { .. } => {
+                crate::audio::primitives::tail_frames_for(48_000.0 * 0.010, 0.9)
+            }
             FxInstance::Filter { cutoff_hz, resonance, .. } => {
                 let secs = 6.9 * resonance.clamp(0.5, 10.0)
                     / (std::f32::consts::PI * cutoff_hz.clamp(20.0, 20_000.0));
@@ -221,6 +228,7 @@ impl ClipProcessor {
                 if let AudioNode::Gain(g) = node {
                     g.bind_curves(&self.auto, *slot);
                 }
+                node.bind_lfo(&self.auto, *slot, self.clip_len);
             }
         }
     }
@@ -228,6 +236,9 @@ impl ClipProcessor {
     /// Обновить длину клипа (trim) без сброса состояния.
     pub fn set_clip_len(&mut self, clip_len_frames: i64) {
         self.clip_len = clip_len_frames.max(1);
+        for (slot, node) in &mut self.nodes {
+            node.bind_lfo(&self.auto, *slot, self.clip_len);
+        }
     }
 
     /// «Ручки» перехода (п.138): разрешить чтение [−head_ext,
@@ -270,6 +281,7 @@ impl ClipProcessor {
             if let AudioNode::Gain(g) = node {
                 g.bind_curves(&self.auto, *slot);
             }
+            node.bind_lfo(&self.auto, *slot, self.clip_len);
         }
         // варп-половина Slowed+Reverb (потребление источника)
         for f in fx {
