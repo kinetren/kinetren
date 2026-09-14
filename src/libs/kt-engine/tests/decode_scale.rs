@@ -275,3 +275,30 @@ fn t314_export_chunk_respects_the_decode_stage() {
     assert_eq!(frames, 30, "все кадры диапазона отрендерены");
     assert_eq!(stats.missing_video_layers, 0, "ни один слой не потерялся на ступени");
 }
+
+/// Тест 317 (п.322): ПОЛОСКИ прогретости спрашивают качество ДЕКОДА.
+/// Кэш качество-точный (t8), поэтому клип со ступенью, прогретый как
+/// надо, при опросе по Quality выглядел бы полностью холодным —
+/// нарушение инварианта №4 в глазах пользователя.
+#[test]
+fn t317_coverage_is_queried_at_the_decode_quality() {
+    let q = Quality { width: 128, height: 72 };
+    let p = project(128, 72, vec![zoom(2.0)], vec![]);
+    let vr = VideoRenderer::new_with_natives(&p, &natives(512, 288));
+    let dq_clip = vr.video_decode_qualities(q);
+    assert_eq!(dq_clip, vec![(ClipId(1), Quality { width: 256, height: 144 })]);
+
+    // префетч кладёт кадры строго по заказу
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut src = CheckerSource::new(Tick(10 * SEC), 512, 288);
+    for (media, pts, dq) in vr.wanted_frames(TickRange::new(Tick(0), Tick(10 * STEP)), q) {
+        let f = src.read_video_frame(pts, Some(dq)).unwrap();
+        cache.insert_video(kt_engine::source_id(media), Some(dq), video_cache_idx(pts), f.into());
+    }
+    let sid = kt_engine::source_id(MediaId(1));
+    let range = 0..(10 * STEP);
+    let warm = cache.coverage(sid, kt_cache::BurstKind::video(Some(dq_clip[0].1)), range.clone());
+    let cold = cache.coverage(sid, kt_cache::BurstKind::video(Some(q)), range);
+    assert!(!warm.is_empty(), "по качеству декода клип прогрет");
+    assert!(cold.is_empty(), "по Quality того же клипа кадров нет — полоска соврала бы");
+}

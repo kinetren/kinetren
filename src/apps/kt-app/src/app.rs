@@ -3822,6 +3822,14 @@ impl KtApp {
         ui.add_space(2.0);
         let ord = std::sync::atomic::Ordering::Relaxed;
         let q = self.player.preview_quality();
+        // самая крупная ступень декода на монтаже (Р.46, п.322)
+        let max_stage = self
+            .player
+            .video_decode_qualities()
+            .into_iter()
+            .map(|(_, dq)| (dq.width / q.width.max(1)).max(1))
+            .max()
+            .unwrap_or(1);
         // п.15 р.7: короткие метрики — двумя колонками (экономия высоты)
         let s = self.model.project().settings.clone();
         let rows: [(String, String); 4] = [
@@ -3843,7 +3851,13 @@ impl KtApp {
             ),
             (
                 crate::tf!(k::perf::PREVIEW_RES, q.width, q.height),
-                format!("{} fps, {}×{}", s.fps, s.width, s.height),
+                // ступень декода (Р.46): показывается, только когда она
+                // есть — на обычном монтаже строка места не занимает
+                if max_stage > 1 {
+                    crate::tf!(k::perf::DECODE_SCALE, max_stage)
+                } else {
+                    format!("{} fps, {}×{}", s.fps, s.width, s.height)
+                },
             ),
             (
                 crate::tf!(k::perf::CLIPS_N, self.model.project().clips.len()),
@@ -4312,29 +4326,47 @@ impl KtApp {
         if self.coverage_cache.stamp != Some(stamp) && !throttled {
             self.coverage_cache.stamp = Some(stamp);
             self.coverage_cache.last_refresh = Some(std::time::Instant::now());
+            // Качество ДЕКОДА клипа (Р.46, п.322): клип с зумящей цепочкой
+            // греется крупнее Quality, и coverage по Quality показал бы
+            // прогретый клип холодным. Морфер-слой мог нарезать клип на
+            // куски с разными цепочками — берём объединение их качеств.
+            let decode_q = self.player.video_decode_qualities();
             let mut per_clip = HashMap::new();
             for c in &self.model.project().clips {
-                let (kind, b0, b1) = match c.kind {
+                let runs = match c.kind {
                     ClipKind::Audio => {
                         let f0 = c.source_in.to_audio_frames();
                         let f1 = (c.source_in + c.duration).to_audio_frames();
-                        (
+                        self.player.cache.coverage(
+                            kt_engine::source_id(c.media),
                             kt_cache::BurstKind::Audio,
-                            f0.div_euclid(AUDIO_BURST_FRAMES as i64),
-                            (f1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1,
+                            f0.div_euclid(AUDIO_BURST_FRAMES as i64)
+                                ..((f1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1),
                         )
                     }
-                    ClipKind::Video => (
-                        kt_cache::BurstKind::video(Some(q)),
-                        c.source_in.0,
-                        c.source_in.0 + c.duration.0,
-                    ),
+                    ClipKind::Video => {
+                        let (b0, b1) = (c.source_in.0, c.source_in.0 + c.duration.0);
+                        let mut qs: Vec<kt_media::Quality> = decode_q
+                            .iter()
+                            .filter(|(id, _)| kt_model::same_clip(*id, c.id))
+                            .map(|(_, dq)| *dq)
+                            .collect();
+                        qs.sort();
+                        qs.dedup();
+                        if qs.is_empty() {
+                            qs.push(q);
+                        }
+                        let mut runs: Vec<std::ops::Range<i64>> = Vec::new();
+                        for dq in qs {
+                            runs.extend(self.player.cache.coverage(
+                                kt_engine::source_id(c.media),
+                                kt_cache::BurstKind::video(Some(dq)),
+                                b0..b1.max(b0 + 1),
+                            ));
+                        }
+                        merge_runs(runs)
+                    }
                 };
-                let runs = self.player.cache.coverage(
-                    kt_engine::source_id(c.media),
-                    kind,
-                    b0..b1.max(b0 + 1),
-                );
                 per_clip.insert(c.id, runs);
             }
             self.coverage_cache.per_clip = Arc::new(per_clip);
@@ -5836,4 +5868,22 @@ mod repaint_tests {
         assert_eq!(repaint_delay(true).as_millis(), 16);
         assert!(repaint_delay(false).as_millis() >= 100, "простой = редкий тик");
     }
+}
+
+/// Слить пересекающиеся/смежные диапазоны прогретости в один список
+/// (Р.46, п.322): куски одного клипа могут греться в разных качествах
+/// декода, но полоска под клипом — одна.
+pub fn merge_runs(mut runs: Vec<std::ops::Range<i64>>) -> Vec<std::ops::Range<i64>> {
+    if runs.len() < 2 {
+        return runs;
+    }
+    runs.sort_by_key(|r| r.start);
+    let mut out: Vec<std::ops::Range<i64>> = Vec::with_capacity(runs.len());
+    for r in runs {
+        match out.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => out.push(r),
+        }
+    }
+    out
 }

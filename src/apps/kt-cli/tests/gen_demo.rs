@@ -152,4 +152,26 @@ fn gen_demo_concat() {
         ),
     ];
     save(&mut p, "04-pointwise.otio");
+
+    // 05: ступень декода (Р.46). Клипы 1-2 на detail-hi.mp4 (2560x1440),
+    // клип 3 — тот же зум на detail.mp4 (1280x720, запаса нет): рядом
+    // видно, что резкость берётся ИЗ ФАЙЛА, а не из зума.
+    let mut p = project();
+    p.media.push(MediaRef { id: MediaId(3), path: "detail-hi.mp4".into() });
+    p.clips = vec![
+        clip(1, 0, 4, 3, vec![]),
+        clip(2, 4, 4, 3, vec![zoom(2.0)]),
+        clip(3, 8, 4, 1, vec![zoom(2.0)]),
+        clip(
+            4,
+            12,
+            4,
+            3,
+            vec![
+                FxInstance::Vhs { rgb_shift: 3, bleed: 0.35, scan_step: 4, jitter: 0.0 },
+                zoom(2.0),
+            ],
+        ),
+    ];
+    save(&mut p, "05-decode-scale.otio");
 }

@@ -42,7 +42,13 @@ fn synth_pattern(path: &str) -> Option<AudioPattern> {
 /// Печатает ДВЕ вещи, и расхождение между ними само по себе диагноз:
 /// эффективные события (после морфер-слоёв) и заказ префетча — тот самый
 /// список `(медиа, бёрсты)`, по которому греется кэш и читается источник.
-fn probe_range(project: &Project, from: f64, to: f64, time_with: Option<&str>) -> i32 {
+fn probe_range(
+    project: &Project,
+    project_path: Option<&str>,
+    from: f64,
+    to: f64,
+    time_with: Option<&str>,
+) -> i32 {
     let names: std::collections::HashMap<u64, &str> =
         project.media.iter().map(|m| (m.id.0, m.path.as_str())).collect();
     let short = |id: u64| -> String {
@@ -187,6 +193,44 @@ fn probe_range(project: &Project, from: f64, to: f64, time_with: Option<&str>) -
         );
     }
 
+    // ЧТО И В КАКОМ РАЗМЕРЕ будет декодировано (Р.46, п.322): ступень
+    // декода клипа — функция от цепочки, натива файла и Quality, и когда
+    // «зум всё равно мылит», первым делом смотреть сюда
+    println!("\n-- video decode order --");
+    let q = kt_media::Quality {
+        width: project.settings.width.max(2) & !1,
+        height: project.settings.height.max(2) & !1,
+    };
+    let natives = project_path.map(|p| media_natives(project, p)).unwrap_or_default();
+    let vr = kt_engine::VideoRenderer::new_with_natives(project, &natives);
+    println!("  quality (project): {}x{}", q.width, q.height);
+    for (id, dq) in vr.video_decode_qualities(q) {
+        let media = eff_all.iter().find(|c| c.id == id).map(|c| c.media.0);
+        let nat = media
+            .and_then(|m| natives.get(&kt_model::MediaId(m)))
+            .map(|(w, h)| format!("{w}x{h}"))
+            .unwrap_or_else(|| "unknown".into());
+        println!(
+            "  clip {} ({}): native {}, stage x{} -> decode {}x{}",
+            id.0,
+            media.map(short).unwrap_or_else(|| "<none>".into()),
+            nat,
+            (dq.width / q.width.max(1)).max(1),
+            dq.width,
+            dq.height
+        );
+    }
+    let mut per_q: std::collections::BTreeMap<(u64, u32, u32), usize> = Default::default();
+    for (media, _, dq) in vr.wanted_frames(kt_time::TickRange::new(t0, t1), q) {
+        *per_q.entry((media.0, dq.width, dq.height)).or_default() += 1;
+    }
+    if per_q.is_empty() {
+        println!("  (no video frames in this range)");
+    }
+    for ((media, w, h), n) in per_q {
+        println!("  media {} ({}): {n} frames at {w}x{h}", media, short(media));
+    }
+
     // главный вопрос жалобы: не заказано ли медиа, которого в этом месте
     // нет ни у одного события
     let placed: std::collections::BTreeSet<u64> = eff
@@ -286,6 +330,32 @@ fn probe_range(project: &Project, from: f64, to: f64, time_with: Option<&str>) -
         }
     }
     0
+}
+
+/// Нативные размеры видео-медиа (Р.46, п.322): открывается только
+/// КОНТЕЙНЕР (probe), кадры не декодируются. Недоступный файл — не ошибка:
+/// его ступень просто неизвестна, и в отчёте это видно.
+fn media_natives(
+    project: &Project,
+    project_path: &str,
+) -> std::collections::HashMap<kt_model::MediaId, (u32, u32)> {
+    let mut out = std::collections::HashMap::new();
+    for m in &project.media {
+        if synth_pattern(&m.path).is_some() {
+            continue;
+        }
+        let mut idx_db = kt_media::index::MediaIndexDb::open(
+            &std::path::Path::new(project_path).with_extension("ktindex.db"),
+        )
+        .ok();
+        if let Ok(src) = kt_media::ffmpeg::FfmpegSource::open_indexed(&m.path, idx_db.as_mut()) {
+            let i = kt_media::MediaSource::info(&src);
+            if i.has_video {
+                out.insert(m.id, (i.width, i.height));
+            }
+        }
+    }
+    out
 }
 
 /// Открыть все источники проекта. Общее у офлайн-рендера и `probe --time`.
@@ -540,7 +610,7 @@ fn run(args: &[String]) -> i32 {
                 Err(code) => return code,
             };
             let timed = args.iter().any(|a| a == "--time");
-            probe_range(&project, from, to, timed.then_some(input.as_str()))
+            probe_range(&project, Some(input.as_str()), from, to, timed.then_some(input.as_str()))
         }
         Some("render") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
