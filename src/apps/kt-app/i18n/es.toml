@@ -192,6 +192,7 @@ remove_marker = "Eliminar marcador"
 delete_in_region = "Eliminar clips de la región (Supr)"
 punch_out = "Recortar el interior de la región"
 pick_something = "Selecciona una región o un clip"
+duck = "Atenuar bajo una pista…"
 
 # Медиа-бин: режимы, подсказки, пустое состояние.
 [bin]
@@ -623,6 +624,14 @@ flight_saved = "Registro de reproducción guardado: {0}"
 media_missing = "{0}: fuente no disponible, se muestra un marcador ({1})"
 media_missing_count = "fuentes no disponibles: {0}"
 media_online = "{0}: la fuente ha vuelto, recargada"
+duck_title = "Atenuar bajo una pista"
+duck_source_lane = "Pista de origen:"
+duck_depth = "Profundidad de atenuación"
+duck_note = "Es una instantánea: la curva se escribe una vez. ¿Cambió la voz? Vuelve a ejecutarlo."
+duck_do = "Atenuar"
+duck_done = "atenuado, intervalos:"
+duck_nothing = "nada que atenuar: no se encontró voz en esa pista"
+duck_missing = "fuentes no disponibles:"
 [dialog]
 import_ktproj = "Importar un proyecto .ktproj antiguo"
 open_project = "Abrir proyecto"

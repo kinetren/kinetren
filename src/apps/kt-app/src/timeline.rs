@@ -4830,6 +4830,31 @@ impl KtApp {
                     self.magnetize_selected();
                     ui.close();
                 }
+                // автодакинг (Р.48): считает паузы по другой дорожке и
+                // кладёт кривую громкости на выделенные события
+                if is_audio && ui.button(tr(k::tl::menu::DUCK)).clicked() {
+                    if !self.is_selected(id) {
+                        self.select_only(id);
+                    }
+                    let targets: Vec<ClipId> = self.selected.iter().copied().collect();
+                    let my_lane = self.model.clip(id).map(|c| c.lane).unwrap_or(0);
+                    // источник по умолчанию — соседняя аудио-дорожка
+                    let src = self
+                        .model
+                        .project()
+                        .clips
+                        .iter()
+                        .filter(|c| c.kind == ClipKind::Audio && c.lane != my_lane)
+                        .map(|c| c.lane)
+                        .min()
+                        .unwrap_or(my_lane);
+                    self.duck = Some(crate::app::DuckDialog {
+                        targets,
+                        src_lane: src,
+                        params: Default::default(),
+                    });
+                    ui.close();
+                }
                 if is_audio && ui.button(tr(k::tl::menu::RESET_GAIN)).clicked() {
                     self.apply(Command::SetGain { id, gain_db: 0.0 });
                     ui.close();

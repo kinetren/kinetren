@@ -30,6 +30,17 @@ pub struct Notice {
 pub type ReopenedMedia = (MediaId, String, Option<Box<dyn kt_media::MediaSource>>);
 
 /// Окно «как назвать вставленное» (Р.35 п.4).
+/// Диалог автодакинга (Р.48, п.341): по какой дорожке считать паузы и
+/// насколько приглушать. Снимок, а не живой сайдчейн — поэтому это
+/// обычная правка модели с одним undo-шагом.
+pub struct DuckDialog {
+    /// События, к которым применится кривая (выделение на момент вызова).
+    pub targets: Vec<kt_model::ClipId>,
+    /// Дорожка-источник (та, под которую приглушаем).
+    pub src_lane: u32,
+    pub params: kt_engine::ducking::DuckParams,
+}
+
 pub struct PasteNamesDialog {
     /// Позиция вставки, замороженная на момент Ctrl+V.
     pub at: kt_time::Tick,
@@ -286,6 +297,7 @@ pub struct KtApp {
     /// Окно префикса вставки (Р.35 п.4). Неблокирующее, с ЗАМОРОЖЕННОЙ
     /// позицией вставки: курсор под окном её не уводит.
     pub paste_names: Option<PasteNamesDialog>,
+    pub duck: Option<DuckDialog>,
     /// Прямоугольник строки состояния (заполняется при её отрисовке).
     pub statusbar_rect: egui::Rect,
     /// Что реально показано в строке подсказки (для harness-теста).
@@ -515,6 +527,7 @@ impl KtApp {
             blocked: None,
             last_band: None,
             paste_names: None,
+            duck: None,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -656,6 +669,7 @@ impl KtApp {
             blocked: None,
             last_band: None,
             paste_names: None,
+            duck: None,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -1049,6 +1063,7 @@ impl KtApp {
         self.draw_camera_editors(&ctx);
         self.draw_morph_editors(&ctx);
         self.draw_paste_names(&ctx);
+        self.draw_duck_dialog(&ctx);
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
 
@@ -1730,6 +1745,9 @@ impl KtApp {
             return;
         }
         // 0) окно префикса вставки (Р.35 п.4)
+        if self.duck.take().is_some() {
+            return;
+        }
         if self.paste_names.take().is_some() {
             return;
         }
@@ -2464,6 +2482,151 @@ impl KtApp {
             return;
         }
         self.paste_names = Some(d);
+    }
+
+    /// Окно автодакинга. По кнопке считает огибающую дорожки-источника
+    /// (честным рендером — гейны, фейды и FX там уже учтены) и кладёт
+    /// кривую громкости на выделенные события ОДНИМ шагом истории.
+    fn draw_duck_dialog(&mut self, ctx: &egui::Context) {
+        let Some(mut d) = self.duck.take() else { return };
+        let mut go = false;
+        let mut cancel = false;
+        let mut open = true;
+        let lanes: Vec<u32> = {
+            let mut v: Vec<u32> = self
+                .model
+                .project()
+                .clips
+                .iter()
+                .filter(|c| c.kind == kt_model::ClipKind::Audio)
+                .map(|c| c.lane)
+                .collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        egui::Window::new(tr(k::msg::DUCK_TITLE))
+            .id(egui::Id::new("duck"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(tr(k::msg::DUCK_SOURCE_LANE));
+                    egui::ComboBox::from_id_salt("duck_lane")
+                        .selected_text(format!("{}", d.src_lane + 1))
+                        .show_ui(ui, |ui| {
+                            for l in &lanes {
+                                ui.selectable_value(&mut d.src_lane, *l, format!("{}", l + 1));
+                            }
+                        });
+                });
+                egui::Grid::new("duck_params").num_columns(2).show(ui, |ui| {
+                    ui.label(tr(k::fxp::THRESHOLD_DB));
+                    ui.add(
+                        egui::DragValue::new(&mut d.params.threshold_db)
+                            .range(-60.0..=0.0)
+                            .speed(0.5)
+                            .suffix(" dB"),
+                    );
+                    ui.end_row();
+                    ui.label(tr(k::msg::DUCK_DEPTH));
+                    ui.add(
+                        egui::DragValue::new(&mut d.params.depth_db)
+                            .range(0.0..=24.0)
+                            .speed(0.5)
+                            .suffix(" dB"),
+                    );
+                    ui.end_row();
+                    ui.label(tr(k::fxp::ATTACK_MS));
+                    ui.add(
+                        egui::DragValue::new(&mut d.params.attack_ms)
+                            .range(10.0..=1000.0)
+                            .speed(5.0)
+                            .suffix(" ms"),
+                    );
+                    ui.end_row();
+                    ui.label(tr(k::fxp::RELEASE_MS));
+                    ui.add(
+                        egui::DragValue::new(&mut d.params.release_ms)
+                            .range(10.0..=2000.0)
+                            .speed(10.0)
+                            .suffix(" ms"),
+                    );
+                    ui.end_row();
+                });
+                // правило 19: сказать, что это СНИМОК — поменяется музыка,
+                // вызвать заново
+                ui.label(egui::RichText::new(tr(k::msg::DUCK_NOTE)).weak().small());
+                ui.horizontal(|ui| {
+                    if ui.button(tr(k::msg::DUCK_DO)).clicked() {
+                        go = true;
+                    }
+                    if ui.button(tr(k::fx::CANCEL)).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
+        if go {
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("duck")));
+            self.run_ducking(&d);
+            return;
+        }
+        if cancel || !open {
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("duck")));
+            return;
+        }
+        self.duck = Some(d);
+    }
+
+    /// Посчитать интервалы и применить кривую.
+    ///
+    /// Анализ читает источники НАПРЯМУЮ, своим фетчером: декодерами
+    /// владеет MediaWorker плеера (инвариант №5), и лезть к ним из
+    /// UI-потока нельзя, а кэш прогрет только вокруг курсора — для
+    /// огибающей целой дорожки этого мало.
+    fn run_ducking(&mut self, d: &DuckDialog) {
+        let project = self.model.project().clone();
+        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        let index = self.index_db_path();
+        let mut f = kt_engine::DirectFetcher::new(None);
+        let mut missing = 0usize;
+        for m in &project.media {
+            let used = project
+                .clips
+                .iter()
+                .any(|c| c.media == m.id && c.kind == kt_model::ClipKind::Audio);
+            if !used {
+                continue;
+            }
+            let resolved = resolve_media_path(base.as_deref(), &m.path);
+            match open_source_indexed(&resolved, index.as_deref()) {
+                Ok(src) => f.add_source(m.id, src),
+                Err(_) => missing += 1,
+            }
+        }
+        if missing > 0 {
+            self.note(format!("{} {missing}", tr(k::msg::DUCK_MISSING)));
+        }
+        let spans = kt_engine::ducking::duck_spans(&project, &mut f, d.src_lane, d.params);
+        let cmds = kt_model::ops::duck_curve_commands(
+            &project,
+            &d.targets,
+            &spans,
+            d.params.depth_db,
+            d.params.attack_ms,
+            d.params.release_ms,
+        );
+        let keys = spans.len();
+        if cmds.is_empty() {
+            self.note(tr(k::msg::DUCK_NOTHING));
+            return;
+        }
+        self.apply_batch(cmds);
+        self.note(format!("{} {keys}", tr(k::msg::DUCK_DONE)));
     }
 
     /// Есть ли в буфере ИМЕНОВАННОЕ — только тогда спрашиваем префикс

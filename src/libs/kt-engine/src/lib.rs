@@ -7,6 +7,7 @@
 
 pub mod flight;
 pub mod audio;
+pub mod ducking;
 pub mod export;
 pub mod fetch;
 pub mod fxstore;

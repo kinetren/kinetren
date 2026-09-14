@@ -192,6 +192,7 @@ remove_marker = "Delete marker"
 delete_in_region = "Delete clips in the region (Del)"
 punch_out = "Cut out the region interior"
 pick_something = "Select a region or a clip"
+duck = "Duck under a track…"
 
 # Медиа-бин: режимы, подсказки, пустое состояние.
 [bin]
@@ -623,6 +624,14 @@ flight_saved = "Playback journal saved: {0}"
 media_missing = "{0}: source unavailable, a placeholder is shown ({1})"
 media_missing_count = "sources unavailable: {0}"
 media_online = "{0}: the source is back, reloaded"
+duck_title = "Duck under a track"
+duck_source_lane = "Source track:"
+duck_depth = "Ducking depth"
+duck_note = "A snapshot: the curve is written once. Changed the voice? Run it again."
+duck_do = "Duck"
+duck_done = "ducked, spans:"
+duck_nothing = "nothing to duck: no speech found on that track"
+duck_missing = "sources unavailable:"
 [dialog]
 import_ktproj = "Import a legacy .ktproj project"
 open_project = "Open project"
