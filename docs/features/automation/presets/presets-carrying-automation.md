@@ -1,7 +1,7 @@
 ---
 id: F-AUT-004
 title: Пресеты эффектов, которые несут анимацию
-status: исследовано
+status: в-работе
 priority: B
 cost: M
 category: automation/presets
@@ -10,11 +10,11 @@ we_have: частично
 crates: [kt-model, kt-app, kt-otio]
 invariants: [3, 11]
 ui_rules: [4, 17, 20]
-round: null
+round: "Р.48"
 point: null
 tests: []
 depends_on: [F-AUT-002, F-MPH-008]
-checked: 2026-09-07
+checked: 2026-09-14
 ---
 
 # F-AUT-004 — Пресеты эффектов, которые несут анимацию

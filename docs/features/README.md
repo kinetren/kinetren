@@ -134,7 +134,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | `morpher/` | MPH | adjustment-слои: наше против чужого | 8 / 8 |
 | `color/` | CLR | цветокоррекция, scopes, LUT | 7 / 7 |
 | `masks/` | MSK | маски, кеинг, трекинг, стабилизация | 6 / 6 |
-| `audio/` | AUD | обработка и микширование звука | 11 / 9 |
+| `audio/` | AUD | обработка и микширование звука | 12 / 9 |
 | `timeline/` | TL | операции над событиями, структура монтажа | 10 / 5 |
 | `titles/` | TXT | титры, генераторы, субтитры | 6 / 4 |
 | `time/` | SPD | скорость, ретайминг, синхронизация | 4 / 4 |
@@ -256,7 +256,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-AUD-008 | Автоматическая нарезка по тишине | кандидат | B | M | нет | `audio/processing/silence-detection-and-auto-cut.md` |
 | F-AUD-010 | Модуляции — chorus, flanger, phaser, tremolo, autopan, vibrato | сделано | B | M | да | `audio/processing/modulation-family.md` |
 | F-AUT-002 | Домен ключа — материал источника или время таймлайна | уже-есть | B | M | да | `automation/keyframes/keyframe-domain-source-vs-timeline.md` |
-| F-AUT-004 | Пресеты эффектов, которые несут анимацию | исследовано | B | M | частично | `automation/presets/presets-carrying-automation.md` |
+| F-AUT-004 | Пресеты эффектов, которые несут анимацию | в-работе | B | M | частично | `automation/presets/presets-carrying-automation.md` |
 | F-AUT-005 | Ловушки правки ключевых кадров | кандидат | B | M | частично | `automation/keyframes/inserting-and-editing-pitfalls.md` |
 | F-CLR-004 | LUT 1D и 3D (.cube) — технические против творческих | кандидат | B | M | нет | `color/management/lut-1d-and-3d.md` |
 | F-CLR-005 | Приборы — waveform, parade, вектороскоп, гистограмма, false color | кандидат | B | M | нет | `color/scopes/waveform-parade-vectorscope.md` |
@@ -314,6 +314,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-UI-003 | Раскладки окон — пресеты по задаче и где раскладка живёт | кандидат | B | M | частично | `ui/input/workspaces-and-layouts.md` |
 | F-UI-005 | Цвет клипа как данные и как оформление | кандидат | B | M | частично | `ui/viewer/clip-colors-and-legibility.md` |
 | F-AUD-003 | Шумоподавление и восстановление речи | кандидат | B | L | нет | `audio/processing/noise-reduction.md` |
+| F-AUD-013 | Pitch shift — высота без смены длительности | в-работе | B | L | нет | `audio/processing/pitch-shift.md` |
 | F-COL-010 | Ручки: сколько лишнего уезжает с монтажом | кандидат | B | L | нет | `collab/handoff/handles.md` |
 | F-COL-016 | Единица занятия — библиотека, бин или секвенция | исследовано | B | L | нет | `collab/claim/lock-granularity.md` |
 | F-COL-033 | Чем адресуется правка: id, тик или родословная | исследовано | B | L | частично | `collab/merge/identity-of-an-edit.md` |
