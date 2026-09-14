@@ -215,6 +215,41 @@ pub fn warp_material_ticks(base: f64, points: &ParamPoints, span_ticks: i64, tau
     (span_ticks as f64 * source_progress(base, points, tau)).round() as i64
 }
 
+/// ∫₀ᵗ p(u)du для ПРОИЗВОЛЬНОГО параметра БЕЗ клампа значений (Р.47,
+/// п.324): фаза LFO аудио-модуляций = интеграл кривой rate_hz по позиции
+/// клипа. `source_progress` для этого не годится — она пришивает значения
+/// к RATE_CLAMP (0.25..32), а частота LFO живёт в своих пределах спеки.
+/// Кусочно-линейный профиль, трапеция точная; за последней точкой —
+/// константа; t < 0 — линейно значением первого сегмента.
+pub fn param_integral(base: f64, points: &ParamPoints, t: f64) -> f64 {
+    if points.is_empty() {
+        return base * t;
+    }
+    let first = points[0].1;
+    if t <= points[0].0 {
+        // до первого ключа профиль плоский его значением (как segments)
+        return first * t;
+    }
+    let mut acc = first * points[0].0;
+    for w in points.windows(2) {
+        let (t0, v0) = w[0];
+        let (t1, v1) = w[1];
+        if t1 <= t0 {
+            continue;
+        }
+        let hi = t.min(t1);
+        if hi > t0 {
+            let v_hi = v0 + (v1 - v0) * (hi - t0) / (t1 - t0);
+            acc += (v0 + v_hi) * 0.5 * (hi - t0);
+        }
+        if t <= t1 {
+            return acc;
+        }
+    }
+    let (tl, vl) = points[points.len() - 1];
+    acc + vl * (t - tl)
+}
+
 /// Средняя скорость = потреблённая доля источника за весь клип: S(1).
 pub fn avg_rate(base: f64, points: &ParamPoints) -> f64 {
     source_progress(base, points, 1.0)
