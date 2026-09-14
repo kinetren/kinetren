@@ -90,6 +90,9 @@ fn t26_golden_hashes_all_effects() {
         ("eventgrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
     ];
     let mut failures = Vec::new();
+    // zip молча обрезал бы лишний кейс — 11-й эффект остался бы без
+    // голдена и никто бы не заметил (ловушка Р.47, Кв1)
+    assert_eq!(cases.len(), GOLDEN.len(), "cases and GOLDEN must be the same length");
     for ((name, fx), (gname, golden)) in cases.into_iter().zip(GOLDEN) {
         assert_eq!(name, gname, "порядок cases и GOLDEN обязан совпадать");
         let f = run(fx);
@@ -470,4 +473,74 @@ fn t228_glow_vhs_greenscreen_params() {
     }
     assert!(lower > 50, "подавление обязано убрать зелёную засветку: {lower}");
     assert!(alpha_same, "подавление засветки не трогает альфу");
+}
+
+
+/// Тест 328 (Р.47, п.331): golden-цикл по ВИДЕО-подмножеству реестра
+/// FxInstance::all() — хэш дефолт-шаблона каждого эффекта на test_frame.
+/// Замок полноты в обе стороны: вид без строки в таблице и строка без
+/// вида валят тест (t26 остаётся замороженным на 10 легаси-хэшах). Плюс
+/// замок КЛАССИФИКАЦИИ: каждый видео-вид обязан быть гео, поточечным или
+/// иметь арм барьера — «неклассифицированный» эффект молча проходит
+/// насквозь, и в debug это ловится паникой debug_assert в apply_barrier.
+/// (Дефолтные pan и pan3d — оба тождества, их совпадающие хэши легальны.)
+#[test]
+fn t328_golden_cycle_over_the_registry() {
+    use kt_fx::geom::{is_geo, is_pointwise};
+    const GOLDEN_ALL: &[(&str, u64)] = &[
+        ("pan", 0x05719cf53332c61a),
+        ("cam_motion", 0x410e2d08915e02e9),
+        ("mirror", 0x6e6b11df22c1c072),
+        ("blur", 0xec8d2f412f21f555),
+        ("greenscreen", 0x18dd7db23eb92552),
+        ("edges", 0x35521b30cd97497e),
+        ("noise", 0x2c1bd320d47c00c6),
+        ("vhs", 0xd82252c584915e16),
+        ("glow", 0x32647b93a6a84eb2),
+        ("event_grid", 0x0f78a8817bcf1bbe),
+        ("pan3d", 0x05719cf53332c61a),
+    ];
+    let video: Vec<&FxInstance> = FxInstance::all()
+        .iter()
+        .filter(|f| !f.is_audio() && !f.is_layer_mix())
+        .collect();
+    let table: std::collections::BTreeMap<&str, u64> = GOLDEN_ALL.iter().copied().collect();
+    let tags: std::collections::BTreeSet<&str> = video.iter().map(|f| f.tag()).collect();
+    assert_eq!(
+        table.keys().copied().collect::<std::collections::BTreeSet<_>>(),
+        tags,
+        "GOLDEN_ALL and the video registry must cover each other"
+    );
+    for f in video {
+        if !is_geo(f) && !is_pointwise(f) && !matches!(f, FxInstance::SlowedReverb { .. }) {
+            let _ = kt_fx::video::apply_barrier(
+                f,
+                test_frame(),
+                &ctx(),
+                &mut kt_fx::video::FxScratch::default(),
+                1,
+            );
+        }
+        let need_cam = matches!(f, FxInstance::Pan3d { .. });
+        let c = if need_cam {
+            VideoFxCtx {
+                cam3d: Some(kt_fx::geom::Cam3d {
+                    cam: kt_model::CameraParams::default(),
+                    world_scale: 1.0,
+                }),
+                ..ctx()
+            }
+        } else {
+            ctx()
+        };
+        let out = apply_video_chain(std::slice::from_ref(f), test_frame(), &c);
+        let hash = xxhash_rust::xxh3::xxh3_64(&out.rgba);
+        println!("t328 {}: 0x{hash:016x}", f.tag());
+        assert_eq!(
+            hash,
+            table[f.tag()],
+            "{}: default-template bytes moved (update GOLDEN_ALL deliberately)",
+            f.tag()
+        );
+    }
 }

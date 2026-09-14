@@ -82,7 +82,7 @@ fn geo_map(px: f32, py: f32) -> vec3<f32> {
                     y = (y - ky * g.w) / g.w * s.y - 0.5;
                 }
             }
-        } else { // Proj (Pan3d): вход — центр-space, зеркало kt_fx::geom
+        } else if (kind == 3u) { // Proj (Pan3d): вход — центр-space, зеркало kt_fx::geom
             let r0 = G.p[cur];
             let r1 = G.p[cur + 1u];
             let r2 = G.p[cur + 2u];
@@ -180,7 +180,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
     var tcur = tap_count;
     loop {
         if (tcur == 0u) { break; }
-        if (((tap_meta(tcur - 1u) >> 2u) & 0x1fu) != 0u) { break; }
+        if (((tap_meta(tcur - 1u) >> 4u) & 0x1fu) != 0u) { break; }
         rec[tcur - 1u] = vec2<f32>(x, y);
         tcur = tcur - 1u;
     }
@@ -216,7 +216,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                     y = (y - ky * g.w) / g.w * sdim.y - 0.5;
                 }
             }
-        } else {
+        } else if (kind == 3u) {
             let r0 = G.p[cur];
             let r1 = G.p[cur + 1u];
             let r2 = G.p[cur + 2u];
@@ -243,7 +243,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
             applied = i + 1u;
             loop {
                 if (tcur == 0u) { break; }
-                if (((tap_meta(tcur - 1u) >> 2u) & 0x1fu) != applied) { break; }
+                if (((tap_meta(tcur - 1u) >> 4u) & 0x1fu) != applied) { break; }
                 rec[tcur - 1u] = vec2<f32>(x, y);
                 tcur = tcur - 1u;
             }
@@ -261,10 +261,11 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
     // с after_prim <= d
     for (var t = 0u; t < tap_count; t = t + 1u) {
         let tm = tap_meta(t);
-        if (((tm >> 2u) & 0x1fu) > applied) { continue; }
+        if (((tm >> 4u) & 0x1fu) > applied) { continue; }
         let a = G.p[46u + t * 2u];
         let b = G.p[47u + t * 2u];
-        if ((tm & 0x3u) == 0u) { // Greenscreen (континуум формулы ядра)
+        let tap_kind = tm & 0xfu;
+        if (tap_kind == 0u) { // Greenscreen (континуум формулы ядра)
             let key = a.yzw;
             let tol = b.x;
             let hard = b.y;
@@ -300,7 +301,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
             let c = rec[t];
             let xi = u32(clamp(i32(floor(c.x)), 0, sw - 1));
             let yi = u32(clamp(i32(floor(c.y)), 0, sh - 1));
-            if (((tm >> 8u) & 1u) == 1u) { // особая формула size==1 && !color
+            if (((tm >> 10u) & 1u) == 1u) { // особая формула size==1 && !color
                 let hsh = nh(xi ^ nh(yi ^ seed));
                 let nn = i32((hsh >> 16u) & 0x7fffu) - 16384;
                 let off = f32(nn * k / 32767);
@@ -308,7 +309,7 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
             } else {
                 let gx = xi / cell;
                 let gy = yi / cell;
-                if (((tm >> 7u) & 1u) == 1u) { // цветное зерно
+                if (((tm >> 9u) & 1u) == 1u) { // цветное зерно
                     v = vec4<f32>(
                         v.x + noff(gx, gy, 1u, seed, k),
                         v.y + noff(gx, gy, 2u, seed, k),

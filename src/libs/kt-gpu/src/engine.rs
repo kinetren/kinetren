@@ -116,22 +116,22 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
     }
     debug_assert!(cur <= 46, "geom prims exceed uniform slots (tap table at 46+)");
     // tap-таблица поглощённых поточечных (Р.45, п.312): оп i — слоты
-    // 46+2i; meta = kind | after_prim<<2 | color<<7 | special<<8
+    // 46+2i; meta = kind(4 бита, Р.47) | after_prim<<4 | color<<9 | special<<10
     debug_assert!(prog.tap_ops.len() <= kt_fx::geom::MAX_TAP_OPS);
     for (i, op) in prog.tap_ops.iter().enumerate() {
         let base = 46 + i * 2;
         match op.kind {
             kt_fx::geom::TapKind::Gs { key, tol, hard, spill, kc } => {
-                let meta = (op.after_prim as u32) << 2;
+                let meta = (op.after_prim as u32) << 4;
                 u.p[base] =
                     [f32::from_bits(meta), key[0] as f32, key[1] as f32, key[2] as f32];
                 u.p[base + 1] = [tol as f32, hard as f32, spill as f32, kc as f32];
             }
             kt_fx::geom::TapKind::Noise { seed, k, cell, color, special, stage_w, stage_h } => {
                 let meta = 1u32
-                    | ((op.after_prim as u32) << 2)
-                    | ((color as u32) << 7)
-                    | ((special as u32) << 8);
+                    | ((op.after_prim as u32) << 4)
+                    | ((color as u32) << 9)
+                    | ((special as u32) << 10);
                 u.p[base] = [
                     f32::from_bits(meta),
                     f32::from_bits(seed),

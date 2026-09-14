@@ -327,6 +327,16 @@ mod tests {
             !reg.iter().any(|e| e.name.to_lowercase().contains("source")),
             "подмена источника — не эффект: её место в голове полосы, не в реестре"
         );
+        // Р.47 (п.331): категория-фолбэк VIDEO — признак забытой записи в
+        // video_meta; каждый видео-эффект обязан жить в своей категории
+        for e in reg.iter().filter(|e| e.video && e.name != "Slowed+Reverb") {
+            assert_ne!(
+                e.category,
+                k::fxreg::cat::VIDEO,
+                "{}: fell into the fallback category (add it to video_meta)",
+                e.name
+            );
+        }
         // имена согласованы с fx_display_name
         for e in reg {
             assert_eq!(crate::fx_editor::fx_display_name(&e.template), e.name);

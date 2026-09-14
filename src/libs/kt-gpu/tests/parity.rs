@@ -763,3 +763,71 @@ fn t224_transition_parity_gpu_vs_cpu() {
         );
     }
 }
+
+/// Тест 329 (Р.47, п.331): конформанс-цикл CPU↔GPU по ВИДЕО-подмножеству
+/// реестра FxInstance::all(): на каждый эффект — одиночный кейс и сэндвич
+/// `[сетка 2×2, эффект, зум ×2]` (у барьеров сэндвич даёт K=2). Классы
+/// допуска — из таблицы; замок полноты как у t224: вид без строки валит
+/// тест. Slowed+Reverb на видео — варп времени, не пиксельный фильтр —
+/// исключён явно.
+#[test]
+fn t329_parity_cycle_over_the_registry() {
+    let Some(engine) = test_engine() else { return };
+    // (тег, допуск одиночного, допуск сэндвича)
+    let classes: &[(&str, FrameTol, FrameTol)] = &[
+        ("pan", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("cam_motion", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("mirror", FrameTol::EXACT, FrameTol::BILINEAR),
+        ("blur", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("greenscreen", FrameTol::THRESHOLD, FrameTol::THRESHOLD),
+        ("edges", FrameTol::THRESHOLD, FrameTol::THRESHOLD),
+        ("noise", FrameTol::EXACT, FrameTol::THRESHOLD),
+        ("vhs", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("glow", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("event_grid", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("pan3d", FrameTol::GEOM, FrameTol::GEOM),
+    ];
+    let table: std::collections::BTreeMap<&str, (FrameTol, FrameTol)> =
+        classes.iter().map(|(t, a, b)| (*t, (*a, *b))).collect();
+    let video: Vec<&FxInstance> = FxInstance::all()
+        .iter()
+        .filter(|f| {
+            !f.is_audio()
+                && !f.is_layer_mix()
+                && !matches!(f, FxInstance::SlowedReverb { .. })
+        })
+        .collect();
+    let tags: std::collections::BTreeSet<&str> = video.iter().map(|f| f.tag()).collect();
+    assert_eq!(
+        table.keys().copied().collect::<std::collections::BTreeSet<_>>(),
+        tags,
+        "t329 class table and the video registry must cover each other"
+    );
+    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    for (i, f) in video.iter().enumerate() {
+        let (tol_single, tol_sand) = table[f.tag()];
+        let cam = matches!(f, FxInstance::Pan3d { .. }).then(|| kt_engine::Cam3d {
+            cam: kt_model::CameraParams::default(),
+            world_scale: 1.0,
+        });
+        // одиночный
+        let mut src = Src::new(9000 + i as u64 * 2, Some(frame(W, H, false, 0)), vec![(*f).clone()]);
+        src.cam3d = cam;
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert_eq!(cc, cg, "{}: complete diverged (single)", f.tag());
+        assert_frames_close(&cpu, &gpu, W, H, tol_single, f.tag());
+        // сэндвич
+        let mut src = Src::new(
+            9001 + i as u64 * 2,
+            Some(frame(W, H, false, 0)),
+            vec![grid2.clone(), (*f).clone(), zoom2.clone()],
+        );
+        src.cam3d = cam;
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert_eq!(cc, cg, "{}: complete diverged (sandwich)", f.tag());
+        assert_frames_close(&cpu, &gpu, W, H, tol_sand, &format!("sandwich-{}", f.tag()));
+    }
+}
