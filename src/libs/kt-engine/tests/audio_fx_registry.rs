@@ -472,6 +472,10 @@ fn t327_print_dense_chain_cost() {
             FxInstance::chorus(),
             FxInstance::delay(),
             FxInstance::compressor(),
+            // упреждающие узлы Р.48: лимитер дёшев, питч — самый дорогой
+            // из всех (зерновой ресемплинг на каждый грейн)
+            FxInstance::limiter(),
+            FxInstance::PitchShift { semitones: 3.0, cents: 0.0 },
             FxInstance::gain(-3.0),
         ]
     };
@@ -513,8 +517,53 @@ fn t327_print_dense_chain_cost() {
     let ms = t.elapsed().as_secs_f64() * 1e3;
     assert_eq!(stats.underruns, 0);
     println!(
-        "t327: 7 events x 6-node chains, {secs} s of audio in {ms:.1} ms ({:.1} ms per second, {:.1}% of realtime)",
+        "t327: 7 events x 8-node chains, {secs} s of audio in {ms:.1} ms ({:.1} ms per second, {:.1}% of realtime)",
         ms / secs as f64,
         ms / (secs as f64 * 1000.0) * 100.0
     );
+}
+/// Перф-печать упреждающих узлов (Р.48): сколько стоит ОДНО событие с
+/// лимитером и с питчем каждого движка. Ассертов нет — числа идут в
+/// porting-notes, а судить о скорости можно только по РЕЛИЗУ (п.301):
+/// `cargo test -p kt-engine --test audio_fx_registry --release -- --ignored bench_pitch`
+#[test]
+#[ignore]
+fn bench_pitch_cost() {
+    for (name, fx, engine) in [
+        ("dry", vec![], PitchEngine::Wsola),
+        ("limiter", vec![FxInstance::limiter()], PitchEngine::Wsola),
+        (
+            "pitch wsola",
+            vec![FxInstance::PitchShift { semitones: 3.0, cents: 0.0 }],
+            PitchEngine::Wsola,
+        ),
+        (
+            "pitch vocoder",
+            vec![FxInstance::PitchShift { semitones: 3.0, cents: 0.0 }],
+            PitchEngine::Vocoder,
+        ),
+    ] {
+        let mut p = Project::new(ProjectSettings {
+            fps: 30,
+            width: 64,
+            height: 36,
+            sample_rate: 48000,
+            pitch_engine: engine,
+        });
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
+        p.clips.push(ClipEvent { id: ClipId(1), link_group: None, kind: ClipKind::Audio, lane: 0,
+            start: Tick(0), duration: Tick(90_000 * 10), source_in: Tick(0), media: MediaId(1),
+            gain_db: 0.0, reversed: false, fx, fx_bypass: vec![], fx_auto: vec![], opacity: 1.0, fx_off: false });
+        p.validate().unwrap();
+        let r = AudioRenderer::new(&p);
+        let mut f = DirectFetcher::new(None);
+        f.add_source(MediaId(1), Box::new(SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Clicks)));
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; (48_000 * 10) as usize * CH];
+        let t = std::time::Instant::now();
+        r.render_frames_with(&mut f, &mut store, 0, &mut out);
+        let ms = t.elapsed().as_secs_f64() * 1000.0;
+        println!("bench {name}: {:.1} ms per second of audio ({:.1}% of realtime)", ms / 10.0, ms / 100.0);
+    }
 }
