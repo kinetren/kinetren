@@ -2004,6 +2004,39 @@ fn default_phaser_fb() -> f32 {
 fn default_stages() -> u32 {
     4
 }
+fn default_delay_time() -> f32 {
+    350.0
+}
+fn default_delay_fb() -> f32 {
+    0.35
+}
+fn default_delay_mix() -> f32 {
+    0.35
+}
+fn default_comp_thr() -> f32 {
+    -18.0
+}
+fn default_comp_ratio() -> f32 {
+    4.0
+}
+fn default_comp_att() -> f32 {
+    10.0
+}
+fn default_comp_rel() -> f32 {
+    150.0
+}
+fn default_gate_thr() -> f32 {
+    -40.0
+}
+fn default_gate_att() -> f32 {
+    1.0
+}
+fn default_gate_hold() -> f32 {
+    40.0
+}
+fn default_gate_rel() -> f32 {
+    100.0
+}
 fn default_one_f32() -> f32 {
     1.0
 }
@@ -2521,6 +2554,42 @@ pub enum FxInstance {
         #[serde(default = "default_half_f32")]
         mix: f32,
     },
+    /// Эхо (Р.47): кольцо на максимум, время — дробное чтение с
+    /// тейп-глайдом (не структурное), фильтр в петле — хвост темнеет.
+    Delay {
+        #[serde(default = "default_delay_time")]
+        time_ms: f32,
+        #[serde(default = "default_delay_fb")]
+        feedback: f32,
+        #[serde(default = "default_delay_mix")]
+        mix: f32,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pingpong: bool,
+    },
+    /// Компрессор (Р.47): peak-детектор со стерео-линком.
+    Compressor {
+        #[serde(default = "default_comp_thr")]
+        threshold_db: f32,
+        #[serde(default = "default_comp_ratio")]
+        ratio: f32,
+        #[serde(default = "default_comp_att")]
+        attack_ms: f32,
+        #[serde(default = "default_comp_rel")]
+        release_ms: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        makeup_db: f32,
+    },
+    /// Гейт (Р.47): быстрый детектор + гистерезис −6 дБ + hold.
+    Gate {
+        #[serde(default = "default_gate_thr")]
+        threshold_db: f32,
+        #[serde(default = "default_gate_att")]
+        attack_ms: f32,
+        #[serde(default = "default_gate_hold")]
+        hold_ms: f32,
+        #[serde(default = "default_gate_rel")]
+        release_ms: f32,
+    },
     // ---- видео-FX (порт bc_fx.cpp, п.25; параметры и дефолты v1) ----------
     /// Кроп-рамка + пан/зум в размер проекта.
     Pan {
@@ -2703,7 +2772,10 @@ impl FxInstance {
         | FxInstance::Vibrato { .. }
         | FxInstance::Chorus { .. }
         | FxInstance::Flanger { .. }
-        | FxInstance::Phaser { .. } => FxClass::Audio,
+        | FxInstance::Phaser { .. }
+        | FxInstance::Delay { .. }
+        | FxInstance::Compressor { .. }
+        | FxInstance::Gate { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } => FxClass::Video3d,
             _ => FxClass::Video2d,
         }
@@ -2743,6 +2815,9 @@ impl FxInstance {
             FxInstance::Chorus { .. } => "chorus",
             FxInstance::Flanger { .. } => "flanger",
             FxInstance::Phaser { .. } => "phaser",
+            FxInstance::Delay { .. } => "delay",
+            FxInstance::Compressor { .. } => "compressor",
+            FxInstance::Gate { .. } => "gate",
             FxInstance::Pan { .. } => "pan",
             FxInstance::CamMotion { .. } => "cam_motion",
             FxInstance::Mirror { .. } => "mirror",
@@ -2780,6 +2855,9 @@ impl FxInstance {
                 FxInstance::chorus(),
                 FxInstance::flanger(),
                 FxInstance::phaser(),
+                FxInstance::delay(),
+                FxInstance::compressor(),
+                FxInstance::gate(),
                 FxInstance::pan(),
                 FxInstance::cam_motion(),
                 FxInstance::mirror(),
@@ -3055,6 +3133,24 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
         // число каскадов пересоздаёт состояние — кривой не подлежит
         stages: u32, 2.0, 8.0, 4.0, 1.0, Count, Structural;
         mix: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+    },
+    Delay {
+        time_ms: f32, 1.0, 1500.0, 350.0, 1.0, Ms, Smooth;
+        feedback: f32, 0.0, 0.9, 0.35, 0.01, Norm, Smooth;
+        mix: f32, 0.0, 1.0, 0.35, 0.01, Norm, Smooth;
+    },
+    Compressor {
+        threshold_db: f32, -60.0, 0.0, -18.0, 0.1, Db, Smooth;
+        ratio: f32, 1.0, 20.0, 4.0, 0.1, Ratio, Smooth;
+        attack_ms: f32, 0.1, 250.0, 10.0, 0.1, Ms, Smooth;
+        release_ms: f32, 5.0, 2000.0, 150.0, 1.0, Ms, Smooth;
+        makeup_db: f32, 0.0, 24.0, 0.0, 0.1, Db, Smooth;
+    },
+    Gate {
+        threshold_db: f32, -80.0, 0.0, -40.0, 0.1, Db, Smooth;
+        attack_ms: f32, 0.1, 50.0, 1.0, 0.1, Ms, Smooth;
+        hold_ms: f32, 0.0, 500.0, 40.0, 1.0, Ms, Smooth;
+        release_ms: f32, 5.0, 1000.0, 100.0, 1.0, Ms, Smooth;
     },
     // ---- видео 2D --------------------------------------------------------
     Pan {
@@ -3504,6 +3600,24 @@ impl FxInstance {
 
     pub fn phaser() -> FxInstance {
         FxInstance::Phaser { rate_hz: 0.4, depth: 0.7, feedback: 0.3, stages: 4, mix: 0.5 }
+    }
+
+    pub fn delay() -> FxInstance {
+        FxInstance::Delay { time_ms: 350.0, feedback: 0.35, mix: 0.35, pingpong: false }
+    }
+
+    pub fn compressor() -> FxInstance {
+        FxInstance::Compressor {
+            threshold_db: -18.0,
+            ratio: 4.0,
+            attack_ms: 10.0,
+            release_ms: 150.0,
+            makeup_db: 0.0,
+        }
+    }
+
+    pub fn gate() -> FxInstance {
+        FxInstance::Gate { threshold_db: -40.0, attack_ms: 1.0, hold_ms: 40.0, release_ms: 100.0 }
     }
 
     pub fn pan() -> FxInstance {

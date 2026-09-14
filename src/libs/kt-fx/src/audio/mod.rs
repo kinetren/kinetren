@@ -114,6 +114,16 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
             // формула, что у FilterNode::tail (согласие сторожит t322е)
             // модуляции с памятью: максимум их задержек (те же константы,
             // что в узлах — согласие сторожит t322е)
+            // эхо: t60 затухающих повторов (гейт по mix — вкл. кривую,
+            // как у реверба); формула та же, что в узле (t322е)
+            FxInstance::Delay { time_ms, feedback, mix, .. }
+                if *mix > 0.0 || wet.iter().any(|(_, v)| *v > 0.0) =>
+            {
+                crate::audio::primitives::tail_frames_for(
+                    time_ms.clamp(1.0, 1500.0) / 1000.0 * 48_000.0,
+                    feedback.clamp(0.01, 0.9),
+                )
+            }
             FxInstance::Vibrato { .. } => Tick::from_audio_frames((48_000.0 * 0.008) as i64),
             FxInstance::Chorus { .. } => Tick::from_audio_frames((48_000.0 * 0.030) as i64),
             FxInstance::Flanger { .. } => {

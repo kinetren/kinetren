@@ -555,6 +555,9 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Chorus { .. } => "Chorus",
         FxInstance::Flanger { .. } => "Flanger",
         FxInstance::Phaser { .. } => "Phaser",
+        FxInstance::Delay { .. } => "Delay",
+        FxInstance::Compressor { .. } => "Compressor",
+        FxInstance::Gate { .. } => "Gate",
     }
 }
 
@@ -644,6 +647,11 @@ pub(crate) fn draw_video_fx_params(
     };
     match f {
         FxInstance::Pan { mode, .. } => mode_row(ui, mode, &mut ch),
+        FxInstance::Delay { pingpong, .. } => {
+            ui.horizontal(|ui| {
+                ch.base |= ui.checkbox(pingpong, tr(k::fx::PINGPONG)).changed();
+            });
+        }
         // вид среза (Р.47): подписи из каталога, значения — serde-виды
         FxInstance::Filter { mode, .. } => {
             let label = |m: kt_model::FilterMode| match m {

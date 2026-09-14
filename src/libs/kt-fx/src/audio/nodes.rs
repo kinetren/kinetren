@@ -217,6 +217,9 @@ pub enum AudioNode {
     Chorus(Box<ChorusNode>),
     Flanger(Box<FlangerNode>),
     Phaser(Box<PhaserNode>),
+    Delay(Box<DelayNode>),
+    Compressor(CompNode),
+    Gate(GateNode),
 }
 
 impl AudioNode {
@@ -238,6 +241,9 @@ impl AudioNode {
             FxInstance::Chorus { .. } => Some(AudioNode::Chorus(Box::new(ChorusNode::new()))),
             FxInstance::Flanger { .. } => Some(AudioNode::Flanger(Box::new(FlangerNode::new()))),
             FxInstance::Phaser { .. } => Some(AudioNode::Phaser(Box::new(PhaserNode::new()))),
+            FxInstance::Delay { .. } => Some(AudioNode::Delay(Box::new(DelayNode::new()))),
+            FxInstance::Compressor { .. } => Some(AudioNode::Compressor(CompNode::new())),
+            FxInstance::Gate { .. } => Some(AudioNode::Gate(GateNode::new())),
             _ => None,
         }
     }
@@ -297,6 +303,17 @@ impl AudioNode {
                 AudioNode::Phaser(n),
                 FxInstance::Phaser { rate_hz, depth, feedback, stages, mix },
             ) => n.apply(*rate_hz, *depth, *feedback, *stages, *mix),
+            (AudioNode::Delay(n), FxInstance::Delay { time_ms, feedback, mix, pingpong }) => {
+                n.apply(*time_ms, *feedback, *mix, *pingpong)
+            }
+            (
+                AudioNode::Compressor(n),
+                FxInstance::Compressor { threshold_db, ratio, attack_ms, release_ms, makeup_db },
+            ) => n.apply(*threshold_db, *ratio, *attack_ms, *release_ms, *makeup_db),
+            (
+                AudioNode::Gate(n),
+                FxInstance::Gate { threshold_db, attack_ms, hold_ms, release_ms },
+            ) => n.apply(*threshold_db, *attack_ms, *hold_ms, *release_ms),
             // отпечаток цепочки совпал — виды по слотам совпадают по
             // построению; сюда можно попасть только ошибкой сопоставления
             _ => debug_assert!(false, "node/slot kind mismatch"),
@@ -319,6 +336,9 @@ impl AudioNode {
             AudioNode::Chorus(n) => n.set_targets(auto, slot, s),
             AudioNode::Flanger(n) => n.set_targets(auto, slot, s),
             AudioNode::Phaser(n) => n.set_targets(auto, slot, s),
+            AudioNode::Delay(n) => n.set_targets(auto, slot, s),
+            AudioNode::Compressor(n) => n.set_targets(auto, slot, s),
+            AudioNode::Gate(n) => n.set_targets(auto, slot, s),
         }
     }
 
@@ -353,6 +373,9 @@ impl AudioNode {
             AudioNode::Chorus(n) => n.process(buf, _pos),
             AudioNode::Flanger(n) => n.process(buf, _pos),
             AudioNode::Phaser(n) => n.process(buf, _pos),
+            AudioNode::Delay(n) => n.process(buf),
+            AudioNode::Compressor(n) => n.process(buf),
+            AudioNode::Gate(n) => n.process(buf),
         }
     }
 
@@ -363,6 +386,7 @@ impl AudioNode {
             AudioNode::Vibrato(n) => n.tail(),
             AudioNode::Chorus(n) => n.tail(),
             AudioNode::Flanger(n) => n.tail(),
+            AudioNode::Delay(n) => n.tail(true),
             _ => kt_time::Tick::ZERO,
         }
     }
@@ -383,6 +407,9 @@ impl AudioNode {
             AudioNode::Chorus(n) => n.reset(),
             AudioNode::Flanger(n) => n.reset(),
             AudioNode::Phaser(n) => n.reset(),
+            AudioNode::Delay(n) => n.reset(),
+            AudioNode::Compressor(n) => n.reset(),
+            AudioNode::Gate(n) => n.reset(),
         }
     }
 }
@@ -1245,5 +1272,243 @@ impl PhaserNode {
         self.depth.reset_to_target();
         self.feedback.reset_to_target();
         self.mix.reset_to_target();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Узлы Ка4 (Р.47, п.329): эхо и динамика
+// ---------------------------------------------------------------------------
+
+use super::primitives::EnvFollower;
+
+const DELAY_MAX_MS: f32 = 1500.0;
+const DELAY_MAX_FRAMES: usize = (48_000.0 * (DELAY_MAX_MS / 1000.0)) as usize + 8;
+
+/// Эхо: кольцо аллоцировано на максимум (смена времени — дробное чтение,
+/// НЕ структурная); время сглаживается 100 мс — тейп-глайд без щелчков;
+/// фильтр в петле — one-pole LP (хвост темнеет с каждым повтором,
+/// наследие фишки F-AUD-009); pingpong — перекрёстная обратная связь.
+pub struct DelayNode {
+    time_ms: SmoothedParam,
+    feedback: SmoothedParam,
+    mix: SmoothedParam,
+    pingpong: bool,
+    lines: [DelayLine; CH],
+    loop_lp: [f32; CH],
+}
+
+impl DelayNode {
+    fn new() -> DelayNode {
+        DelayNode {
+            time_ms: SmoothedParam::with_ms(350.0, 100.0),
+            feedback: SmoothedParam::with_ms(0.35, 20.0),
+            mix: SmoothedParam::with_ms(0.35, 20.0),
+            pingpong: false,
+            lines: std::array::from_fn(|_| DelayLine::new(DELAY_MAX_FRAMES)),
+            loop_lp: [0.0; CH],
+        }
+    }
+
+    fn apply(&mut self, time_ms: f32, feedback: f32, mix: f32, pingpong: bool) {
+        self.time_ms.set_target(time_ms.clamp(1.0, DELAY_MAX_MS));
+        self.feedback.set_target(feedback.clamp(0.0, 0.9));
+        self.mix.set_target(mix.clamp(0.0, 1.0));
+        self.pingpong = pingpong;
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.time_ms
+            .set_target(auto.value(slot, "time_ms", self.time_ms.target as f64, s) as f32);
+        self.feedback
+            .set_target(auto.value(slot, "feedback", self.feedback.target as f64, s) as f32);
+        self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32]) {
+        let sr = AUDIO_SAMPLE_RATE as f32;
+        // фильтр петли ~4 кГц: повторы темнеют
+        let alpha = 1.0 - (-2.0 * std::f32::consts::PI * 4000.0 / sr).exp();
+        for fr in buf.chunks_exact_mut(CH) {
+            let d = self.time_ms.tick().clamp(1.0, DELAY_MAX_MS) * sr / 1000.0;
+            let fb = self.feedback.tick().clamp(0.0, 0.9);
+            let k = self.mix.tick().clamp(0.0, 1.0);
+            let mut wet = [0f32; CH];
+            for (w, line) in wet.iter_mut().zip(self.lines.iter()) {
+                *w = line.read_frac(d);
+            }
+            for ch in 0..CH {
+                let dry = fr[ch];
+                // ping-pong: обратная связь уходит в ПРОТИВОПОЛОЖНЫЙ канал
+                let fb_src = if self.pingpong { wet[(ch + 1) % CH] } else { wet[ch] };
+                self.loop_lp[ch] += (fb_src - self.loop_lp[ch]) * alpha;
+                self.lines[ch].write(dry + self.loop_lp[ch] * fb);
+                fr[ch] = dry * (1.0 - k) + wet[ch] * k;
+            }
+        }
+    }
+
+    fn tail(&self, mix_on: bool) -> Tick {
+        if !mix_on {
+            return Tick::ZERO;
+        }
+        let frames = self.time_ms.target.clamp(1.0, DELAY_MAX_MS) / 1000.0 * 48_000.0;
+        tail_frames_for(frames, self.feedback.target.clamp(0.01, 0.9))
+    }
+
+    fn reset(&mut self) {
+        for l in &mut self.lines {
+            l.reset();
+        }
+        self.loop_lp = [0.0; CH];
+        self.time_ms.reset_to_target();
+        self.feedback.reset_to_target();
+        self.mix.reset_to_target();
+    }
+}
+
+/// Компрессор: peak-огибающая, стерео-линк max(|l|,|r|), gr в дБ.
+pub struct CompNode {
+    threshold_db: SmoothedParam,
+    ratio: SmoothedParam,
+    makeup_db: SmoothedParam,
+    env: EnvFollower,
+}
+
+impl CompNode {
+    fn new() -> CompNode {
+        CompNode {
+            threshold_db: SmoothedParam::with_ms(-18.0, 20.0),
+            ratio: SmoothedParam::with_ms(4.0, 20.0),
+            makeup_db: SmoothedParam::with_ms(0.0, 20.0),
+            env: EnvFollower::new(10.0, 150.0),
+        }
+    }
+
+    fn apply(&mut self, thr: f32, ratio: f32, att: f32, rel: f32, makeup: f32) {
+        self.threshold_db.set_target(thr.clamp(-60.0, 0.0));
+        self.ratio.set_target(ratio.clamp(1.0, 20.0));
+        self.makeup_db.set_target(makeup.clamp(0.0, 24.0));
+        self.env.set_times(att.clamp(0.1, 250.0), rel.clamp(5.0, 2000.0));
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.threshold_db
+            .set_target(auto.value(slot, "threshold_db", self.threshold_db.target as f64, s) as f32);
+        self.ratio.set_target(auto.value(slot, "ratio", self.ratio.target as f64, s) as f32);
+        self.makeup_db
+            .set_target(auto.value(slot, "makeup_db", self.makeup_db.target as f64, s) as f32);
+        let att = auto.value(slot, "attack_ms", 10.0, s) as f32;
+        let rel = auto.value(slot, "release_ms", 150.0, s) as f32;
+        self.env.set_times(att.clamp(0.1, 250.0), rel.clamp(5.0, 2000.0));
+    }
+
+    fn process(&mut self, buf: &mut [f32]) {
+        for fr in buf.chunks_exact_mut(CH) {
+            let thr = self.threshold_db.tick();
+            let ratio = self.ratio.tick().max(1.0);
+            let makeup = 10f32.powf(self.makeup_db.tick() / 20.0);
+            let peak = fr.iter().fold(0f32, |m, s| m.max(s.abs()));
+            let env = self.env.tick(peak).max(1e-6);
+            let env_db = 20.0 * env.log10();
+            let over = (env_db - thr).max(0.0);
+            let gr_db = over * (1.0 - 1.0 / ratio);
+            let g = 10f32.powf(-gr_db / 20.0) * makeup;
+            for s in fr.iter_mut() {
+                *s *= g;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.env.reset();
+        self.threshold_db.reset_to_target();
+        self.ratio.reset_to_target();
+        self.makeup_db.reset_to_target();
+    }
+}
+
+/// Гейт: быстрый детектор (~0.5 мс) + гистерезис −6 дБ + hold-счётчик
+/// (кадры — переживает шов) + рампы attack/release.
+pub struct GateNode {
+    threshold_db: SmoothedParam,
+    attack_ms: f32,
+    release_ms: f32,
+    hold_frames: i64,
+    env: EnvFollower,
+    open: bool,
+    hold_left: i64,
+    gain: f32,
+}
+
+impl GateNode {
+    fn new() -> GateNode {
+        GateNode {
+            threshold_db: SmoothedParam::with_ms(-40.0, 20.0),
+            attack_ms: 1.0,
+            release_ms: 100.0,
+            hold_frames: (0.040 * 48_000.0) as i64,
+            env: EnvFollower::new(0.5, 0.5),
+            open: false,
+            hold_left: 0,
+            gain: 0.0,
+        }
+    }
+
+    fn apply(&mut self, thr: f32, att: f32, hold: f32, rel: f32) {
+        self.threshold_db.set_target(thr.clamp(-80.0, 0.0));
+        self.attack_ms = att.clamp(0.1, 50.0);
+        self.release_ms = rel.clamp(5.0, 1000.0);
+        self.hold_frames = ((hold.clamp(0.0, 500.0) / 1000.0) * 48_000.0) as i64;
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.threshold_db
+            .set_target(auto.value(slot, "threshold_db", self.threshold_db.target as f64, s) as f32);
+        self.attack_ms = (auto.value(slot, "attack_ms", self.attack_ms as f64, s) as f32)
+            .clamp(0.1, 50.0);
+        self.release_ms = (auto.value(slot, "release_ms", self.release_ms as f64, s) as f32)
+            .clamp(5.0, 1000.0);
+        let hold = auto.value(slot, "hold_ms", (self.hold_frames as f64) / 48.0, s) as f32;
+        self.hold_frames = ((hold.clamp(0.0, 500.0) / 1000.0) * 48_000.0) as i64;
+    }
+
+    fn process(&mut self, buf: &mut [f32]) {
+        let sr = AUDIO_SAMPLE_RATE as f32;
+        let att_step = 1.0 / (self.attack_ms / 1000.0 * sr).max(1.0);
+        let rel_step = 1.0 / (self.release_ms / 1000.0 * sr).max(1.0);
+        for fr in buf.chunks_exact_mut(CH) {
+            let thr_db = self.threshold_db.tick();
+            let open_thr = 10f32.powf(thr_db / 20.0);
+            // гистерезис: закрытие на 6 дБ ниже открытия
+            let close_thr = 10f32.powf((thr_db - 6.0) / 20.0);
+            let peak = fr.iter().fold(0f32, |m, s| m.max(s.abs()));
+            let env = self.env.tick(peak);
+            if env >= open_thr {
+                self.open = true;
+                self.hold_left = self.hold_frames;
+            } else if env < close_thr {
+                if self.hold_left > 0 {
+                    self.hold_left -= 1;
+                } else {
+                    self.open = false;
+                }
+            }
+            self.gain = if self.open {
+                (self.gain + att_step).min(1.0)
+            } else {
+                (self.gain - rel_step).max(0.0)
+            };
+            for s in fr.iter_mut() {
+                *s *= self.gain;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.env.reset();
+        self.open = false;
+        self.hold_left = 0;
+        self.gain = 0.0;
+        self.threshold_db.reset_to_target();
     }
 }
