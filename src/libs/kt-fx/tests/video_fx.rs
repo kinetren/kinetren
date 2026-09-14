@@ -506,6 +506,14 @@ fn t328_golden_cycle_over_the_registry() {
         ("posterize", 0x067921e26e16007c),
         ("vignette", 0xa815992243883318),
         ("corner_pin", 0x05719cf53332c61a),
+        // Р.47 Кв3: drop_shadow на непрозрачном тест-кадре — passthrough
+        // (identity-хэш) — вход без альфы тень не рисует НАМЕРЕННО
+        ("sharpen", 0x542512aaafe117ad),
+        ("pixelate", 0xd856791cc8952d79),
+        ("chromatic_aberration", 0x4513f7b18223cea3),
+        ("radial_blur", 0xcf33730d85dc9c70),
+        ("drop_shadow", 0x05719cf53332c61a),
+        ("halftone", 0x7a640931274d6e24),
     ];
     let video: Vec<&FxInstance> = FxInstance::all()
         .iter()

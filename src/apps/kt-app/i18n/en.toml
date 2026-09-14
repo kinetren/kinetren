@@ -344,6 +344,11 @@ x2 = "BL X"
 y2 = "BL Y"
 x3 = "BR X"
 y3 = "BR Y"
+offset_x = "Offset X"
+offset_y = "Offset Y"
+opacity = "Opacity"
+center_x = "Center X"
+center_y = "Center Y"
 
 [fxreg]
 add = "+ effect…"
@@ -404,6 +409,12 @@ duotone = "duotone two tone tint gradient map"
 posterize = "posterize levels quantize bands"
 vignette = "vignette dark corners frame"
 corner_pin = "corner pin perspective quad distort"
+sharpen = "sharpen unsharp crisp detail"
+pixelate = "pixelate mosaic blocks censor"
+chromatic_aberration = "chromatic aberration fringe rgb split lens"
+radial_blur = "radial blur zoom spin streak"
+drop_shadow = "drop shadow under layer"
+halftone = "halftone dots print raster comic"
 
 # Редактор FX клипа.
 [fx]
@@ -481,6 +492,7 @@ chain_on = "Chain"
 chain_on_hint = "Master switch: turns the whole chain off without touching the slots"
 shadow_color = "Shadows"
 high_color = "Highlights"
+spin = "Spin"
 
 [render]
 already_running = "a render is already running"

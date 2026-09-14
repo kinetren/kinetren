@@ -595,6 +595,116 @@ fn t303_barrier_kernels_res_invariant() {
                 "{name} K={k}: вид уехал (mean {mean:.2}, p99 {p99})"
             );
         }
+        // Р.47 Кв3 (гладкие): пороги ×2 от замера (см. printout)
+        for (name, fx) in [
+            ("sharpen", FxInstance::Sharpen { amount: 2.0, radius: 4 }),
+            ("chroma", FxInstance::ChromaticAberration { amount: 0.03 }),
+            (
+                "radial-zoom",
+                FxInstance::RadialBlur { amount: 0.5, center_x: 0.0, center_y: 0.0, spin: false },
+            ),
+            (
+                "radial-spin",
+                FxInstance::RadialBlur { amount: 0.5, center_x: 0.2, center_y: 0.1, spin: true },
+            ),
+        ] {
+            let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&test_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
+            let kf = apply_barrier(&fx, upf, &ctx(), &mut scratch, k);
+            let mut down = vec![0u8; (W * H * 4) as usize];
+            fit_into(&kf, W, H, &mut down);
+            let mut diffs: Vec<u32> = base
+                .rgba
+                .iter()
+                .zip(&down)
+                .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs())
+                .collect();
+            diffs.sort_unstable();
+            let mean = diffs.iter().map(|&d| d as u64).sum::<u64>() as f64 / diffs.len() as f64;
+            let p99 = diffs[diffs.len() * 99 / 100] as f64;
+            println!("t303 {name} K={k}: mean {mean:.2}, p99 {p99}");
+            assert!(
+                mean <= 2.5 && p99 <= 48.0,
+                "{name} K={k}: вид уехал (mean {mean:.2}, p99 {p99})"
+            );
+        }
+        // тень требует настоящей альфы: жёсткий круг в центре
+        {
+            let alpha_frame = || {
+                let mut f = test_frame();
+                f.has_alpha = true;
+                for y in 0..H {
+                    for x in 0..W {
+                        let (dx, dy) = (x as f64 - W as f64 / 2.0, y as f64 - H as f64 / 2.0);
+                        let i = ((y * W + x) * 4 + 3) as usize;
+                        f.rgba[i] = if dx * dx + dy * dy < 144.0 { 255 } else { 0 };
+                    }
+                }
+                f
+            };
+            let fx = FxInstance::drop_shadow();
+            let base = apply_barrier(&fx, alpha_frame(), &ctx(), &mut scratch, 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&alpha_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: true };
+            let kf = apply_barrier(&fx, upf, &ctx(), &mut scratch, k);
+            let mut down = vec![0u8; (W * H * 4) as usize];
+            fit_into(&kf, W, H, &mut down);
+            let mut diffs: Vec<u32> = base
+                .rgba
+                .iter()
+                .zip(&down)
+                .map(|(a, b)| (*a as i32 - *b as i32).unsigned_abs())
+                .collect();
+            diffs.sort_unstable();
+            let mean = diffs.iter().map(|&d| d as u64).sum::<u64>() as f64 / diffs.len() as f64;
+            let p99 = diffs[diffs.len() * 99 / 100] as f64;
+            println!("t303 drop-shadow K={k}: mean {mean:.2}, p99 {p99}");
+            // кайма тени на ЖЁСТКОЙ альфе (двоичный круг) сдвигается на
+            // фазу мипа — пороги свои, ×2 от замера (K=2: 2.14/56)
+            assert!(
+                mean <= 4.5 && p99 <= 112.0,
+                "drop-shadow K={k}: вид уехал (mean {mean:.2}, p99 {p99})"
+            );
+        }
+        // halftone: K×-исполнение антиалиасит кромки точек (это его
+        // выигрыш, а не дефект) — попиксельная метрика не годится.
+        // Сверяется ПОКРЫТИЕ: средняя люма блоков 8×8 (позиция и размер
+        // точек), пороги ×2 от замера (см. printout).
+        {
+            let fx = FxInstance::Halftone { size: 8, angle: 45.0 };
+            let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
+            let (kw, kh) = (W * k, H * k);
+            let mut up = vec![0u8; (kw * kh * 4) as usize];
+            fit_into(&test_frame(), kw, kh, &mut up);
+            let upf = Frame { w: kw, h: kh, rgba: up, has_alpha: false };
+            let kf = apply_barrier(&fx, upf, &ctx(), &mut scratch, k);
+            let mut down = vec![0u8; (W * H * 4) as usize];
+            fit_into(&kf, W, H, &mut down);
+            let block = 8u32;
+            let mut worst = 0.0f64;
+            for by in 0..H / block {
+                for bx in 0..W / block {
+                    let (mut sa, mut sb) = (0u64, 0u64);
+                    for y in by * block..(by + 1) * block {
+                        for x in bx * block..(bx + 1) * block {
+                            let i = ((y * W + x) * 4) as usize;
+                            sa += base.rgba[i] as u64;
+                            sb += down[i] as u64;
+                        }
+                    }
+                    let n = (block * block) as f64;
+                    worst = worst.max((sa as f64 / n - sb as f64 / n).abs());
+                }
+            }
+            println!("t303 halftone K={k}: worst block delta {worst:.1}");
+            // замер: 14.0 (K=2), 6.0 (K=4); порог ×2
+            assert!(worst <= 28.0, "halftone K={k}: узор уехал (block {worst:.1})");
+        }
         // edges — пороговый класс: сравниваем ДОЛЮ разъехавшихся пикселей
         for (name, fx) in [
             ("edges", FxInstance::edges(48)),
@@ -608,6 +718,8 @@ fn t303_barrier_kernels_res_invariant() {
                     color_b: 255,
                 },
             ),
+            // пороговый Кв3: фаза ячейки на границе законно флипает
+            ("pixelate", FxInstance::Pixelate { size: 8 }),
         ] {
             let base = apply_barrier(&fx, test_frame(), &ctx(), &mut scratch, 1);
             let (kw, kh) = (W * k, H * k);
@@ -968,4 +1080,132 @@ fn t331_corner_pin() {
     let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
     assert_eq!(p.ops.len(), 1, "corner pin is geo: the series stays one run");
     assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
+}
+
+/// Тест 332 (Р.47 Кв3): смысл шести барьеров + альфа-контракт тени.
+#[test]
+fn t332_barrier_semantics() {
+    use kt_fx::video::{FxScratch, apply_barrier};
+    let mut scratch = FxScratch::default();
+
+    // Sharpen: локальный контраст растёт
+    let sharp = run(&[FxInstance::Sharpen { amount: 2.0, radius: 4 }]);
+    assert!(
+        contrast(&sharp) > contrast(&test_frame()) * 1.2,
+        "sharpen must raise local contrast: {} vs {}",
+        contrast(&sharp),
+        contrast(&test_frame())
+    );
+
+    // Pixelate: каждая ячейка 12×12 константна
+    let pix = run(&[FxInstance::Pixelate { size: 12 }]);
+    for cy in 0..H / 12 {
+        for cx in 0..W / 12 {
+            let base = ((cy * 12 * W + cx * 12) * 4) as usize;
+            for y in cy * 12..(cy + 1) * 12 {
+                for x in cx * 12..(cx + 1) * 12 {
+                    let i = ((y * W + x) * 4) as usize;
+                    assert_eq!(
+                        pix.rgba[i..i + 3],
+                        pix.rgba[base..base + 3],
+                        "pixelate cell must be flat at ({x},{y})"
+                    );
+                }
+            }
+        }
+    }
+
+    // ChromaticAberration: центр нетронут, у края каналы разъехались
+    let ca = run(&[FxInstance::ChromaticAberration { amount: 0.04 }]);
+    let src = test_frame();
+    let c = (((H / 2) * W + W / 2) * 4) as usize;
+    assert_eq!(ca.rgba[c..c + 4], src.rgba[c..c + 4], "chroma: center pixel is a fixed point");
+    let edge = ((H / 2 * W + 2) * 4) as usize;
+    assert_ne!(ca.rgba[edge], src.rgba[edge], "chroma: red must shift near the edge");
+
+    // RadialBlur: центр — неподвижная точка луча, край смазан
+    let rb = run(&[FxInstance::RadialBlur {
+        amount: 0.8,
+        center_x: 0.0,
+        center_y: 0.0,
+        spin: false,
+    }]);
+    let mut edge_moved = 0;
+    for x in 0..W {
+        let i = ((H / 4 * W + x) * 4) as usize;
+        if rb.rgba[i] != src.rgba[i] {
+            edge_moved += 1;
+        }
+    }
+    assert!(edge_moved > (W / 4) as usize, "radial blur must smear off-center rows");
+
+    // DropShadow на непрозрачном входе — passthrough байт-в-байт
+    let ds = run(&[FxInstance::drop_shadow()]);
+    assert_eq!(ds.rgba, src.rgba, "opaque input: drop shadow is a byte passthrough");
+
+    // [greenscreen, drop_shadow]: в вырезанной зоне на +offset от
+    // непрозрачной кромки появляется ТЕНЬ (альфа > 0, цвет — tint)
+    let keyed = apply_barrier(
+        &FxInstance::greenscreen([0, 255, 0], 70, 25),
+        test_frame(),
+        &ctx(),
+        &mut scratch,
+        1,
+    );
+    assert!(keyed.has_alpha);
+    let shadowed = apply_barrier(
+        &FxInstance::DropShadow {
+            offset_x: 6,
+            offset_y: 6,
+            radius: 2,
+            opacity: 1.0,
+            tint_r: 0,
+            tint_g: 0,
+            tint_b: 0,
+        },
+        keyed,
+        &ctx(),
+        &mut scratch,
+        1,
+    );
+    // зелёный угол выключен ключом; кромка непрозрачной зоны — на
+    // x == W/2 (и y == H/2); точка чуть правее+ниже кромки в вырезанной
+    // зоне обязана получить тень
+    let px = (W / 2 + 4, H / 2 + 4);
+    let i = ((px.1 * W + px.0) * 4) as usize;
+    assert!(
+        shadowed.rgba[i + 3] > 32,
+        "shadow must appear in the keyed-out zone: alpha {}",
+        shadowed.rgba[i + 3]
+    );
+    assert!(
+        shadowed.rgba[i] < 32 && shadowed.rgba[i + 1] < 32 && shadowed.rgba[i + 2] < 32,
+        "shadow colour is the tint: {:?}",
+        &shadowed.rgba[i..i + 3]
+    );
+
+    // Halftone: выход двухуровневый; в тёмной зоне точек больше
+    let ht = run(&[FxInstance::Halftone { size: 8, angle: 45.0 }]);
+    for pxl in ht.rgba.chunks_exact(4) {
+        assert!(
+            (pxl[0] == 0 || pxl[0] == 255) && pxl[0] == pxl[1] && pxl[1] == pxl[2],
+            "halftone output is binary mono: {pxl:?}"
+        );
+    }
+    let dark_dots = ht
+        .rgba
+        .chunks_exact(4)
+        .take((W * H / 4) as usize)
+        .filter(|p| p[0] == 0)
+        .count();
+    let light_dots = ht
+        .rgba
+        .chunks_exact(4)
+        .skip((W * H * 3 / 4) as usize)
+        .filter(|p| p[0] == 0)
+        .count();
+    assert!(
+        dark_dots > light_dots,
+        "darker area must grow bigger dots: {dark_dots} vs {light_dots}"
+    );
 }

@@ -121,6 +121,12 @@ pub fn param_label(name: &str) -> String {
         "y2" => tr(k::fxp::Y2),
         "x3" => tr(k::fxp::X3),
         "y3" => tr(k::fxp::Y3),
+        // барьеры Р.47 (Кв3)
+        "offset_x" => tr(k::fxp::OFFSET_X),
+        "offset_y" => tr(k::fxp::OFFSET_Y),
+        "opacity" => tr(k::fxp::OPACITY),
+        "center_x" => tr(k::fxp::CENTER_X),
+        "center_y" => tr(k::fxp::CENTER_Y),
         // параметр без подписи в каталоге — видно сразу, а не молча
         other => return other.to_string(),
     };

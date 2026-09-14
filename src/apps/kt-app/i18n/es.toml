@@ -344,6 +344,11 @@ x2 = "II X"
 y2 = "II Y"
 x3 = "ID X"
 y3 = "ID Y"
+offset_x = "Desplaz. X"
+offset_y = "Desplaz. Y"
+opacity = "Opacidad"
+center_x = "Centro X"
+center_y = "Centro Y"
 
 [fxreg]
 add = "+ efecto…"
@@ -404,6 +409,12 @@ duotone = "duotono dos tonos tinte duotone"
 posterize = "posterizar niveles cuantizar posterize"
 vignette = "vineta esquinas oscuras vignette"
 corner_pin = "esquinas perspectiva distorsion corner pin"
+sharpen = "nitidez enfocar detalle sharpen"
+pixelate = "pixelar mosaico censura pixelate"
+chromatic_aberration = "aberracion cromatica franja lente chromatic"
+radial_blur = "desenfoque radial zoom giro radial"
+drop_shadow = "sombra paralela drop shadow"
+halftone = "semitono puntos imprenta halftone"
 
 # Редактор FX клипа.
 [fx]
@@ -481,6 +492,7 @@ chain_on = "Cadena"
 chain_on_hint = "Interruptor maestro: apaga toda la cadena sin tocar los slots"
 shadow_color = "Sombras"
 high_color = "Luces"
+spin = "Giro"
 
 [render]
 already_running = "ya hay un render en curso"

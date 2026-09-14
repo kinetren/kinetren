@@ -2055,6 +2055,46 @@ fn default_duo_hg() -> u8 {
 fn default_duo_hb() -> u8 {
     190
 }
+fn default_two_u32() -> u32 {
+    2
+}
+
+fn default_twelve_u32() -> u32 {
+    12
+}
+
+fn default_chroma_amount() -> f32 {
+    0.012
+}
+
+fn default_quarter_f32() -> f32 {
+    0.25
+}
+
+fn default_eight_i32() -> i32 {
+    8
+}
+
+fn default_four_u32() -> u32 {
+    4
+}
+
+fn default_shadow_opacity() -> f32 {
+    0.6
+}
+
+fn default_eight_u32() -> u32 {
+    8
+}
+
+fn default_halftone_angle() -> f32 {
+    45.0
+}
+
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
+}
+
 fn default_levels() -> u32 {
     6
 }
@@ -2690,6 +2730,64 @@ pub enum FxInstance {
         #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
         y3: f64,
     },
+    /// Нерезкое маскирование по мипу (Р.47, F-FX-001): источник +
+    /// (источник − размытая база)·amount. Барьер.
+    Sharpen {
+        #[serde(default = "default_one_f32")]
+        amount: f32,
+        #[serde(default = "default_two_u32")]
+        radius: u32,
+    },
+    /// Мозаика (Р.47, F-FX-001): целочисленная копия центра ячейки.
+    /// Барьер.
+    Pixelate {
+        #[serde(default = "default_twelve_u32")]
+        size: u32,
+    },
+    /// Хроматическая аберрация (Р.47, F-FX-002): радиальный масштаб
+    /// каналов — R к центру, B от центра, G на месте. Барьер.
+    ChromaticAberration {
+        #[serde(default = "default_chroma_amount")]
+        amount: f32,
+    },
+    /// Радиальное размытие (Р.47, F-FX-003): зум-стрик или вращение
+    /// вокруг центра, константные 16 тапов на обоих бэкендах. Барьер.
+    RadialBlur {
+        #[serde(default = "default_quarter_f32")]
+        amount: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        center_x: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        center_y: f32,
+        #[serde(default, skip_serializing_if = "is_false")]
+        spin: bool,
+    },
+    /// Тень под слоем (Р.47, F-FX-003): размытая альфа со сдвигом,
+    /// источник OVER тень. Барьер; вход без альфы — passthrough.
+    DropShadow {
+        #[serde(default = "default_eight_i32")]
+        offset_x: i32,
+        #[serde(default = "default_eight_i32")]
+        offset_y: i32,
+        #[serde(default = "default_four_u32")]
+        radius: u32,
+        #[serde(default = "default_shadow_opacity")]
+        opacity: f32,
+        #[serde(default, skip_serializing_if = "is_zero_u8")]
+        tint_r: u8,
+        #[serde(default, skip_serializing_if = "is_zero_u8")]
+        tint_g: u8,
+        #[serde(default, skip_serializing_if = "is_zero_u8")]
+        tint_b: u8,
+    },
+    /// Полутоновый растр (Р.47, F-FX-001): точки по люме на повёрнутой
+    /// сетке; узор живёт в логических координатах. Барьер.
+    Halftone {
+        #[serde(default = "default_eight_u32")]
+        size: u32,
+        #[serde(default = "default_halftone_angle")]
+        angle: f32,
+    },
     /// Кроп-рамка + пан/зум в размер проекта.
     Pan {
         #[serde(default)]
@@ -2922,6 +3020,12 @@ impl FxInstance {
             FxInstance::Posterize { .. } => "posterize",
             FxInstance::Vignette { .. } => "vignette",
             FxInstance::CornerPin { .. } => "corner_pin",
+            FxInstance::Sharpen { .. } => "sharpen",
+            FxInstance::Pixelate { .. } => "pixelate",
+            FxInstance::ChromaticAberration { .. } => "chromatic_aberration",
+            FxInstance::RadialBlur { .. } => "radial_blur",
+            FxInstance::DropShadow { .. } => "drop_shadow",
+            FxInstance::Halftone { .. } => "halftone",
             FxInstance::Pan { .. } => "pan",
             FxInstance::CamMotion { .. } => "cam_motion",
             FxInstance::Mirror { .. } => "mirror",
@@ -2967,6 +3071,12 @@ impl FxInstance {
                 FxInstance::posterize(),
                 FxInstance::vignette(),
                 FxInstance::corner_pin(),
+                FxInstance::sharpen(),
+                FxInstance::pixelate(),
+                FxInstance::chromatic_aberration(),
+                FxInstance::radial_blur(),
+                FxInstance::drop_shadow(),
+                FxInstance::halftone(),
                 FxInstance::pan(),
                 FxInstance::cam_motion(),
                 FxInstance::mirror(),
@@ -3081,6 +3191,9 @@ macro_rules! fx_cast {
     };
     (u8, $v:expr) => {
         $v.round().clamp(0.0, 255.0) as u8
+    };
+    (i32, $v:expr) => {
+        $v.round() as i32
     };
 }
 
@@ -3284,6 +3397,34 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
         strength: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
         radius: f32, 0.0, 1.5, 0.7, 0.01, Norm, Smooth;
         softness: f32, 0.05, 1.0, 0.45, 0.01, Norm, Smooth;
+    },
+    Sharpen {
+        amount: f32, 0.0, 4.0, 1.0, 0.01, Ratio, Smooth;
+        radius: u32, 1.0, 16.0, 2.0, 1.0, Px, Smooth;
+    },
+    Pixelate {
+        size: u32, 2.0, 128.0, 12.0, 1.0, Px, Smooth;
+    },
+    ChromaticAberration {
+        amount: f32, 0.0, 0.05, 0.012, 0.001, Norm, Smooth;
+    },
+    RadialBlur {
+        amount: f32, 0.0, 1.0, 0.25, 0.01, Norm, Smooth;
+        center_x: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
+        center_y: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
+    },
+    DropShadow {
+        offset_x: i32, -64.0, 64.0, 8.0, 1.0, Px, Smooth;
+        offset_y: i32, -64.0, 64.0, 8.0, 1.0, Px, Smooth;
+        radius: u32, 1.0, 32.0, 4.0, 1.0, Px, Smooth;
+        opacity: f32, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
+        tint_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        tint_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        tint_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+    },
+    Halftone {
+        size: u32, 2.0, 64.0, 8.0, 1.0, Px, Smooth;
+        angle: f32, -90.0, 90.0, 45.0, 1.0, Deg, Smooth;
     },
     CornerPin {
         x0: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
@@ -3797,6 +3938,38 @@ impl FxInstance {
             x3: 1.0,
             y3: 1.0,
         }
+    }
+
+    pub fn sharpen() -> FxInstance {
+        FxInstance::Sharpen { amount: 1.0, radius: 2 }
+    }
+
+    pub fn pixelate() -> FxInstance {
+        FxInstance::Pixelate { size: 12 }
+    }
+
+    pub fn chromatic_aberration() -> FxInstance {
+        FxInstance::ChromaticAberration { amount: 0.012 }
+    }
+
+    pub fn radial_blur() -> FxInstance {
+        FxInstance::RadialBlur { amount: 0.25, center_x: 0.0, center_y: 0.0, spin: false }
+    }
+
+    pub fn drop_shadow() -> FxInstance {
+        FxInstance::DropShadow {
+            offset_x: 8,
+            offset_y: 8,
+            radius: 4,
+            opacity: 0.6,
+            tint_r: 0,
+            tint_g: 0,
+            tint_b: 0,
+        }
+    }
+
+    pub fn halftone() -> FxInstance {
+        FxInstance::Halftone { size: 8, angle: 45.0 }
     }
 
     pub fn pan() -> FxInstance {

@@ -958,7 +958,7 @@ fn map_pos(prims: &[GeomPrim], ox: f64, oy: f64) -> Mapped {
 /// Дублирование сознательное: скаляр билинейки НЕ рефакторится
 /// (kt-fx/CLAUDE.md) — оба текста и есть определение байтов.
 #[inline]
-fn sample_bilinear_f64(src: &Frame, sx: f64, sy: f64) -> [f64; 4] {
+pub(crate) fn sample_bilinear_f64(src: &Frame, sx: f64, sy: f64) -> [f64; 4] {
     let (sw, sh) = (src.w as i64, src.h as i64);
     let y = sy.floor() as i64;
     let fy = sy - y as f64;

@@ -344,6 +344,11 @@ x2 = "ЛН X"
 y2 = "ЛН Y"
 x3 = "ПН X"
 y3 = "ПН Y"
+offset_x = "Сдвиг X"
+offset_y = "Сдвиг Y"
+opacity = "Плотность"
+center_x = "Центр X"
+center_y = "Центр Y"
 
 [fxreg]
 add = "+ эффект…"
@@ -404,6 +409,12 @@ duotone = "дуотон два цвета тонирование duotone"
 posterize = "постеризация уровни квант posterize"
 vignette = "виньетка тёмные углы vignette"
 corner_pin = "углы перспектива искажение corner pin"
+sharpen = "резкость детали sharpen unsharp"
+pixelate = "пиксели мозаика цензура pixelate"
+chromatic_aberration = "аберрация каёмка линза rgb chromatic"
+radial_blur = "радиальное размытие зум вращение radial"
+drop_shadow = "тень под слоем drop shadow"
+halftone = "растр точки печать комикс halftone"
 
 # Редактор FX клипа.
 [fx]
@@ -481,6 +492,7 @@ chain_on = "Цепочка"
 chain_on_hint = "Мастер-выключатель: гасит всю цепочку, не трогая состояние слотов"
 shadow_color = "Тени"
 high_color = "Света"
+spin = "Вращение"
 
 [render]
 already_running = "рендер уже идёт"

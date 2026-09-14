@@ -563,6 +563,12 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Posterize { .. } => "Posterize",
         FxInstance::Vignette { .. } => "Vignette",
         FxInstance::CornerPin { .. } => "Corner Pin",
+        FxInstance::Sharpen { .. } => "Sharpen",
+        FxInstance::Pixelate { .. } => "Pixelate",
+        FxInstance::ChromaticAberration { .. } => "Chromatic Aberration",
+        FxInstance::RadialBlur { .. } => "Radial Blur",
+        FxInstance::DropShadow { .. } => "Drop Shadow",
+        FxInstance::Halftone { .. } => "Halftone",
     }
 }
 
@@ -606,6 +612,13 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         ("Posterize", FxInstance::posterize()),
         ("Vignette", FxInstance::vignette()),
         ("Corner Pin", FxInstance::corner_pin()),
+        // Р.47 Кв3: барьеры
+        ("Sharpen", FxInstance::sharpen()),
+        ("Pixelate", FxInstance::pixelate()),
+        ("Chromatic Aberration", FxInstance::chromatic_aberration()),
+        ("Radial Blur", FxInstance::radial_blur()),
+        ("Drop Shadow", FxInstance::drop_shadow()),
+        ("Halftone", FxInstance::halftone()),
     ]
 }
 
@@ -635,6 +648,7 @@ pub(crate) fn draw_video_fx_params(
         // цвет линий контура и оттенок свечения — тоже пипеткой (Р.33 С5)
         FxInstance::Edges { .. } => &["color_r", "color_g", "color_b"],
         FxInstance::Glow { .. } => &["tint_r", "tint_g", "tint_b"],
+        FxInstance::DropShadow { .. } => &["tint_r", "tint_g", "tint_b"],
         // обе краски дуотона — пипетками (Р.47 Кв2)
         FxInstance::Duotone { .. } => {
             &["shadow_r", "shadow_g", "shadow_b", "high_r", "high_g", "high_b"]
@@ -789,6 +803,24 @@ pub(crate) fn draw_video_fx_params(
                     *high_b = (hi[2] * 255.0) as u8;
                     ch.base = true;
                 }
+            });
+        }
+        FxInstance::DropShadow { tint_r, tint_g, tint_b, .. } => {
+            ui.horizontal(|ui| {
+                let mut col =
+                    [*tint_r as f32 / 255.0, *tint_g as f32 / 255.0, *tint_b as f32 / 255.0];
+                ui.label(tr(k::fx::TINT));
+                if ui.color_edit_button_rgb(&mut col).changed() {
+                    *tint_r = (col[0] * 255.0) as u8;
+                    *tint_g = (col[1] * 255.0) as u8;
+                    *tint_b = (col[2] * 255.0) as u8;
+                    ch.base = true;
+                }
+            });
+        }
+        FxInstance::RadialBlur { spin, .. } => {
+            ui.horizontal(|ui| {
+                ch.base |= ui.checkbox(spin, tr(k::fx::SPIN)).changed();
             });
         }
         FxInstance::Noise { color, .. } => {

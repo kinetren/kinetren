@@ -185,11 +185,254 @@ pub fn apply_barrier(
                 crate::geom::tap_vig(v, xy, st, ra, so, w, h)
             })
         }
+        // барьеры Р.47 Кв3
+        FxInstance::Sharpen { amount, radius } => {
+            sharpen(frame, (*amount as f64).clamp(0.0, 4.0), *radius, scratch, rs)
+        }
+        FxInstance::Pixelate { size } => pixelate(frame, *size, scratch, rs),
+        FxInstance::ChromaticAberration { amount } => {
+            chroma_ab(frame, (*amount as f64).clamp(0.0, 0.05), scratch)
+        }
+        FxInstance::RadialBlur { amount, center_x, center_y, spin } => radial_blur(
+            frame,
+            (*amount as f64).clamp(0.0, 1.0),
+            *center_x as f64,
+            *center_y as f64,
+            *spin,
+            scratch,
+        ),
+        FxInstance::DropShadow { offset_x, offset_y, radius, opacity, tint_r, tint_g, tint_b } => {
+            drop_shadow(
+                frame,
+                (*offset_x, *offset_y),
+                *radius,
+                (*opacity as f64).clamp(0.0, 1.0),
+                [*tint_r, *tint_g, *tint_b],
+                scratch,
+                rs,
+            )
+        }
+        FxInstance::Halftone { size, angle } => halftone(frame, *size, *angle as f64, scratch, rs),
         _ => {
             debug_assert!(false, "barrier op on non-barrier fx");
             frame
         }
     }
+}
+
+/// Нерезкое маскирование (Р.47): src + (src − мип-база)·amount. Шаг мипа
+/// = radius·K (radius ≥ 2: шаг 1 дал бы базу == источнику и нулевой
+/// эффект — билинейка 1:1 точна). Альфа не трогается.
+fn sharpen(f: Frame, amount: f64, radius: u32, scratch: &mut FxScratch, res_scale: u32) -> Frame {
+    let step = radius.clamp(2, 16) * res_scale;
+    let (dw, dh) = ((f.w / step).max(1), (f.h / step).max(1));
+    let mut small = scratch.take((dw * dh * 4) as usize);
+    bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
+    let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: f.has_alpha };
+    let mut base = scratch.take(f.rgba.len());
+    bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut base);
+    scratch.put(small_f.rgba);
+    let mut out = f;
+    for (px, bp) in out.rgba.chunks_exact_mut(4).zip(base.chunks_exact(4)) {
+        for c in 0..3 {
+            let s = px[c] as f64;
+            px[c] = (s + (s - bp[c] as f64) * amount).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    scratch.put(base);
+    out
+}
+
+/// Мозаика (Р.47): целочисленная копия центра ячейки C = size·K —
+/// EXACT-паритет с GPU по построению.
+fn pixelate(f: Frame, size: u32, scratch: &mut FxScratch, res_scale: u32) -> Frame {
+    let c = size.clamp(2, 128) * res_scale;
+    let mut out = scratch.take(f.rgba.len());
+    for y in 0..f.h {
+        let sy = (y / c * c + c / 2).min(f.h - 1);
+        for x in 0..f.w {
+            let sx = (x / c * c + c / 2).min(f.w - 1);
+            let d = ((y * f.w + x) * 4) as usize;
+            let s = ((sy * f.w + sx) * 4) as usize;
+            out[d..d + 4].copy_from_slice(&f.rgba[s..s + 4]);
+        }
+    }
+    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
+    scratch.put(f.rgba);
+    res
+}
+
+/// Хроматическая аберрация (Р.47): R сэмплится ближе к центру (×(1−a)),
+/// B — дальше (×(1+a)), G и альфа на месте. Позиции — доли кадра,
+/// K×-исполнение масштабируется само.
+fn chroma_ab(f: Frame, amount: f64, scratch: &mut FxScratch) -> Frame {
+    let (cw, ch) = (f.w as f64 / 2.0, f.h as f64 / 2.0);
+    let mut out = scratch.take(f.rgba.len());
+    for y in 0..f.h {
+        for x in 0..f.w {
+            let d = ((y * f.w + x) * 4) as usize;
+            let (px, py) = (x as f64 + 0.5 - cw, y as f64 + 0.5 - ch);
+            let r = crate::geom::sample_bilinear_f64(
+                &f,
+                cw + px * (1.0 - amount) - 0.5,
+                ch + py * (1.0 - amount) - 0.5,
+            )[0];
+            let b = crate::geom::sample_bilinear_f64(
+                &f,
+                cw + px * (1.0 + amount) - 0.5,
+                ch + py * (1.0 + amount) - 0.5,
+            )[2];
+            out[d] = r.round().clamp(0.0, 255.0) as u8;
+            out[d + 1] = f.rgba[d + 1];
+            out[d + 2] = b.round().clamp(0.0, 255.0) as u8;
+            out[d + 3] = f.rgba[d + 3];
+        }
+    }
+    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
+    scratch.put(f.rgba);
+    res
+}
+
+/// Радиальное размытие (Р.47): среднее РОВНО 16 тапов вдоль зум-луча или
+/// дуги вращения — число тапов константа обоих бэкендов, доли кадра
+/// масштабируют K× сами.
+fn radial_blur(
+    f: Frame,
+    amount: f64,
+    center_x: f64,
+    center_y: f64,
+    spin: bool,
+    scratch: &mut FxScratch,
+) -> Frame {
+    const N: usize = 16;
+    let (cx, cy) = (
+        (0.5 + center_x.clamp(-1.0, 1.0) * 0.5) * f.w as f64,
+        (0.5 + center_y.clamp(-1.0, 1.0) * 0.5) * f.h as f64,
+    );
+    let mut out = scratch.take(f.rgba.len());
+    for y in 0..f.h {
+        for x in 0..f.w {
+            let d = ((y * f.w + x) * 4) as usize;
+            let (px, py) = (x as f64 + 0.5 - cx, y as f64 + 0.5 - cy);
+            let mut acc = [0f64; 4];
+            for i in 0..N {
+                let t = i as f64 / (N - 1) as f64;
+                let (sx, sy) = if spin {
+                    let a = 0.6 * amount * (t - 0.5);
+                    let (sa, ca) = a.sin_cos();
+                    (px * ca - py * sa, px * sa + py * ca)
+                } else {
+                    let k = 1.0 - 0.5 * amount * t;
+                    (px * k, py * k)
+                };
+                let s =
+                    crate::geom::sample_bilinear_f64(&f, cx + sx - 0.5, cy + sy - 0.5);
+                for (a, v) in acc.iter_mut().zip(s) {
+                    *a += v;
+                }
+            }
+            for (c, a) in acc.iter().enumerate() {
+                out[d + c] = (a / N as f64).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
+    scratch.put(f.rgba);
+    res
+}
+
+/// Тень под слоем (Р.47): размытая (мип radius·K) альфа источника со
+/// сдвигом offset·K, источник ПОВЕРХ тени (straight alpha, f64,
+/// округление один раз). Вход без альфы — passthrough: формула на
+/// непрозрачном входе вырождается в тождество, ранний выход лишь
+/// экономит работу (GPU-сторона согласована — см. chain_ops).
+fn drop_shadow(
+    f: Frame,
+    offset: (i32, i32),
+    radius: u32,
+    opacity: f64,
+    tint: [u8; 3],
+    scratch: &mut FxScratch,
+    res_scale: u32,
+) -> Frame {
+    if !f.has_alpha {
+        return f;
+    }
+    let step = radius.clamp(1, 32) * res_scale;
+    let (dw, dh) = ((f.w / step).max(1), (f.h / step).max(1));
+    let mut small = scratch.take((dw * dh * 4) as usize);
+    bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
+    let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: true };
+    let mut blurred = scratch.take(f.rgba.len());
+    bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut blurred);
+    scratch.put(small_f.rgba);
+    let (ox, oy) = (
+        offset.0.clamp(-64, 64) * res_scale as i32,
+        offset.1.clamp(-64, 64) * res_scale as i32,
+    );
+    let mut out = scratch.take(f.rgba.len());
+    for y in 0..f.h as i64 {
+        for x in 0..f.w as i64 {
+            let d = ((y * f.w as i64 + x) * 4) as usize;
+            let (bx, by) = (x - ox as i64, y - oy as i64);
+            let ba = if bx >= 0 && by >= 0 && bx < f.w as i64 && by < f.h as i64 {
+                blurred[((by * f.w as i64 + bx) * 4 + 3) as usize] as f64 / 255.0
+            } else {
+                0.0
+            };
+            let ash = ba * opacity;
+            let asrc = f.rgba[d + 3] as f64 / 255.0;
+            let oa = asrc + ash * (1.0 - asrc);
+            if oa <= 0.0 {
+                out[d..d + 4].copy_from_slice(&[0, 0, 0, 0]);
+            } else {
+                for c in 0..3 {
+                    let v = (f.rgba[d + c] as f64 * asrc
+                        + tint[c] as f64 * ash * (1.0 - asrc))
+                        / oa;
+                    out[d + c] = v.round().clamp(0.0, 255.0) as u8;
+                }
+                out[d + 3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    scratch.put(blurred);
+    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: true };
+    scratch.put(f.rgba);
+    res
+}
+
+/// Полутоновый растр (Р.47): чёрные точки на белом, радиус от люмы
+/// центра ячейки. Узор целиком в ЛОГИЧЕСКИХ координатах l = p/K —
+/// K×-исполнение видит ту же сетку.
+fn halftone(f: Frame, size: u32, angle: f64, scratch: &mut FxScratch, res_scale: u32) -> Frame {
+    let s = size.clamp(2, 64) as f64;
+    let k = res_scale as f64;
+    let (sa, ca) = angle.clamp(-90.0, 90.0).to_radians().sin_cos();
+    let mut out = scratch.take(f.rgba.len());
+    for y in 0..f.h {
+        for x in 0..f.w {
+            let d = ((y * f.w + x) * 4) as usize;
+            let (lx, ly) = ((x as f64 + 0.5) / k, (y as f64 + 0.5) / k);
+            // поворот на −angle: сетка стоит в повёрнутом пространстве
+            let (ux, uy) = (lx * ca + ly * sa, -lx * sa + ly * ca);
+            let (ccx, ccy) = ((ux / s).floor() * s + 0.5 * s, (uy / s).floor() * s + 0.5 * s);
+            // центр ячейки назад в логику и в физику кадра
+            let (gx, gy) = (ccx * ca - ccy * sa, ccx * sa + ccy * ca);
+            let smp = crate::geom::sample_bilinear_f64(&f, gx * k - 0.5, gy * k - 0.5);
+            let l = (77.0 * smp[0] + 150.0 * smp[1] + 29.0 * smp[2]) / 256.0;
+            let rd = 0.5 * s * 1.25 * (1.0 - (l / 255.0).clamp(0.0, 1.0)).sqrt();
+            let dist = ((ux - ccx) * (ux - ccx) + (uy - ccy) * (uy - ccy)).sqrt();
+            let v = if dist <= rd { 0u8 } else { 255u8 };
+            out[d] = v;
+            out[d + 1] = v;
+            out[d + 2] = v;
+            out[d + 3] = f.rgba[d + 3];
+        }
+    }
+    let res = Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha };
+    scratch.put(f.rgba);
+    res
 }
 
 /// Поточечный эффект как барьер: f64-континуум формулы тапа на каждом

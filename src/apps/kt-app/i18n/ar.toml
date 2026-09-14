@@ -344,6 +344,11 @@ x2 = "أسفل يسار X"
 y2 = "أسفل يسار Y"
 x3 = "أسفل يمين X"
 y3 = "أسفل يمين Y"
+offset_x = "إزاحة X"
+offset_y = "إزاحة Y"
+opacity = "العتامة"
+center_x = "المركز X"
+center_y = "المركز Y"
 
 [fxreg]
 add = "+ مؤثر…"
@@ -404,6 +409,12 @@ duotone = "لونان تدرج duotone"
 posterize = "تدرج لوني مستويات posterize"
 vignette = "تظليل الزوايا vignette"
 corner_pin = "زوايا منظور corner pin"
+sharpen = "حدة تفاصيل sharpen"
+pixelate = "بكسلة فسيفساء pixelate"
+chromatic_aberration = "زيغ لوني عدسة chromatic"
+radial_blur = "ضبابية شعاعية دوران radial"
+drop_shadow = "ظل خلفي drop shadow"
+halftone = "نقاط طباعة halftone"
 
 # Редактор FX клипа.
 [fx]
@@ -481,6 +492,7 @@ chain_on = "السلسلة"
 chain_on_hint = "مفتاح رئيسي: يوقف السلسلة كاملة دون المساس بالخانات"
 shadow_color = "الظلال"
 high_color = "الإضاءات"
+spin = "دوران"
 
 [render]
 already_running = "هناك تصدير جارٍ بالفعل"

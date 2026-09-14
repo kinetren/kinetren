@@ -344,6 +344,11 @@ x2 = "左下 X"
 y2 = "左下 Y"
 x3 = "右下 X"
 y3 = "右下 Y"
+offset_x = "偏移 X"
+offset_y = "偏移 Y"
+opacity = "不透明度"
+center_x = "中心 X"
+center_y = "中心 Y"
 
 [fxreg]
 add = "+ 特效…"
@@ -404,6 +409,12 @@ duotone = "双色调 渐变映射 duotone"
 posterize = "色调分离 色阶 posterize"
 vignette = "暗角 晕影 vignette"
 corner_pin = "边角定位 透视 corner pin"
+sharpen = "锐化 细节 sharpen unsharp"
+pixelate = "像素化 马赛克 pixelate"
+chromatic_aberration = "色差 镜头 紫边 chromatic"
+radial_blur = "径向模糊 缩放 旋转 radial"
+drop_shadow = "投影 阴影 drop shadow"
+halftone = "半调 网点 印刷 halftone"
 
 # Редактор FX клипа.
 [fx]
@@ -481,6 +492,7 @@ chain_on = "效果链"
 chain_on_hint = "总开关：关闭整条效果链，不改动各个槽位的状态"
 shadow_color = "阴影"
 high_color = "高光"
+spin = "旋转"
 
 [render]
 already_running = "已经在导出了"

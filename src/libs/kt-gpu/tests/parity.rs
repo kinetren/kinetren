@@ -794,6 +794,15 @@ fn t329_parity_cycle_over_the_registry() {
         ("posterize", FrameTol::THRESHOLD, FrameTol::THRESHOLD),
         ("vignette", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("corner_pin", FrameTol::GEOM, FrameTol::GEOM),
+        // Р.47 Кв3: барьеры. Pixelate — целочисленная копия (EXACT
+        // одиночный); drop_shadow на непрозрачном входе — тождество по
+        // формуле; halftone — жёсткий край точки (пороговый класс)
+        ("sharpen", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("pixelate", FrameTol::EXACT, FrameTol::BILINEAR),
+        ("chromatic_aberration", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("radial_blur", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("drop_shadow", FrameTol::EXACT, FrameTol::BILINEAR),
+        ("halftone", FrameTol::THRESHOLD, FrameTol::THRESHOLD),
     ];
     let table: std::collections::BTreeMap<&str, (FrameTol, FrameTol)> =
         classes.iter().map(|(t, a, b)| (*t, (*a, *b))).collect();
@@ -903,4 +912,26 @@ fn t329_parity_cycle_over_the_registry() {
         assert_eq!(cc, cg, "tuned {}: complete diverged (sandwich)", f.tag());
         assert_frames_close(&cpu, &gpu, W, H, *tol_sand, &format!("tuned-sandwich-{}", f.tag()));
     }
+    // Р.47 Кв3: spin-ветка радиального размытия (дуга — тригонометрия
+    // f32 против f64) и тень на НАСТОЯЩЕЙ альфе (после greenscreen —
+    // THRESHOLD, порог ключа рвёт билинейную гладкость)
+    let spin = FxInstance::RadialBlur { amount: 0.6, center_x: 0.2, center_y: -0.1, spin: true };
+    let src = Src::new(9700, Some(frame(W, H, false, 0)), vec![spin.clone()]);
+    let p = plan(90_000, vec![one(&src, 4096, false)]);
+    let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);
+    assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, "tuned-radial-spin");
+    let shadow_chain = vec![
+        FxInstance::greenscreen([0, 255, 0], 70, 25),
+        FxInstance::drop_shadow(),
+    ];
+    let src = Src::new(9702, Some(frame(W, H, false, 0)), shadow_chain.clone());
+    let p = plan(90_000, vec![one(&src, 4096, false)]);
+    let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);
+    assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, "tuned-shadow-alpha");
+    let mut with_zoom = shadow_chain;
+    with_zoom.push(zoom2.clone());
+    let src = Src::new(9704, Some(frame(W, H, false, 0)), with_zoom);
+    let p = plan(90_000, vec![one(&src, 4096, false)]);
+    let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);
+    assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, "tuned-shadow-alpha-zoom");
 }

@@ -46,6 +46,15 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         "Posterize" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::POSTERIZE)),
         "Vignette" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VIGNETTE)),
         "Corner Pin" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::CORNER_PIN)),
+        // Р.47 Кв3: барьеры
+        "Sharpen" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::SHARPEN)),
+        "Pixelate" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::PIXELATE)),
+        "Chromatic Aberration" => {
+            (k::fxreg::cat::DISTORT, Some(k::fxreg::kw::CHROMATIC_ABERRATION))
+        }
+        "Radial Blur" => (k::fxreg::cat::BLUR, Some(k::fxreg::kw::RADIAL_BLUR)),
+        "Drop Shadow" => (k::fxreg::cat::KEY, Some(k::fxreg::kw::DROP_SHADOW)),
+        "Halftone" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::HALFTONE)),
         _ => (k::fxreg::cat::VIDEO, None),
     }
 }
@@ -368,14 +377,15 @@ mod tests {
         assert_eq!(filter_entries(reg, true, "РевЕрб").len(), 1, "кириллический keyword");
         assert_eq!(filter_entries(reg, false, "виш").len(), 0);
         assert_eq!(filter_entries(reg, false, "vhs").len(), 1);
-        assert_eq!(filter_entries(reg, false, "blur").len(), 1);
+        // Р.47 Кв3: "blur" находит Blur И Radial Blur
+        assert_eq!(filter_entries(reg, false, "blur").len(), 2);
         assert_eq!(filter_entries(reg, true, "gain").len(), 1);
         assert!(filter_entries(reg, true, "vhs").is_empty(), "видео-эффект не в аудио-списке");
         // Р.19: английские ключевые слова обязаны находить эффект В ЛЮБОМ
         // языке — имя эффекта не переводится, и искать его будут по нему
         for lang in crate::i18n::Lang::ALL {
             crate::i18n::set_lang(lang);
-            assert_eq!(filter_entries(reg, false, "blur").len(), 1, "blur в {}", lang.code());
+            assert_eq!(filter_entries(reg, false, "blur").len(), 2, "blur в {}", lang.code());
             assert_eq!(filter_entries(reg, false, "vhs").len(), 1, "vhs в {}", lang.code());
             assert_eq!(filter_entries(reg, true, "reverb").len(), 1, "reverb в {}", lang.code());
         }
