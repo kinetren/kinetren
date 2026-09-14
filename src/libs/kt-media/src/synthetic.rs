@@ -210,6 +210,93 @@ impl MediaSource for SyntheticSource {
     }
 }
 
+/// Источник с НАСТОЯЩИМ нативным разрешением и честной минификацией
+/// (Р.46): `SyntheticSource` рисует заливку в любой запрошенный размер,
+/// поэтому на нём невозможно измерить ни потерю деталей при декоде в
+/// Quality, ни их возврат при декоде крупнее.
+///
+/// Фактура — вертикальные полосы шириной 2 px В НАТИВЕ: ужатие вдвое их
+/// сохраняет (box берёт пары одного цвета), ужатие вчетверо гасит в ровный
+/// серый. Поэтому «декод в Quality» и «декод крупнее» различимы прямо по
+/// контрасту готового кадра. Запрос КРУПНЕЕ натива растягивает ближайшим
+/// соседом — деталей не прибавляется, как и у настоящего sws.
+pub struct CheckerSource {
+    info: MediaInfo,
+    /// Нативный размер (детализация есть только на нём).
+    native: (u32, u32),
+}
+
+impl CheckerSource {
+    pub fn new(duration: Tick, native_w: u32, native_h: u32) -> CheckerSource {
+        CheckerSource {
+            info: MediaInfo {
+                duration,
+                has_video: true,
+                has_audio: false,
+                fps: Some((30, 1)),
+                width: native_w.max(2),
+                height: native_h.max(2),
+            },
+            native: (native_w.max(2), native_h.max(2)),
+        }
+    }
+
+    /// Значение фактуры в нативных координатах (серый канал).
+    fn native_px(x: u32) -> u8 {
+        if (x / 2) % 2 == 0 { 16 } else { 239 }
+    }
+}
+
+impl MediaSource for CheckerSource {
+    fn info(&self) -> &MediaInfo {
+        &self.info
+    }
+
+    fn read_audio_burst(&mut self, idx: i64) -> Result<AudioBurst, MediaError> {
+        Ok(AudioBurst::silence(idx))
+    }
+
+    fn read_video_frame(
+        &mut self,
+        pts: Tick,
+        quality: Option<Quality>,
+    ) -> Result<VideoFrame, MediaError> {
+        let (nw, nh) = self.native;
+        let q = quality.unwrap_or(Quality { width: nw, height: nh });
+        let (w, h) = (q.width.max(2) & !1, q.height.max(2) & !1);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        for x in 0..w {
+            // box по нативному диапазону этого выходного столбца; при
+            // увеличении диапазон вырождается в один нативный пиксель
+            let x0 = (x as u64 * nw as u64 / w as u64) as u32;
+            let x1 = (((x as u64 + 1) * nw as u64).div_ceil(w as u64) as u32).max(x0 + 1).min(nw);
+            let mut sum = 0u32;
+            for nx in x0..x1 {
+                sum += Self::native_px(nx) as u32;
+            }
+            let v = (sum / (x1 - x0)) as u8;
+            for y in 0..h {
+                let i = ((y * w + x) * 4) as usize;
+                rgba[i] = v;
+                rgba[i + 1] = v;
+                rgba[i + 2] = v;
+                rgba[i + 3] = 255;
+            }
+        }
+        Ok(VideoFrame {
+            pts,
+            width: w,
+            height: h,
+            rgba: rgba.into_boxed_slice(),
+            has_alpha: false,
+        })
+    }
+
+    fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
+        Some(Tick(pts.0.max(0)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

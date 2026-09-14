@@ -141,6 +141,7 @@ pub struct Player {
     /// display_extrapolation). (последний head, момент, EMA шага).
     video_clock: Mutex<(i64, std::time::Instant, i64)>,
     workers: Workers,
+    natives: Natives,
     project: Arc<Mutex<Project>>,
     model_dirty: Arc<AtomicBool>,
     video: Mutex<VideoRenderer>,
@@ -201,14 +202,22 @@ impl Player {
         let loop_region: Arc<Mutex<Option<(i64, i64)>>> = Arc::new(Mutex::new(None));
         let decode_stats = Arc::new(DecodeStats::default());
         let mut workers = HashMap::new();
+        // нативные размеры источников (Р.46, п.321): ступень декода живёт
+        // в рендерере, а узнать натив можно только у открытого источника
+        let mut nat: HashMap<MediaId, (u32, u32)> = HashMap::new();
         for (media, src) in sources {
+            let i = src.info();
+            if i.has_video {
+                nat.insert(media, (i.width, i.height));
+            }
             workers.insert(
                 media,
                 MediaWorker::spawn_with_stats(media, src, cache.clone(), decode_stats.clone()),
             );
         }
         let workers: Workers = Arc::new(std::sync::RwLock::new(workers));
-        let video = Mutex::new(VideoRenderer::new(&project));
+        let natives: Natives = Arc::new(std::sync::RwLock::new(nat));
+        let video = Mutex::new(VideoRenderer::new_with_natives(&project, &natives.read().unwrap()));
         let video_gpu = Mutex::new(VideoGpuState::default());
         let project = Arc::new(Mutex::new(project));
         let model_dirty = Arc::new(AtomicBool::new(true));
@@ -269,6 +278,7 @@ impl Player {
             let cache = cache.clone();
             let transport = transport.clone();
             let workers = workers.clone();
+            let natives_p = natives.clone();
             let project = project.clone();
             let stop = stop.clone();
             let quality = preview_quality.clone();
@@ -277,8 +287,8 @@ impl Player {
                 .name("prefetch".into())
                 .spawn(move || {
                     prefetch_loop(
-                        cache, transport, workers, project, quality, stop, wake_p, stats_p,
-                        version_p, region_p,
+                        cache, transport, workers, natives_p, project, quality, stop, wake_p,
+                        stats_p, version_p, region_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -286,6 +296,7 @@ impl Player {
 
         let player = Player {
             cache,
+            natives,
             flight,
             transport,
             shared,
@@ -318,7 +329,8 @@ impl Player {
     }
 
     fn wake_after_project_swap(&self, p: Project) {
-        *self.video.lock().unwrap() = VideoRenderer::new(&p);
+        *self.video.lock().unwrap() =
+            VideoRenderer::new_with_natives(&p, &self.natives.read().unwrap());
         *self.project.lock().unwrap() = p;
         self.model_dirty.store(true, Ordering::Release);
         self.wake.notify();
@@ -451,6 +463,7 @@ impl Player {
     /// на общий кэш; транспорт, кольцо, FX-state и прогретый кэш нетронуты
     /// (регрессия п.27: раньше добавление файла сбрасывало весь кэш).
     pub fn add_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
+        self.remember_native(media, source.as_ref());
         let w = MediaWorker::spawn_with_stats(
             media,
             source,
@@ -460,6 +473,7 @@ impl Player {
         if let Some(old) = self.workers.write().unwrap().insert(media, w) {
             old.shutdown();
         }
+        self.rebuild_video_renderer();
     }
 
     /// Заменить источник медиа НА ХОДУ (Р.33 п.10: пропавший файл вернулся
@@ -472,6 +486,9 @@ impl Player {
         if let Some(old) = self.workers.write().unwrap().remove(&media) {
             old.shutdown();
         }
+        // натив нового файла может отличаться от заглушки — ступень декода
+        // обязана пересчитаться на следующей пересборке рендерера (Р.46)
+        self.remember_native(media, source.as_ref());
         self.cache.invalidate_source(kt_cache::SourceId(media.0));
         let w = MediaWorker::spawn_with_stats(
             media,
@@ -480,6 +497,9 @@ impl Player {
             self.decode_stats.clone(),
         );
         self.workers.write().unwrap().insert(media, w);
+        // натив мог смениться (заглушка → настоящий файл) — рендерер
+        // превью обязан пересчитать ступени, не дожидаясь правки проекта
+        self.rebuild_video_renderer();
         // состав источников изменился — префетч обязан проснуться и
         // прогреть кэш заново (в простое он пропускает проходы, пока
         // сигнатура состояния та же, и без бампа версии не заметил бы)
@@ -493,6 +513,37 @@ impl Player {
         if let Some(w) = self.workers.write().unwrap().remove(&media) {
             w.shutdown();
         }
+        self.natives.write().unwrap().remove(&media);
+    }
+
+    /// Пересобрать рендерер превью под текущие нативы (Р.46, п.321):
+    /// префетч-поток делает это сам по версии проекта, а рендерер плеера
+    /// живёт до подмены модели — без этого вернувшийся файл не менял бы
+    /// ступень до первой правки таймлайна.
+    fn rebuild_video_renderer(&self) {
+        let p = self.project.lock().unwrap().clone();
+        *self.video.lock().unwrap() =
+            VideoRenderer::new_with_natives(&p, &self.natives.read().unwrap());
+    }
+
+    /// Запомнить нативный размер источника (Р.46, п.321). Источник без
+    /// видео ступени не получает вовсе.
+    fn remember_native(&self, media: kt_model::MediaId, src: &dyn kt_media::MediaSource) {
+        let i = src.info();
+        let mut nat = self.natives.write().unwrap();
+        if i.has_video {
+            nat.insert(media, (i.width, i.height));
+        } else {
+            nat.remove(&media);
+        }
+    }
+
+    /// Качества декода видео-клипов при текущем Quality превью (Р.46,
+    /// п.322): полоски прогретости обязаны спрашивать coverage по НИМ, а
+    /// не по Quality — иначе прогретый клип показан холодным.
+    pub fn video_decode_qualities(&self) -> Vec<(kt_model::ClipId, Quality)> {
+        let q = self.preview_quality();
+        self.video.lock().unwrap().video_decode_qualities(q)
     }
 
     /// Момент, который сейчас СЛЫШНО (для выбора видеокадра превью):
@@ -653,6 +704,9 @@ struct RenderCtx {
 /// регрессия п.27: раньше добавление файла пересоздавало Player и сбрасывало
 /// весь прогретый кэш). Пишущие захваты — только короткие, из UI-потока.
 type Workers = Arc<std::sync::RwLock<HashMap<MediaId, MediaWorker>>>;
+/// Нативные размеры видео-источников (Р.46, п.321): их знает только
+/// открытый источник, а нужны они рендереру на каждой пересборке.
+type Natives = Arc<std::sync::RwLock<HashMap<MediaId, (u32, u32)>>>;
 
 fn audio_render_loop(ctx: RenderCtx) {
     let RenderCtx {
@@ -1091,6 +1145,7 @@ fn prefetch_loop(
     cache: Arc<BurstCache>,
     transport: Arc<Transport>,
     workers: Workers,
+    natives: Natives,
     project: Arc<Mutex<Project>>,
     preview_quality: Arc<Mutex<Quality>>,
     stop: Arc<AtomicBool>,
@@ -1133,7 +1188,8 @@ fn prefetch_loop(
         if cached.as_ref().map(|(v, _, _)| *v) != Some(version) {
             let p = project.lock().unwrap().clone();
             loop_stats.prefetch_rebuilds.fetch_add(1, Ordering::Relaxed);
-            cached = Some((version, AudioRenderer::new(&p), VideoRenderer::new(&p)));
+            let vr = VideoRenderer::new_with_natives(&p, &natives.read().unwrap());
+            cached = Some((version, AudioRenderer::new(&p), vr));
         }
         let (_, renderer, video) = cached.as_ref().unwrap();
         let generation = transport.generation();

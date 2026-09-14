@@ -247,3 +247,58 @@ fn t211_replace_media_swaps_source_and_drops_its_cache() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
+
+/// Тест 316 (Р.46, п.321): вернувшийся файл приносит СВОЙ натив, и ступень
+/// декода пересчитывается на ходу. Пока на месте заглушка (натив мельче
+/// Quality) клип с зумом декодируется как обычно; подменили источником с
+/// запасом — качество декода клипа выросло, и полоски/префетч обязаны
+/// спрашивать уже его.
+#[test]
+fn t316_replace_media_updates_the_decode_stage() {
+    let mut p =
+        Project::new(ProjectSettings { fps: 30, width: 128, height: 72, sample_rate: 48000 });
+    p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx: vec![FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 }],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    let small: Box<dyn kt_media::MediaSource> =
+        Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence));
+    let (player, _consumer) = Player::new(p, vec![(MediaId(1), small)]);
+    player.set_preview_quality(kt_media::Quality { width: 128, height: 72 });
+    assert_eq!(
+        player.video_decode_qualities(),
+        vec![(ClipId(1), kt_media::Quality { width: 128, height: 72 })],
+        "у источника 64x36 запаса над Quality нет — ступени быть не может"
+    );
+
+    player.replace_media(
+        MediaId(1),
+        Box::new(kt_media::synthetic::CheckerSource::new(Tick(90_000 * 60), 512, 288)),
+    );
+    // пересборка рендерера идёт по версии проекта (её бампает replace_media)
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if player.video_decode_qualities()
+            == vec![(ClipId(1), kt_media::Quality { width: 256, height: 144 })]
+        {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "ступень не пересчиталась после подмены");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}

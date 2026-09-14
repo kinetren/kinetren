@@ -62,6 +62,15 @@ struct VideoClip {
     /// `None` — линейный путь БАЙТ-В-БАЙТ прежний, и на этом стоит
     /// GOLDEN_VIDEO.
     warp: Option<VideoWarp>,
+    /// МАКСИМУМ нетто-зума цепочки за всю длительность клипа (Р.46,
+    /// п.320): сколько раз цепочке нужен вход крупнее Quality. Считается
+    /// один раз при построении рендерера (кривые автоматизации и камеры
+    /// сэмплируются по сетке), ступень — по клипу целиком (решение
+    /// владельца: один ключ кэша на клип).
+    head_zoom: f64,
+    /// Нативный размер файла, если известен. `None` — ступень 1: раздувать
+    /// декод вслепую нельзя (заглушка отсутствующего файла, синтетика).
+    native: Option<(u32, u32)>,
 }
 
 // Карта варпа клипа переехала в kt-model (Р.39): конструктор один на
@@ -208,12 +217,29 @@ pub fn video_cache_idx(source_pts: Tick) -> i64 {
     source_pts.0
 }
 
-/// Ступень декода клипа (Р.46, п.318): во сколько ЦЕЛЫХ раз пре-FX кадр
+/// Ступень декода клипа (Р.46, п.320): во сколько ЦЕЛЫХ раз пре-FX кадр
 /// берётся крупнее Quality. Чистая функция от клипа и Quality —
-/// детерминирована, от устройства и бюджетов не зависит (иначе экспорт
-/// зависел бы от машины). Включение — п.321.
-fn clip_decode_scale(_clip: &VideoClip, _quality: Quality) -> u32 {
-    1
+/// детерминирована, от устройства и бюджетов НЕ зависит (иначе экспорт
+/// зависел бы от машины).
+///
+/// Три множителя: сколько просит цепочка (`head_zoom` клипа, тем же
+/// квантом, что тапы суперсемплинга), сколько может дать файл (запас
+/// натива над Quality, округление ВВЕРХ — решение владельца: остаток
+/// дотянет sws при декоде) и потолок промежуточных буферов.
+fn clip_decode_scale(clip: &VideoClip, quality: Quality) -> u32 {
+    let (qw, qh) = (quality.width.max(2), quality.height.max(2));
+    let want = kt_fx::geom::ss_taps(clip.head_zoom);
+    if want <= 1 {
+        return 1;
+    }
+    let Some((nw, nh)) = clip.native else { return 1 };
+    // запас файла: сколько ЦЕЛЫХ Quality в нативе, с округлением вверх
+    // (натив 1920 при Quality 1280 — это ступень 2, а не 1)
+    let spare_w = (nw as f64 / qw as f64).ceil() as u32;
+    let spare_h = (nh as f64 / qh as f64).ceil() as u32;
+    let spare = spare_w.min(spare_h).max(1);
+    let cap = (kt_fx::plan::MAX_INTER_DIM / qw.max(qh)).max(1);
+    want.min(spare).min(cap)
 }
 
 /// Качество декода клипа. ЕДИНСТВЕННОЕ место решения: заказ префетча,
@@ -227,8 +253,109 @@ fn clip_decode_quality(clip: &VideoClip, quality: Quality) -> Quality {
     Quality { width: quality.width * s, height: quality.height * s }
 }
 
+/// Максимум нетто-зума цепочки за длительность клипа (Р.46, п.320).
+/// Кривые сэмплируются по ЛИНЕЙНОЙ материальной оси — той же, по которой
+/// их читает `layer_src`; камеры — по таймлайну. Точки: равномерная сетка,
+/// оба конца и все ключи кривых (экстремум зума почти всегда в ключе).
+/// Логическая база — размер ПРОЕКТА: зум почти не зависит от Quality
+/// (расхождения целочисленных огрублений сетки мельче кванта ступени), а
+/// ступень обязана быть одинаковой на превью и экспорте.
+fn clip_head_zoom(
+    fx: &[kt_model::FxInstance],
+    auto: &[Vec<kt_model::ParamCurve>],
+    start: Tick,
+    end: Tick,
+    source_in: Tick,
+    reversed: bool,
+    grid: &FpsGrid,
+    cameras: &[kt_model::CameraEvent],
+    project_size: (u32, u32),
+) -> f64 {
+    if !kt_fx::video::has_video_fx(fx) {
+        return 1.0;
+    }
+    let (pw, ph) = (project_size.0.max(2), project_size.1.max(2));
+    let has_3d = fx.iter().any(|f| matches!(f, kt_model::FxInstance::Pan3d { .. }));
+    let live = auto.iter().any(|c| c.iter().any(|p| !p.keys.is_empty()));
+    let span = (end.0 - start.0).max(1);
+    let mut probes: Vec<Tick> = Vec::new();
+    if live || has_3d || !cameras.is_empty() {
+        const GRID: i64 = 32;
+        for i in 0..=GRID {
+            probes.push(Tick(start.0 + span * i / GRID));
+        }
+        for curves in auto {
+            for c in curves {
+                for k in &c.keys {
+                    // ключ живёт в МАТЕРИАЛЬНОЙ оси — переводим в таймлайн
+                    let t = kt_model::clip_timeline_at(
+                        source_in,
+                        start,
+                        Tick(span),
+                        reversed,
+                        grid.frame_step(),
+                        k.t,
+                    );
+                    if start.0 <= t.0 && t.0 <= end.0 {
+                        probes.push(t);
+                    }
+                }
+            }
+        }
+        for cam in cameras {
+            for t in [cam.start, Tick(cam.start.0 + cam.duration.0)] {
+                if start.0 <= t.0 && t.0 <= end.0 {
+                    probes.push(t);
+                }
+            }
+        }
+    } else {
+        // статика: зум одинаков на всей длительности, хватает середины
+        probes.push(Tick(start.0 + span / 2));
+    }
+    let mut best = 1.0f64;
+    let mut owned = fx.to_vec();
+    for t in probes {
+        let mat = kt_model::clip_material_at(source_in, start, Tick(span), reversed, grid.frame_step(), t);
+        if live {
+            owned.clone_from_slice(fx);
+            for (i, f) in owned.iter_mut().enumerate() {
+                if let Some(curves) = auto.get(i) {
+                    kt_model::apply_fx_auto(f, curves, mat);
+                }
+            }
+        }
+        let cam3d = has_3d.then(|| {
+            let ev = kt_model::active_camera_in(cameras, t);
+            let cam = ev.map(|e| e.params_at(t)).unwrap_or_default();
+            // логика считается на размере проекта — world_scale ровно 1
+            Cam3d { cam, world_scale: 1.0 }
+        });
+        let u = (t.0 - start.0) as f64 / span as f64;
+        best = best.max(kt_fx::plan::chain_head_zoom(&owned, pw, ph, u, cam3d));
+    }
+    best
+}
+
 impl VideoRenderer {
     pub fn new(project: &Project) -> VideoRenderer {
+        VideoRenderer::new_with_natives(project, &std::collections::HashMap::new())
+    }
+
+    /// Рендерер, знающий НАТИВНЫЕ размеры источников (Р.46, п.320): без
+    /// них ступень декода всегда 1 — раздувать декод, не зная запаса
+    /// файла, нельзя. Плеер и экспорт зовут этот конструктор.
+    pub fn new_with_natives(
+        project: &Project,
+        natives: &std::collections::HashMap<MediaId, (u32, u32)>,
+    ) -> VideoRenderer {
+        VideoRenderer::build(project, natives)
+    }
+
+    fn build(
+        project: &Project,
+        natives: &std::collections::HashMap<MediaId, (u32, u32)>,
+    ) -> VideoRenderer {
         // effective_clips: morpher'ы применены здесь, движок их не видит (H1)
         let effective = project.effective_clips();
         let grid = FpsGrid::new(project.settings.fps);
@@ -247,6 +374,19 @@ impl VideoRenderer {
                     c.source_in,
                     c.reversed,
                     grid.frame_step(),
+                );
+                // ступень декода — свойство клипа (Р.46): максимум зума по
+                // всей длительности, считается до перемещения цепочки
+                let head_zoom = clip_head_zoom(
+                    &fx,
+                    &auto,
+                    c.start,
+                    c.start + c.duration,
+                    c.source_in,
+                    c.reversed,
+                    &grid,
+                    &project.cameras,
+                    (project.settings.width, project.settings.height),
                 );
                 VideoClip {
                     id: c.id,
@@ -269,6 +409,8 @@ impl VideoRenderer {
                     head_ext: Tick::ZERO,
                     tail_ext: Tick::ZERO,
                     warp,
+                    head_zoom,
+                    native: natives.get(&c.media).copied(),
                 }
             })
             .collect();
@@ -355,6 +497,14 @@ impl VideoRenderer {
         out.sort();
         out.dedup();
         out
+    }
+
+    /// Качество декода каждого видео-клипа (Р.46, п.322): полоски
+    /// прогретости в UI спрашивают coverage по НЕМУ. Id — эффективного
+    /// клипа (морфер-слой мог нарезать исходный на куски с разными
+    /// цепочками, а значит и разными ступенями).
+    pub fn video_decode_qualities(&self, quality: Quality) -> Vec<(kt_model::ClipId, Quality)> {
+        self.clips.iter().map(|c| (c.id, clip_decode_quality(c, quality))).collect()
     }
 
     /// Максимальное качество декода среди клипов (Р.46, п.318): бюджеты
