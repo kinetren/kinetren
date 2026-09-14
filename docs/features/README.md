@@ -256,7 +256,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-AUD-008 | Автоматическая нарезка по тишине | кандидат | B | M | нет | `audio/processing/silence-detection-and-auto-cut.md` |
 | F-AUD-010 | Модуляции — chorus, flanger, phaser, tremolo, autopan, vibrato | сделано | B | M | да | `audio/processing/modulation-family.md` |
 | F-AUT-002 | Домен ключа — материал источника или время таймлайна | уже-есть | B | M | да | `automation/keyframes/keyframe-domain-source-vs-timeline.md` |
-| F-AUT-004 | Пресеты эффектов, которые несут анимацию | в-работе | B | M | частично | `automation/presets/presets-carrying-automation.md` |
+| F-AUT-004 | Пресеты эффектов, которые несут анимацию | сделано | B | M | да | `automation/presets/presets-carrying-automation.md` |
 | F-AUT-005 | Ловушки правки ключевых кадров | кандидат | B | M | частично | `automation/keyframes/inserting-and-editing-pitfalls.md` |
 | F-CLR-004 | LUT 1D и 3D (.cube) — технические против творческих | кандидат | B | M | нет | `color/management/lut-1d-and-3d.md` |
 | F-CLR-005 | Приборы — waveform, parade, вектороскоп, гистограмма, false color | кандидат | B | M | нет | `color/scopes/waveform-parade-vectorscope.md` |

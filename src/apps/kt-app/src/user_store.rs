@@ -360,6 +360,46 @@ mod tests {
         assert!(store.add("Mine", &chain_with_curve()).is_err(), "запись обязана отказать");
     }
 
+    /// Тест 347 (Р.48, п.346): куда пресет законно вставить, решает
+    /// РЕЕСТР, а не догадка. Смешанная цепочка не видна ни в аудио-, ни
+    /// в видео-окне — но морферу она законна, и он показывает всю
+    /// библиотеку (в патче живут обе стороны).
+    #[test]
+    fn t347_preset_compatibility_comes_from_the_registry() {
+        let mut store = FxPresetStore::default();
+        let block = |fx: Vec<kt_model::FxInstance>| kt_model::ops::FxChainBlock {
+            slots: fx
+                .into_iter()
+                .map(|f| kt_model::ops::FxSlotBlock { fx: f, bypass: false, curves: vec![] })
+                .collect(),
+            src_in: kt_time::Tick(0),
+            fx_off: false,
+        };
+        store.add("audio only", &block(vec![kt_model::FxInstance::gain(-3.0)])).unwrap();
+        store.add("video only", &block(vec![kt_model::FxInstance::blur(8)])).unwrap();
+        store
+            .add("both sides", &block(vec![kt_model::FxInstance::slowed_reverb(0.8, 0.3, 80.0)]))
+            .unwrap();
+        store
+            .add(
+                "mixed",
+                &block(vec![kt_model::FxInstance::gain(-3.0), kt_model::FxInstance::blur(8)]),
+            )
+            .unwrap();
+        let mut by = |name: &str| store.rows().iter().find(|r| r.name == name).cloned().unwrap();
+        let g = by("audio only");
+        assert!(g.audio_ok && !g.video_ok, "громкость — только звук");
+        let b = by("video only");
+        assert!(!b.audio_ok && b.video_ok, "блюр — только видео");
+        let sr = by("both sides");
+        assert!(sr.audio_ok && sr.video_ok, "Slowed+Reverb законен обеим сторонам");
+        let m = by("mixed");
+        assert!(
+            !m.audio_ok && !m.video_ok,
+            "смешанная цепочка не видна ни в аудио-, ни в видео-окне (морферу её покажут все)"
+        );
+    }
+
     /// Тест 344c: заводской файл — валидный, полный и разнообразный.
     /// Он в бинаре, значит разбирается тем же кодом на каждом запуске.
     #[test]

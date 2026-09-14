@@ -1,18 +1,18 @@
 ---
 id: F-AUT-004
 title: Пресеты эффектов, которые несут анимацию
-status: в-работе
+status: сделано
 priority: B
 cost: M
 category: automation/presets
 editors: [premiere-26, vegas-pro-2026, resolve-20, fcp-12, after-effects-26]
-we_have: частично
+we_have: да
 crates: [kt-model, kt-app, kt-otio]
 invariants: [3, 11]
 ui_rules: [4, 17, 20]
 round: "Р.48"
-point: null
-tests: []
+point: 345
+tests: [344, 345, 346, 347]
 depends_on: [F-AUT-002, F-MPH-008]
 checked: 2026-09-14
 ---
@@ -311,3 +311,8 @@ Premiere и «Keyframes Aligning Start Frames» у Resolve. Комментари
   https://pixeltoolspost.com/blogs/resolve/powergrades (дата обращения 2026-09-07)
 - Живьём в редакторах не проверялось: Premiere/FCP/AE/Resolve — по официальной
   справке и форумным тредам, Vegas — по справке и Creative COW.
+
+**Реализовано в Р.48** — docs/porting-notes.md пп.342-346 (t342-t347);
+дальнейшая жизнь фичи там. Режимы переноса кривых кроме «вход к входу»
+(Scale, Anchor-Out) остаются за F-AUT-002 — в раунде сделан только тот,
+что уже был канонической механикой копипаста.
