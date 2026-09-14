@@ -56,6 +56,8 @@ struct Src {
     fx_hash: u64,
     u: f64,
     cam3d: Option<kt_engine::Cam3d>,
+    /// Ступень декода слоя (Р.46): кадр в src_scale раз крупнее Quality.
+    src_scale: u32,
 }
 
 impl Src {
@@ -70,6 +72,7 @@ impl Src {
             fx_hash: xxhash_rust::xxh3::xxh3_64(repr.as_bytes()),
             u: 0.5,
             cam3d: None,
+            src_scale: 1,
         }
     }
 
@@ -77,7 +80,7 @@ impl Src {
         LayerSrc {
             source: self.source,
             cache_idx: 0,
-            src_scale: 1,
+            src_scale: self.src_scale,
             frame: self.frame.clone(),
             fx: std::borrow::Cow::Borrowed(&self.fx[..]),
             fx_hash: self.fx_hash,
@@ -456,6 +459,84 @@ fn t181_effect_parity_gpu_vs_cpu() {
         assert_eq!(cc, cg, "{name}: complete разошёлся");
         assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, name);
     }
+}
+
+/// Тест 309 (п.319, Р.46): СТУПЕНЬ ДЕКОДА на GPU. Пре-FX кадр приходит
+/// вдвое крупнее Quality (`src_scale = 2`), план строится в логике, а
+/// исполняется на крупном буфере: конъюгация, ведущие барьеры в 2×,
+/// поглощённые поточечные и Legacy-зеркало обязаны совпасть с CPU в тех же
+/// допусках, что и K×-барьеры Р.45.
+#[test]
+fn t309_decode_stage_parity_gpu_vs_cpu() {
+    let Some(engine) = test_engine() else { return };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let cases: Vec<(&str, Vec<FxInstance>, FrameTol)> = vec![
+        // чистая конъюгация: 2×-вход сводится зумом ровно в Quality
+        ("s2-zoom", vec![zoom2.clone()], FrameTol::BILINEAR),
+        // ведущий барьер исполняется в 2× (ресемпла до него не было)
+        (
+            "s2-vhs-zoom",
+            vec![FxInstance::vhs(4, 0.4), zoom2.clone()],
+            FrameTol::BILINEAR,
+        ),
+        // ступень + сетка выше барьера: K берётся по обоим источникам
+        (
+            "s2-grid-vhs-zoom",
+            vec![grid2.clone(), FxInstance::vhs(2, 0.3), zoom2.clone()],
+            FrameTol::BILINEAR,
+        ),
+        // зеркало на равных краях — старое ядро прямо на 2×-буфере
+        (
+            "s2-mirror-zoom",
+            vec![
+                FxInstance::Mirror { horizontal: true, vertical: false },
+                FxInstance::vhs(4, 0.4),
+                zoom2.clone(),
+            ],
+            FrameTol::BILINEAR,
+        ),
+        // поглощённые поточечные на сабтапе крупного входа
+        (
+            "s2-tap-gs",
+            vec![grid2, FxInstance::greenscreen([0, 255, 0], 70, 25), zoom2.clone()],
+            FrameTol::THRESHOLD,
+        ),
+        // ядро сценария фичи: зум ×2 берёт детали, которых в 1× не было
+        (
+            "s2-zoom-edges",
+            vec![zoom2, FxInstance::edges(48)],
+            FrameTol::THRESHOLD,
+        ),
+    ];
+    for (i, (name, fx, tol)) in cases.into_iter().enumerate() {
+        let mut src = Src::new(4000 + i as u64, Some(frame(W * 2, H * 2, false, 0)), fx);
+        src.src_scale = 2;
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert_eq!(cc, cg, "{name}: complete разошёлся");
+        assert_frames_close(&cpu, &gpu, W, H, tol, name);
+    }
+    // 3D на ступени: обратная гомография считается в логике, тапы — на
+    // крупном буфере (допуск GEOM — силуэт квада, как у t181)
+    let mut src = Src::new(4100, Some(frame(W * 2, H * 2, false, 0)), vec![FxInstance::Pan3d {
+        pos_x: 2.0,
+        pos_y: 0.0,
+        pos_z: 0.0,
+        rot_x: 0.0,
+        rot_y: 15.0,
+        rot_z: 0.0,
+        anchor_x: 0.5,
+        anchor_y: 0.5,
+        scale: 2.0,
+        camera: None,
+    }]);
+    src.src_scale = 2;
+    src.cam3d = Some(kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
+    let p = plan(90_000, vec![one(&src, 4096, false)]);
+    let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+    assert_eq!(cc, cg, "s2-pan3d: complete разошёлся");
+    assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, "s2-pan3d");
 }
 
 #[test]
