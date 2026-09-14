@@ -1932,6 +1932,33 @@ fn is_default_frame_mode(m: &FrameMode) -> bool {
     *m == FrameMode::Nearest
 }
 
+fn default_cutoff_hz() -> f32 {
+    800.0
+}
+fn default_resonance() -> f32 {
+    0.707
+}
+fn default_low_freq() -> f32 {
+    200.0
+}
+fn default_mid_freq() -> f32 {
+    1000.0
+}
+fn default_high_freq() -> f32 {
+    4000.0
+}
+fn default_drive_db() -> f32 {
+    12.0
+}
+fn default_half_f32() -> f32 {
+    0.5
+}
+fn default_bits() -> f32 {
+    8.0
+}
+fn default_crush_rate() -> f32 {
+    12000.0
+}
 fn default_one_f32() -> f32 {
     1.0
 }
@@ -2340,6 +2367,55 @@ pub enum FxInstance {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         automation: Vec<SlowedKeyframe>,
     },
+    /// Резонансный срез (Р.47): LP/HP/BP, RBJ-биквад.
+    Filter {
+        #[serde(default)]
+        mode: FilterMode,
+        #[serde(default = "default_cutoff_hz")]
+        cutoff_hz: f32,
+        #[serde(default = "default_resonance")]
+        resonance: f32,
+    },
+    /// Трёхполосный эквалайзер (Р.47): полка + пик + полка.
+    Eq {
+        #[serde(default, skip_serializing_if = "is_zero")]
+        low_gain_db: f32,
+        #[serde(default = "default_low_freq")]
+        low_freq_hz: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        mid_gain_db: f32,
+        #[serde(default = "default_mid_freq")]
+        mid_freq_hz: f32,
+        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
+        mid_q: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        high_gain_db: f32,
+        #[serde(default = "default_high_freq")]
+        high_freq_hz: f32,
+    },
+    /// Мягкое насыщение (Р.47): softclip с компенсацией уровня.
+    Distortion {
+        #[serde(default = "default_drive_db")]
+        drive_db: f32,
+        #[serde(default = "default_half_f32")]
+        tone: f32,
+        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
+        mix: f32,
+    },
+    /// Lo-fi деградация (Р.47): битовая глубина + удержание сэмпла.
+    Bitcrusher {
+        #[serde(default = "default_bits")]
+        bits: f32,
+        #[serde(default = "default_crush_rate")]
+        rate_hz: f32,
+        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
+        mix: f32,
+    },
+    /// Ширина стерео m/s (Р.47): 0 — моно, 1 — как записано, 2 — шире.
+    StereoWidth {
+        #[serde(default = "default_one_f32")]
+        width: f32,
+    },
     // ---- видео-FX (порт bc_fx.cpp, п.25; параметры и дефолты v1) ----------
     /// Кроп-рамка + пан/зум в размер проекта.
     Pan {
@@ -2510,7 +2586,13 @@ pub enum FxClass {
 impl FxInstance {
     pub fn class(&self) -> FxClass {
         match self {
-            FxInstance::Gain { .. } | FxInstance::SlowedReverb { .. } => FxClass::Audio,
+            FxInstance::Gain { .. }
+        | FxInstance::SlowedReverb { .. }
+        | FxInstance::Filter { .. }
+        | FxInstance::Eq { .. }
+        | FxInstance::Distortion { .. }
+        | FxInstance::Bitcrusher { .. }
+        | FxInstance::StereoWidth { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } => FxClass::Video3d,
             _ => FxClass::Video2d,
         }
@@ -2539,6 +2621,11 @@ impl FxInstance {
             FxInstance::Gain { .. } => "gain",
             FxInstance::LayerMix { .. } => "layer_mix",
             FxInstance::SlowedReverb { .. } => "slowed_reverb",
+            FxInstance::Filter { .. } => "filter",
+            FxInstance::Eq { .. } => "eq",
+            FxInstance::Distortion { .. } => "distortion",
+            FxInstance::Bitcrusher { .. } => "bitcrusher",
+            FxInstance::StereoWidth { .. } => "stereo_width",
             FxInstance::Pan { .. } => "pan",
             FxInstance::CamMotion { .. } => "cam_motion",
             FxInstance::Mirror { .. } => "mirror",
@@ -2565,6 +2652,11 @@ impl FxInstance {
                 FxInstance::gain(0.0),
                 FxInstance::LayerMix { amount: 1.0, from: 0 },
                 FxInstance::slowed_reverb(0.85, 0.35, 100.0),
+                FxInstance::filter(),
+                FxInstance::eq(),
+                FxInstance::distortion(),
+                FxInstance::bitcrusher(),
+                FxInstance::stereo_width(),
                 FxInstance::pan(),
                 FxInstance::cam_motion(),
                 FxInstance::mirror(),
@@ -2782,6 +2874,32 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
         predelay_ms: f32, 0.0, 200.0, 0.0, 1.0, Ms, Structural;
         width: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
+    Filter {
+        cutoff_hz: f32, 20.0, 20000.0, 800.0, 10.0, Hz, Smooth;
+        resonance: f32, 0.5, 10.0, 0.707, 0.01, None, Smooth;
+    },
+    Eq {
+        low_gain_db: f32, -24.0, 24.0, 0.0, 0.1, Db, Smooth;
+        low_freq_hz: f32, 20.0, 2000.0, 200.0, 10.0, Hz, Smooth;
+        mid_gain_db: f32, -24.0, 24.0, 0.0, 0.1, Db, Smooth;
+        mid_freq_hz: f32, 100.0, 10000.0, 1000.0, 10.0, Hz, Smooth;
+        mid_q: f32, 0.3, 8.0, 1.0, 0.01, None, Smooth;
+        high_gain_db: f32, -24.0, 24.0, 0.0, 0.1, Db, Smooth;
+        high_freq_hz: f32, 1000.0, 20000.0, 4000.0, 10.0, Hz, Smooth;
+    },
+    Distortion {
+        drive_db: f32, 0.0, 36.0, 12.0, 0.1, Db, Smooth;
+        tone: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        mix: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
+    },
+    Bitcrusher {
+        bits: f32, 1.0, 16.0, 8.0, 0.1, None, Smooth;
+        rate_hz: f32, 500.0, 48000.0, 12000.0, 100.0, Hz, Smooth;
+        mix: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
+    },
+    StereoWidth {
+        width: f32, 0.0, 2.0, 1.0, 0.01, Ratio, Smooth;
+    },
     // ---- видео 2D --------------------------------------------------------
     Pan {
         pan_x: f64, -4.0, 4.0, 0.0, 0.01, Norm, Smooth;
@@ -2916,6 +3034,16 @@ pub enum PanMode {
     Fit,
     Fill,
     Stretch,
+}
+
+/// Тип аудио-фильтра (Р.47): срез сверху/снизу/полоса.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilterMode {
+    #[default]
+    Lowpass,
+    Highpass,
+    Bandpass,
 }
 
 /// Как добывать кадр, которого в источнике нет (Р.37 п.2): растянутое
@@ -3170,6 +3298,34 @@ impl FxInstance {
     /// следующий параметр не требовал править полсотни мест.
     /// Дефолтные конструкторы видов без своего конструктора (Р.47,
     /// п.326): нужны реестру `all()`; литералы в тестах идут через них.
+    pub fn filter() -> FxInstance {
+        FxInstance::Filter { mode: FilterMode::Lowpass, cutoff_hz: 800.0, resonance: 0.707 }
+    }
+
+    pub fn eq() -> FxInstance {
+        FxInstance::Eq {
+            low_gain_db: 0.0,
+            low_freq_hz: 200.0,
+            mid_gain_db: 0.0,
+            mid_freq_hz: 1000.0,
+            mid_q: 1.0,
+            high_gain_db: 0.0,
+            high_freq_hz: 4000.0,
+        }
+    }
+
+    pub fn distortion() -> FxInstance {
+        FxInstance::Distortion { drive_db: 12.0, tone: 0.5, mix: 1.0 }
+    }
+
+    pub fn bitcrusher() -> FxInstance {
+        FxInstance::Bitcrusher { bits: 8.0, rate_hz: 12_000.0, mix: 1.0 }
+    }
+
+    pub fn stereo_width() -> FxInstance {
+        FxInstance::StereoWidth { width: 1.0 }
+    }
+
     pub fn pan() -> FxInstance {
         FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }
     }

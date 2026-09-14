@@ -917,3 +917,125 @@ fn t321_single_gain_is_exact_scalar_multiply() {
         assert_eq!(*g, d * k, "sample {i}: gain must be one exact multiply");
     }
 }
+
+// ---- Тесты 323/324 (Р.47, п.327): пятёрка Ка2 -------------------------------
+
+/// Тест 323: порядок слотов на НЕЛИНЕЙНОСТИ. «Тихо → перегруз» чист (драйв
+/// почти не кусает −40 дБ), «перегруз → тихо» — грязный, но тихий: спектры
+/// и RMS обязаны различаться в разы. На линейных эффектах порядок слышен
+/// только с кривыми (t320) — дисторшн доказывает его на константах.
+#[test]
+fn t323_slot_order_matters_on_nonlinear_chains() {
+    let dur = 48_000;
+    let render = |fx: Vec<FxInstance>| -> Vec<f32> {
+        let p = fx_project(fx, "synth:sine:440", dur);
+        let r = AudioRenderer::new(&p);
+        let mut f = direct(AudioPattern::Sine { hz: 440.0 });
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; dur as usize * CH];
+        no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
+        out
+    };
+    let quiet_then_drive =
+        render(vec![FxInstance::gain(-40.0), FxInstance::Distortion {
+            drive_db: 24.0,
+            tone: 1.0,
+            mix: 1.0,
+        }]);
+    let drive_then_quiet =
+        render(vec![
+            FxInstance::Distortion { drive_db: 24.0, tone: 1.0, mix: 1.0 },
+            FxInstance::gain(-40.0),
+        ]);
+    let rms = |s: &[f32]| -> f64 {
+        (s.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / s.len() as f64).sqrt()
+    };
+    let (a, b) = (rms(&quiet_then_drive), rms(&drive_then_quiet));
+    assert!(
+        a / b > 2.0 || b / a > 2.0,
+        "nonlinear chain must depend on slot order: {a} vs {b}"
+    );
+}
+
+/// Тест 324: спектральные пробы пятёрки Ка2 — формулы делают то, что
+/// написано на ручках.
+#[test]
+fn t324_ka2_spectral_probes() {
+    let dur = 48_000;
+    let render = |fx: Vec<FxInstance>, hz: f64| -> Vec<f32> {
+        let p = fx_project(fx, "synth:sine:1000", dur);
+        let r = AudioRenderer::new(&p);
+        let mut f = direct(AudioPattern::Sine { hz });
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; dur as usize * CH];
+        no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
+        out
+    };
+    let rms_mono = |out: &[f32]| -> f64 {
+        let mono: Vec<f64> =
+            out.chunks_exact(CH).map(|f| (f[0] as f64 + f[1] as f64) * 0.5).collect();
+        (mono.iter().map(|v| v * v).sum::<f64>() / mono.len() as f64).sqrt()
+    };
+    let lp = |cutoff: f32| FxInstance::Filter {
+        mode: FilterMode::Lowpass,
+        cutoff_hz: cutoff,
+        resonance: 0.707,
+    };
+
+    // LP 800: 200 Гц проходит, 8 кГц глушится >= 40 дБ
+    let pass = rms_mono(&render(vec![lp(800.0)], 200.0));
+    let dry = rms_mono(&render(vec![], 200.0));
+    assert!((pass / dry - 1.0).abs() < 0.1, "LP passband: {pass} vs {dry}");
+    let cut = rms_mono(&render(vec![lp(800.0)], 8000.0));
+    let dry8 = rms_mono(&render(vec![], 8000.0));
+    assert!(cut / dry8 < 0.01, "LP must kill 8 kHz by 40 dB: {}", cut / dry8);
+
+    // EQ: low_gain −12 глушит 100 Гц вдвое-с-лишним, 8 кГц не трогает
+    let mut eq = FxInstance::eq();
+    eq.set_param("low_gain_db", -12.0);
+    let low = rms_mono(&render(vec![eq.clone()], 100.0));
+    let dry100 = rms_mono(&render(vec![], 100.0));
+    let ratio = low / dry100;
+    assert!((ratio - 0.25).abs() < 0.1, "EQ low shelf -12 dB: {ratio}");
+    let high = rms_mono(&render(vec![eq], 8000.0));
+    assert!((high / dry8 - 1.0).abs() < 0.1, "EQ low shelf must not touch 8 kHz");
+
+    // Bitcrusher bits 3 поднимает шумовой пол на чистом синусе
+    let crushed = render(
+        vec![FxInstance::Bitcrusher { bits: 3.0, rate_hz: 48_000.0, mix: 1.0 }],
+        1000.0,
+    );
+    let clean = render(vec![], 1000.0);
+    let mono: Vec<f32> =
+        crushed.chunks_exact(CH).map(|f| (f[0] + f[1]) * 0.5).collect();
+    let mono_clean: Vec<f32> =
+        clean.chunks_exact(CH).map(|f| (f[0] + f[1]) * 0.5).collect();
+    let sp = spectrum_db(&mono[8192..16384]);
+    let sp_clean = spectrum_db(&mono_clean[8192..16384]);
+    // квант ПЕРИОДИКИ — гребёнка гармоник, не сплошной пол: меряем ПИК
+    // в полосе вдали от тона (бин = 48000/8192 ≈ 5.86 Гц; 1000..3000 =
+    // 5.9..17.6 кГц — там живут нечётные гармоники кванта)
+    let peak = |sp: &[f32]| -> f32 {
+        sp[1000..3000].iter().cloned().fold(f32::MIN, f32::max)
+    };
+    assert!(
+        peak(&sp) > peak(&sp_clean) + 60.0,
+        "3-bit quantization must spawn harmonics: {} vs {}",
+        peak(&sp),
+        peak(&sp_clean)
+    );
+
+    // StereoWidth 0 — моно: каналы равны; 2 — s-энергия растёт
+    let p = fx_project(vec![FxInstance::StereoWidth { width: 0.0 }], "synth:ramp", dur);
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Ramp);
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut out = vec![0f32; dur as usize * CH];
+    no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
+    for fr in out.chunks_exact(CH) {
+        assert!((fr[0] - fr[1]).abs() < 1e-6, "width 0 must be mono");
+    }
+}

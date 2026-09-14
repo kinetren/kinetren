@@ -5509,6 +5509,24 @@ impl KtApp {
     }
 }
 
+/// Слить пересекающиеся/смежные диапазоны прогретости в один список
+/// (Р.46, п.322): куски одного клипа могут греться в разных качествах
+/// декода, но полоска под клипом — одна.
+pub fn merge_runs(mut runs: Vec<std::ops::Range<i64>>) -> Vec<std::ops::Range<i64>> {
+    if runs.len() < 2 {
+        return runs;
+    }
+    runs.sort_by_key(|r| r.start);
+    let mut out: Vec<std::ops::Range<i64>> = Vec::with_capacity(runs.len());
+    for r in runs {
+        match out.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => out.push(r),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod repaint_tests {
     use super::repaint_delay;
@@ -5870,20 +5888,3 @@ mod repaint_tests {
     }
 }
 
-/// Слить пересекающиеся/смежные диапазоны прогретости в один список
-/// (Р.46, п.322): куски одного клипа могут греться в разных качествах
-/// декода, но полоска под клипом — одна.
-pub fn merge_runs(mut runs: Vec<std::ops::Range<i64>>) -> Vec<std::ops::Range<i64>> {
-    if runs.len() < 2 {
-        return runs;
-    }
-    runs.sort_by_key(|r| r.start);
-    let mut out: Vec<std::ops::Range<i64>> = Vec::with_capacity(runs.len());
-    for r in runs {
-        match out.last_mut() {
-            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
-            _ => out.push(r),
-        }
-    }
-    out
-}

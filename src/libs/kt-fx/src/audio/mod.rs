@@ -110,6 +110,13 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
             {
                 reverb_tail_for_delay(*reverb_delay_ms, *decay)
             }
+            // звон резонансного среза: t60 = 6.9*Q/(pi*f0) — та же
+            // формула, что у FilterNode::tail (согласие сторожит t322е)
+            FxInstance::Filter { cutoff_hz, resonance, .. } => {
+                let secs = 6.9 * resonance.clamp(0.5, 10.0)
+                    / (std::f32::consts::PI * cutoff_hz.clamp(20.0, 20_000.0));
+                Tick::from_audio_frames((secs * 48_000.0) as i64)
+            }
             _ => Tick::ZERO,
         })
         .max()

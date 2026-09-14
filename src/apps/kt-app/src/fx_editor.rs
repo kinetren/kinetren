@@ -544,6 +544,11 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Glow { .. } => "Glow",
         FxInstance::EventGrid { .. } => "EventGrid",
         FxInstance::Pan3d { .. } => "Pan 3D",
+        FxInstance::Filter { .. } => "Filter",
+        FxInstance::Eq { .. } => "EQ",
+        FxInstance::Distortion { .. } => "Distortion",
+        FxInstance::Bitcrusher { .. } => "Bitcrusher",
+        FxInstance::StereoWidth { .. } => "Stereo Width",
     }
 }
 
@@ -633,6 +638,28 @@ pub(crate) fn draw_video_fx_params(
     };
     match f {
         FxInstance::Pan { mode, .. } => mode_row(ui, mode, &mut ch),
+        // вид среза (Р.47): подписи из каталога, значения — serde-виды
+        FxInstance::Filter { mode, .. } => {
+            let label = |m: kt_model::FilterMode| match m {
+                kt_model::FilterMode::Lowpass => tr(k::fx::FILTER_LP),
+                kt_model::FilterMode::Highpass => tr(k::fx::FILTER_HP),
+                kt_model::FilterMode::Bandpass => tr(k::fx::FILTER_BP),
+            };
+            ui.horizontal(|ui| {
+                ui.label(tr(k::fx::MODE));
+                egui::ComboBox::from_id_salt("filtermode")
+                    .selected_text(label(*mode))
+                    .show_ui(ui, |ui| {
+                        for m in [
+                            kt_model::FilterMode::Lowpass,
+                            kt_model::FilterMode::Highpass,
+                            kt_model::FilterMode::Bandpass,
+                        ] {
+                            ch.base |= ui.selectable_value(mode, m, label(m)).changed();
+                        }
+                    });
+            });
+        }
         FxInstance::CamMotion { mode, ease, .. } => {
             let mut e = *ease;
             mode_row(ui, mode, &mut ch);

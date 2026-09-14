@@ -206,6 +206,11 @@ pub enum AudioNode {
     /// `produce()` — узлу нужен межузловой буфер, которым он не владеет.
     LayerMix,
     Reverb(ReverbNode),
+    Filter(Box<FilterNode>),
+    Eq(Box<EqNode>),
+    Distortion(DistNode),
+    Bitcrusher(CrushNode),
+    StereoWidth(WidthNode),
 }
 
 impl AudioNode {
@@ -216,6 +221,11 @@ impl AudioNode {
             FxInstance::Gain { .. } => Some(AudioNode::Gain(GainNode::new())),
             FxInstance::LayerMix { .. } => Some(AudioNode::LayerMix),
             FxInstance::SlowedReverb { .. } => Some(AudioNode::Reverb(ReverbNode::new())),
+            FxInstance::Filter { .. } => Some(AudioNode::Filter(Box::new(FilterNode::new()))),
+            FxInstance::Eq { .. } => Some(AudioNode::Eq(Box::new(EqNode::new()))),
+            FxInstance::Distortion { .. } => Some(AudioNode::Distortion(DistNode::new())),
+            FxInstance::Bitcrusher { .. } => Some(AudioNode::Bitcrusher(CrushNode::new())),
+            FxInstance::StereoWidth { .. } => Some(AudioNode::StereoWidth(WidthNode::new())),
             _ => None,
         }
     }
@@ -225,6 +235,36 @@ impl AudioNode {
             (AudioNode::Gain(n), FxInstance::Gain { db, pan }) => n.apply(*db, *pan),
             (AudioNode::LayerMix, FxInstance::LayerMix { .. }) => {}
             (AudioNode::Reverb(n), FxInstance::SlowedReverb { .. }) => n.apply(fx, structural),
+            (AudioNode::Filter(n), FxInstance::Filter { mode, cutoff_hz, resonance }) => {
+                n.apply(*mode, *cutoff_hz, *resonance)
+            }
+            (
+                AudioNode::Eq(n),
+                FxInstance::Eq {
+                    low_gain_db,
+                    low_freq_hz,
+                    mid_gain_db,
+                    mid_freq_hz,
+                    mid_q,
+                    high_gain_db,
+                    high_freq_hz,
+                },
+            ) => n.apply([
+                *low_gain_db,
+                *low_freq_hz,
+                *mid_gain_db,
+                *mid_freq_hz,
+                *mid_q,
+                *high_gain_db,
+                *high_freq_hz,
+            ]),
+            (AudioNode::Distortion(n), FxInstance::Distortion { drive_db, tone, mix }) => {
+                n.apply(*drive_db, *tone, *mix)
+            }
+            (AudioNode::Bitcrusher(n), FxInstance::Bitcrusher { bits, rate_hz, mix }) => {
+                n.apply(*bits, *rate_hz, *mix)
+            }
+            (AudioNode::StereoWidth(n), FxInstance::StereoWidth { width }) => n.apply(*width),
             // отпечаток цепочки совпал — виды по слотам совпадают по
             // построению; сюда можно попасть только ошибкой сопоставления
             _ => debug_assert!(false, "node/slot kind mismatch"),
@@ -236,6 +276,11 @@ impl AudioNode {
             AudioNode::Gain(n) => n.set_targets(auto, slot, s),
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.set_targets(auto, slot, s),
+            AudioNode::Filter(n) => n.set_targets(auto, slot, s),
+            AudioNode::Eq(n) => n.set_targets(auto, slot, s),
+            AudioNode::Distortion(n) => n.set_targets(auto, slot, s),
+            AudioNode::Bitcrusher(n) => n.set_targets(auto, slot, s),
+            AudioNode::StereoWidth(n) => n.set_targets(auto, slot, s),
         }
     }
 
@@ -244,12 +289,18 @@ impl AudioNode {
             AudioNode::Gain(n) => n.process(buf),
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.process(buf),
+            AudioNode::Filter(n) => n.process(buf),
+            AudioNode::Eq(n) => n.process(buf),
+            AudioNode::Distortion(n) => n.process(buf),
+            AudioNode::Bitcrusher(n) => n.process(buf, _pos),
+            AudioNode::StereoWidth(n) => n.process(buf),
         }
     }
 
     pub(crate) fn tail(&self) -> kt_time::Tick {
         match self {
             AudioNode::Reverb(n) => n.rv.tail(),
+            AudioNode::Filter(n) => n.tail(),
             _ => kt_time::Tick::ZERO,
         }
     }
@@ -259,6 +310,11 @@ impl AudioNode {
             AudioNode::Gain(n) => n.reset(),
             AudioNode::LayerMix => {}
             AudioNode::Reverb(n) => n.rv.reset(),
+            AudioNode::Filter(n) => n.reset(),
+            AudioNode::Eq(n) => n.reset(),
+            AudioNode::Distortion(n) => n.reset(),
+            AudioNode::Bitcrusher(n) => n.reset(),
+            AudioNode::StereoWidth(n) => n.reset(),
         }
     }
 }
@@ -411,5 +467,337 @@ impl ReverbNode {
         // mix сглаживается one-pole внутри реверба (тот же вызов, что до
         // Р.47 — байты одно-слотовой цепочки не двигаются)
         self.rv.set_mix(auto.value(slot, "mix", self.base_mix, s) as f32);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Узлы Ка2 (Р.47, п.327): фильтры, EQ, дисторшн, биткрашер, ширина
+// ---------------------------------------------------------------------------
+
+use super::primitives::{Biquad, BiquadKind, apply_width, softclip};
+use kt_model::FilterMode;
+
+/// Пересчёт коэффициентов — суб-блоками: чанк 1024 (21 мс) на свипах
+/// частоты слышен как zipper, 128 кадров — нет.
+const TUNE_STEP: usize = 128;
+
+/// Резонансный срез LP/HP/BP: RBJ-биквад на канал.
+pub struct FilterNode {
+    mode: FilterMode,
+    cutoff: SmoothedParam,
+    q: SmoothedParam,
+    bq: [Biquad; CH],
+}
+
+impl FilterNode {
+    fn new() -> FilterNode {
+        FilterNode {
+            mode: FilterMode::Lowpass,
+            cutoff: SmoothedParam::with_ms(800.0, 20.0),
+            q: SmoothedParam::with_ms(0.707, 20.0),
+            bq: Default::default(),
+        }
+    }
+
+    fn kind(&self) -> BiquadKind {
+        match self.mode {
+            FilterMode::Lowpass => BiquadKind::Lowpass,
+            FilterMode::Highpass => BiquadKind::Highpass,
+            FilterMode::Bandpass => BiquadKind::Bandpass,
+        }
+    }
+
+    fn apply(&mut self, mode: FilterMode, cutoff_hz: f32, resonance: f32) {
+        // смена вида НЕ пересоздаёт состояние (2 f32 на канал): транзиент
+        // от смены формы допустим и короче любого клика пересоздания
+        self.mode = mode;
+        self.cutoff.set_target(cutoff_hz.clamp(20.0, 20_000.0));
+        self.q.set_target(resonance.clamp(0.5, 10.0));
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        let f = auto.value(slot, "cutoff_hz", self.cutoff.target as f64, s) as f32;
+        let q = auto.value(slot, "resonance", self.q.target as f64, s) as f32;
+        self.cutoff.set_target(f.clamp(20.0, 20_000.0));
+        self.q.set_target(q.clamp(0.5, 10.0));
+    }
+
+    fn process(&mut self, buf: &mut [f32]) {
+        let kind = self.kind();
+        for block in buf.chunks_mut(TUNE_STEP * CH) {
+            let mut f = 0.0;
+            let mut q = 0.0;
+            for _ in 0..block.len() / CH {
+                f = self.cutoff.tick();
+                q = self.q.tick();
+            }
+            for b in &mut self.bq {
+                b.tune(&kind, f, q, 0.0);
+            }
+            for fr in block.chunks_exact_mut(CH) {
+                for (ch, s) in fr.iter_mut().enumerate() {
+                    *s = self.bq[ch].process(*s);
+                }
+            }
+        }
+    }
+
+    fn tail(&self) -> Tick {
+        // звон резонанса: t60 = 6.9·Q/(π·f0)
+        let f0 = self.cutoff.value().max(20.0);
+        let q = self.q.value().max(0.5);
+        let secs = 6.9 * q / (std::f32::consts::PI * f0);
+        Tick::from_audio_frames((secs * AUDIO_SAMPLE_RATE as f32) as i64)
+    }
+
+    fn reset(&mut self) {
+        for b in &mut self.bq {
+            b.reset();
+        }
+        self.cutoff.reset_to_target();
+        self.q.reset_to_target();
+    }
+}
+
+/// Трёхполосный EQ: полка + пик + полка, каждый — биквад на канал.
+pub struct EqNode {
+    params: SmoothedParam7,
+    bands: [[Biquad; 3]; CH],
+}
+
+/// Семь сглаженных параметров EQ одним блоком (low_g, low_f, mid_g,
+/// mid_f, mid_q, high_g, high_f).
+struct SmoothedParam7([SmoothedParam; 7]);
+
+impl EqNode {
+    const DEFAULTS: [f32; 7] = [0.0, 200.0, 0.0, 1000.0, 1.0, 0.0, 4000.0];
+    const NAMES: [&'static str; 7] = [
+        "low_gain_db",
+        "low_freq_hz",
+        "mid_gain_db",
+        "mid_freq_hz",
+        "mid_q",
+        "high_gain_db",
+        "high_freq_hz",
+    ];
+
+    fn new() -> EqNode {
+        EqNode {
+            params: SmoothedParam7(std::array::from_fn(|i| {
+                SmoothedParam::with_ms(Self::DEFAULTS[i], 20.0)
+            })),
+            bands: Default::default(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply(&mut self, vals: [f32; 7]) {
+        for (p, v) in self.params.0.iter_mut().zip(vals) {
+            p.set_target(v);
+        }
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        for (i, p) in self.params.0.iter_mut().enumerate() {
+            let v = auto.value(slot, Self::NAMES[i], p.target as f64, s) as f32;
+            p.set_target(v);
+        }
+    }
+
+    fn process(&mut self, buf: &mut [f32]) {
+        for block in buf.chunks_mut(TUNE_STEP * CH) {
+            let mut v = [0f32; 7];
+            for _ in 0..block.len() / CH {
+                for (dst, p) in v.iter_mut().zip(self.params.0.iter_mut()) {
+                    *dst = p.tick();
+                }
+            }
+            // все гейны в нуле — plain-пропуск: EQ прозрачен байт-в-байт
+            if v[0] == 0.0 && v[2] == 0.0 && v[5] == 0.0 {
+                continue;
+            }
+            for ch in 0..CH {
+                self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], 0.707, v[0]);
+                self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(0.3), v[2]);
+                self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], 0.707, v[5]);
+            }
+            for fr in block.chunks_exact_mut(CH) {
+                for (ch, s) in fr.iter_mut().enumerate() {
+                    let mut x = *s;
+                    for b in &mut self.bands[ch] {
+                        x = b.process(x);
+                    }
+                    *s = x;
+                }
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        for chb in &mut self.bands {
+            for b in chb {
+                b.reset();
+            }
+        }
+        for p in &mut self.params.0 {
+            p.reset_to_target();
+        }
+    }
+}
+
+/// Мягкое насыщение с компенсацией уровня и тоном.
+pub struct DistNode {
+    drive_db: SmoothedParam,
+    tone: SmoothedParam,
+    mix: SmoothedParam,
+    lp: [f32; CH],
+}
+
+impl DistNode {
+    fn new() -> DistNode {
+        DistNode {
+            drive_db: SmoothedParam::with_ms(12.0, 20.0),
+            tone: SmoothedParam::with_ms(0.5, 20.0),
+            mix: SmoothedParam::with_ms(1.0, 20.0),
+            lp: [0.0; CH],
+        }
+    }
+
+    fn apply(&mut self, drive_db: f32, tone: f32, mix: f32) {
+        self.drive_db.set_target(drive_db);
+        self.tone.set_target(tone.clamp(0.0, 1.0));
+        self.mix.set_target(mix.clamp(0.0, 1.0));
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.drive_db
+            .set_target(auto.value(slot, "drive_db", self.drive_db.target as f64, s) as f32);
+        self.tone.set_target(auto.value(slot, "tone", self.tone.target as f64, s) as f32);
+        self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32]) {
+        for fr in buf.chunks_exact_mut(CH) {
+            let g = 10f32.powf(self.drive_db.tick() / 20.0);
+            let comp = 1.0 / g.sqrt();
+            let tone = self.tone.tick().clamp(0.0, 1.0);
+            // тон: one-pole LP 500..12000 Гц (exp-map)
+            let f = 500.0 * (12_000.0f32 / 500.0).powf(tone);
+            let alpha = 1.0 - (-2.0 * std::f32::consts::PI * f / AUDIO_SAMPLE_RATE as f32).exp();
+            let k = self.mix.tick().clamp(0.0, 1.0);
+            for (ch, s) in fr.iter_mut().enumerate() {
+                let dry = *s;
+                let mut y = softclip(dry * g) * comp;
+                self.lp[ch] += (y - self.lp[ch]) * alpha;
+                y = self.lp[ch];
+                *s = dry * (1.0 - k) + y * k;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.lp = [0.0; CH];
+        self.drive_db.reset_to_target();
+        self.tone.reset_to_target();
+        self.mix.reset_to_target();
+    }
+}
+
+/// Lo-fi: квант битовой глубины + удержание сэмпла по СЕТКЕ ПОЗИЦИИ
+/// (floor(pos·rate/sr) — детерминизм: два рендера одного клипа дают одни
+/// артефакты, прецедент seed шума видео).
+pub struct CrushNode {
+    bits: SmoothedParam,
+    rate_hz: SmoothedParam,
+    mix: SmoothedParam,
+    held: [f32; CH],
+    held_cell: i64,
+}
+
+impl CrushNode {
+    fn new() -> CrushNode {
+        CrushNode {
+            bits: SmoothedParam::with_ms(8.0, 20.0),
+            rate_hz: SmoothedParam::with_ms(12_000.0, 20.0),
+            mix: SmoothedParam::with_ms(1.0, 20.0),
+            held: [0.0; CH],
+            held_cell: i64::MIN,
+        }
+    }
+
+    fn apply(&mut self, bits: f32, rate_hz: f32, mix: f32) {
+        self.bits.set_target(bits.clamp(1.0, 16.0));
+        self.rate_hz.set_target(rate_hz.clamp(500.0, 48_000.0));
+        self.mix.set_target(mix.clamp(0.0, 1.0));
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.bits.set_target(auto.value(slot, "bits", self.bits.target as f64, s) as f32);
+        self.rate_hz
+            .set_target(auto.value(slot, "rate_hz", self.rate_hz.target as f64, s) as f32);
+        self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32], pos: i64) {
+        for (i, fr) in buf.chunks_exact_mut(CH).enumerate() {
+            let bits = self.bits.tick().clamp(1.0, 16.0);
+            let rate = self.rate_hz.tick().clamp(500.0, 48_000.0) as f64;
+            let k = self.mix.tick().clamp(0.0, 1.0);
+            let q = (2f32).powf(bits - 1.0);
+            let p = pos + i as i64;
+            // сетка удержания привязана к ПОЗИЦИИ клипа, не к счётчику
+            let cell = ((p as f64) * rate / AUDIO_SAMPLE_RATE as f64).floor() as i64;
+            if cell != self.held_cell {
+                self.held_cell = cell;
+                for (ch, s) in fr.iter().enumerate() {
+                    self.held[ch] = (s * q).round() / q;
+                }
+            }
+            for (ch, s) in fr.iter_mut().enumerate() {
+                *s = *s * (1.0 - k) + self.held[ch] * k;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.held = [0.0; CH];
+        self.held_cell = i64::MIN;
+        self.bits.reset_to_target();
+        self.rate_hz.reset_to_target();
+        self.mix.reset_to_target();
+    }
+}
+
+/// Ширина стерео m/s. width == 1.0 — ЯВНЫЙ пропуск (m/s-переупаковка не
+/// байт-тождественна).
+pub struct WidthNode {
+    width: SmoothedParam,
+}
+
+impl WidthNode {
+    fn new() -> WidthNode {
+        WidthNode { width: SmoothedParam::with_ms(1.0, 20.0) }
+    }
+
+    fn apply(&mut self, width: f32) {
+        self.width.set_target(width.clamp(0.0, 2.0));
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.width.set_target(auto.value(slot, "width", self.width.target as f64, s) as f32);
+    }
+
+    fn process(&mut self, buf: &mut [f32]) {
+        if self.width.value() == 1.0 && self.width.target == 1.0 {
+            return;
+        }
+        for fr in buf.chunks_exact_mut(CH) {
+            let w = self.width.tick().clamp(0.0, 2.0);
+            apply_width(fr, w);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.width.reset_to_target();
     }
 }

@@ -18,7 +18,7 @@ const DUR: i64 = 48_000 * 2;
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> Project {
     let mut p =
         Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000 });
-    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
         link_group: None,
@@ -40,13 +40,14 @@ fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> P
     p
 }
 
-/// Рендер клипа c нуля; Ramp-паттерн СТЕРЕО-РАЗЛИЧЕН (l = n, r = −n) —
-/// иначе параметры ширины/баланса были бы неслышимы по построению.
+/// Рендер клипа; стимул — широкополосные СТЕРЕО-РАЗЛИЧНЫЕ щелчки: у
+/// фильтров есть что резать, у стерео-параметров — s-компонента, у
+/// кривых — события по всей длине клипа.
 fn render(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool, from: i64) -> Vec<f32> {
     let p = project(fx, auto, reversed);
     let r = AudioRenderer::new(&p);
     let mut f = DirectFetcher::new(None);
-    f.add_source(MediaId(1), Box::new(SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Ramp)));
+    f.add_source(MediaId(1), Box::new(SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Clicks)));
     let mut store = FxStateStore::new();
     r.sync_fx(&mut store);
     let frames = (DUR - from) as usize;
@@ -76,12 +77,15 @@ fn curve_for(spec: &ParamSpec, probe: f64) -> Vec<Vec<ParamCurve>> {
     }]]
 }
 
-/// Пробное значение параметра: максимально далёкое от дефолта.
-fn probe_value(spec: &ParamSpec) -> f64 {
+/// Кандидаты пробы: оба конца диапазона (дальний первым). У параметра
+/// бывает «прозрачный» край (rate_hz=48000 у крашера — сетка в каждый
+/// кадр), поэтому слышимость требуется ХОТЯ БЫ от одного конца, а кривая
+/// строится на слышимом.
+fn probe_values(spec: &ParamSpec) -> [f64; 2] {
     if (spec.default - spec.max).abs() > (spec.default - spec.min).abs() {
-        spec.max
+        [spec.max, spec.min]
     } else {
-        spec.min
+        [spec.min, spec.max]
     }
 }
 
@@ -102,23 +106,56 @@ fn t322_audio_registry_contract() {
         let b = render(fx.clone(), vec![], false, 0);
         assert_eq!(a, b, "{}: default render is not deterministic", f.tag());
 
-        // (б) каждый Smooth-параметр слышен от пробного значения
+        // (б) каждый Smooth-параметр слышен от пробного значения.
+        // Энейблеры: параметр, неслышимый на дефолтах соседей (частота
+        // полосы EQ при нулевом гейне), пробуется на базе, где сосед
+        // включён, — таблица с комментарием на каждую строку.
+        let base_for = |param: &str| -> FxInstance {
+            match (f.tag(), param) {
+                // частота/добротность полосы слышны только при ненулевом
+                // гейне этой полосы
+                ("eq", "low_freq_hz") => {
+                    let mut e = (*f).clone();
+                    e.set_param("low_gain_db", -12.0);
+                    e
+                }
+                ("eq", "mid_freq_hz") | ("eq", "mid_q") => {
+                    let mut e = (*f).clone();
+                    e.set_param("mid_gain_db", -12.0);
+                    e
+                }
+                ("eq", "high_freq_hz") => {
+                    let mut e = (*f).clone();
+                    e.set_param("high_gain_db", -12.0);
+                    e
+                }
+                _ => (*f).clone(),
+            }
+        };
+        let mut audible_probe: Vec<(&'static str, f64)> = Vec::new();
         for spec in f.auto_params() {
-            let mut probed = (*f).clone();
-            assert!(probed.set_param(spec.name, probe_value(spec)));
-            let p = render(vec![probed], vec![], false, 0);
-            assert!(
-                max_delta(&a, &p) > 1e-4,
-                "{}.{}: probe value is inaudible",
-                f.tag(),
-                spec.name
-            );
+            let base = base_for(spec.name);
+            let base_out = render(vec![base.clone()], vec![], false, 0);
+            let heard = probe_values(spec).into_iter().find(|probe| {
+                let mut probed = base.clone();
+                assert!(probed.set_param(spec.name, *probe));
+                let p = render(vec![probed], vec![], false, 0);
+                max_delta(&base_out, &p) > 1e-4
+            });
+            let heard = heard.unwrap_or_else(|| {
+                panic!("{}.{}: no end of the range is audible", f.tag(), spec.name)
+            });
+            audible_probe.push((spec.name, heard));
         }
 
         // (в) кривая первого Smooth-параметра отрабатывает: выход не равен
         // ни константному дефолту, ни константной пробе
         if let Some(spec) = f.auto_params().next() {
-            let probe = probe_value(spec);
+            let probe = audible_probe
+                .iter()
+                .find(|(n, _)| *n == spec.name)
+                .map(|(_, v)| *v)
+                .unwrap();
             let curved = render(fx.clone(), curve_for(spec, probe), false, 0);
             let mut probed = (*f).clone();
             probed.set_param(spec.name, probe);

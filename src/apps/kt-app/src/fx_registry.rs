@@ -66,6 +66,46 @@ pub fn registry() -> &'static [FxEntry] {
                 keywords: Some(k::fxreg::kw::SLOWEDREVERB),
                 template: FxInstance::slowed_reverb(0.82, 0.1, 85.0),
             },
+            FxEntry {
+                name: "Filter",
+                category: k::fxreg::cat::FILTER,
+                audio: true,
+                video: false,
+                keywords: Some(k::fxreg::kw::FILTER),
+                template: FxInstance::filter(),
+            },
+            FxEntry {
+                name: "EQ",
+                category: k::fxreg::cat::FILTER,
+                audio: true,
+                video: false,
+                keywords: Some(k::fxreg::kw::EQ),
+                template: FxInstance::eq(),
+            },
+            FxEntry {
+                name: "Distortion",
+                category: k::fxreg::cat::DISTORT,
+                audio: true,
+                video: false,
+                keywords: Some(k::fxreg::kw::DISTORTION),
+                template: FxInstance::distortion(),
+            },
+            FxEntry {
+                name: "Bitcrusher",
+                category: k::fxreg::cat::DISTORT,
+                audio: true,
+                video: false,
+                keywords: Some(k::fxreg::kw::BITCRUSHER),
+                template: FxInstance::bitcrusher(),
+            },
+            FxEntry {
+                name: "Stereo Width",
+                category: k::fxreg::cat::STEREO,
+                audio: true,
+                video: false,
+                keywords: Some(k::fxreg::kw::STEREOWIDTH),
+                template: FxInstance::stereo_width(),
+            },
         ];
         for (name, tmpl) in video_fx_templates() {
             let (category, keywords) = video_meta(name);
