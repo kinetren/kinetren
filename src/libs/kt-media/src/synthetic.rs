@@ -243,7 +243,7 @@ impl CheckerSource {
 
     /// Значение фактуры в нативных координатах (серый канал).
     fn native_px(x: u32) -> u8 {
-        if (x / 2) % 2 == 0 { 16 } else { 239 }
+        if (x / 2).is_multiple_of(2) { 16 } else { 239 }
     }
 }
 

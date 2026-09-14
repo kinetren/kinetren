@@ -135,31 +135,11 @@ fn t212_keys_stick_to_material_through_edits() {
 /// значения клампятся диапазоном; чужое имя — отказ (кривая-сирота).
 #[test]
 fn t190_set_get_param_all_specs() {
-    let variants: Vec<FxInstance> = vec![
-        FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 },
-        FxInstance::CamMotion { mode: PanMode::Fit, ease: true, time_scale: 1.0, keyframes: vec![] },
-        FxInstance::Mirror { horizontal: true, vertical: false },
-        FxInstance::blur(8),
-        FxInstance::greenscreen([0, 255, 0], 70, 25 ),
-        FxInstance::edges(48),
-        FxInstance::noise(0.1),
-        FxInstance::vhs(4, 0.4),
-        FxInstance::glow(0.65),
-        FxInstance::EventGrid { cols: 2, rows: 2, center: true },
-        FxInstance::Pan3d {
-            pos_x: 0.0,
-            pos_y: 0.0,
-            pos_z: 0.0,
-            rot_x: 0.0,
-            rot_y: 0.0,
-            rot_z: 0.0,
-            anchor_x: 0.5,
-            anchor_y: 0.5,
-            scale: 1.0,
-            camera: None,
-        },
-        FxInstance::gain(0.0),
-    ];
+    // Р.47 (п.326): реестр вместо ручного списка — вид, не попавший в
+    // FxInstance::all(), не пройдёт замок полноты ниже.
+    let variants: Vec<FxInstance> = FxInstance::all().to_vec();
+    let tags: std::collections::BTreeSet<&str> = variants.iter().map(|f| f.tag()).collect();
+    assert_eq!(tags.len(), variants.len(), "теги реестра уникальны");
     let mut specs_total = 0;
     for mut f in variants {
         for spec in f.param_specs() {
@@ -179,10 +159,13 @@ fn t190_set_get_param_all_specs() {
             let got = f.get_param(name).unwrap();
             assert!((got - mid).abs() <= 0.5, "{name}: {got} vs {mid}");
             // выход за диапазон клампится
+            // f32-поля возвращают ближайший representable к границе
+            // (0.99f32 = 0.99000001) — допуск честного f32-эпсилона
+            let eps = 1e-6 * hi.abs().max(1.0);
             assert!(f.set_param(name, hi + 1e6));
-            assert!(f.get_param(name).unwrap() <= hi + 1e-9, "{name} не клампится");
+            assert!(f.get_param(name).unwrap() <= hi + eps, "{name} не клампится");
             assert!(f.set_param(name, lo - 1e6));
-            assert!(f.get_param(name).unwrap() >= lo - 1e-9);
+            assert!(f.get_param(name).unwrap() >= lo - eps);
         }
         // чужое имя — отказ, значение не тронуто
         assert!(!f.set_param("no_such_param", 1.0));

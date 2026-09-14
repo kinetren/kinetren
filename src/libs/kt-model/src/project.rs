@@ -2530,6 +2530,56 @@ impl FxInstance {
         matches!(self, FxInstance::LayerMix { .. })
     }
 
+    /// Стабильный тег варианта (совпадает с serde-`kind`). ИСЧЕРПЫВАЮЩИЙ
+    /// match — единственный компайл-замок реестра (Р.47, п.326): новый
+    /// вариант не соберётся, пока не назван, а тест `all()` сверяет реестр
+    /// с множеством тегов.
+    pub fn tag(&self) -> &'static str {
+        match self {
+            FxInstance::Gain { .. } => "gain",
+            FxInstance::LayerMix { .. } => "layer_mix",
+            FxInstance::SlowedReverb { .. } => "slowed_reverb",
+            FxInstance::Pan { .. } => "pan",
+            FxInstance::CamMotion { .. } => "cam_motion",
+            FxInstance::Mirror { .. } => "mirror",
+            FxInstance::Blur { .. } => "blur",
+            FxInstance::Greenscreen { .. } => "greenscreen",
+            FxInstance::Edges { .. } => "edges",
+            FxInstance::Noise { .. } => "noise",
+            FxInstance::Vhs { .. } => "vhs",
+            FxInstance::Glow { .. } => "glow",
+            FxInstance::EventGrid { .. } => "event_grid",
+            FxInstance::Pan3d { .. } => "pan3d",
+        }
+    }
+
+    /// Реестр ВСЕХ видов эффектов с дефолтными параметрами (аналог
+    /// `TransitionKind::ALL`, Р.47 п.326). Константой не выразить —
+    /// варианты несут Vec (keyframes, automation), — поэтому OnceLock.
+    /// По нему строятся параметризованные тесты (полнота спек, golden- и
+    /// конформанс-циклы): вид, не попавший сюда, виден сразу.
+    pub fn all() -> &'static [FxInstance] {
+        static ALL: std::sync::OnceLock<Vec<FxInstance>> = std::sync::OnceLock::new();
+        ALL.get_or_init(|| {
+            vec![
+                FxInstance::gain(0.0),
+                FxInstance::LayerMix { amount: 1.0, from: 0 },
+                FxInstance::slowed_reverb(0.85, 0.35, 100.0),
+                FxInstance::pan(),
+                FxInstance::cam_motion(),
+                FxInstance::mirror(),
+                FxInstance::blur(8),
+                FxInstance::greenscreen([0, 255, 0], 70, 25),
+                FxInstance::edges(48),
+                FxInstance::noise(0.3),
+                FxInstance::vhs(4, 0.4),
+                FxInstance::glow(0.65),
+                FxInstance::event_grid(),
+                FxInstance::pan3d(),
+            ]
+        })
+    }
+
     /// Эффект ВАРПИТ время: потребление источника перестаёт быть равным
     /// длине события. Такой клип морфер-слой не режет вовсе (находка 2
     /// Р.35) — линейно посчитанный `source_in` куска указал бы не туда.
@@ -2594,6 +2644,8 @@ pub enum ParamUnit {
     Px,
     Deg,
     Ms,
+    /// Частота, герцы (Р.47: фильтры/EQ/LFO).
+    Hz,
     /// Компонента цвета 0..255.
     Rgb8,
     /// Счётное число (колонки, строки).
@@ -3116,6 +3168,39 @@ impl FxInstance {
     /// Конструкторы эффектов с УМОЛЧАНИЯМИ добавленных полей (Р.33 С5).
     /// Струкурные литералы в вызывающем коде заменены на них, чтобы
     /// следующий параметр не требовал править полсотни мест.
+    /// Дефолтные конструкторы видов без своего конструктора (Р.47,
+    /// п.326): нужны реестру `all()`; литералы в тестах идут через них.
+    pub fn pan() -> FxInstance {
+        FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }
+    }
+
+    pub fn cam_motion() -> FxInstance {
+        FxInstance::CamMotion { mode: PanMode::Fit, ease: true, time_scale: 1.0, keyframes: vec![] }
+    }
+
+    pub fn mirror() -> FxInstance {
+        FxInstance::Mirror { horizontal: true, vertical: false }
+    }
+
+    pub fn event_grid() -> FxInstance {
+        FxInstance::EventGrid { cols: 2, rows: 2, center: true }
+    }
+
+    pub fn pan3d() -> FxInstance {
+        FxInstance::Pan3d {
+            pos_x: 0.0,
+            pos_y: 0.0,
+            pos_z: 0.0,
+            rot_x: 0.0,
+            rot_y: 0.0,
+            rot_z: 0.0,
+            anchor_x: 0.5,
+            anchor_y: 0.5,
+            scale: 1.0,
+            camera: None,
+        }
+    }
+
     pub fn blur(radius: u32) -> FxInstance {
         FxInstance::Blur { radius, radius_y: 0 }
     }

@@ -219,10 +219,22 @@ mod tests {
         for e in reg {
             assert_eq!(crate::fx_editor::fx_display_name(&e.template), e.name);
         }
-        // фильтр: по имени, по keyword, по виду, регистронезависимо
+        // Р.47 (п.326): счёт — СВОЙСТВОМ реестра FxInstance::all(), а не
+        // константой. Каждый аудио-вид из all() (кроме LayerMix — слот
+        // силы, у него нет места в пикере) обязан быть в аудио-списке;
+        // каждый видео-вид, у которого есть шаблон, — в видео-списке.
         crate::i18n::set_lang(crate::i18n::Lang::Ru);
-        assert_eq!(filter_entries(reg, true, "").len(), 2);
-        // видео-список = 10 своих + двусторонний Slowed+Reverb
+        let audio_kinds: std::collections::BTreeSet<&str> = FxInstance::all()
+            .iter()
+            .filter(|f| f.is_audio())
+            .map(|f| f.tag())
+            .collect();
+        let audio_in_picker: std::collections::BTreeSet<&str> = filter_entries(reg, true, "")
+            .iter()
+            .map(|e| e.template.tag())
+            .collect();
+        assert_eq!(audio_in_picker, audio_kinds, "каждый аудио-вид реестра — в пикере");
+        // видео-список = все видео-шаблоны + двусторонний Slowed+Reverb
         assert_eq!(filter_entries(reg, false, "").len(), old.len() + 1);
         assert_eq!(filter_entries(reg, false, "reverb").len(), 1, "варп ищется и в видео-пикере");
         assert_eq!(filter_entries(reg, true, "РевЕрб").len(), 1, "кириллический keyword");

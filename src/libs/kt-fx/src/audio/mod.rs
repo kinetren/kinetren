@@ -6,7 +6,7 @@ mod nodes;
 pub mod primitives;
 mod warp;
 
-pub use nodes::Freeverb;
+pub use nodes::{AudioNode, Freeverb};
 pub use primitives::SmoothedParam;
 pub use warp::Warp;
 
@@ -128,6 +128,16 @@ pub fn chain_fingerprint(fx: &[FxInstance]) -> u64 {
     h.finish()
 }
 
+/// Конфиг силы слоя (Р.38 п.12) в узловой цепочке.
+struct MixCfg {
+    /// Слот узла-маркера LayerMix (по нему — кривая amount).
+    slot: usize,
+    /// Слот начала вклада слоя: снапшот сухой стороны берётся перед
+    /// первым узлом со слотом >= from.
+    from: usize,
+    base_amount: f64,
+}
+
 /// Стейтфул-процессор аудио-клипа. Владелец — аудио-render-поток (kt-engine,
 /// FxStateStore). Читается строго последовательно; разрыв → reset + pre-roll.
 pub struct ClipProcessor {
@@ -136,41 +146,15 @@ pub struct ClipProcessor {
     next_local: i64,
     src_in: i64,
     warp: Option<Warp>,
-    reverb: Option<Freeverb>,
-    /// Множитель Gain-слотов БЕЗ кривой (константный путь — байт-в-байт
-    /// как до Р.33, на нём стоит GOLDEN_AUDIO).
-    static_gain: f32,
-    /// СИЛА СЛОЯ (Р.38 п.12): слот смешения, индекс начала вклада слоя и
-    /// базовое значение. `None` — слоя с силой нет, и весь путь ниже
-    /// байт-в-байт прежний (на нём стоит GOLDEN_AUDIO).
-    mix_slot: Option<usize>,
-    mix_from: usize,
-    base_layer_mix: f64,
-    /// Реверб принадлежит СОБЫТИЮ, а не слою: тогда он звучит и в сухой
-    /// стороне смешения. Движок держит ровно один реверб на цепочку,
-    /// поэтому выбор сводится к одному флагу.
-    reverb_is_layer: bool,
-    /// Множитель Gain-слотов СЛОЯ без кривой: он идёт только в мокрую
-    /// сторону. Без слоя равен 1.0 — цикл не выполняется вовсе.
-    layer_gain: f32,
-    /// Баланс каналов (Р.33 С5): множители левого и правого. Оба 1.0 —
-    /// прежний путь, цикл не выполняется вовсе.
-    pan_l: f32,
-    pan_r: f32,
-    /// Слоты Gain с КРИВОЙ баланса и сглаживание их множителей.
-    pan_automated: bool,
-    pan_slots: Vec<(usize, f64)>,
-    auto_pan_l: SmoothedParam,
-    auto_pan_r: SmoothedParam,
-    /// Сглаженная громкость автоматизированных Gain-слотов: цель ставится
-    /// раз в чанк, к ней едем one-pole — шаг чанка не щёлкает.
-    auto_gain: SmoothedParam,
-    /// Есть хоть один Gain-слот с кривой?
-    gain_automated: bool,
-    /// Автоматизированные Gain-слоты: (индекс, базовое значение db).
-    gain_slots: Vec<(usize, f64)>,
+    /// Узлы цепочки В ПОРЯДКЕ СЛОТОВ (Р.47, п.325): обработка идёт по
+    /// порядку, как у видео и в DAW. Слот хранится рядом — по нему узел
+    /// берёт свои кривые из AutoProfiles.
+    nodes: Vec<(usize, AudioNode)>,
+    /// Сила слоя: узел-маркер стоит В цепочке, а снапшот сухой стороны
+    /// берётся перед ПЕРВЫМ узлом со слотом >= from (честная позиционная
+    /// семантика — прежний флаг reverb_is_layer стал её следствием).
+    mix: Option<MixCfg>,
     rate: f64,
-    base_mix: f32,
     /// Кривые клипа в SOURCE-домене. Владеет ими аудио-render-поток
     /// (инвариант №2): ни локов, ни обращений к модели на кадре.
     auto: AutoProfiles,
@@ -199,24 +183,9 @@ impl ClipProcessor {
             next_local: i64::MIN,
             src_in: src_in_frames,
             warp: None,
-            reverb: None,
-            static_gain: 1.0,
-            mix_slot: None,
-            mix_from: usize::MAX,
-            base_layer_mix: 1.0,
-            reverb_is_layer: false,
-            layer_gain: 1.0,
-            pan_l: 1.0,
-            pan_r: 1.0,
-            pan_automated: false,
-            pan_slots: Vec::new(),
-            auto_pan_l: SmoothedParam::new(1.0),
-            auto_pan_r: SmoothedParam::new(1.0),
-            auto_gain: SmoothedParam::new(1.0),
-            gain_automated: false,
-            gain_slots: Vec::new(),
+            nodes: Vec::new(),
+            mix: None,
             rate: 1.0,
-            base_mix: 0.0,
             auto: auto.clone(),
             warp_slot: fx
                 .iter()
@@ -241,6 +210,11 @@ impl ClipProcessor {
     pub fn set_auto(&mut self, auto: &AutoProfiles) {
         if &self.auto != auto {
             self.auto = auto.clone();
+            for (slot, node) in &mut self.nodes {
+                if let AudioNode::Gain(g) = node {
+                    g.bind_curves(&self.auto, *slot);
+                }
+            }
         }
     }
 
@@ -262,148 +236,49 @@ impl ClipProcessor {
     }
 
     /// Донести параметры. `structural` = первый раз (создание объектов).
+    /// Отпечаток цепочки совпал ⇒ последовательность видов по слотам та же
+    /// ⇒ узлы сопоставляются со слотами 1:1 (инвариант №3: состояние
+    /// живёт, параметры доезжают сглаженно).
     pub fn apply_params(&mut self, fx: &[FxInstance], structural: bool) {
-        let mut gain = 1.0f32;
-        let (mut pan_l, mut pan_r) = (1.0f32, 1.0f32);
-        self.gain_automated = false;
-        self.pan_automated = false;
-        // слот СИЛЫ слоя (Р.38 п.12) ищется до всего остального: от него
-        // зависит, что попадёт в сухую сторону смешения
-        self.mix_slot = fx.iter().position(|f| f.is_layer_mix());
-        (self.mix_from, self.base_layer_mix) = match self.mix_slot {
-            Some(i) => match &fx[i] {
-                FxInstance::LayerMix { amount, from } => ((*from as usize).min(i), *amount),
-                _ => (usize::MAX, 1.0),
-            },
-            None => (usize::MAX, 1.0),
-        };
-        self.reverb_is_layer = fx
-            .iter()
-            .position(|f| matches!(f, FxInstance::SlowedReverb { .. }))
-            .map(|i| i >= self.mix_from)
-            .unwrap_or(true);
-        let mut layer_gain = 1.0f32;
-        for (slot, f) in fx.iter().enumerate() {
-            match f {
-                // громкость с кривой считается по материалу в produce();
-                // без кривой — прежним одним множителем на весь буфер
-                FxInstance::Gain { db, pan } => {
-                    if self.auto.points(slot, "db").is_empty() {
-                        // громкость СЛОЯ идёт только в мокрую сторону:
-                        // сила 0 обязана вернуть событие как было
-                        if slot >= self.mix_from {
-                            layer_gain *= 10f32.powf(db / 20.0);
-                        } else {
-                            gain *= 10f32.powf(db / 20.0);
-                        }
-                    } else {
-                        self.gain_automated = true;
-                    }
-                    // баланс: линейный закон, на нуле оба множителя ровно
-                    // 1.0 — прежний путь байт-в-байт
-                    if self.auto.points(slot, "pan").is_empty() {
-                        let p = pan.clamp(-1.0, 1.0);
-                        pan_l *= (1.0 - p).min(1.0);
-                        pan_r *= (1.0 + p).min(1.0);
-                    } else {
-                        self.pan_automated = true;
-                    }
-                }
-                FxInstance::SlowedReverb {
-                    rate,
-                    mix,
-                    reverb_delay_ms,
-                    damp,
-                    decay,
-                    wet_gain,
-                    predelay_ms,
-                    width,
-                    ..
-                } => {
-                    self.rate = rate.clamp(0.25, 32.0);
-                    self.base_mix = *mix;
-                    if structural {
-                        self.reverb =
-                            Some(Freeverb::new(
-                            *mix,
-                            *reverb_delay_ms,
-                            *damp,
-                            *decay,
-                            *wet_gain,
-                            *predelay_ms,
-                            *width,
-                        ));
-                    } else if let Some(rv) = &mut self.reverb {
-                        rv.set_params(
-                            *mix,
-                            *reverb_delay_ms,
-                            *damp,
-                            *decay,
-                            *wet_gain,
-                            *predelay_ms,
-                            *width,
-                        );
-                    }
-                    let has_rate_curve = !self.rate_points().is_empty();
-                    if let Some(w) = &mut self.warp
-                        && !has_rate_curve
-                    {
-                        // с автоматизацией produce() выставит по позиции сам
-                        w.set_rate(self.rate);
-                    }
-                }
-                // видео-FX аудио-процессором игнорируются
-                _ => {}
+        if structural {
+            self.nodes = fx
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, f)| AudioNode::build(f).map(|n| (slot, n)))
+                .collect();
+        }
+        debug_assert_eq!(
+            self.nodes.len(),
+            fx.iter().filter(|f| AudioNode::build(f).is_some()).count(),
+            "node list out of sync with the chain"
+        );
+        self.mix = fx.iter().position(|f| f.is_layer_mix()).map(|i| match &fx[i] {
+            FxInstance::LayerMix { amount, from } => {
+                MixCfg { slot: i, from: (*from as usize).min(i), base_amount: *amount }
+            }
+            _ => MixCfg { slot: i, from: usize::MAX, base_amount: 1.0 },
+        });
+        for (slot, node) in &mut self.nodes {
+            node.apply(&fx[*slot], structural);
+            if let AudioNode::Gain(g) = node {
+                g.bind_curves(&self.auto, *slot);
             }
         }
-        self.static_gain = gain;
-        self.layer_gain = layer_gain;
-        self.pan_l = pan_l;
-        self.pan_r = pan_r;
-        self.gain_slots = fx
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| match f {
-                FxInstance::Gain { db, .. } if !self.auto.points(i, "db").is_empty() => {
-                    Some((i, *db as f64))
+        // варп-половина Slowed+Reverb (потребление источника)
+        for f in fx {
+            if let FxInstance::SlowedReverb { rate, .. } = f {
+                self.rate = rate.clamp(0.25, 32.0);
+                let has_rate_curve = !self.rate_points().is_empty();
+                if let Some(w) = &mut self.warp
+                    && !has_rate_curve
+                {
+                    // с автоматизацией produce() выставит по позиции сам
+                    w.set_rate(self.rate);
                 }
-                _ => None,
-            })
-            .collect();
-        self.pan_slots = fx
-            .iter()
-            .enumerate()
-            .filter_map(|(i, f)| match f {
-                FxInstance::Gain { pan, .. } if !self.auto.points(i, "pan").is_empty() => {
-                    Some((i, *pan as f64))
-                }
-                _ => None,
-            })
-            .collect();
+            }
+        }
     }
 
-    /// Баланс автоматизированных Gain-слотов в позиции материала s.
-    /// Возвращает пару множителей (левый, правый) — тот же линейный
-    /// закон, что у константного пути.
-    fn pan_at(&self, s: f64) -> (f32, f32) {
-        let (mut l, mut r) = (1.0f32, 1.0f32);
-        for (slot, base) in &self.pan_slots {
-            let p = self.auto.value(*slot, "pan", *base, s).clamp(-1.0, 1.0) as f32;
-            l *= (1.0 - p).min(1.0);
-            r *= (1.0 + p).min(1.0);
-        }
-        (l, r)
-    }
-
-    /// Множитель автоматизированных Gain-слотов в позиции материала s.
-    fn gain_at(&self, s: f64) -> f32 {
-        let mut g = 1.0f32;
-        for (slot, base_db) in &self.gain_slots {
-            let db = self.auto.value(*slot, "db", *base_db, s);
-            g *= 10f32.powf(db as f32 / 20.0);
-        }
-        g
-    }
 
     fn has_warp(&self) -> bool {
         (self.rate - 1.0).abs() > 1e-9
@@ -411,7 +286,7 @@ impl ClipProcessor {
     }
 
     pub fn tail(&self) -> Tick {
-        self.reverb.as_ref().map(|r| r.tail()).unwrap_or(Tick::ZERO)
+        self.nodes.iter().map(|(_, n)| n.tail()).max().unwrap_or(Tick::ZERO)
     }
 
     pub fn tail_frames(&self) -> i64 {
@@ -421,8 +296,8 @@ impl ClipProcessor {
     /// Полный сброс состояния и permission на новый seek.
     pub fn reset(&mut self) {
         self.warp = None;
-        if let Some(r) = &mut self.reverb {
-            r.reset();
+        for (_, n) in &mut self.nodes {
+            n.reset();
         }
         self.next_local = i64::MIN;
     }
@@ -512,8 +387,8 @@ impl ClipProcessor {
     }
 
     fn hard_seek(&mut self, local: i64, pull: &mut dyn FnMut(PullKind, i64, &mut [f32]) -> bool) {
-        if let Some(r) = &mut self.reverb {
-            r.reset();
+        for (_, n) in &mut self.nodes {
+            n.reset();
         }
         // pre-roll может заходить в левую «ручку», но не раньше начала
         // материала (−head_ext)
@@ -576,27 +451,17 @@ impl ClipProcessor {
                 if let Some(w) = &mut self.warp {
                     w.set_rate(target_rate);
                 }
-                if let Some(r) = &mut self.reverb {
-                    // mix сглаживается one-pole внутри реверба; остальные
-                    // параметры реверба — тем же чанком
-                    let slot = self.warp_slot;
-                    r.set_mix(self.auto.value(slot, "mix", self.base_mix as f64, s) as f32);
-                }
-                // громкость: кривая на любом Gain-слоте цепочки
-                if self.gain_automated {
-                    self.auto_gain.set_target(self.gain_at(s));
-                }
-                if self.pan_automated {
-                    let (l, r) = self.pan_at(s);
-                    self.auto_pan_l.set_target(l);
-                    self.auto_pan_r.set_target(r);
+                // цели узлов — тем же правилом середины чанка (узел сам
+                // решает, какие из его параметров ведут кривые)
+                for (slot, node) in &mut self.nodes {
+                    node.set_targets(&self.auto, *slot, s);
                 }
             }
             // цель силы слоя на середину чанка — тем же правилом, что и
             // остальные параметры (Р.38 п.12: фейды это её кривая)
-            let mix_k = self.mix_slot.map(|slot| {
+            let mix_k = self.mix.as_ref().map(|m| {
                 let tau = (chunk_local as f64 + n as f64 * 0.5) / self.clip_len as f64;
-                self.auto.value(slot, "amount", self.base_layer_mix, tau).clamp(0.0, 1.0) as f32
+                self.auto.value(m.slot, "amount", m.base_amount, tau).clamp(0.0, 1.0) as f32
             });
             let sub = &mut out[done * CH..(done + n) * CH];
             // Гейт dry-выхода в OUTPUT-домене: за концом МАТЕРИАЛА (тело +
@@ -635,73 +500,32 @@ impl ClipProcessor {
                     sub[cut * CH..].fill(0.0);
                 }
             }
-            // СУХАЯ сторона смешения (Р.38 п.12): состояние ДО вклада
-            // слоя. Реверб у движка ровно один на цепочку, поэтому вопрос
-            // «чей он» решается одним флагом: реверб СОБЫТИЯ звучит и в
-            // сухой стороне, реверб СЛОЯ — только в мокрой.
-            // реверб СОБЫТИЯ звучит и в сухой стороне (снимок после
-            // него), реверб СЛОЯ — только в мокрой (снимок до)
-            let mut dry: Option<Vec<f32>> = match mix_k {
-                Some(_) if self.reverb_is_layer => Some(sub.to_vec()),
-                Some(_) => Some(Vec::new()),
-                None => None,
-            };
-            if let Some(r) = &mut self.reverb {
-                r.process(sub);
-            }
-            if let Some(d) = dry.as_mut()
-                && d.is_empty()
-            {
-                *d = sub.to_vec();
-            }
-            // автоматизированная громкость — ПОСЛЕ реверба, как и
-            // константная: цепочка кончается уровнем события
-            if self.gain_automated {
-                for f in 0..n {
-                    let g = self.auto_gain.tick();
-                    for ch in 0..CH {
-                        sub[f * CH + ch] *= g;
-                    }
+            // ЧЕСТНЫЙ ПОРЯДОК СЛОТОВ (Р.47, п.325): узлы исполняются по
+            // позиции в цепочке. Сухая сторона силы слоя — снимок ПЕРЕД
+            // первым узлом со слотом >= from (реверб/громкость события
+            // стоят раньше — попадают в сухую; узлы слоя — только в
+            // мокрую: прежние reverb_is_layer/layer_gain стали следствием
+            // позиции, а не флагами).
+            let mut dry: Option<Vec<f32>> = None;
+            for (slot, node) in &mut self.nodes {
+                if let Some(m) = &self.mix
+                    && *slot >= m.from
+                    && dry.is_none()
+                {
+                    dry = Some(sub.to_vec());
                 }
-            }
-            if self.pan_automated {
-                for f in sub.chunks_exact_mut(CH) {
-                    let (l, r) = (self.auto_pan_l.tick(), self.auto_pan_r.tick());
-                    f[0] *= l;
-                    if CH > 1 {
-                        f[1] *= r;
+                if matches!(node, AudioNode::LayerMix) {
+                    if let (Some(k), Some(d)) = (mix_k, &dry) {
+                        let ik = 1.0 - k;
+                        for (v, dv) in sub.iter_mut().zip(d.iter()) {
+                            *v = dv * ik + *v * k;
+                        }
                     }
-                }
-            }
-            // громкость СЛОЯ — только на мокрую сторону, потом смешение
-            if let Some(k) = mix_k {
-                if self.layer_gain != 1.0 {
-                    for v in sub.iter_mut() {
-                        *v *= self.layer_gain;
-                    }
-                }
-                if let Some(d) = &dry {
-                    let ik = 1.0 - k;
-                    for (v, dv) in sub.iter_mut().zip(d.iter()) {
-                        *v = dv * ik + *v * k;
-                    }
+                } else {
+                    node.process(sub, chunk_local);
                 }
             }
             done += n;
-        }
-        if self.static_gain != 1.0 {
-            for s in out.iter_mut() {
-                *s *= self.static_gain;
-            }
-        }
-        // баланс — последним: на нуле множители 1.0 и цикл не идёт вовсе
-        if self.pan_l != 1.0 || self.pan_r != 1.0 {
-            for f in out.chunks_exact_mut(CH) {
-                f[0] *= self.pan_l;
-                if CH > 1 {
-                    f[1] *= self.pan_r;
-                }
-            }
         }
     }
 }

@@ -260,6 +260,7 @@ fn clip_decode_quality(clip: &VideoClip, quality: Quality) -> Quality {
 /// Логическая база — размер ПРОЕКТА: зум почти не зависит от Quality
 /// (расхождения целочисленных огрублений сетки мельче кванта ступени), а
 /// ступень обязана быть одинаковой на превью и экспорте.
+#[allow(clippy::too_many_arguments)]
 fn clip_head_zoom(
     fx: &[kt_model::FxInstance],
     auto: &[Vec<kt_model::ParamCurve>],

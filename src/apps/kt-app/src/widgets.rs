@@ -20,6 +20,7 @@ fn unit_suffix(u: ParamUnit) -> &'static str {
     match u {
         ParamUnit::Db => " dB",
         ParamUnit::Ms => " ms",
+        ParamUnit::Hz => " Hz",
         ParamUnit::Deg => "°",
         ParamUnit::Px => " px",
         ParamUnit::None | ParamUnit::Norm | ParamUnit::Ratio | ParamUnit::Rgb8 | ParamUnit::Count => {

@@ -822,3 +822,98 @@ fn t246_gain_curve_peaks_at_event_middle_under_warp() {
         "треугольник симметричен: {quarter:.5} vs {three_q:.5}"
     );
 }
+
+// ---- Тест 320/321 (Р.47, п.325): честный порядок аудио-слотов ---------------
+
+/// Тест 320: обработка идёт В ПОРЯДКЕ ЦЕПОЧКИ. Автоматизированный Gain
+/// ПЕРЕД ревербом — это фейд ВХОДА: хвост реверба обязан дозвонить после
+/// того, как вход ушёл в ноль. До Р.47 конвейер был прибит (громкость
+/// всегда после реверба), и тот же фейд душил ХВОСТ — red-proof: на
+/// коммите до узловой цепочки RMS последней четверти ~0.
+#[test]
+fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
+    let dur = 48_000 * 4;
+    let p = fx_project_auto(
+        vec![
+            FxInstance::gain(0.0),
+            FxInstance::SlowedReverb {
+                rate: 1.0,
+                mix: 1.0,
+                reverb_delay_ms: 100.0,
+                damp: 0.1,
+                decay: 0.95,
+                wet_gain: 1.0,
+                predelay_ms: 0.0,
+                width: 1.0,
+                frames: Default::default(),
+                automation: vec![],
+            },
+        ],
+        vec![
+            vec![ParamCurve {
+                param: "db".into(),
+                ease: false,
+                keys: vec![
+                    AutoKey { t: Tick(0), v: 0.0 },
+                    AutoKey { t: Tick::from_audio_frames(dur / 4), v: -60.0 },
+                ],
+            }],
+            vec![],
+        ],
+        "synth:sine:330",
+        dur,
+    );
+    let r = AudioRenderer::new(&p);
+    let mut f = direct(AudioPattern::Sine { hz: 330.0 });
+    let mut store = FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut out = vec![0f32; dur as usize * CH];
+    no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
+    let rms = |s: &[f32]| -> f64 {
+        (s.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / s.len() as f64).sqrt()
+    };
+    let frames = |a: f64, b: f64| {
+        ((a * 48_000.0) as usize * CH)..((b * 48_000.0) as usize * CH)
+    };
+    let head = rms(&out[frames(0.0, 0.5)]);
+    // окно сразу после фейда входа (2.4..3.6 c): хвост реверба от громкой
+    // первой половины ещё жирный (decay 0.95 ≈ t60 5 c)
+    let tail = rms(&out[frames(1.2, 2.4)]);
+    assert!(head > 0.03, "start must sound: {head}");
+    assert!(
+        tail > head * 0.05,
+        "reverb tail must ring after the INPUT fade (slot order): tail {tail}, head {head}"
+    );
+}
+
+/// Тест 321: байт-якоря одно-слотовых цепочек после узлового рефакторинга.
+/// [Gain −6] — ровно источник × 10^(−6/20) поэлементно (константный путь —
+/// один и тот же множитель, нарезка на чанки не меняет float-умножение).
+#[test]
+fn t321_single_gain_is_exact_scalar_multiply() {
+    let dur = 48_000;
+    let dry = {
+        let p = fx_project(vec![], "synth:ramp", dur);
+        let r = AudioRenderer::new(&p);
+        let mut f = direct(AudioPattern::Ramp);
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; dur as usize * CH];
+        no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
+        out
+    };
+    let gained = {
+        let p = fx_project(vec![FxInstance::gain(-6.0)], "synth:ramp", dur);
+        let r = AudioRenderer::new(&p);
+        let mut f = direct(AudioPattern::Ramp);
+        let mut store = FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; dur as usize * CH];
+        no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
+        out
+    };
+    let k = 10f32.powf(-6.0 / 20.0);
+    for (i, (d, g)) in dry.iter().zip(gained.iter()).enumerate() {
+        assert_eq!(*g, d * k, "sample {i}: gain must be one exact multiply");
+    }
+}
