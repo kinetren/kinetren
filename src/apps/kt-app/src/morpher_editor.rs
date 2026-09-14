@@ -400,7 +400,7 @@ impl KtApp {
                     crate::widgets::ChainEdit {
                         fx: &mut fx,
                         bypass: &mut bypass,
-                        auto: Some(&mut auto),
+                        auto: &mut auto,
                         selected: &mut ed.sel,
                         master_on: &mut enabled,
                         head: Some(crate::widgets::HeadSlot {

@@ -409,10 +409,31 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
     p.validate().unwrap();
     let mut m = TimelineModel::new(p);
 
-    // 1) цепочка целиком: слоты, bypass и кривые переезжают
-    let block = ops::copy_fx_chain(&src);
+    // 1) цепочка целиком: слоты, bypass и кривые переезжают «вход к
+    //    входу» — одной функцией, которую зовёт и UI, и пресеты (Р.48)
+    let block = ops::FxChainBlock {
+        slots: src
+            .fx
+            .iter()
+            .enumerate()
+            .map(|(i, f)| ops::FxSlotBlock {
+                fx: f.clone(),
+                bypass: src.fx_bypass[i],
+                curves: src.fx_auto[i].clone(),
+            })
+            .collect(),
+        src_in: src.source_in,
+        fx_off: src.fx_off,
+    };
     let target = m.clip(ClipId(2)).unwrap().clone();
-    m.apply_batch(ops::paste_fx_chain(&target, &block)).unwrap();
+    let (mut fx, mut bypass, mut auto) = (target.fx.clone(), target.fx_bypass.clone(), target.fx_auto.clone());
+    ops::append_chain_block(&mut fx, &mut bypass, &mut auto, &block, target.source_in);
+    m.apply_batch(vec![
+        Command::SetFx { id: ClipId(2), fx },
+        Command::SetFxBypass { id: ClipId(2), bypass },
+        Command::SetFxAuto { id: ClipId(2), auto },
+    ])
+    .unwrap();
     let got = m.clip(ClipId(2)).unwrap().clone();
     assert_eq!(got.fx, src.fx, "цепочка не переехала");
     assert_eq!(got.fx_bypass, src.fx_bypass, "состояние слотов не переехало");
@@ -428,34 +449,35 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
     assert_eq!(m.undo_depth(), depth - 1, "вставка цепочки — один undo-шаг");
     m.redo().unwrap();
 
-    // 2) отдельный слот дописывается В КОНЕЦ существующей цепочки
-    let one = ops::copy_fx_slot(&src, 0).expect("слот есть");
+    // 2) ДОПИСЫВАНИЕ: второй вызов кладёт слоты в конец, не затирая
     let target = m.clip(ClipId(2)).unwrap().clone();
     let before = target.fx.len();
-    m.apply_batch(ops::paste_fx_slots(&target, &one)).unwrap();
-    assert_eq!(m.clip(ClipId(2)).unwrap().fx.len(), before + 1, "слот не добавился");
+    let (mut fx, mut bypass, mut auto) = (target.fx.clone(), target.fx_bypass.clone(), target.fx_auto.clone());
+    let one = ops::FxChainBlock {
+        slots: vec![block.slots[0].clone()],
+        src_in: block.src_in,
+        fx_off: false,
+    };
+    ops::append_chain_block(&mut fx, &mut bypass, &mut auto, &one, target.source_in);
+    assert_eq!(fx.len(), before + 1, "слот не добавился");
+    assert_eq!(auto.len(), fx.len(), "кривые обязаны идти параллельно слотам");
 
-    // 3) огибающие: вставка в СВОЙ вид эффекта работает, в чужой — отказ
-    let env = ops::copy_envelope(&src, 0, Some("radius")).expect("огибающая есть");
-    let target = m.clip(ClipId(2)).unwrap().clone();
-    let cmds = ops::paste_envelope(&target, 0, &env).expect("тот же вид эффекта");
-    m.apply_batch(cmds).unwrap();
+    // 3) ребейз симметричен: событие → морфер (вход = 0) и обратно
+    let to_morph = ops::rebase_curves(&src.fx_auto[0], src.source_in, kt_time::Tick(0));
     assert_eq!(
-        m.clip(ClipId(2)).unwrap().fx_auto[0]
-            .iter()
-            .find(|c| c.param == "radius")
-            .unwrap()
-            .keys
-            .iter()
-            .map(|k| k.t.0)
-            .collect::<Vec<_>>(),
-        vec![45_000, 135_000]
+        to_morph[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![0, 90_000],
+        "в домене морфера ключи считаются от точки входа"
     );
-    let alien = ops::copy_envelope(&src, 1, None).expect("огибающая второго слота");
-    assert!(
-        ops::paste_envelope(&m.clip(ClipId(2)).unwrap().clone(), 0, &alien).is_none(),
-        "огибающая чужого вида эффекта вставляться не должна"
+    let back_to_clip = ops::rebase_curves(&to_morph, kt_time::Tick(0), Tick(45_000));
+    assert_eq!(
+        back_to_clip[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![45_000, 135_000],
+        "обратный перенос возвращает ключи на материал приёмника"
     );
+    // ключ левее точки входа клампится в ноль, а не уходит в минус
+    let below = ops::rebase_curves(&src.fx_auto[0], Tick(90_000), Tick(0));
+    assert!(below[0].keys.iter().all(|k| k.t.0 >= 0), "ключи не уходят в отрицательное время");
 
     // 4) блок переживает системный буфер (JSON) без потерь
     let json = serde_json::to_string(&block).unwrap();
@@ -571,4 +593,74 @@ fn t248_lone_clip_is_untouched_by_the_rule() {
     assert!(m.project().clips[0].link_group.is_none());
     m.apply(Command::SetFx { id, fx: vec![FxInstance::slowed_reverb(0.5, 0.2, 85.0)] }).unwrap();
     assert_eq!(m.project().clips.iter().filter(|c| !c.fx.is_empty()).count(), 1);
+}
+
+/// Тест 342 (Р.48, п.342): вставка цепочки — ОДНА правда на оба носителя.
+///
+/// До Р.48 UI дублировал ребейз инлайном в двух местах, а у морфера
+/// кривые могли уйти в никуда через тихую ветку `Option`. Теперь вставку
+/// делает `append_chain_block`, и её поведение зафиксировано здесь:
+/// перенос «вход к входу» в ОБЕ стороны, дописывание в конец, приёмник
+/// не выключается чужим `fx_off`.
+#[test]
+fn t342_append_chain_block_is_one_truth() {
+    use kt_model::ops;
+    let curves = vec![ParamCurve {
+        param: "radius".into(),
+        ease: false,
+        keys: vec![key(45_000, 1.0), key(135_000, 48.0)],
+    }];
+    let block = ops::FxChainBlock {
+        slots: vec![ops::FxSlotBlock {
+            fx: FxInstance::blur(8),
+            bypass: true,
+            curves: curves.clone(),
+        }],
+        // донор — событие с точкой входа 45_000 тиков материала
+        src_in: Tick(45_000),
+        // мастер-выключатель донора выключен: приёмник это НЕ наследует
+        fx_off: true,
+    };
+
+    // событие → МОРФЕР: у морфера домен — время блока, вход = 0
+    let (mut fx, mut bypass, mut auto) = (vec![], vec![], vec![]);
+    ops::append_chain_block(&mut fx, &mut bypass, &mut auto, &block, Tick(0));
+    assert_eq!(fx.len(), 1);
+    assert_eq!(bypass, vec![true], "состояние слота обязано переехать");
+    assert_eq!(
+        auto[0][0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![0, 90_000],
+        "в морфере ключи считаются от точки входа донора"
+    );
+
+    // МОРФЕР → событие: тот же отступ от входа, но уже в материале цели
+    let from_morph = ops::FxChainBlock {
+        slots: vec![ops::FxSlotBlock {
+            fx: FxInstance::blur(8),
+            bypass: false,
+            curves: auto[0].clone(),
+        }],
+        src_in: Tick(0),
+        fx_off: false,
+    };
+    let (mut fx2, mut bypass2, mut auto2) = (vec![], vec![], vec![]);
+    ops::append_chain_block(&mut fx2, &mut bypass2, &mut auto2, &from_morph, Tick(30_000));
+    assert_eq!(
+        auto2[0][0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![30_000, 120_000],
+        "обратный перенос ставит ключи на материал приёмника"
+    );
+
+    // ДОПИСЫВАНИЕ: второй блок ложится в конец, первый цел
+    ops::append_chain_block(&mut fx2, &mut bypass2, &mut auto2, &block, Tick(30_000));
+    assert_eq!(fx2.len(), 2, "вставка дописывает, а не заменяет");
+    assert_eq!(auto2.len(), 2, "кривые идут параллельно слотам");
+    assert_eq!(bypass2, vec![false, true]);
+
+    // приёмник с непустой цепочкой и БЕЗ кривых получает их корректно
+    let (mut fx3, mut bypass3, mut auto3) = (vec![FxInstance::gain(-3.0)], vec![], vec![]);
+    ops::append_chain_block(&mut fx3, &mut bypass3, &mut auto3, &block, Tick(0));
+    assert_eq!(auto3.len(), 2, "пустые кривые доращиваются до длины цепочки");
+    assert!(auto3[0].is_empty(), "у прежнего слота кривых не появилось");
+    assert!(!auto3[1].is_empty(), "у вставленного — появились");
 }

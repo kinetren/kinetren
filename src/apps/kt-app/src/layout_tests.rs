@@ -6387,3 +6387,76 @@ fn t289_underrun_counters_are_labelled_and_silence_is_in_ms() {
         "голодание колбэка обязано быть показано и в миллисекундах ({ms} мс): {texts:?}"
     );
 }
+
+/// Тест 343 (Р.48, п.342): вставка FX-цепочки В МОРФЕР доносит кривые.
+///
+/// Дефект жил с Р.38: `ChainEdit.auto` был `Option`, и при `None` ветка
+/// переноса кривых молча пропускалась — вставленная цепочка приезжала
+/// «пустой», хотя в буфере анимация была. Теперь тип не даёт этой ветке
+/// существовать, а тест сторожит СМЫСЛ: ключи доехали и пересчитаны в
+/// домен морфера (время блока — отступ от точки входа донора).
+#[test]
+fn t343_paste_chain_into_morpher_carries_curves() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(180_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.add_morph_layer();
+    // в буфере — цепочка С КРИВОЙ от донора с точкой входа 45_000
+    app.fx_clipboard = Some(kt_model::ops::FxChainBlock {
+        slots: vec![kt_model::ops::FxSlotBlock {
+            fx: FxInstance::blur(8),
+            bypass: false,
+            curves: vec![ParamCurve {
+                param: "radius".into(),
+                ease: false,
+                keys: vec![
+                    AutoKey { t: kt_time::Tick(45_000), v: 1.0 },
+                    AutoKey { t: kt_time::Tick(135_000), v: 48.0 },
+                ],
+            }],
+        }],
+        src_in: kt_time::Tick(45_000),
+        fx_off: false,
+    });
+    h.step();
+    h.step();
+    assert!(h.state().morph_editors.iter().any(|e| e.open), "окно морфера не открылось");
+
+    // кнопка вставки цепочки — та же, что у события
+    let paste = tr(k::fx::PASTE_CHAIN).to_string();
+    h.get_by_label(&paste).click();
+    h.step();
+    h.step();
+
+    let ev = h.state().model.project().morphers[0].clone();
+    assert_eq!(ev.patch.video_fx.len(), 1, "цепочка обязана вставиться в морфер");
+    let curves: Vec<_> = ev.patch.video_auto.iter().flatten().collect();
+    assert_eq!(curves.len(), 1, "кривая обязана доехать вместе со слотом");
+    assert_eq!(
+        curves[0].keys.iter().map(|k| k.t.0).collect::<Vec<_>>(),
+        vec![0, 90_000],
+        "и пересчитаться в домен морфера (отступ от точки входа донора)"
+    );
+}

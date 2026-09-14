@@ -879,7 +879,7 @@ pub fn fx_tag(f: &FxInstance) -> String {
 
 /// Сдвиг ключей при переносе в другое событие: материал адресуется от
 /// точки входа, поэтому кривая встаёт «на то же место куска».
-fn rebase(curves: &[ParamCurve], from: Tick, to: Tick) -> Vec<ParamCurve> {
+pub fn rebase_curves(curves: &[ParamCurve], from: Tick, to: Tick) -> Vec<ParamCurve> {
     let d = to.0 - from.0;
     curves
         .iter()
@@ -891,112 +891,32 @@ fn rebase(curves: &[ParamCurve], from: Tick, to: Tick) -> Vec<ParamCurve> {
         .collect()
 }
 
-pub fn copy_fx_slot(c: &ClipEvent, slot: usize) -> Option<FxChainBlock> {
-    let fx = c.fx.get(slot)?.clone();
-    Some(FxChainBlock {
-        slots: vec![FxSlotBlock {
-            fx,
-            bypass: c.fx_bypass.get(slot).copied().unwrap_or(false),
-            curves: c.fx_auto.get(slot).cloned().unwrap_or_default(),
-        }],
-        src_in: c.source_in,
-        fx_off: false,
-    })
-}
-
-pub fn copy_fx_chain(c: &ClipEvent) -> FxChainBlock {
-    FxChainBlock {
-        slots: c
-            .fx
-            .iter()
-            .enumerate()
-            .map(|(i, f)| FxSlotBlock {
-                fx: f.clone(),
-                bypass: c.fx_bypass.get(i).copied().unwrap_or(false),
-                curves: c.fx_auto.get(i).cloned().unwrap_or_default(),
-            })
-            .collect(),
-        src_in: c.source_in,
-        fx_off: c.fx_off,
-    }
-}
-
-/// Огибающие слота: все кривые или одна названная.
-pub fn copy_envelope(c: &ClipEvent, slot: usize, param: Option<&str>) -> Option<EnvelopeBlock> {
-    let fx = c.fx.get(slot)?;
-    let all = c.fx_auto.get(slot).cloned().unwrap_or_default();
-    let curves = match param {
-        None => all,
-        Some(p) => all.into_iter().filter(|c| c.param == p).collect(),
-    };
-    Some(EnvelopeBlock { fx_tag: fx_tag(fx), curves, src_in: c.source_in })
-}
-
-/// Вставка цепочки: заменяет цепочку события целиком. Один батч — один
-/// undo-шаг.
-pub fn paste_fx_chain(c: &ClipEvent, b: &FxChainBlock) -> Vec<Command> {
-    let mut auto: Vec<Vec<ParamCurve>> =
-        b.slots.iter().map(|s| rebase(&s.curves, b.src_in, c.source_in)).collect();
-    while auto.last().is_some_and(|v| v.is_empty()) {
-        auto.pop();
-    }
-    let mut bypass: Vec<bool> = b.slots.iter().map(|s| s.bypass).collect();
-    while bypass.last() == Some(&false) {
-        bypass.pop();
-    }
-    vec![
-        Command::SetFx { id: c.id, fx: b.slots.iter().map(|s| s.fx.clone()).collect() },
-        Command::SetFxAuto { id: c.id, auto },
-        Command::SetFxBypass { id: c.id, bypass },
-        Command::SetFxOff { id: c.id, off: b.fx_off },
-    ]
-}
-
-/// Вставка слотов в КОНЕЦ цепочки события (копирование эффекта туда, где
-/// уже что-то есть).
-pub fn paste_fx_slots(c: &ClipEvent, b: &FxChainBlock) -> Vec<Command> {
-    let mut fx = c.fx.clone();
-    let mut auto = c.fx_auto.clone();
-    let mut bypass = c.fx_bypass.clone();
-    auto.resize(fx.len(), Vec::new());
+/// Дописать блок цепочки в конец приёмника (Р.48): ЕДИНСТВЕННАЯ правда
+/// вставки — её зовут и копипаст полосы, и вставка пресета.
+///
+/// Ключи переезжают «вход к входу»: `d = dst_src_in − block.src_in`. У
+/// события точка входа — `source_in` (тики материала), у морфера — ноль
+/// (время блока), поэтому одна формула обслуживает оба носителя и оба
+/// направления переноса. Ключи, ушедшие левее входа, клампятся в ноль —
+/// как и в `rebase_curves`.
+///
+/// `fx_off` блока НЕ применяется намеренно: дописывание не должно
+/// выключать цепочку приёмника (мастер-выключатель — свойство события, а
+/// не переносимого куска).
+pub fn append_chain_block(
+    fx: &mut Vec<FxInstance>,
+    bypass: &mut Vec<bool>,
+    auto: &mut Vec<Vec<ParamCurve>>,
+    block: &FxChainBlock,
+    dst_src_in: Tick,
+) {
     bypass.resize(fx.len(), false);
-    for s in &b.slots {
-        fx.push(s.fx.clone());
-        auto.push(rebase(&s.curves, b.src_in, c.source_in));
-        bypass.push(s.bypass);
+    auto.resize(fx.len(), Vec::new());
+    for slot in &block.slots {
+        fx.push(slot.fx.clone());
+        bypass.push(slot.bypass);
+        auto.push(rebase_curves(&slot.curves, block.src_in, dst_src_in));
     }
-    while auto.last().is_some_and(|v| v.is_empty()) {
-        auto.pop();
-    }
-    while bypass.last() == Some(&false) {
-        bypass.pop();
-    }
-    vec![
-        Command::SetFx { id: c.id, fx },
-        Command::SetFxAuto { id: c.id, auto },
-        Command::SetFxBypass { id: c.id, bypass },
-    ]
-}
-
-/// Вставка огибающих в слот. Чужой вид эффекта — отказ (None): кривые
-/// адресуются именами полей своего варианта.
-pub fn paste_envelope(c: &ClipEvent, slot: usize, b: &EnvelopeBlock) -> Option<Vec<Command>> {
-    let fx = c.fx.get(slot)?;
-    if fx_tag(fx) != b.fx_tag {
-        return None;
-    }
-    let mut auto = c.fx_auto.clone();
-    if auto.len() <= slot {
-        auto.resize(slot + 1, Vec::new());
-    }
-    for curve in rebase(&b.curves, b.src_in, c.source_in) {
-        auto[slot].retain(|old| old.param != curve.param);
-        auto[slot].push(curve);
-    }
-    while auto.last().is_some_and(|v| v.is_empty()) {
-        auto.pop();
-    }
-    Some(vec![Command::SetFxAuto { id: c.id, auto }])
 }
 
 /// Автодакинг (Р.48, п.341): кривая громкости по интервалам, в которых

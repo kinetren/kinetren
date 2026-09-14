@@ -387,12 +387,21 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
 // ни там, ни там не было ни мыши, ни мастер-галки, ни копипаста. Теперь
 // полоса одна и умеет всё; вызывают её окно событий и обе секции морфера.
 
-/// Что цепочка отдаёт на редактирование. `bypass` параллелен `fx`;
-/// `auto` есть только у событий (у морфера кривых нет).
+/// Что цепочка отдаёт на редактирование. `bypass` и `auto` параллельны
+/// `fx`.
+///
+/// Кривые есть У ОБОИХ носителей (Р.38 п.13 дал их морферу), и `auto`
+/// здесь НЕ `Option` намеренно: пока он был опциональным, вставка
+/// цепочки при `None` молча роняла кривые на пол — дефект жил
+/// незамеченным, потому что «тихая ветка» выглядела как забота о
+/// носителе без автоматизации. Домены разные, и это нормально: у
+/// события ключ живёт в тиках МАТЕРИАЛА (`src_in` = `source_in`), у
+/// морфера — во времени БЛОКА (`src_in` = 0). Вставка переводит ключи
+/// «вход к входу» в обе стороны (`ops::rebase_curves`).
 pub struct ChainEdit<'a> {
     pub fx: &'a mut Vec<FxInstance>,
     pub bypass: &'a mut Vec<bool>,
-    pub auto: Option<&'a mut Vec<Vec<kt_model::ParamCurve>>>,
+    pub auto: &'a mut Vec<Vec<kt_model::ParamCurve>>,
     pub selected: &'a mut ChainSel,
     /// Мастер-выключатель цепочки (у морфера — выключатель события).
     pub master_on: &'a mut bool,
@@ -518,9 +527,7 @@ pub fn chain_strip(
 ) -> ChainChanged {
     let mut ch = ChainChanged::default();
     edit.bypass.resize(edit.fx.len(), false);
-    if let Some(a) = edit.auto.as_deref_mut() {
-        a.resize(edit.fx.len(), Vec::new());
-    }
+    edit.auto.resize(edit.fx.len(), Vec::new());
     let mut remove: Option<usize> = None;
     let mut swap: Option<(usize, usize)> = None;
 
@@ -638,9 +645,7 @@ pub fn chain_strip(
             Some(crate::fx_registry::Picked::Fx(tmpl)) => {
                 edit.fx.push(tmpl);
                 edit.bypass.push(false);
-                if let Some(a) = edit.auto.as_deref_mut() {
-                    a.push(Vec::new());
-                }
+                edit.auto.push(Vec::new());
                 *edit.selected = ChainSel::Fx(edit.fx.len() - 1);
                 ch.fx = true;
             }
@@ -662,11 +667,7 @@ pub fn chain_strip(
                     .map(|(i, f)| kt_model::ops::FxSlotBlock {
                         fx: f.clone(),
                         bypass: edit.bypass[i],
-                        curves: edit
-                            .auto
-                            .as_deref()
-                            .and_then(|a| a.get(i).cloned())
-                            .unwrap_or_default(),
+                        curves: edit.auto.get(i).cloned().unwrap_or_default(),
                     })
                     .collect(),
                 src_in,
@@ -686,20 +687,16 @@ pub fn chain_strip(
         .clicked()
             && let Some(b) = clipboard.clone()
         {
-            let d = src_in.0 - b.src_in.0;
-            for slot in &b.slots {
-                edit.fx.push(slot.fx.clone());
-                edit.bypass.push(slot.bypass);
-                if let Some(a) = edit.auto.as_deref_mut() {
-                    let mut curves = slot.curves.clone();
-                    for c in &mut curves {
-                        for kf in &mut c.keys {
-                            kf.t = kt_time::Tick((kf.t.0 + d).max(0));
-                        }
-                    }
-                    a.push(curves);
-                }
-            }
+            // ОДНА правда вставки: та же функция, что зовут пресеты
+            // (Р.48). Ключи переезжают «вход к входу» — у события это
+            // тики материала, у морфера время блока.
+            kt_model::ops::append_chain_block(
+                edit.fx,
+                edit.bypass,
+                edit.auto,
+                &b,
+                src_in,
+            );
             *edit.selected = ChainSel::Fx(edit.fx.len().saturating_sub(1));
             ch.fx = true;
             ch.bypass = true;
@@ -712,7 +709,8 @@ pub fn chain_strip(
         edit.fx.insert(to, slot);
         let b = edit.bypass.remove(from);
         edit.bypass.insert(to, b);
-        if let Some(a) = edit.auto.as_deref_mut() {
+        {
+            let a = &mut *edit.auto;
             let c = a.remove(from);
             a.insert(to, c);
             ch.auto = true;
@@ -724,10 +722,8 @@ pub fn chain_strip(
     if let Some(i) = remove {
         edit.fx.remove(i);
         edit.bypass.remove(i);
-        if let Some(a) = edit.auto.as_deref_mut()
-            && i < a.len()
-        {
-            a.remove(i);
+        if i < edit.auto.len() {
+            edit.auto.remove(i);
             ch.auto = true;
         }
         // выбор съезжает на уцелевший слот, а голова остаётся головой

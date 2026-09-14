@@ -212,7 +212,7 @@ impl KtApp {
                                 crate::widgets::ChainEdit {
                                     fx: &mut fx,
                                     bypass: &mut bypass,
-                                    auto: Some(&mut auto),
+                                    auto: &mut auto,
                                     selected: &mut sel_slot,
                                     master_on: &mut chain_on,
                                     head: None,
