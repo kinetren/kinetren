@@ -13,6 +13,8 @@ kt-otio = { workspace = true }
 kt-media = { workspace = true }
 kt-cache = { workspace = true }
 kt-engine = { workspace = true }
+# график АЧХ считает kt_fx::eq_mag_db — теми же коэффициентами, что звучат
+kt-fx = { workspace = true }
 kt-gpu = { workspace = true }
 eframe = { workspace = true }
 cpal = { workspace = true }

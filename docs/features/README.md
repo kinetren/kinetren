@@ -194,7 +194,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 <!-- table:begin -->
 | ID | Фича | Статус | Приор. | Цена | У нас | Заметка |
 |---|---|---|---|---|---|---|
-| F-AUD-001 | Параметрический эквалайзер | в-работе | A | S | нет | `audio/processing/eq-parametric.md` |
+| F-AUD-001 | Параметрический эквалайзер | сделано | A | S | да | `audio/processing/eq-parametric.md` |
 | F-RES-007 | «В превью было одно, а в экспорте другое» | уже-есть | A | S | да | `resilience/environment/preview-vs-export-mismatch.md` |
 | F-AUD-009 | Delay / Echo на событии | сделано | A | M | да | `audio/processing/delay-echo.md` |
 | F-CLR-007 | Базовая цветокоррекция событием — ColorGrade, Duotone, Posterize | сделано | A | M | да | `color/grading/basic-color-fx.md` |
@@ -250,7 +250,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-RES-006 | Зависимость от системных библиотек и драйверов | кандидат | B | S | частично | `resilience/environment/system-libraries-and-drivers.md` |
 | F-TL-002 | Slip и slide — тримы, не меняющие длину | кандидат | B | S | частично | `timeline/trimming/slip-and-slide.md` |
 | F-UI-004 | Системный файловый диалог против своего | кандидат | B | S | частично | `ui/input/native-file-dialogs.md` |
-| F-AUD-002 | Динамическая обработка — компрессор, лимитер, гейт, экспандер | в-работе | B | M | нет | `audio/processing/compressor-and-limiter.md` |
+| F-AUD-002 | Динамическая обработка — компрессор, лимитер, гейт, экспандер | сделано | B | M | да | `audio/processing/compressor-and-limiter.md` |
 | F-AUD-005 | Нормализация громкости по стандартам — LUFS, EBU R128, true peak | кандидат | B | M | нет | `audio/mixing/loudness-r128-and-lufs.md` |
 | F-AUD-006 | Маршрутизация и раскладка аудиоканалов | кандидат | B | M | нет | `audio/mixing/channel-routing-and-mapping.md` |
 | F-AUD-008 | Автоматическая нарезка по тишине | кандидат | B | M | нет | `audio/processing/silence-detection-and-auto-cut.md` |
@@ -314,7 +314,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-UI-003 | Раскладки окон — пресеты по задаче и где раскладка живёт | кандидат | B | M | частично | `ui/input/workspaces-and-layouts.md` |
 | F-UI-005 | Цвет клипа как данные и как оформление | кандидат | B | M | частично | `ui/viewer/clip-colors-and-legibility.md` |
 | F-AUD-003 | Шумоподавление и восстановление речи | кандидат | B | L | нет | `audio/processing/noise-reduction.md` |
-| F-AUD-013 | Pitch shift — высота без смены длительности | в-работе | B | L | нет | `audio/processing/pitch-shift.md` |
+| F-AUD-013 | Pitch shift — высота без смены длительности | сделано | B | L | да | `audio/processing/pitch-shift.md` |
 | F-COL-010 | Ручки: сколько лишнего уезжает с монтажом | кандидат | B | L | нет | `collab/handoff/handles.md` |
 | F-COL-016 | Единица занятия — библиотека, бин или секвенция | исследовано | B | L | нет | `collab/claim/lock-granularity.md` |
 | F-COL-033 | Чем адресуется правка: id, тик или родословная | исследовано | B | L | частично | `collab/merge/identity-of-an-edit.md` |

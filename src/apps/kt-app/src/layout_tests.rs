@@ -6626,3 +6626,136 @@ fn t346_preset_insert_appends_chain_with_curves() {
         "undo снимает вставленный пресет"
     );
 }
+
+/// Проект с одним аудио-событием и эквалайзером; окно FX открыто.
+#[cfg(test)]
+fn harness_with_eq_window() -> egui_kittest::Harness<'static, crate::app::KtApp> {
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(180_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![FxInstance::eq()],
+        fx_bypass: vec![false],
+        fx_auto: vec![vec![]],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    h
+}
+
+/// Тест 349 (Р.48, п.347): график АЧХ есть у эквалайзера, его точка
+/// тянется мышью, и правка доезжает ДО МОДЕЛИ одной ступенью истории.
+///
+/// Утверждается следствие, которое видит человек (полоса переехала на
+/// другую частоту и усиление), а не «функция вернула значение»: ровно
+/// этот урок записан правилом Р.40.
+#[test]
+fn t349_eq_graph_drag_edits_the_model() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness_with_eq_window();
+    let node = h.query_by_label("eq_graph");
+    assert!(node.is_some(), "у эквалайзера обязан быть график АЧХ");
+    let rect = node.unwrap().rect();
+
+    // середина полосы «mid»: дефолт 1 кГц / 0 дБ. Координаты считаем теми
+    // же функциями, что рисуют — иначе тест проверял бы свою арифметику.
+    let plot_w = rect.width() - 4.0;
+    let plot_x = rect.left() + 2.0;
+    let plot_h = rect.height() - 12.0;
+    let plot_y = rect.top() + 6.0;
+    let x_of = |hz: f64| plot_x + crate::eq_graph::hz_to_u(hz) * plot_w;
+    let y_of = |db: f64| plot_y + ((24.0 - db) / 48.0) as f32 * plot_h;
+    let from = egui::pos2(x_of(1000.0), y_of(0.0));
+    let to = egui::pos2(x_of(2000.0), y_of(6.0));
+
+    // драг в ТРИ шага: egui признаёт драг только после порога, и позиция
+    // читается в кадре начала жеста (правило харнесса)
+    h.drag_at(from);
+    h.step();
+    h.hover_at(from + egui::vec2(8.0, -4.0));
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.drop_at(to);
+    h.step();
+
+    let clip = h.state().model.clip(ClipId(1)).unwrap().clone();
+    let (freq, gain) = match &clip.fx[0] {
+        FxInstance::Eq { mid_freq_hz, mid_gain_db, .. } => (*mid_freq_hz, *mid_gain_db),
+        other => panic!("ожидался эквалайзер, получен {other:?}"),
+    };
+    println!("t349 после драга: {freq:.0} Гц, {gain:+.2} дБ");
+    assert!(
+        (freq as f64 - 2000.0).abs() / 2000.0 < 0.03,
+        "частота полосы обязана переехать на 2 кГц, а не {freq}"
+    );
+    assert!((gain - 6.0).abs() < 0.5, "усиление обязано стать +6 дБ, а не {gain}");
+
+    // одна ступень истории на весь жест (коалесцирование сессии окна)
+    let depth = h.state().model.undo_depth();
+    h.state_mut().model.undo().expect("undo");
+    assert_eq!(h.state().model.undo_depth(), depth - 1);
+    let back = h.state().model.clip(ClipId(1)).unwrap().clone();
+    match &back.fx[0] {
+        FxInstance::Eq { mid_freq_hz, mid_gain_db, .. } => {
+            assert!((*mid_freq_hz - 1000.0).abs() < 1.0, "undo вернул частоту");
+            assert!(mid_gain_db.abs() < 0.01, "и усиление");
+        }
+        other => panic!("ожидался эквалайзер, получен {other:?}"),
+    }
+}
+
+/// Тест 350 (Р.48, п.347): колесо над средней точкой правит добротность
+/// и НЕ прокручивает окно (жест поглощается только у самой точки).
+#[test]
+fn t350_eq_graph_wheel_sets_q() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let mut h = harness_with_eq_window();
+    let rect = h.query_by_label("eq_graph").expect("график есть").rect();
+    let plot_w = rect.width() - 4.0;
+    let plot_x = rect.left() + 2.0;
+    let plot_h = rect.height() - 12.0;
+    let plot_y = rect.top() + 6.0;
+    let mid = egui::pos2(
+        plot_x + crate::eq_graph::hz_to_u(1000.0) * plot_w,
+        plot_y + (24.0 / 48.0) * plot_h,
+    );
+    h.hover_at(mid);
+    h.step();
+    h.input_mut().events.push(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, -3.0),
+        modifiers: egui::Modifiers::NONE,
+        phase: egui::TouchPhase::Move,
+    });
+    h.step();
+    h.step();
+
+    let clip = h.state().model.clip(ClipId(1)).unwrap().clone();
+    let q = match &clip.fx[0] {
+        FxInstance::Eq { mid_q, .. } => *mid_q,
+        other => panic!("ожидался эквалайзер, получен {other:?}"),
+    };
+    println!("t350 добротность после колеса: {q:.2}");
+    assert!(q < 1.0 - 0.05, "колесо вниз обязано уменьшить добротность, а не {q}");
+    assert!(q >= 0.3, "и не выйти за нижнюю границу спеки");
+}

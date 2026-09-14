@@ -520,6 +520,7 @@ presets = "预设"
 rename_preset = "重命名…"
 delete_preset = "删除"
 delete_preset_hint = "从预设文件中删除该条目：撤销无法恢复"
+eq_graph_hint = "拖动频段点可调频率和增益；在中间点上滚轮调 Q 值"
 
 [render]
 already_running = "已经在导出了"

@@ -505,6 +505,7 @@ impl KtApp {
                                 Some(&mut bind),
                                 &cameras,
                                 false,
+                                &mut hover_out,
                             )
                             .any();
                             let start = ev.start;

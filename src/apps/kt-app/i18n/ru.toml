@@ -520,6 +520,7 @@ presets = "Пресеты"
 rename_preset = "Переименовать…"
 delete_preset = "Удалить"
 delete_preset_hint = "Удаляет запись из файла пресетов: undo её не вернёт"
+eq_graph_hint = "Точка полосы тянется по частоте и усилению; колесо над средней — добротность"
 
 [render]
 already_running = "рендер уже идёт"

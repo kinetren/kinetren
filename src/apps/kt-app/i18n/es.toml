@@ -520,6 +520,7 @@ presets = "Preajustes"
 rename_preset = "Renombrar…"
 delete_preset = "Eliminar"
 delete_preset_hint = "Elimina la entrada del archivo: deshacer no la devuelve"
+eq_graph_hint = "Arrastra un punto para frecuencia y ganancia; la rueda sobre el central ajusta la Q"
 
 [render]
 already_running = "ya hay un render en curso"

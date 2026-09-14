@@ -1,18 +1,18 @@
 ---
 id: F-AUD-001
 title: Параметрический эквалайзер
-status: в-работе
+status: сделано
 priority: A
 cost: S
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-fx, kt-model, kt-app, kt-engine, kt-otio]
 invariants: [1, 2, 3, 11]
 ui_rules: [13, 17, 20]
-round: "Р.47"
-point: null
-tests: []
+round: "Р.48"
+point: 347
+tests: [322, 324, 348, 349, 350]
 depends_on: []
 checked: 2026-09-14
 ---
@@ -349,3 +349,7 @@ Parametric EQ в After Effects и состав полос VEGAS Track EQ пом�
 `[НЕ ПРОВЕРЕНО]` прямо в таблице. Названия, число и назначение полос у
 Resolve и FCP взяты из первоисточников (blackmagicdesign.com,
 support.apple.com).
+
+**Реализовано в Р.47-Р.48** — трёхполосный EQ пришёл в Р.47 (п.327),
+интерактивный график АЧХ — в Р.48 (п.347, t348-t350). Дальнейшая жизнь
+фичи — docs/porting-notes.md.

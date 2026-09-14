@@ -6,7 +6,7 @@ mod nodes;
 pub mod primitives;
 mod warp;
 
-pub use nodes::{AudioNode, Freeverb};
+pub use nodes::{AudioNode, Freeverb, eq_mag_db};
 pub use primitives::SmoothedParam;
 pub use warp::Warp;
 

@@ -520,6 +520,7 @@ presets = "Presets"
 rename_preset = "Rename…"
 delete_preset = "Delete"
 delete_preset_hint = "Deletes the preset file entry: undo does not bring it back"
+eq_graph_hint = "Drag a band point for frequency and gain; wheel over the middle one sets Q"
 
 [render]
 already_running = "a render is already running"

@@ -288,6 +288,7 @@ impl KtApp {
                                     bind.as_mut(),
                                     &cameras,
                                     clip.kind == ClipKind::Video,
+                                    &mut hover_out,
                                 );
                                 let mut auto_ch = false;
                                 if let Some(curves) = auto.get_mut(sel) {
@@ -712,9 +713,11 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
 pub(crate) fn draw_video_fx_params(
     ui: &mut egui::Ui,
     f: &mut FxInstance,
-    bind: Option<&mut crate::widgets::CurveBind<'_>>,
+    mut bind: Option<&mut crate::widgets::CurveBind<'_>>,
     cameras: &[(u64, String)],
     on_video: bool,
+    // накопитель подсказок кадра (Р.48: у графика АЧХ своя подсказка)
+    hover: &mut Option<String>,
 ) -> crate::widgets::ParamsChanged {
     use kt_model::PanMode;
     // Р.43 п.291: правка БАЗЫ и правка КРИВОЙ — разные команды. Всё
@@ -912,6 +915,14 @@ pub(crate) fn draw_video_fx_params(
             });
         }
         _ => {}
+    }
+
+    // --- график АЧХ эквалайзера (Р.48, п.347) ------------------------------
+    // Рисуется ПЕРЕД сеткой: драг правит значения до того, как поля их
+    // покажут, — и в одном кадре они уже синхронны. Поля при этом
+    // остаются: график их дополняет, а не заменяет.
+    if matches!(f, FxInstance::Eq { .. }) {
+        ch |= crate::eq_graph::draw(ui, f, bind.as_deref_mut(), hover);
     }
 
     // --- числовые параметры: одна сетка на все варианты -------------------

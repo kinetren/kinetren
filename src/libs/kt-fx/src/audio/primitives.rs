@@ -194,6 +194,25 @@ impl Biquad {
         self.a2 = a2 / a0;
     }
 
+    /// АЧХ в дБ на частоте `freq_hz` — по ТЕКУЩИМ коэффициентам, то
+    /// есть по тому самому фильтру, который сейчас звучит (включая
+    /// f32-квантование `tune`). Формулы RBJ здесь НЕ дублируются: график
+    /// в UI по построению не может разойтись с DSP, а правка `tune` сама
+    /// отражается в картинке.
+    ///
+    /// |H(e^jw)|² = |B|²/|A|² раскрыто через cos(w) и cos(2w) — без
+    /// комплексного типа и без зависимостей.
+    pub fn mag_db(&self, freq_hz: f32) -> f64 {
+        let w = 2.0 * std::f64::consts::PI * freq_hz.max(0.0) as f64
+            / AUDIO_SAMPLE_RATE as f64;
+        let (c1, c2) = (w.cos(), (2.0 * w).cos());
+        let (b0, b1, b2) = (self.b0 as f64, self.b1 as f64, self.b2 as f64);
+        let (a1, a2) = (self.a1 as f64, self.a2 as f64);
+        let num = b0 * b0 + b1 * b1 + b2 * b2 + 2.0 * (b0 * b1 + b1 * b2) * c1 + 2.0 * b0 * b2 * c2;
+        let den = 1.0 + a1 * a1 + a2 * a2 + 2.0 * (a1 + a1 * a2) * c1 + 2.0 * a2 * c2;
+        10.0 * (num.max(1e-30) / den.max(1e-30)).log10()
+    }
+
     #[inline]
     pub fn process(&mut self, x: f32) -> f32 {
         let y = self.b0 * x + self.z1;

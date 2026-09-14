@@ -1,18 +1,18 @@
 ---
 id: F-AUD-013
 title: Pitch shift — высота без смены длительности
-status: в-работе
+status: сделано
 priority: B
 cost: L
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-model, kt-fx, kt-engine, kt-otio, kt-app]
 invariants: [1, 2, 3, 5, 11]
 ui_rules: []
 round: "Р.48"
-point: null
-tests: []
+point: 339
+tests: [322, 337, 338, 339, 340]
 depends_on: []
 trackers: []
 services: []
@@ -176,3 +176,7 @@ checked: 2026-09-14
 - https://www.blackmagicdesign.com/products/davinciresolve/fairlight (дата обращения 2026-09-14)
 - https://support.apple.com/guide/final-cut-pro/ (дата обращения 2026-09-14)
 - https://www.ableton.com/en/live-manual/ (дата обращения 2026-09-14)
+
+**Реализовано в Р.48** — docs/porting-notes.md пп.337, 339-340
+(t337-t340); дальнейшая жизнь фичи там. Формант-коррекция и режим на
+событие (вместо настройки проекта) не делались.

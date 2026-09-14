@@ -1,18 +1,18 @@
 ---
 id: F-AUD-002
 title: Динамическая обработка — компрессор, лимитер, гейт, экспандер
-status: в-работе
+status: сделано
 priority: B
 cost: M
 category: audio/processing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-fx, kt-model, kt-engine, kt-app, kt-media]
 invariants: [1, 2, 3, 5, 6, 11]
 ui_rules: [13, 17, 20]
 round: "Р.48"
-point: null
-tests: []
+point: 338
+tests: [322, 326, 334, 335, 336, 341]
 depends_on: [F-AUT-002, F-CLR-006]
 trackers: [kde-bugzilla, kde-invent, olive, openshot, mlt, pitivi]
 checked: 2026-09-14
@@ -462,3 +462,8 @@ Bussing — из сниппета треда forum.blackmagicdesign.com t=145413
 отдавал 403 на всех проверенных URL. Строки Premiere и After Effects в таблице
 «У кого и как» опираются на официальное сообщество Adobe и сниппеты
 официальной справки, живьём не проверялись.
+
+**Реализовано в Р.47-Р.48** — компрессор и гейт в Р.47 (п.329),
+look-ahead лимитер и автодакинг в Р.48 (пп.337-338, 341). Живой
+сайдчейн и мастер-лимитер остаются вне сделанного — причины в разделе
+«Что мешает» выше; дальнейшая жизнь фичи — docs/porting-notes.md.

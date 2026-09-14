@@ -1939,6 +1939,7 @@ dependencies = [
  "image",
  "kt-cache",
  "kt-engine",
+ "kt-fx",
  "kt-gpu",
  "kt-media",
  "kt-model",

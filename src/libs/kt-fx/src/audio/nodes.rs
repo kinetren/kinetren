@@ -710,6 +710,27 @@ impl FilterNode {
 }
 
 /// Трёхполосный EQ: полка + пик + полка, каждый — биквад на канал.
+/// Добротность полок EQ и пол добротности середины — ОДНИ числа для
+/// звука и для графика АЧХ (Р.48, п.347).
+pub(crate) const EQ_SHELF_Q: f32 = 0.707;
+pub(crate) const EQ_MID_Q_FLOOR: f32 = 0.3;
+
+/// АЧХ всего эквалайзера на частоте `at_hz`, дБ. Значения — в порядке
+/// `EqNode::NAMES`: low_gain, low_freq, mid_gain, mid_freq, mid_q,
+/// high_gain, high_freq. Каскад = сумма дБ; фильтры настраиваются тем же
+/// `tune`, что звучит, поэтому кривая в UI равна тому, что слышно.
+pub fn eq_mag_db(v: &[f32; 7], at_hz: f32) -> f64 {
+    let mut b = Biquad::default();
+    let mut db = 0.0;
+    b.tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
+    db += b.mag_db(at_hz);
+    b.tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
+    db += b.mag_db(at_hz);
+    b.tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
+    db += b.mag_db(at_hz);
+    db
+}
+
 pub struct EqNode {
     params: SmoothedParam7,
     bands: [[Biquad; 3]; CH],
@@ -767,9 +788,10 @@ impl EqNode {
                 continue;
             }
             for ch in 0..CH {
-                self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], 0.707, v[0]);
-                self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(0.3), v[2]);
-                self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], 0.707, v[5]);
+                // те же числа, что у графика АЧХ (Р.48): одни константы
+                self.bands[ch][0].tune(&BiquadKind::LowShelf, v[1], EQ_SHELF_Q, v[0]);
+                self.bands[ch][1].tune(&BiquadKind::Peak, v[3], v[4].max(EQ_MID_Q_FLOOR), v[2]);
+                self.bands[ch][2].tune(&BiquadKind::HighShelf, v[6], EQ_SHELF_Q, v[5]);
             }
             for fr in block.chunks_exact_mut(CH) {
                 for (ch, s) in fr.iter_mut().enumerate() {

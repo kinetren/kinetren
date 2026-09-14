@@ -183,6 +183,39 @@ impl CurveBind<'_> {
     fn index_of(&self, param: &str) -> Option<usize> {
         self.curves.iter().position(|c| c.param == param)
     }
+
+    /// Есть ли у параметра ЖИВАЯ кривая — от этого зависит, куда пишет
+    /// и поле, и парный ему график АЧХ (Р.48).
+    pub fn has_curve<P: HasParams + ?Sized>(&self, _f: &P, param: &str) -> bool {
+        self.index_of(param).is_some()
+    }
+
+    /// Что ПОКАЗЫВАЕТ поле этого параметра: значение выбранного ключа,
+    /// значение кривой под курсором или базу (Р.38 п.15).
+    pub fn shown<P: HasParams + ?Sized>(&self, f: &P, param: &str) -> f64 {
+        let base = f.get_param(param).unwrap_or(0.0);
+        match self.index_of(param) {
+            Some(ci) => {
+                let key = match self.sel {
+                    Some((c, k)) if c == ci && k < self.curves[ci].keys.len() => Some(k),
+                    _ => None,
+                };
+                bound_value(&self.curves[ci], key, self.at)
+            }
+            None => base,
+        }
+    }
+
+    /// Что поле ПРАВИТ — ровно то, что показывает.
+    pub fn apply<P: HasParams + ?Sized>(&mut self, _f: &mut P, param: &str, v: f64) {
+        let Some(ci) = self.index_of(param) else { return };
+        let key = match self.sel {
+            Some((c, k)) if c == ci && k < self.curves[ci].keys.len() => Some(k),
+            _ => None,
+        };
+        let at = self.at;
+        bound_apply(&mut self.curves[ci], key, at, v);
+    }
 }
 
 /// Что именно тронуло поле параметра (Р.43, п.291).
