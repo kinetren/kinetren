@@ -558,6 +558,7 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Delay { .. } => "Delay",
         FxInstance::Compressor { .. } => "Compressor",
         FxInstance::Gate { .. } => "Gate",
+        FxInstance::Limiter { .. } => "Limiter",
         FxInstance::ColorGrade { .. } => "Color Grade",
         FxInstance::Duotone { .. } => "Duotone",
         FxInstance::Posterize { .. } => "Posterize",

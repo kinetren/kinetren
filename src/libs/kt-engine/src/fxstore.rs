@@ -48,6 +48,18 @@ impl FxStateStore {
                 // у каких слотов есть кривая (громкость, скорость)
                 p.set_auto(auto);
                 p.apply_params(fx, false);
+                // Упреждение — часть УСТРОЙСТВА цепочки, а не значение
+                // параметра (Р.48, п.337): длина колец меняет выравнивание
+                // потока, и донести её сглаживанием нельзя. Расхождение
+                // (правка окна лимитера, нейтраль питча ↔ актив) —
+                // пересборка процессора: следующий read сделает hard_seek
+                // с прогревом, как настоящий seek.
+                if p.lookahead_frames() != kt_fx::chain_lookahead(fx, auto) {
+                    self.map.insert(
+                        id,
+                        ClipProcessor::new(fx, auto, src_in_frames, clip_len_frames),
+                    );
+                }
             }
             _ => {
                 self.map

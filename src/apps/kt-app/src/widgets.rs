@@ -66,6 +66,9 @@ pub fn param_label(name: &str) -> String {
         "release_ms" => tr(k::fxp::RELEASE_MS),
         "hold_ms" => tr(k::fxp::HOLD_MS),
         "makeup_db" => tr(k::fxp::MAKEUP_DB),
+        // лимитер Р.48
+        "ceiling_db" => tr(k::fxp::CEILING_DB),
+        "lookahead_ms" => tr(k::fxp::LOOKAHEAD_MS),
         "pan_x" => tr(k::fxp::PAN_X),
         "pan_y" => tr(k::fxp::PAN_Y),
         "zoom" => tr(k::fxp::ZOOM),

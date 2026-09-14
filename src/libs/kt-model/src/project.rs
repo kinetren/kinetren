@@ -2095,6 +2095,22 @@ fn is_zero_u8(v: &u8) -> bool {
     *v == 0
 }
 
+fn default_limiter_threshold() -> f32 {
+    -6.0
+}
+
+fn default_limiter_ceiling() -> f32 {
+    -0.3
+}
+
+fn default_limiter_lookahead() -> f32 {
+    5.0
+}
+
+fn default_limiter_release() -> f32 {
+    80.0
+}
+
 fn default_lens_k1() -> f32 {
     0.35
 }
@@ -2812,6 +2828,22 @@ pub enum FxInstance {
         #[serde(default = "default_halftone_angle")]
         angle: f32,
     },
+    /// Look-ahead лимитер (Р.48, F-AUD-002): потолок гарантирован окном
+    /// упреждения — пик виден заранее, поэтому атака мгновенная и без
+    /// искажений. Для остального движка задержка НУЛЕВАЯ: цепочка читает
+    /// источник вперёд, выход остаётся выровненным.
+    Limiter {
+        #[serde(default = "default_limiter_threshold")]
+        threshold_db: f32,
+        #[serde(default = "default_limiter_ceiling")]
+        ceiling_db: f32,
+        /// Окно упреждения. СТРУКТУРНЫЙ параметр: длина кольца — часть
+        /// устройства узла, смена пересобирает процессор (Р.48, п.337).
+        #[serde(default = "default_limiter_lookahead")]
+        lookahead_ms: f32,
+        #[serde(default = "default_limiter_release")]
+        release_ms: f32,
+    },
     /// Линзовая дисторсия (Р.47, F-FX-002): полином k1·r²+k2·r⁴ —
     /// бочка/подушка. Гео (Warp-прим), конкатенируется.
     LensDistort {
@@ -3034,7 +3066,8 @@ impl FxInstance {
         | FxInstance::Phaser { .. }
         | FxInstance::Delay { .. }
         | FxInstance::Compressor { .. }
-        | FxInstance::Gate { .. } => FxClass::Audio,
+        | FxInstance::Gate { .. }
+        | FxInstance::Limiter { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } | FxInstance::Cylinder3d { .. } => FxClass::Video3d,
             _ => FxClass::Video2d,
         }
@@ -3077,6 +3110,7 @@ impl FxInstance {
             FxInstance::Delay { .. } => "delay",
             FxInstance::Compressor { .. } => "compressor",
             FxInstance::Gate { .. } => "gate",
+            FxInstance::Limiter { .. } => "limiter",
             FxInstance::ColorGrade { .. } => "color_grade",
             FxInstance::Duotone { .. } => "duotone",
             FxInstance::Posterize { .. } => "posterize",
@@ -3133,6 +3167,7 @@ impl FxInstance {
                 FxInstance::delay(),
                 FxInstance::compressor(),
                 FxInstance::gate(),
+                FxInstance::limiter(),
                 FxInstance::color_grade(),
                 FxInstance::duotone(),
                 FxInstance::posterize(),
@@ -3497,6 +3532,12 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     Halftone {
         size: u32, 2.0, 64.0, 8.0, 1.0, Px, Smooth;
         angle: f32, -90.0, 90.0, 45.0, 1.0, Deg, Smooth;
+    },
+    Limiter {
+        threshold_db: f32, -60.0, 0.0, -6.0, 0.1, Db, Smooth;
+        ceiling_db: f32, -24.0, 0.0, -0.3, 0.1, Db, Smooth;
+        lookahead_ms: f32, 1.0, 20.0, 5.0, 0.5, Ms, Structural;
+        release_ms: f32, 5.0, 1000.0, 80.0, 1.0, Ms, Smooth;
     },
     LensDistort {
         k1: f32, -1.0, 1.0, 0.35, 0.01, Norm, Smooth;
@@ -3993,6 +4034,15 @@ impl FxInstance {
 
     pub fn gate() -> FxInstance {
         FxInstance::Gate { threshold_db: -40.0, attack_ms: 1.0, hold_ms: 40.0, release_ms: 100.0 }
+    }
+
+    pub fn limiter() -> FxInstance {
+        FxInstance::Limiter {
+            threshold_db: -6.0,
+            ceiling_db: -0.3,
+            lookahead_ms: 5.0,
+            release_ms: 80.0,
+        }
     }
 
     pub fn color_grade() -> FxInstance {

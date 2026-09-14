@@ -220,6 +220,7 @@ pub enum AudioNode {
     Delay(Box<DelayNode>),
     Compressor(CompNode),
     Gate(GateNode),
+    Limiter(Box<LimiterNode>),
 }
 
 impl AudioNode {
@@ -244,6 +245,9 @@ impl AudioNode {
             FxInstance::Delay { .. } => Some(AudioNode::Delay(Box::new(DelayNode::new()))),
             FxInstance::Compressor { .. } => Some(AudioNode::Compressor(CompNode::new())),
             FxInstance::Gate { .. } => Some(AudioNode::Gate(GateNode::new())),
+            FxInstance::Limiter { .. } => {
+                Some(AudioNode::Limiter(Box::new(LimiterNode::new())))
+            }
             _ => None,
         }
     }
@@ -314,6 +318,10 @@ impl AudioNode {
                 AudioNode::Gate(n),
                 FxInstance::Gate { threshold_db, attack_ms, hold_ms, release_ms },
             ) => n.apply(*threshold_db, *attack_ms, *hold_ms, *release_ms),
+            (
+                AudioNode::Limiter(n),
+                FxInstance::Limiter { threshold_db, ceiling_db, lookahead_ms, release_ms },
+            ) => n.apply(*threshold_db, *ceiling_db, *lookahead_ms, *release_ms, structural),
             // отпечаток цепочки совпал — виды по слотам совпадают по
             // построению; сюда можно попасть только ошибкой сопоставления
             _ => debug_assert!(false, "node/slot kind mismatch"),
@@ -332,6 +340,7 @@ impl AudioNode {
             AudioNode::StereoWidth(n) => n.set_targets(auto, slot, s),
             AudioNode::Tremolo(n) => n.set_targets(auto, slot, s),
             AudioNode::AutoPan(n) => n.set_targets(auto, slot, s),
+            AudioNode::Limiter(n) => n.set_targets(auto, slot, s),
             AudioNode::Vibrato(n) => n.set_targets(auto, slot, s),
             AudioNode::Chorus(n) => n.set_targets(auto, slot, s),
             AudioNode::Flanger(n) => n.set_targets(auto, slot, s),
@@ -376,6 +385,23 @@ impl AudioNode {
             AudioNode::Delay(n) => n.process(buf),
             AudioNode::Compressor(n) => n.process(buf),
             AudioNode::Gate(n) => n.process(buf),
+            AudioNode::Limiter(n) => n.process(buf),
+        }
+    }
+
+    /// Упреждение узла в кадрах (Р.48, п.337): сколько СОДЕРЖИМОГО
+    /// впереди выходной позиции узлу нужно, чтобы отдать выход БЕЗ
+    /// задержки. Узел с ненулевым упреждением обязан сам выравнивать
+    /// выход своим кольцом и жить в ОБЕИХ формулах — здесь и в
+    /// статической `chain_lookahead` (их согласие сторожит t322ж).
+    ///
+    /// Упреждение — НЕ хвост: оно входит в прогрев seek и в окно
+    /// источника, но НЕ продлевает `ext_end` (иначе клип звучал бы
+    /// после собственного конца).
+    pub(crate) fn lookahead(&self) -> i64 {
+        match self {
+            AudioNode::Limiter(n) => n.la,
+            _ => 0,
         }
     }
 
@@ -410,6 +436,7 @@ impl AudioNode {
             AudioNode::Delay(n) => n.reset(),
             AudioNode::Compressor(n) => n.reset(),
             AudioNode::Gate(n) => n.reset(),
+            AudioNode::Limiter(n) => n.reset(),
         }
     }
 }
@@ -1424,6 +1451,135 @@ impl CompNode {
         self.threshold_db.reset_to_target();
         self.ratio.reset_to_target();
         self.makeup_db.reset_to_target();
+    }
+}
+
+/// Длина окна упреждения лимитера в кадрах (Р.48, п.338). ОДИН дом
+/// формулы: её зовут и узел (геометрия кольца), и статическая
+/// `chain_lookahead` — разойтись они не могут по построению.
+pub(crate) fn limiter_la_frames(lookahead_ms: f32) -> i64 {
+    (lookahead_ms.clamp(1.0, 20.0) as f64 / 1000.0 * 48_000.0).ceil() as i64
+}
+
+/// Look-ahead лимитер (Р.48, п.338). Потолок гарантирован АЛГЕБРАИЧЕСКИ:
+/// окно скользящего максимума покрывает материал [t, t+La], включая сам
+/// выходной кадр, поэтому редукция успевает до пика и атака мгновенна —
+/// платы искажениями нет. Выход выровнен со входом цепочки: кольцо
+/// задерживает сигнал ровно на La, которое процессор вычитал из позиции.
+pub struct LimiterNode {
+    threshold_db: SmoothedParam,
+    ceiling_db: SmoothedParam,
+    release_ms: f32,
+    /// Геометрия окна: меняется ТОЛЬКО при structural — расхождение с
+    /// цепочкой ловит FxStateStore и пересобирает процессор целиком.
+    la: i64,
+    /// Кольцо выравнивания (la кадров × CH).
+    ring: Vec<f32>,
+    pos: usize,
+    /// Моноочередь скользящего максимума |x|: значения убывают, спереди
+    /// максимум окна. O(1) на кадр амортизированно.
+    win: std::collections::VecDeque<(i64, f32)>,
+    /// Сколько кадров подано в окно (возраст элементов).
+    fed: i64,
+    gain: f32,
+}
+
+impl LimiterNode {
+    fn new() -> LimiterNode {
+        LimiterNode {
+            threshold_db: SmoothedParam::with_ms(-6.0, 20.0),
+            ceiling_db: SmoothedParam::with_ms(-0.3, 20.0),
+            release_ms: 80.0,
+            la: 0,
+            ring: Vec::new(),
+            pos: 0,
+            win: std::collections::VecDeque::new(),
+            fed: 0,
+            gain: 1.0,
+        }
+    }
+
+    fn apply(&mut self, thr: f32, ceil: f32, lookahead_ms: f32, release: f32, structural: bool) {
+        self.threshold_db.set_target(thr.clamp(-60.0, 0.0));
+        self.ceiling_db.set_target(ceil.clamp(-24.0, 0.0));
+        self.release_ms = release.clamp(5.0, 1000.0);
+        let la = limiter_la_frames(lookahead_ms);
+        if structural || self.ring.is_empty() {
+            self.la = la;
+            self.ring = vec![0.0; la.max(1) as usize * CH];
+            self.pos = 0;
+            self.win.clear();
+            self.fed = 0;
+        }
+    }
+
+    fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
+        self.threshold_db
+            .set_target(auto.value(slot, "threshold_db", self.threshold_db.target as f64, s) as f32);
+        self.ceiling_db
+            .set_target(auto.value(slot, "ceiling_db", self.ceiling_db.target as f64, s) as f32);
+        self.release_ms =
+            (auto.value(slot, "release_ms", self.release_ms as f64, s) as f32).clamp(5.0, 1000.0);
+    }
+
+    fn process(&mut self, buf: &mut [f32]) {
+        if self.la <= 0 {
+            return;
+        }
+        let rel_coef = 1.0 - (-1.0 / (self.release_ms / 1000.0 * 48_000.0)).exp();
+        for fr in buf.chunks_exact_mut(CH) {
+            let thr = 10f32.powf(self.threshold_db.tick() / 20.0);
+            let ceil = 10f32.powf(self.ceiling_db.tick() / 20.0);
+            // в окно кладётся ВХОДЯЩИЙ кадр (позиция t + La)
+            let peak = fr.iter().fold(0f32, |m, v| m.max(v.abs()));
+            while let Some(&(_, v)) = self.win.back() {
+                if v <= peak {
+                    self.win.pop_back();
+                } else {
+                    break;
+                }
+            }
+            self.win.push_back((self.fed, peak));
+            let cutoff = self.fed - self.la;
+            while let Some(&(age, _)) = self.win.front() {
+                if age < cutoff {
+                    self.win.pop_front();
+                } else {
+                    break;
+                }
+            }
+            self.fed += 1;
+            // выход — кадр, задержанный на La (позиция t)
+            for v in fr.iter_mut() {
+                std::mem::swap(&mut self.ring[self.pos], v);
+                self.pos += 1;
+            }
+            if self.pos >= self.ring.len() {
+                self.pos = 0;
+            }
+            // максимум по [t, t+La] — включая сам выходной кадр, поэтому
+            // out = wmax * g ≤ ceiling строго
+            let wmax = self.win.front().map(|&(_, v)| v).unwrap_or(0.0);
+            let target = (thr / wmax.max(thr)) * (ceil / thr);
+            if target < self.gain {
+                self.gain = target;
+            } else {
+                self.gain += (target - self.gain) * rel_coef;
+            }
+            for v in fr.iter_mut() {
+                *v *= self.gain;
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.ring.fill(0.0);
+        self.pos = 0;
+        self.win.clear();
+        self.fed = 0;
+        self.gain = 1.0;
+        self.threshold_db.reset_to_target();
+        self.ceiling_db.reset_to_target();
     }
 }
 

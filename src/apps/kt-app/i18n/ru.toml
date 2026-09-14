@@ -355,6 +355,8 @@ freq = "Частота"
 phase = "Фаза"
 segments = "Сектора"
 curvature = "Изгиб"
+ceiling_db = "Потолок"
+lookahead_ms = "Упреждение"
 
 [fxreg]
 add = "+ эффект…"
@@ -426,6 +428,7 @@ twirl = "водоворот спираль вихрь twirl"
 ripple = "волна круги вода ripple"
 kaleidoscope = "калейдоскоп зеркало сектора kaleidoscope"
 cylinder3d = "цилиндр изгиб 3d cylinder"
+limiter = "лимитер потолок пик громкость limiter"
 
 # Редактор FX клипа.
 [fx]

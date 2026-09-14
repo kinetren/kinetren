@@ -197,8 +197,8 @@ pub mod audio;
 
 pub use audio::{ClipProcessor, Freeverb, SmoothedParam, Warp};
 pub use audio::{
-    WARP_SOURCE_MARGIN_FRAMES, chain_fingerprint, chain_source_used, chain_source_window,
-    chain_source_window_ext, chain_tail,
+    WARP_SOURCE_MARGIN_FRAMES, chain_fingerprint, chain_lookahead, chain_source_used,
+    chain_source_window, chain_source_window_ext, chain_tail,
 };
 
 /// Карта растяжения времени ПЕРЕЕХАЛА В kt-model (Р.39): её обязан звать

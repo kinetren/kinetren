@@ -355,6 +355,8 @@ freq = "التردد"
 phase = "الطور"
 segments = "القطاعات"
 curvature = "الانحناء"
+ceiling_db = "السقف"
+lookahead_ms = "الاستباق"
 
 [fxreg]
 add = "+ مؤثر…"
@@ -426,6 +428,7 @@ twirl = "دوامة لولب twirl"
 ripple = "تموج ماء ripple"
 kaleidoscope = "مشكال مرايا kaleidoscope"
 cylinder3d = "أسطوانة انحناء cylinder"
+limiter = "محدد ذروة سقف limiter"
 
 # Редактор FX клипа.
 [fx]

@@ -238,6 +238,37 @@ fn t322_audio_registry_contract() {
             "{}: chain_tail {ct} vs processor tail {pt}",
             f.tag()
         );
+
+        // (ж) упреждение: статическая формула == устройство процессора
+        // (Р.48, п.337). Здесь равенство ТОЧНОЕ — это целые кадры, по
+        // которым расширяется окно источника и прогрев seek'а: разойдутся
+        // — цепочка попросит материал, которого префетч не грел.
+        assert_eq!(
+            kt_fx::chain_lookahead(&fx, &auto),
+            proc.lookahead_frames(),
+            "{}: chain_lookahead disagrees with the processor",
+            f.tag()
+        );
+        // то же с живой кривой первого параметра: у упреждающих видов
+        // нейтраль зависит от кривых (база «ноль» при кривой — не нейтраль)
+        if let Some(sp) = f.auto_params().next() {
+            let curve = vec![vec![kt_model::ParamCurve {
+                param: sp.name.into(),
+                ease: true,
+                keys: vec![
+                    kt_model::AutoKey { t: Tick(0), v: sp.min },
+                    kt_model::AutoKey { t: Tick(DUR), v: sp.max },
+                ],
+            }]];
+            let auto_c = AutoProfiles::from_curves_rev(&curve, 0, DUR, false);
+            let proc_c = kt_fx::ClipProcessor::new(&fx, &auto_c, 0, DUR);
+            assert_eq!(
+                kt_fx::chain_lookahead(&fx, &auto_c),
+                proc_c.lookahead_frames(),
+                "{}: chain_lookahead disagrees with the processor (curved)",
+                f.tag()
+            );
+        }
     }
 
     // LayerMix — слот силы, в одиночной цепочке он смешивает вход с самим

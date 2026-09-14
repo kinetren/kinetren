@@ -355,6 +355,8 @@ freq = "Frecuencia"
 phase = "Fase"
 segments = "Segmentos"
 curvature = "Curvatura"
+ceiling_db = "Techo"
+lookahead_ms = "Anticipación"
 
 [fxreg]
 add = "+ efecto…"
@@ -426,6 +428,7 @@ twirl = "remolino espiral vortice twirl"
 ripple = "ondas agua anillos ripple"
 kaleidoscope = "caleidoscopio espejo mandala kaleidoscope"
 cylinder3d = "cilindro curva 3d cylinder"
+limiter = "limitador techo pico limiter"
 
 # Редактор FX клипа.
 [fx]

@@ -54,7 +54,11 @@ pub fn chain_source_window_ext(
     let len = clip_len_frames.max(1);
     let preroll = chain_tail(fx, auto).to_audio_frames().max(MIN_PREROLL_FRAMES);
     let l0 = (local.start - preroll).max(material.start).min(material.end);
-    let l1 = local.end.clamp(material.start, material.end);
+    // ВПЕРЁД — на упреждение цепочки (Р.48, п.337): столько источника
+    // цепочка реально прочитает, отдавая тот же выход. Правка живёт в
+    // ОДНОЙ функции, поэтому рендер и префетч расширяются одинаково
+    // (разойдутся — вечный промах кэша, п.13/t17).
+    let l1 = (local.end + chain_lookahead(fx, auto)).clamp(material.start, material.end);
     let has_warp = fx.iter().any(|f| matches!(f, FxInstance::SlowedReverb { .. }));
     if !has_warp {
         return l0..l1.max(l0);
@@ -99,6 +103,32 @@ pub fn chain_source_used(fx: &[FxInstance], auto: &AutoProfiles, clip_len_frames
         return len;
     };
     (len as f64 * source_progress(rate, auto.rate_points(fx), 1.0)).ceil() as i64
+}
+
+/// Упреждение цепочки в кадрах (Р.48, п.337): на сколько ВХОД цепочки
+/// обгоняет её выход. Эффект с окном анализа (лимитер, питч) читает
+/// источник ВПЕРЁД, а выход отдаёт выровненным — для остального движка
+/// задержка нулевая (playhead, фейды и A/V-синхрон не двигаются).
+///
+/// Величина входит в прогрев `hard_seek` и в окно источника
+/// (`chain_source_window_ext` — одна функция кормит и рендер, и префетч),
+/// но НЕ входит в `chain_tail`: «сколько греть» и «сколько звучать»
+/// разведены (иначе клип звучал бы после собственного конца).
+///
+/// Формула вида обязана совпадать с `AudioNode::lookahead` того же вида —
+/// согласие сторожит t322ж.
+pub fn chain_lookahead(fx: &[FxInstance], auto: &AutoProfiles) -> i64 {
+    // auto читают армы, у которых нейтраль зависит от кривых: база «ноль»
+    // при живой кривой нейтралью не является
+    let _ = auto;
+    fx.iter()
+        .map(|f| match f {
+            FxInstance::Limiter { lookahead_ms, .. } => {
+                nodes::limiter_la_frames(*lookahead_ms)
+            }
+            _ => 0i64,
+        })
+        .sum()
 }
 
 pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
@@ -193,6 +223,48 @@ pub struct ClipProcessor {
     tail_ext: i64,
     /// Курсор источника для пути без варпа (rate == 1, без автоматизации).
     plain_cursor: i64,
+    /// Упреждение цепочки (Р.48, п.337): вход обгоняет выход на столько
+    /// кадров. 0 — путь арифметически тождествен доpdc-версии.
+    la: i64,
+    /// Опережение содержимого, которое видит узел i: сумма упреждений
+    /// узлов, стоящих НЕ РАНЬШЕ него (каждый упреждающий узел «съедает»
+    /// своё окно собственным кольцом, и к концу цепочки остаётся 0).
+    ahead: Vec<i64>,
+    /// Опережение на позиции узла-маркера LayerMix (для кривой amount).
+    mix_ahead: i64,
+    /// Кольцо выравнивания сухой стороны LayerMix: сколько кадров
+    /// «съедено» упреждающими узлами между снимком и смешением.
+    dry_ring: Option<DryRing>,
+}
+
+/// Задержка сухой стороны на целое число кадров (Р.48): между снимком
+/// сухой стороны и узлом-маркером LayerMix может стоять упреждающий узел,
+/// «съевший» часть опережения — без выравнивания бленд смешал бы разные
+/// моменты материала. При нулевой дельте кольцо не создаётся вовсе.
+struct DryRing {
+    buf: Vec<f32>,
+    pos: usize,
+}
+
+impl DryRing {
+    fn new(frames: i64) -> DryRing {
+        DryRing { buf: vec![0.0; frames.max(1) as usize * CH], pos: 0 }
+    }
+
+    /// Пропустить буфер через задержку НА МЕСТЕ (вход → кольцо, выход из
+    /// кольца → буфер).
+    fn run(&mut self, buf: &mut [f32]) {
+        let len = self.buf.len();
+        for v in buf.iter_mut() {
+            std::mem::swap(&mut self.buf[self.pos], v);
+            self.pos = (self.pos + 1) % len;
+        }
+    }
+
+    fn reset(&mut self) {
+        self.buf.fill(0.0);
+        self.pos = 0;
+    }
 }
 
 impl ClipProcessor {
@@ -219,6 +291,10 @@ impl ClipProcessor {
             head_ext: 0,
             tail_ext: 0,
             plain_cursor: src_in_frames,
+            la: 0,
+            ahead: Vec::new(),
+            mix_ahead: 0,
+            dry_ring: None,
         };
         p.apply_params(fx, true);
         p
@@ -240,7 +316,54 @@ impl ClipProcessor {
                 }
                 node.bind_lfo(&self.auto, *slot, self.clip_len);
             }
+            // нейтраль упреждающего узла может зависеть от кривых
+            self.recompute_lookahead();
         }
+    }
+
+    /// Пересчитать упреждение цепочки и опережения узлов (Р.48, п.337).
+    /// `ahead[i] = Σ lookahead узлов, стоящих не раньше i` — узел видит
+    /// содержимое, обгоняющее выход ровно на столько; к концу цепочки
+    /// сумма обнуляется, поэтому выход выровнен со входом.
+    fn recompute_lookahead(&mut self) {
+        let n = self.nodes.len();
+        self.ahead.clear();
+        self.ahead.resize(n, 0);
+        let mut acc = 0i64;
+        for i in (0..n).rev() {
+            acc += self.nodes[i].1.lookahead();
+            self.ahead[i] = acc;
+        }
+        self.la = acc;
+        // опережение на позиции маркера силы слоя и дельта сухой стороны
+        let (mix_ahead, dry_delta) = match &self.mix {
+            Some(m) => {
+                let at = |slot: usize| {
+                    self.nodes
+                        .iter()
+                        .position(|(s, _)| *s >= slot)
+                        .map(|i| self.ahead[i])
+                        .unwrap_or(0)
+                };
+                let mix_at = self
+                    .nodes
+                    .iter()
+                    .position(|(s, _)| *s == m.slot)
+                    .map(|i| self.ahead[i])
+                    .unwrap_or(0);
+                (mix_at, (at(m.from) - mix_at).max(0))
+            }
+            None => (0, 0),
+        };
+        self.mix_ahead = mix_ahead;
+        self.dry_ring = (dry_delta > 0).then(|| DryRing::new(dry_delta));
+    }
+
+    /// Упреждение цепочки в кадрах — та же величина, что отдаёт
+    /// статическая `chain_lookahead` (сторожит t322ж). По ней
+    /// `FxStateStore` понимает, что процессор пора пересобрать.
+    pub fn lookahead_frames(&self) -> i64 {
+        self.la
     }
 
     /// Обновить длину клипа (trim) без сброса состояния.
@@ -293,6 +416,7 @@ impl ClipProcessor {
             }
             node.bind_lfo(&self.auto, *slot, self.clip_len);
         }
+        self.recompute_lookahead();
         // варп-половина Slowed+Reverb (потребление источника)
         for f in fx {
             if let FxInstance::SlowedReverb { rate, .. } = f {
@@ -327,6 +451,9 @@ impl ClipProcessor {
         self.warp = None;
         for (_, n) in &mut self.nodes {
             n.reset();
+        }
+        if let Some(r) = &mut self.dry_ring {
+            r.reset();
         }
         self.next_local = i64::MIN;
     }
@@ -398,6 +525,10 @@ impl ClipProcessor {
     /// Разрыв ПОЗИЦИИ при непрерывном ВЫХОДЕ: источник переставляется,
     /// состояние FX живёт. Ни reset'а, ни пре-ролла (см. `read`).
     fn seam(&mut self, local: i64) {
+        // источник встаёт под ВХОДНУЮ позицию: цепочка читает вперёд на
+        // упреждение (Р.48, п.337). Кольца упреждающих узлов при этом
+        // живут — шов дозванивает, как реверб (инвариант №3).
+        let local = local + self.la;
         let src_start = self.src_in + self.source_offset(local);
         if self.has_warp() {
             let t = local as f64 / self.clip_len as f64;
@@ -423,7 +554,9 @@ impl ClipProcessor {
         // материала (−head_ext)
         let preroll = self.tail_frames().max(MIN_PREROLL_FRAMES).min((local + self.head_ext).max(0));
         let start = local - preroll;
-        // позиция источника для local=start (интеграл автоматизации)
+        // позиция источника для local=start (интеграл автоматизации).
+        // Формула НЕ меняется: `start` — первая ВХОДНАЯ позиция прогрева,
+        // а выходной цикл стартует на упреждение раньше (Р.48, п.337).
         let src_start = self.src_in + self.source_offset(start);
         if self.has_warp() {
             let t = start as f64 / self.clip_len as f64;
@@ -434,12 +567,21 @@ impl ClipProcessor {
             self.warp = None;
         }
         self.plain_cursor = src_start;
-        // прогрев: рендерим в мусор
+        if let Some(r) = &mut self.dry_ring {
+            r.reset();
+        }
+        // Прогрев: рендерим в мусор. Выходной цикл начинается на
+        // упреждение РАНЬШЕ (его первый чанк читает вход ровно с
+        // `start`), а длина растёт на ту же величину — к моменту `local`
+        // кольца упреждающих узлов заполнены настоящим материалом
+        // [local, local + la). При la = 0 — прежний цикл дословно.
+        let warm = preroll + self.la;
+        let start_out = start - self.la;
         let mut scratch = vec![0f32; 1024 * CH];
         let mut done = 0i64;
-        while done < preroll {
-            let n = (preroll - done).min(1024) as usize;
-            self.produce(PullKind::Warmup, start + done, &mut scratch[..n * CH], pull);
+        while done < warm {
+            let n = (warm - done).min(1024) as usize;
+            self.produce(PullKind::Warmup, start_out + done, &mut scratch[..n * CH], pull);
             done += n as i64;
         }
     }
@@ -464,7 +606,12 @@ impl ClipProcessor {
         let mut done = 0usize;
         while done < total {
             let n = (total - done).min(Self::AUTOMATION_STEP_FRAMES);
+            // ВЫХОДНАЯ позиция чанка (что услышит слушатель) и ВХОДНАЯ
+            // (что цепочка сейчас читает). Они разъезжаются ровно на
+            // упреждение цепочки (Р.48, п.337); при la = 0 всё ниже
+            // арифметически тождественно доpdc-версии.
             let chunk_local = local + done as i64;
+            let chunk_in = chunk_local + self.la;
             // автоматизация: цели на середину чанка; rubato/one-pole сглаживают
             if !self.auto.is_empty() {
                 // ДОМЕН СОБЫТИЯ (Р.37): цель чанка — по ВЫХОДНОМУ времени,
@@ -474,22 +621,27 @@ impl ClipProcessor {
                 // `s`). Правило середины чанка при этом стало ТОЧНЫМ:
                 // подынтегральная функция линейна, а середина трапеции —
                 // её точное среднее.
-                let tau = (chunk_local as f64 + n as f64 * 0.5) / self.clip_len as f64;
-                let s = tau;
-                let target_rate = eff_rate(self.rate, self.rate_points(), s);
+                // варп ведёт ВХОД цепочки: он и есть потребитель источника
+                let tau = (chunk_in as f64 + n as f64 * 0.5) / self.clip_len as f64;
+                let target_rate = eff_rate(self.rate, self.rate_points(), tau);
                 if let Some(w) = &mut self.warp {
                     w.set_rate(target_rate);
                 }
-                // цели узлов — тем же правилом середины чанка (узел сам
-                // решает, какие из его параметров ведут кривые)
-                for (slot, node) in &mut self.nodes {
-                    node.set_targets(&self.auto, *slot, s);
+                // цели узлов — тем же правилом середины чанка, но по
+                // позиции СОДЕРЖИМОГО, которое узел сейчас видит: кривая
+                // остаётся приклеенной к материалу, а не к выходу
+                let ahead = &self.ahead;
+                for (i, (slot, node)) in self.nodes.iter_mut().enumerate() {
+                    let s = (chunk_local + ahead[i]) as f64 + n as f64 * 0.5;
+                    node.set_targets(&self.auto, *slot, s / self.clip_len as f64);
                 }
             }
             // цель силы слоя на середину чанка — тем же правилом, что и
             // остальные параметры (Р.38 п.12: фейды это её кривая)
+            let mix_ahead = self.mix_ahead;
             let mix_k = self.mix.as_ref().map(|m| {
-                let tau = (chunk_local as f64 + n as f64 * 0.5) / self.clip_len as f64;
+                let tau =
+                    ((chunk_local + mix_ahead) as f64 + n as f64 * 0.5) / self.clip_len as f64;
                 self.auto.value(m.slot, "amount", m.base_amount, tau).clamp(0.0, 1.0) as f32
             });
             let sub = &mut out[done * CH..(done + n) * CH];
@@ -499,8 +651,11 @@ impl ClipProcessor {
             // ИСТОЧНИКА можно расширять с запасом на прайминг rubato, не
             // боясь утечки dry в хвост (дефект «тихий хвост»: sinc-ресемплер
             // видел нули за жёстко обрезанным окном и рано глушил конец).
+            // Гейт — во ВХОДНОМ домене: за концом материала цепочка
+            // получает детерминированную тишину ВПЕРЁД, и кольца
+            // упреждающих узлов дожимают тело ровно к концу события.
             let gate_end = self.clip_len + self.tail_ext;
-            if chunk_local >= gate_end {
+            if chunk_in >= gate_end {
                 // ЧАНК ЦЕЛИКОМ В ХВОСТЕ (Р.43, п.304): что бы ни выдал
                 // варп, гейт ниже обнулит это ПОЛНОСТЬЮ — значит считать
                 // нечего. Пропуск байт-идентичен ПО ПОСТРОЕНИЮ: результат
@@ -524,8 +679,8 @@ impl ClipProcessor {
                         self.plain_cursor += n as i64;
                     }
                 }
-                if chunk_local + (n as i64) > gate_end {
-                    let cut = (gate_end - chunk_local).clamp(0, n as i64) as usize;
+                if chunk_in + (n as i64) > gate_end {
+                    let cut = (gate_end - chunk_in).clamp(0, n as i64) as usize;
                     sub[cut * CH..].fill(0.0);
                 }
             }
@@ -536,12 +691,21 @@ impl ClipProcessor {
             // мокрую: прежние reverb_is_layer/layer_gain стали следствием
             // позиции, а не флагами).
             let mut dry: Option<Vec<f32>> = None;
-            for (slot, node) in &mut self.nodes {
+            let ahead = &self.ahead;
+            let dry_ring = &mut self.dry_ring;
+            for (i, (slot, node)) in self.nodes.iter_mut().enumerate() {
                 if let Some(m) = &self.mix
                     && *slot >= m.from
                     && dry.is_none()
                 {
-                    dry = Some(sub.to_vec());
+                    let mut d = sub.to_vec();
+                    // между снимком и маркером стоит упреждающий узел:
+                    // сухую сторону надо задержать на съеденное им окно,
+                    // иначе бленд смешал бы разные моменты материала
+                    if let Some(r) = dry_ring.as_mut() {
+                        r.run(&mut d);
+                    }
+                    dry = Some(d);
                 }
                 if matches!(node, AudioNode::LayerMix) {
                     if let (Some(k), Some(d)) = (mix_k, &dry) {
@@ -551,7 +715,7 @@ impl ClipProcessor {
                         }
                     }
                 } else {
-                    node.process(sub, chunk_local);
+                    node.process(sub, chunk_local + ahead[i]);
                 }
             }
             done += n;

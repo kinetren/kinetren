@@ -355,6 +355,8 @@ freq = "频率"
 phase = "相位"
 segments = "段数"
 curvature = "弯曲度"
+ceiling_db = "上限"
+lookahead_ms = "前瞻"
 
 [fxreg]
 add = "+ 特效…"
@@ -426,6 +428,7 @@ twirl = "旋转扭曲 漩涡 twirl"
 ripple = "波纹 水波 ripple"
 kaleidoscope = "万花筒 镜像 kaleidoscope"
 cylinder3d = "圆柱 弯曲 3d cylinder"
+limiter = "限制器 峰值 上限 limiter"
 
 # Редактор FX клипа.
 [fx]

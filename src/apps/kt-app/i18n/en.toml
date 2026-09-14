@@ -355,6 +355,8 @@ freq = "Frequency"
 phase = "Phase"
 segments = "Segments"
 curvature = "Curvature"
+ceiling_db = "Ceiling"
+lookahead_ms = "Lookahead"
 
 [fxreg]
 add = "+ effect…"
@@ -426,6 +428,7 @@ twirl = "twirl swirl spiral vortex"
 ripple = "ripple wave water rings"
 kaleidoscope = "kaleidoscope mirror segments mandala"
 cylinder3d = "cylinder 3d bend curve wrap"
+limiter = "limiter ceiling peak loud master"
 
 # Редактор FX клипа.
 [fx]

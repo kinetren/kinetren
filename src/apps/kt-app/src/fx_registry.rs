@@ -192,6 +192,14 @@ pub fn registry() -> &'static [FxEntry] {
                 template: FxInstance::gate(),
             },
             FxEntry {
+                name: "Limiter",
+                category: k::fxreg::cat::DYNAMICS,
+                audio: true,
+                video: false,
+                keywords: Some(k::fxreg::kw::LIMITER),
+                template: FxInstance::limiter(),
+            },
+            FxEntry {
                 name: "Stereo Width",
                 category: k::fxreg::cat::STEREO,
                 audio: true,
