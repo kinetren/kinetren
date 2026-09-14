@@ -1,7 +1,7 @@
 ---
 id: F-AUD-001
 title: Параметрический эквалайзер
-status: кандидат
+status: в-работе
 priority: A
 cost: S
 category: audio/processing
@@ -10,11 +10,11 @@ we_have: нет
 crates: [kt-fx, kt-model, kt-app, kt-engine, kt-otio]
 invariants: [1, 2, 3, 11]
 ui_rules: [13, 17, 20]
-round: null
+round: "Р.47"
 point: null
 tests: []
 depends_on: []
-checked: 2026-09-07
+checked: 2026-09-14
 ---
 
 # F-AUD-001 — Параметрический эквалайзер

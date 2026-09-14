@@ -1,7 +1,7 @@
 ---
 id: F-AUD-002
 title: Динамическая обработка — компрессор, лимитер, гейт, экспандер
-status: кандидат
+status: в-работе
 priority: B
 cost: M
 category: audio/processing
@@ -10,12 +10,12 @@ we_have: нет
 crates: [kt-fx, kt-model, kt-engine, kt-app, kt-media]
 invariants: [1, 2, 3, 5, 6, 11]
 ui_rules: [13, 17, 20]
-round: null
+round: "Р.47"
 point: null
 tests: []
 depends_on: [F-AUT-002, F-CLR-006]
 trackers: [kde-bugzilla, kde-invent, olive, openshot, mlt, pitivi]
-checked: 2026-09-08
+checked: 2026-09-14
 ---
 
 # F-AUD-002 — Динамическая обработка — компрессор, лимитер, гейт, экспандер
