@@ -418,6 +418,72 @@ fn bench_geom_1080p() {
     ], &bctx);
 }
 
+/// Перф-печать Р.47 (п.336): цена новых эффектов на 1080p, нс/px.
+/// `cargo test -p kt-fx --test geo_fuse --release -- --ignored bench_fx`
+#[test]
+#[ignore]
+fn bench_fx_1080p() {
+    use std::time::Instant;
+    let (bw, bh) = (1920u32, 1080u32);
+    let mut rgba = vec![0u8; (bw * bh * 4) as usize];
+    for (p, px) in rgba.chunks_exact_mut(4).enumerate() {
+        px[0] = (p % 251) as u8;
+        px[1] = (p % 241) as u8;
+        px[2] = (p % 239) as u8;
+        px[3] = 255;
+    }
+    let mk = || Frame { w: bw, h: bh, rgba: rgba.clone(), has_alpha: false };
+    let bctx =
+        VideoFxCtx { out_w: bw, out_h: bh, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 };
+    let npx = (bw * bh) as f64;
+    let bench = |name: &str, fx: &[FxInstance]| {
+        let t0 = Instant::now();
+        let out = apply_video_chain(fx, mk(), &bctx);
+        let dt = t0.elapsed();
+        println!(
+            "{name}: {:.1} мс/кадр 1080p, {:.1} нс/px (выход {}x{})",
+            dt.as_secs_f64() * 1e3,
+            dt.as_secs_f64() * 1e9 / npx,
+            out.w,
+            out.h
+        );
+    };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
+    bench("colorgrade+vignette (2 барьера)", &[
+        FxInstance::ColorGrade { brightness: 0.05, contrast: 0.3, saturation: 1.4, hue: 20.0 },
+        FxInstance::vignette(),
+    ]);
+    bench("sharpen r=3", &[FxInstance::Sharpen { amount: 1.5, radius: 3 }]);
+    bench("pixelate 12", &[FxInstance::Pixelate { size: 12 }]);
+    bench("chroma_ab 0.02", &[FxInstance::ChromaticAberration { amount: 0.02 }]);
+    bench("radial_blur zoom (16 тапов)", &[FxInstance::RadialBlur {
+        amount: 0.5,
+        center_x: 0.0,
+        center_y: 0.0,
+        spin: false,
+    }]);
+    bench("radial_blur spin", &[FxInstance::RadialBlur {
+        amount: 0.5,
+        center_x: 0.0,
+        center_y: 0.0,
+        spin: true,
+    }]);
+    bench("halftone 8/45", &[FxInstance::Halftone { size: 8, angle: 45.0 }]);
+    bench("greenscreen→drop_shadow (тень с альфой)", &[
+        FxInstance::greenscreen([0, 255, 0], 70, 25),
+        FxInstance::drop_shadow(),
+    ]);
+    bench("grid→lens→twirl→zoom (слитый ран, perpixel-SS)", &[
+        grid,
+        FxInstance::lens_distort(),
+        FxInstance::twirl(),
+        zoom2,
+    ]);
+    bench("kaleidoscope соло", &[FxInstance::kaleidoscope()]);
+    bench("cylinder 0.8", &[FxInstance::Cylinder3d { curvature: 0.8 }]);
+}
+
 /// Тест 306 (п.311, Р.45): план цепочки — единственное место сегментации.
 /// Раны/барьеры/маркеры силы, бюджет шагов, и «план слайса ≡ кусок плана
 /// целого» (CPU режет по стопам уровнем выше, GPU планирует целиком со

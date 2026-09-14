@@ -82,3 +82,21 @@ headless). CPU-путь kt-fx/kt-engine остаётся байт-эталоно
 - Допуски — только `FrameTol`/`assert_frames_close`; ad-hoc epsilon
   запрещены (инвариант №11). Пороги ставятся ×2 от замера; провал «на
   грани» — расследование и запись в porting-notes, не подкрутка.
+
+## Р.47 (пп.332-335): 19 пассов, Warp, барьеры
+
+- PIPE_COUNT = 19: + colorgrade/duotone/posterize/vignette (поточечные на
+  барьерной позиции, зеркала tap-функций kt-fx) + sharpen_add/pixelate/
+  chroma_ab/radial_blur/shadow_under/halftone. Sharpen и DropShadow —
+  3 пасса (Resample down/up + финал с T1); passes()/slot_units обязаны
+  это предсказывать.
+- `geom_fused.wgsl`: прим kind 4 — Warp (2 слота юниформы, [mode,p0..p2]
+  [p3..p6]); тап-арм kind 2..5 — поточечные Р.47; коды и формулы —
+  зеркала kt-fx (geom.rs::warp_map / tap_*), правка — ТЕМ ЖЕ КОММИТОМ.
+- DropShadow в chain_ops: при `has_alpha_known && !has_alpha` оп НЕ
+  эмитится (CPU-passthrough); при неизвестной альфе эмитится — формула
+  на непрозрачном входе тождественна байтам (a_src=1 ⇒ out=src).
+- Конформанс новых видов — t329 (цикл по реестру + tuned-экземпляры для
+  тождественных дефолтов + warp-hard-кейсы). FrameTol::WARP НЕ введён:
+  жёсткие варпы держат GEOM на обоих бэкендах (п.335); провал
+  warp-hard — расследование и ввод WARP ×2 от замера, не подкрутка GEOM.

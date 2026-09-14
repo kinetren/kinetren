@@ -174,4 +174,104 @@ fn gen_demo_concat() {
         ),
     ];
     save(&mut p, "05-decode-scale.otio");
+
+    // 06: цвет (Р.47 Кв2) — поточечные соло и ВНУТРИ гео-серии
+    // (поглощение тапом: ключ и зум не ломают формулу цвета).
+    let mut p = project();
+    p.clips = vec![
+        clip(
+            1,
+            0,
+            4,
+            1,
+            vec![FxInstance::ColorGrade {
+                brightness: 0.05,
+                contrast: 0.35,
+                saturation: 1.5,
+                hue: -20.0,
+            }],
+        ),
+        clip(2, 4, 4, 1, vec![FxInstance::duotone()]),
+        clip(3, 8, 4, 1, vec![FxInstance::Posterize { levels: 4 }]),
+        clip(
+            4,
+            12,
+            4,
+            1,
+            vec![grid2(), FxInstance::vignette(), zoom(2.0)],
+        ),
+    ];
+    save(&mut p, "06-color.otio");
+
+    // 07: барьеры (Р.47 Кв3) — резкость/мозаика/аберрация/лучи/тень/растр.
+    let mut p = project();
+    p.clips = vec![
+        clip(1, 0, 4, 1, vec![FxInstance::Sharpen { amount: 2.0, radius: 3 }]),
+        clip(2, 4, 4, 1, vec![FxInstance::Pixelate { size: 16 }]),
+        clip(3, 8, 4, 1, vec![FxInstance::ChromaticAberration { amount: 0.02 }]),
+        clip(
+            4,
+            12,
+            4,
+            1,
+            vec![FxInstance::RadialBlur { amount: 0.5, center_x: 0.0, center_y: 0.0, spin: false }],
+        ),
+        // тень видна на вырезанном ключе green.mp4
+        clip(
+            5,
+            16,
+            4,
+            2,
+            vec![
+                FxInstance::greenscreen([0, 255, 0], 90, 20),
+                FxInstance::DropShadow {
+                    offset_x: 14,
+                    offset_y: 14,
+                    radius: 6,
+                    opacity: 0.7,
+                    tint_r: 0,
+                    tint_g: 0,
+                    tint_b: 0,
+                },
+            ],
+        ),
+        clip(6, 20, 4, 1, vec![FxInstance::Halftone { size: 10, angle: 45.0 }]),
+    ];
+    save(&mut p, "07-fx-barriers.otio");
+
+    // 08: варпы (Р.47 Кв4) — нелинейные гео в конкатенации; Ripple с
+    // кривой phase (волна бежит), CornerPin с кривыми углов (экран
+    // «устанавливается» на место).
+    let mut p = project();
+    let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
+    let curve = |param: &str, keys: Vec<AutoKey>| ParamCurve {
+        param: param.into(),
+        ease: true,
+        keys,
+    };
+    let mut ripple = clip(
+        1,
+        0,
+        4,
+        1,
+        vec![FxInstance::Ripple { amount: 0.12, freq: 12.0, phase: 0.0 }],
+    );
+    ripple.fx_auto = vec![vec![curve("phase", vec![key(0.0, 0.0), key(4.0, 1080.0)])]];
+    let mut pin = clip(2, 4, 4, 1, vec![FxInstance::corner_pin()]);
+    pin.fx_auto = vec![vec![
+        curve("x0", vec![key(0.0, 0.35), key(3.0, 0.0)]),
+        curve("y0", vec![key(0.0, 0.25), key(3.0, 0.0)]),
+        curve("x3", vec![key(0.0, 0.8), key(3.0, 1.0)]),
+        curve("y3", vec![key(0.0, 0.75), key(3.0, 1.0)]),
+    ]];
+    p.clips = vec![
+        ripple,
+        pin,
+        clip(3, 8, 4, 1, vec![FxInstance::LensDistort { k1: -0.5, k2: 0.0 }]),
+        clip(4, 12, 4, 1, vec![FxInstance::twirl()]),
+        // конкатенация: калейдоскоп и цилиндр С ЗУМОМ — один слитый ран
+        clip(5, 16, 4, 1, vec![FxInstance::kaleidoscope(), zoom(1.5)]),
+        clip(6, 20, 4, 1, vec![FxInstance::Cylinder3d { curvature: 0.8 }, zoom(1.3)]),
+    ];
+    save(&mut p, "08-warp.otio");
 }

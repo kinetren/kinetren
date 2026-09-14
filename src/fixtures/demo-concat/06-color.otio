@@ -1,0 +1,289 @@
+{
+    "OTIO_SCHEMA": "Timeline.1",
+    "name": "",
+    "global_start_time": null,
+    "metadata": {
+        "kt": {
+            "v": 1,
+            "settings": {
+                "fps": 30,
+                "width": 1280,
+                "height": 720,
+                "sample_rate": 48000
+            },
+            "bin_media": [
+                {
+                    "id": 2,
+                    "path": "green.mp4"
+                }
+            ],
+            "lanes": [
+                1,
+                1
+            ]
+        }
+    },
+    "tracks": {
+        "OTIO_SCHEMA": "Stack.1",
+        "name": "",
+        "children": [
+            {
+                "OTIO_SCHEMA": "Track.1",
+                "name": "",
+                "kind": "Video",
+                "children": [
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "name": "",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "value": 360000.0,
+                                "rate": 90000.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "value": 0.0,
+                                "rate": 90000.0
+                            }
+                        },
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "name": "",
+                                "target_url": "detail.mp4",
+                                "available_range": null,
+                                "available_image_bounds": null,
+                                "metadata": {}
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA",
+                        "effects": [
+                            {
+                                "OTIO_SCHEMA": "Effect.1",
+                                "name": "",
+                                "effect_name": "kt:color_grade",
+                                "enabled": true,
+                                "metadata": {
+                                    "kt": {
+                                        "kind": "color_grade",
+                                        "brightness": 0.05000000074505806,
+                                        "contrast": 0.3499999940395355,
+                                        "saturation": 1.5,
+                                        "hue": -20.0
+                                    }
+                                }
+                            }
+                        ],
+                        "markers": [],
+                        "enabled": true,
+                        "metadata": {
+                            "kt": {
+                                "id": 1,
+                                "media": 1
+                            }
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "name": "",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "value": 360000.0,
+                                "rate": 90000.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "value": 0.0,
+                                "rate": 90000.0
+                            }
+                        },
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "name": "",
+                                "target_url": "detail.mp4",
+                                "available_range": null,
+                                "available_image_bounds": null,
+                                "metadata": {}
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA",
+                        "effects": [
+                            {
+                                "OTIO_SCHEMA": "Effect.1",
+                                "name": "",
+                                "effect_name": "kt:duotone",
+                                "enabled": true,
+                                "metadata": {
+                                    "kt": {
+                                        "kind": "duotone",
+                                        "shadow_r": 24,
+                                        "shadow_g": 18,
+                                        "shadow_b": 64,
+                                        "high_r": 255,
+                                        "high_g": 236,
+                                        "high_b": 190,
+                                        "amount": 1.0
+                                    }
+                                }
+                            }
+                        ],
+                        "markers": [],
+                        "enabled": true,
+                        "metadata": {
+                            "kt": {
+                                "id": 2,
+                                "media": 1
+                            }
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "name": "",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "value": 360000.0,
+                                "rate": 90000.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "value": 0.0,
+                                "rate": 90000.0
+                            }
+                        },
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "name": "",
+                                "target_url": "detail.mp4",
+                                "available_range": null,
+                                "available_image_bounds": null,
+                                "metadata": {}
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA",
+                        "effects": [
+                            {
+                                "OTIO_SCHEMA": "Effect.1",
+                                "name": "",
+                                "effect_name": "kt:posterize",
+                                "enabled": true,
+                                "metadata": {
+                                    "kt": {
+                                        "kind": "posterize",
+                                        "levels": 4
+                                    }
+                                }
+                            }
+                        ],
+                        "markers": [],
+                        "enabled": true,
+                        "metadata": {
+                            "kt": {
+                                "id": 3,
+                                "media": 1
+                            }
+                        }
+                    },
+                    {
+                        "OTIO_SCHEMA": "Clip.2",
+                        "name": "",
+                        "source_range": {
+                            "OTIO_SCHEMA": "TimeRange.1",
+                            "duration": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "value": 360000.0,
+                                "rate": 90000.0
+                            },
+                            "start_time": {
+                                "OTIO_SCHEMA": "RationalTime.1",
+                                "value": 0.0,
+                                "rate": 90000.0
+                            }
+                        },
+                        "media_references": {
+                            "DEFAULT_MEDIA": {
+                                "OTIO_SCHEMA": "ExternalReference.1",
+                                "name": "",
+                                "target_url": "detail.mp4",
+                                "available_range": null,
+                                "available_image_bounds": null,
+                                "metadata": {}
+                            }
+                        },
+                        "active_media_reference_key": "DEFAULT_MEDIA",
+                        "effects": [
+                            {
+                                "OTIO_SCHEMA": "Effect.1",
+                                "name": "",
+                                "effect_name": "kt:event_grid",
+                                "enabled": true,
+                                "metadata": {
+                                    "kt": {
+                                        "kind": "event_grid",
+                                        "cols": 2,
+                                        "rows": 2,
+                                        "center": true
+                                    }
+                                }
+                            },
+                            {
+                                "OTIO_SCHEMA": "Effect.1",
+                                "name": "",
+                                "effect_name": "kt:vignette",
+                                "enabled": true,
+                                "metadata": {
+                                    "kt": {
+                                        "kind": "vignette",
+                                        "strength": 0.5,
+                                        "radius": 0.699999988079071,
+                                        "softness": 0.44999998807907104
+                                    }
+                                }
+                            },
+                            {
+                                "OTIO_SCHEMA": "Effect.1",
+                                "name": "",
+                                "effect_name": "kt:pan",
+                                "enabled": true,
+                                "metadata": {
+                                    "kt": {
+                                        "kind": "pan",
+                                        "mode": "stretch",
+                                        "pan_x": 0.0,
+                                        "pan_y": 0.0,
+                                        "zoom": 2.0
+                                    }
+                                }
+                            }
+                        ],
+                        "markers": [],
+                        "enabled": true,
+                        "metadata": {
+                            "kt": {
+                                "id": 4,
+                                "media": 1
+                            }
+                        }
+                    }
+                ],
+                "source_range": null,
+                "effects": [],
+                "markers": [],
+                "enabled": true,
+                "metadata": {}
+            }
+        ],
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "enabled": true,
+        "metadata": {}
+    }
+}

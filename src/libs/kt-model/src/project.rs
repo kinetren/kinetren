@@ -3509,7 +3509,7 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     Ripple {
         amount: f32, 0.0, 0.5, 0.08, 0.005, Norm, Smooth;
         freq: f32, 1.0, 40.0, 10.0, 0.5, Count, Smooth;
-        phase: f32, 0.0, 360.0, 0.0, 1.0, Deg, Smooth;
+        phase: f32, 0.0, 3600.0, 0.0, 1.0, Deg, Smooth;
     },
     Kaleidoscope {
         segments: u32, 2.0, 32.0, 6.0, 1.0, Count, Smooth;
