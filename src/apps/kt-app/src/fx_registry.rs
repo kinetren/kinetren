@@ -40,6 +40,12 @@ fn video_meta(name: &str) -> (Key, Option<Key>) {
         "Glow" => (k::fxreg::cat::GLOW, Some(k::fxreg::kw::GLOW)),
         "EventGrid" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::EVENTGRID)),
         "Pan 3D" => (k::fxreg::cat::THREE_D, Some(k::fxreg::kw::PAN3D)),
+        // Р.47 Кв2: цвет/стиль/перспектива
+        "Color Grade" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::COLOR_GRADE)),
+        "Duotone" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::DUOTONE)),
+        "Posterize" => (k::fxreg::cat::COLOR, Some(k::fxreg::kw::POSTERIZE)),
+        "Vignette" => (k::fxreg::cat::STYLE, Some(k::fxreg::kw::VIGNETTE)),
+        "Corner Pin" => (k::fxreg::cat::GEOMETRY, Some(k::fxreg::kw::CORNER_PIN)),
         _ => (k::fxreg::cat::VIDEO, None),
     }
 }

@@ -331,6 +331,19 @@ rot_z = "Rot Z:"
 anchor_x = "Ancla X:"
 anchor_y = "Ancla Y:"
 scale = "Escala:"
+brightness = "Brillo"
+contrast = "Contraste"
+saturation = "Saturación"
+hue = "Tono"
+levels = "Niveles"
+x0 = "SI X"
+y0 = "SI Y"
+x1 = "SD X"
+y1 = "SD Y"
+x2 = "II X"
+y2 = "II Y"
+x3 = "ID X"
+y3 = "ID Y"
 
 [fxreg]
 add = "+ efecto…"
@@ -355,6 +368,7 @@ modulation = "Modulación"
 delay = "Eco"
 dynamics = "Dinámica"
 timestretch = "Estiramiento de tiempo"
+color = "Color"
 
 # Ключевые слова поиска. НЕ переупорядочиваются для арабского
 # (сравниваются с вводом пользователя), пишутся в нижнем регистре.
@@ -385,6 +399,11 @@ phaser = "phaser"
 delay = "eco delay"
 compressor = "compresor dinámica"
 gate = "puerta ruido"
+color_grade = "color brillo contraste saturacion tono color grade"
+duotone = "duotono dos tonos tinte duotone"
+posterize = "posterizar niveles cuantizar posterize"
+vignette = "vineta esquinas oscuras vignette"
+corner_pin = "esquinas perspectiva distorsion corner pin"
 
 # Редактор FX клипа.
 [fx]
@@ -460,6 +479,9 @@ center = "Centrar"
 # Диалог настроек рендера и окно прогресса.
 chain_on = "Cadena"
 chain_on_hint = "Interruptor maestro: apaga toda la cadena sin tocar los slots"
+shadow_color = "Sombras"
+high_color = "Luces"
+
 [render]
 already_running = "ya hay un render en curso"
 summary = "{0} fotogramas de vídeo, {1} de audio, underruns {2}, codificador {3}"

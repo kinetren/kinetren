@@ -2037,6 +2037,39 @@ fn default_gate_hold() -> f32 {
 fn default_gate_rel() -> f32 {
     100.0
 }
+fn default_duo_sr() -> u8 {
+    24
+}
+fn default_duo_sg() -> u8 {
+    18
+}
+fn default_duo_sb() -> u8 {
+    64
+}
+fn default_duo_hr() -> u8 {
+    255
+}
+fn default_duo_hg() -> u8 {
+    236
+}
+fn default_duo_hb() -> u8 {
+    190
+}
+fn default_levels() -> u32 {
+    6
+}
+fn default_vig_radius() -> f32 {
+    0.7
+}
+fn default_vig_soft() -> f32 {
+    0.45
+}
+fn default_one_f64() -> f64 {
+    1.0
+}
+fn is_one_f64(v: &f64) -> bool {
+    *v == 1.0
+}
 fn default_one_f32() -> f32 {
     1.0
 }
@@ -2591,6 +2624,72 @@ pub enum FxInstance {
         release_ms: f32,
     },
     // ---- видео-FX (порт bc_fx.cpp, п.25; параметры и дефолты v1) ----------
+    /// Базовая цветокоррекция (Р.47, F-CLR-007): яркость/контраст/
+    /// насыщенность/оттенок. Поточечный — поглощается в слитый гео-проход.
+    ColorGrade {
+        #[serde(default, skip_serializing_if = "is_zero")]
+        brightness: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        contrast: f32,
+        #[serde(default = "default_one_f32", skip_serializing_if = "is_one_f32")]
+        saturation: f32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        hue: f32,
+    },
+    /// Две краски по люме (Р.47): сепия/тонировка/инверсия — точки этого
+    /// пространства. Поточечный.
+    Duotone {
+        #[serde(default = "default_duo_sr")]
+        shadow_r: u8,
+        #[serde(default = "default_duo_sg")]
+        shadow_g: u8,
+        #[serde(default = "default_duo_sb")]
+        shadow_b: u8,
+        #[serde(default = "default_duo_hr")]
+        high_r: u8,
+        #[serde(default = "default_duo_hg")]
+        high_g: u8,
+        #[serde(default = "default_duo_hb")]
+        high_b: u8,
+        #[serde(default = "default_one_f32")]
+        amount: f32,
+    },
+    /// Постеризация по каналам (Р.47). Поточечный (внутри гео-серии
+    /// суперсемплинг смягчает ступени — принято, THRESHOLD).
+    Posterize {
+        #[serde(default = "default_levels")]
+        levels: u32,
+    },
+    /// Виньетка (Р.47): затемнение к краям, координата своей стадии —
+    /// внутри цепочки зумится вместе с картинкой. Поточечный.
+    Vignette {
+        #[serde(default = "default_half_f32")]
+        strength: f32,
+        #[serde(default = "default_vig_radius")]
+        radius: f32,
+        #[serde(default = "default_vig_soft")]
+        softness: f32,
+    },
+    /// Посадка за четыре угла (Р.47, F-FX-004): гомография quad→quad,
+    /// главный инструмент «экрана в кадре». Гео — конкатенируется.
+    CornerPin {
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        x0: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        y0: f64,
+        #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
+        x1: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        y1: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        x2: f64,
+        #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
+        y2: f64,
+        #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
+        x3: f64,
+        #[serde(default = "default_one_f64", skip_serializing_if = "is_one_f64")]
+        y3: f64,
+    },
     /// Кроп-рамка + пан/зум в размер проекта.
     Pan {
         #[serde(default)]
@@ -2818,6 +2917,11 @@ impl FxInstance {
             FxInstance::Delay { .. } => "delay",
             FxInstance::Compressor { .. } => "compressor",
             FxInstance::Gate { .. } => "gate",
+            FxInstance::ColorGrade { .. } => "color_grade",
+            FxInstance::Duotone { .. } => "duotone",
+            FxInstance::Posterize { .. } => "posterize",
+            FxInstance::Vignette { .. } => "vignette",
+            FxInstance::CornerPin { .. } => "corner_pin",
             FxInstance::Pan { .. } => "pan",
             FxInstance::CamMotion { .. } => "cam_motion",
             FxInstance::Mirror { .. } => "mirror",
@@ -2858,6 +2962,11 @@ impl FxInstance {
                 FxInstance::delay(),
                 FxInstance::compressor(),
                 FxInstance::gate(),
+                FxInstance::color_grade(),
+                FxInstance::duotone(),
+                FxInstance::posterize(),
+                FxInstance::vignette(),
+                FxInstance::corner_pin(),
                 FxInstance::pan(),
                 FxInstance::cam_motion(),
                 FxInstance::mirror(),
@@ -3153,6 +3262,39 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
         release_ms: f32, 5.0, 1000.0, 100.0, 1.0, Ms, Smooth;
     },
     // ---- видео 2D --------------------------------------------------------
+    ColorGrade {
+        brightness: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
+        contrast: f32, -1.0, 1.0, 0.0, 0.01, Norm, Smooth;
+        saturation: f32, 0.0, 2.0, 1.0, 0.01, Ratio, Smooth;
+        hue: f32, -180.0, 180.0, 0.0, 1.0, Deg, Smooth;
+    },
+    Duotone {
+        shadow_r: u8, 0.0, 255.0, 24.0, 1.0, Rgb8, Smooth;
+        shadow_g: u8, 0.0, 255.0, 18.0, 1.0, Rgb8, Smooth;
+        shadow_b: u8, 0.0, 255.0, 64.0, 1.0, Rgb8, Smooth;
+        high_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        high_g: u8, 0.0, 255.0, 236.0, 1.0, Rgb8, Smooth;
+        high_b: u8, 0.0, 255.0, 190.0, 1.0, Rgb8, Smooth;
+        amount: f32, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
+    },
+    Posterize {
+        levels: u32, 2.0, 32.0, 6.0, 1.0, Count, Smooth;
+    },
+    Vignette {
+        strength: f32, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        radius: f32, 0.0, 1.5, 0.7, 0.01, Norm, Smooth;
+        softness: f32, 0.05, 1.0, 0.45, 0.01, Norm, Smooth;
+    },
+    CornerPin {
+        x0: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
+        y0: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
+        x1: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
+        y1: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
+        x2: f64, -1.0, 2.0, 0.0, 0.005, Norm, Smooth;
+        y2: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
+        x3: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
+        y3: f64, -1.0, 2.0, 1.0, 0.005, Norm, Smooth;
+    },
     Pan {
         pan_x: f64, -4.0, 4.0, 0.0, 0.01, Norm, Smooth;
         pan_y: f64, -4.0, 4.0, 0.0, 0.01, Norm, Smooth;
@@ -3618,6 +3760,43 @@ impl FxInstance {
 
     pub fn gate() -> FxInstance {
         FxInstance::Gate { threshold_db: -40.0, attack_ms: 1.0, hold_ms: 40.0, release_ms: 100.0 }
+    }
+
+    pub fn color_grade() -> FxInstance {
+        FxInstance::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 }
+    }
+
+    pub fn duotone() -> FxInstance {
+        FxInstance::Duotone {
+            shadow_r: 24,
+            shadow_g: 18,
+            shadow_b: 64,
+            high_r: 255,
+            high_g: 236,
+            high_b: 190,
+            amount: 1.0,
+        }
+    }
+
+    pub fn posterize() -> FxInstance {
+        FxInstance::Posterize { levels: 6 }
+    }
+
+    pub fn vignette() -> FxInstance {
+        FxInstance::Vignette { strength: 0.5, radius: 0.7, softness: 0.45 }
+    }
+
+    pub fn corner_pin() -> FxInstance {
+        FxInstance::CornerPin {
+            x0: 0.0,
+            y0: 0.0,
+            x1: 1.0,
+            y1: 0.0,
+            x2: 0.0,
+            y2: 1.0,
+            x3: 1.0,
+            y3: 1.0,
+        }
     }
 
     pub fn pan() -> FxInstance {

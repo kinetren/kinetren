@@ -148,11 +148,64 @@ pub fn apply_barrier(
         FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
             glow(frame, *strength, *radius, *threshold, [*tint_r, *tint_g, *tint_b], scratch, rs)
         }
+        // поточечные Р.47 в БАРЬЕРНОЙ позиции (ведущий/замыкающий слот):
+        // тот же f64-текст формулы, что у тапа слитого прохода, — один дом
+        FxInstance::ColorGrade { brightness, contrast, saturation, hue } => {
+            let h = (*hue as f64).to_radians();
+            let (hc, hs) = (h.cos(), h.sin());
+            pointwise_barrier(frame, |v, _| {
+                crate::geom::tap_grade(
+                    v,
+                    *brightness as f64,
+                    *contrast as f64,
+                    *saturation as f64,
+                    hc,
+                    hs,
+                )
+            })
+        }
+        FxInstance::Duotone { shadow_r, shadow_g, shadow_b, high_r, high_g, high_b, amount } => {
+            let sh = [*shadow_r as f64, *shadow_g as f64, *shadow_b as f64];
+            let hi = [*high_r as f64, *high_g as f64, *high_b as f64];
+            let a = (*amount as f64).clamp(0.0, 1.0);
+            pointwise_barrier(frame, |v, _| crate::geom::tap_duo(v, &sh, &hi, a))
+        }
+        FxInstance::Posterize { levels } => {
+            let n = (*levels).clamp(2, 32);
+            pointwise_barrier(frame, |v, _| crate::geom::tap_poster(v, n))
+        }
+        FxInstance::Vignette { strength, radius, softness } => {
+            let (st, ra, so) = (
+                (*strength as f64).clamp(0.0, 1.0),
+                (*radius as f64).clamp(0.0, 1.5),
+                (*softness as f64).clamp(0.05, 1.0),
+            );
+            let (w, h) = (frame.w, frame.h);
+            pointwise_barrier(frame, move |v, xy| {
+                crate::geom::tap_vig(v, xy, st, ra, so, w, h)
+            })
+        }
         _ => {
             debug_assert!(false, "barrier op on non-barrier fx");
             frame
         }
     }
+}
+
+/// Поточечный эффект как барьер: f64-континуум формулы тапа на каждом
+/// пикселе, clamp+round ОДИН раз на выходе (та же дисциплина, что у
+/// exec_geom_cpu).
+fn pointwise_barrier(mut f: Frame, op: impl Fn(&mut [f64; 4], (f64, f64))) -> Frame {
+    let w = f.w as usize;
+    for (i, px) in f.rgba.chunks_exact_mut(4).enumerate() {
+        let (x, y) = ((i % w) as f64, (i / w) as f64);
+        let mut v = [px[0] as f64, px[1] as f64, px[2] as f64, px[3] as f64];
+        op(&mut v, (x, y));
+        for (c, out) in v.iter().zip(px.iter_mut()) {
+            *out = c.round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    f
 }
 
 /// Одиночный гео-эффект СТАРЫМИ ядрами (`GeomExec::Legacy`): байты как до

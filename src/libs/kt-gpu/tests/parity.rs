@@ -786,6 +786,14 @@ fn t329_parity_cycle_over_the_registry() {
         ("glow", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("event_grid", FrameTol::BILINEAR, FrameTol::BILINEAR),
         ("pan3d", FrameTol::GEOM, FrameTol::GEOM),
+        // Р.47 Кв2: поточечные — f32-континуум против f64 (в сэндвиче они
+        // едут тапами слитого гео-прохода); Posterize — пороговый квант;
+        // CornerPin — проективный, как pan3d
+        ("color_grade", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("duotone", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("posterize", FrameTol::THRESHOLD, FrameTol::THRESHOLD),
+        ("vignette", FrameTol::BILINEAR, FrameTol::BILINEAR),
+        ("corner_pin", FrameTol::GEOM, FrameTol::GEOM),
     ];
     let table: std::collections::BTreeMap<&str, (FrameTol, FrameTol)> =
         classes.iter().map(|(t, a, b)| (*t, (*a, *b))).collect();
@@ -829,5 +837,70 @@ fn t329_parity_cycle_over_the_registry() {
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
         assert_eq!(cc, cg, "{}: complete diverged (sandwich)", f.tag());
         assert_frames_close(&cpu, &gpu, W, H, tol_sand, &format!("sandwich-{}", f.tag()));
+    }
+    // Р.47 Кв2: у color_grade и corner_pin дефолт — тождество, и цикл выше
+    // их формул не касается. Настроенные экземпляры сверяют математику:
+    // одиночный — барьерный пасс (или Proj-ран), сэндвич — тап слитого
+    // гео-прохода (kind 2..5 в geom_fused.wgsl).
+    let tuned: &[(FxInstance, FrameTol, FrameTol)] = &[
+        (
+            FxInstance::ColorGrade {
+                brightness: 0.12,
+                contrast: 0.35,
+                saturation: 1.6,
+                hue: 60.0,
+            },
+            FrameTol::BILINEAR,
+            FrameTol::BILINEAR,
+        ),
+        (
+            FxInstance::Duotone {
+                shadow_r: 40,
+                shadow_g: 0,
+                shadow_b: 80,
+                high_r: 255,
+                high_g: 220,
+                high_b: 160,
+                amount: 0.7,
+            },
+            FrameTol::BILINEAR,
+            FrameTol::BILINEAR,
+        ),
+        (FxInstance::Posterize { levels: 4 }, FrameTol::THRESHOLD, FrameTol::THRESHOLD),
+        (
+            FxInstance::Vignette { strength: 0.9, radius: 0.3, softness: 0.2 },
+            FrameTol::BILINEAR,
+            FrameTol::BILINEAR,
+        ),
+        (
+            FxInstance::CornerPin {
+                x0: 0.08,
+                y0: 0.06,
+                x1: 0.92,
+                y1: -0.04,
+                x2: -0.05,
+                y2: 0.95,
+                x3: 1.05,
+                y3: 1.1,
+            },
+            FrameTol::GEOM,
+            FrameTol::GEOM,
+        ),
+    ];
+    for (i, (f, tol_single, tol_sand)) in tuned.iter().enumerate() {
+        let src = Src::new(9600 + i as u64 * 2, Some(frame(W, H, false, 0)), vec![f.clone()]);
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert_eq!(cc, cg, "tuned {}: complete diverged (single)", f.tag());
+        assert_frames_close(&cpu, &gpu, W, H, *tol_single, &format!("tuned-{}", f.tag()));
+        let src = Src::new(
+            9601 + i as u64 * 2,
+            Some(frame(W, H, false, 0)),
+            vec![grid2.clone(), f.clone(), zoom2.clone()],
+        );
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert_eq!(cc, cg, "tuned {}: complete diverged (sandwich)", f.tag());
+        assert_frames_close(&cpu, &gpu, W, H, *tol_sand, &format!("tuned-sandwich-{}", f.tag()));
     }
 }

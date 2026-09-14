@@ -331,6 +331,19 @@ rot_z = "旋转 Z："
 anchor_x = "锚点 X："
 anchor_y = "锚点 Y："
 scale = "缩放比例："
+brightness = "亮度"
+contrast = "对比度"
+saturation = "饱和度"
+hue = "色相"
+levels = "色阶"
+x0 = "左上 X"
+y0 = "左上 Y"
+x1 = "右上 X"
+y1 = "右上 Y"
+x2 = "左下 X"
+y2 = "左下 Y"
+x3 = "右下 X"
+y3 = "右下 Y"
 
 [fxreg]
 add = "+ 特效…"
@@ -355,6 +368,7 @@ modulation = "调制"
 delay = "延迟/回声"
 dynamics = "动态"
 timestretch = "时间伸缩"
+color = "颜色"
 
 # Ключевые слова поиска. НЕ переупорядочиваются для арабского
 # (сравниваются с вводом пользователя), пишутся в нижнем регистре.
@@ -385,6 +399,11 @@ phaser = "相位"
 delay = "延迟 回声"
 compressor = "压缩器 动态"
 gate = "噪声门"
+color_grade = "色彩 亮度 对比度 饱和度 色相 color grade"
+duotone = "双色调 渐变映射 duotone"
+posterize = "色调分离 色阶 posterize"
+vignette = "暗角 晕影 vignette"
+corner_pin = "边角定位 透视 corner pin"
 
 # Редактор FX клипа.
 [fx]
@@ -460,6 +479,9 @@ center = "居中"
 # Диалог настроек рендера и окно прогресса.
 chain_on = "效果链"
 chain_on_hint = "总开关：关闭整条效果链，不改动各个槽位的状态"
+shadow_color = "阴影"
+high_color = "高光"
+
 [render]
 already_running = "已经在导出了"
 summary = "{0} 个视频帧，{1} 个音频帧，underruns {2}，编码器 {3}"

@@ -746,3 +746,226 @@ fn t308b_mirror_run_between_k_segments() {
     let out = run(&[grid, vhs, mir, FxInstance::blur(8), zoom2]);
     assert_eq!((out.w, out.h), (W, H), "chain must land in Quality");
 }
+
+/// Люма пикселя (та же формула 77/150/29, что в tap-ядрах).
+fn luma(f: &Frame, x: u32, y: u32) -> f64 {
+    let i = ((y * f.w + x) * 4) as usize;
+    (77.0 * f.rgba[i] as f64 + 150.0 * f.rgba[i + 1] as f64 + 29.0 * f.rgba[i + 2] as f64) / 256.0
+}
+
+/// Тест 330 (Р.47 Кв2): новые поточечные — ColorGrade/Duotone/Posterize/
+/// Vignette. (а) внутренний поточечный поглощается в гео-ран (план длиной
+/// 1); (б) смысл каждого на барьерной позиции; (в) Vignette считает
+/// координату СВОЕЙ СТАДИИ, а не выхода: зум после неё срезает углы.
+#[test]
+fn t330_new_pointwise_absorb_and_meaning() {
+    use kt_fx::plan::{PlanOp, plan_chain};
+    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+
+    // (а) поглощение: каждый новый поточечный между гео-шагами — ран ОДИН
+    for f in [
+        FxInstance::color_grade(),
+        FxInstance::duotone(),
+        FxInstance::posterize(),
+        FxInstance::vignette(),
+    ] {
+        let fx = vec![grid2.clone(), f.clone(), zoom2.clone()];
+        let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
+        assert_eq!(p.ops.len(), 1, "{}: must absorb into the run", f.tag());
+        assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }), "{}", f.tag());
+    }
+
+    // (б-1) ColorGrade: насыщенность 0 — кадр обесцвечен (r==g==b)
+    let gray = run(&[FxInstance::ColorGrade {
+        brightness: 0.0,
+        contrast: 0.0,
+        saturation: 0.0,
+        hue: 0.0,
+    }]);
+    let src = test_frame();
+    assert_ne!(gray.rgba, src.rgba, "saturation 0 must change a colored frame");
+    for px in gray.rgba.chunks_exact(4) {
+        assert!(px[0] == px[1] && px[1] == px[2], "saturation 0 must produce gray: {px:?}");
+    }
+
+    // (б-2) Duotone: две краски — на выходе только их отрезок
+    let duo = run(&[FxInstance::Duotone {
+        shadow_r: 0,
+        shadow_g: 0,
+        shadow_b: 255,
+        high_r: 255,
+        high_g: 0,
+        high_b: 0,
+        amount: 1.0,
+    }]);
+    for px in duo.rgba.chunks_exact(4) {
+        assert_eq!(px[1], 0, "duotone (blue..red) leaves no green");
+        let sum = px[0] as i32 + px[2] as i32;
+        assert!((254..=256).contains(&sum), "off the shadow..high segment: {px:?}");
+    }
+
+    // (б-3) Posterize: не больше levels уникальных значений на канал
+    let post = run(&[FxInstance::Posterize { levels: 4 }]);
+    for c in 0..3 {
+        let uniq: std::collections::BTreeSet<u8> =
+            post.rgba.chunks_exact(4).map(|px| px[c]).collect();
+        assert!(uniq.len() <= 4, "channel {c}: {} levels out of 4", uniq.len());
+        let before: std::collections::BTreeSet<u8> =
+            src.rgba.chunks_exact(4).map(|px| px[c]).collect();
+        assert!(before.len() > 4, "source must have had detail to lose");
+    }
+
+    // (б-4) Vignette: углы темнее, центр нетронут (radius > r в центре).
+    // Кадр — ровный серый: у test_frame угол (0,0) сам чёрный, и темнить
+    // там нечего.
+    // radius 0.5: угол кадра (r=1) гаснет в ноль, а точка стадии под
+    // углом ЗУМА (r≈0.48) остаётся внутри радиуса — контраст (в) полный
+    let vig = FxInstance::Vignette { strength: 1.0, radius: 0.5, softness: 0.3 };
+    let flat = || {
+        let mut rgba = vec![200u8; (W * H * 4) as usize];
+        for px in rgba.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+        Frame { w: W, h: H, rgba, has_alpha: false }
+    };
+    let v = apply_video_chain(std::slice::from_ref(&vig), flat(), &ctx());
+    let (cx, cy) = (W / 2, H / 2);
+    assert!(luma(&v, 0, 0) < 100.0, "corner must darken: {}", luma(&v, 0, 0));
+    assert_eq!(
+        v.rgba[((cy * W + cx) * 4) as usize..((cy * W + cx) * 4 + 4) as usize],
+        [200, 200, 200, 255],
+        "inside radius the pixel is untouched"
+    );
+
+    // (в) координата стадии: [grid, vig, zoom2] виньетирует ДО зума —
+    // зум срезает тёмные углы, и угол выхода светлее прямого виньетажа.
+    let direct = apply_video_chain(std::slice::from_ref(&vig), flat(), &ctx());
+    let fused = apply_video_chain(&[grid2.clone(), vig, zoom2.clone()], flat(), &ctx());
+    assert!(
+        luma(&fused, 0, 0) > luma(&direct, 0, 0) + 20.0,
+        "vignette must use STAGE coords (zoom crops the dark corners): fused {} direct {}",
+        luma(&fused, 0, 0),
+        luma(&direct, 0, 0)
+    );
+}
+
+/// Тест 331 (Р.47 Кв2): CornerPin. Дефолт — тождество байт-в-байт (шаг
+/// пропущен); сжатие в правую половину кладёт маркер по формуле и
+/// оставляет левую прозрачной; перспективный квад двигает угловой маркер
+/// к назначенному углу; вырожденный квад — прозрачность, детерминированно;
+/// в серии с гео CornerPin остаётся ОДНИМ раном.
+#[test]
+fn t331_corner_pin() {
+    use kt_fx::plan::{PlanOp, plan_chain};
+    // (1) дефолт: identity байт-в-байт, альфа не объявляется
+    let out = run(&[FxInstance::corner_pin()]);
+    let src = test_frame();
+    assert_eq!(out.rgba, src.rgba, "default corners are a byte-exact identity");
+    assert!(!out.has_alpha, "skipped step must not declare alpha");
+
+    // маркерный кадр: белое поле, чёрный блок 4×4 в центре
+    let marker = || {
+        let mut m =
+            Frame { w: W, h: H, rgba: vec![255u8; (W * H * 4) as usize], has_alpha: false };
+        for y in H / 2 - 2..H / 2 + 2 {
+            for x in W / 2 - 2..W / 2 + 2 {
+                let i = ((y * W + x) * 4) as usize;
+                m.rgba[i] = 0;
+                m.rgba[i + 1] = 0;
+                m.rgba[i + 2] = 0;
+            }
+        }
+        m
+    };
+    let centroid = |f: &Frame| {
+        let (mut sx, mut sy, mut n) = (0.0f64, 0.0f64, 0.0f64);
+        for y in 0..f.h {
+            for x in 0..f.w {
+                let i = ((y * f.w + x) * 4) as usize;
+                if f.rgba[i + 3] == 255 && f.rgba[i] < 128 {
+                    sx += x as f64;
+                    sy += y as f64;
+                    n += 1.0;
+                }
+            }
+        }
+        assert!(n > 0.0, "marker must survive");
+        (sx / n, sy / n)
+    };
+
+    // (2) сжатие в правую половину: uv-центр → x = 0.75·W
+    let right = FxInstance::CornerPin {
+        x0: 0.5,
+        y0: 0.0,
+        x1: 1.0,
+        y1: 0.0,
+        x2: 0.5,
+        y2: 1.0,
+        x3: 1.0,
+        y3: 1.0,
+    };
+    let o = apply_video_chain(std::slice::from_ref(&right), marker(), &ctx());
+    assert!(o.has_alpha, "corner pin declares alpha");
+    for y in 0..H {
+        for x in 0..W / 2 - 1 {
+            assert_eq!(o.rgba[((y * W + x) * 4 + 3) as usize], 0, "left half is off-quad");
+        }
+    }
+    let (mx, my) = centroid(&o);
+    assert!(
+        (mx - 0.75 * W as f64).abs() <= 2.0 && (my - 0.5 * H as f64).abs() <= 2.0,
+        "marker must land at (0.75W, 0.5H): got ({mx:.1}, {my:.1})"
+    );
+
+    // (3) перспектива: TL-угол утянут внутрь — угловой маркер едет за ним
+    let mut tlm = Frame { w: W, h: H, rgba: vec![255u8; (W * H * 4) as usize], has_alpha: false };
+    for y in 0..4u32 {
+        for x in 0..4u32 {
+            let i = ((y * W + x) * 4) as usize;
+            tlm.rgba[i] = 0;
+            tlm.rgba[i + 1] = 0;
+            tlm.rgba[i + 2] = 0;
+        }
+    }
+    let persp = FxInstance::CornerPin {
+        x0: 0.25,
+        y0: 0.25,
+        x1: 1.0,
+        y1: 0.0,
+        x2: 0.0,
+        y2: 1.0,
+        x3: 1.0,
+        y3: 1.0,
+    };
+    let o = apply_video_chain(std::slice::from_ref(&persp), tlm, &ctx());
+    let (mx, my) = centroid(&o);
+    assert!(
+        (mx - 0.25 * W as f64).abs() <= 4.0 && (my - 0.25 * H as f64).abs() <= 4.0,
+        "TL marker must follow the pinned corner: got ({mx:.1}, {my:.1})"
+    );
+
+    // (4) вырожденный квад: прозрачно и детерминированно
+    let degen = FxInstance::CornerPin {
+        x0: 0.3,
+        y0: 0.3,
+        x1: 0.3,
+        y1: 0.3,
+        x2: 0.3,
+        y2: 0.3,
+        x3: 0.3,
+        y3: 0.3,
+    };
+    let a = apply_video_chain(std::slice::from_ref(&degen), marker(), &ctx());
+    let b = apply_video_chain(std::slice::from_ref(&degen), marker(), &ctx());
+    assert!(a.rgba.chunks_exact(4).all(|px| px[3] == 0), "degenerate quad is transparent");
+    assert_eq!(a.rgba, b.rgba, "and deterministic");
+
+    // (5) серия с гео — один ран
+    let grid2 = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
+    let fx = vec![grid2, right, zoom2];
+    let p = plan_chain(&fx, W, H, 1, W, H, 0.5, None, 90_000, &[]);
+    assert_eq!(p.ops.len(), 1, "corner pin is geo: the series stays one run");
+    assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
+}

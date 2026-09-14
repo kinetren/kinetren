@@ -140,6 +140,29 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
                 ];
                 u.p[base + 1] = [stage_w as f32, stage_h as f32, 0.0, 0.0];
             }
+            kt_fx::geom::TapKind::Grade { brightness, contrast, saturation, hue_cos, hue_sin } => {
+                let meta = 2u32 | ((op.after_prim as u32) << 4);
+                u.p[base] =
+                    [f32::from_bits(meta), brightness as f32, contrast as f32, saturation as f32];
+                u.p[base + 1] = [hue_cos as f32, hue_sin as f32, 0.0, 0.0];
+            }
+            kt_fx::geom::TapKind::Duo { shadow, high, amount } => {
+                let meta = 3u32 | ((op.after_prim as u32) << 4);
+                u.p[base] =
+                    [f32::from_bits(meta), shadow[0] as f32, shadow[1] as f32, shadow[2] as f32];
+                u.p[base + 1] = [high[0] as f32, high[1] as f32, high[2] as f32, amount as f32];
+            }
+            kt_fx::geom::TapKind::Poster { levels } => {
+                let meta = 4u32 | ((op.after_prim as u32) << 4);
+                u.p[base] = [f32::from_bits(meta), levels as f32, 0.0, 0.0];
+                u.p[base + 1] = [0.0; 4];
+            }
+            kt_fx::geom::TapKind::Vig { strength, radius, softness, stage_w, stage_h } => {
+                let meta = 5u32 | ((op.after_prim as u32) << 4);
+                u.p[base] =
+                    [f32::from_bits(meta), strength as f32, radius as f32, softness as f32];
+                u.p[base + 1] = [stage_w as f32, stage_h as f32, 0.0, 0.0];
+            }
         }
     }
     // суперсемплинг (п.309): тапы аффинных серий посчитаны на CPU и едут
@@ -166,9 +189,14 @@ enum Pipe {
     Composite,
     /// Сила наложения слоя (Р.38 п.12): смешение сухой и мокрой сторон.
     LayerMix,
+    // поточечные Р.47 в барьерной позиции
+    ColorGrade,
+    Duotone,
+    Posterize,
+    Vignette,
 }
 
-const PIPE_COUNT: usize = 9;
+const PIPE_COUNT: usize = 13;
 
 /// Один шаг цепочки, предвычисленный на CPU (общая математика — kt-fx:
 /// pan_frame/cam_at/noise_seed). Кол-во пассов и размеры известны заранее.
@@ -182,6 +210,11 @@ enum FxOp {
     Vhs { shift: u32, line_off: u32, bleed: f32, jq: i32, step: u32, seed: u32, res_scale: u32 },
     /// Bloom: даунскейл dw×dh → апскейл → аддитив ×s (3 пасса).
     Glow { dw: u32, dh: u32, s: f32, th: u32, tint: [f32; 3] },
+    /// Поточечные Р.47 на барьерной позиции: один пасс, зеркала tap_*.
+    ColorGrade { br: f32, con: f32, sat: f32, hc: f32, hs: f32 },
+    Duotone { shadow: [f32; 3], high: [f32; 3], amount: f32 },
+    Posterize { levels: u32 },
+    Vignette { strength: f32, radius: f32, softness: f32 },
     /// Слитая гео-серия (Р.44): программа обратных отображений строится в
     /// kt-fx (общий код с CPU-исполнителем), один пасс, юниформа 1024 Б.
     /// EventGrid — всегда этим путём (мозаика прежних 2 пассов удалена).
@@ -398,6 +431,41 @@ fn chain_ops(
                     });
                 }
             }
+            FxInstance::ColorGrade { brightness, contrast, saturation, hue } => {
+                let hr = (*hue as f64).to_radians();
+                ops.push(FxOp::ColorGrade {
+                    br: *brightness,
+                    con: *contrast,
+                    sat: *saturation,
+                    hc: hr.cos() as f32,
+                    hs: hr.sin() as f32,
+                });
+            }
+            FxInstance::Duotone {
+                shadow_r,
+                shadow_g,
+                shadow_b,
+                high_r,
+                high_g,
+                high_b,
+                amount,
+            } => {
+                ops.push(FxOp::Duotone {
+                    shadow: [*shadow_r as f32, *shadow_g as f32, *shadow_b as f32],
+                    high: [*high_r as f32, *high_g as f32, *high_b as f32],
+                    amount: amount.clamp(0.0, 1.0),
+                });
+            }
+            FxInstance::Posterize { levels } => {
+                ops.push(FxOp::Posterize { levels: (*levels).clamp(2, 32) });
+            }
+            FxInstance::Vignette { strength, radius, softness } => {
+                ops.push(FxOp::Vignette {
+                    strength: strength.clamp(0.0, 1.0),
+                    radius: radius.clamp(0.0, 1.5),
+                    softness: softness.clamp(0.05, 1.0),
+                });
+            }
             FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
                 ops.push(FxOp::Vhs {
                     // Р.45 (п.313): сдвиг ×K; строчный контекст (скан и
@@ -496,6 +564,10 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("glow_add", include_str!("shaders/glow_add.wgsl")),
     ("composite", include_str!("shaders/composite.wgsl")),
     ("layer_mix", include_str!("shaders/layer_mix.wgsl")),
+    ("colorgrade", include_str!("shaders/colorgrade.wgsl")),
+    ("duotone", include_str!("shaders/duotone.wgsl")),
+    ("posterize", include_str!("shaders/posterize.wgsl")),
+    ("vignette", include_str!("shaders/vignette.wgsl")),
 ];
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
@@ -1091,6 +1163,62 @@ impl Inner {
                         ..Default::default()
                     };
                     self.pass(enc, Pipe::Vhs, &dst.view, &view, &dummy, &dummy, u);
+                    if let Some(t) = owned.take() {
+                        self.pool.release(t);
+                    }
+                    view = dst.view.clone();
+                    owned = Some(dst);
+                }
+                FxOp::ColorGrade { br, con, sat, hc, hs } => {
+                    let dst = self.pool.acquire(&self.device, w, h);
+                    let u = UniformData {
+                        f: [*br, *con, *sat, *hc, *hs, 0.0, 0.0, 0.0],
+                        ..Default::default()
+                    };
+                    self.pass(enc, Pipe::ColorGrade, &dst.view, &view, &dummy, &dummy, u);
+                    if let Some(t) = owned.take() {
+                        self.pool.release(t);
+                    }
+                    view = dst.view.clone();
+                    owned = Some(dst);
+                }
+                FxOp::Duotone { shadow, high, amount } => {
+                    let dst = self.pool.acquire(&self.device, w, h);
+                    let u = UniformData {
+                        f: [
+                            shadow[0], shadow[1], shadow[2], 0.0, high[0], high[1], high[2],
+                            *amount,
+                        ],
+                        ..Default::default()
+                    };
+                    self.pass(enc, Pipe::Duotone, &dst.view, &view, &dummy, &dummy, u);
+                    if let Some(t) = owned.take() {
+                        self.pool.release(t);
+                    }
+                    view = dst.view.clone();
+                    owned = Some(dst);
+                }
+                FxOp::Posterize { levels } => {
+                    let dst = self.pool.acquire(&self.device, w, h);
+                    let u = UniformData {
+                        f: [*levels as f32, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        ..Default::default()
+                    };
+                    self.pass(enc, Pipe::Posterize, &dst.view, &view, &dummy, &dummy, u);
+                    if let Some(t) = owned.take() {
+                        self.pool.release(t);
+                    }
+                    view = dst.view.clone();
+                    owned = Some(dst);
+                }
+                FxOp::Vignette { strength, radius, softness } => {
+                    let dst = self.pool.acquire(&self.device, w, h);
+                    let u = UniformData {
+                        u: [w, h, 0, 0, 0, 0, 0, 0],
+                        f: [*strength, *radius, *softness, 0.0, 0.0, 0.0, 0.0, 0.0],
+                        ..Default::default()
+                    };
+                    self.pass(enc, Pipe::Vignette, &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
                     }

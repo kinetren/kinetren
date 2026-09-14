@@ -107,6 +107,20 @@ pub fn param_label(name: &str) -> String {
         "anchor_y" => tr(k::fxp::ANCHOR_Y),
         "scale" => tr(k::fxp::SCALE),
         "fov_deg" => tr(k::fxp::FOV_DEG),
+        // видео-эффекты Р.47 (Кв2)
+        "brightness" => tr(k::fxp::BRIGHTNESS),
+        "contrast" => tr(k::fxp::CONTRAST),
+        "saturation" => tr(k::fxp::SATURATION),
+        "hue" => tr(k::fxp::HUE),
+        "levels" => tr(k::fxp::LEVELS),
+        "x0" => tr(k::fxp::X0),
+        "y0" => tr(k::fxp::Y0),
+        "x1" => tr(k::fxp::X1),
+        "y1" => tr(k::fxp::Y1),
+        "x2" => tr(k::fxp::X2),
+        "y2" => tr(k::fxp::Y2),
+        "x3" => tr(k::fxp::X3),
+        "y3" => tr(k::fxp::Y3),
         // параметр без подписи в каталоге — видно сразу, а не молча
         other => return other.to_string(),
     };

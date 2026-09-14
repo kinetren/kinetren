@@ -51,6 +51,7 @@ pub fn is_geo(f: &FxInstance) -> bool {
             | FxInstance::Mirror { .. }
             | FxInstance::EventGrid { .. }
             | FxInstance::Pan3d { .. }
+            | FxInstance::CornerPin { .. }
     )
 }
 
@@ -124,7 +125,15 @@ pub const MAX_PRIM_SLOTS: usize = 46;
 /// ВНУТРЕННИЕ (между гео-шагами рана): ведущие/замыкающие остаются
 /// барьерами — их байты при K=1 неотличимы от прежних.
 pub fn is_pointwise(f: &FxInstance) -> bool {
-    matches!(f, FxInstance::Greenscreen { .. } | FxInstance::Noise { .. })
+    matches!(
+        f,
+        FxInstance::Greenscreen { .. }
+            | FxInstance::Noise { .. }
+            | FxInstance::ColorGrade { .. }
+            | FxInstance::Duotone { .. }
+            | FxInstance::Posterize { .. }
+            | FxInstance::Vignette { .. }
+    )
 }
 
 /// Поточечный оп, применяемый к ЗНАЧЕНИЮ САБТАПА (после билинейки, до
@@ -137,6 +146,16 @@ pub enum TapKind {
     /// считается от floor координаты стадии; `special` — особая формула
     /// пользовательского `size == 1 && !color` (у неё другое зерно).
     Noise { seed: u32, k: i64, cell: u32, color: bool, special: bool, stage_w: u32, stage_h: u32 },
+    /// ColorGrade (Р.47): cos/sin оттенка предвычислены в f64 —
+    /// GPU получает их юниформой с однократным округлением.
+    Grade { brightness: f64, contrast: f64, saturation: f64, hue_cos: f64, hue_sin: f64 },
+    /// Duotone (Р.47): lerp по люме между двумя красками.
+    Duo { shadow: [f64; 3], high: [f64; 3], amount: f64 },
+    /// Posterize (Р.47): квант по каналам.
+    Poster { levels: u32 },
+    /// Vignette (Р.47): координата СВОЕЙ стадии (как Noise) — затемнение
+    /// зумится с картинкой внутри цепочки.
+    Vig { strength: f64, radius: f64, softness: f64, stage_w: u32, stage_h: u32 },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -418,6 +437,61 @@ fn build_program(
                     }));
                 }
             }
+            FxInstance::ColorGrade { brightness, contrast, saturation, hue } => {
+                let h = (*hue as f64).to_radians();
+                fw.push(Step::Tap(TapKind::Grade {
+                    brightness: *brightness as f64,
+                    contrast: *contrast as f64,
+                    saturation: *saturation as f64,
+                    hue_cos: h.cos(),
+                    hue_sin: h.sin(),
+                }));
+            }
+            FxInstance::Duotone { shadow_r, shadow_g, shadow_b, high_r, high_g, high_b, amount } => {
+                fw.push(Step::Tap(TapKind::Duo {
+                    shadow: [*shadow_r as f64, *shadow_g as f64, *shadow_b as f64],
+                    high: [*high_r as f64, *high_g as f64, *high_b as f64],
+                    amount: (*amount as f64).clamp(0.0, 1.0),
+                }));
+            }
+            FxInstance::Posterize { levels } => {
+                fw.push(Step::Tap(TapKind::Poster { levels: (*levels).clamp(2, 32) }));
+            }
+            FxInstance::Vignette { strength, radius, softness } => {
+                fw.push(Step::Tap(TapKind::Vig {
+                    strength: (*strength as f64).clamp(0.0, 1.0),
+                    radius: (*radius as f64).clamp(0.0, 1.5),
+                    softness: (*softness as f64).clamp(0.05, 1.0),
+                    stage_w: w,
+                    stage_h: h,
+                }));
+            }
+            FxInstance::CornerPin { x0, y0, x1, y1, x2, y2, x3, y3 } => {
+                // дефолт бит-точный: углы в углах — шаг пропускается,
+                // цепочка остаётся тождеством (identity байт-в-байт)
+                let ident = *x0 == 0.0
+                    && *y0 == 0.0
+                    && *x1 == 1.0
+                    && *y1 == 0.0
+                    && *x2 == 0.0
+                    && *y2 == 1.0
+                    && *x3 == 1.0
+                    && *y3 == 1.0;
+                if !ident {
+                    let m = corner_pin_inverse([
+                        (*x0, *y0),
+                        (*x1, *y1),
+                        (*x2, *y2),
+                        (*x3, *y3),
+                    ], mow, moh);
+                    fw.push(Step::Proj { m, iw: w, ih: h });
+                    // вне квада — прозрачно (как у Pan3d)
+                    has_alpha_known = true;
+                    has_alpha = true;
+                    w = mow;
+                    h = moh;
+                }
+            }
             _ => debug_assert!(false, "non-geo step in build_program"),
         }
     }
@@ -639,6 +713,45 @@ fn rot_y(a: f64) -> M3 {
 /// Обращение 3×3 через adj/det. None — вырождение (квад ребром к камере).
 /// Знак t.z обратного образа при adj/det корректен: t = G⁻¹·(c,1) = q̃/w,
 /// то есть sign(t.z) = sign(w) — тест «за камерой» получается сам.
+/// ОБРАТНАЯ гомография Corner Pin (Р.47, F-FX-004): прямая карта
+/// «единичный квадрат → 4 угла в долях выхода» строится замкнутой формой
+/// (Heckbert), масштабируется в центр-space пикселей выхода и обращается.
+/// Вырождение (нулевой знаменатель/необратимая матрица) — прозрачная
+/// матрица `t.z = −1` (прецедент Pan3d за камерой).
+fn corner_pin_inverse(c: [(f64, f64); 4], out_w: u32, out_h: u32) -> [[f64; 3]; 3] {
+    let transparent = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, -1.0]];
+    // углы: TL, TR, BL, BR (uv-пространство источника: (0,0)..(1,1))
+    let (p0, p1, p2, p3) = (c[0], c[1], c[2], c[3]);
+    let dx1 = (p1.0 - p3.0, p1.1 - p3.1);
+    let dx2 = (p2.0 - p3.0, p2.1 - p3.1);
+    let sx = p0.0 - p1.0 - p2.0 + p3.0;
+    let sy = p0.1 - p1.1 - p2.1 + p3.1;
+    let den = dx1.0 * dx2.1 - dx1.1 * dx2.0;
+    if den.abs() < 1e-12 {
+        return transparent;
+    }
+    let g = (sx * dx2.1 - sy * dx2.0) / den;
+    let hh = (dx1.0 * sy - dx1.1 * sx) / den;
+    // прямая карта uv(квадрат) -> доли выхода
+    let fwd = [
+        [p1.0 - p0.0 + g * p1.0, p2.0 - p0.0 + hh * p2.0, p0.0],
+        [p1.1 - p0.1 + g * p1.1, p2.1 - p0.1 + hh * p2.1, p0.1],
+        [g, hh, 1.0],
+    ];
+    // доли выхода -> центр-space пикселей выхода: строки x и y умножаются
+    // на mow/moh (как хвост pan3d_forward)
+    let (mw, mh) = (out_w.max(2) as f64, out_h.max(2) as f64);
+    let scaled = [
+        [fwd[0][0] * mw, fwd[0][1] * mw, fwd[0][2] * mw],
+        [fwd[1][0] * mh, fwd[1][1] * mh, fwd[1][2] * mh],
+        fwd[2],
+    ];
+    match invert3(&scaled) {
+        Some(inv) => inv,
+        None => transparent,
+    }
+}
+
 fn invert3(g: &M3) -> Option<M3> {
     let adj = [
         [
@@ -993,6 +1106,70 @@ fn tap_noise(
     }
 }
 
+/// ColorGrade на сабтапе (Р.47): порядок — сатурация и hue ДО контраста
+/// и яркости (basic-панели пяти редакторов; иначе контраст перекрашивает
+/// оттенки). Hue — поворот вокруг серой оси (Родригес, k = (1,1,1)/√3).
+/// Значения f64-континуум, финальный clamp+round — один раз на выходе.
+pub(crate) fn tap_grade(v: &mut [f64; 4], br: f64, con: f64, sat: f64, hc: f64, hs: f64) {
+    let l = (77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0;
+    for c in v.iter_mut().take(3) {
+        *c = l + (*c - l) * sat;
+    }
+    if hc != 1.0 || hs != 0.0 {
+        let k = 1.0 / 3f64.sqrt();
+        let (x, y, z) = (v[0], v[1], v[2]);
+        let dot = k * (x + y + z);
+        let (cx, cy, cz) = (k * (y - z), k * (z - x), k * (x - y));
+        v[0] = x * hc + cx * hs + k * dot * (1.0 - hc);
+        v[1] = y * hc + cy * hs + k * dot * (1.0 - hc);
+        v[2] = z * hc + cz * hs + k * dot * (1.0 - hc);
+    }
+    for c in v.iter_mut().take(3) {
+        *c = (*c - 128.0) * (1.0 + con) + 128.0 + br * 255.0;
+    }
+}
+
+/// Duotone на сабтапе: lerp двух красок по люме; альфа нетронута.
+pub(crate) fn tap_duo(v: &mut [f64; 4], shadow: &[f64; 3], high: &[f64; 3], amount: f64) {
+    let l = ((77.0 * v[0] + 150.0 * v[1] + 29.0 * v[2]) / 256.0 / 255.0).clamp(0.0, 1.0);
+    for (c, (sh, hi)) in v.iter_mut().take(3).zip(shadow.iter().zip(high.iter())) {
+        let out = sh + (hi - sh) * l;
+        *c += (out - *c) * amount;
+    }
+}
+
+/// Posterize на сабтапе: квант ПО КАНАЛАМ (стандарт — AE Posterize).
+pub(crate) fn tap_poster(v: &mut [f64; 4], levels: u32) {
+    let n = levels.clamp(2, 32) as f64;
+    for c in v.iter_mut().take(3) {
+        let i = (*c * n / 256.0).floor().clamp(0.0, n - 1.0);
+        *c = i * 255.0 / (n - 1.0);
+    }
+}
+
+/// Vignette на сабтапе: координата СВОЕЙ стадии; радиус нормирован к
+/// полудиагонали; smoothstep выписан руками (один текст в обоих
+/// исполнителях).
+pub(crate) fn tap_vig(
+    v: &mut [f64; 4],
+    coord: (f64, f64),
+    strength: f64,
+    radius: f64,
+    softness: f64,
+    stage_w: u32,
+    stage_h: u32,
+) {
+    let dx = (coord.0 + 0.5) / stage_w.max(1) as f64 - 0.5;
+    let dy = (coord.1 + 0.5) / stage_h.max(1) as f64 - 0.5;
+    let r = ((2.0 * dx) * (2.0 * dx) + (2.0 * dy) * (2.0 * dy)).sqrt() / std::f64::consts::SQRT_2;
+    let t = ((r - radius) / softness.max(1e-6)).clamp(0.0, 1.0);
+    let w = t * t * (3.0 - 2.0 * t);
+    let g = 1.0 - strength * w;
+    for c in v.iter_mut().take(3) {
+        *c *= g;
+    }
+}
+
 /// Один сабтап: обратная цепочка целиком + тап (кайма Fold и силуэт Proj
 /// анти-алиасятся честно — каждый сабтап решает короткие замыкания сам);
 /// затем поглощённые поточечные опы в порядке цепочки (Р.45, п.312).
@@ -1021,6 +1198,14 @@ fn sample_at(p: &GeomProgram, src: &Frame, x: f64, y: f64) -> [f64; 4] {
             TapKind::Gs { key, tol, hard, spill, kc } => tap_gs(&mut v, &key, tol, hard, spill, kc),
             TapKind::Noise { seed, k, cell, color, special, stage_w, stage_h } => {
                 tap_noise(&mut v, rec[ti], seed, k, cell, color, special, stage_w, stage_h)
+            }
+            TapKind::Grade { brightness, contrast, saturation, hue_cos, hue_sin } => {
+                tap_grade(&mut v, brightness, contrast, saturation, hue_cos, hue_sin)
+            }
+            TapKind::Duo { shadow, high, amount } => tap_duo(&mut v, &shadow, &high, amount),
+            TapKind::Poster { levels } => tap_poster(&mut v, levels),
+            TapKind::Vig { strength, radius, softness, stage_w, stage_h } => {
+                tap_vig(&mut v, rec[ti], strength, radius, softness, stage_w, stage_h)
             }
         }
     }

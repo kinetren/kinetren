@@ -558,6 +558,11 @@ pub(crate) fn fx_display_name(f: &FxInstance) -> &'static str {
         FxInstance::Delay { .. } => "Delay",
         FxInstance::Compressor { .. } => "Compressor",
         FxInstance::Gate { .. } => "Gate",
+        FxInstance::ColorGrade { .. } => "Color Grade",
+        FxInstance::Duotone { .. } => "Duotone",
+        FxInstance::Posterize { .. } => "Posterize",
+        FxInstance::Vignette { .. } => "Vignette",
+        FxInstance::CornerPin { .. } => "Corner Pin",
     }
 }
 
@@ -595,6 +600,12 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
             },
         ),
         ("EventGrid", FxInstance::EventGrid { cols: 2, rows: 2, center: true }),
+        // Р.47: поточечные цвет/стиль + первая честная перспектива
+        ("Color Grade", FxInstance::color_grade()),
+        ("Duotone", FxInstance::duotone()),
+        ("Posterize", FxInstance::posterize()),
+        ("Vignette", FxInstance::vignette()),
+        ("Corner Pin", FxInstance::corner_pin()),
     ]
 }
 
@@ -624,6 +635,10 @@ pub(crate) fn draw_video_fx_params(
         // цвет линий контура и оттенок свечения — тоже пипеткой (Р.33 С5)
         FxInstance::Edges { .. } => &["color_r", "color_g", "color_b"],
         FxInstance::Glow { .. } => &["tint_r", "tint_g", "tint_b"],
+        // обе краски дуотона — пипетками (Р.47 Кв2)
+        FxInstance::Duotone { .. } => {
+            &["shadow_r", "shadow_g", "shadow_b", "high_r", "high_g", "high_b"]
+        }
         // на ВИДЕО-экземпляре у варпа значит только скорость: реверб там
         // не звучит, и показывать его ручки — врать пользователю (Р.37)
         FxInstance::SlowedReverb { .. } if on_video => {
@@ -750,6 +765,28 @@ pub(crate) fn draw_video_fx_params(
                     *tint_r = (col[0] * 255.0) as u8;
                     *tint_g = (col[1] * 255.0) as u8;
                     *tint_b = (col[2] * 255.0) as u8;
+                    ch.base = true;
+                }
+            });
+        }
+        FxInstance::Duotone { shadow_r, shadow_g, shadow_b, high_r, high_g, high_b, .. } => {
+            ui.horizontal(|ui| {
+                let mut sh =
+                    [*shadow_r as f32 / 255.0, *shadow_g as f32 / 255.0, *shadow_b as f32 / 255.0];
+                ui.label(tr(k::fx::SHADOW_COLOR));
+                if ui.color_edit_button_rgb(&mut sh).changed() {
+                    *shadow_r = (sh[0] * 255.0) as u8;
+                    *shadow_g = (sh[1] * 255.0) as u8;
+                    *shadow_b = (sh[2] * 255.0) as u8;
+                    ch.base = true;
+                }
+                let mut hi =
+                    [*high_r as f32 / 255.0, *high_g as f32 / 255.0, *high_b as f32 / 255.0];
+                ui.label(tr(k::fx::HIGH_COLOR));
+                if ui.color_edit_button_rgb(&mut hi).changed() {
+                    *high_r = (hi[0] * 255.0) as u8;
+                    *high_g = (hi[1] * 255.0) as u8;
+                    *high_b = (hi[2] * 255.0) as u8;
                     ch.base = true;
                 }
             });

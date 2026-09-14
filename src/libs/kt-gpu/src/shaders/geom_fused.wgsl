@@ -292,7 +292,53 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                     else { v.z = vc; }
                 }
             }
-        } else { // Noise: зерно прибито к сетке своей стадии
+        } else if (tap_kind == 2u) { // ColorGrade: зеркало tap_grade
+            let br = a.y;
+            let con = a.z;
+            let sat = a.w;
+            let hc = b.x;
+            let hs = b.y;
+            let l = (77.0 * v.x + 150.0 * v.y + 29.0 * v.z) / 256.0;
+            v = vec4<f32>(vec3<f32>(l) + (v.xyz - vec3<f32>(l)) * sat, v.w);
+            if (hc != 1.0 || hs != 0.0) {
+                let kk = 1.0 / sqrt(3.0);
+                let dotv = kk * (v.x + v.y + v.z);
+                let cx = kk * (v.y - v.z);
+                let cy = kk * (v.z - v.x);
+                let cz = kk * (v.x - v.y);
+                v = vec4<f32>(
+                    v.x * hc + cx * hs + kk * dotv * (1.0 - hc),
+                    v.y * hc + cy * hs + kk * dotv * (1.0 - hc),
+                    v.z * hc + cz * hs + kk * dotv * (1.0 - hc),
+                    v.w,
+                );
+            }
+            v = vec4<f32>((v.xyz - vec3<f32>(128.0)) * (1.0 + con) + vec3<f32>(128.0 + br * 255.0), v.w);
+        } else if (tap_kind == 3u) { // Duotone: зеркало tap_duo
+            let sh3 = a.yzw;
+            let hi3 = b.xyz;
+            let am = b.w;
+            let l = clamp((77.0 * v.x + 150.0 * v.y + 29.0 * v.z) / 256.0 / 255.0, 0.0, 1.0);
+            let outc = sh3 + (hi3 - sh3) * l;
+            v = vec4<f32>(v.xyz + (outc - v.xyz) * am, v.w);
+        } else if (tap_kind == 4u) { // Posterize: зеркало tap_poster
+            let n = a.y;
+            let idx3 = clamp(floor(v.xyz * n / 256.0), vec3<f32>(0.0), vec3<f32>(n - 1.0));
+            v = vec4<f32>(idx3 * 255.0 / (n - 1.0), v.w);
+        } else if (tap_kind == 5u) { // Vignette: зеркало tap_vig
+            let st = a.y;
+            let ra = a.z;
+            let so = a.w;
+            let sw = b.x;
+            let sh1 = b.y;
+            let c = rec[t];
+            let ddx = (c.x + 0.5) / max(sw, 1.0) - 0.5;
+            let ddy = (c.y + 0.5) / max(sh1, 1.0) - 0.5;
+            let r = sqrt((2.0 * ddx) * (2.0 * ddx) + (2.0 * ddy) * (2.0 * ddy)) / sqrt(2.0);
+            let tt = clamp((r - ra) / max(so, 1e-6), 0.0, 1.0);
+            let ww = tt * tt * (3.0 - 2.0 * tt);
+            v = vec4<f32>(v.xyz * (1.0 - st * ww), v.w);
+        } else if (tap_kind == 1u) { // Noise: зерно прибито к сетке своей стадии
             let seed = bitcast<u32>(a.y);
             let k = i32(bitcast<u32>(a.z));
             let cell = u32(a.w);
@@ -320,6 +366,8 @@ fn geo_sample(px: f32, py: f32) -> vec4<f32> {
                     v = vec4<f32>(v.xyz + vec3<f32>(noff(gx, gy, 0u, seed, k)), v.w);
                 }
             }
+        } else {
+            // неизвестный вид тапа: значение не трогается (замок Кв1)
         }
     }
     return v;

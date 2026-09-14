@@ -499,6 +499,13 @@ fn t328_golden_cycle_over_the_registry() {
         ("glow", 0x32647b93a6a84eb2),
         ("event_grid", 0x0f78a8817bcf1bbe),
         ("pan3d", 0x05719cf53332c61a),
+        // Р.47 Кв2: дефолтные color_grade и corner_pin — тождества,
+        // их совпадение с identity-хэшем pan легально и НАМЕРЕННО
+        ("color_grade", 0x05719cf53332c61a),
+        ("duotone", 0xb24b68c2dc8d352e),
+        ("posterize", 0x067921e26e16007c),
+        ("vignette", 0xa815992243883318),
+        ("corner_pin", 0x05719cf53332c61a),
     ];
     let video: Vec<&FxInstance> = FxInstance::all()
         .iter()
