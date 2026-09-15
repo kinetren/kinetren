@@ -137,6 +137,19 @@ impl MediaIndexDb {
                media_id INTEGER PRIMARY KEY,
                t_ticks  INTEGER NOT NULL,
                score    INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS loudness (
+               media_id  INTEGER PRIMARY KEY,
+               lufs_x100 INTEGER NOT NULL,
+               dbtp_x100 INTEGER NOT NULL,
+               lra_x100  INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS sync_offset (
+               a_media  INTEGER NOT NULL,
+               b_media  INTEGER NOT NULL,
+               ticks    INTEGER NOT NULL,
+               conf_x100 INTEGER NOT NULL,
+               PRIMARY KEY (a_media, b_media)
              );",
         )?;
         Ok(MediaIndexDb { conn, path: path.to_path_buf() })
@@ -191,11 +204,84 @@ impl MediaIndexDb {
     }
 
     fn purge_media(&self, media_id: i64) -> Result<(), IndexError> {
-        for table in ["packet_index", "audio_peaks", "thumbnails", "poster"] {
+        for table in ["packet_index", "audio_peaks", "thumbnails", "poster", "loudness"] {
             self.conn
                 .execute(&format!("DELETE FROM {table} WHERE media_id=?1"), params![media_id])?;
         }
+        // Сдвиг синхронизации — про ПАРУ, и однородное `WHERE media_id=?1`
+        // его не чистит: файл, оказавшийся не тем, делает недействительными
+        // обе стороны каждой своей пары (Р.49, п.369).
+        self.conn.execute(
+            "DELETE FROM sync_offset WHERE a_media=?1 OR b_media=?1",
+            params![media_id],
+        )?;
         Ok(())
+    }
+
+    // ---- результаты офлайн-анализа (Р.49, п.369) --------------------------
+    //
+    // Целые ×100, а не f64: round-trip обязан быть байт-точным, иначе
+    // «пересчитали то же самое» давало бы другое число в последнем знаке, и
+    // отличить «пересчитали» от «изменилось» стало бы нечем.
+
+    pub fn set_loudness(&self, media_id: i64, lufs: f64, dbtp: f64, lra: f64) -> Result<(), IndexError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO loudness(media_id, lufs_x100, dbtp_x100, lra_x100) \
+             VALUES(?1, ?2, ?3, ?4)",
+            params![
+                media_id,
+                (lufs * 100.0).round() as i64,
+                (dbtp * 100.0).round() as i64,
+                (lra * 100.0).round() as i64
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// (LUFS, dBTP, LRA) или `None`, если ещё не мерили.
+    pub fn loudness(&self, media_id: i64) -> Result<Option<(f64, f64, f64)>, IndexError> {
+        let mut st = self
+            .conn
+            .prepare("SELECT lufs_x100, dbtp_x100, lra_x100 FROM loudness WHERE media_id=?1")?;
+        let mut rows = st.query(params![media_id])?;
+        match rows.next()? {
+            Some(r) => {
+                let (a, b, c): (i64, i64, i64) = (r.get(0)?, r.get(1)?, r.get(2)?);
+                Ok(Some((a as f64 / 100.0, b as f64 / 100.0, c as f64 / 100.0)))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Сдвиг B относительно A в тиках и уверенность 0..1. Ключ —
+    /// УПОРЯДОЧЕННАЯ пара: знак сдвига от порядка зависит.
+    pub fn set_sync_offset(
+        &self,
+        a_media: i64,
+        b_media: i64,
+        ticks: i64,
+        conf: f64,
+    ) -> Result<(), IndexError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sync_offset(a_media, b_media, ticks, conf_x100) \
+             VALUES(?1, ?2, ?3, ?4)",
+            params![a_media, b_media, ticks, (conf * 100.0).round() as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn sync_offset(&self, a_media: i64, b_media: i64) -> Result<Option<(i64, f64)>, IndexError> {
+        let mut st = self
+            .conn
+            .prepare("SELECT ticks, conf_x100 FROM sync_offset WHERE a_media=?1 AND b_media=?2")?;
+        let mut rows = st.query(params![a_media, b_media])?;
+        match rows.next()? {
+            Some(r) => {
+                let (t, c): (i64, i64) = (r.get(0)?, r.get(1)?);
+                Ok(Some((t, c as f64 / 100.0)))
+            }
+            None => Ok(None),
+        }
     }
 
     pub fn is_complete(&self, media_id: i64) -> Result<bool, IndexError> {
@@ -382,6 +468,22 @@ pub struct PeakPyramid {
 
 impl PeakPyramid {
     pub fn build(source: &mut dyn MediaSource) -> PeakPyramid {
+        Self::build_observed(source, &mut |_| {})
+    }
+
+    /// То же, но КАЖДЫЙ прочитанный burst показывается наблюдателю
+    /// (Р.49, п.369).
+    ///
+    /// Зачем: громкость материала и его огибающая считаются на проходе,
+    /// который И ТАК ИДЁТ. Второй проход по файлу ради LUFS означал бы
+    /// второй полный декод — на часовом исходнике это минуты.
+    ///
+    /// Пирамида от наблюдателя НЕ ЗАВИСИТ: тот только смотрит, и `build`
+    /// остаётся байт-в-байт прежней (t15 цел).
+    pub fn build_observed(
+        source: &mut dyn MediaSource,
+        observe: &mut dyn FnMut(&crate::AudioBurst),
+    ) -> PeakPyramid {
         let duration_frames = source.info().duration.to_audio_frames().max(0);
         let mut level0: Vec<Vec<(i16, i16)>> = vec![Vec::new(); AUDIO_CHANNELS];
         let mut block: Vec<(i16, i16)> = vec![(i16::MAX, i16::MIN); AUDIO_CHANNELS];
@@ -389,6 +491,7 @@ impl PeakPyramid {
         let total_bursts = duration_frames.div_euclid(AUDIO_BURST_FRAMES as i64).max(0);
         for bidx in 0..total_bursts {
             let Ok(burst) = source.read_audio_burst(bidx) else { break };
+            observe(&burst);
             for f in 0..AUDIO_BURST_FRAMES {
                 for (ch, b) in block.iter_mut().enumerate() {
                     let v = (burst.data[f * AUDIO_CHANNELS + ch].clamp(-1.0, 1.0) * 32767.0) as i16;

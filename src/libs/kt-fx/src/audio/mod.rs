@@ -3,6 +3,7 @@
 //! пути вызывающих (`kt_fx::ClipProcessor` и т.д.) не изменились.
 
 mod nodes;
+pub mod loudness;
 pub mod primitives;
 mod warp;
 

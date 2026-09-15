@@ -5,6 +5,7 @@
 
 mod app;
 mod audio_out;
+mod bg;
 mod automation;
 mod bin_panel;
 mod camera_editor;

@@ -114,6 +114,11 @@ pub struct KtApp {
     #[allow(dead_code)]
     pub audio: Option<audio_out::AudioOutput>,
     pub peaks: Arc<Mutex<HashMap<MediaId, Peaks>>>,
+    /// Служба индекса: ОДИН поток на проект с очередью (Р.49, п.368).
+    /// Раньше на её месте было три задачи, притворявшихся сервисом.
+    pub index: crate::util::IndexService,
+    /// Об ошибках индекса сказано (один раз за адрес).
+    pub index_errs_said: std::collections::HashSet<String>,
     pub texture: Option<egui::TextureHandle>,
     pub view_start: f64, // тики
     pub ticks_per_px: f64,
@@ -527,6 +532,8 @@ impl KtApp {
         let project = Self::empty_project();
         let project2 = project.clone();
         let (player, audio, _) = Self::build_player(&project, None, None);
+        let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
+        let index = crate::util::IndexService::start(peaks.clone());
         KtApp {
             model: TimelineModel::new(project),
             project_path: None,
@@ -534,7 +541,9 @@ impl KtApp {
             dirty_ui: false,
             player,
             audio,
-            peaks: Arc::new(Mutex::new(HashMap::new())),
+            peaks,
+            index,
+            index_errs_said: Default::default(),
             texture: None,
             view_start: 0.0,
             ticks_per_px: 900.0,
@@ -693,7 +702,8 @@ impl KtApp {
         let peaks = Arc::new(Mutex::new(HashMap::new()));
         let media: Vec<_> =
             project.media.iter().map(|m| (m.id, resolve_media_path(base, &m.path))).collect();
-        spawn_index_worker(Some(path.with_extension("ktindex.db")), media, peaks.clone());
+        let index = crate::util::IndexService::start(peaks.clone());
+        index.enqueue(Some(path.with_extension("ktindex.db")), media);
         let ui_state = project.ui.clone();
         let mut app = KtApp {
             model: TimelineModel::new(project),
@@ -703,6 +713,8 @@ impl KtApp {
             player,
             audio,
             peaks,
+            index,
+            index_errs_said: Default::default(),
             texture: None,
             view_start: 0.0,
             ticks_per_px: 900.0,
@@ -1316,6 +1328,15 @@ impl KtApp {
                 .ok();
         }
         self.poll_returned_sources();
+        // Ошибки индекса — ВСЛУХ (Р.49, п.368). Четыре `let _ =` молчали о
+        // том, что индекс не построился, и человек видел плейсхолдеры
+        // вместо волноформ без единого слова о причине. Один раз на адрес:
+        // служба может повторить попытку, а сообщение повторять незачем.
+        for e in self.index.take_errors() {
+            if self.index_errs_said.insert(e.clone()) {
+                self.warn(crate::tf!(k::msg::INDEX_FAILED, e));
+            }
+        }
         if let Some((snap_rev, rx)) = &self.autosave_rx
             && let Ok(res) = rx.try_recv()
         {
@@ -3582,19 +3603,15 @@ impl KtApp {
                 self.project_path = Some(p.clone());
                 self.claim_project(&p);
                 // индекс-БД и тумбы теперь могут жить рядом с проектом
-                spawn_index_worker(
-                    Some(p.with_extension("ktindex.db")),
-                    {
-                        let base = p.parent();
-                        self.model
-                            .project()
-                            .media
-                            .iter()
-                            .map(|m| (m.id, resolve_media_path(base, &m.path)))
-                            .collect()
-                    },
-                    self.peaks.clone(),
-                );
+                self.index.enqueue(Some(p.with_extension("ktindex.db")), {
+                    let base = p.parent();
+                    self.model
+                        .project()
+                        .media
+                        .iter()
+                        .map(|m| (m.id, resolve_media_path(base, &m.path)))
+                        .collect()
+                });
                 p
             }
         };
@@ -4121,10 +4138,9 @@ impl KtApp {
         self.thumbs.add_media(media_id, resolved.clone());
         // в индекс-БД — резолвнутый путь (п.150: сырой относительный путь
         // давал файлу ВТОРОЙ media_id в кэше рядом с резолвнутым)
-        spawn_index_worker(
+        self.index.enqueue(
             self.project_path.as_ref().map(|p| p.with_extension("ktindex.db")),
             vec![(media_id, resolved.clone())],
-            self.peaks.clone(),
         );
         self.note(crate::tf!(k::msg::ADDED, path));
     }

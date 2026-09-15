@@ -11,22 +11,14 @@ use kt_media::MediaSource;
 use kt_media::synthetic::SyntheticSource;
 use kt_model::{MediaId, Project};
 use kt_time::Tick;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-
-pub enum RenderMsg {
-    Progress(ExportProgress),
-    Done(Result<kt_engine::export::ExportStats, String>),
-}
 
 pub struct RenderJob {
-    pub rx: std::sync::mpsc::Receiver<RenderMsg>,
-    pub cancel: Arc<AtomicBool>,
-    pub pause: Arc<AtomicBool>,
-    pub started: std::time::Instant,
+    /// Общий каркас фоновой ЗАДАЧИ (Р.49, п.367): канал, отмена, пауза и
+    /// гашение потока при `Drop`. Рендер — эталон, из которого каркас и
+    /// выделен; всё, что ниже, — его собственные числа для панели Run.
+    pub job: crate::bg::BgJob<ExportProgress, Result<kt_engine::export::ExportStats, String>>,
     pub progress: ExportProgress,
     pub out_path: String,
-    pub done: Option<Result<kt_engine::export::ExportStats, String>>,
     /// Настройки запуска (для панели Output).
     pub opts: kt_engine::export::ExportOptions,
     pub out_res: (u32, u32),
@@ -195,8 +187,6 @@ impl KtApp {
         let proj_fps = project.settings.fps;
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let range = project.region.map(|r| (r.start, r.end));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let pause = Arc::new(AtomicBool::new(false));
         let opts = kt_engine::export::ExportOptions {
             quality: self.render_setup.quality,
             video_bitrate: self.render_setup.video_bitrate,
@@ -204,51 +194,35 @@ impl KtApp {
             force_encoder: self.render_setup.encoder.clone(),
             resolution: self.render_setup.resolution,
         };
-        let (tx, rx) = std::sync::mpsc::channel();
         let opts_thread = opts.clone();
-        let pause_thread = pause.clone();
-        {
-            let cancel = cancel.clone();
-            let out_path = out_path.clone();
-            std::thread::Builder::new()
-                .name("render".into())
-                .spawn(move || {
-                    let (a, _) = open_all(&project, base.as_deref());
-                    let (v, _) = open_all(&project, base.as_deref());
-                    let txp = tx.clone();
-                    // Р.29: GPU-рендер по умолчанию — свой headless-девайс
-                    // на джоб (очередь UI не делит время с экспортом);
-                    // движка нет → CPU (для 2D это полноценный путь)
-                    let backends = kt_engine::ExportBackends {
-                        video_gpu: crate::app::export_video_gpu(),
-                    };
-                    let res = kt_engine::export::export_mp4_with_backends(
-                        &project,
-                        a,
-                        v,
-                        &out_path,
-                        range,
-                        &opts_thread,
-                        &backends,
-                        &cancel,
-                        &pause_thread,
-                        move |p| {
-                            let _ = txp.send(RenderMsg::Progress(p));
-                        },
-                    );
-                    let _ = tx.send(RenderMsg::Done(res.map_err(|e| e.to_string())));
-                })
-                .expect("spawn render");
-        }
+        let out_path_thread = out_path.clone();
+        let job = crate::bg::BgJob::spawn("render", move |ctl, send| {
+            let send_p = move |p| send.send(p);
+            let (a, _) = open_all(&project, base.as_deref());
+            let (v, _) = open_all(&project, base.as_deref());
+            // Р.29: GPU-рендер по умолчанию — свой headless-девайс на
+            // джоб (очередь UI не делит время с экспортом); движка нет
+            // → CPU (для 2D это полноценный путь)
+            let backends = kt_engine::ExportBackends { video_gpu: crate::app::export_video_gpu() };
+            kt_engine::export::export_mp4_with_backends(
+                &project,
+                a,
+                v,
+                &out_path_thread,
+                range,
+                &opts_thread,
+                &backends,
+                ctl.cancel_flag(),
+                ctl.pause_flag(),
+                send_p,
+            )
+            .map_err(|e| e.to_string())
+        });
         let out_res = opts.resolution.unwrap_or(proj_res);
         self.render_job = Some(RenderJob {
-            rx,
-            cancel,
-            pause,
-            started: std::time::Instant::now(),
+            job,
             progress: ExportProgress::default(),
             out_path,
-            done: None,
             opts,
             out_res,
             fps: proj_fps,
@@ -429,11 +403,10 @@ impl KtApp {
     pub fn draw_render_dialog(&mut self, ctx: &egui::Context) {
         self.draw_render_setup(ctx);
         let Some(job) = &mut self.render_job else { return };
-        while let Ok(msg) = job.rx.try_recv() {
-            match msg {
-                RenderMsg::Progress(p) => job.progress = p,
-                RenderMsg::Done(r) => job.done = Some(r),
-            }
+        if job.job.poll()
+            && let Some(p) = job.job.progress
+        {
+            job.progress = p;
         }
         let mut close = false;
         egui::Window::new(tr(k::render::PROGRESS_TITLE))
@@ -469,7 +442,7 @@ impl KtApp {
                     ui.strong(phase);
                 });
                 ui.add(egui::ProgressBar::new(frac).show_percentage());
-                let elapsed = job.started.elapsed().as_secs_f64();
+                let elapsed = job.job.started.elapsed().as_secs_f64();
                 let proj_fps = job.fps.max(1) as f64;
                 let speed = if elapsed > 0.5 && job.progress.total_video_frames > 0 {
                     job.progress.video_frames as f64 / elapsed / proj_fps
@@ -478,7 +451,7 @@ impl KtApp {
                 };
                 // мгновенная скорость по дельте кадров (панель Speed v1)
                 let dt = job.last_tick.elapsed().as_secs_f64();
-                if dt >= 0.5 && job.done.is_none() {
+                if dt >= 0.5 && job.job.done.is_none() {
                     let cur =
                         (job.progress.video_frames - job.last_frames) as f64 / dt / proj_fps;
                     job.last_frames = job.progress.video_frames;
@@ -499,7 +472,7 @@ impl KtApp {
                         format!("{:.2}", job.speed_max),
                     ));
                 }
-                let eta = if frac > 0.01 && job.done.is_none() {
+                let eta = if frac > 0.01 && job.job.done.is_none() {
                     elapsed / frac as f64 * (1.0 - frac as f64)
                 } else {
                     0.0
@@ -515,12 +488,12 @@ impl KtApp {
                     format!("{eta:.0}"),
                 ));
                 ui.add_space(4.0);
-                match &job.done {
+                match &job.job.done {
                     None => {
                         ui.horizontal(|ui| {
-                            let paused = job.pause.load(std::sync::atomic::Ordering::Acquire);
+                            let paused = job.job.is_paused();
                             if ui.button(if paused { tr(k::render::RESUME) } else { tr(k::render::PAUSE) }).clicked() {
-                                job.pause.store(!paused, std::sync::atomic::Ordering::Release);
+                                job.job.set_paused(!paused);
                             }
                             if paused {
                                 ui.colored_label(
@@ -529,7 +502,7 @@ impl KtApp {
                                 );
                             }
                             if ui.button(tr(k::render::CANCEL)).clicked() {
-                                job.cancel.store(true, std::sync::atomic::Ordering::Release);
+                                job.job.cancel();
                             }
                         });
                     }

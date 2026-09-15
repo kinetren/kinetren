@@ -663,6 +663,7 @@ recovery_failed = "no se pudo restaurar {0}: {1}"
 recovery_none = "nada que recuperar: no hay trabajo sin guardar"
 prev_session_crashed = "la sesión anterior terminó de forma anómala: el informe está en {0}"
 workspace_readonly = "los ajustes del espacio de trabajo no se guardan: {0} lo escribió una versión más nueva"
+index_failed = "no se pudo construir el índice del material: {0}: las formas de onda seguirán siendo marcadores"
 [dialog]
 import_ktproj = "Importar un proyecto .ktproj antiguo"
 open_project = "Abrir proyecto"

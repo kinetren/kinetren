@@ -189,3 +189,104 @@ fn t70_thumbnail_near() {
     // чужое медиа не видно
     assert_eq!(db.thumbnail_near(id + 1, 90_000, 45_000).unwrap(), None);
 }
+
+/// Тест 401 (Р.49 Б3): таблицы офлайн-анализа живут в той же БД, добавлены
+/// АДДИТИВНО (без бампа SCHEMA_VERSION — бамп сносит пакетный индекс, пики и
+/// тумбы всех медиа проекта) и переживают круг байт-точно: целые ×100, а не
+/// f64, иначе «пересчитали то же самое» давало бы другое число в последнем
+/// знаке, и отличить «пересчитали» от «изменилось» стало бы нечем.
+#[test]
+fn t401_analysis_tables_round_trip_exactly() {
+    let dir = std::env::temp_dir().join(format!("kt-t401-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("p.ktindex.db");
+
+    {
+        let db = MediaIndexDb::open(&path).unwrap();
+        assert!(db.loudness(1).unwrap().is_none(), "пустая БД не должна ничего знать");
+        db.set_loudness(1, -23.45, -1.20, 7.80).unwrap();
+        db.set_sync_offset(1, 2, -4410, 0.87).unwrap();
+    }
+    // новое открытие — данные на месте и те же
+    {
+        let db = MediaIndexDb::open(&path).unwrap();
+        assert_eq!(db.loudness(1).unwrap(), Some((-23.45, -1.20, 7.80)));
+        assert_eq!(db.sync_offset(1, 2).unwrap(), Some((-4410, 0.87)));
+        // пара УПОРЯДОЧЕНА: знак сдвига зависит от порядка, и «просто найти»
+        // запись задом наперёд значило бы вернуть сдвиг с чужим знаком
+        assert_eq!(db.sync_offset(2, 1).unwrap(), None, "пара прочиталась задом наперёд");
+        // перезапись на месте
+        db.set_loudness(1, -16.0, -0.5, 3.0).unwrap();
+        assert_eq!(db.loudness(1).unwrap(), Some((-16.0, -0.5, 3.0)));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 402 (Р.49 Б3): файл, оказавшийся ДРУГИМ, уносит с собой и громкость,
+/// и сдвиги ОБЕИХ сторон каждой своей пары.
+///
+/// Ловушка стадии: однородное `DELETE ... WHERE media_id=?1` чистит `loudness`
+/// (там ключ — медиа), но НЕ `sync_offset` — там ключ пара, и запись, где
+/// подменённый файл стоит вторым, пережила бы инвалидацию. Осталась бы
+/// синхронизация, посчитанная по другому звуку.
+#[test]
+fn t402_changed_file_invalidates_both_sides_of_its_pairs() {
+    let dir = std::env::temp_dir().join(format!("kt-t402-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("a.wav");
+    std::fs::write(&file, b"RIFF....WAVEfmt first").unwrap();
+    let path = dir.join("p.ktindex.db");
+    let mut db = MediaIndexDb::open(&path).unwrap();
+
+    let (a, st) = db.ensure_media(&file).unwrap();
+    assert_eq!(st, MediaEntryStatus::Rebuilt);
+    db.set_loudness(a, -20.0, -1.0, 5.0).unwrap();
+    // пара, где подменяемый файл стоит ВТОРЫМ
+    db.set_sync_offset(777, a, 900, 0.9).unwrap();
+    db.set_sync_offset(a, 888, -900, 0.8).unwrap();
+    // чужая пара, которой подмена не касается
+    db.set_sync_offset(777, 888, 123, 0.5).unwrap();
+
+    // файл подменили: другой размер и содержимое
+    std::fs::write(&file, b"RIFF....WAVEfmt totally different content here").unwrap();
+    let (a2, st) = db.ensure_media(&file).unwrap();
+    assert_eq!(a2, a, "media_id остаётся за путём");
+    assert_eq!(st, MediaEntryStatus::Rebuilt, "подмена файла обязана считаться перестройкой");
+
+    assert_eq!(db.loudness(a).unwrap(), None, "громкость посчитана по другому файлу");
+    assert_eq!(
+        db.sync_offset(777, a).unwrap(),
+        None,
+        "сдвиг, где подменённый файл ВТОРОЙ, пережил инвалидацию — однородное \
+         WHERE media_id его не видит"
+    );
+    assert_eq!(db.sync_offset(a, 888).unwrap(), None, "сдвиг, где он первый, тоже уходит");
+    assert_eq!(db.sync_offset(777, 888).unwrap(), Some((123, 0.5)), "снесена ЧУЖАЯ пара");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `build_observed` показывает каждый burst и НЕ меняет пирамиду: громкость
+/// считается на проходе, который и так идёт (второй полный декод часового
+/// исходника — это минуты).
+#[test]
+fn t401b_build_observed_sees_every_burst_and_keeps_the_pyramid() {
+    let mut a = synth(2, AudioPattern::Sine { hz: 440.0 });
+    let plain = PeakPyramid::build(&mut a);
+
+    let mut b = synth(2, AudioPattern::Sine { hz: 440.0 });
+    let mut seen = 0usize;
+    let mut frames = 0usize;
+    let observed = PeakPyramid::build_observed(&mut b, &mut |burst| {
+        seen += 1;
+        frames += burst.data.len() / AUDIO_CHANNELS;
+    });
+    assert_eq!(observed.levels, plain.levels, "наблюдатель изменил пирамиду");
+    assert_eq!(
+        seen as i64,
+        Tick(90_000 * 2).to_audio_frames() / AUDIO_BURST_FRAMES as i64,
+        "наблюдатель увидел не все burst'ы"
+    );
+    assert_eq!(frames, seen * AUDIO_BURST_FRAMES);
+}

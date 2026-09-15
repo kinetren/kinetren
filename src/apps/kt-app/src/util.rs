@@ -85,85 +85,155 @@ pub fn resolve_media_path(base: Option<&Path>, path: &str) -> String {
     }
 }
 
-/// Фоновое построение индекс-БД + загрузка peak-пирамид для отрисовки.
-pub fn spawn_index_worker(
+/// Служба индекса: ОДИН поток на проект, очередь заданий (Р.49, п.368).
+///
+/// Раньше это был `spawn_index_worker` — ЗАДАЧА, притворявшаяся сервисом.
+/// Каждый её вызов поднимал новый поток: открыли проект (раз), сохранили
+/// как… (два), добавили медиа (три) — и все трое дописывали в общий
+/// `Arc<Mutex<..>>`, а тот, что открыли первым, писал уже в таблицу, которую
+/// никто не читает. Разницу задачи и сервиса теперь несёт тип: сервис —
+/// бесконечный поток с очередью, живёт, пока живёт проект, и умирает по
+/// `Drop` (болезнь `WatchdogHandle`).
+///
+/// Ошибки ПУБЛИКУЮТСЯ: четыре `let _ =` молчали о том, что индекс не
+/// построился, и пользователь видел плейсхолдеры вместо волноформ без
+/// единого слова о причине.
+pub struct IndexService {
+    tx: std::sync::mpsc::Sender<IndexTask>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+    /// Что пошло не так (читает UI). Не `let _ =`.
+    pub errors: Arc<Mutex<Vec<String>>>,
+}
+
+struct IndexTask {
     db_path: Option<PathBuf>,
     media: Vec<(MediaId, String)>,
-    out: Arc<Mutex<HashMap<MediaId, Peaks>>>,
-) {
-    std::thread::Builder::new()
-        .name("index-worker".into())
-        .spawn(move || {
-            let mut db = db_path.and_then(|p| kt_media::index::MediaIndexDb::open(&p).ok());
-            for (id, path) in media {
-                if out.lock().unwrap().contains_key(&id) {
-                    continue;
-                }
-                let peaks: Option<Peaks> = if path.starts_with("synth:") {
-                    open_source(&path).ok().map(|mut s| {
-                        kt_media::index::PeakPyramid::build(s.as_mut())
-                            .levels
-                            .into_iter()
-                            .map(|mut chs| {
-                                let l = if chs.is_empty() { Vec::new() } else { chs.remove(0) };
-                                let r = if chs.is_empty() { l.clone() } else { chs.remove(0) };
-                                (l, r)
-                            })
-                            .collect()
-                    })
-                } else if let Some(db) = &mut db {
-                    match db.ensure_media(Path::new(&path)) {
-                        Ok((mid, status)) => {
-                            let complete = db.is_complete(mid).unwrap_or(false)
-                                && status == kt_media::index::MediaEntryStatus::Reused;
-                            if !complete
-                                && let Ok(mut src) =
-                                    kt_media::ffmpeg::FfmpegSource::open_indexed(&path, Some(db))
-                            {
-                                // отдельный короткоживущий источник —
-                                // не декодеры воспроизведения; заодно
-                                // персистится пакетный индекс (тест 34)
-                                let _ = db.build_audio_peaks(mid, &mut src);
-                                let _ = db.mark_complete(mid);
+}
+
+impl Drop for IndexService {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl IndexService {
+    pub fn start(out: Arc<Mutex<HashMap<MediaId, Peaks>>>) -> IndexService {
+        let (tx, rx) = std::sync::mpsc::channel::<IndexTask>();
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let stop_t = stop.clone();
+        let err_t = errors.clone();
+        std::thread::Builder::new()
+            .name("index-service".into())
+            .spawn(move || {
+                let mut db: Option<(PathBuf, kt_media::index::MediaIndexDb)> = None;
+                while !stop_t.load(std::sync::atomic::Ordering::Acquire) {
+                    // ждём задание, но просыпаемся проверить флаг остановки
+                    let task = match rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                        Ok(t) => t,
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                        // канал закрыт — владелец умер, уходим
+                        Err(_) => break,
+                    };
+                    // БД переоткрываем, только когда сменился путь: на
+                    // каждое добавленное медиа открывать заново незачем
+                    if db.as_ref().map(|(p, _)| p) != task.db_path.as_ref() {
+                        db = task.db_path.as_ref().and_then(|p| {
+                            match kt_media::index::MediaIndexDb::open(p) {
+                                Ok(d) => Some((p.clone(), d)),
+                                Err(e) => {
+                                    err_t.lock().unwrap().push(format!("{}: {e}", p.display()));
+                                    None
+                                }
                             }
-                            let mut levels = Vec::new();
-                            let mut level = 0u32;
-                            while let Ok(Some(l)) = db.audio_peaks(mid, level, 0) {
-                                let r = db
-                                    .audio_peaks(mid, level, 1)
-                                    .ok()
-                                    .flatten()
-                                    .unwrap_or_else(|| l.clone());
-                                levels.push((l, r));
-                                level += 1;
-                            }
-                            Some(levels)
-                        }
-                        Err(_) => None,
+                        });
                     }
-                } else {
-                    // Проект без пути → БД нет, но пики нужны (п.3:
-                    // «пропало превью аудио» у безымянного проекта):
-                    // строим пирамиду в памяти — при сохранении проекта
-                    // воркер перезапустится уже с БД
-                    open_source(&path).ok().map(|mut s| {
-                        kt_media::index::PeakPyramid::build(s.as_mut())
-                            .levels
-                            .into_iter()
-                            .map(|mut chs| {
-                                let l = if chs.is_empty() { Vec::new() } else { chs.remove(0) };
-                                let r = if chs.is_empty() { l.clone() } else { chs.remove(0) };
-                                (l, r)
-                            })
-                            .collect()
-                    })
-                };
-                if let Some(p) = peaks {
-                    out.lock().unwrap().insert(id, p);
+                    for (id, path) in task.media {
+                        if stop_t.load(std::sync::atomic::Ordering::Acquire) {
+                            return;
+                        }
+                        if out.lock().unwrap().contains_key(&id) {
+                            continue;
+                        }
+                        match build_peaks(&path, db.as_mut().map(|(_, d)| d), &stop_t) {
+                            Ok(Some(p)) => {
+                                out.lock().unwrap().insert(id, p);
+                            }
+                            Ok(None) => {}
+                            Err(e) => err_t.lock().unwrap().push(format!("{path}: {e}")),
+                        }
+                    }
                 }
-            }
+            })
+            .expect("spawn index service");
+        IndexService { tx, stop, errors }
+    }
+
+    /// Поставить медиа в очередь. Служба мертва — не беда: волноформы
+    /// появятся при следующем открытии проекта.
+    pub fn enqueue(&self, db_path: Option<PathBuf>, media: Vec<(MediaId, String)>) {
+        if media.is_empty() {
+            return;
+        }
+        let _ = self.tx.send(IndexTask { db_path, media });
+    }
+
+    /// Забрать накопленные ошибки (UI показывает их один раз).
+    pub fn take_errors(&self) -> Vec<String> {
+        std::mem::take(&mut *self.errors.lock().unwrap())
+    }
+}
+
+/// Пирамида пиков одного медиа. Отдельной функцией — её зовут и служба, и
+/// тесты, и офлайн-анализ.
+fn build_peaks(
+    path: &str,
+    db: Option<&mut kt_media::index::MediaIndexDb>,
+    stop: &Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Option<Peaks>, String> {
+    let from_source = |path: &str| -> Result<Option<Peaks>, String> {
+        let mut s = open_source(path).map_err(|e| e.to_string())?;
+        Ok(Some(pyramid_to_peaks(kt_media::index::PeakPyramid::build(s.as_mut()))))
+    };
+    if path.starts_with("synth:") {
+        return from_source(path);
+    }
+    let Some(db) = db else {
+        // Проект без пути → БД нет, но пики нужны (п.3: «пропало превью
+        // аудио» у безымянного проекта): строим пирамиду в памяти — при
+        // сохранении проекта служба получит задание уже с БД
+        return from_source(path);
+    };
+    let (mid, status) = db.ensure_media(Path::new(path)).map_err(|e| e.to_string())?;
+    let complete = db.is_complete(mid).unwrap_or(false)
+        && status == kt_media::index::MediaEntryStatus::Reused;
+    if !complete && !stop.load(std::sync::atomic::Ordering::Acquire) {
+        // отдельный короткоживущий источник — не декодеры воспроизведения;
+        // заодно персистится пакетный индекс (тест 34)
+        let mut src = kt_media::ffmpeg::FfmpegSource::open_indexed(path, Some(db))
+            .map_err(|e| e.to_string())?;
+        db.build_audio_peaks(mid, &mut src).map_err(|e| e.to_string())?;
+        db.mark_complete(mid).map_err(|e| e.to_string())?;
+    }
+    let mut levels = Vec::new();
+    let mut level = 0u32;
+    while let Ok(Some(l)) = db.audio_peaks(mid, level, 0) {
+        let r = db.audio_peaks(mid, level, 1).ok().flatten().unwrap_or_else(|| l.clone());
+        levels.push((l, r));
+        level += 1;
+    }
+    Ok(Some(levels))
+}
+
+fn pyramid_to_peaks(p: kt_media::index::PeakPyramid) -> Peaks {
+    p.levels
+        .into_iter()
+        .map(|mut chs| {
+            let l = if chs.is_empty() { Vec::new() } else { chs.remove(0) };
+            let r = if chs.is_empty() { l.clone() } else { chs.remove(0) };
+            (l, r)
         })
-        .expect("spawn index worker");
+        .collect()
 }
 
 /// Watchdog доступности медиафайлов (порт mediaSourceProbeTimer 900 мс):
@@ -379,16 +449,78 @@ mod tests {
         assert_eq!(p("-5"), None);
     }
 
+    /// Тест 399 (Р.49 Б2): служба — ОДИН поток с очередью, а не задача на
+    /// каждый вызов. Два задания подряд обслуживаются обоими, и второе не
+    /// теряется.
+    #[test]
+    fn t399_index_service_serves_a_queue() {
+        let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
+        let svc = IndexService::start(out.clone());
+        // синтетика не требует ни FFmpeg, ни файлов на диске
+        svc.enqueue(None, vec![(MediaId(1), "synth:sine:440".into())]);
+        svc.enqueue(None, vec![(MediaId(2), "synth:ramp".into())]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            if out.lock().unwrap().len() == 2 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "служба обслужила {} задания из двух — очередь теряет работу",
+                out.lock().unwrap().len()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for id in [MediaId(1), MediaId(2)] {
+            let g = out.lock().unwrap();
+            let p = g.get(&id).expect("пирамида");
+            assert!(!p.is_empty() && !p[0].0.is_empty(), "пустая пирамида у {id:?}");
+        }
+        assert!(svc.take_errors().is_empty(), "на здоровой работе ошибок быть не должно");
+    }
+
+    /// Тест 400 (Р.49 Б2): служба умирает вместе с владельцем, а ошибки
+    /// ПУБЛИКУЮТСЯ. Четыре `let _ =` молчали о том, что индекс не
+    /// построился, и человек видел плейсхолдеры без единого слова о причине.
+    #[test]
+    fn t400_index_service_dies_with_owner_and_reports_errors() {
+        // 1) ошибка доезжает
+        let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
+        let svc = IndexService::start(out.clone());
+        svc.enqueue(None, vec![(MediaId(9), "/proc/self/no-such-file.wav".into())]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut errs = Vec::new();
+        while errs.is_empty() && std::time::Instant::now() < deadline {
+            errs = svc.take_errors();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(!errs.is_empty(), "об отказе индекса не сказано ни слова");
+        assert!(errs[0].contains("no-such-file"), "в сообщении нет адреса: {errs:?}");
+        assert!(svc.take_errors().is_empty(), "ошибки отдаются один раз");
+
+        // 2) Drop останавливает поток: следующее задание не обслуживается
+        let out2: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
+        let tx = {
+            let svc = IndexService::start(out2.clone());
+            svc.tx.clone()
+        }; // здесь Drop
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let _ = tx.send(IndexTask { db_path: None, media: vec![(MediaId(3), "synth:ramp".into())] });
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        assert!(
+            out2.lock().unwrap().is_empty(),
+            "служба пережила владельца и продолжает работать — ровно та утечка \
+             потоков, ради которой сервис и заведён"
+        );
+    }
+
     /// Тест 23 (п.3): пики строятся и БЕЗ индекс-БД (безымянный проект) —
     /// раньше db_path=None означал «пиков не будет вообще».
     #[test]
     fn t23_peaks_build_without_db() {
         let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
-        spawn_index_worker(
-            None, // безымянный проект
-            vec![(MediaId(7), fixture("sine48k_stereo.flac"))],
-            out.clone(),
-        );
+        let svc = IndexService::start(out.clone());
+        svc.enqueue(None, vec![(MediaId(7), fixture("sine48k_stereo.flac"))]); // безымянный проект
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         loop {
             if let Some(p) = out.lock().unwrap().get(&MediaId(7)) {
