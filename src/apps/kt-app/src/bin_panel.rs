@@ -141,6 +141,10 @@ impl KtApp {
     }
 
     pub fn draw_bin(&mut self, ui: &mut egui::Ui) {
+        // фон — ПЕРВЫМ: в egui позже зарегистрированная интеракция лежит
+        // выше, значит иконки и карточки, добавленные ниже, свои клики и
+        // наведение забирают себе, а фону достаётся только мимо них
+        self.bin_background_menu(ui);
         // Переключатель режимов — ИКОНКА, не галочка (п.8 р.8: галочек
         // «не к месту» больше не делаем)
         ui.horizontal(|ui| {
@@ -423,6 +427,11 @@ impl KtApp {
         if let Some(id) = to_place {
             self.place_media_at_cursor(id);
         }
+        // Свободная полоса внизу: место, куда всегда можно бросить файл и
+        // куда всегда можно нажать правой кнопкой. Без неё «фон бина» на
+        // плотной сетке физически отсутствует — карточки заняли всё.
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
+        self.bin_rect = ui.min_rect();
         if let Some(id) = to_remove
             && self.apply(Command::RemoveMedia { id })
         {
@@ -432,6 +441,53 @@ impl KtApp {
             self.bin_sel.remove(&id);
             let alive: Vec<MediaId> = self.model.project().media.iter().map(|m| m.id).collect();
             kt_model::prune_bin_groups(&mut self.bin_groups, &alive);
+            self.dirty_ui = true;
+        }
+    }
+
+    /// Правый клик по СВОБОДНОМУ ФОНУ бина (Р.49, п.365).
+    ///
+    /// Раскладка переключалась только двумя иконками наверху панели — и
+    /// человек, привыкший к правой кнопке на таймлайне, на фоне бина
+    /// получал молчание. Пункты — те же два действия, что у иконок:
+    /// новых ключей ноль.
+    ///
+    /// Интеракция регистрируется ПЕРВОЙ, до иконок и карточек: в egui
+    /// позже зарегистрированное лежит ВЫШЕ, и всё, во что человек целится,
+    /// забирает клик себе, а фону достаётся только мимо. Граница берётся по
+    /// `clip_rect`, а не `max_rect`: внутри `ScrollArea` второй равен
+    /// вьюпорту в координатах СОДЕРЖИМОГО и при скролле уезжает (п.118).
+    fn bin_background_menu(&mut self, ui: &mut egui::Ui) {
+        // Прямоугольник ПРОШЛОГО кадра: свою высоту бин узнаёт, только
+        // дорисовав карточки, а интеракция обязана регистрироваться ДО них.
+        // На первом кадре его ещё нет — меню появляется со второго, и это
+        // незаметно (первый кадр окна человек не успевает щёлкнуть).
+        // `ui.clip_rect()` тут не годится: внутри `ScrollArea` он равен
+        // вьюпорту КОЛОНКИ, а ниже бина живёт перф-панель — её правый клик
+        // уходил бы в меню бина.
+        let view = self.bin_rect.intersect(ui.clip_rect());
+        if !view.is_positive() {
+            return;
+        }
+        let resp = ui.interact(view, ui.id().with("bin-bg"), egui::Sense::click());
+        let mut free: Option<bool> = None;
+        let mut picked = false;
+        resp.context_menu(|ui| {
+            picked = true;
+            if ui.button(tr(k::bin::HINT_FREE)).clicked() {
+                free = Some(true);
+                ui.close();
+            }
+            if ui.button(tr(k::bin::HINT_GRID)).clicked() {
+                free = Some(false);
+                ui.close();
+            }
+        });
+        if picked {
+            self.set_panel_target(crate::ctx_menu::PanelTarget::BinEmpty);
+        }
+        if let Some(v) = free {
+            self.bin_free = v;
             self.dirty_ui = true;
         }
     }

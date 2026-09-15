@@ -980,6 +980,7 @@ impl KtApp {
             "{{\"playhead\":{},\"playing\":{},\"fields\":[{}],\"clips\":[{}],\
              \"underruns\":{},\"callback_underruns\":{},\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
+             \"bin\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
              \"timeline\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
              \"lane_h\":{:.1},\"ticks_per_px\":{:.3},\"view_start\":{:.1},\"rows\":[{}]}}\n",
             self.player.video_playhead().0,
@@ -990,6 +991,10 @@ impl KtApp {
             self.player.shared.callback_underruns.load(ord),
             screen.width(),
             screen.height(),
+            self.bin_rect.left(),
+            self.bin_rect.right(),
+            self.bin_rect.top(),
+            self.bin_rect.bottom(),
             geom.rect.left(),
             geom.rect.right(),
             geom.rect.top(),
@@ -2212,6 +2217,7 @@ impl KtApp {
             if gutter_resp.secondary_clicked()
                 && let Some(pos) = gutter_resp.interact_pointer_pos()
             {
+                self.ctx_panel = None; // цели гасят друг друга (п.363)
                 match geom.key_at_y(pos.y) {
                     Some((LaneKind::Video, lane)) => {
                         self.ctx_target = Some(CtxTarget::Lane { kind: ClipKind::Video, lane });
@@ -2636,6 +2642,8 @@ impl KtApp {
             // строка под кликом нужна и для пустого места: «добавить
             // дорожку» из меню встаёт СРАЗУ ПОД ней (п.5 р.16)
             self.ctx_row = geom.key_at_y(pos.y);
+            // цели гасят друг друга: меню на экране одно (п.363)
+            self.ctx_panel = None;
             self.ctx_target = Some(if let Some(m) = marker_at(self, pos) {
                 CtxTarget::Marker(m)
             } else if let Some(mid) = morpher_at(self, pos) {

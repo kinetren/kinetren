@@ -8,6 +8,7 @@ mod audio_out;
 mod automation;
 mod bin_panel;
 mod camera_editor;
+mod ctx_menu;
 mod fx_editor;
 #[cfg(test)]
 mod font_tests;

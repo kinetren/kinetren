@@ -977,3 +977,156 @@ fn t273_source_in_arithmetic_lives_in_one_place() {
         bad.join("\n  ")
     );
 }
+
+// ---- правый клик В ПАНЕЛЯХ (Р.49, волна В) ---------------------------------
+
+/// Глагол панельного объекта — что человек хочет с ним сделать.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PanelVerb {
+    /// Правая кнопка вообще отвечает.
+    Menu,
+    /// Хоть одно ДЕЙСТВИЕ в этом меню, а не только заголовок.
+    Act,
+}
+
+/// ЕДИНСТВЕННАЯ таблица «панельная сущность → чем отвечает правая кнопка».
+/// `match` исчерпывающий: новая панельная сущность не соберётся, пока
+/// строку не заполнили.
+fn panel_verbs(e: crate::ctx_menu::PanelEntity) -> Vec<(PanelVerb, &'static str)> {
+    use crate::ctx_menu::PanelEntity as P;
+    match e {
+        P::FxSlot => vec![
+            (PanelVerb::Menu, "правый клик по слоту цепочки открывает его меню"),
+            (PanelVerb::Act, "включить или выключить слот, удалить слот из цепочки"),
+        ],
+        P::FxHead => vec![
+            (PanelVerb::Menu, "правый клик по приколотой голове цепочки открывает меню"),
+            (PanelVerb::Act, "включить или выключить источник морфер-слоя"),
+        ],
+        P::CurveKey => vec![
+            (PanelVerb::Menu, "правый клик по ключу кривой автоматизации открывает меню"),
+            (
+                PanelVerb::Act,
+                "удалить этот ключ; сама правая кнопка НЕ удаляет — иначе обещание \
+                 «правой кнопкой можно пробовать безопасно» обесценится везде",
+            ),
+        ],
+        P::Bin => vec![
+            (PanelVerb::Menu, "правый клик по свободному фону медиа-бина открывает меню"),
+            (PanelVerb::Act, "переключить раскладку: свободная или сетка"),
+        ],
+        P::Preview => vec![
+            (PanelVerb::Menu, "правый клик по окну превью открывает его меню"),
+            (PanelVerb::Act, "отделить превью в своё окно или вернуть обратно"),
+        ],
+        P::Meters => vec![
+            (PanelVerb::Menu, "правый клик по шкалам метров и по фейдеру открывает меню"),
+            (PanelVerb::Act, "приглушить мастер, сбросить фейдер в 0 dB, сбросить пик"),
+        ],
+    }
+}
+
+/// Тест 395 (Р.49 В3/В6): у КАЖДОЙ панельной сущности правая кнопка чем-то
+/// отвечает, и это записано в одном месте.
+///
+/// Реестр панелей отдельный от `TlEntity` намеренно: у целей таймлайна общая
+/// сцена и общий род идентификатора (время и дорожка), у панелей — ни того,
+/// ни другого. Сваленные в один enum, они дали бы `match`, половина веток
+/// которого в своём месте не встречается никогда.
+#[test]
+fn t395_every_panel_entity_answers_right_click() {
+    use crate::ctx_menu::PanelEntity as P;
+    assert_eq!(P::ALL.len(), P::N, "литерал ALL разошёлся с N");
+    for e in P::ALL {
+        let verbs = panel_verbs(e);
+        assert!(
+            verbs.iter().any(|(v, _)| *v == PanelVerb::Menu),
+            "{e:?}: не сказано, отвечает ли правая кнопка"
+        );
+        for (_, why) in &verbs {
+            assert!(
+                why.trim().chars().count() >= 20,
+                "{e:?}: объяснение «{why}» короче 20 символов — так строка \
+                 заполняется «лишь бы собралось»"
+            );
+        }
+    }
+    // род цели — исчерпывающий match, каждая цель кому-то принадлежит
+    use crate::ctx_menu::PanelTarget as T;
+    use kt_model::ClipId;
+    let all: Vec<T> = vec![
+        T::FxSlot { chain: ClipId(1), slot: 0 },
+        T::FxHead { chain: ClipId(1) },
+        T::CurveKey { chain: ClipId(1), slot: 0, curve: 0, key: 0 },
+        T::BinEmpty,
+        T::Preview,
+        T::Meters,
+    ];
+    let mut seen: Vec<crate::ctx_menu::PanelEntity> = all.iter().map(|t| t.entity()).collect();
+    seen.sort_by_key(|e| *e as usize);
+    seen.dedup();
+    assert_eq!(seen.len(), P::N, "не у каждой панельной сущности есть своя цель: {seen:?}");
+}
+
+/// Тест 396 (Р.49 В6): объект, который отвечает на НАВЕДЕНИЕ, обязан
+/// отвечать и на правую кнопку.
+///
+/// Скан каталога, а не кода: подсказка объекта — это обещание «я вещь, со
+/// мной можно работать», и человек, научившийся правой кнопке на таймлайне,
+/// жмёт её везде. Молчание читается как «объекта нет» — ровно тот класс
+/// тупиков, что стоил раундов Р.33-Р.40. Родня «catalog keys nobody uses».
+#[test]
+fn t396_hinted_objects_have_a_right_click_answer() {
+    // объектные подсказки: у каждой в паре стоит панельная сущность,
+    // которая на правую кнопку отвечает
+    const ANSWERED: &[(&str, &str)] = &[
+        ("fx.slot_hint", "FxSlot"),
+        ("mrph.src_slot_hint", "FxHead"),
+        ("bin.hint_free", "Bin"),
+        ("bin.hint_grid", "Bin"),
+        ("hint.preview_click", "Preview"),
+        ("meter.mute", "Meters"),
+        ("meter.fader", "Meters"),
+        ("meter.peak", "Meters"),
+        ("fx.key_at", "CurveKey"),
+    ];
+    let src = crate::font_tests::sources();
+    let named: Vec<&str> = crate::ctx_menu::PanelEntity::ALL
+        .iter()
+        .map(|e| match e {
+            crate::ctx_menu::PanelEntity::FxSlot => "FxSlot",
+            crate::ctx_menu::PanelEntity::FxHead => "FxHead",
+            crate::ctx_menu::PanelEntity::CurveKey => "CurveKey",
+            crate::ctx_menu::PanelEntity::Bin => "Bin",
+            crate::ctx_menu::PanelEntity::Preview => "Preview",
+            crate::ctx_menu::PanelEntity::Meters => "Meters",
+        })
+        .collect();
+    for (key, entity) in ANSWERED {
+        assert!(
+            named.contains(entity),
+            "{key}: назван род «{entity}», которого нет в реестре панелей"
+        );
+        // ключ подсказки обязан и правда существовать в коде: иначе
+        // таблица сторожит выдуманное
+        let path = {
+            let mut parts: Vec<String> = key.split('.').map(str::to_string).collect();
+            if let Some(last) = parts.last_mut() {
+                *last = last.to_uppercase();
+            }
+            parts.join("::")
+        };
+        assert!(
+            src.iter().any(|(_, s)| s.contains(&path)),
+            "{key}: такой подсказки в коде нет — таблица сторожит выдуманное"
+        );
+    }
+    // и обратное: каждая панельная сущность закрыта хотя бы одной подсказкой
+    for e in named {
+        assert!(
+            ANSWERED.iter().any(|(_, x)| *x == e),
+            "{e}: сущность в реестре есть, а подсказки, которую она закрывает, \
+             в таблице нет — либо объект нем на наведение, либо строку забыли"
+        );
+    }
+}

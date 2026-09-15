@@ -276,6 +276,9 @@ impl KtApp {
         let mut env_clip = self.env_clipboard.clone();
         // подсказки — в статусбар, как везде (попапов в программе нет)
         let mut hover_out: Option<String> = None;
+        // цель правого клика в полосе цепочки (п.363): полоса — виджет,
+        // про KtApp она не знает, и цель отдаёт наружу
+        let mut panel_pick: Option<crate::ctx_menu::PanelTarget> = None;
         egui::Window::new(title)
             .id(egui::Id::new(("morph", ed.id.0)))
             .open(&mut open)
@@ -425,6 +428,12 @@ impl KtApp {
                     &mut fx_clip,
                     kt_time::Tick(0),
                     &mut hover_out,
+                    // у морфер-цепочки нет клипа-владельца: адресуем её
+                    // номером морфера — оба живут в своём пространстве имён
+                    &mut crate::widgets::ChainCtx {
+                        chain: kt_model::ClipId(ed.id.0),
+                        picked: &mut panel_pick,
+                    },
                 );
                 if ch.any() {
                     ev.patch.src_off = !src_on;
@@ -618,6 +627,9 @@ impl KtApp {
         if let Some(t) = seek_to {
             // клик по чипу подматывает таймлайн к этому месту
             self.player.seek(t);
+        }
+        if let Some(t) = panel_pick {
+            self.set_panel_target(t); // цели гасят друг друга (п.363)
         }
         if let Some(h) = hover_out {
             self.hover_hint = Some(h);

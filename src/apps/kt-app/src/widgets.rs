@@ -587,6 +587,15 @@ fn slot_text(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -> egui
 /// Полоса цепочки: мастер-галка, слоты (галка вкл/выкл, имя, крестик),
 /// перестановка мышью, пикер и копипаст. `audio` — фильтр пикера.
 #[allow(clippy::too_many_arguments)]
+/// Кому принадлежит полоса и куда сообщить о правом клике (Р.49, п.363).
+/// Полоса не знает про `KtApp` и знать не должна — она виджет; адрес цели
+/// она принимает снаружи и снаружи же отдаёт результат.
+pub struct ChainCtx<'a> {
+    pub chain: kt_model::ClipId,
+    pub picked: &'a mut Option<crate::ctx_menu::PanelTarget>,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn chain_strip(
     ui: &mut egui::Ui,
     id: impl std::hash::Hash + std::fmt::Debug + Copy,
@@ -596,6 +605,7 @@ pub fn chain_strip(
     clipboard: &mut Option<kt_model::ops::FxChainBlock>,
     src_in: kt_time::Tick,
     hover: &mut Option<String>,
+    ctx: &mut ChainCtx<'_>,
 ) -> ChainChanged {
     let mut ch = ChainChanged::default();
     edit.bypass.resize(edit.fx.len(), false);
@@ -629,6 +639,24 @@ pub fn chain_strip(
             );
             if resp.clicked() {
                 *edit.selected = ChainSel::Head;
+            }
+            // голова тоже отвечает на правую кнопку (п.363): у неё есть
+            // ровно одно действие — своя галка, и молчать об этом нельзя
+            let head_label = h.label.clone();
+            let head_on = *h.on;
+            let mut head_toggle = false;
+            resp.clone().context_menu(|ui| {
+                *ctx.picked = Some(crate::ctx_menu::PanelTarget::FxHead { chain: ctx.chain });
+                ui.label(egui::RichText::new(head_label.clone()).strong());
+                let label = if head_on { tr(k::fx::DISABLE) } else { tr(k::fx::ENABLE) };
+                if ui.button(label).clicked() {
+                    head_toggle = true;
+                    ui.close();
+                }
+            });
+            if head_toggle {
+                *h.on = !head_on;
+                ch.head = true;
             }
             // полное имя — в подсказке: усечённое видно, а какой файл
             // подставлен, узнать иначе негде
@@ -694,6 +722,26 @@ pub fn chain_strip(
             {
                 swap = Some((*from, i));
             }
+            // Правый клик по слоту (Р.49, п.363): до этого раунда слот
+            // отвечал подсказкой на наведение и МОЛЧАЛ на правую кнопку —
+            // а пользователь, научившись правой кнопке на таймлайне, жмёт
+            // её везде. Новых ключей ноль: пункты — те же действия, что
+            // уже есть галкой и крестиком.
+            resp.context_menu(|ui| {
+                *ctx.picked =
+                    Some(crate::ctx_menu::PanelTarget::FxSlot { chain: ctx.chain, slot: i });
+                ui.label(egui::RichText::new(name).strong());
+                let label = if off { tr(k::fx::ENABLE) } else { tr(k::fx::DISABLE) };
+                if ui.button(label).clicked() {
+                    edit.bypass[i] = !off;
+                    ch.bypass = true;
+                    ui.close();
+                }
+                if ui.button(tr(k::fx::REMOVE_SLOT)).clicked() {
+                    remove = Some(i);
+                    ui.close();
+                }
+            });
             if crate::app::hint_into(hover, ui.small_button(crate::icons::CLEAR), tr(k::fx::REMOVE_SLOT))
                 .clicked()
             {

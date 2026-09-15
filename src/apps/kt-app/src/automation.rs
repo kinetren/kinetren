@@ -24,6 +24,10 @@ use eframe::egui;
 use kt_model::{ClipEvent, FxInstance, ParamCurve, ParamSpec};
 use kt_time::Tick;
 
+/// Радиус хвата ключа. Шире рисунка (правило 1 чек-листа): в ромбик
+/// радиусом 4.5 px целиться не должно быть нужно.
+const KEY_GRAB_PX: f32 = 9.0;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AutoMode {
     #[default]
@@ -50,6 +54,19 @@ pub struct AutoView {
     /// Пока строка редактируется, ключи НЕ пересортировываются — иначе
     /// строка уезжает из-под рук на каждой цифре.
     pub t_edit: Option<(usize, usize, f64)>,
+    /// Экранные позиции ключей ПОСЛЕДНЕЙ отрисовки: (кривая, ключ, точка).
+    ///
+    /// Рисунок и щуп — из одного места правды (Р.49, п.364). До этого
+    /// раунда хит-тест жил внутри цикла отрисовки и срабатывал только на
+    /// `interact_pointer_pos` — то есть при НАЖАТОЙ кнопке. Поэтому ключ
+    /// молчал и на наведение, и на правую кнопку: подсказки не было, меню
+    /// не было, а «ПКМ удаляет» не завели намеренно — удаление и так есть
+    /// двумя путями, а destructive правая кнопка обесценила бы обещание
+    /// «правой кнопкой можно пробовать безопасно» во всех остальных местах.
+    ///
+    /// Буфер ПЕРЕИСПОЛЬЗУЕТСЯ (`clear`, не `Vec::new`): инвариант 12 —
+    /// в draw-путях на кадр не аллоцируем.
+    pub key_marks: Vec<(usize, usize, egui::Pos2)>,
     /// Замороженное окно значений тянущейся кривой: (кривая, lo, hi).
     /// Без заморозки шкала пересчитывалась бы по самим же ключам и
     /// «дышала» под курсором.
@@ -57,6 +74,15 @@ pub struct AutoView {
 }
 
 impl AutoView {
+    /// Ключ под точкой. Один щуп на все каналы: нажатие, наведение и
+    /// правая кнопка спрашивают ОДНО И ТО ЖЕ.
+    pub fn key_at(&self, pos: egui::Pos2) -> Option<(usize, usize)> {
+        self.key_marks
+            .iter()
+            .find(|(_, _, p)| (*p - pos).length() < KEY_GRAB_PX)
+            .map(|(ci, ki, _)| (*ci, *ki))
+    }
+
     /// Видимое окно оси времени в домене кривой.
     ///
     /// **Связанный график показывает окно таймлайна КАК ЕСТЬ** (Р.40).
@@ -177,6 +203,10 @@ pub struct AutoResult {
     /// колесо над графиком зумит и панорамирует именно его — оси остаются
     /// синхронными, а жест не пропадает.
     pub set_view: Option<(Tick, Tick)>,
+    /// По какому ключу открыто контекстное меню (Р.49, п.364). Нужен
+    /// владельцу окна, чтобы записать панельную цель: сам виджет про
+    /// `KtApp` не знает.
+    pub key_menu: Option<(usize, usize)>,
 }
 
 /// Просьбы виджета про ОСЬ, собранные с нескольких графиков одного окна
@@ -555,7 +585,7 @@ fn graph(
     }
 
     // кривые и ключи
-    let mut hit: Option<(usize, usize)> = None;
+    view.key_marks.clear();
     for (ci, c) in curves.iter().enumerate() {
         let Some(spec) = ctx.spec(&c.param) else { continue };
         let (lo, hi) = win_of(c, spec, view, ci);
@@ -583,11 +613,64 @@ fn graph(
                 if selected { egui::Color32::WHITE } else { col },
                 egui::Stroke::new(1.0, col),
             ));
-            if let Some(pos) = resp.interact_pointer_pos()
-                && (pos - egui::pos2(x, y)).length() < 9.0
-            {
-                hit = Some((ci, ki));
+            view.key_marks.push((ci, ki, egui::pos2(x, y)));
+        }
+    }
+    // щуп — по НАРИСОВАННОМУ, и один на все каналы
+    let hit = resp.interact_pointer_pos().and_then(|pos| view.key_at(pos));
+    // Подсказка у ключа (Р.49, п.364): раньше он молчал в ОБОИХ каналах —
+    // ни наведение, ни правая кнопка ничего не сообщали, и что это за
+    // точка, узнать было негде, кроме как выбрать её и прочесть строку
+    // сверху. Формат тот же, что у выбранного ключа: секунды материала и
+    // доля события одной строкой.
+    if let Some(hp) = resp.hover_pos()
+        && let Some((ci, ki)) = view.key_at(hp)
+        && let Some(key) = curves.get(ci).and_then(|c| c.keys.get(ki))
+    {
+        crate::app::hint_into(
+            hover,
+            resp.clone(),
+            &crate::tf!(
+                k::fx::KEY_AT,
+                format!("{:.3}", secs(key.t)),
+                format!("{:.0}", ctx.frac(key.t) * 100.0)
+            ),
+        );
+    }
+    // Меню ключа — ДО ранних `return` ниже (линейка, двойной клик): после
+    // них правый клик по ключу не доходил бы до привязки вовсе.
+    {
+        let menu_hit = resp.hover_pos().and_then(|pos| view.key_at(pos));
+        let mut del: Option<(usize, usize)> = None;
+        let mut picked: Option<(usize, usize)> = None;
+        resp.clone().context_menu(|ui| {
+            let Some((ci, ki)) = menu_hit else {
+                ui.close();
+                return;
+            };
+            picked = Some((ci, ki));
+            if let Some(key) = curves.get(ci).and_then(|c| c.keys.get(ki)) {
+                ui.label(egui::RichText::new(crate::tf!(
+                    k::fx::KEY_AT,
+                    format!("{:.3}", secs(key.t)),
+                    format!("{:.0}", ctx.frac(key.t) * 100.0)
+                ))
+                .strong());
             }
+            // «Удалить» БЕЗ аккорда: Del удаляет выделенные события
+            // таймлайна, а не ключ (п.362)
+            if crate::widgets::menu_item(ui, tr(k::tl::menu::DELETE), None) {
+                del = Some((ci, ki));
+                ui.close();
+            }
+        });
+        out.key_menu = picked;
+        if let Some((ci, ki)) = del
+            && curves.get(ci).is_some_and(|c| ki < c.keys.len())
+        {
+            curves[ci].keys.remove(ki);
+            view.sel = None;
+            out.changed = true;
         }
     }
     // подпись активной кривой (в неё кладёт ключ клик по пустому месту)

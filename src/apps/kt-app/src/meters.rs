@@ -797,6 +797,48 @@ impl KtApp {
                 self.meter.fader_target = db_at(pos.y);
             }
         }
+        // Правый клик по метрам (Р.49, п.365). Панель отвечала подсказками
+        // на наведение и МОЛЧАЛА на правую кнопку, хотя все три её действия
+        // уже есть — просто спрятаны в кнопке M, двойном клике по фейдеру и
+        // спаде пика. Меню и на шкалах, и на фейдере: «парные способы ведут
+        // себя одинаково» (правило 17). Новых ключей ноль.
+        {
+            let muted = self.meter.muted;
+            let mut act: Option<u8> = None;
+            let mut picked = false;
+            let menu = |ui: &mut egui::Ui, act: &mut Option<u8>| {
+                if ui.button(tr(k::meter::MUTE)).clicked() {
+                    *act = Some(0);
+                    ui.close();
+                }
+                if ui.button(tr(k::meter::FADER)).clicked() {
+                    *act = Some(1);
+                    ui.close();
+                }
+                if ui.button(tr(k::meter::PEAK)).clicked() {
+                    *act = Some(2);
+                    ui.close();
+                }
+            };
+            response.clone().context_menu(|ui| {
+                picked = true;
+                menu(ui, &mut act);
+            });
+            fader.clone().context_menu(|ui| {
+                picked = true;
+                menu(ui, &mut act);
+            });
+            if picked {
+                self.set_panel_target(crate::ctx_menu::PanelTarget::Meters);
+            }
+            match act {
+                Some(0) => self.meter.muted = !muted,
+                Some(1) => self.meter.fader_target = 0.0,
+                // сброс удержанного пика: «ленты» уезжают к текущему уровню
+                Some(2) => self.meter.cap_db = self.meter.bar_db,
+                _ => {}
+            }
+        }
         if fader.drag_stopped() {
             self.fader_grab = None;
         }

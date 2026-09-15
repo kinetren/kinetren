@@ -4828,6 +4828,77 @@ fn t393_menu_accelerator_promises_only_what_the_key_does() {
     );
 }
 
+/// Тест 394 (Р.49 В3-В5): немых объектов в панелях не бывает.
+///
+/// Разведка нашла двенадцать мест, где объект отвечает на НАВЕДЕНИЕ
+/// подсказкой, а на правую кнопку — ничем. Человек учится один раз: если
+/// правая кнопка где-то показала меню, он жмёт её везде, и молчание читается
+/// как «объекта нет». Здесь правый клик приходит в КАЖДЫЙ панельный объект и
+/// проверяется, что программа назвала цель — то есть меню принадлежит именно
+/// тому, во что целились.
+#[test]
+fn t394_panel_objects_answer_right_click() {
+    use crate::ctx_menu::PanelTarget as T;
+    use kt_model::*;
+    let (mut h, _) = harness_three_clips_dt(Some(0.02));
+
+    // ---- фон медиа-бина ---------------------------------------------------
+    {
+        let app = h.state_mut();
+        app.ctx_panel = None;
+    }
+    h.step();
+    // прямоугольник бина программа сообщает сама: ниже него в колонке живёт
+    // перф-панель, и «примерно внизу колонки» щупало бы её
+    let bin = h.state().bin_rect;
+    assert!(bin.is_positive(), "бин не сообщил свой прямоугольник");
+    right_click_at(&mut h, egui::pos2(bin.center().x, bin.bottom() - 10.0));
+    assert_eq!(
+        h.state().ctx_panel,
+        Some(T::BinEmpty),
+        "фон медиа-бина молчит на правую кнопку"
+    );
+
+    // ---- панель метров ----------------------------------------------------
+    let meters = panel_rect(&h, "meters_col");
+    right_click_at(&mut h, meters.center());
+    assert_eq!(h.state().ctx_panel, Some(T::Meters), "панель метров молчит на правую кнопку");
+
+    // ---- окно превью ------------------------------------------------------
+    let prev = h.state().preview_rect;
+    assert!(prev.is_finite(), "превью не нарисовано — сцена сломана");
+    right_click_at(&mut h, egui::pos2(prev.center().x, prev.center().y + 20.0));
+    assert_eq!(h.state().ctx_panel, Some(T::Preview), "окно превью молчит на правую кнопку");
+
+    // ---- слот цепочки эффектов -------------------------------------------
+    {
+        let app = h.state_mut();
+        let id = app.model.project().clips[0].id;
+        assert!(app.apply(Command::SetFx { id, fx: vec![FxInstance::blur(8)] }));
+        app.open_fx_editor(id);
+    }
+    h.step();
+    h.step();
+    let slot = {
+        use egui_kittest::kittest::Queryable;
+        h.query_all_by_label_contains(crate::fx_editor::fx_display_name(&FxInstance::blur(8)))
+            .map(|n| n.rect())
+            .next()
+            .expect("слот цепочки не нарисован")
+    };
+    right_click_at(&mut h, slot.center());
+    assert!(
+        matches!(h.state().ctx_panel, Some(T::FxSlot { .. })),
+        "слот цепочки молчит на правую кнопку"
+    );
+
+    // и цель ТАЙМЛАЙНА при этом погашена: меню на экране одно
+    assert!(
+        h.state().ctx_target.is_none(),
+        "панельная цель не погасила цель таймлайна — тест прочитал бы протухшую"
+    );
+}
+
 /// Тест 376 (Р.49 А8): номер события не переиспользуется в пределах сессии.
 /// Прежняя формула «максимум по текущим клипам + 1» после удаления последнего
 /// события выдавала его же номер заново — и новорождённый клип наследовал

@@ -293,6 +293,9 @@ pub struct KtApp {
     /// создаваемых и уничтожаемых приложений не должна сыпать файлами
     /// восстановления в общий каталог данных.
     pub recovery_on_drop: bool,
+    /// Цель ПАНЕЛЬНОГО контекстного меню (Р.49, п.363). Взаимно гасится с
+    /// `ctx_target`: меню на экране одно.
+    pub ctx_panel: Option<crate::ctx_menu::PanelTarget>,
     /// Найденная несохранённая работа и выбранный кандидат (п.353).
     pub recovery_offer: Vec<RecoveryCandidate>,
     pub recovery_pick: usize,
@@ -426,6 +429,9 @@ pub struct KtApp {
     pub glow_texture: Option<egui::TextureHandle>,
     /// Rect превью прошлого кадра (для оверлей-свечения поверх UI, п.8).
     pub preview_rect: egui::Rect,
+    /// Прямоугольник медиа-бина прошлого кадра (Р.49, п.365): по нему
+    /// ловится правый клик по свободному фону.
+    pub bin_rect: egui::Rect,
     /// Rect метров прошлого кадра + цвет доминирующей зоны.
     /// (панель метров, интенсивность 0..1, уровень dB) — оверлей красит
     /// ореол по ЗОНАМ высоты (п.8 v1.4), не одним цветом.
@@ -602,6 +608,7 @@ impl KtApp {
             ask: None,
             quit_confirmed: false,
             recovery_on_drop: true,
+            ctx_panel: None,
             recovery_offer: Vec::new(),
             recovery_pick: 0,
             recovery_open: false,
@@ -636,6 +643,7 @@ impl KtApp {
             smooth_scaling: true,
             glow_texture: None,
             preview_rect: egui::Rect::NOTHING,
+            bin_rect: egui::Rect::NOTHING,
             meter_glow: None,
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
             fx_editors: Vec::new(),
@@ -768,6 +776,7 @@ impl KtApp {
             ask: None,
             quit_confirmed: false,
             recovery_on_drop: true,
+            ctx_panel: None,
             recovery_offer: Vec::new(),
             recovery_pick: 0,
             recovery_open: false,
@@ -802,6 +811,7 @@ impl KtApp {
             smooth_scaling: true,
             glow_texture: None,
             preview_rect: egui::Rect::NOTHING,
+            bin_rect: egui::Rect::NOTHING,
             meter_glow: None,
             thumbs: thumbs_svc,
             fx_editors: Vec::new(),
@@ -4297,6 +4307,34 @@ impl KtApp {
         );
         let resp = ui.interact(hit, ui.id().with("preview-click"), egui::Sense::click());
         let resp = self.hint(resp, tr(k::hint::PREVIEW_CLICK));
+        // Правый клик по превью (Р.49, п.365). Двойной клик уже умеет
+        // отделять и возвращать окно, но узнать об этом можно было только
+        // из подсказки — на правую кнопку превью молчало. Пункт ровно один
+        // и ровно тот, что делает жест: новых ключей ноль.
+        {
+            let detached = self.preview_detached;
+            let mut toggle = false;
+            let mut picked = false;
+            resp.clone().context_menu(|ui| {
+                picked = true;
+                let label = if detached {
+                    tr(k::menu::view::ATTACH_PREVIEW)
+                } else {
+                    tr(k::menu::view::DETACH_PREVIEW)
+                };
+                if ui.button(label).clicked() {
+                    toggle = true;
+                    ui.close();
+                }
+            });
+            if picked {
+                self.set_panel_target(crate::ctx_menu::PanelTarget::Preview);
+            }
+            if toggle {
+                self.preview_detached = !detached;
+                self.dirty_ui = true;
+            }
+        }
         // пп.10-11 р.7: одиночный клик (отложенный на окно double-click) =
         // play/pause; двойной = detach/attach. Работает и в отдельном окне
         // превью (двойной клик там возвращает превью обратно).
