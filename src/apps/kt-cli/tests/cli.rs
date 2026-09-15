@@ -107,6 +107,37 @@ fn t290_probe_reports_what_layers_changed() {
     );
     assert!(head.contains("stage x"), "в заказе видео обязана быть ступень декода:\n{head}");
 
+    // Тест 452b (Р.50, Б6): по вложенному монтажу «войди в N уровней,
+    // чтобы понять, откуда кадр» — это наш минус. Дерево лент и ПУТЬ
+    // события печатаются сразу.
+    let nested = dir.join("nested.otio");
+    {
+        let text = std::fs::read_to_string(&path).unwrap();
+        let b = kt_otio::load_project(&text, path.parent()).unwrap();
+        let mut pr = b.project;
+        let mut n = kt_model::ops::NestCounters::of(&pr);
+        let ids: Vec<kt_model::ClipId> =
+            pr.clips.iter().filter(|c| c.start.0 < 2 * 90_000).map(|c| c.id).collect();
+        let (cmds, rep) = kt_model::ops::collapse_into_sequence(&pr, &ids, "Заставка", n.ids());
+        let mut m = kt_model::TimelineModel::new(pr);
+        m.apply_batch(cmds).expect("сворачивание на демо-проекте");
+        assert!(rep.seq.is_some());
+        pr = m.project().clone();
+        std::fs::write(&nested, kt_otio::save_project(&pr, &b.retained, nested.parent())).unwrap();
+    }
+    let out = cli().args(["probe", nested.to_str().unwrap(), "0", "2"]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let nest_head = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(nest_head.contains("nested reels"), "probe обязан печатать дерево лент:\n{nest_head}");
+    assert!(
+        nest_head.contains("Заставка") && nest_head.contains("places"),
+        "в дереве лент обязаны быть имя и число мест:\n{nest_head}"
+    );
+    assert!(
+        nest_head.contains("is a NESTED REEL"),
+        "probe обязан называть ПУТЬ события вложения:\n{nest_head}"
+    );
+
     // слой демо-проекта целится в события 7 и 9; в конце таймлайна их
     // нет, значит правок быть не должно — а события быть должны, иначе
     // «ничего не изменено» выполнялось бы само собой

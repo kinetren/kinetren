@@ -5666,6 +5666,10 @@ impl KtApp {
             // прогретый клип холодным. Морфер-слой мог нарезать клип на
             // куски с разными цепочками — берём объединение их качеств.
             let decode_q = self.player.video_decode_qualities();
+            // Вложение: у ленты источника нет, и полоска спрашивает её
+            // СОДЕРЖИМОЕ — пересечение прогретости детей (Р.50, Б6).
+            let nest_cov: HashMap<ClipId, Vec<std::ops::Range<i64>>> =
+                self.player.nest_coverage().into_iter().collect();
             let mut per_clip = HashMap::new();
             for c in &self.model.project().clips {
                 let runs = match c.kind {
@@ -5678,6 +5682,9 @@ impl KtApp {
                             f0.div_euclid(AUDIO_BURST_FRAMES as i64)
                                 ..((f1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1),
                         )
+                    }
+                    ClipKind::Video if nest_cov.contains_key(&c.id) => {
+                        nest_cov.get(&c.id).cloned().unwrap_or_default()
                     }
                     ClipKind::Video => {
                         let (b0, b1) = (c.source_in.0, c.source_in.0 + c.duration.0);

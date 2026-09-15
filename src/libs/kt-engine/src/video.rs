@@ -78,6 +78,10 @@ struct VideoClip {
     /// Хэш редакции ленты: правка ВНУТРИ не трогает ни одного поля
     /// экземпляра, поэтому без него мемо отдавало бы стейл.
     content: u64,
+    /// Ступень суб-композита — МАКСИМУМ по всем экземплярам этой ленты в
+    /// дереве (Р.50, Б5). Свойство ЛЕНТЫ, а не экземпляра: разойдись они —
+    /// у внутреннего клипа два ключа кэша и два заказа.
+    nest_scale: u32,
 }
 
 // Карта варпа клипа переехала в kt-model (Р.39): конструктор один на
@@ -286,6 +290,15 @@ pub fn video_cache_idx(source_pts: Tick) -> i64 {
 /// дотянет sws при декоде) и потолок промежуточных буферов.
 fn clip_decode_scale(clip: &VideoClip, quality: Quality) -> u32 {
     let (qw, qh) = (quality.width.max(2), quality.height.max(2));
+    let cap = (kt_fx::plan::MAX_INTER_DIM / qw.max(qh)).max(1);
+    // ВЛОЖЕНИЕ (Р.50, Б5): «натива» у ленты нет — суб-композит можно
+    // собрать в любом размере, запас не ограничен ничем, кроме потолка
+    // промежуточных буферов. Ступень берётся ОДНА на ленту (максимум по
+    // всем её экземплярам): иначе у внутреннего клипа было бы два ключа
+    // кэша, две полоски и два заказа — вечный промах (t312/t317).
+    if clip.nest.is_some() {
+        return clip.nest_scale.min(cap).max(1);
+    }
     let want = kt_fx::geom::ss_taps(clip.head_zoom);
     if want <= 1 {
         return 1;
@@ -296,19 +309,95 @@ fn clip_decode_scale(clip: &VideoClip, quality: Quality) -> u32 {
     let spare_w = (nw as f64 / qw as f64).ceil() as u32;
     let spare_h = (nh as f64 / qh as f64).ceil() as u32;
     let spare = spare_w.min(spare_h).max(1);
-    let cap = (kt_fx::plan::MAX_INTER_DIM / qw.max(qh)).max(1);
     want.min(spare).min(cap)
+}
+
+/// Ступень суб-композита каждой ленты: МАКСИМУМ запроса по всем её
+/// экземплярам в ДЕРЕВЕ (Р.50, Б5).
+///
+/// Ступень обязана быть свойством ЛЕНТЫ, а не экземпляра: содержимое у них
+/// общее, и разные ступени дали бы внутреннему клипу два ключа кэша, две
+/// полоски прогретости и два заказа префетча — вечный промах (t312/t317).
+/// Чистая функция от проекта: от устройства и бюджетов не зависит.
+fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
+    let mut out: std::collections::HashMap<MediaId, u32> = std::collections::HashMap::new();
+    let grid = FpsGrid::new(project.settings.fps);
+    let size = (project.settings.width, project.settings.height);
+    let reels = std::iter::once(None).chain(project.sequences.iter().map(|s| Some(s.id)));
+    for reel in reels {
+        let cams = match reel.and_then(|id| project.sequence(id)) {
+            Some(s) => &s.cameras,
+            None => &project.cameras,
+        };
+        for c in project.effective_reel(reel) {
+            if c.kind != ClipKind::Video || project.sequence(c.media).is_none() {
+                continue;
+            }
+            let fx = c.active_fx();
+            let auto = c.active_fx_auto();
+            let zoom = clip_head_zoom(
+                &fx,
+                &auto,
+                c.start,
+                c.start + c.duration,
+                c.source_in,
+                c.reversed,
+                &grid,
+                cams,
+                size,
+            );
+            let want = kt_fx::geom::ss_taps(zoom).max(1);
+            let e = out.entry(c.media).or_insert(1);
+            *e = (*e).max(want);
+        }
+    }
+    out
+}
+
+/// `a \ b` на отсортированных наборах интервалов.
+fn subtract(
+    a: Vec<std::ops::Range<i64>>,
+    mut b: Vec<std::ops::Range<i64>>,
+) -> Vec<std::ops::Range<i64>> {
+    if b.is_empty() {
+        return a;
+    }
+    b.sort_by_key(|r| r.start);
+    let mut out = Vec::new();
+    for r in a {
+        let mut cur = r.start;
+        for h in &b {
+            if h.end <= cur || h.start >= r.end {
+                continue;
+            }
+            if h.start > cur {
+                out.push(cur..h.start);
+            }
+            cur = cur.max(h.end);
+            if cur >= r.end {
+                break;
+            }
+        }
+        if cur < r.end {
+            out.push(cur..r.end);
+        }
+    }
+    out
+}
+
+fn shift_runs(v: Vec<std::ops::Range<i64>>, d: i64) -> Vec<std::ops::Range<i64>> {
+    v.into_iter().map(|r| (r.start + d)..(r.end + d)).collect()
+}
+
+fn scaled(q: Quality, s: u32) -> Quality {
+    if s <= 1 { q } else { Quality { width: q.width * s, height: q.height * s } }
 }
 
 /// Качество декода клипа. ЕДИНСТВЕННОЕ место решения: заказ префетча,
 /// чтение композита и полоски прогретости обязаны спрашивать его — иначе
 /// греется не то, что читается (t247d по оси размера, t312).
 fn clip_decode_quality(clip: &VideoClip, quality: Quality) -> Quality {
-    let s = clip_decode_scale(clip, quality);
-    if s == 1 {
-        return quality;
-    }
-    Quality { width: quality.width * s, height: quality.height * s }
+    scaled(quality, clip_decode_scale(clip, quality))
 }
 
 /// Максимум нетто-зума цепочки за длительность клипа (Р.46, п.320).
@@ -422,12 +511,13 @@ impl VideoRenderer {
         project: &Project,
         natives: &std::collections::HashMap<MediaId, (u32, u32)>,
     ) -> VideoRenderer {
-        VideoRenderer::build_reel(project, natives, None, 0)
+        VideoRenderer::build_reel(project, natives, &nest_scales(project), None, 0)
     }
 
     fn build_reel(
         project: &Project,
         natives: &std::collections::HashMap<MediaId, (u32, u32)>,
+        nest_scales: &std::collections::HashMap<MediaId, u32>,
         seq: Option<MediaId>,
         depth: usize,
     ) -> VideoRenderer {
@@ -492,6 +582,7 @@ impl VideoRenderer {
                     native: natives.get(&c.media).copied(),
                     nest,
                     content,
+                    nest_scale: nest.and_then(|id| nest_scales.get(&id).copied()).unwrap_or(1),
                 }
             })
             .collect();
@@ -541,7 +632,7 @@ impl VideoRenderer {
         if depth < kt_model::MAX_NEST_DEPTH {
             for id in clips.iter().filter_map(|c| c.nest) {
                 nests.entry(id).or_insert_with(|| {
-                    VideoRenderer::build_reel(project, natives, Some(id), depth + 1)
+                    VideoRenderer::build_reel(project, natives, nest_scales, Some(id), depth + 1)
                 });
             }
         }
@@ -584,8 +675,12 @@ impl VideoRenderer {
             // обязан согреть оба, иначе второй не запросят никогда
             let (a, b) = clip_frame_keys(c, t, &self.grid);
             match c.nest.and_then(|id| self.nests.get(&id)) {
-                // внутреннее время ленты — ровно «точка входа в источник»
-                Some(sub) => sub.layers_at_into(a, quality, out),
+                // внутреннее время ленты — ровно «точка входа в источник»,
+                // а КАЧЕСТВО — увеличенное ступенью ленты: заказ и чтение
+                // обязаны спрашивать одно и то же (инвариант 4)
+                Some(sub) => {
+                    sub.layers_at_into(a, scaled(quality, clip_decode_scale(c, quality)), out)
+                }
                 None => {
                     let dq = clip_decode_quality(c, quality);
                     out.push((c.media, a, dq));
@@ -630,9 +725,101 @@ impl VideoRenderer {
         self.clips
             .iter()
             .map(|c| clip_decode_quality(c, quality))
-            .chain(self.nests.values().map(|s| s.max_decode_quality(quality)))
+            .chain(self.clips.iter().filter_map(|c| {
+                let sub = self.nests.get(&c.nest?)?;
+                Some(sub.max_decode_quality(clip_decode_quality(c, quality)))
+            }))
             .max()
             .unwrap_or(quality)
+    }
+
+    /// Прогретость ВЛОЖЕНИЙ в тиках их содержимого (Р.50, Б6).
+    ///
+    /// Coverage вложения = **ПЕРЕСЕЧЕНИЕ** прогретости его детей. Не
+    /// объединение: объединение врало бы В ХОРОШУЮ сторону — показывало бы
+    /// прогретым место, где половина слоёв ещё не пришла, а это ровно то,
+    /// против чего стоит инвариант 4 («кэш — единственная правда»).
+    ///
+    /// Считается интервальной арифметикой: из пролёта ленты вычитается
+    /// НЕПРОГРЕТАЯ часть каждого ребёнка. Дырка между детьми остаётся
+    /// прогретой — там нечего декодировать, и это правда.
+    ///
+    /// **Ребёнок с растяжением времени участвует целиком**: карта варпа
+    /// переводит интервалы источника в интервалы содержимого нелинейно, и
+    /// приблизительный перевод тут хуже честного огрубления — такой
+    /// ребёнок считается прогретым, только если прогрет весь.
+    pub fn nest_coverage(
+        &self,
+        cache: &BurstCache,
+        quality: Quality,
+    ) -> Vec<(kt_model::ClipId, Vec<std::ops::Range<i64>>)> {
+        let mut out = Vec::new();
+        for c in &self.clips {
+            let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) else { continue };
+            let win = c.source_in.0..(c.source_in.0 + (c.end.0 - c.start.0));
+            let dq = clip_decode_quality(c, quality);
+            out.push((c.id, sub.reel_coverage(cache, dq, win)));
+        }
+        out
+    }
+
+    /// Прогретость СОДЕРЖИМОГО ленты на окне `win` (тики ленты).
+    fn reel_coverage(
+        &self,
+        cache: &BurstCache,
+        quality: Quality,
+        win: std::ops::Range<i64>,
+    ) -> Vec<std::ops::Range<i64>> {
+        let mut warm = vec![win.clone()];
+        for c in &self.clips {
+            let body = c.start.0.max(win.start)..(c.end.0 + c.tail_ext.0).min(win.end);
+            if body.start >= body.end {
+                continue;
+            }
+            // вложенная лента внутри ленты — та же арифметика этажом ниже
+            let cold = if let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) {
+                let inner = c.source_in.0..(c.source_in.0 + (c.end.0 - c.start.0));
+                let sub_warm = sub.reel_coverage(cache, clip_decode_quality(c, quality), inner);
+                subtract(vec![body.clone()], shift_runs(sub_warm, c.start.0 - c.source_in.0))
+            } else if c.warp.is_some() {
+                // растянутый ребёнок — целиком или никак (см. док)
+                let b0 = c.source_in.0;
+                let b1 = b0 + (c.end.0 - c.start.0).max(1);
+                let runs = cache.coverage(
+                    SourceId(c.media.0),
+                    kt_cache::BurstKind::video(Some(clip_decode_quality(c, quality))),
+                    b0..b1,
+                );
+                let full = runs.iter().any(|r| r.start <= b0 && r.end >= b1);
+                if full { Vec::new() } else { vec![body.clone()] }
+            } else {
+                let b0 = c.source_in.0;
+                let b1 = b0 + (c.end.0 - c.start.0).max(1);
+                let runs = cache.coverage(
+                    SourceId(c.media.0),
+                    kt_cache::BurstKind::video(Some(clip_decode_quality(c, quality))),
+                    b0..b1,
+                );
+                // источник → время ленты; у reversed материал идёт навстречу
+                let mapped: Vec<std::ops::Range<i64>> = runs
+                    .into_iter()
+                    .map(|r| {
+                        if c.reversed {
+                            let len = c.end.0 - c.start.0;
+                            let s = c.start.0 + (len - (r.end - c.source_in.0));
+                            let e = c.start.0 + (len - (r.start - c.source_in.0));
+                            s..e
+                        } else {
+                            (c.start.0 + (r.start - c.source_in.0))
+                                ..(c.start.0 + (r.end - c.source_in.0))
+                        }
+                    })
+                    .collect();
+                subtract(vec![body.clone()], mapped)
+            };
+            warm = subtract(warm, cold);
+        }
+        warm
     }
 
     /// Композит момента `t` из кэша в RGBA-буфер `quality`-размера.
@@ -848,7 +1035,18 @@ fn layer_src<'a>(
                 nests: &sub.nests,
                 memoize: ctx.memoize,
             };
-            let plan = build_plan(&sub.clips, &sub_ctx, cache, src_pts, quality, ctx.memoize);
+            // Суб-план собирается в S×Quality (Р.50, Б5): цепочка на
+            // вложении зумит СОБРАННУЮ картинку, и без запаса она была бы
+            // мягкой. Дети считают свою ступень уже против УВЕЛИЧЕННОГО
+            // Quality — конъюгация правила п.317 этажом выше.
+            let plan = build_plan(
+                &sub.clips,
+                &sub_ctx,
+                cache,
+                src_pts,
+                scaled(quality, src_scale),
+                ctx.memoize,
+            );
             crate::video_plan::LayerInput::Nest(Box::new(crate::video_plan::NestSrc {
                 seq: id,
                 content_hash: clip.content,

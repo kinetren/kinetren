@@ -548,6 +548,13 @@ impl Player {
         self.video.lock().unwrap().video_decode_qualities(q)
     }
 
+    /// Прогретость вложений в тиках их содержимого (Р.50, Б6): у ленты
+    /// источника нет, и полоска обязана спрашивать её СОДЕРЖИМОЕ.
+    pub fn nest_coverage(&self) -> Vec<(kt_model::ClipId, Vec<std::ops::Range<i64>>)> {
+        let q = self.preview_quality();
+        self.video.lock().unwrap().nest_coverage(&self.cache, q)
+    }
+
     /// Момент, который сейчас СЛЫШНО (для выбора видеокадра превью):
     /// playhead минус задержка вывода. При паузе или без вывода — playhead
     /// как есть; loop-регион учитывается wrap'ом (п.30 — рассинхрон A/V).

@@ -773,3 +773,128 @@ fn t448_submix_is_the_same_whole_and_in_chunks() {
          не дошёл до цепочек вложения"
     );
 }
+
+// ---- 450-452 (Р.50, Б5-Б6): ступень, бюджеты, прогретость -----------------
+
+/// Вложение, у экземпляра которого цепочка ЗУМИТ собранную картинку.
+fn zooming_nest(zoom: f64) -> Project {
+    let mut p = base();
+    let mut s = Sequence::new(MediaId(100), "Кусок");
+    s.clips = vec![ev(2, ClipKind::Video, 0, Tick(0), PART, 1)];
+    p.sequences.push(s);
+    let mut inst = ev(10, ClipKind::Video, 0, Tick(0), PART, 100);
+    inst.source_in = Tick(0);
+    inst.fx = vec![FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom }];
+    p.clips.push(inst);
+    p.validate().expect("зумящее вложение законно");
+    p
+}
+
+#[test]
+fn t450_nest_decode_stage_is_a_property_of_the_reel() {
+    let q = Quality { width: 64, height: 36 };
+    let t = Tick(FRAME * 5);
+
+    // без зума ступень 1 — путь прежний
+    let flat = VideoRenderer::new(&zooming_nest(1.0));
+    let plain: Vec<Quality> = flat.layers_at(t, q).into_iter().map(|(_, _, dq)| dq).collect();
+    assert!(plain.iter().all(|dq| *dq == q), "без зума заказ обязан идти в Quality: {plain:?}");
+
+    // с зумом суб-план собирается КРУПНЕЕ, и заказ содержимого — тоже:
+    // разойдись они — префетч грел бы один размер, а композит читал другой
+    let z = VideoRenderer::new(&zooming_nest(3.0));
+    let big: Vec<Quality> = z.layers_at(t, q).into_iter().map(|(_, _, dq)| dq).collect();
+    assert!(!big.is_empty(), "заказ пуст");
+    assert!(
+        big.iter().all(|dq| dq.width > q.width),
+        "заказ содержимого зумящего вложения остался в Quality — суб-композит \
+         вышел бы мягким: {big:?}"
+    );
+    assert!(
+        z.max_decode_quality(q).width >= big[0].width,
+        "бюджеты считают меньше, чем заказывает префетч"
+    );
+
+    // ступень — свойство ЛЕНТЫ: второй экземпляр БЕЗ зума обязан получить
+    // ТУ ЖЕ ступень, иначе у внутреннего клипа два ключа кэша и два заказа
+    let mut two = zooming_nest(3.0);
+    let mut twin = two.clips[0].clone();
+    twin.id = ClipId(11);
+    twin.start = Tick(10 * PART.0);
+    twin.fx = vec![];
+    two.clips.push(twin);
+    two.validate().unwrap();
+    let v = VideoRenderer::new(&two);
+    let a: Vec<Quality> = v.layers_at(t, q).into_iter().map(|(_, _, dq)| dq).collect();
+    let b: Vec<Quality> =
+        v.layers_at(Tick(10 * PART.0 + t.0), q).into_iter().map(|(_, _, dq)| dq).collect();
+    assert_eq!(a, b, "два экземпляра одной ленты заказали РАЗНЫЕ размеры: {a:?} против {b:?}");
+}
+
+#[test]
+fn t451_nest_costs_its_subcomposite_in_the_chunk_budget() {
+    let p = nest_with(1.0, vec![]);
+    let v = VideoRenderer::new(&p);
+    // внутри ленты два перекрывающихся события, снаружи один экземпляр:
+    // бюджет обязан увидеть 1 (буфер суб-композита) + 2 (дети), а не 1
+    assert_eq!(
+        v.max_concurrent_layers(),
+        3,
+        "бюджет чанка не увидел содержимого вложения. Недосчёт вытесняет соседа \
+         до композиции, срабатывает ветка голода, и БАЙТЫ ЭКСПОРТА начинают \
+         зависеть от тайминга кэша"
+    );
+    // ...а плоский проект считается как раньше
+    assert_eq!(VideoRenderer::new(&spread_with(1.0, vec![])).max_concurrent_layers(), 2);
+}
+
+#[test]
+fn t452_nest_warmth_is_the_intersection_of_its_children() {
+    let q = Quality { width: 64, height: 36 };
+    let p = nest_with(1.0, vec![]);
+    let v = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+
+    // Пусто — холодно ВЕЗДЕ, ГДЕ ЕСТЬ ЧТО ДЕКОДИРОВАТЬ. Хвост ленты,
+    // где детей нет вовсе, остаётся тёплым, и это правда: декодировать
+    // там нечего, прозрачность приходит мгновенно.
+    let material = 0..(PART.0 + PART.0 / 2); // дети живут здесь
+    let cold = v.nest_coverage(&cache, q);
+    assert_eq!(cold.len(), 1, "полоска вложения не построена");
+    assert!(
+        cold[0].1.iter().all(|r| r.end <= material.start || r.start >= material.end),
+        "пустой кэш показан прогретым там, где лежат дети: {:?}",
+        cold[0].1
+    );
+
+    // прогрели ОДИН момент: тёплой обязана стать только окрестность, и
+    // только там, где пришли ВСЕ накрывающие дети
+    let t = Tick(FRAME * 20);
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        sources().into_iter().collect();
+    for (media, src_pts, dq) in v.layers_at(t, q) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    let warm = v.nest_coverage(&cache, q);
+    let runs = &warm[0].1;
+    assert!(!runs.is_empty(), "прогретый момент не виден в полоске");
+    assert!(
+        runs.iter().any(|r| r.start <= t.0 && t.0 < r.end),
+        "прогретый момент {} не попал ни в один прогон {runs:?}",
+        t.0
+    );
+    // ...но НЕ весь пролёт: остальное не грели
+    let span: i64 =
+        runs.iter().map(|r| (r.end.min(material.end) - r.start.max(material.start)).max(0)).sum();
+    assert!(
+        span < material.end - material.start,
+        "прогрет один кадр, а полоска показывает всю ленту тёплой ({span}) — \
+         это объединение вместо пересечения, и оно врёт в ХОРОШУЮ сторону"
+    );
+}

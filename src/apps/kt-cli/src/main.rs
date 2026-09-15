@@ -67,6 +67,47 @@ fn probe_range(
     );
     println!("range {from:.3}..{to:.3} s");
 
+    // ВЛОЖЕНИЯ (Р.50): «чтобы понять, откуда кадр, войди в N уровней» —
+    // это наш минус, а не фича. Дерево печатается сразу и целиком.
+    if !project.sequences.is_empty() {
+        println!("\n-- nested reels --");
+        fn print_reel(p: &kt_model::Project, id: kt_model::MediaId, depth: usize, path: &str) {
+            let Some(s) = p.sequence(id) else { return };
+            let here =
+                if path.is_empty() { s.name.clone() } else { format!("{path} / {}", s.name) };
+            println!(
+                "  {:indent$}{} (media {}) — {} clips, {} places, ends {:.3} s",
+                "",
+                here,
+                id.0,
+                s.clips.len(),
+                p.sequence_uses(id),
+                s.end().as_secs_f64(),
+                indent = depth * 2
+            );
+            for c in &s.clips {
+                if p.sequence(c.media).is_some() {
+                    print_reel(p, c.media, depth + 1, &here);
+                }
+            }
+        }
+        for s in &project.sequences {
+            // корневые ленты — те, что стоят прямо в монтаже
+            if project.clips.iter().any(|c| c.media == s.id) {
+                print_reel(project, s.id, 0, "");
+            }
+        }
+        let orphan: Vec<&str> = project
+            .sequences
+            .iter()
+            .filter(|s| project.sequence_uses(s.id) == 0)
+            .map(|s| s.name.as_str())
+            .collect();
+        if !orphan.is_empty() {
+            println!("  unused: {}", orphan.join(", "));
+        }
+    }
+
     println!("\n-- effective clips (after morph layers) --");
     let eff = project.effective_clips();
     let mut shown = 0;
@@ -92,6 +133,22 @@ fn probe_range(
     }
     if shown == 0 {
         println!("  (none)");
+    }
+    // ПУТЬ каждого события вложения: без него «звук от другого события»
+    // на вложенном монтаже нечем разбирать (Р.50, Б6).
+    for c in &project.clips {
+        let end = c.start + c.duration;
+        if c.start >= t1 || end <= t0 {
+            continue;
+        }
+        let Some(s) = project.sequence(c.media) else { continue };
+        println!(
+            "  {:?} is a NESTED REEL '{}' — its content plays at {:.3}..{:.3} s of the reel",
+            c.id,
+            s.name,
+            c.source_in.as_secs_f64(),
+            (c.source_in + c.duration).as_secs_f64()
+        );
     }
 
     // Что морфер-слои ИЗМЕНИЛИ против файла (Р.43, п.298): подменённый
