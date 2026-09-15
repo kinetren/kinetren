@@ -3,6 +3,7 @@
 //!
 //! Инварианты UI — см. корневой CLAUDE.md (№3, №8).
 
+mod analysis;
 mod app;
 mod audio_out;
 mod bg;

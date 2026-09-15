@@ -136,10 +136,6 @@ impl<P: Send + 'static, R: Send + 'static> BgJob<P, R> {
         self.cancel.store(true, Ordering::Release);
     }
 
-    pub fn is_cancelled(&self) -> bool {
-        self.cancel.load(Ordering::Acquire)
-    }
-
     pub fn set_paused(&self, on: bool) {
         self.pause.store(on, Ordering::Release);
     }

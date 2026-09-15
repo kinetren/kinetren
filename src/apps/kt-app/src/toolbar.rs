@@ -298,6 +298,12 @@ impl KtApp {
                     self.paste_at_cursor();
                     ui.close();
                 }
+                if ui.button(tr(k::tl::menu::SYNC_AUDIO)).clicked() {
+                    // одно тело на оба пути (правило 17): пункт меню события
+                    // и пункт главного меню делают ровно одно и то же
+                    self.sync_selected_by_audio();
+                    ui.close();
+                }
                 if Self::menu_btn(ui, tr(k::menu::edit::DELETE), "Del") {
                     self.delete_action();
                     ui.close();

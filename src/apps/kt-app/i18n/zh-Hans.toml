@@ -23,6 +23,9 @@ notices_title = "通知"
 notices_empty = "暂无内容"
 search_title = "在项目中搜索"
 diag_title = "诊断"
+analysis_title = "正在分析素材"
+analysis_cancel = "取消"
+analysis_queued = "队列中：{0}"
 
 [menu.file]
 import_ktproj = "导入 .ktproj…"
@@ -195,6 +198,7 @@ punch_out = "挖去区间内部"
 pick_something = "请先选择区间或片段"
 duck = "在轨道下压低…"
 remove_transition = "移除此转场"
+sync_audio = "按音频与另一个选中事件同步"
 
 # Медиа-бин: режимы, подсказки, пустое состояние.
 [bin]
@@ -203,6 +207,8 @@ hint_grid = "网格：卡片自动排列"
 hint_group = "分组：点击 — 选中，右键 — 重命名/锁定/取消分组"
 empty = "空 — 把媒体文件拖到窗口上"
 group_name = "分组名称"
+loudness = "{0} LUFS，峰值 {1} dBTP"
+loudness_pending = "尚未测量响度"
 
 # Медиа-бин: контекстные меню карточки и группы.
 [bin.menu]
@@ -215,6 +221,7 @@ lock_toggle = "锁定 / 解锁"
 group_selected = "把选中的分组（{0}）"
 group_one = "分组（锁定此卡片）"
 remove = "从项目中移除"
+measure_loudness = "测量响度"
 
 # Метры и мастер-фейдер превью.
 [meter]
@@ -561,6 +568,8 @@ close = "关闭"
 missing_warn = "不可用素材（{0}），将以占位画面写入文件：{1}"
 missing_after = "以占位画面渲染（{0}）：{1}"
 missing_layers = "丢失的视频层：{0}"
+loudness = "响度：{0} LUFS，真实峰值 {1} dBTP，范围 {2} LU"
+loudness_to_target = "到 −23 LUFS：{0} dB（仅供参考，不会应用）"
 [hint]
 preview_detached = "预览在独立窗口里（关掉它就会回来）"
 drop_here = "松开 — 片段落在鼠标下（轨道已高亮）"
@@ -664,6 +673,13 @@ recovery_none = "无可恢复内容：未找到未保存的工作"
 prev_session_crashed = "上一次会话异常结束 — 报告位于 {0}"
 workspace_readonly = "工作区设置未被保存：{0} 由更新的版本写入"
 index_failed = "无法建立素材索引：{0} — 波形将保持为占位图"
+sync_need_two = "请正好选择两个事件 — 要把哪个对齐到哪个"
+sync_pending = "索引仍在建立 — 需要两个文件的波形"
+sync_no_match = "两段录音不匹配：未找到可靠的偏移"
+sync_done = "偏移 {0} 毫秒，置信度 {1}%"
+sync_out_of_range = "对齐会把事件移到项目开始之前"
+analysis_failed = "分析失败：{0}"
+analysis_stale = "分析期间剪辑已更改 — 结果未应用"
 [dialog]
 import_ktproj = "导入旧版 .ktproj 项目"
 open_project = "打开项目"

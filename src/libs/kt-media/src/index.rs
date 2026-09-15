@@ -308,7 +308,19 @@ impl MediaIndexDb {
         media_id: i64,
         source: &mut dyn MediaSource,
     ) -> Result<(), IndexError> {
-        let pyramid = PeakPyramid::build(source);
+        self.build_audio_peaks_observed(media_id, source, &mut |_| {})
+    }
+
+    /// То же с наблюдателем за burst'ами (Р.49, п.373): громкость материала
+    /// считается на проходе, который И ТАК ИДЁТ, — второй полный декод ради
+    /// LUFS на часовом исходнике это минуты.
+    pub fn build_audio_peaks_observed(
+        &mut self,
+        media_id: i64,
+        source: &mut dyn MediaSource,
+        observe: &mut dyn FnMut(&crate::AudioBurst),
+    ) -> Result<(), IndexError> {
+        let pyramid = PeakPyramid::build_observed(source, observe);
         let tx = self.conn.transaction()?;
         tx.execute("DELETE FROM audio_peaks WHERE media_id=?1", params![media_id])?;
         for (level, channels) in pyramid.levels.iter().enumerate() {

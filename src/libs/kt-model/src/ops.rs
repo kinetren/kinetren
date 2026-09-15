@@ -1008,3 +1008,51 @@ pub fn duck_curve_commands(
     }
     out
 }
+
+/// Совместить событие `b` с событием `a` по найденному сдвигу звука
+/// (Р.49, п.375).
+///
+/// `offset_ticks` — «материал B отстаёт от материала A на столько тиков».
+///
+/// **Не тримит и не линкует.** Синхронизация отвечает на вопрос «где», а не
+/// «как долго» и не «вместе ли»: магнит подрезает соседа — это его свойство,
+/// а link-группа это отдельное решение монтажёра. Сдвинуть и остановиться —
+/// ровно то, о чём просили.
+///
+/// **Перевод «материал → таймлайн» — только через `clip_timeline_at`**
+/// (правило единственного дома, t273): своя арифметика по `source_in` здесь
+/// уехала бы на реверсе и на подрезанном начале.
+pub fn sync_by_audio_commands(p: &Project, a: ClipId, b: ClipId, offset_ticks: Tick) -> SyncPlan {
+    let Some(ca) = p.clips.iter().find(|c| c.id == a) else { return SyncPlan::AlreadyAligned };
+    let Some(cb) = p.clips.iter().find(|c| c.id == b) else { return SyncPlan::AlreadyAligned };
+    let step = kt_time::FpsGrid::new(p.settings.fps).frame_step();
+    // точка материала A, которая сейчас стоит в начале события A
+    let mat_a = clip_material_at(ca.source_in, ca.start, ca.duration, ca.reversed, step, ca.start);
+    // тот же момент реального мира в материале B
+    let mat_b = Tick(mat_a.0 + offset_ticks.0);
+    // где он сейчас на таймлайне у события B
+    let now = clip_timeline_at(cb.source_in, cb.start, cb.duration, cb.reversed, step, mat_b);
+    let delta = ca.start.0 - now.0;
+    if delta == 0 {
+        return SyncPlan::AlreadyAligned;
+    }
+    let want = cb.start.0 + delta;
+    if want < 0 {
+        // КЛАМПИТЬ НЕЛЬЗЯ: событие, упёршееся в ноль, окажется НЕ совмещено,
+        // а выглядеть будет как успешная синхронизация. Отказ честнее.
+        return SyncPlan::OutOfRange;
+    }
+    SyncPlan::Move(vec![Command::MoveClip { id: b, new_start: Tick(want), new_lane: cb.lane }])
+}
+
+/// Чем кончилось планирование синхронизации.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SyncPlan {
+    /// Двигаем.
+    Move(Vec<Command>),
+    /// Уже совмещено — работы нет.
+    AlreadyAligned,
+    /// Совмещение уводит событие ЗА НАЧАЛО проекта. Кламп к нулю тут
+    /// недопустим: он выглядит как успех, а материалы остаются вразнобой.
+    OutOfRange,
+}

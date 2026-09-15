@@ -531,6 +531,28 @@ impl KtApp {
                                 ),
                             );
                         }
+                        // Громкость посчитана на том же проходе (Р.49,
+                        // п.371). Показывается СПРАВОЧНО: кнопки
+                        // «нормализовать» тут нет намеренно — цель
+                        // нормализации (вещание −23, стриминг −14, кино
+                        // −27) выбирает человек, а не программа, и
+                        // применять её задним числом к уже записанному
+                        // файлу значило бы перекодировать его ещё раз.
+                        if let Some(l) = stats.loudness
+                            && let Some(lufs) = l.lufs
+                        {
+                            ui.label(crate::tf!(
+                                k::render::LOUDNESS,
+                                format!("{lufs:.1}"),
+                                format!("{:.1}", l.dbtp),
+                                format!("{:.1}", l.lra)
+                            ));
+                            let delta = -23.0 - lufs;
+                            ui.weak(crate::tf!(
+                                k::render::LOUDNESS_TO_TARGET,
+                                format!("{delta:+.1}")
+                            ));
+                        }
                         if stats.missing_video_layers > 0 {
                             ui.colored_label(
                                 egui::Color32::from_rgb(255, 190, 120),

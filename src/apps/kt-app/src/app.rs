@@ -77,6 +77,7 @@ pub struct PresetSaveDialog {
     pub focus: bool,
 }
 
+#[derive(Clone)]
 pub struct DuckDialog {
     /// События, к которым применится кривая (выделение на момент вызова).
     pub targets: Vec<kt_model::ClipId>,
@@ -119,6 +120,15 @@ pub struct KtApp {
     pub index: crate::util::IndexService,
     /// Об ошибках индекса сказано (один раз за адрес).
     pub index_errs_said: std::collections::HashSet<String>,
+    /// Громкость медиа: (LUFS, dBTP, LRA). Читается из индекс-БД по мере
+    /// готовности (Р.49, п.373).
+    pub loudness: Arc<Mutex<crate::util::LoudnessMap>>,
+    /// Офлайн-анализ материала (п.372).
+    pub analysis: crate::analysis::Analysis,
+    /// Интервалы дакинга, посчитанные фоном, и число недоступных медиа.
+    pub duck_spans: Arc<Mutex<(Vec<std::ops::Range<i64>>, usize)>>,
+    /// Настройки дакинга, ждущие своих интервалов.
+    pub duck_pending: Option<DuckDialog>,
     pub texture: Option<egui::TextureHandle>,
     pub view_start: f64, // тики
     pub ticks_per_px: f64,
@@ -533,7 +543,9 @@ impl KtApp {
         let project2 = project.clone();
         let (player, audio, _) = Self::build_player(&project, None, None);
         let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
-        let index = crate::util::IndexService::start(peaks.clone());
+        let loudness_map: Arc<Mutex<crate::util::LoudnessMap>> =
+            Arc::new(Mutex::new(Default::default()));
+        let index = crate::util::IndexService::start(peaks.clone(), loudness_map.clone());
         KtApp {
             model: TimelineModel::new(project),
             project_path: None,
@@ -544,6 +556,10 @@ impl KtApp {
             peaks,
             index,
             index_errs_said: Default::default(),
+            loudness: loudness_map,
+            analysis: Default::default(),
+            duck_spans: Arc::new(Mutex::new((Vec::new(), 0))),
+            duck_pending: None,
             texture: None,
             view_start: 0.0,
             ticks_per_px: 900.0,
@@ -702,7 +718,9 @@ impl KtApp {
         let peaks = Arc::new(Mutex::new(HashMap::new()));
         let media: Vec<_> =
             project.media.iter().map(|m| (m.id, resolve_media_path(base, &m.path))).collect();
-        let index = crate::util::IndexService::start(peaks.clone());
+        let loudness_map: Arc<Mutex<crate::util::LoudnessMap>> =
+            Arc::new(Mutex::new(Default::default()));
+        let index = crate::util::IndexService::start(peaks.clone(), loudness_map.clone());
         index.enqueue(Some(path.with_extension("ktindex.db")), media);
         let ui_state = project.ui.clone();
         let mut app = KtApp {
@@ -715,6 +733,10 @@ impl KtApp {
             peaks,
             index,
             index_errs_said: Default::default(),
+            loudness: loudness_map,
+            analysis: Default::default(),
+            duck_spans: Arc::new(Mutex::new((Vec::new(), 0))),
+            duck_pending: None,
             texture: None,
             view_start: 0.0,
             ticks_per_px: 900.0,
@@ -1328,6 +1350,15 @@ impl KtApp {
                 .ok();
         }
         self.poll_returned_sources();
+        // Офлайн-анализ: забрать готовое, запустить следующее (п.372).
+        // `animating` держится на `is_running()`, а не на «окно открыто» —
+        // иначе перерисовка не остановится после финиша (повтор t38).
+        if let Some((kind, rev, res)) = self.analysis.poll(crate::analysis::spawn_default) {
+            self.on_analysis_done(kind, rev, res);
+        }
+        if self.analysis.is_running() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+        }
         // Ошибки индекса — ВСЛУХ (Р.49, п.368). Четыре `let _ =` молчали о
         // том, что индекс не построился, и человек видел плейсхолдеры
         // вместо волноформ без единого слова о причине. Один раз на адрес:
@@ -1470,6 +1501,29 @@ impl KtApp {
             });
             if let Some(a) = answer {
                 self.answer_ask(a);
+            }
+        }
+
+        // окно прогресса анализа (п.372). ОДНО на все задачи: у каждой
+        // своё окно означало бы частокол окон при очереди из десятка файлов.
+        if self.analysis.open {
+            let mut cancel = false;
+            egui::Window::new(tr(k::win::ANALYSIS_TITLE))
+                .id(egui::Id::new("kt_analysis"))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::RIGHT_BOTTOM, [-16.0, -16.0])
+                .show(ui.ctx(), |ui| {
+                    ui.add(egui::ProgressBar::new(self.analysis.progress()).desired_width(220.0));
+                    if self.analysis.queued() > 0 {
+                        ui.weak(crate::tf!(k::win::ANALYSIS_QUEUED, self.analysis.queued()));
+                    }
+                    if ui.button(tr(k::win::ANALYSIS_CANCEL)).clicked() {
+                        cancel = true;
+                    }
+                });
+            if cancel {
+                self.analysis.cancel_all();
             }
         }
 
@@ -2427,6 +2481,63 @@ impl KtApp {
         self.note(crate::tf!(k::msg::RECOVERY_FORGOTTEN, c.path.display()));
     }
 
+    /// Синхронизировать два выделенных события по звуку (Р.49, п.375).
+    ///
+    /// ОДНО ТЕЛО на оба пути — пункт меню события и пункт главного меню
+    /// (правило 17: парные способы ведут себя одинаково). Невозможность
+    /// показывается ОШИБКОЙ, а не блёклой подсказкой (правило 16): «индекс
+    /// ещё строится» и «записи не совпадают» — разные причины, и обе
+    /// называются вслух.
+    pub fn sync_selected_by_audio(&mut self) {
+        let ids: Vec<kt_model::ClipId> = self.selected.iter().copied().collect();
+        if ids.len() != 2 {
+            self.warn(tr(k::msg::SYNC_NEED_TWO));
+            return;
+        }
+        let (a, b) = (ids[0], ids[1]);
+        let (Some(ca), Some(cb)) = (self.model.clip(a).cloned(), self.model.clip(b).cloned())
+        else {
+            return;
+        };
+        // Пирамиды обоих файлов обязаны быть готовы. «Ещё не готово» — это
+        // честный отказ, а не «сдвиг ноль»: ноль неотличим от «они и так
+        // совпадают», и монтажёр поверит.
+        let peaks = self.peaks.lock().unwrap();
+        let (Some(pa), Some(pb)) = (peaks.get(&ca.media), peaks.get(&cb.media)) else {
+            drop(peaks);
+            self.warn(tr(k::msg::SYNC_PENDING));
+            return;
+        };
+        let la: Vec<Vec<(i16, i16)>> = pa.iter().map(|(l, _)| l.clone()).collect();
+        let lb: Vec<Vec<(i16, i16)>> = pb.iter().map(|(l, _)| l.clone()).collect();
+        drop(peaks);
+        let Some(off) =
+            kt_media::sync::offset_from_pyramids(&la, &lb, kt_media::PEAK_BLOCK_FRAMES)
+        else {
+            self.warn(tr(k::msg::SYNC_NO_MATCH));
+            return;
+        };
+        let cmds = match kt_model::ops::sync_by_audio_commands(self.model.project(), a, b, off.ticks)
+        {
+            kt_model::ops::SyncPlan::Move(c) => c,
+            kt_model::ops::SyncPlan::AlreadyAligned => {
+                self.note(crate::tf!(k::msg::SYNC_DONE, 0, (off.confidence * 100.0).round()));
+                return;
+            }
+            kt_model::ops::SyncPlan::OutOfRange => {
+                self.warn(tr(k::msg::SYNC_OUT_OF_RANGE));
+                return;
+            }
+        };
+        if self.apply_batch(cmds) {
+            self.note(crate::tf!(
+                k::msg::SYNC_DONE,
+                off.ticks.as_ms(),
+                (off.confidence * 100.0).round()
+            ));
+        }
+    }
+
     /// Ответить на заданный вопрос. Вынесено из отрисовки, чтобы тест
     /// отвечал ровно тем же кодом, что и кнопка (правило 17).
     pub fn answer_ask(&mut self, ans: Answer) {
@@ -3209,7 +3320,7 @@ impl KtApp {
         }
         if go {
             ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("duck")));
-            self.run_ducking(&d);
+            self.start_ducking(&d);
             return;
         }
         if cancel || !open {
@@ -3225,32 +3336,179 @@ impl KtApp {
     /// владеет MediaWorker плеера (инвариант №5), и лезть к ним из
     /// UI-потока нельзя, а кэш прогрет только вокруг курсора — для
     /// огибающей целой дорожки этого мало.
-    fn run_ducking(&mut self, d: &DuckDialog) {
+    /// Автодакинг — В ФОНЕ (Р.49, п.376; долг Р.48).
+    ///
+    /// Раньше считался СИНХРОННО в UI-потоке: открыть все источники, прочесть
+    /// их целиком, посчитать огибающую. На длинном монтаже окно замирало на
+    /// десятки секунд без единого признака жизни — ровно то, чего быть не
+    /// должно (чек-лист «фоновая работа не мешает»). Теперь это третий
+    /// потребитель общего каркаса задач, и им же доказывается, что каркас
+    /// общий, а не выкроен под рендер.
+    pub(crate) fn start_ducking(&mut self, d: &DuckDialog) {
         let project = self.model.project().clone();
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let index = self.index_db_path();
-        let mut f = kt_engine::DirectFetcher::new(None);
-        let mut missing = 0usize;
-        for m in &project.media {
-            let used = project
-                .clips
-                .iter()
-                .any(|c| c.media == m.id && c.kind == kt_model::ClipKind::Audio);
-            if !used {
-                continue;
+        let params = d.params;
+        let src_lane = d.src_lane;
+        let spans_out = self.duck_spans.clone();
+        self.duck_pending = Some(d.clone());
+        let rev = self.model_rev;
+        self.analysis.request_with(
+            crate::analysis::AnalysisKind::Duck,
+            rev,
+            true,
+            move |ctl: crate::bg::BgCtl, send: crate::bg::BgSend<f32>| {
+                let mut f = kt_engine::DirectFetcher::new(None);
+                let mut missing = 0usize;
+                let used: Vec<_> = project
+                    .media
+                    .iter()
+                    .filter(|m| {
+                        project
+                            .clips
+                            .iter()
+                            .any(|c| c.media == m.id && c.kind == kt_model::ClipKind::Audio)
+                    })
+                    .cloned()
+                    .collect();
+                for (i, m) in used.iter().enumerate() {
+                    if ctl.should_stop() {
+                        return Err("cancelled".to_string());
+                    }
+                    send.send(i as f32 / used.len().max(1) as f32 * 0.5);
+                    let resolved = resolve_media_path(base.as_deref(), &m.path);
+                    match open_source_indexed(&resolved, index.as_deref()) {
+                        Ok(src) => f.add_source(m.id, src),
+                        Err(_) => missing += 1,
+                    }
+                }
+                send.send(0.5);
+                let spans = kt_engine::ducking::duck_spans(&project, &mut f, src_lane, params);
+                let n = spans.len();
+                *spans_out.lock().unwrap() = (spans, missing);
+                send.send(1.0);
+                Ok(crate::analysis::AnalysisOut::Duck { spans: n })
+            },
+        );
+    }
+
+    /// Померить громкость медиа по прямой просьбе (Р.49, п.373).
+    ///
+    /// Именно ПО ПРОСЬБЕ: сам показ ничего не запускает (инвариант 8), а
+    /// служба индекса меряет только то, что и так индексирует.
+    pub fn measure_loudness(&mut self, id: MediaId) {
+        let Some(m) = self.model.project().media.iter().find(|m| m.id == id).cloned() else {
+            return;
+        };
+        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        let index = self.index_db_path();
+        let path = resolve_media_path(base.as_deref(), &m.path);
+        let rev = self.model_rev;
+        let kind = crate::analysis::AnalysisKind::Loudness(id);
+        // «попробуй ещё раз» — это и есть прямая просьба: негативный кэш
+        // снимается только здесь
+        let retry = self.analysis.failure(kind).is_some();
+        self.analysis.request_with(
+            kind,
+            rev,
+            retry,
+            move |ctl: crate::bg::BgCtl, send: crate::bg::BgSend<f32>| {
+                let mut src = open_source_indexed(&path, index.as_deref())?;
+                let total = src.info().duration.to_audio_frames()
+                    / kt_time::AUDIO_BURST_FRAMES as i64;
+                let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
+                for b in 0..total.max(1) {
+                    if ctl.should_stop() {
+                        return Err("cancelled".into());
+                    }
+                    let Ok(burst) = src.read_audio_burst(b) else { break };
+                    meter.feed(burst.data.as_slice());
+                    if b % 64 == 0 {
+                        send.send(b as f32 / total.max(1) as f32);
+                    }
+                }
+                let l = meter.finish();
+                Ok(crate::analysis::AnalysisOut::Loudness {
+                    media: id,
+                    lufs: l.lufs,
+                    dbtp: l.dbtp,
+                    lra: l.lra,
+                })
+            },
+        );
+    }
+
+    /// Результат задачи анализа доехал.
+    ///
+    /// Стейл-защита по ревизии: пока задача считала, пользователь мог
+    /// подменить исходник или перестроить монтаж — применять к другой модели
+    /// число, посчитанное по старой, нельзя.
+    fn on_analysis_done(
+        &mut self,
+        kind: crate::analysis::AnalysisKind,
+        rev: u64,
+        res: Result<crate::analysis::AnalysisOut, String>,
+    ) {
+        use crate::analysis::{AnalysisKind as K, AnalysisOut as O};
+        let out = match res {
+            Ok(o) => o,
+            Err(e) => {
+                if e != "cancelled" {
+                    self.warn(crate::tf!(k::msg::ANALYSIS_FAILED, e));
+                }
+                self.duck_pending = None;
+                return;
             }
-            let resolved = resolve_media_path(base.as_deref(), &m.path);
-            match open_source_indexed(&resolved, index.as_deref()) {
-                Ok(src) => f.add_source(m.id, src),
-                Err(_) => missing += 1,
+        };
+        // стейл-защита: ревизия И присутствие медиа. Подменили исходник —
+        // число, посчитанное по прежнему файлу, к нему не относится.
+        let alive = |m: MediaId| self.model.project().media.iter().any(|x| x.id == m);
+        let stale = self.model_rev != rev || !kind.media().into_iter().all(alive);
+        match (kind, out) {
+            (K::Duck, O::Duck { .. }) => {
+                if stale {
+                    // монтаж успел измениться — кривые от старой модели легли
+                    // бы не на те события
+                    self.duck_pending = None;
+                    self.note(tr(k::msg::ANALYSIS_STALE));
+                } else {
+                    self.apply_ducking();
+                }
             }
+            (_, O::Loudness { media, lufs, dbtp, lra }) => {
+                // число по исчезнувшему или подменённому медиа относится не
+                // к этому проекту: применять его — врать о материале
+                if stale {
+                    return;
+                }
+                if let Some(l) = lufs {
+                    self.loudness.lock().unwrap().insert(media, (l, dbtp, lra));
+                }
+            }
+            (_, O::Duck { .. }) => {}
         }
+    }
+
+    /// Тот же приём результата, что в кадре, — для теста стейл-защиты.
+    #[cfg(test)]
+    pub(crate) fn on_analysis_done_for_test(
+        &mut self,
+        kind: crate::analysis::AnalysisKind,
+        rev: u64,
+        res: Result<crate::analysis::AnalysisOut, String>,
+    ) {
+        self.on_analysis_done(kind, rev, res);
+    }
+
+    /// Применить посчитанные в фоне интервалы дакинга.
+    fn apply_ducking(&mut self) {
+        let Some(d) = self.duck_pending.take() else { return };
+        let (spans, missing) = std::mem::take(&mut *self.duck_spans.lock().unwrap());
         if missing > 0 {
             self.note(format!("{} {missing}", tr(k::msg::DUCK_MISSING)));
         }
-        let spans = kt_engine::ducking::duck_spans(&project, &mut f, d.src_lane, d.params);
         let cmds = kt_model::ops::duck_curve_commands(
-            &project,
+            self.model.project(),
             &d.targets,
             &spans,
             d.params.depth_db,

@@ -4899,6 +4899,228 @@ fn t394_panel_objects_answer_right_click() {
     );
 }
 
+/// Тест 412 (Р.49 Б7): громкость видна В ПОДСКАЗКЕ карточки бина, а показ
+/// НИЧЕГО НЕ ЗАПУСКАЕТ.
+///
+/// Второе важнее первого: провести мышью по бину значило бы начать декод
+/// десятка файлов — прямая родня инварианта 8 («скролл/зум не порождает
+/// декод-запросов»). И пока не мерили, программа так и говорит, а не
+/// показывает выдуманный ноль.
+#[test]
+fn t412_bin_tooltip_shows_loudness_and_does_not_request_it() {
+    use kt_model::*;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+        app.model.apply(Command::AddMedia { id: MediaId(2), path: "synth:sine:440".into() }).unwrap();
+        // первому громкость известна, второму — нет
+        app.loudness.lock().unwrap().insert(MediaId(1), (-18.5, -1.2, 6.0));
+    }
+    h.step();
+    h.step();
+
+    let g = h.state().bin_rect;
+    assert!(g.is_positive(), "бин не нарисован");
+    // наводимся на карточки и читаем строку состояния
+    let mut seen_known = false;
+    let mut seen_pending = false;
+    for y in 0..20 {
+        let p = egui::pos2(g.left() + 30.0, g.top() + 20.0 + y as f32 * 12.0);
+        if !g.contains(p) {
+            break;
+        }
+        h.hover_at(p);
+        h.step();
+        if let Some(hint) = h.state().hover_hint.clone() {
+            if hint.contains("-18.5") || hint.contains("−18.5") {
+                seen_known = true;
+            }
+            if hint.contains(tr(k::bin::LOUDNESS_PENDING)) {
+                seen_pending = true;
+            }
+        }
+    }
+    assert!(seen_known, "громкость не доехала до подсказки карточки");
+    assert!(seen_pending, "о неизмеренной громкости программа промолчала");
+
+    // и ни одна заявка на анализ при этом не поставлена
+    let st = h.state();
+    assert_eq!(st.analysis.queued(), 0, "показ поставил заявку на анализ");
+    assert!(st.analysis.current().is_none(), "показ запустил анализ");
+}
+
+/// Тест 418 (Р.49 Б9): невозможность синхронизации называется ВСЛУХ и
+/// РАЗНЫМИ причинами (правило 16).
+///
+/// «Индекс ещё строится» и «записи не совпадают» — не одно и то же: в первом
+/// случае надо подождать, во втором ждать бессмысленно. Молчание или общее
+/// «не получилось» оставляет человека гадать.
+#[test]
+fn t418_sync_refusals_are_spoken_and_distinct() {
+    use kt_model::*;
+    let (mut h, _) = harness_three_clips();
+
+    // ни одного выделения — сказано, что надо выделить два
+    let app = h.state_mut();
+    app.selected.clear();
+    app.notices.clear();
+    app.sync_selected_by_audio();
+    assert_eq!(
+        h.state().notices.back().map(|n| n.text.clone()),
+        Some(tr(k::msg::SYNC_NEED_TWO).to_string()),
+        "о неверном выделении не сказано"
+    );
+
+    // два выделено, но пирамид нет — «индекс ещё строится», другая причина
+    let app = h.state_mut();
+    let ids: Vec<ClipId> = app.model.project().clips.iter().take(2).map(|c| c.id).collect();
+    app.selected = ids.iter().copied().collect();
+    app.peaks.lock().unwrap().clear();
+    app.notices.clear();
+    app.sync_selected_by_audio();
+    let last = h.state().notices.back().cloned().expect("о неготовом индексе промолчали");
+    assert_eq!(last.text, tr(k::msg::SYNC_PENDING), "причина названа не та");
+    assert_eq!(last.severity, crate::app::Severity::Warn, "отказ показан не как ошибка");
+    assert_ne!(
+        tr(k::msg::SYNC_PENDING),
+        tr(k::msg::SYNC_NO_MATCH),
+        "две разные причины обязаны звучать по-разному"
+    );
+}
+
+/// Тест 419 (Р.49 Б9): пункт меню события и пункт главного меню — ОДНО ТЕЛО
+/// (правило 17). Разные тела разъехались бы на первой же правке.
+#[test]
+fn t419_sync_menu_and_timeline_item_are_the_same_body() {
+    let root = crate::reach_tests::workspace_root();
+    let mut callers = Vec::new();
+    for rel in ["apps/kt-app/src/timeline.rs", "apps/kt-app/src/toolbar.rs"] {
+        let src = std::fs::read_to_string(root.join(rel)).expect(rel);
+        assert!(
+            src.contains("SYNC_AUDIO"),
+            "{rel}: пункта синхронизации нет — парный способ потерян"
+        );
+        callers.push(src.matches("sync_selected_by_audio()").count());
+    }
+    assert!(
+        callers.iter().all(|&n| n >= 1),
+        "один из путей зовёт не общее тело: {callers:?}"
+    );
+    // и само тело — одно на весь app
+    let app = std::fs::read_to_string(root.join("apps/kt-app/src/app.rs")).expect("app.rs");
+    assert_eq!(
+        app.matches("pub fn sync_selected_by_audio").count(),
+        1,
+        "тел синхронизации больше одного — они разъедутся"
+    );
+}
+
+/// Тест 420 (Р.49 Б10): автодакинг считается В ФОНЕ — долг Р.48.
+///
+/// Раньше он открывал все источники и читал их целиком прямо в UI-потоке: на
+/// длинном монтаже окно замирало на десятки секунд без единого признака
+/// жизни. Теперь это третий потребитель общего каркаса задач — им же и
+/// доказывается, что каркас общий, а не выкроен под рендер.
+#[test]
+fn t420_ducking_runs_in_the_background() {
+    use kt_model::*;
+    let (mut h, _) = harness_three_clips();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        let mut a = p.clips[0].clone();
+        a.id = ClipId(50);
+        a.kind = ClipKind::Audio;
+        a.lane = 0;
+        p.clips.push(a);
+        p.audio_lanes = p.audio_lanes.max(1);
+        app.model = kt_model::TimelineModel::new(p);
+        // окно настроек дакинга, как его собирает диалог
+        app.duck = Some(crate::app::DuckDialog {
+            targets: vec![ClipId(50)],
+            src_lane: 0,
+            params: Default::default(),
+        });
+    }
+    h.step();
+
+    // жмём «применить» тем же телом, что и кнопка
+    let d = h.state().duck.clone().expect("диалог дакинга");
+    h.state_mut().start_ducking(&d);
+    // UI-поток НЕ ЗАБЛОКИРОВАН: кадр проходит сразу, задача считается фоном
+    let t = std::time::Instant::now();
+    h.step();
+    assert!(
+        t.elapsed() < std::time::Duration::from_secs(2),
+        "кадр ждал дакинга — значит он считается в UI-потоке"
+    );
+    assert!(
+        h.state().analysis.current().is_some() || h.state().duck_pending.is_none(),
+        "задача дакинга не поставлена"
+    );
+
+    // ждём финиша и смотрим следствие: кривые появились на цели
+    let deadline = std::time::Instant::now() + WAIT_BG;
+    while h.state().duck_pending.is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    assert!(h.state().duck_pending.is_none(), "задача дакинга не закончилась");
+}
+
+/// Тест 421 (Р.49 Б10): результат, посчитанный по УСТАРЕВШЕЙ модели, не
+/// применяется. Пока задача читала файлы, монтаж мог поехать — кривые от
+/// старой модели легли бы не на те события, и молча.
+#[test]
+fn t421_stale_analysis_result_is_not_applied() {
+    use kt_model::*;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+        app.model_rev += 1;
+    }
+    let rev = h.state().model_rev;
+    // результат «из прошлого»: ревизия та же, медиа на месте — применяется
+    h.state_mut().on_analysis_done_for_test(
+        crate::analysis::AnalysisKind::Loudness(MediaId(1)),
+        rev,
+        Ok(crate::analysis::AnalysisOut::Loudness {
+            media: MediaId(1),
+            lufs: Some(-17.0),
+            dbtp: -2.0,
+            lra: 4.0,
+        }),
+    );
+    assert!(
+        h.state().loudness.lock().unwrap().contains_key(&MediaId(1)),
+        "свежий результат не применён"
+    );
+
+    // а теперь медиа подменили: результат по прежнему файлу к нему не относится
+    {
+        let app = h.state_mut();
+        app.loudness.lock().unwrap().clear();
+        app.apply(Command::RemoveMedia { id: MediaId(1) });
+    }
+    let rev = h.state().model_rev;
+    h.state_mut().on_analysis_done_for_test(
+        crate::analysis::AnalysisKind::Loudness(MediaId(1)),
+        rev,
+        Ok(crate::analysis::AnalysisOut::Loudness {
+            media: MediaId(1),
+            lufs: Some(-17.0),
+            dbtp: -2.0,
+            lra: 4.0,
+        }),
+    );
+    assert!(
+        !h.state().loudness.lock().unwrap().contains_key(&MediaId(1)),
+        "число по исчезнувшему медиа применено — стейл-защита не сработала"
+    );
+}
+
 /// Тест 376 (Р.49 А8): номер события не переиспользуется в пределах сессии.
 /// Прежняя формула «максимум по текущим клипам + 1» после удаления последнего
 /// события выдавала его же номер заново — и новорождённый клип наследовал

@@ -181,6 +181,7 @@ impl KtApp {
         let card_h = card_w * PREVIEW_H / PREVIEW_W;
         let row_h = card_h + 18.0;
         let mut to_place: Option<MediaId> = None;
+        let mut to_measure: Option<MediaId> = None;
         let mut to_remove: Option<MediaId> = None;
         let mut pending = false;
         let mut drag_out: Option<MediaId> = None;
@@ -257,6 +258,7 @@ impl KtApp {
                     &offline,
                     &mut pending,
                     &mut to_place,
+                    &mut to_measure,
                     &mut to_remove,
                 );
                 // перетаскивание внутри бина двигает карточку (и всю её
@@ -404,6 +406,7 @@ impl KtApp {
                         &offline,
                         &mut pending,
                         &mut to_place,
+                        &mut to_measure,
                         &mut to_remove,
                     );
                     if resp.dragged() {
@@ -423,6 +426,9 @@ impl KtApp {
         if pending {
             // тумба грузится — мягкий ретрай, не 60 fps
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+        }
+        if let Some(id) = to_measure {
+            self.measure_loudness(id);
         }
         if let Some(id) = to_place {
             self.place_media_at_cursor(id);
@@ -665,6 +671,7 @@ impl KtApp {
         offline: &std::collections::HashSet<MediaId>,
         pending: &mut bool,
         to_place: &mut Option<MediaId>,
+        to_measure: &mut Option<MediaId>,
         to_remove: &mut Option<MediaId>,
     ) -> egui::Response {
         let name = std::path::Path::new(path)
@@ -776,6 +783,10 @@ impl KtApp {
                 *to_place = Some(id);
                 ui.close();
             }
+            if ui.button(tr(k::bin::menu::MEASURE_LOUDNESS)).clicked() {
+                *to_measure = Some(id);
+                ui.close();
+            }
             ui.separator();
             match group_of {
                 Some(gi) => {
@@ -845,7 +856,18 @@ impl KtApp {
             avail,
         );
         p.galley(egui::pos2(x, label_y), g, egui::Color32::from_gray(190));
-        self.hint(resp.clone(), path);
+        // Громкость материала — В ПОДСКАЗКЕ, без новой полосы в карточке
+        // (Р.49, п.373). Показ НИЧЕГО НЕ ЗАПУСКАЕТ: провести мышью по бину
+        // значило бы начать декод десятка файлов — прямая родня инварианта 8
+        // («скролл/зум не порождает декод-запросов»). Пока не мерили, так и
+        // сказано: «ещё не измерена», а не выдуманный ноль.
+        let loud = match self.loudness.lock().unwrap().get(&id) {
+            Some((lufs, dbtp, _)) => {
+                crate::tf!(k::bin::LOUDNESS, format!("{lufs:.1}"), format!("{dbtp:.1}"))
+            }
+            None => tr(k::bin::LOUDNESS_PENDING).to_string(),
+        };
+        self.hint(resp.clone(), &format!("{path}\n{loud}"));
         resp
     }
 

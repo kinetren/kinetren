@@ -118,6 +118,10 @@ pub struct LoudnessMeter {
     short_steps: std::collections::VecDeque<[f64; AUDIO_CHANNELS]>,
     short_blocks: Vec<f64>,
     peak: f64,
+    /// Наибольший модуль СЭМПЛА — им гейтится дорогая интерполяция.
+    sample_peak: f32,
+    /// Сколько кадров ещё считать интерполяцию после «большого» сэмпла.
+    tp_countdown: usize,
     /// Хвост для полифазного оверсэмплинга true-peak.
     tp_tail: [[f32; TP_TAPS]; AUDIO_CHANNELS],
 }
@@ -126,6 +130,10 @@ pub struct LoudnessMeter {
 const TP_TAPS: usize = 8;
 /// Оверсэмплинг ×4 — минимум, требуемый BS.1770-4 для 48 кГц.
 const TP_OVER: usize = 4;
+/// Доля от наибольшего сэмпла, начиная с которой считается интерполяция.
+/// 0.7 ≈ −3 dB: межсэмпловый выброс band-limited сигнала не превышает
+/// соседний сэмпл больше чем примерно на 1.5 dB, так что запас тройной.
+const TP_GATE: f32 = 0.7;
 
 impl Default for LoudnessMeter {
     fn default() -> Self {
@@ -146,6 +154,8 @@ impl LoudnessMeter {
             short_steps: std::collections::VecDeque::new(),
             short_blocks: Vec::new(),
             peak: 0.0,
+            sample_peak: 0.0,
+            tp_countdown: 0,
             tp_tail: [[0.0; TP_TAPS]; AUDIO_CHANNELS],
         }
     }
@@ -194,10 +204,34 @@ impl LoudnessMeter {
     }
 
     /// Истинный пик: сигнал между сэмплами бывает выше, чем в них.
+    ///
+    /// Интерполяция считается НЕ на каждом кадре. Межсэмпловый выброс живёт
+    /// рядом с большими сэмплами — это и значит «пик»; в тишине его быть не
+    /// может. Поэтому полифазная сумма (восемь тапов на четыре фазы, то есть
+    /// 64 умножения на кадр) запускается только вокруг сэмплов, сравнимых с
+    /// наибольшим, и держится ещё длину ядра после него, чтобы выброс СПРАВА
+    /// от большого сэмпла тоже попал в счёт.
+    ///
+    /// Без гейта проход по часовому файлу упирался в эту сумму: индексация
+    /// материала замедлялась в разы, а она идёт при каждом открытии проекта.
     fn true_peak(&mut self, ch: usize, x: f32) {
         let tail = &mut self.tp_tail[ch];
         tail.rotate_left(1);
         tail[TP_TAPS - 1] = x;
+        let a = x.abs();
+        if a > self.sample_peak {
+            self.sample_peak = a;
+        }
+        if a >= self.sample_peak * TP_GATE {
+            self.tp_countdown = TP_TAPS;
+        }
+        if self.tp_countdown == 0 {
+            return;
+        }
+        if ch + 1 == AUDIO_CHANNELS {
+            self.tp_countdown -= 1;
+        }
+        let tail = self.tp_tail[ch];
         for phase in 0..TP_OVER {
             let mut acc = 0.0f64;
             for (i, &s) in tail.iter().enumerate() {

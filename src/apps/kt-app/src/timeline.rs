@@ -4871,6 +4871,14 @@ impl KtApp {
                     self.delete_selected();
                     ui.close();
                 }
+                // синхронизация по звуку (Р.49, п.375): видна там, где
+                // человек и работает — на самих событиях
+                if self.selected.len() == 2
+                    && ui.button(tr(k::tl::menu::SYNC_AUDIO)).clicked()
+                {
+                    self.sync_selected_by_audio();
+                    ui.close();
+                }
                 if ui.button(tr(k::tl::menu::SPLIT)).clicked() {
                     if !self.is_selected(id) {
                         self.select_only(id);

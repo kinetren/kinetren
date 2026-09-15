@@ -98,6 +98,9 @@ pub fn resolve_media_path(base: Option<&Path>, path: &str) -> String {
 /// Ошибки ПУБЛИКУЮТСЯ: четыре `let _ =` молчали о том, что индекс не
 /// построился, и пользователь видел плейсхолдеры вместо волноформ без
 /// единого слова о причине.
+/// Громкость медиа: (LUFS, dBTP, LRA).
+pub type LoudnessMap = HashMap<MediaId, (f64, f64, f64)>;
+
 pub struct IndexService {
     tx: std::sync::mpsc::Sender<IndexTask>,
     stop: Arc<std::sync::atomic::AtomicBool>,
@@ -117,7 +120,10 @@ impl Drop for IndexService {
 }
 
 impl IndexService {
-    pub fn start(out: Arc<Mutex<HashMap<MediaId, Peaks>>>) -> IndexService {
+    pub fn start(
+        out: Arc<Mutex<HashMap<MediaId, Peaks>>>,
+        loud: Arc<Mutex<LoudnessMap>>,
+    ) -> IndexService {
         let (tx, rx) = std::sync::mpsc::channel::<IndexTask>();
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -156,8 +162,11 @@ impl IndexService {
                             continue;
                         }
                         match build_peaks(&path, db.as_mut().map(|(_, d)| d), &stop_t) {
-                            Ok(Some(p)) => {
+                            Ok(Some((p, l))) => {
                                 out.lock().unwrap().insert(id, p);
+                                if let Some(l) = l {
+                                    loud.lock().unwrap().insert(id, l);
+                                }
                             }
                             Ok(None) => {}
                             Err(e) => err_t.lock().unwrap().push(format!("{path}: {e}")),
@@ -186,23 +195,42 @@ impl IndexService {
 
 /// Пирамида пиков одного медиа. Отдельной функцией — её зовут и служба, и
 /// тесты, и офлайн-анализ.
+///
+/// Заодно МЕРЯЕТ ГРОМКОСТЬ (Р.49, п.373) и кладёт её в индекс-БД: проход по
+/// файлу и так идёт, а второй ради LUFS на часовом исходнике — минуты.
+type PeaksAndLoudness = (Peaks, Option<(f64, f64, f64)>);
+
 fn build_peaks(
     path: &str,
     db: Option<&mut kt_media::index::MediaIndexDb>,
     stop: &Arc<std::sync::atomic::AtomicBool>,
-) -> Result<Option<Peaks>, String> {
-    let from_source = |path: &str| -> Result<Option<Peaks>, String> {
+) -> Result<Option<PeaksAndLoudness>, String> {
+    let from_source = |path: &str, measure: bool| -> Result<Option<PeaksAndLoudness>, String> {
         let mut s = open_source(path).map_err(|e| e.to_string())?;
-        Ok(Some(pyramid_to_peaks(kt_media::index::PeakPyramid::build(s.as_mut()))))
+        let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
+        let pyr = if measure {
+            kt_media::index::PeakPyramid::build_observed(s.as_mut(), &mut |b| {
+                meter.feed(b.data.as_slice())
+            })
+        } else {
+            kt_media::index::PeakPyramid::build(s.as_mut())
+        };
+        let l = meter.finish();
+        let loud = measure.then(|| l.lufs.map(|lufs| (lufs, l.dbtp, l.lra))).flatten();
+        Ok(Some((pyramid_to_peaks(pyr), loud)))
     };
     if path.starts_with("synth:") {
-        return from_source(path);
+        // Синтетика громкость НЕ меряет: это генератор, а не материал —
+        // его уровень ровно такой, как сказано в узоре, и «нормализовать
+        // синус до −23» никому не нужно. Заодно не платим за измерение там,
+        // где декода нет вовсе и оно стало бы единственной ценой прохода.
+        return from_source(path, false);
     }
     let Some(db) = db else {
         // Проект без пути → БД нет, но пики нужны (п.3: «пропало превью
         // аудио» у безымянного проекта): строим пирамиду в памяти — при
         // сохранении проекта служба получит задание уже с БД
-        return from_source(path);
+        return from_source(path, true);
     };
     let (mid, status) = db.ensure_media(Path::new(path)).map_err(|e| e.to_string())?;
     let complete = db.is_complete(mid).unwrap_or(false)
@@ -212,7 +240,14 @@ fn build_peaks(
         // заодно персистится пакетный индекс (тест 34)
         let mut src = kt_media::ffmpeg::FfmpegSource::open_indexed(path, Some(db))
             .map_err(|e| e.to_string())?;
-        db.build_audio_peaks(mid, &mut src).map_err(|e| e.to_string())?;
+        let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
+        db.build_audio_peaks_observed(mid, &mut src, &mut |b| meter.feed(b.data.as_slice()))
+            .map_err(|e| e.to_string())?;
+        let l = meter.finish();
+        // тишина — не «−70»: числа, которого нет, в БД не пишем
+        if let Some(lufs) = l.lufs {
+            let _ = db.set_loudness(mid, lufs, l.dbtp, l.lra);
+        }
         db.mark_complete(mid).map_err(|e| e.to_string())?;
     }
     let mut levels = Vec::new();
@@ -222,7 +257,10 @@ fn build_peaks(
         levels.push((l, r));
         level += 1;
     }
-    Ok(Some(levels))
+    // громкость берётся из БД: её мог посчитать и ПРОШЛЫЙ запуск — второй
+    // полный декод ради уже известного числа не нужен никому
+    let loud = db.loudness(mid).ok().flatten();
+    Ok(Some((levels, loud)))
 }
 
 fn pyramid_to_peaks(p: kt_media::index::PeakPyramid) -> Peaks {
@@ -455,7 +493,8 @@ mod tests {
     #[test]
     fn t399_index_service_serves_a_queue() {
         let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
-        let svc = IndexService::start(out.clone());
+        let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
+        let svc = IndexService::start(out.clone(), loud.clone());
         // синтетика не требует ни FFmpeg, ни файлов на диске
         svc.enqueue(None, vec![(MediaId(1), "synth:sine:440".into())]);
         svc.enqueue(None, vec![(MediaId(2), "synth:ramp".into())]);
@@ -477,6 +516,8 @@ mod tests {
             assert!(!p.is_empty() && !p[0].0.is_empty(), "пустая пирамида у {id:?}");
         }
         assert!(svc.take_errors().is_empty(), "на здоровой работе ошибок быть не должно");
+        // синтетика громкость не меряет: это генератор, а не материал
+        assert!(loud.lock().unwrap().is_empty(), "синтетику незачем измерять");
     }
 
     /// Тест 400 (Р.49 Б2): служба умирает вместе с владельцем, а ошибки
@@ -486,7 +527,8 @@ mod tests {
     fn t400_index_service_dies_with_owner_and_reports_errors() {
         // 1) ошибка доезжает
         let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
-        let svc = IndexService::start(out.clone());
+        let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
+        let svc = IndexService::start(out.clone(), loud.clone());
         svc.enqueue(None, vec![(MediaId(9), "/proc/self/no-such-file.wav".into())]);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let mut errs = Vec::new();
@@ -501,7 +543,7 @@ mod tests {
         // 2) Drop останавливает поток: следующее задание не обслуживается
         let out2: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
         let tx = {
-            let svc = IndexService::start(out2.clone());
+            let svc = IndexService::start(out2.clone(), Arc::new(Mutex::new(Default::default())));
             svc.tx.clone()
         }; // здесь Drop
         std::thread::sleep(std::time::Duration::from_millis(400));
@@ -514,12 +556,52 @@ mod tests {
         );
     }
 
+    /// Тест 411 (Р.49 Б7): громкость НАСТОЯЩЕГО материала считается на том же
+    /// проходе, что и пирамида, и ложится в индекс-БД — второй запуск берёт
+    /// её оттуда, не декодируя файл заново.
+    #[test]
+    fn t411_source_loudness_is_measured_on_the_pyramid_pass() {
+        let dir = std::env::temp_dir().join(format!("kt-t411-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db_path = dir.join("p.ktindex.db");
+        let file = fixture("sine48k_stereo.flac");
+
+        let peaks: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
+        let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
+        let svc = IndexService::start(peaks.clone(), loud.clone());
+        svc.enqueue(Some(db_path.clone()), vec![(MediaId(5), file.clone())]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while loud.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let first = *loud.lock().unwrap().get(&MediaId(5)).expect("громкость не посчитана");
+        assert!(first.0 < 0.0 && first.0 > -60.0, "громкость подозрительна: {first:?}");
+        assert!(first.1 <= 0.5, "истинный пик выше нуля: {}", first.1);
+        assert!(svc.take_errors().is_empty());
+        drop(svc);
+
+        // второй запуск: число берётся из БД, а не считается заново
+        let peaks2: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
+        let loud2: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
+        let svc2 = IndexService::start(peaks2, loud2.clone());
+        svc2.enqueue(Some(db_path), vec![(MediaId(5), file)]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while loud2.lock().unwrap().is_empty() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let second = *loud2.lock().unwrap().get(&MediaId(5)).expect("громкость не прочитана из БД");
+        assert_eq!(first, second, "круг через БД изменил число");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Тест 23 (п.3): пики строятся и БЕЗ индекс-БД (безымянный проект) —
     /// раньше db_path=None означал «пиков не будет вообще».
     #[test]
     fn t23_peaks_build_without_db() {
         let out: Arc<Mutex<HashMap<MediaId, Peaks>>> = Arc::new(Mutex::new(HashMap::new()));
-        let svc = IndexService::start(out.clone());
+        let loud: Arc<Mutex<LoudnessMap>> = Arc::new(Mutex::new(Default::default()));
+        let svc = IndexService::start(out.clone(), loud.clone());
         svc.enqueue(None, vec![(MediaId(7), fixture("sine48k_stereo.flac"))]); // безымянный проект
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
         loop {

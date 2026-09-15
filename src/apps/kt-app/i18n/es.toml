@@ -23,6 +23,9 @@ notices_title = "Avisos"
 notices_empty = "Todavía nada"
 search_title = "Buscar en el proyecto"
 diag_title = "Diagnóstico"
+analysis_title = "Analizando el material"
+analysis_cancel = "Cancelar"
+analysis_queued = "en cola: {0}"
 
 [menu.file]
 import_ktproj = "Importar .ktproj…"
@@ -195,6 +198,7 @@ punch_out = "Recortar el interior de la región"
 pick_something = "Selecciona una región o un clip"
 duck = "Atenuar bajo una pista…"
 remove_transition = "Quitar esta transición"
+sync_audio = "Sincronizar por audio con el otro clip seleccionado"
 
 # Медиа-бин: режимы, подсказки, пустое состояние.
 [bin]
@@ -203,6 +207,8 @@ hint_grid = "Cuadrícula: las tarjetas se ordenan solas"
 hint_group = "Grupo: clic — seleccionar, clic derecho — renombrar/bloquear/desagrupar"
 empty = "vacío — arrastra archivos multimedia a la ventana"
 group_name = "nombre del grupo"
+loudness = "{0} LUFS, pico {1} dBTP"
+loudness_pending = "sonoridad aún no medida"
 
 # Медиа-бин: контекстные меню карточки и группы.
 [bin.menu]
@@ -215,6 +221,7 @@ lock_toggle = "Bloquear / desbloquear"
 group_selected = "Agrupar lo seleccionado ({0})"
 group_one = "Agrupar (bloquear esta tarjeta)"
 remove = "Quitar del proyecto"
+measure_loudness = "Medir la sonoridad"
 
 # Метры и мастер-фейдер превью.
 [meter]
@@ -561,6 +568,8 @@ close = "Cerrar"
 missing_warn = "fuentes no disponibles ({0}), se renderizan como marcadores: {1}"
 missing_after = "renderizado con marcadores ({0}): {1}"
 missing_layers = "capas de vídeo perdidas: {0}"
+loudness = "Sonoridad: {0} LUFS, pico real {1} dBTP, rango {2} LU"
+loudness_to_target = "hasta −23 LUFS: {0} dB (solo informativo, no se aplica nada)"
 [hint]
 preview_detached = "la previsualización está en otra ventana (ciérrala para devolverla)"
 drop_here = "Suelta — el clip cae bajo el ratón (pista resaltada)"
@@ -664,6 +673,13 @@ recovery_none = "nada que recuperar: no hay trabajo sin guardar"
 prev_session_crashed = "la sesión anterior terminó de forma anómala: el informe está en {0}"
 workspace_readonly = "los ajustes del espacio de trabajo no se guardan: {0} lo escribió una versión más nueva"
 index_failed = "no se pudo construir el índice del material: {0}: las formas de onda seguirán siendo marcadores"
+sync_need_two = "selecciona exactamente dos eventos: qué alinear con qué"
+sync_pending = "el índice aún se está construyendo: hacen falta las ondas de ambos archivos"
+sync_no_match = "las tomas no coinciden: no se halló un desfase fiable"
+sync_done = "desfase {0} ms, confianza {1}%"
+sync_out_of_range = "la alineación movería el evento antes del inicio del proyecto"
+analysis_failed = "el análisis falló: {0}"
+analysis_stale = "el montaje cambió durante el análisis: el resultado no se aplicó"
 [dialog]
 import_ktproj = "Importar un proyecto .ktproj antiguo"
 open_project = "Abrir proyecto"

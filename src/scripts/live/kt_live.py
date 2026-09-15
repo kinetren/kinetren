@@ -401,6 +401,12 @@ class Live:
     def alive(self):
         return self.proc is not None and self.proc.poll() is None
 
+    def hover(self, x, y, pause=0.25):
+        """Навести указатель и дать окну кадр на реакцию."""
+        self.focus()
+        probe.move(x, y, pause=pause)
+        time.sleep(pause)
+
     def has_probe(self, name, tries=12):
         """Виджет с таким именем показан прямо сейчас."""
         for _ in range(tries):

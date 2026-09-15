@@ -51,6 +51,18 @@ pub struct ExportStats {
     /// Слои видео, не декодированные к моменту кадра (в экспорте это ошибка
     /// источника, не тайминга — декод блокирующий).
     pub missing_video_layers: u64,
+    /// Громкость СМИКШИРОВАННОГО материала (Р.49, п.371). `None` — аудио не
+    /// считалось (видео-проход) или материал целиком ниже абсолютного гейта.
+    ///
+    /// Меряется на проходе, который И ТАК ИДЁТ: метр кормится готовым
+    /// буфером чанка — ни одного нового декода и ни одного нового цикла.
+    ///
+    /// БЕЗ мастер-гейна — и это не упущение: мастер-гейн живёт только в
+    /// `Player`, его нет ни в `Project`, ни в .otio, экспорт его не
+    /// применяет, а ставит его фейдер панели метров. Это громкость
+    /// КОНТРОЛЯ, а не материала. Следствие: число в превью и число файла
+    /// совпадают по построению.
+    pub loudness: Option<kt_fx::audio::loudness::Loudness>,
 }
 
 /// Диапазон экспорта: [0, конец последнего клипа].
@@ -107,6 +119,7 @@ pub fn render_raw_audio_range(
         Some((a, b)) => (a.to_audio_frames(), b.to_audio_frames()),
         None => (0, project_range(project).to_audio_frames()),
     };
+    let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
     let mut chunk = vec![0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS];
     let mut head = start_frame;
     while head < end_frame {
@@ -118,10 +131,12 @@ pub fn render_raw_audio_range(
         let sub = &mut chunk[..n * AUDIO_CHANNELS];
         let s = renderer.render_frames_with(&mut fetcher, &mut store, head, sub);
         stats.underruns += s.underruns;
+        meter.feed(sub);
         emit(sub)?;
         stats.audio_frames += n as u64;
         head += n as i64;
     }
+    stats.loudness = Some(meter.finish());
     Ok(stats)
 }
 
@@ -518,5 +533,8 @@ pub fn export_mp4_with_backends(
         underruns: astats.underruns,
         missing_video_layers: vstats.missing_video_layers,
         encoder,
+        // громкость посчитана на аудио-проходе — тем же метром, тем же
+        // буфером и без мастер-гейна (п.371)
+        loudness: astats.loudness,
     })
 }
