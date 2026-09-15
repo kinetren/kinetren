@@ -4804,6 +4804,35 @@ impl Project {
         out
     }
 
+    /// Поменять местами содержимое корня и содержимое ленты `seq`
+    /// (Р.50, В1). Повторный вызов с тем же адресом возвращает как было.
+    ///
+    /// Этим и сделан ВХОД ВНУТРЬ. Альтернатива — провести «текущую ленту»
+    /// через все шестьдесят рук команд (`p.clips`, `p.transitions`,
+    /// `p.video_lanes`, …): пропусти одну — и правка молча уедет в корень,
+    /// пока человек смотрит внутрь. Здесь же ни одна команда о вложениях
+    /// не знает вовсе, и знать не должна: она правит ЛЕНТУ, а какая лента
+    /// под руками — вопрос контекста.
+    ///
+    /// Обмен держит СОЮЗ содержимого неизменным: все события документа
+    /// по-прежнему видны, просто в других контейнерах. Поэтому проверки
+    /// вида «этот файл ещё кем-то используется» остаются верными во время
+    /// правки внутри ленты.
+    pub fn swap_reel(&mut self, seq: MediaId) {
+        let Some(i) = self.sequences.iter().position(|s| s.id == seq) else { return };
+        let s = &mut self.sequences[i];
+        std::mem::swap(&mut self.clips, &mut s.clips);
+        std::mem::swap(&mut self.transitions, &mut s.transitions);
+        std::mem::swap(&mut self.morphers, &mut s.morphers);
+        std::mem::swap(&mut self.cameras, &mut s.cameras);
+        std::mem::swap(&mut self.video_lanes, &mut s.video_lanes);
+        std::mem::swap(&mut self.audio_lanes, &mut s.audio_lanes);
+        std::mem::swap(&mut self.morph_lanes, &mut s.morph_lanes);
+        std::mem::swap(&mut self.camera_lanes, &mut s.camera_lanes);
+        std::mem::swap(&mut self.lane_order, &mut s.lane_order);
+        std::mem::swap(&mut self.overlap_layers, &mut s.overlap_layers);
+    }
+
     /// Клипы ОДНОЙ ленты после морфер-слоёв, БЕЗ раскрытия вложений
     /// (Р.50, волна Б). `None` — корень.
     ///

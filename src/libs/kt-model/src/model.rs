@@ -390,10 +390,27 @@ pub enum CommandError {
 #[derive(Debug, Clone)]
 pub struct TimelineModel {
     project: Project,
-    undo: Vec<Project>,
-    redo: Vec<Project>,
+    undo: Vec<Snapshot>,
+    redo: Vec<Snapshot>,
     /// Токен последнего coalesced-жеста (см. apply_coalesced).
     last_gesture: Option<u64>,
+    /// Лента, которую сейчас редактируют (Р.50, В1). `None` — корень.
+    ///
+    /// Живёт В МОДЕЛИ, а не в проекте: это не монтаж, а место, где стоит
+    /// человек. В файл не пишется (вид внутри ленты — рабочее место, а не
+    /// работа) и в undo-снимок не входит — но КАЖДЫЙ снимок помнит, в
+    /// каком контексте правка делалась.
+    editing: Option<MediaId>,
+}
+
+/// Снимок истории: проект и контекст, в котором правка делалась (Р.50, В1).
+///
+/// Без контекста Ctrl+Z внутри ленты выглядел бы как «нажал — ничего не
+/// произошло»: отменилась бы правка в другом месте, которого не видно.
+#[derive(Debug, Clone)]
+struct Snapshot {
+    project: Project,
+    scope: Option<MediaId>,
 }
 
 /// Кто от кого родился в пакете команд (Р.49, п.357). Родство сообщает
@@ -432,7 +449,33 @@ impl Births {
 
 impl TimelineModel {
     pub fn new(project: Project) -> TimelineModel {
-        TimelineModel { project, undo: Vec::new(), redo: Vec::new(), last_gesture: None }
+        TimelineModel {
+            project,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            last_gesture: None,
+            editing: None,
+        }
+    }
+
+    /// Лента, которую сейчас редактируют. `None` — корень.
+    pub fn editing(&self) -> Option<MediaId> {
+        self.editing
+    }
+
+    /// Войти в ленту (или выйти в корень). Несуществующий адрес —
+    /// молчаливый выход в корень: лента могла исчезнуть под undo.
+    pub fn set_editing(&mut self, seq: Option<MediaId>) {
+        self.editing = seq.filter(|id| self.project.sequence(*id).is_some());
+        self.last_gesture = None;
+    }
+
+    /// Содержимое ленты, которую сейчас редактируют.
+    pub fn reel(&self) -> &dyn Reel {
+        match self.editing.and_then(|id| self.project.sequence(id)) {
+            Some(s) => s,
+            None => &self.project,
+        }
     }
 
     pub fn project(&self) -> &Project {
@@ -477,14 +520,28 @@ impl TimelineModel {
 
     fn simulate(&self, cmds: &[Command]) -> Result<Project, CommandError> {
         let mut scratch = self.project.clone();
-        for cmd in cmds {
-            Self::check_on(&scratch, cmd)?;
-            Self::mutate_on(&mut scratch, cmd.clone());
+        // ВХОД ВНУТРЬ (Р.50, В1): содержимое ленты встаёт на место корня,
+        // команда правит его, не зная о вложениях вовсе, и в конце всё
+        // возвращается на место. Валидация идёт уже ПОСЛЕ возврата.
+        if let Some(seq) = self.editing {
+            scratch.swap_reel(seq);
         }
+        let run = |scratch: &mut Project| -> Result<(), CommandError> {
+            for cmd in cmds {
+                Self::check_on(scratch, cmd)?;
+                Self::mutate_on(scratch, cmd.clone());
+            }
+            Ok(())
+        };
+        let res = run(&mut scratch);
         // reconcile — ОДИН раз на весь батч: жест атомарен, и переход не
         // должен умирать в переходном состоянии между командами (roll стыка
         // = TrimEnd+TrimStart: между ними стык формально разорван)
         Self::reconcile_transitions(&mut scratch);
+        if let Some(seq) = self.editing {
+            scratch.swap_reel(seq);
+        }
+        res?;
         // Жёсткая валидация результата (Р.24, этап 6): перекрытия после
         // групповых мувов/тримов/вставок дешевле отловить одной проверкой,
         // чем дублировать их логику в check_on. Провал = ноль изменений.
@@ -495,11 +552,7 @@ impl TimelineModel {
     /// Как apply, но серия вызовов с одним `gesture`-токеном сливается в
     /// одну undo-запись (live-редактирование параметров FX из окна).
     pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> Result<(), CommandError> {
-        let mut scratch = self.project.clone();
-        Self::check_on(&scratch, &cmd)?;
-        Self::mutate_on(&mut scratch, cmd);
-        Self::reconcile_transitions(&mut scratch);
-        scratch.validate().map_err(CommandError::InvalidLayout)?;
+        let scratch = self.simulate(std::slice::from_ref(&cmd))?;
         if self.last_gesture != Some(gesture) {
             self.push_undo();
         }
@@ -509,7 +562,7 @@ impl TimelineModel {
     }
 
     fn push_undo(&mut self) {
-        self.undo.push(self.project.clone());
+        self.undo.push(Snapshot { project: self.project.clone(), scope: self.editing });
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
         }
@@ -533,18 +586,28 @@ impl TimelineModel {
     pub fn undo(&mut self) -> Result<(), CommandError> {
         let mut prev = self.undo.pop().ok_or(CommandError::NothingToUndo)?;
         // регион/loop не откатываются — переносим текущие значения
-        prev.region = self.project.region;
-        prev.loop_enabled = self.project.loop_enabled;
-        self.redo.push(std::mem::replace(&mut self.project, prev));
+        prev.project.region = self.project.region;
+        prev.project.loop_enabled = self.project.loop_enabled;
+        // КОНТЕКСТ едет вместе с ПРАВКОЙ, а не с тем, где человек стоял в
+        // момент отмены (Р.50, В1): отменяется то, что он сделал ТАМ —
+        // значит и показать надо то место. И redo-запись помнит ТОТ ЖЕ
+        // контекст, иначе обратный ход уводил бы не туда.
+        let here = Snapshot { project: self.project.clone(), scope: prev.scope };
+        self.project = prev.project;
+        self.set_editing(prev.scope);
+        self.redo.push(here);
         self.last_gesture = None;
         Ok(())
     }
 
     pub fn redo(&mut self) -> Result<(), CommandError> {
         let mut next = self.redo.pop().ok_or(CommandError::NothingToRedo)?;
-        next.region = self.project.region;
-        next.loop_enabled = self.project.loop_enabled;
-        self.undo.push(std::mem::replace(&mut self.project, next));
+        next.project.region = self.project.region;
+        next.project.loop_enabled = self.project.loop_enabled;
+        let here = Snapshot { project: self.project.clone(), scope: next.scope };
+        self.project = next.project;
+        self.set_editing(next.scope);
+        self.undo.push(here);
         self.last_gesture = None;
         Ok(())
     }
@@ -1144,6 +1207,12 @@ impl TimelineModel {
                 // остаются жить и режут по-прежнему.
                 let baked = {
                     let mut q = p.clone();
+                    // Вложения при bake НЕ раскрываются (Р.50): морфер
+                    // материализует свою резку по клипам ЭТОЙ ленты, а
+                    // экземпляр вложения — такой же клип. Раскрытие
+                    // подменило бы его содержимым и потеряло бы само
+                    // событие.
+                    q.sequences.clear();
                     q.morphers.retain(|m| m.id == id);
                     q.effective_clips()
                 };

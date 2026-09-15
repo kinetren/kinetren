@@ -526,3 +526,115 @@ fn t430_outer_transition_is_rehung_and_media_is_held_by_the_whole_tree() {
         "файл, стоящий только ВНУТРИ ленты, удалился молча"
     );
 }
+
+// ---- 453-455 (Р.50, В1): контекст редактирования -----------------------------
+
+/// Проект: корневое событие и лента с двумя событиями внутри.
+fn with_reel() -> (TimelineModel, MediaId) {
+    let mut p = base();
+    p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
+    let mut s = Sequence::new(MediaId(100), "Кусок");
+    s.clips.push(clip(20, 1, Tick(0), LEN));
+    s.clips.push(clip(21, 2, LEN, LEN));
+    p.sequences.push(s);
+    p.clips.push(clip(1, 1, Tick(0), LEN));
+    let mut inst = clip(10, 100, LEN, LEN + LEN);
+    inst.source_in = Tick(0);
+    p.clips.push(inst);
+    p.validate().expect("фикстура законна");
+    (TimelineModel::new(p), MediaId(100))
+}
+
+#[test]
+fn t453_commands_edit_the_reel_you_are_standing_in() {
+    let (mut m, seq) = with_reel();
+    let root_before: Vec<i64> = m.project().clips.iter().map(|c| c.start.0).collect();
+
+    m.set_editing(Some(seq));
+    assert_eq!(m.editing(), Some(seq));
+    assert_eq!(m.reel().clips().len(), 2, "внутри ленты обязаны быть ЕЁ события");
+
+    // правка ВНУТРИ: корень не шелохнулся, лента изменилась
+    m.apply(Command::MoveClip { id: ClipId(20), new_start: Tick(LEN.0 / 2), new_lane: 0 })
+        .expect("перенос внутри ленты законен");
+    assert_eq!(
+        m.project().clips.iter().map(|c| c.start.0).collect::<Vec<_>>(),
+        root_before,
+        "правка ВНУТРИ ленты уехала в корень — человек смотрит в одно место, а \
+         меняется другое"
+    );
+    assert_eq!(
+        m.project().sequence(seq).unwrap().clips[0].start.0,
+        LEN.0 / 2,
+        "правка не доехала до ленты"
+    );
+
+    // события КОРНЯ изнутри не видны и не адресуются
+    assert!(
+        matches!(
+            m.apply(Command::MoveClip { id: ClipId(1), new_start: Tick(0), new_lane: 0 }),
+            Err(CommandError::ClipNotFound(ClipId(1)))
+        ),
+        "изнутри ленты удалось адресовать событие КОРНЯ"
+    );
+
+    // вышли — и корень снова под руками
+    m.set_editing(None);
+    m.apply(Command::MoveClip { id: ClipId(1), new_start: Tick(LEN.0 * 9), new_lane: 0 })
+        .expect("снаружи корень снова правится");
+    assert_eq!(m.project().sequence(seq).unwrap().clips.len(), 2, "лента пострадала от правки корня");
+}
+
+#[test]
+fn t454_undo_takes_you_back_to_where_the_edit_was() {
+    let (mut m, seq) = with_reel();
+    // правка СНАРУЖИ
+    m.apply(Command::MoveClip { id: ClipId(1), new_start: Tick(LEN.0 * 9), new_lane: 0 }).unwrap();
+    // правка ВНУТРИ
+    m.set_editing(Some(seq));
+    m.apply(Command::MoveClip { id: ClipId(20), new_start: Tick(LEN.0 / 2), new_lane: 0 }).unwrap();
+    // вышли наружу и жмём Ctrl+Z
+    m.set_editing(None);
+    m.undo().unwrap();
+    assert_eq!(
+        m.editing(),
+        Some(seq),
+        "Ctrl+Z отменил правку ВНУТРИ ленты, а показал корень — для человека это \
+         «нажал, и ничего не произошло»"
+    );
+    assert_eq!(m.project().sequence(seq).unwrap().clips[0].start.0, 0, "правка внутри не отменена");
+
+    // следующий шаг — правка снаружи, и контекст обязан уехать наружу
+    m.undo().unwrap();
+    assert_eq!(m.editing(), None, "Ctrl+Z до корневой правки оставил нас внутри ленты");
+    assert_eq!(m.project().clips[0].start.0, 0, "корневая правка не отменена");
+
+    // redo ведёт обратно тем же путём
+    m.redo().unwrap();
+    assert_eq!(m.editing(), None, "redo корневой правки перебросил внутрь");
+    m.redo().unwrap();
+    assert_eq!(m.editing(), Some(seq), "redo правки внутри не вернул в ленту");
+}
+
+#[test]
+fn t455_editing_context_survives_and_yields() {
+    let (mut m, seq) = with_reel();
+    m.set_editing(Some(seq));
+
+    // контекст — рабочее место, а не работа: он живёт в МОДЕЛИ, а не в
+    // проекте, поэтому в файл ему попасть неоткуда
+    let dump = format!("{:?}", m.project());
+    assert!(!dump.contains("editing"), "контекст редактирования пролез в проект");
+
+    // лента исчезла под руками (undo сворачивания) — выходим в корень, а
+    // не остаёмся в никуда
+    m.set_editing(None);
+    let cmds = ops::remove_unused_sequences(m.project());
+    assert!(cmds.is_empty(), "лента используется — убирать нечего");
+    m.apply(Command::RemoveClip { id: ClipId(10) }).unwrap();
+    let cmds = ops::remove_unused_sequences(m.project());
+    m.apply_batch(cmds).unwrap();
+    m.set_editing(Some(seq));
+    assert_eq!(m.editing(), None, "вход в исчезнувшую ленту оставил нас в никуда");
+    assert_eq!(m.reel().clips().len(), m.project().clips.len(), "лента без адреса подменила корень");
+}
