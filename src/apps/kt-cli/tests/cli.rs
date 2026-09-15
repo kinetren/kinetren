@@ -211,3 +211,102 @@ fn t307_relative_media_paths_resolve_once() {
     assert!(all.contains("missing layers 0"), "пустые слои: {all}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Тест 387 (Р.49 А11): kt-cli не затирает существующий файл молча. Звёздочки
+/// и диалога у него нет — помешать некому; поэтому перезапись только по
+/// явному `--force`.
+#[test]
+fn t387_cli_does_not_overwrite_without_force() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t387-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("p.otio");
+    std::fs::write(&path, "работа пользователя").unwrap();
+
+    for cmd in [["new"], ["demo"]] {
+        let st = cli().args([cmd[0], path.to_str().unwrap()]).output().unwrap();
+        assert!(!st.status.success(), "{} затёр существующий файл", cmd[0]);
+        let err = String::from_utf8_lossy(&st.stderr);
+        assert!(err.contains("--force"), "{}: не сказано, чем разрешить: {err}", cmd[0]);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "работа пользователя",
+            "{} всё-таки переписал файл",
+            cmd[0]
+        );
+    }
+
+    // с --force пишет, и пишет АТОМАРНО: временного файла не остаётся
+    let st = cli().args(["new", path.to_str().unwrap(), "--force"]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    assert!(std::fs::read_to_string(&path).unwrap().contains("OTIO_SCHEMA"));
+    let leftovers: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".tmp"))
+        .collect();
+    assert!(leftovers.is_empty(), "остался временный файл: {leftovers:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 388 (Р.49 А11): `demo` и `render` работают подряд БЕЗ единого
+/// медиафайла. Восемь путей `media/*`, на которые демо ссылалось, не
+/// существуют нигде в поставке — то есть демо не рендерилось ни у кого, кто
+/// не собрал эти файлы сам. `synth:` — полноправный источник во всей
+/// программе, и теперь он в демо по умолчанию.
+#[test]
+fn t388_demo_renders_without_any_media_files() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t388-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let proj = dir.join("demo.otio");
+    let wav = dir.join("demo.wav");
+
+    let st = cli().args(["demo", proj.to_str().unwrap()]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    let text = std::fs::read_to_string(&proj).unwrap();
+    assert!(text.contains("synth:"), "демо по умолчанию ссылается не на синтетику");
+    assert!(!text.contains("media/"), "в демо остались несуществующие файлы: {text:.400}");
+
+    let st = cli().args(["render", proj.to_str().unwrap(), wav.to_str().unwrap()]).output().unwrap();
+    assert!(
+        st.status.success(),
+        "демо не рендерится из коробки: {}",
+        String::from_utf8_lossy(&st.stderr)
+    );
+    let len = std::fs::metadata(&wav).unwrap().len();
+    assert!(len > 1_000_000, "звук подозрительно короткий: {len} байт");
+
+    // прежние имена файлов остаются доступны явным флагом
+    let files = dir.join("demo-files.otio");
+    let st = cli().args(["demo", files.to_str().unwrap(), "--files"]).output().unwrap();
+    assert!(st.status.success());
+    assert!(std::fs::read_to_string(&files).unwrap().contains("media/"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 389 (Р.49 А11): рендер с недоступным медиа — ОТКАЗ, а не молчаливая
+/// тишина в выходном файле; `--allow-missing` переключает это осознанно.
+#[test]
+fn t389_render_refuses_missing_media_unless_allowed() {
+    let dir = std::env::temp_dir().join(format!("kt-cli-t389-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let proj = dir.join("p.otio");
+    let wav = dir.join("p.wav");
+    let st = cli().args(["demo", proj.to_str().unwrap(), "--files"]).output().unwrap();
+    assert!(st.status.success());
+
+    let st = cli().args(["render", proj.to_str().unwrap(), wav.to_str().unwrap()]).output().unwrap();
+    assert!(!st.status.success(), "рендер с отсутствующими медиа обязан отказать");
+    assert!(!wav.exists(), "написан файл, в котором вместо материала тишина");
+
+    let st = cli()
+        .args(["render", proj.to_str().unwrap(), wav.to_str().unwrap(), "--allow-missing"])
+        .output()
+        .unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
+    assert!(wav.exists(), "с --allow-missing рендер обязан пройти");
+    let _ = std::fs::remove_dir_all(&dir);
+}

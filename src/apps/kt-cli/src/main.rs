@@ -393,31 +393,18 @@ fn open_sources(
     Ok(fetcher)
 }
 
-fn render_wav(project: &Project, project_path: &str, output: &str) -> i32 {
-    let mut fetcher = DirectFetcher::new(None);
-    for m in &project.media {
-        if let Some(pattern) = synth_pattern(&m.path) {
-            fetcher.add_source(m.id, Box::new(SyntheticSource::new(Tick(90_000 * 3600), pattern)));
-            continue;
+fn render_wav(project: &Project, project_path: &str, output: &str, allow_missing: bool) -> i32 {
+    // Открытие источников — ОДНО на рендер и диагностику (Р.49, п.359):
+    // тут лежала вторая копия того же цикла, и разъехалась она бы молча.
+    // `--allow-missing` рендерит тишиной вместо отказа: иногда это ровно
+    // то, что нужно (проверить монтаж без чужих медиа), но НЕ по умолчанию.
+    let mut fetcher = match open_sources(project, project_path, !allow_missing, None) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
         }
-        // относительные пути — от файла проекта (как в kt-app)
-        // путь УЖЕ разрешён при загрузке (kt_otio::load_project резолвит
-        // относительные target_url от каталога проекта, п.316) — второй
-        // join удваивал префикс и «терял» файл при относительном вызове
-        let resolved = m.path.clone();
-        // sidecar-БД проекта: пакетный индекс вместо полного скана (тест 34)
-        let mut idx_db = kt_media::index::MediaIndexDb::open(
-            &std::path::Path::new(project_path).with_extension("ktindex.db"),
-        )
-        .ok();
-        match kt_media::ffmpeg::FfmpegSource::open_indexed(&resolved, idx_db.as_mut()) {
-            Ok(src) => fetcher.add_source(m.id, Box::new(src)),
-            Err(e) => {
-                eprintln!("{resolved}: {e}");
-                return 1;
-            }
-        }
-    }
+    };
     let end_frame =
         project.clips.iter().map(|c| (c.start + c.duration).to_audio_frames()).max().unwrap_or(0);
     if end_frame == 0 {
@@ -482,6 +469,8 @@ fn load_otio(input: &str) -> Result<Project, i32> {
 }
 
 fn run(args: &[String]) -> i32 {
+    // разрешение перезаписать существующий файл — одно на все подкоманды
+    let force = args.iter().any(|a| a == "--force");
     match args.first().map(String::as_str) {
         Some("version") | None => {
             println!("kt-cli {} (tick rate {} Hz)", kt_version::FULL, kt_time::TICK_HZ);
@@ -489,7 +478,7 @@ fn run(args: &[String]) -> i32 {
         }
         Some("new") => {
             let Some(path) = args.get(1) else {
-                eprintln!("usage: kt-cli new <out.otio>");
+                eprintln!("usage: kt-cli new <out.otio> [--force]");
                 return 2;
             };
             let p = Project::new(ProjectSettings {
@@ -499,16 +488,15 @@ fn run(args: &[String]) -> i32 {
                 sample_rate: 48000, pitch_engine: Default::default() });
             let base = std::path::Path::new(path).parent().map(|d| d.to_path_buf());
             let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
-            if let Err(e) = std::fs::write(path, out) {
-                eprintln!("write {path}: {e}");
-                return 1;
+            if let Err(c) = write_project(path, &out, force) {
+                return c;
             }
             0
         }
         Some("convert") => {
             // Р.24 п.12: единственный путь для старых .ktproj
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli convert <in.ktproj> <out.otio>");
+                eprintln!("usage: kt-cli convert <in.ktproj> <out.otio> [--force]");
                 return 2;
             };
             let text = match std::fs::read_to_string(input) {
@@ -530,30 +518,33 @@ fn run(args: &[String]) -> i32 {
             }
             let base = std::path::Path::new(output).parent().map(|d| d.to_path_buf());
             let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
-            if let Err(e) = std::fs::write(output, out) {
-                eprintln!("write {output}: {e}");
-                return 1;
+            if let Err(c) = write_project(output, &out, force) {
+                return c;
             }
             eprintln!("ok: {} media, {} clips, {} transitions", p.media.len(), p.clips.len(), p.transitions.len());
             0
         }
         Some("demo") => {
             let Some(path) = args.get(1) else {
-                eprintln!("usage: kt-cli demo <out.otio>");
+                eprintln!("usage: kt-cli demo <out.otio> [--files] [--force]");
                 return 2;
             };
-            let p = demo_project();
+            // По умолчанию демо ссылается на СИНТЕТИЧЕСКИЕ источники (Р.49,
+            // п.359). Восемь путей `media/*` не существуют нигде в поставке —
+            // `demo` и `render` подряд не работали ни у кого, кто не собрал
+            // эти файлы сам. `synth:` — полноправный источник во всей
+            // программе; `--files` возвращает прежние имена.
+            let p = demo_project(!args.iter().any(|a| a == "--files"));
             let base = std::path::Path::new(path).parent().map(|d| d.to_path_buf());
             let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
-            if let Err(e) = std::fs::write(path, out) {
-                eprintln!("write {path}: {e}");
-                return 1;
+            if let Err(c) = write_project(path, &out, force) {
+                return c;
             }
             0
         }
         Some("roundtrip") => {
             let Some(input) = args.get(1) else {
-                eprintln!("usage: kt-cli roundtrip <in.otio> [out.otio]");
+                eprintln!("usage: kt-cli roundtrip <in.otio> [out.otio] [--force]");
                 return 2;
             };
             let text = match std::fs::read_to_string(input) {
@@ -575,9 +566,8 @@ fn run(args: &[String]) -> i32 {
             let out = kt_otio::save_project(&project, &bundle.retained, base.as_deref());
             match args.get(2) {
                 Some(dst) => {
-                    if let Err(e) = std::fs::write(dst, &out) {
-                        eprintln!("write {dst}: {e}");
-                        return 1;
+                    if let Err(c) = write_project(dst, &out, force) {
+                        return c;
                     }
                 }
                 None => print!("{out}"),
@@ -613,14 +603,14 @@ fn run(args: &[String]) -> i32 {
         }
         Some("render") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
-                eprintln!("usage: kt-cli render <in.otio> <out.wav>");
+                eprintln!("usage: kt-cli render <in.otio> <out.wav> [--allow-missing]");
                 return 2;
             };
             let project = match load_otio(input) {
                 Ok(p) => p,
                 Err(code) => return code,
             };
-            render_wav(&project, input, output)
+            render_wav(&project, input, output, args.iter().any(|a| a == "--allow-missing"))
         }
         Some("export") => {
             let (Some(input), Some(output)) = (args.get(1), args.get(2)) else {
@@ -732,7 +722,62 @@ fn run(args: &[String]) -> i32 {
 /// Демо-монтаж для скриншотов сайта (порт gen_project из site/screenshots.py —
 /// убирает второго писателя формата, Р.24 этап 11): шесть именованных
 /// дорожек, метки, регион с loop, FX-цепочки, морфер.
-fn demo_project() -> Project {
+/// Записать проект атомарно, тем же кодом, что и GUI (Р.49, п.359).
+/// Голый `fs::write` оставлял обрубок прямо на месте файла, если запись
+/// прервалась. Существующий файл не перезаписывается без `--force`: у kt-cli
+/// нет ни звёздочки, ни диалога — молча затереть чужой проект тут нечему
+/// помешать.
+fn write_project(path: &str, text: &str, force: bool) -> Result<(), i32> {
+    let p = std::path::Path::new(path);
+    warn_if_locked(path);
+    if p.exists() && !force {
+        eprintln!("{path}: file exists (use --force to overwrite)");
+        return Err(1);
+    }
+    match kt_otio::write_atomic(p, text) {
+        Ok(w) => {
+            if !w.dir_synced {
+                eprintln!("note: {path} written, but the directory could not be synced");
+            }
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("write {path}: {e}");
+            Err(1)
+        }
+    }
+}
+
+/// Проект занят другой копией программы — предупредить (Р.49, п.359).
+/// Запрещать нечего: kt-cli читает, а пишет по явной просьбе.
+fn warn_if_locked(path: &str) {
+    if !std::path::Path::new(path).exists() {
+        return;
+    }
+    let lock = kt_lock_holder(path);
+    if let Some(pid) = lock {
+        eprintln!("note: {path} is open in Kinotrain (process {pid}) — it may overwrite changes");
+    }
+}
+
+/// Номер процесса-держателя замка на проект, если он есть. Формат файла
+/// замка — тот же, что кладёт kt-app (`project_lock.rs`): первая строка pid.
+fn kt_lock_holder(project: &str) -> Option<u32> {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
+    let abs = std::path::absolute(project).ok()?;
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in abs.to_string_lossy().as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    let f = base.join("kinotrain").join("locks").join(format!("{h:016x}.lock"));
+    let text = std::fs::read_to_string(f).ok()?;
+    text.lines().next()?.trim().parse().ok()
+}
+
+fn demo_project(synth: bool) -> Project {
     use kt_model::*;
     let t = |s: f64| Tick((s * 90_000.0).round() as i64);
     let clip = |id: u64, kind: ClipKind, lane: u32, st: f64, du: f64, si: f64, m: u64,
@@ -800,7 +845,7 @@ fn demo_project() -> Project {
     };
     let mut p =
         Project::new(ProjectSettings { fps: 30, width: 1920, height: 1080, sample_rate: 48000, pitch_engine: Default::default() });
-    for (id, path) in [
+    let files = [
         (1u64, "media/drone_coast.mp4"),
         (2, "media/city_night_broll.mp4"),
         (3, "media/interview_camA.mp4"),
@@ -809,7 +854,20 @@ fn demo_project() -> Project {
         (6, "media/music_bed.flac"),
         (7, "media/voiceover_take3.wav"),
         (8, "media/room_tone.wav"),
-    ] {
+    ];
+    // синтетика подобрана по роли: разные ноты у музыки и голоса слышны
+    // по отдельности, комнатный тон — тихая постоянная составляющая
+    let synths = [
+        (1u64, "synth:ramp"),
+        (2, "synth:impulse"),
+        (3, "synth:sine:440"),
+        (4, "synth:ramp"),
+        (5, "synth:dc:0.25"),
+        (6, "synth:sine:220"),
+        (7, "synth:sine:660"),
+        (8, "synth:dc:0.05"),
+    ];
+    for (id, path) in if synth { synths } else { files } {
         p.media.push(MediaRef { id: MediaId(id), path: path.into() });
     }
     p.clips = vec![
