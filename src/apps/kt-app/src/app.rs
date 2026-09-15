@@ -27,6 +27,26 @@ pub enum Severity {
 pub enum Ask {
     /// Проект занят другой копией программы — писать всё равно?
     SaveOverLock { pid: Option<u32> },
+    /// В редакторе несохранённая работа, а пользователь уходит.
+    Unsaved(Pending),
+}
+
+/// Что программа собиралась сделать, когда спросила про несохранённое.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pending {
+    New,
+    Open,
+    Quit,
+}
+
+/// Ответ на вопрос. Три состояния, а не `bool`: «не сохранять» и «отмена» —
+/// РАЗНЫЕ ответы (первый продолжает действие, второй отменяет его), и путать
+/// их значит терять работу по нажатию кнопки «Отмена».
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Answer {
+    Yes,
+    No,
+    Cancel,
 }
 
 #[derive(Clone, Debug)]
@@ -264,6 +284,13 @@ pub struct KtApp {
     pub lock_override: bool,
     /// Заданный и ещё не отвеченный вопрос.
     pub ask: Option<Ask>,
+    /// Выход уже разрешён пользователем: следующий `close_requested` не
+    /// перехватываем, иначе окно не закроется никогда.
+    pub quit_confirmed: bool,
+    /// Последний рубеж включён (п.354). В харнессе выключен: тысяча
+    /// создаваемых и уничтожаемых приложений не должна сыпать файлами
+    /// восстановления в общий каталог данных.
+    pub recovery_on_drop: bool,
     /// Найденная несохранённая работа и выбранный кандидат (п.353).
     pub recovery_offer: Vec<RecoveryCandidate>,
     pub recovery_pick: usize,
@@ -459,6 +486,9 @@ impl KtApp {
             sources.push((m.id, src));
         }
         let (player, ring) = Player::new(project.clone(), sources);
+        // «чёрный ящик» — панического хука (п.355). Переприсваивается при
+        // каждом пересоздании приложения: дамп должен быть от ЖИВОГО плеера.
+        crate::journal::set_flight(player.flight.clone());
         let audio = match audio_out::start(ring, player.shared.clone(), player.transport.clone()) {
             Ok(a) => Some(a),
             Err(e) => {
@@ -551,6 +581,8 @@ impl KtApp {
             lock_holder: None,
             lock_override: false,
             ask: None,
+            quit_confirmed: false,
+            recovery_on_drop: true,
             recovery_offer: Vec::new(),
             recovery_pick: 0,
             recovery_open: false,
@@ -706,6 +738,8 @@ impl KtApp {
             lock_holder: None,
             lock_override: false,
             ask: None,
+            quit_confirmed: false,
+            recovery_on_drop: true,
             recovery_offer: Vec::new(),
             recovery_pick: 0,
             recovery_open: false,
@@ -1257,9 +1291,9 @@ impl KtApp {
         // вопрос, на который программа ждёт ответа (п.352). Модальное окно:
         // пока на него не ответили, сохранение не продолжается.
         if let Some(ask) = self.ask.clone() {
-            let mut answer: Option<bool> = None;
+            let mut answer: Option<Answer> = None;
             egui::Modal::new(egui::Id::new("kt_ask")).show(ui.ctx(), |ui| {
-                ui.set_max_width(420.0);
+                ui.set_max_width(440.0);
                 match &ask {
                     Ask::SaveOverLock { pid } => {
                         ui.heading(tr(k::ask::LOCKED_TITLE));
@@ -1275,17 +1309,41 @@ impl KtApp {
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
                             if ui.button(tr(k::ask::SAVE_ANYWAY)).clicked() {
-                                answer = Some(true);
+                                answer = Some(Answer::Yes);
                             }
                             if ui.button(tr(k::ask::DONT_SAVE)).clicked() {
-                                answer = Some(false);
+                                answer = Some(Answer::No);
+                            }
+                        });
+                    }
+                    Ask::Unsaved(p) => {
+                        ui.heading(tr(k::ask::UNSAVED_TITLE));
+                        ui.add_space(6.0);
+                        ui.label(tr(match p {
+                            Pending::New => k::ask::UNSAVED_NEW,
+                            Pending::Open => k::ask::UNSAVED_OPEN,
+                            Pending::Quit => k::ask::UNSAVED_QUIT,
+                        }));
+                        ui.add_space(4.0);
+                        // правило 19: решение ни к чему не приговаривает
+                        ui.weak(tr(k::ask::UNSAVED_WHERE));
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            if ui.button(tr(k::ask::SAVE_AND_GO)).clicked() {
+                                answer = Some(Answer::Yes);
+                            }
+                            if ui.button(tr(k::ask::DISCARD)).clicked() {
+                                answer = Some(Answer::No);
+                            }
+                            if ui.button(tr(k::ask::STAY)).clicked() {
+                                answer = Some(Answer::Cancel);
                             }
                         });
                     }
                 }
             });
-            if let Some(yes) = answer {
-                self.answer_ask(yes);
+            if let Some(a) = answer {
+                self.answer_ask(a);
             }
         }
 
@@ -2245,15 +2303,56 @@ impl KtApp {
 
     /// Ответить на заданный вопрос. Вынесено из отрисовки, чтобы тест
     /// отвечал ровно тем же кодом, что и кнопка (правило 17).
-    pub fn answer_ask(&mut self, yes: bool) {
+    pub fn answer_ask(&mut self, ans: Answer) {
         let Some(a) = self.ask.take() else { return };
-        match a {
-            Ask::SaveOverLock { .. } if yes => {
+        match (a, ans) {
+            (Ask::SaveOverLock { .. }, Answer::Yes) => {
                 self.lock_override = true;
                 self.save();
             }
-            Ask::SaveOverLock { .. } => {}
+            (Ask::SaveOverLock { .. }, _) => {}
+            (Ask::Unsaved(_), Answer::Cancel) => {}
+            (Ask::Unsaved(p), Answer::Yes) => {
+                self.save();
+                // сохранение могло не состояться (отменён Save-As, отказ
+                // записи, вопрос о занятом проекте) — тогда уходить нельзя:
+                // ровно этим «сохранить и выйти» и отличается от «выйти»
+                if !self.dirty_content && !self.dirty_ui {
+                    self.proceed(p);
+                }
+            }
+            (Ask::Unsaved(p), Answer::No) => {
+                // работа объявлена ненужной: гасим флаги ДО перехода, иначе
+                // `Drop` воскресит её файлом восстановления
+                self.dirty_content = false;
+                self.dirty_ui = false;
+                self.drop_own_recovery();
+                self.proceed(p);
+            }
         }
+    }
+
+    /// Сделать то, ради чего спрашивали.
+    fn proceed(&mut self, p: Pending) {
+        match p {
+            Pending::New => *self = Self::new_empty(None),
+            Pending::Open => self.open_project_dialog_now(),
+            Pending::Quit => self.quit_confirmed = true,
+        }
+    }
+
+    /// Спросить, если есть что терять. `true` — можно действовать сразу.
+    ///
+    /// До Р.49 программа не спрашивала НИЧЕГО, и это был законный выбор
+    /// (вердикт F-RES-005): фоновый автосейв писал прямо в файл пользователя,
+    /// то есть терять было нечего. Владелец это убрал (п.351) — вместе с
+    /// правом не спрашивать.
+    pub fn guard_unsaved(&mut self, p: Pending) -> bool {
+        if !self.dirty_content && !self.dirty_ui {
+            return true;
+        }
+        self.ask = Some(Ask::Unsaved(p));
+        false
     }
 
     /// Занять проект (п.352). Вторая копия не запрещается — она честно
@@ -3313,11 +3412,19 @@ impl KtApp {
     /// Старое состояние (плеер/потоки/watchdog) корректно дропается ПОСЛЕ
     /// постройки нового.
     pub fn new_project(&mut self) {
-        *self = Self::new_empty(None);
+        if self.guard_unsaved(Pending::New) {
+            *self = Self::new_empty(None);
+        }
     }
 
     /// Меню Файл → Открыть…: диалог + пересоздание приложения на месте.
     pub fn open_project_dialog(&mut self) {
+        if self.guard_unsaved(Pending::Open) {
+            self.open_project_dialog_now();
+        }
+    }
+
+    fn open_project_dialog_now(&mut self) {
         let Some(p) = rfd::FileDialog::new()
             .set_title(tr(k::dialog::OPEN_PROJECT))
             .add_filter("OpenTimelineIO", &["otio"])
@@ -5815,7 +5922,10 @@ pub fn write_project_guarded(
     rev: u64,
     json: &str,
 ) -> std::io::Result<SaveOutcome> {
-    let mut last = guard.lock().unwrap();
+    // Отравленный мьютекс — не повод не сохранять: паниковавший под ним
+    // поток оставил лишь число (последнюю записанную ревизию), и оно цело
+    // (п.354 — в `Drop` любая паника означала бы abort).
+    let mut last = guard.lock().unwrap_or_else(|e| e.into_inner());
     if *last > rev {
         return Ok(SaveOutcome::SkippedNewerOnDisk);
     }
@@ -6023,6 +6133,18 @@ impl KtApp {
 
 impl eframe::App for KtApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Перехват закрытия окна (п.354). `CancelClose` в eframe 0.36
+        // работает и для КОРНЕВОГО окна — значит вопрос «сохранить перед
+        // выходом?» делается штатно, без своей обработки системных событий.
+        if ui.ctx().input(|i| i.viewport().close_requested())
+            && !self.quit_confirmed
+            && !self.guard_unsaved(Pending::Quit)
+        {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+        }
+        if self.quit_confirmed {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         // детект софт-рендера — один раз (пп. 17, 19)
         if self.sw_render.is_none() {
             let sw = _frame
@@ -6092,6 +6214,25 @@ impl eframe::App for KtApp {
     }
 }
 
+/// Последний рубеж (Р.49, п.354).
+///
+/// Срабатывает там, где `on_exit` не зовут вовсе: при `*self = app` (Файл →
+/// Новый/Открыть пересоздают приложение НА МЕСТЕ) и при раскрутке стека от
+/// паники — `panic = "unwind"` у нас сохранён намеренно.
+///
+/// В теле НЕТ НИ ОДНОГО `unwrap`. Паника внутри `Drop` во время раскрутки —
+/// это немедленный `abort`, и он унёс бы ровно тот файл, ради которого всё
+/// затевалось. По той же причине сторож берётся с терпимостью к отравленному
+/// мьютексу: поток, паниковавший под замком, не должен лишать нас записи.
+impl Drop for KtApp {
+    fn drop(&mut self) {
+        if !self.recovery_on_drop || !(self.dirty_content || self.dirty_ui) {
+            return;
+        }
+        self.write_recovery_now();
+    }
+}
+
 /// GPU-движок для экспорта (Р.29): свой headless-девайс на джоб — kt-cli
 /// окна не имеет, а очередь UI не делит время с 4K-экспортом. None → CPU
 /// (для 2D-проекта это полноценный путь; `KT_VIDEO_GPU=0` — принудительно).
@@ -6150,6 +6291,7 @@ pub fn run() -> eframe::Result {
             crate::theme::apply_debug_flags(&cc.egui_ctx); // п.23 р.6
             crate::i18n::set_lang_ctx(&cc.egui_ctx, crate::i18n::resolve(lang_choice));
             crate::icons::install_fonts(&cc.egui_ctx);
+            crate::journal::install_panic_hook();
             let restored = arg
                 .clone()
                 .or_else(|| cc.storage.and_then(|s| s.get_string("last_project")))
@@ -6169,6 +6311,10 @@ pub fn run() -> eframe::Result {
             // временем каждого кандидата. Прежняя ветка не покрывала главный
             // сценарий: открыл проект A, нажал «Новый», час работы, падение —
             // last_project указывал на A, и про час не говорилось ни строки.
+            // прошлая сессия упала — отчёт лежит и ждёт (п.355)
+            if let Some(p) = crate::journal::take_crash_report() {
+                app.warn(crate::tf!(k::msg::PREV_SESSION_CRASHED, p.display()));
+            }
             app.offer_recovery(true);
             Ok(Box::new(app))
         }),

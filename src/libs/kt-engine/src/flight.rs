@@ -122,7 +122,7 @@ impl FlightRecorder {
     }
 
     pub fn push_at(&self, at_ms: u64, kind: Ev, a: i64, b: i64, snap: Snap) {
-        let mut ring = self.ring.lock().unwrap();
+        let mut ring = self.lock();
         // дедуп подряд идущих: «×N» вместо N строк (правило 2)
         if let Some(last) = ring.back_mut()
             && last.kind == kind
@@ -141,11 +141,22 @@ impl FlightRecorder {
     }
 
     pub fn records(&self) -> Vec<Rec> {
-        self.ring.lock().unwrap().iter().copied().collect()
+        self.lock().iter().copied().collect()
     }
 
     pub fn clear(&self) {
-        self.ring.lock().unwrap().clear();
+        self.lock().clear();
+    }
+
+    /// Замок, терпимый к отравлению (Р.49, п.355). «Чёрный ящик» читает
+    /// ПАНИЧЕСКИЙ ХУК — то есть ровно тогда, когда кто-то уже паниковал, в
+    /// том числе, возможно, под этим замком. `unwrap()` дал бы вторую панику
+    /// внутри хука, а это немедленный `abort` без всякого отчёта: прибор,
+    /// ломающийся от той самой аварии, ради которой поставлен. Содержимое
+    /// кольца при отравлении по-прежнему осмысленно: это журнал прошедших
+    /// событий, а не полуготовая структура.
+    fn lock(&self) -> std::sync::MutexGuard<'_, VecDeque<Rec>> {
+        self.ring.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Текстовый дамп: одна строка на запись, время в секундах от старта,
@@ -182,5 +193,39 @@ impl FlightRecorder {
             out.push('\n');
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// t373 (Р.49, п.355): отравленное кольцо ЧИТАЕТСЯ. «Чёрный ящик» зовёт
+    /// панический хук — то есть ровно тогда, когда кто-то уже паниковал, в
+    /// том числе под этим замком. `unwrap()` дал бы вторую панику внутри
+    /// хука, а это немедленный `abort` без всякого отчёта.
+    #[test]
+    fn t373_poisoned_flight_ring_still_reads() {
+        let f = std::sync::Arc::new(FlightRecorder::new());
+        f.push(Ev::Play, 48_000, 0);
+
+        // паника ПОД замком — так его и отравляют по-настоящему
+        let g = f.clone();
+        let res = std::thread::spawn(move || {
+            let _held = g.ring.lock().unwrap();
+            panic!("under the flight lock");
+        })
+        .join();
+        assert!(res.is_err(), "поток обязан был паниковать");
+        assert!(f.ring.is_poisoned(), "мьютекс не отравлен — тест ничего не проверяет");
+
+        // и запись, и чтение, и дамп продолжают работать
+        f.push(Ev::Pause, 96_000, 0);
+        let recs = f.records();
+        assert_eq!(recs.len(), 2, "после отравления кольцо потеряно");
+        let dump = f.dump();
+        assert!(dump.to_lowercase().contains("play"), "дамп пуст: {dump:?}");
+        f.clear();
+        assert!(f.records().is_empty());
     }
 }

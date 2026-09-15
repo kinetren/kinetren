@@ -33,9 +33,19 @@ fn harness_lang(lang: crate::i18n::Lang) -> Harness<'static, KtApp> {
 /// ВРЕМЕННОЙ жест (два клика ближе 0.3 с), а шаг харнесса по умолчанию
 /// 0.25 с: события в соседних кадрах не складываются в двойной клик, и
 /// тест «двойной клик» проверял бы одиночный.
+/// Сколько ждать фоновую запись. Это НЕ утверждение о скорости: под полным
+/// параллельным прогоном (полтораста тестов, каждый со своим egui-контекстом)
+/// поток автосейва честно ждал своей очереди дольше пяти секунд, и тесты
+/// краснели от загрузки машины, а не от дефекта.
+const WAIT_BG: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn harness_lang_dt(lang: crate::i18n::Lang, step_dt: Option<f32>) -> Harness<'static, KtApp> {
     crate::i18n::set_lang(lang);
-    let app = KtApp::new_empty(None);
+    let mut app = KtApp::new_empty(None);
+    // «последний рубеж» (п.354) в харнессе выключен: тысяча создаваемых и
+    // уничтожаемых приложений сыпала бы файлами восстановления в общий
+    // каталог данных. Сам рубеж проверяет t372, включая его явно.
+    app.recovery_on_drop = false;
     let mut b = Harness::builder().with_size(egui::vec2(W, H));
     if let Some(dt) = step_dt {
         b = b.with_step_dt(dt);
@@ -3566,7 +3576,7 @@ fn t194_autosave_runs_in_background() {
     h.step();
     assert!(h.state().autosave_rx.is_some(), "фоновый автосейв обязан стартовать");
     // дождаться воркер и забрать результат следующим кадром
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();
@@ -3598,7 +3608,7 @@ fn t194_autosave_runs_in_background() {
         .unwrap();
     app.model_rev += 1;
     app.dirty_content = true;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();
@@ -3849,7 +3859,7 @@ fn t211_returned_source_replaces_its_placeholder() {
         app.model = kt_model::TimelineModel::new(p);
         app.offline.lock().unwrap().clear();
     }
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT_BG;
     while !h.state().placeholder_media.is_empty() && std::time::Instant::now() < deadline {
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -3997,7 +4007,7 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
         .with_size(egui::vec2(W, H))
         .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
     crate::icons::install_fonts(&h.ctx);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT_BG;
     let mut complete = false;
     while std::time::Instant::now() < deadline {
         h.step();
@@ -4353,7 +4363,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
     );
     assert!(app.model_rev > rev_before, "правка жеста двигает ревизию модели");
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();
@@ -4430,7 +4440,7 @@ fn t199_background_autosave_never_overwrites_newer_save() {
     app.save();
 
     // дожидаемся фоновую и убеждаемся, что она НЕ откатила файл
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();
@@ -4442,6 +4452,153 @@ fn t199_background_autosave_never_overwrites_newer_save() {
         2,
         "на диске обязана остаться СВЕЖАЯ версия (2 медиа), а не снимок автосейва"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 369 (Р.49 А6): «Новый» и «Открыть» при несохранённой работе СПРАШИВАЮТ.
+/// До Р.49 не спрашивали — и это был законный выбор (вердикт F-RES-005):
+/// фоновый автосейв писал прямо в файл пользователя, терять было нечего.
+/// Владелец автосейв в проект убрал (п.351) — вместе с правом не спрашивать.
+#[test]
+fn t369_new_and_open_guard_unsaved_work() {
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+
+    // «Новый» не выбрасывает работу молча
+    app.new_project();
+    assert_eq!(h.state().ask, Some(crate::app::Ask::Unsaved(crate::app::Pending::New)));
+    assert_eq!(h.state().model.project().media.len(), 1, "работа выброшена до ответа");
+
+    // «Остаться» — ничего не произошло
+    h.state_mut().answer_ask(crate::app::Answer::Cancel);
+    assert!(h.state().ask.is_none());
+    assert_eq!(h.state().model.project().media.len(), 1, "«Остаться» выбросило работу");
+    assert!(h.state().dirty_content);
+
+    // «Не сохранять» — новый проект на месте, и звёздочки на нём нет
+    h.state_mut().new_project();
+    h.state_mut().answer_ask(crate::app::Answer::No);
+    assert_eq!(h.state().model.project().media.len(), 0, "новый проект не создан");
+    assert!(!h.state().dirty_content);
+
+    // чистому проекту вопрос не задаётся
+    h.state_mut().new_project();
+    assert!(h.state().ask.is_none(), "спросили на пустом месте");
+
+    // «Открыть» — тот же сторож (правило 17: парные пути ведут себя одинаково)
+    let app = h.state_mut();
+    app.dirty_content = true;
+    app.open_project_dialog();
+    assert_eq!(h.state().ask, Some(crate::app::Ask::Unsaved(crate::app::Pending::Open)));
+    h.state_mut().answer_ask(crate::app::Answer::Cancel);
+}
+
+/// Тест 370 (Р.49 А6): «Сохранить и продолжить» НЕ продолжает, если сохранить
+/// не вышло. Иначе отказ записи (нет прав, диск полон, отменённый Save-As)
+/// оборачивался бы ровно той потерей работы, от которой сторож и поставлен.
+#[test]
+fn t370_save_and_go_does_not_go_when_save_failed() {
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(std::path::PathBuf::from("/proc/self/no-such-dir/x.otio"));
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.new_project();
+    h.state_mut().answer_ask(crate::app::Answer::Yes);
+
+    let st = h.state();
+    assert_eq!(st.model.project().media.len(), 1, "работа выброшена, хотя запись не удалась");
+    assert!(st.dirty_content, "звёздочка погашена при неудачной записи");
+    assert!(st.notices.iter().any(|n| n.severity == crate::app::Severity::Warn));
+}
+
+/// Тест 371 (Р.49 А6): выход перехватывается и отменяется. `CancelClose` в
+/// eframe 0.36 работает и для КОРНЕВОГО окна — на этом и держится вопрос
+/// «сохранить перед выходом?»; без него пришлось бы ловить системные события
+/// мимо egui.
+#[test]
+fn t371_close_request_is_intercepted_and_cancelled() {
+    use kt_model::*;
+    let mut h = harness();
+    let app = h.state_mut();
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+
+    // сторож принимает решение тем же кодом, каким его принимает кадр
+    assert!(!h.state_mut().guard_unsaved(crate::app::Pending::Quit), "выход не перехвачен");
+    assert_eq!(h.state().ask, Some(crate::app::Ask::Unsaved(crate::app::Pending::Quit)));
+    assert!(!h.state().quit_confirmed, "выход разрешён до ответа");
+
+    // «Остаться» — уходить не собираемся
+    h.state_mut().answer_ask(crate::app::Answer::Cancel);
+    assert!(!h.state().quit_confirmed);
+
+    // «Не сохранять» — выход разрешён, и второй раз не переспрашиваем
+    assert!(!h.state_mut().guard_unsaved(crate::app::Pending::Quit));
+    h.state_mut().answer_ask(crate::app::Answer::No);
+    assert!(h.state().quit_confirmed, "после ответа выход не разрешён — окно не закроется");
+    assert!(!h.state().dirty_content);
+
+    // чистому проекту сторож не мешает уйти
+    assert!(h.state_mut().guard_unsaved(crate::app::Pending::Quit));
+}
+
+/// Тест 372 (Р.49 А6): последний рубеж — `Drop`. Он срабатывает там, где
+/// `on_exit` не зовут вовсе: `*self = app` при «Новый»/«Открыть» и раскрутка
+/// стека от паники. В теле ни одного `unwrap`: паника внутри `Drop` во время
+/// раскрутки — немедленный `abort`, уносящий ровно тот файл, ради которого
+/// всё затевалось. Потому здесь же проверяется ОТРАВЛЕННЫЙ сторож.
+#[test]
+fn t372_drop_is_the_last_line_of_defence() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t372-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let proj = dir.join("t372.otio");
+    let rec = crate::app::recovery_path_for(Some(&proj));
+
+    {
+        let mut h = harness();
+        let app = h.state_mut();
+        app.recovery_on_drop = true; // в харнессе рубеж выключен — включаем
+        app.project_path = Some(proj.clone());
+        app.model.apply(Command::AddMedia { id: MediaId(5), path: "synth:ramp".into() }).unwrap();
+        app.model_rev += 1;
+        app.dirty_content = true;
+        // сторож отравлен: поток паниковал под замком. Запись обязана пройти —
+        // иначе чужая паника лишает пользователя последнего шанса.
+        let g = app.recovery_rev.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = g.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+        assert!(app.recovery_rev.is_poisoned(), "мьютекс не отравлен — тест ничего не проверяет");
+    } // здесь Drop
+
+    let text = std::fs::read_to_string(&rec).expect("Drop не записал восстановление");
+    let saved = kt_otio::load_project(&text, rec.parent()).unwrap().project;
+    assert_eq!(saved.media.len(), 1, "в восстановлении не та работа");
+    assert!(!proj.exists(), "Drop записал В ПРОЕКТ: его меняет только Ctrl+S");
+
+    // чистому приложению ронять нечего
+    let _ = std::fs::remove_file(&rec);
+    {
+        let mut h = harness();
+        let app = h.state_mut();
+        app.recovery_on_drop = true;
+        app.project_path = Some(proj.clone());
+        app.dirty_content = false;
+        app.dirty_ui = false;
+    }
+    assert!(!rec.exists(), "Drop записал восстановление на чистом проекте");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -4711,14 +4868,14 @@ fn t364_locked_project_asks_before_first_save() {
     );
 
     // «не сохранять» — файл цел, звёздочка на месте, вопрос закрыт
-    h.state_mut().answer_ask(false);
+    h.state_mut().answer_ask(crate::app::Answer::No);
     assert!(h.state().ask.is_none());
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "чужое содержимое");
     assert!(h.state().dirty_content, "отказ сохранять погасил звёздочку");
 
     // «всё равно» — пишем; второй раз уже не спрашиваем
     h.state_mut().save();
-    h.state_mut().answer_ask(true);
+    h.state_mut().answer_ask(crate::app::Answer::Yes);
     assert!(!h.state().dirty_content, "после ответа «всё равно» проект не записан");
     assert!(h.state().lock_override);
     let app = h.state_mut();
@@ -4770,7 +4927,7 @@ fn t358_autosave_writes_recovery_not_project() {
     app.dirty_content = true;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
     h.step();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();
@@ -4852,7 +5009,7 @@ fn t360_viewport_drift_does_not_write() {
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
     h.step();
     assert!(h.state().autosave_rx.is_some(), "правка обязана запускать автосейв");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();
@@ -4879,7 +5036,7 @@ fn t361_recovery_guard_does_not_block_save() {
     app.dirty_content = true;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
     h.step();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = std::time::Instant::now() + WAIT_BG;
     while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(20));
         h.step();

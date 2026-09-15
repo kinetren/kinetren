@@ -37,6 +37,93 @@ pub fn path() -> PathBuf {
     data_dir().join("kt-app.log")
 }
 
+/// Отчёт о последнем падении. Один файл: он перезаписывается каждым новым
+/// падением, а прочитанный уезжает в `.seen` — так предупреждение появляется
+/// ровно один раз на аварию, и при этом последний отчёт всегда на месте.
+pub fn crash_path() -> PathBuf {
+    data_dir().join("kt-app-crash.txt")
+}
+
+pub fn crash_seen_path() -> PathBuf {
+    data_dir().join("kt-app-crash.seen.txt")
+}
+
+/// «Чёрный ящик» для панического хука. Хранится ОТДЕЛЬНО от приложения:
+/// хук не имеет права трогать модель (инвариант 2 — состояние FX принадлежит
+/// рендер-потоку; инвариант 6 — в колбэке ни локов, ни аллокаций), а
+/// кольцо событий самодостаточно и читается из любого потока.
+static FLIGHT: std::sync::OnceLock<
+    std::sync::Mutex<Option<std::sync::Arc<kt_engine::flight::FlightRecorder>>>,
+> = std::sync::OnceLock::new();
+
+fn flight_slot() -> &'static std::sync::Mutex<
+    Option<std::sync::Arc<kt_engine::flight::FlightRecorder>>,
+> {
+    FLIGHT.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+pub fn set_flight(f: std::sync::Arc<kt_engine::flight::FlightRecorder>) {
+    if let Ok(mut slot) = flight_slot().lock() {
+        *slot = Some(f);
+    }
+}
+
+/// Поставить панический хук. Разделение труда с `Drop for KtApp` (п.354)
+/// прямое: **хук — диагностика, `Drop` — данные**. Хук не сохраняет проект
+/// (лезть в модель из произвольного паникующего потока нельзя) и не мешает
+/// раскрутке: прежний хук зовётся следом, `Drop` доедет своим ходом.
+pub fn install_panic_hook() {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let out = crash_report(&info.to_string());
+        let p = crash_path();
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(&p, &out);
+        log("CRASH", &format!("panic report written to {}", p.display()));
+        prev(info);
+    }));
+}
+
+/// Тело отчёта. Вынесено из хука, чтобы его можно было проверить, не
+/// подменяя глобальный хук в тесте (подмена задела бы соседние тесты).
+pub(crate) fn crash_report(panic_text: &str) -> String {
+    let dump = flight_slot().lock().ok().and_then(|s| s.as_ref().map(|f| f.dump()));
+    crash_report_with(panic_text, dump.as_deref())
+}
+
+pub(crate) fn crash_report_with(panic_text: &str, flight: Option<&str>) -> String {
+    let mut out = String::with_capacity(8 * 1024);
+    out.push_str(&format!("kinotrain {}\n", kt_version::display()));
+    out.push_str(&format!("time: {}\n", stamp()));
+    let t = std::thread::current();
+    out.push_str(&format!("thread: {}\n", t.name().unwrap_or("<unnamed>")));
+    out.push_str(&format!("panic: {panic_text}\n\n"));
+    out.push_str(&format!("{}\n", std::backtrace::Backtrace::force_capture()));
+    // дамп «чёрного ящика»: что программа делала последние секунды
+    if let Some(f) = flight {
+        out.push_str("\n--- flight recorder ---\n");
+        out.push_str(f);
+    }
+    out
+}
+
+/// Если прошлая сессия оставила отчёт — вернуть его путь ОДИН раз и
+/// отложить сам отчёт в сторону.
+pub fn take_crash_report() -> Option<PathBuf> {
+    let p = crash_path();
+    if !p.exists() {
+        return None;
+    }
+    let seen = crash_seen_path();
+    match std::fs::rename(&p, &seen) {
+        Ok(()) => Some(seen),
+        // переименовать не вышло — сказать всё равно надо, отчёт на месте
+        Err(_) => Some(p),
+    }
+}
+
 /// Дописать строку. Ошибки записи журнала ГЛОТАЮТСЯ намеренно: журнал —
 /// вспомогательный канал, и падать/шуметь из-за него, когда пользователь
 /// как раз теряет проект, было бы издевательством.
@@ -127,6 +214,53 @@ mod tests {
         // недоступный путь — молча мимо: журнал не смеет ронять программу
         write_to(Path::new("/proc/self/no-such-dir/kt.log"), "WARN", "ignored");
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    /// t375: отчёт о падении называет версию, поток и место, несёт бэктрейс
+    /// и дамп «чёрного ящика» — иначе жалоба «программа закрылась» остаётся
+    /// без единой зацепки. Симметричный сторож на отравление кольца — t373
+    /// в kt-engine: хук читает ящик ровно тогда, когда кто-то уже паниковал.
+    #[test]
+    fn t375_crash_report_names_version_thread_and_flight() {
+        use kt_engine::flight::{Ev, FlightRecorder};
+        let f = FlightRecorder::new();
+        f.push(Ev::Play, 48_000, 0);
+        // дамп передаётся явно: слот «чёрного ящика» глобальный, а тесты
+        // идут параллельно — соседний харнесс успевает положить туда свой
+        let r = crash_report_with("assertion failed: у пользователя всё сломалось", Some(&f.dump()));
+        assert!(r.contains(kt_version::display()), "нет версии: жалоба без неё бесполезна");
+        assert!(r.contains("thread:"), "нет потока");
+        assert!(r.contains("assertion failed"), "нет самого сообщения паники");
+        assert!(r.contains("crash_report_with"), "в бэктрейсе нет имён — отчёт из голых адресов");
+        assert!(r.contains("--- flight recorder ---"), "нет дампа чёрного ящика");
+        assert!(r.to_lowercase().contains("play"), "чёрный ящик пуст: {r}");
+    }
+
+    /// t374: отчёт прошлой сессии отдаётся ровно ОДИН раз и не теряется.
+    #[test]
+    fn t374_crash_report_is_reported_once() {
+        let dir = std::env::temp_dir().join(format!("kt-t374-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let crash = dir.join("kt-app-crash.txt");
+        let seen = dir.join("kt-app-crash.seen.txt");
+        std::fs::write(&crash, "report").unwrap();
+
+        // та же логика, что в `take_crash_report`, на явных путях: каталог
+        // данных один на процесс, а тесты идут параллельно
+        let take = |c: &Path, s: &Path| -> Option<PathBuf> {
+            if !c.exists() {
+                return None;
+            }
+            match std::fs::rename(c, s) {
+                Ok(()) => Some(s.to_path_buf()),
+                Err(_) => Some(c.to_path_buf()),
+            }
+        };
+        assert_eq!(take(&crash, &seen), Some(seen.clone()), "об аварии не сказано");
+        assert_eq!(std::fs::read_to_string(&seen).unwrap(), "report", "отчёт потерян");
+        assert_eq!(take(&crash, &seen), None, "об одной аварии сказано дважды");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Дата собирается своими руками — сторож на известные значения.
