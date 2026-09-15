@@ -951,3 +951,131 @@ fn t251_broken_kt_meta_is_an_error() {
     let foreign = serde_json::to_string_pretty(&v).unwrap();
     assert!(load_project(&foreign, None).is_ok(), "чужой OTIO обязан открываться");
 }
+
+/// Тест 383 (Р.49 А10): битая НАША секция у клипа — ОШИБКА со списком адресов,
+/// а не «обычный чужой файл».
+///
+/// `kt_get` с `.ok()` выбрасывал конверт молча: клип получал НОВЫЙ номер, а с
+/// ним рвались link-группы A/V и ссылки морферов, терялись громкость,
+/// прозрачность и выключенная цепочка. Notice тут не помогает — молча
+/// переприсвоенный номер необратим. Близнец t251 (та же строгость у Timeline).
+#[test]
+fn t383_broken_clip_kt_section_is_an_error() {
+    let doc = |kt: &str| {
+        format!(
+            r#"{{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{{"OTIO_SCHEMA":"Stack.1",
+        "name":"","children":[{{"OTIO_SCHEMA":"Track.1","name":"V","kind":"Video","children":[
+        {{"OTIO_SCHEMA":"Clip.1","name":"c","source_range":{{"OTIO_SCHEMA":"TimeRange.1",
+        "duration":{{"OTIO_SCHEMA":"RationalTime.1","value":48,"rate":24}},
+        "start_time":{{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24}}}},
+        "media_reference":{{"OTIO_SCHEMA":"ExternalReference.1","name":"","target_url":"a.mov",
+        "available_range":null,"available_image_bounds":null,"metadata":{{}}}},
+        "effects":[],"markers":[],"enabled":true,"metadata":{kt}}}],
+        "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{{}}}}],
+        "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{{}}}},
+        "global_start_time":null,"metadata":{{}}}}"#
+        )
+    };
+
+    // секции нет — обычный чужой файл, читается
+    load_project(&doc("{}"), None).expect("чужой файл без нашей секции обязан читаться");
+    // чужой неймспейс — тоже не наше дело
+    load_project(&doc(r#"{"resolve":{"clip_color":"Orange"}}"#), None).expect("чужая секция");
+
+    // секция ЕСТЬ и она битая — отказ с адресом
+    let msg = match load_project(&doc(r#"{"kt":{"id":"не число","media":1}}"#), None) {
+        Ok(_) => panic!("битая секция обязана валить загрузку"),
+        Err(e) => e.to_string(),
+    };
+    assert!(msg.contains("kt"), "в сообщении нет упоминания нашей секции: {msg}");
+    assert!(msg.contains('c') && msg.contains("lane"), "в сообщении нет адреса клипа: {msg}");
+}
+
+/// Тест 384 (Р.49 А10): чужое у ДОРОЖКИ возвращается на место — эффекты,
+/// маркеры и флаг «выключена». Своих дорожечных эффектов у нас нет, а у
+/// соседей есть, и круг их терял молча.
+#[test]
+fn t384_track_foreign_effects_markers_and_enabled_survive() {
+    let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
+    "name":"","children":[{"OTIO_SCHEMA":"Track.1","name":"V","kind":"Video","children":[
+    {"OTIO_SCHEMA":"Clip.1","name":"c","source_range":{"OTIO_SCHEMA":"TimeRange.1",
+    "duration":{"OTIO_SCHEMA":"RationalTime.1","value":48,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24}},
+    "media_reference":{"OTIO_SCHEMA":"ExternalReference.1","name":"","target_url":"a.mov",
+    "available_range":null,"available_image_bounds":null,"metadata":{}},
+    "effects":[],"markers":[],"enabled":true,"metadata":{}}],
+    "source_range":null,
+    "effects":[{"OTIO_SCHEMA":"Effect.1","name":"track fx","effect_name":"TrackGrade",
+    "enabled":true,"metadata":{}}],
+    "markers":[{"OTIO_SCHEMA":"Marker.2","name":"на дорожке","color":"BLUE","marked_range":
+    {"OTIO_SCHEMA":"TimeRange.1","duration":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":12,"rate":24}},"metadata":{}}],
+    "enabled":false,"metadata":{}}],
+    "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{}},
+    "global_start_time":null,"metadata":{}}"#;
+    let b = load_project(doc, None).expect("файл читается");
+    assert!(
+        b.notices.iter().any(|n| n.contains("disabled")),
+        "о выключенной чужой дорожке не сказано ни слова: {:?}",
+        b.notices
+    );
+
+    let out = save_project(&b.project, &b.retained, None);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let tr = &v["tracks"]["children"][0];
+    assert_eq!(tr["enabled"], false, "флаг «выключена» потерян — чужой редактор услышит дорожку");
+    assert_eq!(tr["effects"][0]["effect_name"], "TrackGrade", "потерян эффект дорожки");
+    assert_eq!(tr["markers"][0]["name"], "на дорожке", "потерян маркер дорожки");
+}
+
+/// Тест 385 (Р.49 А10): чужое у МЕТКИ (комментарий, metadata) переживает круг.
+/// Модель знает про метку только время, имя и цвет — остальное обязано
+/// вернуться из конверта, иначе после нашего сохранения комментарии исчезают.
+#[test]
+fn t385_marker_comment_and_metadata_survive_roundtrip() {
+    let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
+    "name":"","children":[],"source_range":null,"effects":[],"markers":[
+    {"OTIO_SCHEMA":"Marker.2","name":"замечание","color":"RED","marked_range":
+    {"OTIO_SCHEMA":"TimeRange.1","duration":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":48,"rate":24}},
+    "comment":"переснять крупный план","metadata":{"resolve":{"flag":"yellow"}}}],
+    "enabled":true,"metadata":{}},
+    "global_start_time":null,"metadata":{}}"#;
+    let b = load_project(doc, None).expect("файл с меткой читается");
+    assert_eq!(b.project.markers.len(), 1);
+
+    let out = save_project(&b.project, &b.retained, None);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let m = &v["tracks"]["markers"][0];
+    assert_eq!(m["name"], "замечание");
+    assert_eq!(m["comment"], "переснять крупный план", "комментарий метки потерян");
+    assert_eq!(m["metadata"]["resolve"]["flag"], "yellow", "чужие metadata метки потеряны");
+}
+
+/// Тест 386 (Р.49 А10): `Clip.enabled` НЕ чиним — он не сломан. Выключенный
+/// чужой клип уже приходит как `ForeignEvent` с verbatim-сырьём и возвращается
+/// в файл как есть. «Класс проблем» не значит «ужать всё подряд».
+#[test]
+fn t386_disabled_clip_is_already_verbatim() {
+    let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
+    "name":"","children":[{"OTIO_SCHEMA":"Track.1","name":"V","kind":"Video","children":[
+    {"OTIO_SCHEMA":"Clip.1","name":"выключен","source_range":{"OTIO_SCHEMA":"TimeRange.1",
+    "duration":{"OTIO_SCHEMA":"RationalTime.1","value":48,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24}},
+    "media_reference":{"OTIO_SCHEMA":"ExternalReference.1","name":"","target_url":"a.mov",
+    "available_range":null,"available_image_bounds":null,"metadata":{}},
+    "effects":[],"markers":[],"enabled":false,"metadata":{"vendor":{"k":1}}}],
+    "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{}}],
+    "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{}},
+    "global_start_time":null,"metadata":{}}"#;
+    let b = load_project(doc, None).expect("файл читается");
+    assert!(b.project.clips.is_empty(), "выключенный клип не должен становиться нашим событием");
+    assert_eq!(b.project.foreign.len(), 1, "он обязан лечь в foreign как есть");
+
+    let out = save_project(&b.project, &b.retained, None);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let c = &v["tracks"]["children"][0]["children"][0];
+    assert_eq!(c["enabled"], false, "флаг потерян");
+    assert_eq!(c["name"], "выключен");
+    assert_eq!(c["metadata"]["vendor"]["k"], 1, "чужие metadata выключенного клипа потеряны");
+}

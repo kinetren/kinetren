@@ -66,19 +66,49 @@ pub struct ClipExtra {
 /// вставка, событие из бина), своего `ClipExtra` не имеет — и на записи его
 /// `source_in` уходил в файл без этого часа, а при следующей загрузке час
 /// вычитался ещё раз. Медиа-уровень чинит всю эту половину разом.
+/// Чужое у метки: то, чего нет в `kt_model::Marker`.
+#[derive(Debug, Clone, Default)]
+pub struct MarkerExtra {
+    pub comment: String,
+    pub metadata: Map<String, Value>,
+    pub extra: Map<String, Value>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct MediaRefs {
     pub media_refs: IndexMap<String, Option<MediaRefNode>>,
     pub active_key: String,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct TrackExtra {
     pub name_foreign: Option<String>,
     pub extra: Map<String, Value>,
     pub metadata: Map<String, Value>,
     /// extra/metadata gap'ов по порядковому номеру в дорожке.
     pub gaps: Vec<(usize, ExtraMeta)>,
+    /// Чужое, что висит на САМОЙ дорожке (Р.49, п.358). Своих дорожечных
+    /// эффектов и маркеров у нас нет, а у соседей есть — и круг их терял.
+    pub effects: Vec<EffectNode>,
+    pub markers: Vec<MarkerNode>,
+    /// Выключенная дорожка. Мы такого не умеем и не выдумываем: значение
+    /// возвращается в файл как есть, а пользователь получает notice —
+    /// иначе он смотрит на дорожку, которой в чужом редакторе не слышно.
+    pub enabled: bool,
+}
+
+impl Default for TrackExtra {
+    fn default() -> TrackExtra {
+        TrackExtra {
+            name_foreign: None,
+            extra: Map::new(),
+            metadata: Map::new(),
+            gaps: Vec::new(),
+            effects: Vec::new(),
+            markers: Vec::new(),
+            enabled: true,
+        }
+    }
 }
 
 /// Passthrough-остатки загруженного файла. Вне undo (нередактируемы);
@@ -104,6 +134,12 @@ pub struct Retained {
     pub foreign: HashMap<u64, RawObject>,
     /// Чужие маркеры корневого Stack (наши — из модели).
     pub stack_markers_foreign: Vec<MarkerNode>,
+    /// Чужое у НАШИХ меток корневого Stack: комментарий, metadata, extra
+    /// (Р.49, п.358). Модель их не знает — метка у нас это время, имя и
+    /// цвет, — а круг их терял: чужой редактор клал комментарий и
+    /// собственный неймспейс, и после нашего сохранения они исчезали.
+    /// Ключ — порядковый номер метки в НАШЕМ списке на момент чтения.
+    pub stack_marker_extras: Vec<(usize, MarkerExtra)>,
     /// Неизвестные поля НАШЕГО конверта kt (будущие версии, Р.29):
     /// passthrough — v2-сборка не теряет добавки v3.
     pub timeline_kt_extra: Map<String, Value>,
@@ -378,9 +414,11 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             },
             children: kids,
             source_range: None,
-            effects: vec![],
-            markers: vec![],
-            enabled: true,
+            // чужое у дорожки возвращается на место (п.358); на слоях
+            // расслоения его не дублируем — оно принадлежит слою 0
+            effects: tx.effects.clone(),
+            markers: tx.markers.clone(),
+            enabled: tx.enabled,
             metadata: tx.metadata.clone(),
             extra: tx.extra.clone(),
         }));
@@ -406,14 +444,22 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
     let mut markers: Vec<MarkerNode> = p
         .markers
         .iter()
-        .map(|m| {
+        .enumerate()
+        .map(|(i, m)| {
+            // чужое у метки возвращается на своё место (п.358)
+            let ex = retained
+                .stack_marker_extras
+                .iter()
+                .find(|(n, _)| *n == i)
+                .map(|(_, e)| e.clone())
+                .unwrap_or_default();
             MarkerNode::Marker(Marker {
                 name: m.name.clone(),
                 color: m.color.clone().unwrap_or_else(Marker::default_color),
                 marked_range: range(m.t, m.duration),
-                comment: String::new(),
-                metadata: Map::new(),
-                extra: Map::new(),
+                comment: ex.comment,
+                metadata: ex.metadata,
+                extra: ex.extra,
             })
         })
         .collect();
@@ -710,6 +756,8 @@ pub fn timeline_to_project(
     let mut notices: Vec<Notice> = Vec::new();
     // нечитаемые кривые автоматизации: копим и валим загрузку в конце
     let mut bad_auto: Vec<String> = Vec::new();
+    // адреса клипов с испорченной НАШЕЙ секцией (п.358)
+    let mut bad_kt: Vec<String> = Vec::new();
     // битая kt-секция — ОШИБКА, а не «чужой файл»: молчаливое выбрасывание
     // конверта уносило с собой настройки, дорожки, морферы и раскладку
     let kt: Option<KtTimelineMeta> =
@@ -751,12 +799,24 @@ pub fn timeline_to_project(
     // маркеры корневого Stack
     for m in &tl.tracks.markers {
         match m {
-            MarkerNode::Marker(mk) => p.markers.push(kt_model::Marker {
-                t: mk.marked_range.start_time.to_ticks(),
-                duration: Tick(mk.marked_range.duration.to_ticks().0.max(0)),
-                name: mk.name.clone(),
-                color: Some(mk.color.clone()),
-            }),
+            MarkerNode::Marker(mk) => {
+                if !mk.comment.is_empty() || !mk.metadata.is_empty() || !mk.extra.is_empty() {
+                    retained.stack_marker_extras.push((
+                        p.markers.len(),
+                        MarkerExtra {
+                            comment: mk.comment.clone(),
+                            metadata: mk.metadata.clone(),
+                            extra: mk.extra.clone(),
+                        },
+                    ));
+                }
+                p.markers.push(kt_model::Marker {
+                    t: mk.marked_range.start_time.to_ticks(),
+                    duration: Tick(mk.marked_range.duration.to_ticks().0.max(0)),
+                    name: mk.name.clone(),
+                    color: Some(mk.color.clone()),
+                })
+            }
             MarkerNode::Unknown(_) => retained.stack_markers_foreign.push(m.clone()),
         }
     }
@@ -846,7 +906,18 @@ pub fn timeline_to_project(
             extra: track.extra.clone(),
             metadata: track.metadata.clone(),
             gaps: Vec::new(),
+            effects: track.effects.clone(),
+            markers: track.markers.clone(),
+            enabled: track.enabled,
         };
+        if !track.enabled {
+            // правило 16: невозможность/необычность — вслух, а не молча
+            notices.push(format!(
+                "track '{}' is disabled in the file; Kinotrain has no per-track mute — \
+                 the flag is kept on save",
+                if track.name.is_empty() { "<unnamed>" } else { &track.name }
+            ));
+        }
         if !track.name.is_empty() {
             let ui = p.ui.get_or_insert_with(UiState::default);
             let lk = match kind {
@@ -919,6 +990,7 @@ pub fn timeline_to_project(
                         &mut p,
                         &mut notices,
                         &mut bad_auto,
+                        &mut bad_kt,
                     );
                     // переход перед клипом: с живым соседом слева —
                     // кроссфейд, без него (край дорожки или Gap) — фейд-ин
@@ -1111,6 +1183,11 @@ pub fn timeline_to_project(
     if let Some(first) = bad_auto.first() {
         return Err(Error::UnsupportedSchema(first.clone()));
     }
+    // адрес КАЖДОГО битого клипа: чинить файл вслепую нечем, а исходник мы
+    // не трогаем — отказ читать безопаснее молчаливой порчи связей
+    if !bad_kt.is_empty() {
+        return Err(Error::KtMetaBroken(bad_kt.join("; ")));
+    }
     Ok(ProjectBundle { project: p, retained, notices })
 }
 
@@ -1212,8 +1289,25 @@ fn clip_from_otio(
     p: &mut Project,
     notices: &mut Vec<Notice>,
     bad_auto: &mut Vec<String>,
+    bad_kt: &mut Vec<String>,
 ) -> (ClipEvent, ClipExtra) {
-    let meta: Option<KtClipMeta> = kt_get(&c.metadata);
+    // Битая НАША секция у клипа — ОШИБКА, а не «чужой файл» (Р.49, п.358;
+    // близнец t251 у Timeline). `kt_get` с `.ok()` выбрасывал конверт молча:
+    // клип получал НОВЫЙ номер, а с ним рвались link-группы A/V и ссылки
+    // морферов, терялись громкость, прозрачность и выключенная цепочка.
+    // Notice тут не спасает: переприсвоенный номер необратим.
+    let meta: Option<KtClipMeta> = match kt_get_checked(&c.metadata) {
+        Ok(v) => v,
+        Err(e) => {
+            bad_kt.push(format!(
+                "clip '{}' at {:?} lane {lane} ({}): broken kt section ({e})",
+                c.name,
+                kind,
+                start.0
+            ));
+            None
+        }
+    };
     let url = match c.active_media() {
         Some(MediaRefNode::External(er)) => er.target_url.clone(),
         _ => String::new(),
