@@ -533,7 +533,9 @@ impl TimelineModel {
                 if p.clips.iter().any(|x| x.id == c.id) {
                     return Err(CommandError::IdInUse(c.id.0));
                 }
-                if !p.media.iter().any(|m| m.id == c.media) {
+                // от КЛИПА к источнику — только через `Project::source()`:
+                // он смотрит и в файлы, и во вложенные ленты (Р.50)
+                if p.source(c.media).is_none() {
                     return Err(CommandError::MediaNotFound(c.media));
                 }
                 if c.duration < MIN_CLIP_DURATION {

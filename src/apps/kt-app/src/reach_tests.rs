@@ -978,6 +978,76 @@ fn t273_source_in_arithmetic_lives_in_one_place() {
     );
 }
 
+/// Тест 426b (Р.50): поиск источника ОТ КЛИПА живёт в одном доме.
+///
+/// Повод — цена, которую мы сознательно платим за выбранный носитель ссылки.
+/// Адрес вложенной ленты лежит в ОДНОМ пространстве с `MediaId` файлов, но
+/// `MediaRef`-а у ленты нет: тело живёт в `Project.sequences`. Поэтому код,
+/// спрашивающий `project.media` про `clip.media`, для вложения получает
+/// `None` — и это не отказ, а ТИХАЯ неправильная работа: watchdog покрасит
+/// вложение тинтом офлайна, `IndexService` полезет строить по нему пики
+/// ffmpeg'ом, команда откажет с «медиа не найдено».
+///
+/// Разрешено ровно одно: `Project::source()`. Перебирать `project.media` само
+/// по себе законно (бин, диалог путей, сборка карты путей — они и правда про
+/// ФАЙЛЫ); запрещено сравнивать элемент этого перебора с полем `media` клипа.
+#[test]
+fn t426b_media_lookup_from_a_clip_lives_in_one_place() {
+    let root = workspace_root();
+    // дом правила — сама `Project::source()` и её соседи по файлу
+    const HOME: &str = "libs/kt-model/src/project.rs";
+    let mut bad: Vec<String> = Vec::new();
+    let mut files: Vec<String> = Vec::new();
+    for dir in ["libs", "apps"] {
+        collect_rs(&root.join(dir), &mut files);
+    }
+    for rel in files {
+        if rel == HOME || rel.contains("/tests/") || rel.ends_with("_tests.rs") {
+            continue;
+        }
+        let src = strip_comments(&std::fs::read_to_string(root.join(&rel)).expect(&rel));
+        for (n, line) in src.lines().enumerate() {
+            let t = line.trim();
+            if !t.contains("media.iter()") {
+                continue;
+            }
+            // «сравнили с полем `media` какого-то события» — вот это и есть
+            // поиск ОТ КЛИПА
+            let from_clip = t.contains(".media)")
+                || t.contains(".media {")
+                || t.contains("== c.media")
+                || t.contains("== clip.media");
+            if from_clip {
+                bad.push(format!("{rel}:{}: {t}", n + 1));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "источник события ищется в `project.media` мимо единственного дома          (`Project::source()` в {HOME}). У вложенной секвенции `MediaRef`-а нет:          такой поиск вернёт None и превратит вложение в «офлайн-медиа» молча —          ни одного отказа, ни одной ошибки, просто неправильная работа:\n  {}",
+        bad.join("\n  ")
+    );
+}
+
+/// Рекурсивный обход `.rs` с путями относительно корня workspace.
+fn collect_rs(dir: &std::path::Path, out: &mut Vec<String>) {
+    let root = workspace_root();
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if p.file_name().is_some_and(|n| n == "target" || n == "vendor") {
+                continue;
+            }
+            collect_rs(&p, out);
+        } else if p.extension().is_some_and(|x| x == "rs")
+            && let Ok(rel) = p.strip_prefix(&root)
+        {
+            out.push(rel.to_string_lossy().into_owned());
+        }
+    }
+}
+
 // ---- правый клик В ПАНЕЛЯХ (Р.49, волна В) ---------------------------------
 
 /// Глагол панельного объекта — что человек хочет с ним сделать.

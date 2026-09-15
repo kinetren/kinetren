@@ -405,11 +405,11 @@ impl TransitionEvent {
     /// Стык: конец `a`, а для фейд-ина — начало `b` (Р.25). None — оба конца
     /// пропали; такое состояние живёт только внутри мутации до
     /// reconcile_transitions.
-    pub fn joint(&self, p: &Project) -> Option<Tick> {
-        if let Some(a) = self.a.and_then(|id| p.clips.iter().find(|c| c.id == id)) {
+    pub fn joint(&self, p: &dyn Reel) -> Option<Tick> {
+        if let Some(a) = self.a.and_then(|id| p.clips().iter().find(|c| c.id == id)) {
             return Some(a.start + a.duration);
         }
-        let b = self.b.and_then(|id| p.clips.iter().find(|c| c.id == id))?;
+        let b = self.b.and_then(|id| p.clips().iter().find(|c| c.id == id))?;
         Some(b.start)
     }
 
@@ -426,10 +426,211 @@ impl TransitionEvent {
     }
 
     /// Полуоткрытое окно перехода на таймлайне.
-    pub fn window(&self, p: &Project) -> Option<TickRange> {
+    pub fn window(&self, p: &dyn Reel) -> Option<TickRange> {
         let at = self.joint(p)?;
         Some(TickRange::new(at - self.in_offset, at + self.out_offset))
     }
+}
+
+/// ЛЕНТА МОНТАЖА: события и переходы между ними (Р.50, п.378).
+///
+/// Реализуют и корень проекта, и вложенная секвенция. Трейт существует
+/// ради одной вещи: вся геометрия переходов (`joint`, `window`,
+/// `check_transition_full`, `forbidden_zones`) обязана спрашивать ТУ
+/// ленту, на которой переход стоит. Переход, чьи концы лежат в секвенции,
+/// а сам он ищется среди корневых клипов, вернул бы `None` — и
+/// `reconcile_transitions` убил бы его на первой же команде.
+///
+/// Взят трейт, а не структура-вид: тогда 29 существующих вызовов вида
+/// `t.joint(project)` продолжают компилироваться дословно, а новый путь
+/// просто передаёт `&Sequence`.
+pub trait Reel {
+    fn clips(&self) -> &[ClipEvent];
+    fn transitions(&self) -> &[TransitionEvent];
+    /// Остальное содержимое ленты. Умолчания — пустота: реализующий
+    /// обязан переопределить только то, что у него есть.
+    fn morphers(&self) -> &[MorpherEvent] {
+        &[]
+    }
+    fn cameras(&self) -> &[CameraEvent] {
+        &[]
+    }
+    fn foreign(&self) -> &[ForeignEvent] {
+        &[]
+    }
+    fn overlaps_allowed(&self) -> bool {
+        true
+    }
+
+}
+
+/// Зоны, куда не встаёт граница морфер-слоя: окна переходов этого клипа
+/// и наезды соседей по дорожке. Резка там ломает не цель, а ОКРУЖЕНИЕ (Р.37).
+///
+/// Свободная функция, а не метод трейта: `Reel` обязан оставаться
+/// объектно-безопасным (обход дерева лент ходит по `&dyn Reel`), а тело
+/// зовёт `t.joint(reel)` — коэрцию `&Self -> &dyn Reel` внутри
+/// провайд-метода сделать нечем.
+pub fn forbidden_zones(reel: &dyn Reel, c: &ClipEvent) -> Vec<TickRange>
+    {
+        let body = TickRange::new(c.start, c.start + c.duration);
+        let mut out = Vec::new();
+        for t in reel.transitions() {
+            if t.a != Some(c.id) && t.b != Some(c.id) {
+                continue;
+            }
+            let Some(j) = t.joint(reel) else { continue };
+            let z = TickRange::new(j - t.in_offset, j + t.out_offset).intersect(&body);
+            if !z.is_empty() {
+                out.push(z);
+            }
+        }
+        for o in reel.clips() {
+            if o.id == c.id || o.kind != c.kind || o.lane != c.lane {
+                continue;
+            }
+            let z = TickRange::new(o.start, o.start + o.duration).intersect(&body);
+            if !z.is_empty() {
+                out.push(z);
+            }
+        }
+        out
+    }
+
+/// Старший бит адреса медиа отдан вложенным лентам (Р.50).
+///
+/// Движку нужен ОДИН `SourceId` на ленту — ключ кэша, ключ мемоизации
+/// пост-FX, адрес в перф-панели. Он берётся как `NEST_TAG | seq`, поэтому
+/// адрес настоящего файла обязан лежать ниже: иначе файл и секвенция
+/// молча поделили бы кэш. Проверяется в `validate`.
+pub const NEST_TAG: u64 = 1 << 63;
+
+/// Предел глубины вложенности (Р.50, п.378).
+///
+/// Число ПОСЧИТАНО, а не выбрано круглым: в момент композита уровня в
+/// памяти видеокарты живы два аккумулятора этого уровня плюс по
+/// аккумулятору и результату на каждого предка — около 25 МиБ на уровень
+/// при 1080p, при бюджете временных текстур 128 МиБ (kt-gpu). Предел
+/// стоит и здесь (жёстко, с именами лент в тексте ошибки), и в
+/// исполнителе (аккуратный `TooLarge` с откатом на CPU).
+pub const MAX_NEST_DEPTH: usize = 4;
+
+/// Вложенная секвенция — лента, на которую ССЫЛАЮТСЯ (Р.50, п.378).
+///
+/// Своих настроек у неё НЕТ — ни fps, ни растра, ни частоты: вложение
+/// наследует родителя (прямое решение владельца). Из этого следует
+/// главное техническое свойство раунда: промежуточного растра не
+/// возникает, поэтому **вложение с пустой цепочкой тождественно своему
+/// развёрнутому содержимому**, и раскрытие в `effective_clips` служит
+/// эталоном-оракулом для настоящего поддерева плана.
+///
+/// Адрес — `MediaId` в ОДНОМ пространстве с медиа: `ClipEvent.media`
+/// указывает либо на файл (`Project.media`), либо на ленту
+/// (`Project.sequences`). `MediaRef`-а у секвенции НЕТ намеренно — иначе
+/// `build_player` поднял бы на неё `MediaWorker`, watchdog покрасил бы её
+/// тинтом офлайна, а служба индекса полезла бы строить пики ffmpeg'ом.
+/// Перечисленные пути перебирают `project.media`, где секвенций нет, и
+/// остаются правильными ПО ПОСТРОЕНИЮ.
+///
+/// Имя — подпись, а НЕ адрес (в отличие от `MarkedArea`): переименование
+/// не имеет шанса порвать ссылку, а дедупликация тел при записи в .otio
+/// опирается на устойчивый ключ, переживающий переименование.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Sequence {
+    pub id: MediaId,
+    /// Подпись в бине и `Stack.name` в файле. Непустая (иначе в бине
+    /// карточка без подписи), но НЕ обязана быть уникальной.
+    pub name: String,
+    pub clips: Vec<ClipEvent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transitions: Vec<TransitionEvent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub morphers: Vec<MorpherEvent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cameras: Vec<CameraEvent>,
+    #[serde(default = "default_lanes")]
+    pub video_lanes: u32,
+    #[serde(default = "default_lanes")]
+    pub audio_lanes: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub morph_lanes: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub camera_lanes: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lane_order: Vec<(LaneKind, u32)>,
+    #[serde(default = "default_true")]
+    pub overlap_layers: bool,
+}
+
+impl Sequence {
+    pub fn new(id: MediaId, name: impl Into<String>) -> Sequence {
+        Sequence {
+            id,
+            name: name.into(),
+            clips: Vec::new(),
+            transitions: Vec::new(),
+            morphers: Vec::new(),
+            cameras: Vec::new(),
+            video_lanes: default_lanes(),
+            audio_lanes: default_lanes(),
+            morph_lanes: 0,
+            camera_lanes: 0,
+            lane_order: Vec::new(),
+            overlap_layers: true,
+        }
+    }
+
+    /// Конец содержимого ленты.
+    pub fn end(&self) -> Tick {
+        self.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO)
+    }
+}
+
+impl Reel for Project {
+    fn clips(&self) -> &[ClipEvent] {
+        &self.clips
+    }
+    fn transitions(&self) -> &[TransitionEvent] {
+        &self.transitions
+    }
+    fn morphers(&self) -> &[MorpherEvent] {
+        &self.morphers
+    }
+    fn cameras(&self) -> &[CameraEvent] {
+        &self.cameras
+    }
+    fn foreign(&self) -> &[ForeignEvent] {
+        &self.foreign
+    }
+    fn overlaps_allowed(&self) -> bool {
+        self.overlap_layers
+    }
+}
+
+impl Reel for Sequence {
+    fn clips(&self) -> &[ClipEvent] {
+        &self.clips
+    }
+    fn transitions(&self) -> &[TransitionEvent] {
+        &self.transitions
+    }
+    fn morphers(&self) -> &[MorpherEvent] {
+        &self.morphers
+    }
+    fn cameras(&self) -> &[CameraEvent] {
+        &self.cameras
+    }
+    fn overlaps_allowed(&self) -> bool {
+        self.overlap_layers
+    }
+}
+
+/// На что смотрит `ClipEvent.media` — ЕДИНСТВЕННЫЙ ответ на вопрос
+/// «файл это или лента» (Р.50, п.378). Заведён по образцу `lane_key`:
+/// отображение, выписанное в шести местах, рано или поздно разъезжается.
+pub enum Source<'a> {
+    File(&'a MediaRef),
+    Seq(&'a Sequence),
 }
 
 /// Чужая OTIO-конструкция, которую мы не рендерим (неизвестная схема,
@@ -493,6 +694,12 @@ pub struct Project {
     /// Плейсхолдеры чужих OTIO-конструкций (появляются только из импорта).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub foreign: Vec<ForeignEvent>,
+    /// Вложенные ленты (Р.50, п.378). Пусто — проект плоский, и ВСЕ
+    /// быстрые пути (validate, effective_clips, писатель формата)
+    /// остаются в точности прежними: на этом стоят GOLDEN и байтовая
+    /// стабильность файлов без вложений.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sequences: Vec<Sequence>,
     /// Состояние вьюпорта редактора (п.13, порт v1: timelineViewStartMs/
     /// zoomLevel/cursorMs). Вне undo-истории (как region); старые файлы
     /// без секции читаются как None.
@@ -1248,7 +1455,7 @@ impl MorpherEvent {
         // один: либо кадр материала, либо неразрезанное окружение. Дороже
         // стоит окружение — кусок с бо́льшим `start` вылезает над соседом
         // и меняет веса кроссфейда, а сетка стоит одного кадра на шве.
-        let zones = p.forbidden_zones(c);
+        let zones = forbidden_zones(p, c);
         let mut s = snap_out_of(grid(w.start), &zones);
         let mut e = snap_out_of(grid(w.end), &zones);
         s = Tick(s.0.clamp(body.start.0, body.end.0));
@@ -4342,6 +4549,17 @@ pub enum ProjectError {
     BadFxAuto(ClipId),
     #[error("transition {0:?}: parameter curves must be finite, sorted and known")]
     BadTransitionAuto(TransitionId),
+    // --- вложенные секвенции (Р.50) ---
+    #[error("sequence {0:?} would contain itself: {1}")]
+    SequenceCycle(MediaId, String),
+    #[error("sequence {0:?} ({1}) nests deeper than {MAX_NEST_DEPTH} levels")]
+    SequenceTooDeep(MediaId, String),
+    #[error("sequence {0:?}: name must not be empty")]
+    SequenceUnnamed(MediaId),
+    #[error("media id {0:?} is out of range (top bit is reserved for nested sequences)")]
+    MediaIdTooLarge(MediaId),
+    #[error("sequence {0:?} is still used by {1} clip(s)")]
+    SequenceInUse(MediaId, usize),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,
@@ -4350,11 +4568,11 @@ pub enum ProjectError {
 /// но self-id тоже пропускается). Используется и validate(), и check_on
 /// команд (тест 135).
 pub fn check_transition_full(
-    p: &Project,
+    p: &dyn Reel,
     t: &TransitionEvent,
     ignore: Option<TransitionId>,
 ) -> Result<(), ProjectError> {
-    let clip = |id: ClipId| p.clips.iter().find(|c| c.id == id);
+    let clip = |id: ClipId| p.clips().iter().find(|c| c.id == id);
     let find = |side: Option<ClipId>| -> Result<Option<&ClipEvent>, ProjectError> {
         match side {
             None => Ok(None),
@@ -4395,7 +4613,7 @@ pub fn check_transition_full(
         }
     }
     let w = TickRange::new(joint - t.in_offset, joint + t.out_offset);
-    for other in &p.transitions {
+    for other in p.transitions() {
         if other.id == t.id || Some(other.id) == ignore {
             continue;
         }
@@ -4428,6 +4646,7 @@ impl Project {
             morphers: Vec::new(),
             transitions: Vec::new(),
             foreign: Vec::new(),
+            sequences: Vec::new(),
             ui: None,
             overlap_layers: true,
             trim_stretches_auto: false,
@@ -4565,31 +4784,6 @@ impl Project {
     /// там сломала бы НЕ цель, а окружение — у видео порядок композиции
     /// `(Reverse(lane), start)`, и кусок с бо́льшим start вылез бы над
     /// соседом; у аудио `overlap_weight` считает рампу из геометрии клипов.
-    pub fn forbidden_zones(&self, c: &ClipEvent) -> Vec<TickRange> {
-        let body = TickRange::new(c.start, c.start + c.duration);
-        let mut out = Vec::new();
-        for t in &self.transitions {
-            if t.a != Some(c.id) && t.b != Some(c.id) {
-                continue;
-            }
-            let Some(j) = t.joint(self) else { continue };
-            let z = TickRange::new(j - t.in_offset, j + t.out_offset).intersect(&body);
-            if !z.is_empty() {
-                out.push(z);
-            }
-        }
-        for o in &self.clips {
-            if o.id == c.id || o.kind != c.kind || o.lane != c.lane {
-                continue;
-            }
-            let z = TickRange::new(o.start, o.start + o.duration).intersect(&body);
-            if !z.is_empty() {
-                out.push(z);
-            }
-        }
-        out
-    }
-
     /// Нормализация после загрузки: число дорожек подтягивается вверх до
     /// фактических lane клипов (файлы, писанные до появления полей).
     pub fn normalize(&mut self) {
@@ -4625,6 +4819,12 @@ impl Project {
         }
         let mut media_ids = std::collections::HashSet::new();
         for m in &self.media {
+            // старший бит адреса отдан вложенным лентам (Р.50): движок
+            // кладёт `SourceId(NEST_TAG | seq)` в ключ кэша, и файл с таким
+            // id молча делил бы кэш с секвенцией
+            if m.id.0 >= NEST_TAG {
+                return Err(ProjectError::MediaIdTooLarge(m.id));
+            }
             if !media_ids.insert(m.id) {
                 return Err(ProjectError::DuplicateMediaId(m.id));
             }
@@ -4649,11 +4849,144 @@ impl Project {
                 return Err(ProjectError::DuplicateName(m.name.clone()));
             }
         }
+        if let Some(r) = &self.region
+            && r.end <= r.start
+        {
+            return Err(ProjectError::BadRegion);
+        }
+        // Дерево лент. Быстрый путь первой строкой: плоский проект —
+        // подавляющее большинство — платит одну проверку `is_empty`, и
+        // живой драг (`apply_coalesced` зовёт validate на каждый кадр
+        // жеста) не становится дороже ни на такт.
+        let sources = if self.sequences.is_empty() {
+            media_ids.clone()
+        } else {
+            self.validate_tree(&media_ids)?;
+            media_ids.iter().copied().chain(self.sequences.iter().map(|s| s.id)).collect()
+        };
+        // Содержимое каждой ленты — одним кодом. `ClipId` уникален во ВСЁМ
+        // документе, а не внутри ленты: `Retained.clips`/`.transitions`
+        // (kt-otio) — глобальные карты по id, и совпавшие id из разных лент
+        // МОЛЧА обменялись бы материалом, стартовым таймкодом и эффектами.
         let mut clip_ids = std::collections::HashSet::new();
-        for c in &self.clips {
-            if !clip_ids.insert(c.id) {
+        for (_, reel) in self.reels() {
+            self.validate_reel(reel, &sources, &media_ids, &mut clip_ids)?;
+        }
+        Ok(())
+    }
+
+    /// Ленты как ДОКУМЕНТ: адреса, имена, циклы, глубина.
+    fn validate_tree(
+        &self,
+        media_ids: &std::collections::HashSet<MediaId>,
+    ) -> Result<(), ProjectError> {
+        let mut seq_ids = std::collections::HashSet::new();
+        for s in &self.sequences {
+            if s.id.0 >= NEST_TAG {
+                return Err(ProjectError::MediaIdTooLarge(s.id));
+            }
+            if s.name.trim().is_empty() {
+                return Err(ProjectError::SequenceUnnamed(s.id));
+            }
+            // адреса файлов и лент — ОДНО пространство: `clip.media`
+            // смотрит и туда, и туда
+            if !seq_ids.insert(s.id) || media_ids.contains(&s.id) {
+                return Err(ProjectError::DuplicateMediaId(s.id));
+            }
+        }
+        let idx: std::collections::HashMap<MediaId, usize> =
+            self.sequences.iter().enumerate().map(|(i, s)| (s.id, i)).collect();
+        let kids: Vec<Vec<usize>> = self
+            .sequences
+            .iter()
+            .map(|s| {
+                let mut v: Vec<usize> =
+                    s.clips.iter().filter_map(|c| idx.get(&c.media).copied()).collect();
+                v.sort_unstable();
+                v.dedup();
+                v
+            })
+            .collect();
+        // Итеративный DFS СО ВСЕХ вершин, а не только от корня: пара лент
+        // A ↔ B, не использованная в монтаже нигде, всё равно цикл — файл с
+        // ней сохранился бы и не открылся. Итеративный — потому что
+        // рекурсия по вражескому файлу это переполнение стека, а не ошибка.
+        const WHITE: u8 = 0;
+        const GRAY: u8 = 1;
+        const BLACK: u8 = 2;
+        let n = self.sequences.len();
+        let mut mark = vec![WHITE; n];
+        let mut depth = vec![1usize; n];
+        for start in 0..n {
+            if mark[start] != WHITE {
+                continue;
+            }
+            mark[start] = GRAY;
+            let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+            while let Some(&(node, ci)) = stack.last() {
+                if ci < kids[node].len() {
+                    stack.last_mut().unwrap().1 += 1;
+                    let k = kids[node][ci];
+                    match mark[k] {
+                        GRAY => {
+                            // Текст ошибки называет ИМЕНА, а не адреса:
+                            // «Заставка -> Титры -> Заставка» человек
+                            // разматывает сам, «seq 7 -> seq 3» — нет.
+                            let from =
+                                stack.iter().position(|&(v, _)| v == k).unwrap_or(stack.len() - 1);
+                            let mut path: Vec<&str> = stack[from..]
+                                .iter()
+                                .map(|&(v, _)| self.sequences[v].name.as_str())
+                                .collect();
+                            path.push(self.sequences[k].name.as_str());
+                            return Err(ProjectError::SequenceCycle(
+                                self.sequences[k].id,
+                                path.join(" -> "),
+                            ));
+                        }
+                        WHITE => {
+                            mark[k] = GRAY;
+                            stack.push((k, 0));
+                        }
+                        _ => {}
+                    }
+                } else {
+                    depth[node] = 1 + kids[node].iter().map(|&k| depth[k]).max().unwrap_or(0);
+                    mark[node] = BLACK;
+                    stack.pop();
+                }
+            }
+        }
+        // Глубина считается у КАЖДОЙ ленты, а не только у использованных:
+        // лента, лежащая в бине и не поставленная никуда, при первой же
+        // постановке дала бы недопустимое дерево — ругаться надо там, где
+        // её собрали, а не через неделю на драге.
+        if let Some(i) = (0..n).find(|&i| depth[i] > MAX_NEST_DEPTH) {
+            return Err(ProjectError::SequenceTooDeep(
+                self.sequences[i].id,
+                self.sequences[i].name.clone(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Содержимое ОДНОЙ ленты. `sources` — всё, на что имеет право смотреть
+    /// `clip.media` (файлы и ленты), `media_ids` — только файлы (морфер-слой
+    /// берёт материал из файла: вложение под слоем — отдельное решение, и
+    /// молча считать его файлом нельзя).
+    fn validate_reel(
+        &self,
+        reel: &dyn Reel,
+        sources: &std::collections::HashSet<MediaId>,
+        media_ids: &std::collections::HashSet<MediaId>,
+        seen_clips: &mut std::collections::HashSet<ClipId>,
+    ) -> Result<(), ProjectError> {
+        let mut clip_ids = std::collections::HashSet::new();
+        for c in reel.clips() {
+            if !seen_clips.insert(c.id) {
                 return Err(ProjectError::DuplicateClipId(c.id));
             }
+            clip_ids.insert(c.id);
             // старший диапазон отдан кускам морфер-слоя (Р.35): настоящий
             // клип с таким id столкнулся бы с синтетическим
             if c.id.0 >= MAX_REAL_CLIP_ID {
@@ -4665,21 +4998,18 @@ impl Project {
             if c.source_in.0 < 0 {
                 return Err(ProjectError::NegativeSourceIn(c.id));
             }
-            if !media_ids.contains(&c.media) {
+            if !sources.contains(&c.media) {
                 return Err(ProjectError::UnknownMedia(c.id, c.media));
             }
             check_fx_auto(c.id, &c.fx_auto)?;
         }
-        if let Some(r) = &self.region
-            && r.end <= r.start
-        {
-            return Err(ProjectError::BadRegion);
-        }
         let mut morph_ids = std::collections::HashSet::new();
-        for m in &self.morphers {
+        for m in reel.morphers() {
             if !morph_ids.insert(m.id) {
                 return Err(ProjectError::DuplicateMorphId(m.id));
             }
+            // цель — клип ЭТОЙ ленты: ссылка через границу вернула бы
+            // `None` из `joint()`, и слой молча перестал бы действовать
             for t in m.targets.clip_ids() {
                 if !clip_ids.contains(t) {
                     return Err(ProjectError::MorphUnknownTarget(m.id, *t));
@@ -4696,7 +5026,7 @@ impl Project {
         // ЗАКОННЫ (разруливает active_camera_at) — к ClipOverlap не
         // подключаются.
         let mut cam_ids = std::collections::HashSet::new();
-        for c in &self.cameras {
+        for c in reel.cameras() {
             if !cam_ids.insert(c.id) {
                 return Err(ProjectError::DuplicateCameraId(c.id));
             }
@@ -4729,14 +5059,14 @@ impl Project {
             }
         }
         let mut tr_ids = std::collections::HashSet::new();
-        for t in &self.transitions {
+        for t in reel.transitions() {
             if !tr_ids.insert(t.id) {
                 return Err(ProjectError::DuplicateTransitionId(t.id));
             }
-            check_transition_full(self, t, None)?;
+            check_transition_full(reel, t, None)?;
         }
         let mut foreign_keys = std::collections::HashSet::new();
-        for f in &self.foreign {
+        for f in reel.foreign() {
             if !foreign_keys.insert(f.key) {
                 return Err(ProjectError::DuplicateForeignKey(f.key));
             }
@@ -4750,11 +5080,11 @@ impl Project {
             Clip(ClipId),
             Foreign(u64),
         }
-        let mut spans: Vec<(ClipKind, u32, i64, i64, SpanId)> = self
-            .clips
+        let mut spans: Vec<(ClipKind, u32, i64, i64, SpanId)> = reel
+            .clips()
             .iter()
             .map(|c| (c.kind, c.lane, c.start.0, (c.start + c.duration).0, SpanId::Clip(c.id)))
-            .chain(self.foreign.iter().map(|f| {
+            .chain(reel.foreign().iter().map(|f| {
                 (f.kind, f.lane, f.start.0, (f.start + f.duration).0, SpanId::Foreign(f.key))
             }))
             .collect();
@@ -4765,7 +5095,7 @@ impl Project {
             if ka == kb && la == lb && *end_a > *start_b {
                 // переслаивание разрешает наложение КЛИПОВ, но не чужих
                 // плейсхолдеров
-                if self.overlap_layers
+                if reel.overlaps_allowed()
                     && matches!((ida, idb), (SpanId::Clip(_), SpanId::Clip(_)))
                 {
                     continue;
@@ -4781,6 +5111,42 @@ impl Project {
             }
         }
         Ok(())
+    }
+
+    /// На что смотрит `clip.media` — файл или вложенная лента.
+    pub fn source(&self, id: MediaId) -> Option<Source<'_>> {
+        if let Some(m) = self.media.iter().find(|m| m.id == id) {
+            return Some(Source::File(m));
+        }
+        self.sequences.iter().find(|s| s.id == id).map(Source::Seq)
+    }
+
+    pub fn sequence(&self, id: MediaId) -> Option<&Sequence> {
+        self.sequences.iter().find(|s| s.id == id)
+    }
+
+    pub fn sequence_mut(&mut self, id: MediaId) -> Option<&mut Sequence> {
+        self.sequences.iter_mut().find(|s| s.id == id)
+    }
+
+    pub fn is_nest(&self, c: &ClipEvent) -> bool {
+        self.sequences.iter().any(|s| s.id == c.media)
+    }
+
+    /// Сколько мест в ДЕРЕВЕ ссылается на эту ленту.
+    ///
+    /// Закрывает то, что разведка назвала общей бедой Premiere, FCP и
+    /// VEGAS: «по клипу на таймлайне НЕ ВИДНО, сколько ещё мест изменится
+    /// вместе с ним». Считается пересчётом, своей бухгалтерии нет.
+    pub fn sequence_uses(&self, id: MediaId) -> usize {
+        let count = |cs: &[ClipEvent]| cs.iter().filter(|c| c.media == id).count();
+        count(&self.clips) + self.sequences.iter().map(|s| count(&s.clips)).sum::<usize>()
+    }
+
+    /// Все ленты документа: корень первым, затем вложенные.
+    fn reels(&self) -> impl Iterator<Item = (Option<MediaId>, &dyn Reel)> {
+        std::iter::once((None, self as &dyn Reel))
+            .chain(self.sequences.iter().map(|s| (Some(s.id), s as &dyn Reel)))
     }
 
     /// Парс без validate() — для легаси-импорта (Р.24): старые .ktproj

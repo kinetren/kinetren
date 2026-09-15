@@ -228,7 +228,7 @@ fn t236_forbidden_zones_snap_the_boundary() {
         auto: vec![],
     });
     p.validate().unwrap();
-    let zones = p.forbidden_zones(&p.clips[0]);
+    let zones = kt_model::forbidden_zones(&p, &p.clips[0]);
     assert!(zones.iter().any(|z| z.start == Tick(81_000) && z.end == LEN), "окно перехода — зона");
 
     // граница внутри окна перехода выталкивается к ближнему краю
@@ -244,7 +244,7 @@ fn t236_forbidden_zones_snap_the_boundary() {
     // наезд соседа по дорожке — тоже запретная зона
     let mut p = base();
     p.clips.push(clip(11, ClipKind::Video, 0, Tick(70_000), LEN));
-    let zones = p.forbidden_zones(&p.clips[0]);
+    let zones = kt_model::forbidden_zones(&p, &p.clips[0]);
     assert!(zones.iter().any(|z| z.start == Tick(70_000) && z.end == LEN), "наезд — зона");
     p.morphers.push(layer(Tick(30_000), Tick(45_000))); // конец 75_000 — внутри наезда
     let eff = p.effective_clips();
