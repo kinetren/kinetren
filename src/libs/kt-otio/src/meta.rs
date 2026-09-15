@@ -14,7 +14,7 @@ pub const KT_NS: &str = "kt";
 /// правило р.24 «наше чтобы никто не ломал»); иначе v=1 — файлы без 3D
 /// байт-стабильны и открываются старыми сборками. Один Pan3d версию НЕ
 /// бампает: неизвестный эффект деградирует в foreign-passthrough.
-pub const KT_META_VERSION: u32 = 5;
+pub const KT_META_VERSION: u32 = 6;
 pub const KT_META_V1: u32 = 1;
 /// Камеры и камерные дорожки (Р.29).
 pub const KT_META_V2: u32 = 2;
@@ -31,6 +31,13 @@ pub const KT_META_V4: u32 = 4;
 /// бы и то и другое молча, а «слой на 30%» превратился бы в «слой
 /// целиком» — испорченный монтаж, а не потерянная мелочь.
 pub const KT_META_V5: u32 = 5;
+/// Вложенные секвенции (Р.50). Тело ленты инлайнится в каждый экземпляр
+/// `Stack`-ом, поэтому ЧУЖОЙ редактор увидит правильный монтаж и без
+/// нашего конверта; а вот СТАРАЯ НАША сборка прочла бы вложение серым
+/// плейсхолдером `ForeignEvent` (п.158) и при первой же перезаписи вернула
+/// бы его в файл сырьём — то есть превратила бы живой монтаж в мёртвый
+/// кусок JSON. Отказ честнее.
+pub const KT_META_V6: u32 = 6;
 
 // ---- типизированные конверты metadata.kt (приём otio-types) -----------------
 // Структурно-мелкое — СВОИ типы (эволюция модели не двигает схему файла
@@ -91,11 +98,61 @@ pub struct KtTimelineMeta {
     pub camera_lanes: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cameras: Vec<kt_model::CameraEvent>,
+    /// Вложенные ленты (Р.50) — то, чего OTIO не выражает: число дорожек,
+    /// порядок строк, морфер-слои и камеры ВНУТРИ ленты.
+    ///
+    /// Сам МОНТАЖ ленты сюда не едет: он инлайнится `Stack`-ом в каждый
+    /// экземпляр, и чужой редактор читает его штатно. Здесь — сайдкар по
+    /// образцу `KtLayers`: не сошёлся с файлом — notice и чтение как есть,
+    /// а не порча. Сортируются по адресу (детерминизм, т.144).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sequences: Vec<KtSequence>,
     /// Форвард-милосердие к будущим версиям (Р.29): неизвестные kt-поля
     /// v3+ возятся passthrough'ом — следующие добавки не потребуют
     /// жёсткого отказа, если старый ридер ничего из них не теряет.
     #[serde(default, flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// Сайдкар вложенной ленты (Р.50): всё, чему в OTIO места нет.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KtSequence {
+    pub id: u64,
+    pub name: String,
+    #[serde(default = "one_u32")]
+    pub video_lanes: u32,
+    #[serde(default = "one_u32")]
+    pub audio_lanes: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub morph_lanes: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub camera_lanes: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lane_order: Vec<(kt_model::LaneKind, u32)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub morphers: Vec<kt_model::MorpherEvent>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cameras: Vec<kt_model::CameraEvent>,
+    /// Переслаивание внутри ленты. По умолчанию включено, как у корня.
+    #[serde(default = "yes_bool", skip_serializing_if = "is_true")]
+    pub overlap_layers: bool,
+    /// Карта слоёв ЛЕНТЫ (Р.28 этажом ниже): перекрытые события одной её
+    /// дорожки лежат соседними треками внутри её `Stack`. Без карты они
+    /// разъехались бы по разным дорожкам — тот же дефект, что был у корня.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layers: Option<KtLayers>,
+}
+
+fn one_u32() -> u32 {
+    1
+}
+
+fn yes_bool() -> bool {
+    true
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
 }
 
 /// Карта слоёв дорожек (Р.28) + политика переслаивания проекта.
@@ -218,6 +275,15 @@ pub fn check_kt_version(t: &Timeline) -> Result<(), Error> {
         Some(v) if v > KT_META_VERSION => Err(Error::KtMetaTooNew(v)),
         _ => Ok(()),
     }
+}
+
+/// Адрес ленты у вложения (Р.50): `metadata.kt.seq`.
+///
+/// Именно по нему экземпляры схлопываются в ОДНУ ленту при чтении: тело
+/// инлайнится в каждый экземпляр, потому что объектной идентичности в
+/// JSON OTIO нет. Нет ключа — вложение ЧУЖОЕ, и читается как новая лента.
+pub fn nest_seq_id(metadata: &Map<String, Value>) -> Option<u64> {
+    metadata.get(KT_NS)?.as_object()?.get("seq")?.as_u64()
 }
 
 /// Наш конверт в metadata: чужие неймспейсы не трогаются, `kt` при первом

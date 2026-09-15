@@ -125,7 +125,8 @@ fn t378_media_refs_do_not_override_clip_own_refs() {
     let c = &v["tracks"]["children"][0]["children"][0];
     assert_eq!(c["active_media_reference_key"], "proxy", "подменён активный ключ клипа");
     assert!(
-        c["media_references"]["proxy"].is_object() && c["media_references"]["DEFAULT_MEDIA"].is_object(),
+        c["media_references"]["proxy"].is_object()
+            && c["media_references"]["DEFAULT_MEDIA"].is_object(),
         "потеряна одна из ссылок клипа: {}",
         c["media_references"]
     );

@@ -32,8 +32,13 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, media: u64) ->
 }
 
 fn rich_project() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     for id in [1u64, 2, 3] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("media/m{id}.mp4") });
     }
@@ -43,10 +48,7 @@ fn rich_project() -> Project {
     let mut a1 = clip(10, ClipKind::Audio, 0, 0, 90_000, 1);
     a1.gain_db = -3.0;
     a1.link_group = Some(GroupId(5));
-    a1.fx = vec![
-        FxInstance::gain(1.5),
-        FxInstance::slowed_reverb(0.8, 0.2, 85.0),
-    ];
+    a1.fx = vec![FxInstance::gain(1.5), FxInstance::slowed_reverb(0.8, 0.2, 85.0)];
     a1.fx_bypass = vec![true];
     let mut a2 = clip(11, ClipKind::Audio, 0, 90_000, 90_000, 2);
     a2.reversed = true;
@@ -63,7 +65,12 @@ fn rich_project() -> Project {
         audio: Default::default(),
         auto: vec![],
     });
-    p.markers.push(Marker { t: Tick(15_000), duration: Tick(30_000), name: "range".into(), color: None });
+    p.markers.push(Marker {
+        t: Tick(15_000),
+        duration: Tick(30_000),
+        name: "range".into(),
+        color: None,
+    });
     p.markers.push(Marker::named(Tick(120_000), "point"));
     p.region = Some(Region { start: Tick(10_000), end: Tick(60_000) });
     p.loop_enabled = true;
@@ -71,7 +78,10 @@ fn rich_project() -> Project {
         view_start: 0.0,
         ticks_per_px: 1000.0,
         cursor: 42_000,
-        lane_names: vec![(LaneKind::Video, 0, "MAIN".into()), (LaneKind::Audio, 0, "DIALOG".into())],
+        lane_names: vec![
+            (LaneKind::Video, 0, "MAIN".into()),
+            (LaneKind::Audio, 0, "DIALOG".into()),
+        ],
         ..Default::default()
     });
     p.normalize();
@@ -225,7 +235,8 @@ fn t148_regen() {
 /// клип с `media_reference: null`, `name: null` у ссылок.
 #[test]
 fn t154_upstream_samples_load() {
-    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples"));
+    let dir =
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples"));
     let mut seen = 0;
     for e in std::fs::read_dir(dir).expect("каталог сэмплов") {
         let path = e.unwrap().path();
@@ -291,7 +302,10 @@ fn t154_clip_without_media_reference_survives() {
         .map(|c| c["media_references"]["DEFAULT_MEDIA"].clone())
         .collect::<Vec<_>>();
     assert_eq!(refs.len(), 3);
-    assert!(refs.iter().all(|r| r.is_null()), "null-ссылка не должна превращаться в ExternalReference: {refs:?}");
+    assert!(
+        refs.iter().all(|r| r.is_null()),
+        "null-ссылка не должна превращаться в ExternalReference: {refs:?}"
+    );
 }
 
 /// Тест 165 (п.165 porting-notes, Р.28): дорожка с ПЕРЕСЛОЕНИЕМ уезжает в
@@ -299,8 +313,13 @@ fn t154_clip_without_media_reference_survives() {
 /// порядок детей трека, поэтому иначе перекрытие развалило бы монтаж.
 #[test]
 fn t165_overlapping_lane_survives_layer_roundtrip() {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "media/a.mp4".into() });
     // три клипа одной дорожки: два перекрываются, третий встык
     for (id, start, dur) in [(1u64, 0i64, 90_000i64), (2, 45_000, 90_000), (3, 200_000, 45_000)] {
@@ -327,12 +346,8 @@ fn t165_overlapping_lane_survives_layer_roundtrip() {
 
     let text = save_project(&p, &Retained::default(), None);
     let doc = parse_document(&text).expect("наш вывод типизируется");
-    let tracks = doc
-        .tracks
-        .children
-        .iter()
-        .filter(|c| matches!(c, kt_otio::Composable::Track(_)))
-        .count();
+    let tracks =
+        doc.tracks.children.iter().filter(|c| matches!(c, kt_otio::Composable::Track(_))).count();
     assert_eq!(tracks, 2, "перекрытая дорожка разложилась на два трека");
 
     let back = load_project(&text, None).expect("читается обратно").project;
@@ -585,10 +600,7 @@ fn t189_cameras_roundtrip_and_conditional_version() {
         vec![(0, 0.0), (90_000, 60.0)],
         "доля события переведена в тики от начала"
     );
-    assert!(
-        c.auto.iter().all(|c| c.param != "pos_y"),
-        "ровные параметры кривых не заводят"
-    );
+    assert!(c.auto.iter().all(|c| c.param != "pos_y"), "ровные параметры кривых не заводят");
 }
 
 /// Неизвестные kt-поля будущих версий (v3+) возятся passthrough'ом:
@@ -706,11 +718,7 @@ fn t222_transition_kind_roundtrip_and_version() {
 
     // 2. вайп с параметрами и не-дефолтной кривой аудио
     let mut p = rich_project();
-    p.transitions[0].kind = TransitionKind::Wipe {
-        dir: Dir::Up,
-        softness: 0.25,
-        angle: 12.0,
-    };
+    p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Up, softness: 0.25, angle: 12.0 };
     p.transitions[0].audio = AudioCurve::SCurve;
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);
@@ -842,8 +850,11 @@ fn t240_morpher_schema_v4_and_legacy_read() {
     let text = save_project(&b.project, &b.retained, None);
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_ne!(v["metadata"]["kt"]["v"], 4, "прежняя семантика — прежняя версия");
-    assert_eq!(text, save_project(&load_project(&text, None).unwrap().project,
-        &b.retained, None), "идемпотентность записи морфера");
+    assert_eq!(
+        text,
+        save_project(&load_project(&text, None).unwrap().project, &b.retained, None),
+        "идемпотентность записи морфера"
+    );
 
     // слой поднимает до v4 и переживает круг
     let mut p = b.project.clone();
@@ -1078,4 +1089,229 @@ fn t386_disabled_clip_is_already_verbatim() {
     assert_eq!(c["enabled"], false, "флаг потерян");
     assert_eq!(c["name"], "выключен");
     assert_eq!(c["metadata"]["vendor"]["k"], 1, "чужие metadata выключенного клипа потеряны");
+}
+
+// ---- 431-433 (Р.50, п.382): вложенные ленты в формате -------------------------
+
+fn nested_project() -> Project {
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
+    for id in [1u64, 2] {
+        p.media.push(MediaRef { id: MediaId(id), path: format!("media/m{id}.mp4") });
+    }
+    // лента: два события встык, кроссфейд между ними, свой морфер-слой и
+    // своя камера — то, чего OTIO не выражает и что едет сайдкаром
+    let mut s = Sequence::new(MediaId(100), "Заставка");
+    s.clips.push(clip(11, ClipKind::Video, 0, 0, 45_000, 1));
+    s.clips.push(clip(12, ClipKind::Video, 0, 45_000, 45_000, 2));
+    // id перехода на чтении раздаётся заново — как и у корня (так было
+    // всегда: переход адресуется парой концов, а не номером)
+    s.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: Some(ClipId(11)),
+        b: Some(ClipId(12)),
+        in_offset: Tick(9_000),
+        out_offset: Tick(9_000),
+        kind: Default::default(),
+        audio: Default::default(),
+        auto: vec![],
+    });
+    s.morphers.push(MorpherEvent {
+        id: MorphId(3),
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        targets: MorphTargets::Below,
+        patch: Default::default(),
+        enabled: true,
+        timed: true,
+        strength: 1.0,
+        fade_in: Tick(0),
+        fade_out: Tick(0),
+    });
+    s.morph_lanes = 1;
+    p.sequences.push(s);
+
+    // экземпляр стоит ДВАЖДЫ — тело инлайнится в каждый, на чтении они
+    // обязаны схлопнуться обратно в ОДНУ ленту
+    let mut a = clip(1, ClipKind::Video, 0, 0, 90_000, 100);
+    a.opacity = 0.5;
+    a.fx = vec![FxInstance::Gain { db: 2.0, pan: 0.0 }];
+    a.fx_bypass = vec![];
+    p.clips.push(a);
+    p.clips.push(clip(2, ClipKind::Video, 0, 200_000, 60_000, 100));
+    p.validate().expect("фикстура обязана быть законной");
+    p
+}
+
+#[test]
+fn t431_nested_reel_survives_the_round_trip() {
+    let p = nested_project();
+    let text = save_project(&p, &Retained::default(), None);
+
+    // экземпляр записан Stack'ом ребёнком Track — тем же приёмом, каким
+    // это делают Premiere и FCP, и чужой редактор увидит монтаж, а не
+    // ссылку в наш конверт
+    let tl = parse_document(&text).unwrap();
+    let track = tl
+        .tracks
+        .children
+        .iter()
+        .find_map(|c| match c {
+            kt_otio::Composable::Track(t) => Some(t),
+            _ => None,
+        })
+        .expect("видео-дорожка");
+    let stacks: Vec<_> = track
+        .children
+        .iter()
+        .filter_map(|c| match c {
+            kt_otio::Composable::Stack(s) => Some(s),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(stacks.len(), 2, "оба экземпляра обязаны быть Stack'ами");
+    assert_eq!(stacks[0].name, "Заставка", "имя ленты — имя стека");
+    assert!(stacks[0].source_range.is_some(), "окно экземпляра — source_range стека");
+    assert!(
+        !stacks[0].children.is_empty(),
+        "тело обязано быть ИНЛАЙНОМ в каждом экземпляре: объектной идентичности \
+         в JSON OTIO нет, и чужой редактор увидел бы пустоту"
+    );
+
+    // версия ПО СОДЕРЖИМОМУ: вложение — первым условием каскада
+    assert_eq!(
+        kt_otio::kt_version(&tl),
+        Some(kt_otio::KT_META_V6),
+        "файл с вложением обязан нести v6: старая сборка прочла бы вложение серым \
+         плейсхолдером и при первой перезаписи вернула бы монтаж в файл мёртвым сырьём"
+    );
+
+    // round-trip: одна лента, оба экземпляра на неё
+    let bundle = load_project(&text, None).unwrap();
+    let q = bundle.project;
+    assert_eq!(q.sequences.len(), 1, "экземпляры не схлопнулись в одну ленту: {:?}", q.sequences);
+    let s = &q.sequences[0];
+    assert_eq!(s.name, "Заставка");
+    assert_eq!(s.clips, p.sequences[0].clips, "содержимое ленты поле-в-поле");
+    assert_eq!(s.transitions, p.sequences[0].transitions, "кроссфейд внутри ленты");
+    assert_eq!(s.morphers, p.sequences[0].morphers, "морфер-слой ленты — из сайдкара");
+    assert_eq!(s.morph_lanes, 1, "морф-дорожка ленты — из сайдкара");
+    assert_eq!(q.clips, p.clips, "экземпляры поле-в-поле (уровень, цепочка, окно)");
+    assert_eq!(q.sequence_uses(MediaId(100)), 2, "лента обязана остаться в двух местах");
+
+    // второй круг байт-в-байт
+    let text2 = save_project(&q, &bundle.retained, None);
+    assert_eq!(text2, text, "save→load→save с вложением не байт-стабилен");
+}
+
+#[test]
+fn t432_diverged_bodies_become_two_reels() {
+    let p = nested_project();
+    let text = save_project(&p, &Retained::default(), None);
+    // чужой редактор правил ОДИН экземпляр и не правил другой: подменяем
+    // длительность события во втором инлайне
+    let marker = "\"duration\": {\n";
+    assert!(text.contains(marker));
+    let mut tl = parse_document(&text).unwrap();
+    {
+        let kt_otio::Composable::Track(t) = &mut tl.tracks.children[0] else { panic!("трек") };
+        let kt_otio::Composable::Stack(s) = t
+            .children
+            .iter_mut()
+            .filter(|c| matches!(c, kt_otio::Composable::Stack(_)))
+            .nth(1)
+            .expect("второй экземпляр")
+        else {
+            panic!("стек")
+        };
+        s.children.clear(); // тело второго экземпляра стало другим
+    }
+    let text = kt_otio::write_document(&tl);
+    let bundle = load_project(&text, None).unwrap();
+    assert_eq!(
+        bundle.project.sequences.len(),
+        2,
+        "разошедшиеся тела обязаны дать ДВЕ ленты: тихий выбор одного из двух \
+         есть потеря чужой работы"
+    );
+    assert!(
+        bundle.notices.iter().any(|n| n.contains("two different bodies")),
+        "о расхождении тел не сказано: {:?}",
+        bundle.notices
+    );
+    // адреса событий второй ленты СВЕЖИЕ — ClipId уникален по документу
+    bundle.project.validate().expect("прочитанный проект обязан быть законным");
+}
+
+#[test]
+fn t433_the_sidecar_is_advisory_not_authoritative() {
+    let p = nested_project();
+    let text = save_project(&p, &Retained::default(), None);
+    // сайдкар потерялся (чужой редактор переписал metadata таймлайна):
+    // монтаж ленты обязан прочитаться ИЗ ФАЙЛА, а не пропасть
+    let mut tl = parse_document(&text).unwrap();
+    {
+        let kt = tl.metadata.get_mut("kt").unwrap().as_object_mut().unwrap();
+        kt.remove("sequences");
+    }
+    let text = kt_otio::write_document(&tl);
+    let bundle = load_project(&text, None).unwrap();
+    let q = &bundle.project;
+    assert_eq!(q.sequences.len(), 1, "лента пропала вместе с сайдкаром");
+    assert_eq!(q.sequences[0].clips.len(), 2, "монтаж ленты обязан читаться из файла");
+    assert_eq!(q.sequences[0].transitions.len(), 1, "кроссфейд внутри ленты обязан читаться");
+    assert!(
+        q.sequences[0].morphers.is_empty(),
+        "морфер-слой без сайдкара взяться неоткуда — это и есть его цена"
+    );
+    assert!(
+        bundle.notices.iter().any(|n| n.contains("no kt sidecar")),
+        "о пропавшем сайдкаре не сказано: {:?}",
+        bundle.notices
+    );
+    q.validate().expect("прочитанный проект обязан быть законным");
+}
+
+/// Тест 433b (Р.50): каскад версии не сдвинул НИ ОДИН прежний файл.
+///
+/// Версия конверта ставится по СОДЕРЖИМОМУ, и новое условие, встроенное в
+/// каскад не туда, поднимает версию всем подряд — такой файл перестаёт
+/// открываться прежними сборками. Это единственная проверка, ловящая ошибку
+/// каскада целиком: t148/t189 сторожат по одному эталону, а здесь — все наши
+/// закоммиченные .otio разом.
+#[test]
+fn t433b_version_cascade_did_not_move_old_files() {
+    let dir = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures"));
+    let mut seen = 0;
+    for e in std::fs::read_dir(dir).expect("каталог фикстур") {
+        let path = e.unwrap().path();
+        if path.extension().and_then(|x| x.to_str()) != Some("otio") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        let before = kt_otio::kt_version(&parse_document(&text).unwrap());
+        let bundle = load_project(&text, path.parent()).expect("наш файл читается");
+        assert!(
+            bundle.project.sequences.is_empty(),
+            "{}: в прежней фикстуре вложений быть не должно",
+            path.display()
+        );
+        let out = save_project(&bundle.project, &bundle.retained, path.parent());
+        assert_eq!(
+            kt_otio::kt_version(&parse_document(&out).unwrap()),
+            before,
+            "{}: версия конверта сдвинулась на файле БЕЗ вложений — условие \
+             встроено в каскад не туда, и прежние сборки перестанут открывать файл",
+            path.display()
+        );
+        assert_eq!(out, text, "{}: пересохранение не байт-в-байт", path.display());
+        seen += 1;
+    }
+    assert!(seen >= 2, "наши .otio-фикстуры пропали (нашлось {seen})");
 }

@@ -258,10 +258,9 @@ impl Clip {
         match self.active_media()? {
             MediaRefNode::External(er) => er.available_range,
             MediaRefNode::Missing(mr) => mr.available_range,
-            MediaRefNode::Unknown(raw) => raw
-                .0
-                .get("available_range")
-                .and_then(|v| serde_json::from_value(v.clone()).ok()),
+            MediaRefNode::Unknown(raw) => {
+                raw.0.get("available_range").and_then(|v| serde_json::from_value(v.clone()).ok())
+            }
         }
     }
 }
@@ -390,10 +389,7 @@ pub(crate) fn split_schema(tag: &str) -> Result<(&str, u32), Error> {
 }
 
 fn take_tag(map: &Map<String, Value>) -> Result<String, Error> {
-    map.get("OTIO_SCHEMA")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-        .ok_or(Error::MissingSchemaTag)
+    map.get("OTIO_SCHEMA").and_then(Value::as_str).map(str::to_owned).ok_or(Error::MissingSchemaTag)
 }
 
 /// Типизированный парс без тега (тег уже снят вызывающим).

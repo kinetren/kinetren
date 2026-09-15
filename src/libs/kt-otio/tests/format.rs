@@ -66,7 +66,11 @@ fn rich_timeline() -> Timeline {
     let mut video = Track {
         name: "MAIN".into(),
         kind: "Video".into(),
-        children: vec![clip("a", "media/a.mp4", 0, 90_000), gap(45_000), clip("b", "media/b.mp4", 9_000, 90_000)],
+        children: vec![
+            clip("a", "media/a.mp4", 0, 90_000),
+            gap(45_000),
+            clip("b", "media/b.mp4", 9_000, 90_000),
+        ],
         source_range: None,
         effects: vec![],
         markers: vec![],
@@ -251,7 +255,9 @@ fn t146_schema_versions() {
     .to_string();
     let tl = parse_document(&text).unwrap();
     let Composable::Track(track) = &tl.tracks.children[0] else { panic!() };
-    let Composable::Clip(c) = &track.children[0] else { panic!("Clip.1 must upgrade to typed Clip") };
+    let Composable::Clip(c) = &track.children[0] else {
+        panic!("Clip.1 must upgrade to typed Clip")
+    };
     assert_eq!(c.active_media_reference_key, "DEFAULT_MEDIA");
     let Some(MediaRefNode::External(er)) = c.active_media() else { panic!() };
     assert_eq!(er.target_url, "x.mov");
@@ -262,11 +268,15 @@ fn t146_schema_versions() {
     let leaf = text.replace("Clip.1", "Clip.99").replace("media_reference", "media_referencesX");
     let tl2 = parse_document(&leaf).unwrap();
     let Composable::Track(track2) = &tl2.tracks.children[0] else { panic!() };
-    assert!(matches!(&track2.children[0], Composable::Unknown(r) if r.schema_tag() == Some("Clip.99")));
+    assert!(
+        matches!(&track2.children[0], Composable::Unknown(r) if r.schema_tag() == Some("Clip.99"))
+    );
 
     // хребет новее — отказ
     let bad_track = text.replace("Track.1", "Track.2");
-    assert!(matches!(parse_document(&bad_track), Err(Error::UnsupportedSchema(s)) if s == "Track.2"));
+    assert!(
+        matches!(parse_document(&bad_track), Err(Error::UnsupportedSchema(s)) if s == "Track.2")
+    );
     let bad_tl = text.replace("Timeline.1", "Timeline.3");
     assert!(matches!(parse_document(&bad_tl), Err(Error::UnsupportedSchema(_))));
 
@@ -287,12 +297,20 @@ fn t146_schema_versions() {
 /// Тест 147: пути и file://-URL.
 #[test]
 fn t147_media_urls() {
-    use kt_otio::{decode_file_url, encode_file_url, media_target_url, relativize, resolve_media_path};
+    use kt_otio::{
+        decode_file_url, encode_file_url, media_target_url, relativize, resolve_media_path,
+    };
     let base = Path::new("/home/user/projects/film");
 
     // relativize: рядом, глубже, выше
-    assert_eq!(relativize(base, Path::new("/home/user/projects/film/media/a.mp4")).unwrap(), "media/a.mp4");
-    assert_eq!(relativize(base, Path::new("/home/user/projects/other/b.mp4")).unwrap(), "../other/b.mp4");
+    assert_eq!(
+        relativize(base, Path::new("/home/user/projects/film/media/a.mp4")).unwrap(),
+        "media/a.mp4"
+    );
+    assert_eq!(
+        relativize(base, Path::new("/home/user/projects/other/b.mp4")).unwrap(),
+        "../other/b.mp4"
+    );
     assert_eq!(relativize(base, Path::new("/home/user/projects/film")).unwrap(), ".");
     // общего только корень — не релятивизуем (фолбэк на file://)
     assert_eq!(relativize(base, Path::new("/mnt/disk/c.mp4")), None);
@@ -308,7 +326,10 @@ fn t147_media_urls() {
 
     // media_target_url: относительный / фолбэк / synth
     assert_eq!(media_target_url(base, "/home/user/projects/film/media/a.mp4"), "media/a.mp4");
-    assert_eq!(media_target_url(base, "/mnt/disk/c.mp4"), encode_file_url(Path::new("/mnt/disk/c.mp4")));
+    assert_eq!(
+        media_target_url(base, "/mnt/disk/c.mp4"),
+        encode_file_url(Path::new("/mnt/disk/c.mp4"))
+    );
     assert_eq!(media_target_url(base, "synth:Ramp"), "synth:Ramp");
     assert_eq!(media_target_url(base, "already/relative.mp4"), "already/relative.mp4");
 
