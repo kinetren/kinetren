@@ -187,6 +187,16 @@ impl KtApp {
         if crumbs.is_empty() {
             return;
         }
+        // САМО ИМЯ ПРОЕКТА — первая крошка: щёлкнув по нему, человек
+        // выходит в корень одним движением. Без этого у пути глубины 1
+        // кликабельных крошек не было бы вовсе.
+        let root_hit = ui.interact(
+            title_at.expand2(egui::vec2(2.0, 3.0)),
+            ui.id().with("crumb-root"),
+            egui::Sense::click(),
+        );
+        crate::widgets::field_probe::note("nest.root", root_hit.rect);
+        let to_root = self.hint(root_hit, tr(k::msg::NEST_CRUMB_HINT)).clicked();
         let mut x = title_at.right() + 8.0;
         let font = egui::FontId::proportional(11.5);
         let mut back_to: Option<usize> = None;
@@ -216,13 +226,25 @@ impl KtApp {
                 ui.id().with(("crumb", i)),
                 egui::Sense::click(),
             );
+            crate::widgets::field_probe::note(
+                match i {
+                    0 => "nest.crumb0",
+                    1 => "nest.crumb1",
+                    _ => "nest.crumb",
+                },
+                hit.rect,
+            );
             if self.hint(hit, tr(k::msg::NEST_CRUMB_HINT)).clicked() && !last {
                 back_to = Some(i);
             }
         }
         // клик по крошке — выход НА НЕЁ: столько шагов наружу, сколько
-        // уровней ниже неё
-        if let Some(i) = back_to {
+        // уровней ниже неё; клик по имени проекта — сразу в корень
+        if to_root {
+            while !self.nest_path.is_empty() {
+                self.leave_nest();
+            }
+        } else if let Some(i) = back_to {
             for _ in 0..(crumbs.len() - 1 - i) {
                 self.leave_nest();
             }
@@ -296,6 +318,10 @@ impl KtApp {
         crate::widgets::menu_item(ui, label, Some(accel))
     }
 
+    fn menu_btn_probed(ui: &mut egui::Ui, label: &str, accel: &str) -> (bool, egui::Rect) {
+        crate::widgets::menu_item_probed(ui, label, Some(accel))
+    }
+
     /// Пункты меню (три корневых). Отдельно от контейнера, чтобы их же
     /// показывал бургер при узкой колонке.
     fn menu_items(&mut self, ui: &mut egui::Ui) -> f32 {
@@ -336,7 +362,7 @@ impl KtApp {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         });
-        ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
+        let edit_btn = ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
             if Self::menu_btn(ui, tr(k::menu::edit::UNDO), "Ctrl+Z") {
                 self.undo();
                 ui.close();
@@ -346,11 +372,18 @@ impl KtApp {
                 ui.close();
             }
             ui.separator();
-            if Self::menu_btn(ui, tr(k::menu::edit::COPY), "Ctrl+C") {
+            // прямоугольники — наружу для живых сценариев (Р.27):
+            // системного буфера в виртуальном экране может не быть вовсе,
+            // а рука ходит в меню, и путь у них один (правило 17)
+            let (hit, r) = Self::menu_btn_probed(ui, tr(k::menu::edit::COPY), "Ctrl+C");
+            crate::widgets::field_probe::note("edit.copy", r);
+            if hit {
                 self.copy_selection();
                 ui.close();
             }
-            if Self::menu_btn(ui, tr(k::menu::edit::PASTE), "Ctrl+V") {
+            let (hit, r) = Self::menu_btn_probed(ui, tr(k::menu::edit::PASTE), "Ctrl+V");
+            crate::widgets::field_probe::note("edit.paste", r);
+            if hit {
                 self.paste_at_cursor();
                 ui.close();
             }
@@ -387,6 +420,7 @@ impl KtApp {
                 ui.close();
             }
         });
+        crate::widgets::field_probe::note("menu.edit", edit_btn.response.rect);
         let last = ui.menu_button(tr(k::menu::view::TITLE), |ui| {
             let detach_label = if self.preview_detached {
                 tr(k::menu::view::ATTACH_PREVIEW)

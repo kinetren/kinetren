@@ -2671,6 +2671,36 @@ impl KtApp {
         }
     }
 
+    /// Прыгнуть к СЛЕДУЮЩЕМУ месту, где стоит та же лента (Р.50, В3).
+    ///
+    /// Бейдж «×N» говорит, что мест несколько; без этого глагола он был бы
+    /// сообщением без продолжения — «их три, а где они, ищи сам».
+    pub fn goto_next_place(&mut self, id: ClipId) {
+        let Some(c) = self.model.clip(id).cloned() else { return };
+        let here = c.start;
+        let mut places: Vec<kt_model::ClipEvent> =
+            self.model.project().clips.iter().filter(|x| x.media == c.media).cloned().collect();
+        if places.len() < 2 {
+            self.warn(tr(k::msg::NEST_ONE_PLACE));
+            return;
+        }
+        places.sort_by_key(|x| (x.start, x.id));
+        // по кругу: после последнего — первое, иначе у глагола был бы
+        // тупик ровно там, где он нужнее всего
+        let next =
+            places.iter().find(|x| x.start > here).or_else(|| places.first()).cloned().unwrap();
+        self.select_only(next.id);
+        self.player.seek(next.start);
+        self.center_view_on(next.start);
+    }
+
+    /// Привести момент в вид (крошка общей арифметики: своей формулы
+    /// прокрутки в местах вызова не заводим).
+    fn center_view_on(&mut self, t: Tick) {
+        let half = self.timeline_rect.width().max(1.0) as f64 * self.ticks_per_px / 2.0;
+        self.view_start = (t.0 as f64 - half).max(0.0);
+    }
+
     /// Убрать ленты, на которые больше никто не смотрит.
     pub fn remove_unused_seqs(&mut self) {
         let cmds = kt_model::ops::remove_unused_sequences(self.model.project());
@@ -4197,7 +4227,7 @@ impl KtApp {
     }
 
     pub fn next_morph_id(&self) -> u64 {
-        self.model.project().morphers.iter().map(|m| m.id.0).max().unwrap_or(0) + 1
+        self.model.project().max_morph_id() + 1
     }
 
     /// Камера под курсором воспроизведения (Р.29): дефолтная «50 мм»,
@@ -4494,7 +4524,7 @@ impl KtApp {
     /// при удалении» отвергнут: удаление откатывается через undo, а
     /// вычищенный конверт — нет.
     pub fn next_clip_id(&self) -> u64 {
-        let live = self.model.project().clips.iter().map(|c| c.id.0).max().unwrap_or(0);
+        let live = self.model.project().max_clip_id();
         let hw = self.clip_id_hw.get().max(live);
         self.clip_id_hw.set(hw);
         hw + 1
@@ -4577,22 +4607,19 @@ impl KtApp {
     }
 
     pub fn next_transition_id(&self) -> u64 {
-        self.model.project().transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1
+        self.model.project().max_transition_id() + 1
     }
 
     pub fn next_group_id(&self) -> u64 {
-        self.model
-            .project()
-            .clips
-            .iter()
-            .filter_map(|c| c.link_group.map(|g| g.0))
-            .max()
-            .unwrap_or(0)
-            + 1
+        self.model.project().max_group_id() + 1
     }
 
+    /// Свежий адрес медиа — по ВСЕМУ пространству (Р.50): ленты живут в
+    /// одном пространстве адресов с файлами.
     pub fn next_media_id(&self) -> u64 {
-        self.model.project().media.iter().map(|m| m.id.0).max().unwrap_or(0) + 1
+        let p = self.model.project();
+        p.media.iter().map(|m| m.id.0).chain(p.sequences.iter().map(|s| s.id.0)).max().unwrap_or(0)
+            + 1
     }
 
     pub fn split_selected(&mut self) {

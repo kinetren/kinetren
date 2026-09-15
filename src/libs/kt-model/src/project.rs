@@ -5313,6 +5313,49 @@ impl Project {
         count(&self.clips) + self.sequences.iter().map(|s| count(&s.clips)).sum::<usize>()
     }
 
+    /// Наибольшие занятые адреса ВО ВСЁМ ДОКУМЕНТЕ (Р.50).
+    ///
+    /// Счёт «по корню» — дыра: события внутри лент для него невидимы, и
+    /// свежий адрес, выданный по корню, СТОЛКНУЛСЯ БЫ с адресом внутри
+    /// ленты. Батч тогда отвергается целиком, и жест (вставка, разрез)
+    /// просто МОЛЧА не происходит. Обмен содержимого при входе внутрь
+    /// союза не меняет, поэтому считать можно по любому виду проекта.
+    pub fn max_clip_id(&self) -> u64 {
+        self.clips
+            .iter()
+            .chain(self.sequences.iter().flat_map(|s| s.clips.iter()))
+            .map(|c| c.id.0)
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn max_group_id(&self) -> u64 {
+        self.clips
+            .iter()
+            .chain(self.sequences.iter().flat_map(|s| s.clips.iter()))
+            .filter_map(|c| c.link_group.map(|g| g.0))
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn max_transition_id(&self) -> u64 {
+        self.transitions
+            .iter()
+            .chain(self.sequences.iter().flat_map(|s| s.transitions.iter()))
+            .map(|t| t.id.0)
+            .max()
+            .unwrap_or(0)
+    }
+
+    pub fn max_morph_id(&self) -> u64 {
+        self.morphers
+            .iter()
+            .chain(self.sequences.iter().flat_map(|s| s.morphers.iter()))
+            .map(|m| m.id.0)
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Все ленты документа: корень первым, затем вложенные.
     fn reels(&self) -> impl Iterator<Item = (Option<MediaId>, &dyn Reel)> {
         std::iter::once((None, self as &dyn Reel))

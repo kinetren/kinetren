@@ -8402,3 +8402,48 @@ fn t457_four_ways_in_one_way_out() {
     h3.step();
     assert_eq!(h3.state().model.editing(), Some(seq3), "Enter по выделенному вложению не сработал");
 }
+
+/// Тест 458 (Р.50, В2): у вложения свой вид и свои обещания.
+///
+/// Три вещи, которых не видно в модели: филмстрипа у вложения быть не
+/// может (своего файла у ленты нет, а тумбы содержимого — это декод на
+/// скролле, инвариант 8), бейдж «×N» появляется ТОЛЬКО при N > 1, и фон
+/// внутри ленты тонирован.
+#[test]
+fn t458_nest_looks_like_a_nest() {
+    use kt_model::*;
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+
+    // ФИЛМСТРИП: у вложения его нет вовсе — своего файла у ленты нет, а
+    // тумбы содержимого были бы декодом на скролле (инвариант 8). Ни один
+    // ключ тумбы не адресует адрес ЛЕНТЫ.
+    h.step();
+    h.step();
+    assert!(
+        h.state().thumb_textures.keys().all(|k| k.media != seq),
+        "вложение завело тумбы по адресу ЛЕНТЫ — у неё нет файла"
+    );
+
+    // БЕЙДЖ ×N: при одном месте его нет
+    assert_eq!(h.state().nest_uses(seq), 1, "сцена: одно место");
+    // ...а при двух — есть, и «следующее место» ведёт по кругу
+    let mut twin = h.state().model.project().clips.iter().find(|c| c.id == inst).unwrap().clone();
+    twin.id = ClipId(h.state().next_clip_id());
+    twin.start = kt_time::Tick(900_000);
+    twin.link_group = None;
+    assert!(h.state_mut().apply(Command::AddClip(twin.clone())));
+    h.step();
+    assert_eq!(h.state().nest_uses(seq), 2, "второе место не посчиталось");
+    h.state_mut().goto_next_place(inst);
+    h.step();
+    assert!(
+        h.state().selected.contains(&twin.id),
+        "«следующее место» не привело ко второму экземпляру — бейдж ×N остался \
+         сообщением без продолжения"
+    );
+    // ...и по кругу обратно
+    h.state_mut().goto_next_place(twin.id);
+    h.step();
+    assert!(h.state().selected.contains(&inst), "круг не замкнулся на первом месте");
+}

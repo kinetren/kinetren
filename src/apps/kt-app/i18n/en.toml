@@ -207,6 +207,7 @@ nest_expand = "Expand the reel onto lanes"
 nest_independent = "Detach from the other places"
 nest_rename = "Rename the reel..."
 nest_enter = "Open the reel (Enter)"
+nest_next_place = "Go to the next place"
 
 [bin]
 hint_free = "Free layout: cards move with the mouse"
@@ -703,6 +704,7 @@ nest_rename_do = "Rename"
 nest_uses = "Places that change together: {0}"
 nest_too_deep = "Nesting is limited to {0} levels"
 nest_crumb_hint = "Click to go back out to this reel"
+nest_one_place = "This reel stands in one place only"
 
 [dialog]
 import_ktproj = "Import a legacy .ktproj project"

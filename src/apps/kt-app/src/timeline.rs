@@ -975,8 +975,19 @@ impl KtApp {
                 format!("{{\"id\":{},\"start\":{},\"dur\":{}}}", c.id.0, c.start.0, c.duration.0)
             })
             .collect();
+        // ГДЕ МЫ СТОИМ (Р.50, В4): без этого все будущие сценарии молча
+        // проверяли бы не тот список событий — `clips` выше отдаёт
+        // содержимое ТЕКУЩЕЙ ленты, и снаружи это корень, а внутри лента.
+        let nest = format!(
+            "{{\"depth\":{},\"seq\":{},\"name\":\"{}\",\"uses\":{}}}",
+            self.nest_path.len(),
+            self.model.editing().map(|m| m.0 as i64).unwrap_or(-1),
+            self.nest_crumbs().last().cloned().unwrap_or_default().replace('"', "'"),
+            self.model.editing().map(|m| self.model.document().sequence_uses(m)).unwrap_or(0),
+        );
         let json = format!(
             "{{\"playhead\":{},\"playing\":{},\"fields\":[{}],\"clips\":[{}],\
+             \"nest\":{},\"clipboard\":{},\
              \"underruns\":{},\"callback_underruns\":{},\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"bin\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
@@ -986,6 +997,8 @@ impl KtApp {
             self.player.transport.is_playing(),
             fields.join(","),
             clips.join(","),
+            nest,
+            self.clipboard.clips.len(),
             self.player.underruns.load(ord),
             self.player.shared.callback_underruns.load(ord),
             screen.width(),
@@ -1632,6 +1645,12 @@ impl KtApp {
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
         let painter = ui.painter_at(full);
         painter.rect_filled(full, 0.0, crate::theme::TL_BG);
+        // ВНУТРИ ЛЕНТЫ фон тонирован (Р.50, В2): единственный признак,
+        // который виден краем глаза, не читая крошек. Своей полосы или
+        // рамки под это не заводим — правило 13.
+        if self.model.editing().is_some() {
+            painter.rect_filled(full, 0.0, egui::Color32::from_rgba_unmultiplied(80, 60, 120, 16));
+        }
         // заголовки дорожек интерактивны: драг = реордер (п.7), ПКМ = меню
         // удаления/вставки (п.8)
         let gutter_resp =
@@ -3589,9 +3608,47 @@ impl KtApp {
             // грубый шаг и вырождается в повторяющиеся бакеты
             let used_span = warp.map_or(dur, |w| w.used().max(1));
 
+            // ВЛОЖЕНИЕ: филмстрипа у него нет и быть не может — своего
+            // файла у ленты нет, а спрашивать тумбы содержимого значило бы
+            // просить декод на скролле (инвариант 8). Вместо него —
+            // МИНИ-КАРТА содержимого: спаны детей ОДНИМ мешем, без единого
+            // обращения к медиа.
+            let is_nest = self.model.project().sequence(c.media).is_some();
+            if is_nest && clip_rect.width() > 20.0 {
+                let seq = self.model.project().sequence(c.media).unwrap();
+                let win = (c.source_in.0, c.source_in.0 + dur);
+                let span = (win.1 - win.0).max(1) as f32;
+                let mut mesh = egui::Mesh::default();
+                let lanes = seq.video_lanes.max(1) + seq.audio_lanes.max(1);
+                let bar_h = (clip_rect.height() - 4.0) / lanes as f32;
+                for ch in &seq.clips {
+                    let (a, b) = (ch.start.0, (ch.start + ch.duration).0);
+                    let (a, b) = (a.max(win.0), b.min(win.1));
+                    if a >= b {
+                        continue;
+                    }
+                    let row = match ch.kind {
+                        ClipKind::Video => ch.lane,
+                        ClipKind::Audio => seq.video_lanes.max(1) + ch.lane,
+                    };
+                    let y = clip_rect.top() + 2.0 + row as f32 * bar_h;
+                    let r = egui::Rect::from_min_max(
+                        egui::pos2(
+                            clip_rect.left() + clip_rect.width() * (a - win.0) as f32 / span,
+                            y,
+                        ),
+                        egui::pos2(
+                            clip_rect.left() + clip_rect.width() * (b - win.0) as f32 / span,
+                            y + (bar_h - 1.0).max(1.0),
+                        ),
+                    );
+                    mesh.add_colored_rect(r, egui::Color32::from_white_alpha(40));
+                }
+                painter.add(egui::Shape::mesh(mesh));
+            }
             // филмстрип видео-клипа: тумбы из индекс-БД/сервиса, отрисовка
             // никогда не блокируется и не трогает декодеры плеера
-            if c.kind == ClipKind::Video && !is_offline && clip_rect.width() > 30.0 {
+            if c.kind == ClipKind::Video && !is_nest && !is_offline && clip_rect.width() > 30.0 {
                 let thumb_h = clip_rect.height() - 2.0;
                 let thumb_w = (thumb_h * 16.0 / 9.0).max(28.0);
                 let step = crate::thumbs::thumb_source_step(
@@ -3771,6 +3828,17 @@ impl KtApp {
             // имя клипа на плашке
             if clip_rect.width() > 40.0 && !suppress_name.contains(&c.id) {
                 let mut label = media_names.get(&c.id).cloned().unwrap_or_default();
+                // БЕЙДЖ ×N — «сколько мест изменится вместе с этим»
+                // (Р.50). Только при N > 1: обещание, которое ничего не
+                // значит, хуже его отсутствия. Это наш единственный
+                // дифференциатор против Premiere, FCP и VEGAS, и он
+                // бесплатен — место уже занято подписью.
+                if is_nest {
+                    let n = self.model.document().sequence_uses(c.media);
+                    if n > 1 {
+                        label.push_str(&format!("  ×{n}"));
+                    }
+                }
                 if !c.fx.is_empty() {
                     label.push(' ');
                     label.push_str(crate::icons::FX);
@@ -4873,11 +4941,20 @@ impl KtApp {
                 // пункт стоит у события; войти, развернуть, отвязать и
                 // переименовать — только у САМОГО вложения, и «отвязать»
                 // показывается лишь когда мест и правда больше одного
-                if self.is_nest(id) && ui.button(tr(k::tl::menu::NEST_ENTER)).clicked() {
-                    self.enter_nest(id);
-                    ui.close();
+                // прямоугольники пунктов — наружу для живых сценариев
+                // (Р.49): меню egui в дереве доступности не ищется, а
+                // угадывать смещения сценарий не должен
+                if self.is_nest(id) {
+                    let r = ui.button(tr(k::tl::menu::NEST_ENTER));
+                    crate::widgets::field_probe::note("nest.enter", r.rect);
+                    if r.clicked() {
+                        self.enter_nest(id);
+                        ui.close();
+                    }
                 }
-                if ui.button(tr(k::tl::menu::COLLAPSE)).clicked() {
+                let r = ui.button(tr(k::tl::menu::COLLAPSE));
+                crate::widgets::field_probe::note("nest.collapse", r.rect);
+                if r.clicked() {
                     if !self.is_selected(id) {
                         self.select_only(id);
                     }
@@ -4888,11 +4965,26 @@ impl KtApp {
                     self.model.clip(id).map(|c| c.media).filter(|m| self.nest_uses(*m) > 0)
                     && self.model.project().sequence(seq).is_some()
                 {
-                    if ui.button(tr(k::tl::menu::NEST_EXPAND)).clicked() {
+                    let r = ui.button(tr(k::tl::menu::NEST_EXPAND));
+                    crate::widgets::field_probe::note("nest.expand", r.rect);
+                    if r.clicked() {
                         self.expand_nest(id);
                         ui.close();
                     }
                     let uses = self.nest_uses(seq);
+                    // «×N» без продолжения было бы сообщением, а не
+                    // глаголом: вот куда по нему идти
+                    if uses > 1 {
+                        let r = crate::widgets::menu_item(
+                            ui,
+                            tr(k::tl::menu::NEST_NEXT_PLACE),
+                            Some(&format!("×{uses}")),
+                        );
+                        if r {
+                            self.goto_next_place(id);
+                            ui.close();
+                        }
+                    }
                     if uses > 1
                         && crate::widgets::menu_item(
                             ui,
@@ -4903,7 +4995,9 @@ impl KtApp {
                         self.nest_make_independent(id);
                         ui.close();
                     }
-                    if ui.button(tr(k::tl::menu::NEST_RENAME)).clicked() {
+                    let r = ui.button(tr(k::tl::menu::NEST_RENAME));
+                    crate::widgets::field_probe::note("nest.rename", r.rect);
+                    if r.clicked() {
                         let name = self
                             .model
                             .project()

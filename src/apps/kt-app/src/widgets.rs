@@ -267,10 +267,17 @@ impl std::ops::BitOrAssign for ParamsChanged {
 /// Разделитель — `\t`: egui разносит им подпись и аккорд по краям пункта,
 /// как это делают системные меню.
 pub fn menu_item(ui: &mut egui::Ui, label: &str, accel: Option<&str>) -> bool {
-    match accel {
-        Some(a) => ui.button(format!("{label}\t{a}")).clicked(),
-        None => ui.button(label).clicked(),
-    }
+    menu_item_probed(ui, label, accel).0
+}
+
+/// То же плюс ПРЯМОУГОЛЬНИК пункта: живым сценариям нечем найти пункт меню
+/// egui (в дереве доступности его нет), а угадывать смещения они не должны.
+pub fn menu_item_probed(ui: &mut egui::Ui, label: &str, accel: Option<&str>) -> (bool, egui::Rect) {
+    let r = match accel {
+        Some(a) => ui.button(format!("{label}\t{a}")),
+        None => ui.button(label),
+    };
+    (r.clicked(), r.rect)
 }
 
 /// Прямоугольники полей параметров последнего кадра — ТОЛЬКО для живых

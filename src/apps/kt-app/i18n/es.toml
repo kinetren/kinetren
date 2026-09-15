@@ -207,6 +207,7 @@ nest_expand = "Desplegar la bobina en pistas"
 nest_independent = "Separar de los demás lugares"
 nest_rename = "Renombrar la bobina..."
 nest_enter = "Abrir la bobina (Enter)"
+nest_next_place = "Ir al siguiente lugar"
 
 [bin]
 hint_free = "Disposición libre: las tarjetas se mueven con el ratón"
@@ -703,6 +704,7 @@ nest_rename_do = "Renombrar"
 nest_uses = "Lugares que cambian juntos: {0}"
 nest_too_deep = "El anidamiento se limita a {0} niveles"
 nest_crumb_hint = "Clic para volver a esta bobina"
+nest_one_place = "Esta bobina está en un solo lugar"
 
 [dialog]
 import_ktproj = "Importar un proyecto .ktproj antiguo"
