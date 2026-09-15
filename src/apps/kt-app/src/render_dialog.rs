@@ -167,7 +167,7 @@ impl KtApp {
             return;
         }
         let base = self.project_path.as_deref().and_then(|p| p.parent());
-        self.render_setup.missing = missing_sources(self.model.project(), base);
+        self.render_setup.missing = missing_sources(&self.model.document(), base);
         self.render_setup.open = true;
     }
 
@@ -185,7 +185,7 @@ impl KtApp {
             return;
         };
         let out_path = path.to_string_lossy().to_string();
-        let project = self.model.project().clone();
+        let project = self.model.document();
         let proj_res = (project.settings.width, project.settings.height);
         let proj_fps = project.settings.fps;
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));

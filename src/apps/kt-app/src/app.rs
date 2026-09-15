@@ -77,6 +77,28 @@ pub struct PresetSaveDialog {
     pub focus: bool,
 }
 
+/// Уровень пути внутрь вложений (Р.50, В1).
+///
+/// Хранит ВИД СНАРУЖИ целиком: выйти обязано означать «вернулся туда же»,
+/// а не «оказался в начале таймлайна с пустым выделением» (правило 14 —
+/// фича работает повторно, и правило 5 — действие не гасит соседнее
+/// состояние).
+#[derive(Clone)]
+pub struct NestStep {
+    /// Где стояли ДО входа (`None` — корень).
+    pub parent: Option<kt_model::MediaId>,
+    /// Через какой экземпляр вошли: по нему переводится курсор обратно.
+    pub inst: ClipId,
+    /// Имя ленты — для крошек.
+    pub name: String,
+    pub view_start: f64,
+    pub ticks_per_px: f64,
+    pub tl_scroll: f32,
+    pub cursor: Tick,
+    pub region: Option<kt_model::Region>,
+    pub selected: std::collections::BTreeSet<ClipId>,
+}
+
 /// Окно имени ленты (Р.50). Та же форма, что у окна имени пресета: живой
 /// предпросмотр, Enter/Esc, фокус отдаётся при закрытии (правило 14).
 pub struct SeqNameDialog {
@@ -419,6 +441,8 @@ pub struct KtApp {
     pub preset_save: Option<PresetSaveDialog>,
     /// Окно переименования вложенной ленты (Р.50).
     pub seq_name: Option<SeqNameDialog>,
+    /// Путь внутрь вложений: по уровню на каждый вход (Р.50, В1).
+    pub nest_path: Vec<NestStep>,
     /// Библиотека FX-пресетов (Р.48): файл пользователя, общий на все
     /// проекты. Загружается лениво при первом обращении.
     pub presets: crate::user_store::FxPresetStore,
@@ -702,6 +726,7 @@ impl KtApp {
             duck: None,
             preset_save: None,
             seq_name: None,
+            nest_path: Vec::new(),
             presets: Default::default(),
             presets_reported: false,
             dir_sync_warned: false,
@@ -880,6 +905,7 @@ impl KtApp {
             duck: None,
             preset_save: None,
             seq_name: None,
+            nest_path: Vec::new(),
             presets: Default::default(),
             presets_reported: false,
             dir_sync_warned: false,
@@ -1359,7 +1385,7 @@ impl KtApp {
             let ui = Some(self.ui_state());
             self.model.set_ui_state(ui);
             let target = self.recovery_target();
-            let project = self.model.project().clone();
+            let project = self.model.document();
             let retained = self.retained.clone();
             let (tx, rx) = std::sync::mpsc::channel();
             let snap_rev = self.model_rev;
@@ -2201,12 +2227,22 @@ impl KtApp {
             return;
         }
         // 3) снять регион и выделение (loop остаётся взведённым — п.3 р.11)
+        let had = self.model.project().region.is_some()
+            || !self.selected.is_empty()
+            || !self.selected_morph.is_empty()
+            || !self.selected_camera.is_empty();
         if self.model.project().region.is_some() {
             self.clear_region_keep_loop();
         }
         self.selected.clear();
         self.selected_morph.clear();
         self.selected_camera.clear();
+        // 4) ВЫЙТИ ИЗ ЛЕНТЫ — ПОСЛЕДНИМ (Р.50, В3). Стой он раньше,
+        // «снять выделение» выкидывало бы человека наружу: одна клавиша
+        // делала бы два разных дела, и второе — необратимое по вниманию.
+        if !had && !self.nest_path.is_empty() {
+            self.leave_nest();
+        }
     }
 
     /// Перестановка display-строк дорожек (п.6 v1.4): между строками
@@ -2425,7 +2461,7 @@ impl KtApp {
     pub(crate) fn write_recovery_now(&mut self) {
         let target = self.recovery_target();
         let json = kt_otio::save_project(
-            self.model.project(),
+            &self.model.document(),
             &self.retained,
             self.project_path.as_deref().and_then(|p| p.parent()),
         );
@@ -2472,7 +2508,7 @@ impl KtApp {
                 self.model = kt_model::TimelineModel::new(project);
                 self.retained = retained;
                 self.model_rev += 1;
-                self.player.set_project(self.model.project().clone());
+                self.player.set_project(self.model.document());
                 // работа В РЕДАКТОРЕ и нигде больше: звёздочка горит, пока
                 // пользователь не нажмёт Ctrl+S
                 self.dirty_content = true;
@@ -2648,6 +2684,83 @@ impl KtApp {
         }
     }
 
+    /// Войти в ленту события `id` (Р.50, В1).
+    ///
+    /// Курсор ПЕРЕВОДИТСЯ, а не сбрасывается: `t_вн = source_in + (t_нар −
+    /// start)`. Человек вошёл, а не перепрыгнул — превью показывает тот же
+    /// кадр, и это единственное, по чему видно, что он попал туда, куда
+    /// целился.
+    pub fn enter_nest(&mut self, id: ClipId) {
+        let Some(c) = self.model.clip(id).cloned() else { return };
+        let Some(seq) = self.model.project().sequence(c.media).map(|s| (s.id, s.name.clone()))
+        else {
+            self.warn(tr(k::msg::NEST_NOT_A_NEST));
+            return;
+        };
+        if self.nest_path.len() >= kt_model::MAX_NEST_DEPTH {
+            self.warn(crate::tf!(k::msg::NEST_TOO_DEEP, kt_model::MAX_NEST_DEPTH));
+            return;
+        }
+        let here = self.player.transport.playhead();
+        self.nest_path.push(NestStep {
+            parent: self.model.editing(),
+            inst: id,
+            name: seq.1,
+            view_start: self.view_start,
+            ticks_per_px: self.ticks_per_px,
+            tl_scroll: self.tl_scroll,
+            cursor: here,
+            region: self.model.project().region,
+            selected: std::mem::take(&mut self.selected),
+        });
+        self.model.set_editing(Some(seq.0));
+        // регион живёт в ОСИ ВРЕМЕНИ ленты, а снаружи он был в оси корня:
+        // унести его внутрь значило бы накрыть не то место
+        self.model.set_region(None);
+        // выделение снаружи внутри бессмысленно: там другие события
+        self.selected.clear();
+        self.selected_morph.clear();
+        self.selected_camera.clear();
+        let inner = c.source_in + (here - c.start);
+        self.on_context_changed(inner.max(Tick::ZERO));
+    }
+
+    /// Выйти на уровень выше. `None` в пути — мы и так в корне.
+    pub fn leave_nest(&mut self) {
+        let Some(step) = self.nest_path.pop() else { return };
+        let inner = self.player.transport.playhead();
+        self.model.set_editing(step.parent);
+        self.model.set_region(step.region);
+        self.view_start = step.view_start;
+        self.ticks_per_px = step.ticks_per_px;
+        self.tl_scroll = step.tl_scroll;
+        self.selected = step.selected;
+        // курсор переводится обратно ТЕМ ЖЕ правилом; событие могло
+        // уехать или исчезнуть под undo — тогда возвращаемся туда, где
+        // стояли до входа
+        let back = match self.model.clip(step.inst).cloned() {
+            Some(c) => (c.start + (inner - c.source_in)).max(Tick::ZERO),
+            None => step.cursor,
+        };
+        self.on_context_changed(back);
+    }
+
+    /// Общее на вход и выход: движок продолжает играть ДОКУМЕНТ, кэши
+    /// кадра пересобираются, курсор встаёт на переведённое место.
+    fn on_context_changed(&mut self, cursor: Tick) {
+        self.player.seek(cursor);
+        self.blocked = None;
+        // ревизия — то, на чём висят кэши кадра (coverage, имена, пути) и
+        // сборка рендерера: смена контекста меняет ВСЁ, что они держат
+        self.model_rev += 1;
+        self.player.set_project(self.model.document());
+    }
+
+    /// Крошки пути: корень и каждая лента по дороге внутрь.
+    pub fn nest_crumbs(&self) -> Vec<String> {
+        self.nest_path.iter().map(|s| s.name.clone()).collect()
+    }
+
     /// Окно имени ленты (эталон — окно имени пресета, t345).
     fn draw_seq_name(&mut self, ctx: &egui::Context) {
         let Some(mut d) = self.seq_name.take() else { return };
@@ -2709,6 +2822,11 @@ impl KtApp {
             return;
         }
         self.seq_name = Some(d);
+    }
+
+    /// Событие-ВЛОЖЕНИЕ? (Р.50)
+    pub fn is_nest(&self, id: ClipId) -> bool {
+        self.model.clip(id).is_some_and(|c| self.model.project().sequence(c.media).is_some())
     }
 
     /// Сколько мест дерева смотрит на эту ленту.
@@ -2853,7 +2971,7 @@ impl KtApp {
         // приходит ОДНИМ путём (п.357), и одиночный разрез не исключение
         match self.model.apply_batch(vec![cmd]) {
             Ok(births) => {
-                self.player.set_project(self.model.project().clone());
+                self.player.set_project(self.model.document());
                 self.dirty_content = true;
                 self.bump_clip_hw();
                 self.inherit_extras(&births);
@@ -2943,7 +3061,7 @@ impl KtApp {
             return false;
         }
         self.model_rev += 1;
-        self.player.set_project(self.model.project().clone());
+        self.player.set_project(self.model.document());
         self.dirty_content = true;
         true
     }
@@ -2965,7 +3083,7 @@ impl KtApp {
         self.model_rev += 1;
         match self.model.apply_batch(cmds) {
             Ok(births) => {
-                self.player.set_project(self.model.project().clone());
+                self.player.set_project(self.model.document());
                 self.dirty_content = true;
                 self.bump_clip_hw();
                 self.inherit_extras(&births);
@@ -3517,7 +3635,8 @@ impl KtApp {
     /// потребитель общего каркаса задач, и им же доказывается, что каркас
     /// общий, а не выкроен под рендер.
     pub(crate) fn start_ducking(&mut self, d: &DuckDialog) {
-        let project = self.model.project().clone();
+        // дакинг считает по времени ТОГО, ЧТО ПОД РУКАМИ (Р.50, В1)
+        let project = self.model.reel_document();
         let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
         let index = self.index_db_path();
         let params = d.params;
@@ -3954,7 +4073,7 @@ impl KtApp {
     pub fn undo(&mut self) {
         self.model_rev += 1;
         if self.model.undo().is_ok() {
-            self.player.set_project(self.model.project().clone());
+            self.player.set_project(self.model.document());
             self.dirty_content = true;
             self.bump_clip_hw();
         }
@@ -3963,7 +4082,7 @@ impl KtApp {
     pub fn redo(&mut self) {
         self.model_rev += 1;
         if self.model.redo().is_ok() {
-            self.player.set_project(self.model.project().clone());
+            self.player.set_project(self.model.document());
             self.dirty_content = true;
             self.bump_clip_hw();
         }
@@ -4053,7 +4172,7 @@ impl KtApp {
         }
         let ui = Some(self.ui_state());
         self.model.set_ui_state(ui);
-        let out = kt_otio::save_project(self.model.project(), &self.retained, path.parent());
+        let out = kt_otio::save_project(&self.model.document(), &self.retained, path.parent());
         // под сторожем: фоновый автосейв не должен перетереть нашу
         // запись своим более старым снапшотом (Р.32)
         match write_project_guarded(&self.saved_rev, &path, self.model_rev, &out) {
@@ -5370,6 +5489,7 @@ impl KtApp {
             region_out: bool,
             loop_toggle: bool,
             esc: bool,
+            enter_nest: bool,
             copy: bool,
             paste: bool,
             nav_prev: bool,
@@ -5419,6 +5539,7 @@ impl KtApp {
             // перехватывает их и шлёт Event::Copy / Event::Paste(..)
             // (регрессия п.21 — «Ctrl+V не работает»)
             esc: i.key_pressed(egui::Key::Escape),
+            enter_nest: i.key_pressed(egui::Key::Enter) && !i.modifiers.any(),
             copy: i.events.iter().any(|e| matches!(e, egui::Event::Copy))
                 || (i.modifiers.ctrl && i.key_pressed(egui::Key::C)),
             paste: i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))
@@ -5489,6 +5610,13 @@ impl KtApp {
         }
         if k.esc {
             self.escape_action();
+        }
+        // Enter — войти в выделенное вложение (парный способ к двойному
+        // клику и пункту меню, правило 17)
+        if k.enter_nest
+            && let Some(id) = self.selected.iter().copied().find(|id| self.is_nest(*id))
+        {
+            self.enter_nest(id);
         }
         if k.copy {
             self.copy_selection();

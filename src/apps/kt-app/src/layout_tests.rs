@@ -2874,7 +2874,7 @@ fn t173_corner_fade_and_level_gestures() {
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
-        app.select_only(ClipId(1));
+        app.select_only(kt_model::ClipId(1));
         app.view_start = 0.0;
         app.ticks_per_px = TPP;
         app.player.seek(Tick(0));
@@ -8254,4 +8254,151 @@ fn t430b_collapse_and_expand_are_reachable_by_hand() {
         "экземпляр остался на таймлайне после разворачивания"
     );
     assert_eq!(p.clips.len(), 3, "содержимое не вернулось на дорожку: {:?}", p.clips.len());
+}
+
+// ---- 456-460 (Р.50, В): вход внутрь ленты руками -----------------------------
+
+/// Харнесс с лентой из одного события и экземпляром на дорожке.
+#[cfg(test)]
+fn harness_with_nest_dt(
+    dt: Option<f32>,
+) -> (Harness<'static, KtApp>, crate::timeline::TlGeom, kt_model::MediaId) {
+    let (mut h, g) = harness_three_clips_dt(dt);
+    {
+        let app = h.state_mut();
+        app.select_only(kt_model::ClipId(1));
+    }
+    h.step();
+    h.state_mut().collapse_selection();
+    h.step();
+    h.step();
+    let seq = h.state().model.document().sequences[0].id;
+    let g = h.state().tl_geom.clone().unwrap_or(g);
+    (h, g, seq)
+}
+
+#[cfg(test)]
+fn harness_with_nest() -> (Harness<'static, KtApp>, crate::timeline::TlGeom, kt_model::MediaId) {
+    harness_with_nest_dt(None)
+}
+
+/// Тест 456 (Р.50, В1): вход и выход — тождество по виду и курсору.
+#[test]
+fn t456_entering_and_leaving_is_identity() {
+    use kt_time::Tick;
+    let (mut h, g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+
+    // снимок вида СНАРУЖИ
+    h.state_mut().player.seek(Tick(20_000));
+    h.state_mut().view_start = 5_000.0;
+    h.state_mut().ticks_per_px = 900.0;
+    h.state_mut().select_only(inst);
+    h.step();
+    let (vs, tpp) = (h.state().view_start, h.state().ticks_per_px);
+    let outside = h.state().player.transport.playhead();
+
+    h.state_mut().enter_nest(inst);
+    h.step();
+    assert_eq!(h.state().model.editing(), Some(seq), "вход не состоялся");
+    assert_eq!(h.state().nest_crumbs().len(), 1, "крошка пути не появилась");
+    // КУРСОР ПЕРЕВЕДЁН, а не сброшен: человек вошёл, а не перепрыгнул
+    let c = h.state().model.document().clips.iter().find(|c| c.id == inst).unwrap().clone();
+    let want = c.source_in + (outside - c.start);
+    // ТОЧНОСТЬ — КВАНТ ТРАНСПОРТА, названный, а не подобранный: playhead
+    // живёт в аудиокадрах 48 кГц, и round-trip «тик → кадр → тик» усекает
+    // вниз (п.7 р.10). Один кадр — 90000/48000 = 1.875 тика, округляем
+    // вверх. Требовать тик-в-тик значило бы требовать того, чего транспорт
+    // не умеет ни здесь, ни где-либо ещё.
+    const QUANT: i64 = (kt_time::TICK_HZ + kt_time::AUDIO_SAMPLE_RATE as i64 - 1)
+        / kt_time::AUDIO_SAMPLE_RATE as i64;
+    let got = h.state().player.transport.playhead();
+    assert!(
+        (got.0 - want.0).abs() <= QUANT,
+        "курсор при входе сброшен, а не переведён ({got:?} против {want:?}) — превью \
+         показало бы другой кадр"
+    );
+    // под руками содержимое ЛЕНТЫ
+    assert_eq!(h.state().model.project().clips.len(), 1, "внутри ленты видно не её содержимое");
+
+    // выход — вид вернулся ТОТ ЖЕ (правило 14: фича работает повторно)
+    h.state_mut().leave_nest();
+    h.step();
+    assert_eq!(h.state().model.editing(), None, "выход не состоялся");
+    assert!(h.state().nest_crumbs().is_empty(), "крошка осталась после выхода");
+    let back = h.state().player.transport.playhead();
+    assert!(
+        (back.0 - outside.0).abs() <= 2 * QUANT,
+        "курсор не вернулся на место: {back:?} против {outside:?}"
+    );
+    assert_eq!((h.state().view_start, h.state().ticks_per_px), (vs, tpp), "вид не восстановлен");
+    assert!(h.state().selected.contains(&inst), "выделение не восстановлено");
+    let _ = g;
+}
+
+/// Тест 457 (Р.50, В3): войти можно ЧЕТЫРЬМЯ способами, и все они — одно тело.
+#[test]
+fn t457_four_ways_in_one_way_out() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    let row = g.row_of((LaneKind::Video, 0)).expect("видео-строка");
+    let y = g.row_center_y(row);
+    let x = {
+        let c = h.state().model.project().clips.iter().find(|c| c.id == inst).unwrap().clone();
+        g.tick_to_x(c.start.0 + c.duration.0 / 2)
+    };
+
+    // 1) пункт меню
+    right_click_at(&mut h, egui::pos2(x, y));
+    assert!(
+        matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Nest(_))),
+        "ПКМ по вложению обязан дать цель ВЛОЖЕНИЯ, а не обычного события"
+    );
+    h.get_by_label(tr(k::tl::menu::NEST_ENTER)).click();
+    h.step();
+    h.step();
+    assert_eq!(h.state().model.editing(), Some(seq), "пункт меню не завёл внутрь");
+
+    // 2) Esc — ПОСЛЕДНИМ в каскаде: сначала он снимает выделение
+    let inner = h.state().model.project().clips[0].id;
+    h.state_mut().select_only(inner);
+    h.state_mut().escape_action();
+    assert_eq!(
+        h.state().model.editing(),
+        Some(seq),
+        "Esc выкинул наружу вместо того, чтобы снять выделение — одна клавиша \
+         делает два дела, и второе необратимо по вниманию"
+    );
+    h.state_mut().escape_action();
+    assert_eq!(h.state().model.editing(), None, "Esc на пустом выделении обязан выводить наружу");
+
+    // 3) двойной клик
+    // двойной клик у egui ВРЕМЕННОЙ: шаг харнесса по умолчанию 0.25 с, и
+    // без мелкого dt тест проверял бы ОДИНОЧНЫЙ клик
+    let (mut h2, g2, seq2) = harness_with_nest_dt(Some(0.02));
+    let inst2 = h2.state().model.project().clips.iter().find(|c| c.media == seq2).unwrap().id;
+    let row2 = g2.row_of((LaneKind::Video, 0)).unwrap();
+    let x2 = {
+        let c = h2.state().model.project().clips.iter().find(|c| c.id == inst2).unwrap().clone();
+        g2.tick_to_x(c.start.0 + c.duration.0 / 2)
+    };
+    double_click_at(&mut h2, egui::pos2(x2, g2.lane_y(ClipKind::Video, 0, 0.6)));
+    assert_eq!(
+        h2.state().model.editing(),
+        Some(seq2),
+        "двойной клик по вложению не завёл внутрь — у Premiere и FCP это основной путь"
+    );
+    let _ = row2;
+
+    // 4) Enter по выделенному
+    let (mut h3, _, seq3) = harness_with_nest();
+    let inst3 = h3.state().model.project().clips.iter().find(|c| c.media == seq3).unwrap().id;
+    h3.state_mut().select_only(inst3);
+    h3.step();
+    h3.key_press(egui::Key::Enter);
+    h3.step();
+    h3.step();
+    assert_eq!(h3.state().model.editing(), Some(seq3), "Enter по выделенному вложению не сработал");
 }

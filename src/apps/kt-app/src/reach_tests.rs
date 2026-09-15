@@ -340,6 +340,22 @@ fn scene(
             opacity: 1.0,
             fx_off: false,
         });
+        if e == E::Nest {
+            // ВЛОЖЕНИЕ: лента с одним событием внутри и экземпляр на
+            // дорожке — ровно то, по чему человек жмёт правой кнопкой
+            let mut seq = Sequence::new(MediaId(100), "Заставка");
+            let mut inner = p.clips[0].clone();
+            inner.id = ClipId(50);
+            inner.start = Tick(0);
+            seq.clips.push(inner);
+            p.sequences.push(seq);
+            let mut inst = p.clips[0].clone();
+            inst.id = ClipId(3);
+            inst.media = MediaId(100);
+            inst.start = Tick(600_000);
+            inst.source_in = Tick(0);
+            p.clips.push(inst);
+        }
         if e == E::Transition {
             // кроссфейд между двумя событиями: окно шире зоны ручек, и
             // правый клик целится в то, что ВИДНО, а не в ±6 px у стыка
@@ -429,6 +445,10 @@ fn scene(
         E::Clip => vec![(
             "тело события",
             egui::pos2(g.tick_to_x(25_000), g.lane_y(ClipKind::Video, 0, 0.6)),
+        )],
+        E::Nest => vec![(
+            "тело вложения",
+            egui::pos2(g.tick_to_x(625_000), g.lane_y(ClipKind::Video, 0, 0.6)),
         )],
         E::Marker => vec![("флажок на линейке", egui::pos2(g.tick_to_x(60_000), ruler_y))],
         // верхний контур области на её дорожке
@@ -667,6 +687,12 @@ enum Verb {
     Create,
     Rename,
     Delete,
+    /// Открыть СОДЕРЖИМОЕ или свойства: окно FX у события, редактор у
+    /// морфера, окно вида у перехода, вход внутрь у вложения (Р.50).
+    ///
+    /// Заведён потому, что без него «войти в ленту» некуда было записать,
+    /// а вход — единственное, ради чего вложение отличается от клипа.
+    Open,
 }
 
 /// Как глагол ДОСТИЖИМ.
@@ -693,6 +719,13 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
             (Verb::Create, Reach::Elsewhere("медиа-бин, t99; вставка, t205")),
             (Verb::Rename, Reach::Absent("у события нет имени — подпись это имя медиа")),
             (Verb::Delete, menu(tr(k::tl::menu::DELETE))),
+            (Verb::Open, menu(tr(k::tl::menu::FX))),
+        ],
+        E::Nest => vec![
+            (Verb::Create, menu(tr(k::tl::menu::COLLAPSE))),
+            (Verb::Rename, menu(tr(k::tl::menu::NEST_RENAME))),
+            (Verb::Delete, menu(tr(k::tl::menu::DELETE))),
+            (Verb::Open, menu(tr(k::tl::menu::NEST_ENTER))),
         ],
         E::Marker => vec![
             (
@@ -701,6 +734,12 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
             ),
             (Verb::Rename, menu(tr(k::tl::menu::RENAME))),
             (Verb::Delete, menu(tr(k::tl::menu::REMOVE_MARKER))),
+            (
+                Verb::Open,
+                Reach::Elsewhere(
+                    "двойной клик по ленте метки-диапазона делает по ней регион, t206",
+                ),
+            ),
         ],
         E::Transition => vec![
             (
@@ -712,11 +751,16 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
             ),
             (Verb::Rename, Reach::Absent("переход безымянен: он между событиями, его «имя» — вид")),
             (Verb::Delete, menu(tr(k::tl::menu::REMOVE_TRANSITION))),
+            (Verb::Open, menu(tr(k::tl::menu::TRANSITION_PROPS))),
         ],
         E::Area => vec![
             (Verb::Create, Reach::Elsewhere("пункт меню пустого места SAVE_AREA")),
             (Verb::Rename, menu(tr(k::tl::menu::RENAME))),
             (Verb::Delete, menu(tr(k::tl::menu::DELETE))),
+            (
+                Verb::Open,
+                Reach::Absent("у области нет содержимого: это имя, время и набор дорожек"),
+            ),
         ],
         E::Morpher => vec![
             (
@@ -728,11 +772,13 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
             ),
             (Verb::Rename, Reach::Absent("морфер безымянен: это слой правок, а не объект")),
             (Verb::Delete, menu(tr(k::tl::menu::REMOVE_MORPHER))),
+            (Verb::Open, menu(tr(k::tl::menu::MORPH_EDITOR))),
         ],
         E::Camera => vec![
             (Verb::Create, Reach::Elsewhere("пункт ADD_CAMERA_HERE в меню камерной дорожки")),
             (Verb::Rename, Reach::Elsewhere("поле имени в окне камеры, t231b")),
             (Verb::Delete, menu(tr(k::tl::menu::DELETE))),
+            (Verb::Open, menu(tr(k::cam::PROPS))),
         ],
         // у дорожки Create — «положить сюда свой элемент»: событие в бин
         // умеет только бин, а морфер и камера ставятся ИЗ МЕНЮ ДОРОЖКИ.
@@ -741,21 +787,28 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
             (Verb::Create, Reach::Elsewhere("события кладёт медиа-бин переносом, t99")),
             (Verb::Rename, menu(tr(k::tl::lane::RENAME))),
             (Verb::Delete, menu(tr(k::tl::lane::DELETE))),
+            (Verb::Open, Reach::Absent("дорожка и есть содержимое — открывать у неё нечего")),
         ],
         E::MorphLane => vec![
             (Verb::Create, menu(tr(k::tl::lane::ADD_MORPHER_HERE))),
             (Verb::Rename, menu(tr(k::tl::lane::RENAME))),
             (Verb::Delete, menu(tr(k::tl::lane::DELETE))),
+            (Verb::Open, Reach::Absent("дорожка и есть содержимое — открывать у неё нечего")),
         ],
         E::CameraLane => vec![
             (Verb::Create, menu(tr(k::tl::lane::ADD_CAMERA_HERE))),
             (Verb::Rename, menu(tr(k::tl::lane::RENAME))),
             (Verb::Delete, menu(tr(k::tl::lane::DELETE))),
+            (Verb::Open, Reach::Absent("дорожка и есть содержимое — открывать у неё нечего")),
         ],
         E::Region => vec![
             (Verb::Create, Reach::Elsewhere("драг по руллеру с пустого места, t96")),
             (Verb::Rename, Reach::Absent("регион безымянен; именованное — это область")),
             (Verb::Delete, menu(tr(k::tl::menu::REGION_CLEAR))),
+            (
+                Verb::Open,
+                Reach::Absent("регион — это две грани на линейке, содержимого у него нет"),
+            ),
         ],
     }
 }
@@ -1025,6 +1078,45 @@ fn t426b_media_lookup_from_a_clip_lives_in_one_place() {
     assert!(
         bad.is_empty(),
         "источник события ищется в `project.media` мимо единственного дома          (`Project::source()` в {HOME}). У вложенной секвенции `MediaRef`-а нет:          такой поиск вернёт None и превратит вложение в «офлайн-медиа» молча —          ни одного отказа, ни одной ошибки, просто неправильная работа:\n  {}",
+        bad.join("\n  ")
+    );
+}
+
+/// Тест 456b (Р.50, В1): наружу уходит ДОКУМЕНТ, а не рабочий вид.
+///
+/// Стоя внутри ленты, `model.project()` отдаёт ЕЁ содержимое на месте
+/// корня — на этом держится весь интерфейс, который о вложениях не знает
+/// вовсе. Но плееру, файлу и экспорту нужен документ: отдать им рабочий вид
+/// значит записать на диск проект, у которого содержимое корня и ленты
+/// поменялись местами. Человек заметил бы это только при следующем открытии
+/// — ровно тот класс тихой потери работы, из-за которого заведён Р.49.
+#[test]
+fn t456b_only_the_document_leaves_the_model() {
+    let root = workspace_root();
+    let mut bad: Vec<String> = Vec::new();
+    for (file, src) in production_corpus() {
+        if !file.contains("kt-app") && !file.ends_with(".rs") {
+            continue;
+        }
+        let _ = &root;
+        for (n, line) in src.lines().enumerate() {
+            let t = line.trim();
+            // на одной строке: «отдаём наружу» и «рабочий вид»
+            let out = t.contains("set_project(")
+                || t.contains("save_project(")
+                || t.contains("render_raw_video")
+                || t.contains("ExportBackends");
+            if out && t.contains("model.project()") {
+                bad.push(format!("{file}:{}: {t}", n + 1));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "наружу (в плеер, в файл, в экспорт) уходит РАБОЧИЙ ВИД вместо документа. \
+         Стоя внутри ленты он держит её содержимое на месте корня — записать такое \
+         значит поменять местами корень и ленту на диске. Нужен `model.document()` \
+         (а офлайн-счёту по тому, что под руками — `model.reel_document()`):\n  {}",
         bad.join("\n  ")
     );
 }

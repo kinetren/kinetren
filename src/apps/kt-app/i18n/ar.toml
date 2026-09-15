@@ -206,6 +206,7 @@ collapse = "طي التحديد في بكرة"
 nest_expand = "نشر البكرة على المسارات"
 nest_independent = "فصل عن الأماكن الأخرى"
 nest_rename = "إعادة تسمية البكرة…"
+nest_enter = "فتح البكرة (Enter)"
 
 [bin]
 hint_free = "تخطيط حر: تُحرَّك البطاقات بالفأرة"
@@ -700,6 +701,8 @@ nest_rename_title = "إعادة تسمية البكرة"
 nest_name_label = "الاسم"
 nest_rename_do = "إعادة تسمية"
 nest_uses = "أماكن تتغير معا: {0}"
+nest_too_deep = "التداخل محدود بـ {0} مستويات"
+nest_crumb_hint = "انقر للعودة إلى هذه البكرة"
 
 [dialog]
 import_ktproj = "استيراد مشروع .ktproj قديم"

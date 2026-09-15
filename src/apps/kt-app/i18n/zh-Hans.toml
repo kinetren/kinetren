@@ -206,6 +206,7 @@ collapse = "将所选折叠为片段"
 nest_expand = "将片段展开到轨道"
 nest_independent = "与其他位置分离"
 nest_rename = "重命名片段…"
+nest_enter = "进入片段 (Enter)"
 
 [bin]
 hint_free = "自由布局：卡片可用鼠标拖动"
@@ -700,6 +701,8 @@ nest_rename_title = "重命名片段"
 nest_name_label = "名称"
 nest_rename_do = "重命名"
 nest_uses = "一同改变的位置：{0}"
+nest_too_deep = "嵌套深度上限为 {0} 层"
+nest_crumb_hint = "点击返回到此片段"
 
 [dialog]
 import_ktproj = "导入旧版 .ktproj 项目"

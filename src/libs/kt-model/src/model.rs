@@ -466,20 +466,62 @@ impl TimelineModel {
     /// Войти в ленту (или выйти в корень). Несуществующий адрес —
     /// молчаливый выход в корень: лента могла исчезнуть под undo.
     pub fn set_editing(&mut self, seq: Option<MediaId>) {
-        self.editing = seq.filter(|id| self.project.sequence(*id).is_some());
+        let want = seq.filter(|id| {
+            // адрес ищем в ДОКУМЕНТЕ: стоя внутри X, сам X в
+            // `project.sequences` держит содержимое корня, но id у него
+            // прежний — этого и достаточно
+            self.project.sequence(*id).is_some()
+        });
+        if want == self.editing {
+            return;
+        }
+        if let Some(cur) = self.editing {
+            self.project.swap_reel(cur);
+        }
+        if let Some(next) = want {
+            self.project.swap_reel(next);
+        }
+        self.editing = want;
         self.last_gesture = None;
     }
 
-    /// Содержимое ленты, которую сейчас редактируют.
-    pub fn reel(&self) -> &dyn Reel {
-        match self.editing.and_then(|id| self.project.sequence(id)) {
-            Some(s) => s,
-            None => &self.project,
+    /// Документ, в котором ТЕКУЩАЯ лента стоит КОРНЕМ (Р.50, В1).
+    ///
+    /// Нужен офлайн-путям, считающим по времени того, что под руками:
+    /// громкость, дакинг, превью материала. Рабочий вид им отдавать
+    /// нельзя — в нём лента, внутри которой стоим, держит содержимое
+    /// корня и выглядит вложенной в саму себя.
+    pub fn reel_document(&self) -> Project {
+        let mut p = self.project.clone();
+        if let Some(cur) = self.editing {
+            p.sequences.retain(|s| s.id != cur);
         }
+        p
     }
 
+    /// Проект КАК ЕГО ВИДИТ ЧЕЛОВЕК: содержимое ленты, в которой он сейчас
+    /// стоит, лежит на месте корня (Р.50, В1).
+    ///
+    /// Весь интерфейс — отрисовка, хит-тест, планирование жестов, снап,
+    /// выделение, окна FX и морфера — работает с этим видом и о вложениях
+    /// не знает вовсе. Тому, кому нужен ДОКУМЕНТ (движок, сохранение,
+    /// экспорт), нужен `document()`; сторож — сканирующий тест t456b.
     pub fn project(&self) -> &Project {
         &self.project
+    }
+
+    /// ДОКУМЕНТ в настоящей раскладке: корень корнем, ленты лентами.
+    ///
+    /// Именно он уходит в плеер, в файл и в экспорт. Отдать туда рабочий
+    /// вид значило бы записать на диск проект, у которого содержимое
+    /// корня и ленты поменялись местами — потеря работы, которую человек
+    /// заметил бы только при следующем открытии.
+    pub fn document(&self) -> Project {
+        let mut p = self.project.clone();
+        if let Some(seq) = self.editing {
+            p.swap_reel(seq);
+        }
+        p
     }
 
     pub fn clip(&self, id: ClipId) -> Option<&ClipEvent> {
@@ -519,13 +561,10 @@ impl TimelineModel {
     }
 
     fn simulate(&self, cmds: &[Command]) -> Result<Project, CommandError> {
+        // Скретч уже в РАБОЧЕМ виде: содержимое текущей ленты стоит на
+        // месте корня (Р.50, В1), и команда правит его, не зная о
+        // вложениях вовсе.
         let mut scratch = self.project.clone();
-        // ВХОД ВНУТРЬ (Р.50, В1): содержимое ленты встаёт на место корня,
-        // команда правит его, не зная о вложениях вовсе, и в конце всё
-        // возвращается на место. Валидация идёт уже ПОСЛЕ возврата.
-        if let Some(seq) = self.editing {
-            scratch.swap_reel(seq);
-        }
         let run = |scratch: &mut Project| -> Result<(), CommandError> {
             for cmd in cmds {
                 Self::check_on(scratch, cmd)?;
@@ -538,14 +577,20 @@ impl TimelineModel {
         // должен умирать в переходном состоянии между командами (roll стыка
         // = TrimEnd+TrimStart: между ними стык формально разорван)
         Self::reconcile_transitions(&mut scratch);
+        res?;
+        // Валидация — ПО ДОКУМЕНТУ: в рабочем виде экземпляр ленты, в
+        // которой стоим, лежит внутри неё самой и выглядит циклом.
         if let Some(seq) = self.editing {
             scratch.swap_reel(seq);
         }
-        res?;
         // Жёсткая валидация результата (Р.24, этап 6): перекрытия после
         // групповых мувов/тримов/вставок дешевле отловить одной проверкой,
         // чем дублировать их логику в check_on. Провал = ноль изменений.
-        scratch.validate().map_err(CommandError::InvalidLayout)?;
+        let ok = scratch.validate().map_err(CommandError::InvalidLayout);
+        if let Some(seq) = self.editing {
+            scratch.swap_reel(seq);
+        }
+        ok?;
         Ok(scratch)
     }
 
@@ -594,7 +639,9 @@ impl TimelineModel {
         // контекст, иначе обратный ход уводил бы не туда.
         let here = Snapshot { project: self.project.clone(), scope: prev.scope };
         self.project = prev.project;
-        self.set_editing(prev.scope);
+        // Снимок уже несёт раскладку СВОЕГО контекста — обмен тут был бы
+        // вторым, и содержимое уехало бы не туда.
+        self.editing = prev.scope.filter(|id| self.project.sequence(*id).is_some());
         self.redo.push(here);
         self.last_gesture = None;
         Ok(())
@@ -606,7 +653,7 @@ impl TimelineModel {
         next.project.loop_enabled = self.project.loop_enabled;
         let here = Snapshot { project: self.project.clone(), scope: next.scope };
         self.project = next.project;
-        self.set_editing(next.scope);
+        self.editing = next.scope.filter(|id| self.project.sequence(*id).is_some());
         self.undo.push(here);
         self.last_gesture = None;
         Ok(())

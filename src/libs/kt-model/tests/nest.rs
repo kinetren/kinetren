@@ -548,23 +548,26 @@ fn with_reel() -> (TimelineModel, MediaId) {
 #[test]
 fn t453_commands_edit_the_reel_you_are_standing_in() {
     let (mut m, seq) = with_reel();
-    let root_before: Vec<i64> = m.project().clips.iter().map(|c| c.start.0).collect();
+    let root_before: Vec<i64> = m.document().clips.iter().map(|c| c.start.0).collect();
 
     m.set_editing(Some(seq));
     assert_eq!(m.editing(), Some(seq));
-    assert_eq!(m.reel().clips().len(), 2, "внутри ленты обязаны быть ЕЁ события");
+    // РАБОЧИЙ ВИД: под руками содержимое ленты, и весь интерфейс работает
+    // с ним, не зная о вложениях вовсе
+    assert_eq!(m.project().clips.len(), 2, "внутри ленты обязаны быть ЕЁ события");
+    assert_eq!(m.document().clips.len(), 2, "документ обязан остаться документом");
 
     // правка ВНУТРИ: корень не шелохнулся, лента изменилась
     m.apply(Command::MoveClip { id: ClipId(20), new_start: Tick(LEN.0 / 2), new_lane: 0 })
         .expect("перенос внутри ленты законен");
     assert_eq!(
-        m.project().clips.iter().map(|c| c.start.0).collect::<Vec<_>>(),
+        m.document().clips.iter().map(|c| c.start.0).collect::<Vec<_>>(),
         root_before,
         "правка ВНУТРИ ленты уехала в корень — человек смотрит в одно место, а \
          меняется другое"
     );
     assert_eq!(
-        m.project().sequence(seq).unwrap().clips[0].start.0,
+        m.document().sequence(seq).unwrap().clips[0].start.0,
         LEN.0 / 2,
         "правка не доехала до ленты"
     );
@@ -582,7 +585,11 @@ fn t453_commands_edit_the_reel_you_are_standing_in() {
     m.set_editing(None);
     m.apply(Command::MoveClip { id: ClipId(1), new_start: Tick(LEN.0 * 9), new_lane: 0 })
         .expect("снаружи корень снова правится");
-    assert_eq!(m.project().sequence(seq).unwrap().clips.len(), 2, "лента пострадала от правки корня");
+    assert_eq!(
+        m.document().sequence(seq).unwrap().clips.len(),
+        2,
+        "лента пострадала от правки корня"
+    );
 }
 
 #[test]
@@ -602,12 +609,16 @@ fn t454_undo_takes_you_back_to_where_the_edit_was() {
         "Ctrl+Z отменил правку ВНУТРИ ленты, а показал корень — для человека это \
          «нажал, и ничего не произошло»"
     );
-    assert_eq!(m.project().sequence(seq).unwrap().clips[0].start.0, 0, "правка внутри не отменена");
+    assert_eq!(
+        m.document().sequence(seq).unwrap().clips[0].start.0,
+        0,
+        "правка внутри не отменена"
+    );
 
     // следующий шаг — правка снаружи, и контекст обязан уехать наружу
     m.undo().unwrap();
     assert_eq!(m.editing(), None, "Ctrl+Z до корневой правки оставил нас внутри ленты");
-    assert_eq!(m.project().clips[0].start.0, 0, "корневая правка не отменена");
+    assert_eq!(m.document().clips[0].start.0, 0, "корневая правка не отменена");
 
     // redo ведёт обратно тем же путём
     m.redo().unwrap();
@@ -636,5 +647,9 @@ fn t455_editing_context_survives_and_yields() {
     m.apply_batch(cmds).unwrap();
     m.set_editing(Some(seq));
     assert_eq!(m.editing(), None, "вход в исчезнувшую ленту оставил нас в никуда");
-    assert_eq!(m.reel().clips().len(), m.project().clips.len(), "лента без адреса подменила корень");
+    assert_eq!(
+        m.project().clips.len(),
+        m.document().clips.len(),
+        "лента без адреса подменила корень"
+    );
 }

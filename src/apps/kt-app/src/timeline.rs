@@ -547,6 +547,10 @@ pub enum CtxTarget {
     CameraLane(u32),
     /// Правый клик по камере-событию (Р.34 К3).
     Camera(kt_model::CameraId),
+    /// Правый клик по событию-ВЛОЖЕНИЮ (Р.50). Отдельная цель, а не
+    /// `Clip`: у него свои глаголы (войти, развернуть, отвязать), и
+    /// «тупиков не бывает» проверяет их по своей строке.
+    Nest(ClipId),
     /// Правый клик по ОКНУ ПЕРЕХОДА (Р.49, п.361). До этого раунда переход
     /// был единственной сущностью таймлайна без своего меню: всё, что с ним
     /// можно сделать, лежало в меню СОСЕДНЕГО КЛИПА — то есть пользователь,
@@ -574,6 +578,9 @@ pub enum CtxTarget {
 #[repr(usize)]
 pub enum TlEntity {
     Clip = 0,
+    /// Событие-ВЛОЖЕНИЕ (Р.50): такой же `ClipEvent`, но с ним можно
+    /// делать то, чего с обычным нельзя — войти внутрь.
+    Nest,
     Marker,
     Area,
     Morpher,
@@ -593,6 +600,7 @@ impl TlEntity {
     /// тесты.
     pub const ALL: [TlEntity; Self::N] = [
         TlEntity::Clip,
+        TlEntity::Nest,
         TlEntity::Marker,
         TlEntity::Area,
         TlEntity::Morpher,
@@ -612,6 +620,7 @@ impl CtxTarget {
     pub fn entity(self) -> Option<TlEntity> {
         match self {
             CtxTarget::Clip(_) => Some(TlEntity::Clip),
+            CtxTarget::Nest(_) => Some(TlEntity::Nest),
             CtxTarget::Marker(_) => Some(TlEntity::Marker),
             CtxTarget::RegionEdge(_) => Some(TlEntity::Region),
             CtxTarget::Lane { .. } => Some(TlEntity::ClipLane),
@@ -2649,7 +2658,9 @@ impl KtApp {
                 }
                 self.selected_morph.clear();
                 self.selected_camera.clear();
-                CtxTarget::Clip(id)
+                // ВЛОЖЕНИЕ — своя сущность (Р.50): у него свои глаголы, и
+                // «тупиков не бывает» спрашивает их по своей строке
+                if self.is_nest(id) { CtxTarget::Nest(id) } else { CtxTarget::Clip(id) }
             } else if let Some((i, _)) = area_at(self, pos) {
                 CtxTarget::Area(i)
             } else if let Some((LaneKind::Video | LaneKind::Audio, _)) = geom.key_at_y(pos.y) {
@@ -2862,6 +2873,12 @@ impl KtApp {
                                 }
                             };
                         }
+                    } else if self.is_nest(id) {
+                        // ВЛОЖЕНИЕ открывается ВНУТРЬ (Р.50, В3) — так же,
+                        // как у Premiere и FCP. Окно FX у него тоже есть, в
+                        // меню: цепочка на вложении законна и считается на
+                        // собранной картинке.
+                        self.enter_nest(id);
                     } else {
                         self.open_fx_editor(id);
                     }
@@ -3193,8 +3210,15 @@ impl KtApp {
                         // live-превью без записи в историю: у аудио уровень
                         // это громкость (диапазон рейла v1), у видео —
                         // непрозрачность
-                        let mut p = self.model.project().clone();
-                        if let Some(cm) = p.clips.iter_mut().find(|c| c.id == id) {
+                        // плеер играет ДОКУМЕНТ; правим событие там, где
+                        // человек его тянет (Р.50, В1)
+                        let mut p = self.model.document();
+                        let here = self.model.editing();
+                        let clips = match here.and_then(|s| p.sequence_mut(s)) {
+                            Some(s) => &mut s.clips,
+                            None => &mut p.clips,
+                        };
+                        if let Some(cm) = clips.iter_mut().find(|c| c.id == id) {
                             if kind == ClipKind::Audio {
                                 cm.gain_db = level_to_gain(lv);
                             } else {
@@ -4766,7 +4790,7 @@ impl KtApp {
         // ---- контекст-меню ----------------------------------------------------------
         let target = self.ctx_target;
         response.context_menu(|ui| match target {
-            Some(CtxTarget::Clip(id)) => {
+            Some(CtxTarget::Clip(id)) | Some(CtxTarget::Nest(id)) => {
                 let (is_audio, has_group) = self
                     .model
                     .clip(id)
@@ -4846,9 +4870,13 @@ impl KtApp {
                     ui.close();
                 }
                 // вложенные ленты (Р.50). Свернуть можно что угодно —
-                // пункт стоит у события; развернуть, отвязать и
+                // пункт стоит у события; войти, развернуть, отвязать и
                 // переименовать — только у САМОГО вложения, и «отвязать»
                 // показывается лишь когда мест и правда больше одного
+                if self.is_nest(id) && ui.button(tr(k::tl::menu::NEST_ENTER)).clicked() {
+                    self.enter_nest(id);
+                    ui.close();
+                }
                 if ui.button(tr(k::tl::menu::COLLAPSE)).clicked() {
                     if !self.is_selected(id) {
                         self.select_only(id);

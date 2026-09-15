@@ -102,6 +102,17 @@ fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response
     resp
 }
 
+/// Имя ленты для крошки: длинное усекается, а не разносит строку
+/// (правило 7 чек-листа; помощник усечения один на все места).
+fn crumb_label(name: &str) -> String {
+    const MAX: usize = 18;
+    if name.chars().count() <= MAX {
+        return name.to_string();
+    }
+    let head: String = name.chars().take(MAX - 1).collect();
+    format!("{head}…")
+}
+
 impl KtApp {
     /// Шапка ЛЕВОЙ колонки (пп.15,6,7 р.8): лого + меню + имя проекта с
     /// версией. Полосы на всю ширину больше нет — центр сверху отдан
@@ -161,13 +172,61 @@ impl KtApp {
             egui::Order::Foreground,
             egui::Id::new("project-title"),
         ));
-        fg.text(
+        let title_at = fg.text(
             egui::pos2(menu_end + 10.0, strip.center().y),
             egui::Align2::LEFT_CENTER,
             &self.last_title,
             egui::FontId::proportional(11.5),
             egui::Color32::from_gray(125),
         );
+        // КРОШКИ ПУТИ — на УЖЕ ЗАНЯТОЙ строке, справа от имени проекта
+        // (правило 13: своей полосы под надпись, появляющуюся изредка, не
+        // заводим). Каждая крошка кликабельна: это и способ выйти на любой
+        // уровень сразу.
+        let crumbs = self.nest_crumbs();
+        if crumbs.is_empty() {
+            return;
+        }
+        let mut x = title_at.right() + 8.0;
+        let font = egui::FontId::proportional(11.5);
+        let mut back_to: Option<usize> = None;
+        for (i, name) in crumbs.iter().enumerate() {
+            let sep = fg.text(
+                egui::pos2(x, strip.center().y),
+                egui::Align2::LEFT_CENTER,
+                crate::icons::CARET_RIGHT,
+                font.clone(),
+                egui::Color32::from_gray(90),
+            );
+            x = sep.right() + 4.0;
+            let last = i + 1 == crumbs.len();
+            let col = if last { crate::theme::ACCENT } else { egui::Color32::from_gray(150) };
+            let r = fg.text(
+                egui::pos2(x, strip.center().y),
+                egui::Align2::LEFT_CENTER,
+                // длинное имя усекается, а не разносит строку (правило 7):
+                // тем же помощником, что и везде
+                crumb_label(name),
+                font.clone(),
+                col,
+            );
+            x = r.right() + 2.0;
+            let hit = ui.interact(
+                r.expand2(egui::vec2(2.0, 3.0)),
+                ui.id().with(("crumb", i)),
+                egui::Sense::click(),
+            );
+            if self.hint(hit, tr(k::msg::NEST_CRUMB_HINT)).clicked() && !last {
+                back_to = Some(i);
+            }
+        }
+        // клик по крошке — выход НА НЕЁ: столько шагов наружу, сколько
+        // уровней ниже неё
+        if let Some(i) = back_to {
+            for _ in 0..(crumbs.len() - 1 - i) {
+                self.leave_nest();
+            }
+        }
     }
 
     /// Кнопки окна — компактным блоком в шапке панели метров (п.15 р.8:
