@@ -1,21 +1,21 @@
 ---
 id: F-RES-012
 title: Отмена длинной операции и прогресс
-status: кандидат
+status: сделано
 priority: B
 cost: M
 category: resilience/performance
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: да
 crates: [kt-app, kt-cli, kt-engine, kt-media]
 invariants: [5, 9, 11]
 ui_rules: [12, 14, 16, 19]
-round: null
-point: null
-tests: []
+round: "Р.49"
+point: 367
+tests: [398, 408, 409, 410]
 depends_on: [F-RES-010]
 trackers: [kde-bugzilla, kde-invent, pitivi, shotcut]
-checked: 2026-09-08
+checked: 2026-09-15
 ---
 
 # F-RES-012 — Отмена длинной операции и прогресс
@@ -420,3 +420,6 @@ wall-clock (ETA, скорость) считается в UI и не имеет �
   `src/libs/kt-engine/src/{export,worker,player}.rs`,
   `src/libs/kt-media/src/index.rs`, `src/apps/kt-cli/src/main.rs`,
   `src/libs/kt-engine/tests/scheduler.rs`.
+
+**Реализовано в Р.49** — docs/porting-notes.md п.367
+(тесты t398, t408, t409, t410); дальнейшая жизнь фичи там.

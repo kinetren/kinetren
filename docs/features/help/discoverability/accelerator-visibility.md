@@ -1,21 +1,21 @@
 ---
 id: F-HLP-017
 title: Видимость горячей клавиши — акселератор рядом с командой
-status: кандидат
+status: сделано
 priority: B
 cost: S
 category: help/discoverability
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: да
 crates: [kt-app]
 invariants: []
 ui_rules: [9, 13, 17, 18]
-round: null
-point: null
-tests: []
+round: "Р.49"
+point: 362
+tests: [392, 393]
 depends_on: [F-UI-002]
 trackers: [losslesscut, kde-bugzilla, shotcut, kde-invent, openshot]
-checked: 2026-09-08
+checked: 2026-09-15
 ---
 
 # F-HLP-017 — Видимость горячей клавиши — акселератор рядом с командой
@@ -648,3 +648,6 @@ F-HLP-005, здесь он только сосчитан). Восьмой, `Esc`
 `egui-0.36.1/src/context.rs:1731`,
 `egui-0.36.1/src/data/input/keyboard_shortcut.rs:11`,
 `epaint-0.36.1/src/text/text_layout.rs:262-270`.
+
+**Реализовано в Р.49** — docs/porting-notes.md п.362
+(тесты t392, t393); дальнейшая жизнь фичи там.

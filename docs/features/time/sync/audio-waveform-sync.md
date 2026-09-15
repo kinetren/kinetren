@@ -1,20 +1,20 @@
 ---
 id: F-SPD-004
 title: Синхронизация камеры и рекордера по волноформе и таймкоду
-status: кандидат
+status: сделано
 priority: B
 cost: M
 category: time/sync
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: да
 crates: [kt-media, kt-model, kt-app]
 invariants: [1, 5, 8, 11]
 ui_rules: [13, 17, 19]
-round: null
-point: null
-tests: []
+round: "Р.49"
+point: 374
+tests: [413, 414, 415, 416, 417, 418, 419]
 depends_on: [F-SPD-001]
-checked: 2026-09-07
+checked: 2026-09-15
 ---
 
 # F-SPD-004 — Синхронизация камеры и рекордера по волноформе и таймкоду
@@ -335,3 +335,6 @@ found, the clips are synced at their respective starting points» — то ес�
   окружения не открывается **[НЕ ПРОВЕРЕНО]**
 - Ограничение Premiere «один видеоклип + до 16 аудиоклипов на merged clip»
   в тексте заметки СОЗНАТЕЛЬНО не утверждается: подтвердить было нечем
+
+**Реализовано в Р.49** — docs/porting-notes.md п.374
+(тесты t413, t414, t415, t416, t417, t418, t419); дальнейшая жизнь фичи там.

@@ -1,20 +1,20 @@
 ---
 id: F-AUD-005
 title: Нормализация громкости по стандартам — LUFS, EBU R128, true peak
-status: кандидат
+status: сделано
 priority: B
 cost: M
 category: audio/mixing
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-engine, kt-app, kt-media, kt-model]
 invariants: [1, 2, 5, 6, 8, 11, 12]
 ui_rules: [1, 9, 13, 17]
-round: null
-point: null
-tests: []
+round: "Р.49"
+point: 370
+tests: [403, 404, 405, 406, 407, 411, 412]
 depends_on: []
-checked: 2026-09-07
+checked: 2026-09-15
 ---
 
 # F-AUD-005 — Нормализация громкости по стандартам — LUFS, EBU R128, true peak
@@ -334,3 +334,6 @@ UI, ни формата, ни изменения сигнала, и сразу �
   Discourse `forum.borisfx.com/c/vegas-pro/55`, где на 2026-09-07 всего ~11
   тем, а исторический архив тредов недоступен. Живых цитат по громкости оттуда
   добыть не удалось; `_editors.md` в части «где искать» на этот счёт устарел
+
+**Реализовано в Р.49** — docs/porting-notes.md п.370
+(тесты t403, t404, t405, t406, t407, t411, t412); дальнейшая жизнь фичи там.

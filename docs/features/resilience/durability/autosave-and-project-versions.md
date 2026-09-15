@@ -1,21 +1,21 @@
 ---
 id: F-RES-001
 title: Автосейв и версии проекта — поверх файла или рядом с ним
-status: кандидат
+status: сделано
 priority: B
 cost: M
 category: resilience/durability
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08]
-we_have: частично
+we_have: да
 crates: [kt-app, kt-otio]
 invariants: []
 ui_rules: [5, 12, 13, 19, 20]
-round: null
-point: null
-tests: []
+round: "Р.49"
+point: 351
+tests: [357, 358, 359, 360, 361]
 depends_on: []
 trackers: [kde-bugzilla, kde-invent, pitivi]
-checked: 2026-09-08
+checked: 2026-09-15
 ---
 
 # F-RES-001 — Автосейв и версии проекта — поверх файла или рядом с ним
@@ -370,3 +370,6 @@ and if everything passes, delete the backup file». Отсюда неочеви�
   `src/libs/kt-model/src/model.rs:11` (`MAX_UNDO`),
   `src/libs/kt-otio/src/meta.rs:17` (`KT_META_VERSION`), пп.96, 197, 200
   `docs/porting-notes.md`, тесты t194/t199/t200 `layout_tests.rs`.
+
+**Реализовано в Р.49** — docs/porting-notes.md п.351
+(тесты t357, t358, t359, t360, t361); дальнейшая жизнь фичи там.

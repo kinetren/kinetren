@@ -1,21 +1,21 @@
 ---
 id: F-RES-004
 title: Что переживает падение: механизм восстановления
-status: кандидат
+status: сделано
 priority: B
 cost: M
 category: resilience/recovery
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08, blender-5.2]
-we_have: частично
+we_have: да
 crates: [kt-app, kt-engine]
 trackers: [kde-bugzilla, kde-invent, pitivi]
 invariants: [2, 6, 12]
 ui_rules: [14, 16, 19, 20]
-round: null
-point: null
-tests: []
+round: "Р.49"
+point: 353
+tests: [357, 358, 359, 360, 361, 365, 366, 367, 368, 373, 374, 375]
 depends_on: [F-HLP-014, F-PRJ-002, F-HLP-013]
-checked: 2026-09-08
+checked: 2026-09-15
 ---
 
 # F-RES-004 — Что переживает падение: механизм восстановления
@@ -379,3 +379,6 @@ F-PRJ-002, здесь только названо.
   `src/apps/kt-app/src/layout_tests.rs`, `src/libs/kt-engine/src/flight.rs`,
   `src/Cargo.toml`, пп.96, 150, 175, 197, 199, 200
   `docs/porting-notes.md`.
+
+**Реализовано в Р.49** — docs/porting-notes.md п.353
+(тесты t357, t358, t359, t360, t361, t365, t366, t367, t368, t373, t374, t375); дальнейшая жизнь фичи там.

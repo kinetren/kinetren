@@ -1,21 +1,21 @@
 ---
 id: F-RES-005
 title: Несохранённая работа при выходе — звёздочка и вопрос при закрытии
-status: кандидат
+status: сделано
 priority: B
 cost: S
 category: resilience/recovery
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: частично
+we_have: да
 crates: [kt-app]
 invariants: []
 ui_rules: [5, 12, 19]
-round: null
-point: null
-tests: []
+round: "Р.49"
+point: 354
+tests: [369, 370, 371, 372]
 depends_on: [F-RES-001]
 trackers: [kde-bugzilla, kde-invent, pitivi, shotcut]
-checked: 2026-09-08
+checked: 2026-09-15
 ---
 
 # F-RES-005 — Несохранённая работа при выходе — звёздочка и вопрос при закрытии
@@ -404,3 +404,6 @@ current project»), — с той разницей, что у нас он не �
   `src/libs/kt-model/src/model.rs`, `src/libs/kt-model/src/project.rs`;
   п.96, п.197, п.200, п.235, п.262 `docs/porting-notes.md`; раздел «Правки
   содержимого ≠ правки удобства» в `src/apps/kt-app/CLAUDE.md`.
+
+**Реализовано в Р.49** — docs/porting-notes.md п.354
+(тесты t369, t370, t371, t372); дальнейшая жизнь фичи там.

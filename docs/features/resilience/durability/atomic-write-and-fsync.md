@@ -1,21 +1,21 @@
 ---
 id: F-RES-002
 title: Атомарная запись проекта и fsync
-status: кандидат
+status: сделано
 priority: B
 cost: S
 category: resilience/durability
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, kdenlive-26.08, sqlite-3.50]
-we_have: частично
+we_have: да
 crates: [kt-app, kt-otio, kt-media]
 invariants: []
 ui_rules: [12]
-round: null
-point: null
-tests: []
+round: "Р.49"
+point: 349
+tests: [351, 352, 353]
 depends_on: [F-PRJ-002]
 trackers: [kde-bugzilla, kde-invent, pitivi]
-checked: 2026-09-08
+checked: 2026-09-15
 ---
 
 # F-RES-002 — Атомарная запись проекта и fsync
@@ -306,3 +306,6 @@ project file via command line» (#519355, 24.04.2026, открыт). После�
 - ext4 `auto_da_alloc`: документация ядра, [НЕ ПРОВЕРЕНО живьём в этой сессии] — kernel.org отсюда не открывался, формулировка приведена по памяти и помечена как непроверенная
 - Механизмы автосейва и бэкапов пяти редакторов ядра не переоткрывались: факты и их первоисточники — в F-PRJ-002 (`docs/features/project/history/versions-and-snapshots.md`)
 - Живьём ни один из пяти редакторов в этой заметке не проверялся: вопрос «переживает ли запись выключение питания» наблюдением не решается в принципе (см. «Фишка фишки», пункт 2)
+
+**Реализовано в Р.49** — docs/porting-notes.md п.349
+(тесты t351, t352, t353); дальнейшая жизнь фичи там.

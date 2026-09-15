@@ -235,7 +235,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-HLP-013 | Центр уведомлений и журнал: где живёт то, что промелькнуло | кандидат | B | S | частично | `help/errors/notification-center-and-log.md` |
 | F-HLP-015 | Палитра команд — поиск по самой программе | кандидат | B | S | частично | `help/discoverability/command-palette.md` |
 | F-HLP-016 | Контекстное меню как справочник: правый клик показывает, что можно | кандидат | B | S | частично | `help/discoverability/right-click-is-the-manual.md` |
-| F-HLP-017 | Видимость горячей клавиши — акселератор рядом с командой | кандидат | B | S | частично | `help/discoverability/accelerator-visibility.md` |
+| F-HLP-017 | Видимость горячей клавиши — акселератор рядом с командой | сделано | B | S | да | `help/discoverability/accelerator-visibility.md` |
 | F-HLP-018 | Подпись, которая сама себя объясняет — «что» и «где» прямо в названии | кандидат | B | S | частично | `help/discoverability/labels-that-say-what-and-where.md` |
 | F-HLP-024 | Шпаргалка клавиш внутри программы | кандидат | B | S | частично | `help/reference/keyboard-shortcut-reference.md` |
 | F-HLP-025 | Описание эффекта там, где его выбирают | кандидат | B | S | частично | `help/reference/effect-catalogue-descriptions.md` |
@@ -244,14 +244,14 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-HLP-031 | Пресет как форма документации — «вот как это настраивают» | исследовано | B | S | частично | `help/onboarding/presets-as-documentation.md` |
 | F-HLP-032 | Документация как код и автоматическая пересъёмка скриншотов | уже-есть | B | S | да | `help/authoring/docs-as-code-and-screenshot-pipeline.md` |
 | F-HLP-033 | Цена строки справки на пяти языках | кандидат | B | S | частично | `help/authoring/help-text-localization-cost.md` |
-| F-RES-002 | Атомарная запись проекта и fsync | кандидат | B | S | частично | `resilience/durability/atomic-write-and-fsync.md` |
+| F-RES-002 | Атомарная запись проекта и fsync | сделано | B | S | да | `resilience/durability/atomic-write-and-fsync.md` |
 | F-RES-003 | Проект, созданный другой версией программы | кандидат | B | S | частично | `resilience/durability/project-format-migration.md` |
-| F-RES-005 | Несохранённая работа при выходе — звёздочка и вопрос при закрытии | кандидат | B | S | частично | `resilience/recovery/unsaved-work-guards.md` |
+| F-RES-005 | Несохранённая работа при выходе — звёздочка и вопрос при закрытии | сделано | B | S | да | `resilience/recovery/unsaved-work-guards.md` |
 | F-RES-006 | Зависимость от системных библиотек и драйверов | кандидат | B | S | частично | `resilience/environment/system-libraries-and-drivers.md` |
 | F-TL-002 | Slip и slide — тримы, не меняющие длину | кандидат | B | S | частично | `timeline/trimming/slip-and-slide.md` |
 | F-UI-004 | Системный файловый диалог против своего | кандидат | B | S | частично | `ui/input/native-file-dialogs.md` |
 | F-AUD-002 | Динамическая обработка — компрессор, лимитер, гейт, экспандер | сделано | B | M | да | `audio/processing/compressor-and-limiter.md` |
-| F-AUD-005 | Нормализация громкости по стандартам — LUFS, EBU R128, true peak | кандидат | B | M | нет | `audio/mixing/loudness-r128-and-lufs.md` |
+| F-AUD-005 | Нормализация громкости по стандартам — LUFS, EBU R128, true peak | сделано | B | M | да | `audio/mixing/loudness-r128-and-lufs.md` |
 | F-AUD-006 | Маршрутизация и раскладка аудиоканалов | кандидат | B | M | нет | `audio/mixing/channel-routing-and-mapping.md` |
 | F-AUD-008 | Автоматическая нарезка по тишине | кандидат | B | M | нет | `audio/processing/silence-detection-and-auto-cut.md` |
 | F-AUD-010 | Модуляции — chorus, flanger, phaser, tremolo, autopan, vibrato | сделано | B | M | да | `audio/processing/modulation-family.md` |
@@ -295,13 +295,13 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-MSK-004 | Хромакей: показ матte, despill и обработка края | кандидат | B | M | частично | `masks/keying/chroma-key-spill-suppression.md` |
 | F-PRJ-002 | История правок и версии проекта | кандидат | B | M | частично | `project/history/versions-and-snapshots.md` |
 | F-PRJ-003 | Проект, открытый на другой машине | кандидат | B | M | частично | `project/structure/project-portability.md` |
-| F-RES-001 | Автосейв и версии проекта — поверх файла или рядом с ним | кандидат | B | M | частично | `resilience/durability/autosave-and-project-versions.md` |
-| F-RES-004 | Что переживает падение: механизм восстановления | кандидат | B | M | частично | `resilience/recovery/crash-recovery-flow.md` |
+| F-RES-001 | Автосейв и версии проекта — поверх файла или рядом с ним | сделано | B | M | да | `resilience/durability/autosave-and-project-versions.md` |
+| F-RES-004 | Что переживает падение: механизм восстановления | сделано | B | M | да | `resilience/recovery/crash-recovery-flow.md` |
 | F-RES-010 | Отзывчивость под нагрузкой: программа жива, но не отвечает | кандидат | B | M | частично | `resilience/performance/responsiveness-under-load.md` |
 | F-RES-011 | Память и большие проекты: кто и по какому правилу выселяет | кандидат | B | M | частично | `resilience/performance/memory-and-large-projects.md` |
-| F-RES-012 | Отмена длинной операции и прогресс | кандидат | B | M | частично | `resilience/performance/cancelling-long-operations.md` |
+| F-RES-012 | Отмена длинной операции и прогресс | сделано | B | M | да | `resilience/performance/cancelling-long-operations.md` |
 | F-SPD-001 | Скорость события — постоянная и переменная | кандидат | B | M | частично | `time/retiming/video-speed-ramping.md` |
-| F-SPD-004 | Синхронизация камеры и рекордера по волноформе и таймкоду | кандидат | B | M | частично | `time/sync/audio-waveform-sync.md` |
+| F-SPD-004 | Синхронизация камеры и рекордера по волноформе и таймкоду | сделано | B | M | да | `time/sync/audio-waveform-sync.md` |
 | F-TL-003 | JKL-навигация и динамический трим | кандидат | B | M | частично | `timeline/trimming/dynamic-trim-jkl.md` |
 | F-TL-007 | Направляющие и инструмент-распорка | кандидат | B | M | частично | `timeline/navigation/guides-and-spacer.md` |
 | F-TL-008 | Закрытие дыр на дорожке — одна, вся дорожка, весь проект | кандидат | B | M | нет | `timeline/assembly/close-gaps-and-blank-space.md` |
