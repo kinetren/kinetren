@@ -13,16 +13,19 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Важность уведомления (п.18).
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
     Info,
     Warn,
 }
 
+#[derive(Clone, Debug)]
 pub struct Notice {
     pub at: String,
     pub severity: Severity,
     pub text: String,
+    /// Сколько раз подряд пришло это же сообщение (показывается «×N»).
+    pub repeats: u32,
 }
 
 /// Результат фонового переоткрытия: медиа, имя для сообщения и источник
@@ -230,12 +233,21 @@ pub struct KtApp {
     pub max_src_cache: Option<(u64, Option<(u32, u32)>)>,
     /// Фоновый автосейв (Р.31 п.2): (rev снапшота, результат). UI-поток
     /// больше не пишет файл сам — только сериализует снапшот и ждёт итог.
-    pub autosave_rx: Option<(u64, std::sync::mpsc::Receiver<std::io::Result<()>>)>,
+    pub autosave_rx: Option<(u64, std::sync::mpsc::Receiver<std::io::Result<SaveOutcome>>)>,
     /// Сторож записи проекта (Р.32): ревизия модели, ЗАПИСАННАЯ на диск
     /// последней. Фоновый автосейв обязан свериться с ним перед подменой
     /// файла — иначе он перетирает более свежий Ctrl+S своим устаревшим
     /// снапшотом (гонка, найденная живыми сценариями).
     pub saved_rev: std::sync::Arc<std::sync::Mutex<u64>>,
+    /// Сторож файла ВОССТАНОВЛЕНИЯ — отдельный от сторожа проекта (Р.49,
+    /// п.350). Один мьютекс на две разные цели начинал отменять Ctrl+S
+    /// из-за чужой ревизии: фоновая запись recovery поднимала планку, и
+    /// следующая явная запись проекта оказывалась «устаревшей».
+    pub recovery_rev: std::sync::Arc<std::sync::Mutex<u64>>,
+    /// Файл восстановления, написанный ЭТОЙ копией программы. Удаляем при
+    /// сохранении только его: иначе Ctrl+S в одной копии убивал бы
+    /// восстановление другой (Р.49, п.351).
+    pub recovery_written: Option<PathBuf>,
     pub snap_line: Option<i64>,
     /// (поколение транспорта, число loop-перескоков) на прошлом кадре
     /// превью. Смена любого — законная причина уехать ключу показа назад:
@@ -315,6 +327,8 @@ pub struct KtApp {
     pub presets: crate::user_store::FxPresetStore,
     /// Состояние библиотеки пресетов уже показано (один раз за сессию).
     pub presets_reported: bool,
+    /// О невозможности сбросить каталог сказано (один раз за сессию).
+    pub dir_sync_warned: bool,
     /// Прямоугольник строки состояния (заполняется при её отрисовке).
     pub statusbar_rect: egui::Rect,
     /// Что реально показано в строке подсказки (для harness-теста).
@@ -508,6 +522,8 @@ impl KtApp {
             max_src_cache: None,
             autosave_rx: None,
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
+            recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
+            recovery_written: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -548,6 +564,7 @@ impl KtApp {
             preset_save: None,
             presets: Default::default(),
             presets_reported: false,
+            dir_sync_warned: false,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -653,6 +670,8 @@ impl KtApp {
             max_src_cache: None,
             autosave_rx: None,
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
+            recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
+            recovery_written: None,
             snap_line: None,
             preview_gen: (0, 0),
             snap_off: false,
@@ -693,6 +712,7 @@ impl KtApp {
             preset_save: None,
             presets: Default::default(),
             presets_reported: false,
+            dir_sync_warned: false,
             statusbar_rect: egui::Rect::NOTHING,
             status_line_shown: (String::new(), HintKind::Idle),
             timeline_rect: egui::Rect::NOTHING,
@@ -1103,24 +1123,24 @@ impl KtApp {
         // автосейв в UI-потоке ронял FPS в ноль каждые 30 с.
         // dirty_ui/сдвиг вьюпорта тоже сохраняются попутно (п.5 р.11) —
         // раньше это делал синхронный сейв из eframe::save каждые 30 с
+        // Р.49 п.351: цель фоновой записи — ФАЙЛ ВОССТАНОВЛЕНИЯ, а не проект
+        // пользователя (прямое решение владельца). Проект меняет только явное
+        // сохранение; поэтому и звёздочка тут больше не гаснет.
+        // Дрейф вьюпорта (зум/скролл) больше НЕ повод для записи: раньше он
+        // раз в 30 секунд переписывал весь проект без единой правки.
         let due = self.autosave_rx.is_none() && self.autosave_due();
-        let moved = self.project_path.is_some()
-            && due
-            && (self.dirty_ui || {
-                let fresh = self.ui_state();
-                self.model.project().ui.as_ref() != Some(&fresh)
-            });
-        if (self.dirty_content || moved) && due {
+        if (self.dirty_content || self.dirty_ui) && due {
             self.last_autosave = std::time::Instant::now();
             let ui = Some(self.ui_state());
             self.model.set_ui_state(ui);
-            let target = self.project_path.clone().unwrap_or_else(autosave_path);
+            let target = recovery_path_for(self.project_path.as_deref());
             let project = self.model.project().clone();
             let retained = self.retained.clone();
             let (tx, rx) = std::sync::mpsc::channel();
             let snap_rev = self.model_rev;
             self.autosave_rx = Some((snap_rev, rx));
-            let guard = self.saved_rev.clone();
+            let guard = self.recovery_rev.clone();
+            self.recovery_written = Some(target.clone());
             std::thread::Builder::new()
                 .name("autosave".into())
                 .spawn(move || {
@@ -1128,9 +1148,7 @@ impl KtApp {
                     // подмена файла — под сторожем: если пока мы
                     // сериализовали, на диск лёг БОЛЕЕ СВЕЖИЙ снимок
                     // (Ctrl+S), свой устаревший не пишем вовсе
-                    let _ = tx.send(
-                        write_project_guarded(&guard, &target, snap_rev, &out).map(|_| ()),
-                    );
+                    let _ = tx.send(write_project_guarded(&guard, &target, snap_rev, &out));
                 })
                 .ok();
         }
@@ -1140,16 +1158,17 @@ impl KtApp {
         {
             let snap_rev = *snap_rev;
             self.autosave_rx = None;
+            let _ = snap_rev;
             match res {
-                // флаги гасим, только если с момента снапшота ничего не
-                // менялось — иначе правки после снапшота потеряли бы след
-                Ok(()) => {
-                    if self.project_path.is_some() && self.model_rev == snap_rev {
-                        self.dirty_content = false;
-                        self.dirty_ui = false;
-                    }
+                // Звёздочка НЕ гаснет: работа пользователя легла в файл
+                // восстановления, а его проект по-прежнему без этих правок.
+                Ok(SaveOutcome::Wrote { dir_synced }) => self.warn_if_dir_unsynced(dir_synced),
+                // штатно и молча: значит уже записан более свежий снимок
+                Ok(SaveOutcome::SkippedNewerOnDisk) => {}
+                Err(e) => {
+                    self.recovery_written = None;
+                    self.warn(crate::tf!(k::msg::AUTOSAVE_FAILED, e))
                 }
-                Err(e) => self.warn(crate::tf!(k::msg::AUTOSAVE_FAILED, e)),
             }
         }
 
@@ -1175,6 +1194,9 @@ impl KtApp {
                         ui.horizontal_wrapped(|ui| {
                             ui.weak(&n.at);
                             ui.colored_label(col, &n.text);
+                            if n.repeats > 1 {
+                                ui.weak(format!("×{}", n.repeats));
+                            }
                         });
                     }
                 });
@@ -2016,17 +2038,68 @@ impl KtApp {
     /// Warning-уведомление: в статусбар и в ретроспективу (п.18).
     pub fn warn(&mut self, msg: impl Into<String>) {
         let text = msg.into();
+        // в журнал — чтобы у жалобы «оно что-то сказало и пропало» был адрес
+        crate::journal::log("WARN", &text);
         self.push_notice(Severity::Warn, text.clone());
         self.status = Some((text, std::time::Instant::now()));
     }
 
+    /// Сказать ОДИН раз за сессию, что каталог этой файловой системы не
+    /// сбрасывается: файл на месте, но при потере питания может потеряться
+    /// само переименование (exFAT, сетевые шары, не-unix).
+    /// Записать файл восстановления ПРЯМО СЕЙЧАС, синхронно. Зовётся там,
+    /// где фонового потока уже не будет: `on_exit` и (п.354) `Drop`. Исход —
+    /// в журнал: окна нет, показать некому.
+    pub(crate) fn write_recovery_now(&mut self) {
+        let target = recovery_path_for(self.project_path.as_deref());
+        let json =
+            kt_otio::save_project(self.model.project(), &self.retained, self.project_path.as_deref().and_then(|p| p.parent()));
+        match write_project_guarded(&self.recovery_rev, &target, self.model_rev, &json) {
+            Ok(SaveOutcome::Wrote { dir_synced }) => {
+                self.recovery_written = Some(target);
+                if !dir_synced {
+                    crate::journal::log("WARN", "recovery write: directory sync unsupported");
+                }
+            }
+            Ok(SaveOutcome::SkippedNewerOnDisk) => {}
+            Err(e) => crate::journal::log(
+                "WARN",
+                &format!("recovery write failed: {} ({e})", target.display()),
+            ),
+        }
+    }
+
+    /// Убрать файл восстановления, написанный ЭТОЙ копией.
+    pub(crate) fn drop_own_recovery(&mut self) {
+        if let Some(p) = self.recovery_written.take() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    fn warn_if_dir_unsynced(&mut self, dir_synced: bool) {
+        if !dir_synced && !self.dir_sync_warned {
+            self.dir_sync_warned = true;
+            self.warn(tr(k::msg::DIR_SYNC_UNSUPPORTED));
+        }
+    }
+
     fn push_notice(&mut self, severity: Severity, text: String) {
-        // не плодим дубликаты подряд
-        if self.notices.back().map(|n| n.text == text).unwrap_or(false) {
+        let at = chrono_like_now();
+        // Дубликаты подряд схлопываются в «текст ×N», но счётчик
+        // непрочитанных растёт ВСЕГДА (Р.49, п.350): раньше ранний
+        // возврат гасил и его, и вторая подряд «save failed» не красила
+        // колокольчик — единственный канал сообщения об ошибке записи
+        // умирал ровно тогда, когда ошибка повторялась.
+        if let Some(last) = self.notices.back_mut()
+            && last.text == text
+        {
+            last.repeats += 1;
+            last.at = at;
+            last.severity = severity;
+            self.notices_unread += 1;
             return;
         }
-        let at = chrono_like_now();
-        self.notices.push_back(Notice { at, severity, text });
+        self.notices.push_back(Notice { at, severity, text, repeats: 1 });
         if self.notices.len() > 200 {
             self.notices.pop_front();
         }
@@ -3081,18 +3154,23 @@ impl KtApp {
             kt_otio::save_project(self.model.project(), &self.retained, path.parent());
         // под сторожем: фоновый автосейв не должен перетереть нашу
         // запись своим более старым снапшотом (Р.32)
-        let res = write_project_guarded(&self.saved_rev, &path, self.model_rev, &out)
-            .map(|_| ());
-        match res {
-            Ok(()) => {
+        match write_project_guarded(&self.saved_rev, &path, self.model_rev, &out) {
+            Ok(SaveOutcome::Wrote { dir_synced }) => {
                 self.dirty_content = false;
                 self.dirty_ui = false;
                 self.note(crate::tf!(k::msg::SAVED, path.display()));
-                // именованный проект сохранён — recovery-файл безымянного
-                // больше не должен «воскресать» при старте (п.12)
-                let _ = std::fs::remove_file(autosave_path());
+                self.warn_if_dir_unsynced(dir_synced);
+                // работа легла в проект — СВОЁ восстановление больше не
+                // нужно. Убираем именно своё (Р.49, п.351): чужое рядом —
+                // это несохранённая работа другой копии программы.
+                self.drop_own_recovery();
             }
-            Err(e) => self.note(crate::tf!(k::msg::SAVE_FAILED, e)),
+            // НЕ писали: звёздочка остаётся, файл восстановления цел —
+            // иначе пользователь считал бы работу сохранённой (п.350)
+            Ok(SaveOutcome::SkippedNewerOnDisk) => {
+                self.note(tr(k::msg::SAVE_SKIPPED_NEWER));
+            }
+            Err(e) => self.warn(crate::tf!(k::msg::SAVE_FAILED, e)),
         }
     }
 
@@ -5366,6 +5444,23 @@ impl PerfState {
 /// hh:mm:ss без зависимости chrono.
 /// Файл автосохранения безымянного проекта (порт v1
 /// defaultAutosaveProjectPath: ~/.local/share/kinotrain/).
+/// Файл восстановления для этого проекта: `<полное имя>.recovery.otio`
+/// РЯДОМ с проектом. Суффикс дописывается к ПОЛНОМУ имени, а не подменяет
+/// расширение (урок t150: `film.otio` и `film.mp4.otio` обязаны дать разные
+/// имена, иначе один проект затирает восстановление другого).
+/// Безымянный проект восстанавливается в каталоге данных: рядом с ним
+/// каталога ещё нет.
+pub fn recovery_path_for(project: Option<&Path>) -> PathBuf {
+    match project {
+        Some(p) => {
+            let mut name = p.file_name().unwrap_or_default().to_os_string();
+            name.push(".recovery.otio");
+            p.with_file_name(name)
+        }
+        None => autosave_path(),
+    }
+}
+
 pub fn autosave_path() -> PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -5382,36 +5477,46 @@ pub fn autosave_path() -> PathBuf {
 /// не пишем вовсе и возвращаем `Ok(false)`: иначе фоновый автосейв
 /// перетирал более свежий Ctrl+S своим устаревшим снапшотом, и правки
 /// пользователя терялись (гонку нашли живые сценарии).
+/// Чем кончилась попытка записи (Р.49, п.350).
+///
+/// Раньше сюда возвращался `bool`, и все трое зовущих делали
+/// `.map(|_| ())` — «на диске уже новее, я не писал» становилось
+/// неотличимо от «записал». Следствие у Ctrl+S: гасла звёздочка,
+/// печаталось «saved», и УДАЛЯЛСЯ файл восстановления. Тип снимает эту
+/// ветку: у трёх зовущих три разных ответа, и забыть один нельзя.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveOutcome {
+    /// Записали. `dir_synced == false` — файл на месте, но каталог
+    /// сбросить не удалось (exFAT, сетевая шара, не-unix).
+    Wrote { dir_synced: bool },
+    /// На диске уже лежит более свежий снимок — не писали вовсе.
+    SkippedNewerOnDisk,
+}
+
 pub fn write_project_guarded(
     guard: &std::sync::Mutex<u64>,
     path: &std::path::Path,
     rev: u64,
     json: &str,
-) -> std::io::Result<bool> {
+) -> std::io::Result<SaveOutcome> {
     let mut last = guard.lock().unwrap();
     if *last > rev {
-        return Ok(false);
+        return Ok(SaveOutcome::SkippedNewerOnDisk);
     }
-    write_project_atomic(path, json)?;
+    let w = kt_otio::write_atomic(path, json)?;
     *last = rev;
-    Ok(true)
+    Ok(SaveOutcome::Wrote { dir_synced: w.dir_synced })
 }
 
+/// Тонкая обёртка над единственным домом атомарной записи (Р.49, п.349):
+/// сама запись, fsync файла и каталога живут в kt-otio, потому что туда
+/// же ходит kt-cli — второго писателя файла проекта в дереве нет.
 pub fn write_project_atomic(path: &std::path::Path, json: &str) -> std::io::Result<()> {
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = atomic_tmp_path(path);
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(&tmp, path)
+    kt_otio::write_atomic(path, json).map(|_| ())
 }
 
-/// Имя временного файла ДОПИСЫВАЕТСЯ к полному имени (тест 150): старый
-/// with_extension("ktproj.tmp") для «a.b.otio» съедал часть имени и был
-/// захардкожен под ktproj.
 pub fn atomic_tmp_path(path: &std::path::Path) -> PathBuf {
-    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    path.with_file_name(format!("{name}.tmp"))
+    kt_otio::atomic_tmp_path(path)
 }
 
 /// Чтение .otio с диска для open() (Р.24 п.12: .ktproj — только импорт).
@@ -5419,6 +5524,14 @@ pub(crate) fn load_project_file(
     path: &Path,
 ) -> Result<(Project, kt_otio::Retained, Vec<String>), String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    // Пустой файл — не «битый JSON», а известный исход потери питания до
+    // Р.49: переименование легло в журнал раньше данных. Сырая строка
+    // serde («EOF while parsing a value at line 1 column 0») об этом не
+    // говорит ничего, а пользователю нужно понять, что искать рядом файл
+    // восстановления, а не чинить синтаксис.
+    if text.trim().is_empty() {
+        return Err(crate::tf!(k::msg::PROJECT_FILE_EMPTY, path.display().to_string()));
+    }
     match kt_otio::load_project(&text, path.parent()) {
         Ok(b) => Ok((b.project, b.retained, b.notices)),
         Err(kt_otio::Error::NotOtio) => Err(tr(k::msg::KTPROJ_IMPORT_ONLY).to_string()),
@@ -5653,19 +5766,15 @@ impl eframe::App for KtApp {
         if let Some((_, rx)) = self.autosave_rx.take() {
             let _ = rx.recv_timeout(std::time::Duration::from_secs(5));
         }
-        if let Some(p) = &self.project_path.clone() {
-            let fresh = self.ui_state();
-            let moved = self.model.project().ui.as_ref() != Some(&fresh);
-            if self.dirty_content || self.dirty_ui || moved {
-                self.model.set_ui_state(Some(fresh));
-                // под тем же сторожем, что и Ctrl+S (Р.32)
-                let _ = write_project_guarded(
-                    &self.saved_rev,
-                    p,
-                    self.model_rev,
-                    &kt_otio::save_project(self.model.project(), &self.retained, p.parent()),
-                );
-            }
+        // Р.49 п.351: выход — НЕ момент молча переписать проект пользователя.
+        // Несохранённое уезжает в файл восстановления; сохранённое уносит свой
+        // файл восстановления с собой, чтобы следующий старт не предлагал
+        // восстановить то, что и так в проекте.
+        if self.dirty_content || self.dirty_ui {
+            self.model.set_ui_state(Some(self.ui_state()));
+            self.write_recovery_now();
+        } else {
+            self.drop_own_recovery();
         }
     }
 }

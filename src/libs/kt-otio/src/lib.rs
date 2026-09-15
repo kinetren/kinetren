@@ -20,7 +20,10 @@ mod url;
 pub use convert::{
     Notice, ProjectBundle, Retained, grid_fps, project_to_timeline, timeline_to_project,
 };
-pub use io::{parse_document, write_document};
+pub use io::{
+    AtomicFs, RealFs, Written, atomic_tmp_path, parse_document, write_atomic, write_atomic_with,
+    write_document,
+};
 pub use legacy::import_legacy;
 pub use meta::{KT_META_VERSION, KT_NS, check_kt_version, kt_entry_mut, kt_version};
 pub use schema::{

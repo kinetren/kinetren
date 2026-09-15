@@ -14,6 +14,7 @@ mod font_tests;
 mod fx_registry;
 mod graphs;
 mod i18n;
+mod journal;
 #[cfg(test)]
 mod i18n_tests;
 mod icons;

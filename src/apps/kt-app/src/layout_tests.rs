@@ -3570,8 +3570,14 @@ fn t194_autosave_runs_in_background() {
         h.step();
     }
     assert!(h.state().autosave_rx.is_none(), "результат автосейва забран");
-    assert!(!h.state().dirty_content, "успешный автосейв гасит звёздочку");
-    assert!(target.exists(), "файл записан фоновым потоком");
+    // Р.49 п.351 (решение владельца, user-feedback.md): автосейв больше НЕ
+    // пишет в файл пользователя и НЕ гасит звёздочку. Тест из замороженного
+    // диапазона 1-221 переписан по прямой санкции владельца: «фоновая запись
+    // идёт в свой recovery-файл, проект меняет только явное сохранение».
+    assert!(h.state().dirty_content, "автосейв не имеет права считать проект сохранённым");
+    assert!(!target.exists(), "автосейв тронул файл проекта");
+    let rec = crate::app::recovery_path_for(Some(&target));
+    assert!(rec.exists(), "файл восстановления записан фоновым потоком: {}", rec.display());
 
     // правка ПОСЛЕ снапшота не должна терять звёздочку
     let app = h.state_mut();
@@ -4375,15 +4381,18 @@ fn t199_guarded_write_never_goes_backwards() {
     let f = dir.join("p.otio");
     let guard = std::sync::Mutex::new(0u64);
 
+    use crate::app::SaveOutcome;
+    let wrote = |o: SaveOutcome| matches!(o, SaveOutcome::Wrote { .. });
+
     // первая запись (ревизия 5) проходит
-    assert!(crate::app::write_project_guarded(&guard, &f, 5, "rev5").unwrap());
+    assert!(wrote(crate::app::write_project_guarded(&guard, &f, 5, "rev5").unwrap()));
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev5");
     // «опоздавший» фоновый снапшот ревизии 3 — файл не трогает
-    assert!(!crate::app::write_project_guarded(&guard, &f, 3, "rev3").unwrap());
+    assert!(!wrote(crate::app::write_project_guarded(&guard, &f, 3, "rev3").unwrap()));
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev5", "старый снимок перетёр свежий");
     // повтор той же ревизии допустим (идемпотентно), новее — пишется
-    assert!(crate::app::write_project_guarded(&guard, &f, 5, "rev5b").unwrap());
-    assert!(crate::app::write_project_guarded(&guard, &f, 9, "rev9").unwrap());
+    assert!(wrote(crate::app::write_project_guarded(&guard, &f, 5, "rev5b").unwrap()));
+    assert!(wrote(crate::app::write_project_guarded(&guard, &f, 9, "rev9").unwrap()));
     assert_eq!(std::fs::read_to_string(&f).unwrap(), "rev9");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4432,6 +4441,264 @@ fn t199_background_autosave_never_overwrites_newer_save() {
         "на диске обязана остаться СВЕЖАЯ версия (2 медиа), а не снимок автосейва"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 357 (Р.49 А3): имя файла восстановления дописывается к ПОЛНОМУ имени
+/// проекта. Подмена расширения (`with_extension`) склеила бы `film.otio` и
+/// `film.mp4.otio` в одно восстановление — ровно тот класс, что закрывал t150.
+/// Безымянный проект восстанавливается в каталоге данных.
+#[test]
+fn t357_recovery_path_appends_to_full_name() {
+    use crate::app::recovery_path_for;
+    let a = recovery_path_for(Some(std::path::Path::new("/w/film.otio")));
+    let b = recovery_path_for(Some(std::path::Path::new("/w/film.mp4.otio")));
+    assert_eq!(a, std::path::Path::new("/w/film.otio.recovery.otio"));
+    assert_eq!(b, std::path::Path::new("/w/film.mp4.otio.recovery.otio"));
+    assert_ne!(a, b, "два разных проекта делят один файл восстановления");
+    assert_eq!(a.parent(), Some(std::path::Path::new("/w")), "восстановление лежит рядом");
+    assert_eq!(
+        recovery_path_for(None),
+        crate::app::autosave_path(),
+        "у безымянного проекта каталога ещё нет — восстановление в каталоге данных"
+    );
+}
+
+/// Тест 358 (Р.49 А3): фоновая запись идёт в ФАЙЛ ВОССТАНОВЛЕНИЯ, проект
+/// пользователя не трогает, звёздочку не гасит — и всё это восстановимо:
+/// в recovery лежит настоящая модель с правками.
+#[test]
+fn t358_autosave_writes_recovery_not_project() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t358-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t358.otio");
+    std::fs::write(&target, "исходный файл пользователя").unwrap();
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    app.model.apply(Command::AddMedia { id: MediaId(7), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
+    h.step();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "исходный файл пользователя",
+        "автосейв переписал файл пользователя — его меняет только Ctrl+S"
+    );
+    assert!(h.state().dirty_content, "автосейв погасил звёздочку: работа считается сохранённой");
+    let rec = crate::app::recovery_path_for(Some(&target));
+    let text = std::fs::read_to_string(&rec).expect("файла восстановления нет");
+    let saved = kt_otio::load_project(&text, rec.parent()).unwrap().project;
+    assert_eq!(saved.media.len(), 1, "в восстановлении не та модель");
+    assert_eq!(h.state().recovery_written.as_deref(), Some(rec.as_path()));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 359 (Р.49 А3): сохранение уносит СВОЙ файл восстановления и не трогает
+/// чужой. Прежний код сносил `autosave_path()` безусловно — Ctrl+S в одной
+/// копии программы убивал несохранённую работу другой.
+#[test]
+fn t359_save_drops_only_own_recovery() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t359-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t359.otio");
+    let mine = crate::app::recovery_path_for(Some(&target));
+    let alien = dir.join("other.otio.recovery.otio");
+    std::fs::write(&mine, "мой снимок").unwrap();
+    std::fs::write(&alien, "чужая несохранённая работа").unwrap();
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    app.recovery_written = Some(mine.clone());
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.save();
+
+    assert!(target.exists(), "Ctrl+S обязан записать проект");
+    assert!(!mine.exists(), "своё восстановление не убрано — старт предложит уже сохранённое");
+    assert!(alien.exists(), "снесено ЧУЖОЕ восстановление: потеряна работа другой копии");
+    assert!(h.state().recovery_written.is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 360 (Р.49 А3): дрейф вьюпорта не запускает запись. Зум и скролл
+/// раз в 30 секунд гоняли полную сериализацию проекта БЕЗ ЕДИНОЙ правки —
+/// на большом монтаже это заметный фриз ни за что (инвариант 8 по духу:
+/// прокрутка таймлайна не порождает работы).
+#[test]
+fn t360_viewport_drift_does_not_write() {
+    let dir = std::env::temp_dir().join(format!("kt-t360-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t360.otio");
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    app.dirty_content = false;
+    app.dirty_ui = false;
+    // проект «как на диске» не знает текущего вьюпорта — и это не повод писать
+    app.model.set_ui_state(None);
+    app.ticks_per_px *= 1.7;
+    app.view_start += 400_000.0;
+    app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
+    h.step();
+    assert!(h.state().autosave_rx.is_none(), "дрейф вьюпорта запустил запись проекта");
+    assert!(!crate::app::recovery_path_for(Some(&target)).exists());
+
+    // а настоящая правка — запускает
+    let app = h.state_mut();
+    app.dirty_content = true;
+    app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
+    h.step();
+    assert!(h.state().autosave_rx.is_some(), "правка обязана запускать автосейв");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 361 (Р.49 А2/А3): сторожа ДВА. Один мьютекс на две цели поднимал бы
+/// планку ревизии фоновой записью восстановления — и следующий Ctrl+S
+/// оказывался «устаревшим», то есть молча ничего не сохранял.
+#[test]
+fn t361_recovery_guard_does_not_block_save() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t361-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t361.otio");
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
+    h.step();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state().autosave_rx.is_some() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    assert!(
+        *h.state().recovery_rev.lock().unwrap() > 0,
+        "фоновая запись восстановления обязана поднять СВОЙ сторож"
+    );
+    assert_eq!(*h.state().saved_rev.lock().unwrap(), 0, "она подняла сторож ПРОЕКТА");
+
+    // Ctrl+S той же ревизии обязан пройти
+    h.state_mut().save();
+    assert!(target.exists(), "Ctrl+S отменён сторожем файла восстановления");
+    assert!(!h.state().dirty_content);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 355 (Р.49 А2): исход записи — ТИП, и Ctrl+S его разбирает. Раньше
+/// `write_project_guarded` возвращал `bool`, а `save()` делал `.map(|_| ())`:
+/// отказ по сторожу («на диске уже свежее») выглядел как успех — звёздочка
+/// гасла, в статусе писалось «сохранено», а файла с этими правками не было.
+#[test]
+fn t355_save_reports_skipped_and_keeps_dirty() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t355-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t355.otio");
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.save();
+    assert!(!h.state().dirty_content, "обычный Ctrl+S обязан гасить звёздочку");
+    let ok_len = std::fs::read_to_string(&target).unwrap().len();
+
+    // на диск «лёг» снимок ревизии из будущего: сторож обязан отказать
+    let app = h.state_mut();
+    *app.saved_rev.lock().unwrap() = app.model_rev + 100;
+    app.model.apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.notices.clear();
+    app.save();
+
+    let st = h.state();
+    assert!(st.dirty_content, "отказ по сторожу погасил звёздочку: правки считаются сохранёнными");
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap().len(),
+        ok_len,
+        "при отказе файл не должен меняться"
+    );
+    let texts: Vec<&str> = st.notices.iter().map(|n| n.text.as_str()).collect();
+    assert!(!texts.is_empty(), "об отказе не сказано ни слова");
+    assert!(
+        !texts.iter().any(|t| t.contains(&target.display().to_string())),
+        "об отказе сказано как об успешном сохранении: {texts:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 356 (Р.49 А2): повтор одного сообщения красит колокольчик. Схлопывание
+/// дублей было сделано ранним возвратом ДО инкремента `notices_unread` — и
+/// вторая подряд «не удалось сохранить» не поднимала счётчик непрочитанных:
+/// единственный канал сообщения об ошибке записи умирал ровно тогда, когда
+/// ошибка повторялась. Плюс ошибка Ctrl+S — это Warn, а не Info.
+#[test]
+fn t356_repeated_notice_still_marks_unread() {
+    let mut h = harness();
+    let app = h.state_mut();
+    app.notices.clear();
+    app.notices_unread = 0;
+
+    app.warn("disk on fire");
+    app.warn("disk on fire");
+    app.warn("disk on fire");
+    assert_eq!(app.notices.len(), 1, "дубли обязаны схлопываться в одну строку");
+    assert_eq!(app.notices.back().unwrap().repeats, 3, "счётчик повторов не вырос");
+    assert_eq!(app.notices_unread, 3, "повтор не покрасил колокольчик");
+    assert_eq!(
+        app.notices.back().unwrap().text,
+        "disk on fire",
+        "«×N» — дело показа: в тексте записи его быть не должно"
+    );
+    assert!(matches!(app.notices.back().unwrap().severity, crate::app::Severity::Warn));
+
+    // другое сообщение начинает свою строку
+    app.warn("other");
+    assert_eq!(app.notices.len(), 2);
+    assert_eq!(app.notices.back().unwrap().repeats, 1);
+
+    // ошибка записи проекта приходит именно как предупреждение
+    let app = h.state_mut();
+    app.notices.clear();
+    app.project_path = Some(std::path::PathBuf::from("/proc/self/no-such-dir/x.otio"));
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.save();
+    let last = h.state().notices.back().cloned().expect("об ошибке записи не сказано");
+    assert!(
+        matches!(last.severity, crate::app::Severity::Warn),
+        "ошибка Ctrl+S пришла как обычная заметка: {last:?}"
+    );
+    assert!(h.state().dirty_content, "после ошибки записи звёздочка обязана остаться");
 }
 
 /// Тест 227 (Р.33 С4): у перехода появилось окно свойств. Двойной клик по
