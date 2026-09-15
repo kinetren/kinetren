@@ -205,9 +205,11 @@ enum Pipe {
     RadialBlur,
     ShadowUnder,
     Halftone,
+    /// Граница вложения (Р.50): прямая альфа из премультиплицированной.
+    Unpremul,
 }
 
-const PIPE_COUNT: usize = 19;
+const PIPE_COUNT: usize = 20;
 
 /// Один шаг цепочки, предвычисленный на CPU (общая математика — kt-fx:
 /// pan_frame/cam_at/noise_seed). Кол-во пассов и размеры известны заранее.
@@ -654,9 +656,20 @@ fn chain_ops(
     (ops, (w, h), has_alpha, has_alpha_known, (mw, mh))
 }
 
+/// Откуда цепочка слоя берёт вход.
+enum ChainSrc {
+    /// Загруженный кадр источника.
+    Tex(wgpu::TextureView),
+    /// ПОДДЕРЕВО вложения (Р.50): свои джобы, свой размер. Текстуры у него
+    /// в момент разбора ещё нет — она появится при кодировании, поэтому
+    /// разбор и кодирование пришлось разделить: арена юниформ выделяется
+    /// ДО энкодера, а её размер зависит от всего дерева.
+    Nest(Vec<Job>),
+}
+
 struct ChainSpec {
     ops: Vec<FxOp>,
-    src_view: wgpu::TextureView,
+    src: ChainSrc,
     src_w: u32,
     src_h: u32,
     has_alpha: bool, // после цепочки
@@ -664,7 +677,12 @@ struct ChainSpec {
 
 impl ChainSpec {
     fn slot_units(&self) -> u32 {
-        self.ops.iter().map(|o| o.slot_units()).sum()
+        let own: u32 = self.ops.iter().map(|o| o.slot_units()).sum();
+        match &self.src {
+            ChainSrc::Tex(_) => own,
+            // + 1 на пасс снятия премультипликации на границе
+            ChainSrc::Nest(jobs) => own + 1 + jobs.iter().map(|j| j.slot_units()).sum::<u32>(),
+        }
     }
 }
 
@@ -727,6 +745,7 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("radial_blur", include_str!("shaders/radial_blur.wgsl")),
     ("shadow_under", include_str!("shaders/shadow_under.wgsl")),
     ("halftone", include_str!("shaders/halftone.wgsl")),
+    ("unpremul", include_str!("shaders/unpremul.wgsl")),
 ];
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
@@ -936,46 +955,7 @@ impl Inner {
         }
 
         // --- resolve: присутствие/размер по правилам CPU-исполнителя ---
-        let mut complete = true;
-        let mut jobs: Vec<Job> = Vec::new();
-        for layer in &plan.layers {
-            match layer {
-                PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
-                    match self.resolve_chain(src, ow, oh, plan.t)? {
-                        None => complete = false,
-                        Some((chain, fits)) => {
-                            if fits {
-                                jobs.push(Job::Single {
-                                    chain,
-                                    alpha_k: *alpha_k,
-                                    scale: *scale_alpha,
-                                    fade: *fade,
-                                });
-                            } // чужой размер — молча пропускается
-                        }
-                    }
-                }
-                PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
-                    let ca = self.resolve_chain(a, ow, oh, plan.t)?;
-                    let cb = self.resolve_chain(b, ow, oh, plan.t)?;
-                    match (ca, cb) {
-                        (Some((a, true)), Some((b, true))) => {
-                            jobs.push(Job::Dissolve { a, b, k: *k, alpha_k: *alpha_k, mix: *mix });
-                        }
-                        (Some((c, true)), None) | (None, Some((c, true))) => {
-                            jobs.push(Job::Single {
-                                chain: c,
-                                alpha_k: *alpha_k,
-                                scale: *alpha_k < 4096,
-                                fade: None,
-                            });
-                            complete = false;
-                        }
-                        _ => complete = false,
-                    }
-                }
-            }
-        }
+        let (jobs, complete) = self.resolve_plan(plan)?;
 
         let n = (ow as usize) * (oh as usize) * 4;
         if jobs.is_empty() {
@@ -1002,80 +982,7 @@ impl Inner {
         let mut enc = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("kt-gpu") });
-        let acc_a = self.pool.acquire(&self.device, ow, oh);
-        let acc_b = self.pool.acquire(&self.device, ow, oh);
-        let acc = [acc_a, acc_b];
-        let mut cur = 0usize; // куда писал ПОСЛЕДНИЙ композит-пасс
-        for (ji, job) in jobs.iter().enumerate() {
-            let first = (ji == 0) as u32;
-            let target = 1 - cur;
-            match job {
-                Job::Single { chain, alpha_k, scale, fade } => {
-                    let (view, owned) = self.encode_chain(&mut enc, chain);
-                    let mode = if fade.is_some() {
-                        3
-                    } else if *scale {
-                        1
-                    } else {
-                        0
-                    };
-                    // сольный фейд с видом: кадр стоит на своей стороне
-                    // пары, вторая помечена пустой (clear-бит) — ядро её
-                    // не читает вовсе (зеркало Img::Clear)
-                    let has = chain.has_alpha as u32;
-                    let (u0z, u0w, clear, swap) = match fade {
-                        Some(f) if f.incoming => (0, has, 1u32, true),
-                        Some(_) => (has, 0, 2u32, false),
-                        None => (has, 0, 0, false),
-                    };
-                    let u = UniformData {
-                        u: [
-                            mode,
-                            *alpha_k,
-                            u0z,
-                            u0w,
-                            first,
-                            fade.map(|f| f.k).unwrap_or(0),
-                            fade.map(|f| f.mix.mode).unwrap_or(0),
-                            clear,
-                        ],
-                        f: fade.map(|f| f.mix.p).unwrap_or_default(),
-                        ..Default::default()
-                    };
-                    let acc_in = acc[cur].view.clone();
-                    let dummy = self.dummy.view.clone();
-                    let (t1, t2) = if swap { (&dummy, &view) } else { (&view, &dummy) };
-                    self.pass(&mut enc, Pipe::Composite, &acc[target].view, &acc_in, t1, t2, u);
-                    for t in owned {
-                        self.pool.release(t);
-                    }
-                }
-                Job::Dissolve { a, b, k, alpha_k, mix } => {
-                    let (va, oa) = self.encode_chain(&mut enc, a);
-                    let (vb, ob) = self.encode_chain(&mut enc, b);
-                    let u = UniformData {
-                        u: [
-                            2,
-                            *alpha_k,
-                            a.has_alpha as u32,
-                            b.has_alpha as u32,
-                            first,
-                            *k,
-                            mix.mode,
-                            0,
-                        ],
-                        f: mix.p,
-                        ..Default::default()
-                    };
-                    let acc_in = acc[cur].view.clone();
-                    self.pass(&mut enc, Pipe::Composite, &acc[target].view, &acc_in, &va, &vb, u);
-                    for t in oa.into_iter().chain(ob) {
-                        self.pool.release(t);
-                    }
-                }
-            }
-            cur = target;
-        }
+        let result = self.encode_jobs(&mut enc, &jobs, ow, oh);
 
         // --- readback ---
         let padded_bpr = (ow * 4).next_multiple_of(256);
@@ -1100,7 +1007,7 @@ impl Inner {
         let (staging, _, _, _) = self.staging.as_ref().unwrap();
         enc.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
-                texture: &acc[cur].texture,
+                texture: &result.texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
@@ -1140,27 +1047,213 @@ impl Inner {
         }
         staging.unmap();
 
-        let [a0, a1] = acc;
-        self.pool.release(a0);
-        self.pool.release(a1);
+        self.pool.release(result);
         self.readback.insert(key, out.clone(), complete);
         Ok(complete)
     }
 
-    /// None — голода нет кадра; Some((chain, fits)) — цепочка готова,
-    /// fits = финальный размер совпал с Quality.
+    /// Кодирует набор джобов в текстуру-аккумулятор. ОДИН код у корня и у
+    /// поддерева вложения (Р.50): иначе правило «первый слой пишет поверх
+    /// прозрачного» пришлось бы держать синхронным в двух местах.
+    fn encode_jobs(
+        &mut self,
+        enc: &mut wgpu::CommandEncoder,
+        jobs: &[Job],
+        ow: u32,
+        oh: u32,
+    ) -> Tex {
+        let acc_a = self.pool.acquire(&self.device, ow, oh);
+        let acc_b = self.pool.acquire(&self.device, ow, oh);
+        let acc = [acc_a, acc_b];
+        let mut cur = 0usize; // куда писал ПОСЛЕДНИЙ композит-пасс
+        if jobs.is_empty() {
+            // Пул отдаёт ГРЯЗНЫЕ текстуры (t183): пустой план обязан
+            // очистить свою — иначе на экране остатки чужого кадра.
+            self.clear_tex(enc, &acc[cur].view);
+        }
+        for (ji, job) in jobs.iter().enumerate() {
+            let first = (ji == 0) as u32;
+            let target = 1 - cur;
+            match job {
+                Job::Single { chain, alpha_k, scale, fade } => {
+                    let (view, owned) = self.encode_chain(enc, chain);
+                    let mode = if fade.is_some() {
+                        3
+                    } else if *scale {
+                        1
+                    } else {
+                        0
+                    };
+                    // сольный фейд с видом: кадр стоит на своей стороне
+                    // пары, вторая помечена пустой (clear-бит) — ядро её
+                    // не читает вовсе (зеркало Img::Clear)
+                    let has = chain.has_alpha as u32;
+                    let (u0z, u0w, clear, swap) = match fade {
+                        Some(f) if f.incoming => (0, has, 1u32, true),
+                        Some(_) => (has, 0, 2u32, false),
+                        None => (has, 0, 0, false),
+                    };
+                    let u = UniformData {
+                        u: [
+                            mode,
+                            *alpha_k,
+                            u0z,
+                            u0w,
+                            first,
+                            fade.map(|f| f.k).unwrap_or(0),
+                            fade.map(|f| f.mix.mode).unwrap_or(0),
+                            clear,
+                        ],
+                        f: fade.map(|f| f.mix.p).unwrap_or_default(),
+                        ..Default::default()
+                    };
+                    let acc_in = acc[cur].view.clone();
+                    let dummy = self.dummy.view.clone();
+                    let (t1, t2) = if swap { (&dummy, &view) } else { (&view, &dummy) };
+                    self.pass(enc, Pipe::Composite, &acc[target].view, &acc_in, t1, t2, u);
+                    for t in owned {
+                        self.pool.release(t);
+                    }
+                }
+                Job::Dissolve { a, b, k, alpha_k, mix } => {
+                    let (va, oa) = self.encode_chain(enc, a);
+                    let (vb, ob) = self.encode_chain(enc, b);
+                    let u = UniformData {
+                        u: [
+                            2,
+                            *alpha_k,
+                            a.has_alpha as u32,
+                            b.has_alpha as u32,
+                            first,
+                            *k,
+                            mix.mode,
+                            0,
+                        ],
+                        f: mix.p,
+                        ..Default::default()
+                    };
+                    let acc_in = acc[cur].view.clone();
+                    self.pass(enc, Pipe::Composite, &acc[target].view, &acc_in, &va, &vb, u);
+                    for t in oa.into_iter().chain(ob) {
+                        self.pool.release(t);
+                    }
+                }
+            }
+            cur = target;
+        }
+
+        let [a0, a1] = acc;
+        if cur == 0 {
+            self.pool.release(a1);
+            a0
+        } else {
+            self.pool.release(a0);
+            a1
+        }
+    }
+
+    /// Прозрачно-чёрная текстура (пул отдаёт грязные).
+    fn clear_tex(&mut self, enc: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+        enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("kt-gpu clear"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: target,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+    }
+
+    /// Разбор ПЛАНА в джобы (без энкодера). Рекурсия живёт здесь: арена
+    /// юниформ выделяется ДО кодирования, а её размер зависит от ВСЕГО
+    /// дерева (Р.50, Б3).
+    fn resolve_plan(&mut self, plan: &FramePlan<'_>) -> Result<(Vec<Job>, bool), GpuExecError> {
+        let (ow, oh) = (plan.out_w, plan.out_h);
+        if ow > self.max_dim || oh > self.max_dim {
+            return Err(GpuExecError::TooLarge { w: ow, h: oh });
+        }
+        let mut complete = true;
+        let mut jobs: Vec<Job> = Vec::new();
+        for layer in &plan.layers {
+            match layer {
+                PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
+                    match self.resolve_chain(src, ow, oh, plan.t)? {
+                        None => complete = false,
+                        Some((chain, fits, sub_ok)) => {
+                            complete &= sub_ok;
+                            if fits {
+                                jobs.push(Job::Single {
+                                    chain,
+                                    alpha_k: *alpha_k,
+                                    scale: *scale_alpha,
+                                    fade: *fade,
+                                });
+                            } // чужой размер — молча пропускается
+                        }
+                    }
+                }
+                PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
+                    let ca = self.resolve_chain(a, ow, oh, plan.t)?;
+                    let cb = self.resolve_chain(b, ow, oh, plan.t)?;
+                    complete &= ca.as_ref().map(|c| c.2).unwrap_or(true);
+                    complete &= cb.as_ref().map(|c| c.2).unwrap_or(true);
+                    match (ca, cb) {
+                        (Some((a, true, _)), Some((b, true, _))) => {
+                            jobs.push(Job::Dissolve { a, b, k: *k, alpha_k: *alpha_k, mix: *mix });
+                        }
+                        (Some((c, true, _)), None) | (None, Some((c, true, _))) => {
+                            jobs.push(Job::Single {
+                                chain: c,
+                                alpha_k: *alpha_k,
+                                scale: *alpha_k < 4096,
+                                fade: None,
+                            });
+                            complete = false;
+                        }
+                        _ => complete = false,
+                    }
+                }
+            }
+        }
+        Ok((jobs, complete))
+    }
+
+    /// None — голода нет кадра; Some((chain, fits, complete)) — цепочка
+    /// готова, `fits` = финальный размер совпал с Quality, `complete` —
+    /// полнота ПОДДЕРЕВА (у обычного слоя всегда true).
     fn resolve_chain(
         &mut self,
         src: &LayerSrc<'_>,
         ow: u32,
         oh: u32,
         t: Tick,
-    ) -> Result<Option<(ChainSpec, bool)>, GpuExecError> {
-        if src.input.nest().is_some() {
-            // Поддерево вложения (Р.50, волна Б): у GPU-исполнителя своего
-            // узла плана пока нет — весь план уходит на CPU, который
-            // считает ТОТ ЖЕ план (семантика одна, инвариант 7).
-            return Err(GpuExecError::Unsupported("nested reel"));
+    ) -> Result<Option<(ChainSpec, bool, bool)>, GpuExecError> {
+        // ВЛОЖЕНИЕ: вход цепочки — не кадр из кэша, а суб-композит. Его
+        // текстуры сейчас нет, и это нормально: `ChainSrc::Nest` несёт
+        // джобы, а текстура появится при кодировании.
+        if let Some(n) = src.input.nest() {
+            let (jobs, sub_ok) = self.resolve_plan(&n.plan)?;
+            let (sw, sh) = (n.plan.out_w, n.plan.out_h);
+            let (ops, (fw, fh), ha, ha_known, (mw, mh)) =
+                chain_ops(&src.fx, sw, sh, src.src_scale, ow, oh, src.u, t, src.cam3d);
+            if mw > self.max_dim || mh > self.max_dim {
+                return Err(GpuExecError::TooLarge { w: mw, h: mh });
+            }
+            // суб-композит всегда с альфой: там, где слоёв нет, он прозрачен
+            let has_alpha = if ha_known { ha } else { true };
+            return Ok(Some((
+                ChainSpec { ops, src: ChainSrc::Nest(jobs), src_w: sw, src_h: sh, has_alpha },
+                (fw, fh) == (ow, oh),
+                sub_ok,
+            )));
         }
         let Some(frame) = src.input.frame() else { return Ok(None) };
         if frame.width > self.max_dim || frame.height > self.max_dim {
@@ -1188,8 +1281,15 @@ impl Inner {
             self.upload.get_or_upload(&self.device, &self.queue, src.source, src.cache_idx, frame);
         let fits = (fw, fh) == (ow, oh);
         Ok(Some((
-            ChainSpec { ops, src_view: view, src_w: frame.width, src_h: frame.height, has_alpha },
+            ChainSpec {
+                ops,
+                src: ChainSrc::Tex(view),
+                src_w: frame.width,
+                src_h: frame.height,
+                has_alpha,
+            },
             fits,
+            true,
         )))
     }
 
@@ -1200,10 +1300,34 @@ impl Inner {
         enc: &mut wgpu::CommandEncoder,
         chain: &ChainSpec,
     ) -> (wgpu::TextureView, Vec<Tex>) {
-        let mut view = chain.src_view.clone();
-        let (mut w, mut h) = (chain.src_w, chain.src_h);
         let mut owned: Option<Tex> = None;
         let mut retired: Vec<Tex> = Vec::new();
+        let (mut w, mut h) = (chain.src_w, chain.src_h);
+        // ВХОД цепочки: кадр из кэша или суб-композит вложения (Р.50).
+        let mut view = match &chain.src {
+            ChainSrc::Tex(v) => v.clone(),
+            ChainSrc::Nest(jobs) => {
+                let sub = self.encode_jobs(enc, jobs, w, h);
+                // ГРАНИЦА ВЛОЖЕНИЯ: аккумулятор композита премультиплицирован
+                // при прямой альфе — ровно одна конверсия, зеркало
+                // `kt_engine::video::unpremultiply` (shaders/unpremul.wgsl).
+                let straight = self.pool.acquire(&self.device, w, h);
+                let dummy = self.dummy.view.clone();
+                self.pass(
+                    enc,
+                    Pipe::Unpremul,
+                    &straight.view,
+                    &sub.view,
+                    &dummy,
+                    &dummy,
+                    UniformData::default(),
+                );
+                let v = straight.view.clone();
+                self.pool.release(sub);
+                retired.push(straight);
+                v
+            }
+        };
         let dummy = self.dummy.view.clone();
         // сухая сторона смешения (Р.38 п.12): снимок состояния ДО вклада
         // слоя. Текстуру снимка нельзя вернуть в пул до самого смешения.
@@ -1701,12 +1825,23 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
         h.update(&s.src_scale.to_le_bytes());
         h.update(&s.u.to_bits().to_le_bytes());
         put_cam3d(h, &s.cam3d);
-        match s.input.frame() {
-            None => h.update(&[0u8]),
-            Some(f) => {
+        match &s.input {
+            kt_engine::video_plan::LayerInput::Frame(None) => h.update(&[0u8]),
+            kt_engine::video_plan::LayerInput::Frame(Some(f)) => {
                 h.update(&[1u8, f.has_alpha as u8]);
                 h.update(&f.width.to_le_bytes());
                 h.update(&f.height.to_le_bytes());
+            }
+            // Поддерево — В КЛЮЧ ЦЕЛИКОМ (Р.50): у ленты нет ни кадра, ни
+            // `cache_idx`, по которым её можно было бы различить, а
+            // ReadbackCache обязан отличать разные суб-композиты.
+            kt_engine::video_plan::LayerInput::Nest(n) => {
+                h.update(&[2u8]);
+                h.update(&n.seq.0.to_le_bytes());
+
+                h.update(&n.content_hash.to_le_bytes());
+                h.update(&n.inner_t.0.to_le_bytes());
+                put_plan(h, &n.plan);
             }
         }
     }
@@ -1718,34 +1853,37 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
             h.update(&v.to_bits().to_le_bytes());
         }
     }
-    let mut h = Xxh3::new();
-    h.update(&plan.t.0.to_le_bytes());
-    h.update(&plan.out_w.to_le_bytes());
-    h.update(&plan.out_h.to_le_bytes());
-    for layer in &plan.layers {
-        match layer {
-            PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
-                h.update(&[1u8, *scale_alpha as u8]);
-                h.update(&alpha_k.to_le_bytes());
-                match fade {
-                    None => h.update(&[0u8]),
-                    Some(f) => {
-                        h.update(&[1u8, f.incoming as u8]);
-                        h.update(&f.k.to_le_bytes());
-                        put_mix(&mut h, &f.mix);
+    fn put_plan(h: &mut Xxh3, plan: &FramePlan<'_>) {
+        h.update(&plan.t.0.to_le_bytes());
+        h.update(&plan.out_w.to_le_bytes());
+        h.update(&plan.out_h.to_le_bytes());
+        for layer in &plan.layers {
+            match layer {
+                PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
+                    h.update(&[1u8, *scale_alpha as u8]);
+                    h.update(&alpha_k.to_le_bytes());
+                    match fade {
+                        None => h.update(&[0u8]),
+                        Some(f) => {
+                            h.update(&[1u8, f.incoming as u8]);
+                            h.update(&f.k.to_le_bytes());
+                            put_mix(h, &f.mix);
+                        }
                     }
+                    put_src(h, src);
                 }
-                put_src(&mut h, src);
-            }
-            PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
-                h.update(&[2u8]);
-                h.update(&k.to_le_bytes());
-                h.update(&alpha_k.to_le_bytes());
-                put_mix(&mut h, mix);
-                put_src(&mut h, a);
-                put_src(&mut h, b);
+                PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
+                    h.update(&[2u8]);
+                    h.update(&k.to_le_bytes());
+                    h.update(&alpha_k.to_le_bytes());
+                    put_mix(h, mix);
+                    put_src(h, a);
+                    put_src(h, b);
+                }
             }
         }
     }
+    let mut h = Xxh3::new();
+    put_plan(&mut h, plan);
     h.digest()
 }

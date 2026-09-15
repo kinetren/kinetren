@@ -216,3 +216,158 @@ fn t301_export_without_gpu_renders_3d() {
         assert_frames_close(&cpu3d, &gpu3d, q.width, q.height, FrameTol::GEOM, "t301-cpu-vs-gpu");
     }
 }
+
+// ---- 444-446 (Р.50, Б3): поддерево вложения на GPU ---------------------------
+
+/// Проект со вложением: два перекрывающихся события внутри ленты, уровень и
+/// цепочка — на ЭКЗЕМПЛЯРЕ. Именно эта конфигурация отличает «границу
+/// порядка обработки» от её отсутствия.
+fn nested_project(outer_fx: Vec<FxInstance>, outer_opacity: f32) -> Project {
+    let sec = 90_000i64;
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 128,
+        height: 72,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
+    for id in [1u64, 2] {
+        p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
+    }
+    let ev = |id: u64, lane: u32, start: i64, dur: i64, media: u64, opacity: f32| ClipEvent {
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane,
+        start: Tick(start),
+        duration: Tick(dur),
+        source_in: Tick(0),
+        media: MediaId(media),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx: vec![],
+        opacity,
+        fx_off: false,
+    };
+    let mut s = Sequence::new(MediaId(100), "Кусок");
+    s.clips = vec![ev(2, 1, 0, 2 * sec, 1, 1.0), ev(3, 0, sec / 2, sec, 2, 0.5)];
+    s.video_lanes = 2;
+    p.sequences.push(s);
+    let mut inst = ev(10, 0, 0, 2 * sec, 100, outer_opacity);
+    inst.fx = outer_fx;
+    p.clips = vec![inst];
+    p.validate().unwrap();
+    p
+}
+
+fn warm_cache(p: &Project, q: Quality, t: Tick) -> (VideoRenderer, kt_cache::BurstCache) {
+    let video = VideoRenderer::new(p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        sources().into_iter().collect();
+    for (media, src_pts, dq) in video.layers_at(t, q) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    (video, cache)
+}
+
+#[test]
+fn t444_nested_reel_conforms_gpu_to_cpu() {
+    use kt_engine::VideoGpuExec;
+    let Some(e) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let t = Tick(20 * 3000);
+    // и с цепочкой на вложении, и без: цепочка меняет путь (границу
+    // проходит суб-композит, а не кадр), и оба обязаны сходиться
+    for fx in [vec![], vec![FxInstance::Mirror { horizontal: true, vertical: false }]] {
+        let p = nested_project(fx.clone(), 0.5);
+        let (mut video, cache) = warm_cache(&p, q, t);
+        let plan = video.frame_plan(&cache, t, q);
+        let mut gpu = Vec::new();
+        let complete = e.execute_into(&plan, &mut gpu).expect("GPU обязан УМЕТЬ поддерево");
+        assert!(complete, "прогретый композит с вложением обязан быть полным");
+        drop(plan);
+        let (cpu, cpu_complete) = video.compose_from_cache(&cache, t, q);
+        assert!(cpu_complete);
+        assert_frames_close(
+            &cpu,
+            &gpu,
+            q.width,
+            q.height,
+            FrameTol::BILINEAR,
+            &format!("вложение, цепочка {}", fx.len()),
+        );
+        // ...и это не «оба чёрные»
+        assert!(gpu.iter().any(|&x| x != 0), "GPU-композит вложения чёрный");
+    }
+}
+
+#[test]
+fn t445_nest_boundary_is_not_twice_as_dark_on_gpu() {
+    use kt_engine::VideoGpuExec;
+    let Some(e) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let t = Tick(20 * 3000);
+    // Полупрозрачное содержимое: ровно там, где премультипликация на
+    // границе даёт «вдвое темнее». WGSL-зеркало `unpremultiply` обязано
+    // совпадать с CPU до разряда — все текстуры движка Rgba8Uint.
+    let p = nested_project(vec![], 1.0);
+    let (mut video, cache) = warm_cache(&p, q, t);
+    let plan = video.frame_plan(&cache, t, q);
+    let mut gpu = Vec::new();
+    e.execute_into(&plan, &mut gpu).unwrap();
+    drop(plan);
+    let (cpu, _) = video.compose_from_cache(&cache, t, q);
+    assert_frames_close(&cpu, &gpu, q.width, q.height, FrameTol::EXACT, "граница вложения");
+}
+
+#[test]
+fn t446_nested_gpu_is_deterministic_on_device() {
+    use kt_engine::VideoGpuExec;
+    let Some(e1) = test_engine() else { return };
+    let Some(e2) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let t = Tick(20 * 3000);
+    let p = nested_project(vec![FxInstance::glow(1.0)], 0.75);
+    let (video, cache) = warm_cache(&p, q, t);
+    let plan = video.frame_plan(&cache, t, q);
+    let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
+    e1.execute_into(&plan, &mut a).unwrap();
+    // второй прогон ТОГО ЖЕ движка — через ReadbackCache: ключ обязан
+    // различать поддеревья, иначе вернётся чужой суб-композит
+    e1.execute_into(&plan, &mut b).unwrap();
+    // и СВЕЖИЙ движок на том же адаптере — пул отдаёт грязные текстуры,
+    // и незачищенный аккумулятор поддерева виден именно здесь
+    e2.execute_into(&plan, &mut c).unwrap();
+    assert_eq!(a, b, "повторный прогон дал другой кадр (ReadbackCache)");
+    assert_eq!(a, c, "свежий движок дал другой кадр (грязный пул поддерева)");
+
+    // ключ плана обязан РАЗЛИЧАТЬ редакции ленты: правим содержимое и
+    // требуем другой кадр от ТОГО ЖЕ движка
+    let mut p2 = nested_project(vec![FxInstance::glow(1.0)], 0.75);
+    p2.sequences[0].clips[1].opacity = 0.9;
+    p2.validate().unwrap();
+    let (video2, cache2) = warm_cache(&p2, q, t);
+    let plan2 = video2.frame_plan(&cache2, t, q);
+    let mut d = Vec::new();
+    e1.execute_into(&plan2, &mut d).unwrap();
+    assert_ne!(a, d, "правка ВНУТРИ ленты не изменила ключ плана — ReadbackCache отдал стейл");
+
+    // ГОЛОД ВНУТРИ ленты меняет картинку, не меняя НИ ОДНОГО поля
+    // экземпляра: без плана поддерева в ключе движок вернул бы прогретый
+    // кадр на пустом кэше — и никогда не перезапросил бы содержимое.
+    let cold = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let plan_cold = video.frame_plan(&cold, t, q);
+    let mut e = Vec::new();
+    let complete = e1.execute_into(&plan_cold, &mut e).unwrap();
+    assert!(!complete, "голод внутри ленты не дошёл до внешнего композита");
+    assert_ne!(a, e, "на ПУСТОМ кэше вернулся прогретый кадр — план поддерева не в ключе");
+}
