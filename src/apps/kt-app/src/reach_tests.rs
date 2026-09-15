@@ -338,6 +338,24 @@ fn scene(
             opacity: 1.0,
             fx_off: false,
         });
+        if e == E::Transition {
+            // кроссфейд между двумя событиями: окно шире зоны ручек, и
+            // правый клик целится в то, что ВИДНО, а не в ±6 px у стыка
+            let mut second = p.clips[0].clone();
+            second.id = ClipId(2);
+            second.start = Tick(50_000);
+            p.clips.push(second);
+            p.transitions.push(TransitionEvent {
+                id: TransitionId(1),
+                a: Some(ClipId(1)),
+                b: Some(ClipId(2)),
+                in_offset: Tick(20_000),
+                out_offset: Tick(20_000),
+                kind: TransitionKind::Crossfade,
+                audio: Default::default(),
+                auto: vec![],
+            });
+        }
         p.markers.push(Marker::named(Tick(60_000), "метка"));
         p.areas.push(MarkedArea {
             name: "область".into(),
@@ -436,6 +454,11 @@ fn scene(
             ("свободное место НА дорожке", egui::pos2(free_x, g.row_center_y(cam_row))),
         ],
         E::Region => vec![("грань региона", egui::pos2(g.tick_to_x(300_000), ruler_y))],
+        // окно перехода, подальше от стыка: там ручки, а это про ЖЕСТ
+        E::Transition => vec![(
+            "окно перехода",
+            egui::pos2(g.tick_to_x(36_000), g.row_center_y(video_row)),
+        )],
     };
     (h, pos)
 }
@@ -677,6 +700,20 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
             ),
             (Verb::Rename, menu(tr(k::tl::menu::RENAME))),
             (Verb::Delete, menu(tr(k::tl::menu::REMOVE_MARKER))),
+        ],
+        E::Transition => vec![
+            (
+                Verb::Create,
+                Reach::Elsewhere(
+                    "меню события: TRANSITION_NEXT/TRANSITION_PREV с соседом, \
+                     FADE_IN/FADE_OUT у свободного края; жест уголка, t173",
+                ),
+            ),
+            (
+                Verb::Rename,
+                Reach::Absent("переход безымянен: он между событиями, его «имя» — вид"),
+            ),
+            (Verb::Delete, menu(tr(k::tl::menu::REMOVE_TRANSITION))),
         ],
         E::Area => vec![
             (Verb::Create, Reach::Elsewhere("пункт меню пустого места SAVE_AREA")),

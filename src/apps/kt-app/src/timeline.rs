@@ -548,6 +548,11 @@ pub enum CtxTarget {
     CameraLane(u32),
     /// Правый клик по камере-событию (Р.34 К3).
     Camera(kt_model::CameraId),
+    /// Правый клик по ОКНУ ПЕРЕХОДА (Р.49, п.361). До этого раунда переход
+    /// был единственной сущностью таймлайна без своего меню: всё, что с ним
+    /// можно сделать, лежало в меню СОСЕДНЕГО КЛИПА — то есть пользователь,
+    /// целясь в переход, получал меню не того объекта.
+    Transition(TransitionId),
     /// Правый клик по именованной области (Р.38 п.1). Индекс в
     /// `project().areas`, а не имя: цель обязана оставаться `Copy`.
     /// Читается через `get` — область могли удалить из-под меню.
@@ -578,11 +583,12 @@ pub enum TlEntity {
     MorphLane,
     CameraLane,
     Region,
+    Transition,
 }
 
 #[allow(dead_code)]
 impl TlEntity {
-    pub const N: usize = TlEntity::Region as usize + 1;
+    pub const N: usize = TlEntity::Transition as usize + 1;
     /// Длина массива задана `N`: добавил вариант — литерал перестал
     /// соответствовать длине, и не собирается ВСЁ приложение, а не только
     /// тесты.
@@ -596,6 +602,7 @@ impl TlEntity {
         TlEntity::MorphLane,
         TlEntity::CameraLane,
         TlEntity::Region,
+        TlEntity::Transition,
     ];
 }
 
@@ -614,6 +621,7 @@ impl CtxTarget {
             CtxTarget::CameraLane(_) => Some(TlEntity::CameraLane),
             CtxTarget::Camera(_) => Some(TlEntity::Camera),
             CtxTarget::Area(_) => Some(TlEntity::Area),
+            CtxTarget::Transition(_) => Some(TlEntity::Transition),
             CtxTarget::Empty => None,
         }
     }
@@ -2425,6 +2433,33 @@ impl KtApp {
             }
             None
         };
+        // Окно перехода целиком — для КОНТЕКСТНОГО МЕНЮ (Р.49, п.361).
+        // `transition_at` выше ловит только ручки и стык (это про ЖЕСТ,
+        // ±6 px), а правый клик целится в то, что ВИДНО: окно нарисовано
+        // поверх соседних клипов, значит и меню даёт оно. Правило 17:
+        // «переход выигрывает пиксель у клипа» — так уже в hover и press.
+        let transition_body_at = |app: &KtApp, pos: egui::Pos2| -> Option<TransitionId> {
+            let p = app.model.project();
+            for t in &p.transitions {
+                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id))
+                else {
+                    continue;
+                };
+                let Some(joint) = t.joint(p).map(|j| j.0) else { continue };
+                let top = lane_top(a.kind, a.lane);
+                let lane_h = lane_h_at(a.kind, a.lane);
+                let r = transition_rect(
+                    tick_to_x(joint - t.in_offset.0),
+                    tick_to_x(joint + t.out_offset.0),
+                    top,
+                    lane_h,
+                );
+                if r.contains(pos) {
+                    return Some(t.id);
+                }
+            }
+            None
+        };
         // порядок хита — обратный порядку отрисовки: сначала то, что лежит
         // СВЕРХУ (поздний клип при наезде, п.177), иначе клик выбирал бы не
         // тот клип, который видно
@@ -2620,6 +2655,8 @@ impl KtApp {
             } else if let Some(start_edge) = region_edge_at(self, pos) {
                 let r = self.model.project().region.unwrap();
                 CtxTarget::RegionEdge(if start_edge { r.start.0 } else { r.end.0 })
+            } else if let Some(tid) = transition_body_at(self, pos) {
+                CtxTarget::Transition(tid)
             } else if let Some((id, _)) = clip_at(self, pos) {
                 // ПКМ по члену выделения не рушит пачку: меню про неё
                 if !self.is_selected(id) {
@@ -2825,6 +2862,23 @@ impl KtApp {
                     // остался на Shift+двойном клике и в меню
                     if shift_held {
                         self.region_from_event(id);
+                    } else if zone == ClipZone::Level {
+                        // …а НА ЛИНИИ УРОВНЯ он сбрасывает уровень (Р.49,
+                        // п.362). Подсказка обещала это с самого начала
+                        // («double-click — 0 dB»), и всё это время двойной
+                        // клик по линии открывал окно FX. Линия одна на оба
+                        // вида (п.176): у звука это 0 dB, у видео — полная
+                        // непрозрачность.
+                        if let Some(c) = self.model.clip(id).cloned() {
+                            match c.kind {
+                                ClipKind::Audio => {
+                                    self.apply(Command::SetGain { id, gain_db: 0.0 })
+                                }
+                                ClipKind::Video => {
+                                    self.apply(Command::SetOpacity { id, opacity: 1.0 })
+                                }
+                            };
+                        }
                     } else {
                         self.open_fx_editor(id);
                     }
@@ -4797,7 +4851,11 @@ impl KtApp {
                     self.paste_at_cursor();
                     ui.close();
                 }
-                if ui.button(tr(k::tl::menu::DELETE)).clicked() {
+                // аккорд обещается ТОЛЬКО когда он и правда делает это
+                // (Р.49, п.362): при нарисованном регионе Del удаляет
+                // содержимое региона, а не выделенное событие
+                let del_accel = self.model.project().region.is_none().then_some("Del");
+                if crate::widgets::menu_item(ui, tr(k::tl::menu::DELETE), del_accel) {
                     if !self.is_selected(id) {
                         self.select_only(id);
                     }
@@ -5040,13 +5098,48 @@ impl KtApp {
                     ui.close();
                 }
             }
+            // Переход (Р.49, п.361). Раньше своего меню у него не было
+            // вовсе: всё лежало в меню соседнего КЛИПА, то есть человек,
+            // целясь в переход, получал меню не того объекта — и, если
+            // соседей два, гадал, чьё именно.
+            Some(CtxTarget::Transition(tid)) => {
+                let Some(t) =
+                    self.model.project().transitions.iter().find(|t| t.id == tid).cloned()
+                else {
+                    ui.close();
+                    return;
+                };
+                // ЧТО это: вид перехода прямо в заголовке меню. Подменю
+                // шестнадцати видов тут не заводим — вид меняется в окне
+                // свойств, где рядом видно кривую и стороны.
+                ui.label(
+                    egui::RichText::new(crate::transition_editor::kind_name(&t.kind)).strong(),
+                );
+                if ui.button(tr(k::tl::menu::TRANSITION_PROPS)).clicked() {
+                    self.open_transition_editor(tid);
+                    ui.close();
+                }
+                // подпись снятия — ТОЧНАЯ (правило 18): «Remove crossfade»
+                // одной надписью снимал и затухание с конца, и кроссфейд
+                let label = match (t.is_fade(), t.a.is_some()) {
+                    (true, true) => tr(k::tl::menu::REMOVE_FADE_END),
+                    (true, false) => tr(k::tl::menu::REMOVE_FADE_START),
+                    // у самого перехода сторона «предыдущий/следующий»
+                    // неразличима — он МЕЖДУ соседями, а не у одного из них
+                    (false, _) => tr(k::tl::menu::REMOVE_TRANSITION),
+                };
+                if ui.button(label).clicked() {
+                    self.apply(Command::RemoveTransition { id: tid });
+                    ui.close();
+                }
+            }
             Some(CtxTarget::Camera(cid)) => {
                 // камера наконец редактируема (Р.34 К3): свойства и удаление
                 if ui.button(tr(k::cam::PROPS)).clicked() {
                     self.open_camera_editor(cid);
                     ui.close();
                 }
-                if ui.button(tr(k::tl::menu::DELETE)).clicked() {
+                if crate::widgets::menu_item(ui, tr(k::tl::menu::DELETE), Some("Del")) {
                     self.apply(Command::RemoveCamera { id: cid });
                     ui.close();
                 }
@@ -5106,7 +5199,9 @@ impl KtApp {
                         }
                     }
                 });
-                if ui.button(tr(k::tl::menu::DELETE)).clicked() {
+                // без аккорда: Del удаляет ВЫДЕЛЕННЫЕ СОБЫТИЯ, а не область,
+                // и подпись «Удалить (Del)» тут обещала неправду (п.362)
+                if crate::widgets::menu_item(ui, tr(k::tl::menu::DELETE), None) {
                     self.apply(Command::RemoveArea { name: a.name.clone() });
                     ui.close();
                 }

@@ -237,7 +237,7 @@ impl KtApp {
     /// каталоге: переводчик не должен иметь возможности сломать акселератор, а
     /// латинский ярлык внутри арабской строки уехал бы при переупорядочивании.
     fn menu_btn(ui: &mut egui::Ui, label: &str, accel: &str) -> bool {
-        ui.button(format!("{label}\t{accel}")).clicked()
+        crate::widgets::menu_item(ui, label, Some(accel))
     }
 
     /// Пункты меню (три корневых). Отдельно от контейнера, чтобы их же

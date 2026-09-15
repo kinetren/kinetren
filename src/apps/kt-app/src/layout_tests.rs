@@ -4629,6 +4629,205 @@ fn t391_workspace_falls_back_to_file_and_project_keeps_its_own() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+
+/// Двойной клик в точку. История кликов у egui общая на окно, поэтому шаг
+/// харнесса должен быть коротким (0.02 с) — иначе два клика расходятся во
+/// времени и складываются в два одиночных (ловушка п.232).
+fn double_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
+    // история кликов у egui общая на окно: два жеста подряд складываются в
+    // ТРОЙНОЙ клик, и второй «двойной» не случается вовсе (ловушка п.232).
+    // Даём окну двойного клика истечь.
+    for _ in 0..25 {
+        h.step();
+    }
+    h.hover_at(pos);
+    h.step();
+    for _ in 0..2 {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+}
+
+/// Правый клик без движения указателя.
+fn right_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
+    h.hover_at(pos);
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+}
+
+/// Подписи пунктов открытого меню.
+fn menu_labels(h: &mut Harness<'_, KtApp>) -> Vec<String> {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    h.query_all_by_label_contains("")
+        .filter_map(|n| n.accesskit_node().label().map(|l| l.to_string()))
+        .collect()
+}
+
+/// Тест 392 (Р.49 В2): двойной клик по линии уровня СБРАСЫВАЕТ уровень.
+/// Подсказка обещала это с самого начала («тяни, двойной клик — 0 dB»), а
+/// двойной клик по линии всё это время открывал окно FX: обещание в подсказке
+/// было, поведения не было.
+#[test]
+fn t392_double_click_on_level_rail_resets_level() {
+    use kt_model::*;
+    let (mut h, g) = harness_three_clips_dt(Some(0.02));
+    // звук и видео: линия уровня одна на оба вида (п.176)
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        let mut a = p.clips[0].clone();
+        a.id = ClipId(10);
+        a.kind = ClipKind::Audio;
+        a.lane = 0;
+        a.gain_db = -3.0;
+        p.clips.push(a);
+        p.audio_lanes = p.audio_lanes.max(1);
+        p.clips[0].opacity = 0.35;
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().unwrap_or(g);
+
+    // линия уровня стоит по значению: у 35 % она низко, у −9 dB — тоже
+    let vclip = h.state().model.project().clips[0].clone();
+    let level_y = |kind: ClipKind, lane: u32, v: f32| -> f32 {
+        let top = g.lane_top(kind, lane);
+        let lh = g.lane_h_of(kind, lane);
+        crate::timeline::level_y(v, top, lh)
+    };
+    let vx = g.tick_to_x(vclip.start.0 + vclip.duration.0 / 2);
+    let vy = level_y(ClipKind::Video, 0, 0.35);
+
+    double_click_at(&mut h, egui::pos2(vx, vy));
+    let st = h.state();
+    assert_eq!(
+        st.model.project().clips.iter().find(|c| c.id == vclip.id).map(|c| c.opacity),
+        Some(1.0),
+        "двойной клик по линии уровня видео не сбросил непрозрачность"
+    );
+    assert!(st.fx_editors.is_empty(), "двойной клик по линии открыл окно FX вместо сброса");
+
+    // тот же жест у звука: 0 dB
+    let aclip = h.state().model.project().clips.iter().find(|c| c.id == ClipId(10)).cloned().unwrap();
+    let ax = g.tick_to_x(aclip.start.0 + aclip.duration.0 / 2);
+    let ay = level_y(ClipKind::Audio, 0, crate::timeline::gain_to_level(-3.0));
+    double_click_at(&mut h, egui::pos2(ax, ay));
+    assert_eq!(
+        h.state().model.project().clips.iter().find(|c| c.id == ClipId(10)).map(|c| c.gain_db),
+        Some(0.0),
+        "двойной клик по линии громкости не дал 0 dB"
+    );
+
+    // а по ТЕЛУ события двойной клик по-прежнему открывает FX
+    let body_y = g.lane_y(ClipKind::Video, 0, 0.75);
+    double_click_at(&mut h, egui::pos2(vx, body_y));
+    assert!(!h.state().fx_editors.is_empty(), "двойной клик по телу перестал открывать FX");
+}
+
+/// Тест 393 (Р.49 В2): аккорд в подписи пункта обещает ровно то, что клавиша
+/// делает. «Удалить (Del)» у именованной области было неправдой: Del удаляет
+/// ВЫДЕЛЕННЫЕ СОБЫТИЯ, а область не трогает вовсе.
+#[test]
+fn t393_menu_accelerator_promises_only_what_the_key_does() {
+    use kt_model::*;
+    use kt_time::Tick;
+    // сам механизм: аккорд — аргумент, а не часть переводимой фразы
+    for lang in crate::i18n::Lang::ALL {
+        crate::i18n::set_lang(lang);
+        assert!(
+            !tr(k::tl::menu::DELETE).contains("(Del"),
+            "{}: аккорд остался внутри значения каталога — одна фраза на все контексты",
+            lang.code()
+        );
+    }
+
+    let (mut h, g) = harness_three_clips();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        // область СВОБОДНА от событий: под клипом её контур не схватить —
+        // там выигрывает клип, и это правильно
+        p.areas.push(MarkedArea {
+            name: "сцена 3".into(),
+            start: Tick(300_000),
+            duration: Tick(50_000),
+            lanes: vec![(LaneKind::Video, 0)],
+            color: None,
+        });
+        app.model = kt_model::TimelineModel::new(p);
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().unwrap_or(g);
+
+    // меню ОБЛАСТИ: пункт есть, аккорда в нём нет
+    let row = g.row_of((LaneKind::Video, 0)).expect("видео-строка");
+    right_click_at(&mut h, egui::pos2(g.tick_to_x(320_000), g.row_top(row) + 1.0));
+    assert!(
+        matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Area(_))),
+        "сцена: правый клик обязан дать область"
+    );
+    let labels = menu_labels(&mut h);
+    let del = labels
+        .iter()
+        .find(|l| l.starts_with(tr(k::tl::menu::DELETE)))
+        .unwrap_or_else(|| panic!("в меню области нет пункта удаления: {labels:?}"));
+    assert!(
+        !del.contains("Del"),
+        "у области обещан аккорд Del, который её не удаляет: «{del}»"
+    );
+
+    // и это не «убрали везде»: у КАМЕРЫ Del работает, и обещание осталось.
+    // Свой харнесс: у egui история кликов общая на окно, и второй правый
+    // клик в том же окне ЗАКРЫЛ бы уже открытое меню.
+    let (mut h2, _) = harness_three_clips();
+    {
+        let app = h2.state_mut();
+        assert!(app.apply(Command::InsertCameraLane { at: 0 }));
+        app.player.seek(Tick(320_000));
+        app.add_camera_at_playhead(0);
+        app.camera_editors.clear();
+    }
+    h2.step();
+    h2.step();
+    let g2 = h2.state().tl_geom.clone().expect("геометрия");
+    let cam_row = g2.row_of((LaneKind::Camera, 0)).expect("камерная строка");
+    let cam = h2.state().model.project().cameras[0].clone();
+    right_click_at(
+        &mut h2,
+        egui::pos2(g2.tick_to_x(cam.start.0 + cam.duration.0 / 2), g2.row_center_y(cam_row)),
+    );
+    assert!(
+        matches!(h2.state().ctx_target, Some(crate::timeline::CtxTarget::Camera(_))),
+        "сцена: правый клик обязан дать камеру"
+    );
+    let labels = menu_labels(&mut h2);
+    assert!(
+        labels.iter().any(|l| l.starts_with(tr(k::tl::menu::DELETE)) && l.contains("Del")),
+        "у камеры Del работает — обещание обязано остаться: {labels:?}"
+    );
+}
+
 /// Тест 376 (Р.49 А8): номер события не переиспользуется в пределах сессии.
 /// Прежняя формула «максимум по текущим клипам + 1» после удаления последнего
 /// события выдавала его же номер заново — и новорождённый клип наследовал
