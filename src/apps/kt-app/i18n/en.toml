@@ -661,6 +661,7 @@ recovery_forgotten = "recovery file deleted: {0}"
 recovery_failed = "could not restore {0}: {1}"
 recovery_none = "nothing to recover: no unsaved work found"
 prev_session_crashed = "the previous session ended abnormally — the report is in {0}"
+workspace_readonly = "workspace settings are not being saved: {0} was written by a newer version"
 [dialog]
 import_ktproj = "Import a legacy .ktproj project"
 open_project = "Open project"

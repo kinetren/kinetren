@@ -46,6 +46,11 @@ fn harness_lang_dt(lang: crate::i18n::Lang, step_dt: Option<f32>) -> Harness<'st
     // уничтожаемых приложений сыпала бы файлами восстановления в общий
     // каталог данных. Сам рубеж проверяет t372, включая его явно.
     app.recovery_on_drop = false;
+    // рабочее место (п.360) — в свой файл: общий лежит в домашнем каталоге
+    // разработчика, и полторы сотни тестов писали бы туда наперегонки
+    app.workspace_file = Some(
+        std::env::temp_dir().join(format!("kt-ws-{}-{:p}.json", std::process::id(), &app)),
+    );
     let mut b = Harness::builder().with_size(egui::vec2(W, H));
     if let Some(dt) = step_dt {
         b = b.with_step_dt(dt);
@@ -4512,6 +4517,116 @@ fn t382_app_carries_extras_to_born_clips() {
             .is_some_and(|e| e.name == "Шот 12A")),
         "вставленная копия потеряла имя оригинала"
     );
+}
+
+/// Тест 390 (Р.49 А12): рабочее место не уезжает в чужой файл проекта.
+/// Ширина панели метров и вид (зум/скролл/курсор) жили в `.otio`: открыл
+/// проект коллеги — потерял свою ширину, сохранил — навязал ему свою. В файле
+/// остаётся passthrough: что прочитали, то и пишем, байт-стабильность цела.
+#[test]
+fn t390_workspace_does_not_travel_in_the_project_file() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t390-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t390.otio");
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    app.workspace_file = Some(dir.join("workspace.json"));
+    // «прочитали из чужого файла»: его ширина метров и его вид
+    app.ui_passthrough = Some(kt_model::UiState {
+        meters_w: 123.0,
+        view_start: 4444.0,
+        ticks_per_px: 777.0,
+        cursor: 555,
+        ..Default::default()
+    });
+    // а у нас своё рабочее место
+    app.meters_w = 90.0;
+    app.view_start = 10.0;
+    app.ticks_per_px = 200.0;
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.save();
+
+    // в файле — ЧУЖИЕ значения, нетронутые
+    let text = std::fs::read_to_string(&target).unwrap();
+    let saved = kt_otio::load_project(&text, target.parent()).unwrap().project;
+    let ui = saved.ui.expect("вьюпорт обязан остаться в файле");
+    assert_eq!(ui.meters_w, 123.0, "в чужой файл уехала НАША ширина метров");
+    assert_eq!(ui.view_start, 4444.0, "в чужой файл уехал НАШ скролл");
+    assert_eq!(ui.cursor, 555, "в чужой файл уехал НАШ курсор");
+
+    // а наше — в своём хранилище
+    let w = crate::user_store::load_workspace_at(&dir.join("workspace.json"));
+    assert_eq!(w.meters_w, 90.0, "своя ширина метров не сохранена");
+    let v = w.view_of(Some(&target)).expect("вид проекта не сохранён");
+    assert_eq!(v.view_start, 10.0);
+    assert_eq!(v.ticks_per_px, 200.0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 391 (Р.49 А12): переезд без потерь. Пустое хранилище (первый запуск
+/// после переезда) оставляет значения из файла — миграция без единой строки
+/// кода; заполненное сильнее файла; имена и высоты дорожек и группы бина
+/// остаются в ПРОЕКТЕ, потому что они про ЭТОТ монтаж.
+#[test]
+fn t391_workspace_falls_back_to_file_and_project_keeps_its_own() {
+    use crate::user_store::{ProjectView, Workspace, load_workspace_at, save_workspace_at};
+    let dir = std::env::temp_dir().join(format!("kt-t391-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let ws = dir.join("workspace.json");
+    let proj = dir.join("p.otio");
+
+    // пустое хранилище ничего не навязывает
+    let w = load_workspace_at(&ws);
+    assert_eq!(w.meters_w, 0.0, "пустое хранилище обязано молчать");
+    assert!(w.view_of(Some(&proj)).is_none());
+
+    // круг: записали — прочитали
+    let mut w = Workspace::default();
+    w.meters_w = 111.0;
+    w.set_view(Some(&proj), ProjectView { view_start: 7.0, ticks_per_px: 13.0, cursor: 42 });
+    save_workspace_at(&ws, &w);
+    let back = load_workspace_at(&ws);
+    assert_eq!(back.meters_w, 111.0);
+    let v = back.view_of(Some(&proj)).expect("вид не прочитан");
+    assert_eq!((v.view_start, v.ticks_per_px, v.cursor), (7.0, 13.0, 42));
+    // вид другого проекта не подменяется
+    assert!(back.view_of(Some(&dir.join("other.otio"))).is_none());
+
+    // битый файл не роняет программу и не навязывает мусор
+    std::fs::write(&ws, "{ это не json").unwrap();
+    assert_eq!(load_workspace_at(&ws).meters_w, 0.0);
+
+    // файл из БУДУЩЕЙ версии читается, но не перезаписывается: ломать то,
+    // чего мы не понимаем, нельзя (политика user_store с Р.48)
+    std::fs::write(&ws, r#"{"version":99,"meters_w":55.0,"views":[]}"#).unwrap();
+    let future = load_workspace_at(&ws);
+    assert_eq!(future.meters_w, 55.0, "будущий файл обязан читаться");
+    assert!(future.is_readonly());
+    // программа держит ПРОЧИТАННОЕ хранилище — оно и отказывается писать
+    save_workspace_at(&ws, &future);
+    assert!(
+        std::fs::read_to_string(&ws).unwrap().contains("99"),
+        "переписали файл новее нашей версии"
+    );
+
+    // а вот ЭТО остаётся в проекте: оно про монтаж, а не про рабочее место
+    let mut h = harness();
+    let app = h.state_mut();
+    app.lane_names = vec![(kt_model::LaneKind::Audio, 0, "Речь".into())];
+    app.lane_heights = vec![(kt_model::LaneKind::Video, 0, 88.0)];
+    app.bin_free = true;
+    let ui = app.ui_state_for_test();
+    assert_eq!(ui.lane_names.len(), 1, "имя дорожки обязано ехать вместе с монтажом");
+    assert_eq!(ui.lane_heights.len(), 1, "высота дорожки обязана ехать вместе с монтажом");
+    assert!(ui.bin_free, "раскладка бина — часть монтажа");
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// Тест 376 (Р.49 А8): номер события не переиспользуется в пределах сессии.

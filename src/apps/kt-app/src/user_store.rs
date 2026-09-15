@@ -424,3 +424,133 @@ mod tests {
         assert!(any_audio && any_video, "заводские обязаны покрывать оба вида событий");
     }
 }
+
+// ---- рабочее место (Р.49, п.360) ------------------------------------------
+//
+// Ширина панели метров, зум, скролл и позиция курсора ехали В ФАЙЛЕ ПРОЕКТА.
+// Следствие, заметное на любой совместной работе: открыл проект коллеги —
+// потерял свою ширину метров; сохранил — навязал ему свою. Это РАБОЧЕЕ МЕСТО,
+// а не монтаж.
+//
+// Имена и высоты дорожек, группы бина в проекте ОСТАЮТСЯ: они про ЭТОТ
+// монтаж, и коллега должен получить их вместе с ним.
+//
+// В самом .otio прежние значения остаются passthrough — что прочитали, то и
+// пишем. Байт-стабильность цела, GOLDEN не двигаются, а старая сборка,
+// открыв файл, найдёт в нём ровно то, что там было.
+
+/// Версия файла рабочего места.
+const WORKSPACE_VERSION: u64 = 1;
+
+/// Сколько проектов помним. Список — не история, а удобство; после сотни
+/// монтажей самые старые записи никому не нужны.
+const WORKSPACE_KEEP: usize = 64;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectView {
+    pub view_start: f64,
+    pub ticks_per_px: f64,
+    pub cursor: i64,
+}
+
+/// Рабочее место пользователя: общее (ширина метров) и по проектам (вид).
+#[derive(Debug, Clone, Default)]
+pub struct Workspace {
+    /// 0 — не задано, брать значение из файла проекта (первый запуск после
+    /// переезда) или умолчание.
+    pub meters_w: f32,
+    /// Вид по проекту, свежие впереди.
+    views: Vec<(String, ProjectView)>,
+    /// Файл прочитан из будущей версии — только чтение.
+    readonly: bool,
+}
+
+impl Workspace {
+    pub fn view_of(&self, project: Option<&std::path::Path>) -> Option<ProjectView> {
+        let key = project?.to_string_lossy().into_owned();
+        self.views.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+    }
+
+    pub fn set_view(&mut self, project: Option<&std::path::Path>, v: ProjectView) {
+        let Some(key) = project.map(|p| p.to_string_lossy().into_owned()) else { return };
+        self.views.retain(|(k, _)| *k != key);
+        self.views.insert(0, (key, v));
+        self.views.truncate(WORKSPACE_KEEP);
+    }
+
+    pub fn is_readonly(&self) -> bool {
+        self.readonly
+    }
+}
+
+fn workspace_path() -> PathBuf {
+    store_dir().join("workspace.json")
+}
+
+pub fn load_workspace() -> Workspace {
+    load_workspace_at(&workspace_path())
+}
+
+pub fn load_workspace_at(path: &std::path::Path) -> Workspace {
+    let Ok(text) = std::fs::read_to_string(path) else { return Workspace::default() };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        // битый файл не роняет программу и не съедает работу: он будет
+        // отодвинут в `.broken` при первой записи
+        return Workspace::default();
+    };
+    let ver = v.get("version").and_then(|x| x.as_u64()).unwrap_or(0);
+    let mut w = Workspace { readonly: ver > WORKSPACE_VERSION, ..Default::default() };
+    w.meters_w = v.get("meters_w").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+    if let Some(arr) = v.get("views").and_then(|x| x.as_array()) {
+        for e in arr.iter().take(WORKSPACE_KEEP) {
+            let (Some(path), Some(vs), Some(tp)) = (
+                e.get("project").and_then(|x| x.as_str()),
+                e.get("view_start").and_then(|x| x.as_f64()),
+                e.get("ticks_per_px").and_then(|x| x.as_f64()),
+            ) else {
+                continue;
+            };
+            w.views.push((
+                path.to_string(),
+                ProjectView {
+                    view_start: vs,
+                    ticks_per_px: tp,
+                    cursor: e.get("cursor").and_then(|x| x.as_i64()).unwrap_or(0),
+                },
+            ));
+        }
+    }
+    w
+}
+
+pub fn save_workspace(w: &Workspace) {
+    save_workspace_at(&workspace_path(), w);
+}
+
+pub fn save_workspace_at(path: &std::path::Path, w: &Workspace) {
+    if w.readonly {
+        return; // файл новее нашего — не переписываем то, чего не понимаем
+    }
+    let views: Vec<serde_json::Value> = w
+        .views
+        .iter()
+        .map(|(k, v)| {
+            serde_json::json!({
+                "project": k,
+                "view_start": v.view_start,
+                "ticks_per_px": v.ticks_per_px,
+                "cursor": v.cursor,
+            })
+        })
+        .collect();
+    let doc = serde_json::json!({
+        "version": WORKSPACE_VERSION,
+        "meters_w": w.meters_w,
+        "views": views,
+    });
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    // тем же кодом, что и проект: обрыв на середине не оставляет обрубка
+    let _ = kt_otio::write_atomic(path, &format!("{doc:#}\n"));
+}

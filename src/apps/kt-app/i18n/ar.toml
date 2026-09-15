@@ -661,6 +661,7 @@ recovery_forgotten = "حُذف ملف الاسترداد: {0}"
 recovery_failed = "تعذّرت استعادة {0}: {1}"
 recovery_none = "لا شيء للاستعادة: لم يُعثر على عمل غير محفوظ"
 prev_session_crashed = "انتهت الجلسة السابقة على نحو غير طبيعي — التقرير في {0}"
+workspace_readonly = "لا تُحفظ إعدادات مساحة العمل: كتب {0} إصدار أحدث"
 [dialog]
 import_ktproj = "استيراد مشروع .ktproj قديم"
 open_project = "فتح مشروع"

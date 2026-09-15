@@ -661,6 +661,7 @@ recovery_forgotten = "恢复文件已删除：{0}"
 recovery_failed = "无法恢复 {0}：{1}"
 recovery_none = "无可恢复内容：未找到未保存的工作"
 prev_session_crashed = "上一次会话异常结束 — 报告位于 {0}"
+workspace_readonly = "工作区设置未被保存：{0} 由更新的版本写入"
 [dialog]
 import_ktproj = "导入旧版 .ktproj 项目"
 open_project = "打开项目"

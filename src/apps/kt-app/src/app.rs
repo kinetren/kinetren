@@ -318,6 +318,17 @@ pub struct KtApp {
     /// Ширина панели метров (её тянет своя полоса, п.6 р.13). «Удобство»:
     /// едет в UiState, звёздочку не зажигает.
     pub meters_w: f32,
+    /// Рабочее место пользователя (Р.49, п.360): ширина метров и вид по
+    /// проектам живут ЗДЕСЬ, а не в чужом файле проекта.
+    pub workspace: crate::user_store::Workspace,
+    /// Куда писать рабочее место. `None` — общий файл пользователя; в
+    /// харнессе и живых сценариях подменяется, иначе полторы сотни тестов
+    /// писали бы в домашний каталог разработчика.
+    pub workspace_file: Option<PathBuf>,
+    /// Вид, ПРОЧИТАННЫЙ из файла проекта. Пишется обратно как есть:
+    /// байт-стабильность чужого файла цела, а наши правки вида уезжают в
+    /// рабочее место.
+    pub ui_passthrough: Option<kt_model::UiState>,
     pub ctx_target: Option<CtxTarget>,
     /// Строка таймлайна под правым кликом (п.5 р.16): новая дорожка из
     /// контекстного меню встаёт СРАЗУ ПОД ней, а не в самый низ.
@@ -595,6 +606,9 @@ impl KtApp {
             snap_off: false,
             play_dir_back: false,
             meters_w: 70.0,
+            workspace: crate::user_store::Workspace::default(),
+            workspace_file: None,
+            ui_passthrough: None,
             ctx_target: None,
             ctx_row: None,
             live_gain: None,
@@ -753,6 +767,9 @@ impl KtApp {
             snap_off: false,
             play_dir_back: false,
             meters_w: 70.0,
+            workspace: crate::user_store::Workspace::default(),
+            workspace_file: None,
+            ui_passthrough: None,
             ctx_target: None,
             ctx_row: None,
             live_gain: None,
@@ -837,6 +854,7 @@ impl KtApp {
             app.player.play();
         }
         // восстановление вьюпорта/курсора (п.13, v1: fromJson)
+        app.ui_passthrough = ui_state.clone();
         if let Some(ui) = ui_state {
             // сперва tpp (единые пределы п.17), потом view_start — раньше
             // view_start клампился по ещё-дефолтному tpp
@@ -859,7 +877,48 @@ impl KtApp {
             app.lane_names = ui.lane_names;
             app.lane_heights = ui.lane_heights;
         }
+        // Р.49 п.360: рабочее место пользователя сильнее того, что лежит в
+        // чужом файле. Пустое хранилище (первый запуск после переезда)
+        // оставляет значения из файла — миграция без единой строки кода.
+        app.workspace = crate::user_store::load_workspace();
+        if app.workspace.meters_w > 0.0 {
+            app.meters_w = app.workspace.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
+        }
+        if let Some(v) = app.workspace.view_of(Some(path)) {
+            app.ticks_per_px =
+                v.ticks_per_px.clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
+            app.view_start = v.view_start.max(-40.0 * app.ticks_per_px);
+            app.player.seek(Tick(v.cursor.max(0)));
+        }
         Ok(app)
+    }
+
+    /// Запомнить рабочее место. Зовётся там же, где программа и так пишет:
+    /// при сохранении проекта и на выходе — своего расписания ему не надо.
+    pub(crate) fn save_workspace(&mut self) {
+        // файл новее нашей сборки — мы его не трогаем, но и молчать нельзя:
+        // иначе ширины панелей «не запоминаются» без единого объяснения
+        if self.workspace.is_readonly() {
+            let p = self
+                .workspace_file
+                .clone()
+                .unwrap_or_else(|| crate::user_store::store_dir().join("workspace.json"));
+            self.warn(crate::tf!(k::msg::WORKSPACE_READONLY, p.display()));
+            return;
+        }
+        self.workspace.meters_w = self.meters_w;
+        self.workspace.set_view(
+            self.project_path.as_deref(),
+            crate::user_store::ProjectView {
+                view_start: self.view_start,
+                ticks_per_px: self.ticks_per_px,
+                cursor: self.player.transport.playhead().0,
+            },
+        );
+        match &self.workspace_file {
+            Some(p) => crate::user_store::save_workspace_at(p, &self.workspace),
+            None => crate::user_store::save_workspace(&self.workspace),
+        }
     }
 
     #[cfg(test)]
@@ -895,15 +954,18 @@ impl KtApp {
 
     /// Снимок вьюпорта для записи в проект (п.13).
     fn ui_state(&self) -> kt_model::UiState {
+        // Поля РАБОЧЕГО МЕСТА (вид и ширина метров) возвращаются в файл
+        // такими, какими пришли (Р.49, п.360): свои живут в user_store.
+        let keep = self.ui_passthrough.clone().unwrap_or_default();
         kt_model::UiState {
-            view_start: self.view_start,
-            ticks_per_px: self.ticks_per_px,
-            cursor: self.player.transport.playhead().0,
+            view_start: keep.view_start,
+            ticks_per_px: keep.ticks_per_px,
+            cursor: keep.cursor,
             lane_order: Vec::new(), // порядок строк живёт в модели (Р.35)
             bin_free: self.bin_free,
             bin_layout: self.bin_layout.iter().map(|(id, p)| (*id, p.x, p.y)).collect(),
             bin_groups: self.bin_groups.clone(),
-            meters_w: self.meters_w,
+            meters_w: keep.meters_w,
             lane_names: self.lane_names.clone(),
             lane_heights: self.lane_heights.clone(),
             auto_axis_unlinked: !self.auto_axis_linked,
@@ -3518,6 +3580,7 @@ impl KtApp {
                 self.dirty_ui = false;
                 self.note(crate::tf!(k::msg::SAVED, path.display()));
                 self.warn_if_dir_unsynced(dir_synced);
+                self.save_workspace();
                 // работа легла в проект — СВОЁ восстановление больше не
                 // нужно. Убираем именно своё (Р.49, п.351): чужое рядом —
                 // это несохранённая работа другой копии программы.
@@ -6262,6 +6325,7 @@ impl eframe::App for KtApp {
         // Несохранённое уезжает в файл восстановления; сохранённое уносит свой
         // файл восстановления с собой, чтобы следующий старт не предлагал
         // восстановить то, что и так в проекте.
+        self.save_workspace();
         if self.dirty_content || self.dirty_ui {
             self.model.set_ui_state(Some(self.ui_state()));
             self.write_recovery_now();
