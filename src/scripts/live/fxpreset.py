@@ -66,7 +66,7 @@ def main(out):
     presets = os.path.join(store, "fx-presets.json")
 
     proj = os.path.join(out, "fxpreset.otio")
-    subprocess.run([KT_CLI, "demo", proj], check=True, capture_output=True)
+    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
 
     # --- 1) валидная библиотека: программа её читает и не портит --------
     with open(presets, "w") as f:

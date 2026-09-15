@@ -23,7 +23,7 @@ import subprocess
 import sys
 import time
 
-from Xlib import X, XK, display
+from Xlib import X, XK, display, protocol
 from Xlib.ext import xtest
 
 WM_CLASS = "kinotrain"
@@ -55,6 +55,21 @@ def origin(w):
     g = w.get_geometry()
     t = w.translate_coords(root, 0, 0)
     return -t.x, -t.y, g.width, g.height
+
+
+def close_window():
+    """Попросить окно закрыться, как это делает крестик оконного менеджера
+    (WM_DELETE_WINDOW). Именно этот путь перехватывает программа, чтобы
+    спросить про несохранённую работу (Р.49, п.354)."""
+    w = window()
+    # окно eframe лежит внутри рамки openbox — протокол висит на нём самом
+    wm_protocols = d.intern_atom("WM_PROTOCOLS")
+    wm_delete = d.intern_atom("WM_DELETE_WINDOW")
+    ev = protocol.event.ClientMessage(
+        window=w, client_type=wm_protocols, data=(32, [wm_delete, X.CurrentTime, 0, 0, 0])
+    )
+    w.send_event(ev, event_mask=X.NoEventMask)
+    d.sync()
 
 
 def move(x, y, pause=0.05):

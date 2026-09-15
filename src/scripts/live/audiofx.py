@@ -23,7 +23,7 @@ SEC = 90000
 def main(out):
     require_tools()
     proj = os.path.join(out, "audiofx.otio")
-    subprocess.run([KT_CLI, "demo", proj], check=True, capture_output=True)
+    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
     # первому АУДИО-событию демо-проекта дописываем слот Filter с
     # неумолчальным cutoff — по нему узнаем свой слот после сейва
     with open(proj) as f:

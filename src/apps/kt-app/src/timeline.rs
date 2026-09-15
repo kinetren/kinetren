@@ -953,8 +953,23 @@ impl KtApp {
         // нечем отличить «играет ровно» от «играет ровно, но с тишиной»,
         // а после п.294 часы под голоданием идут и симптом не виден
         let ord = std::sync::atomic::Ordering::Relaxed;
+        // события ЖИВОЙ модели: сценарию, который проверяет сторож
+        // несохранённого, сохраняться НЕЛЬЗЯ — иначе он проверит запись,
+        // а не сторож (Р.49, п.354)
+        let clips: Vec<String> = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .map(|c| {
+                format!(
+                    "{{\"id\":{},\"start\":{},\"dur\":{}}}",
+                    c.id.0, c.start.0, c.duration.0
+                )
+            })
+            .collect();
         let json = format!(
-            "{{\"playhead\":{},\"playing\":{},\"fields\":[{}],\
+            "{{\"playhead\":{},\"playing\":{},\"fields\":[{}],\"clips\":[{}],\
              \"underruns\":{},\"callback_underruns\":{},\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
              \"timeline\":{{\"left\":{:.1},\"right\":{:.1},\"top\":{:.1},\"bottom\":{:.1}}},\
@@ -962,6 +977,7 @@ impl KtApp {
             self.player.video_playhead().0,
             self.player.transport.is_playing(),
             fields.join(","),
+            clips.join(","),
             self.player.underruns.load(ord),
             self.player.shared.callback_underruns.load(ord),
             screen.width(),

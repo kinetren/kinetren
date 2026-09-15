@@ -321,6 +321,11 @@ pub struct KtApp {
     /// Рабочее место пользователя (Р.49, п.360): ширина метров и вид по
     /// проектам живут ЗДЕСЬ, а не в чужом файле проекта.
     pub workspace: crate::user_store::Workspace,
+    /// Интервал фоновой записи восстановления. Отдельным полем ради живых
+    /// сценариев (`KT_AUTOSAVE_SECS`): ждать полминуты в каждом прогоне
+    /// нечестно по отношению к проверке, а подделывать таймер изнутри
+    /// значило бы проверять не ту программу, которую запускает пользователь.
+    pub autosave_secs: u64,
     /// Куда писать рабочее место. `None` — общий файл пользователя; в
     /// харнессе и живых сценариях подменяется, иначе полторы сотни тестов
     /// писали бы в домашний каталог разработчика.
@@ -608,6 +613,11 @@ impl KtApp {
             meters_w: 70.0,
             workspace: crate::user_store::Workspace::default(),
             workspace_file: None,
+            autosave_secs: std::env::var("KT_AUTOSAVE_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(AUTOSAVE_SECS),
             ui_passthrough: None,
             ctx_target: None,
             ctx_row: None,
@@ -769,6 +779,11 @@ impl KtApp {
             meters_w: 70.0,
             workspace: crate::user_store::Workspace::default(),
             workspace_file: None,
+            autosave_secs: std::env::var("KT_AUTOSAVE_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|v| *v > 0)
+                .unwrap_or(AUTOSAVE_SECS),
             ui_passthrough: None,
             ctx_target: None,
             ctx_row: None,
@@ -1335,13 +1350,21 @@ impl KtApp {
                 ui.weak(tr(k::ask::RECOVERY_NOTE));
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
-                    if ui.button(tr(k::ask::RECOVERY_RESTORE)).clicked() {
+                    // координаты кнопок — наружу живым сценариям (Р.27):
+                    // модальное окно egui в дереве доступности не ищется
+                    let r = ui.button(tr(k::ask::RECOVERY_RESTORE));
+                    crate::widgets::field_probe::note("ask.restore", r.rect);
+                    if r.clicked() {
                         act = Some(0);
                     }
-                    if ui.button(tr(k::ask::RECOVERY_FORGET)).clicked() {
+                    let r = ui.button(tr(k::ask::RECOVERY_FORGET));
+                    crate::widgets::field_probe::note("ask.forget", r.rect);
+                    if r.clicked() {
                         act = Some(1);
                     }
-                    if ui.button(tr(k::ask::RECOVERY_LATER)).clicked() {
+                    let r = ui.button(tr(k::ask::RECOVERY_LATER));
+                    crate::widgets::field_probe::note("ask.later", r.rect);
+                    if r.clicked() {
                         act = Some(2);
                     }
                 });
@@ -1395,13 +1418,19 @@ impl KtApp {
                         ui.weak(tr(k::ask::UNSAVED_WHERE));
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
-                            if ui.button(tr(k::ask::SAVE_AND_GO)).clicked() {
+                            let r = ui.button(tr(k::ask::SAVE_AND_GO));
+                            crate::widgets::field_probe::note("ask.save_and_go", r.rect);
+                            if r.clicked() {
                                 answer = Some(Answer::Yes);
                             }
-                            if ui.button(tr(k::ask::DISCARD)).clicked() {
+                            let r = ui.button(tr(k::ask::DISCARD));
+                            crate::widgets::field_probe::note("ask.discard", r.rect);
+                            if r.clicked() {
                                 answer = Some(Answer::No);
                             }
-                            if ui.button(tr(k::ask::STAY)).clicked() {
+                            let r = ui.button(tr(k::ask::STAY));
+                            crate::widgets::field_probe::note("ask.stay", r.rect);
+                            if r.clicked() {
                                 answer = Some(Answer::Cancel);
                             }
                         });
@@ -2821,13 +2850,13 @@ impl KtApp {
     /// всё равно (потерять правки хуже, чем разово моргнуть, п.4 р.11).
     pub fn autosave_due(&self) -> bool {
         let idle = self.last_autosave.elapsed().as_secs();
-        if idle < AUTOSAVE_SECS {
+        if idle < self.autosave_secs {
             return false;
         }
         let busy = self.drag.is_some()
             || self.bin_drag.is_some()
             || self.player.transport.is_playing();
-        !busy || idle >= AUTOSAVE_SECS * 2
+        !busy || idle >= self.autosave_secs * 2
     }
 
     pub fn clear_region(&mut self) {

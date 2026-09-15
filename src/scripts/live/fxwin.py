@@ -22,7 +22,7 @@ def main(out):
     # демо-проект: у первого видео-события есть цепочка (пан/зум), значит
     # окно покажет и полосу цепочки, и сетку параметров
     proj = os.path.join(out, "fxwin.otio")
-    subprocess.run([KT_CLI, "demo", proj], check=True, capture_output=True)
+    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
 
     with Live("fxwin", out, project=proj) as app:
         # аудио-дорожка 1 демо-проекта: на ней slowed&reverb с кривыми,

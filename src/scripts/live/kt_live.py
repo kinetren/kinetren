@@ -391,6 +391,46 @@ class Live:
         probe.key(spec)
         time.sleep(0.4)
 
+    def close_window(self):
+        """Крестик оконного менеджера. Программа его перехватывает, чтобы
+        спросить про несохранённую работу (Р.49, п.354)."""
+        self.focus()
+        probe.close_window()
+        time.sleep(0.8)
+
+    def alive(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def has_probe(self, name, tries=12):
+        """Виджет с таким именем показан прямо сейчас."""
+        for _ in range(tries):
+            if any(f["param"] == name for f in self.geom().get("fields", [])):
+                return True
+            time.sleep(0.25)
+        return False
+
+    def live_clips(self):
+        """События ЖИВОЙ модели (без сохранения). Нужно там, где проверяется
+        сторож несохранённого: Ctrl+S проверил бы запись, а не сторож."""
+        return sorted((c["start"], c["dur"]) for c in self.geom().get("clips", []))
+
+    def click_probe(self, name, what=None):
+        """Кликнуть виджет, чей прямоугольник программа отдала в дампе
+        геометрии (`fields`). Модальные окна egui в дереве доступности не
+        ищутся, а угадывать смещения внутри окна сценарий не должен (Р.27)."""
+        for _ in range(20):
+            f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
+            if f:
+                win = geometry()
+                self.click(
+                    win["x"] + int(f["x"] + f["w"] / 2),
+                    win["y"] + int(f["y"] + f["h"] / 2),
+                )
+                return True
+            time.sleep(0.25)
+        self.expect(False, what or f"программа отдала прямоугольник «{name}»")
+        return False
+
     def shot(self, tag):
         """Снимок ЭКРАНА через xwd.
 
@@ -525,8 +565,12 @@ class Live:
 
 
 def demo_project(dest):
-    """Свежий демо-проект программой же (kt-cli demo) — один писатель формата."""
-    subprocess.run([KT_CLI, "demo", dest], check=True, capture_output=True)
+    """Свежий демо-проект программой же (kt-cli demo) — один писатель формата.
+
+    `--force`: сценарии перезапускаются по месту, а kt-cli с Р.49 (п.359) не
+    затирает существующий файл молча. Медиа демо с того же раунда —
+    синтетические, так что сценарию нечего доставать со стороны."""
+    subprocess.run([KT_CLI, "demo", dest, "--force"], check=True, capture_output=True)
     return dest
 
 
@@ -536,7 +580,9 @@ def project_with_clips(dest, clips, fps=30, width=1280, height=720):
     плашек — это позволяет сценарию отличать, ЧЕЙ материал нарисован.
     Пишется через `kt-cli new` + правку .otio: формат остаётся за нашей
     библиотекой."""
-    subprocess.run([KT_CLI, "new", dest], check=True, capture_output=True)
+    # --force: сценарии перезапускаются по месту, а kt-cli с Р.49
+    # не затирает существующий файл молча (п.359)
+    subprocess.run([KT_CLI, "new", dest, "--force"], check=True, capture_output=True)
     with open(dest) as f:
         doc = json.load(f)
     doc["metadata"]["kt"]["settings"].update(fps=fps, width=width, height=height)

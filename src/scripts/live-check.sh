@@ -49,6 +49,13 @@ trap cleanup EXIT
 Xvfb "$display_num" -screen 0 "$screen" -nolisten tcp > "$out/xvfb.log" 2>&1 &
 pids+=($!)
 export DISPLAY="$display_num"
+# своё пользовательское хранилище на прогон (Р.49): журнал, замки проектов,
+# рабочее место и безымянное восстановление не должны лезть в домашний
+# каталог разработчика и не должны переезжать между прогонами
+export XDG_DATA_HOME="$out/xdg"
+export KT_USER_STORE_DIR="$out/xdg/kinotrain"
+rm -rf "$XDG_DATA_HOME"
+mkdir -p "$KT_USER_STORE_DIR"
 # ждём готовности сервера (xdpyinfo не гарантирован — пробуем через xlib)
 for _ in $(seq 40); do
     python3 -c "import Xlib.display, os; Xlib.display.Display(os.environ['DISPLAY'])" 2> /dev/null && break

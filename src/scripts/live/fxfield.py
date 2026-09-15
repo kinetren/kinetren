@@ -54,7 +54,7 @@ def main(out):
     # демо-проект: у события 25 на аудио-дорожке 1 стоит slowed&reverb с
     # живыми кривыми — ровно та цепочка, о которой претензия
     proj = os.path.join(out, "fxfield.otio")
-    subprocess.run([KT_CLI, "demo", proj], check=True, capture_output=True)
+    subprocess.run([KT_CLI, "demo", proj, "--force"], check=True, capture_output=True)
 
     with Live("fxfield", out, project=proj) as app:
         app.shot("open")
