@@ -60,14 +60,10 @@ pub fn parse(src: &str) -> Result<Vec<Entry>, String> {
             continue;
         }
 
-        let eq = s
-            .find('=')
-            .ok_or_else(|| format!("line {line}: expected `key = \"value\"`"))?;
+        let eq = s.find('=').ok_or_else(|| format!("line {line}: expected `key = \"value\"`"))?;
         let key = s[..eq].trim();
         if !bare_key_ok(key) {
-            return Err(format!(
-                "line {line}: bad key {key:?} (want [a-z][a-z0-9_]*)"
-            ));
+            return Err(format!("line {line}: bad key {key:?} (want [a-z][a-z0-9_]*)"));
         }
         let (value, consumed) = parse_string(s[eq + 1..].trim_start(), line)?;
         let tail = s[eq + 1..].trim_start()[consumed..].trim();
@@ -75,22 +71,14 @@ pub fn parse(src: &str) -> Result<Vec<Entry>, String> {
             return Err(format!("line {line}: trailing text after value"));
         }
 
-        let full = if section.is_empty() {
-            key.to_string()
-        } else {
-            format!("{section}.{key}")
-        };
+        let full = if section.is_empty() { key.to_string() } else { format!("{section}.{key}") };
         if let Some(prev) = out.iter().find(|e| e.key == full) {
             return Err(format!(
                 "line {line}: duplicate key {full:?} (first defined on line {})",
                 prev.line
             ));
         }
-        out.push(Entry {
-            key: full,
-            value,
-            line,
-        });
+        out.push(Entry { key: full, value, line });
     }
 
     Ok(out)
@@ -121,9 +109,9 @@ fn parse_string(s: &str, line: usize) -> Result<(String, usize), String> {
                     'u' => {
                         let mut hex = String::new();
                         for _ in 0..4 {
-                            let (_, h) = it.next().ok_or_else(|| {
-                                format!("line {line}: \\u needs four hex digits")
-                            })?;
+                            let (_, h) = it
+                                .next()
+                                .ok_or_else(|| format!("line {line}: \\u needs four hex digits"))?;
                             hex.push(h);
                         }
                         let cp = u32::from_str_radix(&hex, 16)

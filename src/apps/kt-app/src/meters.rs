@@ -2,8 +2,8 @@
 //! PreviewVolumeFader): лестница цветов, peak-hold caps со спадом,
 //! фейдер −60..+24 dB, double-click = 0 dB, кнопка M = mute.
 
-use crate::i18n::{k, tr};
 use crate::app::KtApp;
+use crate::i18n::{k, tr};
 use eframe::egui;
 
 pub const METER_MIN_DB: f32 = -48.0;
@@ -428,10 +428,8 @@ impl KtApp {
         // подложка → свечение → LED → блик и пик ПОВЕРХ. В р.11 подложка
         // уехала поверх свечения и закрасила его целиком, а блик ушёл под
         // непрозрачные сегменты — метр стал плоским и «фейковым».
-        let lit_n: [usize; 2] = [
-            led_lit(self.meter.bar_db[0], seg_db),
-            led_lit(self.meter.bar_db[1], seg_db),
-        ];
+        let lit_n: [usize; 2] =
+            [led_lit(self.meter.bar_db[0], seg_db), led_lit(self.meter.bar_db[1], seg_db)];
         let cap_seg: [Option<usize>; 2] = std::array::from_fn(|ch| {
             let cap = self.meter.cap_db[ch];
             (cap > self.meter.bar_db[ch] + 0.4 && cap > METER_MIN_DB + 1.0)
@@ -771,10 +769,10 @@ impl KtApp {
         let fader = ui.interact(hit, ui.id().with("fader"), egui::Sense::click_and_drag());
         let db_at = |y: f32| {
             let t = ((bars.bottom() - y) / bars.height()).clamp(0.0, 1.0);
-            (FADER_MIN_DB + t * (FADER_MAX_DB - FADER_MIN_DB))
-                .clamp(FADER_MIN_DB, FADER_MAX_DB)
+            (FADER_MIN_DB + t * (FADER_MAX_DB - FADER_MIN_DB)).clamp(FADER_MIN_DB, FADER_MAX_DB)
         };
-        if response.clicked() && response.interact_pointer_pos().is_some_and(|p| mute_rect.contains(p))
+        if response.clicked()
+            && response.interact_pointer_pos().is_some_and(|p| mute_rect.contains(p))
         {
             self.meter.muted = !self.meter.muted;
         } else if fader.double_clicked() {
@@ -783,8 +781,7 @@ impl KtApp {
             if fader.drag_started() {
                 // нажали рядом с ручкой — тянем ОТНОСИТЕЛЬНО (без рывка);
                 // нажали по треку — едем к точке
-                self.fader_grab =
-                    if (pos.y - hy).abs() <= 12.0 { Some(hy - pos.y) } else { None };
+                self.fader_grab = if (pos.y - hy).abs() <= 12.0 { Some(hy - pos.y) } else { None };
                 if self.fader_grab.is_none() {
                     self.meter.fader_target = db_at(pos.y);
                 }
@@ -844,12 +841,10 @@ impl KtApp {
         }
         // колесо над метром: шаг 1 dB, с Shift — точный 0.2 dB
         if fader.contains_pointer() {
-            let (scroll, shift) =
-                ui.input(|i| (i.smooth_scroll_delta.y, i.modifiers.shift));
+            let (scroll, shift) = ui.input(|i| (i.smooth_scroll_delta.y, i.modifiers.shift));
             if scroll != 0.0 {
                 let step = if shift { 0.2 } else { 1.0 };
-                self.meter.fader_target = (self.meter.fader_target
-                    + scroll.signum() * step)
+                self.meter.fader_target = (self.meter.fader_target + scroll.signum() * step)
                     .clamp(FADER_MIN_DB, FADER_MAX_DB);
             }
         }
@@ -864,11 +859,7 @@ impl KtApp {
         self.player.set_master_gain(gain);
         // подсказка зависит от зоны под курсором (п.1 р.9)
         let over_mute = fader.hover_pos().is_some_and(|p| mute_rect.contains(p));
-        let text = if over_mute {
-            tr(k::meter::MUTE)
-        } else {
-            tr(k::meter::FADER)
-        };
+        let text = if over_mute { tr(k::meter::MUTE) } else { tr(k::meter::FADER) };
         self.hint(fader, text);
         self.hint(response, tr(k::meter::PEAK));
     }

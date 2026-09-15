@@ -28,8 +28,13 @@ fn f32s_as_bytes(s: &[f32]) -> Vec<u8> {
 
 /// Проект теста 11: конкатенация + кроссфейд + slowed с автоматизацией.
 fn golden_project() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 128, height: 72, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 128,
+        height: 72,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     for (id, path) in
         [(1, "synth:ramp"), (2, "synth:dc:0.5"), (3, "synth:impulse"), (4, "synth:ramp")]
     {

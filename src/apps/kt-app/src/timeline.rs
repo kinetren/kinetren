@@ -3,8 +3,8 @@
 //! volume rail, стерео-волноформы, цвет клипа из хэша пути, офлайн-тинт,
 //! edge-autoscroll, контекст-меню, снап к маркерам/региону/клипам.
 
-use crate::i18n::{k, tr};
 use crate::app::KtApp;
+use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_cache::BurstKind;
 use kt_model::*;
@@ -55,9 +55,8 @@ pub const TPP_MAX: f64 = 2_000_000.0;
 ///
 /// Доли выбраны точными в тиках (90 000 делится на все): 0.01, 0.05, 0.1,
 /// 0.2, 0.5 с. Дальше — прежние 1 с, 10 с, минута, 10 минут, час.
-const RULER_LADDER: [i64; 10] = [
-    900, 4_500, 9_000, 18_000, 45_000, 90_000, 900_000, 5_400_000, 54_000_000, 324_000_000,
-];
+const RULER_LADDER: [i64; 10] =
+    [900, 4_500, 9_000, 18_000, 45_000, 90_000, 900_000, 5_400_000, 54_000_000, 324_000_000];
 pub const EDGE_GRAB_PX: f32 = 7.0;
 pub const SNAP_PX: f64 = 10.0;
 pub const REGION_EDGE_PX: f32 = 8.0;
@@ -687,12 +686,7 @@ pub fn row_height(kind: LaneKind, base_h: f32) -> f32 {
 /// менять высоту каждого трека индивидуально»). Переопределение — в
 /// пикселях и абсолютное: вертикальный зум его не трогает, иначе
 /// «поставил дорожке высоту» переставало держаться при первом же зуме.
-pub fn row_height_of(
-    kind: LaneKind,
-    lane: u32,
-    base_h: f32,
-    over: &[(LaneKind, u32, f32)],
-) -> f32 {
+pub fn row_height_of(kind: LaneKind, lane: u32, base_h: f32, over: &[(LaneKind, u32, f32)]) -> f32 {
     match over.iter().find(|(k, l, _)| *k == kind && *l == lane) {
         Some((_, _, h)) => h.clamp(THIN_ROW_MIN, ROW_H_MAX),
         None => row_height(kind, base_h),
@@ -729,9 +723,8 @@ pub fn vertical_layout(
     let usable = (avail_h - RULER_H - 6.0).max(0.0);
     // вес служебных строк в делителе — их доля от строки клипов; у морф-
     // и камерных строк доли РАЗНЫЕ (п.10 Р.38)
-    let weight = clip_lanes
-        + morph_lanes as f32 / MORPH_ROW_DIV
-        + camera_lanes as f32 / THIN_ROW_DIV;
+    let weight =
+        clip_lanes + morph_lanes as f32 / MORPH_ROW_DIV + camera_lanes as f32 / THIN_ROW_DIV;
     let base_h = match v_zoom {
         Some(z) => z.clamp(16.0, 120.0),
         None => (usable / weight).clamp(30.0, 84.0),
@@ -970,10 +963,7 @@ impl KtApp {
             .clips
             .iter()
             .map(|c| {
-                format!(
-                    "{{\"id\":{},\"start\":{},\"dur\":{}}}",
-                    c.id.0, c.start.0, c.duration.0
-                )
+                format!("{{\"id\":{},\"start\":{},\"dur\":{}}}", c.id.0, c.start.0, c.duration.0)
             })
             .collect();
         let json = format!(
@@ -1081,9 +1071,9 @@ impl TlGeom {
 
     /// Высота служебной строки (морф/камера) — тоже своя.
     pub fn thin_h_of(&self, kind: LaneKind, lane: u32) -> f32 {
-        self.row_of((kind, lane)).map(|r| self.row_h(r)).unwrap_or_else(|| {
-            crate::timeline::row_height(kind, self.base_h)
-        })
+        self.row_of((kind, lane))
+            .map(|r| self.row_h(r))
+            .unwrap_or_else(|| crate::timeline::row_height(kind, self.base_h))
     }
 
     /// Середина строки — куда садятся подписи gutter'а.
@@ -1377,9 +1367,8 @@ impl KtApp {
     /// (п.2 р.11).
     pub fn snap_targets(&self, exclude: Option<ClipId>) -> Vec<i64> {
         let p = self.model.project();
-        let group = exclude
-            .and_then(|id| p.clips.iter().find(|c| c.id == id))
-            .and_then(|c| c.link_group);
+        let group =
+            exclude.and_then(|id| p.clips.iter().find(|c| c.id == id)).and_then(|c| c.link_group);
         let mut t: Vec<i64> = vec![0, self.player.transport.playhead().0];
         for c in &p.clips {
             let same_group = group.is_some() && c.link_group == group;
@@ -1677,8 +1666,8 @@ impl KtApp {
                     .sum()
             });
             let zoom = ui.input(|i| i.zoom_delta());
-            let (ctrl, shift) = ui
-                .input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
+            let (ctrl, shift) =
+                ui.input(|i| (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift));
             // Shift-вертикаль окно НЕ двигает — follow не гасим (п.30 р.7)
             let user_scrolled = (!shift && scroll != egui::Vec2::ZERO) || zoom != 1.0;
             if user_scrolled {
@@ -1689,11 +1678,9 @@ impl KtApp {
             if shift && ctrl && raw_y != 0.0 {
                 // Shift+Ctrl+колесо = вертикальный зум, якорь — строка
                 // под курсором (п.12 р.6)
-                let cur_h = self
-                    .tl_v_zoom
-                    .unwrap_or_else(|| {
-                        vertical_layout(rect.height(), clip_hint, morph_hint, cam_hint, None).base_h
-                    });
+                let cur_h = self.tl_v_zoom.unwrap_or_else(|| {
+                    vertical_layout(rect.height(), clip_hint, morph_hint, cam_hint, None).base_h
+                });
                 let factor = if raw_y > 0.0 { 1.15 } else { 1.0 / 1.15 };
                 let new_h = (cur_h * factor).clamp(16.0, 120.0);
                 // якорь — строка ПОД КУРСОРОМ в долях строк; делением на
@@ -1707,8 +1694,7 @@ impl KtApp {
                     })
                     .max(0.0);
                 self.tl_v_zoom = Some(new_h);
-                self.tl_scroll =
-                    (row * new_h - (pos.y - (rect.top() + RULER_H + 3.0))).max(0.0);
+                self.tl_scroll = (row * new_h - (pos.y - (rect.top() + RULER_H + 3.0))).max(0.0);
             } else if shift && raw_y != 0.0 {
                 // Shift+колесо = вертикальный скролл (кламп ниже, по layout)
                 self.tl_scroll = (self.tl_scroll - raw_y).max(0.0);
@@ -1772,14 +1758,8 @@ impl KtApp {
         // зоны, что у follow_view, но без требования «играет» — иначе на
         // паузе Home/End оставляли окно на месте
         if let Some(at) = self.pending_reveal.take()
-            && let Some(vs) = follow_view(
-                true,
-                true,
-                false,
-                at as f64,
-                view_start,
-                rect.width() as f64 * tpp,
-            )
+            && let Some(vs) =
+                follow_view(true, true, false, at as f64, view_start, rect.width() as f64 * tpp)
         {
             view_start = vs;
         }
@@ -1905,10 +1885,7 @@ impl KtApp {
             ruler_mesh.add_colored_rect(
                 egui::Rect::from_min_max(
                     egui::pos2(x, rect.top() + TIME_TOP),
-                    egui::pos2(
-                        x + 1.0,
-                        rect.top() + if major { RULER_H } else { TIME_TOP + 6.0 },
-                    ),
+                    egui::pos2(x + 1.0, rect.top() + if major { RULER_H } else { TIME_TOP + 6.0 }),
                 ),
                 tick_col,
             );
@@ -2015,8 +1992,7 @@ impl KtApp {
         let morph_lane_top = |lane: u32| -> f32 { geom.morph_lane_top(lane) };
         // (подпись, центр строки, верх строки) — верх нужен, чтобы длинный
         // ярлык встал ПОД именем клипа, а не поверх него
-        let mut gutter_labels: Vec<(String, f32, f32, f32)> =
-            Vec::with_capacity(geom.rows.len());
+        let mut gutter_labels: Vec<(String, f32, f32, f32)> = Vec::with_capacity(geom.rows.len());
         for (row, &(kind, lane)) in geom.rows.iter().enumerate() {
             let y = geom.row_top(row);
             // высота ЭТОЙ строки: служебные втрое ниже (Р.35 п.1)
@@ -2340,19 +2316,20 @@ impl KtApp {
             if pos.y > rect.top() + RULER_H {
                 return None;
             }
-            app.model
-                .project()
-                .markers
-                .iter()
-                .filter(|m| m.is_range())
-                .map(|m| m.t.0)
-                .find(|start| {
+            app.model.project().markers.iter().filter(|m| m.is_range()).map(|m| m.t.0).find(
+                |start| {
                     let end = start
-                        + app.model.project().markers.iter().find(|m| m.t.0 == *start)
+                        + app
+                            .model
+                            .project()
+                            .markers
+                            .iter()
+                            .find(|m| m.t.0 == *start)
                             .map(|m| m.duration.0)
                             .unwrap_or(0);
                     (tick_to_x(end) - pos.x).abs() <= EDGE_GRAB_PX
-                })
+                },
+            )
         };
         // Именованная область (Р.38 п.1: «не понимаю как удалить saved
         // area region… пкм ничего не дает»). Хватается КОНТУР — тело
@@ -2406,8 +2383,7 @@ impl KtApp {
             let p = app.model.project();
             for t in &p.transitions {
                 // якорь фейда (Р.25) — его единственный живой конец
-                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id))
-                else {
+                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
                     continue;
                 };
                 let top = lane_top(a.kind, a.lane);
@@ -2447,8 +2423,7 @@ impl KtApp {
         let transition_body_at = |app: &KtApp, pos: egui::Pos2| -> Option<TransitionId> {
             let p = app.model.project();
             for t in &p.transitions {
-                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id))
-                else {
+                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
                     continue;
                 };
                 let Some(joint) = t.joint(p).map(|j| j.0) else { continue };
@@ -2492,8 +2467,10 @@ impl KtApp {
                 let p = app.model.project();
                 let fade_l = corner_fade_len(p, c.id, true).unwrap_or(0);
                 let fade_r = corner_fade_len(p, c.id, false).unwrap_or(0);
-                let hx_l = tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_l, true));
-                let hx_r = tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_r, false));
+                let hx_l =
+                    tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_l, true));
+                let hx_r =
+                    tick_to_x(fade_handle_tick(c.start.0, c.start.0 + c.duration.0, fade_r, false));
                 let in_strip = pos.y <= top + strip;
                 let ly = level_y(clip_level(c), top, lane_h);
                 let fgrab = fade_grab_for_width(x1 - x0);
@@ -2564,63 +2541,63 @@ impl KtApp {
                     }
                     Some((id, ClipZone::Level)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-                        let audio = self
-                            .model
-                            .clip(id)
-                            .map(|c| c.kind == ClipKind::Audio)
-                            .unwrap_or(false);
-                        zone_hint =
-                            Some(if audio { tr(k::tl::hint::VOLUME) } else { tr(k::tl::hint::LEVEL) });
+                        let audio =
+                            self.model.clip(id).map(|c| c.kind == ClipKind::Audio).unwrap_or(false);
+                        zone_hint = Some(if audio {
+                            tr(k::tl::hint::VOLUME)
+                        } else {
+                            tr(k::tl::hint::LEVEL)
+                        });
                     }
                     Some((_, ClipZone::Body)) => {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-                        zone_hint = Some(
-                            tr(k::tl::hint::CLIP),
-                        );
+                        zone_hint = Some(tr(k::tl::hint::CLIP));
                     }
                     None => {
                         // «пустое место» говорилось и НАД морф/камера-блоком:
                         // `clip_at` на служебной строке всегда None, а
                         // отдельной ветки не было. Подсказка, которая врёт,
                         // хуже отсутствующей (правило 10 чек-листа).
-                        zone_hint = Some(if morph_edge_at(self, pos).is_some()
-                            || camera_edge_at(self, pos).is_some()
-                        {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                            tr(k::tl::hint::MORPH_EDGE)
-                        } else if area_at(self, pos).is_some() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                            tr(k::tl::hint::AREA)
-                        } else if morpher_at(self, pos).is_some() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-                            tr(k::tl::hint::MORPHER)
-                        } else if camera_at(self, pos).is_some() {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-                            tr(k::tl::hint::CAMERA)
-                        } else if let Some((lk @ (LaneKind::Video | LaneKind::Audio), l)) =
-                            geom.key_at_y(pos.y)
-                        {
-                            // на дорожке подсказка НАЗЫВАЕТ дорожку и говорит
-                            // про её меню: с Р.40 ПКМ здесь даёт меню строки,
-                            // а не одну лишь вставку
-                            hint_owned = Some(crate::tf!(
-                                k::tl::hint::LANE_FREE,
-                                kt_model::lane_label(&self.lane_names, lk, l)
-                            ));
-                            ""
-                        } else if geom.morph_lane_at_y(pos.y).is_some() {
-                            // ПУСТАЯ служебная строка говорит, ЧТО на неё
-                            // класть (Р.40 п.5, дословно: «я не понимаю как
-                            // что-то добавить на камерный трек — для чего
-                            // он?????»). Раньше тут была подсказка пустого
-                            // места про регион и выделение — про строку, где
-                            // ни того, ни другого не бывает.
-                            tr(k::tl::hint::MORPH_LANE)
-                        } else if geom.camera_lane_at_y(pos.y).is_some() {
-                            tr(k::tl::hint::CAMERA_LANE)
-                        } else {
-                            tr(k::tl::hint::EMPTY)
-                        });
+                        zone_hint = Some(
+                            if morph_edge_at(self, pos).is_some()
+                                || camera_edge_at(self, pos).is_some()
+                            {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                                tr(k::tl::hint::MORPH_EDGE)
+                            } else if area_at(self, pos).is_some() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                                tr(k::tl::hint::AREA)
+                            } else if morpher_at(self, pos).is_some() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                                tr(k::tl::hint::MORPHER)
+                            } else if camera_at(self, pos).is_some() {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                                tr(k::tl::hint::CAMERA)
+                            } else if let Some((lk @ (LaneKind::Video | LaneKind::Audio), l)) =
+                                geom.key_at_y(pos.y)
+                            {
+                                // на дорожке подсказка НАЗЫВАЕТ дорожку и говорит
+                                // про её меню: с Р.40 ПКМ здесь даёт меню строки,
+                                // а не одну лишь вставку
+                                hint_owned = Some(crate::tf!(
+                                    k::tl::hint::LANE_FREE,
+                                    kt_model::lane_label(&self.lane_names, lk, l)
+                                ));
+                                ""
+                            } else if geom.morph_lane_at_y(pos.y).is_some() {
+                                // ПУСТАЯ служебная строка говорит, ЧТО на неё
+                                // класть (Р.40 п.5, дословно: «я не понимаю как
+                                // что-то добавить на камерный трек — для чего
+                                // он?????»). Раньше тут была подсказка пустого
+                                // места про регион и выделение — про строку, где
+                                // ни того, ни другого не бывает.
+                                tr(k::tl::hint::MORPH_LANE)
+                            } else if geom.camera_lane_at_y(pos.y).is_some() {
+                                tr(k::tl::hint::CAMERA_LANE)
+                            } else {
+                                tr(k::tl::hint::EMPTY)
+                            },
+                        );
                     }
                 }
             }
@@ -2773,8 +2750,7 @@ impl KtApp {
                 if response.double_clicked() {
                     self.open_camera_editor(cid);
                 } else if response.drag_started()
-                    && let Some(orig) =
-                        self.model.project().cameras.iter().find(|c| c.id == cid)
+                    && let Some(orig) = self.model.project().cameras.iter().find(|c| c.id == cid)
                 {
                     self.drag = Some(Drag::Camera {
                         id: cid,
@@ -2799,8 +2775,7 @@ impl KtApp {
                 if response.double_clicked() {
                     self.open_morph_editor(mid);
                 } else if response.drag_started()
-                    && let Some(orig) =
-                        self.model.project().morphers.iter().find(|m| m.id == mid)
+                    && let Some(orig) = self.model.project().morphers.iter().find(|m| m.id == mid)
                 {
                     self.drag = Some(Drag::Morph {
                         id: mid,
@@ -2894,8 +2869,7 @@ impl KtApp {
                     match zone {
                         ClipZone::FadeLeft | ClipZone::FadeRight => {
                             let left = zone == ClipZone::FadeLeft;
-                            let len = corner_fade_len(self.model.project(), id, left)
-                                .unwrap_or(0);
+                            let len = corner_fade_len(self.model.project(), id, left).unwrap_or(0);
                             self.drag = Some(Drag::Fade { id, left, len, moved: false });
                         }
                         ClipZone::Level => {
@@ -2958,8 +2932,7 @@ impl KtApp {
                     // режиме-инструменте — обычный драг. Начинается с
                     // ПУСТОГО места: драг по событию остаётся переносом, и
                     // Ctrl в нём по-прежнему снимает магнит (п.2 р.11)
-                    self.drag =
-                        Some(Drag::Rubber { anchor: pos, add: ctrl_held && self.sel_tool });
+                    self.drag = Some(Drag::Rubber { anchor: pos, add: ctrl_held && self.sel_tool });
                 } else {
                     // пустое место: выделение региона (порт RegionSelect)
                     // снап и при создании региона с пустого места (п.13 р.6)
@@ -3001,12 +2974,7 @@ impl KtApp {
                                 (raw, None)
                             } else {
                                 let targets = self.snap_targets(Some(d.id));
-                                snap_move(
-                                    raw,
-                                    dur,
-                                    &targets,
-                                    snap_threshold(self.ticks_per_px),
-                                )
+                                snap_move(raw, dur, &targets, snap_threshold(self.ticks_per_px))
                             };
                             d.cur_start = snapped.max(0);
                             // упор в ноль ломает примагничивание — линию гасим
@@ -3131,10 +3099,7 @@ impl KtApp {
                             let body = |side: Option<ClipId>| {
                                 // у фейда сторона-пустота телом не ограничена
                                 side.map_or(i64::MAX, |id| {
-                                    p.clips
-                                        .iter()
-                                        .find(|c| c.id == id)
-                                        .map_or(0, |c| c.duration.0)
+                                    p.clips.iter().find(|c| c.id == id).map_or(0, |c| c.duration.0)
                                 })
                             };
                             let raw = x_to_tick(pos.x);
@@ -3264,10 +3229,7 @@ impl KtApp {
                                 // от ОРИГИНАЛЬНЫХ стартов: команда двигает всю
                                 // link-группу, и повтор по её члену — no-op
                                 new_start: Tick(orig_start + delta),
-                                new_lane: self
-                                    .model
-                                    .clip(id)
-                                    .map_or(d.orig.lane, |c| c.lane),
+                                new_lane: self.model.clip(id).map_or(d.orig.lane, |c| c.lane),
                             })
                             .collect();
                         self.apply_batch_restoring(cmds);
@@ -3288,8 +3250,7 @@ impl KtApp {
                                     .find(|t| (t.a, t.b) == (Some(outgoing), Some(incoming)))
                                     .map(|t| t.id);
                                 let ev = TransitionEvent {
-                                    id: existing
-                                        .unwrap_or(TransitionId(self.next_transition_id())),
+                                    id: existing.unwrap_or(TransitionId(self.next_transition_id())),
                                     a: Some(outgoing),
                                     b: Some(incoming),
                                     in_offset: Tick(in_off),
@@ -3362,10 +3323,7 @@ impl KtApp {
                     if ns != start {
                         self.apply_batch(vec![
                             Command::MoveMarker { from: Tick(start), to: Tick(ns) },
-                            Command::SetMarkerDuration {
-                                at: Tick(ns),
-                                duration: Tick(end - ns),
-                            },
+                            Command::SetMarkerDuration { at: Tick(ns), duration: Tick(end - ns) },
                         ]);
                     }
                 }
@@ -3405,7 +3363,8 @@ impl KtApp {
                 Some(Drag::Rubber { anchor, add }) => {
                     // точка отпускания: interact_pointer_pos живёт до конца
                     // кадра релиза, hover — страховка
-                    let band = egui::Rect::from_two_pos(anchor, pointer.or(hover).unwrap_or(anchor));
+                    let band =
+                        egui::Rect::from_two_pos(anchor, pointer.or(hover).unwrap_or(anchor));
                     // рамка запоминается В ДОМЕНЕ МОДЕЛИ (время × ключи
                     // дорожек): из неё делается именованная область
                     // (Р.35 п.2) — пунктом меню или кнопкой, уже после
@@ -3506,9 +3465,7 @@ impl KtApp {
             let (start, end, lane) = match &self.drag {
                 Some(Drag::Clip(d)) if d.id == c.id => (d.cur_start, d.cur_end, d.cur_lane),
                 // прочие события пачки едут тем же сдвигом (Р.33 п.7)
-                Some(Drag::Clip(d))
-                    if d.extra.iter().any(|(id, _)| *id == c.id) =>
-                {
+                Some(Drag::Clip(d)) if d.extra.iter().any(|(id, _)| *id == c.id) => {
                     let delta = d.cur_start - d.orig.start.0;
                     (c.start.0 + delta, c.start.0 + c.duration.0 + delta, c.lane)
                 }
@@ -3771,12 +3728,18 @@ impl KtApp {
                 let ly = level_y(lv, top, lane_h);
                 // «не по умолчанию» — ярче: у видео это op<1, у аудио 0 dB
                 // стоит посередине (диапазон рейла v1 ±6 dB)
-                let dim = if c.kind == ClipKind::Audio { (op - 0.5).abs() > 1e-3 } else { op < 1.0 };
+                let dim =
+                    if c.kind == ClipKind::Audio { (op - 0.5).abs() > 1e-3 } else { op < 1.0 };
                 painter.line_segment(
                     [egui::pos2(clip_rect.left(), ly), egui::pos2(clip_rect.right(), ly)],
                     egui::Stroke::new(
                         if dim { 2.0 } else { 1.0 },
-                        egui::Color32::from_rgba_unmultiplied(255, 220, 120, if dim { 230 } else { 90 }),
+                        egui::Color32::from_rgba_unmultiplied(
+                            255,
+                            220,
+                            120,
+                            if dim { 230 } else { 90 },
+                        ),
                     ),
                 );
             }
@@ -3876,11 +3839,8 @@ impl KtApp {
         // приём, что у имени группы бина).
         for a in &self.model.project().areas {
             let Some(r) = geom.area_rect(a) else { continue };
-            let col = a
-                .color
-                .as_deref()
-                .and_then(crate::theme::parse_hex)
-                .unwrap_or(crate::theme::AREA);
+            let col =
+                a.color.as_deref().and_then(crate::theme::parse_hex).unwrap_or(crate::theme::AREA);
             // разрыв верхней линии под имя
             let font = egui::FontId::proportional(11.0);
             let galley = painter.layout_no_wrap(a.name.clone(), font.clone(), col);
@@ -3898,7 +3858,11 @@ impl KtApp {
                 stroke,
             );
             if gap > 12.0 {
-                painter.galley(egui::pos2(r.left() + 10.0, r.top() - galley.size().y * 0.5), galley, col);
+                painter.galley(
+                    egui::pos2(r.left() + 10.0, r.top() - galley.size().y * 0.5),
+                    galley,
+                    col,
+                );
             }
         }
 
@@ -3907,11 +3871,7 @@ impl KtApp {
             && let Some(cur) = pointer.or(hover)
         {
             let band = egui::Rect::from_two_pos(*anchor, cur);
-            painter.rect_filled(
-                band,
-                0.0,
-                egui::Color32::from_rgba_unmultiplied(90, 140, 220, 40),
-            );
+            painter.rect_filled(band, 0.0, egui::Color32::from_rgba_unmultiplied(90, 140, 220, 40));
             painter.rect_stroke(
                 band,
                 0.0,
@@ -3933,7 +3893,11 @@ impl KtApp {
                 Some(Drag::MorphEdge { id, left, cur }) if *id == m.id => {
                     let min = kt_model::MIN_CLIP_DURATION.0;
                     let (s0, e0) = (m.start.0, (m.start + m.duration).0);
-                    if *left { ((*cur).min(e0 - min).max(0), e0) } else { (s0, (*cur).max(s0 + min)) }
+                    if *left {
+                        ((*cur).min(e0 - min).max(0), e0)
+                    } else {
+                        (s0, (*cur).max(s0 + min))
+                    }
                 }
                 _ => (m.start.0, (m.start + m.duration).0),
             };
@@ -3958,7 +3922,11 @@ impl KtApp {
                 egui::Color32::from_rgba_unmultiplied(140, 90, 200, 200),
                 egui::Stroke::new(
                     if selected { 2.0 } else { 1.0 },
-                    if selected { egui::Color32::WHITE } else { egui::Color32::from_rgb(40, 30, 55) },
+                    if selected {
+                        egui::Color32::WHITE
+                    } else {
+                        egui::Color32::from_rgb(40, 30, 55)
+                    },
                 ),
                 egui::StrokeKind::Inside,
             );
@@ -3976,9 +3944,13 @@ impl KtApp {
                 let fo = r.right() - r.width() * (m.fade_out.0 as f32 / dur).clamp(0.0, 1.0);
                 let col = egui::Color32::from_rgba_unmultiplied(255, 220, 120, 220);
                 let st = egui::Stroke::new(1.6, col);
-                painter.line_segment([egui::pos2(r.left(), r.bottom() - 1.0), egui::pos2(fi, ly)], st);
+                painter
+                    .line_segment([egui::pos2(r.left(), r.bottom() - 1.0), egui::pos2(fi, ly)], st);
                 painter.line_segment([egui::pos2(fi, ly), egui::pos2(fo.max(fi), ly)], st);
-                painter.line_segment([egui::pos2(fo.max(fi), ly), egui::pos2(r.right(), r.bottom() - 1.0)], st);
+                painter.line_segment(
+                    [egui::pos2(fo.max(fi), ly), egui::pos2(r.right(), r.bottom() - 1.0)],
+                    st,
+                );
             }
             // подпись по РЕЖИМУ ЦЕЛЕЙ (Р.35): вида у морфера больше нет,
             // а «на кого действует» — единственное, чего не видно по
@@ -4014,7 +3986,11 @@ impl KtApp {
                 Some(Drag::CameraEdge { id, left, cur }) if *id == c.id => {
                     let min = kt_model::MIN_CLIP_DURATION.0;
                     let (s0, e0) = (c.start.0, (c.start + c.duration).0);
-                    if *left { ((*cur).min(e0 - min).max(0), e0) } else { (s0, (*cur).max(s0 + min)) }
+                    if *left {
+                        ((*cur).min(e0 - min).max(0), e0)
+                    } else {
+                        (s0, (*cur).max(s0 + min))
+                    }
                 }
                 _ => (c.start.0, (c.start + c.duration).0),
             };
@@ -4046,11 +4022,7 @@ impl KtApp {
                 egui::StrokeKind::Inside,
             );
             if r.width() > 46.0 {
-                let label = if c.name.is_empty() {
-                    format!("C{}", c.id.0)
-                } else {
-                    c.name.clone()
-                };
+                let label = if c.name.is_empty() { format!("C{}", c.id.0) } else { c.name.clone() };
                 painter.text(
                     egui::pos2(r.left() + 6.0, r.center().y),
                     egui::Align2::LEFT_CENTER,
@@ -4133,11 +4105,8 @@ impl KtApp {
                 egui::pos2(track.left(), knob_y),
                 egui::vec2(track.width(), knob_h),
             );
-            let resp = ui.interact(
-                track,
-                ui.id().with("tl-vscroll"),
-                egui::Sense::click_and_drag(),
-            );
+            let resp =
+                ui.interact(track, ui.id().with("tl-vscroll"), egui::Sense::click_and_drag());
             if resp.dragged()
                 && let Some(p) = resp.interact_pointer_pos()
             {
@@ -4162,8 +4131,7 @@ impl KtApp {
             let p = self.model.project();
             for t in &p.transitions {
                 // якорь фейда (Р.25) — единственный живой конец, стык у него
-                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id))
-                else {
+                let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
                     continue;
                 };
                 let Some(base_joint) = t.joint(p).map(|j| j.0) else { continue };
@@ -4178,7 +4146,11 @@ impl KtApp {
                             && ((*left && t.b == Some(*id) && t.a.is_none())
                                 || (!*left && t.a == Some(*id) && t.b.is_none())) =>
                     {
-                        if *left { (0, *len) } else { (*len, 0) }
+                        if *left {
+                            (0, *len)
+                        } else {
+                            (*len, 0)
+                        }
                     }
                     _ => (t.in_offset.0, t.out_offset.0),
                 };
@@ -4201,12 +4173,7 @@ impl KtApp {
                         .get(&c.media)
                         .map(|path| clip_color(path, c.kind))
                         .unwrap_or(egui::Color32::from_gray(80));
-                    Some(egui::Color32::from_rgba_unmultiplied(
-                        base.r(),
-                        base.g(),
-                        base.b(),
-                        70,
-                    ))
+                    Some(egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 70))
                 };
                 // слева от стыка просвечивает ВХОДЯЩИЙ, справа — уходящий
                 if let Some(fill) = handle_fill(t.b) {
@@ -4220,8 +4187,10 @@ impl KtApp {
                     2.0,
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22),
                 );
-                let st =
-                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 130));
+                let st = egui::Stroke::new(
+                    1.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 130),
+                );
                 // кроссфейд — X (две встречные диагонали), фейд — ОДНА
                 // диагональ по направлению нарастания (Р.25)
                 match (t.a.is_some(), t.b.is_some()) {
@@ -4274,7 +4243,10 @@ impl KtApp {
                 }
                 painter.line_segment(
                     [egui::pos2(xj, r.top()), egui::pos2(xj, r.bottom())],
-                    egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 80)),
+                    egui::Stroke::new(
+                        1.0,
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 80),
+                    ),
                 );
             }
         }
@@ -4292,7 +4264,11 @@ impl KtApp {
                 let (s0, e0) = (c.start.0, c.start.0 + c.duration.0);
                 let (a, b) = if *left { (s0, s0 + *len) } else { (e0 - *len, e0) };
                 let r = transition_rect(tick_to_x(a), tick_to_x(b), top, lane_h);
-                painter.rect_filled(r, 2.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22));
+                painter.rect_filled(
+                    r,
+                    2.0,
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22),
+                );
                 let st = egui::Stroke::new(
                     1.0,
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 130),
@@ -4309,11 +4285,8 @@ impl KtApp {
             // видел линию уровня, не видел ручек, целился в линию и попадал
             // в невидимую зону. Порог ширины снят: ручка сжимается вместе с
             // хватом (`fade_grab_for_width`), а не пропадает.
-            let handle_on: Vec<ClipId> = self
-                .selected_one()
-                .into_iter()
-                .chain(hover_clip)
-                .collect();
+            let handle_on: Vec<ClipId> =
+                self.selected_one().into_iter().chain(hover_clip).collect();
             for c in p.clips.iter().filter(|c| handle_on.contains(&c.id)) {
                 let top = lane_top(c.kind, c.lane);
                 let (s0, e0) = (c.start.0, c.start.0 + c.duration.0);
@@ -4325,11 +4298,7 @@ impl KtApp {
                         let d = 5.0f32;
                         let dx = if left { d } else { -d };
                         painter.add(egui::Shape::convex_polygon(
-                            vec![
-                                egui::pos2(x, y),
-                                egui::pos2(x + dx, y),
-                                egui::pos2(x, y + d),
-                            ],
+                            vec![egui::pos2(x, y), egui::pos2(x + dx, y), egui::pos2(x, y + d)],
                             egui::Color32::from_rgba_unmultiplied(255, 255, 255, 190),
                             egui::Stroke::NONE,
                         ));
@@ -4383,11 +4352,7 @@ impl KtApp {
                 egui::Stroke::new(1.0, amber),
             );
             full_painter.add(egui::Shape::convex_polygon(
-                vec![
-                    egui::pos2(x - 5.0, top),
-                    egui::pos2(x + 5.0, top),
-                    egui::pos2(x, top + 8.0),
-                ],
+                vec![egui::pos2(x - 5.0, top), egui::pos2(x + 5.0, top), egui::pos2(x, top + 8.0)],
                 amber,
                 egui::Stroke::NONE,
             ));
@@ -4821,7 +4786,10 @@ impl KtApp {
                             if ui
                                 .add(
                                     egui::DragValue::new(&mut db)
-                                        .range(-(RAIL_DB_SPAN as f64) / 2.0..=RAIL_DB_SPAN as f64 / 2.0)
+                                        .range(
+                                            -(RAIL_DB_SPAN as f64) / 2.0
+                                                ..=RAIL_DB_SPAN as f64 / 2.0,
+                                        )
                                         .speed(0.1)
                                         .suffix(" dB"),
                                 )
@@ -4873,9 +4841,7 @@ impl KtApp {
                 }
                 // синхронизация по звуку (Р.49, п.375): видна там, где
                 // человек и работает — на самих событиях
-                if self.selected.len() == 2
-                    && ui.button(tr(k::tl::menu::SYNC_AUDIO)).clicked()
-                {
+                if self.selected.len() == 2 && ui.button(tr(k::tl::menu::SYNC_AUDIO)).clicked() {
                     self.sync_selected_by_audio();
                     ui.close();
                 }
@@ -4916,8 +4882,7 @@ impl KtApp {
                             .sequence(seq)
                             .map(|s| s.name.clone())
                             .unwrap_or_default();
-                        self.seq_name =
-                            Some(crate::app::SeqNameDialog { seq, name, focus: true });
+                        self.seq_name = Some(crate::app::SeqNameDialog { seq, name, focus: true });
                         ui.close();
                     }
                 }
@@ -5271,8 +5236,7 @@ impl KtApp {
                 // уже сходятся две кромки и перенос — третья зона в 5 px
                 // сделала бы промах правилом (п.1 чек-листа). Показываем
                 // силу на самом блоке, правим числом или в окне.
-                if let Some(m) =
-                    self.model.project().morphers.iter().find(|m| m.id == mid).cloned()
+                if let Some(m) = self.model.project().morphers.iter().find(|m| m.id == mid).cloned()
                 {
                     ui.horizontal(|ui| {
                         let mut v = m.strength;
@@ -5283,10 +5247,7 @@ impl KtApp {
                         {
                             let mut ev = m.clone();
                             ev.strength = v;
-                            self.apply_coalesced(
-                                Command::SetMorpher(ev),
-                                self.gesture_counter,
-                            );
+                            self.apply_coalesced(Command::SetMorpher(ev), self.gesture_counter);
                         }
                     });
                     ui.separator();
@@ -5360,12 +5321,8 @@ impl KtApp {
                     self.marker_edit_focus = true;
                     ui.close();
                 }
-                let is_range = self
-                    .model
-                    .project()
-                    .markers
-                    .iter()
-                    .any(|k| k.t.0 == m && k.is_range());
+                let is_range =
+                    self.model.project().markers.iter().any(|k| k.t.0 == m && k.is_range());
                 if is_range && ui.button(tr(k::tl::menu::CLEAR_RANGE)).clicked() {
                     self.apply(Command::SetMarkerDuration { at: Tick(m), duration: Tick::ZERO });
                     ui.close();
@@ -5507,11 +5464,7 @@ mod geom_tests {
         let g = edge_grab_for_width(10.0);
         assert!((2.0..=2.5).contains(&g), "узкий клип: захват ~w/4, got {g}");
         // 30-мин клип при узком окне получает крупную ступень тумбов
-        let step = crate::thumbs::thumb_source_step(
-            kt_time::Tick(30 * 60 * 90_000),
-            600.0,
-            150.0,
-        );
+        let step = crate::thumbs::thumb_source_step(kt_time::Tick(30 * 60 * 90_000), 600.0, 150.0);
         assert_eq!(step, 10_800_000, "2-минутная ступень");
     }
 

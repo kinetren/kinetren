@@ -7,7 +7,6 @@
 use kt_fx::{CH, ClipProcessor, source_progress};
 use kt_model::FxInstance;
 
-
 /// Профиль (доля ВЫХОДНОГО времени, rate) → кривые клипа и профили kt-fx.
 fn profiles(points: &[(f64, f64)], len_frames: i64) -> kt_fx::AutoProfiles {
     let curves = vec![vec![kt_model::ParamCurve {
@@ -26,12 +25,7 @@ fn profiles(points: &[(f64, f64)], len_frames: i64) -> kt_fx::AutoProfiles {
 
 #[test]
 fn clip_processor_follows_integral_map() {
-    let automation = vec![
-        (0.2, 1.0),
-        (0.3, 0.35),
-        (0.7, 0.6),
-        (0.8, 1.0),
-    ];
+    let automation = vec![(0.2, 1.0), (0.3, 0.35), (0.7, 0.6), (0.8, 1.0)];
     let fx = vec![FxInstance::SlowedReverb {
         rate: 1.0,
         mix: 0.0,
@@ -77,12 +71,7 @@ fn clip_processor_follows_integral_map() {
 
 #[test]
 fn clip_processor_single_big_read_matches() {
-    let automation = vec![
-        (0.2, 1.0),
-        (0.3, 0.35),
-        (0.7, 0.6),
-        (0.8, 1.0),
-    ];
+    let automation = vec![(0.2, 1.0), (0.3, 0.35), (0.7, 0.6), (0.8, 1.0)];
     let fx = vec![FxInstance::SlowedReverb {
         rate: 1.0,
         mix: 0.0,

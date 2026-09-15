@@ -83,14 +83,7 @@ fn run_window_end(fx: &[FxInstance], i: usize, stops: &[usize], max_geo: usize) 
 
 /// Лупа Legacy-рана (одиночный Pan/CamMotion/Mirror) для аккумуляторов
 /// K×: рамка pan_frame в долях выхода; Mirror — тождество.
-fn legacy_lens(
-    step: &FxInstance,
-    lw: u32,
-    lh: u32,
-    out_w: u32,
-    out_h: u32,
-    u: f64,
-) -> (f64, f64) {
+fn legacy_lens(step: &FxInstance, lw: u32, lh: u32, out_w: u32, out_h: u32, u: f64) -> (f64, f64) {
     let (mow, moh) = (out_w.max(2) as f64, out_h.max(2) as f64);
     match step {
         FxInstance::Pan { mode, pan_x, pan_y, zoom } => {
@@ -145,12 +138,9 @@ fn segment(
             let mut max_geo = MAX_GEO_STEPS;
             let (j, exec) = loop {
                 let j = run_window_end(fx, idx, stops, max_geo);
-                let steps: Vec<&FxInstance> = fx[idx..j]
-                    .iter()
-                    .filter(|g| is_geo(g) || is_pointwise(g))
-                    .collect();
-                let exec =
-                    build_geom_exec(&steps, w, h, out_w, out_h, u, cam3d, burst_index, 1, 1);
+                let steps: Vec<&FxInstance> =
+                    fx[idx..j].iter().filter(|g| is_geo(g) || is_pointwise(g)).collect();
+                let exec = build_geom_exec(&steps, w, h, out_w, out_h, u, cam3d, burst_index, 1, 1);
                 let fits = match &exec {
                     GeomExec::Legacy => true,
                     GeomExec::Fused(p) => {
@@ -335,12 +325,19 @@ pub fn plan_chain(
                     Some(RawKind::Barrier { .. }) => kmap[ri + 1],
                     _ => 1,
                 };
-                let steps: Vec<&FxInstance> = fx[*i..*j]
-                    .iter()
-                    .filter(|g| is_geo(g) || is_pointwise(g))
-                    .collect();
+                let steps: Vec<&FxInstance> =
+                    fx[*i..*j].iter().filter(|g| is_geo(g) || is_pointwise(g)).collect();
                 let exec = build_geom_exec(
-                    &steps, w, h, out_w, out_h, u, cam3d, burst_index, cur_k, k_out,
+                    &steps,
+                    w,
+                    h,
+                    out_w,
+                    out_h,
+                    u,
+                    cam3d,
+                    burst_index,
+                    cur_k,
+                    k_out,
                 );
                 match &exec {
                     GeomExec::Fused(p) => {

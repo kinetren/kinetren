@@ -89,7 +89,8 @@ fn balanced_body(src: &str, open: usize) -> &str {
 /// тогда, когда его перестанут править.
 fn command_variants() -> Vec<String> {
     let path = workspace_root().join("libs/kt-model/src/model.rs");
-    let src = strip_comments(&std::fs::read_to_string(&path).expect("нет libs/kt-model/src/model.rs"));
+    let src =
+        strip_comments(&std::fs::read_to_string(&path).expect("нет libs/kt-model/src/model.rs"));
     let at = src.find("pub enum Command {").expect("в model.rs нет `pub enum Command {`");
     let body = balanced_body(&src, src[at..].find('{').unwrap() + at);
 
@@ -164,7 +165,8 @@ fn constructs(hay: &str, name: &str) -> bool {
 /// Элементы `ops.rs` верхнего уровня: (имя функции, тело).
 fn ops_items() -> Vec<(String, String)> {
     let path = workspace_root().join("libs/kt-model/src/ops.rs");
-    let src = strip_comments(&std::fs::read_to_string(&path).expect("нет libs/kt-model/src/ops.rs"));
+    let src =
+        strip_comments(&std::fs::read_to_string(&path).expect("нет libs/kt-model/src/ops.rs"));
     let mut out = Vec::new();
     let mut starts: Vec<usize> = Vec::new();
     for (off, line) in src.match_indices('\n') {
@@ -455,10 +457,9 @@ fn scene(
         ],
         E::Region => vec![("грань региона", egui::pos2(g.tick_to_x(300_000), ruler_y))],
         // окно перехода, подальше от стыка: там ручки, а это про ЖЕСТ
-        E::Transition => vec![(
-            "окно перехода",
-            egui::pos2(g.tick_to_x(36_000), g.row_center_y(video_row)),
-        )],
+        E::Transition => {
+            vec![("окно перехода", egui::pos2(g.tick_to_x(36_000), g.row_center_y(video_row)))]
+        }
     };
     (h, pos)
 }
@@ -709,10 +710,7 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
                      FADE_IN/FADE_OUT у свободного края; жест уголка, t173",
                 ),
             ),
-            (
-                Verb::Rename,
-                Reach::Absent("переход безымянен: он между событиями, его «имя» — вид"),
-            ),
+            (Verb::Rename, Reach::Absent("переход безымянен: он между событиями, его «имя» — вид")),
             (Verb::Delete, menu(tr(k::tl::menu::REMOVE_TRANSITION))),
         ],
         E::Area => vec![
@@ -723,8 +721,10 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
         E::Morpher => vec![
             (
                 Verb::Create,
-                Reach::Elsewhere("пункт ADD_MORPHER в меню пустого места; на дорожке — \
-                                  глагол Create у самой MorphLane"),
+                Reach::Elsewhere(
+                    "пункт ADD_MORPHER в меню пустого места; на дорожке — \
+                                  глагол Create у самой MorphLane",
+                ),
             ),
             (Verb::Rename, Reach::Absent("морфер безымянен: это слой правок, а не объект")),
             (Verb::Delete, menu(tr(k::tl::menu::REMOVE_MORPHER))),

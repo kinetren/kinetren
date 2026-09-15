@@ -60,11 +60,26 @@ fn t297_routing_single_legacy_multi_fused() {
     let pan = FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.3, pan_y: -0.2, zoom: 1.5 };
     let mir = FxInstance::Mirror { horizontal: true, vertical: false };
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
-    assert!(matches!(build_geom_exec(&[&pan], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Legacy));
-    assert!(matches!(build_geom_exec(&[&mir], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Legacy));
-    assert!(matches!(build_geom_exec(&[&grid], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Fused(_)));
-    assert!(matches!(build_geom_exec(&[&grid, &pan], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Fused(_)));
-    assert!(matches!(build_geom_exec(&[&mir, &grid], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Fused(_)));
+    assert!(matches!(
+        build_geom_exec(&[&pan], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        GeomExec::Legacy
+    ));
+    assert!(matches!(
+        build_geom_exec(&[&mir], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        GeomExec::Legacy
+    ));
+    assert!(matches!(
+        build_geom_exec(&[&grid], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        GeomExec::Fused(_)
+    ));
+    assert!(matches!(
+        build_geom_exec(&[&grid, &pan], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        GeomExec::Fused(_)
+    ));
+    assert!(matches!(
+        build_geom_exec(&[&mir, &grid], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        GeomExec::Fused(_)
+    ));
 }
 
 /// Зеркало ПОСЛЕ сетки — точная перестановка: слитая серия обязана дать
@@ -254,11 +269,8 @@ fn t296_net_identity_chain_preserves_detail() {
         camera: None,
     };
     let grid_c = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
-    let out3d = apply_video_chain(
-        &[grid_c.clone(), p3(1.0), grid_c, p3(4.0)],
-        checkerboard(),
-        &ctx3d,
-    );
+    let out3d =
+        apply_video_chain(&[grid_c.clone(), p3(1.0), grid_c, p3(4.0)], checkerboard(), &ctx3d);
     // контраст по центральной трети кадра
     let mut sum = 0u64;
     let mut n = 0u64;
@@ -331,8 +343,14 @@ fn t300_ss_taps_and_routing_boundary() {
     // слитый проход ради суперсемплинга
     let pan1 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 };
     let pan_min = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 0.9 };
-    assert!(matches!(build_geom_exec(&[&pan1], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Legacy));
-    assert!(matches!(build_geom_exec(&[&pan_min], W, H, W, H, 0.5, None, 90_000, 1, 1), GeomExec::Fused(_)));
+    assert!(matches!(
+        build_geom_exec(&[&pan1], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        GeomExec::Legacy
+    ));
+    assert!(matches!(
+        build_geom_exec(&[&pan_min], W, H, W, H, 0.5, None, 90_000, 1, 1),
+        GeomExec::Fused(_)
+    ));
 
     // детерминизм слитого суперсемплинга
     let a = run(std::slice::from_ref(&pan_min));
@@ -357,7 +375,8 @@ fn bench_geom_1080p() {
         px[3] = 255;
     }
     let mk = || Frame { w: bw, h: bh, rgba: rgba.clone(), has_alpha: false };
-    let bctx = VideoFxCtx { out_w: bw, out_h: bh, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 };
+    let bctx =
+        VideoFxCtx { out_w: bw, out_h: bh, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 };
     let ctx3d = VideoFxCtx {
         cam3d: Some(Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 }),
         ..bctx
@@ -388,34 +407,36 @@ fn bench_geom_1080p() {
             out.h
         );
     };
-    bench("pan legacy (zoom 1.5)", &[FxInstance::Pan {
-        mode: PanMode::Stretch,
-        pan_x: 0.0,
-        pan_y: 0.0,
-        zoom: 1.5,
-    }], &bctx);
+    bench(
+        "pan legacy (zoom 1.5)",
+        &[FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 1.5 }],
+        &bctx,
+    );
     bench("grid 2x2 слитый + SS 2x2", std::slice::from_ref(&grid), &bctx);
-    bench("цепочка пользователя grid→pan3d→grid→pan3d(зум)", &[
-        grid.clone(),
-        p3(1.0),
-        grid.clone(),
-        p3(4.0),
-    ], &ctx3d);
+    bench(
+        "цепочка пользователя grid→pan3d→grid→pan3d(зум)",
+        &[grid.clone(), p3(1.0), grid.clone(), p3(4.0)],
+        &ctx3d,
+    );
     bench("pan3d одиночный (perpixel-пробы)", &[p3(0.9)], &ctx3d);
     // K×-барьеры (п.314): на 1080p k_cap = 4096/1920 = 2 — барьер-сегмент
     // работает в 3840×2160
     let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
-    bench("grid→vhs(K=2)→zoom, барьер в 3840×2160", &[
-        grid.clone(),
-        FxInstance::Vhs { rgb_shift: 2, bleed: 0.3, scan_step: 5, jitter: 0.4 },
-        zoom2.clone(),
-    ], &bctx);
+    bench(
+        "grid→vhs(K=2)→zoom, барьер в 3840×2160",
+        &[
+            grid.clone(),
+            FxInstance::Vhs { rgb_shift: 2, bleed: 0.3, scan_step: 5, jitter: 0.4 },
+            zoom2.clone(),
+        ],
+        &bctx,
+    );
     bench("grid→blur(K=2)→zoom", &[grid.clone(), FxInstance::blur(8), zoom2.clone()], &bctx);
-    bench("grid→greenscreen(tap)→zoom", &[
-        grid,
-        FxInstance::greenscreen([0, 255, 0], 70, 25),
-        zoom2,
-    ], &bctx);
+    bench(
+        "grid→greenscreen(tap)→zoom",
+        &[grid, FxInstance::greenscreen([0, 255, 0], 70, 25), zoom2],
+        &bctx,
+    );
 }
 
 /// Перф-печать Р.47 (п.336): цена новых эффектов на 1080p, нс/px.
@@ -450,36 +471,33 @@ fn bench_fx_1080p() {
     };
     let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
     let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: true };
-    bench("colorgrade+vignette (2 барьера)", &[
-        FxInstance::ColorGrade { brightness: 0.05, contrast: 0.3, saturation: 1.4, hue: 20.0 },
-        FxInstance::vignette(),
-    ]);
+    bench(
+        "colorgrade+vignette (2 барьера)",
+        &[
+            FxInstance::ColorGrade { brightness: 0.05, contrast: 0.3, saturation: 1.4, hue: 20.0 },
+            FxInstance::vignette(),
+        ],
+    );
     bench("sharpen r=3", &[FxInstance::Sharpen { amount: 1.5, radius: 3 }]);
     bench("pixelate 12", &[FxInstance::Pixelate { size: 12 }]);
     bench("chroma_ab 0.02", &[FxInstance::ChromaticAberration { amount: 0.02 }]);
-    bench("radial_blur zoom (16 тапов)", &[FxInstance::RadialBlur {
-        amount: 0.5,
-        center_x: 0.0,
-        center_y: 0.0,
-        spin: false,
-    }]);
-    bench("radial_blur spin", &[FxInstance::RadialBlur {
-        amount: 0.5,
-        center_x: 0.0,
-        center_y: 0.0,
-        spin: true,
-    }]);
+    bench(
+        "radial_blur zoom (16 тапов)",
+        &[FxInstance::RadialBlur { amount: 0.5, center_x: 0.0, center_y: 0.0, spin: false }],
+    );
+    bench(
+        "radial_blur spin",
+        &[FxInstance::RadialBlur { amount: 0.5, center_x: 0.0, center_y: 0.0, spin: true }],
+    );
     bench("halftone 8/45", &[FxInstance::Halftone { size: 8, angle: 45.0 }]);
-    bench("greenscreen→drop_shadow (тень с альфой)", &[
-        FxInstance::greenscreen([0, 255, 0], 70, 25),
-        FxInstance::drop_shadow(),
-    ]);
-    bench("grid→lens→twirl→zoom (слитый ран, perpixel-SS)", &[
-        grid,
-        FxInstance::lens_distort(),
-        FxInstance::twirl(),
-        zoom2,
-    ]);
+    bench(
+        "greenscreen→drop_shadow (тень с альфой)",
+        &[FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::drop_shadow()],
+    );
+    bench(
+        "grid→lens→twirl→zoom (слитый ран, perpixel-SS)",
+        &[grid, FxInstance::lens_distort(), FxInstance::twirl(), zoom2],
+    );
     bench("kaleidoscope соло", &[FxInstance::kaleidoscope()]);
     bench("cylinder 0.8", &[FxInstance::Cylinder3d { curvature: 0.8 }]);
 }
@@ -854,10 +872,7 @@ fn t304_k_only_with_squeeze_and_zoom() {
     assert_eq!(k_of(&[vhs.clone(), zoom2.clone()]), vec![1], "сжатия выше нет");
     assert_eq!(k_of(&[grid.clone(), vhs.clone(), zoom2.clone()]), vec![2], "сжатие+зум → K=2");
     // соседние барьеры — один K (ресемплов между барьерами не бывает)
-    assert_eq!(
-        k_of(&[grid.clone(), vhs.clone(), FxInstance::blur(8), zoom2.clone()]),
-        vec![2, 2]
-    );
+    assert_eq!(k_of(&[grid.clone(), vhs.clone(), FxInstance::blur(8), zoom2.clone()]), vec![2, 2]);
     // t68-цепочка пользователя: хвост после барьеров не зумит — K=1
     assert_eq!(
         k_of(&[mir.clone(), grid.clone(), FxInstance::glow(1.0), FxInstance::vhs(2, 0.5)]),
@@ -1044,8 +1059,7 @@ fn t331_corner_pin() {
 
     // маркерный кадр: белое поле, чёрный блок 4×4 в центре
     let marker = || {
-        let mut m =
-            Frame { w: W, h: H, rgba: vec![255u8; (W * H * 4) as usize], has_alpha: false };
+        let mut m = Frame { w: W, h: H, rgba: vec![255u8; (W * H * 4) as usize], has_alpha: false };
         for y in H / 2 - 2..H / 2 + 2 {
             for x in W / 2 - 2..W / 2 + 2 {
                 let i = ((y * W + x) * 4) as usize;
@@ -1190,12 +1204,8 @@ fn t332_barrier_semantics() {
     assert_ne!(ca.rgba[edge], src.rgba[edge], "chroma: red must shift near the edge");
 
     // RadialBlur: центр — неподвижная точка луча, край смазан
-    let rb = run(&[FxInstance::RadialBlur {
-        amount: 0.8,
-        center_x: 0.0,
-        center_y: 0.0,
-        spin: false,
-    }]);
+    let rb =
+        run(&[FxInstance::RadialBlur { amount: 0.8, center_x: 0.0, center_y: 0.0, spin: false }]);
     let mut edge_moved = 0;
     for x in 0..W {
         let i = ((H / 4 * W + x) * 4) as usize;
@@ -1258,18 +1268,10 @@ fn t332_barrier_semantics() {
             "halftone output is binary mono: {pxl:?}"
         );
     }
-    let dark_dots = ht
-        .rgba
-        .chunks_exact(4)
-        .take((W * H / 4) as usize)
-        .filter(|p| p[0] == 0)
-        .count();
-    let light_dots = ht
-        .rgba
-        .chunks_exact(4)
-        .skip((W * H * 3 / 4) as usize)
-        .filter(|p| p[0] == 0)
-        .count();
+    let dark_dots =
+        ht.rgba.chunks_exact(4).take((W * H / 4) as usize).filter(|p| p[0] == 0).count();
+    let light_dots =
+        ht.rgba.chunks_exact(4).skip((W * H * 3 / 4) as usize).filter(|p| p[0] == 0).count();
     assert!(
         dark_dots > light_dots,
         "darker area must grow bigger dots: {dark_dots} vs {light_dots}"
@@ -1316,8 +1318,7 @@ fn t333_warp_prims() {
     // (4) twirl: центр — неподвижная точка; точка на радиусе повёрнута.
     // Маркерный кадр: белое поле, чёрный блок справа от центра.
     let marker_at = |mx: u32, my: u32| {
-        let mut f =
-            Frame { w: W, h: H, rgba: vec![255u8; (W * H * 4) as usize], has_alpha: false };
+        let mut f = Frame { w: W, h: H, rgba: vec![255u8; (W * H * 4) as usize], has_alpha: false };
         for y in my.saturating_sub(1)..(my + 2).min(H) {
             for x in mx.saturating_sub(1)..(mx + 2).min(W) {
                 let i = ((y * W + x) * 4) as usize;
@@ -1355,8 +1356,7 @@ fn t333_warp_prims() {
     // видимо уезжает с исходного места
     let out = apply_video_chain(std::slice::from_ref(&tw), marker_at(W / 2 + 9, H / 2), &ctx());
     let (mx, my) = centroid(&out);
-    let moved =
-        ((mx - (W / 2 + 9) as f64).powi(2) + (my - (H / 2) as f64).powi(2)).sqrt();
+    let moved = ((mx - (W / 2 + 9) as f64).powi(2) + (my - (H / 2) as f64).powi(2)).sqrt();
     assert!(moved > 4.0, "twirl must move an off-center marker: ({mx:.1}, {my:.1})");
 
     // (5) lens: сдвиг маркера по формуле. Обратная карта: выходной r
@@ -1387,10 +1387,7 @@ fn t333_warp_prims() {
     let mut checked = 0;
     for y in 0..H {
         for x in 0..W {
-            let (dx, dy) = (
-                x as f64 + 0.5 - W as f64 / 2.0,
-                y as f64 + 0.5 - H as f64 / 2.0,
-            );
+            let (dx, dy) = (x as f64 + 0.5 - W as f64 / 2.0, y as f64 + 0.5 - H as f64 / 2.0);
             let phi = dy.atan2(dx);
             let r = (dx * dx + dy * dy).sqrt() / (H as f64 / 2.0);
             // глубоко внутри первой ПОЛОВИНЫ клина (там m == q — тождество)
@@ -1415,10 +1412,7 @@ fn t333_warp_prims() {
     // там семплится ближе к центру, картинка распухает к краю)
     let out = apply_video_chain(std::slice::from_ref(&cyl), marker_at(3 * W / 4, H / 2), &ctx());
     let (mx, _) = centroid(&out);
-    assert!(
-        mx > (3 * W / 4) as f64 + 2.0,
-        "cylinder must push mid-side content outward: {mx:.1}"
-    );
+    assert!(mx > (3 * W / 4) as f64 + 2.0, "cylinder must push mid-side content outward: {mx:.1}");
 
     // (8) серия варпов + зум — ОДИН ран
     let fx = vec![

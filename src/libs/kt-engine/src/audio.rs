@@ -275,7 +275,11 @@ fn overlap_weight(clips: &[AudioClip], covers: &OverlapMap, ci: usize, frame: i6
                 0.5
             };
             // equal-power: ранний затухает √(1−t), поздний нарастает √t
-            if ci == first { ((1.0 - t).max(0.0)).sqrt() as f32 } else { (t.max(0.0)).sqrt() as f32 }
+            if ci == first {
+                ((1.0 - t).max(0.0)).sqrt() as f32
+            } else {
+                (t.max(0.0)).sqrt() as f32
+            }
         }
         n => 1.0 / n as f32,
     }
@@ -341,9 +345,9 @@ impl AudioRenderer {
             // же, «партнёра» просто нет, и материал напротив — тишина
             // разрезанная морфером цель (Р.35): стык у того куска, чья
             // граница на нём стоит; id оригинала носит кусок №0
-            if let Some(a) =
-                t.a.and_then(|id| clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.end == jf))
-            {
+            if let Some(a) = t.a.and_then(|id| {
+                clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.end == jf)
+            }) {
                 // reversed-FX: зеркальный якорь источника завязан на
                 // window_end — ручку не расширяем (ограничение v1, п.136),
                 // фейд-вес применяется как есть
@@ -353,10 +357,9 @@ impl AudioRenderer {
                 a.tail_ext = ext.max(0);
                 a.ext_end += a.tail_ext;
             }
-            if let Some(b) = t
-                .b
-                .and_then(|id| clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.start == jf))
-            {
+            if let Some(b) = t.b.and_then(|id| {
+                clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.start == jf)
+            }) {
                 let ext = if b.reversed && !b.fx.is_empty() { 0 } else { b.start - w0 };
                 b.fade_in = Some((w0, w1));
                 b.fade_in_curve = t.audio;
@@ -565,9 +568,8 @@ impl AudioRenderer {
                 match burst {
                     Some(b) => {
                         for k in 0..take {
-                            let w = fade_weight(clip, f + k)
-                                * self.overlap_at(ci, f + k)
-                                * clip.gain;
+                            let w =
+                                fade_weight(clip, f + k) * self.overlap_at(ci, f + k) * clip.gain;
                             let oi = ((f + k - range.start) as usize) * AUDIO_CHANNELS;
                             let sk = if clip.reversed { within - k } else { within + k };
                             let si = (sk as usize) * AUDIO_CHANNELS;
@@ -666,8 +668,14 @@ impl AudioRenderer {
         let clip_len = clip.end - clip.start;
         let material = -clip.head_ext..clip_len + clip.tail_ext;
         let src_window_end = clip.source_in
-            + kt_fx::chain_source_window_ext(&clip.fx, &clip.auto, clip_len, material.clone(), material)
-                .end;
+            + kt_fx::chain_source_window_ext(
+                &clip.fx,
+                &clip.auto,
+                clip_len,
+                material.clone(),
+                material,
+            )
+            .end;
         // ОСЬ ЗЕРКАЛА ≠ конец окна (Р.43, п.292). Окно включает запас
         // ресемплера (`WARP_SOURCE_MARGIN_FRAMES`, 8192 кадра = 170.7 мс) —
         // это правильная граница «дальше тишина», но негодная ось: зеркаля
@@ -817,7 +825,12 @@ impl AudioRenderer {
                 // кадр файла: расходись эти два расчёта — вечный промах кэша.
                 let len = c.end - c.start;
                 let used = kt_fx::chain_source_used(&c.fx, &c.auto, len);
-                let w = kt_fx::chain_source_window(&c.fx, &c.auto, len, (from - c.start)..(to - c.start));
+                let w = kt_fx::chain_source_window(
+                    &c.fx,
+                    &c.auto,
+                    len,
+                    (from - c.start)..(to - c.start),
+                );
                 (c.source_in + used - w.end, c.source_in + used - w.start)
             } else {
                 // с FX: варп потребляет источник по rate_integral, а не

@@ -315,8 +315,11 @@ impl BurstCache {
         fx_hash: u64,
         idx: i64,
     ) -> Option<Arc<VideoFrame>> {
-        match self.get(BurstKey { source, kind: BurstKind::PostFxVideo { quality, fx_hash }, idx })?
-        {
+        match self.get(BurstKey {
+            source,
+            kind: BurstKind::PostFxVideo { quality, fx_hash },
+            idx,
+        })? {
             Payload::Video(f) => Some(f),
             Payload::Audio(_) => unreachable!("postfx key holds audio payload"),
         }
@@ -669,8 +672,7 @@ mod postfx_tests {
     /// не дырявя пре-FX полосу (у неё свой kind).
     #[test]
     fn t65b_postfx_evicts_under_budget() {
-        let cache =
-            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 64 });
+        let cache = BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 64 });
         let src = SourceId(1);
         let q = Quality { width: 2, height: 2 };
         cache.insert_video_span(src, Some(q), 0, 3000, vframe(32));

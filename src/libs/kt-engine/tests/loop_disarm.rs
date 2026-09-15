@@ -27,8 +27,13 @@ const RE: i64 = 2 * 48_000 + 264;
 const SPAN: i64 = RE - RS;
 
 fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     let mut media_ids: Vec<MediaId> = clips.iter().map(|c| c.media).collect();
     media_ids.sort();
     media_ids.dedup();
@@ -40,7 +45,14 @@ fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
     p
 }
 
-fn audio_clip(id: u64, lane: u32, start_f: i64, dur_f: i64, src_in_f: i64, media: u64) -> ClipEvent {
+fn audio_clip(
+    id: u64,
+    lane: u32,
+    start_f: i64,
+    dur_f: i64,
+    src_in_f: i64,
+    media: u64,
+) -> ClipEvent {
     ClipEvent {
         id: ClipId(id),
         link_group: None,
@@ -115,7 +127,11 @@ fn bump_consumed(player: &Player, frames: i64) {
 
 /// «Колбэк»: снять `frames` кадров из кольца, продвигая consumed_frames
 /// квантами колбэка (2048) ровно на снятое — playhead в конце точен.
-fn collect_frames(player: &Player, pop: &mut dyn FnMut() -> Option<f32>, frames: usize) -> Vec<f32> {
+fn collect_frames(
+    player: &Player,
+    pop: &mut dyn FnMut() -> Option<f32>,
+    frames: usize,
+) -> Vec<f32> {
     let total = frames * CH;
     let mut got = Vec::with_capacity(total);
     let mut bumped = 0i64;

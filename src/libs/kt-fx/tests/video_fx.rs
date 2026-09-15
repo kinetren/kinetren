@@ -79,10 +79,7 @@ fn t26_golden_hashes_all_effects() {
         ),
         ("mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
         ("blur", FxInstance::blur(8)),
-        (
-            "greenscreen",
-            FxInstance::greenscreen([0, 255, 0], 70, 25 ),
-        ),
+        ("greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
         ("edges", FxInstance::edges(48)),
         ("noise", FxInstance::noise(0.3)),
         ("vhs", FxInstance::vhs(4, 0.4)),
@@ -241,12 +238,7 @@ fn t68_pooled_chain_identical_with_dirty_scratch() {
     ];
     let mut dirty = FxScratch::default();
     // испачкать пул чужими данными разных размеров
-    let junk = apply_video_chain_pooled(
-        &[FxInstance::blur(5)],
-        test_frame(),
-        &ctx(),
-        &mut dirty,
-    );
+    let junk = apply_video_chain_pooled(&[FxInstance::blur(5)], test_frame(), &ctx(), &mut dirty);
     drop(junk);
     for fx in &all {
         let fresh = apply_video_chain(fx, test_frame(), &ctx());
@@ -475,7 +467,6 @@ fn t228_glow_vhs_greenscreen_params() {
     assert!(alpha_same, "подавление засветки не трогает альфу");
 }
 
-
 /// Тест 328 (Р.47, п.331): golden-цикл по ВИДЕО-подмножеству реестра
 /// FxInstance::all() — хэш дефолт-шаблона каждого эффекта на test_frame.
 /// Замок полноты в обе стороны: вид без строки в таблице и строка без
@@ -521,10 +512,8 @@ fn t328_golden_cycle_over_the_registry() {
         ("kaleidoscope", 0x9d601aeee14f4062),
         ("cylinder3d", 0x9178d747ce3f9976),
     ];
-    let video: Vec<&FxInstance> = FxInstance::all()
-        .iter()
-        .filter(|f| !f.is_audio() && !f.is_layer_mix())
-        .collect();
+    let video: Vec<&FxInstance> =
+        FxInstance::all().iter().filter(|f| !f.is_audio() && !f.is_layer_mix()).collect();
     let table: std::collections::BTreeMap<&str, u64> = GOLDEN_ALL.iter().copied().collect();
     let tags: std::collections::BTreeSet<&str> = video.iter().map(|f| f.tag()).collect();
     assert_eq!(

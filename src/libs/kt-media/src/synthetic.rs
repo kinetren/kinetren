@@ -150,8 +150,7 @@ impl SyntheticSource {
                     0.0
                 };
                 let bed = 0.02
-                    * (2.0 * std::f64::consts::PI * 200.0 * n as f64
-                        / AUDIO_SAMPLE_RATE as f64)
+                    * (2.0 * std::f64::consts::PI * 200.0 * n as f64 / AUDIO_SAMPLE_RATE as f64)
                         .sin() as f32;
                 click + bed
             }
@@ -313,13 +312,7 @@ impl MediaSource for CheckerSource {
                 rgba[i + 3] = 255;
             }
         }
-        Ok(VideoFrame {
-            pts,
-            width: w,
-            height: h,
-            rgba: rgba.into_boxed_slice(),
-            has_alpha: false,
-        })
+        Ok(VideoFrame { pts, width: w, height: h, rgba: rgba.into_boxed_slice(), has_alpha: false })
     }
 
     fn keyframe_before(&self, pts: Tick) -> Option<Tick> {

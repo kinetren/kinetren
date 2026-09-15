@@ -24,8 +24,13 @@ fn no_underruns(s: kt_engine::RenderStats) {
 const CH: usize = AUDIO_CHANNELS;
 
 fn fx_project(fx: Vec<FxInstance>, pattern_path: &str, dur_frames: i64) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: pattern_path.into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -282,7 +287,12 @@ fn t6_graph_rebuild_mid_tail_preserves_state() {
     });
     let r2 = AudioRenderer::new(&p2);
     r2.sync_fx(&mut store_b); // state клипа 1 обязан пережить пересборку
-    no_underruns(r2.render_frames_with(&mut fb, &mut store_b, half as i64, &mut split[half * CH..]));
+    no_underruns(r2.render_frames_with(
+        &mut fb,
+        &mut store_b,
+        half as i64,
+        &mut split[half * CH..],
+    ));
 
     assert_eq!(full, split, "пересборка графа не должна менять звук (state сохранён)");
 }
@@ -323,12 +333,7 @@ fn t4_automation_changes_rate_over_time() {
         frames: Default::default(),
         automation: vec![],
     }];
-    let p = fx_project_auto(
-        fx,
-        rate_curve(&automation_rate_profile(), dur),
-        "synth:sine:240",
-        dur,
-    );
+    let p = fx_project_auto(fx, rate_curve(&automation_rate_profile(), dur), "synth:sine:240", dur);
     let r = AudioRenderer::new(&p);
     let mut f = direct(AudioPattern::Sine { hz: 240.0 });
     let mut store = FxStateStore::new();
@@ -424,8 +429,7 @@ fn t4_automation_consumes_source_by_integral() {
 fn t31_keyframes_anchor_to_event_time() {
     let dur = 20 * AUDIO_SAMPLE_RATE as i64; // L, кадры
     let profile_a: Vec<(f64, f64)> = vec![(0.40, 1.0), (0.50, 0.5), (0.70, 0.5), (0.75, 1.0)];
-    let mut profile_b: Vec<(f64, f64)> =
-        vec![(0.10, 1.0), (0.18, 2.0), (0.26, 2.0), (0.34, 1.0)];
+    let mut profile_b: Vec<(f64, f64)> = vec![(0.10, 1.0), (0.18, 2.0), (0.26, 2.0), (0.34, 1.0)];
     profile_b.extend(profile_a.iter().copied());
 
     let render = |profile: Vec<(f64, f64)>| -> Vec<f32> {
@@ -454,9 +458,8 @@ fn t31_keyframes_anchor_to_event_time() {
     let out_b = render(profile_b.clone());
 
     // материал, играющий на ВЫХОДНОМ прогрессе τ (ramp кодирует кадр)
-    let material_at_out = |out: &[f32], tau: f64| -> f64 {
-        out[((tau * dur as f64) as usize) * CH] as f64 / 1e-6
-    };
+    let material_at_out =
+        |out: &[f32], tau: f64| -> f64 { out[((tau * dur as f64) as usize) * CH] as f64 / 1e-6 };
     // фактическая скорость на ВЫХОДНОМ прогрессе τ (окно 0.5 c)
     let rate_at_out = |out: &[f32], tau: f64| -> f64 {
         let x = (tau * dur as f64) as usize;
@@ -488,8 +491,8 @@ fn t31_keyframes_anchor_to_event_time() {
     let ma = material_at_out(&out_a, 0.5);
     let mb = material_at_out(&out_b, 0.5);
     assert!(mb > ma, "с ранним ускорением к τ=0.5 съедено БОЛЬШЕ материала: {mb} vs {ma}");
-    let pred = kt_fx::source_progress(1.0, &profile_b, 0.5)
-        - kt_fx::source_progress(1.0, &profile_a, 0.5);
+    let pred =
+        kt_fx::source_progress(1.0, &profile_b, 0.5) - kt_fx::source_progress(1.0, &profile_a, 0.5);
     let got = (mb - ma) / dur as f64;
     assert!(
         (got - pred).abs() < 8192.0 / dur as f64,
@@ -536,7 +539,8 @@ fn t213_audio_gain_follows_its_curve() {
     no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
 
     let rms = |from: usize, n: usize| -> f64 {
-        let s: f64 = out[from * CH..(from + n) * CH].iter().map(|v| (*v as f64) * (*v as f64)).sum();
+        let s: f64 =
+            out[from * CH..(from + n) * CH].iter().map(|v| (*v as f64) * (*v as f64)).sum();
         (s / (n * CH) as f64).sqrt()
     };
     let win = AUDIO_SAMPLE_RATE as usize / 4;
@@ -550,10 +554,7 @@ fn t213_audio_gain_follows_its_curve() {
     // сглаживание параметра (one-pole ~20 мс) чуть отстаёт от кривой —
     // это не дефект, а то, ради чего оно и стоит (без него тут щёлкало бы)
     let peak = rms(dur as usize / 2 - 375, 750);
-    assert!(
-        (peak - 0.3536).abs() < 0.03,
-        "в 0 dB ожидается исходный уровень, вышло {peak:.4}"
-    );
+    assert!((peak - 0.3536).abs() < 0.03, "в 0 dB ожидается исходный уровень, вышло {peak:.4}");
 
     // без кривой звук байт-в-байт прежний (константный путь не тронут)
     let plain = fx_project(vec![FxInstance::gain(0.0)], "synth:sine:440", dur);
@@ -872,9 +873,7 @@ fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
     let rms = |s: &[f32]| -> f64 {
         (s.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / s.len() as f64).sqrt()
     };
-    let frames = |a: f64, b: f64| {
-        ((a * 48_000.0) as usize * CH)..((b * 48_000.0) as usize * CH)
-    };
+    let frames = |a: f64, b: f64| ((a * 48_000.0) as usize * CH)..((b * 48_000.0) as usize * CH);
     let head = rms(&out[frames(0.0, 0.5)]);
     // окно сразу после фейда входа (2.4..3.6 c): хвост реверба от громкой
     // первой половины ещё жирный (decay 0.95 ≈ t60 5 c)
@@ -937,25 +936,19 @@ fn t323_slot_order_matters_on_nonlinear_chains() {
         no_underruns(r.render_frames_with(&mut f, &mut store, 0, &mut out));
         out
     };
-    let quiet_then_drive =
-        render(vec![FxInstance::gain(-40.0), FxInstance::Distortion {
-            drive_db: 24.0,
-            tone: 1.0,
-            mix: 1.0,
-        }]);
-    let drive_then_quiet =
-        render(vec![
-            FxInstance::Distortion { drive_db: 24.0, tone: 1.0, mix: 1.0 },
-            FxInstance::gain(-40.0),
-        ]);
+    let quiet_then_drive = render(vec![
+        FxInstance::gain(-40.0),
+        FxInstance::Distortion { drive_db: 24.0, tone: 1.0, mix: 1.0 },
+    ]);
+    let drive_then_quiet = render(vec![
+        FxInstance::Distortion { drive_db: 24.0, tone: 1.0, mix: 1.0 },
+        FxInstance::gain(-40.0),
+    ]);
     let rms = |s: &[f32]| -> f64 {
         (s.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / s.len() as f64).sqrt()
     };
     let (a, b) = (rms(&quiet_then_drive), rms(&drive_then_quiet));
-    assert!(
-        a / b > 2.0 || b / a > 2.0,
-        "nonlinear chain must depend on slot order: {a} vs {b}"
-    );
+    assert!(a / b > 2.0 || b / a > 2.0, "nonlinear chain must depend on slot order: {a} vs {b}");
 }
 
 /// Тест 324: спектральные пробы пятёрки Ка2 — формулы делают то, что
@@ -1003,23 +996,17 @@ fn t324_ka2_spectral_probes() {
     assert!((high / dry8 - 1.0).abs() < 0.1, "EQ low shelf must not touch 8 kHz");
 
     // Bitcrusher bits 3 поднимает шумовой пол на чистом синусе
-    let crushed = render(
-        vec![FxInstance::Bitcrusher { bits: 3.0, rate_hz: 48_000.0, mix: 1.0 }],
-        1000.0,
-    );
+    let crushed =
+        render(vec![FxInstance::Bitcrusher { bits: 3.0, rate_hz: 48_000.0, mix: 1.0 }], 1000.0);
     let clean = render(vec![], 1000.0);
-    let mono: Vec<f32> =
-        crushed.chunks_exact(CH).map(|f| (f[0] + f[1]) * 0.5).collect();
-    let mono_clean: Vec<f32> =
-        clean.chunks_exact(CH).map(|f| (f[0] + f[1]) * 0.5).collect();
+    let mono: Vec<f32> = crushed.chunks_exact(CH).map(|f| (f[0] + f[1]) * 0.5).collect();
+    let mono_clean: Vec<f32> = clean.chunks_exact(CH).map(|f| (f[0] + f[1]) * 0.5).collect();
     let sp = spectrum_db(&mono[8192..16384]);
     let sp_clean = spectrum_db(&mono_clean[8192..16384]);
     // квант ПЕРИОДИКИ — гребёнка гармоник, не сплошной пол: меряем ПИК
     // в полосе вдали от тона (бин = 48000/8192 ≈ 5.86 Гц; 1000..3000 =
     // 5.9..17.6 кГц — там живут нечётные гармоники кванта)
-    let peak = |sp: &[f32]| -> f32 {
-        sp[1000..3000].iter().cloned().fold(f32::MIN, f32::max)
-    };
+    let peak = |sp: &[f32]| -> f32 { sp[1000..3000].iter().cloned().fold(f32::MIN, f32::max) };
     assert!(
         peak(&sp) > peak(&sp_clean) + 60.0,
         "3-bit quantization must spawn harmonics: {} vs {}",

@@ -67,9 +67,7 @@ fn pyramid(mono: &[f32]) -> Vec<Vec<(i16, i16)>> {
         let prev = levels.last().unwrap();
         let next: Vec<(i16, i16)> = prev
             .chunks(2)
-            .map(|p| {
-                (p.iter().map(|x| x.0).min().unwrap(), p.iter().map(|x| x.1).max().unwrap())
-            })
+            .map(|p| (p.iter().map(|x| x.0).min().unwrap(), p.iter().map(|x| x.1).max().unwrap()))
             .collect();
         levels.push(next);
     }

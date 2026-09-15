@@ -181,15 +181,16 @@ mod tests {
         // 2) отмена: тело спрашивает `should_stop` и выходит
         let steps = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let s = steps.clone();
-        let job2: BgJob<(), &'static str> = BgJob::spawn("t398-b", move |ctl, _send: BgSend<()>| {
-            loop {
-                if ctl.should_stop() {
-                    return "stopped";
+        let job2: BgJob<(), &'static str> =
+            BgJob::spawn("t398-b", move |ctl, _send: BgSend<()>| {
+                loop {
+                    if ctl.should_stop() {
+                        return "stopped";
+                    }
+                    s.fetch_add(1, Ordering::Release);
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
-                s.fetch_add(1, Ordering::Release);
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-        });
+            });
         std::thread::sleep(std::time::Duration::from_millis(40));
         job2.cancel();
         let mut job2 = job2;

@@ -47,8 +47,8 @@ fn catalog_values() -> Vec<(String, String)> {
         if p.extension().map(|x| x == "toml").unwrap_or(false) {
             let name = p.file_name().unwrap().to_string_lossy().into_owned();
             let src = std::fs::read_to_string(&p).expect("unreadable catalog");
-            let entries = crate::i18n::catalog::parse(&src)
-                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            let entries =
+                crate::i18n::catalog::parse(&src).unwrap_or_else(|e| panic!("{name}: {e}"));
             for entry in entries {
                 out.push((format!("{name}:{}", entry.line), entry.value));
             }
@@ -242,11 +242,7 @@ fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, St
             continue;
         }
         if p.extension().map(|x| x == "rs").unwrap_or(false) {
-            let name = p
-                .strip_prefix(root)
-                .unwrap_or(&p)
-                .to_string_lossy()
-                .into_owned();
+            let name = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().into_owned();
             if name.ends_with("_tests.rs") {
                 continue;
             }
@@ -265,12 +261,7 @@ fn walk(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, St
 fn t100_ui_chars_have_glyphs() {
     let fonts: Vec<(String, ab_glyph::FontVec)> = loaded_fonts()
         .into_iter()
-        .map(|(n, d)| {
-            (
-                n,
-                ab_glyph::FontVec::try_from_vec(d).expect("шрифт не парсится"),
-            )
-        })
+        .map(|(n, d)| (n, ab_glyph::FontVec::try_from_vec(d).expect("шрифт не парсится")))
         .collect();
 
     // символы, которые ТОЧНО должны быть/не быть — страховка самого теста:
@@ -296,10 +287,7 @@ fn t100_ui_chars_have_glyphs() {
     for (file, src) in sources() {
         for (line, ch) in literal_chars(&src) {
             if !covered(&fonts, ch) {
-                missing
-                    .entry(ch)
-                    .or_default()
-                    .push(format!("{file}:{line}"));
+                missing.entry(ch).or_default().push(format!("{file}:{line}"));
             }
         }
     }

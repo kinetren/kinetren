@@ -1045,10 +1045,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             seq_layers: kt
                 .as_ref()
                 .map(|k| {
-                    k.sequences
-                        .iter()
-                        .filter_map(|s| s.layers.clone().map(|l| (s.id, l)))
-                        .collect()
+                    k.sequences.iter().filter_map(|s| s.layers.clone().map(|l| (s.id, l))).collect()
                 })
                 .unwrap_or_default(),
         };
@@ -1323,7 +1320,8 @@ fn read_reel(
     cx: &mut ReadCtx<'_>,
     depth: usize,
 ) -> Result<(), Error> {
-    let total_of = |k: ClipKind| children.iter().filter(|c| track_kind(c) == Some(k)).count() as u32;
+    let total_of =
+        |k: ClipKind| children.iter().filter(|c| track_kind(c) == Some(k)).count() as u32;
     let video_total = total_of(ClipKind::Video);
     let layer_plan = |kind: ClipKind| -> Option<Vec<u32>> {
         let l = layers?;

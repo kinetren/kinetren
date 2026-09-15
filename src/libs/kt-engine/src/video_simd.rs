@@ -71,26 +71,16 @@ pub(crate) unsafe fn dissolve_avx2(
                 vb = _mm_or_si128(vb, alpha_fill);
             }
             // чередуем байты a и b, расширяем до u16 и сворачиваем madd'ом
-            let lo = _mm256_madd_epi16(
-                _mm256_cvtepu8_epi16(_mm_unpacklo_epi8(va, vb)),
-                coef,
-            );
-            let hi = _mm256_madd_epi16(
-                _mm256_cvtepu8_epi16(_mm_unpackhi_epi8(va, vb)),
-                coef,
-            );
+            let lo = _mm256_madd_epi16(_mm256_cvtepu8_epi16(_mm_unpacklo_epi8(va, vb)), coef);
+            let hi = _mm256_madd_epi16(_mm256_cvtepu8_epi16(_mm_unpackhi_epi8(va, vb)), coef);
             let lo = _mm256_srli_epi32::<12>(_mm256_add_epi32(lo, round));
             let hi = _mm256_srli_epi32::<12>(_mm256_add_epi32(hi, round));
             // упаковка через 128-битные половины — порядок элементов
             // сохраняется (packus 256-бит перемешал бы полосы)
-            let lo16 = _mm_packus_epi32(
-                _mm256_castsi256_si128(lo),
-                _mm256_extracti128_si256::<1>(lo),
-            );
-            let hi16 = _mm_packus_epi32(
-                _mm256_castsi256_si128(hi),
-                _mm256_extracti128_si256::<1>(hi),
-            );
+            let lo16 =
+                _mm_packus_epi32(_mm256_castsi256_si128(lo), _mm256_extracti128_si256::<1>(lo));
+            let hi16 =
+                _mm_packus_epi32(_mm256_castsi256_si128(hi), _mm256_extracti128_si256::<1>(hi));
             _mm_storeu_si128(pd.add(off).cast(), _mm_packus_epi16(lo16, hi16));
             p += 4;
         }
@@ -123,14 +113,8 @@ pub(crate) unsafe fn scale_alpha_avx2(
             let off = p * 4;
             let v = _mm256_loadu_si256(ps.add(off).cast());
             let a = if has_alpha { _mm256_srli_epi32::<24>(v) } else { opaque };
-            let na = _mm256_srli_epi32::<12>(_mm256_add_epi32(
-                _mm256_mullo_epi32(a, kv),
-                round,
-            ));
-            let out = _mm256_or_si256(
-                _mm256_and_si256(v, rgb_mask),
-                _mm256_slli_epi32::<24>(na),
-            );
+            let na = _mm256_srli_epi32::<12>(_mm256_add_epi32(_mm256_mullo_epi32(a, kv), round));
+            let out = _mm256_or_si256(_mm256_and_si256(v, rgb_mask), _mm256_slli_epi32::<24>(na));
             _mm256_storeu_si256(pd.add(off).cast(), out);
             p += 8;
         }
@@ -183,10 +167,8 @@ pub(crate) unsafe fn alpha_over_avx2(dst: &mut [u8], src: &[u8], pixels: usize) 
             let r = mix(sr, dr);
             let g = mix(sg, dg);
             let b = mix(sb, db);
-            let na = _mm256_min_epu32(
-                _mm256_add_epi32(sa, div255(_mm256_mullo_epi32(da, inv))),
-                c255,
-            );
+            let na =
+                _mm256_min_epu32(_mm256_add_epi32(sa, div255(_mm256_mullo_epi32(da, inv))), c255);
             let out = _mm256_or_si256(
                 _mm256_or_si256(r, _mm256_slli_epi32::<8>(g)),
                 _mm256_or_si256(_mm256_slli_epi32::<16>(b), _mm256_slli_epi32::<24>(na)),

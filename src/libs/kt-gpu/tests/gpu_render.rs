@@ -16,8 +16,13 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn project() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 128, height: 72, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 128,
+        height: 72,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: "synth:ramp".into() });
     }
@@ -64,11 +69,7 @@ fn sources() -> Vec<(MediaId, Box<dyn MediaSource>)> {
         .collect()
 }
 
-fn gpu_export_frames(
-    backends: &ExportBackends,
-    q: Quality,
-    grab: &[usize],
-) -> Vec<Vec<u8>> {
+fn gpu_export_frames(backends: &ExportBackends, q: Quality, grab: &[usize]) -> Vec<Vec<u8>> {
     let p = project();
     let mut out: Vec<Vec<u8>> = Vec::new();
     let mut n = 0usize;

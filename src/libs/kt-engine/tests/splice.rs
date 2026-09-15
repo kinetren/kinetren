@@ -27,8 +27,13 @@ fn direct() -> DirectFetcher {
 #[test]
 fn t19_copy_region_fragment_paste_renders_identically() {
     // клип 0..4c, регион вырезает [1c, 2.5c) из его СЕРЕДИНЫ
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -89,8 +94,13 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
     // склейка двух кусков ОДНОГО источника встык: [1c,2c) + [3c,4c) → на 10c
     // ожидание: выход на стыке равен прямому чтению источника без щелчка,
     // т.е. рендер == конкатенация двух эталонных кусков.
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -142,8 +152,16 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
     no_underruns(renderer.render_frames(&mut direct(), at1.to_audio_frames(), &mut spliced));
 
     let mut expected = vec![0f32; seg * 2 * CH];
-    no_underruns(renderer.render_frames(&mut direct(), r1.start.to_audio_frames(), &mut expected[..seg * CH]));
-    no_underruns(renderer.render_frames(&mut direct(), r2.start.to_audio_frames(), &mut expected[seg * CH..]));
+    no_underruns(renderer.render_frames(
+        &mut direct(),
+        r1.start.to_audio_frames(),
+        &mut expected[..seg * CH],
+    ));
+    no_underruns(renderer.render_frames(
+        &mut direct(),
+        r2.start.to_audio_frames(),
+        &mut expected[seg * CH..],
+    ));
 
     assert_eq!(spliced, expected, "склейка кусков должна быть sample-exact без швов");
 }

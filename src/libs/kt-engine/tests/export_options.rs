@@ -10,8 +10,13 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 fn tiny_project() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     for (id, kind, lane) in [(1u64, ClipKind::Video, 0u32), (2, ClipKind::Audio, 0)] {
         p.clips.push(ClipEvent {
@@ -131,8 +136,13 @@ fn t33_exported_file_contains_every_frame() {
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("t33.mp4").to_string_lossy().to_string();
     // 2 секунды = 60 кадров при 30 fps
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     for (id, kind, lane) in [(1u64, ClipKind::Video, 0u32), (2, ClipKind::Audio, 0)] {
         p.clips.push(ClipEvent {

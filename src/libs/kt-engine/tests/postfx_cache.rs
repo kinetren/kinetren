@@ -9,8 +9,13 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn project_with_fx(fx: Vec<FxInstance>, start_frames: i64) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -33,12 +38,7 @@ fn project_with_fx(fx: Vec<FxInstance>, start_frames: i64) -> Project {
     p
 }
 
-fn warm_pre_fx(
-    vr: &VideoRenderer,
-    cache: &kt_cache::BurstCache,
-    t: Tick,
-    q: kt_media::Quality,
-) {
+fn warm_pre_fx(vr: &VideoRenderer, cache: &kt_cache::BurstCache, t: Tick, q: kt_media::Quality) {
     use kt_media::MediaSource;
     let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Silence);
     for (media, src_pts, q) in vr.layers_at(t, q) {
@@ -57,10 +57,8 @@ fn t66_postfx_cached_and_no_stale() {
     // Noise: амплитуда меняет байты даже на плоском синтетическом кадре
     // (SyntheticSource кодирует pts сплошным цветом — Mirror/Vhs на нём
     // вырождаются в identity, стейл по байтам не отличить)
-    let chain = vec![
-        FxInstance::Mirror { horizontal: true, vertical: false },
-        FxInstance::noise(0.3),
-    ];
+    let chain =
+        vec![FxInstance::Mirror { horizontal: true, vertical: false }, FxInstance::noise(0.3)];
     let p = project_with_fx(chain.clone(), 48_000);
     let mut vr = VideoRenderer::new(&p);
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
@@ -84,10 +82,7 @@ fn t66_postfx_cached_and_no_stale() {
     // смена ПАРАМЕТРА цепочки → другой fx_hash → пересчёт (байты кэша
     // растут: вставка нового ключа, а не стейл-хит) и другой результат
     let p2 = project_with_fx(
-        vec![
-            FxInstance::Mirror { horizontal: true, vertical: false },
-            FxInstance::noise(0.9),
-        ],
+        vec![FxInstance::Mirror { horizontal: true, vertical: false }, FxInstance::noise(0.9)],
         48_000,
     );
     let mut vr2 = VideoRenderer::new(&p2);
@@ -140,10 +135,7 @@ fn t66b_invalidate_source_drops_postfx() {
 #[test]
 fn t66c_export_compose_skips_postfx_memoization() {
     let p = project_with_fx(
-        vec![
-            FxInstance::Mirror { horizontal: true, vertical: false },
-            FxInstance::noise(0.3),
-        ],
+        vec![FxInstance::Mirror { horizontal: true, vertical: false }, FxInstance::noise(0.3)],
         0,
     );
     let q = kt_media::Quality { width: 640, height: 360 };

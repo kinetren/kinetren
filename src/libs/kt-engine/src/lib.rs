@@ -5,11 +5,11 @@
 //! M6-аудио (FX в графе), M4-ядро (Player + видео-композит).
 //! Впереди: M7 (экспорт). Архитектура и владение потоками — docs/architecture.md.
 
-pub mod flight;
 pub mod audio;
 pub mod ducking;
 pub mod export;
 pub mod fetch;
+pub mod flight;
 pub mod fxstore;
 pub mod player;
 pub mod prefetch;
@@ -59,9 +59,7 @@ pub mod simd_testing {
     ) {
         need_avx2();
         // SAFETY: фича проверена
-        unsafe {
-            crate::video_simd::dissolve_avx2(dst, a, b, a_has_alpha, b_has_alpha, k, pixels)
-        };
+        unsafe { crate::video_simd::dissolve_avx2(dst, a, b, a_has_alpha, b_has_alpha, k, pixels) };
     }
 
     pub fn scale_alpha_avx2(dst: &mut [u8], src: &[u8], has_alpha: bool, k: u32, pixels: usize) {
@@ -115,13 +113,7 @@ pub mod simd_testing {
         }
     }
 
-    pub fn scale_alpha_scalar(
-        dst: &mut [u8],
-        src: &[u8],
-        has_alpha: bool,
-        k: u32,
-        pixels: usize,
-    ) {
+    pub fn scale_alpha_scalar(dst: &mut [u8], src: &[u8], has_alpha: bool, k: u32, pixels: usize) {
         for p in 0..pixels {
             let i = p * 4;
             dst[i..i + 3].copy_from_slice(&src[i..i + 3]);
@@ -137,8 +129,8 @@ pub use export::{
     ExportBackends, ExportOptions, ExportStats, export_mp4, export_mp4_with,
     export_mp4_with_backends, render_raw_audio, render_raw_video,
 };
-pub use flight::{FlightRecorder, Snap as FlightSnap};
 pub use fetch::{AudioFetcher, CacheFetcher, DirectFetcher, source_id};
+pub use flight::{FlightRecorder, Snap as FlightSnap};
 pub use fxstore::FxStateStore;
 pub use player::{
     AudioShared, Player, VideoBackendStatus, callback_step, lookahead_windows, reverse_frames,
@@ -174,4 +166,3 @@ pub enum Priority {
     FarPrefetch = 2,
     Thumbnail = 3,
 }
-

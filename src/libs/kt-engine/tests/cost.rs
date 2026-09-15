@@ -63,8 +63,13 @@ fn slowed() -> FxInstance {
 
 /// `n` событий по 300 мс подряд на РАЗНЫХ дорожках, со slowed+reverb.
 fn base(n: u64) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 60, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 60,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.audio_lanes = n.max(1) as u32;
     for i in 0..n {

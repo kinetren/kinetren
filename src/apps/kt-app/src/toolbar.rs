@@ -2,8 +2,8 @@
 //! полупрозрачная градиентная полоса с тенью, кнопки 30×28, подсказки
 //! дублируются в статусбар.
 
-use crate::i18n::{k, tr};
 use crate::app::KtApp;
+use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_model::ClipKind;
 
@@ -68,11 +68,8 @@ fn window_button(ui: &mut egui::Ui, kind: u8, maximized: bool) -> egui::Response
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(22.0, 20.0), egui::Sense::click());
     let p = ui.painter();
     if resp.hovered() {
-        let fill = if kind == 2 {
-            egui::Color32::from_rgb(178, 44, 44)
-        } else {
-            crate::theme::HOVER
-        };
+        let fill =
+            if kind == 2 { egui::Color32::from_rgb(178, 44, 44) } else { crate::theme::HOVER };
         p.rect_filled(rect, 0.0, fill);
     }
     let c = rect.center();
@@ -243,138 +240,137 @@ impl KtApp {
     /// Пункты меню (три корневых). Отдельно от контейнера, чтобы их же
     /// показывал бургер при узкой колонке.
     fn menu_items(&mut self, ui: &mut egui::Ui) -> f32 {
-            ui.menu_button(tr(k::menu::file::TITLE), |ui| {
-                if ui.button(tr(k::menu::file::NEW)).clicked() {
-                    self.new_project();
-                    ui.close();
-                }
-                if ui.button(tr(k::menu::file::OPEN)).clicked() {
-                    self.open_project_dialog();
-                    ui.close();
-                }
-                if ui.button(tr(k::menu::file::IMPORT_KTPROJ)).clicked() {
-                    // Р.24 п.12: старый формат — только конвертация
-                    self.import_ktproj_dialog();
-                    ui.close();
-                }
-                ui.separator();
-                if Self::menu_btn(ui, tr(k::menu::file::SAVE), "Ctrl+S") {
-                    self.save();
-                    ui.close();
-                }
-                if ui.button(tr(k::menu::file::SAVE_AS)).clicked() {
-                    self.save_as();
-                    ui.close();
-                }
-                if ui.button(tr(k::menu::file::RECOVER)).clicked() {
-                    self.offer_recovery(false);
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(tr(k::menu::file::RENDER)).clicked() {
-                    self.start_render();
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button(tr(k::menu::file::QUIT)).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-            });
-            ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
-                if Self::menu_btn(ui, tr(k::menu::edit::UNDO), "Ctrl+Z") {
-                    self.undo();
-                    ui.close();
-                }
-                if Self::menu_btn(ui, tr(k::menu::edit::REDO), "Ctrl+Shift+Z") {
-                    self.redo();
-                    ui.close();
-                }
-                ui.separator();
-                if Self::menu_btn(ui, tr(k::menu::edit::COPY), "Ctrl+C") {
-                    self.copy_selection();
-                    ui.close();
-                }
-                if Self::menu_btn(ui, tr(k::menu::edit::PASTE), "Ctrl+V") {
-                    self.paste_at_cursor();
-                    ui.close();
-                }
-                // ОДНО ТЕЛО с пунктом меню события (правило 17)
-                if ui.button(tr(k::tl::menu::COLLAPSE)).clicked() {
-                    self.collapse_selection();
-                    ui.close();
-                }
-                if ui.button(tr(k::menu::edit::REMOVE_UNUSED_SEQS)).clicked() {
-                    self.remove_unused_seqs();
-                    ui.close();
-                }
-                if ui.button(tr(k::tl::menu::SYNC_AUDIO)).clicked() {
-                    // одно тело на оба пути (правило 17): пункт меню события
-                    // и пункт главного меню делают ровно одно и то же
-                    self.sync_selected_by_audio();
-                    ui.close();
-                }
-                if Self::menu_btn(ui, tr(k::menu::edit::DELETE), "Del") {
-                    self.delete_action();
-                    ui.close();
-                }
-                // Опция «трим растягивает анимацию вместе с событием»
-                // (Р.40). Живёт в меню ПРАВКИ, а не вида: она меняет
-                // результат редактирования, а не то, как он показан.
-                // Выключена по умолчанию — ключ остаётся на своём кадре.
-                let mut stretch = self.model.project().trim_stretches_auto;
-                if ui.checkbox(&mut stretch, tr(k::menu::edit::TRIM_STRETCHES_AUTO)).changed() {
-                    self.apply(kt_model::Command::SetTrimStretchesAuto { on: stretch });
-                }
-                ui.separator();
-                if Self::menu_btn(ui, tr(k::menu::edit::CUT_REGION), "S") {
-                    self.cut_action();
-                    ui.close();
-                }
-            });
-            let last = ui.menu_button(tr(k::menu::view::TITLE), |ui| {
-                let detach_label =
-                    if self.preview_detached {
-                        tr(k::menu::view::ATTACH_PREVIEW)
+        ui.menu_button(tr(k::menu::file::TITLE), |ui| {
+            if ui.button(tr(k::menu::file::NEW)).clicked() {
+                self.new_project();
+                ui.close();
+            }
+            if ui.button(tr(k::menu::file::OPEN)).clicked() {
+                self.open_project_dialog();
+                ui.close();
+            }
+            if ui.button(tr(k::menu::file::IMPORT_KTPROJ)).clicked() {
+                // Р.24 п.12: старый формат — только конвертация
+                self.import_ktproj_dialog();
+                ui.close();
+            }
+            ui.separator();
+            if Self::menu_btn(ui, tr(k::menu::file::SAVE), "Ctrl+S") {
+                self.save();
+                ui.close();
+            }
+            if ui.button(tr(k::menu::file::SAVE_AS)).clicked() {
+                self.save_as();
+                ui.close();
+            }
+            if ui.button(tr(k::menu::file::RECOVER)).clicked() {
+                self.offer_recovery(false);
+                ui.close();
+            }
+            ui.separator();
+            if ui.button(tr(k::menu::file::RENDER)).clicked() {
+                self.start_render();
+                ui.close();
+            }
+            ui.separator();
+            if ui.button(tr(k::menu::file::QUIT)).clicked() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        });
+        ui.menu_button(tr(k::menu::edit::TITLE), |ui| {
+            if Self::menu_btn(ui, tr(k::menu::edit::UNDO), "Ctrl+Z") {
+                self.undo();
+                ui.close();
+            }
+            if Self::menu_btn(ui, tr(k::menu::edit::REDO), "Ctrl+Shift+Z") {
+                self.redo();
+                ui.close();
+            }
+            ui.separator();
+            if Self::menu_btn(ui, tr(k::menu::edit::COPY), "Ctrl+C") {
+                self.copy_selection();
+                ui.close();
+            }
+            if Self::menu_btn(ui, tr(k::menu::edit::PASTE), "Ctrl+V") {
+                self.paste_at_cursor();
+                ui.close();
+            }
+            // ОДНО ТЕЛО с пунктом меню события (правило 17)
+            if ui.button(tr(k::tl::menu::COLLAPSE)).clicked() {
+                self.collapse_selection();
+                ui.close();
+            }
+            if ui.button(tr(k::menu::edit::REMOVE_UNUSED_SEQS)).clicked() {
+                self.remove_unused_seqs();
+                ui.close();
+            }
+            if ui.button(tr(k::tl::menu::SYNC_AUDIO)).clicked() {
+                // одно тело на оба пути (правило 17): пункт меню события
+                // и пункт главного меню делают ровно одно и то же
+                self.sync_selected_by_audio();
+                ui.close();
+            }
+            if Self::menu_btn(ui, tr(k::menu::edit::DELETE), "Del") {
+                self.delete_action();
+                ui.close();
+            }
+            // Опция «трим растягивает анимацию вместе с событием»
+            // (Р.40). Живёт в меню ПРАВКИ, а не вида: она меняет
+            // результат редактирования, а не то, как он показан.
+            // Выключена по умолчанию — ключ остаётся на своём кадре.
+            let mut stretch = self.model.project().trim_stretches_auto;
+            if ui.checkbox(&mut stretch, tr(k::menu::edit::TRIM_STRETCHES_AUTO)).changed() {
+                self.apply(kt_model::Command::SetTrimStretchesAuto { on: stretch });
+            }
+            ui.separator();
+            if Self::menu_btn(ui, tr(k::menu::edit::CUT_REGION), "S") {
+                self.cut_action();
+                ui.close();
+            }
+        });
+        let last = ui.menu_button(tr(k::menu::view::TITLE), |ui| {
+            let detach_label = if self.preview_detached {
+                tr(k::menu::view::ATTACH_PREVIEW)
+            } else {
+                tr(k::menu::view::DETACH_PREVIEW)
+            };
+            if ui.button(detach_label).clicked() {
+                self.preview_detached =
+                    crate::app::preview_detached_next(self.preview_detached, true, false);
+                ui.close();
+            }
+            ui.checkbox(&mut self.ui_economy, tr(k::menu::view::ECONOMY));
+            // Язык живёт в УЖЕ существующем меню (правило 13 чек-листа:
+            // новой полосы под него не заводим). Пункты — самоназвания:
+            // выбравшему китайский нечего искать в русском списке.
+            ui.menu_button(tr(k::menu::view::LANGUAGE), |ui| {
+                let items = std::iter::once((None, tr(k::menu::view::LANG_AUTO)))
+                    .chain(crate::i18n::Lang::ALL.into_iter().map(|l| (Some(l), l.endonym())));
+                for (choice, label) in items {
+                    let active = self.lang_choice == choice;
+                    let label = if active {
+                        format!("{label} {}", crate::icons::CHECK)
                     } else {
-                        tr(k::menu::view::DETACH_PREVIEW)
+                        label.to_string()
                     };
-                if ui.button(detach_label).clicked() {
-                    self.preview_detached =
-                        crate::app::preview_detached_next(self.preview_detached, true, false);
-                    ui.close();
-                }
-                ui.checkbox(&mut self.ui_economy, tr(k::menu::view::ECONOMY));
-                // Язык живёт в УЖЕ существующем меню (правило 13 чек-листа:
-                // новой полосы под него не заводим). Пункты — самоназвания:
-                // выбравшему китайский нечего искать в русском списке.
-                ui.menu_button(tr(k::menu::view::LANGUAGE), |ui| {
-                    let items = std::iter::once((None, tr(k::menu::view::LANG_AUTO)))
-                        .chain(crate::i18n::Lang::ALL.into_iter().map(|l| (Some(l), l.endonym())));
-                    for (choice, label) in items {
-                        let active = self.lang_choice == choice;
-                        let label = if active {
-                            format!("{label} {}", crate::icons::CHECK)
-                        } else {
-                            label.to_string()
-                        };
-                        if ui.button(label).clicked() {
-                            self.lang_choice = choice;
-                            crate::i18n::set_lang_ctx(ui.ctx(), crate::i18n::resolve(choice));
-                            ui.close();
-                        }
+                    if ui.button(label).clicked() {
+                        self.lang_choice = choice;
+                        crate::i18n::set_lang_ctx(ui.ctx(), crate::i18n::resolve(choice));
+                        ui.close();
                     }
-                });
-                ui.separator();
-                if ui.button(tr(k::menu::view::DIAGNOSTICS)).clicked() {
-                    self.perf.diag_open = true;
-                    ui.close();
-                }
-                if ui.button(tr(k::menu::view::NOTICES)).clicked() {
-                    self.notices_open = true;
-                    ui.close();
                 }
             });
-            last.response.rect.right()
+            ui.separator();
+            if ui.button(tr(k::menu::view::DIAGNOSTICS)).clicked() {
+                self.perf.diag_open = true;
+                ui.close();
+            }
+            if ui.button(tr(k::menu::view::NOTICES)).clicked() {
+                self.notices_open = true;
+                ui.close();
+            }
+        });
+        last.response.rect.right()
     }
 
     /// Рисует три корневых меню и возвращает x конца ПОСЛЕДНЕЙ кнопки.
@@ -434,13 +430,11 @@ impl KtApp {
         }
         // Shift здесь — «тянуть регион» (как Shift+A/D, п.2 р.16); «в
         // самое начало/конец» осталось за Shift+Home/End
-        if self.tb(ui, crate::icons::SKIP_BACK, tr(k::tb::BACK))
-        {
+        if self.tb(ui, crate::icons::SKIP_BACK, tr(k::tb::BACK)) {
             let shift = ui.input(|i| i.modifiers.shift);
             self.nav_jump(false, false, shift);
         }
-        if self.tb(ui, crate::icons::SKIP_FWD, tr(k::tb::FORWARD))
-        {
+        if self.tb(ui, crate::icons::SKIP_FWD, tr(k::tb::FORWARD)) {
             let shift = ui.input(|i| i.modifiers.shift);
             self.nav_jump(true, false, shift);
         }
@@ -464,14 +458,8 @@ impl KtApp {
                 + egui::vec2(6.0, 0.0);
             let (rect, r) = ui.allocate_exact_size(size, egui::Sense::click());
             let editing = self.tc_edit.is_some();
-            let r = self.hint(
-                r,
-                if editing {
-                    tr(k::tb::TIMECODE_EDIT)
-                } else {
-                    tr(k::tb::TIMECODE)
-                },
-            );
+            let r =
+                self.hint(r, if editing { tr(k::tb::TIMECODE_EDIT) } else { tr(k::tb::TIMECODE) });
             if r.double_clicked() && !editing {
                 self.tc_edit = Some(String::new());
                 self.tc_edit_focus = true;
@@ -505,15 +493,13 @@ impl KtApp {
                         }
                         // вставка готового тайм-кода («1:02:03») — разбираем
                         // и раскладываем по разрядам маски
-                        egui::Event::Text(t) => {
-                            match crate::util::parse_timecode(t, fps) {
-                                Some(at) => {
-                                    input = crate::util::tick_to_mask(at);
-                                    false
-                                }
-                                None => true,
+                        egui::Event::Text(t) => match crate::util::parse_timecode(t, fps) {
+                            Some(at) => {
+                                input = crate::util::tick_to_mask(at);
+                                false
                             }
-                        }
+                            None => true,
+                        },
                         egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
                             input.pop();
                             false
@@ -636,12 +622,10 @@ impl KtApp {
             self.zoom_at_playhead(0.8);
         }
         ui.separator();
-        if self.tb(ui, crate::icons::REGION_IN, tr(k::tb::REGION_IN))
-        {
+        if self.tb(ui, crate::icons::REGION_IN, tr(k::tb::REGION_IN)) {
             self.set_region_edge_from_cursor(true);
         }
-        if self.tb(ui, crate::icons::REGION_OUT, tr(k::tb::REGION_OUT))
-        {
+        if self.tb(ui, crate::icons::REGION_OUT, tr(k::tb::REGION_OUT)) {
             self.set_region_edge_from_cursor(false);
         }
         if self.tb(ui, crate::icons::CLEAR, tr(k::tb::REGION_CLEAR)) {
@@ -671,11 +655,7 @@ impl KtApp {
         } else {
             egui::RichText::new(crate::icons::LOOP)
         };
-        let hint = if armed {
-            tr(k::tb::LOOP_ARMED)
-        } else {
-            tr(k::tb::LOOP)
-        };
+        let hint = if armed { tr(k::tb::LOOP_ARMED) } else { tr(k::tb::LOOP) };
         let r = ui.add_sized([30.0, 26.0], egui::Button::selectable(loop_on, label));
         if self.hint(r, hint).clicked() {
             self.toggle_loop();
@@ -688,8 +668,7 @@ impl KtApp {
             self.redo();
         }
         ui.separator();
-        if self.tb(ui, crate::icons::RENDER, tr(k::tb::RENDER))
-        {
+        if self.tb(ui, crate::icons::RENDER, tr(k::tb::RENDER)) {
             self.start_render();
         }
         if self.tb(ui, crate::icons::SEARCH, tr(k::tb::SEARCH)) {

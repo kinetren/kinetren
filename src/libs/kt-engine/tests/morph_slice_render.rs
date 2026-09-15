@@ -49,8 +49,13 @@ fn clip(id: u64, kind: ClipKind, start: Tick, dur: Tick) -> ClipEvent {
 }
 
 fn base(kind: ClipKind) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 64,
+        height: 36,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(clip(10, kind, Tick(0), LEN));
@@ -273,10 +278,8 @@ fn t267_layer_strength_blends_only_the_layer() {
         p.clips[0].fx_bypass = vec![false];
         p.clips[0].fx_auto = vec![vec![]];
         if layered {
-            let mut m = layer(MorphPatch {
-                video_fx: vec![layer_fx.clone()],
-                ..Default::default()
-            });
+            let mut m =
+                layer(MorphPatch { video_fx: vec![layer_fx.clone()], ..Default::default() });
             m.strength = strength;
             p.morphers.push(m);
         }
@@ -314,10 +317,8 @@ fn t267_layer_strength_blends_only_the_layer() {
 fn t267b_layer_fades_are_the_strength_curve() {
     let scene = || {
         let mut p = base(ClipKind::Video);
-        let mut m = layer(MorphPatch {
-            video_fx: vec![FxInstance::edges(24)],
-            ..Default::default()
-        });
+        let mut m =
+            layer(MorphPatch { video_fx: vec![FxInstance::edges(24)], ..Default::default() });
         // блок 30_000..60_000; фейды по трети с каждой стороны
         m.fade_in = Tick(10_000);
         m.fade_out = Tick(10_000);
@@ -355,10 +356,8 @@ fn t268_layer_strength_blends_audio_too() {
         p.clips[0].fx_bypass = vec![false];
         p.clips[0].fx_auto = vec![vec![]];
         if layered {
-            let mut m = layer(MorphPatch {
-                audio_fx: vec![FxInstance::gain(12.0)],
-                ..Default::default()
-            });
+            let mut m =
+                layer(MorphPatch { audio_fx: vec![FxInstance::gain(12.0)], ..Default::default() });
             m.strength = strength;
             p.morphers.push(m);
         }

@@ -276,7 +276,7 @@ fn t236_untimed_morpher_ignores_block_position() {
     assert_eq!(eff.len(), 1, "старый морфер не режет");
     assert_eq!(eff[0].media, MediaId(2), "и действует независимо от времени блока");
     assert_eq!(
-        p.morphers[0].windows_on(&p.clips[0], &p, &p.rows()),
+        p.morphers[0].windows_on(&p.clips[0], &p, &p, &p.rows()),
         vec![TickRange::new(Tick(0), LEN)]
     );
 
@@ -1014,7 +1014,7 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
         p.morphers[0].covers(&p.clips[0], &rows),
         "слой обязан накрывать клип ПО ПРОСТРАНСТВУ — иначе проверка про ВРЕМЯ          выполнялась бы сама собой"
     );
-    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &rows);
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &rows);
     assert!(
         wins.is_empty(),
         "блок на 10-й секунде не имеет отношения к клипу 0..1 с, даже если тот \
@@ -1056,7 +1056,7 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     p.validate().unwrap();
 
     let rows = p.rows();
-    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &rows);
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &rows);
     assert_eq!(
         wins,
         vec![TickRange::new(Tick(0), LEN)],

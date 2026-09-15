@@ -86,10 +86,8 @@ fn t341_ducking_finds_speech_and_lowers_the_music() {
     let p = project();
     let params = DuckParams::default();
     let spans = duck_spans(&p, &mut fetcher(), 0, params);
-    let as_sec: Vec<(f64, f64)> = spans
-        .iter()
-        .map(|s| (s.start as f64 / SEC as f64, s.end as f64 / SEC as f64))
-        .collect();
+    let as_sec: Vec<(f64, f64)> =
+        spans.iter().map(|s| (s.start as f64 / SEC as f64, s.end as f64 / SEC as f64)).collect();
     println!("t341 интервалы речи: {as_sec:?}");
     // два слова с паузой 0.6 с — она короче порога слияния (0.3 с?) нет,
     // длиннее: интервалы обязаны остаться раздельными

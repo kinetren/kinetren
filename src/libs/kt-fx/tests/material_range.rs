@@ -36,7 +36,6 @@ fn read_span(p: &mut ClipProcessor, from: i64, to: i64) -> Vec<f32> {
     out
 }
 
-
 #[test]
 fn t138_plain_chain_reads_handles_and_gates_at_material_end() {
     let fx = [FxInstance::gain(0.0)];
@@ -48,8 +47,7 @@ fn t138_plain_chain_reads_handles_and_gates_at_material_end() {
     for i in 0..(head + len + tail + 512) {
         let local = -head + i;
         let got = out[(i as usize) * CH];
-        let expect =
-            if local < len + tail { (src_in + local) as f32 * 1e-6 } else { 0.0 };
+        let expect = if local < len + tail { (src_in + local) as f32 * 1e-6 } else { 0.0 };
         assert_eq!(got, expect, "local {local}: handles read source, gate at material end");
     }
 }
@@ -71,10 +69,7 @@ fn t138_source_map_extrapolates_left_linearly() {
     assert_eq!(source_progress(0.5, &[], -0.25), -0.125);
     assert_eq!(output_time_for_source(0.5, &[], -0.125), -0.25);
     // с автоматизацией: слева — скорость ПЕРВОГО сегмента (за краями крайние)
-    let kfs = [
-        (0.0, 0.5),
-        (1.0, 2.0),
-    ];
+    let kfs = [(0.0, 0.5), (1.0, 2.0)];
     assert_eq!(source_progress(1.0, &kfs, -0.1), -0.05);
     assert_eq!(output_time_for_source(1.0, &kfs, -0.05), -0.1);
     // нормировка тела не тронута: S(0) = 0, якорь автоматизации на месте
@@ -119,7 +114,8 @@ fn t138_source_window_ext_and_compat() {
     }
     // ручки: окно источника уходит в отрицательные смещения (левее source_in);
     // pre-roll клампится началом материала, не нулём
-    let w = chain_source_window_ext(&plain, &Default::default(), 8_192, -2_048..10_240, -2_048..-1_000);
+    let w =
+        chain_source_window_ext(&plain, &Default::default(), 8_192, -2_048..10_240, -2_048..-1_000);
     assert_eq!(w, -2_048..-1_000, "material start bounds the window, no zero clamp");
     let ww = chain_source_window_ext(&warp, &Default::default(), 8_192, -2_048..10_240, -2_048..0);
     assert!(ww.start < 0, "warp window may reach left of source_in for handles");

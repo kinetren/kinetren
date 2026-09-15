@@ -155,10 +155,8 @@ pub(crate) unsafe fn noise_avx2(rgba: &mut [u8], w: u32, h: u32, seed: u32, k: i
             let mut x = 0usize;
             while x < vec_w {
                 // h = noise_hash(x ^ rowh) — lowbias32 в векторе
-                let mut hv = _mm256_xor_si256(
-                    _mm256_add_epi32(_mm256_set1_epi32(x as i32), lane_x),
-                    rowh_v,
-                );
+                let mut hv =
+                    _mm256_xor_si256(_mm256_add_epi32(_mm256_set1_epi32(x as i32), lane_x), rowh_v);
                 hv = _mm256_xor_si256(hv, _mm256_srli_epi32::<16>(hv));
                 hv = _mm256_mullo_epi32(hv, _mm256_set1_epi32(0x7feb_352du32 as i32));
                 hv = _mm256_xor_si256(hv, _mm256_srli_epi32::<15>(hv));
@@ -246,14 +244,8 @@ pub(crate) unsafe fn luma_avx2(luma: &mut [i32], rgba: &[u8], pixels: usize) {
         while p < n {
             let v = _mm256_loadu_si256(ps.add(p * 4).cast());
             let r = _mm256_mullo_epi32(_mm256_and_si256(v, byte), c77);
-            let g = _mm256_mullo_epi32(
-                _mm256_and_si256(_mm256_srli_epi32::<8>(v), byte),
-                c150,
-            );
-            let b = _mm256_mullo_epi32(
-                _mm256_and_si256(_mm256_srli_epi32::<16>(v), byte),
-                c29,
-            );
+            let g = _mm256_mullo_epi32(_mm256_and_si256(_mm256_srli_epi32::<8>(v), byte), c150);
+            let b = _mm256_mullo_epi32(_mm256_and_si256(_mm256_srli_epi32::<16>(v), byte), c29);
             let l = _mm256_srai_epi32::<8>(_mm256_add_epi32(_mm256_add_epi32(r, g), b));
             _mm256_storeu_si256(pl.add(p).cast(), l);
             p += 8;
@@ -261,9 +253,8 @@ pub(crate) unsafe fn luma_avx2(luma: &mut [i32], rgba: &[u8], pixels: usize) {
         for p in n..pixels {
             let i = p * 4;
             let px = ps.add(i);
-            *pl.add(p) = (77 * (*px) as i32 + 150 * (*px.add(1)) as i32
-                + 29 * (*px.add(2)) as i32)
-                >> 8;
+            *pl.add(p) =
+                (77 * (*px) as i32 + 150 * (*px.add(1)) as i32 + 29 * (*px.add(2)) as i32) >> 8;
         }
     }
 }
@@ -293,7 +284,9 @@ pub(crate) unsafe fn sobel_row_avx2(
         let mut x = 1usize;
         // грузим строки y-1, y, y+1 со смещениями -1, 0, +1
         let ld = |row: usize, dx: i64, x: usize| -> __m256i {
-            _mm256_loadu_si256(pl.add((row * w) as isize as usize + (x as i64 + dx) as usize).cast())
+            _mm256_loadu_si256(
+                pl.add((row * w) as isize as usize + (x as i64 + dx) as usize).cast(),
+            )
         };
         while x + 8 <= x_end {
             let (ym, yc, yp) = (y - 1, y, y + 1);
@@ -321,10 +314,7 @@ pub(crate) unsafe fn sobel_row_avx2(
                 ),
                 _mm256_add_epi32(_mm256_mullo_epi32(a_dc, two), a_dr),
             );
-            let sq = _mm256_add_epi32(
-                _mm256_mullo_epi32(gx, gx),
-                _mm256_mullo_epi32(gy, gy),
-            );
+            let sq = _mm256_add_epi32(_mm256_mullo_epi32(gx, gx), _mm256_mullo_epi32(gy, gy));
             // sqrt в f64 двумя половинами, усечение как `as i32`
             let lo = _mm256_cvttpd_epi32(_mm256_min_pd(
                 _mm256_sqrt_pd(_mm256_cvtepi32_pd(_mm256_castsi256_si128(sq))),
@@ -334,10 +324,7 @@ pub(crate) unsafe fn sobel_row_avx2(
                 _mm256_sqrt_pd(_mm256_cvtepi32_pd(_mm256_extracti128_si256::<1>(sq))),
                 c255d,
             ));
-            let mag = _mm256_min_epi32(
-                _mm256_set_m128i(hi, lo),
-                c255i,
-            );
+            let mag = _mm256_min_epi32(_mm256_set_m128i(hi, lo), c255i);
             // v = if mag < th { 0 } else { mag }
             let keep = _mm256_cmpgt_epi32(thv, mag); // th > mag
             let v = _mm256_andnot_si256(keep, mag);
@@ -368,10 +355,7 @@ unsafe fn lerp8_round(a: __m256i, b: __m256i, inv: __m256d, bl: __m256d) -> __m2
             _mm256_cvttpd_epi32(round_half_away_nonneg(r))
         };
         let lo = mix(_mm256_castsi256_si128(a), _mm256_castsi256_si128(b));
-        let hi = mix(
-            _mm256_extracti128_si256::<1>(a),
-            _mm256_extracti128_si256::<1>(b),
-        );
+        let hi = mix(_mm256_extracti128_si256::<1>(a), _mm256_extracti128_si256::<1>(b));
         _mm256_set_m128i(hi, lo)
     }
 }
@@ -411,12 +395,8 @@ pub(crate) unsafe fn vhs_row_avx2(
             let cur = _mm256_loadu_si256(pr.add(x * 4).cast());
             let right = _mm256_loadu_si256(pr.add((x + d) * 4).cast());
             let left = _mm256_loadu_si256(pr.add((x - d) * 4).cast());
-            let r = lerp8_round(
-                _mm256_and_si256(cur, byte),
-                _mm256_and_si256(right, byte),
-                inv,
-                bl,
-            );
+            let r =
+                lerp8_round(_mm256_and_si256(cur, byte), _mm256_and_si256(right, byte), inv, bl);
             let b = lerp8_round(
                 _mm256_and_si256(_mm256_srli_epi32::<16>(cur), byte),
                 _mm256_and_si256(_mm256_srli_epi32::<16>(left), byte),

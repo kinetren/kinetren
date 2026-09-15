@@ -129,8 +129,7 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
         match op.kind {
             kt_fx::geom::TapKind::Gs { key, tol, hard, spill, kc } => {
                 let meta = (op.after_prim as u32) << 4;
-                u.p[base] =
-                    [f32::from_bits(meta), key[0] as f32, key[1] as f32, key[2] as f32];
+                u.p[base] = [f32::from_bits(meta), key[0] as f32, key[1] as f32, key[2] as f32];
                 u.p[base + 1] = [tol as f32, hard as f32, spill as f32, kc as f32];
             }
             kt_fx::geom::TapKind::Noise { seed, k, cell, color, special, stage_w, stage_h } => {
@@ -165,8 +164,7 @@ fn encode_geom(prog: &kt_fx::geom::GeomProgram) -> GeomUniform {
             }
             kt_fx::geom::TapKind::Vig { strength, radius, softness, stage_w, stage_h } => {
                 let meta = 5u32 | ((op.after_prim as u32) << 4);
-                u.p[base] =
-                    [f32::from_bits(meta), strength as f32, radius as f32, softness as f32];
+                u.p[base] = [f32::from_bits(meta), strength as f32, radius as f32, softness as f32];
                 u.p[base + 1] = [stage_w as f32, stage_h as f32, 0.0, 0.0];
             }
         }
@@ -215,38 +213,120 @@ const PIPE_COUNT: usize = 19;
 /// pan_frame/cam_at/noise_seed). Кол-во пассов и размеры известны заранее.
 enum FxOp {
     /// Билинейная рамка (Pan/CamMotion/Blur down+up): выход tw×th.
-    Resample { tw: u32, th: u32, frame: (f64, f64, f64, f64) },
-    Mirror { h: bool, v: bool },
-    Noise { seed: u32, k: u32, size: u32, color: bool, res_scale: u32 },
-    Greenscreen { key: [f32; 3], tol: f32, hard: f32, spill: f32, kc: u32 },
-    Edges { th: u32, d: u32, color: [u32; 3] },
-    Vhs { shift: u32, line_off: u32, bleed: f32, jq: i32, step: u32, seed: u32, res_scale: u32 },
+    Resample {
+        tw: u32,
+        th: u32,
+        frame: (f64, f64, f64, f64),
+    },
+    Mirror {
+        h: bool,
+        v: bool,
+    },
+    Noise {
+        seed: u32,
+        k: u32,
+        size: u32,
+        color: bool,
+        res_scale: u32,
+    },
+    Greenscreen {
+        key: [f32; 3],
+        tol: f32,
+        hard: f32,
+        spill: f32,
+        kc: u32,
+    },
+    Edges {
+        th: u32,
+        d: u32,
+        color: [u32; 3],
+    },
+    Vhs {
+        shift: u32,
+        line_off: u32,
+        bleed: f32,
+        jq: i32,
+        step: u32,
+        seed: u32,
+        res_scale: u32,
+    },
     /// Bloom: даунскейл dw×dh → апскейл → аддитив ×s (3 пасса).
-    Glow { dw: u32, dh: u32, s: f32, th: u32, tint: [f32; 3] },
+    Glow {
+        dw: u32,
+        dh: u32,
+        s: f32,
+        th: u32,
+        tint: [f32; 3],
+    },
     /// Барьеры Р.47 Кв3. Sharpen/DropShadow — 3 пасса (мип down/up +
     /// финал), остальные — один.
-    Sharpen { dw: u32, dh: u32, amount: f32 },
-    Pixelate { cell: u32 },
-    ChromaAb { amount: f32 },
-    RadialBlur { amount: f32, cx: f32, cy: f32, spin: u32 },
-    DropShadow { dw: u32, dh: u32, ox: i32, oy: i32, opacity: f32, tint: [f32; 3] },
-    Halftone { size: f32, ca: f32, sa: f32, k: f32 },
+    Sharpen {
+        dw: u32,
+        dh: u32,
+        amount: f32,
+    },
+    Pixelate {
+        cell: u32,
+    },
+    ChromaAb {
+        amount: f32,
+    },
+    RadialBlur {
+        amount: f32,
+        cx: f32,
+        cy: f32,
+        spin: u32,
+    },
+    DropShadow {
+        dw: u32,
+        dh: u32,
+        ox: i32,
+        oy: i32,
+        opacity: f32,
+        tint: [f32; 3],
+    },
+    Halftone {
+        size: f32,
+        ca: f32,
+        sa: f32,
+        k: f32,
+    },
     /// Поточечные Р.47 на барьерной позиции: один пасс, зеркала tap_*.
-    ColorGrade { br: f32, con: f32, sat: f32, hc: f32, hs: f32 },
-    Duotone { shadow: [f32; 3], high: [f32; 3], amount: f32 },
-    Posterize { levels: u32 },
-    Vignette { strength: f32, radius: f32, softness: f32 },
+    ColorGrade {
+        br: f32,
+        con: f32,
+        sat: f32,
+        hc: f32,
+        hs: f32,
+    },
+    Duotone {
+        shadow: [f32; 3],
+        high: [f32; 3],
+        amount: f32,
+    },
+    Posterize {
+        levels: u32,
+    },
+    Vignette {
+        strength: f32,
+        radius: f32,
+        softness: f32,
+    },
     /// Слитая гео-серия (Р.44): программа обратных отображений строится в
     /// kt-fx (общий код с CPU-исполнителем), один пасс, юниформа 1024 Б.
     /// EventGrid — всегда этим путём (мозаика прежних 2 пассов удалена).
-    GeomFused { prog: kt_fx::geom::GeomProgram },
+    GeomFused {
+        prog: kt_fx::geom::GeomProgram,
+    },
     /// Снимок состояния ДО вклада слоя (Р.38 п.12): сухая сторона
     /// будущего смешения. Только маркер — пассов не порождает.
     Snapshot,
     /// Смешать текущий результат со снимком весом `k` (0..4096).
     /// Размеры могли разойтись (Pan/CamMotion ресемплят) — тогда сухая
     /// сторона вписывается ТОЙ ЖЕ билинейкой, что и на CPU.
-    Mix { k: u32 },
+    Mix {
+        k: u32,
+    },
 }
 
 impl FxOp {
@@ -367,10 +447,8 @@ fn chain_ops(
                         h = moh;
                     }
                     FxInstance::CamMotion { mode, ease, time_scale, keyframes } => {
-                        let (px, py, z) =
-                            kt_fx::video::cam_at(keyframes, u, *ease, *time_scale);
-                        let frame =
-                            kt_fx::video::pan_frame(w, h, out_w, out_h, *mode, px, py, z);
+                        let (px, py, z) = kt_fx::video::cam_at(keyframes, u, *ease, *time_scale);
+                        let frame = kt_fx::video::pan_frame(w, h, out_w, out_h, *mode, px, py, z);
                         ops.push(FxOp::Resample { tw: mow, th: moh, frame });
                         w = mow;
                         h = moh;
@@ -395,181 +473,181 @@ fn chain_ops(
                 }
             },
             kt_fx::plan::PlanOp::Barrier { idx, res_scale } => match &fx[idx] {
-            FxInstance::Blur { radius, radius_y } => {
-                // Р.45 (п.313): шаги ×K — мип тот же, вид инвариантен
-                let radius = (*radius).clamp(1, 48);
-                let step = ((radius / 3).max(1) + 1) * res_scale;
-                let step_y = if *radius_y == 0 {
-                    step
-                } else {
-                    (((*radius_y).clamp(1, 48) / 3).max(1) + 1) * res_scale
-                };
-                let (dw, dh) = ((w / step).max(1), (h / step_y).max(1));
-                ops.push(FxOp::Resample {
-                    tw: dw,
-                    th: dh,
-                    frame: (0.0, 0.0, w as f64, h as f64),
-                });
-                ops.push(FxOp::Resample {
-                    tw: w,
-                    th: h,
-                    frame: (0.0, 0.0, dw as f64, dh as f64),
-                });
-            }
-            FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
-                let tol = (*tolerance).clamp(1, 200);
-                let soft = (*softness).clamp(0, 100);
-                let hard = (tol as f64 - soft as f64).max(0.0);
-                let key = [*key_r, *key_g, *key_b];
-                ops.push(FxOp::Greenscreen {
-                    key: [key[0] as f32, key[1] as f32, key[2] as f32],
-                    tol: tol as f32,
-                    hard: hard as f32,
-                    spill: spill.clamp(0.0, 1.0) as f32,
-                    kc: (0..3).max_by_key(|&i| key[i]).unwrap_or(1) as u32,
-                });
-                has_alpha_known = true;
-                has_alpha = true;
-            }
-            FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => {
-                ops.push(FxOp::Edges {
-                    th: (*threshold).clamp(1, 255),
-                    // Р.45 (п.313): страйд Собеля ×K
-                    d: (*thickness).clamp(1, 8) * res_scale,
-                    color: [*color_r as u32, *color_g as u32, *color_b as u32],
-                });
-                has_alpha_known = true;
-                has_alpha = false;
-            }
-            FxInstance::Noise { amount, size, color } => {
-                let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
-                if k > 0 {
-                    ops.push(FxOp::Noise {
+                FxInstance::Blur { radius, radius_y } => {
+                    // Р.45 (п.313): шаги ×K — мип тот же, вид инвариантен
+                    let radius = (*radius).clamp(1, 48);
+                    let step = ((radius / 3).max(1) + 1) * res_scale;
+                    let step_y = if *radius_y == 0 {
+                        step
+                    } else {
+                        (((*radius_y).clamp(1, 48) / 3).max(1) + 1) * res_scale
+                    };
+                    let (dw, dh) = ((w / step).max(1), (h / step_y).max(1));
+                    ops.push(FxOp::Resample {
+                        tw: dw,
+                        th: dh,
+                        frame: (0.0, 0.0, w as f64, h as f64),
+                    });
+                    ops.push(FxOp::Resample {
+                        tw: w,
+                        th: h,
+                        frame: (0.0, 0.0, dw as f64, dh as f64),
+                    });
+                }
+                FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
+                    let tol = (*tolerance).clamp(1, 200);
+                    let soft = (*softness).clamp(0, 100);
+                    let hard = (tol as f64 - soft as f64).max(0.0);
+                    let key = [*key_r, *key_g, *key_b];
+                    ops.push(FxOp::Greenscreen {
+                        key: [key[0] as f32, key[1] as f32, key[2] as f32],
+                        tol: tol as f32,
+                        hard: hard as f32,
+                        spill: spill.clamp(0.0, 1.0) as f32,
+                        kc: (0..3).max_by_key(|&i| key[i]).unwrap_or(1) as u32,
+                    });
+                    has_alpha_known = true;
+                    has_alpha = true;
+                }
+                FxInstance::Edges { threshold, thickness, color_r, color_g, color_b } => {
+                    ops.push(FxOp::Edges {
+                        th: (*threshold).clamp(1, 255),
+                        // Р.45 (п.313): страйд Собеля ×K
+                        d: (*thickness).clamp(1, 8) * res_scale,
+                        color: [*color_r as u32, *color_g as u32, *color_b as u32],
+                    });
+                    has_alpha_known = true;
+                    has_alpha = false;
+                }
+                FxInstance::Noise { amount, size, color } => {
+                    let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
+                    if k > 0 {
+                        ops.push(FxOp::Noise {
+                            seed: kt_fx::video::noise_seed(t.0),
+                            k: k as u32,
+                            size: (*size).clamp(1, 64),
+                            color: *color,
+                            res_scale,
+                        });
+                    }
+                }
+                FxInstance::ColorGrade { brightness, contrast, saturation, hue } => {
+                    let hr = (*hue as f64).to_radians();
+                    ops.push(FxOp::ColorGrade {
+                        br: *brightness,
+                        con: *contrast,
+                        sat: *saturation,
+                        hc: hr.cos() as f32,
+                        hs: hr.sin() as f32,
+                    });
+                }
+                FxInstance::Duotone {
+                    shadow_r,
+                    shadow_g,
+                    shadow_b,
+                    high_r,
+                    high_g,
+                    high_b,
+                    amount,
+                } => {
+                    ops.push(FxOp::Duotone {
+                        shadow: [*shadow_r as f32, *shadow_g as f32, *shadow_b as f32],
+                        high: [*high_r as f32, *high_g as f32, *high_b as f32],
+                        amount: amount.clamp(0.0, 1.0),
+                    });
+                }
+                FxInstance::Posterize { levels } => {
+                    ops.push(FxOp::Posterize { levels: (*levels).clamp(2, 32) });
+                }
+                FxInstance::Vignette { strength, radius, softness } => {
+                    ops.push(FxOp::Vignette {
+                        strength: strength.clamp(0.0, 1.0),
+                        radius: radius.clamp(0.0, 1.5),
+                        softness: softness.clamp(0.05, 1.0),
+                    });
+                }
+                FxInstance::Sharpen { amount, radius } => {
+                    let step = (*radius).clamp(2, 16) * res_scale;
+                    let (dw, dh) = ((w / step).max(1), (h / step).max(1));
+                    ops.push(FxOp::Sharpen { dw, dh, amount: amount.clamp(0.0, 4.0) });
+                }
+                FxInstance::Pixelate { size } => {
+                    ops.push(FxOp::Pixelate { cell: (*size).clamp(2, 128) * res_scale });
+                }
+                FxInstance::ChromaticAberration { amount } => {
+                    ops.push(FxOp::ChromaAb { amount: amount.clamp(0.0, 0.05) });
+                }
+                FxInstance::RadialBlur { amount, center_x, center_y, spin } => {
+                    ops.push(FxOp::RadialBlur {
+                        amount: amount.clamp(0.0, 1.0),
+                        cx: 0.5 + center_x.clamp(-1.0, 1.0) * 0.5,
+                        cy: 0.5 + center_y.clamp(-1.0, 1.0) * 0.5,
+                        spin: *spin as u32,
+                    });
+                }
+                FxInstance::DropShadow {
+                    offset_x,
+                    offset_y,
+                    radius,
+                    opacity,
+                    tint_r,
+                    tint_g,
+                    tint_b,
+                } => {
+                    // непрозрачный вход: CPU делает passthrough; формула на
+                    // альфе 255 вырождается в тождество, поэтому пропуск —
+                    // оптимизация, а не другой результат
+                    if !(has_alpha_known && !has_alpha) {
+                        let step = (*radius).clamp(1, 32) * res_scale;
+                        let (dw, dh) = ((w / step).max(1), (h / step).max(1));
+                        ops.push(FxOp::DropShadow {
+                            dw,
+                            dh,
+                            ox: (*offset_x).clamp(-64, 64) * res_scale as i32,
+                            oy: (*offset_y).clamp(-64, 64) * res_scale as i32,
+                            opacity: opacity.clamp(0.0, 1.0),
+                            tint: [*tint_r as f32, *tint_g as f32, *tint_b as f32],
+                        });
+                    }
+                }
+                FxInstance::Halftone { size, angle } => {
+                    let a = (angle.clamp(-90.0, 90.0) as f64).to_radians();
+                    ops.push(FxOp::Halftone {
+                        size: (*size).clamp(2, 64) as f32,
+                        ca: a.cos() as f32,
+                        sa: a.sin() as f32,
+                        k: res_scale as f32,
+                    });
+                }
+                FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
+                    ops.push(FxOp::Vhs {
+                        // Р.45 (п.313): сдвиг ×K; строчный контекст (скан и
+                        // дрожание) шейдер ведёт от логической строки y/K
+                        shift: (*rgb_shift).clamp(0, 12) * res_scale,
+                        line_off: ((t.0 / 3000) % 7) as u32,
+                        bleed: bleed.clamp(0.0, 1.0) as f32,
+                        step: (*scan_step).clamp(0, 32),
+                        // квант дрожания — тот же, что считает CPU-ядро
+                        jq: (jitter.clamp(0.0, 1.0) * 1024.0).round() as i32,
                         seed: kt_fx::video::noise_seed(t.0),
-                        k: k as u32,
-                        size: (*size).clamp(1, 64),
-                        color: *color,
                         res_scale,
                     });
                 }
-            }
-            FxInstance::ColorGrade { brightness, contrast, saturation, hue } => {
-                let hr = (*hue as f64).to_radians();
-                ops.push(FxOp::ColorGrade {
-                    br: *brightness,
-                    con: *contrast,
-                    sat: *saturation,
-                    hc: hr.cos() as f32,
-                    hs: hr.sin() as f32,
-                });
-            }
-            FxInstance::Duotone {
-                shadow_r,
-                shadow_g,
-                shadow_b,
-                high_r,
-                high_g,
-                high_b,
-                amount,
-            } => {
-                ops.push(FxOp::Duotone {
-                    shadow: [*shadow_r as f32, *shadow_g as f32, *shadow_b as f32],
-                    high: [*high_r as f32, *high_g as f32, *high_b as f32],
-                    amount: amount.clamp(0.0, 1.0),
-                });
-            }
-            FxInstance::Posterize { levels } => {
-                ops.push(FxOp::Posterize { levels: (*levels).clamp(2, 32) });
-            }
-            FxInstance::Vignette { strength, radius, softness } => {
-                ops.push(FxOp::Vignette {
-                    strength: strength.clamp(0.0, 1.0),
-                    radius: radius.clamp(0.0, 1.5),
-                    softness: softness.clamp(0.05, 1.0),
-                });
-            }
-            FxInstance::Sharpen { amount, radius } => {
-                let step = (*radius).clamp(2, 16) * res_scale;
-                let (dw, dh) = ((w / step).max(1), (h / step).max(1));
-                ops.push(FxOp::Sharpen { dw, dh, amount: amount.clamp(0.0, 4.0) });
-            }
-            FxInstance::Pixelate { size } => {
-                ops.push(FxOp::Pixelate { cell: (*size).clamp(2, 128) * res_scale });
-            }
-            FxInstance::ChromaticAberration { amount } => {
-                ops.push(FxOp::ChromaAb { amount: amount.clamp(0.0, 0.05) });
-            }
-            FxInstance::RadialBlur { amount, center_x, center_y, spin } => {
-                ops.push(FxOp::RadialBlur {
-                    amount: amount.clamp(0.0, 1.0),
-                    cx: 0.5 + center_x.clamp(-1.0, 1.0) * 0.5,
-                    cy: 0.5 + center_y.clamp(-1.0, 1.0) * 0.5,
-                    spin: *spin as u32,
-                });
-            }
-            FxInstance::DropShadow {
-                offset_x,
-                offset_y,
-                radius,
-                opacity,
-                tint_r,
-                tint_g,
-                tint_b,
-            } => {
-                // непрозрачный вход: CPU делает passthrough; формула на
-                // альфе 255 вырождается в тождество, поэтому пропуск —
-                // оптимизация, а не другой результат
-                if !(has_alpha_known && !has_alpha) {
-                    let step = (*radius).clamp(1, 32) * res_scale;
-                    let (dw, dh) = ((w / step).max(1), (h / step).max(1));
-                    ops.push(FxOp::DropShadow {
-                        dw,
-                        dh,
-                        ox: (*offset_x).clamp(-64, 64) * res_scale as i32,
-                        oy: (*offset_y).clamp(-64, 64) * res_scale as i32,
-                        opacity: opacity.clamp(0.0, 1.0),
-                        tint: [*tint_r as f32, *tint_g as f32, *tint_b as f32],
-                    });
+                FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
+                    let s = strength.clamp(0.0, 2.0) * 0.35;
+                    if s > 0.0 {
+                        // Р.45 (п.313): делитель мипа ×K — мип тот же
+                        let r = (*radius).clamp(1, 32) * res_scale;
+                        ops.push(FxOp::Glow {
+                            dw: (w / r).max(1),
+                            dh: (h / r).max(1),
+                            s: s as f32,
+                            th: (*threshold).min(255),
+                            tint: [*tint_r as f32, *tint_g as f32, *tint_b as f32],
+                        });
+                    }
                 }
-            }
-            FxInstance::Halftone { size, angle } => {
-                let a = (angle.clamp(-90.0, 90.0) as f64).to_radians();
-                ops.push(FxOp::Halftone {
-                    size: (*size).clamp(2, 64) as f32,
-                    ca: a.cos() as f32,
-                    sa: a.sin() as f32,
-                    k: res_scale as f32,
-                });
-            }
-            FxInstance::Vhs { rgb_shift, bleed, scan_step, jitter } => {
-                ops.push(FxOp::Vhs {
-                    // Р.45 (п.313): сдвиг ×K; строчный контекст (скан и
-                    // дрожание) шейдер ведёт от логической строки y/K
-                    shift: (*rgb_shift).clamp(0, 12) * res_scale,
-                    line_off: ((t.0 / 3000) % 7) as u32,
-                    bleed: bleed.clamp(0.0, 1.0) as f32,
-                    step: (*scan_step).clamp(0, 32),
-                    // квант дрожания — тот же, что считает CPU-ядро
-                    jq: (jitter.clamp(0.0, 1.0) * 1024.0).round() as i32,
-                    seed: kt_fx::video::noise_seed(t.0),
-                    res_scale,
-                });
-            }
-            FxInstance::Glow { strength, radius, threshold, tint_r, tint_g, tint_b } => {
-                let s = strength.clamp(0.0, 2.0) * 0.35;
-                if s > 0.0 {
-                    // Р.45 (п.313): делитель мипа ×K — мип тот же
-                    let r = (*radius).clamp(1, 32) * res_scale;
-                    ops.push(FxOp::Glow {
-                        dw: (w / r).max(1),
-                        dh: (h / r).max(1),
-                        s: s as f32,
-                        th: (*threshold).min(255),
-                        tint: [*tint_r as f32, *tint_g as f32, *tint_b as f32],
-                    });
-                }
-            }
-            _ => debug_assert!(false, "barrier op on non-barrier fx"),
+                _ => debug_assert!(false, "barrier op on non-barrier fx"),
             },
         }
     }
@@ -1082,8 +1160,17 @@ impl Inner {
         if frame.width > self.max_dim || frame.height > self.max_dim {
             return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
         }
-        let (ops, (fw, fh), ha, ha_known, (mw, mh)) =
-            chain_ops(&src.fx, frame.width, frame.height, src.src_scale, ow, oh, src.u, t, src.cam3d);
+        let (ops, (fw, fh), ha, ha_known, (mw, mh)) = chain_ops(
+            &src.fx,
+            frame.width,
+            frame.height,
+            src.src_scale,
+            ow,
+            oh,
+            src.u,
+            t,
+            src.cam3d,
+        );
         // K×-промежутки плана (п.314) обязаны влезать в лимит текстур
         // устройства; не влезли — аккуратный TooLarge (весь план уходит на
         // CPU, который считает ТОТ ЖЕ план — семантика одна)
@@ -1092,8 +1179,7 @@ impl Inner {
         }
         let has_alpha = if ha_known { ha } else { frame.has_alpha };
         let view =
-            self.upload
-                .get_or_upload(&self.device, &self.queue, src.source, src.cache_idx, frame);
+            self.upload.get_or_upload(&self.device, &self.queue, src.source, src.cache_idx, frame);
         let fits = (fw, fh) == (ow, oh);
         Ok(Some((
             ChainSpec { ops, src_view: view, src_w: frame.width, src_h: frame.height, has_alpha },
@@ -1337,10 +1423,7 @@ impl Inner {
                 }
                 FxOp::Pixelate { cell } => {
                     let dst = self.pool.acquire(&self.device, w, h);
-                    let u = UniformData {
-                        u: [w, h, *cell, 0, 0, 0, 0, 0],
-                        ..Default::default()
-                    };
+                    let u = UniformData { u: [w, h, *cell, 0, 0, 0, 0, 0], ..Default::default() };
                     self.pass(enc, Pipe::Pixelate, &dst.view, &view, &dummy, &dummy, u);
                     if let Some(t) = owned.take() {
                         self.pool.release(t);
@@ -1499,7 +1582,10 @@ impl Inner {
                         size: wgpu::BufferSize::new(GEOM_UNIFORM_BYTES as u64),
                     }),
                 },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(t0) },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(t0),
+                },
             ],
         });
         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1550,9 +1636,18 @@ impl Inner {
                         size: wgpu::BufferSize::new(128),
                     }),
                 },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(t0) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(t1) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(t2) },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(t0),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(t1),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(t2),
+                },
             ],
         });
         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {

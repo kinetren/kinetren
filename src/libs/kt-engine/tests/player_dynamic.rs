@@ -8,8 +8,13 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn base_project() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -255,8 +260,13 @@ fn t211_replace_media_swaps_source_and_drops_its_cache() {
 /// спрашивать уже его.
 #[test]
 fn t316_replace_media_updates_the_decode_stage() {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 128, height: 72, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 128,
+        height: 72,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),

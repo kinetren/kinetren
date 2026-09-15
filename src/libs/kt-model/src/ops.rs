@@ -1083,25 +1083,21 @@ impl NestCounters {
         let reels = || std::iter::once(&p.clips).chain(p.sequences.iter().map(|s| &s.clips));
         let max = |it: &mut dyn Iterator<Item = u64>| it.max().unwrap_or(0) + 1;
         NestCounters {
-            media: max(
-                &mut p
-                    .media
-                    .iter()
-                    .map(|m| m.id.0)
-                    .chain(p.sequences.iter().map(|s| s.id.0)),
-            ),
+            media: max(&mut p
+                .media
+                .iter()
+                .map(|m| m.id.0)
+                .chain(p.sequences.iter().map(|s| s.id.0))),
             clip: max(&mut reels().flat_map(|cs| cs.iter().map(|c| c.id.0))),
-            group: max(&mut reels().flat_map(|cs| cs.iter().filter_map(|c| c.link_group.map(|g| g.0)))),
-            transition: max(
-                &mut std::iter::once(&p.transitions)
-                    .chain(p.sequences.iter().map(|s| &s.transitions))
-                    .flat_map(|ts| ts.iter().map(|t| t.id.0)),
+            group: max(
+                &mut reels().flat_map(|cs| cs.iter().filter_map(|c| c.link_group.map(|g| g.0)))
             ),
-            morph: max(
-                &mut std::iter::once(&p.morphers)
-                    .chain(p.sequences.iter().map(|s| &s.morphers))
-                    .flat_map(|ms| ms.iter().map(|m| m.id.0)),
-            ),
+            transition: max(&mut std::iter::once(&p.transitions)
+                .chain(p.sequences.iter().map(|s| &s.transitions))
+                .flat_map(|ts| ts.iter().map(|t| t.id.0))),
+            morph: max(&mut std::iter::once(&p.morphers)
+                .chain(p.sequences.iter().map(|s| &s.morphers))
+                .flat_map(|ms| ms.iter().map(|m| m.id.0))),
         }
     }
 
@@ -1170,10 +1166,8 @@ pub fn collapse_into_sequence(
     content.clips = block.clips.clone();
     content.transitions = block.transitions.clone();
     content.morphers = block.morphers.clone();
-    content.video_lanes =
-        lanes_needed(&content.clips, ClipKind::Video).max(1);
-    content.audio_lanes =
-        lanes_needed(&content.clips, ClipKind::Audio).max(1);
+    content.video_lanes = lanes_needed(&content.clips, ClipKind::Video).max(1);
+    content.audio_lanes = lanes_needed(&content.clips, ClipKind::Audio).max(1);
     content.morph_lanes = content.morphers.iter().map(|m| m.lane + 1).max().unwrap_or(0);
     content.overlap_layers = p.overlap_layers;
 
@@ -1258,10 +1252,8 @@ pub fn collapse_into_sequence(
             continue; // оба внутри (уехал в ленту) или оба снаружи (цел)
         }
         let outer = if ia { t.b } else { t.a };
-        let kind = outer
-            .and_then(|i| p.clips.iter().find(|c| c.id == i))
-            .map(|c| c.kind)
-            .or_else(|| {
+        let kind =
+            outer.and_then(|i| p.clips.iter().find(|c| c.id == i)).map(|c| c.kind).or_else(|| {
                 let side = if ia { t.a } else { t.b };
                 side.and_then(|i| p.clips.iter().find(|c| c.id == i)).map(|c| c.kind)
             });
@@ -1302,11 +1294,7 @@ pub struct ExpandReport {
 /// Содержимое подрезается окном экземпляра ОДНИМ правилом куска
 /// (`clip_slice`) и переносится на свежие id через `paste_block`: тело ленты
 /// остаётся на месте — та же лента может стоять ещё в пяти местах.
-pub fn expand_instance(
-    p: &Project,
-    id: ClipId,
-    n: NestIds<'_>,
-) -> (Vec<Command>, ExpandReport) {
+pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>, ExpandReport) {
     let Some(inst) = p.clips.iter().find(|c| c.id == id) else {
         return (Vec::new(), ExpandReport::default());
     };
@@ -1374,12 +1362,7 @@ pub fn expand_instance(
     let (paste, _, _) = paste_block(
         &block,
         inst.start,
-        PasteIds {
-            clip: n.clip,
-            group: n.group,
-            transition: n.transition,
-            morph: n.morph,
-        },
+        PasteIds { clip: n.clip, group: n.group, transition: n.transition, morph: n.morph },
         &PasteNames::default(),
     );
     cmds.extend(paste);
@@ -1391,12 +1374,7 @@ pub fn expand_instance(
 /// Нужно ровно тогда, когда «правка внутри меняет все места» перестаёт быть
 /// тем, чего человек хочет. Названо не «Unlink» — рядом уже есть разрыв
 /// A/V-связи, и одно слово на два разных действия врало бы (правило 18).
-pub fn make_independent(
-    p: &Project,
-    id: ClipId,
-    name: &str,
-    n: NestIds<'_>,
-) -> Vec<Command> {
+pub fn make_independent(p: &Project, id: ClipId, name: &str, n: NestIds<'_>) -> Vec<Command> {
     let Some(inst) = p.clips.iter().find(|c| c.id == id) else { return Vec::new() };
     let Some(seq) = p.sequence(inst.media) else { return Vec::new() };
     let new_id = MediaId(*n.media);

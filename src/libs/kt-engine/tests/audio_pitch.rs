@@ -58,11 +58,7 @@ fn render(fx: Vec<FxInstance>, engine: PitchEngine) -> Vec<f32> {
     render_auto(fx, vec![], engine)
 }
 
-fn render_auto(
-    fx: Vec<FxInstance>,
-    auto: Vec<Vec<ParamCurve>>,
-    engine: PitchEngine,
-) -> Vec<f32> {
+fn render_auto(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, engine: PitchEngine) -> Vec<f32> {
     let p = project(fx, auto, engine);
     let r = AudioRenderer::new(&p);
     let mut f = source();

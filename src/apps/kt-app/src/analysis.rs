@@ -53,9 +53,16 @@ impl AnalysisKind {
 /// Итог задачи.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum AnalysisOut {
-    Loudness { media: MediaId, lufs: Option<f64>, dbtp: f64, lra: f64 },
+    Loudness {
+        media: MediaId,
+        lufs: Option<f64>,
+        dbtp: f64,
+        lra: f64,
+    },
     /// Интервалы, где ведущая дорожка звучит (тики), и число ключей.
-    Duck { spans: usize },
+    Duck {
+        spans: usize,
+    },
 }
 
 /// Шаг прогресса: доля 0..1.
@@ -119,7 +126,10 @@ impl Analysis {
     /// человека, а сама программа в недоступный файл не долбится.
     pub fn request_with<F>(&mut self, k: AnalysisKind, rev: u64, retry: bool, body: F)
     where
-        F: FnOnce(crate::bg::BgCtl, crate::bg::BgSend<AnalysisProgress>) -> Result<AnalysisOut, String>
+        F: FnOnce(
+                crate::bg::BgCtl,
+                crate::bg::BgSend<AnalysisProgress>,
+            ) -> Result<AnalysisOut, String>
             + Send
             + 'static,
     {
@@ -202,7 +212,10 @@ mod tests {
         crate::bg::BgJob::spawn("t408", move |_ctl, _send: crate::bg::BgSend<f32>| out)
     }
 
-    fn wait(a: &mut Analysis, out: Result<AnalysisOut, String>) -> Option<(AnalysisKind, u64, Result<AnalysisOut, String>)> {
+    fn wait(
+        a: &mut Analysis,
+        out: Result<AnalysisOut, String>,
+    ) -> Option<(AnalysisKind, u64, Result<AnalysisOut, String>)> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             if let Some(r) = a.poll(|_| done(out.clone())) {

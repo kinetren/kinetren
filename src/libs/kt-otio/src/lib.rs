@@ -26,9 +26,7 @@ pub use io::{
     write_document,
 };
 pub use legacy::import_legacy;
-pub use meta::{
-    KT_META_V6, KT_META_VERSION, KT_NS, check_kt_version, kt_entry_mut, kt_version,
-};
+pub use meta::{KT_META_V6, KT_META_VERSION, KT_NS, check_kt_version, kt_entry_mut, kt_version};
 pub use schema::{
     Clip, Composable, Effect, EffectNode, ExternalReference, Gap, LinearTimeWarp, Marker,
     MarkerNode, MediaRefNode, Metadata, MissingReference, RationalTime, RawObject, Stack,

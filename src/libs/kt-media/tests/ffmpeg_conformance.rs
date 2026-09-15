@@ -336,10 +336,7 @@ fn t112_video_frame_selection_is_floor_on_mismatched_fps() {
         if seen.last().map(|p| *p == cur).unwrap_or(false) {
             continue;
         }
-        assert!(
-            !seen.contains(&cur),
-            "кадр повторился ПОСЛЕ смены — это откат назад"
-        );
+        assert!(!seen.contains(&cur), "кадр повторился ПОСЛЕ смены — это откат назад");
         seen.push(cur);
     }
     // источник 25 fps на 1.5 с сетки 60 fps даёт ~38 разных кадров

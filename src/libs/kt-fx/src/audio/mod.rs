@@ -2,8 +2,8 @@
 //! источника. Публичная поверхность крейта реэкспортируется из lib.rs —
 //! пути вызывающих (`kt_fx::ClipProcessor` и т.д.) не изменились.
 
-mod nodes;
 pub mod loudness;
+mod nodes;
 pub mod primitives;
 mod warp;
 
@@ -17,7 +17,6 @@ use kt_time::Tick;
 use nodes::reverb_tail_for_delay;
 
 use kt_model::{AutoProfiles, ParamPoints, eff_rate, rate_at, source_progress};
-
 
 /// Длина хвоста цепочки БЕЗ создания state (для расширения окна клипа
 /// в графе до того, как процессор построен).
@@ -185,7 +184,6 @@ pub fn chain_tail(fx: &[FxInstance], auto: &AutoProfiles) -> Tick {
         .max()
         .unwrap_or(Tick::ZERO)
 }
-
 
 /// Отпечаток СТРУКТУРЫ цепочки (виды FX по порядку). Совпадает → state
 /// переиспользуется, параметры доезжают через set_params (сглаженно).
@@ -472,7 +470,6 @@ impl ClipProcessor {
         }
     }
 
-
     fn has_warp(&self) -> bool {
         (self.rate - 1.0).abs() > 1e-9
             || self.rate_points().iter().any(|(_, r)| (r - 1.0).abs() > 1e-9)
@@ -592,7 +589,8 @@ impl ClipProcessor {
         }
         // pre-roll может заходить в левую «ручку», но не раньше начала
         // материала (−head_ext)
-        let preroll = self.tail_frames().max(MIN_PREROLL_FRAMES).min((local + self.head_ext).max(0));
+        let preroll =
+            self.tail_frames().max(MIN_PREROLL_FRAMES).min((local + self.head_ext).max(0));
         let start = local - preroll;
         // позиция источника для local=start (интеграл автоматизации).
         // Формула НЕ меняется: `start` — первая ВХОДНАЯ позиция прогрева,

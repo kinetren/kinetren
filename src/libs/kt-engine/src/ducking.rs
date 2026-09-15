@@ -53,21 +53,16 @@ pub fn duck_spans(
     let mut solo = project.clone();
     solo.clips.retain(|c| c.kind == ClipKind::Audio && c.lane == src_lane);
     // переход живёт, только если ОБА его конца остались на дорожке
-    let alive = |id: Option<kt_model::ClipId>| {
-        id.is_none_or(|i| solo.clips.iter().any(|c| c.id == i))
-    };
-    let kept: Vec<_> = solo.transitions.iter().filter(|t| alive(t.a) && alive(t.b)).cloned().collect();
+    let alive =
+        |id: Option<kt_model::ClipId>| id.is_none_or(|i| solo.clips.iter().any(|c| c.id == i));
+    let kept: Vec<_> =
+        solo.transitions.iter().filter(|t| alive(t.a) && alive(t.b)).cloned().collect();
     solo.transitions = kept;
     if solo.clips.is_empty() {
         return Vec::new();
     }
     let from = solo.clips.iter().map(|c| c.start.to_audio_frames()).min().unwrap_or(0).max(0);
-    let to = solo
-        .clips
-        .iter()
-        .map(|c| (c.start + c.duration).to_audio_frames())
-        .max()
-        .unwrap_or(0);
+    let to = solo.clips.iter().map(|c| (c.start + c.duration).to_audio_frames()).max().unwrap_or(0);
     if to <= from {
         return Vec::new();
     }

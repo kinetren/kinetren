@@ -166,15 +166,9 @@ fn t70_thumbnail_near() {
     db.put_thumbnail(id, 180_000, b"jpeg-b").unwrap();
 
     // точное совпадение приоритетно
-    assert_eq!(
-        db.thumbnail_near(id, 90_000, 45_000).unwrap(),
-        Some((90_000, b"jpeg-a".to_vec()))
-    );
+    assert_eq!(db.thumbnail_near(id, 90_000, 45_000).unwrap(), Some((90_000, b"jpeg-a".to_vec())));
     // ближайший в допуске (100_000 ближе к 90_000, чем к 180_000)
-    assert_eq!(
-        db.thumbnail_near(id, 100_000, 45_000).unwrap(),
-        Some((90_000, b"jpeg-a".to_vec()))
-    );
+    assert_eq!(db.thumbnail_near(id, 100_000, 45_000).unwrap(), Some((90_000, b"jpeg-a".to_vec())));
     assert_eq!(
         db.thumbnail_near(id, 150_000, 45_000).unwrap(),
         Some((180_000, b"jpeg-b".to_vec()))
@@ -182,10 +176,7 @@ fn t70_thumbnail_near() {
     // вне допуска — None (скраб не должен врать позицией)
     assert_eq!(db.thumbnail_near(id, 400_000, 45_000).unwrap(), None);
     // границы BETWEEN включительны
-    assert_eq!(
-        db.thumbnail_near(id, 135_000, 45_000).unwrap().map(|(t, _)| t),
-        Some(90_000)
-    );
+    assert_eq!(db.thumbnail_near(id, 135_000, 45_000).unwrap().map(|(t, _)| t), Some(90_000));
     // чужое медиа не видно
     assert_eq!(db.thumbnail_near(id + 1, 90_000, 45_000).unwrap(), None);
 }

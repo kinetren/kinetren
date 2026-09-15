@@ -18,7 +18,13 @@ use kt_time::Tick;
 const DUR: Tick = Tick(90_000 * 3); // 3 с
 
 fn project(fps: u32, reversed: bool) -> Project {
-    let mut p = Project::new(ProjectSettings { fps, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps,
+        width: 64,
+        height: 36,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -148,10 +154,7 @@ fn t115_preview_keys_are_monotonic_at_quarter_rate() {
             }
         }
         consumed += 1;
-        player
-            .shared
-            .consumed_frames
-            .fetch_add(256, std::sync::atomic::Ordering::AcqRel);
+        player.shared.consumed_frames.fetch_add(256, std::sync::atomic::Ordering::AcqRel);
         for _ in 0..4 {
             let t = player.video_playhead();
             let key = grid.align_floor(t).0;

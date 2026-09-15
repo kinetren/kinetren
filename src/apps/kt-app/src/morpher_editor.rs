@@ -6,8 +6,8 @@
 //! окна = один undo-шаг. Автоматизация в батч-цепочках не редактируется —
 //! после bake доступен полный FX-редактор клипа.
 
-use crate::i18n::{k, tr};
 use crate::app::KtApp;
+use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_model::*;
 use kt_time::{TICK_HZ, Tick};
@@ -100,9 +100,8 @@ impl KtApp {
         // Поле источника (Р.33 п.2): принимает дроп файла из системы и
         // карточки из медиа-бина, открывает список медиа проекта с
         // поиском и системный диалог файла.
-        let frame = egui::Frame::group(ui.style())
-            .fill(ui.visuals().extreme_bg_color)
-            .show(ui, |ui| {
+        let frame =
+            egui::Frame::group(ui.style()).fill(ui.visuals().extreme_bg_color).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::mrph::NEW_SOURCE));
                     // то же усечение, что в полосе: имя файла тут ровно
@@ -215,13 +214,8 @@ impl KtApp {
             })
             .collect();
         // имена медиа для подписи морф-слота
-        let media_names: Vec<(MediaId, String)> = self
-            .model
-            .project()
-            .media
-            .iter()
-            .map(|m| (m.id, m.path.clone()))
-            .collect();
+        let media_names: Vec<(MediaId, String)> =
+            self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect();
         let title = if is_batch {
             crate::tf!(k::mrph::TITLE_BATCH, ed.id.0)
         } else {
@@ -301,9 +295,9 @@ impl KtApp {
                         }
                         MorphTargets::Below => tr(k::mrph::ON_BELOW).to_string(),
                     };
-                    egui::ComboBox::from_id_salt(("morph_on", ed.id.0))
-                        .selected_text(cur)
-                        .show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt(("morph_on", ed.id.0)).selected_text(cur).show_ui(
+                        ui,
+                        |ui| {
                             if ui.selectable_label(false, tr(k::mrph::ON_BELOW)).clicked()
                                 && !matches!(ev.targets, MorphTargets::Below)
                             {
@@ -329,11 +323,8 @@ impl KtApp {
                             // замораживаем ТЕКУЩЕЕ выделение; пустой
                             // список у Clips запрещён моделью, поэтому
                             // отказ показывается ошибкой, а не молчанием
-                            let sel: Vec<ClipId> = if frozen.is_empty() {
-                                selection.clone()
-                            } else {
-                                frozen.clone()
-                            };
+                            let sel: Vec<ClipId> =
+                                if frozen.is_empty() { selection.clone() } else { frozen.clone() };
                             let label = crate::tf!(k::mrph::ON_CLIPS, sel.len());
                             if ui.selectable_label(false, label).clicked() {
                                 if sel.is_empty() {
@@ -343,15 +334,21 @@ impl KtApp {
                                     changed = true;
                                 }
                             }
-                        });
+                        },
+                    );
                     let mut timed = ev.timed;
                     // в ссылочных режимах время задаёт САМА ссылка —
                     // галка тут ничего не решает и честно гаснет
-                    let by_ref =
-                        matches!(ev.targets, MorphTargets::Areas { .. } | MorphTargets::Marks { .. });
+                    let by_ref = matches!(
+                        ev.targets,
+                        MorphTargets::Areas { .. } | MorphTargets::Marks { .. }
+                    );
                     if crate::app::hint_into(
                         &mut hover_out,
-                        ui.add_enabled(!by_ref, egui::Checkbox::new(&mut timed, tr(k::mrph::TIMED))),
+                        ui.add_enabled(
+                            !by_ref,
+                            egui::Checkbox::new(&mut timed, tr(k::mrph::TIMED)),
+                        ),
                         if by_ref { tr(k::mrph::TIMED_BY_REF) } else { tr(k::mrph::TIMED_HINT) },
                     )
                     .changed()
@@ -497,13 +494,9 @@ impl KtApp {
                         // правок. Тот же домен, что у камеры и перехода.
                         let at = kt_time::Tick((playhead.0 - ev.start.0).clamp(0, ev.duration.0));
                         let view_sel = ed.auto_views.get(&i).and_then(|v| v.sel);
-                        let mut slot_auto =
-                            auto.get(i).cloned().unwrap_or_default();
-                        let mut bind = crate::widgets::CurveBind {
-                            curves: &mut slot_auto,
-                            sel: view_sel,
-                            at,
-                        };
+                        let mut slot_auto = auto.get(i).cloned().unwrap_or_default();
+                        let mut bind =
+                            crate::widgets::CurveBind { curves: &mut slot_auto, sel: view_sel, at };
                         let mut slot_changed = false;
                         if let Some(f) = fx.get_mut(i) {
                             // у морфера обе правки едут одной командой
@@ -588,9 +581,7 @@ impl KtApp {
         ed.open = open;
 
         // системный диалог файла: новый источник может не быть в проекте
-        if pick_file
-            && let Some(path) = rfd::FileDialog::new().pick_file()
-        {
+        if pick_file && let Some(path) = rfd::FileDialog::new().pick_file() {
             // окно остаётся открытым: пользователь видит новый источник
             self.set_morph_source_file(ed.id, &path.to_string_lossy());
             return;
@@ -664,15 +655,12 @@ impl KtApp {
                     focus: true,
                 });
             }
-            Some(crate::widgets::PresetAction::Delete(name)) => {
-                match self.presets.remove(&name) {
-                    Ok(()) => self.note(format!("{} {name}", tr(k::msg::PRESET_DELETED))),
-                    Err(e) => self.note(format!("{}: {e}", tr(k::msg::PRESET_SAVE_FAILED))),
-                }
-            }
+            Some(crate::widgets::PresetAction::Delete(name)) => match self.presets.remove(&name) {
+                Ok(()) => self.note(format!("{} {name}", tr(k::msg::PRESET_DELETED))),
+                Err(e) => self.note(format!("{}: {e}", tr(k::msg::PRESET_SAVE_FAILED))),
+            },
             None => {}
         }
-
     }
 }
 

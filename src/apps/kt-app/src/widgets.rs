@@ -24,9 +24,11 @@ fn unit_suffix(u: ParamUnit) -> &'static str {
         ParamUnit::Deg => "°",
         ParamUnit::Px => " px",
         ParamUnit::St => " st",
-        ParamUnit::None | ParamUnit::Norm | ParamUnit::Ratio | ParamUnit::Rgb8 | ParamUnit::Count => {
-            ""
-        }
+        ParamUnit::None
+        | ParamUnit::Norm
+        | ParamUnit::Ratio
+        | ParamUnit::Rgb8
+        | ParamUnit::Count => "",
     }
 }
 
@@ -351,9 +353,7 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
         Some((c, k)) if c == ci && k < bind.curves[ci].keys.len() => Some(k),
         _ => None,
     };
-    ui.label(
-        egui::RichText::new(param_label(spec.name)).color(crate::automation::curve_color(ci)),
-    );
+    ui.label(egui::RichText::new(param_label(spec.name)).color(crate::automation::curve_color(ci)));
     let c = &mut bind.curves[ci];
     let mut v = bound_value(c, key, bind.at);
     let r = param_value(ui, spec, &mut v);
@@ -379,12 +379,7 @@ pub fn bound_value(c: &kt_model::ParamCurve, key: Option<usize>, at: kt_time::Ti
 
 /// Что поле ПРАВИТ. Ровно то же, что показывает (Р.38 п.15): выбранный
 /// ключ либо новый ключ под курсором.
-pub fn bound_apply(
-    c: &mut kt_model::ParamCurve,
-    key: Option<usize>,
-    at: kt_time::Tick,
-    v: f64,
-) {
+pub fn bound_apply(c: &mut kt_model::ParamCurve, key: Option<usize>, at: kt_time::Tick, v: f64) {
     match key.filter(|k| *k < c.keys.len()) {
         Some(k) => c.keys[k].v = v,
         None => {
@@ -545,22 +540,13 @@ pub const SLOT_GRAB_PAD: f32 = 2.0;
 /// ОДНА функция на все места, где показывается имя пользователя: подпись
 /// слота, голова полосы, поле источника морфера. Разойдись они — половина
 /// мест снова начала бы разъезжаться, а это и была претензия пп.7-8.
-pub fn elided_name(
-    ui: &egui::Ui,
-    name: &str,
-    color: egui::Color32,
-    off: bool,
-) -> egui::WidgetText {
+pub fn elided_name(ui: &egui::Ui, name: &str, color: egui::Color32, off: bool) -> egui::WidgetText {
     let mut job = egui::text::LayoutJob::single_section(
         name.to_string(),
         egui::TextFormat {
             font_id: egui::TextStyle::Button.resolve(ui.style()),
             color,
-            strikethrough: if off {
-                egui::Stroke::new(1.0, color)
-            } else {
-                egui::Stroke::NONE
-            },
+            strikethrough: if off { egui::Stroke::new(1.0, color) } else { egui::Stroke::NONE },
             ..Default::default()
         },
     );
@@ -742,8 +728,12 @@ pub fn chain_strip(
                     ui.close();
                 }
             });
-            if crate::app::hint_into(hover, ui.small_button(crate::icons::CLEAR), tr(k::fx::REMOVE_SLOT))
-                .clicked()
+            if crate::app::hint_into(
+                hover,
+                ui.small_button(crate::icons::CLEAR),
+                tr(k::fx::REMOVE_SLOT),
+            )
+            .clicked()
             {
                 remove = Some(i);
             }
@@ -822,8 +812,12 @@ pub fn chain_strip(
         }
         // копипаст цепочки (модель — kt_model::ops, Р.33)
         if !edit.fx.is_empty()
-            && crate::app::hint_into(hover, ui.button(tr(k::fx::COPY_CHAIN)), tr(k::fx::COPY_CHAIN_HINT))
-                .clicked()
+            && crate::app::hint_into(
+                hover,
+                ui.button(tr(k::fx::COPY_CHAIN)),
+                tr(k::fx::COPY_CHAIN_HINT),
+            )
+            .clicked()
         {
             let block = kt_model::ops::FxChainBlock {
                 slots: edit
@@ -856,13 +850,7 @@ pub fn chain_strip(
             // ОДНА правда вставки: та же функция, что зовут пресеты
             // (Р.48). Ключи переезжают «вход к входу» — у события это
             // тики материала, у морфера время блока.
-            kt_model::ops::append_chain_block(
-                edit.fx,
-                edit.bypass,
-                edit.auto,
-                &b,
-                src_in,
-            );
+            kt_model::ops::append_chain_block(edit.fx, edit.bypass, edit.auto, &b, src_in);
             *edit.selected = ChainSel::Fx(edit.fx.len().saturating_sub(1));
             ch.fx = true;
             ch.bypass = true;

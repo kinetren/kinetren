@@ -34,8 +34,11 @@ const BAND_COLORS: [egui::Color32; 3] = [
 ];
 
 /// Имена параметров полосы: (частота, усиление).
-const BANDS: [(&str, &str); 3] =
-    [("low_freq_hz", "low_gain_db"), ("mid_freq_hz", "mid_gain_db"), ("high_freq_hz", "high_gain_db")];
+const BANDS: [(&str, &str); 3] = [
+    ("low_freq_hz", "low_gain_db"),
+    ("mid_freq_hz", "mid_gain_db"),
+    ("high_freq_hz", "high_gain_db"),
+];
 
 /// Частота → доля ширины (лог-шкала: декады равны по ширине).
 pub(crate) fn hz_to_u(hz: f64) -> f32 {
@@ -90,9 +93,13 @@ pub fn draw(
     for hz in [20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10_000.0, 20_000.0] {
         let x = x_of(hz);
         let decade = matches!(hz as i64, 100 | 1000 | 10_000);
-        p.line_segment([egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())], if decade { axis } else { grid });
+        p.line_segment(
+            [egui::pos2(x, plot.top()), egui::pos2(x, plot.bottom())],
+            if decade { axis } else { grid },
+        );
         if decade {
-            let label = if hz >= 1000.0 { format!("{:.0}k", hz / 1000.0) } else { format!("{hz:.0}") };
+            let label =
+                if hz >= 1000.0 { format!("{:.0}k", hz / 1000.0) } else { format!("{hz:.0}") };
             p.text(
                 egui::pos2(x + 3.0, plot.bottom() - 2.0),
                 egui::Align2::LEFT_BOTTOM,
@@ -160,8 +167,8 @@ pub fn draw(
     let hovered = resp.hover_pos();
     let grab = grabbed(ui.ctx(), id);
     for (i, &c) in centers.iter().enumerate() {
-        let near = grab == Some(i)
-            || hovered.is_some_and(|h| h.distance(c) <= 9.0 && grab.is_none());
+        let near =
+            grab == Some(i) || hovered.is_some_and(|h| h.distance(c) <= 9.0 && grab.is_none());
         // «усы» середины показывают ширину полосы — иначе добротность,
         // которую правит колесо, никак не видна
         if i == 1 {
@@ -255,11 +262,7 @@ pub fn draw(
 }
 
 /// Что показывает поле этого параметра — база или значение кривой.
-fn shown(
-    f: &FxInstance,
-    bind: &Option<&mut crate::widgets::CurveBind<'_>>,
-    name: &str,
-) -> f64 {
+fn shown(f: &FxInstance, bind: &Option<&mut crate::widgets::CurveBind<'_>>, name: &str) -> f64 {
     match bind {
         Some(b) => b.shown(f, name),
         None => f.get_param(name).unwrap_or(0.0),

@@ -156,8 +156,7 @@ impl RollingGraph {
             p.add(egui::Shape::line(pts, egui::Stroke::new(1.4, s.color)));
             // маркер текущего значения у правого края линии + число (порт)
             let last = *s.data.back().unwrap();
-            let last_x = g.left()
-                + ((s.data.len() - 1) as f32 / (SAMPLES - 1) as f32) * g.width();
+            let last_x = g.left() + ((s.data.len() - 1) as f32 / (SAMPLES - 1) as f32) * g.width();
             let last_y = y_of(last);
             p.circle_filled(egui::pos2(last_x, last_y), 2.6, s.color);
             p.text(

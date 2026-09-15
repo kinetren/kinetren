@@ -21,17 +21,17 @@ const DUR: i64 = 48_000 * 2;
 /// тождественно 1.0 на сигнале ниже единицы, и остаётся только сдвиг
 /// (если он есть). Ради этого свойства тест и существует.
 fn limiter_linear() -> FxInstance {
-    FxInstance::Limiter {
-        threshold_db: 0.0,
-        ceiling_db: 0.0,
-        lookahead_ms: 5.0,
-        release_ms: 80.0,
-    }
+    FxInstance::Limiter { threshold_db: 0.0, ceiling_db: 0.0, lookahead_ms: 5.0, release_ms: 80.0 }
 }
 
 fn project(fx: Vec<FxInstance>, pattern: &str) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 64,
+        height: 36,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: pattern.into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -135,10 +135,7 @@ fn t334_lookahead_does_not_shift_the_output() {
     // сила слоя поверх упреждающего узла не двоит материал: сухая
     // сторона задерживается ровно на съеденное узлом окно
     let mixed = render(
-        vec![
-            FxInstance::limiter(),
-            FxInstance::LayerMix { amount: 0.5, from: 0 },
-        ],
+        vec![FxInstance::limiter(), FxInstance::LayerMix { amount: 0.5, from: 0 }],
         AudioPattern::Clicks,
         0,
     );

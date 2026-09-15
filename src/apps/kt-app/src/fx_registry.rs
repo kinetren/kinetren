@@ -230,11 +230,7 @@ pub fn registry() -> &'static [FxEntry] {
 /// Ищет по ключевым словам ТЕКУЩЕГО языка И по английским: иначе выбравший
 /// китайский не смог бы найти «blur», хотя имя эффекта именно такое.
 /// Значения keywords лежат в каталоге уже в нижнем регистре.
-pub fn filter_entries<'a>(
-    entries: &'a [FxEntry],
-    audio: bool,
-    query: &str,
-) -> Vec<&'a FxEntry> {
+pub fn filter_entries<'a>(entries: &'a [FxEntry], audio: bool, query: &str) -> Vec<&'a FxEntry> {
     let q = query.trim().to_lowercase();
     entries
         .iter()
@@ -242,9 +238,7 @@ pub fn filter_entries<'a>(
         .filter(|e| {
             q.is_empty()
                 || e.name.to_lowercase().contains(&q)
-                || e.keywords.is_some_and(|kw| {
-                    tr(kw).contains(&q) || tr_en(kw).contains(&q)
-                })
+                || e.keywords.is_some_and(|kw| tr(kw).contains(&q) || tr_en(kw).contains(&q))
         })
         .collect()
 }
@@ -275,7 +269,8 @@ pub fn fx_picker_with_head(
     let mut picked = None;
     ui.menu_button(tr(k::fxreg::ADD), |ui| {
         ui.set_min_width(230.0);
-        let edit = egui::TextEdit::singleline(query).hint_text(tr(k::fxreg::SEARCH)).desired_width(210.0);
+        let edit =
+            egui::TextEdit::singleline(query).hint_text(tr(k::fxreg::SEARCH)).desired_width(210.0);
         let resp = ui.add(edit);
         // фокус в строку поиска при открытии меню
         if ui.input(|i| i.events.is_empty()) && !resp.has_focus() {
@@ -314,12 +309,8 @@ pub fn fx_picker_with_head(
         if !shown.is_empty() {
             ui.label(egui::RichText::new(tr(k::fx::PRESETS)).small().weak());
             for (i, r) in shown {
-                let label = crate::widgets::elided_name(
-                    ui,
-                    &r.name,
-                    ui.visuals().text_color(),
-                    false,
-                );
+                let label =
+                    crate::widgets::elided_name(ui, &r.name, ui.visuals().text_color(), false);
                 let resp = ui.button(label);
                 if resp.clicked() {
                     picked = Some(Picked::Preset(i));
@@ -447,15 +438,10 @@ mod tests {
         // силы, у него нет места в пикере) обязан быть в аудио-списке;
         // каждый видео-вид, у которого есть шаблон, — в видео-списке.
         crate::i18n::set_lang(crate::i18n::Lang::Ru);
-        let audio_kinds: std::collections::BTreeSet<&str> = FxInstance::all()
-            .iter()
-            .filter(|f| f.is_audio())
-            .map(|f| f.tag())
-            .collect();
-        let audio_in_picker: std::collections::BTreeSet<&str> = filter_entries(reg, true, "")
-            .iter()
-            .map(|e| e.template.tag())
-            .collect();
+        let audio_kinds: std::collections::BTreeSet<&str> =
+            FxInstance::all().iter().filter(|f| f.is_audio()).map(|f| f.tag()).collect();
+        let audio_in_picker: std::collections::BTreeSet<&str> =
+            filter_entries(reg, true, "").iter().map(|e| e.template.tag()).collect();
         assert_eq!(audio_in_picker, audio_kinds, "каждый аудио-вид реестра — в пикере");
         // видео-список = все видео-шаблоны + двусторонний Slowed+Reverb
         assert_eq!(filter_entries(reg, false, "").len(), old.len() + 1);

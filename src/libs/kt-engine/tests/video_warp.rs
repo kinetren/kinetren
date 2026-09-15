@@ -16,8 +16,13 @@ const STEP: i64 = SEC / 30; // 3000, 30 fps
 const Q: kt_media::Quality = kt_media::Quality { width: 64, height: 36 };
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 64,
+        height: 36,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -87,10 +92,7 @@ fn t247_video_follows_the_rate_curve() {
         param: "rate".into(),
         ease: false,
         // ключи — в тиках МАТЕРИАЛА от source_in (домен Р.37: ось линейна)
-        keys: vec![
-            AutoKey { t: Tick(SEC), v: 1.0 },
-            AutoKey { t: Tick(SEC + dur), v: 2.0 },
-        ],
+        keys: vec![AutoKey { t: Tick(SEC), v: 1.0 }, AutoKey { t: Tick(SEC + dur), v: 2.0 }],
     }]];
     let p = project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], curve, false);
     let track = pts_track(&p);
@@ -354,7 +356,8 @@ fn t272_split_renders_the_same_frames() {
                 .filter(|(_, (a, b))| (*a - *b).abs() > STEP)
                 .count();
             assert_eq!(
-                bad, 0,
+                bad,
+                0,
                 "{name}, разрез на {at}: {bad} кадров из {} разошлись — резка попала не в тот \
                  материал",
                 before.len()

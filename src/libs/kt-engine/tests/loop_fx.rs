@@ -58,8 +58,13 @@ impl AudioFetcher for Probe {
 }
 
 fn base_project() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:sine".into() });
     p
@@ -173,11 +178,8 @@ fn t166_loop_wrap_is_a_seam_not_a_seek() {
     // состояние FX пережило заворот: та же позиция на втором круге звучит
     // ИНАЧЕ, чем при холодном старте — реверб дозванивает через шов
     if let Some(h2) = head_turn2 {
-        let diff = h2
-            .iter()
-            .zip(head_turn1.iter())
-            .map(|(a, b)| (a - b).abs())
-            .fold(0f32, f32::max);
+        let diff =
+            h2.iter().zip(head_turn1.iter()).map(|(a, b)| (a - b).abs()).fold(0f32, f32::max);
         assert!(diff > 1e-6, "хвост реверба обязан переживать заворот (шов, а не reset)");
         assert!(h2.iter().all(|s| s.is_finite() && s.abs() <= 4.0), "шов не даёт выбросов");
     } else {

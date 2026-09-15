@@ -56,9 +56,8 @@ static FLIGHT: std::sync::OnceLock<
     std::sync::Mutex<Option<std::sync::Arc<kt_engine::flight::FlightRecorder>>>,
 > = std::sync::OnceLock::new();
 
-fn flight_slot() -> &'static std::sync::Mutex<
-    Option<std::sync::Arc<kt_engine::flight::FlightRecorder>>,
-> {
+fn flight_slot()
+-> &'static std::sync::Mutex<Option<std::sync::Arc<kt_engine::flight::FlightRecorder>>> {
     FLIGHT.get_or_init(|| std::sync::Mutex::new(None))
 }
 
@@ -227,7 +226,8 @@ mod tests {
         f.push(Ev::Play, 48_000, 0);
         // дамп передаётся явно: слот «чёрного ящика» глобальный, а тесты
         // идут параллельно — соседний харнесс успевает положить туда свой
-        let r = crash_report_with("assertion failed: у пользователя всё сломалось", Some(&f.dump()));
+        let r =
+            crash_report_with("assertion failed: у пользователя всё сломалось", Some(&f.dump()));
         assert!(r.contains(kt_version::display()), "нет версии: жалоба без неё бесполезна");
         assert!(r.contains("thread:"), "нет потока");
         assert!(r.contains("assertion failed"), "нет самого сообщения паники");

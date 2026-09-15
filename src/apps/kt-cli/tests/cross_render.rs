@@ -122,7 +122,11 @@ fn prepare(env: &Env, sample: &str, out: &Path) -> Result<Prep, String> {
         .iter()
         .map(|x| {
             let c = x["rgb"].as_array().unwrap();
-            [c[0].as_u64().unwrap() as u8, c[1].as_u64().unwrap() as u8, c[2].as_u64().unwrap() as u8]
+            [
+                c[0].as_u64().unwrap() as u8,
+                c[1].as_u64().unwrap() as u8,
+                c[2].as_u64().unwrap() as u8,
+            ]
         })
         .collect();
     let transitions = m["transitions"]
@@ -297,8 +301,10 @@ fn classify(obs: [f64; 3], table: &[Vec<[f64; 3]>]) -> Result<Option<usize>, Str
     }
     match best {
         Some((i, d)) if d <= ACCEPT => Ok(Some(i)),
-        Some((_, d)) => Err(format!("#{:02X}{:02X}{:02X} (ближайший на {d:.1})",
-            obs[0] as u8, obs[1] as u8, obs[2] as u8)),
+        Some((_, d)) => Err(format!(
+            "#{:02X}{:02X}{:02X} (ближайший на {d:.1})",
+            obs[0] as u8, obs[1] as u8, obs[2] as u8
+        )),
         None => Err("палитра пуста".into()),
     }
 }
@@ -348,19 +354,12 @@ fn probes(project: &kt_model::Project, p: &Prep) -> (Vec<i64>, usize) {
     let mut skip: Vec<(i64, i64)> = p
         .transitions
         .iter()
-        .map(|(a, b)| {
-            ((a * 90_000.0).round() as i64 - fd, (b * 90_000.0).round() as i64 + fd)
-        })
+        .map(|(a, b)| ((a * 90_000.0).round() as i64 - fd, (b * 90_000.0).round() as i64 + fd))
         .collect();
     // зоны чужих конструкций, которые мы показываем плейсхолдером (решение
     // Р.24 п.5): там сравнивать нечего — у нас пусто по определению. Число
     // пропущенных точек печатается, тихой потери покрытия нет.
-    skip.extend(
-        project
-            .foreign
-            .iter()
-            .map(|f| (f.start.0 - fd, (f.start + f.duration).0 + fd)),
-    );
+    skip.extend(project.foreign.iter().map(|f| (f.start.0 - fd, (f.start + f.duration).0 + fd)));
 
     let mut out = Vec::new();
     for w in bounds.windows(2) {
@@ -485,10 +484,8 @@ fn t158_cross_render_conformance() {
         );
         for f in frames {
             let t = Tick(f * fd);
-            let (Ok(a), Ok(b)) = (
-                ours.read_video_frame(t, None),
-                theirs.read_video_frame(t, None),
-            ) else {
+            let (Ok(a), Ok(b)) = (ours.read_video_frame(t, None), theirs.read_video_frame(t, None))
+            else {
                 problems.push(format!("{sample}: кадр {f} не читается"));
                 continue;
             };
@@ -518,10 +515,9 @@ fn t158_cross_render_conformance() {
 fn show(c: &Result<Option<usize>, String>, palette: &[[u8; 3]]) -> String {
     match c {
         Ok(None) => "пусто".into(),
-        Ok(Some(i)) => format!(
-            "#{:02X}{:02X}{:02X}",
-            palette[*i][0], palette[*i][1], palette[*i][2]
-        ),
+        Ok(Some(i)) => {
+            format!("#{:02X}{:02X}{:02X}", palette[*i][0], palette[*i][1], palette[*i][2])
+        }
         Err(e) => format!("не опознан {e}"),
     }
 }

@@ -132,7 +132,6 @@ pub trait VideoGpuExec: Send + Sync {
     /// правила «playback не ждёт» (инвариант №5), что у CPU-исполнителя;
     /// отличие одно: мемоизированный пост-FX кадр CPU-пути GPU не видит,
     /// слой без пре-FX кадра для него всегда голод.
-    fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>)
-    -> Result<bool, GpuExecError>;
+    fn execute_into(&self, plan: &FramePlan<'_>, out: &mut Vec<u8>) -> Result<bool, GpuExecError>;
     fn info(&self) -> &GpuBackendInfo;
 }

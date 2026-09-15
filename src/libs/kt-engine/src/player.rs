@@ -361,7 +361,9 @@ impl Player {
         // отрицательное = reverse-транспорт (J4 v1.4); 0 = стоп потребления
         // (тишина, playhead стоит). Колбэк использует |rate|, знак читает
         // только render-поток.
-        self.shared.playback_rate.store(rate.clamp(-ENGINE_RATE_MAX, ENGINE_RATE_MAX).to_bits(), Ordering::Release);
+        self.shared
+            .playback_rate
+            .store(rate.clamp(-ENGINE_RATE_MAX, ENGINE_RATE_MAX).to_bits(), Ordering::Release);
     }
 
     pub fn playback_rate(&self) -> f32 {
@@ -868,14 +870,13 @@ fn audio_render_loop(ctx: RenderCtx) {
             // при loop заказываем через wrap-отображение
             match effective_region {
                 Some((rs, re))
-                    if re > rs
-                        && (if dir < 0 { render_head <= re } else { render_head >= rs }) =>
+                    if re > rs && (if dir < 0 { render_head <= re } else { render_head >= rs }) =>
                 {
                     let tl = rs + (render_head - rs).rem_euclid(re - rs);
                     // на скорости >1 окно упреждения растягивается: иначе
                     // при 8× 200 мс превращаются в 25 мс реального времени
-                    let look = (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32
-                        * rate_now.abs().max(1.0)) as i64;
+                    let look =
+                        (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32 * rate_now.abs().max(1.0)) as i64;
                     let ahead = look.min(re - rs);
                     if dir < 0 {
                         // реверс: греем ПОЗАДИ головы, заворот в хвост региона
@@ -929,15 +930,13 @@ fn audio_render_loop(ctx: RenderCtx) {
                 _ => {
                     let win = if dir < 0 {
                         (render_head
-                            - (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32
-                                * rate_now.abs().max(1.0))
+                            - (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32 * rate_now.abs().max(1.0))
                                 as i64)
                             .max(0)..render_head
                     } else {
                         render_head
                             ..render_head
-                                + (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32
-                                    * rate_now.abs().max(1.0))
+                                + (PLAYBACK_AUDIO_LOOKAHEAD_FRAMES as f32 * rate_now.abs().max(1.0))
                                     as i64
                     };
                     prefetch_audio_pass(
@@ -1058,8 +1057,7 @@ pub fn preview_key_step(
     if ahead < 0 {
         return (prev, 0, true);
     }
-    let skipped =
-        if step > 0 && ahead > step { ((ahead / step) - 1).max(0) as u64 } else { 0 };
+    let skipped = if step > 0 && ahead > step { ((ahead / step) - 1).max(0) as u64 } else { 0 };
     (key, skipped, false)
 }
 
@@ -1128,8 +1126,7 @@ pub fn lookahead_windows(
             let h = rs + (head - rs).rem_euclid(span);
             let want = len.min(span);
             let first = (re - h).min(want);
-            let mut v: Vec<std::ops::Range<i64>> =
-                std::iter::once(h..h + first).collect();
+            let mut v: Vec<std::ops::Range<i64>> = std::iter::once(h..h + first).collect();
             if want > first {
                 v.push(rs..rs + (want - first));
             }
@@ -1213,9 +1210,10 @@ fn prefetch_loop(
         let step = video.grid.frame_step();
         // бюджет окна — по САМОМУ КРУПНОМУ качеству декода (Р.46, п.318):
         // на Quality окно переливало бы кэш ровно в S^2 раз
-        let ahead = video_lookahead_ticks(video.max_decode_quality(q), step, cache.max_video_bytes());
-        let region_ticks = region
-            .map(|(s, e)| (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0));
+        let ahead =
+            video_lookahead_ticks(video.max_decode_quality(q), step, cache.max_video_bytes());
+        let region_ticks =
+            region.map(|(s, e)| (Tick::from_audio_frames(s).0, Tick::from_audio_frames(e).0));
         let ranges: Vec<TickRange> = lookahead_windows(t0.0, ahead, region_ticks)
             .into_iter()
             .map(|r| TickRange::new(Tick(r.start), Tick(r.end)))
@@ -1265,7 +1263,11 @@ mod sync_tests {
         assert_eq!(video_display_frame(48_000, 4_800, None, 1, 1.0), 43_200);
         // в loop-регионе wrap в обе стороны
         assert_eq!(video_display_frame(59_500, 1_000, Some((50_000, 60_000)), -1, 1.0), 50_500);
-        assert_eq!(video_display_frame(1000, 0, None, -1, 1.0), 1000, "нулевая задержка нейтральна");
+        assert_eq!(
+            video_display_frame(1000, 0, None, -1, 1.0),
+            1000,
+            "нулевая задержка нейтральна"
+        );
     }
 
     /// Тест 134 (п.132, Р.23): условия принадлежности loop'у согласованы с
@@ -1731,17 +1733,10 @@ mod varispeed_tests {
         // seek/пауза — переанкор, ключ уходит куда сказано
         assert_eq!(super::preview_key_step(Some(9000), 0, step, 1, true), (0, 0, false));
         // вперёд: пропуск ячеек считается
-        assert_eq!(
-            super::preview_key_step(Some(9000), 12_000, step, 1, false),
-            (12_000, 0, false)
-        );
-        assert_eq!(
-            super::preview_key_step(Some(9000), 21_000, step, 1, false),
-            (21_000, 3, false)
-        );
+        assert_eq!(super::preview_key_step(Some(9000), 12_000, step, 1, false), (12_000, 0, false));
+        assert_eq!(super::preview_key_step(Some(9000), 21_000, step, 1, false), (21_000, 3, false));
         // РЕВЕРС: убывание — норма, рост — откат
         assert_eq!(super::preview_key_step(Some(9000), 6000, step, -1, false), (6000, 0, false));
         assert_eq!(super::preview_key_step(Some(9000), 12_000, step, -1, false), (9000, 0, true));
     }
-
 }

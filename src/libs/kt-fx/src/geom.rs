@@ -288,8 +288,7 @@ pub fn build_geom_exec(
             && k_out == 1
             && matches!(steps[0], FxInstance::Pan { .. } | FxInstance::CamMotion { .. })
         {
-            let prog =
-                build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, 1, 1);
+            let prog = build_program(steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, 1, 1);
             if prog.ss == (SsSpec::Const { nx: 1, ny: 1 }) {
                 return GeomExec::Legacy;
             }
@@ -297,7 +296,16 @@ pub fn build_geom_exec(
         }
     }
     GeomExec::Fused(build_program(
-        steps, in_w, in_h, out_w, out_h, u, cam3d, burst_index, k_in, k_out,
+        steps,
+        in_w,
+        in_h,
+        out_w,
+        out_h,
+        u,
+        cam3d,
+        burst_index,
+        k_in,
+        k_out,
     ))
 }
 
@@ -305,14 +313,44 @@ pub fn build_geom_exec(
 /// каждого шага зависят от предыдущих).
 enum Step {
     /// Pan/CamMotion: рамка pan_frame в координатах входа шага.
-    Frame { x0: f64, y0: f64, cw: f64, ch: f64, iw: u32, ih: u32 },
-    Mirror { h: bool, v: bool, iw: u32, ih: u32 },
-    Grid { offx: u32, offy: u32, gw: u32, gh: u32, cw: u32, ch: u32, iw: u32, ih: u32 },
+    Frame {
+        x0: f64,
+        y0: f64,
+        cw: f64,
+        ch: f64,
+        iw: u32,
+        ih: u32,
+    },
+    Mirror {
+        h: bool,
+        v: bool,
+        iw: u32,
+        ih: u32,
+    },
+    Grid {
+        offx: u32,
+        offy: u32,
+        gw: u32,
+        gh: u32,
+        cw: u32,
+        ch: u32,
+        iw: u32,
+        ih: u32,
+    },
     /// Pan3d: ОБРАТНАЯ гомография (центр-space выхода → uv квада).
-    Proj { m: [[f64; 3]; 3], iw: u32, ih: u32 },
+    Proj {
+        m: [[f64; 3]; 3],
+        iw: u32,
+        ih: u32,
+    },
     /// Нелинейный варп Р.47: растр не меняет, работает в нормализованном
     /// центрированном пространстве своей стадии.
-    Warp { mode: u32, p: [f64; 7], iw: u32, ih: u32 },
+    Warp {
+        mode: u32,
+        p: [f64; 7],
+        iw: u32,
+        ih: u32,
+    },
     /// Поглощённый поточечный оп (Р.45): применяется к значению сабтапа
     /// на координате СВОЕЙ стадии.
     Tap(TapKind),
@@ -414,8 +452,7 @@ fn build_program(
                 );
                 // вырожденная гомография (|det| ≈ 0, квад ребром) —
                 // прозрачный слой: m с t.z ≡ −1
-                let m = invert3(&g)
-                    .unwrap_or([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, -1.0]]);
+                let m = invert3(&g).unwrap_or([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, -1.0]]);
                 fw.push(Step::Proj { m, iw: w, ih: h });
                 w = mow;
                 h = moh;
@@ -463,7 +500,15 @@ fn build_program(
                     hue_sin: h.sin(),
                 }));
             }
-            FxInstance::Duotone { shadow_r, shadow_g, shadow_b, high_r, high_g, high_b, amount } => {
+            FxInstance::Duotone {
+                shadow_r,
+                shadow_g,
+                shadow_b,
+                high_r,
+                high_g,
+                high_b,
+                amount,
+            } => {
                 fw.push(Step::Tap(TapKind::Duo {
                     shadow: [*shadow_r as f64, *shadow_g as f64, *shadow_b as f64],
                     high: [*high_r as f64, *high_g as f64, *high_b as f64],
@@ -494,12 +539,11 @@ fn build_program(
                     && *x3 == 1.0
                     && *y3 == 1.0;
                 if !ident {
-                    let m = corner_pin_inverse([
-                        (*x0, *y0),
-                        (*x1, *y1),
-                        (*x2, *y2),
-                        (*x3, *y3),
-                    ], mow, moh);
+                    let m = corner_pin_inverse(
+                        [(*x0, *y0), (*x1, *y1), (*x2, *y2), (*x3, *y3)],
+                        mow,
+                        moh,
+                    );
                     fw.push(Step::Proj { m, iw: w, ih: h });
                     // вне квада — прозрачно (как у Pan3d)
                     has_alpha_known = true;
@@ -575,12 +619,7 @@ fn build_program(
     // S_out: физический индекс K×-выхода → логический (полутексельная
     // конвенция, как bilinear_into); k_out=1 → тождество точно
     let ko = k_out as f64;
-    let mut pending = Aff {
-        ax: 1.0 / ko,
-        bx: 0.5 / ko - 0.5,
-        ay: 1.0 / ko,
-        by: 0.5 / ko - 0.5,
-    };
+    let mut pending = Aff { ax: 1.0 / ko, bx: 0.5 / ko - 0.5, ay: 1.0 / ko, by: 0.5 / ko - 0.5 };
     let flush = |pending: &mut Aff, prims: &mut Vec<GeomPrim>| {
         if !pending.is_identity() {
             prims.push(GeomPrim::Affine(*pending));
@@ -592,8 +631,8 @@ fn build_program(
             Step::Frame { x0, y0, cw, ch, iw, ih } => {
                 let ax = cw / mow as f64;
                 let ay = ch / moh as f64;
-                pending = pending
-                    .then(&Aff { ax, bx: x0 + 0.5 * ax - 0.5, ay, by: y0 + 0.5 * ay - 0.5 });
+                pending =
+                    pending.then(&Aff { ax, bx: x0 + 0.5 * ax - 0.5, ay, by: y0 + 0.5 * ay - 0.5 });
                 // рамка шире входа (zoom<1 / Stretch): «плато» из растянутой
                 // кромки — semantика старого пошагового клампа тапов
                 let cx = *cw > *iw as f64;
@@ -671,12 +710,7 @@ fn build_program(
     // S_in⁻¹: логический входной индекс → физический K_in×-буфер;
     // k_in=1 → тождество точно
     let ki = k_in as f64;
-    pending = pending.then(&Aff {
-        ax: ki,
-        bx: (ki - 1.0) / 2.0,
-        ay: ki,
-        by: (ki - 1.0) / 2.0,
-    });
+    pending = pending.then(&Aff { ax: ki, bx: (ki - 1.0) / 2.0, ay: ki, by: (ki - 1.0) / 2.0 });
     flush(&mut pending, &mut prims);
     // цепочечный порядок опов (обратный проход собрал их с конца);
     // after_prim при этом убывают
@@ -691,29 +725,27 @@ fn build_program(
     // КОНСТАНТЕН — тапы считаются один раз здесь, в f64, и едут в юниформу
     // (конъюгационные аффины уже в примах — лупа автоматически физическая);
     // Proj (перспектива) делает его по-пиксельным.
-    let (ss, lens) = if prims
-        .iter()
-        .any(|p| matches!(p, GeomPrim::Proj { .. } | GeomPrim::Warp { .. }))
-    {
-        // лупа для планировщика K× — оценка пробами обратной карты
-        (SsSpec::PerPixel, probe_program_lens(&prims, pout_w, pout_h))
-    } else {
-        let (mut lx, mut ly) = (1.0f64, 1.0f64);
-        for p in &prims {
-            match p {
-                GeomPrim::Affine(a) => {
-                    lx *= a.ax.abs();
-                    ly *= a.ay.abs();
+    let (ss, lens) =
+        if prims.iter().any(|p| matches!(p, GeomPrim::Proj { .. } | GeomPrim::Warp { .. })) {
+            // лупа для планировщика K× — оценка пробами обратной карты
+            (SsSpec::PerPixel, probe_program_lens(&prims, pout_w, pout_h))
+        } else {
+            let (mut lx, mut ly) = (1.0f64, 1.0f64);
+            for p in &prims {
+                match p {
+                    GeomPrim::Affine(a) => {
+                        lx *= a.ax.abs();
+                        ly *= a.ay.abs();
+                    }
+                    GeomPrim::Fold { cw, ch, in_w, in_h, .. } => {
+                        lx *= in_w / cw;
+                        ly *= in_h / ch;
+                    }
+                    GeomPrim::Clamp { .. } | GeomPrim::Proj { .. } | GeomPrim::Warp { .. } => {}
                 }
-                GeomPrim::Fold { cw, ch, in_w, in_h, .. } => {
-                    lx *= in_w / cw;
-                    ly *= in_h / ch;
-                }
-                GeomPrim::Clamp { .. } | GeomPrim::Proj { .. } | GeomPrim::Warp { .. } => {}
             }
-        }
-        (SsSpec::Const { nx: ss_taps(lx), ny: ss_taps(ly) }, (lx, ly))
-    };
+            (SsSpec::Const { nx: ss_taps(lx), ny: ss_taps(ly) }, (lx, ly))
+        };
     GeomProgram {
         prims,
         in_w,
@@ -734,13 +766,8 @@ fn build_program(
 /// бэкендах — K в плане один.
 fn probe_program_lens(prims: &[GeomPrim], out_w: u32, out_h: u32) -> (f64, f64) {
     let (ow, oh) = (out_w.max(2) as f64, out_h.max(2) as f64);
-    let pts = [
-        (ow * 0.5, oh * 0.5),
-        (1.0, 1.0),
-        (ow - 2.0, 1.0),
-        (1.0, oh - 2.0),
-        (ow - 2.0, oh - 2.0),
-    ];
+    let pts =
+        [(ow * 0.5, oh * 0.5), (1.0, 1.0), (ow - 2.0, 1.0), (1.0, oh - 2.0), (ow - 2.0, oh - 2.0)];
     let coords = |x: f64, y: f64| -> Option<(f64, f64)> {
         match map_pos(prims, x, y) {
             Mapped::At(sx, sy) => Some((sx, sy)),
@@ -915,11 +942,8 @@ fn pan3d_forward(
     let fov = cam.fov_deg.clamp(1.0, 179.0).to_radians();
     let f = 1.0 / (fov * 0.5).tan();
     let auto_z = -(oh * 0.5) * f;
-    let eye: V3 = [
-        cam.pos_x * s,
-        cam.pos_y * s,
-        if cam.pos_z == 0.0 { auto_z } else { cam.pos_z * s },
-    ];
+    let eye: V3 =
+        [cam.pos_x * s, cam.pos_y * s, if cam.pos_z == 0.0 { auto_z } else { cam.pos_z * s }];
     // взгляд: на target (two-node) либо вдоль +Z; up экрана в мире — −Y
     let dir: V3 = match cam.target {
         Some((tx, ty, tz)) => {
@@ -980,16 +1004,8 @@ fn pan3d_forward(
 
     // экран: c.x·w = ow/2·(clip.x + w); c.y·w = oh/2·(w − clip.y)
     [
-        [
-            ow * 0.5 * (p1[0] + p1[2]),
-            ow * 0.5 * (p2[0] + p2[2]),
-            ow * 0.5 * (p0[0] + p0[2]),
-        ],
-        [
-            oh * 0.5 * (p1[2] - p1[1]),
-            oh * 0.5 * (p2[2] - p2[1]),
-            oh * 0.5 * (p0[2] - p0[1]),
-        ],
+        [ow * 0.5 * (p1[0] + p1[2]), ow * 0.5 * (p2[0] + p2[2]), ow * 0.5 * (p0[0] + p0[2])],
+        [oh * 0.5 * (p1[2] - p1[1]), oh * 0.5 * (p2[2] - p2[1]), oh * 0.5 * (p0[2] - p0[1])],
         [p1[2], p2[2], p0[2]],
     ]
 }

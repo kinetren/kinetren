@@ -217,24 +217,23 @@ fn bench_simd_1080p() {
     // «делать или оставить скаляром» — по этим цифрам, Р.32 шаг 5).
     use kt_fx::video::{VideoFxCtx, apply_video_chain};
     use kt_model::FxInstance;
-    let ctx = VideoFxCtx { out_w: 1920, out_h: 1080, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 };
+    let ctx = VideoFxCtx {
+        out_w: 1920,
+        out_h: 1080,
+        u: 0.5,
+        burst_index: 90_000,
+        cam3d: None,
+        in_scale: 1,
+    };
     for (name, fx) in [
-        (
-            "greenscreen",
-            FxInstance::greenscreen([0, 255, 0], 70, 25 ),
-        ),
+        ("greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
         ("edges", FxInstance::edges(48)),
         ("vhs", FxInstance::vhs(4, 0.4)),
         ("mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
     ] {
         let t = std::time::Instant::now();
         for _ in 0..iters {
-            let f = Frame {
-                w: 1920,
-                h: 1080,
-                rgba: src.rgba.clone(),
-                has_alpha: true,
-            };
+            let f = Frame { w: 1920, h: 1080, rgba: src.rgba.clone(), has_alpha: true };
             std::hint::black_box(apply_video_chain(std::slice::from_ref(&fx), f, &ctx));
         }
         let ms = t.elapsed().as_secs_f64() * 1000.0 / iters as f64;
@@ -271,9 +270,8 @@ fn t198_noise_scalar_eq_avx2() {
                     for y in 0..h {
                         for x in vec_w..w {
                             let i = ((y * w + x) * 4) as usize;
-                            let hh = kt_fx::video::noise_hash(
-                                x ^ kt_fx::video::noise_hash(y ^ seed),
-                            );
+                            let hh =
+                                kt_fx::video::noise_hash(x ^ kt_fx::video::noise_hash(y ^ seed));
                             let n = ((hh >> 16) & 0x7fff) as i64 - 16384;
                             let off = (n * k / 32767) as i32;
                             for c in 0..3 {
@@ -323,7 +321,14 @@ fn t198_edges_scalar_eq_simd() {
             for th in [1u32, 48, 255] {
                 let src = frame(w, h, kind);
                 let want = st::edges_scalar(&src.rgba, w as usize, h as usize, th);
-                let ctx = VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: 90_000, cam3d: None, in_scale: 1 };
+                let ctx = VideoFxCtx {
+                    out_w: w,
+                    out_h: h,
+                    u: 0.5,
+                    burst_index: 90_000,
+                    cam3d: None,
+                    in_scale: 1,
+                };
                 let got = apply_video_chain(&[FxInstance::edges(th)], src, &ctx);
                 if got.rgba != want {
                     let i = got.rgba.iter().zip(&want).position(|(a, b)| a != b).unwrap();
@@ -360,16 +365,17 @@ fn t198_vhs_scalar_eq_simd() {
                         let src = frame(w, h, kind);
                         let mut want = src.rgba.clone();
                         st::vhs_scalar(&mut want, w as usize, h as usize, shift, bleed, burst);
-                        let ctx =
-                            VideoFxCtx { out_w: w, out_h: h, u: 0.5, burst_index: burst, cam3d: None, in_scale: 1 };
-                        let got = apply_video_chain(
-                            &[FxInstance::vhs(shift, bleed)],
-                            src,
-                            &ctx,
-                        );
+                        let ctx = VideoFxCtx {
+                            out_w: w,
+                            out_h: h,
+                            u: 0.5,
+                            burst_index: burst,
+                            cam3d: None,
+                            in_scale: 1,
+                        };
+                        let got = apply_video_chain(&[FxInstance::vhs(shift, bleed)], src, &ctx);
                         if got.rgba != want {
-                            let i =
-                                got.rgba.iter().zip(&want).position(|(a, b)| a != b).unwrap();
+                            let i = got.rgba.iter().zip(&want).position(|(a, b)| a != b).unwrap();
                             let p = i / 4;
                             panic!(
                                 "vhs kind={kind} {w}x{h} shift={shift} bleed={bleed} \

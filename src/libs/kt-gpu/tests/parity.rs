@@ -101,10 +101,7 @@ fn plan<'a>(t: i64, layers: Vec<PlanLayer<'a>>) -> FramePlan<'a> {
 
 /// CPU против GPU на одном плане; возвращает (cpu, gpu, complete_cpu,
 /// complete_gpu).
-fn run_both(
-    engine: &dyn VideoGpuExec,
-    p: &FramePlan<'_>,
-) -> (Vec<u8>, Vec<u8>, bool, bool) {
+fn run_both(engine: &dyn VideoGpuExec, p: &FramePlan<'_>) -> (Vec<u8>, Vec<u8>, bool, bool) {
     let cache = BurstCache::new(CacheConfig::default());
     let mut cpu = Vec::new();
     let c_cpu = compose_plan_cpu(p, &cache, &mut cpu);
@@ -135,25 +132,13 @@ fn t181_effect_parity_gpu_vs_cpu() {
             }],
             FrameTol::BILINEAR,
         ),
-        (
-            "mirror",
-            vec![FxInstance::Mirror { horizontal: true, vertical: false }],
-            FrameTol::EXACT,
-        ),
+        ("mirror", vec![FxInstance::Mirror { horizontal: true, vertical: false }], FrameTol::EXACT),
         ("blur", vec![FxInstance::blur(8)], FrameTol::BILINEAR),
-        (
-            "greenscreen",
-            vec![FxInstance::greenscreen([0, 255, 0], 70, 25)],
-            FrameTol::THRESHOLD,
-        ),
+        ("greenscreen", vec![FxInstance::greenscreen([0, 255, 0], 70, 25)], FrameTol::THRESHOLD),
         ("edges", vec![FxInstance::edges(48)], FrameTol::THRESHOLD),
         ("noise", vec![FxInstance::noise(0.3)], FrameTol::EXACT),
         // новые параметры Р.33 С5 — зеркала обязаны сойтись и на них
-        (
-            "blur-xy",
-            vec![FxInstance::Blur { radius: 24, radius_y: 4 }],
-            FrameTol::BILINEAR,
-        ),
+        ("blur-xy", vec![FxInstance::Blur { radius: 24, radius_y: 4 }], FrameTol::BILINEAR),
         (
             "edges-thick-color",
             vec![FxInstance::Edges {
@@ -358,10 +343,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ),
         (
             "chain-key",
-            vec![
-                FxInstance::greenscreen([0, 255, 0], 70, 25),
-                FxInstance::noise(0.5),
-            ],
+            vec![FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::noise(0.5)],
             FrameTol::THRESHOLD,
         ),
         // СИЛА СЛОЯ (Р.38 п.12): смешение сухой и мокрой сторон. Ядро
@@ -378,10 +360,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ),
         (
             "layer-mix-zero",
-            vec![
-                FxInstance::edges(48),
-                FxInstance::LayerMix { amount: 0.0, from: 1 },
-            ],
+            vec![FxInstance::edges(48), FxInstance::LayerMix { amount: 0.0, from: 1 }],
             FrameTol::THRESHOLD,
         ),
         // сила ПОСЛЕ ресемплящего эффекта: сухая сторона обязана быть
@@ -398,10 +377,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         // сила НУЛЬ поверх всего: обязана вернуть состояние до слоя
         (
             "layer-mix-whole-chain",
-            vec![
-                FxInstance::vhs(4, 0.4),
-                FxInstance::LayerMix { amount: 0.25, from: 0 },
-            ],
+            vec![FxInstance::vhs(4, 0.4), FxInstance::LayerMix { amount: 0.25, from: 0 }],
             FrameTol::BILINEAR,
         ),
     ];
@@ -413,12 +389,11 @@ fn t181_effect_parity_gpu_vs_cpu() {
         assert_frames_close(&cpu, &gpu, W, H, tol, name);
     }
     // Pan с кадром ЧУЖОГО размера (ресайз в Quality обязан совпасть)
-    let src = Src::new(2000, Some(frame(96, 54, false, 0)), vec![FxInstance::Pan {
-        mode: PanMode::Fill,
-        pan_x: 0.1,
-        pan_y: 0.0,
-        zoom: 1.2,
-    }]);
+    let src = Src::new(
+        2000,
+        Some(frame(96, 54, false, 0)),
+        vec![FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.1, pan_y: 0.0, zoom: 1.2 }],
+    );
     let p = plan(90_000, vec![one(&src, 4096, false)]);
     let (cpu, gpu, _, _) = run_both(engine.as_ref(), &p);
     assert_frames_close(&cpu, &gpu, W, H, FrameTol::BILINEAR, "pan-resize");
@@ -445,10 +420,7 @@ fn t181_effect_parity_gpu_vs_cpu() {
         ("pan3d-grid", vec![p3(0.0, 0.0, 0.7), grid2.clone()]),
         // ЦЕПОЧКА ПОЛЬЗОВАТЕЛЯ (Р.44): grid → pan3d → grid → pan3d-зум,
         // нетто-масштаб ≈ 1 — слитый проход сэмплирует исходник
-        (
-            "user-grid-pan3d-x2",
-            vec![grid2.clone(), p3(2.0, 15.0, 1.0), grid2, p3(0.0, 0.0, 4.0)],
-        ),
+        ("user-grid-pan3d-x2", vec![grid2.clone(), p3(2.0, 15.0, 1.0), grid2, p3(0.0, 0.0, 4.0)]),
     ];
     for (i, (name, fx)) in geo3d.into_iter().enumerate() {
         let mut src = Src::new(3000 + i as u64, Some(frame(W, H, false, 0)), fx);
@@ -475,11 +447,7 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
         // чистая конъюгация: 2×-вход сводится зумом ровно в Quality
         ("s2-zoom", vec![zoom2.clone()], FrameTol::BILINEAR),
         // ведущий барьер исполняется в 2× (ресемпла до него не было)
-        (
-            "s2-vhs-zoom",
-            vec![FxInstance::vhs(4, 0.4), zoom2.clone()],
-            FrameTol::BILINEAR,
-        ),
+        ("s2-vhs-zoom", vec![FxInstance::vhs(4, 0.4), zoom2.clone()], FrameTol::BILINEAR),
         // ступень + сетка выше барьера: K берётся по обоим источникам
         (
             "s2-grid-vhs-zoom",
@@ -503,11 +471,7 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
             FrameTol::THRESHOLD,
         ),
         // ядро сценария фичи: зум ×2 берёт детали, которых в 1× не было
-        (
-            "s2-zoom-edges",
-            vec![zoom2, FxInstance::edges(48)],
-            FrameTol::THRESHOLD,
-        ),
+        ("s2-zoom-edges", vec![zoom2, FxInstance::edges(48)], FrameTol::THRESHOLD),
     ];
     for (i, (name, fx, tol)) in cases.into_iter().enumerate() {
         let mut src = Src::new(4000 + i as u64, Some(frame(W * 2, H * 2, false, 0)), fx);
@@ -519,18 +483,22 @@ fn t309_decode_stage_parity_gpu_vs_cpu() {
     }
     // 3D на ступени: обратная гомография считается в логике, тапы — на
     // крупном буфере (допуск GEOM — силуэт квада, как у t181)
-    let mut src = Src::new(4100, Some(frame(W * 2, H * 2, false, 0)), vec![FxInstance::Pan3d {
-        pos_x: 2.0,
-        pos_y: 0.0,
-        pos_z: 0.0,
-        rot_x: 0.0,
-        rot_y: 15.0,
-        rot_z: 0.0,
-        anchor_x: 0.5,
-        anchor_y: 0.5,
-        scale: 2.0,
-        camera: None,
-    }]);
+    let mut src = Src::new(
+        4100,
+        Some(frame(W * 2, H * 2, false, 0)),
+        vec![FxInstance::Pan3d {
+            pos_x: 2.0,
+            pos_y: 0.0,
+            pos_z: 0.0,
+            rot_x: 0.0,
+            rot_y: 15.0,
+            rot_z: 0.0,
+            anchor_x: 0.5,
+            anchor_y: 0.5,
+            scale: 2.0,
+            camera: None,
+        }],
+    );
     src.src_scale = 2;
     src.cam3d = Some(kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
     let p = plan(90_000, vec![one(&src, 4096, false)]);
@@ -616,10 +584,14 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
     let Some(e2) = test_engine() else { return };
     // цепочка БЕЗ t-зависимых эффектов: смена t меняет ключ кэша
     // движка, но не байты → форсит пересчёт «грязным» пулом
-    let src = Src::new(10, Some(frame(96, 54, false, 3)), vec![
-        FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.2, pan_y: 0.1, zoom: 1.3 },
-        FxInstance::glow(1.2),
-    ]);
+    let src = Src::new(
+        10,
+        Some(frame(96, 54, false, 3)),
+        vec![
+            FxInstance::Pan { mode: PanMode::Fill, pan_x: 0.2, pan_y: 0.1, zoom: 1.3 },
+            FxInstance::glow(1.2),
+        ],
+    );
     let bg = Src::new(11, Some(frame(W, H, false, 0)), vec![]);
     let mk = |t: i64| plan(t, vec![one(&bg, 4096, false), one(&src, 3000, true)]);
 
@@ -632,12 +604,16 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
 
     // испачкать пулы e1 другими планами (вкл. слитую гео-серию Р.44 и
     // K×-барьер Р.45: сетка стиснула → blur в 2× → зум)
-    let junk = Src::new(12, Some(frame(W, H, false, 9)), vec![
-        FxInstance::EventGrid { cols: 3, rows: 2, center: true },
-        FxInstance::blur(12),
-        FxInstance::Mirror { horizontal: true, vertical: false },
-        FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
-    ]);
+    let junk = Src::new(
+        12,
+        Some(frame(W, H, false, 9)),
+        vec![
+            FxInstance::EventGrid { cols: 3, rows: 2, center: true },
+            FxInstance::blur(12),
+            FxInstance::Mirror { horizontal: true, vertical: false },
+            FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+        ],
+    );
     let mut _j = Vec::new();
     e1.execute_into(&plan(1920, vec![one(&junk, 4096, false)]), &mut _j).unwrap();
     e1.execute_into(&plan(3840, vec![one(&junk, 2000, true)]), &mut _j).unwrap();
@@ -653,7 +629,6 @@ fn t183_gpu_deterministic_on_device_and_dirty_pool() {
     e1.execute_into(&mk(90_000), &mut a3).unwrap();
     assert_eq!(a1, a3, "ReadbackCache вернул не те байты");
 }
-
 
 /// Тест 224 (Р.33 С4): КАЖДЫЙ вид перехода считается на GPU так же, как на
 /// CPU. Ядра переходов — единственное место, где одну формулу пришлось
@@ -714,13 +689,7 @@ fn t224_transition_parity_gpu_vs_cpu() {
         for k in [200u32, 1024, 1800, 2048, 3600] {
             let p = plan(
                 k as i64,
-                vec![PlanLayer::Dissolve {
-                    a: a.layer(),
-                    b: b.layer(),
-                    k,
-                    alpha_k: 4096,
-                    mix,
-                }],
+                vec![PlanLayer::Dissolve { a: a.layer(), b: b.layer(), k, alpha_k: 4096, mix }],
             );
             let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
             assert!(cc && cg, "{}: план обязан быть полным", kind.tag());
@@ -815,9 +784,7 @@ fn t329_parity_cycle_over_the_registry() {
     let video: Vec<&FxInstance> = FxInstance::all()
         .iter()
         .filter(|f| {
-            !f.is_audio()
-                && !f.is_layer_mix()
-                && !matches!(f, FxInstance::SlowedReverb { .. })
+            !f.is_audio() && !f.is_layer_mix() && !matches!(f, FxInstance::SlowedReverb { .. })
         })
         .collect();
     let tags: std::collections::BTreeSet<&str> = video.iter().map(|f| f.tag()).collect();
@@ -830,12 +797,11 @@ fn t329_parity_cycle_over_the_registry() {
     let zoom2 = FxInstance::Pan { mode: PanMode::Stretch, pan_x: 0.0, pan_y: 0.0, zoom: 2.0 };
     for (i, f) in video.iter().enumerate() {
         let (tol_single, tol_sand) = table[f.tag()];
-        let cam = matches!(f, FxInstance::Pan3d { .. }).then(|| kt_engine::Cam3d {
-            cam: kt_model::CameraParams::default(),
-            world_scale: 1.0,
-        });
+        let cam = matches!(f, FxInstance::Pan3d { .. })
+            .then(|| kt_engine::Cam3d { cam: kt_model::CameraParams::default(), world_scale: 1.0 });
         // одиночный
-        let mut src = Src::new(9000 + i as u64 * 2, Some(frame(W, H, false, 0)), vec![(*f).clone()]);
+        let mut src =
+            Src::new(9000 + i as u64 * 2, Some(frame(W, H, false, 0)), vec![(*f).clone()]);
         src.cam3d = cam;
         let p = plan(90_000, vec![one(&src, 4096, false)]);
         let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
@@ -859,12 +825,7 @@ fn t329_parity_cycle_over_the_registry() {
     // гео-прохода (kind 2..5 в geom_fused.wgsl).
     let tuned: &[(FxInstance, FrameTol, FrameTol)] = &[
         (
-            FxInstance::ColorGrade {
-                brightness: 0.12,
-                contrast: 0.35,
-                saturation: 1.6,
-                hue: 60.0,
-            },
+            FxInstance::ColorGrade { brightness: 0.12, contrast: 0.35, saturation: 1.6, hue: 60.0 },
             FrameTol::BILINEAR,
             FrameTol::BILINEAR,
         ),
@@ -960,10 +921,8 @@ fn t329_parity_cycle_over_the_registry() {
     let p = plan(90_000, vec![one(&src, 4096, false)]);
     let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);
     assert_frames_close(&cpu, &gpu, W, H, FrameTol::THRESHOLD, "tuned-radial-spin");
-    let shadow_chain = vec![
-        FxInstance::greenscreen([0, 255, 0], 70, 25),
-        FxInstance::drop_shadow(),
-    ];
+    let shadow_chain =
+        vec![FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::drop_shadow()];
     let src = Src::new(9702, Some(frame(W, H, false, 0)), shadow_chain.clone());
     let p = plan(90_000, vec![one(&src, 4096, false)]);
     let (cpu, gpu, ..) = run_both(engine.as_ref(), &p);

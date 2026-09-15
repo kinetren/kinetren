@@ -153,9 +153,7 @@ impl Biquad {
                 let c = (1.0 + cos) * 0.5;
                 (c, -(1.0 + cos), c, 1.0 + alpha, -2.0 * cos, 1.0 - alpha)
             }
-            BiquadKind::Bandpass => {
-                (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha)
-            }
+            BiquadKind::Bandpass => (alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cos, 1.0 - alpha),
             BiquadKind::Peak => (
                 1.0 + alpha * a,
                 -2.0 * cos,
@@ -203,8 +201,7 @@ impl Biquad {
     /// |H(e^jw)|² = |B|²/|A|² раскрыто через cos(w) и cos(2w) — без
     /// комплексного типа и без зависимостей.
     pub fn mag_db(&self, freq_hz: f32) -> f64 {
-        let w = 2.0 * std::f64::consts::PI * freq_hz.max(0.0) as f64
-            / AUDIO_SAMPLE_RATE as f64;
+        let w = 2.0 * std::f64::consts::PI * freq_hz.max(0.0) as f64 / AUDIO_SAMPLE_RATE as f64;
         let (c1, c2) = (w.cos(), (2.0 * w).cos());
         let (b0, b1, b2) = (self.b0 as f64, self.b1 as f64, self.b2 as f64);
         let (a1, a2) = (self.a1 as f64, self.a2 as f64);

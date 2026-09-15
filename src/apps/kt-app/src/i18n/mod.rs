@@ -179,11 +179,7 @@ pub fn interp(tmpl: &str, args: &[&dyn fmt::Display]) -> String {
     }
     // Уровень 2 порядка RTL: статические строки переупорядочены сборкой, а
     // собранные из аргументов — здесь. Для остальных языков это один скан.
-    if current().is_rtl() {
-        bidi::visual(&out)
-    } else {
-        out
-    }
+    if current().is_rtl() { bidi::visual(&out) } else { out }
 }
 
 /// `tf!(k::msg::CLIPS_COPIED, n)` — строка каталога с аргументами.

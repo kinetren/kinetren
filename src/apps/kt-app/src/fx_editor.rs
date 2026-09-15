@@ -4,15 +4,14 @@
 //! live-применение через apply_coalesced (вся сессия окна = 1 undo),
 //! Отмена = откат к состоянию на момент открытия.
 
-use crate::i18n::{k, tr};
 use crate::app::KtApp;
+use crate::i18n::{k, tr};
 use eframe::egui;
 use kt_model::*;
 
 /// Снимок одной цепочки на момент открытия окна: сама цепочка, кривые,
 /// выключатели слотов и мастер-выключатель.
-pub type ChainSnapshot =
-    (ClipId, Vec<FxInstance>, Vec<Vec<kt_model::ParamCurve>>, Vec<bool>, bool);
+pub type ChainSnapshot = (ClipId, Vec<FxInstance>, Vec<Vec<kt_model::ParamCurve>>, Vec<bool>, bool);
 
 pub struct FxEditor {
     /// Якорь окна: событие, по которому его открыли (его id — id окна).
@@ -232,9 +231,8 @@ impl KtApp {
                             // и того же `ed` одолжены одновременно
                             // у цепочки события головы нет: выбор всегда
                             // слот эффекта, поэтому индекс хранится как был
-                            let mut sel_slot = crate::widgets::ChainSel::Fx(
-                                *ed.selected.get(id).unwrap_or(&0),
-                            );
+                            let mut sel_slot =
+                                crate::widgets::ChainSel::Fx(*ed.selected.get(id).unwrap_or(&0));
                             let mut query = std::mem::take(&mut ed.picker_query);
                             ch = crate::widgets::chain_strip(
                                 ui,
@@ -278,8 +276,7 @@ impl KtApp {
                                     frame_step,
                                     playhead,
                                 );
-                                let view_sel =
-                                    ed.auto_views.get(&(*id, sel)).and_then(|v| v.sel);
+                                let view_sel = ed.auto_views.get(&(*id, sel)).and_then(|v| v.sel);
                                 let mut bind = auto.get_mut(sel).map(|curves| {
                                     crate::widgets::CurveBind { curves, sel: view_sel, at }
                                 });
@@ -325,7 +322,12 @@ impl KtApp {
                                         )
                                     };
                                     let actx = crate::automation::clip_ctx(
-                                        &clip, f, frame_step, &to_tl, &to_mat, tl_view,
+                                        &clip,
+                                        f,
+                                        frame_step,
+                                        &to_tl,
+                                        &to_mat,
+                                        tl_view,
                                         axis_linked,
                                     );
                                     let r = draw_auto_for(
@@ -342,13 +344,12 @@ impl KtApp {
                                     auto_ch = r.changed;
                                     // правый клик по ключу — тоже цель (п.364)
                                     if let Some((ci, ki)) = r.key_menu {
-                                        panel_pick =
-                                            Some(crate::ctx_menu::PanelTarget::CurveKey {
-                                                chain: *id,
-                                                slot: sel,
-                                                curve: ci,
-                                                key: ki,
-                                            });
+                                        panel_pick = Some(crate::ctx_menu::PanelTarget::CurveKey {
+                                            chain: *id,
+                                            slot: sel,
+                                            curve: ci,
+                                            key: ki,
+                                        });
                                     }
                                     // Поле параметра читает выбранный ключ
                                     // ДО отрисовки графика, поэтому смена
@@ -417,12 +418,10 @@ impl KtApp {
                     focus: true,
                 });
             }
-            Some(crate::widgets::PresetAction::Delete(name)) => {
-                match self.presets.remove(&name) {
-                    Ok(()) => self.note(format!("{} {name}", tr(k::msg::PRESET_DELETED))),
-                    Err(e) => self.note(format!("{}: {e}", tr(k::msg::PRESET_SAVE_FAILED))),
-                }
-            }
+            Some(crate::widgets::PresetAction::Delete(name)) => match self.presets.remove(&name) {
+                Ok(()) => self.note(format!("{} {name}", tr(k::msg::PRESET_DELETED))),
+                Err(e) => self.note(format!("{}: {e}", tr(k::msg::PRESET_SAVE_FAILED))),
+            },
             None => {}
         }
         if let Some(t) = panel_pick {
@@ -470,10 +469,7 @@ impl KtApp {
                 while b.last() == Some(&false) {
                     b.pop(); // хвостовые false не сериализуются зря
                 }
-                self.apply_coalesced(
-                    Command::SetFxBypass { id: e.clip, bypass: b },
-                    ed.gesture,
-                );
+                self.apply_coalesced(Command::SetFxBypass { id: e.clip, bypass: b }, ed.gesture);
             }
             if let Some(off) = e.off {
                 self.apply_coalesced(Command::SetFxOff { id: e.clip, off }, ed.gesture);
@@ -513,11 +509,8 @@ pub(crate) fn draw_auto_for(
     ui.separator();
     ui.horizontal(|ui| {
         // параметры без кривой — кандидаты на добавление
-        let free: Vec<&kt_model::ParamSpec> = specs
-            .iter()
-            .copied()
-            .filter(|s| !curves.iter().any(|c| c.param == s.name))
-            .collect();
+        let free: Vec<&kt_model::ParamSpec> =
+            specs.iter().copied().filter(|s| !curves.iter().any(|c| c.param == s.name)).collect();
         if !free.is_empty() {
             // МЕНЮ, а не ComboBox: выбранный текст у него никогда не
             // менялся (это список действий, а не селектор), и заодно у
@@ -674,10 +667,7 @@ pub(crate) fn video_fx_templates() -> Vec<(&'static str, FxInstance)> {
         ("Pan", FxInstance::Pan { mode: PanMode::Fit, pan_x: 0.0, pan_y: 0.0, zoom: 1.0 }),
         ("Mirror", FxInstance::Mirror { horizontal: true, vertical: false }),
         ("Blur", FxInstance::blur(8)),
-        (
-            "Greenscreen",
-            FxInstance::greenscreen([0, 255, 0], 70, 25 ),
-        ),
+        ("Greenscreen", FxInstance::greenscreen([0, 255, 0], 70, 25)),
         ("Edges", FxInstance::edges(48)),
         ("Noise", FxInstance::noise(0.08)),
         ("VHS", FxInstance::vhs(4, 0.4)),
@@ -763,18 +753,20 @@ pub(crate) fn draw_video_fx_params(
     };
 
     // --- нечисловые контролы варианта ------------------------------------
-    let mode_row = |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut crate::widgets::ParamsChanged| {
-        ui.horizontal(|ui| {
-            ui.label(tr(k::fx::MODE));
-            egui::ComboBox::from_id_salt("panmode")
-            .selected_text(format!("{mode:?}"))
-            .show_ui(ui, |ui| {
-                for m in [PanMode::Fit, PanMode::Fill, PanMode::Stretch] {
-                    ch.base |= ui.selectable_value(mode, m, format!("{m:?}")).changed();
-                }
+    let mode_row =
+        |ui: &mut egui::Ui, mode: &mut PanMode, ch: &mut crate::widgets::ParamsChanged| {
+            ui.horizontal(|ui| {
+                ui.label(tr(k::fx::MODE));
+                egui::ComboBox::from_id_salt("panmode").selected_text(format!("{mode:?}")).show_ui(
+                    ui,
+                    |ui| {
+                        for m in [PanMode::Fit, PanMode::Fill, PanMode::Stretch] {
+                            ch.base |= ui.selectable_value(mode, m, format!("{m:?}")).changed();
+                        }
+                    },
+                );
             });
-        });
-    };
+        };
     match f {
         FxInstance::Pan { mode, .. } => mode_row(ui, mode, &mut ch),
         FxInstance::Delay { pingpong, .. } => {
@@ -791,9 +783,9 @@ pub(crate) fn draw_video_fx_params(
             };
             ui.horizontal(|ui| {
                 ui.label(tr(k::fx::MODE));
-                egui::ComboBox::from_id_salt("filtermode")
-                    .selected_text(label(*mode))
-                    .show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("filtermode").selected_text(label(*mode)).show_ui(
+                    ui,
+                    |ui| {
                         for m in [
                             kt_model::FilterMode::Lowpass,
                             kt_model::FilterMode::Highpass,
@@ -801,7 +793,8 @@ pub(crate) fn draw_video_fx_params(
                         ] {
                             ch.base |= ui.selectable_value(mode, m, label(m)).changed();
                         }
-                    });
+                    },
+                );
             });
         }
         FxInstance::CamMotion { mode, ease, .. } => {
@@ -964,7 +957,8 @@ pub(crate) fn draw_video_fx_params(
                         .unwrap_or_else(|| format!("C{}", id.0)),
                 };
                 egui::ComboBox::from_id_salt("pan3dcam").selected_text(sel).show_ui(ui, |ui| {
-                    ch.base |= ui.selectable_value(camera, None, tr(k::fx::CAMERA_ACTIVE)).changed();
+                    ch.base |=
+                        ui.selectable_value(camera, None, tr(k::fx::CAMERA_ACTIVE)).changed();
                     for (cid, name) in cameras {
                         ch.base |= ui
                             .selectable_value(camera, Some(kt_model::CameraId(*cid)), name.clone())

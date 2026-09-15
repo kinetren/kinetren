@@ -2,8 +2,8 @@
 //! лог, Cancel. Экспорт в фоне через export_mp4_with со СВЕЖИМИ
 //! FfmpegSource (не декодеры плеера); диапазон = регион, иначе весь проект.
 
-use crate::i18n::{k, tr};
 use crate::app::KtApp;
+use crate::i18n::{k, tr};
 use crate::util::{resolve_media_path, synth_pattern};
 use eframe::egui;
 use kt_engine::export::ExportProgress;
@@ -67,7 +67,10 @@ type Sources = Vec<(MediaId, Box<dyn MediaSource>)>;
 /// Источники для рендера. Недоступный файл НЕ отменяет экспорт (Р.33
 /// п.10): вместо него встаёт плейсхолдер, а имя попадает в список —
 /// пользователь предупреждён до старта и видит счёт после.
-pub(crate) fn open_all(project: &Project, base: Option<&std::path::Path>) -> (Sources, Vec<String>) {
+pub(crate) fn open_all(
+    project: &Project,
+    base: Option<&std::path::Path>,
+) -> (Sources, Vec<String>) {
     let mut out = Vec::new();
     let mut missing = Vec::new();
     for m in &project.media {
@@ -452,8 +455,7 @@ impl KtApp {
                 // мгновенная скорость по дельте кадров (панель Speed v1)
                 let dt = job.last_tick.elapsed().as_secs_f64();
                 if dt >= 0.5 && job.job.done.is_none() {
-                    let cur =
-                        (job.progress.video_frames - job.last_frames) as f64 / dt / proj_fps;
+                    let cur = (job.progress.video_frames - job.last_frames) as f64 / dt / proj_fps;
                     job.last_frames = job.progress.video_frames;
                     job.last_tick = std::time::Instant::now();
                     if cur > 0.0 {
@@ -466,7 +468,10 @@ impl KtApp {
                 if job.speed_n > 0 {
                     ui.weak(crate::tf!(
                         k::render::SPEED,
-                        format!("{:.2}", if job.speed_min == f64::MAX { 0.0 } else { job.speed_min }),
+                        format!(
+                            "{:.2}",
+                            if job.speed_min == f64::MAX { 0.0 } else { job.speed_min }
+                        ),
                         format!("{:.2}", job.speed_sum / job.speed_n as f64),
                         format!("{speed:.2}"),
                         format!("{:.2}", job.speed_max),
@@ -492,7 +497,14 @@ impl KtApp {
                     None => {
                         ui.horizontal(|ui| {
                             let paused = job.job.is_paused();
-                            if ui.button(if paused { tr(k::render::RESUME) } else { tr(k::render::PAUSE) }).clicked() {
+                            if ui
+                                .button(if paused {
+                                    tr(k::render::RESUME)
+                                } else {
+                                    tr(k::render::PAUSE)
+                                })
+                                .clicked()
+                            {
                                 job.job.set_paused(!paused);
                             }
                             if paused {
@@ -556,10 +568,7 @@ impl KtApp {
                         if stats.missing_video_layers > 0 {
                             ui.colored_label(
                                 egui::Color32::from_rgb(255, 190, 120),
-                                crate::tf!(
-                                    k::render::MISSING_LAYERS,
-                                    stats.missing_video_layers
-                                ),
+                                crate::tf!(k::render::MISSING_LAYERS, stats.missing_video_layers),
                             );
                         }
                         if ui.button("OK").clicked() {

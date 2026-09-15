@@ -254,10 +254,7 @@ impl Source {
     /// пропускается (остаётся только чтение заголовка) — быстрое открытие
     /// больших файлов. Индекс обязан соответствовать текущему содержимому
     /// файла (идентичность проверяет вызывающая сторона).
-    pub fn open_with_index(
-        path: &str,
-        prebuilt: Option<PrebuiltIndex>,
-    ) -> Result<Source, FfError> {
+    pub fn open_with_index(path: &str, prebuilt: Option<PrebuiltIndex>) -> Result<Source, FfError> {
         let (backend, _) = init().as_ref().map_err(|e| FfError::NotFound(e.clone()))?;
         match backend {
             Backend::V6(api) => v6::Source::open_with_index(api, path, prebuilt).map(Source::V6),

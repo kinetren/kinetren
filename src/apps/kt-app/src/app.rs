@@ -1,7 +1,7 @@
 //! KtApp: состояние приложения, панели, клавиши, дропы, lifecycle.
 
-use crate::i18n::{k, tr};
 use crate::audio_out;
+use crate::i18n::{k, tr};
 use crate::timeline::{CtxTarget, Drag};
 use crate::util::*;
 use eframe::egui;
@@ -483,7 +483,13 @@ pub struct KtApp {
 
 impl KtApp {
     fn empty_project() -> Project {
-        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000, pitch_engine: Default::default() })
+        Project::new(ProjectSettings {
+            fps: 30,
+            width: 1280,
+            height: 720,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+        })
     }
 
     /// Р.29: собрать GPU-движок видео-FX на живом устройстве eframe и
@@ -1014,11 +1020,8 @@ impl KtApp {
     /// функция на все окна с кривыми — иначе у слота, камеры и перехода
     /// зум разъедется, как когда-то разъехались их редакторы ключей.
     pub fn tl_view(&self) -> (kt_time::Tick, kt_time::Tick) {
-        let w = self
-            .tl_geom
-            .as_ref()
-            .map(|g| g.rect.width() as f64 * g.tpp)
-            .unwrap_or(10.0 * 90_000.0);
+        let w =
+            self.tl_geom.as_ref().map(|g| g.rect.width() as f64 * g.tpp).unwrap_or(10.0 * 90_000.0);
         let s = self.view_start;
         (kt_time::Tick(s.max(0.0) as i64), kt_time::Tick((s + w) as i64))
     }
@@ -1061,9 +1064,8 @@ impl KtApp {
         // из-за них ВЕСЬ интерфейс не доходил до краёв окна (жалоба п.3
         // р.9 про «отступ метров справа» — на самом деле отступала каждая
         // панель). Работаем на полном content_rect.
-        let mut root = ui.new_child(
-            egui::UiBuilder::new().max_rect(ctx.content_rect()).layout(*ui.layout()),
-        );
+        let mut root =
+            ui.new_child(egui::UiBuilder::new().max_rect(ctx.content_rect()).layout(*ui.layout()));
         let ui = &mut root;
         // имя проекта — в заголовок окна (п.19 р.6), не каждый кадр
         // имя БЕЗ расширения (п.5 р.12: «.ktproj» и так понятно) и версия
@@ -1119,159 +1121,172 @@ impl KtApp {
         // живут внутри боковых колонок). Умное сжатие панелей egui при
         // этом не ломается — добавлен только верхний предел.
         let tl_max = (ui.available_height() - 140.0).max(80.0);
-        egui::Panel::bottom("timeline").frame(egui::Frame::new().fill(crate::theme::PANEL)).resizable(true).default_size(300.0).max_size(tl_max).show(ui, |ui| {
-            let full = ui.available_rect_before_wrap();
-            self.timeline_rect = full;
-            let strip_h = 34.0;
-            let tl_rect = egui::Rect::from_min_max(
-                full.min,
-                egui::pos2(full.right(), full.bottom() - strip_h),
-            );
-            ui.scope_builder(egui::UiBuilder::new().max_rect(tl_rect), |ui| {
-                self.draw_timeline(ui);
+        egui::Panel::bottom("timeline")
+            .frame(egui::Frame::new().fill(crate::theme::PANEL))
+            .resizable(true)
+            .default_size(300.0)
+            .max_size(tl_max)
+            .show(ui, |ui| {
+                let full = ui.available_rect_before_wrap();
+                self.timeline_rect = full;
+                let strip_h = 34.0;
+                let tl_rect = egui::Rect::from_min_max(
+                    full.min,
+                    egui::pos2(full.right(), full.bottom() - strip_h),
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(tl_rect), |ui| {
+                    self.draw_timeline(ui);
+                });
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
+                        egui::pos2(full.left(), full.bottom() - strip_h),
+                        full.max,
+                    )),
+                    |ui| {
+                        self.draw_toolbar_strip(ui);
+                    },
+                );
             });
-            ui.scope_builder(
-                egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
-                    egui::pos2(full.left(), full.bottom() - strip_h),
-                    full.max,
-                )),
-                |ui| {
-                    self.draw_toolbar_strip(ui);
-                },
-            );
-        });
         // полоса времени над таймлайном (порт Timeline time strip)
         // левая колонка: медиа-бин + перфоманс-бокс (порт widget_3)
         // ПРЕДЕЛ ПОСТАВЛЕН ПО ЖАЛОБЕ п.4 р.13 — не ужимать без новой просьбы
-            // пользователя: 420 px были страховкой р.7.1, в р.9 подняты до
-            // половины окна по его прямой просьбе, а в р.11 я срезал их
-            // обратно «по аналогии» с метрами и сломал работу в третий раз.
-            egui::Panel::left("left_col").frame(crate::theme::panel_frame()).resizable(true).default_size(232.0).min_size(72.0).max_size((ui.max_rect().width() * 0.7).max(420.0)).show(ui, |ui| {
-            // шапка: лого + меню + имя проекта (пп.15,6,7 р.8)
-            self.draw_column_header(ui);
-            ui.add_space(2.0);
-            // п.27 р.7: контент в ScrollArea — фрейм панели не перерастает
-            // высоту, и сепаратор egui больше не залезает на таймлайн
-            // (panel.rs берёт ФАКТИЧЕСКИЙ rect фрейма); заодно колонка
-            // скроллится при малой высоте окна
-            // auto_shrink по ШИРИНЕ обязателен: [false] заставлял контент
-            // требовать всю доступную ширину, панель раздувалась по
-            // контенту и съедала превью (регрессия п.3 р.7.1). По высоте
-            // false — ради п.27 (фрейм не перерастает панель).
-            egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
-                egui::Frame::group(ui.style())
-                    .fill(crate::theme::WINDOW)
-                    .corner_radius(1.0)
-                    .show(ui, |ui| {
-                        self.draw_bin(ui);
-                    });
-                ui.add_space(8.0);
-                egui::Frame::group(ui.style())
-                    .fill(crate::theme::WINDOW)
-                    .corner_radius(1.0)
-                    .show(ui, |ui| {
-                        self.draw_perf_box(ui);
-                    });
+        // пользователя: 420 px были страховкой р.7.1, в р.9 подняты до
+        // половины окна по его прямой просьбе, а в р.11 я срезал их
+        // обратно «по аналогии» с метрами и сломал работу в третий раз.
+        egui::Panel::left("left_col")
+            .frame(crate::theme::panel_frame())
+            .resizable(true)
+            .default_size(232.0)
+            .min_size(72.0)
+            .max_size((ui.max_rect().width() * 0.7).max(420.0))
+            .show(ui, |ui| {
+                // шапка: лого + меню + имя проекта (пп.15,6,7 р.8)
+                self.draw_column_header(ui);
+                ui.add_space(2.0);
+                // п.27 р.7: контент в ScrollArea — фрейм панели не перерастает
+                // высоту, и сепаратор egui больше не залезает на таймлайн
+                // (panel.rs берёт ФАКТИЧЕСКИЙ rect фрейма); заодно колонка
+                // скроллится при малой высоте окна
+                // auto_shrink по ШИРИНЕ обязателен: [false] заставлял контент
+                // требовать всю доступную ширину, панель раздувалась по
+                // контенту и съедала превью (регрессия п.3 р.7.1). По высоте
+                // false — ради п.27 (фрейм не перерастает панель).
+                egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
+                    egui::Frame::group(ui.style())
+                        .fill(crate::theme::WINDOW)
+                        .corner_radius(1.0)
+                        .show(ui, |ui| {
+                            self.draw_bin(ui);
+                        });
+                    ui.add_space(8.0);
+                    egui::Frame::group(ui.style())
+                        .fill(crate::theme::WINDOW)
+                        .corner_radius(1.0)
+                        .show(ui, |ui| {
+                            self.draw_perf_box(ui);
+                        });
+                });
             });
-        });
         // центр: превью + метры справа, под ними контролы.
         // Фрейм без воздуха: дефолтные 8 px по периметру съедали место и
         // отодвигали кнопки окна от угла (п.15 р.8).
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(crate::theme::PANEL))
-            .show(ui, |ui| {
-            let p = self.model.project();
-            if let Some(r) = p.region
-                && !p.loop_enabled
-                && self.player.transport.is_playing()
-                && self.player.transport.playhead() >= r.end
-                && self.player.transport.playhead() < r.end + Tick(9000)
-            {
-                self.player.pause();
-                // как ручная пауза: двойной Space после авто-паузы = стоп
-                // в начало региона (п.29 р.7)
-                self.paused_at = Some(std::time::Instant::now());
-            }
-            egui::Panel::bottom("prev_controls").show(ui, |ui| {
-                ui.add_space(3.0);
-                self.draw_preview_controls(ui);
-                ui.add_space(3.0);
-            });
-            // Ширину держим САМИ, штатный resizable выключен (п.6 р.13):
-            // хват egui — ±8 px по ВСЕЙ высоте панели и регистрируется
-            // ПОСЛЕ её контента (так задумано в egui), поэтому он выигрывал
-            // у кнопок окна и «свернуть» нажималась наполовину. Своя полоса
-            // лежит ЛЕВЕЕ панели и внутрь неё не заходит.
-            let mw = self.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
-            egui::Panel::right("meters_col").resizable(false).exact_size(mw).frame(egui::Frame::new().fill(crate::theme::PANEL)).show(ui, |ui| {
-                // кнопки окна — здесь, в вёрстке (п.15 р.8)
-                self.draw_window_buttons(ui);
-                self.draw_meters(ui);
-            });
-            // полоса перетаскивания — уже ВНЕ панели: место под неё забрала
-            // сама панель, поэтому правый край оставшегося места и есть её
-            // левая кромка. Ниже полосы драга окна, чтобы не спорить с ней.
-            {
-                // кромка панели считается от окна (ui.max_rect() панель не
-                // ужимает), полоса лежит СЛЕВА от неё и в панель не заходит
-                let win = ui.ctx().content_rect();
-                let edge = win.right() - mw;
-                let sep = egui::Rect::from_min_max(
-                    egui::pos2(edge - METERS_SEP_W, win.top() + TOP_DRAG_H),
-                    egui::pos2(edge, win.bottom()),
-                );
-                let r = ui.interact(sep, egui::Id::new("meters-sep"), egui::Sense::drag());
-                if r.hovered() || r.dragged() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                }
-                if r.dragged()
-                    && let Some(pos) = r.interact_pointer_pos()
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(crate::theme::PANEL)).show(
+            ui,
+            |ui| {
+                let p = self.model.project();
+                if let Some(r) = p.region
+                    && !p.loop_enabled
+                    && self.player.transport.is_playing()
+                    && self.player.transport.playhead() >= r.end
+                    && self.player.transport.playhead() < r.end + Tick(9000)
                 {
-                    self.meters_w = (win.right() - pos.x).clamp(METERS_W_MIN, METERS_W_MAX);
-                    self.dirty_ui = true;
+                    self.player.pause();
+                    // как ручная пауза: двойной Space после авто-паузы = стоп
+                    // в начало региона (п.29 р.7)
+                    self.paused_at = Some(std::time::Instant::now());
                 }
-            }
-            egui::CentralPanel::default()
-                .frame(egui::Frame::new())
-                .show(ui, |ui| {
-                // п.2 р.9: НЕПРЕРЫВНАЯ зона драга окна по всей ширине.
-                // Полоса невидима и лежит между кромкой ресайза (WIN_EDGE)
-                // и низом шапок колонок, поэтому места не занимает и
-                // стыкуется с шапкой слева и кнопками окна справа.
-                if std::env::var_os("KT_DECORATIONS").is_none() {
-                    let full = ui.available_rect_before_wrap();
-                    // В развёрнутом окне ресайза НЕТ (блок ниже выключен
-                    // гардом maximized), поэтому верхние WIN_EDGE пикселей
-                    // оставались МЁРТВЫМИ: тянешь у самой кромки — ничего,
-                    // чуть ниже — работает (п.11 р.13). Отдаём их драгу.
-                    let maximized =
-                        ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
-                    let top = if maximized { full.top() } else { full.top() + WIN_EDGE };
-                    let strip = egui::Rect::from_min_max(
-                        egui::pos2(full.left() - 8.0, top),
-                        egui::pos2(full.right() + 8.0, full.top() + TOP_DRAG_H),
-                    );
-                    let bg = ui.interact(
-                        strip,
-                        ui.id().with("top-drag"),
-                        egui::Sense::click_and_drag(),
-                    );
-                    self.window_drag_from(&bg, ui.ctx());
-                    // МЕСТА полоса не занимает (п.1 р.11): раньше здесь
-                    // стоял advance_cursor_after_rect, и превью теряло
-                    // 20 px по высоте ни за что. Клики полоса не крадёт —
-                    // egui ищет цель клика и цель драга независимо, а
-                    // превью само не принимает клики выше TOP_DRAG_H.
-                }
-                if self.preview_detached {
-                    ui.centered_and_justified(|ui| {
-                        ui.weak(tr(k::hint::PREVIEW_DETACHED));
+                egui::Panel::bottom("prev_controls").show(ui, |ui| {
+                    ui.add_space(3.0);
+                    self.draw_preview_controls(ui);
+                    ui.add_space(3.0);
+                });
+                // Ширину держим САМИ, штатный resizable выключен (п.6 р.13):
+                // хват egui — ±8 px по ВСЕЙ высоте панели и регистрируется
+                // ПОСЛЕ её контента (так задумано в egui), поэтому он выигрывал
+                // у кнопок окна и «свернуть» нажималась наполовину. Своя полоса
+                // лежит ЛЕВЕЕ панели и внутрь неё не заходит.
+                let mw = self.meters_w.clamp(METERS_W_MIN, METERS_W_MAX);
+                egui::Panel::right("meters_col")
+                    .resizable(false)
+                    .exact_size(mw)
+                    .frame(egui::Frame::new().fill(crate::theme::PANEL))
+                    .show(ui, |ui| {
+                        // кнопки окна — здесь, в вёрстке (п.15 р.8)
+                        self.draw_window_buttons(ui);
+                        self.draw_meters(ui);
                     });
-                } else {
-                    self.draw_preview(ui);
+                // полоса перетаскивания — уже ВНЕ панели: место под неё забрала
+                // сама панель, поэтому правый край оставшегося места и есть её
+                // левая кромка. Ниже полосы драга окна, чтобы не спорить с ней.
+                {
+                    // кромка панели считается от окна (ui.max_rect() панель не
+                    // ужимает), полоса лежит СЛЕВА от неё и в панель не заходит
+                    let win = ui.ctx().content_rect();
+                    let edge = win.right() - mw;
+                    let sep = egui::Rect::from_min_max(
+                        egui::pos2(edge - METERS_SEP_W, win.top() + TOP_DRAG_H),
+                        egui::pos2(edge, win.bottom()),
+                    );
+                    let r = ui.interact(sep, egui::Id::new("meters-sep"), egui::Sense::drag());
+                    if r.hovered() || r.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                    }
+                    if r.dragged()
+                        && let Some(pos) = r.interact_pointer_pos()
+                    {
+                        self.meters_w = (win.right() - pos.x).clamp(METERS_W_MIN, METERS_W_MAX);
+                        self.dirty_ui = true;
+                    }
                 }
-            });
-        });
+                egui::CentralPanel::default().frame(egui::Frame::new()).show(ui, |ui| {
+                    // п.2 р.9: НЕПРЕРЫВНАЯ зона драга окна по всей ширине.
+                    // Полоса невидима и лежит между кромкой ресайза (WIN_EDGE)
+                    // и низом шапок колонок, поэтому места не занимает и
+                    // стыкуется с шапкой слева и кнопками окна справа.
+                    if std::env::var_os("KT_DECORATIONS").is_none() {
+                        let full = ui.available_rect_before_wrap();
+                        // В развёрнутом окне ресайза НЕТ (блок ниже выключен
+                        // гардом maximized), поэтому верхние WIN_EDGE пикселей
+                        // оставались МЁРТВЫМИ: тянешь у самой кромки — ничего,
+                        // чуть ниже — работает (п.11 р.13). Отдаём их драгу.
+                        let maximized = ui.ctx().input(|i| i.viewport().maximized.unwrap_or(false));
+                        let top = if maximized { full.top() } else { full.top() + WIN_EDGE };
+                        let strip = egui::Rect::from_min_max(
+                            egui::pos2(full.left() - 8.0, top),
+                            egui::pos2(full.right() + 8.0, full.top() + TOP_DRAG_H),
+                        );
+                        let bg = ui.interact(
+                            strip,
+                            ui.id().with("top-drag"),
+                            egui::Sense::click_and_drag(),
+                        );
+                        self.window_drag_from(&bg, ui.ctx());
+                        // МЕСТА полоса не занимает (п.1 р.11): раньше здесь
+                        // стоял advance_cursor_after_rect, и превью теряло
+                        // 20 px по высоте ни за что. Клики полоса не крадёт —
+                        // egui ищет цель клика и цель драга независимо, а
+                        // превью само не принимает клики выше TOP_DRAG_H.
+                    }
+                    if self.preview_detached {
+                        ui.centered_and_justified(|ui| {
+                            ui.weak(tr(k::hint::PREVIEW_DETACHED));
+                        });
+                    } else {
+                        self.draw_preview(ui);
+                    }
+                });
+            },
+        );
 
         // ---- отделённое окно превью (п.7 v1.4): второй монитор ------------
         // show_viewport_immediate: один egui::Context на все вьюпорты →
@@ -1699,7 +1714,6 @@ impl KtApp {
         ctx.request_repaint_after(delay);
     }
 
-
     /// После системного драга/ресайза окна (X11 `_NET_WM_MOVERESIZE`) WM
     /// забирает указатель и ButtonReleased в приложение НЕ приходит — egui
     /// вечно считает кнопку зажатой, `dragged` держит виджет драга, и весь
@@ -1720,11 +1734,7 @@ impl KtApp {
         if !strip.is_finite() || strip.width() < 1.0 {
             return;
         }
-        let mode = if self.dnd_hover.is_some() {
-            Some(tr(k::hint::DROP_HERE))
-        } else {
-            None
-        };
+        let mode = if self.dnd_hover.is_some() { Some(tr(k::hint::DROP_HERE)) } else { None };
         let status =
             self.status.as_ref().map(|(m, at)| (m.as_str(), at.elapsed().as_millis() as u64));
         let blocked = self.blocked.map(|b| self.blocked_text(b));
@@ -1737,9 +1747,10 @@ impl KtApp {
             tr(k::hint::IDLE),
         );
         if kind != HintKind::Status
-            && self.status.as_ref().is_some_and(|(_, at)| {
-                at.elapsed().as_millis() as u64 >= STATUS_TTL_MS
-            })
+            && self
+                .status
+                .as_ref()
+                .is_some_and(|(_, at)| at.elapsed().as_millis() as u64 >= STATUS_TTL_MS)
         {
             self.status = None;
         }
@@ -1754,8 +1765,7 @@ impl KtApp {
             egui::Order::Foreground,
             egui::Id::new("status-hint"),
         ));
-        let galley =
-            painter.layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), col);
+        let galley = painter.layout_no_wrap(text.clone(), egui::FontId::proportional(12.0), col);
         let x1 = strip.right() - 6.0;
         // длинная подсказка спокойно затирает метрики слева — она важнее
         let plate = egui::Rect::from_min_max(
@@ -1887,9 +1897,7 @@ impl KtApp {
         // «конец» — не только конец материала: маркер или граница региона
         // могут лежать правее, и тогда прыжок вперёд утаскивал курсор
         // НАЗАД (п.7 р.10)
-        let end = kt_engine::export::project_range(p)
-            .0
-            .max(pts.last().copied().unwrap_or(0));
+        let end = kt_engine::export::project_range(p).0.max(pts.last().copied().unwrap_or(0));
         let cursor = self.player.transport.playhead().0;
         let at = if far {
             if forward { end } else { 0 }
@@ -1935,8 +1943,7 @@ impl KtApp {
         self.last_user_scroll = Some(std::time::Instant::now());
         let ph = self.player.transport.playhead().0 as f64;
         let old_tpp = self.ticks_per_px;
-        let new_tpp =
-            (old_tpp * factor).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
+        let new_tpp = (old_tpp * factor).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
         let w = (self.timeline_rect.width() as f64 - crate::timeline::GUTTER_W as f64).max(1.0);
         let px = (ph - self.view_start) / old_tpp; // экранная позиция курсора
         let px = if (0.0..=w).contains(&px) { px } else { w * 0.5 };
@@ -2068,10 +2075,8 @@ impl KtApp {
     pub fn on_transport_toggle(&mut self) {
         let p = self.model.project();
         let region = p.region.map(|r| (r.start.0, r.end.0));
-        let pause_recent = self
-            .paused_at
-            .map(|t| t.elapsed().as_millis() < DOUBLE_PAUSE_MS)
-            .unwrap_or(false);
+        let pause_recent =
+            self.paused_at.map(|t| t.elapsed().as_millis() < DOUBLE_PAUSE_MS).unwrap_or(false);
         match Self::transport_toggle(
             self.player.transport.is_playing(),
             pause_recent,
@@ -2280,8 +2285,7 @@ impl KtApp {
             let mut rows = self.model.project().rows();
             if let Some(f) = rows.iter().position(|&e| e == (kind, at)) {
                 let e = rows.remove(f);
-                let to =
-                    rows.iter().position(|&x| x == row).map(|i| i + 1).unwrap_or(rows.len());
+                let to = rows.iter().position(|&x| x == row).map(|i| i + 1).unwrap_or(rows.len());
                 rows.insert(to, e);
                 self.apply(Command::SetLaneOrder { order: rows });
             }
@@ -2420,8 +2424,11 @@ impl KtApp {
     /// в журнал: окна нет, показать некому.
     pub(crate) fn write_recovery_now(&mut self) {
         let target = self.recovery_target();
-        let json =
-            kt_otio::save_project(self.model.project(), &self.retained, self.project_path.as_deref().and_then(|p| p.parent()));
+        let json = kt_otio::save_project(
+            self.model.project(),
+            &self.retained,
+            self.project_path.as_deref().and_then(|p| p.parent()),
+        );
         match write_project_guarded(&self.recovery_rev, &target, self.model_rev, &json) {
             Ok(SaveOutcome::Wrote { dir_synced }) => {
                 self.recovery_written = Some(target);
@@ -2524,24 +2531,23 @@ impl KtApp {
         let la: Vec<Vec<(i16, i16)>> = pa.iter().map(|(l, _)| l.clone()).collect();
         let lb: Vec<Vec<(i16, i16)>> = pb.iter().map(|(l, _)| l.clone()).collect();
         drop(peaks);
-        let Some(off) =
-            kt_media::sync::offset_from_pyramids(&la, &lb, kt_media::PEAK_BLOCK_FRAMES)
+        let Some(off) = kt_media::sync::offset_from_pyramids(&la, &lb, kt_media::PEAK_BLOCK_FRAMES)
         else {
             self.warn(tr(k::msg::SYNC_NO_MATCH));
             return;
         };
-        let cmds = match kt_model::ops::sync_by_audio_commands(self.model.project(), a, b, off.ticks)
-        {
-            kt_model::ops::SyncPlan::Move(c) => c,
-            kt_model::ops::SyncPlan::AlreadyAligned => {
-                self.note(crate::tf!(k::msg::SYNC_DONE, 0, (off.confidence * 100.0).round()));
-                return;
-            }
-            kt_model::ops::SyncPlan::OutOfRange => {
-                self.warn(tr(k::msg::SYNC_OUT_OF_RANGE));
-                return;
-            }
-        };
+        let cmds =
+            match kt_model::ops::sync_by_audio_commands(self.model.project(), a, b, off.ticks) {
+                kt_model::ops::SyncPlan::Move(c) => c,
+                kt_model::ops::SyncPlan::AlreadyAligned => {
+                    self.note(crate::tf!(k::msg::SYNC_DONE, 0, (off.confidence * 100.0).round()));
+                    return;
+                }
+                kt_model::ops::SyncPlan::OutOfRange => {
+                    self.warn(tr(k::msg::SYNC_OUT_OF_RANGE));
+                    return;
+                }
+            };
         if self.apply_batch(cmds) {
             self.note(crate::tf!(
                 k::msg::SYNC_DONE,
@@ -2664,8 +2670,7 @@ impl KtApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(tr(k::msg::NEST_NAME_LABEL));
-                    let resp =
-                        ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(200.0));
+                    let resp = ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(200.0));
                     if d.focus {
                         resp.request_focus();
                         d.focus = false;
@@ -2798,7 +2803,8 @@ impl KtApp {
         match self.lock_holder {
             None => base,
             Some(_) => {
-                let name = base.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let name =
+                    base.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                 base.with_file_name(format!("{name}.{}.otio", std::process::id()))
             }
         }
@@ -3038,9 +3044,7 @@ impl KtApp {
             .media
             .iter()
             .filter(|m| self.placeholder_media.contains(&m.id) && !offline.contains(&m.id))
-            .map(|m| {
-                (m.id, crate::util::media_label(&m.path), resolve_media_path(base, &m.path))
-            })
+            .map(|m| (m.id, crate::util::media_label(&m.path), resolve_media_path(base, &m.path)))
             .collect();
         if back.is_empty() {
             return;
@@ -3100,8 +3104,7 @@ impl KtApp {
             && (r.contains(at) || at == r.start || at == r.end)
         {
             let dur = r.end - r.start;
-            let at_start =
-                self.model.project().markers.iter().find(|m| m.t == r.start).cloned();
+            let at_start = self.model.project().markers.iter().find(|m| m.t == r.start).cloned();
             match at_start {
                 Some(m) if m.duration == dur => {
                     self.apply(Command::RemoveMarker { at: r.start });
@@ -3168,9 +3171,8 @@ impl KtApp {
         if idle < self.autosave_secs {
             return false;
         }
-        let busy = self.drag.is_some()
-            || self.bin_drag.is_some()
-            || self.player.transport.is_playing();
+        let busy =
+            self.drag.is_some() || self.bin_drag.is_some() || self.player.transport.is_playing();
         !busy || idle >= self.autosave_secs * 2
     }
 
@@ -3260,10 +3262,7 @@ impl KtApp {
                     }
                     // сторона — переключателем рядом с полем, а не вторым
                     // окном: это тот же выбор, а не отдельная настройка
-                    if ui
-                        .selectable_label(d.before, tr(k::msg::PASTE_AFFIX_BEFORE))
-                        .clicked()
-                    {
+                    if ui.selectable_label(d.before, tr(k::msg::PASTE_AFFIX_BEFORE)).clicked() {
                         d.before = !d.before;
                     }
                 });
@@ -3587,8 +3586,8 @@ impl KtApp {
             retry,
             move |ctl: crate::bg::BgCtl, send: crate::bg::BgSend<f32>| {
                 let mut src = open_source_indexed(&path, index.as_deref())?;
-                let total = src.info().duration.to_audio_frames()
-                    / kt_time::AUDIO_BURST_FRAMES as i64;
+                let total =
+                    src.info().duration.to_audio_frames() / kt_time::AUDIO_BURST_FRAMES as i64;
                 let mut meter = kt_fx::audio::loudness::LoudnessMeter::new();
                 for b in 0..total.max(1) {
                     if ctl.should_stop() {
@@ -3735,11 +3734,8 @@ impl KtApp {
         let mut next_group = self.next_group_id();
         let mut next_transition = self.next_transition_id();
         let mut next_morph = self.next_morph_id();
-        let names = kt_model::ops::PasteNames {
-            affix,
-            before,
-            taken: self.model.project().taken_names(),
-        };
+        let names =
+            kt_model::ops::PasteNames { affix, before, taken: self.model.project().taken_names() };
         let (cmds, end, skipped) = kt_model::ops::paste_block(
             &self.clipboard,
             at,
@@ -4057,8 +4053,7 @@ impl KtApp {
         }
         let ui = Some(self.ui_state());
         self.model.set_ui_state(ui);
-        let out =
-            kt_otio::save_project(self.model.project(), &self.retained, path.parent());
+        let out = kt_otio::save_project(self.model.project(), &self.retained, path.parent());
         // под сторожем: фоновый автосейв не должен перетереть нашу
         // запись своим более старым снапшотом (Р.32)
         match write_project_guarded(&self.saved_rev, &path, self.model_rev, &out) {
@@ -4212,12 +4207,8 @@ impl KtApp {
             Some(r) => p.clips.iter().filter(|c| r.intersects_clip(c)).map(|c| c.id).collect(),
             None => self.selected.iter().copied().collect(),
         };
-        let groups: Vec<GroupId> = p
-            .clips
-            .iter()
-            .filter(|c| ids.contains(&c.id))
-            .filter_map(|c| c.link_group)
-            .collect();
+        let groups: Vec<GroupId> =
+            p.clips.iter().filter(|c| ids.contains(&c.id)).filter_map(|c| c.link_group).collect();
         for c in &p.clips {
             if let Some(g) = c.link_group
                 && groups.contains(&g)
@@ -4546,12 +4537,7 @@ impl KtApp {
     }
 
     /// Медиа + клип(ы) в конкретную позицию (дроп в позицию мыши, п.2 v1.4).
-    pub fn add_media_clip_at(
-        &mut self,
-        path: &str,
-        at: Tick,
-        lane_hint: Option<(ClipKind, u32)>,
-    ) {
+    pub fn add_media_clip_at(&mut self, path: &str, at: Tick, lane_hint: Option<(ClipKind, u32)>) {
         let media_id = MediaId(self.next_media_id());
         if !self.apply(Command::AddMedia { id: media_id, path: path.to_string() }) {
             return;
@@ -4748,10 +4734,8 @@ impl KtApp {
         // картинка рисуется от самого верха окна, а клики принимаются
         // НИЖЕ полосы перетаскивания окна: иначе нажатие у кромки — это
         // одновременно ресайз, перенос окна и play/pause (п.1 р.11)
-        let hit = egui::Rect::from_min_max(
-            egui::pos2(rect.left(), rect.top() + TOP_DRAG_H),
-            rect.max,
-        );
+        let hit =
+            egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() + TOP_DRAG_H), rect.max);
         let resp = ui.interact(hit, ui.id().with("preview-click"), egui::Sense::click());
         let resp = self.hint(resp, tr(k::hint::PREVIEW_CLICK));
         // Правый клик по превью (Р.49, п.365). Двойной клик уже умеет
@@ -4973,7 +4957,8 @@ impl KtApp {
             let t = raw.clamp(-1.0, 1.0);
             // ушли за пределы виджета — «второе дыхание» (п.4 р.8)
             let over_px = ((raw.abs() - 1.0) * rect.width() * 0.5).max(0.0);
-            let rate_of = |t: f32| overshoot_rate(slider_to_rate(t), over_px, OVERSHOOT_PX_PER_DOUBLE);
+            let rate_of =
+                |t: f32| overshoot_rate(slider_to_rate(t), over_px, OVERSHOOT_PX_PER_DOUBLE);
             if self.speed_drag_upper == Some(true) {
                 // верхняя полоса: постоянная скорость (остаётся)
                 self.base_rate = rate_of(t);
@@ -5009,10 +4994,7 @@ impl KtApp {
             egui::Color32::from_rgba_unmultiplied(120, 160, 255, 70),
         );
         p.line_segment(
-            [
-                egui::pos2(to_x(base_t), upper.top() + 1.0),
-                egui::pos2(to_x(base_t), upper.bottom()),
-            ],
+            [egui::pos2(to_x(base_t), upper.top() + 1.0), egui::pos2(to_x(base_t), upper.bottom())],
             egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(150, 180, 255, 220)),
         );
         // нижняя полоса: shuttle-заливка + кружок текущей скорости
@@ -5041,8 +5023,7 @@ impl KtApp {
             && let Some(pos) = resp.interact_pointer_pos()
         {
             let cur = self.player.playback_rate();
-            let shown =
-                if self.speed_drag_upper == Some(true) { self.base_rate } else { cur };
+            let shown = if self.speed_drag_upper == Some(true) { self.base_rate } else { cur };
             egui::Area::new(egui::Id::new("speed-drag-overlay"))
                 .order(egui::Order::Foreground)
                 .fixed_pos(pos + egui::vec2(14.0, -26.0))
@@ -5052,10 +5033,7 @@ impl KtApp {
                     });
                 });
         }
-        self.hint(
-            resp,
-            tr(k::hint::SPEED),
-        );
+        self.hint(resp, tr(k::hint::SPEED));
     }
 
     /// Контролы превью (п.17 р.7: без очевидных надписей — значения
@@ -5607,7 +5585,6 @@ pub const SPACE_BOOST_MAX: f32 = 4.0;
 /// НЕ ускорять без новой просьбы.
 pub const SPACE_BOOST_SECS: f32 = 5.0;
 
-
 /// Состояние перф-панели: rolling-графики, дельты счётчиков, журнал проблем.
 /// Кэш coverage-опросов таймлайна (п.1).
 #[derive(Default)]
@@ -5821,12 +5798,10 @@ fn dnd_pointer_pos(ctx: &egui::Context) -> Option<egui::Pos2> {
         std::sync::OnceLock::new();
     let conn = X11
         .get_or_init(|| {
-            x11rb::connect(None)
-                .ok()
-                .map(|(c, screen)| {
-                    let root = c.setup().roots[screen].root;
-                    (c, root)
-                })
+            x11rb::connect(None).ok().map(|(c, screen)| {
+                let root = c.setup().roots[screen].root;
+                (c, root)
+            })
         })
         .as_ref()?;
     let reply = conn.0.query_pointer(conn.1).ok()?.reply().ok()?;
@@ -6092,10 +6067,7 @@ pub fn search_hits(
             m.name.clone()
         };
         if let Some(r) = rank(&label) {
-            out.push((
-                r,
-                Hit { kind: HitKind::Marker, label, at: m.t.0, media: None, clip: None },
-            ));
+            out.push((r, Hit { kind: HitKind::Marker, label, at: m.t.0, media: None, clip: None }));
         }
     }
     for g in groups {
@@ -6137,17 +6109,9 @@ pub fn search_hits(
         for lane in 0..count {
             let label = kt_model::lane_label(lane_names, kind, lane);
             if let Some(r) = rank(&label) {
-                let at = p
-                    .clips
-                    .iter()
-                    .filter(|c| c.lane == lane)
-                    .map(|c| c.start.0)
-                    .min()
-                    .unwrap_or(0);
-                out.push((
-                    r,
-                    Hit { kind: HitKind::Track, label, at, media: None, clip: None },
-                ));
+                let at =
+                    p.clips.iter().filter(|c| c.lane == lane).map(|c| c.start.0).min().unwrap_or(0);
+                out.push((r, Hit { kind: HitKind::Track, label, at, media: None, clip: None }));
             }
         }
     }
@@ -6168,7 +6132,11 @@ pub fn search_hits(
                 r + 1, // клипы ниже медиа с тем же именем
                 Hit {
                     kind: HitKind::Clip,
-                    label: crate::tf!(k::search::CLIP_AT, name, format!("{:.2}", c.start.as_secs_f64())),
+                    label: crate::tf!(
+                        k::search::CLIP_AT,
+                        name,
+                        format!("{:.2}", c.start.as_secs_f64())
+                    ),
                     at: c.start.0,
                     media: Some(c.media),
                     clip: Some(c.id),
@@ -6299,11 +6267,7 @@ pub fn rate_to_slider(rate: f32) -> f32 {
 }
 
 pub fn format_rate(r: f32) -> String {
-    if r == 0.0 {
-        tr(k::perf::RATE_STOP).to_string()
-    } else {
-        format!("{r:+.2}×")
-    }
+    if r == 0.0 { tr(k::perf::RATE_STOP).to_string() } else { format!("{r:+.2}×") }
 }
 
 /// Ключ кадра превью: тик, выровненный по сетке fps проекта (тест 39).
@@ -6575,7 +6539,6 @@ pub fn write_project_atomic(path: &std::path::Path, json: &str) -> std::io::Resu
     kt_otio::write_atomic(path, json).map(|_| ())
 }
 
-
 /// Чтение .otio с диска для open() (Р.24 п.12: .ktproj — только импорт).
 pub(crate) fn load_project_file(
     path: &Path,
@@ -6667,7 +6630,10 @@ impl KtApp {
         }
         self.perf.last_underruns = (ur, uc);
         if d_ev as f32 / dt > 500.0 {
-            self.perf.note(crate::tf!(k::perf::note::EVICTION_SPIKE, format!("{:.0}", d_ev as f32 / dt)));
+            self.perf.note(crate::tf!(
+                k::perf::note::EVICTION_SPIKE,
+                format!("{:.0}", d_ev as f32 / dt)
+            ));
         }
         // порт главного предупреждения v1: кадры выселены ДО первого чтения
         if d_unused > 0 {
@@ -6676,11 +6642,7 @@ impl KtApp {
         // порог (в v1 порогов не было вовсе): низкий видео-hit при игре
         if v_hit < 80.0
             && self.player.transport.is_playing()
-            && self
-                .perf
-                .last_hit_warn
-                .map(|t| t.elapsed().as_secs() >= 10)
-                .unwrap_or(true)
+            && self.perf.last_hit_warn.map(|t| t.elapsed().as_secs() >= 10).unwrap_or(true)
         {
             self.perf.last_hit_warn = Some(std::time::Instant::now());
             self.perf.note(crate::tf!(k::perf::note::LOW_VIDEO_HIT, format!("{v_hit:.0}")));
@@ -6785,8 +6747,7 @@ impl eframe::App for KtApp {
                 .wgpu_render_state()
                 .map(|rs| {
                     let info = rs.adapter.get_info();
-                    self.gpu_info =
-                        Some(format!("{} / {:?}", info.name, info.backend));
+                    self.gpu_info = Some(format!("{} / {:?}", info.name, info.backend));
                     let name = info.name.to_lowercase();
                     info.device_type == eframe::wgpu::DeviceType::Cpu
                         || name.contains("llvmpipe")
@@ -6901,11 +6862,11 @@ pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1440.0, 860.0])
-                    .with_min_inner_size([640.0, 640.0])
-                    .with_icon(app_icon())
-                    // app_id для Wayland и связи с .desktop (на X11 WM_CLASS
-                    // всё равно = имя бинаря, см. StartupWMClass в .desktop)
-                    .with_app_id("kinotrain")
+            .with_min_inner_size([640.0, 640.0])
+            .with_icon(app_icon())
+            // app_id для Wayland и связи с .desktop (на X11 WM_CLASS
+            // всё равно = имя бинаря, см. StartupWMClass в .desktop)
+            .with_app_id("kinotrain")
             .with_decorations(decorations)
             .with_title("Kinotrain"),
         wgpu_options,
@@ -7152,10 +7113,7 @@ mod repaint_tests {
         assert_eq!(preview_click_step(Some(300), false, false, 300), (C::TogglePlay, O::Clear));
         assert_eq!(preview_click_step(Some(999), false, false, 300), (C::TogglePlay, O::Clear));
         // двойной клик отменяет отложенный одиночный и детачит
-        assert_eq!(
-            preview_click_step(Some(120), false, true, 300),
-            (C::ToggleDetach, O::Clear)
-        );
+        assert_eq!(preview_click_step(Some(120), false, true, 300), (C::ToggleDetach, O::Clear));
         // двойной без pending — тоже детач
         assert_eq!(preview_click_step(None, false, true, 300), (C::ToggleDetach, O::Clear));
         // без клика и без pending — ничего
@@ -7173,7 +7131,9 @@ mod repaint_tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000, pitch_engine: Default::default() });
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+        });
         p.media.push(MediaRef { id: MediaId(1), path: "/tmp/Интервью.mp4".into() });
         p.markers.push(Marker::named(Tick(5000), "Интро"));
         p.markers.push(Marker::named(Tick(9000), "интервью — начало"));
@@ -7199,9 +7159,7 @@ mod repaint_tests {
         assert!(hits.iter().any(|h| h.kind == HitKind::Media));
 
         // дорожка по пользовательскому имени и по формуле
-        assert!(
-            search_hits(&p, &names, &groups, "голос").iter().any(|h| h.kind == HitKind::Track)
-        );
+        assert!(search_hits(&p, &names, &groups, "голос").iter().any(|h| h.kind == HitKind::Track));
         assert!(search_hits(&p, &names, &groups, "v1").iter().any(|h| h.kind == HitKind::Track));
 
         // мимо
@@ -7226,7 +7184,9 @@ mod repaint_tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000, pitch_engine: Default::default() });
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+        });
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         let clip = |id: u64, start: i64, dur: i64| ClipEvent {
             id: ClipId(id),
@@ -7277,7 +7237,9 @@ mod repaint_tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000, pitch_engine: Default::default() });
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+        });
         assert_eq!(stop_points(&empty), vec![0]);
     }
 
@@ -7313,8 +7275,14 @@ mod repaint_tests {
         use super::{HintKind as K, STATUS_TTL_MS, status_line};
         let idle = "дежурная";
         // невозможность действия перебивает даже наведение (п.5 Р.28)
-        let (t, k) =
-            status_line(Some("нельзя"), Some("hover"), Some("mode"), Some(("st", 0)), STATUS_TTL_MS, idle);
+        let (t, k) = status_line(
+            Some("нельзя"),
+            Some("hover"),
+            Some("mode"),
+            Some(("st", 0)),
+            STATUS_TTL_MS,
+            idle,
+        );
         assert_eq!((t.as_str(), k), ("нельзя", K::Error));
         // наведение перебивает остальное
         let (t, k) =
@@ -7387,4 +7355,3 @@ mod repaint_tests {
         assert!(repaint_delay(false).as_millis() >= 100, "простой = редкий тик");
     }
 }
-

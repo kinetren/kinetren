@@ -81,8 +81,7 @@ pub fn export_chunk_frames(budget_bytes: usize, width: u32, height: u32, layers:
 }
 
 pub fn project_range(project: &Project) -> Tick {
-    let material =
-        project.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO);
+    let material = project.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO);
     // монтажная длина чужого файла (хвостовой Gap) считается концом: рендер
     // доходит до неё чёрным/тишиной, как у эталона и melt (Р.25)
     project.timeline_end.map_or(material, |e| e.max(material))
@@ -257,7 +256,8 @@ pub fn render_raw_video_range_with(
         // размеры (kt-media), и заказ приходит уже с качеством (Р.46)
         let mut per_src: std::collections::BTreeMap<(MediaId, Quality), Vec<Tick>> =
             Default::default();
-        for (media, src_pts, dq) in video.wanted_frames(kt_time::TickRange::new(t, chunk_end), quality)
+        for (media, src_pts, dq) in
+            video.wanted_frames(kt_time::TickRange::new(t, chunk_end), quality)
         {
             per_src.entry((media, dq)).or_default().push(src_pts);
         }

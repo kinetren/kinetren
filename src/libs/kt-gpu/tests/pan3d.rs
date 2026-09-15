@@ -55,11 +55,7 @@ fn pan3d(pos_x: f64, scale: f64) -> FxInstance {
     }
 }
 
-fn layer<'a>(
-    fx: &'a [FxInstance],
-    frame: &Arc<VideoFrame>,
-    id: u64,
-) -> PlanLayer<'a> {
+fn layer<'a>(fx: &'a [FxInstance], frame: &Arc<VideoFrame>, id: u64) -> PlanLayer<'a> {
     PlanLayer::One {
         src: LayerSrc {
             source: SourceId(id),

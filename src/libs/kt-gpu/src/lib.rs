@@ -119,6 +119,8 @@ pub fn test_engine() -> Option<std::sync::Arc<GpuFxEngine>> {
     let name = ctx.adapter_info.name.clone();
     match GpuFxEngine::new(ctx) {
         Ok(e) => Some(e),
-        Err(err) => panic!("adapter '{name}' is present, but the GPU engine failed to build: {err}"),
+        Err(err) => {
+            panic!("adapter '{name}' is present, but the GPU engine failed to build: {err}")
+        }
     }
 }

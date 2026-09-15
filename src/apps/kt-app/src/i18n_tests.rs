@@ -33,12 +33,7 @@ fn t125_catalogs_are_complete_and_used() {
         let table = tables::TABLES[li];
         assert_eq!(table.len(), i18n::N_KEYS, "{}: wrong table length", lang.code());
         for (i, v) in table.iter().enumerate() {
-            assert!(
-                !v.is_empty(),
-                "{}: key {:?} is empty",
-                lang.code(),
-                tables::KEY_NAMES[i]
-            );
+            assert!(!v.is_empty(), "{}: key {:?} is empty", lang.code(), tables::KEY_NAMES[i]);
             assert_eq!(
                 catalog::placeholders(v),
                 catalog::placeholders(tables::TABLES[Lang::En as usize][i]),
@@ -47,11 +42,7 @@ fn t125_catalogs_are_complete_and_used() {
                 tables::KEY_NAMES[i]
             );
         }
-        assert!(
-            !lang.endonym().is_empty(),
-            "{}: endonym is empty",
-            lang.code()
-        );
+        assert!(!lang.endonym().is_empty(), "{}: endonym is empty", lang.code());
     }
 
     // самоназвания одинаковы во всех каталогах — иначе выбравшему китайский
@@ -108,11 +99,7 @@ fn t126_bidi_reorders_words_not_letters() {
 
     // два слова меняются местами, буквы внутри каждого — нет
     let phrase = format!("{two} {one}");
-    assert_eq!(
-        bidi::visual(&phrase),
-        format!("{one} {two}"),
-        "words must swap, letters must not"
-    );
+    assert_eq!(bidi::visual(&phrase), format!("{one} {two}"), "words must swap, letters must not");
 
     // латиница/цифры внутри арабской фразы уезжают на свою визуальную позицию
     let mixed = format!("{one}: 42");
@@ -168,13 +155,13 @@ fn t125_catalog_parser_is_strict() {
     assert_eq!(esc[0].value, "a\tb\nc\"d\\e\u{00ab}");
 
     for bad in [
-        "key = value",            // без кавычек
-        "Key = \"v\"",            // ключ не в нижнем регистре
-        "[a b]\nk = \"v\"",       // пробел в секции
-        "k = \"unterminated",     // не закрыта строка
-        "k = \"v\" junk",         // мусор после значения
-        "k = \"v\"\nk = \"w\"",   // дубликат
-        "k = \"\\q\"",            // неизвестный эскейп
+        "key = value",          // без кавычек
+        "Key = \"v\"",          // ключ не в нижнем регистре
+        "[a b]\nk = \"v\"",     // пробел в секции
+        "k = \"unterminated",   // не закрыта строка
+        "k = \"v\" junk",       // мусор после значения
+        "k = \"v\"\nk = \"w\"", // дубликат
+        "k = \"\\q\"",          // неизвестный эскейп
     ] {
         assert!(catalog::parse(bad).is_err(), "must be rejected: {bad:?}");
     }

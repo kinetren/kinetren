@@ -311,11 +311,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 kt_media::ffmpeg::FfmpegSource::open_indexed(&path, db.as_mut()).ok().map(|src| {
                     let info = src.info();
                     // вид медиа достаётся бесплатно: источник уже открыт
-                    shared
-                        .kinds
-                        .lock()
-                        .unwrap()
-                        .insert(pid, (info.has_video, info.has_audio));
+                    shared.kinds.lock().unwrap().insert(pid, (info.has_video, info.has_audio));
                     info.duration
                 })
             });
@@ -362,11 +358,8 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 if jpeg.is_none() && near_tol > 0 {
                     // ближайшая готовая тумба вместо декода; публикуется под
                     // ЗАПРОШЕННЫМ ключом, в БД не пишется
-                    jpeg = db
-                        .thumbnail_near(db_id, key.t, near_tol)
-                        .ok()
-                        .flatten()
-                        .map(|(_t, j)| j);
+                    jpeg =
+                        db.thumbnail_near(db_id, key.t, near_tol).ok().flatten().map(|(_t, j)| j);
                 }
             }
         }
@@ -512,7 +505,9 @@ fn find_poster(
     media: MediaId,
 ) -> Option<i64> {
     let path = shared.media.lock().unwrap().get(&media).cloned()?;
-    let db_id = db.as_mut().and_then(|d| d.ensure_media(std::path::Path::new(&path)).ok())
+    let db_id = db
+        .as_mut()
+        .and_then(|d| d.ensure_media(std::path::Path::new(&path)).ok())
         .map(|(id, _)| id);
     // уже искали в прошлой сессии — берём из БД
     if let (Some(d), Some(id)) = (db.as_ref(), db_id)
@@ -621,7 +616,9 @@ mod key_tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000, pitch_engine: Default::default() });
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+        });
         let svc = ThumbService::start(&project, None);
         let id = MediaId(99); // медиа НЕТ в карте сервиса
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);

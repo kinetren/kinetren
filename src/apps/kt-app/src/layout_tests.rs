@@ -10,8 +10,8 @@
 //! интерактивного поведения обязано сопровождаться тестом отсюда.
 
 use crate::app::KtApp;
-use eframe::egui;
 use crate::i18n::{Lang, k, tr};
+use eframe::egui;
 use egui_kittest::Harness;
 
 const W: f32 = 1440.0;
@@ -48,9 +48,8 @@ fn harness_lang_dt(lang: crate::i18n::Lang, step_dt: Option<f32>) -> Harness<'st
     app.recovery_on_drop = false;
     // рабочее место (п.360) — в свой файл: общий лежит в домашнем каталоге
     // разработчика, и полторы сотни тестов писали бы туда наперегонки
-    app.workspace_file = Some(
-        std::env::temp_dir().join(format!("kt-ws-{}-{:p}.json", std::process::id(), &app)),
-    );
+    app.workspace_file =
+        Some(std::env::temp_dir().join(format!("kt-ws-{}-{:p}.json", std::process::id(), &app)));
     let mut b = Harness::builder().with_size(egui::vec2(W, H));
     if let Some(dt) = step_dt {
         b = b.with_step_dt(dt);
@@ -87,7 +86,11 @@ fn t76_layout_panels_and_preview_share_space() {
     let mut h = harness();
     let w = panel_width(&h, "left_col");
     assert!((72.0..=420.0).contains(&w), "левая колонка по умолчанию вне пределов: {w}");
-    assert!(h.state().preview_rect.width() > 600.0, "превью схлопнулось: {:?}", h.state().preview_rect);
+    assert!(
+        h.state().preview_rect.width() > 600.0,
+        "превью схлопнулось: {:?}",
+        h.state().preview_rect
+    );
 
     // длинный контент не должен раздувать панель
     h.state_mut().gpu_info = Some("X".repeat(400));
@@ -136,12 +139,12 @@ fn t76_left_panel_separator_is_draggable() {
 fn t76_window_edges_resize() {
     use egui::{CursorIcon as C, ViewportCommand as V};
     let cases: [(egui::Pos2, C); 6] = [
-        (egui::pos2(2.0, H * 0.5), C::ResizeHorizontal),   // левая кромка
+        (egui::pos2(2.0, H * 0.5), C::ResizeHorizontal), // левая кромка
         (egui::pos2(W - 2.0, H * 0.5), C::ResizeHorizontal), // правая
-        (egui::pos2(W * 0.5, 2.0), C::ResizeVertical),     // верхняя
+        (egui::pos2(W * 0.5, 2.0), C::ResizeVertical),   // верхняя
         (egui::pos2(W * 0.5, H - 2.0), C::ResizeVertical), // нижняя
-        (egui::pos2(3.0, 3.0), C::ResizeNwSe),             // угол СЗ
-        (egui::pos2(W - 3.0, 3.0), C::ResizeNeSw),         // угол СВ
+        (egui::pos2(3.0, 3.0), C::ResizeNwSe),           // угол СЗ
+        (egui::pos2(W - 3.0, 3.0), C::ResizeNeSw),       // угол СВ
     ];
     for (pos, want) in cases {
         let mut h = harness();
@@ -261,10 +264,7 @@ fn t83_hints_reach_status_line() {
         h.hover_at(pos);
         h.step();
         let (text, kind) = h.state().status_line_shown.clone();
-        assert!(
-            text.starts_with(want),
-            "из {pos:?} ждали «{want}», в строке состояния «{text}»"
-        );
+        assert!(text.starts_with(want), "из {pos:?} ждали «{want}», в строке состояния «{text}»");
         assert_eq!(kind, HintKind::Hover);
     }
 
@@ -301,11 +301,7 @@ fn t85_top_drag_is_continuous() {
     // пикселей раньше были мёртвыми — «полоска, по которой бесполезно
     // тянуть». Теперь драг начинается от самой кромки.
     let mut h = harness();
-    h.input_mut()
-        .viewports
-        .entry(egui::ViewportId::ROOT)
-        .or_default()
-        .maximized = Some(true);
+    h.input_mut().viewports.entry(egui::ViewportId::ROOT).or_default().maximized = Some(true);
     h.step();
     h.drag_at(egui::pos2(W * 0.5, 1.0));
     h.step();
@@ -331,9 +327,11 @@ fn t86_meters_edge_and_min_window() {
     h.hover_at(egui::pos2(W - 3.0, H * 0.35));
     h.step();
     assert!(
-        [tr(k::meter::FADER), tr(k::meter::PEAK), tr(k::meter::MUTE)]
-            .iter()
-            .any(|want| h.state().status_line_shown.0.starts_with(want)),
+        [tr(k::meter::FADER), tr(k::meter::PEAK), tr(k::meter::MUTE)].iter().any(|want| h
+            .state()
+            .status_line_shown
+            .0
+            .starts_with(want)),
         "у правого края зазор: в строке «{}»",
         h.state().status_line_shown.0
     );
@@ -372,14 +370,11 @@ fn t88_jump_reveals_cursor() {
     h.state_mut().jump_stop(false, true); // Shift+Home — в начало проекта
     h.step();
     let st = h.state();
-    let vis = (st.timeline_rect.width() as f64 - crate::timeline::GUTTER_W as f64) * st.ticks_per_px;
+    let vis =
+        (st.timeline_rect.width() as f64 - crate::timeline::GUTTER_W as f64) * st.ticks_per_px;
     let ph = st.player.transport.playhead().0 as f64;
     let vs = st.view_start;
-    assert!(
-        ph >= vs && ph <= vs + vis,
-        "курсор вне окна: ph={ph}, окно=[{vs}, {}]",
-        vs + vis
-    );
+    assert!(ph >= vs && ph <= vs + vis, "курсор вне окна: ph={ph}, окно=[{vs}, {}]", vs + vis);
 }
 
 /// Тест 94 (пп.7,8 р.10): кнопка «Вперёд» РЕАЛЬНО двигает курсор вправо,
@@ -427,10 +422,7 @@ fn t94_forward_navigation_advances() {
         h.state_mut().jump_stop(true, false);
         h.step();
         let now = h.state().player.transport.playhead().0;
-        assert!(
-            now > *seen.last().unwrap(),
-            "курсор не двинулся вперёд: цепочка {seen:?} → {now}"
-        );
+        assert!(now > *seen.last().unwrap(), "курсор не двинулся вперёд: цепочка {seen:?} → {now}");
         seen.push(now);
     }
     // и ни один прыжок не утащил назад
@@ -687,10 +679,7 @@ fn t97_top_meters_and_leds() {
     // имя метки живёт на строке подписей времени
     let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
     let ruler = g.lane_top(kt_model::ClipKind::Video, 0) - g.rect.top();
-    assert!(
-        ruler <= 36.0,
-        "линейка съела {ruler} px до первой дорожки — место тратится впустую"
-    );
+    assert!(ruler <= 36.0, "линейка съела {ruler} px до первой дорожки — место тратится впустую");
 
     // --- (п.7) панель метров нельзя растянуть на пол-экрана
     let sep = panel_rect(&h, "meters_col").left();
@@ -721,10 +710,7 @@ fn t97_top_meters_and_leds() {
     // п.4 р.13: предел бина — 70 % окна (не ужимать!), тянуться обязан
     let lw = panel_width(&h, "left_col");
     assert!(lw <= W * 0.7 + 1.0, "левая колонка вышла за предел: {lw}");
-    assert!(
-        lw > 600.0,
-        "медиа-бин снова зажат ({lw} px) — предел ставился по прямой просьбе"
-    );
+    assert!(lw > 600.0, "медиа-бин снова зажат ({lw} px) — предел ставился по прямой просьбе");
 }
 
 /// Тест 98 (п.9 р.11): маска ввода таймкода.
@@ -773,11 +759,7 @@ fn t98_timecode_mask() {
     let playing = h.state().player.transport.is_playing();
     h.key_press(egui::Key::Space);
     h.step();
-    assert_eq!(
-        h.state().player.transport.is_playing(),
-        playing,
-        "пробел утёк в хоткеи мимо маски"
-    );
+    assert_eq!(h.state().player.transport.is_playing(), playing, "пробел утёк в хоткеи мимо маски");
 
     // --- ПОВТОРНЫЙ вызов (п.8 р.12): после Enter маска обязана отдать
     // фокус, иначе все горячие клавиши мертвы до клика мышью
@@ -798,11 +780,7 @@ fn t98_timecode_mask() {
     h.key_press(egui::Key::Enter);
     h.step();
     assert!(h.state().tc_edit.is_none(), "Enter не закрыл маску");
-    assert_eq!(
-        h.state().player.transport.playhead().0 / 90_000,
-        90,
-        "курсор не встал на 00:01:30"
-    );
+    assert_eq!(h.state().player.transport.playhead().0 / 90_000, 90, "курсор не встал на 00:01:30");
     // подмотка отрабатывает тем же кадром: запрос уже погашен, а курсор
     // виден в окне (иначе «перешёл, но не видно»)
     assert!(h.state().pending_reveal.is_none(), "запрос подмотки завис");
@@ -876,12 +854,8 @@ fn t99_bin_groups() {
 
     // --- замок
     assert!(!h.state().bin_locked(MediaId(3)));
-    let gi2 = h
-        .state()
-        .bin_groups
-        .iter()
-        .position(|g| g.name == "Интервью")
-        .expect("группа пропала");
+    let gi2 =
+        h.state().bin_groups.iter().position(|g| g.name == "Интервью").expect("группа пропала");
     h.state_mut().bin_groups[gi2].locked = true;
     h.step();
     assert!(h.state().bin_locked(MediaId(3)), "замок группы не действует на участника");
@@ -930,10 +904,8 @@ fn t99_bin_groups() {
     // --- групповой драг: обе карточки уехали на одну дельту
     h.state_mut().bin_group_selection("Пара".into()).expect("группа");
     h.step();
-    let before: Vec<egui::Pos2> = [MediaId(1), MediaId(2)]
-        .iter()
-        .map(|m| h.state().bin_layout[m])
-        .collect();
+    let before: Vec<egui::Pos2> =
+        [MediaId(1), MediaId(2)].iter().map(|m| h.state().bin_layout[m]).collect();
     let grab = at(&h, MediaId(1));
     // нажать → чуть сдвинуть (здесь egui признаёт драг) → вести дальше
     h.drag_at(grab.center());
@@ -944,10 +916,8 @@ fn t99_bin_groups() {
     h.step();
     h.drop_at(grab.center() + egui::vec2(0.0, 38.0));
     h.step();
-    let after: Vec<egui::Pos2> = [MediaId(1), MediaId(2)]
-        .iter()
-        .map(|m| h.state().bin_layout[m])
-        .collect();
+    let after: Vec<egui::Pos2> =
+        [MediaId(1), MediaId(2)].iter().map(|m| h.state().bin_layout[m]).collect();
     let d0 = after[0] - before[0];
     let d1 = after[1] - before[1];
     assert!(d0.y > 10.0, "схваченная карточка не поехала: {d0:?}");
@@ -1024,11 +994,7 @@ fn t101_edge_buttons_are_clickable() {
     // кадр без команды — тест ловил пустоту при работающей кнопке.
     fn press(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) -> Vec<V> {
         let grab = |h: &Harness<'_, KtApp>| -> Vec<V> {
-            h.output()
-                .viewport_output
-                .values()
-                .flat_map(|v| v.commands.iter().cloned())
-                .collect()
+            h.output().viewport_output.values().flat_map(|v| v.commands.iter().cloned()).collect()
         };
         let button = |pressed: bool| egui::Event::PointerButton {
             pos,
@@ -1151,10 +1117,8 @@ fn t122_insert_lane_after_clicked_row() {
         p.audio_lanes = 2;
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
-        app.lane_names = vec![
-            (LaneKind::Video, 1, "Титры".into()),
-            (LaneKind::Audio, 1, "Голос".into()),
-        ];
+        app.lane_names =
+            vec![(LaneKind::Video, 1, "Титры".into()), (LaneKind::Audio, 1, "Голос".into())];
     }
     h.step();
 
@@ -1231,10 +1195,8 @@ fn t122_insert_lane_after_clicked_row() {
     // --- удаление: имя уходит вместе с дорожкой, соседи съезжают
     {
         let app = h.state_mut();
-        app.lane_names = vec![
-            (LaneKind::Audio, 0, "Музыка".into()),
-            (LaneKind::Audio, 1, "Голос".into()),
-        ];
+        app.lane_names =
+            vec![(LaneKind::Audio, 0, "Музыка".into()), (LaneKind::Audio, 1, "Голос".into())];
         app.delete_lane(kt_model::ClipKind::Audio, 0);
     }
     h.step();
@@ -1588,10 +1550,7 @@ fn t118_bin_autoscrolls_and_wheel_works() {
     h.drop_at(low);
     h.step();
     let moved = h.state().bin_layout[&MediaId(1)];
-    assert!(
-        moved.y > 200.0,
-        "карточку откатило вместо переноса вниз (липкий «вынос»): {moved:?}"
-    );
+    assert!(moved.y > 200.0, "карточку откатило вместо переноса вниз (липкий «вынос»): {moved:?}");
 
     // --- колесо: содержимое теперь длиннее вьюпорта, и над бином оно
     // обязано крутиться (штатный ScrollArea глушит колесо только на
@@ -1711,10 +1670,7 @@ fn t102_lane_label_and_playhead_trail() {
         assert!(y >= 100.0, "ярлык уехал выше дорожки: {y}");
         assert!(y + galley_h <= 100.0 + lane_h, "ярлык вылез за дорожку: {y}+{galley_h}");
         if lane_h >= 36.0 {
-            assert!(
-                y >= 117.0,
-                "ярлык на дорожке {lane_h} встал на строку имени клипа: {y}"
-            );
+            assert!(y >= 117.0, "ярлык на дорожке {lane_h} встал на строку имени клипа: {y}");
         }
     }
     // (п.5) свечение стартует ниже полосок кэша
@@ -1885,9 +1841,7 @@ fn t126_arabic_renders_right_to_left() {
     // и контроль: БЕЗ переупорядочивания порядок обратный — то есть тест
     // действительно меряет работу bidi, а не свойство шрифта
     let g = layout(phrase.clone());
-    let x_of = |ch: char| {
-        g.rows[0].glyphs.iter().find(|x| x.chr == ch).expect("глиф").pos.x
-    };
+    let x_of = |ch: char| g.rows[0].glyphs.iter().find(|x| x.chr == ch).expect("глиф").pos.x;
     assert!(
         x_of('\u{062C}') > x_of('\u{0645}'),
         "логический порядок вдруг совпал с визуальным — проверка выродилась"
@@ -1918,15 +1872,10 @@ fn t128_labels_fit_their_budget() {
 
     for lang in Lang::ALL {
         let h = harness_lang(lang);
-        let body = h.ctx.style_of(egui::Theme::Dark).text_styles
-            [&egui::TextStyle::Body]
-            .clone();
+        let body = h.ctx.style_of(egui::Theme::Dark).text_styles[&egui::TextStyle::Body].clone();
         let heading = egui::FontId::proportional(14.0);
         let w = |text: String, font: egui::FontId| {
-            h.ctx
-                .fonts_mut(|f| f.layout_no_wrap(text, font, egui::Color32::WHITE))
-                .size()
-                .x
+            h.ctx.fonts_mut(|f| f.layout_no_wrap(text, font, egui::Color32::WHITE)).size().x
         };
         let code = lang.code();
 
@@ -1994,7 +1943,13 @@ fn t139_move_plan_crossfade_and_clamp() {
         opacity: 1.0,
         fx_off: false,
     };
-    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
     p.overlap_layers = false;
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
@@ -2062,8 +2017,8 @@ fn t139_drag_overlap_creates_crossfade() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-    // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
-    p.overlap_layers = false;
+        // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
+        p.overlap_layers = false;
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
             p.clips.push(ClipEvent {
@@ -2345,8 +2300,8 @@ fn t160_pulling_apart_restores_trimmed_material() {
     {
         let app = h.state_mut();
         let mut p = app.model.project().clone();
-    // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
-    p.overlap_layers = false;
+        // поведение Р.24/Р.26 живёт в режиме БЕЗ переслаивания (Р.28)
+        p.overlap_layers = false;
         p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
         for (n, start) in [(1u64, 0i64), (2, 200_000)] {
             p.clips.push(ClipEvent {
@@ -2541,8 +2496,7 @@ fn t142_marker_range_gesture_and_edges() {
     assert!(h.state().model.project().markers.is_empty(), "toggle удаляет диапазон");
 
     // точечная метка на старте региона растягивается жестом M
-    h.state_mut()
-        .apply(Command::AddMarker { at: Tick(30_000), duration: Tick::ZERO });
+    h.state_mut().apply(Command::AddMarker { at: Tick(30_000), duration: Tick::ZERO });
     h.state_mut().marker_toggle_at_cursor();
     assert_eq!(h.state().model.project().markers[0].duration, Tick(60_000));
 
@@ -2623,9 +2577,7 @@ fn t150_project_io_is_otio() {
         PathBuf::from(format!("/x/a.b.otio.{pid}.tmp"))
     );
     // recovery безымянного проекта — тоже .otio
-    assert!(
-        crate::app::autosave_path().to_string_lossy().ends_with("autosave-project.otio")
-    );
+    assert!(crate::app::autosave_path().to_string_lossy().ends_with("autosave-project.otio"));
 
     let dir = std::env::temp_dir().join(format!("kt-t150-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -2634,7 +2586,9 @@ fn t150_project_io_is_otio() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000, pitch_engine: Default::default() });
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     let otio = dir.join("ok.otio");
     std::fs::write(&otio, kt_otio::save_project(&p, &kt_otio::Retained::default(), Some(&dir)))
         .unwrap();
@@ -2697,7 +2651,11 @@ fn t169_preview_material_shifts_only_on_trim_start() {
     assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 0, "перенос влево не крутит");
     // трим левого края: кусок стоит, край едет ПО материалу
     let d = drag(DragMode::TrimStart, 5_000, 11_000);
-    assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), 4_000, "трим начала двигает материал");
+    assert_eq!(
+        preview_src_shift(Some(&d), ClipId(1), 1_000),
+        4_000,
+        "трим начала двигает материал"
+    );
     let d = drag(DragMode::TrimStart, 0, 11_000);
     assert_eq!(preview_src_shift(Some(&d), ClipId(1), 1_000), -1_000, "влево — в обратную сторону");
     // трим правого края левую границу не трогает
@@ -2773,8 +2731,13 @@ fn t172_blocked_gesture_is_an_error_not_a_pale_hint() {
     const TPP: f64 = 1000.0;
 
     // 1. план знает, ВО ЧТО упёрлись
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.overlap_layers = false; // блокировка возможна только в этом режиме
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     // клипы 2 и 3 стоят встык: любое попадание между ними — наезд на ДВОИХ
@@ -3054,10 +3017,7 @@ fn t176_audio_and_video_share_one_level_line() {
     h.drop_at(egui::pos2(x, y1));
     h.step();
     let gain = h.state().model.project().clips[0].gain_db;
-    assert!(
-        (gain - RAIL_DB_SPAN * 0.25).abs() < 0.5,
-        "уровень аудио доехал до +3 dB: {gain}"
-    );
+    assert!((gain - RAIL_DB_SPAN * 0.25).abs() < 0.5, "уровень аудио доехал до +3 dB: {gain}");
 
     // у уголка фейда приоритет над линией: верхняя полоса — жест фейда
     let y_strip = top + 2.0;
@@ -3115,10 +3075,8 @@ fn t185_gpu_loss_notice_once() {
         "бэкенд отравлен до конца сессии"
     );
     let texts: Vec<&str> = app.notices.iter().map(|n| n.text.as_str()).collect();
-    let hits = texts
-        .iter()
-        .filter(|t| **t == crate::tf!(k::msg::VIDEO_FX_GPU_LOST, "DeviceLost"))
-        .count();
+    let hits =
+        texts.iter().filter(|t| **t == crate::tf!(k::msg::VIDEO_FX_GPU_LOST, "DeviceLost")).count();
     assert_eq!(hits, 1, "предупреждение ровно одно: {texts:?}");
 }
 
@@ -3161,11 +3119,7 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
     };
     let mat = m(&c, Tick(180_000 + 30_000));
     assert_eq!(mat.0, 75_000, "материал = source_in + смещение внутри события");
-    assert_eq!(
-        tl(&c, mat).0,
-        180_000 + 30_000,
-        "обратный перевод обязан возвращать тот же момент"
-    );
+    assert_eq!(tl(&c, mat).0, 180_000 + 30_000, "обратный перевод обязан возвращать тот же момент");
 
     // реверс: материал идёт навстречу таймлайну
     c.reversed = true;
@@ -3200,10 +3154,7 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
     let mut curves = [ParamCurve {
         param: "radius".into(),
         ease: false,
-        keys: vec![
-            AutoKey { t: Tick(45_000), v: 1.0 },
-            AutoKey { t: Tick(135_000), v: 48.0 },
-        ],
+        keys: vec![AutoKey { t: Tick(45_000), v: 1.0 }, AutoKey { t: Tick(135_000), v: 48.0 }],
     }];
     // пользователь начал править время ВТОРОГО ключа на значение МЕНЬШЕ
     // первого: пока правка не закоммичена, порядок ключей не меняется
@@ -3442,17 +3393,11 @@ fn t217_one_chain_widget_for_events_and_morphers() {
 
     // 1) мастер-галка цепочки есть в ОБОИХ окнах — она одна и та же
     let chain_label = tr(k::fx::CHAIN_ON).to_string();
-    assert!(
-        h.query_by_label(&chain_label).is_some(),
-        "в окне события нет мастер-галки цепочки"
-    );
+    assert!(h.query_by_label(&chain_label).is_some(), "в окне события нет мастер-галки цепочки");
     h.state_mut().open_morph_editor(MorphId(1));
     h.step();
     h.step();
-    assert!(
-        h.state().morph_editors.iter().any(|e| e.open),
-        "окно морфера не открылось"
-    );
+    assert!(h.state().morph_editors.iter().any(|e| e.open), "окно морфера не открылось");
     // у морфера мастер-галка тоже есть (их теперь две — по одной на окно)
     assert!(
         h.get_all_by_label(&chain_label).count() >= 2,
@@ -3546,11 +3491,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
     let c = app.model.clip(ClipId(9)).unwrap().clone();
     assert_eq!(c.fx, fx);
     assert_eq!(c.fx_auto.len(), 1, "хвост без кривых подрезан");
-    assert_eq!(
-        app.model.undo_depth(),
-        depth_before + 1,
-        "оба изменения жеста — один undo-шаг"
-    );
+    assert_eq!(app.model.undo_depth(), depth_before + 1, "оба изменения жеста — один undo-шаг");
     app.model.undo().unwrap();
     let c = app.model.clip(ClipId(9)).unwrap().clone();
     assert_eq!(c.fx.len(), 1, "undo вернул цепочку");
@@ -3572,9 +3513,7 @@ fn t194_autosave_runs_in_background() {
     let app = h.state_mut();
     app.project_path = Some(target.clone());
     // правка содержимого + «прошло 30 секунд»
-    app.model
-        .apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() })
-        .unwrap();
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.dirty_content = true;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
@@ -3598,9 +3537,7 @@ fn t194_autosave_runs_in_background() {
 
     // правка ПОСЛЕ снапшота не должна терять звёздочку
     let app = h.state_mut();
-    app.model
-        .apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() })
-        .unwrap();
+    app.model.apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.dirty_content = true;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
@@ -3608,9 +3545,7 @@ fn t194_autosave_runs_in_background() {
     assert!(h.state().autosave_rx.is_some());
     // модель меняется, пока запись в полёте
     let app = h.state_mut();
-    app.model
-        .apply(Command::AddMedia { id: MediaId(3), path: "synth:ramp".into() })
-        .unwrap();
+    app.model.apply(Command::AddMedia { id: MediaId(3), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.dirty_content = true;
     let deadline = std::time::Instant::now() + WAIT_BG;
@@ -3821,8 +3756,13 @@ fn t211_returned_source_replaces_its_placeholder() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("t211.otio");
 
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     // «пропавший» файл: имя synth-источника, которого нет на диске — при
     // открытии он не откроется, а к моменту возврата станет валидным
     p.media.push(MediaRef { id: MediaId(1), path: "later.mp4".into() });
@@ -3869,10 +3809,7 @@ fn t211_returned_source_replaces_its_placeholder() {
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(
-        h.state().placeholder_media.is_empty(),
-        "вернувшийся файл так и не заменил заглушку"
-    );
+    assert!(h.state().placeholder_media.is_empty(), "вернувшийся файл так и не заменил заглушку");
     assert!(
         h.state().notices.iter().any(|n| n.text.contains("later.mp4")),
         "о возврате исходника не сказано"
@@ -3900,8 +3837,13 @@ fn t210_render_with_missing_sources_warns_and_runs() {
     let present = dir.join("here.wav");
     std::fs::write(&present, b"not a real media file").unwrap();
 
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 320, height: 180, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 320,
+        height: 180,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "gone.mp4".into() });
     p.clips.push(ClipEvent {
@@ -3970,8 +3912,13 @@ fn t209_missing_source_opens_with_placeholder_and_notices() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("t209.otio");
 
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "no-such-clip.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "also-gone.wav".into() });
     p.clips.push(ClipEvent {
@@ -4099,10 +4046,22 @@ fn t207_double_click_on_marked_range_selects_it() {
         Marker { t: Tick(500_000), duration: Tick::ZERO, name: "точка".into(), color: None },
     ];
     let tol = 4_000;
-    assert_eq!(pick_range_marker(&markers, 70_000, tol), Some(60_000), "общая часть — ближний флажок слева");
-    assert_eq!(pick_range_marker(&markers, 31_000, tol), Some(30_000), "клик по флажку берёт свою метку");
+    assert_eq!(
+        pick_range_marker(&markers, 70_000, tol),
+        Some(60_000),
+        "общая часть — ближний флажок слева"
+    );
+    assert_eq!(
+        pick_range_marker(&markers, 31_000, tol),
+        Some(30_000),
+        "клик по флажку берёт свою метку"
+    );
     assert_eq!(pick_range_marker(&markers, 200_000, tol), None, "мимо лент — ничего");
-    assert_eq!(pick_range_marker(&markers, 500_000, tol), None, "точечная метка регионом не становится");
+    assert_eq!(
+        pick_range_marker(&markers, 500_000, tol),
+        None,
+        "точечная метка регионом не становится"
+    );
 
     // ---- живой двойной клик по ленте ----
     let (mut h, g) = harness_three_clips_dt(Some(0.02));
@@ -4158,8 +4117,13 @@ fn t204_multi_drag_moves_the_whole_block() {
     use kt_time::Tick;
 
     // ---- чистая часть: кламп блока о препятствие ----
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     let clip = |id: u64, start: i64| ClipEvent {
         id: ClipId(id),
@@ -4281,7 +4245,10 @@ fn t201_render_file_name_follows_template() {
     use crate::render_dialog::render_file_name;
     use kt_model::*;
     // чистая часть шаблона
-    assert_eq!(render_file_name(Some("movie"), Some("intro"), 90_000 * 12), "kt-movie-intro-12s.mp4");
+    assert_eq!(
+        render_file_name(Some("movie"), Some("intro"), 90_000 * 12),
+        "kt-movie-intro-12s.mp4"
+    );
     assert_eq!(render_file_name(Some("movie"), None, 90_000 * 3), "kt-movie-3s.mp4");
     assert_eq!(render_file_name(Some("movie"), Some("  "), 90_000), "kt-movie-1s.mp4");
     assert_eq!(render_file_name(None, None, 0), "kt-untitled-0s.mp4");
@@ -4361,11 +4328,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
     let rev_before = app.model_rev;
     app.open_fx_editor(ClipId(9));
     let gesture = app.fx_editors[0].gesture;
-    app.set_fx_coalesced(
-        ClipId(9),
-        vec![FxInstance::blur(20), FxInstance::glow(1.0)],
-        gesture,
-    );
+    app.set_fx_coalesced(ClipId(9), vec![FxInstance::blur(20), FxInstance::glow(1.0)], gesture);
     assert!(app.model_rev > rev_before, "правка жеста двигает ревизию модели");
 
     let deadline = std::time::Instant::now() + WAIT_BG;
@@ -4374,10 +4337,7 @@ fn t200_coalesced_edits_bump_revision_and_keep_dirty() {
         h.step();
     }
     assert!(h.state().autosave_rx.is_none(), "результат автосейва забран");
-    assert!(
-        h.state().dirty_content,
-        "цепочка изменена ПОСЛЕ снимка — звёздочка обязана остаться"
-    );
+    assert!(h.state().dirty_content, "цепочка изменена ПОСЛЕ снимка — звёздочка обязана остаться");
     assert_eq!(
         h.state().model.clip(ClipId(9)).unwrap().fx.len(),
         2,
@@ -4427,9 +4387,7 @@ fn t199_background_autosave_never_overwrites_newer_save() {
     let app = h.state_mut();
     app.project_path = Some(target.clone());
     // ревизия 1: медиа A, фоновый автосейв стартует с ЭТИМ снапшотом
-    app.model
-        .apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() })
-        .unwrap();
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.dirty_content = true;
     app.last_autosave = std::time::Instant::now() - std::time::Duration::from_secs(40);
@@ -4438,9 +4396,7 @@ fn t199_background_autosave_never_overwrites_newer_save() {
 
     // ревизия 2 + немедленный Ctrl+S, пока фоновая ещё не финишировала
     let app = h.state_mut();
-    app.model
-        .apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() })
-        .unwrap();
+    app.model.apply(Command::AddMedia { id: MediaId(2), path: "synth:ramp".into() }).unwrap();
     app.model_rev += 1;
     app.save();
 
@@ -4472,20 +4428,14 @@ fn t382_app_carries_extras_to_born_clips() {
     let src = app.model.project().clips[0].clone();
 
     // у события есть конверт из «файла»: имя и чужой маркер
-    app.retained.clips.insert(
-        src.id,
-        kt_otio::ClipExtra { name: "Шот 12A".into(), ..Default::default() },
-    );
+    app.retained
+        .clips
+        .insert(src.id, kt_otio::ClipExtra { name: "Шот 12A".into(), ..Default::default() });
 
     // разрез жестом приложения
     let mid = src.start + Tick(src.duration.0 / 2);
     let new_id = ClipId(app.next_clip_id());
-    assert!(app.apply(Command::Split {
-        id: src.id,
-        at: mid,
-        new_id,
-        new_group: None,
-    }));
+    assert!(app.apply(Command::Split { id: src.id, at: mid, new_id, new_group: None }));
     assert_eq!(
         h.state().retained.clips.get(&new_id).map(|e| e.name.as_str()),
         Some("Шот 12A"),
@@ -4629,7 +4579,6 @@ fn t391_workspace_falls_back_to_file_and_project_keeps_its_own() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-
 /// Двойной клик в точку. История кликов у egui общая на окно, поэтому шаг
 /// харнесса должен быть коротким (0.02 с) — иначе два клика расходятся во
 /// времени и складываются в два одиночных (ловушка п.232).
@@ -4729,7 +4678,8 @@ fn t392_double_click_on_level_rail_resets_level() {
     assert!(st.fx_editors.is_empty(), "двойной клик по линии открыл окно FX вместо сброса");
 
     // тот же жест у звука: 0 dB
-    let aclip = h.state().model.project().clips.iter().find(|c| c.id == ClipId(10)).cloned().unwrap();
+    let aclip =
+        h.state().model.project().clips.iter().find(|c| c.id == ClipId(10)).cloned().unwrap();
     let ax = g.tick_to_x(aclip.start.0 + aclip.duration.0 / 2);
     let ay = level_y(ClipKind::Audio, 0, crate::timeline::gain_to_level(-3.0));
     double_click_at(&mut h, egui::pos2(ax, ay));
@@ -4792,10 +4742,7 @@ fn t393_menu_accelerator_promises_only_what_the_key_does() {
         .iter()
         .find(|l| l.starts_with(tr(k::tl::menu::DELETE)))
         .unwrap_or_else(|| panic!("в меню области нет пункта удаления: {labels:?}"));
-    assert!(
-        !del.contains("Del"),
-        "у области обещан аккорд Del, который её не удаляет: «{del}»"
-    );
+    assert!(!del.contains("Del"), "у области обещан аккорд Del, который её не удаляет: «{del}»");
 
     // и это не «убрали везде»: у КАМЕРЫ Del работает, и обещание осталось.
     // Свой харнесс: у egui история кликов общая на окно, и второй правый
@@ -4853,11 +4800,7 @@ fn t394_panel_objects_answer_right_click() {
     let bin = h.state().bin_rect;
     assert!(bin.is_positive(), "бин не сообщил свой прямоугольник");
     right_click_at(&mut h, egui::pos2(bin.center().x, bin.bottom() - 10.0));
-    assert_eq!(
-        h.state().ctx_panel,
-        Some(T::BinEmpty),
-        "фон медиа-бина молчит на правую кнопку"
-    );
+    assert_eq!(h.state().ctx_panel, Some(T::BinEmpty), "фон медиа-бина молчит на правую кнопку");
 
     // ---- панель метров ----------------------------------------------------
     let meters = panel_rect(&h, "meters_col");
@@ -4913,7 +4856,9 @@ fn t412_bin_tooltip_shows_loudness_and_does_not_request_it() {
     {
         let app = h.state_mut();
         app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
-        app.model.apply(Command::AddMedia { id: MediaId(2), path: "synth:sine:440".into() }).unwrap();
+        app.model
+            .apply(Command::AddMedia { id: MediaId(2), path: "synth:sine:440".into() })
+            .unwrap();
         // первому громкость известна, второму — нет
         app.loudness.lock().unwrap().insert(MediaId(1), (-18.5, -1.2, 6.0));
     }
@@ -5003,10 +4948,7 @@ fn t419_sync_menu_and_timeline_item_are_the_same_body() {
         );
         callers.push(src.matches("sync_selected_by_audio()").count());
     }
-    assert!(
-        callers.iter().all(|&n| n >= 1),
-        "один из путей зовёт не общее тело: {callers:?}"
-    );
+    assert!(callers.iter().all(|&n| n >= 1), "один из путей зовёт не общее тело: {callers:?}");
     // и само тело — одно на весь app
     let app = std::fs::read_to_string(root.join("apps/kt-app/src/app.rs")).expect("app.rs");
     assert_eq!(
@@ -5201,7 +5143,9 @@ fn t379_clip_id_arithmetic_lives_in_one_place() {
         "apps/kt-app/src/toolbar.rs",
         HOME,
     ] {
-        let src = crate::reach_tests::strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+        let src = crate::reach_tests::strip_comments(
+            &std::fs::read_to_string(root.join(rel)).expect(rel),
+        );
         for (n, line) in src.lines().enumerate() {
             let t = line.trim();
             // «взять максимум номеров клипов и прибавить» — формула выдачи
@@ -5488,7 +5432,10 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
     let app = h.state_mut();
     app.project_path = Some(proj.clone());
     app.dirty_content = false;
-    app.offer_recovery_list(crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")), true);
+    app.offer_recovery_list(
+        crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")),
+        true,
+    );
     assert_eq!(h.state().recovery_offer.len(), 1, "восстановление не найдено рядом с проектом");
 
     h.state_mut().restore_recovery(0);
@@ -5513,7 +5460,10 @@ fn t367_restore_puts_work_in_editor_and_repeats() {
         pitch_engine: Default::default(),
     }));
     assert_eq!(app.model.project().media.len(), 0);
-    app.offer_recovery_list(crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")), true);
+    app.offer_recovery_list(
+        crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")),
+        true,
+    );
     h.state_mut().restore_recovery(0);
     assert_eq!(h.state().model.project().media.len(), 3, "повторное восстановление не сработало");
     let _ = std::fs::remove_dir_all(&dir);
@@ -6061,11 +6011,7 @@ fn t231_camera_editor_opens_and_edits() {
     }
     h.step();
     h.step();
-    assert_eq!(
-        h.state().camera_editors.len(),
-        1,
-        "двойной клик по камере обязан открыть её окно"
-    );
+    assert_eq!(h.state().camera_editors.len(), 1, "двойной клик по камере обязан открыть её окно");
 
     // правка через сессию окна: один gesture — один шаг истории
     let gesture = h.state().camera_editors[0].gesture;
@@ -6076,10 +6022,7 @@ fn t231_camera_editor_opens_and_edits() {
         c.auto = vec![ParamCurve {
             param: "pos_z".into(),
             ease: true,
-            keys: vec![
-                AutoKey { t: Tick(0), v: -900.0 },
-                AutoKey { t: Tick(120_000), v: -300.0 },
-            ],
+            keys: vec![AutoKey { t: Tick(0), v: -900.0 }, AutoKey { t: Tick(120_000), v: -300.0 }],
         }];
         assert!(app.apply_coalesced(Command::SetCamera(c), gesture));
     }
@@ -6277,7 +6220,7 @@ fn t244_morpher_has_one_chain_with_pinned_head() {
 /// смешанном наборе и якорь зума.
 #[test]
 fn t245_thin_service_rows_geometry() {
-    use crate::timeline::{TlGeom, THIN_ROW_MIN, row_height, row_offsets};
+    use crate::timeline::{THIN_ROW_MIN, TlGeom, row_height, row_offsets};
     use kt_model::{ClipKind, LaneKind};
     let rows = vec![
         (LaneKind::Morph, 0),
@@ -6303,7 +6246,7 @@ fn t245_thin_service_rows_geometry() {
         egui::Rect::from_min_max(egui::pos2(52.0, 100.0), egui::pos2(1052.0, 600.0)),
         60.0,
         rows.clone(),
-            &[],
+        &[],
         0.0,
         0.0,
         900.0,
@@ -6409,12 +6352,10 @@ fn t246_thin_row_is_clickable_and_zoom_anchor_holds() {
     app.tl_v_zoom = Some(g.lane_h_of(ClipKind::Video, 0) * 1.5);
     h.step();
     let g2 = h.state().tl_geom.clone().unwrap();
+    assert!(g2.lane_h_of(ClipKind::Video, 0) > g.lane_h_of(ClipKind::Video, 0), "зум применился");
     assert!(
-        g2.lane_h_of(ClipKind::Video, 0) > g.lane_h_of(ClipKind::Video, 0),
-        "зум применился"
-    );
-    assert!(
-        (g2.row_h(mrow) / g2.lane_h_of(ClipKind::Video, 0) - 1.0 / crate::timeline::MORPH_ROW_DIV).abs()
+        (g2.row_h(mrow) / g2.lane_h_of(ClipKind::Video, 0) - 1.0 / crate::timeline::MORPH_ROW_DIV)
+            .abs()
             < 0.05,
         "отношение высоты морф-строки держится при зуме"
     );
@@ -7001,7 +6942,11 @@ fn t265_automation_axis_and_field_bind() {
         "замок «связать с таймлайном» включён по умолчанию (решение п.14)"
     );
     let mut v = AutoView::default();
-    assert_eq!(v.axis(&ctx), (90_000 * 2, 90_000 * 4), "связанный график показывает окно таймлайна");
+    assert_eq!(
+        v.axis(&ctx),
+        (90_000 * 2, 90_000 * 4),
+        "связанный график показывает окно таймлайна"
+    );
     ctx.linked = false;
     assert_eq!(v.axis(&ctx), (0, 90_000 * 10), "без своего окна отвязанный показывает всё");
     v.win = Some((90_000, 90_000 * 3));
@@ -7086,7 +7031,6 @@ fn t265_automation_axis_and_field_bind() {
     };
     assert_eq!(names.len(), 2, "у slowed+reverb есть хотя бы два автоматизируемых параметра");
 
-
     for n in &names {
         h.get_by_label(tr(k::fx::AUTO_ADD)).click();
         h.step();
@@ -7107,8 +7051,14 @@ fn t265_automation_axis_and_field_bind() {
     );
 
     // кнопки управления ключами и осью на месте (п.18)
-    for icon in [crate::icons::PLUS, crate::icons::SKIP_BACK, crate::icons::SKIP_FWD,
-                 crate::icons::TRASH, crate::icons::LOCK, crate::icons::ARROWS_OUT] {
+    for icon in [
+        crate::icons::PLUS,
+        crate::icons::SKIP_BACK,
+        crate::icons::SKIP_FWD,
+        crate::icons::TRASH,
+        crate::icons::LOCK,
+        crate::icons::ARROWS_OUT,
+    ] {
         assert!(
             h.query_all_by_label(icon).count() >= 1,
             "в панели автоматизации нет кнопки {icon:?} (п.18)"
@@ -7161,14 +7111,15 @@ fn t269_morph_strength_and_fades_reach_the_model() {
     match &c.fx[mix_at] {
         FxInstance::LayerMix { amount, from } => {
             assert!((amount - 0.4).abs() < 1e-9, "сила доехала: {amount}");
-            assert_eq!(*from as usize, mix_at.saturating_sub(1), "вклад слоя начинается с его эффекта");
+            assert_eq!(
+                *from as usize,
+                mix_at.saturating_sub(1),
+                "вклад слоя начинается с его эффекта"
+            );
         }
         _ => unreachable!(),
     }
-    assert!(
-        !c.fx_auto[mix_at].is_empty(),
-        "фейд — это КРИВАЯ силы, а не отдельный механизм"
-    );
+    assert!(!c.fx_auto[mix_at].is_empty(), "фейд — это КРИВАЯ силы, а не отдельный механизм");
 
     // сила 1.0 без фейдов слота НЕ создаёт: прежний путь байт-в-байт
     let app = h.state_mut();
@@ -7186,7 +7137,6 @@ fn t269_morph_strength_and_fades_reach_the_model() {
         "на умолчаниях слота смешения нет вовсе — на этом стоят GOLDEN'ы"
     );
 }
-
 
 /// Тест 274 (Р.40 п.11): высота дорожки доходит до СОБЫТИЯ.
 ///
@@ -7480,10 +7430,9 @@ fn t278_opacity_reachable_on_a_short_event() {
         let px = 20.0 * g0.tpp;
         let c = h.state().model.project().clips[0].clone();
         let app = h.state_mut();
-        assert!(app.apply(kt_model::Command::TrimEnd {
-            id: c.id,
-            new_end: c.start + Tick(px as i64),
-        }));
+        assert!(
+            app.apply(kt_model::Command::TrimEnd { id: c.id, new_end: c.start + Tick(px as i64) })
+        );
         (c.id, c.start.0, 0.0)
     };
     let _ = y_line;
@@ -7565,29 +7514,20 @@ fn t279_axis_lock_and_keys_that_stay() {
         c.fx_auto = vec![vec![ParamCurve {
             param: "radius".into(),
             ease: false,
-            keys: vec![
-                AutoKey { t: Tick(10_000), v: 1.0 },
-                AutoKey { t: Tick(40_000), v: 9.0 },
-            ],
+            keys: vec![AutoKey { t: Tick(10_000), v: 1.0 }, AutoKey { t: Tick(40_000), v: 9.0 }],
         }]];
         let mut p = app.model.project().clone();
         p.clips[0] = c;
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
     }
-    let before: Vec<i64> = h.state().model.project().clips[0].fx_auto[0][0]
-        .keys
-        .iter()
-        .map(|k| k.t.0)
-        .collect();
+    let before: Vec<i64> =
+        h.state().model.project().clips[0].fx_auto[0][0].keys.iter().map(|k| k.t.0).collect();
     // левый край вправо на 20 000 тиков
     let start = h.state().model.project().clips[0].start;
     assert!(h.state_mut().apply(Command::TrimStart { id, new_start: start + Tick(20_000) }));
-    let after: Vec<i64> = h.state().model.project().clips[0].fx_auto[0][0]
-        .keys
-        .iter()
-        .map(|k| k.t.0)
-        .collect();
+    let after: Vec<i64> =
+        h.state().model.project().clips[0].fx_auto[0][0].keys.iter().map(|k| k.t.0).collect();
     assert_eq!(
         after, before,
         "ключ обязан остаться на ТОМ ЖЕ кадре материала: «вот как сделать так чтобы \
@@ -7614,7 +7554,8 @@ fn t279_axis_lock_and_keys_that_stay() {
     // и поехать РОВНО пропорционально: доля ключа внутри события сохранена
     let span_new = kt_model::clip_material_span(&c1);
     for (k, off0) in stretched.iter().zip(&offs_old) {
-        let want = c1.source_in.0 + (*off0 as f64 * span_new as f64 / span_old as f64).round() as i64;
+        let want =
+            c1.source_in.0 + (*off0 as f64 * span_new as f64 / span_old as f64).round() as i64;
         assert_eq!(
             *k, want,
             "доля ключа внутри события обязана сохраниться: {span_old} → {span_new}"
@@ -7838,10 +7779,7 @@ fn t289_underrun_counters_are_labelled_and_silence_is_in_ms() {
         .filter(|t| t.to_lowercase().contains("underrun"))
         .collect();
     let all = texts.join("\n").to_lowercase();
-    assert!(
-        !texts.is_empty(),
-        "счётчики underrun'ов обязаны быть видны — их не нашлось вовсе"
-    );
+    assert!(!texts.is_empty(), "счётчики underrun'ов обязаны быть видны — их не нашлось вовсе");
     assert!(
         all.contains(&RENDER.to_string()) && all.contains(&CALLBACK.to_string()),
         "оба числа обязаны быть показаны: {texts:?}"

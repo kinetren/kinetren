@@ -91,9 +91,8 @@ fn prepare(env: &Env, out: &Path) -> Result<Prep, String> {
     let m: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(out.join("manifest.json")).unwrap())
             .map_err(|e| e.to_string())?;
-    let mlt = m["mlt"]
-        .as_str()
-        .ok_or_else(|| format!("MLT-адаптер отказался: {}", m["mlt_error"]))?;
+    let mlt =
+        m["mlt"].as_str().ok_or_else(|| format!("MLT-адаптер отказался: {}", m["mlt_error"]))?;
     Ok(Prep {
         prepared: PathBuf::from(m["prepared"].as_str().unwrap()),
         mlt: PathBuf::from(mlt),
@@ -140,7 +139,15 @@ fn render_theirs(mlt: &Path, rate: f64, dir: &Path, out: &Path) -> Result<(), St
         .arg(mlt)
         .arg("-consumer")
         .arg(format!("avformat:{}", out.display()))
-        .args(["vcodec=libx264", "preset=veryfast", "crf=18", "g=15", "pix_fmt=yuv420p", "an=1", "real_time=0"])
+        .args([
+            "vcodec=libx264",
+            "preset=veryfast",
+            "crf=18",
+            "g=15",
+            "pix_fmt=yuv420p",
+            "an=1",
+            "real_time=0",
+        ])
         .output()
         .map_err(|e| e.to_string())?;
     if !o.status.success() || !out.exists() {
@@ -210,10 +217,8 @@ fn t179_real_film_cross_render() {
 
     // длительность: сверяем в СЕКУНДАХ — число кадров у нас и у melt разное
     // по построению (наша сетка 24, у melt 24000/1001, п.178)
-    let (od, td) = (
-        ours.info().duration.0 as f64 / 90_000.0,
-        theirs.info().duration.0 as f64 / 90_000.0,
-    );
+    let (od, td) =
+        (ours.info().duration.0 as f64 / 90_000.0, theirs.info().duration.0 as f64 / 90_000.0);
     let frame = 1.0 / prep.rate;
     assert!(
         (od - td).abs() <= 2.0 * frame,

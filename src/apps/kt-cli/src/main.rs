@@ -238,8 +238,7 @@ fn probe_range(
         .filter(|c| c.start < t1 && c.start + c.duration > t0)
         .map(|c| c.media.0)
         .collect();
-    let foreign: Vec<u64> =
-        want.iter().map(|(m, _)| m.0).filter(|m| !placed.contains(m)).collect();
+    let foreign: Vec<u64> = want.iter().map(|(m, _)| m.0).filter(|m| !placed.contains(m)).collect();
     if foreign.is_empty() {
         println!("\nno foreign media in the order");
     } else {
@@ -258,7 +257,8 @@ fn probe_range(
         // заново на каждый бёрст, а у реверса чтение идёт НАЗАД по файлу —
         // это совсем другой порядок цены и совсем не то, что переживает
         // пользователь на повторе (Р.43, п.302).
-        let cache = std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig::default()));
+        let cache =
+            std::sync::Arc::new(kt_cache::BurstCache::new(kt_cache::CacheConfig::default()));
         let mut fetcher = match open_sources(project, path, false, Some(cache)) {
             Ok(f) => f,
             Err(e) => {
@@ -314,7 +314,8 @@ fn probe_range(
         let mut under_l = 0u64;
         let mut done = 0i64;
         while done < total {
-            under_l += r.render_looped_with(&mut fetcher, &mut store, fa..fb, pos, &mut out).underruns;
+            under_l +=
+                r.render_looped_with(&mut fetcher, &mut store, fa..fb, pos, &mut out).underruns;
             pos = fa + (pos - fa + step).rem_euclid(fb - fa);
             done += step;
         }
@@ -485,7 +486,9 @@ fn run(args: &[String]) -> i32 {
                 fps: 30,
                 width: 1920,
                 height: 1080,
-                sample_rate: 48000, pitch_engine: Default::default() });
+                sample_rate: 48000,
+                pitch_engine: Default::default(),
+            });
             let base = std::path::Path::new(path).parent().map(|d| d.to_path_buf());
             let out = kt_otio::save_project(&p, &Retained::default(), base.as_deref());
             if let Err(c) = write_project(path, &out, force) {
@@ -521,7 +524,12 @@ fn run(args: &[String]) -> i32 {
             if let Err(c) = write_project(output, &out, force) {
                 return c;
             }
-            eprintln!("ok: {} media, {} clips, {} transitions", p.media.len(), p.clips.len(), p.transitions.len());
+            eprintln!(
+                "ok: {} media, {} clips, {} transitions",
+                p.media.len(),
+                p.clips.len(),
+                p.transitions.len()
+            );
             0
         }
         Some("demo") => {
@@ -661,10 +669,7 @@ fn run(args: &[String]) -> i32 {
                     return 1;
                 }
             };
-            let opts = kt_engine::ExportOptions {
-                force_encoder: encoder,
-                ..Default::default()
-            };
+            let opts = kt_engine::ExportOptions { force_encoder: encoder, ..Default::default() };
             // Р.29: рендер на GPU по умолчанию (headless-девайс, тот же
             // код композиции); адаптера нет → CPU с пометкой в stderr,
             // KT_VIDEO_GPU=0 — принудительный CPU
@@ -713,7 +718,9 @@ fn run(args: &[String]) -> i32 {
             }
         }
         Some(cmd) => {
-            eprintln!("unknown command: {cmd} (available: version, new, roundtrip, probe, render, export)");
+            eprintln!(
+                "unknown command: {cmd} (available: version, new, roundtrip, probe, render, export)"
+            );
             2
         }
     }
@@ -763,9 +770,9 @@ fn warn_if_locked(path: &str) {
 /// Номер процесса-держателя замка на проект, если он есть. Формат файла
 /// замка — тот же, что кладёт kt-app (`project_lock.rs`): первая строка pid.
 fn kt_lock_holder(project: &str) -> Option<u32> {
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
+    let base = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| {
+        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))
+    })?;
     let abs = std::path::absolute(project).ok()?;
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for b in abs.to_string_lossy().as_bytes() {
@@ -780,8 +787,15 @@ fn kt_lock_holder(project: &str) -> Option<u32> {
 fn demo_project(synth: bool) -> Project {
     use kt_model::*;
     let t = |s: f64| Tick((s * 90_000.0).round() as i64);
-    let clip = |id: u64, kind: ClipKind, lane: u32, st: f64, du: f64, si: f64, m: u64,
-                gain: f32, fx: Vec<FxInstance>| ClipEvent {
+    let clip = |id: u64,
+                kind: ClipKind,
+                lane: u32,
+                st: f64,
+                du: f64,
+                si: f64,
+                m: u64,
+                gain: f32,
+                fx: Vec<FxInstance>| ClipEvent {
         id: ClipId(id),
         link_group: None,
         kind,
@@ -843,8 +857,13 @@ fn demo_project(synth: bool) -> Project {
             },
         ]]
     };
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 1920, height: 1080, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1920,
+        height: 1080,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     let files = [
         (1u64, "media/drone_coast.mp4"),
         (2, "media/city_night_broll.mp4"),
@@ -872,21 +891,45 @@ fn demo_project(synth: bool) -> Project {
     }
     p.clips = vec![
         clip(1, ClipKind::Video, 0, 0.0, 12.0, 2.0, 1, 0.0, vec![pan.clone()]),
-        clip(3, ClipKind::Video, 0, 12.0, 22.0, 3.0, 3, 0.0,
-             vec![pan.clone(), FxInstance::noise(0.05)]),
+        clip(
+            3,
+            ClipKind::Video,
+            0,
+            12.0,
+            22.0,
+            3.0,
+            3,
+            0.0,
+            vec![pan.clone(), FxInstance::noise(0.05)],
+        ),
         clip(5, ClipKind::Video, 0, 34.0, 14.0, 20.0, 1, 0.0, vec![cam]),
         clip(7, ClipKind::Video, 0, 48.0, 18.0, 4.0, 2, 0.0, vec![]),
         clip(9, ClipKind::Video, 0, 66.0, 14.0, 2.0, 5, 0.0, vec![]),
         clip(11, ClipKind::Video, 0, 80.0, 20.0, 24.0, 3, 0.0, vec![pan]),
-        clip(13, ClipKind::Video, 1, 6.0, 6.0, 1.0, 4, 0.0,
-             vec![FxInstance::EventGrid { cols: 3, rows: 2, center: true }]),
-        clip(15, ClipKind::Video, 1, 26.0, 8.0, 10.0, 2, 0.0,
-             vec![FxInstance::glow(0.72)]),
-        clip(17, ClipKind::Video, 1, 55.0, 7.0, 8.0, 5, 0.0,
-             vec![FxInstance::vhs(6, 0.5)]),
-        clip(19, ClipKind::Video, 2, 88.0, 6.0, 6.0, 4, 0.0,
-             vec![FxInstance::Mirror { horizontal: true, vertical: false },
-                  FxInstance::edges(42)]),
+        clip(
+            13,
+            ClipKind::Video,
+            1,
+            6.0,
+            6.0,
+            1.0,
+            4,
+            0.0,
+            vec![FxInstance::EventGrid { cols: 3, rows: 2, center: true }],
+        ),
+        clip(15, ClipKind::Video, 1, 26.0, 8.0, 10.0, 2, 0.0, vec![FxInstance::glow(0.72)]),
+        clip(17, ClipKind::Video, 1, 55.0, 7.0, 8.0, 5, 0.0, vec![FxInstance::vhs(6, 0.5)]),
+        clip(
+            19,
+            ClipKind::Video,
+            2,
+            88.0,
+            6.0,
+            6.0,
+            4,
+            0.0,
+            vec![FxInstance::Mirror { horizontal: true, vertical: false }, FxInstance::edges(42)],
+        ),
         clip(21, ClipKind::Audio, 0, 12.0, 22.0, 2.0, 7, -1.5, vec![]),
         clip(23, ClipKind::Audio, 0, 80.0, 20.0, 28.0, 7, -1.5, vec![]),
         {
@@ -986,7 +1029,11 @@ fn demo_project(synth: bool) -> Project {
                 members: vec![MediaId(1), MediaId(3), MediaId(2), MediaId(5), MediaId(4)],
                 locked: false,
             },
-            BinGroup { name: "SOUND".into(), members: vec![MediaId(6), MediaId(7), MediaId(8)], locked: true },
+            BinGroup {
+                name: "SOUND".into(),
+                members: vec![MediaId(6), MediaId(7), MediaId(8)],
+                locked: true,
+            },
         ],
         lane_names: vec![
             (LaneKind::Video, 0, "MAIN".into()),

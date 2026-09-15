@@ -34,8 +34,13 @@ fn frame() -> Arc<kt_media::VideoFrame> {
 }
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: W, height: H, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: W,
+        height: H,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -97,13 +102,8 @@ fn t191_animated_equals_static_at_each_moment() {
         let u = (t.0 / step * step) as f64 / SPAN as f64;
         let r = 1.0 + (47.0 - 1.0) * u;
         let s = 2.0 * u;
-        let static_p = project(
-            vec![
-                FxInstance::blur(r.round() as u32),
-                FxInstance::glow(s),
-            ],
-            vec![],
-        );
+        let static_p =
+            project(vec![FxInstance::blur(r.round() as u32), FxInstance::glow(s)], vec![]);
         let cache_a = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         let cache_s = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
         let (a, ca) = compose(&animated, t, &cache_a);
@@ -190,10 +190,7 @@ fn t230_cammotion_migrates_to_pan_curves() {
     let before = project(vec![empty], vec![]);
     let mut after = before.clone();
     assert!(kt_model::migrate_legacy_cammotion(&mut after.clips[0]));
-    let zoom = after.clips[0].fx_auto[0]
-        .iter()
-        .find(|c| c.param == "zoom")
-        .expect("кривая наезда");
+    let zoom = after.clips[0].fx_auto[0].iter().find(|c| c.param == "zoom").expect("кривая наезда");
     assert_eq!(zoom.keys.len(), 2);
     assert!((zoom.keys[1].v - 1.35).abs() < 1e-9, "пресет v1 сохранён: {:?}", zoom.keys);
     for t in [Tick(0), Tick(SPAN / 2), Tick(69_000)] {

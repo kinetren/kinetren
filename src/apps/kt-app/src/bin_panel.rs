@@ -6,8 +6,8 @@
 //! не безусловный; текстуры — общие thumb_textures/LRU приложения;
 //! «last good» на медиа — превью не мигает при недогруженных бакетах.
 
-use crate::i18n::{k, tr};
 use crate::app::KtApp;
+use crate::i18n::{k, tr};
 use crate::thumbs::{THUMB_STEP_LADDER, ThumbKey, ThumbState, thumb_key_t, thumb_source_step};
 use eframe::egui;
 use kt_model::{Command, MediaId};
@@ -149,10 +149,8 @@ impl KtApp {
         // «не к месту» больше не делаем)
         ui.horizontal(|ui| {
             let free = self.bin_free;
-            let r = ui.add_sized(
-                [22.0, 20.0],
-                egui::Button::selectable(free, crate::icons::ARROWS_OUT),
-            );
+            let r = ui
+                .add_sized([22.0, 20.0], egui::Button::selectable(free, crate::icons::ARROWS_OUT));
             if self.hint(r, tr(k::bin::HINT_FREE)).clicked() {
                 self.bin_free = true;
             }
@@ -210,7 +208,8 @@ impl KtApp {
                 egui::vec2(ui.available_width(), need_h),
                 egui::Sense::click_and_drag(),
             );
-            let add_mode = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
+            let add_mode =
+                ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
             if bg.drag_started()
                 && let Some(pos) = bg.interact_pointer_pos()
             {
@@ -392,10 +391,8 @@ impl KtApp {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                 for (id, path) in &media {
-                    let (rect, _) = ui.allocate_exact_size(
-                        egui::vec2(card_w, row_h),
-                        egui::Sense::hover(),
-                    );
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(card_w, row_h), egui::Sense::hover());
                     let resp = self.draw_bin_card(
                         ui,
                         *id,
@@ -555,26 +552,15 @@ impl KtApp {
             if title.is_empty() {
                 painter.line_segment([frame.left_top(), frame.right_top()], stroke);
             } else {
-                let galley = painter.layout_no_wrap(
-                    title,
-                    egui::FontId::proportional(10.5),
-                    col,
-                );
+                let galley = painter.layout_no_wrap(title, egui::FontId::proportional(10.5), col);
                 let w = galley.size().x.min(frame.width() - 12.0).max(0.0);
                 let x0 = frame.left() + 6.0;
-                painter.line_segment(
-                    [frame.left_top(), egui::pos2(x0 - 3.0, frame.top())],
-                    stroke,
-                );
+                painter.line_segment([frame.left_top(), egui::pos2(x0 - 3.0, frame.top())], stroke);
                 painter.line_segment(
                     [egui::pos2(x0 + w + 3.0, frame.top()), frame.right_top()],
                     stroke,
                 );
-                painter.galley(
-                    egui::pos2(x0, frame.top() - galley.size().y * 0.5),
-                    galley,
-                    col,
-                );
+                painter.galley(egui::pos2(x0, frame.top() - galley.size().y * 0.5), galley, col);
             }
             // клик по РАМКЕ (не по карточке): выделить группу, ПКМ — меню
             let bar = egui::Rect::from_min_max(
@@ -591,11 +577,8 @@ impl KtApp {
                     rename = Some(gi);
                     ui.close();
                 }
-                let lock_label = if g.locked {
-                    tr(k::bin::menu::UNLOCK)
-                } else {
-                    tr(k::bin::menu::LOCK)
-                };
+                let lock_label =
+                    if g.locked { tr(k::bin::menu::UNLOCK) } else { tr(k::bin::menu::LOCK) };
                 if ui.button(lock_label).clicked() {
                     self.bin_groups[gi].locked = !g.locked;
                     self.dirty_ui = true;
@@ -704,10 +687,7 @@ impl KtApp {
                     (thumb_key_t(0, (frac as f64 * d.0 as f64) as i64, step), step / 2)
                 }
                 // постер: самый информативный кадр, а не первый (п.4 р.9)
-                _ => (
-                    self.thumbs.poster_t_or_request(id).unwrap_or(0),
-                    THUMB_STEP_LADDER[0] / 2,
-                ),
+                _ => (self.thumbs.poster_t_or_request(id).unwrap_or(0), THUMB_STEP_LADDER[0] / 2),
             };
             let key = ThumbKey { media: id, t };
             let tex = self.thumb_texture(ui, key);
@@ -843,18 +823,15 @@ impl KtApp {
         });
         let mut x = rect.left();
         if let Some(d) = dur_txt {
-            let g = p.layout_no_wrap(d, egui::FontId::monospace(10.0), egui::Color32::from_gray(120));
+            let g =
+                p.layout_no_wrap(d, egui::FontId::monospace(10.0), egui::Color32::from_gray(120));
             p.galley(egui::pos2(x, label_y), g.clone(), egui::Color32::from_gray(120));
             x += g.size().x + 4.0;
         }
         let label = if is_off { format!("{} {name}", crate::icons::WARN) } else { name };
         let avail = (rect.right() - x).max(10.0);
-        let g = p.layout(
-            label,
-            egui::FontId::proportional(11.0),
-            egui::Color32::from_gray(190),
-            avail,
-        );
+        let g =
+            p.layout(label, egui::FontId::proportional(11.0), egui::Color32::from_gray(190), avail);
         p.galley(egui::pos2(x, label_y), g, egui::Color32::from_gray(190));
         // Громкость материала — В ПОДСКАЗКЕ, без новой полосы в карточке
         // (Р.49, п.373). Показ НИЧЕГО НЕ ЗАПУСКАЕТ: провести мышью по бину
@@ -935,11 +912,7 @@ impl KtApp {
 
     /// Тумба как egui-текстура из ОБЩЕГО кэша приложения (тот же путь,
     /// что у филмстрипа таймлайна): get → load_texture → LRU.
-    fn thumb_texture(
-        &mut self,
-        ui: &egui::Ui,
-        key: ThumbKey,
-    ) -> Option<egui::TextureHandle> {
+    fn thumb_texture(&mut self, ui: &egui::Ui, key: ThumbKey) -> Option<egui::TextureHandle> {
         if let Some(t) = self.thumb_textures.get(&key) {
             return Some(t.clone());
         }

@@ -47,8 +47,8 @@ impl GpuContext {
         let instance =
             wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::from_env()
-                .unwrap_or(wgpu::PowerPreference::LowPower),
+            power_preference:
+                wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::LowPower),
             ..Default::default()
         }))
         .map_err(|e| GpuInitError::NoAdapter(e.to_string()))?;

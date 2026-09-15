@@ -90,9 +90,8 @@ impl Transport {
                 }
             }
             _ => {
-                let _ = self
-                    .playhead_frames
-                    .fetch_update(Ordering::AcqRel, Ordering::Acquire, |p| {
+                let _ =
+                    self.playhead_frames.fetch_update(Ordering::AcqRel, Ordering::Acquire, |p| {
                         Some((p + frames).max(0))
                     });
             }

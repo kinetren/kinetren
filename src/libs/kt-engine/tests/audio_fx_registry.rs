@@ -16,8 +16,13 @@ const CH: usize = AUDIO_CHANNELS;
 const DUR: i64 = 48_000 * 2;
 
 fn project(fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>, reversed: bool) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 64,
+        height: 36,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -183,11 +188,8 @@ fn t322_audio_registry_contract() {
         // (в) кривая первого Smooth-параметра отрабатывает: выход не равен
         // ни константному дефолту, ни константной пробе
         if let Some(spec) = f.auto_params().next() {
-            let probe = audible_probe
-                .iter()
-                .find(|(n, _)| *n == spec.name)
-                .map(|(_, v)| *v)
-                .unwrap();
+            let probe =
+                audible_probe.iter().find(|(n, _)| *n == spec.name).map(|(_, v)| *v).unwrap();
             let curved = render_on(fx.clone(), curve_for(spec, probe), false, 0, stim);
             let mut probed = (*f).clone();
             probed.set_param(spec.name, probe);
@@ -278,8 +280,7 @@ fn t322_audio_registry_contract() {
     assert_eq!(lm, dry, "solo LayerMix must be a no-op (dry == wet)");
 
     // замок полноты: покрыт каждый аудио-вид реестра
-    let all_tags: std::collections::BTreeSet<&str> =
-        audio.iter().map(|f| f.tag()).collect();
+    let all_tags: std::collections::BTreeSet<&str> = audio.iter().map(|f| f.tag()).collect();
     let covered: std::collections::BTreeSet<&str> = covered.into_iter().collect();
     assert_eq!(covered, all_tags, "every audio kind of all() must pass this contract");
 }
@@ -307,8 +308,7 @@ fn t325_lfo_phase_is_a_function_of_position() {
     let third = (DUR / 3) as usize * CH;
     let n0 = r.render_frames_with(&mut f, &mut store, 0, &mut pieces[..third]);
     assert_eq!(n0.underruns, 0);
-    let n1 =
-        r.render_frames_with(&mut f, &mut store, DUR / 3, &mut pieces[third..2 * third]);
+    let n1 = r.render_frames_with(&mut f, &mut store, DUR / 3, &mut pieces[third..2 * third]);
     assert_eq!(n1.underruns, 0);
     let n2 = r.render_frames_with(&mut f, &mut store, 2 * (DUR / 3), &mut pieces[2 * third..]);
     assert_eq!(n2.underruns, 0);
@@ -356,10 +356,7 @@ fn t325_lfo_phase_is_a_function_of_position() {
     };
     let half = env.len() / 2;
     let (d1, d2) = (dips(&env[..half]), dips(&env[half..]));
-    assert!(
-        d2 > d1 + 1,
-        "rate curve 2->8 Hz must speed the modulation up: {d1} dips then {d2}"
-    );
+    assert!(d2 > d1 + 1, "rate curve 2->8 Hz must speed the modulation up: {d1} dips then {d2}");
 }
 
 /// Тест 326 (Р.47, п.329): эхо и динамика делают то, что написано на
@@ -412,8 +409,7 @@ fn t326_delay_and_dynamics_behave() {
         let out = render_on(fx, vec![], false, 0, AudioPattern::Sine { hz: 440.0 });
         // стабильный участок после атаки: вторая половина
         let tail = &out[out.len() / 2..];
-        let rms = (tail.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>()
-            / tail.len() as f64)
+        let rms = (tail.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / tail.len() as f64)
             .sqrt();
         20.0 * (rms * std::f64::consts::SQRT_2).log10()
     };
@@ -479,8 +475,13 @@ fn t327_print_dense_chain_cost() {
             FxInstance::gain(-3.0),
         ]
     };
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 64,
+        height: 36,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
     for i in 0..7 {
         p.clips.push(ClipEvent {
@@ -551,19 +552,40 @@ fn bench_pitch_cost() {
             pitch_engine: engine,
         });
         p.media.push(MediaRef { id: MediaId(1), path: "synth:clicks".into() });
-        p.clips.push(ClipEvent { id: ClipId(1), link_group: None, kind: ClipKind::Audio, lane: 0,
-            start: Tick(0), duration: Tick(90_000 * 10), source_in: Tick(0), media: MediaId(1),
-            gain_db: 0.0, reversed: false, fx, fx_bypass: vec![], fx_auto: vec![], opacity: 1.0, fx_off: false });
+        p.clips.push(ClipEvent {
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Audio,
+            lane: 0,
+            start: Tick(0),
+            duration: Tick(90_000 * 10),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx,
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
         p.validate().unwrap();
         let r = AudioRenderer::new(&p);
         let mut f = DirectFetcher::new(None);
-        f.add_source(MediaId(1), Box::new(SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Clicks)));
+        f.add_source(
+            MediaId(1),
+            Box::new(SyntheticSource::new(Tick(90_000 * 600), AudioPattern::Clicks)),
+        );
         let mut store = FxStateStore::new();
         r.sync_fx(&mut store);
         let mut out = vec![0f32; (48_000 * 10) as usize * CH];
         let t = std::time::Instant::now();
         r.render_frames_with(&mut f, &mut store, 0, &mut out);
         let ms = t.elapsed().as_secs_f64() * 1000.0;
-        println!("bench {name}: {:.1} ms per second of audio ({:.1}% of realtime)", ms / 10.0, ms / 100.0);
+        println!(
+            "bench {name}: {:.1} ms per second of audio ({:.1}% of realtime)",
+            ms / 10.0,
+            ms / 100.0
+        );
     }
 }

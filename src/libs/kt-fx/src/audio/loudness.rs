@@ -294,8 +294,7 @@ fn loudness_range(short: &[f64]) -> f64 {
     }
     let prelim = power_to_lufs(pass1.iter().sum::<f64>() / pass1.len() as f64);
     let gate = prelim - 20.0;
-    let mut vals: Vec<f64> =
-        pass1.into_iter().map(power_to_lufs).filter(|l| *l > gate).collect();
+    let mut vals: Vec<f64> = pass1.into_iter().map(power_to_lufs).filter(|l| *l > gate).collect();
     if vals.len() < 2 {
         return 0.0;
     }

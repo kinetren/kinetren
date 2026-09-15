@@ -187,7 +187,7 @@ pub fn offset_from_pyramids(
     let frames = coarse_lag * frames_per_block0 as i64;
     let ticks = Tick::from_audio_frames(frames);
     // округление до сетки: обещать точность выше блока пирамиды нечестно
-    let q = (ticks.0 as f64 / SYNC_GRANULARITY_TICKS as f64).round() as i64
-        * SYNC_GRANULARITY_TICKS;
+    let q =
+        (ticks.0 as f64 / SYNC_GRANULARITY_TICKS as f64).round() as i64 * SYNC_GRANULARITY_TICKS;
     Some(SyncOffset { ticks: Tick(q), confidence })
 }

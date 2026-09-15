@@ -578,6 +578,17 @@ impl Sequence {
         }
     }
 
+    /// Строки ленты сверху вниз — то же правило, что у корня.
+    pub fn rows(&self) -> Vec<(LaneKind, u32)> {
+        normalize_lane_order(
+            &self.lane_order,
+            self.video_lanes,
+            self.audio_lanes,
+            self.morph_lanes,
+            self.camera_lanes,
+        )
+    }
+
     /// Конец содержимого ленты.
     pub fn end(&self) -> Tick {
         self.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO)
@@ -1361,10 +1372,15 @@ impl MorpherEvent {
     ///    границу наружу: слой «липнет» к краю кроссфейда, зато соседи по
     ///    дорожке не переслаиваются от резки (находка 1 Р.35);
     /// 6. огрызок короче `crate::MIN_CLIP_DURATION` схлопывается к краю тела.
+    /// `reel` — лента, на которой лежит клип: запретные зоны (окна
+    /// переходов и наезды соседей) считаются ПО НЕЙ, а не по корню
+    /// (Р.50). `p` остаётся ради настроек проекта — вложение их
+    /// наследует, своих у него нет.
     pub fn windows_on(
         &self,
         c: &ClipEvent,
         p: &Project,
+        reel: &dyn Reel,
         rows: &[(LaneKind, u32)],
     ) -> Vec<TickRange> {
         let body = TickRange::new(c.start, c.start + c.duration);
@@ -1398,7 +1414,7 @@ impl MorpherEvent {
             if no_cut {
                 return vec![body];
             }
-            return refs.into_iter().filter_map(|w| self.fit_window(w, c, p, body)).collect();
+            return refs.into_iter().filter_map(|w| self.fit_window(w, c, p, reel, body)).collect();
         }
         if !self.timed {
             return vec![body]; // v1: время блока не действует
@@ -1410,7 +1426,7 @@ impl MorpherEvent {
         if no_cut {
             return vec![body];
         }
-        match self.fit_window(w, c, p, body) {
+        match self.fit_window(w, c, p, reel, body) {
             Some(w) => vec![w],
             None => Vec::new(),
         }
@@ -1423,6 +1439,7 @@ impl MorpherEvent {
         w: TickRange,
         c: &ClipEvent,
         p: &Project,
+        reel: &dyn Reel,
         body: TickRange,
     ) -> Option<TickRange> {
         if w.len() < crate::MIN_CLIP_DURATION {
@@ -1449,7 +1466,7 @@ impl MorpherEvent {
         // один: либо кадр материала, либо неразрезанное окружение. Дороже
         // стоит окружение — кусок с бо́льшим `start` вылезает над соседом
         // и меняет веса кроссфейда, а сетка стоит одного кадра на шве.
-        let zones = forbidden_zones(p, c);
+        let zones = forbidden_zones(reel, c);
         let mut s = snap_out_of(grid(w.start), &zones);
         let mut e = snap_out_of(grid(w.end), &zones);
         s = Tick(s.0.clamp(body.start.0, body.end.0));
@@ -4543,6 +4560,13 @@ pub enum ProjectError {
     SequenceTooDeep(MediaId, String),
     #[error("sequence {0:?}: name must not be empty")]
     SequenceUnnamed(MediaId),
+    #[error(
+        "clip {0:?} is a nested reel: effects, reverse and time warp on the instance are \
+         not rendered yet — they would apply to each piece instead of the assembled picture"
+    )]
+    NestInstanceNotChainable(ClipId),
+    #[error("sequence {0:?}: morph layers inside a reel cannot target areas or named ranges")]
+    MorphRefInsideSequence(MorphId),
     #[error("media id {0:?} is out of range (top bit is reserved for nested sequences)")]
     MediaIdTooLarge(MediaId),
 }
@@ -4719,20 +4743,35 @@ impl Project {
     /// негласным — дефект D11 разведки). Несколько morpher'ов на клип
     /// применяются кумулятивно.
     pub fn effective_clips(&self) -> Vec<ClipEvent> {
-        if self.morphers.is_empty() {
-            return self.clips.clone(); // быстрый путь: GOLDEN держится на нём
+        // быстрый путь: GOLDEN держится на нём
+        if self.morphers.is_empty() && self.sequences.is_empty() {
+            return self.clips.clone();
         }
-        let rows = self.rows();
+        let out = self.morph_pass(self, &self.rows());
+        if self.sequences.is_empty() {
+            return out;
+        }
+        self.inline_pass(out)
+    }
+
+    /// Морфер-слои ОДНОЙ ленты. Вынесено из `effective_clips` (Р.50):
+    /// внутрь вложения можно класть всё, включая слои, — значит и этот
+    /// проход обязан уметь работать по ленте, а не только по корню.
+    fn morph_pass(&self, reel: &dyn Reel, rows: &[(LaneKind, u32)]) -> Vec<ClipEvent> {
+        let ms_all = reel.morphers();
+        if ms_all.is_empty() {
+            return reel.clips().to_vec();
+        }
         // шаг кадра нужен для перевода ключей слоя в материал цели
         let frame_step = 90_000 / self.settings.fps.max(1) as i64;
-        let mut ms: Vec<&MorpherEvent> = self.morphers.iter().filter(|m| m.enabled).collect();
+        let mut ms: Vec<&MorpherEvent> = ms_all.iter().filter(|m| m.enabled).collect();
         // Порядок наложения — СНИЗУ ВВЕРХ (нижний слой первым, как
         // adjustment layer в AE); внутри строки прежнее правило по id.
-        ms.sort_by_key(|m| (std::cmp::Reverse(m.row_in(&rows)), m.id));
-        let mut out = Vec::with_capacity(self.clips.len());
-        for c in &self.clips {
+        ms.sort_by_key(|m| (std::cmp::Reverse(m.row_in(rows)), m.id));
+        let mut out = Vec::with_capacity(reel.clips().len());
+        for c in reel.clips() {
             let wins: Vec<Vec<TickRange>> =
-                ms.iter().map(|m| m.windows_on(c, self, &rows)).collect();
+                ms.iter().map(|m| m.windows_on(c, self, reel, rows)).collect();
             let body = TickRange::new(c.start, c.start + c.duration);
             // точки реза — ВНУТРЕННИЕ края окон; общий набор на все
             // морферы, чтобы они не резали куски друг друга
@@ -4763,6 +4802,83 @@ impl Project {
             }
         }
         out
+    }
+
+    /// Раскрытие вложений (Р.50, п.383).
+    ///
+    /// Вложение с ПУСТОЙ цепочкой семантически ТОЖДЕСТВЕННО своему
+    /// развёрнутому содержимому: настройки наследуются, промежуточного
+    /// растра не возникает. Поэтому картинка и звук получаются здесь, без
+    /// единой правки плана, воркеров, кэша и GPU — а сам инлайн становится
+    /// ЭТАЛОНОМ-ОРАКУЛОМ для настоящего поддерева (закон Э, тесты t434-t436).
+    ///
+    /// Чего он НЕ делает и не притворяется, что делает: цепочка, варп и
+    /// реверс на самом экземпляре применялись бы к каждому куску отдельно,
+    /// а не к собранной картинке, — это другой результат, поэтому команды
+    /// их на вложение просто НЕ ПУСКАЮТ (правило 16). Уровень и усиление
+    /// домножаются: на неперекрывающемся содержимом это то же самое, а
+    /// перекрытие — уже дело настоящего поддерева.
+    fn inline_pass(&self, clips: Vec<ClipEvent>) -> Vec<ClipEvent> {
+        // Свободные номера кусков: морфер-проход уже мог порезать сам
+        // экземпляр, и новые куски обязаны встать ВЫШЕ его номеров —
+        // иначе два разных куска получили бы один адрес.
+        let mut next: std::collections::HashMap<ClipId, u32> = std::collections::HashMap::new();
+        for c in &clips {
+            if let Some(o) = slice_origin(c.id) {
+                let idx = (c.id.0 & ((1 << SLICE_IDX_BITS) - 1)) as u32;
+                let e = next.entry(o).or_insert(0);
+                *e = (*e).max(idx + 1);
+            }
+        }
+        let mut out = Vec::with_capacity(clips.len());
+        for c in &clips {
+            self.inline_one(c, 0, &mut next, &mut out);
+        }
+        out
+    }
+
+    fn inline_one(
+        &self,
+        inst: &ClipEvent,
+        depth: usize,
+        next: &mut std::collections::HashMap<ClipId, u32>,
+        out: &mut Vec<ClipEvent>,
+    ) {
+        let Some(seq) = self.sequence(inst.media) else {
+            out.push(inst.clone());
+            return;
+        };
+        if depth >= MAX_NEST_DEPTH {
+            return; // validate такого не пропустит; здесь — страховка
+        }
+        // окно экземпляра в координатах содержимого
+        let win = TickRange::new(inst.source_in, inst.source_in + inst.duration);
+        let inner = self.morph_pass(seq, &seq.rows());
+        // Адреса кусков считаются от НАСТОЯЩЕГО клипа-экземпляра: так
+        // `same_clip` доводит кусок обратно до события, по которому человек
+        // кликнул, а `slice_id` не переполняется поверх собственного тега.
+        let base = slice_origin(inst.id).unwrap_or(inst.id);
+        for child in &inner {
+            let body = TickRange::new(child.start, child.start + child.duration);
+            let cut = body.intersect(&win);
+            if cut.is_empty() || cut.len() < crate::MIN_CLIP_DURATION {
+                continue;
+            }
+            let n = next.entry(base).or_insert(0);
+            let id = slice_id(base, *n);
+            *n += 1;
+            let mut piece = clip_slice(child, cut, id);
+            piece.start = inst.start + (cut.start - win.start);
+            // Дорожка содержимого ложится ПОД дорожку экземпляра — ровно
+            // так же, как её кладёт `expand_instance`: два пути обязаны
+            // давать одну картинку, иначе «свернул — развернул» перестаёт
+            // быть тождеством.
+            piece.lane = inst.lane + child.lane;
+            piece.opacity *= inst.opacity;
+            piece.gain_db += inst.gain_db;
+            piece.link_group = inst.link_group;
+            self.inline_one(&piece, depth + 1, next, out);
+        }
     }
 
     /// Зоны клипа, внутри которых граница морфер-слоя ставиться не может
@@ -4855,8 +4971,8 @@ impl Project {
         // (kt-otio) — глобальные карты по id, и совпавшие id из разных лент
         // МОЛЧА обменялись бы материалом, стартовым таймкодом и эффектами.
         let mut clip_ids = std::collections::HashSet::new();
-        for (_, reel) in self.reels() {
-            self.validate_reel(reel, &sources, &media_ids, &mut clip_ids)?;
+        for (seq, reel) in self.reels() {
+            self.validate_reel(reel, seq.is_none(), &sources, &media_ids, &mut clip_ids)?;
         }
         Ok(())
     }
@@ -4963,6 +5079,7 @@ impl Project {
     fn validate_reel(
         &self,
         reel: &dyn Reel,
+        is_root: bool,
         sources: &std::collections::HashSet<MediaId>,
         media_ids: &std::collections::HashSet<MediaId>,
         seen_clips: &mut std::collections::HashSet<ClipId>,
@@ -4988,6 +5105,18 @@ impl Project {
                 return Err(ProjectError::UnknownMedia(c.id, c.media));
             }
             check_fx_auto(c.id, &c.fx_auto)?;
+            // Вложение с цепочкой, реверсом или варпом — это «эффект на
+            // РЕЗУЛЬТАТ», а инлайн (Р.50, волна А) применил бы их к каждому
+            // куску отдельно. Считать другое молча нельзя, поэтому такого
+            // состояния просто НЕ БЫВАЕТ: отказывают и команда, и файл, и
+            // bake (правило 16). Снимется, когда у вложения появится
+            // собственный узел плана.
+            if !self.sequences.is_empty()
+                && self.sequences.iter().any(|s| s.id == c.media)
+                && (!c.fx.is_empty() || c.reversed || c.fx_auto.iter().any(|v| !v.is_empty()))
+            {
+                return Err(ProjectError::NestInstanceNotChainable(c.id));
+            }
         }
         let mut morph_ids = std::collections::HashSet::new();
         for m in reel.morphers() {
@@ -5005,6 +5134,14 @@ impl Project {
                 if !media_ids.contains(&mid) {
                     return Err(ProjectError::MorphUnknownMedia(m.id, mid));
                 }
+            }
+            // Области и метки — навигация ПО ПРОЕКТУ, они живут в корне и
+            // их время — корневое. Слой внутри ленты, сославшийся на них,
+            // накрыл бы не то место, и понять это было бы нечем.
+            if !is_root
+                && matches!(m.targets, MorphTargets::Areas { .. } | MorphTargets::Marks { .. })
+            {
+                return Err(ProjectError::MorphRefInsideSequence(m.id));
             }
         }
         // Камеры (Р.29): дубли id, длительность, fov, отсортированные

@@ -11,8 +11,13 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn project_pair() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }
@@ -71,7 +76,10 @@ fn synth_frame(src_pts: Tick, q: kt_media::Quality) -> Vec<u8> {
 
 fn dissolve(a: &[u8], b: &[u8], k: u32) -> Vec<u8> {
     let ik = 4096 - k;
-    a.iter().zip(b).map(|(&av, &bv)| ((av as u32 * ik + bv as u32 * k + 2048) >> 12) as u8).collect()
+    a.iter()
+        .zip(b)
+        .map(|(&av, &bv)| ((av as u32 * ik + bv as u32 * k + 2048) >> 12) as u8)
+        .collect()
 }
 
 #[test]
@@ -297,8 +305,13 @@ fn t174_clip_opacity_scales_the_layer() {
     let q = kt_media::Quality { width: 64, height: 36 };
     let t = Tick(45_000);
     // два слоя: lane 0 (сверху) и lane 1 (снизу), РАЗНЫЕ источники
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     for id in [1u64, 2] {
         p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
     }
@@ -476,11 +489,7 @@ fn t232_transition_params_animate() {
     let render = |auto: Vec<ParamCurve>, t: Tick| {
         let mut p = project_pair();
         // вайп без размытия: угол кромки виден по форме границы
-        p.transitions[0].kind = TransitionKind::Wipe {
-            dir: Dir::Left,
-            angle: 0.0,
-            softness: 0.0,
-        };
+        p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 };
         p.transitions[0].auto = auto;
         p.validate().unwrap();
         let mut vr = VideoRenderer::new(&p);
@@ -494,10 +503,7 @@ fn t232_transition_params_animate() {
     let curve = vec![ParamCurve {
         param: "angle".into(),
         ease: false,
-        keys: vec![
-            AutoKey { t: Tick(0), v: 0.0 },
-            AutoKey { t: Tick(18_000), v: 80.0 },
-        ],
+        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(18_000), v: 80.0 }],
     }];
     let t = Tick(96_000); // ближе к концу окна — угол уже большой
     let plain = render(vec![], t);

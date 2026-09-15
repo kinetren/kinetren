@@ -22,7 +22,6 @@
 
 use std::path::PathBuf;
 
-
 /// Версия формата файла пресетов, которую эта сборка умеет писать.
 const PRESETS_VERSION: u64 = 1;
 
@@ -86,8 +85,7 @@ impl Default for FxPresetStore {
             loaded: false,
             skipped: 0,
             // под тестами — только память, если каталог не задан явно
-            dir: (!cfg!(test) || std::env::var_os("KT_USER_STORE_DIR").is_some())
-                .then(store_dir),
+            dir: (!cfg!(test) || std::env::var_os("KT_USER_STORE_DIR").is_some()).then(store_dir),
         }
     }
 }
@@ -135,11 +133,8 @@ impl FxPresetStore {
                 Ok(v) => {
                     let ver = v.get("version").and_then(|x| x.as_u64()).unwrap_or(0);
                     self.readonly = ver > PRESETS_VERSION;
-                    self.raw = v
-                        .get("presets")
-                        .and_then(|x| x.as_array())
-                        .cloned()
-                        .unwrap_or_default();
+                    self.raw =
+                        v.get("presets").and_then(|x| x.as_array()).cloned().unwrap_or_default();
                 }
                 Err(_) => self.broken = true,
             }
@@ -190,8 +185,7 @@ impl FxPresetStore {
     }
 
     fn reload_rows(&mut self) {
-        let mut rows: Vec<PresetRow> =
-            self.raw.iter().filter_map(|v| decode(v, false)).collect();
+        let mut rows: Vec<PresetRow> = self.raw.iter().filter_map(|v| decode(v, false)).collect();
         self.skipped = self.raw.len() - rows.len();
         if let Ok(f) = serde_json::from_str::<serde_json::Value>(FACTORY) {
             let list = f.get("presets").and_then(|x| x.as_array()).cloned().unwrap_or_default();
@@ -229,7 +223,8 @@ fn decode(v: &serde_json::Value, factory: bool) -> Option<PresetRow> {
     if name.is_empty() {
         return None;
     }
-    let slots: Vec<kt_model::ops::FxSlotBlock> = serde_json::from_value(v.get("slots")?.clone()).ok()?;
+    let slots: Vec<kt_model::ops::FxSlotBlock> =
+        serde_json::from_value(v.get("slots")?.clone()).ok()?;
     if slots.is_empty() {
         return None;
     }

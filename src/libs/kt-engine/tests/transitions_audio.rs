@@ -14,8 +14,13 @@ use kt_time::{AUDIO_CHANNELS, Tick};
 const CH: usize = AUDIO_CHANNELS;
 
 fn project(clips: Vec<ClipEvent>) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     let mut ids: Vec<MediaId> = clips.iter().map(|c| c.media).collect();
     ids.sort();
     ids.dedup();
@@ -50,7 +55,10 @@ fn clip(id: u64, start_f: i64, dur_f: i64, src_in_f: i64, media: u64) -> ClipEve
 fn direct(medias: &[u64]) -> DirectFetcher {
     let mut f = DirectFetcher::new(None);
     for &id in medias {
-        f.add_source(MediaId(id), Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Ramp)));
+        f.add_source(
+            MediaId(id),
+            Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Ramp)),
+        );
     }
     f
 }
@@ -170,8 +178,8 @@ fn t136_missing_left_handle_is_silent_without_underruns() {
     let (w0, w1) = (8_192i64, 12_288i64);
     for f in [8_192i64, 9_000, 10_000] {
         let t = (f - w0) as f64 / (w1 - w0) as f64;
-        let expect =
-            SyntheticSource::sample_at(AudioPattern::Ramp, f, 0) * (((1.0 - t).max(0.0)).sqrt() as f32);
+        let expect = SyntheticSource::sample_at(AudioPattern::Ramp, f, 0)
+            * (((1.0 - t).max(0.0)).sqrt() as f32);
         assert_eq!(out[(f as usize) * CH], expect, "frame {f}: A only");
     }
 }
@@ -355,20 +363,14 @@ fn t226_audio_crossfade_curve_is_applied() {
         a_val * (curve.rise(1.0 - t) as f32) + b_val * (curve.rise(t) as f32)
     };
     let probes = [8_192i64, 9_000, 10_240, 11_000, 12_287];
-    for curve in [
-        AudioCurve::EqualPower,
-        AudioCurve::Linear,
-        AudioCurve::SCurve,
-        AudioCurve::Exponential,
-    ] {
+    for curve in
+        [AudioCurve::EqualPower, AudioCurve::Linear, AudioCurve::SCurve, AudioCurve::Exponential]
+    {
         let out = render_with(curve);
         for f in probes {
             let got = out[f as usize * CH];
             let want = expect(curve, f);
-            assert!(
-                (got - want).abs() < 1e-6,
-                "{curve:?} @{f}: {got} vs {want}"
-            );
+            assert!((got - want).abs() < 1e-6, "{curve:?} @{f}: {got} vs {want}");
         }
     }
     // equal-power — прежняя формула БАЙТ-в-байт: иначе поехал бы GOLDEN

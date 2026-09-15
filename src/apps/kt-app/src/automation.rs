@@ -160,10 +160,7 @@ impl AutoCtx<'_> {
 /// Окно главного таймлайна в домене кривой. Переводится ТЕМ ЖЕ
 /// отображением, что и всё остальное; у реверснутого носителя концы
 /// меняются местами — поэтому min/max, а не «первый-второй».
-pub fn view_in_curve(
-    to_curve: &dyn Fn(Tick) -> Tick,
-    tl_view: (Tick, Tick),
-) -> (Tick, Tick) {
+pub fn view_in_curve(to_curve: &dyn Fn(Tick) -> Tick, tl_view: (Tick, Tick)) -> (Tick, Tick) {
     let (a, b) = (to_curve(tl_view.0).0, to_curve(tl_view.1).0);
     (Tick(a.min(b)), Tick(a.max(b)))
 }
@@ -371,8 +368,7 @@ fn toolbar(
                 continue;
             }
             let active = view.active;
-            let targets: Vec<usize> =
-                if all { (0..curves.len()).collect() } else { vec![active] };
+            let targets: Vec<usize> = if all { (0..curves.len()).collect() } else { vec![active] };
             for ci in targets {
                 let Some(c) = curves.get_mut(ci) else { continue };
                 let v = kt_model::curve_value(&c.keys, c.ease, at);
@@ -404,9 +400,8 @@ fn toolbar(
                 }
             }
         }
-        let has_sel = view
-            .sel
-            .is_some_and(|(c, k)| curves.get(c).is_some_and(|c| k < c.keys.len()));
+        let has_sel =
+            view.sel.is_some_and(|(c, k)| curves.get(c).is_some_and(|c| k < c.keys.len()));
         if crate::app::hint_into(
             hover,
             ui.add_enabled(has_sel, egui::Button::new(crate::icons::TRASH).small()),
@@ -650,12 +645,14 @@ fn graph(
             };
             picked = Some((ci, ki));
             if let Some(key) = curves.get(ci).and_then(|c| c.keys.get(ki)) {
-                ui.label(egui::RichText::new(crate::tf!(
-                    k::fx::KEY_AT,
-                    format!("{:.3}", secs(key.t)),
-                    format!("{:.0}", ctx.frac(key.t) * 100.0)
-                ))
-                .strong());
+                ui.label(
+                    egui::RichText::new(crate::tf!(
+                        k::fx::KEY_AT,
+                        format!("{:.3}", secs(key.t)),
+                        format!("{:.0}", ctx.frac(key.t) * 100.0)
+                    ))
+                    .strong(),
+                );
             }
             // «Удалить» БЕЗ аккорда: Del удаляет выделенные события
             // таймлайна, а не ключ (п.362)
@@ -728,11 +725,7 @@ fn graph(
             }
         } else if resp.clicked() {
             // клик по пустому месту — новый ключ активной кривой
-            if let Some(spec) = curves
-                .get(view.active)
-                .and_then(|c| ctx.spec(&c.param))
-                .copied()
-            {
+            if let Some(spec) = curves.get(view.active).and_then(|c| ctx.spec(&c.param)).copied() {
                 let (lo, hi) = win_of(&curves[view.active], &spec, view, view.active);
                 let c = &mut curves[view.active];
                 let t = Tick(t_of(pos.x).clamp(m0, m1));

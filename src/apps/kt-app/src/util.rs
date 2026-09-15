@@ -233,8 +233,8 @@ fn build_peaks(
         return from_source(path, true);
     };
     let (mid, status) = db.ensure_media(Path::new(path)).map_err(|e| e.to_string())?;
-    let complete = db.is_complete(mid).unwrap_or(false)
-        && status == kt_media::index::MediaEntryStatus::Reused;
+    let complete =
+        db.is_complete(mid).unwrap_or(false) && status == kt_media::index::MediaEntryStatus::Reused;
     if !complete && !stop.load(std::sync::atomic::Ordering::Acquire) {
         // отдельный короткоживущий источник — не декодеры воспроизведения;
         // заодно персистится пакетный индекс (тест 34)
@@ -383,7 +383,6 @@ pub fn parse_timecode(s: &str, fps: u32) -> Option<kt_time::Tick> {
     Some(grid.align_floor(kt_time::Tick::from_secs_f64(secs)))
 }
 
-
 /// Маска ввода таймкода (п.9 р.11): цифры набиваются СПРАВА НАЛЕВО
 /// (решение пользователя) в разряды ЧЧММСС, ненабранные старшие разряды —
 /// нули. Так «130» это 00:01:30, а не «что-то от текущей позиции»: как в
@@ -410,7 +409,12 @@ pub fn mask_to_tick(input: &str, fps: u32) -> kt_time::Tick {
 /// Разряды ЧЧММСС из тика — для вставки готового тайм-кода в маску.
 pub fn tick_to_mask(t: kt_time::Tick) -> String {
     let ms = t.as_ms().max(0);
-    format!("{:02}{:02}{:02}", (ms / 3_600_000).min(99), ms % 3_600_000 / 60_000, ms % 60_000 / 1000)
+    format!(
+        "{:02}{:02}{:02}",
+        (ms / 3_600_000).min(99),
+        ms % 3_600_000 / 60_000,
+        ms % 60_000 / 1000
+    )
 }
 
 /// Как маска выглядит на экране: (ненабранная часть, набранная часть).
@@ -547,7 +551,8 @@ mod tests {
             svc.tx.clone()
         }; // здесь Drop
         std::thread::sleep(std::time::Duration::from_millis(400));
-        let _ = tx.send(IndexTask { db_path: None, media: vec![(MediaId(3), "synth:ramp".into())] });
+        let _ =
+            tx.send(IndexTask { db_path: None, media: vec![(MediaId(3), "synth:ramp".into())] });
         std::thread::sleep(std::time::Duration::from_millis(600));
         assert!(
             out2.lock().unwrap().is_empty(),
@@ -628,7 +633,9 @@ mod tests {
             fps: 30,
             width: 640,
             height: 360,
-            sample_rate: 48000, pitch_engine: Default::default() });
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+        });
         let svc = crate::thumbs::ThumbService::start(&project, None);
         svc.add_media(MediaId(3), fixture("testsrc_h264.mp4"));
         let key = crate::thumbs::ThumbKey { media: MediaId(3), t: 0 };

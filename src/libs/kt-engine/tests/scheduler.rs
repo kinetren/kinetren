@@ -200,8 +200,13 @@ fn t9_prefetch_pass_is_idempotent() {
     let cache = Arc::new(BurstCache::new(CacheConfig::default()));
     let (worker, _served) = slow_worker(1, 0, &cache);
 
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -226,13 +231,28 @@ fn t9_prefetch_pass_is_idempotent() {
 
     let n1 = {
         workers.insert(MediaId(1), worker);
-        prefetch_audio_pass(&renderer, &cache, &workers, range.clone(), Priority::FarPrefetch, 0, false)
+        prefetch_audio_pass(
+            &renderer,
+            &cache,
+            &workers,
+            range.clone(),
+            Priority::FarPrefetch,
+            0,
+            false,
+        )
     };
     assert!(n1 > 0);
     wait_idle(&workers[&MediaId(1)]);
 
-    let n2 =
-        prefetch_audio_pass(&renderer, &cache, &workers, range.clone(), Priority::FarPrefetch, 0, false);
+    let n2 = prefetch_audio_pass(
+        &renderer,
+        &cache,
+        &workers,
+        range.clone(),
+        Priority::FarPrefetch,
+        0,
+        false,
+    );
     assert_eq!(n2, 0, "по тёплому кэшу prefetch не должен сабмитить ничего");
 
     // coverage совпадает с wanted
@@ -254,7 +274,13 @@ fn t9_prefetch_pass_is_idempotent() {
 /// один.
 #[test]
 fn t287_stutter_of_micro_clips_asks_for_one_burst() {
-    let mut p = Project::new(ProjectSettings { fps: 60, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 60,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     // 400 событий по 90 тиков встык, все с одной точки материала
     let step = kt_time::Tick(90);

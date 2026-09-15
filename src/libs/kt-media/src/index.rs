@@ -211,10 +211,8 @@ impl MediaIndexDb {
         // Сдвиг синхронизации — про ПАРУ, и однородное `WHERE media_id=?1`
         // его не чистит: файл, оказавшийся не тем, делает недействительными
         // обе стороны каждой своей пары (Р.49, п.369).
-        self.conn.execute(
-            "DELETE FROM sync_offset WHERE a_media=?1 OR b_media=?1",
-            params![media_id],
-        )?;
+        self.conn
+            .execute("DELETE FROM sync_offset WHERE a_media=?1 OR b_media=?1", params![media_id])?;
         Ok(())
     }
 
@@ -224,7 +222,13 @@ impl MediaIndexDb {
     // «пересчитали то же самое» давало бы другое число в последнем знаке, и
     // отличить «пересчитали» от «изменилось» стало бы нечем.
 
-    pub fn set_loudness(&self, media_id: i64, lufs: f64, dbtp: f64, lra: f64) -> Result<(), IndexError> {
+    pub fn set_loudness(
+        &self,
+        media_id: i64,
+        lufs: f64,
+        dbtp: f64,
+        lra: f64,
+    ) -> Result<(), IndexError> {
         self.conn.execute(
             "INSERT OR REPLACE INTO loudness(media_id, lufs_x100, dbtp_x100, lra_x100) \
              VALUES(?1, ?2, ?3, ?4)",
@@ -270,7 +274,11 @@ impl MediaIndexDb {
         Ok(())
     }
 
-    pub fn sync_offset(&self, a_media: i64, b_media: i64) -> Result<Option<(i64, f64)>, IndexError> {
+    pub fn sync_offset(
+        &self,
+        a_media: i64,
+        b_media: i64,
+    ) -> Result<Option<(i64, f64)>, IndexError> {
         let mut st = self
             .conn
             .prepare("SELECT ticks, conf_x100 FROM sync_offset WHERE a_media=?1 AND b_media=?2")?;
@@ -420,11 +428,9 @@ impl MediaIndexDb {
     pub fn poster(&self, media_id: i64) -> Result<Option<i64>, IndexError> {
         Ok(self
             .conn
-            .query_row(
-                "SELECT t_ticks FROM poster WHERE media_id=?1",
-                params![media_id],
-                |r| r.get(0),
-            )
+            .query_row("SELECT t_ticks FROM poster WHERE media_id=?1", params![media_id], |r| {
+                r.get(0)
+            })
             .optional()?)
     }
 

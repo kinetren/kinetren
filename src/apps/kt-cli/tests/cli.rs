@@ -46,7 +46,9 @@ fn t151_cli_otio_workflows() {
     let conv_path = dir.join("converted.otio");
     let st = cli().args(["convert", legacy, conv_path.to_str().unwrap()]).output().unwrap();
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
-    assert!(std::fs::read_to_string(&conv_path).unwrap().contains("\"OTIO_SCHEMA\": \"Timeline.1\""));
+    assert!(
+        std::fs::read_to_string(&conv_path).unwrap().contains("\"OTIO_SCHEMA\": \"Timeline.1\"")
+    );
 
     // render отвергает .ktproj с подсказкой
     let wav = dir.join("out.wav");
@@ -80,10 +82,7 @@ fn t290_probe_reports_what_layers_changed() {
     assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stderr));
 
     let probe = |from: &str, to: &str| -> String {
-        let out = cli()
-            .args(["probe", path.to_str().unwrap(), from, to])
-            .output()
-            .unwrap();
+        let out = cli().args(["probe", path.to_str().unwrap(), from, to]).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         String::from_utf8_lossy(&out.stdout).to_string()
     };
@@ -123,10 +122,7 @@ fn t290_probe_reports_what_layers_changed() {
     // --time отвечает на вопрос «успевает ли движок ЗДЕСЬ» (Р.43, п.301):
     // после п.294 голодание кольца слышно тишиной, а не замедлением, и без
     // числа его не с чем сравнить
-    let timed = cli()
-        .args(["probe", path.to_str().unwrap(), "0", "2", "--time"])
-        .output()
-        .unwrap();
+    let timed = cli().args(["probe", path.to_str().unwrap(), "0", "2", "--time"]).output().unwrap();
     assert!(timed.status.success(), "{}", String::from_utf8_lossy(&timed.stderr));
     let timed = String::from_utf8_lossy(&timed.stdout);
     assert!(
@@ -168,7 +164,9 @@ fn t307_relative_media_paths_resolve_once() {
         fps: 30,
         width: 320,
         height: 180,
-        sample_rate: 48000, pitch_engine: Default::default() });
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "clip.mp4".into() });
     p.clips.push(kt_model::ClipEvent {
         id: kt_model::ClipId(1),
@@ -188,11 +186,8 @@ fn t307_relative_media_paths_resolve_once() {
         fx_off: false,
     });
     p.validate().unwrap();
-    std::fs::write(
-        sub.join("p.otio"),
-        kt_otio::save_project(&p, &Default::default(), None),
-    )
-    .unwrap();
+    std::fs::write(sub.join("p.otio"), kt_otio::save_project(&p, &Default::default(), None))
+        .unwrap();
 
     // ОТНОСИТЕЛЬНЫЙ путь к проекту из каталога НАД ним — до правки медиа
     // резолвилось в sub/sub/clip.mp4 и слой молча пропадал
@@ -201,11 +196,8 @@ fn t307_relative_media_paths_resolve_once() {
         .args(["export", "sub/p.otio", "sub/out.mp4", "libx264"])
         .output()
         .unwrap();
-    let all = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let all =
+        format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(out.status.success(), "{all}");
     assert!(!all.contains("decode failed"), "медиа потеряно: {all}");
     assert!(all.contains("missing layers 0"), "пустые слои: {all}");
@@ -269,7 +261,8 @@ fn t388_demo_renders_without_any_media_files() {
     assert!(text.contains("synth:"), "демо по умолчанию ссылается не на синтетику");
     assert!(!text.contains("media/"), "в демо остались несуществующие файлы: {text:.400}");
 
-    let st = cli().args(["render", proj.to_str().unwrap(), wav.to_str().unwrap()]).output().unwrap();
+    let st =
+        cli().args(["render", proj.to_str().unwrap(), wav.to_str().unwrap()]).output().unwrap();
     assert!(
         st.status.success(),
         "демо не рендерится из коробки: {}",
@@ -298,7 +291,8 @@ fn t389_render_refuses_missing_media_unless_allowed() {
     let st = cli().args(["demo", proj.to_str().unwrap(), "--files"]).output().unwrap();
     assert!(st.status.success());
 
-    let st = cli().args(["render", proj.to_str().unwrap(), wav.to_str().unwrap()]).output().unwrap();
+    let st =
+        cli().args(["render", proj.to_str().unwrap(), wav.to_str().unwrap()]).output().unwrap();
     assert!(!st.status.success(), "рендер с отсутствующими медиа обязан отказать");
     assert!(!wav.exists(), "написан файл, в котором вместо материала тишина");
 

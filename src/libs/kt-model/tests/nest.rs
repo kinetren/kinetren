@@ -350,12 +350,8 @@ fn t427_collapse_then_expand_is_identity_in_one_undo_step() {
     let mut m = TimelineModel::new(p);
 
     let mut n = ops::NestCounters::of(m.project());
-    let (cmds, rep) = ops::collapse_into_sequence(
-        m.project(),
-        &[ClipId(11), ClipId(12)],
-        "Кусок",
-        n.ids(),
-    );
+    let (cmds, rep) =
+        ops::collapse_into_sequence(m.project(), &[ClipId(11), ClipId(12)], "Кусок", n.ids());
     m.apply_batch(cmds).expect("сворачивание обязано быть законным");
     let seq_id = rep.seq.expect("лента не заведена");
 
@@ -404,25 +400,44 @@ fn t427_collapse_then_expand_is_identity_in_one_undo_step() {
 fn t428_expand_drops_the_instance_chain_and_says_so() {
     let mut m = TimelineModel::new(montage());
     let mut n = ops::NestCounters::of(m.project());
-    let (cmds, rep) = ops::collapse_into_sequence(
-        m.project(),
-        &[ClipId(11), ClipId(12)],
-        "Кусок",
-        n.ids(),
-    );
+    let (cmds, rep) =
+        ops::collapse_into_sequence(m.project(), &[ClipId(11), ClipId(12)], "Кусок", n.ids());
     m.apply_batch(cmds).unwrap();
     let seq_id = rep.seq.unwrap();
     let inst = m.project().clips.iter().find(|c| c.media == seq_id).unwrap().id;
 
-    // навесили на экземпляр то, чего внутри применить некуда
-    m.apply(Command::SetFx { id: inst, fx: vec![FxInstance::Gain { db: 3.0, pan: 0.0 }] }).unwrap();
-    m.apply(Command::SetOpacity { id: inst, opacity: 0.5 }).unwrap();
-
-    let (cmds, rep) = ops::expand_instance(
-        m.project(),
-        inst,
-        n.ids(),
+    // ЦЕПОЧКА НА ВЛОЖЕНИЕ ПОКА НЕ ПУСКАЕТСЯ (правило 16): снаружи она
+    // применялась бы к СОБРАННОЙ картинке, а инлайн применил бы её к
+    // каждому куску — это другой результат, и считать его молча нельзя
+    assert!(
+        matches!(
+            m.apply(Command::SetFx { id: inst, fx: vec![FxInstance::Gain { db: 3.0, pan: 0.0 }] }),
+            Err(CommandError::InvalidLayout(ProjectError::NestInstanceNotChainable(_)))
+        ),
+        "цепочка на вложение прошла молча — она посчиталась бы не на том"
     );
+    assert!(
+        matches!(
+            m.apply(Command::SetReversed { id: inst, reversed: true }),
+            Err(CommandError::InvalidLayout(ProjectError::NestInstanceNotChainable(_)))
+        ),
+        "реверс вложения прошёл молча"
+    );
+    // ...а уровень — пускается: на неперекрывающемся содержимом домножение
+    // даёт ровно то же самое
+    m.apply(Command::SetOpacity { id: inst, opacity: 0.5 }).expect("уровень вложения законен");
+
+    // Контракт разворачивания проверяется на состоянии, которое может
+    // приехать ИЗ ФАЙЛА (его писала сборка, где цепочка уже работает):
+    // правим модель напрямую, минуя команды.
+    {
+        let mut p = m.project().clone();
+        let c = p.clips.iter_mut().find(|c| c.id == inst).unwrap();
+        c.fx = vec![FxInstance::Gain { db: 3.0, pan: 0.0 }];
+        m = TimelineModel::new(p);
+    }
+
+    let (cmds, rep) = ops::expand_instance(m.project(), inst, n.ids());
     assert!(
         rep.chain_dropped && rep.level_dropped,
         "разворачивание промолчало о снятой цепочке и уровне: {rep:?}. Снаружи они \
@@ -440,12 +455,8 @@ fn t428_expand_drops_the_instance_chain_and_says_so() {
 fn t429_a_used_sequence_refuses_to_leave() {
     let mut m = TimelineModel::new(montage());
     let mut n = ops::NestCounters::of(m.project());
-    let (cmds, rep) = ops::collapse_into_sequence(
-        m.project(),
-        &[ClipId(11), ClipId(12)],
-        "Кусок",
-        n.ids(),
-    );
+    let (cmds, rep) =
+        ops::collapse_into_sequence(m.project(), &[ClipId(11), ClipId(12)], "Кусок", n.ids());
     m.apply_batch(cmds).unwrap();
     let seq_id = rep.seq.unwrap();
 
@@ -469,12 +480,7 @@ fn t429_a_used_sequence_refuses_to_leave() {
     m.apply(Command::AddClip(twin.clone())).expect("вторая постановка ленты законна");
     assert_eq!(m.project().sequence_uses(seq_id), 2, "второе место не посчиталось");
 
-    let cmds = ops::make_independent(
-        m.project(),
-        twin.id,
-        "Кусок 2",
-        n.ids(),
-    );
+    let cmds = ops::make_independent(m.project(), twin.id, "Кусок 2", n.ids());
     m.apply_batch(cmds).expect("отвязывание обязано быть законным");
     assert_eq!(m.project().sequences.len(), 2, "своя лента не появилась");
     assert_eq!(m.project().sequence_uses(seq_id), 1, "первая лента не освободилась");
@@ -509,12 +515,8 @@ fn t430_outer_transition_is_rehung_and_media_is_held_by_the_whole_tree() {
     .expect("кроссфейд на стыке законен");
 
     let mut n = ops::NestCounters::of(m.project());
-    let (cmds, rep) = ops::collapse_into_sequence(
-        m.project(),
-        &[ClipId(11), ClipId(12)],
-        "Кусок",
-        n.ids(),
-    );
+    let (cmds, rep) =
+        ops::collapse_into_sequence(m.project(), &[ClipId(11), ClipId(12)], "Кусок", n.ids());
     assert_eq!(rep.rehung, 1, "переход с одним концом снаружи не перевешен: {rep:?}");
     m.apply_batch(cmds).unwrap();
 

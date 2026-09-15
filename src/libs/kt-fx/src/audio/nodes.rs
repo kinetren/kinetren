@@ -1,9 +1,11 @@
 //! Аудио-узлы цепочки (Р.47): Freeverb (дословный переезд из lib.rs) и —
 //! со следующего шага Ка1 — enum AudioNode со всеми эффектами.
 
-use crate::{CH};
+use super::primitives::{
+    ALLPASS_TUNINGS, Allpass, COMB_TUNINGS, Comb, STEREO_SPREAD, SmoothedParam, tail_frames_for,
+};
+use crate::CH;
 use kt_time::{AUDIO_SAMPLE_RATE, Tick};
-use super::primitives::{Allpass, Comb, COMB_TUNINGS, ALLPASS_TUNINGS, STEREO_SPREAD, SmoothedParam, tail_frames_for};
 
 /// Стерео-freeverb. Смена delay пересоздаёт линии (это структурная смена
 /// геометрии — неизбежно), но wet/dry сглажены и НЕ трогают буферы.
@@ -87,9 +89,7 @@ impl Freeverb {
         // структурная смена геометрии: пересоздание допускается только при
         // реально другом delay (порог 0.5 мс, как в старом коде, но wet/dry
         // это не трогает); пред-задержка — такая же геометрия
-        if (delay_ms - self.delay_ms).abs() > 0.5
-            || (predelay_ms - self.predelay_ms).abs() > 0.5
-        {
+        if (delay_ms - self.delay_ms).abs() > 0.5 || (predelay_ms - self.predelay_ms).abs() > 0.5 {
             let keep_wet = self.wet;
             *self =
                 Freeverb::new(keep_wet.target, delay_ms, damp, decay, wet_gain, predelay_ms, width);
@@ -246,9 +246,7 @@ impl AudioNode {
             FxInstance::Delay { .. } => Some(AudioNode::Delay(Box::new(DelayNode::new()))),
             FxInstance::Compressor { .. } => Some(AudioNode::Compressor(CompNode::new())),
             FxInstance::Gate { .. } => Some(AudioNode::Gate(GateNode::new())),
-            FxInstance::Limiter { .. } => {
-                Some(AudioNode::Limiter(Box::new(LimiterNode::new())))
-            }
+            FxInstance::Limiter { .. } => Some(AudioNode::Limiter(Box::new(LimiterNode::new()))),
             FxInstance::PitchShift { .. } => Some(AudioNode::Pitch(Box::new(PitchNode::new()))),
             _ => None,
         }
@@ -301,10 +299,9 @@ impl AudioNode {
             (AudioNode::Chorus(n), FxInstance::Chorus { rate_hz, depth_ms, mix, voices }) => {
                 n.apply(*rate_hz, *depth_ms, *mix, *voices)
             }
-            (
-                AudioNode::Flanger(n),
-                FxInstance::Flanger { rate_hz, depth_ms, feedback, mix },
-            ) => n.apply(*rate_hz, *depth_ms, *feedback, *mix),
+            (AudioNode::Flanger(n), FxInstance::Flanger { rate_hz, depth_ms, feedback, mix }) => {
+                n.apply(*rate_hz, *depth_ms, *feedback, *mix)
+            }
             (
                 AudioNode::Phaser(n),
                 FxInstance::Phaser { rate_hz, depth, feedback, stages, mix },
@@ -584,7 +581,14 @@ impl ReverbNode {
 
     fn apply(&mut self, fx: &FxInstance, structural: bool) {
         let FxInstance::SlowedReverb {
-            mix, reverb_delay_ms, damp, decay, wet_gain, predelay_ms, width, ..
+            mix,
+            reverb_delay_ms,
+            damp,
+            decay,
+            wet_gain,
+            predelay_ms,
+            width,
+            ..
         } = fx
         else {
             return;
@@ -905,8 +909,7 @@ impl CrushNode {
 
     fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
         self.bits.set_target(auto.value(slot, "bits", self.bits.target as f64, s) as f32);
-        self.rate_hz
-            .set_target(auto.value(slot, "rate_hz", self.rate_hz.target as f64, s) as f32);
+        self.rate_hz.set_target(auto.value(slot, "rate_hz", self.rate_hz.target as f64, s) as f32);
         self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
     }
 
@@ -1185,8 +1188,7 @@ impl ChorusNode {
                     let ph = phi
                         + v as f64 * std::f64::consts::TAU / nv as f64
                         + if ch == 1 { std::f64::consts::FRAC_PI_2 } else { 0.0 };
-                    let delay =
-                        (CHORUS_BASE_MS + d * (0.5 + 0.5 * ph.sin() as f32)) * sr / 1000.0;
+                    let delay = (CHORUS_BASE_MS + d * (0.5 + 0.5 * ph.sin() as f32)) * sr / 1000.0;
                     wet += self.lines[ch].read_frac(delay);
                 }
                 wet /= nv as f32;
@@ -1394,8 +1396,7 @@ impl DelayNode {
     }
 
     fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.time_ms
-            .set_target(auto.value(slot, "time_ms", self.time_ms.target as f64, s) as f32);
+        self.time_ms.set_target(auto.value(slot, "time_ms", self.time_ms.target as f64, s) as f32);
         self.feedback
             .set_target(auto.value(slot, "feedback", self.feedback.target as f64, s) as f32);
         self.mix.set_target(auto.value(slot, "mix", self.mix.target as f64, s) as f32);
@@ -1469,8 +1470,12 @@ impl CompNode {
     }
 
     fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.threshold_db
-            .set_target(auto.value(slot, "threshold_db", self.threshold_db.target as f64, s) as f32);
+        self.threshold_db.set_target(auto.value(
+            slot,
+            "threshold_db",
+            self.threshold_db.target as f64,
+            s,
+        ) as f32);
         self.ratio.set_target(auto.value(slot, "ratio", self.ratio.target as f64, s) as f32);
         self.makeup_db
             .set_target(auto.value(slot, "makeup_db", self.makeup_db.target as f64, s) as f32);
@@ -1564,8 +1569,12 @@ impl LimiterNode {
     }
 
     fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.threshold_db
-            .set_target(auto.value(slot, "threshold_db", self.threshold_db.target as f64, s) as f32);
+        self.threshold_db.set_target(auto.value(
+            slot,
+            "threshold_db",
+            self.threshold_db.target as f64,
+            s,
+        ) as f32);
         self.ceiling_db
             .set_target(auto.value(slot, "ceiling_db", self.ceiling_db.target as f64, s) as f32);
         self.release_ms =
@@ -1632,7 +1641,6 @@ impl LimiterNode {
         self.ceiling_db.reset_to_target();
     }
 }
-
 
 /// Упреждение питча (Р.48, п.339): грейн повышения на две октавы читает
 /// вход вчетверо быстрее выхода, и к концу грейна ему нужен материал на
@@ -2066,12 +2074,16 @@ impl GateNode {
     }
 
     fn set_targets(&mut self, auto: &AutoProfiles, slot: usize, s: f64) {
-        self.threshold_db
-            .set_target(auto.value(slot, "threshold_db", self.threshold_db.target as f64, s) as f32);
-        self.attack_ms = (auto.value(slot, "attack_ms", self.attack_ms as f64, s) as f32)
-            .clamp(0.1, 50.0);
-        self.release_ms = (auto.value(slot, "release_ms", self.release_ms as f64, s) as f32)
-            .clamp(5.0, 1000.0);
+        self.threshold_db.set_target(auto.value(
+            slot,
+            "threshold_db",
+            self.threshold_db.target as f64,
+            s,
+        ) as f32);
+        self.attack_ms =
+            (auto.value(slot, "attack_ms", self.attack_ms as f64, s) as f32).clamp(0.1, 50.0);
+        self.release_ms =
+            (auto.value(slot, "release_ms", self.release_ms as f64, s) as f32).clamp(5.0, 1000.0);
         let hold = auto.value(slot, "hold_ms", (self.hold_frames as f64) / 48.0, s) as f32;
         self.hold_frames = ((hold.clamp(0.0, 500.0) / 1000.0) * 48_000.0) as i64;
     }

@@ -176,11 +176,10 @@ impl KtApp {
                             });
                     });
                     // ---- параметры вида: та же сетка, что у эффектов -------
-                    let color = matches!(
-                        t.kind,
-                        TransitionKind::Flash { .. } | TransitionKind::Dip { .. }
-                    );
-                    let skip: &[&str] = if color { &["color_r", "color_g", "color_b"] } else { &[] };
+                    let color =
+                        matches!(t.kind, TransitionKind::Flash { .. } | TransitionKind::Dip { .. });
+                    let skip: &[&str] =
+                        if color { &["color_r", "color_g", "color_b"] } else { &[] };
                     if let Some(dir) = dir_of(&mut t.kind) {
                         ui.horizontal(|ui| {
                             ui.label(tr(k::trn::DIR));
@@ -205,7 +204,8 @@ impl KtApp {
                                 (kt_model::IrisShape::Diamond, tr(k::trn::shape::DIAMOND)),
                                 (kt_model::IrisShape::Box, tr(k::trn::shape::BOX)),
                             ] {
-                                if ui.selectable_label(*shape == s, label).clicked() && *shape != s {
+                                if ui.selectable_label(*shape == s, label).clicked() && *shape != s
+                                {
                                     *shape = s;
                                     changed = true;
                                 }

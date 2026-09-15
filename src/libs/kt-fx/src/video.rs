@@ -181,9 +181,7 @@ pub fn apply_barrier(
                 (*softness as f64).clamp(0.05, 1.0),
             );
             let (w, h) = (frame.w, frame.h);
-            pointwise_barrier(frame, move |v, xy| {
-                crate::geom::tap_vig(v, xy, st, ra, so, w, h)
-            })
+            pointwise_barrier(frame, move |v, xy| crate::geom::tap_vig(v, xy, st, ra, so, w, h))
         }
         // барьеры Р.47 Кв3
         FxInstance::Sharpen { amount, radius } => {
@@ -325,8 +323,7 @@ fn radial_blur(
                     let k = 1.0 - 0.5 * amount * t;
                     (px * k, py * k)
                 };
-                let s =
-                    crate::geom::sample_bilinear_f64(&f, cx + sx - 0.5, cy + sy - 0.5);
+                let s = crate::geom::sample_bilinear_f64(&f, cx + sx - 0.5, cy + sy - 0.5);
                 for (a, v) in acc.iter_mut().zip(s) {
                     *a += v;
                 }
@@ -366,10 +363,8 @@ fn drop_shadow(
     let mut blurred = scratch.take(f.rgba.len());
     bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut blurred);
     scratch.put(small_f.rgba);
-    let (ox, oy) = (
-        offset.0.clamp(-64, 64) * res_scale as i32,
-        offset.1.clamp(-64, 64) * res_scale as i32,
-    );
+    let (ox, oy) =
+        (offset.0.clamp(-64, 64) * res_scale as i32, offset.1.clamp(-64, 64) * res_scale as i32);
     let mut out = scratch.take(f.rgba.len());
     for y in 0..f.h as i64 {
         for x in 0..f.w as i64 {
@@ -387,9 +382,8 @@ fn drop_shadow(
                 out[d..d + 4].copy_from_slice(&[0, 0, 0, 0]);
             } else {
                 for c in 0..3 {
-                    let v = (f.rgba[d + c] as f64 * asrc
-                        + tint[c] as f64 * ash * (1.0 - asrc))
-                        / oa;
+                    let v =
+                        (f.rgba[d + c] as f64 * asrc + tint[c] as f64 * ash * (1.0 - asrc)) / oa;
                     out[d + c] = v.round().clamp(0.0, 255.0) as u8;
                 }
                 out[d + 3] = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -725,13 +719,7 @@ fn blur(f: Frame, radius: u32, radius_y: u32, scratch: &mut FxScratch, res_scale
     Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha }
 }
 
-fn greenscreen(
-    mut f: Frame,
-    key: [u8; 3],
-    tolerance: u32,
-    softness: u32,
-    spill: f64,
-) -> Frame {
+fn greenscreen(mut f: Frame, key: [u8; 3], tolerance: u32, softness: u32, spill: f64) -> Frame {
     let tol = tolerance.clamp(1, 200) as f64;
     let soft = softness.clamp(0, 100) as f64;
     let hard = (tol - soft).max(0.0);
@@ -784,8 +772,8 @@ fn edges(
     let plain = d == 1 && color == [255, 255, 255];
     let (w, h) = (f.w as usize, f.h as usize);
     #[cfg(target_arch = "x86_64")]
-    let simd = crate::simd::simd_level() == crate::simd::SimdLevel::Avx2
-        && f.rgba.len() >= w * h * 4;
+    let simd =
+        crate::simd::simd_level() == crate::simd::SimdLevel::Avx2 && f.rgba.len() >= w * h * 4;
     #[cfg(not(target_arch = "x86_64"))]
     let simd = false;
     let luma: Vec<i32> = if simd {
@@ -813,9 +801,7 @@ fn edges(
         #[cfg(target_arch = "x86_64")]
         if plain && simd && w > 2 {
             // SAFETY: уровень проверен; строки y-1..y+1 существуют, out полон
-            x_from = unsafe {
-                crate::video_simd::sobel_row_avx2(&mut out, &luma, w, y, th, w - 1)
-            };
+            x_from = unsafe { crate::video_simd::sobel_row_avx2(&mut out, &luma, w, y, th, w - 1) };
         }
         for x in x_from..w.saturating_sub(m) {
             let l = |dx: i64, dy: i64| {
@@ -984,8 +970,7 @@ fn vhs(
     // полного clone (п.2 р.7); арифметика не изменена
     let mut row = scratch.take(w * 4);
     for y in 0..h {
-        let scan =
-            if step > 0 && (y / rs + line_off).is_multiple_of(step) { 1i64 } else { 0 };
+        let scan = if step > 0 && (y / rs + line_off).is_multiple_of(step) { 1i64 } else { 0 };
         // дрожание строки: сдвиг всей строки на долю ширины
         // ЦЕЛОЧИСЛЕННО: у GPU round() округляет половины к чётному, и на
         // дробном пути строка иногда уезжала на пиксель мимо CPU (t181).
@@ -1027,8 +1012,7 @@ fn vhs(
                 let r = row[xr * 4] as f64;
                 let b = row[xb * 4 + 2] as f64;
                 f.rgba[i] = (row[x * 4] as f64 * (1.0 - bleed) + r * bleed).round() as u8;
-                f.rgba[i + 2] =
-                    (row[x * 4 + 2] as f64 * (1.0 - bleed) + b * bleed).round() as u8;
+                f.rgba[i + 2] = (row[x * 4 + 2] as f64 * (1.0 - bleed) + b * bleed).round() as u8;
                 if scan == 1 {
                     f.rgba[i + 1] = row[x * 4 + 1].saturating_sub(18);
                 }
@@ -1092,9 +1076,7 @@ fn glow(
         unsafe { crate::video_simd::glow_add_avx2(&mut f.rgba, &up, s, pixels) };
         done = pixels;
     }
-    for (o, u) in
-        f.rgba.chunks_exact_mut(4).zip(up.chunks_exact(4)).skip(done)
-    {
+    for (o, u) in f.rgba.chunks_exact_mut(4).zip(up.chunks_exact(4)).skip(done) {
         // порог по яркости РАЗМЫТОГО кадра: мягкое колено шириной th
         let w = if th == 0 {
             1.0

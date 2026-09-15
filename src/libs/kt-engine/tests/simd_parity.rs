@@ -204,16 +204,12 @@ fn bench_composite_1080p() {
     };
     let mut d1 = base.clone();
     let s1 = src.clone();
-    let ms_s = bench(
-        "alpha_over scalar",
-        Box::new(move || st::alpha_over_scalar(&mut d1, &s1, pixels)),
-    );
+    let ms_s =
+        bench("alpha_over scalar", Box::new(move || st::alpha_over_scalar(&mut d1, &s1, pixels)));
     let mut d2 = base.clone();
     let s2 = src.clone();
-    let ms_a = bench(
-        "alpha_over avx2  ",
-        Box::new(move || st::alpha_over_avx2(&mut d2, &s2, pixels)),
-    );
+    let ms_a =
+        bench("alpha_over avx2  ", Box::new(move || st::alpha_over_avx2(&mut d2, &s2, pixels)));
     println!("alpha_over 1080p ×{:.2}", ms_s / ms_a);
 
     let mut o1 = vec![0u8; pixels * 4];

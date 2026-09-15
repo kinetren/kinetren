@@ -78,7 +78,6 @@ struct VideoClip {
 // разойтись «какой кадр показать» и «где режем» больше не могут.
 use kt_model::ClipWarp as VideoWarp;
 
-
 /// Переход, привязанный к клипу: вид, его кривые и начало окна. Вид
 /// разрешается на КАЖДЫЙ момент — иначе анимация параметров не дошла бы
 /// до картинки (Р.34 К4).
@@ -101,7 +100,10 @@ impl TransAnim {
         let mut k = self.kind.clone();
         for c in &self.auto {
             if !c.keys.is_empty() {
-                k.set_param(&c.param, kt_model::curve_value(&c.keys, c.ease, Tick(t.0 - self.w0.0)));
+                k.set_param(
+                    &c.param,
+                    kt_model::curve_value(&c.keys, c.ease, Tick(t.0 - self.w0.0)),
+                );
             }
         }
         crate::TransMix::of(&k)
@@ -317,7 +319,14 @@ fn clip_head_zoom(
     let mut best = 1.0f64;
     let mut owned = fx.to_vec();
     for t in probes {
-        let mat = kt_model::clip_material_at(source_in, start, Tick(span), reversed, grid.frame_step(), t);
+        let mat = kt_model::clip_material_at(
+            source_in,
+            start,
+            Tick(span),
+            reversed,
+            grid.frame_step(),
+            t,
+        );
         if live {
             owned.clone_from_slice(fx);
             for (i, f) in owned.iter_mut().enumerate() {
@@ -427,18 +436,17 @@ impl VideoRenderer {
             // морфер-слой мог разрезать цель (Р.35): id остался у куска
             // №0, а стык достался тому куску, чья граница на нём стоит —
             // без этого переход на разрезанном клипе молча исчезал
-            if let Some(a) =
-                t.a.and_then(|id| clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.end == joint))
-            {
+            if let Some(a) = t.a.and_then(|id| {
+                clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.end == joint)
+            }) {
                 a.fade_out = Some((w0, w1));
                 a.fade_out_solo = solo;
                 a.fade_out_trans = Some(TransAnim::of(t, w0));
                 a.tail_ext = Tick((w1.0 - a.end.0).max(0));
             }
-            if let Some(b) = t
-                .b
-                .and_then(|id| clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.start == joint))
-            {
+            if let Some(b) = t.b.and_then(|id| {
+                clips.iter_mut().find(|c| kt_model::same_clip(c.id, id) && c.start == joint)
+            }) {
                 b.fade_in = Some((w0, w1));
                 b.fade_in_solo = solo;
                 b.fade_in_trans = Some(TransAnim::of(t, w0));
@@ -512,11 +520,7 @@ impl VideoRenderer {
     /// кэша и лукахеда считают память по НЕМУ, а не по Quality — иначе
     /// чанк экспорта недооценён в S² раз (п.15: «чёрный рендер»).
     pub fn max_decode_quality(&self, quality: Quality) -> Quality {
-        self.clips
-            .iter()
-            .map(|c| clip_decode_quality(c, quality))
-            .max()
-            .unwrap_or(quality)
+        self.clips.iter().map(|c| clip_decode_quality(c, quality)).max().unwrap_or(quality)
     }
 
     /// Композит момента `t` из кэша в RGBA-буфер `quality`-размера.
@@ -543,11 +547,8 @@ impl VideoRenderer {
         quality: Quality,
         out: &mut Vec<u8>,
     ) -> bool {
-        let ctx = PlanCtx {
-            grid: &self.grid,
-            cameras: &self.cameras,
-            project_size: self.project_size,
-        };
+        let ctx =
+            PlanCtx { grid: &self.grid, cameras: &self.cameras, project_size: self.project_size };
         let plan = build_plan(&self.clips, &ctx, cache, t, quality, true);
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
     }
@@ -561,11 +562,8 @@ impl VideoRenderer {
         quality: Quality,
         out: &mut Vec<u8>,
     ) -> bool {
-        let ctx = PlanCtx {
-            grid: &self.grid,
-            cameras: &self.cameras,
-            project_size: self.project_size,
-        };
+        let ctx =
+            PlanCtx { grid: &self.grid, cameras: &self.cameras, project_size: self.project_size };
         let plan = build_plan(&self.clips, &ctx, cache, t, quality, false);
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
     }
@@ -595,11 +593,8 @@ impl VideoRenderer {
     /// План кадра для внешнего исполнителя (GPU в kt-gpu). Пре-FX кадры
     /// уже прочитаны из кэша (recency бампнут), структура слоёв решена.
     pub fn frame_plan(&self, cache: &BurstCache, t: Tick, quality: Quality) -> FramePlan<'_> {
-        let ctx = PlanCtx {
-            grid: &self.grid,
-            cameras: &self.cameras,
-            project_size: self.project_size,
-        };
+        let ctx =
+            PlanCtx { grid: &self.grid, cameras: &self.cameras, project_size: self.project_size };
         build_plan(&self.clips, &ctx, cache, t, quality, true)
     }
 }
@@ -655,10 +650,7 @@ fn layer_src<'a>(
         Some((pts, k)) => {
             let idx = video_cache_idx(pts);
             let nb = cache.get_video(source, Some(dq), idx);
-            (
-                blend_frames(frame, nb, k),
-                Some(crate::video_plan::LayerBlend { cache_idx: idx, k }),
-            )
+            (blend_frames(frame, nb, k), Some(crate::video_plan::LayerBlend { cache_idx: idx, k }))
         }
     };
     let span = (clip.end.0 - clip.start.0).max(1);
@@ -692,10 +684,7 @@ fn layer_src<'a>(
                 .and_then(|id| ctx.cameras.iter().find(|c| c.id == id))
                 .or_else(|| kt_model::active_camera_in(ctx.cameras, t));
             let cam = ev.map(|e| e.params_at(t)).unwrap_or_default();
-            Cam3d {
-                cam,
-                world_scale: quality.width as f64 / ctx.project_size.0.max(1) as f64,
-            }
+            Cam3d { cam, world_scale: quality.width as f64 / ctx.project_size.0.max(1) as f64 }
         });
     debug_assert!(
         src_scale == 1 || kt_fx::video::has_video_fx(&fx),
@@ -873,12 +862,7 @@ fn execute_plan_cpu(
 
 /// Партнёр по переходу: клип той же дорожки с ТЕМ ЖЕ окном на противоположной
 /// стороне (incoming ищет outgoing и наоборот). Клипов мало, линейный скан.
-fn find_pair(
-    clips: &[VideoClip],
-    lane: u32,
-    win: (Tick, Tick),
-    incoming: bool,
-) -> Option<usize> {
+fn find_pair(clips: &[VideoClip], lane: u32, win: (Tick, Tick), incoming: bool) -> Option<usize> {
     clips.iter().position(|c| {
         c.lane == lane && (if incoming { c.fade_in } else { c.fade_out }) == Some(win)
     })
@@ -917,9 +901,7 @@ fn layer_frame_cpu(
     // (натив появился/исчез, сменилась кривая зума) — без неё кэш отдал бы
     // стейл (t313).
     let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d, src.src_scale);
-    if has_fx
-        && let Some(f) = cache.get_postfx_video(src.source, q_key, key_hash, t.0)
-    {
+    if has_fx && let Some(f) = cache.get_postfx_video(src.source, q_key, key_hash, t.0) {
         return Some(f);
     }
     if !has_fx {
@@ -1001,11 +983,9 @@ fn layer_mixes(fx: &[kt_model::FxInstance]) -> Vec<(usize, usize, u32)> {
     fx.iter()
         .enumerate()
         .filter_map(|(i, f)| match f {
-            kt_model::FxInstance::LayerMix { amount, from } => Some((
-                i,
-                (*from as usize).min(i),
-                (amount.clamp(0.0, 1.0) * 4096.0).round() as u32,
-            )),
+            kt_model::FxInstance::LayerMix { amount, from } => {
+                Some((i, (*from as usize).min(i), (amount.clamp(0.0, 1.0) * 4096.0).round() as u32))
+            }
             _ => None,
         })
         .collect()
@@ -1107,21 +1087,15 @@ fn blend_frames_cpu(
     let (a, b) = (as_vf(&dry), as_vf(&wet));
     let mut buf = Vec::new();
     dissolve_into(&mut buf, &a, &b, k, pixels);
-    kt_fx::video::Frame {
-        w: wet.w,
-        h: wet.h,
-        rgba: buf,
-        has_alpha: wet.has_alpha || dry.has_alpha,
-    }
+    kt_fx::video::Frame { w: wet.w, h: wet.h, rgba: buf, has_alpha: wet.has_alpha || dry.has_alpha }
 }
 
 /// Сольный фейд (Р.25) в момент t: (вес 0..4096, клип ПОЯВЛЯЕТСЯ, вид).
 /// fade_in нарастает 0→1, fade_out затухает 1→0. None — момент вне
 /// сольного окна (обычный слой или половина настоящей пары).
 fn solo_fade(clip: &VideoClip, t: Tick) -> Option<(u32, bool, crate::TransMix)> {
-    let frac = |w: (Tick, Tick)| {
-        (((t.0 - w.0.0) * 4096) / (w.1.0 - w.0.0).max(1)).clamp(0, 4096) as u32
-    };
+    let frac =
+        |w: (Tick, Tick)| (((t.0 - w.0.0) * 4096) / (w.1.0 - w.0.0).max(1)).clamp(0, 4096) as u32;
     if let Some(w) = clip.fade_in
         && clip.fade_in_solo
         && t.0 >= w.0.0
@@ -1180,7 +1154,6 @@ fn scale_alpha_into(dst: &mut Vec<u8>, f: &kt_media::VideoFrame, k: u32, pixels:
         dst[i + 3] = ((a * k + 2048) >> 12) as u8;
     }
 }
-
 
 /// Линейный dissolve пары (п.137): dst = a·(1−k) + b·k, целочисленно
 /// (k из 4096 долей, округление к ближайшему). Кадр без альфы считается

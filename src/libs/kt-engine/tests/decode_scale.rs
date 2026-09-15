@@ -17,7 +17,13 @@ const SEC: i64 = 90_000;
 const STEP: i64 = SEC / 30;
 
 fn project(w: u32, h: u32, fx: Vec<FxInstance>, auto: Vec<Vec<ParamCurve>>) -> Project {
-    let mut p = Project::new(ProjectSettings { fps: 30, width: w, height: h, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: w,
+        height: h,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "checker".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -111,11 +117,8 @@ fn t311_head_zoom_samples_the_whole_clip() {
     let nat = Some((1280, 720));
     let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
     // зум 1 → 4 к концу клипа: на первом кадре цепочка ещё тождественна
-    let curve = ParamCurve {
-        param: "zoom".into(),
-        ease: true,
-        keys: vec![key(0.0, 1.0), key(2.0, 4.0)],
-    };
+    let curve =
+        ParamCurve { param: "zoom".into(), ease: true, keys: vec![key(0.0, 1.0), key(2.0, 4.0)] };
     let p = project(320, 180, vec![zoom(1.0)], vec![vec![curve]]);
     assert_eq!(
         dq(&p, nat, q),
@@ -123,27 +126,25 @@ fn t311_head_zoom_samples_the_whole_clip() {
         "ступень берётся по максимуму кривой, а не по первому кадру"
     );
     // обратная кривая (зум в начале) — тот же максимум
-    let back = ParamCurve {
-        param: "zoom".into(),
-        ease: true,
-        keys: vec![key(0.0, 4.0), key(2.0, 1.0)],
-    };
+    let back =
+        ParamCurve { param: "zoom".into(), ease: true, keys: vec![key(0.0, 4.0), key(2.0, 1.0)] };
     let pb = project(320, 180, vec![zoom(1.0)], vec![vec![back]]);
     assert_eq!(dq(&pb, nat, q), Quality { width: 1280, height: 720 });
     // стоп силы слоя в нуле обнуляет зум префикса: ступени нет
-    let mixed = project(
-        320,
-        180,
-        vec![zoom(2.0), FxInstance::LayerMix { amount: 0.5, from: 0 }],
-        vec![],
-    );
+    let mixed =
+        project(320, 180, vec![zoom(2.0), FxInstance::LayerMix { amount: 0.5, from: 0 }], vec![]);
     assert_eq!(dq(&mixed, nat, q), q, "смешение в нуле — цепочка префикса пуста");
     // реверс клипа не ломает ось: максимум тот же
-    let mut pr = project(320, 180, vec![zoom(1.0)], vec![vec![ParamCurve {
-        param: "zoom".into(),
-        ease: true,
-        keys: vec![key(0.0, 1.0), key(2.0, 4.0)],
-    }]]);
+    let mut pr = project(
+        320,
+        180,
+        vec![zoom(1.0)],
+        vec![vec![ParamCurve {
+            param: "zoom".into(),
+            ease: true,
+            keys: vec![key(0.0, 1.0), key(2.0, 4.0)],
+        }]],
+    );
     pr.clips[0].reversed = true;
     assert_eq!(dq(&pr, nat, q), Quality { width: 1280, height: 720 });
 }
@@ -242,8 +243,12 @@ fn t314_export_chunk_respects_the_decode_stage() {
     // качеству декода (×2 по стороне = ×4 памяти) — уже нет
     let q = Quality { width: 960, height: 540 };
     let dq = Quality { width: 1920, height: 1080 };
-    let by_quality =
-        kt_engine::export::export_chunk_frames(kt_engine::export::EXPORT_VIDEO_CACHE_BYTES, q.width, q.height, 1);
+    let by_quality = kt_engine::export::export_chunk_frames(
+        kt_engine::export::EXPORT_VIDEO_CACHE_BYTES,
+        q.width,
+        q.height,
+        1,
+    );
     let by_decode = kt_engine::export::export_chunk_frames(
         kt_engine::export::EXPORT_VIDEO_CACHE_BYTES,
         dq.width,

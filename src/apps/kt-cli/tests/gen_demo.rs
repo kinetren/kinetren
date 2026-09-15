@@ -9,8 +9,13 @@ use kt_time::Tick;
 const SEC: i64 = 90_000;
 
 fn project() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "detail.mp4".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "green.mp4".into() });
     p
@@ -85,11 +90,8 @@ fn gen_demo_concat() {
     let mut p = project();
     let mut c = clip(1, 0, 8, 1, vec![grid2(), pan3d(1.0), grid2(), pan3d(1.0)]);
     let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
-    let curve = |param: &str, keys: Vec<AutoKey>| ParamCurve {
-        param: param.into(),
-        ease: true,
-        keys,
-    };
+    let curve =
+        |param: &str, keys: Vec<AutoKey>| ParamCurve { param: param.into(), ease: true, keys };
     c.fx_auto = vec![
         vec![],
         // первый pan3d: параллакс (поворот+сдвиг) уходит в норму к 4 c
@@ -136,13 +138,7 @@ fn gen_demo_concat() {
     let mut p = project();
     p.clips = vec![
         clip(1, 0, 4, 2, vec![FxInstance::greenscreen([0, 255, 0], 90, 20)]),
-        clip(
-            2,
-            4,
-            4,
-            2,
-            vec![grid2(), FxInstance::greenscreen([0, 255, 0], 90, 20), zoom(2.0)],
-        ),
+        clip(2, 4, 4, 2, vec![grid2(), FxInstance::greenscreen([0, 255, 0], 90, 20), zoom(2.0)]),
         clip(
             3,
             8,
@@ -193,13 +189,7 @@ fn gen_demo_concat() {
         ),
         clip(2, 4, 4, 1, vec![FxInstance::duotone()]),
         clip(3, 8, 4, 1, vec![FxInstance::Posterize { levels: 4 }]),
-        clip(
-            4,
-            12,
-            4,
-            1,
-            vec![grid2(), FxInstance::vignette(), zoom(2.0)],
-        ),
+        clip(4, 12, 4, 1, vec![grid2(), FxInstance::vignette(), zoom(2.0)]),
     ];
     save(&mut p, "06-color.otio");
 
@@ -244,18 +234,10 @@ fn gen_demo_concat() {
     // «устанавливается» на место).
     let mut p = project();
     let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
-    let curve = |param: &str, keys: Vec<AutoKey>| ParamCurve {
-        param: param.into(),
-        ease: true,
-        keys,
-    };
-    let mut ripple = clip(
-        1,
-        0,
-        4,
-        1,
-        vec![FxInstance::Ripple { amount: 0.12, freq: 12.0, phase: 0.0 }],
-    );
+    let curve =
+        |param: &str, keys: Vec<AutoKey>| ParamCurve { param: param.into(), ease: true, keys };
+    let mut ripple =
+        clip(1, 0, 4, 1, vec![FxInstance::Ripple { amount: 0.12, freq: 12.0, phase: 0.0 }]);
     ripple.fx_auto = vec![vec![curve("phase", vec![key(0.0, 0.0), key(4.0, 1080.0)])]];
     let mut pin = clip(2, 4, 4, 1, vec![FxInstance::corner_pin()]);
     pin.fx_auto = vec![vec![

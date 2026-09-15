@@ -24,8 +24,13 @@ fn no_underruns(s: kt_engine::RenderStats) {
 const CH: usize = AUDIO_CHANNELS;
 
 fn project_with_audio_clips(clips: Vec<ClipEvent>) -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     let mut media_ids: Vec<MediaId> = clips.iter().map(|c| c.media).collect();
     media_ids.sort();
     media_ids.dedup();
@@ -453,7 +458,13 @@ fn t14_player_loop_stream_equals_render_looped_reference() {
     r.sync_fx(&mut store);
     let mut f = direct(&[(1, AudioPattern::Ramp)]);
     let mut expect = vec![0f32; got.len()];
-    no_underruns(r.render_looped_with(&mut f, &mut store, region_f.clone(), region_f.start, &mut expect));
+    no_underruns(r.render_looped_with(
+        &mut f,
+        &mut store,
+        region_f.clone(),
+        region_f.start,
+        &mut expect,
+    ));
     if let Some(i) = (0..got.len()).find(|&i| got[i] != expect[i]) {
         panic!(
             "расхождение с эталоном на сэмпле {} (кадр {}): got {:?} expect {:?}",
@@ -474,7 +485,9 @@ fn t84_master_gain_is_clamped() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000, pitch_engine: Default::default() });
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     let (player, _rx) = kt_engine::Player::new(p, vec![]);
     player.set_master_gain(1e20);
     assert!(
@@ -560,7 +573,9 @@ fn t162_overlap_rejected_when_option_off() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000, pitch_engine: Default::default() });
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips = vec![audio_clip(1, 0, 0, 2000, 0, 1), audio_clip(2, 0, 1000, 2000, 0, 1)];
     p.overlap_layers = false;
