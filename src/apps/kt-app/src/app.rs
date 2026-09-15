@@ -2437,11 +2437,14 @@ impl KtApp {
 
     pub fn apply(&mut self, cmd: Command) -> bool {
         self.model_rev += 1;
-        match self.model.apply(cmd) {
-            Ok(()) => {
+        // через `apply_batch`, а не `apply`: родство рождённых событий
+        // приходит ОДНИМ путём (п.357), и одиночный разрез не исключение
+        match self.model.apply_batch(vec![cmd]) {
+            Ok(births) => {
                 self.player.set_project(self.model.project().clone());
                 self.dirty_content = true;
                 self.bump_clip_hw();
+                self.inherit_extras(&births);
                 true
             }
             Err(e) => {
@@ -2549,10 +2552,11 @@ impl KtApp {
     pub fn apply_batch(&mut self, cmds: Vec<Command>) -> bool {
         self.model_rev += 1;
         match self.model.apply_batch(cmds) {
-            Ok(()) => {
+            Ok(births) => {
                 self.player.set_project(self.model.project().clone());
                 self.dirty_content = true;
                 self.bump_clip_hw();
+                self.inherit_extras(&births);
                 true
             }
             Err(e) => {
@@ -3834,6 +3838,29 @@ impl KtApp {
         let hw = self.clip_id_hw.get().max(live);
         self.clip_id_hw.set(hw);
         hw + 1
+    }
+
+    /// Производное событие наследует конверт родителя (Р.49, п.357).
+    ///
+    /// Половина разреза, остаток кропа, вставленная копия, кусок bake — всё
+    /// это «то же самое событие, только короче». До Р.49 они теряли ИМЯ,
+    /// чужие эффекты (включая непонятые тайм-варпы), маркеры и чужие
+    /// metadata: в файл уезжал безымянный клип без всего, что чужой редактор
+    /// туда положил.
+    ///
+    /// Маркеры копируются ЦЕЛИКОМ, а раскладывает их по половинам ПИСАТЕЛЬ,
+    /// по пересечению с окном материала. Разложить здесь значило бы потерять
+    /// их при undo: отменённый разрез вернул бы родителя без маркеров,
+    /// уехавших к детям.
+    fn inherit_extras(&mut self, births: &kt_model::Births) {
+        for (child, parent) in &births.pairs {
+            if self.retained.clips.contains_key(child) {
+                continue; // у ребёнка уже свой конверт — не трогаем
+            }
+            if let Some(ex) = self.retained.clips.get(parent).cloned() {
+                self.retained.clips.insert(*child, ex);
+            }
+        }
     }
 
     /// Запомнить номера, которые уже рождались. Зовётся ПОСЛЕ каждой правки

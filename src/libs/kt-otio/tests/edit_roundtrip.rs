@@ -130,3 +130,120 @@ fn t378_media_refs_do_not_override_clip_own_refs() {
         c["media_references"]
     );
 }
+
+/// Тест 380 (Р.49 А9): производное событие наследует конверт родителя — имя,
+/// чужие эффекты и чужие metadata. До Р.49 в файл уезжал безымянный клип без
+/// всего, что туда положил чужой редактор: половина разреза «теряла» и
+/// непонятый тайм-варп, и чужой неймспейс.
+#[test]
+fn t380_born_clip_inherits_name_effects_and_metadata() {
+    let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
+    "name":"","children":[{"OTIO_SCHEMA":"Track.1","name":"V","kind":"Video","children":[
+    {"OTIO_SCHEMA":"Clip.1","name":"Шот 12A","source_range":{"OTIO_SCHEMA":"TimeRange.1",
+    "duration":{"OTIO_SCHEMA":"RationalTime.1","value":480,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24}},
+    "media_reference":{"OTIO_SCHEMA":"ExternalReference.1","name":"","target_url":"a.mov",
+    "available_range":null,"available_image_bounds":null,"metadata":{}},
+    "effects":[{"OTIO_SCHEMA":"Effect.1","name":"их эффект","effect_name":"AlienBlur",
+    "enabled":true,"metadata":{"vendor":{"strength":3}}}],
+    "markers":[],"enabled":true,"metadata":{"resolve":{"clip_color":"Orange"}}}],
+    "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{}}],
+    "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{}},
+    "global_start_time":null,"metadata":{}}"#;
+    let b = load_project(doc, None).expect("файл читается");
+    let mut m = TimelineModel::new(b.project);
+    let mut retained = b.retained;
+    let src = m.project().clips[0].clone();
+
+    let mid = src.start + Tick(src.duration.0 / 2);
+    let next = ClipId(src.id.0 + 1);
+    let births = m
+        .apply_batch(vec![Command::Split { id: src.id, at: mid, new_id: next, new_group: None }])
+        .expect("разрез");
+    assert_eq!(births.parent_of(next), Some(src.id), "модель не назвала родителя");
+
+    // ровно то, что делает приложение по ответу модели
+    for (child, parent) in &births.pairs {
+        if let Some(ex) = retained.clips.get(parent).cloned() {
+            retained.clips.entry(*child).or_insert(ex);
+        }
+    }
+
+    let out = save_project(m.project(), &retained, None);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let kids = &v["tracks"]["children"][0]["children"];
+    for i in 0..2 {
+        assert_eq!(kids[i]["name"], "Шот 12A", "половина {i} потеряла имя события");
+        assert_eq!(
+            kids[i]["metadata"]["resolve"]["clip_color"], "Orange",
+            "половина {i} потеряла чужие metadata"
+        );
+        let fx = kids[i]["effects"].as_array().expect("нет списка эффектов");
+        assert!(
+            fx.iter().any(|e| e["effect_name"] == "AlienBlur"),
+            "половина {i} потеряла чужой эффект: {fx:?}"
+        );
+    }
+}
+
+/// Тест 381 (Р.49 А9): маркеры раскладывает ПИСАТЕЛЬ — по пересечению с окном
+/// материала. Конверт наследуется целиком намеренно: разложи их при разрезе —
+/// и undo вернул бы родителя без маркеров, уехавших к детям.
+#[test]
+fn t381_markers_are_dealt_by_the_writer() {
+    // три маркера: в первой половине (кадр 100), во второй (кадр 400) и на
+    // самой границе (кадр 240 — уже вторая половина)
+    let doc = r#"{"OTIO_SCHEMA":"Timeline.1","name":"t","tracks":{"OTIO_SCHEMA":"Stack.1",
+    "name":"","children":[{"OTIO_SCHEMA":"Track.1","name":"V","kind":"Video","children":[
+    {"OTIO_SCHEMA":"Clip.1","name":"c","source_range":{"OTIO_SCHEMA":"TimeRange.1",
+    "duration":{"OTIO_SCHEMA":"RationalTime.1","value":480,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24}},
+    "media_reference":{"OTIO_SCHEMA":"ExternalReference.1","name":"","target_url":"a.mov",
+    "available_range":null,"available_image_bounds":null,"metadata":{}},
+    "effects":[],"markers":[
+    {"OTIO_SCHEMA":"Marker.2","name":"рано","color":"RED","marked_range":
+    {"OTIO_SCHEMA":"TimeRange.1","duration":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":100,"rate":24}},"metadata":{}},
+    {"OTIO_SCHEMA":"Marker.2","name":"граница","color":"RED","marked_range":
+    {"OTIO_SCHEMA":"TimeRange.1","duration":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":240,"rate":24}},"metadata":{}},
+    {"OTIO_SCHEMA":"Marker.2","name":"поздно","color":"RED","marked_range":
+    {"OTIO_SCHEMA":"TimeRange.1","duration":{"OTIO_SCHEMA":"RationalTime.1","value":0,"rate":24},
+    "start_time":{"OTIO_SCHEMA":"RationalTime.1","value":400,"rate":24}},"metadata":{}}],
+    "enabled":true,"metadata":{}}],
+    "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{}}],
+    "source_range":null,"effects":[],"markers":[],"enabled":true,"metadata":{}},
+    "global_start_time":null,"metadata":{}}"#;
+    let b = load_project(doc, None).expect("файл с маркерами читается");
+    let mut m = TimelineModel::new(b.project);
+    let mut retained = b.retained;
+    let src = m.project().clips[0].clone();
+    assert_eq!(retained.clips.get(&src.id).map(|e| e.markers.len()), Some(3));
+
+    let mid = src.start + Tick(src.duration.0 / 2);
+    let next = ClipId(src.id.0 + 1);
+    let births = m
+        .apply_batch(vec![Command::Split { id: src.id, at: mid, new_id: next, new_group: None }])
+        .expect("разрез");
+    for (child, parent) in &births.pairs {
+        if let Some(ex) = retained.clips.get(parent).cloned() {
+            retained.clips.entry(*child).or_insert(ex);
+        }
+    }
+    // конверт ребёнка получил ВСЕ три — раскладывать будет писатель
+    assert_eq!(retained.clips.get(&next).map(|e| e.markers.len()), Some(3));
+
+    let out = save_project(m.project(), &retained, None);
+    let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let kids = &v["tracks"]["children"][0]["children"];
+    let names = |i: usize| -> Vec<String> {
+        kids[i]["markers"]
+            .as_array()
+            .expect("нет маркеров")
+            .iter()
+            .map(|m| m["name"].as_str().unwrap_or_default().to_string())
+            .collect()
+    };
+    assert_eq!(names(0), vec!["рано"], "первая половина получила чужие маркеры");
+    assert_eq!(names(1), vec!["граница", "поздно"], "вторая половина потеряла свои маркеры");
+}

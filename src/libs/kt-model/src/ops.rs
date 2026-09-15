@@ -290,6 +290,9 @@ pub fn paste_block(
         let mut copy = c.clone();
         copy.id = ClipId(*next_clip);
         clip_map.insert(c.id, copy.id);
+        // родство — для конверта (п.357): вставленная копия обязана унести
+        // имя, чужие эффекты и metadata оригинала
+        cmds.push(Command::NoteBirth { child: copy.id, parent: c.id });
         *next_clip += 1;
         copy.link_group = c.link_group.map(|g| {
             *group_map.entry(g).or_insert_with(|| {
@@ -388,12 +391,14 @@ pub fn punch_out_region(p: &Project, r: Region, next_clip: &mut u64) -> Vec<Comm
             let mut left = clip_slice(c, TickRange::new(c.start, r.start), ClipId(*next_clip));
             *next_clip += 1;
             left.link_group = None;
+            cmds.push(Command::NoteBirth { child: left.id, parent: c.id });
             cmds.push(Command::AddClip(left));
         }
         if end - r.end >= MIN_CLIP_DURATION {
             let mut right = clip_slice(c, TickRange::new(r.end, end), ClipId(*next_clip));
             *next_clip += 1;
             right.link_group = None;
+            cmds.push(Command::NoteBirth { child: right.id, parent: c.id });
             cmds.push(Command::AddClip(right));
         }
     }

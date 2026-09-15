@@ -119,6 +119,19 @@ pub enum Command {
         id: ClipId,
         new_end: Tick,
     },
+    /// Заметка о РОДСТВЕ: `child` — событие, рождённое от `parent` в этом же
+    /// пакете (Р.49, п.357). Состояние проекта не меняет вовсе.
+    ///
+    /// Зачем командой. Производные события — правая половина разреза, остатки
+    /// кропа и punch-out, вставленная копия, куски bake — рождаются ВНУТРИ
+    /// `ops::*`, и снаружи их родителя уже не вычислить: после перенумерации
+    /// это была бы догадка по совпадению материала и окна. Тот, кто режет,
+    /// родителя знает точно — пусть он его и назовёт. Носитель родства должен
+    /// пережить undo вместе с самой правкой, а значит жить в пакете команд.
+    NoteBirth {
+        child: ClipId,
+        parent: ClipId,
+    },
     /// Разрез в точке `at` (абсолютный тик). Правая половина получает новый id
     /// и новую link-группу (правые половины A/V-пары остаются связаны).
     Split {
@@ -348,6 +361,40 @@ pub struct TimelineModel {
     last_gesture: Option<u64>,
 }
 
+/// Кто от кого родился в пакете команд (Р.49, п.357). Родство сообщает
+/// МОДЕЛЬ, а не догадывается вызывающий: у `Split` оно прямо в аргументах, у
+/// остальных производных — в заметке `NoteBirth`, которую оставляет тот, кто
+/// резал. Догадка по совпадению материала и окна была бы именно догадкой:
+/// после перенумерации отличить «половину разреза» от «соседнего события того
+/// же файла» нечем.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Births {
+    /// Пары «новое событие ← родитель», в порядке рождения.
+    pub pairs: Vec<(ClipId, ClipId)>,
+}
+
+impl Births {
+    fn of(cmds: &[Command]) -> Births {
+        let mut pairs = Vec::new();
+        for c in cmds {
+            match c {
+                Command::Split { id, new_id, .. } => pairs.push((*new_id, *id)),
+                Command::NoteBirth { child, parent } => pairs.push((*child, *parent)),
+                _ => {}
+            }
+        }
+        Births { pairs }
+    }
+
+    pub fn parent_of(&self, child: ClipId) -> Option<ClipId> {
+        self.pairs.iter().find(|(c, _)| *c == child).map(|(_, p)| *p)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pairs.is_empty()
+    }
+}
+
 impl TimelineModel {
     pub fn new(project: Project) -> TimelineModel {
         TimelineModel { project, undo: Vec::new(), redo: Vec::new(), last_gesture: None }
@@ -367,21 +414,22 @@ impl TimelineModel {
     }
 
     pub fn apply(&mut self, cmd: Command) -> Result<(), CommandError> {
-        self.apply_batch(vec![cmd])
+        self.apply_batch(vec![cmd]).map(|_| ())
     }
 
     /// Пакет команд = ОДИН undo-снапшот на жест (сплит A/V-пары, удаление
     /// группы, paste, punch-out). Атомарно: валидация всей серии на клоне,
     /// провал любой команды = ноль изменений и ноль записей в истории.
-    pub fn apply_batch(&mut self, cmds: Vec<Command>) -> Result<(), CommandError> {
+    pub fn apply_batch(&mut self, cmds: Vec<Command>) -> Result<Births, CommandError> {
         if cmds.is_empty() {
-            return Ok(());
+            return Ok(Births::default());
         }
         let scratch = self.simulate(&cmds)?;
+        let births = Births::of(&cmds);
         self.push_undo();
         self.project = scratch;
         self.last_gesture = None;
-        Ok(())
+        Ok(births)
     }
 
     /// Проект, каким он СТАНЕТ после батча — без записи в undo (Р.26).
@@ -474,6 +522,8 @@ impl TimelineModel {
         let find =
             |id: ClipId| p.clips.iter().find(|c| c.id == id).ok_or(CommandError::ClipNotFound(id));
         match cmd {
+            // заметка о родстве ничего не требует от проекта: она про пакет
+            Command::NoteBirth { .. } => {}
             Command::AddMedia { id, .. } => {
                 if p.media.iter().any(|m| m.id == *id) {
                     return Err(CommandError::IdInUse(id.0));
@@ -766,6 +816,7 @@ impl TimelineModel {
 
     fn mutate_on(p: &mut Project, cmd: Command) {
         match cmd {
+            Command::NoteBirth { .. } => {}
             Command::AddMedia { id, path } => {
                 p.media.push(MediaRef { id, path });
             }

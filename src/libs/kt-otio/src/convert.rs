@@ -663,15 +663,37 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
         },
     );
 
+    // Маркеры раскладываются по ОКНУ МАТЕРИАЛА (Р.49, п.357). Производное
+    // событие наследует конверт родителя ЦЕЛИКОМ — иначе undo вернул бы
+    // родителя без маркеров, уехавших к детям. Значит выбирает писатель: в
+    // файл идут только те, что пересекают окно этого события. Чужие маркеры
+    // неизвестной схемы пропускаются как есть: их диапазон нам не прочесть,
+    // а выбрасывать чужое нельзя.
+    let win_start = c.source_in.0 + media_origin;
+    let win_end = win_start + c.duration.0;
+    let markers: Vec<MarkerNode> = ex
+        .markers
+        .into_iter()
+        .filter(|m| match m {
+            MarkerNode::Marker(mk) => {
+                let a = mk.marked_range.start_time.to_ticks().0;
+                let b = a + mk.marked_range.duration.to_ticks().0.max(0);
+                // полуинтервал: точечный маркер ровно на конце — уже следующий
+                a < win_end && b >= win_start
+            }
+            MarkerNode::Unknown(_) => true,
+        })
+        .collect();
+
     Clip {
         name: ex.name,
         // таймкод материала возвращается на место (п.180): чужой файл
         // обязан прочитаться другим редактором так же, как пришёл
-        source_range: Some(range(Tick(c.source_in.0 + media_origin), c.duration)),
+        source_range: Some(range(Tick(win_start), c.duration)),
         media_references: media_refs,
         active_media_reference_key: active_key,
         effects,
-        markers: ex.markers,
+        markers,
         enabled: true,
         metadata: meta,
         extra: ex.extra,

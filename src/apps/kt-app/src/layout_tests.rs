@@ -4455,6 +4455,65 @@ fn t199_background_autosave_never_overwrites_newer_save() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Тест 382 (Р.49 А9): конверт наследуется НА ЖИВОМ ЖЕСТЕ, а не только в
+/// теории kt-otio. Разрез и вставка копии идут через `apply_batch`, и родство
+/// доезжает до `Retained` тем же путём, каким его сообщила модель.
+#[test]
+fn t382_app_carries_extras_to_born_clips() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips();
+    let app = h.state_mut();
+    let src = app.model.project().clips[0].clone();
+
+    // у события есть конверт из «файла»: имя и чужой маркер
+    app.retained.clips.insert(
+        src.id,
+        kt_otio::ClipExtra { name: "Шот 12A".into(), ..Default::default() },
+    );
+
+    // разрез жестом приложения
+    let mid = src.start + Tick(src.duration.0 / 2);
+    let new_id = ClipId(app.next_clip_id());
+    assert!(app.apply(Command::Split {
+        id: src.id,
+        at: mid,
+        new_id,
+        new_group: None,
+    }));
+    assert_eq!(
+        h.state().retained.clips.get(&new_id).map(|e| e.name.as_str()),
+        Some("Шот 12A"),
+        "половина разреза осталась безымянной: в файл уедет клип без имени"
+    );
+
+    // вставка копии — тот же путь через ops::paste_block
+    let app = h.state_mut();
+    let before = app.model.project().clips.len();
+    app.selected = [src.id].into_iter().collect();
+    app.copy_selection();
+    app.paste_here(Tick(500_000), String::new(), false);
+    assert!(h.state().model.project().clips.len() > before, "вставка не добавила событий");
+    let pasted = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .filter(|c| c.id != src.id && c.id != new_id)
+        .map(|c| c.id)
+        .collect::<Vec<_>>();
+    assert!(
+        pasted.iter().any(|id| h
+            .state()
+            .retained
+            .clips
+            .get(id)
+            .is_some_and(|e| e.name == "Шот 12A")),
+        "вставленная копия потеряла имя оригинала"
+    );
+}
+
 /// Тест 376 (Р.49 А8): номер события не переиспользуется в пределах сессии.
 /// Прежняя формула «максимум по текущим клипам + 1» после удаления последнего
 /// события выдавала его же номер заново — и новорождённый клип наследовал

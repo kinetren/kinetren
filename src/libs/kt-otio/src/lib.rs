@@ -18,7 +18,8 @@ mod schema;
 mod url;
 
 pub use convert::{
-    Notice, ProjectBundle, Retained, grid_fps, project_to_timeline, timeline_to_project,
+    ClipExtra, MediaRefs, Notice, ProjectBundle, Retained, grid_fps, project_to_timeline,
+    timeline_to_project,
 };
 pub use io::{
     AtomicFs, RealFs, Written, atomic_tmp_path, parse_document, write_atomic, write_atomic_with,
