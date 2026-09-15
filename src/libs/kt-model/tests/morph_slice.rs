@@ -32,8 +32,13 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: Tick, dur: Tick) -> ClipEvent
 }
 
 fn base() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(clip(10, ClipKind::Video, 0, Tick(0), LEN));
@@ -126,8 +131,13 @@ fn t233_reversed_slices_keep_material() {
         q.clips[0].reversed = true;
         q
     });
-    m.apply(Command::Split { id: ClipId(10), at: Tick(30_000), new_id: ClipId(11), new_group: None })
-        .unwrap();
+    m.apply(Command::Split {
+        id: ClipId(10),
+        at: Tick(30_000),
+        new_id: ClipId(11),
+        new_group: None,
+    })
+    .unwrap();
     let left = m.project().clips.iter().find(|c| c.id == ClipId(10)).unwrap();
     assert_eq!(left.source_in, eff[0].source_in, "Split и резка считают source_in одинаково");
 }
@@ -265,7 +275,10 @@ fn t236_untimed_morpher_ignores_block_position() {
     let eff = p.effective_clips();
     assert_eq!(eff.len(), 1, "старый морфер не режет");
     assert_eq!(eff[0].media, MediaId(2), "и действует независимо от времени блока");
-    assert_eq!(p.morphers[0].windows_on(&p.clips[0], &p, &p.rows()), vec![TickRange::new(Tick(0), LEN)]);
+    assert_eq!(
+        p.morphers[0].windows_on(&p.clips[0], &p, &p.rows()),
+        vec![TickRange::new(Tick(0), LEN)]
+    );
 
     // выключенный морфер не действует и не режет
     p.morphers[0].timed = true;
@@ -399,7 +412,10 @@ fn t239_bake_materializes_slices() {
     );
     // геометрия и материал — те же, что рисовались
     for (a, b) in m.project().clips.iter().zip(&before) {
-        assert_eq!((a.start, a.duration, a.source_in, a.media), (b.start, b.duration, b.source_in, b.media));
+        assert_eq!(
+            (a.start, a.duration, a.source_in, a.media),
+            (b.start, b.duration, b.source_in, b.media)
+        );
         assert_eq!(a.fx, b.fx);
     }
     assert_eq!(m.project().effective_clips().len(), 4, "рендер не изменился");
@@ -528,7 +544,10 @@ fn t247_named_areas_and_references() {
     assert_eq!(mm.project().effective_clips().len(), 4, "и продолжает работать");
     mm.undo().unwrap();
     assert_eq!(mm.project().areas[0].name, "финал");
-    assert_eq!(mm.project().morphers[0].targets, MorphTargets::Areas { names: vec!["финал".into()] });
+    assert_eq!(
+        mm.project().morphers[0].targets,
+        MorphTargets::Areas { names: vec!["финал".into()] }
+    );
 
     // удаление области оставляет ссылку МЁРТВОЙ: пользователь вернёт
     // область тем же именем, и всё оживёт (правило 20 — ничего не
@@ -562,7 +581,8 @@ fn t247_marks_give_windows_and_merge() {
         color: None,
     });
     let mut m = layer(Tick(0), Tick(1));
-    m.targets = MorphTargets::Marks { names: vec!["a".into(), "b".into(), "нет такой".into()] };
+    m.targets =
+        MorphTargets::Marks { names: vec!["a".into(), "b".into(), "нет такой".into()] };
     p.morphers.push(m);
     p.validate().unwrap();
 
@@ -634,7 +654,8 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
 
     let mut m = TimelineModel::new(p);
     let (mut nc, mut ng, mut nt, mut nm) = (100u64, 100u64, 100u64, 100u64);
-    let names = PasteNames { affix: "копия".into(), before: false, taken: m.project().taken_names() };
+    let names =
+        PasteNames { affix: "копия".into(), before: false, taken: m.project().taken_names() };
     let (cmds, _end, skipped) = paste_block(
         &block,
         Tick(300_000),
@@ -655,7 +676,8 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
     );
 
     // цели скопированного морфера указывают ТОЛЬКО на новые id
-    let pasted: Vec<&MorpherEvent> = m.project().morphers.iter().filter(|x| x.id.0 >= 100).collect();
+    let pasted: Vec<&MorpherEvent> =
+        m.project().morphers.iter().filter(|x| x.id.0 >= 100).collect();
     assert_eq!(pasted.len(), 2, "два морфера доехали, третий пропущен");
     let frozen = pasted.iter().find(|x| !x.targets.clip_ids().is_empty()).unwrap();
     assert_eq!(frozen.targets.clip_ids(), &[ClipId(100)], "цель — новый клип, а не старый");
@@ -668,7 +690,8 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
     m.project().validate().unwrap();
 
     // ВТОРАЯ вставка тем же словом даёт « 2» — имена остаются адресами
-    let names = PasteNames { affix: "копия".into(), before: false, taken: m.project().taken_names() };
+    let names =
+        PasteNames { affix: "копия".into(), before: false, taken: m.project().taken_names() };
     let (cmds, _end, _) = paste_block(
         &block,
         Tick(600_000),
@@ -692,8 +715,13 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
     use kt_model::*;
     use kt_time::Tick;
 
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -728,10 +756,7 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
             video_auto: vec![vec![ParamCurve {
                 param: "radius".into(),
                 ease: false,
-                keys: vec![
-                    AutoKey { t: Tick(0), v: 2.0 },
-                    AutoKey { t: Tick(90_000 * 2), v: 9.0 },
-                ],
+                keys: vec![AutoKey { t: Tick(0), v: 2.0 }, AutoKey { t: Tick(90_000 * 2), v: 9.0 }],
             }]],
             ..Default::default()
         },
@@ -845,10 +870,7 @@ fn t270c_split_on_a_rate_curve_moves_keys_with_the_anchor() {
     // рампа 1.0 → 2.0 по всему событию; ключи в тиках материала от source_in
     let c = warped(
         1.0,
-        vec![
-            AutoKey { t: Tick(90_000), v: 1.0 },
-            AutoKey { t: Tick(90_000 + 4 * 90_000), v: 2.0 },
-        ],
+        vec![AutoKey { t: Tick(90_000), v: 1.0 }, AutoKey { t: Tick(90_000 + 4 * 90_000), v: 2.0 }],
         false,
     );
     let at = Tick(2 * 90_000);
@@ -880,9 +902,7 @@ fn t270d_slice_seam_has_no_gap() {
         let at = Tick(90_000 * 3 / 2); // не на круглой границе
         let l = clip_slice(&c, TickRange::new(Tick(0), at), ClipId(1));
         let r = clip_slice(&c, TickRange::new(at, Tick(4 * 90_000)), ClipId(2));
-        let used = |x: &ClipEvent| {
-            kt_model::clip_warp(x).map(|w| w.used()).unwrap_or(x.duration.0)
-        };
+        let used = |x: &ClipEvent| kt_model::clip_warp(x).map(|w| w.used()).unwrap_or(x.duration.0);
         let (near, far) = if rev { (&r, &l) } else { (&l, &r) };
         let seam = near.source_in.0 + used(near);
         assert!(
@@ -975,11 +995,7 @@ fn t288_layer_does_not_reach_a_warped_clip_outside_its_window() {
     // строка слоя обязана быть ВЫШЕ дорожки клипа, иначе `Below` не
     // накрывает его и тест зеленел бы по совсем другой причине
     let above = |p: &mut Project| {
-        p.lane_order = vec![
-            (LaneKind::Morph, 0),
-            (LaneKind::Video, 0),
-            (LaneKind::Audio, 0),
-        ];
+        p.lane_order = vec![(LaneKind::Morph, 0), (LaneKind::Video, 0), (LaneKind::Audio, 0)];
     };
 
     // --- 1. варп у САМОГО КЛИПА: блок далеко, трогать нечего -------------
@@ -1127,10 +1143,7 @@ fn t291_source_replacement_carries_the_clips_own_curves() {
         kt_model::curve_value(&c.fx_auto[0][0].keys, false, mat)
     };
     let (a, b) = (at(&plain), at(&patched));
-    assert!(
-        (a - 30.0).abs() < 1e-6,
-        "без подмены в середине события стоит пик кривой, а не {a}"
-    );
+    assert!((a - 30.0).abs() < 1e-6, "без подмены в середине события стоит пик кривой, а не {a}");
     assert!(
         (b - a).abs() < 1e-6,
         "после подмены источника кривая обязана давать то же самое: было {a}, стало {b} \

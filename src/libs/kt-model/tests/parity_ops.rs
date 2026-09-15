@@ -6,8 +6,13 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn base() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "a.mp4".into() });
     // A/V-пара 0..90000 + одиночный аудио 90000..180000
     p.clips.push(clip(10, Some(1), ClipKind::Video, 0, 0, 90_000, 0));
@@ -123,7 +128,11 @@ fn markers_sorted_and_region_survives_undo() {
     let mut m = TimelineModel::new(base());
     m.apply(Command::AddMarker { at: Tick(5000), duration: Tick::ZERO }).unwrap();
     m.apply(Command::AddMarker { at: Tick(1000), duration: Tick::ZERO }).unwrap();
-    assert_eq!(m.project().markers, vec![Marker::at(Tick(1000)), Marker::at(Tick(5000))], "сортировка при вставке");
+    assert_eq!(
+        m.project().markers,
+        vec![Marker::at(Tick(1000)), Marker::at(Tick(5000))],
+        "сортировка при вставке"
+    );
     m.apply(Command::MoveMarker { from: Tick(1000), to: Tick(9000) }).unwrap();
     assert_eq!(m.project().markers, vec![Marker::at(Tick(5000)), Marker::at(Tick(9000))]);
 
@@ -314,7 +323,13 @@ fn t24_reversed_roundtrip_and_undo() {
 #[test]
 fn ui_state_round_trip_and_old_json() {
     let mut p = base();
-    p.ui = Some(UiState { view_start: 12_345.0, ticks_per_px: 450.0, cursor: 90_000, lane_order: vec![], ..Default::default() });
+    p.ui = Some(UiState {
+        view_start: 12_345.0,
+        ticks_per_px: 450.0,
+        cursor: 90_000,
+        lane_order: vec![],
+        ..Default::default()
+    });
     let json = serde_json::to_string(&p).unwrap();
     let p2 = Project::from_json(&json).unwrap();
     assert_eq!(p2.ui, p.ui);
@@ -420,7 +435,9 @@ fn t89_named_markers() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000, pitch_engine: Default::default() });
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     // старый проект: markers — просто числа
     p.markers = vec![Marker::at(Tick(5000)), Marker::at(Tick(1000))];
     let old_json = r#"{"format_version":1,"settings":{"fps":30,"width":640,"height":360,"sample_rate":48000},"media":[],"clips":[],"markers":[1000,5000]}"#;
@@ -438,10 +455,7 @@ fn t89_named_markers() {
 
     // дубли по времени схлопываются детерминированно (stable-сортировка)
     let mut p2 = p.clone();
-    p2.markers = vec![
-        Marker::named(Tick(2000), "первая"),
-        Marker::named(Tick(2000), "вторая"),
-    ];
+    p2.markers = vec![Marker::named(Tick(2000), "первая"), Marker::named(Tick(2000), "вторая")];
     p2.normalize();
     assert_eq!(p2.markers, vec![Marker::named(Tick(2000), "первая")]);
 
@@ -452,9 +466,7 @@ fn t89_named_markers() {
     assert_eq!(moved.name, "старт", "имя должно переехать вместе с меткой");
 
     // SetMarkerName на несуществующей метке — ошибка
-    assert!(
-        m.apply(Command::SetMarkerName { at: Tick(999_999), name: "x".into() }).is_err()
-    );
+    assert!(m.apply(Command::SetMarkerName { at: Tick(999_999), name: "x".into() }).is_err());
 }
 
 /// Тест 90 (п.2 р.10): имена дорожек — round-trip, вставка/удаление
@@ -510,7 +522,9 @@ fn t90_lane_names() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000, pitch_engine: Default::default() });
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.ui = Some(UiState { lane_names: names.clone(), ..Default::default() });
     let json = serde_json::to_string(&p).unwrap();
     assert!(json.contains("Титры"));

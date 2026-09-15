@@ -47,6 +47,7 @@ paste = "粘贴到播放头"
 delete = "删除"
 cut_region = "切分 / 裁去区间"
 trim_stretches_auto = "修剪时动画随事件一起拉伸"
+remove_unused_seqs = "移除未使用的片段"
 
 [menu.view]
 title = "视图"
@@ -201,6 +202,11 @@ remove_transition = "移除此转场"
 sync_audio = "按音频与另一个选中事件同步"
 
 # Медиа-бин: режимы, подсказки, пустое состояние.
+collapse = "将所选折叠为片段"
+nest_expand = "将片段展开到轨道"
+nest_independent = "与其他位置分离"
+nest_rename = "重命名片段…"
+
 [bin]
 hint_free = "自由布局：卡片可用鼠标拖动"
 hint_grid = "网格：卡片自动排列"
@@ -680,6 +686,21 @@ sync_done = "偏移 {0} 毫秒，置信度 {1}%"
 sync_out_of_range = "对齐会把事件移到项目开始之前"
 analysis_failed = "分析失败：{0}"
 analysis_stale = "分析期间剪辑已更改 — 结果未应用"
+nest_need_selection = "请先选择事件，然后折叠"
+nest_default_name = "片段"
+nest_collapsed = "已折叠为：{0}"
+nest_outer_layers = "变形层现在作用于合成画面：{0}"
+nest_not_a_nest = "此事件不是嵌套片段"
+nest_expanded = "已展开到轨道"
+nest_expand_dropped = "已展开；实例的效果链和电平已移除：它们在外层作用于合成画面"
+nest_independent = "已分离为独立片段：{0}"
+nest_none_unused = "所有片段都在使用中"
+nest_removed_unused = "已移除未使用片段：{0}"
+nest_rename_title = "重命名片段"
+nest_name_label = "名称"
+nest_rename_do = "重命名"
+nest_uses = "一同改变的位置：{0}"
+
 [dialog]
 import_ktproj = "导入旧版 .ktproj 项目"
 open_project = "打开项目"

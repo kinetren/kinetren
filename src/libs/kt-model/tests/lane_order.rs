@@ -10,10 +10,7 @@ use kt_model::*;
 #[test]
 fn t49_normalize_lane_order() {
     // пусто → блочный дефолт
-    assert_eq!(
-        normalize_lane_order(&[], 2, 2, 1, 0),
-        vec![(V, 0), (V, 1), (A, 0), (A, 1), (M, 0)]
-    );
+    assert_eq!(normalize_lane_order(&[], 2, 2, 1, 0), vec![(V, 0), (V, 1), (A, 0), (A, 1), (M, 0)]);
     // произвольный валидный порядок сохраняется
     let mixed = vec![(V, 0), (A, 0), (V, 1), (M, 0), (A, 1)];
     assert_eq!(normalize_lane_order(&mixed, 2, 2, 1, 0), mixed);
@@ -46,7 +43,13 @@ fn t49_lane_order_serde_roundtrip() {
     // с Р.35 порядок строк живёт В МОДЕЛИ (морфер-слой действует «на всё,
     // что ниже», значит порядок влияет на картинку), а `ui.lane_order`
     // остался легаси-входом и больше не пишется
-    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.morph_lanes = 1;
     p.set_lane_order(&[(M, 0), (V, 0), (A, 0)]);
     assert_eq!(p.lane_order, vec![(M, 0), (V, 0), (A, 0)]);
@@ -80,7 +83,9 @@ fn t241_lane_order_is_model_state() {
         fps: 30,
         width: 640,
         height: 360,
-        sample_rate: 48000, pitch_engine: Default::default() }));
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    }));
     // вставка morph-дорожки САМА кладёт строку в порядок
     m.apply(Command::InsertMorphLane { at: 0 }).unwrap();
     assert_eq!(m.project().rows(), vec![(V, 0), (A, 0), (M, 0)]);
@@ -108,10 +113,7 @@ fn t241_lane_order_is_model_state() {
 /// V..A..M..C), insert/remove работают той же машинерией.
 #[test]
 fn t188_camera_lanes_in_display_order() {
-    assert_eq!(
-        normalize_lane_order(&[], 1, 1, 1, 2),
-        vec![(V, 0), (A, 0), (M, 0), (C, 0), (C, 1)]
-    );
+    assert_eq!(normalize_lane_order(&[], 1, 1, 1, 2), vec![(V, 0), (A, 0), (M, 0), (C, 0), (C, 1)]);
     // произвольный валидный порядок с камерами сохраняется
     let mixed = vec![(C, 0), (V, 0), (A, 0)];
     assert_eq!(normalize_lane_order(&mixed, 1, 1, 0, 1), mixed);

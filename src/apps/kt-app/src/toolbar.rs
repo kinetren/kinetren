@@ -298,6 +298,15 @@ impl KtApp {
                     self.paste_at_cursor();
                     ui.close();
                 }
+                // ОДНО ТЕЛО с пунктом меню события (правило 17)
+                if ui.button(tr(k::tl::menu::COLLAPSE)).clicked() {
+                    self.collapse_selection();
+                    ui.close();
+                }
+                if ui.button(tr(k::menu::edit::REMOVE_UNUSED_SEQS)).clicked() {
+                    self.remove_unused_seqs();
+                    ui.close();
+                }
                 if ui.button(tr(k::tl::menu::SYNC_AUDIO)).clicked() {
                     // одно тело на оба пути (правило 17): пункт меню события
                     // и пункт главного меню делают ровно одно и то же

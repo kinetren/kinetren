@@ -96,7 +96,11 @@ fn t423_cycle_is_refused_and_names_the_path() {
     p.clips.push(clip(1, 101, Tick(0), LEN));
     p.clips.push(clip(2, 102, LEN, LEN));
     p.validate().expect("ромб — не цикл: одна лента законно стоит в двух местах");
-    assert_eq!(p.sequence_uses(MediaId(100)), 2, "«сколько мест изменится вместе» считается неверно");
+    assert_eq!(
+        p.sequence_uses(MediaId(100)),
+        2,
+        "«сколько мест изменится вместе» считается неверно"
+    );
 }
 
 // ---- 424. глубина ------------------------------------------------------------
@@ -108,16 +112,19 @@ fn t424_depth_is_capped_and_the_cap_names_the_sequence() {
         let mut p = base();
         for i in 0..levels {
             let inner = if i == 0 { 1 } else { 100 + i - 1 };
-            p.sequences.push(seq(100 + i, &format!("У{i}"), vec![clip(10 + i, inner, Tick(0), LEN)]));
+            p.sequences.push(seq(
+                100 + i,
+                &format!("У{i}"),
+                vec![clip(10 + i, inner, Tick(0), LEN)],
+            ));
         }
         p.clips.push(clip(1, 100 + levels - 1, Tick(0), LEN));
         p
     };
     chain(MAX_NEST_DEPTH as u64).validate().expect("предельная глубина обязана быть законной");
 
-    let err = chain(MAX_NEST_DEPTH as u64 + 1)
-        .validate()
-        .expect_err("на уровень глубже предела — отказ");
+    let err =
+        chain(MAX_NEST_DEPTH as u64 + 1).validate().expect_err("на уровень глубже предела — отказ");
     assert!(matches!(err, ProjectError::SequenceTooDeep(..)), "глубина не опознана: {err}");
     assert!(
         err.to_string().contains(&format!("У{}", MAX_NEST_DEPTH)),
@@ -170,7 +177,10 @@ fn t425_document_wide_ids_and_closed_reels() {
     // имя ленты непустое: карточка без подписи в бине неотличима от соседней
     let mut p = base();
     p.sequences.push(seq(100, "  ", vec![clip(10, 1, Tick(0), LEN)]));
-    assert!(matches!(p.validate(), Err(ProjectError::SequenceUnnamed(..))), "лента без имени прошла");
+    assert!(
+        matches!(p.validate(), Err(ProjectError::SequenceUnnamed(..))),
+        "лента без имени прошла"
+    );
 
     // ни одна ссылка модели не пересекает границу ленты: цель морфер-слоя
     // в чужой ленте вернула бы None из joint(), и слой молча перестал бы
@@ -276,4 +286,256 @@ fn t426_sequence_does_not_lag_behind_the_root() {
     assert_eq!((s.morph_lanes, s.camera_lanes), (p.morph_lanes, p.camera_lanes));
     assert_eq!(s.overlap_layers, p.overlap_layers);
     assert_eq!(s.end(), Tick(0), "пустая лента обязана кончаться в нуле");
+}
+
+// ---- 427-430. команды и жесты (Р.50, п.380) -----------------------------------
+
+/// Три события подряд на одной дорожке, кроссфейд между вторым и третьим,
+/// и одно «снаружи» слева, с которым второе склеено переходом.
+fn montage() -> Project {
+    let mut p = base();
+    p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
+    for (i, start) in (0..4).map(|i| (i, Tick(i * LEN.0))) {
+        // второй файл стоит РОВНО на том, что уедет внутрь ленты: так
+        // проверяется, что медиа держит всё дерево, а не только корень
+        let mut c = clip(10 + i as u64, if (1..=2).contains(&i) { 2 } else { 1 }, start, LEN);
+        c.source_in = Tick(1_500);
+        p.clips.push(c);
+    }
+    p
+}
+
+/// Снимок «как это выглядит и звучит»: id не сравниваем — при разворачивании
+/// события законно получают свежие адреса, а тождественной обязана остаться
+/// КАРТИНКА.
+fn shape(p: &Project) -> Vec<(ClipKind, u32, i64, i64, i64, u64, bool)> {
+    let mut v: Vec<_> = p
+        .clips
+        .iter()
+        .map(|c| (c.kind, c.lane, c.start.0, c.duration.0, c.source_in.0, c.media.0, c.reversed))
+        .collect();
+    v.sort_by_key(|x| (x.0 as u8, x.1, x.2));
+    v
+}
+
+/// Переходы как ГЕОМЕТРИЯ: положение стыка и обе ручки.
+fn joints(p: &Project) -> Vec<(i64, i64, i64)> {
+    let mut v: Vec<_> = p
+        .transitions
+        .iter()
+        .filter_map(|t| t.joint(p).map(|j| (j.0, t.in_offset.0, t.out_offset.0)))
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+#[test]
+fn t427_collapse_then_expand_is_identity_in_one_undo_step() {
+    let mut p = montage();
+    // кроссфейд ВНУТРИ будущей ленты: он обязан уехать внутрь целиком и
+    // вернуться на тот же стык — иначе «свернул, развернул» теряет работу
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: Some(ClipId(11)),
+        b: Some(ClipId(12)),
+        in_offset: Tick(9_000),
+        out_offset: Tick(9_000),
+        kind: Default::default(),
+        audio: Default::default(),
+        auto: Vec::new(),
+    });
+    p.validate().expect("фикстура обязана быть законной");
+    let before_shape = shape(&p);
+    let before_joints = joints(&p);
+    let mut m = TimelineModel::new(p);
+
+    let mut n = ops::NestCounters::of(m.project());
+    let (cmds, rep) = ops::collapse_into_sequence(
+        m.project(),
+        &[ClipId(11), ClipId(12)],
+        "Кусок",
+        n.ids(),
+    );
+    m.apply_batch(cmds).expect("сворачивание обязано быть законным");
+    let seq_id = rep.seq.expect("лента не заведена");
+
+    // корень: два события остались, третьим стал экземпляр
+    let p = m.project();
+    assert_eq!(p.clips.len(), 3, "после сворачивания в корне не то число событий");
+    let inst = p.clips.iter().find(|c| c.media == seq_id).expect("экземпляра нет");
+    assert_eq!((inst.start.0, inst.duration.0), (LEN.0, 2 * LEN.0), "окно экземпляра не то");
+    assert_eq!(p.sequence(seq_id).map(|s| s.clips.len()), Some(2), "в ленте не два события");
+    assert_eq!(
+        p.sequence(seq_id).map(|s| s.transitions.len()),
+        Some(1),
+        "кроссфейд между свёрнутыми событиями не уехал внутрь ленты"
+    );
+    assert!(p.transitions.is_empty(), "кроссфейд остался и в корне — он теперь в двух местах");
+    // ClipId СОХРАНЕНЫ: те же события переехали, а не родились заново —
+    // на этом держатся переходы, link-группы, цели морферов и FX-состояние
+    let inner: Vec<u64> = p.sequence(seq_id).unwrap().clips.iter().map(|c| c.id.0).collect();
+    assert_eq!(inner, vec![11, 12], "id свёрнутых событий изменились: {inner:?}");
+
+    // ...и ОДИН шаг истории
+    m.undo().expect("сворачивание обязано отменяться одним шагом");
+    assert_eq!(shape(m.project()), before_shape, "undo не вернул монтаж");
+    assert!(m.project().sequences.is_empty(), "undo оставил ленту");
+
+    // развернули обратно — тождество
+    m.redo().expect("redo");
+    let (cmds, rep) = ops::expand_instance(
+        m.project(),
+        m.project().clips.iter().find(|c| c.media == seq_id).unwrap().id,
+        n.ids(),
+    );
+    assert!(!rep.chain_dropped && !rep.level_dropped, "снимать было нечего: {rep:?}");
+    m.apply_batch(cmds).expect("разворачивание обязано быть законным");
+    assert_eq!(
+        shape(m.project()),
+        before_shape,
+        "свернул и развернул — монтаж обязан быть ТЕМ ЖЕ: вложение с пустой \
+         цепочкой семантически тождественно своему содержимому (настройки \
+         наследуются, промежуточного растра нет)"
+    );
+    assert_eq!(joints(m.project()), before_joints, "переходы не вернулись на свои стыки");
+}
+
+#[test]
+fn t428_expand_drops_the_instance_chain_and_says_so() {
+    let mut m = TimelineModel::new(montage());
+    let mut n = ops::NestCounters::of(m.project());
+    let (cmds, rep) = ops::collapse_into_sequence(
+        m.project(),
+        &[ClipId(11), ClipId(12)],
+        "Кусок",
+        n.ids(),
+    );
+    m.apply_batch(cmds).unwrap();
+    let seq_id = rep.seq.unwrap();
+    let inst = m.project().clips.iter().find(|c| c.media == seq_id).unwrap().id;
+
+    // навесили на экземпляр то, чего внутри применить некуда
+    m.apply(Command::SetFx { id: inst, fx: vec![FxInstance::Gain { db: 3.0, pan: 0.0 }] }).unwrap();
+    m.apply(Command::SetOpacity { id: inst, opacity: 0.5 }).unwrap();
+
+    let (cmds, rep) = ops::expand_instance(
+        m.project(),
+        inst,
+        n.ids(),
+    );
+    assert!(
+        rep.chain_dropped && rep.level_dropped,
+        "разворачивание промолчало о снятой цепочке и уровне: {rep:?}. Снаружи они \
+         применялись к СОБРАННОЙ картинке, внутри такого места нет — молча \
+         раскидать их по кускам значит посчитать другое"
+    );
+    m.apply_batch(cmds).unwrap();
+    assert!(
+        m.project().clips.iter().all(|c| c.fx.is_empty()),
+        "цепочка экземпляра всё-таки расползлась по кускам"
+    );
+}
+
+#[test]
+fn t429_a_used_sequence_refuses_to_leave() {
+    let mut m = TimelineModel::new(montage());
+    let mut n = ops::NestCounters::of(m.project());
+    let (cmds, rep) = ops::collapse_into_sequence(
+        m.project(),
+        &[ClipId(11), ClipId(12)],
+        "Кусок",
+        n.ids(),
+    );
+    m.apply_batch(cmds).unwrap();
+    let seq_id = rep.seq.unwrap();
+
+    assert_eq!(
+        m.apply(Command::RemoveSequence { id: seq_id }),
+        Err(CommandError::SequenceInUse(seq_id, 1)),
+        "занятая лента удалилась молча — события повисли бы на несуществующем адресе"
+    );
+    assert!(
+        ops::remove_unused_sequences(m.project()).is_empty(),
+        "занятая лента попала в уборку неиспользованных"
+    );
+
+    // поставили её во ВТОРОЕ место и отвязали одно из них
+    let inst = m.project().clips.iter().find(|c| c.media == seq_id).unwrap().clone();
+    let mut twin = inst.clone();
+    twin.id = ClipId(n.clip);
+    n.clip += 1;
+    twin.link_group = None;
+    twin.start = Tick(10 * LEN.0);
+    m.apply(Command::AddClip(twin.clone())).expect("вторая постановка ленты законна");
+    assert_eq!(m.project().sequence_uses(seq_id), 2, "второе место не посчиталось");
+
+    let cmds = ops::make_independent(
+        m.project(),
+        twin.id,
+        "Кусок 2",
+        n.ids(),
+    );
+    m.apply_batch(cmds).expect("отвязывание обязано быть законным");
+    assert_eq!(m.project().sequences.len(), 2, "своя лента не появилась");
+    assert_eq!(m.project().sequence_uses(seq_id), 1, "первая лента не освободилась");
+    // содержимое то же, а адреса событий — СВЕЖИЕ (иначе карты kt-otio
+    // молча обменяли бы материал между лентами)
+    let a: Vec<u64> = m.project().sequences[0].clips.iter().map(|c| c.id.0).collect();
+    let b: Vec<u64> = m.project().sequences[1].clips.iter().map(|c| c.id.0).collect();
+    assert_eq!(a.len(), b.len(), "копия ленты потеряла события");
+    assert!(a.iter().all(|x| !b.contains(x)), "адреса событий копии совпали с оригиналом");
+
+    // освободили — и уборка её видит
+    m.apply(Command::RemoveClip { id: twin.id }).unwrap();
+    let cmds = ops::remove_unused_sequences(m.project());
+    assert_eq!(cmds.len(), 1, "освободившаяся лента не попала в уборку");
+    m.apply_batch(cmds).expect("уборка обязана проходить");
+}
+
+#[test]
+fn t430_outer_transition_is_rehung_and_media_is_held_by_the_whole_tree() {
+    let mut m = TimelineModel::new(montage());
+    // кроссфейд между СНАРУЖИ (10) и тем, что уедет внутрь (11)
+    m.apply(Command::AddTransition(TransitionEvent {
+        id: TransitionId(1),
+        a: Some(ClipId(10)),
+        b: Some(ClipId(11)),
+        in_offset: Tick(9_000),
+        out_offset: Tick(9_000),
+        kind: Default::default(),
+        audio: Default::default(),
+        auto: Vec::new(),
+    }))
+    .expect("кроссфейд на стыке законен");
+
+    let mut n = ops::NestCounters::of(m.project());
+    let (cmds, rep) = ops::collapse_into_sequence(
+        m.project(),
+        &[ClipId(11), ClipId(12)],
+        "Кусок",
+        n.ids(),
+    );
+    assert_eq!(rep.rehung, 1, "переход с одним концом снаружи не перевешен: {rep:?}");
+    m.apply_batch(cmds).unwrap();
+
+    let p = m.project();
+    let inst = p.clips.iter().find(|c| c.media == rep.seq.unwrap()).unwrap();
+    let t = p.transitions.iter().find(|t| t.id == TransitionId(1)).expect(
+        "кроссфейд со свёрнутым куском умер вместе с исчезнувшим концом — \
+         пользователь потерял работу молча",
+    );
+    assert_eq!((t.a, t.b), (Some(ClipId(10)), Some(inst.id)), "переход перевешен не туда");
+    assert_eq!(t.joint(p), Some(inst.start), "стык перевешенного перехода уехал");
+
+    // медиа держит ВСЁ ДЕРЕВО: файл, оставшийся только внутри ленты, не
+    // удаляется — иначе события повисли бы, и всплыло бы это через неделю
+    assert!(
+        p.clips.iter().all(|c| c.media != MediaId(2)),
+        "в корне не должно остаться событий на этом файле — в этом весь случай"
+    );
+    assert_eq!(
+        m.apply(Command::RemoveMedia { id: MediaId(2) }),
+        Err(CommandError::MediaInUse(MediaId(2))),
+        "файл, стоящий только ВНУТРИ ленты, удалился молча"
+    );
 }

@@ -4879,6 +4879,48 @@ impl KtApp {
                     self.sync_selected_by_audio();
                     ui.close();
                 }
+                // вложенные ленты (Р.50). Свернуть можно что угодно —
+                // пункт стоит у события; развернуть, отвязать и
+                // переименовать — только у САМОГО вложения, и «отвязать»
+                // показывается лишь когда мест и правда больше одного
+                if ui.button(tr(k::tl::menu::COLLAPSE)).clicked() {
+                    if !self.is_selected(id) {
+                        self.select_only(id);
+                    }
+                    self.collapse_selection();
+                    ui.close();
+                }
+                if let Some(seq) =
+                    self.model.clip(id).map(|c| c.media).filter(|m| self.nest_uses(*m) > 0)
+                    && self.model.project().sequence(seq).is_some()
+                {
+                    if ui.button(tr(k::tl::menu::NEST_EXPAND)).clicked() {
+                        self.expand_nest(id);
+                        ui.close();
+                    }
+                    let uses = self.nest_uses(seq);
+                    if uses > 1
+                        && crate::widgets::menu_item(
+                            ui,
+                            tr(k::tl::menu::NEST_INDEPENDENT),
+                            Some(&format!("×{uses}")),
+                        )
+                    {
+                        self.nest_make_independent(id);
+                        ui.close();
+                    }
+                    if ui.button(tr(k::tl::menu::NEST_RENAME)).clicked() {
+                        let name = self
+                            .model
+                            .project()
+                            .sequence(seq)
+                            .map(|s| s.name.clone())
+                            .unwrap_or_default();
+                        self.seq_name =
+                            Some(crate::app::SeqNameDialog { seq, name, focus: true });
+                        ui.close();
+                    }
+                }
                 if ui.button(tr(k::tl::menu::SPLIT)).clicked() {
                     if !self.is_selected(id) {
                         self.select_only(id);

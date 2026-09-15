@@ -47,6 +47,7 @@ paste = "لصق عند المؤشر"
 delete = "حذف"
 cut_region = "تقسيم / قص المنطقة"
 trim_stretches_auto = "القص يمطّ الحركة مع الحدث"
+remove_unused_seqs = "إزالة البكرات غير المستخدمة"
 
 [menu.view]
 title = "عرض"
@@ -201,6 +202,11 @@ remove_transition = "إزالة هذا الانتقال"
 sync_audio = "مزامنة بالصوت مع الحدث المحدد الآخر"
 
 # Медиа-бин: режимы, подсказки, пустое состояние.
+collapse = "طي التحديد في بكرة"
+nest_expand = "نشر البكرة على المسارات"
+nest_independent = "فصل عن الأماكن الأخرى"
+nest_rename = "إعادة تسمية البكرة…"
+
 [bin]
 hint_free = "تخطيط حر: تُحرَّك البطاقات بالفأرة"
 hint_grid = "شبكة: تُرتَّب البطاقات تلقائيًا"
@@ -680,6 +686,21 @@ sync_done = "الإزاحة {0} مللي ثانية، الثقة {1}%"
 sync_out_of_range = "ستؤدي المحاذاة إلى نقل الحدث قبل بداية المشروع"
 analysis_failed = "فشل التحليل: {0}"
 analysis_stale = "تغيّر المونتاج أثناء التحليل — لم تُطبَّق النتيجة"
+nest_need_selection = "حدد الأحداث أولا ثم اطوها"
+nest_default_name = "بكرة"
+nest_collapsed = "مطوي في: {0}"
+nest_outer_layers = "طبقات التحويل تؤثر الآن على الصورة المجمعة: {0}"
+nest_not_a_nest = "هذا الحدث ليس بكرة متداخلة"
+nest_expanded = "تم النشر على المسارات"
+nest_expand_dropped = "تم النشر؛ أزيلت سلسلة المؤثرات والمستوى: خارجا كانا يطبقان على الصورة المجمعة"
+nest_independent = "تم الفصل إلى بكرة خاصة: {0}"
+nest_none_unused = "كل البكرات مستخدمة"
+nest_removed_unused = "بكرات غير مستخدمة أزيلت: {0}"
+nest_rename_title = "إعادة تسمية البكرة"
+nest_name_label = "الاسم"
+nest_rename_do = "إعادة تسمية"
+nest_uses = "أماكن تتغير معا: {0}"
+
 [dialog]
 import_ktproj = "استيراد مشروع .ktproj قديم"
 open_project = "فتح مشروع"

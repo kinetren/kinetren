@@ -5,8 +5,13 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn sample_project() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 1920, height: 1080, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1920,
+        height: 1080,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "clips/a.mp4".into() });
     p.clips.push(ClipEvent {
         id: ClipId(10),

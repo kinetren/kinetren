@@ -77,6 +77,14 @@ pub struct PresetSaveDialog {
     pub focus: bool,
 }
 
+/// Окно имени ленты (Р.50). Та же форма, что у окна имени пресета: живой
+/// предпросмотр, Enter/Esc, фокус отдаётся при закрытии (правило 14).
+pub struct SeqNameDialog {
+    pub seq: kt_model::MediaId,
+    pub name: String,
+    pub focus: bool,
+}
+
 #[derive(Clone)]
 pub struct DuckDialog {
     /// События, к которым применится кривая (выделение на момент вызова).
@@ -409,6 +417,8 @@ pub struct KtApp {
     pub paste_names: Option<PasteNamesDialog>,
     pub duck: Option<DuckDialog>,
     pub preset_save: Option<PresetSaveDialog>,
+    /// Окно переименования вложенной ленты (Р.50).
+    pub seq_name: Option<SeqNameDialog>,
     /// Библиотека FX-пресетов (Р.48): файл пользователя, общий на все
     /// проекты. Загружается лениво при первом обращении.
     pub presets: crate::user_store::FxPresetStore,
@@ -685,6 +695,7 @@ impl KtApp {
             paste_names: None,
             duck: None,
             preset_save: None,
+            seq_name: None,
             presets: Default::default(),
             presets_reported: false,
             dir_sync_warned: false,
@@ -862,6 +873,7 @@ impl KtApp {
             paste_names: None,
             duck: None,
             preset_save: None,
+            seq_name: None,
             presets: Default::default(),
             presets_reported: false,
             dir_sync_warned: false,
@@ -1305,6 +1317,7 @@ impl KtApp {
         self.draw_paste_names(&ctx);
         self.draw_duck_dialog(&ctx);
         self.draw_preset_save(&ctx);
+        self.draw_seq_name(&ctx);
         self.draw_render_dialog(&ctx);
         self.draw_diagnostics(&ctx);
 
@@ -2536,6 +2549,166 @@ impl KtApp {
                 (off.confidence * 100.0).round()
             ));
         }
+    }
+
+    // ---- вложенные ленты (Р.50, п.381) ------------------------------------
+
+    /// Свернуть выделение в ленту. ОДНО ТЕЛО на все пути вызова (правило 17):
+    /// меню события, главное меню.
+    pub fn collapse_selection(&mut self) {
+        let ids = self.selected_with_groups();
+        if ids.is_empty() {
+            self.warn(tr(k::msg::NEST_NEED_SELECTION));
+            return;
+        }
+        let mut n = kt_model::ops::NestCounters::of(self.model.project());
+        let taken: Vec<String> =
+            self.model.project().sequences.iter().map(|s| s.name.clone()).collect();
+        let name = kt_model::unique_name(&taken, tr(k::msg::NEST_DEFAULT_NAME), "copy");
+        let (cmds, rep) =
+            kt_model::ops::collapse_into_sequence(self.model.project(), &ids, &name, n.ids());
+        if cmds.is_empty() {
+            self.warn(tr(k::msg::NEST_NEED_SELECTION));
+            return;
+        }
+        // Материал НЕ режется: события переехали в ленту целиком, поэтому
+        // возврата ручек (apply_batch_restoring) тут быть не должно — он
+        // отдал бы материал клипам, которых в корне уже нет.
+        if !self.apply_batch(cmds) {
+            return;
+        }
+        if let Some(seq) = rep.seq
+            && let Some(inst) = self.model.project().clips.iter().find(|c| c.media == seq)
+        {
+            let id = inst.id;
+            self.select_only(id);
+        }
+        self.note(crate::tf!(k::msg::NEST_COLLAPSED, name.clone()));
+        // Морфер-слой, накрывавший свёрнутое СНАРУЖИ, теперь бьёт по
+        // собранной картинке, а не по каждому куску: картинка законно
+        // изменилась, и человек обязан узнать об этом СРАЗУ, а не искать
+        // причину потом.
+        if rep.outer_layers > 0 {
+            self.warn(crate::tf!(k::msg::NEST_OUTER_LAYERS, rep.outer_layers));
+        }
+    }
+
+    /// Развернуть экземпляр обратно на дорожки.
+    pub fn expand_nest(&mut self, id: ClipId) {
+        let mut n = kt_model::ops::NestCounters::of(self.model.project());
+        let (cmds, rep) = kt_model::ops::expand_instance(self.model.project(), id, n.ids());
+        if cmds.is_empty() {
+            self.warn(tr(k::msg::NEST_NOT_A_NEST));
+            return;
+        }
+        if !self.apply_batch(cmds) {
+            return;
+        }
+        // правило 16: снятое обязано быть НАЗВАНО, а не обнаружено потом
+        if rep.chain_dropped || rep.level_dropped {
+            self.warn(tr(k::msg::NEST_EXPAND_DROPPED));
+        } else {
+            self.note(tr(k::msg::NEST_EXPANDED));
+        }
+    }
+
+    /// Отвязать экземпляр от остальных мест: содержимое копируется в свою ленту.
+    pub fn nest_make_independent(&mut self, id: ClipId) {
+        let p = self.model.project();
+        let Some(seq) = p.clips.iter().find(|c| c.id == id).and_then(|c| p.sequence(c.media))
+        else {
+            self.warn(tr(k::msg::NEST_NOT_A_NEST));
+            return;
+        };
+        let taken: Vec<String> = p.sequences.iter().map(|s| s.name.clone()).collect();
+        let name = kt_model::unique_name(&taken, &seq.name, "copy");
+        let mut n = kt_model::ops::NestCounters::of(p);
+        let cmds = kt_model::ops::make_independent(self.model.project(), id, &name, n.ids());
+        if self.apply_batch(cmds) {
+            self.note(crate::tf!(k::msg::NEST_INDEPENDENT, name));
+        }
+    }
+
+    /// Убрать ленты, на которые больше никто не смотрит.
+    pub fn remove_unused_seqs(&mut self) {
+        let cmds = kt_model::ops::remove_unused_sequences(self.model.project());
+        let n = cmds.len();
+        if n == 0 {
+            self.note(tr(k::msg::NEST_NONE_UNUSED));
+            return;
+        }
+        if self.apply_batch(cmds) {
+            self.note(crate::tf!(k::msg::NEST_REMOVED_UNUSED, n));
+        }
+    }
+
+    /// Окно имени ленты (эталон — окно имени пресета, t345).
+    fn draw_seq_name(&mut self, ctx: &egui::Context) {
+        let Some(mut d) = self.seq_name.take() else { return };
+        let mut go = false;
+        let mut cancel = false;
+        let mut open = true;
+        let taken: Vec<String> = self
+            .model
+            .project()
+            .sequences
+            .iter()
+            .filter(|s| s.id != d.seq)
+            .map(|s| s.name.clone())
+            .collect();
+        egui::Window::new(tr(k::msg::NEST_RENAME_TITLE))
+            .id(egui::Id::new("seq_name"))
+            .open(&mut open)
+            .resizable(false)
+            .collapsible(false)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(tr(k::msg::NEST_NAME_LABEL));
+                    let resp =
+                        ui.add(egui::TextEdit::singleline(&mut d.name).desired_width(200.0));
+                    if d.focus {
+                        resp.request_focus();
+                        d.focus = false;
+                    }
+                    if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        go = true;
+                    }
+                });
+                // сколько мест изменится вместе с этим — наш единственный
+                // ответ на общую беду Premiere/FCP/VEGAS, и он бесплатен
+                ui.label(
+                    egui::RichText::new(crate::tf!(k::msg::NEST_USES, self.nest_uses(d.seq)))
+                        .weak()
+                        .small(),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button(tr(k::msg::NEST_RENAME_DO)).clicked() {
+                        go = true;
+                    }
+                    if ui.button(tr(k::fx::CANCEL)).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            cancel = true;
+        }
+        if go && !d.name.trim().is_empty() {
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("seq_name")));
+            let name = kt_model::unique_name(&taken, d.name.trim(), "copy");
+            self.apply(Command::RenameSequence { id: d.seq, name });
+            return;
+        }
+        if cancel || !open {
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("seq_name")));
+            return;
+        }
+        self.seq_name = Some(d);
+    }
+
+    /// Сколько мест дерева смотрит на эту ленту.
+    pub fn nest_uses(&self, seq: kt_model::MediaId) -> usize {
+        self.model.project().sequence_uses(seq)
     }
 
     /// Ответить на заданный вопрос. Вынесено из отрисовки, чтобы тест

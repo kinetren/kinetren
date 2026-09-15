@@ -93,10 +93,7 @@ fn block_extras(p: &Project, clips: &[ClipEvent], base: Option<Tick>, len: Tick)
                 // слой и ссылки целей не морозят: они едут, если сам блок
                 // морфера попал в окно
                 _ => {
-                    return m
-                        .window()
-                        .overlaps(&win)
-                        .then(|| rebase_morpher(m, base));
+                    return m.window().overlaps(&win).then(|| rebase_morpher(m, base));
                 }
             };
             (!kept.is_empty()).then(|| {
@@ -531,7 +528,11 @@ fn room_right(p: &Project, c: &ClipEvent) -> i64 {
         .iter()
         .map(|m| {
             let end = (m.start + m.duration).0;
-            obstacles(p, m).filter(|(s, _)| *s >= end).map(|(s, _)| s - end).min().unwrap_or(i64::MAX)
+            obstacles(p, m)
+                .filter(|(s, _)| *s >= end)
+                .map(|(s, _)| s - end)
+                .min()
+                .unwrap_or(i64::MAX)
         })
         .min()
         .unwrap_or(0)
@@ -695,12 +696,10 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
         let a0 = p.clips.iter().find(|c| c.id == a_id).unwrap().clone();
         let b0 = p.clips.iter().find(|c| c.id == b_id).unwrap().clone();
         let (ov0, ov1) = (b0.start, a0.start + a0.duration);
-        let joint = Tick(
-            (ov0.0 + (ov1.0 - ov0.0) / 2).clamp(
-                (a0.start + MIN_CLIP_DURATION).0,
-                (b0.start + b0.duration - MIN_CLIP_DURATION).0,
-            ),
-        );
+        let joint = Tick((ov0.0 + (ov1.0 - ov0.0) / 2).clamp(
+            (a0.start + MIN_CLIP_DURATION).0,
+            (b0.start + b0.duration - MIN_CLIP_DURATION).0,
+        ));
         for c in p.clips.iter_mut() {
             if c.id == a_id {
                 raw_trim_end(c, joint);
@@ -740,8 +739,7 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
     //    ниже раннего — старый тайбрейк (сверху тот, у кого start меньше)
     //    сохраняется байт-в-байт
     while let Some(mover) = find_overlap_mover(p, ClipKind::Video) {
-        let keeper_lane =
-            p.clips.iter().find(|c| c.id == mover).map(|c| c.lane).unwrap_or(0);
+        let keeper_lane = p.clips.iter().find(|c| c.id == mover).map(|c| c.lane).unwrap_or(0);
         for c in p.clips.iter_mut() {
             if c.kind == ClipKind::Video && c.lane > keeper_lane {
                 c.lane += 1;
@@ -801,12 +799,8 @@ fn find_audio_pair(p: &Project) -> Option<(ClipId, ClipId)> {
 /// Первый конфликтующий клип вида `kind`: в каждой зоне перекрытия остаётся
 /// самый ранний (по (start, id)), следующий — кандидат на переезд.
 fn find_overlap_mover(p: &Project, kind: ClipKind) -> Option<ClipId> {
-    let mut spans: Vec<(&ClipEvent, Tick)> = p
-        .clips
-        .iter()
-        .filter(|c| c.kind == kind)
-        .map(|c| (c, c.start + c.duration))
-        .collect();
+    let mut spans: Vec<(&ClipEvent, Tick)> =
+        p.clips.iter().filter(|c| c.kind == kind).map(|c| (c, c.start + c.duration)).collect();
     spans.sort_by_key(|(c, _)| (c.lane, c.start, c.id));
     for w in spans.windows(2) {
         let ((a, a_end), (b, _)) = (&w[0], &w[1]);
@@ -969,9 +963,8 @@ pub fn duck_curve_commands(
         };
         // ключи в тиках МАТЕРИАЛА — тем же правилом, что у редактора
         // кривых (реверс и обрезка учтены одной функцией)
-        let mat = |t: Tick| {
-            crate::clip_material_at(c.source_in, c.start, c.duration, c.reversed, 1, t)
-        };
+        let mat =
+            |t: Tick| crate::clip_material_at(c.source_in, c.start, c.duration, c.reversed, 1, t);
         let mut keys: Vec<AutoKey> = Vec::new();
         let push = |t: Tick, v: f64, keys: &mut Vec<AutoKey>| {
             let t = mat(t.clamp(c.start, clip_end));
@@ -1055,4 +1048,403 @@ pub enum SyncPlan {
     /// Совмещение уводит событие ЗА НАЧАЛО проекта. Кламп к нулю тут
     /// недопустим: он выглядит как успех, а материалы остаются вразнобой.
     OutOfRange,
+}
+
+// ---- вложенные секвенции (Р.50, п.380) --------------------------------------
+
+/// Свежие адреса для операций над лентами. Тот же приём, что `PasteIds`:
+/// растущий список аргументов перестаёт читаться на четвёртом.
+pub struct NestIds<'a> {
+    pub media: &'a mut u64,
+    pub clip: &'a mut u64,
+    pub group: &'a mut u64,
+    pub transition: &'a mut u64,
+    pub morph: &'a mut u64,
+}
+
+/// Счётчики свежих адресов, посчитанные ОТ ПРОЕКТА.
+///
+/// Заведены отдельной структурой, потому что операции над лентами раздают
+/// адреса пяти видов сразу, и call-site, который выпишет их руками, рано или
+/// поздно выпишет их по дереву не целиком: `ClipId` уникален по ВСЕМУ
+/// документу, и «максимум по `p.clips`» мимо лент — это молчаливое
+/// столкновение адресов.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NestCounters {
+    pub media: u64,
+    pub clip: u64,
+    pub group: u64,
+    pub transition: u64,
+    pub morph: u64,
+}
+
+impl NestCounters {
+    pub fn of(p: &Project) -> NestCounters {
+        let reels = || std::iter::once(&p.clips).chain(p.sequences.iter().map(|s| &s.clips));
+        let max = |it: &mut dyn Iterator<Item = u64>| it.max().unwrap_or(0) + 1;
+        NestCounters {
+            media: max(
+                &mut p
+                    .media
+                    .iter()
+                    .map(|m| m.id.0)
+                    .chain(p.sequences.iter().map(|s| s.id.0)),
+            ),
+            clip: max(&mut reels().flat_map(|cs| cs.iter().map(|c| c.id.0))),
+            group: max(&mut reels().flat_map(|cs| cs.iter().filter_map(|c| c.link_group.map(|g| g.0)))),
+            transition: max(
+                &mut std::iter::once(&p.transitions)
+                    .chain(p.sequences.iter().map(|s| &s.transitions))
+                    .flat_map(|ts| ts.iter().map(|t| t.id.0)),
+            ),
+            morph: max(
+                &mut std::iter::once(&p.morphers)
+                    .chain(p.sequences.iter().map(|s| &s.morphers))
+                    .flat_map(|ms| ms.iter().map(|m| m.id.0)),
+            ),
+        }
+    }
+
+    pub fn ids(&mut self) -> NestIds<'_> {
+        NestIds {
+            media: &mut self.media,
+            clip: &mut self.clip,
+            group: &mut self.group,
+            transition: &mut self.transition,
+            morph: &mut self.morph,
+        }
+    }
+}
+
+/// Что сворачивание изменило, кроме монтажа. Возвращается, а не
+/// «доправляется»: человеку надо сказать (правило 16), а не догадываться.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CollapseReport {
+    /// Адрес заведённой ленты.
+    pub seq: Option<MediaId>,
+    /// Переходы, у которых один конец остался СНАРУЖИ: они перевешены на
+    /// экземпляр (кроссфейд со свёрнутым куском остаётся кроссфейдом).
+    pub rehung: usize,
+    /// Морфер-слои, накрывавшие свёрнутое СНАРУЖИ. Они остаются снаружи и
+    /// теперь бьют по СОБРАННОЙ картинке, а не по каждому куску: картинка
+    /// законно меняется, и об этом обязано быть сказано.
+    pub outer_layers: usize,
+}
+
+/// Свернуть выделение в ленту и поставить на его место экземпляр.
+///
+/// Тело набирает `copy_clips` — второго правила «что едет с выделением»
+/// заводить нельзя: разойдись они, копипаст и сворачивание брали бы разное,
+/// и объяснить это было бы нечем.
+///
+/// **`ClipId` сохраняются.** Те же события переехали в другой контейнер, а не
+/// родились заново: поэтому переходы, link-группы и замороженные цели
+/// морферов переезжают verbatim, а FX-состояние движка (ключ — `ClipId`)
+/// живёт дальше и хвосты ревербов не обрываются (инвариант 3).
+pub fn collapse_into_sequence(
+    p: &Project,
+    ids: &[ClipId],
+    name: &str,
+    n: NestIds<'_>,
+) -> (Vec<Command>, CollapseReport) {
+    let block = copy_clips(p, ids);
+    if block.clips.is_empty() {
+        return (Vec::new(), CollapseReport::default());
+    }
+    let members: Vec<ClipId> = block.clips.iter().map(|c| c.id).collect();
+    let base = p
+        .clips
+        .iter()
+        .filter(|c| members.contains(&c.id))
+        .map(|c| c.start)
+        .min()
+        .unwrap_or(Tick::ZERO);
+    let len = block_len(&block.clips);
+    let seq_id = MediaId(*n.media);
+    *n.media += 1;
+
+    // Содержимое ленты: события, переходы и морферы блока. Области и метки
+    // ОСТАЮТСЯ В КОРНЕ: это навигация по проекту, человек поставил их там, и
+    // утащить их внутрь значило бы «отрубить само» (правило 20).
+    let mut content = Sequence::new(seq_id, name);
+    content.clips = block.clips.clone();
+    content.transitions = block.transitions.clone();
+    content.morphers = block.morphers.clone();
+    content.video_lanes =
+        lanes_needed(&content.clips, ClipKind::Video).max(1);
+    content.audio_lanes =
+        lanes_needed(&content.clips, ClipKind::Audio).max(1);
+    content.morph_lanes = content.morphers.iter().map(|m| m.lane + 1).max().unwrap_or(0);
+    content.overlap_layers = p.overlap_layers;
+
+    let mut report = CollapseReport { seq: Some(seq_id), ..Default::default() };
+    report.outer_layers = p
+        .morphers
+        .iter()
+        .filter(|m| !block.morphers.iter().any(|b| b.id == m.id))
+        .filter(|m| m.window().overlaps(&TickRange::new(base, base + len)))
+        .count();
+
+    let mut cmds = vec![
+        Command::AddSequence { id: seq_id, name: name.to_string() },
+        Command::SetSequenceContent { id: seq_id, content: Box::new(content) },
+    ];
+    for id in &members {
+        cmds.push(Command::RemoveClip { id: *id });
+    }
+
+    // Экземпляр — ОБЫЧНЫЙ клип, и он ПАРА (видео + аудио) в одной
+    // link-группе: тогда «смонтируй, потом замедли целиком» получается даром
+    // через существующий `sync_warp_to_link_group`.
+    let kinds: Vec<ClipKind> = [ClipKind::Video, ClipKind::Audio]
+        .into_iter()
+        .filter(|k| block.clips.iter().any(|c| c.kind == *k))
+        .collect();
+    let group = (kinds.len() > 1).then(|| {
+        let g = GroupId(*n.group);
+        *n.group += 1;
+        g
+    });
+    let mut instances: Vec<(ClipKind, ClipId)> = Vec::new();
+    for k in kinds {
+        // самое верхнее из свёрнутого: экземпляр встаёт туда, куда человек
+        // смотрел, а не на нулевую дорожку
+        let lane = p
+            .clips
+            .iter()
+            .filter(|c| members.contains(&c.id) && c.kind == k)
+            .map(|c| c.lane)
+            .min()
+            .unwrap_or(0);
+        let id = ClipId(*n.clip);
+        *n.clip += 1;
+        instances.push((k, id));
+        let first = p
+            .clips
+            .iter()
+            .filter(|c| members.contains(&c.id) && c.kind == k)
+            .min_by_key(|c| (c.start, c.id))
+            .map(|c| c.id);
+        if let Some(parent) = first {
+            // конверт экземпляра — от первого свёрнутого события его вида
+            cmds.push(Command::NoteBirth { child: id, parent });
+        }
+        cmds.push(Command::AddClip(ClipEvent {
+            id,
+            link_group: group,
+            kind: k,
+            lane,
+            start: base,
+            duration: len,
+            source_in: Tick::ZERO,
+            media: seq_id,
+            gain_db: 0.0,
+            reversed: false,
+            fx: Vec::new(),
+            fx_bypass: Vec::new(),
+            fx_auto: Vec::new(),
+            opacity: 1.0,
+            fx_off: false,
+        }));
+    }
+
+    // Переход, у которого ОДИН конец остался снаружи, перевешивается на
+    // экземпляр: кроссфейд со свёрнутым куском обязан остаться кроссфейдом,
+    // а не умереть от `reconcile_transitions` вместе с исчезнувшим концом.
+    for t in &p.transitions {
+        let inside = |id: Option<ClipId>| id.is_some_and(|i| members.contains(&i));
+        let (ia, ib) = (inside(t.a), inside(t.b));
+        if ia == ib {
+            continue; // оба внутри (уехал в ленту) или оба снаружи (цел)
+        }
+        let outer = if ia { t.b } else { t.a };
+        let kind = outer
+            .and_then(|i| p.clips.iter().find(|c| c.id == i))
+            .map(|c| c.kind)
+            .or_else(|| {
+                let side = if ia { t.a } else { t.b };
+                side.and_then(|i| p.clips.iter().find(|c| c.id == i)).map(|c| c.kind)
+            });
+        let Some(inst) = kind.and_then(|k| instances.iter().find(|(x, _)| *x == k)) else {
+            continue;
+        };
+        let mut copy = t.clone();
+        if ia {
+            copy.a = Some(inst.1);
+        } else {
+            copy.b = Some(inst.1);
+        }
+        cmds.push(Command::SetTransition(copy));
+        report.rehung += 1;
+    }
+    (cmds, report)
+}
+
+fn lanes_needed(clips: &[ClipEvent], k: ClipKind) -> u32 {
+    clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max().unwrap_or(1)
+}
+
+/// Что разворачивание сделало сверх переноса событий.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ExpandReport {
+    /// Экземпляр нёс цепочку эффектов, и она СНЯТА: снаружи она
+    /// применялась к собранной картинке, внутри такого места нет. Молча
+    /// раскидать её по кускам — значит посчитать другое (правило 16).
+    pub chain_dropped: bool,
+    /// Экземпляр нёс уровень/реверс/варп — тоже сняты, по той же причине.
+    pub level_dropped: bool,
+    /// Сколько дорожек пришлось вставить под содержимое.
+    pub lanes_inserted: usize,
+}
+
+/// Развернуть экземпляр обратно на дорожки.
+///
+/// Содержимое подрезается окном экземпляра ОДНИМ правилом куска
+/// (`clip_slice`) и переносится на свежие id через `paste_block`: тело ленты
+/// остаётся на месте — та же лента может стоять ещё в пяти местах.
+pub fn expand_instance(
+    p: &Project,
+    id: ClipId,
+    n: NestIds<'_>,
+) -> (Vec<Command>, ExpandReport) {
+    let Some(inst) = p.clips.iter().find(|c| c.id == id) else {
+        return (Vec::new(), ExpandReport::default());
+    };
+    let Some(seq) = p.sequence(inst.media) else { return (Vec::new(), ExpandReport::default()) };
+    let mut report = ExpandReport {
+        chain_dropped: !inst.fx.is_empty(),
+        level_dropped: inst.opacity != 1.0 || inst.gain_db != 0.0 || inst.reversed,
+        lanes_inserted: 0,
+    };
+    // окно экземпляра в координатах содержимого
+    let win = TickRange::new(inst.source_in, inst.source_in + inst.duration);
+    let mut block = ClipBlock::default();
+    for c in &seq.clips {
+        let body = TickRange::new(c.start, c.start + c.duration);
+        let cut = body.intersect(&win);
+        if cut.is_empty() || cut.len() < MIN_CLIP_DURATION {
+            continue;
+        }
+        // id тут временный: `paste_block` ниже выдаст свежие и ретаргетит
+        // переходы на них. Важно, что материальная точка входа куска
+        // считается ЕДИНСТВЕННЫМ правилом проекта.
+        let mut s = clip_slice(c, cut, c.id);
+        s.start = cut.start - win.start;
+        block.clips.push(s);
+    }
+    if block.clips.is_empty() {
+        return (Vec::new(), report);
+    }
+    block.transitions = seq
+        .transitions
+        .iter()
+        .filter(|t| {
+            let ok = |x: Option<ClipId>| x.is_none_or(|i| block.clips.iter().any(|c| c.id == i));
+            ok(t.a) && ok(t.b)
+        })
+        .cloned()
+        .collect();
+
+    // Дорожки ВСТАВЛЯЮТСЯ под содержимое, а не занимаются чужие: иначе
+    // разворачивание молча меняет z-order соседей — «отросло само».
+    let mut cmds = Vec::new();
+    let partners: Vec<&ClipEvent> = p
+        .clips
+        .iter()
+        .filter(|c| c.id == id || (inst.link_group.is_some() && c.link_group == inst.link_group))
+        .collect();
+    let mut lane_of: std::collections::HashMap<ClipKind, u32> = std::collections::HashMap::new();
+    for c in &partners {
+        lane_of.insert(c.kind, c.lane);
+    }
+    for k in [ClipKind::Video, ClipKind::Audio] {
+        let need = block.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max();
+        let (Some(need), Some(&at)) = (need, lane_of.get(&k)) else { continue };
+        for _ in 1..need {
+            cmds.push(Command::InsertLane { kind: k, at: at + 1 });
+            report.lanes_inserted += 1;
+        }
+        for c in block.clips.iter_mut().filter(|c| c.kind == k) {
+            c.lane += at;
+        }
+    }
+    for c in &partners {
+        cmds.push(Command::RemoveClip { id: c.id });
+    }
+    let (paste, _, _) = paste_block(
+        &block,
+        inst.start,
+        PasteIds {
+            clip: n.clip,
+            group: n.group,
+            transition: n.transition,
+            morph: n.morph,
+        },
+        &PasteNames::default(),
+    );
+    cmds.extend(paste);
+    (cmds, report)
+}
+
+/// Отвязать экземпляр от остальных мест: содержимое копируется в СВОЮ ленту.
+///
+/// Нужно ровно тогда, когда «правка внутри меняет все места» перестаёт быть
+/// тем, чего человек хочет. Названо не «Unlink» — рядом уже есть разрыв
+/// A/V-связи, и одно слово на два разных действия врало бы (правило 18).
+pub fn make_independent(
+    p: &Project,
+    id: ClipId,
+    name: &str,
+    n: NestIds<'_>,
+) -> Vec<Command> {
+    let Some(inst) = p.clips.iter().find(|c| c.id == id) else { return Vec::new() };
+    let Some(seq) = p.sequence(inst.media) else { return Vec::new() };
+    let new_id = MediaId(*n.media);
+    *n.media += 1;
+    let mut copy = seq.clone();
+    copy.id = new_id;
+    copy.name = name.to_string();
+    // id содержимого обязаны быть СВЕЖИМИ: `ClipId` уникален по всему
+    // документу, иначе карты `Retained` в kt-otio обменяют материал между
+    // лентами молча
+    let mut map: std::collections::HashMap<ClipId, ClipId> = std::collections::HashMap::new();
+    for c in &mut copy.clips {
+        let fresh = ClipId(*n.clip);
+        *n.clip += 1;
+        map.insert(c.id, fresh);
+        c.id = fresh;
+    }
+    for t in &mut copy.transitions {
+        t.id = TransitionId(*n.transition);
+        *n.transition += 1;
+        t.a = t.a.map(|x| map[&x]);
+        t.b = t.b.map(|x| map[&x]);
+    }
+    for m in &mut copy.morphers {
+        m.id = MorphId(*n.morph);
+        *n.morph += 1;
+        if let MorphTargets::Clips { ids } = &mut m.targets {
+            ids.retain(|x| map.contains_key(x));
+            for x in ids.iter_mut() {
+                *x = map[x];
+            }
+        }
+    }
+    // link-группы внутри ленты остаются как есть: они адресуются только
+    // внутри своей ленты и с чужими не сталкиваются
+    vec![
+        Command::AddSequence { id: new_id, name: name.to_string() },
+        Command::SetSequenceContent { id: new_id, content: Box::new(copy) },
+        Command::SetClipMedia { id, media: new_id },
+    ]
+}
+
+/// Ленты, на которые больше никто не смотрит. Возвращает команды, а не
+/// чистит сам: удаление — это шаг истории, его должно быть можно отменить.
+pub fn remove_unused_sequences(p: &Project) -> Vec<Command> {
+    p.sequences
+        .iter()
+        .filter(|s| p.sequence_uses(s.id) == 0)
+        .map(|s| Command::RemoveSequence { id: s.id })
+        .collect()
 }

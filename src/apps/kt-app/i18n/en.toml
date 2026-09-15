@@ -47,6 +47,7 @@ paste = "Paste at playhead"
 delete = "Delete"
 cut_region = "Split / cut region"
 trim_stretches_auto = "Trimming stretches the animation with the event"
+remove_unused_seqs = "Remove unused reels"
 
 [menu.view]
 title = "View"
@@ -201,6 +202,11 @@ remove_transition = "Remove this transition"
 sync_audio = "Sync with the other selected clip by audio"
 
 # Медиа-бин: режимы, подсказки, пустое состояние.
+collapse = "Collapse selection into a reel"
+nest_expand = "Expand the reel onto lanes"
+nest_independent = "Detach from the other places"
+nest_rename = "Rename the reel..."
+
 [bin]
 hint_free = "Free layout: cards move with the mouse"
 hint_grid = "Grid: cards arrange themselves"
@@ -680,6 +686,21 @@ sync_done = "offset {0} ms, confidence {1}%"
 sync_out_of_range = "aligning would move the event before the project start"
 analysis_failed = "analysis failed: {0}"
 analysis_stale = "the montage changed while analysing — the result was not applied"
+nest_need_selection = "Select events first, then collapse them"
+nest_default_name = "Reel"
+nest_collapsed = "Collapsed into: {0}"
+nest_outer_layers = "Morph layers now act on the assembled picture: {0}"
+nest_not_a_nest = "This event is not a nested reel"
+nest_expanded = "Expanded onto lanes"
+nest_expand_dropped = "Expanded; the chain and level of the instance were removed: outside they applied to the assembled picture"
+nest_independent = "Detached into its own reel: {0}"
+nest_none_unused = "Every reel is in use"
+nest_removed_unused = "Unused reels removed: {0}"
+nest_rename_title = "Rename reel"
+nest_name_label = "Name"
+nest_rename_do = "Rename"
+nest_uses = "Places that change together: {0}"
+
 [dialog]
 import_ktproj = "Import a legacy .ktproj project"
 open_project = "Open project"

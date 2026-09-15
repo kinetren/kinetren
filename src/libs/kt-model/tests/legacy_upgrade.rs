@@ -32,8 +32,13 @@ fn clip(id: u64, kind: ClipKind, lane: u32, start: i64, dur: i64, src: i64) -> C
 
 fn raw_project(clips: Vec<ClipEvent>) -> Project {
     // НЕ validate: легаси-перекрытия до апгрейда инвариант нарушают
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.clips = clips;
     // тесты t143 закрепляют конверсию наездов в переходы/дорожки — она живёт
@@ -123,7 +128,11 @@ fn t143_video_overlap_demotes_later_clip_below() {
     assert_eq!(rep.video_moved, 1);
     assert_eq!(p.clips.iter().find(|c| c.id == ClipId(1)).unwrap().lane, 0, "ранний сверху");
     assert_eq!(p.clips.iter().find(|c| c.id == ClipId(2)).unwrap().lane, 1, "поздний ниже");
-    assert_eq!(p.clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane, 2, "старый фон уехал вниз");
+    assert_eq!(
+        p.clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane,
+        2,
+        "старый фон уехал вниз"
+    );
     assert!(p.video_lanes >= 3);
 }
 
@@ -133,8 +142,13 @@ fn t143_video_overlap_demotes_later_clip_below() {
 /// видео-дорожек.
 #[test]
 fn t164_legacy_import_keeps_overlaps_and_lanes() {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
     p.video_lanes = 2;
     p.audio_lanes = 2;

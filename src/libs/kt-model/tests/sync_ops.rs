@@ -61,7 +61,8 @@ fn t416_sync_aligns_the_material_not_the_clip_edges() {
     // проверяем СЛЕДСТВИЕ: момент реального мира, стоящий в начале A,
     // теперь стоит там же и у B
     let step = 90_000 / 30;
-    let mat_a = clip_material_at(Tick(90_000), Tick(180_000), Tick(900_000), false, step, Tick(180_000));
+    let mat_a =
+        clip_material_at(Tick(90_000), Tick(180_000), Tick(900_000), false, step, Tick(180_000));
     let mat_b = Tick(mat_a.0 + off.0);
     let at_b = clip_timeline_at(b.source_in, b.start, b.duration, b.reversed, step, mat_b);
     assert_eq!(at_b.0, 180_000, "материалы не совместились: момент B встал в {}", at_b.0);
@@ -122,14 +123,8 @@ fn t417_sync_only_moves_and_understands_reverse() {
     let step = 90_000 / 30;
     let mat_a =
         clip_material_at(Tick(90_000), Tick(900_000), Tick(900_000), false, step, Tick(900_000));
-    let at_b = clip_timeline_at(
-        b.source_in,
-        b.start,
-        b.duration,
-        b.reversed,
-        step,
-        Tick(mat_a.0 + off.0),
-    );
+    let at_b =
+        clip_timeline_at(b.source_in, b.start, b.duration, b.reversed, step, Tick(mat_a.0 + off.0));
     assert_eq!(at_b.0, 900_000, "на реверсе материалы не совместились: {}", at_b.0);
 }
 

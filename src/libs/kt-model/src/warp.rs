@@ -411,9 +411,7 @@ pub fn chain_rate(fx: &[FxInstance]) -> f64 {
 pub fn chain_avg_rate(fx: &[FxInstance], auto: &AutoProfiles) -> f64 {
     fx.iter()
         .find_map(|f| match f {
-            FxInstance::SlowedReverb { rate, .. } => {
-                Some(avg_rate(*rate, auto.rate_points(fx)))
-            }
+            FxInstance::SlowedReverb { rate, .. } => Some(avg_rate(*rate, auto.rate_points(fx))),
             _ => None,
         })
         .unwrap_or(1.0)
@@ -652,9 +650,13 @@ pub fn clip_warp_of(
 pub fn clip_warp(c: &crate::ClipEvent) -> Option<ClipWarp> {
     // дешёвый отсев ДО аллокаций `active_fx`/`active_fx_auto`:
     // `effective_clips` зовёт это на каждый кусок каждого клипа
-    if c.fx_off || !c.fx.iter().enumerate().any(|(i, f)| {
-        f.warps_time() && !c.fx_bypass.get(i).copied().unwrap_or(false)
-    }) {
+    if c.fx_off
+        || !c
+            .fx
+            .iter()
+            .enumerate()
+            .any(|(i, f)| f.warps_time() && !c.fx_bypass.get(i).copied().unwrap_or(false))
+    {
         return None;
     }
     clip_warp_of(&c.active_fx(), &c.active_fx_auto(), c.source_in, c.duration, c.reversed)

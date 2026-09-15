@@ -8238,3 +8238,82 @@ fn t350_eq_graph_wheel_sets_q() {
     assert!(q < 1.0 - 0.05, "колесо вниз обязано уменьшить добротность, а не {q}");
     assert!(q >= 0.3, "и не выйти за нижнюю границу спеки");
 }
+
+/// Тест 430b (Р.50 А2): свернуть и развернуть можно РУКАМИ, и программа
+/// говорит, что при этом изменилось.
+///
+/// Утверждается СЛЕДСТВИЕ (Р.40): не «пункт в меню есть», а «монтаж стал
+/// другим». Точка, из которой тест жмёт, — тело события: именно туда жмёт
+/// человек.
+#[test]
+fn t430b_collapse_and_expand_are_reachable_by_hand() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, g) = harness_three_clips();
+    let row = g.row_of((LaneKind::Video, 0)).expect("видео-строка");
+    let y = g.row_center_y(row);
+
+    // выделили два события рамкой не станем — хватит одного: пункт работает
+    // и на одиночном, а тест утверждает достижимость
+    h.state_mut().select_only(ClipId(1));
+    h.step();
+    right_click_at(&mut h, egui::pos2(g.tick_to_x(20_000), y));
+    assert!(
+        matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Clip(ClipId(1)))),
+        "правый клик по телу события обязан дать меню СОБЫТИЯ"
+    );
+    let labels = menu_labels(&mut h);
+    assert!(
+        labels.iter().any(|l| l == tr(k::tl::menu::COLLAPSE)),
+        "в меню события нет пункта сворачивания: {labels:?}"
+    );
+    h.get_by_label(tr(k::tl::menu::COLLAPSE)).click();
+    h.step();
+    h.step();
+
+    // СЛЕДСТВИЕ: лента завелась, событие стало экземпляром
+    let p = h.state().model.project().clone();
+    assert_eq!(p.sequences.len(), 1, "лента не завелась: {:?}", p.sequences);
+    let seq = p.sequences[0].id;
+    let inst = p.clips.iter().find(|c| c.media == seq).expect("экземпляра на таймлайне нет");
+    assert_eq!(p.sequences[0].clips.len(), 1, "в ленте не то содержимое");
+    assert_eq!(h.state().nest_uses(seq), 1, "мест использования посчитано неверно");
+    let inst_id = inst.id;
+
+    // ...и меню САМОГО вложения знает, что с ним делать
+    let g = h.state().tl_geom.clone().unwrap_or(g);
+    right_click_at(&mut h, egui::pos2(g.tick_to_x(20_000), y));
+    let labels = menu_labels(&mut h);
+    for want in [tr(k::tl::menu::NEST_EXPAND), tr(k::tl::menu::NEST_RENAME)] {
+        assert!(labels.iter().any(|l| l == want), "в меню вложения нет «{want}»: {labels:?}");
+    }
+    assert!(
+        !labels.iter().any(|l| l.starts_with(tr(k::tl::menu::NEST_INDEPENDENT))),
+        "«отвязать от других мест» предложено там, где место ОДНО — обещание,          которое ничего не изменит: {labels:?}"
+    );
+
+    // окно имени открывается, Esc закрывает без следов, и оно работает
+    // ПОВТОРНО (правило 14)
+    for _ in 0..2 {
+        h.get_by_label(tr(k::tl::menu::NEST_RENAME)).click();
+        h.step();
+        h.step();
+        assert!(h.state().seq_name.is_some(), "окно имени ленты не открылось");
+        h.key_press(egui::Key::Escape);
+        h.step();
+        h.step();
+        assert!(h.state().seq_name.is_none(), "Esc не закрыл окно имени ленты");
+        let g = h.state().tl_geom.clone().unwrap_or(g.clone());
+        right_click_at(&mut h, egui::pos2(g.tick_to_x(20_000), y));
+    }
+
+    // развернули — монтаж вернулся, и об этом сказано
+    h.state_mut().expand_nest(inst_id);
+    h.step();
+    let p = h.state().model.project().clone();
+    assert!(
+        p.clips.iter().all(|c| c.media != seq),
+        "экземпляр остался на таймлайне после разворачивания"
+    );
+    assert_eq!(p.clips.len(), 3, "содержимое не вернулось на дорожку: {:?}", p.clips.len());
+}

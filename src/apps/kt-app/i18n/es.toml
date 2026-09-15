@@ -47,6 +47,7 @@ paste = "Pegar en el cursor"
 delete = "Eliminar"
 cut_region = "Dividir / cortar región"
 trim_stretches_auto = "Recortar estira la animación junto con el evento"
+remove_unused_seqs = "Eliminar bobinas sin uso"
 
 [menu.view]
 title = "Ver"
@@ -201,6 +202,11 @@ remove_transition = "Quitar esta transición"
 sync_audio = "Sincronizar por audio con el otro clip seleccionado"
 
 # Медиа-бин: режимы, подсказки, пустое состояние.
+collapse = "Plegar la selección en una bobina"
+nest_expand = "Desplegar la bobina en pistas"
+nest_independent = "Separar de los demás lugares"
+nest_rename = "Renombrar la bobina..."
+
 [bin]
 hint_free = "Disposición libre: las tarjetas se mueven con el ratón"
 hint_grid = "Cuadrícula: las tarjetas se ordenan solas"
@@ -680,6 +686,21 @@ sync_done = "desfase {0} ms, confianza {1}%"
 sync_out_of_range = "la alineación movería el evento antes del inicio del proyecto"
 analysis_failed = "el análisis falló: {0}"
 analysis_stale = "el montaje cambió durante el análisis: el resultado no se aplicó"
+nest_need_selection = "Selecciona eventos antes de plegarlos"
+nest_default_name = "Bobina"
+nest_collapsed = "Plegado en: {0}"
+nest_outer_layers = "Capas de morphing ahora actúan sobre la imagen montada: {0}"
+nest_not_a_nest = "Este evento no es una bobina anidada"
+nest_expanded = "Desplegado en pistas"
+nest_expand_dropped = "Desplegado; se quitaron la cadena y el nivel: fuera se aplicaban a la imagen montada"
+nest_independent = "Separado en su propia bobina: {0}"
+nest_none_unused = "Todas las bobinas están en uso"
+nest_removed_unused = "Bobinas sin uso eliminadas: {0}"
+nest_rename_title = "Renombrar bobina"
+nest_name_label = "Nombre"
+nest_rename_do = "Renombrar"
+nest_uses = "Lugares que cambian juntos: {0}"
+
 [dialog]
 import_ktproj = "Importar un proyecto .ktproj antiguo"
 open_project = "Abrir proyecto"

@@ -461,7 +461,6 @@ pub trait Reel {
     fn overlaps_allowed(&self) -> bool {
         true
     }
-
 }
 
 /// Зоны, куда не встаёт граница морфер-слоя: окна переходов этого клипа
@@ -471,31 +470,30 @@ pub trait Reel {
 /// объектно-безопасным (обход дерева лент ходит по `&dyn Reel`), а тело
 /// зовёт `t.joint(reel)` — коэрцию `&Self -> &dyn Reel` внутри
 /// провайд-метода сделать нечем.
-pub fn forbidden_zones(reel: &dyn Reel, c: &ClipEvent) -> Vec<TickRange>
-    {
-        let body = TickRange::new(c.start, c.start + c.duration);
-        let mut out = Vec::new();
-        for t in reel.transitions() {
-            if t.a != Some(c.id) && t.b != Some(c.id) {
-                continue;
-            }
-            let Some(j) = t.joint(reel) else { continue };
-            let z = TickRange::new(j - t.in_offset, j + t.out_offset).intersect(&body);
-            if !z.is_empty() {
-                out.push(z);
-            }
+pub fn forbidden_zones(reel: &dyn Reel, c: &ClipEvent) -> Vec<TickRange> {
+    let body = TickRange::new(c.start, c.start + c.duration);
+    let mut out = Vec::new();
+    for t in reel.transitions() {
+        if t.a != Some(c.id) && t.b != Some(c.id) {
+            continue;
         }
-        for o in reel.clips() {
-            if o.id == c.id || o.kind != c.kind || o.lane != c.lane {
-                continue;
-            }
-            let z = TickRange::new(o.start, o.start + o.duration).intersect(&body);
-            if !z.is_empty() {
-                out.push(z);
-            }
+        let Some(j) = t.joint(reel) else { continue };
+        let z = TickRange::new(j - t.in_offset, j + t.out_offset).intersect(&body);
+        if !z.is_empty() {
+            out.push(z);
         }
-        out
     }
+    for o in reel.clips() {
+        if o.id == c.id || o.kind != c.kind || o.lane != c.lane {
+            continue;
+        }
+        let z = TickRange::new(o.start, o.start + o.duration).intersect(&body);
+        if !z.is_empty() {
+            out.push(z);
+        }
+    }
+    out
+}
 
 /// Старший бит адреса медиа отдан вложенным лентам (Р.50).
 ///
@@ -825,8 +823,6 @@ pub struct MorpherEvent {
     pub fade_out: Tick,
 }
 
-
-
 fn is_true(v: &bool) -> bool {
     *v
 }
@@ -1007,13 +1003,9 @@ impl<'de> Deserialize<'de> for MorphPatch {
                 audio_fx,
                 video_bypass,
                 audio_bypass,
-            }) => MorphPatch {
-                video_fx,
-                audio_fx,
-                video_bypass,
-                audio_bypass,
-                ..Default::default()
-            },
+            }) => {
+                MorphPatch { video_fx, audio_fx, video_bypass, audio_bypass, ..Default::default() }
+            }
             Repr::Flat(f) => MorphPatch {
                 media: f.media,
                 source_in_delta: f.source_in_delta,
@@ -1369,7 +1361,12 @@ impl MorpherEvent {
     ///    границу наружу: слой «липнет» к краю кроссфейда, зато соседи по
     ///    дорожке не переслаиваются от резки (находка 1 Р.35);
     /// 6. огрызок короче `crate::MIN_CLIP_DURATION` схлопывается к краю тела.
-    pub fn windows_on(&self, c: &ClipEvent, p: &Project, rows: &[(LaneKind, u32)]) -> Vec<TickRange> {
+    pub fn windows_on(
+        &self,
+        c: &ClipEvent,
+        p: &Project,
+        rows: &[(LaneKind, u32)],
+    ) -> Vec<TickRange> {
         let body = TickRange::new(c.start, c.start + c.duration);
         if !self.enabled || !self.covers(c, rows) || !self.patch.affects(c) {
             return Vec::new();
@@ -1401,10 +1398,7 @@ impl MorpherEvent {
             if no_cut {
                 return vec![body];
             }
-            return refs
-                .into_iter()
-                .filter_map(|w| self.fit_window(w, c, p, body))
-                .collect();
+            return refs.into_iter().filter_map(|w| self.fit_window(w, c, p, body)).collect();
         }
         if !self.timed {
             return vec![body]; // v1: время блока не действует
@@ -2010,7 +2004,12 @@ pub fn lane_names_swap(names: &mut [(LaneKind, u32, String)], kind: LaneKind, a:
 /// строк): содержимое едет по формуле сдвига (см. `reorder_lane` в
 /// kt-app) — имена обязаны ехать по ней же, иначе подпись приклеится к
 /// чужой дорожке (п.5 р.16).
-pub fn lane_names_rotate(names: &mut [(LaneKind, u32, String)], kind: LaneKind, from: u32, to: u32) {
+pub fn lane_names_rotate(
+    names: &mut [(LaneKind, u32, String)],
+    kind: LaneKind,
+    from: u32,
+    to: u32,
+) {
     if from == to {
         return;
     }
@@ -2670,12 +2669,8 @@ pub fn migrate_legacy_cammotion(c: &mut ClipEvent) -> bool {
             keyframes.clone()
         };
         let first = keys[0];
-        c.fx[i] = FxInstance::Pan {
-            mode,
-            pan_x: first.pan_x,
-            pan_y: first.pan_y,
-            zoom: first.zoom,
-        };
+        c.fx[i] =
+            FxInstance::Pan { mode, pan_x: first.pan_x, pan_y: first.pan_y, zoom: first.zoom };
         if c.fx_auto.len() <= i {
             c.fx_auto.resize(i + 1, Vec::new());
         }
@@ -3291,23 +3286,23 @@ impl FxInstance {
     pub fn class(&self) -> FxClass {
         match self {
             FxInstance::Gain { .. }
-        | FxInstance::SlowedReverb { .. }
-        | FxInstance::Filter { .. }
-        | FxInstance::Eq { .. }
-        | FxInstance::Distortion { .. }
-        | FxInstance::Bitcrusher { .. }
-        | FxInstance::StereoWidth { .. }
-        | FxInstance::Tremolo { .. }
-        | FxInstance::AutoPan { .. }
-        | FxInstance::Vibrato { .. }
-        | FxInstance::Chorus { .. }
-        | FxInstance::Flanger { .. }
-        | FxInstance::Phaser { .. }
-        | FxInstance::Delay { .. }
-        | FxInstance::Compressor { .. }
-        | FxInstance::Gate { .. }
-        | FxInstance::Limiter { .. }
-        | FxInstance::PitchShift { .. } => FxClass::Audio,
+            | FxInstance::SlowedReverb { .. }
+            | FxInstance::Filter { .. }
+            | FxInstance::Eq { .. }
+            | FxInstance::Distortion { .. }
+            | FxInstance::Bitcrusher { .. }
+            | FxInstance::StereoWidth { .. }
+            | FxInstance::Tremolo { .. }
+            | FxInstance::AutoPan { .. }
+            | FxInstance::Vibrato { .. }
+            | FxInstance::Chorus { .. }
+            | FxInstance::Flanger { .. }
+            | FxInstance::Phaser { .. }
+            | FxInstance::Delay { .. }
+            | FxInstance::Compressor { .. }
+            | FxInstance::Gate { .. }
+            | FxInstance::Limiter { .. }
+            | FxInstance::PitchShift { .. } => FxClass::Audio,
             FxInstance::Pan3d { .. } | FxInstance::Cylinder3d { .. } => FxClass::Video3d,
             _ => FxClass::Video2d,
         }
@@ -4113,9 +4108,7 @@ impl CameraEvent {
                     pos_y: l(a.cam.pos_y, b.cam.pos_y),
                     pos_z: l(a.cam.pos_z, b.cam.pos_z),
                     target: match (a.cam.target, b.cam.target) {
-                        (Some(ta), Some(tb)) => {
-                            Some((l(ta.0, tb.0), l(ta.1, tb.1), l(ta.2, tb.2)))
-                        }
+                        (Some(ta), Some(tb)) => Some((l(ta.0, tb.0), l(ta.1, tb.1), l(ta.2, tb.2))),
                         _ => a.cam.target,
                     },
                     rot_x: l(a.cam.rot_x, b.cam.rot_x),
@@ -4422,13 +4415,7 @@ impl FxInstance {
     }
 
     pub fn edges(threshold: u32) -> FxInstance {
-        FxInstance::Edges {
-            threshold,
-            thickness: 1,
-            color_r: 255,
-            color_g: 255,
-            color_b: 255,
-        }
+        FxInstance::Edges { threshold, thickness: 1, color_r: 255, color_g: 255, color_b: 255 }
     }
 
     pub fn gain(db: f32) -> FxInstance {
@@ -4558,8 +4545,6 @@ pub enum ProjectError {
     SequenceUnnamed(MediaId),
     #[error("media id {0:?} is out of range (top bit is reserved for nested sequences)")]
     MediaIdTooLarge(MediaId),
-    #[error("sequence {0:?} is still used by {1} clip(s)")]
-    SequenceInUse(MediaId, usize),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,
@@ -4746,7 +4731,8 @@ impl Project {
         ms.sort_by_key(|m| (std::cmp::Reverse(m.row_in(&rows)), m.id));
         let mut out = Vec::with_capacity(self.clips.len());
         for c in &self.clips {
-            let wins: Vec<Vec<TickRange>> = ms.iter().map(|m| m.windows_on(c, self, &rows)).collect();
+            let wins: Vec<Vec<TickRange>> =
+                ms.iter().map(|m| m.windows_on(c, self, &rows)).collect();
             let body = TickRange::new(c.start, c.start + c.duration);
             // точки реза — ВНУТРЕННИЕ края окон; общий набор на все
             // морферы, чтобы они не резали куски друг друга

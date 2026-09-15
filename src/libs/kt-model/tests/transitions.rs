@@ -8,8 +8,13 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn base_project() -> Project {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:Ramp".into() });
     for (id, start) in [(1u64, 0i64), (2, 48_000), (3, 96_000)] {
         p.clips.push(ClipEvent {
@@ -200,8 +205,13 @@ fn t135_split_retargets_outgoing() {
     // Split OUTGOING-соседа: стык (его конец) уезжает к правой половине
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
-    m.apply(Command::Split { id: ClipId(1), at: Tick(24_000), new_id: ClipId(50), new_group: None })
-        .unwrap();
+    m.apply(Command::Split {
+        id: ClipId(1),
+        at: Tick(24_000),
+        new_id: ClipId(50),
+        new_group: None,
+    })
+    .unwrap();
     assert_eq!(m.project().transitions.len(), 1, "transition survives outgoing split");
     let t = &m.project().transitions[0];
     assert_eq!((t.a, t.b), (Some(ClipId(50)), Some(ClipId(2))));
@@ -210,14 +220,18 @@ fn t135_split_retargets_outgoing() {
     // Split INCOMING-соседа: стык (его начало) остаётся за левой половиной
     let mut m = TimelineModel::new(base_project());
     m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
-    m.apply(Command::Split { id: ClipId(2), at: Tick(72_000), new_id: ClipId(51), new_group: None })
-        .unwrap();
+    m.apply(Command::Split {
+        id: ClipId(2),
+        at: Tick(72_000),
+        new_id: ClipId(51),
+        new_group: None,
+    })
+    .unwrap();
     let t = &m.project().transitions[0];
     assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))), "incoming split keeps ids");
     // тело incoming укоротилось до 24000 — out_offset клампнулся
     assert_eq!(t.out_offset, Tick(9_000).min(Tick(24_000)));
 }
-
 
 // ---- тест 155: фейды у края дорожки (Р.25) -----------------------------------
 
@@ -290,7 +304,8 @@ fn t155_fade_survives_edits_and_clipboard() {
     m.apply(Command::AddTransition(fade(1, None, Some(2), 9_000, 9_000))).unwrap();
     let block = kt_model::ops::copy_group(m.project(), ClipId(2));
     assert_eq!(block.transitions.len(), 1, "фейд в блоке");
-    let (mut next_clip, mut next_group, mut next_tr, mut next_morph) = (100u64, 100u64, 100u64, 1u64);
+    let (mut next_clip, mut next_group, mut next_tr, mut next_morph) =
+        (100u64, 100u64, 100u64, 1u64);
     let (cmds, _end, _) = kt_model::ops::paste_block(
         &block,
         Tick(300_000),
@@ -326,11 +341,7 @@ fn t159_restore_handles_after_pulling_apart() {
     .unwrap();
 
     // растаскиваем: клип 2 уезжает далеко вправо
-    let cmds = vec![Command::MoveClip {
-        id: ClipId(2),
-        new_start: Tick(300_000),
-        new_lane: 0,
-    }];
+    let cmds = vec![Command::MoveClip { id: ClipId(2), new_start: Tick(300_000), new_lane: 0 }];
     let after = m.preview(&cmds).unwrap();
     assert!(after.transitions.is_empty(), "разорванный стык убивает переход");
     let restore = kt_model::ops::restore_handles(m.project(), &after);
@@ -366,8 +377,7 @@ fn t159_restore_is_clamped_by_free_space() {
     .unwrap();
 
     // зазор всего 6000 тиков против 20000 «хотелок»
-    let cmds =
-        vec![Command::MoveClip { id: ClipId(2), new_start: Tick(44_000), new_lane: 0 }];
+    let cmds = vec![Command::MoveClip { id: ClipId(2), new_start: Tick(44_000), new_lane: 0 }];
     let after = m.preview(&cmds).unwrap();
     let mut all = cmds;
     all.extend(kt_model::ops::restore_handles(m.project(), &after));
@@ -482,8 +492,7 @@ fn t159_restore_never_breaks_the_gesture() {
         p.validate().unwrap();
         let mut m = TimelineModel::new(p);
 
-        let cmds =
-            vec![Command::MoveClip { id: ClipId(2), new_start: Tick(300_000), new_lane: 0 }];
+        let cmds = vec![Command::MoveClip { id: ClipId(2), new_start: Tick(300_000), new_lane: 0 }];
         let after = m.preview(&cmds).unwrap();
         let mut all = cmds;
         all.extend(kt_model::ops::restore_handles(m.project(), &after));
@@ -554,7 +563,9 @@ fn t223_transition_kind_specs() {
     );
 
     // кривые аудио: монотонны, края точные, сумма мощностей не проваливается
-    for c in [AudioCurve::EqualPower, AudioCurve::Linear, AudioCurve::SCurve, AudioCurve::Exponential] {
+    for c in
+        [AudioCurve::EqualPower, AudioCurve::Linear, AudioCurve::SCurve, AudioCurve::Exponential]
+    {
         assert!((c.rise(0.0)).abs() < 1e-12, "{c:?}: старт с нуля");
         assert!((c.rise(1.0) - 1.0).abs() < 1e-12, "{c:?}: конец в единице");
         let mut prev = -1.0;

@@ -6,7 +6,13 @@ use kt_model::*;
 use kt_time::Tick;
 
 fn base_project() -> TimelineModel {
-    let mut p = Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
     p.media.push(MediaRef { id: MediaId(2), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
@@ -176,8 +182,13 @@ fn t35_targets_follow_clip_edits() {
     let mut m = base_project();
     m.apply(Command::AddMorpher(replace_morpher(1, vec![ClipId(10), ClipId(11)]))).unwrap();
 
-    m.apply(Command::Split { id: ClipId(10), at: Tick(45_000), new_id: ClipId(12), new_group: None })
-        .unwrap();
+    m.apply(Command::Split {
+        id: ClipId(10),
+        at: Tick(45_000),
+        new_id: ClipId(12),
+        new_group: None,
+    })
+    .unwrap();
     assert!(
         m.project().morphers[0].targets.clip_ids().contains(&ClipId(12)),
         "правая половина унаследовала таргетинг"

@@ -20,7 +20,13 @@ fn cam(id: u64, lane: u32, start: i64, dur: i64) -> CameraEvent {
 }
 
 fn project() -> Project {
-    Project::new(ProjectSettings { fps: 30, width: 1280, height: 720, sample_rate: 48000, pitch_engine: Default::default() })
+    Project::new(ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    })
 }
 
 #[test]

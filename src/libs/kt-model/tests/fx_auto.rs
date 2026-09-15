@@ -51,7 +51,9 @@ fn t212_keys_stick_to_material_through_edits() {
         fps: 30,
         width: 320,
         height: 180,
-        sample_rate: 48000, pitch_engine: Default::default() });
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(ClipEvent {
         id: ClipId(1),
@@ -94,34 +96,17 @@ fn t212_keys_stick_to_material_through_edits() {
     // разрез: обе половины держат ОДНУ кривую в координатах материала,
     // поэтому каждая играет свой кусок (у левой виден ключ 0..45k, у
     // правой — 45k..90k) — дублирования анимации больше нет
-    m.apply(Command::Split {
-        id: ClipId(1),
-        at: Tick(45_000),
-        new_id: ClipId(2),
-        new_group: None,
-    })
-    .unwrap();
+    m.apply(Command::Split { id: ClipId(1), at: Tick(45_000), new_id: ClipId(2), new_group: None })
+        .unwrap();
     let (l, r) = (m.clip(ClipId(1)).unwrap().clone(), m.clip(ClipId(2)).unwrap().clone());
     assert_eq!(keys_of(&m, ClipId(1)), before);
     assert_eq!(keys_of(&m, ClipId(2)), before);
     // значение кривой на стыке одинаково с обеих сторон — анимация
     // непрерывна через разрез
-    let left_end = kt_model::clip_material_at(
-        l.source_in,
-        l.start,
-        l.duration,
-        false,
-        3000,
-        Tick(45_000),
-    );
-    let right_start = kt_model::clip_material_at(
-        r.source_in,
-        r.start,
-        r.duration,
-        false,
-        3000,
-        Tick(45_000),
-    );
+    let left_end =
+        kt_model::clip_material_at(l.source_in, l.start, l.duration, false, 3000, Tick(45_000));
+    let right_start =
+        kt_model::clip_material_at(r.source_in, r.start, r.duration, false, 3000, Tick(45_000));
     assert_eq!(left_end, right_start, "стык разреза — одна материальная точка");
     assert_eq!(
         curve_value(&l.fx_auto[0][0].keys, false, left_end),
@@ -208,11 +193,7 @@ fn t190_apply_fx_auto() {
         ParamCurve { param: "orphan".into(), ease: false, keys: vec![key(0, 5.0)] },
         ParamCurve { param: "empty".into(), ease: false, keys: vec![] },
     ];
-    assert_eq!(
-        apply_fx_auto(&mut f, &curves, Tick(45_000)),
-        1,
-        "сироты и пустые не считаются"
-    );
+    assert_eq!(apply_fx_auto(&mut f, &curves, Tick(45_000)), 1, "сироты и пустые не считаются");
     assert_eq!(f.get_param("radius"), Some(24.0), "лерп 1..47 в середине");
 }
 
@@ -237,8 +218,13 @@ fn clip_with_fx() -> ClipEvent {
 }
 
 fn model_with_clip() -> TimelineModel {
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 640, height: 360, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     p.clips.push(clip_with_fx());
     p.validate().unwrap();
@@ -264,11 +250,9 @@ fn t190_commands_undo_and_truncation() {
     assert_eq!(m.project().clips[0].fx_auto, auto);
     // битые кривые не проходят: не отсортированы / до начала материала /
     // не конечны
-    for bad_keys in [
-        vec![key(90_000, 1.0), key(10_000, 2.0)],
-        vec![key(-1, 1.0)],
-        vec![key(45_000, f64::NAN)],
-    ] {
+    for bad_keys in
+        [vec![key(90_000, 1.0), key(10_000, 2.0)], vec![key(-1, 1.0)], vec![key(45_000, f64::NAN)]]
+    {
         let bad = vec![vec![ParamCurve { param: "radius".into(), ease: false, keys: bad_keys }]];
         assert!(
             m.apply(Command::SetFxAuto { id: ClipId(1), auto: bad }).is_err(),
@@ -276,9 +260,7 @@ fn t190_commands_undo_and_truncation() {
         );
     }
     // SetFx с укороченной цепочкой подрезает кривые лишних слотов
-    assert!(m
-        .apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::blur(8)] })
-        .is_ok());
+    assert!(m.apply(Command::SetFx { id: ClipId(1), fx: vec![FxInstance::blur(8)] }).is_ok());
     assert_eq!(m.project().clips[0].fx_auto.len(), 1, "кривые второго слота отпали");
     assert_eq!(m.project().clips[0].fx_auto[0][0].param, "radius");
     // undo возвращает и цепочку, и кривые
@@ -426,7 +408,8 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
         fx_off: src.fx_off,
     };
     let target = m.clip(ClipId(2)).unwrap().clone();
-    let (mut fx, mut bypass, mut auto) = (target.fx.clone(), target.fx_bypass.clone(), target.fx_auto.clone());
+    let (mut fx, mut bypass, mut auto) =
+        (target.fx.clone(), target.fx_bypass.clone(), target.fx_auto.clone());
     ops::append_chain_block(&mut fx, &mut bypass, &mut auto, &block, target.source_in);
     m.apply_batch(vec![
         Command::SetFx { id: ClipId(2), fx },
@@ -452,7 +435,8 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
     // 2) ДОПИСЫВАНИЕ: второй вызов кладёт слоты в конец, не затирая
     let target = m.clip(ClipId(2)).unwrap().clone();
     let before = target.fx.len();
-    let (mut fx, mut bypass, mut auto) = (target.fx.clone(), target.fx_bypass.clone(), target.fx_auto.clone());
+    let (mut fx, mut bypass, mut auto) =
+        (target.fx.clone(), target.fx_bypass.clone(), target.fx_auto.clone());
     let one = ops::FxChainBlock {
         slots: vec![block.slots[0].clone()],
         src_in: block.src_in,
@@ -492,8 +476,13 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
 #[test]
 fn t248_warp_rate_is_shared_by_the_link_group() {
     use kt_time::Tick;
-    let mut p =
-        Project::new(ProjectSettings { fps: 30, width: 64, height: 36, sample_rate: 48000, pitch_engine: Default::default() });
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 64,
+        height: 36,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
     p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
     let mk = |id: u64, kind: ClipKind| ClipEvent {
         id: ClipId(id),
@@ -548,11 +537,8 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
     assert!(matches!(m.clip(ClipId(2)).unwrap().fx[0], FxInstance::Gain { .. }));
 
     // кривая rate тоже синхронна, а кривые ДРУГИХ параметров — нет
-    let curve = ParamCurve {
-        param: "rate".into(),
-        ease: false,
-        keys: vec![key(0, 1.0), key(90_000, 2.0)],
-    };
+    let curve =
+        ParamCurve { param: "rate".into(), ease: false, keys: vec![key(0, 1.0), key(90_000, 2.0)] };
     let mix = ParamCurve { param: "mix".into(), ease: false, keys: vec![key(0, 0.9)] };
     m.apply(Command::SetFxAuto { id: ClipId(2), auto: vec![vec![], vec![curve, mix]] }).unwrap();
     let va = &m.clip(ClipId(1)).unwrap().fx_auto[0];

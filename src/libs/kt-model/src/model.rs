@@ -50,8 +50,10 @@ fn sync_warp_to_link_group(p: &mut Project, id: ClipId) {
         match (warp_slot(c), &tmpl) {
             // у обоих есть — переносим ТОЛЬКО скорость и её кривую
             (Some(j), Some(t)) => {
-                if let (FxInstance::SlowedReverb { rate, .. }, FxInstance::SlowedReverb { rate: r0, .. }) =
-                    (&mut c.fx[j], t)
+                if let (
+                    FxInstance::SlowedReverb { rate, .. },
+                    FxInstance::SlowedReverb { rate: r0, .. },
+                ) = (&mut c.fx[j], t)
                 {
                     *rate = *r0;
                 }
@@ -297,6 +299,35 @@ pub enum Command {
     RemoveCameraLane {
         at: u32,
     },
+    // --- вложенные секвенции (Р.50) ---
+    /// Завести пустую ленту. Содержимое приезжает отдельной командой:
+    /// сворачивание — это пакет «завести, наполнить, убрать оригиналы,
+    /// поставить экземпляр», и он обязан быть ОДНИМ шагом истории.
+    AddSequence {
+        id: MediaId,
+        name: String,
+    },
+    /// Убрать ленту. Отказ, пока на неё смотрит хоть одно событие дерева:
+    /// молча осиротить клипы дороже, чем сказать «занята».
+    RemoveSequence {
+        id: MediaId,
+    },
+    RenameSequence {
+        id: MediaId,
+        name: String,
+    },
+    /// Полная замена СОДЕРЖИМОГО ленты (Box — чтобы `Command` не разнесло
+    /// по размеру ради одного варианта).
+    SetSequenceContent {
+        id: MediaId,
+        content: Box<Sequence>,
+    },
+    /// Сменить источник события — файл или ленту. Несущая команда и
+    /// сворачивания, и «сделать независимым».
+    SetClipMedia {
+        id: ClipId,
+        media: MediaId,
+    },
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -345,6 +376,10 @@ pub enum CommandError {
     InvalidCamera(ProjectError),
     #[error("camera lane {0} not found")]
     CameraLaneNotFound(u32),
+    #[error("sequence {0:?} not found")]
+    SequenceNotFound(MediaId),
+    #[error("sequence {0:?} is still used by {1} clip(s)")]
+    SequenceInUse(MediaId, usize),
     #[error("nothing to undo")]
     NothingToUndo,
     #[error("nothing to redo")]
@@ -675,12 +710,70 @@ impl TimelineModel {
                 if !p.media.iter().any(|m| m.id == *id) {
                     return Err(CommandError::MediaNotFound(*id));
                 }
-                if p.clips.iter().any(|c| c.media == *id) {
+                // ПО ВСЕМУ ДЕРЕВУ, а не только по корню (Р.50): файл, стоящий
+                // лишь внутри ленты, удалился бы молча, и события повисли бы
+                // на несуществующем адресе — всплыло бы это через неделю
+                if p.sequence_uses(*id) > 0 {
                     return Err(CommandError::MediaInUse(*id));
                 }
                 // morpher с подменой на это медиа тоже держит его
-                if p.morphers.iter().any(|m| m.media_refs().any(|x| x == *id)) {
+                if p.morphers
+                    .iter()
+                    .chain(p.sequences.iter().flat_map(|s| s.morphers.iter()))
+                    .any(|m| m.media_refs().any(|x| x == *id))
+                {
                     return Err(CommandError::MediaInUse(*id));
+                }
+            }
+            Command::AddSequence { id, name } => {
+                if p.source(*id).is_some() {
+                    return Err(CommandError::IdInUse(id.0));
+                }
+                if name.trim().is_empty() {
+                    return Err(CommandError::InvalidClip(ProjectError::SequenceUnnamed(*id)));
+                }
+            }
+            Command::RemoveSequence { id } => {
+                if p.sequence(*id).is_none() {
+                    return Err(CommandError::SequenceNotFound(*id));
+                }
+                let used = p.sequence_uses(*id);
+                if used > 0 {
+                    return Err(CommandError::SequenceInUse(*id, used));
+                }
+            }
+            Command::RenameSequence { id, name } => {
+                if p.sequence(*id).is_none() {
+                    return Err(CommandError::SequenceNotFound(*id));
+                }
+                if name.trim().is_empty() {
+                    return Err(CommandError::InvalidClip(ProjectError::SequenceUnnamed(*id)));
+                }
+            }
+            Command::SetSequenceContent { id, content } => {
+                if p.sequence(*id).is_none() {
+                    return Err(CommandError::SequenceNotFound(*id));
+                }
+                if content.id != *id {
+                    return Err(CommandError::SequenceNotFound(content.id));
+                }
+                // дорожек в ленте не меньше, чем занято её событиями:
+                // «SetLanes не осиротит клипы» обязано выполняться и здесь
+                let need = |k: ClipKind| {
+                    content.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max()
+                };
+                if content.video_lanes < need(ClipKind::Video).unwrap_or(1).max(1)
+                    || content.audio_lanes < need(ClipKind::Audio).unwrap_or(1).max(1)
+                {
+                    return Err(CommandError::LanesTooFew);
+                }
+            }
+            Command::SetClipMedia { id, media } => {
+                if !p.clips.iter().any(|c| c.id == *id) {
+                    return Err(CommandError::ClipNotFound(*id));
+                }
+                if p.source(*media).is_none() {
+                    return Err(CommandError::MediaNotFound(*media));
                 }
             }
             Command::SetSettings { settings } => {
@@ -906,8 +999,7 @@ impl TimelineModel {
                 // (реверс, п.16: левая половина играет ХВОСТ источника)
                 let c = Self::clip_mut_on(p, id).clone();
                 let body = TickRange::new(c.start, c.start + c.duration);
-                *Self::clip_mut_on(p, id) =
-                    clip_slice(&c, TickRange::new(body.start, at), id);
+                *Self::clip_mut_on(p, id) = clip_slice(&c, TickRange::new(body.start, at), id);
                 let mut right = clip_slice(&c, TickRange::new(at, body.end), new_id);
                 right.link_group = new_group;
                 p.clips.push(right);
@@ -1018,6 +1110,19 @@ impl TimelineModel {
             }
             Command::SetLaneOrder { order } => p.set_lane_order(&order),
             Command::RemoveMedia { id } => p.media.retain(|m| m.id != id),
+            Command::AddSequence { id, name } => p.sequences.push(Sequence::new(id, name)),
+            Command::RemoveSequence { id } => p.sequences.retain(|s| s.id != id),
+            Command::RenameSequence { id, name } => {
+                if let Some(s) = p.sequence_mut(id) {
+                    s.name = name;
+                }
+            }
+            Command::SetSequenceContent { id, content } => {
+                if let Some(slot) = p.sequences.iter_mut().find(|s| s.id == id) {
+                    *slot = *content;
+                }
+            }
+            Command::SetClipMedia { id, media } => Self::clip_mut_on(p, id).media = media,
             Command::SetSettings { settings } => p.settings = settings,
             Command::AddMorpher(m) => {
                 p.morph_lanes = p.morph_lanes.max(m.lane + 1);
@@ -1068,9 +1173,7 @@ impl TimelineModel {
                 for t in &mut p.transitions {
                     let Some(a) = t.a else { continue };
                     let Some(&(_, end)) = ends.iter().find(|(i, _)| *i == a) else { continue };
-                    if let Some(&(_, new, _)) =
-                        born.iter().find(|(o, _, e)| *o == a && *e == end)
-                    {
+                    if let Some(&(_, new, _)) = born.iter().find(|(o, _, e)| *o == a && *e == end) {
                         t.a = Some(new);
                     }
                 }
@@ -1179,33 +1282,43 @@ impl TimelineModel {
     /// телами, схлопнувшееся ниже минимума окно умирает. Групповой перенос
     /// обоих соседей стык сохраняет — переход живёт (идентичность по ClipId,
     /// позиция не хранится).
+    /// Переходы сверяются с содержимым КАЖДОЙ ленты (Р.50): переход живёт
+    /// на той ленте, где лежат его концы, и сверять его с чужими клипами —
+    /// значит убить его на первой же команде.
     fn reconcile_transitions(p: &mut Project) {
-        let Project { clips, transitions, .. } = p;
-        transitions.retain_mut(|t| {
-            let side = |id: Option<ClipId>| match id {
-                // сторона-пустота у фейда (Р.25) — законна и остаётся пустой
-                None => Some(None),
-                // клип стороны пропал: переход умирает целиком (фейды
-                // заводятся явно, а не остатками от удаления)
-                Some(id) => clips.iter().find(|c| c.id == id).map(Some),
-            };
-            let (Some(a), Some(b)) = (side(t.a), side(t.b)) else { return false };
-            if let (Some(a), Some(b)) = (a, b)
-                && (a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start)
-            {
-                return false;
-            }
-            if let Some(a) = a {
-                t.in_offset = t.in_offset.min(a.duration);
-            }
-            if let Some(b) = b {
-                t.out_offset = t.out_offset.min(b.duration);
-            }
-            t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION
-        });
+        let Project { clips, transitions, sequences, .. } = p;
+        reconcile_reel(clips, transitions);
+        for s in sequences {
+            reconcile_reel(&s.clips, &mut s.transitions);
+        }
     }
 
     fn clip_mut_on(p: &mut Project, id: ClipId) -> &mut ClipEvent {
         p.clips.iter_mut().find(|c| c.id == id).unwrap()
     }
+}
+
+fn reconcile_reel(clips: &[ClipEvent], transitions: &mut Vec<TransitionEvent>) {
+    transitions.retain_mut(|t| {
+        let side = |id: Option<ClipId>| match id {
+            // сторона-пустота у фейда (Р.25) — законна и остаётся пустой
+            None => Some(None),
+            // клип стороны пропал: переход умирает целиком (фейды
+            // заводятся явно, а не остатками от удаления)
+            Some(id) => clips.iter().find(|c| c.id == id).map(Some),
+        };
+        let (Some(a), Some(b)) = (side(t.a), side(t.b)) else { return false };
+        if let (Some(a), Some(b)) = (a, b)
+            && (a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start)
+        {
+            return false;
+        }
+        if let Some(a) = a {
+            t.in_offset = t.in_offset.min(a.duration);
+        }
+        if let Some(b) = b {
+            t.out_offset = t.out_offset.min(b.duration);
+        }
+        t.in_offset + t.out_offset >= MIN_TRANSITION_DURATION
+    });
 }
