@@ -57,6 +57,21 @@ pub struct ClipExtra {
     pub kt_extra: Map<String, Value>,
 }
 
+/// Ссылки на материал — свойство МЕДИА, а не клипа. Ключ `Retained.media`.
+///
+/// Зачем отдельно от `ClipExtra` (Р.49, п.356). `available_range` описывает
+/// файл: где у него начало в его собственных координатах. У вещательных и
+/// киношных файлов оно не в нуле, а во вшитом таймкоде (у Sol Levante — ровно
+/// час). Клип, РОЖДЁННЫЙ в редакторе (правая половина разреза, кусок bake,
+/// вставка, событие из бина), своего `ClipExtra` не имеет — и на записи его
+/// `source_in` уходил в файл без этого часа, а при следующей загрузке час
+/// вычитался ещё раз. Медиа-уровень чинит всю эту половину разом.
+#[derive(Debug, Clone, Default)]
+pub struct MediaRefs {
+    pub media_refs: IndexMap<String, Option<MediaRefNode>>,
+    pub active_key: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct TrackExtra {
     pub name_foreign: Option<String>,
@@ -80,6 +95,8 @@ pub struct Retained {
     pub global_start_time: Option<RationalTime>,
     pub tracks: HashMap<(ClipKind, u32), TrackExtra>,
     pub clips: HashMap<ClipId, ClipExtra>,
+    /// Ссылки на материал по МЕДИА — общие для всех его клипов (п.356).
+    pub media: HashMap<kt_model::MediaId, MediaRefs>,
     /// По паре клипов стыка.
     /// Ключ — пара концов перехода; у фейда (Р.25) один конец None.
     pub transitions: HashMap<(Option<ClipId>, Option<ClipId>), TransitionExtra>,
@@ -547,7 +564,16 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
 }
 
 fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
-    let ex = retained.clips.get(&c.id).cloned().unwrap_or_default();
+    let mut ex = retained.clips.get(&c.id).cloned().unwrap_or_default();
+    // Клип, рождённый в редакторе, конверта не имеет — ссылки на материал
+    // берём у МЕДИА (п.356). Иначе потерялся бы `available_range`, а вместе
+    // с ним стартовый таймкод файла: `source_in` уезжал бы на час.
+    if ex.media_refs.is_empty()
+        && let Some(m) = retained.media.get(&c.media)
+    {
+        ex.media_refs = m.media_refs.clone();
+        ex.active_key = m.active_key.clone();
+    }
     // эффекты: LTW(-1) при реверсе первым, затем наша цепочка, чужие —
     // по исходным индексам
     let mut effects: Vec<EffectNode> = Vec::new();
@@ -894,6 +920,14 @@ pub fn timeline_to_project(
                         });
                     }
                     prev_clip = Some(ev.id);
+                    // ссылки на материал — и на уровне медиа: ими будут
+                    // пользоваться клипы, рождённые в редакторе (п.356)
+                    if !ex.media_refs.is_empty() {
+                        retained.media.entry(ev.media).or_insert_with(|| MediaRefs {
+                            media_refs: ex.media_refs.clone(),
+                            active_key: ex.active_key.clone(),
+                        });
+                    }
                     retained.clips.insert(ev.id, ex);
                     p.clips.push(ev);
                     cursor = cursor + dur;

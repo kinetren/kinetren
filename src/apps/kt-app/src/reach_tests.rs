@@ -22,14 +22,14 @@
 use eframe::egui;
 use std::path::{Path, PathBuf};
 
-fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
 /// Убрать комментарии: в теле `enum Command` и в `ops.rs` строковых
 /// литералов с `//` нет, поэтому полный токенайзер не нужен — тот же
 /// уровень строгости, что у сканера шрифтов (`font_tests`).
-fn strip_comments(src: &str) -> String {
+pub(crate) fn strip_comments(src: &str) -> String {
     let b = src.as_bytes();
     let mut out = String::with_capacity(src.len());
     let mut i = 0;

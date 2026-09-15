@@ -268,6 +268,8 @@ pub struct KtApp {
     /// последней. Фоновый автосейв обязан свериться с ним перед подменой
     /// файла — иначе он перетирает более свежий Ctrl+S своим устаревшим
     /// снапшотом (гонка, найденная живыми сценариями).
+    /// Самый большой номер события, рождавшийся в ЭТОЙ сессии (п.356).
+    pub clip_id_hw: std::cell::Cell<u64>,
     pub saved_rev: std::sync::Arc<std::sync::Mutex<u64>>,
     /// Сторож файла ВОССТАНОВЛЕНИЯ — отдельный от сторожа проекта (Р.49,
     /// п.350). Один мьютекс на две разные цели начинал отменять Ctrl+S
@@ -575,6 +577,7 @@ impl KtApp {
             gpu_fx_lost_notified: false,
             max_src_cache: None,
             autosave_rx: None,
+            clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             project_lock: None,
@@ -732,6 +735,7 @@ impl KtApp {
             gpu_fx_lost_notified: false,
             max_src_cache: None,
             autosave_rx: None,
+            clip_id_hw: std::cell::Cell::new(0),
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             project_lock: None,
@@ -2437,6 +2441,7 @@ impl KtApp {
             Ok(()) => {
                 self.player.set_project(self.model.project().clone());
                 self.dirty_content = true;
+                self.bump_clip_hw();
                 true
             }
             Err(e) => {
@@ -2547,6 +2552,7 @@ impl KtApp {
             Ok(()) => {
                 self.player.set_project(self.model.project().clone());
                 self.dirty_content = true;
+                self.bump_clip_hw();
                 true
             }
             Err(e) => {
@@ -3397,6 +3403,7 @@ impl KtApp {
         if self.model.undo().is_ok() {
             self.player.set_project(self.model.project().clone());
             self.dirty_content = true;
+            self.bump_clip_hw();
         }
     }
 
@@ -3405,6 +3412,7 @@ impl KtApp {
         if self.model.redo().is_ok() {
             self.player.set_project(self.model.project().clone());
             self.dirty_content = true;
+            self.bump_clip_hw();
         }
     }
 
@@ -3810,8 +3818,30 @@ impl KtApp {
         }
     }
 
+    /// Свободный номер события. Номера НЕ ПЕРЕИСПОЛЬЗУЮТСЯ в пределах
+    /// сессии (Р.49, п.356): прежняя формула «максимум по текущим клипам + 1»
+    /// после удаления последнего события выдавала его же номер заново, и
+    /// новорождённый клип наследовал ЧУЖОЙ конверт из `Retained.clips` —
+    /// имя, маркеры и ссылки на материал удалённого. По тому же номеру
+    /// ходят link-группы и ссылки морферов.
+    ///
+    /// Формат это НЕ ТРОГАЕТ: класс живёт внутри сессии — при переоткрытии
+    /// файла конверты пересобираются из него же. Вариант «чистить `Retained`
+    /// при удалении» отвергнут: удаление откатывается через undo, а
+    /// вычищенный конверт — нет.
     pub fn next_clip_id(&self) -> u64 {
-        self.model.project().clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 1
+        let live = self.model.project().clips.iter().map(|c| c.id.0).max().unwrap_or(0);
+        let hw = self.clip_id_hw.get().max(live);
+        self.clip_id_hw.set(hw);
+        hw + 1
+    }
+
+    /// Запомнить номера, которые уже рождались. Зовётся ПОСЛЕ каждой правки
+    /// модели: только там новые клипы уже в проекте, а удалить их ещё не
+    /// успели.
+    fn bump_clip_hw(&mut self) {
+        let live = self.model.project().clips.iter().map(|c| c.id.0).max().unwrap_or(0);
+        self.clip_id_hw.set(self.clip_id_hw.get().max(live));
     }
 
     /// Зафиксировать жест ручки фейда (Р.28, п.12). Длина меньше минимума

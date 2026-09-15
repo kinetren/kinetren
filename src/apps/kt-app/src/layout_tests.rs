@@ -4455,6 +4455,108 @@ fn t199_background_autosave_never_overwrites_newer_save() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Тест 376 (Р.49 А8): номер события не переиспользуется в пределах сессии.
+/// Прежняя формула «максимум по текущим клипам + 1» после удаления последнего
+/// события выдавала его же номер заново — и новорождённый клип наследовал
+/// ЧУЖОЙ конверт из `Retained.clips`: имя, маркеры и ссылки на материал
+/// удалённого. По тому же номеру ходят link-группы и ссылки морферов.
+#[test]
+fn t376_clip_ids_are_not_reused_within_a_session() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let mut h = harness();
+    let app = h.state_mut();
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+
+    let make = |app: &mut crate::app::KtApp, id: u64| {
+        app.apply(Command::AddClip(ClipEvent {
+            id: ClipId(id),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(0),
+            duration: Tick(90_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        }));
+    };
+
+    let first = app.next_clip_id();
+    make(app, first);
+    let second = app.next_clip_id();
+    assert!(second > first, "второй номер не больше первого");
+    make(app, second);
+
+    // удалили оба — номера всё равно не возвращаются
+    app.apply(Command::RemoveClip { id: ClipId(second) });
+    app.apply(Command::RemoveClip { id: ClipId(first) });
+    assert!(app.model.project().clips.is_empty());
+    let third = app.next_clip_id();
+    assert!(
+        third > second,
+        "номер переиспользован после удаления ({third} <= {second}): новый клип получит \
+         конверт удалённого — его имя, маркеры и ссылки на материал"
+    );
+
+    // отметка не двигается, пока номер не взяли на деле
+    assert_eq!(app.next_clip_id(), third, "выдали два разных номера на один запрос");
+
+    // undo, отменивший рождение, отметку НЕ откатывает: номер уже жил, и
+    // конверт под ним мог осесть в Retained
+    make(app, third);
+    app.undo();
+    assert!(app.model.project().clips.is_empty(), "undo обязан был убрать рождённый клип");
+    assert!(
+        app.next_clip_id() > third,
+        "undo вернул номер в оборот — вместе с конвертом, который под ним завёлся"
+    );
+}
+
+/// Тест 379 (Р.49 А8, идиома t273): арифметика номеров событий живёт в ОДНОМ
+/// месте. Каждая своя копия «max(...)+1» — это ещё один способ выдать номер
+/// удалённого клипа, и найти её потом можно только по жалобе.
+#[test]
+fn t379_clip_id_arithmetic_lives_in_one_place() {
+    let root = crate::reach_tests::workspace_root();
+    const HOME: &str = "apps/kt-app/src/app.rs";
+    let mut bad: Vec<String> = Vec::new();
+    for rel in [
+        "apps/kt-app/src/timeline.rs",
+        "apps/kt-app/src/bin_panel.rs",
+        "apps/kt-app/src/morpher_editor.rs",
+        "apps/kt-app/src/fx_editor.rs",
+        "apps/kt-app/src/toolbar.rs",
+        HOME,
+    ] {
+        let src = crate::reach_tests::strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+        for (n, line) in src.lines().enumerate() {
+            let t = line.trim();
+            // «взять максимум номеров клипов и прибавить» — формула выдачи
+            if !(t.contains("c.id.0") && t.contains("max()")) {
+                continue;
+            }
+            // в доме правила (next_clip_id/bump_clip_hw) такие строки законны
+            if rel == HOME {
+                continue;
+            }
+            bad.push(format!("{rel}:{}: {t}", n + 1));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "номер события выдаётся ВНЕ единственного правила (`next_clip_id` в {HOME}). \
+         Своя копия «max + 1» не знает об уже рождённых и переиспользует номера \
+         удалённых событий вместе с их конвертами: {bad:?}"
+    );
+}
+
 /// Тест 369 (Р.49 А6): «Новый» и «Открыть» при несохранённой работе СПРАШИВАЮТ.
 /// До Р.49 не спрашивали — и это был законный выбор (вердикт F-RES-005):
 /// фоновый автосейв писал прямо в файл пользователя, терять было нечего.
