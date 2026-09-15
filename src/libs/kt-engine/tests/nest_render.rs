@@ -604,3 +604,172 @@ fn t443_three_keys_separate_reels_instances_and_editions() {
         "суб-композит не мемоизирован по адресу ленты"
     );
 }
+
+// ---- 447-449 (Р.50, Б4): аудио — суб-микс --------------------------------
+
+/// Реверб без растяжения времени: варп на вложении пока запрещён, а
+/// хвост — ровно то, что должно тянуться ЧЕРЕЗ шов между репликами.
+fn reverb() -> FxInstance {
+    FxInstance::SlowedReverb {
+        rate: 1.0,
+        mix: 0.6,
+        reverb_delay_ms: 60.0,
+        damp: 0.4,
+        decay: 0.7,
+        wet_gain: 1.0,
+        predelay_ms: 0.0,
+        width: 1.0,
+        frames: Default::default(),
+        automation: vec![],
+    }
+}
+
+fn audio_nest(outer_fx: Vec<FxInstance>, inner_fx: Vec<FxInstance>) -> Project {
+    let mut p = base();
+    let mut s = Sequence::new(MediaId(100), "Реплики");
+    // две реплики встык — то самое «десять реплик под одной цепочкой»
+    let mut a = ev(2, ClipKind::Audio, 0, Tick(0), PART, 1);
+    let mut b = ev(3, ClipKind::Audio, 0, PART, PART, 2);
+    a.fx = inner_fx.clone();
+    b.fx = inner_fx;
+    s.clips = vec![a, b];
+    p.sequences.push(s);
+    let mut inst = ev(10, ClipKind::Audio, 0, Tick(0), PART + PART, 100);
+    inst.source_in = Tick(0);
+    inst.fx = outer_fx;
+    p.clips.push(inst);
+    p.validate().expect("проект со звуковым вложением законен");
+    p
+}
+
+fn spread_audio(fx: Vec<FxInstance>) -> Project {
+    let mut p = base();
+    let mut a = ev(2, ClipKind::Audio, 0, Tick(0), PART, 1);
+    let mut b = ev(3, ClipKind::Audio, 0, PART, PART, 2);
+    a.fx = fx.clone();
+    b.fx = fx;
+    p.clips = vec![a, b];
+    p.validate().expect("развёрнутый проект законен");
+    p
+}
+
+#[test]
+fn t447_audio_law_e_through_the_submix() {
+    let frames = (PART + PART).to_audio_frames() as usize;
+    let a = render_audio(&spread_audio(vec![]), frames);
+    let b = render_audio(&audio_nest(vec![], vec![]), frames);
+    assert_eq!(
+        a, b,
+        "ЗАКОН Э по аудио через СУБ-МИКС: вложение с пустой цепочкой обязано \
+         звучать БАЙТ-В-БАЙТ как развёрнутое содержимое. Вложение — виртуальное \
+         медиа под фетчером, а не ветка в миксере, именно чтобы порядок сложения \
+         f32 не поехал"
+    );
+    assert!(a.iter().any(|x| x.abs() > 1e-6), "фикстура молчит");
+
+    // ЗАКАЗ БЁРСТОВ уходит вглубь: у ленты источника нет, и адрес ленты в
+    // заказе означал бы, что префетч греет несуществующее, а суб-микс
+    // читает настоящее — вечный промах (п.13)
+    let r = AudioRenderer::new(&audio_nest(vec![], vec![]));
+    let want = r.wanted_audio_bursts(0..frames as i64);
+    assert!(!want.is_empty(), "заказ пуст — проверять нечего");
+    assert!(
+        want.iter().all(|(m, _)| *m != MediaId(100)),
+        "в заказе бёрстов стоит АДРЕС ЛЕНТЫ: {want:?}"
+    );
+    assert!(
+        want.iter().any(|(m, _)| *m == MediaId(1)) && want.iter().any(|(m, _)| *m == MediaId(2)),
+        "заказ не покрыл содержимое ленты: {want:?}"
+    );
+}
+
+#[test]
+fn t449_one_reverb_on_ten_replicas_is_not_a_chain_on_each() {
+    let frames = (PART + PART).to_audio_frames() as usize;
+    let rev = vec![reverb()];
+    // цепочка НА ВЛОЖЕНИИ: один хвост на обе реплики, и он тянется ЧЕРЕЗ шов
+    let on_nest = render_audio(&audio_nest(rev.clone(), vec![]), frames);
+    // цепочка на КАЖДОМ ребёнке: два независимых хвоста, обрывающихся на швах
+    let on_each = render_audio(&spread_audio(rev.clone()), frames);
+    assert_ne!(
+        on_nest, on_each,
+        "реверб на вложении посчитался покусочно. «Одна цепочка на группу \
+         реплик» — то, ради чего звуковое вложение и нужно"
+    );
+    assert!(on_nest.iter().any(|x| x.abs() > 1e-6), "вложение молчит");
+
+    // ...и цепочка на вложении ВООБЩЕ действует: без неё звучало бы сухо
+    let dry = render_audio(&audio_nest(vec![], vec![]), frames);
+    assert_ne!(
+        on_nest, dry,
+        "цепочка на вложении молча пропала — до Б4 её роняло раскрытие, и \
+         это был бы ровно тот случай «тихо посчитали другое»"
+    );
+
+    // Цепочка ВНУТРИ ленты тоже обязана звучать: её процессоры живут в
+    // своём сторе, и без рекурсии `sync_fx` их бы просто не завели.
+    let inside = render_audio(&audio_nest(vec![], rev), frames);
+    // Ключевое утверждение — НЕ «отличается от сухого»: без синхронизации
+    // процессор внутренней цепочки не заводится, `render_fx_clip` выходит
+    // на первой строке, и событие просто ПРОПАДАЕТ. Отличие от сухого при
+    // этом тоже есть, и тест был бы зелёным на сломанном коде.
+    let energy = |v: &[f32]| v.iter().map(|x| x.abs() as f64).sum::<f64>();
+    assert!(
+        energy(&inside) > energy(&dry) * 0.3,
+        "звук внутри ленты ПРОПАЛ ({:.1} против {:.1} у сухого): состояние \
+         вложенных цепочек не синхронизировано с моделью, и `render_fx_clip` \
+         молча вышел, не найдя процессора",
+        energy(&inside),
+        energy(&dry)
+    );
+    assert_ne!(inside, dry, "цепочка внутри ленты не изменила звук");
+    assert_ne!(inside, on_nest, "цепочка внутри и снаружи дали одно и то же");
+}
+
+#[test]
+fn t448_submix_is_the_same_whole_and_in_chunks() {
+    // Потоковая цепочка внутри ленты обязана переживать нарезку выхода: у
+    // плеера кольцо заполняется кусками, и шов между ними не должен быть
+    // слышен (родня t338 «куском == кусками»).
+    let p = audio_nest(vec![reverb()], vec![]);
+    let frames = (PART + PART).to_audio_frames() as usize;
+    let whole = render_audio(&p, frames);
+
+    let r = AudioRenderer::new(&p);
+    let mut store = kt_engine::fxstore::FxStateStore::new();
+    r.sync_fx(&mut store);
+    let mut f = direct();
+    let mut pieces = vec![0f32; frames * CH];
+    let chunk = 1024usize;
+    let mut done = 0usize;
+    while done < frames {
+        let n = chunk.min(frames - done);
+        let (_, tail) = pieces.split_at_mut(done * CH);
+        let (dst, _) = tail.split_at_mut(n * CH);
+        r.render_frames_with(&mut f, &mut store, done as i64, dst);
+        done += n;
+    }
+    assert_eq!(
+        whole, pieces,
+        "суб-микс, посчитанный КУСКАМИ, разошёлся с ним же целиком: внутренняя \
+         цепочка теряет непрерывность на швах выхода"
+    );
+
+    // seek уходит ВГЛУБЬ: после reset хвост из другого места не звучит
+    let mut store2 = kt_engine::fxstore::FxStateStore::new();
+    r.sync_fx(&mut store2);
+    let mut far = vec![0f32; 4096 * CH];
+    r.render_frames_with(&mut f, &mut store2, 200_000, &mut far);
+    store2.reset_all();
+    let mut after = vec![0f32; 4096 * CH];
+    r.render_frames_with(&mut f, &mut store2, 0, &mut after);
+    let mut fresh_store = kt_engine::fxstore::FxStateStore::new();
+    r.sync_fx(&mut fresh_store);
+    let mut fresh = vec![0f32; 4096 * CH];
+    r.render_frames_with(&mut f, &mut fresh_store, 0, &mut fresh);
+    assert_eq!(
+        after, fresh,
+        "после seek внутри ленты остался хвост из ДРУГОГО места: `reset_all` \
+         не дошёл до цепочек вложения"
+    );
+}

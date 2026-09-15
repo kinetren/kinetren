@@ -646,6 +646,25 @@ pub fn clip_warp_of(
     Some(ClipWarp { base, prof, used, blend })
 }
 
+/// Растягивает ли цепочка ВРЕМЯ на самом деле.
+///
+/// Наличие слота и растяжение — разные вещи: `SlowedReverb` со скоростью 1×
+/// даёт хвост, но материал потребляет 1:1. `warps_time()` отвечает на
+/// вопрос «умеет ли этот ВИД», и для вето на резку куска этого достаточно;
+/// там, где спрашивают «поедет ли время» (вложение, Р.50), нужен ответ про
+/// ЗНАЧЕНИЯ.
+pub fn chain_warps_time(fx: &[FxInstance], auto: &[Vec<ParamCurve>]) -> bool {
+    fx.iter().enumerate().any(|(i, f)| match f {
+        FxInstance::SlowedReverb { rate, .. } => {
+            *rate != 1.0
+                || auto.get(i).is_some_and(|cs| {
+                    cs.iter().any(|c| c.param == "rate" && c.keys.iter().any(|k| k.v != 1.0))
+                })
+        }
+        _ => false,
+    })
+}
+
 /// Карта клипа из его активной цепочки.
 pub fn clip_warp(c: &crate::ClipEvent) -> Option<ClipWarp> {
     // дешёвый отсев ДО аллокаций `active_fx`/`active_fx_auto`:

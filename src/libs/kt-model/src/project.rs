@@ -5131,7 +5131,7 @@ impl Project {
             // файл и bake разом (правило 16).
             if !self.sequences.is_empty()
                 && self.sequences.iter().any(|s| s.id == c.media)
-                && (c.reversed || c.fx.iter().any(|f| f.warps_time()))
+                && (c.reversed || crate::chain_warps_time(&c.active_fx(), &c.active_fx_auto()))
             {
                 return Err(ProjectError::NestInstanceNotChainable(c.id));
             }

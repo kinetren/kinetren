@@ -133,6 +133,52 @@ pub struct AudioRenderer {
     /// питча). Донести их сглаживанием нельзя — смена пересобирает
     /// процессоры (сверка в FxStateStore).
     opts: kt_fx::ChainOpts,
+    /// Рендереры вложенных лент (Р.50, Б4).
+    ///
+    /// Вложение — ВИРТУАЛЬНОЕ МЕДИА под фетчером, а не ветка в миксере.
+    /// Поэтому `render_plain_clip`, `render_fx_clip`, веса,
+    /// `chain_source_window_ext`, `fill_source` и ПОРЯДОК СЛОЖЕНИЯ f32 не
+    /// меняются ни на строку: вложение — просто один из клипов в
+    /// `active_clips`, и GOLDEN_AUDIO не двигается.
+    nests: std::collections::HashMap<kt_model::MediaId, AudioRenderer>,
+}
+
+/// Фетчер, за которым вложенные ленты выглядят обычными источниками.
+///
+/// Суб-микс НЕ кэшируется и не может: цепочка — потоковый автомат, и тот же
+/// кусок на втором круге лупа даёт ДРУГОЙ выход (Р.43, п.302). Кэшируется
+/// ровно один последний бёрст — потому что `render_plain_clip` держит на
+/// нём курсор и берёт куски, а пересчёт вернул бы другое.
+struct NestFetcher<'a> {
+    inner: &'a mut dyn AudioFetcher,
+    reels: &'a std::collections::HashMap<kt_model::MediaId, AudioRenderer>,
+    states: &'a mut std::collections::HashMap<kt_model::MediaId, crate::fxstore::NestState>,
+}
+
+impl AudioFetcher for NestFetcher<'_> {
+    fn audio_burst(
+        &mut self,
+        media: kt_model::MediaId,
+        idx: i64,
+    ) -> Option<std::sync::Arc<kt_media::AudioBurst>> {
+        let Some(reel) = self.reels.get(&media) else { return self.inner.audio_burst(media, idx) };
+        let st = self.states.entry(media).or_default();
+        if let Some((i, b)) = &st.last
+            && *i == idx
+        {
+            return Some(b.clone());
+        }
+        let mut data = Box::new([0.0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS]);
+        reel.render_frames_with(
+            self.inner,
+            &mut st.store,
+            idx * AUDIO_BURST_FRAMES as i64,
+            &mut data[..],
+        );
+        let burst = std::sync::Arc::new(kt_media::AudioBurst { idx, data });
+        st.last = Some((idx, burst.clone()));
+        Some(burst)
+    }
 }
 
 /// Карты перекрытий ПО НОМЕРУ ДОРОЖКИ: обращение идёт на каждый кадр,
@@ -287,9 +333,18 @@ fn overlap_weight(clips: &[AudioClip], covers: &OverlapMap, ci: usize, frame: i6
 
 impl AudioRenderer {
     pub fn new(project: &Project) -> AudioRenderer {
-        // effective_clips: morpher'ы уже применены (подмена источника,
-        // live FX batch) — движок про morpher не знает (H1)
-        let effective = project.effective_clips();
+        AudioRenderer::build_reel(project, None, 0)
+    }
+
+    fn build_reel(
+        project: &Project,
+        seq: Option<kt_model::MediaId>,
+        depth: usize,
+    ) -> AudioRenderer {
+        // морфер-слои уже применены (подмена источника, live FX batch) —
+        // движок про морфер не знает (H1); вложения НЕ раскрываются: у
+        // каждого свой суб-микс (Р.50, Б4)
+        let effective = project.effective_reel(seq);
         let mut clips: Vec<AudioClip> = effective
             .iter()
             .filter(|c| c.kind == ClipKind::Audio)
@@ -370,17 +425,30 @@ impl AudioRenderer {
         // («ранний» клип определяется по (start, media)).
         clips.sort_by_key(|c| (c.start, c.end, c.lane, c.media));
         let (index, index_from) = Self::build_index(&clips);
-        let covers =
-            if project.overlap_layers { build_lane_covers(&clips) } else { OverlapMap::new() };
+        // переслаивание — свойство ЛЕНТЫ, на которой лежат события
+        let overlap_layers = match seq.and_then(|id| project.sequence(id)) {
+            Some(s) => s.overlap_layers,
+            None => project.overlap_layers,
+        };
+        let covers = if overlap_layers { build_lane_covers(&clips) } else { OverlapMap::new() };
         let overlaps = overlapping_clips(&clips, &covers);
+        let mut nests = std::collections::HashMap::new();
+        if depth < kt_model::MAX_NEST_DEPTH {
+            for id in clips.iter().filter_map(|c| project.sequence(c.media).map(|s| s.id)) {
+                nests
+                    .entry(id)
+                    .or_insert_with(|| AudioRenderer::build_reel(project, Some(id), depth + 1));
+            }
+        }
         AudioRenderer {
             clips,
             index,
             index_from,
             covers,
             overlaps,
-            overlap_layers: project.overlap_layers,
+            overlap_layers,
             opts: kt_fx::ChainOpts { pitch_engine: project.settings.pitch_engine },
+            nests,
         }
     }
 
@@ -450,6 +518,13 @@ impl AudioRenderer {
         }
         let alive: std::collections::HashSet<_> = self.clips.iter().map(|c| c.id).collect();
         store.retain_clips(&|id| alive.contains(&id));
+        // цепочки ВНУТРИ лент синхронизируются тем же правилом: те же
+        // цепочки — те же state-объекты, хвосты ревербов живут (инвариант 3)
+
+        for (id, sub) in &self.nests {
+            sub.sync_fx(&mut store.nest_mut(*id).store);
+        }
+        store.retain_nests(&|id| self.nests.contains_key(&id));
     }
 
     /// Рендер без внешнего FX-состояния (для клипов без FX эквивалентно
@@ -471,6 +546,30 @@ impl AudioRenderer {
     /// (`render_looped`), разрезая диапазон по границе региона.
     /// `store` — долгоживущее FX-состояние аудио-render-потока.
     pub fn render_frames_with(
+        &self,
+        fetcher: &mut dyn AudioFetcher,
+        store: &mut crate::fxstore::FxStateStore,
+        start_frame: i64,
+        out: &mut [f32],
+    ) -> RenderStats {
+        // Плоская лента — ПРЕЖНИЙ путь без единой лишней ветки: на нём
+        // стоит GOLDEN_AUDIO.
+        if self.nests.is_empty() {
+            return self.render_reel(fetcher, store, start_frame, out);
+        }
+        // Состояния лент вынимаются НАРУЖУ: суб-рендер зовётся из фетчера,
+        // а фетчер живёт рядом со стором — взять оба мутабельно
+        // одновременно нечем.
+        let mut states = store.take_nests();
+        let stats = {
+            let mut f = NestFetcher { inner: fetcher, reels: &self.nests, states: &mut states };
+            self.render_reel(&mut f, store, start_frame, out)
+        };
+        store.put_nests(states);
+        stats
+    }
+
+    fn render_reel(
         &self,
         fetcher: &mut dyn AudioFetcher,
         store: &mut crate::fxstore::FxStateStore,
@@ -852,6 +951,13 @@ impl AudioRenderer {
             // бёрсты не заказываем
             let s0 = s0.max(0);
             let s1 = s1.max(s0 + 1);
+            // ЗАКАЗ УХОДИТ ВГЛУБЬ (Р.50): у ленты источника нет, есть
+            // содержимое. Спрашиваем её о ТОМ ЖЕ окне потребления, но в её
+            // собственных кадрах — правда у префетча и рендера одна (п.13).
+            if let Some(sub) = self.nests.get(&c.media) {
+                out.extend(sub.wanted_audio_bursts_for(s0..s1, raw));
+                continue;
+            }
             let b0 = s0.div_euclid(AUDIO_BURST_FRAMES as i64);
             let b1 = (s1 - 1).div_euclid(AUDIO_BURST_FRAMES as i64) + 1;
             out.push((c.media, b0..b1));
