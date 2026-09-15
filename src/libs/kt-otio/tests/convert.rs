@@ -1318,3 +1318,75 @@ fn t433b_version_cascade_did_not_move_old_files() {
     }
     assert!(seen >= 2, "наши .otio-фикстуры пропали (нашлось {seen})");
 }
+
+/// Тест 437 (Р.50 А5): чужое вложение — настоящая лента, а не серая дыра.
+///
+/// Дословная цена сегодняшнего поведения (п.158): «melt раскрывает вложенные
+/// композиции и рисует их содержимое, а у нас там пустота» — из-за чего
+/// `nested_example` навсегда сидел в smoke-ярусе кросс-рендера. Владелец
+/// решил закрыть дыру в этом же раунде, приняв несовместимую смену поведения
+/// импорта.
+#[test]
+fn t437_foreign_nested_stacks_become_real_reels() {
+    let path =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../../fixtures/otio-samples/nested_example.otio");
+    let text = std::fs::read_to_string(path).unwrap();
+    let b = load_project(&text, None).expect("nested_example читается");
+    let p = &b.project;
+
+    // в файле ТРИ вложения: два Stack и один Track внутри Track
+    assert_eq!(
+        p.sequences.len(),
+        3,
+        "чужие вложения не стали лентами: {:?}",
+        p.sequences.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        p.sequences.iter().any(|s| s.name.contains("Nested Track")),
+        "`Track` внутри `Track` — тоже вложение, и он пропущен: {:?}",
+        p.sequences.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        p.foreign.is_empty(),
+        "вложения остались серыми плейсхолдерами: {:?}",
+        p.foreign
+    );
+    // содержимое доехало: у каждой ленты есть события
+    for s in &p.sequences {
+        assert!(!s.clips.is_empty(), "лента '{}' пуста", s.name);
+    }
+    // экземпляры стоят на таймлайне и смотрят на свои ленты
+    for s in &p.sequences {
+        assert_eq!(p.sequence_uses(s.id), 1, "лента '{}' не поставлена", s.name);
+    }
+    p.validate().expect("прочитанный проект обязан быть законным");
+
+    // ...и раскрытие даёт настоящий монтаж, а не пустоту: ни одно событие,
+    // дошедшее до движка, не смотрит на ЛЕНТУ — все смотрят на материал
+    let eff = p.effective_clips();
+    assert!(
+        eff.iter().all(|c| p.sequence(c.media).is_none()),
+        "после раскрытия остались события, смотрящие на ленту, — движок увидел бы пустоту"
+    );
+    // каждая лента внесла своё содержимое, подрезанное окном экземпляра
+    for s in &p.sequences {
+        let inner: Vec<MediaId> = s.clips.iter().map(|c| c.media).collect();
+        assert!(
+            inner.iter().all(|m| eff.iter().any(|c| c.media == *m)),
+            "материал ленты '{}' не доехал до движка",
+            s.name
+        );
+    }
+
+    // круг: наш вывод читается и остаётся идемпотентным
+    let once = save_project(p, &b.retained, None);
+    let again = load_project(&once, None).expect("наш вывод читается");
+    assert_eq!(
+        again.project.sequences.len(),
+        3,
+        "ленты не пережили круг: {:?}",
+        again.project.sequences.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+    );
+    let twice = save_project(&again.project, &again.retained, None);
+    assert_eq!(once, twice, "пересохранение не идемпотентно");
+}

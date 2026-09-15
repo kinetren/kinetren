@@ -140,6 +140,14 @@ pub struct Retained {
     /// собственный неймспейс, и после нашего сохранения они исчезали.
     /// Ключ — порядковый номер метки в НАШЕМ списке на момент чтения.
     pub stack_marker_extras: Vec<(usize, MarkerExtra)>,
+    /// Чужие объекты на уровне ДЕТЕЙ корневого Stack — не `Track`.
+    ///
+    /// До Р.50 они попадали в `foreign` по ключу, но писателем не
+    /// доставались ОТТУДА никогда: сырьё возвращают только
+    /// `ForeignEvent`-плейсхолдеры, живущие НА дорожках, а у корневого
+    /// ребёнка дорожки нет. Круг терял такой объект молча. Храним его с
+    /// ПОЗИЦИЕЙ среди детей и возвращаем на неё.
+    pub root_foreign: Vec<(usize, RawObject)>,
     /// Неизвестные поля НАШЕГО конверта kt (будущие версии, Р.29):
     /// passthrough — v2-сборка не теряет добавки v3.
     pub timeline_kt_extra: Map<String, Value>,
@@ -192,6 +200,13 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
         base_dir,
         0,
     );
+    // чужие корневые дети возвращаются на СВОИ позиции (Р.50): раньше они
+    // уезжали в `foreign` по ключу, который писателю не достаётся
+    let mut children = children;
+    for (pos, raw) in &retained.root_foreign {
+        let at = (*pos).min(children.len());
+        children.insert(at, Composable::Unknown(raw.clone()));
+    }
 
     // метки — на корневом Stack (наши + чужие passthrough)
     let mut markers: Vec<MarkerNode> = p
@@ -1042,6 +1057,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
             bad_kt: &mut bad_kt,
             track_extras: Some(&mut track_extras),
             seqs: Vec::new(),
+            pending: Vec::new(),
             seq_layers: kt
                 .as_ref()
                 .map(|k| {
@@ -1050,6 +1066,9 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
                 .unwrap_or_default(),
         };
         read_reel(&tl.tracks.children, root_layers.as_ref(), &mut root, &mut cx, 0)?;
+        // аудио-половины чужих вложений, встреченных на видео-дорожках
+        // (и наоборот) — они рождаются вне обхода своей дорожки
+        root.clips.extend(std::mem::take(&mut cx.pending));
         for (id, mut seq) in std::mem::take(&mut cx.seqs) {
             // сайдкар (Р.50): дорожки, порядок строк, морферы и камеры
             // ленты — то, чего OTIO не выражает. Не сошлось с файлом —
@@ -1305,6 +1324,9 @@ struct ReadCtx<'a> {
     seqs: Vec<(MediaId, Sequence)>,
     /// Карты слоёв вложенных лент из сайдкара `kt.sequences`.
     seq_layers: HashMap<u64, crate::meta::KtLayers>,
+    /// События, рождённые ВНЕ обхода своей дорожки: аудио-половина чужого
+    /// вложения, встреченного на видео-дорожке (и наоборот).
+    pending: Vec<ClipEvent>,
 }
 
 /// Прочитать детей одного `Stack` — треки одной ленты.
@@ -1352,16 +1374,23 @@ fn read_reel(
     }
     let mut seen_video = 0u32;
     let mut seen_audio = 0u32;
-    for child in children {
+    for (pos, child) in children.iter().enumerate() {
         let Some(kind) = track_kind(child) else {
             cx.notices.push(format!(
                 "unsupported track-level object was kept untouched: {}",
                 composable_tag(child)
             ));
-            // хребет типизирован — перекодируем в сырьё для Retained
+            // хребет типизирован — перекодируем в сырьё для Retained.
+            // У КОРНЯ сырьё хранится с позицией и возвращается на неё: до
+            // Р.50 оно уезжало в `foreign` по ключу, который писателю не
+            // достаётся никогда, и круг терял объект молча.
             let raw = to_raw(child);
-            cx.retained.foreign.insert(*cx.next_foreign_key, raw);
-            *cx.next_foreign_key += 1;
+            if depth == 0 {
+                cx.retained.root_foreign.push((pos, raw));
+            } else {
+                cx.retained.foreign.insert(*cx.next_foreign_key, raw);
+                *cx.next_foreign_key += 1;
+            }
             continue;
         };
         let Composable::Track(track) = child else { unreachable!() };
@@ -1512,13 +1541,25 @@ fn read_reel(
                     out.clips.push(ev);
                     cursor = cursor + dur;
                 }
-                Composable::Stack(st)
-                    if cx.is_ours && crate::meta::nest_seq_id(&st.metadata).is_some() =>
-                {
+                // Вложение: наше (`kt.seq`) — схлопывается по адресу; чужое
+                // (`Stack` или `Track` внутри `Track`) — становится НОВОЙ
+                // лентой тем же кодом. Глубже предела — старый путь
+                // плейсхолдера ниже: он милосерднее отказа, круг цел.
+                Composable::Stack(_) | Composable::Track(_) if depth < kt_model::MAX_NEST_DEPTH => {
                     let dur = composable_duration(item).ok_or_else(|| {
-                        Error::UnsupportedSchema("nested Stack without readable duration".into())
+                        Error::UnsupportedSchema(format!(
+                            "nested {} without readable duration",
+                            composable_tag(item)
+                        ))
                     })?;
-                    let ev = read_nest(st, kind, lane, cursor, dur, cx, depth)?;
+                    let ev = match item {
+                        Composable::Stack(st)
+                            if cx.is_ours && crate::meta::nest_seq_id(&st.metadata).is_some() =>
+                        {
+                            read_nest(st, kind, lane, cursor, dur, cx, depth)?
+                        }
+                        other => read_foreign_nest(other, kind, lane, cursor, dur, cx, depth)?,
+                    };
                     if let Some((in_off, out_off, (ttype, mut meta, extra))) =
                         pending_transition.take()
                     {
@@ -1617,6 +1658,141 @@ fn read_reel(
         }
     }
     Ok(())
+}
+
+/// Прочитать ЧУЖОЕ вложение — `Stack` или `Track` внутри `Track` (Р.50, А5).
+///
+/// До этого раунда оно становилось серым плейсхолдером: «melt раскрывает
+/// вложенные композиции и рисует их содержимое, а у нас там пустота»
+/// (п.158). Теперь — настоящая лента, прочитанная ТЕМ ЖЕ `read_reel`.
+/// Цена принята владельцем вместе с решением: импорт чужих файлов даёт
+/// другую модель, чем давал раньше.
+///
+/// Два случая, и оба есть в `nested_example.otio`:
+///
+/// - дети — `Track`'и: обычная многодорожечная лента;
+/// - дети — сразу клипы (`Stack` без треков, либо `Track` внутри `Track`):
+///   лента из ОДНОЙ дорожки, и вид у неё — вид РОДИТЕЛЬСКОГО трека, потому
+///   что своего у неё нет.
+fn read_foreign_nest(
+    item: &Composable,
+    kind: ClipKind,
+    lane: u32,
+    start: Tick,
+    dur: Tick,
+    cx: &mut ReadCtx<'_>,
+    depth: usize,
+) -> Result<ClipEvent, Error> {
+    let (name, children, source_range, effects) = match item {
+        Composable::Stack(st) => {
+            (&st.name, &st.children, st.source_range, &st.effects)
+        }
+        Composable::Track(t) => (&t.name, &t.children, t.source_range, &t.effects),
+        _ => unreachable!("called on Stack/Track only"),
+    };
+    let has_tracks = children.iter().any(|c| track_kind(c).is_some());
+    let mut body = ReelRead::default();
+    if has_tracks {
+        read_reel(children, None, &mut body, cx, depth + 1)?;
+    } else {
+        // Оборачиваем содержимое в ОДИН трек своего вида: `read_reel` умеет
+        // читать только треки, а правило «клип за клипом с гэпами» у нас
+        // одно и второй раз его выписывать нельзя.
+        let synth = Composable::Track(Track {
+            name: String::new(),
+            kind: match item {
+                Composable::Track(t) => t.kind.clone(),
+                _ => match kind {
+                    ClipKind::Video => "Video".into(),
+                    ClipKind::Audio => "Audio".into(),
+                },
+            },
+            children: children.clone(),
+            source_range: None,
+            effects: vec![],
+            markers: vec![],
+            enabled: true,
+            metadata: Map::new(),
+            extra: Map::new(),
+        });
+        read_reel(std::slice::from_ref(&synth), None, &mut body, cx, depth + 1)?;
+    }
+    if !effects.is_empty() {
+        cx.notices.push(format!(
+            "effects on the nested '{}' are not ours and were dropped",
+            if name.is_empty() { "<unnamed>" } else { name }
+        ));
+    }
+    let addr = {
+        let free = (*cx.next_media_id)
+            .max(cx.media.iter().map(|m| m.id.0 + 1).max().unwrap_or(0))
+            .max(cx.seqs.iter().map(|(id, _)| id.0 + 1).max().unwrap_or(0));
+        *cx.next_media_id = free + 1;
+        MediaId(free)
+    };
+    let mut seq = Sequence::new(
+        addr,
+        if name.trim().is_empty() { format!("Nested {}", addr.0) } else { name.clone() },
+    );
+    for (k, n) in [
+        (ClipKind::Video, &mut seq.video_lanes),
+        (ClipKind::Audio, &mut seq.audio_lanes),
+    ] {
+        *n = body.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max().unwrap_or(1).max(1);
+    }
+    let both = body.clips.iter().any(|c| c.kind == ClipKind::Video)
+        && body.clips.iter().any(|c| c.kind == ClipKind::Audio);
+    seq.clips = body.clips;
+    seq.transitions = body.transitions;
+    cx.seqs.push((addr, seq));
+
+    let id = ClipId(*cx.next_clip_id);
+    *cx.next_clip_id += 1;
+    let source_in = source_range.map(|r| r.start_time.to_ticks()).unwrap_or(Tick::ZERO);
+    // Чужое вложение со звуком И картинкой внутри: у нас это ДВА события в
+    // одной link-группе — своей «дорожки обоих видов» у нас нет. Молчать
+    // тут нельзя: человек увидит на таймлайне на одно событие больше, чем
+    // было в чужом файле.
+    let group = if both {
+        let seq_name = cx.seqs.last().map(|(_, s)| s.name.clone()).unwrap_or_default();
+        cx.notices.push(format!(
+            "nested reel '{seq_name}' carries both video and audio — it became a linked pair"
+        ));
+        let g = GroupId(*cx.next_clip_id);
+        *cx.next_clip_id += 1;
+        Some(g)
+    } else {
+        None
+    };
+    let make = |id: ClipId, kind: ClipKind, lane: u32| ClipEvent {
+        id,
+        link_group: group,
+        kind,
+        lane,
+        start,
+        duration: dur,
+        source_in,
+        media: addr,
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    if both {
+        let other = match kind {
+            ClipKind::Video => ClipKind::Audio,
+            ClipKind::Audio => ClipKind::Video,
+        };
+        // партнёр встаёт на НУЛЕВУЮ дорожку своего вида: переслаивание
+        // включено, наложение законно, а угадывать свободную нечем
+        let pid = ClipId(*cx.next_clip_id);
+        *cx.next_clip_id += 1;
+        cx.pending.push(make(pid, other, 0));
+    }
+    Ok(make(id, kind, lane))
 }
 
 /// Прочитать вложение: `Stack` ребёнком `Track` (Р.50).
