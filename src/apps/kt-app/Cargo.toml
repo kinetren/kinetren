@@ -40,3 +40,8 @@ ab_glyph = "0.2"
 # XdndPosition (п.2 v1.4) — читаем указатель напрямую
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = "0.13"
+
+# flock для замка на проект (п.352): ядро снимает его при любой смерти
+# процесса — свойство, которого нет ни у одного замка «своими руками»
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

@@ -62,18 +62,21 @@ fn t351_atomic_write_syncs_file_then_renames_then_syncs_dir() {
     assert!(w.dir_synced, "на обычной ФС каталог обязан сброситься");
 
     let log = rec.log.borrow().clone();
+    // имя временного файла несёт номер процесса (п.352) — в ожиданиях он
+    // подставляется, а не захардкожен
+    let pid = std::process::id();
     assert_eq!(
         log,
         vec![
             // tmp дописан к ПОЛНОМУ имени — «a.b.otio» не теряет «.b» (t150)
-            "write+sync a.b.otio.tmp (5 bytes)".to_string(),
-            "rename a.b.otio.tmp -> a.b.otio".to_string(),
+            format!("write+sync a.b.otio.{pid}.tmp (5 bytes)"),
+            format!("rename a.b.otio.{pid}.tmp -> a.b.otio"),
             "sync dir".to_string(),
         ],
         "порядок обязан быть: записать и сбросить ФАЙЛ → переименовать → сбросить КАТАЛОГ"
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
-    assert!(!path.with_extension("otio.tmp").exists(), "временный файл не остаётся");
+    assert!(!kt_otio::atomic_tmp_path(&path).exists(), "временный файл не остаётся");
 
     // и то же настоящей файловой системой — обёртка не разошлась с трейтом
     let path2 = dir.join("real.otio");

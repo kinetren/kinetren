@@ -119,7 +119,13 @@ pub fn write_atomic_with(fs: &dyn AtomicFs, path: &Path, text: &str) -> io::Resu
 
 /// Имя временного файла ДОПИСЫВАЕТСЯ к полному имени (тест 150): старый
 /// `with_extension("ktproj.tmp")` для «a.b.otio» съедал часть имени.
+///
+/// В имени стоит номер процесса (Р.49, п.352): две копии программы, открывшие
+/// один проект, писали бы В ОДИН временный файл — и `rename` одной подменял
+/// бы проект наполовину записанным содержимым другой. Замок на проект (см.
+/// `kt-app/src/project_lock.rs`) вторую копию не запрещает, а значит одного
+/// замка тут мало.
 pub fn atomic_tmp_path(path: &Path) -> PathBuf {
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    path.with_file_name(format!("{name}.tmp"))
+    path.with_file_name(format!("{name}.{}.tmp", std::process::id()))
 }

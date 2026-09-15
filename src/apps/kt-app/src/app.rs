@@ -19,6 +19,16 @@ pub enum Severity {
     Warn,
 }
 
+/// Вопрос, на который программа обязана получить ответ ДО действия (Р.49).
+/// Отдельный тип, а не флаг на каждый случай: вопросов будет несколько
+/// (занятый проект, несохранённая работа), и все они рисуются одним местом —
+/// иначе у каждого заведётся своя кнопка «Отмена» со своим поведением.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Ask {
+    /// Проект занят другой копией программы — писать всё равно?
+    SaveOverLock { pid: Option<u32> },
+}
+
 #[derive(Clone, Debug)]
 pub struct Notice {
     pub at: String,
@@ -244,6 +254,20 @@ pub struct KtApp {
     /// из-за чужой ревизии: фоновая запись recovery поднимала планку, и
     /// следующая явная запись проекта оказывалась «устаревшей».
     pub recovery_rev: std::sync::Arc<std::sync::Mutex<u64>>,
+    /// Замок на файл проекта (п.352). `None` — проект безымянный либо
+    /// занят другой копией: тогда `lock_holder` несёт её номер процесса.
+    pub project_lock: Option<crate::project_lock::ProjectLock>,
+    /// Номер процесса-держателя, если проект занят не нами.
+    pub lock_holder: Option<Option<u32>>,
+    /// Вопрос «проект занят — всё равно сохранить?» задаётся ОДИН раз за
+    /// сессию: дальше пользователь уже принял решение.
+    pub lock_override: bool,
+    /// Заданный и ещё не отвеченный вопрос.
+    pub ask: Option<Ask>,
+    /// Найденная несохранённая работа и выбранный кандидат (п.353).
+    pub recovery_offer: Vec<RecoveryCandidate>,
+    pub recovery_pick: usize,
+    pub recovery_open: bool,
     /// Файл восстановления, написанный ЭТОЙ копией программы. Удаляем при
     /// сохранении только его: иначе Ctrl+S в одной копии убивал бы
     /// восстановление другой (Р.49, п.351).
@@ -523,6 +547,13 @@ impl KtApp {
             autosave_rx: None,
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
+            project_lock: None,
+            lock_holder: None,
+            lock_override: false,
+            ask: None,
+            recovery_offer: Vec::new(),
+            recovery_pick: 0,
+            recovery_open: false,
             recovery_written: None,
             snap_line: None,
             preview_gen: (0, 0),
@@ -671,6 +702,13 @@ impl KtApp {
             autosave_rx: None,
             saved_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
             recovery_rev: std::sync::Arc::new(std::sync::Mutex::new(0)),
+            project_lock: None,
+            lock_holder: None,
+            lock_override: false,
+            ask: None,
+            recovery_offer: Vec::new(),
+            recovery_pick: 0,
+            recovery_open: false,
             recovery_written: None,
             snap_line: None,
             preview_gen: (0, 0),
@@ -1133,7 +1171,7 @@ impl KtApp {
             self.last_autosave = std::time::Instant::now();
             let ui = Some(self.ui_state());
             self.model.set_ui_state(ui);
-            let target = recovery_path_for(self.project_path.as_deref());
+            let target = self.recovery_target();
             let project = self.model.project().clone();
             let retained = self.retained.clone();
             let (tx, rx) = std::sync::mpsc::channel();
@@ -1169,6 +1207,85 @@ impl KtApp {
                     self.recovery_written = None;
                     self.warn(crate::tf!(k::msg::AUTOSAVE_FAILED, e))
                 }
+            }
+        }
+
+        // предложение восстановить несохранённую работу (п.353)
+        if self.recovery_open {
+            let mut act: Option<u8> = None;
+            egui::Modal::new(egui::Id::new("kt_recovery")).show(ui.ctx(), |ui| {
+                ui.set_max_width(560.0);
+                ui.heading(tr(k::ask::RECOVERY_TITLE));
+                ui.add_space(6.0);
+                ui.label(tr(k::ask::RECOVERY_INTRO));
+                ui.add_space(6.0);
+                for (i, c) in self.recovery_offer.iter().enumerate() {
+                    let owner = match &c.for_project {
+                        Some(p) => p.display().to_string(),
+                        None => tr(k::ask::RECOVERY_UNNAMED).to_string(),
+                    };
+                    let label = format!("{}  —  {owner}", crate::journal::stamp_of(c.mtime));
+                    if ui.radio(self.recovery_pick == i, label).clicked() {
+                        self.recovery_pick = i;
+                    }
+                    ui.weak(c.path.display().to_string());
+                }
+                ui.add_space(8.0);
+                // правило 19: диалог говорит, что решение ничего не ломает
+                ui.weak(tr(k::ask::RECOVERY_NOTE));
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button(tr(k::ask::RECOVERY_RESTORE)).clicked() {
+                        act = Some(0);
+                    }
+                    if ui.button(tr(k::ask::RECOVERY_FORGET)).clicked() {
+                        act = Some(1);
+                    }
+                    if ui.button(tr(k::ask::RECOVERY_LATER)).clicked() {
+                        act = Some(2);
+                    }
+                });
+            });
+            match act {
+                Some(0) => self.restore_recovery(self.recovery_pick),
+                Some(1) => self.forget_recovery(self.recovery_pick),
+                Some(2) => self.recovery_open = false,
+                _ => {}
+            }
+        }
+
+        // вопрос, на который программа ждёт ответа (п.352). Модальное окно:
+        // пока на него не ответили, сохранение не продолжается.
+        if let Some(ask) = self.ask.clone() {
+            let mut answer: Option<bool> = None;
+            egui::Modal::new(egui::Id::new("kt_ask")).show(ui.ctx(), |ui| {
+                ui.set_max_width(420.0);
+                match &ask {
+                    Ask::SaveOverLock { pid } => {
+                        ui.heading(tr(k::ask::LOCKED_TITLE));
+                        ui.add_space(6.0);
+                        ui.label(match pid {
+                            Some(n) => crate::tf!(k::msg::PROJECT_LOCKED_BY, n),
+                            None => tr(k::msg::PROJECT_LOCKED).to_string(),
+                        });
+                        ui.add_space(4.0);
+                        ui.weak(tr(k::ask::LOCKED_BODY));
+                        // правило 19: где это переиграть
+                        ui.weak(tr(k::ask::LOCKED_WHERE));
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            if ui.button(tr(k::ask::SAVE_ANYWAY)).clicked() {
+                                answer = Some(true);
+                            }
+                            if ui.button(tr(k::ask::DONT_SAVE)).clicked() {
+                                answer = Some(false);
+                            }
+                        });
+                    }
+                }
+            });
+            if let Some(yes) = answer {
+                self.answer_ask(yes);
             }
         }
 
@@ -2051,7 +2168,7 @@ impl KtApp {
     /// где фонового потока уже не будет: `on_exit` и (п.354) `Drop`. Исход —
     /// в журнал: окна нет, показать некому.
     pub(crate) fn write_recovery_now(&mut self) {
-        let target = recovery_path_for(self.project_path.as_deref());
+        let target = self.recovery_target();
         let json =
             kt_otio::save_project(self.model.project(), &self.retained, self.project_path.as_deref().and_then(|p| p.parent()));
         match write_project_guarded(&self.recovery_rev, &target, self.model_rev, &json) {
@@ -2066,6 +2183,115 @@ impl KtApp {
                 "WARN",
                 &format!("recovery write failed: {} ({e})", target.display()),
             ),
+        }
+    }
+
+    /// Поискать несохранённую работу и предложить её. Зовётся на старте и
+    /// пунктом меню: механизм обязан работать ПОВТОРНО (правило 14), а не
+    /// один раз при запуске.
+    pub fn offer_recovery(&mut self, quiet: bool) {
+        let list = recovery_candidates(self.project_path.as_deref());
+        self.offer_recovery_list(list, quiet);
+    }
+
+    pub(crate) fn offer_recovery_list(&mut self, list: Vec<RecoveryCandidate>, quiet: bool) {
+        self.recovery_offer = list;
+        self.recovery_pick = 0;
+        self.recovery_open = !self.recovery_offer.is_empty();
+        if self.recovery_offer.is_empty() && !quiet {
+            self.note(tr(k::msg::RECOVERY_NONE));
+        }
+    }
+
+    /// Забрать работу из файла восстановления В РЕДАКТОР. Файл-источник не
+    /// трогается: восстановиться можно ещё раз (передумал, отменил, открыл
+    /// не тот кандидат), а исходник несохранённой работы уничтожать вправе
+    /// только пользователь.
+    pub fn restore_recovery(&mut self, i: usize) {
+        let Some(c) = self.recovery_offer.get(i).cloned() else { return };
+        match load_project_file(&c.path) {
+            Ok((project, retained, notices)) => {
+                self.model = kt_model::TimelineModel::new(project);
+                self.retained = retained;
+                self.model_rev += 1;
+                self.player.set_project(self.model.project().clone());
+                // работа В РЕДАКТОРЕ и нигде больше: звёздочка горит, пока
+                // пользователь не нажмёт Ctrl+S
+                self.dirty_content = true;
+                self.recovery_open = false;
+                for n in notices {
+                    self.warn(n);
+                }
+                self.note(crate::tf!(k::msg::RECOVERY_RESTORED, c.path.display()));
+            }
+            Err(e) => self.warn(crate::tf!(k::msg::RECOVERY_FAILED, c.path.display(), e)),
+        }
+    }
+
+    /// Выбросить файл восстановления: работа из него не нужна.
+    pub fn forget_recovery(&mut self, i: usize) {
+        if i >= self.recovery_offer.len() {
+            return;
+        }
+        let c = self.recovery_offer.remove(i);
+        let _ = std::fs::remove_file(&c.path);
+        if self.recovery_written.as_deref() == Some(c.path.as_path()) {
+            self.recovery_written = None;
+        }
+        self.recovery_pick = self.recovery_pick.min(self.recovery_offer.len().saturating_sub(1));
+        self.recovery_open = !self.recovery_offer.is_empty();
+        self.note(crate::tf!(k::msg::RECOVERY_FORGOTTEN, c.path.display()));
+    }
+
+    /// Ответить на заданный вопрос. Вынесено из отрисовки, чтобы тест
+    /// отвечал ровно тем же кодом, что и кнопка (правило 17).
+    pub fn answer_ask(&mut self, yes: bool) {
+        let Some(a) = self.ask.take() else { return };
+        match a {
+            Ask::SaveOverLock { .. } if yes => {
+                self.lock_override = true;
+                self.save();
+            }
+            Ask::SaveOverLock { .. } => {}
+        }
+    }
+
+    /// Занять проект (п.352). Вторая копия не запрещается — она честно
+    /// деградирует: предупреждение с номером чужого процесса, своё
+    /// восстановление, свой временный файл и вопрос при первом сохранении.
+    pub(crate) fn claim_project(&mut self, path: &Path) {
+        // старый замок отпускаем ДО взятия нового: иначе «Сохранить как…»
+        // в тот же файл отказал бы сам себе
+        self.project_lock = None;
+        self.lock_holder = None;
+        self.lock_override = false;
+        match crate::project_lock::acquire(path) {
+            crate::project_lock::LockState::Owned(l) => self.project_lock = Some(l),
+            crate::project_lock::LockState::Busy { pid } => {
+                self.lock_holder = Some(pid);
+                match pid {
+                    Some(n) => self.warn(crate::tf!(k::msg::PROJECT_LOCKED_BY, n)),
+                    None => self.warn(tr(k::msg::PROJECT_LOCKED)),
+                }
+            }
+            // замок взять не удалось совсем — молча ведём себя как владелец:
+            // отказывать в работе из-за отсутствия каталога данных нельзя
+            crate::project_lock::LockState::Unavailable => {}
+        }
+    }
+
+    /// Адрес своего файла восстановления. У второй копии он с номером
+    /// процесса: иначе две копии одного проекта писали бы в один файл и
+    /// затирали несохранённую работу друг друга — ровно то, от чего вся
+    /// эта волна.
+    pub(crate) fn recovery_target(&self) -> PathBuf {
+        let base = recovery_path_for(self.project_path.as_deref());
+        match self.lock_holder {
+            None => base,
+            Some(_) => {
+                let name = base.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                base.with_file_name(format!("{name}.{}.otio", std::process::id()))
+            }
         }
     }
 
@@ -3100,7 +3326,10 @@ impl KtApp {
             return;
         };
         match Self::open(&p) {
-            Ok(app) => *self = app,
+            Ok(mut app) => {
+                app.claim_project(&p);
+                *self = app;
+            }
             Err(e) => self.note(crate::tf!(k::msg::OPEN_FAILED, e)),
         }
     }
@@ -3131,6 +3360,7 @@ impl KtApp {
                 };
                 let p = if p.extension().is_none() { p.with_extension("otio") } else { p };
                 self.project_path = Some(p.clone());
+                self.claim_project(&p);
                 // индекс-БД и тумбы теперь могут жить рядом с проектом
                 spawn_index_worker(
                     Some(p.with_extension("ktindex.db")),
@@ -3148,6 +3378,15 @@ impl KtApp {
                 p
             }
         };
+        // Проект занят другой копией — спрашиваем ОДИН раз за сессию (п.352).
+        // Не запрещаем: вторая копия законна, а её работа лежит в своём файле
+        // восстановления. Но молча затирать чужой Ctrl+S программа не вправе.
+        if let Some(pid) = self.lock_holder
+            && !self.lock_override
+        {
+            self.ask = Some(Ask::SaveOverLock { pid });
+            return;
+        }
         let ui = Some(self.ui_state());
         self.model.set_ui_state(ui);
         let out =
@@ -5444,6 +5683,83 @@ impl PerfState {
 /// hh:mm:ss без зависимости chrono.
 /// Файл автосохранения безымянного проекта (порт v1
 /// defaultAutosaveProjectPath: ~/.local/share/kinotrain/).
+/// Найденная несохранённая работа: файл, время и проект, к которому он
+/// относится (`None` — работа, у которой имени проекта не было).
+#[derive(Clone, Debug)]
+pub struct RecoveryCandidate {
+    pub path: PathBuf,
+    pub mtime: std::time::SystemTime,
+    pub for_project: Option<PathBuf>,
+}
+
+/// Собрать всё, что программа не успела отдать пользователю (п.353).
+///
+/// Отбор по ВРЕМЕНИ, а не по факту существования. Сценарий, который до Р.49
+/// не покрывался ничем: открыл проект A → «Новый» → час работы → падение.
+/// `last_project` указывал на A, программа послушно открывала A, а про час
+/// не говорила ни строки — потому что смотрела только на `last_project` и
+/// только в момент, когда его не было.
+///
+/// Восстановление проекта предлагается, только если оно СТРОГО новее самого
+/// проекта: иначе после обычного Ctrl+S программа предлагала бы «восстановить»
+/// то, что и так лежит в файле. Безымянная работа сравнивать не с чем —
+/// она предлагается всегда, пока пользователь её не заберёт или не удалит.
+pub fn recovery_candidates(project: Option<&Path>) -> Vec<RecoveryCandidate> {
+    recovery_candidates_at(project, &autosave_path())
+}
+
+/// То же с явно названным файлом безымянной работы. Шов ради теста: каталог
+/// данных один на процесс, а тесты идут параллельно — подменять переменную
+/// окружения значило бы ронять соседей.
+pub fn recovery_candidates_at(project: Option<&Path>, anon: &Path) -> Vec<RecoveryCandidate> {
+    let mut out: Vec<RecoveryCandidate> = Vec::new();
+    let mtime = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+
+    if let Some(proj) = project {
+        let base = recovery_path_for(Some(proj));
+        let stem = base.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let proj_time = mtime(proj);
+        if let Some(dir) = base.parent()
+            && let Ok(rd) = std::fs::read_dir(dir)
+        {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().into_owned();
+                // и сам `<имя>.recovery.otio`, и файлы вторых копий
+                // `<имя>.recovery.otio.<pid>.otio`
+                if !name.starts_with(&stem) || !name.ends_with(".otio") {
+                    continue;
+                }
+                let path = e.path();
+                let Some(t) = mtime(&path) else { continue };
+                if proj_time.is_some_and(|pt| t <= pt) {
+                    continue; // проект новее — восстанавливать нечего
+                }
+                out.push(RecoveryCandidate { path, mtime: t, for_project: Some(proj.into()) });
+            }
+        }
+    }
+
+    // безымянная работа — в каталоге данных
+    let stem = anon.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if let Some(dir) = anon.parent()
+        && let Ok(rd) = std::fs::read_dir(dir)
+    {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !name.starts_with(&stem) || !name.ends_with(".otio") {
+                continue;
+            }
+            let path = e.path();
+            let Some(t) = mtime(&path) else { continue };
+            out.push(RecoveryCandidate { path, mtime: t, for_project: None });
+        }
+    }
+
+    // свежее — сверху: первым предлагается то, над чем работали последним
+    out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.path.cmp(&b.path)));
+    out
+}
+
 /// Файл восстановления для этого проекта: `<полное имя>.recovery.otio`
 /// РЯДОМ с проектом. Суффикс дописывается к ПОЛНОМУ имени, а не подменяет
 /// расширение (урок t150: `film.otio` и `film.mp4.otio` обязаны дать разные
@@ -5515,9 +5831,6 @@ pub fn write_project_atomic(path: &std::path::Path, json: &str) -> std::io::Resu
     kt_otio::write_atomic(path, json).map(|_| ())
 }
 
-pub fn atomic_tmp_path(path: &std::path::Path) -> PathBuf {
-    kt_otio::atomic_tmp_path(path)
-}
 
 /// Чтение .otio с диска для open() (Р.24 п.12: .ktproj — только импорт).
 pub(crate) fn load_project_file(
@@ -5841,22 +6154,22 @@ pub fn run() -> eframe::Result {
                 .clone()
                 .or_else(|| cc.storage.and_then(|s| s.get_string("last_project")))
                 .map(std::path::PathBuf::from)
-                .filter(|p| p.exists())
-                // v1: если last_project нет — восстановление из автосейва
-                .or_else(|| Some(autosave_path()).filter(|p| p.exists()));
+                .filter(|p| p.exists());
             let mut app = match restored {
                 Some(path) => {
                     let mut a = KtApp::open(&path).unwrap_or_else(|e| KtApp::new_empty(Some(e)));
-                    if path == autosave_path() {
-                        // восстановленный recovery остаётся «безымянным»
-                        a.project_path = None;
-                        a.note(tr(k::msg::AUTOSAVE_RESTORED));
-                    }
+                    a.claim_project(&path);
                     a
                 }
                 None => KtApp::new_empty(Some(tr(k::msg::OPEN_A_PROJECT).to_string())),
             };
             app.lang_choice = lang_choice;
+            // Р.49 п.353: несохранённая работа больше не «подменяет проект,
+            // если last_project не нашёлся», а ПРЕДЛАГАЕТСЯ — с путём и
+            // временем каждого кандидата. Прежняя ветка не покрывала главный
+            // сценарий: открыл проект A, нажал «Новый», час работы, падение —
+            // last_project указывал на A, и про час не говорилось ни строки.
+            app.offer_recovery(true);
             Ok(Box::new(app))
         }),
     )

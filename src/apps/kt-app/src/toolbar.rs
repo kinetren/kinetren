@@ -266,6 +266,10 @@ impl KtApp {
                     self.save_as();
                     ui.close();
                 }
+                if ui.button(tr(k::menu::file::RECOVER)).clicked() {
+                    self.offer_recovery(false);
+                    ui.close();
+                }
                 ui.separator();
                 if ui.button(tr(k::menu::file::RENDER)).clicked() {
                     self.start_render();

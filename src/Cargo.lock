@@ -1946,6 +1946,7 @@ dependencies = [
  "kt-otio",
  "kt-time",
  "kt-version",
+ "libc",
  "rfd",
  "rtrb",
  "serde_json",

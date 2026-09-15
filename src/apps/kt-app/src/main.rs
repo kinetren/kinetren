@@ -15,6 +15,7 @@ mod fx_registry;
 mod graphs;
 mod i18n;
 mod journal;
+mod project_lock;
 #[cfg(test)]
 mod i18n_tests;
 mod icons;

@@ -67,10 +67,13 @@ fn rotate(path: &Path) {
 /// Дата и время без внешних зависимостей: программа не тянет chrono ради
 /// одной строки. Алгоритм — civil_from_days Говарда Хиннанта.
 fn stamp() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    stamp_of(std::time::SystemTime::now())
+}
+
+/// Та же метка для произвольного момента — ею диалог восстановления
+/// показывает время каждого кандидата (п.353).
+pub fn stamp_of(t: std::time::SystemTime) -> String {
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let (days, rem) = (secs / 86_400, secs % 86_400);
     let (y, m, d) = civil_from_days(days as i64);
     format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}", rem / 3600, rem % 3600 / 60, rem % 60)

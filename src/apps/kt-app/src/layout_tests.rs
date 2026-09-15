@@ -2594,16 +2594,18 @@ fn t142_marker_end_drag() {
 /// Тест 150 (п.150 porting-notes, Р.24): файловый IO приложения — .otio.
 #[test]
 fn t150_project_io_is_otio() {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     // атомарный tmp дописывается к ПОЛНОМУ имени (старый with_extension
-    // был захардкожен под ktproj и съедал многоточечные имена)
+    // был захардкожен под ktproj и съедал многоточечные имена); с Р.49
+    // (п.352) в имени ещё и номер процесса — см. t363
+    let pid = std::process::id();
     assert_eq!(
-        crate::app::atomic_tmp_path(Path::new("/x/a.otio")),
-        Path::new("/x/a.otio.tmp")
+        kt_otio::atomic_tmp_path(Path::new("/x/a.otio")),
+        PathBuf::from(format!("/x/a.otio.{pid}.tmp"))
     );
     assert_eq!(
-        crate::app::atomic_tmp_path(Path::new("/x/a.b.otio")),
-        Path::new("/x/a.b.otio.tmp")
+        kt_otio::atomic_tmp_path(Path::new("/x/a.b.otio")),
+        PathBuf::from(format!("/x/a.b.otio.{pid}.tmp"))
     );
     // recovery безымянного проекта — тоже .otio
     assert!(
@@ -4440,6 +4442,291 @@ fn t199_background_autosave_never_overwrites_newer_save() {
         2,
         "на диске обязана остаться СВЕЖАЯ версия (2 медиа), а не снимок автосейва"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 365 (Р.49 А5): кандидаты отбираются по ВРЕМЕНИ. Восстановление
+/// старше проекта не предлагается (иначе после каждого Ctrl+S программа
+/// звала бы «восстановить» то, что и так в файле), новее — предлагается,
+/// безымянная работа предлагается всегда, свежее — первым.
+#[test]
+fn t365_recovery_candidates_are_picked_by_time() {
+    use std::time::{Duration, SystemTime};
+    let dir = std::env::temp_dir().join(format!("kt-t365-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let proj = dir.join("film.otio");
+    let rec = crate::app::recovery_path_for(Some(&proj));
+    let anon = dir.join("anon").join("autosave-project.otio");
+    std::fs::create_dir_all(anon.parent().unwrap()).unwrap();
+
+    let touch = |p: &std::path::Path, secs_ago: u64| {
+        std::fs::write(p, "{}").unwrap();
+        let t = SystemTime::now() - Duration::from_secs(secs_ago);
+        std::fs::File::options().write(true).open(p).unwrap().set_modified(t).unwrap();
+    };
+
+    // проект новее восстановления: предлагать нечего
+    touch(&rec, 600);
+    touch(&proj, 60);
+    let got = crate::app::recovery_candidates_at(Some(&proj), &anon);
+    assert!(got.is_empty(), "предложено восстановление старее самого проекта: {got:?}");
+
+    // восстановление новее проекта — предлагается
+    touch(&rec, 10);
+    let got = crate::app::recovery_candidates_at(Some(&proj), &anon);
+    assert_eq!(got.len(), 1, "не предложено восстановление новее проекта");
+    assert_eq!(got[0].path, rec);
+    assert_eq!(got[0].for_project.as_deref(), Some(proj.as_path()));
+
+    // безымянная работа предлагается всегда и, будучи свежее, идёт первой
+    touch(&anon, 1);
+    let got = crate::app::recovery_candidates_at(Some(&proj), &anon);
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0].path, anon, "свежее обязано идти первым");
+    assert!(got[0].for_project.is_none(), "безымянная работа не привязана к проекту");
+    assert_eq!(got[1].path, rec);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 366 (Р.49 А5): главный сценарий, не покрытый ничем до Р.49 —
+/// «открыл проект A, нажал Новый, час работы, падение». `last_project`
+/// указывает на A, A существует, программа его открывает — и про час работы
+/// не говорит ни слова, потому что смотрела на автосейв только когда
+/// `last_project` не нашёлся.
+#[test]
+fn t366_unnamed_work_is_offered_even_when_project_opens() {
+    let dir = std::env::temp_dir().join(format!("kt-t366-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let proj = dir.join("A.otio");
+    std::fs::write(&proj, "{}").unwrap();
+    let anon = dir.join("data").join("autosave-project.otio");
+    std::fs::create_dir_all(anon.parent().unwrap()).unwrap();
+    std::fs::write(&anon, "{}").unwrap();
+
+    let list = crate::app::recovery_candidates_at(Some(&proj), &anon);
+    assert_eq!(list.len(), 1, "час безымянной работы не предложен: {list:?}");
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(proj.clone());
+    app.offer_recovery_list(list, true);
+    assert!(h.state().recovery_open, "окно восстановления не открылось");
+
+    // и наоборот: предлагать нечего — окна нет, а по прямой просьбе из меню
+    // программа обязана сказать это словами, а не промолчать
+    let app = h.state_mut();
+    app.notices.clear();
+    app.offer_recovery_list(Vec::new(), false);
+    assert!(!h.state().recovery_open);
+    assert_eq!(h.state().notices.len(), 1, "меню «Восстановить…» промолчало");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 367 (Р.49 А5): восстановление кладёт работу В РЕДАКТОР и больше
+/// никуда. Файл проекта не трогается (его меняет только Ctrl+S), файл-источник
+/// не съедается, звёздочка горит, и всё это ПОВТОРИМО (правило 14).
+#[test]
+fn t367_restore_puts_work_in_editor_and_repeats() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t367-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let proj = dir.join("t367.otio");
+    std::fs::write(&proj, "исходный файл пользователя").unwrap();
+
+    // в файле восстановления — работа с тремя медиа
+    let mut p = kt_model::Project::new(kt_model::ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
+    for i in 1..=3 {
+        p.media.push(MediaRef { id: MediaId(i), path: format!("synth:{i}") });
+    }
+    let rec = crate::app::recovery_path_for(Some(&proj));
+    std::fs::write(&rec, kt_otio::save_project(&p, &Default::default(), rec.parent())).unwrap();
+    // проект заведомо СТАРШЕ восстановления: гранулярность mtime у файловой
+    // системы бывает секундной, и «записали одно за другим» её не различает.
+    // Сам отбор по времени проверяет t365 — здесь он не предмет теста.
+    std::fs::File::options()
+        .write(true)
+        .open(&proj)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(600))
+        .unwrap();
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(proj.clone());
+    app.dirty_content = false;
+    app.offer_recovery_list(crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")), true);
+    assert_eq!(h.state().recovery_offer.len(), 1, "восстановление не найдено рядом с проектом");
+
+    h.state_mut().restore_recovery(0);
+    let st = h.state();
+    assert_eq!(st.model.project().media.len(), 3, "работа не доехала до редактора");
+    assert!(st.dirty_content, "восстановленная работа обязана считаться несохранённой");
+    assert!(!st.recovery_open, "окно не закрылось после восстановления");
+    assert_eq!(
+        std::fs::read_to_string(&proj).unwrap(),
+        "исходный файл пользователя",
+        "восстановление переписало файл проекта"
+    );
+    assert!(rec.exists(), "восстановление съело свой источник — второй раз не выйдет");
+
+    // правило 14: то же самое ещё раз, после отмены
+    let app = h.state_mut();
+    app.model = kt_model::TimelineModel::new(kt_model::Project::new(kt_model::ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    }));
+    assert_eq!(app.model.project().media.len(), 0);
+    app.offer_recovery_list(crate::app::recovery_candidates_at(Some(&proj), &dir.join("none")), true);
+    h.state_mut().restore_recovery(0);
+    assert_eq!(h.state().model.project().media.len(), 3, "повторное восстановление не сработало");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 368 (Р.49 А5): «Удалить» уносит именно этот файл и закрывает окно,
+/// когда предлагать больше нечего; «Не сейчас» файл оставляет.
+#[test]
+fn t368_forget_removes_file_and_later_keeps_it() {
+    let dir = std::env::temp_dir().join(format!("kt-t368-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.recovery.otio");
+    let b = dir.join("b.recovery.otio");
+    std::fs::write(&a, "{}").unwrap();
+    std::fs::write(&b, "{}").unwrap();
+    let cand = |p: &std::path::Path| crate::app::RecoveryCandidate {
+        path: p.to_path_buf(),
+        mtime: std::fs::metadata(p).unwrap().modified().unwrap(),
+        for_project: None,
+    };
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.offer_recovery_list(vec![cand(&a), cand(&b)], true);
+    app.forget_recovery(0);
+    assert!(!a.exists(), "выбранный файл не удалён");
+    assert!(b.exists(), "удалён не тот файл");
+    assert!(h.state().recovery_open, "остался кандидат — окно обязано остаться");
+
+    h.state_mut().forget_recovery(0);
+    assert!(!b.exists());
+    assert!(!h.state().recovery_open, "кандидатов не осталось — окно обязано закрыться");
+
+    // «Не сейчас» ничего не уничтожает
+    std::fs::write(&a, "{}").unwrap();
+    let app = h.state_mut();
+    app.offer_recovery_list(vec![cand(&a)], true);
+    app.recovery_open = false;
+    assert!(a.exists(), "«не сейчас» удалило файл");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 363 (Р.49 А4, расширяет t150): две копии программы, открывшие один
+/// проект, не делят ни временный файл, ни файл восстановления. Общий tmp
+/// означал бы, что `rename` одной копии подменяет проект наполовину
+/// записанным содержимым другой — то есть атомарная запись перестаёт быть
+/// атомарной ровно тогда, когда защита нужнее всего.
+#[test]
+fn t363_second_copy_has_its_own_tmp_and_recovery() {
+    let pid = std::process::id();
+    let tmp = kt_otio::atomic_tmp_path(std::path::Path::new("/w/film.otio"));
+    assert!(
+        tmp.to_string_lossy().contains(&pid.to_string()),
+        "во временном имени нет номера процесса: {}",
+        tmp.display()
+    );
+    assert!(tmp.to_string_lossy().ends_with(".tmp"));
+    assert!(tmp.to_string_lossy().starts_with("/w/film.otio."), "съедена часть имени проекта");
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(std::path::PathBuf::from("/w/film.otio"));
+    let owner = app.recovery_target();
+    assert_eq!(owner, std::path::Path::new("/w/film.otio.recovery.otio"));
+    // та же программа, но проект занят кем-то ещё
+    app.lock_holder = Some(Some(4242));
+    let second = app.recovery_target();
+    assert_ne!(owner, second, "вторая копия пишет в чужой файл восстановления");
+    assert!(second.to_string_lossy().contains(&pid.to_string()));
+    assert!(second.to_string_lossy().ends_with(".otio"), "восстановление обязано быть .otio");
+}
+
+/// Тест 364 (Р.49 А4): вторая копия не запрещается, а честно деградирует.
+/// Предупреждение с номером чужого процесса, и первый Ctrl+S не пишет молча,
+/// а спрашивает. Ответ «не сохранять» оставляет файл нетронутым и звёздочку
+/// на месте; «всё равно» пишет и больше не переспрашивает.
+#[test]
+fn t364_locked_project_asks_before_first_save() {
+    use kt_model::*;
+    let dir = std::env::temp_dir().join(format!("kt-t364-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let target = dir.join("t364.otio");
+    std::fs::write(&target, "чужое содержимое").unwrap();
+
+    let mut h = harness();
+    let app = h.state_mut();
+    app.project_path = Some(target.clone());
+    app.notices.clear();
+    app.claim_project(&target);
+    assert!(app.project_lock.is_some(), "свободный проект обязан заниматься");
+    assert!(app.lock_holder.is_none());
+
+    // вторая копия в этом же процессе: свой замок отпускаем, проект занимает
+    // «сосед» — а программа заходит на него заново, как соседняя копия
+    h.state_mut().project_lock = None;
+    let _held = match crate::project_lock::acquire(&target) {
+        crate::project_lock::LockState::Owned(l) => l,
+        _ => panic!("первый замок должен был отпуститься вместе с полем"),
+    };
+    let app = h.state_mut();
+    app.claim_project(&target);
+    assert_eq!(app.lock_holder, Some(Some(std::process::id())), "занятость не замечена");
+    assert!(
+        app.notices.iter().any(|n| n.text.contains(&std::process::id().to_string())),
+        "о занятости не сказано с номером процесса: {:?}",
+        app.notices.iter().map(|n| &n.text).collect::<Vec<_>>()
+    );
+
+    app.model.apply(Command::AddMedia { id: MediaId(1), path: "synth:ramp".into() }).unwrap();
+    app.model_rev += 1;
+    app.dirty_content = true;
+    app.save();
+    assert!(matches!(h.state().ask, Some(crate::app::Ask::SaveOverLock { .. })), "не спросили");
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        "чужое содержимое",
+        "записали, не дождавшись ответа"
+    );
+
+    // «не сохранять» — файл цел, звёздочка на месте, вопрос закрыт
+    h.state_mut().answer_ask(false);
+    assert!(h.state().ask.is_none());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "чужое содержимое");
+    assert!(h.state().dirty_content, "отказ сохранять погасил звёздочку");
+
+    // «всё равно» — пишем; второй раз уже не спрашиваем
+    h.state_mut().save();
+    h.state_mut().answer_ask(true);
+    assert!(!h.state().dirty_content, "после ответа «всё равно» проект не записан");
+    assert!(h.state().lock_override);
+    let app = h.state_mut();
+    app.dirty_content = true;
+    app.model_rev += 1;
+    app.save();
+    assert!(h.state().ask.is_none(), "переспросили после принятого решения");
+    assert!(!h.state().dirty_content);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
