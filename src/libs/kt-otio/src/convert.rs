@@ -1684,9 +1684,7 @@ fn read_foreign_nest(
     depth: usize,
 ) -> Result<ClipEvent, Error> {
     let (name, children, source_range, effects) = match item {
-        Composable::Stack(st) => {
-            (&st.name, &st.children, st.source_range, &st.effects)
-        }
+        Composable::Stack(st) => (&st.name, &st.children, st.source_range, &st.effects),
         Composable::Track(t) => (&t.name, &t.children, t.source_range, &t.effects),
         _ => unreachable!("called on Stack/Track only"),
     };
@@ -1734,11 +1732,10 @@ fn read_foreign_nest(
         addr,
         if name.trim().is_empty() { format!("Nested {}", addr.0) } else { name.clone() },
     );
-    for (k, n) in [
-        (ClipKind::Video, &mut seq.video_lanes),
-        (ClipKind::Audio, &mut seq.audio_lanes),
-    ] {
-        *n = body.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max().unwrap_or(1).max(1);
+    for (k, n) in [(ClipKind::Video, &mut seq.video_lanes), (ClipKind::Audio, &mut seq.audio_lanes)]
+    {
+        *n =
+            body.clips.iter().filter(|c| c.kind == k).map(|c| c.lane + 1).max().unwrap_or(1).max(1);
     }
     let both = body.clips.iter().any(|c| c.kind == ClipKind::Video)
         && body.clips.iter().any(|c| c.kind == ClipKind::Audio);

@@ -29,9 +29,8 @@ pub struct LayerSrc<'a> {
     /// Ступень декода слоя (Р.46, п.318): пре-FX кадр в `src_scale` раз
     /// крупнее Quality. 1 — кадр ровно в Quality, как было всегда.
     pub src_scale: u32,
-    /// Пре-FX кадр; None — голод. Исполнители решают сами: CPU может
-    /// вернуть мемоизированный пост-FX кадр и без него, GPU — нет.
-    pub frame: Option<Arc<VideoFrame>>,
+    /// Вход слоя: готовый пре-FX кадр или ПОДДЕРЕВО (Р.50).
+    pub input: LayerInput<'a>,
     /// Цепочка С УЖЕ применённой автоматизацией (Р.30): кривые разрешаются
     /// один раз при построении плана — оба исполнителя видят готовые
     /// параметры. Без кривых — заём из VideoClip (ноль клонов).
@@ -60,6 +59,51 @@ pub struct LayerSrc<'a> {
     pub blend: Option<LayerBlend>,
 }
 
+/// Вход слоя: кадр или суб-композит вложенной ленты (Р.50, волна Б).
+///
+/// Вложение НЕ получает своей ветки `PlanLayer` намеренно: это клип, у него
+/// есть уровень, сольный фейд, `u`, камера, и оно может быть половиной
+/// `Dissolve`. Отдельная ветка продублировала бы логику уровня и фейдов в
+/// ОБОИХ исполнителях — ровно то, против чего стоит инвариант 7. Меняется
+/// только то, ОТКУДА берётся пре-FX кадр слоя.
+pub enum LayerInput<'a> {
+    /// Пре-FX кадр; None — голод. Исполнители решают сами: CPU может
+    /// вернуть мемоизированный пост-FX кадр и без него, GPU — нет.
+    Frame(Option<Arc<VideoFrame>>),
+    /// Поддерево: план ленты, собранный на ВНУТРЕННЕМ времени экземпляра.
+    Nest(Box<NestSrc<'a>>),
+}
+
+impl<'a> LayerInput<'a> {
+    /// Готовый кадр, если вход — кадр. Для поддерева всегда `None`:
+    /// его ещё надо исполнить.
+    pub fn frame(&self) -> Option<&Arc<VideoFrame>> {
+        match self {
+            LayerInput::Frame(f) => f.as_ref(),
+            LayerInput::Nest(_) => None,
+        }
+    }
+
+    pub fn nest(&self) -> Option<&NestSrc<'a>> {
+        match self {
+            LayerInput::Nest(n) => Some(n),
+            LayerInput::Frame(_) => None,
+        }
+    }
+}
+
+/// Поддерево вложения.
+pub struct NestSrc<'a> {
+    /// Адрес ленты — он же `SourceId` суб-композита в кэше.
+    pub seq: kt_model::MediaId,
+    /// Хэш РЕДАКЦИИ ленты: правка внутри не трогает ни одного поля
+    /// экземпляра, и без него мемо отдавало бы стейл.
+    pub content_hash: u64,
+    /// Внутреннее время, на котором собран план (ключ мемоизации).
+    pub inner_t: Tick,
+    pub plan: FramePlan<'a>,
+}
+
 /// Чем и как смешан кадр слоя: сосед (для ключей кэша) и вес в 4096-х.
 #[derive(Debug, Clone, Copy)]
 pub struct LayerBlend {
@@ -77,6 +121,7 @@ pub struct SoloFade {
     pub incoming: bool,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum PlanLayer<'a> {
     /// Обычный слой или соло-фейд. `alpha_k` (0..4096) — уровень × вес
     /// фейда; `scale_alpha` — прогонять через масштабирование альфы даже
@@ -112,7 +157,14 @@ pub struct FramePlan<'a> {
 pub enum GpuExecError {
     DeviceLost,
     Validation(String),
-    TooLarge { w: u32, h: u32 },
+    TooLarge {
+        w: u32,
+        h: u32,
+    },
+    /// Плана такого вида GPU-исполнитель ещё не умеет — фолбэк на CPU
+    /// ТОЛЬКО для этого плана, как `TooLarge`. Не «отравление»: устройство
+    /// живо, и следующий кадр может снова пойти на GPU.
+    Unsupported(&'static str),
 }
 
 /// Паспорт бэкенда (notice и строка перф-панели).

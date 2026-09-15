@@ -644,7 +644,7 @@ impl Player {
                 let plan = video.frame_plan(&self.cache, aligned, q);
                 match exec.execute_into(&plan, out) {
                     Ok(complete) => return (q, complete),
-                    Err(GpuExecError::TooLarge { .. }) => None,
+                    Err(GpuExecError::TooLarge { .. } | GpuExecError::Unsupported(_)) => None,
                     Err(e) => Some(format!("{e:?}")),
                 }
             };

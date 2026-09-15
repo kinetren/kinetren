@@ -4561,8 +4561,8 @@ pub enum ProjectError {
     #[error("sequence {0:?}: name must not be empty")]
     SequenceUnnamed(MediaId),
     #[error(
-        "clip {0:?} is a nested reel: effects, reverse and time warp on the instance are \
-         not rendered yet — they would apply to each piece instead of the assembled picture"
+        "clip {0:?} is a nested reel: reverse and time warp on the instance are not \
+         rendered yet"
     )]
     NestInstanceNotChainable(ClipId),
     #[error("sequence {0:?}: morph layers inside a reel cannot target areas or named ranges")]
@@ -4802,6 +4802,24 @@ impl Project {
             }
         }
         out
+    }
+
+    /// Клипы ОДНОЙ ленты после морфер-слоёв, БЕЗ раскрытия вложений
+    /// (Р.50, волна Б). `None` — корень.
+    ///
+    /// Этим движок строит ДЕРЕВО рендереров: вложение доходит до него
+    /// одним событием и получает собственный узел плана — только так
+    /// «эффект на РЕЗУЛЬТАТ» и становится выразимым. Раскрытие
+    /// (`effective_clips`) остаётся эталоном-оракулом: с ним готовое
+    /// поддерево сверяется байт-в-байт (закон Э).
+    pub fn effective_reel(&self, seq: Option<MediaId>) -> Vec<ClipEvent> {
+        match seq {
+            None => self.morph_pass(self, &self.rows()),
+            Some(id) => match self.sequence(id) {
+                Some(s) => self.morph_pass(s, &s.rows()),
+                None => Vec::new(),
+            },
+        }
     }
 
     /// Раскрытие вложений (Р.50, п.383).
@@ -5105,15 +5123,15 @@ impl Project {
                 return Err(ProjectError::UnknownMedia(c.id, c.media));
             }
             check_fx_auto(c.id, &c.fx_auto)?;
-            // Вложение с цепочкой, реверсом или варпом — это «эффект на
-            // РЕЗУЛЬТАТ», а инлайн (Р.50, волна А) применил бы их к каждому
-            // куску отдельно. Считать другое молча нельзя, поэтому такого
-            // состояния просто НЕ БЫВАЕТ: отказывают и команда, и файл, и
-            // bake (правило 16). Снимется, когда у вложения появится
-            // собственный узел плана.
+            // ЦЕПОЧКА на вложении с волны Б законна и применяется к
+            // СОБРАННОЙ картинке — ради этого вложение и заводилось.
+            // А вот реверс и варп времени экземпляра требуют смешивания
+            // ДВУХ суб-композитов и ресемплера над суб-миксом: их пока нет,
+            // и такого состояния просто НЕ БЫВАЕТ — отказывают команда,
+            // файл и bake разом (правило 16).
             if !self.sequences.is_empty()
                 && self.sequences.iter().any(|s| s.id == c.media)
-                && (!c.fx.is_empty() || c.reversed || c.fx_auto.iter().any(|v| !v.is_empty()))
+                && (c.reversed || c.fx.iter().any(|f| f.warps_time()))
             {
                 return Err(ProjectError::NestInstanceNotChainable(c.id));
             }

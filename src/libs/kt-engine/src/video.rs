@@ -71,6 +71,13 @@ struct VideoClip {
     /// Нативный размер файла, если известен. `None` — ступень 1: раздувать
     /// декод вслепую нельзя (заглушка отсутствующего файла, синтетика).
     native: Option<(u32, u32)>,
+    /// Вложенная лента (Р.50, волна Б): вместо кадра из кэша слой получает
+    /// СУБ-КОМПОЗИТ — и цепочка, навешенная на это событие, применяется к
+    /// СОБРАННОЙ картинке, а не к каждому куску. Ради этого всё и затевалось.
+    nest: Option<MediaId>,
+    /// Хэш редакции ленты: правка ВНУТРИ не трогает ни одного поля
+    /// экземпляра, поэтому без него мемо отдавало бы стейл.
+    content: u64,
 }
 
 // Карта варпа клипа переехала в kt-model (Р.39): конструктор один на
@@ -117,10 +124,51 @@ impl VideoClip {
     }
 }
 
+/// Хэш СОДЕРЖИМОГО вложенной ленты, рекурсивный (Р.50, волна Б).
+///
+/// Сегодняшнее обещание «правка модели пересоздаёт рендерер, стейл-кадры не
+/// читаются» для вложения НЕПРАВДА: правка ВНУТРИ ленты не трогает ни одного
+/// поля клипа-экземпляра, и его `fx_hash` остаётся прежним. Этот хэш
+/// вплетается туда и закрывает дыру. Разделение получается чистым:
+/// `source` различает ЛЕНТЫ, `fx_hash` — ЭКЗЕМПЛЯРЫ, `content_hash` —
+/// РЕДАКЦИИ.
+///
+/// Считается Debug-представлением — тем же приёмом, что `fx_chain_hash`:
+/// f64 печатается shortest-roundtrip, значит детерминированно, а новое поле
+/// модели попадает в хэш САМО.
+pub fn content_hash(project: &Project, seq: MediaId) -> u64 {
+    use xxhash_rust::xxh3::Xxh3;
+    let mut h = Xxh3::new();
+    hash_reel(project, seq, 0, &mut h);
+    h.digest()
+}
+
+fn hash_reel(project: &Project, seq: MediaId, depth: usize, h: &mut xxhash_rust::xxh3::Xxh3) {
+    let Some(s) = project.sequence(seq) else { return };
+    if depth > kt_model::MAX_NEST_DEPTH {
+        return;
+    }
+    h.update(&[s.overlap_layers as u8]);
+    for v in [s.video_lanes, s.audio_lanes, s.morph_lanes, s.camera_lanes] {
+        h.update(&v.to_le_bytes());
+    }
+    h.update(format!("{:?}", s.lane_order).as_bytes());
+    h.update(format!("{:?}", s.clips).as_bytes());
+    h.update(format!("{:?}", s.transitions).as_bytes());
+    h.update(format!("{:?}", s.morphers).as_bytes());
+    h.update(format!("{:?}", s.cameras).as_bytes());
+    for c in &s.clips {
+        if project.sequence(c.media).is_some() {
+            hash_reel(project, c.media, depth + 1, h);
+        }
+    }
+}
+
 /// Хэш цепочки для пост-FX кэша. Вход — Debug-представление параметров
 /// (детерминировано, f64 печатается shortest-roundtrip) + геометрия:
 /// start/span/source_in/reversed задают отображение t→(src_pts, u),
 /// frame_step — сетку (смена fps проекта обязана инвалидировать).
+#[allow(clippy::too_many_arguments)]
 fn fx_chain_hash(
     fx: &[kt_model::FxInstance],
     auto: &[Vec<kt_model::ParamCurve>],
@@ -129,11 +177,15 @@ fn fx_chain_hash(
     source_in: Tick,
     reversed: bool,
     frame_step: i64,
+    content: u64,
 ) -> u64 {
     // кривые автоматизации — часть ключа (Р.30): правка кейфрейма обязана
-    // инвалидировать пост-FX кадры, пережившие пересоздание рендерера
+    // инвалидировать пост-FX кадры, пережившие пересоздание рендерера.
+    // `content` (Р.50) — редакция ВЛОЖЕННОЙ ленты: правка внутри не
+    // трогает ни одного поля экземпляра, и без неё пост-FX кадр экземпляра
+    // остался бы стейлом. У обычного клипа это ноль, и ключ прежний.
     let repr = format!(
-        "{fx:?}|{auto:?}|{}|{}|{}|{reversed}|{frame_step}",
+        "{fx:?}|{auto:?}|{}|{}|{}|{reversed}|{frame_step}|{content}",
         start.0,
         end.0 - start.0,
         source_in.0
@@ -192,6 +244,10 @@ pub struct VideoRenderer {
     cameras: Vec<kt_model::CameraEvent>,
     /// Размер проекта в px — мировая система координат 3D-эффектов.
     project_size: (u32, u32),
+    /// Рендереры вложенных лент (Р.50). Дерево строится ОДИН раз вместе с
+    /// корнем: правка модели пересоздаёт рендерер целиком, и стейл-узлов
+    /// не бывает по построению.
+    nests: std::collections::HashMap<MediaId, VideoRenderer>,
 }
 
 /// Кадр(ы) источника для момента `t`: основной и, в режиме «смешивание»,
@@ -366,8 +422,18 @@ impl VideoRenderer {
         project: &Project,
         natives: &std::collections::HashMap<MediaId, (u32, u32)>,
     ) -> VideoRenderer {
-        // effective_clips: morpher'ы применены здесь, движок их не видит (H1)
-        let effective = project.effective_clips();
+        VideoRenderer::build_reel(project, natives, None, 0)
+    }
+
+    fn build_reel(
+        project: &Project,
+        natives: &std::collections::HashMap<MediaId, (u32, u32)>,
+        seq: Option<MediaId>,
+        depth: usize,
+    ) -> VideoRenderer {
+        // морфер-слои применены здесь, движок их не видит (H1); вложения
+        // НЕ раскрываются — у каждого свой узел плана (Р.50, волна Б)
+        let effective = project.effective_reel(seq);
         let grid = FpsGrid::new(project.settings.fps);
         let mut clips: Vec<VideoClip> = effective
             .iter()
@@ -376,6 +442,8 @@ impl VideoRenderer {
                 let fx = c.active_fx(); // bypass-слоты отфильтрованы (п.2)
                 let auto = c.active_fx_auto();
                 let warp = kt_model::clip_warp_of(&fx, &auto, c.source_in, c.duration, c.reversed);
+                let nest = project.sequence(c.media).map(|_| c.media);
+                let content = nest.map(|id| content_hash(project, id)).unwrap_or(0);
                 let fx_hash = fx_chain_hash(
                     &fx,
                     &auto,
@@ -384,6 +452,7 @@ impl VideoRenderer {
                     c.source_in,
                     c.reversed,
                     grid.frame_step(),
+                    content,
                 );
                 // ступень декода — свойство клипа (Р.46): максимум зума по
                 // всей длительности, считается до перемещения цепочки
@@ -421,13 +490,19 @@ impl VideoRenderer {
                     warp,
                     head_zoom,
                     native: natives.get(&c.media).copied(),
+                    nest,
+                    content,
                 }
             })
             .collect();
         // окна dissolve из переходов (Р.24): пары находят друг друга по
         // равенству окна на одной дорожке (compose блендит их одним слоем)
-        for t in &project.transitions {
-            let Some(joint) = t.joint(project) else { continue };
+        let reel: &dyn kt_model::Reel = match seq.and_then(|id| project.sequence(id)) {
+            Some(s) => s,
+            None => project,
+        };
+        for t in reel.transitions() {
+            let Some(joint) = t.joint(reel) else { continue };
             let (w0, w1) = (joint - t.in_offset, joint + t.out_offset);
             if w1.0 <= w0.0 {
                 continue;
@@ -459,13 +534,30 @@ impl VideoRenderer {
         // Р.28; до этого работало правило v1 «сверху тот, у кого start
         // меньше», и полоса таймлайна с ним расходилась). Тест 162.
         clips.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
+        // Поддеревья: по одному рендереру на КАЖДУЮ использованную ленту.
+        // Предел глубины держит модель (`validate`), здесь он страховка от
+        // вражеского файла.
+        let mut nests = std::collections::HashMap::new();
+        if depth < kt_model::MAX_NEST_DEPTH {
+            for id in clips.iter().filter_map(|c| c.nest) {
+                nests.entry(id).or_insert_with(|| {
+                    VideoRenderer::build_reel(project, natives, Some(id), depth + 1)
+                });
+            }
+        }
         VideoRenderer {
             clips,
             grid,
             fx_scratch: Default::default(),
             blend: Vec::new(),
-            cameras: project.cameras.clone(),
+            // камеры — СВОИ у каждой ленты: внутрь вложения можно класть
+            // камеры, и правило активной камеры считается по её ленте
+            cameras: match seq.and_then(|id| project.sequence(id)) {
+                Some(s) => s.cameras.clone(),
+                None => project.cameras.clone(),
+            },
             project_size: (project.settings.width, project.settings.height),
+            nests,
         }
     }
 
@@ -477,17 +569,32 @@ impl VideoRenderer {
     /// греть и читать РОВНО это качество — иначе вечный промах кэша
     /// (t247d), теперь и по оси размера (t312).
     pub fn layers_at(&self, t: Tick, quality: Quality) -> Vec<(MediaId, Tick, Quality)> {
-        self.clips
-            .iter()
-            .filter(|c| c.active_at(t))
-            .flat_map(|c| {
-                let dq = clip_decode_quality(c, quality);
-                // в режиме «смешивание» слой читает ДВА кадра — префетч
-                // обязан согреть оба, иначе второй не запросят никогда
-                let (a, b) = clip_frame_keys(c, t, &self.grid);
-                std::iter::once((c.media, a, dq)).chain(b.map(|(p, _)| (c.media, p, dq)))
-            })
-            .collect()
+        let mut out = Vec::new();
+        self.layers_at_into(t, quality, &mut out);
+        out
+    }
+
+    /// Заказ УХОДИТ ВГЛУБЬ (Р.50, волна Б): у ленты источника нет, есть
+    /// содержимое. Не спустись он — префетч грел бы адрес, которого не
+    /// существует, а композит читал бы настоящие кадры: вечный промах
+    /// кэша, тот самый, против которого стоит инвариант 4.
+    fn layers_at_into(&self, t: Tick, quality: Quality, out: &mut Vec<(MediaId, Tick, Quality)>) {
+        for c in self.clips.iter().filter(|c| c.active_at(t)) {
+            // в режиме «смешивание» слой читает ДВА кадра — префетч
+            // обязан согреть оба, иначе второй не запросят никогда
+            let (a, b) = clip_frame_keys(c, t, &self.grid);
+            match c.nest.and_then(|id| self.nests.get(&id)) {
+                // внутреннее время ленты — ровно «точка входа в источник»
+                Some(sub) => sub.layers_at_into(a, quality, out),
+                None => {
+                    let dq = clip_decode_quality(c, quality);
+                    out.push((c.media, a, dq));
+                    if let Some((p, _)) = b {
+                        out.push((c.media, p, dq));
+                    }
+                }
+            }
+        }
     }
 
     /// Все ключи кадров для диапазона таймлайна (prefetch/экспорт).
@@ -520,7 +627,12 @@ impl VideoRenderer {
     /// кэша и лукахеда считают память по НЕМУ, а не по Quality — иначе
     /// чанк экспорта недооценён в S² раз (п.15: «чёрный рендер»).
     pub fn max_decode_quality(&self, quality: Quality) -> Quality {
-        self.clips.iter().map(|c| clip_decode_quality(c, quality)).max().unwrap_or(quality)
+        self.clips
+            .iter()
+            .map(|c| clip_decode_quality(c, quality))
+            .chain(self.nests.values().map(|s| s.max_decode_quality(quality)))
+            .max()
+            .unwrap_or(quality)
     }
 
     /// Композит момента `t` из кэша в RGBA-буфер `quality`-размера.
@@ -547,8 +659,13 @@ impl VideoRenderer {
         quality: Quality,
         out: &mut Vec<u8>,
     ) -> bool {
-        let ctx =
-            PlanCtx { grid: &self.grid, cameras: &self.cameras, project_size: self.project_size };
+        let ctx = PlanCtx {
+            grid: &self.grid,
+            cameras: &self.cameras,
+            project_size: self.project_size,
+            nests: &self.nests,
+            memoize: true,
+        };
         let plan = build_plan(&self.clips, &ctx, cache, t, quality, true);
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
     }
@@ -562,8 +679,13 @@ impl VideoRenderer {
         quality: Quality,
         out: &mut Vec<u8>,
     ) -> bool {
-        let ctx =
-            PlanCtx { grid: &self.grid, cameras: &self.cameras, project_size: self.project_size };
+        let ctx = PlanCtx {
+            grid: &self.grid,
+            cameras: &self.cameras,
+            project_size: self.project_size,
+            nests: &self.nests,
+            memoize: false,
+        };
         let plan = build_plan(&self.clips, &ctx, cache, t, quality, false);
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
     }
@@ -577,7 +699,14 @@ impl VideoRenderer {
             // это — чанк экспорта вытеснит соседа до композиции, сработает
             // ветка голода, и БАЙТЫ ЭКСПОРТА станут зависеть от тайминга
             // кэша.
-            let w = if c.warp.as_ref().is_some_and(|w| w.blend()) { 2 } else { 1 };
+            let mut w = if c.warp.as_ref().is_some_and(|w| w.blend()) { 2 } else { 1 };
+            // Вложение держит СВОЙ буфер суб-композита плюс всё, что
+            // одновременно живо внутри него (Р.50). Недосчёт делает БАЙТЫ
+            // ЭКСПОРТА зависящими от тайминга кэша — дословно регрессия
+            // Р.37 С5.
+            if let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) {
+                w += sub.max_concurrent_layers() as i32;
+            }
             evs.push((c.start.0 - c.head_ext.0, w));
             evs.push((c.end.0 + c.tail_ext.0, -w));
         }
@@ -593,8 +722,13 @@ impl VideoRenderer {
     /// План кадра для внешнего исполнителя (GPU в kt-gpu). Пре-FX кадры
     /// уже прочитаны из кэша (recency бампнут), структура слоёв решена.
     pub fn frame_plan(&self, cache: &BurstCache, t: Tick, quality: Quality) -> FramePlan<'_> {
-        let ctx =
-            PlanCtx { grid: &self.grid, cameras: &self.cameras, project_size: self.project_size };
+        let ctx = PlanCtx {
+            grid: &self.grid,
+            cameras: &self.cameras,
+            project_size: self.project_size,
+            nests: &self.nests,
+            memoize: true,
+        };
         build_plan(&self.clips, &ctx, cache, t, quality, true)
     }
 }
@@ -604,6 +738,12 @@ struct PlanCtx<'a> {
     grid: &'a FpsGrid,
     cameras: &'a [kt_model::CameraEvent],
     project_size: (u32, u32),
+    /// Рендереры вложенных лент — из них строятся суб-планы (Р.50).
+    nests: &'a std::collections::HashMap<MediaId, VideoRenderer>,
+    /// Мемоизировать ли пост-FX: наследуется ВНИЗ. Иначе суб-композиты
+    /// вытеснят ещё не использованные пре-кадры соседних слоёв из
+    /// 192-мегабайтного бюджета экспорта — дословно регрессия Р.31 п.4.
+    memoize: bool,
 }
 
 /// Источник слоя: pts, пре-FX кадр (читается ВСЕГДА — бамп recency, чтобы
@@ -611,7 +751,7 @@ struct PlanCtx<'a> {
 /// цепочка и прогресс клипа.
 fn layer_src<'a>(
     clip: &'a VideoClip,
-    ctx: &PlanCtx<'_>,
+    ctx: &PlanCtx<'a>,
     cache: &BurstCache,
     quality: Quality,
     t: Tick,
@@ -639,7 +779,11 @@ fn layer_src<'a>(
     // которое заказал префетч через layers_at.
     let src_scale = clip_decode_scale(clip, quality);
     let dq = clip_decode_quality(clip, quality);
-    let frame = cache.get_video(source, Some(dq), cache_idx);
+    let frame = if clip.nest.is_some() {
+        None // вход поддерева собирается ниже
+    } else {
+        cache.get_video(source, Some(dq), cache_idx)
+    };
     // СМЕШИВАНИЕ (Р.37 С5) делается ЗДЕСЬ, в общем коде плана: оба
     // исполнителя получают уже смешанный пре-FX кадр, и держать одну и ту
     // же арифметику синхронной в CPU-ядре и в WGSL не приходится
@@ -690,7 +834,31 @@ fn layer_src<'a>(
         src_scale == 1 || kt_fx::video::has_video_fx(&fx),
         "a clip without video fx never gets a decode stage"
     );
-    LayerSrc { source, cache_idx, src_scale, frame, fx, fx_hash: clip.fx_hash, u, cam3d, blend }
+    // ВХОД слоя. У вложения это не кадр из кэша, а СУБ-КОМПОЗИТ: план
+    // ленты, собранный на ВНУТРЕННЕМ времени экземпляра. Внутреннее время —
+    // это ровно `clip_source_pts`, то есть «точка входа в источник»: для
+    // файла — pts кадра, для ленты — момент её таймлайна. Одна и та же
+    // функция, один и тот же реверс и одни и те же ручки переходов.
+    let input = match clip.nest.and_then(|id| ctx.nests.get(&id).map(|r| (id, r))) {
+        Some((id, sub)) => {
+            let sub_ctx = PlanCtx {
+                grid: &sub.grid,
+                cameras: &sub.cameras,
+                project_size: sub.project_size,
+                nests: &sub.nests,
+                memoize: ctx.memoize,
+            };
+            let plan = build_plan(&sub.clips, &sub_ctx, cache, src_pts, quality, ctx.memoize);
+            crate::video_plan::LayerInput::Nest(Box::new(crate::video_plan::NestSrc {
+                seq: id,
+                content_hash: clip.content,
+                inner_t: src_pts,
+                plan,
+            }))
+        }
+        None => crate::video_plan::LayerInput::Frame(frame),
+    };
+    LayerSrc { source, cache_idx, src_scale, input, fx, fx_hash: clip.fx_hash, u, cam3d, blend }
 }
 
 /// Построение плана кадра: какие слои, в каких ролях и с какими весами.
@@ -698,7 +866,7 @@ fn layer_src<'a>(
 /// (п.137); фейд у края/Gap (Р.25) — соло-слой, уходящий в прозрачность.
 fn build_plan<'a>(
     clips: &'a [VideoClip],
-    ctx: &PlanCtx<'_>,
+    ctx: &PlanCtx<'a>,
     cache: &BurstCache,
     t: Tick,
     quality: Quality,
@@ -797,7 +965,16 @@ fn execute_plan_cpu(
     for layer in &plan.layers {
         match layer {
             PlanLayer::One { src, alpha_k, scale_alpha, fade } => {
-                match layer_frame_cpu(src, cache, q_key, scratch, plan.t, plan.memoize_postfx) {
+                match layer_frame_cpu(
+                    src,
+                    cache,
+                    q_key,
+                    scratch,
+                    blend,
+                    plan.t,
+                    plan.memoize_postfx,
+                    &mut complete,
+                ) {
                     Some(f) if fits(&f) => {
                         if let Some(sf) = fade {
                             // сольный фейд с видом: вторая сторона — пустота
@@ -820,8 +997,26 @@ fn execute_plan_cpu(
                 }
             }
             PlanLayer::Dissolve { a, b, k, alpha_k, mix } => {
-                let fa = layer_frame_cpu(a, cache, q_key, scratch, plan.t, plan.memoize_postfx);
-                let fb = layer_frame_cpu(b, cache, q_key, scratch, plan.t, plan.memoize_postfx);
+                let fa = layer_frame_cpu(
+                    a,
+                    cache,
+                    q_key,
+                    scratch,
+                    blend,
+                    plan.t,
+                    plan.memoize_postfx,
+                    &mut complete,
+                );
+                let fb = layer_frame_cpu(
+                    b,
+                    cache,
+                    q_key,
+                    scratch,
+                    blend,
+                    plan.t,
+                    plan.memoize_postfx,
+                    &mut complete,
+                );
                 match (fa, fb) {
                     (Some(fa), Some(fb)) if fits(&fa) && fits(&fb) => {
                         let mut has_alpha = if mix.is_crossfade() {
@@ -868,6 +1063,78 @@ fn find_pair(clips: &[VideoClip], lane: u32, win: (Tick, Tick), incoming: bool) 
     })
 }
 
+/// Суб-композит вложенной ленты (Р.50, волна Б).
+///
+/// **Ловушка, ради которой эта функция существует отдельно.**
+/// `execute_plan_cpu` начинает с прозрачно-чёрного и накладывает слои
+/// `alpha_over`; при `da == 0` получается `dst.rgb = s·sa/255`, `dst.a = sa`
+/// — то есть результат композита хранит ПРЕМУЛЬТИПЛИЦИРОВАННЫЙ RGB при
+/// ПРЯМОЙ альфе, а `alpha_over` ждёт на входе прямую. Подать такой буфер
+/// обратно в композит — картинка вдвое темнее РОВНО в полупрозрачных
+/// местах, что легко списать на «так и задумано».
+///
+/// Лечение — ровно ОДНА конверсия здесь, на границе вложения. Сам
+/// `alpha_over` не трогаем: на его байтах стоят GOLDEN_VIDEO и AVX2-близнец
+/// (t198).
+fn nest_frame_cpu(
+    n: &crate::video_plan::NestSrc<'_>,
+    cache: &BurstCache,
+    scratch: &mut kt_fx::video::FxScratch,
+    blend: &mut Vec<u8>,
+    memoize: bool,
+    complete: &mut bool,
+) -> Option<Arc<VideoFrame>> {
+    let (w, h) = (n.plan.out_w, n.plan.out_h);
+    let q_key = (w, h);
+    let source = nest_source_id(n.seq);
+    if memoize && let Some(f) = cache.get_postfx_video(source, q_key, n.content_hash, n.inner_t.0) {
+        return Some(f);
+    }
+    let mut buf = scratch.take(w as usize * h as usize * 4);
+    if !execute_plan_cpu(&n.plan, cache, scratch, blend, &mut buf) {
+        *complete = false;
+    }
+    unpremultiply(&mut buf);
+    let rgba: Box<[u8]> = buf[..].into();
+    scratch.put(buf);
+    let frame = Arc::new(VideoFrame { pts: n.inner_t, width: w, height: h, rgba, has_alpha: true });
+    if memoize {
+        cache.insert_postfx_video(source, q_key, n.content_hash, n.inner_t.0, frame.clone());
+    }
+    Some(frame)
+}
+
+/// Адрес ленты в кэше. Старший бит `MediaId` отдан вложениям (Р.50):
+/// файл с таким адресом молча делил бы кэш с секвенцией, и это отвергает
+/// `validate`.
+pub fn nest_source_id(seq: MediaId) -> SourceId {
+    SourceId(kt_model::NEST_TAG | seq.0)
+}
+
+/// Прямая альфа из премультиплицированной: `rgb' = rgb·255/a`.
+///
+/// Тождество при `a == 255` (непрозрачный пиксель не трогается вовсе) и
+/// ноль при `a == 0` (цвета там нет). Целочисленно и точно зеркалится в
+/// WGSL — все текстуры kt-gpu `Rgba8Uint`.
+fn unpremultiply(rgba: &mut [u8]) {
+    for px in rgba.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        if a == 255 {
+            continue;
+        }
+        if a == 0 {
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
+            continue;
+        }
+        for c in px[..3].iter_mut() {
+            *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 /// Кадр слоя для CPU-исполнителя: пре-FX кадр из плана либо результат
 /// FX-цепочки (мемоизированный пост-FX кэшем). None — кадра нет (голод).
 /// Свежий пост-FX кадр возвращается ЧЕРЕЗ кэш (одна лишняя выборка на
@@ -877,8 +1144,10 @@ fn layer_frame_cpu(
     cache: &BurstCache,
     q_key: (u32, u32),
     scratch: &mut kt_fx::video::FxScratch,
+    blend: &mut Vec<u8>,
     t: Tick,
     memoize: bool,
+    complete: &mut bool,
 ) -> Option<Arc<VideoFrame>> {
     // цепочка видео-FX (п.25): кэш хранит ПРЕ-FX кадры (правда о
     // coverage), пост-FX кадр мемоизируется отдельным kind'ом
@@ -904,12 +1173,21 @@ fn layer_frame_cpu(
     if has_fx && let Some(f) = cache.get_postfx_video(src.source, q_key, key_hash, t.0) {
         return Some(f);
     }
+    // Вход слоя: кадр из кэша или СУБ-КОМПОЗИТ вложенной ленты.
+    let resolved;
+    let frame = match &src.input {
+        crate::video_plan::LayerInput::Frame(f) => f.as_ref(),
+        crate::video_plan::LayerInput::Nest(n) => {
+            resolved = nest_frame_cpu(n, cache, scratch, blend, memoize, complete);
+            resolved.as_ref()
+        }
+    };
     if !has_fx {
         // цепочка из одной силы пикселей не трогает: смешивать вход с
         // самим собой нечего
-        return src.frame.clone();
+        return frame.cloned();
     }
-    let frame = src.frame.as_ref()?;
+    let frame = frame?;
     let ctx = kt_fx::video::VideoFxCtx {
         out_w: q_key.0,
         out_h: q_key.1,

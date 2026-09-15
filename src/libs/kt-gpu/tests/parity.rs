@@ -81,7 +81,7 @@ impl Src {
             source: self.source,
             cache_idx: 0,
             src_scale: self.src_scale,
-            frame: self.frame.clone(),
+            input: kt_engine::video_plan::LayerInput::Frame(self.frame.clone()),
             fx: std::borrow::Cow::Borrowed(&self.fx[..]),
             fx_hash: self.fx_hash,
             u: self.u,

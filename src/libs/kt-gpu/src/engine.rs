@@ -1156,7 +1156,13 @@ impl Inner {
         oh: u32,
         t: Tick,
     ) -> Result<Option<(ChainSpec, bool)>, GpuExecError> {
-        let Some(frame) = &src.frame else { return Ok(None) };
+        if src.input.nest().is_some() {
+            // Поддерево вложения (Р.50, волна Б): у GPU-исполнителя своего
+            // узла плана пока нет — весь план уходит на CPU, который
+            // считает ТОТ ЖЕ план (семантика одна, инвариант 7).
+            return Err(GpuExecError::Unsupported("nested reel"));
+        }
+        let Some(frame) = src.input.frame() else { return Ok(None) };
         if frame.width > self.max_dim || frame.height > self.max_dim {
             return Err(GpuExecError::TooLarge { w: frame.width, h: frame.height });
         }
@@ -1695,7 +1701,7 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
         h.update(&s.src_scale.to_le_bytes());
         h.update(&s.u.to_bits().to_le_bytes());
         put_cam3d(h, &s.cam3d);
-        match &s.frame {
+        match s.input.frame() {
             None => h.update(&[0u8]),
             Some(f) => {
                 h.update(&[1u8, f.has_alpha as u8]);

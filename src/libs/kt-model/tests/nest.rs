@@ -406,16 +406,14 @@ fn t428_expand_drops_the_instance_chain_and_says_so() {
     let seq_id = rep.seq.unwrap();
     let inst = m.project().clips.iter().find(|c| c.media == seq_id).unwrap().id;
 
-    // ЦЕПОЧКА НА ВЛОЖЕНИЕ ПОКА НЕ ПУСКАЕТСЯ (правило 16): снаружи она
-    // применялась бы к СОБРАННОЙ картинке, а инлайн применил бы её к
-    // каждому куску — это другой результат, и считать его молча нельзя
-    assert!(
-        matches!(
-            m.apply(Command::SetFx { id: inst, fx: vec![FxInstance::Gain { db: 3.0, pan: 0.0 }] }),
-            Err(CommandError::InvalidLayout(ProjectError::NestInstanceNotChainable(_)))
-        ),
-        "цепочка на вложение прошла молча — она посчиталась бы не на том"
-    );
+    // ЦЕПОЧКА на вложении законна с волны Б: она применяется к СОБРАННОЙ
+    // картинке — ради этого вложение и заводилось
+    m.apply(Command::SetFx { id: inst, fx: vec![FxInstance::Gain { db: 3.0, pan: 0.0 }] })
+        .expect("цепочка на вложении законна");
+    m.apply(Command::SetOpacity { id: inst, opacity: 0.5 }).expect("уровень вложения законен");
+    // ...а реверс и варп времени экземпляра — ещё нет: они требуют
+    // смешивания ДВУХ суб-композитов и ресемплера над суб-миксом. Такого
+    // состояния просто не бывает (правило 16), а не «считается не то»
     assert!(
         matches!(
             m.apply(Command::SetReversed { id: inst, reversed: true }),
@@ -423,19 +421,6 @@ fn t428_expand_drops_the_instance_chain_and_says_so() {
         ),
         "реверс вложения прошёл молча"
     );
-    // ...а уровень — пускается: на неперекрывающемся содержимом домножение
-    // даёт ровно то же самое
-    m.apply(Command::SetOpacity { id: inst, opacity: 0.5 }).expect("уровень вложения законен");
-
-    // Контракт разворачивания проверяется на состоянии, которое может
-    // приехать ИЗ ФАЙЛА (его писала сборка, где цепочка уже работает):
-    // правим модель напрямую, минуя команды.
-    {
-        let mut p = m.project().clone();
-        let c = p.clips.iter_mut().find(|c| c.id == inst).unwrap();
-        c.fx = vec![FxInstance::Gain { db: 3.0, pan: 0.0 }];
-        m = TimelineModel::new(p);
-    }
 
     let (cmds, rep) = ops::expand_instance(m.project(), inst, n.ids());
     assert!(

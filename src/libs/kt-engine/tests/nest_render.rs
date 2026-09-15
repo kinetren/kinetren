@@ -196,8 +196,8 @@ fn t435_law_e_video_and_preview_equals_export() {
 fn t436_nest_orders_the_same_frames_and_costs_the_same() {
     let q = Quality { width: 64, height: 36 };
     let (a, b) = (decomposed(ClipKind::Video), nested(ClipKind::Video));
-    let mut va = VideoRenderer::new(&a);
-    let mut vb = VideoRenderer::new(&b);
+    let va = VideoRenderer::new(&a);
+    let vb = VideoRenderer::new(&b);
     for i in 0..90 {
         let t = Tick(i * FRAME);
         let la: Vec<_> = va.layers_at(t, q).into_iter().collect();
@@ -238,5 +238,369 @@ fn t436_nest_orders_the_same_frames_and_costs_the_same() {
         dt.as_millis() < 500,
         "раскрытие трёх постановок ленты в 500 событий заняло {dt:?} — это уже не \
          линейный проход, а перебор на каждый кадр"
+    );
+}
+
+// ---- 438-441 (Р.50, волна Б): вложение — ГРАНИЦА ПОРЯДКА ОБРАБОТКИ --------
+
+/// Два ПЕРЕКРЫВАЮЩИХСЯ события на соседних дорожках, верхнее —
+/// ПОЛУПРОЗРАЧНОЕ. Оба условия обязательны: пока дети не перекрываются
+/// (или верхний непрозрачен и накрывает нижнего целиком), «на вложение» и
+/// «на каждого» дают одно и то же, и граница неотличима от её отсутствия.
+fn inner_pair() -> Vec<ClipEvent> {
+    let a = ev(2, ClipKind::Video, 1, Tick(0), PART, 1);
+    let mut b = ev(3, ClipKind::Video, 0, Tick(PART.0 / 2), PART, 2);
+    b.opacity = 0.5;
+    vec![a, b]
+}
+
+/// Наибольшее расхождение по каналу.
+fn max_diff(a: &[u8], b: &[u8]) -> i32 {
+    assert_eq!(a.len(), b.len(), "кадры разного размера");
+    a.iter().zip(b).map(|(x, y)| (*x as i32 - *y as i32).abs()).max().unwrap_or(0)
+}
+
+/// `P`: дети внутри ленты, уровень/цепочка — на ЭКЗЕМПЛЯРЕ.
+fn nest_with(outer_opacity: f32, fx: Vec<FxInstance>) -> Project {
+    let mut p = base();
+    let mut s = Sequence::new(MediaId(100), "Кусок");
+    s.clips = inner_pair();
+    s.video_lanes = 2;
+    p.sequences.push(s);
+    let mut inst = ev(10, ClipKind::Video, 0, Tick(0), PART + PART, 100);
+    inst.source_in = Tick(0);
+    inst.opacity = outer_opacity;
+    inst.fx = fx;
+    p.clips.push(inst);
+    p.validate().expect("проект с вложением законен");
+    p
+}
+
+/// `Decompose(P)`: те же дети прямо на дорожках, уровень/цепочка — на КАЖДОМ.
+fn spread_with(opacity: f32, fx: Vec<FxInstance>) -> Project {
+    let mut p = base();
+    let mut flat = inner_pair();
+    for c in flat.iter_mut() {
+        c.opacity *= opacity;
+        c.fx = fx.clone();
+    }
+    p.clips = flat;
+    p.video_lanes = 2;
+    p.validate().expect("развёрнутый проект законен");
+    p
+}
+
+#[test]
+fn t438_law_g_level_on_the_nest_is_not_level_on_each_child() {
+    let q = Quality { width: 64, height: 36 };
+    let t = Tick(FRAME * 20); // внутри перекрытия
+    let (nested_half, _) = (render_video(&nest_with(0.5, vec![]), t, q).0, ());
+    let spread_half = render_video(&spread_with(0.5, vec![]), t, q).0;
+    assert_ne!(
+        nested_half, spread_half,
+        "ЗАКОН Г: уровень 50 % НА ВЛОЖЕНИИ обязан отличаться от 50 % на каждом \
+         ребёнке. Совпали — значит границы порядка обработки нет, и вложение \
+         бессмысленно: ровно ради «эффект на РЕЗУЛЬТАТ» оно и заводилось"
+    );
+    // ...и это не «одно из них чёрное»
+    assert!(nested_half.iter().any(|&x| x != 0), "композит вложения чёрный");
+    assert!(spread_half.iter().any(|&x| x != 0), "развёрнутый композит чёрный");
+
+    // при уровне 1.0 разницы быть НЕ должно: непрозрачный композит
+    // накладывается так же, как его непрозрачные дети (закон Э)
+    assert_eq!(
+        render_video(&nest_with(1.0, vec![]), t, q).0,
+        render_video(&spread_with(1.0, vec![]), t, q).0,
+        "без уровня и цепочки вложение обязано быть ТОЖДЕСТВЕННО содержимому"
+    );
+}
+
+#[test]
+fn t439_semi_transparent_subcomposite_is_not_twice_as_dark() {
+    // Дефект, найденный разведкой до того, как он появился: аккумулятор
+    // композита хранит ПРЕМУЛЬТИПЛИЦИРОВАННЫЙ RGB при ПРЯМОЙ альфе, а
+    // `alpha_over` ждёт прямую. Подать суб-композит обратно в композит без
+    // конверсии — картинка вдвое темнее РОВНО в полупрозрачных местах.
+    let q = Quality { width: 64, height: 36 };
+    let t = Tick(FRAME * 5);
+
+    // фон снизу, полупрозрачный ребёнок внутри ленты сверху
+    let mut nested = base();
+    let mut s = Sequence::new(MediaId(100), "Кусок");
+    let mut child = ev(2, ClipKind::Video, 0, Tick(0), PART, 1);
+    child.opacity = 0.5;
+    s.clips = vec![child.clone()];
+    nested.sequences.push(s);
+    nested.video_lanes = 2;
+    // ФОН другого цвета: у синтетики цвет — функция pts, поэтому без
+    // своей точки входа фон и содержимое совпали бы, и потемнение было бы
+    // не на чем увидеть
+    let mut bg_clip = ev(1, ClipKind::Video, 1, Tick(0), PART, 3);
+    bg_clip.source_in = Tick(FRAME * 500);
+    nested.clips.push(bg_clip.clone());
+    let mut inst = ev(10, ClipKind::Video, 0, Tick(0), PART, 100);
+    inst.source_in = Tick(0);
+    nested.clips.push(inst);
+    nested.validate().unwrap();
+
+    let mut flat = base();
+    flat.video_lanes = 2;
+    flat.clips.push(bg_clip.clone());
+    flat.clips.push(child);
+    flat.validate().unwrap();
+
+    let bg = render_video(
+        &{
+            let mut p = base();
+            let mut c = bg_clip;
+            c.lane = 0;
+            p.clips.push(c);
+            p.validate().unwrap();
+            p
+        },
+        t,
+        q,
+    )
+    .0;
+    let a = render_video(&nested, t, q).0;
+    let b = render_video(&flat, t, q).0;
+
+    // ЗДЕСЬ закон Э честно НЕ выполняется байт-в-байт, и это не чинится:
+    // промежуток между уровнями 8-битный, и premultiply→unpremultiply
+    // теряет один младший разряд. Предел названный, а не подобранный: ОДНО
+    // округление 8-битного промежутка.
+    let d = max_diff(&a, &b);
+    assert!(
+        d <= 1,
+        "суб-композит лёг на фон не так, как то же содержимое легло бы прямо \
+         (расхождение {d} > 1 LSB). Сигнатура дефекта — примерно ВДВОЕ темнее \
+         ровно в полупрозрачных местах: аккумулятор отдаёт премультиплицированный \
+         цвет, а наложение ждёт прямой"
+    );
+    // ...и это утверждение не пустое: без конверсии картинка уезжает К ФОНУ
+    // (полупрозрачный слой вносит вдвое меньше), а вовсе не на один разряд
+    let to_bg = max_diff(&b, &bg);
+    assert!(
+        to_bg > 8,
+        "фикстура вырождена: содержимое вложения и так почти равно фону ({to_bg}), \
+         на ней потемнение было бы не видно"
+    );
+}
+
+#[test]
+fn t440_a_chain_on_the_nest_acts_on_the_assembled_picture() {
+    let q = Quality { width: 64, height: 36 };
+    let t = Tick(FRAME * 20);
+    // Постеризация НЕЛИНЕЙНА: квантование смеси двух цветов — не смесь их
+    // квантований. Линейный эффект (размытие, уровень) на плоских кадрах
+    // ничего бы не показал, и тест был бы зелёным на сломанном коде.
+    let fx = vec![FxInstance::Posterize { levels: 3 }];
+    let on_nest = render_video(&nest_with(1.0, fx.clone()), t, q).0;
+    let on_each = render_video(&spread_with(1.0, fx), t, q).0;
+    assert_ne!(
+        on_nest, on_each,
+        "цепочка на вложении посчиталась ПОКУСОЧНО. «Эффект на результат» — \
+         единственный способ выразить это там, где эффекты живут на событиях, \
+         и ровно он тут не работает"
+    );
+    assert!(on_nest.iter().any(|&x| x != 0), "композит с цепочкой чёрный");
+    // ...а без цепочки те же два проекта совпадают — значит разошлись они
+    // ИМЕННО на цепочке, а не на устройстве фикстуры
+    assert_eq!(
+        render_video(&nest_with(1.0, vec![]), t, q).0,
+        render_video(&spread_with(1.0, vec![]), t, q).0,
+        "фикстуры расходятся и без цепочки — тест доказывал бы не то"
+    );
+}
+
+#[test]
+fn t441_hunger_and_memoization_cross_the_boundary() {
+    let q = Quality { width: 64, height: 36 };
+    let t = Tick(FRAME * 20);
+    let p = nest_with(1.0, vec![]);
+    let seq = MediaId(100);
+
+    // ГОЛОД ВНУТРИ виден СНАРУЖИ: кадра ребёнка нет — композит неполон.
+    // Иначе плеер считал бы кадр готовым и никогда его не перезапросил.
+    let mut v = VideoRenderer::new(&p);
+    let cold = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let (_, complete) = v.compose_from_cache(&cold, t, q);
+    assert!(!complete, "голод ВНУТРИ ленты не дошёл до внешнего композита");
+
+    // Прогрели — и полный.
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        sources().into_iter().collect();
+    for (media, src_pts, dq) in v.layers_at(t, q) {
+        assert_ne!(media, seq, "заказ не спустился вглубь: адрес ЛЕНТЫ источника не имеет");
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    let (preview, complete) = v.compose_from_cache(&cache, t, q);
+    assert!(complete, "прогретый композит с вложением обязан быть полным");
+
+    // Мемоизация суб-композита есть в ПРЕВЬЮ...
+    let h = kt_engine::content_hash(&p, seq);
+    let inner_t = t; // экземпляр стоит в нуле с source_in = 0
+    assert!(
+        cache
+            .get_postfx_video(kt_engine::nest_source_id(seq), (q.width, q.height), h, inner_t.0)
+            .is_some(),
+        "суб-композит не мемоизирован в превью — цепочка ленты платилась бы на КАЖДЫЙ кадр"
+    );
+
+    // ...и НЕТ в экспорте: полноразмерные суб-композиты вытеснили бы ещё
+    // не использованные пре-кадры соседних слоёв из бюджета чанка —
+    // дословно регрессия Р.31 п.4 («рендер поломан»).
+    let export_cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    for (media, src_pts, dq) in v.layers_at(t, q) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        export_cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    let mut out = Vec::new();
+    let complete = v.compose_export_into(&export_cache, t, q, &mut out);
+    assert!(complete, "экспортный композит с вложением обязан быть полным");
+    assert_eq!(out, preview, "превью и экспорт обязаны совпадать БАЙТ-В-БАЙТ");
+    assert!(
+        export_cache
+            .get_postfx_video(kt_engine::nest_source_id(seq), (q.width, q.height), h, inner_t.0)
+            .is_none(),
+        "экспорт мемоизировал суб-композит: бюджет чанка вытеснит пре-кадры соседей"
+    );
+}
+
+// ---- 442-443 (Р.50, Б2): ключи мемоизации ------------------------------------
+
+/// Прогреть пре-FX кадры плана и вернуть композит.
+fn warm_and_compose(
+    v: &mut VideoRenderer,
+    cache: &kt_cache::BurstCache,
+    t: Tick,
+    q: Quality,
+) -> Vec<u8> {
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        sources().into_iter().collect();
+    for (media, src_pts, dq) in v.layers_at(t, q) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    v.compose_from_cache(cache, t, q).0
+}
+
+#[test]
+fn t442_editing_inside_the_reel_invalidates_the_instance() {
+    let q = Quality { width: 64, height: 36 };
+    let t = Tick(FRAME * 20);
+    // цепочка НА ЭКЗЕМПЛЯРЕ: именно её пост-FX кадр мемоизируется, и
+    // именно он стал бы стейлом
+    let mut p = nest_with(1.0, vec![FxInstance::Posterize { levels: 3 }]);
+    // кэш ОДИН на оба прогона — в программе он и есть один: правка модели
+    // пересоздаёт рендерер, но не кэш
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let before = warm_and_compose(&mut VideoRenderer::new(&p), &cache, t, q);
+
+    // правим ВНУТРИ ленты. Ни одно поле клипа-экземпляра не меняется:
+    // его `fx_hash` по геометрии и цепочке остался бы прежним, и без
+    // `content_hash` кэш отдал бы КАДР ДО ПРАВКИ.
+    p.sequences[0].clips[1].source_in = Tick(FRAME * 77);
+    p.validate().unwrap();
+    let after = warm_and_compose(&mut VideoRenderer::new(&p), &cache, t, q);
+    assert_ne!(
+        before, after,
+        "правка ВНУТРИ ленты не дошла до картинки: обещание «правка модели \
+         пересоздаёт рендерер, стейл-кадры не читаются» для вложения держится \
+         только на хэше РЕДАКЦИИ — у экземпляра не меняется ни одно поле"
+    );
+}
+
+#[test]
+fn t443_three_keys_separate_reels_instances_and_editions() {
+    let q = Quality { width: 64, height: 36 };
+    let t = Tick(FRAME * 20);
+    let p = nest_with(1.0, vec![]);
+    let seq = MediaId(100);
+
+    // РЕДАКЦИИ: тот же адрес, другое содержимое — другой ключ
+    let h1 = kt_engine::content_hash(&p, seq);
+    let mut q2 = p.clone();
+    q2.sequences[0].clips[1].source_in = Tick(FRAME * 77);
+    let h2 = kt_engine::content_hash(&q2, seq);
+    assert_ne!(h1, h2, "правка внутри ленты не изменила хэш редакции");
+
+    // ...и рекурсивно: правка во ВНУКЕ обязана дойти до деда
+    let mut deep = base();
+    let mut inner = Sequence::new(MediaId(101), "Внутренняя");
+    inner.clips = vec![ev(20, ClipKind::Video, 0, Tick(0), PART, 1)];
+    let mut outer = Sequence::new(MediaId(100), "Внешняя");
+    let mut mid = ev(21, ClipKind::Video, 0, Tick(0), PART, 101);
+    mid.source_in = Tick(0);
+    outer.clips = vec![mid];
+    deep.sequences.push(inner);
+    deep.sequences.push(outer);
+    let mut top = ev(10, ClipKind::Video, 0, Tick(0), PART, 100);
+    top.source_in = Tick(0);
+    deep.clips.push(top);
+    deep.validate().unwrap();
+    let d1 = kt_engine::content_hash(&deep, MediaId(100));
+    deep.sequences[0].clips[0].source_in = Tick(FRAME * 9);
+    let d2 = kt_engine::content_hash(&deep, MediaId(100));
+    assert_ne!(d1, d2, "правка во ВНУКЕ не дошла до хэша деда — мемо отдаст стейл");
+
+    // ЛЕНТЫ: адрес суб-композита в кэше — не адрес файла
+    assert_ne!(
+        kt_engine::nest_source_id(seq),
+        kt_engine::source_id(MediaId(seq.0)),
+        "лента и файл с тем же номером делят адрес в кэше"
+    );
+    assert!(
+        kt_engine::nest_source_id(seq).0 >= kt_model::NEST_TAG,
+        "адрес ленты обязан лежать выше диапазона файлов"
+    );
+
+    // ЭКЗЕМПЛЯРЫ: две постановки ОДНОЙ ленты с разными цепочками не
+    // схлопываются в один пост-FX кадр, а суб-композит у них ОБЩИЙ —
+    // в этом и выигрыш
+    let mut two = nest_with(1.0, vec![FxInstance::Posterize { levels: 3 }]);
+    let mut twin = two.clips[0].clone();
+    twin.id = ClipId(11);
+    twin.start = Tick(10 * PART.0);
+    twin.fx = vec![FxInstance::Posterize { levels: 5 }];
+    two.clips.push(twin);
+    two.validate().unwrap();
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut v = VideoRenderer::new(&two);
+    let a = warm_and_compose(&mut v, &cache, t, q);
+    let b = warm_and_compose(&mut v, &cache, Tick(10 * PART.0 + t.0), q);
+    assert_ne!(
+        a, b,
+        "две постановки одной ленты с РАЗНЫМИ цепочками отдали один кадр — \
+         пост-FX кэш ключуется не экземпляром"
+    );
+    // суб-композит ленты лежит в кэше ОДИН — по адресу ленты и редакции
+    assert!(
+        cache
+            .get_postfx_video(
+                kt_engine::nest_source_id(seq),
+                (q.width, q.height),
+                kt_engine::content_hash(&two, seq),
+                t.0
+            )
+            .is_some(),
+        "суб-композит не мемоизирован по адресу ленты"
     );
 }

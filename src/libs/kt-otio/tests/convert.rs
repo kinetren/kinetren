@@ -1346,11 +1346,7 @@ fn t437_foreign_nested_stacks_become_real_reels() {
         "`Track` внутри `Track` — тоже вложение, и он пропущен: {:?}",
         p.sequences.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
     );
-    assert!(
-        p.foreign.is_empty(),
-        "вложения остались серыми плейсхолдерами: {:?}",
-        p.foreign
-    );
+    assert!(p.foreign.is_empty(), "вложения остались серыми плейсхолдерами: {:?}", p.foreign);
     // содержимое доехало: у каждой ленты есть события
     for s in &p.sequences {
         assert!(!s.clips.is_empty(), "лента '{}' пуста", s.name);
