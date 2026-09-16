@@ -1412,3 +1412,70 @@ fn t437_foreign_nested_stacks_become_real_reels() {
     let twice = save_project(&again.project, &again.retained, None);
     assert_eq!(once, twice, "пересохранение не идемпотентно");
 }
+
+/// Тест 465 (п.399, Р.51): наложенный переход в файле — конверт ленты
+/// `overlap_transitions` (ребёнком последовательного трека пара из разных
+/// Track невыразима), файл поднимается до v7, круг идемпотентен, битая
+/// запись — notice, а не порча.
+#[test]
+fn t465_overlap_transition_roundtrip() {
+    let mk = || {
+        let mut p = rich_project();
+        // видео-лесенка на одной дорожке: [0..90к) и [45к..135к)
+        p.clips.retain(|c| c.id.0 >= 10); // аудио-пара остаётся
+        p.clips.push(clip(1, ClipKind::Video, 0, 0, 90_000, 1));
+        p.clips.push(clip(2, ClipKind::Video, 0, 45_000, 90_000, 2));
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(7),
+            a: Some(ClipId(1)),
+            b: Some(ClipId(2)),
+            in_offset: Tick::ZERO,
+            out_offset: Tick::ZERO,
+            kind: TransitionKind::Barn { vertical: false, softness: 0.2 },
+            audio: AudioCurve::SCurve,
+            auto: vec![],
+            invert: true,
+        });
+        p.validate().unwrap();
+        p
+    };
+    let p = mk();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 7, "наложенный переход поднимает файл до v7");
+    let ot = &v["metadata"]["kt"]["overlap_transitions"];
+    assert_eq!(ot.as_array().map(|a| a.len()), Some(1), "переход в конверте ленты: {ot}");
+    assert_eq!(ot[0]["a"], 1);
+    assert_eq!(ot[0]["b"], 2);
+    assert_eq!(ot[0]["kind"]["kind"], "barn");
+    assert_eq!(ot[0]["invert"], true);
+
+    let b = load_project(&text, None).expect("файл с наложенным переходом читается");
+    let got: Vec<&TransitionEvent> =
+        b.project.transitions.iter().filter(|t| t.overlap_pair(&b.project).is_some()).collect();
+    assert_eq!(got.len(), 1, "наложенный переход восстановлен");
+    let t = got[0];
+    assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))));
+    assert_eq!(t.kind, TransitionKind::Barn { vertical: false, softness: 0.2 });
+    assert_eq!(t.audio, AudioCurve::SCurve);
+    assert!(t.invert);
+    let w = t.window(&b.project).unwrap();
+    assert_eq!((w.start, w.end), (Tick(45_000), Tick(90_000)), "окно = перекрытие");
+    b.project.validate().expect("прочитанное валидно");
+    assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность");
+
+    // битая запись (неизвестный клип) — notice и пропуск, не порча
+    let mut broken: serde_json::Value = serde_json::from_str(&text).unwrap();
+    broken["metadata"]["kt"]["overlap_transitions"][0]["b"] = serde_json::json!(777);
+    let b = load_project(&serde_json::to_string_pretty(&broken).unwrap(), None)
+        .expect("битая запись не валит файл");
+    assert!(
+        b.project.transitions.iter().all(|t| t.overlap_pair(&b.project).is_none()),
+        "битый наложенный переход пропущен"
+    );
+    assert!(
+        b.notices.iter().any(|n| n.contains("overlap transition")),
+        "пропуск обязан дать замечание: {:?}",
+        b.notices
+    );
+}

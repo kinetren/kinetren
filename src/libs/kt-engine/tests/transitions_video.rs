@@ -771,3 +771,95 @@ fn t461_transition_invert() {
         alpha(&s1, 61)
     );
 }
+
+/// Тест 464 (п.399, Р.51): картинка на НАЛОЖЕНИИ. Без перехода — прежний
+/// жёсткий срез Vegas (поздний сверху непрозрачен); с переходом пара
+/// схлопывается в Dissolve, и вид доезжает до кадра.
+#[test]
+fn t464_overlap_transition_reaches_picture() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let mk = |with: Option<TransitionKind>| {
+        let mut p = Project::new(ProjectSettings {
+            fps: 30,
+            width: 640,
+            height: 360,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+        });
+        for id in [1u64, 2] {
+            p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
+        }
+        // лесенка: [0..120к) и [60к..180к), перекрытие [60к..120к)
+        for (id, start, media) in [(1u64, 0i64, 1u64), (2, 60_000, 2)] {
+            p.clips.push(ClipEvent {
+                id: ClipId(id),
+                link_group: None,
+                kind: ClipKind::Video,
+                lane: 0,
+                start: Tick(start),
+                duration: Tick(120_000),
+                source_in: Tick::ZERO,
+                media: MediaId(media),
+                gain_db: 0.0,
+                reversed: false,
+                fx: vec![],
+                fx_bypass: vec![],
+                fx_auto: vec![],
+                opacity: 1.0,
+                fx_off: false,
+            });
+        }
+        if let Some(kind) = with {
+            p.transitions.push(TransitionEvent {
+                id: TransitionId(1),
+                a: Some(ClipId(1)),
+                b: Some(ClipId(2)),
+                in_offset: Tick::ZERO,
+                out_offset: Tick::ZERO,
+                kind,
+                audio: Default::default(),
+                auto: vec![],
+                invert: false,
+            });
+        }
+        p.validate().unwrap();
+        p
+    };
+    let render = |p: &Project, t: Tick| {
+        let mut vr = VideoRenderer::new(p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "слои прогреты");
+        out
+    };
+    let px = |buf: &[u8], x: usize, y: usize| {
+        let i = (y * q.width as usize + x) * 4;
+        [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
+    };
+    let t = Tick(90_000); // середина перекрытия
+    let a = synth_frame(Tick(90_000), q);
+    let b = synth_frame(Tick(30_000), q);
+    let (ca, cb) = (px(&a, 0, 0), px(&b, 0, 0));
+    assert_ne!(ca, cb, "цвета сторон различимы");
+
+    // без перехода: жёсткий срез — весь кадр показывает ПОЗДНИЙ клип
+    let bare = render(&mk(None), t);
+    assert_eq!(px(&bare, 2, 18), cb, "поздний сверху непрозрачен (правило Vegas)");
+    assert_eq!(px(&bare, 61, 18), cb);
+
+    // с вайпом: обе стороны в кадре, граница в середине окна
+    let wipe = render(
+        &mk(Some(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 })),
+        t,
+    );
+    assert_eq!(px(&wipe, 2, 18), ca, "слева ещё уходящий");
+    assert_eq!(px(&wipe, 61, 18), cb, "справа уже входящий");
+
+    // кроссфейд: однородная смесь по кадру
+    let cross = render(&mk(Some(TransitionKind::Crossfade)), t);
+    let mix = px(&cross, 5, 5);
+    assert_eq!(mix, px(&cross, 58, 30), "кроссфейд однороден");
+    assert_ne!(mix, ca);
+    assert_ne!(mix, cb);
+}

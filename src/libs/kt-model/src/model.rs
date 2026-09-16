@@ -1423,11 +1423,42 @@ fn reconcile_reel(clips: &[ClipEvent], transitions: &mut Vec<TransitionEvent>) {
             // заводятся явно, а не остатками от удаления)
             Some(id) => clips.iter().find(|c| c.id == id).map(Some),
         };
-        let (Some(a), Some(b)) = (side(t.a), side(t.b)) else { return false };
-        if let (Some(a), Some(b)) = (a, b)
-            && (a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start)
-        {
-            return false;
+        let (Some(mut a), Some(mut b)) = (side(t.a), side(t.b)) else { return false };
+        if let (Some(ca), Some(cb)) = (a, b) {
+            // канонизация ролей (Р.51, п.399): Split и мувы могли поменять
+            // порядок пары — «a» всегда ранний. Направленный вид при этом
+            // зеркалится вместе с ролями; смерть перехода была бы хуже
+            // (правило 20)
+            if cb.start < ca.start {
+                std::mem::swap(&mut t.a, &mut t.b);
+                std::mem::swap(&mut a, &mut b);
+            }
+            let (ca, cb) = (a.unwrap(), b.unwrap());
+            let (a_end, b_end) = (ca.start + ca.duration, cb.start + cb.duration);
+            if ca.kind != cb.kind || ca.lane != cb.lane {
+                return false;
+            }
+            if a_end != cb.start {
+                // не встык: жив только как НАЛОЖЕННЫЙ переход (Р.51) —
+                // чистая «лесенка» с окном не короче минимума и без
+                // третьего клипа в нём (третий вполз мувом → переход
+                // умирает, батч не валится — прецедент разорванного стыка)
+                let stag = ca.start < cb.start && cb.start < a_end && a_end < b_end;
+                if !stag || a_end - cb.start < MIN_TRANSITION_DURATION {
+                    return false;
+                }
+                let busy = clips.iter().any(|c| {
+                    c.id != ca.id
+                        && c.id != cb.id
+                        && c.kind == ca.kind
+                        && c.lane == ca.lane
+                        && c.start < a_end
+                        && cb.start < c.start + c.duration
+                });
+                // офсеты у наложенного не клампятся — они мёртвый груз и
+                // оживают при возврате пары встык
+                return !busy;
+            }
         }
         if let Some(a) = a {
             t.in_offset = t.in_offset.min(a.duration);

@@ -462,8 +462,32 @@ impl TransitionEvent {
         self.a == Some(id) || self.b == Some(id)
     }
 
-    /// Полуоткрытое окно перехода на таймлайне.
+    /// Пара НАЛОЖЕННОГО перехода (Р.51, п.399): оба конца живы, одна
+    /// (kind, lane) и перекрытие «лесенкой» — a начался раньше и кончился
+    /// внутри b. Полное вложение и равные старты парой не считаются:
+    /// у такого расположения нет ни направления, ни осмысленного окна.
+    pub fn overlap_pair<'a>(&self, p: &'a dyn Reel) -> Option<(&'a ClipEvent, &'a ClipEvent)> {
+        let a = p.clips().iter().find(|c| Some(c.id) == self.a)?;
+        let b = p.clips().iter().find(|c| Some(c.id) == self.b)?;
+        let (a_end, b_end) = (a.start + a.duration, b.start + b.duration);
+        (a.kind == b.kind
+            && a.lane == b.lane
+            && a.start < b.start
+            && b.start < a_end
+            && a_end < b_end)
+            .then_some((a, b))
+    }
+
+    /// Полуоткрытое окно перехода на таймлайне. У стыкового — офсеты от
+    /// стыка; у наложенного (Р.51) окно — САМА зона перекрытия: режим не
+    /// хранится, окно следует за тримом клипов, собственных ручек у него
+    /// нет (урок Kdenlive из F-TL-010 — второй подсистемы окна не заводим).
+    /// `in/out_offset` в режиме наложения не используются (лежат мёртвым
+    /// грузом и оживают при возврате пары встык).
     pub fn window(&self, p: &dyn Reel) -> Option<TickRange> {
+        if let Some((a, b)) = self.overlap_pair(p) {
+            return Some(TickRange::new(b.start, a.start + a.duration));
+        }
         let at = self.joint(p)?;
         Some(TickRange::new(at - self.in_offset, at + self.out_offset))
     }
@@ -514,8 +538,9 @@ pub fn forbidden_zones(reel: &dyn Reel, c: &ClipEvent) -> Vec<TickRange> {
         if t.a != Some(c.id) && t.b != Some(c.id) {
             continue;
         }
-        let Some(j) = t.joint(reel) else { continue };
-        let z = TickRange::new(j - t.in_offset, j + t.out_offset).intersect(&body);
+        // у наложенного перехода (Р.51) окно — зона перекрытия
+        let Some(w) = t.window(reel) else { continue };
+        let z = w.intersect(&body);
         if !z.is_empty() {
             out.push(z);
         }
@@ -4560,8 +4585,10 @@ pub enum ProjectError {
     DuplicateTransitionId(TransitionId),
     #[error("transition {0:?}: unknown clip {1:?}")]
     TransitionUnknownClip(TransitionId, ClipId),
-    #[error("transition {0:?}: clips are not butt-joined neighbors")]
+    #[error("transition {0:?}: clips are neither butt-joined nor staggered-overlapping")]
     TransitionNotAtJoint(TransitionId),
+    #[error("transition {0:?}: a third clip {1:?} sits inside the overlap window")]
+    TransitionOverlapBusy(TransitionId, ClipId),
     #[error("transition {0:?}: window exceeds clip bodies")]
     TransitionTooWide(TransitionId),
     #[error("transition {0:?}: window below minimal duration")]
@@ -4628,27 +4655,62 @@ pub fn check_transition_full(
     let a = find(t.a)?;
     let b = find(t.b)?;
     // фейд (Р.25): один конец — пустота; офсет в её сторону телом не
-    // ограничен, стык берётся у живого клипа
+    // ограничен, стык берётся у живого клипа. С Р.51 (п.399) пара может
+    // быть и НАЛОЖЕННОЙ «лесенкой» — тогда окно = зона перекрытия, а
+    // офсеты не используются вовсе (мёртвый груз до возврата встык).
+    let mut staggered = false;
     let (kind, lane, joint) = match (a, b) {
         (Some(a), Some(b)) => {
-            if a.kind != b.kind || a.lane != b.lane || a.start + a.duration != b.start {
+            let (a_end, b_end) = (a.start + a.duration, b.start + b.duration);
+            if a.kind != b.kind || a.lane != b.lane {
                 return Err(ProjectError::TransitionNotAtJoint(t.id));
             }
-            (a.kind, a.lane, a.start + a.duration)
+            if a_end == b.start {
+                (a.kind, a.lane, a_end)
+            } else if a.start < b.start && b.start < a_end && a_end < b_end {
+                staggered = true;
+                (a.kind, a.lane, a_end)
+            } else {
+                // полное вложение, равные старты, обратный порядок или
+                // разрыв — у такой пары нет ни направления, ни окна
+                return Err(ProjectError::TransitionNotAtJoint(t.id));
+            }
         }
         (Some(a), None) => (a.kind, a.lane, a.start + a.duration),
         (None, Some(b)) => (b.kind, b.lane, b.start),
         (None, None) => return Err(ProjectError::TransitionWithoutClips(t.id)),
     };
-    if t.in_offset.0 < 0
-        || t.out_offset.0 < 0
-        || a.is_some_and(|a| t.in_offset > a.duration)
-        || b.is_some_and(|b| t.out_offset > b.duration)
-    {
-        return Err(ProjectError::TransitionTooWide(t.id));
-    }
-    if t.in_offset + t.out_offset < MIN_TRANSITION_DURATION {
-        return Err(ProjectError::TransitionTooShort(t.id));
+    if staggered {
+        // окно задают ТЕЛА пары; третий клип в нём ломает не переход, а
+        // окружение (1/N-зоны остаются без переходов — как и трое без
+        // перехода дают 1/N, п.162)
+        let (a, b) = (a.unwrap(), b.unwrap());
+        let w = TickRange::new(b.start, a.start + a.duration);
+        if w.end - w.start < MIN_TRANSITION_DURATION {
+            return Err(ProjectError::TransitionTooShort(t.id));
+        }
+        for c in p.clips() {
+            if c.id != a.id
+                && c.id != b.id
+                && c.kind == kind
+                && c.lane == lane
+                && c.start < w.end
+                && w.start < c.start + c.duration
+            {
+                return Err(ProjectError::TransitionOverlapBusy(t.id, c.id));
+            }
+        }
+    } else {
+        if t.in_offset.0 < 0
+            || t.out_offset.0 < 0
+            || a.is_some_and(|a| t.in_offset > a.duration)
+            || b.is_some_and(|b| t.out_offset > b.duration)
+        {
+            return Err(ProjectError::TransitionTooWide(t.id));
+        }
+        if t.in_offset + t.out_offset < MIN_TRANSITION_DURATION {
+            return Err(ProjectError::TransitionTooShort(t.id));
+        }
     }
     // кривые параметров вида — те же правила, что у кривых эффектов
     for c in &t.auto {
@@ -4658,7 +4720,11 @@ pub fn check_transition_full(
             return Err(ProjectError::BadTransitionAuto(t.id));
         }
     }
-    let w = TickRange::new(joint - t.in_offset, joint + t.out_offset);
+    let w = if staggered {
+        TickRange::new(b.unwrap().start, joint)
+    } else {
+        TickRange::new(joint - t.in_offset, joint + t.out_offset)
+    };
     for other in p.transitions() {
         if other.id == t.id || Some(other.id) == ignore {
             continue;

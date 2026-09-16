@@ -8622,3 +8622,91 @@ fn t460b_overlap_redrag_keeps_kind() {
     assert_eq!(t.audio, AudioCurve::Linear, "кривая аудио не сброшена");
     p.validate().expect("итог валиден");
 }
+
+/// Тест 466 (п.399, Р.51): переход НА НАЛОЖЕНИИ достижим жестами — ПКМ по
+/// зоне наложения предлагает «Переход с…» (сосед-«лесенка» равноправен
+/// стыковому, правило 17), а двойной клик по зоне наложенного перехода
+/// открывает его свойства, как у стыкового.
+#[test]
+fn t466_overlap_transition_reachable() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let overlap_app = |with_transition: bool| {
+        let (mut h, g) = harness_three_clips_dt(Some(0.02));
+        {
+            let app = h.state_mut();
+            let mut p = app.model.project().clone();
+            // лесенка: клип 1 [0..50к), клип 2 [30к..80к); третий подальше
+            p.clips[0].duration = Tick(50_000);
+            p.clips[1].start = Tick(30_000);
+            p.clips[1].duration = Tick(50_000);
+            p.clips[2].start = Tick(200_000);
+            if with_transition {
+                p.transitions.push(TransitionEvent {
+                    id: TransitionId(1),
+                    a: Some(ClipId(1)),
+                    b: Some(ClipId(2)),
+                    in_offset: Tick::ZERO,
+                    out_offset: Tick::ZERO,
+                    kind: TransitionKind::Barn { vertical: false, softness: 0.1 },
+                    audio: Default::default(),
+                    auto: vec![],
+                    invert: false,
+                });
+            }
+            p.validate().unwrap();
+            app.model = kt_model::TimelineModel::new(p);
+        }
+        h.step();
+        let g2 = h.state().tl_geom.clone().unwrap_or(g);
+        (h, g2)
+    };
+
+    // ПКМ по зоне наложения БЕЗ перехода: меню клипа предлагает переход
+    let (mut h, g) = overlap_app(false);
+    let y = g.lane_y(kt_model::ClipKind::Video, 0, 0.75);
+    right_click_at(&mut h, egui::pos2(g.tick_to_x(40_000), y));
+    assert!(
+        matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Clip(_))),
+        "ПКМ по зоне наложения обязан дать меню клипа"
+    );
+    let labels = menu_labels(&mut h);
+    assert!(
+        labels.iter().any(|l| {
+            // menu_button дописывает к подписи стрелку подменю
+            l.starts_with(&tr(k::tl::menu::TRANSITION_PREV))
+                || l.starts_with(&tr(k::tl::menu::TRANSITION_NEXT))
+        }),
+        "сосед-«лесенка» обязан дать пункт «Переход с…»: {labels:?}"
+    );
+
+    // двойной клик по зоне НАЛОЖЕННОГО перехода открывает свойства
+    let (mut h, g) = overlap_app(true);
+    let pos = egui::pos2(g.tick_to_x(40_000), y);
+    for _ in 0..2 {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().transition_editors.len(),
+        1,
+        "двойной клик по наложенному переходу обязан открыть свойства"
+    );
+    // и длина окна в свойствах — длина ПЕРЕКРЫТИЯ, офсеты тут ни при чём
+    let p = h.state().model.project();
+    let t = &p.transitions[0];
+    let w = t.window(p).expect("окно наложенного");
+    assert_eq!((w.end - w.start).0, 20_000, "окно = зона перекрытия");
+}

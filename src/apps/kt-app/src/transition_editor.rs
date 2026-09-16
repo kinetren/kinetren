@@ -127,9 +127,12 @@ impl KtApp {
         let mut axis_req = crate::automation::AxisReq::default();
         let playhead = self.player.transport.playhead();
         let frame_step = 90_000 / self.model.project().settings.fps.max(1) as i64;
-        // окно перехода на таймлайне: домен кривых — тик от его начала
-        let w0 = cur.window(self.model.project()).map(|w| w.start).unwrap_or(kt_time::Tick::ZERO);
-        let win_len = (cur.in_offset + cur.out_offset).0.max(1);
+        // окно перехода на таймлайне: домен кривых — тик от его начала.
+        // У наложенного (Р.51) окно — зона перекрытия, офсеты — мёртвый
+        // груз, поэтому длина берётся у САМОГО окна.
+        let win = cur.window(self.model.project());
+        let w0 = win.map(|w| w.start).unwrap_or(kt_time::Tick::ZERO);
+        let win_len = win.map(|w| (w.end - w.start).0).unwrap_or(1).max(1);
         let mut open = ed.open;
         let is_fade = cur.is_fade();
         // переход на АУДИО-дорожке: вид картинки ему не нужен вовсе —
@@ -339,9 +342,10 @@ impl KtApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    // длина окна — величина, которую тянут мышью; здесь
-                    // она ЧИТАЕТСЯ, чтобы не гадать по пикселям
-                    let len = (cur.in_offset.0 + cur.out_offset.0) as f64 / 90_000.0;
+                    // длина окна — величина, которую тянут мышью (у
+                    // наложенного — тримом клипов); здесь она ЧИТАЕТСЯ,
+                    // чтобы не гадать по пикселям
+                    let len = win_len as f64 / 90_000.0;
                     ui.label(crate::tf!(k::trn::LENGTH, format!("{len:.2}")));
                     if is_fade {
                         ui.label(tr(k::trn::IS_FADE));

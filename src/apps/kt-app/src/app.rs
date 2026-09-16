@@ -5788,6 +5788,11 @@ pub struct NamesCache {
     pub names: Arc<HashMap<ClipId, String>>,
     pub suppress: Arc<std::collections::HashSet<ClipId>>,
     pub media_paths: Arc<HashMap<MediaId, String>>,
+    /// Зоны ГОЛЫХ наложений (Р.51, п.399): перекрытия пар одной
+    /// (kind, lane), у которых нет перехода. Полоса метит их штриховкой —
+    /// цель ПКМ-жеста «Переход с…» обязана быть видима (правило 16;
+    /// минус «наложил и не заметил» из F-TL-010).
+    pub overlaps: Arc<Vec<(ClipKind, u32, i64, i64)>>,
 }
 
 impl KtApp {
@@ -5936,6 +5941,27 @@ impl KtApp {
                 (std::cmp::Reverse(c.lane), c.start.0)
             });
             self.names_cache.draw_order = Arc::new(order);
+            // голые наложения: сортировка по дорожке + скан соседей,
+            // O(n log n + пересечения) — раз на версию модели
+            let mut sorted: Vec<&ClipEvent> = p.clips.iter().collect();
+            sorted.sort_by_key(|c| (c.kind as u8, c.lane, c.start.0));
+            let mut ov: Vec<(ClipKind, u32, i64, i64)> = Vec::new();
+            for (i, a) in sorted.iter().enumerate() {
+                let a_end = a.start.0 + a.duration.0;
+                for b in sorted[i + 1..]
+                    .iter()
+                    .take_while(|b| b.kind == a.kind && b.lane == a.lane && b.start.0 < a_end)
+                {
+                    let covered = p.transitions.iter().any(|t| {
+                        (t.a, t.b) == (Some(a.id), Some(b.id))
+                            || (t.a, t.b) == (Some(b.id), Some(a.id))
+                    });
+                    if !covered {
+                        ov.push((a.kind, a.lane, b.start.0, a_end.min(b.start.0 + b.duration.0)));
+                    }
+                }
+            }
+            self.names_cache.overlaps = Arc::new(ov);
         }
         (
             self.names_cache.names.clone(),
@@ -5943,6 +5969,12 @@ impl KtApp {
             self.names_cache.media_paths.clone(),
             self.names_cache.draw_order.clone(),
         )
+    }
+
+    /// Зоны голых наложений (Р.51). Свежесть обеспечивает `names()` —
+    /// звать после него в том же кадре.
+    pub fn overlap_zones(&self) -> Arc<Vec<(ClipKind, u32, i64, i64)>> {
+        self.names_cache.overlaps.clone()
     }
 }
 

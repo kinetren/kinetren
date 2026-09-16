@@ -586,3 +586,155 @@ fn t223_transition_kind_specs() {
     assert!(mid(AudioCurve::Exponential) < 0.5, "экспонента — намеренно глубокий провал");
     assert_eq!(AudioCurve::default(), AudioCurve::EqualPower, "умолчание — прежняя формула");
 }
+
+/// Тест 462 (п.399, Р.51): переход на НАЛОЖЕНИИ — пара «лесенкой», окно =
+/// зона перекрытия, режим не хранится. Валидация, судьба при правках
+/// (reconcile), возврат ручек и копипаст.
+#[test]
+fn t462_overlap_transition_model() {
+    // клипы 1 и 2 внахлёст «лесенкой»: [0..60к) и [30к..90к)
+    let overlap_project = || {
+        let mut p = base_project();
+        p.clips.retain(|c| c.id.0 <= 2);
+        p.clips[0].duration = Tick(60_000);
+        p.clips[1].start = Tick(30_000);
+        p.clips[1].duration = Tick(60_000);
+        p.validate().unwrap();
+        p
+    };
+    let ov = |id: u64, a: u64, b: u64| TransitionEvent {
+        id: TransitionId(id),
+        a: Some(ClipId(a)),
+        b: Some(ClipId(b)),
+        in_offset: Tick::ZERO,
+        out_offset: Tick::ZERO,
+        kind: TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.1 },
+        audio: AudioCurve::Linear,
+        auto: vec![],
+        invert: false,
+    };
+
+    // 1. валидация: лесенка законна, окно — сама зона перекрытия
+    let mut p = overlap_project();
+    p.transitions.push(ov(1, 1, 2));
+    p.validate().expect("наложенный переход законен");
+    let w = p.transitions[0].window(&p).unwrap();
+    assert_eq!((w.start, w.end), (Tick(30_000), Tick(60_000)), "окно = зона перекрытия");
+    assert!(p.transitions[0].overlap_pair(&p).is_some());
+
+    // 2. обратный порядок ролей — отказ (канонизацию делает reconcile)
+    let mut p = overlap_project();
+    p.transitions.push(ov(1, 2, 1));
+    assert!(p.validate().is_err(), "перевёрнутая пара — не лесенка");
+
+    // 3. полное вложение — отказ
+    let mut p = overlap_project();
+    p.clips[1].start = Tick(10_000);
+    p.clips[1].duration = Tick(20_000); // клип 2 целиком внутри клипа 1
+    p.transitions.push(ov(1, 1, 2));
+    assert!(p.validate().is_err(), "вложение — не лесенка");
+
+    // 4. третий клип в окне — отказ с именем виновника
+    let mut p = overlap_project();
+    p.clips.push(ClipEvent {
+        id: ClipId(3),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: Tick(40_000),
+        duration: Tick(10_000),
+        source_in: Tick::ZERO,
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.transitions.push(ov(1, 1, 2));
+    match p.validate() {
+        Err(ProjectError::TransitionOverlapBusy(_, c)) => assert_eq!(c, ClipId(3)),
+        other => panic!("ожидался TransitionOverlapBusy, получено {other:?}"),
+    }
+
+    // 5. reconcile: стыковой переход выживает НАЛОЖЕННЫМ при наезде пары
+    let mut m = TimelineModel::new(base_project());
+    m.apply(Command::AddTransition(tr(1, 1, 2, 9_000, 9_000))).unwrap();
+    m.project().transitions[0].window(m.project()).unwrap();
+    // наезд: клип 2 съехал влево на 18к — теперь лесенка
+    m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(30_000), new_lane: 0 }).unwrap();
+    let p = m.project();
+    assert_eq!(p.transitions.len(), 1, "переход пережил наезд наложением");
+    let t = &p.transitions[0];
+    assert!(t.overlap_pair(p).is_some(), "теперь это наложенный переход");
+    assert_eq!(
+        t.kind,
+        TransitionKind::Crossfade,
+        "вид не тронут (см. t460 про сохранение настроек)"
+    );
+    let w = t.window(p).unwrap();
+    assert_eq!((w.start, w.end), (Tick(30_000), Tick(48_000)), "окно = новое перекрытие");
+    // офсеты — мёртвый груз, не тронуты
+    assert_eq!((t.in_offset, t.out_offset), (Tick(9_000), Tick(9_000)));
+
+    // ...и возвращение встык оживляет прежние офсеты
+    m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(48_000), new_lane: 0 }).unwrap();
+    let p = m.project();
+    assert_eq!(p.transitions.len(), 1);
+    assert!(p.transitions[0].overlap_pair(p).is_none(), "пара снова встык");
+    let w = p.transitions[0].window(p).unwrap();
+    assert_eq!((w.start, w.end), (Tick(39_000), Tick(57_000)), "окно снова от офсетов");
+
+    // 6. reconcile: разрыв (растащили далеко) убивает наложенный переход
+    let mut m = TimelineModel::new(overlap_project());
+    m.apply(Command::AddTransition(ov(1, 1, 2))).unwrap();
+    m.apply(Command::MoveClip { id: ClipId(2), new_start: Tick(90_000), new_lane: 0 }).unwrap();
+    assert!(m.project().transitions.is_empty(), "перекрытие исчезло — переход умер");
+
+    // 7. reconcile: канонизация ролей — клип b уехал ЛЕВЕЕ a, роли
+    // зеркалятся, переход жив
+    let mut m = TimelineModel::new(overlap_project());
+    m.apply(Command::AddTransition(ov(1, 1, 2))).unwrap();
+    // клип 2 (был поздним) уезжает в 0, клип 1 начинается там же... нет:
+    // сдвинем клип 1 вправо, чтобы прежний b стал ранним
+    m.apply(Command::MoveClip { id: ClipId(1), new_start: Tick(45_000), new_lane: 0 }).unwrap();
+    let p = m.project();
+    assert_eq!(p.transitions.len(), 1, "переход жив после смены порядка");
+    let t = &p.transitions[0];
+    assert_eq!((t.a, t.b), (Some(ClipId(2)), Some(ClipId(1))), "роли канонизированы: a ранний");
+    assert!(t.overlap_pair(p).is_some());
+
+    // 8. restore_handles: разрыв наложенного НЕ дарит тримы (ничего не
+    // срезалось при наезде)
+    let before = {
+        let mut p = overlap_project();
+        p.transitions.push(ov(1, 1, 2));
+        p.validate().unwrap();
+        p
+    };
+    let after = {
+        let mut p = before.clone();
+        p.transitions.clear();
+        p.clips[1].start = Tick(90_000); // растащили
+        p.validate().unwrap();
+        p
+    };
+    assert!(
+        ops::restore_handles(&before, &after).is_empty(),
+        "у наложенного перехода нет срезанных ручек"
+    );
+
+    // 9. копипаст: наложенный переход выживает в блоке целиком
+    let p = {
+        let mut p = overlap_project();
+        p.transitions.push(ov(1, 1, 2));
+        p.validate().unwrap();
+        p
+    };
+    let block = ops::copy_clips(&p, &[ClipId(1), ClipId(2)]);
+    assert_eq!(block.transitions.len(), 1, "наложенный переход скопирован");
+    let block1 = ops::copy_clips(&p, &[ClipId(1)]);
+    assert!(block1.transitions.is_empty(), "без пары переход не едет");
+}

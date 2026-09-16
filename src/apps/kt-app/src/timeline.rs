@@ -2300,6 +2300,7 @@ impl KtApp {
         // ---- хит-тесты --------------------------------------------------------
         // кэши по model_rev; Arc-снапшоты — клоны указателей (п.1 v1.4)
         let (media_names, suppress_name, media_paths, draw_order) = self.names();
+        let overlap_zones = self.overlap_zones();
         let pointer = response.interact_pointer_pos();
         let hover = response.hover_pos();
         self.snap_line = None;
@@ -2429,6 +2430,12 @@ impl KtApp {
                 {
                     continue;
                 }
+                // у НАЛОЖЕННОГО перехода (Р.51) драг-зон нет: окно — сама
+                // зона перекрытия и следует за тримом клипов (второй
+                // подсистемы ручек не заводим — урок Kdenlive, F-TL-010)
+                if t.overlap_pair(p).is_some() {
+                    continue;
+                }
                 let Some(joint) = t.joint(p).map(|j| j.0) else { continue };
                 let xj = tick_to_x(joint);
                 if (pos.x - xj).abs() <= EDGE_GRAB_PX {
@@ -2454,15 +2461,11 @@ impl KtApp {
                 let Some(a) = t.a.or(t.b).and_then(|id| p.clips.iter().find(|c| c.id == id)) else {
                     continue;
                 };
-                let Some(joint) = t.joint(p).map(|j| j.0) else { continue };
+                // окно у наложенного перехода (Р.51) — зона перекрытия
+                let Some(w) = t.window(p) else { continue };
                 let top = lane_top(a.kind, a.lane);
                 let lane_h = lane_h_at(a.kind, a.lane);
-                let r = transition_rect(
-                    tick_to_x(joint - t.in_offset.0),
-                    tick_to_x(joint + t.out_offset.0),
-                    top,
-                    lane_h,
-                );
+                let r = transition_rect(tick_to_x(w.start.0), tick_to_x(w.end.0), top, lane_h);
                 if r.contains(pos) {
                     return Some(t.id);
                 }
@@ -2815,12 +2818,17 @@ impl KtApp {
                         moved: false,
                     });
                 }
+            } else if response.double_clicked()
+                && let Some(tid) = transition_body_at(self, pos)
+            {
+                // двойной клик по окну перехода = его свойства (паритет
+                // со способом «двойной клик по событию = окно FX», п.17
+                // р.28). Хит — по ТЕЛУ окна: у наложенного перехода
+                // (Р.51) драг-зон нет вовсе, а окно есть.
+                self.open_transition_editor(tid);
             } else if let Some((tid, tz)) = transition_at(self, pos) {
                 if response.double_clicked() {
-                    // двойной клик по окну перехода = его свойства
-                    // (паритет со способом «двойной клик по событию =
-                    // окно FX», п.17 р.28: парные способы ведут себя
-                    // одинаково)
+                    // двойной клик по ручкам/стыку — то же окно свойств
                     self.open_transition_editor(tid);
                 } else if response.drag_started() {
                     match tz {
@@ -4231,6 +4239,31 @@ impl KtApp {
             );
         }
 
+        // ---- голые наложения (Р.51, п.399): зона помечена штриховкой ----------
+        // Цель ПКМ-жеста «Переход с…» обязана быть видима (правило 16);
+        // до этого случайное наложение было неотличимо от начала клипа,
+        // а хвост соседа под ним ЗВУЧАЛ (минус из F-TL-010).
+        for &(kind, lane, w0, w1) in overlap_zones.iter() {
+            let (x0, x1) = (tick_to_x(w0), tick_to_x(w1));
+            if x1 < rect.left() || x0 > rect.right() {
+                continue;
+            }
+            let top = lane_top(kind, lane);
+            let lane_h = lane_h_at(kind, lane);
+            let r = transition_rect(x0, x1, top, lane_h);
+            let clipped = painter.with_clip_rect(r.intersect(rect));
+            let st =
+                egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 34));
+            let mut x = r.left() - r.height();
+            while x < r.right() {
+                clipped.line_segment(
+                    [egui::pos2(x, r.bottom()), egui::pos2(x + r.height(), r.top())],
+                    st,
+                );
+                x += 7.0;
+            }
+        }
+
         // ---- переходы (Р.24, п.140): подложка + X + риска стыка ---------------
         {
             let p = self.model.project();
@@ -4259,33 +4292,45 @@ impl KtApp {
                     }
                     _ => (t.in_offset.0, t.out_offset.0),
                 };
-                let x0 = tick_to_x(joint - in_off);
-                let x1 = tick_to_x(joint + out_off);
+                // НАЛОЖЕННЫЙ переход (Р.51, п.399): окно — сама зона
+                // перекрытия, «ручек» нет (материал обеих сторон настоящий)
+                let staggered = t.overlap_pair(p).and_then(|_| t.window(p));
+                let (x0, x1) = match &staggered {
+                    Some(w) => (tick_to_x(w.start.0), tick_to_x(w.end.0)),
+                    None => (tick_to_x(joint - in_off), tick_to_x(joint + out_off)),
+                };
                 if x1 < rect.left() || x0 > rect.right() {
                     continue;
                 }
                 let top = lane_top(a.kind, a.lane);
                 let lane_h = lane_h_at(a.kind, a.lane);
                 let r = transition_rect(x0, x1, top, lane_h);
-                // ручки (Р.26): материал соседей продолжается за стык и
-                // никуда не делся — растащишь клипы, и он вернётся
-                let xj = tick_to_x(joint);
-                let (left, right) = transition_handle_rects(x0, xj, x1, top, lane_h);
                 let _ = (in_off, out_off);
-                let handle_fill = |id: Option<ClipId>| {
-                    let c = id.and_then(|i| p.clips.iter().find(|c| c.id == i))?;
-                    let base = media_paths
-                        .get(&c.media)
-                        .map(|path| clip_color(path, c.kind))
-                        .unwrap_or(egui::Color32::from_gray(80));
-                    Some(egui::Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), 70))
-                };
-                // слева от стыка просвечивает ВХОДЯЩИЙ, справа — уходящий
-                if let Some(fill) = handle_fill(t.b) {
-                    painter.rect_filled(left, 2.0, fill);
-                }
-                if let Some(fill) = handle_fill(t.a) {
-                    painter.rect_filled(right, 2.0, fill);
+                if staggered.is_none() {
+                    // ручки (Р.26): материал соседей продолжается за стык и
+                    // никуда не делся — растащишь клипы, и он вернётся
+                    let xj = tick_to_x(joint);
+                    let (left, right) = transition_handle_rects(x0, xj, x1, top, lane_h);
+                    let handle_fill = |id: Option<ClipId>| {
+                        let c = id.and_then(|i| p.clips.iter().find(|c| c.id == i))?;
+                        let base = media_paths
+                            .get(&c.media)
+                            .map(|path| clip_color(path, c.kind))
+                            .unwrap_or(egui::Color32::from_gray(80));
+                        Some(egui::Color32::from_rgba_unmultiplied(
+                            base.r(),
+                            base.g(),
+                            base.b(),
+                            70,
+                        ))
+                    };
+                    // слева от стыка просвечивает ВХОДЯЩИЙ, справа — уходящий
+                    if let Some(fill) = handle_fill(t.b) {
+                        painter.rect_filled(left, 2.0, fill);
+                    }
+                    if let Some(fill) = handle_fill(t.a) {
+                        painter.rect_filled(right, 2.0, fill);
+                    }
                 }
                 painter.rect_filled(
                     r,
@@ -4346,13 +4391,18 @@ impl KtApp {
                         );
                     }
                 }
-                painter.line_segment(
-                    [egui::pos2(xj, r.top()), egui::pos2(xj, r.bottom())],
-                    egui::Stroke::new(
-                        1.0,
-                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 80),
-                    ),
-                );
+                // риска стыка — только у стыкового окна: у наложенного
+                // (Р.51) стыка нет, окно и есть перекрытие
+                if staggered.is_none() {
+                    let xj = tick_to_x(joint);
+                    painter.line_segment(
+                        [egui::pos2(xj, r.top()), egui::pos2(xj, r.bottom())],
+                        egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 80),
+                        ),
+                    );
+                }
             }
         }
 
@@ -5096,16 +5146,26 @@ impl KtApp {
                     let p = self.model.project();
                     let me = p.clips.iter().find(|c| c.id == id).cloned();
                     if let Some(me) = me {
+                        // сосед — встык ИЛИ «лесенкой» (Р.51, п.399): один
+                        // глагол на оба механизма (правило 17)
+                        let me_end = me.start + me.duration;
                         let neighbor = |incoming: bool| {
                             p.clips
                                 .iter()
                                 .find(|c| {
+                                    let c_end = c.start + c.duration;
                                     c.kind == me.kind
                                         && c.lane == me.lane
                                         && if incoming {
-                                            c.start == me.start + me.duration
+                                            c.start == me_end
+                                                || (me.start < c.start
+                                                    && c.start < me_end
+                                                    && me_end < c_end)
                                         } else {
-                                            c.start + c.duration == me.start
+                                            c_end == me.start
+                                                || (c.start < me.start
+                                                    && me.start < c_end
+                                                    && c_end < me_end)
                                         }
                                 })
                                 .map(|c| c.id)
@@ -5174,12 +5234,19 @@ impl KtApp {
                                     self.model.project().clips.iter().find(|c| c.id == i).cloned()
                                 };
                                 if let (Some(ca), Some(cb)) = (clip(a), clip(b)) {
-                                    // окно по умолчанию: до 0.5 c на сторону,
-                                    // клампится телами соседей
-                                    let half = Tick(45_000)
-                                        .min(Tick(ca.duration.0 / 2))
-                                        .min(Tick(cb.duration.0 / 2))
-                                        .max(MIN_TRANSITION_DURATION);
+                                    // встык: окно по умолчанию до 0.5 c на
+                                    // сторону, клампится телами; наложение
+                                    // (Р.51): окно — сама зона перекрытия,
+                                    // офсеты не используются
+                                    let butt = ca.start + ca.duration == cb.start;
+                                    let half = if butt {
+                                        Tick(45_000)
+                                            .min(Tick(ca.duration.0 / 2))
+                                            .min(Tick(cb.duration.0 / 2))
+                                            .max(MIN_TRANSITION_DURATION)
+                                    } else {
+                                        Tick::ZERO
+                                    };
                                     self.apply(Command::AddTransition(TransitionEvent {
                                         id: TransitionId(self.next_transition_id()),
                                         a: Some(a),

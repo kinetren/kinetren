@@ -898,3 +898,45 @@ fn t452_nest_warmth_is_the_intersection_of_its_children() {
          это объединение вместо пересечения, и оно врёт в ХОРОШУЮ сторону"
     );
 }
+
+/// Тест 463b (п.399, Р.51): переход МЕЖДУ репликами внутри ленты слышен.
+/// Найденный попутно дефект Р.50: аудио вешало окна переходов из
+/// `project.transitions` (корень), и переход внутри вложенной секвенции
+/// молча не кроссфейдил звук — видео при этом брало переходы своей ленты.
+#[test]
+fn t463b_transition_inside_a_reel_is_audible() {
+    let frames = (PART + PART).to_audio_frames() as usize;
+    let add_tr = |v: &mut Vec<TransitionEvent>| {
+        v.push(TransitionEvent {
+            id: TransitionId(1),
+            a: Some(ClipId(2)),
+            b: Some(ClipId(3)),
+            in_offset: Tick(9_000),
+            out_offset: Tick(9_000),
+            kind: TransitionKind::Crossfade,
+            audio: AudioCurve::Linear,
+            auto: vec![],
+            invert: false,
+        });
+    };
+    let mut nested = audio_nest(vec![], vec![]);
+    add_tr(&mut nested.sequences[0].transitions);
+    nested.validate().expect("переход внутри ленты законен");
+    let mut spread = spread_audio(vec![]);
+    add_tr(&mut spread.transitions);
+    spread.validate().unwrap();
+
+    let inside = render_audio(&nested, frames);
+    // закон Э: переход внутри ленты звучит байт-в-байт как развёрнутый
+    assert_eq!(
+        inside,
+        render_audio(&spread, frames),
+        "переход внутри ленты обязан звучать как тот же переход снаружи"
+    );
+    // ...и он вообще действует (до фикса тут была тишина про переход)
+    assert_ne!(
+        inside,
+        render_audio(&audio_nest(vec![], vec![]), frames),
+        "переход внутри ленты молча пропал"
+    );
+}

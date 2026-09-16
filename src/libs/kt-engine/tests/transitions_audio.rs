@@ -408,3 +408,72 @@ fn t226_audio_crossfade_curve_is_applied() {
         lin[mid]
     );
 }
+
+/// Тест 463 (п.399, Р.51): явный переход на НАЛОЖЕНИИ применяет свою
+/// кривую вместо зашитого equal-power перекрытия; двойного затухания нет;
+/// без перехода путь байт-в-байт прежний (GOLDEN цел — см. golden_export).
+#[test]
+fn t463_overlap_transition_applies_its_curve() {
+    // два клипа внахлёст «лесенкой»: [0..2с) и [1с..3с), перекрытие 1с
+    let sec = 48_000i64;
+    let clips = || vec![clip(1, 0, 2 * sec, 0, 1), clip(2, sec, 2 * sec, 0, 2)];
+    let total = (3 * sec) as usize;
+
+    // без перехода — старый √-закон перекрытия
+    let plain = render(&project(clips()), &[1, 2], total).0;
+
+    // c переходом Linear — в середине окна вес каждой стороны 0.5
+    let mut p = project(clips());
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
+        in_offset: Tick::ZERO,
+        out_offset: Tick::ZERO,
+        kind: TransitionKind::Crossfade,
+        audio: AudioCurve::Linear,
+        auto: vec![],
+        invert: false,
+    });
+    p.validate().unwrap();
+    let linear = render(&p, &[1, 2], total).0;
+    assert_ne!(plain, linear, "линейная кривая обязана звучать иначе √-перекрытия");
+
+    // середина окна (1.5 с): рампа обоих источников детерминирована,
+    // прямой расчёт весов: linear = 0.5·a + 0.5·b, √-закон = 0.707·(a+b)
+    let mid = (3 * sec / 2) as usize;
+    let sample = |buf: &[f32]| buf[mid * CH];
+    let (a_alone, _) = render(&project(vec![clips()[0].clone()]), &[1], total);
+    let (b_alone, _) = render(&project(vec![clips()[1].clone()]), &[2], total);
+    let (sa, sb) = (sample(&a_alone), sample(&b_alone));
+    assert!(
+        (sample(&linear) - (0.5 * sa + 0.5 * sb)).abs() < 1e-6,
+        "середина Linear-окна — ровно полусумма сторон: {} vs {}",
+        sample(&linear),
+        0.5 * sa + 0.5 * sb
+    );
+    let ep = 0.5f32.sqrt();
+    assert!(
+        (sample(&plain) - (ep * sa + ep * sb)).abs() < 1e-6,
+        "перекрытие без перехода — прежний √-закон"
+    );
+
+    // equal-power переход на наложении совпадает с ним же БЕЗ перехода:
+    // формулы одни (√t / √(1−t) на том же окне) — добавление перехода с
+    // кривой по умолчанию не меняет звук
+    let mut p = project(clips());
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: Some(ClipId(1)),
+        b: Some(ClipId(2)),
+        in_offset: Tick::ZERO,
+        out_offset: Tick::ZERO,
+        kind: TransitionKind::Crossfade,
+        audio: AudioCurve::EqualPower,
+        auto: vec![],
+        invert: false,
+    });
+    p.validate().unwrap();
+    let ep_render = render(&p, &[1, 2], total).0;
+    assert_eq!(plain, ep_render, "equal-power переход на наложении звучит как перекрытие");
+}

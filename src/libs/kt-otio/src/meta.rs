@@ -113,6 +113,10 @@ pub struct KtTimelineMeta {
     /// а не порча. Сортируются по адресу (детерминизм, т.144).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sequences: Vec<KtSequence>,
+    /// Наложенные переходы КОРНЕВОЙ ленты (Р.51, п.399); у вложенных —
+    /// то же поле в их `KtSequence`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overlap_transitions: Vec<KtOverlapTransition>,
     /// Форвард-милосердие к будущим версиям (Р.29): неизвестные kt-поля
     /// v3+ возятся passthrough'ом — следующие добавки не потребуют
     /// жёсткого отказа, если старый ридер ничего из них не теряет.
@@ -142,11 +146,41 @@ pub struct KtSequence {
     /// Переслаивание внутри ленты. По умолчанию включено, как у корня.
     #[serde(default = "yes_bool", skip_serializing_if = "is_true")]
     pub overlap_layers: bool,
+    /// Наложенные переходы ленты (Р.51, п.399).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overlap_transitions: Vec<KtOverlapTransition>,
     /// Карта слоёв ЛЕНТЫ (Р.28 этажом ниже): перекрытые события одной её
     /// дорожки лежат соседними треками внутри её `Stack`. Без карты они
     /// разъехались бы по разным дорожкам — тот же дефект, что был у корня.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layers: Option<KtLayers>,
+}
+
+/// Наложенный переход (Р.51, п.399): его пара лежит в РАЗНЫХ соседних
+/// `Track` (карта слоёв), поэтому ребёнком последовательного трека он
+/// невыразим — едет списком в конверте СВОЕЙ ленты. Офсетов нет: окно —
+/// сама зона перекрытия. Id не хранится: идентичность — пара, номер
+/// назначается на чтении (как у стыковых позиция — порядком детей).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KtOverlapTransition {
+    pub a: u64,
+    pub b: u64,
+    #[serde(default, skip_serializing_if = "is_crossfade_kind")]
+    pub kind: kt_model::TransitionKind,
+    #[serde(default, skip_serializing_if = "is_equal_power")]
+    pub audio: kt_model::AudioCurve,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub auto: Vec<kt_model::ParamCurve>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub invert: bool,
+}
+
+fn is_crossfade_kind(k: &kt_model::TransitionKind) -> bool {
+    *k == kt_model::TransitionKind::Crossfade
+}
+
+fn is_equal_power(c: &kt_model::AudioCurve) -> bool {
+    *c == kt_model::AudioCurve::EqualPower
 }
 
 fn one_u32() -> u32 {

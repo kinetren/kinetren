@@ -49,6 +49,11 @@ struct AudioClip {
     /// «Ручки»: материал за краями тела, звучит только под окнами переходов.
     head_ext: i64,
     tail_ext: i64,
+    /// Окно пришло из НАЛОЖЕННОГО перехода (Р.51, п.399): кривую в нём
+    /// даёт `fade_weight`, а зашитый equal-power `overlap_weight`
+    /// глушится через `overlap_at` — иначе двойное затухание.
+    fade_in_excl: bool,
+    fade_out_excl: bool,
 }
 
 /// Вес кроссфейда по окнам переходов клипа. Позиционный и направления не
@@ -382,14 +387,49 @@ impl AudioRenderer {
                     fade_out_curve: Default::default(),
                     head_ext: 0,
                     tail_ext: 0,
+                    fade_in_excl: false,
+                    fade_out_excl: false,
                 }
             })
             .collect();
         // Окна кроссфейда из переходов (Р.24): границы окна флорятся в кадры
         // ТОЙ ЖЕ конвертацией, что границы клипов, — для сконвертированного
         // перекрытия окно бит-в-бит совпадает со старым weight_at.
-        for t in &project.transitions {
-            let Some(joint) = t.joint(project) else { continue };
+        // Переходы — СВОЕЙ ленты (п.399: раньше тут стоял корень, и переход
+        // внутри вложенной секвенции молча не кроссфейдил звук).
+        let reel: &dyn kt_model::Reel = match seq.and_then(|id| project.sequence(id)) {
+            Some(s) => s,
+            None => project,
+        };
+        for t in reel.transitions() {
+            // НАЛОЖЕННЫЙ переход (Р.51, п.399): окно — сама зона
+            // перекрытия, ручек нет (материал у обеих сторон настоящий),
+            // кривая работает вместо зашитого equal-power перекрытия
+            if let Some((pa, pb)) = t.overlap_pair(reel) {
+                let w0 = pb.start.to_audio_frames();
+                let w1 = (pa.start + pa.duration).to_audio_frames();
+                if w1 <= w0 {
+                    continue;
+                }
+                if let Some(a) = clips
+                    .iter_mut()
+                    .find(|c| kt_model::same_clip(c.id, pa.id) && c.end == w1)
+                {
+                    a.fade_out = Some((w0, w1));
+                    a.fade_out_curve = t.audio;
+                    a.fade_out_excl = true;
+                }
+                if let Some(b) = clips
+                    .iter_mut()
+                    .find(|c| kt_model::same_clip(c.id, pb.id) && c.start == w0)
+                {
+                    b.fade_in = Some((w0, w1));
+                    b.fade_in_curve = t.audio;
+                    b.fade_in_excl = true;
+                }
+                continue;
+            }
+            let Some(joint) = t.joint(reel) else { continue };
             let w0 = (joint - t.in_offset).to_audio_frames();
             let w1 = (joint + t.out_offset).to_audio_frames();
             let jf = joint.to_audio_frames();
@@ -601,6 +641,15 @@ impl AudioRenderer {
     /// Вес перекрытия для клипа `ci` в кадре `f` (1.0, когда переслаивание
     /// выключено — тогда перекрытий в модели нет по построению).
     fn overlap_at(&self, ci: usize, f: i64) -> f32 {
+        // окно наложенного перехода (Р.51): кривую уже применил
+        // `fade_weight` — зашитый equal-power перекрытия глушится, иначе
+        // двойное затухание. O(1), без скана переходов.
+        let c = &self.clips[ci];
+        if (c.fade_in_excl && c.fade_in.is_some_and(|(w0, w1)| f >= w0 && f < w1))
+            || (c.fade_out_excl && c.fade_out.is_some_and(|(w0, w1)| f >= w0 && f < w1))
+        {
+            return 1.0;
+        }
         if self.overlap_layers && self.overlaps[ci] {
             overlap_weight(&self.clips, &self.covers, ci, f)
         } else {

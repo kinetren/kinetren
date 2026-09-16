@@ -151,10 +151,16 @@ fn surviving_transitions(p: &Project, block_clips: &[ClipEvent]) -> Vec<Transiti
         .iter()
         .filter_map(|t| {
             let (a, b) = (side(t.a)?, side(t.b)?);
-            if let (Some(a), Some(b)) = (a, b)
-                && a.start + a.duration != b.start
-            {
-                return None;
+            if let (Some(a), Some(b)) = (a, b) {
+                let (a_end, b_end) = (a.start + a.duration, b.start + b.duration);
+                if a_end != b.start {
+                    // наложенный переход (Р.51) выживает, если оба клипа в
+                    // блоке лежат той же «лесенкой»; окно проверит
+                    // check_transition_full при вставке
+                    let stag = a.start < b.start && b.start < a_end && a_end < b_end;
+                    return (stag && a_end - b.start >= MIN_TRANSITION_DURATION)
+                        .then(|| t.clone());
+                }
             }
             let mut t = t.clone();
             if let Some(a) = a {
@@ -466,6 +472,11 @@ pub fn restore_handles(before: &Project, after: &Project) -> Vec<Command> {
     let mut cmds = Vec::new();
     for t in &before.transitions {
         if t.is_fade() || after.transitions.iter().any(|x| x.id == t.id) {
+            continue;
+        }
+        // наложенный переход (Р.51): у него ничего не срезалось при
+        // наезде — «возврат ручек» дал бы ложные тримы
+        if t.overlap_pair(before).is_some() {
             continue;
         }
         let (Some(a_id), Some(b_id)) = (t.a, t.b) else { continue };

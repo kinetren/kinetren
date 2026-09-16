@@ -290,11 +290,15 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                         .chain(m.patch.audio_auto.iter())
                         .any(|a| !a.is_empty())
             });
-            // переходы Р.51 (инверсия) — по ВСЕМ лентам документа: старая
-            // сборка сыграла бы переход неинвертированным и сохранила бы
-            // ключ нетронутым — порча незаметнее некуда
-            let has_v7 = p.transitions.iter().any(|t| t.invert)
-                || p.sequences.iter().any(|s| s.transitions.iter().any(|t| t.invert));
+            // переходы Р.51 (инверсия, наложенные) — по ВСЕМ лентам
+            // документа: старая сборка сыграла бы переход неинвертированным
+            // (а наложенный — жёстким срезом) и сохранила бы конверт
+            // нетронутым — порча незаметнее некуда
+            let v7_reel = |reel: &dyn kt_model::Reel| {
+                reel.transitions().iter().any(|t| t.invert || t.overlap_pair(reel).is_some())
+            };
+            let has_v7 =
+                v7_reel(p) || p.sequences.iter().any(|s| v7_reel(s as &dyn kt_model::Reel));
             // вложенные ленты (Р.50): старая сборка прочла бы вложение
             // серым плейсхолдером (п.158) и при первой перезаписи вернула
             // бы живой монтаж в файл мёртвым сырьём
@@ -406,12 +410,14 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                                 audio: if multi { a } else { Vec::new() },
                             })
                         },
+                        overlap_transitions: overlap_transition_list(s),
                     }
                 })
                 .collect();
             v.sort_by_key(|s| s.id);
             v
         },
+        overlap_transitions: overlap_transition_list(p),
         extra: retained.timeline_kt_extra.clone(),
     };
     kt_set(&mut meta, &kt);
@@ -516,6 +522,63 @@ fn clip_effects(c: &ClipEvent, foreign: &[(usize, EffectNode)]) -> Vec<EffectNod
 /// привязанные к `&Project`. Ленты у нас две разновидности, а правило
 /// расслоения, гэпов, переходов и имён дорожек — одно; выписать его второй
 /// раз значило бы завести вторую правду о формате.
+/// Чтение наложенных переходов ленты из её конверта (Р.51, п.399):
+/// возвращает события и замечания. Запись с неизвестным клипом — notice
+/// и пропуск (паттерн KtLayers: не сошлось — чтение как есть, не порча);
+/// геометрию пары дальше проверит validate.
+fn read_overlap_transitions(
+    list: &[crate::meta::KtOverlapTransition],
+    clips: &[ClipEvent],
+    next_id: &mut u64,
+) -> (Vec<TransitionEvent>, Vec<Notice>) {
+    let mut out = Vec::new();
+    let mut notices = Vec::new();
+    for ot in list {
+        let have = |id: u64| clips.iter().any(|c| c.id.0 == id);
+        if !have(ot.a) || !have(ot.b) {
+            notices.push(format!(
+                "overlap transition {}->{} references unknown clips, dropped",
+                ot.a, ot.b
+            ));
+            continue;
+        }
+        *next_id += 1;
+        out.push(TransitionEvent {
+            id: TransitionId(*next_id),
+            a: Some(ClipId(ot.a)),
+            b: Some(ClipId(ot.b)),
+            in_offset: Tick::ZERO,
+            out_offset: Tick::ZERO,
+            kind: ot.kind.clone(),
+            audio: ot.audio,
+            auto: ot.auto.clone(),
+            invert: ot.invert,
+        });
+    }
+    (out, notices)
+}
+
+/// Наложенные переходы ленты — в её конверт (Р.51, п.399): пара живёт в
+/// разных соседних Track и ребёнком последовательного трека невыразима.
+/// Сортировка по паре — детерминизм записи (т.144).
+fn overlap_transition_list(reel: &dyn kt_model::Reel) -> Vec<crate::meta::KtOverlapTransition> {
+    let mut v: Vec<crate::meta::KtOverlapTransition> = reel
+        .transitions()
+        .iter()
+        .filter(|t| t.overlap_pair(reel).is_some())
+        .map(|t| crate::meta::KtOverlapTransition {
+            a: t.a.map(|c| c.0).unwrap_or(0),
+            b: t.b.map(|c| c.0).unwrap_or(0),
+            kind: t.kind.clone(),
+            audio: t.audio,
+            auto: t.auto.clone(),
+            invert: t.invert,
+        })
+        .collect();
+    v.sort_by_key(|t| (t.a, t.b));
+    v
+}
+
 struct ReelWrite<'a> {
     clips: &'a [ClipEvent],
     foreign: &'a [ForeignEvent],
@@ -545,11 +608,23 @@ fn reel_children(
         p.media.iter().find(|m| m.id == id).map(|m| m.path.clone()).unwrap_or_default()
     };
     // переход пишется ПЕРЕД своим incoming-клипом; фейд-аут (правого клипа
-    // нет) — ПОСЛЕ своего outgoing (Р.25)
+    // нет) — ПОСЛЕ своего outgoing (Р.25). НАЛОЖЕННЫЙ переход (Р.51) в
+    // детей трека не пишется вовсе: его пара лежит в разных Track — он
+    // едет в конверте ленты (`overlap_transitions`).
+    let staggered = |t: &TransitionEvent| -> bool {
+        let find = |id: Option<ClipId>| id.and_then(|i| r.clips.iter().find(|c| c.id == i));
+        let (Some(a), Some(b)) = (find(t.a), find(t.b)) else { return false };
+        let (ae, be) = (a.start + a.duration, b.start + b.duration);
+        a.kind == b.kind && a.lane == b.lane && a.start < b.start && b.start < ae && ae < be
+    };
     let trans_before: HashMap<ClipId, &TransitionEvent> =
-        r.transitions.iter().filter_map(|t| Some((t.b?, t))).collect();
-    let trans_after: HashMap<ClipId, &TransitionEvent> =
-        r.transitions.iter().filter(|t| t.b.is_none()).filter_map(|t| Some((t.a?, t))).collect();
+        r.transitions.iter().filter(|t| !staggered(t)).filter_map(|t| Some((t.b?, t))).collect();
+    let trans_after: HashMap<ClipId, &TransitionEvent> = r
+        .transitions
+        .iter()
+        .filter(|t| t.b.is_none() && !staggered(t))
+        .filter_map(|t| Some((t.a?, t)))
+        .collect();
 
     // Переслаивание (Р.28): в OTIO позиция клипа определяется ПОРЯДКОМ детей
     // трека, поэтому перекрытые клипы одной нашей дорожки невыразимы в одном
@@ -1127,6 +1202,19 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
     if let Some(kt) = kt {
         // неизвестные kt-поля будущих версий — passthrough (Р.29)
         retained.timeline_kt_extra = kt.extra.clone();
+        // наложенные переходы (Р.51, п.399): id назначаются заново —
+        // идентичность задаёт пара, номера сквозные по документу (п.394)
+        let mut next_tid = p.max_transition_id();
+        let read = read_overlap_transitions(&kt.overlap_transitions, &p.clips, &mut next_tid);
+        p.transitions.extend(read.0);
+        notices.extend(read.1);
+        for s in &mut p.sequences {
+            let Some(meta) = kt.sequences.iter().find(|m| m.id == s.id.0) else { continue };
+            let read =
+                read_overlap_transitions(&meta.overlap_transitions, &s.clips, &mut next_tid);
+            s.transitions.extend(read.0);
+            notices.extend(read.1);
+        }
         if let Some(tr) = kt.transport {
             p.region = tr.region.and_then(|(s, e)| kt_model::Region::normalized(Tick(s), Tick(e)));
             p.loop_enabled = tr.loop_enabled;
