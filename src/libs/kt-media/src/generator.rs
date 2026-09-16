@@ -41,24 +41,28 @@ pub struct GeneratorSource {
 
 impl GeneratorSource {
     pub fn new(kind: GeneratorKind) -> GeneratorSource {
+        let info = Self::info_for(&kind);
+        GeneratorSource { kind, info, cache: None }
+    }
+
+    /// Паспорт источника для вида — ЕДИНСТВЕННОЕ место, где он считается
+    /// (Р.53, п.410). По нему же фабрика решает, можно ли перенастроить
+    /// живой источник: `retune` обязан не менять `info()`.
+    pub fn info_for(kind: &GeneratorKind) -> MediaInfo {
         // единственный звучащий вид — SMPTE с включённым тоном
         let has_audio = matches!(kind, GeneratorKind::SmpteBars { tone: true, .. });
-        GeneratorSource {
-            kind,
-            info: MediaInfo {
-                // «длительности нет»: UI при броске подставит свой дефолт
-                // (5 с), трим не ограничен, EOF не бывает.
-                duration: Tick(0),
-                has_video: true,
-                // Тишину источник всё равно отдаёт (см. заголовок), а
-                // аудио-КЛИП place_media_at создаёт только по этому флагу.
-                has_audio,
-                // своей сетки кадров нет: движок планирует по сетке ПРОЕКТА
-                fps: None,
-                width: GEN_NATIVE,
-                height: GEN_NATIVE,
-            },
-            cache: None,
+        MediaInfo {
+            // «длительности нет»: UI при броске подставит свой дефолт
+            // (5 с), трим не ограничен, EOF не бывает.
+            duration: Tick(0),
+            has_video: true,
+            // Тишину источник всё равно отдаёт (см. заголовок), а
+            // аудио-КЛИП place_media_at создаёт только по этому флагу.
+            has_audio,
+            // своей сетки кадров нет: движок планирует по сетке ПРОЕКТА
+            fps: None,
+            width: GEN_NATIVE,
+            height: GEN_NATIVE,
         }
     }
 
@@ -406,6 +410,21 @@ impl MediaSource for GeneratorSource {
     fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
         Some(Tick(pts.0.max(0)))
     }
+
+    /// Перенастройка на месте (Р.53, п.410): поток воркера жив, кадры
+    /// старых параметров выбрасывает он сам. Отказ — когда паспорт
+    /// источника изменился бы (SMPTE со включённым тоном становится
+    /// звучащим медиа, а это уже другой набор клипов) или путь не
+    /// разбирается.
+    fn retune(&mut self, path: &str) -> bool {
+        let Some(kind) = kt_model::parse_gen_path(path) else { return false };
+        if Self::info_for(&kind) != self.info {
+            return false;
+        }
+        self.kind = kind;
+        self.cache = None;
+        true
+    }
 }
 
 #[cfg(test)]
@@ -456,6 +475,45 @@ mod tests {
         assert_eq!((i.width, i.height), (GEN_NATIVE, GEN_NATIVE));
         assert_eq!(s.keyframe_before(Tick(-5)), Some(Tick(0)));
         assert_eq!(s.keyframe_before(Tick(90_000)), Some(Tick(90_000)));
+    }
+
+    /// t498 (Р.53, п.410): генератор перенастраивается НА МЕСТЕ. Кадр
+    /// после `retune` байт-в-байт равен кадру свежего источника (кэш
+    /// сброшен), отказ не меняет ничего.
+    #[test]
+    fn t498_generator_retunes_in_place() {
+        let q = Quality { width: 64, height: 36 };
+        let orange = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
+        let mut s = GeneratorSource::new(GeneratorKind::Solid {
+            color_r: 0,
+            color_g: 0,
+            color_b: 0,
+        });
+        // прогреваем внутренний кэш кадра старыми параметрами
+        let before = s.read_video_frame(Tick(0), Some(q)).unwrap();
+        assert_eq!(&before.rgba[..4], &[0, 0, 0, 255]);
+
+        assert!(s.retune(&kt_model::format_gen_path(&orange)), "solid → solid перенастраивается");
+        let after = s.read_video_frame(Tick(0), Some(q)).unwrap();
+        let fresh =
+            GeneratorSource::new(orange.clone()).read_video_frame(Tick(0), Some(q)).unwrap();
+        assert_eq!(after.rgba, fresh.rgba, "кэш старых параметров обязан быть сброшен");
+
+        // отказы: битый путь, чужая схема, смена паспорта (тон SMPTE)
+        let mut smpte =
+            GeneratorSource::new(GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 });
+        let paspt = smpte.info().clone();
+        let with_tone =
+            kt_model::format_gen_path(&GeneratorKind::SmpteBars { tone: true, tone_db: -20.0 });
+        assert!(!smpte.retune(&with_tone), "включение тона меняет паспорт — только пересоздание");
+        assert_eq!(smpte.info(), &paspt, "отказ не меняет ничего");
+        assert!(!smpte.retune("gen:unknown"));
+        assert!(!smpte.retune("media/clip.mp4"));
+        assert_eq!(smpte.info(), &paspt);
+
+        // смена ВИДА при том же паспорте законна: клипы те же
+        let mut s2 = GeneratorSource::new(orange);
+        assert!(s2.retune("gen:checker"), "solid → checker: паспорт тот же");
     }
 
     /// t491 (Р.52 С5): шум counter-based — кадр = f(pts, x, y): повтор

@@ -53,6 +53,22 @@ pub fn open_pseudo(path: &str) -> Option<Result<Box<dyn MediaSource>, String>> {
     None
 }
 
+/// Можно ли перевести ЖИВОЙ источник со старого пути на новый БЕЗ
+/// пересоздания (Р.53, п.410). Предикат живёт здесь, в единственном доме
+/// разбора псевдо-путей, и обязан совпадать с `MediaSource::retune`
+/// точь-в-точь (сторож — t499): разойдутся — вызывающий либо зря
+/// пересоздаёт поток, либо считает перенастроенным то, что ею не было.
+///
+/// Файлы не перенастраиваются никогда: смена пути там и есть смена файла.
+pub fn can_retune(old: &str, new: &str) -> bool {
+    let (Some(a), Some(b)) = (kt_model::parse_gen_path(old), kt_model::parse_gen_path(new)) else {
+        return false;
+    };
+    // паспорт обязан остаться прежним: у SMPTE включение тона делает
+    // медиа звучащим, а это уже другой набор клипов на таймлайне
+    GeneratorSource::info_for(&a) == GeneratorSource::info_for(&b)
+}
+
 /// Открытие любого пути: псевдо — из фабрики, файл — FFmpeg с sidecar
 /// индекс-БД (пакетный индекс из БД при неизменном файле, тест 34).
 #[cfg(feature = "ffmpeg")]
@@ -79,6 +95,32 @@ fn strip_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// t499 (Р.53, п.410): предикат фабрики и реализация источника не
+    /// расходятся НИ НА ОДНОЙ паре видов. Расхождение означало бы либо
+    /// зря погашенный поток, либо «перенастроили» то, что не менялось.
+    #[test]
+    fn t499_can_retune_equals_retune() {
+        use kt_model::{format_gen_path, GeneratorKind};
+        let mut kinds: Vec<GeneratorKind> = GeneratorKind::all();
+        // вариации, меняющие паспорт и не меняющие его
+        kinds.push(GeneratorKind::Solid { color_r: 1, color_g: 2, color_b: 3 });
+        kinds.push(GeneratorKind::SmpteBars { tone: true, tone_db: -12.0 });
+        kinds.push(GeneratorKind::SmpteBars { tone: false, tone_db: -6.0 });
+
+        for a in &kinds {
+            for b in &kinds {
+                let (pa, pb) = (format_gen_path(a), format_gen_path(b));
+                let predicate = can_retune(&pa, &pb);
+                let actual = GeneratorSource::new(a.clone()).retune(&pb);
+                assert_eq!(predicate, actual, "{pa} -> {pb}: предикат разошёлся с реализацией");
+            }
+        }
+        // файлы и тестовая схема не перенастраиваются никогда
+        assert!(!can_retune("a.mp4", "b.mp4"));
+        assert!(!can_retune("synth:ramp", "synth:sine:440"));
+        assert!(!can_retune("gen:solid", "a.mp4"));
+    }
 
     /// t471b: маршрутизация фабрики — обе псевдо-схемы в любом регистре,
     /// битое псевдо = Some(Err) (в FFmpeg не ходит), файл = None.
