@@ -19,8 +19,9 @@ use crate::meta::{
     kt_set,
 };
 use crate::schema::{
-    Clip, Composable, Effect, EffectNode, ExternalReference, Gap, LinearTimeWarp, Marker,
-    MarkerNode, MediaRefNode, RationalTime, RawObject, Stack, TimeRange, Timeline, Track,
+    Clip, Composable, Effect, EffectNode, ExternalReference, Gap, GeneratorReference,
+    LinearTimeWarp, Marker, MarkerNode, MediaRefNode, RationalTime, RawObject, Stack, TimeRange,
+    Timeline, Track,
 };
 use crate::{DEFAULT_MEDIA_KEY, Error};
 use kt_model::{
@@ -937,6 +938,28 @@ fn nest_to_otio(
     }
 }
 
+/// `GeneratorReference` (наш, `kt.<тег>`) → канонический `gen:`-путь.
+/// Незнакомый тег или битые параметры — `None` (совместимость только
+/// вперёд: заглушка вместо генератора из будущей сборки).
+fn generator_ref_path(gr: &GeneratorReference) -> Option<String> {
+    let tag = gr.generator_kind.strip_prefix("kt.")?;
+    let mut fields = gr.parameters.clone();
+    fields.insert("kind".into(), Value::String(tag.to_string()));
+    let kind: kt_model::GeneratorKind = serde_json::from_value(Value::Object(fields)).ok()?;
+    Some(kt_model::format_gen_path(&kind))
+}
+
+/// Поля `GeneratorKind` словарём `parameters` (без служебного `kind` —
+/// он едет строкой `generator_kind`). Порядок ключей детерминирован
+/// порядком полей структуры.
+fn generator_parameters(kind: &kt_model::GeneratorKind) -> Map<String, Value> {
+    let Ok(Value::Object(mut fields)) = serde_json::to_value(kind) else {
+        unreachable!("GeneratorKind serializes to an object");
+    };
+    fields.shift_remove("kind");
+    fields
+}
+
 fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
     let mut ex = retained.clips.get(&c.id).cloned().unwrap_or_default();
     // Клип, рождённый в редакторе, конверта не имеет — ссылки на материал
@@ -954,21 +977,46 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
     let active_key =
         if ex.active_key.is_empty() { DEFAULT_MEDIA_KEY.to_string() } else { ex.active_key };
     if !target_url.is_empty() {
-        // available_range/metadata/extra прежней ссылки сохраняются,
-        // подменяется только адрес материала
-        let mut active = match media_refs.get(&active_key) {
-            Some(Some(MediaRefNode::External(er))) => er.clone(),
-            _ => ExternalReference {
-                name: String::new(),
-                target_url: String::new(),
-                available_range: None,
-                available_image_bounds: None,
-                metadata: Map::new(),
-                extra: Map::new(),
-            },
-        };
-        active.target_url = target_url.to_string();
-        media_refs.insert(active_key.clone(), Some(MediaRefNode::External(active)));
+        if let Some(kind) = kt_model::parse_gen_path(target_url) {
+            // генератор пишется ПЕРВОКЛАССНОЙ схемой OTIO (Р.52):
+            // name/metadata/extra прежнего узла сохраняются, вид и
+            // параметры перезаписываются каноном. `available_range`
+            // ОБЯЗАТЕЛЕН (контракт схемы — фикстура SMPTE несёт 50 кадров
+            // при том, что длительности у генератора не существует):
+            // пишем ровно потреблённое ЭТИМ клипом — идемпотентно.
+            let mut active = match media_refs.get(&active_key) {
+                Some(Some(MediaRefNode::Generator(gr))) => gr.clone(),
+                _ => GeneratorReference {
+                    name: String::new(),
+                    generator_kind: String::new(),
+                    available_range: None,
+                    available_image_bounds: None,
+                    parameters: Map::new(),
+                    metadata: Map::new(),
+                    extra: Map::new(),
+                },
+            };
+            active.generator_kind = format!("kt.{}", kind.tag());
+            active.parameters = generator_parameters(&kind);
+            active.available_range = Some(range(Tick(0), c.source_in + c.duration));
+            media_refs.insert(active_key.clone(), Some(MediaRefNode::Generator(active)));
+        } else {
+            // available_range/metadata/extra прежней ссылки сохраняются,
+            // подменяется только адрес материала
+            let mut active = match media_refs.get(&active_key) {
+                Some(Some(MediaRefNode::External(er))) => er.clone(),
+                _ => ExternalReference {
+                    name: String::new(),
+                    target_url: String::new(),
+                    available_range: None,
+                    available_image_bounds: None,
+                    metadata: Map::new(),
+                    extra: Map::new(),
+                },
+            };
+            active.target_url = target_url.to_string();
+            media_refs.insert(active_key.clone(), Some(MediaRefNode::External(active)));
+        }
     }
 
     // начало available_range активной ссылки — тот самый таймкод, который
@@ -979,6 +1027,8 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
         .and_then(|n| match n {
             MediaRefNode::External(er) => er.available_range,
             MediaRefNode::Missing(mr) => mr.available_range,
+            // у генератора начало материала всегда 0 — таймкода файла нет
+            MediaRefNode::Generator(_) => None,
             MediaRefNode::Unknown(raw) => {
                 raw.0.get("available_range").and_then(|v| serde_json::from_value(v.clone()).ok())
             }
@@ -2094,6 +2144,10 @@ fn clip_from_otio(
     };
     let url = match c.active_media() {
         Some(MediaRefNode::External(er)) => er.target_url.clone(),
+        // наш генератор: канонический gen:-путь из generator_kind +
+        // parameters; непрочитавшийся (kt-вид новее сборки) — пустой url,
+        // то есть заметная заглушка, а узел уезжает обратно без потерь
+        Some(MediaRefNode::Generator(gr)) => generator_ref_path(gr).unwrap_or_default(),
         _ => String::new(),
     };
     let media = match &meta {

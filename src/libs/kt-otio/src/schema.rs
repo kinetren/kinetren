@@ -201,6 +201,27 @@ pub struct MissingReference {
     pub extra: Map<String, Value>,
 }
 
+/// Генератор (Р.52): источник, считающий картинку сам. Наши генераторы
+/// пишутся этой схемой первоклассно (`generator_kind = "kt.<тег>"`,
+/// `parameters` — поля `kt_model::GeneratorKind`); ЧУЖИЕ generator_kind
+/// остаются `Unknown`-passthrough (см. гард в `decode_media_ref`) — их
+/// байт-идемпотентность важнее типизации (t154).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeneratorReference {
+    #[serde(default, deserialize_with = "string_or_null")]
+    pub name: String,
+    pub generator_kind: String,
+    pub available_range: Option<TimeRange>,
+    #[serde(default)]
+    pub available_image_bounds: Option<Value>,
+    #[serde(default)]
+    pub parameters: Map<String, Value>,
+    #[serde(default)]
+    pub metadata: Metadata,
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Transition {
     #[serde(default, deserialize_with = "string_or_null")]
@@ -258,6 +279,7 @@ impl Clip {
         match self.active_media()? {
             MediaRefNode::External(er) => er.available_range,
             MediaRefNode::Missing(mr) => mr.available_range,
+            MediaRefNode::Generator(gr) => gr.available_range,
             MediaRefNode::Unknown(raw) => {
                 raw.0.get("available_range").and_then(|v| serde_json::from_value(v.clone()).ok())
             }
@@ -377,6 +399,7 @@ pub enum EffectNode {
 pub enum MediaRefNode {
     External(ExternalReference),
     Missing(MissingReference),
+    Generator(GeneratorReference),
     Unknown(RawObject),
 }
 
@@ -461,6 +484,17 @@ fn decode_media_ref(v: Value) -> Result<MediaRefNode, Error> {
     match split_schema(&tag)? {
         ("ExternalReference", 1) => Ok(MediaRefNode::External(typed(map)?)),
         ("MissingReference", 1) => Ok(MediaRefNode::Missing(typed(map)?)),
+        // типизируются только НАШИ генераторы: чужие (SMPTEBars, титры
+        // Premiere) остаются passthrough — их порядок ключей и незнакомые
+        // поля обязаны пережить пересохранение байт-в-байт (t154)
+        ("GeneratorReference", 1)
+            if map
+                .get("generator_kind")
+                .and_then(Value::as_str)
+                .is_some_and(|k| k.starts_with("kt.")) =>
+        {
+            Ok(MediaRefNode::Generator(typed(map)?))
+        }
         _ => Ok(MediaRefNode::Unknown(RawObject(map))),
     }
 }
@@ -526,6 +560,7 @@ node_serde!(EffectNode, decode_effect, |e| match e {
 node_serde!(MediaRefNode, decode_media_ref, |m| match m {
     MediaRefNode::External(x) => encode("ExternalReference.1", x),
     MediaRefNode::Missing(x) => encode("MissingReference.1", x),
+    MediaRefNode::Generator(x) => encode("GeneratorReference.1", x),
     MediaRefNode::Unknown(raw) => Value::Object(raw.0.clone()),
 });
 

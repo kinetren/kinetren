@@ -1479,3 +1479,140 @@ fn t465_overlap_transition_roundtrip() {
         b.notices
     );
 }
+
+/// Все объекты данной OTIO-схемы в дереве JSON.
+fn find_schema<'a>(v: &'a serde_json::Value, tag: &str, out: &mut Vec<&'a serde_json::Value>) {
+    match v {
+        serde_json::Value::Object(m) => {
+            if m.get("OTIO_SCHEMA").and_then(|t| t.as_str()) == Some(tag) {
+                out.push(v);
+            }
+            for x in m.values() {
+                find_schema(x, tag, out);
+            }
+        }
+        serde_json::Value::Array(a) => {
+            for x in a {
+                find_schema(x, tag, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Тест 473 (Р.52): наш генератор пишется первоклассным
+/// `GeneratorReference.1` (`kt.solid` + parameters + ОБЯЗАТЕЛЬНЫЙ
+/// available_range от нуля, rate 90000), читается обратно в тот же
+/// канонический `gen:`-путь, запись идемпотентна; `synth:` остаётся
+/// `ExternalReference` verbatim; генератор внутри вложенной ленты идёт
+/// тем же кодом; kt.v от генератора НЕ растёт (старая сборка видит
+/// заметную заглушку, а не молчаливую порчу).
+#[test]
+fn t473_generator_reference_roundtrip() {
+    let mut p = rich_project();
+    p.media.push(MediaRef { id: MediaId(7), path: "gen:solid:c=ff8800".into() });
+    p.media.push(MediaRef { id: MediaId(8), path: "synth:ramp".into() });
+    let mut g = clip(30, ClipKind::Video, 0, 200_000, 45_000, 7);
+    g.source_in = Tick(4_500);
+    p.clips.push(g);
+    p.clips.push(clip(31, ClipKind::Audio, 0, 200_000, 45_000, 8));
+    // тот же генератор внутри вложенной ленты (Р.50): reel_children один
+    let mut seq = Sequence::new(MediaId(9_000_000), "лента");
+    seq.clips.push(clip(40, ClipKind::Video, 0, 0, 30_000, 7));
+    p.sequences.push(seq);
+    p.clips.push(clip(32, ClipKind::Video, 1, 300_000, 30_000, 9_000_000));
+    p.validate().unwrap();
+
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let mut gens = Vec::new();
+    find_schema(&v, "GeneratorReference.1", &mut gens);
+    assert_eq!(gens.len(), 2, "клип в корне и клип в ленте");
+    let mut durs = Vec::new();
+    for gr in &gens {
+        assert_eq!(gr["generator_kind"], "kt.solid");
+        assert_eq!(gr["parameters"]["color_r"], 255);
+        assert_eq!(gr["parameters"]["color_g"], 136);
+        assert_eq!(gr["parameters"]["color_b"], 0);
+        assert!(
+            gr["parameters"].get("kind").is_none(),
+            "вид едет строкой generator_kind, не полем parameters"
+        );
+        let ar = &gr["available_range"];
+        assert!(!ar.is_null(), "available_range ОБЯЗАТЕЛЕН у GeneratorReference");
+        assert_eq!(ar["start_time"]["value"], 0.0);
+        assert_eq!(ar["duration"]["rate"], 90000.0);
+        durs.push(ar["duration"]["value"].as_f64().unwrap() as i64);
+    }
+    durs.sort();
+    assert_eq!(durs, vec![30_000, 49_500], "потреблённое клипом: source_in + duration");
+
+    // synth: остался прежней внешней ссылкой verbatim
+    let mut exts = Vec::new();
+    find_schema(&v, "ExternalReference.1", &mut exts);
+    assert!(
+        exts.iter().any(|e| e["target_url"] == "synth:ramp"),
+        "synth: пишется ExternalReference как раньше; urls: {:?}",
+        exts.iter().map(|e| e["target_url"].clone()).collect::<Vec<_>>()
+    );
+
+    let b = load_project(&text, None).expect("файл с генератором читается");
+    assert_eq!(
+        b.project.media.iter().find(|m| m.id == MediaId(7)).unwrap().path,
+        "gen:solid:c=ff8800",
+        "канонический gen:-путь пережил круг"
+    );
+    assert_eq!(b.project.sequence(MediaId(9_000_000)).unwrap().clips[0].media, MediaId(7));
+    assert_eq!(b.project.clips, p.clips, "клипы пережили круг");
+    assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность");
+
+    // генератор версию файла не двигает: тот же проект БЕЗ генератора
+    // обязан получить ту же kt.v
+    let mut plain = rich_project();
+    plain.sequences.push(Sequence::new(MediaId(9_000_000), "лента"));
+    plain.clips.push(clip(32, ClipKind::Video, 1, 300_000, 30_000, 9_000_000));
+    plain.validate().unwrap();
+    let vp: serde_json::Value =
+        serde_json::from_str(&save_project(&plain, &Retained::default(), None)).unwrap();
+    assert_eq!(
+        v["metadata"]["kt"]["v"], vp["metadata"]["kt"]["v"],
+        "генератор не бампает версию: старой сборке достаётся заметная заглушка"
+    );
+}
+
+/// Тест 474 (Р.52, родня t154): ЧУЖОЙ generator_kind (не `kt.*`) не
+/// типизируется — клип получает пустой путь (заметная заглушка), а узел
+/// уезжает при пересохранении без потерь.
+#[test]
+fn t474_foreign_generator_kind_is_passthrough() {
+    let mut p = rich_project();
+    p.media.push(MediaRef { id: MediaId(7), path: "gen:solid:c=ff8800".into() });
+    p.clips.push(clip(30, ClipKind::Video, 0, 200_000, 45_000, 7));
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+
+    // «файл из чужого редактора»: generator_kind не наш
+    let foreign = text.replace("\"kt.solid\"", "\"SMPTEBars\"");
+    assert_ne!(foreign, text);
+    let b = load_project(&foreign, None).expect("чужой генератор читается");
+    let m7 = b.project.media.iter().find(|m| m.id == MediaId(7)).unwrap();
+    assert_eq!(m7.path, "", "чужой генератор = заглушка (пустой путь), не догадка");
+
+    // пересохранение возит узел без потерь: вид и параметры на месте
+    let text2 = save_project(&b.project, &b.retained, None);
+    let v2: serde_json::Value = serde_json::from_str(&text2).unwrap();
+    let mut gens = Vec::new();
+    find_schema(&v2, "GeneratorReference.1", &mut gens);
+    assert_eq!(gens.len(), 1);
+    assert_eq!(gens[0]["generator_kind"], "SMPTEBars");
+    assert_eq!(gens[0]["parameters"]["color_r"], 255, "параметры не потеряны");
+    assert_eq!(
+        text2,
+        save_project(
+            &load_project(&text2, None).unwrap().project,
+            &load_project(&text2, None).unwrap().retained,
+            None
+        ),
+        "идемпотентность пересохранения чужого генератора"
+    );
+}
