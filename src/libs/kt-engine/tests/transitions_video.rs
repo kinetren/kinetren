@@ -863,3 +863,106 @@ fn t464_overlap_transition_reaches_picture() {
     assert_ne!(mix, ca);
     assert_ne!(mix, cb);
 }
+
+/// Тест 467 (п.400, Р.51): новые 2D-виды доезжают до картинки —
+/// аналитические ассерты зон, а не «что-то изменилось».
+#[test]
+fn t467_new_kind_families_reach_picture() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(90_000); // середина окна, k = 0.5
+    let render = |kind: TransitionKind| {
+        let mut p = project_pair();
+        p.transitions[0].kind = kind;
+        p.validate().unwrap();
+        let mut vr = VideoRenderer::new(&p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "слои прогреты");
+        out
+    };
+    let px = |buf: &[u8], x: usize, y: usize| {
+        let i = (y * q.width as usize + x) * 4;
+        [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
+    };
+    let a = synth_frame(Tick(90_000), q);
+    let b = synth_frame(Tick(30_000), q);
+    let (ca, cb) = (px(&a, 0, 0), px(&b, 0, 0));
+    assert_ne!(ca, cb);
+
+    // шахматы 8×6 без мягкости: в k=0.5 у чётной клетки открыта ЛЕВАЯ
+    // половина, у нечётной — ПРАВАЯ (встречные волны)
+    let ch = render(TransitionKind::Checker { cols: 8, rows: 6, softness: 0.0 });
+    // клетка (0,0) чётная: столбцы 0..8, открытая половина 0..4
+    assert_eq!(px(&ch, 1, 3), cb, "чётная клетка открывается слева");
+    assert_eq!(px(&ch, 6, 3), ca, "правая половина чётной ещё уходящий");
+    // клетка (1,0) нечётная: столбцы 8..16, открытая половина 12..16
+    assert_eq!(px(&ch, 14, 3), cb, "нечётная клетка открывается справа");
+    assert_eq!(px(&ch, 9, 3), ca);
+
+    // разделение: половинки A разъехались, в щели [16..48) открыт B
+    let sp = render(TransitionKind::Split { vertical: false });
+    assert_eq!(px(&sp, 8, 18), ca, "левая половинка A ещё на экране");
+    assert_eq!(px(&sp, 32, 18), cb, "в щели уже входящий");
+    assert_eq!(px(&sp, 56, 18), ca, "правая половинка A");
+
+    // растяжение: в полосе |u−0.5|<k/2 — B, снаружи A нетронут
+    let st = render(TransitionKind::Stretch { vertical: false });
+    assert_eq!(px(&st, 32, 18), cb, "в полосе — входящий");
+    assert_eq!(px(&st, 4, 18), ca, "снаружи — уходящий как был");
+    assert_eq!(px(&st, 60, 18), ca);
+
+    // сжатие вправо: c<k — B расправился, дальше — A сжатый
+    let sq = render(TransitionKind::Squeeze { dir: Dir::Right });
+    assert_eq!(px(&sq, 8, 18), cb, "ближняя часть — входящий");
+    assert_eq!(px(&sq, 56, 18), ca, "дальняя — сжатый уходящий");
+
+    // радиальный смаз: k=0.5 — сторона уже B, центр луча неподвижен
+    let zb = render(TransitionKind::ZoomBlur { amount: 1.0, cx: 0.5, cy: 0.5 });
+    assert_eq!(px(&zb, 32, 18), cb, "центр лучей неподвижен и показывает сторону");
+
+    // жалюзи 8 полос без мягкости: в k=0.5 открыта левая половина каждой
+    let bl = render(TransitionKind::Blinds { count: 8, angle: 0.0, softness: 0.0 });
+    assert_eq!(px(&bl, 1, 18), cb, "начало полосы открыто");
+    assert_eq!(px(&bl, 6, 18), ca, "хвост полосы ещё уходящий");
+    assert_eq!(px(&bl, 9, 18), cb, "вторая полоса — так же");
+
+    // случайные блоки: без мягкости каждая клетка целиком A или B
+    let bk = render(TransitionKind::Blocks { cols: 16, rows: 9, softness: 0.0 });
+    let mut seen_a = 0;
+    let mut seen_b = 0;
+    for j in 0..9 {
+        for i in 0..16 {
+            let c = px(&bk, i * 4 + 2, j * 4 + 2);
+            if c == ca {
+                seen_a += 1;
+            } else if c == cb {
+                seen_b += 1;
+            } else {
+                panic!("клетка ({i},{j}) — не A и не B: {c:?}");
+            }
+        }
+    }
+    assert!(seen_a > 20 && seen_b > 20, "обе стороны в мозаике: {seen_a}/{seen_b}");
+
+    // обмен: на середине обе стороны сжаты — по краям видна ПУСТОТА
+    // (прозрачность), в кадре есть обе картинки с тенью глубины
+    let sw = render(TransitionKind::Swap { vertical: false, depth: 0.4 });
+    assert_eq!(px(&sw, 1, 1)[3], 0, "угол пуст — квады уехали и сжались");
+    let has = |want: [u8; 4], shade: f32| {
+        let dim = |c: [u8; 4]| {
+            [(c[0] as f32 * shade) as i32, (c[1] as f32 * shade) as i32, (c[2] as f32 * shade) as i32]
+        };
+        let w = dim(want);
+        (0..36).any(|y| {
+            (0..64).any(|x| {
+                let g = px(&sw, x, y);
+                g[3] > 250
+                    && (g[0] as i32 - w[0]).abs() <= 2
+                    && (g[1] as i32 - w[1]).abs() <= 2
+                    && (g[2] as i32 - w[2]).abs() <= 2
+            })
+        })
+    };
+    assert!(has(ca, 0.75) && has(cb, 0.75), "обе стороны обмена в кадре с тенью 0.75");
+}

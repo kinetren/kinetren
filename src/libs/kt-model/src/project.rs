@@ -87,10 +87,15 @@ pub enum TransitionKind {
         #[serde(default = "default_soft")]
         softness: f64,
     },
-    /// Раскрытие из центра: круг/ромб/прямоугольник.
+    /// Раскрытие из центра: круг/ромб/прямоугольник. Центр (Р.51) —
+    /// доли кадра, умолчание середина; при 0.5/0.5 картинка байт-та же.
     Iris {
         #[serde(default)]
         shape: IrisShape,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cy: f64,
         #[serde(default = "default_soft")]
         softness: f64,
     },
@@ -98,6 +103,10 @@ pub enum TransitionKind {
     Clock {
         #[serde(default)]
         reverse: bool,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cy: f64,
         #[serde(default = "default_soft")]
         softness: f64,
     },
@@ -129,6 +138,10 @@ pub enum TransitionKind {
     Zoom {
         #[serde(default = "default_zoom_amount")]
         amount: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cy: f64,
     },
     /// Поворот с наплывом.
     Spin {
@@ -136,6 +149,10 @@ pub enum TransitionKind {
         turns: f64,
         #[serde(default = "default_zoom_amount")]
         amount: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cy: f64,
     },
     /// Резкий пролёт камерой со смазом.
     Whip {
@@ -179,6 +196,110 @@ pub enum TransitionKind {
         #[serde(default)]
         color_b: u8,
     },
+    // ---- узоры (Р.51, п.400) -------------------------------------------
+    /// Жалюзи: полосы открываются веером, угол даёт диагональ.
+    Blinds {
+        #[serde(default = "default_count8")]
+        count: u32,
+        #[serde(default)]
+        angle: f64,
+        #[serde(default = "default_soft_thin")]
+        softness: f64,
+    },
+    /// Шахматы: клетки открываются двумя встречными волнами.
+    Checker {
+        #[serde(default = "default_count8")]
+        cols: u32,
+        #[serde(default = "default_count6")]
+        rows: u32,
+        #[serde(default = "default_soft_thin")]
+        softness: f64,
+    },
+    /// Случайные блоки: клетки вспыхивают в псевдослучайном порядке.
+    Blocks {
+        #[serde(default = "default_count16")]
+        cols: u32,
+        #[serde(default = "default_count9")]
+        rows: u32,
+        #[serde(default = "default_blocks_soft")]
+        softness: f64,
+    },
+    /// Спираль: архимедов фронт закручивается вокруг центра.
+    Spiral {
+        #[serde(default = "default_spiral_turns")]
+        turns: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cy: f64,
+        #[serde(default = "default_soft_thin")]
+        softness: f64,
+    },
+    // ---- сдвиг (симбиоз: движутся ОБА кадра) ----------------------------
+    /// Разделение: половинки уходящего разъезжаются, входящий открывается.
+    Split {
+        #[serde(default)]
+        vertical: bool,
+    },
+    /// Сжатие: уходящий сжимается к дальнему краю, входящий расправляется.
+    Squeeze {
+        #[serde(default)]
+        dir: Dir,
+    },
+    /// Растяжение: входящий растягивается из центральной линии.
+    Stretch {
+        #[serde(default)]
+        vertical: bool,
+    },
+    /// Обмен: кадры меняются местами по дуге, порядок сторон
+    /// переключается на середине (2.5D без глубины).
+    Swap {
+        #[serde(default)]
+        vertical: bool,
+        #[serde(default = "default_swap_depth")]
+        depth: f64,
+    },
+    // ---- стилизованные --------------------------------------------------
+    /// Тряска: рывки кадра, смена стороны на середине.
+    Shake {
+        #[serde(default = "default_glitch")]
+        amount: f64,
+        #[serde(default = "default_shake_steps")]
+        steps: u32,
+    },
+    /// Прожог плёнки: фронт по крупному шуму с горячей кромкой.
+    FilmBurn {
+        #[serde(default = "default_burn_scale")]
+        scale: f64,
+        #[serde(default = "default_burn_soft")]
+        softness: f64,
+        #[serde(default = "default_255")]
+        tint_r: u8,
+        #[serde(default = "default_burn_tint_g")]
+        tint_g: u8,
+        #[serde(default)]
+        tint_b: u8,
+    },
+    /// Блики света: цветные пятна пролетают по кадру поверх растворения.
+    LightLeaks {
+        #[serde(default = "default_leaks_strength")]
+        strength: f64,
+        #[serde(default = "default_255")]
+        tint_r: u8,
+        #[serde(default = "default_leaks_tint_g")]
+        tint_g: u8,
+        #[serde(default = "default_leaks_tint_b")]
+        tint_b: u8,
+    },
+    /// Радиальный смаз: лучи от центра, смена стороны на середине.
+    ZoomBlur {
+        #[serde(default = "default_whip_blur")]
+        amount: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cx: f64,
+        #[serde(default = "default_center", skip_serializing_if = "is_center")]
+        cy: f64,
+    },
 }
 
 /// Форма раскрытия у Iris.
@@ -193,6 +314,75 @@ pub enum IrisShape {
 
 fn default_soft() -> f64 {
     0.15
+}
+
+fn default_center() -> f64 {
+    0.5
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_center(v: &f64) -> bool {
+    *v == 0.5
+}
+
+fn default_soft_thin() -> f64 {
+    0.1
+}
+
+fn default_blocks_soft() -> f64 {
+    0.25
+}
+
+fn default_count6() -> u32 {
+    6
+}
+
+fn default_count8() -> u32 {
+    8
+}
+
+fn default_count9() -> u32 {
+    9
+}
+
+fn default_count16() -> u32 {
+    16
+}
+
+fn default_spiral_turns() -> f64 {
+    2.0
+}
+
+fn default_swap_depth() -> f64 {
+    0.3
+}
+
+fn default_shake_steps() -> u32 {
+    12
+}
+
+fn default_burn_scale() -> f64 {
+    6.0
+}
+
+fn default_burn_soft() -> f64 {
+    0.2
+}
+
+fn default_burn_tint_g() -> u8 {
+    120
+}
+
+fn default_leaks_strength() -> f64 {
+    0.6
+}
+
+fn default_leaks_tint_g() -> u8 {
+    90
+}
+
+fn default_leaks_tint_b() -> u8 {
+    40
 }
 
 fn default_zoom_amount() -> f64 {
@@ -261,20 +451,32 @@ impl TransitionKind {
     pub const ALL: &'static [TransitionKind] = &[
         TransitionKind::Crossfade,
         TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.15 },
-        TransitionKind::Iris { shape: IrisShape::Circle, softness: 0.15 },
-        TransitionKind::Clock { reverse: false, softness: 0.15 },
+        TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.5, cy: 0.5, softness: 0.15 },
+        TransitionKind::Clock { reverse: false, cx: 0.5, cy: 0.5, softness: 0.15 },
         TransitionKind::Barn { vertical: false, softness: 0.15 },
         TransitionKind::Luma { invert: false, softness: 0.15 },
         TransitionKind::Push { dir: Dir::Left },
         TransitionKind::Slide { dir: Dir::Left },
-        TransitionKind::Zoom { amount: 0.4 },
-        TransitionKind::Spin { turns: 1.0, amount: 0.4 },
+        TransitionKind::Zoom { amount: 0.4, cx: 0.5, cy: 0.5 },
+        TransitionKind::Spin { turns: 1.0, amount: 0.4, cx: 0.5, cy: 0.5 },
         TransitionKind::Whip { dir: Dir::Left, blur: 0.6 },
         TransitionKind::BlurDissolve { amount: 24.0 },
         TransitionKind::Pixelate { amount: 48.0 },
         TransitionKind::Glitch { amount: 0.5 },
         TransitionKind::Flash { color_r: 255, color_g: 255, color_b: 255, strength: 1.0 },
         TransitionKind::Dip { color_r: 0, color_g: 0, color_b: 0 },
+        TransitionKind::Blinds { count: 8, angle: 0.0, softness: 0.1 },
+        TransitionKind::Checker { cols: 8, rows: 6, softness: 0.1 },
+        TransitionKind::Blocks { cols: 16, rows: 9, softness: 0.25 },
+        TransitionKind::Spiral { turns: 2.0, cx: 0.5, cy: 0.5, softness: 0.1 },
+        TransitionKind::Split { vertical: false },
+        TransitionKind::Squeeze { dir: Dir::Left },
+        TransitionKind::Stretch { vertical: false },
+        TransitionKind::Swap { vertical: false, depth: 0.3 },
+        TransitionKind::Shake { amount: 0.5, steps: 12 },
+        TransitionKind::FilmBurn { scale: 6.0, softness: 0.2, tint_r: 255, tint_g: 120, tint_b: 0 },
+        TransitionKind::LightLeaks { strength: 0.6, tint_r: 255, tint_g: 90, tint_b: 40 },
+        TransitionKind::ZoomBlur { amount: 0.6, cx: 0.5, cy: 0.5 },
     ];
 
     /// Тег вида, как он лежит в файле (для UI и сравнения).
@@ -296,6 +498,18 @@ impl TransitionKind {
             TransitionKind::Glitch { .. } => "glitch",
             TransitionKind::Flash { .. } => "flash",
             TransitionKind::Dip { .. } => "dip",
+            TransitionKind::Blinds { .. } => "blinds",
+            TransitionKind::Checker { .. } => "checker",
+            TransitionKind::Blocks { .. } => "blocks",
+            TransitionKind::Spiral { .. } => "spiral",
+            TransitionKind::Split { .. } => "split",
+            TransitionKind::Squeeze { .. } => "squeeze",
+            TransitionKind::Stretch { .. } => "stretch",
+            TransitionKind::Swap { .. } => "swap",
+            TransitionKind::Shake { .. } => "shake",
+            TransitionKind::FilmBurn { .. } => "film_burn",
+            TransitionKind::LightLeaks { .. } => "light_leaks",
+            TransitionKind::ZoomBlur { .. } => "zoom_blur",
         }
     }
 
@@ -315,7 +529,9 @@ impl TransitionKind {
             | TransitionKind::Pixelate { .. }
             | TransitionKind::Glitch { .. }
             | TransitionKind::Flash { .. }
-            | TransitionKind::Dip { .. } => true,
+            | TransitionKind::Dip { .. }
+            // сила лучей sin(πk) и смена стороны на середине симметричны
+            | TransitionKind::ZoomBlur { .. } => true,
             TransitionKind::Wipe { .. }
             | TransitionKind::Iris { .. }
             | TransitionKind::Clock { .. }
@@ -324,7 +540,18 @@ impl TransitionKind {
             | TransitionKind::Push { .. }
             | TransitionKind::Slide { .. }
             | TransitionKind::Spin { .. }
-            | TransitionKind::Whip { .. } => false,
+            | TransitionKind::Whip { .. }
+            | TransitionKind::Blinds { .. }
+            | TransitionKind::Checker { .. }
+            | TransitionKind::Blocks { .. }
+            | TransitionKind::Spiral { .. }
+            | TransitionKind::Split { .. }
+            | TransitionKind::Squeeze { .. }
+            | TransitionKind::Stretch { .. }
+            | TransitionKind::Swap { .. }
+            | TransitionKind::Shake { .. }
+            | TransitionKind::FilmBurn { .. }
+            | TransitionKind::LightLeaks { .. } => false,
         }
     }
 
@@ -3973,9 +4200,13 @@ params_for! { TransitionKind, transition_specs, transition_set_param, transition
         softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
     },
     Iris {
+        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
         softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
     },
     Clock {
+        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
         softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;
     },
     Barn {
@@ -3986,10 +4217,14 @@ params_for! { TransitionKind, transition_specs, transition_set_param, transition
     },
     Zoom {
         amount: f64, 0.0, 4.0, 0.4, 0.01, Ratio, Smooth;
+        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
     },
     Spin {
         turns: f64, -4.0, 4.0, 1.0, 0.05, Ratio, Smooth;
         amount: f64, 0.0, 4.0, 0.4, 0.01, Ratio, Smooth;
+        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
     },
     Whip {
         blur: f64, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
@@ -4013,6 +4248,52 @@ params_for! { TransitionKind, transition_specs, transition_set_param, transition
         color_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
         color_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
         color_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+    },
+    Blinds {
+        count: u32, 2.0, 64.0, 8.0, 1.0, Count, Smooth;
+        angle: f64, -90.0, 90.0, 0.0, 1.0, Deg, Smooth;
+        softness: f64, 0.0, 1.0, 0.1, 0.01, Norm, Smooth;
+    },
+    Checker {
+        cols: u32, 1.0, 64.0, 8.0, 1.0, Count, Smooth;
+        rows: u32, 1.0, 64.0, 6.0, 1.0, Count, Smooth;
+        softness: f64, 0.0, 1.0, 0.1, 0.01, Norm, Smooth;
+    },
+    Blocks {
+        cols: u32, 2.0, 64.0, 16.0, 1.0, Count, Smooth;
+        rows: u32, 2.0, 64.0, 9.0, 1.0, Count, Smooth;
+        softness: f64, 0.0, 1.0, 0.25, 0.01, Norm, Smooth;
+    },
+    Spiral {
+        turns: f64, 0.25, 6.0, 2.0, 0.05, Ratio, Smooth;
+        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        softness: f64, 0.0, 1.0, 0.1, 0.01, Norm, Smooth;
+    },
+    Swap {
+        depth: f64, 0.0, 1.0, 0.3, 0.01, Norm, Smooth;
+    },
+    Shake {
+        amount: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        steps: u32, 1.0, 30.0, 12.0, 1.0, Count, Smooth;
+    },
+    FilmBurn {
+        scale: f64, 1.0, 24.0, 6.0, 0.5, Ratio, Smooth;
+        softness: f64, 0.0, 1.0, 0.2, 0.01, Norm, Smooth;
+        tint_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        tint_g: u8, 0.0, 255.0, 120.0, 1.0, Rgb8, Smooth;
+        tint_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+    },
+    LightLeaks {
+        strength: f64, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
+        tint_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        tint_g: u8, 0.0, 255.0, 90.0, 1.0, Rgb8, Smooth;
+        tint_b: u8, 0.0, 255.0, 40.0, 1.0, Rgb8, Smooth;
+    },
+    ZoomBlur {
+        amount: f64, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
+        cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
     },
 }}
 

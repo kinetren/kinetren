@@ -99,12 +99,39 @@ fn quant(x: f32, step: f32) -> f32 {
     return floor(x / step) * step + step * 0.5;
 }
 
-fn rot_sample(which: u32, uv: vec2<f32>, ang: f32, zoom: f32, aspect: f32) -> vec4<f32> {
+fn rot_sample(which: u32, uv: vec2<f32>, ang: f32, zoom: f32, aspect: f32, o: vec2<f32>) -> vec4<f32> {
     let s = sin(ang);
     let c = cos(ang);
-    let cx = (uv.x - 0.5) * aspect / zoom;
-    let cy = (uv.y - 0.5) / zoom;
-    return samp(which, vec2<f32>((cx * c - cy * s) / aspect + 0.5, cx * s + cy * c + 0.5));
+    let cx = (uv.x - o.x) * aspect / zoom;
+    let cy = (uv.y - o.y) / zoom;
+    return samp(which, vec2<f32>((cx * c - cy * s) / aspect + o.x, cx * s + cy * c + o.y));
+}
+
+// Straight-alpha «top поверх bottom» в f32 — зеркало over_straight (Р.51).
+fn over_straight(top: vec4<f32>, bot: vec4<f32>) -> vec4<f32> {
+    let ta = clamp(top.a / 255.0, 0.0, 1.0);
+    let ba = clamp(bot.a / 255.0, 0.0, 1.0);
+    let oa = ta + ba * (1.0 - ta);
+    if (oa <= 0.0) { return vec4<f32>(0.0); }
+    let rgb = (top.rgb * ta + bot.rgb * ba * (1.0 - ta)) / oa;
+    return vec4<f32>(rgb, oa * 255.0);
+}
+
+// Клеточный value-noise на общем целочисленном хэше — зеркало value_noise.
+fn cell_h(i: f32, j: f32) -> f32 {
+    return hash01(t_hash(u32(i32(i)) * 1973u) ^ t_hash(u32(i32(j)) * 9277u));
+}
+
+fn value_noise(x: f32, y: f32) -> f32 {
+    let xi = floor(x);
+    let yi = floor(y);
+    let fx = x - xi;
+    let fy = y - yi;
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let sy = fy * fy * (3.0 - 2.0 * fy);
+    let top = mix(cell_h(xi, yi), cell_h(xi + 1.0, yi), sx);
+    let bot = mix(cell_h(xi, yi + 1.0), cell_h(xi + 1.0, yi + 1.0), sx);
+    return mix(top, bot, sy);
 }
 
 fn box9(which: u32, uv: vec2<f32>, r: vec2<f32>) -> vec4<f32> {
@@ -128,6 +155,7 @@ fn glitch_pick(which: u32, uv: vec2<f32>, ch: f32) -> vec4<f32> {
 fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
     let mode = P.u1.z;
     let p0 = P.f0;
+    let p1 = P.f1;
     let od = out_dims();
     let aspect = od.x / od.y;
     let pi = 3.14159265;
@@ -136,17 +164,18 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
         let s = ((uv.x - 0.5) * p0.x + (uv.y - 0.5) * p0.y + ext * 0.5) / ext;
         return mix(samp(0u, uv), samp(1u, uv), front_mask(s, k, p0.z));
     }
-    if (mode == 2u) { // iris
-        let c = vec2<f32>((uv.x - 0.5) * aspect, uv.y - 0.5);
+    if (mode == 2u) { // iris: центр (p0.zw), rmax — до дальнего угла (п.400)
+        let c = vec2<f32>((uv.x - p0.z) * aspect, uv.y - p0.w);
+        let e = vec2<f32>(max(p0.z, 1.0 - p0.z) * aspect, max(p0.w, 1.0 - p0.w));
         let shape = i32(p0.x);
         var r = length(c);
-        var rmax = sqrt((aspect * aspect + 1.0) * 0.25);
-        if (shape == 1) { r = abs(c.x) + abs(c.y); rmax = (aspect + 1.0) * 0.5; }
-        if (shape == 2) { r = max(abs(c.x), abs(c.y)); rmax = max(aspect * 0.5, 0.5); }
+        var rmax = max(length(e), 1e-6);
+        if (shape == 1) { r = abs(c.x) + abs(c.y); rmax = max(e.x + e.y, 1e-6); }
+        if (shape == 2) { r = max(abs(c.x), abs(c.y)); rmax = max(max(e.x, e.y), 1e-6); }
         return mix(samp(0u, uv), samp(1u, uv), front_mask(r / rmax, k, p0.y));
     }
-    if (mode == 3u) { // clock
-        var ang = atan2(uv.x - 0.5, -(uv.y - 0.5));
+    if (mode == 3u) { // clock: центр (p0.zw)
+        var ang = atan2(uv.x - p0.z, -(uv.y - p0.w));
         if (ang < 0.0) { ang = ang + 2.0 * pi; }
         if (p0.x > 0.5) { ang = 2.0 * pi - ang; }
         return mix(samp(0u, uv), samp(1u, uv), front_mask(ang / (2.0 * pi), k, p0.y));
@@ -172,16 +201,18 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
         if (b.x >= 0.0 && b.x < 1.0 && b.y >= 0.0 && b.y < 1.0) { return samp(1u, b); }
         return samp(0u, uv);
     }
-    if (mode == 8u) { // zoom
+    if (mode == 8u) { // zoom: центр (p0.yz)
+        let o = p0.yz;
         let za = 1.0 + p0.x * k;
         let zb = 1.0 + p0.x * (1.0 - k);
-        let sa = samp(0u, (uv - vec2<f32>(0.5)) / za + vec2<f32>(0.5));
-        let sb = samp(1u, (uv - vec2<f32>(0.5)) / zb + vec2<f32>(0.5));
+        let sa = samp(0u, (uv - o) / za + o);
+        let sb = samp(1u, (uv - o) / zb + o);
         return mix(sa, sb, k);
     }
-    if (mode == 9u) { // spin
-        let sa = rot_sample(0u, uv, p0.x * k * 2.0 * pi, 1.0 + p0.y * k, aspect);
-        let sb = rot_sample(1u, uv, -p0.x * (1.0 - k) * 2.0 * pi, 1.0 + p0.y * (1.0 - k), aspect);
+    if (mode == 9u) { // spin: центр (p0.zw)
+        let o = p0.zw;
+        let sa = rot_sample(0u, uv, p0.x * k * 2.0 * pi, 1.0 + p0.y * k, aspect, o);
+        let sb = rot_sample(1u, uv, -p0.x * (1.0 - k) * 2.0 * pi, 1.0 + p0.y * (1.0 - k), aspect, o);
         return mix(sa, sb, k);
     }
     if (mode == 10u) { // whip
@@ -225,7 +256,161 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
         if (k < 0.5) { src = samp(0u, uv); t = k * 2.0; }
         return vec4<f32>(mix(src.rgb, p0.rgb, t), src.a);
     }
+    if (mode == 16u) { // blinds: фракция внутри полосы по повёрнутой оси
+        let ext = max(abs(p0.x) + abs(p0.y), 1e-6);
+        let c = ((uv.x - 0.5) * p0.x + (uv.y - 0.5) * p0.y + ext * 0.5) / ext;
+        let f = fract(c * max(p0.z, 1.0));
+        return mix(samp(0u, uv), samp(1u, uv), front_mask(f, k, p0.w));
+    }
+    if (mode == 17u) { // checker: встречные волны в клетках
+        let cols = max(p0.x, 1.0);
+        let rows = max(p0.y, 1.0);
+        let i = floor(uv.x * cols);
+        let j = floor(uv.y * rows);
+        let fx = fract(uv.x * cols);
+        var s = fx;
+        if (i32(i + j) % 2 != 0) { s = 1.0 - fx; }
+        return mix(samp(0u, uv), samp(1u, uv), front_mask(s, k, p0.z));
+    }
+    if (mode == 18u) { // blocks: порядок клеток — хэш клетки
+        let cols = max(p0.x, 1.0);
+        let rows = max(p0.y, 1.0);
+        let i = u32(floor(uv.x * cols));
+        let j = u32(floor(uv.y * rows));
+        let s = hash01(t_hash(i * 1973u) ^ t_hash(j * 9277u));
+        return mix(samp(0u, uv), samp(1u, uv), front_mask(s, k, p0.z));
+    }
+    if (mode == 19u) { // spiral: архимедов фронт вокруг центра (p0.zw)
+        let cx = uv.x - p0.z;
+        let cy = uv.y - p0.w;
+        var ang = atan2(cx, -cy);
+        if (ang < 0.0) { ang = ang + 2.0 * pi; }
+        let theta = ang / (2.0 * pi);
+        let ex = max(p0.z, 1.0 - p0.z) * aspect;
+        let ey = max(p0.w, 1.0 - p0.w);
+        let rmax = max(sqrt(ex * ex + ey * ey), 1e-6);
+        let r = sqrt(cx * aspect * (cx * aspect) + cy * cy) / rmax;
+        let turns = max(p0.x, 0.25);
+        let sfrac = (theta + turns * r) / (1.0 + turns);
+        return mix(samp(0u, uv), samp(1u, uv), front_mask(sfrac, k, p0.y));
+    }
+    if (mode == 20u) { // split: половинки A разъезжаются, B в щели
+        var c = uv.x - 0.5;
+        if (p0.x > 0.5) { c = uv.y - 0.5; }
+        let h = k * 0.5;
+        if (abs(c) >= h) {
+            let off = h * sign(c);
+            if (p0.x > 0.5) { return samp(0u, vec2<f32>(uv.x, uv.y - off)); }
+            return samp(0u, vec2<f32>(uv.x - off, uv.y));
+        }
+        return samp(1u, uv);
+    }
+    if (mode == 21u) { // squeeze: A сжимается, B расправляется вдоль dir
+        var c = 1.0 - uv.y;
+        if (p0.x > 0.5) { c = uv.x; }
+        else if (p0.x < -0.5) { c = 1.0 - uv.x; }
+        else if (p0.y > 0.5) { c = uv.y; }
+        if (c < k) {
+            let c2 = c / max(k, 1e-4);
+            return samp(1u, sq_back(uv, c2, p0.xy));
+        }
+        let c2 = (c - k) / max(1.0 - k, 1e-4);
+        return samp(0u, sq_back(uv, c2, p0.xy));
+    }
+    if (mode == 22u) { // stretch: B растягивается из центральной линии
+        var c = uv.x - 0.5;
+        if (p0.x > 0.5) { c = uv.y - 0.5; }
+        let h = k * 0.5;
+        if (abs(c) < h) {
+            let c2 = c / max(k, 1e-4) + 0.5;
+            if (p0.x > 0.5) { return samp(1u, vec2<f32>(uv.x, c2)); }
+            return samp(1u, vec2<f32>(c2, uv.y));
+        }
+        return samp(0u, uv);
+    }
+    if (mode == 23u) { // swap: 2.5D-обмен, порядок меняется на середине
+        let vert = p0.x > 0.5;
+        let wave = sin(pi * k);
+        let off = 0.3 * wave;
+        let scale = max(1.0 - p0.y * wave, 0.05);
+        let sa = swap_quad(0u, uv, vert, off, scale, wave);
+        let sb = swap_quad(1u, uv, vert, -off, scale, wave);
+        if (k < 0.5) { return over_straight(sa, sb); }
+        return over_straight(sb, sa);
+    }
+    if (mode == 24u) { // shake: рывки, сторона катом на 0.5
+        let steps = max(p0.y, 1.0);
+        let i = min(u32(k * steps), u32(steps) - 1u);
+        let amp = p0.x * 0.2 * sin(pi * k);
+        let ox = (hash01(i * 2u + 1u) - 0.5) * amp;
+        let oy = (hash01(i * 2u + 2u) - 0.5) * amp;
+        var which = 1u;
+        if (k < 0.5) { which = 0u; }
+        return samp(which, uv + vec2<f32>(ox, oy));
+    }
+    if (mode == 25u) { // film burn: фронт по шуму, горячая кромка
+        let n = value_noise(uv.x * p0.x * aspect, uv.y * p0.x);
+        let mask = front_mask(n, k, max(p0.y, 0.02));
+        let base = mix(samp(0u, uv), samp(1u, uv), mask);
+        let rim = clamp(mask * (1.0 - mask) * 4.0, 0.0, 1.0);
+        let gate = rim * base.a / 255.0;
+        let tint = vec3<f32>(p0.z, p0.w, p1.x);
+        return vec4<f32>(mix(base.rgb, tint, gate), base.a);
+    }
+    if (mode == 26u) { // light leaks: два пятна по диагоналям
+        let base = mix(samp(0u, uv), samp(1u, uv), k);
+        let wave = sin(pi * k);
+        let w = (leak_blob(uv, k * 1.2 - 0.1, 0.3 + 0.4 * k, aspect)
+            + leak_blob(uv, 1.1 - 1.2 * k, 0.7 - 0.4 * k, aspect)) * p0.x * wave;
+        let gate = clamp(w, 0.0, 1.0) * base.a / 255.0;
+        let tint = vec3<f32>(p0.y, p0.z, p0.w);
+        return vec4<f32>(mix(base.rgb, tint, gate), base.a);
+    }
+    if (mode == 27u) { // zoom blur: лучи от центра (p0.yz)
+        let o = p0.yz;
+        let amt = p0.x * sin(pi * k);
+        var which = 1u;
+        if (k < 0.5) { which = 0u; }
+        var acc = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        for (var i = 0; i < 7; i = i + 1) {
+            let z = 1.0 + amt * 0.6 * (f32(i) / 6.0);
+            acc = acc + samp(which, (uv - o) / z + o);
+        }
+        return acc / 7.0;
+    }
     return mix(samp(0u, uv), samp(1u, uv), k);
+}
+
+// Осевое «обратно в uv» у squeeze — зеркало back() CPU-ядра (Р.51).
+fn sq_back(uv: vec2<f32>, c2: f32, d: vec2<f32>) -> vec2<f32> {
+    if (d.x > 0.5) { return vec2<f32>(c2, uv.y); }
+    if (d.x < -0.5) { return vec2<f32>(1.0 - c2, uv.y); }
+    if (d.y > 0.5) { return vec2<f32>(uv.x, c2); }
+    return vec2<f32>(uv.x, 1.0 - c2);
+}
+
+// Квад стороны 2.5D-обмена: сэмпл в прямоугольнике, вне — прозрачно,
+// дальняя сторона чуть темнее (зеркало quad() CPU-ядра).
+fn swap_quad(which: u32, uv: vec2<f32>, vert: bool, off: f32, scale: f32, wave: f32) -> vec4<f32> {
+    var q = vec2<f32>(0.5 + off, 0.5);
+    if (vert) { q = vec2<f32>(0.5, 0.5 + off); }
+    let su = (uv.x - q.x) / scale + 0.5;
+    let sv = (uv.y - q.y) / scale + 0.5;
+    if (su >= 0.0 && su < 1.0 && sv >= 0.0 && sv < 1.0) {
+        let c = samp(which, vec2<f32>(su, sv));
+        let shade = 1.0 - 0.25 * wave;
+        return vec4<f32>(c.rgb * shade, c.a);
+    }
+    return vec4<f32>(0.0);
+}
+
+// Пятно блика — зеркало blob() CPU-ядра.
+fn leak_blob(uv: vec2<f32>, bx: f32, by: f32, aspect: f32) -> f32 {
+    let dx = (uv.x - bx) * aspect;
+    let dy = uv.y - by;
+    let d = sqrt(dx * dx + dy * dy) / 0.45;
+    let w = max(1.0 - d, 0.0);
+    return w * w;
 }
 
 /// Округление к ближайшему целому — так же, как CPU-ядро пишет байты.

@@ -8674,8 +8674,8 @@ fn t466_overlap_transition_reachable() {
     assert!(
         labels.iter().any(|l| {
             // menu_button дописывает к подписи стрелку подменю
-            l.starts_with(&tr(k::tl::menu::TRANSITION_PREV))
-                || l.starts_with(&tr(k::tl::menu::TRANSITION_NEXT))
+            l.starts_with(tr(k::tl::menu::TRANSITION_PREV))
+                || l.starts_with(tr(k::tl::menu::TRANSITION_NEXT))
         }),
         "сосед-«лесенка» обязан дать пункт «Переход с…»: {labels:?}"
     );

@@ -38,7 +38,16 @@ pub fn kind_category(kind: &TransitionKind) -> Key {
         | TransitionKind::Slide { .. }
         | TransitionKind::Zoom { .. }
         | TransitionKind::Spin { .. }
-        | TransitionKind::Whip { .. } => k::trn::cat::MOTION,
+        | TransitionKind::Whip { .. }
+        | TransitionKind::Split { .. }
+        | TransitionKind::Squeeze { .. }
+        | TransitionKind::Stretch { .. }
+        | TransitionKind::Swap { .. } => k::trn::cat::MOTION,
+        // узоры (Р.51): маски-паттерны — своё семейство
+        TransitionKind::Blinds { .. }
+        | TransitionKind::Checker { .. }
+        | TransitionKind::Blocks { .. }
+        | TransitionKind::Spiral { .. } => k::trn::cat::PATTERN,
         _ => k::trn::cat::STYLE,
     }
 }
@@ -62,6 +71,18 @@ pub fn kind_name(kind: &TransitionKind) -> &'static str {
         TransitionKind::Glitch { .. } => tr(k::trn::kind::GLITCH),
         TransitionKind::Flash { .. } => tr(k::trn::kind::FLASH),
         TransitionKind::Dip { .. } => tr(k::trn::kind::DIP),
+        TransitionKind::Blinds { .. } => tr(k::trn::kind::BLINDS),
+        TransitionKind::Checker { .. } => tr(k::trn::kind::CHECKER),
+        TransitionKind::Blocks { .. } => tr(k::trn::kind::BLOCKS),
+        TransitionKind::Spiral { .. } => tr(k::trn::kind::SPIRAL),
+        TransitionKind::Split { .. } => tr(k::trn::kind::SPLIT),
+        TransitionKind::Squeeze { .. } => tr(k::trn::kind::SQUEEZE),
+        TransitionKind::Stretch { .. } => tr(k::trn::kind::STRETCH),
+        TransitionKind::Swap { .. } => tr(k::trn::kind::SWAP),
+        TransitionKind::Shake { .. } => tr(k::trn::kind::SHAKE),
+        TransitionKind::FilmBurn { .. } => tr(k::trn::kind::FILM_BURN),
+        TransitionKind::LightLeaks { .. } => tr(k::trn::kind::LIGHT_LEAKS),
+        TransitionKind::ZoomBlur { .. } => tr(k::trn::kind::ZOOM_BLUR),
     }
 }
 
@@ -81,7 +102,8 @@ fn dir_of(kind: &mut TransitionKind) -> Option<&mut kt_model::Dir> {
         TransitionKind::Wipe { dir, .. }
         | TransitionKind::Push { dir }
         | TransitionKind::Slide { dir }
-        | TransitionKind::Whip { dir, .. } => Some(dir),
+        | TransitionKind::Whip { dir, .. }
+        | TransitionKind::Squeeze { dir } => Some(dir),
         _ => None,
     }
 }
@@ -181,8 +203,18 @@ impl KtApp {
                     // ---- параметры вида: та же сетка, что у эффектов -------
                     let color =
                         matches!(t.kind, TransitionKind::Flash { .. } | TransitionKind::Dip { .. });
-                    let skip: &[&str] =
-                        if color { &["color_r", "color_g", "color_b"] } else { &[] };
+                    // у прожога и бликов цвет зовётся tint_* — та же пипетка
+                    let tint = matches!(
+                        t.kind,
+                        TransitionKind::FilmBurn { .. } | TransitionKind::LightLeaks { .. }
+                    );
+                    let skip: &[&str] = if color {
+                        &["color_r", "color_g", "color_b"]
+                    } else if tint {
+                        &["tint_r", "tint_g", "tint_b"]
+                    } else {
+                        &[]
+                    };
                     if let Some(dir) = dir_of(&mut t.kind) {
                         ui.horizontal(|ui| {
                             ui.label(tr(k::trn::DIR));
@@ -225,6 +257,14 @@ impl KtApp {
                     {
                         changed = true;
                     }
+                    // ось у сдвигов-симбиозов Р.51 — одна галка на троих
+                    if let TransitionKind::Split { vertical }
+                    | TransitionKind::Stretch { vertical }
+                    | TransitionKind::Swap { vertical, .. } = &mut t.kind
+                        && ui.checkbox(vertical, tr(k::trn::VERTICAL_AXIS)).changed()
+                    {
+                        changed = true;
+                    }
                     if let TransitionKind::Luma { invert, .. } = &mut t.kind
                         && ui.checkbox(invert, tr(k::trn::INVERT)).changed()
                     {
@@ -237,13 +277,18 @@ impl KtApp {
                     {
                         changed = true;
                     }
-                    if color {
+                    if color || tint {
                         ui.horizontal(|ui| {
                             ui.label(tr(k::trn::COLOR));
+                            let names = if tint {
+                                ["tint_r", "tint_g", "tint_b"]
+                            } else {
+                                ["color_r", "color_g", "color_b"]
+                            };
                             let get = |n: &str| t.kind.get_param(n).unwrap_or(0.0) as f32 / 255.0;
-                            let mut c = [get("color_r"), get("color_g"), get("color_b")];
+                            let mut c = [get(names[0]), get(names[1]), get(names[2])];
                             if ui.color_edit_button_rgb(&mut c).changed() {
-                                for (n, v) in ["color_r", "color_g", "color_b"].iter().zip(c) {
+                                for (n, v) in names.iter().zip(c) {
                                     t.kind.set_param(n, (v * 255.0).round() as f64);
                                 }
                                 changed = true;

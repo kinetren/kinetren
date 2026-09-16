@@ -652,11 +652,14 @@ fn t224_transition_parity_gpu_vs_cpu() {
         TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.15 },
         TransitionKind::Wipe { dir: Dir::Up, angle: 0.0, softness: 0.0 },
         TransitionKind::Wipe { dir: Dir::Right, angle: 37.0, softness: 0.3 },
-        TransitionKind::Iris { shape: IrisShape::Circle, softness: 0.15 },
-        TransitionKind::Iris { shape: IrisShape::Diamond, softness: 0.0 },
-        TransitionKind::Iris { shape: IrisShape::Box, softness: 0.4 },
-        TransitionKind::Clock { reverse: false, softness: 0.1 },
-        TransitionKind::Clock { reverse: true, softness: 0.0 },
+        TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.5, cy: 0.5, softness: 0.15 },
+        TransitionKind::Iris { shape: IrisShape::Diamond, cx: 0.5, cy: 0.5, softness: 0.0 },
+        TransitionKind::Iris { shape: IrisShape::Box, cx: 0.5, cy: 0.5, softness: 0.4 },
+        // смещённый центр (Р.51): без него ошибка в члене центра не видна
+        TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.2, cy: 0.7, softness: 0.1 },
+        TransitionKind::Clock { reverse: false, cx: 0.5, cy: 0.5, softness: 0.1 },
+        TransitionKind::Clock { reverse: true, cx: 0.5, cy: 0.5, softness: 0.0 },
+        TransitionKind::Clock { reverse: false, cx: 0.7, cy: 0.3, softness: 0.1 },
         TransitionKind::Barn { vertical: false, softness: 0.2 },
         TransitionKind::Barn { vertical: true, softness: 0.0 },
         TransitionKind::Luma { invert: false, softness: 0.2 },
@@ -665,9 +668,10 @@ fn t224_transition_parity_gpu_vs_cpu() {
         TransitionKind::Push { dir: Dir::Down },
         TransitionKind::Slide { dir: Dir::Right },
         TransitionKind::Slide { dir: Dir::Up },
-        TransitionKind::Zoom { amount: 0.4 },
-        TransitionKind::Spin { turns: 1.0, amount: 0.4 },
-        TransitionKind::Spin { turns: -0.5, amount: 0.0 },
+        TransitionKind::Zoom { amount: 0.4, cx: 0.5, cy: 0.5 },
+        TransitionKind::Zoom { amount: 1.5, cx: 0.25, cy: 0.6 },
+        TransitionKind::Spin { turns: 1.0, amount: 0.4, cx: 0.5, cy: 0.5 },
+        TransitionKind::Spin { turns: -0.5, amount: 0.0, cx: 0.8, cy: 0.2 },
         TransitionKind::Whip { dir: Dir::Left, blur: 0.6 },
         TransitionKind::Whip { dir: Dir::Down, blur: 1.0 },
         TransitionKind::BlurDissolve { amount: 24.0 },
@@ -675,6 +679,34 @@ fn t224_transition_parity_gpu_vs_cpu() {
         TransitionKind::Glitch { amount: 0.5 },
         TransitionKind::Flash { color_r: 255, color_g: 200, color_b: 40, strength: 1.0 },
         TransitionKind::Dip { color_r: 0, color_g: 0, color_b: 0 },
+        // Р.51 (п.400): узоры, сдвиги-симбиозы, стилизованные — обе оси
+        // и оба флага у каждого направленного, как требует шапка списка
+        TransitionKind::Blinds { count: 8, angle: 0.0, softness: 0.1 },
+        TransitionKind::Blinds { count: 5, angle: 30.0, softness: 0.0 },
+        TransitionKind::Checker { cols: 8, rows: 6, softness: 0.1 },
+        TransitionKind::Checker { cols: 5, rows: 7, softness: 0.0 },
+        TransitionKind::Blocks { cols: 16, rows: 9, softness: 0.25 },
+        TransitionKind::Blocks { cols: 7, rows: 5, softness: 0.05 },
+        TransitionKind::Spiral { turns: 2.0, cx: 0.5, cy: 0.5, softness: 0.1 },
+        TransitionKind::Spiral { turns: 4.0, cx: 0.3, cy: 0.6, softness: 0.05 },
+        TransitionKind::Split { vertical: false },
+        TransitionKind::Split { vertical: true },
+        TransitionKind::Squeeze { dir: Dir::Left },
+        TransitionKind::Squeeze { dir: Dir::Right },
+        TransitionKind::Squeeze { dir: Dir::Up },
+        TransitionKind::Squeeze { dir: Dir::Down },
+        TransitionKind::Stretch { vertical: false },
+        TransitionKind::Stretch { vertical: true },
+        TransitionKind::Swap { vertical: false, depth: 0.3 },
+        TransitionKind::Swap { vertical: true, depth: 0.7 },
+        TransitionKind::Shake { amount: 0.5, steps: 12 },
+        TransitionKind::Shake { amount: 1.0, steps: 3 },
+        TransitionKind::FilmBurn { scale: 6.0, softness: 0.2, tint_r: 255, tint_g: 120, tint_b: 0 },
+        TransitionKind::FilmBurn { scale: 14.0, softness: 0.05, tint_r: 200, tint_g: 40, tint_b: 20 },
+        TransitionKind::LightLeaks { strength: 0.6, tint_r: 255, tint_g: 90, tint_b: 40 },
+        TransitionKind::LightLeaks { strength: 1.0, tint_r: 80, tint_g: 160, tint_b: 255 },
+        TransitionKind::ZoomBlur { amount: 0.6, cx: 0.5, cy: 0.5 },
+        TransitionKind::ZoomBlur { amount: 1.0, cx: 0.2, cy: 0.8 },
     ];
     let mut seen = std::collections::BTreeSet::new();
     for kind in &cases {
@@ -696,7 +728,7 @@ fn t224_transition_parity_gpu_vs_cpu() {
             assert_frames_close(&cpu, &gpu, W, H, soft, &format!("{}@{k}", kind.tag()));
         }
     }
-    assert_eq!(seen.len(), 15, "все 15 не-кроссфейдных режимов проверены: {seen:?}");
+    assert_eq!(seen.len(), 27, "все 27 не-кроссфейдных режимов проверены: {seen:?}");
     assert_eq!(
         seen.len() + 1,
         TransitionKind::ALL.len(),
@@ -706,8 +738,11 @@ fn t224_transition_parity_gpu_vs_cpu() {
     // сольный фейд С ВИДОМ: вторая сторона — пустота, тот же код
     for (incoming, kind) in [
         (true, TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.2 }),
-        (false, TransitionKind::Iris { shape: IrisShape::Circle, softness: 0.1 }),
+        (false, TransitionKind::Iris { shape: IrisShape::Circle, cx: 0.5, cy: 0.5, softness: 0.1 }),
         (true, TransitionKind::Push { dir: Dir::Up }),
+        // представители Р.51: узор и сдвиг-симбиоз фейдом «из пустоты»
+        (true, TransitionKind::Blinds { count: 8, angle: 0.0, softness: 0.1 }),
+        (false, TransitionKind::Squeeze { dir: Dir::Right }),
     ] {
         let mix = kt_engine::TransMix::of(&kind);
         let p = plan(

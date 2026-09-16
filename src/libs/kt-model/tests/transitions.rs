@@ -517,7 +517,7 @@ fn t159_restore_never_breaks_the_gesture() {
 #[test]
 fn t223_transition_kind_specs() {
     let all = TransitionKind::ALL;
-    assert_eq!(all.len(), 16, "16 видов по решению пользователя");
+    assert_eq!(all.len(), 28, "28 видов: 16 прежних + 12 Р.51 (якорь «16» снят решением владельца, docs/user-feedback.md Р.51)");
     let mut tags: Vec<&str> = all.iter().map(|k| k.tag()).collect();
     tags.sort_unstable();
     let uniq = tags.len();

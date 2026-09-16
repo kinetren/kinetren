@@ -31,6 +31,21 @@ pub const MODE_PIXELATE: u32 = 12;
 pub const MODE_GLITCH: u32 = 13;
 pub const MODE_FLASH: u32 = 14;
 pub const MODE_DIP: u32 = 15;
+// Р.51 (п.400): узоры, сдвиги-симбиозы, стилизованные. Числа — контракт
+// ТОЛЬКО между transitions.rs и composite.wgsl (правятся одним коммитом):
+// в файл проекта едет tag(), в кэш-ключи — уже готовый TransMix.
+pub const MODE_BLINDS: u32 = 16;
+pub const MODE_CHECKER: u32 = 17;
+pub const MODE_BLOCKS: u32 = 18;
+pub const MODE_SPIRAL: u32 = 19;
+pub const MODE_SPLIT: u32 = 20;
+pub const MODE_SQUEEZE: u32 = 21;
+pub const MODE_STRETCH: u32 = 22;
+pub const MODE_SWAP: u32 = 23;
+pub const MODE_SHAKE: u32 = 24;
+pub const MODE_BURN: u32 = 25;
+pub const MODE_LEAKS: u32 = 26;
+pub const MODE_ZOOMBLUR: u32 = 27;
 
 /// Разрешённый переход для исполнителей: режим + 8 чисел (ровно f0/f1
 /// униформы GPU). Своей семантики у полей нет — её задают ядра ниже.
@@ -72,18 +87,22 @@ impl TransMix {
                 p[2] = *softness as f32;
                 MODE_WIPE
             }
-            TransitionKind::Iris { shape, softness } => {
+            TransitionKind::Iris { shape, cx, cy, softness } => {
                 p[0] = match shape {
                     IrisShape::Circle => 0.0,
                     IrisShape::Diamond => 1.0,
                     IrisShape::Box => 2.0,
                 };
                 p[1] = *softness as f32;
+                p[2] = *cx as f32;
+                p[3] = *cy as f32;
                 MODE_IRIS
             }
-            TransitionKind::Clock { reverse, softness } => {
+            TransitionKind::Clock { reverse, cx, cy, softness } => {
                 p[0] = if *reverse { 1.0 } else { 0.0 };
                 p[1] = *softness as f32;
+                p[2] = *cx as f32;
+                p[3] = *cy as f32;
                 MODE_CLOCK
             }
             TransitionKind::Barn { vertical, softness } => {
@@ -104,13 +123,17 @@ impl TransMix {
                 (p[0], p[1]) = d(*dir);
                 MODE_SLIDE
             }
-            TransitionKind::Zoom { amount } => {
+            TransitionKind::Zoom { amount, cx, cy } => {
                 p[0] = *amount as f32;
+                p[1] = *cx as f32;
+                p[2] = *cy as f32;
                 MODE_ZOOM
             }
-            TransitionKind::Spin { turns, amount } => {
+            TransitionKind::Spin { turns, amount, cx, cy } => {
                 p[0] = *turns as f32;
                 p[1] = *amount as f32;
+                p[2] = *cx as f32;
+                p[3] = *cy as f32;
                 MODE_SPIN
             }
             TransitionKind::Whip { dir, blur } => {
@@ -142,6 +165,78 @@ impl TransMix {
                 p[1] = *color_g as f32;
                 p[2] = *color_b as f32;
                 MODE_DIP
+            }
+            TransitionKind::Blinds { count, angle, softness } => {
+                // угол поворачивает ось полос — та же схема, что у wipe
+                let a = (*angle as f32).to_radians();
+                let (sn, cs) = (a.sin(), a.cos());
+                p[0] = cs;
+                p[1] = sn;
+                p[2] = *count as f32;
+                p[3] = *softness as f32;
+                MODE_BLINDS
+            }
+            TransitionKind::Checker { cols, rows, softness } => {
+                p[0] = *cols as f32;
+                p[1] = *rows as f32;
+                p[2] = *softness as f32;
+                MODE_CHECKER
+            }
+            TransitionKind::Blocks { cols, rows, softness } => {
+                p[0] = *cols as f32;
+                p[1] = *rows as f32;
+                p[2] = *softness as f32;
+                MODE_BLOCKS
+            }
+            TransitionKind::Spiral { turns, cx, cy, softness } => {
+                p[0] = *turns as f32;
+                p[1] = *softness as f32;
+                p[2] = *cx as f32;
+                p[3] = *cy as f32;
+                MODE_SPIRAL
+            }
+            TransitionKind::Split { vertical } => {
+                p[0] = if *vertical { 1.0 } else { 0.0 };
+                MODE_SPLIT
+            }
+            TransitionKind::Squeeze { dir } => {
+                (p[0], p[1]) = d(*dir);
+                MODE_SQUEEZE
+            }
+            TransitionKind::Stretch { vertical } => {
+                p[0] = if *vertical { 1.0 } else { 0.0 };
+                MODE_STRETCH
+            }
+            TransitionKind::Swap { vertical, depth } => {
+                p[0] = if *vertical { 1.0 } else { 0.0 };
+                p[1] = *depth as f32;
+                MODE_SWAP
+            }
+            TransitionKind::Shake { amount, steps } => {
+                p[0] = *amount as f32;
+                p[1] = *steps as f32;
+                MODE_SHAKE
+            }
+            TransitionKind::FilmBurn { scale, softness, tint_r, tint_g, tint_b } => {
+                p[0] = *scale as f32;
+                p[1] = *softness as f32;
+                p[2] = *tint_r as f32;
+                p[3] = *tint_g as f32;
+                p[4] = *tint_b as f32;
+                MODE_BURN
+            }
+            TransitionKind::LightLeaks { strength, tint_r, tint_g, tint_b } => {
+                p[0] = *strength as f32;
+                p[1] = *tint_r as f32;
+                p[2] = *tint_g as f32;
+                p[3] = *tint_b as f32;
+                MODE_LEAKS
+            }
+            TransitionKind::ZoomBlur { amount, cx, cy } => {
+                p[0] = *amount as f32;
+                p[1] = *cx as f32;
+                p[2] = *cy as f32;
+                MODE_ZOOMBLUR
             }
         };
         TransMix { mode, p }
@@ -315,22 +410,23 @@ fn kernel(
             mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[2]))
         }
         MODE_IRIS => {
-            let (cx, cy) = ((u - 0.5) * aspect, v - 0.5);
-            let r = match p[0] as i32 {
-                1 => cx.abs() + cy.abs(),
-                2 => cx.abs().max(cy.abs()),
-                _ => (cx * cx + cy * cy).sqrt(),
+            // центр (p2, p3) произвольный (Р.51); rmax — расстояние до
+            // САМОГО ДАЛЬНЕГО угла кадра в той же метрике, чтобы фронт
+            // всегда накрывал кадр целиком
+            let (cx, cy) = ((u - p[2]) * aspect, v - p[3]);
+            let metric = |dx: f32, dy: f32| match p[0] as i32 {
+                1 => dx.abs() + dy.abs(),
+                2 => dx.abs().max(dy.abs()),
+                _ => (dx * dx + dy * dy).sqrt(),
             };
-            // радиус, накрывающий кадр целиком
-            let rmax = match p[0] as i32 {
-                1 => (aspect + 1.0) * 0.5,
-                2 => (aspect * 0.5).max(0.5),
-                _ => ((aspect * aspect + 1.0) * 0.25).sqrt(),
-            };
+            let r = metric(cx, cy);
+            let ex = (p[2].max(1.0 - p[2])) * aspect;
+            let ey = p[3].max(1.0 - p[3]);
+            let rmax = metric(ex, ey).max(1e-6);
             mix4(a.sample(u, v), b.sample(u, v), front_mask(r / rmax, k, p[1]))
         }
         MODE_CLOCK => {
-            let (cx, cy) = (u - 0.5, v - 0.5);
+            let (cx, cy) = (u - p[2], v - p[3]);
             // 0 наверху, по часовой; reverse — против
             let mut ang = cx.atan2(-cy);
             if ang < 0.0 {
@@ -379,15 +475,26 @@ fn kernel(
         }
         MODE_ZOOM => {
             let amt = p[0];
+            let (ox, oy) = (p[1], p[2]);
             let za = 1.0 + amt * k; // уходящий разъезжается
             let zb = 1.0 + amt * (1.0 - k); // входящий налетает
-            let sa = a.sample((u - 0.5) / za + 0.5, (v - 0.5) / za + 0.5);
-            let sb = b.sample((u - 0.5) / zb + 0.5, (v - 0.5) / zb + 0.5);
+            let sa = a.sample((u - ox) / za + ox, (v - oy) / za + oy);
+            let sb = b.sample((u - ox) / zb + ox, (v - oy) / zb + oy);
             mix4(sa, sb, k)
         }
         MODE_SPIN => {
             let (turns, amt) = (p[0], p[1]);
-            let sa = rot_sample(a, u, v, turns * k * std::f32::consts::TAU, 1.0 + amt * k, aspect);
+            let (ox, oy) = (p[2], p[3]);
+            let sa = rot_sample(
+                a,
+                u,
+                v,
+                turns * k * std::f32::consts::TAU,
+                1.0 + amt * k,
+                aspect,
+                ox,
+                oy,
+            );
             let sb = rot_sample(
                 b,
                 u,
@@ -395,6 +502,8 @@ fn kernel(
                 -turns * (1.0 - k) * std::f32::consts::TAU,
                 1.0 + amt * (1.0 - k),
                 aspect,
+                ox,
+                oy,
             );
             mix4(sa, sb, k)
         }
@@ -472,11 +581,240 @@ fn kernel(
                 src[3],
             ]
         }
+        MODE_BLINDS => {
+            // проекция на повёрнутую ось (как wipe), фракция ВНУТРИ полосы:
+            // все полосы открываются одновременно
+            let (dx, dy) = (p[0], p[1]);
+            let ext = (dx.abs() + dy.abs()).max(1e-6);
+            let c = ((u - 0.5) * dx + (v - 0.5) * dy + ext * 0.5) / ext;
+            let f = fracf(c * p[2].max(1.0));
+            mix4(a.sample(u, v), b.sample(u, v), front_mask(f, k, p[3]))
+        }
+        MODE_CHECKER => {
+            // локальный вайп в клетке, чётные и нечётные — навстречу
+            let (cols, rows) = (p[0].max(1.0), p[1].max(1.0));
+            let (i, j) = ((u * cols).floor(), (v * rows).floor());
+            let fx = fracf(u * cols);
+            let s = if ((i + j) as i32) % 2 == 0 { fx } else { 1.0 - fx };
+            mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[2]))
+        }
+        MODE_BLOCKS => {
+            // порядок клеток — хэш клетки: детерминизм без seed, тот же
+            // приём, что у glitch. softness — пер-клеточный кроссфейд
+            let (cols, rows) = (p[0].max(1.0), p[1].max(1.0));
+            let (i, j) = ((u * cols).floor() as u32, (v * rows).floor() as u32);
+            let s = hash01(hash_u32(i.wrapping_mul(1973)) ^ hash_u32(j.wrapping_mul(9277)));
+            mix4(a.sample(u, v), b.sample(u, v), front_mask(s, k, p[2]))
+        }
+        MODE_SPIRAL => {
+            // архимедов фронт: угол (как clock) + обороты по радиусу
+            let (cx, cy) = (u - p[2], v - p[3]);
+            let mut ang = cx.atan2(-cy);
+            if ang < 0.0 {
+                ang += std::f32::consts::TAU;
+            }
+            let theta = ang / std::f32::consts::TAU;
+            let ex = (p[2].max(1.0 - p[2])) * aspect;
+            let ey = p[3].max(1.0 - p[3]);
+            let rmax = (ex * ex + ey * ey).sqrt().max(1e-6);
+            let r = ((cx * aspect) * (cx * aspect) + cy * cy).sqrt() / rmax;
+            let turns = p[0].max(0.25);
+            let sfrac = (theta + turns * r) / (1.0 + turns);
+            mix4(a.sample(u, v), b.sample(u, v), front_mask(sfrac, k, p[1]))
+        }
+        MODE_SPLIT => {
+            // симбиоз: половинки A разъезжаются, B открывается в щели
+            let c = if p[0] > 0.5 { v - 0.5 } else { u - 0.5 };
+            let h = k * 0.5;
+            if c.abs() >= h {
+                let off = h * c.signum();
+                if p[0] > 0.5 { a.sample(u, v - off) } else { a.sample(u - off, v) }
+            } else {
+                b.sample(u, v)
+            }
+        }
+        MODE_SQUEEZE => {
+            // симбиоз: A сжимается к дальнему краю, B расправляется от
+            // ближнего; движение вдоль dir
+            let (dx, dy) = (p[0], p[1]);
+            let c = if dx > 0.5 {
+                u
+            } else if dx < -0.5 {
+                1.0 - u
+            } else if dy > 0.5 {
+                v
+            } else {
+                1.0 - v
+            };
+            let back = |c2: f32| -> (f32, f32) {
+                if dx > 0.5 {
+                    (c2, v)
+                } else if dx < -0.5 {
+                    (1.0 - c2, v)
+                } else if dy > 0.5 {
+                    (u, c2)
+                } else {
+                    (u, 1.0 - c2)
+                }
+            };
+            if c < k {
+                let (su, sv) = back(c / k.max(1e-4));
+                b.sample(su, sv)
+            } else {
+                let (su, sv) = back((c - k) / (1.0 - k).max(1e-4));
+                a.sample(su, sv)
+            }
+        }
+        MODE_STRETCH => {
+            // симбиоз: B растягивается из центральной линии поверх A
+            let c = if p[0] > 0.5 { v - 0.5 } else { u - 0.5 };
+            let h = k * 0.5;
+            if c.abs() < h {
+                let c2 = c / k.max(1e-4) + 0.5;
+                if p[0] > 0.5 { b.sample(u, c2) } else { b.sample(c2, v) }
+            } else {
+                a.sample(u, v)
+            }
+        }
+        MODE_SWAP => {
+            // 2.5D-обмен: стороны едут по дуге, сжимаясь вглубь; порядок
+            // переключается на середине — окклюзия аналитическая, без
+            // глубины (depth-буфера в пайплайне нет и не надо)
+            let vert = p[0] > 0.5;
+            let wave = (std::f32::consts::PI * k).sin();
+            let off = 0.3 * wave;
+            let scale = (1.0 - p[1] * wave).max(0.05);
+            let quad = |img: &Img<'_>, side: f32| -> [f32; 4] {
+                let (qx, qy) = if vert { (0.5, 0.5 + side * off) } else { (0.5 + side * off, 0.5) };
+                let su = (u - qx) / scale + 0.5;
+                let sv = (v - qy) / scale + 0.5;
+                if (0.0..1.0).contains(&su) && (0.0..1.0).contains(&sv) {
+                    let mut c = img.sample(su, sv);
+                    // дальняя сторона чуть темнее — глубина читается
+                    let shade = 1.0 - 0.25 * wave;
+                    c[0] *= shade;
+                    c[1] *= shade;
+                    c[2] *= shade;
+                    c
+                } else {
+                    [0.0; 4]
+                }
+            };
+            let sa = quad(a, 1.0);
+            let sb = quad(b, -1.0);
+            // k < 0.5 — уходящий ещё СВЕРХУ, дальше — входящий
+            let (top, bot) = if k < 0.5 { (sa, sb) } else { (sb, sa) };
+            over_straight(top, bot)
+        }
+        MODE_SHAKE => {
+            // рывки кадра: индекс шага по прогрессу, кадр — катом на 0.5
+            let steps = p[1].max(1.0);
+            let i = ((k * steps) as u32).min(steps as u32 - 1);
+            let amp = p[0] * 0.2 * (std::f32::consts::PI * k).sin();
+            let ox = (hash01(i.wrapping_mul(2).wrapping_add(1)) - 0.5) * amp;
+            let oy = (hash01(i.wrapping_mul(2).wrapping_add(2)) - 0.5) * amp;
+            let img = if k < 0.5 { a } else { b };
+            img.sample(u + ox, v + oy)
+        }
+        MODE_BURN => {
+            // фронт по крупному шуму, на кромке — горячая примесь цвета;
+            // вклад гейтится альфой (иначе соло-фейд подсветил бы пустоту)
+            let n = value_noise(u * p[0] * aspect, v * p[0]);
+            let mask = front_mask(n, k, p[1].max(0.02));
+            let base = mix4(a.sample(u, v), b.sample(u, v), mask);
+            let rim = (mask * (1.0 - mask) * 4.0).clamp(0.0, 1.0);
+            let gate = rim * base[3] / 255.0;
+            [
+                base[0] + (p[2] - base[0]) * gate,
+                base[1] + (p[3] - base[1]) * gate,
+                base[2] + (p[4] - base[2]) * gate,
+                base[3],
+            ]
+        }
+        MODE_LEAKS => {
+            // два цветных пятна пролетают по диагоналям поверх растворения
+            let base = mix4(a.sample(u, v), b.sample(u, v), k);
+            let wave = (std::f32::consts::PI * k).sin();
+            let blob = |bx: f32, by: f32| -> f32 {
+                let dx = (u - bx) * aspect;
+                let dy = v - by;
+                let d = (dx * dx + dy * dy).sqrt() / 0.45;
+                let w = (1.0 - d).max(0.0);
+                w * w
+            };
+            let w = (blob(k * 1.2 - 0.1, 0.3 + 0.4 * k) + blob(1.1 - 1.2 * k, 0.7 - 0.4 * k))
+                * p[0]
+                * wave;
+            let gate = w.clamp(0.0, 1.0) * base[3] / 255.0;
+            [
+                base[0] + (p[1] - base[0]) * gate,
+                base[1] + (p[2] - base[1]) * gate,
+                base[2] + (p[3] - base[2]) * gate,
+                base[3],
+            ]
+        }
+        MODE_ZOOMBLUR => {
+            // лучи от центра: 7 тапов вдоль луча, сторона — катом на 0.5
+            let (ox, oy) = (p[1], p[2]);
+            let amt = p[0] * (std::f32::consts::PI * k).sin();
+            let img = if k < 0.5 { a } else { b };
+            let mut acc = [0.0f32; 4];
+            for i in 0..WHIP_TAPS {
+                let z = 1.0 + amt * 0.6 * (i as f32 / (WHIP_TAPS - 1) as f32);
+                let c = img.sample((u - ox) / z + ox, (v - oy) / z + oy);
+                for ch in 0..4 {
+                    acc[ch] += c[ch];
+                }
+            }
+            for ch in acc.iter_mut() {
+                *ch /= WHIP_TAPS as f32;
+            }
+            acc
+        }
         _ => mix4(a.sample(u, v), b.sample(u, v), k),
     }
 }
 
 const WHIP_TAPS: usize = 7;
+
+/// Дробная часть «как в WGSL»: x − floor(x) (у f32::fract другой знак
+/// на отрицательных — зеркала разъехались бы).
+fn fracf(x: f32) -> f32 {
+    x - x.floor()
+}
+
+/// Straight-alpha «top поверх bottom» в f32 — для 2.5D-обмена, где
+/// стороны движутся раздельно и появляется настоящая прозрачность.
+fn over_straight(top: [f32; 4], bot: [f32; 4]) -> [f32; 4] {
+    let ta = (top[3] / 255.0).clamp(0.0, 1.0);
+    let ba = (bot[3] / 255.0).clamp(0.0, 1.0);
+    let oa = ta + ba * (1.0 - ta);
+    if oa <= 0.0 {
+        return [0.0; 4];
+    }
+    let mut o = [0.0f32; 4];
+    for c in 0..3 {
+        o[c] = (top[c] * ta + bot[c] * ba * (1.0 - ta)) / oa;
+    }
+    o[3] = oa * 255.0;
+    o
+}
+
+/// Клеточный value-noise на общем целочисленном хэше (тот же, что у
+/// glitch/blocks) — WGSL повторяет дословно.
+fn value_noise(x: f32, y: f32) -> f32 {
+    let (xi, yi) = (x.floor(), y.floor());
+    let (fx, fy) = (x - xi, y - yi);
+    let h = |i: f32, j: f32| -> f32 {
+        let (i, j) = (i as i32 as u32, j as i32 as u32);
+        hash01(hash_u32(i.wrapping_mul(1973)) ^ hash_u32(j.wrapping_mul(9277)))
+    };
+    let sx = fx * fx * (3.0 - 2.0 * fx);
+    let sy = fy * fy * (3.0 - 2.0 * fy);
+    let top = h(xi, yi) + (h(xi + 1.0, yi) - h(xi, yi)) * sx;
+    let bot = h(xi, yi + 1.0) + (h(xi + 1.0, yi + 1.0) - h(xi, yi + 1.0)) * sx;
+    top + (bot - top) * sy
+}
 
 fn quant(x: f32, step: f32) -> f32 {
     if step <= 0.0 {
@@ -485,12 +823,22 @@ fn quant(x: f32, step: f32) -> f32 {
     (x / step).floor() * step + step * 0.5
 }
 
-fn rot_sample(img: &Img<'_>, u: f32, v: f32, ang: f32, zoom: f32, aspect: f32) -> [f32; 4] {
+#[allow(clippy::too_many_arguments)]
+fn rot_sample(
+    img: &Img<'_>,
+    u: f32,
+    v: f32,
+    ang: f32,
+    zoom: f32,
+    aspect: f32,
+    ox: f32,
+    oy: f32,
+) -> [f32; 4] {
     let (s, c) = (ang.sin(), ang.cos());
-    let (cx, cy) = ((u - 0.5) * aspect / zoom, (v - 0.5) / zoom);
+    let (cx, cy) = ((u - ox) * aspect / zoom, (v - oy) / zoom);
     let rx = cx * c - cy * s;
     let ry = cx * s + cy * c;
-    img.sample(rx / aspect + 0.5, ry + 0.5)
+    img.sample(rx / aspect + ox, ry + oy)
 }
 
 /// Дешёвое размытие 9 отсчётами (3×3 с шагом r) — форма выбрана так,
