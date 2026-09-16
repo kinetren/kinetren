@@ -273,6 +273,13 @@ fn lowbias32(mut x: u32) -> u32 {
     x
 }
 
+/// Раскладка титра в пикселях кадра `w`×`h` — для рамки драга в превью
+/// (Р.52 С6). Возвращает `None` для не-титра. Идёт через ту же
+/// `text_params`: окно, кадр и рамка обязаны видеть одни значения.
+pub fn title_layout(kind: &GeneratorKind, w: u32, h: u32) -> Option<kt_text::LayoutInfo> {
+    matches!(kind, GeneratorKind::Text { .. }).then(|| kt_text::layout_info(&text_params(kind), w, h))
+}
+
 /// ЕДИНСТВЕННАЯ функция перевода хранимого титра (kt-model) во вход
 /// растеризатора (kt-text) — второго парсера не бывает (kt-text/CLAUDE.md):
 /// окно и кадр обязаны видеть одни и те же значения.

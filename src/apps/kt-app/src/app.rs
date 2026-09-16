@@ -3217,6 +3217,58 @@ impl KtApp {
         }
     }
 
+    /// Драг титра ПРЯМО В ПРЕВЬЮ (Р.52 С6): рамка блока текста из той же
+    /// раскладки, что рисует кадр; перетаскивание пишет pos_x/pos_y ТОЙ ЖЕ
+    /// командой и тем же gesture, что окно, — оба способа ведут себя
+    /// одинаково по построению (правило 17). Хват-зона шире рамки
+    /// (правило 1); клик-play вне рамки жив.
+    fn title_drag_in_preview(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, img: egui::Rect) {
+        let Some((media, gesture)) =
+            self.title_editors.iter().find(|e| e.open).map(|e| (e.media, e.gesture))
+        else {
+            return;
+        };
+        let Some(kt_model::Source::File(m)) = self.model.project().source(media) else { return };
+        let path = m.path.clone();
+        let Some(mut kind) = kt_model::parse_gen_path(&path) else { return };
+        let (iw, ih) = (img.width().max(1.0) as u32, img.height().max(1.0) as u32);
+        let Some(info) = kt_media::generator::title_layout(&kind, iw, ih) else { return };
+        let b = info.block;
+        let frame = egui::Rect::from_min_size(
+            img.min + egui::vec2(b.x as f32, b.y as f32),
+            egui::vec2(b.w.max(8.0) as f32, b.h.max(8.0) as f32),
+        )
+        .intersect(img);
+        painter.rect(
+            frame,
+            0.0,
+            egui::Color32::TRANSPARENT,
+            egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(120, 190, 255, 200)),
+            egui::StrokeKind::Outside,
+        );
+        let resp =
+            ui.interact(frame.expand(8.0), ui.id().with(("title-drag", media)), egui::Sense::drag());
+        if resp.dragged() {
+            let d = resp.drag_delta();
+            if d != egui::Vec2::ZERO
+                && let kt_model::GeneratorKind::Text { pos_x, pos_y, .. } = &mut kind
+            {
+                *pos_x = (*pos_x + d.x as f64 / img.width().max(1.0) as f64).clamp(0.0, 1.0);
+                *pos_y = (*pos_y + d.y as f64 / img.height().max(1.0) as f64).clamp(0.0, 1.0);
+                let new_path = kt_model::format_gen_path(&kind);
+                if new_path != path {
+                    self.apply_coalesced(
+                        kt_model::Command::SetMediaPath { id: media, path: new_path },
+                        gesture,
+                    );
+                }
+            }
+        }
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+    }
+
     /// Safe-зоны рисуются, пока открыто хоть одно окно титра (Р.52 С3).
     pub(crate) fn show_safe_zones(&self) -> bool {
         self.title_editors.iter().any(|e| e.open)
@@ -5187,6 +5239,7 @@ impl KtApp {
                     );
                 }
             }
+            self.title_drag_in_preview(ui, &painter, img_rect);
             // скрим — только если неполнота держится >180 мс (v1)
             let show_overlay = self
                 .incomplete_since

@@ -6062,6 +6062,70 @@ fn t489_safe_zones_follow_title_window() {
     assert!(!h.state().show_safe_zones());
 }
 
+/// Тест 495 (Р.52 С6): драг титра ПРЯМО В ПРЕВЬЮ — рамка блока при
+/// открытом окне, перетаскивание в три шага пишет pos_x/pos_y ТОЙ ЖЕ
+/// командой и тем же gesture, что окно (правило 17 по построению).
+#[test]
+fn t495_title_drag_in_preview_writes_pos() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    h.step();
+    let id = h.state().model.project().media.last().unwrap().id;
+    let gesture = h.state().title_editors[0].gesture;
+    // титру нужен видимый блок — даём текст той же сессией окна
+    let mut kind =
+        kt_model::parse_gen_path(&h.state().model.project().media.last().unwrap().path).unwrap();
+    if let GeneratorKind::Text { text, size, .. } = &mut kind {
+        *text = "DRAG".into();
+        *size = 0.2;
+    }
+    {
+        let app = h.state_mut();
+        let path = format_gen_path(&kind);
+        assert!(app.apply_coalesced(Command::SetMediaPath { id, path }, gesture));
+    }
+    h.step();
+    let preview = h.state().preview_rect;
+    assert!(preview.width() > 40.0, "превью в харнесте есть: {preview:?}");
+
+    let depth = h.state().model.undo_depth();
+    let before = match kt_model::parse_gen_path(
+        &h.state().model.project().media.last().unwrap().path,
+    ) {
+        Some(GeneratorKind::Text { pos_x, pos_y, .. }) => (pos_x, pos_y),
+        _ => unreachable!(),
+    };
+    assert_eq!(before, (0.5, 0.5));
+
+    // драг в ТРИ шага из центра превью (блок с якорем Center сидит там)
+    let c = preview.center();
+    h.drag_at(c);
+    h.step();
+    h.hover_at(c + egui::vec2(9.0, 0.0));
+    h.step();
+    h.hover_at(c + egui::vec2(40.0, 24.0));
+    h.step();
+    h.drop_at(c + egui::vec2(40.0, 24.0));
+    h.step();
+
+    let after = match kt_model::parse_gen_path(
+        &h.state().model.project().media.last().unwrap().path,
+    ) {
+        Some(GeneratorKind::Text { pos_x, pos_y, .. }) => (pos_x, pos_y),
+        _ => unreachable!(),
+    };
+    assert!(
+        after.0 > before.0 + 0.01 && after.1 > before.1 + 0.01,
+        "драг обязан сдвинуть позицию: {before:?} -> {after:?}"
+    );
+    assert_eq!(
+        h.state().model.undo_depth(),
+        depth,
+        "драг пишет тем же gesture, что сессия окна, — новых шагов истории нет"
+    );
+}
+
 /// Тест 227 (Р.33 С4): у перехода появилось окно свойств. Двойной клик по
 /// его окну на полосе открывает редактор, вид меняется пикером и сразу
 /// уезжает в модель, «Отмена» возвращает прежний.
