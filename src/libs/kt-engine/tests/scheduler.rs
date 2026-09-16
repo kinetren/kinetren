@@ -313,3 +313,80 @@ fn t287_stutter_of_micro_clips_asks_for_one_burst() {
         "400 микрособытий на одном кадре источника — один заказ, а не 400: {wanted:?}"
     );
 }
+
+/// Тест 501 (Р.53, п.411): перенастройка источника — НЕ запрос.
+///
+/// (а) Она не подчиняется generation-отмене: seek посреди сессии окна
+/// (драг пипетки цвета) не имеет права выбросить её из очереди — иначе
+/// источник навсегда остался бы со старыми параметрами, а модель ушла бы
+/// вперёд. Именно поэтому `Queue.retune` живёт отдельным полем.
+///
+/// (б) После перенастройки в кэше не остаётся НИ ОДНОГО кадра старых
+/// параметров: чистит их сам воркер — тот же поток, который их вставляет.
+#[test]
+fn t501_retune_is_not_cancelled_and_not_raced() {
+    let cache = Arc::new(BurstCache::new(CacheConfig::default()));
+    let media = MediaId(1);
+    let sid = source_id(media);
+    let q = Quality { width: 32, height: 18 };
+    let src = match kt_media::factory::open_pseudo("gen:solid") {
+        Some(Ok(s)) => s,
+        _ => unreachable!("gen: путь обязан открыться"),
+    };
+    let w = MediaWorker::spawn(media, src, cache.clone());
+
+    // заказываем пачку кадров чёрного генератора и ждём прогрева
+    let step = 3000i64;
+    for i in 0..64 {
+        w.submit(DecodeRequest {
+            kind: RequestKind::video_on_grid(Tick(i * step), Some(q), step),
+            prio: Priority::NearPrefetch,
+            generation: 1,
+        });
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !w.is_idle() {
+        assert!(std::time::Instant::now() < deadline, "прогрев не закончился");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let warmed = (0..64)
+        .filter(|i| cache.get_video(sid, Some(q), i * step).is_some())
+        .count();
+    assert!(warmed > 8, "кэш не прогрелся: {warmed} кадров");
+
+    // (а) перенастройка + НЕМЕДЛЕННЫЙ seek с огромным поколением
+    w.retune("gen:solid:c=ff8800");
+    w.cancel_generations_below(u64::MAX / 2);
+
+    // ждём, пока перенастройка доедет: кадры новых параметров приходят
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        w.submit(DecodeRequest {
+            kind: RequestKind::video_on_grid(Tick(0), Some(q), step),
+            prio: Priority::Playback,
+            generation: u64::MAX / 2,
+        });
+        if let Some(f) = cache.get_video(sid, Some(q), 0)
+            && f.rgba[..3] == [255, 136, 0]
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "seek отменил перенастройку — источник остался со старыми параметрами"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // (б) ни одного кадра СТАРЫХ параметров не осталось
+    for i in 0..64 {
+        if let Some(f) = cache.get_video(sid, Some(q), i * step) {
+            assert_eq!(
+                &f.rgba[..3],
+                &[255, 136, 0],
+                "кадр {i} остался со старыми параметрами: чистка разошлась с воркером"
+            );
+        }
+    }
+    w.shutdown();
+}

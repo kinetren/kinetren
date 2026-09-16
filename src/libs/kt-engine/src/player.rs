@@ -159,6 +159,12 @@ pub struct Player {
     wake: Arc<Wake>,
     /// Версия проекта: prefetch пересобирает рендереры только по смене.
     project_version: Arc<AtomicU64>,
+    /// «Содержимое источника изменилось» (Р.53, п.411) — ОТДЕЛЬНО от
+    /// версии проекта. Префетч по ней просыпается, но рендереры НЕ
+    /// пересобирает: план от параметров генератора не зависит (закон П).
+    content_version: Arc<AtomicU64>,
+    /// Счётчик поднятых потоков-декодеров (сторож t500/t502).
+    worker_spawns: Arc<AtomicU64>,
     /// Кэш графа для sample_levels_at (п.1): (версия, renderer, store).
     levels_probe: Mutex<Option<(u64, AudioRenderer, FxStateStore)>>,
     pub loop_stats: Arc<LoopStats>,
@@ -223,6 +229,8 @@ impl Player {
         let model_dirty = Arc::new(AtomicBool::new(true));
         let wake = Arc::new(Wake { lock: Mutex::new(()), cv: std::sync::Condvar::new() });
         let project_version = Arc::new(AtomicU64::new(0));
+        let content_version = Arc::new(AtomicU64::new(0));
+        let worker_spawns = Arc::new(AtomicU64::new(0));
         let loop_stats = Arc::new(LoopStats::default());
         let stop = Arc::new(AtomicBool::new(false));
         let underruns = Arc::new(AtomicU64::new(0));
@@ -275,6 +283,7 @@ impl Player {
             let wake_p = wake.clone();
             let stats_p = loop_stats.clone();
             let version_p = project_version.clone();
+            let content_p = content_version.clone();
             let cache = cache.clone();
             let transport = transport.clone();
             let workers = workers.clone();
@@ -288,7 +297,7 @@ impl Player {
                 .spawn(move || {
                     prefetch_loop(
                         cache, transport, workers, natives_p, project, quality, stop, wake_p,
-                        stats_p, version_p, region_p,
+                        stats_p, version_p, content_p, region_p,
                     )
                 })
                 .expect("spawn prefetch")
@@ -317,6 +326,8 @@ impl Player {
             decode_stats,
             wake,
             project_version,
+            content_version,
+            worker_spawns,
             loop_stats,
             levels_probe: Mutex::new(None),
         };
@@ -465,6 +476,7 @@ impl Player {
     /// на общий кэш; транспорт, кольцо, FX-state и прогретый кэш нетронуты
     /// (регрессия п.27: раньше добавление файла сбрасывало весь кэш).
     pub fn add_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
+        self.worker_spawns.fetch_add(1, Ordering::AcqRel);
         self.remember_native(media, source.as_ref());
         let w = MediaWorker::spawn_with_stats(
             media,
@@ -485,6 +497,7 @@ impl Player {
     /// кадр заглушки уже после инвалидации. Транспорт, позиция и кэш
     /// прочих источников не трогаются.
     pub fn replace_media(&self, media: kt_model::MediaId, source: Box<dyn kt_media::MediaSource>) {
+        self.worker_spawns.fetch_add(1, Ordering::AcqRel);
         if let Some(old) = self.workers.write().unwrap().remove(&media) {
             old.shutdown();
         }
@@ -504,9 +517,51 @@ impl Player {
         self.rebuild_video_renderer();
         // состав источников изменился — префетч обязан проснуться и
         // прогреть кэш заново (в простое он пропускает проходы, пока
-        // сигнатура состояния та же, и без бампа версии не заметил бы)
-        self.project_version.fetch_add(1, Ordering::AcqRel);
+        // сигнатура состояния та же, и без бампа версии не заметил бы).
+        // Версия СОДЕРЖИМОГО, а не проекта: свою пересборку рендерера
+        // подмена уже сделала выше, а плану источник безразличен.
+        self.content_version.fetch_add(1, Ordering::AcqRel);
         self.wake.notify();
+    }
+
+    /// Перенастроить источник под новый путь БЕЗ пересоздания (Р.53,
+    /// п.411): поток декодера жив, рендереры целы, проект не клонируется.
+    /// Вызывающий обязан спросить `kt_media::factory::can_retune` — иначе
+    /// источник отвергнет путь, и правка молча не применится.
+    ///
+    /// `false` — воркера нет (медиа не поднято): вызывающий делает
+    /// обычную подмену.
+    pub fn retune_media(&self, media: kt_model::MediaId, path: &str) -> bool {
+        let workers = self.workers.read().unwrap();
+        let Some(w) = workers.get(&media) else { return false };
+        w.retune(path);
+        drop(workers);
+        // содержимое источника изменилось: префетч просыпается и греет
+        // кэш заново, рендереры НЕ пересобираются
+        self.content_version.fetch_add(1, Ordering::AcqRel);
+        self.wake.notify();
+        true
+    }
+
+    pub fn content_version(&self) -> u64 {
+        self.content_version.load(Ordering::Acquire)
+    }
+
+    /// Сколько раз за жизнь плеера поднимался поток-декодер (Р.53):
+    /// сторож того, что правка параметров генератора НЕ пересоздаёт
+    /// источник (t500, t502). В продукте не читается.
+    pub fn worker_spawns(&self) -> u64 {
+        self.worker_spawns.load(Ordering::Acquire)
+    }
+
+    /// Правка пути медиа в хранимом проекте БЕЗ бампа версий и пересборки
+    /// (Р.53, п.412): `Player::project()` обязан оставаться правдивым,
+    /// но плану путь безразличен — рендереры знают только `MediaId`.
+    pub fn set_media_path(&self, media: kt_model::MediaId, path: &str) {
+        let mut p = self.project.lock().unwrap();
+        if let Some(m) = p.media.iter_mut().find(|m| m.id == media) {
+            m.path = path.to_string();
+        }
     }
 
     /// Убрать медиа (симметрия RemoveMedia): воркер гасится, кэш других
@@ -1156,6 +1211,7 @@ fn prefetch_loop(
     wake: Arc<Wake>,
     loop_stats: Arc<LoopStats>,
     project_version: Arc<AtomicU64>,
+    content_version: Arc<AtomicU64>,
     loop_region: Arc<Mutex<Option<(i64, i64)>>>,
 ) {
     // рендереры кэшируются до смены версии проекта: клонировать Project и
@@ -1167,7 +1223,11 @@ fn prefetch_loop(
     // после seek/правки/смены качества сохраняется: любое изменение
     // состояния снимает пропуск.
     // (playhead, версия проекта, generation, качество, loop-регион)
-    type PassState = (i64, u64, u64, Quality, Option<(i64, i64)>);
+    // content_version в состоянии прохода есть (иначе в простое правка
+    // параметров генератора не разбудила бы префетч), но в условии
+    // ПЕРЕСБОРКИ рендереров его нет: план от параметров не зависит
+    // (закон П, Р.53 п.411).
+    type PassState = (i64, u64, u64, u64, Quality, Option<(i64, i64)>);
     let mut last_state: Option<PassState> = None;
     while !stop.load(Ordering::Acquire) {
         wake.wait_timeout(std::time::Duration::from_millis(100));
@@ -1178,6 +1238,7 @@ fn prefetch_loop(
             let state = (
                 transport.playhead_frames(),
                 project_version.load(Ordering::Acquire),
+                content_version.load(Ordering::Acquire),
                 transport.generation(),
                 *preview_quality.lock().unwrap(),
                 *loop_region.lock().unwrap(),

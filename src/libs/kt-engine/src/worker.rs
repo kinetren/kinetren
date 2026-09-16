@@ -76,12 +76,17 @@ struct Queue {
     // BTreeMap даёт и порядок, и dedup.
     audio: BTreeMap<(Priority, i64), u64>, // pos = burst idx
     video: BTreeMap<VideoQueueKey, (u64, i64)>, // pos = pts тики; (gen, step)
+    /// Перенастройка источника (Р.53, п.411): НЕ запрос. Поколением не
+    /// отменяется (иначе seek посреди драга пипетки молча выбросил бы её,
+    /// и источник навсегда остался бы со старыми параметрами),
+    /// приоритетом не задерживается, последняя выигрывает.
+    retune: Option<String>,
     closed: bool,
 }
 
 impl Queue {
     fn is_empty(&self) -> bool {
-        self.audio.is_empty() && self.video.is_empty()
+        self.audio.is_empty() && self.video.is_empty() && self.retune.is_none()
     }
 }
 
@@ -143,6 +148,19 @@ impl MediaWorker {
                 q.video.insert((req.prio, pts.0, quality), (req.generation, step));
             }
         }
+        self.shared.idle.store(false, Ordering::Release);
+        drop(q);
+        self.shared.cond.notify_one();
+    }
+
+    /// Перенастроить ЖИВОЙ источник под новый путь (Р.53, п.411): у
+    /// генератора это правка параметров, поток декодера при этом не
+    /// гасится и рендереры не пересобираются. Кадры старых параметров
+    /// выбрасывает САМ воркер — тот же поток, который их вставляет,
+    /// поэтому гонки «старый кадр дописан после чистки» не бывает.
+    pub fn retune(&self, path: &str) {
+        let mut q = self.shared.queue.lock().unwrap();
+        q.retune = Some(path.to_string());
         self.shared.idle.store(false, Ordering::Release);
         drop(q);
         self.shared.cond.notify_one();
@@ -210,6 +228,26 @@ fn worker_loop(
             loop {
                 if q.closed {
                     return;
+                }
+                // ПЕРЕНАСТРОЙКА — первой, до выбора задания (п.411):
+                // дальше пойдут ключи, которые обязаны считаться уже
+                // новыми параметрами.
+                if let Some(path) = q.retune.take() {
+                    drop(q);
+                    let applied = source.retune(&path);
+                    debug_assert!(
+                        applied,
+                        "source rejected retune: the caller must ask factory::can_retune first"
+                    );
+                    if applied {
+                        // кадры старых параметров выбрасывает ТОТ ЖЕ поток,
+                        // что их вставляет: гонки нет по построению
+                        cache.invalidate_source(source_id);
+                        failed_video.clear();
+                        failed_audio.clear();
+                    }
+                    q = shared.queue.lock().unwrap();
+                    continue;
                 }
                 match pick_next(&q, cursor_audio, cursor_video) {
                     Some(Pick::Audio(key)) => {

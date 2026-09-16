@@ -312,3 +312,109 @@ fn t316_replace_media_updates_the_decode_stage() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
+
+/// Тест 500 (Р.53, п.411): перенастройка источника НЕ пересоздаёт его.
+/// Поток декодера жив (счётчик спавнов не растёт), рендереры не
+/// пересобираются (версия проекта не растёт), а картинка при этом новая
+/// — кадры старых параметров выброшены. До этого пункта каждое нажатие
+/// клавиши в поле титра гасило и поднимало поток и дважды пересобирало
+/// рендереры (претензия владельца Р.53).
+#[test]
+fn t500_retune_keeps_worker_and_renderer() {
+    let mut project = base_project();
+    // клип-генератор поверх аудио-клипа базового проекта
+    project.media.push(MediaRef { id: MediaId(2), path: "gen:solid".into() });
+    project.clips.push(ClipEvent {
+        id: ClipId(2),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000 * 4),
+        source_in: Tick(0),
+        media: MediaId(2),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    project.validate().unwrap();
+
+    let open_gen = |path: &str| -> Box<dyn kt_media::MediaSource> {
+        match kt_media::factory::open_pseudo(path) {
+            Some(Ok(s)) => s,
+            _ => unreachable!("gen: путь обязан открыться"),
+        }
+    };
+    let (player, _consumer) = Player::new(
+        project,
+        vec![
+            (
+                MediaId(1),
+                Box::new(SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Dc { value: 1.0 })),
+            ),
+            (MediaId(2), open_gen("gen:solid")),
+        ],
+    );
+    let q = kt_media::Quality { width: 64, height: 36 };
+    player.set_preview_quality(q);
+    let sid = kt_engine::source_id(MediaId(2));
+    let idx = kt_engine::video::video_cache_idx(Tick(0));
+
+    // прогреваем кадр чёрного генератора
+    player.cache.insert_video(
+        sid,
+        Some(q),
+        idx,
+        kt_media::VideoFrame {
+            pts: Tick(0),
+            width: q.width,
+            height: q.height,
+            rgba: vec![0u8; (q.width * q.height * 4) as usize].into_boxed_slice(),
+            has_alpha: false,
+        }
+        .into(),
+    );
+    let spawns = player.worker_spawns();
+    let pver = player.project_version();
+    let cver = player.content_version();
+
+    assert!(
+        kt_media::factory::can_retune("gen:solid", "gen:solid:c=ff8800"),
+        "цвет меняется без смены паспорта"
+    );
+    assert!(player.retune_media(MediaId(2), "gen:solid:c=ff8800"));
+
+    assert_eq!(player.worker_spawns(), spawns, "поток декодера обязан остаться живым");
+    assert_eq!(player.project_version(), pver, "рендереры пересобирать незачем: план тот же");
+    assert!(player.content_version() > cver, "содержимое источника изменилось — префетч будит");
+
+    // кадр старых параметров выброшен, новый приходит с НОВЫМ цветом
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut saw_empty = false;
+    loop {
+        match player.cache.get_video(sid, Some(q), idx) {
+            Some(f) if f.rgba[..3] == [255, 136, 0] => break,
+            // старый кадр ещё лежит — воркер не дошёл до перенастройки;
+            // ждём, но по дедлайну это провал
+            Some(_) => {}
+            None => saw_empty = true,
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "кадр новых параметров не приехал (пусто видели: {saw_empty})"
+        );
+        // превью-композит сам заказывает недостающие кадры у воркера —
+        // это и есть продуктовый путь заказа
+        let mut buf = Vec::new();
+        let _ = player.compose_preview_into(Tick(0), &mut buf);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(saw_empty, "кадр старых параметров обязан был уйти из кэша");
+    // и поток за всё это время так и не пересоздавался
+    assert_eq!(player.worker_spawns(), spawns);
+    assert_eq!(player.project_version(), pver);
+}
