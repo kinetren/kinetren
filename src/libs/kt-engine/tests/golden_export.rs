@@ -376,3 +376,108 @@ fn t67_preview_equals_export_with_fx_cold_and_warm() {
     let (warm, _) = video.compose_from_cache(&cache, t, q);
     assert_eq!(warm, export_frame, "прогретый (пост-FX кэш) == экспорт");
 }
+
+// ---- Р.52: генератор в рендере ------------------------------------------
+
+type Sources = Vec<(MediaId, Box<dyn MediaSource>)>;
+
+/// Проект t479: solid-генератор поверх синтетического фона.
+fn generator_project() -> (Project, Sources) {
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 128,
+        height: 72,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:dc:0.25".into() });
+    p.media.push(MediaRef { id: MediaId(2), path: "gen:solid:c=ff8800".into() });
+    let clip = |id: u64, lane: u32, start: i64, dur: i64, media: u64| ClipEvent {
+        id: ClipId(id),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane,
+        start: Tick(start),
+        duration: Tick(dur),
+        source_in: Tick(0),
+        media: MediaId(media),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    };
+    // фон — вся сцена; solid входит на 30_000 (кадр №10) верхним слоем
+    p.clips = vec![clip(1, 1, 0, 90_000, 1), clip(2, 0, 30_000, 60_000, 2)];
+    p.validate().unwrap();
+    let sources: Sources = vec![
+        (MediaId(1), Box::new(SyntheticSource::new(Tick(90_000), AudioPattern::Silence))),
+        (
+            MediaId(2),
+            Box::new(kt_media::generator::GeneratorSource::new(kt_model::GeneratorKind::Solid {
+                color_r: 255,
+                color_g: 136,
+                color_b: 0,
+            })),
+        ),
+    ];
+    (p, sources)
+}
+
+/// Тест 479 (Р.52, родня t11): генератор в рендер-пути. Экспорт
+/// детерминирован между прогонами; кадр в зоне генератора — ровно
+/// заданный цвет; превью == экспорт байт-в-байт (инвариант 7).
+/// GOLDEN_AUDIO/GOLDEN_VIDEO этой сценой НЕ трогаются: у них свой
+/// проект без генераторов.
+#[test]
+fn t479_generator_preview_equals_export() {
+    let q = Quality { width: 128, height: 72 };
+    let target = 17usize; // кадр внутри зоны solid (t >= 30_000)
+    let run = || {
+        let (p, sources) = generator_project();
+        let mut captured: Option<Vec<u8>> = None;
+        let mut all = Vec::new();
+        let mut n = 0usize;
+        render_raw_video(&p, sources, q, |rgba| {
+            if n == target {
+                captured = Some(rgba.to_vec());
+            }
+            all.extend_from_slice(rgba);
+            n += 1;
+            Ok(())
+        })
+        .unwrap();
+        (captured.unwrap(), fnv(&all))
+    };
+    let (frame_a, hash_a) = run();
+    let (_, hash_b) = run();
+    assert_eq!(hash_a, hash_b, "экспорт с генератором обязан быть детерминирован");
+
+    // верхний слой — solid: каждый пиксель кадра ровно заданного цвета
+    assert!(
+        frame_a.chunks_exact(4).all(|px| px == [255, 136, 0, 255]),
+        "кадр генератора обязан быть ровно заданного цвета"
+    );
+
+    // превью тем же путём, что t11: независимый кэш + layers_at
+    let (p, sources) = generator_project();
+    let mut video = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let t = Tick(target as i64 * 3000);
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        sources.into_iter().collect();
+    for (media, src_pts, q) in video.layers_at(t, q) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(q)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(q),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    let (preview_frame, complete) = video.compose_from_cache(&cache, t, q);
+    assert!(complete, "композит с генератором обязан быть полон");
+    assert_eq!(preview_frame, frame_a, "превью и экспорт обязаны совпадать байт-в-байт");
+}

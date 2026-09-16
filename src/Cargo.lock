@@ -2035,6 +2035,7 @@ name = "kt-media"
 version = "0.1.0"
 dependencies = [
  "kt-ffmpeg",
+ "kt-model",
  "kt-time",
  "rusqlite",
  "tempfile",

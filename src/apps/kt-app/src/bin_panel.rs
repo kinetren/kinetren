@@ -494,15 +494,19 @@ impl KtApp {
             }
             ui.separator();
             // генераторы (Р.52): единственный вход для медиа БЕЗ файла —
-            // раньше в бин попадало только перетаскивание файлов на окно
-            ui.menu_button(tr(k::bin::menu::NEW_GENERATOR), |ui| {
+            // раньше в бин попадало только перетаскивание файлов на окно.
+            // Прямоугольники пунктов — наружу для живых сценариев (Р.49)
+            let mr = ui.menu_button(tr(k::bin::menu::NEW_GENERATOR), |ui| {
                 for kd in kt_model::GeneratorKind::ALL {
-                    if ui.button(crate::generator_editor::kind_name(kd)).clicked() {
+                    let r = ui.button(crate::generator_editor::kind_name(kd));
+                    crate::widgets::field_probe::note(&format!("gen.new.{}", kd.tag()), r.rect);
+                    if r.clicked() {
                         new_gen = Some(*kd);
                         ui.close();
                     }
                 }
             });
+            crate::widgets::field_probe::note("gen.new", mr.response.rect);
         });
         if picked {
             self.set_panel_target(crate::ctx_menu::PanelTarget::BinEmpty);
@@ -691,6 +695,10 @@ impl KtApp {
         let is_synth = path.starts_with("synth:");
         let is_off = offline.contains(&id);
         let thumb_rect = egui::Rect::from_min_size(rect.min, egui::vec2(card_w, card_h));
+        if gen_kind.is_some() {
+            // карточка генератора — наружу для живых сценариев (Р.52)
+            crate::widgets::field_probe::note("bin.gen", thumb_rect);
+        }
         let resp = ui.interact(
             thumb_rect,
             ui.id().with(("bin-card", id.0)),

@@ -110,7 +110,9 @@ impl KtApp {
                     ui.label(tr(k::trn::COLOR));
                     let get = |n: &str| g.get_param(n).unwrap_or(0.0) as f32 / 255.0;
                     let mut c = [get("color_r"), get("color_g"), get("color_b")];
-                    if ui.color_edit_button_rgb(&mut c).changed() {
+                    let r = ui.color_edit_button_rgb(&mut c);
+                    crate::widgets::field_probe::note("genw.color", r.rect);
+                    if r.changed() {
                         for (n, v) in ["color_r", "color_g", "color_b"].iter().zip(c) {
                             g.set_param(n, (v * 255.0).round() as f64);
                         }
