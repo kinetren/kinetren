@@ -36,6 +36,66 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
         GeneratorKind::NoiseField { .. } => tr(k::genkind::NOISE),
         GeneratorKind::SmpteBars { .. } => tr(k::genkind::SMPTE),
         GeneratorKind::Timecode { .. } => tr(k::genkind::TIMECODE),
+        GeneratorKind::Transparent => tr(k::genkind::TRANSPARENT),
+        GeneratorKind::Rect { .. } => tr(k::genkind::RECT),
+        GeneratorKind::Ellipse { .. } => tr(k::genkind::ELLIPSE),
+        GeneratorKind::Line { .. } => tr(k::genkind::LINE),
+        GeneratorKind::Leader { .. } => tr(k::genkind::LEADER),
+        // разновидность таблицы — часть ИМЕНИ: в меню их пять, и «просто
+        // таблица» не сказала бы, какая именно (правило UI 18)
+        GeneratorKind::TestPattern { table } => match table {
+            kt_model::TestTable::Ebu75 => tr(k::genkind::EBU75),
+            kt_model::TestTable::Ebu100 => tr(k::genkind::EBU100),
+            kt_model::TestTable::Grayscale => tr(k::genkind::GRAYSCALE),
+            kt_model::TestTable::Steps10 => tr(k::genkind::STEPS10),
+            kt_model::TestTable::RampYcbcr => tr(k::genkind::YCBCR),
+        },
+        GeneratorKind::WindowPattern { .. } => tr(k::genkind::WINDOW),
+    }
+}
+
+/// Группа меню создания (Р.53, п.422): видов стало девятнадцать, и
+/// плоский список из них — свалка. Группы — функция ВИДА, второго
+/// списка не заводим.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GenGroup {
+    Background,
+    Shapes,
+    Titles,
+    Check,
+}
+
+impl GenGroup {
+    pub(crate) const ALL: [GenGroup; 4] =
+        [GenGroup::Background, GenGroup::Shapes, GenGroup::Titles, GenGroup::Check];
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            GenGroup::Background => tr(k::genkind::GROUP_BG),
+            GenGroup::Shapes => tr(k::genkind::GROUP_SHAPES),
+            GenGroup::Titles => tr(k::genkind::GROUP_TITLES),
+            GenGroup::Check => tr(k::genkind::GROUP_CHECK),
+        }
+    }
+
+    pub(crate) fn of(kind: &GeneratorKind) -> GenGroup {
+        match kind {
+            GeneratorKind::Solid { .. }
+            | GeneratorKind::Gradient { .. }
+            | GeneratorKind::Corners { .. }
+            | GeneratorKind::Transparent
+            | GeneratorKind::NoiseField { .. } => GenGroup::Background,
+            GeneratorKind::Rect { .. }
+            | GeneratorKind::Ellipse { .. }
+            | GeneratorKind::Line { .. } => GenGroup::Shapes,
+            GeneratorKind::Text { .. }
+            | GeneratorKind::Timecode { .. }
+            | GeneratorKind::Leader { .. } => GenGroup::Titles,
+            GeneratorKind::Checker { .. }
+            | GeneratorKind::SmpteBars { .. }
+            | GeneratorKind::TestPattern { .. }
+            | GeneratorKind::WindowPattern { .. } => GenGroup::Check,
+        }
     }
 }
 
@@ -81,11 +141,29 @@ pub(crate) fn color_groups(
         GeneratorKind::Checker { .. } => {
             &[(k::genw::COLOR_A, ["a_r", "a_g", "a_b"]), (k::genw::COLOR_B, ["b_r", "b_g", "b_b"])]
         }
+        // у фигур цвет с АЛЬФОЙ (Р.53, п.419)
+        GeneratorKind::Rect { .. } | GeneratorKind::Ellipse { .. } | GeneratorKind::Line { .. } => {
+            &[(k::trn::COLOR, ["color_r", "color_g", "color_b"])]
+        }
         GeneratorKind::Text { .. }
         | GeneratorKind::NoiseField { .. }
         | GeneratorKind::SmpteBars { .. }
-        | GeneratorKind::Timecode { .. } => &[],
+        | GeneratorKind::Timecode { .. }
+        | GeneratorKind::Transparent
+        | GeneratorKind::Leader { .. }
+        | GeneratorKind::TestPattern { .. }
+        | GeneratorKind::WindowPattern { .. } => &[],
     }
+}
+
+/// Имя альфа-компоненты цветовой группы вида, если она есть (Р.53,
+/// п.419). У фигур цвет четырёхкомпонентный, у остальных видов — нет.
+pub(crate) fn color_alpha(kind: &GeneratorKind) -> Option<&'static str> {
+    matches!(
+        kind,
+        GeneratorKind::Rect { .. } | GeneratorKind::Ellipse { .. } | GeneratorKind::Line { .. }
+    )
+    .then_some("color_a")
 }
 
 impl KtApp {
@@ -202,6 +280,7 @@ impl KtApp {
                 // компоненты скрыты. У титра цвета свои — их рисует его
                 // собственное окно (С3)
                 let groups = color_groups(&g);
+                let alpha = color_alpha(&g);
                 let mut skip: Vec<&str> = Vec::new();
                 for (_, names) in groups {
                     skip.extend_from_slice(names);
@@ -213,7 +292,7 @@ impl KtApp {
                         tr(*label),
                         &mut g,
                         *names,
-                        None,
+                        alpha,
                         (i == 0).then_some("genw.color"),
                     );
                 }

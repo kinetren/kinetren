@@ -1369,10 +1369,13 @@ fn t508_every_param_has_a_label() {
         }
     };
     for k in kt_model::GeneratorKind::all() {
-        let covered: Vec<&str> = crate::generator_editor::color_groups(&k)
+        let mut covered: Vec<&str> = crate::generator_editor::color_groups(&k)
             .iter()
             .flat_map(|(_, names)| names.iter().copied())
             .collect();
+        // четвёртая компонента (альфа фигур, Р.53 п.419) закрыта той же
+        // пипеткой — окно передаёт её в `color_row` отдельным параметром
+        covered.extend(crate::generator_editor::color_alpha(&k));
         check(k.tag(), &k, &covered);
     }
     // у переходов цвет рисует своя пипетка (окно перехода, Р.33 С4)

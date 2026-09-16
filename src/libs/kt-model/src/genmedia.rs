@@ -196,6 +196,155 @@ pub enum GeneratorKind {
         #[serde(default = "default_tc_fps")]
         fps: u32,
     },
+    // --- Р.53, пп.419-422: фигуры, подложка, отсчёт, таблицы ----------
+    /// ПРОЗРАЧНАЯ подложка (п.420): кадр из нулей. Держатель места на
+    /// дорожке и заготовка матта. Отдельный вид, а не «Solid с альфой»:
+    /// полупрозрачная заливка уже выражается уровнем события, и второй
+    /// выключатель того же смысла запрещён (правило UI 9).
+    Transparent,
+    /// Прямоугольник со скруглением (п.419). Размеры — в долях СВОЕЙ
+    /// оси, поэтому подложка переживает смену формата проекта;
+    /// изотропные длины (скругление, растушёвка) — в долях ВЫСОТЫ.
+    Rect {
+        #[serde(default = "default_half")]
+        cx: f64,
+        #[serde(default = "default_half")]
+        cy: f64,
+        #[serde(default = "default_shape_w")]
+        w: f64,
+        #[serde(default = "default_shape_h")]
+        h: f64,
+        #[serde(default)]
+        radius: f64,
+        #[serde(default = "default_feather")]
+        feather: f64,
+        #[serde(default = "default_255")]
+        color_r: u8,
+        #[serde(default = "default_255")]
+        color_g: u8,
+        #[serde(default = "default_255")]
+        color_b: u8,
+        #[serde(default = "default_255")]
+        color_a: u8,
+    },
+    /// Эллипс (п.419). Отдельный вид от прямоугольника: у него нет
+    /// скругления, и объединение дало бы мёртвый контрол (правило UI 9).
+    Ellipse {
+        #[serde(default = "default_half")]
+        cx: f64,
+        #[serde(default = "default_half")]
+        cy: f64,
+        #[serde(default = "default_shape_w")]
+        w: f64,
+        #[serde(default = "default_shape_h")]
+        h: f64,
+        #[serde(default = "default_feather")]
+        feather: f64,
+        #[serde(default = "default_255")]
+        color_r: u8,
+        #[serde(default = "default_255")]
+        color_g: u8,
+        #[serde(default = "default_255")]
+        color_b: u8,
+        #[serde(default = "default_255")]
+        color_a: u8,
+    },
+    /// Отрезок (п.419): концы, а не центр с размерами — своя пара
+    /// параметров, значит свой вид.
+    Line {
+        #[serde(default = "default_line_x1")]
+        x1: f64,
+        #[serde(default = "default_half")]
+        y1: f64,
+        #[serde(default = "default_line_x2")]
+        x2: f64,
+        #[serde(default = "default_half")]
+        y2: f64,
+        #[serde(default = "default_thickness")]
+        thickness: f64,
+        #[serde(default = "default_feather")]
+        feather: f64,
+        #[serde(default = "default_255")]
+        color_r: u8,
+        #[serde(default = "default_255")]
+        color_g: u8,
+        #[serde(default = "default_255")]
+        color_b: u8,
+        #[serde(default = "default_255")]
+        color_a: u8,
+    },
+    /// Обратный отсчёт (п.421): крест, окружность, бегущий сектор и
+    /// цифра. Время — pts МАТЕРИАЛА, как у тайм-кода. «2-pop» длиной
+    /// ровно `1/fps` и биип 1 кГц тем же кодом, что тон SMPTE.
+    Leader {
+        #[serde(default = "default_leader_secs")]
+        seconds: u32,
+        #[serde(default = "default_tc_fps")]
+        fps: u32,
+        #[serde(default)]
+        beep: bool,
+        #[serde(default = "default_tone_db")]
+        beep_db: f64,
+    },
+    /// Инженерная таблица (п.422). Своих ЧИСЕЛ у таблиц нет, поэтому вид
+    /// ОДИН, а разновидность — поле: пять вариантов enum с пустым
+    /// набором параметров были бы пятью копиями одного кода.
+    #[serde(rename = "table")]
+    TestPattern {
+        #[serde(default)]
+        table: TestTable,
+    },
+    /// Окно уровня (п.422): белое окно заданной ДОЛИ ПЛОЩАДИ кадра на
+    /// чёрном — измерение APL и разогрева панели. Числа свои, значит вид
+    /// свой.
+    #[serde(rename = "window")]
+    WindowPattern {
+        #[serde(default = "default_window_area")]
+        area: f64,
+        #[serde(default = "default_one")]
+        level: f64,
+    },
+}
+
+/// Разновидность инженерной таблицы (Р.53, п.422).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TestTable {
+    /// Цветные полосы 75 % (восемь, включая чёрную).
+    #[default]
+    Ebu75,
+    /// Они же на полной амплитуде.
+    Ebu100,
+    /// Непрерывная горизонтальная шкала серого 0..255.
+    Grayscale,
+    /// Десять ступеней серого.
+    Steps10,
+    /// Плоскость цветности BT.709: Cb по X, Cr по Y при постоянной Y.
+    RampYcbcr,
+}
+
+impl TestTable {
+    pub const ALL: [TestTable; 5] = [
+        TestTable::Ebu75,
+        TestTable::Ebu100,
+        TestTable::Grayscale,
+        TestTable::Steps10,
+        TestTable::RampYcbcr,
+    ];
+
+    pub fn token(self) -> &'static str {
+        match self {
+            TestTable::Ebu75 => "ebu75",
+            TestTable::Ebu100 => "ebu100",
+            TestTable::Grayscale => "grey",
+            TestTable::Steps10 => "steps",
+            TestTable::RampYcbcr => "ycbcr",
+        }
+    }
+
+    pub fn from_token(s: &str) -> Option<TestTable> {
+        TestTable::ALL.into_iter().find(|t| t.token() == s)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -275,6 +424,33 @@ fn default_tone_db() -> f64 {
 fn default_tc_fps() -> u32 {
     30
 }
+fn default_shape_w() -> f64 {
+    0.5
+}
+fn default_shape_h() -> f64 {
+    0.25
+}
+/// Растушёвка края по умолчанию — полпроцента высоты: без неё
+/// аналитический край выглядит «лесенкой» на крупном кадре.
+fn default_feather() -> f64 {
+    0.005
+}
+fn default_thickness() -> f64 {
+    0.01
+}
+fn default_line_x1() -> f64 {
+    0.2
+}
+fn default_line_x2() -> f64 {
+    0.8
+}
+fn default_leader_secs() -> u32 {
+    8
+}
+/// Доля площади кадра у окна уровня: классические 10 % APL.
+fn default_window_area() -> f64 {
+    0.1
+}
 fn default_order() -> [TextLayer; 4] {
     [TextLayer::Plate, TextLayer::Shadow, TextLayer::Stroke, TextLayer::Fill]
 }
@@ -323,6 +499,57 @@ impl GeneratorKind {
             GeneratorKind::NoiseField { amount: 1.0, mono: true },
             GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 },
             GeneratorKind::Timecode { fps: 30 },
+            // Р.53: новые виды — В КОНЕЦ реестра. Инженерные таблицы
+            // стоят ПЯТЬЮ строками одного вида: меню показывает каждую
+            // разновидность, кода у них один.
+            GeneratorKind::Transparent,
+            GeneratorKind::Rect {
+                cx: 0.5,
+                cy: 0.5,
+                w: default_shape_w(),
+                h: default_shape_h(),
+                radius: 0.0,
+                feather: default_feather(),
+                color_r: 255,
+                color_g: 255,
+                color_b: 255,
+                color_a: 255,
+            },
+            GeneratorKind::Ellipse {
+                cx: 0.5,
+                cy: 0.5,
+                w: default_shape_w(),
+                h: default_shape_h(),
+                feather: default_feather(),
+                color_r: 255,
+                color_g: 255,
+                color_b: 255,
+                color_a: 255,
+            },
+            GeneratorKind::Line {
+                x1: default_line_x1(),
+                y1: 0.5,
+                x2: default_line_x2(),
+                y2: 0.5,
+                thickness: default_thickness(),
+                feather: default_feather(),
+                color_r: 255,
+                color_g: 255,
+                color_b: 255,
+                color_a: 255,
+            },
+            GeneratorKind::Leader {
+                seconds: default_leader_secs(),
+                fps: default_tc_fps(),
+                beep: false,
+                beep_db: default_tone_db(),
+            },
+            GeneratorKind::TestPattern { table: TestTable::Ebu75 },
+            GeneratorKind::TestPattern { table: TestTable::Ebu100 },
+            GeneratorKind::TestPattern { table: TestTable::Grayscale },
+            GeneratorKind::TestPattern { table: TestTable::Steps10 },
+            GeneratorKind::TestPattern { table: TestTable::RampYcbcr },
+            GeneratorKind::WindowPattern { area: default_window_area(), level: 1.0 },
         ]
     }
 
@@ -377,6 +604,13 @@ impl GeneratorKind {
             GeneratorKind::NoiseField { .. } => "noise",
             GeneratorKind::SmpteBars { .. } => "smpte",
             GeneratorKind::Timecode { .. } => "timecode",
+            GeneratorKind::Transparent => "transparent",
+            GeneratorKind::Rect { .. } => "rect",
+            GeneratorKind::Ellipse { .. } => "ellipse",
+            GeneratorKind::Line { .. } => "line",
+            GeneratorKind::Leader { .. } => "leader",
+            GeneratorKind::TestPattern { .. } => "table",
+            GeneratorKind::WindowPattern { .. } => "window",
         }
     }
 
@@ -452,6 +686,52 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, {
     Timecode {
         fps: u32, 1.0, 120.0, 30.0, 1.0, Count, Structural;
     },
+    // Р.53 (п.419): доли СВОЕЙ оси у размеров и позиций, доли ВЫСОТЫ у
+    // изотропных длин — подложка переживает смену формата проекта
+    Rect {
+        cx: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
+        cy: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
+        w: f64, 0.0, 2.0, 0.5, 0.001, Percent, Smooth;
+        h: f64, 0.0, 2.0, 0.25, 0.001, Percent, Smooth;
+        radius: f64, 0.0, 1.0, 0.0, 0.001, Percent, Smooth;
+        feather: f64, 0.0, 0.5, 0.005, 0.001, Percent, Smooth;
+        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_a: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+    },
+    Ellipse {
+        cx: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
+        cy: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
+        w: f64, 0.0, 2.0, 0.5, 0.001, Percent, Smooth;
+        h: f64, 0.0, 2.0, 0.25, 0.001, Percent, Smooth;
+        feather: f64, 0.0, 0.5, 0.005, 0.001, Percent, Smooth;
+        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_a: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+    },
+    Line {
+        x1: f64, 0.0, 1.0, 0.2, 0.001, Percent, Smooth;
+        y1: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
+        x2: f64, 0.0, 1.0, 0.8, 0.001, Percent, Smooth;
+        y2: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
+        thickness: f64, 0.0, 0.5, 0.01, 0.001, Percent, Smooth;
+        feather: f64, 0.0, 0.5, 0.005, 0.001, Percent, Smooth;
+        color_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        color_a: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+    },
+    Leader {
+        seconds: u32, 1.0, 60.0, 8.0, 1.0, Count, Structural;
+        fps: u32, 1.0, 120.0, 30.0, 1.0, Count, Structural;
+        beep_db: f64, -60.0, 0.0, -20.0, 0.5, Db, Smooth;
+    },
+    WindowPattern {
+        area: f64, 0.0, 1.0, 0.1, 0.005, Percent, Smooth;
+        level: f64, 0.0, 1.0, 1.0, 0.005, Percent, Smooth;
+    },
 }}
 
 flags_for! { GeneratorKind, gen_flag_specs, gen_set_flag, gen_get_flag, {
@@ -461,6 +741,7 @@ flags_for! { GeneratorKind, gen_flag_specs, gen_set_flag, gen_get_flag, {
     NoiseField { mono: true },
     SmpteBars { tone: false },
     Text { bold: false },
+    Leader { beep: false },
 }}
 
 impl HasParams for GeneratorKind {
@@ -701,6 +982,126 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
                 push("fps", format!("{fps}"));
             }
         }
+        // --- Р.53 (пп.419-422) -------------------------------------------
+        GeneratorKind::Transparent => {}
+        GeneratorKind::Rect {
+            cx,
+            cy,
+            w,
+            h,
+            radius,
+            feather,
+            color_r,
+            color_g,
+            color_b,
+            color_a,
+        } => {
+            let f = |v: &f64| format!("{v}");
+            if *cx != 0.5 {
+                push("cx", f(cx));
+            }
+            if *cy != 0.5 {
+                push("cy", f(cy));
+            }
+            if *w != default_shape_w() {
+                push("w", f(w));
+            }
+            if *h != default_shape_h() {
+                push("h", f(h));
+            }
+            if *radius != 0.0 {
+                push("rad", f(radius));
+            }
+            if *feather != default_feather() {
+                push("fe", f(feather));
+            }
+            if (*color_r, *color_g, *color_b, *color_a) != (255, 255, 255, 255) {
+                push("c", format!("{color_r:02x}{color_g:02x}{color_b:02x}{color_a:02x}"));
+            }
+        }
+        GeneratorKind::Ellipse { cx, cy, w, h, feather, color_r, color_g, color_b, color_a } => {
+            let f = |v: &f64| format!("{v}");
+            if *cx != 0.5 {
+                push("cx", f(cx));
+            }
+            if *cy != 0.5 {
+                push("cy", f(cy));
+            }
+            if *w != default_shape_w() {
+                push("w", f(w));
+            }
+            if *h != default_shape_h() {
+                push("h", f(h));
+            }
+            if *feather != default_feather() {
+                push("fe", f(feather));
+            }
+            if (*color_r, *color_g, *color_b, *color_a) != (255, 255, 255, 255) {
+                push("c", format!("{color_r:02x}{color_g:02x}{color_b:02x}{color_a:02x}"));
+            }
+        }
+        GeneratorKind::Line {
+            x1,
+            y1,
+            x2,
+            y2,
+            thickness,
+            feather,
+            color_r,
+            color_g,
+            color_b,
+            color_a,
+        } => {
+            let f = |v: &f64| format!("{v}");
+            if *x1 != default_line_x1() {
+                push("x1", f(x1));
+            }
+            if *y1 != 0.5 {
+                push("y1", f(y1));
+            }
+            if *x2 != default_line_x2() {
+                push("x2", f(x2));
+            }
+            if *y2 != 0.5 {
+                push("y2", f(y2));
+            }
+            if *thickness != default_thickness() {
+                push("th", f(thickness));
+            }
+            if *feather != default_feather() {
+                push("fe", f(feather));
+            }
+            if (*color_r, *color_g, *color_b, *color_a) != (255, 255, 255, 255) {
+                push("c", format!("{color_r:02x}{color_g:02x}{color_b:02x}{color_a:02x}"));
+            }
+        }
+        GeneratorKind::Leader { seconds, fps, beep, beep_db } => {
+            if *seconds != default_leader_secs() {
+                push("n", format!("{seconds}"));
+            }
+            if *fps != default_tc_fps() {
+                push("fps", format!("{fps}"));
+            }
+            if *beep {
+                push("beep", "1".into());
+            }
+            if *beep_db != default_tone_db() {
+                push("db", format!("{beep_db}"));
+            }
+        }
+        GeneratorKind::TestPattern { table } => {
+            if *table != TestTable::default() {
+                push("tb", table.token().into());
+            }
+        }
+        GeneratorKind::WindowPattern { area, level } => {
+            if *area != default_window_area() {
+                push("ar", format!("{area}"));
+            }
+            if *level != 1.0 {
+                push("lv", format!("{level}"));
+            }
+        }
     }
     out
 }
@@ -920,7 +1321,107 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
             }
             Some(())
         }
+        // --- Р.53 (пп.419-422) -------------------------------------------
+        // у подложки параметров нет: любой токен — битый путь
+        GeneratorKind::Transparent => None,
+        GeneratorKind::Rect {
+            cx,
+            cy,
+            w,
+            h,
+            radius,
+            feather,
+            color_r,
+            color_g,
+            color_b,
+            color_a,
+        } => {
+            match key {
+                "cx" => *cx = unit(val)?,
+                "cy" => *cy = unit(val)?,
+                "w" => *w = span(val)?,
+                "h" => *h = span(val)?,
+                "rad" => *radius = unit(val)?,
+                "fe" => *feather = unit(val)?,
+                "c" => (*color_r, *color_g, *color_b, *color_a) = parse_rgba(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::Ellipse { cx, cy, w, h, feather, color_r, color_g, color_b, color_a } => {
+            match key {
+                "cx" => *cx = unit(val)?,
+                "cy" => *cy = unit(val)?,
+                "w" => *w = span(val)?,
+                "h" => *h = span(val)?,
+                "fe" => *feather = unit(val)?,
+                "c" => (*color_r, *color_g, *color_b, *color_a) = parse_rgba(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::Line {
+            x1,
+            y1,
+            x2,
+            y2,
+            thickness,
+            feather,
+            color_r,
+            color_g,
+            color_b,
+            color_a,
+        } => {
+            match key {
+                "x1" => *x1 = unit(val)?,
+                "y1" => *y1 = unit(val)?,
+                "x2" => *x2 = unit(val)?,
+                "y2" => *y2 = unit(val)?,
+                "th" => *thickness = unit(val)?,
+                "fe" => *feather = unit(val)?,
+                "c" => (*color_r, *color_g, *color_b, *color_a) = parse_rgba(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::Leader { seconds, fps, beep, beep_db } => {
+            match key {
+                "n" => *seconds = val.parse::<u32>().ok().filter(|v| (1..=60).contains(v))?,
+                "fps" => *fps = val.parse::<u32>().ok().filter(|v| (1..=120).contains(v))?,
+                "beep" => *beep = val == "1",
+                "db" => *beep_db = val.parse::<f64>().ok().filter(|v| v.is_finite())?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::TestPattern { table } => {
+            match key {
+                "tb" => *table = TestTable::from_token(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::WindowPattern { area, level } => {
+            match key {
+                "ar" => *area = unit(val)?,
+                "lv" => *level = unit(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
     }
+}
+
+/// Доля 0..1 из токена. Вне диапазона или не число — битый путь, а не
+/// молчаливый кламп (правило разбора: ошибка, а не догадка).
+fn unit(val: &str) -> Option<f64> {
+    val.parse::<f64>().ok().filter(|v| v.is_finite() && (0.0..=1.0).contains(v))
+}
+
+/// Размер фигуры: до ДВУХ долей оси — фигура законно вылезает за кадр
+/// (подложка под титр шире кадра — обычное дело).
+fn span(val: &str) -> Option<f64> {
+    val.parse::<f64>().ok().filter(|v| v.is_finite() && (0.0..=2.0).contains(v))
 }
 
 /// `rrggbbaa` (8 hex-цифр) → четвёрка компонент.

@@ -119,9 +119,18 @@ fn t469b_gen_value_escaping_roundtrip() {
 /// самого реестрового экземпляра, get/set ходят по каждому имени.
 #[test]
 fn t470_generator_param_specs_are_complete() {
+    // Виды БЕЗ чисел объявляются здесь поимённо (Р.53, п.420/422):
+    // «спеки пусты» — законное состояние ровно для них, и новый вид,
+    // потерявший спеки по недосмотру, по-прежнему валит тест.
+    const NO_PARAMS: &[&str] = &["transparent", "table"];
     for k in GeneratorKind::all() {
         let specs = k.param_specs();
-        assert!(!specs.is_empty(), "{}: пустые спеки", k.tag());
+        assert_eq!(
+            specs.is_empty(),
+            NO_PARAMS.contains(&k.tag()),
+            "{}: спеки и объявление «вид без чисел» разошлись",
+            k.tag()
+        );
         let mut probe = k.clone();
         for s in specs {
             assert!(
@@ -139,6 +148,7 @@ fn t470_generator_param_specs_are_complete() {
         }
         assert_eq!(k.get_param("no_such_param"), None);
         assert!(!probe.set_param("no_such_param", 1.0));
+        let _ = &probe;
     }
 }
 
@@ -248,4 +258,69 @@ fn t510_generator_flags_are_complete_and_roundtrip() {
     assert_eq!(tone.get_flag("tone"), Some(true));
     let colour = GeneratorKind::NoiseField { amount: 1.0, mono: false };
     assert_eq!(colour.get_flag("mono"), Some(false));
+}
+
+/// Тест 524 (Р.53, пп.419-422): новые виды ездят по пути туда и обратно,
+/// а канон остаётся каноном.
+///
+/// Правило разбора одно на все виды: `format(parse(s)) == format(s)`,
+/// умолчания не пишутся, битое значение — `None`, а не тихий кламп.
+#[test]
+fn t524_new_kinds_round_trip_through_the_path() {
+    use kt_model::{TestTable, format_gen_path, parse_gen_path};
+    // каждый вид реестра: умолчания дают ГОЛЫЙ путь без токенов
+    for k in GeneratorKind::all() {
+        let p = format_gen_path(&k);
+        assert_eq!(parse_gen_path(&p).as_ref(), Some(&k), "{p}: путь не вернул свой вид");
+        assert_eq!(format_gen_path(&parse_gen_path(&p).unwrap()), p, "{p}: канон не канон");
+    }
+    // разновидность таблицы — ОДИН тег на пять видов
+    for t in TestTable::ALL {
+        let k = GeneratorKind::TestPattern { table: t };
+        let p = format_gen_path(&k);
+        assert!(p.starts_with("gen:table"), "{p}");
+        assert_eq!(parse_gen_path(&p), Some(k), "{p}");
+    }
+    assert_eq!(format_gen_path(&GeneratorKind::Transparent), "gen:transparent");
+    assert_eq!(parse_gen_path("gen:transparent"), Some(GeneratorKind::Transparent));
+    assert_eq!(parse_gen_path("gen:transparent:c=ff0000"), None, "у подложки параметров нет");
+
+    // значения вне диапазона — ошибка, а не молчаливый кламп
+    assert_eq!(parse_gen_path("gen:rect:cx=1.5"), None);
+    assert_eq!(parse_gen_path("gen:rect:w=3"), None, "размер больше двух долей оси");
+    assert!(parse_gen_path("gen:rect:w=1.8").is_some(), "фигура вправе вылезти за кадр");
+    assert_eq!(parse_gen_path("gen:line:th=nan"), None);
+    assert_eq!(parse_gen_path("gen:table:tb=nope"), None);
+    assert_eq!(parse_gen_path("gen:leader:n=0"), None);
+
+    // цвет фигуры — С АЛЬФОЙ (восемь hex-цифр)
+    let path = "gen:rect:c=ff8800c0";
+    let Some(GeneratorKind::Rect { color_r, color_a, .. }) = parse_gen_path(path) else {
+        panic!("{path} не разобрался");
+    };
+    assert_eq!((color_r, color_a), (0xff, 0xc0));
+    assert_eq!(parse_gen_path("gen:rect:c=ff8800"), None, "шесть цифр — это путь без альфы");
+}
+
+/// Тест 525 (Р.53, п.419): «вид = вариант enum тогда, когда у него СВОИ
+/// числа». Сторож против объединения фигур в один вид с мёртвыми
+/// контролами (правило UI 9) и против пяти копий одного кода у таблиц.
+#[test]
+fn t525_kinds_differ_by_their_numbers() {
+    use std::collections::BTreeSet;
+    let names = |k: &GeneratorKind| -> BTreeSet<&'static str> {
+        k.param_specs().iter().map(|s| s.name).collect()
+    };
+    let rect = GeneratorKind::default_for_tag("rect").unwrap();
+    let ell = GeneratorKind::default_for_tag("ellipse").unwrap();
+    let line = GeneratorKind::default_for_tag("line").unwrap();
+    assert_ne!(names(&rect), names(&ell), "у прямоугольника и эллипса одинаковые числа");
+    assert_ne!(names(&ell), names(&line));
+    assert!(names(&rect).contains("radius"), "скругление есть только у прямоугольника");
+    assert!(!names(&ell).contains("radius"), "у эллипса скругление было бы мёртвым контролом");
+
+    // у таблиц чисел нет вовсе — поэтому вид ОДИН, а разновидность поле
+    for t in kt_model::TestTable::ALL {
+        assert!(GeneratorKind::TestPattern { table: t }.param_specs().is_empty());
+    }
 }

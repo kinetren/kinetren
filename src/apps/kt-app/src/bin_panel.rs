@@ -504,13 +504,36 @@ impl KtApp {
             // раньше в бин попадало только перетаскивание файлов на окно.
             // Прямоугольники пунктов — наружу для живых сценариев (Р.49)
             let mr = ui.menu_button(tr(k::bin::menu::NEW_GENERATOR), |ui| {
-                for kd in kt_model::GeneratorKind::all() {
-                    let r = ui.button(crate::generator_editor::kind_name(&kd));
-                    crate::widgets::field_probe::note(&format!("gen.new.{}", kd.tag()), r.rect);
-                    if r.clicked() {
-                        new_gen = Some(kd);
-                        ui.close();
+                // Р.53: видов девятнадцать, плоский список из них —
+                // свалка. Группа — ФУНКЦИЯ вида (`GenGroup::of`), второго
+                // списка нет: новый вид попадает в меню сам.
+                use crate::generator_editor::GenGroup;
+                for grp in GenGroup::ALL {
+                    let kinds: Vec<_> = kt_model::GeneratorKind::all()
+                        .into_iter()
+                        .filter(|k| GenGroup::of(k) == grp)
+                        .collect();
+                    if kinds.is_empty() {
+                        continue;
                     }
+                    ui.menu_button(grp.name(), |ui| {
+                        for kd in kinds {
+                            let r = ui.button(crate::generator_editor::kind_name(&kd));
+                            let probe = match &kd {
+                                // у таблиц тег один на пять видов —
+                                // различаем разновидностью (живые сценарии)
+                                kt_model::GeneratorKind::TestPattern { table } => {
+                                    format!("gen.new.table.{}", table.token())
+                                }
+                                other => format!("gen.new.{}", other.tag()),
+                            };
+                            crate::widgets::field_probe::note(&probe, r.rect);
+                            if r.clicked() {
+                                new_gen = Some(kd);
+                                ui.close();
+                            }
+                        }
+                    });
                 }
             });
             crate::widgets::field_probe::note("gen.new", mr.response.rect);

@@ -64,6 +64,22 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "cols" => tr(k::genp::COLS),
         "tone_db" => tr(k::genp::TONE_DB),
         "fps" => tr(k::genp::FPS),
+        // Р.53 (пп.419-422): фигуры, отсчёт, окно уровня
+        "cx" => tr(k::genp::CX),
+        "cy" => tr(k::genp::CY),
+        "w" => tr(k::genp::W),
+        "h" => tr(k::genp::H),
+        "radius" => tr(k::genp::RADIUS),
+        "feather" => tr(k::genp::FEATHER),
+        "x1" => tr(k::genp::X1),
+        "y1" => tr(k::genp::Y1),
+        "x2" => tr(k::genp::X2),
+        "y2" => tr(k::genp::Y2),
+        "thickness" => tr(k::genp::THICKNESS),
+        "seconds" => tr(k::genp::SECONDS),
+        "beep_db" => tr(k::genp::BEEP_DB),
+        "area" => tr(k::genp::AREA),
+        "level" => tr(k::genp::LEVEL),
         _ => return None,
     })
 }
@@ -161,6 +177,7 @@ pub fn flag_label(name: &str) -> String {
     let s: &str = match name {
         "mono" => tr(k::genp::MONO),
         "tone" => tr(k::genp::TONE),
+        "beep" => tr(k::genp::BEEP),
         "bold" => tr(k::titlew::BOLD),
         "reverse" => tr(k::trn::REVERSE),
         "vertical" => tr(k::trn::VERTICAL),
