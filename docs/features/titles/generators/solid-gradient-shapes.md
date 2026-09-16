@@ -1,18 +1,18 @@
 ---
 id: F-TXT-003
 title: Генераторы — цвет, градиент, шум, фигуры, тайм-код, тестовые таблицы
-status: принято
+status: сделано
 priority: B
 cost: M
 category: titles/generators
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-media, kt-model, kt-otio, kt-app, kt-cli]
 invariants: [1, 4, 5, 8, 11]
 ui_rules: [4, 6, 8, 13, 20]
 round: Р.52
-point: null
-tests: []
+point: 402
+tests: [t469, t470, t471, t472, t473, t474, t475, t476, t477, t478, t479, t491, t492, t493, t494]
 depends_on: []
 checked: 2026-09-16
 ---

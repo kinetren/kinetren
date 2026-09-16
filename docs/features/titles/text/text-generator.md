@@ -1,18 +1,18 @@
 ---
 id: F-TXT-001
 title: Текст в кадре: титры, подписи, нижние трети
-status: принято
+status: сделано
 priority: A
 cost: L
 category: titles/text
 editors: [premiere-26, resolve-21, vegas-pro-2026, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-media, kt-model, kt-engine, kt-app, kt-otio, kt-cli]
 invariants: [4, 5, 7, 8, 11]
 ui_rules: [3, 7, 8, 11, 13, 14, 17]
 round: Р.52
-point: null
-tests: []
+point: 405
+tests: [t480, t481, t482, t483, t484, t485, t487, t488, t489, t490, t495]
 depends_on: []
 checked: 2026-09-16
 ---

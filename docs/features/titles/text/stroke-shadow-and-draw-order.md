@@ -1,18 +1,18 @@
 ---
 id: F-TXT-005
 title: Обводка, тень, плашка и порядок отрисовки текста
-status: кандидат
+status: сделано
 priority: B
 cost: M
 category: titles/text
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26, libass-0.17]
-we_have: нет
+we_have: да
 crates: [kt-fx, kt-media, kt-engine, kt-gpu, kt-model, kt-app]
 invariants: [4, 7, 10, 11]
 ui_rules: [6, 13, 17, 20]
-round: null
-point: null
-tests: []
+round: Р.52
+point: 406
+tests: [t486]
 depends_on: [F-TXT-001]
 trackers: [kde-invent, kde-bugzilla, pitivi, flowblade, olive, mlt, openshot]
 checked: 2026-09-08
@@ -434,6 +434,12 @@ Kdenlive поменял порядок константой и через три
 дисциплина (целочисленное ядро + AVX2 + WGSL-зеркало + допуск t181) и
 даунскейл-размытие. Отдельно и независимо от титров: прогон видео-FX по
 кадру с альфой не делает ни один тест — это чинить в любом случае.
+
+**Сделано в Р.52 С3 (п.406):** плашка по строке, тень box-blur альфы,
+обводка точной EDT с наружностью ПОРЯДКОМ, `order` — сохраняемое поле
+формата с первого дня. Редактор порядка слоёв в UI — отложен (дефолт
+plate→shadow→stroke→fill покрывает норму; поле уже в файле, так что UI
+добавится без миграции).
 
 ## Источники
 
