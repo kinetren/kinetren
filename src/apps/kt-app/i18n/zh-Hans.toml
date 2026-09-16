@@ -878,6 +878,8 @@ text = "文本"
 
 # Окно титра (Р.52 С3).
 [titlew]
+family = "字体"
+font_missing = "本机没有字体“{0}”——已改用 Noto Sans"
 title = "字幕"
 bold = "粗体"
 anchor = "锚点"

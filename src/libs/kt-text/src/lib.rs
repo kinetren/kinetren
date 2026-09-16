@@ -175,31 +175,124 @@ fn face(style: FaceStyle) -> &'static Face {
         FaceStyle::Regular => (&REGULAR, REGULAR_BYTES),
         FaceStyle::Bold => (&BOLD, BOLD_BYTES),
     };
-    cell.get_or_init(|| {
-        let ab = AbFont::try_from_slice(bytes).expect("vendored font parses");
-        let hr = HrFont::new(bytes).expect("vendored font parses (read-fonts)");
-        let shaper = ShaperData::new(&hr);
-        let upem = ab.units_per_em().expect("vendored font has upem") as f64;
-        let ascent_u = ab.ascent_unscaled() as f64;
-        let descent_u = ab.descent_unscaled() as f64; // отрицательный
-        let gap_u = ab.line_gap_unscaled() as f64;
-        Face {
-            ab,
-            hr,
-            shaper,
-            unit: 1.0 / upem,
-            ascent_u,
-            descent_u,
-            gap_u,
-            height_per_em: (ascent_u - descent_u) / upem,
-        }
+    cell.get_or_init(|| build_face(bytes, 0).expect("vendored font parses"))
+}
+
+/// Конструктор начертания из байт (вендоренных или системных; `index` —
+/// номер шрифта в ttc-коллекции).
+fn build_face(bytes: &'static [u8], index: u32) -> Option<Face> {
+    let ab = AbFont::try_from_slice_and_index(bytes, index).ok()?;
+    let hr = HrFont::from_index(bytes, index).ok()?;
+    let shaper = ShaperData::new(&hr);
+    let upem = ab.units_per_em()? as f64;
+    let ascent_u = ab.ascent_unscaled() as f64;
+    let descent_u = ab.descent_unscaled() as f64; // отрицательный
+    let gap_u = ab.line_gap_unscaled() as f64;
+    Some(Face {
+        ab,
+        hr,
+        shaper,
+        unit: 1.0 / upem,
+        ascent_u,
+        descent_u,
+        gap_u,
+        height_per_em: (ascent_u - descent_u) / upem,
     })
 }
 
+/// Итог резолва семьи шрифта (С4): чем рисуем и почему. `System` несёт
+/// путь файла — вместе с байтами он входит в идентичность кадра
+/// (kt-text/CLAUDE.md, правило 1); `MissingFallback` обязан дать видимое
+/// уведомление в UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FontResolve {
+    Vendored,
+    System(std::path::PathBuf),
+    MissingFallback,
+}
+
+fn font_db() -> &'static fontdb::Database {
+    static DB: OnceLock<fontdb::Database> = OnceLock::new();
+    DB.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        db
+    })
+}
+
+/// Системные семьи для комбо окна титра: отсортированы, без дублей.
+/// Вендоренная семья в список не входит — она отдельная первая строка.
+pub fn system_families() -> Vec<String> {
+    let mut out: Vec<String> = font_db()
+        .faces()
+        .flat_map(|f| f.families.iter().map(|(name, _)| name.clone()))
+        .filter(|n| !n.is_empty() && n != VENDORED_FAMILY)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Чем реально рисуется данная семья на ЭТОЙ машине.
+pub fn resolve_family(family: &str, bold: bool) -> FontResolve {
+    if family.is_empty() || family == VENDORED_FAMILY {
+        return FontResolve::Vendored;
+    }
+    match system_face(family, bold) {
+        Some((_, path)) => FontResolve::System(path),
+        None => FontResolve::MissingFallback,
+    }
+}
+
+/// Загруженные системные начертания. Байты утекают ОДИН раз на
+/// (семья, стиль): шрифтов в проекте единицы, а `Face` держит
+/// `FontRef<'static>`.
+#[allow(clippy::type_complexity)]
+fn system_face(family: &str, bold: bool) -> Option<(&'static Face, std::path::PathBuf)> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static CACHE: OnceLock<
+        Mutex<HashMap<(String, bool), Option<(&'static Face, std::path::PathBuf)>>>,
+    > = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = (family.to_string(), bold);
+    if let Some(hit) = cache.lock().unwrap().get(&key) {
+        return hit.clone();
+    }
+    let db = font_db();
+    let query = fontdb::Query {
+        families: &[fontdb::Family::Name(family)],
+        weight: if bold { fontdb::Weight::BOLD } else { fontdb::Weight::NORMAL },
+        stretch: fontdb::Stretch::Normal,
+        style: fontdb::Style::Normal,
+    };
+    let loaded = db.query(&query).and_then(|id| {
+        let path = match &db.face(id)?.source {
+            fontdb::Source::File(p) => p.clone(),
+            _ => std::path::PathBuf::new(),
+        };
+        db.with_face_data(id, |bytes, index| {
+            let leaked: &'static [u8] = Box::leak(bytes.to_vec().into_boxed_slice());
+            build_face(leaked, index).map(|f| {
+                let face: &'static Face = Box::leak(Box::new(f));
+                (face, path.clone())
+            })
+        })?
+    });
+    cache.lock().unwrap().insert(key, loaded.clone());
+    loaded
+}
+
 fn resolve_face(p: &TextParams) -> &'static Face {
-    // v1: любая семья, кроме вендоренной, падает в вендоренную; выбор
-    // системных семей и уведомление о подмене — С4
-    face(p.style)
+    if p.family.is_empty() || p.family == VENDORED_FAMILY {
+        return face(p.style);
+    }
+    // семья не найдена — подмена вендоренной (уведомление — забота окна,
+    // `resolve_family`); найдена — рисуем ею
+    match system_face(&p.family, matches!(p.style, FaceStyle::Bold)) {
+        Some((f, _)) => f,
+        None => face(p.style),
+    }
 }
 
 // ---- раскладка -------------------------------------------------------------
@@ -317,8 +410,12 @@ pub fn layout_info(p: &TextParams, w: u32, h: u32) -> LayoutInfo {
 
 /// Кодпоинты текста, для которых в начертании НЕТ глифа (ответ «глифа
 /// нет» в окне титра — правило UI 11). Пустой список = всё покрыто.
-pub fn uncovered(text: &str, _family: &str, style: FaceStyle) -> Vec<char> {
-    let face = face(style);
+pub fn uncovered(text: &str, family: &str, style: FaceStyle) -> Vec<char> {
+    let face = resolve_face(&TextParams {
+        family: family.to_string(),
+        style,
+        ..TextParams::default()
+    });
     let mut out: Vec<char> = text
         .chars()
         .filter(|c| !c.is_control() && face.ab.glyph_id(*c).0 == 0)
@@ -732,6 +829,39 @@ mod tests {
         );
         // управляющие не считаются «непокрытыми»
         assert!(uncovered("a\nb\t", VENDORED_FAMILY, FaceStyle::Regular).is_empty());
+    }
+
+    /// t490 (Р.52 С4): системные семьи. Несуществующая — подмена
+    /// вендоренной БАЙТ-В-БАЙТ (+ `MissingFallback` для уведомления);
+    /// найденная системная резолвится в файл и рисует сама.
+    #[test]
+    fn t490_system_family_resolve_and_fallback() {
+        assert_eq!(resolve_family("__kt_no_such_family__", false), FontResolve::MissingFallback);
+        assert_eq!(resolve_family(VENDORED_FAMILY, true), FontResolve::Vendored);
+        assert_eq!(resolve_family("", false), FontResolve::Vendored);
+
+        let mut missing = sample();
+        missing.family = "__kt_no_such_family__".into();
+        let sub = render_rgba(&missing, 320, 180);
+        assert_eq!(
+            sub,
+            render_rgba(&sample(), 320, 180),
+            "подмена обязана быть вендоренной байт-в-байт"
+        );
+
+        // если на машине есть системные шрифты — первый резолвящийся
+        // обязан дать существующий файл и собственный рендер
+        if let Some(fam) = system_families()
+            .into_iter()
+            .find(|f| matches!(resolve_family(f, false), FontResolve::System(_)))
+        {
+            let FontResolve::System(path) = resolve_family(&fam, false) else { unreachable!() };
+            assert!(path.exists(), "{path:?}");
+            let mut sp = sample();
+            sp.family = fam.clone();
+            let frame = render_rgba(&sp, 320, 180);
+            assert!(frame.chunks_exact(4).any(|px| px[3] > 0), "{fam}: кадр пуст");
+        }
     }
 
     /// t486 (Р.52 С3): оформление. Порядок слоёв меняет байты

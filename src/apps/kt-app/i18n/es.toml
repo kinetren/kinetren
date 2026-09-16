@@ -878,6 +878,8 @@ text = "Texto"
 
 # Окно титра (Р.52 С3).
 [titlew]
+family = "Fuente"
+font_missing = "La fuente «{0}» no está en esta máquina: se usa Noto Sans"
 title = "Título"
 bold = "Negrita"
 anchor = "Ancla"

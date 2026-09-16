@@ -20,6 +20,19 @@ pub struct TitleEditor {
     pub open: bool,
 }
 
+/// Предупреждение о ПОДМЕНЕ шрифта (С4): выбранной семьи на этой машине
+/// нет — кадр рисуется вендоренной (решение владельца: «промах = подмена
+/// вендоренным + видимое уведомление»).
+pub fn font_warning(kind: &GeneratorKind) -> Option<String> {
+    let GeneratorKind::Text { family, bold, .. } = kind else { return None };
+    match kt_text::resolve_family(family, *bold) {
+        kt_text::FontResolve::MissingFallback => {
+            Some(crate::tf!(k::titlew::FONT_MISSING, family.clone()))
+        }
+        _ => None,
+    }
+}
+
 /// Предупреждение «глифа нет» для текущего текста (правило UI 11: t100
 /// проверяет каталоги, а текст титра приходит от пользователя — ответ
 /// обязан быть видимым, тофу в кадре — допустимым, молчание — нет).
@@ -107,9 +120,40 @@ impl KtApp {
                     changed |= r.changed();
                 }
 
-                // ---- «глифа нет» — ошибочным стилем, не серым ------------
+                // ---- «глифа нет» и подмена шрифта — ошибочным стилем -----
                 if let Some(warn) = title_warning(&g) {
                     ui.colored_label(egui::Color32::from_rgb(255, 105, 97), warn);
+                }
+                if let Some(warn) = font_warning(&g) {
+                    ui.colored_label(egui::Color32::from_rgb(255, 105, 97), warn);
+                }
+
+                // ---- семья шрифта: вендоренная + системные (С4) ----------
+                {
+                    let GeneratorKind::Text { family, .. } = &mut g else { unreachable!() };
+                    ui.horizontal(|ui| {
+                        ui.label(tr(k::titlew::FAMILY));
+                        egui::ComboBox::from_id_salt(("title-family", ed.media))
+                            .selected_text(family.clone())
+                            .show_ui(ui, |ui| {
+                                let vend = kt_text::VENDORED_FAMILY;
+                                if ui.selectable_label(family == vend, vend).clicked()
+                                    && family != vend
+                                {
+                                    *family = vend.to_string();
+                                    changed = true;
+                                }
+                                ui.separator();
+                                for f in kt_text::system_families() {
+                                    if ui.selectable_label(*family == f, &f).clicked()
+                                        && *family != f
+                                    {
+                                        *family = f;
+                                        changed = true;
+                                    }
+                                }
+                            });
+                    });
                 }
 
                 let GeneratorKind::Text {

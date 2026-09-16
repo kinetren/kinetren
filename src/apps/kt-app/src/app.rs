@@ -3208,6 +3208,15 @@ impl KtApp {
     /// (redo добавления) = поднятие источника. Зовётся из всех обёрток
     /// правок и из undo/redo — иначе undo смены цвета не доехал бы до
     /// картинки: источник живёт вне project→player синка.
+    /// Подменённый шрифт титра — ВИДИМОЕ уведомление (Р.52 С4).
+    fn note_missing_title_font(&mut self, path: &str) {
+        if let Some(kind) = kt_model::parse_gen_path(path)
+            && let Some(warn) = crate::title_editor::font_warning(&kind)
+        {
+            self.note(warn);
+        }
+    }
+
     /// Safe-зоны рисуются, пока открыто хоть одно окно титра (Р.52 С3).
     pub(crate) fn show_safe_zones(&self) -> bool {
         self.title_editors.iter().any(|e| e.open)
@@ -3217,7 +3226,12 @@ impl KtApp {
         let cur: HashMap<MediaId, String> =
             self.model.document().media.iter().map(|m| (m.id, m.path.clone())).collect();
         if !self.media_synced {
-            // первый вызов: источники уже поднял build_player
+            // первый вызов: источники уже поднял build_player; заодно —
+            // видимое уведомление о подмене шрифтов титров (С4: проект с
+            // чужой машины, семьи здесь нет)
+            for path in cur.values() {
+                self.note_missing_title_font(path);
+            }
             self.media_paths = cur;
             self.media_synced = true;
             return;
@@ -3244,6 +3258,7 @@ impl KtApp {
             } else {
                 self.player.add_media(*id, src);
             }
+            self.note_missing_title_font(path);
             self.thumbs.add_media(*id, resolved);
             self.thumbs.invalidate_media(*id);
         }
