@@ -162,10 +162,10 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
         if (p0.x > 0.5) { l = 1.0 - l; }
         return mix(c, samp(1u, uv), front_mask(l, k, p0.y));
     }
-    if (mode == 6u) { // push
+    if (mode == 6u) { // push: B стоит вплотную ЗА A — на экран дальше по +dir (п.396)
         let a = uv - p0.xy * k;
         if (a.x >= 0.0 && a.x < 1.0 && a.y >= 0.0 && a.y < 1.0) { return samp(0u, a); }
-        return samp(1u, a - p0.xy);
+        return samp(1u, a + p0.xy);
     }
     if (mode == 7u) { // slide
         let b = uv + p0.xy * (1.0 - k);
@@ -192,7 +192,7 @@ fn trans(uv: vec2<f32>, k: f32) -> vec4<f32> {
             let s = uv + p0.xy * o;
             let a = s - p0.xy * k;
             if (a.x >= 0.0 && a.x < 1.0 && a.y >= 0.0 && a.y < 1.0) { acc = acc + samp(0u, a); }
-            else { acc = acc + samp(1u, a - p0.xy); }
+            else { acc = acc + samp(1u, a + p0.xy); } // B за A, +dir как у push (п.396)
         }
         return acc / 7.0;
     }

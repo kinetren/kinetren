@@ -357,13 +357,16 @@ fn kernel(
         }
         MODE_PUSH => {
             // содержимое ЕДЕТ в сторону dir, поэтому пиксель экрана
-            // показывает источник ПОЗАДИ себя на dir·k
+            // показывает источник ПОЗАДИ себя на dir·k; B стоит вплотную
+            // ЗА уходящим A — на целый экран дальше ПО направлению
+            // движения (`+dir`, п.396: с `−dir` координата уходила за
+            // [0,1) и кламп рисовал размазанную кромку вместо B)
             let (dx, dy) = (p[0], p[1]);
             let (au, av) = (u - dx * k, v - dy * k);
             if (0.0..1.0).contains(&au) && (0.0..1.0).contains(&av) {
                 a.sample(au, av)
             } else {
-                b.sample(au - dx, av - dy)
+                b.sample(au + dx, av + dy)
             }
         }
         MODE_SLIDE => {
@@ -408,7 +411,8 @@ fn kernel(
                 let c = if (0.0..1.0).contains(&au) && (0.0..1.0).contains(&av) {
                     a.sample(au, av)
                 } else {
-                    b.sample(au - dx, av - dy)
+                    // B за уходящим A — `+dir`, как у push (п.396)
+                    b.sample(au + dx, av + dy)
                 };
                 for ch in 0..4 {
                     acc[ch] += c[ch];

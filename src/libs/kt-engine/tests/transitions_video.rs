@@ -532,3 +532,146 @@ fn t232_transition_params_animate() {
     p.transitions[0].auto[0].param = "no_such".into();
     assert!(p.validate().is_err(), "кривая-сирота обязана валить загрузку");
 }
+
+/// Тест 459 (Р.51, п.396): у направленных ядер ожидание считается
+/// ФОРМУЛОЙ, а не вторым экземпляром той же формулы. Кадры — линейные
+/// рампы (R по X, G по Y, B — маркер источника): билинейка на рампе при
+/// целом сдвиге вырождается в точное значение, и «въехавшая» часть
+/// обязана показывать НАСТОЯЩИЕ строки/колонки кадра B, а не размазанную
+/// кромку. Именно эту слепоту имели t224 (зеркало против зеркала) и
+/// t225 (сплошные цвета): push/whip сэмплировали B со сдвигом −dir
+/// вместо +dir, кламп у края превращал B в полосу его первой
+/// строки/колонки — и оба теста оставались зелёными.
+#[test]
+fn t459_push_whip_bring_real_b_content() {
+    use kt_engine::transitions::{mix_into, TransMix};
+    const W: usize = 64;
+    const H: usize = 36;
+    let ramp = |marker: u8| -> kt_media::VideoFrame {
+        let mut rgba = vec![0u8; W * H * 4];
+        for y in 0..H {
+            for x in 0..W {
+                let i = (y * W + x) * 4;
+                rgba[i] = (x * 4) as u8; // R: рампа по X (0..252)
+                rgba[i + 1] = (y * 7) as u8; // G: рампа по Y (0..245)
+                rgba[i + 2] = marker; // B: чей кадр
+                rgba[i + 3] = 255;
+            }
+        }
+        kt_media::VideoFrame {
+            pts: Tick(0),
+            width: W as u32,
+            height: H as u32,
+            rgba: rgba.into_boxed_slice(),
+            has_alpha: false,
+        }
+    };
+    let a = ramp(50);
+    let b = ramp(200);
+
+    // Геометрия push: экран показывает ленту [A|B], сдвинутую на dir·k.
+    // Тексел (x,y) берёт материал в (x,y) − shift; вне кадра — кадр B,
+    // перенесённый на целый экран ПО НАПРАВЛЕНИЮ движения.
+    let expect = |x: i32, y: i32, dx: i32, dy: i32, shift_x: i32, shift_y: i32| -> [u8; 3] {
+        let (mx, my) = (x - shift_x, y - shift_y);
+        let inside = (0..W as i32).contains(&mx) && (0..H as i32).contains(&my);
+        let (sx, sy, marker) = if inside {
+            (mx, my, 50)
+        } else {
+            (mx + dx * W as i32, my + dy * H as i32, 200)
+        };
+        [(sx * 4) as u8, (sy * 7) as u8, marker]
+    };
+
+    let mut dst = Vec::new();
+    for dir in [Dir::Left, Dir::Right, Dir::Up, Dir::Down] {
+        let (dx, dy) = dir.vec();
+        let (dx, dy) = (dx as i32, dy as i32);
+        for k in [1024u32, 2048] {
+            // сдвиг при этих k целый и по X (64·k/4096), и по Y (36·k/4096)
+            let kk = k as f32 / 4096.0;
+            let (shift_x, shift_y) =
+                ((dx as f32 * kk * W as f32) as i32, (dy as f32 * kk * H as f32) as i32);
+            let m = TransMix::of(&TransitionKind::Push { dir });
+            mix_into(&mut dst, Some(&a), Some(&b), k, m, W, H);
+            for y in 0..H as i32 {
+                for x in 0..W as i32 {
+                    let i = ((y * W as i32 + x) * 4) as usize;
+                    let want = expect(x, y, dx, dy, shift_x, shift_y);
+                    for c in 0..3 {
+                        let got = dst[i + c] as i32;
+                        assert!(
+                            (got - want[c] as i32).abs() <= 1,
+                            "push {dir:?} k={k}: пиксель ({x},{y}) канал {c}: \
+                             {got}, а материал там {}",
+                            want[c]
+                        );
+                    }
+                }
+            }
+            // whip с нулевым смазом — ровно push: 7 тапов в одной точке
+            let mw = TransMix::of(&TransitionKind::Whip { dir, blur: 0.0 });
+            let mut dw = Vec::new();
+            mix_into(&mut dw, Some(&a), Some(&b), k, mw, W, H);
+            assert_eq!(dw, dst, "whip {dir:?} blur=0 k={k} обязан совпасть с push байт-в-байт");
+        }
+    }
+}
+
+/// Тест 459b: та же геометрия доезжает через ПЛАН (VideoRenderer), а не
+/// только через голое ядро — кэш прогревается рамповыми кадрами, и
+/// въехавшая половина обязана показать середину кадра B.
+#[test]
+fn t459b_push_through_renderer_shows_real_b() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let ramp_rgba = |marker: u8| -> Vec<u8> {
+        let (w, h) = (64usize, 36usize);
+        let mut rgba = vec![0u8; w * h * 4];
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 4;
+                rgba[i] = (x * 4) as u8;
+                rgba[i + 1] = (y * 7) as u8;
+                rgba[i + 2] = marker;
+                rgba[i + 3] = 255;
+            }
+        }
+        rgba
+    };
+    let mut p = project_pair();
+    p.transitions[0].kind = TransitionKind::Push { dir: Dir::Down };
+    p.validate().unwrap();
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let t = Tick(90_000); // середина окна: сдвиг ровно полкадра
+    for (media, src_pts, fq) in vr.layers_at(t, q) {
+        let marker = if kt_engine::source_id(media) == kt_engine::source_id(MediaId(1)) {
+            50
+        } else {
+            200
+        };
+        let frame = kt_media::VideoFrame {
+            pts: src_pts,
+            width: fq.width,
+            height: fq.height,
+            rgba: ramp_rgba(marker).into_boxed_slice(),
+            has_alpha: false,
+        };
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(fq),
+            kt_engine::video_cache_idx(src_pts),
+            std::sync::Arc::new(frame),
+        );
+    }
+    let (out, complete) = vr.compose_from_cache(&cache, t, q);
+    assert!(complete, "слои прогреты");
+    let px = |x: usize, y: usize| {
+        let i = (y * 64 + x) * 4;
+        [out[i], out[i + 1], out[i + 2]]
+    };
+    // push Down, k=0.5: верхняя половина экрана — НИЖНЯЯ половина кадра B
+    assert_eq!(px(32, 4), [128, (4 + 18) * 7, 200], "въехал настоящий B, а не кромка");
+    // нижняя половина — верх кадра A, уехавший вниз
+    assert_eq!(px(32, 30), [128, (30 - 18) * 7, 50], "A уезжает вниз своим верхом");
+}
