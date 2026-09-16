@@ -1,11 +1,16 @@
 // Собель по яркости — зеркало edges (kt-fx/src/video.rs): целочисленная
 // люма (77R+150G+29B)>>8, sqrt в f32 (у порога законные выбросы, t181),
-// кайма кадра — чёрная с альфой 255.
+// кайма кадра — чёрная (альфа — см. ниже).
 // u0 = (w, h, threshold, thickness, color_r, color_g, color_b, 0).
 //
 // thickness — шаг выборки Собеля (Р.33 С5): 1 даёт прежнее ядро 3×3, при
 // большем шаге линия толще и кайма шире ровно на тот же шаг. Цвет линий
 // домножает серую величину; 255,255,255 — прежний белый.
+//
+// АЛЬФА (Р.53, п.418): a_out = max(a_in, сила линии) — обводка ПОДНИМАЕТ
+// непрозрачность, а не заливает её. На непрозрачном входе (a_in = 255)
+// формула тождественна прежней заливке 255, поэтому байты не двинулись.
+// Правится ТЕМ ЖЕ коммитом, что и `edges` в kt-fx/src/video.rs.
 
 fn luma(p: vec2<i32>) -> i32 {
     let c = textureLoad(T0, p, 0);
@@ -18,8 +23,9 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     let w = i32(P.u0.x);
     let h = i32(P.u0.y);
     let d = max(i32(P.u0.w), 1);
+    let a_in = textureLoad(T0, p, 0).w;
     if (p.x < d || p.y < d || p.x >= w - d || p.y >= h - d) {
-        return vec4<u32>(0u, 0u, 0u, 255u);
+        return vec4<u32>(0u, 0u, 0u, a_in);
     }
     let a = luma(p + vec2<i32>(-d, -d));
     let b = luma(p + vec2<i32>(-d, 0));
@@ -36,5 +42,5 @@ fn fs(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<u32> {
     if (mag >= i32(P.u0.z)) { v = u32(mag); }
     // цвет линий (целочисленно, как CPU: v*color/255)
     let col = vec3<u32>(P.u1.x, P.u1.y, P.u1.z);
-    return vec4<u32>((vec3<u32>(v) * col) / 255u, 255u);
+    return vec4<u32>((vec3<u32>(v) * col) / 255u, max(a_in, v));
 }

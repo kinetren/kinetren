@@ -392,6 +392,46 @@ fn t181_effect_parity_gpu_vs_cpu() {
         assert_eq!(cc, cg, "{name}: complete разошёлся");
         assert_frames_close(&cpu, &gpu, W, H, tol, name);
     }
+    // ПРАВИЛО АЛЬФЫ (Р.53, п.418): вход С АЛЬФОЙ. Тут бэкенды расходятся
+    // легче всего — премультипликация перед мипом и поднятие альфы у
+    // edges живут ДВАЖДЫ (kt-fx и WGSL), и разойдись они, титр с
+    // размытием выглядел бы на GPU иначе, чем в экспорте на CPU.
+    let alpha_cases: Vec<(&str, Vec<FxInstance>, FrameTol)> = vec![
+        ("alpha-blur", vec![FxInstance::blur(8)], FrameTol::BILINEAR),
+        ("alpha-blur-xy", vec![FxInstance::Blur { radius: 24, radius_y: 4 }], FrameTol::BILINEAR),
+        ("alpha-glow", vec![FxInstance::glow(1.2)], FrameTol::BILINEAR),
+        (
+            "alpha-glow-tinted",
+            vec![FxInstance::Glow {
+                strength: 0.8,
+                radius: 9,
+                threshold: 40,
+                tint_r: 200,
+                tint_g: 120,
+                tint_b: 255,
+            }],
+            FrameTol::BILINEAR,
+        ),
+        ("alpha-edges", vec![FxInstance::edges(48)], FrameTol::THRESHOLD),
+        (
+            "alpha-gs-blur",
+            vec![FxInstance::greenscreen([0, 255, 0], 70, 25), FxInstance::blur(8)],
+            FrameTol::THRESHOLD,
+        ),
+        (
+            "alpha-grid-blur",
+            vec![FxInstance::EventGrid { cols: 2, rows: 2, center: true }, FxInstance::blur(12)],
+            FrameTol::BILINEAR,
+        ),
+    ];
+    for (i, (name, fx, tol)) in alpha_cases.into_iter().enumerate() {
+        let src = Src::new(3000 + i as u64, Some(frame(W, H, true, 0)), fx);
+        let p = plan(90_000, vec![one(&src, 4096, false)]);
+        let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+        assert_eq!(cc, cg, "{name}: complete разошёлся");
+        assert_frames_close(&cpu, &gpu, W, H, tol, name);
+    }
+
     // Pan с кадром ЧУЖОГО размера (ресайз в Quality обязан совпасть)
     let src = Src::new(
         2000,

@@ -1363,28 +1363,10 @@ pub fn nest_source_id(seq: MediaId) -> SourceId {
     SourceId(kt_model::NEST_TAG | seq.0)
 }
 
-/// Прямая альфа из премультиплицированной: `rgb' = rgb·255/a`.
-///
-/// Тождество при `a == 255` (непрозрачный пиксель не трогается вовсе) и
-/// ноль при `a == 0` (цвета там нет). Целочисленно и точно зеркалится в
-/// WGSL — все текстуры kt-gpu `Rgba8Uint`.
-fn unpremultiply(rgba: &mut [u8]) {
-    for px in rgba.chunks_exact_mut(4) {
-        let a = px[3] as u32;
-        if a == 255 {
-            continue;
-        }
-        if a == 0 {
-            px[0] = 0;
-            px[1] = 0;
-            px[2] = 0;
-            continue;
-        }
-        for c in px[..3].iter_mut() {
-            *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
-        }
-    }
-}
+/// Прямая альфа из премультиплицированной — ОДНА на проект, дом в kt-fx
+/// (её же зовёт premul-гейт ядер, Р.53 п.418). Здесь остался только
+/// реэкспорт под прежним именем.
+use kt_fx::video::unpremultiply;
 
 #[allow(clippy::too_many_arguments)]
 /// Кадр слоя для CPU-исполнителя: пре-FX кадр из плана либо результат

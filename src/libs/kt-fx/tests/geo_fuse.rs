@@ -1424,3 +1424,144 @@ fn t333_warp_prims() {
     assert_eq!(p.ops.len(), 1, "warp series stays one fused run");
     assert!(matches!(p.ops[0], PlanOp::Run { i: 0, j: 3, .. }));
 }
+
+/// Тест 519 (Р.53, п.417): правило альфы — свёртка, а не «последний
+/// объявивший выигрывает» среди ВСЕХ шагов.
+///
+/// `EventGrid` объявлял себя убийцей альфы, хотя тайл — это
+/// пересемплированный вход и альфа входа живёт в нём по-прежнему. Из-за
+/// этого титр или выход гринскрина под сеткой ложились в композит
+/// НЕПРОЗРАЧНЫМ прямоугольником.
+#[test]
+fn t519_alpha_rule_folds_produces_and_destroys() {
+    use kt_fx::geom::build_geom_exec;
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let gs = FxInstance::Greenscreen {
+        key_r: 0,
+        key_g: 255,
+        key_b: 0,
+        tolerance: 80,
+        softness: 20,
+        spill: 0.0,
+    };
+    let mir = FxInstance::Mirror { horizontal: true, vertical: false };
+
+    let prog = |fx: &[FxInstance]| {
+        let refs: Vec<&FxInstance> = fx.iter().collect();
+        match build_geom_exec(&refs, W, H, W, H, 0.5, None, 90_000, 1, 1) {
+            GeomExec::Fused(p) => p,
+            _ => panic!("серия обязана слиться"),
+        }
+    };
+
+    // сетка одна: про альфу ей сказать нечего — берётся альфа ИСТОЧНИКА
+    let p = prog(&[grid.clone(), mir.clone()]);
+    assert!(!p.has_alpha_known, "EventGrid снова объявляет альфу за источник");
+
+    // гринскрин СОЗДАЁТ альфу, и сетка за ним её не стирает
+    let p = prog(&[gs.clone(), grid.clone()]);
+    assert!(p.has_alpha_known && p.has_alpha, "сетка стёрла альфу гринскрина");
+
+    // порядок наоборот — тот же ответ
+    let p = prog(&[grid.clone(), gs.clone(), mir.clone()]);
+    assert!(p.has_alpha_known && p.has_alpha);
+}
+
+/// Тест 520 (Р.53, п.417): следствие В ПИКСЕЛЯХ. Кадр с прозрачной
+/// половиной проходит сетку и остаётся прозрачным там, где был.
+#[test]
+fn t520_grid_keeps_transparent_pixels_transparent() {
+    let mut f = test_frame();
+    f.has_alpha = true;
+    for y in 0..H {
+        for x in 0..W {
+            let i = ((y * W + x) * 4) as usize;
+            if x < W / 2 {
+                f.rgba[i + 3] = 0;
+            }
+        }
+    }
+    let grid = FxInstance::EventGrid { cols: 2, rows: 2, center: false };
+    let out = apply_video_chain(&[grid], f, &ctx());
+    assert!(out.has_alpha, "кадр объявлен непрозрачным — композит зальёт его плитой");
+    // левая четверть каждого тайла приходит из прозрачной половины входа
+    let a = |x: u32, y: u32| out.rgba[(((y * W + x) * 4) + 3) as usize];
+    assert_eq!(a(2, 4), 0, "прозрачный пиксель стал непрозрачным");
+    assert_eq!(a(W / 2 + 2, 4), 0, "второй тайл потерял прозрачность входа");
+    assert_eq!(a(W / 4 + 2, 4), 255, "непрозрачная половина входа испортилась");
+}
+
+/// Тест 522 (Р.53, п.418): размытие кадра С АЛЬФОЙ не тянет цвет
+/// прозрачных пикселей в видимые.
+///
+/// Без премультипликации мип смешивает RGB прозрачных соседей (у титра
+/// это чёрный фон вокруг глифа) с видимыми, и по краю появляется тёмный
+/// ореол. Проверяется СЛЕДСТВИЕ: яркий непрозрачный пиксель рядом с
+/// прозрачной чёрной областью после размытия не темнеет.
+#[test]
+fn t522_blur_of_an_alpha_frame_has_no_dark_halo() {
+    // белая непрозрачная полоса в чёрном ПРОЗРАЧНОМ поле
+    let mut f = Frame { w: W, h: H, rgba: vec![0u8; (W * H * 4) as usize], has_alpha: true };
+    for y in 0..H {
+        for x in 0..W {
+            let i = ((y * W + x) * 4) as usize;
+            let inside = (W / 4..W * 3 / 4).contains(&x);
+            if inside {
+                f.rgba[i] = 255;
+                f.rgba[i + 1] = 255;
+                f.rgba[i + 2] = 255;
+                f.rgba[i + 3] = 255;
+            }
+        }
+    }
+    let out = apply_video_chain(&[FxInstance::blur(8)], f, &ctx());
+    // там, где альфа ещё заметна, цвет обязан остаться белым: чёрный из
+    // прозрачного поля в него не затёк
+    let mut worst = 255u8;
+    for y in 0..H {
+        for x in 0..W {
+            let i = ((y * W + x) * 4) as usize;
+            if out.rgba[i + 3] >= 200 {
+                worst = worst.min(out.rgba[i]);
+            }
+        }
+    }
+    assert!(worst >= 250, "цвет прозрачных соседей затёк в видимые: минимум {worst} вместо ~255");
+}
+
+/// Тест 523 (Р.53, п.418): гейт по `has_alpha` — НЕПРОЗРАЧНЫЙ кадр
+/// проходит те же ядра БАЙТ В БАЙТ.
+///
+/// Премультипликация при `a == 255` тождественна, и именно на этом стоит
+/// обещание «ни один голден не двинулся»: правило включается только там,
+/// где альфа есть.
+#[test]
+fn t523_opaque_frames_are_byte_identical() {
+    for fx in [
+        FxInstance::blur(8),
+        FxInstance::blur(24),
+        FxInstance::Glow {
+            strength: 1.0,
+            radius: 4,
+            threshold: 0,
+            tint_r: 255,
+            tint_g: 255,
+            tint_b: 255,
+        },
+        FxInstance::Glow {
+            strength: 0.7,
+            radius: 9,
+            threshold: 40,
+            tint_r: 200,
+            tint_g: 120,
+            tint_b: 255,
+        },
+    ] {
+        // тот же кадр, но объявленный с альфой: все пиксели a == 255
+        let mut with = test_frame();
+        with.has_alpha = true;
+        let a = apply_video_chain(std::slice::from_ref(&fx), test_frame(), &ctx());
+        let b = apply_video_chain(std::slice::from_ref(&fx), with, &ctx());
+        assert_eq!(a.rgba, b.rgba, "{fx:?}: гейт альфы сдвинул байты на непрозрачном кадре");
+    }
+}

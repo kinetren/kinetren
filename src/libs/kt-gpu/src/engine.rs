@@ -207,9 +207,11 @@ enum Pipe {
     Halftone,
     /// Граница вложения (Р.50): прямая альфа из премультиплицированной.
     Unpremul,
+    /// Премультипликация перед мипом (Р.53, п.418).
+    Premul,
 }
 
-const PIPE_COUNT: usize = 20;
+const PIPE_COUNT: usize = 21;
 
 /// Один шаг цепочки, предвычисленный на CPU (общая математика — kt-fx:
 /// pan_frame/cam_at/noise_seed). Кол-во пассов и размеры известны заранее.
@@ -259,7 +261,12 @@ enum FxOp {
         s: f32,
         th: u32,
         tint: [f32; 3],
+        /// Мипить ПРЕМУЛЬТИПЛИЦИРОВАННОЕ (Р.53, п.418).
+        pm: bool,
     },
+    /// Премультипликация/обратная конверсия вокруг мипа (Р.53, п.418).
+    Premul,
+    Unpremul,
     /// Барьеры Р.47 Кв3. Sharpen/DropShadow — 3 пасса (мип down/up +
     /// финал), остальные — один.
     Sharpen {
@@ -399,6 +406,12 @@ fn chain_ops(
     u: f64,
     t: Tick,
     cam3d: Option<Cam3d>,
+    // Альфа ВХОДА цепочки (Р.53, п.418). Свёртка `has_alpha_known`
+    // говорит только о том, высказался ли какой-то шаг; пока никто не
+    // высказался, альфа кадра — это альфа источника, и премультипликацию
+    // перед мипом надо решать по ней, иначе CPU (у которого есть
+    // `Frame.has_alpha`) и GPU разошлись бы на титрах.
+    src_has_alpha: bool,
 ) -> ChainOps {
     let (mut w, mut h) = (src_w, src_h);
     // максимум ПРОМЕЖУТОЧНЫХ размеров (K×-сегменты п.314): resolve_chain
@@ -485,6 +498,14 @@ fn chain_ops(
                         (((*radius_y).clamp(1, 48) / 3).max(1) + 1) * res_scale
                     };
                     let (dw, dh) = ((w / step).max(1), (h / step_y).max(1));
+                    // ПРАВИЛО АЛЬФЫ (п.418): мип идёт по
+                    // премультиплицированному — зеркало гейта в
+                    // `kt_fx::video::blur`. При a == 255 обе конверсии
+                    // тождественны, поэтому проходы и не ставятся.
+                    let pm = if has_alpha_known { has_alpha } else { src_has_alpha };
+                    if pm {
+                        ops.push(FxOp::Premul);
+                    }
                     ops.push(FxOp::Resample {
                         tw: dw,
                         th: dh,
@@ -495,6 +516,9 @@ fn chain_ops(
                         th: h,
                         frame: (0.0, 0.0, dw as f64, dh as f64),
                     });
+                    if pm {
+                        ops.push(FxOp::Unpremul);
+                    }
                 }
                 FxInstance::Greenscreen { key_r, key_g, key_b, tolerance, softness, spill } => {
                     let tol = (*tolerance).clamp(1, 200);
@@ -518,8 +542,9 @@ fn chain_ops(
                         d: (*thickness).clamp(1, 8) * res_scale,
                         color: [*color_r as u32, *color_g as u32, *color_b as u32],
                     });
-                    has_alpha_known = true;
-                    has_alpha = false;
+                    // ПРАВИЛО АЛЬФЫ (Р.53, п.418): edges ПРОПУСКАЕТ альфу
+                    // (`a_out = max(a_in, сила линии)`), а не уничтожает
+                    // её — свёртку не трогает, как и вся геометрия.
                 }
                 FxInstance::Noise { amount, size, color } => {
                     let k = (amount.clamp(0.0, 1.0) * 32.0) as i64;
@@ -646,6 +671,10 @@ fn chain_ops(
                             s: s as f32,
                             th: (*threshold).min(255),
                             tint: [*tint_r as f32, *tint_g as f32, *tint_b as f32],
+                            // свет из прозрачных мест не идёт (п.418):
+                            // мипится премультиплицированная копия, база
+                            // сложения остаётся прямой
+                            pm: if has_alpha_known { has_alpha } else { src_has_alpha },
                         });
                     }
                 }
@@ -746,6 +775,7 @@ const SHADERS: [(&str, &str); PIPE_COUNT] = [
     ("shadow_under", include_str!("shaders/shadow_under.wgsl")),
     ("halftone", include_str!("shaders/halftone.wgsl")),
     ("unpremul", include_str!("shaders/unpremul.wgsl")),
+    ("premul", include_str!("shaders/premul.wgsl")),
 ];
 
 const COMMON: &str = include_str!("shaders/common.wgsl");
@@ -1248,7 +1278,8 @@ impl Inner {
             let (jobs, sub_ok) = self.resolve_plan(&n.plan)?;
             let (sw, sh) = (n.plan.out_w, n.plan.out_h);
             let (ops, (fw, fh), ha, ha_known, (mw, mh)) =
-                chain_ops(&src.fx, sw, sh, src.src_scale, ow, oh, src.u, t, src.cam3d);
+                // суб-композит всегда с альфой (см. ниже)
+                chain_ops(&src.fx, sw, sh, src.src_scale, ow, oh, src.u, t, src.cam3d, true);
             if mw > self.max_dim || mh > self.max_dim {
                 return Err(GpuExecError::TooLarge { w: mw, h: mh });
             }
@@ -1274,6 +1305,7 @@ impl Inner {
             src.u,
             t,
             src.cam3d,
+            frame.has_alpha,
         );
         // K×-промежутки плана (п.314) обязаны влезать в лимит текстур
         // устройства; не влезли — аккуратный TooLarge (весь план уходит на
@@ -1637,14 +1669,45 @@ impl Inner {
                     view = dst.view.clone();
                     owned = Some(dst);
                 }
-                FxOp::Glow { dw, dh, s, th, tint } => {
+                FxOp::Premul | FxOp::Unpremul => {
+                    let dst = self.pool.acquire(&self.device, w, h);
+                    let pipe =
+                        if matches!(op, FxOp::Premul) { Pipe::Premul } else { Pipe::Unpremul };
+                    self.pass(enc, pipe, &dst.view, &view, &dummy, &dummy, UniformData::default());
+                    if let Some(t) = owned.take() {
+                        self.pool.release(t);
+                    }
+                    view = dst.view.clone();
+                    owned = Some(dst);
+                }
+                FxOp::Glow { dw, dh, s, th, tint, pm } => {
+                    // мип берётся с премультиплицированной КОПИИ, база
+                    // сложения остаётся прямой (зеркало kt_fx::video::glow)
+                    let pm_tex = pm.then(|| {
+                        let t = self.pool.acquire(&self.device, w, h);
+                        self.pass(
+                            enc,
+                            Pipe::Premul,
+                            &t.view,
+                            &view,
+                            &dummy,
+                            &dummy,
+                            UniformData::default(),
+                        );
+                        t
+                    });
+                    let mip_src =
+                        pm_tex.as_ref().map(|t| t.view.clone()).unwrap_or_else(|| view.clone());
                     let small = self.pool.acquire(&self.device, *dw, *dh);
                     let u = UniformData {
                         u: [*dw, *dh, w, h, 0, 0, 0, 0],
                         f: [0.0, 0.0, w as f32, h as f32, 0.0, 0.0, 0.0, 0.0],
                         ..Default::default()
                     };
-                    self.pass(enc, Pipe::Resample, &small.view, &view, &dummy, &dummy, u);
+                    self.pass(enc, Pipe::Resample, &small.view, &mip_src, &dummy, &dummy, u);
+                    if let Some(t) = pm_tex {
+                        self.pool.release(t);
+                    }
                     let up = self.pool.acquire(&self.device, w, h);
                     let u = UniformData {
                         u: [w, h, *dw, *dh, 0, 0, 0, 0],

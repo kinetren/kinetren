@@ -85,7 +85,8 @@ headless). CPU-путь kt-fx/kt-engine остаётся байт-эталоно
 
 ## Р.47 (пп.332-335): 19 пассов, Warp, барьеры
 
-- PIPE_COUNT = 19: + colorgrade/duotone/posterize/vignette (поточечные на
+- PIPE_COUNT рос по раундам (Р.47 — 19, Р.50 — +unpremul, Р.53 — +premul):
+  + colorgrade/duotone/posterize/vignette (поточечные на
   барьерной позиции, зеркала tap-функций kt-fx) + sharpen_add/pixelate/
   chroma_ab/radial_blur/shadow_under/halftone. Sharpen и DropShadow —
   3 пасса (Resample down/up + финал с T1); passes()/slot_units обязаны
@@ -93,6 +94,19 @@ headless). CPU-путь kt-fx/kt-engine остаётся байт-эталоно
 - `geom_fused.wgsl`: прим kind 4 — Warp (2 слота юниформы, [mode,p0..p2]
   [p3..p6]); тап-арм kind 2..5 — поточечные Р.47; коды и формулы —
   зеркала kt-fx (geom.rs::warp_map / tap_*), правка — ТЕМ ЖЕ КОММИТОМ.
+- **Премультипликация перед мипом (Р.53, п.418).** `premul.wgsl` —
+  зеркало `kt_fx::video::premultiply`, `unpremul.wgsl` — зеркало
+  `kt_fx::video::unpremultiply` (дом обеих функций в kt-fx, оттуда же их
+  берёт kt-engine). Blur ставит пару вокруг двух Resample, Glow мипит
+  премультиплицированную КОПИЮ и складывает её как есть; решение —
+  «есть ли альфа У КАДРА В ЭТОЙ ТОЧКЕ», то есть свёртка, а при молчании
+  свёртки — `src_has_alpha` (новый параметр `chain_ops`: без него GPU
+  судил бы по свёртке, а CPU — по `Frame.has_alpha`, и титры разъехались
+  бы). При `a == 255` обе конверсии тождественны, поэтому на
+  непрозрачных кадрах не эмитится НИЧЕГО и голдены целы. Сторож —
+  alpha-кейсы t181 (проверено: без Premul на GPU t181 краснеет).
+- **Edges ПРОПУСКАЕТ альфу** (Р.53, п.418): `a_out = max(a_in, сила
+  линии)` в обоих исполнителях; свёртку `has_alpha` он больше не трогает.
 - DropShadow в chain_ops: при `has_alpha_known && !has_alpha` оп НЕ
   эмитится (CPU-passthrough); при неизвестной альфе эмитится — формула
   на непрозрачном входе тождественна байтам (a_src=1 ⇒ out=src).

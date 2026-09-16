@@ -319,7 +319,13 @@ fn t198_edges_scalar_eq_simd() {
     for kind in 0..5u32 {
         for (w, h) in [(3u32, 3u32), (9, 5), (11, 4), (64, 36), (65, 37), (129, 9)] {
             for th in [1u32, 48, 255] {
-                let src = frame(w, h, kind);
+                // AVX2-путь edges существует только на НЕПРОЗРАЧНОМ кадре
+                // (Р.53, п.418: на кадре с альфой ядро поднимает её до
+                // силы линии и считает скаляром) — тест про SIMD, значит
+                // и кадр объявляем непрозрачным. Байты RGB от этого не
+                // зависят: люма читает только RGB.
+                let mut src = frame(w, h, kind);
+                src.has_alpha = false;
                 let want = st::edges_scalar(&src.rgba, w as usize, h as usize, th);
                 let ctx = VideoFxCtx {
                     out_w: w,

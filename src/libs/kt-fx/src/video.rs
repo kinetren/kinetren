@@ -701,7 +701,62 @@ fn mirror(mut f: Frame, h: bool, v: bool) -> Frame {
 /// Размытие даунскейлом. `radius_y == 0` — «как по горизонтали»: ровно
 /// прежний путь (один шаг на обе оси), поэтому golden'ы не двигаются;
 /// разные радиусы дают смаз по одной оси (Р.33 С5).
-fn blur(f: Frame, radius: u32, radius_y: u32, scratch: &mut FxScratch, res_scale: u32) -> Frame {
+/// Премультиплицировать НА МЕСТЕ: `rgb' = rgb·a/255` с округлением к
+/// ближайшему (Р.53, п.418).
+///
+/// Зачем: мип и любая свёртка смешивают СОСЕДНИЕ пиксели, а у прозрачного
+/// пикселя цвет — мусор (чаще всего чёрный). На прямой альфе этот мусор
+/// затекает в видимые пиксели, и у титра появляется тёмный ореол по
+/// краю. Премультипликация делает вклад прозрачного пикселя нулевым по
+/// построению.
+///
+/// Тождество при `a == 255`: на непрозрачном кадре премультипликация НЕ
+/// МЕНЯЕТ НИ БАЙТА — на этом стоят все голдены, и поэтому шаг гейтится
+/// `has_alpha`, а не включается всегда.
+pub fn premultiply(rgba: &mut [u8]) {
+    for px in rgba.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        if a == 255 {
+            continue;
+        }
+        for c in px[..3].iter_mut() {
+            *c = ((*c as u32 * a + 127) / 255) as u8;
+        }
+    }
+}
+
+/// Прямая альфа из премультиплицированной: `rgb' = rgb·255/a`.
+///
+/// Тождество при `a == 255` (непрозрачный пиксель не трогается вовсе) и
+/// ноль при `a == 0` (цвета там нет). Целочисленно и точно зеркалится в
+/// WGSL — все текстуры kt-gpu `Rgba8Uint`. Дом функции — ЗДЕСЬ: её зовут
+/// и граница вложения (kt-engine), и premul-гейт ядер (п.418), а два
+/// экземпляра одного правила разошлись бы на округлении.
+pub fn unpremultiply(rgba: &mut [u8]) {
+    for px in rgba.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        if a == 255 {
+            continue;
+        }
+        if a == 0 {
+            px[0] = 0;
+            px[1] = 0;
+            px[2] = 0;
+            continue;
+        }
+        for c in px[..3].iter_mut() {
+            *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+        }
+    }
+}
+
+fn blur(
+    mut f: Frame,
+    radius: u32,
+    radius_y: u32,
+    scratch: &mut FxScratch,
+    res_scale: u32,
+) -> Frame {
     let radius = radius.clamp(1, 48);
     // Р.45 (п.313): K×-исполнение масштабирует ШАГ — floor(K·w/(K·step))
     // == floor(w/step), мип тот же, вид инвариантен точно; K=1 — ×1
@@ -709,11 +764,22 @@ fn blur(f: Frame, radius: u32, radius_y: u32, scratch: &mut FxScratch, res_scale
     let step_y =
         if radius_y == 0 { step } else { ((radius_y.clamp(1, 48) / 3).max(1) + 1) * res_scale };
     let (dw, dh) = ((f.w / step).max(1), (f.h / step_y).max(1));
+    // ПРАВИЛО АЛЬФЫ (п.418): размывается премультиплицированное, иначе в
+    // видимые пиксели затекает цвет прозрачных — тёмный ореол по краю
+    // титра. На непрозрачном кадре обе конверсии тождественны, поэтому
+    // гейт по `has_alpha` и оставляет все голдены нетронутыми.
+    let pm = f.has_alpha;
+    if pm {
+        premultiply(&mut f.rgba);
+    }
     let mut small = scratch.take((dw * dh * 4) as usize);
     bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
     let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: f.has_alpha };
     let mut out = scratch.take(f.rgba.len());
     bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut out);
+    if pm {
+        unpremultiply(&mut out);
+    }
     scratch.put(small_f.rgba);
     scratch.put(f.rgba);
     Frame { w: f.w, h: f.h, rgba: out, has_alpha: f.has_alpha }
@@ -790,16 +856,24 @@ fn edges(
             .map(|p| (77 * p[0] as i32 + 150 * p[1] as i32 + 29 * p[2] as i32) >> 8)
             .collect()
     };
+    // ПРАВИЛО АЛЬФЫ (Р.53, п.418): edges больше не заливает альфу 255, а
+    // ПОДНИМАЕТ её до силы линии — `a_out = max(a_in, v)`. На непрозрачном
+    // входе (a_in = 255) это тождество, и байты прежние; на входе с
+    // альфой обводка перестала быть непрозрачной плитой во весь кадр и
+    // стала тем, чем её и просят быть — накладкой контуров.
+    let keep_alpha = f.has_alpha;
     let mut out = scratch.take(f.rgba.len());
-    for p in out.chunks_exact_mut(4) {
-        p[3] = 255;
+    for (o, i) in out.chunks_exact_mut(4).zip(f.rgba.chunks_exact(4)) {
+        o[3] = if keep_alpha { i[3] } else { 255 };
     }
     let m = d as usize; // кайма шире при толстой линии
     for y in m..h.saturating_sub(m) {
         // векторная часть строки; скалярный цикл ниже дорисовывает хвост
         let mut x_from = m;
         #[cfg(target_arch = "x86_64")]
-        if plain && simd && w > 2 {
+        // AVX2-ядро пишет альфу 255 жёстко: на кадре С АЛЬФОЙ считаем
+        // скаляром (там и так не горячий путь — титры, а не монтаж 4K)
+        if plain && simd && w > 2 && !keep_alpha {
             // SAFETY: уровень проверен; строки y-1..y+1 существуют, out полон
             x_from = unsafe { crate::video_simd::sobel_row_avx2(&mut out, &luma, w, y, th, w - 1) };
         }
@@ -816,10 +890,13 @@ fn edges(
             for c in 0..3 {
                 out[i + c] = ((v as u32 * color[c] as u32) / 255) as u8;
             }
+            if keep_alpha {
+                out[i + 3] = out[i + 3].max(v);
+            }
         }
     }
     scratch.put(f.rgba);
-    Frame { w: f.w, h: f.h, rgba: out, has_alpha: false }
+    Frame { w: f.w, h: f.h, rgba: out, has_alpha: keep_alpha }
 }
 
 /// Финализатор lowbias32 (Chris Wellons): целочисленный avalanche-хэш,
@@ -1062,8 +1139,25 @@ fn glow(
     let th = threshold.min(255) as i32;
     let plain = th == 0 && tint == [255, 255, 255];
     let (dw, dh) = ((f.w / r).max(1), (f.h / r).max(1));
+    // ПРАВИЛО АЛЬФЫ (п.418): свет из прозрачных мест не идёт. Мипим
+    // КОПИЮ премультиплицированного кадра — и добавляем её как есть,
+    // без обратной конверсии: премультиплицированный RGB и есть вклад
+    // света. База сложения остаётся прямой. На непрозрачном кадре копия
+    // побайтово равна оригиналу — прежний путь цел.
+    let pm = f.has_alpha;
+    let mut pmbuf = None;
+    if pm {
+        let mut b = scratch.take(f.rgba.len());
+        b.copy_from_slice(&f.rgba);
+        premultiply(&mut b);
+        pmbuf = Some(Frame { w: f.w, h: f.h, rgba: b, has_alpha: true });
+    }
+    let mip_src = pmbuf.as_ref().unwrap_or(&f);
     let mut small = scratch.take((dw * dh * 4) as usize);
-    bilinear_into(&f, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
+    bilinear_into(mip_src, 0.0, 0.0, f.w as f64, f.h as f64, dw, dh, &mut small);
+    if let Some(fr) = pmbuf {
+        scratch.put(fr.rgba);
+    }
     let small_f = Frame { w: dw, h: dh, rgba: small, has_alpha: false };
     let mut up = scratch.take(f.rgba.len());
     bilinear_into(&small_f, 0.0, 0.0, dw as f64, dh as f64, f.w, f.h, &mut up);

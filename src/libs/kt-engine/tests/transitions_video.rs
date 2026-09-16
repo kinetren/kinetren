@@ -1043,3 +1043,83 @@ fn t468_volume_kinds_reach_picture() {
     near(px(&rm, 2, 18), cb, "roll@середина: пройденное — входящий");
     near(px(&rm, 61, 18), ca, "roll@середина: хвост листа ещё лежит");
 }
+
+/// Тест 521 (Р.53, п.417): слой с АЛЬФОЙ под гео-цепочкой просвечивает.
+///
+/// Это тот самый симптом, ради которого правилось правило альфы: титр (и
+/// любой выход гринскрина) с `EventGrid` в цепочке ложился на нижнюю
+/// дорожку непрозрачным прямоугольником. Тест независим от kt-fx: он
+/// щупает КОМПОЗИТ — то, что видит человек в превью.
+#[test]
+fn t521_alpha_layer_under_a_chain_shows_through() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(45_000);
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
+    for id in [1u64, 2] {
+        p.media.push(MediaRef { id: MediaId(id), path: format!("synth:{id}") });
+    }
+    for (id, lane, media) in [(1u64, 0u32, 1u64), (2, 1, 2)] {
+        p.clips.push(ClipEvent {
+            id: ClipId(id),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane,
+            start: Tick(0),
+            duration: Tick(90_000),
+            source_in: Tick(if id == 1 { 0 } else { 900_000 }),
+            media: MediaId(media),
+            gain_db: 0.0,
+            reversed: false,
+            fx: vec![],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
+    }
+    // ключ — СОБСТВЕННЫЙ цвет верхнего слоя: гринскрин выбивает его
+    // насквозь, дальше сетка (кадры синтетики — сплошной цвет от pts)
+    let top = synth_frame(t, q);
+    p.clips[0].fx = vec![
+        FxInstance::Greenscreen {
+            key_r: top[0],
+            key_g: top[1],
+            key_b: top[2],
+            tolerance: 8,
+            softness: 0,
+            spill: 0.0,
+        },
+        FxInstance::EventGrid { cols: 2, rows: 2, center: false },
+    ];
+    p.clips[0].fx_bypass = vec![false; 2];
+    p.clips[0].fx_auto = vec![vec![]; 2];
+    p.validate().unwrap();
+
+    let render = |p: &Project| {
+        let mut vr = VideoRenderer::new(p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "слои прогреты");
+        out
+    };
+
+    let with_top = render(&p);
+    // тот же монтаж без верхнего слоя — эталон «видно только нижний»
+    let mut only_bottom = p.clone();
+    only_bottom.clips.remove(0);
+    only_bottom.validate().unwrap();
+    let bottom = render(&only_bottom);
+
+    assert_eq!(
+        with_top, bottom,
+        "верхний слой выбит гринскрином целиком, но лёг НЕПРОЗРАЧНОЙ плитой: \
+         сетка в цепочке объявила альфу потерянной"
+    );
+}
