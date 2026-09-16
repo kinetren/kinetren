@@ -776,6 +776,7 @@ basic = "Básicas"
 wipe = "Cortinillas"
 motion = "Movimiento"
 pattern = "Patrones"
+volume = "3D"
 style = "Estilizadas"
 
 [trn.kind]
@@ -807,6 +808,11 @@ shake = "Sacudida"
 film_burn = "Quemadura de película"
 light_leaks = "Fugas de luz"
 zoom_blur = "Desenfoque radial"
+flip = "Volteo"
+cube = "Cubo"
+door = "Puertas"
+page_peel = "Vuelta de página"
+page_roll = "Rollo de página"
 
 [trn.curve]
 equal_power = "Potencia igual"

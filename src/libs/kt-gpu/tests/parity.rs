@@ -728,7 +728,36 @@ fn t224_transition_parity_gpu_vs_cpu() {
             assert_frames_close(&cpu, &gpu, W, H, soft, &format!("{}@{k}", kind.tag()));
         }
     }
-    assert_eq!(seen.len(), 27, "все 27 не-кроссфейдных режимов проверены: {seen:?}");
+    // объёмные (Р.51, п.401): жёсткие кромки панелей и перспективное
+    // деление — допуск GEOM, как у pan3d (пиксель на кромке может
+    // перещёлкнуться целиком)
+    let hard: Vec<TransitionKind> = vec![
+        TransitionKind::Flip { vertical: false, persp: 0.5, shade: 0.5 },
+        TransitionKind::Flip { vertical: true, persp: 1.0, shade: 0.0 },
+        TransitionKind::Cube { dir: Dir::Left, persp: 0.5, shade: 0.5 },
+        TransitionKind::Cube { dir: Dir::Right, persp: 0.2, shade: 0.0 },
+        TransitionKind::Cube { dir: Dir::Up, persp: 0.8, shade: 0.3 },
+        TransitionKind::Door { vertical: false, persp: 0.5, shade: 0.5 },
+        TransitionKind::Door { vertical: true, persp: 0.9, shade: 0.2 },
+        TransitionKind::PagePeel { dir: Dir::Left, curl: 0.18, shadow: 0.5 },
+        TransitionKind::PagePeel { dir: Dir::Down, curl: 0.35, shadow: 1.0 },
+        TransitionKind::PageRoll { dir: Dir::Right, curl: 0.18, shadow: 0.5 },
+        TransitionKind::PageRoll { dir: Dir::Up, curl: 0.3, shadow: 0.0 },
+    ];
+    for kind in &hard {
+        let mix = kt_engine::TransMix::of(kind);
+        seen.insert(mix.mode);
+        for k in [200u32, 1024, 1800, 2048, 3600] {
+            let p = plan(
+                k as i64,
+                vec![PlanLayer::Dissolve { a: a.layer(), b: b.layer(), k, alpha_k: 4096, mix }],
+            );
+            let (cpu, gpu, cc, cg) = run_both(engine.as_ref(), &p);
+            assert!(cc && cg, "{}: план обязан быть полным", kind.tag());
+            assert_frames_close(&cpu, &gpu, W, H, FrameTol::GEOM, &format!("{}@{k}", kind.tag()));
+        }
+    }
+    assert_eq!(seen.len(), 32, "все 32 не-кроссфейдных режима проверены: {seen:?}");
     assert_eq!(
         seen.len() + 1,
         TransitionKind::ALL.len(),

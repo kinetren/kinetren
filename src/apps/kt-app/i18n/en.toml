@@ -776,6 +776,7 @@ basic = "Basic"
 wipe = "Wipes"
 motion = "Motion"
 pattern = "Patterns"
+volume = "3D"
 style = "Stylized"
 
 [trn.kind]
@@ -807,6 +808,11 @@ shake = "Shake"
 film_burn = "Film burn"
 light_leaks = "Light leaks"
 zoom_blur = "Zoom blur"
+flip = "Flip"
+cube = "Cube"
+door = "Doors"
+page_peel = "Page peel"
+page_roll = "Page roll"
 
 [trn.curve]
 equal_power = "Equal power"

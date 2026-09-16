@@ -1105,7 +1105,12 @@ impl Inner {
                             clear,
                         ],
                         f: fade.map(|f| f.mix.p).unwrap_or_default(),
-                        ..Default::default()
+                        // объёмные виды (Р.51, п.401): гомографии панелей,
+                        // посчитанные в f64 общей trans_ext, — оба бэкенда
+                        // читают одни и те же f32-биты
+                        m: fade
+                            .map(|f| kt_engine::transitions::trans_ext(&f.mix, f.k))
+                            .unwrap_or_default(),
                     };
                     let acc_in = acc[cur].view.clone();
                     let dummy = self.dummy.view.clone();
@@ -1130,6 +1135,7 @@ impl Inner {
                             0,
                         ],
                         f: mix.p,
+                        m: kt_engine::transitions::trans_ext(mix, *k),
                         ..Default::default()
                     };
                     let acc_in = acc[cur].view.clone();
@@ -1846,7 +1852,9 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
         }
     }
     /// Параметры перехода — В КЛЮЧ: без них ReadbackCache отдал бы кадр
-    /// другого вида перехода (Р.33 С4).
+    /// другого вида перехода (Р.33 С4). Ext-скаляры объёмных видов (Р.51,
+    /// `trans_ext`) сюда НЕ входят и не должны: это детерминированная
+    /// функция уже захэшированного (mode, p, k) — «недостающего» здесь нет.
     fn put_mix(h: &mut Xxh3, m: &TransMix) {
         h.update(&m.mode.to_le_bytes());
         for v in m.p {

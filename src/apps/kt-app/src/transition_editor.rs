@@ -48,6 +48,12 @@ pub fn kind_category(kind: &TransitionKind) -> Key {
         | TransitionKind::Checker { .. }
         | TransitionKind::Blocks { .. }
         | TransitionKind::Spiral { .. } => k::trn::cat::PATTERN,
+        // объёмные (Р.51): панели и цилиндры
+        TransitionKind::Flip { .. }
+        | TransitionKind::Cube { .. }
+        | TransitionKind::Door { .. }
+        | TransitionKind::PagePeel { .. }
+        | TransitionKind::PageRoll { .. } => k::trn::cat::VOLUME,
         _ => k::trn::cat::STYLE,
     }
 }
@@ -83,6 +89,11 @@ pub fn kind_name(kind: &TransitionKind) -> &'static str {
         TransitionKind::FilmBurn { .. } => tr(k::trn::kind::FILM_BURN),
         TransitionKind::LightLeaks { .. } => tr(k::trn::kind::LIGHT_LEAKS),
         TransitionKind::ZoomBlur { .. } => tr(k::trn::kind::ZOOM_BLUR),
+        TransitionKind::Flip { .. } => tr(k::trn::kind::FLIP),
+        TransitionKind::Cube { .. } => tr(k::trn::kind::CUBE),
+        TransitionKind::Door { .. } => tr(k::trn::kind::DOOR),
+        TransitionKind::PagePeel { .. } => tr(k::trn::kind::PAGE_PEEL),
+        TransitionKind::PageRoll { .. } => tr(k::trn::kind::PAGE_ROLL),
     }
 }
 
@@ -103,7 +114,10 @@ fn dir_of(kind: &mut TransitionKind) -> Option<&mut kt_model::Dir> {
         | TransitionKind::Push { dir }
         | TransitionKind::Slide { dir }
         | TransitionKind::Whip { dir, .. }
-        | TransitionKind::Squeeze { dir } => Some(dir),
+        | TransitionKind::Squeeze { dir }
+        | TransitionKind::Cube { dir, .. }
+        | TransitionKind::PagePeel { dir, .. }
+        | TransitionKind::PageRoll { dir, .. } => Some(dir),
         _ => None,
     }
 }
@@ -260,7 +274,9 @@ impl KtApp {
                     // ось у сдвигов-симбиозов Р.51 — одна галка на троих
                     if let TransitionKind::Split { vertical }
                     | TransitionKind::Stretch { vertical }
-                    | TransitionKind::Swap { vertical, .. } = &mut t.kind
+                    | TransitionKind::Swap { vertical, .. }
+                    | TransitionKind::Flip { vertical, .. }
+                    | TransitionKind::Door { vertical, .. } = &mut t.kind
                         && ui.checkbox(vertical, tr(k::trn::VERTICAL_AXIS)).changed()
                     {
                         changed = true;

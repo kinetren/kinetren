@@ -46,6 +46,13 @@ pub const MODE_SHAKE: u32 = 24;
 pub const MODE_BURN: u32 = 25;
 pub const MODE_LEAKS: u32 = 26;
 pub const MODE_ZOOMBLUR: u32 = 27;
+// Объёмные (п.401): панели через обратные гомографии в ext (см. trans_ext),
+// цилиндры peel/roll — аналитика прямо в ядре.
+pub const MODE_FLIP: u32 = 28;
+pub const MODE_CUBE: u32 = 29;
+pub const MODE_DOOR: u32 = 30;
+pub const MODE_PEEL: u32 = 31;
+pub const MODE_ROLL: u32 = 32;
 
 /// Разрешённый переход для исполнителей: режим + 8 чисел (ровно f0/f1
 /// униформы GPU). Своей семантики у полей нет — её задают ядра ниже.
@@ -238,9 +245,155 @@ impl TransMix {
                 p[2] = *cy as f32;
                 MODE_ZOOMBLUR
             }
+            TransitionKind::Flip { vertical, persp, shade } => {
+                p[0] = if *vertical { 1.0 } else { 0.0 };
+                p[1] = *persp as f32;
+                p[2] = *shade as f32;
+                MODE_FLIP
+            }
+            TransitionKind::Cube { dir, persp, shade } => {
+                (p[0], p[1]) = d(*dir);
+                p[2] = *persp as f32;
+                p[3] = *shade as f32;
+                MODE_CUBE
+            }
+            TransitionKind::Door { vertical, persp, shade } => {
+                p[0] = if *vertical { 1.0 } else { 0.0 };
+                p[1] = *persp as f32;
+                p[2] = *shade as f32;
+                MODE_DOOR
+            }
+            TransitionKind::PagePeel { dir, curl, shadow } => {
+                (p[0], p[1]) = d(*dir);
+                p[2] = *curl as f32;
+                p[3] = *shadow as f32;
+                MODE_PEEL
+            }
+            TransitionKind::PageRoll { dir, curl, shadow } => {
+                (p[0], p[1]) = d(*dir);
+                p[2] = *curl as f32;
+                p[3] = *shadow as f32;
+                MODE_ROLL
+            }
         };
         TransMix { mode, p }
     }
+}
+
+/// Предвычисленные скаляры кадра для ОБЪЁМНЫХ видов (Р.51, п.401):
+/// обратные гомографии панелей, посчитанные в f64 и ОДНОКРАТНО
+/// округлённые в f32. CPU-ядро и WGSL читают одни и те же биты — паритет
+/// по построению, отдельный f64-эталон не нужен. Едут в поле `m`
+/// униформы композита (свободно с Р.44). Для остальных режимов — нули;
+/// в кэш-ключи не входят и не должны: ext — детерминированная функция
+/// уже хэшированного (mode, p, k) — см. комментарий у `put_mix` kt-gpu.
+pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
+    let mut e = [0.0f32; 16];
+    let kf = k as f64 / 4096.0;
+    let p = m.p;
+    let dist = |persp: f32| 1.5 / (persp as f64).max(0.05);
+    match m.mode {
+        MODE_FLIP => {
+            let mut th = kf * std::f64::consts::PI;
+            // ребро (θ=π/2) вырождает панель в линию — детерминированный
+            // ε-сдвиг, одинаковый на обоих бэкендах по построению
+            if (th - std::f64::consts::FRAC_PI_2).abs() < 1e-4 {
+                th += 1e-3;
+            }
+            let (sn, cs) = th.sin_cos();
+            let d = dist(p[1]);
+            if let Some(h) = face_h_inv(0.5 - 0.5 * cs, cs, -0.5 * sn, sn, d) {
+                e[..8].copy_from_slice(&h);
+            }
+            e[8] = if cs >= 0.0 { 1.0 } else { -1.0 };
+            e[9] = (1.0 - p[2] as f64 * sn.abs()) as f32;
+        }
+        MODE_CUBE => {
+            // знак вращения по направлению: содержимое уезжает В сторону dir
+            let sgn = if p[0].abs() > 0.5 { -p[0] as f64 } else { -p[1] as f64 };
+            let d = dist(p[2]);
+            let face = |phi: f64| {
+                let (sn, cs) = phi.sin_cos();
+                face_h_inv(
+                    0.5 - 0.5 * cs - 0.5 * sn,
+                    cs,
+                    0.5 + 0.5 * sn - 0.5 * cs,
+                    -sn,
+                    d,
+                )
+            };
+            let phi_a = sgn * kf * std::f64::consts::FRAC_PI_2;
+            let phi_b = phi_a - sgn * std::f64::consts::FRAC_PI_2;
+            if let Some(h) = face(phi_a) {
+                e[..8].copy_from_slice(&h);
+            }
+            if let Some(h) = face(phi_b) {
+                e[8..16].copy_from_slice(&h);
+            }
+        }
+        MODE_DOOR => {
+            let th = kf * (std::f64::consts::FRAC_PI_2 - 1e-3);
+            let (sn, cs) = th.sin_cos();
+            let d = dist(p[1]);
+            // левая створка: шарнир на краю, распахивается вглубь;
+            // правая — её зеркало, считается в ядре
+            if let Some(h) = face_h_inv(0.0, cs, 0.0, sn, d) {
+                e[..8].copy_from_slice(&h);
+            }
+            e[8] = (1.0 - p[2] as f64 * sn) as f32;
+        }
+        _ => {}
+    }
+    e
+}
+
+/// Обратная гомография панели: точка панели (s, t) лежит в мире как
+/// `x(s) = x0 + s·xs`, `z(s) = z0 + s·zs`, `y = t − 0.5`; камера в
+/// (0.5, 0.5, −d). Возвращает 8 чисел (нормировка h22 = 1) отображения
+/// «экран (X, Y) → панель (s·w, t·w, w)».
+fn face_h_inv(x0: f64, xs: f64, z0: f64, zs: f64, d: f64) -> Option<[f32; 8]> {
+    // прямая матрица (s, t, 1) → (X·w, Y·w, w)
+    let m = [
+        xs * d + 0.5 * zs,
+        0.0,
+        (x0 - 0.5) * d + 0.5 * (d + z0),
+        0.5 * zs,
+        d,
+        0.5 * z0,
+        zs,
+        0.0,
+        d + z0,
+    ];
+    let inv = inv3(m)?;
+    let n = inv[8];
+    if n.abs() < 1e-12 {
+        return None;
+    }
+    let mut out = [0.0f32; 8];
+    for i in 0..8 {
+        out[i] = (inv[i] / n) as f32;
+    }
+    Some(out)
+}
+
+fn inv3(m: [f64; 9]) -> Option<[f64; 9]> {
+    let det = m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6])
+        + m[2] * (m[3] * m[7] - m[4] * m[6]);
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let id = 1.0 / det;
+    Some([
+        (m[4] * m[8] - m[5] * m[7]) * id,
+        (m[2] * m[7] - m[1] * m[8]) * id,
+        (m[1] * m[5] - m[2] * m[4]) * id,
+        (m[5] * m[6] - m[3] * m[8]) * id,
+        (m[0] * m[8] - m[2] * m[6]) * id,
+        (m[2] * m[3] - m[0] * m[5]) * id,
+        (m[3] * m[7] - m[4] * m[6]) * id,
+        (m[1] * m[6] - m[0] * m[7]) * id,
+        (m[0] * m[4] - m[1] * m[3]) * id,
+    ])
 }
 
 /// Кадр как источник выборки. Кадр без альфы читается как непрозрачный —
@@ -370,6 +523,7 @@ pub fn mix_into(
     dst.resize(n, 0);
     let ia = Img::of(a);
     let ib = Img::of(b);
+    let ext = trans_ext(&m, k);
     let k = kf(k);
     let (fw, fh) = (w as f32, h as f32);
     let aspect = fw / fh;
@@ -377,7 +531,7 @@ pub fn mix_into(
         let v = (y as f32 + 0.5) / fh;
         for x in 0..w {
             let u = (x as f32 + 0.5) / fw;
-            let px = kernel(&ia, &ib, u, v, k, m, aspect, fw, fh);
+            let px = kernel(&ia, &ib, u, v, k, m, aspect, fw, fh, &ext);
             let i = (y * w + x) * 4;
             for c in 0..4 {
                 dst[i + c] = (px[c] + 0.5).clamp(0.0, 255.0) as u8;
@@ -399,6 +553,7 @@ fn kernel(
     aspect: f32,
     fw: f32,
     fh: f32,
+    ext: &[f32; 16],
 ) -> [f32; 4] {
     let p = m.p;
     match m.mode {
@@ -771,11 +926,177 @@ fn kernel(
             }
             acc
         }
+        MODE_FLIP => {
+            // панель по обратной гомографии из ext; на обороте — изнанка
+            // с входящим (зеркало по оси движения)
+            let vert = p[0] > 0.5;
+            let (sx, sy) = if vert { (v, u) } else { (u, v) };
+            match hpanel(&ext[0..8], sx, sy) {
+                Some((sp, t)) if (0.0..=1.0).contains(&sp) && (0.0..=1.0).contains(&t) => {
+                    let front = ext[8] >= 0.0;
+                    let ms = if front { sp } else { 1.0 - sp };
+                    let (mu, mv) = if vert { (t, ms) } else { (ms, t) };
+                    let img = if front { a } else { b };
+                    shade3(img.sample(mu, mv), ext[9])
+                }
+                _ => [0.0; 4],
+            }
+        }
+        MODE_CUBE => {
+            let vert = p[1].abs() > 0.5;
+            let (sx, sy) = if vert { (v, u) } else { (u, v) };
+            let sh = 1.0 - p[3] * (std::f32::consts::PI * k).sin() * 0.5;
+            let pick = |h: &[f32], img: &Img<'_>| -> Option<[f32; 4]> {
+                match hpanel(h, sx, sy) {
+                    Some((sp, t)) if (0.0..=1.0).contains(&sp) && (0.0..=1.0).contains(&t) => {
+                        let (mu, mv) = if vert { (t, sp) } else { (sp, t) };
+                        Some(shade3(img.sample(mu, mv), sh))
+                    }
+                    _ => None,
+                }
+            };
+            // грани куба не пересекаются интерьером — порядок фиксирован
+            pick(&ext[8..16], b).or_else(|| pick(&ext[0..8], a)).unwrap_or([0.0; 4])
+        }
+        MODE_DOOR => {
+            let vert = p[0] > 0.5;
+            let (sx, sy) = if vert { (v, u) } else { (u, v) };
+            let sh = ext[8];
+            let door = |x: f32, mirror: bool| -> Option<[f32; 4]> {
+                match hpanel(&ext[0..8], x, sy) {
+                    Some((sp, t))
+                        if (0.0..=0.5).contains(&sp) && (0.0..=1.0).contains(&t) =>
+                    {
+                        let ms = if mirror { 1.0 - sp } else { sp };
+                        let (mu, mv) = if vert { (t, ms) } else { (ms, t) };
+                        Some(shade3(a.sample(mu, mv), sh))
+                    }
+                    _ => None,
+                }
+            };
+            door(sx, false).or_else(|| door(1.0 - sx, true)).unwrap_or_else(|| b.sample(u, v))
+        }
+        MODE_PEEL => {
+            // лист заворачивается назад цилиндром радиуса r: хвост-изнанка
+            // летит над ещё лежащей частью, под снятой — входящий
+            let (dx, dy) = (p[0], p[1]);
+            let r = p[2].max(0.01);
+            let shadow = p[3];
+            let c = axis_c(u, v, dx, dy);
+            let f = 1.0 - k * (1.0 + std::f32::consts::PI * r);
+            let back = 1.0 - shadow * 0.35;
+            // 1. плоский хвост изнанки (θ > π): x = 2f + πr − c
+            let m_tail = 2.0 * f + std::f32::consts::PI * r - c;
+            if c <= f && m_tail >= f + std::f32::consts::PI * r && m_tail <= 1.0 {
+                return shade3(axis_sample(a, u, v, dx, dy, m_tail), back);
+            }
+            // 2. цилиндр над [f, f+r]
+            let dc = c - f;
+            if (0.0..=r).contains(&dc) {
+                let th1 = dc.atan2((r * r - dc * dc).max(0.0).sqrt());
+                let th2 = std::f32::consts::PI - th1;
+                let m2 = f + r * th2;
+                if m2 <= 1.0 {
+                    return shade3(axis_sample(a, u, v, dx, dy, m2), back);
+                }
+                let m1 = f + r * th1;
+                if m1 <= 1.0 {
+                    let sh = 1.0 - shadow * 0.3 * th1.sin();
+                    return shade3(axis_sample(a, u, v, dx, dy, m1), sh);
+                }
+            }
+            // 3. база: лежащий лист или открытый входящий с тенью у фронта
+            if c <= f {
+                a.sample(u, v)
+            } else {
+                let sh = 1.0 - shadow * 0.5 * (1.0 - (dc / r.max(1e-4)).min(1.0)).max(0.0);
+                shade3(b.sample(u, v), sh)
+            }
+        }
+        MODE_ROLL => {
+            // рулон радиуса r катится, снаружи виден верхний виток изнанки
+            let (dx, dy) = (p[0], p[1]);
+            let r = p[2].max(0.01);
+            let shadow = p[3];
+            let c = axis_c(u, v, dx, dy);
+            let f = 1.0 - k * (1.0 + 2.0 * r);
+            let back = 1.0 - shadow * 0.35;
+            let dc = f - c;
+            if dc.abs() <= r {
+                // передняя (c < f): верхняя точка витка θ₂ = π − asin;
+                // задняя (c > f): продолжение витка θ₃ = π + asin
+                let ad = dc.abs();
+                let th1 = ad.atan2((r * r - ad * ad).max(0.0).sqrt());
+                let th = if dc >= 0.0 {
+                    std::f32::consts::PI - th1
+                } else {
+                    std::f32::consts::PI + th1
+                };
+                let mw = f + r * th;
+                if mw <= 1.0 {
+                    let sh = back * (1.0 - 0.2 * (1.0 - th.sin().abs()));
+                    return shade3(axis_sample(a, u, v, dx, dy, mw), sh);
+                }
+                let m1 = f + r * th1;
+                if dc >= 0.0 && m1 <= 1.0 {
+                    return shade3(axis_sample(a, u, v, dx, dy, m1), back);
+                }
+            }
+            if c <= f {
+                a.sample(u, v)
+            } else {
+                let sh = 1.0 - shadow * 0.5 * (1.0 - ((c - f) / r.max(1e-4)).min(1.0)).max(0.0);
+                shade3(b.sample(u, v), sh)
+            }
+        }
         _ => mix4(a.sample(u, v), b.sample(u, v), k),
     }
 }
 
 const WHIP_TAPS: usize = 7;
+
+/// Панель по обратной гомографии (8 чисел из `trans_ext`): экран → (s, t).
+/// None — за камерой (знаменатель ≤ 0).
+fn hpanel(h: &[f32], x: f32, y: f32) -> Option<(f32, f32)> {
+    let den = h[6] * x + h[7] * y + 1.0;
+    if den <= 1e-6 {
+        return None;
+    }
+    Some(((h[0] * x + h[1] * y + h[2]) / den, (h[3] * x + h[4] * y + h[5]) / den))
+}
+
+fn shade3(mut c: [f32; 4], sh: f32) -> [f32; 4] {
+    c[0] *= sh;
+    c[1] *= sh;
+    c[2] *= sh;
+    c
+}
+
+/// Координата вдоль оси заворота: фронт (c = 0) движется В СТОРОНУ dir.
+fn axis_c(u: f32, v: f32, dx: f32, dy: f32) -> f32 {
+    if dx > 0.5 {
+        1.0 - u
+    } else if dx < -0.5 {
+        u
+    } else if dy > 0.5 {
+        1.0 - v
+    } else {
+        v
+    }
+}
+
+/// Сэмпл с подменённой ОСЕВОЙ координатой (поперечная не тронута).
+fn axis_sample(img: &Img<'_>, u: f32, v: f32, dx: f32, dy: f32, m: f32) -> [f32; 4] {
+    if dx > 0.5 {
+        img.sample(1.0 - m, v)
+    } else if dx < -0.5 {
+        img.sample(m, v)
+    } else if dy > 0.5 {
+        img.sample(u, 1.0 - m)
+    } else {
+        img.sample(u, m)
+    }
+}
 
 /// Дробная часть «как в WGSL»: x − floor(x) (у f32::fract другой знак
 /// на отрицательных — зеркала разъехались бы).

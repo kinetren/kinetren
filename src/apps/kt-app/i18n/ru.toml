@@ -776,6 +776,7 @@ basic = "Обычные"
 wipe = "Вайпы"
 motion = "Сдвиг"
 pattern = "Узоры"
+volume = "Объёмные"
 style = "Стилизованные"
 
 [trn.kind]
@@ -807,6 +808,11 @@ shake = "Тряска"
 film_burn = "Прожог плёнки"
 light_leaks = "Блики света"
 zoom_blur = "Радиальный смаз"
+flip = "Переворот"
+cube = "Куб"
+door = "Двери"
+page_peel = "Перелистывание"
+page_roll = "Свиток"
 
 [trn.curve]
 equal_power = "Равная мощность"

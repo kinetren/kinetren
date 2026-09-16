@@ -776,6 +776,7 @@ basic = "基本"
 wipe = "划像"
 motion = "位移"
 pattern = "图案"
+volume = "立体"
 style = "风格化"
 
 [trn.kind]
@@ -807,6 +808,11 @@ shake = "抖动"
 film_burn = "胶片灼烧"
 light_leaks = "漏光"
 zoom_blur = "径向模糊"
+flip = "翻转"
+cube = "立方体"
+door = "门扉"
+page_peel = "翻页"
+page_roll = "卷页"
 
 [trn.curve]
 equal_power = "等功率"

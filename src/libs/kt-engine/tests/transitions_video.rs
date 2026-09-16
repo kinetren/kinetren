@@ -966,3 +966,86 @@ fn t467_new_kind_families_reach_picture() {
     };
     assert!(has(ca, 0.75) && has(cb, 0.75), "обе стороны обмена в кадре с тенью 0.75");
 }
+
+/// Тест 468 (п.401, Р.51): объёмные виды доезжают до картинки — зоны и
+/// прозрачность за панелями считаются аналитически.
+#[test]
+fn t468_volume_kinds_reach_picture() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let render = |kind: TransitionKind, t: Tick| {
+        let mut p = project_pair();
+        p.transitions[0].kind = kind;
+        p.validate().unwrap();
+        let mut vr = VideoRenderer::new(&p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "слои прогреты");
+        out
+    };
+    let px = |buf: &[u8], x: usize, y: usize| {
+        let i = (y * q.width as usize + x) * 4;
+        [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
+    };
+    let near = |got: [u8; 4], want: [u8; 4], what: &str| {
+        for c in 0..3 {
+            assert!(
+                (got[c] as i32 - want[c] as i32).abs() <= 3,
+                "{what}: {got:?} vs {want:?}"
+            );
+        }
+        assert!(got[3] > 250, "{what}: непрозрачно");
+    };
+    let dim = |c: [u8; 4], sh: f32| {
+        [
+            (c[0] as f32 * sh).round() as u8,
+            (c[1] as f32 * sh).round() as u8,
+            (c[2] as f32 * sh).round() as u8,
+            c[3],
+        ]
+    };
+    let a = synth_frame(Tick(90_000), q);
+    let b = synth_frame(Tick(30_000), q);
+    let (ca, cb) = (px(&a, 0, 0), px(&b, 0, 0));
+    assert_ne!(ca, cb);
+    let (t0, tm, t1) = (Tick(81_300), Tick(90_000), Tick(98_700));
+    // цвет синтетики зависит от pts: у краёв окна кадры сторон ДРУГИЕ
+    let ca0 = px(&synth_frame(Tick(81_000), q), 0, 0);
+    let cb1 = px(&synth_frame(Tick(36_000), q), 0, 0);
+
+    // flip: начало — почти целиком A, середина — панель ребром (кадр
+    // прозрачен по краям), конец — почти целиком B
+    let f = TransitionKind::Flip { vertical: false, persp: 0.5, shade: 0.0 };
+    near(px(&render(f.clone(), t0), 32, 18), ca0, "flip@начало: центр — уходящий");
+    let mid = render(f.clone(), tm);
+    assert_eq!(px(&mid, 4, 18)[3], 0, "flip@середина: за ребром панели пусто");
+    assert_eq!(px(&mid, 60, 18)[3], 0);
+    near(px(&render(f, t1), 32, 18), cb1, "flip@конец: центр — входящий");
+
+    // door: в середине створки видны по краям (затемнённый A), центр — B
+    let d = TransitionKind::Door { vertical: false, persp: 0.5, shade: 0.5 };
+    let dm = render(d, tm);
+    near(px(&dm, 32, 18), cb, "door@середина: в проёме входящий");
+    let sh_door = 1.0 - 0.5 * (std::f32::consts::FRAC_PI_4 - 5e-4).sin();
+    near(px(&dm, 2, 18), dim(ca, sh_door), "door@середина: левая створка затемнена");
+
+    // cube: середина — слева затемнённый уходящий, справа затемнённый входящий
+    let c = TransitionKind::Cube { dir: Dir::Left, persp: 0.5, shade: 0.5 };
+    let cm = render(c, tm);
+    let sh_cube = 1.0 - 0.5 * 0.5;
+    near(px(&cm, 6, 18), dim(ca, sh_cube), "cube@середина: слева грань уходящего");
+    near(px(&cm, 58, 18), dim(cb, sh_cube), "cube@середина: справа грань входящего");
+
+    // peel влево: у начала движения (справа по экрану) — изнанка листа,
+    // на дальнем краю — уже чистый входящий
+    let p1 = TransitionKind::PagePeel { dir: Dir::Left, curl: 0.18, shadow: 0.5 };
+    let pm = render(p1, tm);
+    near(px(&pm, 61, 18), cb, "peel@середина: открытое — входящий без тени");
+    near(px(&pm, 3, 18), dim(ca, 1.0 - 0.5 * 0.35), "peel@середина: изнанка листа");
+
+    // roll вправо: хвост листа ещё лежит нетронутым, начало — входящий
+    let r1 = TransitionKind::PageRoll { dir: Dir::Right, curl: 0.18, shadow: 0.5 };
+    let rm = render(r1, tm);
+    near(px(&rm, 2, 18), cb, "roll@середина: пройденное — входящий");
+    near(px(&rm, 61, 18), ca, "roll@середина: хвост листа ещё лежит");
+}

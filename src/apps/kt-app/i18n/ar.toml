@@ -776,6 +776,7 @@ basic = "أساسية"
 wipe = "مسح"
 motion = "حركة"
 pattern = "أنماط"
+volume = "مجسم"
 style = "مؤثرة"
 
 [trn.kind]
@@ -807,6 +808,11 @@ shake = "اهتزاز"
 film_burn = "احتراق الفيلم"
 light_leaks = "تسرب الضوء"
 zoom_blur = "ضبابية شعاعية"
+flip = "قلب"
+cube = "مكعب"
+door = "أبواب"
+page_peel = "طي الصفحة"
+page_roll = "لف الصفحة"
 
 [trn.curve]
 equal_power = "قدرة متساوية"

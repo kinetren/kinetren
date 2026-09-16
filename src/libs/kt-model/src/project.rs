@@ -300,6 +300,55 @@ pub enum TransitionKind {
         #[serde(default = "default_center", skip_serializing_if = "is_center")]
         cy: f64,
     },
+    // ---- объёмные (Р.51, п.401): панели и цилиндры, окклюзия
+    // аналитическая — глубинного буфера в композите нет и не надо -------
+    /// Переворот: панель крутится вокруг своей середины, на обороте
+    /// видна изнанка с входящим кадром.
+    Flip {
+        #[serde(default)]
+        vertical: bool,
+        #[serde(default = "default_persp")]
+        persp: f64,
+        #[serde(default = "default_shade")]
+        shade: f64,
+    },
+    /// Куб: уходящий и входящий — две грани, куб поворачивается.
+    Cube {
+        #[serde(default)]
+        dir: Dir,
+        #[serde(default = "default_persp")]
+        persp: f64,
+        #[serde(default = "default_shade")]
+        shade: f64,
+    },
+    /// Двери: две створки уходящего распахиваются вглубь, за ними входящий.
+    Door {
+        #[serde(default)]
+        vertical: bool,
+        #[serde(default = "default_persp")]
+        persp: f64,
+        #[serde(default = "default_shade")]
+        shade: f64,
+    },
+    /// Перелистывание: лист заворачивается назад цилиндром, виден его
+    /// изнаночный хвост; под листом открывается входящий.
+    PagePeel {
+        #[serde(default)]
+        dir: Dir,
+        #[serde(default = "default_curl")]
+        curl: f64,
+        #[serde(default = "default_shade")]
+        shadow: f64,
+    },
+    /// Свиток: лист наматывается на рулон, виден верхний виток.
+    PageRoll {
+        #[serde(default)]
+        dir: Dir,
+        #[serde(default = "default_curl")]
+        curl: f64,
+        #[serde(default = "default_shade")]
+        shadow: f64,
+    },
 }
 
 /// Форма раскрытия у Iris.
@@ -383,6 +432,18 @@ fn default_leaks_tint_g() -> u8 {
 
 fn default_leaks_tint_b() -> u8 {
     40
+}
+
+fn default_persp() -> f64 {
+    0.5
+}
+
+fn default_shade() -> f64 {
+    0.5
+}
+
+fn default_curl() -> f64 {
+    0.18
 }
 
 fn default_zoom_amount() -> f64 {
@@ -477,6 +538,11 @@ impl TransitionKind {
         TransitionKind::FilmBurn { scale: 6.0, softness: 0.2, tint_r: 255, tint_g: 120, tint_b: 0 },
         TransitionKind::LightLeaks { strength: 0.6, tint_r: 255, tint_g: 90, tint_b: 40 },
         TransitionKind::ZoomBlur { amount: 0.6, cx: 0.5, cy: 0.5 },
+        TransitionKind::Flip { vertical: false, persp: 0.5, shade: 0.5 },
+        TransitionKind::Cube { dir: Dir::Left, persp: 0.5, shade: 0.5 },
+        TransitionKind::Door { vertical: false, persp: 0.5, shade: 0.5 },
+        TransitionKind::PagePeel { dir: Dir::Left, curl: 0.18, shadow: 0.5 },
+        TransitionKind::PageRoll { dir: Dir::Left, curl: 0.18, shadow: 0.5 },
     ];
 
     /// Тег вида, как он лежит в файле (для UI и сравнения).
@@ -510,6 +576,11 @@ impl TransitionKind {
             TransitionKind::FilmBurn { .. } => "film_burn",
             TransitionKind::LightLeaks { .. } => "light_leaks",
             TransitionKind::ZoomBlur { .. } => "zoom_blur",
+            TransitionKind::Flip { .. } => "flip",
+            TransitionKind::Cube { .. } => "cube",
+            TransitionKind::Door { .. } => "door",
+            TransitionKind::PagePeel { .. } => "page_peel",
+            TransitionKind::PageRoll { .. } => "page_roll",
         }
     }
 
@@ -551,7 +622,12 @@ impl TransitionKind {
             | TransitionKind::Swap { .. }
             | TransitionKind::Shake { .. }
             | TransitionKind::FilmBurn { .. }
-            | TransitionKind::LightLeaks { .. } => false,
+            | TransitionKind::LightLeaks { .. }
+            | TransitionKind::Flip { .. }
+            | TransitionKind::Cube { .. }
+            | TransitionKind::Door { .. }
+            | TransitionKind::PagePeel { .. }
+            | TransitionKind::PageRoll { .. } => false,
         }
     }
 
@@ -4294,6 +4370,26 @@ params_for! { TransitionKind, transition_specs, transition_set_param, transition
         amount: f64, 0.0, 1.0, 0.6, 0.01, Norm, Smooth;
         cx: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
         cy: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+    },
+    Flip {
+        persp: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        shade: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+    },
+    Cube {
+        persp: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        shade: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+    },
+    Door {
+        persp: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+        shade: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+    },
+    PagePeel {
+        curl: f64, 0.05, 0.45, 0.18, 0.01, Norm, Smooth;
+        shadow: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
+    },
+    PageRoll {
+        curl: f64, 0.05, 0.45, 0.18, 0.01, Norm, Smooth;
+        shadow: f64, 0.0, 1.0, 0.5, 0.01, Norm, Smooth;
     },
 }}
 
