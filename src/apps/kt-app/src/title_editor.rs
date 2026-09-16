@@ -18,6 +18,14 @@ pub struct TitleEditor {
     pub backup_path: String,
     pub gesture: u64,
     pub open: bool,
+    /// Кэш предупреждений на кадр (Р.53, п.413): «глифа нет» перебирает
+    /// символы через резолв начертания, «шрифта нет» — карту семей, и
+    /// оба считались НА КАЖДЫЙ КАДР окна. Ключ — путь: другого входа у
+    /// них нет.
+    warn_cache: Option<(String, Option<String>, Option<String>)>,
+    /// (ревизия модели, число мест) — счётчик «мест на монтаже» линейно
+    /// обходит все клипы корня и всех лент.
+    uses_cache: Option<(u64, usize)>,
 }
 
 /// Предупреждение о ПОДМЕНЕ шрифта (С4): выбранной семьи на этой машине
@@ -67,6 +75,8 @@ impl KtApp {
             backup_path: path,
             gesture: self.gesture_counter,
             open: true,
+            warn_cache: None,
+            uses_cache: None,
         });
     }
 
@@ -121,11 +131,14 @@ impl KtApp {
                 }
 
                 // ---- «глифа нет» и подмена шрифта — ошибочным стилем -----
-                if let Some(warn) = title_warning(&g) {
-                    ui.colored_label(egui::Color32::from_rgb(255, 105, 97), warn);
+                // считаются при СМЕНЕ ПУТИ, не на каждый кадр (п.413)
+                if ed.warn_cache.as_ref().map(|(p, _, _)| p.as_str()) != Some(path.as_str()) {
+                    ed.warn_cache = Some((path.clone(), title_warning(&g), font_warning(&g)));
                 }
-                if let Some(warn) = font_warning(&g) {
-                    ui.colored_label(egui::Color32::from_rgb(255, 105, 97), warn);
+                if let Some((_, miss, font)) = &ed.warn_cache {
+                    for w in [miss, font].into_iter().flatten() {
+                        ui.colored_label(egui::Color32::from_rgb(255, 105, 97), w);
+                    }
                 }
 
                 // ---- семья шрифта: вендоренная + системные (С4) ----------
@@ -145,10 +158,9 @@ impl KtApp {
                                 }
                                 ui.separator();
                                 for f in kt_text::system_families() {
-                                    if ui.selectable_label(*family == f, &f).clicked()
-                                        && *family != f
+                                    if ui.selectable_label(family == f, f).clicked() && family != f
                                     {
-                                        *family = f;
+                                        family.clone_from(f);
                                         changed = true;
                                     }
                                 }
@@ -257,7 +269,12 @@ impl KtApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    let uses = self.model.project().sequence_uses(ed.media);
+                    // счётчик мест — линейный обход дерева: раз на ревизию
+                    if ed.uses_cache.map(|(r, _)| r) != Some(self.model_rev) {
+                        ed.uses_cache =
+                            Some((self.model_rev, self.model.project().sequence_uses(ed.media)));
+                    }
+                    let uses = ed.uses_cache.map(|(_, n)| n).unwrap_or(0);
                     ui.label(crate::tf!(k::genw::USES, uses));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(tr(k::fx::CANCEL)).clicked() {

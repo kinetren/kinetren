@@ -426,6 +426,15 @@ pub struct KtApp {
     pub(crate) media_paths: HashMap<MediaId, String>,
     /// Первый вызов синка принимает состояние build_player как данность.
     pub(crate) media_synced: bool,
+    /// Ревизия модели, на которой синк отработал (Р.53, п.413): карта
+    /// путей не пересобирается, пока модель не менялась.
+    pub(crate) media_synced_rev: u64,
+    /// Сколько раз карта путей реально пересобиралась (сторож t503).
+    pub(crate) media_sync_builds: u64,
+    /// Семьи шрифтов, о подмене которых уже сказали (Р.53, п.413):
+    /// иначе при отсутствующем шрифте каждая правка пути титра давала
+    /// свой notice — на драге это шторм одинаковых сообщений.
+    pub(crate) font_warned: std::collections::HashSet<String>,
     /// Окна камер (Р.34 К3).
     pub camera_editors: Vec<crate::camera_editor::CameraEditor>,
     pub morph_editors: Vec<crate::morpher_editor::MorphEditor>,
@@ -725,6 +734,9 @@ impl KtApp {
             title_editors: Vec::new(),
             media_paths: HashMap::new(),
             media_synced: false,
+            media_synced_rev: 0,
+            media_sync_builds: 0,
+            font_warned: std::collections::HashSet::new(),
             camera_editors: Vec::new(),
             morph_editors: Vec::new(),
             gesture_counter: 0,
@@ -908,6 +920,9 @@ impl KtApp {
             title_editors: Vec::new(),
             media_paths: HashMap::new(),
             media_synced: false,
+            media_synced_rev: 0,
+            media_sync_builds: 0,
+            font_warned: std::collections::HashSet::new(),
             camera_editors: Vec::new(),
             morph_editors: Vec::new(),
             gesture_counter: 0,
@@ -3218,9 +3233,15 @@ impl KtApp {
     /// картинки: источник живёт вне project→player синка.
     /// Подменённый шрифт титра — ВИДИМОЕ уведомление (Р.52 С4).
     fn note_missing_title_font(&mut self, path: &str) {
-        if let Some(kind) = kt_model::parse_gen_path(path)
-            && let Some(warn) = crate::title_editor::font_warning(&kind)
-        {
+        let Some(kind) = kt_model::parse_gen_path(path) else { return };
+        let kt_model::GeneratorKind::Text { family, .. } = &kind else { return };
+        // о каждой семье говорим ОДИН раз за сессию (п.413): путь титра
+        // меняется на каждый символ, и без дедупа это шторм
+        if self.font_warned.contains(family) {
+            return;
+        }
+        if let Some(warn) = crate::title_editor::font_warning(&kind) {
+            self.font_warned.insert(family.clone());
             self.note(warn);
         }
     }
@@ -3283,6 +3304,17 @@ impl KtApp {
     }
 
     pub(crate) fn sync_media_sources(&mut self) {
+        // Дешёвая сверка ДО сборки карты (Р.53, п.413): синк зовётся из
+        // каждой обёртки правок, то есть на КАЖДОМ кадре любого
+        // coalesced-жеста (драг края перехода, уровень, пипетка). Пока
+        // ревизия модели не сдвинулась, состав медиа не мог измениться —
+        // а собирать HashMap с клоном каждого пути на кадр запрещено
+        // инвариантом 12 (никаких аллокаций в путях кадра).
+        if self.media_synced && self.media_synced_rev == self.model_rev {
+            return;
+        }
+        self.media_synced_rev = self.model_rev;
+        self.media_sync_builds += 1;
         let cur: HashMap<MediaId, String> =
             self.model.document().media.iter().map(|m| (m.id, m.path.clone())).collect();
         if !self.media_synced {

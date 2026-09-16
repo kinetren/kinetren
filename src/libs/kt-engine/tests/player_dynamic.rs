@@ -392,8 +392,11 @@ fn t500_retune_keeps_worker_and_renderer() {
     assert_eq!(player.project_version(), pver, "рендереры пересобирать незачем: план тот же");
     assert!(player.content_version() > cver, "содержимое источника изменилось — префетч будит");
 
-    // кадр старых параметров выброшен, новый приходит с НОВЫМ цветом
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    // кадр старых параметров выброшен, новый приходит с НОВЫМ цветом.
+    // Дедлайн щедрый: утверждение — «перенастройка доезжает», а не «она
+    // быстрая», и под параллельным прогоном всего workspace поток
+    // воркера ждёт своей очереди на CPU (тот же урок, что у t399/t476).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     let mut saw_empty = false;
     loop {
         match player.cache.get_video(sid, Some(q), idx) {

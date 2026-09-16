@@ -25,6 +25,13 @@ pub fn open_source_indexed(
     path: &str,
     db_path: Option<&Path>,
 ) -> Result<Box<dyn MediaSource>, String> {
+    // Псевдо-путь отсекается ДО sidecar-БД (Р.53, п.413): открытие
+    // sqlite (соединение + WAL-прагма + запрос версии схемы) ради
+    // источника, у которого файла нет, — чистая трата, а зовётся это на
+    // каждую правку параметров генератора и на каждую постановку клипа.
+    if let Some(r) = kt_media::factory::open_pseudo(path) {
+        return r;
+    }
     let mut db = db_path.and_then(|p| kt_media::index::MediaIndexDb::open(p).ok());
     kt_media::factory::open_indexed(path, db.as_mut())
 }
@@ -484,7 +491,14 @@ mod tests {
         // синтетика не требует ни FFmpeg, ни файлов на диске
         svc.enqueue(None, vec![(MediaId(1), "synth:sine:440".into())]);
         svc.enqueue(None, vec![(MediaId(2), "synth:ramp".into())]);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        // Дедлайн ЩЕДРЫЙ намеренно: `synth:`-источник длится ЧАС
+        // (SYNTH_DURATION фабрики), и пирамида пиков по нему в
+        // debug-сборке строится секунды, а под параллельным прогоном
+        // всего workspace — десятки. Тест утверждает «очередь не теряет
+        // работу», а не «служба быстрая»: о СКОРОСТИ судят по релизу
+        // (п.301), и смешивать эти два утверждения в одном ожидании —
+        // тот самый флак, что уже ловили на t411/t476 (Р.52).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             if out.lock().unwrap().len() == 2 {
                 break;

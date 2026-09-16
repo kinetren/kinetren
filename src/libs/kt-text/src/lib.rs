@@ -222,15 +222,22 @@ fn font_db() -> &'static fontdb::Database {
 
 /// Системные семьи для комбо окна титра: отсортированы, без дублей.
 /// Вендоренная семья в список не входит — она отдельная первая строка.
-pub fn system_families() -> Vec<String> {
-    let mut out: Vec<String> = font_db()
-        .faces()
-        .flat_map(|f| f.families.iter().map(|(name, _)| name.clone()))
-        .filter(|n| !n.is_empty() && n != VENDORED_FAMILY)
-        .collect();
-    out.sort();
-    out.dedup();
-    out
+///
+/// Считается ОДИН раз (Р.53, п.413): список зовётся на каждом кадре, пока
+/// открыт попап комбо, а обход всех начертаний с сортировкой и дедупом —
+/// это аллокации в пути кадра (инвариант 12).
+pub fn system_families() -> &'static [String] {
+    static FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
+    FAMILIES.get_or_init(|| {
+        let mut out: Vec<String> = font_db()
+            .faces()
+            .flat_map(|f| f.families.iter().map(|(name, _)| name.clone()))
+            .filter(|n| !n.is_empty() && n != VENDORED_FAMILY)
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    })
 }
 
 /// Чем реально рисуется данная семья на ЭТОЙ машине.
@@ -852,16 +859,27 @@ mod tests {
         // если на машине есть системные шрифты — первый резолвящийся
         // обязан дать существующий файл и собственный рендер
         if let Some(fam) = system_families()
-            .into_iter()
+            .iter()
             .find(|f| matches!(resolve_family(f, false), FontResolve::System(_)))
         {
-            let FontResolve::System(path) = resolve_family(&fam, false) else { unreachable!() };
+            let FontResolve::System(path) = resolve_family(fam, false) else { unreachable!() };
             assert!(path.exists(), "{path:?}");
             let mut sp = sample();
             sp.family = fam.clone();
             let frame = render_rgba(&sp, 320, 180);
             assert!(frame.chunks_exact(4).any(|px| px[3] > 0), "{fam}: кадр пуст");
         }
+    }
+
+    /// t506 (Р.53, п.413): список системных семей строится ОДИН раз.
+    /// Он зовётся на каждом кадре, пока открыт попап комбо в окне титра,
+    /// а обход всех начертаний с сортировкой и дедупом — аллокации в
+    /// пути кадра (инвариант 12).
+    #[test]
+    fn t506_system_families_are_built_once() {
+        let a = system_families();
+        let b = system_families();
+        assert!(std::ptr::eq(a, b), "список пересобирается на каждый вызов");
     }
 
     /// t486 (Р.52 С3): оформление. Порядок слоёв меняет байты

@@ -394,9 +394,15 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
         };
         let path = &path;
 
-        // 1) пробуем БД: точный ключ, затем ближайший в допуске (п.14 р.7)
+        // 1) пробуем БД: точный ключ, затем ближайший в допуске (п.14 р.7).
+        // Псевдо-источники (`gen:`, `synth:`) в БД не ходят вовсе (Р.53,
+        // п.413): её ключ — размер и mtime ФАЙЛА, которого у них нет, и
+        // `ensure_media` на каждую тумбу впустую дёргал бы sqlite.
         let mut jpeg: Option<Vec<u8>> = None;
-        if let Some(db) = &mut db {
+        let use_db = !kt_model::is_pseudo_path(path);
+        if let Some(db) = &mut db
+            && use_db
+        {
             let db_id = *db_ids.entry(key.media).or_insert_with(|| {
                 db.ensure_media(std::path::Path::new(path)).map(|(id, _)| id).unwrap_or(-1)
             });

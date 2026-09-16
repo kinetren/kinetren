@@ -70,16 +70,18 @@ impl GeneratorSource {
         &self.kind
     }
 
-    fn frame_rgba(&mut self, pts: Tick, q: Quality) -> std::borrow::Cow<'_, [u8]> {
+    /// Буфер кадра ДЛЯ ВЫДАЧИ. Живые виды (шум, тайм-код) рисуются сразу
+    /// в возвращаемый буфер — кэш по Quality им не годится; статические
+    /// рисуются один раз на качество и копируются (Р.53, п.413: копий на
+    /// запрос было ДВЕ — в кэш и из кэша, стало одна).
+    fn frame_bytes(&mut self, pts: Tick, q: Quality) -> Box<[u8]> {
         if depends_on_time(&self.kind) {
-            // живые виды (шум, тайм-код) рисуются на каждый запрос —
-            // кэш по Quality им не годится, а кадр дешёвый
-            return std::borrow::Cow::Owned(render_at(&self.kind, pts, q.width, q.height).into());
+            return render_at(&self.kind, pts, q.width, q.height);
         }
         if self.cache.as_ref().is_none_or(|(cq, _)| *cq != q) {
             self.cache = Some((q, render_at(&self.kind, Tick(0), q.width, q.height)));
         }
-        std::borrow::Cow::Borrowed(&self.cache.as_ref().expect("frame was just built").1)
+        self.cache.as_ref().expect("frame was just built").1.clone()
     }
 }
 
@@ -401,7 +403,7 @@ impl MediaSource for GeneratorSource {
         quality: Option<Quality>,
     ) -> Result<VideoFrame, MediaError> {
         let q = quality.unwrap_or(DEFAULT_Q);
-        let rgba = self.frame_rgba(pts, q).to_vec().into_boxed_slice();
+        let rgba = self.frame_bytes(pts, q);
         // у титра честная альфа: он живёт ПОВЕРХ других слоёв
         let has_alpha = matches!(self.kind, GeneratorKind::Text { .. });
         Ok(VideoFrame { pts, width: q.width, height: q.height, rgba, has_alpha })
@@ -514,6 +516,38 @@ mod tests {
         // смена ВИДА при том же паспорте законна: клипы те же
         let mut s2 = GeneratorSource::new(orange);
         assert!(s2.retune("gen:checker"), "solid → checker: паспорт тот же");
+    }
+
+    /// t507 (Р.53, п.413): статический кадр рисуется ОДИН раз на
+    /// качество и отдаётся одной копией. До этого пункта копий на запрос
+    /// было две — в кэш и из кэша, то есть 16 МБ лишнего memcpy на
+    /// каждый кадр 1080p.
+    #[test]
+    fn t507_generator_frame_is_rendered_once_per_quality() {
+        let q1 = Quality { width: 64, height: 36 };
+        let q2 = Quality { width: 32, height: 18 };
+        let mut s = GeneratorSource::new(GeneratorKind::Solid {
+            color_r: 9,
+            color_g: 9,
+            color_b: 9,
+        });
+        let a = s.read_video_frame(Tick(0), Some(q1)).unwrap();
+        let b = s.read_video_frame(Tick(90_000), Some(q1)).unwrap();
+        assert_eq!(a.rgba, b.rgba, "статический кадр не зависит от времени");
+        // буферы РАЗНЫЕ (владение отдаётся наружу), но содержимое одно
+        assert!(!std::ptr::eq(a.rgba.as_ptr(), b.rgba.as_ptr()));
+
+        // смена качества туда-обратно не портит содержимое
+        let small = s.read_video_frame(Tick(0), Some(q2)).unwrap();
+        assert_eq!(small.rgba.len(), (q2.width * q2.height * 4) as usize);
+        let again = s.read_video_frame(Tick(0), Some(q1)).unwrap();
+        assert_eq!(again.rgba, a.rgba);
+
+        // живой вид (шум) кэш по качеству не использует вовсе
+        let mut n = GeneratorSource::new(GeneratorKind::NoiseField { amount: 1.0, mono: true });
+        let f1 = n.read_video_frame(Tick(0), Some(q1)).unwrap();
+        let f2 = n.read_video_frame(Tick(3000), Some(q1)).unwrap();
+        assert_ne!(f1.rgba, f2.rgba, "шум обязан зависеть от времени");
     }
 
     /// t491 (Р.52 С5): шум counter-based — кадр = f(pts, x, y): повтор

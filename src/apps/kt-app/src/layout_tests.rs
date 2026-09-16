@@ -6212,6 +6212,87 @@ fn t502_generator_edit_does_not_respawn_source() {
     );
 }
 
+/// Тест 503 (Р.53, п.413): кадр ЖЕСТА не пересобирает карту путей.
+/// Синк зовётся из каждой обёртки правок, то есть на каждом кадре любого
+/// coalesced-жеста — а он собирал `HashMap` с клоном каждого пути
+/// (аллокации в пути кадра, инвариант 12).
+#[test]
+fn t503_gesture_frame_touches_no_media_paths() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    let gesture = 4242u64;
+    // один жест, 60 кадров — секунда драга уровня события
+    let before = h.state().media_sync_builds;
+    for i in 0..60 {
+        let app = h.state_mut();
+        let db = -6.0 + i as f32 * 0.1;
+        assert!(app.apply_coalesced(Command::SetGain { id: ClipId(1), gain_db: db }, gesture));
+        h.step();
+    }
+    let builds = h.state().media_sync_builds - before;
+    assert!(
+        builds <= 60,
+        "карта путей пересобиралась чаще, чем менялась модель: {builds}"
+    );
+    // состав медиа не менялся ни разу — источники трогать было незачем
+    assert_eq!(h.state().player.worker_spawns(), 0, "жест уровня поднимал источники");
+}
+
+/// Тест 504 (Р.53, п.413): псевдо-путь НЕ открывает sidecar-БД. У
+/// генератора файла нет, а открытие sqlite (соединение + WAL-прагма +
+/// версия схемы) висело на каждой правке параметров и на каждой
+/// постановке клипа.
+#[test]
+fn t504_pseudo_path_never_opens_sqlite() {
+    let dir = std::env::temp_dir().join(format!("kt-t504-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("x.ktindex.db");
+    assert!(!db.exists());
+
+    let src = crate::util::open_source_indexed("gen:solid:c=ff8800", Some(&db));
+    assert!(src.is_ok(), "генератор обязан открыться");
+    assert!(!db.exists(), "псевдо-путь открыл sidecar-БД");
+
+    let src = crate::util::open_source_indexed("synth:ramp", Some(&db));
+    assert!(src.is_ok());
+    assert!(!db.exists(), "тестовая схема открыла sidecar-БД");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 505 (Р.53, п.413): о подменённом шрифте говорится ОДИН раз.
+/// Путь титра меняется на каждый набранный символ, и без дедупа
+/// отсутствующая семья давала свой notice на каждую правку — шторм
+/// одинаковых сообщений и счётчик непрочитанного в сотнях.
+#[test]
+fn t505_missing_font_warns_once() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    let mut kind = GeneratorKind::default_text();
+    if let GeneratorKind::Text { family, .. } = &mut kind {
+        *family = "__kt_no_such_family__".into();
+    }
+    h.state_mut().create_generator(kind.clone());
+    h.step();
+    let id = h.state().model.project().media.last().unwrap().id;
+    let gesture = h.state().title_editors[0].gesture;
+    let notices = h.state().notices.len();
+
+    for i in 0..40 {
+        let mut k = kind.clone();
+        if let GeneratorKind::Text { text, .. } = &mut k {
+            *text = "a".repeat(i + 1);
+        }
+        let app = h.state_mut();
+        assert!(app.apply_coalesced(
+            Command::SetMediaPath { id, path: format_gen_path(&k) },
+            gesture
+        ));
+        h.step();
+    }
+    let added = h.state().notices.len() - notices;
+    assert!(added <= 1, "о подмене шрифта сказали {added} раз вместо одного");
+}
+
 /// Тест 227 (Р.33 С4): у перехода появилось окно свойств. Двойной клик по
 /// его окну на полосе открывает редактор, вид меняется пикером и сразу
 /// уезжает в модель, «Отмена» возвращает прежний.

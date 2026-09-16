@@ -20,6 +20,9 @@ pub struct GeneratorEditor {
     pub backup_path: String,
     pub gesture: u64,
     pub open: bool,
+    /// (ревизия модели, число мест) — Р.53, п.413: счётчик линейно
+    /// обходит клипы корня и всех лент, на кадр его считать незачем.
+    uses_cache: Option<(u64, usize)>,
 }
 
 /// Локализованное имя вида. Полные пути — тест 125 ищет ключ по ним.
@@ -91,6 +94,7 @@ impl KtApp {
             backup_path: path,
             gesture: self.gesture_counter,
             open: true,
+            uses_cache: None,
         });
     }
 
@@ -179,7 +183,11 @@ impl KtApp {
                 ui.horizontal(|ui| {
                     // правка заденет ВСЕ места этого генератора — сказать
                     // прямо (тот же счётчик, что у вложений: «×N»)
-                    let uses = self.model.project().sequence_uses(ed.media);
+                    if ed.uses_cache.map(|(r, _)| r) != Some(self.model_rev) {
+                        ed.uses_cache =
+                            Some((self.model_rev, self.model.project().sequence_uses(ed.media)));
+                    }
+                    let uses = ed.uses_cache.map(|(_, n)| n).unwrap_or(0);
                     ui.label(crate::tf!(k::genw::USES, uses));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button(tr(k::fx::CANCEL)).clicked() {
