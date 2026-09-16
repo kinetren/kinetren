@@ -3924,6 +3924,7 @@ macro_rules! fx_cast {
         $v.round() as i32
     };
 }
+pub(crate) use fx_cast;
 
 /// ЕДИНСТВЕННАЯ декларация параметров эффектов: спеки, запись и чтение
 /// генерятся из неё, поэтому рассинхрон трёх таблиц невозможен.
@@ -4001,6 +4002,7 @@ macro_rules! params_for {
         }
     };
 }
+pub(crate) use params_for;
 
 params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     // ---- аудио (Р.33: автоматизируются общим механизмом) ----------------
@@ -5781,6 +5783,21 @@ impl Project {
 
     pub fn is_nest(&self, c: &ClipEvent) -> bool {
         self.sequences.iter().any(|s| s.id == c.media)
+    }
+
+    /// Клип на генераторе (`gen:`-медиа, Р.52): источник считает кадр
+    /// сам. Строго по РАЗБИРАЕМОМУ пути: непарсящийся `gen:` от будущей
+    /// сборки — заглушка отсутствующего файла, окно генератора ему не
+    /// предлагается.
+    pub fn is_gen(&self, c: &ClipEvent) -> bool {
+        self.is_gen_media(c.media)
+    }
+
+    pub fn is_gen_media(&self, id: MediaId) -> bool {
+        self.media
+            .iter()
+            .find(|m| m.id == id)
+            .is_some_and(|m| crate::genmedia::parse_gen_path(&m.path).is_some())
     }
 
     /// Сколько мест в ДЕРЕВЕ ссылается на эту ленту.
