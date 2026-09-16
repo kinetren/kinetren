@@ -85,6 +85,74 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
     })
 }
 
+/// Пипетка цвета + поле HEX для ПРЯМЫХ полей носителя (Р.53, п.415).
+///
+/// У титра цвета — не `ParamSpec` и никогда ими не были («первое
+/// законное исключение» F-TXT-001), поэтому путь через `get_param`
+/// для них молча возвращает ноль: именно так в Р.53 заливка титра
+/// оказалась прозрачно-чёрной, и титр перестал рисоваться вовсе. Живой
+/// сценарий это увидел, харнесс — нет.
+pub fn color_row_rgba(
+    ui: &mut egui::Ui,
+    label: &str,
+    rgba: (&mut u8, &mut u8, &mut u8, &mut u8),
+    probe: Option<&str>,
+) -> bool {
+    let (r, g, b, a) = rgba;
+    let mut changed = false;
+    let mut col = egui::Color32::from_rgba_unmultiplied(*r, *g, *b, *a);
+    ui.horizontal(|ui| {
+        ui.label(label);
+        let resp = ui.color_edit_button_srgba(&mut col);
+        if let Some(name) = probe {
+            field_probe::note(name, resp.rect);
+        }
+        if resp.changed() {
+            changed = true;
+        }
+        // HEX-поле: канон пути (rrggbbaa) и приём его же.
+        // ПРЯМЫЕ компоненты: `Color32` внутри премультиплицирован, и
+        // `col.r()` на полупрозрачном цвете вернул бы затемнённый байт —
+        // цвет темнел бы при каждом открытии окна.
+        let s = col.to_srgba_unmultiplied();
+        let shown = format!("{:02x}{:02x}{:02x}{:02x}", s[0], s[1], s[2], s[3]);
+        let id = ui.id().with(("hexedit", label.len(), probe.unwrap_or("")));
+        let mut text = ui
+            .memory_mut(|m| m.data.get_temp::<String>(id))
+            .filter(|_| ui.memory(|m| m.has_focus(id)))
+            .unwrap_or_else(|| shown.clone());
+        let te =
+            ui.add(egui::TextEdit::singleline(&mut text).id(id).desired_width(72.0).char_limit(8));
+        if let Some(name) = probe {
+            field_probe::note(&format!("{name}.hex"), te.rect);
+        }
+        if te.changed() {
+            let hex = text.trim().trim_start_matches('#');
+            if hex.len() == 8
+                && hex.bytes().all(|c| c.is_ascii_hexdigit())
+                && let Ok(v) = u32::from_str_radix(hex, 16)
+            {
+                col = egui::Color32::from_rgba_unmultiplied(
+                    (v >> 24) as u8,
+                    (v >> 16) as u8,
+                    (v >> 8) as u8,
+                    v as u8,
+                );
+                changed = true;
+            }
+            ui.memory_mut(|m| m.data.insert_temp(id, text.clone()));
+        }
+        if changed {
+            let s = col.to_srgba_unmultiplied();
+            *r = s[0];
+            *g = s[1];
+            *b = s[2];
+            *a = s[3];
+        }
+    });
+    changed
+}
+
 /// Пипетка цвета + поле HEX (Р.53, п.415). Канон пути — именно hex
 /// (`c=rrggbb`), и до этого пункта пользователь видел его в модели, но
 /// ввести не мог: egui-пикер hex-поля не содержит.
@@ -121,19 +189,26 @@ pub fn color_row<P: HasParams + ?Sized>(
         if let Some(name) = probe {
             field_probe::note(name, resp.rect);
         }
+        // ПРЯМЫЕ компоненты: `Color32` внутри премультиплицирован (см.
+        // `color_row_rgba`), и на полупрозрачном цвете `col.r()` вернул
+        // бы затемнённый байт
+        let straight = col.to_srgba_unmultiplied();
         if resp.changed() {
-            for (n, v) in names.iter().zip([col.r(), col.g(), col.b()]) {
+            for (n, v) in names.iter().zip(straight) {
                 f.set_param(n, v as f64);
             }
             if let Some(n) = alpha {
-                f.set_param(n, col.a() as f64);
+                f.set_param(n, straight[3] as f64);
             }
             changed = true;
         }
         // HEX-поле: показывает канон пути и принимает его же
         let shown = match alpha {
-            Some(_) => format!("{:02x}{:02x}{:02x}{:02x}", col.r(), col.g(), col.b(), col.a()),
-            None => format!("{:02x}{:02x}{:02x}", col.r(), col.g(), col.b()),
+            Some(_) => format!(
+                "{:02x}{:02x}{:02x}{:02x}",
+                straight[0], straight[1], straight[2], straight[3]
+            ),
+            None => format!("{:02x}{:02x}{:02x}", straight[0], straight[1], straight[2]),
         };
         let mut text = ui
             .memory_mut(|m| m.data.get_temp::<String>(ui.id().with(("hex", names[0]))))
@@ -147,6 +222,11 @@ pub fn color_row<P: HasParams + ?Sized>(
                 .desired_width(72.0)
                 .char_limit(8),
         );
+        if let Some(name) = probe {
+            // hex-поле — отдельная проба: живому сценарию надо ПЕЧАТАТЬ
+            // цвет, а не тыкать в системный пикер
+            field_probe::note(&format!("{name}.hex"), te.rect);
+        }
         if te.changed() {
             let hex = text.trim().trim_start_matches('#');
             let ok = hex.len() == names.len() * 2 || (alpha.is_some() && hex.len() == 8);

@@ -516,7 +516,7 @@ impl KtApp {
                     if kinds.is_empty() {
                         continue;
                     }
-                    ui.menu_button(grp.name(), |ui| {
+                    let gr = ui.menu_button(grp.name(), |ui| {
                         for kd in kinds {
                             let r = ui.button(crate::generator_editor::kind_name(&kd));
                             let probe = match &kd {
@@ -534,6 +534,12 @@ impl KtApp {
                             }
                         }
                     });
+                    // прямоугольник ГРУППЫ — наружу для живых сценариев:
+                    // подменю в дереве доступности не ищется
+                    crate::widgets::field_probe::note(
+                        &format!("gen.new.group.{}", grp.probe()),
+                        gr.response.rect,
+                    );
                 }
             });
             crate::widgets::field_probe::note("gen.new", mr.response.rect);

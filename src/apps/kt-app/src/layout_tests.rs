@@ -9559,3 +9559,117 @@ fn t540_title_preset_sets_everything_in_one_step() {
     );
     let _ = id;
 }
+
+/// Тест 541 (Р.53, п.412): правка параметров при НЕПОДВИЖНОМ курсоре
+/// доезжает до ЭКРАНА, а не только до кэша плеера.
+///
+/// Нашёл этот дефект живой сценарий, а не харнесс, и это ровно тот
+/// случай, о котором предупреждает CLAUDE.md: t478 спрашивает кэш плеера
+/// НАПРЯМУЮ, мимо мемоизации превью, и был зелёным на программе, где в
+/// окне стоял оранжевый цвет, а на экране висел чёрный кадр. Ключ превью
+/// не менялся: ни курсор, ни качество, ни план правка не двигает — и
+/// композит считался «уже посчитанным» до первого движения playhead'а.
+///
+/// Поэтому тест утверждает СЛЕДСТВИЕ: программа пересобрала превью.
+#[test]
+fn t541_param_edit_repaints_the_preview_without_moving_the_playhead() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+    for _ in 0..4 {
+        h.step();
+    }
+    let id = h.state().model.project().media.last().unwrap().id;
+    let gesture = h.state().generator_editors[0].gesture;
+
+    // дать превью устояться: ключ посчитан, композит полон
+    for _ in 0..40 {
+        if h.state().preview_key.is_some_and(|k| k.2) {
+            break;
+        }
+        h.step();
+    }
+    let before = h.state().preview_key;
+    let content_before = h.state().preview_content;
+    assert!(before.is_some(), "превью так и не посчиталось");
+
+    // правка цвета БЕЗ движения курсора
+    {
+        let app = h.state_mut();
+        assert!(app.apply_coalesced(
+            Command::SetMediaPath { id, path: "gen:solid:c=ff8800".into() },
+            gesture
+        ));
+    }
+    // ...и программа обязана пересобрать превью: версия содержимого
+    // источников вошла в ключ
+    let mut repainted = false;
+    for _ in 0..60 {
+        h.step();
+        if h.state().preview_content != content_before {
+            repainted = true;
+            break;
+        }
+    }
+    assert!(
+        repainted,
+        "правка параметров не сдвинула ключ превью — на экране остался бы старый кадр"
+    );
+    assert_eq!(
+        h.state().preview_key.map(|k| k.0),
+        before.map(|k| k.0),
+        "курсор не двигался: тик ключа обязан остаться прежним"
+    );
+}
+
+/// Тест 542 (Р.53, п.415): цвета в окне титра — НАСТОЯЩИЕ.
+///
+/// Регрессия, которую нашёл живой сценарий, а не харнесс: пипетка титра
+/// была переведена на общий `color_row`, а тот читает значения через
+/// `ParamSpec`. У титра цвета — прямые поля и `ParamSpec`'ами не
+/// выражаются («первое законное исключение» F-TXT-001), поэтому
+/// `get_param` молча возвращал ноль: заливка показывалась (и записывалась
+/// при первом же касании) прозрачно-чёрной, и титр переставал рисоваться
+/// вовсе. Ни один тест этого не видел — они щупали текст и числа.
+///
+/// Тест утверждает СЛЕДСТВИЕ: окно показывает те же цвета, что лежат в
+/// модели, и hex-поле рядом с пипеткой показывает их же.
+#[test]
+fn t542_title_window_shows_real_colors() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    let mut kind = GeneratorKind::default_text();
+    if let GeneratorKind::Text { text, fill_r, fill_g, fill_b, fill_a, .. } = &mut kind {
+        *text = "A".into();
+        (*fill_r, *fill_g, *fill_b, *fill_a) = (255, 136, 0, 200);
+    }
+    h.state_mut().create_generator(kind);
+    for _ in 0..4 {
+        h.step();
+    }
+
+    // hex-поле заливки показывает РОВНО то, что в модели. Щупаем по
+    // РОЛИ: у текстового поля в accesskit нет label, содержимое лежит в
+    // `value` (родня заметки про DragValue и ComboBox).
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, by};
+    let shown: Vec<String> = h
+        .query_all(by().role(Role::MultilineTextInput))
+        .chain(h.query_all(by().role(Role::TextInput)))
+        .filter_map(|n| n.accesskit_node().value().map(|v| v.to_string()))
+        .collect();
+    assert!(
+        shown.iter().any(|s| s == "ff8800c8"),
+        "окно титра показывает не тот цвет заливки: {shown:?}"
+    );
+
+    // и умолчание титра НЕ прозрачно-чёрное: иначе новый титр невидим
+    let d = GeneratorKind::default_text();
+    let GeneratorKind::Text { fill_r, fill_g, fill_b, fill_a, .. } = &d else { unreachable!() };
+    assert_eq!(
+        (*fill_r, *fill_g, *fill_b, *fill_a),
+        (255, 255, 255, 255),
+        "умолчание заливки титра обязано быть непрозрачно-белым"
+    );
+}

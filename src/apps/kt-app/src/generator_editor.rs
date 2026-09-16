@@ -78,6 +78,17 @@ impl GenGroup {
         }
     }
 
+    /// Стабильный ключ группы для живых сценариев (имя локализовано и
+    /// щупать по нему нельзя).
+    pub(crate) fn probe(self) -> &'static str {
+        match self {
+            GenGroup::Background => "bg",
+            GenGroup::Shapes => "shapes",
+            GenGroup::Titles => "titles",
+            GenGroup::Check => "check",
+        }
+    }
+
     pub(crate) fn of(kind: &GeneratorKind) -> GenGroup {
         match kind {
             GeneratorKind::Solid { .. }

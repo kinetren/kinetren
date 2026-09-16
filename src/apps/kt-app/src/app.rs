@@ -485,6 +485,10 @@ pub struct KtApp {
     /// качество, полный ли). Текстура обновляется только при смене —
     /// раньше кадр заливался в GPU 60 раз/с даже в паузе (п.1).
     pub preview_key: Option<(i64, (u32, u32), bool)>,
+    /// Версия СОДЕРЖИМОГО источников на момент последнего композита
+    /// (Р.53, п.412): ключ превью её обязан учитывать, иначе правка
+    /// параметров при неподвижном курсоре не доезжает до экрана.
+    pub preview_content: u64,
     /// Когда превью впервые стало неполным (скрим «Загрузка» — после 180 мс,
     /// как в v1, чтобы не мигал на быстрых промахах; п.14).
     pub incomplete_since: Option<std::time::Instant>,
@@ -765,6 +769,7 @@ impl KtApp {
             sw_render: None,
             perf: PerfState::new(),
             preview_key: None,
+            preview_content: 0,
             incomplete_since: None,
             last_compose_retry: std::time::Instant::now(),
             thumb_textures: HashMap::new(),
@@ -952,6 +957,7 @@ impl KtApp {
             sw_render: None,
             perf: PerfState::new(),
             preview_key: None,
+            preview_content: 0,
             incomplete_since: None,
             last_compose_retry: std::time::Instant::now(),
             thumb_textures: HashMap::new(),
@@ -5110,10 +5116,27 @@ impl KtApp {
             self.perf.video_rollbacks += 1;
         }
         let key_now = (key_tick, (q.width, q.height));
+        // СОДЕРЖИМОЕ источников — часть ключа превью (Р.53, п.412).
+        //
+        // Правка параметров генератора не двигает ни курсор, ни качество,
+        // ни план: ключ остаётся прежним, композит считается «уже
+        // посчитанным», и на экране висит СТАРЫЙ кадр — до первого
+        // движения playhead'а. Харнесс этого не видел: t478 спрашивает
+        // кэш плеера напрямую, мимо мемоизации превью, и был зелёным на
+        // программе, где правка цвета до картинки не доезжала (живой
+        // сценарий `generator` показал чёрное превью при оранжевом
+        // значении в модели).
+        let content = self.player.content_version();
         let need = match self.preview_key {
-            Some((pt, pq, was_complete)) => pt != key_now.0 || pq != key_now.1 || !was_complete,
+            Some((pt, pq, was_complete)) => {
+                pt != key_now.0
+                    || pq != key_now.1
+                    || !was_complete
+                    || self.preview_content != content
+            }
             None => true,
         };
+        self.preview_content = content;
         let new_frame = self.preview_key.map(|k| k.0) != Some(key_now.0);
         let mut complete = self.preview_key.map(|k| k.2).unwrap_or(false);
         if need {

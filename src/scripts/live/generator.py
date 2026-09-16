@@ -31,12 +31,24 @@ def main(out):
         b = app.geom()["bin"]
         app.shot("open")
 
+        # кадр synth-клипа читаем ДО создания генератора: с Р.53 клип
+        # генератора встаёт под курсор сразу и накрывает эту дорожку
+        preview = app.preview_center()
+        app.click(app.x_at(int(1.5 * SEC)), app.ruler_y())
+        ramp_px = app.pixel_settled(preview)
+        app.expect(sum(ramp_px) > 30, f"кадр synth-клипа не чёрный: {ramp_px}")
+        app.click(app.x_at(0), app.ruler_y())
+        time.sleep(0.3)
+
         # 1. создать генератор из меню фона бина (Р.52)
         app.right_click(
             win["x"] + int((b["left"] + b["right"]) / 2),
             win["y"] + int(b["bottom"]) - 10,
         )
         app.click_probe("gen.new", "пункт «Создать генератор» в меню бина")
+        # Р.53: видов девятнадцать, они разложены по группам; подменю egui
+        # раскрывается НАВЕДЕНИЕМ, клик по нему закрыл бы всё меню
+        app.hover_probe("gen.new.group.bg", "группа «Фон» в подменю")
         app.click_probe("gen.new.solid", "вид «Сплошной цвет» в подменю")
         app.expect(
             app.has_probe("genw.color"),
@@ -44,16 +56,8 @@ def main(out):
         )
         app.shot("created")
 
-        # 2. превью: на synth-клипе кадр цветной (ramp кодирует время)
-        preview = app.preview_center()
-        app.click(app.x_at(int(1.5 * SEC)), app.ruler_y())
-        ramp_px = app.pixel_settled(preview)
-        app.expect(sum(ramp_px) > 30, f"кадр synth-клипа не чёрный: {ramp_px}")
-
-        # 3. курсор за конец synth-клипа и клип генератора на курсор
-        app.click(app.x_at(4 * SEC), app.ruler_y())
-        time.sleep(0.5)
-        app.click_probe("bin.gen", "карточка генератора в бине")
+        # 2. Р.53 (п.416): создание СРАЗУ кладёт клип под курсор — в бин
+        # за карточкой ходить не надо, титр не набирается вслепую
         clips = None
         for _ in range(20):
             clips = app.live_clips()
@@ -62,12 +66,14 @@ def main(out):
             time.sleep(0.25)
         app.expect(
             clips is not None and len(clips) == 2,
-            f"клип генератора встал на курсор: {clips}",
+            f"создание генератора обязано класть клип: {clips}",
         )
         if clips and len(clips) == 2:
-            start, dur = clips[-1]
-            app.near(start, 4 * SEC, 3000, "клип на курсоре")
-            app.near(dur, 5 * SEC, 3000, "длительность по умолчанию 5 с")
+            app.near(clips[-1][1], 5 * SEC, 3000, "длительность по умолчанию 5 с")
+
+        # 3. курсор за конец synth-клипа — там виден кадр генератора
+        app.click(app.x_at(4 * SEC), app.ruler_y())
+        time.sleep(0.5)
 
         # 4. кадр генератора доехал до превью: цветной ramp-кадр сменился
         # ЧЁРНЫМ (цвет солида по умолчанию). pixel_settled тут не годится:
@@ -97,21 +103,48 @@ def main(out):
             "у GeneratorReference есть available_range",
         )
 
-        # 6. undo убирает клип, генератор остаётся в бине; неиспользуемый
-        # генератор при сохранении едет gen:-путём в kt.bin_media
-        app.key("ctrl+z")
-        undone = False
-        for _ in range(20):
-            if len(app.live_clips()) == 1:
-                undone = True
+        # 6. ПРАВКА ЦВЕТА доезжает до картинки (Р.53, п.412): hex-поле
+        # окна параметров, Enter — и пиксель превью меняется; поток
+        # декодера при этом не пересоздаётся (это утверждает t502)
+        # окно открываем ДВОЙНЫМ кликом по карточке (Р.53, п.416): один
+        # клип он не плодит, а окно открывает
+        app.double_click_probe("bin.gen", "карточка генератора в бине")
+        app.expect(app.has_probe("genw.color.hex"), "hex-поле цвета в окне генератора")
+        app.click_probe("genw.color.hex", "hex-поле цвета")
+        # поле чистим BackSpace'ами: Ctrl+A в окне может перехватить
+        # само приложение, и тогда напечатанное просто допишется
+        for _ in range(10):
+            app.key("BackSpace")
+        for ch in "ff8800":
+            app.key(ch)
+        app.key("Return")
+        lit = None
+        for _ in range(40):
+            lit = app.pixel(*preview)
+            if lit[0] > 150 and lit[2] < 80:
                 break
             time.sleep(0.3)
-        app.expect(undone, f"undo убрал клип генератора: {app.live_clips()}")
+        app.expect(
+            lit is not None and lit[0] > 150 and lit[2] < 80,
+            f"правка цвета обязана доехать до картинки: {lit}",
+        )
+        app.shot("recolored")
+
+        # 7. undo убирает правку цвета целиком (сессия окна — один шаг)
+        app.key("Escape")
+        time.sleep(0.4)
+        app.key("ctrl+z")
+        back = None
+        for _ in range(20):
+            back = app.pixel(*preview)
+            if max(back) < 40:
+                break
+            time.sleep(0.3)
+        app.expect(
+            back is not None and max(back) < 40,
+            f"undo обязан вернуть чёрный солид: {back}",
+        )
         app.expect(app.has_probe("bin.gen"), "карточка генератора жива после undo")
-        app.saved_project()
-        with open(app.project) as f:
-            text = f.read()
-        app.expect("gen:solid" in text, "неиспользуемый генератор в файле gen:-путём")
         app.shot("undone")
         return app.done()
 

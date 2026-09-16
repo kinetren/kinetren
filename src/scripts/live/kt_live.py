@@ -420,6 +420,38 @@ class Live:
         сторож несохранённого: Ctrl+S проверил бы запись, а не сторож."""
         return sorted((c["start"], c["dur"]) for c in self.geom().get("clips", []))
 
+    def double_click_probe(self, name, what=None):
+        """Двойной клик по виджету из дампа геометрии."""
+        for _ in range(20):
+            f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
+            if f:
+                win = geometry()
+                self.double_click(
+                    win["x"] + int(f["x"] + f["w"] / 2),
+                    win["y"] + int(f["y"] + f["h"] / 2),
+                )
+                return True
+            time.sleep(0.25)
+        self.expect(False, what or f"программа отдала прямоугольник «{name}»")
+        return False
+
+    def hover_probe(self, name, what=None):
+        """Навести на виджет по его прямоугольнику из дампа. Подменю egui
+        раскрывается НАВЕДЕНИЕМ, а клик по нему закрывает всё меню."""
+        for _ in range(20):
+            f = next((f for f in self.geom().get("fields", []) if f["param"] == name), None)
+            if f:
+                win = geometry()
+                self.hover(
+                    win["x"] + int(f["x"] + f["w"] / 2),
+                    win["y"] + int(f["y"] + f["h"] / 2),
+                    pause=0.45,
+                )
+                return True
+            time.sleep(0.25)
+        self.expect(False, what or f"программа отдала прямоугольник «{name}»")
+        return False
+
     def click_probe(self, name, what=None):
         """Кликнуть виджет, чей прямоугольник программа отдала в дампе
         геометрии (`fields`). Модальные окна egui в дереве доступности не
@@ -468,6 +500,41 @@ class Live:
         os.unlink(img)
         self._shot_no -= 1
         return tuple(nums[:3])
+
+    def ink_box(self, xy, half=60, step=6):
+        """Самый яркий пиксель КВАДРАТА вокруг точки — один снимок экрана.
+
+        Есть ли в этом месте изображение хоть что-нибудь светлое. Точечный
+        `brightness` для букв титра не годится: кегль 7 % кадра даёт тонкий
+        штрих, и попасть в него центром превью — лотерея, а тест-лотерея
+        не тест (правило «утверждать следствие»).
+        """
+        img = self.shot(f"ink-{xy[0]}-{xy[1]}")
+        x0, y0 = xy[0] - half, xy[1] - half
+        n = 2 * half // step
+        out = subprocess.run(
+            [
+                "convert",
+                img,
+                "-crop",
+                f"{2 * half}x{2 * half}+{x0}+{y0}",
+                "+repage",
+                "-resize",
+                f"{n}x{n}!",
+                "-format",
+                "%[fx:maxima*255]",
+                "info:-",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        os.unlink(img)
+        self._shot_no -= 1
+        try:
+            return float(out.strip())
+        except ValueError:
+            raise Failure(f"не удалось прочитать яркость области: {out!r}")
 
     def pixel_settled(self, xy, differs_from=None, tries=20, settle=0.6):
         """Цвет пикселя ПОСЛЕ того, как картинка устоялась.

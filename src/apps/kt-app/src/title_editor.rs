@@ -547,14 +547,57 @@ impl KtApp {
                     }
 
                     // ---- цвета слоёв: RGBA-пипетка + HEX (правила 13, п.415)
-                    for (label, names, alpha) in [
-                        (k::titlew::FILL, ["fill_r", "fill_g", "fill_b"], "fill_a"),
-                        (k::titlew::STROKE, ["stroke_r", "stroke_g", "stroke_b"], "stroke_a"),
-                        (k::titlew::SHADOW, ["shadow_r", "shadow_g", "shadow_b"], "shadow_a"),
-                        (k::titlew::PLATE, ["plate_r", "plate_g", "plate_b"], "plate_a"),
-                    ] {
-                        changed |=
-                            widgets::color_row(ui, tr(label), &mut g, names, Some(alpha), None);
+                    // Цвета титра — ПРЯМЫЕ поля, а не `ParamSpec` («первое
+                    // законное исключение» F-TXT-001), поэтому и виджет
+                    // свой: путь через `get_param` для них молча вернул бы
+                    // ноль, и заливка стала бы прозрачно-чёрной.
+                    {
+                        let GeneratorKind::Text {
+                            fill_r,
+                            fill_g,
+                            fill_b,
+                            fill_a,
+                            stroke_r,
+                            stroke_g,
+                            stroke_b,
+                            stroke_a,
+                            shadow_r,
+                            shadow_g,
+                            shadow_b,
+                            shadow_a,
+                            plate_r,
+                            plate_g,
+                            plate_b,
+                            plate_a,
+                            ..
+                        } = &mut g
+                        else {
+                            unreachable!()
+                        };
+                        changed |= widgets::color_row_rgba(
+                            ui,
+                            tr(k::titlew::FILL),
+                            (fill_r, fill_g, fill_b, fill_a),
+                            Some("titlew.fill"),
+                        );
+                        changed |= widgets::color_row_rgba(
+                            ui,
+                            tr(k::titlew::STROKE),
+                            (stroke_r, stroke_g, stroke_b, stroke_a),
+                            Some("titlew.stroke"),
+                        );
+                        changed |= widgets::color_row_rgba(
+                            ui,
+                            tr(k::titlew::SHADOW),
+                            (shadow_r, shadow_g, shadow_b, shadow_a),
+                            Some("titlew.shadow"),
+                        );
+                        changed |= widgets::color_row_rgba(
+                            ui,
+                            tr(k::titlew::PLATE),
+                            (plate_r, plate_g, plate_b, plate_a),
+                            Some("titlew.plate"),
+                        );
                     }
 
                     // ---- порядок слоёв: поле формата с Р.52, редактора не

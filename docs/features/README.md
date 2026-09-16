@@ -309,7 +309,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-TL-010 | Переход между клипами на одной дорожке | уже-есть | B | M | да | `timeline/structure/same-track-transitions.md` |
 | F-TXT-003 | Генераторы — цвет, градиент, шум, фигуры, тайм-код, тестовые таблицы | сделано | B | M | да | `titles/generators/solid-gradient-shapes.md` |
 | F-TXT-005 | Обводка, тень, плашка и порядок отрисовки текста | сделано | B | M | да | `titles/text/stroke-shadow-and-draw-order.md` |
-| F-TXT-006 | Анимация текста: печатная машинка, по буквам, бегущая строка | кандидат | B | M | нет | `titles/text/text-animation-presets.md` |
+| F-TXT-006 | Анимация текста: печатная машинка, по буквам, бегущая строка | сделано | B | M | да | `titles/text/text-animation-presets.md` |
 | F-UI-001 | Экранные контролы во вьюере: рамка трансформации, ручки, разметка | кандидат | B | M | нет | `ui/viewer/on-screen-controls.md` |
 | F-UI-003 | Раскладки окон — пресеты по задаче и где раскладка живёт | кандидат | B | M | частично | `ui/input/workspaces-and-layouts.md` |
 | F-UI-005 | Цвет клипа как данные и как оформление | кандидат | B | M | частично | `ui/viewer/clip-colors-and-legibility.md` |
