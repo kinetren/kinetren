@@ -917,6 +917,21 @@ timecode = "Timecode"
 
 # Окно титра (Р.52 С3).
 [titlew]
+preset_roll = "End credits"
+preset_crawl = "Crawl"
+preset_typewriter = "Typewriter"
+preset_headline = "Headline"
+preset_lower_third = "Lower third"
+hint_preset = "A preset sets everything, including position and anchor; one undo returns it"
+preset_none = "Matches no preset"
+presets = "Presets"
+hint_anim = "Reveal changes visibility, crawl and roll move the whole block"
+anim_roll = "Roll"
+anim_crawl = "Crawl"
+anim_fade = "Soft reveal"
+anim_typewriter = "Typewriter"
+anim_none = "Off"
+anim = "Animation"
 center = "Centre"
 hint_order = "Layer order: a click swaps the layer with its neighbour"
 hint_center = "Put the title in the centre of the frame"
@@ -940,6 +955,7 @@ align_r = "Right"
 # Подписи параметров генераторов (Р.53 п.414): своя область — «size» у
 # титра это КЕГЛЬ, а не зерно эффекта Noise.
 [genp]
+anim_secs = "Duration"
 level = "Level"
 area = "Area"
 beep = "Beep"

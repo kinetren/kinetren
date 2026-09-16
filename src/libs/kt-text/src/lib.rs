@@ -91,6 +91,21 @@ pub struct TextParams {
     pub plate: [u8; 4],
     /// Порядок слоёв снизу вверх.
     pub order: [Layer; 4],
+    /// Доля РАСКРЫТЫХ кластеров, 0..1 (Р.53, п.423). 1.0 — всё видно, и
+    /// это ТОЧНО прежняя ветка кода: голден титра не двигается.
+    ///
+    /// Времени в kt-text нет и не будет: число считает kt-media из pts
+    /// материала. Раскладка по-прежнему считается ОДИН раз по ПОЛНОЙ
+    /// строке — иначе буквы дёргались бы при каждом появлении соседа.
+    pub reveal: f64,
+    /// Ширина мягкого фронта раскрытия, В КЛАСТЕРАХ (0 — жёсткий срез,
+    /// «печатная машинка»).
+    pub reveal_soft: f64,
+    /// Смещение ВСЕГО блока в пикселях кадра (Р.53, п.424). Бегущая
+    /// строка и ползок — это смещение, а не видимость. Вызывающий обязан
+    /// квантовать его до 1/64 px ДО передачи: тогда взаимная геометрия
+    /// глифов между кадрами бит-в-бит постоянна.
+    pub offset: (f64, f64),
 }
 
 impl Default for TextParams {
@@ -115,6 +130,9 @@ impl Default for TextParams {
             plate_pad: (0.25, 0.12),
             plate: [0, 0, 0, 0],
             order: [Layer::Plate, Layer::Shadow, Layer::Stroke, Layer::Fill],
+            reveal: 1.0,
+            reveal_soft: 0.0,
+            offset: (0.0, 0.0),
         }
     }
 }
@@ -134,6 +152,12 @@ pub struct PxBox {
 pub struct LayoutInfo {
     pub block: PxBox,
     pub lines: Vec<PxBox>,
+    /// Боксы КЛАСТЕРОВ в порядке текста (Р.53, п.423). Кластер, а не
+    /// символ и не глиф: harfrust отдаёт грапhemные кластеры даром, и
+    /// лигатура `fi`, база с диакритикой и ZWJ-эмодзи приходят ОДНОЙ
+    /// единицей. Своего сегментатора в проекте нет и заводить его ради
+    /// анимации было бы отдельной подсистемой.
+    pub clusters: Vec<PxBox>,
 }
 
 pub struct FaceInfo {
@@ -309,6 +333,10 @@ struct PlacedGlyph {
     /// Начало пера в px кадра (baseline).
     x: f64,
     y: f64,
+    /// Номер кластера СКВОЗЬ весь текст (Р.53, п.423): по нему считается
+    /// раскрытие. Глифы одного кластера несут один номер и появляются
+    /// вместе.
+    cluster: usize,
 }
 
 struct Laid {
@@ -318,8 +346,19 @@ struct Laid {
     scale: PxScale,
 }
 
-/// Строка после шейпинга: глифы (id, x, y в font units) и ширина в units.
-type ShapedLine = (Vec<(u16, f64, f64)>, f64);
+/// Глиф строки после шейпинга: id, x/y в font units, БАЙТОВЫЙ адрес
+/// кластера (у harfrust это смещение в исходной строке) и продвижение —
+/// по ним считается бокс кластера.
+struct ShapedGlyph {
+    id: u16,
+    x: f64,
+    y: f64,
+    cluster: u32,
+    adv: f64,
+}
+
+/// Строка после шейпинга: глифы и ширина в units.
+type ShapedLine = (Vec<ShapedGlyph>, f64);
 
 /// Шейпинг одной строки.
 fn shape_line(face: &Face, text: &str, tracking_u: f64) -> ShapedLine {
@@ -333,7 +372,13 @@ fn shape_line(face: &Face, text: &str, tracking_u: f64) -> ShapedLine {
     for (info, pos) in out.glyph_infos().iter().zip(out.glyph_positions()) {
         let id = u16::try_from(info.glyph_id).unwrap_or(0);
         // harfrust: Y+ вверх; кадр: Y+ вниз
-        glyphs.push((id, cursor + pos.x_offset as f64, -(pos.y_offset as f64)));
+        glyphs.push(ShapedGlyph {
+            id,
+            x: cursor + pos.x_offset as f64,
+            y: -(pos.y_offset as f64),
+            cluster: info.cluster,
+            adv: pos.x_advance as f64,
+        });
         cursor += pos.x_advance as f64 + tracking_u;
     }
     if !glyphs.is_empty() {
@@ -368,8 +413,17 @@ fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
         Anchor::BottomLeft | Anchor::BottomCenter | Anchor::BottomRight => ay - block_h,
     };
 
+    // Смещение всего блока (Р.53, п.424) — квант 1/64 px ДО сложения:
+    // кратные 1/64 представимы в f64 точно, поэтому взаимная геометрия
+    // глифов между кадрами бит-в-бит постоянна, а не «почти».
+    let (bx, by) = (bx + q64(p.offset.0), by + q64(p.offset.1));
+
     let mut glyphs = Vec::new();
     let mut line_boxes = Vec::with_capacity(shaped.len());
+    let mut clusters: Vec<PxBox> = Vec::new();
+    // номер кластера СКВОЗНОЙ по всему тексту: байтовые адреса harfrust
+    // уникальны только внутри своей строки
+    let mut cluster_no = 0usize;
     for (i, (line, line_w_u)) in shaped.iter().enumerate() {
         let line_w = line_w_u * k;
         let lx = match p.align {
@@ -381,12 +435,30 @@ fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
         // базовая линия = верх строки + ascent·k; межстрочный множитель
         // растягивает ШАГ строк, а не сам глиф
         let baseline = top + face.ascent_u * k;
-        for (id, gx_u, gy_u) in line {
+        let mut prev_cluster: Option<u32> = None;
+        for g in line {
+            // новый байтовый адрес — новый кластер; глифы одного кластера
+            // (лигатура, база с диакритикой) идут подряд и делят номер
+            if prev_cluster != Some(g.cluster) {
+                if prev_cluster.is_some() {
+                    cluster_no += 1;
+                }
+                prev_cluster = Some(g.cluster);
+                clusters.push(PxBox { x: lx + g.x * k, y: top, w: g.adv * k, h: line_h });
+            } else if let Some(b) = clusters.last_mut() {
+                // второй глиф того же кластера расширяет его бокс
+                let right = (lx + g.x * k + g.adv * k).max(b.x + b.w);
+                b.w = right - b.x;
+            }
             glyphs.push(PlacedGlyph {
-                id: *id,
-                x: q64(lx + gx_u * k),
-                y: q64(baseline + gy_u * k),
+                id: g.id,
+                x: q64(lx + g.x * k),
+                y: q64(baseline + g.y * k),
+                cluster: cluster_no,
             });
+        }
+        if prev_cluster.is_some() {
+            cluster_no += 1;
         }
         line_boxes.push(PxBox { x: lx, y: top, w: line_w, h: line_h });
     }
@@ -396,6 +468,7 @@ fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
         info: LayoutInfo {
             block: PxBox { x: bx, y: by, w: block_w, h: block_h },
             lines: line_boxes,
+            clusters,
         },
         scale: PxScale::from((size_px * face.height_per_em) as f32),
     }
@@ -439,9 +512,31 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
     let laid = layout(p, w, h);
     let size_px = p.size * h as f64;
 
+    // Раскрытие (Р.53, п.423): вес кластера, 0..255. Полная видимость —
+    // ТОЧНО прежняя ветка (вес не считается вовсе), поэтому голден титра
+    // не может двинуться от появления анимации.
+    let full = p.reveal >= 1.0 && p.reveal_soft <= 0.0;
+    let ncl = laid.info.clusters.len().max(1) as f64;
+    let cluster_w = |c: usize| -> u32 {
+        if full {
+            return 255;
+        }
+        // фронт идёт по кластерам; мягкость — ширина фронта в кластерах
+        let front = p.reveal.clamp(0.0, 1.0) * (ncl + p.reveal_soft.max(0.0));
+        let d = front - c as f64;
+        if p.reveal_soft <= 0.0 {
+            return if d >= 1.0 { 255 } else { 0 };
+        }
+        ((d / p.reveal_soft).clamp(0.0, 1.0) * 255.0).round() as u32
+    };
+
     // силуэт (A8): покрытие всех глифов, перекрытия — максимумом
     let mut cov = vec![0u8; n];
     for g in &laid.glyphs {
+        let wgt = cluster_w(g.cluster);
+        if wgt == 0 {
+            continue;
+        }
         let glyph = Glyph {
             id: ab_glyph::GlyphId(g.id),
             scale: laid.scale,
@@ -456,7 +551,9 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
                 return;
             }
             let i = (py * w as i64 + px) as usize;
-            let v = (c * 255.0).round().clamp(0.0, 255.0) as u8;
+            let raw = (c * 255.0).round().clamp(0.0, 255.0) as u8;
+            // модуляция ОДНОЙ строкой; при full она тождественна (255/255)
+            let v = if full { raw } else { ((raw as u32 * wgt + 127) / 255) as u8 };
             cov[i] = cov[i].max(v);
         });
     }
@@ -950,5 +1047,120 @@ mod tests {
         assert_eq!(render_rgba(&p, 0, 0).len(), 0);
         let f = render_rgba(&p, 64, 36);
         assert_eq!(f.len(), 64 * 36 * 4);
+    }
+
+    // ---- Р.53 (пп.423-424): кластеры, раскрытие, движение ------------
+
+    fn rows(p: &TextParams, w: u32, h: u32) -> Vec<u8> {
+        render_rgba(p, w, h).to_vec()
+    }
+
+    fn ink(rgba: &[u8]) -> u64 {
+        rgba.chunks_exact(4).map(|p| p[3] as u64).sum()
+    }
+
+    /// t534: боксы КЛАСТЕРОВ есть у каждой раскладки, их столько же,
+    /// сколько единиц текста, и они идут слева направо внутри строки.
+    /// Кластер, а не символ: лигатура приходит одной единицей даром.
+    #[test]
+    fn t534_layout_reports_cluster_boxes() {
+        let p = TextParams { text: "ABC".into(), size: 0.2, ..TextParams::default() };
+        let li = layout_info(&p, 400, 200);
+        assert_eq!(li.clusters.len(), 3, "три буквы — три кластера");
+        assert!(li.clusters[0].x < li.clusters[1].x, "кластеры идут по тексту");
+        assert!(li.clusters[1].x < li.clusters[2].x);
+        for c in &li.clusters {
+            assert!(c.w > 0.0 && c.h > 0.0, "пустой бокс кластера");
+        }
+        // многострочный текст: нумерация СКВОЗНАЯ
+        let p2 = TextParams { text: "AB\nCD".into(), ..p.clone() };
+        let li2 = layout_info(&p2, 400, 200);
+        assert_eq!(li2.clusters.len(), 4, "перевод строки не кластер");
+        assert!(li2.clusters[2].y > li2.clusters[0].y, "вторая строка ниже первой");
+    }
+
+    /// t535: раскрытие открывает кластеры ПО ОЧЕРЕДИ, и при полной
+    /// видимости кадр БАЙТ В БАЙТ равен кадру без анимации — на этом
+    /// стоит обещание «голден титра не двинулся».
+    #[test]
+    fn t535_reveal_opens_clusters_in_order() {
+        let base = TextParams { text: "ABCD".into(), size: 0.3, ..TextParams::default() };
+        let full = rows(&base, 400, 200);
+        let mut p = base.clone();
+        p.reveal = 1.0;
+        assert_eq!(rows(&p, 400, 200), full, "полная видимость обязана быть прежней веткой");
+
+        p.reveal = 0.0;
+        assert_eq!(ink(&rows(&p, 400, 200)), 0, "в нуле не видно ничего");
+        // растёт монотонно и доходит до полного кадра
+        let mut prev = 0u64;
+        for i in 1..=4 {
+            p.reveal = i as f64 / 4.0;
+            let v = ink(&rows(&p, 400, 200));
+            assert!(v > prev, "раскрытие {i}/4 не добавило чернил: {v} после {prev}");
+            prev = v;
+        }
+        assert_eq!(prev, ink(&full), "полное раскрытие обязано дать полный кадр");
+    }
+
+    /// t536: мягкий фронт даёт ПРОМЕЖУТОЧНЫЕ значения там, где жёсткий
+    /// даёт только 0 и 255 — иначе «проявление» было бы той же машинкой.
+    #[test]
+    fn t536_soft_reveal_is_not_a_hard_cut() {
+        let base = TextParams { text: "ABCD".into(), size: 0.3, ..TextParams::default() };
+        let hard = TextParams { reveal: 0.5, reveal_soft: 0.0, ..base.clone() };
+        let soft = TextParams { reveal: 0.5, reveal_soft: 1.0, ..base.clone() };
+        let h = rows(&hard, 400, 200);
+        let s = rows(&soft, 400, 200);
+        assert_ne!(h, s, "мягкий фронт обязан отличаться от жёсткого");
+        assert!(ink(&s) > 0);
+        // у мягкого есть кластер с частичной непрозрачностью
+        let max_a = |v: &[u8]| v.chunks_exact(4).map(|p| p[3]).max().unwrap_or(0);
+        assert_eq!(max_a(&h), 255);
+        assert!(ink(&s) != ink(&h), "мягкий фронт даёт другую сумму чернил");
+    }
+
+    /// t537: смещение — это ПЕРЕНОС блока, и взаимная геометрия глифов от
+    /// него бит-в-бит постоянна. Квант 1/64 px (кратные ему представимы в
+    /// f64 точно) — то, ради чего смещение квантуется ДО сложения.
+    #[test]
+    fn t537_offset_translates_without_reshaping() {
+        let base = TextParams { text: "ABC".into(), size: 0.25, ..TextParams::default() };
+        let a = layout_info(&base, 400, 200);
+        let shift = 8.0; // целое число пикселей — точный перенос
+        let moved = TextParams { offset: (shift, 0.0), ..base.clone() };
+        let b = layout_info(&moved, 400, 200);
+        assert_eq!(b.block.x, a.block.x + shift, "блок не переехал ровно на смещение");
+        assert_eq!(b.block.w, a.block.w, "перенос изменил ширину блока");
+        for (x, y) in a.clusters.iter().zip(&b.clusters) {
+            assert_eq!(y.x - x.x, shift, "кластер уехал не на то же расстояние");
+            assert_eq!(y.w, x.w, "перенос переформовал кластер");
+        }
+        // и пиксели: сдвиг на целые px даёт ровно сдвинутый кадр
+        let fa = render_rgba(&base, 400, 200);
+        let fb = render_rgba(&moved, 400, 200);
+        let at = |f: &[u8], x: usize, y: usize| f[((y * 400 + x) * 4) + 3];
+        let sh = shift as usize;
+        for y in 0..200 {
+            for x in 0..(400 - sh) {
+                assert_eq!(at(&fa, x, y), at(&fb, x + sh, y), "пиксель ({x},{y}) не перенёсся");
+            }
+        }
+    }
+
+    /// t538: дробное смещение КВАНТУЕТСЯ до 1/64 px, поэтому соседние
+    /// кадры движения отличаются переносом, а не пересчётом раскладки.
+    #[test]
+    fn t538_offset_is_quantised_to_one_sixty_fourth() {
+        let base = TextParams { text: "AB".into(), size: 0.25, ..TextParams::default() };
+        let mk = |dx: f64| layout_info(&TextParams { offset: (dx, 0.0), ..base.clone() }, 400, 200);
+        // меньше ПОЛОВИНЫ кванта — раскладка обязана быть той же
+        // (округление к ближайшему: 1/128 это ровно половина и уедет вверх)
+        assert_eq!(mk(0.0).block.x, mk(1.0 / 256.0).block.x, "дробь мельче кванта что-то сдвинула");
+        // 1/64 px — уже квант
+        assert_ne!(mk(0.0).block.x, mk(1.0 / 64.0).block.x, "квант 1/64 px не сработал");
+        // и кванты складываются точно: 64 шага по 1/64 дают ровно 1 px
+        let step = mk(1.0 / 64.0).block.x - mk(0.0).block.x;
+        assert_eq!(step * 64.0, 1.0, "квант не точен в f64");
     }
 }

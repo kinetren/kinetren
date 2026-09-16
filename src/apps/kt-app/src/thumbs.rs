@@ -562,6 +562,10 @@ fn poster_candidates(dur: Tick) -> Vec<i64> {
 /// Минимальный разброс яркости, при котором кадр считается информативным.
 const POSTER_MIN_SCORE: i64 = 6;
 
+/// Момент постера у медиа БЕЗ длительности (генераторы): середина
+/// пятисекундного клипа, который UI ставит при броске.
+pub const GEN_POSTER_T: i64 = 90_000 * 5 / 2;
+
 fn find_poster(
     shared: &Shared,
     db: &mut Option<kt_media::index::MediaIndexDb>,
@@ -580,6 +584,13 @@ fn find_poster(
         return (t >= 0).then_some(t);
     }
     let dur = shared.durations.lock().unwrap().get(&media).copied().flatten();
+    // «ДЛИТЕЛЬНОСТИ НЕТ» ≠ «ещё не измерили» (Р.53, п.424). У генератора
+    // она честно нулевая, и постер с t = 0 у анимированного титра пуст:
+    // машинка в нуле не напечатала ни буквы. Берём представительный
+    // момент — середину той длины, которую UI подставляет при броске.
+    if dur == Some(Tick(0)) {
+        return Some(GEN_POSTER_T);
+    }
     let Some(dur) = dur.filter(|d| d.0 > 0) else {
         return None; // длительности ещё нет — заявка вернётся позже
     };

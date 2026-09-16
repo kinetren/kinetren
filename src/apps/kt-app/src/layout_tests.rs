@@ -9500,3 +9500,62 @@ fn t515_card_counts_places_on_the_timeline() {
         "событие внутри ленты не сосчитано — «мест» меньше, чем правка затронет"
     );
 }
+
+/// Тест 540 (Р.53, п.424): пресет титра ставит ВСЁ одним шагом истории, а
+/// активный пресет определяется ОБРАТНОЙ функцией.
+///
+/// Решение владельца дословно: «пресет ставит всё», включая позицию и
+/// якорь, один Ctrl+Z возвращает весь набор, а ручная подкрутка честно
+/// показывает «не совпадает ни с одним». Флага «какой пресет нажимали» в
+/// программе нет намеренно: он врал бы после первой же правки поля.
+#[test]
+fn t540_title_preset_sets_everything_in_one_step() {
+    use crate::title_editor::{active_preset, title_presets};
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+
+    // обратная функция: пресет, применённый к своему результату, даёт
+    // тот же результат — иначе «активный» не определялся бы вовсе
+    let base = GeneratorKind::default_text();
+    for (i, pr) in title_presets().iter().enumerate() {
+        let made = pr.applied(&base);
+        assert_eq!(active_preset(&made), Some(i), "пресет {i} не узнаёт собственный результат");
+    }
+    // умолчание титра ни одному пресету не равно — и это честно
+    assert_eq!(active_preset(&base), None, "пустой титр не обязан совпадать с пресетом");
+
+    // ...и то же в ОКНЕ: нажатие ставит набор полей одной командой
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    for _ in 0..3 {
+        h.step();
+    }
+    let id = h.state().model.project().media.last().unwrap().id;
+    let depth = h.state().model.undo_depth();
+    let before = h.state().model.project().media.last().unwrap().path.clone();
+
+    let label = crate::i18n::tr(title_presets()[0].key);
+    h.get_by_label(label).click();
+    h.step();
+    h.step();
+
+    let app = h.state();
+    let path = app.model.project().media.last().unwrap().path.clone();
+    assert_ne!(path, before, "нажатие пресета ничего не изменило");
+    let made = kt_model::parse_gen_path(&path).expect("титр остался титром");
+    assert_eq!(active_preset(&made), Some(0), "окно поставило не тот набор");
+    let GeneratorKind::Text { anchor, pos_y, size, .. } = &made else { unreachable!() };
+    assert_eq!(*anchor, TextAnchor::BottomLeft, "пресет обязан ставить и ЯКОРЬ");
+    assert!(*pos_y > 0.5 && *size < 0.07, "пресет обязан ставить и позицию, и кегль");
+    assert_eq!(app.model.undo_depth(), depth + 1, "пресет — ровно один шаг истории");
+
+    // один Ctrl+Z возвращает весь набор разом
+    h.state_mut().undo();
+    h.step();
+    assert_eq!(
+        h.state().model.project().media.last().unwrap().path,
+        before,
+        "undo обязан вернуть титр целиком"
+    );
+    let _ = id;
+}

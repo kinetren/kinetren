@@ -917,6 +917,21 @@ timecode = "时间码"
 
 # Окно титра (Р.52 С3).
 [titlew]
+preset_roll = "片尾字幕"
+preset_crawl = "滚动字幕"
+preset_typewriter = "打字机"
+preset_headline = "大标题"
+preset_lower_third = "下三分之一"
+hint_preset = "预设会设置全部内容，包括位置与锚点；一次撤销即可还原"
+preset_none = "与任何预设都不匹配"
+presets = "预设"
+hint_anim = "显现改变可见性，滚动移动整个文本块"
+anim_roll = "向上滚动"
+anim_crawl = "滚动字幕"
+anim_fade = "柔和显现"
+anim_typewriter = "打字机"
+anim_none = "无"
+anim = "动画"
 center = "居中"
 hint_order = "图层顺序：点击可与相邻图层交换"
 hint_center = "将字幕放到画面中心"
@@ -940,6 +955,7 @@ align_r = "右对齐"
 # Подписи параметров генераторов (Р.53 п.414): своя область — «size» у
 # титра это КЕГЛЬ, а не зерно эффекта Noise.
 [genp]
+anim_secs = "时长"
 level = "电平"
 area = "面积"
 beep = "提示音"

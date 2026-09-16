@@ -80,6 +80,7 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "beep_db" => tr(k::genp::BEEP_DB),
         "area" => tr(k::genp::AREA),
         "level" => tr(k::genp::LEVEL),
+        "anim_secs" => tr(k::genp::ANIM_SECS),
         _ => return None,
     })
 }

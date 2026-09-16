@@ -56,6 +56,199 @@ pub fn title_warning(kind: &GeneratorKind) -> Option<String> {
     ))
 }
 
+/// Локализованное имя анимации.
+pub fn anim_name(a: kt_model::TextAnim) -> &'static str {
+    use kt_model::TextAnim as A;
+    match a {
+        A::None => tr(k::titlew::ANIM_NONE),
+        A::Typewriter => tr(k::titlew::ANIM_TYPEWRITER),
+        A::Fade => tr(k::titlew::ANIM_FADE),
+        A::Crawl => tr(k::titlew::ANIM_CRAWL),
+        A::Roll => tr(k::titlew::ANIM_ROLL),
+    }
+}
+
+/// Анимация титра (у не-титра её нет).
+fn anim_of(g: &GeneratorKind) -> kt_model::TextAnim {
+    match g {
+        GeneratorKind::Text { anim, .. } => *anim,
+        _ => kt_model::TextAnim::None,
+    }
+}
+
+/// Пресеты титра (Р.53, п.424). Решение владельца: **пресет ставит ВСЁ**
+/// — кегль, позицию, якорь, выравнивание, цвета и анимацию, — и это один
+/// шаг истории: нажал, не понравилось, один Ctrl+Z вернул как было.
+///
+/// Активный пресет определяется ОБРАТНОЙ функцией — сравнением с тем,
+/// что пресет произвёл бы из текущего текста. Поэтому ручная подкрутка
+/// честно показывает «не совпадает ни с одним», а не подсвечивает
+/// кнопку, к которой титр уже не имеет отношения.
+pub struct TitlePreset {
+    pub key: crate::i18n::Key,
+    apply: fn(&mut GeneratorKind),
+}
+
+pub fn title_presets() -> &'static [TitlePreset] {
+    use kt_model::{TextAlign, TextAnchor, TextAnim};
+    &[
+        TitlePreset {
+            key: k::titlew::PRESET_LOWER_THIRD,
+            apply: |g| {
+                let GeneratorKind::Text {
+                    size,
+                    pos_x,
+                    pos_y,
+                    anchor,
+                    align,
+                    plate_a,
+                    plate_pad_x,
+                    plate_pad_y,
+                    anim,
+                    ..
+                } = g
+                else {
+                    return;
+                };
+                *size = 0.055;
+                *pos_x = 0.08;
+                *pos_y = 0.82;
+                *anchor = TextAnchor::BottomLeft;
+                *align = TextAlign::Left;
+                *plate_a = 170;
+                *plate_pad_x = 0.35;
+                *plate_pad_y = 0.2;
+                *anim = TextAnim::None;
+            },
+        },
+        TitlePreset {
+            key: k::titlew::PRESET_HEADLINE,
+            apply: |g| {
+                let GeneratorKind::Text {
+                    size,
+                    pos_x,
+                    pos_y,
+                    anchor,
+                    align,
+                    plate_a,
+                    stroke_w,
+                    anim,
+                    ..
+                } = g
+                else {
+                    return;
+                };
+                *size = 0.14;
+                *pos_x = 0.5;
+                *pos_y = 0.5;
+                *anchor = TextAnchor::Center;
+                *align = TextAlign::Center;
+                *plate_a = 0;
+                *stroke_w = 0.02;
+                *anim = TextAnim::None;
+            },
+        },
+        TitlePreset {
+            key: k::titlew::PRESET_TYPEWRITER,
+            apply: |g| {
+                let GeneratorKind::Text {
+                    size,
+                    pos_x,
+                    pos_y,
+                    anchor,
+                    align,
+                    anim,
+                    anim_secs,
+                    plate_a,
+                    ..
+                } = g
+                else {
+                    return;
+                };
+                *size = 0.07;
+                *pos_x = 0.5;
+                *pos_y = 0.5;
+                *anchor = TextAnchor::Center;
+                *align = TextAlign::Center;
+                *plate_a = 0;
+                *anim = TextAnim::Typewriter;
+                *anim_secs = 2.0;
+            },
+        },
+        TitlePreset {
+            key: k::titlew::PRESET_CRAWL,
+            apply: |g| {
+                let GeneratorKind::Text {
+                    size,
+                    pos_x,
+                    pos_y,
+                    anchor,
+                    align,
+                    anim,
+                    anim_secs,
+                    plate_a,
+                    ..
+                } = g
+                else {
+                    return;
+                };
+                *size = 0.06;
+                *pos_x = 0.5;
+                *pos_y = 0.9;
+                *anchor = TextAnchor::Center;
+                *align = TextAlign::Left;
+                *plate_a = 0;
+                *anim = TextAnim::Crawl;
+                *anim_secs = 12.0;
+            },
+        },
+        TitlePreset {
+            key: k::titlew::PRESET_ROLL,
+            apply: |g| {
+                let GeneratorKind::Text {
+                    size,
+                    pos_x,
+                    pos_y,
+                    anchor,
+                    align,
+                    anim,
+                    anim_secs,
+                    plate_a,
+                    ..
+                } = g
+                else {
+                    return;
+                };
+                *size = 0.06;
+                *pos_x = 0.5;
+                *pos_y = 0.5;
+                *anchor = TextAnchor::Center;
+                *align = TextAlign::Center;
+                *plate_a = 0;
+                *anim = TextAnim::Roll;
+                *anim_secs = 20.0;
+            },
+        },
+    ]
+}
+
+impl TitlePreset {
+    /// Что пресет сделал бы с ЭТИМ титром (текст и семья не трогаются).
+    pub fn applied(&self, base: &GeneratorKind) -> GeneratorKind {
+        let mut g = base.clone();
+        (self.apply)(&mut g);
+        g
+    }
+}
+
+/// Номер пресета, которому титр СОВПАДАЕТ целиком, или `None` («не
+/// совпадает ни с одним»). Обратная функция — сравнение результата, а не
+/// отдельный флаг «какой пресет нажимали»: флаг врал бы после первой же
+/// ручной правки.
+pub fn active_preset(kind: &GeneratorKind) -> Option<usize> {
+    title_presets().iter().position(|p| p.applied(kind) == *kind)
+}
+
 /// Порядок слоёв титра (Р.53, п.415). Поле `order` живёт в формате с
 /// Р.52 — урок Kdenlive, где порядок был константой и перерисовал чужие
 /// проекты, — но редактора у него не было: поменять местами заливку и
@@ -146,6 +339,7 @@ impl KtApp {
             return;
         };
         let mut edited: Option<GeneratorKind> = None;
+        let mut preset: Option<usize> = None;
         let mut kind_switched = false;
         let mut revert = false;
         let mut open = ed.open;
@@ -188,6 +382,27 @@ impl KtApp {
                         ui.colored_label(egui::Color32::from_rgb(255, 105, 97), w);
                     }
                 }
+
+                // ---- пресеты: ставят ВСЁ, одним шагом истории -----------
+                // Живут НАД прокруткой: за ними тянутся первыми, и
+                // прокручивать до них было бы издевательством (правило 1).
+                let active = active_preset(&g);
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(tr(k::titlew::PRESETS));
+                    for (i, pr) in title_presets().iter().enumerate() {
+                        let r = ui.selectable_label(active == Some(i), tr(pr.key));
+                        crate::widgets::field_probe::note(&format!("titlew.preset.{i}"), r.rect);
+                        widgets::hint(&r, tr(k::titlew::HINT_PRESET));
+                        if r.clicked() {
+                            preset = Some(i);
+                        }
+                    }
+                    if active.is_none() {
+                        // честный ответ вместо подсветки кнопки, к которой
+                        // титр уже не имеет отношения (решение владельца)
+                        ui.weak(tr(k::titlew::PRESET_NONE));
+                    }
+                });
 
                 // ---- вид генератора: ТОТ ЖЕ пикер, что в общем окне
                 // (правило 17). Без него титр был тупиком: сменить вид
@@ -346,8 +561,31 @@ impl KtApp {
                     // было — поменять местами заливку и обводку было нечем
                     changed |= order_row(ui, &mut g);
 
-                    // ---- числа: та же сетка, что у эффектов ------------------
-                    changed |= widgets::params_grid(ui, ("titlep", ed.media), &mut g, &[]);
+                    // ---- анимация (Р.53, пп.423-424) --------------------
+                    {
+                        let GeneratorKind::Text { anim, .. } = &mut g else { unreachable!() };
+                        ui.horizontal(|ui| {
+                            widgets::hint(&ui.label(tr(k::titlew::ANIM)), tr(k::titlew::HINT_ANIM));
+                            for a in kt_model::TextAnim::ALL {
+                                let on = *anim == a;
+                                let r = ui.selectable_label(on, anim_name(a));
+                                crate::widgets::field_probe::note(
+                                    &format!("titlew.anim.{}", a.token()),
+                                    r.rect,
+                                );
+                                if r.clicked() && !on {
+                                    *anim = a;
+                                    changed = true;
+                                }
+                            }
+                        });
+                    }
+
+                    // ---- числа: та же сетка, что у эффектов --------------
+                    // длительность показываем только когда анимация есть:
+                    // мёртвый контрол — это правило UI 9
+                    let skip: &[&str] = if anim_of(&g).animated() { &[] } else { &["anim_secs"] };
+                    changed |= widgets::params_grid(ui, ("titlep", ed.media), &mut g, skip);
                 });
 
                 ui.separator();
@@ -365,7 +603,10 @@ impl KtApp {
                         }
                     });
                 });
-                if changed {
+                // пресет перебивает правку этого кадра: он ставит ВСЁ
+                if let Some(i) = preset {
+                    edited = Some(title_presets()[i].applied(&g));
+                } else if changed {
                     edited = Some(g);
                 }
             });
@@ -373,6 +614,12 @@ impl KtApp {
         if let Some(g) = edited {
             let new_path = kt_model::format_gen_path(&g);
             if new_path != path {
+                if preset.is_some() {
+                    // пресет — СВОЙ шаг истории: один Ctrl+Z возвращает
+                    // весь набор полей разом (решение владельца)
+                    self.gesture_counter += 1;
+                    ed.gesture = self.gesture_counter;
+                }
                 if kind_switched {
                     // смена вида — свой шаг истории (правило 20)
                     self.gesture_counter += 1;

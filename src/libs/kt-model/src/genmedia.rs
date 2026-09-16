@@ -107,6 +107,14 @@ pub enum GeneratorKind {
         plate_a: u8,
         #[serde(default = "default_order")]
         order: [TextLayer; 4],
+        /// Анимация титра (Р.53, пп.423-424). Времени в kt-text нет:
+        /// kt-media считает из pts материала ДВА числа — долю раскрытия
+        /// и смещение блока, — и передаёт их растеризатору.
+        #[serde(default)]
+        anim: TextAnim,
+        /// Длительность раскрытия или полного прохода, СЕКУНДЫ.
+        #[serde(default = "default_anim_secs")]
+        anim_secs: f64,
     },
     /// Линейный градиент между двумя цветами (угол в градусах).
     Gradient {
@@ -306,6 +314,52 @@ pub enum GeneratorKind {
     },
 }
 
+/// Анимация титра (Р.53, пп.423-424).
+///
+/// Две ветви и они РАЗНЫЕ по существу: раскрытие меняет ВИДИМОСТЬ
+/// кластеров, движение — СМЕЩЕНИЕ всего блока. Смешивать их в одно поле
+/// «скорость» нельзя: у раскрытия конец есть, у движения он за кадром.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAnim {
+    #[default]
+    None,
+    /// Печатная машинка: кластеры появляются по одному, жёстким срезом.
+    Typewriter,
+    /// Мягкое проявление: у фронта ширина в один кластер.
+    Fade,
+    /// Бегущая строка: блок едет справа налево, один полный проход.
+    Crawl,
+    /// Ползок финальных титров: снизу вверх.
+    Roll,
+}
+
+impl TextAnim {
+    pub const ALL: [TextAnim; 5] =
+        [TextAnim::None, TextAnim::Typewriter, TextAnim::Fade, TextAnim::Crawl, TextAnim::Roll];
+
+    pub fn token(self) -> &'static str {
+        match self {
+            TextAnim::None => "no",
+            TextAnim::Typewriter => "tw",
+            TextAnim::Fade => "fd",
+            TextAnim::Crawl => "cr",
+            TextAnim::Roll => "rl",
+        }
+    }
+
+    pub fn from_token(s: &str) -> Option<TextAnim> {
+        TextAnim::ALL.into_iter().find(|a| a.token() == s)
+    }
+
+    /// Зависит ли КАДР от времени. Ровно по этому признаку у титра
+    /// отключается кэш по Quality (`GeneratorSource`): статические титры
+    /// от появления анимации не страдают.
+    pub fn animated(self) -> bool {
+        self != TextAnim::None
+    }
+}
+
 /// Разновидность инженерной таблицы (Р.53, п.422).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -423,6 +477,9 @@ fn default_tone_db() -> f64 {
 }
 fn default_tc_fps() -> u32 {
     30
+}
+fn default_anim_secs() -> f64 {
+    1.0
 }
 fn default_shape_w() -> f64 {
     0.5
@@ -589,6 +646,8 @@ impl GeneratorKind {
             plate_b: 0,
             plate_a: 0,
             order: default_order(),
+            anim: TextAnim::None,
+            anim_secs: default_anim_secs(),
         }
     }
 
@@ -843,6 +902,8 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
             plate_b,
             plate_a,
             order,
+            anim,
+            anim_secs,
         } => {
             // умолчания не пишутся; f64 — кратчайшая точная запись Display
             if !text.is_empty() {
@@ -909,6 +970,12 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
             }
             if *order != default_order() {
                 push("or", order.iter().map(|l| layer_letter(*l)).collect());
+            }
+            if *anim != TextAnim::default() {
+                push("am", anim.token().into());
+            }
+            if *anim_secs != default_anim_secs() {
+                push("ams", f(anim_secs));
             }
         }
         GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
@@ -1229,9 +1296,15 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
             plate_b,
             plate_a,
             order,
+            anim,
+            anim_secs,
         } => {
             let n = || val.parse::<f64>().ok().filter(|v| v.is_finite());
             match key {
+                "am" => *anim = TextAnim::from_token(val)?,
+                "ams" => {
+                    *anim_secs = val.parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0)?
+                }
                 "t" => *text = unescape_gen_value(val)?,
                 "f" => *family = unescape_gen_value(val)?,
                 "b" => *bold = val == "1",

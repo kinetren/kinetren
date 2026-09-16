@@ -89,6 +89,11 @@ impl GeneratorSource {
 }
 
 fn depends_on_time(kind: &GeneratorKind) -> bool {
+    // у титра — ТОЛЬКО анимированного (Р.53, п.424): статические титры
+    // остаются в кэше по Quality, как были
+    if let GeneratorKind::Text { anim, .. } = kind {
+        return anim.animated();
+    }
     matches!(
         kind,
         GeneratorKind::NoiseField { .. }
@@ -133,7 +138,11 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
             }
             buf.into_boxed_slice()
         }
-        GeneratorKind::Text { .. } => kt_text::render_rgba(&text_params(kind), w, h),
+        GeneratorKind::Text { .. } => {
+            let mut p = text_params(kind);
+            animate_text(&mut p, kind, pts, w, h);
+            kt_text::render_rgba(&p, w, h)
+        }
         GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
             // проекция нормированных координат на направление угла,
             // растянутая на весь кадр: при любом угле оба цвета видны
@@ -696,6 +705,8 @@ fn text_params(kind: &GeneratorKind) -> kt_text::TextParams {
         shadow_g,
         shadow_b,
         shadow_a,
+        anim: _,
+        anim_secs: _,
         plate_pad_x,
         plate_pad_y,
         plate_r,
@@ -749,6 +760,49 @@ fn text_params(kind: &GeneratorKind) -> kt_text::TextParams {
         plate_pad: (*plate_pad_x, *plate_pad_y),
         plate: [*plate_r, *plate_g, *plate_b, *plate_a],
         order: [layer(&order[0]), layer(&order[1]), layer(&order[2]), layer(&order[3])],
+        // анимация приезжает отдельно (`animate_text`): раскладка и
+        // цвета от времени не зависят, а окно титра и рамка драга в
+        // превью обязаны видеть ТИТР, а не его текущий кадр
+        reveal: 1.0,
+        reveal_soft: 0.0,
+        offset: (0.0, 0.0),
+    }
+}
+
+/// Два числа анимации титра из pts МАТЕРИАЛА (Р.53, пп.423-424).
+///
+/// Времени в kt-text нет и не будет: сюда приходит тик, отсюда уходят
+/// «доля раскрытия» и «смещение блока в px». Смещение КВАНТУЕТСЯ до
+/// 1/64 px здесь же — kt-text складывает уже квантованное, и взаимная
+/// геометрия глифов между кадрами бит-в-бит постоянна.
+fn animate_text(p: &mut kt_text::TextParams, kind: &GeneratorKind, pts: Tick, w: u32, h: u32) {
+    let GeneratorKind::Text { anim, anim_secs, .. } = kind else { return };
+    if !anim.animated() {
+        return;
+    }
+    let secs = anim_secs.max(1.0 / 1000.0);
+    let prog = (pts.0.max(0) as f64 / 90_000.0 / secs).clamp(0.0, 1.0);
+    match anim {
+        kt_model::TextAnim::None => {}
+        kt_model::TextAnim::Typewriter => p.reveal = prog,
+        kt_model::TextAnim::Fade => {
+            p.reveal = prog;
+            // фронт шириной в один кластер: буква успевает проявиться
+            p.reveal_soft = 1.0;
+        }
+        kt_model::TextAnim::Crawl | kt_model::TextAnim::Roll => {
+            // блок проезжает кадр НАСКВОЗЬ: путь = кадр + сам блок, и
+            // размер блока берётся у той же раскладки (второй проход
+            // шейпинга — цена честного прохода при любом якоре)
+            let b = kt_text::layout_info(p, w, h).block;
+            if *anim == kt_model::TextAnim::Crawl {
+                let span = w as f64 + b.w;
+                p.offset.0 = span / 2.0 - prog * span;
+            } else {
+                let span = h as f64 + b.h;
+                p.offset.1 = span / 2.0 - prog * span;
+            }
+        }
     }
 }
 
@@ -1211,6 +1265,51 @@ mod tests {
         // середина между секундами — тишина
         let mid = 48_000 / 2 / 1024;
         assert_eq!(peak(&mut loud, mid), 0.0, "между секундами обязана быть тишина");
+    }
+
+    /// t539 (Р.53, пп.423-424): анимация титра идёт по pts МАТЕРИАЛА, а
+    /// кэш по Quality отключается ТОЛЬКО у анимированного — статические
+    /// титры от появления анимации не страдают.
+    #[test]
+    fn t539_title_animation_follows_material_time() {
+        let q = Quality { width: 240, height: 120 };
+        let ink = |f: &VideoFrame| f.rgba.chunks_exact(4).map(|p| p[3] as u64).sum::<u64>();
+        // машинка: в нуле пусто, к концу — весь текст
+        let k = kt_model::parse_gen_path("gen:text:t=ABCD:am=tw:ams=2:s=0.3").expect("путь титра");
+        let mut s = GeneratorSource::new(k);
+        let a = s.read_video_frame(Tick(0), Some(q)).unwrap();
+        let mid = s.read_video_frame(Tick(90_000), Some(q)).unwrap();
+        let end = s.read_video_frame(Tick(180_000), Some(q)).unwrap();
+        assert_eq!(ink(&a), 0, "машинка в нуле не напечатала ни буквы");
+        assert!(ink(&mid) > 0 && ink(&mid) < ink(&end), "к середине напечатана часть");
+        // за концом анимации кадр равен статическому титру
+        let stat = kt_model::parse_gen_path("gen:text:t=ABCD:s=0.3").expect("путь");
+        let mut st = GeneratorSource::new(stat);
+        let want = st.read_video_frame(Tick(0), Some(q)).unwrap();
+        assert_eq!(end.rgba, want.rgba, "после раскрытия титр обязан стать обычным");
+
+        // бегущая строка: блок ЕДЕТ, а не проявляется
+        let cr = kt_model::parse_gen_path("gen:text:t=ABCD:am=cr:ams=2:s=0.3").expect("путь");
+        let mut c = GeneratorSource::new(cr);
+        let f0 = c.read_video_frame(Tick(45_000), Some(q)).unwrap();
+        let f1 = c.read_video_frame(Tick(90_000), Some(q)).unwrap();
+        assert_ne!(f0.rgba, f1.rgba, "бегущая строка обязана ехать");
+        let cx = |f: &VideoFrame| -> f64 {
+            // центр масс по X — куда уехал блок
+            let (mut sum, mut wsum) = (0f64, 0f64);
+            for (i, p) in f.rgba.chunks_exact(4).enumerate() {
+                let a = p[3] as f64;
+                sum += a * (i % 240) as f64;
+                wsum += a;
+            }
+            if wsum > 0.0 { sum / wsum } else { 0.0 }
+        };
+        assert!(cx(&f0) > cx(&f1), "бегущая строка обязана ехать справа налево");
+
+        // кэш по Quality: статический титр считается ОДИН раз, анимация —
+        // на каждый кадр (иначе движение замерло бы)
+        assert!(!depends_on_time(&kt_model::parse_gen_path("gen:text:t=A").unwrap()));
+        assert!(depends_on_time(&kt_model::parse_gen_path("gen:text:t=A:am=tw").unwrap()));
     }
 
     /// t472: «нет звука» — это тишина `Ok`, никогда не `Err` (иначе

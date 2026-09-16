@@ -917,6 +917,21 @@ timecode = "Código de tiempo"
 
 # Окно титра (Р.52 С3).
 [titlew]
+preset_roll = "Créditos finales"
+preset_crawl = "Rótulo deslizante"
+preset_typewriter = "Máquina de escribir"
+preset_headline = "Titular"
+preset_lower_third = "Tercio inferior"
+hint_preset = "Un ajuste lo fija todo, incluidos posición y anclaje; un solo deshacer lo revierte"
+preset_none = "No coincide con ningún ajuste"
+presets = "Ajustes"
+hint_anim = "La aparición cambia la visibilidad; el desplazamiento mueve todo el bloque"
+anim_roll = "Créditos verticales"
+anim_crawl = "Rótulo deslizante"
+anim_fade = "Aparición suave"
+anim_typewriter = "Máquina de escribir"
+anim_none = "No"
+anim = "Animación"
 center = "Centrar"
 hint_order = "Orden de capas: un clic intercambia la capa con su vecina"
 hint_center = "Colocar el rótulo en el centro del cuadro"
@@ -940,6 +955,7 @@ align_r = "Derecha"
 # Подписи параметров генераторов (Р.53 п.414): своя область — «size» у
 # титра это КЕГЛЬ, а не зерно эффекта Noise.
 [genp]
+anim_secs = "Duración"
 level = "Nivel"
 area = "Área"
 beep = "Pitido"
