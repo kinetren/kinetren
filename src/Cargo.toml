@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "apps/kt-app",
     "apps/kt-cli",
+    "libs/kt-text",
     "libs/kt-time",
     "libs/kt-version",
     "libs/kt-model",
@@ -25,6 +26,7 @@ publish = false
 kt-time = { path = "libs/kt-time" }
 kt-version = { path = "libs/kt-version" }
 kt-model = { path = "libs/kt-model" }
+kt-text = { path = "libs/kt-text" }
 kt-otio = { path = "libs/kt-otio" }
 kt-ffmpeg = { path = "libs/kt-ffmpeg" }
 kt-media = { path = "libs/kt-media" }

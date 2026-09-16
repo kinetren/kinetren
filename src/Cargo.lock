@@ -2066,6 +2066,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kt-text"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "harfrust",
+]
+
+[[package]]
 name = "kt-time"
 version = "0.1.0"
 dependencies = [
