@@ -63,8 +63,12 @@ def main(out):
         body_b = app.pixel(app.x_at(b.end - (b.end - b.start) // 4), y)
         mid = app.pixel(app.x_at((b.start + a.end) // 2), y)
         app.expect(body_a != body_b, f"источники различимы по цвету: {body_a} / {body_b}")
+        # зона ГОЛОГО наложения с Р.51 помечена штриховкой (п.399: цель
+        # ПКМ-жеста «Переход с…» обязана быть видима) — пиксель зоны чуть
+        # светлее тела клипа, сравнение с допуском
         app.expect(
-            mid == body_b,
+            all(abs(m - b) <= 12 for m, b in zip(mid, body_b))
+            and any(abs(m - a) > 20 for m, a in zip(mid, body_a)),
             f"в перекрытии сверху поздний клип: {mid} против {body_b} (ранний {body_a})",
         )
 
