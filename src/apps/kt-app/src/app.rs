@@ -418,6 +418,13 @@ pub struct KtApp {
     pub fx_editors: Vec<crate::fx_editor::FxEditor>,
     /// Окна переходов (Р.33 С4) — по одному на переход.
     pub transition_editors: Vec<crate::transition_editor::TransitionEditor>,
+    pub generator_editors: Vec<crate::generator_editor::GeneratorEditor>,
+    /// Пути медиа, под которые у плеера подняты источники, — снимок для
+    /// `sync_media_sources` (Р.52): смена пути (окно генератора,
+    /// undo/redo) видна диффом против него.
+    pub(crate) media_paths: HashMap<MediaId, String>,
+    /// Первый вызов синка принимает состояние build_player как данность.
+    pub(crate) media_synced: bool,
     /// Окна камер (Р.34 К3).
     pub camera_editors: Vec<crate::camera_editor::CameraEditor>,
     pub morph_editors: Vec<crate::morpher_editor::MorphEditor>,
@@ -713,6 +720,9 @@ impl KtApp {
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
+            generator_editors: Vec::new(),
+            media_paths: HashMap::new(),
+            media_synced: false,
             camera_editors: Vec::new(),
             morph_editors: Vec::new(),
             gesture_counter: 0,
@@ -892,6 +902,9 @@ impl KtApp {
             thumbs: thumbs_svc,
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
+            generator_editors: Vec::new(),
+            media_paths: HashMap::new(),
+            media_synced: false,
             camera_editors: Vec::new(),
             morph_editors: Vec::new(),
             gesture_counter: 0,
@@ -1353,6 +1366,7 @@ impl KtApp {
         self.draw_search(&ctx);
         self.draw_fx_editors(&ctx);
         self.draw_transition_editors(&ctx);
+        self.draw_generator_editors(&ctx);
         self.draw_camera_editors(&ctx);
         self.draw_morph_editors(&ctx);
         self.draw_paste_names(&ctx);
@@ -2515,6 +2529,7 @@ impl KtApp {
                 self.retained = retained;
                 self.model_rev += 1;
                 self.player.set_project(self.model.document());
+                self.sync_media_sources();
                 // работа В РЕДАКТОРЕ и нигде больше: звёздочка горит, пока
                 // пользователь не нажмёт Ctrl+S
                 self.dirty_content = true;
@@ -2790,6 +2805,7 @@ impl KtApp {
         // сборка рендерера: смена контекста меняет ВСЁ, что они держат
         self.model_rev += 1;
         self.player.set_project(self.model.document());
+        self.sync_media_sources();
     }
 
     /// Крошки пути: корень и каждая лента по дороге внутрь.
@@ -3008,6 +3024,7 @@ impl KtApp {
         match self.model.apply_batch(vec![cmd]) {
             Ok(births) => {
                 self.player.set_project(self.model.document());
+                self.sync_media_sources();
                 self.dirty_content = true;
                 self.bump_clip_hw();
                 self.inherit_extras(&births);
@@ -3098,6 +3115,7 @@ impl KtApp {
         }
         self.model_rev += 1;
         self.player.set_project(self.model.document());
+        self.sync_media_sources();
         self.dirty_content = true;
         true
     }
@@ -3120,6 +3138,7 @@ impl KtApp {
         match self.model.apply_batch(cmds) {
             Ok(births) => {
                 self.player.set_project(self.model.document());
+                self.sync_media_sources();
                 self.dirty_content = true;
                 self.bump_clip_hw();
                 self.inherit_extras(&births);
@@ -3168,6 +3187,77 @@ impl KtApp {
     /// реакция: файл больше не offline, а на его месте стоит плейсхолдер —
     /// открываем ЗАНОВО в фоне и подменяем источник у плеера. Позиция,
     /// транспорт и кэш прочих источников не трогаются.
+    /// Источники плеера догоняют модель (Р.52): дифф путей
+    /// `document().media` против снимка последнего синка. Смена пути
+    /// (окно генератора, undo/redo) = пересоздание источника фабрикой
+    /// (`replace_media` гасит воркер и чистит его кэш); исчезновение
+    /// медиа = `remove_media` (заодно закрыт старый долг: «Убрать из
+    /// проекта» оставлял воркер жить); появление БЕЗ ручной регистрации
+    /// (redo добавления) = поднятие источника. Зовётся из всех обёрток
+    /// правок и из undo/redo — иначе undo смены цвета не доехал бы до
+    /// картинки: источник живёт вне project→player синка.
+    pub(crate) fn sync_media_sources(&mut self) {
+        let cur: HashMap<MediaId, String> =
+            self.model.document().media.iter().map(|m| (m.id, m.path.clone())).collect();
+        if !self.media_synced {
+            // первый вызов: источники уже поднял build_player
+            self.media_paths = cur;
+            self.media_synced = true;
+            return;
+        }
+        if self.media_paths == cur {
+            return;
+        }
+        let base = self.project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
+        let db = self.index_db_path();
+        for (id, path) in &cur {
+            let known = self.media_paths.get(id).cloned();
+            if known.as_deref() == Some(path.as_str()) {
+                continue;
+            }
+            let resolved = resolve_media_path(base.as_deref(), path);
+            let label = crate::util::media_label(path);
+            let (src, err) =
+                crate::util::open_source_or_placeholder(&resolved, db.as_deref(), &label);
+            if let Some(e) = err {
+                self.note(e);
+            }
+            if known.is_some() {
+                self.player.replace_media(*id, src);
+            } else {
+                self.player.add_media(*id, src);
+            }
+            self.thumbs.add_media(*id, resolved);
+            self.thumbs.invalidate_media(*id);
+        }
+        let gone: Vec<MediaId> =
+            self.media_paths.keys().filter(|id| !cur.contains_key(id)).copied().collect();
+        for id in gone {
+            self.player.remove_media(id);
+        }
+        self.media_paths = cur;
+    }
+
+    /// «Создать генератор» из меню бина (Р.52): медиа + источник +
+    /// карточка + сразу окно параметров. Клип НЕ ставится — карточку
+    /// тянут на таймлайн или жмут «Поставить на курсор», как у файла.
+    pub fn create_generator(&mut self, kind: kt_model::GeneratorKind) {
+        let path = kt_model::format_gen_path(&kind);
+        let id = MediaId(self.next_media_id());
+        // снимок — ДО apply: источник поднимаем сами, синку не надо
+        self.media_paths.insert(id, path.clone());
+        if !self.apply(Command::AddMedia { id, path: path.clone() }) {
+            self.media_paths.remove(&id);
+            return;
+        }
+        match crate::util::open_source(&path) {
+            Ok(src) => self.player.add_media(id, src),
+            Err(e) => self.note(e),
+        }
+        self.thumbs.add_media(id, path);
+        self.open_generator_editor(id);
+    }
+
     pub(crate) fn poll_returned_sources(&mut self) {
         if let Some(rx) = self.reopen_rx.take() {
             let mut ready = Vec::new();
@@ -4110,6 +4200,7 @@ impl KtApp {
         self.model_rev += 1;
         if self.model.undo().is_ok() {
             self.player.set_project(self.model.document());
+            self.sync_media_sources();
             self.dirty_content = true;
             self.bump_clip_hw();
         }
@@ -4119,6 +4210,7 @@ impl KtApp {
         self.model_rev += 1;
         if self.model.redo().is_ok() {
             self.player.set_project(self.model.document());
+            self.sync_media_sources();
             self.dirty_content = true;
             self.bump_clip_hw();
         }
@@ -4700,7 +4792,10 @@ impl KtApp {
     /// Медиа + клип(ы) в конкретную позицию (дроп в позицию мыши, п.2 v1.4).
     pub fn add_media_clip_at(&mut self, path: &str, at: Tick, lane_hint: Option<(ClipKind, u32)>) {
         let media_id = MediaId(self.next_media_id());
+        // снимок синка — ДО apply: источник поднимаем сами ниже (Р.52)
+        self.media_paths.insert(media_id, path.to_string());
         if !self.apply(Command::AddMedia { id: media_id, path: path.to_string() }) {
+            self.media_paths.remove(&media_id);
             return;
         }
         self.place_media_at(media_id, at, lane_hint);

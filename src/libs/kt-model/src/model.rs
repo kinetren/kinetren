@@ -102,6 +102,16 @@ pub enum Command {
         id: MediaId,
         path: String,
     },
+    /// Смена пути медиа (Р.52): правка параметров генератора — это смена
+    /// его `gen:`-пути, и все клипы этого медиа обновляются (семантика
+    /// Vegas: два клипа на один генератор делят вид). Путь для модели
+    /// непрозрачен, как в `AddMedia`, — команда годится и будущему
+    /// relink. Пересоздание источника у плеера — забота call-site
+    /// (`KtApp::sync_media_sources`), как и у `AddMedia`.
+    SetMediaPath {
+        id: MediaId,
+        path: String,
+    },
     AddClip(ClipEvent),
     RemoveClip {
         id: ClipId,
@@ -674,6 +684,11 @@ impl TimelineModel {
                     return Err(CommandError::IdInUse(id.0));
                 }
             }
+            Command::SetMediaPath { id, .. } => {
+                if !p.media.iter().any(|m| m.id == *id) {
+                    return Err(CommandError::MediaNotFound(*id));
+                }
+            }
             Command::AddClip(c) => {
                 if p.clips.iter().any(|x| x.id == c.id) {
                     return Err(CommandError::IdInUse(c.id.0));
@@ -1024,6 +1039,11 @@ impl TimelineModel {
             Command::NoteBirth { .. } => {}
             Command::AddMedia { id, path } => {
                 p.media.push(MediaRef { id, path });
+            }
+            Command::SetMediaPath { id, path } => {
+                if let Some(m) = p.media.iter_mut().find(|m| m.id == id) {
+                    m.path = path;
+                }
             }
             Command::AddClip(c) => {
                 match c.kind {

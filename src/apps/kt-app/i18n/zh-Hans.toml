@@ -207,6 +207,7 @@ nest_expand = "将片段展开到轨道"
 nest_independent = "与其他位置分离"
 nest_rename = "重命名片段…"
 nest_enter = "进入片段 (Enter)"
+gen_params = "生成器参数…"
 nest_next_place = "转到下一个位置"
 
 [bin]
@@ -230,6 +231,7 @@ group_selected = "把选中的分组（{0}）"
 group_one = "分组（锁定此卡片）"
 remove = "从项目中移除"
 measure_loudness = "测量响度"
+new_generator = "新建生成器…"
 
 # Метры и мастер-фейдер превью.
 [meter]
@@ -864,3 +866,11 @@ unsaved_where = "无论如何都会保留恢复文件，这不是最后的机会
 save_and_go = "保存并继续"
 discard = "不保存"
 stay = "留在此处"
+
+# Окно генератора (Р.52): вид и параметры медиа без файла.
+[genw]
+title = "生成器"
+uses = "使用位置：{0}"
+
+[genkind]
+solid = "纯色"

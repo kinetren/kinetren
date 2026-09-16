@@ -5865,6 +5865,107 @@ fn t356_repeated_notice_still_marks_unread() {
     assert!(h.state().dirty_content, "после ошибки записи звёздочка обязана остаться");
 }
 
+/// Тест 477 (Р.52): «Создать генератор» — медиа без файла появляется в
+/// модели и в сервисах: путь канонический, источник поднят, карточка
+/// бина получает вид «видео без аудио» и «длительности нет», окно
+/// параметров открывается сразу и повторно (из меню карточки и меню
+/// события — оба пути зовут одно `open_generator_editor`).
+#[test]
+fn t477_create_generator_from_bin() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    let before = h.state().model.project().media.len();
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    h.step();
+    let app = h.state();
+    let p = app.model.project();
+    assert_eq!(p.media.len(), before + 1, "медиа не добавилось");
+    let m = p.media.last().unwrap();
+    assert_eq!(m.path, "gen:solid:c=ff8800", "путь обязан быть каноническим");
+    assert!(p.is_gen_media(m.id));
+    // окно параметров открыто сразу после создания
+    assert_eq!(app.generator_editors.len(), 1, "окно генератора не открылось");
+    assert_eq!(app.generator_editors[0].media, m.id);
+    // сервис тумб знает вид и «длительность» — карточка нарисует тумбу,
+    // а не «♪», и скроет нулевую длительность
+    let id = m.id;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let _ = app.thumbs.duration_or_probe(id);
+    loop {
+        if let Some((v, a)) = h.state().thumbs.kinds(id) {
+            assert!(v && !a, "генератор — видео без аудио");
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "probe генератора не опубликован");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.step();
+    }
+    assert_eq!(h.state().thumbs.duration(id), Some(kt_time::Tick(0)));
+    // повторное открытие (второй путь меню) не плодит второе окно
+    h.state_mut().open_generator_editor(id);
+    assert_eq!(h.state().generator_editors.len(), 1, "окно обязано быть одно");
+    // снимок синка источников зарегистрирован — правки пойдут диффом
+    assert_eq!(h.state().media_paths.get(&id).map(String::as_str), Some("gen:solid:c=ff8800"));
+}
+
+/// Тест 478 (Р.52, стиль t281/t227): правка цвета в живой сессии окна
+/// доезжает и до МОДЕЛИ, и до ИСТОЧНИКА плеера (sync_media_sources);
+/// «Отмена» возвращает backup; вся сессия — ОДИН шаг undo, и undo тоже
+/// пересоздаёт источник (иначе картинка отстала бы от модели).
+#[test]
+fn t478_generator_edit_reaches_model_and_source() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+    h.step();
+    let id = h.state().model.project().media.last().unwrap().id;
+    let gesture = h.state().generator_editors[0].gesture;
+    let depth = h.state().model.undo_depth();
+
+    // сессия окна: две правки цвета тем же gesture (как шлёт пипетка)
+    for c in ["gen:solid:c=104080", "gen:solid:c=ff8800"] {
+        let app = h.state_mut();
+        assert!(app.apply_coalesced(Command::SetMediaPath { id, path: c.into() }, gesture));
+        h.step();
+    }
+    let app = h.state();
+    assert_eq!(app.model.project().media.last().unwrap().path, "gen:solid:c=ff8800");
+    // источник плеера пересоздан: снимок синка догнал модель
+    assert_eq!(app.media_paths.get(&id).map(String::as_str), Some("gen:solid:c=ff8800"));
+    assert_eq!(app.model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
+
+    // undo возвращает и модель, и источник (хук в undo, а не только в apply)
+    h.state_mut().undo();
+    h.step();
+    let app = h.state();
+    assert_eq!(app.model.project().media.last().unwrap().path, "gen:solid");
+    assert_eq!(
+        app.media_paths.get(&id).map(String::as_str),
+        Some("gen:solid"),
+        "undo обязан пересоздать источник — иначе картинка отстаёт от модели"
+    );
+
+    // «Отмена» окна: команда backup тем же gesture + окно закрывается;
+    // после смерти медиа окно уходит само
+    h.state_mut().redo();
+    h.step();
+    let backup = h.state().generator_editors[0].backup_path.clone();
+    assert_eq!(backup, "gen:solid", "backup — путь на момент открытия");
+    {
+        let app = h.state_mut();
+        assert!(app.apply_coalesced(Command::SetMediaPath { id, path: backup }, gesture));
+    }
+    h.step();
+    assert_eq!(h.state().model.project().media.last().unwrap().path, "gen:solid");
+    {
+        let app = h.state_mut();
+        let _ = app.apply(Command::RemoveMedia { id });
+    }
+    h.step();
+    assert!(h.state().generator_editors.is_empty(), "окно мёртвого медиа обязано закрыться");
+    assert!(!h.state().media_paths.contains_key(&id), "источник мёртвого медиа снят");
+}
+
 /// Тест 227 (Р.33 С4): у перехода появилось окно свойств. Двойной клик по
 /// его окну на полосе открывает редактор, вид меняется пикером и сразу
 /// уезжает в модель, «Отмена» возвращает прежний.

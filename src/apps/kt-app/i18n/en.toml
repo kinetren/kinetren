@@ -207,6 +207,7 @@ nest_expand = "Expand the reel onto lanes"
 nest_independent = "Detach from the other places"
 nest_rename = "Rename the reel..."
 nest_enter = "Open the reel (Enter)"
+gen_params = "Generator parameters…"
 nest_next_place = "Go to the next place"
 
 [bin]
@@ -230,6 +231,7 @@ group_selected = "Group the selected ({0})"
 group_one = "Group (lock this card)"
 remove = "Remove from the project"
 measure_loudness = "Measure loudness"
+new_generator = "Create a generator…"
 
 # Метры и мастер-фейдер превью.
 [meter]
@@ -864,3 +866,11 @@ unsaved_where = "Either way a recovery file is kept, so this is not the last cha
 save_and_go = "Save and continue"
 discard = "Discard"
 stay = "Stay here"
+
+# Окно генератора (Р.52): вид и параметры медиа без файла.
+[genw]
+title = "Generator"
+uses = "events using it: {0}"
+
+[genkind]
+solid = "Solid color"

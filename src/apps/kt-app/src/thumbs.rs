@@ -663,6 +663,57 @@ mod key_tests {
         assert_eq!(svc.state(&key), ThumbState::Missing);
     }
 
+    /// Тест 476 (Р.52, родня t69): тумба и probe ГЕНЕРАТОРА строятся без
+    /// файла на диске — и без sidecar-БД, и с ней (ключ БД — метаданные
+    /// файла, у `gen:` их нет: воркер идёт фабричным источником напрямую).
+    /// Сервис отдаёт вид (видео без аудио), «длительности нет» (0) и
+    /// настоящую тумбу заданного цвета.
+    #[test]
+    fn t476_generator_thumbs_without_a_file() {
+        let mut project = kt_model::Project::new(kt_model::ProjectSettings {
+            fps: 30,
+            width: 640,
+            height: 360,
+            sample_rate: 48000,
+            pitch_engine: Default::default(),
+        });
+        let id = MediaId(1);
+        project.media.push(kt_model::MediaRef { id, path: "gen:solid:c=ff8800".into() });
+        // прогон дважды: без пути проекта (нет БД) и с путём (БД есть,
+        // но генератору она закрыта по ключу file_identity)
+        let db_project = std::env::temp_dir().join(format!("kt-t476-{}.otio", std::process::id()));
+        for project_path in [None, Some(db_project.clone())] {
+            let with_db = project_path.is_some();
+            let svc = ThumbService::start(&project, project_path);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            assert_eq!(svc.duration_or_probe(id), None, "первый вызов — заявка");
+            while !svc.shared.durations.lock().unwrap().contains_key(&id) {
+                assert!(std::time::Instant::now() < deadline, "probe не опубликован (db={with_db})");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert_eq!(svc.duration(id), Some(Tick(0)), "у генератора длительности нет (db={with_db})");
+            assert_eq!(svc.kinds(id), Some((true, false)), "видео без аудио (db={with_db})");
+            let key = ThumbKey { media: id, t: 0 };
+            svc.request(key);
+            let img = loop {
+                match svc.state(&key) {
+                    ThumbState::Ready(img) => break img,
+                    ThumbState::Failed => panic!("тумба генератора упала (db={with_db})"),
+                    _ => {}
+                }
+                assert!(std::time::Instant::now() < deadline, "тумба не построилась (db={with_db})");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            let c = img.pixels[img.pixels.len() / 2];
+            let close = |a: u8, b: u8| a.abs_diff(b) <= 2;
+            assert!(
+                close(c.r(), 255) && close(c.g(), 136) && close(c.b(), 0),
+                "цвет тумбы не совпал с параметрами генератора: {c:?} (db={with_db})"
+            );
+        }
+        let _ = std::fs::remove_file(db_project.with_extension("ktindex.db"));
+    }
+
     /// Тест 71 (п.1 р.7): LRU источников — вытеснение старейшего, без
     /// полного сброса (прежний clear() при >2 переоткрывал каждый файл).
     #[test]

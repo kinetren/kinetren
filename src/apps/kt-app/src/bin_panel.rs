@@ -180,6 +180,7 @@ impl KtApp {
         let row_h = card_h + 18.0;
         let mut to_place: Option<MediaId> = None;
         let mut to_measure: Option<MediaId> = None;
+        let mut to_gen: Option<MediaId> = None;
         let mut to_remove: Option<MediaId> = None;
         let mut pending = false;
         let mut drag_out: Option<MediaId> = None;
@@ -258,6 +259,7 @@ impl KtApp {
                     &mut pending,
                     &mut to_place,
                     &mut to_measure,
+                    &mut to_gen,
                     &mut to_remove,
                 );
                 // перетаскивание внутри бина двигает карточку (и всю её
@@ -404,6 +406,7 @@ impl KtApp {
                         &mut pending,
                         &mut to_place,
                         &mut to_measure,
+                        &mut to_gen,
                         &mut to_remove,
                     );
                     if resp.dragged() {
@@ -426,6 +429,9 @@ impl KtApp {
         }
         if let Some(id) = to_measure {
             self.measure_loudness(id);
+        }
+        if let Some(id) = to_gen {
+            self.open_generator_editor(id);
         }
         if let Some(id) = to_place {
             self.place_media_at_cursor(id);
@@ -475,6 +481,7 @@ impl KtApp {
         let resp = ui.interact(view, ui.id().with("bin-bg"), egui::Sense::click());
         let mut free: Option<bool> = None;
         let mut picked = false;
+        let mut new_gen: Option<kt_model::GeneratorKind> = None;
         resp.context_menu(|ui| {
             picked = true;
             if ui.button(tr(k::bin::HINT_FREE)).clicked() {
@@ -485,9 +492,23 @@ impl KtApp {
                 free = Some(false);
                 ui.close();
             }
+            ui.separator();
+            // генераторы (Р.52): единственный вход для медиа БЕЗ файла —
+            // раньше в бин попадало только перетаскивание файлов на окно
+            ui.menu_button(tr(k::bin::menu::NEW_GENERATOR), |ui| {
+                for kd in kt_model::GeneratorKind::ALL {
+                    if ui.button(crate::generator_editor::kind_name(kd)).clicked() {
+                        new_gen = Some(*kd);
+                        ui.close();
+                    }
+                }
+            });
         });
         if picked {
             self.set_panel_target(crate::ctx_menu::PanelTarget::BinEmpty);
+        }
+        if let Some(kd) = new_gen {
+            self.create_generator(kd);
         }
         if let Some(v) = free {
             self.bin_free = v;
@@ -655,12 +676,18 @@ impl KtApp {
         pending: &mut bool,
         to_place: &mut Option<MediaId>,
         to_measure: &mut Option<MediaId>,
+        to_gen: &mut Option<MediaId>,
         to_remove: &mut Option<MediaId>,
     ) -> egui::Response {
-        let name = std::path::Path::new(path)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string());
+        let gen_kind = kt_model::parse_gen_path(path);
+        // подпись генератора — имя вида, не сырой gen:-путь (правило 7)
+        let name = match &gen_kind {
+            Some(kd) => crate::generator_editor::kind_name(kd).to_string(),
+            None => std::path::Path::new(path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string()),
+        };
         let is_synth = path.starts_with("synth:");
         let is_off = offline.contains(&id);
         let thumb_rect = egui::Rect::from_min_size(rect.min, egui::vec2(card_w, card_h));
@@ -763,7 +790,15 @@ impl KtApp {
                 *to_place = Some(id);
                 ui.close();
             }
-            if ui.button(tr(k::bin::menu::MEASURE_LOUDNESS)).clicked() {
+            if gen_kind.is_some() {
+                // у генератора вместо замера громкости (мерить нечего:
+                // аудио нет) — его окно параметров; тот же пункт, что в
+                // меню события на таймлайне (правило 17)
+                if ui.button(tr(k::tl::menu::GEN_PARAMS)).clicked() {
+                    *to_gen = Some(id);
+                    ui.close();
+                }
+            } else if ui.button(tr(k::bin::menu::MEASURE_LOUDNESS)).clicked() {
                 *to_measure = Some(id);
                 ui.close();
             }

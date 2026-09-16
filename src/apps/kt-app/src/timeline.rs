@@ -5007,6 +5007,19 @@ impl KtApp {
                 // прямоугольники пунктов — наружу для живых сценариев
                 // (Р.49): меню egui в дереве доступности не ищется, а
                 // угадывать смещения сценарий не должен
+                // генератор (Р.52): параметры — свойство МЕДИА, окно одно
+                // на все клипы этого генератора; тот же пункт есть в меню
+                // карточки бина (правило 17)
+                if let Some(media) = self.model.clip(id).map(|c| c.media)
+                    && self.model.project().is_gen_media(media)
+                {
+                    let r = ui.button(tr(k::tl::menu::GEN_PARAMS));
+                    crate::widgets::field_probe::note("gen.params", r.rect);
+                    if r.clicked() {
+                        self.open_generator_editor(media);
+                        ui.close();
+                    }
+                }
                 if self.is_nest(id) {
                     let r = ui.button(tr(k::tl::menu::NEST_ENTER));
                     crate::widgets::field_probe::note("nest.enter", r.rect);

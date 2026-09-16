@@ -112,3 +112,70 @@ fn t470_generator_param_specs_are_complete() {
         assert!(!probe.set_param("no_such_param", 1.0));
     }
 }
+
+/// Тест 475 (Р.52): команда смены пути медиа — правка параметров
+/// генератора. check (медиа существует), мутация видна всем клипам этого
+/// медиа, undo/redo работают, живой драг окна схлопывается в ОДИН шаг.
+#[test]
+fn t475_set_media_path_command() {
+    use kt_model::{
+        ClipEvent, ClipId, ClipKind, Command, CommandError, MediaId, Project, ProjectSettings,
+        TimelineModel,
+    };
+    use kt_time::Tick;
+
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
+    p.media.push(kt_model::MediaRef { id: MediaId(1), path: "gen:solid".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    let mut m = TimelineModel::new(p);
+
+    // несуществующее медиа — честный отказ
+    assert!(matches!(
+        m.apply(Command::SetMediaPath { id: MediaId(9), path: "gen:solid".into() }),
+        Err(CommandError::MediaNotFound(MediaId(9)))
+    ));
+
+    // правка видна: путь сменился, клип ссылается на то же медиа
+    m.apply(Command::SetMediaPath { id: MediaId(1), path: "gen:solid:c=ff8800".into() })
+        .unwrap();
+    assert_eq!(m.project().media[0].path, "gen:solid:c=ff8800");
+    assert!(m.project().is_gen(&m.project().clips[0]));
+
+    // undo возвращает прежний путь
+    m.undo().unwrap();
+    assert_eq!(m.project().media[0].path, "gen:solid");
+    m.redo().unwrap();
+    assert_eq!(m.project().media[0].path, "gen:solid:c=ff8800");
+
+    // сессия окна: три правки одним жестом = ОДИН undo-шаг
+    let before_depth = m.undo_depth();
+    for c in ["gen:solid:c=110000", "gen:solid:c=220000", "gen:solid:c=330000"] {
+        m.apply_coalesced(Command::SetMediaPath { id: MediaId(1), path: c.into() }, 42).unwrap();
+    }
+    assert_eq!(m.project().media[0].path, "gen:solid:c=330000");
+    assert_eq!(m.undo_depth(), before_depth + 1, "жест схлопнулся в один шаг");
+    m.undo().unwrap();
+    assert_eq!(m.project().media[0].path, "gen:solid:c=ff8800", "undo жеста — до сессии");
+}
