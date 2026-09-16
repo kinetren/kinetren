@@ -4579,31 +4579,39 @@ impl KtApp {
                         _ => false,
                     }
             })
-            .map(|t| t.id);
+            .cloned();
         if len < kt_model::MIN_TRANSITION_DURATION.0 {
-            if let Some(tid) = existing {
-                self.apply(Command::RemoveTransition { id: tid });
+            if let Some(t) = existing {
+                self.apply(Command::RemoveTransition { id: t.id });
             }
             return;
         }
         let (a, b) = if left { (None, Some(id)) } else { (Some(id), None) };
         let (in_offset, out_offset) =
             if left { (Tick::ZERO, Tick(len)) } else { (Tick(len), Tick::ZERO) };
-        let ev = TransitionEvent {
-            id: existing.unwrap_or(TransitionId(self.next_transition_id())),
-            a,
-            b,
-            in_offset,
-            out_offset,
-            kind: TransitionKind::Crossfade,
-            audio: Default::default(),
-            auto: vec![],
+        let had = existing.is_some();
+        let ev = match existing {
+            // повторный драг уголка правит ТОЛЬКО длину окна: выбранный
+            // вид, кривые и кривая аудио не отрубаются сами (правило 20,
+            // п.397 — раньше тут собирался свежий Crossfade и молча
+            // стирал настройки фейда)
+            Some(mut t) => {
+                t.in_offset = in_offset;
+                t.out_offset = out_offset;
+                t
+            }
+            None => TransitionEvent {
+                id: TransitionId(self.next_transition_id()),
+                a,
+                b,
+                in_offset,
+                out_offset,
+                kind: TransitionKind::Crossfade,
+                audio: Default::default(),
+                auto: vec![],
+            },
         };
-        self.apply(if existing.is_some() {
-            Command::SetTransition(ev)
-        } else {
-            Command::AddTransition(ev)
-        });
+        self.apply(if had { Command::SetTransition(ev) } else { Command::AddTransition(ev) });
     }
 
     pub fn next_transition_id(&self) -> u64 {

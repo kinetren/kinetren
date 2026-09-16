@@ -3291,16 +3291,28 @@ impl KtApp {
                                     .transitions
                                     .iter()
                                     .find(|t| (t.a, t.b) == (Some(outgoing), Some(incoming)))
-                                    .map(|t| t.id);
-                                let ev = TransitionEvent {
-                                    id: existing.unwrap_or(TransitionId(self.next_transition_id())),
-                                    a: Some(outgoing),
-                                    b: Some(incoming),
-                                    in_offset: Tick(in_off),
-                                    out_offset: Tick(out_off),
-                                    kind: TransitionKind::Crossfade,
-                                    audio: Default::default(),
-                                    auto: vec![],
+                                    .cloned();
+                                let had = existing.is_some();
+                                let ev = match existing {
+                                    // повторный наезд на пару с настроенным
+                                    // переходом двигает ТОЛЬКО окно: вид,
+                                    // кривые и звук остаются (правило 20,
+                                    // п.397)
+                                    Some(mut t) => {
+                                        t.in_offset = Tick(in_off);
+                                        t.out_offset = Tick(out_off);
+                                        t
+                                    }
+                                    None => TransitionEvent {
+                                        id: TransitionId(self.next_transition_id()),
+                                        a: Some(outgoing),
+                                        b: Some(incoming),
+                                        in_offset: Tick(in_off),
+                                        out_offset: Tick(out_off),
+                                        kind: TransitionKind::Crossfade,
+                                        audio: Default::default(),
+                                        auto: vec![],
+                                    },
                                 };
                                 let mut cmds = vec![
                                     Command::MoveClip {
@@ -3311,7 +3323,7 @@ impl KtApp {
                                     Command::TrimEnd { id: outgoing, new_end: Tick(joint) },
                                     Command::TrimStart { id: incoming, new_start: Tick(joint) },
                                 ];
-                                cmds.push(if existing.is_some() {
+                                cmds.push(if had {
                                     Command::SetTransition(ev)
                                 } else {
                                     Command::AddTransition(ev)

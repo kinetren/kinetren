@@ -8447,3 +8447,173 @@ fn t458_nest_looks_like_a_nest() {
     h.step();
     assert!(h.state().selected.contains(&inst), "круг не замкнулся на первом месте");
 }
+
+/// Тест 460 (п.397, Р.51): повторный драг уголка-фейда правит ТОЛЬКО длину
+/// окна — выбранный вид, кривые параметров и кривая аудио выживают.
+/// Раньше `commit_fade_handle` собирал свежий Crossfade и молча стирал
+/// настройки (против правила 20 «ничего не отрубается само»).
+#[test]
+fn t460_fade_handle_redrag_keeps_kind() {
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        p.clips.push(ClipEvent {
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Video,
+            lane: 0,
+            start: Tick(100_000),
+            duration: Tick(200_000),
+            source_in: Tick(0),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed: false,
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            fx: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        });
+        // уголковый фейд-ин с НАСТРОЕННЫМ видом, кривой и звуком
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: None,
+            b: Some(ClipId(1)),
+            in_offset: Tick::ZERO,
+            out_offset: Tick(40_000),
+            kind: TransitionKind::Wipe { dir: Dir::Left, angle: 10.0, softness: 0.2 },
+            audio: AudioCurve::SCurve,
+            auto: vec![ParamCurve {
+                param: "angle".into(),
+                ease: false,
+                keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(30_000), v: 45.0 }],
+            }],
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.select_only(ClipId(1));
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let y_strip = g.lane_top(ClipKind::Video, 0) + 3.0;
+
+    // тянем ручку фейда (конец окна, тик 140 000) дальше вправо до 180 000
+    let from = g.tick_to_x(140_000);
+    h.hover_at(egui::pos2(from, y_strip));
+    h.step();
+    h.drag_at(egui::pos2(from, y_strip));
+    h.step();
+    let to = g.tick_to_x(180_000);
+    h.hover_at(egui::pos2(to, y_strip));
+    h.step();
+    h.drop_at(egui::pos2(to, y_strip));
+    h.step();
+
+    let p = h.state().model.project().clone();
+    assert_eq!(p.transitions.len(), 1, "фейд один: {:?}", p.transitions);
+    let t = &p.transitions[0];
+    assert!(
+        (t.out_offset.0 - 80_000).abs() <= 2_000,
+        "длина окна поехала за ручкой: {:?}",
+        t.out_offset
+    );
+    assert_eq!(
+        t.kind,
+        TransitionKind::Wipe { dir: Dir::Left, angle: 10.0, softness: 0.2 },
+        "вид фейда пережил повторный драг уголка"
+    );
+    assert_eq!(t.audio, AudioCurve::SCurve, "кривая аудио не сброшена");
+    assert_eq!(t.auto.len(), 1, "кривые параметров не стёрты: {:?}", t.auto);
+}
+
+/// Тест 460b (п.397, Р.51): повторный наезд Move-драгом на пару с уже
+/// настроенным переходом двигает окно, но вид/кривую аудио сохраняет.
+#[test]
+fn t460b_overlap_redrag_keeps_kind() {
+    use kt_model::*;
+    use kt_time::Tick;
+    const TPP: f64 = 1000.0;
+    let mut h = harness();
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        // ветка кроссфейда из наезда живёт в режиме БЕЗ переслаивания (Р.28)
+        p.overlap_layers = false;
+        p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+        for (n, start, src_in) in [(1u64, 0i64, 0i64), (2, 90_000, 20_000)] {
+            p.clips.push(ClipEvent {
+                id: ClipId(n),
+                link_group: None,
+                kind: ClipKind::Video,
+                lane: 0,
+                start: Tick(start),
+                duration: Tick(90_000),
+                source_in: Tick(src_in),
+                media: MediaId(1),
+                gain_db: 0.0,
+                reversed: false,
+                fx_bypass: vec![],
+                fx_auto: vec![],
+                fx: vec![],
+                opacity: 1.0,
+                fx_off: false,
+            });
+        }
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: Some(ClipId(1)),
+            b: Some(ClipId(2)),
+            in_offset: Tick(9_000),
+            out_offset: Tick(9_000),
+            kind: TransitionKind::Barn { vertical: true, softness: 0.1 },
+            audio: AudioCurve::Linear,
+            auto: vec![],
+        });
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.view_start = 0.0;
+        app.ticks_per_px = TPP;
+        app.player.seek(Tick(0));
+    }
+    h.step();
+    let g = h.state().tl_geom.clone().expect("нет геометрии таймлайна");
+    let y = g.lane_y(ClipKind::Video, 0, 0.5);
+    let grab = g.tick_to_x(90_000 + 45_000);
+    h.hover_at(egui::pos2(grab, y));
+    h.step();
+    h.drag_at(egui::pos2(grab, y));
+    h.step();
+    h.hover_at(egui::pos2(grab - 8.0, y));
+    h.step();
+    let grab_dt = match h.state().drag {
+        Some(crate::timeline::Drag::Clip(ref d)) => d.grab_dt,
+        _ => panic!("драг клипа не начался"),
+    };
+    // цель: start = 50 000 — наезд ГЛУБЖЕ на хвост клипа 1
+    let to = g.tick_to_x(50_000 + grab_dt);
+    h.hover_at(egui::pos2(to, y));
+    h.step();
+    h.drop_at(egui::pos2(to, y));
+    h.step();
+
+    let p = h.state().model.project().clone();
+    assert_eq!(p.transitions.len(), 1, "переход один: {:?}", p.transitions);
+    let t = &p.transitions[0];
+    assert_eq!((t.a, t.b), (Some(ClipId(1)), Some(ClipId(2))));
+    assert!((t.in_offset.0 - 20_000).abs() <= 1_000, "окно поехало: {:?}", t.in_offset);
+    assert_eq!(
+        t.kind,
+        TransitionKind::Barn { vertical: true, softness: 0.1 },
+        "вид перехода пережил повторный наезд"
+    );
+    assert_eq!(t.audio, AudioCurve::Linear, "кривая аудио не сброшена");
+    p.validate().expect("итог валиден");
+}
