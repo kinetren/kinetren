@@ -196,6 +196,8 @@ impl KtApp {
 
                 // ---- начертание и выравнивание ---------------------------
                 ui.horizontal(|ui| {
+                    // «жирный» теперь флаг паспорта (Р.53, п.414) — но
+                    // рисуется тут же, рядом с выравниванием
                     changed |= ui.checkbox(bold, tr(k::titlew::BOLD)).changed();
                     ui.separator();
                     for (a, label) in [

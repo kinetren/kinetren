@@ -470,10 +470,52 @@ fn default_glitch() -> f64 {
 /// эффекты, и виды переходов — поэтому UI полей у них ОДИН (требование
 /// Р.33 п.1: «управление ими надо унифицировать как fx-chain»), и любой
 /// новый носитель параметров получает готовую сетку полей даром.
+/// Паспорт ФЛАГА — параметра, у которого нет диапазона (Р.53, п.414).
+///
+/// Числа описывает `ParamSpec`, а «да/нет» не число: его нельзя тянуть
+/// ползунком и нельзя автоматизировать кривой. До этого пункта такие
+/// поля рисовались рукописными строками в каждом окне — и ровно поэтому
+/// забывались: тон 1 кГц у SMPTE и цветной режим шума существовали в
+/// формате, но включить их было НЕЧЕМ (класс t252 «осиротевшая фича»).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FlagSpec {
+    /// Имя поля snake_case — оно же ключ в файле.
+    pub name: &'static str,
+    pub default: bool,
+}
+
+/// Кому принадлежит параметр (Р.53, п.414). Одно и то же ИМЯ значит у
+/// разных носителей разное: `size` — зерно у эффекта Noise и КЕГЛЬ у
+/// титра, `amount` — сила у полудюжины эффектов. Глобальная карта «имя →
+/// подпись» на этом и врала: кегль титра был подписан «Зерно:».
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamScope {
+    Fx,
+    Generator,
+}
+
 pub trait HasParams {
     fn param_specs(&self) -> &'static [ParamSpec];
     fn get_param(&self, name: &str) -> Option<f64>;
     fn set_param(&mut self, name: &str, v: f64) -> bool;
+
+    /// Чьи это параметры — подпись ищется сперва в своей области
+    /// (Р.53, п.414).
+    fn params_scope(&self) -> ParamScope {
+        ParamScope::Fx
+    }
+
+    /// Флаги вида (Р.53, п.414). Пусто — их нет; тогда окно не рисует
+    /// ни одного чекбокса, и это законно.
+    fn flag_specs(&self) -> &'static [FlagSpec] {
+        &[]
+    }
+    fn get_flag(&self, _name: &str) -> Option<bool> {
+        None
+    }
+    fn set_flag(&mut self, _name: &str, _v: bool) -> bool {
+        false
+    }
 
     /// Спека параметра по имени (кривая-сирота видна сразу).
     fn param_spec(&self, name: &str) -> Option<&'static ParamSpec> {
@@ -4003,6 +4045,54 @@ macro_rules! params_for {
     };
 }
 pub(crate) use params_for;
+
+/// Паспорт ФЛАГОВ вида — из ОДНОЙ декларации, рядом с `params_for!`
+/// (Р.53, п.414). Генерит спеки, чтение и запись: рассинхрона трёх
+/// таблиц не бывает, а полноту (не забыт ли bool-поле) сторожит тест,
+/// который сверяет флаги с serde-представлением вида.
+macro_rules! flags_for {
+    ($enum:ident, $specs:ident, $set:ident, $get:ident, {$(
+        $variant:ident { $( $field:ident : $def:expr );+ $(;)? }
+    ),* $(,)?}) => {
+        fn $specs(fx: &$enum) -> &'static [FlagSpec] {
+            match fx {
+                $( $enum::$variant { .. } => &[
+                    $( FlagSpec { name: stringify!($field), default: $def } ),+
+                ], )*
+                #[allow(unreachable_patterns)]
+                _ => &[],
+            }
+        }
+
+        fn $set(fx: &mut $enum, name: &str, v: bool) -> bool {
+            match fx {
+                $( $enum::$variant { $($field,)+ .. } => {
+                    $( if name == stringify!($field) {
+                        *$field = v;
+                        return true;
+                    } )+
+                    false
+                } )*
+                #[allow(unreachable_patterns)]
+                _ => false,
+            }
+        }
+
+        fn $get(fx: &$enum, name: &str) -> Option<bool> {
+            match fx {
+                $( $enum::$variant { $($field,)+ .. } => {
+                    $( if name == stringify!($field) {
+                        return Some(*$field);
+                    } )+
+                    None
+                } )*
+                #[allow(unreachable_patterns)]
+                _ => None,
+            }
+        }
+    };
+}
+pub(crate) use flags_for;
 
 params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
     // ---- аудио (Р.33: автоматизируются общим механизмом) ----------------

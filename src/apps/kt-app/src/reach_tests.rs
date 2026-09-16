@@ -1297,3 +1297,97 @@ fn t396_hinted_objects_have_a_right_click_answer() {
         );
     }
 }
+
+
+/// Тест 508 (Р.53, п.414): у КАЖДОГО параметра есть подпись из каталога.
+///
+/// `param_label` на неизвестном имени возвращает СЫРОЕ английское имя
+/// поля — и делает это молча, на всех пяти языках. Так в окнах Р.52
+/// оказались `line_spacing`, `plate_pad_x`, `angle_deg`, а кегль титра
+/// подписался «Зерно:» (чужим ключом эффекта Noise). Ни t100, ни t125
+/// этого не ловят: ключа просто не существует.
+#[test]
+fn t508_every_param_has_a_label() {
+    use kt_model::HasParams;
+    let mut bad: Vec<String> = Vec::new();
+    let mut check = |who: &str, f: &dyn HasParams, covered: &[&str]| {
+        let scope = f.params_scope();
+        for spec in f.param_specs() {
+            // компоненты цвета подписи не имеют и не должны: они закрыты
+            // ПИПЕТКОЙ (правило 13 — три ползунка 0..255 на один цвет это
+            // трата места). Но закрыты обязаны быть ВСЕ: незакрытый
+            // Rgb8-параметр вывалится в сетку сырым именем.
+            if spec.unit == kt_model::ParamUnit::Rgb8 {
+                assert!(
+                    covered.contains(&spec.name),
+                    "{who}.{}: компонента цвета не попала ни в одну пипетку — \
+                     пользователь увидит сырое имя поля",
+                    spec.name
+                );
+                continue;
+            }
+            let label = crate::widgets::param_label_scoped(scope, spec.name);
+            // подпись, равная имени поля, — это и есть «ключа нет»
+            if label == spec.name {
+                bad.push(format!("{who}.{}", spec.name));
+            }
+        }
+        for spec in f.flag_specs() {
+            if crate::widgets::flag_label(spec.name) == spec.name {
+                bad.push(format!("{who}.{} (флаг)", spec.name));
+            }
+        }
+    };
+    for k in kt_model::GeneratorKind::all() {
+        let covered: Vec<&str> = crate::generator_editor::color_groups(&k)
+            .iter()
+            .flat_map(|(_, names)| names.iter().copied())
+            .collect();
+        check(k.tag(), &k, &covered);
+    }
+    // у переходов цвет рисует своя пипетка (окно перехода, Р.33 С4)
+    const TRANS_COLOR: &[&str] = &[
+        "color_r", "color_g", "color_b", "tint_r", "tint_g", "tint_b",
+    ];
+    for k in kt_model::TransitionKind::ALL {
+        check(k.tag(), k, TRANS_COLOR);
+    }
+    check("camera", &kt_model::CameraParams::default(), &[]);
+    assert!(
+        bad.is_empty(),
+        "параметры без подписи в каталоге — пользователь видит сырое имя поля:\n  {}",
+        bad.join("\n  ")
+    );
+}
+
+/// Тест 509 (Р.53, п.414): у каждого ФЛАГА есть контрол.
+///
+/// Флаг, объявленный в паспорте, но не нарисованный ни одним окном, —
+/// это ровно та «осиротевшая фича», которую сторожит t252 для команд:
+/// тон 1 кГц у SMPTE существовал в формате с Р.52, а включить его было
+/// нечем. Сканируем корпус kt-app на вызов общего виджета `flags_row`.
+#[test]
+fn t509_every_flag_has_a_control() {
+    let root = workspace_root();
+    let mut files: Vec<String> = Vec::new();
+    collect_rs(&root.join("apps/kt-app"), &mut files);
+    let mut draws_flags = false;
+    for rel in &files {
+        if rel.ends_with("_tests.rs") || rel.contains("/tests/") {
+            continue;
+        }
+        let src = strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+        if src.contains("widgets::flags_row(") {
+            draws_flags = true;
+        }
+    }
+    let has_flags = kt_model::GeneratorKind::all().iter().any(|k| {
+        use kt_model::HasParams;
+        !k.flag_specs().is_empty()
+    });
+    assert!(
+        !has_flags || draws_flags,
+        "виды объявляют флаги, но ни одно окно не зовёт widgets::flags_row — \
+         включить их пользователю нечем"
+    );
+}

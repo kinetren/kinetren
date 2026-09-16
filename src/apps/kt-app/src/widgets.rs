@@ -32,6 +32,82 @@ fn unit_suffix(u: ParamUnit) -> &'static str {
     }
 }
 
+/// Локализованная подпись параметра СВОЕЙ области (Р.53, п.414).
+///
+/// Одно имя значит у разных носителей разное: `size` — зерно у эффекта
+/// Noise и КЕГЛЬ у титра. Глобальная карта на этом врала, поэтому
+/// область спрашивается первой, и только потом общая таблица.
+pub fn param_label_scoped(scope: kt_model::ParamScope, name: &str) -> String {
+    if scope == kt_model::ParamScope::Generator
+        && let Some(s) = generator_param_label(name)
+    {
+        return s.to_string();
+    }
+    param_label(name)
+}
+
+/// Подписи параметров ГЕНЕРАТОРОВ. `None` — имя общее с эффектами и
+/// берётся из общей таблицы.
+fn generator_param_label(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "size" => tr(k::genp::SIZE),
+        "line_spacing" => tr(k::genp::LINE_SPACING),
+        "tracking" => tr(k::genp::TRACKING),
+        "stroke_w" => tr(k::genp::STROKE_W),
+        "shadow_dx" => tr(k::genp::SHADOW_DX),
+        "shadow_dy" => tr(k::genp::SHADOW_DY),
+        "shadow_blur" => tr(k::genp::SHADOW_BLUR),
+        "plate_pad_x" => tr(k::genp::PLATE_PAD_X),
+        "plate_pad_y" => tr(k::genp::PLATE_PAD_Y),
+        "angle_deg" => tr(k::genp::ANGLE_DEG),
+        "cols" => tr(k::genp::COLS),
+        "tone_db" => tr(k::genp::TONE_DB),
+        "fps" => tr(k::genp::FPS),
+        _ => return None,
+    })
+}
+
+/// Подпись ФЛАГА (Р.53, п.414).
+pub fn flag_label(name: &str) -> String {
+    let s: &str = match name {
+        "mono" => tr(k::genp::MONO),
+        "tone" => tr(k::genp::TONE),
+        "bold" => tr(k::titlew::BOLD),
+        "reverse" => tr(k::trn::REVERSE),
+        "vertical" => tr(k::trn::VERTICAL),
+        "invert" => tr(k::trn::INVERT),
+        other => return other.to_string(),
+    };
+    s.to_string()
+}
+
+/// Ряд флагов носителя — ОДИН виджет на все окна (Р.53, п.414). До него
+/// «да/нет» рисовались рукописными строками в каждом окне и потому
+/// забывались: тон 1 кГц и цветной шум включить было нечем.
+pub fn flags_row<P: HasParams + ?Sized>(
+    ui: &mut egui::Ui,
+    _id: impl std::hash::Hash + std::fmt::Debug,
+    f: &mut P,
+) -> bool {
+    let specs = f.flag_specs();
+    if specs.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        for spec in specs {
+            let mut v = f.get_flag(spec.name).unwrap_or(spec.default);
+            let r = ui.checkbox(&mut v, flag_label(spec.name));
+            field_probe::note(spec.name, r.rect);
+            if r.changed() {
+                f.set_flag(spec.name, v);
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
 /// Локализованная подпись параметра. Имя поля — ключ, перевод живёт в
 /// каталогах: kt-model про язык интерфейса ничего не знает.
 pub fn param_label(name: &str) -> String {
@@ -143,6 +219,16 @@ pub fn param_label(name: &str) -> String {
         "phase" => tr(k::fxp::PHASE),
         "segments" => tr(k::fxp::SEGMENTS),
         "curvature" => tr(k::fxp::CURVATURE),
+        // параметры видов переходов Р.51: центр жеста, объёмные панели
+        // (поймано t508 — показывались сырыми английскими именами)
+        "cx" => tr(k::fxp::CX),
+        "cy" => tr(k::fxp::CY),
+        "count" => tr(k::fxp::COUNT),
+        "persp" => tr(k::fxp::PERSP),
+        "shade" => tr(k::fxp::SHADE),
+        "curl" => tr(k::fxp::CURL),
+        "shadow" => tr(k::fxp::SHADOW),
+        "steps" => tr(k::fxp::STEPS),
         // параметр без подписи в каталоге — видно сразу, а не молча
         other => return other.to_string(),
     };
@@ -332,8 +418,11 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
 ) -> ParamsChanged {
     let none = ParamsChanged::default();
     let Some(base) = f.get_param(spec.name) else { return none };
+    // подпись — СВОЕЙ области носителя (Р.53, п.414): «size» у титра это
+    // кегль, а не зерно эффекта Noise
+    let label = param_label_scoped(f.params_scope(), spec.name);
     let Some(bind) = bind else {
-        ui.label(param_label(spec.name));
+        ui.label(label);
         let mut v = base;
         let r = param_value(ui, spec, &mut v);
         field_probe::note(spec.name, r.rect);
@@ -344,7 +433,7 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
         return none;
     };
     let Some(ci) = bind.index_of(spec.name) else {
-        ui.label(param_label(spec.name));
+        ui.label(label);
         let mut v = base;
         let r = param_value(ui, spec, &mut v);
         field_probe::note(spec.name, r.rect);
@@ -360,7 +449,7 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
         Some((c, k)) if c == ci && k < bind.curves[ci].keys.len() => Some(k),
         _ => None,
     };
-    ui.label(egui::RichText::new(param_label(spec.name)).color(crate::automation::curve_color(ci)));
+    ui.label(egui::RichText::new(label).color(crate::automation::curve_color(ci)));
     let c = &mut bind.curves[ci];
     let mut v = bound_value(c, key, bind.at);
     let r = param_value(ui, spec, &mut v);

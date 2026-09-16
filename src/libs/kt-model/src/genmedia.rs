@@ -11,7 +11,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::project::{fx_cast, params_for, HasParams, ParamKind, ParamSpec, ParamUnit};
+use crate::project::{
+    flags_for, fx_cast, params_for, FlagSpec, HasParams, ParamKind, ParamScope, ParamSpec,
+    ParamUnit,
+};
 
 /// Вид генератора с параметрами. Serde-представление (internally tagged
 /// `kind`) нужно kt-otio: поля уезжают словарём `parameters` в
@@ -440,6 +443,15 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, {
     },
 }}
 
+flags_for! { GeneratorKind, gen_flag_specs, gen_set_flag, gen_get_flag, {
+    // «да/нет» ползунком не тянется и кривой не автоматизируется, но и
+    // забытым быть не должно: тон 1 кГц и цветной шум существовали в
+    // формате с Р.52, а включить их было нечем (Р.53, п.414).
+    NoiseField { mono: true },
+    SmpteBars { tone: false },
+    Text { bold: false },
+}}
+
 impl HasParams for GeneratorKind {
     fn param_specs(&self) -> &'static [ParamSpec] {
         gen_specs(self)
@@ -449,6 +461,18 @@ impl HasParams for GeneratorKind {
     }
     fn set_param(&mut self, name: &str, v: f64) -> bool {
         gen_set_param(self, name, v)
+    }
+    fn params_scope(&self) -> ParamScope {
+        ParamScope::Generator
+    }
+    fn flag_specs(&self) -> &'static [FlagSpec] {
+        gen_flag_specs(self)
+    }
+    fn get_flag(&self, name: &str) -> Option<bool> {
+        gen_get_flag(self, name)
+    }
+    fn set_flag(&mut self, name: &str, v: bool) -> bool {
+        gen_set_flag(self, name, v)
     }
 }
 

@@ -205,3 +205,46 @@ fn t475_set_media_path_command() {
     m.undo().unwrap();
     assert_eq!(m.project().media[0].path, "gen:solid:c=ff8800", "undo жеста — до сессии");
 }
+
+
+/// Тест 510 (Р.53, п.414): флаги видов — полный паспорт. Каждое
+/// bool-поле вида ОБЯЗАНО быть в `flag_specs`: иначе оно существует в
+/// формате, а включить его нечем (так с Р.52 жили тон 1 кГц у SMPTE и
+/// цветной режим шума). Полнота проверяется по serde-представлению —
+/// оно видит ВСЕ поля, а не те, что вспомнил автор.
+#[test]
+fn t510_generator_flags_are_complete_and_roundtrip() {
+    use kt_model::GeneratorKind;
+    for k in GeneratorKind::all() {
+        let v = serde_json::to_value(&k).expect("вид сериализуется");
+        let obj = v.as_object().expect("вид — объект");
+        let bools: Vec<&str> =
+            obj.iter().filter(|(_, v)| v.is_boolean()).map(|(k, _)| k.as_str()).collect();
+        let declared: Vec<&str> = k.flag_specs().iter().map(|s| s.name).collect();
+        for b in &bools {
+            assert!(
+                declared.contains(b),
+                "{}: поле {b} есть в формате, но не объявлено флагом — включить его нечем",
+                k.tag()
+            );
+        }
+        for d in &declared {
+            assert!(bools.contains(d), "{}: флаг {d} не существует в формате", k.tag());
+        }
+        // чтение и запись ходят по каждому имени, путь переживает круг
+        let mut probe = k.clone();
+        for spec in k.flag_specs() {
+            let was = probe.get_flag(spec.name).expect("флаг читается");
+            assert!(probe.set_flag(spec.name, !was), "флаг {} не пишется", spec.name);
+            assert_eq!(probe.get_flag(spec.name), Some(!was));
+        }
+        let path = kt_model::format_gen_path(&probe);
+        assert_eq!(kt_model::parse_gen_path(&path), Some(probe), "{path}: флаги не пережили путь");
+    }
+
+    // и главное следствие: «тон включён» и «цветной шум» выразимы
+    let tone = GeneratorKind::SmpteBars { tone: true, tone_db: -20.0 };
+    assert_eq!(tone.get_flag("tone"), Some(true));
+    let colour = GeneratorKind::NoiseField { amount: 1.0, mono: false };
+    assert_eq!(colour.get_flag("mono"), Some(false));
+}

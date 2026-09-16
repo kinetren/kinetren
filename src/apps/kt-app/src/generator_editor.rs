@@ -40,7 +40,9 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
 }
 
 /// Цветовые группы вида для пипеток окна (подпись, [имена R,G,B]).
-fn color_groups(kind: &GeneratorKind) -> &'static [(crate::i18n::Key, [&'static str; 3])] {
+/// Публична для t508: параметр либо подписан, либо закрыт пипеткой —
+/// третьего не бывает (Р.53, п.414).
+pub(crate) fn color_groups(kind: &GeneratorKind) -> &'static [(crate::i18n::Key, [&'static str; 3])] {
     use crate::i18n::k;
     match kind {
         GeneratorKind::Solid { .. } => &[(k::trn::COLOR, ["color_r", "color_g", "color_b"])],
@@ -178,6 +180,10 @@ impl KtApp {
                 if matches!(g, GeneratorKind::Timecode { .. }) {
                     ui.weak(tr(k::genw::TC_NOTE));
                 }
+                // ФЛАГИ вида — один виджет на все окна (Р.53, п.414): до
+                // него тон 1 кГц и цветной шум существовали в формате, а
+                // включить их было нечем
+                changed |= widgets::flags_row(ui, ("genf", ed.media), &mut g);
                 changed |= widgets::params_grid(ui, ("genp", ed.media), &mut g, &skip);
                 ui.separator();
                 ui.horizontal(|ui| {

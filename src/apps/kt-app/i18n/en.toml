@@ -288,6 +288,14 @@ remove = "Delete morpher"
 # Реестр FX и пикер с поиском.
 # Подписи параметров эффектов (Р.33): один источник — спека kt-model.
 [fxp]
+cx = "Centre X:"
+cy = "Centre Y:"
+count = "Count:"
+persp = "Perspective:"
+shade = "Shading:"
+curl = "Curl:"
+shadow = "Shadow:"
+steps = "Steps:"
 fov_deg = "FOV:"
 scan_step = "Scan lines every:"
 jitter = "Jitter:"
@@ -904,3 +912,22 @@ missing = "No glyph: {0} (+{1})"
 align_l = "Left"
 align_c = "Centered"
 align_r = "Right"
+
+# Подписи параметров генераторов (Р.53 п.414): своя область — «size» у
+# титра это КЕГЛЬ, а не зерно эффекта Noise.
+[genp]
+size = "Size:"
+line_spacing = "Line spacing:"
+tracking = "Tracking:"
+stroke_w = "Outline:"
+shadow_dx = "Shadow X:"
+shadow_dy = "Shadow Y:"
+shadow_blur = "Shadow blur:"
+plate_pad_x = "Backing pad X:"
+plate_pad_y = "Backing pad Y:"
+angle_deg = "Angle:"
+cols = "Columns:"
+tone_db = "Tone level:"
+fps = "Frames per second:"
+mono = "Grey"
+tone = "1 kHz tone"
