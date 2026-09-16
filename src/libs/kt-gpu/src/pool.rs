@@ -6,7 +6,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use kt_cache::SourceId;
 use kt_media::VideoFrame;
 
 /// Все текстуры движка — Rgba8Uint (сырые байты 0..255 без unorm-потерь).
@@ -74,11 +73,16 @@ impl TexturePool {
     }
 }
 
-/// LRU загруженных пре-FX кадров: (source, cache_idx, dims) → текстура.
-/// Содержимое кадра для ключа детерминировано (передекод даёт те же
-/// байты), generation не нужен.
+/// LRU загруженных пре-FX кадров: (СЕРИЙНЫЙ НОМЕР содержимого, dims) →
+/// текстура.
+///
+/// Адреса `(source, cache_idx)` для ключа НЕ ХВАТАЕТ (Р.53, п.409):
+/// у генератора с новыми параметрами и у вернувшегося вместо заглушки
+/// файла адрес тот же, а байты другие — кэш отдавал бы старую текстуру,
+/// и на GPU-пути правка цвета титра была бы не видна (t496, t211).
+/// Серийный номер выдаёт `BurstCache` и не переиспользует никогда.
 pub(crate) struct UploadCache {
-    map: HashMap<(u64, i64, u32, u32), (Tex, u64)>,
+    map: HashMap<(u64, u32, u32), (Tex, u64)>,
     order: u64,
     bytes: u64,
     budget: u64,
@@ -93,11 +97,10 @@ impl UploadCache {
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        source: SourceId,
-        cache_idx: i64,
+        content: u64,
         frame: &Arc<VideoFrame>,
     ) -> wgpu::TextureView {
-        let key = (source.0, cache_idx, frame.width, frame.height);
+        let key = (content, frame.width, frame.height);
         self.order += 1;
         if let Some((tex, stamp)) = self.map.get_mut(&key) {
             *stamp = self.order;

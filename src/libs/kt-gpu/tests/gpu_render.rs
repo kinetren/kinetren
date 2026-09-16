@@ -371,3 +371,75 @@ fn t446_nested_gpu_is_deterministic_on_device() {
     assert!(!complete, "голод внутри ленты не дошёл до внешнего композита");
     assert_ne!(a, e, "на ПУСТОМ кэше вернулся прогретый кадр — план поддерева не в ключе");
 }
+
+/// Тест 496 (Р.53, п.409): кадр опознаётся по СОДЕРЖИМОМУ, а не по
+/// адресу. Правка параметров генератора при НЕПОДВИЖНОМ курсоре даёт тот
+/// же `(source, cache_idx, размер)` — и до этого пункта GPU отдавал
+/// СТАРУЮ картинку: `UploadCache` переиспользовал текстуру, а
+/// `ReadbackCache` — готовый композит. Тот же дефект у возврата
+/// пропавшего файла вместо заглушки (t211).
+///
+/// В харнессе это невидимо (он весь CPU), поэтому тест живёт здесь.
+#[test]
+fn t496_gpu_frame_identity_follows_content() {
+    use kt_engine::VideoGpuExec;
+    let Some(e) = test_engine() else { return };
+    let q = Quality { width: 64, height: 36 };
+    let t = Tick(0);
+
+    // проект из одного клипа-генератора; цвет меняем «под курсором»
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 64,
+        height: 36,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
+    let solid = |r: u8| GeneratorKind::Solid { color_r: r, color_g: 0, color_b: 0 };
+    p.media.push(MediaRef { id: MediaId(1), path: format_gen_path(&solid(32)) });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: Tick(0),
+        duration: Tick(90_000),
+        source_in: Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+
+    let shot = |red: u8, cache: &kt_cache::BurstCache| -> Vec<u8> {
+        let mut src = kt_media::generator::GeneratorSource::new(solid(red));
+        let frame = src.read_video_frame(Tick(0), Some(q)).unwrap();
+        // ТОТ ЖЕ адрес: источник, индекс и размер не меняются
+        cache.insert_video(
+            kt_engine::source_id(MediaId(1)),
+            Some(q),
+            kt_engine::video::video_cache_idx(Tick(0)),
+            frame.into(),
+        );
+        let video = VideoRenderer::new(&p);
+        let plan = video.frame_plan(cache, t, q);
+        let mut out = Vec::new();
+        e.execute_into(&plan, &mut out).unwrap();
+        out
+    };
+
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let dark = shot(32, &cache);
+    let bright = shot(220, &cache);
+    assert_eq!(dark[0], 32, "первый кадр — заданный цвет");
+    assert_ne!(
+        dark, bright,
+        "правка параметров при неподвижном курсоре обязана менять картинку на GPU"
+    );
+    assert_eq!(bright[0], 220, "второй кадр — НОВЫЙ цвет, а не старая текстура");
+}

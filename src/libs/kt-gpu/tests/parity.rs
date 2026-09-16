@@ -80,6 +80,14 @@ impl Src {
         LayerSrc {
             source: self.source,
             cache_idx: 0,
+            // серийный номер содержимого (Р.53, п.409): в продукте его
+            // выдаёт BurstCache, здесь — хэш самих байт кадра, чтобы
+            // разные кадры не делили текстуру в UploadCache
+            content: self
+                .frame
+                .as_ref()
+                .map(|f| xxhash_rust::xxh3::xxh3_64(&f.rgba))
+                .unwrap_or(0),
             src_scale: self.src_scale,
             input: kt_engine::video_plan::LayerInput::Frame(self.frame.clone()),
             fx: std::borrow::Cow::Borrowed(&self.fx[..]),

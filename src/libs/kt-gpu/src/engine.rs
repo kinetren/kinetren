@@ -1283,7 +1283,7 @@ impl Inner {
         }
         let has_alpha = if ha_known { ha } else { frame.has_alpha };
         let view =
-            self.upload.get_or_upload(&self.device, &self.queue, src.source, src.cache_idx, frame);
+            self.upload.get_or_upload(&self.device, &self.queue, src.content, frame);
         let fits = (fw, fh) == (ow, oh);
         Ok(Some((
             ChainSpec {
@@ -1807,12 +1807,15 @@ impl Inner {
     }
 }
 
-/// Ключ ReadbackCache: полное описание плана. Кадры по (source, cache_idx,
-/// dims) детерминированы — контент в ключ не входит.
+/// Ключ ReadbackCache: полное описание плана. Кадр адресуется СЕРИЙНЫМ
+/// НОМЕРОМ содержимого (Р.53, п.409), а не парой (source, cache_idx):
+/// по адресу мемо отдавал бы старый композит после правки параметров
+/// генератора при неподвижном курсоре.
 fn plan_key(plan: &FramePlan<'_>) -> u64 {
     fn put_src(h: &mut Xxh3, s: &LayerSrc<'_>) {
         h.update(&s.source.0.to_le_bytes());
         h.update(&s.cache_idx.to_le_bytes());
+        h.update(&s.content.to_le_bytes());
         // смешивание кадров (Р.37 С5) — В КЛЮЧ: те же два кадра с другим
         // весом дают ДРУГУЮ картинку, и без этого ReadbackCache отдал бы
         // чужой смес (та же причина, что у put_mix)
@@ -1822,6 +1825,7 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
                 h.update(&[1u8]);
                 h.update(&b.cache_idx.to_le_bytes());
                 h.update(&b.k.to_le_bytes());
+                h.update(&b.content.to_le_bytes());
             }
         }
         h.update(&s.fx_hash.to_le_bytes());

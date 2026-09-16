@@ -8,7 +8,7 @@
 //! записи разных качеств не взаимозаменяемы.
 
 use kt_media::{AudioBurst, Quality, VideoFrame};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -79,6 +79,13 @@ impl Default for CacheConfig {
 
 struct Entry {
     payload: Payload,
+    /// Серийный номер СОДЕРЖИМОГО (Р.53, п.409): монотонный, никогда не
+    /// переиспользуется. По нему потребители (аплоад текстур в kt-gpu,
+    /// мемо композита) отличают «тот же адрес, другие байты» — адреса
+    /// `(источник, время, размер)` для этого мало: генератор с новыми
+    /// параметрами и вернувшийся вместо заглушки файл дают ТОТ ЖЕ адрес
+    /// и другую картинку (t496, t211).
+    serial: u64,
     recency: u64,
     pinned: bool,
     /// Был ли хоть один get после вставки — eviction непрочитанной записи
@@ -171,6 +178,10 @@ struct Inner {
     map: HashMap<BurstKey, Entry>,
     // recency -> key; уникальность recency гарантируется монотонным счётчиком
     lru: BTreeMap<u64, BurstKey>,
+    /// Ключи каждого источника (Р.53, п.409): `invalidate_source` иначе
+    /// сканирует ВЕСЬ кэш, а зовётся он теперь на каждую правку
+    /// параметров генератора. Держится в синхроне с `map`.
+    by_source: HashMap<SourceId, HashSet<BurstKey>>,
     coverage: HashMap<(SourceId, BurstKind), IntervalSet>,
     audio_bytes: usize,
     video_bytes: usize,
@@ -187,6 +198,9 @@ pub struct CacheStats {
     pub evictions: u64,
     /// Записи, выселенные/перезаписанные ДО первого чтения (prefetch-thrash).
     pub unused_evictions: u64,
+    /// Сколько ключей просмотрел `invalidate_source` (п.409): сторож
+    /// того, что он идёт по индексу источника, а не по всему кэшу.
+    pub invalidate_scan_steps: u64,
 }
 
 #[derive(Default)]
@@ -197,6 +211,7 @@ struct StatCounters {
     video_misses: AtomicU64,
     evictions: AtomicU64,
     unused_evictions: AtomicU64,
+    invalidate_scan_steps: AtomicU64,
 }
 
 /// Потокобезопасный кэш burst'ов с LRU по раздельным байтовым бюджетам
@@ -217,6 +232,7 @@ impl BurstCache {
             inner: Mutex::new(Inner {
                 map: HashMap::new(),
                 lru: BTreeMap::new(),
+                by_source: HashMap::new(),
                 coverage: HashMap::new(),
                 audio_bytes: 0,
                 video_bytes: 0,
@@ -235,6 +251,7 @@ impl BurstCache {
             video_misses: self.stats.video_misses.load(Ordering::Relaxed),
             evictions: self.stats.evictions.load(Ordering::Relaxed),
             unused_evictions: self.stats.unused_evictions.load(Ordering::Relaxed),
+            invalidate_scan_steps: self.stats.invalidate_scan_steps.load(Ordering::Relaxed),
         }
     }
 
@@ -276,13 +293,32 @@ impl BurstCache {
         quality: Option<Quality>,
         idx: i64,
     ) -> Option<Arc<VideoFrame>> {
-        match self.get(BurstKey { source, kind: BurstKind::video(quality), idx })? {
-            Payload::Video(f) => Some(f),
-            Payload::Audio(_) => unreachable!("video key holds audio payload"),
+        self.get_video_stamped(source, quality, idx).map(|(f, _)| f)
+    }
+
+    /// Кадр вместе с СЕРИЙНЫМ НОМЕРОМ содержимого (Р.53, п.409). Номер
+    /// уезжает в план (`LayerSrc.content`) и дальше в ключи GPU: адрес
+    /// `(источник, время, размер)` один и тот же у старого и нового
+    /// кадра генератора, а байты разные.
+    pub fn get_video_stamped(
+        &self,
+        source: SourceId,
+        quality: Option<Quality>,
+        idx: i64,
+    ) -> Option<(Arc<VideoFrame>, u64)> {
+        let key = BurstKey { source, kind: BurstKind::video(quality), idx };
+        match self.get_stamped(key)? {
+            (Payload::Video(f), serial) => Some((f, serial)),
+            (Payload::Audio(_), _) => unreachable!("video key holds audio payload"),
         }
     }
 
     pub fn get(&self, key: BurstKey) -> Option<Payload> {
+        self.get_stamped(key).map(|(p, _)| p)
+    }
+
+    /// `get` + серийный номер содержимого записи (п.409).
+    pub fn get_stamped(&self, key: BurstKey) -> Option<(Payload, u64)> {
         let mut inner = self.inner.lock().unwrap();
         inner.recency_counter += 1;
         let counter = inner.recency_counter;
@@ -302,9 +338,10 @@ impl BurstCache {
         let old = entry.recency;
         entry.recency = counter;
         let payload = entry.payload.clone();
+        let serial = entry.serial;
         inner.lru.remove(&old);
         inner.lru.insert(counter, key);
-        Some(payload)
+        Some((payload, serial))
     }
 
     /// Пост-FX кадр клипа (п.2 р.7): idx = таймлайн-тик по сетке.
@@ -404,8 +441,16 @@ impl BurstCache {
 
         inner.recency_counter += 1;
         let recency = inner.recency_counter;
-        inner.map.insert(key, Entry { payload, recency, pinned: false, had_hit: false, span });
+        // серийный номер содержимого берётся из того же монотонного
+        // счётчика: он не переиспользуется, поэтому «тот же адрес —
+        // другие байты» всегда различимы (п.409)
+        inner.recency_counter += 1;
+        let serial = inner.recency_counter;
+        inner
+            .map
+            .insert(key, Entry { payload, serial, recency, pinned: false, had_hit: false, span });
         inner.lru.insert(recency, key);
+        inner.by_source.entry(key.source).or_default().insert(key);
         if is_audio {
             inner.audio_bytes += bytes;
         } else {
@@ -442,6 +487,12 @@ impl BurstCache {
             }
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&recency);
+            if let Some(keys) = inner.by_source.get_mut(&key.source) {
+                keys.remove(&key);
+                if keys.is_empty() {
+                    inner.by_source.remove(&key.source);
+                }
+            }
             let b = entry.payload.bytes();
             if entry.payload.is_audio() {
                 inner.audio_bytes -= b;
@@ -488,11 +539,14 @@ impl BurstCache {
         }
     }
 
-    /// Сбросить все записи источника (файл изменился на диске).
+    /// Сбросить все записи источника (файл изменился на диске; параметры
+    /// генератора перенастроены — Р.53, п.411). Идёт по индексу
+    /// `by_source`, а не по всему кэшу: зовётся на каждую правку.
     pub fn invalidate_source(&self, source: SourceId) {
         let mut inner = self.inner.lock().unwrap();
         let keys: Vec<BurstKey> =
-            inner.map.keys().filter(|k| k.source == source).copied().collect();
+            inner.by_source.remove(&source).map(|k| k.into_iter().collect()).unwrap_or_default();
+        self.stats.invalidate_scan_steps.fetch_add(keys.len() as u64, Ordering::Relaxed);
         for key in keys {
             let entry = inner.map.remove(&key).unwrap();
             inner.lru.remove(&entry.recency);
@@ -740,5 +794,65 @@ mod perf_counter_tests {
         // «dropped by LRU or overwritten before any read»)
         cache.insert_video(src, None, 3, frame(bytes));
         assert_eq!(cache.stats().unused_evictions, 2, "overwrite до чтения — thrash");
+    }
+
+    /// Тест 497 (Р.53, п.409): `invalidate_source` идёт по индексу СВОЕГО
+    /// источника, а не по всему кэшу. Зовётся он теперь на каждую правку
+    /// параметров генератора, и линейный проход по чужим записям был бы
+    /// ценой, растущей с прогретостью монтажа.
+    #[test]
+    fn t497_invalidate_source_scans_only_its_own() {
+        let cache = BurstCache::new(CacheConfig {
+            max_audio_bytes: 1 << 24,
+            max_video_bytes: 1 << 24,
+        });
+        let mine = SourceId(7);
+        for i in 0..300 {
+            cache.insert_video(SourceId(100 + i as u64), None, i, frame(64));
+        }
+        for i in 0..3 {
+            cache.insert_video(mine, None, i, frame(64));
+        }
+        assert_eq!(cache.stats().invalidate_scan_steps, 0);
+
+        cache.invalidate_source(mine);
+        let s = cache.stats();
+        assert!(
+            s.invalidate_scan_steps <= 8,
+            "чистка прошлась по чужим записям: {} шагов",
+            s.invalidate_scan_steps
+        );
+        for i in 0..3 {
+            assert!(cache.get_video(mine, None, i).is_none(), "свои записи обязаны уйти");
+        }
+        for i in 0..300 {
+            assert!(
+                cache.get_video(SourceId(100 + i as u64), None, i).is_some(),
+                "чужая запись {i} пострадала"
+            );
+        }
+    }
+
+    /// Тест 496a (Р.53, п.409): серийный номер содержимого. Тот же АДРЕС
+    /// с другими байтами обязан получить другой номер — по нему kt-gpu
+    /// отличает «новый кадр генератора» от «того же кадра» (иначе на
+    /// GPU-пути правка цвета не видна: t496 в kt-gpu).
+    #[test]
+    fn t496a_content_serial_changes_with_bytes() {
+        let cache = BurstCache::new(CacheConfig {
+            max_audio_bytes: 1 << 20,
+            max_video_bytes: 1 << 20,
+        });
+        let src = SourceId(1);
+        cache.insert_video(src, None, 0, frame(64));
+        let (_, first) = cache.get_video_stamped(src, None, 0).expect("кадр лежит");
+        let (_, again) = cache.get_video_stamped(src, None, 0).expect("кадр лежит");
+        assert_eq!(first, again, "чтение не меняет номер содержимого");
+
+        // перезапись того же адреса другими байтами — номер обязан стать другим
+        cache.insert_video(src, None, 0, frame(64));
+        let (_, second) = cache.get_video_stamped(src, None, 0).expect("кадр лежит");
+        assert_ne!(first, second, "тот же адрес, другие байты — номер обязан отличаться");
+        assert!(second > first, "номера монотонны и не переиспользуются");
     }
 }

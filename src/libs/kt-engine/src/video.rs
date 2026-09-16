@@ -997,10 +997,16 @@ fn layer_src<'a>(
     // которое заказал префетч через layers_at.
     let src_scale = clip_decode_scale(clip, quality);
     let dq = clip_decode_quality(clip, quality);
-    let frame = if clip.nest.is_some() {
-        None // вход поддерева собирается ниже
+    // Кадр берётся ВМЕСТЕ с серийным номером содержимого (Р.53, п.409):
+    // адрес `(source, cache_idx, размер)` у нового кадра генератора тот
+    // же, что у старого, и без номера GPU отдал бы старую текстуру.
+    let (frame, content) = if clip.nest.is_some() {
+        (None, 0) // вход поддерева собирается ниже
     } else {
-        cache.get_video(source, Some(dq), cache_idx)
+        match cache.get_video_stamped(source, Some(dq), cache_idx) {
+            Some((f, serial)) => (Some(f), serial),
+            None => (None, 0),
+        }
     };
     // СМЕШИВАНИЕ (Р.37 С5) делается ЗДЕСЬ, в общем коде плана: оба
     // исполнителя получают уже смешанный пре-FX кадр, и держать одну и ту
@@ -1011,8 +1017,14 @@ fn layer_src<'a>(
         None => (frame, None),
         Some((pts, k)) => {
             let idx = video_cache_idx(pts);
-            let nb = cache.get_video(source, Some(dq), idx);
-            (blend_frames(frame, nb, k), Some(crate::video_plan::LayerBlend { cache_idx: idx, k }))
+            let (nb, nb_content) = match cache.get_video_stamped(source, Some(dq), idx) {
+                Some((f, serial)) => (Some(f), serial),
+                None => (None, 0),
+            };
+            (
+                blend_frames(frame, nb, k),
+                Some(crate::video_plan::LayerBlend { cache_idx: idx, k, content: nb_content }),
+            )
         }
     };
     let span = (clip.end.0 - clip.start.0).max(1);
@@ -1087,7 +1099,18 @@ fn layer_src<'a>(
         }
         None => crate::video_plan::LayerInput::Frame(frame),
     };
-    LayerSrc { source, cache_idx, src_scale, input, fx, fx_hash: clip.fx_hash, u, cam3d, blend }
+    LayerSrc {
+        source,
+        cache_idx,
+        content,
+        src_scale,
+        input,
+        fx,
+        fx_hash: clip.fx_hash,
+        u,
+        cam3d,
+        blend,
+    }
 }
 
 /// Построение плана кадра: какие слои, в каких ролях и с какими весами.

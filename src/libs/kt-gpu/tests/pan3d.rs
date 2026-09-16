@@ -60,6 +60,7 @@ fn layer<'a>(fx: &'a [FxInstance], frame: &Arc<VideoFrame>, id: u64) -> PlanLaye
         src: LayerSrc {
             source: SourceId(id),
             cache_idx: 0,
+            content: xxhash_rust::xxh3::xxh3_64(&frame.rgba),
             src_scale: 1,
             input: kt_engine::video_plan::LayerInput::Frame(Some(frame.clone())),
             fx: std::borrow::Cow::Borrowed(fx),
