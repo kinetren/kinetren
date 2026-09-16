@@ -874,3 +874,4 @@ uses = "events using it: {0}"
 
 [genkind]
 solid = "Solid color"
+text = "Text"

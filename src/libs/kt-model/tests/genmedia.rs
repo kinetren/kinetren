@@ -12,12 +12,38 @@ use kt_model::{
 #[test]
 fn t469_gen_path_parse_format_canonical() {
     // Канонический roundtrip всех видов реестра с умолчаниями.
-    for k in GeneratorKind::ALL {
-        let path = format_gen_path(k);
+    for k in GeneratorKind::all() {
+        let path = format_gen_path(&k);
         assert!(path.starts_with("gen:"), "{path}");
-        assert_eq!(parse_gen_path(&path).as_ref(), Some(k), "{path}");
+        assert_eq!(parse_gen_path(&path), Some(k.clone()), "{path}");
         assert_eq!(format_gen_path(&parse_gen_path(&path).unwrap()), path);
     }
+
+    // титр с НЕумолчаниями: строка с экранированием, стиль, цвета и
+    // порядок слоёв переживают путь лослесс (текст титра — С2)
+    let mut title = GeneratorKind::default_text();
+    if let GeneratorKind::Text {
+        text, bold, size, align, anchor, fill_a, stroke_w, order, ..
+    } = &mut title
+    {
+        *text = "Привет: a=b %25\nвторая строка".into();
+        *bold = true;
+        *size = 0.12;
+        *align = kt_model::TextAlign::Left;
+        *anchor = kt_model::TextAnchor::BottomCenter;
+        *fill_a = 200;
+        *stroke_w = 0.05;
+        *order = [
+            kt_model::TextLayer::Shadow,
+            kt_model::TextLayer::Plate,
+            kt_model::TextLayer::Fill,
+            kt_model::TextLayer::Stroke,
+        ];
+    }
+    let path = format_gen_path(&title);
+    assert!(!path.contains('\n'), "путь остаётся одной строкой: {path:?}");
+    assert_eq!(parse_gen_path(&path), Some(title.clone()), "{path}");
+    assert_eq!(format_gen_path(&parse_gen_path(&path).unwrap()), path, "канон стабилен");
 
     // Умолчания не сериализуются: чёрный solid — голый тег.
     assert_eq!(
@@ -28,7 +54,7 @@ fn t469_gen_path_parse_format_canonical() {
     // Не-умолчание пишется одним цветовым токеном, нижним регистром.
     let orange = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
     assert_eq!(format_gen_path(&orange), "gen:solid:c=ff8800");
-    assert_eq!(parse_gen_path("gen:solid:c=ff8800"), Some(orange));
+    assert_eq!(parse_gen_path("gen:solid:c=ff8800"), Some(orange.clone()));
 
     // Регистр схемы, тега, ключа и hex-значения безразличен.
     assert_eq!(parse_gen_path("Gen:SOLID:C=FF8800"), Some(orange));
@@ -90,10 +116,10 @@ fn t469b_gen_value_escaping_roundtrip() {
 /// самого реестрового экземпляра, get/set ходят по каждому имени.
 #[test]
 fn t470_generator_param_specs_are_complete() {
-    for k in GeneratorKind::ALL {
+    for k in GeneratorKind::all() {
         let specs = k.param_specs();
         assert!(!specs.is_empty(), "{}: пустые спеки", k.tag());
-        let mut probe = *k;
+        let mut probe = k.clone();
         for s in specs {
             assert!(
                 s.min <= s.default && s.default <= s.max,

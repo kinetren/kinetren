@@ -874,3 +874,4 @@ uses = "使用位置：{0}"
 
 [genkind]
 solid = "纯色"
+text = "文本"

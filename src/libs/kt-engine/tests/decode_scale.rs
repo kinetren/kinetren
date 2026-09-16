@@ -307,3 +307,22 @@ fn t317_coverage_is_queried_at_the_decode_quality() {
     assert!(!warm.is_empty(), "по качеству декода клип прогрет");
     assert!(cold.is_empty(), "по Quality того же клипа кадров нет — полоска соврала бы");
 }
+
+/// Тест 484b (Р.52): натив генератора (`GEN_NATIVE` = 4096) — честный
+/// «запас деталей» векторного источника: клип-титр с зумящей цепочкой
+/// заказывает S×Quality (резкий зум), голый генератор — ровно Quality,
+/// а без натива ступень 1 даже под зумом.
+#[test]
+fn t484b_generator_native_feeds_decode_stage() {
+    use kt_media::generator::GEN_NATIVE;
+    let q = Quality { width: 640, height: 360 };
+    let zoomed = project(640, 360, vec![zoom(2.0)], vec![]);
+    assert_eq!(
+        dq(&zoomed, Some((GEN_NATIVE, GEN_NATIVE)), q),
+        Quality { width: 1280, height: 720 },
+        "зум титра обязан заказывать кадр крупнее"
+    );
+    let plain = project(640, 360, vec![], vec![]);
+    assert_eq!(dq(&plain, Some((GEN_NATIVE, GEN_NATIVE)), q), q, "без FX ступени не бывает");
+    assert_eq!(dq(&zoomed, None, q), q, "натив неизвестен — ступень 1");
+}

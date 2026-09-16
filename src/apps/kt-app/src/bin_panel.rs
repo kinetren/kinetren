@@ -497,11 +497,11 @@ impl KtApp {
             // раньше в бин попадало только перетаскивание файлов на окно.
             // Прямоугольники пунктов — наружу для живых сценариев (Р.49)
             let mr = ui.menu_button(tr(k::bin::menu::NEW_GENERATOR), |ui| {
-                for kd in kt_model::GeneratorKind::ALL {
-                    let r = ui.button(crate::generator_editor::kind_name(kd));
+                for kd in kt_model::GeneratorKind::all() {
+                    let r = ui.button(crate::generator_editor::kind_name(&kd));
                     crate::widgets::field_probe::note(&format!("gen.new.{}", kd.tag()), r.rect);
                     if r.clicked() {
-                        new_gen = Some(*kd);
+                        new_gen = Some(kd);
                         ui.close();
                     }
                 }

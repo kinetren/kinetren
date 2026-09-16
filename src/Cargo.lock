@@ -2036,6 +2036,7 @@ version = "0.1.0"
 dependencies = [
  "kt-ffmpeg",
  "kt-model",
+ "kt-text",
  "kt-time",
  "rusqlite",
  "tempfile",

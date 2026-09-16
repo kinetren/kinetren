@@ -874,3 +874,4 @@ uses = "usos en el montaje: {0}"
 
 [genkind]
 solid = "Color sólido"
+text = "Texto"

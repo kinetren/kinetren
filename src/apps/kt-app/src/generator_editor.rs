@@ -26,6 +26,7 @@ pub struct GeneratorEditor {
 pub fn kind_name(kind: &GeneratorKind) -> &'static str {
     match kind {
         GeneratorKind::Solid { .. } => tr(k::genkind::SOLID),
+        GeneratorKind::Text { .. } => tr(k::genkind::TEXT),
     }
 }
 
@@ -92,33 +93,38 @@ impl KtApp {
                     egui::ComboBox::from_id_salt(("genkind", ed.media))
                         .selected_text(kind_name(&g))
                         .show_ui(ui, |ui| {
-                            for kd in GeneratorKind::ALL {
+                            for kd in GeneratorKind::all() {
                                 let same = kd.tag() == g.tag();
-                                if ui.selectable_label(same, kind_name(kd)).clicked() && !same {
+                                if ui.selectable_label(same, kind_name(&kd)).clicked() && !same {
                                     // смена вида = его умолчания: параметры
                                     // у видов разные, переносить нечего
-                                    g = *kd;
+                                    g = kd;
                                     changed = true;
                                 }
                             }
                         });
                 });
                 // ---- цвет: тройка Rgb8 — одной пипеткой (правило 13,
-                // та же идиома, что у Dip/Flash в окне перехода) ---------
+                // та же идиома, что у Dip/Flash в окне перехода). У титра
+                // цвета свои (заливка/обводка/тень) — их рисует его
+                // собственное окно (С3), здесь пипетка только у видов с
+                // одним цветом
                 let skip: &[&str] = &["color_r", "color_g", "color_b"];
-                ui.horizontal(|ui| {
-                    ui.label(tr(k::trn::COLOR));
-                    let get = |n: &str| g.get_param(n).unwrap_or(0.0) as f32 / 255.0;
-                    let mut c = [get("color_r"), get("color_g"), get("color_b")];
-                    let r = ui.color_edit_button_rgb(&mut c);
-                    crate::widgets::field_probe::note("genw.color", r.rect);
-                    if r.changed() {
-                        for (n, v) in ["color_r", "color_g", "color_b"].iter().zip(c) {
-                            g.set_param(n, (v * 255.0).round() as f64);
+                if matches!(g, GeneratorKind::Solid { .. }) {
+                    ui.horizontal(|ui| {
+                        ui.label(tr(k::trn::COLOR));
+                        let get = |n: &str| g.get_param(n).unwrap_or(0.0) as f32 / 255.0;
+                        let mut c = [get("color_r"), get("color_g"), get("color_b")];
+                        let r = ui.color_edit_button_rgb(&mut c);
+                        crate::widgets::field_probe::note("genw.color", r.rect);
+                        if r.changed() {
+                            for (n, v) in ["color_r", "color_g", "color_b"].iter().zip(c) {
+                                g.set_param(n, (v * 255.0).round() as f64);
+                            }
+                            changed = true;
                         }
-                        changed = true;
-                    }
-                });
+                    });
+                }
                 changed |= widgets::params_grid(ui, ("genp", ed.media), &mut g, skip);
                 ui.separator();
                 ui.horizontal(|ui| {

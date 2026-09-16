@@ -15,6 +15,8 @@ kt-time = { workspace = true }
 # Словарь генераторов (GeneratorKind, разбор gen:-пути) — Р.52. Ребро
 # ациклично: kt-model зависит только от kt-time и serde.
 kt-model = { workspace = true }
+# Растеризация титров (правило детерминизма — kt-text/CLAUDE.md).
+kt-text = { workspace = true }
 thiserror = { workspace = true }
 rusqlite = { workspace = true }
 xxhash-rust = { workspace = true }

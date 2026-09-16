@@ -18,7 +18,7 @@ use crate::project::{fx_cast, params_for, HasParams, ParamKind, ParamSpec, Param
 /// `GeneratorReference.1`, сам `kind` — строкой `generator_kind`
 /// (`kt.<tag>`). Незнакомые поля игнорируются, пропущенные берут
 /// умолчания — файл от будущей сборки читается без отказа.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum GeneratorKind {
     /// Сплошной цвет — единственный генератор, которым пользуются
@@ -31,27 +31,212 @@ pub enum GeneratorKind {
         #[serde(default)]
         color_b: u8,
     },
+    /// Титр (F-TXT-001): текст рисует kt-text (вендоренный шрифт,
+    /// правило детерминизма — kt-text/CLAUDE.md). Всё относительное:
+    /// кегль — доля высоты кадра, трекинг/обводка/тень/паддинги — доли
+    /// em. Поля оформления (F-TXT-005) и `order` — В ФОРМАТЕ с первого
+    /// дня (урок Kdenlive: смена порядка константой перерисовала чужие
+    /// проекты), даже пока их рендер (С3) и окно не готовы.
+    Text {
+        #[serde(default)]
+        text: String,
+        #[serde(default = "default_family")]
+        family: String,
+        #[serde(default)]
+        bold: bool,
+        #[serde(default = "default_text_size")]
+        size: f64,
+        #[serde(default = "default_one")]
+        line_spacing: f64,
+        #[serde(default)]
+        tracking: f64,
+        #[serde(default)]
+        align: TextAlign,
+        #[serde(default)]
+        anchor: TextAnchor,
+        #[serde(default = "default_half")]
+        pos_x: f64,
+        #[serde(default = "default_half")]
+        pos_y: f64,
+        #[serde(default = "default_255")]
+        fill_r: u8,
+        #[serde(default = "default_255")]
+        fill_g: u8,
+        #[serde(default = "default_255")]
+        fill_b: u8,
+        #[serde(default = "default_255")]
+        fill_a: u8,
+        #[serde(default)]
+        stroke_w: f64,
+        #[serde(default)]
+        stroke_r: u8,
+        #[serde(default)]
+        stroke_g: u8,
+        #[serde(default)]
+        stroke_b: u8,
+        #[serde(default = "default_255")]
+        stroke_a: u8,
+        #[serde(default = "default_shadow_off")]
+        shadow_dx: f64,
+        #[serde(default = "default_shadow_off")]
+        shadow_dy: f64,
+        #[serde(default = "default_shadow_blur")]
+        shadow_blur: f64,
+        #[serde(default)]
+        shadow_r: u8,
+        #[serde(default)]
+        shadow_g: u8,
+        #[serde(default)]
+        shadow_b: u8,
+        #[serde(default)]
+        shadow_a: u8,
+        #[serde(default = "default_plate_px")]
+        plate_pad_x: f64,
+        #[serde(default = "default_plate_py")]
+        plate_pad_y: f64,
+        #[serde(default)]
+        plate_r: u8,
+        #[serde(default)]
+        plate_g: u8,
+        #[serde(default)]
+        plate_b: u8,
+        #[serde(default)]
+        plate_a: u8,
+        #[serde(default = "default_order")]
+        order: [TextLayer; 4],
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAlign {
+    Left,
+    #[default]
+    Center,
+    Right,
+}
+
+/// Якорь 3×3: какой точкой блок текста сидит в (pos_x, pos_y).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextAnchor {
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    #[default]
+    Center,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+/// Слой оформления титра, порядок отрисовки снизу вверх.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextLayer {
+    Plate,
+    Shadow,
+    Stroke,
+    Fill,
+}
+
+fn default_family() -> String {
+    "Noto Sans".into()
+}
+fn default_text_size() -> f64 {
+    0.07
+}
+fn default_one() -> f64 {
+    1.0
+}
+fn default_half() -> f64 {
+    0.5
+}
+fn default_255() -> u8 {
+    255
+}
+fn default_shadow_off() -> f64 {
+    0.04
+}
+fn default_shadow_blur() -> f64 {
+    0.06
+}
+fn default_plate_px() -> f64 {
+    0.25
+}
+fn default_plate_py() -> f64 {
+    0.12
+}
+fn default_order() -> [TextLayer; 4] {
+    [TextLayer::Plate, TextLayer::Shadow, TextLayer::Stroke, TextLayer::Fill]
 }
 
 impl GeneratorKind {
-    /// Все виды с УМОЛЧАНИЯМИ параметров — единственный реестр (как
-    /// `TransitionKind::ALL`): по нему меню создания в UI и полнота спек
-    /// в тестах. Новый вид добавляется В КОНЕЦ.
-    pub const ALL: &'static [GeneratorKind] =
-        &[GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 }];
+    /// Все виды с УМОЛЧАНИЯМИ параметров — единственный реестр (роль
+    /// `TransitionKind::ALL`; функция, а не const: у титра есть String):
+    /// по нему меню создания в UI и полнота спек в тестах. Новый вид
+    /// добавляется В КОНЕЦ.
+    pub fn all() -> Vec<GeneratorKind> {
+        vec![
+            GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
+            GeneratorKind::default_text(),
+        ]
+    }
+
+    /// Титр с умолчаниями (текст пуст — его набирают в окне).
+    pub fn default_text() -> GeneratorKind {
+        GeneratorKind::Text {
+            text: String::new(),
+            family: default_family(),
+            bold: false,
+            size: default_text_size(),
+            line_spacing: 1.0,
+            tracking: 0.0,
+            align: TextAlign::Center,
+            anchor: TextAnchor::Center,
+            pos_x: 0.5,
+            pos_y: 0.5,
+            fill_r: 255,
+            fill_g: 255,
+            fill_b: 255,
+            fill_a: 255,
+            stroke_w: 0.0,
+            stroke_r: 0,
+            stroke_g: 0,
+            stroke_b: 0,
+            stroke_a: 255,
+            shadow_dx: default_shadow_off(),
+            shadow_dy: default_shadow_off(),
+            shadow_blur: default_shadow_blur(),
+            shadow_r: 0,
+            shadow_g: 0,
+            shadow_b: 0,
+            shadow_a: 0,
+            plate_pad_x: default_plate_px(),
+            plate_pad_y: default_plate_py(),
+            plate_r: 0,
+            plate_g: 0,
+            plate_b: 0,
+            plate_a: 0,
+            order: default_order(),
+        }
+    }
 
     /// Тег вида — он же имя в `gen:`-пути и суффикс `generator_kind`
     /// (`kt.<tag>`) в файле обмена.
     pub fn tag(&self) -> &'static str {
         match self {
             GeneratorKind::Solid { .. } => "solid",
+            GeneratorKind::Text { .. } => "text",
         }
     }
 
     /// Вид с умолчаниями по тегу (регистр тега — забота вызывающего:
     /// `parse_gen_path` приводит сам).
     pub fn default_for_tag(tag: &str) -> Option<GeneratorKind> {
-        GeneratorKind::ALL.iter().copied().find(|k| k.tag() == tag)
+        GeneratorKind::all().into_iter().find(|k| k.tag() == tag)
     }
 }
 
@@ -60,6 +245,21 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, {
         color_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
         color_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
         color_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+    },
+    // числовые параметры титра; текст/семья/выравнивание/цвета — не
+    // спеки (свои контролы окна, «законное исключение» F-TXT-001)
+    Text {
+        size: f64, 0.005, 0.5, 0.07, 0.001, Norm, Smooth;
+        line_spacing: f64, 0.5, 3.0, 1.0, 0.05, Ratio, Smooth;
+        tracking: f64, -0.05, 0.5, 0.0, 0.005, Norm, Smooth;
+        pos_x: f64, 0.0, 1.0, 0.5, 0.001, Norm, Smooth;
+        pos_y: f64, 0.0, 1.0, 0.5, 0.001, Norm, Smooth;
+        stroke_w: f64, 0.0, 0.25, 0.0, 0.005, Norm, Smooth;
+        shadow_dx: f64, -0.5, 0.5, 0.04, 0.005, Norm, Smooth;
+        shadow_dy: f64, -0.5, 0.5, 0.04, 0.005, Norm, Smooth;
+        shadow_blur: f64, 0.0, 0.5, 0.06, 0.005, Norm, Smooth;
+        plate_pad_x: f64, 0.0, 2.0, 0.25, 0.01, Norm, Smooth;
+        plate_pad_y: f64, 0.0, 2.0, 0.12, 0.01, Norm, Smooth;
     },
 }}
 
@@ -104,14 +304,202 @@ pub fn parse_gen_path(path: &str) -> Option<GeneratorKind> {
 /// модель всегда хранит канон (его производят окно и ридер kt-otio).
 pub fn format_gen_path(k: &GeneratorKind) -> String {
     let mut out = format!("gen:{}", k.tag());
-    match *k {
+    let mut push = |key: &str, val: String| {
+        out.push(':');
+        out.push_str(key);
+        out.push('=');
+        out.push_str(&val);
+    };
+    match k {
         GeneratorKind::Solid { color_r, color_g, color_b } => {
-            if (color_r, color_g, color_b) != (0, 0, 0) {
-                out.push_str(&format!(":c={color_r:02x}{color_g:02x}{color_b:02x}"));
+            if (*color_r, *color_g, *color_b) != (0, 0, 0) {
+                push("c", format!("{color_r:02x}{color_g:02x}{color_b:02x}"));
+            }
+        }
+        GeneratorKind::Text {
+            text,
+            family,
+            bold,
+            size,
+            line_spacing,
+            tracking,
+            align,
+            anchor,
+            pos_x,
+            pos_y,
+            fill_r,
+            fill_g,
+            fill_b,
+            fill_a,
+            stroke_w,
+            stroke_r,
+            stroke_g,
+            stroke_b,
+            stroke_a,
+            shadow_dx,
+            shadow_dy,
+            shadow_blur,
+            shadow_r,
+            shadow_g,
+            shadow_b,
+            shadow_a,
+            plate_pad_x,
+            plate_pad_y,
+            plate_r,
+            plate_g,
+            plate_b,
+            plate_a,
+            order,
+        } => {
+            // умолчания не пишутся; f64 — кратчайшая точная запись Display
+            if !text.is_empty() {
+                push("t", escape_gen_value(text));
+            }
+            if family != &default_family() {
+                push("f", escape_gen_value(family));
+            }
+            if *bold {
+                push("b", "1".into());
+            }
+            let f = |v: &f64| format!("{v}");
+            if *size != default_text_size() {
+                push("s", f(size));
+            }
+            if *line_spacing != 1.0 {
+                push("ls", f(line_spacing));
+            }
+            if *tracking != 0.0 {
+                push("tr", f(tracking));
+            }
+            if *align != TextAlign::default() {
+                push("al", align_token(*align).into());
+            }
+            if *anchor != TextAnchor::default() {
+                push("an", anchor_token(*anchor).into());
+            }
+            if *pos_x != 0.5 {
+                push("px", f(pos_x));
+            }
+            if *pos_y != 0.5 {
+                push("py", f(pos_y));
+            }
+            let rgba =
+                |r: &u8, g: &u8, b: &u8, a: &u8| format!("{r:02x}{g:02x}{b:02x}{a:02x}");
+            if (*fill_r, *fill_g, *fill_b, *fill_a) != (255, 255, 255, 255) {
+                push("c", rgba(fill_r, fill_g, fill_b, fill_a));
+            }
+            if *stroke_w != 0.0 {
+                push("sw", f(stroke_w));
+            }
+            if (*stroke_r, *stroke_g, *stroke_b, *stroke_a) != (0, 0, 0, 255) {
+                push("sc", rgba(stroke_r, stroke_g, stroke_b, stroke_a));
+            }
+            if *shadow_dx != default_shadow_off() {
+                push("sdx", f(shadow_dx));
+            }
+            if *shadow_dy != default_shadow_off() {
+                push("sdy", f(shadow_dy));
+            }
+            if *shadow_blur != default_shadow_blur() {
+                push("sb", f(shadow_blur));
+            }
+            if (*shadow_r, *shadow_g, *shadow_b, *shadow_a) != (0, 0, 0, 0) {
+                push("shc", rgba(shadow_r, shadow_g, shadow_b, shadow_a));
+            }
+            if *plate_pad_x != default_plate_px() {
+                push("ppx", f(plate_pad_x));
+            }
+            if *plate_pad_y != default_plate_py() {
+                push("ppy", f(plate_pad_y));
+            }
+            if (*plate_r, *plate_g, *plate_b, *plate_a) != (0, 0, 0, 0) {
+                push("plc", rgba(plate_r, plate_g, plate_b, plate_a));
+            }
+            if *order != default_order() {
+                push("or", order.iter().map(|l| layer_letter(*l)).collect());
             }
         }
     }
     out
+}
+
+fn align_token(a: TextAlign) -> &'static str {
+    match a {
+        TextAlign::Left => "l",
+        TextAlign::Center => "c",
+        TextAlign::Right => "r",
+    }
+}
+
+fn align_from(s: &str) -> Option<TextAlign> {
+    Some(match s {
+        "l" => TextAlign::Left,
+        "c" => TextAlign::Center,
+        "r" => TextAlign::Right,
+        _ => return None,
+    })
+}
+
+fn anchor_token(a: TextAnchor) -> &'static str {
+    match a {
+        TextAnchor::TopLeft => "tl",
+        TextAnchor::TopCenter => "tc",
+        TextAnchor::TopRight => "tr",
+        TextAnchor::CenterLeft => "cl",
+        TextAnchor::Center => "cc",
+        TextAnchor::CenterRight => "cr",
+        TextAnchor::BottomLeft => "bl",
+        TextAnchor::BottomCenter => "bc",
+        TextAnchor::BottomRight => "br",
+    }
+}
+
+fn anchor_from(s: &str) -> Option<TextAnchor> {
+    Some(match s {
+        "tl" => TextAnchor::TopLeft,
+        "tc" => TextAnchor::TopCenter,
+        "tr" => TextAnchor::TopRight,
+        "cl" => TextAnchor::CenterLeft,
+        "cc" => TextAnchor::Center,
+        "cr" => TextAnchor::CenterRight,
+        "bl" => TextAnchor::BottomLeft,
+        "bc" => TextAnchor::BottomCenter,
+        "br" => TextAnchor::BottomRight,
+        _ => return None,
+    })
+}
+
+fn layer_letter(l: TextLayer) -> char {
+    match l {
+        TextLayer::Plate => 'p',
+        TextLayer::Shadow => 'h',
+        TextLayer::Stroke => 's',
+        TextLayer::Fill => 'f',
+    }
+}
+
+fn order_from(s: &str) -> Option<[TextLayer; 4]> {
+    let mut out = [TextLayer::Plate; 4];
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() != 4 {
+        return None;
+    }
+    for (i, c) in chars.iter().enumerate() {
+        out[i] = match c {
+            'p' => TextLayer::Plate,
+            'h' => TextLayer::Shadow,
+            's' => TextLayer::Stroke,
+            'f' => TextLayer::Fill,
+            _ => return None,
+        };
+    }
+    // каждый слой ровно один раз
+    for l in [TextLayer::Plate, TextLayer::Shadow, TextLayer::Stroke, TextLayer::Fill] {
+        if !out.contains(&l) {
+            return None;
+        }
+    }
+    Some(out)
 }
 
 /// Один `ключ=значение`-токен пути. Ключ уже в нижнем регистре.
@@ -124,7 +512,78 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
             }
             _ => None,
         },
+        GeneratorKind::Text {
+            text,
+            family,
+            bold,
+            size,
+            line_spacing,
+            tracking,
+            align,
+            anchor,
+            pos_x,
+            pos_y,
+            fill_r,
+            fill_g,
+            fill_b,
+            fill_a,
+            stroke_w,
+            stroke_r,
+            stroke_g,
+            stroke_b,
+            stroke_a,
+            shadow_dx,
+            shadow_dy,
+            shadow_blur,
+            shadow_r,
+            shadow_g,
+            shadow_b,
+            shadow_a,
+            plate_pad_x,
+            plate_pad_y,
+            plate_r,
+            plate_g,
+            plate_b,
+            plate_a,
+            order,
+        } => {
+            let n = || val.parse::<f64>().ok().filter(|v| v.is_finite());
+            match key {
+                "t" => *text = unescape_gen_value(val)?,
+                "f" => *family = unescape_gen_value(val)?,
+                "b" => *bold = val == "1",
+                "s" => *size = n()?,
+                "ls" => *line_spacing = n()?,
+                "tr" => *tracking = n()?,
+                "al" => *align = align_from(val)?,
+                "an" => *anchor = anchor_from(val)?,
+                "px" => *pos_x = n()?,
+                "py" => *pos_y = n()?,
+                "c" => (*fill_r, *fill_g, *fill_b, *fill_a) = parse_rgba(val)?,
+                "sw" => *stroke_w = n()?,
+                "sc" => (*stroke_r, *stroke_g, *stroke_b, *stroke_a) = parse_rgba(val)?,
+                "sdx" => *shadow_dx = n()?,
+                "sdy" => *shadow_dy = n()?,
+                "sb" => *shadow_blur = n()?,
+                "shc" => (*shadow_r, *shadow_g, *shadow_b, *shadow_a) = parse_rgba(val)?,
+                "ppx" => *plate_pad_x = n()?,
+                "ppy" => *plate_pad_y = n()?,
+                "plc" => (*plate_r, *plate_g, *plate_b, *plate_a) = parse_rgba(val)?,
+                "or" => *order = order_from(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
     }
+}
+
+/// `rrggbbaa` (8 hex-цифр) → четвёрка компонент.
+fn parse_rgba(s: &str) -> Option<(u8, u8, u8, u8)> {
+    if s.len() != 8 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let c = |i: usize| u8::from_str_radix(&s[i..i + 2], 16).ok();
+    Some((c(0)?, c(2)?, c(4)?, c(6)?))
 }
 
 /// `rrggbb` (6 hex-цифр, регистр любой) → тройка компонент.

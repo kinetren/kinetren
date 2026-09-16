@@ -77,14 +77,102 @@ impl GeneratorSource {
 /// шум), получат pts отдельным аргументом, когда появятся (С5) — и
 /// перестанут ходить через кэш по Quality.
 fn render(kind: &GeneratorKind, w: u32, h: u32) -> Box<[u8]> {
-    match *kind {
+    match kind {
         GeneratorKind::Solid { color_r, color_g, color_b } => {
             let mut buf = vec![0u8; (w as usize) * (h as usize) * 4];
             for px in buf.chunks_exact_mut(4) {
-                px.copy_from_slice(&[color_r, color_g, color_b, 255]);
+                px.copy_from_slice(&[*color_r, *color_g, *color_b, 255]);
             }
             buf.into_boxed_slice()
         }
+        GeneratorKind::Text { .. } => kt_text::render_rgba(&text_params(kind), w, h),
+    }
+}
+
+/// ЕДИНСТВЕННАЯ функция перевода хранимого титра (kt-model) во вход
+/// растеризатора (kt-text) — второго парсера не бывает (kt-text/CLAUDE.md):
+/// окно и кадр обязаны видеть одни и те же значения.
+fn text_params(kind: &GeneratorKind) -> kt_text::TextParams {
+    let GeneratorKind::Text {
+        text,
+        family,
+        bold,
+        size,
+        line_spacing,
+        tracking,
+        align,
+        anchor,
+        pos_x,
+        pos_y,
+        fill_r,
+        fill_g,
+        fill_b,
+        fill_a,
+        stroke_w,
+        stroke_r,
+        stroke_g,
+        stroke_b,
+        stroke_a,
+        shadow_dx,
+        shadow_dy,
+        shadow_blur,
+        shadow_r,
+        shadow_g,
+        shadow_b,
+        shadow_a,
+        plate_pad_x,
+        plate_pad_y,
+        plate_r,
+        plate_g,
+        plate_b,
+        plate_a,
+        order,
+    } = kind
+    else {
+        unreachable!("text_params is only called for GeneratorKind::Text");
+    };
+    let align = match align {
+        kt_model::TextAlign::Left => kt_text::Align::Left,
+        kt_model::TextAlign::Center => kt_text::Align::Center,
+        kt_model::TextAlign::Right => kt_text::Align::Right,
+    };
+    let anchor = match anchor {
+        kt_model::TextAnchor::TopLeft => kt_text::Anchor::TopLeft,
+        kt_model::TextAnchor::TopCenter => kt_text::Anchor::TopCenter,
+        kt_model::TextAnchor::TopRight => kt_text::Anchor::TopRight,
+        kt_model::TextAnchor::CenterLeft => kt_text::Anchor::CenterLeft,
+        kt_model::TextAnchor::Center => kt_text::Anchor::Center,
+        kt_model::TextAnchor::CenterRight => kt_text::Anchor::CenterRight,
+        kt_model::TextAnchor::BottomLeft => kt_text::Anchor::BottomLeft,
+        kt_model::TextAnchor::BottomCenter => kt_text::Anchor::BottomCenter,
+        kt_model::TextAnchor::BottomRight => kt_text::Anchor::BottomRight,
+    };
+    let layer = |l: &kt_model::TextLayer| match l {
+        kt_model::TextLayer::Plate => kt_text::Layer::Plate,
+        kt_model::TextLayer::Shadow => kt_text::Layer::Shadow,
+        kt_model::TextLayer::Stroke => kt_text::Layer::Stroke,
+        kt_model::TextLayer::Fill => kt_text::Layer::Fill,
+    };
+    kt_text::TextParams {
+        text: text.clone(),
+        family: family.clone(),
+        style: if *bold { kt_text::FaceStyle::Bold } else { kt_text::FaceStyle::Regular },
+        size: *size,
+        line_spacing: *line_spacing,
+        tracking: *tracking,
+        align,
+        anchor,
+        pos: (*pos_x, *pos_y),
+        fill: [*fill_r, *fill_g, *fill_b, *fill_a],
+        stroke_w: *stroke_w,
+        stroke: [*stroke_r, *stroke_g, *stroke_b, *stroke_a],
+        shadow_dx: *shadow_dx,
+        shadow_dy: *shadow_dy,
+        shadow_blur: *shadow_blur,
+        shadow: [*shadow_r, *shadow_g, *shadow_b, *shadow_a],
+        plate_pad: (*plate_pad_x, *plate_pad_y),
+        plate: [*plate_r, *plate_g, *plate_b, *plate_a],
+        order: [layer(&order[0]), layer(&order[1]), layer(&order[2]), layer(&order[3])],
     }
 }
 
@@ -104,7 +192,9 @@ impl MediaSource for GeneratorSource {
     ) -> Result<VideoFrame, MediaError> {
         let q = quality.unwrap_or(DEFAULT_Q);
         let rgba = self.frame_rgba(q).to_vec().into_boxed_slice();
-        Ok(VideoFrame { pts, width: q.width, height: q.height, rgba, has_alpha: false })
+        // у титра честная альфа: он живёт ПОВЕРХ других слоёв
+        let has_alpha = matches!(self.kind, GeneratorKind::Text { .. });
+        Ok(VideoFrame { pts, width: q.width, height: q.height, rgba, has_alpha })
     }
 
     fn keyframe_before(&self, pts: Tick) -> Option<Tick> {
@@ -160,6 +250,41 @@ mod tests {
         assert_eq!((i.width, i.height), (GEN_NATIVE, GEN_NATIVE));
         assert_eq!(s.keyframe_before(Tick(-5)), Some(Tick(0)));
         assert_eq!(s.keyframe_before(Tick(90_000)), Some(Tick(90_000)));
+    }
+
+    /// t484 (Р.52 С2): титр-источник — кадр РОВНО Quality, с настоящей
+    /// АЛЬФОЙ (титр живёт поверх других слоёв), детерминирован, от pts
+    /// не зависит; стиль меняет байты; кадр рисует kt-text (вендоренный
+    /// шрифт — системные тут ни при чём).
+    #[test]
+    fn t484_text_source_renders_title() {
+        let title = |bold: bool| {
+            let mut k = GeneratorKind::default_text();
+            if let GeneratorKind::Text { text, bold: b, .. } = &mut k {
+                *text = "Kinotrain\nР.52".into();
+                *b = bold;
+            }
+            GeneratorSource::new(k)
+        };
+        let q = Quality { width: 320, height: 180 };
+        let mut s = title(false);
+        let f1 = s.read_video_frame(Tick(0), Some(q)).unwrap();
+        let f2 = s.read_video_frame(Tick(90_000), Some(q)).unwrap();
+        assert_eq!((f1.width, f1.height), (320, 180), "кадр обязан быть ровно Quality");
+        assert!(f1.has_alpha, "у титра честная альфа");
+        assert_eq!(f1.rgba, f2.rgba, "кадр не зависит от времени");
+        let ink = f1.rgba.chunks_exact(4).filter(|px| px[3] > 0).count();
+        assert!(ink > 200, "надписи на кадре нет: {ink}");
+        // фон прозрачен, а не чёрен: непокрытые пиксели с нулевой альфой
+        assert!(f1.rgba.chunks_exact(4).any(|px| px[3] == 0));
+        // жирный стиль — другие байты (второе начертание реально грузится)
+        let fb = title(true).read_video_frame(Tick(0), Some(q)).unwrap();
+        assert_ne!(fb.rgba, f1.rgba, "Bold обязан отличаться от Regular");
+        // паспорт тот же, что у прочих генераторов
+        let i = title(false).info().clone();
+        assert!(i.has_video && !i.has_audio);
+        assert_eq!((i.width, i.height), (GEN_NATIVE, GEN_NATIVE));
+        assert_eq!(i.duration.0, 0);
     }
 
     /// t472: «нет звука» — это тишина `Ok`, никогда не `Err` (иначе
