@@ -118,8 +118,8 @@ pub mod generator;
 pub mod index;
 #[cfg(feature = "ffmpeg")]
 pub mod muxer;
-pub mod placeholder;
 pub(crate) mod pixfont;
+pub mod placeholder;
 #[cfg(feature = "ffmpeg")]
 pub mod sync;
 pub mod synthetic;

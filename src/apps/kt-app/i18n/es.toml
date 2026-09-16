@@ -463,6 +463,7 @@ pitch_shift = "tono altura semitonos transponer pitch"
 
 # Редактор FX клипа.
 [fx]
+hint_reset = "Doble clic en la etiqueta para restablecer el parámetro"
 active_curve_hint = "Curva activa: al hacer clic en el gráfico vacío se añade una clave"
 key_add_hint = "Añadir una clave en la curva activa bajo el cursor"
 key_before_hint = "Clave justo antes del cabezal: fija la curva a la izquierda (Ctrl — todas las curvas del módulo)"
@@ -877,6 +878,8 @@ stay = "Quedarse"
 
 # Окно генератора (Р.52): вид и параметры медиа без файла.
 [genw]
+hint_kind = "Tipo de generador; «Texto» abre la ventana de rótulo"
+unknown_kind = "Este build no conoce este tipo de generador: {0}"
 title = "Generador"
 color_a = "Color A"
 color_b = "Color B"
@@ -899,6 +902,12 @@ timecode = "Código de tiempo"
 
 # Окно титра (Р.52 С3).
 [titlew]
+center = "Centrar"
+hint_order = "Orden de capas: un clic intercambia la capa con su vecina"
+hint_center = "Colocar el rótulo en el centro del cuadro"
+hint_family = "Familia tipográfica; la que falte se sustituye por la incluida"
+hint_text = "Texto del rótulo; Enter inicia una línea nueva"
+order = "Orden de capas:"
 family = "Fuente"
 font_missing = "La fuente «{0}» no está en esta máquina: se usa Noto Sans"
 title = "Título"

@@ -606,17 +606,15 @@ impl VideoRenderer {
                 if w1.0 <= w0.0 {
                     continue;
                 }
-                if let Some(a) = clips
-                    .iter_mut()
-                    .find(|c| kt_model::same_clip(c.id, pa.id) && c.end == w1)
+                if let Some(a) =
+                    clips.iter_mut().find(|c| kt_model::same_clip(c.id, pa.id) && c.end == w1)
                 {
                     a.fade_out = Some((w0, w1));
                     a.fade_out_solo = false;
                     a.fade_out_trans = Some(TransAnim::of(t, w0));
                 }
-                if let Some(b) = clips
-                    .iter_mut()
-                    .find(|c| kt_model::same_clip(c.id, pb.id) && c.start == w0)
+                if let Some(b) =
+                    clips.iter_mut().find(|c| kt_model::same_clip(c.id, pb.id) && c.start == w0)
                 {
                     b.fade_in = Some((w0, w1));
                     b.fade_in_solo = false;

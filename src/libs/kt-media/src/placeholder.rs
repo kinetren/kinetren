@@ -13,7 +13,7 @@
 //! тестах. Символы вне таблицы (кириллица, иероглифы) показываются как
 //! «?» — имя файла остаётся узнаваемым по латинице, цифрам и расширению.
 
-use crate::pixfont::{text_width, Canvas, GLYPH_H, GLYPH_W};
+use crate::pixfont::{Canvas, GLYPH_H, GLYPH_W, text_width};
 use crate::{AudioBurst, MediaError, MediaInfo, MediaSource, Quality, VideoFrame};
 use kt_time::Tick;
 

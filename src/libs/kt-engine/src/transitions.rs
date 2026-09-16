@@ -314,13 +314,7 @@ pub fn trans_ext(m: &TransMix, k: u32) -> [f32; 16] {
             let d = dist(p[2]);
             let face = |phi: f64| {
                 let (sn, cs) = phi.sin_cos();
-                face_h_inv(
-                    0.5 - 0.5 * cs - 0.5 * sn,
-                    cs,
-                    0.5 + 0.5 * sn - 0.5 * cs,
-                    -sn,
-                    d,
-                )
+                face_h_inv(0.5 - 0.5 * cs - 0.5 * sn, cs, 0.5 + 0.5 * sn - 0.5 * cs, -sn, d)
             };
             let phi_a = sgn * kf * std::f64::consts::FRAC_PI_2;
             let phi_b = phi_a - sgn * std::f64::consts::FRAC_PI_2;
@@ -964,9 +958,7 @@ fn kernel(
             let sh = ext[8];
             let door = |x: f32, mirror: bool| -> Option<[f32; 4]> {
                 match hpanel(&ext[0..8], x, sy) {
-                    Some((sp, t))
-                        if (0.0..=0.5).contains(&sp) && (0.0..=1.0).contains(&t) =>
-                    {
+                    Some((sp, t)) if (0.0..=0.5).contains(&sp) && (0.0..=1.0).contains(&t) => {
                         let ms = if mirror { 1.0 - sp } else { sp };
                         let (mu, mv) = if vert { (t, ms) } else { (ms, t) };
                         Some(shade3(a.sample(mu, mv), sh))
@@ -1027,11 +1019,8 @@ fn kernel(
                 // задняя (c > f): продолжение витка θ₃ = π + asin
                 let ad = dc.abs();
                 let th1 = ad.atan2((r * r - ad * ad).max(0.0).sqrt());
-                let th = if dc >= 0.0 {
-                    std::f32::consts::PI - th1
-                } else {
-                    std::f32::consts::PI + th1
-                };
+                let th =
+                    if dc >= 0.0 { std::f32::consts::PI - th1 } else { std::f32::consts::PI + th1 };
                 let mw = f + r * th;
                 if mw <= 1.0 {
                     let sh = back * (1.0 - 0.2 * (1.0 - th.sin().abs()));

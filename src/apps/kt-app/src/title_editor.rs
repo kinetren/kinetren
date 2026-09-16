@@ -11,7 +11,7 @@ use crate::app::KtApp;
 use crate::i18n::{k, tr};
 use crate::widgets;
 use eframe::egui;
-use kt_model::{Command, GeneratorKind, MediaId, TextAlign, TextAnchor};
+use kt_model::{Command, GeneratorKind, HasParams, MediaId, TextAlign, TextAnchor};
 
 pub struct TitleEditor {
     pub media: MediaId,
@@ -56,6 +56,36 @@ pub fn title_warning(kind: &GeneratorKind) -> Option<String> {
     ))
 }
 
+/// Порядок слоёв титра (Р.53, п.415). Поле `order` живёт в формате с
+/// Р.52 — урок Kdenlive, где порядок был константой и перерисовал чужие
+/// проекты, — но редактора у него не было: поменять местами заливку и
+/// обводку было нечем. Четыре кнопки-слота, клик меняет местами с
+/// соседом; подпись говорит, что верх списка рисуется ПОСЛЕДНИМ.
+fn order_row(ui: &mut egui::Ui, g: &mut GeneratorKind) -> bool {
+    let GeneratorKind::Text { order, .. } = g else { return false };
+    let name = |l: kt_model::TextLayer| match l {
+        kt_model::TextLayer::Plate => tr(k::titlew::PLATE),
+        kt_model::TextLayer::Shadow => tr(k::titlew::SHADOW),
+        kt_model::TextLayer::Stroke => tr(k::titlew::STROKE),
+        kt_model::TextLayer::Fill => tr(k::titlew::FILL),
+    };
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        crate::widgets::hint(&ui.label(tr(k::titlew::ORDER)), tr(k::titlew::HINT_ORDER));
+        for i in 0..order.len() {
+            let r = ui.small_button(name(order[i]));
+            crate::widgets::field_probe::note(&format!("titlew.order.{i}"), r.rect);
+            // клик — «поднять выше соседа»: перестановка без драга, как у
+            // слотов цепочки (правило 1: попасть мышью с первого раза)
+            if r.clicked() && i + 1 < order.len() {
+                order.swap(i, i + 1);
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
 impl KtApp {
     pub fn open_title_editor(&mut self, media: MediaId) {
         if let Some(ed) = self.title_editors.iter_mut().find(|e| e.media == media) {
@@ -87,8 +117,14 @@ impl KtApp {
         }
         for ed in editors.iter().filter(|e| !e.open) {
             // окно закрылось — фокус ОТДАЁТСЯ, иначе горячие клавиши
-            // мертвы до клика мимо (правило 14, дефект п.8 р.12)
-            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new(("title-text", ed.media))));
+            // мертвы до клика мимо (правило 14, дефект п.8 р.12).
+            // Поле текста и ЛЮБОЕ числовое: DragValue тоже берёт фокус.
+            ctx.memory_mut(|m| {
+                m.surrender_focus(egui::Id::new(("title-text", ed.media)));
+                if m.focused().is_some() {
+                    m.stop_text_input();
+                }
+            });
         }
         editors.retain(|e| e.open);
         self.title_editors = editors;
@@ -101,19 +137,30 @@ impl KtApp {
         };
         let path = m.path.clone();
         let Some(cur @ GeneratorKind::Text { .. }) = kt_model::parse_gen_path(&path) else {
+            // путь перестал быть титром (undo глубже открытия) или вид
+            // новее сборки — окно уходит, но не молча (правило 16)
+            if kt_model::parse_gen_path(&path).is_none() {
+                self.note(crate::tf!(k::genw::UNKNOWN_KIND, path));
+            }
             ed.open = false;
             return;
         };
         let mut edited: Option<GeneratorKind> = None;
+        let mut kind_switched = false;
         let mut revert = false;
         let mut open = ed.open;
+        // Ширина фиксирована (правило 3), тело прокручивается: без
+        // прокрутки подвал с «Отмена» уезжал за нижнюю кромку ноутбучного
+        // экрана — окно титра самое высокое в программе (п.415).
         egui::Window::new(tr(k::titlew::TITLE))
             .id(egui::Id::new(("title", ed.media)))
             .open(&mut open)
-            .default_size([360.0, 420.0])
-            .min_size([300.0, 260.0])
+            .default_size([380.0, 460.0])
+            .min_width(380.0)
+            .max_width(380.0)
             .resizable(true)
             .show(ctx, |ui| {
+                ui.set_width(364.0);
                 let mut g = cur.clone();
                 let mut changed = false;
                 // ---- текст: многострочное поле (исключение из param_row) --
@@ -127,6 +174,7 @@ impl KtApp {
                         .desired_width(f32::INFINITY);
                     let r = ui.add(te);
                     crate::widgets::field_probe::note("titlew.text", r.rect);
+                    widgets::hint(&r, tr(k::titlew::HINT_TEXT));
                     changed |= r.changed();
                 }
 
@@ -141,133 +189,166 @@ impl KtApp {
                     }
                 }
 
-                // ---- семья шрифта: вендоренная + системные (С4) ----------
-                {
-                    let GeneratorKind::Text { family, .. } = &mut g else { unreachable!() };
-                    ui.horizontal(|ui| {
-                        ui.label(tr(k::titlew::FAMILY));
-                        egui::ComboBox::from_id_salt(("title-family", ed.media))
-                            .selected_text(family.clone())
-                            .show_ui(ui, |ui| {
-                                let vend = kt_text::VENDORED_FAMILY;
-                                if ui.selectable_label(family == vend, vend).clicked()
-                                    && family != vend
+                // ---- вид генератора: ТОТ ЖЕ пикер, что в общем окне
+                // (правило 17). Без него титр был тупиком: сменить вид
+                // обратно на цвет или градиент было нечем (п.415)
+                ui.horizontal(|ui| {
+                    widgets::hint(&ui.label(tr(k::trn::KIND)), tr(k::genw::HINT_KIND));
+                    egui::ComboBox::from_id_salt(("titlekind", ed.media))
+                        .selected_text(crate::generator_editor::kind_name(&g))
+                        .show_ui(ui, |ui| {
+                            for kd in GeneratorKind::all() {
+                                let same = kd.tag() == g.tag();
+                                if ui
+                                    .selectable_label(same, crate::generator_editor::kind_name(&kd))
+                                    .clicked()
+                                    && !same
                                 {
-                                    *family = vend.to_string();
+                                    g = kd;
                                     changed = true;
+                                    kind_switched = true;
                                 }
-                                ui.separator();
-                                for f in kt_text::system_families() {
-                                    if ui.selectable_label(family == f, f).clicked() && family != f
-                                    {
-                                        family.clone_from(f);
-                                        changed = true;
-                                    }
-                                }
-                            });
-                    });
+                            }
+                        });
+                });
+                if kind_switched {
+                    // вид больше не титр — дальше рисовать нечего,
+                    // остальное сделает роутинг ниже
+                    edited = Some(g);
+                    return;
                 }
 
-                let GeneratorKind::Text {
-                    bold,
-                    align,
-                    anchor,
-                    fill_r,
-                    fill_g,
-                    fill_b,
-                    fill_a,
-                    stroke_r,
-                    stroke_g,
-                    stroke_b,
-                    stroke_a,
-                    shadow_r,
-                    shadow_g,
-                    shadow_b,
-                    shadow_a,
-                    plate_r,
-                    plate_g,
-                    plate_b,
-                    plate_a,
-                    ..
-                } = &mut g
-                else {
-                    unreachable!();
-                };
-
-                // ---- начертание и выравнивание ---------------------------
-                ui.horizontal(|ui| {
-                    // «жирный» теперь флаг паспорта (Р.53, п.414) — но
-                    // рисуется тут же, рядом с выравниванием
-                    changed |= ui.checkbox(bold, tr(k::titlew::BOLD)).changed();
-                    ui.separator();
-                    for (a, label) in [
-                        (TextAlign::Left, tr(k::titlew::ALIGN_L)),
-                        (TextAlign::Center, tr(k::titlew::ALIGN_C)),
-                        (TextAlign::Right, tr(k::titlew::ALIGN_R)),
-                    ] {
-                        if ui.selectable_label(*align == a, label).clicked() && *align != a {
-                            *align = a;
-                            changed = true;
-                        }
-                    }
-                });
-
-                // ---- якорь 3×3 -------------------------------------------
-                ui.horizontal(|ui| {
-                    ui.label(tr(k::titlew::ANCHOR));
-                    egui::Grid::new(("title-anchor", ed.media)).spacing([2.0, 2.0]).show(
-                        ui,
-                        |ui| {
-                            use TextAnchor as A;
-                            for (row, anchors) in [
-                                [A::TopLeft, A::TopCenter, A::TopRight],
-                                [A::CenterLeft, A::Center, A::CenterRight],
-                                [A::BottomLeft, A::BottomCenter, A::BottomRight],
-                            ]
-                            .iter()
-                            .enumerate()
-                            {
-                                for a in anchors {
-                                    let on = *anchor == *a;
-                                    if ui.add_sized([18.0, 14.0], egui::Button::selectable(on, "•"))
-                                        .clicked()
-                                        && !on
+                // Тело прокручивается, подвал с «Отмена» остаётся на
+                // месте: без этого подвал уезжал за нижнюю кромку экрана
+                egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                    // ---- семья шрифта: вендоренная + системные (С4) ----------
+                    {
+                        let GeneratorKind::Text { family, .. } = &mut g else { unreachable!() };
+                        ui.horizontal(|ui| {
+                            widgets::hint(
+                                &ui.label(tr(k::titlew::FAMILY)),
+                                tr(k::titlew::HINT_FAMILY),
+                            );
+                            egui::ComboBox::from_id_salt(("title-family", ed.media))
+                                .width(190.0)
+                                .selected_text(crate::widgets::elided_name(
+                                    ui,
+                                    family,
+                                    ui.visuals().text_color(),
+                                    false,
+                                ))
+                                .show_ui(ui, |ui| {
+                                    let vend = kt_text::VENDORED_FAMILY;
+                                    if ui.selectable_label(family == vend, vend).clicked()
+                                        && family != vend
                                     {
-                                        *anchor = *a;
+                                        *family = vend.to_string();
                                         changed = true;
                                     }
-                                }
-                                let _ = row;
-                                ui.end_row();
-                            }
-                        },
-                    );
-                });
+                                    ui.separator();
+                                    for f in kt_text::system_families() {
+                                        if ui.selectable_label(family == f, f).clicked()
+                                            && family != f
+                                        {
+                                            family.clone_from(f);
+                                            changed = true;
+                                        }
+                                    }
+                                });
+                        });
+                    }
 
-                // ---- цвета слоёв: RGBA-пипетки (правило 13) --------------
-                let color_row =
-                    |ui: &mut egui::Ui, label: &str, r: &mut u8, g_: &mut u8, b: &mut u8, a: &mut u8| {
-                        let mut c = egui::Color32::from_rgba_unmultiplied(*r, *g_, *b, *a);
-                        ui.horizontal(|ui| {
-                            ui.label(label);
-                            let resp = ui.color_edit_button_srgba(&mut c);
-                            if resp.changed() {
-                                (*r, *g_, *b, *a) = (c.r(), c.g(), c.b(), c.a());
-                                return true;
-                            }
-                            false
-                        })
-                        .inner
+                    let mut center = false;
+                    let GeneratorKind::Text { bold, align, anchor, .. } = &mut g else {
+                        unreachable!();
                     };
-                changed |= color_row(ui, tr(k::titlew::FILL), fill_r, fill_g, fill_b, fill_a);
-                changed |=
-                    color_row(ui, tr(k::titlew::STROKE), stroke_r, stroke_g, stroke_b, stroke_a);
-                changed |=
-                    color_row(ui, tr(k::titlew::SHADOW), shadow_r, shadow_g, shadow_b, shadow_a);
-                changed |= color_row(ui, tr(k::titlew::PLATE), plate_r, plate_g, plate_b, plate_a);
 
-                // ---- числа: та же сетка, что у эффектов ------------------
-                changed |= widgets::params_grid(ui, ("titlep", ed.media), &mut g, &[]);
+                    // ---- начертание и выравнивание ---------------------------
+                    ui.horizontal(|ui| {
+                        // «жирный» теперь флаг паспорта (Р.53, п.414) — но
+                        // рисуется тут же, рядом с выравниванием
+                        changed |= ui.checkbox(bold, tr(k::titlew::BOLD)).changed();
+                        ui.separator();
+                        for (a, label) in [
+                            (TextAlign::Left, tr(k::titlew::ALIGN_L)),
+                            (TextAlign::Center, tr(k::titlew::ALIGN_C)),
+                            (TextAlign::Right, tr(k::titlew::ALIGN_R)),
+                        ] {
+                            if ui.selectable_label(*align == a, label).clicked() && *align != a {
+                                *align = a;
+                                changed = true;
+                            }
+                        }
+                    });
+
+                    // ---- якорь 3×3 -------------------------------------------
+                    ui.horizontal(|ui| {
+                        ui.label(tr(k::titlew::ANCHOR));
+                        egui::Grid::new(("title-anchor", ed.media)).spacing([2.0, 2.0]).show(
+                            ui,
+                            |ui| {
+                                use TextAnchor as A;
+                                for (row, anchors) in [
+                                    [A::TopLeft, A::TopCenter, A::TopRight],
+                                    [A::CenterLeft, A::Center, A::CenterRight],
+                                    [A::BottomLeft, A::BottomCenter, A::BottomRight],
+                                ]
+                                .iter()
+                                .enumerate()
+                                {
+                                    for a in anchors {
+                                        let on = *anchor == *a;
+                                        if ui
+                                            .add_sized(
+                                                [18.0, 14.0],
+                                                egui::Button::selectable(on, "•"),
+                                            )
+                                            .clicked()
+                                            && !on
+                                        {
+                                            *anchor = *a;
+                                            changed = true;
+                                        }
+                                    }
+                                    let _ = row;
+                                    ui.end_row();
+                                }
+                            },
+                        );
+                        // «по центру» — один жест вместо трёх полей: якорь в
+                        // середину и позиция в середину кадра (п.415)
+                        let r = ui.button(tr(k::titlew::CENTER));
+                        widgets::hint(&r, tr(k::titlew::HINT_CENTER));
+                        crate::widgets::field_probe::note("titlew.center", r.rect);
+                        if r.clicked() {
+                            *anchor = TextAnchor::Center;
+                            center = true;
+                            changed = true;
+                        }
+                    });
+                    if center {
+                        g.set_param("pos_x", 0.5);
+                        g.set_param("pos_y", 0.5);
+                    }
+
+                    // ---- цвета слоёв: RGBA-пипетка + HEX (правила 13, п.415)
+                    for (label, names, alpha) in [
+                        (k::titlew::FILL, ["fill_r", "fill_g", "fill_b"], "fill_a"),
+                        (k::titlew::STROKE, ["stroke_r", "stroke_g", "stroke_b"], "stroke_a"),
+                        (k::titlew::SHADOW, ["shadow_r", "shadow_g", "shadow_b"], "shadow_a"),
+                        (k::titlew::PLATE, ["plate_r", "plate_g", "plate_b"], "plate_a"),
+                    ] {
+                        changed |=
+                            widgets::color_row(ui, tr(label), &mut g, names, Some(alpha), None);
+                    }
+
+                    // ---- порядок слоёв: поле формата с Р.52, редактора не
+                    // было — поменять местами заливку и обводку было нечем
+                    changed |= order_row(ui, &mut g);
+
+                    // ---- числа: та же сетка, что у эффектов ------------------
+                    changed |= widgets::params_grid(ui, ("titlep", ed.media), &mut g, &[]);
+                });
 
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -292,10 +373,19 @@ impl KtApp {
         if let Some(g) = edited {
             let new_path = kt_model::format_gen_path(&g);
             if new_path != path {
+                if kind_switched {
+                    // смена вида — свой шаг истории (правило 20)
+                    self.gesture_counter += 1;
+                    ed.gesture = self.gesture_counter;
+                }
                 self.apply_coalesced(
                     Command::SetMediaPath { id: ed.media, path: new_path },
                     ed.gesture,
                 );
+                if kind_switched {
+                    ed.open = false;
+                    self.open_generator_editor(ed.media);
+                }
             }
         }
         if revert {

@@ -412,17 +412,16 @@ fn generator_project() -> (Project, Sources) {
     // фон — вся сцена; solid входит на 30_000 (кадр №10) верхним слоем
     p.clips = vec![clip(1, 1, 0, 90_000, 1), clip(2, 0, 30_000, 60_000, 2)];
     p.validate().unwrap();
-    let sources: Sources = vec![
-        (MediaId(1), Box::new(SyntheticSource::new(Tick(90_000), AudioPattern::Silence))),
-        (
-            MediaId(2),
-            Box::new(kt_media::generator::GeneratorSource::new(kt_model::GeneratorKind::Solid {
-                color_r: 255,
-                color_g: 136,
-                color_b: 0,
-            })),
-        ),
-    ];
+    let sources: Sources =
+        vec![
+            (MediaId(1), Box::new(SyntheticSource::new(Tick(90_000), AudioPattern::Silence))),
+            (
+                MediaId(2),
+                Box::new(kt_media::generator::GeneratorSource::new(
+                    kt_model::GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 },
+                )),
+            ),
+        ];
     (p, sources)
 }
 

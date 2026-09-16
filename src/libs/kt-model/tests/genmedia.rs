@@ -2,8 +2,8 @@
 //! экранирование строковых значений, полнота спек параметров.
 
 use kt_model::{
-    escape_gen_value, format_gen_path, is_pseudo_path, parse_gen_path, unescape_gen_value,
-    GeneratorKind, HasParams,
+    GeneratorKind, HasParams, escape_gen_value, format_gen_path, is_pseudo_path, parse_gen_path,
+    unescape_gen_value,
 };
 
 /// t469: `format(parse(s))` канонизирует, разбор регистронезависимый
@@ -59,7 +59,10 @@ fn t469_gen_path_parse_format_canonical() {
     // Регистр схемы, тега, ключа и hex-значения безразличен.
     assert_eq!(parse_gen_path("Gen:SOLID:C=FF8800"), Some(orange));
     // ...а канонизация возвращает нижний регистр.
-    assert_eq!(format_gen_path(&parse_gen_path("GEN:Solid:c=FF8800").unwrap()), "gen:solid:c=ff8800");
+    assert_eq!(
+        format_gen_path(&parse_gen_path("GEN:Solid:c=FF8800").unwrap()),
+        "gen:solid:c=ff8800"
+    );
 
     // Мусор — None, а не догадка: незнакомый тег, незнакомый ключ,
     // битое значение, токен без '=', пустой тег, чужая схема.
@@ -127,9 +130,9 @@ fn t470_generator_param_specs_are_complete() {
                 k.tag(),
                 s.name
             );
-            let v = k.get_param(s.name).unwrap_or_else(|| {
-                panic!("{}.{}: get_param не знает своё имя", k.tag(), s.name)
-            });
+            let v = k
+                .get_param(s.name)
+                .unwrap_or_else(|| panic!("{}.{}: get_param не знает своё имя", k.tag(), s.name));
             assert_eq!(v, s.default, "{}.{}: реестр не на умолчании", k.tag(), s.name);
             assert!(probe.set_param(s.name, s.max), "{}.{}: set_param", k.tag(), s.name);
             assert_eq!(probe.get_param(s.name), Some(s.max));
@@ -184,8 +187,7 @@ fn t475_set_media_path_command() {
     ));
 
     // правка видна: путь сменился, клип ссылается на то же медиа
-    m.apply(Command::SetMediaPath { id: MediaId(1), path: "gen:solid:c=ff8800".into() })
-        .unwrap();
+    m.apply(Command::SetMediaPath { id: MediaId(1), path: "gen:solid:c=ff8800".into() }).unwrap();
     assert_eq!(m.project().media[0].path, "gen:solid:c=ff8800");
     assert!(m.project().is_gen(&m.project().clips[0]));
 
@@ -205,7 +207,6 @@ fn t475_set_media_path_command() {
     m.undo().unwrap();
     assert_eq!(m.project().media[0].path, "gen:solid:c=ff8800", "undo жеста — до сессии");
 }
-
 
 /// Тест 510 (Р.53, п.414): флаги видов — полный паспорт. Каждое
 /// bool-поле вида ОБЯЗАНО быть в `flag_specs`: иначе оно существует в

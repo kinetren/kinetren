@@ -802,10 +802,8 @@ mod perf_counter_tests {
     /// ценой, растущей с прогретостью монтажа.
     #[test]
     fn t497_invalidate_source_scans_only_its_own() {
-        let cache = BurstCache::new(CacheConfig {
-            max_audio_bytes: 1 << 24,
-            max_video_bytes: 1 << 24,
-        });
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 24, max_video_bytes: 1 << 24 });
         let mine = SourceId(7);
         for i in 0..300 {
             cache.insert_video(SourceId(100 + i as u64), None, i, frame(64));
@@ -839,10 +837,8 @@ mod perf_counter_tests {
     /// GPU-пути правка цвета не видна: t496 в kt-gpu).
     #[test]
     fn t496a_content_serial_changes_with_bytes() {
-        let cache = BurstCache::new(CacheConfig {
-            max_audio_bytes: 1 << 20,
-            max_video_bytes: 1 << 20,
-        });
+        let cache =
+            BurstCache::new(CacheConfig { max_audio_bytes: 1 << 20, max_video_bytes: 1 << 20 });
         let src = SourceId(1);
         cache.insert_video(src, None, 0, frame(64));
         let (_, first) = cache.get_video_stamped(src, None, 0).expect("кадр лежит");

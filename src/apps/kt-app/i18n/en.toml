@@ -463,6 +463,7 @@ pitch_shift = "pitch shift semitones transpose key voice"
 
 # Редактор FX клипа.
 [fx]
+hint_reset = "Double-click the label to reset the parameter"
 active_curve_hint = "Active curve: clicking empty graph space adds a key to it"
 key_add_hint = "Add a key on the active curve at the playhead"
 key_before_hint = "Key just before the playhead: locks the curve to the left (Ctrl — all curves of the slot)"
@@ -877,6 +878,8 @@ stay = "Stay here"
 
 # Окно генератора (Р.52): вид и параметры медиа без файла.
 [genw]
+hint_kind = "Generator kind; “Text” opens the title window"
+unknown_kind = "Generator kind is unknown to this build: {0}"
 title = "Generator"
 color_a = "Colour A"
 color_b = "Colour B"
@@ -899,6 +902,12 @@ timecode = "Timecode"
 
 # Окно титра (Р.52 С3).
 [titlew]
+center = "Centre"
+hint_order = "Layer order: a click swaps the layer with its neighbour"
+hint_center = "Put the title in the centre of the frame"
+hint_family = "Font family; a family missing here is replaced by the bundled one"
+hint_text = "Title text; Enter starts a new line"
+order = "Draw order:"
 family = "Font"
 font_missing = "Font “{0}” is not on this machine — Noto Sans is used instead"
 title = "Title"

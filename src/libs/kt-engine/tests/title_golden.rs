@@ -6,7 +6,7 @@
 //! краснеет ЗДЕСЬ, и перегенерация обязана быть осознанной
 //! (kt-text/CLAUDE.md, FONT-MANIFEST.txt).
 
-use kt_engine::{render_raw_video, VideoRenderer};
+use kt_engine::{VideoRenderer, render_raw_video};
 use kt_media::generator::GeneratorSource;
 use kt_media::{MediaSource, Quality};
 use kt_model::*;

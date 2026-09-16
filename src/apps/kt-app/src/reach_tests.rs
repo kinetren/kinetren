@@ -1298,7 +1298,6 @@ fn t396_hinted_objects_have_a_right_click_answer() {
     }
 }
 
-
 /// Тест 508 (Р.53, п.414): у КАЖДОГО параметра есть подпись из каталога.
 ///
 /// `param_label` на неизвестном имени возвращает СЫРОЕ английское имя
@@ -1346,9 +1345,7 @@ fn t508_every_param_has_a_label() {
         check(k.tag(), &k, &covered);
     }
     // у переходов цвет рисует своя пипетка (окно перехода, Р.33 С4)
-    const TRANS_COLOR: &[&str] = &[
-        "color_r", "color_g", "color_b", "tint_r", "tint_g", "tint_b",
-    ];
+    const TRANS_COLOR: &[&str] = &["color_r", "color_g", "color_b", "tint_r", "tint_g", "tint_b"];
     for k in kt_model::TransitionKind::ALL {
         check(k.tag(), k, TRANS_COLOR);
     }

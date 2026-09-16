@@ -411,17 +411,15 @@ impl AudioRenderer {
                 if w1 <= w0 {
                     continue;
                 }
-                if let Some(a) = clips
-                    .iter_mut()
-                    .find(|c| kt_model::same_clip(c.id, pa.id) && c.end == w1)
+                if let Some(a) =
+                    clips.iter_mut().find(|c| kt_model::same_clip(c.id, pa.id) && c.end == w1)
                 {
                     a.fade_out = Some((w0, w1));
                     a.fade_out_curve = t.audio;
                     a.fade_out_excl = true;
                 }
-                if let Some(b) = clips
-                    .iter_mut()
-                    .find(|c| kt_model::same_clip(c.id, pb.id) && c.start == w0)
+                if let Some(b) =
+                    clips.iter_mut().find(|c| kt_model::same_clip(c.id, pb.id) && c.start == w0)
                 {
                     b.fade_in = Some((w0, w1));
                     b.fade_in_curve = t.audio;

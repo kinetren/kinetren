@@ -12,7 +12,7 @@ use crate::app::KtApp;
 use crate::i18n::{k, tr};
 use crate::widgets;
 use eframe::egui;
-use kt_model::{Command, GeneratorKind, HasParams, MediaId};
+use kt_model::{Command, GeneratorKind, MediaId};
 
 pub struct GeneratorEditor {
     pub media: MediaId,
@@ -39,27 +39,48 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
     }
 }
 
+/// Ширина самого длинного имени вида: по ней фиксируется ширина окна и
+/// комбо (правило 3 «ничего не скачет» — мерить галлеей, а не «примерным»
+/// числом). Считается раз на кадр, список видов короткий.
+fn widest_kind_width(ctx: &egui::Context) -> f32 {
+    let layer = egui::LayerId::new(egui::Order::Background, egui::Id::new("gen-measure"));
+    let painter = ctx.layer_painter(layer);
+    GeneratorKind::all()
+        .iter()
+        .map(|k| {
+            painter
+                .layout_no_wrap(
+                    kind_name(k).to_string(),
+                    egui::FontId::proportional(14.0),
+                    egui::Color32::WHITE,
+                )
+                .size()
+                .x
+        })
+        .fold(0.0f32, f32::max)
+}
+
 /// Цветовые группы вида для пипеток окна (подпись, [имена R,G,B]).
 /// Публична для t508: параметр либо подписан, либо закрыт пипеткой —
 /// третьего не бывает (Р.53, п.414).
-pub(crate) fn color_groups(kind: &GeneratorKind) -> &'static [(crate::i18n::Key, [&'static str; 3])] {
+pub(crate) fn color_groups(
+    kind: &GeneratorKind,
+) -> &'static [(crate::i18n::Key, [&'static str; 3])] {
     use crate::i18n::k;
     match kind {
         GeneratorKind::Solid { .. } => &[(k::trn::COLOR, ["color_r", "color_g", "color_b"])],
-        GeneratorKind::Gradient { .. } => &[
-            (k::genw::COLOR_A, ["a_r", "a_g", "a_b"]),
-            (k::genw::COLOR_B, ["b_r", "b_g", "b_b"]),
-        ],
+        GeneratorKind::Gradient { .. } => {
+            &[(k::genw::COLOR_A, ["a_r", "a_g", "a_b"]), (k::genw::COLOR_B, ["b_r", "b_g", "b_b"])]
+        }
         GeneratorKind::Corners { .. } => &[
             (k::genw::CORNER_TL, ["tl_r", "tl_g", "tl_b"]),
             (k::genw::CORNER_TR, ["tr_r", "tr_g", "tr_b"]),
             (k::genw::CORNER_BL, ["bl_r", "bl_g", "bl_b"]),
             (k::genw::CORNER_BR, ["br_r", "br_g", "br_b"]),
         ],
-        GeneratorKind::Checker { .. } => &[
-            (k::genw::COLOR_A, ["a_r", "a_g", "a_b"]),
-            (k::genw::COLOR_B, ["b_r", "b_g", "b_b"]),
-        ],
+        GeneratorKind::Checker { .. } => {
+            &[(k::genw::COLOR_A, ["a_r", "a_g", "a_b"]), (k::genw::COLOR_B, ["b_r", "b_g", "b_b"])]
+        }
         GeneratorKind::Text { .. }
         | GeneratorKind::NoiseField { .. }
         | GeneratorKind::SmpteBars { .. }
@@ -86,8 +107,10 @@ impl KtApp {
             return;
         };
         let path = m.path.clone();
-        // не генератор (или вид новее сборки — заглушка): окна нет
+        // не генератор (или вид новее сборки — заглушка): окна нет, но
+        // МОЛЧАТЬ нельзя (правило 16 — невозможность действия видна)
         if kt_model::parse_gen_path(&path).is_none() {
+            self.note(crate::tf!(k::genw::UNKNOWN_KIND, path));
             return;
         }
         self.gesture_counter += 1;
@@ -104,6 +127,16 @@ impl KtApp {
         let mut editors = std::mem::take(&mut self.generator_editors);
         for ed in &mut editors {
             self.draw_one_generator_editor(ctx, ed);
+        }
+        for ed in editors.iter().filter(|e| !e.open) {
+            // закрылось — фокус ОТДАЁТСЯ (правило 14): иначе горячие
+            // клавиши мертвы, пока не кликнешь мимо (дефект п.8 р.12)
+            ctx.memory_mut(|m| {
+                if m.focused().is_some() {
+                    m.stop_text_input();
+                }
+            });
+            let _ = ed;
         }
         editors.retain(|e| e.open);
         self.generator_editors = editors;
@@ -122,20 +155,33 @@ impl KtApp {
             return;
         };
         let mut edited: Option<GeneratorKind> = None;
+        let mut switched = false;
         let mut revert = false;
         let mut open = ed.open;
+        // Ширина ФИКСИРОВАНА (правило 3 «ничего не скачет»): у видов
+        // разный состав (у сплошного цвета одна пипетка, у углов —
+        // четыре), а egui `Resize` окно только растит и назад не ужимает.
+        // Меряем по самому длинному имени вида, а не «примерным» числом.
+        let kind_w = widest_kind_width(ctx);
+        let win_w = (kind_w + 210.0).clamp(300.0, 460.0);
         egui::Window::new(tr(k::genw::TITLE))
             .id(egui::Id::new(("generator", ed.media)))
             .open(&mut open)
-            .default_size([320.0, 160.0])
-            .min_size([260.0, 120.0])
-            .resizable(true)
+            .default_width(win_w)
+            .min_width(win_w)
+            .max_width(win_w)
+            .resizable(false)
             .show(ctx, |ui| {
+                ui.set_width(win_w - 16.0);
                 let mut g = cur;
                 let mut changed = false;
+                // смена ВИДА — отдельный шаг истории (правило 20): один
+                // Ctrl+Z обязан отменять «случайно ткнул другой вид», а
+                // не всю работу в окне
+                let mut kind_switched = false;
                 // ---- вид: пикер из реестра -----------------------------
                 ui.horizontal(|ui| {
-                    ui.label(tr(k::trn::KIND));
+                    widgets::hint(&ui.label(tr(k::trn::KIND)), tr(k::genw::HINT_KIND));
                     egui::ComboBox::from_id_salt(("genkind", ed.media))
                         .selected_text(kind_name(&g))
                         .show_ui(ui, |ui| {
@@ -146,6 +192,7 @@ impl KtApp {
                                     // у видов разные, переносить нечего
                                     g = kd;
                                     changed = true;
+                                    kind_switched = true;
                                 }
                             }
                         });
@@ -160,21 +207,15 @@ impl KtApp {
                     skip.extend_from_slice(names);
                 }
                 for (i, (label, names)) in groups.iter().enumerate() {
-                    ui.horizontal(|ui| {
-                        ui.label(tr(*label));
-                        let get = |n: &str| g.get_param(n).unwrap_or(0.0) as f32 / 255.0;
-                        let mut c = [get(names[0]), get(names[1]), get(names[2])];
-                        let r = ui.color_edit_button_rgb(&mut c);
-                        if i == 0 {
-                            crate::widgets::field_probe::note("genw.color", r.rect);
-                        }
-                        if r.changed() {
-                            for (n, v) in names.iter().zip(c) {
-                                g.set_param(n, (v * 255.0).round() as f64);
-                            }
-                            changed = true;
-                        }
-                    });
+                    // пипетка + HEX-поле: канон пути — именно hex (п.415)
+                    changed |= widgets::color_row(
+                        ui,
+                        tr(*label),
+                        &mut g,
+                        *names,
+                        None,
+                        (i == 0).then_some("genw.color"),
+                    );
                 }
                 // тайм-код показывает время МАТЕРИАЛА — сказать прямо
                 if matches!(g, GeneratorKind::Timecode { .. }) {
@@ -203,6 +244,7 @@ impl KtApp {
                 });
                 if changed {
                     edited = Some(g);
+                    switched = kind_switched;
                 }
             });
         ed.open = open;
@@ -210,10 +252,21 @@ impl KtApp {
             let new_path = kt_model::format_gen_path(&g);
             // команда ТОЛЬКО при реально изменившемся значении (п.200)
             if new_path != path {
+                if switched {
+                    // смена вида — СВОЙ шаг истории (правило 20)
+                    self.gesture_counter += 1;
+                    ed.gesture = self.gesture_counter;
+                }
                 self.apply_coalesced(
-                    Command::SetMediaPath { id: ed.media, path: new_path },
+                    Command::SetMediaPath { id: ed.media, path: new_path.clone() },
                     ed.gesture,
                 );
+                // титру своё окно: вид сменили — уходим туда (правило 17,
+                // пикер один на оба окна)
+                if matches!(kt_model::parse_gen_path(&new_path), Some(GeneratorKind::Text { .. })) {
+                    ed.open = false;
+                    self.open_title_editor(ed.media);
+                }
             }
         }
         if revert {

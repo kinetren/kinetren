@@ -1793,6 +1793,14 @@ impl KtApp {
         if !strip.is_finite() || strip.width() < 1.0 {
             return;
         }
+        // подсказки общих виджетов приходят из замыканий окон (сток
+        // `widgets::hint_sink`, п.415): забираем ровно здесь, в конце
+        // кадра, чтобы место показа осталось ОДНО (правило 10)
+        if self.hover_hint.is_none() {
+            self.hover_hint = crate::widgets::hint_sink::take();
+        } else {
+            let _ = crate::widgets::hint_sink::take();
+        }
         let mode = if self.dnd_hover.is_some() { Some(tr(k::hint::DROP_HERE)) } else { None };
         let status =
             self.status.as_ref().map(|(m, at)| (m.as_str(), at.elapsed().as_millis() as u64));
@@ -3251,7 +3259,12 @@ impl KtApp {
     /// командой и тем же gesture, что окно, — оба способа ведут себя
     /// одинаково по построению (правило 17). Хват-зона шире рамки
     /// (правило 1); клик-play вне рамки жив.
-    fn title_drag_in_preview(&mut self, ui: &mut egui::Ui, painter: &egui::Painter, img: egui::Rect) {
+    fn title_drag_in_preview(
+        &mut self,
+        ui: &mut egui::Ui,
+        painter: &egui::Painter,
+        img: egui::Rect,
+    ) {
         let Some((media, gesture)) =
             self.title_editors.iter().find(|e| e.open).map(|e| (e.media, e.gesture))
         else {
@@ -3275,8 +3288,11 @@ impl KtApp {
             egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(120, 190, 255, 200)),
             egui::StrokeKind::Outside,
         );
-        let resp =
-            ui.interact(frame.expand(8.0), ui.id().with(("title-drag", media)), egui::Sense::drag());
+        let resp = ui.interact(
+            frame.expand(8.0),
+            ui.id().with(("title-drag", media)),
+            egui::Sense::drag(),
+        );
         if resp.dragged() {
             let d = resp.drag_delta();
             if d != egui::Vec2::ZERO

@@ -311,8 +311,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
         // выбросить источники, чьи параметры перенастроены (п.412):
         // иначе воркер продолжит рисовать старым GeneratorSource
         {
-            let dropped: Vec<MediaId> =
-                shared.drop_sources.lock().unwrap().drain().collect();
+            let dropped: Vec<MediaId> = shared.drop_sources.lock().unwrap().drain().collect();
             for id in dropped {
                 sources.remove(id);
                 db_ids.remove(&id);
@@ -732,10 +731,17 @@ mod key_tests {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
             assert_eq!(svc.duration_or_probe(id), None, "первый вызов — заявка");
             while !svc.shared.durations.lock().unwrap().contains_key(&id) {
-                assert!(std::time::Instant::now() < deadline, "probe не опубликован (db={with_db})");
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "probe не опубликован (db={with_db})"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            assert_eq!(svc.duration(id), Some(Tick(0)), "у генератора длительности нет (db={with_db})");
+            assert_eq!(
+                svc.duration(id),
+                Some(Tick(0)),
+                "у генератора длительности нет (db={with_db})"
+            );
             assert_eq!(svc.kinds(id), Some((true, false)), "видео без аудио (db={with_db})");
             let key = ThumbKey { media: id, t: 0 };
             svc.request(key);
@@ -745,7 +751,10 @@ mod key_tests {
                     ThumbState::Failed => panic!("тумба генератора упала (db={with_db})"),
                     _ => {}
                 }
-                assert!(std::time::Instant::now() < deadline, "тумба не построилась (db={with_db})");
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "тумба не построилась (db={with_db})"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(10));
             };
             let c = img.pixels[img.pixels.len() / 2];

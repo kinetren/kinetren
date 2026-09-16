@@ -548,7 +548,7 @@ fn t232_transition_params_animate() {
 /// строки/колонки — и оба теста оставались зелёными.
 #[test]
 fn t459_push_whip_bring_real_b_content() {
-    use kt_engine::transitions::{mix_into, TransMix};
+    use kt_engine::transitions::{TransMix, mix_into};
     const W: usize = 64;
     const H: usize = 36;
     let ramp = |marker: u8| -> kt_media::VideoFrame {
@@ -579,11 +579,8 @@ fn t459_push_whip_bring_real_b_content() {
     let expect = |x: i32, y: i32, dx: i32, dy: i32, shift_x: i32, shift_y: i32| -> [u8; 3] {
         let (mx, my) = (x - shift_x, y - shift_y);
         let inside = (0..W as i32).contains(&mx) && (0..H as i32).contains(&my);
-        let (sx, sy, marker) = if inside {
-            (mx, my, 50)
-        } else {
-            (mx + dx * W as i32, my + dy * H as i32, 200)
-        };
+        let (sx, sy, marker) =
+            if inside { (mx, my, 50) } else { (mx + dx * W as i32, my + dy * H as i32, 200) };
         [(sx * 4) as u8, (sy * 7) as u8, marker]
     };
 
@@ -649,11 +646,8 @@ fn t459b_push_through_renderer_shows_real_b() {
     let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
     let t = Tick(90_000); // середина окна: сдвиг ровно полкадра
     for (media, src_pts, fq) in vr.layers_at(t, q) {
-        let marker = if kt_engine::source_id(media) == kt_engine::source_id(MediaId(1)) {
-            50
-        } else {
-            200
-        };
+        let marker =
+            if kt_engine::source_id(media) == kt_engine::source_id(MediaId(1)) { 50 } else { 200 };
         let frame = kt_media::VideoFrame {
             pts: src_pts,
             width: fq.width,
@@ -718,7 +712,8 @@ fn t461_transition_invert() {
     );
 
     // вайп: инверсия меняет стороны у той же границы
-    let wipe = |inv| render(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 }, inv);
+    let wipe =
+        |inv| render(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 }, inv);
     let (w0, w1) = (wipe(false), wipe(true));
     assert_eq!(px(&w0, 2, 18), ca, "прямой вайп: слева уходящий");
     assert_eq!(px(&w0, 61, 18), cb, "прямой вайп: справа входящий");
@@ -849,10 +844,8 @@ fn t464_overlap_transition_reaches_picture() {
     assert_eq!(px(&bare, 61, 18), cb);
 
     // с вайпом: обе стороны в кадре, граница в середине окна
-    let wipe = render(
-        &mk(Some(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 })),
-        t,
-    );
+    let wipe =
+        render(&mk(Some(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 })), t);
     assert_eq!(px(&wipe, 2, 18), ca, "слева ещё уходящий");
     assert_eq!(px(&wipe, 61, 18), cb, "справа уже входящий");
 
@@ -951,7 +944,11 @@ fn t467_new_kind_families_reach_picture() {
     assert_eq!(px(&sw, 1, 1)[3], 0, "угол пуст — квады уехали и сжались");
     let has = |want: [u8; 4], shade: f32| {
         let dim = |c: [u8; 4]| {
-            [(c[0] as f32 * shade) as i32, (c[1] as f32 * shade) as i32, (c[2] as f32 * shade) as i32]
+            [
+                (c[0] as f32 * shade) as i32,
+                (c[1] as f32 * shade) as i32,
+                (c[2] as f32 * shade) as i32,
+            ]
         };
         let w = dim(want);
         (0..36).any(|y| {
@@ -989,10 +986,7 @@ fn t468_volume_kinds_reach_picture() {
     };
     let near = |got: [u8; 4], want: [u8; 4], what: &str| {
         for c in 0..3 {
-            assert!(
-                (got[c] as i32 - want[c] as i32).abs() <= 3,
-                "{what}: {got:?} vs {want:?}"
-            );
+            assert!((got[c] as i32 - want[c] as i32).abs() <= 3, "{what}: {got:?} vs {want:?}");
         }
         assert!(got[3] > 250, "{what}: непрозрачно");
     };

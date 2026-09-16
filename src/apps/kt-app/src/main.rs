@@ -10,14 +10,13 @@ mod automation;
 mod bg;
 mod bin_panel;
 mod camera_editor;
-mod generator_editor;
-mod title_editor;
 mod ctx_menu;
 mod eq_graph;
 #[cfg(test)]
 mod font_tests;
 mod fx_editor;
 mod fx_registry;
+mod generator_editor;
 mod graphs;
 mod i18n;
 #[cfg(test)]
@@ -35,6 +34,7 @@ mod render_dialog;
 mod theme;
 mod thumbs;
 mod timeline;
+mod title_editor;
 mod toolbar;
 mod transition_editor;
 mod user_store;

@@ -107,8 +107,8 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
             // растянутая на весь кадр: при любом угле оба цвета видны
             let rad = angle_deg.to_radians();
             let (dx, dy) = (rad.cos(), rad.sin());
-            let corners =
-                [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)].map(|(x, y): (f64, f64)| x * dx + y * dy);
+            let corners = [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (1.0, 1.0)]
+                .map(|(x, y): (f64, f64)| x * dx + y * dy);
             let lo = corners.iter().cloned().fold(f64::INFINITY, f64::min);
             let hi = corners.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             let span = (hi - lo).max(1e-9);
@@ -175,7 +175,11 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
                 for x in 0..w as usize {
                     let cx = (x as f64 / cell) as u64;
                     let o = (y * w as usize + x) * 4;
-                    buf[o..o + 4].copy_from_slice(if (cx + cy).is_multiple_of(2) { &a } else { &b });
+                    buf[o..o + 4].copy_from_slice(if (cx + cy).is_multiple_of(2) {
+                        &a
+                    } else {
+                        &b
+                    });
                 }
             }
             buf.into_boxed_slice()
@@ -250,13 +254,8 @@ fn render_at(kind: &GeneratorKind, pts: Tick, w: u32, h: u32) -> Box<[u8]> {
             let t = pts.0.max(0);
             let secs = t / 90_000;
             let ff = (t % 90_000) * fps / 90_000;
-            let label = format!(
-                "{:02}:{:02}:{:02}:{:02}",
-                secs / 3600,
-                secs % 3600 / 60,
-                secs % 60,
-                ff
-            );
+            let label =
+                format!("{:02}:{:02}:{:02}:{:02}", secs / 3600, secs % 3600 / 60, secs % 60, ff);
             let mut c = crate::pixfont::Canvas::new(w.max(1), h.max(1), [0, 0, 0, 255]);
             let chars = label.chars().count();
             let s = ((c.w * 4 / 5) / crate::pixfont::text_width(chars, 1).max(1)).clamp(1, 40);
@@ -283,7 +282,8 @@ fn lowbias32(mut x: u32) -> u32 {
 /// (Р.52 С6). Возвращает `None` для не-титра. Идёт через ту же
 /// `text_params`: окно, кадр и рамка обязаны видеть одни значения.
 pub fn title_layout(kind: &GeneratorKind, w: u32, h: u32) -> Option<kt_text::LayoutInfo> {
-    matches!(kind, GeneratorKind::Text { .. }).then(|| kt_text::layout_info(&text_params(kind), w, h))
+    matches!(kind, GeneratorKind::Text { .. })
+        .then(|| kt_text::layout_info(&text_params(kind), w, h))
 }
 
 /// ЕДИНСТВЕННАЯ функция перевода хранимого титра (kt-model) во вход
@@ -486,11 +486,8 @@ mod tests {
     fn t498_generator_retunes_in_place() {
         let q = Quality { width: 64, height: 36 };
         let orange = GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 };
-        let mut s = GeneratorSource::new(GeneratorKind::Solid {
-            color_r: 0,
-            color_g: 0,
-            color_b: 0,
-        });
+        let mut s =
+            GeneratorSource::new(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
         // прогреваем внутренний кэш кадра старыми параметрами
         let before = s.read_video_frame(Tick(0), Some(q)).unwrap();
         assert_eq!(&before.rgba[..4], &[0, 0, 0, 255]);
@@ -526,11 +523,8 @@ mod tests {
     fn t507_generator_frame_is_rendered_once_per_quality() {
         let q1 = Quality { width: 64, height: 36 };
         let q2 = Quality { width: 32, height: 18 };
-        let mut s = GeneratorSource::new(GeneratorKind::Solid {
-            color_r: 9,
-            color_g: 9,
-            color_b: 9,
-        });
+        let mut s =
+            GeneratorSource::new(GeneratorKind::Solid { color_r: 9, color_g: 9, color_b: 9 });
         let a = s.read_video_frame(Tick(0), Some(q1)).unwrap();
         let b = s.read_video_frame(Tick(90_000), Some(q1)).unwrap();
         assert_eq!(a.rgba, b.rgba, "статический кадр не зависит от времени");
@@ -570,15 +564,12 @@ mod tests {
         assert!(a.rgba.chunks_exact(4).any(|p| p[0] > 224));
 
         // amount 0 — ровное поле 128
-        let z = GeneratorSource::new(mk(0.0, true))
-            .read_video_frame(Tick(3000), Some(q))
-            .unwrap();
+        let z = GeneratorSource::new(mk(0.0, true)).read_video_frame(Tick(3000), Some(q)).unwrap();
         assert!(z.rgba.chunks_exact(4).all(|p| p[0] == 128));
 
         // независимость от Quality: половинный кадр — те же клетки
-        let half = s
-            .read_video_frame(Tick(3000), Some(Quality { width: 960, height: 540 }))
-            .unwrap();
+        let half =
+            s.read_video_frame(Tick(3000), Some(Quality { width: 960, height: 540 })).unwrap();
         for (hx, hy) in [(10usize, 7usize), (123, 400), (900, 100)] {
             let hpx = &half.rgba[(hy * 960 + hx) * 4];
             let fpx = &a.rgba[((hy * 2) * 1920 + hx * 2) * 4];
@@ -592,7 +583,8 @@ mod tests {
     fn t492_smpte_tone_and_bars() {
         let silent = GeneratorSource::new(GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 });
         assert!(!silent.info().has_audio, "без тона аудио-клип не создаётся");
-        let mut loud = GeneratorSource::new(GeneratorKind::SmpteBars { tone: true, tone_db: -20.0 });
+        let mut loud =
+            GeneratorSource::new(GeneratorKind::SmpteBars { tone: true, tone_db: -20.0 });
         assert!(loud.info().has_audio);
         let a = loud.read_audio_burst(3).unwrap();
         let b = loud.read_audio_burst(3).unwrap();

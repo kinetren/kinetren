@@ -1263,8 +1263,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
         notices.extend(read.1);
         for s in &mut p.sequences {
             let Some(meta) = kt.sequences.iter().find(|m| m.id == s.id.0) else { continue };
-            let read =
-                read_overlap_transitions(&meta.overlap_transitions, &s.clips, &mut next_tid);
+            let read = read_overlap_transitions(&meta.overlap_transitions, &s.clips, &mut next_tid);
             s.transitions.extend(read.0);
             notices.extend(read.1);
         }
@@ -1763,7 +1762,8 @@ fn read_reel(
                     {
                         if let Some(a) = prev_clip {
                             let id = out.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                            let (kind, audio, auto, invert) = take_transition_kt(&mut meta, cx.notices);
+                            let (kind, audio, auto, invert) =
+                                take_transition_kt(&mut meta, cx.notices);
                             cx.retained.transitions.insert((Some(a), None), (ttype, meta, extra));
                             out.transitions.push(TransitionEvent {
                                 id: TransitionId(id),

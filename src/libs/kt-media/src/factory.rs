@@ -10,9 +10,9 @@
 //! - битый псевдо-путь — честная ошибка, а НЕ попытка открыть его
 //!   FFmpeg'ом («no such file» прятал бы настоящую причину).
 
+use crate::MediaSource;
 use crate::generator::GeneratorSource;
 use crate::synthetic::{AudioPattern, SyntheticSource};
-use crate::MediaSource;
 use kt_time::Tick;
 
 /// Длительность synth-источников: час, как было в kt-app с первого дня.
@@ -101,7 +101,7 @@ mod tests {
     /// зря погашенный поток, либо «перенастроили» то, что не менялось.
     #[test]
     fn t499_can_retune_equals_retune() {
-        use kt_model::{format_gen_path, GeneratorKind};
+        use kt_model::{GeneratorKind, format_gen_path};
         let mut kinds: Vec<GeneratorKind> = GeneratorKind::all();
         // вариации, меняющие паспорт и не меняющие его
         kinds.push(GeneratorKind::Solid { color_r: 1, color_g: 2, color_b: 3 });

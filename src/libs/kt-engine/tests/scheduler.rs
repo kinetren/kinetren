@@ -349,9 +349,7 @@ fn t501_retune_is_not_cancelled_and_not_raced() {
         assert!(std::time::Instant::now() < deadline, "прогрев не закончился");
         std::thread::sleep(Duration::from_millis(10));
     }
-    let warmed = (0..64)
-        .filter(|i| cache.get_video(sid, Some(q), i * step).is_some())
-        .count();
+    let warmed = (0..64).filter(|i| cache.get_video(sid, Some(q), i * step).is_some()).count();
     assert!(warmed > 8, "кэш не прогрелся: {warmed} кадров");
 
     // (а) перенастройка + НЕМЕДЛЕННЫЙ seek с огромным поколением

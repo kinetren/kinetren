@@ -7,7 +7,7 @@
 //! только заливка; обводка/тень/плашка (F-TXT-005) — С3, поля под них
 //! уже в структуре: формат не догоняет код.
 
-use ab_glyph::{point, Font as _, FontRef as AbFont, Glyph, PxScale};
+use ab_glyph::{Font as _, FontRef as AbFont, Glyph, PxScale, point};
 use harfrust::{FontRef as HrFont, ShapeOptions, ShaperData, UnicodeBuffer};
 use std::sync::OnceLock;
 
@@ -349,8 +349,7 @@ fn layout(p: &TextParams, w: u32, h: u32) -> Laid {
     let tracking_u = if size_px > 0.0 { p.tracking / face.unit } else { 0.0 };
 
     let lines: Vec<&str> = p.text.split('\n').collect();
-    let shaped: Vec<ShapedLine> =
-        lines.iter().map(|l| shape_line(face, l, tracking_u)).collect();
+    let shaped: Vec<ShapedLine> = lines.iter().map(|l| shape_line(face, l, tracking_u)).collect();
 
     let line_h = (face.ascent_u - face.descent_u + face.gap_u) * k * p.line_spacing;
     let block_w = shaped.iter().map(|(_, w)| *w * k).fold(0.0f64, f64::max);
@@ -418,15 +417,10 @@ pub fn layout_info(p: &TextParams, w: u32, h: u32) -> LayoutInfo {
 /// Кодпоинты текста, для которых в начертании НЕТ глифа (ответ «глифа
 /// нет» в окне титра — правило UI 11). Пустой список = всё покрыто.
 pub fn uncovered(text: &str, family: &str, style: FaceStyle) -> Vec<char> {
-    let face = resolve_face(&TextParams {
-        family: family.to_string(),
-        style,
-        ..TextParams::default()
-    });
-    let mut out: Vec<char> = text
-        .chars()
-        .filter(|c| !c.is_control() && face.ab.glyph_id(*c).0 == 0)
-        .collect();
+    let face =
+        resolve_face(&TextParams { family: family.to_string(), style, ..TextParams::default() });
+    let mut out: Vec<char> =
+        text.chars().filter(|c| !c.is_control() && face.ab.glyph_id(*c).0 == 0).collect();
     out.sort_unstable();
     out.dedup();
     out
@@ -754,9 +748,7 @@ mod tests {
 
     fn sample() -> TextParams {
         TextParams {
-            text: "Привет, Kinotrain!\nтитр".into(),
-            size: 0.12,
-            ..TextParams::default()
+            text: "Привет, Kinotrain!\nтитр".into(), size: 0.12, ..TextParams::default()
         }
     }
 
@@ -814,10 +806,7 @@ mod tests {
         let wid = |s: &str| shape_line(f, s, 0.0).1;
         let pair = wid("AV");
         let solo = wid("A") + wid("V");
-        assert!(
-            pair < solo - 1.0,
-            "кернинг не применился: AV={pair}, A+V={solo} (font units)"
-        );
+        assert!(pair < solo - 1.0, "кернинг не применился: AV={pair}, A+V={solo} (font units)");
         // лигатуры тоже живут: fi короче или равна f+i, но ОДНИМ глифом
         let (fi, _) = shape_line(f, "fi", 0.0);
         assert_eq!(fi.len(), 1, "лигатура fi не собралась: {} глифов", fi.len());
@@ -827,13 +816,15 @@ mod tests {
     /// полным вендоренным шрифтом.
     #[test]
     fn t483_uncovered_codepoints() {
-        assert!(uncovered("Съешь ещё этих мягких французских булок, да выпей же чаю. Zażółć!",
-            VENDORED_FAMILY, FaceStyle::Regular)
-            .is_empty());
-        assert_eq!(
-            uncovered("до 漢字 после", VENDORED_FAMILY, FaceStyle::Bold),
-            vec!['字', '漢']
+        assert!(
+            uncovered(
+                "Съешь ещё этих мягких французских булок, да выпей же чаю. Zażółć!",
+                VENDORED_FAMILY,
+                FaceStyle::Regular
+            )
+            .is_empty()
         );
+        assert_eq!(uncovered("до 漢字 после", VENDORED_FAMILY, FaceStyle::Bold), vec!['字', '漢']);
         // управляющие не считаются «непокрытыми»
         assert!(uncovered("a\nb\t", VENDORED_FAMILY, FaceStyle::Regular).is_empty());
     }
@@ -919,10 +910,7 @@ mod tests {
         inv.order = [Layer::Plate, Layer::Shadow, Layer::Fill, Layer::Stroke];
         let inverted = render_rgba(&inv, 320, 180);
         assert_ne!(inverted, stroked, "порядок слоёв обязан менять байты");
-        assert!(
-            count(&inverted, &is_fill) < fill_plain / 2,
-            "fill под stroke обязан быть накрыт"
-        );
+        assert!(count(&inverted, &is_fill) < fill_plain / 2, "fill под stroke обязан быть накрыт");
 
         // тень: пиксели цвета тени ВНЕ силуэта, сдвинутые вправо-вниз
         let mut sh = p.clone();

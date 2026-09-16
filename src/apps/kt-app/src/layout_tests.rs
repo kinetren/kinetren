@@ -6130,12 +6130,11 @@ fn t495_title_drag_in_preview_writes_pos() {
     assert!(preview.width() > 40.0, "превью в харнесте есть: {preview:?}");
 
     let depth = h.state().model.undo_depth();
-    let before = match kt_model::parse_gen_path(
-        &h.state().model.project().media.last().unwrap().path,
-    ) {
-        Some(GeneratorKind::Text { pos_x, pos_y, .. }) => (pos_x, pos_y),
-        _ => unreachable!(),
-    };
+    let before =
+        match kt_model::parse_gen_path(&h.state().model.project().media.last().unwrap().path) {
+            Some(GeneratorKind::Text { pos_x, pos_y, .. }) => (pos_x, pos_y),
+            _ => unreachable!(),
+        };
     assert_eq!(before, (0.5, 0.5));
 
     // драг в ТРИ шага из центра превью (блок с якорем Center сидит там)
@@ -6149,12 +6148,11 @@ fn t495_title_drag_in_preview_writes_pos() {
     h.drop_at(c + egui::vec2(40.0, 24.0));
     h.step();
 
-    let after = match kt_model::parse_gen_path(
-        &h.state().model.project().media.last().unwrap().path,
-    ) {
-        Some(GeneratorKind::Text { pos_x, pos_y, .. }) => (pos_x, pos_y),
-        _ => unreachable!(),
-    };
+    let after =
+        match kt_model::parse_gen_path(&h.state().model.project().media.last().unwrap().path) {
+            Some(GeneratorKind::Text { pos_x, pos_y, .. }) => (pos_x, pos_y),
+            _ => unreachable!(),
+        };
     assert!(
         after.0 > before.0 + 0.01 && after.1 > before.1 + 0.01,
         "драг обязан сдвинуть позицию: {before:?} -> {after:?}"
@@ -6230,10 +6228,7 @@ fn t503_gesture_frame_touches_no_media_paths() {
         h.step();
     }
     let builds = h.state().media_sync_builds - before;
-    assert!(
-        builds <= 60,
-        "карта путей пересобиралась чаще, чем менялась модель: {builds}"
-    );
+    assert!(builds <= 60, "карта путей пересобиралась чаще, чем менялась модель: {builds}");
     // состав медиа не менялся ни разу — источники трогать было незачем
     assert_eq!(h.state().player.worker_spawns(), 0, "жест уровня поднимал источники");
 }
@@ -6283,10 +6278,9 @@ fn t505_missing_font_warns_once() {
             *text = "a".repeat(i + 1);
         }
         let app = h.state_mut();
-        assert!(app.apply_coalesced(
-            Command::SetMediaPath { id, path: format_gen_path(&k) },
-            gesture
-        ));
+        assert!(
+            app.apply_coalesced(Command::SetMediaPath { id, path: format_gen_path(&k) }, gesture)
+        );
         h.step();
     }
     let added = h.state().notices.len() - notices;
@@ -9137,4 +9131,182 @@ fn t466_overlap_transition_reachable() {
     let t = &p.transitions[0];
     let w = t.window(p).expect("окно наложенного");
     assert_eq!((w.end - w.start).0, 20_000, "окно = зона перекрытия");
+}
+
+/// Тест 511 (Р.53, п.415): пикер вида ОДИН на оба окна, и смена вида
+/// роутит пользователя в нужное окно.
+///
+/// До этого пункта окно титра было тупиком: вид генератора в нём не
+/// показывался вовсе, и сменить титр обратно на цвет или градиент было
+/// нечем (правило 17 — парные способы одного действия ведут себя
+/// одинаково). Смена вида — СВОЙ шаг истории (правило 20): один Ctrl+Z
+/// возвращает титр со всем набранным текстом, а не откатывает заодно
+/// правку цвета.
+///
+/// Пикер щупается по РОЛИ: у `ComboBox` в accesskit нет label, показанный
+/// текст лежит в `value` — по подписи его не найти (родня заметки про
+/// `DragValue` в CLAUDE.md).
+#[test]
+fn t511_kind_picker_routes_between_windows() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{Queryable, by};
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    h.step();
+    h.step();
+    h.step();
+    let id = h.state().model.project().media.last().unwrap().id;
+    assert_eq!(h.state().title_editors.len(), 1, "титр открывается в своём окне");
+    assert!(h.state().generator_editors.is_empty());
+    let depth = h.state().model.undo_depth();
+
+    let text_name = crate::generator_editor::kind_name(&GeneratorKind::default_text());
+    let solid_name = crate::generator_editor::kind_name(&GeneratorKind::Solid {
+        color_r: 0,
+        color_g: 0,
+        color_b: 0,
+    });
+
+    // пикер вида ЕСТЬ в окне титра и показывает «Текст»
+    h.get(by().role(Role::ComboBox).value(text_name)).click();
+    h.step();
+    h.get_by_label(solid_name).click();
+    h.step();
+    h.step();
+
+    // следствие: вид сменился, титра больше нет, пользователь — в общем окне
+    let app = h.state();
+    assert_eq!(app.model.project().media.last().unwrap().path, "gen:solid");
+    assert!(app.title_editors.is_empty(), "окно титра осталось на не-титре");
+    assert_eq!(app.generator_editors.len(), 1, "смена вида не привела в общее окно");
+    assert_eq!(app.generator_editors[0].media, id, "окно открылось не на том медиа");
+    assert_eq!(app.model.undo_depth(), depth + 1, "смена вида — ровно один шаг истории");
+
+    // и обратно: «Текст» из общего окна уводит в окно титра
+    h.get(by().role(Role::ComboBox).value(solid_name)).click();
+    h.step();
+    h.get_by_label(text_name).click();
+    h.step();
+    h.step();
+    let app = h.state();
+    let path = app.model.project().media.last().unwrap().path.clone();
+    assert!(path.starts_with("gen:text"), "вид не вернулся в титр: {path}");
+    assert_eq!(app.title_editors.len(), 1, "«Текст» обязан привести в окно титра");
+    assert!(app.generator_editors.is_empty(), "общее окно осталось открытым на титре");
+}
+
+/// Тест 516 (Р.53, п.415): доля кадра ПОКАЗЫВАЕТСЯ процентом, а хранится
+/// долей. «Кегль 0.070» не говорит пользователю ничего; при этом ни
+/// формат, ни кривые, ни движок о процентах не знают — пересчёт живёт в
+/// одном месте (`widgets::param_value`).
+#[test]
+fn t516_frame_fractions_are_shown_in_percent() {
+    use eframe::egui::accesskit::Role;
+    use egui_kittest::kittest::{NodeT, Queryable, by};
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    h.step();
+    h.step();
+    h.step();
+
+    // объявление: кегль — процент, межстрочный интервал — множитель
+    let kind = GeneratorKind::default_text();
+    let spec = |n: &str| *kind.param_specs().iter().find(|s| s.name == n).unwrap();
+    assert_eq!(spec("size").unit, ParamUnit::Percent, "кегль обязан показываться процентом");
+    assert_eq!(spec("pos_x").unit, ParamUnit::Percent);
+    assert_eq!(spec("line_spacing").unit, ParamUnit::Ratio, "множитель процентом не бывает");
+
+    // следствие В ОКНЕ: поле кегля показывает «7.0 %», а не «0.07»
+    let shown: Vec<String> = h
+        .query_all(by().role(Role::SpinButton))
+        .filter_map(|n| n.accesskit_node().value().map(|v| v.to_string()))
+        .collect();
+    assert!(
+        shown.iter().any(|s| s == "7.0 %"),
+        "в окне титра нет поля кегля в процентах: {shown:?}"
+    );
+    assert!(
+        shown.iter().any(|s| s == "1.00"),
+        "множитель уехал в проценты вместе с долями: {shown:?}"
+    );
+
+    // и хранение осталось долей: путь пишет 0.125, а не 12.5
+    let mut k = GeneratorKind::default_text();
+    k.set_param("size", 0.125);
+    let path = format_gen_path(&k);
+    assert!(path.contains("s=0.125"), "в путь уехал процент вместо доли: {path}");
+}
+
+/// Тест 517 (Р.53, п.415): двойной клик по ПОДПИСИ возвращает параметру
+/// умолчание. Раньше «вернуть как было» требовало помнить число — у
+/// титра таких чисел одиннадцать.
+#[test]
+fn t517_double_click_on_label_resets_param() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    let mut kind = GeneratorKind::default_text();
+    kind.set_param("size", 0.3);
+    h.state_mut().create_generator(kind);
+    h.step();
+    h.step();
+    let id = h.state().model.project().media.last().unwrap().id;
+    let default_size = GeneratorKind::default_text().get_param("size").unwrap();
+
+    let label = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "size");
+    let rect = h.get_by_label(&label).rect();
+    double_click_at(&mut h, rect.center());
+    h.step();
+    h.step();
+
+    let path = h.state().model.project().source(id).map(|s| match s {
+        kt_model::Source::File(m) => m.path.clone(),
+        _ => String::new(),
+    });
+    let got = kt_model::parse_gen_path(path.as_deref().unwrap_or(""))
+        .and_then(|k| k.get_param("size"))
+        .expect("медиа обязано остаться титром");
+    assert!(
+        (got - default_size).abs() < 1e-9,
+        "двойной клик по подписи не вернул умолчание: {got} вместо {default_size}"
+    );
+}
+
+/// Тест 518 (Р.53, п.415): непарсящийся `gen:`-путь — ОШИБКА, а не
+/// молчание (правило 16), и подсказка общего виджета доезжает до строки
+/// состояния (правило 10: место показа одно).
+#[test]
+fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    h.step();
+    let id = h.state().model.project().media.last().unwrap().id;
+
+    // подсказка подписи параметра: наводим на неё и читаем СТРОКУ СОСТОЯНИЯ
+    let label = crate::widgets::param_label_scoped(kt_model::ParamScope::Generator, "size");
+    let rect = h.get_by_label(&label).rect();
+    h.hover_at(rect.center());
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().hover_hint.as_deref(),
+        Some(crate::i18n::tr(crate::i18n::k::fx::HINT_RESET)),
+        "подсказка общего виджета не доехала до строки состояния"
+    );
+
+    // вид новее сборки: окно уходит, но пользователь слышит почему
+    let notices = h.state().notices.len();
+    {
+        let app = h.state_mut();
+        let _ = app.apply(Command::SetMediaPath { id, path: "gen:from_the_future".into() });
+    }
+    h.step();
+    h.step();
+    let app = h.state();
+    assert!(app.title_editors.is_empty(), "окно осталось на непарсящемся пути");
+    assert!(app.notices.len() > notices, "непарсящийся путь закрыл окно МОЛЧА");
 }

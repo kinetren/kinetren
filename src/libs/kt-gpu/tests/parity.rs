@@ -83,11 +83,7 @@ impl Src {
             // серийный номер содержимого (Р.53, п.409): в продукте его
             // выдаёт BurstCache, здесь — хэш самих байт кадра, чтобы
             // разные кадры не делили текстуру в UploadCache
-            content: self
-                .frame
-                .as_ref()
-                .map(|f| xxhash_rust::xxh3::xxh3_64(&f.rgba))
-                .unwrap_or(0),
+            content: self.frame.as_ref().map(|f| xxhash_rust::xxh3::xxh3_64(&f.rgba)).unwrap_or(0),
             src_scale: self.src_scale,
             input: kt_engine::video_plan::LayerInput::Frame(self.frame.clone()),
             fx: std::borrow::Cow::Borrowed(&self.fx[..]),
@@ -710,7 +706,13 @@ fn t224_transition_parity_gpu_vs_cpu() {
         TransitionKind::Shake { amount: 0.5, steps: 12 },
         TransitionKind::Shake { amount: 1.0, steps: 3 },
         TransitionKind::FilmBurn { scale: 6.0, softness: 0.2, tint_r: 255, tint_g: 120, tint_b: 0 },
-        TransitionKind::FilmBurn { scale: 14.0, softness: 0.05, tint_r: 200, tint_g: 40, tint_b: 20 },
+        TransitionKind::FilmBurn {
+            scale: 14.0,
+            softness: 0.05,
+            tint_r: 200,
+            tint_g: 40,
+            tint_b: 20,
+        },
         TransitionKind::LightLeaks { strength: 0.6, tint_r: 255, tint_g: 90, tint_b: 40 },
         TransitionKind::LightLeaks { strength: 1.0, tint_r: 80, tint_g: 160, tint_b: 255 },
         TransitionKind::ZoomBlur { amount: 0.6, cx: 0.5, cy: 0.5 },

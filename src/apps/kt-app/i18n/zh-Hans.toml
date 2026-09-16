@@ -463,6 +463,7 @@ pitch_shift = "变调 音高 半音 pitch"
 
 # Редактор FX клипа.
 [fx]
+hint_reset = "双击标签可将参数复位"
 active_curve_hint = "活动曲线：点击图表空白处会为它添加关键帧"
 key_add_hint = "在光标处为活动曲线添加关键帧"
 key_before_hint = "在播放头之前打关键帧：锁定左侧曲线（Ctrl — 该槽的所有曲线）"
@@ -877,6 +878,8 @@ stay = "留在此处"
 
 # Окно генератора (Р.52): вид и параметры медиа без файла.
 [genw]
+hint_kind = "生成器类型；“文字”会打开字幕窗口"
+unknown_kind = "此版本不认识该生成器类型：{0}"
 title = "生成器"
 color_a = "颜色 A"
 color_b = "颜色 B"
@@ -899,6 +902,12 @@ timecode = "时间码"
 
 # Окно титра (Р.52 С3).
 [titlew]
+center = "居中"
+hint_order = "图层顺序：点击可与相邻图层交换"
+hint_center = "将字幕放到画面中心"
+hint_family = "字体家族；本机没有的将由内置字体替代"
+hint_text = "字幕文字；回车换行"
+order = "绘制顺序："
 family = "字体"
 font_missing = "本机没有字体“{0}”——已改用 Noto Sans"
 title = "字幕"

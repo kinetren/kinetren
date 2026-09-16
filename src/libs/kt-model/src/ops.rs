@@ -158,8 +158,7 @@ fn surviving_transitions(p: &Project, block_clips: &[ClipEvent]) -> Vec<Transiti
                     // блоке лежат той же «лесенкой»; окно проверит
                     // check_transition_full при вставке
                     let stag = a.start < b.start && b.start < a_end && a_end < b_end;
-                    return (stag && a_end - b.start >= MIN_TRANSITION_DURATION)
-                        .then(|| t.clone());
+                    return (stag && a_end - b.start >= MIN_TRANSITION_DURATION).then(|| t.clone());
                 }
             }
             let mut t = t.clone();

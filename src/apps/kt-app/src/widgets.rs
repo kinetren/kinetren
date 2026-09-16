@@ -24,6 +24,7 @@ fn unit_suffix(u: ParamUnit) -> &'static str {
         ParamUnit::Deg => "°",
         ParamUnit::Px => " px",
         ParamUnit::St => " st",
+        ParamUnit::Percent => " %",
         ParamUnit::None
         | ParamUnit::Norm
         | ParamUnit::Ratio
@@ -65,6 +66,94 @@ fn generator_param_label(name: &str) -> Option<&'static str> {
         "fps" => tr(k::genp::FPS),
         _ => return None,
     })
+}
+
+/// Пипетка цвета + поле HEX (Р.53, п.415). Канон пути — именно hex
+/// (`c=rrggbb`), и до этого пункта пользователь видел его в модели, но
+/// ввести не мог: egui-пикер hex-поля не содержит.
+///
+/// `alpha` — имя четвёртого компонента, если у цвета есть прозрачность.
+pub fn color_row<P: HasParams + ?Sized>(
+    ui: &mut egui::Ui,
+    label: &str,
+    f: &mut P,
+    names: [&str; 3],
+    alpha: Option<&str>,
+    probe: Option<&str>,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        let get = |n: &str| f.get_param(n).unwrap_or(0.0).round().clamp(0.0, 255.0) as u8;
+        let (r, g, b) = (get(names[0]), get(names[1]), get(names[2]));
+        let a = alpha.map(&get).unwrap_or(255);
+        let mut col = egui::Color32::from_rgba_unmultiplied(r, g, b, a);
+        let resp = match alpha {
+            Some(_) => ui.color_edit_button_srgba(&mut col),
+            None => {
+                let mut rgb = [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0];
+                let resp = ui.color_edit_button_rgb(&mut rgb);
+                col = egui::Color32::from_rgb(
+                    (rgb[0] * 255.0).round() as u8,
+                    (rgb[1] * 255.0).round() as u8,
+                    (rgb[2] * 255.0).round() as u8,
+                );
+                resp
+            }
+        };
+        if let Some(name) = probe {
+            field_probe::note(name, resp.rect);
+        }
+        if resp.changed() {
+            for (n, v) in names.iter().zip([col.r(), col.g(), col.b()]) {
+                f.set_param(n, v as f64);
+            }
+            if let Some(n) = alpha {
+                f.set_param(n, col.a() as f64);
+            }
+            changed = true;
+        }
+        // HEX-поле: показывает канон пути и принимает его же
+        let shown = match alpha {
+            Some(_) => format!("{:02x}{:02x}{:02x}{:02x}", col.r(), col.g(), col.b(), col.a()),
+            None => format!("{:02x}{:02x}{:02x}", col.r(), col.g(), col.b()),
+        };
+        let mut text = ui
+            .memory_mut(|m| m.data.get_temp::<String>(ui.id().with(("hex", names[0]))))
+            .unwrap_or_else(|| shown.clone());
+        if !ui.memory(|m| m.has_focus(ui.id().with(("hexedit", names[0])))) {
+            text = shown.clone();
+        }
+        let te = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .id(ui.id().with(("hexedit", names[0])))
+                .desired_width(72.0)
+                .char_limit(8),
+        );
+        if te.changed() {
+            let hex = text.trim().trim_start_matches('#');
+            let ok = hex.len() == names.len() * 2 || (alpha.is_some() && hex.len() == 8);
+            if ok
+                && hex.bytes().all(|b| b.is_ascii_hexdigit())
+                && let Ok(v) = u32::from_str_radix(hex, 16)
+            {
+                let (r, g, b, a) = if hex.len() == 8 {
+                    ((v >> 24) as u8, (v >> 16) as u8, (v >> 8) as u8, v as u8)
+                } else {
+                    ((v >> 16) as u8, (v >> 8) as u8, v as u8, 255)
+                };
+                for (n, x) in names.iter().zip([r, g, b]) {
+                    f.set_param(n, x as f64);
+                }
+                if let Some(n) = alpha {
+                    f.set_param(n, a as f64);
+                }
+                changed = true;
+            }
+            ui.memory_mut(|m| m.data.insert_temp(ui.id().with(("hex", names[0])), text.clone()));
+        }
+    });
+    changed
 }
 
 /// Подпись ФЛАГА (Р.53, п.414).
@@ -237,6 +326,26 @@ pub fn param_label(name: &str) -> String {
 
 /// Единый числовой контрол параметра. Диапазон, шаг и единица — из спеки.
 pub fn param_value(ui: &mut egui::Ui, spec: &ParamSpec, v: &mut f64) -> egui::Response {
+    // Доля, показываемая процентом (Р.53, п.415): пересчёт живёт ЗДЕСЬ и
+    // только здесь — в модели, в файле и в кривых значение остаётся долей.
+    if spec.unit == ParamUnit::Percent {
+        let mut pct = *v * 100.0;
+        let step = spec.step * 100.0;
+        let mut dv = egui::DragValue::new(&mut pct)
+            .range(spec.min * 100.0..=spec.max * 100.0)
+            .speed(step)
+            .suffix(" %");
+        if step >= 1.0 {
+            dv = dv.max_decimals(0);
+        } else {
+            dv = dv.max_decimals(1);
+        }
+        let r = ui.add(dv);
+        if r.changed() {
+            *v = pct / 100.0;
+        }
+        return r;
+    }
     let mut dv = egui::DragValue::new(v).range(spec.min..=spec.max).speed(spec.step);
     let suffix = unit_suffix(spec.unit);
     if !suffix.is_empty() {
@@ -403,6 +512,47 @@ pub(crate) mod field_probe {
     }
 }
 
+/// Подсказки из ЗАМЫКАНИЙ (Р.53, п.415). Правило 10 требует ровно одно
+/// место для подсказки — правый низ строки состояния, — но общие виджеты
+/// (`param_row_bound`, `color_row`) рисуются внутри `Window::show`, где
+/// `&mut KtApp` недоступен, а протаскивать накопитель через семь
+/// сигнатур значило бы менять все вызовы ради строки текста. Механизм
+/// тот же, что у `field_probe`: виджет кладёт, `KtApp` забирает в конце
+/// кадра.
+pub(crate) mod hint_sink {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static TEXT: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
+
+    pub(crate) fn put(text: &str) {
+        TEXT.with(|t| *t.borrow_mut() = Some(text.to_string()));
+    }
+
+    /// Забрать накопленное (зовётся `draw_status_hint` в конце кадра).
+    pub(crate) fn take() -> Option<String> {
+        TEXT.with(|t| t.borrow_mut().take())
+    }
+}
+
+/// Подсказка у виджета, нарисованного в замыкании.
+pub fn hint(r: &egui::Response, text: &str) {
+    if r.hovered() {
+        hint_sink::put(text);
+    }
+}
+
+/// Подпись параметра — КЛИКАБЕЛЬНАЯ: двойной клик сбрасывает параметр к
+/// умолчанию спеки (Р.53, п.415). «Вернуть как было» не должно требовать
+/// от пользователя помнить число; подсказка об этом висит на самой
+/// подписи, а значит находится там же, где и жест.
+fn param_label_widget(ui: &mut egui::Ui, text: impl Into<egui::RichText>) -> bool {
+    let r = ui.add(egui::Label::new(text.into()).sense(egui::Sense::click()));
+    hint(&r, tr(k::fx::HINT_RESET));
+    r.double_clicked()
+}
+
 /// Та же строка, но знающая про кривые.
 ///
 /// Правило одно: **поле правит ровно то, что показывает.**
@@ -422,22 +572,22 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     // кегль, а не зерно эффекта Noise
     let label = param_label_scoped(f.params_scope(), spec.name);
     let Some(bind) = bind else {
-        ui.label(label);
-        let mut v = base;
+        let reset = param_label_widget(ui, label);
+        let mut v = if reset { spec.default } else { base };
         let r = param_value(ui, spec, &mut v);
         field_probe::note(spec.name, r.rect);
-        if r.changed() {
+        if r.changed() || reset {
             f.set_param(spec.name, v);
             return ParamsChanged::base();
         }
         return none;
     };
     let Some(ci) = bind.index_of(spec.name) else {
-        ui.label(label);
-        let mut v = base;
+        let reset = param_label_widget(ui, label);
+        let mut v = if reset { spec.default } else { base };
         let r = param_value(ui, spec, &mut v);
         field_probe::note(spec.name, r.rect);
-        if r.changed() {
+        if r.changed() || reset {
             f.set_param(spec.name, v);
             return ParamsChanged::base();
         }
@@ -449,12 +599,15 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
         Some((c, k)) if c == ci && k < bind.curves[ci].keys.len() => Some(k),
         _ => None,
     };
-    ui.label(egui::RichText::new(label).color(crate::automation::curve_color(ci)));
+    let reset = param_label_widget(
+        ui,
+        egui::RichText::new(label).color(crate::automation::curve_color(ci)),
+    );
     let c = &mut bind.curves[ci];
-    let mut v = bound_value(c, key, bind.at);
+    let mut v = if reset { spec.default } else { bound_value(c, key, bind.at) };
     let r = param_value(ui, spec, &mut v);
     field_probe::note(spec.name, r.rect);
-    if r.changed() {
+    if r.changed() || reset {
         bound_apply(c, key, bind.at, v);
         // правка ушла в КРИВУЮ — значит и команда обязана быть SetFxAuto
         return ParamsChanged::curve();

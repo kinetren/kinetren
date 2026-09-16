@@ -12,8 +12,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::project::{
-    flags_for, fx_cast, params_for, FlagSpec, HasParams, ParamKind, ParamScope, ParamSpec,
-    ParamUnit,
+    FlagSpec, HasParams, ParamKind, ParamScope, ParamSpec, ParamUnit, flags_for, fx_cast,
+    params_for,
 };
 
 /// Вид генератора с параметрами. Serde-представление (internally tagged
@@ -311,7 +311,15 @@ impl GeneratorKind {
                 br_g: 255,
                 br_b: 255,
             },
-            GeneratorKind::Checker { cols: 8, a_r: 0, a_g: 0, a_b: 0, b_r: 255, b_g: 255, b_b: 255 },
+            GeneratorKind::Checker {
+                cols: 8,
+                a_r: 0,
+                a_g: 0,
+                a_b: 0,
+                b_r: 255,
+                b_g: 255,
+                b_b: 255,
+            },
             GeneratorKind::NoiseField { amount: 1.0, mono: true },
             GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 },
             GeneratorKind::Timecode { fps: 30 },
@@ -387,18 +395,21 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, {
     },
     // числовые параметры титра; текст/семья/выравнивание/цвета — не
     // спеки (свои контролы окна, «законное исключение» F-TXT-001)
+    // всё, что в ДОЛЯХ КАДРА, показывается процентами (Р.53, п.415):
+    // хранение не меняется, читаемость меняется целиком. `line_spacing`
+    // и `plate_pad_*` — доли СВОЕЙ высоты текста, это множители.
     Text {
-        size: f64, 0.005, 0.5, 0.07, 0.001, Norm, Smooth;
+        size: f64, 0.005, 0.5, 0.07, 0.001, Percent, Smooth;
         line_spacing: f64, 0.5, 3.0, 1.0, 0.05, Ratio, Smooth;
-        tracking: f64, -0.05, 0.5, 0.0, 0.005, Norm, Smooth;
-        pos_x: f64, 0.0, 1.0, 0.5, 0.001, Norm, Smooth;
-        pos_y: f64, 0.0, 1.0, 0.5, 0.001, Norm, Smooth;
-        stroke_w: f64, 0.0, 0.25, 0.0, 0.005, Norm, Smooth;
-        shadow_dx: f64, -0.5, 0.5, 0.04, 0.005, Norm, Smooth;
-        shadow_dy: f64, -0.5, 0.5, 0.04, 0.005, Norm, Smooth;
-        shadow_blur: f64, 0.0, 0.5, 0.06, 0.005, Norm, Smooth;
-        plate_pad_x: f64, 0.0, 2.0, 0.25, 0.01, Norm, Smooth;
-        plate_pad_y: f64, 0.0, 2.0, 0.12, 0.01, Norm, Smooth;
+        tracking: f64, -0.05, 0.5, 0.0, 0.005, Percent, Smooth;
+        pos_x: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
+        pos_y: f64, 0.0, 1.0, 0.5, 0.001, Percent, Smooth;
+        stroke_w: f64, 0.0, 0.25, 0.0, 0.005, Percent, Smooth;
+        shadow_dx: f64, -0.5, 0.5, 0.04, 0.005, Percent, Smooth;
+        shadow_dy: f64, -0.5, 0.5, 0.04, 0.005, Percent, Smooth;
+        shadow_blur: f64, 0.0, 0.5, 0.06, 0.005, Percent, Smooth;
+        plate_pad_x: f64, 0.0, 2.0, 0.25, 0.01, Ratio, Smooth;
+        plate_pad_y: f64, 0.0, 2.0, 0.12, 0.01, Ratio, Smooth;
     },
     Gradient {
         angle_deg: f64, 0.0, 360.0, 90.0, 1.0, Deg, Smooth;
@@ -584,8 +595,7 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
             if *pos_y != 0.5 {
                 push("py", f(pos_y));
             }
-            let rgba =
-                |r: &u8, g: &u8, b: &u8, a: &u8| format!("{r:02x}{g:02x}{b:02x}{a:02x}");
+            let rgba = |r: &u8, g: &u8, b: &u8, a: &u8| format!("{r:02x}{g:02x}{b:02x}{a:02x}");
             if (*fill_r, *fill_g, *fill_b, *fill_a) != (255, 255, 255, 255) {
                 push("c", rgba(fill_r, fill_g, fill_b, fill_a));
             }

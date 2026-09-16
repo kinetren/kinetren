@@ -1282,8 +1282,7 @@ impl Inner {
             return Err(GpuExecError::TooLarge { w: mw, h: mh });
         }
         let has_alpha = if ha_known { ha } else { frame.has_alpha };
-        let view =
-            self.upload.get_or_upload(&self.device, &self.queue, src.content, frame);
+        let view = self.upload.get_or_upload(&self.device, &self.queue, src.content, frame);
         let fits = (fw, fh) == (ow, oh);
         Ok(Some((
             ChainSpec {
