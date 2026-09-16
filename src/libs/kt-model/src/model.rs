@@ -340,6 +340,77 @@ pub enum Command {
     },
 }
 
+impl Command {
+    /// Меняет ли команда то, что СЧИТАЮТ рендереры (Р.53, п.412).
+    ///
+    /// Закон П: путь медиа — свойство ИСТОЧНИКА, а не плана. Рендереры
+    /// знают только `MediaId`, поэтому `SetMediaPath` не имеет права
+    /// клонировать проект и пересобирать графы: его адресат — воркер
+    /// этого медиа (`Player::retune_media`). До этого пункта каждое
+    /// нажатие клавиши в поле титра останавливало аудио-render-поток.
+    ///
+    /// Match ИСЧЕРПЫВАЮЩИЙ и без `_ =>`: новая команда не соберётся,
+    /// пока не ответили, трогает ли она план. Прецедент того же рода —
+    /// `on_region_changed` без `set_project` (Р.43 п.296, сторож t286).
+    pub fn touches_render_plan(&self) -> bool {
+        match self {
+            Command::SetMediaPath { .. } => false,
+            Command::NoteBirth { .. }
+            | Command::AddMedia { .. }
+            | Command::AddClip(_)
+            | Command::RemoveClip { .. }
+            | Command::MoveClip { .. }
+            | Command::TrimStart { .. }
+            | Command::TrimEnd { .. }
+            | Command::Split { .. }
+            | Command::SetTrimStretchesAuto { .. }
+            | Command::SetGain { .. }
+            | Command::SetOpacity { .. }
+            | Command::SetFxOff { .. }
+            | Command::SetReversed { .. }
+            | Command::SetFxBypass { .. }
+            | Command::SetFx { .. }
+            | Command::SetFxAuto { .. }
+            | Command::LinkClips { .. }
+            | Command::UnlinkClip { .. }
+            | Command::AddTransition(_)
+            | Command::RemoveTransition { .. }
+            | Command::SetTransition(_)
+            | Command::AddMarker { .. }
+            | Command::RemoveMarker { .. }
+            | Command::SetMarkerName { .. }
+            | Command::MoveMarker { .. }
+            | Command::SetMarkerDuration { .. }
+            | Command::InsertLane { .. }
+            | Command::SetLanes { .. }
+            | Command::RemoveMedia { .. }
+            | Command::SetSettings { .. }
+            | Command::AddMorpher(_)
+            | Command::RemoveMorpher { .. }
+            | Command::SetMorpher(_)
+            | Command::BakeMorpher { .. }
+            | Command::SetLaneOrder { .. }
+            | Command::AddArea(_)
+            | Command::RemoveArea { .. }
+            | Command::RenameArea { .. }
+            | Command::SetAreaRange { .. }
+            | Command::SetAreaLanes { .. }
+            | Command::InsertMorphLane { .. }
+            | Command::RemoveMorphLane { .. }
+            | Command::AddCamera(_)
+            | Command::SetCamera(_)
+            | Command::RemoveCamera { .. }
+            | Command::InsertCameraLane { .. }
+            | Command::RemoveCameraLane { .. }
+            | Command::AddSequence { .. }
+            | Command::RemoveSequence { .. }
+            | Command::RenameSequence { .. }
+            | Command::SetSequenceContent { .. }
+            | Command::SetClipMedia { .. } => true,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum CommandError {
     #[error("clip {0:?} not found")]

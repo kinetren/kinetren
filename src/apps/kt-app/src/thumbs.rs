@@ -90,6 +90,12 @@ impl<V> SourceLru<V> {
         }
         self.map.get_mut(&id)
     }
+    /// Выбросить источник (Р.53, п.412): его параметры перенастроены, и
+    /// держать открытым старый — значит рисовать старые тумбы.
+    pub fn remove(&mut self, id: MediaId) {
+        self.map.remove(&id);
+        self.order.retain(|k| *k != id);
+    }
     pub fn insert(&mut self, id: MediaId, v: V) {
         self.map.insert(id, v);
         self.order.retain(|k| *k != id);
@@ -142,6 +148,10 @@ struct Shared {
     /// ЖИВАЯ карта медиа: пополняется при добавлении файлов (п.3 — раньше
     /// карта замораживалась при старте и новые медиа не получали тумбы).
     media: Mutex<HashMap<MediaId, String>>,
+    /// Медиа, чей ОТКРЫТЫЙ источник воркер обязан выбросить (Р.53,
+    /// п.412): после перенастройки параметров генератора его `SourceLru`
+    /// держал бы источник со старыми параметрами и рисовал старые тумбы.
+    drop_sources: Mutex<HashSet<MediaId>>,
 }
 
 pub struct ThumbService {
@@ -162,6 +172,7 @@ impl ThumbService {
             poster_jobs: Mutex::new(std::collections::VecDeque::new()),
             kinds: Mutex::new(HashMap::new()),
             media: Mutex::new(HashMap::new()),
+            drop_sources: Mutex::new(HashSet::new()),
         });
         let media: HashMap<MediaId, String> = {
             let base = project_path.as_deref().and_then(|p| p.parent().map(|b| b.to_path_buf()));
@@ -199,6 +210,22 @@ impl ThumbService {
     pub fn invalidate_media(&self, id: MediaId) {
         self.shared.durations.lock().unwrap().remove(&id);
         self.shared.failed.lock().unwrap().retain(|k| k.media != id);
+    }
+
+    /// Медиа осталось тем же, а КАРТИНКА изменилась (Р.53, п.412:
+    /// перенастроены параметры генератора). Негативных кэшей мало —
+    /// протухли и ГОТОВЫЕ тумбы, и постер, и вид медиа, и открытый
+    /// источник в воркере: ключ `ThumbKey{media,t}` от параметров не
+    /// зависит, поэтому карточка показывала бы старый кадр (Б5).
+    pub fn retune_media(&self, id: MediaId, resolved_path: String) {
+        self.shared.media.lock().unwrap().insert(id, resolved_path);
+        self.shared.ready.lock().unwrap().retain(|k, _| k.media != id);
+        self.shared.order.lock().unwrap().retain(|k| k.media != id);
+        self.shared.posters.lock().unwrap().remove(&id);
+        self.shared.kinds.lock().unwrap().remove(&id);
+        self.shared.drop_sources.lock().unwrap().insert(id);
+        self.invalidate_media(id);
+        self.shared.cond.notify_all();
     }
 
     pub fn request(&self, key: ThumbKey) {
@@ -281,6 +308,16 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
     let mut sources: SourceLru<Box<dyn kt_media::MediaSource>> = SourceLru::new(MAX_OPEN_SOURCES);
     let mut db_ids: HashMap<MediaId, i64> = HashMap::new();
     loop {
+        // выбросить источники, чьи параметры перенастроены (п.412):
+        // иначе воркер продолжит рисовать старым GeneratorSource
+        {
+            let dropped: Vec<MediaId> =
+                shared.drop_sources.lock().unwrap().drain().collect();
+            for id in dropped {
+                sources.remove(id);
+                db_ids.remove(&id);
+            }
+        }
         // condvar вместо 33 пробуждений/с на пустой очереди (п.1);
         // probe-заявки будят цикл и БЕЗ ключей в очереди (п.1 р.7 —
         // иначе они голодают, когда failed-фильтр опустошает очередь)

@@ -5865,6 +5865,30 @@ fn t356_repeated_notice_still_marks_unread() {
     assert!(h.state().dirty_content, "после ошибки записи звёздочка обязана остаться");
 }
 
+/// Пиксель кадра, который ЖИВОЙ источник плеера отдаёт прямо сейчас
+/// (Р.53): проверка «правка доехала до картинки», а не только до модели.
+/// Ходит тем же путём, что превью: воркер → кэш.
+pub(crate) fn generator_pixel(
+    h: &egui_kittest::Harness<'_, crate::app::KtApp>,
+    id: kt_model::MediaId,
+) -> Option<[u8; 3]> {
+    let app = h.state();
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let idx = kt_engine::video::video_cache_idx(kt_time::Tick(0));
+    let sid = kt_engine::source_id(id);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        app.player.request_video(id, kt_time::Tick(0), q);
+        if let Some(f) = app.player.cache.get_video(sid, Some(q), idx) {
+            return Some([f.rgba[0], f.rgba[1], f.rgba[2]]);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 /// Тест 477 (Р.52): «Создать генератор» — медиа без файла появляется в
 /// модели и в сервисах: путь канонический, источник поднят, карточка
 /// бина получает вид «видео без аудио» и «длительности нет», окно
@@ -5908,10 +5932,15 @@ fn t477_create_generator_from_bin() {
     assert_eq!(h.state().media_paths.get(&id).map(String::as_str), Some("gen:solid:c=ff8800"));
 }
 
-/// Тест 478 (Р.52, стиль t281/t227): правка цвета в живой сессии окна
-/// доезжает и до МОДЕЛИ, и до ИСТОЧНИКА плеера (sync_media_sources);
+/// Тест 478 (Р.52, усилен в Р.53 п.412): правка цвета в живой сессии
+/// окна доезжает до МОДЕЛИ, до ИСТОЧНИКА плеера и до КАРТИНКИ;
 /// «Отмена» возвращает backup; вся сессия — ОДИН шаг undo, и undo тоже
-/// пересоздаёт источник (иначе картинка отстала бы от модели).
+/// доезжает до картинки.
+///
+/// Утверждение «источник ПЕРЕСОЗДАН» заменено на «картинка новая»
+/// намеренно и с решения владельца (Р.53): пересоздание потока было
+/// ценой, а не целью — теперь источник перенастраивается на месте
+/// (t500), а проверять надо следствие, которое видит человек.
 #[test]
 fn t478_generator_edit_reaches_model_and_source() {
     use kt_model::*;
@@ -5930,11 +5959,17 @@ fn t478_generator_edit_reaches_model_and_source() {
     }
     let app = h.state();
     assert_eq!(app.model.project().media.last().unwrap().path, "gen:solid:c=ff8800");
-    // источник плеера пересоздан: снимок синка догнал модель
+    // источник плеера догнал модель (перенастройкой, а не пересозданием)
     assert_eq!(app.media_paths.get(&id).map(String::as_str), Some("gen:solid:c=ff8800"));
     assert_eq!(app.model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
+    // ...и до КАРТИНКИ: источник плеера отдаёт кадр НОВОГО цвета
+    assert_eq!(
+        crate::layout_tests::generator_pixel(&h, id),
+        Some([255, 136, 0]),
+        "правка обязана доехать до картинки, а не только до модели"
+    );
 
-    // undo возвращает и модель, и источник (хук в undo, а не только в apply)
+    // undo возвращает и модель, и картинку (хук в undo, а не только в apply)
     h.state_mut().undo();
     h.step();
     let app = h.state();
@@ -5942,7 +5977,12 @@ fn t478_generator_edit_reaches_model_and_source() {
     assert_eq!(
         app.media_paths.get(&id).map(String::as_str),
         Some("gen:solid"),
-        "undo обязан пересоздать источник — иначе картинка отстаёт от модели"
+        "undo обязан догнать источник — иначе картинка отстаёт от модели"
+    );
+    assert_eq!(
+        crate::layout_tests::generator_pixel(&h, id),
+        Some([0, 0, 0]),
+        "undo обязан доехать до картинки"
     );
 
     // «Отмена» окна: команда backup тем же gesture + окно закрывается;
@@ -6123,6 +6163,52 @@ fn t495_title_drag_in_preview_writes_pos() {
         h.state().model.undo_depth(),
         depth,
         "драг пишет тем же gesture, что сессия окна, — новых шагов истории нет"
+    );
+}
+
+/// Тест 502 (Р.53, п.412): сессия правки генератора НЕ пересоздаёт
+/// источник и НЕ пересобирает рендереры. Тридцать правок цвета — ровно
+/// столько, сколько даёт секунда драга пипетки: до этого пункта каждая
+/// гасила и поднимала поток декодера и дважды пересобирала графы, а на
+/// игре это гарантированные провалы звука (претензия владельца Р.53).
+#[test]
+fn t502_generator_edit_does_not_respawn_source() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 });
+    h.step();
+    let id = h.state().model.project().media.last().unwrap().id;
+    let gesture = h.state().generator_editors[0].gesture;
+    let spawns = h.state().player.worker_spawns();
+    let pver = h.state().player.project_version();
+
+    for i in 0..30u8 {
+        let path = format!("gen:solid:c={i:02x}{i:02x}{i:02x}");
+        let app = h.state_mut();
+        assert!(app.apply_coalesced(Command::SetMediaPath { id, path }, gesture));
+        h.step();
+    }
+
+    let app = h.state();
+    assert_eq!(
+        app.player.worker_spawns(),
+        spawns,
+        "поток декодера пересоздавался на каждую правку параметров"
+    );
+    assert_eq!(
+        app.player.project_version(),
+        pver,
+        "рендереры пересобирались: SetMediaPath план не трогает (закон П)"
+    );
+    assert_eq!(
+        app.media_paths.get(&id).map(String::as_str),
+        Some("gen:solid:c=1d1d1d"),
+        "снимок синка обязан догнать модель"
+    );
+    assert_eq!(
+        crate::layout_tests::generator_pixel(&h, id),
+        Some([0x1d, 0x1d, 0x1d]),
+        "последняя правка обязана доехать до картинки"
     );
 }
 

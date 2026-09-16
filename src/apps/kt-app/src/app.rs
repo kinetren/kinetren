@@ -3122,11 +3122,19 @@ impl KtApp {
     /// Ошибку не показываем: путь живой, команда шлётся каждый кадр драга, и
     /// плашка на каждый кадр была бы шумом — жест просто не двигается дальше.
     pub fn apply_coalesced(&mut self, cmd: Command, gesture: u64) -> bool {
+        // Закон П (Р.53, п.412): команда, не трогающая план, не имеет
+        // права клонировать проект и пересобирать графы. Правка
+        // параметров генератора — это `SetMediaPath`, её адресат воркер
+        // этого медиа, а не рендереры (иначе каждое нажатие клавиши в
+        // поле титра останавливало бы аудио-render-поток).
+        let touches_plan = cmd.touches_render_plan();
         if self.model.apply_coalesced(cmd, gesture).is_err() {
             return false;
         }
         self.model_rev += 1;
-        self.player.set_project(self.model.document());
+        if touches_plan {
+            self.player.set_project(self.model.document());
+        }
         self.sync_media_sources();
         self.dirty_content = true;
         true
@@ -3299,6 +3307,20 @@ impl KtApp {
                 continue;
             }
             let resolved = resolve_media_path(base.as_deref(), path);
+            // ПЕРЕНАСТРОЙКА НА МЕСТЕ (Р.53, п.412): у генератора смена
+            // параметров — не подмена файла. Поток декодера остаётся
+            // жить, рендереры целы; кадры старых параметров выбрасывает
+            // сам воркер. Паспорт источника при этом меняться не может —
+            // за этим следит предикат фабрики (t499).
+            if let Some(old) = known.as_deref()
+                && kt_media::factory::can_retune(old, path)
+                && self.player.retune_media(*id, path)
+            {
+                self.player.set_media_path(*id, path);
+                self.note_missing_title_font(path);
+                self.thumbs.retune_media(*id, resolved);
+                continue;
+            }
             let label = crate::util::media_label(path);
             let (src, err) =
                 crate::util::open_source_or_placeholder(&resolved, db.as_deref(), &label);

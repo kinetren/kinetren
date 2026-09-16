@@ -543,6 +543,21 @@ impl Player {
         true
     }
 
+    /// Попросить кадр у воркера напрямую (Р.53): тот же продуктовый
+    /// путь, что у `compose_preview_into`, но без композита — нужен
+    /// диагностике и харнесс-тестам, которые проверяют «правка доехала
+    /// до картинки».
+    pub fn request_video(&self, media: kt_model::MediaId, pts: Tick, q: Quality) {
+        let step = self.video.lock().unwrap().grid.frame_step();
+        if let Some(w) = self.workers.read().unwrap().get(&media) {
+            w.submit(DecodeRequest {
+                kind: RequestKind::video_on_grid(pts, Some(q), step),
+                prio: Priority::Playback,
+                generation: self.transport.generation(),
+            });
+        }
+    }
+
     pub fn content_version(&self) -> u64 {
         self.content_version.load(Ordering::Acquire)
     }
