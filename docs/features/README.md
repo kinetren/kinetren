@@ -147,7 +147,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | `help/` | HLP | подсказки, справка, обучение, документация | 33 / 33 |
 | `resilience/` | RES | сохранность работы, восстановление, поведение под нагрузкой и на чужом железе | 12 / 12 |
 | `collab/` | COL | работа не в одиночку: занять, свести, сказать про кадр, отдать, раздать материал, передать счёт, зависеть от чужой стороны | 45 / 45 |
-| `compositing/` | CMP | как кадр становится кадром: конкатенация трансформов, качество ресемплинга, разрешение промежуточных стадий | 1 / 1 |
+| `compositing/` | CMP | как кадр становится кадром: конкатенация трансформов, качество ресемплинга, разрешение промежуточных стадий, словарь переходов | 2 / 2 |
 | `fx/` | FX | видео-эффекты клипа: стилизация, искажения, размытия, 3D-трансформы | 4 / 4 |
 
 Подкатегория — стабильная таксономия, объявленная здесь; она не создаётся и не
@@ -210,7 +210,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-TL-001 | Ripple — правка со сдвигом всего, что правее | кандидат | A | L | нет | `timeline/trimming/ripple-delete.md` |
 | F-TXT-001 | Текст в кадре: титры, подписи, нижние трети | кандидат | A | L | нет | `titles/text/text-generator.md` |
 | F-CMP-001 | Конкатенация трансформов | сделано | A | XL | да | `compositing/transforms/transform-concatenation.md` |
-| F-TL-004 | Вложенные секвенции — монтаж, который ведёт себя как клип | кандидат | A | XL | нет | `timeline/structure/nested-sequences.md` |
+| F-TL-004 | Вложенные секвенции — монтаж, который ведёт себя как клип | сделано | A | XL | да | `timeline/structure/nested-sequences.md` |
 | F-AUD-011 | Distortion / сатурация и Bitcrusher | сделано | B | S | да | `audio/processing/distortion-and-bitcrush.md` |
 | F-AUD-012 | Stereo Width (mid/side-ширина) | сделано | B | S | да | `audio/processing/stereo-width.md` |
 | F-COL-002 | Служебное рядом с проектом — кэш, индекс и замок на общем диске | кандидат | B | S | частично | `collab/assets/sidecar-on-a-share.md` |
@@ -315,6 +315,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-UI-005 | Цвет клипа как данные и как оформление | кандидат | B | M | частично | `ui/viewer/clip-colors-and-legibility.md` |
 | F-AUD-003 | Шумоподавление и восстановление речи | кандидат | B | L | нет | `audio/processing/noise-reduction.md` |
 | F-AUD-013 | Pitch shift — высота без смены длительности | сделано | B | L | да | `audio/processing/pitch-shift.md` |
+| F-CMP-002 | Словарь переходов: инверсия, узоры, объём | принято | B | L | частично | `compositing/transitions/transition-vocabulary.md` |
 | F-COL-010 | Ручки: сколько лишнего уезжает с монтажом | кандидат | B | L | нет | `collab/handoff/handles.md` |
 | F-COL-016 | Единица занятия — библиотека, бин или секвенция | исследовано | B | L | нет | `collab/claim/lock-granularity.md` |
 | F-COL-033 | Чем адресуется правка: id, тик или родословная | исследовано | B | L | частично | `collab/merge/identity-of-an-edit.md` |
