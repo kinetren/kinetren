@@ -5966,6 +5966,102 @@ fn t478_generator_edit_reaches_model_and_source() {
     assert!(!h.state().media_paths.contains_key(&id), "источник мёртвого медиа снят");
 }
 
+/// Тест 487 (Р.52 С3): у титра СВОЁ окно — все входы генераторов
+/// маршрутизируются в него; правка текста через сессию окна доезжает до
+/// модели каноническим путём и схлопывается в один шаг undo; окно
+/// умирает вместе с медиа.
+#[test]
+fn t487_title_editor_routes_and_edits() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    h.step();
+    let app = h.state();
+    assert_eq!(app.title_editors.len(), 1, "титру положено СВОЁ окно");
+    assert!(app.generator_editors.is_empty(), "общее окно генератора не открывается для титра");
+    let id = app.model.project().media.last().unwrap().id;
+    let gesture = app.title_editors[0].gesture;
+    let depth = app.model.undo_depth();
+
+    // сессия окна: набранный текст уезжает каноническим gen:text-путём
+    let mut kind = kt_model::parse_gen_path(&h.state().model.project().media.last().unwrap().path)
+        .expect("титр парсится");
+    if let GeneratorKind::Text { text, .. } = &mut kind {
+        *text = "Привет,\nтитр!".into();
+    }
+    let path = format_gen_path(&kind);
+    {
+        let app = h.state_mut();
+        assert!(app.apply_coalesced(Command::SetMediaPath { id, path: path.clone() }, gesture));
+    }
+    h.step();
+    let app = h.state();
+    assert_eq!(app.model.project().media.last().unwrap().path, path);
+    assert_eq!(
+        kt_model::parse_gen_path(&path),
+        Some(kind),
+        "текст пережил путь лослесс (экранирование)"
+    );
+    assert_eq!(app.model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
+    assert_eq!(app.media_paths.get(&id).map(String::as_str), Some(path.as_str()));
+
+    // повторное открытие — то же окно
+    h.state_mut().open_generator_editor(id);
+    assert_eq!(h.state().title_editors.len(), 1);
+
+    // медиа умерло — окно ушло
+    {
+        let app = h.state_mut();
+        let _ = app.apply(Command::RemoveMedia { id });
+    }
+    h.step();
+    assert!(h.state().title_editors.is_empty(), "окно мёртвого титра обязано закрыться");
+}
+
+/// Тест 488 (Р.52 С3, правило UI 11): «глифа нет» — видимый ответ.
+/// Кириллица/латиница полного вендоренного шрифта чисты; CJK-символ
+/// называется кодпоинтом и счётчиком остальных.
+#[test]
+fn t488_missing_glyph_warning() {
+    use kt_model::GeneratorKind;
+    let mut k = GeneratorKind::default_text();
+    let set = |k: &mut GeneratorKind, s: &str| {
+        if let GeneratorKind::Text { text, .. } = k {
+            *text = s.into();
+        }
+    };
+    set(&mut k, "Привет, Kinotrain! ёЁ №5");
+    assert_eq!(crate::title_editor::title_warning(&k), None, "кириллица покрыта");
+    set(&mut k, "до 漢字 после");
+    let warn = crate::title_editor::title_warning(&k).expect("CJK непокрыт — ответ обязан быть");
+    assert!(warn.contains("U+5B57") || warn.contains("U+6F22"), "{warn}");
+    assert!(warn.contains("+1"), "счётчик остальных: {warn}");
+    set(&mut k, "");
+    assert_eq!(crate::title_editor::title_warning(&k), None);
+}
+
+/// Тест 489 (Р.52 С3): safe-зоны — 5 % и 10 % от кадра превью, видны
+/// ровно пока открыто окно титра.
+#[test]
+fn t489_safe_zones_follow_title_window() {
+    use kt_model::GeneratorKind;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    assert!(!h.state().show_safe_zones(), "без окна титра зоны не рисуются");
+    h.state_mut().create_generator(GeneratorKind::default_text());
+    h.step();
+    assert!(h.state().show_safe_zones(), "окно титра включает зоны");
+    let img = egui::Rect::from_min_max(egui::pos2(100.0, 200.0), egui::pos2(300.0, 300.0));
+    let [action, title] = crate::app::safe_zone_rects(img);
+    assert_eq!(action.min, egui::pos2(110.0, 205.0));
+    assert_eq!(action.max, egui::pos2(290.0, 295.0));
+    assert_eq!(title.min, egui::pos2(120.0, 210.0));
+    assert_eq!(title.max, egui::pos2(280.0, 290.0));
+    // окно закрыли — зоны ушли
+    h.state_mut().title_editors[0].open = false;
+    h.step();
+    assert!(!h.state().show_safe_zones());
+}
+
 /// Тест 227 (Р.33 С4): у перехода появилось окно свойств. Двойной клик по
 /// его окну на полосе открывает редактор, вид меняется пикером и сразу
 /// уезжает в модель, «Отмена» возвращает прежний.

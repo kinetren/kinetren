@@ -1,0 +1,248 @@
+//! Окно ТИТРА (Р.52 С3, F-TXT-001): текст, начертание, выравнивание,
+//! якорь и слои оформления (F-TXT-005). Правит МЕДИА (`SetMediaPath`),
+//! как окно генератора, — титр «gen:text» и есть генератор, просто с
+//! собственным окном: строку и цвета `ParamSpec` не выражает («первое
+//! законное исключение» из правила param_row), числа — та же
+//! `params_grid`. «Отмена» = backup тем же gesture = один undo-шаг.
+//! Содержимое `TextEdit` НЕ переупорядочивается bidi (правило
+//! «Локализация»), при закрытии окна фокус ОТДАЁТСЯ (правило 14).
+
+use crate::app::KtApp;
+use crate::i18n::{k, tr};
+use crate::widgets;
+use eframe::egui;
+use kt_model::{Command, GeneratorKind, MediaId, TextAlign, TextAnchor};
+
+pub struct TitleEditor {
+    pub media: MediaId,
+    pub backup_path: String,
+    pub gesture: u64,
+    pub open: bool,
+}
+
+/// Предупреждение «глифа нет» для текущего текста (правило UI 11: t100
+/// проверяет каталоги, а текст титра приходит от пользователя — ответ
+/// обязан быть видимым, тофу в кадре — допустимым, молчание — нет).
+pub fn title_warning(kind: &GeneratorKind) -> Option<String> {
+    let GeneratorKind::Text { text, family, bold, .. } = kind else { return None };
+    let style = if *bold { kt_text::FaceStyle::Bold } else { kt_text::FaceStyle::Regular };
+    let missing = kt_text::uncovered(text, family, style);
+    let first = *missing.first()?;
+    Some(crate::tf!(
+        k::titlew::MISSING,
+        format!("«{first}» U+{:04X}", first as u32),
+        missing.len().saturating_sub(1)
+    ))
+}
+
+impl KtApp {
+    pub fn open_title_editor(&mut self, media: MediaId) {
+        if let Some(ed) = self.title_editors.iter_mut().find(|e| e.media == media) {
+            ed.open = true;
+            return;
+        }
+        let Some(kt_model::Source::File(m)) = self.model.project().source(media) else {
+            return;
+        };
+        let path = m.path.clone();
+        if !matches!(kt_model::parse_gen_path(&path), Some(GeneratorKind::Text { .. })) {
+            return;
+        }
+        self.gesture_counter += 1;
+        self.title_editors.push(TitleEditor {
+            media,
+            backup_path: path,
+            gesture: self.gesture_counter,
+            open: true,
+        });
+    }
+
+    pub fn draw_title_editors(&mut self, ctx: &egui::Context) {
+        let mut editors = std::mem::take(&mut self.title_editors);
+        for ed in &mut editors {
+            self.draw_one_title_editor(ctx, ed);
+        }
+        for ed in editors.iter().filter(|e| !e.open) {
+            // окно закрылось — фокус ОТДАЁТСЯ, иначе горячие клавиши
+            // мертвы до клика мимо (правило 14, дефект п.8 р.12)
+            ctx.memory_mut(|m| m.surrender_focus(egui::Id::new(("title-text", ed.media))));
+        }
+        editors.retain(|e| e.open);
+        self.title_editors = editors;
+    }
+
+    fn draw_one_title_editor(&mut self, ctx: &egui::Context, ed: &mut TitleEditor) {
+        let Some(kt_model::Source::File(m)) = self.model.project().source(ed.media) else {
+            ed.open = false;
+            return;
+        };
+        let path = m.path.clone();
+        let Some(cur @ GeneratorKind::Text { .. }) = kt_model::parse_gen_path(&path) else {
+            ed.open = false;
+            return;
+        };
+        let mut edited: Option<GeneratorKind> = None;
+        let mut revert = false;
+        let mut open = ed.open;
+        egui::Window::new(tr(k::titlew::TITLE))
+            .id(egui::Id::new(("title", ed.media)))
+            .open(&mut open)
+            .default_size([360.0, 420.0])
+            .min_size([300.0, 260.0])
+            .resizable(true)
+            .show(ctx, |ui| {
+                let mut g = cur.clone();
+                let mut changed = false;
+                // ---- текст: многострочное поле (исключение из param_row) --
+                {
+                    let GeneratorKind::Text { text, .. } = &mut g else {
+                        unreachable!("title editor only opens for gen:text");
+                    };
+                    let te = egui::TextEdit::multiline(text)
+                        .id(egui::Id::new(("title-text", ed.media)))
+                        .desired_rows(3)
+                        .desired_width(f32::INFINITY);
+                    let r = ui.add(te);
+                    crate::widgets::field_probe::note("titlew.text", r.rect);
+                    changed |= r.changed();
+                }
+
+                // ---- «глифа нет» — ошибочным стилем, не серым ------------
+                if let Some(warn) = title_warning(&g) {
+                    ui.colored_label(egui::Color32::from_rgb(255, 105, 97), warn);
+                }
+
+                let GeneratorKind::Text {
+                    bold,
+                    align,
+                    anchor,
+                    fill_r,
+                    fill_g,
+                    fill_b,
+                    fill_a,
+                    stroke_r,
+                    stroke_g,
+                    stroke_b,
+                    stroke_a,
+                    shadow_r,
+                    shadow_g,
+                    shadow_b,
+                    shadow_a,
+                    plate_r,
+                    plate_g,
+                    plate_b,
+                    plate_a,
+                    ..
+                } = &mut g
+                else {
+                    unreachable!();
+                };
+
+                // ---- начертание и выравнивание ---------------------------
+                ui.horizontal(|ui| {
+                    changed |= ui.checkbox(bold, tr(k::titlew::BOLD)).changed();
+                    ui.separator();
+                    for (a, label) in [
+                        (TextAlign::Left, tr(k::titlew::ALIGN_L)),
+                        (TextAlign::Center, tr(k::titlew::ALIGN_C)),
+                        (TextAlign::Right, tr(k::titlew::ALIGN_R)),
+                    ] {
+                        if ui.selectable_label(*align == a, label).clicked() && *align != a {
+                            *align = a;
+                            changed = true;
+                        }
+                    }
+                });
+
+                // ---- якорь 3×3 -------------------------------------------
+                ui.horizontal(|ui| {
+                    ui.label(tr(k::titlew::ANCHOR));
+                    egui::Grid::new(("title-anchor", ed.media)).spacing([2.0, 2.0]).show(
+                        ui,
+                        |ui| {
+                            use TextAnchor as A;
+                            for (row, anchors) in [
+                                [A::TopLeft, A::TopCenter, A::TopRight],
+                                [A::CenterLeft, A::Center, A::CenterRight],
+                                [A::BottomLeft, A::BottomCenter, A::BottomRight],
+                            ]
+                            .iter()
+                            .enumerate()
+                            {
+                                for a in anchors {
+                                    let on = *anchor == *a;
+                                    if ui.add_sized([18.0, 14.0], egui::Button::selectable(on, "•"))
+                                        .clicked()
+                                        && !on
+                                    {
+                                        *anchor = *a;
+                                        changed = true;
+                                    }
+                                }
+                                let _ = row;
+                                ui.end_row();
+                            }
+                        },
+                    );
+                });
+
+                // ---- цвета слоёв: RGBA-пипетки (правило 13) --------------
+                let color_row =
+                    |ui: &mut egui::Ui, label: &str, r: &mut u8, g_: &mut u8, b: &mut u8, a: &mut u8| {
+                        let mut c = egui::Color32::from_rgba_unmultiplied(*r, *g_, *b, *a);
+                        ui.horizontal(|ui| {
+                            ui.label(label);
+                            let resp = ui.color_edit_button_srgba(&mut c);
+                            if resp.changed() {
+                                (*r, *g_, *b, *a) = (c.r(), c.g(), c.b(), c.a());
+                                return true;
+                            }
+                            false
+                        })
+                        .inner
+                    };
+                changed |= color_row(ui, tr(k::titlew::FILL), fill_r, fill_g, fill_b, fill_a);
+                changed |=
+                    color_row(ui, tr(k::titlew::STROKE), stroke_r, stroke_g, stroke_b, stroke_a);
+                changed |=
+                    color_row(ui, tr(k::titlew::SHADOW), shadow_r, shadow_g, shadow_b, shadow_a);
+                changed |= color_row(ui, tr(k::titlew::PLATE), plate_r, plate_g, plate_b, plate_a);
+
+                // ---- числа: та же сетка, что у эффектов ------------------
+                changed |= widgets::params_grid(ui, ("titlep", ed.media), &mut g, &[]);
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let uses = self.model.project().sequence_uses(ed.media);
+                    ui.label(crate::tf!(k::genw::USES, uses));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(tr(k::fx::CANCEL)).clicked() {
+                            revert = true;
+                        }
+                    });
+                });
+                if changed {
+                    edited = Some(g);
+                }
+            });
+        ed.open = open;
+        if let Some(g) = edited {
+            let new_path = kt_model::format_gen_path(&g);
+            if new_path != path {
+                self.apply_coalesced(
+                    Command::SetMediaPath { id: ed.media, path: new_path },
+                    ed.gesture,
+                );
+            }
+        }
+        if revert {
+            if ed.backup_path != path {
+                self.apply_coalesced(
+                    Command::SetMediaPath { id: ed.media, path: ed.backup_path.clone() },
+                    ed.gesture,
+                );
+            }
+            ed.open = false;
+        }
+    }
+}

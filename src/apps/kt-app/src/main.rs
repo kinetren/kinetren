@@ -11,6 +11,7 @@ mod bg;
 mod bin_panel;
 mod camera_editor;
 mod generator_editor;
+mod title_editor;
 mod ctx_menu;
 mod eq_graph;
 #[cfg(test)]

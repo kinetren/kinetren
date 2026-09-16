@@ -21,7 +21,9 @@ fn fnv(bytes: &[u8]) -> u64 {
     h
 }
 
-fn title_project() -> (Project, Vec<(MediaId, Box<dyn MediaSource>)>) {
+type Sources = Vec<(MediaId, Box<dyn MediaSource>)>;
+
+fn title_project() -> (Project, Sources) {
     let mut p = Project::new(ProjectSettings {
         fps: 30,
         width: 320,
@@ -58,7 +60,7 @@ fn title_project() -> (Project, Vec<(MediaId, Box<dyn MediaSource>)>) {
     };
     p.clips = vec![clip(1, 1, 1), clip(2, 0, 2)];
     p.validate().unwrap();
-    let sources: Vec<(MediaId, Box<dyn MediaSource>)> = vec![
+    let sources: Sources = vec![
         (MediaId(1), Box::new(GeneratorSource::new(solid))),
         (MediaId(2), Box::new(GeneratorSource::new(title))),
     ];
@@ -107,7 +109,11 @@ fn t485_title_matches_committed_golden() {
     assert_eq!(v, GOLDEN_TITLE_VIDEO, "титровый поток разошёлся с эталоном: 0x{v:016x}");
 }
 
-const GOLDEN_TITLE_VIDEO: u64 = 0x4cea52ff97ff15a5;
+// ПЕРЕГЕНЕРИРОВАН в С3 того же раунда: заливка пошла через единый
+// premult-композит слоёв оформления — у краевых (антиалиасных) пикселей
+// цветной заливки сдвинулись младшие разряды. Прежний (С2, fill-only
+// путь): 0x4cea52ff97ff15a5.
+const GOLDEN_TITLE_VIDEO: u64 = 0x95267f57405a8c95;
 
 #[test]
 #[ignore = "генератор эталона: cargo test -p kt-engine --test title_golden -- --ignored print"]

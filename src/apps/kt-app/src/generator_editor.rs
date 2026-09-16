@@ -32,6 +32,14 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
 
 impl KtApp {
     pub fn open_generator_editor(&mut self, media: MediaId) {
+        // у титра СВОЁ окно (строка и цвета спекой не выражаются) — все
+        // входы (карточка, меню события, создание) маршрутизируются здесь
+        if let Some(kt_model::Source::File(m)) = self.model.project().source(media)
+            && matches!(kt_model::parse_gen_path(&m.path), Some(GeneratorKind::Text { .. }))
+        {
+            self.open_title_editor(media);
+            return;
+        }
         if let Some(ed) = self.generator_editors.iter_mut().find(|e| e.media == media) {
             ed.open = true;
             return;

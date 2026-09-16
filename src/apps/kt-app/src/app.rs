@@ -419,6 +419,7 @@ pub struct KtApp {
     /// Окна переходов (Р.33 С4) — по одному на переход.
     pub transition_editors: Vec<crate::transition_editor::TransitionEditor>,
     pub generator_editors: Vec<crate::generator_editor::GeneratorEditor>,
+    pub title_editors: Vec<crate::title_editor::TitleEditor>,
     /// Пути медиа, под которые у плеера подняты источники, — снимок для
     /// `sync_media_sources` (Р.52): смена пути (окно генератора,
     /// undo/redo) видна диффом против него.
@@ -721,6 +722,7 @@ impl KtApp {
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
             generator_editors: Vec::new(),
+            title_editors: Vec::new(),
             media_paths: HashMap::new(),
             media_synced: false,
             camera_editors: Vec::new(),
@@ -903,6 +905,7 @@ impl KtApp {
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
             generator_editors: Vec::new(),
+            title_editors: Vec::new(),
             media_paths: HashMap::new(),
             media_synced: false,
             camera_editors: Vec::new(),
@@ -1367,6 +1370,7 @@ impl KtApp {
         self.draw_fx_editors(&ctx);
         self.draw_transition_editors(&ctx);
         self.draw_generator_editors(&ctx);
+        self.draw_title_editors(&ctx);
         self.draw_camera_editors(&ctx);
         self.draw_morph_editors(&ctx);
         self.draw_paste_names(&ctx);
@@ -2229,6 +2233,14 @@ impl KtApp {
             return;
         }
         if let Some(ed) = self.morph_editors.iter_mut().rev().find(|e| e.open) {
+            ed.open = false;
+            return;
+        }
+        if let Some(ed) = self.title_editors.iter_mut().rev().find(|e| e.open) {
+            ed.open = false;
+            return;
+        }
+        if let Some(ed) = self.generator_editors.iter_mut().rev().find(|e| e.open) {
             ed.open = false;
             return;
         }
@@ -3196,6 +3208,11 @@ impl KtApp {
     /// (redo добавления) = поднятие источника. Зовётся из всех обёрток
     /// правок и из undo/redo — иначе undo смены цвета не доехал бы до
     /// картинки: источник живёт вне project→player синка.
+    /// Safe-зоны рисуются, пока открыто хоть одно окно титра (Р.52 С3).
+    pub(crate) fn show_safe_zones(&self) -> bool {
+        self.title_editors.iter().any(|e| e.open)
+    }
+
     pub(crate) fn sync_media_sources(&mut self) {
         let cur: HashMap<MediaId, String> =
             self.model.document().media.iter().map(|m| (m.id, m.path.clone())).collect();
@@ -5139,6 +5156,22 @@ impl KtApp {
                 egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 24)),
                 egui::StrokeKind::Outside,
             );
+            // safe-зоны (Р.52 С3, F-TXT-001): пока открыто окно титра —
+            // action 5% и title 10% (наследие кинескопов, живо до сих пор)
+            if self.show_safe_zones() {
+                for r in safe_zone_rects(img_rect) {
+                    painter.rect(
+                        r,
+                        0.0,
+                        egui::Color32::TRANSPARENT,
+                        egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 70),
+                        ),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
             // скрим — только если неполнота держится >180 мс (v1)
             let show_overlay = self
                 .incomplete_since
@@ -7293,6 +7326,18 @@ pub fn merge_runs(mut runs: Vec<std::ops::Range<i64>>) -> Vec<std::ops::Range<i6
         }
     }
     out
+}
+
+/// Прямоугольники safe-зон кадра: action 5 % и title 10 % с каждой
+/// стороны (проценты — F-TXT-001, наследие кинескопов).
+pub(crate) fn safe_zone_rects(img: egui::Rect) -> [egui::Rect; 2] {
+    let inset = |f: f32| {
+        egui::Rect::from_min_max(
+            img.min + egui::vec2(img.width() * f, img.height() * f),
+            img.max - egui::vec2(img.width() * f, img.height() * f),
+        )
+    };
+    [inset(0.05), inset(0.10)]
 }
 
 #[cfg(test)]

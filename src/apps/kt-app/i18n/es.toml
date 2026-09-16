@@ -875,3 +875,17 @@ uses = "usos en el montaje: {0}"
 [genkind]
 solid = "Color sólido"
 text = "Texto"
+
+# Окно титра (Р.52 С3).
+[titlew]
+title = "Título"
+bold = "Negrita"
+anchor = "Ancla"
+fill = "Relleno"
+stroke = "Contorno"
+shadow = "Sombra"
+plate = "Placa"
+missing = "Sin glifo: {0} (+{1})"
+align_l = "Izquierda"
+align_c = "Centrado"
+align_r = "Derecha"

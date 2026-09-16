@@ -875,3 +875,17 @@ uses = "events using it: {0}"
 [genkind]
 solid = "Solid color"
 text = "Text"
+
+# Окно титра (Р.52 С3).
+[titlew]
+title = "Title"
+bold = "Bold"
+anchor = "Anchor"
+fill = "Fill"
+stroke = "Stroke"
+shadow = "Shadow"
+plate = "Backing"
+missing = "No glyph: {0} (+{1})"
+align_l = "Left"
+align_c = "Centered"
+align_r = "Right"

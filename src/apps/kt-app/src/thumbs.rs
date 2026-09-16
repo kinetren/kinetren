@@ -685,7 +685,8 @@ mod key_tests {
         for project_path in [None, Some(db_project.clone())] {
             let with_db = project_path.is_some();
             let svc = ThumbService::start(&project, project_path);
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            // щедрый дедлайн: под полным параллельным прогоном диск занят
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
             assert_eq!(svc.duration_or_probe(id), None, "первый вызов — заявка");
             while !svc.shared.durations.lock().unwrap().contains_key(&id) {
                 assert!(std::time::Instant::now() < deadline, "probe не опубликован (db={with_db})");

@@ -875,3 +875,17 @@ uses = "使用位置：{0}"
 [genkind]
 solid = "纯色"
 text = "文本"
+
+# Окно титра (Р.52 С3).
+[titlew]
+title = "字幕"
+bold = "粗体"
+anchor = "锚点"
+fill = "填充"
+stroke = "描边"
+shadow = "阴影"
+plate = "底板"
+missing = "缺少字形：{0}（+{1}）"
+align_l = "左对齐"
+align_c = "居中"
+align_r = "右对齐"

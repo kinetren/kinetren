@@ -328,17 +328,21 @@ pub fn uncovered(text: &str, _family: &str, style: FaceStyle) -> Vec<char> {
     out
 }
 
-/// Кадр титра РОВНО `w`×`h`: straight-RGBA8. С2 — только заливка.
+/// Кадр титра РОВНО `w`×`h`: straight-RGBA8. Слои оформления (плашка,
+/// тень, обводка, заливка) компонуются по `order` в premultiplied u16 и
+/// разпремультиплицируются один раз на выходе.
 pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
-    let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
+    let n = (w as usize) * (h as usize);
+    let mut out = vec![0u8; n * 4];
     if w == 0 || h == 0 || p.text.is_empty() || p.size <= 0.0 {
         return out.into_boxed_slice();
     }
     let face = resolve_face(p);
     let laid = layout(p, w, h);
+    let size_px = p.size * h as f64;
 
     // силуэт (A8): покрытие всех глифов, перекрытия — максимумом
-    let mut cov = vec![0u8; (w as usize) * (h as usize)];
+    let mut cov = vec![0u8; n];
     for g in &laid.glyphs {
         let glyph = Glyph {
             id: ab_glyph::GlyphId(g.id),
@@ -359,20 +363,276 @@ pub fn render_rgba(p: &TextParams, w: u32, h: u32) -> Box<[u8]> {
         });
     }
 
-    // заливка: straight-альфа поверх прозрачного холста
-    let [fr, fg, fb, fa] = p.fill;
-    for (i, &c) in cov.iter().enumerate() {
-        if c == 0 {
+    // premultiplied-аккумулятор u16 на канал
+    let mut acc = vec![0u16; n * 4];
+    let mut over = |alpha: &[u8], color: [u8; 4]| {
+        let ca = color[3] as u32;
+        if ca == 0 {
+            return;
+        }
+        for (i, &m) in alpha.iter().enumerate() {
+            if m == 0 {
+                continue;
+            }
+            let sa = (m as u32 * ca + 127) / 255; // альфа слоя в пикселе
+            let inv = 255 - sa;
+            let o = i * 4;
+            for ch in 0..3 {
+                let sc = (color[ch] as u32 * sa + 127) / 255; // premult
+                let d = acc[o + ch] as u32;
+                acc[o + ch] = (sc + (d * inv + 127) / 255) as u16;
+            }
+            let da = acc[o + 3] as u32;
+            acc[o + 3] = (sa + (da * inv + 127) / 255) as u16;
+        }
+    };
+
+    for layer in p.order {
+        match layer {
+            Layer::Fill => over(&cov, p.fill),
+            Layer::Plate => {
+                if p.plate[3] == 0 {
+                    continue;
+                }
+                // прозрачность плашки вшита в её альфа-карту
+                let alpha = plate_alpha(&laid.info, p, size_px, w, h);
+                over(&alpha, [p.plate[0], p.plate[1], p.plate[2], 255]);
+            }
+            Layer::Shadow => {
+                if p.shadow[3] == 0 {
+                    continue;
+                }
+                let alpha = shadow_alpha(&cov, p, size_px, w, h);
+                over(&alpha, p.shadow);
+            }
+            Layer::Stroke => {
+                if p.stroke_w <= 0.0 || p.stroke[3] == 0 {
+                    continue;
+                }
+                let alpha = stroke_alpha(&cov, p.stroke_w * size_px, w, h);
+                over(&alpha, p.stroke);
+            }
+        }
+    }
+
+    // разпремультипликация → straight
+    for i in 0..n {
+        let o = i * 4;
+        let a = acc[o + 3].min(255) as u32;
+        if a == 0 {
             continue;
         }
-        let a = (c as u32 * fa as u32 + 127) / 255;
-        let o = i * 4;
-        out[o] = fr;
-        out[o + 1] = fg;
-        out[o + 2] = fb;
+        for ch in 0..3 {
+            let c = acc[o + ch].min(255) as u32;
+            out[o + ch] = ((c * 255 + a / 2) / a).min(255) as u8;
+        }
         out[o + 3] = a as u8;
     }
     out.into_boxed_slice()
+}
+
+/// Плашка: прямоугольник ПО СТРОКЕ (честная геометрия — из метрик глифов
+/// её не вывести, F-TXT-005) + паддинги в долях em; прозрачность плашки
+/// вшита в альфу.
+fn plate_alpha(info: &LayoutInfo, p: &TextParams, size_px: f64, w: u32, h: u32) -> Vec<u8> {
+    let mut out = vec![0u8; (w as usize) * (h as usize)];
+    let (px, py) = (p.plate_pad.0 * size_px, p.plate_pad.1 * size_px);
+    let a = p.plate[3];
+    for l in &info.lines {
+        if l.w <= 0.0 {
+            continue; // пустая строка плашку не рисует
+        }
+        let x0 = (l.x - px).floor().max(0.0) as usize;
+        let y0 = (l.y - py).floor().max(0.0) as usize;
+        let x1 = ((l.x + l.w + px).ceil() as usize).min(w as usize);
+        let y1 = ((l.y + l.h + py).ceil() as usize).min(h as usize);
+        for y in y0..y1 {
+            let row = y * w as usize;
+            for x in x0..x1 {
+                out[row + x] = out[row + x].max(a);
+            }
+        }
+    }
+    out
+}
+
+/// Тень: силуэт, сдвинутый на ЦЕЛЫЕ px (доли em; округление до пикселя —
+/// осознанное, документировано), размытый трёхкратным box-blur ОДНОГО
+/// канала — размывается альфа при постоянном цвете, «зелёного ореола»
+/// (ловушка flowblade #937) не бывает по построению.
+fn shadow_alpha(cov: &[u8], p: &TextParams, size_px: f64, w: u32, h: u32) -> Vec<u8> {
+    let dx = (p.shadow_dx * size_px).round() as i64;
+    let dy = (p.shadow_dy * size_px).round() as i64;
+    let (wi, hi) = (w as i64, h as i64);
+    let mut out = vec![0u8; (w as usize) * (h as usize)];
+    for y in 0..hi {
+        let sy = y - dy;
+        if sy < 0 || sy >= hi {
+            continue;
+        }
+        for x in 0..wi {
+            let sx = x - dx;
+            if sx < 0 || sx >= wi {
+                continue;
+            }
+            out[(y * wi + x) as usize] = cov[(sy * wi + sx) as usize];
+        }
+    }
+    let r = (p.shadow_blur * size_px).round().max(0.0) as usize;
+    for _ in 0..3 {
+        box_blur_a8(&mut out, w as usize, h as usize, r);
+    }
+    out
+}
+
+/// Однократный box-blur канала A8 радиусом r (окно 2r+1), горизонталь +
+/// вертикаль, целочисленное скользящее окно.
+fn box_blur_a8(buf: &mut [u8], w: usize, h: usize, r: usize) {
+    if r == 0 || w == 0 || h == 0 {
+        return;
+    }
+    let win = (2 * r + 1) as u32;
+    let mut tmp = vec![0u8; buf.len()];
+    // горизонталь: скользящее окно, края читаются как ноль
+    for y in 0..h {
+        let row = y * w;
+        let mut sum: u32 = 0;
+        for x in 0..w {
+            let add = x + r;
+            if add < w {
+                sum += buf[row + add] as u32;
+            }
+            if x == 0 {
+                for k in 0..r.min(w) {
+                    sum += buf[row + k] as u32;
+                }
+            } else if let Some(sub) = (x - 1).checked_sub(r) {
+                sum -= buf[row + sub] as u32;
+            }
+            tmp[row + x] = ((sum + win / 2) / win) as u8;
+        }
+    }
+    // вертикаль
+    for x in 0..w {
+        let mut sum: u32 = 0;
+        for y in 0..h {
+            let add = y + r;
+            if add < h {
+                sum += tmp[add * w + x] as u32;
+            }
+            if y == 0 {
+                for k in 0..r.min(h) {
+                    sum += tmp[k * w + x] as u32;
+                }
+            } else if let Some(sub) = (y - 1).checked_sub(r) {
+                sum -= tmp[sub * w + x] as u32;
+            }
+            buf[y * w + x] = ((sum + win / 2) / win) as u8;
+        }
+    }
+}
+
+/// Обводка: точная евклидова дистанс-трансформа (Felzenszwalb) по
+/// бинаризованному силуэту (α ≥ 128), рамп ±0.5 px на границе радиуса.
+/// «Наружность» получается ПОРЯДКОМ слоёв: заливка сверху перекрывает
+/// внутреннюю половину — двойная ширина не нужна, а штрих глифа обводка
+/// не съедает (t486).
+fn stroke_alpha(cov: &[u8], radius_px: f64, w: u32, h: u32) -> Vec<u8> {
+    let dist2 = edt_sq(cov, w as usize, h as usize);
+    let r = radius_px.max(0.0);
+    dist2
+        .iter()
+        .map(|&d2| {
+            let d = (d2 as f64).sqrt();
+            let a = (r + 0.5 - d).clamp(0.0, 1.0);
+            (a * 255.0).round() as u8
+        })
+        .collect()
+}
+
+/// Квадраты евклидовых расстояний до ближайшего пикселя силуэта
+/// (α ≥ 128). Классический двухпроходный Felzenszwalb: параболы по
+/// столбцам, затем по строкам; целые квадраты в i64.
+fn edt_sq(cov: &[u8], w: usize, h: usize) -> Vec<i64> {
+    const INF: i64 = i64::MAX / 4;
+    let mut d = vec![INF; w * h];
+    for (i, &c) in cov.iter().enumerate() {
+        if c >= 128 {
+            d[i] = 0;
+        }
+    }
+    let mut f = vec![0i64; w.max(h)];
+    let mut dd = vec![0i64; w.max(h)];
+    let mut v = vec![0usize; w.max(h)];
+    let mut z = vec![0f64; w.max(h) + 1];
+    // столбцы
+    for x in 0..w {
+        for y in 0..h {
+            f[y] = d[y * w + x];
+        }
+        dt_1d(&f[..h], &mut dd[..h], &mut v[..h], &mut z[..h + 1]);
+        for y in 0..h {
+            d[y * w + x] = dd[y];
+        }
+    }
+    // строки
+    for y in 0..h {
+        let row = y * w;
+        f[..w].copy_from_slice(&d[row..row + w]);
+        dt_1d(&f[..w], &mut dd[..w], &mut v[..w], &mut z[..w + 1]);
+        d[row..row + w].copy_from_slice(&dd[..w]);
+    }
+    d
+}
+
+/// 1D-дистанс-трансформа параболами (Felzenszwalb–Huttenlocher).
+fn dt_1d(f: &[i64], out: &mut [i64], v: &mut [usize], z: &mut [f64]) {
+    const INF: i64 = i64::MAX / 4;
+    let n = f.len();
+    let mut k = 0usize;
+    v[0] = 0;
+    z[0] = f64::NEG_INFINITY;
+    z[1] = f64::INFINITY;
+    let sq = |q: usize| (q * q) as i64;
+    for q in 1..n {
+        if f[q] >= INF && f[v[k]] >= INF {
+            // оба «бесконечны»: парабола не нужна
+            continue;
+        }
+        loop {
+            let p = v[k];
+            let s = if f[q] >= INF {
+                f64::INFINITY
+            } else if f[p] >= INF {
+                f64::NEG_INFINITY
+            } else {
+                ((f[q] + sq(q)) - (f[p] + sq(p))) as f64 / (2 * (q - p)) as f64
+            };
+            if s <= z[k] {
+                if k == 0 {
+                    v[0] = q;
+                    z[0] = f64::NEG_INFINITY;
+                    z[1] = f64::INFINITY;
+                    break;
+                }
+                k -= 1;
+                continue;
+            }
+            k += 1;
+            v[k] = q;
+            z[k] = s;
+            z[k + 1] = f64::INFINITY;
+            break;
+        }
+    }
+    let mut k = 0usize;
+    for (q, o) in out.iter_mut().enumerate() {
+        while z[k + 1] < q as f64 {
+            k += 1;
+        }
+        let p = v[k];
+        *o = if f[p] >= INF { INF } else { f[p] + ((q as i64 - p as i64) * (q as i64 - p as i64)) };
+    }
 }
 
 #[cfg(test)]
@@ -472,6 +732,77 @@ mod tests {
         );
         // управляющие не считаются «непокрытыми»
         assert!(uncovered("a\nb\t", VENDORED_FAMILY, FaceStyle::Regular).is_empty());
+    }
+
+    /// t486 (Р.52 С3): оформление. Порядок слоёв меняет байты
+    /// предсказуемо; обводка НЕ съедает штрих глифа (заливка сверху —
+    /// прямая проверка ловушки kde-invent #1550); тень лежит вне
+    /// силуэта своим цветом; плашка следует за строками.
+    #[test]
+    fn t486_ornament_layers() {
+        let mut p = sample();
+        p.text = "IHK".into();
+        p.size = 0.5;
+        let plain = render_rgba(&p, 320, 180);
+        let count = |buf: &[u8], pred: &dyn Fn(&[u8]) -> bool| {
+            buf.chunks_exact(4).filter(|px| pred(px)).count()
+        };
+        // интерьер штриха — пиксели с ПОЛНОЙ альфой: антиалиасный край
+        // законно смешивается с нижними слоями, интерьер — никогда
+        let is_fill = |px: &[u8]| px[3] == 255 && px[..3] == [255, 255, 255];
+        let fill_plain = count(&plain, &is_fill);
+        assert!(fill_plain > 500, "заливки нет: {fill_plain}");
+
+        // обводка: интерьер штриха цел, вокруг появился цвет обводки
+        let mut st = p.clone();
+        st.stroke_w = 0.06;
+        st.stroke = [255, 0, 0, 255];
+        let stroked = render_rgba(&st, 320, 180);
+        let fill_kept = count(&stroked, &is_fill);
+        assert!(
+            fill_kept as f64 > fill_plain as f64 * 0.98,
+            "обводка съела штрих: {fill_kept} из {fill_plain}"
+        );
+        let red = count(&stroked, &|px| px[3] > 200 && px[0] > 200 && px[1] < 60);
+        assert!(red > 400, "обводки не видно: {red}");
+
+        // порядок решает: заливка ПОД обводкой — обводка накрывает штрих
+        let mut inv = st.clone();
+        inv.order = [Layer::Plate, Layer::Shadow, Layer::Fill, Layer::Stroke];
+        let inverted = render_rgba(&inv, 320, 180);
+        assert_ne!(inverted, stroked, "порядок слоёв обязан менять байты");
+        assert!(
+            count(&inverted, &is_fill) < fill_plain / 2,
+            "fill под stroke обязан быть накрыт"
+        );
+
+        // тень: пиксели цвета тени ВНЕ силуэта, сдвинутые вправо-вниз
+        let mut sh = p.clone();
+        sh.shadow = [0, 0, 0, 255];
+        sh.shadow_dx = 0.15;
+        sh.shadow_dy = 0.15;
+        sh.shadow_blur = 0.0;
+        let shadowed = render_rgba(&sh, 320, 180);
+        let dark = count(&shadowed, &|px| px[3] > 200 && px[0] < 40 && px[1] < 40);
+        assert!(dark > 300, "тени не видно: {dark}");
+        // с размытием тень мягче: полупрозрачных пикселей больше
+        sh.shadow_blur = 0.12;
+        let soft = render_rgba(&sh, 320, 180);
+        let half = |buf: &[u8]| count(buf, &|px| px[3] > 10 && px[3] < 200);
+        assert!(half(&soft) > half(&shadowed), "размытие не смягчило тень");
+
+        // плашка: прямоугольник строки своим цветом, растёт с текстом
+        let mut pl = p.clone();
+        pl.plate = [0, 60, 0, 255];
+        let plated = render_rgba(&pl, 320, 180);
+        let green = count(&plated, &|px| px[3] > 200 && px[1] > 40 && px[0] < 30);
+        assert!(green > 2000, "плашки не видно: {green}");
+        pl.text = "IHKWWWW".into();
+        let wider = render_rgba(&pl, 320, 180);
+        assert!(
+            count(&wider, &|px| px[3] > 0) > count(&plated, &|px| px[3] > 0),
+            "плашка обязана расти за текстом"
+        );
     }
 
     /// Пустой текст и нулевой кадр — прозрачно и без паники.

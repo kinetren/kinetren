@@ -875,3 +875,17 @@ uses = "مواضع الاستخدام: {0}"
 [genkind]
 solid = "لون خالص"
 text = "نص"
+
+# Окно титра (Р.52 С3).
+[titlew]
+title = "عنوان"
+bold = "عريض"
+anchor = "مرساة"
+fill = "تعبئة"
+stroke = "حدود"
+shadow = "ظل"
+plate = "لوح"
+missing = "لا يوجد محرف: {0} (+{1})"
+align_l = "يسار"
+align_c = "وسط"
+align_r = "يمين"
