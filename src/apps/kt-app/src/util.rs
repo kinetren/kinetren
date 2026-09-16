@@ -1,31 +1,16 @@
 //! Вспомогательное: источники, пути, фоновый индекс-воркер.
 
 use kt_media::MediaSource;
-use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_model::MediaId;
-use kt_time::Tick;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-pub type Peaks = Vec<(Vec<(i16, i16)>, Vec<(i16, i16)>)>; // [level] -> (L, R) по блокам
+// Разбор псевдо-путей (`synth:`, `gen:`) переехал в kt-media (Р.52,
+// `kt_media::factory`): раньше он был написан здесь и ВТОРОЙ раз в
+// kt-cli, и копии разъезжались по регистру (сноска п.211).
 
-pub fn synth_pattern(path: &str) -> Option<AudioPattern> {
-    let rest = path.strip_prefix("synth:")?;
-    let mut it = rest.split(':');
-    // имя образца регистронезависимо: живые сценарии пишут «synth:Ramp»,
-    // а тесты и kt-cli — «synth:ramp». До Р.33 разница делала источник
-    // «отсутствующим» молча (превью висело в «Loading»), а с заглушкой
-    // (п.207) стала видна сразу — на превью появилась плашка
-    match it.next()?.to_ascii_lowercase().as_str() {
-        "silence" => Some(AudioPattern::Silence),
-        "ramp" => Some(AudioPattern::Ramp),
-        "impulse" => Some(AudioPattern::Impulse),
-        "sine" => Some(AudioPattern::Sine { hz: it.next()?.parse().ok()? }),
-        "dc" => Some(AudioPattern::Dc { value: it.next()?.parse().ok()? }),
-        _ => None,
-    }
-}
+pub type Peaks = Vec<(Vec<(i16, i16)>, Vec<(i16, i16)>)>; // [level] -> (L, R) по блокам
 
 pub fn open_source(path: &str) -> Result<Box<dyn MediaSource>, String> {
     open_source_indexed(path, None)
@@ -35,17 +20,13 @@ pub fn open_source(path: &str) -> Result<Box<dyn MediaSource>, String> {
 /// пакетный индекс берётся из БД и полный скан-проход пропускается
 /// (быстрое открытие больших файлов, тест 34). Соединение короткоживущее —
 /// WAL допускает параллельных читателей/писателей из других потоков.
+/// Псевдо-пути (`synth:`, `gen:`) решает фабрика kt-media.
 pub fn open_source_indexed(
     path: &str,
     db_path: Option<&Path>,
 ) -> Result<Box<dyn MediaSource>, String> {
-    if let Some(p) = synth_pattern(path) {
-        return Ok(Box::new(SyntheticSource::new(Tick(90_000 * 3600), p)));
-    }
     let mut db = db_path.and_then(|p| kt_media::index::MediaIndexDb::open(p).ok());
-    kt_media::ffmpeg::FfmpegSource::open_indexed(path, db.as_mut())
-        .map(|s| Box::new(s) as _)
-        .map_err(|e| e.to_string())
+    kt_media::factory::open_indexed(path, db.as_mut())
 }
 
 /// Источник или ПЛЕЙСХОЛДЕР вместо него (Р.33 п.10): недоступный файл не
@@ -76,7 +57,7 @@ pub fn media_label(path: &str) -> String {
 }
 
 pub fn resolve_media_path(base: Option<&Path>, path: &str) -> String {
-    if path.starts_with("synth:") || Path::new(path).is_absolute() {
+    if kt_model::is_pseudo_path(path) || Path::new(path).is_absolute() {
         return path.to_string();
     }
     match base {
@@ -219,11 +200,12 @@ fn build_peaks(
         let loud = measure.then(|| l.lufs.map(|lufs| (lufs, l.dbtp, l.lra))).flatten();
         Ok(Some((pyramid_to_peaks(pyr), loud)))
     };
-    if path.starts_with("synth:") {
-        // Синтетика громкость НЕ меряет: это генератор, а не материал —
-        // его уровень ровно такой, как сказано в узоре, и «нормализовать
-        // синус до −23» никому не нужно. Заодно не платим за измерение там,
-        // где декода нет вовсе и оно стало бы единственной ценой прохода.
+    if kt_model::is_pseudo_path(path) {
+        // Псевдо-источники громкость НЕ меряют: это генератор, а не
+        // материал — его уровень ровно такой, как сказано в параметрах, и
+        // «нормализовать синус до −23» никому не нужно. Заодно не платим
+        // за измерение там, где декода нет вовсе. У `gen:` без аудио
+        // (duration = 0) пирамида получается пустой — и это правильно.
         return from_source(path, false);
     }
     let Some(db) = db else {
@@ -297,7 +279,7 @@ pub fn spawn_media_watchdog(
     let paths: Vec<(MediaId, String)> = project
         .media
         .iter()
-        .filter(|m| !m.path.starts_with("synth:"))
+        .filter(|m| !kt_model::is_pseudo_path(&m.path))
         .map(|m| (m.id, resolve_media_path(base, &m.path)))
         .collect();
     let out = set.clone();

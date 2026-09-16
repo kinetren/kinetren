@@ -13,7 +13,6 @@
 mod wav;
 
 use kt_engine::{AudioRenderer, DirectFetcher};
-use kt_media::synthetic::{AudioPattern, SyntheticSource};
 use kt_model::{Project, ProjectSettings};
 use kt_otio::Retained;
 use kt_time::{AUDIO_CHANNELS, AUDIO_SAMPLE_RATE, Tick};
@@ -24,18 +23,9 @@ fn main() {
     std::process::exit(code);
 }
 
-fn synth_pattern(path: &str) -> Option<AudioPattern> {
-    let rest = path.strip_prefix("synth:")?;
-    let mut it = rest.split(':');
-    match it.next()? {
-        "silence" => Some(AudioPattern::Silence),
-        "ramp" => Some(AudioPattern::Ramp),
-        "impulse" => Some(AudioPattern::Impulse),
-        "sine" => Some(AudioPattern::Sine { hz: it.next()?.parse().ok()? }),
-        "dc" => Some(AudioPattern::Dc { value: it.next()?.parse().ok()? }),
-        _ => None,
-    }
-}
+// Разбор псевдо-путей (`synth:`, `gen:`) — ЕДИНАЯ фабрика kt-media
+// (Р.52). Здесь жила вторая, регистроЗАВИСИМАЯ копия `synth_pattern`, и
+// копии уже разъезжались (сноска п.211).
 
 /// Что движок читает в диапазоне [from, to) секунд таймлайна.
 ///
@@ -399,15 +389,18 @@ fn media_natives(
 ) -> std::collections::HashMap<kt_model::MediaId, (u32, u32)> {
     let mut out = std::collections::HashMap::new();
     for m in &project.media {
-        if synth_pattern(&m.path).is_some() {
+        // синтетика пропускается: её info().width/height фиктивны;
+        // генераторы (`gen:`) проходят — их натив это честный «запас
+        // деталей» для ступени (GEN_NATIVE, Р.52)
+        if kt_media::factory::synth_pattern(&m.path).is_some() {
             continue;
         }
         let mut idx_db = kt_media::index::MediaIndexDb::open(
             &std::path::Path::new(project_path).with_extension("ktindex.db"),
         )
         .ok();
-        if let Ok(src) = kt_media::ffmpeg::FfmpegSource::open_indexed(&m.path, idx_db.as_mut()) {
-            let i = kt_media::MediaSource::info(&src);
+        if let Ok(src) = kt_media::factory::open_indexed(&m.path, idx_db.as_mut()) {
+            let i = kt_media::MediaSource::info(&*src);
             if i.has_video {
                 out.insert(m.id, (i.width, i.height));
             }
@@ -430,8 +423,12 @@ fn open_sources(
 ) -> Result<DirectFetcher, String> {
     let mut fetcher = DirectFetcher::new(cache);
     for m in &project.media {
-        if let Some(pattern) = synth_pattern(&m.path) {
-            fetcher.add_source(m.id, Box::new(SyntheticSource::new(Tick(90_000 * 3600), pattern)));
+        if let Some(pseudo) = kt_media::factory::open_pseudo(&m.path) {
+            match pseudo {
+                Ok(s) => fetcher.add_source(m.id, s),
+                Err(e) if strict => return Err(e),
+                Err(e) => eprintln!("  skipped (bad pseudo source): {e}"),
+            }
             continue;
         }
         // путь УЖЕ разрешён при загрузке (kt_otio::load_project резолвит
@@ -696,8 +693,8 @@ fn run(args: &[String]) -> i32 {
                 let mut out = Vec::new();
                 for m in &project.media {
                     let src: Box<dyn kt_media::MediaSource> =
-                        if let Some(p) = synth_pattern(&m.path) {
-                            Box::new(SyntheticSource::new(Tick(90_000 * 3600), p))
+                        if let Some(pseudo) = kt_media::factory::open_pseudo(&m.path) {
+                            pseudo?
                         } else {
                             // путь уже разрешён при загрузке (п.316)
                             let resolved = m.path.clone();

@@ -8,7 +8,7 @@
 
 use crate::util::{open_source, resolve_media_path};
 use eframe::egui;
-use kt_media::{MediaSource, Quality};
+use kt_media::Quality;
 use kt_model::{MediaId, Project};
 use kt_time::Tick;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -168,7 +168,9 @@ impl ThumbService {
             project
                 .media
                 .iter()
-                .filter(|m| !m.path.starts_with("synth:"))
+                // синтетика (тестовая схема) тумб не имеет; генераторы
+                // (`gen:`) — ИМЕЮТ: их кадр рисует та же фабрика (Р.52)
+                .filter(|m| kt_media::factory::synth_pattern(&m.path).is_none())
                 .map(|m| (m.id, resolve_media_path(base.as_deref(), &m.path)))
                 .collect()
         };
@@ -186,7 +188,7 @@ impl ThumbService {
     /// Зарегистрировать новое медиа (добавление файла в проект) — тумбы
     /// начинают строиться сразу, без перезапуска сервиса.
     pub fn add_media(&self, id: MediaId, resolved_path: String) {
-        if !resolved_path.starts_with("synth:") {
+        if kt_media::factory::synth_pattern(&resolved_path).is_none() {
             self.shared.media.lock().unwrap().insert(id, resolved_path);
             // новое/переустановленное медиа: негативные кэши устарели
             self.invalidate_media(id);
@@ -308,7 +310,15 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 continue;
             }
             let dur = shared.media.lock().unwrap().get(&pid).cloned().and_then(|path| {
-                kt_media::ffmpeg::FfmpegSource::open_indexed(&path, db.as_mut()).ok().map(|src| {
+                let opened: Option<Box<dyn kt_media::MediaSource>> =
+                    if kt_model::is_pseudo_path(&path) || db.is_none() {
+                        open_source(&path).ok()
+                    } else {
+                        kt_media::ffmpeg::FfmpegSource::open_indexed(&path, db.as_mut())
+                            .ok()
+                            .map(|s| Box::new(s) as _)
+                    };
+                opened.map(|src| {
                     let info = src.info();
                     // вид медиа достаётся бесплатно: источник уже открыт
                     shared.kinds.lock().unwrap().insert(pid, (info.has_video, info.has_audio));
@@ -369,7 +379,7 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 // синтетика — через open_source; файлы — через open_indexed
                 // с уже открытой БД (переиспользуем пакетный индекс, тест 34)
                 let opened: Option<Box<dyn kt_media::MediaSource>> =
-                    if path.starts_with("synth:") || db.is_none() {
+                    if kt_model::is_pseudo_path(path) || db.is_none() {
                         open_source(path).ok()
                     } else {
                         kt_media::ffmpeg::FfmpegSource::open_indexed(path, db.as_mut())
@@ -530,7 +540,7 @@ fn find_poster(
             // 2) декод кандидата
             if !sources.contains(media) {
                 let opened: Option<Box<dyn kt_media::MediaSource>> =
-                    if path.starts_with("synth:") || db.is_none() {
+                    if kt_model::is_pseudo_path(&path) || db.is_none() {
                         open_source(&path).ok()
                     } else {
                         kt_media::ffmpeg::FfmpegSource::open_indexed(&path, db.as_mut())

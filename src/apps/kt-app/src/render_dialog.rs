@@ -4,11 +4,10 @@
 
 use crate::app::KtApp;
 use crate::i18n::{k, tr};
-use crate::util::{resolve_media_path, synth_pattern};
+use crate::util::resolve_media_path;
 use eframe::egui;
 use kt_engine::export::ExportProgress;
 use kt_media::MediaSource;
-use kt_media::synthetic::SyntheticSource;
 use kt_model::{MediaId, Project};
 use kt_time::Tick;
 
@@ -74,16 +73,25 @@ pub(crate) fn open_all(
     let mut out = Vec::new();
     let mut missing = Vec::new();
     for m in &project.media {
-        let src: Box<dyn MediaSource> = if let Some(p) = synth_pattern(&m.path) {
-            Box::new(SyntheticSource::new(Tick(90_000 * 3600), p))
-        } else {
-            let resolved = resolve_media_path(base, &m.path);
-            match kt_media::ffmpeg::FfmpegSource::open(&resolved) {
-                Ok(s) => Box::new(s),
-                Err(e) => {
-                    let label = crate::util::media_label(&m.path);
-                    missing.push(format!("{label}: {e}"));
-                    Box::new(kt_media::placeholder::PlaceholderSource::new(label))
+        let src: Box<dyn MediaSource> = match kt_media::factory::open_pseudo(&m.path) {
+            Some(Ok(s)) => s,
+            // битый псевдо-путь (генератор новее этой сборки) — та же
+            // судьба, что у пропавшего файла: заметная заглушка + строка
+            // в списке, экспорт не отменяется
+            Some(Err(e)) => {
+                let label = crate::util::media_label(&m.path);
+                missing.push(format!("{label}: {e}"));
+                Box::new(kt_media::placeholder::PlaceholderSource::new(label))
+            }
+            None => {
+                let resolved = resolve_media_path(base, &m.path);
+                match kt_media::ffmpeg::FfmpegSource::open(&resolved) {
+                    Ok(s) => Box::new(s),
+                    Err(e) => {
+                        let label = crate::util::media_label(&m.path);
+                        missing.push(format!("{label}: {e}"));
+                        Box::new(kt_media::placeholder::PlaceholderSource::new(label))
+                    }
                 }
             }
         };
@@ -97,8 +105,11 @@ pub(crate) fn missing_sources(project: &Project, base: Option<&std::path::Path>)
     project
         .media
         .iter()
-        .filter(|m| synth_pattern(&m.path).is_none())
-        .filter(|m| !std::path::Path::new(&resolve_media_path(base, &m.path)).exists())
+        .filter(|m| match kt_media::factory::open_pseudo(&m.path) {
+            // псевдо-источник «недоступен», только если путь битый
+            Some(r) => r.is_err(),
+            None => !std::path::Path::new(&resolve_media_path(base, &m.path)).exists(),
+        })
         .map(|m| crate::util::media_label(&m.path))
         .collect()
 }

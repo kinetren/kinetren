@@ -817,7 +817,10 @@ impl KtApp {
         }
         // подпись: длительность (моно) + имя, под превью
         let label_y = thumb_rect.bottom() + 2.0;
-        let dur_txt = self.thumbs.duration(id).map(|d| {
+        // у генератора длительности НЕТ (duration == 0) — не писать ни
+        // «0:00:00», ни «1000:00:00» (минус F-TXT-003: бин обязан уметь
+        // случай «длины нет»)
+        let dur_txt = self.thumbs.duration(id).filter(|d| d.0 > 0).map(|d| {
             let s = d.0 / 90_000;
             format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
         });

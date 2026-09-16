@@ -69,9 +69,10 @@ pub fn relativize(base_dir: &Path, target: &Path) -> Option<String> {
 }
 
 /// target_url из файла → путь для открытия. `base_dir` — каталог проекта.
-/// `synth:` возвращается как есть (нефайловый источник).
+/// Псевдо-пути (`synth:`, `gen:`) возвращаются как есть (нефайловые
+/// источники).
 pub fn resolve_media_path(base_dir: &Path, target_url: &str) -> PathBuf {
-    if target_url.starts_with("synth:") {
+    if kt_model::is_pseudo_path(target_url) {
         return PathBuf::from(target_url);
     }
     if let Some(p) = decode_file_url(target_url) {
@@ -83,7 +84,7 @@ pub fn resolve_media_path(base_dir: &Path, target_url: &str) -> PathBuf {
 
 /// Путь медиа → target_url для записи (решение Р.24 п.7).
 pub fn media_target_url(base_dir: &Path, media_path: &str) -> String {
-    if media_path.starts_with("synth:") {
+    if kt_model::is_pseudo_path(media_path) {
         return media_path.to_string();
     }
     let p = Path::new(media_path);

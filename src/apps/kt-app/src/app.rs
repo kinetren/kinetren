@@ -2170,6 +2170,12 @@ impl KtApp {
         let db = self.index_db_path();
         let (mut mw, mut mh) = (0u32, 0u32);
         for m in &self.model.project().media {
+            // псевдо-источники не участвуют: «натив» генератора — это
+            // запас деталей для ступени декода (GEN_NATIVE, Р.52), а не
+            // разрешение материала, и в «Max (по источникам)» ему не место
+            if kt_model::is_pseudo_path(&m.path) {
+                continue;
+            }
             if let Ok(src) =
                 open_source_indexed(&resolve_media_path(base.as_deref(), &m.path), db.as_deref())
             {
