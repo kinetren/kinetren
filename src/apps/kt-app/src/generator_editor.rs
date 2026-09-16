@@ -27,6 +27,38 @@ pub fn kind_name(kind: &GeneratorKind) -> &'static str {
     match kind {
         GeneratorKind::Solid { .. } => tr(k::genkind::SOLID),
         GeneratorKind::Text { .. } => tr(k::genkind::TEXT),
+        GeneratorKind::Gradient { .. } => tr(k::genkind::GRADIENT),
+        GeneratorKind::Corners { .. } => tr(k::genkind::CORNERS),
+        GeneratorKind::Checker { .. } => tr(k::genkind::CHECKER),
+        GeneratorKind::NoiseField { .. } => tr(k::genkind::NOISE),
+        GeneratorKind::SmpteBars { .. } => tr(k::genkind::SMPTE),
+        GeneratorKind::Timecode { .. } => tr(k::genkind::TIMECODE),
+    }
+}
+
+/// Цветовые группы вида для пипеток окна (подпись, [имена R,G,B]).
+fn color_groups(kind: &GeneratorKind) -> &'static [(crate::i18n::Key, [&'static str; 3])] {
+    use crate::i18n::k;
+    match kind {
+        GeneratorKind::Solid { .. } => &[(k::trn::COLOR, ["color_r", "color_g", "color_b"])],
+        GeneratorKind::Gradient { .. } => &[
+            (k::genw::COLOR_A, ["a_r", "a_g", "a_b"]),
+            (k::genw::COLOR_B, ["b_r", "b_g", "b_b"]),
+        ],
+        GeneratorKind::Corners { .. } => &[
+            (k::genw::CORNER_TL, ["tl_r", "tl_g", "tl_b"]),
+            (k::genw::CORNER_TR, ["tr_r", "tr_g", "tr_b"]),
+            (k::genw::CORNER_BL, ["bl_r", "bl_g", "bl_b"]),
+            (k::genw::CORNER_BR, ["br_r", "br_g", "br_b"]),
+        ],
+        GeneratorKind::Checker { .. } => &[
+            (k::genw::COLOR_A, ["a_r", "a_g", "a_b"]),
+            (k::genw::COLOR_B, ["b_r", "b_g", "b_b"]),
+        ],
+        GeneratorKind::Text { .. }
+        | GeneratorKind::NoiseField { .. }
+        | GeneratorKind::SmpteBars { .. }
+        | GeneratorKind::Timecode { .. } => &[],
     }
 }
 
@@ -112,28 +144,37 @@ impl KtApp {
                             }
                         });
                 });
-                // ---- цвет: тройка Rgb8 — одной пипеткой (правило 13,
-                // та же идиома, что у Dip/Flash в окне перехода). У титра
-                // цвета свои (заливка/обводка/тень) — их рисует его
-                // собственное окно (С3), здесь пипетка только у видов с
-                // одним цветом
-                let skip: &[&str] = &["color_r", "color_g", "color_b"];
-                if matches!(g, GeneratorKind::Solid { .. }) {
+                // ---- цвета: Rgb8-тройки — пипетками (правило 13, идиома
+                // Dip/Flash), по группе на цвет вида; в числовой сетке
+                // компоненты скрыты. У титра цвета свои — их рисует его
+                // собственное окно (С3)
+                let groups = color_groups(&g);
+                let mut skip: Vec<&str> = Vec::new();
+                for (_, names) in groups {
+                    skip.extend_from_slice(names);
+                }
+                for (i, (label, names)) in groups.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        ui.label(tr(k::trn::COLOR));
+                        ui.label(tr(*label));
                         let get = |n: &str| g.get_param(n).unwrap_or(0.0) as f32 / 255.0;
-                        let mut c = [get("color_r"), get("color_g"), get("color_b")];
+                        let mut c = [get(names[0]), get(names[1]), get(names[2])];
                         let r = ui.color_edit_button_rgb(&mut c);
-                        crate::widgets::field_probe::note("genw.color", r.rect);
+                        if i == 0 {
+                            crate::widgets::field_probe::note("genw.color", r.rect);
+                        }
                         if r.changed() {
-                            for (n, v) in ["color_r", "color_g", "color_b"].iter().zip(c) {
+                            for (n, v) in names.iter().zip(c) {
                                 g.set_param(n, (v * 255.0).round() as f64);
                             }
                             changed = true;
                         }
                     });
                 }
-                changed |= widgets::params_grid(ui, ("genp", ed.media), &mut g, skip);
+                // тайм-код показывает время МАТЕРИАЛА — сказать прямо
+                if matches!(g, GeneratorKind::Timecode { .. }) {
+                    ui.weak(tr(k::genw::TC_NOTE));
+                }
+                changed |= widgets::params_grid(ui, ("genp", ed.media), &mut g, &skip);
                 ui.separator();
                 ui.horizontal(|ui| {
                     // правка заденет ВСЕ места этого генератора — сказать

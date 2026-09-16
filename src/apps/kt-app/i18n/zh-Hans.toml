@@ -870,11 +870,24 @@ stay = "留在此处"
 # Окно генератора (Р.52): вид и параметры медиа без файла.
 [genw]
 title = "生成器"
+color_a = "颜色 A"
+color_b = "颜色 B"
+corner_tl = "左上"
+corner_tr = "右上"
+corner_bl = "左下"
+corner_br = "右下"
+tc_note = "显示素材时间：从零开始且素材起点为 0 的片段与时间线时钟一致"
 uses = "使用位置：{0}"
 
 [genkind]
 solid = "纯色"
 text = "文本"
+gradient = "渐变"
+corners = "四角渐变"
+checker = "棋盘格"
+noise = "噪点场"
+smpte = "SMPTE 彩条"
+timecode = "时间码"
 
 # Окно титра (Р.52 С3).
 [titlew]

@@ -105,6 +105,94 @@ pub enum GeneratorKind {
         #[serde(default = "default_order")]
         order: [TextLayer; 4],
     },
+    /// Линейный градиент между двумя цветами (угол в градусах).
+    Gradient {
+        #[serde(default = "default_angle")]
+        angle_deg: f64,
+        #[serde(default)]
+        a_r: u8,
+        #[serde(default)]
+        a_g: u8,
+        #[serde(default)]
+        a_b: u8,
+        #[serde(default = "default_255")]
+        b_r: u8,
+        #[serde(default = "default_255")]
+        b_g: u8,
+        #[serde(default = "default_255")]
+        b_b: u8,
+    },
+    /// Четырёхцветный градиент по углам (билинейный).
+    Corners {
+        #[serde(default = "default_255")]
+        tl_r: u8,
+        #[serde(default)]
+        tl_g: u8,
+        #[serde(default)]
+        tl_b: u8,
+        #[serde(default)]
+        tr_r: u8,
+        #[serde(default = "default_255")]
+        tr_g: u8,
+        #[serde(default)]
+        tr_b: u8,
+        #[serde(default)]
+        bl_r: u8,
+        #[serde(default)]
+        bl_g: u8,
+        #[serde(default = "default_255")]
+        bl_b: u8,
+        #[serde(default = "default_255")]
+        br_r: u8,
+        #[serde(default = "default_255")]
+        br_g: u8,
+        #[serde(default = "default_255")]
+        br_b: u8,
+    },
+    /// Шахматка: клетка задаётся СЧЁТОМ колонок (resolution-independent).
+    Checker {
+        #[serde(default = "default_cols")]
+        cols: u32,
+        #[serde(default)]
+        a_r: u8,
+        #[serde(default)]
+        a_g: u8,
+        #[serde(default)]
+        a_b: u8,
+        #[serde(default = "default_255")]
+        b_r: u8,
+        #[serde(default = "default_255")]
+        b_g: u8,
+        #[serde(default = "default_255")]
+        b_b: u8,
+    },
+    /// Шумовое поле: counter-based зерно от (x, y, pts МАТЕРИАЛА) —
+    /// сдвиг клипа зерно не меняет; полный диапазон яркости («серое
+    /// поле», которого Noise-ЭФФЕКТ дать не может — F-TXT-003).
+    #[serde(rename = "noise")]
+    NoiseField {
+        #[serde(default = "default_one")]
+        amount: f64,
+        #[serde(default = "default_true_flag")]
+        mono: bool,
+    },
+    /// SMPTE-полосы 75 % (+ опоры в нижней трети); тон 1 кГц — параметр:
+    /// включение делает медиа звучащим (уровень в dBFS).
+    #[serde(rename = "smpte")]
+    SmpteBars {
+        #[serde(default)]
+        tone: bool,
+        #[serde(default = "default_tone_db")]
+        tone_db: f64,
+    },
+    /// Тайм-код БЕГУЩИМИ цифрами. Показывает время МАТЕРИАЛА (источник
+    /// «часов таймлайна» не видит по построению): клип от нуля с
+    /// source_in = 0 совпадает с часами таймлайна, трим/сдвиг показывают
+    /// материал. Burn-in выхода — другой будущий объект (F-TXT-003).
+    Timecode {
+        #[serde(default = "default_tc_fps")]
+        fps: u32,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -169,6 +257,21 @@ fn default_plate_px() -> f64 {
 fn default_plate_py() -> f64 {
     0.12
 }
+fn default_angle() -> f64 {
+    90.0
+}
+fn default_cols() -> u32 {
+    8
+}
+fn default_true_flag() -> bool {
+    true
+}
+fn default_tone_db() -> f64 {
+    -20.0
+}
+fn default_tc_fps() -> u32 {
+    30
+}
 fn default_order() -> [TextLayer; 4] {
     [TextLayer::Plate, TextLayer::Shadow, TextLayer::Stroke, TextLayer::Fill]
 }
@@ -182,6 +285,33 @@ impl GeneratorKind {
         vec![
             GeneratorKind::Solid { color_r: 0, color_g: 0, color_b: 0 },
             GeneratorKind::default_text(),
+            GeneratorKind::Gradient {
+                angle_deg: 90.0,
+                a_r: 0,
+                a_g: 0,
+                a_b: 0,
+                b_r: 255,
+                b_g: 255,
+                b_b: 255,
+            },
+            GeneratorKind::Corners {
+                tl_r: 255,
+                tl_g: 0,
+                tl_b: 0,
+                tr_r: 0,
+                tr_g: 255,
+                tr_b: 0,
+                bl_r: 0,
+                bl_g: 0,
+                bl_b: 255,
+                br_r: 255,
+                br_g: 255,
+                br_b: 255,
+            },
+            GeneratorKind::Checker { cols: 8, a_r: 0, a_g: 0, a_b: 0, b_r: 255, b_g: 255, b_b: 255 },
+            GeneratorKind::NoiseField { amount: 1.0, mono: true },
+            GeneratorKind::SmpteBars { tone: false, tone_db: -20.0 },
+            GeneratorKind::Timecode { fps: 30 },
         ]
     }
 
@@ -230,6 +360,12 @@ impl GeneratorKind {
         match self {
             GeneratorKind::Solid { .. } => "solid",
             GeneratorKind::Text { .. } => "text",
+            GeneratorKind::Gradient { .. } => "gradient",
+            GeneratorKind::Corners { .. } => "corners",
+            GeneratorKind::Checker { .. } => "checker",
+            GeneratorKind::NoiseField { .. } => "noise",
+            GeneratorKind::SmpteBars { .. } => "smpte",
+            GeneratorKind::Timecode { .. } => "timecode",
         }
     }
 
@@ -260,6 +396,47 @@ params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, {
         shadow_blur: f64, 0.0, 0.5, 0.06, 0.005, Norm, Smooth;
         plate_pad_x: f64, 0.0, 2.0, 0.25, 0.01, Norm, Smooth;
         plate_pad_y: f64, 0.0, 2.0, 0.12, 0.01, Norm, Smooth;
+    },
+    Gradient {
+        angle_deg: f64, 0.0, 360.0, 90.0, 1.0, Deg, Smooth;
+        a_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        a_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        a_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        b_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        b_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        b_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+    },
+    Corners {
+        tl_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        tl_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        tl_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        tr_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        tr_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        tr_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        bl_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        bl_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        bl_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        br_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        br_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        br_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+    },
+    Checker {
+        cols: u32, 1.0, 256.0, 8.0, 1.0, Count, Structural;
+        a_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        a_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        a_b: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
+        b_r: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        b_g: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+        b_b: u8, 0.0, 255.0, 255.0, 1.0, Rgb8, Smooth;
+    },
+    NoiseField {
+        amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
+    },
+    SmpteBars {
+        tone_db: f64, -60.0, 0.0, -20.0, 0.5, Db, Smooth;
+    },
+    Timecode {
+        fps: u32, 1.0, 120.0, 30.0, 1.0, Count, Structural;
     },
 }}
 
@@ -419,6 +596,77 @@ pub fn format_gen_path(k: &GeneratorKind) -> String {
                 push("or", order.iter().map(|l| layer_letter(*l)).collect());
             }
         }
+        GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
+            if *angle_deg != default_angle() {
+                push("ang", format!("{angle_deg}"));
+            }
+            if (*a_r, *a_g, *a_b) != (0, 0, 0) {
+                push("a", format!("{a_r:02x}{a_g:02x}{a_b:02x}"));
+            }
+            if (*b_r, *b_g, *b_b) != (255, 255, 255) {
+                push("b", format!("{b_r:02x}{b_g:02x}{b_b:02x}"));
+            }
+        }
+        GeneratorKind::Corners {
+            tl_r,
+            tl_g,
+            tl_b,
+            tr_r,
+            tr_g,
+            tr_b,
+            bl_r,
+            bl_g,
+            bl_b,
+            br_r,
+            br_g,
+            br_b,
+        } => {
+            let hex = |r: &u8, g: &u8, b: &u8| format!("{r:02x}{g:02x}{b:02x}");
+            if (*tl_r, *tl_g, *tl_b) != (255, 0, 0) {
+                push("tl", hex(tl_r, tl_g, tl_b));
+            }
+            if (*tr_r, *tr_g, *tr_b) != (0, 255, 0) {
+                push("tr", hex(tr_r, tr_g, tr_b));
+            }
+            if (*bl_r, *bl_g, *bl_b) != (0, 0, 255) {
+                push("bl", hex(bl_r, bl_g, bl_b));
+            }
+            if (*br_r, *br_g, *br_b) != (255, 255, 255) {
+                push("br", hex(br_r, br_g, br_b));
+            }
+        }
+        GeneratorKind::Checker { cols, a_r, a_g, a_b, b_r, b_g, b_b } => {
+            if *cols != default_cols() {
+                push("n", format!("{cols}"));
+            }
+            if (*a_r, *a_g, *a_b) != (0, 0, 0) {
+                push("a", format!("{a_r:02x}{a_g:02x}{a_b:02x}"));
+            }
+            if (*b_r, *b_g, *b_b) != (255, 255, 255) {
+                push("b", format!("{b_r:02x}{b_g:02x}{b_b:02x}"));
+            }
+        }
+        GeneratorKind::NoiseField { amount, mono } => {
+            if *amount != 1.0 {
+                push("amt", format!("{amount}"));
+            }
+            if !*mono {
+                push("mono", "0".into());
+            }
+        }
+        GeneratorKind::SmpteBars { tone, tone_db } => {
+            if *tone {
+                push("tone", "1".into());
+            }
+            if *tone_db != default_tone_db() {
+                push("db", format!("{tone_db}"));
+            }
+        }
+        GeneratorKind::Timecode { fps } => {
+            if *fps != default_tc_fps() {
+                push("fps", format!("{fps}"));
+            }
+        }
     }
     out
 }
@@ -570,6 +818,70 @@ fn apply_token(k: &mut GeneratorKind, key: &str, val: &str) -> Option<()> {
                 "ppy" => *plate_pad_y = n()?,
                 "plc" => (*plate_r, *plate_g, *plate_b, *plate_a) = parse_rgba(val)?,
                 "or" => *order = order_from(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::Gradient { angle_deg, a_r, a_g, a_b, b_r, b_g, b_b } => {
+            match key {
+                "ang" => *angle_deg = val.parse::<f64>().ok().filter(|v| v.is_finite())?,
+                "a" => (*a_r, *a_g, *a_b) = parse_rgb(val)?,
+                "b" => (*b_r, *b_g, *b_b) = parse_rgb(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::Corners {
+            tl_r,
+            tl_g,
+            tl_b,
+            tr_r,
+            tr_g,
+            tr_b,
+            bl_r,
+            bl_g,
+            bl_b,
+            br_r,
+            br_g,
+            br_b,
+        } => {
+            match key {
+                "tl" => (*tl_r, *tl_g, *tl_b) = parse_rgb(val)?,
+                "tr" => (*tr_r, *tr_g, *tr_b) = parse_rgb(val)?,
+                "bl" => (*bl_r, *bl_g, *bl_b) = parse_rgb(val)?,
+                "br" => (*br_r, *br_g, *br_b) = parse_rgb(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::Checker { cols, a_r, a_g, a_b, b_r, b_g, b_b } => {
+            match key {
+                "n" => *cols = val.parse::<u32>().ok().filter(|v| (1..=256).contains(v))?,
+                "a" => (*a_r, *a_g, *a_b) = parse_rgb(val)?,
+                "b" => (*b_r, *b_g, *b_b) = parse_rgb(val)?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::NoiseField { amount, mono } => {
+            match key {
+                "amt" => *amount = val.parse::<f64>().ok().filter(|v| v.is_finite())?,
+                "mono" => *mono = val != "0",
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::SmpteBars { tone, tone_db } => {
+            match key {
+                "tone" => *tone = val == "1",
+                "db" => *tone_db = val.parse::<f64>().ok().filter(|v| v.is_finite())?,
+                _ => return None,
+            }
+            Some(())
+        }
+        GeneratorKind::Timecode { fps } => {
+            match key {
+                "fps" => *fps = val.parse::<u32>().ok().filter(|v| (1..=120).contains(v))?,
                 _ => return None,
             }
             Some(())

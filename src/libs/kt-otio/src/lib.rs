@@ -32,6 +32,16 @@ pub use schema::{
     MarkerNode, MediaRefNode, Metadata, MissingReference, RationalTime, RawObject, Stack,
     TimeRange, Timeline, Track, Transition,
 };
+/// Чужие имена генераторов, у которых есть наш эквивалент (импорт-алиас,
+/// Р.52 С5): читаются первоклассно и при пересохранении канонизируются в
+/// `kt.<tag>`. Список короткий и явный — незнакомое остаётся passthrough.
+pub(crate) fn generator_alias(kind: &str) -> Option<&'static str> {
+    match kind {
+        "SMPTEBars" => Some("smpte"),
+        _ => None,
+    }
+}
+
 pub use url::{decode_file_url, encode_file_url, media_target_url, relativize, resolve_media_path};
 
 /// Ключ единственной media-reference наших клипов (конвенция эталона).

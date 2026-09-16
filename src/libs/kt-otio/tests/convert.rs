@@ -1591,8 +1591,8 @@ fn t474_foreign_generator_kind_is_passthrough() {
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);
 
-    // «файл из чужого редактора»: generator_kind не наш
-    let foreign = text.replace("\"kt.solid\"", "\"SMPTEBars\"");
+    // «файл из чужого редактора»: generator_kind не наш и не алиас
+    let foreign = text.replace("\"kt.solid\"", "\"Legacy.Title\"");
     assert_ne!(foreign, text);
     let b = load_project(&foreign, None).expect("чужой генератор читается");
     let m7 = b.project.media.iter().find(|m| m.id == MediaId(7)).unwrap();
@@ -1604,7 +1604,7 @@ fn t474_foreign_generator_kind_is_passthrough() {
     let mut gens = Vec::new();
     find_schema(&v2, "GeneratorReference.1", &mut gens);
     assert_eq!(gens.len(), 1);
-    assert_eq!(gens[0]["generator_kind"], "SMPTEBars");
+    assert_eq!(gens[0]["generator_kind"], "Legacy.Title");
     assert_eq!(gens[0]["parameters"]["color_r"], 255, "параметры не потеряны");
     assert_eq!(
         text2,
@@ -1615,4 +1615,35 @@ fn t474_foreign_generator_kind_is_passthrough() {
         ),
         "идемпотентность пересохранения чужого генератора"
     );
+}
+
+/// Тест 494 (Р.52 С5): импорт-алиас — чужой `SMPTEBars` читается НАШИМ
+/// генератором полос, а пересохранение канонизирует вид в `kt.smpte`
+/// идемпотентно. (Апстрим-фикстура generator_reference_test.otio для
+/// этого непригодна: её дорожка — архаичная `Sequence.1`, целиком
+/// passthrough; она остаётся под t154.)
+#[test]
+fn t494_smpte_alias_import() {
+    let mut p = rich_project();
+    p.media.push(MediaRef { id: MediaId(7), path: "gen:smpte".into() });
+    p.clips.push(clip(30, ClipKind::Video, 0, 200_000, 45_000, 7));
+    p.validate().unwrap();
+    let ours = save_project(&p, &Retained::default(), None);
+    // «чужой редактор»: то же содержимое, но вид назван по-апстримовски
+    let foreign = ours.replace("\"kt.smpte\"", "\"SMPTEBars\"");
+    assert_ne!(foreign, ours);
+
+    let b = load_project(&foreign, None).expect("чужой SMPTEBars читается");
+    assert_eq!(
+        b.project.media.iter().find(|m| m.id == MediaId(7)).unwrap().path,
+        "gen:smpte",
+        "алиас обязан дать НАШ генератор полос, а не заглушку"
+    );
+
+    // пересохранение канонизирует вид; дальше — байт-в-байт
+    let text2 = save_project(&b.project, &b.retained, None);
+    assert!(text2.contains("\"kt.smpte\""), "вид канонизирован");
+    assert!(!text2.contains("SMPTEBars"), "чужое имя ушло при канонизации");
+    let b2 = load_project(&text2, None).unwrap();
+    assert_eq!(text2, save_project(&b2.project, &b2.retained, None), "идемпотентность");
 }

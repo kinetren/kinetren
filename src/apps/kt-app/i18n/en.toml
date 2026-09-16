@@ -870,11 +870,24 @@ stay = "Stay here"
 # Окно генератора (Р.52): вид и параметры медиа без файла.
 [genw]
 title = "Generator"
+color_a = "Colour A"
+color_b = "Colour B"
+corner_tl = "Top left"
+corner_tr = "Top right"
+corner_bl = "Bottom left"
+corner_br = "Bottom right"
+tc_note = "Shows MATERIAL time: a clip from zero with source start 0 matches the timeline clock"
 uses = "events using it: {0}"
 
 [genkind]
 solid = "Solid color"
 text = "Text"
+gradient = "Gradient"
+corners = "Four-corner gradient"
+checker = "Checkerboard"
+noise = "Noise field"
+smpte = "SMPTE bars"
+timecode = "Timecode"
 
 # Окно титра (Р.52 С3).
 [titlew]

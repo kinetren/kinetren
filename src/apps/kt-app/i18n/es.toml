@@ -870,11 +870,24 @@ stay = "Quedarse"
 # Окно генератора (Р.52): вид и параметры медиа без файла.
 [genw]
 title = "Generador"
+color_a = "Color A"
+color_b = "Color B"
+corner_tl = "Superior izquierda"
+corner_tr = "Superior derecha"
+corner_bl = "Inferior izquierda"
+corner_br = "Inferior derecha"
+tc_note = "Muestra el tiempo del MATERIAL: un clip desde cero con inicio 0 coincide con el reloj de la línea de tiempo"
 uses = "usos en el montaje: {0}"
 
 [genkind]
 solid = "Color sólido"
 text = "Texto"
+gradient = "Degradado"
+corners = "Degradado de cuatro esquinas"
+checker = "Tablero"
+noise = "Campo de ruido"
+smpte = "Barras SMPTE"
+timecode = "Código de tiempo"
 
 # Окно титра (Р.52 С3).
 [titlew]

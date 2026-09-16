@@ -942,7 +942,10 @@ fn nest_to_otio(
 /// Незнакомый тег или битые параметры — `None` (совместимость только
 /// вперёд: заглушка вместо генератора из будущей сборки).
 fn generator_ref_path(gr: &GeneratorReference) -> Option<String> {
-    let tag = gr.generator_kind.strip_prefix("kt.")?;
+    let tag = gr
+        .generator_kind
+        .strip_prefix("kt.")
+        .or_else(|| crate::generator_alias(&gr.generator_kind))?;
     let mut fields = gr.parameters.clone();
     fields.insert("kind".into(), Value::String(tag.to_string()));
     let kind: kt_model::GeneratorKind = serde_json::from_value(Value::Object(fields)).ok()?;

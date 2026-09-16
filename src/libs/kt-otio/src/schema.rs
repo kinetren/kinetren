@@ -491,7 +491,7 @@ fn decode_media_ref(v: Value) -> Result<MediaRefNode, Error> {
             if map
                 .get("generator_kind")
                 .and_then(Value::as_str)
-                .is_some_and(|k| k.starts_with("kt.")) =>
+                .is_some_and(|k| k.starts_with("kt.") || crate::generator_alias(k).is_some()) =>
         {
             Ok(MediaRefNode::Generator(typed(map)?))
         }
