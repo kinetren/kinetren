@@ -91,6 +91,7 @@ fn crossfade(p: &mut Project) {
         kind: Default::default(),
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
 }
 

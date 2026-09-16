@@ -193,6 +193,7 @@ fn golden_project() -> Project {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     p

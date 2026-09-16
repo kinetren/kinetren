@@ -1040,6 +1040,7 @@ fn demo_project(synth: bool) -> Project {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.region = Some(Region { start: t(34.0), end: t(66.0) });
     p.loop_enabled = true;

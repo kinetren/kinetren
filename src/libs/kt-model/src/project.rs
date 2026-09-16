@@ -299,6 +299,35 @@ impl TransitionKind {
         }
     }
 
+    /// Симметричные виды: `kernel(b, a, 1−k)` для них тождественен
+    /// `kernel(a, b, k)`, инверсия ничего не меняет — UI прячет галку
+    /// (правило 16: неработающий контрол не показывается). Match
+    /// исчерпывающий намеренно: новый вид обязан решить, симметричен ли.
+    pub fn symmetric(&self) -> bool {
+        match self {
+            // у zoom обе стороны считаются той же формулой от своей роли,
+            // и mix-тождество `mix(y, x, 1−t) == mix(x, y, t)` делает
+            // инверсию точным тождеством (у spin — нет: знак поворота
+            // при инверсии меняется, и это осмысленно)
+            TransitionKind::Crossfade
+            | TransitionKind::Zoom { .. }
+            | TransitionKind::BlurDissolve { .. }
+            | TransitionKind::Pixelate { .. }
+            | TransitionKind::Glitch { .. }
+            | TransitionKind::Flash { .. }
+            | TransitionKind::Dip { .. } => true,
+            TransitionKind::Wipe { .. }
+            | TransitionKind::Iris { .. }
+            | TransitionKind::Clock { .. }
+            | TransitionKind::Barn { .. }
+            | TransitionKind::Luma { .. }
+            | TransitionKind::Push { .. }
+            | TransitionKind::Slide { .. }
+            | TransitionKind::Spin { .. }
+            | TransitionKind::Whip { .. } => false,
+        }
+    }
+
     /// Числовые параметры вида — та же спека, что у эффектов, поэтому UI
     /// рисует их тем же кодом.
     pub fn param_specs(&self) -> &'static [ParamSpec] {
@@ -380,6 +409,14 @@ pub struct TransitionEvent {
     /// как обрезка клипа, а не растягивает анимацию.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub auto: Vec<ParamCurve>,
+    /// Инверсия перехода (Р.51, п.398): жест играется задом наперёд —
+    /// исполнители меняют стороны местами и обращают прогресс
+    /// (`kernel(b, a, 1−k)`), сам переход по-прежнему идёт из A в B.
+    /// Частные флаги видов (`Clock.reverse` — направление стрелки,
+    /// `Luma.invert` — порог яркости) — ДРУГИЕ оси, они остаются.
+    /// Умолчание не сериализуется — файлы прежних версий байт-стабильны.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub invert: bool,
 }
 
 fn is_default_curve(c: &AudioCurve) -> bool {

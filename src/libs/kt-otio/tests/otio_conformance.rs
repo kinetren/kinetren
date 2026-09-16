@@ -69,6 +69,7 @@ fn sample() -> Project {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.markers.push(Marker {
         t: Tick(15_000),

@@ -717,6 +717,7 @@ pub fn upgrade_legacy(p: &mut Project) -> UpgradeReport {
             kind: TransitionKind::Crossfade,
             audio: Default::default(),
             auto: vec![],
+            invert: false,
         });
         report.transitions_created += 1;
     }

@@ -89,6 +89,7 @@ fn t136_converted_overlap_matches_old_crossfade_math() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
 
@@ -127,6 +128,7 @@ fn t136_fade_math_and_handle_material() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let (out, underruns) = render(&p, &[1, 2], 14_336);
@@ -170,6 +172,7 @@ fn t136_missing_left_handle_is_silent_without_underruns() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let (out, underruns) = render(&p, &[1, 2], 12_288);
@@ -200,6 +203,7 @@ fn t136_fx_path_handles_match_plain() {
             kind: TransitionKind::Crossfade,
             audio: Default::default(),
             auto: vec![],
+            invert: false,
         });
         p.validate().unwrap();
         p
@@ -227,6 +231,7 @@ fn t136_reversed_incoming_handle_mirrors_source() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let (out, underruns) = render(&p, &[1, 2], 14_336);
@@ -259,6 +264,7 @@ fn t136_wanted_covers_handles() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);
@@ -287,6 +293,7 @@ fn t156_audio_fade_ramps_from_silence() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let (out, underruns) = render(&p, &[1], 4800);
@@ -322,6 +329,7 @@ fn t156_audio_fade_out_ends_in_silence() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let (out, _) = render(&p, &[1], 4800);
@@ -350,6 +358,7 @@ fn t226_audio_crossfade_curve_is_applied() {
             kind: TransitionKind::Crossfade,
             audio: curve,
             auto: vec![],
+            invert: false,
         });
         p.validate().unwrap();
         let (out, underruns) = render(&p, &[1, 2], 14_336);

@@ -4609,6 +4609,7 @@ impl KtApp {
                 kind: TransitionKind::Crossfade,
                 audio: Default::default(),
                 auto: vec![],
+                invert: false,
             },
         };
         self.apply(if had { Command::SetTransition(ev) } else { Command::AddTransition(ev) });

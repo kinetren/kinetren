@@ -227,6 +227,13 @@ impl KtApp {
                     {
                         changed = true;
                     }
+                    // инверсия перехода (Р.51, п.398) — свойство СОБЫТИЯ:
+                    // жест играется задом наперёд. У симметричных видов
+                    // это тождество — галка не показывается (правило 16)
+                    if !t.kind.symmetric() && ui.checkbox(&mut t.invert, tr(k::trn::INVERSE)).changed()
+                    {
+                        changed = true;
+                    }
                     if color {
                         ui.horizontal(|ui| {
                             ui.label(tr(k::trn::COLOR));

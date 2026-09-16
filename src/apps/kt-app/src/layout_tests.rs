@@ -2124,6 +2124,7 @@ fn t140_transition_edge_and_body_drags() {
             kind: TransitionKind::Crossfade,
             audio: Default::default(),
             auto: vec![],
+            invert: false,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -2417,6 +2418,7 @@ fn t157_fade_edge_drag_without_neighbour() {
             kind: TransitionKind::Crossfade,
             audio: Default::default(),
             auto: vec![],
+            invert: false,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -5885,6 +5887,7 @@ fn t227_transition_editor_opens_and_sets_kind() {
             kind: TransitionKind::Crossfade,
             audio: Default::default(),
             auto: vec![],
+            invert: false,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -8493,6 +8496,7 @@ fn t460_fade_handle_redrag_keeps_kind() {
                 ease: false,
                 keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(30_000), v: 45.0 }],
             }],
+            invert: false,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
@@ -8576,6 +8580,7 @@ fn t460b_overlap_redrag_keeps_kind() {
             kind: TransitionKind::Barn { vertical: true, softness: 0.1 },
             audio: AudioCurve::Linear,
             auto: vec![],
+            invert: false,
         });
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);

@@ -343,6 +343,7 @@ fn t427_collapse_then_expand_is_identity_in_one_undo_step() {
         kind: Default::default(),
         audio: Default::default(),
         auto: Vec::new(),
+        invert: false,
     });
     p.validate().expect("фикстура обязана быть законной");
     let before_shape = shape(&p);
@@ -496,6 +497,7 @@ fn t430_outer_transition_is_rehung_and_media_is_held_by_the_whole_tree() {
         kind: Default::default(),
         audio: Default::default(),
         auto: Vec::new(),
+        invert: false,
     }))
     .expect("кроссфейд на стыке законен");
 

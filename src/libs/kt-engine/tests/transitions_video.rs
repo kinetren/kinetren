@@ -49,6 +49,7 @@ fn project_pair() -> Project {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     p
@@ -183,6 +184,7 @@ fn t156_solo_fade_scales_alpha_and_stays_complete() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let mut vr = VideoRenderer::new(&p);
@@ -221,6 +223,7 @@ fn t156_fade_out_goes_dark_at_the_edge() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let mut vr = VideoRenderer::new(&p);
@@ -457,6 +460,7 @@ fn t225_solo_fade_with_kind_shapes_alpha() {
             kind,
             audio: Default::default(),
             auto: vec![],
+            invert: false,
         });
         p.clips.retain(|c| c.id == ClipId(1));
         p.validate().unwrap();
@@ -674,4 +678,96 @@ fn t459b_push_through_renderer_shows_real_b() {
     assert_eq!(px(32, 4), [128, (4 + 18) * 7, 200], "въехал настоящий B, а не кромка");
     // нижняя половина — верх кадра A, уехавший вниз
     assert_eq!(px(32, 30), [128, (30 - 18) * 7, 50], "A уезжает вниз своим верхом");
+}
+
+/// Тест 461 (п.398, Р.51): инверсия перехода — «жест задом наперёд»,
+/// исполняется планом как swap сторон + обратный прогресс. Кроссфейд —
+/// тождество (целочисленный путь не трогается), у направленных видов
+/// инверсия совпадает с противоположным направлением, у соло-фейда
+/// форма режется с другой стороны.
+#[test]
+fn t461_transition_invert() {
+    let q = kt_media::Quality { width: 64, height: 36 };
+    let t = Tick(90_000); // середина окна, k = 0.5
+    let render = |kind: TransitionKind, invert: bool| {
+        let mut p = project_pair();
+        p.transitions[0].kind = kind;
+        p.transitions[0].invert = invert;
+        p.validate().unwrap();
+        let mut vr = VideoRenderer::new(&p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        warm(&vr, &cache, t, q);
+        let (out, complete) = vr.compose_from_cache(&cache, t, q);
+        assert!(complete, "слои прогреты");
+        out
+    };
+    let px = |buf: &[u8], x: usize, y: usize| {
+        let i = (y * q.width as usize + x) * 4;
+        [buf[i], buf[i + 1], buf[i + 2], buf[i + 3]]
+    };
+    let a = synth_frame(Tick(90_000), q);
+    let b = synth_frame(Tick(30_000), q);
+    let (ca, cb) = (px(&a, 0, 0), px(&b, 0, 0));
+    assert_ne!(ca, cb, "цвета сторон обязаны различаться, иначе тест слеп");
+
+    // кроссфейд: инверсия — тождество, байт-в-байт (GOLDEN-путь не тронут)
+    assert_eq!(
+        render(TransitionKind::Crossfade, false),
+        render(TransitionKind::Crossfade, true),
+        "инверсия кроссфейда обязана быть тождеством"
+    );
+
+    // вайп: инверсия меняет стороны у той же границы
+    let wipe = |inv| render(TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 }, inv);
+    let (w0, w1) = (wipe(false), wipe(true));
+    assert_eq!(px(&w0, 2, 18), ca, "прямой вайп: слева уходящий");
+    assert_eq!(px(&w0, 61, 18), cb, "прямой вайп: справа входящий");
+    assert_eq!(px(&w1, 2, 18), cb, "инверсный вайп: слева уже входящий");
+    assert_eq!(px(&w1, 61, 18), ca, "инверсный вайп: справа ещё уходящий");
+
+    // push: инверсия направленного вида == противоположное направление
+    assert_eq!(
+        render(TransitionKind::Push { dir: Dir::Right }, true),
+        render(TransitionKind::Push { dir: Dir::Left }, false),
+        "инверсный push вправо обязан совпасть с push влево"
+    );
+
+    // соло-фейд: форма режется с другой стороны
+    let solo = |inv: bool| {
+        let mut p = project_pair();
+        p.transitions.clear();
+        p.transitions.push(TransitionEvent {
+            id: TransitionId(1),
+            a: Some(ClipId(1)),
+            b: None,
+            in_offset: Tick(18_000),
+            out_offset: Tick(0),
+            kind: TransitionKind::Wipe { dir: Dir::Left, angle: 0.0, softness: 0.0 },
+            audio: Default::default(),
+            auto: vec![],
+            invert: inv,
+        });
+        p.clips.retain(|c| c.id == ClipId(1));
+        p.validate().unwrap();
+        let mut vr = VideoRenderer::new(&p);
+        let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+        let t = Tick(81_000); // середина окна фейда 72_000..90_000
+        warm(&vr, &cache, t, q);
+        let (out, _) = vr.compose_from_cache(&cache, t, q);
+        out
+    };
+    let alpha = |buf: &[u8], x: usize| buf[(18 * q.width as usize + x) * 4 + 3];
+    let (s0, s1) = (solo(false), solo(true));
+    assert!(
+        alpha(&s0, 2) > 250 && alpha(&s0, 61) < 5,
+        "прямой вайп-фейд режет справа: {}/{}",
+        alpha(&s0, 2),
+        alpha(&s0, 61)
+    );
+    assert!(
+        alpha(&s1, 2) < 5 && alpha(&s1, 61) > 250,
+        "инверсный вайп-фейд режет слева: {}/{}",
+        alpha(&s1, 2),
+        alpha(&s1, 61)
+    );
 }

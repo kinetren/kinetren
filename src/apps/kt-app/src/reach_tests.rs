@@ -372,6 +372,7 @@ fn scene(
                 kind: TransitionKind::Crossfade,
                 audio: Default::default(),
                 auto: vec![],
+                invert: false,
             });
         }
         p.markers.push(Marker::named(Tick(60_000), "метка"));

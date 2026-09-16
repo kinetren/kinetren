@@ -64,6 +64,7 @@ fn rich_project() -> Project {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.markers.push(Marker {
         t: Tick(15_000),
@@ -789,6 +790,30 @@ fn t222_transition_kind_roundtrip_and_version() {
         "битый вид обязан дать замечание, а не тишину: {:?}",
         b.notices
     );
+
+    // 6. инверсия (Р.51, п.398): едет в конверте, бампит файл до v7,
+    // выключение чистит и ключ, и версию
+    let mut p = rich_project();
+    p.transitions[0].kind = TransitionKind::Wipe { dir: Dir::Up, softness: 0.25, angle: 12.0 };
+    p.transitions[0].invert = true;
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 7, "инверсия поднимает файл до v7");
+    let tr = find_transition(&v);
+    assert_eq!(tr["metadata"]["kt"]["invert"], true, "инверсия в конверте перехода");
+    let b = load_project(&text, None).expect("файл с инверсией читается");
+    assert!(b.project.transitions[0].invert, "инверсия пережила круг");
+    assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность с инверсией");
+    let mut back = b.project.clone();
+    back.transitions[0].invert = false;
+    let text = save_project(&back, &b.retained, None);
+    let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(v["metadata"]["kt"]["v"], 3, "без инверсии версия снова по содержимому");
+    assert!(
+        find_transition(&v)["metadata"]["kt"].get("invert").is_none(),
+        "выключенная инверсия не оставляет ключа"
+    );
 }
 
 /// Первый Transition в дереве дорожек (в rich_project он один).
@@ -1120,6 +1145,7 @@ fn nested_project() -> Project {
         kind: Default::default(),
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     s.morphers.push(MorpherEvent {
         id: MorphId(3),

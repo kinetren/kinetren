@@ -277,6 +277,7 @@ fn t168_complex_montage_plays_without_underruns() {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);

@@ -97,11 +97,14 @@ struct TransAnim {
     kind: kt_model::TransitionKind,
     auto: Vec<kt_model::ParamCurve>,
     w0: Tick,
+    /// Инверсия перехода (Р.51, п.398). Исполняется ПЛАНОМ, не ядром:
+    /// `apply_invert` меняет стороны местами и обращает прогресс.
+    invert: bool,
 }
 
 impl TransAnim {
     fn of(t: &kt_model::TransitionEvent, w0: Tick) -> TransAnim {
-        TransAnim { kind: t.kind.clone(), auto: t.auto.clone(), w0 }
+        TransAnim { kind: t.kind.clone(), auto: t.auto.clone(), w0, invert: t.invert }
     }
 
     fn mix_at(&self, t: Tick) -> crate::TransMix {
@@ -1077,13 +1080,16 @@ fn build_plan<'a>(
         }
         // фейд у края/Gap: пары нет по модели, слой всегда идёт через
         // масштабирование альфы (scale_alpha)
-        if let Some((w, incoming, mix)) = solo_fade(clip, t) {
+        if let Some((w, incoming, mix, inv)) = solo_fade(clip, t) {
             // кроссфейд — прежний путь (вес прямо в альфе, байты те же);
             // любой другой вид форму даёт ядром, а уровень остаётся
             // уровнем события
             let (alpha_k, fade) = if mix.is_crossfade() {
                 (w * clip.opacity_k / 4096, None)
             } else {
+                // инверсия соло-фейда: флип роли ДО вычисления k — его
+                // выражение само даёт комплемент (п.398)
+                let incoming = incoming != inv;
                 let k = if incoming { w } else { 4096 - w };
                 (clip.opacity_k, Some(crate::video_plan::SoloFade { k, mix, incoming }))
             };
@@ -1110,19 +1116,18 @@ fn build_plan<'a>(
         {
             let outgoing = &clips[pi];
             debug_assert_ne!(pi, i);
-            let k = (((t.0 - win.0.0) * 4096) / (win.1.0 - win.0.0)).clamp(0, 4096) as u32;
+            let mut k = (((t.0 - win.0.0) * 4096) / (win.1.0 - win.0.0)).clamp(0, 4096) as u32;
             // вид разрешается по позиции ВНУТРИ окна: у его параметров
             // могут быть кривые (Р.34 К4)
-            let mix = clip.fade_in_trans.as_ref().map(|a| a.mix_at(t)).unwrap_or_default();
-            // уровни соседей смешиваются тем же весом, что и картинка
+            let ta = clip.fade_in_trans.as_ref();
+            let mix = ta.map(|a| a.mix_at(t)).unwrap_or_default();
+            // уровни соседей смешиваются тем же весом, что и картинка;
+            // выражение симметрично к (swap, 1−k) — инверсия его не трогает
             let op = (outgoing.opacity_k * (4096 - k) + clip.opacity_k * k) / 4096;
-            layers.push(PlanLayer::Dissolve {
-                a: layer_src(outgoing, ctx, cache, quality, t),
-                b: layer_src(clip, ctx, cache, quality, t),
-                k,
-                alpha_k: op,
-                mix,
-            });
+            let mut a = layer_src(outgoing, ctx, cache, quality, t);
+            let mut b = layer_src(clip, ctx, cache, quality, t);
+            apply_invert(&mut a, &mut b, &mut k, &mix, ta.is_some_and(|a| a.invert));
+            layers.push(PlanLayer::Dissolve { a, b, k, alpha_k: op, mix });
             continue;
         }
         layers.push(PlanLayer::One {
@@ -1569,7 +1574,7 @@ fn blend_frames_cpu(
 /// Сольный фейд (Р.25) в момент t: (вес 0..4096, клип ПОЯВЛЯЕТСЯ, вид).
 /// fade_in нарастает 0→1, fade_out затухает 1→0. None — момент вне
 /// сольного окна (обычный слой или половина настоящей пары).
-fn solo_fade(clip: &VideoClip, t: Tick) -> Option<(u32, bool, crate::TransMix)> {
+fn solo_fade(clip: &VideoClip, t: Tick) -> Option<(u32, bool, crate::TransMix, bool)> {
     let frac =
         |w: (Tick, Tick)| (((t.0 - w.0.0) * 4096) / (w.1.0 - w.0.0).max(1)).clamp(0, 4096) as u32;
     if let Some(w) = clip.fade_in
@@ -1577,10 +1582,12 @@ fn solo_fade(clip: &VideoClip, t: Tick) -> Option<(u32, bool, crate::TransMix)> 
         && t.0 >= w.0.0
         && t.0 < w.1.0
     {
+        let ta = clip.fade_in_trans.as_ref();
         return Some((
             frac(w),
             true,
-            clip.fade_in_trans.as_ref().map(|a| a.mix_at(t)).unwrap_or_default(),
+            ta.map(|a| a.mix_at(t)).unwrap_or_default(),
+            ta.is_some_and(|a| a.invert),
         ));
     }
     if let Some(w) = clip.fade_out
@@ -1588,13 +1595,35 @@ fn solo_fade(clip: &VideoClip, t: Tick) -> Option<(u32, bool, crate::TransMix)> 
         && t.0 >= w.0.0
         && t.0 < w.1.0
     {
+        let ta = clip.fade_out_trans.as_ref();
         return Some((
             4096 - frac(w),
             false,
-            clip.fade_out_trans.as_ref().map(|a| a.mix_at(t)).unwrap_or_default(),
+            ta.map(|a| a.mix_at(t)).unwrap_or_default(),
+            ta.is_some_and(|a| a.invert),
         ));
     }
     None
+}
+
+/// Инверсия перехода (Р.51, п.398): «жест задом наперёд» — поменять
+/// стороны местами и обратить прогресс, `kernel(b, a, 1−k)`. Кроссфейд
+/// не трогаем: для него это тождество, а целочисленный `dissolve_into`
+/// держит GOLDEN_VIDEO. КОНТРАКТ: любая сборка `PlanLayer::Dissolve`
+/// (в т.ч. будущая пара наложения) обязана пройти через этот хелпер —
+/// иначе инверсия на ней молча потеряется. Ключи кэша едут сами: своп
+/// меняет порядок `put_src`, k уже хэшируется.
+fn apply_invert<'a>(
+    a: &mut crate::video_plan::LayerSrc<'a>,
+    b: &mut crate::video_plan::LayerSrc<'a>,
+    k: &mut u32,
+    mix: &crate::TransMix,
+    invert: bool,
+) {
+    if invert && !mix.is_crossfade() {
+        std::mem::swap(a, b);
+        *k = 4096 - *k;
+    }
 }
 
 /// Альфа буфера, умноженная на k/4096 НА МЕСТЕ (уровень поверх готового

@@ -290,11 +290,17 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
                         .chain(m.patch.audio_auto.iter())
                         .any(|a| !a.is_empty())
             });
-            // вложенные ленты (Р.50) — ПЕРВЫМ условием каскада: старая
-            // сборка прочла бы вложение серым плейсхолдером (п.158) и при
-            // первой перезаписи вернула бы живой монтаж в файл мёртвым
-            // сырьём
-            if !p.sequences.is_empty() {
+            // переходы Р.51 (инверсия) — по ВСЕМ лентам документа: старая
+            // сборка сыграла бы переход неинвертированным и сохранила бы
+            // ключ нетронутым — порча незаметнее некуда
+            let has_v7 = p.transitions.iter().any(|t| t.invert)
+                || p.sequences.iter().any(|s| s.transitions.iter().any(|t| t.invert));
+            // вложенные ленты (Р.50): старая сборка прочла бы вложение
+            // серым плейсхолдером (п.158) и при первой перезаписи вернула
+            // бы живой монтаж в файл мёртвым сырьём
+            if has_v7 {
+                crate::meta::KT_META_V7
+            } else if !p.sequences.is_empty() {
                 crate::meta::KT_META_V6
             } else if has_morph_v5 {
                 crate::meta::KT_META_V5
@@ -663,6 +669,7 @@ fn reel_children(
                         if t.kind != TransitionKind::Crossfade
                             || t.audio != AudioCurve::EqualPower
                             || !t.auto.is_empty()
+                            || t.invert
                         {
                             let e = crate::meta::kt_entry_mut(&mut meta);
                             e.insert(
@@ -680,6 +687,10 @@ fn reel_children(
                                     "auto".into(),
                                     serde_json::to_value(&t.auto).unwrap_or(Value::Null),
                                 );
+                            }
+                            // умолчание false не пишется (байт-стабильность)
+                            if t.invert {
+                                e.insert("invert".into(), Value::Bool(true));
                             }
                         }
                         kids.push(Composable::Transition(crate::schema::Transition {
@@ -1213,7 +1224,7 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
 fn take_transition_kt(
     meta: &mut Map<String, Value>,
     notices: &mut Vec<Notice>,
-) -> (TransitionKind, AudioCurve, Vec<kt_model::ParamCurve>) {
+) -> (TransitionKind, AudioCurve, Vec<kt_model::ParamCurve>, bool) {
     let Some(Value::Object(kt)) = meta.get_mut(crate::meta::KT_NS) else {
         return Default::default();
     };
@@ -1234,10 +1245,19 @@ fn take_transition_kt(
         }),
         None => Vec::new(),
     };
+    // инверсия (Р.51, п.398); не-булево — notice + false, файл не валится
+    let invert = match kt.shift_remove("invert") {
+        Some(Value::Bool(b)) => b,
+        Some(_) => {
+            notices.push("unreadable transition invert flag, kept off".to_string());
+            false
+        }
+        None => false,
+    };
     if kt.is_empty() {
         meta.shift_remove(crate::meta::KT_NS);
     }
-    (kind, audio, auto)
+    (kind, audio, auto, invert)
 }
 
 /// Кривые файла ДО v3: ключи лежат в долях длины события (домен Р.30),
@@ -1453,7 +1473,7 @@ fn read_reel(
                         && let Some(a) = prev_clip
                     {
                         let id = out.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                        let (kind, audio, auto) = take_transition_kt(&mut meta, cx.notices);
+                        let (kind, audio, auto, invert) = take_transition_kt(&mut meta, cx.notices);
                         cx.retained.transitions.insert((Some(a), None), (ttype, meta, extra));
                         out.transitions.push(TransitionEvent {
                             id: TransitionId(id),
@@ -1464,6 +1484,7 @@ fn read_reel(
                             kind,
                             audio,
                             auto,
+                            invert,
                         });
                     }
                     if !g.extra.is_empty() || !g.metadata.is_empty() {
@@ -1510,7 +1531,7 @@ fn read_reel(
                         pending_transition.take()
                     {
                         let id = out.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                        let (kind, audio, auto) = take_transition_kt(&mut meta, cx.notices);
+                        let (kind, audio, auto, invert) = take_transition_kt(&mut meta, cx.notices);
                         if ttype != "SMPTE_Dissolve" {
                             cx.notices.push(format!("transition '{ttype}' imported as crossfade"));
                         }
@@ -1526,6 +1547,7 @@ fn read_reel(
                             kind,
                             audio,
                             auto,
+                            invert,
                         });
                     }
                     prev_clip = Some(ev.id);
@@ -1564,7 +1586,7 @@ fn read_reel(
                         pending_transition.take()
                     {
                         let id = out.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                        let (kind, audio, auto) = take_transition_kt(&mut meta, cx.notices);
+                        let (kind, audio, auto, invert) = take_transition_kt(&mut meta, cx.notices);
                         cx.retained
                             .transitions
                             .insert((prev_clip, Some(ev.id)), (ttype, meta, extra));
@@ -1577,6 +1599,7 @@ fn read_reel(
                             kind,
                             audio,
                             auto,
+                            invert,
                         });
                     }
                     prev_clip = Some(ev.id);
@@ -1599,7 +1622,7 @@ fn read_reel(
                     {
                         if let Some(a) = prev_clip {
                             let id = out.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                            let (kind, audio, auto) = take_transition_kt(&mut meta, cx.notices);
+                            let (kind, audio, auto, invert) = take_transition_kt(&mut meta, cx.notices);
                             cx.retained.transitions.insert((Some(a), None), (ttype, meta, extra));
                             out.transitions.push(TransitionEvent {
                                 id: TransitionId(id),
@@ -1610,6 +1633,7 @@ fn read_reel(
                                 kind,
                                 audio,
                                 auto,
+                                invert,
                             });
                         } else {
                             cx.notices
@@ -1634,7 +1658,7 @@ fn read_reel(
         if let Some((in_off, out_off, (ttype, mut meta, extra))) = pending_transition.take() {
             if let Some(a) = prev_clip {
                 let id = out.transitions.iter().map(|t| t.id.0).max().unwrap_or(0) + 1;
-                let (kind, audio, auto) = take_transition_kt(&mut meta, cx.notices);
+                let (kind, audio, auto, invert) = take_transition_kt(&mut meta, cx.notices);
                 cx.retained.transitions.insert((Some(a), None), (ttype, meta, extra));
                 out.transitions.push(TransitionEvent {
                     id: TransitionId(id),
@@ -1645,6 +1669,7 @@ fn read_reel(
                     kind,
                     audio,
                     auto,
+                    invert,
                 });
             } else {
                 cx.notices.push("transition on an empty track was dropped".into());

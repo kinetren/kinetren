@@ -236,6 +236,7 @@ fn t236_forbidden_zones_snap_the_boundary() {
         kind: Default::default(),
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let zones = kt_model::forbidden_zones(&p, &p.clips[0]);
@@ -396,6 +397,7 @@ fn t239_bake_materializes_slices() {
         kind: Default::default(),
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.morphers.push(layer(Tick(30_000), Tick(30_000)));
     p.validate().unwrap();

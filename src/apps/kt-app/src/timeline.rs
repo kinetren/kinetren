@@ -3312,6 +3312,7 @@ impl KtApp {
                                         kind: TransitionKind::Crossfade,
                                         audio: Default::default(),
                                         auto: vec![],
+                                        invert: false,
                                     },
                                 };
                                 let mut cmds = vec![
@@ -5188,6 +5189,7 @@ impl KtApp {
                                         kind,
                                         audio: Default::default(),
                                         auto: vec![],
+                                        invert: false,
                                     }));
                                 }
                                 ui.close();
@@ -5214,6 +5216,7 @@ impl KtApp {
                                     kind: TransitionKind::Crossfade,
                                     audio: Default::default(),
                                     auto: vec![],
+                                    invert: false,
                                 }));
                                 ui.close();
                             }

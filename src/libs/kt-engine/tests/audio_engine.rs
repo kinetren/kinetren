@@ -143,6 +143,7 @@ fn t2_crossfade_transition_is_equal_power() {
         kind: kt_model::TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);
@@ -219,6 +220,7 @@ fn t7_render_is_deterministic_regardless_of_history() {
         kind: kt_model::TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     });
     p.validate().unwrap();
     let r = AudioRenderer::new(&p);

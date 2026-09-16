@@ -49,6 +49,7 @@ fn tr(id: u64, a: u64, b: u64, in_off: i64, out_off: i64) -> TransitionEvent {
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     }
 }
 
@@ -245,6 +246,7 @@ fn fade(id: u64, a: Option<u64>, b: Option<u64>, in_off: i64, out_off: i64) -> T
         kind: TransitionKind::Crossfade,
         audio: Default::default(),
         auto: vec![],
+        invert: false,
     }
 }
 
