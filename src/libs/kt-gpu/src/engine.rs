@@ -1136,7 +1136,6 @@ impl Inner {
                         ],
                         f: mix.p,
                         m: kt_engine::transitions::trans_ext(mix, *k),
-                        ..Default::default()
                     };
                     let acc_in = acc[cur].view.clone();
                     self.pass(enc, Pipe::Composite, &acc[target].view, &acc_in, &va, &vb, u);

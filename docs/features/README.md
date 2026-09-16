@@ -315,7 +315,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-UI-005 | Цвет клипа как данные и как оформление | кандидат | B | M | частично | `ui/viewer/clip-colors-and-legibility.md` |
 | F-AUD-003 | Шумоподавление и восстановление речи | кандидат | B | L | нет | `audio/processing/noise-reduction.md` |
 | F-AUD-013 | Pitch shift — высота без смены длительности | сделано | B | L | да | `audio/processing/pitch-shift.md` |
-| F-CMP-002 | Словарь переходов: инверсия, узоры, объём | принято | B | L | частично | `compositing/transitions/transition-vocabulary.md` |
+| F-CMP-002 | Словарь переходов: инверсия, узоры, объём | сделано | B | L | да | `compositing/transitions/transition-vocabulary.md` |
 | F-COL-010 | Ручки: сколько лишнего уезжает с монтажом | кандидат | B | L | нет | `collab/handoff/handles.md` |
 | F-COL-016 | Единица занятия — библиотека, бин или секвенция | исследовано | B | L | нет | `collab/claim/lock-granularity.md` |
 | F-COL-033 | Чем адресуется правка: id, тик или родословная | исследовано | B | L | частично | `collab/merge/identity-of-an-edit.md` |
