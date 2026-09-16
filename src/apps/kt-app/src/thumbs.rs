@@ -439,7 +439,19 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
                 }
             }
             let src = sources.get_mut(key.media).expect("source just inserted");
+            // длительность И ВИД медиа: источник открыт, оба достаются
+            // даром. Вид публиковала только ветка probe, а она себя
+            // пропускает, когда длительность уже известна («continue» по
+            // `durations.contains_key`) — медиа, у которого сначала
+            // попросили ТУМБУ, вид не получало НИКОГДА (Р.53, п.416).
+            // Видно это было как чёрный квадрат вместо волноформы у
+            // аудио-карточки, попавшей в кадр раньше своего probe.
             shared.durations.lock().unwrap().insert(key.media, Some(src.info().duration));
+            shared
+                .kinds
+                .lock()
+                .unwrap()
+                .insert(key.media, (src.info().has_video, src.info().has_audio));
             let mut ok = false;
             if let Ok(frame) =
                 src.read_video_frame(Tick(key.t), Some(Quality { width: THUMB_W, height: THUMB_H }))

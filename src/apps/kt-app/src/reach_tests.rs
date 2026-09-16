@@ -340,6 +340,15 @@ fn scene(
             opacity: 1.0,
             fx_off: false,
         });
+        if e == E::Generator {
+            // событие-генератор: своё медиа с `gen:`-путём и клип по нему
+            p.media.push(MediaRef { id: MediaId(200), path: "gen:solid:c=ff8800".into() });
+            let mut genclip = p.clips[0].clone();
+            genclip.id = ClipId(4);
+            genclip.media = MediaId(200);
+            genclip.start = Tick(600_000);
+            p.clips.push(genclip);
+        }
         if e == E::Nest {
             // ВЛОЖЕНИЕ: лента с одним событием внутри и экземпляр на
             // дорожке — ровно то, по чему человек жмёт правой кнопкой
@@ -449,6 +458,10 @@ fn scene(
         )],
         E::Nest => vec![(
             "тело вложения",
+            egui::pos2(g.tick_to_x(625_000), g.lane_y(ClipKind::Video, 0, 0.6)),
+        )],
+        E::Generator => vec![(
+            "тело события-генератора",
             egui::pos2(g.tick_to_x(625_000), g.lane_y(ClipKind::Video, 0, 0.6)),
         )],
         E::Marker => vec![("флажок на линейке", egui::pos2(g.tick_to_x(60_000), ruler_y))],
@@ -721,6 +734,24 @@ fn verbs(e: crate::timeline::TlEntity) -> Vec<(Verb, Reach)> {
             (Verb::Rename, Reach::Absent("у события нет имени — подпись это имя медиа")),
             (Verb::Delete, menu(tr(k::tl::menu::DELETE))),
             (Verb::Open, menu(tr(k::tl::menu::FX))),
+        ],
+        E::Generator => vec![
+            (
+                Verb::Create,
+                Reach::Elsewhere(
+                    "подменю «Генератор» в меню фона бина кладёт и медиа, и клип \
+                     под курсор одним шагом истории, t512",
+                ),
+            ),
+            (
+                Verb::Rename,
+                Reach::Absent(
+                    "у генератора нет имени: подпись — это его ВИД, а вид меняется \
+                     пикером в окне параметров",
+                ),
+            ),
+            (Verb::Delete, menu(tr(k::tl::menu::DELETE))),
+            (Verb::Open, menu(tr(k::tl::menu::GEN_PARAMS))),
         ],
         E::Nest => vec![
             (Verb::Create, menu(tr(k::tl::menu::COLLAPSE))),

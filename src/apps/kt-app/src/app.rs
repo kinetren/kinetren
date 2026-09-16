@@ -515,6 +515,8 @@ pub struct KtApp {
     /// Кэш имён/подавления имён клипов по model_rev (были 2 HashMap +
     /// O(n²) на каждый кадр).
     pub names_cache: NamesCache,
+    /// «Мест на монтаже» по медиа, по ревизии модели (Р.53, п.416).
+    uses_cache: (Option<u64>, Arc<HashMap<MediaId, usize>>),
     /// Карты растяжения времени по клипам, по model_rev (Р.37 п.3).
     /// Превью обязано считать позицию ТОЙ ЖЕ картой, что рендер, но
     /// строить профиль на каждый пиксельный столбец — аллокация в
@@ -770,6 +772,7 @@ impl KtApp {
             model_rev: 0,
             coverage_cache: Default::default(),
             names_cache: Default::default(),
+            uses_cache: Default::default(),
             warp_cache: Default::default(),
         }
     }
@@ -956,6 +959,7 @@ impl KtApp {
             model_rev: 0,
             coverage_cache: Default::default(),
             names_cache: Default::default(),
+            uses_cache: Default::default(),
             warp_cache: Default::default(),
         };
         // loop-регион загруженного проекта — в плеер сразу (раньше
@@ -2912,6 +2916,15 @@ impl KtApp {
     }
 
     /// Событие-ВЛОЖЕНИЕ? (Р.50)
+    /// Прямоугольник карточки медиа в бине (кадр назад) — там, где
+    /// действует человек. Список этого кадра короткий (карточки бина),
+    /// линейный поиск дешевле карты. Зовут его harness-тесты и живые
+    /// сценарии: в продуктовом пути координата карточки не нужна.
+    #[allow(dead_code)]
+    pub fn bin_card_rect(&self, id: MediaId) -> Option<egui::Rect> {
+        self.bin_card_rects.iter().find(|(m, _)| *m == id).map(|(_, r)| *r)
+    }
+
     pub fn is_nest(&self, id: ClipId) -> bool {
         self.model.clip(id).is_some_and(|c| self.model.project().sequence(c.media).is_some())
     }
@@ -3395,19 +3408,35 @@ impl KtApp {
     /// «Создать генератор» из меню бина (Р.52): медиа + источник +
     /// карточка + сразу окно параметров. Клип НЕ ставится — карточку
     /// тянут на таймлайн или жмут «Поставить на курсор», как у файла.
+    /// Новый генератор: медиа И КЛИП под курсором — одним батчем, одним
+    /// шагом истории (Р.53, п.416).
+    ///
+    /// До этого пункта пункт меню заводил только медиа в бине: окно
+    /// параметров открывалось, а в превью ничего не было — набирать титр
+    /// приходилось вслепую, потом идти в бин и ставить карточку руками.
+    /// Ctrl+Z возвращает всё разом, потому что батч один.
     pub fn create_generator(&mut self, kind: kt_model::GeneratorKind) {
         let path = kt_model::format_gen_path(&kind);
         let id = MediaId(self.next_media_id());
-        // снимок — ДО apply: источник поднимаем сами, синку не надо
+        // источник поднимаем сами (снимок синка — ДО apply); он же отдаёт
+        // паспорт, по которому считается набор клипов
+        let src = match crate::util::open_source(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.note(e);
+                return;
+            }
+        };
+        let info = src.info().clone();
         self.media_paths.insert(id, path.clone());
-        if !self.apply(Command::AddMedia { id, path: path.clone() }) {
+        let at = self.player.transport.playhead();
+        let mut cmds = vec![Command::AddMedia { id, path: path.clone() }];
+        cmds.extend(self.clip_cmds_for(id, &info, at, None));
+        if !self.apply_batch(cmds) {
             self.media_paths.remove(&id);
             return;
         }
-        match crate::util::open_source(&path) {
-            Ok(src) => self.player.add_media(id, src),
-            Err(e) => self.note(e),
-        }
+        self.player.add_media(id, src);
         self.thumbs.add_media(id, path);
         self.open_generator_editor(id);
     }
@@ -5000,6 +5029,22 @@ impl KtApp {
                 return;
             }
         };
+        let cmds = self.clip_cmds_for(media_id, &info, at, lane_hint);
+        self.apply_batch(cmds);
+    }
+
+    /// Команды «положить клип(ы) этого медиа в точку». Вынесено из
+    /// `place_media_at` (Р.53, п.416): создание генератора обязано класть
+    /// клип ТЕМ ЖЕ батчем, что и медиа — иначе новый вид появляется
+    /// только в бине, и пользователь набирает титр вслепую (правило 4:
+    /// полезное умолчание).
+    pub(crate) fn clip_cmds_for(
+        &mut self,
+        media_id: MediaId,
+        info: &kt_media::MediaInfo,
+        at: Tick,
+        lane_hint: Option<(ClipKind, u32)>,
+    ) -> Vec<Command> {
         let dur = if info.duration.0 > 0 { info.duration } else { Tick(90_000 * 5) };
         let group = (info.has_video && info.has_audio).then(|| GroupId(self.next_group_id()));
         let mut next_id = self.next_clip_id();
@@ -5033,7 +5078,7 @@ impl KtApp {
             }));
             next_id += 1;
         }
-        self.apply_batch(cmds);
+        cmds
     }
 
     // -- снап ---------------------------------------------------------------
@@ -6047,9 +6092,29 @@ pub struct WarpCache {
     maps: Arc<HashMap<ClipId, kt_engine::ClipWarp>>,
 }
 
+/// Подпись медиа для пользователя: у файла — имя файла, у генератора —
+/// ИМЯ ВИДА (Р.53, п.416). До этого пункта клип-генератор подписывался
+/// сырым путём `gen:solid:c=ff8800`, который к тому же менялся на каждое
+/// нажатие в окне параметров: подпись дёргалась под руками. Место одно —
+/// его же зовёт карточка бина.
+pub fn media_display_name(path: &str) -> String {
+    if let Some(kd) = kt_model::parse_gen_path(path) {
+        return crate::generator_editor::kind_name(&kd).to_string();
+    }
+    std::path::Path::new(path)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string())
+}
+
 #[derive(Default)]
 pub struct NamesCache {
     rev: Option<u64>,
+    /// Язык, на котором посчитаны имена (Р.53, п.416). Подпись
+    /// клипа-генератора — ИМЯ ВИДА, то есть строка каталога; смена языка
+    /// модель не трогает, и без этого штампа таймлайн до первой правки
+    /// монтажа оставался бы на старом языке.
+    lang: Option<crate::i18n::Lang>,
     /// Порядок отрисовки клипов (индексы в `project().clips`) — тот же
     /// back-to-front, что у композиции движка: задняя дорожка первой, а
     /// внутри дорожки раньше начавшийся раньше, чтобы поздний лёг СВЕРХУ
@@ -6172,23 +6237,16 @@ impl KtApp {
         // Модель можно подменить целиком, не бампнув model_rev (открытие
         // проекта, харнесс-тесты) — тогда спасает эта проверка.
         if self.names_cache.rev != Some(self.model_rev)
+            || self.names_cache.lang != Some(crate::i18n::current())
             || self.names_cache.draw_order.len() != self.model.project().clips.len()
         {
             self.names_cache.rev = Some(self.model_rev);
+            self.names_cache.lang = Some(crate::i18n::current());
             let mut names = HashMap::new();
             let mut suppress = std::collections::HashSet::new();
             let p = self.model.project();
-            let media_names: HashMap<MediaId, String> = p
-                .media
-                .iter()
-                .map(|m| {
-                    let name = std::path::Path::new(&m.path)
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_else(|| m.path.clone());
-                    (m.id, name)
-                })
-                .collect();
+            let media_names: HashMap<MediaId, String> =
+                p.media.iter().map(|m| (m.id, media_display_name(&m.path))).collect();
             for c in &p.clips {
                 if let Some(n) = media_names.get(&c.media) {
                     names.insert(c.id, n.clone());
@@ -6241,6 +6299,23 @@ impl KtApp {
             self.names_cache.media_paths.clone(),
             self.names_cache.draw_order.clone(),
         )
+    }
+
+    /// Сколько РАЗ каждое медиа стоит на монтаже (Р.53, п.416). Считается
+    /// раз на ревизию модели: у бина карточек десятки, у монтажа событий
+    /// тысячи, и опрос `Project::sequence_uses` на карточку в кадр — это
+    /// линейный обход всего документа умноженный на число карточек
+    /// (инвариант 12).
+    pub fn media_uses(&mut self) -> Arc<HashMap<MediaId, usize>> {
+        if self.uses_cache.0 != Some(self.model_rev) {
+            let p = self.model.project();
+            let mut m: HashMap<MediaId, usize> = HashMap::new();
+            for c in p.clips.iter().chain(p.sequences.iter().flat_map(|s| s.clips.iter())) {
+                *m.entry(c.media).or_default() += 1;
+            }
+            self.uses_cache = (Some(self.model_rev), Arc::new(m));
+        }
+        self.uses_cache.1.clone()
     }
 
     /// Зоны голых наложений (Р.51). Свежесть обеспечивает `names()` —

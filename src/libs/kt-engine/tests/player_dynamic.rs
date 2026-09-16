@@ -378,6 +378,10 @@ fn t500_retune_keeps_worker_and_renderer() {
         }
         .into(),
     );
+    // серийник прогретой записи: по нему видно, что кадр старых
+    // параметров именно ВЫБРОСИЛИ, а не пережил перенастройку
+    let (_, warm_serial) =
+        player.cache.get_video_stamped(sid, Some(q), idx).expect("прогретый кадр");
     let spawns = player.worker_spawns();
     let pver = player.project_version();
     let cver = player.content_version();
@@ -397,26 +401,25 @@ fn t500_retune_keeps_worker_and_renderer() {
     // быстрая», и под параллельным прогоном всего workspace поток
     // воркера ждёт своей очереди на CPU (тот же урок, что у t399/t476).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    let mut saw_empty = false;
-    loop {
-        match player.cache.get_video(sid, Some(q), idx) {
-            Some(f) if f.rgba[..3] == [255, 136, 0] => break,
-            // старый кадр ещё лежит — воркер не дошёл до перенастройки;
-            // ждём, но по дедлайну это провал
-            Some(_) => {}
-            None => saw_empty = true,
+    let got = loop {
+        // «Пусто видели» ловить нельзя: воркер успевает и выбросить, и
+        // заполнить между двумя опросами, и под нагрузкой тест краснел на
+        // исправном коде. Утверждение то же, но детерминированное —
+        // ЗАПИСЬ ДРУГАЯ (серийник монотонен и не переиспользуется, п.409),
+        // значит кадр старых параметров выброшен, а не пережил правку.
+        if let Some((f, serial)) = player.cache.get_video_stamped(sid, Some(q), idx)
+            && serial != warm_serial
+        {
+            break f;
         }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "кадр новых параметров не приехал (пусто видели: {saw_empty})"
-        );
+        assert!(std::time::Instant::now() < deadline, "кадр новых параметров не приехал");
         // превью-композит сам заказывает недостающие кадры у воркера —
         // это и есть продуктовый путь заказа
         let mut buf = Vec::new();
         let _ = player.compose_preview_into(Tick(0), &mut buf);
         std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    assert!(saw_empty, "кадр старых параметров обязан был уйти из кэша");
+    };
+    assert_eq!(&got.rgba[..3], &[255, 136, 0], "новая запись несёт СТАРЫЙ цвет");
     // и поток за всё это время так и не пересоздавался
     assert_eq!(player.worker_spawns(), spawns);
     assert_eq!(player.project_version(), pver);

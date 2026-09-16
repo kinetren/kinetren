@@ -5872,6 +5872,22 @@ pub(crate) fn generator_pixel(
     h: &egui_kittest::Harness<'_, crate::app::KtApp>,
     id: kt_model::MediaId,
 ) -> Option<[u8; 3]> {
+    generator_pixel_after(h, id, 0).map(|(px, _)| px)
+}
+
+/// Пиксель генератора и СЕРИЙНЫЙ НОМЕР записи кэша (Р.53, п.416).
+///
+/// Серийник обязателен, когда правку надо увидеть ГЛАЗАМИ теста: кадр
+/// старых параметров живёт в кэше до тех пор, пока воркер не дойдёт до
+/// перенастройки (чистка идёт ВНУТРИ его потока — п.411), и голое чтение
+/// возвращало бы предыдущую картинку. Ждём кадр, записанный ПОЗЖЕ
+/// `after`: это ровно «пришёл НОВЫЙ кадр», а не «дождались нужного
+/// цвета» — второе было бы тестом, который не умеет покраснеть.
+pub(crate) fn generator_pixel_after(
+    h: &egui_kittest::Harness<'_, crate::app::KtApp>,
+    id: kt_model::MediaId,
+    after: u64,
+) -> Option<([u8; 3], u64)> {
     let app = h.state();
     let q = kt_media::Quality { width: 64, height: 36 };
     let idx = kt_engine::video::video_cache_idx(kt_time::Tick(0));
@@ -5879,8 +5895,10 @@ pub(crate) fn generator_pixel(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         app.player.request_video(id, kt_time::Tick(0), q);
-        if let Some(f) = app.player.cache.get_video(sid, Some(q), idx) {
-            return Some([f.rgba[0], f.rgba[1], f.rgba[2]]);
+        if let Some((f, serial)) = app.player.cache.get_video_stamped(sid, Some(q), idx)
+            && serial > after
+        {
+            return Some(([f.rgba[0], f.rgba[1], f.rgba[2]], serial));
         }
         if std::time::Instant::now() >= deadline {
             return None;
@@ -5963,11 +5981,9 @@ fn t478_generator_edit_reaches_model_and_source() {
     assert_eq!(app.media_paths.get(&id).map(String::as_str), Some("gen:solid:c=ff8800"));
     assert_eq!(app.model.undo_depth(), depth + 1, "сессия окна — один шаг истории");
     // ...и до КАРТИНКИ: источник плеера отдаёт кадр НОВОГО цвета
-    assert_eq!(
-        crate::layout_tests::generator_pixel(&h, id),
-        Some([255, 136, 0]),
-        "правка обязана доехать до картинки, а не только до модели"
-    );
+    let (px, serial) = crate::layout_tests::generator_pixel_after(&h, id, 0)
+        .expect("кадр генератора так и не пришёл");
+    assert_eq!(px, [255, 136, 0], "правка обязана доехать до картинки, а не только до модели");
 
     // undo возвращает и модель, и картинку (хук в undo, а не только в apply)
     h.state_mut().undo();
@@ -5979,11 +5995,9 @@ fn t478_generator_edit_reaches_model_and_source() {
         Some("gen:solid"),
         "undo обязан догнать источник — иначе картинка отстаёт от модели"
     );
-    assert_eq!(
-        crate::layout_tests::generator_pixel(&h, id),
-        Some([0, 0, 0]),
-        "undo обязан доехать до картинки"
-    );
+    let (px, _) = crate::layout_tests::generator_pixel_after(&h, id, serial)
+        .expect("после undo новый кадр так и не пришёл");
+    assert_eq!(px, [0, 0, 0], "undo обязан доехать до картинки");
 
     // «Отмена» окна: команда backup тем же gesture + окно закрывается;
     // после смерти медиа окно уходит само
@@ -5998,8 +6012,14 @@ fn t478_generator_edit_reaches_model_and_source() {
     h.step();
     assert_eq!(h.state().model.project().media.last().unwrap().path, "gen:solid");
     {
+        // клип генератора снимаем первым: создание кладёт его сразу
+        // (п.416), а медиа под живым событием модель удалить не даёт
         let app = h.state_mut();
-        let _ = app.apply(Command::RemoveMedia { id });
+        let clips: Vec<ClipId> =
+            app.model.project().clips.iter().filter(|c| c.media == id).map(|c| c.id).collect();
+        assert!(!clips.is_empty(), "создание генератора обязано ставить клип (п.416)");
+        app.apply_batch(clips.into_iter().map(|id| Command::RemoveClip { id }).collect());
+        assert!(app.apply(Command::RemoveMedia { id }));
     }
     h.step();
     assert!(h.state().generator_editors.is_empty(), "окно мёртвого медиа обязано закрыться");
@@ -6049,10 +6069,16 @@ fn t487_title_editor_routes_and_edits() {
     h.state_mut().open_generator_editor(id);
     assert_eq!(h.state().title_editors.len(), 1);
 
-    // медиа умерло — окно ушло
+    // медиа умерло — окно ушло. Клип титра снимаем первым: создание
+    // генератора кладёт его сразу (п.416), а медиа под живым событием
+    // модель удалить не даёт — и правильно делает.
     {
         let app = h.state_mut();
-        let _ = app.apply(Command::RemoveMedia { id });
+        let clips: Vec<ClipId> =
+            app.model.project().clips.iter().filter(|c| c.media == id).map(|c| c.id).collect();
+        assert!(!clips.is_empty(), "создание генератора обязано ставить клип (п.416)");
+        app.apply_batch(clips.into_iter().map(|id| Command::RemoveClip { id }).collect());
+        assert!(app.apply(Command::RemoveMedia { id }));
     }
     h.step();
     assert!(h.state().title_editors.is_empty(), "окно мёртвого титра обязано закрыться");
@@ -9309,4 +9335,168 @@ fn t518_unknown_kind_is_loud_and_widget_hints_reach_the_status_line() {
     let app = h.state();
     assert!(app.title_editors.is_empty(), "окно осталось на непарсящемся пути");
     assert!(app.notices.len() > notices, "непарсящийся путь закрыл окно МОЛЧА");
+}
+
+/// Тест 512 (Р.53, п.416): новый генератор появляется НА МОНТАЖЕ, а не
+/// только в бине, и всё это — один шаг истории.
+///
+/// До этого пункта пункт меню заводил медиа и открывал окно параметров, а
+/// в превью не было ничего: пользователь набирал титр вслепую, потом шёл
+/// в бин и ставил карточку руками. Правило 4 чек-листа — умолчание должно
+/// быть полезным.
+#[test]
+fn t512_new_generator_lands_on_the_timeline() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    // тик КРАТЕН 15: playhead живёт в аудиокадрах 48 кГц, и round-trip
+    // «тик → кадр → тик» усекает вниз (п.7 р.10) — 400_000 вернулось бы
+    // как 399_999, и тест ловил бы не то
+    h.state_mut().player.seek(kt_time::Tick(450_000));
+    let clips_before = h.state().model.project().clips.len();
+    let depth = h.state().model.undo_depth();
+
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    h.step();
+
+    let app = h.state();
+    let id = app.model.project().media.last().unwrap().id;
+    let mine: Vec<&ClipEvent> =
+        app.model.project().clips.iter().filter(|c| c.media == id).collect();
+    assert_eq!(mine.len(), 1, "генератор без звука кладёт ровно одно событие");
+    assert_eq!(mine[0].start, kt_time::Tick(450_000), "событие обязано встать ПОД КУРСОР");
+    assert!(mine[0].duration.0 > 0, "у события нулевой длины нечего показывать");
+    assert_eq!(app.model.project().clips.len(), clips_before + 1);
+    assert_eq!(app.model.undo_depth(), depth + 1, "медиа и клип — ОДИН шаг истории");
+
+    // один Ctrl+Z убирает и событие, и медиа
+    h.state_mut().undo();
+    h.step();
+    let app = h.state();
+    assert_eq!(app.model.project().clips.len(), clips_before, "undo оставил событие");
+    assert!(
+        !app.model.project().media.iter().any(|m| m.id == id),
+        "undo оставил медиа: шаг был не один"
+    );
+}
+
+/// Тест 513 (Р.53, п.416): событие-генератор подписано ИМЕНЕМ ВИДА, а не
+/// сырым `gen:`-путём, и подпись следует за языком интерфейса.
+///
+/// Сырой путь врал дважды: в нём были параметры (подпись дёргалась на
+/// каждое нажатие в окне) и не было вида. Язык — отдельный штамп в кэше
+/// имён: смена языка модель не трогает, и без него таймлайн оставался бы
+/// на старом языке до первой правки монтажа.
+#[test]
+fn t513_generator_clip_is_labelled_by_its_kind() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    h.step();
+    let id = h.state().model.project().media.last().unwrap().id;
+    let clip = h.state().model.project().clips.iter().find(|c| c.media == id).unwrap().id;
+
+    let name_of = |h: &mut Harness<'_, KtApp>| h.state_mut().names().0.get(&clip).cloned();
+    let ru = name_of(&mut h).expect("у события генератора нет подписи");
+    assert_eq!(
+        ru,
+        crate::generator_editor::kind_name(&GeneratorKind::Solid {
+            color_r: 255,
+            color_g: 136,
+            color_b: 0
+        })
+    );
+    assert!(!ru.contains("gen:"), "подпись всё ещё сырой путь: {ru}");
+    assert!(!ru.contains("ff8800"), "параметры уехали в подпись: {ru}");
+
+    // смена языка — подпись обязана переехать вместе с интерфейсом
+    crate::i18n::set_lang(crate::i18n::Lang::En);
+    h.step();
+    let en = name_of(&mut h).expect("подпись пропала после смены языка");
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    assert_ne!(en, ru, "подпись осталась на прежнем языке: кэш имён не знает про язык");
+
+    // и цвет события НЕ зависит от параметров: правка не перекрашивает
+    let a = crate::timeline::clip_color("gen:solid:c=ff8800", ClipKind::Video);
+    let b = crate::timeline::clip_color("gen:solid:c=104080", ClipKind::Video);
+    assert_eq!(a, b, "клип перекрашивается на каждое нажатие в окне параметров");
+    assert_ne!(
+        a,
+        crate::timeline::clip_color("gen:text", ClipKind::Video),
+        "разные виды обязаны отличаться цветом"
+    );
+}
+
+/// Тест 514 (Р.53, п.416): двойной клик по карточке бина даёт ОДИН клип и
+/// открывает окно параметров.
+///
+/// У egui `clicked()` истинно на ОБОИХ кликах двойного, а одиночный клик
+/// по карточке ставит событие — значит двойной ставил ДВА внахлёст, и
+/// пользователь этого не просил (правило 20: ничего не отрастает само).
+#[test]
+fn t514_double_click_on_a_card_gives_one_clip_and_the_window() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    for _ in 0..6 {
+        h.step();
+    }
+    let id = h.state().model.project().media.last().unwrap().id;
+    // окно создания закрываем: тест про ОТКРЫТИЕ двойным кликом
+    h.state_mut().generator_editors.clear();
+    h.state_mut().player.seek(kt_time::Tick(700_000));
+    h.step();
+    let before = h.state().model.project().clips.iter().filter(|c| c.media == id).count();
+
+    let card =
+        h.state().bin_card_rect(id).expect("карточка генератора не нарисована — щупать нечего");
+    double_click_at(&mut h, card.center());
+    h.step();
+    h.step();
+
+    let app = h.state();
+    let after = app.model.project().clips.iter().filter(|c| c.media == id).count();
+    assert_eq!(after, before + 1, "двойной клик поставил не один клип, а {}", after - before);
+    assert_eq!(app.generator_editors.len(), 1, "двойной клик по карточке не открыл окно");
+    assert_eq!(app.generator_editors[0].media, id);
+}
+
+/// Тест 515 (Р.53, п.416): карточка говорит, во СКОЛЬКИХ местах стоит
+/// генератор. Параметры общие на все места, и правка цвета меняет
+/// картинку сразу везде — число обязано быть видно ДО правки, а не только
+/// в окне. Место не новое: у генератора длительности нет, и подпись
+/// занимает её пустующий слот (правило 13).
+#[test]
+fn t515_card_counts_places_on_the_timeline() {
+    use kt_model::*;
+    let (mut h, _g) = harness_three_clips_dt(Some(0.02));
+    h.state_mut().create_generator(GeneratorKind::Solid { color_r: 255, color_g: 136, color_b: 0 });
+    h.step();
+    let id = h.state().model.project().media.last().unwrap().id;
+    assert_eq!(h.state_mut().media_uses().get(&id).copied(), Some(1), "клип создания не сосчитан");
+
+    h.state_mut().player.seek(kt_time::Tick(800_000));
+    h.state_mut().place_media_at_cursor(id);
+    h.step();
+    assert_eq!(h.state_mut().media_uses().get(&id).copied(), Some(2));
+
+    // счёт идёт по ВСЕМУ документу, а не по корню: событие внутри ленты —
+    // такое же место, и правка параметров меняет и его
+    {
+        let app = h.state_mut();
+        let mut p = app.model.project().clone();
+        let mut inner = p.clips.iter().find(|c| c.media == id).unwrap().clone();
+        inner.id = ClipId(9001);
+        inner.start = kt_time::Tick(0);
+        let mut seq = Sequence::new(MediaId(9000), "лента");
+        seq.clips.push(inner);
+        p.sequences.push(seq);
+        p.validate().unwrap();
+        app.model = kt_model::TimelineModel::new(p);
+        app.model_rev += 1;
+    }
+    assert_eq!(
+        h.state_mut().media_uses().get(&id).copied(),
+        Some(3),
+        "событие внутри ленты не сосчитано — «мест» меньше, чем правка затронет"
+    );
 }

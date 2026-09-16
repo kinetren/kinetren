@@ -551,6 +551,11 @@ pub enum CtxTarget {
     /// `Clip`: у него свои глаголы (войти, развернуть, отвязать), и
     /// «тупиков не бывает» проверяет их по своей строке.
     Nest(ClipId),
+    /// Правый клик по событию-ГЕНЕРАТОРУ (Р.53, п.416). Отдельная цель по
+    /// той же причине, что и `Nest`: у него есть глагол «открыть»
+    /// (параметры вида), которого у события из файла нет, и механизм
+    /// «тупиков не бывает» обязан спрашивать его по СВОЕЙ строке.
+    Generator(ClipId),
     /// Правый клик по ОКНУ ПЕРЕХОДА (Р.49, п.361). До этого раунда переход
     /// был единственной сущностью таймлайна без своего меню: всё, что с ним
     /// можно сделать, лежало в меню СОСЕДНЕГО КЛИПА — то есть пользователь,
@@ -578,6 +583,10 @@ pub enum CtxTarget {
 #[repr(usize)]
 pub enum TlEntity {
     Clip = 0,
+    /// Событие-ГЕНЕРАТОР (Р.53): такой же `ClipEvent`, но его «материал»
+    /// живёт в параметрах медиа, а не в файле — и правятся они окном,
+    /// одним на все места этого генератора.
+    Generator,
     /// Событие-ВЛОЖЕНИЕ (Р.50): такой же `ClipEvent`, но с ним можно
     /// делать то, чего с обычным нельзя — войти внутрь.
     Nest,
@@ -600,6 +609,7 @@ impl TlEntity {
     /// тесты.
     pub const ALL: [TlEntity; Self::N] = [
         TlEntity::Clip,
+        TlEntity::Generator,
         TlEntity::Nest,
         TlEntity::Marker,
         TlEntity::Area,
@@ -620,6 +630,7 @@ impl CtxTarget {
     pub fn entity(self) -> Option<TlEntity> {
         match self {
             CtxTarget::Clip(_) => Some(TlEntity::Clip),
+            CtxTarget::Generator(_) => Some(TlEntity::Generator),
             CtxTarget::Nest(_) => Some(TlEntity::Nest),
             CtxTarget::Marker(_) => Some(TlEntity::Marker),
             CtxTarget::RegionEdge(_) => Some(TlEntity::Region),
@@ -636,7 +647,21 @@ impl CtxTarget {
 }
 
 /// Цвет клипа из хэша пути (порт colorFromPath: r=80+h%120 ...).
+///
+/// У ГЕНЕРАТОРА хэшируется только вид, без параметров (Р.53, п.416):
+/// параметры живут в пути, и от хэша полного пути клип перекрашивался на
+/// каждое нажатие в окне — мигание под руками там, где ничего не
+/// переставлялось. Вид один — цвет один, и он же отличает генератор от
+/// файла с тем же именем.
 pub fn clip_color(path: &str, kind: ClipKind) -> egui::Color32 {
+    let path = match kt_model::parse_gen_path(path) {
+        Some(kd) => return clip_color_raw(&format!("gen:{}", kd.tag()), kind),
+        None => path,
+    };
+    clip_color_raw(path, kind)
+}
+
+fn clip_color_raw(path: &str, kind: ClipKind) -> egui::Color32 {
     let mut h: u64 = 1469598103934665603;
     let suffix = match kind {
         ClipKind::Video => ":v",
@@ -2682,7 +2707,16 @@ impl KtApp {
                 self.selected_camera.clear();
                 // ВЛОЖЕНИЕ — своя сущность (Р.50): у него свои глаголы, и
                 // «тупиков не бывает» спрашивает их по своей строке
-                if self.is_nest(id) { CtxTarget::Nest(id) } else { CtxTarget::Clip(id) }
+                // ВЛОЖЕНИЕ и ГЕНЕРАТОР — свои сущности (Р.50, Р.53): у
+                // обоих есть глагол, которого у обычного события нет
+                let media = self.model.clip(id).map(|c| c.media);
+                if self.is_nest(id) {
+                    CtxTarget::Nest(id)
+                } else if media.is_some_and(|m| self.model.project().is_gen_media(m)) {
+                    CtxTarget::Generator(id)
+                } else {
+                    CtxTarget::Clip(id)
+                }
             } else if let Some((i, _)) = area_at(self, pos) {
                 CtxTarget::Area(i)
             } else if let Some((LaneKind::Video | LaneKind::Audio, _)) = geom.key_at_y(pos.y) {
@@ -4921,7 +4955,9 @@ impl KtApp {
         // ---- контекст-меню ----------------------------------------------------------
         let target = self.ctx_target;
         response.context_menu(|ui| match target {
-            Some(CtxTarget::Clip(id)) | Some(CtxTarget::Nest(id)) => {
+            Some(CtxTarget::Clip(id))
+            | Some(CtxTarget::Nest(id))
+            | Some(CtxTarget::Generator(id)) => {
                 let (is_audio, has_group) = self
                     .model
                     .clip(id)

@@ -141,6 +141,13 @@ impl KtApp {
     }
 
     pub fn draw_bin(&mut self, ui: &mut egui::Ui) {
+        // прямоугольники карточек живут ОДИН кадр: карточка могла уехать
+        // скроллом, схлопнуться в группу или исчезнуть с медиа. В
+        // свободном режиме их считает сам режим (рамки групп рисуются
+        // РАНЬШЕ карточек), в сетке — заполняет `draw_bin_card`.
+        if !self.bin_free {
+            self.bin_card_rects.clear();
+        }
         // фон — ПЕРВЫМ: в egui позже зарегистрированная интеракция лежит
         // выше, значит иконки и карточки, добавленные ниже, свои клики и
         // наведение забирают себе, а фону достаётся только мимо них
@@ -695,6 +702,11 @@ impl KtApp {
         let is_synth = path.starts_with("synth:");
         let is_off = offline.contains(&id);
         let thumb_rect = egui::Rect::from_min_size(rect.min, egui::vec2(card_w, card_h));
+        if !self.bin_free {
+            // в сетке прямоугольники не считает никто другой, а щупать
+            // карточку мышью надо и тесту, и живому сценарию (Р.53, п.416)
+            self.bin_card_rects.push((id, thumb_rect));
+        }
         if gen_kind.is_some() {
             // карточка генератора — наружу для живых сценариев (Р.52)
             crate::widgets::field_probe::note("bin.gen", thumb_rect);
@@ -776,7 +788,13 @@ impl KtApp {
         // (поставить на курсор), заодно делая карточку единственной
         // выделенной: иначе «выделил рамкой, кликнул мимо — а выделение
         // осталось» (п.13 р.11)
-        if resp.clicked() {
+        // Второй клик двойного НЕ ставит второй клип (Р.53, п.416): у
+        // egui `clicked()` истинно на обоих, и двойной клик по карточке
+        // давал ДВА события внахлёст. Теперь он даёт один клип (от
+        // первого клика) и открывает окно параметров — тот же глагол
+        // «открыть», что у пункта меню и у двойного клика по событию
+        // (правило 17).
+        if resp.clicked() && !resp.double_clicked() {
             let add = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
             if add {
                 if !self.bin_sel.remove(&id) {
@@ -787,6 +805,9 @@ impl KtApp {
                 self.bin_sel.insert(id);
                 *to_place = Some(id);
             }
+        }
+        if resp.double_clicked() && gen_kind.is_some() {
+            *to_gen = Some(id);
         }
         let sel_n = self.bin_sel.len();
         let group_of = self.bin_group_of(id);
@@ -867,8 +888,17 @@ impl KtApp {
             let s = d.0 / 90_000;
             format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
         });
+        // «×N» — сколько РАЗ медиа стоит на монтаже (Р.53, п.416). У
+        // генератора параметры общие на все места, и правка цвета меняет
+        // картинку сразу везде: число обязано быть видно ДО правки, а не
+        // только в окне. Место не новое — это пустующий слот длительности
+        // (правило 13), поэтому и показываем только там, где он пуст.
+        let uses_txt = (dur_txt.is_none())
+            .then(|| self.media_uses().get(&id).copied().unwrap_or(0))
+            .filter(|n| *n > 0)
+            .map(|n| format!("×{n}"));
         let mut x = rect.left();
-        if let Some(d) = dur_txt {
+        if let Some(d) = dur_txt.or(uses_txt) {
             let g =
                 p.layout_no_wrap(d, egui::FontId::monospace(10.0), egui::Color32::from_gray(120));
             p.galley(egui::pos2(x, label_y), g.clone(), egui::Color32::from_gray(120));
