@@ -208,7 +208,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-MED-003 | Картинки, секвенции кадров и материал с альфой | кандидат | A | L | частично | `media/sources/image-sequences-and-alpha.md` |
 | F-MED-004 | Правило приведения кадра — вписать, заполнить, растянуть или оставить | кандидат | A | L | частично | `media/sources/import-scaling-policy.md` |
 | F-TL-001 | Ripple — правка со сдвигом всего, что правее | кандидат | A | L | нет | `timeline/trimming/ripple-delete.md` |
-| F-TXT-001 | Текст в кадре: титры, подписи, нижние трети | кандидат | A | L | нет | `titles/text/text-generator.md` |
+| F-TXT-001 | Текст в кадре: титры, подписи, нижние трети | принято | A | L | нет | `titles/text/text-generator.md` |
 | F-CMP-001 | Конкатенация трансформов | сделано | A | XL | да | `compositing/transforms/transform-concatenation.md` |
 | F-TL-004 | Вложенные секвенции — монтаж, который ведёт себя как клип | сделано | A | XL | да | `timeline/structure/nested-sequences.md` |
 | F-AUD-011 | Distortion / сатурация и Bitcrusher | сделано | B | S | да | `audio/processing/distortion-and-bitcrush.md` |
@@ -307,7 +307,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-TL-008 | Закрытие дыр на дорожке — одна, вся дорожка, весь проект | кандидат | B | M | нет | `timeline/assembly/close-gaps-and-blank-space.md` |
 | F-TL-009 | Полоса обзора и линейка таймлайна | кандидат | B | M | частично | `timeline/navigation/zoom-bar-and-ruler.md` |
 | F-TL-010 | Переход между клипами на одной дорожке | уже-есть | B | M | да | `timeline/structure/same-track-transitions.md` |
-| F-TXT-003 | Генераторы — цвет, градиент, шум, фигуры, тайм-код, тестовые таблицы | кандидат | B | M | нет | `titles/generators/solid-gradient-shapes.md` |
+| F-TXT-003 | Генераторы — цвет, градиент, шум, фигуры, тайм-код, тестовые таблицы | принято | B | M | нет | `titles/generators/solid-gradient-shapes.md` |
 | F-TXT-005 | Обводка, тень, плашка и порядок отрисовки текста | кандидат | B | M | нет | `titles/text/stroke-shadow-and-draw-order.md` |
 | F-TXT-006 | Анимация текста: печатная машинка, по буквам, бегущая строка | кандидат | B | M | нет | `titles/text/text-animation-presets.md` |
 | F-UI-001 | Экранные контролы во вьюере: рамка трансформации, ручки, разметка | кандидат | B | M | нет | `ui/viewer/on-screen-controls.md` |

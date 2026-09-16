@@ -1,7 +1,7 @@
 ---
 id: F-TXT-001
 title: Текст в кадре: титры, подписи, нижние трети
-status: кандидат
+status: принято
 priority: A
 cost: L
 category: titles/text
@@ -10,11 +10,11 @@ we_have: нет
 crates: [kt-media, kt-model, kt-engine, kt-app, kt-otio, kt-cli]
 invariants: [4, 5, 7, 8, 11]
 ui_rules: [3, 7, 8, 11, 13, 14, 17]
-round: null
+round: Р.52
 point: null
 tests: []
 depends_on: []
-checked: 2026-09-07
+checked: 2026-09-16
 ---
 
 # F-TXT-001 — Текст в кадре: титры, подписи, нижние трети

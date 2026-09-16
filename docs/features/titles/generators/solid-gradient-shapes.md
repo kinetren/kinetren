@@ -1,7 +1,7 @@
 ---
 id: F-TXT-003
 title: Генераторы — цвет, градиент, шум, фигуры, тайм-код, тестовые таблицы
-status: кандидат
+status: принято
 priority: B
 cost: M
 category: titles/generators
@@ -10,11 +10,11 @@ we_have: нет
 crates: [kt-media, kt-model, kt-otio, kt-app, kt-cli]
 invariants: [1, 4, 5, 8, 11]
 ui_rules: [4, 6, 8, 13, 20]
-round: null
+round: Р.52
 point: null
 tests: []
 depends_on: []
-checked: 2026-09-07
+checked: 2026-09-16
 ---
 
 # F-TXT-003 — Генераторы — цвет, градиент, шум, фигуры, тайм-код, тестовые таблицы
