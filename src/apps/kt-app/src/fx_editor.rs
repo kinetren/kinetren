@@ -30,6 +30,14 @@ pub struct FxEditor {
     /// Состояние виджета автоматизации на каждую (цепочку, слот):
     /// вид, выбранный ключ, незакоммиченный ввод времени.
     pub auto_views: std::collections::HashMap<(ClipId, usize), crate::automation::AutoView>,
+    /// Момент, на кадре которого считаются миниатюры пикера (Р.54).
+    /// Пока НЕ играем — следует за курсором (он неподвижен, картинка
+    /// стабильна); при игре остаётся на последнем значении: пересчитывать
+    /// десятки ячеек на каждый квант часов незачем, а мерцающая полоска
+    /// хуже слегка устаревшей.
+    pub preview_t: Option<kt_time::Tick>,
+    /// Когда окно открыли — мисклик-гард ЗАКАЗОВ декода (п.430).
+    pub opened_at: std::time::Instant,
     pub open: bool,
 }
 
@@ -72,6 +80,8 @@ impl KtApp {
             gesture: self.gesture_counter,
             selected,
             auto_views: std::collections::HashMap::new(),
+            preview_t: None,
+            opened_at: std::time::Instant::now(),
             open: true,
         });
     }
@@ -98,6 +108,11 @@ impl KtApp {
         let mut editors = std::mem::take(&mut self.fx_editors);
         for ed in &mut editors {
             self.draw_one_fx_editor(ctx, ed);
+        }
+        // закрыли окно — считать его ячейки больше незачем (Р.54): всё,
+        // что осталось в очереди миниатюр, выбрасывается сменой поколения
+        if editors.iter().any(|e| !e.open) {
+            self.fx_thumbs.bump_generation();
         }
         editors.retain(|e| e.open);
         self.fx_editors = editors;
@@ -193,6 +208,133 @@ impl KtApp {
         let mut axis_req = crate::automation::AxisReq::default();
         let mut open = ed.open;
         let members = ed.members.clone();
+        // ---- контекст миниатюр пикера (Р.54, п.432) -------------------
+        // WYSIWYG: ячейка показывает ЦЕПОЧКУ СОБЫТИЯ плюс кандидата в
+        // хвосте, то есть ровно то, что получится после клика. Кадр —
+        // ближайшая готовая тумба к позиции курсора: формула перевода
+        // «тик события → кадр источника» ОДНА с филмстрипом
+        // (`thumbs::material_key_t`), поэтому ключи общие и нового декода
+        // полоска не порождает (инвариант №8).
+        let pv_t = {
+            let want = anchor
+                .start
+                .0
+                .max(playhead.0 - playhead.0.rem_euclid(frame_step))
+                .min((anchor.start.0 + anchor.duration.0 - 1).max(anchor.start.0));
+            if self.player.transport.is_playing() {
+                *ed.preview_t.get_or_insert(kt_time::Tick(want))
+            } else {
+                let t = kt_time::Tick(want);
+                ed.preview_t = Some(t);
+                t
+            }
+        };
+        let pv_span = anchor.duration.0.max(1);
+        let pv_u = (pv_t.0 - anchor.start.0) as f64 / pv_span as f64;
+        // камера разрешается ПО ЯКОРЮ, но как если бы Pan3d в цепочке был:
+        // вариант «Pan 3D» в полоске обязан показать перспективу и на
+        // клипе, где 3D ещё не стоит. Правило разрешения — одно с движком
+        // (kt_engine::resolve_cam3d, п.429).
+        let pv_cam = kt_engine::resolve_cam3d(
+            &[kt_model::FxInstance::Pan3d {
+                pos_x: 0.0,
+                pos_y: 0.0,
+                pos_z: 0.0,
+                rot_x: 0.0,
+                rot_y: 0.0,
+                rot_z: 0.0,
+                anchor_x: 0.5,
+                anchor_y: 0.5,
+                scale: 1.0,
+                camera: None,
+            }],
+            &self.model.project().cameras,
+            pv_t,
+            crate::fx_thumbs::REF_W,
+            self.model.project().settings.width,
+        );
+        // цепочка ЯКОРЯ с разрешёнными кривыми: значения на момент
+        // курсора, домен — материал события (Р.37: скорость ось не жмёт)
+        let pv_chain: Vec<FxInstance> = {
+            let mat = kt_model::clip_material_at(
+                anchor.source_in,
+                anchor.start,
+                anchor.duration,
+                anchor.reversed,
+                frame_step,
+                pv_t,
+            );
+            anchor
+                .fx
+                .iter()
+                .enumerate()
+                .filter(|(i, f)| {
+                    !anchor.fx_bypass.get(*i).copied().unwrap_or(false) && !f.is_audio()
+                })
+                .map(|(i, f)| {
+                    let mut fx = f.clone();
+                    if let Some(curves) = anchor.fx_auto.get(i) {
+                        kt_model::apply_fx_auto(&mut fx, curves, mat);
+                    }
+                    fx
+                })
+                .collect()
+        };
+        // кадр-основа: точная тумба → постер медиа → встроенный образец.
+        // Пустых полосок не бывает, а ЗАКАЗЫ декода ставятся только после
+        // мисклик-гарда (п.430).
+        let decode_ok = crate::fx_thumbs::decode_orders_allowed(ed.opened_at.elapsed());
+        let is_nest = self.model.project().sequence(anchor.media).is_some();
+        let pv_step = crate::thumbs::THUMB_STEP_LADDER[1];
+        let (pv_base, pv_img) = if is_nest {
+            // у ленты своего файла нет, и тумб у неё не бывает (п.395) —
+            // показываем образец, а не пустоту
+            (crate::fx_thumbs::FxThumbBase::Pattern, None)
+        } else {
+            let warps = self.warp_maps();
+            let key = crate::thumbs::ThumbKey {
+                media: anchor.media,
+                t: crate::thumbs::material_key_t(
+                    anchor.source_in.0,
+                    warps.get(&anchor.id),
+                    anchor.duration,
+                    anchor.reversed,
+                    pv_t.0 - anchor.start.0,
+                    pv_step,
+                ),
+            };
+            match self.thumbs.get(&key) {
+                Some(img) => (crate::fx_thumbs::FxThumbBase::Thumb(key), Some(img)),
+                None => {
+                    if decode_ok {
+                        // ближайшая готовая тумба из sidecar-БД вместо
+                        // декода (механизм скраба бина, п.14 р.7)
+                        self.thumbs.request_near(key, pv_step * 2);
+                    }
+                    let poster = if decode_ok {
+                        self.thumbs.poster_t_or_request(anchor.media)
+                    } else {
+                        None
+                    };
+                    let pk = poster
+                        .map(|t| crate::thumbs::ThumbKey { media: anchor.media, t })
+                        .and_then(|pk| self.thumbs.get(&pk).map(|img| (pk, img)));
+                    match pk {
+                        Some((pk, img)) => (crate::fx_thumbs::FxThumbBase::Thumb(pk), Some(img)),
+                        None => (crate::fx_thumbs::FxThumbBase::Pattern, None),
+                    }
+                }
+            }
+        };
+        let mut pv = crate::fx_thumbs::PickerCtx::new(
+            &self.fx_thumbs,
+            pv_base,
+            pv_img,
+            pv_chain,
+            pv_u,
+            pv_t.0,
+            pv_cam,
+        );
         egui::Window::new(title)
             .id(egui::Id::new(("fx", ed.clip)))
             .open(&mut open)
@@ -259,6 +401,9 @@ impl KtApp {
                                     chain: *id,
                                     picked: &mut panel_pick,
                                 },
+                                // у аудио-цепочки картинок нет: миниатюру
+                                // звука не нарисовать (решение владельца)
+                                if clip.kind == ClipKind::Audio { None } else { Some(&mut pv) },
                             );
                             ed.picker_query = query;
                             let sel = sel_slot.fx().unwrap_or(0);

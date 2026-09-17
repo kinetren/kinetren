@@ -147,6 +147,7 @@ pub fn test_pattern(w: u32, h: u32, alpha_margin: bool) -> Frame {
 /// вид, не про силу; звать её осмысленно на опорном размере (у нас это
 /// размер тумбы, 320×180) и ужимать результат `fit_into`, а не считать
 /// сразу в размере ячейки.
+#[allow(clippy::too_many_arguments)] // это параметры VideoFxCtx, а не «много всего»
 pub fn render_fx_thumb(
     base: &Frame,
     fx: &[FxInstance],

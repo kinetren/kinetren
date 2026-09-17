@@ -44,6 +44,43 @@ pub fn thumb_key_t(source_in: i64, timeline_local: i64, step: i64) -> i64 {
     (((source_in + timeline_local).max(0)) / step.max(1)) * step.max(1)
 }
 
+/// Ключ тумбы для момента `tl` тиков ОТ НАЧАЛА события — ОДНА формула
+/// «пиксель → кадр источника» на филмстрип и на миниатюры пикера (Р.54).
+///
+/// Р.37 п.3 уже требовал, чтобы превью события считало ТУ ЖЕ карту, что
+/// рендер, и вынес растяжение в `ClipWarp::material_off`. Дыра осталась
+/// ровно одна и нашлась при сборке пикера: у реверсивного события БЕЗ
+/// варпа карты нет (`clip_warp` отдаёт `None` — реверс это не варп), и
+/// прежний `map_or(tl, …)` показывал материал ПРЯМО. То есть филмстрип
+/// перевёрнутого события рисовал не то, что играет: первая колонка — не
+/// последний кадр куска, а первый.
+pub fn material_at(
+    warp: Option<&kt_model::ClipWarp>,
+    duration: Tick,
+    reversed: bool,
+    tl: i64,
+) -> i64 {
+    match warp {
+        // варп сам знает про реверс (ось — фактически потреблённое)
+        Some(w) => w.material_off(duration, reversed, tl),
+        None if reversed => (duration.0 - 1 - tl).max(0),
+        None => tl,
+    }
+}
+
+/// Тот же перевод, квантованный к сетке шага ОТ НУЛЯ ФАЙЛА, — готовый
+/// ключ тумбы (общий кэш бин↔таймлайн↔пикер, тест 62).
+pub fn material_key_t(
+    source_in: i64,
+    warp: Option<&kt_model::ClipWarp>,
+    duration: Tick,
+    reversed: bool,
+    tl: i64,
+    step: i64,
+) -> i64 {
+    thumb_key_t(source_in, material_at(warp, duration, reversed, tl), step)
+}
+
 pub fn thumb_source_step(clip_dur: Tick, inner_width_px: f32, thumb_w_px: f32) -> i64 {
     if clip_dur.0 <= 5 * 90_000 {
         // короткий клип: один тумб, ключ стабилен (кратен 0.5 c)
@@ -812,6 +849,48 @@ mod key_tests {
 
     /// Тест 62 (п.11 р.6): квантование ключей тумб ОТ НУЛЯ ФАЙЛА — бин и
     /// таймлайн (с ненулевым source_in) дают ОДИН ключ на один момент
+    /// Тест 549 (Р.54, п.432): карта «тик события → кадр источника» —
+    /// ОДНА на филмстрип и на миниатюры пикера, и она знает про реверс.
+    ///
+    /// Р.37 п.3 уже требовал считать превью события той же картой, что
+    /// рендер, и вынес растяжение в `ClipWarp::material_off`. Дыра
+    /// осталась одна и нашлась при сборке пикера: у реверсивного события
+    /// БЕЗ варпа карты нет вовсе (`clip_warp` отдаёт `None` — реверс это
+    /// не варп), и прежний `map_or(tl, …)` брал материал ПРЯМО. Тест
+    /// красный на старой формуле: она давала на первом пикселе 0 вместо
+    /// последнего кадра куска.
+    #[test]
+    fn t549_material_map_is_one_and_knows_reverse() {
+        let dur = kt_time::Tick(4 * 90_000);
+        let step = THUMB_STEP_LADDER[1]; // 1 c
+        // прямое событие: пиксель = материал
+        assert_eq!(material_at(None, dur, false, 0), 0);
+        assert_eq!(material_at(None, dur, false, 90_000), 90_000);
+        // реверсивное БЕЗ варпа: первый пиксель — ПОСЛЕДНИЙ кадр куска
+        assert_eq!(material_at(None, dur, true, 0), dur.0 - 1);
+        assert_eq!(material_at(None, dur, true, dur.0 - 1), 0);
+        // монотонность: у реверса материал убывает
+        let mut prev = i64::MAX;
+        for i in 0..=8 {
+            let tl = i * dur.0 / 8;
+            let m = material_at(None, dur, true, tl);
+            assert!(m <= prev, "реверс обязан идти назад: {m} после {prev}");
+            prev = m;
+        }
+        // ключ — тот же квант, что у прямого события (общий кэш, t62)
+        let k = material_key_t(0, None, dur, true, 0, step);
+        assert_eq!(k % step, 0, "ключ вне сетки шага");
+        assert_eq!(k, ((dur.0 - 1) / step) * step);
+        // source_in прибавляется ДО квантования (от нуля файла)
+        assert_eq!(
+            material_key_t(30_000, None, dur, false, 90_000, step),
+            material_key_t(0, None, dur, false, 120_000, step),
+            "квантование обязано идти от нуля файла"
+        );
+        // за краями события ключ не уходит в минус
+        assert_eq!(material_key_t(0, None, dur, false, -10, step), 0);
+    }
+
     /// файла; ключ кратен шагу и стабилен внутри бакета; скраб монотонен.
     #[test]
     fn t62_thumb_keys_unified_from_file_zero() {

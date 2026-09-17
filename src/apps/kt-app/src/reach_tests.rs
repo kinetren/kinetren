@@ -694,6 +694,109 @@ fn t254_click_is_a_click() {
     assert!(crosses >= 2, "у каждого слота обязан быть крестик, найдено {crosses}");
 }
 
+/// Тест 547 (Р.54, п.431): галерея пикера доходит до МОДЕЛИ.
+///
+/// Утверждается следствие, которое видит человек: он открыл пикер, нажал
+/// на ячейку «Плотно» у Blur — и на событии стоит Blur ИМЕННО с её
+/// параметрами, а не шаблонный. Щупается оттуда, откуда действует человек:
+/// клик по ячейке, найденной по её подписи.
+///
+/// Плюс закрепляется новое поведение попапа: у меню egui дефолт
+/// `CloseOnClick` — попап закрывается ЛЮБЫМ кликом внутри, и галерея с
+/// кликабельными миниатюрами была бы мертворождённой. Тест жмёт в строку
+/// поиска и требует, чтобы попап ОСТАЛСЯ открыт.
+#[test]
+fn t547_gallery_click_reaches_the_model() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let mut h = crate::layout_tests::harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Video,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+
+    // 1) открыть пикер — та же кнопка «+ эффект…», что и до Р.54
+    let add = crate::i18n::tr(crate::i18n::k::fxreg::ADD).to_string();
+    assert!(h.query_by_label(&add).is_some(), "кнопки пикера нет");
+    h.get_by_label(&add).click();
+    h.step();
+    h.step();
+
+    // 2) галерея видна: имя эффекта и подписи его вариантов
+    assert!(h.query_by_label("Blur").is_some(), "строка эффекта не нарисовалась");
+    let heavy = {
+        let e = crate::fx_registry::registry()
+            .iter()
+            .find(|e| e.name == "Blur")
+            .expect("Blur в реестре");
+        let v = &e.variants[1];
+        // доступное имя ячейки — составное: подпись «Плотно» есть у
+        // шести видов, и различить их можно только с именем эффекта
+        (format!("{} {}", e.name, crate::i18n::tr(v.name)), v.fx.clone())
+    };
+    // до поиска ячейка Blur лежит НИЖЕ СГИБА прокрутки, и её там
+    // сознательно нет: невидимая ячейка не рисуется и не считается
+    // (иначе одно открытие галереи заказывало полторы сотни миниатюр —
+    // нашёл живой сценарий fxpicker)
+    assert!(
+        h.query_by_label(&heavy.0).is_none(),
+        "ячейка «{}» нарисована ниже сгиба: гард видимости не работает",
+        heavy.0
+    );
+
+    // 3) НАБИРАЕМ в поиске, как человек: галерея из 27 строк не влезает
+    // в прокрутку целиком, и нужная строка может быть НИЖЕ сгиба — ровно
+    // поэтому у пикера и есть поиск. Строка поиска получает фокус сама
+    // при открытии меню (это и закрепляется здесь).
+    h.event(egui::Event::Text("blur".into()));
+    h.step();
+    h.step();
+    assert!(
+        h.query_by_label(&heavy.0).is_some(),
+        "после поиска ячейка «{}» обязана быть видна: ввод ВНУТРИ попапа \
+         его не закрывает (у меню egui дефолт CloseOnClick, галерее нужен \
+         MenuConfig::close_behavior(CloseOnClickOutside))",
+        heavy.0
+    );
+
+    // 4) клик по ячейке — и в модели ИМЕННО эти параметры
+    h.get_by_label(&heavy.0).click();
+    h.step();
+    h.step();
+    let fx = h.state().model.project().clips[0].fx.clone();
+    assert_eq!(fx.len(), 1, "клик по ячейке варианта не добавил эффект");
+    assert_eq!(
+        format!("{:?}", fx[0]),
+        format!("{:?}", heavy.1),
+        "добавился не вариант, а что-то другое (шаблон?)"
+    );
+    // попап закрылся ВЫБОРОМ (явный ui.close), а не остался висеть
+    assert!(h.query_by_label(&heavy.0).is_none(), "после выбора попап остался открыт");
+}
+
 /// Глагол — операция, без которой сущность становится тупиком: создал и
 /// живи с этим.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -884,6 +987,152 @@ fn painted_texts(h: &egui_kittest::Harness<'_, crate::app::KtApp>) -> Vec<Painte
         collect_texts(&cs.shape, &mut out);
     }
     out
+}
+
+/// Галерея пикера на клипе заданного вида: открыть окно FX, раскрыть
+/// пикер и (по желанию) отфильтровать поиском — галерея из 27 строк в
+/// прокрутку целиком не влезает, и нужная строка может быть НИЖЕ сгиба.
+fn picker_harness(
+    kind: kt_model::ClipKind,
+    query: Option<&str>,
+) -> egui_kittest::Harness<'static, crate::app::KtApp> {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let mut h = crate::layout_tests::harness();
+    let app = h.state_mut();
+    let mut p = app.model.project().clone();
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:ramp".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind,
+        lane: 0,
+        start: kt_time::Tick(0),
+        duration: kt_time::Tick(90_000),
+        source_in: kt_time::Tick(0),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed: false,
+        fx: vec![],
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    app.model = kt_model::TimelineModel::new(p);
+    app.open_fx_editor(ClipId(1));
+    h.step();
+    h.step();
+    let add = crate::i18n::tr(crate::i18n::k::fxreg::ADD).to_string();
+    h.get_by_label(&add).click();
+    h.step();
+    h.step();
+    if let Some(q) = query {
+        h.event(egui::Event::Text(q.into()));
+        h.step();
+        h.step();
+    }
+    h
+}
+
+/// Тест 548 (Р.54, п.431): вёрстка галереи.
+///
+/// Четыре утверждения, и все — про то, что ВИДНО: подпись ячейки усечена
+/// (а не перенесена и не вылезла), заголовок категории печатается ОДИН
+/// раз, ширина галереи не зависит от набранного в поиске, а в аудио-пикере
+/// ячеек нет вовсе.
+#[test]
+fn t548_gallery_layout_is_stable_and_elided() {
+    use egui_kittest::kittest::Queryable;
+
+    // ---- (а) подпись ячейки усекается, а не разносит её ---------------
+    let h = picker_harness(kt_model::ClipKind::Video, Some("aberration"));
+    let texts = painted_texts(&h);
+    let cells: Vec<&PaintedText> = texts
+        .iter()
+        .filter(|t| {
+            crate::fx_registry::registry()
+                .iter()
+                .flat_map(|e| e.variants.iter())
+                .any(|v| crate::i18n::tr(v.name) == t.src)
+        })
+        .collect();
+    assert!(!cells.is_empty(), "подписей ячеек не нарисовано вовсе");
+    for c in &cells {
+        assert_eq!(c.rows, 1, "подпись «{}» перенеслась на {} строк", c.src, c.rows);
+        assert!(
+            c.rect.width() <= crate::fx_registry::CELL_DRAW_W + 1.0,
+            "подпись «{}» шире ячейки: {} px",
+            c.src,
+            c.rect.width()
+        );
+    }
+
+    // ---- (б) заголовок категории — ОДИН раз --------------------------
+    // Реестр отсортирован по смыслу, и категории в нём повторяются:
+    // «Стилизация» печаталась пять раз, «Размытие» — три. Группировка на
+    // отрисовке обязана это схлопнуть.
+    let h2 = picker_harness(kt_model::ClipKind::Video, None);
+    for cat in [
+        crate::i18n::k::fxreg::cat::STYLE,
+        crate::i18n::k::fxreg::cat::BLUR,
+        crate::i18n::k::fxreg::cat::THREE_D,
+        crate::i18n::k::fxreg::cat::GEOMETRY,
+    ] {
+        let name = crate::i18n::tr(cat);
+        let n = painted_texts(&h2).iter().filter(|t| t.src == name).count();
+        assert!(n <= 1, "заголовок категории «{name}» напечатан {n} раз");
+    }
+
+    // ---- (в) содержимое галереи не вылезает и не скачет --------------
+    // «Ничего не скачет» (правило 3) и «текст помещается» (правило 7):
+    // строка ячеек обязана ЗАВОРАЧИВАТЬСЯ внутри объявленной ширины, а
+    // набор в поиске не имеет права двигать галерею.
+    let content_box = |h: &egui_kittest::Harness<'_, crate::app::KtApp>| -> egui::Rect {
+        let mut r = egui::Rect::NOTHING;
+        for e in crate::fx_registry::registry().iter().filter(|e| e.video) {
+            if let Some(n) = h.query_by_label(e.name) {
+                r = r.union(n.rect());
+            }
+            for v in &e.variants {
+                let l = format!("{} {}", e.name, crate::i18n::tr(v.name));
+                if let Some(n) = h.query_by_label(&l) {
+                    r = r.union(n.rect());
+                }
+            }
+        }
+        r
+    };
+    let wide = content_box(&h2);
+    let narrow = content_box(&h);
+    assert!(
+        wide.width() <= crate::fx_registry::GALLERY_W,
+        "содержимое галереи шире объявленной ширины: {} px против {}",
+        wide.width(),
+        crate::fx_registry::GALLERY_W
+    );
+    assert!(
+        (wide.left() - narrow.left()).abs() <= 1.0,
+        "галерея съехала от запроса: левый край {} против {}",
+        wide.left(),
+        narrow.left()
+    );
+
+    // ---- (г) в аудио-пикере картинок нет ----------------------------
+    let ha = picker_harness(kt_model::ClipKind::Audio, None);
+    assert!(ha.query_by_label("Gain").is_some(), "аудио-список не нарисовался");
+    for l in crate::fx_registry::registry()
+        .iter()
+        .flat_map(|e| e.variants.iter().map(|v| format!("{} {}", e.name, crate::i18n::tr(v.name))))
+    {
+        assert!(
+            ha.query_by_label(&l).is_none(),
+            "в аудио-пикере нашлась ячейка «{l}»: миниатюру звука не нарисовать"
+        );
+    }
 }
 
 /// Тест 255 (Р.38 пп.7-8): длинное имя усекается, а не разносит полосу.

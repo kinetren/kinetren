@@ -507,6 +507,9 @@ pub struct KtApp {
     /// ореол по ЗОНАМ высоты (п.8 v1.4), не одним цветом.
     pub meter_glow: Option<(egui::Rect, f32, f32)>,
     pub thumbs: crate::thumbs::ThumbService,
+    /// Миниатюры эффектов для пикера (Р.54): свой сервис, потому что
+    /// считает он не кадр источника, а цепочку НА кадре (п.430).
+    pub fx_thumbs: crate::fx_thumbs::FxThumbService,
     /// Текстуры филмстрипа (LRU держит ThumbService, тут egui-хэндлы).
     pub thumb_textures: HashMap<crate::thumbs::ThumbKey, egui::TextureHandle>,
     /// Порядок вставки текстур — LRU-вытеснение вместо clear() (п.2).
@@ -734,6 +737,7 @@ impl KtApp {
             bin_rect: egui::Rect::NOTHING,
             meter_glow: None,
             thumbs: crate::thumbs::ThumbService::start(&project2, None),
+            fx_thumbs: crate::fx_thumbs::FxThumbService::start(),
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
             generator_editors: Vec::new(),
@@ -922,6 +926,7 @@ impl KtApp {
             bin_rect: egui::Rect::NOTHING,
             meter_glow: None,
             thumbs: thumbs_svc,
+            fx_thumbs: crate::fx_thumbs::FxThumbService::start(),
             fx_editors: Vec::new(),
             transition_editors: Vec::new(),
             generator_editors: Vec::new(),
@@ -1773,6 +1778,16 @@ impl KtApp {
             || self.drag.is_some()
             || self.render_job.is_some()
             || self.meter.is_active();
+        // «сбавить обороты, когда занято» (правило 12): миниатюры пикера
+        // считаются в своём потоке, и при игре/экспорте он обязан уступать
+        self.fx_thumbs.set_busy(self.player.transport.is_playing() || self.render_job.is_some());
+        // ...а пока у него есть незакрытые заявки — просим кадры, иначе
+        // готовая ячейка появится только на следующем вводе. Гейт висит на
+        // «работа ЖИВА», а не на «пикер открыт»: открытое меню не имеет
+        // права держать 60 fps в простое (дефект t38).
+        if self.fx_thumbs.pending() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        }
         let delay = if animating {
             std::time::Duration::from_millis(if self.ui_economy { 33 } else { 16 })
         } else if self.incomplete_since.is_some() {
@@ -3386,6 +3401,11 @@ impl KtApp {
                 self.player.set_media_path(*id, path);
                 self.note_missing_title_font(path);
                 self.thumbs.retune_media(*id, resolved);
+                // ячейки пикера помнят ТОТ ЖЕ ThumbKey, а он от параметров
+                // генератора не зависит: без этой строки полоска показывала
+                // бы эффект на кадре СТАРЫХ параметров — дефект-близнец
+                // п.412, только в пикере
+                self.fx_thumbs.invalidate_media(*id);
                 continue;
             }
             let label = crate::util::media_label(path);

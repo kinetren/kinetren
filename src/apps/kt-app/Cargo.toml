@@ -22,6 +22,7 @@ eframe = { workspace = true }
 cpal = { workspace = true }
 rtrb = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+xxhash-rust = { workspace = true }
 rfd = "0.15"
 serde_json.workspace = true
 # порядок арабского текста (Р.19): egui 0.36 шейпит вязь, но не переупорядочивает

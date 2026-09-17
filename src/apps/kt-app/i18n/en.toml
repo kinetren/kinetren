@@ -392,6 +392,8 @@ cents = "Cents"
 add = "+ effect…"
 search = "search…"
 nothing = "nothing found"
+template_hint = "Adds the effect with its default values"
+var_hint = "Adds the effect already tuned — the thumbnail is your frame"
 
 # Категории эффектов в пикере.
 [fxreg.cat]

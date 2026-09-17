@@ -613,9 +613,138 @@ pub enum Picked {
     Fx(FxInstance),
 }
 
+/// Ширина галереи (Р.54). Фиксирована галлеей самого длинного варианта
+/// содержимого: правило 3 чек-листа — ничего не скачет при наборе в
+/// строке поиска и при смене числа ячеек.
+pub(crate) const GALLERY_W: f32 = 520.0;
+/// Высота прокрутки списка эффектов и секции пресетов.
+const GALLERY_H: f32 = 450.0;
+const PRESETS_H: f32 = 160.0;
+/// Рисуемый размер ячейки (хранится вдвое крупнее — hidpi).
+pub(crate) const CELL_DRAW_W: f32 = 80.0;
+const CELL_DRAW_H: f32 = 45.0;
+
+/// Значок категории для строки эффекта. Исчерпывающе по категориям
+/// реестра: новая категория без значка обязана краснеть в t543b, а не
+/// молча рисоваться пустотой.
+fn cat_glyph(cat: Key) -> &'static str {
+    // Полными путями к ключам — та же причина, что у `video_meta`.
+    match cat {
+        c if c == k::fxreg::cat::MOTION => crate::icons::CAT_MOTION,
+        c if c == k::fxreg::cat::GEOMETRY => crate::icons::CAT_GEOMETRY,
+        c if c == k::fxreg::cat::BLUR => crate::icons::CAT_BLUR,
+        c if c == k::fxreg::cat::KEY => crate::icons::CAT_KEY,
+        c if c == k::fxreg::cat::STYLE => crate::icons::CAT_STYLE,
+        c if c == k::fxreg::cat::GLOW => crate::icons::CAT_GLOW,
+        c if c == k::fxreg::cat::THREE_D => crate::icons::CAT_THREE_D,
+        c if c == k::fxreg::cat::COLOR => crate::icons::CAT_COLOR,
+        c if c == k::fxreg::cat::DISTORT => crate::icons::CAT_DISTORT,
+        c if c == k::fxreg::cat::VOLUME => crate::icons::CAT_VOLUME,
+        c if c == k::fxreg::cat::FILTER => crate::icons::CAT_FILTER,
+        c if c == k::fxreg::cat::STEREO => crate::icons::CAT_STEREO,
+        c if c == k::fxreg::cat::MODULATION => crate::icons::CAT_MODULATION,
+        c if c == k::fxreg::cat::DELAY => crate::icons::CAT_DELAY,
+        c if c == k::fxreg::cat::DYNAMICS => crate::icons::CAT_DYNAMICS,
+        c if c == k::fxreg::cat::TIMESTRETCH => crate::icons::CAT_TIMESTRETCH,
+        _ => crate::icons::CAT_VIDEO,
+    }
+}
+
+/// Ячейка полоски: картинка (или плашка, пока считается) и подпись под
+/// ней, ОДНА интеракция на всё. Клик в центре без движения обязан дать
+/// действие (философия t254), а по подписи ячейка находится харнессом.
+/// `prefix` — имя эффекта для ДОСТУПНОГО имени ячейки. Видимая подпись
+/// остаётся короткой («Мягко»), а доступное имя обязано быть уникальным:
+/// словарь вариантов общий на реестр, и «Мягко» есть у шести видов —
+/// без префикса ни скринридер, ни харнесс не отличат ячейку Blur от
+/// ячейки Glow (нашлось при написании t547). Строка склеивается ВНУТРИ
+/// `widget_info`, а его замыкание egui зовёт только при включённой
+/// доступности — в обычном запуске это ноль аллокаций.
+fn preview_cell(
+    ui: &mut egui::Ui,
+    preview: &mut Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
+    extra: &[FxInstance],
+    prefix: &str,
+    label: &str,
+    frame: egui::Color32,
+) -> egui::Response {
+    // подпись рисуется ПОД картинкой; пустая подпись = имя стоит рядом
+    // (строка пресета), и место под текст не резервируется (правило 13)
+    let cap_h =
+        if label.is_empty() { 0.0 } else { ui.text_style_height(&egui::TextStyle::Small) + 2.0 };
+    let size = egui::vec2(CELL_DRAW_W, CELL_DRAW_H + cap_h);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let img_rect = egui::Rect::from_min_size(rect.min, egui::vec2(CELL_DRAW_W, CELL_DRAW_H));
+    // НИЖЕ СГИБА прокрутки ячейка не считается и не рисуется: список
+    // раскладывается целиком (прокрутке нужен полный размер), и без этого
+    // гарда одно открытие галереи заказывало полторы сотни миниатюр —
+    // видимых из них полтора десятка. Нашёл живой сценарий: кликать по
+    // невидимой ячейке он уходил МИМО попапа, в таймлайн (её
+    // прямоугольник честно лежал там, где её никто не видит).
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let p = ui.painter();
+    // подложка ОДНИМ прямоугольником, не шахматкой: прозрачные места
+    // (Greenscreen, Pan3d, CornerPin) видны на ней как есть, а шахматка
+    // из плиток дала бы тысячи примитивов на открытие (инвариант №12)
+    p.rect_filled(img_rect, 2.0, crate::theme::EXTREME);
+    if let Some(ctx) = preview.as_deref_mut()
+        && let Some(tex) = ctx.texture(ui.ctx(), extra)
+    {
+        p.image(
+            tex,
+            img_rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+    let stroke = if resp.hovered() { crate::theme::ACCENT } else { frame };
+    p.rect_stroke(img_rect, 2.0, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
+    resp.widget_info(|| {
+        let name = match (prefix.is_empty(), label.is_empty()) {
+            (_, true) => prefix.to_string(),
+            (true, _) => label.to_string(),
+            _ => format!("{prefix} {label}"),
+        };
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name)
+    });
+    if label.is_empty() {
+        return resp;
+    }
+    // подпись усекается, а не разносит ячейку (правило 7 чек-листа)
+    let galley = ui.fonts_mut(|f| {
+        let mut job = egui::text::LayoutJob::single_section(
+            label.to_string(),
+            egui::TextFormat {
+                font_id: egui::TextStyle::Small.resolve(ui.style()),
+                color: ui.visuals().weak_text_color(),
+                ..Default::default()
+            },
+        );
+        job.wrap = egui::text::TextWrapping {
+            max_width: CELL_DRAW_W,
+            max_rows: 1,
+            overflow_character: Some('…'),
+            ..Default::default()
+        };
+        f.layout_job(job)
+    });
+    let cap_x = img_rect.center().x - galley.size().x / 2.0;
+    ui.painter().galley(egui::pos2(cap_x, img_rect.bottom() + 2.0), galley, egui::Color32::WHITE);
+    resp
+}
+
 /// Пикер, у которого ПЕРВОЙ строкой стоит голова полосы. В `registry()`
 /// её нет намеренно: t48 сверяет реестр с шаблонами эффектов, а у
 /// псевдо-слота шаблона не бывает — он не эффект, а часть морфера.
+///
+/// С Р.54 это галерея: у каждого видео-эффекта под именем стоит полоска
+/// миниатюр (встроенные варианты и подходящие одноэффектные пресеты), а у
+/// пресетов библиотеки — своя миниатюра целого блока. `preview` — контекст
+/// ячеек; `None` означает «картинок не рисуем» (аудио-пикер, харнесс-тесты
+/// без сервиса), и тогда пикер вырождается в прежний список имён.
+#[allow(clippy::too_many_arguments)]
 pub fn fx_picker_with_head(
     ui: &mut egui::Ui,
     id_salt: impl std::hash::Hash,
@@ -623,106 +752,262 @@ pub fn fx_picker_with_head(
     query: &mut String,
     head: Option<&str>,
     presets: &[crate::user_store::PresetRow],
+    hover: &mut Option<String>,
+    mut preview: Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
 ) -> Option<Picked> {
     let mut picked = None;
-    ui.menu_button(tr(k::fxreg::ADD), |ui| {
-        ui.set_min_width(230.0);
-        let edit =
-            egui::TextEdit::singleline(query).hint_text(tr(k::fxreg::SEARCH)).desired_width(210.0);
-        let resp = ui.add(edit);
-        // фокус в строку поиска при открытии меню
-        if ui.input(|i| i.events.is_empty()) && !resp.has_focus() {
-            resp.request_focus();
-        }
-        ui.separator();
-        // голова — своим цветом и ПЕРВОЙ («поднять в списке fx»);
-        // ищется той же строкой поиска, что и эффекты
-        if let Some(h) = head
-            && (query.is_empty() || h.to_lowercase().contains(&query.to_lowercase()))
-        {
-            let text = egui::RichText::new(h).color(crate::theme::MORPH_SLOT);
-            if ui.button(text).clicked() {
-                picked = Some(Picked::Head);
-                query.clear();
-                ui.close();
+    // CloseOnClickOutside обязателен (Р.54): у меню egui дефолт
+    // CloseOnClick — попап закрывается ЛЮБЫМ кликом, в том числе по
+    // миниатюре, и галерея была бы мертворождённой. Наши клики закрывают
+    // попап явным `ui.close()`, Esc работает как раньше.
+    let cfg = egui::containers::menu::MenuConfig::new()
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    let (btn, _) =
+        egui::containers::menu::MenuButton::new(tr(k::fxreg::ADD)).config(cfg).ui(ui, |ui| {
+            ui.set_min_width(if preview.is_some() { GALLERY_W } else { 230.0 });
+            let edit = egui::TextEdit::singleline(query)
+                .hint_text(tr(k::fxreg::SEARCH))
+                .desired_width(210.0);
+            let resp = ui.add(edit);
+            // фокус в строку поиска при открытии меню
+            if ui.input(|i| i.events.is_empty()) && !resp.has_focus() {
+                resp.request_focus();
             }
             ui.separator();
-        }
-        // Пресеты (Р.48) — СВОЕЙ секцией сразу после головы: это не
-        // виды эффектов, и в статический реестр они не попадают (t48
-        // сверяет его с шаблонами). Ищутся той же строкой — и по имени
-        // пресета, и по именам эффектов внутри него.
-        let q = query.to_lowercase();
-        let shown: Vec<(usize, &crate::user_store::PresetRow)> = presets
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| {
-                q.is_empty()
-                    || r.name.to_lowercase().contains(&q)
-                    || r.block.slots.iter().any(|sl| {
-                        crate::fx_editor::fx_display_name(&sl.fx).to_lowercase().contains(&q)
-                    })
-            })
-            .collect();
-        if !shown.is_empty() {
-            ui.label(egui::RichText::new(tr(k::fx::PRESETS)).small().weak());
-            for (i, r) in shown {
-                let label =
-                    crate::widgets::elided_name(ui, &r.name, ui.visuals().text_color(), false);
-                let resp = ui.button(label);
-                if resp.clicked() {
-                    picked = Some(Picked::Preset(i));
+            // голова — своим цветом и ПЕРВОЙ («поднять в списке fx»);
+            // ищется той же строкой поиска, что и эффекты
+            if let Some(h) = head
+                && (query.is_empty() || h.to_lowercase().contains(&query.to_lowercase()))
+            {
+                let text = egui::RichText::new(h).color(crate::theme::MORPH_SLOT);
+                if ui.button(text).clicked() {
+                    picked = Some(Picked::Head);
                     query.clear();
                     ui.close();
                 }
-                // заводские не переименовываются и не удаляются — и это
-                // видно: у них нет меню, а подсказка говорит почему
-                if r.factory {
-                    resp.on_hover_text(tr(k::msg::PRESET_FACTORY));
-                } else {
-                    let name = r.name.clone();
-                    resp.context_menu(|ui| {
-                        if ui.button(tr(k::fx::RENAME_PRESET)).clicked() {
-                            picked = Some(Picked::PresetAction(
-                                crate::widgets::PresetAction::Rename(name.clone()),
-                            ));
-                            ui.close();
+                ui.separator();
+            }
+            // Пресеты (Р.48) — СВОЕЙ секцией сразу после головы: это не
+            // виды эффектов, и в статический реестр они не попадают (t48
+            // сверяет его с шаблонами). Ищутся той же строкой — и по имени
+            // пресета, и по именам эффектов внутри него.
+            let q = query.to_lowercase();
+            let shown: Vec<(usize, &crate::user_store::PresetRow)> = presets
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| {
+                    q.is_empty()
+                        || r.name.to_lowercase().contains(&q)
+                        || r.block.slots.iter().any(|sl| {
+                            crate::fx_editor::fx_display_name(&sl.fx).to_lowercase().contains(&q)
+                        })
+                })
+                .collect();
+            if !shown.is_empty() {
+                ui.label(egui::RichText::new(tr(k::fx::PRESETS)).small().weak());
+                // Пресеты живут НАД прокруткой эффектов (правило Р.53: за
+                // ними тянутся первыми), но своя прокрутка им нужна — иначе
+                // тридцать сохранённых цепочек выдавят список эффектов за
+                // край экрана.
+                egui::ScrollArea::vertical().id_salt("fxpreset-rows").max_height(PRESETS_H).show(
+                    ui,
+                    |ui| {
+                        for (i, r) in shown {
+                            let resp = if preview.is_some() && r.video_ok {
+                                // миниатюра ЦЕЛОГО блока: кривые берутся в точке входа
+                                // пресета (ключи в блоке ребейзнуты к нулю)
+                                let chain: Vec<FxInstance> = r
+                                    .block
+                                    .slots
+                                    .iter()
+                                    .filter(|sl| !sl.bypass)
+                                    .map(|sl| {
+                                        let mut fx = sl.fx.clone();
+                                        kt_model::apply_fx_auto(
+                                            &mut fx,
+                                            &sl.curves,
+                                            kt_time::Tick(0),
+                                        );
+                                        fx
+                                    })
+                                    .collect();
+                                ui.horizontal(|ui| {
+                                    let c = preview_cell(
+                                        ui,
+                                        &mut preview,
+                                        &chain,
+                                        "",
+                                        &r.name,
+                                        crate::theme::MORPH_SLOT,
+                                    );
+                                    let lbl = crate::widgets::elided_name(
+                                        ui,
+                                        &r.name,
+                                        ui.visuals().text_color(),
+                                        false,
+                                    );
+                                    let b = ui.button(lbl);
+                                    if c.clicked() { c } else { b }
+                                })
+                                .inner
+                            } else {
+                                let label = crate::widgets::elided_name(
+                                    ui,
+                                    &r.name,
+                                    ui.visuals().text_color(),
+                                    false,
+                                );
+                                ui.button(label)
+                            };
+                            if resp.clicked() {
+                                picked = Some(Picked::Preset(i));
+                                query.clear();
+                                ui.close();
+                            }
+                            // заводские не переименовываются и не удаляются — и это
+                            // видно: у них нет меню, а подсказка говорит почему
+                            if r.factory {
+                                resp.on_hover_text(tr(k::msg::PRESET_FACTORY));
+                            } else {
+                                let name = r.name.clone();
+                                resp.context_menu(|ui| {
+                                    if ui.button(tr(k::fx::RENAME_PRESET)).clicked() {
+                                        picked = Some(Picked::PresetAction(
+                                            crate::widgets::PresetAction::Rename(name.clone()),
+                                        ));
+                                        ui.close();
+                                    }
+                                    if ui
+                                        .button(tr(k::fx::DELETE_PRESET))
+                                        .on_hover_text(tr(k::fx::DELETE_PRESET_HINT))
+                                        .clicked()
+                                    {
+                                        picked = Some(Picked::PresetAction(
+                                            crate::widgets::PresetAction::Delete(name.clone()),
+                                        ));
+                                        ui.close();
+                                    }
+                                });
+                            }
                         }
-                        if ui
-                            .button(tr(k::fx::DELETE_PRESET))
-                            .on_hover_text(tr(k::fx::DELETE_PRESET_HINT))
-                            .clicked()
-                        {
-                            picked = Some(Picked::PresetAction(
-                                crate::widgets::PresetAction::Delete(name.clone()),
-                            ));
-                            ui.close();
-                        }
-                    });
+                    },
+                );
+                ui.separator();
+            }
+            let list = filter_entries(registry(), audio, query);
+            if list.is_empty() && head.is_none() {
+                ui.weak(tr(k::fxreg::NOTHING));
+            }
+            // КАТЕГОРИИ ГРУППИРУЮТСЯ НА ОТРИСОВКЕ (Р.54). Реестр отсортирован
+            // по смыслу («кварталы» Р.47), и категории в нём повторяются:
+            // заголовок «Стилизация» печатался пять раз, «Размытие» — три.
+            // Порядок самих категорий — по первому появлению, сортировка
+            // стабильная, поэтому внутри категории порядок реестра цел.
+            let mut cats: Vec<Key> = Vec::new();
+            for e in &list {
+                if !cats.contains(&e.category) {
+                    cats.push(e.category);
                 }
             }
-            ui.separator();
-        }
-        let list = filter_entries(registry(), audio, query);
-        if list.is_empty() && head.is_none() {
-            ui.weak(tr(k::fxreg::NOTHING));
-        }
-        let mut last_cat: Option<Key> = None;
-        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-            for e in list {
-                if last_cat != Some(e.category) {
-                    last_cat = Some(e.category);
-                    ui.label(egui::RichText::new(tr(e.category)).small().weak());
-                }
-                if ui.button(e.name).clicked() {
-                    picked = Some(Picked::Fx(e.template.clone()));
-                    query.clear();
-                    ui.close();
-                }
-            }
+            let mut rows = list;
+            rows.sort_by_key(|e| cats.iter().position(|c| *c == e.category).unwrap_or(usize::MAX));
+            let mut last_cat: Option<Key> = None;
+            egui::ScrollArea::vertical().id_salt("fxreg-rows").max_height(GALLERY_H).show(
+                ui,
+                |ui| {
+                    for e in rows {
+                        if last_cat != Some(e.category) {
+                            last_cat = Some(e.category);
+                            ui.label(egui::RichText::new(tr(e.category)).small().weak());
+                        }
+                        // строка имени: глиф категории + имя (клик = ШАБЛОН, как
+                        // было до Р.54)
+                        let mut hit_name = None;
+                        ui.horizontal(|ui| {
+                            ui.label(cat_glyph(e.category));
+                            let r = crate::app::hint_into(
+                                hover,
+                                ui.button(e.name),
+                                tr(k::fxreg::TEMPLATE_HINT),
+                            );
+                            if r.clicked() {
+                                hit_name = Some(e.template.clone());
+                            }
+                        });
+                        if let Some(t) = hit_name {
+                            picked = Some(Picked::Fx(t));
+                            query.clear();
+                            ui.close();
+                        }
+                        // полоска: встроенные варианты, затем ОДНОэффектные
+                        // пресеты пользователя того же вида — они про то же
+                        // («вот как это настраивают»), и место у них там же
+                        if preview.is_some() && !e.variants.is_empty() {
+                            let mut hit = None;
+                            ui.horizontal_wrapped(|ui| {
+                                for (vi, v) in e.variants.iter().enumerate() {
+                                    let c = preview_cell(
+                                        ui,
+                                        &mut preview,
+                                        std::slice::from_ref(&v.fx),
+                                        e.name,
+                                        tr(v.name),
+                                        crate::theme::OUTLINE,
+                                    );
+                                    crate::widgets::field_probe::note(
+                                        &format!("fxreg.var.{}.{vi}", e.template.tag()),
+                                        c.rect,
+                                    );
+                                    if crate::app::hint_into(hover, c, tr(k::fxreg::VAR_HINT))
+                                        .clicked()
+                                    {
+                                        hit = Some(Picked::Fx(v.fx.clone()));
+                                    }
+                                }
+                                for (i, r) in presets.iter().enumerate() {
+                                    let one = match r.block.slots.as_slice() {
+                                        [only] => only.fx.tag() == e.template.tag(),
+                                        _ => false,
+                                    };
+                                    if !one || !r.video_ok {
+                                        continue;
+                                    }
+                                    let mut fx = r.block.slots[0].fx.clone();
+                                    kt_model::apply_fx_auto(
+                                        &mut fx,
+                                        &r.block.slots[0].curves,
+                                        kt_time::Tick(0),
+                                    );
+                                    let c = preview_cell(
+                                        ui,
+                                        &mut preview,
+                                        std::slice::from_ref(&fx),
+                                        "",
+                                        &r.name,
+                                        crate::theme::MORPH_SLOT,
+                                    );
+                                    if crate::app::hint_into(hover, c, tr(k::fxreg::VAR_HINT))
+                                        .clicked()
+                                    {
+                                        hit = Some(Picked::Preset(i));
+                                    }
+                                }
+                            });
+                            if let Some(h) = hit {
+                                picked = Some(h);
+                                query.clear();
+                                ui.close();
+                            }
+                        }
+                    }
+                },
+            );
+            let _ = id_salt;
         });
-        let _ = id_salt;
-    });
+    // прямоугольники для живых сценариев: модальные попапы egui в дереве
+    // доступности не ищутся, а угадывать смещения внутри окна сценарий не
+    // должен (Р.27). Ветка стоит один OnceLock-чек без KT_GEOM_DUMP.
+    crate::widgets::field_probe::note("fxreg.add", btn.rect);
     picked
 }
 

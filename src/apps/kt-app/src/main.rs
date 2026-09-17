@@ -16,6 +16,7 @@ mod eq_graph;
 mod font_tests;
 mod fx_editor;
 mod fx_registry;
+mod fx_thumbs;
 mod generator_editor;
 mod graphs;
 mod i18n;

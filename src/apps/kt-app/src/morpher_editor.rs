@@ -273,6 +273,28 @@ impl KtApp {
         // цель правого клика в полосе цепочки (п.363): полоса — виджет,
         // про KtApp она не знает, и цель отдаёт наружу
         let mut panel_pick: Option<crate::ctx_menu::PanelTarget> = None;
+        // части контекста миниатюр пикера (Р.54): сервис и кэш текстур
+        // одалживаются ДО окна — внутри замыкания `self` занят моделью
+        let pv_svc = &self.fx_thumbs;
+        let pv_tick = playhead.0 - playhead.0.rem_euclid(frame_step);
+        let pv_cam = kt_engine::resolve_cam3d(
+            &[kt_model::FxInstance::Pan3d {
+                pos_x: 0.0,
+                pos_y: 0.0,
+                pos_z: 0.0,
+                rot_x: 0.0,
+                rot_y: 0.0,
+                rot_z: 0.0,
+                anchor_x: 0.5,
+                anchor_y: 0.5,
+                scale: 1.0,
+                camera: None,
+            }],
+            &self.model.project().cameras,
+            kt_time::Tick(pv_tick),
+            crate::fx_thumbs::REF_W,
+            self.model.project().settings.width,
+        );
         egui::Window::new(title)
             .id(egui::Id::new(("morph", ed.id.0)))
             .open(&mut open)
@@ -398,6 +420,15 @@ impl KtApp {
                 // раскладывает обратно по `FxInstance::class()`.
                 let (mut fx, mut bypass, mut auto, split) = merge_chains(&ev.patch);
                 let mut src_on = !ev.patch.src_off;
+                let mut pv = crate::fx_thumbs::PickerCtx::new(
+                    pv_svc,
+                    crate::fx_thumbs::FxThumbBase::Pattern,
+                    None,
+                    Vec::new(),
+                    0.5,
+                    pv_tick,
+                    pv_cam,
+                );
                 let ch = crate::widgets::chain_strip(
                     ui,
                     ("morphchain", ed.id.0),
@@ -431,6 +462,12 @@ impl KtApp {
                         chain: kt_model::ClipId(ed.id.0),
                         picked: &mut panel_pick,
                     },
+                    // Морфер: WYSIWYG невозможен по построению — слой
+                    // красит МНОГО целей (Below/Marks/Areas), и «первая
+                    // цель у курсора» нестабильна. Показываем встроенный
+                    // образец: он детерминирован и честно говорит, ЧТО
+                    // делает вариант, не притворяясь кадром монтажа.
+                    Some(&mut pv),
                 );
                 if ch.any() {
                     ev.patch.src_off = !src_on;

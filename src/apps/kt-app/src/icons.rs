@@ -44,6 +44,27 @@ pub const LOCK: &str = "\u{E2FA}"; // замок (группы бина)
 pub const ARROWS_OUT: &str = "\u{E0A2}"; // свободная раскладка
 pub const SKIP_FWD: &str = "\u{E5A6}"; // к следующей точке
 
+// Глифы КАТЕГОРИЙ пикера эффектов (Р.54): строка эффекта начинается
+// значком своей категории — читается быстрее, чем подпись-заголовок, и
+// не занимает отдельной полосы (правило 13).
+pub const CAT_MOTION: &str = "\u{E0A4}"; // arrows-out-cardinal
+pub const CAT_GEOMETRY: &str = "\u{ED6A}"; // flip-horizontal
+pub const CAT_BLUR: &str = "\u{E566}"; // drop-half
+pub const CAT_KEY: &str = "\u{E568}"; // eyedropper
+pub const CAT_STYLE: &str = "\u{E6B6}"; // magic-wand
+pub const CAT_GLOW: &str = "\u{E472}"; // sun
+pub const CAT_THREE_D: &str = "\u{E1DA}"; // cube
+pub const CAT_VIDEO: &str = "\u{E792}"; // film-strip
+pub const CAT_COLOR: &str = "\u{E6C8}"; // palette
+pub const CAT_DISTORT: &str = "\u{EA9A}"; // wave-sine
+pub const CAT_VOLUME: &str = "\u{E44A}"; // speaker-high
+pub const CAT_FILTER: &str = "\u{E192}"; // circles-three
+pub const CAT_STEREO: &str = "\u{E69A}"; // selection
+pub const CAT_MODULATION: &str = "\u{E6A2}"; // sparkle
+pub const CAT_DELAY: &str = "\u{E1EC}"; // diamond
+pub const CAT_DYNAMICS: &str = "\u{E000}"; // pulse
+pub const CAT_TIMESTRETCH: &str = "\u{E1A0}"; // clock-counter-clockwise
+
 /// Вендоренные шрифты: имя в egui и байты. Порядок здесь = порядок фолбэка,
 /// и менять его НЕЛЬЗЯ.
 ///

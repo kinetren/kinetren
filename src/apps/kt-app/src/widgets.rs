@@ -939,6 +939,10 @@ pub fn chain_strip(
     src_in: kt_time::Tick,
     hover: &mut Option<String>,
     ctx: &mut ChainCtx<'_>,
+    // Контекст миниатюр пикера (Р.54). `None` — картинок не рисуем:
+    // аудио-цепочка (миниатюру звука не нарисовать) и харнесс-тесты без
+    // сервиса. Полоса про миниатюры больше ничего не знает — она виджет.
+    preview: Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
 ) -> ChainChanged {
     let mut ch = ChainChanged::default();
     edit.bypass.resize(edit.fx.len(), false);
@@ -1099,6 +1103,8 @@ pub fn chain_strip(
             query,
             head_name.as_deref(),
             edit.presets.rows,
+            hover,
+            preview,
         ) {
             Some(crate::fx_registry::Picked::Preset(i)) => {
                 if let Some(row) = edit.presets.rows.get(i) {

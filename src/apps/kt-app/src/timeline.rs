@@ -3655,8 +3655,21 @@ impl KtApp {
             let warp = warps.get(&c.id);
             let dur = c.duration.0.max(1);
             // тик таймлайна внутри события → СМЕЩЕНИЕ В МАТЕРИАЛЕ
-            let material_off = |tl: i64| -> i64 {
-                warp.map_or(tl, |w| w.material_off(c.duration, c.reversed, tl))
+            // карта «тик события → материал» живёт в ОДНОМ месте
+            // (`thumbs::material_key_t`, Р.54): её же спрашивают миниатюры
+            // пикера, и разойтись они не могут — иначе ячейка показывала бы
+            // кадр, которого на событии нет
+            let material_off =
+                |tl: i64| -> i64 { crate::thumbs::material_at(warp, c.duration, c.reversed, tl) };
+            let key_at = |tl: i64, step: i64| -> i64 {
+                crate::thumbs::material_key_t(
+                    c.source_in.0 + src_shift,
+                    warp,
+                    c.duration,
+                    c.reversed,
+                    tl,
+                    step,
+                )
             };
             // фактически потреблённый пролёт источника: по нему выбирается
             // ступень филмстрипа, иначе замедленный клип берёт вдвое более
@@ -3722,11 +3735,7 @@ impl KtApp {
                         // показывала кадр за 3 секунды ДО начала куска
                         // квантование ОТ НУЛЯ ФАЙЛА — общий кэш с бином
                         // (п.11 р.6, тест 62)
-                        let src_t = crate::thumbs::thumb_key_t(
-                            c.source_in.0 + src_shift,
-                            material_off(tl),
-                            step,
-                        );
+                        let src_t = key_at(tl, step);
                         let key = crate::thumbs::ThumbKey { media: c.media, t: src_t };
                         let tex = match self.thumb_textures.get(&key) {
                             Some(t) => Some(t.clone()),

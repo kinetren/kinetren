@@ -1975,6 +1975,7 @@ dependencies = [
  "serde_json",
  "unicode-bidi",
  "x11rb",
+ "xxhash-rust",
 ]
 
 [[package]]

@@ -392,6 +392,8 @@ cents = "Centésimas"
 add = "+ efecto…"
 search = "buscar…"
 nothing = "no se encontró nada"
+template_hint = "Añade el efecto con sus valores por defecto"
+var_hint = "Añade el efecto ya ajustado — la miniatura es tu fotograma"
 
 # Категории эффектов в пикере.
 [fxreg.cat]
