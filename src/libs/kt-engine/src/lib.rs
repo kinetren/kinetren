@@ -139,7 +139,9 @@ pub use player::{
 pub use prefetch::prefetch_audio_pass;
 pub use transitions::TransMix;
 pub use transport::Transport;
-pub use video::{VideoRenderer, compose_plan_cpu, content_hash, nest_source_id, video_cache_idx};
+pub use video::{
+    VideoRenderer, compose_plan_cpu, content_hash, nest_source_id, resolve_cam3d, video_cache_idx,
+};
 pub use video_plan::{
     Cam3d, FramePlan, GpuBackendInfo, GpuExecError, LayerSrc, PlanLayer, VideoGpuExec,
 };

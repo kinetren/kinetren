@@ -962,6 +962,38 @@ struct PlanCtx<'a> {
     memoize: bool,
 }
 
+/// Камера цепочки: прибитая по id, иначе активная по `t`, иначе дефолтная
+/// «50 мм» (тождество для Pan3d с дефолтами). Нет Pan3d в цепочке — нет и
+/// камеры: `None` означает «Pan3d пропускается», как было до Р.44.
+///
+/// Pub с Р.54 (п.429) и зовётся ИЗ `layer_src`: правило разрешения должно
+/// остаться одно на программу. Второй потребитель — миниатюры пикера
+/// (kt-app): полоска показывает цепочку клипа с кандидатом в хвосте, и
+/// если бы она собирала камеру сама, вариант `Pan 3D` в пикере выглядел
+/// бы иначе, чем после клика. `out_w`/`project_w` дают `world_scale` —
+/// мир камеры заморожен форматом в мировых пикселях проекта (Р.29),
+/// поэтому масштаб цели входит в него, а не в саму камеру.
+pub fn resolve_cam3d(
+    fx: &[kt_model::FxInstance],
+    cameras: &[kt_model::CameraEvent],
+    t: Tick,
+    out_w: u32,
+    project_w: u32,
+) -> Option<Cam3d> {
+    fx.iter()
+        .find_map(|f| match f {
+            kt_model::FxInstance::Pan3d { camera, .. } => Some(*camera),
+            _ => None,
+        })
+        .map(|pinned| {
+            let ev = pinned
+                .and_then(|id| cameras.iter().find(|c| c.id == id))
+                .or_else(|| kt_model::active_camera_in(cameras, t));
+            let cam = ev.map(|e| e.params_at(t)).unwrap_or_default();
+            Cam3d { cam, world_scale: out_w as f64 / project_w.max(1) as f64 }
+        })
+}
+
 /// Источник слоя: pts, пре-FX кадр (читается ВСЕГДА — бамп recency, чтобы
 /// полоски прогретости и prefetch не «остывали» под живым пост-FX кэшем),
 /// цепочка и прогресс клипа.
@@ -1042,22 +1074,7 @@ fn layer_src<'a>(
         } else {
             std::borrow::Cow::Borrowed(&clip.fx[..])
         };
-    // 3D-эффект → разрешаем камеру: прибитая по id, иначе активная по t,
-    // иначе дефолтная «50 мм» (тождество для Pan3d с дефолтами)
-    let cam3d = clip
-        .fx
-        .iter()
-        .find_map(|f| match f {
-            kt_model::FxInstance::Pan3d { camera, .. } => Some(*camera),
-            _ => None,
-        })
-        .map(|pinned| {
-            let ev = pinned
-                .and_then(|id| ctx.cameras.iter().find(|c| c.id == id))
-                .or_else(|| kt_model::active_camera_in(ctx.cameras, t));
-            let cam = ev.map(|e| e.params_at(t)).unwrap_or_default();
-            Cam3d { cam, world_scale: quality.width as f64 / ctx.project_size.0.max(1) as f64 }
-        });
+    let cam3d = resolve_cam3d(&clip.fx, ctx.cameras, t, quality.width, ctx.project_size.0);
     debug_assert!(
         src_scale == 1 || kt_fx::video::has_video_fx(&fx),
         "a clip without video fx never gets a decode stage"
