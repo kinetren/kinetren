@@ -1,18 +1,18 @@
 ---
 id: F-AUT-006
 title: Галерея превью в пикере — миниатюра эффекта на своём кадре
-status: принято
+status: сделано
 priority: B
 cost: M
 category: automation/presets
 editors: [vegas-pro-2026, premiere-26, resolve-21, fcp-12, after-effects-26]
-we_have: нет
+we_have: да
 crates: [kt-app, kt-fx, kt-engine]
 invariants: [8, 12]
 ui_rules: [1, 3, 10, 12, 13]
 round: "Р.54"
-point: null
-tests: []
+point: 431
+tests: [543, 544, 545, 546, 547, 548, 549]
 depends_on: [F-AUT-004, F-HLP-031, F-HLP-025]
 checked: 2026-09-17
 ---
@@ -259,3 +259,9 @@ sidecar-БД (`thumbnails`, `src/libs/kt-media/src/index.rs:141`), ключи
 - Premiere и After Effects — вторично: `helpx.adobe.com` из этого окружения не
   открывается (та же недоступность, что зафиксирована в F-HLP-031). Живьём ни
   один из пяти редакторов не проверялся.
+
+**Реализовано в Р.54** — `docs/porting-notes.md` пп.427-432 (t543-t549),
+живой сценарий `src/scripts/live/fxpicker.py`; дальнейшая жизнь фичи
+там. Ось ЗНАЧЕНИЯ у ячейки (Option-скимминг FCP) в раунд не вошла и
+остаётся открытой: она требует объявить у каждого из 27 видов главный
+параметр.
