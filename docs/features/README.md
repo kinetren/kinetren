@@ -138,7 +138,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | `timeline/` | TL | операции над событиями, структура монтажа | 10 / 5 |
 | `titles/` | TXT | титры, генераторы, субтитры | 6 / 4 |
 | `time/` | SPD | скорость, ретайминг, синхронизация | 4 / 4 |
-| `automation/` | AUT | ключи, кривые, пресеты | 5 / 5 |
+| `automation/` | AUT | ключи, кривые, пресеты | 6 / 6 |
 | `media/` | MED | организация медиа, прокси, источники | 6 / 3 |
 | `export/` | EXP | пресеты, очередь, smart render | 4 / 3 |
 | `project/` | PRJ | секвенции, история, версии | 3 / 2 |
@@ -258,6 +258,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-AUT-002 | Домен ключа — материал источника или время таймлайна | уже-есть | B | M | да | `automation/keyframes/keyframe-domain-source-vs-timeline.md` |
 | F-AUT-004 | Пресеты эффектов, которые несут анимацию | сделано | B | M | да | `automation/presets/presets-carrying-automation.md` |
 | F-AUT-005 | Ловушки правки ключевых кадров | кандидат | B | M | частично | `automation/keyframes/inserting-and-editing-pitfalls.md` |
+| F-AUT-006 | Галерея превью в пикере — миниатюра эффекта на своём кадре | принято | B | M | нет | `automation/presets/preset-gallery-with-previews.md` |
 | F-CLR-004 | LUT 1D и 3D (.cube) — технические против творческих | кандидат | B | M | нет | `color/management/lut-1d-and-3d.md` |
 | F-CLR-005 | Приборы — waveform, parade, вектороскоп, гистограмма, false color | кандидат | B | M | нет | `color/scopes/waveform-parade-vectorscope.md` |
 | F-COL-001 | Общий диск вместо облака — сеть как файловая система | исследовано | B | M | частично | `collab/assets/shared-storage-and-the-protocol.md` |
