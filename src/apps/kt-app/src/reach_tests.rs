@@ -1038,6 +1038,89 @@ fn picker_harness(
     h
 }
 
+/// Тест 551 (Р.54, п.433): ОСЬ СИЛЫ у ячейки.
+///
+/// Утверждается то, что делает человек: нажал на ячейке, повёл вбок,
+/// отпустил — и на событии стоит НЕ названный вариант, а то, что он
+/// видел под курсором. И обратное, не менее важное: нажал и отпустил не
+/// двигаясь — стоит ровно названный вариант (правило t254, иначе «Плотно»
+/// перестало бы быть достижимым).
+#[test]
+fn t551_strength_axis_lands_between_variants() {
+    use egui_kittest::kittest::Queryable;
+
+    // язык ЯВНО и ДО чтения имён: `tr` живёт в TLS потока, а харнесс
+    // ставит язык только внутри себя — подпись посчиталась бы английской,
+    // а искалась бы русская
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let e =
+        crate::fx_registry::registry().iter().find(|e| e.name == "Blur").expect("Blur в реестре");
+    let soft = e.variants[0].fx.get_param("radius").unwrap();
+    let heavy = e.variants[1].fx.get_param("radius").unwrap();
+    let label_heavy = format!("{} {}", e.name, crate::i18n::tr(e.variants[1].name));
+
+    // --- (а) клик без движения даёт ИМЕННО вариант -------------------
+    let mut h = picker_harness(kt_model::ClipKind::Video, Some("blur"));
+    h.get_by_label(&label_heavy).click();
+    h.step();
+    h.step();
+    let fx = h.state().model.project().clips[0].fx.clone();
+    assert_eq!(fx.len(), 1);
+    assert_eq!(fx[0].get_param("radius"), Some(heavy), "клик перестал давать сам вариант");
+
+    // --- (б) проводка ВЛЕВО даёт смесь с соседом слева ---------------
+    // соседняя точка ряда слева от «Плотно» — «Мягко»; ведём на половину
+    // ячейки, то есть примерно посередине между ними
+    let mut h = picker_harness(kt_model::ClipKind::Video, Some("blur"));
+    let cell = h.get_by_label(&label_heavy).rect();
+    let c = cell.center();
+    h.drag_at(c);
+    h.step();
+    // порог драга egui: сначала маленький сдвиг, потом до цели (та же
+    // трёхшаговая идиома, что у всех драг-тестов репозитория)
+    h.hover_at(egui::pos2(c.x - 8.0, c.y));
+    h.step();
+    let target = egui::pos2(c.x - crate::fx_registry::CELL_DRAW_W / 2.0, c.y);
+    h.hover_at(target);
+    h.step();
+    h.drop_at(target);
+    h.step();
+    h.step();
+
+    let fx = h.state().model.project().clips[0].fx.clone();
+    assert_eq!(fx.len(), 1, "проводка не добавила эффект");
+    let got = fx[0].get_param("radius").expect("radius");
+    assert!(
+        got > soft && got < heavy,
+        "ось не сработала: radius {got} обязан лежать МЕЖДУ {soft} и {heavy}"
+    );
+    // ось квантуется, а не «сколько пикселей — столько значений»
+    let (j, tt) = crate::fx_registry::axis_at(1, -crate::fx_registry::CELL_DRAW_W / 2.0, 4);
+    assert_eq!((j, tt), (1, 0.5), "середина между соседями считается не так");
+}
+
+/// Чистая арифметика оси: края упираются, центр ячейки — сам вариант.
+#[test]
+fn t551b_axis_math_clamps_and_snaps() {
+    use crate::fx_registry::{CELL_DRAW_W, axis_at};
+    // ряд: [шаблон, v0, v1, v2] — четыре точки, ячейка i стоит в i + 1
+    let n = 4;
+    // центр своей ячейки = сама точка (доля 0 у неё же)
+    assert_eq!(axis_at(0, 0.0, n), (1, 0.0));
+    assert_eq!(axis_at(1, 0.0, n), (2, 0.0));
+    // мелкое дрожание руки не сдвигает значение (квант оси)
+    assert_eq!(axis_at(1, 3.0, n), (2, 0.0));
+    assert_eq!(axis_at(1, -3.0, n), (2, 0.0));
+    // ячейка влево — предыдущая точка ряда
+    assert_eq!(axis_at(1, -CELL_DRAW_W, n), (1, 0.0));
+    // левее ШАБЛОНА не уедешь: ряд упирается
+    assert_eq!(axis_at(0, -10.0 * CELL_DRAW_W, n), (0, 0.0));
+    // и правее последней точки тоже
+    assert_eq!(axis_at(2, 10.0 * CELL_DRAW_W, n), (n - 2, 1.0));
+    // половина ячейки — ровно половина доли
+    assert_eq!(axis_at(0, CELL_DRAW_W / 2.0, n), (1, 0.5));
+}
+
 /// Тест 548 (Р.54, п.431): вёрстка галереи.
 ///
 /// Четыре утверждения, и все — про то, что ВИДНО: подпись ячейки усечена

@@ -650,6 +650,43 @@ fn cat_glyph(cat: Key) -> &'static str {
     }
 }
 
+/// Сколько промежуточных ступеней между соседними точками оси силы
+/// (Р.54, п.433). Ось КВАНТУЕТСЯ, потому что каждая позиция — свой
+/// рецепт и свой рендер: без квантования проводка мышью порождала бы
+/// новый кадр на каждый пиксель.
+const AXIS_STEPS: i32 = 8;
+
+/// Точка оси силы по сдвигу курсора. Ось — это ряд `[шаблон, вариант₀,
+/// вариант₁, …]`, ячейка варианта `cell` стоит в позиции `cell + 1`, и
+/// один размер ячейки сдвига = один шаг по оси.
+///
+/// Возвращает `(j, t)`: смешивать `axis[j]` с `axis[j + 1]` в доле `t`.
+/// Чистая функция — её проверяет t551 без всякого egui.
+pub(crate) fn axis_at(cell: usize, dx_px: f32, points: usize) -> (usize, f64) {
+    let last = points.saturating_sub(1).max(1);
+    let raw = (cell + 1) as f32 + dx_px / CELL_DRAW_W;
+    // квантуем и зажимаем в границы ряда: за краями ось упирается, а не
+    // «тянет» несуществующие значения
+    let q = ((raw * AXIS_STEPS as f32).round() as i32).clamp(0, last as i32 * AXIS_STEPS);
+    let j = (q / AXIS_STEPS) as usize;
+    if j >= last {
+        // правый край ряда выражается как «предыдущая точка, доля 1»
+        return (last - 1, 1.0);
+    }
+    (j, (q % AXIS_STEPS) as f64 / AXIS_STEPS as f64)
+}
+
+/// Точка ряда: нулевая — ШАБЛОН эффекта (сила «ничего»), дальше варианты.
+/// Ряд не материализуется: аллокация на каждую строку в draw-пути — это
+/// инвариант №12.
+fn axis_point(e: &FxEntry, k: usize) -> &FxInstance {
+    if k == 0 { &e.template } else { &e.variants[k - 1].fx }
+}
+
+fn axis_name(e: &FxEntry, k: usize) -> &str {
+    if k == 0 { e.name } else { tr(e.variants[k - 1].name) }
+}
+
 /// Ячейка полоски: картинка (или плашка, пока считается) и подпись под
 /// ней, ОДНА интеракция на всё. Клик в центре без движения обязан дать
 /// действие (философия t254), а по подписи ячейка находится харнессом.
@@ -660,6 +697,7 @@ fn cat_glyph(cat: Key) -> &'static str {
 /// ячейки Glow (нашлось при написании t547). Строка склеивается ВНУТРИ
 /// `widget_info`, а его замыкание egui зовёт только при включённой
 /// доступности — в обычном запуске это ноль аллокаций.
+#[allow(clippy::too_many_arguments)]
 fn preview_cell(
     ui: &mut egui::Ui,
     preview: &mut Option<&mut crate::fx_thumbs::PickerCtx<'_>>,
@@ -667,13 +705,20 @@ fn preview_cell(
     prefix: &str,
     label: &str,
     frame: egui::Color32,
-) -> egui::Response {
+    // ось силы: запись реестра и номер ячейки в её полоске. `None` —
+    // ячейка без оси (пресет библиотеки: смешивать ЦЕПОЧКИ нельзя).
+    axis: Option<(&FxEntry, usize)>,
+) -> (egui::Response, Option<(usize, f64, FxInstance)>) {
     // подпись рисуется ПОД картинкой; пустая подпись = имя стоит рядом
     // (строка пресета), и место под текст не резервируется (правило 13)
     let cap_h =
         if label.is_empty() { 0.0 } else { ui.text_style_height(&egui::TextStyle::Small) + 2.0 };
     let size = egui::vec2(CELL_DRAW_W, CELL_DRAW_H + cap_h);
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    // click_and_drag: клик без движения = именно этот вариант (t254),
+    // а проводка по горизонтали ведёт ОСЬ СИЛЫ между соседями (п.433).
+    // Идиома репозитория — одна интеракция с разбором clicked()/dragged(),
+    // а не два вложенных виджета (запрет dnd_drag_source, t254b).
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
     let img_rect = egui::Rect::from_min_size(rect.min, egui::vec2(CELL_DRAW_W, CELL_DRAW_H));
     // НИЖЕ СГИБА прокрутки ячейка не считается и не рисуется: список
     // раскладывается целиком (прокрутке нужен полный размер), и без этого
@@ -682,15 +727,34 @@ fn preview_cell(
     // невидимой ячейке он уходил МИМО попапа, в таймлайн (её
     // прямоугольник честно лежал там, где её никто не видит).
     if !ui.is_rect_visible(rect) {
-        return resp;
+        return (resp, None);
     }
+    // ОСЬ СИЛЫ (п.433): пока ведут по горизонтали, ячейка показывает
+    // смесь соседних точек ряда — «сколько тут ставят» видно кадрами, а
+    // не объявленным «главным параметром» (у VHS и Color Grade таких
+    // параметра четыре, и выбор одного был бы спорным).
+    //
+    // Отсчёт — от ЦЕНТРА своей ячейки по абсолютной позиции указателя, а
+    // не накоплением `drag_delta`: накопление уезжает от руки на каждом
+    // пропущенном кадре. `drag_stopped` тоже читается — на кадре
+    // отпускания `dragged()` уже false, а применять надо показанное.
+    let pick = axis.and_then(|(e, cell)| {
+        if !(resp.dragged() || resp.drag_stopped()) {
+            return None;
+        }
+        let pos = resp.interact_pointer_pos()?;
+        let (j, t) = axis_at(cell, pos.x - rect.center().x, e.variants.len() + 1);
+        Some((j, t, axis_point(e, j).lerp(axis_point(e, j + 1), t)))
+    });
+    let shown: &[FxInstance] =
+        pick.as_ref().map(|(_, _, fx)| std::slice::from_ref(fx)).unwrap_or(extra);
     let p = ui.painter();
     // подложка ОДНИМ прямоугольником, не шахматкой: прозрачные места
     // (Greenscreen, Pan3d, CornerPin) видны на ней как есть, а шахматка
     // из плиток дала бы тысячи примитивов на открытие (инвариант №12)
     p.rect_filled(img_rect, 2.0, crate::theme::EXTREME);
     if let Some(ctx) = preview.as_deref_mut()
-        && let Some(tex) = ctx.texture(ui.ctx(), extra)
+        && let Some(tex) = ctx.texture(ui.ctx(), shown)
     {
         p.image(
             tex,
@@ -699,7 +763,7 @@ fn preview_cell(
             egui::Color32::WHITE,
         );
     }
-    let stroke = if resp.hovered() { crate::theme::ACCENT } else { frame };
+    let stroke = if resp.hovered() || pick.is_some() { crate::theme::ACCENT } else { frame };
     p.rect_stroke(img_rect, 2.0, egui::Stroke::new(1.0, stroke), egui::StrokeKind::Inside);
     resp.widget_info(|| {
         let name = match (prefix.is_empty(), label.is_empty()) {
@@ -710,7 +774,7 @@ fn preview_cell(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), name)
     });
     if label.is_empty() {
-        return resp;
+        return (resp, pick);
     }
     // подпись усекается, а не разносит ячейку (правило 7 чек-листа)
     let galley = ui.fonts_mut(|f| {
@@ -732,7 +796,7 @@ fn preview_cell(
     });
     let cap_x = img_rect.center().x - galley.size().x / 2.0;
     ui.painter().galley(egui::pos2(cap_x, img_rect.bottom() + 2.0), galley, egui::Color32::WHITE);
-    resp
+    (resp, pick)
 }
 
 /// Пикер, у которого ПЕРВОЙ строкой стоит голова полосы. В `registry()`
@@ -832,13 +896,18 @@ pub fn fx_picker_with_head(
                                     })
                                     .collect();
                                 ui.horizontal(|ui| {
-                                    let c = preview_cell(
+                                    // подпись НЕ дублируем: имя стоит
+                                    // кнопкой сразу справа от миниатюры
+                                    // (правило 13). Оси у пресета нет —
+                                    // смешивать ЦЕПОЧКИ бессмысленно.
+                                    let (c, _) = preview_cell(
                                         ui,
                                         &mut preview,
                                         &chain,
-                                        "",
                                         &r.name,
+                                        "",
                                         crate::theme::MORPH_SLOT,
+                                        None,
                                     );
                                     let lbl = crate::widgets::elided_name(
                                         ui,
@@ -946,22 +1015,43 @@ pub fn fx_picker_with_head(
                             let mut hit = None;
                             ui.horizontal_wrapped(|ui| {
                                 for (vi, v) in e.variants.iter().enumerate() {
-                                    let c = preview_cell(
+                                    let (c, pick) = preview_cell(
                                         ui,
                                         &mut preview,
                                         std::slice::from_ref(&v.fx),
                                         e.name,
                                         tr(v.name),
                                         crate::theme::OUTLINE,
+                                        Some((e, vi)),
                                     );
                                     crate::widgets::field_probe::note(
                                         &format!("fxreg.var.{}.{vi}", e.template.tag()),
                                         c.rect,
                                     );
-                                    if crate::app::hint_into(hover, c, tr(k::fxreg::VAR_HINT))
-                                        .clicked()
-                                    {
+                                    // подсказка — в статусбар, как всё в
+                                    // программе (правило 10): пока ведут
+                                    // ось, она говорит МЕЖДУ ЧЕМ ведут и
+                                    // на сколько
+                                    let axis_hint = pick.as_ref().map(|(j, t, _)| {
+                                        crate::tf!(
+                                            k::fxreg::AXIS_HINT,
+                                            axis_name(e, *j),
+                                            axis_name(e, j + 1),
+                                            (t * 100.0).round() as i64
+                                        )
+                                    });
+                                    let hint =
+                                        axis_hint.as_deref().unwrap_or(tr(k::fxreg::VAR_HINT));
+                                    let c = crate::app::hint_into(hover, c, hint);
+                                    // клик без движения — ИМЕННО этот
+                                    // вариант (t254); проводка — то, что
+                                    // показано на кадре отпускания
+                                    if c.clicked() {
                                         hit = Some(Picked::Fx(v.fx.clone()));
+                                    } else if c.drag_stopped()
+                                        && let Some((_, _, fx)) = pick
+                                    {
+                                        hit = Some(Picked::Fx(fx));
                                     }
                                 }
                                 for (i, r) in presets.iter().enumerate() {
@@ -978,13 +1068,14 @@ pub fn fx_picker_with_head(
                                         &r.block.slots[0].curves,
                                         kt_time::Tick(0),
                                     );
-                                    let c = preview_cell(
+                                    let (c, _) = preview_cell(
                                         ui,
                                         &mut preview,
                                         std::slice::from_ref(&fx),
                                         "",
                                         &r.name,
                                         crate::theme::MORPH_SLOT,
+                                        None,
                                     );
                                     if crate::app::hint_into(hover, c, tr(k::fxreg::VAR_HINT))
                                         .clicked()

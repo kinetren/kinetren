@@ -394,6 +394,7 @@ search = "search…"
 nothing = "nothing found"
 template_hint = "Adds the effect with its default values"
 var_hint = "Adds the effect already tuned — the thumbnail is your frame"
+axis_hint = "Strength: {0} … {1}, {2} %  (release to add what you see)"
 
 # Категории эффектов в пикере.
 [fxreg.cat]

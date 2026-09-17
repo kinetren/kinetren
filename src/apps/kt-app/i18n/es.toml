@@ -394,6 +394,7 @@ search = "buscar…"
 nothing = "no se encontró nada"
 template_hint = "Añade el efecto con sus valores por defecto"
 var_hint = "Añade el efecto ya ajustado — la miniatura es tu fotograma"
+axis_hint = "Intensidad: {0} … {1}, {2} %  (suelta y se añade lo que ves)"
 
 # Категории эффектов в пикере.
 [fxreg.cat]

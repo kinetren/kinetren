@@ -103,8 +103,41 @@ def main(out):
             f"миниатюра нарисована, а не осталась чёрной плашкой (пиксель {drawn})",
         )
 
-        # 4) клик по ячейке — и в ФАЙЛЕ ровно её параметры
+        # 4) ОСЬ СИЛЫ: проводка по горизонтали от ячейки «Плотно» к
+        # соседней слева обязана дать ПРОМЕЖУТОЧНОЕ значение — то, что
+        # человек видел под курсором, а не названный вариант.
+        win = geometry()
+        cx = win["x"] + int(cell["x"] + cell["w"] / 2)
+        cy = win["y"] + int(cell["y"] + cell["h"] * 0.35)
         before_radii = radius_in(proj)
+        app.drag(cx, cy, cx - int(cell["w"] / 2), cy)
+        app.shot("axis")
+        app.saved_project()
+        axis_radii = [r for r in radius_in(proj) if r not in before_radii]
+        app.expect(
+            len(axis_radii) == 1,
+            f"проводка добавила ровно один blur (было {before_radii}, стало {radius_in(proj)})",
+        )
+        if axis_radii:
+            app.expect(
+                3 < axis_radii[0] < WANT_RADIUS,
+                f"ось дала ПРОМЕЖУТОЧНОЕ значение между 3 и {WANT_RADIUS}: {axis_radii[0]}",
+            )
+        # откат: ось добавила эффект одним шагом истории, и Ctrl+Z обязан
+        # его снять — иначе следующая проверка мерила бы сумму двух жестов
+        app.key("ctrl+z")
+        app.saved_project()
+        after_undo = radius_in(proj)
+        app.expect(
+            axis_radii and axis_radii[0] not in after_undo,
+            f"Ctrl+Z снял добавленное осью (осталось {after_undo})",
+        )
+
+        # 5) клик по ячейке — и в ФАЙЛЕ ровно её параметры
+        before_radii = after_undo
+        app.click_probe("fxreg.add", "пикер открывается повторно")
+        for ch in "blur":
+            app.key(ch)
         if not app.click_probe(VARIANT, "ячейка варианта кликабельна"):
             return app.done()
         app.shot("after-pick")
