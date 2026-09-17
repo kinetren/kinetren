@@ -55,6 +55,120 @@ impl FxScratch {
     }
 }
 
+/// Встроенный образец для МИНИАТЮР эффектов (Р.54): что показать в
+/// иконке, когда своего кадра ещё нет — пикер открыт на клипе-вложении,
+/// тумба источника не приехала, или речь про иконку самого вида.
+///
+/// Свойства выбраны под то, что миниатюра обязана показать:
+/// * АСИММЕТРИЯ по обеим осям (диагональ + круг в одном углу) — иначе
+///   `Mirror` неотличим от входа, а его как раз и надо показать;
+/// * зелёная плашка — `Greenscreen` должен чему-то кеиться;
+/// * цветные полосы и яркостная рампа — `ColorGrade`/`Duotone`/
+///   `Posterize`/`VHS` меняют именно их;
+/// * мелкая сетка и жёсткие кромки — `Blur`/`Sharpen`/`Edges`/`Glow`/
+///   `Pixelate`/`Halftone` без высоких частот показали бы пустое место.
+///
+/// `alpha_margin` — контент в рамке с ПРОЗРАЧНЫМИ полями: `DropShadow` на
+/// непрозрачном кадре тождествен по построению (тень падает из-под
+/// альфы), а `Pan3d`/`CornerPin` без полей упирают квад в кромку.
+///
+/// Детерминирован (ни времени, ни RNG) и заморожен голденом t544: это
+/// ЭТАЛОН, а не украшение — по нему сверяют иконки.
+pub fn test_pattern(w: u32, h: u32, alpha_margin: bool) -> Frame {
+    let (w, h) = (w.max(4), h.max(4));
+    let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4];
+    // 8 цветных полос сверху (жёсткие вертикальные кромки)
+    const BARS: [[u8; 3]; 8] = [
+        [235, 235, 235],
+        [235, 235, 40],
+        [40, 235, 235],
+        [40, 200, 60],
+        [235, 60, 200],
+        [220, 50, 50],
+        [50, 70, 220],
+        [20, 20, 20],
+    ];
+    let grid = (w / 40).max(2);
+    let (fw, fh) = (w as f64, h as f64);
+    for y in 0..h {
+        let v = (y as f64 + 0.5) / fh;
+        for x in 0..w {
+            let u = (x as f64 + 0.5) / fw;
+            let i = ((y as usize) * (w as usize) + x as usize) * 4;
+            let (mut r, mut g, mut b) = if v < 0.34 {
+                let bar = ((u * BARS.len() as f64) as usize).min(BARS.len() - 1);
+                (BARS[bar][0], BARS[bar][1], BARS[bar][2])
+            } else if v < 0.67 {
+                // яркостная рампа; в левой половине — мелкая шахматка
+                let l = (u * 255.0) as u8;
+                if u < 0.5 && ((x / grid) + (y / grid)) % 2 == 0 {
+                    (l.saturating_add(60), l.saturating_add(60), l.saturating_add(60))
+                } else {
+                    (l, l, l)
+                }
+            } else if u > 0.62 {
+                (0, 255, 0) // плашка под кеинг
+            } else {
+                (96, 96, 104)
+            };
+            // диагональ (асимметрия по обеим осям)
+            if ((u - v).abs() * fw) < grid as f64 {
+                (r, g, b) = (255, 255, 255);
+            }
+            // круг в ЛЕВОМ нижнем углу: зеркало по любой оси его сдвинет
+            let (dx, dy) = (u - 0.22, v - 0.80);
+            if dx * dx + dy * dy < 0.012 {
+                (r, g, b) = (250, 170, 30);
+            }
+            let inside = !alpha_margin || (0.11..0.89).contains(&u) && (0.11..0.89).contains(&v);
+            rgba[i] = if inside { r } else { 0 };
+            rgba[i + 1] = if inside { g } else { 0 };
+            rgba[i + 2] = if inside { b } else { 0 };
+            rgba[i + 3] = if inside { 255 } else { 0 };
+        }
+    }
+    Frame { w, h, rgba, has_alpha: alpha_margin }
+}
+
+/// Миниатюра цепочки на готовом кадре (Р.54): вписать `base` в w×h и
+/// прогнать цепочку. ЕДИНСТВЕННЫЙ вход миниатюр — и у иконок вида, и у
+/// полоски вариантов, и у пресетов библиотеки.
+///
+/// Семантика контекста — семантика движка, чтобы картинка не расходилась
+/// с тем, что получится после клика: `u` — прогресс клипа в точке
+/// курсора, `burst_index` — абсолютный тик таймлайна (зерно noise/vhs),
+/// `cam3d` — разрешённая камера слоя (без неё Pan3d — passthrough).
+/// `in_scale` здесь всегда 1: ступень декода (Р.46) говорит «кадр пришёл
+/// КРУПНЕЕ логического размера», а у миниатюры наоборот.
+///
+/// О РАЗМЕРЕ. Часть параметров задана в ПИКСЕЛЯХ (`Pixelate.size` до 128,
+/// `Halftone.size`, радиусы размытий, `Vhs.rgb_shift`), поэтому одна и та
+/// же цепочка на 96×54 и на 1080p показывает разную СИЛУ. Миниатюра — про
+/// вид, не про силу; звать её осмысленно на опорном размере (у нас это
+/// размер тумбы, 320×180) и ужимать результат `fit_into`, а не считать
+/// сразу в размере ячейки.
+pub fn render_fx_thumb(
+    base: &Frame,
+    fx: &[FxInstance],
+    w: u32,
+    h: u32,
+    u: f64,
+    burst_index: i64,
+    cam3d: Option<crate::geom::Cam3d>,
+    scratch: &mut FxScratch,
+) -> Frame {
+    let (w, h) = (w.max(1), h.max(1));
+    let src = if base.w == w && base.h == h {
+        Frame { w, h, rgba: base.rgba.clone(), has_alpha: base.has_alpha }
+    } else {
+        let mut buf = scratch.take((w as usize) * (h as usize) * 4);
+        fit_into(base, w, h, &mut buf);
+        Frame { w, h, rgba: buf, has_alpha: base.has_alpha }
+    };
+    let ctx = VideoFxCtx { out_w: w, out_h: h, u, burst_index, cam3d, in_scale: 1 };
+    apply_video_chain_pooled(fx, src, &ctx, scratch)
+}
+
 /// Применить цепочку видео-FX клипа. Аудио-варианты игнорируются.
 /// Обёртка с локальным пулом — результат идентичен pooled-варианту.
 pub fn apply_video_chain(fx: &[FxInstance], frame: Frame, ctx: &VideoFxCtx) -> Frame {
