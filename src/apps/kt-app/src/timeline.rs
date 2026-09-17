@@ -477,6 +477,21 @@ pub enum Drag {
         left: bool,
         cur: i64,
     },
+    /// Край окна ЭКЗЕМПЛЯРА внутри раскрытой полосы (Р.55, С5).
+    ///
+    /// Указатель стоит над строкой ЛЕНТЫ, а правится событие КОРНЯ — это
+    /// единственный жест, где так, и потому он назван отдельным вариантом,
+    /// а не подмешан к тримам. Команды обычные: `TrimStart`/`TrimEnd` на
+    /// экземпляре.
+    ///
+    /// Содержимое полосы при этом НЕ ЕДЕТ по экрану: трим двигает `start` и
+    /// `source_in` на одну дельту (`clip_slice`), значит `dt` полосы не
+    /// меняется, а окно наезжает на неподвижный материал, как шторка.
+    NestWindow {
+        inst: ClipId,
+        left: bool,
+        cur: i64,
+    },
     /// Край окна перехода (true = левый/in_offset): live через
     /// apply_coalesced(SetTransition) — один undo на жест (Р.24, п.140).
     TransitionEdge {
@@ -2064,9 +2079,30 @@ impl KtApp {
                 LaneKind::Morph => crate::theme::LANE_MORPH,
                 LaneKind::Camera => crate::theme::LANE_CAMERA,
             };
-            // подпись: пользовательское имя либо формула V1/A1/M1 (п.2 р.10)
-            let label = kt_model::lane_label(&self.lane_names, kind, lane);
+            // подпись: пользовательское имя либо формула V1/A1/M1 (п.2 р.10).
+            // У строки РАСКРЫТОЙ ПОЛОСЫ (Р.55, С5) имя корневых дорожек
+            // соврало бы: это строка ДРУГОЙ ленты. Подпись получает её имя,
+            // а номер считается от начала полосы.
+            let band = self.model.band_of_row(kind, lane).copied();
+            let label = match &band {
+                Some(b) => {
+                    let name = self
+                        .model
+                        .project()
+                        .sequence(b.seq)
+                        .map(|s| s.name.clone())
+                        .unwrap_or_default();
+                    let local = lane - b.base.get(kind);
+                    format!("{name} {}", kt_model::lane_label(&[], kind, local))
+                }
+                None => kt_model::lane_label(&self.lane_names, kind, lane),
+            };
             painter.rect_filled(lane_rect, 0.0, fill);
+            // ФОН ПОЛОСЫ тонирован: две системы координат на одном экране
+            // обязаны быть различимы, иначе человек правит не то, что думает
+            if band.is_some() {
+                painter.rect_filled(lane_rect, 0.0, crate::theme::BAND_TINT);
+            }
             // ПУСТАЯ служебная строка сама говорит, что на неё класть
             // (Р.40 п.5). Своей полосы под это не заводим — надпись живёт
             // ВНУТРИ пустой строки, которая и так занимает место
@@ -2096,6 +2132,23 @@ impl KtApp {
             }
             gutter_labels.push((label, y + rh * 0.5, y, rh));
         }
+        // КРАЙ ОКНА раскрытой полосы (Р.55, С5). Зона хвата та же, что у
+        // тримов клипа, а приоритет — ВЫШЕ событий полосы: вертикаль края
+        // проходит поверх них, и попасть в неё человек целится именно как
+        // в неё.
+        let band_edge_at = |slf: &KtApp, pos: egui::Pos2| -> Option<(ClipId, bool)> {
+            let key = geom.key_at_y(pos.y)?;
+            let b = slf.model.band_of_row(key.0, key.1)?;
+            let win = b.window(slf.model.project())?;
+            let (xa, xb) = (tick_to_x(win.start.0), tick_to_x(win.end.0));
+            if (pos.x - xa).abs() <= EDGE_GRAB_PX {
+                Some((b.inst, true))
+            } else if (pos.x - xb).abs() <= EDGE_GRAB_PX {
+                Some((b.inst, false))
+            } else {
+                None
+            }
+        };
         // хит-тест morph-блока (нужен и press-обработке, и ПКМ ниже)
         // кромка morph-блока: та же зона хвата, что у тримов клипа
         let morph_edge_at = |slf: &KtApp, pos: egui::Pos2| -> Option<(MorphId, bool)> {
@@ -2803,6 +2856,24 @@ impl KtApp {
                     let t = self.snap(x_to_tick(pos.x).max(0), None);
                     self.player.seek(Tick(t.max(0)));
                 }
+            } else if let Some((inst, left)) =
+                band_edge_at(self, pos).filter(|_| !response.double_clicked())
+                && response.drag_started()
+            {
+                // КРАЙ ОКНА раскрытой полосы — ПЕРЕД всеми остальными
+                // целями в её строках: вертикаль края нарисована поверх
+                // событий, и целятся в неё, а не в то, что под ней.
+                let cur = self
+                    .model
+                    .project()
+                    .clips
+                    .iter()
+                    .find(|c| c.id == inst)
+                    .map(|c| if left { c.start.0 } else { (c.start + c.duration).0 });
+                if let Some(cur) = cur {
+                    self.select_only(inst);
+                    self.drag = Some(Drag::NestWindow { inst, left, cur });
+                }
             } else if let Some((cid, left)) =
                 camera_edge_at(self, pos).filter(|_| !response.double_clicked())
                 && response.drag_started()
@@ -2935,11 +3006,16 @@ impl KtApp {
                             };
                         }
                     } else if self.is_nest(id) {
-                        // ВЛОЖЕНИЕ открывается ВНУТРЬ (Р.50, В3) — так же,
-                        // как у Premiere и FCP. Окно FX у него тоже есть, в
-                        // меню: цепочка на вложении законна и считается на
-                        // собранной картинке.
-                        self.enter_nest(id);
+                        // ВЛОЖЕНИЕ РАСКРЫВАЕТСЯ НА МЕСТЕ (Р.55, С5) — это
+                        // режим по умолчанию по прямой просьбе владельца:
+                        // из корня мы не выходим, играет вся программа, и
+                        // композицию можно поправить, сразу слыша результат
+                        // в контексте. ПОЛНЫЙ вход (вид только ленты)
+                        // остался пунктом меню «Войти в ленту».
+                        //
+                        // Жест работает ПОВТОРНО (правило 14): второй
+                        // двойной клик сворачивает раскрытие.
+                        self.expand_in_place(id);
                     } else {
                         self.open_fx_editor(id);
                     }
@@ -3222,6 +3298,12 @@ impl KtApp {
                     let cur = x_to_tick(pos.x).max(0);
                     self.drag = Some(Drag::CameraEdge { id, left, cur });
                 }
+                Some(Drag::NestWindow { inst, left, .. }) => {
+                    // снап тот же, что у тримов: окно обязано садиться на
+                    // те же места, что и любой другой край
+                    let cur = self.snap(x_to_tick(pos.x).max(0), Some(inst));
+                    self.drag = Some(Drag::NestWindow { inst, left, cur });
+                }
                 Some(Drag::MorphEdge { id, left, .. }) => {
                     let cur = x_to_tick(pos.x).max(0);
                     self.drag = Some(Drag::MorphEdge { id, left, cur });
@@ -3271,15 +3353,13 @@ impl KtApp {
                         // live-превью без записи в историю: у аудио уровень
                         // это громкость (диапазон рейла v1), у видео —
                         // непрозрачность
-                        // плеер играет ДОКУМЕНТ; правим событие там, где
-                        // человек его тянет (Р.50, В1)
-                        let mut p = self.model.document();
-                        let here = self.model.editing();
-                        let clips = match here.and_then(|s| p.sequence_mut(s)) {
-                            Some(s) => &mut s.clips,
-                            None => &mut p.clips,
-                        };
-                        if let Some(cm) = clips.iter_mut().find(|c| c.id == id) {
+                        // Плеер играет то, что отдаёт `player_project`
+                        // (Р.55, С1): в корне — документ, внутри ленты —
+                        // САМА ЛЕНТА. И там и там событие, которое человек
+                        // тянет, лежит в КОРНЕ этого проекта, поэтому
+                        // искать его по дереву больше не нужно.
+                        let mut p = self.player_project();
+                        if let Some(cm) = p.clips.iter_mut().find(|c| c.id == id) {
                             if kind == ClipKind::Audio {
                                 cm.gain_db = level_to_gain(lv);
                             } else {
@@ -3502,6 +3582,18 @@ impl KtApp {
                         ev.lane = cur_lane;
                         self.apply(Command::SetCamera(ev));
                     }
+                }
+                Some(Drag::NestWindow { inst, left, cur }) => {
+                    // ОБЫЧНЫЕ КОМАНДЫ на экземпляре: жест живёт в строках
+                    // ленты, а правит событие корня — и это единственное
+                    // место, где так. Клампы делает сама модель (`check_on`
+                    // тримов), поэтому своей арифметики окна тут нет.
+                    let cmd = if left {
+                        Command::TrimStart { id: inst, new_start: Tick(cur) }
+                    } else {
+                        Command::TrimEnd { id: inst, new_end: Tick(cur) }
+                    };
+                    self.apply_batch_restoring(vec![cmd]);
                 }
                 Some(Drag::CameraEdge { id, left, cur }) => {
                     if let Some(mut ev) =
@@ -4020,6 +4112,68 @@ impl KtApp {
                     col,
                 );
             }
+        }
+
+        // ---- РАСКРЫТАЯ ПОЛОСА: хвосты и граница окна (Р.55, С5) ------------
+        //
+        // Рисуется ПОСЛЕ событий, поверх них: вуаль обязана лечь и на
+        // клипы, и на их филмстрипы с волноформами, иначе «за окном» и
+        // «в окне» отличались бы только рамкой.
+        //
+        // Материал ленты за окном экземпляра НЕ ЗВУЧИТ и не показывается в
+        // превью, но он есть, он виден и его можно править. Владелец
+        // выбрал именно это: «затемнённо + править + тянуть край».
+        for b in self.model.bands() {
+            let Some(mut win) = b.window(self.model.project()) else { continue };
+            // ЖИВОЙ ПРЕДПРОСМОТР края: без него окно стояло бы на месте до
+            // отпускания, и жест выглядел бы мёртвым
+            if let Some(Drag::NestWindow { inst, left, cur }) = &self.drag
+                && *inst == b.inst
+            {
+                if *left {
+                    win.start = Tick((*cur).min(win.end.0 - 1));
+                } else {
+                    win.end = Tick((*cur).max(win.start.0 + 1));
+                }
+            }
+            let rows: Vec<usize> = geom
+                .rows
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| b.owns(r.0, r.1))
+                .map(|(i, _)| i)
+                .collect();
+            let (Some(&first), Some(&last)) = (rows.first(), rows.last()) else { continue };
+            let y0 = geom.row_top(first);
+            let y1 = geom.row_top(last) + geom.row_h(last);
+            let (xa, xb) = (tick_to_x(win.start.0), tick_to_x(win.end.0));
+            // ВУАЛЬ слева и справа от окна — одним мешем на обе стороны
+            let mut veil = egui::Mesh::default();
+            for (a, z) in [(rect.left(), xa), (xb, rect.right())] {
+                if z > a {
+                    veil.add_colored_rect(
+                        egui::Rect::from_min_max(egui::pos2(a, y0), egui::pos2(z, y1)),
+                        crate::theme::BAND_TAIL_VEIL,
+                    );
+                }
+            }
+            painter.add(egui::Shape::mesh(veil));
+            // ГРАНИЦЫ ОКНА — они же зона хвата края экземпляра
+            for x in [xa, xb] {
+                if x >= rect.left() && x <= rect.right() {
+                    painter.line_segment(
+                        [egui::pos2(x, y0), egui::pos2(x, y1)],
+                        egui::Stroke::new(2.0, crate::theme::BAND_EDGE),
+                    );
+                }
+            }
+            // РАМКА БЛОКА: полоса читается как блок, а не как «ещё дорожки»
+            painter.rect_stroke(
+                egui::Rect::from_min_max(egui::pos2(rect.left(), y0), egui::pos2(rect.right(), y1)),
+                0.0,
+                egui::Stroke::new(1.0, crate::theme::BAND_EDGE.gamma_multiply(0.5)),
+                egui::StrokeKind::Inside,
+            );
         }
 
         // ---- рамка выделения (Р.33 п.7): тот же вид, что в медиа-бине ------
@@ -5066,6 +5220,24 @@ impl KtApp {
                     }
                 }
                 if self.is_nest(id) {
+                    // РАСКРЫТЬ ЗДЕСЬ стоит выше: это режим по умолчанию, и
+                    // порядок пунктов обязан ему соответствовать
+                    let open = self.model.bands().iter().any(|b| b.inst == id);
+                    let label = if open {
+                        k::tl::menu::NEST_COLLAPSE_HERE
+                    } else {
+                        k::tl::menu::NEST_EXPAND_HERE
+                    };
+                    let r = ui.button(tr(label));
+                    crate::widgets::field_probe::note("nest.expand_here", r.rect);
+                    if r.clicked() {
+                        if open {
+                            self.collapse_in_place(id);
+                        } else {
+                            self.expand_in_place(id);
+                        }
+                        ui.close();
+                    }
                     let r = ui.button(tr(k::tl::menu::NEST_ENTER));
                     crate::widgets::field_probe::note("nest.enter", r.rect);
                     if r.clicked() {
@@ -5150,7 +5322,9 @@ impl KtApp {
                 } else {
                     tr(k::tl::menu::REVERSE).to_string()
                 };
-                if ui.button(rev_label).clicked() {
+                let rev_r = ui.button(rev_label);
+                crate::widgets::field_probe::note("tl.reverse", rev_r.rect);
+                if rev_r.clicked() {
                     self.apply(Command::SetReversed { id, reversed: !is_rev });
                     ui.close();
                 }

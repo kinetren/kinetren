@@ -7572,20 +7572,43 @@ fn t269_morph_strength_and_fades_reach_the_model() {
     }
     assert!(!c.fx_auto[mix_at].is_empty(), "фейд — это КРИВАЯ силы, а не отдельный механизм");
 
-    // сила 1.0 без фейдов слота НЕ создаёт: прежний путь байт-в-байт
+    // Сила 1.0 без фейдов слота НЕ создаёт — ТАМ, ГДЕ СЛОЙ НАКРЫВАЕТ
+    // СОБЫТИЕ ЦЕЛИКОМ. Именно на этом стоят GOLDEN'ы: полное накрытие —
+    // самый частый случай, и путь для него обязан остаться байт-в-байт.
+    //
+    // С Р.55 (С2) у ЧАСТИЧНО накрытого события слот появляется и на
+    // умолчаниях: «по времени» теперь выражается ВОРОТАМИ силы, а не
+    // резкой, и без слота слой бил бы по всему телу. Это не регрессия
+    // умолчаний, а то, ради чего ворота и заведены.
     let app = h.state_mut();
     let mut ev = app.model.project().morphers[0].clone();
     ev.strength = 1.0;
     ev.fade_in = Tick::ZERO;
     ev.fade_out = Tick::ZERO;
+    let win = ev.window();
     assert!(app.apply(Command::SetMorpher(ev)));
+    let eff = app.model.project().effective_clips();
+    let has_mix = |c: &ClipEvent| c.fx.iter().any(|f| matches!(f, FxInstance::LayerMix { .. }));
+    let whole: Vec<&ClipEvent> =
+        eff.iter().filter(|c| win.start <= c.start && c.start + c.duration <= win.end).collect();
+    assert!(!whole.is_empty(), "сцена выродилась: слой не накрывает ни одного события целиком");
     assert!(
-        app.model
-            .project()
-            .effective_clips()
-            .iter()
-            .all(|c| !c.fx.iter().any(|f| matches!(f, FxInstance::LayerMix { .. }))),
-        "на умолчаниях слота смешения нет вовсе — на этом стоят GOLDEN'ы"
+        whole.iter().all(|c| !has_mix(c)),
+        "на умолчаниях у ЦЕЛИКОМ накрытого события слота смешения нет вовсе — \
+         на этом стоят GOLDEN'ы"
+    );
+    // а у частично накрытого он есть, и это и есть «по времени»
+    let part: Vec<&ClipEvent> = eff
+        .iter()
+        .filter(|c| {
+            let body = kt_time::TickRange::new(c.start, c.start + c.duration);
+            !body.intersect(&win).is_empty() && !(win.start <= c.start && body.end <= win.end)
+        })
+        .collect();
+    assert!(
+        part.iter().all(|c| has_mix(c)),
+        "у частично накрытого события обязаны быть ВОРОТА силы — иначе слой \
+         действует на всё тело, а человек просил окно"
     );
 }
 
@@ -8717,7 +8740,14 @@ fn harness_with_nest_dt(
     let (mut h, g) = harness_three_clips_dt(dt);
     {
         let app = h.state_mut();
-        app.select_only(kt_model::ClipId(1));
+        // СВОРАЧИВАЕМ СРЕДНЕЕ событие, а не первое, и это не вкусовщина
+        // (Р.55, С1). `ClipId(1)` стоит в нуле, поэтому у экземпляра
+        // `start == 0` и `source_in == 0`, а перевод курсора
+        // `source_in + (t − start)` вырождается в тождество: t456 был
+        // зелёным и на коде, который курсор не переводит ВОВСЕ. Здесь
+        // `ClipId(2)` стоит на 100_000 — сдвиг оси ненулевой, и формулу
+        // стало чем проверить.
+        app.select_only(kt_model::ClipId(2));
     }
     h.step();
     h.state_mut().collapse_selection();
@@ -8740,8 +8770,10 @@ fn t456_entering_and_leaving_is_identity() {
     let (mut h, g, seq) = harness_with_nest();
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
 
-    // снимок вида СНАРУЖИ
-    h.state_mut().player.seek(Tick(20_000));
+    // снимок вида СНАРУЖИ. Курсор — ВНУТРИ тела экземпляра (100_000 …
+    // 150_000): вход переводит время, а не телепортирует, и проверять
+    // перевод имеет смысл только оттуда, откуда человек входит.
+    h.state_mut().player.seek(Tick(120_000));
     h.state_mut().view_start = 5_000.0;
     h.state_mut().ticks_per_px = 900.0;
     h.state_mut().select_only(inst);
@@ -8756,6 +8788,14 @@ fn t456_entering_and_leaving_is_identity() {
     // КУРСОР ПЕРЕВЕДЁН, а не сброшен: человек вошёл, а не перепрыгнул
     let c = h.state().model.document().clips.iter().find(|c| c.id == inst).unwrap().clone();
     let want = c.source_in + (outside - c.start);
+    // СТОРОЖ САМОЙ ПРОВЕРКИ: на экземпляре, стоящем в нуле, `want`
+    // совпадает с `outside`, и всё, что ниже, перестаёт что-либо
+    // утверждать. Сцена обязана оставаться со сдвигом.
+    assert_ne!(
+        want.0, outside.0,
+        "сцена выродилась: экземпляр стоит в нуле, и перевод курсора нечем отличить \
+         от его отсутствия"
+    );
     // ТОЧНОСТЬ — КВАНТ ТРАНСПОРТА, названный, а не подобранный: playhead
     // живёт в аудиокадрах 48 кГц, и round-trip «тик → кадр → тик» усекает
     // вниз (п.7 р.10). Один кадр — 90000/48000 = 1.875 тика, округляем
@@ -8785,6 +8825,108 @@ fn t456_entering_and_leaving_is_identity() {
     assert_eq!((h.state().view_start, h.state().ticks_per_px), (vs, tpp), "вид не восстановлен");
     assert!(h.state().selected.contains(&inst), "выделение не восстановлено");
     let _ = g;
+}
+
+/// Тест 552 (Р.55, С1): внутри ленты играет ЛЕНТА, а не корень.
+///
+/// До Р.55 в плеер всегда уходил `document()`. Человек входил в
+/// композицию, видел на таймлайне её события — и слышал корневой монтаж,
+/// взятый в момент, численно равный ЛОКАЛЬНОМУ времени ленты. Совпадало
+/// это ровно тогда, когда экземпляр стоит в нуле, поэтому ни один тест
+/// дефекта не видел (та же дыра, что закрыта в харнессе t456).
+///
+/// Утверждение проверяется по СЛЕДСТВИЮ — по тому, что реально уходит в
+/// плеер, а не по тому, какой метод вызвался.
+#[test]
+fn t552_inside_a_reel_the_reel_is_what_plays() {
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+
+    // СНАРУЖИ играет документ: корень несёт экземпляр и соседей
+    let outside = h.state().player_project();
+    assert!(
+        outside.clips.iter().any(|c| c.id == inst),
+        "в корне плеер обязан играть документ — экземпляра в нём нет"
+    );
+    assert!(
+        outside.sequences.iter().any(|s| s.id == seq),
+        "лента обязана остаться в документе: её играют через экземпляр"
+    );
+
+    h.state_mut().enter_nest(inst);
+    h.step();
+
+    let inside = h.state().player_project();
+    // КОРЕНЬ того, что играет, — содержимое ЛЕНТЫ
+    let want: Vec<kt_model::ClipId> =
+        h.state().model.project().clips.iter().map(|c| c.id).collect();
+    let got: Vec<kt_model::ClipId> = inside.clips.iter().map(|c| c.id).collect();
+    assert_eq!(
+        got, want,
+        "внутри ленты плеер играет НЕ ЕЁ: на таймлайне одни события, в звуке и \
+         превью другие"
+    );
+    assert!(
+        !inside.clips.iter().any(|c| c.id == inst),
+        "экземпляр обязан исчезнуть из того, что играет: стоя ВНУТРИ него, \
+         слышать его же снаружи значит слышать себя дважды"
+    );
+
+    // А НАРУЖУ (в файл и в экспорт) по-прежнему уходит ДОКУМЕНТ —
+    // настоящая раскладка, корень корнем (t456b сторожит вызовы,
+    // этот кусок сторожит СОДЕРЖИМОЕ)
+    let doc = h.state().model.document();
+    assert!(
+        doc.clips.iter().any(|c| c.id == inst),
+        "в документ уехало содержимое ленты вместо корня — записать такое значит \
+         поменять местами корень и ленту на диске"
+    );
+
+    h.state_mut().leave_nest();
+    h.step();
+    let back: Vec<kt_model::ClipId> =
+        h.state().player_project().clips.iter().map(|c| c.id).collect();
+    let was: Vec<kt_model::ClipId> = outside.clips.iter().map(|c| c.id).collect();
+    assert_eq!(back, was, "выход не вернул плееру корень");
+}
+
+/// Тест 553 (Р.55, С1): вход приводит ВИД туда, где встал курсор.
+///
+/// Курсор переводился и раньше, а прокрутка — нет: она оставалась в оси
+/// КОРНЯ. Войдя во вложение, стоящее на десятой минуте, человек видел
+/// пустой экран — содержимое ленты лежит около её нуля. Это и есть
+/// претензия «мы оказываемся на том же t, где были, а композиция идёт
+/// с t=0».
+#[test]
+fn t553_entering_brings_the_view_to_the_cursor() {
+    use kt_time::Tick;
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    let c = h.state().model.project().clips.iter().find(|x| x.id == inst).unwrap().clone();
+
+    // курсор внутри тела экземпляра, вид — вокруг него В ОСИ КОРНЯ
+    h.state_mut().player.seek(c.start + Tick(c.duration.0 / 2));
+    h.state_mut().view_start = c.start.0 as f64;
+    h.state_mut().select_only(inst);
+    h.step();
+    let before = h.state().view_start;
+
+    h.state_mut().enter_nest(inst);
+    h.step();
+
+    let cur = h.state().player.transport.playhead();
+    let g = h.state().tl_geom.clone().expect("геометрия таймлайна");
+    let span = g.rect.width() as f64 * h.state().ticks_per_px;
+    let vs = h.state().view_start;
+    assert!(
+        cur.0 as f64 >= vs && (cur.0 as f64) < vs + span,
+        "курсор ({}) вне видимого окна [{vs}, {}) — человек смотрит на пустое место",
+        cur.0,
+        vs + span
+    );
+    // сторож самой проверки: сцена обязана быть со сдвигом, иначе
+    // «вид не тронули» неотличимо от «вид привели»
+    assert_ne!(before, vs, "сцена выродилась: вид и так стоял там, куда его надо было привести");
 }
 
 /// Тест 457 (Р.50, В3): войти можно ЧЕТЫРЬМЯ способами, и все они — одно тело.
@@ -8825,7 +8967,11 @@ fn t457_four_ways_in_one_way_out() {
     h.state_mut().escape_action();
     assert_eq!(h.state().model.editing(), None, "Esc на пустом выделении обязан выводить наружу");
 
-    // 3) двойной клик
+    // 3) ДВОЙНОЙ КЛИК даёт не полный вход, а РАСКРЫТИЕ НА МЕСТЕ (Р.55,
+    // С5): быстрый жест даёт режим ПО УМОЛЧАНИЮ, названный пункт меню —
+    // названный режим. Прямая просьба владельца: «по умолчанию гибридный
+    // удобный режим нужен».
+    //
     // двойной клик у egui ВРЕМЕННОЙ: шаг харнесса по умолчанию 0.25 с, и
     // без мелкого dt тест проверял бы ОДИНОЧНЫЙ клик
     let (mut h2, g2, seq2) = harness_with_nest_dt(Some(0.02));
@@ -8835,15 +8981,29 @@ fn t457_four_ways_in_one_way_out() {
         let c = h2.state().model.project().clips.iter().find(|c| c.id == inst2).unwrap().clone();
         g2.tick_to_x(c.start.0 + c.duration.0 / 2)
     };
-    double_click_at(&mut h2, egui::pos2(x2, g2.lane_y(ClipKind::Video, 0, 0.6)));
+    let pos2 = egui::pos2(x2, g2.lane_y(ClipKind::Video, 0, 0.6));
+    double_click_at(&mut h2, pos2);
     assert_eq!(
         h2.state().model.editing(),
-        Some(seq2),
-        "двойной клик по вложению не завёл внутрь — у Premiere и FCP это основной путь"
+        None,
+        "двойной клик ушёл в ПОЛНЫЙ вход: из корня в гибридном режиме не выходят, \
+         иначе играть будет лента, а не программа"
+    );
+    assert_eq!(
+        h2.state().model.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
+        vec![inst2],
+        "двойной клик не раскрыл композицию на месте"
+    );
+    // ЖЕСТ РАБОТАЕТ ПОВТОРНО (правило 14): второй раз сворачивает
+    double_click_at(&mut h2, pos2);
+    assert!(
+        h2.state().model.bands().is_empty(),
+        "повторный двойной клик обязан сворачивать раскрытие, а не копить полосы"
     );
     let _ = row2;
 
-    // 4) Enter по выделенному
+    // 4) Enter по выделенному — КЛАВИАТУРНЫЙ БЛИЗНЕЦ двойного клика, и
+    // ведёт себя так же (правило 17)
     let (mut h3, _, seq3) = harness_with_nest();
     let inst3 = h3.state().model.project().clips.iter().find(|c| c.media == seq3).unwrap().id;
     h3.state_mut().select_only(inst3);
@@ -8851,7 +9011,13 @@ fn t457_four_ways_in_one_way_out() {
     h3.key_press(egui::Key::Enter);
     h3.step();
     h3.step();
-    assert_eq!(h3.state().model.editing(), Some(seq3), "Enter по выделенному вложению не сработал");
+    assert_eq!(h3.state().model.editing(), None, "Enter ушёл в полный вход, а не в раскрытие");
+    assert_eq!(
+        h3.state().model.bands().len(),
+        1,
+        "Enter по выделенному вложению не раскрыл его на месте"
+    );
+    let _ = seq3;
 }
 
 /// Тест 458 (Р.50, В2): у вложения свой вид и свои обещания.
@@ -9671,5 +9837,357 @@ fn t542_title_window_shows_real_colors() {
         (*fill_r, *fill_g, *fill_b, *fill_a),
         (255, 255, 255, 255),
         "умолчание заливки титра обязано быть непрозрачно-белым"
+    );
+}
+
+/// Тест 570 (Р.55, С5): раскрытие НЕ МЕНЯЕТ ни проект, ни то, что играет.
+///
+/// Главное обещание гибридного режима: из корня мы не выходим, поэтому
+/// движок продолжает играть ВСЮ ПРОГРАММУ, а документ остаётся тем же
+/// байт-в-байт. Раскрытие — рабочее место, а не работа: ни шага истории,
+/// ни следа в файле.
+#[test]
+fn t570_expanding_in_place_changes_nothing_but_the_view() {
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    let doc_before = h.state().model.document();
+    let play_before = h.state().player_project();
+    let undo_before = h.state().model.undo_depth();
+    let rows_before = h.state().tl_geom.clone().map(|g| g.rows.len()).unwrap_or(0);
+
+    h.state_mut().expand_in_place(inst);
+    h.step();
+
+    assert_eq!(h.state().model.editing(), None, "раскрытие вышло из корня — играть будет лента");
+    assert_eq!(h.state().model.bands().len(), 1, "полоса не завелась");
+    assert_eq!(h.state().model.document(), doc_before, "раскрытие изменило ДОКУМЕНТ");
+    assert_eq!(h.state().player_project(), play_before, "раскрытие изменило то, что ИГРАЕТ");
+    assert_eq!(h.state().model.undo_depth(), undo_before, "раскрытие записалось в историю");
+
+    // а вид — да: строки ленты встали ПОД строкой экземпляра
+    let g = h.state().tl_geom.clone().expect("геометрия");
+    assert!(g.rows.len() > rows_before, "строк не прибавилось — полосы не видно: {:?}", g.rows);
+    let inner = h.state().model.project().clips.iter().find(|c| c.id != inst && c.media != seq);
+    assert!(inner.is_some(), "содержимого ленты нет в рабочем виде");
+
+    // и свернуть обратно — тождество вида (правило 14: жест повторный)
+    h.state_mut().collapse_in_place(inst);
+    h.step();
+    assert!(h.state().model.bands().is_empty(), "свёртка не сработала");
+    assert_eq!(h.state().model.document(), doc_before, "свёртка изменила документ");
+    assert_eq!(
+        h.state().tl_geom.clone().map(|g| g.rows.len()).unwrap_or(0),
+        rows_before,
+        "после свёртки строк осталось не столько же"
+    );
+}
+
+/// Тест 571 (Р.55, С5): правка ИЗ ПОЛОСЫ доезжает до ЛЕНТЫ.
+///
+/// Адресации правок нет и не нужно: событие полосы физически лежит в
+/// корневом векторе рабочего вида, команда приходит на него обычным путём,
+/// а сборка вычитает смещение. Утверждение проверяется по ДОКУМЕНТУ.
+#[test]
+fn t571_editing_inside_a_band_lands_in_the_reel() {
+    use kt_time::Tick;
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    h.state_mut().expand_in_place(inst);
+    h.step();
+
+    // событие ПОЛОСЫ — то, чья строка принадлежит раскрытию
+    let ids: Vec<(kt_model::ClipId, kt_time::Tick, u32)> =
+        h.state().model.project().clips.iter().map(|c| (c.id, c.start, c.lane)).collect();
+    let (id, was, lane) = ids
+        .iter()
+        .copied()
+        .find(|(id, _, _)| *id != inst && h.state().reel_of_clip(*id).is_some())
+        .expect("событие полосы");
+
+    assert!(h.state_mut().apply(kt_model::Command::MoveClip {
+        id,
+        new_start: was + Tick(1_000),
+        new_lane: lane,
+    }));
+    h.step();
+
+    let doc = h.state().model.document();
+    let s = doc.sequence(seq).expect("лента");
+    assert!(
+        s.clips.iter().any(|c| c.id == id),
+        "правка не доехала до ленты: событие ушло в корень документа"
+    );
+    assert!(
+        !doc.clips.iter().any(|c| c.id == id),
+        "событие ленты оказалось в КОРНЕ документа — на диск уехал бы другой монтаж"
+    );
+    // раскрытие пережило правку
+    assert_eq!(h.state().model.bands().len(), 1, "правка свернула раскрытие");
+}
+
+/// Тест 572 (Р.55, С5): выделение живёт РОВНО В ОДНОЙ ленте.
+///
+/// Смешанное выделение выглядело бы обычным, а жест по нему поехал бы
+/// наполовину: команды на события разных лент один батч не переживут.
+/// Клик в другой полосе ЗАМЕНЯЕТ выделение и говорит об этом.
+#[test]
+fn t572_selection_lives_in_one_reel() {
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    h.state_mut().expand_in_place(inst);
+    h.step();
+
+    let ids: Vec<kt_model::ClipId> = h.state().model.project().clips.iter().map(|c| c.id).collect();
+    let root_other = ids
+        .iter()
+        .copied()
+        .find(|id| *id != inst && h.state().reel_of_clip(*id).is_none())
+        .expect("корневое событие рядом");
+    let in_band = ids
+        .iter()
+        .copied()
+        .find(|id| h.state().reel_of_clip(*id).is_some())
+        .expect("событие полосы");
+
+    h.state_mut().select_only(root_other);
+    h.state_mut().toggle_selected(in_band);
+    assert_eq!(
+        h.state().selected.iter().copied().collect::<Vec<_>>(),
+        vec![in_band],
+        "выделение размазалось по двум лентам — половина жеста молча не поехала бы"
+    );
+    // и обратно тоже
+    h.state_mut().toggle_selected(root_other);
+    assert_eq!(
+        h.state().selected.iter().copied().collect::<Vec<_>>(),
+        vec![root_other],
+        "выделение размазалось по двум лентам в обратную сторону"
+    );
+}
+
+/// Тест 573 (Р.55, С5): Esc сворачивает раскрытие ПЕРЕД выходом из ленты.
+///
+/// Свёртка полосы стоит человеку меньше внимания, чем выход наружу, —
+/// значит и в каскаде стоит раньше. Но позже «снять выделение»: одна
+/// клавиша не имеет права делать два дела за раз.
+#[test]
+fn t573_escape_collapses_the_band_before_leaving_a_reel() {
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    h.state_mut().expand_in_place(inst);
+    h.state_mut().select_only(inst);
+    h.step();
+
+    h.state_mut().escape_action();
+    assert_eq!(h.state().model.bands().len(), 1, "Esc свернул полосу вместо снятия выделения");
+    assert!(h.state().selected.is_empty(), "Esc не снял выделение");
+
+    h.state_mut().escape_action();
+    assert!(h.state().model.bands().is_empty(), "второй Esc обязан свернуть раскрытие");
+}
+
+/// Тест 576 (Р.55, С6): дроп ПРОЕКТА СПРАШИВАЕТ и не теряет работу.
+///
+/// **Претензия владельца дословно:** «я переношу файл проекта на таймлайн и
+/// открывается новый таймлайн, а я хочу чтобы оно дало мне выбор».
+///
+/// Выбора не было — и, что хуже, не было и вопроса о несохранённой работе:
+/// дроп делал `*self = app` в обход `guard_unsaved` и `claim_project`, то
+/// есть мимо всего, что построено в Р.49. Работа исчезала молча.
+///
+/// Тест утверждает ТРИ вещи: вопрос задаётся; «Отмена» ничего не делает;
+/// «Открыть» проходит через сторож несохранённого.
+#[test]
+fn t576_dropping_a_project_asks_and_keeps_the_work() {
+    let (mut h, _) = harness_three_clips();
+    let dir = std::env::temp_dir().join("kt-t576");
+    let _ = std::fs::create_dir_all(&dir);
+    let foreign = dir.join("foreign.otio");
+    {
+        // чужой проект на диске — минимальный, но законный
+        let mut p = kt_model::Project::new(h.state().model.project().settings.clone());
+        p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "synth:1".into() });
+        p.clips.push(h.state().model.project().clips[0].clone());
+        p.clips[0].media = kt_model::MediaId(1);
+        let text = kt_otio::save_project(&p, &kt_otio::Retained::default(), None);
+        std::fs::write(&foreign, text).unwrap();
+    }
+
+    // в редакторе есть НЕСОХРАНЁННАЯ работа
+    h.state_mut().dirty_content = true;
+    let clips_before: Vec<kt_model::ClipId> =
+        h.state().model.project().clips.iter().map(|c| c.id).collect();
+
+    h.state_mut().pending_drop = Some((foreign.clone(), None));
+    h.state_mut().ask = Some(crate::app::Ask::DropOtio);
+    h.step();
+
+    // 1) ВОПРОС задан, и монтаж пока не тронут
+    assert!(matches!(h.state().ask, Some(crate::app::Ask::DropOtio)), "вопрос не задан");
+    assert_eq!(
+        h.state().model.project().clips.iter().map(|c| c.id).collect::<Vec<_>>(),
+        clips_before,
+        "дроп изменил монтаж ДО ответа"
+    );
+
+    // 2) ОТМЕНА не делает ничего
+    h.state_mut().answer_ask(crate::app::Answer::Cancel);
+    h.step();
+    assert!(h.state().ask.is_none(), "вопрос остался после отмены");
+    assert_eq!(
+        h.state().model.project().clips.iter().map(|c| c.id).collect::<Vec<_>>(),
+        clips_before,
+        "отмена всё-таки что-то сделала"
+    );
+    assert!(h.state().dirty_content, "отмена погасила признак несохранённой работы");
+
+    // 3) «ОТКРЫТЬ» при несохранённой работе обязано СПРОСИТЬ, а не открыть
+    h.state_mut().pending_drop = Some((foreign.clone(), None));
+    h.state_mut().ask = Some(crate::app::Ask::DropOtio);
+    h.state_mut().answer_ask(crate::app::Answer::Yes);
+    h.step();
+    assert!(
+        matches!(h.state().ask, Some(crate::app::Ask::Unsaved(crate::app::Pending::DropOpen))),
+        "дроп проекта открыл его поверх несохранённой работы — она пропала бы молча"
+    );
+    assert_eq!(
+        h.state().model.project().clips.iter().map(|c| c.id).collect::<Vec<_>>(),
+        clips_before,
+        "монтаж подменён до ответа на вопрос о несохранённом"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 577 (Р.55, С6): «вставить композицией» кладёт ленту и экземпляр.
+#[test]
+fn t577_dropping_a_project_can_insert_it_as_a_composition() {
+    use kt_time::Tick;
+    let (mut h, _) = harness_three_clips();
+    let dir = std::env::temp_dir().join("kt-t577");
+    let _ = std::fs::create_dir_all(&dir);
+    let foreign = dir.join("foreign.otio");
+    {
+        let mut p = kt_model::Project::new(h.state().model.project().settings.clone());
+        p.media.push(kt_model::MediaRef { id: kt_model::MediaId(1), path: "synth:1".into() });
+        p.clips.push(h.state().model.project().clips[0].clone());
+        p.clips[0].media = kt_model::MediaId(1);
+        let text = kt_otio::save_project(&p, &kt_otio::Retained::default(), None);
+        std::fs::write(&foreign, text).unwrap();
+    }
+    let seqs_before = h.state().model.document().sequences.len();
+    let clips_before = h.state().model.project().clips.len();
+
+    h.state_mut().pending_drop =
+        Some((foreign.clone(), Some((Tick(400_000), (kt_model::ClipKind::Video, 0)))));
+    h.state_mut().ask = Some(crate::app::Ask::DropOtio);
+    h.state_mut().answer_ask(crate::app::Answer::No);
+    h.step();
+
+    let doc = h.state().model.document();
+    assert_eq!(doc.sequences.len(), seqs_before + 1, "лента из чужого проекта не завелась");
+    assert_eq!(
+        h.state().model.project().clips.len(),
+        clips_before + 1,
+        "экземпляр чужого проекта не встал на таймлайн"
+    );
+    let seq = doc.sequences.last().unwrap().id;
+    let inst = doc.clips.iter().find(|c| c.media == seq).expect("экземпляра нет");
+    assert_eq!(inst.start, Tick(400_000), "экземпляр встал не в точку дропа");
+    doc.validate().expect("документ после вставки обязан быть законным");
+    // и это ОДИН шаг истории: Ctrl+Z убирает вставку целиком
+    assert!(h.state_mut().model.undo().is_ok());
+    assert_eq!(
+        h.state().model.document().sequences.len(),
+        seqs_before,
+        "вставка чужого проекта снялась не одним шагом"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Тест 578 (Р.55, С6): лента — ОБЪЕКТ БИНА, а не только событие.
+///
+/// **Претензия владельца дословно:** «наверное еще куча вещей недоступна
+/// из ui». Лента была ровно таким случаем: в бине её не было вовсе, и
+/// поставить композицию во второе место можно было только копипастом уже
+/// стоящего экземпляра, завести пустую — ничем, а удалить конкретную —
+/// тоже (кнопка «убрать неиспользованные» убирает все сразу).
+///
+/// t253 этого не ловил: его таблица исчерпывающая по сущностям ТАЙМЛАЙНА,
+/// а бин — панель. t395 спрашивает, отвечает ли панель на правую кнопку, а
+/// не что в ней показано.
+#[test]
+fn t578_a_reel_is_an_object_of_the_bin() {
+    let (mut h, _g, seq) = harness_with_nest();
+    h.step();
+    h.step();
+
+    // 1) КАРТОЧКА ленты есть в бине
+    let cards: Vec<kt_model::MediaId> =
+        h.state().bin_card_rects.iter().map(|(id, _)| *id).collect();
+    assert!(
+        cards.contains(&seq),
+        "ленты нет в бине: {cards:?} — поставить её во второе место было бы нечем"
+    );
+
+    // 2) ПОСТАВИТЬ во второе место — одним глаголом, а не копипастом
+    let before = h.state().model.document().sequence_uses(seq);
+    h.state_mut().player.seek(kt_time::Tick(400_000));
+    h.state_mut().place_media_at_cursor(seq);
+    h.step();
+    assert_eq!(
+        h.state().model.document().sequence_uses(seq),
+        before + 1,
+        "лента не встала во второе место из бина"
+    );
+    let inst = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .filter(|c| c.media == seq)
+        .map(|c| c.start)
+        .max()
+        .expect("экземпляра нет");
+    // точность — квант транспорта (playhead живёт в аудиокадрах 48 кГц,
+    // п.7 р.10): требовать тик-в-тик значило бы требовать того, чего
+    // транспорт не умеет нигде
+    assert!((inst.0 - 400_000).abs() <= 2, "экземпляр встал не под курсор: {inst:?}");
+
+    // 3) ЗАВЕСТИ ПУСТУЮ — тоже глагол, а не побочный эффект сворачивания
+    let seqs_before = h.state().model.document().sequences.len();
+    h.state_mut().create_empty_reel();
+    h.step();
+    h.step();
+    assert_eq!(
+        h.state().model.document().sequences.len(),
+        seqs_before + 1,
+        "пустая лента не завелась"
+    );
+    let cards: Vec<kt_model::MediaId> =
+        h.state().bin_card_rects.iter().map(|(id, _)| *id).collect();
+    assert_eq!(
+        cards.len(),
+        h.state().model.project().media.len() + h.state().model.document().sequences.len(),
+        "в бине показаны не все объекты: {cards:?}"
+    );
+
+    // 4) УДАЛИТЬ АДРЕСНО — и занятая лента отказывается уходить (t429)
+    let fresh = h
+        .state()
+        .model
+        .document()
+        .sequences
+        .iter()
+        .map(|s| s.id)
+        .find(|id| *id != seq)
+        .expect("пустая лента");
+    assert!(
+        h.state_mut().apply(kt_model::Command::RemoveSequence { id: fresh }),
+        "пустая лента обязана удаляться адресно"
+    );
+    assert!(
+        !h.state_mut().apply(kt_model::Command::RemoveSequence { id: seq }),
+        "ЗАНЯТАЯ лента ушла молча — события повисли бы на несуществующем адресе"
     );
 }

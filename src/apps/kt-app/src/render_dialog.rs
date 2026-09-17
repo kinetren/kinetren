@@ -179,6 +179,14 @@ impl KtApp {
         }
         let base = self.project_path.as_deref().and_then(|p| p.parent());
         self.render_setup.missing = missing_sources(&self.model.document(), base);
+        // Расхождение обязано быть НАЗВАНО (правило 16, Р.55 С1): с этого
+        // раунда внутри ленты ИГРАЕТ лента, а экспортируется по-прежнему
+        // ДОКУМЕНТ целиком. Человек, нажавший «Рендер» изнутри композиции,
+        // иначе получил бы не то, что слушал, и узнал бы об этом только
+        // из готового файла.
+        if self.model.editing().is_some() {
+            self.warn(tr(k::render::WHOLE_PROJECT_NOT_REEL));
+        }
         self.render_setup.open = true;
     }
 

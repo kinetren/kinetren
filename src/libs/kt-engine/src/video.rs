@@ -707,6 +707,9 @@ impl VideoRenderer {
                 // внутреннее время ленты — ровно «точка входа в источник»,
                 // а КАЧЕСТВО — увеличенное ступенью ленты: заказ и чтение
                 // обязаны спрашивать одно и то же (инвариант 4)
+                // у вложения пары не бывает (см. `layer_src`): смешивание
+                // кадров на собранной картинке не считается, и греть
+                // второе внутреннее время было бы заказом впустую
                 Some(sub) => {
                     sub.layers_at_into(a, scaled(quality, clip_decode_scale(c, quality)), out)
                 }
@@ -785,7 +788,16 @@ impl VideoRenderer {
         let mut out = Vec::new();
         for c in &self.clips {
             let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) else { continue };
-            let win = c.source_in.0..(c.source_in.0 + (c.end.0 - c.start.0));
+            // Окно — по ФАКТИЧЕСКИ потреблённому материалу (Р.55, С4):
+            // у растянутого экземпляра оно не равно его длине на
+            // таймлайне, и полоска врала бы в ХОРОШУЮ сторону — то, чего
+            // инвариант 4 не разрешает. У зеркального интервал тот же,
+            // меняется направление, а не границы.
+            let used = match &c.warp {
+                Some(w) => w.used().max(1),
+                None => c.end.0 - c.start.0,
+            };
+            let win = c.source_in.0..(c.source_in.0 + used);
             let dq = clip_decode_quality(c, quality);
             out.push((c.id, sub.reel_coverage(cache, dq, win)));
         }
@@ -807,9 +819,24 @@ impl VideoRenderer {
             }
             // вложенная лента внутри ленты — та же арифметика этажом ниже
             let cold = if let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) {
-                let inner = c.source_in.0..(c.source_in.0 + (c.end.0 - c.start.0));
-                let sub_warm = sub.reel_coverage(cache, clip_decode_quality(c, quality), inner);
-                subtract(vec![body.clone()], shift_runs(sub_warm, c.start.0 - c.source_in.0))
+                // РАСТЯНУТОЕ или ЗЕРКАЛЬНОЕ вложение — целиком или никак,
+                // ровно как растянутый файловый ребёнок (Р.55, С4):
+                // `shift_runs` — ЛИНЕЙНАЯ карта, и под варпом она врёт, а
+                // врать в ХОРОШУЮ сторону полоска не имеет права.
+                let used = match &c.warp {
+                    Some(w) => w.used().max(1),
+                    None => c.end.0 - c.start.0,
+                };
+                let inner = c.source_in.0..(c.source_in.0 + used);
+                let sub_warm =
+                    sub.reel_coverage(cache, clip_decode_quality(c, quality), inner.clone());
+                if c.warp.is_some() || c.reversed {
+                    let full =
+                        sub_warm.iter().any(|r| r.start <= inner.start && r.end >= inner.end);
+                    if full { Vec::new() } else { vec![body.clone()] }
+                } else {
+                    subtract(vec![body.clone()], shift_runs(sub_warm, c.start.0 - c.source_in.0))
+                }
             } else if c.warp.is_some() {
                 // растянутый ребёнок — целиком или никак (см. док)
                 let b0 = c.source_in.0;
@@ -915,7 +942,12 @@ impl VideoRenderer {
             // это — чанк экспорта вытеснит соседа до композиции, сработает
             // ветка голода, и БАЙТЫ ЭКСПОРТА станут зависеть от тайминга
             // кэша.
-            let mut w = if c.warp.as_ref().is_some_and(|w| w.blend()) { 2 } else { 1 };
+            // У ВЛОЖЕНИЯ смешивания кадров не бывает (Р.55, С4), поэтому
+            // и двойного буфера ему не нужно: посчитай мы его — бюджет
+            // чанка экспорта разошёлся бы с тем, что план на самом деле
+            // делает, и это разошлось бы в обе стороны.
+            let blends = c.nest.is_none() && c.warp.as_ref().is_some_and(|w| w.blend());
+            let mut w = if blends { 2 } else { 1 };
             // Вложение держит СВОЙ буфер суб-композита плюс всё, что
             // одновременно живо внутри него (Р.50). Недосчёт делает БАЙТЫ
             // ЭКСПОРТА зависящими от тайминга кэша — дословно регрессия
@@ -1022,7 +1054,15 @@ fn layer_src<'a>(
         t,
     );
     let cache_idx = video_cache_idx(src_pts);
-    let source = SourceId(clip.media.0);
+    // Адрес ЛЕНТЫ обязан нести `NEST_TAG` (Р.55, С4). Без него он численно
+    // совпадает с адресом ФАЙЛА с тем же id — ровно то, что `validate`
+    // запрещает, чтобы файл и секвенция не делили кэш. До сих пор спасало
+    // только различие `key_hash`; ветка смешивания кадров читала бы по
+    // этому адресу кадр ЧУЖОГО ФАЙЛА.
+    let source = match clip.nest {
+        Some(seq) => nest_source_id(seq),
+        None => SourceId(clip.media.0),
+    };
     // Р.46 (п.318): слой читает кадр СВОЕГО качества декода — того же,
     // которое заказал префетч через layers_at.
     let src_scale = clip_decode_scale(clip, quality);
@@ -1043,6 +1083,13 @@ fn layer_src<'a>(
     // же арифметику синхронной в CPU-ядре и в WGSL не приходится
     // (инвариант №7). Ядро — готовый `dissolve_into`: байт-заморожено,
     // с AVX2-близнецом.
+    // СМЕШИВАНИЕ КАДРОВ НА САМОМ ВЛОЖЕНИИ не делается (Р.55, С4): оно
+    // требует ДВУХ суб-композитов на кадр, то есть вдвое дороже и на CPU,
+    // и на GPU. Пара здесь гасится, а не «почти считается»: иначе ветка
+    // ниже пошла бы в кэш за кадром по адресу ленты и смешала суб-композит
+    // с чужим кадром. Человеку об этом говорит окно эффекта — режим
+    // «смешивание» у вложения не предлагается.
+    let pair = if clip.nest.is_some() { None } else { pair };
     let (frame, blend) = match pair {
         None => (frame, None),
         Some((pts, k)) => {

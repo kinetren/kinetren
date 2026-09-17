@@ -24,6 +24,12 @@ pub struct ClipBlock {
     /// внутри окна.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub markers: Vec<Marker>,
+    /// Камеры, чьё окно пересекло окно блока (Р.55, С3). Правило то же,
+    /// что у морфер-слоя в режиме «всё, что ниже»: камера — тоже строка
+    /// над монтажом, и без неё свёрнутый кусок теряет движение, которое
+    /// человек ему поставил.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cameras: Vec<CameraEvent>,
 }
 
 /// Свежие id для вставки — растущий список аргументов `paste_block`
@@ -33,6 +39,7 @@ pub struct PasteIds<'a> {
     pub group: &'a mut u64,
     pub transition: &'a mut u64,
     pub morph: &'a mut u64,
+    pub camera: &'a mut u64,
 }
 
 /// Как называть вставленное именованное (Р.35 п.4: «Имена — уникальные,
@@ -103,6 +110,14 @@ fn block_extras(p: &Project, clips: &[ClipEvent], base: Option<Tick>, len: Tick)
             })
         })
         .collect();
+    // камеры — по ПЕРЕСЕЧЕНИЮ окна с окном блока, с ребейзом: у камеры
+    // нет «целей», она действует на то, что под ней по времени
+    let cameras = p
+        .cameras
+        .iter()
+        .filter(|c| kt_time::TickRange::new(c.start, c.start + c.duration).overlaps(&win))
+        .map(|c| CameraEvent { start: c.start - base, ..c.clone() })
+        .collect();
     let areas = p
         .areas
         .iter()
@@ -131,7 +146,7 @@ fn block_extras(p: &Project, clips: &[ClipEvent], base: Option<Tick>, len: Tick)
             }
         })
         .collect();
-    ClipBlock { morphers, areas, markers, ..Default::default() }
+    ClipBlock { morphers, areas, markers, cameras, ..Default::default() }
 }
 
 fn rebase_morpher(m: &MorpherEvent, base: Tick) -> MorpherEvent {
@@ -260,7 +275,13 @@ pub fn paste_block(
     ids: PasteIds<'_>,
     names: &PasteNames,
 ) -> (Vec<Command>, Tick, PasteSkipped) {
-    let PasteIds { clip: next_clip, group: next_group, transition: next_transition, morph } = ids;
+    let PasteIds {
+        clip: next_clip,
+        group: next_group,
+        transition: next_transition,
+        morph,
+        camera: next_camera,
+    } = ids;
     let mut skipped = PasteSkipped::default();
     let mut taken = names.taken.clone();
     // имена вставленного: приставка + уникализация ТОЙ ЖЕ функцией, что у
@@ -370,6 +391,19 @@ pub fn paste_block(
         *morph += 1;
         end = end.max(copy.start + copy.duration);
         cmds.push(Command::AddMorpher(copy));
+    }
+    // камеры — то же правило, что у морферов: свежий адрес, ребейз на
+    // точку вставки. Целей у камеры нет, поэтому и пропускать нечего.
+    for c in &block.cameras {
+        let mut copy = c.clone();
+        copy.id = CameraId(*next_camera);
+        *next_camera += 1;
+        copy.start = at + c.start;
+        // имя камеры НЕ уникализируется: оно подпись, а не адрес —
+        // ссылок на него нет (в отличие от области и метки, на которые
+        // смотрит морфер по ссылке)
+        end = end.max(copy.start + copy.duration);
+        cmds.push(Command::AddCamera(copy));
     }
     (cmds, end, skipped)
 }
@@ -1071,6 +1105,7 @@ pub struct NestIds<'a> {
     pub group: &'a mut u64,
     pub transition: &'a mut u64,
     pub morph: &'a mut u64,
+    pub camera: &'a mut u64,
 }
 
 /// Счётчики свежих адресов, посчитанные ОТ ПРОЕКТА.
@@ -1087,6 +1122,7 @@ pub struct NestCounters {
     pub group: u64,
     pub transition: u64,
     pub morph: u64,
+    pub camera: u64,
 }
 
 impl NestCounters {
@@ -1109,6 +1145,9 @@ impl NestCounters {
             morph: max(&mut std::iter::once(&p.morphers)
                 .chain(p.sequences.iter().map(|s| &s.morphers))
                 .flat_map(|ms| ms.iter().map(|m| m.id.0))),
+            camera: max(&mut std::iter::once(&p.cameras)
+                .chain(p.sequences.iter().map(|s| &s.cameras))
+                .flat_map(|cs| cs.iter().map(|c| c.id.0))),
         }
     }
 
@@ -1119,6 +1158,7 @@ impl NestCounters {
             group: &mut self.group,
             transition: &mut self.transition,
             morph: &mut self.morph,
+            camera: &mut self.camera,
         }
     }
 }
@@ -1136,6 +1176,16 @@ pub struct CollapseReport {
     /// теперь бьют по СОБРАННОЙ картинке, а не по каждому куску: картинка
     /// законно меняется, и об этом обязано быть сказано.
     pub outer_layers: usize,
+    /// Слои, уехавшие ВНУТРЬ ленты (и убранные из корня).
+    pub moved_layers: usize,
+    /// Камеры, уехавшие внутрь.
+    pub moved_cameras: usize,
+    /// Слои по ОБЛАСТИ/МЕТКЕ, оставленные снаружи. Ссылочные режимы
+    /// внутри ленты запрещены (`MorphRefInsideSequence`): область и метка
+    /// — навигация ПО ПРОЕКТУ, они живут в корне. Утащи такой слой
+    /// внутрь — и `validate` отвергнет ВЕСЬ батч, то есть свернуть
+    /// выделение под ним стало бы нельзя вообще.
+    pub kept_ref_layers: usize,
 }
 
 /// Свернуть выделение в ленту и поставить на его место экземпляр.
@@ -1176,13 +1226,43 @@ pub fn collapse_into_sequence(
     let mut content = Sequence::new(seq_id, name);
     content.clips = block.clips.clone();
     content.transitions = block.transitions.clone();
-    content.morphers = block.morphers.clone();
+    // Слой по ОБЛАСТИ или МЕТКЕ внутрь не едет: `validate_reel` такие
+    // внутри ленты запрещает (`MorphRefInsideSequence`), и утащенный
+    // слой уронил бы ВЕСЬ батч — свернуть выделение под ссылочным слоем
+    // стало бы нельзя вообще, с английской ошибкой в статусбаре.
+    let refs_stay = |m: &MorpherEvent| {
+        matches!(m.targets, MorphTargets::Areas { .. } | MorphTargets::Marks { .. })
+    };
+    content.morphers = block.morphers.iter().filter(|m| !refs_stay(m)).cloned().collect();
+    content.cameras = block.cameras.clone();
     content.video_lanes = lanes_needed(&content.clips, ClipKind::Video).max(1);
     content.audio_lanes = lanes_needed(&content.clips, ClipKind::Audio).max(1);
     content.morph_lanes = content.morphers.iter().map(|m| m.lane + 1).max().unwrap_or(0);
+    content.camera_lanes = content.cameras.iter().map(|c| c.lane + 1).max().unwrap_or(0);
+    // ПОРЯДОК СТРОК едет вместе с содержимым (Р.55, С3). Без него у ленты
+    // порядок дефолтный — видео, аудио, морферы, камеры, — а в нём
+    // морф-строки идут ПОСЛЕДНИМИ. Слой в режиме «всё, что ниже» требует
+    // цели НИЖЕ себя, и под ним не оказывается ничего: слой уехал внутрь
+    // и там умер. Ровно это владелец и увидел («морфер не попадает туда»).
+    content.lane_order = p
+        .rows()
+        .into_iter()
+        .filter(|&(k, l)| match k {
+            LaneKind::Video => l < content.video_lanes,
+            LaneKind::Audio => l < content.audio_lanes,
+            LaneKind::Morph => l < content.morph_lanes,
+            LaneKind::Camera => l < content.camera_lanes,
+        })
+        .collect();
     content.overlap_layers = p.overlap_layers;
 
-    let mut report = CollapseReport { seq: Some(seq_id), ..Default::default() };
+    let mut report = CollapseReport {
+        seq: Some(seq_id),
+        moved_layers: content.morphers.len(),
+        moved_cameras: content.cameras.len(),
+        kept_ref_layers: block.morphers.iter().filter(|m| refs_stay(m)).count(),
+        ..Default::default()
+    };
     report.outer_layers = p
         .morphers
         .iter()
@@ -1196,6 +1276,28 @@ pub fn collapse_into_sequence(
     ];
     for id in &members {
         cmds.push(Command::RemoveClip { id: *id });
+    }
+    // Уехавшее ВНУТРЬ убирается из КОРНЯ. Без этого слой и камера жили бы
+    // в двух местах сразу: внутри — на каждом куске, снаружи — на
+    // собранной картинке. Одно и то же наложилось бы дважды, и объяснить
+    // это было бы нечем.
+    let moved_morphs: Vec<MorphId> = p
+        .morphers
+        .iter()
+        .filter(|m| block.morphers.iter().any(|b| b.id == m.id) && !refs_stay(m))
+        .map(|m| m.id)
+        .collect();
+    for id in moved_morphs {
+        cmds.push(Command::RemoveMorpher { id });
+    }
+    let moved_cams: Vec<CameraId> = p
+        .cameras
+        .iter()
+        .filter(|c| block.cameras.iter().any(|b| b.id == c.id))
+        .map(|c| c.id)
+        .collect();
+    for id in moved_cams {
+        cmds.push(Command::RemoveCamera { id });
     }
 
     // Экземпляр — ОБЫЧНЫЙ клип, и он ПАРА (видео + аудио) в одной
@@ -1294,8 +1396,21 @@ pub struct ExpandReport {
     /// применялась к собранной картинке, внутри такого места нет. Молча
     /// раскидать её по кускам — значит посчитать другое (правило 16).
     pub chain_dropped: bool,
-    /// Экземпляр нёс уровень/реверс/варп — тоже сняты, по той же причине.
+    /// Экземпляр нёс уровень (непрозрачность или громкость) — снят.
     pub level_dropped: bool,
+    /// Экземпляр был ЗЕРКАЛЬНЫМ, и реверс снят (Р.55, С4).
+    ///
+    /// Назван отдельно, потому что это РЕВЕРС-АНАЛОГ ЗАКОНА Г: «реверс
+    /// собранного куска ≠ реверс каждого куска». Перевернуть порядок
+    /// кусков и выставить каждому `reversed` эквивалентно только там, где
+    /// внутри нет ни перекрытий, ни переходов, ни потоковых цепочек, — то
+    /// есть в частном случае. Тихо раскидать реверс по кускам значит
+    /// посчитать другое.
+    pub reverse_dropped: bool,
+    /// Экземпляр играл со СКОРОСТЬЮ, и она снята — по той же причине:
+    /// ресемплируется СОБРАННЫЙ микс со сшитыми хвостами, а не каждый
+    /// кусок со своим оборванным.
+    pub warp_dropped: bool,
     /// Сколько дорожек пришлось вставить под содержимое.
     pub lanes_inserted: usize,
 }
@@ -1312,7 +1427,9 @@ pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>
     let Some(seq) = p.sequence(inst.media) else { return (Vec::new(), ExpandReport::default()) };
     let mut report = ExpandReport {
         chain_dropped: !inst.fx.is_empty(),
-        level_dropped: inst.opacity != 1.0 || inst.gain_db != 0.0 || inst.reversed,
+        level_dropped: inst.opacity != 1.0 || inst.gain_db != 0.0,
+        reverse_dropped: inst.reversed,
+        warp_dropped: crate::chain_warps_time(&inst.active_fx(), &inst.active_fx_auto()),
         lanes_inserted: 0,
     };
     // окно экземпляра в координатах содержимого
@@ -1373,7 +1490,13 @@ pub fn expand_instance(p: &Project, id: ClipId, n: NestIds<'_>) -> (Vec<Command>
     let (paste, _, _) = paste_block(
         &block,
         inst.start,
-        PasteIds { clip: n.clip, group: n.group, transition: n.transition, morph: n.morph },
+        PasteIds {
+            clip: n.clip,
+            group: n.group,
+            transition: n.transition,
+            morph: n.morph,
+            camera: n.camera,
+        },
         &PasteNames::default(),
     );
     cmds.extend(paste);
@@ -1436,4 +1559,203 @@ pub fn remove_unused_sequences(p: &Project) -> Vec<Command> {
         .filter(|s| p.sequence_uses(s.id) == 0)
         .map(|s| Command::RemoveSequence { id: s.id })
         .collect()
+}
+
+/// Что вставка чужого проекта изменила сверх появления ленты (Р.55, С6).
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ImportReport {
+    /// Заведённая лента-корень чужого проекта.
+    pub seq: Option<MediaId>,
+    /// Сколько его вложенных лент приехало вместе с ним.
+    pub inner_seqs: usize,
+    /// Сколько медиа заведено заново.
+    pub media_added: usize,
+    /// Сколько медиа УЗНАНО среди своих по пути и переиспользовано: тот же
+    /// файл не обязан приезжать вторым экземпляром.
+    pub media_reused: usize,
+    /// Что НЕ приехало и почему — области, метки и настройки чужого
+    /// проекта. Они принадлежат ДОКУМЕНТУ, а не монтажу, и класть их в
+    /// свой проект значит подменить человеку его собственные (правило 20).
+    pub dropped_extras: usize,
+}
+
+/// Вставить ЧУЖОЙ ПРОЕКТ как композицию (Р.55, С6).
+///
+/// Претензия владельца дословно: «я переношу файл проекта на таймлайн и
+/// открывается новый таймлайн, а я хочу чтобы оно дало мне выбор — открыть
+/// как проект или вставить как композицию».
+///
+/// Корень чужого проекта становится ЛЕНТОЙ, его вложенные ленты приезжают
+/// вместе с ним, а на `at` встаёт экземпляр. Все адреса перенумеровываются:
+/// `ClipId` уникален по ВСЕМУ документу (Р.50, t425), и столкновение
+/// адресов молча обменяло бы материал между лентами через карты `Retained`.
+///
+/// **Медиа дедуплицируются по пути.** Тот же файл, уже стоящий в проекте,
+/// не обязан приезжать вторым экземпляром: у него был бы свой воркер, своя
+/// строка в кэше и свои тумбы — то есть двойная цена за одно и то же.
+///
+/// Области, метки и настройки чужого проекта НЕ едут: это навигация и
+/// свойства ДОКУМЕНТА, а не монтажа. То же правило, что у сворачивания
+/// (`collapse_into_sequence`): «утащить их внутрь значило бы отрубить само».
+pub fn import_as_sequences(
+    dst: &Project,
+    src: &Project,
+    name: &str,
+    at: Tick,
+    lane: u32,
+    n: NestIds<'_>,
+) -> (Vec<Command>, ImportReport) {
+    let mut rep = ImportReport::default();
+    if src.clips.is_empty() && src.sequences.is_empty() {
+        return (Vec::new(), rep);
+    }
+    let mut cmds = Vec::new();
+    // ---- медиа: свои узнаём по пути, чужие заводим -------------------
+    let mut media: std::collections::HashMap<MediaId, MediaId> = std::collections::HashMap::new();
+    for m in &src.media {
+        match dst.media.iter().find(|x| x.path == m.path) {
+            Some(mine) => {
+                media.insert(m.id, mine.id);
+                rep.media_reused += 1;
+            }
+            None => {
+                let fresh = MediaId(*n.media);
+                *n.media += 1;
+                media.insert(m.id, fresh);
+                rep.media_added += 1;
+                cmds.push(Command::AddMedia { id: fresh, path: m.path.clone() });
+            }
+        }
+    }
+    // ---- ленты: адреса вперёд, чтобы вложения нашли друг друга -------
+    let mut seqs: std::collections::HashMap<MediaId, MediaId> = std::collections::HashMap::new();
+    for s in &src.sequences {
+        let fresh = MediaId(*n.media);
+        *n.media += 1;
+        seqs.insert(s.id, fresh);
+        rep.inner_seqs += 1;
+    }
+    let root_id = MediaId(*n.media);
+    *n.media += 1;
+    rep.seq = Some(root_id);
+    // адрес медиа события: либо файл, либо вложенная лента
+    let remap_media = |m: MediaId| -> Option<MediaId> {
+        media.get(&m).copied().or_else(|| seqs.get(&m).copied())
+    };
+
+    let convert = |from: &dyn Reel, n: &mut NestIds<'_>| -> Option<Sequence> {
+        let mut out = Sequence::new(MediaId(0), "");
+        let mut map: std::collections::HashMap<ClipId, ClipId> = std::collections::HashMap::new();
+        let mut groups: std::collections::HashMap<GroupId, GroupId> =
+            std::collections::HashMap::new();
+        for c in from.clips() {
+            let mut copy = c.clone();
+            copy.id = ClipId(*n.clip);
+            *n.clip += 1;
+            map.insert(c.id, copy.id);
+            copy.media = remap_media(c.media)?;
+            copy.link_group = c.link_group.map(|g| {
+                *groups.entry(g).or_insert_with(|| {
+                    let ng = GroupId(*n.group);
+                    *n.group += 1;
+                    ng
+                })
+            });
+            out.clips.push(copy);
+        }
+        for t in from.transitions() {
+            let mut copy = t.clone();
+            copy.id = TransitionId(*n.transition);
+            *n.transition += 1;
+            copy.a = t.a.map(|x| map.get(&x).copied()).unwrap_or(None);
+            copy.b = t.b.map(|x| map.get(&x).copied()).unwrap_or(None);
+            out.transitions.push(copy);
+        }
+        for m in from.morphers() {
+            // ССЫЛОЧНЫЕ слои внутрь ленты не пускает `validate_reel`
+            // (область и метка живут в корне), а областей мы и не везём
+            if matches!(m.targets, MorphTargets::Areas { .. } | MorphTargets::Marks { .. }) {
+                continue;
+            }
+            let mut copy = m.clone();
+            copy.id = MorphId(*n.morph);
+            *n.morph += 1;
+            if let MorphTargets::Clips { ids } = &mut copy.targets {
+                ids.retain(|x| map.contains_key(x));
+                for x in ids.iter_mut() {
+                    *x = map[x];
+                }
+                if ids.is_empty() {
+                    continue;
+                }
+            }
+            out.morphers.push(copy);
+        }
+        for c in from.cameras() {
+            let mut copy = c.clone();
+            copy.id = CameraId(*n.camera);
+            *n.camera += 1;
+            out.cameras.push(copy);
+        }
+        out.video_lanes = lanes_needed(&out.clips, ClipKind::Video).max(1);
+        out.audio_lanes = lanes_needed(&out.clips, ClipKind::Audio).max(1);
+        out.morph_lanes = out.morphers.iter().map(|m| m.lane + 1).max().unwrap_or(0);
+        out.camera_lanes = out.cameras.iter().map(|c| c.lane + 1).max().unwrap_or(0);
+        Some(out)
+    };
+
+    let mut n = n;
+    for s in &src.sequences {
+        let Some(mut body) = convert(s, &mut n) else { continue };
+        let id = seqs[&s.id];
+        body.id = id;
+        body.name = s.name.clone();
+        body.overlap_layers = s.overlap_layers;
+        body.lane_order = s.lane_order.clone();
+        cmds.push(Command::AddSequence { id, name: body.name.clone() });
+        cmds.push(Command::SetSequenceContent { id, content: Box::new(body) });
+    }
+    let Some(mut root) = convert(src, &mut n) else { return (Vec::new(), ImportReport::default()) };
+    root.id = root_id;
+    root.name = name.to_string();
+    root.overlap_layers = src.overlap_layers;
+    root.lane_order = src.lane_order.clone();
+    let len = block_len(&root.clips);
+    cmds.push(Command::AddSequence { id: root_id, name: name.to_string() });
+    cmds.push(Command::SetSequenceContent { id: root_id, content: Box::new(root) });
+    rep.dropped_extras = src.areas.len() + src.markers.len();
+
+    // экземпляр — ОБЫЧНЫЙ клип, пара видео+аудио в одной link-группе, как
+    // у сворачивания: «вставил, потом замедли целиком» получается даром
+    let kinds: Vec<ClipKind> = [ClipKind::Video, ClipKind::Audio]
+        .into_iter()
+        .filter(|k| src.clips.iter().any(|c| c.kind == *k))
+        .collect();
+    let group = (kinds.len() > 1).then(|| {
+        let g = GroupId(*n.group);
+        *n.group += 1;
+        g
+    });
+    for k in kinds {
+        let id = ClipId(*n.clip);
+        *n.clip += 1;
+        cmds.push(Command::AddClip(ClipEvent {
+            id,
+            link_group: group,
+            kind: k,
+            lane: if k == ClipKind::Video { lane } else { 0 },
+            start: at,
+            duration: len.max(crate::MIN_CLIP_DURATION),
+            source_in: Tick::ZERO,
+            media: root_id,
+            gain_db: 0.0,
+            reversed: false,
+            fx: Vec::new(),
+            fx_bypass: Vec::new(),
+            fx_auto: Vec::new(),
+            opacity: 1.0,
+            fx_off: false,
+        }));
+    }
+    (cmds, rep)
 }

@@ -60,7 +60,7 @@ if cargo test -p kt-gpu -q 2>&1 | tail -4; then
     echo "kt-gpu: ok"
 else
     echo "KT-GPU ТЕСТЫ ПРОВАЛИЛИСЬ" >&2
-    LIVE_FAILED=1
+    GPU_FAILED=1
 fi
 
 # SIMD-конформанс (Р.32): AVX2-ядра обязаны быть байт-в-байт со скаляром.
@@ -74,7 +74,7 @@ if KT_REQUIRE_SIMD=1 cargo test -p kt-fx --test simd_parity -q 2>&1 | tail -3 \
     echo "simd: ok (AVX2 == скаляр, golden'ы зелены обоими путями)"
 else
     echo "SIMD-КОНФОРМАНС ПРОВАЛИЛСЯ" >&2
-    LIVE_FAILED=1
+    SIMD_FAILED=1
 fi
 
 echo "== чистка =="
@@ -93,7 +93,12 @@ du -sh target/debug target/release target/dist-container target/dist-out 2>/dev/
 mkdir -p target/dist-out
 printf '%s\n%s\n' "$FULL" "$(pwd)/target/debug/kt-app" > target/dist-out/LATEST
 echo
+# Красное называется СВОИМ ИМЕНЕМ (Р.55): один флаг стоял на трёх стадиях,
+# и падение GPU или SIMD печаталось как «живые сценарии красные» — отчёт врал
+# о том, ЧТО сломалось, и посылал искать не туда.
 [ -n "${LIVE_FAILED:-}" ] && echo "ВНИМАНИЕ: живые сценарии красные — см. target/live-out"
+[ -n "${GPU_FAILED:-}" ] && echo "ВНИМАНИЕ: GPU-конформанс красный (kt-gpu)"
+[ -n "${SIMD_FAILED:-}" ] && echo "ВНИМАНИЕ: SIMD-конформанс красный (t198)"
 echo "ВЕРСИЯ: $FULL$DIRTY"
 echo "запускать: $(pwd)/target/debug/kt-app"
 # Р.43 п.301: debug-сборка честно считает, но в 9 раз медленнее. На плотном

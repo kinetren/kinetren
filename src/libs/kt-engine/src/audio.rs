@@ -96,6 +96,11 @@ pub struct RenderStats {
     /// кадры не идут, поэтому в `underruns` не входят (п.166). Диагностика:
     /// систематический рост = префетч не греет зону прогрева.
     pub warmup_misses: u64,
+    /// Бёрсты СУБ-МИКСА, посчитанные впустую: пре-ролл переезда продюсера
+    /// вложенной ленты (Р.55, С4). Не underrun — их не слышно, — но по ним
+    /// видно цену реверса и растяжения на вложении и то, разошлось ли окно
+    /// заказа с тем, что читает продюсер.
+    pub nest_warmups: u64,
 }
 
 /// Корзина индекса времени — одна секунда выхода.
@@ -150,39 +155,127 @@ pub struct AudioRenderer {
 
 /// Фетчер, за которым вложенные ленты выглядят обычными источниками.
 ///
-/// Суб-микс НЕ кэшируется и не может: цепочка — потоковый автомат, и тот же
-/// кусок на втором круге лупа даёт ДРУГОЙ выход (Р.43, п.302). Кэшируется
-/// ровно один последний бёрст — потому что `render_plain_clip` держит на
-/// нём курсор и берёт куски, а пересчёт вернул бы другое.
+/// Суб-микс НЕ кэшируется в `BurstCache` и не может: его производство —
+/// прогон FX-состояния ленты, а состояние трогает ТОЛЬКО аудио-render-поток
+/// (инвариант 2). Значит продюсер живёт здесь.
+///
+/// **Три ветки и ни одной больше** (Р.55, С4):
+///
+/// 1. бёрст уже в кольце — отдать, состояние не трогать;
+/// 2. он впереди курсора не дальше блока — ДОГНАТЬ вперёд, промежуточные в
+///    кольцо (так работает ускоренное растяжение и мелкие прыжки);
+/// 3. иначе (назад, далеко вперёд, первое обращение) — КАНОНИЧЕСКИЙ
+///    ПЕРЕЕЗД: сброс, старт с границы блока минус пре-ролл, вперёд до
+///    нужного. Каноничность сетки — то, что делает значение бёрста чистой
+///    функцией индекса: двузначность «дошли непрерывно / переехали»
+///    остаётся ровно одна, и она та же, что уже узаконена парой
+///    `seam`/`hard_seek` у обычного клипа.
+///
+/// Четвёртой ветки быть не должно: каждая новая — новый сорт
+/// недетерминизма, которого в аудио не бывает (инвариант 11).
 struct NestFetcher<'a> {
     inner: &'a mut dyn AudioFetcher,
     reels: &'a std::collections::HashMap<kt_model::MediaId, AudioRenderer>,
-    states: &'a mut std::collections::HashMap<kt_model::MediaId, crate::fxstore::NestState>,
+    states: &'a mut std::collections::HashMap<kt_model::ClipId, crate::fxstore::NestStream>,
+    /// Пре-ролл и блок — свойства ЛЕНТЫ, посчитанные при сборке рендерера.
+    prerolls: &'a std::collections::HashMap<kt_model::MediaId, (u32, u32)>,
+    /// Кто читает СЕЙЧАС (`begin_clip`). У вложения свой поток на каждый
+    /// экземпляр, и без этого пять мест одной ленты дрались бы за один
+    /// курсор продюсера.
+    cur: Option<kt_model::ClipId>,
+    /// Сколько бёрстов суб-микса посчитано впустую (пре-ролл переезда).
+    /// Это НЕ underrun: их не слышно, но по ним видно, что окно заказа
+    /// разошлось с тем, что читает продюсер.
+    warmups: u64,
+    /// РАЗРЕШЁН ли продюсер. В сыром реверс-транспорте (`render_frames_raw`)
+    /// лента играется dry, у неё нет состояния вовсе, и блоки не нужны.
+    raw: bool,
+}
+
+impl NestFetcher<'_> {
+    /// Отрендерить бёрст суб-микса ВПЕРЁД, продвинув состояние ленты.
+    fn produce(
+        reel: &AudioRenderer,
+        inner: &mut dyn AudioFetcher,
+        st: &mut crate::fxstore::NestStream,
+        idx: i64,
+        raw: bool,
+    ) -> std::sync::Arc<kt_media::AudioBurst> {
+        let mut data = Box::new([0.0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS]);
+        let at = idx * AUDIO_BURST_FRAMES as i64;
+        if raw {
+            reel.render_frames_raw(inner, at, &mut data[..]);
+        } else {
+            reel.render_frames_with(inner, &mut st.store, at, &mut data[..]);
+        }
+        st.next = Some(idx + 1);
+        std::sync::Arc::new(kt_media::AudioBurst { idx, data })
+    }
 }
 
 impl AudioFetcher for NestFetcher<'_> {
+    fn begin_clip(&mut self, id: kt_model::ClipId) {
+        self.cur = Some(id);
+        self.inner.begin_clip(id);
+    }
+
     fn audio_burst(
         &mut self,
         media: kt_model::MediaId,
         idx: i64,
     ) -> Option<std::sync::Arc<kt_media::AudioBurst>> {
         let Some(reel) = self.reels.get(&media) else { return self.inner.audio_burst(media, idx) };
-        let st = self.states.entry(media).or_default();
-        if let Some((i, b)) = &st.last
-            && *i == idx
-        {
-            return Some(b.clone());
+        // Читатель обязан быть объявлен: без него пять экземпляров одной
+        // ленты делили бы один поток. Ловим в debug, а в release честно
+        // отдаём тишину, а не чужой звук.
+        debug_assert!(self.cur.is_some(), "submix read without begin_clip: reader unknown");
+        let who = self.cur?;
+        let (preroll, block) = self.prerolls.get(&media).copied().unwrap_or((0, 1));
+        let raw = self.raw;
+        let st = {
+            let e = self.states.entry(who);
+            use std::collections::hash_map::Entry;
+            match e {
+                Entry::Occupied(o) => o.into_mut(),
+                Entry::Vacant(v) => {
+                    v.insert(crate::fxstore::NestStream::new_for(media, preroll, block))
+                }
+            }
+        };
+        if st.seq != media {
+            *st = crate::fxstore::NestStream::new_for(media, preroll, block);
         }
-        let mut data = Box::new([0.0f32; AUDIO_BURST_FRAMES * AUDIO_CHANNELS]);
-        reel.render_frames_with(
-            self.inner,
-            &mut st.store,
-            idx * AUDIO_BURST_FRAMES as i64,
-            &mut data[..],
-        );
-        let burst = std::sync::Arc::new(kt_media::AudioBurst { idx, data });
-        st.last = Some((idx, burst.clone()));
-        Some(burst)
+        st.preroll = preroll;
+        st.block = block;
+        // 1) уже посчитан
+        if let Some(b) = st.cached(idx) {
+            return Some(b);
+        }
+        // 2) догон вперёд — не дальше блока: дальше дешевле переехать
+        let gap = block.max(1) as i64;
+        let catch_up = matches!(st.next, Some(n) if n <= idx && idx - n < gap);
+        if !catch_up {
+            // 3) КАНОНИЧЕСКИЙ ПЕРЕЕЗД от границы блока минус пре-ролл
+            st.rewind();
+            st.next = Some(st.block_start(idx) - preroll as i64);
+        }
+        let mut from = st.next.unwrap_or(idx);
+        // пре-ролл левее нуля ленты считать незачем: там тишина
+        if from < 0 {
+            from = 0;
+            st.next = Some(0);
+        }
+        let mut out = None;
+        for i in from..=idx {
+            let b = Self::produce(reel, self.inner, st, i, raw);
+            if i == idx {
+                out = Some(b.clone());
+            } else {
+                self.warmups += 1;
+            }
+            st.push(i, b);
+        }
+        out
     }
 }
 
@@ -548,6 +641,57 @@ impl AudioRenderer {
         out
     }
 
+    /// Пре-ролл и размер блока суб-микса ЭТОЙ ленты в бёрстах (Р.55, С4).
+    ///
+    /// Обе величины — ЧИСТЫЕ ФУНКЦИИ ПРОЕКТА, и это не педантизм: зависели
+    /// бы они от бюджета памяти или от устройства — байты выхода зависели
+    /// бы от них же, а аудио обязано быть байт-в-байт всегда и везде
+    /// (инвариант 11).
+    ///
+    /// Пре-ролл — хвост самой хвостатой цепочки ленты, рекурсивно вместе с
+    /// пре-роллом её собственных вложений. **У ленты без хвостатых
+    /// эффектов он НУЛЕВОЙ, и реверс стоит ровно столько же, сколько
+    /// прямое воспроизведение**; дорого становится только там, где внутри
+    /// стоит реверб или дилей — и ровно настолько, насколько длинен его
+    /// хвост.
+    fn reel_preroll_bursts(&self) -> u32 {
+        let mut tail = 0i64;
+        for c in &self.clips {
+            if !c.fx.is_empty() {
+                tail = tail.max(kt_fx::chain_tail(&c.fx, &c.auto).to_audio_frames());
+            }
+            if let Some(sub) = self.nests.get(&c.media) {
+                tail = tail.max(sub.reel_preroll_bursts() as i64 * AUDIO_BURST_FRAMES as i64);
+            }
+        }
+        if tail <= 0 {
+            return 0;
+        }
+        let p = tail.max(kt_fx::MIN_PREROLL_FRAMES);
+        let b = AUDIO_BURST_FRAMES as i64;
+        ((p + b - 1) / b).clamp(1, 4096) as u32
+    }
+
+    /// Пре-ролл и блок ленты, на которую смотрит этот экземпляр.
+    fn nest_preroll(&self, media: kt_model::MediaId) -> (u32, u32) {
+        match self.nests.get(&media) {
+            Some(sub) => {
+                let p = sub.reel_preroll_bursts();
+                // Блок вчетверо длиннее пре-ролла: накладные переезда при
+                // чтении НАЗАД выходят ровно (W + P)/W = 1.25×. Потолок и
+                // пол — от памяти кольца (8 КиБ на бёрст), но САМ РАЗМЕР
+                // от неё не зависит: он функция хвоста ленты.
+                let w = (4 * p).clamp(32, 256);
+                (p, w)
+            }
+            None => (0, 1),
+        }
+    }
+
+    fn nest_prerolls(&self) -> std::collections::HashMap<kt_model::MediaId, (u32, u32)> {
+        self.nests.keys().map(|id| (*id, self.nest_preroll(*id))).collect()
+    }
+
     /// Синхронизировать FX-состояние с этим графом (вызывается владельцем
     /// стора — аудио-render-потоком — после каждой пересборки графа).
     pub fn sync_fx(&self, store: &mut crate::fxstore::FxStateStore) {
@@ -559,10 +703,14 @@ impl AudioRenderer {
         // цепочки ВНУТРИ лент синхронизируются тем же правилом: те же
         // цепочки — те же state-объекты, хвосты ревербов живут (инвариант 3)
 
-        for (id, sub) in &self.nests {
-            sub.sync_fx(&mut store.nest_mut(*id).store);
+        for c in &self.clips {
+            let Some(sub) = self.nests.get(&c.media) else { continue };
+            let (preroll, block) = self.nest_preroll(c.media);
+            sub.sync_fx(&mut store.nest_mut(c.id, c.media, preroll, block).store);
         }
-        store.retain_nests(&|id| self.nests.contains_key(&id));
+        let live: std::collections::HashSet<_> =
+            self.clips.iter().filter(|c| self.nests.contains_key(&c.media)).map(|c| c.id).collect();
+        store.retain_nests(&|id| live.contains(&id));
     }
 
     /// Рендер без внешнего FX-состояния (для клипов без FX эквивалентно
@@ -599,9 +747,20 @@ impl AudioRenderer {
         // а фетчер живёт рядом со стором — взять оба мутабельно
         // одновременно нечем.
         let mut states = store.take_nests();
+        let prerolls = self.nest_prerolls();
         let stats = {
-            let mut f = NestFetcher { inner: fetcher, reels: &self.nests, states: &mut states };
-            self.render_reel(&mut f, store, start_frame, out)
+            let mut f = NestFetcher {
+                inner: fetcher,
+                reels: &self.nests,
+                states: &mut states,
+                prerolls: &prerolls,
+                cur: None,
+                warmups: 0,
+                raw: false,
+            };
+            let mut st = self.render_reel(&mut f, store, start_frame, out);
+            st.nest_warmups += f.warmups;
+            st
         };
         store.put_nests(states);
         stats
@@ -625,6 +784,10 @@ impl AudioRenderer {
         // Вклад каждого клипа считаем по-бурстово (источника), веса — по-сэмплово.
         for &ci in &active {
             let clip = &self.clips[ci];
+            // КТО читает — до первого чтения (Р.55, С4): у вложения свой
+            // поток суб-микса на каждый экземпляр. Один виртуальный вызов
+            // на клип на бёрст, не на кадр.
+            fetcher.begin_clip(clip.id);
             if !clip.fx.is_empty() {
                 self.render_fx_clip(ci, fetcher, store, &range, out, &mut stats);
                 continue;
@@ -751,11 +914,45 @@ impl AudioRenderer {
         out.fill(0.0);
         let frames = (out.len() / AUDIO_CHANNELS) as i64;
         let range = start_frame..start_frame + frames;
+        // ВЛОЖЕНИЯ И ЗДЕСЬ (Р.55, С4). До этого раунда сырой путь не
+        // оборачивал фетчер, и `audio_burst(адрес ленты)` уходил в обычный
+        // фетчер, где такого источника нет: реверс-транспорт над вложением
+        // давал ТИШИНУ и растил underrun'ы по кадрам. При этом
+        // `wanted_audio_bursts_raw` честно рекурсировал внутрь — заказ
+        // уходил, а чтение до него не доходило (нарушение инварианта 4).
+        //
+        // Суб-микс сырого пути тоже DRY (решение «как в Vegas»), а у dry
+        // состояния нет вовсе: бёрст — чистая функция индекса, ни блоков,
+        // ни пре-ролла не нужно.
+        if self.nests.is_empty() {
+            return self.render_raw_reel(fetcher, &range, out);
+        }
+        let mut states = std::collections::HashMap::new();
+        let prerolls = self.nest_prerolls();
+        let mut f = NestFetcher {
+            inner: fetcher,
+            reels: &self.nests,
+            states: &mut states,
+            prerolls: &prerolls,
+            cur: None,
+            warmups: 0,
+            raw: true,
+        };
+        self.render_raw_reel(&mut f, &range, out)
+    }
+
+    fn render_raw_reel(
+        &self,
+        fetcher: &mut dyn AudioFetcher,
+        range: &std::ops::Range<i64>,
+        out: &mut [f32],
+    ) -> RenderStats {
         let mut stats = RenderStats::default();
-        for ci in self.active_clips(&range) {
+        for ci in self.active_clips(range) {
             // сырой путь смотрит на ТЕЛО с ручками, а не на хвост FX
             if self.clips[ci].end + self.clips[ci].tail_ext > range.start {
-                self.render_plain_clip(ci, fetcher, &range, out, &mut stats);
+                fetcher.begin_clip(self.clips[ci].id);
+                self.render_plain_clip(ci, fetcher, range, out, &mut stats);
             }
         }
         stats
@@ -1002,7 +1199,16 @@ impl AudioRenderer {
             // содержимое. Спрашиваем её о ТОМ ЖЕ окне потребления, но в её
             // собственных кадрах — правда у префетча и рендера одна (п.13).
             if let Some(sub) = self.nests.get(&c.media) {
-                out.extend(sub.wanted_audio_bursts_for(s0..s1, raw));
+                // ЗАКАЗ УХОДИТ ВГЛУБЬ, но продюсер суб-микса читает ленту
+                // ШИРЕ окна потребления: при чтении НАЗАД каждый бёрст —
+                // переезд, а переезд начинается с границы блока минус
+                // пре-ролл. Не расширить заказ значит промахиваться мимо
+                // кэша на каждом переезде — вечный промах (п.13, t17).
+                // Правило ОДНО на рендер и на префетч: разойдись они, и
+                // это был бы тот же класс дефекта.
+                let (preroll, block) = self.nest_preroll(c.media);
+                let w = nest_read_window(preroll, block, c.reversed, s0..s1);
+                out.extend(sub.wanted_audio_bursts_for(w, raw));
                 continue;
             }
             let b0 = s0.div_euclid(AUDIO_BURST_FRAMES as i64);
@@ -1011,6 +1217,32 @@ impl AudioRenderer {
         }
         merge_burst_ranges(out)
     }
+}
+
+/// Какой отрезок ВРЕМЕНИ ЛЕНТЫ реально прочитает продюсер суб-микса, чтобы
+/// отдать кадры `s` (Р.55, С4).
+///
+/// ЕДИНЫЙ ИСТОЧНИК ПРАВДЫ для рендера и префетча — не «одинаковая формула
+/// в двух местах», а одна функция: разойдись они, получился бы вечный
+/// промах кэша (п.13, t17, t247d).
+///
+/// `blocks` — читаем ли НАЗАД. Гейт именно по реверсу, а не по варпу:
+/// варп монотонен (`fill_source` идёт по `virt` вперёд, а скорость снизу
+/// ограничена `RATE_CLAMP`), и в блоках он не нуждается — на прямом пути
+/// заказ не двигается НИ НА БЁРСТ, и «цена линейна» (t436) остаётся верным.
+fn nest_read_window(
+    preroll: u32,
+    block: u32,
+    blocks: bool,
+    s: std::ops::Range<i64>,
+) -> std::ops::Range<i64> {
+    if !blocks {
+        return s;
+    }
+    let b = AUDIO_BURST_FRAMES as i64;
+    let w = (block.max(1) as i64) * b;
+    let start = s.start.div_euclid(w) * w - (preroll as i64) * b;
+    start.max(0)..s.end
 }
 
 /// Схлопнуть перекрывающиеся и соприкасающиеся диапазоны бёрстов одного

@@ -326,9 +326,12 @@ fn probe_range(
         }
         let start = std::time::Instant::now();
         let mut under = 0u64;
+        let mut warm = 0u64;
         let mut pos = fa;
         while pos < fb {
-            under += r.render_frames_with(&mut fetcher, &mut store, pos, &mut out).underruns;
+            let st = r.render_frames_with(&mut fetcher, &mut store, pos, &mut out);
+            under += st.underruns;
+            warm += st.nest_warmups;
             pos += step;
         }
         let ms = start.elapsed().as_secs_f64() * 1e3;
@@ -339,6 +342,17 @@ fn probe_range(
             to - from,
             ms / span_ms * 100.0
         );
+        // ЦЕНА СУБ-МИКСА (Р.55, С4): бёрсты, посчитанные впустую на
+        // пре-ролле переезда продюсера вложенной ленты. Их не слышно, но
+        // по ним видно цену реверса и растяжения на вложении — и то, не
+        // разошлось ли окно заказа с тем, что читает продюсер (тогда они
+        // растут систематически).
+        if warm > 0 {
+            println!(
+                "  nest submix warmups: {warm} bursts ({:.0} ms of reel time)",
+                warm as f64 * kt_time::AUDIO_BURST_FRAMES as f64 / 48.0
+            );
+        }
 
         // ТО ЖЕ МЕСТО НА ПОВТОРЕ: регион играется через `render_looped_with`,
         // и заворот стоит своего (Р.43). Короткий регион заворачивается чаще,

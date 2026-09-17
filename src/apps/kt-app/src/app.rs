@@ -29,14 +29,24 @@ pub enum Ask {
     SaveOverLock { pid: Option<u32> },
     /// В редакторе несохранённая работа, а пользователь уходит.
     Unsaved(Pending),
+    /// На окно брошен ЧУЖОЙ ПРОЕКТ (Р.55, С6): открыть его или вставить
+    /// композицией. Претензия владельца дословно: «я переношу файл проекта
+    /// на таймлайн и открывается новый таймлайн, а я хочу чтобы оно дало
+    /// мне выбор». До этого раунда выбора не было — и, что хуже, не было
+    /// и вопроса о несохранённой работе: она пропадала молча.
+    DropOtio,
 }
 
 /// Что программа собиралась сделать, когда спросила про несохранённое.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pending {
     New,
-    Open,
     Quit,
+    Open,
+    /// Открыть ПРОЕКТ, БРОШЕННЫЙ НА ОКНО (Р.55, С6). Путь лежит отдельным
+    /// полем `KtApp.pending_drop`: `Pending` — `Copy`, и `PathBuf` в него
+    /// не кладётся.
+    DropOpen,
 }
 
 /// Ответ на вопрос. Три состояния, а не `bool`: «не сохранять» и «отмена» —
@@ -97,6 +107,12 @@ pub struct NestStep {
     pub cursor: Tick,
     pub region: Option<kt_model::Region>,
     pub selected: std::collections::BTreeSet<ClipId>,
+    /// Выделение служебных строк. Хранится ровно потому же, почему и
+    /// `selected`: `enter_nest` его чистит (внутри ленты оно бессмысленно),
+    /// и без возврата выход переставал быть тождеством — правило «жест
+    /// работает повторно» ломалось на морф-слое и камере.
+    pub selected_morph: std::collections::BTreeSet<MorphId>,
+    pub selected_camera: std::collections::BTreeSet<kt_model::CameraId>,
 }
 
 /// Окно имени ленты (Р.50). Та же форма, что у окна имени пресета: живой
@@ -460,6 +476,12 @@ pub struct KtApp {
     pub seq_name: Option<SeqNameDialog>,
     /// Путь внутрь вложений: по уровню на каждый вход (Р.50, В1).
     pub nest_path: Vec<NestStep>,
+    /// Ленты, про которые уже сказано «стоит в N местах» (Р.55, С5).
+    /// По ЛЕНТЕ, а не на сессию целиком: две разные общие ленты — два
+    /// разных предупреждения, и это честно. В файл не пишется.
+    pub shared_warned: std::collections::HashSet<kt_model::MediaId>,
+    /// Брошенный на окно проект: путь и место дропа (Р.55, С6).
+    pub pending_drop: Option<(PathBuf, Option<(Tick, (ClipKind, u32))>)>,
     /// Библиотека FX-пресетов (Р.48): файл пользователя, общий на все
     /// проекты. Загружается лениво при первом обращении.
     pub presets: crate::user_store::FxPresetStore,
@@ -761,6 +783,8 @@ impl KtApp {
             preset_save: None,
             seq_name: None,
             nest_path: Vec::new(),
+            shared_warned: Default::default(),
+            pending_drop: None,
             presets: Default::default(),
             presets_reported: false,
             dir_sync_warned: false,
@@ -950,6 +974,8 @@ impl KtApp {
             preset_save: None,
             seq_name: None,
             nest_path: Vec::new(),
+            shared_warned: Default::default(),
+            pending_drop: None,
             presets: Default::default(),
             presets_reported: false,
             dir_sync_warned: false,
@@ -1574,7 +1600,7 @@ impl KtApp {
                         ui.add_space(6.0);
                         ui.label(tr(match p {
                             Pending::New => k::ask::UNSAVED_NEW,
-                            Pending::Open => k::ask::UNSAVED_OPEN,
+                            Pending::Open | Pending::DropOpen => k::ask::UNSAVED_OPEN,
                             Pending::Quit => k::ask::UNSAVED_QUIT,
                         }));
                         ui.add_space(4.0);
@@ -1594,6 +1620,36 @@ impl KtApp {
                             }
                             let r = ui.button(tr(k::ask::STAY));
                             crate::widgets::field_probe::note("ask.stay", r.rect);
+                            if r.clicked() {
+                                answer = Some(Answer::Cancel);
+                            }
+                        });
+                    }
+                    Ask::DropOtio => {
+                        ui.heading(tr(k::ask::DROP_OTIO_TITLE));
+                        ui.add_space(6.0);
+                        let what = self
+                            .pending_drop
+                            .as_ref()
+                            .map(|(p, _)| p.display().to_string())
+                            .unwrap_or_default();
+                        ui.label(crate::tf!(k::ask::DROP_OTIO_BODY, what));
+                        ui.add_space(4.0);
+                        ui.weak(tr(k::ask::DROP_OTIO_WHERE));
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            let r = ui.button(tr(k::ask::DROP_OPEN));
+                            crate::widgets::field_probe::note("ask.drop_open", r.rect);
+                            if r.clicked() {
+                                answer = Some(Answer::Yes);
+                            }
+                            let r = ui.button(tr(k::ask::DROP_INSERT));
+                            crate::widgets::field_probe::note("ask.drop_insert", r.rect);
+                            if r.clicked() {
+                                answer = Some(Answer::No);
+                            }
+                            let r = ui.button(tr(k::ask::STAY_HERE));
+                            crate::widgets::field_probe::note("ask.drop_cancel", r.rect);
                             if r.clicked() {
                                 answer = Some(Answer::Cancel);
                             }
@@ -2317,7 +2373,13 @@ impl KtApp {
         self.selected.clear();
         self.selected_morph.clear();
         self.selected_camera.clear();
-        // 4) ВЫЙТИ ИЗ ЛЕНТЫ — ПОСЛЕДНИМ (Р.50, В3). Стой он раньше,
+        // 4) СВЕРНУТЬ РАСКРЫТИЕ — перед выходом из ленты (Р.55, С5):
+        // свёртка полосы стоит человеку меньше внимания, чем выход наружу,
+        // а вернуть её одним жестом дешевле.
+        if !had && self.collapse_all_in_place() {
+            return;
+        }
+        // 5) ВЫЙТИ ИЗ ЛЕНТЫ — ПОСЛЕДНИМ (Р.50, В3). Стой он раньше,
         // «снять выделение» выкидывало бы человека наружу: одна клавиша
         // делала бы два разных дела, и второе — необратимое по вниманию.
         if !had && !self.nest_path.is_empty() {
@@ -2588,7 +2650,7 @@ impl KtApp {
                 self.model = kt_model::TimelineModel::new(project);
                 self.retained = retained;
                 self.model_rev += 1;
-                self.player.set_project(self.model.document());
+                self.push_project_to_player();
                 self.sync_media_sources();
                 // работа В РЕДАКТОРЕ и нигде больше: звёздочка горит, пока
                 // пользователь не нажмёт Ctrl+S
@@ -2714,6 +2776,17 @@ impl KtApp {
         if rep.outer_layers > 0 {
             self.warn(crate::tf!(k::msg::NEST_OUTER_LAYERS, rep.outer_layers));
         }
+        // Что УЕХАЛО внутрь — тоже обязано быть названо (правило 16):
+        // человек ищет свой слой или камеру там, где они были, а их там
+        // больше нет. До Р.55 слой уезжал и МОЛЧА умирал внутри (порядок
+        // строк ленты был дефолтным, и под морф-строкой не оказывалось
+        // ничего), а камера не уезжала вовсе.
+        if rep.moved_layers > 0 || rep.moved_cameras > 0 {
+            self.note(crate::tf!(k::msg::NEST_MOVED_EXTRAS, rep.moved_layers, rep.moved_cameras));
+        }
+        if rep.kept_ref_layers > 0 {
+            self.warn(crate::tf!(k::msg::NEST_REF_LAYERS_STAY, rep.kept_ref_layers));
+        }
     }
 
     /// Развернуть экземпляр обратно на дорожки.
@@ -2782,6 +2855,22 @@ impl KtApp {
         self.view_start = (t.0 as f64 - half).max(0.0);
     }
 
+    /// Завести ПУСТУЮ ленту (Р.55, С6).
+    ///
+    /// Она сразу видна в бине, и с ней уже можно работать: поставить на
+    /// таймлайн, раскрыть, переименовать, убрать. До этого раунда
+    /// `AddSequence` конструировалась только внутри сворачивания и
+    /// отвязывания — завести композицию с нуля было нечем.
+    pub fn create_empty_reel(&mut self) {
+        let taken: Vec<String> =
+            self.model.document().sequences.iter().map(|s| s.name.clone()).collect();
+        let name = kt_model::unique_name(&taken, tr(k::msg::NEST_DEFAULT_NAME), "copy");
+        let id = kt_model::MediaId(kt_model::ops::NestCounters::of(&self.model.document()).media);
+        if self.apply(Command::AddSequence { id, name: name.clone() }) {
+            self.note(crate::tf!(k::msg::NEST_CREATED, name));
+        }
+    }
+
     /// Убрать ленты, на которые больше никто не смотрит.
     pub fn remove_unused_seqs(&mut self) {
         let cmds = kt_model::ops::remove_unused_sequences(self.model.project());
@@ -2793,6 +2882,73 @@ impl KtApp {
         if self.apply_batch(cmds) {
             self.note(crate::tf!(k::msg::NEST_REMOVED_UNUSED, n));
         }
+    }
+
+    /// Раскрыть ленту события НА МЕСТЕ (Р.55, С5) — режим по умолчанию.
+    ///
+    /// Из корня мы при этом НЕ ВЫХОДИМ: играет вся программа, курсор в её
+    /// оси, соседи и переходы на месте. Ровно это владелец и просил —
+    /// «и по основному таймлайну даст проигрывание и по композиции
+    /// одновременно». Плата — что на экране две системы координат, и
+    /// строки полосы обязаны быть видно отличимы.
+    pub fn expand_in_place(&mut self, id: ClipId) {
+        if self.model.editing().is_some() {
+            // внутри полного входа раскрытие бессмысленно: полоса
+            // считается от КОРНЯ, а корнем сейчас стоит другая лента
+            self.warn(tr(k::msg::NEST_EXPAND_NOT_HERE));
+            return;
+        }
+        if self.model.bands().iter().any(|b| b.inst == id) {
+            self.collapse_in_place(id);
+            return; // жест работает ПОВТОРНО (правило 14): второй раз сворачивает
+        }
+        if !self.is_nest(id) {
+            self.warn(tr(k::msg::NEST_NOT_A_NEST));
+            return;
+        }
+        // ОДНА полоса за раз (Р.55, С5). Ограничение стоит константой, а не
+        // рассыпано: на глубине четырёх раскрытий это четыре взаимозависимых
+        // смещения на каждую лейн-команду и четыре уровня затемнения на два
+        // десятка строк — нечитаемо. Снимается одной строкой плюс тестом.
+        let had = !self.model.bands().is_empty();
+        self.model.collapse_all_bands();
+        if !self.model.expand_band(id) {
+            self.warn(tr(k::msg::NEST_NOT_A_NEST));
+            return;
+        }
+        if had {
+            self.note(tr(k::msg::NEST_ONE_BAND));
+        }
+        self.after_bands_changed();
+    }
+
+    /// Свернуть раскрытие обратно. Ни шага истории, ни следа в файле:
+    /// раскрытие — рабочее место, а не работа.
+    pub fn collapse_in_place(&mut self, id: ClipId) {
+        if self.model.collapse_band(id) {
+            self.after_bands_changed();
+        }
+    }
+
+    pub fn collapse_all_in_place(&mut self) -> bool {
+        if self.model.bands().is_empty() {
+            return false;
+        }
+        self.model.collapse_all_bands();
+        self.after_bands_changed();
+        true
+    }
+
+    /// Общее на раскрытие и свёртку: проект НЕ изменился (в плеер и в файл
+    /// уходит тот же документ), а вот вид, выделение и кэши строк — да.
+    fn after_bands_changed(&mut self) {
+        // выделение живёт РОВНО В ОДНОЙ ленте: после смены набора строк
+        // держать в нём чужие адреса значит обещать жест, которого не будет
+        self.selected.clear();
+        self.selected_morph.clear();
+        self.selected_camera.clear();
+        self.model_rev += 1;
+        self.dirty_ui = true;
     }
 
     /// Войти в ленту события `id` (Р.50, В1).
@@ -2823,17 +2979,41 @@ impl KtApp {
             cursor: here,
             region: self.model.project().region,
             selected: std::mem::take(&mut self.selected),
+            selected_morph: std::mem::take(&mut self.selected_morph),
+            selected_camera: std::mem::take(&mut self.selected_camera),
         });
         self.model.set_editing(Some(seq.0));
         // регион живёт в ОСИ ВРЕМЕНИ ленты, а снаружи он был в оси корня:
         // унести его внутрь значило бы накрыть не то место
         self.model.set_region(None);
         // выделение снаружи внутри бессмысленно: там другие события
+        // (сами множества уже забраны в снимок выше)
         self.selected.clear();
-        self.selected_morph.clear();
-        self.selected_camera.clear();
-        let inner = c.source_in + (here - c.start);
-        self.on_context_changed(inner.max(Tick::ZERO));
+        // Курсор ПЕРЕВОДИТСЯ, а не сбрасывается — но только пока ему есть
+        // куда переводиться. Стоял он ВНЕ тела экземпляра (человек вошёл
+        // из меню, не подводя курсор) — переведённая позиция оказывается
+        // за содержимым ленты, и «вошёл» означало бы «смотрю в пустоту».
+        // Тогда курсор садится на ближайший край материала: это и есть
+        // ближайший кадр, который лента показывает.
+        // Конец содержимого берётся ПОСЛЕ обмена: `set_editing` уже
+        // поменял корень и ленту местами, и `sequence(c.media)` теперь
+        // отдаёт запись, которая держит содержимое КОРНЯ, а не ленты.
+        let end = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .map(|x| x.start + x.duration)
+            .max()
+            .unwrap_or(c.duration);
+        let inner = (c.source_in + (here - c.start)).clamp(Tick::ZERO, end.max(Tick::ZERO));
+        self.on_context_changed(inner);
+        // ВИД приводится к переведённому курсору. Без этого прокрутка
+        // оставалась в оси КОРНЯ: войдя во вложение, стоящее на десятой
+        // минуте, человек видел пустой экран, потому что содержимое ленты
+        // лежит около её нуля. Выход вид не трогает — там он ВОЗВРАЩАЕТСЯ
+        // из снимка целиком (t456).
+        self.center_view_on(inner);
     }
 
     /// Выйти на уровень выше. `None` в пути — мы и так в корне.
@@ -2846,6 +3026,8 @@ impl KtApp {
         self.ticks_per_px = step.ticks_per_px;
         self.tl_scroll = step.tl_scroll;
         self.selected = step.selected;
+        self.selected_morph = step.selected_morph;
+        self.selected_camera = step.selected_camera;
         // курсор переводится обратно ТЕМ ЖЕ правилом; событие могло
         // уехать или исчезнуть под undo — тогда возвращаемся туда, где
         // стояли до входа
@@ -2856,15 +3038,16 @@ impl KtApp {
         self.on_context_changed(back);
     }
 
-    /// Общее на вход и выход: движок продолжает играть ДОКУМЕНТ, кэши
-    /// кадра пересобираются, курсор встаёт на переведённое место.
+    /// Общее на вход и выход: кэши кадра пересобираются, курсор встаёт на
+    /// переведённое место, а плеер получает то, что обязан играть ЗДЕСЬ
+    /// (`player_project`: в корне — документ, внутри ленты — сама лента).
     fn on_context_changed(&mut self, cursor: Tick) {
         self.player.seek(cursor);
         self.blocked = None;
         // ревизия — то, на чём висят кэши кадра (coverage, имена, пути) и
         // сборка рендерера: смена контекста меняет ВСЁ, что они держат
         self.model_rev += 1;
-        self.player.set_project(self.model.document());
+        self.push_project_to_player();
         self.sync_media_sources();
     }
 
@@ -2975,6 +3158,19 @@ impl KtApp {
                     self.proceed(p);
                 }
             }
+            // БРОШЕННЫЙ ПРОЕКТ: три ответа, и все три РАЗНЫЕ по смыслу —
+            // ровно то, ради чего у `Answer` их три, а не `bool`
+            (Ask::DropOtio, Answer::Yes) => {
+                // «Открыть как проект» — через ту же дверь, что пункт меню:
+                // вопрос о несохранённом и замок на файле (Р.49).
+                if self.guard_unsaved(Pending::DropOpen) {
+                    self.open_dropped_now();
+                }
+            }
+            (Ask::DropOtio, Answer::No) => self.insert_dropped_as_sequence(),
+            (Ask::DropOtio, Answer::Cancel) => {
+                self.pending_drop = None;
+            }
             (Ask::Unsaved(p), Answer::No) => {
                 // работа объявлена ненужной: гасим флаги ДО перехода, иначе
                 // `Drop` воскресит её файлом восстановления
@@ -2992,6 +3188,74 @@ impl KtApp {
             Pending::New => *self = Self::new_empty(None),
             Pending::Open => self.open_project_dialog_now(),
             Pending::Quit => self.quit_confirmed = true,
+            Pending::DropOpen => self.open_dropped_now(),
+        }
+    }
+
+    /// Открыть брошенный проект — ТЕМ ЖЕ путём, что пункт меню «Открыть»
+    /// (Р.55, С6).
+    ///
+    /// До этого раунда дроп делал `*self = app` в обход и вопроса о
+    /// несохранённом, и замка на файле: работа исчезала без единого
+    /// вопроса, а вторая копия программы на том же файле не обнаруживалась.
+    fn open_dropped_now(&mut self) {
+        let Some((path, _)) = self.pending_drop.take() else { return };
+        match KtApp::open(&path) {
+            Ok(mut app) => {
+                app.claim_project(&path);
+                *self = app;
+            }
+            Err(e) => self.warn(format!("{}: {e}", path.display())),
+        }
+    }
+
+    /// Вставить брошенный проект КОМПОЗИЦИЕЙ в текущий монтаж (Р.55, С6).
+    fn insert_dropped_as_sequence(&mut self) {
+        let Some((path, target)) = self.pending_drop.take() else { return };
+        let src = match load_project_file(&path) {
+            Ok((p, _, notices)) => {
+                for n in notices {
+                    self.warn(n);
+                }
+                p
+            }
+            Err(e) => {
+                self.warn(format!("{}: {e}", path.display()));
+                return;
+            }
+        };
+        let name = kt_model::unique_name(
+            &self.model.project().sequences.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+            path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default().trim(),
+            "copy",
+        );
+        let (at, lane) = match target {
+            Some((at, (_, lane))) => (at, lane),
+            None => (self.player.transport.playhead(), 0),
+        };
+        let doc = self.model.document();
+        let mut n = kt_model::ops::NestCounters::of(&doc);
+        let (cmds, rep) = kt_model::ops::import_as_sequences(
+            self.model.project(),
+            &src,
+            &name,
+            at,
+            lane,
+            n.ids(),
+        );
+        if cmds.is_empty() {
+            self.warn(tr(k::msg::IMPORT_EMPTY));
+            return;
+        }
+        if !self.apply_batch(cmds) {
+            return;
+        }
+        self.note(crate::tf!(k::msg::IMPORT_DONE, name.clone(), rep.media_added));
+        // Что НЕ приехало — обязано быть НАЗВАНО (правило 16): области,
+        // метки и настройки чужого проекта принадлежат ДОКУМЕНТУ, а не
+        // монтажу, и подменять ими свои нельзя.
+        if rep.dropped_extras > 0 {
+            self.warn(crate::tf!(k::msg::IMPORT_DROPPED, rep.dropped_extras));
         }
     }
 
@@ -3086,13 +3350,40 @@ impl KtApp {
         self.notices_unread += 1;
     }
 
+    /// Проект, который ИГРАЕТ плеер — ЕДИНСТВЕННОЕ место, где решается,
+    /// что именно слышно и видно (Р.55, С1).
+    ///
+    /// Стоя в корне, играет документ. Стоя ВНУТРИ ленты, играет САМА ЛЕНТА
+    /// со своего нуля: до Р.55 сюда всегда уходил `document()`, и человек,
+    /// войдя в композицию, видел на таймлайне её события, а слышал и видел
+    /// КОРЕНЬ, взятый в момент, численно равный локальному времени ленты.
+    /// Совпадало это ровно тогда, когда экземпляр стоит в нуле — поэтому
+    /// ни один тест и ни один живой сценарий дефекта не видел.
+    ///
+    /// В ФАЙЛ и в ЭКСПОРТ по-прежнему уходит `document()`: там расхождение
+    /// означало бы записать на диск не то, что человек монтировал (t456b).
+    pub(crate) fn player_project(&self) -> kt_model::Project {
+        match self.model.editing() {
+            Some(_) => self.model.reel_document(),
+            None => self.model.document(),
+        }
+    }
+
+    /// Отдать плееру то, что он обязан играть. Своих `set_project` в
+    /// приложении быть не должно: их было восемь, и первая же правка
+    /// внутри ленты возвращала в плеер корень (сторож — t456c).
+    pub(crate) fn push_project_to_player(&mut self) {
+        let p = self.player_project();
+        self.player.set_project(p);
+    }
+
     pub fn apply(&mut self, cmd: Command) -> bool {
         self.model_rev += 1;
         // через `apply_batch`, а не `apply`: родство рождённых событий
         // приходит ОДНИМ путём (п.357), и одиночный разрез не исключение
         match self.model.apply_batch(vec![cmd]) {
             Ok(births) => {
-                self.player.set_project(self.model.document());
+                self.push_project_to_player();
                 self.sync_media_sources();
                 self.dirty_content = true;
                 self.bump_clip_hw();
@@ -3108,6 +3399,12 @@ impl KtApp {
 
     // ---- выделение событий (Р.33 п.7) ---------------------------------------
 
+    /// Чья это лента: `None` — корень, `Some` — раскрытая полоса (Р.55, С5).
+    pub fn reel_of_clip(&self, id: ClipId) -> Option<kt_model::MediaId> {
+        let c = self.model.clip(id)?;
+        self.model.band_of_row(kt_model::lane_key(c).0, c.lane).map(|b| b.seq)
+    }
+
     /// Выделить ровно это событие (обычный клик).
     pub fn select_only(&mut self, id: ClipId) {
         self.selected.clear();
@@ -3115,10 +3412,23 @@ impl KtApp {
     }
 
     /// Ctrl+клик: добавить/убрать из выделения.
+    ///
+    /// **Выделение живёт РОВНО В ОДНОЙ ленте** (Р.55, С5). Смешанное
+    /// выделение выглядело бы обычным, а жест по нему поехал бы только
+    /// наполовину: `selected_with_groups` собирает группы по одному
+    /// пространству, а команды на события разных лент один батч не
+    /// переживут. Поэтому клик в другой полосе ЗАМЕНЯЕТ выделение и
+    /// говорит об этом — молчаливое выбрасывание половины было бы хуже.
     pub fn toggle_selected(&mut self, id: ClipId) {
-        if !self.selected.remove(&id) {
-            self.selected.insert(id);
+        if self.selected.remove(&id) {
+            return;
         }
+        let here = self.reel_of_clip(id);
+        if self.selected.iter().any(|o| self.reel_of_clip(*o) != here) {
+            self.selected.clear();
+            self.note(tr(k::msg::NEST_SELECTION_MOVED));
+        }
+        self.selected.insert(id);
     }
 
     pub fn is_selected(&self, id: ClipId) -> bool {
@@ -3190,7 +3500,7 @@ impl KtApp {
         }
         self.model_rev += 1;
         if touches_plan {
-            self.player.set_project(self.model.document());
+            self.push_project_to_player();
         }
         self.sync_media_sources();
         self.dirty_content = true;
@@ -3209,12 +3519,39 @@ impl KtApp {
         self.apply_batch(cmds)
     }
 
+    /// Лента стоит в НЕСКОЛЬКИХ местах, а человек правит её в раскрытии —
+    /// сказать об этом один раз (Р.55, С5, решение владельца).
+    ///
+    /// Правка правит ВСЕ места: это ссылка, ради этого её и заводят. Но
+    /// выглядит она как обычный драг на таймлайне, и промолчать значит
+    /// дать человеку изменить три места, думая, что он изменил одно
+    /// (правило 16). Дальше молчим: предупреждение на каждую правку
+    /// превратилось бы в шум, который перестают читать.
+    fn warn_shared_band(&mut self, cmds: &[Command]) {
+        let touched: Vec<kt_model::MediaId> = cmds
+            .iter()
+            .filter_map(|c| c.target_clip())
+            .filter_map(|id| self.reel_of_clip(id))
+            .collect();
+        for seq in touched {
+            if self.shared_warned.contains(&seq) {
+                continue;
+            }
+            let uses = self.model.document().sequence_uses(seq);
+            if uses > 1 {
+                self.shared_warned.insert(seq);
+                self.warn(crate::tf!(k::msg::NEST_SHARED_EDIT, uses));
+            }
+        }
+    }
+
     /// Пакет команд = один undo-снапшот на жест (атомарно).
     pub fn apply_batch(&mut self, cmds: Vec<Command>) -> bool {
         self.model_rev += 1;
+        self.warn_shared_band(&cmds);
         match self.model.apply_batch(cmds) {
             Ok(births) => {
-                self.player.set_project(self.model.document());
+                self.push_project_to_player();
                 self.sync_media_sources();
                 self.dirty_content = true;
                 self.bump_clip_hw();
@@ -4188,6 +4525,7 @@ impl KtApp {
         let mut next_group = self.next_group_id();
         let mut next_transition = self.next_transition_id();
         let mut next_morph = self.next_morph_id();
+        let mut next_camera = self.next_camera_id();
         let names =
             kt_model::ops::PasteNames { affix, before, taken: self.model.project().taken_names() };
         let (cmds, end, skipped) = kt_model::ops::paste_block(
@@ -4198,6 +4536,7 @@ impl KtApp {
                 group: &mut next_group,
                 transition: &mut next_transition,
                 morph: &mut next_morph,
+                camera: &mut next_camera,
             },
             &names,
         );
@@ -4408,7 +4747,7 @@ impl KtApp {
     pub fn undo(&mut self) {
         self.model_rev += 1;
         if self.model.undo().is_ok() {
-            self.player.set_project(self.model.document());
+            self.push_project_to_player();
             self.sync_media_sources();
             self.dirty_content = true;
             self.bump_clip_hw();
@@ -4418,7 +4757,7 @@ impl KtApp {
     pub fn redo(&mut self) {
         self.model_rev += 1;
         if self.model.redo().is_ok() {
-            self.player.set_project(self.model.document());
+            self.push_project_to_player();
             self.sync_media_sources();
             self.dirty_content = true;
             self.bump_clip_hw();
@@ -4535,6 +4874,10 @@ impl KtApp {
 
     pub fn next_morph_id(&self) -> u64 {
         self.model.project().max_morph_id() + 1
+    }
+
+    pub fn next_camera_id(&self) -> u64 {
+        self.model.project().max_camera_id() + 1
     }
 
     /// Камера под курсором воспроизведения (Р.29): дефолтная «50 мм»,
@@ -5033,6 +5376,62 @@ impl KtApp {
         self.place_media_at(media_id, at, None);
     }
 
+    /// Экземпляр ЛЕНТЫ в позицию `at` (Р.55, С6).
+    ///
+    /// Пара видео+аудио в одной link-группе — как у сворачивания
+    /// (`collapse_into_sequence`): тогда «поставил, потом замедли целиком»
+    /// получается даром через `sync_warp_to_link_group`.
+    fn place_reel_at(&mut self, seq: MediaId, at: Tick, lane_hint: Option<(ClipKind, u32)>) {
+        let doc = self.model.document();
+        let Some(s) = doc.sequence(seq) else { return };
+        let len = s.end().max(kt_model::MIN_CLIP_DURATION);
+        let kinds: Vec<ClipKind> = [ClipKind::Video, ClipKind::Audio]
+            .into_iter()
+            .filter(|k| s.clips.iter().any(|c| c.kind == *k))
+            .collect();
+        if kinds.is_empty() {
+            self.warn(tr(k::msg::NEST_EMPTY_REEL));
+            return;
+        }
+        let mut next_clip = self.next_clip_id();
+        let group = (kinds.len() > 1).then(|| {
+            let g = kt_model::GroupId(self.next_group_id());
+            g
+        });
+        let mut cmds = Vec::new();
+        let mut first = None;
+        for k in kinds {
+            let id = ClipId(next_clip);
+            next_clip += 1;
+            first.get_or_insert(id);
+            cmds.push(Command::AddClip(kt_model::ClipEvent {
+                id,
+                link_group: group,
+                kind: k,
+                lane: match lane_hint {
+                    Some((hk, l)) if hk == k => l,
+                    _ => 0,
+                },
+                start: at,
+                duration: len,
+                source_in: Tick::ZERO,
+                media: seq,
+                gain_db: 0.0,
+                reversed: false,
+                fx: Vec::new(),
+                fx_bypass: Vec::new(),
+                fx_auto: Vec::new(),
+                opacity: 1.0,
+                fx_off: false,
+            }));
+        }
+        if self.apply_batch(cmds)
+            && let Some(id) = first
+        {
+            self.select_only(id);
+        }
+    }
+
     /// Клип(ы) медиа в позицию `at`; `lane_hint` — дорожка под мышкой при
     /// дропе (п.2 v1.4): её kind получает эту lane, парная половина — lane 0.
     pub fn place_media_at(
@@ -5041,6 +5440,14 @@ impl KtApp {
         at: Tick,
         lane_hint: Option<(ClipKind, u32)>,
     ) {
+        // ЛЕНТА ставится ЭКЗЕМПЛЯРОМ (Р.55, С6): у неё нет ни файла, ни
+        // длительности из источника — длина берётся из её содержимого.
+        // Раньше поставить ленту во второе место можно было ТОЛЬКО
+        // копипастом уже стоящего экземпляра.
+        if self.model.document().sequence(media_id).is_some() {
+            self.place_reel_at(media_id, at, lane_hint);
+            return;
+        }
         let Some(path) =
             self.model.project().media.iter().find(|m| m.id == media_id).map(|m| m.path.clone())
         else {
@@ -6007,12 +6414,14 @@ impl KtApp {
         if k.esc {
             self.escape_action();
         }
-        // Enter — войти в выделенное вложение (парный способ к двойному
-        // клику и пункту меню, правило 17)
+        // Enter — РАСКРЫТЬ выделенное вложение на месте: клавиатурный
+        // близнец двойного клика, и вести себя обязан так же (правило 17).
+        // Полный вход — названный пункт меню «Войти в ленту»: быстрый жест
+        // даёт режим по умолчанию, названный пункт — названный режим.
         if k.enter_nest
             && let Some(id) = self.selected.iter().copied().find(|id| self.is_nest(*id))
         {
-            self.enter_nest(id);
+            self.expand_in_place(id);
         }
         if k.copy {
             self.copy_selection();
@@ -6063,10 +6472,13 @@ impl KtApp {
                 // Р.24 п.12: .ktproj как проект не открывается
                 self.note(tr(k::msg::KTPROJ_IMPORT_ONLY));
             } else if path.extension().map(|e| e == "otio").unwrap_or(false) {
-                match KtApp::open(&path) {
-                    Ok(app) => *self = app,
-                    Err(e) => self.note(format!("{}: {e}", path.display())),
-                }
+                // БРОШЕН ПРОЕКТ — СПРАШИВАЕМ (Р.55, С6). До этого раунда
+                // здесь стояло `*self = app`: ни выбора «открыть или
+                // вставить», ни вопроса о несохранённой работе, ни замка
+                // на файле. Работа исчезала молча — в обход всего, что
+                // построено в Р.49.
+                self.pending_drop = Some((path.clone(), target));
+                self.ask = Some(Ask::DropOtio);
             } else if let Some(id) = self.morph_editors.iter().find_map(|e| {
                 let r = e.src_rect?;
                 let pos = drop_pos?;

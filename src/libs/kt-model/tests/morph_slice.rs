@@ -204,7 +204,9 @@ fn t236_degenerate_windows() {
     assert_eq!(eff[0].media, MediaId(2), "первый кусок накрыт целиком");
     assert_eq!(eff[0].duration, Tick(30_000), "и конец сел на сетку кадров");
 
-    // патч с одними видео-эффектами не трогает аудио под собой
+    // Патч с одними видео-эффектами не трогает аудио под собой — и с Р.55
+    // (С2) НЕ РЕЖЕТ И ВИДЕО: выключить вклад цепочки можно кривой силы,
+    // а значит резать ради неё незачем. Раньше тут было три куска.
     let mut p = base();
     p.clips.push(clip(11, ClipKind::Audio, 0, Tick(0), LEN));
     p.audio_lanes = 1;
@@ -216,7 +218,29 @@ fn t236_degenerate_windows() {
     let audio: Vec<&ClipEvent> = eff.iter().filter(|c| c.kind == ClipKind::Audio).collect();
     assert_eq!(audio.len(), 1, "аудио не разрезано");
     assert_eq!(audio[0].id, ClipId(11));
-    assert_eq!(eff.iter().filter(|c| c.kind == ClipKind::Video).count(), 3, "видео разрезано");
+    let video: Vec<&ClipEvent> = eff.iter().filter(|c| c.kind == ClipKind::Video).collect();
+    assert_eq!(video.len(), 1, "видео тоже НЕ разрезано: цепочку гасят, а не вырезают");
+    assert_eq!(video[0].id, ClipId(10), "и кусок держит id оригинала (инвариант 3)");
+    assert!(
+        video[0].fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })),
+        "цепочка слоя обязана быть на теле"
+    );
+    // ВОРОТА: сила нулевая вне окна блока и полная внутри
+    let (i, _) = video[0]
+        .fx
+        .iter()
+        .enumerate()
+        .find(|(_, f)| matches!(f, FxInstance::LayerMix { .. }))
+        .expect("слот силы обязан появиться: без него слой действовал бы на всё тело");
+    let cur = &video[0].fx_auto[i][0];
+    let at = |t: i64| {
+        let ks = &cur.keys;
+        let j = ks.partition_point(|k| k.t.0 <= t).saturating_sub(1);
+        ks[j].v
+    };
+    assert!(at(10_000) < 0.01, "до окна слой обязан молчать, а не действовать");
+    assert!(at(45_000) > 0.99, "внутри окна слой обязан действовать в полную силу");
+    assert!(at(80_000) < 0.01, "после окна слой обязан молчать");
 }
 
 /// Тест 236b: запретные зоны. Граница слоя не встаёт внутрь окна
@@ -656,12 +680,19 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
 
     let mut m = TimelineModel::new(p);
     let (mut nc, mut ng, mut nt, mut nm) = (100u64, 100u64, 100u64, 100u64);
+    let mut ncam = 100u64;
     let names =
         PasteNames { affix: "копия".into(), before: false, taken: m.project().taken_names() };
     let (cmds, _end, skipped) = paste_block(
         &block,
         Tick(300_000),
-        PasteIds { clip: &mut nc, group: &mut ng, transition: &mut nt, morph: &mut nm },
+        PasteIds {
+            clip: &mut nc,
+            group: &mut ng,
+            transition: &mut nt,
+            morph: &mut nm,
+            camera: &mut ncam,
+        },
         &names,
     );
     assert_eq!(skipped.morphers, 1, "морфер без уцелевших целей пропущен");
@@ -697,7 +728,13 @@ fn t249_clipboard_carries_morphers_areas_and_marks() {
     let (cmds, _end, _) = paste_block(
         &block,
         Tick(600_000),
-        PasteIds { clip: &mut nc, group: &mut ng, transition: &mut nt, morph: &mut nm },
+        PasteIds {
+            clip: &mut nc,
+            group: &mut ng,
+            transition: &mut nt,
+            morph: &mut nm,
+            camera: &mut ncam,
+        },
         &names,
     );
     m.apply_batch(cmds).unwrap();
@@ -1152,4 +1189,136 @@ fn t291_source_replacement_carries_the_clips_own_curves() {
          (до Р.43 ключи оставались в СТАРОМ домене материала и кривая зажималась \
           последним ключом — «pan3d не применяется»)"
     );
+}
+
+/// Клип с фейдом на ОБОИХ краях: два перехода с одним живым концом.
+/// `in/out_offset` считаются от СТЫКА (`joint`), поэтому у фейда на входе
+/// живёт `out_offset`, у фейда на выходе — `in_offset`.
+fn with_fades_both_ends(p: &mut Project, id: ClipId, len: Tick, fade: Tick) {
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(1),
+        a: None,
+        b: Some(id),
+        in_offset: Tick::ZERO,
+        out_offset: fade,
+        kind: Default::default(),
+        audio: Default::default(),
+        auto: vec![],
+        invert: false,
+    });
+    p.transitions.push(TransitionEvent {
+        id: TransitionId(2),
+        a: Some(id),
+        b: None,
+        in_offset: fade,
+        out_offset: Tick::ZERO,
+        kind: Default::default(),
+        audio: Default::default(),
+        auto: vec![],
+        invert: false,
+    });
+    let _ = len;
+}
+
+/// Тест 555 (Р.55, С2): «по времени» на событии с фейдами означает ровно
+/// то, что написано.
+///
+/// **Претензия владельца дословно:** «еще на событиях с переходом(типо
+/// fade) морфер ломается и накладывает правки на всё событие вместо
+/// "by time"».
+///
+/// Причина была не в морфере, а в РЕЗКЕ. Резать кусок внутри окна
+/// перехода нельзя — это переслаивает соседей и меняет веса кроссфейда, —
+/// поэтому граница выталкивалась из запретной зоны к БЛИЖАЙШЕМУ краю, в
+/// том числе НАРУЖУ. На сцене ниже (фейды по 20 000 тиков с обеих сторон,
+/// окно слоя 5 000 … 85 000) старый код давал `s = 0`, `e = 90 000` —
+/// ровно «на всё событие».
+///
+/// Лечение — не чинить выталкивание, а не резать вовсе: вклад цепочки
+/// гасится кривой силы, и тогда граница точна ДО ТИКА, а переходы и
+/// соседи не тронуты совсем.
+#[test]
+fn t555_time_window_is_exact_on_an_event_with_fades() {
+    let mut p = base();
+    with_fades_both_ends(&mut p, ClipId(10), LEN, Tick(20_000));
+    p.validate().expect("сцена с двумя фейдами законна");
+    // зоны, в которые не встаёт граница РЕЗА
+    let zones = kt_model::forbidden_zones(&p, &p.clips[0]);
+    assert!(zones.iter().any(|z| z.start == Tick(0) && z.end == Tick(20_000)), "фейд на входе");
+    assert!(zones.iter().any(|z| z.start == Tick(70_000) && z.end == LEN), "фейд на выходе");
+
+    // слой из ОДНИХ ЭФФЕКТОВ: окно 5 000 … 85 000, оба конца в зонах
+    let mut m = layer(Tick(5_000), Tick(80_000));
+    m.patch.media = None;
+    p.morphers.push(m);
+
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &p.rows());
+    assert_eq!(
+        wins,
+        vec![TickRange::new(Tick(5_000), Tick(85_000))],
+        "окно обязано быть ТЕМ, что просили: ни выталкивания наружу, ни посадки на сетку"
+    );
+
+    let eff = p.effective_clips();
+    assert_eq!(eff.len(), 1, "резов не появилось: гасить можно там, где резать нельзя");
+    assert_eq!(eff[0].id, ClipId(10), "id оригинала цел — с ним и FX-состояние (инвариант 3)");
+    assert_eq!(eff[0].duration, LEN, "тело не тронуто");
+
+    // ВОРОТА силы: молчит вне окна, полная сила внутри
+    let (i, _) = eff[0]
+        .fx
+        .iter()
+        .enumerate()
+        .find(|(_, f)| matches!(f, FxInstance::LayerMix { .. }))
+        .expect("слот силы обязан быть: без него слой бьёт по всему телу");
+    let cur = &eff[0].fx_auto[i][0];
+    let at = |t: i64| {
+        let ks = &cur.keys;
+        let j = ks.partition_point(|k| k.t.0 <= t).saturating_sub(1);
+        ks[j].v
+    };
+    // домен ключей — МАТЕРИАЛ цели (`source_in` = 3 000)
+    let mat = |tl: i64| tl + 3_000;
+    assert!(at(mat(1_000)) < 0.01, "до окна слой обязан молчать");
+    assert!(at(mat(45_000)) > 0.99, "внутри окна — полная сила");
+    assert!(at(mat(88_000)) < 0.01, "после окна слой обязан молчать");
+    // и ГРАНИЦА ТОЧНА: за тик до окна ещё ноль, на самом краю уже сила
+    assert!(at(mat(4_999)) < 0.01, "граница уехала влево");
+    assert!(at(mat(5_000)) > 0.99, "граница уехала вправо");
+
+    // ПЕРЕХОДЫ ЦЕЛЫ: их окна не поехали, концы не потерялись
+    let after = kt_model::forbidden_zones(&p, &p.clips[0]);
+    assert_eq!(after, zones, "слой тронул окна переходов — соседи переслоились бы");
+}
+
+/// Тест 556 (Р.55, С2): патч с ПОДМЕНОЙ ИСТОЧНИКА по-прежнему режет, а
+/// граница уходит ТОЛЬКО ВНУТРЬ.
+///
+/// «Взять кадр из другого файла» кривой силы не выражается, поэтому здесь
+/// резка остаётся. Но выталкивание перестало быть «к ближайшему краю»:
+/// окно теперь только СОКРАЩАЕТСЯ. На той же сцене старый код давал всё
+/// тело, новый — середину между фейдами.
+#[test]
+fn t556_source_replacing_layer_still_cuts_but_only_inward() {
+    let mut p = base();
+    with_fades_both_ends(&mut p, ClipId(10), LEN, Tick(20_000));
+    p.morphers.push(layer(Tick(5_000), Tick(80_000))); // patch.media = Some(2)
+    p.validate().expect("сцена законна");
+
+    let wins = p.morphers[0].windows_on(&p.clips[0], &p, &p, &p.rows());
+    assert_eq!(
+        wins,
+        vec![TickRange::new(Tick(20_000), Tick(70_000))],
+        "границы обязаны уйти ВНУТРЬ, к дальним краям зон, а не наружу"
+    );
+
+    let all = p.effective_clips();
+    let eff: Vec<&ClipEvent> = all.iter().filter(|c| c.kind == ClipKind::Video).collect();
+    assert_eq!(eff.len(), 3, "три куска: до фейда, накрытый, после");
+    assert_eq!(eff[0].start, Tick(0));
+    assert_eq!(eff[1].start, Tick(20_000), "накрытый кусок начинается ЗА окном фейда");
+    assert_eq!(eff[2].start, Tick(70_000), "и кончается ПЕРЕД окном второго фейда");
+    assert_eq!(eff[1].media, MediaId(2), "подмена досталась среднему куску");
+    assert_eq!(eff[0].media, MediaId(1), "фейд на входе слой не накрыл");
+    assert_eq!(eff[2].media, MediaId(1), "и фейд на выходе тоже");
 }

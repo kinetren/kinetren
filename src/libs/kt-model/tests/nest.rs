@@ -412,16 +412,20 @@ fn t428_expand_drops_the_instance_chain_and_says_so() {
     m.apply(Command::SetFx { id: inst, fx: vec![FxInstance::Gain { db: 3.0, pan: 0.0 }] })
         .expect("цепочка на вложении законна");
     m.apply(Command::SetOpacity { id: inst, opacity: 0.5 }).expect("уровень вложения законен");
-    // ...а реверс и варп времени экземпляра — ещё нет: они требуют
-    // смешивания ДВУХ суб-композитов и ресемплера над суб-миксом. Такого
-    // состояния просто не бывает (правило 16), а не «считается не то»
-    assert!(
-        matches!(
-            m.apply(Command::SetReversed { id: inst, reversed: true }),
-            Err(CommandError::InvalidLayout(ProjectError::NestInstanceNotChainable(_)))
-        ),
-        "реверс вложения прошёл молча"
-    );
+    // ...И РЕВЕРС С РАСТЯЖЕНИЕМ ТОЖЕ (Р.55, С4). До этого раунда они
+    // отвергались: суб-микс читался строго по порядку, а обоим нужно
+    // читать иначе. Теперь у суб-микса есть продюсер с пре-роллом, и
+    // реверс с варпом действуют на СЭМПЛЫ собранного микса — ровно так
+    // же, как на сэмплы файла. Это и была претензия владельца: «на
+    // композицию не работает реверсы», «slowedandreverb не срабатывает
+    // на прекомпозициях».
+    m.apply(Command::SetReversed { id: inst, reversed: true })
+        .expect("реверс вложения обязан проходить");
+    let mut fx = m.project().clips.iter().find(|c| c.id == inst).unwrap().fx.clone();
+    fx.push(FxInstance::slowed_reverb(0.82, 0.1, 85.0));
+    m.apply(Command::SetFx { id: inst, fx })
+        .expect("растягивающая цепочка на вложении обязана проходить");
+    m.project().validate().expect("документ с реверснутым и замедленным вложением законен");
 
     let (cmds, rep) = ops::expand_instance(m.project(), inst, n.ids());
     assert!(
@@ -430,10 +434,19 @@ fn t428_expand_drops_the_instance_chain_and_says_so() {
          применялись к СОБРАННОЙ картинке, внутри такого места нет — молча \
          раскидать их по кускам значит посчитать другое"
     );
+    // РЕВЕРС и СКОРОСТЬ названы ОТДЕЛЬНО: «реверс собранного куска ≠
+    // реверс каждого куска» — это реверс-аналог закона Г (t438), и свалить
+    // его в общую кучу с уровнем значит не сказать главного
+    assert!(rep.reverse_dropped, "снятый реверс не назван: {rep:?}");
+    assert!(rep.warp_dropped, "снятая скорость не названа: {rep:?}");
     m.apply_batch(cmds).unwrap();
     assert!(
         m.project().clips.iter().all(|c| c.fx.is_empty()),
         "цепочка экземпляра всё-таки расползлась по кускам"
+    );
+    assert!(
+        m.project().clips.iter().all(|c| !c.reversed),
+        "реверс экземпляра расползся по кускам — это ДРУГОЙ монтаж"
     );
 }
 
@@ -654,4 +667,569 @@ fn t455_editing_context_survives_and_yields() {
         m.document().clips.len(),
         "лента без адреса подменила корень"
     );
+}
+
+// ---- Р.55, С3: сворачивание ничего не теряет ---------------------------------
+
+/// Тест 557: морфер-слой, уехавший в ленту, накрывает ТО ЖЕ, что накрывал
+/// снаружи.
+///
+/// **Претензия владельца дословно:** «При создании композицию если был
+/// морфер в регионе то он почему-то не попадает туда, наверное и камеры
+/// тоже не попадают и генераторы, проверяй».
+///
+/// Слой попадал внутрь и там УМИРАЛ, и это хуже, чем не попасть: у ленты
+/// не было `lane_order`, а в дефолтном порядке (видео → аудио → морферы →
+/// камеры) морф-строки идут ПОСЛЕДНИМИ. Режим «всё, что ниже» требует
+/// цели НИЖЕ слоя — под ним не оказывалось ничего.
+///
+/// Тест утверждает СЛЕДСТВИЕ: набор накрытых событий, а не наличие поля.
+#[test]
+fn t557_a_layer_inside_covers_what_it_covered_outside() {
+    let mut p = base();
+    p.clips.push(clip(11, 1, Tick::ZERO, LEN));
+    p.clips.push(clip(12, 1, LEN, LEN));
+    p.morph_lanes = 1;
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: Tick::ZERO,
+        duration: Tick(2 * LEN.0),
+        targets: MorphTargets::Below,
+        patch: MorphPatch {
+            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            ..Default::default()
+        },
+        timed: true,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
+        enabled: true,
+    });
+    // строка морфера СВЕРХУ — иначе «всё, что ниже» не накрывает ничего и
+    // снаружи, и сравнивать было бы не с чем
+    p.lane_order = vec![(LaneKind::Morph, 0), (LaneKind::Video, 0)];
+    p.validate().expect("фикстура законна");
+
+    // что слой накрывал СНАРУЖИ: оба события получили зеркало
+    let mirrored = |q: &Project| -> usize {
+        q.effective_clips()
+            .iter()
+            .filter(|c| c.fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })))
+            .count()
+    };
+    assert_eq!(mirrored(&p), 2, "сцена выродилась: слой не накрывает ничего и снаружи");
+
+    let mut m = TimelineModel::new(p);
+    let mut n = ops::NestCounters::of(m.project());
+    let (cmds, rep) =
+        ops::collapse_into_sequence(m.project(), &[ClipId(11), ClipId(12)], "Кусок", n.ids());
+    m.apply_batch(cmds).expect("сворачивание обязано быть законным");
+    let seq_id = rep.seq.expect("лента не заведена");
+
+    assert_eq!(rep.moved_layers, 1, "слой обязан уехать внутрь и быть НАЗВАН");
+    let s = m.project().sequence(seq_id).expect("лента");
+    assert_eq!(s.morphers.len(), 1, "слоя нет внутри ленты");
+    assert!(
+        m.project().morphers.is_empty(),
+        "слой остался И в корне: одно и то же наложилось бы дважды"
+    );
+    // ПОРЯДОК СТРОК уехал вместе с ним
+    let rows = s.rows();
+    let mine = rows.iter().position(|&k| k == (LaneKind::Morph, 0)).expect("строка слоя");
+    let his = rows.iter().position(|&k| k == (LaneKind::Video, 0)).expect("строка видео");
+    assert!(mine < his, "внутри ленты слой оказался НИЖЕ цели: {rows:?}");
+
+    // СЛЕДСТВИЕ: внутри ленты слой накрывает те же два события
+    let inside = m.project().effective_reel(Some(seq_id));
+    let n_mirrored = inside
+        .iter()
+        .filter(|c| c.fx.iter().any(|f| matches!(f, FxInstance::Mirror { .. })))
+        .count();
+    assert_eq!(n_mirrored, 2, "внутри ленты слой не накрыл ничего — он уехал и умер");
+}
+
+/// Тест 558: камеры едут в ленту вместе с монтажом.
+///
+/// `Sequence` держит `cameras` и `camera_lanes` с самого Р.50, но
+/// сворачивание их не заполняло — поле было, а класть в него было некому.
+/// Событие с `Pan3d`, ездившее по камере, внутри свёрнутой ленты теряло
+/// её МОЛЧА: `resolve_cam3d` при пустом списке отдаёт камеру по умолчанию.
+#[test]
+fn t558_cameras_travel_into_the_sequence() {
+    let mut p = base();
+    p.clips.push(clip(11, 1, Tick::ZERO, LEN));
+    p.clips.push(clip(12, 1, LEN, LEN));
+    p.camera_lanes = 1;
+    p.cameras.push(CameraEvent {
+        id: CameraId(7),
+        lane: 0,
+        start: Tick::ZERO,
+        duration: Tick(2 * LEN.0),
+        name: "Проезд".into(),
+        cam: Default::default(),
+        keyframes: Vec::new(),
+        auto: Vec::new(),
+        ease: true,
+    });
+    p.validate().expect("фикстура законна");
+
+    let mut m = TimelineModel::new(p);
+    let mut n = ops::NestCounters::of(m.project());
+    let (cmds, rep) =
+        ops::collapse_into_sequence(m.project(), &[ClipId(11), ClipId(12)], "Кусок", n.ids());
+    m.apply_batch(cmds).expect("сворачивание обязано быть законным");
+    let seq_id = rep.seq.expect("лента");
+
+    assert_eq!(rep.moved_cameras, 1, "камера обязана уехать внутрь и быть НАЗВАНА");
+    let s = m.project().sequence(seq_id).expect("лента");
+    assert_eq!(s.cameras.len(), 1, "камеры нет внутри ленты");
+    assert_eq!(s.cameras[0].id, CameraId(7), "камера родилась заново вместо переезда");
+    assert_eq!(s.cameras[0].start, Tick::ZERO, "камера не ребейзнута в ось ленты");
+    assert!(s.camera_lanes >= 1, "камерная строка внутри ленты не заведена — камеры не видно");
+    assert!(
+        s.rows().contains(&(LaneKind::Camera, 0)),
+        "камерной строки нет в порядке строк ленты: {:?}",
+        s.rows()
+    );
+    assert!(m.project().cameras.is_empty(), "камера осталась И в корне");
+    m.project().validate().expect("документ после сворачивания обязан быть законным");
+}
+
+/// Тест 559: свернуть под слоем ПО ОБЛАСТИ можно, и слой остаётся снаружи.
+///
+/// Ссылочные режимы внутри ленты запрещены (`MorphRefInsideSequence`):
+/// область и метка — навигация ПО ПРОЕКТУ, они живут в корне. А
+/// `block_extras` клал такой слой ВНУТРЬ — и `validate` отвергал весь
+/// батч. Свернуть выделение под слоем «по области» было нельзя ВООБЩЕ, с
+/// английской ошибкой в статусбаре.
+#[test]
+fn t559_collapsing_under_an_area_layer_is_possible() {
+    let mut p = base();
+    p.clips.push(clip(11, 1, Tick::ZERO, LEN));
+    p.clips.push(clip(12, 1, LEN, LEN));
+    p.morph_lanes = 1;
+    p.areas.push(MarkedArea {
+        name: "Кусок".into(),
+        start: Tick::ZERO,
+        duration: Tick(2 * LEN.0),
+        lanes: Vec::new(),
+        color: Default::default(),
+    });
+    p.morphers.push(MorpherEvent {
+        id: MorphId(1),
+        lane: 0,
+        start: Tick::ZERO,
+        duration: Tick(2 * LEN.0),
+        targets: MorphTargets::Areas { names: vec!["Кусок".into()] },
+        patch: MorphPatch {
+            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            ..Default::default()
+        },
+        timed: true,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
+        enabled: true,
+    });
+    p.validate().expect("фикстура законна");
+
+    let mut m = TimelineModel::new(p);
+    let mut n = ops::NestCounters::of(m.project());
+    let (cmds, rep) =
+        ops::collapse_into_sequence(m.project(), &[ClipId(11), ClipId(12)], "Кусок", n.ids());
+    m.apply_batch(cmds).expect("свернуть под ссылочным слоем обязано быть можно");
+    let seq_id = rep.seq.expect("лента");
+
+    assert_eq!(rep.kept_ref_layers, 1, "оставленный снаружи слой обязан быть НАЗВАН");
+    assert_eq!(m.project().morphers.len(), 1, "ссылочный слой обязан остаться в корне");
+    assert!(
+        m.project().sequence(seq_id).is_some_and(|s| s.morphers.is_empty()),
+        "ссылочный слой уехал внутрь — документ перестал быть законным"
+    );
+    m.project().validate().expect("документ после сворачивания обязан быть законным");
+}
+
+// ---- Р.55, С5: раскрытие ленты на месте --------------------------------------
+
+/// Сцена для раскрытия: корень с двумя событиями и переходом, лента с
+/// двумя событиями, своим переходом, морфер-слоем и камерой, и СВОИМ
+/// порядком строк — то есть всё, что раскрытие обязано вернуть на место.
+fn expandable() -> Project {
+    let mut p = base();
+    p.clips.push(clip(1, 1, Tick::ZERO, LEN));
+    p.clips.push(clip(2, 1, Tick(3 * LEN.0), LEN));
+    p.video_lanes = 1;
+    p.audio_lanes = 1;
+
+    let mut s = Sequence::new(MediaId(100), "Кусок");
+    s.clips = vec![clip(11, 1, Tick::ZERO, LEN), clip(12, 1, LEN, LEN)];
+    s.clips[1].lane = 1;
+    s.video_lanes = 2;
+    s.audio_lanes = 1;
+    s.morph_lanes = 1;
+    s.camera_lanes = 1;
+    s.morphers.push(MorpherEvent {
+        id: MorphId(5),
+        lane: 0,
+        start: Tick(LEN.0 / 2),
+        duration: LEN,
+        targets: MorphTargets::Below,
+        patch: MorphPatch {
+            video_fx: vec![FxInstance::Mirror { horizontal: true, vertical: false }],
+            ..Default::default()
+        },
+        timed: true,
+        strength: 1.0,
+        fade_in: Tick::ZERO,
+        fade_out: Tick::ZERO,
+        enabled: true,
+    });
+    s.cameras.push(CameraEvent {
+        id: CameraId(7),
+        lane: 0,
+        start: Tick::ZERO,
+        duration: Tick(2 * LEN.0),
+        name: "Проезд".into(),
+        cam: Default::default(),
+        keyframes: Vec::new(),
+        auto: Vec::new(),
+        ease: true,
+    });
+    // СВОЙ порядок строк: морф-строка сверху, иначе слой не накрывает ничего
+    s.lane_order = vec![
+        (LaneKind::Morph, 0),
+        (LaneKind::Video, 0),
+        (LaneKind::Video, 1),
+        (LaneKind::Audio, 0),
+        (LaneKind::Camera, 0),
+    ];
+    p.sequences.push(s);
+
+    let mut inst = clip(20, 100, Tick(LEN.0), Tick(2 * LEN.0));
+    inst.source_in = Tick::ZERO;
+    p.clips.push(inst);
+    p.validate().expect("сцена для раскрытия законна");
+    p
+}
+
+/// Тест 566 (Р.55, С5): РАСКРЫТЬ И СОБРАТЬ — тождество.
+///
+/// Фундамент всей стадии. Раскрытие на месте делается тем же приёмом, что
+/// контекст правки в Р.50 (п.392): перекладыванием СОДЕРЖИМОГО, а не
+/// параметром у шестидесяти рук, — только со смещением по времени и по
+/// номеру дорожки. Весь интерфейс продолжает работать с корнем и о полосе
+/// не знает; цена этого — вот это тождество, и оно обязано быть ПОБАЙТОВЫМ.
+///
+/// Красный здесь означает, что дизайн неверен, а не что тест придирчив.
+#[test]
+fn t566_expanding_and_collapsing_a_band_is_identity() {
+    let before = expandable();
+    let b = Band::of(&before, ClipId(20)).expect("полоса для экземпляра");
+    assert_eq!(b.dt, Tick(LEN.0), "сдвиг полосы посчитан не так");
+
+    let mut p = before.clone();
+    p.merge_reel(&b);
+    // события ленты ФИЗИЧЕСКИ в корне, со смещением
+    assert!(p.sequence(MediaId(100)).is_some_and(|s| s.clips.is_empty()), "тело ленты не опустело");
+    let inner = p.clips.iter().find(|c| c.id == ClipId(11)).expect("события ленты нет в корне");
+    assert_eq!(inner.start, Tick(LEN.0), "время полосы не смещено в ось корня");
+    assert_eq!(inner.lane, 1, "дорожка полосы не ушла в хвост пространства");
+    assert!(p.clips.iter().any(|c| c.id == ClipId(20)), "экземпляр обязан остаться в корне");
+    // и строки полосы стоят НЕРАЗРЫВНЫМ блоком под строкой экземпляра
+    let rows = p.rows();
+    let at = rows.iter().position(|&k| k == (LaneKind::Video, 0)).expect("строка экземпляра");
+    // блок стоит В СВОЁМ ПОРЯДКЕ (морф-строка сверху — так его завёл
+    // человек внутри ленты), только номера сдвинуты в хвост пространства
+    let want: Vec<(LaneKind, u32)> = before
+        .sequence(MediaId(100))
+        .unwrap()
+        .rows()
+        .into_iter()
+        .map(|(k, l)| (k, l + b.base.get(k)))
+        .collect();
+    for (j, r) in want.iter().enumerate() {
+        assert_eq!(rows.get(at + 1 + j), Some(r), "строки полосы не встали блоком: {rows:?}");
+    }
+
+    p.unmerge_reel(&b).expect("сборка обратно обязана пройти");
+    assert_eq!(p, before, "раскрыть и собрать — НЕ тождество, и весь приём неверен");
+}
+
+/// Тест 567 (Р.55, С5): через границу полосы не уедешь.
+///
+/// Это и есть ответ на риск, который п.392 называет словами «пропусти
+/// одну, и правка молча уедет в корень». Адресация правок не нужна: уехать
+/// физически нечем, а попытку ловит сборка — и батч отвергается ЦЕЛИКОМ,
+/// а не «доправляется».
+#[test]
+fn t567_an_event_cannot_change_reels_inside_a_band() {
+    let p0 = expandable();
+    let b = Band::of(&p0, ClipId(20)).expect("полоса");
+
+    // событие ПОЛОСЫ утащили на корневую дорожку
+    let mut p = p0.clone();
+    p.merge_reel(&b);
+    if let Some(c) = p.clips.iter_mut().find(|c| c.id == ClipId(11)) {
+        c.lane = 0;
+    }
+    let mut q = p.clone();
+    assert!(
+        q.unmerge_reel(&b).is_ok(),
+        "уехавшее в корень событие обязано просто остаться в корне — там оно законно"
+    );
+    assert!(
+        q.sequence(MediaId(100)).is_some_and(|s| s.clips.len() == 1),
+        "из ленты обязано уехать ровно одно событие"
+    );
+
+    // а вот ЭКЗЕМПЛЯР внутрь собственной ленты — никогда
+    let mut p = p0.clone();
+    p.merge_reel(&b);
+    if let Some(c) = p.clips.iter_mut().find(|c| c.id == ClipId(20)) {
+        c.lane = 1;
+    }
+    assert!(
+        matches!(p.unmerge_reel(&b), Err(ProjectError::BandEscape(ClipId(20)))),
+        "экземпляр уехал внутрь собственной ленты — она стала бы содержать саму себя"
+    );
+
+    // корневая строка ПОСРЕДИ блока раскрытия — не ошибка: блок ставится
+    // заново при каждой пересборке вида, а относительный порядок и
+    // корневых строк, и строк ленты при делении сохраняется
+    let mut p = p0.clone();
+    p.merge_reel(&b);
+    let mut rows = p.rows();
+    let first_band = rows.iter().position(|&(k, l)| b.owns(k, l)).expect("строка полосы");
+    let root_row = rows.iter().rposition(|&(k, l)| !b.owns(k, l)).expect("корневая строка");
+    let moved = rows.remove(root_row);
+    rows.insert(first_band + 1, moved);
+    p.lane_order = rows;
+    p.unmerge_reel(&b).expect("разрыв блока ронять батч не имеет права");
+    assert_eq!(
+        p.sequence(MediaId(100)).map(|s| s.rows()),
+        p0.sequence(MediaId(100)).map(|s| s.rows()),
+        "порядок строк ЛЕНТЫ поехал от чужой строки посреди блока"
+    );
+}
+
+/// Тест 568 (Р.55, С5): вставка и удаление дорожки НЕ РВУТ полосу.
+///
+/// Единственное место конструкции, где правильность держится на человеке,
+/// а не на построении, — `Band::after_batch`. Ошибка там не падает ни
+/// одним ассертом сама: полоса «съезжает», и сборка начинает отвергать
+/// батчи, а при симметричной ошибке — молча кладёт событие не в ту ленту.
+///
+/// Утверждение одно и оно сильное: после ЛЮБОЙ лейн-команды тождество
+/// t566 обязано остаться верным.
+#[test]
+fn t568_inserting_and_removing_lanes_does_not_break_a_band() {
+    // корневая дорожка НИЖЕ начала полосы — полоса едет вниз целиком
+    for (name, cmd) in [
+        ("видео-дорожка в корне", Command::InsertLane { kind: ClipKind::Video, at: 0 }),
+        ("аудио-дорожка в корне", Command::InsertLane { kind: ClipKind::Audio, at: 0 }),
+        ("морф-строка в корне", Command::InsertMorphLane { at: 0 }),
+        ("камерная строка в корне", Command::InsertCameraLane { at: 0 }),
+    ] {
+        let mut m = TimelineModel::new(expandable());
+        assert!(m.expand_band(ClipId(20)), "полоса не раскрылась");
+        let before_doc = m.document();
+        m.apply(cmd).unwrap_or_else(|e| panic!("{name}: команда не прошла: {e:?}"));
+        // СЛЕДСТВИЕ: содержимое ленты на месте и не перемешалось с корнем
+        let doc = m.document();
+        let s0 = before_doc.sequence(MediaId(100)).unwrap();
+        let s1 = doc.sequence(MediaId(100)).unwrap();
+        assert_eq!(
+            s1.clips.iter().map(|c| c.id).collect::<Vec<_>>(),
+            s0.clips.iter().map(|c| c.id).collect::<Vec<_>>(),
+            "{name}: содержимое ленты поехало"
+        );
+        assert_eq!(s1.clips[0].start, s0.clips[0].start, "{name}: время в ленте поехало");
+        assert_eq!(s1.clips[0].lane, s0.clips[0].lane, "{name}: дорожка в ленте поехала");
+        assert!(doc.clips.iter().any(|c| c.id == ClipId(20)), "{name}: экземпляр пропал из корня");
+        // и свернуть обратно всё ещё можно
+        m.collapse_all_bands();
+        assert_eq!(
+            m.project().sequence(MediaId(100)).map(|s| s.clips.len()),
+            Some(2),
+            "{name}: после свёртки лента не собралась"
+        );
+    }
+}
+
+/// Тест 569 (Р.55, С5): правка В ПОЛОСЕ доезжает до ЛЕНТЫ, а правка в
+/// корне — до корня.
+///
+/// Это ответ на «как адресуются правки»: никак. Событие полосы физически
+/// лежит в корневом векторе рабочего вида, команда приходит на него
+/// обычным путём, а сборка вычитает смещение. Проверяется СЛЕДСТВИЕ — что
+/// лежит в `document()`, а не какие функции вызвались.
+#[test]
+fn t569_an_edit_inside_a_band_lands_in_the_reel() {
+    let mut m = TimelineModel::new(expandable());
+    assert!(m.expand_band(ClipId(20)));
+    // событие ПОЛОСЫ видно в рабочем виде — со смещением
+    let inner = m.project().clips.iter().find(|c| c.id == ClipId(11)).expect("события полосы нет");
+    let was = inner.start;
+    assert_eq!(was, Tick(LEN.0), "полоса не смещена в ось корня");
+
+    m.apply(Command::MoveClip {
+        id: ClipId(11),
+        new_start: was + Tick(1_000),
+        new_lane: inner.lane,
+    })
+    .expect("правка в полосе обязана проходить");
+
+    // СЛЕДСТВИЕ: сдвинулось событие ЛЕНТЫ, в её собственной оси
+    let doc = m.document();
+    let s = doc.sequence(MediaId(100)).expect("лента");
+    let moved = s.clips.iter().find(|c| c.id == ClipId(11)).expect("события нет в ленте");
+    assert_eq!(moved.start, Tick(1_000), "правка не доехала в ленту, в её ось");
+    assert!(
+        !doc.clips.iter().any(|c| c.id == ClipId(11)),
+        "событие ленты осталось в КОРНЕ документа — на диск уехал бы другой монтаж"
+    );
+
+    // а правка КОРНЕВОГО события — в корень
+    m.apply(Command::MoveClip { id: ClipId(1), new_start: Tick(5_000), new_lane: 0 })
+        .expect("правка в корне обязана проходить");
+    let doc = m.document();
+    assert_eq!(
+        doc.clips.iter().find(|c| c.id == ClipId(1)).map(|c| c.start),
+        Some(Tick(5_000)),
+        "правка корневого события не доехала до корня"
+    );
+
+    // Ctrl+Z снимает ЕЁ одним шагом и оставляет полосу раскрытой
+    m.undo().expect("undo");
+    assert_eq!(m.bands().len(), 1, "undo свернул раскрытие — правка пропала бы из виду");
+}
+
+// ---- Р.55, С6: вставка ЧУЖОГО проекта композицией ---------------------------
+
+/// Чужой проект: два события, переход между ними, своя вложенная лента и
+/// СВОИ области с метками — то, что приехать НЕ должно.
+fn foreign() -> Project {
+    let mut p = Project::new(settings());
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:sine:440".into() });
+    // ОДИН из путей совпадает с тем, что уже стоит у нас: он обязан быть
+    // УЗНАН, а не приехать вторым экземпляром
+    p.media.push(MediaRef { id: MediaId(2), path: "foreign:only".into() });
+    let mut inner = Sequence::new(MediaId(50), "Вложенная чужая");
+    inner.clips = vec![clip(90, 1, Tick::ZERO, LEN)];
+    p.sequences.push(inner);
+    p.clips.push(clip(1, 1, Tick::ZERO, LEN));
+    p.clips.push(clip(2, 2, LEN, LEN));
+    p.clips.push(clip(3, 50, Tick(2 * LEN.0), LEN));
+    p.areas.push(MarkedArea {
+        name: "Чужая область".into(),
+        start: Tick::ZERO,
+        duration: LEN,
+        lanes: Vec::new(),
+        color: Default::default(),
+    });
+    p.markers.push(Marker {
+        t: Tick(LEN.0),
+        duration: Tick::ZERO,
+        name: "чужая метка".into(),
+        color: Default::default(),
+    });
+    p.validate().expect("чужой проект законен");
+    p
+}
+
+/// Тест 574 (Р.55, С6): чужой проект вставляется КОМПОЗИЦИЕЙ.
+///
+/// **Претензия владельца дословно:** «я переношу файл проекта на таймлайн и
+/// открывается новый таймлайн, а я хочу чтобы оно дало мне выбор — открыть
+/// как проект или вставить как композицию».
+///
+/// Проверяется СЛЕДСТВИЕ: документ после вставки законен, адреса не
+/// столкнулись, вложенные ленты чужого проекта приехали вместе с ним, а
+/// медиа, уже стоящее у нас, УЗНАНО и не задвоилось.
+#[test]
+fn t574_a_foreign_project_is_inserted_as_a_composition() {
+    let mut dst = base();
+    dst.clips.push(clip(1, 1, Tick::ZERO, LEN));
+    dst.validate().expect("свой проект законен");
+    let mine_media = dst.media.len();
+
+    let mut m = TimelineModel::new(dst);
+    let doc = m.document();
+    let mut n = ops::NestCounters::of(&doc);
+    let (cmds, rep) =
+        ops::import_as_sequences(m.project(), &foreign(), "Чужой", Tick(5 * LEN.0), 0, n.ids());
+    assert!(!cmds.is_empty(), "вставка не дала команд");
+    m.apply_batch(cmds).expect("вставка чужого проекта обязана быть законной");
+    m.document().validate().expect("документ после вставки обязан быть законным");
+
+    let seq = rep.seq.expect("лента-корень чужого проекта");
+    assert_eq!(rep.inner_seqs, 1, "вложенная лента чужого проекта не приехала: {rep:?}");
+    // МЕДИА: совпавший путь узнан, чужой заведён
+    assert_eq!(rep.media_reused, 1, "уже стоящее медиа не узнано и приедет вторым: {rep:?}");
+    assert_eq!(rep.media_added, 1, "чужое медиа не заведено: {rep:?}");
+    assert_eq!(
+        m.document().media.len(),
+        mine_media + 1,
+        "медиа задвоилось: у одного файла был бы свой воркер, своя строка кэша и свои тумбы"
+    );
+
+    // ЭКЗЕМПЛЯР встал туда, куда бросили
+    let p = m.document();
+    let inst = p.clips.iter().find(|c| c.media == seq).expect("экземпляра нет");
+    assert_eq!(inst.start, Tick(5 * LEN.0), "экземпляр встал не в точку дропа");
+    assert_eq!(inst.source_in, Tick::ZERO);
+    // содержимое на месте
+    let s = p.sequence(seq).expect("лента");
+    assert_eq!(s.clips.len(), 3, "содержимое чужого корня приехало не целиком");
+
+    // ОБЛАСТИ И МЕТКИ чужого проекта НЕ приехали: это навигация по ЕГО
+    // документу, и подменять ими свои нельзя
+    assert!(p.areas.is_empty(), "чужая область подменила бы навигацию по своему проекту");
+    assert!(p.markers.is_empty(), "чужая метка подменила бы навигацию по своему проекту");
+    assert_eq!(rep.dropped_extras, 2, "оставленное снаружи обязано быть НАЗВАНО: {rep:?}");
+}
+
+/// Тест 575 (Р.55, С6): адреса чужого проекта не сталкиваются со своими.
+///
+/// `ClipId` уникален по ВСЕМУ документу (t425). Приедь чужой проект со
+/// своими номерами — карты `Retained` в kt-otio молча обменяли бы материал,
+/// стартовый таймкод и чужие эффекты между лентами (тот же класс, что
+/// п.379).
+#[test]
+fn t575_imported_addresses_never_collide() {
+    let mut dst = base();
+    // НАРОЧНО те же номера, что у чужого проекта
+    dst.clips.push(clip(1, 1, Tick::ZERO, LEN));
+    dst.clips.push(clip(2, 1, LEN, LEN));
+    dst.clips[1].lane = 1;
+    dst.video_lanes = 2;
+    dst.validate().unwrap();
+
+    let mut m = TimelineModel::new(dst);
+    let doc = m.document();
+    let mut n = ops::NestCounters::of(&doc);
+    let (cmds, _) =
+        ops::import_as_sequences(m.project(), &foreign(), "Чужой", Tick(9 * LEN.0), 0, n.ids());
+    m.apply_batch(cmds).expect("вставка обязана быть законной");
+
+    // каждый адрес встречается РОВНО ОДИН раз по всему документу
+    let p = m.document();
+    let mut ids: Vec<u64> = p
+        .clips
+        .iter()
+        .chain(p.sequences.iter().flat_map(|s| s.clips.iter()))
+        .map(|c| c.id.0)
+        .collect();
+    let total = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), total, "адреса событий столкнулись после вставки чужого проекта");
+    let mut mids: Vec<u64> =
+        p.media.iter().map(|m| m.id.0).chain(p.sequences.iter().map(|s| s.id.0)).collect();
+    let mt = mids.len();
+    mids.sort_unstable();
+    mids.dedup();
+    assert_eq!(mids.len(), mt, "адреса медиа и лент столкнулись после вставки");
+    p.validate().expect("документ после вставки законен");
 }

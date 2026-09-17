@@ -91,6 +91,17 @@ pub struct BinDragState {
     pub mates: Vec<(MediaId, egui::Pos2)>,
 }
 
+/// Глаголы ленты в бине (Р.55, С6). Отдельный тип, а не строка: меню
+/// строится в замыкании, а действовать надо СНАРУЖИ него — иначе `self`
+/// занят заимствованием.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReelVerb {
+    Expand,
+    Open,
+    Rename,
+    Remove,
+}
+
 impl KtApp {
     /// Индекс группы, в которой состоит карточка.
     pub fn bin_group_of(&self, id: MediaId) -> Option<usize> {
@@ -175,8 +186,29 @@ impl KtApp {
             self.thumbs.invalidate_media(*id);
         }
         self.bin_last_offline = offline.clone();
-        let media: Vec<(MediaId, String)> =
-            self.model.project().media.iter().map(|m| (m.id, m.path.clone())).collect();
+        // Карточки бина — файлы, генераторы И ЛЕНТЫ (Р.55, С6).
+        //
+        // До этого раунда лент в бине не было вовсе: поставить композицию
+        // во второе место можно было только копипастом уже стоящего
+        // экземпляра, завести пустую — ничем, удалить конкретную — тоже
+        // («убрать неиспользованные» убирает все сразу). Претензия
+        // владельца дословно: «наверное еще куча вещей недоступна из ui».
+        //
+        // Различает их НАБОР АДРЕСОВ, а не префикс строки: псевдо-пути
+        // разбирает только `kt_media::factory` (сноска п.211), а у ленты
+        // `MediaRef`-а нет НАМЕРЕННО (п.378) — заведи мы ей путь, watchdog
+        // покрасил бы её офлайном, а служба индекса полезла бы строить
+        // пики ffmpeg'ом.
+        let reels: std::collections::HashSet<MediaId> =
+            self.model.document().sequences.iter().map(|s| s.id).collect();
+        let media: Vec<(MediaId, String)> = self
+            .model
+            .project()
+            .media
+            .iter()
+            .map(|m| (m.id, m.path.clone()))
+            .chain(self.model.document().sequences.iter().map(|s| (s.id, s.name.clone())))
+            .collect();
         // ширина карточки считается ОДИН раз от ширины панели: внутри
         // wrapped-строки available_width убывает и карточки выходили
         // рваными (п.5 р.8)
@@ -263,6 +295,7 @@ impl KtApp {
                     card_w,
                     card_h,
                     &offline,
+                    &reels,
                     &mut pending,
                     &mut to_place,
                     &mut to_measure,
@@ -410,6 +443,7 @@ impl KtApp {
                         card_w,
                         card_h,
                         &offline,
+                        &reels,
                         &mut pending,
                         &mut to_place,
                         &mut to_measure,
@@ -489,6 +523,7 @@ impl KtApp {
         let mut free: Option<bool> = None;
         let mut picked = false;
         let mut new_gen: Option<kt_model::GeneratorKind> = None;
+        let mut new_reel = false;
         resp.context_menu(|ui| {
             picked = true;
             if ui.button(tr(k::bin::HINT_FREE)).clicked() {
@@ -500,55 +535,29 @@ impl KtApp {
                 ui.close();
             }
             ui.separator();
-            // генераторы (Р.52): единственный вход для медиа БЕЗ файла —
-            // раньше в бин попадало только перетаскивание файлов на окно.
-            // Прямоугольники пунктов — наружу для живых сценариев (Р.49)
-            let mr = ui.menu_button(tr(k::bin::menu::NEW_GENERATOR), |ui| {
-                // Р.53: видов девятнадцать, плоский список из них —
-                // свалка. Группа — ФУНКЦИЯ вида (`GenGroup::of`), второго
-                // списка нет: новый вид попадает в меню сам.
-                use crate::generator_editor::GenGroup;
-                for grp in GenGroup::ALL {
-                    let kinds: Vec<_> = kt_model::GeneratorKind::all()
-                        .into_iter()
-                        .filter(|k| GenGroup::of(k) == grp)
-                        .collect();
-                    if kinds.is_empty() {
-                        continue;
-                    }
-                    let gr = ui.menu_button(grp.name(), |ui| {
-                        for kd in kinds {
-                            let r = ui.button(crate::generator_editor::kind_name(&kd));
-                            let probe = match &kd {
-                                // у таблиц тег один на пять видов —
-                                // различаем разновидностью (живые сценарии)
-                                kt_model::GeneratorKind::TestPattern { table } => {
-                                    format!("gen.new.table.{}", table.token())
-                                }
-                                other => format!("gen.new.{}", other.tag()),
-                            };
-                            crate::widgets::field_probe::note(&probe, r.rect);
-                            if r.clicked() {
-                                new_gen = Some(kd);
-                                ui.close();
-                            }
-                        }
-                    });
-                    // прямоугольник ГРУППЫ — наружу для живых сценариев:
-                    // подменю в дереве доступности не ищется
-                    crate::widgets::field_probe::note(
-                        &format!("gen.new.group.{}", grp.probe()),
-                        gr.response.rect,
-                    );
-                }
-            });
-            crate::widgets::field_probe::note("gen.new", mr.response.rect);
+            // генераторы (Р.52) — ТО ЖЕ ТЕЛО, что в главном меню
+            // (правило 17): второго списка видов не бывает
+            if let Some(kd) = crate::generator_editor::generator_menu(ui) {
+                new_gen = Some(kd);
+            }
+            // ПУСТАЯ ЛЕНТА (Р.55, С6). До этого раунда `AddSequence`
+            // конструировалась только внутри сворачивания и отвязывания:
+            // завести композицию с нуля было нечем.
+            let r = ui.button(tr(k::bin::menu::NEW_REEL));
+            crate::widgets::field_probe::note("bin.new_reel", r.rect);
+            if r.clicked() {
+                new_reel = true;
+                ui.close();
+            }
         });
         if picked {
             self.set_panel_target(crate::ctx_menu::PanelTarget::BinEmpty);
         }
         if let Some(kd) = new_gen {
             self.create_generator(kd);
+        }
+        if new_reel {
+            self.create_empty_reel();
         }
         if let Some(v) = free {
             self.bin_free = v;
@@ -713,20 +722,29 @@ impl KtApp {
         card_w: f32,
         card_h: f32,
         offline: &std::collections::HashSet<MediaId>,
+        // Адреса ЛЕНТ: у них нет ни файла, ни тумб, ни громкости, и
+        // глаголы у них свои (Р.55, С6).
+        reels: &std::collections::HashSet<MediaId>,
         pending: &mut bool,
         to_place: &mut Option<MediaId>,
         to_measure: &mut Option<MediaId>,
         to_gen: &mut Option<MediaId>,
         to_remove: &mut Option<MediaId>,
     ) -> egui::Response {
-        let gen_kind = kt_model::parse_gen_path(path);
-        // подпись генератора — имя вида, не сырой gen:-путь (правило 7)
-        let name = match &gen_kind {
-            Some(kd) => crate::generator_editor::kind_name(kd).to_string(),
-            None => std::path::Path::new(path)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.to_string()),
+        let is_reel = reels.contains(&id);
+        let gen_kind = if is_reel { None } else { kt_model::parse_gen_path(path) };
+        // подпись генератора — имя вида, не сырой gen:-путь (правило 7);
+        // у ленты подпись — её собственное имя, и путь ей не положен
+        let name = if is_reel {
+            path.to_string()
+        } else {
+            match &gen_kind {
+                Some(kd) => crate::generator_editor::kind_name(kd).to_string(),
+                None => std::path::Path::new(path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.to_string()),
+            }
         };
         let is_synth = path.starts_with("synth:");
         let is_off = offline.contains(&id);
@@ -749,9 +767,55 @@ impl KtApp {
         p.rect_filled(thumb_rect, 2.0, egui::Color32::from_rgb(10, 11, 13));
         // аудио-медиа: вместо чёрного квадрата — мини-волноформа из уже
         // построенной peak-пирамиды (п.5 р.9)
-        let kinds = self.thumbs.kinds(id);
+        if is_reel {
+            // МИНИ-КАРТА вместо тумбы: филмстрипа у ленты нет и быть не
+            // может — своего файла у неё нет, а тумбы содержимого были бы
+            // декодом на скролле (инвариант 8, п.395). Тот же приём, что
+            // на самом событии-вложении.
+            crate::widgets::field_probe::note("bin.reel", thumb_rect);
+            if let Some(seq) = self.model.document().sequence(id) {
+                let end = seq.end().0.max(1);
+                let lanes = seq.video_lanes.max(1) + seq.audio_lanes.max(1);
+                let bar_h = (thumb_rect.height() - 4.0) / lanes as f32;
+                let mut mesh = egui::Mesh::default();
+                for ch in &seq.clips {
+                    let row = match ch.kind {
+                        kt_model::ClipKind::Video => ch.lane,
+                        kt_model::ClipKind::Audio => seq.video_lanes.max(1) + ch.lane,
+                    };
+                    let y = thumb_rect.top() + 2.0 + row as f32 * bar_h;
+                    let x0 =
+                        thumb_rect.left() + thumb_rect.width() * ch.start.0 as f32 / end as f32;
+                    let x1 = thumb_rect.left()
+                        + thumb_rect.width() * (ch.start + ch.duration).0 as f32 / end as f32;
+                    mesh.add_colored_rect(
+                        egui::Rect::from_min_max(
+                            egui::pos2(x0, y),
+                            egui::pos2(x1.max(x0 + 1.0), y + (bar_h - 1.0).max(1.0)),
+                        ),
+                        crate::theme::BAND_EDGE.gamma_multiply(0.7),
+                    );
+                }
+                p.add(egui::Shape::mesh(mesh));
+                // БЕЙДЖ ×N — только когда мест НЕСКОЛЬКО (то же правило,
+                // что на событии, t458): «×1» было бы шумом
+                let uses = self.model.document().sequence_uses(id);
+                if uses > 1 {
+                    p.text(
+                        thumb_rect.right_top() + egui::vec2(-4.0, 2.0),
+                        egui::Align2::RIGHT_TOP,
+                        format!("×{uses}"),
+                        egui::FontId::proportional(11.0),
+                        crate::theme::BAND_EDGE,
+                    );
+                }
+            }
+        }
+        let kinds = if is_reel { None } else { self.thumbs.kinds(id) };
         let audio_only = kinds == Some((false, true));
-        if audio_only {
+        if is_reel {
+            // всё уже нарисовано выше
+        } else if audio_only {
             self.draw_bin_waveform(&p, thumb_rect, id);
         } else if !is_synth && !is_off {
             let dur = self.thumbs.duration_or_probe(id);
@@ -843,10 +907,46 @@ impl KtApp {
         let mut group_now = false;
         let mut ungroup: Option<usize> = None;
         let mut lock_toggle: Option<usize> = None;
+        let mut reel_verb: Option<ReelVerb> = None;
         resp.clone().context_menu(|ui| {
-            if ui.button(tr(k::bin::menu::PLACE)).clicked() {
+            let r = ui.button(tr(k::bin::menu::PLACE));
+            crate::widgets::field_probe::note("bin.place", r.rect);
+            if r.clicked() {
                 *to_place = Some(id);
                 ui.close();
+            }
+            // ГЛАГОЛЫ ЛЕНТЫ (Р.55, С6). Раньше их не было ни одного: лента
+            // в бине не показывалась вовсе, и «создать можно, управлять
+            // нельзя» относилось к ней целиком.
+            if is_reel {
+                for (key, verb) in [
+                    (k::tl::menu::NEST_EXPAND_HERE, ReelVerb::Expand),
+                    (k::tl::menu::NEST_ENTER, ReelVerb::Open),
+                    (k::tl::menu::NEST_RENAME, ReelVerb::Rename),
+                ] {
+                    let r = ui.button(tr(key));
+                    crate::widgets::field_probe::note(
+                        match verb {
+                            ReelVerb::Expand => "bin.reel.expand",
+                            ReelVerb::Open => "bin.reel.open",
+                            ReelVerb::Rename => "bin.reel.rename",
+                            ReelVerb::Remove => "bin.reel.remove",
+                        },
+                        r.rect,
+                    );
+                    if r.clicked() {
+                        reel_verb = Some(verb);
+                        ui.close();
+                    }
+                }
+                ui.separator();
+                let r = ui.button(tr(k::bin::menu::REMOVE));
+                crate::widgets::field_probe::note("bin.reel.remove", r.rect);
+                if r.clicked() {
+                    reel_verb = Some(ReelVerb::Remove);
+                    ui.close();
+                }
+                return;
             }
             if gen_kind.is_some() {
                 // у генератора вместо замера громкости (мерить нечего:
@@ -890,6 +990,9 @@ impl KtApp {
                 ui.close();
             }
         });
+        if let Some(v) = reel_verb {
+            self.reel_verb_from_bin(id, v);
+        }
         if group_now {
             if self.bin_sel.is_empty() {
                 self.bin_sel.insert(id);
@@ -956,6 +1059,45 @@ impl KtApp {
     /// Мини-волноформа аудио-медиа в карточке (п.5 р.9): один меш из
     /// уже готовой peak-пирамиды — обзор всего файла. Если весь файл ниже
     /// порога тишины, рисуем плоскую линию и значок.
+    /// Исполнить глагол ленты, выбранный в бине (Р.55, С6).
+    ///
+    /// Каждый глагол — ТО ЖЕ ТЕЛО, что у пункта меню события (правило 17):
+    /// второго способа раскрыть, войти, переименовать или убрать ленту
+    /// заводить нельзя, иначе они разойдутся.
+    fn reel_verb_from_bin(&mut self, seq: MediaId, verb: ReelVerb) {
+        // «раскрыть» и «войти» действуют НАД ЭКЗЕМПЛЯРОМ: раскрытие — это
+        // вид вокруг конкретного места, а не свойство ленты. Нет ни одного
+        // места — сказать об этом, а не молчать.
+        let inst = self.model.project().clips.iter().find(|c| c.media == seq).map(|c| c.id);
+        match verb {
+            ReelVerb::Expand | ReelVerb::Open => {
+                let Some(inst) = inst else {
+                    self.warn(tr(k::msg::NEST_NOT_PLACED));
+                    return;
+                };
+                if verb == ReelVerb::Expand {
+                    self.expand_in_place(inst);
+                } else {
+                    self.enter_nest(inst);
+                }
+            }
+            ReelVerb::Rename => {
+                let name =
+                    self.model.document().sequence(seq).map(|s| s.name.clone()).unwrap_or_default();
+                self.seq_name = Some(crate::app::SeqNameDialog { seq, name, focus: true });
+            }
+            ReelVerb::Remove => {
+                // АДРЕСНОЕ удаление: раньше была только кнопка «убрать
+                // неиспользованные», то есть все сразу. Занятая лента
+                // отказывается уходить сама (t429) — отказ с причиной, а
+                // не молчание.
+                if self.apply(Command::RemoveSequence { id: seq }) {
+                    self.note(tr(k::msg::NEST_REMOVED));
+                }
+            }
+        }
+    }
+
     fn draw_bin_waveform(&self, p: &egui::Painter, rect: egui::Rect, id: MediaId) {
         let peaks = self.peaks.lock().unwrap();
         let Some(levels) = peaks.get(&id) else {

@@ -902,6 +902,323 @@ pub fn forbidden_zones(reel: &dyn Reel, c: &ClipEvent) -> Vec<TickRange> {
     out
 }
 
+// ---- РАСКРЫТИЕ ЛЕНТЫ НА МЕСТЕ (Р.55, С5) -----------------------------------
+
+/// Сколько дорожек каждого вида. Служит и «где начинается полоса», и
+/// «сколько её».
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LaneBases {
+    pub video: u32,
+    pub audio: u32,
+    pub morph: u32,
+    pub camera: u32,
+}
+
+impl LaneBases {
+    pub fn get(&self, k: LaneKind) -> u32 {
+        match k {
+            LaneKind::Video => self.video,
+            LaneKind::Audio => self.audio,
+            LaneKind::Morph => self.morph,
+            LaneKind::Camera => self.camera,
+        }
+    }
+
+    pub fn get_mut(&mut self, k: LaneKind) -> &mut u32 {
+        match k {
+            LaneKind::Video => &mut self.video,
+            LaneKind::Audio => &mut self.audio,
+            LaneKind::Morph => &mut self.morph,
+            LaneKind::Camera => &mut self.camera,
+        }
+    }
+
+    fn of_root(p: &Project) -> LaneBases {
+        LaneBases {
+            video: p.video_lanes,
+            audio: p.audio_lanes,
+            morph: p.morph_lanes,
+            camera: p.camera_lanes,
+        }
+    }
+
+    fn of_seq(s: &Sequence) -> LaneBases {
+        LaneBases {
+            video: s.video_lanes,
+            audio: s.audio_lanes,
+            morph: s.morph_lanes,
+            camera: s.camera_lanes,
+        }
+    }
+}
+
+/// ПОЛОСА РАСКРЫТИЯ: лента, разложенная на дорожки корня ПРЯМО ПОД своим
+/// экземпляром (Р.55, С5).
+///
+/// Приём тот же, что у `swap_reel` (п.392), и по той же причине: контекст
+/// правки делается ПЕРЕКЛАДЫВАНИЕМ СОДЕРЖИМОГО, а не параметром у
+/// шестидесяти рук. Только здесь перекладывание идёт СО СМЕЩЕНИЕМ — по
+/// времени и по номеру дорожки:
+///
+/// ```text
+/// t_корня = t_ленты + dt,   dt = inst.start − inst.source_in
+/// дорожка = своя + base[вид], base[вид] = сколько дорожек этого вида у корня
+/// ```
+///
+/// Что из этого следует и ради чего всё затевалось: **отрисовка, хит-тест,
+/// снап, магнит, рамка, выделение, `rows()`, `MovePlan`, `forbidden_zones`
+/// и `reconcile_transitions` не меняются ни на строку**. События полосы
+/// физически лежат в корневых векторах, поэтому `TrimStart{id}` приходит
+/// на них обычным путём, и «пропустил одно место — правка молча уехала в
+/// корень» стать не может: уехать физически нечем, а нарушение ловит
+/// `unmerge_reel` и отвергает весь батч.
+///
+/// Полоса занимает ХВОСТ числового пространства дорожек, а видимое место
+/// под экземпляром задаётся только через `lane_order`. Тогда корневые
+/// номера все `< base`, номера полосы все `>= base`, и вставка/удаление
+/// дорожки в корне не трогает полосу — по построению, а не по проверке.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Band {
+    /// Через какой экземпляр раскрыто.
+    pub inst: ClipId,
+    /// Какая лента разложена.
+    pub seq: MediaId,
+    /// Сдвиг по времени: `t_корня = t_ленты + dt`.
+    pub dt: Tick,
+    /// С какого номера начинаются дорожки полосы.
+    pub base: LaneBases,
+    /// Сколько их.
+    pub len: LaneBases,
+}
+
+impl Band {
+    /// Полоса для экземпляра `inst`. `None` — это не вложение.
+    ///
+    /// `dt` инвариантен под тримом: `TrimStart`/`TrimEnd` двигают `start` и
+    /// `source_in` на ОДНУ дельту (`clip_slice`), поэтому при перетаскивании
+    /// края экземпляра содержимое полосы не едет по экрану — окно
+    /// открывается над неподвижным материалом. Ровно этот жест владелец и
+    /// просил: «тянуть край можно прямо здесь».
+    pub fn of(p: &Project, inst: ClipId) -> Option<Band> {
+        let c = p.clips.iter().find(|c| c.id == inst)?;
+        let s = p.sequence(c.media)?;
+        Some(Band {
+            inst,
+            seq: c.media,
+            dt: c.start - c.source_in,
+            base: LaneBases::of_root(p),
+            len: LaneBases::of_seq(s),
+        })
+    }
+
+    /// Окно экземпляра в координатах КОРНЯ: что из полосы видно, а что —
+    /// хвост за обрезкой.
+    pub fn window(&self, p: &Project) -> Option<TickRange> {
+        let c = p.clips.iter().find(|c| c.id == self.inst)?;
+        Some(TickRange::new(c.start, c.start + c.duration))
+    }
+
+    /// Принадлежит ли дорожка полосе.
+    pub fn owns(&self, kind: LaneKind, lane: u32) -> bool {
+        let b = self.base.get(kind);
+        lane >= b && lane < b + self.len.get(kind)
+    }
+
+    /// Строки полосы в номерах КОРНЯ, сверху вниз по видам.
+    pub fn rows(&self) -> Vec<(LaneKind, u32)> {
+        let mut out = Vec::new();
+        for k in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
+            let b = self.base.get(k);
+            for i in 0..self.len.get(k) {
+                out.push((k, b + i));
+            }
+        }
+        out
+    }
+}
+
+impl Project {
+    /// Разложить ленту экземпляра на дорожки корня СО СМЕЩЕНИЕМ (Р.55, С5).
+    ///
+    /// Тело ленты ОПУСТОШАЕТСЯ: события переехали, а не скопировались —
+    /// поэтому `max_clip_id` и родня продолжают видеть каждый адрес ровно
+    /// один раз (п.394), и `unmerge_reel` возвращает всё на место.
+    pub fn merge_reel(&mut self, b: &Band) {
+        let Some(i) = self.sequences.iter().position(|s| s.id == b.seq) else { return };
+        let (mut clips, mut trans, mut morphs, mut cams, order) = {
+            let s = &mut self.sequences[i];
+            (
+                std::mem::take(&mut s.clips),
+                std::mem::take(&mut s.transitions),
+                std::mem::take(&mut s.morphers),
+                std::mem::take(&mut s.cameras),
+                s.rows(),
+            )
+        };
+        for c in &mut clips {
+            c.start = c.start + b.dt;
+            c.lane += b.base.get(lane_key(c).0);
+        }
+        for m in &mut morphs {
+            m.start = m.start + b.dt;
+            m.lane += b.base.morph;
+        }
+        for c in &mut cams {
+            c.start = c.start + b.dt;
+            c.lane += b.base.camera;
+        }
+        self.clips.append(&mut clips);
+        self.transitions.append(&mut trans);
+        self.morphers.append(&mut morphs);
+        self.cameras.append(&mut cams);
+        self.video_lanes = b.base.video + b.len.video;
+        self.audio_lanes = b.base.audio + b.len.audio;
+        self.morph_lanes = b.base.morph + b.len.morph;
+        self.camera_lanes = b.base.camera + b.len.camera;
+        // СТРОКИ ПОЛОСЫ встают неразрывным блоком СРАЗУ ПОД строкой
+        // экземпляра: видимое место задаётся только порядком, а номера
+        // остаются в хвосте пространства.
+        let mut rows = normalize_lane_order(
+            &self.lane_order,
+            b.base.video,
+            b.base.audio,
+            b.base.morph,
+            b.base.camera,
+        );
+        let at = self
+            .clips
+            .iter()
+            .find(|c| c.id == b.inst)
+            .and_then(|c| rows.iter().position(|&k| k == lane_key(c)))
+            .map(|p| p + 1)
+            .unwrap_or(rows.len());
+        let shifted: Vec<(LaneKind, u32)> =
+            order.into_iter().map(|(k, l)| (k, l + b.base.get(k))).collect();
+        for (j, row) in shifted.into_iter().enumerate() {
+            rows.insert(at + j, row);
+        }
+        self.lane_order = rows;
+    }
+
+    /// Собрать ленту обратно — С ДОКАЗАТЕЛЬСТВОМ, что никто не сменил полосу.
+    ///
+    /// Ошибка здесь — не мелочь, а сторож всей конструкции: она означает,
+    /// что жест вынес событие через границу лент, и батч обязан быть
+    /// отвергнут ЦЕЛИКОМ, а не «доправлен». Именно поэтому адресация
+    /// правок не нужна: уехать физически нечем, а попытку ловит вот это
+    /// место.
+    pub fn unmerge_reel(&mut self, b: &Band) -> Result<(), ProjectError> {
+        if !self.sequences.iter().any(|s| s.id == b.seq) {
+            return Ok(()); // ленты уже нет (undo) — разбирать нечего
+        }
+        let mine_clip = |c: &ClipEvent| b.owns(lane_key(c).0, c.lane);
+        let (mut inner, root): (Vec<ClipEvent>, Vec<ClipEvent>) =
+            std::mem::take(&mut self.clips).into_iter().partition(mine_clip);
+        self.clips = root;
+        // ЭКЗЕМПЛЯР обязан остаться в корне: утащи его внутрь — лента
+        // стала бы содержать саму себя
+        if inner.iter().any(|c| c.id == b.inst) {
+            return Err(ProjectError::BandEscape(b.inst));
+        }
+        let (mut morphs, root_m): (Vec<MorpherEvent>, Vec<MorpherEvent>) =
+            std::mem::take(&mut self.morphers)
+                .into_iter()
+                .partition(|m| b.owns(LaneKind::Morph, m.lane));
+        self.morphers = root_m;
+        let (mut cams, root_c): (Vec<CameraEvent>, Vec<CameraEvent>) =
+            std::mem::take(&mut self.cameras)
+                .into_iter()
+                .partition(|c| b.owns(LaneKind::Camera, c.lane));
+        self.cameras = root_c;
+        // ПЕРЕХОД целиком либо в полосе, либо в корне: конец по одну
+        // сторону границы — это переход через границу лент, которого в
+        // модели не бывает (Р.50, t425)
+        let inner_ids: std::collections::HashSet<ClipId> = inner.iter().map(|c| c.id).collect();
+        let mut trans = Vec::new();
+        let mut root_t = Vec::new();
+        for t in std::mem::take(&mut self.transitions) {
+            let side = |id: Option<ClipId>| id.map(|i| inner_ids.contains(&i));
+            match (side(t.a), side(t.b)) {
+                (Some(true), Some(false)) | (Some(false), Some(true)) => {
+                    return Err(ProjectError::BandEscape(t.a.or(t.b).unwrap_or(b.inst)));
+                }
+                (Some(true), _) | (_, Some(true)) => trans.push(t),
+                _ => root_t.push(t),
+            }
+        }
+        self.transitions = root_t;
+        for c in &mut inner {
+            c.start = c.start - b.dt;
+            c.lane -= b.base.get(lane_key(c).0);
+        }
+        for m in &mut morphs {
+            m.start = m.start - b.dt;
+            m.lane -= b.base.morph;
+        }
+        for c in &mut cams {
+            c.start = c.start - b.dt;
+            c.lane -= b.base.camera;
+        }
+        // ПОРЯДОК СТРОК делится на корневой и полосы; блок полосы обязан
+        // остаться НЕРАЗРЫВНЫМ — иначе человек утащил корневую строку в
+        // середину раскрытия, и «где чья строка» перестало быть вопросом
+        // с ответом
+        let rows = normalize_lane_order(
+            &self.lane_order,
+            b.base.video + b.len.video,
+            b.base.audio + b.len.audio,
+            b.base.morph + b.len.morph,
+            b.base.camera + b.len.camera,
+        );
+        // Порядок ПРОСТО ДЕЛИТСЯ, и разрыв блока ошибкой не считается.
+        // Блок полосы заново ставится под строкой экземпляра при КАЖДОЙ
+        // пересборке вида, поэтому «корневая строка посреди раскрытия» —
+        // состояние, которое не живёт дольше кадра: его порождает сама
+        // вставка дорожки (`lane_order_insert` кладёт новую строку рядом с
+        // той, чей номер занял). Делать из этого отказ значило бы ронять
+        // весь батч на обычном «добавь дорожку», а относительный порядок и
+        // корневых строк, и строк ленты при делении сохраняется.
+        let mut root_rows = Vec::new();
+        let mut band_rows = Vec::new();
+        for &(k, l) in &rows {
+            if b.owns(k, l) {
+                band_rows.push((k, l - b.base.get(k)));
+            } else {
+                root_rows.push((k, l));
+            }
+        }
+        // ПУСТОЙ порядок — каноническая форма «натуральный», и вернуть
+        // надо именно её: иначе «раскрыл и свернул» записывало бы в проект
+        // явный порядок там, где его не было, и тождество ломалось бы на
+        // файле, а не на экране.
+        self.lane_order = canon_order(root_rows, b.base);
+        self.video_lanes = b.base.video.max(1);
+        self.audio_lanes = b.base.audio.max(1);
+        self.morph_lanes = b.base.morph;
+        self.camera_lanes = b.base.camera;
+        let s =
+            self.sequences.iter_mut().find(|s| s.id == b.seq).expect("reel presence checked above");
+        s.clips = inner;
+        s.transitions = trans;
+        s.morphers = morphs;
+        s.cameras = cams;
+        s.video_lanes = b.len.video.max(1);
+        s.audio_lanes = b.len.audio.max(1);
+        s.morph_lanes = b.len.morph;
+        s.camera_lanes = b.len.camera;
+        s.lane_order = canon_order(band_rows, b.len);
+        Ok(())
+    }
+}
+
+/// Привести порядок строк к канонической форме: натуральный записывается
+/// ПУСТЫМ вектором (Р.55, С5). Без этого «раскрыл и свернул» проставляло бы
+/// явный порядок там, где его не было.
+fn canon_order(rows: Vec<(LaneKind, u32)>, n: LaneBases) -> Vec<(LaneKind, u32)> {
+    let natural = normalize_lane_order(&[], n.video.max(1), n.audio.max(1), n.morph, n.camera);
+    if rows == natural { Vec::new() } else { rows }
+}
+
 /// Старший бит адреса медиа отдан вложенным лентам (Р.50).
 ///
 /// Движку нужен ОДИН `SourceId` на ленту — ключ кэша, ключ мемоизации
@@ -1461,6 +1778,15 @@ impl MorphPatch {
         self.replaces_source() || !self.chain_for(c.kind).is_empty()
     }
 
+    /// Тянет ли ВРЕМЯ цепочка патча для клипа этого вида.
+    ///
+    /// Спрашивается там, где решают, РЕЗАТЬ ли цель: варп нельзя «смешать
+    /// обратно» слотом силы — он меняет не значение, а сколько материала
+    /// съедено, и действует на весь клип, чем его ни гаси.
+    pub fn warps_time_for(&self, kind: ClipKind) -> bool {
+        self.chain_for(kind).iter().any(|f| f.warps_time())
+    }
+
     /// Подменяет ли патч источник (с учётом выключателя морф-слота).
     pub fn replaces_source(&self) -> bool {
         !self.src_off
@@ -1654,6 +1980,70 @@ impl MorpherEvent {
         self.strength < 1.0 || self.fade_in.0 > 0 || self.fade_out.0 > 0
     }
 
+    /// Нужен ли слот смешения С УЧЁТОМ ВОРОТ (Р.55, С2).
+    ///
+    /// `gate` — окна, в которых слой ДЕЙСТВУЕТ, в координатах таймлайна,
+    /// уже пересечённые с телом цели. Если ворота покрывают тело целиком,
+    /// ответ прежний (`mixes`) и путь остаётся байт-в-байт: на умолчаниях
+    /// слота нет, и на этом стоят GOLDEN_VIDEO и GOLDEN_AUDIO.
+    pub fn mixes_on(&self, gate: &[TickRange], body: TickRange) -> bool {
+        self.mixes() || !covers_whole(gate, body)
+    }
+
+    /// Кривая силы в домене БЛОКА с ВОРОТАМИ (Р.55, С2).
+    ///
+    /// Ворота — это и есть «по времени» для слоя, который НЕ РЕЖЕТ цель:
+    /// вне окна сила равна нулю, внутри — обычной силе с фейдами. Ступень
+    /// строится двумя ключами на СОСЕДНИХ тиках: на одном тике
+    /// `dedup_by_key` схлопнул бы их в один, и вместо ступени вышла бы
+    /// рампа во всё тело.
+    ///
+    /// Ключ за краем тела не ставится: `clip_material_at` клампит края, и
+    /// два ключа схлопнулись бы в один тик с РАЗНЫМИ значениями. Там, где
+    /// ворота упираются в край тела, гасить нечего — слой действует от
+    /// самого края.
+    pub fn mix_curve_on(&self, gate: &[TickRange], body: TickRange) -> Option<ParamCurve> {
+        if covers_whole(gate, body) {
+            return self.mix_curve();
+        }
+        let d = self.duration.0.max(1);
+        let fi = self.fade_in.0.clamp(0, d);
+        let fo = self.fade_out.0.clamp(0, d - fi);
+        let s = self.strength;
+        // сила в точке ТАЙМЛАЙНА по фейдам блока (без ворот)
+        let fade_at = |t: i64| -> f64 {
+            let x = t - self.start.0;
+            if fi > 0 && x < fi {
+                s * (x.clamp(0, fi) as f64 / fi as f64)
+            } else if fo > 0 && x > d - fo {
+                s * ((d - x).clamp(0, fo) as f64 / fo as f64)
+            } else {
+                s
+            }
+        };
+        let mut keys: Vec<AutoKey> = Vec::with_capacity(gate.len() * 4 + 2);
+        let mut push = |t: i64, v: f64| keys.push(AutoKey { t: Tick(t - self.start.0), v });
+        for w in gate {
+            if w.start > body.start {
+                push(w.start.0 - 1, 0.0);
+            }
+            push(w.start.0, fade_at(w.start.0));
+            // переломы фейдов, попавшие ВНУТРЬ окна
+            for brk in [self.start.0 + fi, self.start.0 + d - fo] {
+                if brk > w.start.0 && brk < w.end.0 {
+                    push(brk, fade_at(brk));
+                }
+            }
+            push(w.end.0, fade_at(w.end.0));
+            if w.end < body.end {
+                push(w.end.0 + 1, 0.0);
+            }
+        }
+        keys.sort_by_key(|k| k.t.0);
+        keys.dedup_by_key(|k| k.t.0);
+        (!keys.is_empty()).then(|| ParamCurve { param: "amount".into(), ease: false, keys })
+    }
+
     /// Кривая силы в домене БЛОКА: 0 на самом краю, `strength` на плато.
     /// `None` — фейдов нет, хватает базового значения слота.
     pub fn mix_curve(&self) -> Option<ParamCurve> {
@@ -1682,16 +2072,17 @@ impl MorpherEvent {
     ///
     /// Сила — последний слот цепочки: она смешивает ВХОД цепочки с её
     /// результатом, поэтому обязана стоять после всего, что слой делает.
-    pub fn apply_to(&self, c: &mut ClipEvent, frame_step: i64) {
+    pub fn apply_to(&self, c: &mut ClipEvent, frame_step: i64, gate: &[TickRange]) {
+        let body = TickRange::new(c.start, c.start + c.duration);
         self.patch.apply_to(c, self.start, frame_step);
-        if !self.mixes() {
+        if !self.mixes_on(gate, body) {
             return;
         }
         // с какого слота начинается вклад ИМЕННО этого слоя
         let from = c.fx.len().saturating_sub(self.patch.chain_for(c.kind).len()) as u32;
         let mut mix = FxInstance::LayerMix { amount: self.strength, from };
         mix.set_param("amount", self.strength);
-        let curve = self.mix_curve().map(|mut cur| {
+        let curve = self.mix_curve_on(gate, body).map(|mut cur| {
             for k in &mut cur.keys {
                 k.t = crate::clip_material_at(
                     c.source_in,
@@ -1807,8 +2198,17 @@ impl MorpherEvent {
         // а морфер со slowed&reverb в патче раздал варп ВСЕМ событиям
         // ниже своей строки (`chain_for` отдаёт варп обоим видам).
         // Поэтому сначала считаем ДОСЯГАЕМОСТЬ, и только потом вето.
+        // РЕЖЕТ ли слой цель (Р.55, С2). Патч из одних эффектов не режет
+        // вовсе: он ложится на ВСЁ ТЕЛО, а «по времени» задают ВОРОТА
+        // силы. Тогда граница точна до тика, соседей и переходов она не
+        // касается, а шва на материале не возникает совсем.
+        let cuts = self.cuts_target(c);
         let warps = |fx: &[FxInstance]| fx.iter().any(|f| f.warps_time());
-        let no_cut = warps(&c.active_fx()) || warps(&self.patch.chain_for(c.kind));
+        // Вето по варпу имеет смысл ТОЛЬКО там, где режут: линейно
+        // посчитанный `source_in` куска у растянутого клипа указывает не
+        // туда. Ворота ничего не режут, поэтому вето к ним не относится —
+        // и «по времени» начинает работать и на растянутых событиях.
+        let no_cut = cuts && (warps(&c.active_fx()) || warps(&self.patch.chain_for(c.kind)));
         // ссылочные режимы: ВРЕМЯ задаёт сама ссылка, блок его не
         // ограничивает — иначе пользователь ткнул бы в дальний диапазон и
         // не понял, почему ничего не произошло. Галка «по времени» в этих
@@ -1820,6 +2220,9 @@ impl MorpherEvent {
             }
             if no_cut {
                 return vec![body];
+            }
+            if !cuts {
+                return refs; // ворота: окна ссылок как есть, до тика
             }
             return refs.into_iter().filter_map(|w| self.fit_window(w, c, p, reel, body)).collect();
         }
@@ -1833,10 +2236,32 @@ impl MorpherEvent {
         if no_cut {
             return vec![body];
         }
+        if !cuts {
+            return vec![w]; // ворота: окно блока как есть, до тика
+        }
         match self.fit_window(w, c, p, reel, body) {
             Some(w) => vec![w],
             None => Vec::new(),
         }
+    }
+
+    /// Режет ли слой цель на куски, или ложится на всё тело с воротами
+    /// силы (Р.55, С2).
+    ///
+    /// Режут ровно два вида патча, и оба — потому что слотом силы их не
+    /// выключить:
+    ///
+    /// * **подмена источника** — «взять кадр из другого файла» не
+    ///   выражается значением параметра вовсе;
+    /// * **варп времени в патче** — он меняет не значение, а сколько
+    ///   материала съедено, и действует на весь клип, чем его ни гаси.
+    ///
+    /// Всё остальное (а это почти всё) — цепочка эффектов, и её вклад
+    /// гасится кривой силы до нуля. Так «по времени» перестаёт зависеть от
+    /// того, есть ли у события переход: резать внутри окна кроссфейда
+    /// нельзя, а ГАСИТЬ — можно где угодно.
+    pub fn cuts_target(&self, c: &ClipEvent) -> bool {
+        self.patch.replaces_source() || self.patch.warps_time_for(c.kind)
     }
 
     /// Посадить окно на сетку материала, вытолкнуть из запретных зон и
@@ -1873,9 +2298,16 @@ impl MorpherEvent {
         // один: либо кадр материала, либо неразрезанное окружение. Дороже
         // стоит окружение — кусок с бо́льшим `start` вылезает над соседом
         // и меняет веса кроссфейда, а сетка стоит одного кадра на шве.
+        // ВЫТАЛКИВАЕМ ТОЛЬКО ВНУТРЬ (Р.55, С2). До этого граница уходила
+        // к БЛИЖАЙШЕМУ краю зоны — в том числе НАРУЖУ, и у события с
+        // фейдом слева и фейдом справа левая граница уезжала в начало
+        // тела, правая в конец: «по времени» превращалось в «на всё
+        // событие». Окно теперь только СОКРАЩАЕТСЯ; не осталось окна —
+        // слой сюда не дотянулся, и это честный ответ, а не молчаливое
+        // расширение.
         let zones = forbidden_zones(reel, c);
-        let mut s = snap_out_of(grid(w.start), &zones);
-        let mut e = snap_out_of(grid(w.end), &zones);
+        let mut s = snap_out_of(grid(w.start), &zones, true);
+        let mut e = snap_out_of(grid(w.end), &zones, false);
         s = Tick(s.0.clamp(body.start.0, body.end.0));
         e = Tick(e.0.clamp(body.start.0, body.end.0));
         // огрызок, который всё равно нельзя было бы получить командой
@@ -1907,16 +2339,27 @@ fn merge_ranges(it: impl Iterator<Item = TickRange>) -> Vec<TickRange> {
     out
 }
 
-/// Вытолкнуть точку из запретных зон к ближайшему их краю. Зоны могут
+/// Вытолкнуть точку из запретных зон В ЗАДАННУЮ СТОРОНУ. Зоны могут
 /// перекрываться и примыкать, поэтому проход повторяется до сходимости
 /// (не более чем по числу зон — каждый шаг выводит точку из очередной).
-fn snap_out_of(t: Tick, zones: &[TickRange]) -> Tick {
+///
+/// `forward` — куда двигать: начало окна вперёд (к концу зоны), конец окна
+/// назад (к её началу). Сторона задана, а не выбрана по близости, и это
+/// принципиально: «к ближайшему краю» расширяет окно там, где граница
+/// попала в зону чуть дальше её середины, и слой начинает действовать
+/// ШИРЕ, чем человек просил (Р.55, С2).
+fn snap_out_of(t: Tick, zones: &[TickRange], forward: bool) -> Tick {
     let mut t = t;
     for _ in 0..=zones.len() {
         let Some(z) = zones.iter().find(|z| z.start < t && t < z.end) else { return t };
-        t = if (t - z.start) <= (z.end - t) { z.start } else { z.end };
+        t = if forward { z.end } else { z.start };
     }
     t
+}
+
+/// Покрывают ли ворота тело целиком (тогда их как бы и нет).
+fn covers_whole(gate: &[TickRange], body: TickRange) -> bool {
+    gate.iter().any(|w| w.start <= body.start && body.end <= w.end)
 }
 
 /// Ключ строки события: вид дорожки и её номер. Отображение было
@@ -5136,15 +5579,13 @@ pub enum ProjectError {
     SequenceTooDeep(MediaId, String),
     #[error("sequence {0:?}: name must not be empty")]
     SequenceUnnamed(MediaId),
-    #[error(
-        "clip {0:?} is a nested reel: reverse and time warp on the instance are not \
-         rendered yet"
-    )]
-    NestInstanceNotChainable(ClipId),
     #[error("sequence {0:?}: morph layers inside a reel cannot target areas or named ranges")]
     MorphRefInsideSequence(MorphId),
     #[error("media id {0:?} is out of range (top bit is reserved for nested sequences)")]
     MediaIdTooLarge(MediaId),
+    // --- раскрытие ленты на месте (Р.55, С5) ---
+    #[error("clip {0:?} crossed the expanded band boundary: an event cannot change reels")]
+    BandEscape(ClipId),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,
@@ -5388,11 +5829,17 @@ impl Project {
             let wins: Vec<Vec<TickRange>> =
                 ms.iter().map(|m| m.windows_on(c, self, reel, rows)).collect();
             let body = TickRange::new(c.start, c.start + c.duration);
-            // точки реза — ВНУТРЕННИЕ края окон; общий набор на все
-            // морферы, чтобы они не резали куски друг друга
-            let mut cuts: Vec<i64> = wins
+            // ТОЧКИ РЕЗА ДАЮТ НЕ ВСЕ СЛОИ (Р.55, С2). Режут только те, чей
+            // вклад нельзя выключить кривой силы: подмена источника и варп
+            // времени в патче. Слой из одних эффектов кусков не порождает —
+            // он ложится на всё тело, а время задают ВОРОТА. Набор реза
+            // по-прежнему ОБЩИЙ на всех режущих: иначе они резали бы куски
+            // друг друга.
+            let mut cuts: Vec<i64> = ms
                 .iter()
-                .flatten()
+                .zip(&wins)
+                .filter(|(m, _)| m.cuts_target(c))
+                .flat_map(|(_, ws)| ws.iter())
                 .flat_map(|w| [w.start.0, w.end.0])
                 .filter(|&x| x > body.start.0 && x < body.end.0)
                 .collect();
@@ -5409,8 +5856,21 @@ impl Project {
                 let id = if idx == 0 { c.id } else { slice_id(c.id, idx as u32) };
                 let mut piece = clip_slice(c, w, id);
                 for (m, ws) in ms.iter().zip(&wins) {
-                    if ws.iter().any(|x| x.start <= w.start && w.end <= x.end) {
-                        m.apply_to(&mut piece, frame_step);
+                    if m.cuts_target(c) {
+                        // режущий слой ложится на кусок ЦЕЛИКОМ и только
+                        // если кусок целиком внутри его окна (как было)
+                        if ws.iter().any(|x| x.start <= w.start && w.end <= x.end) {
+                            m.apply_to(&mut piece, frame_step, &[w]);
+                        }
+                        continue;
+                    }
+                    // ВОРОТА считаются ПО КУСКУ, а не по исходному клипу:
+                    // куски породили ДРУГИЕ слои, и окно, посчитанное от
+                    // начала тела, уехало бы на длину отрезанного.
+                    let gate: Vec<TickRange> =
+                        ws.iter().map(|x| x.intersect(&w)).filter(|x| !x.is_empty()).collect();
+                    if !gate.is_empty() {
+                        m.apply_to(&mut piece, frame_step, &gate);
                     }
                 }
                 out.push(piece);
@@ -5510,6 +5970,16 @@ impl Project {
             out.push(inst.clone());
             return;
         };
+        // РЕВЕРС И СКОРОСТЬ НЕ РАСКРЫВАЮТСЯ (Р.55, С4). Раскрытие —
+        // эталон-оракул закона Э и то, что печатает `kt-cli probe`, и оно
+        // законно ровно там, где вложение ТОЖДЕСТВЕННО своему содержимому.
+        // Зеркало и ресемплер применяются к СОБРАННОМУ материалу: развернув
+        // их по кускам, мы посчитали бы другое — это тот же аргумент, что у
+        // закона Г для уровня (t438). Такое вложение остаётся событием.
+        if inst.reversed || crate::chain_warps_time(&inst.active_fx(), &inst.active_fx_auto()) {
+            out.push(inst.clone());
+            return;
+        }
         if depth >= MAX_NEST_DEPTH {
             return; // validate такого не пропустит; здесь — страховка
         }
@@ -5767,18 +6237,12 @@ impl Project {
                 return Err(ProjectError::UnknownMedia(c.id, c.media));
             }
             check_fx_auto(c.id, &c.fx_auto)?;
-            // ЦЕПОЧКА на вложении с волны Б законна и применяется к
-            // СОБРАННОЙ картинке — ради этого вложение и заводилось.
-            // А вот реверс и варп времени экземпляра требуют смешивания
-            // ДВУХ суб-композитов и ресемплера над суб-миксом: их пока нет,
-            // и такого состояния просто НЕ БЫВАЕТ — отказывают команда,
-            // файл и bake разом (правило 16).
-            if !self.sequences.is_empty()
-                && self.sequences.iter().any(|s| s.id == c.media)
-                && (c.reversed || crate::chain_warps_time(&c.active_fx(), &c.active_fx_auto()))
-            {
-                return Err(ProjectError::NestInstanceNotChainable(c.id));
-            }
+            // ЦЕПОЧКА, РЕВЕРС И ВАРП на вложении законны (Р.55, С4).
+            // До этого раунда реверс и растяжение отвергались: суб-микс
+            // читался строго по порядку, а обоим нужно читать иначе.
+            // Теперь у суб-микса есть продюсер с пре-роллом, и реверс с
+            // варпом действуют на СЭМПЛЫ собранного микса — ровно так же,
+            // как на сэмплы файла.
         }
         let mut morph_ids = std::collections::HashSet::new();
         for m in reel.morphers() {
@@ -5982,6 +6446,18 @@ impl Project {
             .iter()
             .chain(self.sequences.iter().flat_map(|s| s.morphers.iter()))
             .map(|m| m.id.0)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Наибольший занятый адрес камеры ВО ВСЁМ ДОКУМЕНТЕ (Р.55, С3).
+    /// Счёт «по корню» — та же дыра, что была у остальных четырёх (п.394):
+    /// камеры внутри лент для него невидимы.
+    pub fn max_camera_id(&self) -> u64 {
+        self.cameras
+            .iter()
+            .chain(self.sequences.iter().flat_map(|s| s.cameras.iter()))
+            .map(|c| c.id.0)
             .max()
             .unwrap_or(0)
     }

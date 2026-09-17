@@ -940,3 +940,183 @@ fn t463b_transition_inside_a_reel_is_audible() {
         "переход внутри ленты молча пропал"
     );
 }
+
+// ---- Р.55 (С4): реверс и растяжение НА вложении ---------------------------
+
+/// Проект, где содержимое ленты стоит ПРЯМО на дорожках и целиком
+/// зеркально: два клипа встык, порядок переставлен, у каждого `reversed`.
+/// Это и есть «развёрнутое содержимое, проигранное задом наперёд» — тот
+/// эталон, с которым обязан совпасть реверс ВЛОЖЕНИЯ на ленте без
+/// хвостатых эффектов.
+fn spread_audio_mirrored() -> Project {
+    let mut p = base();
+    // зеркало всего куска: бывший второй клип встаёт первым
+    let mut a = ev(2, ClipKind::Audio, 0, PART, PART, 1);
+    let mut b = ev(3, ClipKind::Audio, 0, Tick(0), PART, 2);
+    a.reversed = true;
+    b.reversed = true;
+    p.clips = vec![a, b];
+    p.validate().expect("зеркальный развёрнутый проект законен");
+    p
+}
+
+/// Тест 561 (Р.55, С4): РЕВЕРС ВЛОЖЕНИЯ == реверс развёрнутого содержимого.
+///
+/// **Претензия владельца дословно:** «на композицию не работает реверсы».
+/// Она и не работала: `validate` отвергал зеркальный экземпляр, потому что
+/// суб-микс читался строго по порядку.
+///
+/// Это определение, а не приближение: «реверс собранного куска» — это
+/// «отрендерить содержимое ВПЕРЁД и проиграть задом наперёд». На ленте без
+/// хвостатых эффектов равенство обязано быть БАЙТ-В-БАЙТ — именно потому,
+/// что суб-микс рендерится вперёд, а зеркало применяется к его сэмплам,
+/// как к сэмплам файла.
+#[test]
+fn t561_reversing_a_nest_equals_reversing_its_content() {
+    let frames = (PART + PART).to_audio_frames() as usize;
+    let mut p = audio_nest(vec![], vec![]);
+    p.clips[0].reversed = true;
+    p.validate().expect("зеркальное вложение обязано быть законным");
+
+    let nested = render_audio(&p, frames);
+    let spread = render_audio(&spread_audio_mirrored(), frames);
+    assert_eq!(
+        nested, spread,
+        "реверс ВЛОЖЕНИЯ разошёлся с реверсом развёрнутого содержимого. Зеркало \
+         действует на СЭМПЛЫ собранного микса — так же, как на сэмплы файла; \
+         рендерить ленту назад значило бы посчитать третий, ничей результат"
+    );
+    assert!(nested.iter().any(|x| x.abs() > 1e-6), "зеркальное вложение молчит");
+}
+
+/// Тест 562 (Р.55, С4): ЗАМЕДЛЕНИЕ ВЛОЖЕНИЯ ≠ замедление каждого куска.
+///
+/// Реверс-аналог уже есть (t428 в модели), а это — аналог ЗАКОНА Г для
+/// скорости: снаружи ресемплируется УЖЕ СОБРАННЫЙ микс со сшитыми
+/// хвостами, внутри — каждый кусок со своим оборванным. Ровно ради этого
+/// «смонтируй, потом замедли целиком» и заводится вложение.
+#[test]
+fn t562_slowing_a_nest_is_not_slowing_each_piece() {
+    let frames = (PART + PART).to_audio_frames() as usize;
+    let slow = vec![FxInstance::slowed_reverb(0.5, 0.6, 60.0)];
+    let on_nest = render_audio(&audio_nest(slow.clone(), vec![]), frames);
+    let on_each = render_audio(&spread_audio(slow.clone()), frames);
+    assert_ne!(
+        on_nest, on_each,
+        "замедление вложения посчиталось покусочно — «смонтируй, потом замедли \
+         целиком» перестало отличаться от «замедли каждое»"
+    );
+    assert!(on_nest.iter().any(|x| x.abs() > 1e-6), "замедленное вложение молчит");
+}
+
+/// Тест 563 (Р.55, С4): суб-микс КУСКОМ == КУСКАМИ и при реверсе.
+///
+/// Родня t448/t338. Продюсер суб-микса читает ленту не по порядку, и без
+/// канонической сетки блоков значение бёрста зависело бы от того, каким
+/// куском его спросили, — то есть от размера выходного чанка. В аудио
+/// такого не бывает (инвариант 11).
+#[test]
+fn t563_reversed_submix_is_the_same_whole_and_in_chunks() {
+    let frames = (PART + PART).to_audio_frames() as usize;
+    let mut p = audio_nest(vec![reverb()], vec![reverb()]);
+    p.clips[0].reversed = true;
+    p.validate().expect("зеркальное вложение с ревербами законно");
+
+    let whole = render_audio(&p, frames);
+    for chunk in [777usize, 1024, 4096] {
+        let r = AudioRenderer::new(&p);
+        let mut store = kt_engine::fxstore::FxStateStore::new();
+        r.sync_fx(&mut store);
+        let mut out = vec![0f32; frames * CH];
+        let mut f = direct();
+        let mut done = 0usize;
+        while done < frames {
+            let n = chunk.min(frames - done);
+            r.render_frames_with(
+                &mut f,
+                &mut store,
+                done as i64,
+                &mut out[done * CH..(done + n) * CH],
+            );
+            done += n;
+        }
+        assert_eq!(
+            out, whole,
+            "суб-микс реверснутого вложения зависит от НАРЕЗКИ выхода \
+             (чанк {chunk}) — байты поехали от размера запроса"
+        );
+    }
+}
+
+/// Тест 564 (Р.55, С4): два экземпляра одной ленты — ДВА ПОТОКА.
+///
+/// Состояние суб-микса ключевалось адресом ЛЕНТЫ, при том что комментарий
+/// рядом сам утверждал обратное («лента в пяти местах — ПЯТЬ разных
+/// потоков»). Два одновременно звучащих экземпляра делили и внутренние
+/// цепочки, и однобёрстовый кэш: под реверсом и растяжением они ещё и
+/// дерутся за курсор продюсера.
+#[test]
+fn t564_two_instances_of_one_reel_do_not_share_a_reverb() {
+    let frames = (PART + PART).to_audio_frames() as usize;
+    // одна и та же лента в ДВУХ местах, со сдвигом, звучат одновременно
+    let mut p = audio_nest(vec![], vec![reverb()]);
+    let mut twin = p.clips[0].clone();
+    twin.id = ClipId(11);
+    twin.lane = 1;
+    twin.start = Tick(PART.0 / 2);
+    p.clips.push(twin);
+    p.audio_lanes = 2;
+    p.validate().expect("лента в двух местах законна");
+    let both = render_audio(&p, frames);
+
+    // каждый экземпляр ОТДЕЛЬНО — и сумма обязана совпасть с общим миксом
+    let mut only_a = p.clone();
+    only_a.clips.retain(|c| c.id == ClipId(10));
+    let mut only_b = p.clone();
+    only_b.clips.retain(|c| c.id == ClipId(11));
+    let a = render_audio(&only_a, frames);
+    let b = render_audio(&only_b, frames);
+
+    let worst = both
+        .iter()
+        .zip(a.iter().zip(b.iter()))
+        .map(|(m, (x, y))| (m - (x + y)).abs())
+        .fold(0f32, f32::max);
+    assert!(
+        worst < 1e-5,
+        "два экземпляра одной ленты дерутся за один поток суб-микса: худшее \
+         расхождение с суммой независимых {worst:.6}. Ключ состояния обязан быть \
+         адресом ЭКЗЕМПЛЯРА, а не ленты"
+    );
+    assert!(both.iter().any(|x| x.abs() > 1e-6), "сцена молчит");
+}
+
+/// Тест 565 (Р.55, С4): СЫРОЙ реверс-транспорт над вложением ЗВУЧИТ.
+///
+/// Дефект, найденный по ходу и живший с Р.50: `render_frames_raw` не
+/// оборачивал фетчер, и `audio_burst(адрес ленты)` уходил в обычный
+/// фетчер, где такого источника нет, — тишина плюс underrun'ы по кадрам.
+/// При этом `wanted_audio_bursts_raw` честно рекурсировал внутрь: заказ
+/// уходил, а чтение до него не доходило. Нарушение «заказ == чтение»
+/// (инвариант 4) прямо в дереве.
+#[test]
+fn t565_raw_reverse_transport_over_a_nest_is_not_silence() {
+    let frames = PART.to_audio_frames() as usize;
+    let p = audio_nest(vec![], vec![]);
+    let r = AudioRenderer::new(&p);
+    let mut out = vec![0f32; frames * CH];
+    let st = r.render_frames_raw(&mut direct(), 0, &mut out);
+    assert!(
+        out.iter().any(|x| x.abs() > 1e-6),
+        "сырой путь над вложением отдал ТИШИНУ — адрес ленты ушёл в фетчер, \
+         который про ленты не знает"
+    );
+    assert_eq!(st.underruns, 0, "сырой путь над вложением копит underrun'ы: {st:?}");
+    // и ЗАКАЗ покрывает то, что он читает
+    let want = r.wanted_audio_bursts_raw(0..frames as i64);
+    assert!(
+        want.iter().all(|(m, _)| *m != MediaId(100)),
+        "в сыром заказе стоит адрес ЛЕНТЫ: {want:?}"
+    );
+    assert!(!want.is_empty(), "сырой заказ пуст");
+}

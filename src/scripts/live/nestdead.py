@@ -87,7 +87,10 @@ def main(out):
         app.expect(os.path.exists(path), "Ctrl+S после окна имени не сработал — фокус не отдан")
 
         # --- 5. два пути наружу ----------------------------------------
-        app.double_click(mid, y)
+        # ПОЛНЫЙ вход — пункт меню (Р.55, С5): двойной клик с этого раунда
+        # раскрывает на месте, и наружу из раскрытия выходят иначе
+        app.right_click(mid, y)
+        app.click_probe("nest.enter", "пункт «Войти в ленту»")
         time.sleep(0.5)
         app.expect(app.geom()["nest"]["depth"] == 1, "не вошли внутрь")
         # путь ПЕРВЫЙ: имя проекта — это крошка корня
@@ -99,7 +102,8 @@ def main(out):
             "сразу на нужный уровень",
         )
         # путь ВТОРОЙ: Esc
-        app.double_click(mid, y)
+        app.right_click(mid, y)
+        app.click_probe("nest.enter", "пункт «Войти в ленту» второй раз")
         time.sleep(0.5)
         app.expect(app.geom()["nest"]["depth"] == 1, "не вошли внутрь второй раз")
         for _ in range(3):

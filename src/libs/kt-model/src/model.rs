@@ -352,6 +352,32 @@ impl Command {
     /// Match ИСЧЕРПЫВАЮЩИЙ и без `_ =>`: новая команда не соберётся,
     /// пока не ответили, трогает ли она план. Прецедент того же рода —
     /// `on_region_changed` без `set_project` (Р.43 п.296, сторож t286).
+    /// Событие, которое команда правит, — если оно у неё одно и ЕСТЬ.
+    ///
+    /// Заведено ради одного вопроса: «в какой ЛЕНТЕ эта правка» (Р.55, С5).
+    /// Перебирать варианты в вызывающем нельзя — это второе место, где
+    /// знают устройство команд, и оно разошлось бы с первым.
+    pub fn target_clip(&self) -> Option<ClipId> {
+        match self {
+            Command::AddClip(c) => Some(c.id),
+            Command::RemoveClip { id }
+            | Command::MoveClip { id, .. }
+            | Command::TrimStart { id, .. }
+            | Command::TrimEnd { id, .. }
+            | Command::Split { id, .. }
+            | Command::SetGain { id, .. }
+            | Command::SetOpacity { id, .. }
+            | Command::SetFxOff { id, .. }
+            | Command::SetReversed { id, .. }
+            | Command::SetFxBypass { id, .. }
+            | Command::SetFx { id, .. }
+            | Command::SetFxAuto { id, .. }
+            | Command::UnlinkClip { id }
+            | Command::SetClipMedia { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+
     pub fn touches_render_plan(&self) -> bool {
         match self {
             Command::SetMediaPath { .. } => false,
@@ -470,7 +496,22 @@ pub enum CommandError {
 /// Модель с историей. Движок читает `project()` (снапшот-клон при rebuild).
 #[derive(Debug, Clone)]
 pub struct TimelineModel {
+    /// КАНОН: настоящая раскладка без раскрытых полос. Он уходит в файл,
+    /// в плеер и в экспорт, и только он существует по-настоящему.
     project: Project,
+    /// ПРОИЗВОДНОЕ: канон плюс раскрытые на месте ленты (Р.55, С5).
+    ///
+    /// Его отдаёт `project()`, то есть с ним работает весь интерфейс —
+    /// отрисовка, хит-тест, снап, выделение, окна. Ни одна из этих рук не
+    /// знает, что часть событий на экране живёт в другой ленте: они
+    /// физически лежат в корневых векторах, только со смещением.
+    /// При пустом `bands` это побайтовая копия канона, то есть прежнее
+    /// поведение без единой лишней ветки.
+    bench: Project,
+    /// Раскрытые полосы. Рабочее место, а не работа: в файл не пишется
+    /// (правило t390-t391), но КАЖДЫЙ undo-снимок помнит свои — иначе
+    /// Ctrl+Z внутри раскрытия выглядел бы как «нажал, и всё пропало».
+    bands: Vec<Band>,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     /// Токен последнего coalesced-жеста (см. apply_coalesced).
@@ -492,6 +533,121 @@ pub struct TimelineModel {
 struct Snapshot {
     project: Project,
     scope: Option<MediaId>,
+    /// Какие полосы были раскрыты в момент правки (Р.55, С5).
+    bands: Vec<Band>,
+}
+
+impl Band {
+    /// Пересчитать полосу после пакета команд (Р.55, С5).
+    ///
+    /// **Единственное место конструкции, где правильность держится на
+    /// человеке, а не на построении.** Поэтому `match` ИСЧЕРПЫВАЮЩИЙ, без
+    /// `_ =>`: новая команда не соберётся, пока строку не заполнили — тот
+    /// же приём, что у `Command::touches_render_plain` и таблицы t253.
+    ///
+    /// Нумерацию дорожек меняют ровно шесть команд. Полоса лежит в ХВОСТЕ
+    /// числового пространства, поэтому правило простое: дорожка вставлена
+    /// или убрана НИЖЕ начала полосы — едет вся полоса (`base`); внутри
+    /// полосы — меняется её размер (`len`).
+    ///
+    /// Ошибка здесь не падает ни одним ассертом сама: полоса «съезжает», и
+    /// `unmerge_reel` начинает отвергать батчи — либо, при симметричной
+    /// ошибке, молча кладёт событие не в ту ленту. Сторож — t568.
+    pub fn after_batch(&mut self, cmds: &[Command]) {
+        for cmd in cmds {
+            match cmd {
+                Command::InsertLane { kind, at } => {
+                    let lk = match kind {
+                        ClipKind::Video => LaneKind::Video,
+                        ClipKind::Audio => LaneKind::Audio,
+                    };
+                    self.lane_inserted(lk, *at);
+                }
+                Command::InsertMorphLane { at } => self.lane_inserted(LaneKind::Morph, *at),
+                Command::InsertCameraLane { at } => self.lane_inserted(LaneKind::Camera, *at),
+                Command::RemoveMorphLane { at } => self.lane_removed(LaneKind::Morph, *at),
+                Command::RemoveCameraLane { at } => self.lane_removed(LaneKind::Camera, *at),
+                // `SetLanes` ПОЛОСУ НЕ ДВИГАЕТ, и это решение, а не
+                // недосмотр. Команда задаёт число дорожек целиком, а клипы
+                // при этом не перенумеровываются — значит граница полосы
+                // (`base`) обязана остаться там, где события и лежат.
+                //
+                // Единственный, кто её шлёт, — удаление дорожки, и оно
+                // сопровождается `MoveClip` для всех, кто выше. Поэтому
+                // удалять дорожку при раскрытой полосе приложение не даёт:
+                // сначала сворачивает раскрытие и говорит об этом.
+                Command::SetLanes { .. } => {}
+                // Всё остальное номеров дорожек не двигает. Перечислено
+                // поимённо НАРОЧНО: `_ =>` спрятал бы следующую команду,
+                // которая начнёт их двигать.
+                Command::NoteBirth { .. }
+                | Command::AddMedia { .. }
+                | Command::SetMediaPath { .. }
+                | Command::AddClip(_)
+                | Command::RemoveClip { .. }
+                | Command::MoveClip { .. }
+                | Command::TrimStart { .. }
+                | Command::TrimEnd { .. }
+                | Command::Split { .. }
+                | Command::SetTrimStretchesAuto { .. }
+                | Command::SetGain { .. }
+                | Command::SetOpacity { .. }
+                | Command::SetFxOff { .. }
+                | Command::SetReversed { .. }
+                | Command::SetFxBypass { .. }
+                | Command::SetFx { .. }
+                | Command::SetFxAuto { .. }
+                | Command::LinkClips { .. }
+                | Command::UnlinkClip { .. }
+                | Command::AddTransition(_)
+                | Command::RemoveTransition { .. }
+                | Command::SetTransition(_)
+                | Command::AddMarker { .. }
+                | Command::RemoveMarker { .. }
+                | Command::SetMarkerName { .. }
+                | Command::MoveMarker { .. }
+                | Command::SetMarkerDuration { .. }
+                | Command::RemoveMedia { .. }
+                | Command::SetSettings { .. }
+                | Command::AddMorpher(_)
+                | Command::RemoveMorpher { .. }
+                | Command::SetMorpher(_)
+                | Command::BakeMorpher { .. }
+                | Command::SetLaneOrder { .. }
+                | Command::AddArea(_)
+                | Command::RemoveArea { .. }
+                | Command::RenameArea { .. }
+                | Command::SetAreaRange { .. }
+                | Command::SetAreaLanes { .. }
+                | Command::AddCamera(_)
+                | Command::SetCamera(_)
+                | Command::RemoveCamera { .. }
+                | Command::AddSequence { .. }
+                | Command::RemoveSequence { .. }
+                | Command::RenameSequence { .. }
+                | Command::SetSequenceContent { .. }
+                | Command::SetClipMedia { .. } => {}
+            }
+        }
+    }
+
+    fn lane_inserted(&mut self, kind: LaneKind, at: u32) {
+        let base = self.base.get(kind);
+        if at <= base {
+            *self.base.get_mut(kind) += 1;
+        } else if at < base + self.len.get(kind) {
+            *self.len.get_mut(kind) += 1;
+        }
+    }
+
+    fn lane_removed(&mut self, kind: LaneKind, lane: u32) {
+        let base = self.base.get(kind);
+        if lane < base {
+            *self.base.get_mut(kind) = base.saturating_sub(1);
+        } else if lane < base + self.len.get(kind) {
+            *self.len.get_mut(kind) = self.len.get(kind).saturating_sub(1);
+        }
+    }
 }
 
 /// Кто от кого родился в пакете команд (Р.49, п.357). Родство сообщает
@@ -531,12 +687,63 @@ impl Births {
 impl TimelineModel {
     pub fn new(project: Project) -> TimelineModel {
         TimelineModel {
+            bench: project.clone(),
             project,
+            bands: Vec::new(),
             undo: Vec::new(),
             redo: Vec::new(),
             last_gesture: None,
             editing: None,
         }
+    }
+
+    /// Пересобрать рабочий вид из канона. Зовётся ПОСЛЕ каждой правки
+    /// канона — включая правки полей вне истории (регион, loop, ui).
+    fn rebuild_bench(&mut self) {
+        self.bench = self.project.clone();
+        for b in &self.bands {
+            self.bench.merge_reel(b);
+        }
+    }
+
+    /// Раскрытые полосы.
+    pub fn bands(&self) -> &[Band] {
+        &self.bands
+    }
+
+    /// Раскрыть ленту экземпляра НА МЕСТЕ (Р.55, С5). `false` — это не
+    /// вложение, либо оно уже раскрыто.
+    pub fn expand_band(&mut self, inst: ClipId) -> bool {
+        if self.bands.iter().any(|b| b.inst == inst) {
+            return false;
+        }
+        // полоса считается от КАНОНА: `base` обязан быть числом корневых
+        // дорожек, а не «сколько их сейчас на экране вместе с чужой полосой»
+        let Some(b) = Band::of(&self.project, inst) else { return false };
+        self.bands.push(b);
+        self.rebuild_bench();
+        true
+    }
+
+    /// Свернуть раскрытие обратно.
+    pub fn collapse_band(&mut self, inst: ClipId) -> bool {
+        let Some(i) = self.bands.iter().position(|b| b.inst == inst) else { return false };
+        self.bands.remove(i);
+        self.rebuild_bench();
+        true
+    }
+
+    pub fn collapse_all_bands(&mut self) {
+        if self.bands.is_empty() {
+            return;
+        }
+        self.bands.clear();
+        self.rebuild_bench();
+    }
+
+    /// Чья это строка: корневая или раскрытой полосы.
+    pub fn band_of_row(&self, kind: LaneKind, lane: u32) -> Option<&Band> {
+        self.bands.iter().find(|b| b.owns(kind, lane))
     }
 
     /// Лента, которую сейчас редактируют. `None` — корень.
@@ -556,6 +763,10 @@ impl TimelineModel {
         if want == self.editing {
             return;
         }
+        // Полный вход и раскрытие на месте — ДВА способа смотреть внутрь,
+        // и одновременно они бессмысленны: полоса считалась от корня, а
+        // корнем станет другая лента.
+        self.bands.clear();
         if let Some(cur) = self.editing {
             self.project.swap_reel(cur);
         }
@@ -564,6 +775,7 @@ impl TimelineModel {
         }
         self.editing = want;
         self.last_gesture = None;
+        self.rebuild_bench();
     }
 
     /// Документ, в котором ТЕКУЩАЯ лента стоит КОРНЕМ (Р.50, В1).
@@ -581,14 +793,21 @@ impl TimelineModel {
     }
 
     /// Проект КАК ЕГО ВИДИТ ЧЕЛОВЕК: содержимое ленты, в которой он сейчас
-    /// стоит, лежит на месте корня (Р.50, В1).
+    /// стоит, лежит на месте корня (Р.50, В1), а раскрытые на месте ленты
+    /// разложены на дорожки со смещением (Р.55, С5).
     ///
     /// Весь интерфейс — отрисовка, хит-тест, планирование жестов, снап,
     /// выделение, окна FX и морфера — работает с этим видом и о вложениях
     /// не знает вовсе. Тому, кому нужен ДОКУМЕНТ (движок, сохранение,
     /// экспорт), нужен `document()`; сторож — сканирующий тест t456b.
+    ///
+    /// Имя НЕ переименовывается в `bench` намеренно: `project()` зовут
+    /// 182 раза, и все эти вызовы правильны — им нужен именно рабочий вид.
+    /// Переименование ничего не прояснило бы, а различие «канон против
+    /// вида» живёт в доке полей и в t456b.
+    #[allow(clippy::misnamed_getters)]
     pub fn project(&self) -> &Project {
-        &self.project
+        &self.bench
     }
 
     /// ДОКУМЕНТ в настоящей раскладке: корень корнем, ленты лентами.
@@ -605,8 +824,14 @@ impl TimelineModel {
         p
     }
 
+    /// Событие ПО ТОМУ, ЧТО ВИДИТ ЧЕЛОВЕК (Р.55, С5).
+    ///
+    /// Ищет в рабочем виде, а не в каноне: интерфейс спрашивает про то, по
+    /// чему щёлкнул, а событие раскрытой полосы в каноне лежит внутри
+    /// ленты. Искал бы здесь канон — каждый жест по полосе отвечал бы
+    /// «такого события нет», причём молча.
     pub fn clip(&self, id: ClipId) -> Option<&ClipEvent> {
-        self.project.clips.iter().find(|c| c.id == id)
+        self.bench.clips.iter().find(|c| c.id == id)
     }
 
     /// Полуоткрытый интервал клипа на таймлайне.
@@ -629,6 +854,14 @@ impl TimelineModel {
         let births = Births::of(&cmds);
         self.push_undo();
         self.project = scratch;
+        // ПОЛОСЫ могли пережить правку с другими номерами дорожек
+        // (`InsertLane` в корне двигает всю полосу вниз): пересчёт — там
+        // же, где применяется результат, и только один раз.
+        for b in &mut self.bands {
+            b.after_batch(&cmds);
+        }
+        self.bands.retain(|b| self.project.clips.iter().any(|c| c.id == b.inst));
+        self.rebuild_bench();
         self.last_gesture = None;
         Ok(births)
     }
@@ -638,14 +871,23 @@ impl TimelineModel {
     /// состоянию: возврат «ручек» кроссфейда считает свободное место уже
     /// после того, как клип уехал (ops::restore_handles).
     pub fn preview(&self, cmds: &[Command]) -> Result<Project, CommandError> {
-        self.simulate(cmds)
+        // РАБОЧИЙ ВИД будущего, а не канон: вызывающий сравнивает его с
+        // `project()` (возврат «ручек» кроссфейда, Р.26). Сравни он канон
+        // с бенчем — и материал начал бы срезаться у чужих событий тихо и
+        // с undo.
+        let canon = self.simulate(cmds)?;
+        let mut bench = canon;
+        for b in &self.bands {
+            bench.merge_reel(b);
+        }
+        Ok(bench)
     }
 
     fn simulate(&self, cmds: &[Command]) -> Result<Project, CommandError> {
         // Скретч уже в РАБОЧЕМ виде: содержимое текущей ленты стоит на
         // месте корня (Р.50, В1), и команда правит его, не зная о
         // вложениях вовсе.
-        let mut scratch = self.project.clone();
+        let mut scratch = self.bench.clone();
         let run = |scratch: &mut Project| -> Result<(), CommandError> {
             for cmd in cmds {
                 Self::check_on(scratch, cmd)?;
@@ -659,6 +901,18 @@ impl TimelineModel {
         // = TrimEnd+TrimStart: между ними стык формально разорван)
         Self::reconcile_transitions(&mut scratch);
         res?;
+        // РАСКРЫТЫЕ ПОЛОСЫ собираются обратно в свои ленты (Р.55, С5) —
+        // в обратном порядке, потому что каждая следующая раскрывалась
+        // поверх уже раскрытых. Ошибка здесь значит, что жест вынес
+        // событие через границу лент: батч отвергается ЦЕЛИКОМ, а не
+        // «доправляется».
+        let mut bands = self.bands.clone();
+        for b in &mut bands {
+            b.after_batch(cmds);
+        }
+        for b in bands.iter().rev() {
+            scratch.unmerge_reel(b).map_err(CommandError::InvalidLayout)?;
+        }
         // Валидация — ПО ДОКУМЕНТУ: в рабочем виде экземпляр ленты, в
         // которой стоим, лежит внутри неё самой и выглядит циклом.
         if let Some(seq) = self.editing {
@@ -683,12 +937,21 @@ impl TimelineModel {
             self.push_undo();
         }
         self.project = scratch;
+        for b in &mut self.bands {
+            b.after_batch(std::slice::from_ref(&cmd));
+        }
+        self.bands.retain(|b| self.project.clips.iter().any(|c| c.id == b.inst));
+        self.rebuild_bench();
         self.last_gesture = Some(gesture);
         Ok(())
     }
 
     fn push_undo(&mut self) {
-        self.undo.push(Snapshot { project: self.project.clone(), scope: self.editing });
+        self.undo.push(Snapshot {
+            project: self.project.clone(),
+            scope: self.editing,
+            bands: self.bands.clone(),
+        });
         if self.undo.len() > MAX_UNDO {
             self.undo.remove(0);
         }
@@ -698,15 +961,18 @@ impl TimelineModel {
     /// Регион ВНЕ undo-истории (семантика старого редактора).
     pub fn set_region(&mut self, r: Option<Region>) {
         self.project.region = r;
+        self.bench.region = r;
     }
 
     pub fn set_loop_enabled(&mut self, on: bool) {
         self.project.loop_enabled = on;
+        self.bench.loop_enabled = on;
     }
 
     /// Вьюпорт (вне undo, как регион) — сохраняется в файл проекта.
     pub fn set_ui_state(&mut self, ui: Option<crate::UiState>) {
-        self.project.ui = ui;
+        self.project.ui = ui.clone();
+        self.bench.ui = ui;
     }
 
     pub fn undo(&mut self) -> Result<(), CommandError> {
@@ -718,11 +984,21 @@ impl TimelineModel {
         // момент отмены (Р.50, В1): отменяется то, что он сделал ТАМ —
         // значит и показать надо то место. И redo-запись помнит ТОТ ЖЕ
         // контекст, иначе обратный ход уводил бы не туда.
-        let here = Snapshot { project: self.project.clone(), scope: prev.scope };
+        let here = Snapshot {
+            project: self.project.clone(),
+            scope: prev.scope,
+            bands: self.bands.clone(),
+        };
         self.project = prev.project;
         // Снимок уже несёт раскладку СВОЕГО контекста — обмен тут был бы
         // вторым, и содержимое уехало бы не туда.
         self.editing = prev.scope.filter(|id| self.project.sequence(*id).is_some());
+        // ПОЛОСЫ едут вместе с контекстом по той же причине, что и он:
+        // отменяется правка, сделанная В РАСКРЫТИИ, — значит и показать
+        // надо раскрытие, иначе Ctrl+Z выглядит как «нажал, и всё пропало».
+        self.bands = prev.bands;
+        self.bands.retain(|b| self.project.clips.iter().any(|c| c.id == b.inst));
+        self.rebuild_bench();
         self.redo.push(here);
         self.last_gesture = None;
         Ok(())
@@ -732,9 +1008,16 @@ impl TimelineModel {
         let mut next = self.redo.pop().ok_or(CommandError::NothingToRedo)?;
         next.project.region = self.project.region;
         next.project.loop_enabled = self.project.loop_enabled;
-        let here = Snapshot { project: self.project.clone(), scope: next.scope };
+        let here = Snapshot {
+            project: self.project.clone(),
+            scope: next.scope,
+            bands: self.bands.clone(),
+        };
         self.project = next.project;
         self.editing = next.scope.filter(|id| self.project.sequence(*id).is_some());
+        self.bands = next.bands;
+        self.bands.retain(|b| self.project.clips.iter().any(|c| c.id == b.inst));
+        self.rebuild_bench();
         self.undo.push(here);
         self.last_gesture = None;
         Ok(())
@@ -1450,7 +1733,13 @@ impl TimelineModel {
                 lane_order_remove(&mut rows, LaneKind::Morph, at);
                 p.set_lane_order(&rows);
             }
-            Command::AddCamera(c) => p.cameras.push(c),
+            Command::AddCamera(c) => {
+                // строка обязана СУЩЕСТВОВАТЬ, иначе камера легла бы на
+                // невидимую дорожку: создать можно, управлять нельзя.
+                // То же правило, что у `MoveClip` для видео и аудио.
+                p.camera_lanes = p.camera_lanes.max(c.lane + 1);
+                p.cameras.push(c);
+            }
             Command::SetCamera(c) => {
                 if let Some(x) = p.cameras.iter_mut().find(|x| x.id == c.id) {
                     *x = c;

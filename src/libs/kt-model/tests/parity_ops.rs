@@ -187,6 +187,7 @@ fn paste_block_keeps_pairs_and_chains() {
     let mut next_group = 50u64;
     let mut next_tr = 500u64;
     let mut next_morph = 1u64;
+    let mut next_cam = 1u64;
     let (cmds, end1, _) = paste_block(
         &block,
         Tick(200_000),
@@ -195,6 +196,7 @@ fn paste_block_keeps_pairs_and_chains() {
             group: &mut next_group,
             transition: &mut next_tr,
             morph: &mut next_morph,
+            camera: &mut next_cam,
         },
         &PasteNames::default(),
     );
@@ -215,6 +217,7 @@ fn paste_block_keeps_pairs_and_chains() {
             group: &mut next_group,
             transition: &mut next_tr,
             morph: &mut next_morph,
+            camera: &mut next_cam,
         },
         &PasteNames::default(),
     );

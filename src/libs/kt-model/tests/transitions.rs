@@ -308,6 +308,7 @@ fn t155_fade_survives_edits_and_clipboard() {
     assert_eq!(block.transitions.len(), 1, "фейд в блоке");
     let (mut next_clip, mut next_group, mut next_tr, mut next_morph) =
         (100u64, 100u64, 100u64, 1u64);
+    let mut next_cam = 1u64;
     let (cmds, _end, _) = kt_model::ops::paste_block(
         &block,
         Tick(300_000),
@@ -316,6 +317,7 @@ fn t155_fade_survives_edits_and_clipboard() {
             group: &mut next_group,
             transition: &mut next_tr,
             morph: &mut next_morph,
+            camera: &mut next_cam,
         },
         &kt_model::ops::PasteNames::default(),
     );

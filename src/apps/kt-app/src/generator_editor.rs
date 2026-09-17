@@ -26,6 +26,57 @@ pub struct GeneratorEditor {
 }
 
 /// Локализованное имя вида. Полные пути — тест 125 ищет ключ по ним.
+/// Подменю «Создать генератор…» — ОДНО ТЕЛО на все входы (правило 17).
+///
+/// Р.53: видов девятнадцать, плоский список из них — свалка. Группа —
+/// ФУНКЦИЯ вида (`GenGroup::of`), второго списка нет: новый вид попадает
+/// в меню сам. Прямоугольники пунктов и групп — наружу для живых
+/// сценариев (Р.49): подменю в дереве доступности не ищется.
+///
+/// Р.55 (С4 претензии 8): вход перестал быть единственным. Раньше
+/// генератор создавался ТОЛЬКО правым кликом по пустому фону бина — «я не
+/// знаю как создать генератор медиа, у нас код есть а как создавать в ui
+/// не понятно». Теперь тот же самый список висит и в главном меню, и
+/// второго списка видов при этом не завелось.
+pub fn generator_menu(ui: &mut egui::Ui) -> Option<kt_model::GeneratorKind> {
+    let mut picked = None;
+    let mr = ui.menu_button(tr(k::bin::menu::NEW_GENERATOR), |ui| {
+        for grp in GenGroup::ALL {
+            let kinds: Vec<_> = kt_model::GeneratorKind::all()
+                .into_iter()
+                .filter(|k| GenGroup::of(k) == grp)
+                .collect();
+            if kinds.is_empty() {
+                continue;
+            }
+            let gr = ui.menu_button(grp.name(), |ui| {
+                for kd in kinds {
+                    let r = ui.button(kind_name(&kd));
+                    let probe = match &kd {
+                        // у таблиц тег один на пять видов — различаем
+                        // разновидностью (живые сценарии)
+                        kt_model::GeneratorKind::TestPattern { table } => {
+                            format!("gen.new.table.{}", table.token())
+                        }
+                        other => format!("gen.new.{}", other.tag()),
+                    };
+                    crate::widgets::field_probe::note(&probe, r.rect);
+                    if r.clicked() {
+                        picked = Some(kd);
+                        ui.close();
+                    }
+                }
+            });
+            crate::widgets::field_probe::note(
+                &format!("gen.new.group.{}", grp.probe()),
+                gr.response.rect,
+            );
+        }
+    });
+    crate::widgets::field_probe::note("gen.new", mr.response.rect);
+    picked
+}
+
 pub fn kind_name(kind: &GeneratorKind) -> &'static str {
     match kind {
         GeneratorKind::Solid { .. } => tr(k::genkind::SOLID),

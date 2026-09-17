@@ -11,26 +11,97 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct FxStateStore {
     map: HashMap<ClipId, ClipProcessor>,
-    /// Состояние ВЛОЖЕННЫХ лент (Р.50, Б4): своё на ленту.
+    /// Потоки суб-микса вложенных лент (Р.50 Б4, ключ исправлен в Р.55 С4).
     ///
-    /// Не «плоский ключ по ClipId на весь документ», хотя адреса уникальны:
-    /// лента, поставленная в пяти местах, — это ПЯТЬ разных потоков через
-    /// её цепочки, и делить между ними один реверб было бы слышно. Ключ —
-    /// адрес ленты, а не экземпляра, потому что один экземпляр читает
-    /// суб-микс последовательно, а разные — своими окнами; на них стоит
-    /// `last` (см. ниже).
-    nests: HashMap<kt_model::MediaId, NestState>,
+    /// Ключ — адрес ЭКЗЕМПЛЯРА, а не ленты. Лента, поставленная в пяти
+    /// местах, — это ПЯТЬ разных потоков через её цепочки, и делить между
+    /// ними один реверб было бы слышно; до Р.55 ключ стоял по ленте, и
+    /// комментарий на этом же месте сам себе противоречил. Под реверсом и
+    /// растяжением (С4) экземпляры читают ленту ещё и в РАЗНОМ порядке,
+    /// то есть дерутся бы за один курсор продюсера.
+    ///
+    /// `ClipId` уникален по всему документу и переживает трим, разрез и
+    /// перенос (инвариант 3) — ровно тот же ключ, что у `map`.
+    nests: HashMap<ClipId, NestStream>,
 }
 
-/// Состояние одной вложенной ленты в аудио-пути.
-#[derive(Default)]
-pub struct NestState {
+/// Поток суб-микса ОДНОГО экземпляра вложенной ленты.
+///
+/// Суб-микс — ПОТОКОВЫЙ АВТОМАТ: внутри ленты живут ревербы и дилеи со
+/// своим состоянием, и пересчёт со случайного места даёт другой выход.
+/// Поэтому лента рендерится ТОЛЬКО ВПЕРЁД и только по возрастанию своего
+/// времени, а реверс и растяжение экземпляра действуют на СЭМПЛЫ готового
+/// микса — так же, как на сэмплы файла. Обратное («рендерить ленту назад»)
+/// дало бы третий, ничей результат: внутренний реверб обязан звучать
+/// вперёд ВНУТРИ ленты, а зеркало снаружи даёт обратный реверб.
+pub struct NestStream {
+    /// Какая лента. Экземпляр могли перевесить на другую (`SetClipMedia`) —
+    /// тогда поток начинается заново, а не наследует чужое состояние.
+    pub seq: kt_model::MediaId,
     pub store: FxStateStore,
-    /// Последний отданный бёрст суб-микса. Повторный запрос того же —
-    /// обычное дело (`render_plain_clip` держит курсор на одном бёрсте и
-    /// берёт из него куски), а пересчитывать потоковую цепочку второй раз
-    /// нельзя: она вернула бы ДРУГОЙ выход.
-    pub last: Option<(i64, std::sync::Arc<kt_media::AudioBurst>)>,
+    /// Непрерывный отрезок уже посчитанных бёрстов, свежие в конце.
+    /// Повторный запрос того же бёрста — обычное дело (`render_plain_clip`
+    /// держит на нём курсор, а зеркало реверса читает его многократно), и
+    /// пересчитывать потоковую цепочку второй раз нельзя.
+    pub ring: std::collections::VecDeque<(i64, std::sync::Arc<kt_media::AudioBurst>)>,
+    /// Следующий бёрст, который выдаст продюсер. Он идёт СТРОГО ВПЕРЁД.
+    pub next: Option<i64>,
+    /// Пре-ролл переезда в бёрстах — та же дисциплина, что у настоящего
+    /// источника (инвариант 11: seek с pre-roll `max(хвост, 100 мс)`).
+    /// У ленты БЕЗ хвостатых эффектов он нулевой, и реверс стоит ровно
+    /// столько же, сколько прямое воспроизведение.
+    pub preroll: u32,
+    /// Размер блока канонической сетки. Переезд начинается с ГРАНИЦЫ
+    /// блока, а не «от i назад на P»: тогда значение бёрста — чистая
+    /// функция индекса, и байты не зависят ни от истории чтения, ни от
+    /// того, каким куском его спросили.
+    pub block: u32,
+}
+
+impl NestStream {
+    /// Свежий поток. `pub`, потому что заводит его и продюсер в `audio.rs`:
+    /// там читатель становится известен только в момент чтения.
+    pub fn new_for(seq: kt_model::MediaId, preroll: u32, block: u32) -> NestStream {
+        NestStream::new(seq, preroll, block)
+    }
+
+    fn new(seq: kt_model::MediaId, preroll: u32, block: u32) -> NestStream {
+        NestStream {
+            seq,
+            store: FxStateStore::new(),
+            ring: std::collections::VecDeque::new(),
+            next: None,
+            preroll,
+            block,
+        }
+    }
+
+    /// Начало блока, в котором лежит бёрст `i`.
+    pub fn block_start(&self, i: i64) -> i64 {
+        let w = self.block.max(1) as i64;
+        i.div_euclid(w) * w
+    }
+
+    pub fn cached(&self, i: i64) -> Option<std::sync::Arc<kt_media::AudioBurst>> {
+        self.ring.iter().find(|(k, _)| *k == i).map(|(_, b)| b.clone())
+    }
+
+    pub fn push(&mut self, i: i64, b: std::sync::Arc<kt_media::AudioBurst>) {
+        // Потолок кольца — ФУНКЦИЯ ПРОЕКТА (блок плюс пре-ролл), а не
+        // бюджет памяти: зависели бы байты выхода от бюджета — рухнул бы
+        // инвариант 11 («аудио байт-в-байт всегда и везде»).
+        let cap = (self.block as usize + self.preroll as usize).max(2);
+        self.ring.push_back((i, b));
+        while self.ring.len() > cap {
+            self.ring.pop_front();
+        }
+    }
+
+    pub fn rewind(&mut self) {
+        self.ring.clear();
+        self.next = None;
+        self.store.reset_all();
+    }
 }
 
 impl FxStateStore {
@@ -108,9 +179,23 @@ impl FxStateStore {
 
     /// Полный сброс (seek транспорта): каждый процессор сделает pre-roll
     /// при следующем чтении.
-    /// Состояние вложенной ленты (заводится по первому обращению).
-    pub fn nest_mut(&mut self, seq: kt_model::MediaId) -> &mut NestState {
-        self.nests.entry(seq).or_default()
+    /// Поток суб-микса экземпляра (заводится по первому обращению).
+    /// Перевесили экземпляр на другую ленту — поток начинается заново.
+    pub fn nest_mut(
+        &mut self,
+        id: ClipId,
+        seq: kt_model::MediaId,
+        preroll: u32,
+        block: u32,
+    ) -> &mut NestStream {
+        let e = self.nests.entry(id).or_insert_with(|| NestStream::new(seq, preroll, block));
+        if e.seq != seq {
+            *e = NestStream::new(seq, preroll, block);
+        } else {
+            e.preroll = preroll;
+            e.block = block;
+        }
+        e
     }
 
     /// Забрать состояния лент НАРУЖУ на время рендера.
@@ -119,15 +204,15 @@ impl FxStateStore {
     /// живёт рядом со стором — взять и то и другое мутабельно одновременно
     /// нечем. Вынутая карта развязывает заимствования, и `put_nests`
     /// возвращает её на место в том же вызове.
-    pub fn take_nests(&mut self) -> HashMap<kt_model::MediaId, NestState> {
+    pub fn take_nests(&mut self) -> HashMap<ClipId, NestStream> {
         std::mem::take(&mut self.nests)
     }
 
-    pub fn put_nests(&mut self, v: HashMap<kt_model::MediaId, NestState>) {
+    pub fn put_nests(&mut self, v: HashMap<ClipId, NestStream>) {
         self.nests = v;
     }
 
-    pub fn retain_nests(&mut self, alive: &dyn Fn(kt_model::MediaId) -> bool) {
+    pub fn retain_nests(&mut self, alive: &dyn Fn(ClipId) -> bool) {
         self.nests.retain(|id, _| alive(*id));
     }
 
@@ -135,8 +220,7 @@ impl FxStateStore {
         // seek уходит ВГЛУБЬ: цепочки внутри ленты — такие же потоковые
         // автоматы, и хвост реверба из другого места звучал бы «из прошлого»
         for n in self.nests.values_mut() {
-            n.store.reset_all();
-            n.last = None;
+            n.rewind();
         }
         for p in self.map.values_mut() {
             p.reset();

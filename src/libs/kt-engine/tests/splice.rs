@@ -62,6 +62,7 @@ fn t19_copy_region_fragment_paste_renders_identically() {
     let paste_at = Tick(90_000 * 10);
     let (mut next_clip, mut next_group, mut next_tr) = (100, 100, 100);
     let mut next_morph = 1u64;
+    let mut next_cam = 1u64;
     let (cmds, _end, _) = paste_block(
         &block,
         paste_at,
@@ -70,6 +71,7 @@ fn t19_copy_region_fragment_paste_renders_identically() {
             group: &mut next_group,
             transition: &mut next_tr,
             morph: &mut next_morph,
+            camera: &mut next_cam,
         },
         &PasteNames::default(),
     );
@@ -130,17 +132,30 @@ fn t19_two_fragments_pasted_back_to_back_are_seamless() {
     let (mut nc, mut ng, mut nt) = (100, 100, 100);
     let at1 = Tick(90_000 * 10);
     let mut nm = 1u64;
+    let mut ncam = 1u64;
     let (cmds1, end1, _) = paste_block(
         &b1,
         at1,
-        PasteIds { clip: &mut nc, group: &mut ng, transition: &mut nt, morph: &mut nm },
+        PasteIds {
+            clip: &mut nc,
+            group: &mut ng,
+            transition: &mut nt,
+            morph: &mut nm,
+            camera: &mut ncam,
+        },
         &PasteNames::default(),
     );
     model.apply_batch(cmds1).unwrap();
     let (cmds2, _, _) = paste_block(
         &b2,
         end1,
-        PasteIds { clip: &mut nc, group: &mut ng, transition: &mut nt, morph: &mut nm },
+        PasteIds {
+            clip: &mut nc,
+            group: &mut ng,
+            transition: &mut nt,
+            morph: &mut nm,
+            camera: &mut ncam,
+        },
         &PasteNames::default(),
     );
     model.apply_batch(cmds2).unwrap();
