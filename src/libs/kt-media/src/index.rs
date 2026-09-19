@@ -503,36 +503,64 @@ impl PeakPyramid {
         observe: &mut dyn FnMut(&crate::AudioBurst),
     ) -> PeakPyramid {
         let duration_frames = source.info().duration.to_audio_frames().max(0);
-        let mut level0: Vec<Vec<(i16, i16)>> = vec![Vec::new(); AUDIO_CHANNELS];
-        let mut block: Vec<(i16, i16)> = vec![(i16::MAX, i16::MIN); AUDIO_CHANNELS];
-        let mut in_block = 0usize;
         let total_bursts = duration_frames.div_euclid(AUDIO_BURST_FRAMES as i64).max(0);
+        let mut acc = PeakAcc::default();
         for bidx in 0..total_bursts {
             let Ok(burst) = source.read_audio_burst(bidx) else { break };
             observe(&burst);
-            for f in 0..AUDIO_BURST_FRAMES {
-                for (ch, b) in block.iter_mut().enumerate() {
-                    let v = (burst.data[f * AUDIO_CHANNELS + ch].clamp(-1.0, 1.0) * 32767.0) as i16;
-                    b.0 = b.0.min(v);
-                    b.1 = b.1.max(v);
-                }
-                in_block += 1;
-                if in_block == PEAK_BLOCK_FRAMES {
-                    for ch in 0..AUDIO_CHANNELS {
-                        level0[ch].push(block[ch]);
-                        block[ch] = (i16::MAX, i16::MIN);
-                    }
-                    in_block = 0;
-                }
-            }
+            acc.push(burst.data.as_slice());
         }
-        if in_block > 0 {
-            for ch in 0..AUDIO_CHANNELS {
-                level0[ch].push(block[ch]);
-            }
-        }
+        acc.finish()
+    }
+}
 
-        let mut levels = vec![level0];
+/// Накопитель пирамиды по ПОТОКУ сэмплов (Р.56, п.452).
+///
+/// Выделен из `build_observed` и им же используется — арифметика одна, и
+/// t15 остаётся байт-в-байт. Нужен службе превью ленты: у ленты нет файла,
+/// её огибающая берётся с готового суб-микса, который отдаёт `AudioRenderer`
+/// кусками, а не `MediaSource`.
+#[derive(Default)]
+pub struct PeakAcc {
+    level0: Vec<Vec<(i16, i16)>>,
+    block: Vec<(i16, i16)>,
+    in_block: usize,
+}
+
+impl PeakAcc {
+    /// Очередной кусок f32 interleaved (кратный числу каналов).
+    pub fn push(&mut self, data: &[f32]) {
+        if self.level0.is_empty() {
+            self.level0 = vec![Vec::new(); AUDIO_CHANNELS];
+            self.block = vec![(i16::MAX, i16::MIN); AUDIO_CHANNELS];
+        }
+        for f in 0..data.len() / AUDIO_CHANNELS {
+            for (ch, b) in self.block.iter_mut().enumerate() {
+                let v = (data[f * AUDIO_CHANNELS + ch].clamp(-1.0, 1.0) * 32767.0) as i16;
+                b.0 = b.0.min(v);
+                b.1 = b.1.max(v);
+            }
+            self.in_block += 1;
+            if self.in_block == PEAK_BLOCK_FRAMES {
+                for ch in 0..AUDIO_CHANNELS {
+                    self.level0[ch].push(self.block[ch]);
+                    self.block[ch] = (i16::MAX, i16::MIN);
+                }
+                self.in_block = 0;
+            }
+        }
+    }
+
+    pub fn finish(mut self) -> PeakPyramid {
+        if self.level0.is_empty() {
+            self.level0 = vec![Vec::new(); AUDIO_CHANNELS];
+        }
+        if self.in_block > 0 {
+            for ch in 0..AUDIO_CHANNELS {
+                self.level0[ch].push(self.block[ch]);
+            }
+        }
+        let mut levels = vec![self.level0];
         while levels.last().unwrap()[0].len() > 1 {
             let prev = levels.last().unwrap();
             let mut next: Vec<Vec<(i16, i16)>> = vec![Vec::new(); AUDIO_CHANNELS];

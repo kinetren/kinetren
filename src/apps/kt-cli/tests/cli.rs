@@ -138,6 +138,39 @@ fn t290_probe_reports_what_layers_changed() {
         "probe обязан называть ПУТЬ события вложения:\n{nest_head}"
     );
 
+    // Р.56 (п.448): у РАСТЯНУТОГО экземпляра окно содержимого не равно его
+    // длине на таймлайне — печатать длину значит врать ровно в том месте,
+    // ради которого probe и запускают («тут кадр из другого места»).
+    let warped = dir.join("nested_warped.otio");
+    {
+        let text = std::fs::read_to_string(&nested).unwrap();
+        let b = kt_otio::load_project(&text, nested.parent()).unwrap();
+        let mut pr = b.project;
+        let id = pr
+            .clips
+            .iter()
+            .find(|c| pr.sequence(c.media).is_some() && c.kind == kt_model::ClipKind::Video)
+            .map(|c| c.id)
+            .expect("экземпляр ленты есть");
+        let c = pr.clips.iter_mut().find(|c| c.id == id).unwrap();
+        c.reversed = true;
+        c.fx.push(kt_model::FxInstance::slowed_reverb(0.5, 0.0, 85.0));
+        pr.validate().expect("зеркальный замедленный экземпляр законен");
+        std::fs::write(&warped, kt_otio::save_project(&pr, &b.retained, warped.parent())).unwrap();
+    }
+    let out = cli().args(["probe", warped.to_str().unwrap(), "0", "2"]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let warp_head = String::from_utf8_lossy(&out.stdout).to_string();
+    let line = warp_head
+        .lines()
+        .find(|l| l.contains("is a NESTED REEL") && l.contains("REVERSED"))
+        .unwrap_or_else(|| panic!("зеркальный экземпляр не назван зеркальным:\n{warp_head}"));
+    assert!(
+        line.contains("warped") && line.contains("consumed"),
+        "у растянутого экземпляра probe обязан печатать ФАКТИЧЕСКИ потреблённое \
+         окно ленты, а не длину события: {line}"
+    );
+
     // слой демо-проекта целится в события 7 и 9; в конце таймлайна их
     // нет, значит правок быть не должно — а события быть должны, иначе
     // «ничего не изменено» выполнялось бы само собой

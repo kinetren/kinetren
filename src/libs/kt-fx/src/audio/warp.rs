@@ -16,19 +16,51 @@ use rubato::{
 /// внутренний счётчик rubato, не пересчитывается извне.
 pub struct Warp {
     rs: SincFixedOut<f32>,
+    /// МОДУЛЬ скорости: направление к ресемплеру отношения не имеет
+    /// (Р.57). Знак живёт в адресе чтения (`fill_source`), а рубато ест
+    /// поток со скоростью |rate| и о направлении не знает.
     rate: f64,
     /// Следующий кадр источника, который будет запрошен у pull.
     src_cursor: i64,
     /// Готовый выход (interleaved), ещё не отданный.
     ready: std::collections::VecDeque<f32>,
     underruns: u64,
+    /// Сколько раз rubato ОТКАЗАЛ в смене отношения (окно ±rel вокруг
+    /// якоря). Раньше отказ глотался `let _ =`, и кривая 0.25→32 молча
+    /// застревала на последнем принятом значении (Р.57, латентный дефект).
+    rejected: u64,
 }
 
 const WARP_CHUNK_OUT: usize = 1024;
 
+/// Окно отношений вокруг якоря у ЛЕГАСИ-режима (кривая целиком в
+/// 0.25…32): ровно как было до Р.57 — на этом стоит байтовое тождество.
+const WARP_RATIO_REL_LEGACY: f64 = 32.0;
+/// Потолок ЯКОРЯ в расширенном режиме. Якорь задаёт и срез анти-алиасинга
+/// (rubato масштабирует `f_cutoff` конструкционным отношением), и размер
+/// буфера `(rel+1)·needed_input`. Два — компромисс: выше растёт память,
+/// ниже становится слышен алиасинг на быстрых участках.
+const WARP_EXT_ANCHOR_MAX_RATE: f64 = 2.0;
+
 impl Warp {
-    pub fn new(rate: f64, src_start: i64) -> Warp {
-        let rate = rate.clamp(0.25, 32.0);
+    /// `rate` — МОДУЛЬ скорости. `reach` — (мин, макс) модуля по ВСЕМУ
+    /// профилю: ресемплеру нужно знать разброс отношений ДО первого чанка,
+    /// иначе смена отношения будет отвергнута (см. `rejected`).
+    pub fn new(rate: f64, src_start: i64, reach: (f64, f64)) -> Warp {
+        let rate = rate.abs().clamp(kt_model::RATE_AUDIO_FLOOR, 32.0);
+        // ЛЕГАСИ-РЕЖИМ (профиль целиком в 0.25…32) — тело дословно
+        // прежнее: тот же якорь, то же окно. Байты не двигаются.
+        let extended = reach.0 < 0.25;
+        let (anchor, rel) = if extended {
+            let anchor = rate.clamp(kt_model::RATE_AUDIO_FLOOR, WARP_EXT_ANCHOR_MAX_RATE);
+            let rel = WARP_RATIO_REL_LEGACY
+                .max(reach.1 / anchor)
+                .max(anchor / reach.0.max(kt_model::RATE_AUDIO_FLOOR))
+                * 1.01;
+            (anchor, rel)
+        } else {
+            (rate.clamp(0.25, 32.0), WARP_RATIO_REL_LEGACY)
+        };
         let params = SincInterpolationParameters {
             sinc_len: 128,
             f_cutoff: 0.95,
@@ -37,24 +69,41 @@ impl Warp {
             window: WindowFunction::BlackmanHarris2,
         };
         // ratio = f_out / f_in = 1 / rate (rate 0.5 → выхода вдвое больше)
-        let rs = SincFixedOut::<f32>::new(1.0 / rate, 32.0, params, WARP_CHUNK_OUT, CH)
+        let mut rs = SincFixedOut::<f32>::new(1.0 / anchor, rel, params, WARP_CHUNK_OUT, CH)
             .expect("rubato init");
+        let mut rejected = 0;
+        if anchor != rate && rs.set_resample_ratio(1.0 / rate, false).is_err() {
+            rejected += 1;
+            debug_assert!(false, "rubato rejected the initial ratio");
+        }
         Warp {
             rs,
             rate,
             src_cursor: src_start,
             ready: std::collections::VecDeque::new(),
             underruns: 0,
+            rejected,
         }
     }
 
+    /// `rate` — МОДУЛЬ скорости.
     pub fn set_rate(&mut self, rate: f64) {
-        let rate = rate.clamp(0.25, 32.0);
+        let rate = rate.abs().clamp(kt_model::RATE_AUDIO_FLOOR, 32.0);
         if (rate - self.rate).abs() > 1e-9 {
             self.rate = rate;
             // ramp=true: rubato плавно ведёт ratio к цели внутри чанка
-            let _ = self.rs.set_resample_ratio(1.0 / rate, true);
+            if self.rs.set_resample_ratio(1.0 / rate, true).is_err() {
+                // ОТКАЗ НАЗЫВАЕТСЯ (Р.57): молчаливое залипание на прежнем
+                // отношении слышно как «замедление не применилось»
+                self.rejected += 1;
+                debug_assert!(false, "rubato rejected a ratio change: {rate}");
+            }
         }
+    }
+
+    /// Сколько смен отношения rubato отверг (диагностика, тесты).
+    pub fn rejected(&self) -> u64 {
+        self.rejected
     }
 
     pub fn rate(&self) -> f64 {

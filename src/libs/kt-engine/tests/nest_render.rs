@@ -1120,3 +1120,468 @@ fn t565_raw_reverse_transport_over_a_nest_is_not_silence() {
     );
     assert!(!want.is_empty(), "сырой заказ пуст");
 }
+
+// ---- Р.56 (п.448): НЕПРЕРЫВНОЕ внутреннее время ленты ---------------------
+//
+// Претензия владельца дословно: «slowed-reverb на композиции → текст и
+// анимация внутри дёргается покадрово». Причина была одна и точная:
+// внутреннее время вложения ФЛОРИЛОСЬ к сетке кадров, хотя декодированных
+// кадров у ленты нет. При rate 0.5 два соседних выходных кадра получали
+// ОДИН И ТОТ ЖЕ `inner_t`, мемо суб-композита отдавало ту же запись, и всё
+// процедурное внутри (титры, автоматизация, камеры, зерно) шло ступеньками.
+//
+// Разделение, на котором стоят все тесты ниже: **пол по сетке ставит ЛИСТ, и
+// только ФАЙЛОВЫЙ**. Футаж прибит к кадрам файла (просить между ними
+// бессмысленно), процедурный источник и лента — нет.
+
+/// Адреса процедурных медиа в фикстурах ниже.
+const GEN: u64 = 4; // ЖИВОЙ вид: кадр — функция тика
+const FLAT: u64 = 5; // СТАТИЧЕСКИЙ вид: кадр не зависит от времени вовсе
+
+fn gen_kind() -> GeneratorKind {
+    // шум counter-based: зерно = f(тик материала), поэтому ЛЮБОЕ смещение
+    // тика меняет весь кадр — «дёргается или нет» видно без порогов
+    GeneratorKind::NoiseField { amount: 1.0, mono: true }
+}
+
+/// Ровная заливка: кадр НЕ зависит от времени, поэтому единственным
+/// источником движения в фикстуре остаётся автоматизация. Без этого мерить
+/// «монотонно ли едет анимация» не на чем: цвет синтетики скачет с pts.
+fn flat_kind() -> GeneratorKind {
+    GeneratorKind::Solid { color_r: 20, color_g: 20, color_b: 20 }
+}
+
+fn sources_gen() -> Vec<(MediaId, Box<dyn MediaSource>)> {
+    let mut v = sources();
+    for (id, k) in [(GEN, gen_kind()), (FLAT, flat_kind())] {
+        v.push((
+            MediaId(id),
+            Box::new(kt_media::generator::GeneratorSource::new(k)) as Box<dyn MediaSource>,
+        ));
+    }
+    v
+}
+
+/// Факты открытых источников — ровно так, как их собирают плеер, экспорт и
+/// kt-cli: спросив у ОТКРЫТОГО источника его паспорт.
+fn facts() -> kt_engine::SourceFacts {
+    let mut f = kt_engine::SourceFacts::default();
+    for (id, s) in sources_gen() {
+        f.observe(id, s.info());
+    }
+    f
+}
+
+fn base_gen() -> Project {
+    let mut p = base();
+    p.media.push(MediaRef { id: MediaId(GEN), path: format_gen_path(&gen_kind()) });
+    p.media.push(MediaRef { id: MediaId(FLAT), path: format_gen_path(&flat_kind()) });
+    p
+}
+
+/// Варп-эффект на ВИДЕО: значима только скорость и режим кадров.
+fn warp_fx(rate: f64, frames: FrameMode) -> FxInstance {
+    FxInstance::SlowedReverb {
+        rate,
+        mix: 0.0,
+        reverb_delay_ms: 85.0,
+        damp: 0.32,
+        decay: 0.58,
+        wet_gain: 0.95,
+        predelay_ms: 0.0,
+        frames,
+        width: 1.0,
+        automation: vec![],
+    }
+}
+
+fn grade() -> FxInstance {
+    FxInstance::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 }
+}
+
+/// Кривая яркости на ВЕСЬ материал ребёнка: линейная и монотонная —
+/// «полушаг» виден как значение МЕЖДУ соседними целыми шагами.
+fn grade_curve() -> Vec<Vec<ParamCurve>> {
+    vec![vec![ParamCurve {
+        param: "brightness".into(),
+        ease: false,
+        // 0.9 на PART материала — это 3.8 уровня яркости на ПОЛУКАДР:
+        // видно в байтах и не упирается в потолок на заливке 20
+        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: PART, v: 0.9 }],
+    }]]
+}
+
+/// Лента с ОДНИМ ребёнком (`media`), экземпляр — со скоростью `rate` и
+/// режимом кадров `mode`. `rate == 1.0` без варпа — эталон целых шагов.
+fn one_child_nest(
+    media: u64,
+    warp: Option<(f64, FrameMode)>,
+    child_fx: Vec<FxInstance>,
+    child_auto: Vec<Vec<ParamCurve>>,
+) -> Project {
+    let mut p = base_gen();
+    let mut s = Sequence::new(MediaId(100), "Кусок");
+    let mut child = ev(2, ClipKind::Video, 0, Tick(0), Tick(PART.0 * 2), media);
+    child.source_in = Tick(0);
+    child.fx = child_fx;
+    child.fx_auto = child_auto;
+    s.clips = vec![child];
+    p.sequences.push(s);
+    let mut inst = ev(10, ClipKind::Video, 0, Tick(0), Tick(PART.0 * 2), 100);
+    inst.source_in = Tick(0);
+    inst.fx = warp.map(|(r, m)| vec![warp_fx(r, m)]).unwrap_or_default();
+    p.clips.push(inst);
+    p.validate().expect("замедленное вложение законно");
+    p
+}
+
+/// Композит момента `t`, прогретый РОВНО тем, что заказал `layers_at`
+/// (заказ == чтение — инвариант 4). Рендерер знает факты источников.
+fn render_with_facts(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
+    let mut video = VideoRenderer::new_with_facts(p, &facts());
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        sources_gen().into_iter().collect();
+    for (media, src_pts, dq) in video.layers_at(t, q) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    video.compose_from_cache(&cache, t, q)
+}
+
+fn mean_level(f: &[u8]) -> f64 {
+    let n = (f.len() / 4).max(1);
+    f.chunks_exact(4).map(|p| (p[0] as f64 + p[1] as f64 + p[2] as f64) / 3.0).sum::<f64>()
+        / n as f64
+}
+
+const QV: Quality = Quality { width: 64, height: 36 };
+
+/// Тест 579 (Р.56, п.448): замедленная лента анимируется ПОЛУШАГАМИ.
+///
+/// Красный на старом коде: при поле по сетке `inner_t` у кадров 2i и 2i+1
+/// совпадал, суб-композит брался из мемо, и пара была БАЙТ-В-БАЙТ равна.
+#[test]
+fn t579_a_slowed_reel_animates_in_half_steps() {
+    let slow = one_child_nest(FLAT, Some((0.5, FrameMode::Nearest)), vec![grade()], grade_curve());
+    let plain = one_child_nest(FLAT, None, vec![grade()], grade_curve());
+
+    let mut frames: Vec<Vec<u8>> = Vec::new();
+    for i in 0..40i64 {
+        let (f, complete) = render_with_facts(&slow, Tick(i * FRAME), QV);
+        assert!(complete, "кадр {i} неполон при полностью прогретом заказе");
+        // ЧЁТНЫЙ кадр стоит на целом шаге материала — он обязан совпасть с
+        // кадром той же ленты при rate = 1 БАЙТ-В-БАЙТ (закон Э на месте)
+        if i % 2 == 0 {
+            let (g, _) = render_with_facts(&plain, Tick(i / 2 * FRAME), QV);
+            assert_eq!(f, g, "чётный кадр замедленной ленты разошёлся с кадром rate = 1 ({i})");
+        }
+        frames.push(f);
+    }
+    for i in 0..19usize {
+        assert_ne!(
+            frames[2 * i],
+            frames[2 * i + 1],
+            "кадры {} и {} равны БАЙТ-В-БАЙТ: внутреннее время ленты округляется к \
+             сетке, и всё процедурное внутри идёт ступеньками по два кадра — ровно \
+             то, что владелец увидел как «текст дёргается»",
+            2 * i,
+            2 * i + 1
+        );
+    }
+    // ...и это ПОЛУШАГ, а не произвольное другое значение: кадр 2i+1 лежит
+    // строго между своими целыми соседями, и яркость едет монотонно
+    let means: Vec<f64> = frames.iter().map(|f| mean_level(f)).collect();
+    for w in means.windows(2) {
+        assert!(w[0] + 1e-9 < w[1], "яркость не монотонна: {:?} -> {:?}", w[0], w[1]);
+    }
+    assert!(means[0] + 10.0 < means[means.len() - 1], "кривая яркости не доехала до картинки");
+    // и ровно то же показывает САМА ЛЕНТА на своём полукадре — независимая
+    // формула: «замедление в два раза» это «то же место, шагами вдвое мельче»
+    for i in 0..19i64 {
+        let (half, _) = render_with_facts(&plain, Tick(i * FRAME + FRAME / 2), QV);
+        assert_eq!(
+            frames[(2 * i + 1) as usize],
+            half,
+            "кадр {} замедленной ленты не равен кадру ленты на её полукадре",
+            2 * i + 1
+        );
+    }
+}
+
+/// Тест 580 (Р.56, п.448): футаж ПРИБИТ к кадрам файла, процедурное — нет.
+///
+/// Два утверждения в одном тесте намеренно. Первое краснеет, если
+/// «непрерывное время» размазать и на файловый лист: просить кадр между
+/// кадрами файла бессмысленно, декодер отдаст тот же, а ключей станет вдвое
+/// больше. Второе краснеет на СТАРОМ коде.
+#[test]
+fn t580_footage_is_pinned_and_the_order_does_not_move() {
+    let plain = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
+    let v = VideoRenderer::new_with_facts(&plain, &facts());
+    for i in 0..10i64 {
+        let (a, _) = render_with_facts(&plain, Tick(2 * i * FRAME), QV);
+        let (b, _) = render_with_facts(&plain, Tick((2 * i + 1) * FRAME), QV);
+        assert_eq!(
+            a, b,
+            "футаж внутри замедленной ленты поехал на полукадре: у ФАЙЛА кадра \
+             «между кадрами» не существует, и пол по сетке ставит именно он"
+        );
+        assert_eq!(
+            v.layers_at(Tick(2 * i * FRAME), QV),
+            v.layers_at(Tick((2 * i + 1) * FRAME), QV),
+            "заказ на полукадре разошёлся с заказом на кадре"
+        );
+    }
+
+    // с автоматизацией внутри — кадры РАЗНЫЕ, а заказ тот же: двигается
+    // процедурное, футаж стоит
+    let live = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![grade()], grade_curve());
+    let vl = VideoRenderer::new_with_facts(&live, &facts());
+    for i in 0..10i64 {
+        let (a, _) = render_with_facts(&live, Tick(2 * i * FRAME), QV);
+        let (b, _) = render_with_facts(&live, Tick((2 * i + 1) * FRAME), QV);
+        assert_ne!(a, b, "автоматизация внутри ленты стоит на месте полкадра ({i})");
+        assert_eq!(
+            vl.layers_at(Tick(2 * i * FRAME), QV),
+            vl.layers_at(Tick((2 * i + 1) * FRAME), QV),
+            "кривая сдвинула ЗАКАЗ кадров — она не имеет права этого делать"
+        );
+    }
+}
+
+/// Тест 581 (Р.56, п.448): «смешивание» на вложении смешивает ЛИСТЬЯ.
+///
+/// Два суб-композита на кадр вдвое дороже на обоих бэкендах и ничего не
+/// добавляют: время ленты и так непрерывно. Поэтому режим НАСЛЕДУЕТСЯ вниз,
+/// и пару собирает лист — тем же целочисленным ядром, что и t250.
+#[test]
+fn t581_blend_on_a_nest_mixes_footage_inside() {
+    use kt_media::synthetic::{AudioPattern, SyntheticSource};
+
+    let blend = one_child_nest(1, Some((0.5, FrameMode::Blend)), vec![], vec![]);
+    let near = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
+    let t = Tick(FRAME); // первый ПОЛУКАДР: внутреннее время = FRAME/2
+
+    let (out, complete) = render_with_facts(&blend, t, QV);
+    assert!(complete, "обе стороны пары обязаны быть в заказе, значит и в кэше");
+
+    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Sine { hz: 440.0 });
+    let a = synth.read_video_frame(Tick(0), Some(QV)).unwrap().rgba.into_vec();
+    let b = synth.read_video_frame(Tick(FRAME), Some(QV)).unwrap().rgba.into_vec();
+    let want: Vec<u8> = a
+        .iter()
+        .zip(&b)
+        .map(|(&x, &y)| ((x as u32 * 2048 + y as u32 * 2048 + 2048) >> 12) as u8)
+        .collect();
+    assert_eq!(
+        out, want,
+        "полукадр смешанной ленты не равен смеси соседних кадров ИСТОЧНИКА — \
+         смешивание на вложении либо не считается, либо считается не тем ядром"
+    );
+
+    // «ближайший» на тех же данных отдаёт ЧИСТЫЙ кадр
+    let (n, _) = render_with_facts(&near, t, QV);
+    assert_eq!(n, a, "режим «ближайший» держит кадр");
+    assert_ne!(n, out, "смешивание не отличается от ближайшего — режима нет");
+
+    // кадр НА СЕТКЕ не изменился: вес пары там 0
+    assert_eq!(
+        render_with_facts(&blend, Tick(0), QV).0,
+        render_with_facts(&near, Tick(0), QV).0,
+        "на целом шаге смешивать нечего, а байты разошлись"
+    );
+
+    // ЗАКАЗ несёт обе стороны: не согрей вторую — слой голодал бы вечно
+    let v = VideoRenderer::new_with_facts(&blend, &facts());
+    let keys: Vec<(MediaId, Tick, Quality)> = v.layers_at(t, QV);
+    assert!(
+        keys.contains(&(MediaId(1), Tick(0), QV)) && keys.contains(&(MediaId(1), Tick(FRAME), QV)),
+        "в заказе нет соседа пары: {keys:?}"
+    );
+    let vn = VideoRenderer::new_with_facts(&near, &facts());
+    assert_eq!(vn.layers_at(t, QV).len(), 1, "«ближайший» заказывает ОДИН кадр");
+}
+
+/// Тест 582 (Р.56, п.448): ключ мемоизации суб-композита несёт РЕЖИМ.
+///
+/// Тот же `inner_t`, та же редакция ленты, разные байты. Без флага в ключе
+/// композит «ближайшего» после композита «смешивания» вернул бы смешанную
+/// картинку из мемо — и ошибка была бы невидимой (кадр правдоподобный).
+#[test]
+fn t582_the_memo_key_carries_the_frame_mode() {
+    use kt_media::synthetic::{AudioPattern, SyntheticSource};
+
+    let blend = one_child_nest(1, Some((0.5, FrameMode::Blend)), vec![], vec![]);
+    let near = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
+    let t = Tick(FRAME);
+    let seq = MediaId(100);
+    // кэш ОДИН на оба прогона — в программе он и есть один
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+
+    let mut vb = VideoRenderer::new_with_facts(&blend, &facts());
+    let mixed = warm_and_compose(&mut vb, &cache, t, QV);
+    let mut vn = VideoRenderer::new_with_facts(&near, &facts());
+    let clean = warm_and_compose(&mut vn, &cache, t, QV);
+
+    let mut synth = SyntheticSource::new(Tick(90_000 * 60), AudioPattern::Sine { hz: 440.0 });
+    let a = synth.read_video_frame(Tick(0), Some(QV)).unwrap().rgba.into_vec();
+    assert_ne!(mixed, clean, "два режима отдали один кадр");
+    assert_eq!(
+        clean, a,
+        "«ближайший» получил СМЕШАННЫЙ суб-композит из мемо: ключ не различает режим"
+    );
+
+    // записи лежат по РАЗНЫМ ключам, и «без смешивания» ключ — сам хэш
+    let h = kt_engine::content_hash(&blend, seq);
+    assert_eq!(kt_engine::nest_memo_key(h, false), h, "прежние записи обязаны остаться на месте");
+    assert_ne!(kt_engine::nest_memo_key(h, true), h);
+    let inner = Tick(FRAME / 2);
+    for (mode, key) in [(true, kt_engine::nest_memo_key(h, true)), (false, h)] {
+        assert!(
+            cache
+                .get_postfx_video(
+                    kt_engine::nest_source_id(seq),
+                    (QV.width, QV.height),
+                    key,
+                    inner.0
+                )
+                .is_some(),
+            "суб-композит режима {mode} не мемоизирован"
+        );
+    }
+}
+
+/// Тест 583 (Р.56, п.448): бюджет чанка видит ПАРУ ВНУТРИ ленты.
+///
+/// Недосчёт вытесняет соседа до композиции, срабатывает ветка голода, и
+/// БАЙТЫ ЭКСПОРТА начинают зависеть от тайминга кэша — дословно регрессия
+/// Р.37 С5, только этажом ниже.
+#[test]
+fn t583_the_chunk_budget_counts_the_pair_inside_the_reel() {
+    let blend = one_child_nest(1, Some((0.5, FrameMode::Blend)), vec![], vec![]);
+    let near = one_child_nest(1, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
+    assert_eq!(
+        VideoRenderer::new_with_facts(&near, &facts()).max_concurrent_layers(),
+        2,
+        "буфер суб-композита плюс один ребёнок"
+    );
+    assert_eq!(
+        VideoRenderer::new_with_facts(&blend, &facts()).max_concurrent_layers(),
+        3,
+        "смешивающий ЛИСТ внутри ленты держит два кадра — бюджет обязан их увидеть"
+    );
+}
+
+/// Тест 584 (Р.56, п.448): реверс И растяжение вместе.
+///
+/// Зеркало считается ПОСЛЕ варпа и якорится фактически потреблённым `used`;
+/// на непрерывном времени это ещё и кламп у края материала. Проверяем, что
+/// последовательность идёт НАЗАД полушагами и не падает на клампе.
+#[test]
+fn t584_reversed_and_slowed_nest_runs_backwards_in_half_steps() {
+    let mut p = one_child_nest(FLAT, Some((0.5, FrameMode::Nearest)), vec![grade()], grade_curve());
+    p.clips[0].reversed = true;
+    p.validate().expect("зеркальное замедленное вложение законно");
+
+    let mut frames: Vec<Vec<u8>> = Vec::new();
+    for i in 0..40i64 {
+        let (f, complete) = render_with_facts(&p, Tick(i * FRAME), QV);
+        assert!(complete, "кадр {i} неполон");
+        frames.push(f);
+    }
+    // КАЖДАЯ соседняя пара, а не только (2i, 2i+1): у зеркала фаза пола
+    // сдвинута, и «проверю чётные с нечётными» прошло бы мимо дефекта
+    for i in 0..frames.len() - 1 {
+        assert_ne!(
+            frames[i],
+            frames[i + 1],
+            "зеркальная замедленная лента стоит полкадра на месте ({i})"
+        );
+    }
+    let means: Vec<f64> = frames.iter().map(|f| mean_level(f)).collect();
+    for w in means.windows(2) {
+        assert!(w[0] + 1e-9 >= w[1], "зеркало идёт не назад: {:?} -> {:?}", w[0], w[1]);
+    }
+    assert!(means[0] > means[means.len() - 1] + 1.0, "кривая не доехала до картинки");
+}
+
+/// Тест 585 (Р.56, п.448): ПРОЦЕДУРНЫЙ источник считается на непрерывном
+/// тике — и в ленте, и В КОРНЕ.
+///
+/// Красный на старом коде дважды: замедленный генератор в корне отдавал
+/// пару одинаковых кадров (пол по сетке), и он же внутри ленты — тем более
+/// (два пола подряд).
+#[test]
+fn t585_procedural_sources_run_on_the_continuous_tick() {
+    // (а) В КОРНЕ: замедленный генератор прямо на дорожке
+    let mut root = base_gen();
+    let mut c = ev(1, ClipKind::Video, 0, Tick(0), Tick(PART.0 * 2), GEN);
+    c.source_in = Tick(0);
+    c.fx = vec![warp_fx(0.5, FrameMode::Nearest)];
+    root.clips.push(c);
+    root.validate().expect("замедленный генератор в корне законен");
+    for i in 0..8i64 {
+        let (a, ca) = render_with_facts(&root, Tick(2 * i * FRAME), QV);
+        let (b, cb) = render_with_facts(&root, Tick((2 * i + 1) * FRAME), QV);
+        assert!(ca && cb, "заказ не покрыл чтение: кадр {i} неполон");
+        assert_ne!(
+            a, b,
+            "замедленный ГЕНЕРАТОР в корне отдал два одинаковых кадра: у него нет \
+             своей сетки кадров, и прижимать его к чужой незачем"
+        );
+        assert!(a.iter().any(|&x| x != 0), "кадр чёрный — проверять нечего");
+    }
+
+    // (б) ВНУТРИ ленты: тот же генератор ребёнком замедленного вложения
+    let nested = one_child_nest(GEN, Some((0.5, FrameMode::Nearest)), vec![], vec![]);
+    for i in 0..8i64 {
+        let (a, ca) = render_with_facts(&nested, Tick(2 * i * FRAME), QV);
+        let (b, cb) = render_with_facts(&nested, Tick((2 * i + 1) * FRAME), QV);
+        assert!(ca && cb, "кадр {i} внутри ленты неполон");
+        assert_ne!(a, b, "замедленный генератор ВНУТРИ ленты дёргается по два кадра");
+    }
+
+    // (в) ПОЛОСКА ПРОГРЕТОСТИ честна: пустой кэш — холодно, прогретое
+    // ЦЕЛИКОМ окно — тепло. Растянутый ребёнок считается «целиком или
+    // никак» (Р.55, С4), и врать в хорошую сторону она не имеет права.
+    let v = VideoRenderer::new_with_facts(&nested, &facts());
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let body = 0..PART.0;
+    let cold = v.nest_coverage(&cache, QV);
+    assert_eq!(cold.len(), 1, "полоска вложения не построена");
+    assert!(
+        cold[0].1.iter().all(|r| r.end <= body.start || r.start >= body.end),
+        "пустой кэш показан прогретым: {:?}",
+        cold[0].1
+    );
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        sources_gen().into_iter().collect();
+    for (media, src_pts, dq) in
+        v.wanted_frames(kt_time::TickRange::new(Tick(0), Tick(PART.0 * 2)), QV)
+    {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        // ТАК ЖЕ, КАК ВОРКЕР: кадр закрывает полосу в один шаг сетки
+        // (`RequestKind::video_on_grid`). Ключ у процедурного источника
+        // внесеточный, и полоски честны ровно потому, что соседние заказы
+        // ближе шага — иначе между ними осталась бы видимая дырка.
+        cache.insert_video_span(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            FRAME,
+            frame.into(),
+        );
+    }
+    let warm = v.nest_coverage(&cache, QV);
+    assert!(
+        warm[0].1.iter().any(|r| r.start <= body.start && r.end >= body.end),
+        "прогретое ЦЕЛИКОМ окно показано холодным: {:?}",
+        warm[0].1
+    );
+}

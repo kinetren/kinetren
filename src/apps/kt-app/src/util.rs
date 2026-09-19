@@ -252,7 +252,7 @@ fn build_peaks(
     Ok(Some((levels, loud)))
 }
 
-fn pyramid_to_peaks(p: kt_media::index::PeakPyramid) -> Peaks {
+pub(crate) fn pyramid_to_peaks(p: kt_media::index::PeakPyramid) -> Peaks {
     p.levels
         .into_iter()
         .map(|mut chs| {

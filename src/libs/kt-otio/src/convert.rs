@@ -154,6 +154,23 @@ pub struct Retained {
     pub timeline_kt_extra: Map<String, Value>,
 }
 
+impl Retained {
+    /// Переставить сырьё чужих ТРЕКОВ вслед за перенумерацией дорожек
+    /// (Р.56, п.449). Ключ — семантическая пара (вид, номер), и при
+    /// «номер = ранг строки» она меняется на чтении: не переставь мы
+    /// карту, metadata чужого трека уехала бы на соседний трек МОЛЧА.
+    pub fn remap_tracks(&mut self, perm: &kt_model::LanePerm) {
+        if perm.is_identity() {
+            return;
+        }
+        self.tracks = self
+            .tracks
+            .drain()
+            .map(|((k, l), v)| ((k, perm.map_clip(k, l)), v))
+            .collect();
+    }
+}
+
 pub struct ProjectBundle {
     pub project: Project,
     pub retained: Retained,
@@ -1344,7 +1361,11 @@ pub fn timeline_to_project(tl: &Timeline, base_dir: Option<&Path>) -> Result<Pro
     if p.timeline_end.is_some_and(|e| e <= material) {
         p.timeline_end = None;
     }
-    p.normalize();
+    // НОМЕР ДОРОЖКИ = РАНГ СТРОКИ (Р.56, п.449). Чужие треки адресуются
+    // парой (вид, номер), поэтому их сырьё переставляется ТЕМ ЖЕ
+    // отображением: иначе metadata чужого трека уехала бы на соседний.
+    let perm = p.normalize();
+    retained.remap_tracks(&perm);
     p.validate().map_err(|e| Error::UnsupportedSchema(format!("invalid timeline: {e}")))?;
     if let Some(first) = bad_auto.first() {
         return Err(Error::UnsupportedSchema(first.clone()));

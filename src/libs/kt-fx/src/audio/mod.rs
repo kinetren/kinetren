@@ -76,12 +76,52 @@ pub fn chain_source_window_ext(
     let s_floor = if material.start >= 0 { 0 } else { i64::MIN };
     let t0 = l0 as f64 / len as f64;
     let t1 = l1 as f64 / len as f64;
-    let s0 = ((len as f64 * source_progress(rate, automation, t0)).floor() as i64)
+    // ЗНАКОВАЯ кривая (Р.57) уходит за пределы своих концов: окно по двум
+    // точкам пропустило бы экскурсию, и префетч грел бы не то (класс
+    // п.13/t17). У монотонной `span_over` возвращает РОВНО концы, поэтому
+    // ветка ниже байт-в-байт прежняя.
+    let (p0, p1) = if kt_model::rate_signed(rate, automation) {
+        kt_model::span_over(rate, automation, t0, t1)
+    } else {
+        (source_progress(rate, automation, t0), source_progress(rate, automation, t1))
+    };
+    let s0 = ((len as f64 * p0).floor() as i64)
         .saturating_sub(WARP_SOURCE_MARGIN_FRAMES)
         .max(s_floor);
-    let s1 = (len as f64 * source_progress(rate, automation, t1)).ceil() as i64
-        + WARP_SOURCE_MARGIN_FRAMES;
+    let s1 = (len as f64 * p1).ceil() as i64 + WARP_SOURCE_MARGIN_FRAMES;
     s0..s1.max(s0)
+}
+
+/// Окно ПОТРЕБЛЕНИЯ: сколько материала цепочка съест на этом куске
+/// выхода (Р.57). Монотонно по построению — им ограничивается курсор
+/// ресемплера (`SrcWindow.end`), тогда как окно АДРЕСОВ выше задаёт, что
+/// греть в кэше.
+pub fn chain_consumption_window_ext(
+    fx: &[FxInstance],
+    auto: &AutoProfiles,
+    clip_len_frames: i64,
+    material: std::ops::Range<i64>,
+    local: std::ops::Range<i64>,
+) -> std::ops::Range<i64> {
+    let len = clip_len_frames.max(1);
+    let l0 = (local.start - chain_lookahead(fx, auto)).clamp(material.start, material.end);
+    let l1 = (local.end + chain_lookahead(fx, auto)).clamp(material.start, material.end);
+    let Some(rate) = fx.iter().find_map(|f| match f {
+        FxInstance::SlowedReverb { rate, .. } => Some(*rate),
+        _ => None,
+    }) else {
+        return l0..l1.max(l0);
+    };
+    let automation = auto.rate_points(fx);
+    let s_floor = if material.start >= 0 { 0 } else { i64::MIN };
+    let a0 = ((len as f64 * kt_model::consumed_abs(rate, automation, l0 as f64 / len as f64))
+        .floor() as i64)
+        .saturating_sub(WARP_SOURCE_MARGIN_FRAMES)
+        .max(s_floor);
+    let a1 = (len as f64 * kt_model::consumed_abs(rate, automation, l1 as f64 / len as f64)).ceil()
+        as i64
+        + WARP_SOURCE_MARGIN_FRAMES;
+    a0..a1.max(a0)
 }
 
 /// Сколько кадров источника событие потребляет ЦЕЛИКОМ: S(1)·len, без
@@ -102,7 +142,10 @@ pub fn chain_source_used(fx: &[FxInstance], auto: &AutoProfiles, clip_len_frames
     }) else {
         return len;
     };
-    (len as f64 * source_progress(rate, auto.rate_points(fx), 1.0)).ceil() as i64
+    // ОСЬ ЗЕРКАЛА — максимум ПРОЛЁТА позиции (Р.57): у знаковой кривой
+    // «сколько съедено» больше пройденного, и зеркало от него уехало бы.
+    // У монотонной это ровно S(1) — прежнее число.
+    (len as f64 * kt_model::span_over(rate, auto.rate_points(fx), 0.0, 1.0).1).ceil() as i64
 }
 
 /// Упреждение цепочки в кадрах (Р.48, п.337): на сколько ВХОД цепочки
@@ -222,7 +265,12 @@ pub struct ClipProcessor {
     /// берётся перед ПЕРВЫМ узлом со слотом >= from (честная позиционная
     /// семантика — прежний флаг reverb_is_layer стал её следствием).
     mix: Option<MixCfg>,
+    /// ЗНАКОВАЯ скорость (Р.57): минус — ход по материалу назад. В
+    /// ресемплер уходит только МОДУЛЬ, знак живёт в адресе чтения.
     rate: f64,
+    /// (мин, макс) модуля скорости по всему профилю: ресемплеру нужен
+    /// разброс отношений ДО первого чанка, иначе смена будет отвергнута.
+    reach: (f64, f64),
     /// Кривые клипа в SOURCE-домене. Владеет ими аудио-render-поток
     /// (инвариант №2): ни локов, ни обращений к модели на кадре.
     auto: AutoProfiles,
@@ -310,6 +358,7 @@ impl ClipProcessor {
             nodes: Vec::new(),
             mix: None,
             rate: 1.0,
+            reach: (1.0, 1.0),
             auto: auto.clone(),
             warp_slot: fx
                 .iter()
@@ -458,21 +507,38 @@ impl ClipProcessor {
         // варп-половина Slowed+Reverb (потребление источника)
         for f in fx {
             if let FxInstance::SlowedReverb { rate, .. } = f {
-                self.rate = rate.clamp(0.25, 32.0);
+                self.rate = rate.clamp(kt_model::RATE_CLAMP.0, kt_model::RATE_CLAMP.1);
+                self.reach = kt_model::rate_reach(self.rate, self.rate_points());
                 let has_rate_curve = !self.rate_points().is_empty();
                 if let Some(w) = &mut self.warp
                     && !has_rate_curve
                 {
                     // с автоматизацией produce() выставит по позиции сам
-                    w.set_rate(self.rate);
+                    w.set_rate(self.rate.abs());
                 }
             }
         }
     }
 
+    /// УДЕРЖАНИЕ на этом чанке: скорость ниже аудио-пола (Р.57).
+    ///
+    /// Решение на чанк, а не на сэмпл — тем же правилом середины, что и
+    /// остальные цели автоматизации: подынтегральная функция линейна, и
+    /// середина трапеции — её точное среднее. Иначе решение пришлось бы
+    /// принимать на каждый кадр, а курсор ресемплера этого не переживёт.
+    fn hold_at(&self, chunk_in: i64, n: usize) -> bool {
+        let tau = (chunk_in as f64 + n as f64 * 0.5) / self.clip_len as f64;
+        eff_rate(self.rate, self.rate_points(), tau).abs() < kt_model::RATE_AUDIO_FLOOR
+    }
+
+    /// Растягивает ли цепочка время ПО МОДУЛЮ (Р.57).
+    ///
+    /// Именно по модулю: постоянная −1 материал не растягивает, значит
+    /// ресемплер ей не нужен — она остаётся на ПЛОСКОМ пути, и «минус
+    /// один» оказывается точным зеркалом, а не приближением.
     fn has_warp(&self) -> bool {
-        (self.rate - 1.0).abs() > 1e-9
-            || self.rate_points().iter().any(|(_, r)| (r - 1.0).abs() > 1e-9)
+        (self.rate.abs() - 1.0).abs() > 1e-9
+            || self.rate_points().iter().any(|(_, r)| (r.abs() - 1.0).abs() > 1e-9)
     }
 
     pub fn tail(&self) -> Tick {
@@ -552,11 +618,16 @@ impl ClipProcessor {
         self.warp.as_ref().map(|w| w.underruns()).unwrap_or(0) - before
     }
 
-    /// Смещение источника (кадры от src_in) для клип-локальной позиции:
-    /// S(t) — инверсия карты source-домена (см. output_time_for_source).
+    /// Сколько материала ЦЕПОЧКА СЪЕЛА к клип-локальной позиции — курсор
+    /// ресемплера (Р.57).
+    ///
+    /// Именно потребление A(t) = ∫|rate|, а не позиция: рубато ест поток
+    /// со скоростью |rate| и о направлении не знает. На положительных
+    /// кривых A ≡ S бит-в-бит, и прежний путь цел.
     fn source_offset(&self, local: i64) -> i64 {
         let t = local as f64 / self.clip_len as f64;
-        (self.clip_len as f64 * source_progress(self.rate, self.rate_points(), t)).round() as i64
+        (self.clip_len as f64 * kt_model::consumed_abs(self.rate, self.rate_points(), t)).round()
+            as i64
     }
 
     /// Разрыв ПОЗИЦИИ при непрерывном ВЫХОДЕ: источник переставляется,
@@ -569,13 +640,13 @@ impl ClipProcessor {
         let src_start = self.src_in + self.source_offset(local);
         if self.has_warp() {
             let t = local as f64 / self.clip_len as f64;
-            let r = rate_at(self.rate, self.rate_points(), t);
+            let r = rate_at(self.rate, self.rate_points(), t).abs();
             match &mut self.warp {
                 Some(w) => {
                     w.set_rate(r);
                     w.seek_source(src_start);
                 }
-                None => self.warp = Some(Warp::new(r, src_start)),
+                None => self.warp = Some(Warp::new(r, src_start, self.reach)),
             }
         } else {
             self.warp = None;
@@ -598,8 +669,9 @@ impl ClipProcessor {
         let src_start = self.src_in + self.source_offset(start);
         if self.has_warp() {
             let t = start as f64 / self.clip_len as f64;
-            let mut w = Warp::new(rate_at(self.rate, self.rate_points(), t), src_start);
-            w.set_rate(rate_at(self.rate, self.rate_points(), t));
+            let r = rate_at(self.rate, self.rate_points(), t).abs();
+            let mut w = Warp::new(r, src_start, self.reach);
+            w.set_rate(r);
             self.warp = Some(w);
         } else {
             self.warp = None;
@@ -661,8 +733,12 @@ impl ClipProcessor {
                 // её точное среднее.
                 // варп ведёт ВХОД цепочки: он и есть потребитель источника
                 let tau = (chunk_in as f64 + n as f64 * 0.5) / self.clip_len as f64;
-                let target_rate = eff_rate(self.rate, self.rate_points(), tau);
-                if let Some(w) = &mut self.warp {
+                // в ресемплер — МОДУЛЬ (Р.57); удержание (|rate| ниже пола)
+                // отношения не меняет: там читать нечего
+                let target_rate = eff_rate(self.rate, self.rate_points(), tau).abs();
+                if let Some(w) = &mut self.warp
+                    && target_rate >= kt_model::RATE_AUDIO_FLOOR
+                {
                     w.set_rate(target_rate);
                 }
                 // цели узлов — тем же правилом середины чанка, но по
@@ -707,6 +783,13 @@ impl ClipProcessor {
                 // `hard_seek`. Непрерывное чтение `local` только растёт.
                 sub.fill(0.0);
                 self.plain_cursor += n as i64;
+            } else if self.hold_at(chunk_in, n) {
+                // УДЕРЖАНИЕ (Р.57, решение владельца «тишина только в
+                // нуле»): скорость ниже пола — материал не потребляется
+                // ВООБЩЕ, выход нулевой, курсор стоит. Узлы при этом
+                // работают: реверб дозванивает хвост на нулях, ровно как в
+                // паузе между событиями.
+                sub.fill(0.0);
             } else {
                 match &mut self.warp {
                     Some(w) => w.produce(kind, sub, pull),
@@ -759,4 +842,51 @@ impl ClipProcessor {
             done += n;
         }
     }
+}
+
+/// Узел АДРЕСНОЙ карты знаковой скорости (Р.57): накопленное потребление
+/// `a`, позиция в материале `p` (оба — кадры от `source_in`) и направление
+/// после узла (+1 вперёд, −1 назад, 0 удержание).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AddrKnot {
+    pub a: i64,
+    pub p: i64,
+    pub dir: i8,
+}
+
+/// Адресная карта цепочки: по какому адресу лежит материал, съеденный
+/// к моменту `a`. `None` — карта монотонна, адрес равен потреблению, и
+/// весь прежний путь остаётся дословным.
+///
+/// Позиции накапливаются ЦЕЛЫМИ (`p_{k+1} = p_k ± (a_{k+1} − a_k)`), а не
+/// округляются по отдельности: иначе на стыке рана появился бы пропуск
+/// или сдвоенный кадр — щелчок ровно в точке разворота.
+pub fn chain_addr_knots(
+    fx: &[FxInstance],
+    auto: &AutoProfiles,
+    clip_len_frames: i64,
+) -> Option<Vec<AddrKnot>> {
+    let len = clip_len_frames.max(1);
+    let rate = fx.iter().find_map(|f| match f {
+        FxInstance::SlowedReverb { rate, .. } => Some(*rate),
+        _ => None,
+    })?;
+    let points = auto.rate_points(fx);
+    if !kt_model::rate_signed(rate, points) {
+        return None;
+    }
+    let knots = kt_model::sign_knots(rate, points);
+    let mut out: Vec<AddrKnot> = Vec::with_capacity(knots.len());
+    let mut p = 0i64;
+    let mut prev_a = 0i64;
+    for (i, k) in knots.iter().enumerate() {
+        let a = (len as f64 * k.a).round() as i64;
+        if i > 0 {
+            let prev_dir = out.last().map(|x: &AddrKnot| x.dir).unwrap_or(1) as i64;
+            p += prev_dir * (a - prev_a);
+        }
+        out.push(AddrKnot { a, p, dir: k.dir_after });
+        prev_a = a;
+    }
+    Some(out)
 }

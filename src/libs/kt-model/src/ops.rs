@@ -32,6 +32,132 @@ pub struct ClipBlock {
     pub cameras: Vec<CameraEvent>,
 }
 
+impl ClipBlock {
+    /// Наименьший и наибольший номер дорожки этого вида в блоке.
+    pub fn lane_span(&self, k: LaneKind) -> Option<(u32, u32)> {
+        let lanes = self
+            .clips
+            .iter()
+            .filter(|c| lane_key(c).0 == k)
+            .map(|c| c.lane)
+            .chain(self.morphers.iter().filter(|_| k == LaneKind::Morph).map(|m| m.lane))
+            .chain(self.cameras.iter().filter(|_| k == LaneKind::Camera).map(|c| c.lane));
+        lanes.fold(None, |acc: Option<(u32, u32)>, l| {
+            Some(acc.map_or((l, l), |(a, b)| (a.min(l), b.max(l))))
+        })
+    }
+
+    /// Сдвинуть ВСЕ виды на одну дельту, клампя КАЖДЫЙ вид так, чтобы его
+    /// нижний номер не ушёл за ноль (Р.56, п.450).
+    ///
+    /// Кламп именно по виду, а не по событию: клампуй мы каждое событие,
+    /// два события разных дорожек слиплись бы на нулевой — форма блока
+    /// важнее попадания в точку. Возвращает виды, которым сдвиг урезали:
+    /// об этом говорят человеку, а не доправляют молча (правило 16).
+    pub fn shift_lanes(&mut self, delta: i64) -> Vec<LaneKind> {
+        let mut clamped = Vec::new();
+        let mut d = [0i64; 4];
+        for (i, k) in
+            [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera].iter().enumerate()
+        {
+            let Some((lo, _)) = self.lane_span(*k) else { continue };
+            d[i] = delta.max(-(lo as i64));
+            if d[i] != delta {
+                clamped.push(*k);
+            }
+        }
+        let of = |k: LaneKind| match k {
+            LaneKind::Video => d[0],
+            LaneKind::Audio => d[1],
+            LaneKind::Morph => d[2],
+            LaneKind::Camera => d[3],
+        };
+        let mv = |lane: &mut u32, k: LaneKind| {
+            *lane = (*lane as i64 + of(k)).max(0) as u32;
+        };
+        for c in &mut self.clips {
+            let k = lane_key(c).0;
+            mv(&mut c.lane, k);
+        }
+        for m in &mut self.morphers {
+            mv(&mut m.lane, LaneKind::Morph);
+        }
+        for c in &mut self.cameras {
+            mv(&mut c.lane, LaneKind::Camera);
+        }
+        clamped
+    }
+
+    /// Привести блок к СТРОКЕ, по которой кликнули (Р.56, п.450).
+    ///
+    /// Вид строки есть в блоке — совмещаем его верхнее событие с этой
+    /// строкой, остальные виды едут на ту же дельту (пара видео+аудио
+    /// сохраняет взаимное положение). Вида нет (кликнули по камерной
+    /// строке блоком без камер) — не двигаем вовсе: угадывать нечего.
+    pub fn shifted_to_row(mut self, row: Option<(LaneKind, u32)>) -> (ClipBlock, Vec<LaneKind>) {
+        let Some((k, lane)) = row else { return (self, Vec::new()) };
+        let Some((lo, _)) = self.lane_span(k) else { return (self, Vec::new()) };
+        let clamped = self.shift_lanes(lane as i64 - lo as i64);
+        (self, clamped)
+    }
+
+    /// Перевести блок из РАБОЧЕГО ВИДА в координаты ленты полосы: номера
+    /// дорожек полосы лежат со смещением `base[вид]` (Р.55, п.441), и
+    /// смещения у видов РАЗНЫЕ. Чужие события выбрасываются со счётом.
+    ///
+    /// Без этого клипборд хранил номера с тремя разными базами, а вставка
+    /// повторяла их как есть: видео оказывалось у потолка, аудио внизу, а
+    /// морфер — в самом низу, где под него заводилась новая строка
+    /// (претензия владельца п.4 Р.56).
+    pub fn localize(&mut self, base: LaneBases, len: LaneBases) -> usize {
+        let owns = |k: LaneKind, lane: u32| {
+            lane >= base.get(k) && lane < base.get(k) + len.get(k).max(1)
+        };
+        let before = self.clips.len() + self.morphers.len() + self.cameras.len();
+        self.clips.retain(|c| owns(lane_key(c).0, c.lane));
+        self.morphers.retain(|m| owns(LaneKind::Morph, m.lane));
+        self.cameras.retain(|c| owns(LaneKind::Camera, c.lane));
+        let kept: Vec<ClipId> = self.clips.iter().map(|c| c.id).collect();
+        self.transitions.retain(|t| {
+            t.a.is_none_or(|id| kept.contains(&id)) && t.b.is_none_or(|id| kept.contains(&id))
+        });
+        for c in &mut self.clips {
+            c.lane -= base.get(lane_key(c).0);
+        }
+        for m in &mut self.morphers {
+            m.lane -= base.morph;
+        }
+        for c in &mut self.cameras {
+            c.lane -= base.camera;
+        }
+        before - (self.clips.len() + self.morphers.len() + self.cameras.len())
+    }
+
+    /// Обратный перевод: в координаты полосы рабочего вида.
+    pub fn offset_lanes(&mut self, base: LaneBases) {
+        for c in &mut self.clips {
+            c.lane += base.get(lane_key(c).0);
+        }
+        for m in &mut self.morphers {
+            m.lane += base.morph;
+        }
+        for c in &mut self.cameras {
+            c.lane += base.camera;
+        }
+    }
+
+    /// Сколько дорожек каждого вида нужно, чтобы блок поместился.
+    pub fn lanes_needed(&self) -> LaneBases {
+        let mut n = LaneBases::default();
+        for k in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
+            if let Some((_, hi)) = self.lane_span(k) {
+                *n.get_mut(k) = hi + 1;
+            }
+        }
+        n
+    }
+}
+
 /// Свежие id для вставки — растущий список аргументов `paste_block`
 /// перестал читаться уже на четвёртом.
 pub struct PasteIds<'a> {

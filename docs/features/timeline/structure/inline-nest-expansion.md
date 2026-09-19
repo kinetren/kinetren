@@ -10,11 +10,11 @@ we_have: да
 crates: [kt-model, kt-app]
 invariants: [3, 7]
 ui_rules: [13, 14, 16, 17, 20]
-round: Р.55
-point: 441-445
-tests: [t566, t567, t568, t569, t570, t571, t572, t573]
+round: Р.55, Р.56
+point: 441-445, 449-451
+tests: [t566, t567, t568, t569, t570, t571, t572, t573, t591, t592, t596, t597]
 depends_on: [F-TL-004]
-checked: 2026-09-18
+checked: 2026-09-19
 ---
 
 # F-TL-011 — Раскрытие вложения НА МЕСТЕ

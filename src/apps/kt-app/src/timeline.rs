@@ -1026,7 +1026,7 @@ impl KtApp {
             self.model.editing().map(|m| self.model.document().sequence_uses(m)).unwrap_or(0),
         );
         let json = format!(
-            "{{\"playhead\":{},\"playing\":{},\"fields\":[{}],\"clips\":[{}],\
+            "{{\"playhead\":{},\"playing\":{},\"base_rate\":{:.3},\"fields\":[{}],\"clips\":[{}],\
              \"nest\":{},\"clipboard\":{},\
              \"underruns\":{},\"callback_underruns\":{},\
              \"window\":{{\"w\":{:.1},\"h\":{:.1}}},\
@@ -1035,6 +1035,10 @@ impl KtApp {
              \"lane_h\":{:.1},\"ticks_per_px\":{:.3},\"view_start\":{:.1},\"rows\":[{}]}}\n",
             self.player.video_playhead().0,
             self.player.transport.is_playing(),
+            // СКОРОСТЬ — из самой программы (Р.57): по пикселям полосы её
+            // не прочитать, а сценарий обязан утверждать значение, а не
+            // «что-то сдвинулось»
+            self.base_rate,
             fields.join(","),
             clips.join(","),
             nest,
@@ -1538,7 +1542,7 @@ impl KtApp {
     /// ни удалить, кроме 34-пиксельного заголовка.
     fn empty_place_menu(&mut self, ui: &mut egui::Ui) {
         if !self.clipboard.clips.is_empty() && ui.button(tr(k::tl::menu::PASTE)).clicked() {
-            self.paste_at_cursor();
+            self.paste_at_click();
             ui.close();
         }
         if self.model.project().region.is_some() {
@@ -2381,6 +2385,10 @@ impl KtApp {
         let overlap_zones = self.overlap_zones();
         let pointer = response.interact_pointer_pos();
         let hover = response.hover_pos();
+        // строка ПОД МЫШЬЮ живёт ровно пока мышь над таймлайном (Р.56,
+        // п.450): Ctrl+V кладёт блок сюда, а вне таймлайна строки нет и
+        // угадывать её нечем
+        self.tl_hover_row = hover.and_then(|p| geom.key_at_y(p.y));
         self.snap_line = None;
         // препятствие живёт РОВНО пока жест в него упирается (п.5)
         self.blocked = None;
@@ -2728,6 +2736,8 @@ impl KtApp {
             // строка под кликом нужна и для пустого места: «добавить
             // дорожку» из меню встаёт СРАЗУ ПОД ней (п.5 р.16)
             self.ctx_row = geom.key_at_y(pos.y);
+            // и ВРЕМЯ клика: «Вставить» кладёт блок сюда (Р.56, п.450)
+            self.ctx_at = Some(kt_time::Tick(geom.x_to_tick(pos.x).max(0)));
             // цели гасят друг друга: меню на экране одно (п.363)
             self.ctx_panel = None;
             self.ctx_target = Some(if let Some(m) = marker_at(self, pos) {
@@ -3645,6 +3655,23 @@ impl KtApp {
         // ---- клипы -----------------------------------------------------------------
         // карты растяжения — раз на версию модели (Р.37 п.3)
         let warps = self.warp_maps();
+        // Превью ЛЕНТ (Р.56, п.452). Заявки ставятся ДО цикла отрисовки и
+        // по ключу (лента, редакция) — значит ни зум, ни прокрутка их не
+        // порождают (инвариант 8), а повторная заявка снимается дедупом.
+        let reel_hashes = self.reel_hashes();
+        let reel_keys: std::collections::HashMap<ClipId, crate::reel_preview::ReelKey> = self
+            .model
+            .project()
+            .clips
+            .iter()
+            .filter_map(|c| {
+                let h = *reel_hashes.get(&c.media)?;
+                Some((c.id, crate::reel_preview::ReelKey { seq: c.media, hash: h }))
+            })
+            .collect();
+        for key in reel_keys.values().copied().collect::<Vec<_>>() {
+            self.request_reel_preview(key);
+        }
         let peaks = self.peaks.lock().unwrap();
         let offline = self.offline.lock().unwrap().clone();
 
@@ -3768,13 +3795,20 @@ impl KtApp {
             // грубый шаг и вырождается в повторяющиеся бакеты
             let used_span = warp.map_or(dur, |w| w.used().max(1));
 
-            // ВЛОЖЕНИЕ: филмстрипа у него нет и быть не может — своего
-            // файла у ленты нет, а спрашивать тумбы содержимого значило бы
-            // просить декод на скролле (инвариант 8). Вместо него —
-            // МИНИ-КАРТА содержимого: спаны детей ОДНИМ мешем, без единого
-            // обращения к медиа.
+            // ВЛОЖЕНИЕ. С Р.56 (п.452) у него есть и филмстрип, и
+            // волноформа — «как у обычных событий», по прямой просьбе
+            // владельца. Своего ФАЙЛА у ленты по-прежнему нет: кадры и
+            // огибающая приходят офлайн-рендером её содержимого по ключу
+            // (лента, редакция), а не тумбой по пути (инвариант 8 цел —
+            // заявка ставится один раз на ключ, до цикла).
+            //
+            // Мини-карта осталась ПЛЕЙСХОЛДЕРОМ: пока полоса считается,
+            // человек всё равно видит, из чего лента состоит.
             let is_nest = self.model.project().sequence(c.media).is_some();
-            if is_nest && clip_rect.width() > 20.0 {
+            let reel_key = reel_keys.get(&c.id).copied();
+            let reel_prev = reel_key.and_then(|k| self.reel_previews.get(&k));
+            let reel_strip = reel_prev.as_ref().and_then(|p| p.strip.clone());
+            if is_nest && reel_strip.is_none() && clip_rect.width() > 20.0 {
                 let seq = self.model.project().sequence(c.media).unwrap();
                 let win = (c.source_in.0, c.source_in.0 + dur);
                 let span = (win.1 - win.0).max(1) as f32;
@@ -3805,6 +3839,58 @@ impl KtApp {
                     mesh.add_colored_rect(r, egui::Color32::from_white_alpha(40));
                 }
                 painter.add(egui::Shape::mesh(mesh));
+            }
+            // ФИЛМСТРИП ЛЕНТЫ (Р.56, п.452): кадры берутся из полосы
+            // офлайн-превью, а МОМЕНТ — той же картой «тик события →
+            // материал», что у файла (t549). Поэтому замедленный или
+            // зеркальный экземпляр листается правильно, и ни одной второй
+            // формулы для этого не завелось.
+            if c.kind == ClipKind::Video
+                && let Some(strip) = &reel_strip
+                && let Some(key) = reel_key
+                && clip_rect.width() > 30.0
+            {
+                let thumb_h = clip_rect.height() - 2.0;
+                let thumb_w = (thumb_h * 16.0 / 9.0).max(28.0);
+                let mut x = clip_rect.left();
+                while x < clip_rect.right() {
+                    let tl = x_to_tick(x + thumb_w * 0.5) - start;
+                    if tl >= 0 {
+                        let src_t = c.source_in.0 + src_shift + material_off(tl);
+                        let idx = strip.index(src_t);
+                        let tex = match self.reel_textures.get(&(key, idx)) {
+                            Some(t) => Some(t.clone()),
+                            None => strip.at(src_t).map(|img| {
+                                let t = ui.ctx().load_texture(
+                                    format!("reel-{}-{}", key.seq.0, idx),
+                                    (**img).clone(),
+                                    egui::TextureOptions::LINEAR,
+                                );
+                                self.reel_textures.insert((key, idx), t.clone());
+                                t
+                            }),
+                        };
+                        if let Some(t) = tex {
+                            let dst = egui::Rect::from_min_size(
+                                egui::pos2(x, clip_rect.top() + 1.0),
+                                egui::vec2(thumb_w.min(clip_rect.right() - x), thumb_h),
+                            );
+                            let uv = egui::Rect::from_min_max(
+                                egui::pos2(0.0, 0.0),
+                                egui::pos2((dst.width() / thumb_w).min(1.0), 1.0),
+                            );
+                            painter.image(t.id(), dst, uv, egui::Color32::WHITE);
+                            painter.rect(
+                                dst,
+                                0.0,
+                                egui::Color32::TRANSPARENT,
+                                egui::Stroke::new(1.0, crate::theme::THUMB_FRAME),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                    }
+                    x += thumb_w + 3.0;
+                }
             }
             // филмстрип видео-клипа: тумбы из индекс-БД/сервиса, отрисовка
             // никогда не блокируется и не трогает декодеры плеера
@@ -3883,10 +3969,14 @@ impl KtApp {
                 }
             }
 
-            // стерео-волноформа
+            // стерео-волноформа. У ЛЕНТЫ огибающая берётся из превью
+            // (Р.56, п.452): пики индекс-службы ключуются `MediaId` ФАЙЛА,
+            // а файла у ленты нет — до Р.56 аудио-половина вложения не
+            // рисовала вообще ничего.
+            let reel_peaks = reel_key.and_then(|k| self.reel_previews.peaks(&k));
             if c.kind == ClipKind::Audio
                 && !is_offline
-                && let Some(levels) = peaks.get(&c.media)
+                && let Some(levels) = peaks.get(&c.media).or(reel_peaks)
                 && !levels.is_empty()
             {
                 let frames_per_px = tpp * 48_000.0 / 90_000.0;
@@ -5178,7 +5268,7 @@ impl KtApp {
                     ui.close();
                 }
                 if ui.button(tr(k::tl::menu::PASTE)).clicked() {
-                    self.paste_at_cursor();
+                    self.paste_at_click();
                     ui.close();
                 }
                 // аккорд обещается ТОЛЬКО когда он и правда делает это
@@ -5228,9 +5318,18 @@ impl KtApp {
                     } else {
                         k::tl::menu::NEST_EXPAND_HERE
                     };
-                    let r = ui.button(tr(label));
-                    crate::widgets::field_probe::note("nest.expand_here", r.rect);
-                    if r.clicked() {
+                    // Аккорд обещается ТОЛЬКО там, где он и правда это
+                    // делает (Р.49, п.362): Enter по свёрнутому раскрывает,
+                    // Enter по раскрытому — входит, а сворачивает Esc.
+                    let accel = if open {
+                        tr(k::tl::menu::NEST_COLLAPSE_HERE_ACCEL)
+                    } else {
+                        tr(k::tl::menu::NEST_EXPAND_HERE_ACCEL)
+                    };
+                    let (hit, rect) =
+                        crate::widgets::menu_item_probed(ui, tr(label), Some(accel));
+                    crate::widgets::field_probe::note("nest.expand_here", rect);
+                    if hit {
                         if open {
                             self.collapse_in_place(id);
                         } else {
@@ -5238,9 +5337,14 @@ impl KtApp {
                         }
                         ui.close();
                     }
-                    let r = ui.button(tr(k::tl::menu::NEST_ENTER));
-                    crate::widgets::field_probe::note("nest.enter", r.rect);
-                    if r.clicked() {
+                    let enter_accel = open.then(|| tr(k::tl::menu::NEST_ENTER_ACCEL));
+                    let (hit, rect) = crate::widgets::menu_item_probed(
+                        ui,
+                        tr(k::tl::menu::NEST_ENTER),
+                        enter_accel,
+                    );
+                    crate::widgets::field_probe::note("nest.enter", rect);
+                    if hit {
                         self.enter_nest(id);
                         ui.close();
                     }

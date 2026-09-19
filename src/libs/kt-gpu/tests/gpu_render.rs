@@ -443,3 +443,146 @@ fn t496_gpu_frame_identity_follows_content() {
     );
     assert_eq!(bright[0], 220, "второй кадр — НОВЫЙ цвет, а не старая текстура");
 }
+
+// ---- 586-587 (Р.56, п.448): непрерывное время ленты и смешивание на GPU ---
+
+/// Варп-эффект на ВИДЕО-экземпляре: значимы только скорость и режим кадров.
+fn warp_fx(rate: f64, frames: FrameMode) -> FxInstance {
+    FxInstance::SlowedReverb {
+        rate,
+        mix: 0.0,
+        reverb_delay_ms: 85.0,
+        damp: 0.32,
+        decay: 0.58,
+        wet_gain: 0.95,
+        predelay_ms: 0.0,
+        frames,
+        width: 1.0,
+        automation: vec![],
+    }
+}
+
+/// Та же сцена, что `nested_project`, но у нижнего ребёнка ЖИВАЯ кривая
+/// яркости: без чего-нибудь процедурного внутри полукадр неотличим от
+/// кадра — футаж-то прибит к кадрам файла (п.448).
+fn animated_nested_project(outer_fx: Vec<FxInstance>) -> Project {
+    let mut p = nested_project(outer_fx, 1.0);
+    let child = &mut p.sequences[0].clips[0];
+    child.fx =
+        vec![FxInstance::ColorGrade { brightness: 0.0, contrast: 0.0, saturation: 1.0, hue: 0.0 }];
+    child.fx_auto = vec![vec![ParamCurve {
+        param: "brightness".into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(60_000), v: 0.9 }],
+    }]];
+    p.validate().unwrap();
+    p
+}
+
+/// Прогреть ОДИН кэш под момент `t` (ключи — ровно те, что заказал план).
+///
+/// Кэш обязан быть ОБЩИМ на все моменты одного движка: `UploadCache`
+/// ключуется СЕРИЙНЫМ НОМЕРОМ содержимого (п.409), а свежий `BurstCache`
+/// начинает нумерацию заново — два кэша на один движок дают ему одинаковые
+/// ключи у РАЗНЫХ кадров, и текстура возвращается чужая. В программе кэш
+/// один на сессию; тест обязан повторять обвязку движка.
+fn warm_into(video: &VideoRenderer, cache: &kt_cache::BurstCache, q: Quality, t: Tick) {
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        sources().into_iter().collect();
+    for (media, src_pts, dq) in video.layers_at(t, q) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+}
+
+/// CPU- и GPU-исполнение ОДНОГО плана момента `t` на общем кэше.
+fn cpu_and_gpu(
+    e: &kt_gpu::GpuFxEngine,
+    video: &mut VideoRenderer,
+    cache: &kt_cache::BurstCache,
+    q: Quality,
+    t: Tick,
+) -> (Vec<u8>, Vec<u8>) {
+    use kt_engine::VideoGpuExec;
+    warm_into(video, cache, q, t);
+    let mut gpu = Vec::new();
+    {
+        let plan = video.frame_plan(cache, t, q);
+        let complete = e.execute_into(&plan, &mut gpu).expect("GPU обязан уметь поддерево");
+        assert!(complete, "прогретый композит с вложением обязан быть полным");
+    }
+    let (cpu, complete) = video.compose_from_cache(cache, t, q);
+    assert!(complete, "CPU-композит с вложением обязан быть полным");
+    (cpu, gpu)
+}
+
+/// Тест 586 (Р.56, п.448): ЗАМЕДЛЕННАЯ лента на GPU.
+///
+/// Красный на старом коде: внутреннее время ленты флорилось к сетке, и
+/// соседние выходные кадры выходили одинаковыми на ОБОИХ бэкендах — вместе
+/// с анимацией внутри композиции.
+#[test]
+fn t586_slowed_nest_conforms_and_is_deterministic_on_gpu() {
+    let Some(e) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let p = animated_nested_project(vec![warp_fx(0.5, FrameMode::Nearest)]);
+    let mut video = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+
+    // ЧЁТНЫЙ кадр стоит на целом шаге материала, НЕЧЁТНЫЙ — на полушаге
+    let (even, odd) = (Tick(20 * 3000), Tick(21 * 3000));
+    let (cpu_e, gpu_e) = cpu_and_gpu(&e, &mut video, &cache, q, even);
+    let (cpu_o, gpu_o) = cpu_and_gpu(&e, &mut video, &cache, q, odd);
+    assert_frames_close(&cpu_e, &gpu_e, q.width, q.height, FrameTol::EXACT, "t586-even");
+    assert_frames_close(&cpu_o, &gpu_o, q.width, q.height, FrameTol::EXACT, "t586-odd");
+    assert_ne!(
+        gpu_e, gpu_o,
+        "полукадр замедленной ленты совпал с кадром: внутреннее время округляется \
+         к сетке, и анимация внутри композиции идёт ступеньками"
+    );
+    assert!(gpu_o.iter().any(|&x| x != 0), "кадр чёрный — сверять нечего");
+
+    // детерминизм НА ОДНОМ движке: второй прогон идёт через ReadbackCache,
+    // и ключ плана обязан различать полукадры
+    let (_, again) = cpu_and_gpu(&e, &mut video, &cache, q, odd);
+    assert_eq!(gpu_o, again, "повторный прогон того же плана дал другой кадр");
+}
+
+/// Тест 587 (Р.56, п.448): СМЕШИВАНИЕ на вложении — на GPU.
+///
+/// Смешивают ЛИСТЬЯ, а не два суб-композита: GPU получает уже смешанный
+/// пре-FX кадр обычным `LayerInput::Frame`, и второго dissolve-пасса не
+/// появляется. План при этом обязан отличаться от «ближайшего» — иначе
+/// ReadbackCache отдаст чужую картинку.
+#[test]
+fn t587_blend_on_a_nest_differs_from_nearest_on_gpu() {
+    let Some(e) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let t = Tick(21 * 3000); // полукадр: у листьев есть пара
+    let blend = nested_project(vec![warp_fx(0.5, FrameMode::Blend)], 1.0);
+    let near = nested_project(vec![warp_fx(0.5, FrameMode::Nearest)], 1.0);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut vb = VideoRenderer::new(&blend);
+    let mut vn = VideoRenderer::new(&near);
+
+    let (cpu_b, gpu_b) = cpu_and_gpu(&e, &mut vb, &cache, q, t);
+    let (cpu_n, gpu_n) = cpu_and_gpu(&e, &mut vn, &cache, q, t);
+    assert_frames_close(&cpu_b, &gpu_b, q.width, q.height, FrameTol::EXACT, "t587-blend");
+    assert_frames_close(&cpu_n, &gpu_n, q.width, q.height, FrameTol::EXACT, "t587-nearest");
+    assert_ne!(
+        gpu_b, gpu_n,
+        "«смешивание» на вложении не отличается от «ближайшего»: режим не \
+         доехал до листьев"
+    );
+    // и это не «одно из них чёрное»
+    assert!(gpu_b.iter().any(|&x| x != 0) && gpu_n.iter().any(|&x| x != 0));
+
+    // детерминизм на одном движке (ReadbackCache)
+    let (_, again) = cpu_and_gpu(&e, &mut vb, &cache, q, t);
+    assert_eq!(gpu_b, again, "повторный прогон смешанного плана дал другой кадр");
+}

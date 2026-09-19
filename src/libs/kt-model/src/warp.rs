@@ -81,7 +81,7 @@ pub fn rate_at(base: f64, points: &ParamPoints, tau: f64) -> f64 {
 // разошлась бы с фактическим потреблением.
 // ---------------------------------------------------------------------------
 
-pub const RATE_CLAMP: (f64, f64) = (0.25, 32.0);
+pub const RATE_CLAMP: (f64, f64) = (-32.0, 32.0);
 
 pub fn eff_rate(base: f64, points: &ParamPoints, s: f64) -> f64 {
     rate_at(base, points, s).clamp(RATE_CLAMP.0, RATE_CLAMP.1)
@@ -205,6 +205,273 @@ pub fn source_progress(base: f64, points: &ParamPoints, t: f64) -> f64 {
         }
     }
     acc_s
+}
+
+// ---------------------------------------------------------------------------
+// ЗНАКОВАЯ СКОРОСТЬ (Р.57, решение владельца): rate живёт в −32…32, ноль
+// разрешён. Семантика — velocity-огибающая Vegas: ПОЗИЦИЯ в материале
+// P(τ) = ∫₀^τ rate, минус идёт по материалу НАЗАД внутри события, ноль —
+// стоп-кадр.
+//
+// Из этого следуют ДВЕ ОСИ, и путать их нельзя:
+//
+// * **P(τ) = ∫rate** — знаковая ПОЗИЦИЯ (адрес чтения). Немонотонна, и
+//   обращать её нечем: у точки материала может быть несколько моментов
+//   выхода. Это и есть `source_progress` — её тело НЕ ТРОНУТО, потому что
+//   `seg_ds` знаконезависима.
+// * **A(τ) = ∫|rate|** — накопленное ПОТРЕБЛЕНИЕ. Монотонна по построению,
+//   и обращается (`output_time_for_consumption`). По ней живёт курсор
+//   ресемплера: рубато ест поток со скоростью |rate| и знака не знает.
+//
+// На кривых, целиком лежащих в 0.25…32, A ≡ P ≡ прежняя S БИТ-В-БИТ:
+// `fabs` положительного f64 — тождество, а разбиение сегмента в нуле
+// скорости включается строго при `r0*r1 < 0`, чего на таких кривых не
+// бывает. На этом стоят GOLDEN_AUDIO и GOLDEN_VIDEO (сторож — t603d).
+// ---------------------------------------------------------------------------
+
+/// Пол скорости для АУДИО: |rate| ниже — это удержание (hold), а не очень
+/// медленное чтение. Одна константа на карту и на процессор: разойдись
+/// они, потребление разъехалось бы с тем, что реально съел ресемплер.
+///
+/// Решение владельца: «тянуть до 0.01, тишина только в нуле».
+pub const RATE_AUDIO_FLOOR: f64 = 0.01;
+
+/// Модуль скорости с полом: ниже пола — ноль (удержание).
+fn mag_floor(r: f64) -> f64 {
+    let a = r.abs();
+    if a < RATE_AUDIO_FLOOR { 0.0 } else { a }
+}
+
+/// Сегменты профиля, разбитые в НУЛЕ СКОРОСТИ, с |rate| на концах.
+///
+/// Разбиение включается строго при `r0*r1 < 0.0` — не `<=`. Сегмент,
+/// КОНЧАЮЩИЙСЯ нулём, остаётся линейным по модулю, и лишнее слагаемое
+/// `acc += 0.0` сдвинуло бы округление там, где ничего не меняется.
+fn abs_segments(base: f64, points: &ParamPoints) -> Vec<(f64, f64, f64, f64)> {
+    let segs = segments(base, points);
+    let mut out = Vec::with_capacity(segs.len() + 2);
+    for (t0, t1, r0, r1) in segs {
+        if r0 * r1 < 0.0 && t1.is_finite() && t1 > t0 {
+            let b = (r1 - r0) / (t1 - t0);
+            let tz = t0 - r0 / b;
+            out.push((t0, tz, mag_floor(r0), 0.0));
+            out.push((tz, t1, 0.0, mag_floor(r1)));
+        } else {
+            out.push((t0, t1, mag_floor(r0), mag_floor(r1)));
+        }
+    }
+    out
+}
+
+/// A(t) = ∫₀ᵗ |rate(u)|du — сколько материала цепочка СЪЕЛА к выходному
+/// прогрессу t. Монотонно не убывает; растёт строго везде, кроме плато
+/// нулевой скорости.
+///
+/// Тело повторяет `source_progress` шаг в шаг (тот же цикл, тот же
+/// `seg_ds`, тот же порядок сложения) — иначе бит-тождество на
+/// положительных кривых не удержать.
+pub fn consumed_abs(base: f64, points: &ParamPoints, t: f64) -> f64 {
+    if t < 0.0 {
+        return t * mag_floor(segments(base, points)[0].2);
+    }
+    let mut acc_s = 0.0;
+    for (t0, t1, r0, r1) in abs_segments(base, points) {
+        if t <= t0 {
+            break;
+        }
+        let hi = if t1.is_finite() { t.min(t1) } else { t };
+        let b = if t1.is_finite() && t1 > t0 { (r1 - r0) / (t1 - t0) } else { 0.0 };
+        acc_s += seg_ds(hi - t0, r0, b);
+        if hi >= t {
+            break;
+        }
+    }
+    acc_s
+}
+
+/// A⁻¹: выходной прогресс, при котором СЪЕДЕНО `a` материала.
+///
+/// Правило плато: на нулевой скорости потребление стоит, и ответом
+/// берётся ЛЕВЫЙ край плато — первый момент, когда счётчик достиг `a`.
+/// Ответ `+∞` значит «столько не съедается никогда» (хвост профиля —
+/// нулевая скорость).
+pub fn output_time_for_consumption(base: f64, points: &ParamPoints, a: f64) -> f64 {
+    if a < 0.0 {
+        let r = mag_floor(segments(base, points)[0].2);
+        return if r == 0.0 { 0.0 } else { a / r };
+    }
+    let (mut acc_t, mut acc_a) = (0.0, 0.0);
+    for (t0, t1, r0, r1) in abs_segments(base, points) {
+        let (seg_t, b) = if t1.is_finite() && t1 > t0 {
+            (t1 - t0, (r1 - r0) / (t1 - t0))
+        } else {
+            (f64::INFINITY, 0.0)
+        };
+        let seg_a = if seg_t.is_finite() {
+            seg_ds(seg_t, r0, b)
+        } else if r0 == 0.0 {
+            0.0
+        } else {
+            f64::INFINITY
+        };
+        if acc_a + seg_a >= a {
+            let need = a - acc_a;
+            // ровно на границе (и на плато) — ЛЕВЫЙ край: `seg_dt` при
+            // нулевом `need` и нулевой скорости дал бы 0/0
+            return if need <= 0.0 { acc_t } else { acc_t + seg_dt(need, r0, b) };
+        }
+        acc_t += seg_t;
+        acc_a += seg_a;
+    }
+    // хвост нулевой скорости: `acc_t` уже бесконечен, если хвост был
+    // ненулевым; иначе столько материала не съедается никогда
+    if acc_a >= a { acc_t } else { f64::INFINITY }
+}
+
+/// Пролёт ПОЗИЦИИ на [t0, t1]: (минимум P, максимум P).
+///
+/// Для монотонного профиля возвращает РОВНО `(P(t0), P(t1))` — на этом
+/// стоит бит-тождество окон префетча и оси зеркала.
+pub fn span_over(base: f64, points: &ParamPoints, t0: f64, t1: f64) -> (f64, f64) {
+    let (a, b) = (source_progress(base, points, t0), source_progress(base, points, t1));
+    let (mut lo, mut hi) = (a.min(b), a.max(b));
+    // экстремумы P — только в нулях скорости: между ними знак постоянен
+    for (s0, s1, r0, r1) in segments(base, points) {
+        if !(s1.is_finite() && s1 > s0) || r0 * r1 >= 0.0 {
+            continue;
+        }
+        let tz = s0 - r0 / ((r1 - r0) / (s1 - s0));
+        if tz > t0.min(t1) && tz < t0.max(t1) {
+            let v = source_progress(base, points, tz);
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+    }
+    (lo, hi)
+}
+
+/// Пролёт позиции за ВСЁ событие, в тиках. `span_ticks` — длина события.
+pub fn warp_span_ticks(base: f64, points: &ParamPoints, span_ticks: i64) -> (i64, i64) {
+    let (lo, hi) = span_over(base, points, 0.0, 1.0);
+    (
+        (span_ticks as f64 * lo).round() as i64,
+        (span_ticks as f64 * hi).round() as i64,
+    )
+}
+
+/// Пределы МОДУЛЯ скорости по всему профилю (для ресемплера: он должен
+/// знать, какой разброс отношений его ждёт, ещё до первого чанка).
+/// Ноль поднимается до пола: на удержании ресемплер не работает вовсе.
+pub fn rate_reach(base: f64, points: &ParamPoints) -> (f64, f64) {
+    let (mut lo, mut hi) = (f64::INFINITY, 0.0f64);
+    // по РАЗБИТЫМ сегментам: кривая, меняющая знак, проходит через ноль
+    // ВНУТРИ сегмента, и по одним концам минимум вышел бы завышенным — а
+    // ресемплер потом отверг бы смену отношения (Р.57).
+    for (_, _, r0, r1) in abs_segments(base, points) {
+        for r in [r0.abs(), r1.abs()] {
+            lo = lo.min(r);
+            hi = hi.max(r);
+        }
+    }
+    if !lo.is_finite() {
+        lo = base.abs();
+        hi = base.abs();
+    }
+    (lo.max(RATE_AUDIO_FLOOR), hi.max(RATE_AUDIO_FLOOR))
+}
+
+/// Ходит ли профиль НАЗАД по материалу хоть где-нибудь.
+///
+/// Это и есть предикат «карта немонотонна»: он гейтит всё, что построено
+/// на чтении вперёд (раны адреса, окна префетча, блочная схема суб-микса).
+pub fn rate_signed(base: f64, points: &ParamPoints) -> bool {
+    segments(base, points).iter().any(|&(_, _, r0, r1)| r0 < 0.0 || r1 < 0.0)
+}
+
+/// Узел смены направления: момент, накопленное потребление, позиция и
+/// направление ПОСЛЕ узла (+1 вперёд, −1 назад, 0 удержание).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignKnot {
+    pub tau: f64,
+    pub a: f64,
+    pub p: f64,
+    pub dir_after: i8,
+}
+
+/// Узлы смены направления профиля на [0, ∞). Первый всегда в нуле.
+/// Соседние узлы с одинаковым направлением схлопнуты: раны должны быть
+/// как можно длиннее — по ним аудио копирует память кусками.
+pub fn sign_knots(base: f64, points: &ParamPoints) -> Vec<SignKnot> {
+    let dir_of = |r: f64| -> i8 {
+        if r.abs() < RATE_AUDIO_FLOOR {
+            0
+        } else if r < 0.0 {
+            -1
+        } else {
+            1
+        }
+    };
+    let mut taus: Vec<f64> = vec![0.0];
+    for (t0, t1, r0, r1) in abs_segments(base, points) {
+        let _ = (r0, r1);
+        if t0 > 0.0 {
+            taus.push(t0);
+        }
+        if t1.is_finite() && t1 > t0 {
+            taus.push(t1);
+        }
+    }
+    taus.retain(|t| t.is_finite());
+    taus.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    taus.dedup();
+    let mut out: Vec<SignKnot> = Vec::with_capacity(taus.len());
+    for tau in taus {
+        // направление СРАЗУ ПОСЛЕ узла: скорость в середине следующего
+        // микро-шага, а не в самой точке (в точке она может быть нулём
+        // ровно на смене знака)
+        let dir = dir_after(base, points, tau);
+        let k = SignKnot {
+            tau,
+            a: consumed_abs(base, points, tau),
+            p: source_progress(base, points, tau),
+            dir_after: dir,
+        };
+        match out.last() {
+            Some(prev) if prev.dir_after == dir => {}
+            _ => out.push(k),
+        }
+    }
+    if out.is_empty() {
+        out.push(SignKnot {
+            tau: 0.0,
+            a: 0.0,
+            p: 0.0,
+            dir_after: dir_of(base),
+        });
+    }
+    out
+}
+
+/// Направление сразу ПОСЛЕ момента `tau` (ноль в самой точке смены знака
+/// направлением не считается).
+fn dir_after(base: f64, points: &ParamPoints, tau: f64) -> i8 {
+    for (t0, t1, r0, r1) in abs_segments(base, points) {
+        if tau >= t1 {
+            continue;
+        }
+        // на этом сегменте модуль линеен; знак берём у ИСХОДНОГО профиля
+        let mid = if t1.is_finite() { (tau.max(t0) + t1) * 0.5 } else { tau.max(t0) + 0.5 };
+        let r = eff_rate(base, points, mid);
+        let _ = (r0, r1);
+        return if r.abs() < RATE_AUDIO_FLOOR {
+            0
+        } else if r < 0.0 {
+            -1
+        } else {
+            1
+        };
+    }
+    0
 }
 
 /// Потреблённый материал В ТИКАХ к выходному прогрессу `tau` (Р.37 п.2).
@@ -400,7 +667,7 @@ impl AutoProfiles {
 pub fn chain_rate(fx: &[FxInstance]) -> f64 {
     fx.iter()
         .find_map(|f| match f {
-            FxInstance::SlowedReverb { rate, .. } => Some(rate.clamp(0.25, 32.0)),
+            FxInstance::SlowedReverb { rate, .. } => Some(rate.clamp(RATE_CLAMP.0, RATE_CLAMP.1)),
             _ => None,
         })
         .unwrap_or(1.0)
@@ -578,8 +845,15 @@ mod zero_start_tests {
 pub struct ClipWarp {
     base: f64,
     prof: Vec<(f64, f64)>,
-    /// Материал в тиках, который событие реально проходит: S(1)·span.
+    /// Материал в тиках, который событие реально СЪЕДАЕТ: A(1)·span.
+    /// Со знаковой скоростью (Р.57) это уже не «докуда дошли»: кривая
+    /// может уйти назад и вернуться, съев вдвое больше, чем прошла.
     used: i64,
+    /// ПРОЛЁТ позиции (мин, макс) в тиках от `source_in` (Р.57). Это и
+    /// есть окно материала события: по нему считаются прогретость,
+    /// префетч и ось зеркала. На положительных кривых — (0, used).
+    span_min: i64,
+    span_max: i64,
     /// Режим «смешивание» (Р.37 С5): читается исполнителем слоя.
     blend: bool,
 }
@@ -594,6 +868,14 @@ impl ClipWarp {
     pub fn used(&self) -> i64 {
         self.used
     }
+    /// Окно материала (мин, макс) в тиках от `source_in` (Р.57).
+    pub fn span(&self) -> (i64, i64) {
+        (self.span_min, self.span_max)
+    }
+    /// Длина окна материала — ею меряют ступень филмстрипа и прогретость.
+    pub fn span_len(&self) -> i64 {
+        (self.span_max - self.span_min).max(1)
+    }
     pub fn blend(&self) -> bool {
         self.blend
     }
@@ -604,7 +886,15 @@ impl ClipWarp {
     pub fn material_off(&self, duration: Tick, reversed: bool, tl: i64) -> i64 {
         let dur = duration.0.max(1);
         let consumed = warp_material_ticks(self.base, &self.prof, dur, tl as f64 / dur as f64);
-        if reversed { (self.used - consumed).max(0) } else { consumed }
+        // Ось зеркала — ПРОЛЁТ позиции, а не «сколько съедено» (Р.57).
+        // На положительных кривых пролёт равен (0, used), и выражение
+        // сворачивается в прежнее `(used − consumed).max(0)` — то же
+        // целое, те же биты.
+        if reversed {
+            (self.span_min + self.span_max - consumed).max(self.span_min)
+        } else {
+            consumed
+        }
     }
 }
 
@@ -642,8 +932,9 @@ pub fn clip_warp_of(
     )
     .rate_points(fx)
     .to_vec();
-    let used = warp_material_ticks(base, &prof, span, 1.0);
-    Some(ClipWarp { base, prof, used, blend })
+    let used = (span as f64 * consumed_abs(base, &prof, 1.0)).round() as i64;
+    let (span_min, span_max) = warp_span_ticks(base, &prof, span);
+    Some(ClipWarp { base, prof, used, span_min, span_max, blend })
 }
 
 /// Растягивает ли цепочка ВРЕМЯ на самом деле.
@@ -728,5 +1019,275 @@ mod reversed_tests {
         );
         // прямой путь не тронут: from_curves == from_curves_rev(false)
         assert_eq!(AutoProfiles::from_curves(&curves, 0, len), fwd);
+    }
+}
+
+#[cfg(test)]
+mod signed_tests {
+    use super::*;
+
+    /// ЗАМОРОЖЕННАЯ копия карты ДО Р.57 — оракул бит-тождества.
+    ///
+    /// Не «похожая функция»: дословный старый текст с прежним клампом.
+    /// Любая лишняя операция на положительном пути (abs, ветка, второе
+    /// сложение) немедленно разойдётся в последнем бите — и t603d покажет
+    /// это раньше, чем покраснеет GOLDEN.
+    mod frozen {
+        pub fn segments(base: f64, points: &[(f64, f64)]) -> Vec<(f64, f64, f64, f64)> {
+            let cl = |r: f64| r.clamp(0.25, 32.0);
+            if points.is_empty() {
+                return vec![(0.0, f64::INFINITY, cl(base), cl(base))];
+            }
+            let mut out = Vec::with_capacity(points.len() + 1);
+            let first = cl(points[0].1);
+            if points[0].0 > 0.0 {
+                out.push((0.0, points[0].0, first, first));
+            }
+            for w in points.windows(2) {
+                if w[1].0 > w[0].0 {
+                    out.push((w[0].0, w[1].0, cl(w[0].1), cl(w[1].1)));
+                }
+            }
+            let last = cl(points[points.len() - 1].1);
+            out.push((points[points.len() - 1].0, f64::INFINITY, last, last));
+            while out.len() > 1 && out[0].1 <= 0.0 {
+                out.remove(0);
+            }
+            if out[0].0 < 0.0 {
+                let (t0, t1, r0, r1) = out[0];
+                let b = if t1.is_finite() && t1 > t0 { (r1 - r0) / (t1 - t0) } else { 0.0 };
+                out[0] = (0.0, t1, r0 + b * (0.0 - t0), r1);
+            }
+            out
+        }
+
+        fn seg_ds(dt: f64, r0: f64, b: f64) -> f64 {
+            r0 * dt + 0.5 * b * dt * dt
+        }
+
+        pub fn source_progress(base: f64, points: &[(f64, f64)], t: f64) -> f64 {
+            if t < 0.0 {
+                return t * segments(base, points)[0].2;
+            }
+            let mut acc_s = 0.0;
+            for (t0, t1, r0, r1) in segments(base, points) {
+                if t <= t0 {
+                    break;
+                }
+                let hi = if t1.is_finite() { t.min(t1) } else { t };
+                let b = if t1.is_finite() && t1 > t0 { (r1 - r0) / (t1 - t0) } else { 0.0 };
+                acc_s += seg_ds(hi - t0, r0, b);
+                if hi >= t {
+                    break;
+                }
+            }
+            acc_s
+        }
+    }
+
+    /// Тест 603a (Р.57): знаковая карта ходит НАЗАД и возвращается, а
+    /// потребление при этом только растёт.
+    #[test]
+    fn t603a_signed_map_walks_back_and_consumption_only_grows() {
+        // 1 → −1 линейно: позиция поднимается до середины и возвращается
+        let a = vec![(0.0, 1.0), (1.0, -1.0)];
+        assert!((source_progress(1.0, &a, 1.0) - 0.0).abs() < 1e-12, "кривая обязана вернуться");
+        assert!((source_progress(1.0, &a, 0.5) - 0.25).abs() < 1e-12, "вершина не там");
+        // потребление — 0.5 (два треугольника по 0.25) и монотонно
+        assert!((consumed_abs(1.0, &a, 1.0) - 0.5).abs() < 1e-12);
+        let mut prev = 0.0;
+        for i in 0..=200 {
+            let t = i as f64 / 200.0;
+            let c = consumed_abs(1.0, &a, t);
+            assert!(c >= prev - 1e-15, "A(t) обязана быть неубывающей: {c} < {prev}");
+            prev = c;
+            // A⁻¹ возвращает момент, а не «какой-нибудь корень»
+            let back = output_time_for_consumption(1.0, &a, c);
+            assert!((back - t).abs() < 1e-6, "A⁻¹(A({t})) = {back}");
+        }
+    }
+
+    /// Тест 603b (Р.57): разбиение в нуле скорости ТОЧНО, а не примерно —
+    /// сверка с независимым численным ∫|rate|.
+    #[test]
+    fn t603b_zero_crossing_split_is_exact() {
+        let a = vec![(0.0, 2.0), (0.4, 2.0), (0.8, -2.0), (1.0, -1.0)];
+        let numeric = |t_target: f64| -> f64 {
+            let n = 400_000;
+            let h = t_target / n as f64;
+            let mut acc = 0.0;
+            for i in 0..n {
+                let t0 = i as f64 * h;
+                let t1 = t0 + h;
+                acc += 0.5 * (eff_rate(1.0, &a, t0).abs() + eff_rate(1.0, &a, t1).abs()) * h;
+            }
+            acc
+        };
+        for t in [0.2, 0.5, 0.6, 0.75, 1.0] {
+            let exact = consumed_abs(1.0, &a, t);
+            let num = numeric(t);
+            assert!((exact - num).abs() < 1e-5, "A({t}): точно {exact}, численно {num}");
+        }
+        // а ПОЗИЦИЯ в тот же момент меньше потребления — она ходила назад
+        assert!(source_progress(1.0, &a, 1.0) < consumed_abs(1.0, &a, 1.0));
+    }
+
+    /// Тест 603c (Р.57): на плато нулевой скорости потребление стоит, а
+    /// A⁻¹ отдаёт ЛЕВЫЙ край плато — первый момент, когда счётчик дошёл.
+    #[test]
+    fn t603c_zero_plateau_holds_consumption() {
+        let a = vec![(0.0, 1.0), (0.25, 1.0), (0.25, 0.0), (0.5, 0.0), (0.5, 1.0), (1.0, 1.0)];
+        let at = |t: f64| consumed_abs(1.0, &a, t);
+        assert!((at(0.25) - 0.25).abs() < 1e-12);
+        assert!((at(0.5) - 0.25).abs() < 1e-12, "на плато потребление обязано стоять");
+        assert!((at(1.0) - 0.75).abs() < 1e-12);
+        // позиция на плато тоже стоит — это и есть стоп-кадр
+        assert!((source_progress(1.0, &a, 0.4) - 0.25).abs() < 1e-12);
+        assert!((output_time_for_consumption(1.0, &a, 0.25) - 0.25).abs() < 1e-9, "левый край");
+        assert!(output_time_for_consumption(1.0, &a, 0.2500001) > 0.5 - 1e-6);
+    }
+
+    /// Тест 603d (Р.57): на кривых, целиком лежащих в 0.25…32, новая карта
+    /// БИТ-В-БИТ равна замороженной старой.
+    ///
+    /// Это сторож GOLDEN_AUDIO и GOLDEN_VIDEO: они молчат, пока байты не
+    /// поехали, но узнать об этом лучше здесь — тут видно, ЧТО поехало.
+    #[test]
+    fn t603d_positive_curves_are_bit_identical_to_the_old_map() {
+        let profiles: Vec<Vec<(f64, f64)>> = vec![
+            vec![],
+            vec![(0.0, 0.5), (1.0, 2.0)],
+            vec![(-1.0, 1.0), (1.0, 2.0)],
+            vec![(0.3, 1.0), (0.7, 0.5)],
+            vec![
+                (0.21616990640748734, 1.0),
+                (0.2935781137508999, 0.35),
+                (0.3822750179985601, 0.62),
+                (0.6397019809160477, 0.6),
+                (0.7557084786003034, 1.0),
+            ],
+        ];
+        for base in [0.25, 0.82, 1.0, 32.0] {
+            for prof in &profiles {
+                for i in -30..=170 {
+                    let t = i as f64 / 100.0;
+                    let want = frozen::source_progress(base, prof, t);
+                    let got = source_progress(base, prof, t);
+                    assert_eq!(
+                        got.to_bits(),
+                        want.to_bits(),
+                        "P разошлась с оракулом: base={base} prof={prof:?} t={t}"
+                    );
+                    let cons = consumed_abs(base, prof, t);
+                    assert_eq!(
+                        cons.to_bits(),
+                        want.to_bits(),
+                        "A разошлась с оракулом (на положительных они одно и то же)"
+                    );
+                }
+                // пролёт: минимум в нуле, максимум — прежнее `used`
+                let span = 360_000i64;
+                let (lo, hi) = warp_span_ticks(base, prof, span);
+                assert_eq!(lo, 0, "у положительной кривой пролёт начинается в нуле");
+                let old_used = (span as f64 * frozen::source_progress(base, prof, 1.0)).round()
+                    as i64;
+                assert_eq!(hi, old_used, "максимум пролёта обязан равняться прежнему used");
+            }
+        }
+    }
+
+    /// Тест 603e (Р.57): экстремумы пролёта ищутся В НУЛЯХ СКОРОСТИ, а не
+    /// только по концам окна.
+    #[test]
+    fn t603e_span_finds_extrema_inside_segments() {
+        // вверх и назад: максимум посреди события
+        let up_down = vec![(0.0, 1.0), (1.0, -1.0)];
+        let (lo, hi) = span_over(1.0, &up_down, 0.0, 1.0);
+        assert!((lo - 0.0).abs() < 1e-12 && (hi - 0.25).abs() < 1e-12, "({lo}, {hi})");
+        // назад и вверх: минимум посреди
+        let down_up = vec![(0.0, -1.0), (1.0, 1.0)];
+        let (lo, hi) = span_over(1.0, &down_up, 0.0, 1.0);
+        assert!((lo + 0.25).abs() < 1e-12 && (hi - 0.0).abs() < 1e-12, "({lo}, {hi})");
+        // МОНОТОННАЯ кривая обязана давать РОВНО концы — на этом стоит
+        // бит-тождество окон префетча
+        let mono = vec![(0.0, 0.5), (1.0, 2.0)];
+        for (t0, t1) in [(0.0, 1.0), (0.2, 0.8), (-0.3, 1.4)] {
+            let (lo, hi) = span_over(1.0, &mono, t0, t1);
+            let (a, b) = (source_progress(1.0, &mono, t0), source_progress(1.0, &mono, t1));
+            assert_eq!(lo.to_bits(), a.min(b).to_bits());
+            assert_eq!(hi.to_bits(), b.max(a).to_bits());
+        }
+    }
+
+    /// Тест 603f (Р.57): зеркало «Реверс» сочетается со знаковой картой —
+    /// оно берётся вокруг ПРОЛЁТА, и на положительных кривых формула
+    /// сворачивается в прежнюю.
+    #[test]
+    fn t603f_mirror_axis_is_the_span() {
+        use crate::{ClipEvent, ClipId, ClipKind, FrameMode, FxInstance, MediaId};
+        let dur = Tick(360_000);
+        let mk = |rate: f64, reversed: bool| ClipEvent {
+            id: ClipId(1),
+            link_group: None,
+            kind: ClipKind::Audio,
+            lane: 0,
+            start: Tick(0),
+            duration: dur,
+            source_in: Tick(720_000),
+            media: MediaId(1),
+            gain_db: 0.0,
+            reversed,
+            fx: vec![FxInstance::SlowedReverb {
+                rate,
+                mix: 0.0,
+                reverb_delay_ms: 60.0,
+                damp: 0.2,
+                decay: 0.84,
+                wet_gain: 1.0,
+                predelay_ms: 0.0,
+                width: 1.0,
+                frames: FrameMode::Nearest,
+                automation: vec![],
+            }],
+            fx_bypass: vec![],
+            fx_auto: vec![],
+            opacity: 1.0,
+            fx_off: false,
+        };
+        // положительная 0.5: пролёт (0, used) — прежняя формула дословно
+        let w = crate::clip_warp(&mk(0.5, true)).unwrap();
+        assert_eq!(w.span(), (0, w.used()));
+        for tl in [0, 90_000, 180_000, 360_000] {
+            let want = (w.used() - w.material_off(dur, false, tl)).max(0);
+            assert_eq!(w.material_off(dur, true, tl), want, "прежняя формула на tl={tl}");
+        }
+        // ОТРИЦАТЕЛЬНАЯ −0.5: событие идёт по материалу назад, пролёт
+        // целиком в минусе, а зеркало разворачивает его вперёд
+        let n = crate::clip_warp(&mk(-0.5, false)).unwrap();
+        assert_eq!(n.span(), (-180_000, 0), "пролёт минусовой кривой");
+        assert_eq!(n.material_off(dur, false, 0), 0);
+        assert_eq!(n.material_off(dur, false, dur.0), -180_000, "ушли назад по материалу");
+        let nr = crate::clip_warp(&mk(-0.5, true)).unwrap();
+        assert_eq!(nr.material_off(dur, true, 0), -180_000, "зеркало — вокруг ПРОЛЁТА");
+        assert_eq!(nr.material_off(dur, true, dur.0), 0);
+    }
+
+    /// Тест 603g (Р.57): клампы стали симметричными, ноль проходит.
+    #[test]
+    fn t603g_clamp_is_symmetric_and_zero_passes() {
+        assert_eq!(RATE_CLAMP, (-32.0, 32.0));
+        let a = vec![(0.0, -40.0), (1.0, 40.0)];
+        assert_eq!(eff_rate(1.0, &a, 0.0), -32.0);
+        assert_eq!(eff_rate(1.0, &a, 1.0), 32.0);
+        // ноль остаётся нулём: пол — свойство АУДИО, а не карты позиции
+        let z = vec![(0.0, 0.0), (1.0, 0.0)];
+        assert_eq!(eff_rate(1.0, &z, 0.5), 0.0);
+        assert_eq!(source_progress(1.0, &z, 1.0), 0.0);
+        assert!(rate_signed(1.0, &a), "кривая с минусом обязана называться знаковой");
+        assert!(!rate_signed(1.0, &[(0.0, 0.5), (1.0, 2.0)]), "положительная — нет");
+        // охват модуля видит НОЛЬ ВНУТРИ сегмента, а не только концы
+        let reach = rate_reach(1.0, &a);
+        assert!(reach.0 <= RATE_AUDIO_FLOOR + 1e-12, "минимум охвата: {reach:?}");
+        assert!((reach.1 - 32.0).abs() < 1e-12);
     }
 }

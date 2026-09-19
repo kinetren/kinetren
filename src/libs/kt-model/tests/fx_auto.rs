@@ -156,6 +156,17 @@ fn t190_set_get_param_all_specs() {
         assert_eq!(f.get_param("no_such_param"), None);
     }
     assert!(specs_total >= 20, "спеки покрывают все видео-варианты: {specs_total}");
+    // СКОРОСТЬ СО ЗНАКОМ (Р.57, решение владельца): минус — ход по
+    // материалу назад, ноль — стоп-кадр. Обобщённая проверка выше клампы
+    // уже щупает; здесь названы САМИ ГРАНИЦЫ, потому что именно они были
+    // претензией («не превращая диапазон -0.25...0...0.25 в 0»).
+    let mut slowed = FxInstance::slowed_reverb(1.0, 0.0, 85.0);
+    let rate = slowed.param_specs().iter().find(|s| s.name == "rate").expect("спека скорости");
+    assert_eq!((rate.min, rate.max), (-32.0, 32.0), "диапазон скорости");
+    for v in [-32.0, -1.0, -0.03, 0.0, 0.05, 1.0, 32.0] {
+        assert!(slowed.set_param("rate", v), "скорость {v} не установилась");
+        assert_eq!(slowed.get_param("rate").unwrap(), v, "скорость {v} поехала");
+    }
     // у зеркала числовых параметров нет вовсе
     assert!(FxInstance::Mirror { horizontal: true, vertical: false }.param_specs().is_empty());
     // Р.33: аудио получило спеки — автоматизируется тем же механизмом

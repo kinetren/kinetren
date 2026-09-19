@@ -1844,3 +1844,53 @@ fn t509_every_flag_has_a_control() {
          включить их пользователю нечем"
     );
 }
+
+/// Тест 602 (Р.56, п.452): рендер ленты вне плеера живёт в ОДНОМ месте.
+///
+/// Офлайн-путь имеет право на свои источники ровно при трёх условиях
+/// (инвариант 5): он ими ни с кем не делится, темпа не обещает, задача
+/// конечна и отменяема. Проверить это у ОДНОГО места можно чтением; у
+/// пяти — уже нет. Поэтому `VideoRenderer`/`AudioRenderer` в kt-app
+/// заводит либо рендер-диалог (экспорт), либо служба превью ленты, и
+/// больше никто.
+#[test]
+fn t602_reel_rendering_lives_in_one_place() {
+    let mut bad: Vec<String> = Vec::new();
+    for (file, src) in production_corpus() {
+        if !file.contains("kt-app")
+            || file.contains("render_dialog.rs")
+            || file.contains("reel_preview.rs")
+        {
+            continue;
+        }
+        for (n, line) in src.lines().enumerate() {
+            let t = line.trim();
+            if t.starts_with("//") {
+                continue;
+            }
+            let renders = t.contains("VideoRenderer::new")
+                || t.contains("AudioRenderer::new")
+                || t.contains("render_raw_video_range")
+                || t.contains("render_raw_audio_range");
+            if renders {
+                bad.push(format!("{file}:{}: {t}", n + 1));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "офлайн-рендер завёлся мимо службы превью ленты. Свои источники, \
+         свой поток и своя отмена — это форма, за которой надо следить в ОДНОМ \
+         месте, иначе следующий такой путь отнимет диск у воспроизведения:\n  {}",
+        bad.join("\n  ")
+    );
+    // самопроверка скана: само место обязано существовать и быть одним
+    let src = std::fs::read_to_string(workspace_root().join("apps/kt-app/src/reel_preview.rs"))
+        .expect("нет reel_preview.rs");
+    assert_eq!(
+        src.matches("pub fn render_reel_preview(").count(),
+        1,
+        "тело офлайн-рендера ленты либо исчезло, либо размножилось — \
+         запрет выше перестал что-либо значить"
+    );
+}

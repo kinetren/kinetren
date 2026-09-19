@@ -487,6 +487,8 @@ pub enum CommandError {
     SequenceNotFound(MediaId),
     #[error("sequence {0:?} is still used by {1} clip(s)")]
     SequenceInUse(MediaId, usize),
+    #[error("row order and lane count cannot change while a reel is expanded in place")]
+    BandsOpen,
     #[error("nothing to undo")]
     NothingToUndo,
     #[error("nothing to redo")]
@@ -576,7 +578,16 @@ impl Band {
                 // сопровождается `MoveClip` для всех, кто выше. Поэтому
                 // удалять дорожку при раскрытой полосе приложение не даёт:
                 // сначала сворачивает раскрытие и говорит об этом.
-                Command::SetLanes { .. } => {}
+                //
+                // `SetLaneOrder` с Р.56 перенумеровывает содержимое (номер
+                // дорожки = ранг строки, п.449) — на бенче это переставило
+                // бы события полосы из ХВОСТА числового пространства, и
+                // `unmerge_reel` разобрал бы их не по тем лентам. Обе
+                // команды отвергает `simulate` при открытой полосе
+                // (`CommandError::BandsOpen`), сюда они не доходят.
+                Command::SetLanes { .. } | Command::SetLaneOrder { .. } => {
+                    debug_assert!(false, "SetLanes/SetLaneOrder are refused while a band is open")
+                }
                 // Всё остальное номеров дорожек не двигает. Перечислено
                 // поимённо НАРОЧНО: `_ =>` спрятал бы следующую команду,
                 // которая начнёт их двигать.
@@ -613,7 +624,6 @@ impl Band {
                 | Command::RemoveMorpher { .. }
                 | Command::SetMorpher(_)
                 | Command::BakeMorpher { .. }
-                | Command::SetLaneOrder { .. }
                 | Command::AddArea(_)
                 | Command::RemoveArea { .. }
                 | Command::RenameArea { .. }
@@ -635,7 +645,12 @@ impl Band {
         let base = self.base.get(kind);
         if at <= base {
             *self.base.get_mut(kind) += 1;
-        } else if at < base + self.len.get(kind) {
+        } else if at <= base + self.len.get(kind) {
+            // ХВОСТ полосы принадлежит ПОЛОСЕ (Р.56): за ней ничего не
+            // лежит по построению, а вставка ровно в `base + len` —
+            // это «ленте нужна ещё одна дорожка» (вставка в раскрытии).
+            // До Р.56 такая дорожка не доставалась никому, и событие на
+            // ней молча уезжало в корень.
             *self.len.get_mut(kind) += 1;
         }
     }
@@ -884,6 +899,19 @@ impl TimelineModel {
     }
 
     fn simulate(&self, cmds: &[Command]) -> Result<Project, CommandError> {
+        // ПОРЯДОК И ЧИСЛО СТРОК при открытой полосе не меняются (Р.56,
+        // п.449). С Р.56 `SetLaneOrder` перенумеровывает содержимое, а
+        // полоса раскрытия намеренно живёт в ХВОСТЕ числового
+        // пространства: перенумеруй мы бенч — `unmerge_reel` разложил бы
+        // события не по тем лентам, причём МОЛЧА. Приложение сворачивает
+        // раскрытие само и говорит об этом.
+        if !self.bands.is_empty()
+            && cmds
+                .iter()
+                .any(|c| matches!(c, Command::SetLaneOrder { .. } | Command::SetLanes { .. }))
+        {
+            return Err(CommandError::BandsOpen);
+        }
         // Скретч уже в РАБОЧЕМ виде: содержимое текущей ленты стоит на
         // месте корня (Р.50, В1), и команда правит его, не зная о
         // вложениях вовсе.

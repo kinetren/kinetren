@@ -82,6 +82,11 @@ struct VideoClip {
     /// дереве (Р.50, Б5). Свойство ЛЕНТЫ, а не экземпляра: разойдись они —
     /// у внутреннего клипа два ключа кэша и два заказа.
     nest_scale: u32,
+    /// ПРОЦЕДУРНЫЙ источник (Р.56, п.448): у медиа нет своей сетки кадров,
+    /// кадр — чистая функция тика (генераторы, титры, заглушка). Такому
+    /// клипу пол по сетке не ставится: под растяжением он обязан двигаться
+    /// НЕПРЕРЫВНО, иначе замедленный титр дёргается покадрово.
+    procedural: bool,
 }
 
 // Карта варпа клипа переехала в kt-model (Р.39): конструктор один на
@@ -202,8 +207,35 @@ fn fx_chain_hash(
 
 /// pts источника для момента таймлайна `t` внутри клипа: прямой или
 /// зеркальный (п.16 реверс). Чистая функция — тест 24.
+///
+/// **Пол по сетке ставит ЛИСТ, и только ФАЙЛОВЫЙ** (Р.56, п.448). Файл
+/// хранит кадры на своей сетке: просить между ними бессмысленно, декодер
+/// всё равно отдаст ближайший, а два ключа на один кадр — двойной расход
+/// кэша. У процедурного источника (генератор, титр, заглушка) кадра «между»
+/// не существует — он считается на любой тик, и пол там только дробит
+/// движение на ступеньки. У ЛЕНТЫ пола нет вовсе: её внутреннее время —
+/// время монтажа, а не индекс кадра (`clip_inner_tick`).
 fn clip_source_pts(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
-    grid.align_floor(clip_material_pos(c, t, grid))
+    let m = clip_material_pos(c, t, grid);
+    if c.procedural { m } else { grid.align_floor(m) }
+}
+
+/// НЕПРЕРЫВНОЕ внутреннее время вложения (Р.56, п.448): момент ленты, в
+/// который играет экземпляр. Пола здесь нет по построению — у ленты нет
+/// декодированных кадров, округлять нечего, а округление ЛОМАЕТ: при
+/// rate 0.5 два соседних выходных кадра получали один и тот же `inner_t`,
+/// мемо суб-композита отдавало ту же запись, и всё процедурное внутри
+/// (титры, анимация, автоматизация, камеры) шло ступеньками по два кадра.
+fn clip_inner_tick(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
+    clip_material_pos(c, t, grid)
+}
+
+/// Смешивает ли этот экземпляр кадры (Р.56, п.448). Наследуется ВНИЗ: на
+/// самой ленте смешивать нечего (суб-композит — функция непрерывного
+/// времени, он и так точен), а вот её ЛИСТЬЯ обязаны смешать свои пары,
+/// иначе футаж внутри замедленной композиции остаётся ступенчатым.
+fn nest_blend(c: &VideoClip, inherited: bool) -> bool {
+    inherited || c.warp.as_ref().is_some_and(|w| w.blend())
 }
 
 /// Материальная позиция момента `t` БЕЗ выравнивания по сетке — в ней
@@ -230,8 +262,20 @@ fn clip_material_pos(c: &VideoClip, t: Tick, grid: &FpsGrid) -> Tick {
         // ВАРП, ПОТОМ ЗЕРКАЛО — не наоборот. Аудио-путь (`fill_source`)
         // зеркалит УЖЕ потреблённый прямой поток; зеркало до варпа гнало бы
         // кривую скорости задом наперёд и рассинхронило A/V. Якорь —
-        // фактически потреблённое `used`, а не длина события.
-        Tick((c.source_in.0 + w.used() - grid.frame_step() - consumed).max(c.source_in.0))
+        // ПРОЛЁТ позиции (Р.57), а не «сколько съедено»: со знаковой
+        // скоростью кривая может уйти назад и вернуться, съев вдвое
+        // больше, чем прошла. На положительных кривых пролёт равен
+        // (0, used), и выражение сворачивается в прежнее.
+        let (smin, smax) = w.span();
+        // два клампа, и оба нужны: нижний край ПРОЛЁТА (дальше зеркало не
+        // ходит) и НАЧАЛО ФАЙЛА — со знаковой скоростью пролёт уезжает за
+        // точку входа и может уйти левее нуля (Р.57). Кадра там нет ни у
+        // одного источника, держим крайний.
+        Tick(
+            (c.source_in.0 + smin + smax - grid.frame_step() - consumed)
+                .max(c.source_in.0 + smin)
+                .max(0),
+        )
     } else {
         Tick((c.source_in.0 + consumed).max(0))
     }
@@ -264,9 +308,23 @@ pub struct VideoRenderer {
 ///
 /// `k == 0` (позиция ровно на сетке: целые скорости, rate = 1, кламп у
 /// края) пары НЕ даёт — путь остаётся байт-в-байт прежним.
-fn clip_frame_keys(c: &VideoClip, t: Tick, grid: &FpsGrid) -> (Tick, Option<(Tick, u32)>) {
+///
+/// `blend_footage` — смешивание, УНАСЛЕДОВАННОЕ от вложения сверху (Р.56,
+/// п.448): режим стоит на экземпляре ленты, а смешивают её листья.
+/// У самой ленты пары не бывает никогда: два суб-композита на кадр вдвое
+/// дороже на обоих бэкендах и ничего не добавляют — её время и так
+/// непрерывно.
+fn clip_frame_keys(
+    c: &VideoClip,
+    t: Tick,
+    grid: &FpsGrid,
+    blend_footage: bool,
+) -> (Tick, Option<(Tick, u32)>) {
+    if c.nest.is_some() {
+        return (clip_inner_tick(c, t, grid), None);
+    }
     let a = clip_source_pts(c, t, grid);
-    if !c.warp.as_ref().is_some_and(|w| w.blend()) {
+    if !(blend_footage || c.warp.as_ref().is_some_and(|w| w.blend())) {
         return (a, None);
     }
     let m = clip_material_pos(c, t, grid);
@@ -495,31 +553,81 @@ fn clip_head_zoom(
     best
 }
 
+/// Что рендерер знает об ОТКРЫТЫХ источниках (Р.46 п.321, Р.56 п.448).
+///
+/// План знает о медиа ровно `MediaId` (закон П): ЧТО лежит по адресу —
+/// свойство ИСТОЧНИКА, и рендерер узнаёт об этом только от того, кто
+/// источник открыл. Отсюда и форма: не путь и не `MediaRef`, а два факта,
+/// которые плану действительно нужны — запас деталей (натив) и наличие
+/// собственной сетки кадров.
+#[derive(Debug, Clone, Default)]
+pub struct SourceFacts {
+    /// Нативный размер видео-источника: запас для ступени декода.
+    pub natives: std::collections::HashMap<MediaId, (u32, u32)>,
+    /// Источники БЕЗ своей сетки кадров (Р.56): кадр — чистая функция
+    /// тика. Им пол по сетке не ставится.
+    pub procedural: std::collections::HashSet<MediaId>,
+}
+
+impl SourceFacts {
+    /// Запомнить факты открытого источника. ЕДИНСТВЕННОЕ место, где
+    /// решается «процедурный ли он»: разойдись плеер, экспорт и kt-cli в
+    /// этом вопросе — заказ и чтение считали бы разные ключи (инвариант 4).
+    pub fn observe(&mut self, media: MediaId, info: &kt_media::MediaInfo) {
+        if info.has_video {
+            self.natives.insert(media, (info.width, info.height));
+        } else {
+            self.natives.remove(&media);
+        }
+        // «Своей сетки кадров нет» — это и есть определение процедурного
+        // источника: у файла fps берётся из контейнера, у генератора,
+        // титра и заглушки его не существует, и кадр считается на любой
+        // запрошенный тик.
+        if info.has_video && info.fps.is_none() {
+            self.procedural.insert(media);
+        } else {
+            self.procedural.remove(&media);
+        }
+    }
+
+    pub fn forget(&mut self, media: MediaId) {
+        self.natives.remove(&media);
+        self.procedural.remove(&media);
+    }
+}
+
 impl VideoRenderer {
     pub fn new(project: &Project) -> VideoRenderer {
-        VideoRenderer::new_with_natives(project, &std::collections::HashMap::new())
+        VideoRenderer::new_with_facts(project, &SourceFacts::default())
     }
 
     /// Рендерер, знающий НАТИВНЫЕ размеры источников (Р.46, п.320): без
     /// них ступень декода всегда 1 — раздувать декод, не зная запаса
-    /// файла, нельзя. Плеер и экспорт зовут этот конструктор.
+    /// файла, нельзя.
     pub fn new_with_natives(
         project: &Project,
         natives: &std::collections::HashMap<MediaId, (u32, u32)>,
     ) -> VideoRenderer {
-        VideoRenderer::build(project, natives)
+        VideoRenderer::new_with_facts(
+            project,
+            &SourceFacts { natives: natives.clone(), procedural: Default::default() },
+        )
     }
 
-    fn build(
-        project: &Project,
-        natives: &std::collections::HashMap<MediaId, (u32, u32)>,
-    ) -> VideoRenderer {
-        VideoRenderer::build_reel(project, natives, &nest_scales(project), None, 0)
+    /// Рендерер, знающий ФАКТЫ об открытых источниках (Р.56): натив и
+    /// процедурность. Плеер, экспорт и kt-cli зовут этот конструктор —
+    /// иначе замедленный титр остаётся ступенчатым.
+    pub fn new_with_facts(project: &Project, facts: &SourceFacts) -> VideoRenderer {
+        VideoRenderer::build(project, facts)
+    }
+
+    fn build(project: &Project, facts: &SourceFacts) -> VideoRenderer {
+        VideoRenderer::build_reel(project, facts, &nest_scales(project), None, 0)
     }
 
     fn build_reel(
         project: &Project,
-        natives: &std::collections::HashMap<MediaId, (u32, u32)>,
+        facts: &SourceFacts,
         nest_scales: &std::collections::HashMap<MediaId, u32>,
         seq: Option<MediaId>,
         depth: usize,
@@ -582,10 +690,11 @@ impl VideoRenderer {
                     tail_ext: Tick::ZERO,
                     warp,
                     head_zoom,
-                    native: natives.get(&c.media).copied(),
+                    native: facts.natives.get(&c.media).copied(),
                     nest,
                     content,
                     nest_scale: nest.and_then(|id| nest_scales.get(&id).copied()).unwrap_or(1),
+                    procedural: facts.procedural.contains(&c.media),
                 }
             })
             .collect();
@@ -661,7 +770,7 @@ impl VideoRenderer {
         if depth < kt_model::MAX_NEST_DEPTH {
             for id in clips.iter().filter_map(|c| c.nest) {
                 nests.entry(id).or_insert_with(|| {
-                    VideoRenderer::build_reel(project, natives, nest_scales, Some(id), depth + 1)
+                    VideoRenderer::build_reel(project, facts, nest_scales, Some(id), depth + 1)
                 });
             }
         }
@@ -690,7 +799,7 @@ impl VideoRenderer {
     /// (t247d), теперь и по оси размера (t312).
     pub fn layers_at(&self, t: Tick, quality: Quality) -> Vec<(MediaId, Tick, Quality)> {
         let mut out = Vec::new();
-        self.layers_at_into(t, quality, &mut out);
+        self.layers_at_into(t, quality, false, &mut out);
         out
     }
 
@@ -698,21 +807,30 @@ impl VideoRenderer {
     /// содержимое. Не спустись он — префетч грел бы адрес, которого не
     /// существует, а композит читал бы настоящие кадры: вечный промах
     /// кэша, тот самый, против которого стоит инвариант 4.
-    fn layers_at_into(&self, t: Tick, quality: Quality, out: &mut Vec<(MediaId, Tick, Quality)>) {
+    fn layers_at_into(
+        &self,
+        t: Tick,
+        quality: Quality,
+        blend_footage: bool,
+        out: &mut Vec<(MediaId, Tick, Quality)>,
+    ) {
         for c in self.clips.iter().filter(|c| c.active_at(t)) {
             // в режиме «смешивание» слой читает ДВА кадра — префетч
             // обязан согреть оба, иначе второй не запросят никогда
-            let (a, b) = clip_frame_keys(c, t, &self.grid);
+            let (a, b) = clip_frame_keys(c, t, &self.grid, blend_footage);
             match c.nest.and_then(|id| self.nests.get(&id)) {
-                // внутреннее время ленты — ровно «точка входа в источник»,
-                // а КАЧЕСТВО — увеличенное ступенью ленты: заказ и чтение
-                // обязаны спрашивать одно и то же (инвариант 4)
-                // у вложения пары не бывает (см. `layer_src`): смешивание
-                // кадров на собранной картинке не считается, и греть
-                // второе внутреннее время было бы заказом впустую
-                Some(sub) => {
-                    sub.layers_at_into(a, scaled(quality, clip_decode_scale(c, quality)), out)
-                }
+                // внутреннее время ленты НЕПРЕРЫВНО (Р.56, п.448): заказ
+                // спускается по тому же тику, на котором план собирает
+                // суб-композит, а КАЧЕСТВО увеличено ступенью ленты —
+                // заказ и чтение обязаны спрашивать одно и то же
+                // (инвариант 4). Режим «смешивание» едет ВНИЗ: смешивают
+                // листья, и греть им надо обе стороны пары.
+                Some(sub) => sub.layers_at_into(
+                    a,
+                    scaled(quality, clip_decode_scale(c, quality)),
+                    nest_blend(c, blend_footage),
+                    out,
+                ),
                 None => {
                     let dq = clip_decode_quality(c, quality);
                     out.push((c.media, a, dq));
@@ -788,18 +906,21 @@ impl VideoRenderer {
         let mut out = Vec::new();
         for c in &self.clips {
             let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) else { continue };
-            // Окно — по ФАКТИЧЕСКИ потреблённому материалу (Р.55, С4):
+            // Окно — по ПРОЛЁТУ материала (Р.55 С4, ось уточнена в Р.57):
             // у растянутого экземпляра оно не равно его длине на
             // таймлайне, и полоска врала бы в ХОРОШУЮ сторону — то, чего
             // инвариант 4 не разрешает. У зеркального интервал тот же,
-            // меняется направление, а не границы.
-            let used = match &c.warp {
-                Some(w) => w.used().max(1),
-                None => c.end.0 - c.start.0,
+            // меняется направление, а не границы; у знаковой кривой
+            // границы даёт пролёт, а не «сколько съедено».
+            let win = match &c.warp {
+                Some(w) => {
+                    let (lo, hi) = w.span();
+                    (c.source_in.0 + lo)..(c.source_in.0 + hi).max(c.source_in.0 + lo + 1)
+                }
+                None => c.source_in.0..(c.source_in.0 + c.end.0 - c.start.0),
             };
-            let win = c.source_in.0..(c.source_in.0 + used);
             let dq = clip_decode_quality(c, quality);
-            out.push((c.id, sub.reel_coverage(cache, dq, win)));
+            out.push((c.id, sub.reel_coverage(cache, dq, win, nest_blend(c, false))));
         }
         out
     }
@@ -810,7 +931,18 @@ impl VideoRenderer {
         cache: &BurstCache,
         quality: Quality,
         win: std::ops::Range<i64>,
+        blend_footage: bool,
     ) -> Vec<std::ops::Range<i64>> {
+        // при смешивании лист читает ЕЩЁ ОДИН кадр справа (Р.56, п.448):
+        // не расширь окно — полоска звала бы прогретым место, у которого
+        // не пришла вторая половина пары, а это вранье в ХОРОШУЮ сторону
+        let pair_ext = |c: &VideoClip| -> i64 {
+            if blend_footage || c.warp.as_ref().is_some_and(|w| w.blend()) {
+                self.grid.frame_step().max(1)
+            } else {
+                0
+            }
+        };
         let mut warm = vec![win.clone()];
         for c in &self.clips {
             let body = c.start.0.max(win.start)..(c.end.0 + c.tail_ext.0).min(win.end);
@@ -823,13 +955,19 @@ impl VideoRenderer {
                 // ровно как растянутый файловый ребёнок (Р.55, С4):
                 // `shift_runs` — ЛИНЕЙНАЯ карта, и под варпом она врёт, а
                 // врать в ХОРОШУЮ сторону полоска не имеет права.
-                let used = match &c.warp {
-                    Some(w) => w.used().max(1),
-                    None => c.end.0 - c.start.0,
+                let inner = match &c.warp {
+                    Some(w) => {
+                        let (lo, hi) = w.span();
+                        (c.source_in.0 + lo)..(c.source_in.0 + hi).max(c.source_in.0 + lo + 1)
+                    }
+                    None => c.source_in.0..(c.source_in.0 + c.end.0 - c.start.0),
                 };
-                let inner = c.source_in.0..(c.source_in.0 + used);
-                let sub_warm =
-                    sub.reel_coverage(cache, clip_decode_quality(c, quality), inner.clone());
+                let sub_warm = sub.reel_coverage(
+                    cache,
+                    clip_decode_quality(c, quality),
+                    inner.clone(),
+                    nest_blend(c, blend_footage),
+                );
                 if c.warp.is_some() || c.reversed {
                     let full =
                         sub_warm.iter().any(|r| r.start <= inner.start && r.end >= inner.end);
@@ -837,10 +975,14 @@ impl VideoRenderer {
                 } else {
                     subtract(vec![body.clone()], shift_runs(sub_warm, c.start.0 - c.source_in.0))
                 }
-            } else if c.warp.is_some() {
-                // растянутый ребёнок — целиком или никак (см. док)
-                let b0 = c.source_in.0;
-                let b1 = b0 + (c.end.0 - c.start.0).max(1);
+            } else if let Some(w) = &c.warp {
+                // растянутый ребёнок — целиком или никак (см. док).
+                // Окно — ПРОЛЁТ материала (Р.57): длина события тут ни при
+                // чём, на 0.5× она вдвое больше прочитанного, и полоска
+                // врала бы в ХОЛОДНУЮ сторону.
+                let (lo, hi) = w.span();
+                let b0 = c.source_in.0 + lo;
+                let b1 = (c.source_in.0 + hi).max(b0 + 1) + pair_ext(c);
                 let runs = cache.coverage(
                     SourceId(c.media.0),
                     kt_cache::BurstKind::video(Some(clip_decode_quality(c, quality))),
@@ -849,16 +991,21 @@ impl VideoRenderer {
                 let full = runs.iter().any(|r| r.start <= b0 && r.end >= b1);
                 if full { Vec::new() } else { vec![body.clone()] }
             } else {
+                let ext = pair_ext(c);
                 let b0 = c.source_in.0;
-                let b1 = b0 + (c.end.0 - c.start.0).max(1);
+                let b1 = b0 + (c.end.0 - c.start.0).max(1) + ext;
                 let runs = cache.coverage(
                     SourceId(c.media.0),
                     kt_cache::BurstKind::video(Some(clip_decode_quality(c, quality))),
                     b0..b1,
                 );
-                // источник → время ленты; у reversed материал идёт навстречу
+                // источник → время ленты; у reversed материал идёт навстречу.
+                // При смешивании прогон УКОРАЧИВАЕТСЯ справа на кадр: место
+                // готово, только если пришла и вторая половина пары.
                 let mapped: Vec<std::ops::Range<i64>> = runs
                     .into_iter()
+                    .map(|r| r.start..(r.end - ext))
+                    .filter(|r| r.start < r.end)
                     .map(|r| {
                         if c.reversed {
                             let len = c.end.0 - c.start.0;
@@ -908,6 +1055,7 @@ impl VideoRenderer {
             project_size: self.project_size,
             nests: &self.nests,
             memoize: true,
+            blend_footage: false,
         };
         let plan = build_plan(&self.clips, &ctx, cache, t, quality, true);
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
@@ -928,6 +1076,7 @@ impl VideoRenderer {
             project_size: self.project_size,
             nests: &self.nests,
             memoize: false,
+            blend_footage: false,
         };
         let plan = build_plan(&self.clips, &ctx, cache, t, quality, false);
         execute_plan_cpu(&plan, cache, &mut self.fx_scratch, &mut self.blend, out)
@@ -936,24 +1085,31 @@ impl VideoRenderer {
     /// Максимум одновременных видео-слоёв (с ручками переходов) — экспорт
     /// делит бюджет чанка на это число (Р.31 п.4).
     pub fn max_concurrent_layers(&self) -> usize {
+        self.max_concurrent_layers_in(false)
+    }
+
+    /// То же внутри ленты, на которую унаследовано смешивание (Р.56,
+    /// п.448): пара считается у ЛИСТА, и считать её надо там же, где она
+    /// живёт, — иначе бюджет чанка разойдётся с тем, что план делает.
+    fn max_concurrent_layers_in(&self, blend_footage: bool) -> usize {
         let mut evs: Vec<(i64, i32)> = Vec::with_capacity(self.clips.len() * 2);
         for c in &self.clips {
             // смешивающий слой держит ДВА кадра сразу (Р.37 С5). Не учесть
             // это — чанк экспорта вытеснит соседа до композиции, сработает
             // ветка голода, и БАЙТЫ ЭКСПОРТА станут зависеть от тайминга
             // кэша.
-            // У ВЛОЖЕНИЯ смешивания кадров не бывает (Р.55, С4), поэтому
-            // и двойного буфера ему не нужно: посчитай мы его — бюджет
-            // чанка экспорта разошёлся бы с тем, что план на самом деле
-            // делает, и это разошлось бы в обе стороны.
-            let blends = c.nest.is_none() && c.warp.as_ref().is_some_and(|w| w.blend());
+            // У САМОГО ВЛОЖЕНИЯ пары не бывает (Р.56, п.448): смешивают
+            // его листья, и двойной буфер считается ВНУТРИ — посчитай мы
+            // его и здесь, бюджет разошёлся бы с тем, что план делает.
+            let blends =
+                c.nest.is_none() && (blend_footage || c.warp.as_ref().is_some_and(|w| w.blend()));
             let mut w = if blends { 2 } else { 1 };
             // Вложение держит СВОЙ буфер суб-композита плюс всё, что
             // одновременно живо внутри него (Р.50). Недосчёт делает БАЙТЫ
             // ЭКСПОРТА зависящими от тайминга кэша — дословно регрессия
             // Р.37 С5.
             if let Some(sub) = c.nest.and_then(|id| self.nests.get(&id)) {
-                w += sub.max_concurrent_layers() as i32;
+                w += sub.max_concurrent_layers_in(nest_blend(c, blend_footage)) as i32;
             }
             evs.push((c.start.0 - c.head_ext.0, w));
             evs.push((c.end.0 + c.tail_ext.0, -w));
@@ -976,6 +1132,7 @@ impl VideoRenderer {
             project_size: self.project_size,
             nests: &self.nests,
             memoize: true,
+            blend_footage: false,
         };
         build_plan(&self.clips, &ctx, cache, t, quality, true)
     }
@@ -992,6 +1149,13 @@ struct PlanCtx<'a> {
     /// вытеснят ещё не использованные пре-кадры соседних слоёв из
     /// 192-мегабайтного бюджета экспорта — дословно регрессия Р.31 п.4.
     memoize: bool,
+    /// Смешивание кадров, унаследованное от вложения СВЕРХУ (Р.56, п.448).
+    /// Режим стоит на экземпляре ленты, а исполняют его ЛИСТЬЯ: так на
+    /// кадр остаётся ОДИН суб-композит (два стоили бы вдвое и на CPU, и на
+    /// GPU), и процедурное внутри не оказывается на сетке вместо
+    /// непрерывного времени. В корне всегда `false` — байты GOLDEN_VIDEO
+    /// на этом стоят.
+    blend_footage: bool,
 }
 
 /// Камера цепочки: прибитая по id, иначе активная по `t`, иначе дефолтная
@@ -1036,7 +1200,10 @@ fn layer_src<'a>(
     quality: Quality,
     t: Tick,
 ) -> LayerSrc<'a> {
-    let (src_pts, pair) = clip_frame_keys(clip, t, ctx.grid);
+    // У ЛЕНТЫ `src_pts` — непрерывный внутренний тик, у листа — pts кадра
+    // (Р.56, п.448). Обе ветки ниже читают ровно то, что заказал
+    // `layers_at_into` той же функцией.
+    let (src_pts, pair) = clip_frame_keys(clip, t, ctx.grid, ctx.blend_footage);
     // Кривые сэмплируются по ЛИНЕЙНОЙ материальной позиции — по той же,
     // которой рисует ось UI и по которой считает звук (Р.37: «БЕЗ учёта
     // замедления-ускорения»). До Р.39 здесь стоял `src_pts` — ВАРП-
@@ -1083,13 +1250,14 @@ fn layer_src<'a>(
     // же арифметику синхронной в CPU-ядре и в WGSL не приходится
     // (инвариант №7). Ядро — готовый `dissolve_into`: байт-заморожено,
     // с AVX2-близнецом.
-    // СМЕШИВАНИЕ КАДРОВ НА САМОМ ВЛОЖЕНИИ не делается (Р.55, С4): оно
-    // требует ДВУХ суб-композитов на кадр, то есть вдвое дороже и на CPU,
-    // и на GPU. Пара здесь гасится, а не «почти считается»: иначе ветка
-    // ниже пошла бы в кэш за кадром по адресу ленты и смешала суб-композит
-    // с чужим кадром. Человеку об этом говорит окно эффекта — режим
-    // «смешивание» у вложения не предлагается.
-    let pair = if clip.nest.is_some() { None } else { pair };
+    // СМЕШИВАНИЕ КАДРОВ НА САМОМ ВЛОЖЕНИИ не делается (Р.56, п.448): два
+    // суб-композита на кадр вдвое дороже на обоих бэкендах и ничего не
+    // добавляют — внутреннее время ленты и так непрерывно. Режим едет
+    // ВНИЗ, к листьям, и пару отдаёт `clip_frame_keys` уже там.
+    debug_assert!(
+        pair.is_none() || clip.nest.is_none(),
+        "a nest never gets a frame pair: the leaf does the blending"
+    );
     let (frame, blend) = match pair {
         None => (frame, None),
         Some((pts, k)) => {
@@ -1127,18 +1295,21 @@ fn layer_src<'a>(
         "a clip without video fx never gets a decode stage"
     );
     // ВХОД слоя. У вложения это не кадр из кэша, а СУБ-КОМПОЗИТ: план
-    // ленты, собранный на ВНУТРЕННЕМ времени экземпляра. Внутреннее время —
-    // это ровно `clip_source_pts`, то есть «точка входа в источник»: для
-    // файла — pts кадра, для ленты — момент её таймлайна. Одна и та же
-    // функция, один и тот же реверс и одни и те же ручки переходов.
+    // ленты, собранный на ВНУТРЕННЕМ времени экземпляра. Внутреннее время
+    // НЕПРЕРЫВНО (`clip_inner_tick`, Р.56 п.448): реверс и ручки переходов
+    // те же, что у файла, а пола нет — у ленты нет кадров, чтобы к ним
+    // прижиматься, зато есть титры и автоматизация, которым пол виден как
+    // дёрганье по два кадра.
     let input = match clip.nest.and_then(|id| ctx.nests.get(&id).map(|r| (id, r))) {
         Some((id, sub)) => {
+            let blend = nest_blend(clip, ctx.blend_footage);
             let sub_ctx = PlanCtx {
                 grid: &sub.grid,
                 cameras: &sub.cameras,
                 project_size: sub.project_size,
                 nests: &sub.nests,
                 memoize: ctx.memoize,
+                blend_footage: blend,
             };
             // Суб-план собирается в S×Quality (Р.50, Б5): цепочка на
             // вложении зумит СОБРАННУЮ картинку, и без запаса она была бы
@@ -1156,6 +1327,7 @@ fn layer_src<'a>(
                 seq: id,
                 content_hash: clip.content,
                 inner_t: src_pts,
+                blend,
                 plan,
             }))
         }
@@ -1403,7 +1575,8 @@ fn nest_frame_cpu(
     let (w, h) = (n.plan.out_w, n.plan.out_h);
     let q_key = (w, h);
     let source = nest_source_id(n.seq);
-    if memoize && let Some(f) = cache.get_postfx_video(source, q_key, n.content_hash, n.inner_t.0) {
+    let key = nest_memo_key(n.content_hash, n.blend);
+    if memoize && let Some(f) = cache.get_postfx_video(source, q_key, key, n.inner_t.0) {
         return Some(f);
     }
     let mut buf = scratch.take(w as usize * h as usize * 4);
@@ -1415,9 +1588,23 @@ fn nest_frame_cpu(
     scratch.put(buf);
     let frame = Arc::new(VideoFrame { pts: n.inner_t, width: w, height: h, rgba, has_alpha: true });
     if memoize {
-        cache.insert_postfx_video(source, q_key, n.content_hash, n.inner_t.0, frame.clone());
+        cache.insert_postfx_video(source, q_key, key, n.inner_t.0, frame.clone());
     }
     Some(frame)
+}
+
+/// Ключ мемоизации суб-композита (Р.56, п.448): редакция ленты + режим
+/// кадров. Один и тот же `inner_t` при «смешивании» и при «ближайшем»
+/// даёт РАЗНЫЕ байты — листья внутри читают либо пару, либо один кадр, —
+/// и без флага кэш отдал бы чужую картинку.
+///
+/// При `blend == false` ключ РАВЕН `content_hash`: прежние записи и
+/// прежние тесты (t441-t443) не двигаются.
+pub fn nest_memo_key(content_hash: u64, blend: bool) -> u64 {
+    if !blend {
+        return content_hash;
+    }
+    xxhash_rust::xxh3::xxh3_64(&[content_hash.to_le_bytes().as_slice(), b"blend"].concat())
 }
 
 /// Адрес ленты в кэше. Старший бит `MediaId` отдан вложениям (Р.50):

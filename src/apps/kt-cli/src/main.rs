@@ -120,6 +120,23 @@ fn probe_range(
             if c.reversed { "  REVERSED" } else { "" },
             if c.fx.is_empty() { String::new() } else { format!("  fx {}", c.fx.len()) }
         );
+        // СКОРОСТЬ СО ЗНАКОМ (Р.57): по одному «warped» не видно ни
+        // направления, ни того, какой кусок материала событие занимает, —
+        // а жалоба «играет не то» разбирается именно этими числами.
+        if let Some(w) = kt_model::clip_warp(c) {
+            let (lo, hi) = w.span();
+            let rates: Vec<f64> = (0..=10)
+                .map(|i| kt_model::eff_rate(w.base(), w.prof(), i as f64 / 10.0))
+                .collect();
+            let rmin = rates.iter().cloned().fold(f64::INFINITY, f64::min);
+            let rmax = rates.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            println!(
+                "      warped: rate {rmin:.2}..{rmax:.2}, material {:.3}..{:.3} s, {:.3} s consumed",
+                kt_time::Tick(c.source_in.0 + lo).as_secs_f64(),
+                kt_time::Tick(c.source_in.0 + hi).as_secs_f64(),
+                kt_time::Tick(w.used()).as_secs_f64(),
+            );
+        }
     }
     if shown == 0 {
         println!("  (none)");
@@ -132,12 +149,30 @@ fn probe_range(
             continue;
         }
         let Some(s) = project.sequence(c.media) else { continue };
+        // ФАКТИЧЕСКОЕ окно, а не длина на таймлайне (Р.56, п.448): у
+        // растянутого экземпляра лента съедается не с той же скоростью, и
+        // «жалоба про другое место» разбирается именно по этим числам.
+        // Зеркальный играет то же окно НАВСТРЕЧУ — границы те же.
+        // Границы — ПРОЛЁТ материала (Р.57): со знаковой скоростью
+        // «съедено» больше пройденного, и по нему окно было бы шире
+        // настоящего.
+        let warp = kt_model::clip_warp(c);
+        let (lo, hi) = match &warp {
+            Some(w) => w.span(),
+            None => (0, c.duration.0),
+        };
         println!(
-            "  {:?} is a NESTED REEL '{}' — its content plays at {:.3}..{:.3} s of the reel",
+            "  {:?} is a NESTED REEL '{}' — its content plays at {:.3}..{:.3} s of the reel{}{}",
             c.id,
             s.name,
-            c.source_in.as_secs_f64(),
-            (c.source_in + c.duration).as_secs_f64()
+            kt_time::Tick(c.source_in.0 + lo).as_secs_f64(),
+            kt_time::Tick(c.source_in.0 + hi).as_secs_f64(),
+            match &warp {
+                Some(w) =>
+                    format!("  (warped, {:.3} s consumed)", kt_time::Tick(w.used()).as_secs_f64()),
+                None => String::new(),
+            },
+            if c.reversed { "  REVERSED" } else { "" }
         );
     }
 
@@ -248,13 +283,13 @@ fn probe_range(
         width: project.settings.width.max(2) & !1,
         height: project.settings.height.max(2) & !1,
     };
-    let natives = project_path.map(|p| media_natives(project, p)).unwrap_or_default();
-    let vr = kt_engine::VideoRenderer::new_with_natives(project, &natives);
+    let facts = project_path.map(|p| media_facts(project, p)).unwrap_or_default();
+    let vr = kt_engine::VideoRenderer::new_with_facts(project, &facts);
     println!("  quality (project): {}x{}", q.width, q.height);
     for (id, dq) in vr.video_decode_qualities(q) {
         let media = eff_all.iter().find(|c| c.id == id).map(|c| c.media.0);
         let nat = media
-            .and_then(|m| natives.get(&kt_model::MediaId(m)))
+            .and_then(|m| facts.natives.get(&kt_model::MediaId(m)))
             .map(|(w, h)| format!("{w}x{h}"))
             .unwrap_or_else(|| "unknown".into());
         println!(
@@ -394,14 +429,12 @@ fn probe_range(
     0
 }
 
-/// Нативные размеры видео-медиа (Р.46, п.322): открывается только
-/// КОНТЕЙНЕР (probe), кадры не декодируются. Недоступный файл — не ошибка:
-/// его ступень просто неизвестна, и в отчёте это видно.
-fn media_natives(
-    project: &Project,
-    project_path: &str,
-) -> std::collections::HashMap<kt_model::MediaId, (u32, u32)> {
-    let mut out = std::collections::HashMap::new();
+/// Факты об источниках проекта: натив (Р.46, п.322) и процедурность
+/// (Р.56, п.448). Открывается только КОНТЕЙНЕР (probe), кадры не
+/// декодируются. Недоступный файл — не ошибка: его ступень просто
+/// неизвестна, и в отчёте это видно.
+fn media_facts(project: &Project, project_path: &str) -> kt_engine::SourceFacts {
+    let mut out = kt_engine::SourceFacts::default();
     for m in &project.media {
         // синтетика пропускается: её info().width/height фиктивны;
         // генераторы (`gen:`) проходят — их натив это честный «запас
@@ -414,10 +447,7 @@ fn media_natives(
         )
         .ok();
         if let Ok(src) = kt_media::factory::open_indexed(&m.path, idx_db.as_mut()) {
-            let i = kt_media::MediaSource::info(&*src);
-            if i.has_video {
-                out.insert(m.id, (i.width, i.height));
-            }
+            out.observe(m.id, kt_media::MediaSource::info(&*src));
         }
     }
     out

@@ -1234,7 +1234,12 @@ fn t122_insert_lane_after_clicked_row() {
         p.validate().unwrap();
         app.model = kt_model::TimelineModel::new(p);
         app.lane_names = vec![(LaneKind::Audio, 0, "Голос".into())];
-        app.reorder_lane(kt_model::ClipKind::Audio, 0, 2);
+        // строки, а не номера: с Р.56 номер дорожки — это РАНГ строки, и
+        // перестановка идёт одной командой на любые виды
+        let rows = app.model.project().rows();
+        let from = rows.iter().position(|&r| r == (LaneKind::Audio, 0)).unwrap();
+        let to = rows.iter().position(|&r| r == (LaneKind::Audio, 2)).unwrap();
+        app.reorder_rows(from, to);
     }
     h.step();
     assert_eq!(
@@ -4449,7 +4454,7 @@ fn t382_app_carries_extras_to_born_clips() {
     let before = app.model.project().clips.len();
     app.selected = [src.id].into_iter().collect();
     app.copy_selection();
-    app.paste_here(Tick(500_000), String::new(), false);
+    app.paste_here(Tick(500_000), None, String::new(), false);
     assert!(h.state().model.project().clips.len() > before, "вставка не добавила событий");
     let pasted = h
         .state()
@@ -6935,7 +6940,7 @@ fn t250_paste_prefix_dialog() {
     let depth = app.model.undo_depth();
     let at = app.paste_names.as_ref().unwrap().at;
     app.paste_names = None;
-    app.paste_here(at, "копия".into(), false);
+    app.paste_here(at, None, "копия".into(), false);
     assert_eq!(app.model.undo_depth(), depth + 1, "вставка — один шаг истории");
     let names: Vec<String> = app.model.project().areas.iter().map(|a| a.name.clone()).collect();
     // Р.38 п.19: «надо по дефолту проставлять не префикс а суффикс» —
@@ -6943,7 +6948,7 @@ fn t250_paste_prefix_dialog() {
     assert!(names.contains(&"финал копия".to_string()), "суффикс применён: {names:?}");
     // а префикс остаётся возможностью того же окна
     app.model.undo().unwrap();
-    app.paste_here(at, "копия".into(), true);
+    app.paste_here(at, None, "копия".into(), true);
     let names: Vec<String> = app.model.project().areas.iter().map(|a| a.name.clone()).collect();
     assert!(names.contains(&"копия финал".to_string()), "префикс всё ещё доступен: {names:?}");
     app.model.undo().unwrap();
@@ -8949,7 +8954,9 @@ fn t457_four_ways_in_one_way_out() {
         matches!(h.state().ctx_target, Some(crate::timeline::CtxTarget::Nest(_))),
         "ПКМ по вложению обязан дать цель ВЛОЖЕНИЯ, а не обычного события"
     );
-    h.get_by_label(tr(k::tl::menu::NEST_ENTER)).click();
+    // подпись пункта ищется ПОДСТРОКОЙ: у пункта есть колонка аккорда
+    // (Р.56, п.451), и точное совпадение сломалось бы о неё
+    h.get_by_label_contains(tr(k::tl::menu::NEST_ENTER)).click();
     h.step();
     h.step();
     assert_eq!(h.state().model.editing(), Some(seq), "пункт меню не завёл внутрь");
@@ -9002,8 +9009,9 @@ fn t457_four_ways_in_one_way_out() {
     );
     let _ = row2;
 
-    // 4) Enter по выделенному — КЛАВИАТУРНЫЙ БЛИЗНЕЦ двойного клика, и
-    // ведёт себя так же (правило 17)
+    // 4) Enter по выделенному — КАСКАД (Р.56, п.451, решение владельца:
+    // «я хочу чтобы двойной enter переходил в нее»). Первый раскрывает
+    // на месте, второй по уже раскрытому — ПОЛНЫЙ ВХОД.
     let (mut h3, _, seq3) = harness_with_nest();
     let inst3 = h3.state().model.project().clips.iter().find(|c| c.media == seq3).unwrap().id;
     h3.state_mut().select_only(inst3);
@@ -9011,30 +9019,53 @@ fn t457_four_ways_in_one_way_out() {
     h3.key_press(egui::Key::Enter);
     h3.step();
     h3.step();
-    assert_eq!(h3.state().model.editing(), None, "Enter ушёл в полный вход, а не в раскрытие");
+    assert_eq!(h3.state().model.editing(), None, "первый Enter ушёл в полный вход");
     assert_eq!(
         h3.state().model.bands().len(),
         1,
         "Enter по выделенному вложению не раскрыл его на месте"
     );
-    let _ = seq3;
+    // экземпляр ОСТАЛСЯ выделен — иначе второму Enter не во что целиться,
+    // и жест молча не делал бы ничего
+    assert!(
+        h3.state().is_selected(inst3),
+        "раскрытие сбросило выделение экземпляра: следующий жест бьёт в пустоту"
+    );
+
+    let (vs, tpp) = (h3.state().view_start, h3.state().ticks_per_px);
+    h3.key_press(egui::Key::Enter);
+    h3.step();
+    h3.step();
+    assert_eq!(h3.state().model.editing(), Some(seq3), "второй Enter не завёл ВНУТРЬ ленты");
+    assert!(h3.state().model.bands().is_empty(), "полный вход обязан свернуть полосу");
+
+    // выход — в КОРЕНЬ И БЕЗ ПОЛОСЫ (решение владельца)
+    h3.state_mut().escape_action();
+    h3.step();
+    assert_eq!(h3.state().model.editing(), None, "Esc не вывел наружу");
+    assert!(h3.state().model.bands().is_empty(), "выход вернул полосу, а его не просили");
+    assert_eq!(
+        (h3.state().view_start, h3.state().ticks_per_px),
+        (vs, tpp),
+        "вид после выхода не вернулся"
+    );
 }
 
 /// Тест 458 (Р.50, В2): у вложения свой вид и свои обещания.
 ///
-/// Три вещи, которых не видно в модели: филмстрипа у вложения быть не
-/// может (своего файла у ленты нет, а тумбы содержимого — это декод на
-/// скролле, инвариант 8), бейдж «×N» появляется ТОЛЬКО при N > 1, и фон
-/// внутри ленты тонирован.
+/// Три вещи, которых не видно в модели: тумб ПО ФАЙЛУ у вложения не
+/// бывает (файла у ленты нет; кадры ей даёт офлайн-рендер содержимого —
+/// Р.56, п.452, служба `reel_preview`), бейдж «×N» появляется ТОЛЬКО при
+/// N > 1, и фон внутри ленты тонирован.
 #[test]
 fn t458_nest_looks_like_a_nest() {
     use kt_model::*;
     let (mut h, _g, seq) = harness_with_nest();
     let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
 
-    // ФИЛМСТРИП: у вложения его нет вовсе — своего файла у ленты нет, а
-    // тумбы содержимого были бы декодом на скролле (инвариант 8). Ни один
-    // ключ тумбы не адресует адрес ЛЕНТЫ.
+    // ТУМБЫ ПО ФАЙЛУ: ни один ключ службы тумб не адресует ЛЕНТУ — файла
+    // у неё нет, и служба индекса полезла бы по нему ffmpeg'ом. Кадры на
+    // событии при этом ЕСТЬ, но приходят из `reel_preview` (t600).
     h.step();
     h.step();
     assert!(
@@ -10190,4 +10221,732 @@ fn t578_a_reel_is_an_object_of_the_bin() {
         !h.state_mut().apply(kt_model::Command::RemoveSequence { id: seq }),
         "ЗАНЯТАЯ лента ушла молча — события повисли бы на несуществующем адресе"
     );
+}
+
+/// Тест 594 (Р.56, п.449): дорожка, добавленная ПОД потолок, и есть
+/// верхний слой картинки.
+///
+/// Претензия владельца дословно: «если поместить видеотрек под потолок
+/// (перед морфером самым высоким) и закинуть туда видео — то оно не
+/// отображается вообще». Причина была в расхождении двух порядков:
+/// движок складывал слои по НОМЕРУ дорожки, а экран показывал по
+/// `lane_order`, и вставка из меню чужой строки брала `at = tail`, то
+/// есть самый большой номер — нижний слой.
+///
+/// Тест утверждает СЛЕДСТВИЕ и щупает оттуда, откуда действует человек:
+/// пункт меню строки, затем событие на новой дорожке, затем порядок, в
+/// котором движок будет рисовать слои.
+#[test]
+fn t594_a_lane_added_under_the_ceiling_is_the_top_layer() {
+    use kt_model::{ClipKind, LaneKind};
+    let (mut h, _g) = harness_three_clips();
+    // морф-строка сверху — та самая «под потолком» раскладка
+    h.state_mut().insert_lane_after_row(LaneKind::Morph, None);
+    h.step();
+    let rows = h.state().model.project().rows();
+    let morph = rows.iter().position(|&r| r.0 == LaneKind::Morph).expect("морф-строка");
+    let top_video = rows.iter().position(|&r| r.0 == LaneKind::Video).expect("видео-строка");
+    h.state_mut().reorder_rows(morph, 0);
+    h.step();
+    assert_eq!(h.state().model.project().rows()[0].0, LaneKind::Morph, "морф-строка не сверху");
+    let _ = top_video;
+
+    // ПКМ по морф-строке → «добавить видеодорожку»
+    let undo_before = h.state().model.undo_depth();
+    h.state_mut().insert_lane_after_row(LaneKind::Video, Some((LaneKind::Morph, 0)));
+    h.step();
+    let p = h.state().model.project().clone();
+    let under = p.rows()[1];
+    assert_eq!(under.0, LaneKind::Video, "новая строка встала не под морф-строкой: {:?}", p.rows());
+    assert_eq!(
+        h.state().model.undo_depth(),
+        undo_before + 1,
+        "вставка дорожки стоила больше одного шага истории"
+    );
+
+    // «закинул туда видео»
+    let media = p.media[0].id;
+    let id = kt_model::ClipId(p.clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 1);
+    let mut c = p.clips.iter().find(|c| c.kind == ClipKind::Video).unwrap().clone();
+    c.id = id;
+    c.link_group = None;
+    // дорожка — ТА, что видна под морф-строкой: номер её и решает
+    c.lane = under.1;
+    c.media = media;
+    c.start = kt_time::Tick(0);
+    assert!(h.state_mut().apply(kt_model::Command::AddClip(c)), "событие не встало на дорожку");
+    h.step();
+
+    // СЛЕДСТВИЕ: в порядке композиции движка (задний план первым) оно
+    // ПОСЛЕДНЕЕ, то есть верхний слой
+    let p = h.state().model.project();
+    let mut order = p.effective_clips();
+    order.retain(|c| c.kind == ClipKind::Video);
+    order.sort_by_key(|c| (std::cmp::Reverse(c.lane), c.start.0));
+    assert_eq!(
+        order.last().map(|c| c.id),
+        Some(id),
+        "событие «под потолком» рисуется НЕ верхним слоем: {:?}",
+        order.iter().map(|c| (c.id, c.lane)).collect::<Vec<_>>()
+    );
+}
+
+/// Тест 596 (Р.56, п.450): копия из раскрытой композиции вставляется
+/// ПАРОЙ и в НАЗВАННОЕ место.
+///
+/// Претензия владельца дословно: «я копирую ZEF последний в длинной
+/// композиции из rendereg3 через пкм и иду потом ее вставлять, тоже через
+/// пкм, а он берет и вставляет одну часть сверху а другую часть(аудио)
+/// уносит вниз, ну и в самом низу морфер т.к. для него действительно
+/// места не было».
+///
+/// Причин было две, и обе здесь проверяются следствием: клипборд хранил
+/// номера РАБОЧЕГО ВИДА (в полосе раскрытия у видов разные базы), а
+/// «Вставить» из меню клало блок НА КУРСОР, а не в точку клика.
+#[test]
+fn t596_paste_from_a_band_lands_as_a_pair_at_the_click() {
+    use kt_model::{ClipKind, LaneKind};
+    use kt_time::Tick;
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    h.state_mut().expand_in_place(inst);
+    h.step();
+    assert_eq!(h.state().model.bands().len(), 1, "полоса не раскрылась");
+
+    // событие ПОЛОСЫ: его номер дорожки — со смещением базы
+    let band = h.state().model.bands()[0].clone();
+    let inner = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .find(|c| c.kind == ClipKind::Video && band.owns(LaneKind::Video, c.lane))
+        .expect("события полосы не видно")
+        .clone();
+    assert!(inner.lane >= band.base.video, "сцена выродилась: полоса не смещена");
+
+    // ПАРА: аудио-половина в той же полосе и в одной link-группе — ровно
+    // то, что копировал владелец
+    let mut a = inner.clone();
+    a.id = kt_model::ClipId(
+        h.state().model.document().clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 50,
+    );
+    a.kind = ClipKind::Audio;
+    a.lane = band.base.audio;
+    a.link_group = Some(kt_model::GroupId(77));
+    assert!(h.state_mut().apply(kt_model::Command::AddClip(a.clone())), "аудио-половина");
+    h.step();
+    assert!(
+        h.state_mut().apply(kt_model::Command::LinkClips {
+            ids: vec![inner.id, a.id],
+            group: kt_model::GroupId(77)
+        }),
+        "пара не связалась"
+    );
+    h.step();
+
+    h.state_mut().select_only(inner.id);
+    h.state_mut().copy_selection();
+    h.step();
+    assert_eq!(h.state().clipboard.clips.len(), 2, "link-пара скопировалась не целиком");
+    // КЛИПБОРД В КООРДИНАТАХ ЛЕНТЫ: номера начинаются с нуля, а не с базы
+    assert_eq!(
+        h.state().clipboard.clips[0].lane,
+        inner.lane - band.base.video,
+        "клипборд хранит номера рабочего вида, а не ленты"
+    );
+
+    // вставка ПКМ в корневую строку и в НАЗВАННОЕ время
+    let root_row = (LaneKind::Video, 0u32);
+    h.state_mut().player.seek(Tick(0));
+    let seqs_before = h.state().model.document().sequences[0].clips.len();
+    let root_before = h.state().model.document().clips.len();
+    h.state_mut().paste_at(Tick(700_000), Some(root_row));
+    h.step();
+
+    let doc = h.state().model.document().clone();
+    assert_eq!(
+        doc.sequences[0].clips.len(),
+        seqs_before,
+        "вставка в КОРЕНЬ дописала событий в ленту"
+    );
+    let fresh: Vec<&kt_model::ClipEvent> = doc
+        .clips
+        .iter()
+        .filter(|c| !matches!(c.id.0, 1..=3) && c.media != seq)
+        .collect();
+    assert_eq!(doc.clips.len(), root_before + fresh.len(), "счёт не сошёлся");
+    let pasted = fresh.iter().find(|c| c.start == Tick(700_000)).unwrap_or_else(|| {
+        panic!("вставка легла не в точку клика: {:?}", fresh.iter().map(|c| c.start).collect::<Vec<_>>())
+    });
+    assert_eq!(pasted.lane, 0, "вставка не попала в кликнутую строку");
+    assert_eq!(pasted.kind, ClipKind::Video);
+
+    // ПАРА не разъехалась: аудио-половина тоже в корне, на своей верхней
+    // дорожке, в то же время и в одной link-группе с видео
+    let pair: Vec<&kt_model::ClipEvent> =
+        fresh.iter().filter(|c| c.start == Tick(700_000)).copied().collect();
+    assert_eq!(pair.len(), 2, "вставилась половина пары: {pair:?}");
+    let pa = pair.iter().find(|c| c.kind == ClipKind::Audio).expect("аудио-половина потерялась");
+    assert_eq!(pa.lane, 0, "аудио уехало вниз, а не на кликнутую строку: {pa:?}");
+    assert_eq!(
+        pa.link_group.is_some() && pa.link_group == pasted.link_group,
+        true,
+        "пара приехала разными группами"
+    );
+    // и ни одна половина не осталась в ленте
+    assert!(
+        !doc.sequences[0].clips.iter().any(|c| c.start == Tick(700_000)),
+        "вставка в корень залезла в ленту"
+    );
+}
+
+/// Тест 597 (Р.56, п.451): решение «что делает Enter» живёт в ОДНОМ месте
+/// и не зависит от того, откуда его спросили.
+///
+/// Плюс два следствия, на которых каскад держится: раскрытие и свёртка
+/// СВОЕЙ полосы оставляют экземпляр выделенным (иначе следующий жест
+/// некуда направить), а «свернуть всё» — нет (полос больше нет, и держать
+/// адрес не за чем).
+#[test]
+fn t597_enter_cascade_decision_and_selection() {
+    use crate::app::EnterOnNest;
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    let plain = h.state().model.project().clips.iter().find(|c| c.media != seq).unwrap().id;
+
+    assert_eq!(h.state().enter_pressed_on_nest(plain), EnterOnNest::NotANest);
+    assert_eq!(h.state().enter_pressed_on_nest(inst), EnterOnNest::Expand, "свёрнутое — раскрыть");
+
+    h.state_mut().select_only(inst);
+    h.state_mut().expand_in_place(inst);
+    h.step();
+    assert_eq!(
+        h.state().enter_pressed_on_nest(inst),
+        EnterOnNest::Enter,
+        "по уже раскрытому Enter обязан вести ВНУТРЬ"
+    );
+    assert!(h.state().is_selected(inst), "раскрытие потеряло выделение экземпляра");
+
+    // своя свёртка выделение держит, «свернуть всё» — нет
+    h.state_mut().collapse_in_place(inst);
+    h.step();
+    assert!(h.state().is_selected(inst), "свёртка потеряла выделение экземпляра");
+    h.state_mut().expand_in_place(inst);
+    h.step();
+    h.state_mut().collapse_all_in_place();
+    h.step();
+    assert!(h.state().selected.is_empty(), "«свернуть всё» обязано снимать выделение");
+
+    // внутри полного входа быстрый жест ведёт ГЛУБЖЕ, а не в тупик
+    h.state_mut().enter_nest(inst);
+    h.step();
+    assert_eq!(h.state().model.editing(), Some(seq));
+    let deeper = h.state().model.project().clips.first().map(|c| c.id).unwrap();
+    assert_eq!(
+        h.state().enter_pressed_on_nest(deeper),
+        EnterOnNest::NotANest,
+        "обычное событие внутри ленты лентой не стало"
+    );
+}
+
+/// Тест 599 (Р.56, п.452): служба превью лент — очередь, дедуп,
+/// инвалидация и потолок кадров.
+#[test]
+fn t599_reel_preview_service_rules() {
+    use crate::reel_preview::{MAX_FRAMES_PER_REEL, ReelKey, ReelPreviews};
+    use kt_model::MediaId;
+    use kt_time::Tick;
+
+    // ШАГ ПОЛОСЫ — ступень лестницы тумб, и кадров не больше потолка
+    for len in [Tick(90_000), Tick(45 * 90_000), Tick(3600 * 90_000)] {
+        let step = ReelPreviews::strip_step(len);
+        assert!(
+            crate::thumbs::THUMB_STEP_LADDER.contains(&step),
+            "шаг {step} не со ступени лестницы — ключи разойдутся с филмстрипом файла"
+        );
+        let n = (len.0 + step - 1) / step;
+        assert!(
+            n <= MAX_FRAMES_PER_REEL as i64 || step == *crate::thumbs::THUMB_STEP_LADDER.last().unwrap(),
+            "у ленты {len:?} вышло {n} кадров при потолке {MAX_FRAMES_PER_REEL}"
+        );
+    }
+
+    let (mut h, _g, seq) = harness_with_nest();
+    let hash = *h.state_mut().reel_hashes().get(&seq).expect("хэш ленты");
+    let key = ReelKey { seq, hash };
+
+    // ДЕДУП: вторая заявка по тому же ключу работы не добавляет
+    h.state_mut().request_reel_preview(key);
+    let pending = h.state().reel_previews.pending();
+    assert!(pending >= 1, "заявка не встала в очередь");
+    h.state_mut().request_reel_preview(key);
+    assert_eq!(h.state().reel_previews.pending(), pending, "дубль заявки прошёл");
+
+    // ИНВАЛИДАЦИЯ: другая редакция той же ленты снимает старую работу
+    h.state_mut().reel_previews.invalidate_seq(seq, hash ^ 1);
+    assert_eq!(h.state().reel_previews.pending(), 0, "устаревшая работа осталась в очереди");
+}
+
+/// Тест 600 (Р.56, п.452): кадры и пики ленты доезжают до ЭКРАНА.
+///
+/// Утверждается следствие, а не наличие поля: у события-вложения на
+/// таймлайне появляются ТЕКСТУРЫ КАДРОВ и непустая огибающая — ровно то,
+/// чего владелец не увидел («на таймлайне нет превью как у обычных
+/// событий - кадров и аудио-пиков»).
+#[test]
+fn t600_reel_frames_and_peaks_reach_the_timeline() {
+    use crate::reel_preview::ReelKey;
+    let (mut h, _g, seq) = harness_with_nest();
+    let hash = *h.state_mut().reel_hashes().get(&seq).expect("хэш ленты");
+    let key = ReelKey { seq, hash };
+
+    // аудио-половина ленты: без неё пики проверять не на чем
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().clone();
+    let mut a = inst.clone();
+    a.id = kt_model::ClipId(
+        h.state().model.document().clips.iter().map(|c| c.id.0).max().unwrap_or(0) + 60,
+    );
+    a.kind = kt_model::ClipKind::Audio;
+    a.lane = 0;
+    a.link_group = None;
+    assert!(h.state_mut().apply(kt_model::Command::AddClip(a)), "аудио-половина");
+    h.step();
+
+    let deadline = std::time::Instant::now() + WAIT_BG;
+    while h.state().reel_previews.get(&key).map(|p| p.peaks.is_none()).unwrap_or(true)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+
+    let prev = h.state().reel_previews.get(&key).expect("превью ленты не посчиталось");
+    let strip = prev.strip.as_ref().expect("кадров ленты нет");
+    assert!(strip.frames.iter().any(|f| f.is_some()), "в полосе ленты ни одного кадра");
+    assert!(
+        prev.peaks.as_ref().is_some_and(|p| !p.is_empty()),
+        "огибающей ленты нет — аудио-половина осталась пустой плашкой"
+    );
+
+    // и они ДОЕХАЛИ до отрисовки: текстуры кадров этой ленты загружены
+    h.step();
+    h.step();
+    assert!(
+        h.state().reel_textures.keys().any(|(k, _)| *k == key),
+        "кадры ленты не дошли до экрана: текстур нет"
+    );
+
+    // ПРАВКА ВНУТРИ ленты меняет редакцию — старое превью больше не наше
+    let inner = h.state().model.document().sequences[0].clips[0].clone();
+    h.state_mut().expand_in_place(inst.id);
+    h.step();
+    let band_clip = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .find(|c| c.id == inner.id)
+        .expect("событие полосы")
+        .clone();
+    assert!(
+        h.state_mut().apply(kt_model::Command::MoveClip {
+            id: band_clip.id,
+            new_start: band_clip.start + kt_time::Tick(1_000),
+            new_lane: band_clip.lane,
+        }),
+        "правка внутри ленты"
+    );
+    h.step();
+    let fresh = *h.state_mut().reel_hashes().get(&seq).expect("хэш после правки");
+    assert_ne!(fresh, hash, "правка внутри ленты не изменила редакцию — инвалидировать нечем");
+    assert!(
+        h.state().reel_previews.get(&key).is_none(),
+        "устаревшее превью осталось в кэше и рисовалось бы вместо правки"
+    );
+}
+
+/// Тест 601 (Р.56, п.452): прокрутка и зум заявок НЕ ставят (инвариант 8),
+/// а служба тумб про ленту не знает вовсе.
+#[test]
+fn t601_scrolling_does_not_order_reel_work() {
+    use crate::reel_preview::ReelKey;
+    let (mut h, _g, seq) = harness_with_nest();
+    let hash = *h.state_mut().reel_hashes().get(&seq).expect("хэш ленты");
+    let key = ReelKey { seq, hash };
+    let deadline = std::time::Instant::now() + WAIT_BG;
+    // ждём КОНЦА работы, а не только кадров: `pending()` считает и
+    // бегущую задачу, и тест мерил бы её, а не новые заявки
+    while h.state().reel_previews.pending() > 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.step();
+    }
+    assert!(h.state().reel_previews.get(&key).is_some(), "превью не посчиталось");
+
+    // возим вид туда-сюда и зумим — новых заявок появиться не должно
+    for i in 0..6 {
+        h.state_mut().view_start = (i as f64) * 25_000.0;
+        h.state_mut().ticks_per_px = 400.0 * (1.0 + i as f64 * 0.3);
+        h.step();
+        assert_eq!(
+            h.state().reel_previews.pending(),
+            0,
+            "прокрутка/зум поставили заявку на превью ленты (шаг {i})"
+        );
+    }
+
+    // и служба ТУМБ про ленту по-прежнему не знает: у неё ключ по файлу
+    assert!(
+        h.state().reel_textures.keys().all(|(k, _)| k.seq == seq),
+        "в кэше текстур лент оказалась чужая лента"
+    );
+    assert!(
+        h.state().thumb_textures.keys().all(|k| k.media != seq),
+        "тумба по ленте заказана: у ленты нет файла, и служба индекса полезла бы ffmpeg'ом"
+    );
+}
+
+// ===================== скорость транспорта (Р.57, п.455) =====================
+
+/// Прямоугольник контрола скорости (программа отдаёт его сама — правило
+/// «координаты берутся из САМОЙ программы», Р.27).
+fn speed_rect(h: &Harness<'_, KtApp>) -> egui::Rect {
+    let r = h.state().speed_rect;
+    assert!(r.is_finite() && r.width() > 100.0, "контрол скорости не нарисован: {r:?}");
+    r
+}
+
+/// Ctrl+клик без движения указателя. Модификатор едет ОТДЕЛЬНЫМ событием:
+/// `i.modifiers` egui читает из состояния кадра, а не из кнопки мыши.
+fn ctrl_click_at(h: &mut Harness<'_, KtApp>, pos: egui::Pos2) {
+    let m = egui::Modifiers::COMMAND;
+    h.hover_at(pos);
+    h.step();
+    h.event(egui::Event::ModifiersChanged(m));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: m,
+        });
+    }
+    h.step();
+    h.step();
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    h.step();
+}
+
+/// Тест 627 (Р.57): ВВОД СКОРОСТИ ЧИСЛОМ.
+///
+/// Прямая претензия владельца: «я должен иметь возможность выставить 0,05
+/// или −0,03». Тест щупает оттуда, откуда действует человек: правая кнопка
+/// (и Ctrl+клик — второй обещанный путь, правило 17) по САМОЙ полосе,
+/// печать символов, Enter — и утверждает СЛЕДСТВИЕ: что стоит в базовой
+/// скорости и что уехало в плеер.
+#[test]
+fn t627_speed_typed_value_reaches_player() {
+    use crate::app::format_rate;
+    let mut h = harness();
+    let rect = speed_rect(&h);
+    let on_bar = egui::pos2(rect.center().x, rect.top() + 4.0);
+
+    // --- подсказка полосы правдива и обещает оба входа
+    h.hover_at(on_bar);
+    h.step();
+    assert_eq!(
+        h.state().hover_hint.as_deref(),
+        Some(tr(k::hint::SPEED)),
+        "полоса скорости не отдаёт свою подсказку"
+    );
+
+    // --- правый клик открывает поле НА МЕСТЕ полосы
+    let before = h.state().tl_geom.clone().map(|g| g.rect.height());
+    right_click_at(&mut h, on_bar);
+    assert!(h.state().speed_entry.is_some(), "ПКМ по полосе не открыл ввод скорости");
+    assert_eq!(
+        h.state().tl_geom.clone().map(|g| g.rect.height()),
+        before,
+        "открытие поля сдвинуло вёрстку (правило 3: ничего не скачет)"
+    );
+    assert_eq!(speed_rect(&h), rect, "поле заняло не тот прямоугольник, что полоса");
+    h.hover_at(on_bar);
+    h.step();
+    assert_eq!(
+        h.state().hover_hint.as_deref(),
+        Some(tr(k::hint::SPEED_ENTRY)),
+        "у открытого поля чужая подсказка"
+    );
+
+    // --- пробел при открытом поле НЕ запускает воспроизведение
+    let playing = h.state().player.transport.is_playing();
+    h.event(egui::Event::Text(" ".into()));
+    h.key_press(egui::Key::Space);
+    h.step();
+    assert_eq!(
+        h.state().player.transport.is_playing(),
+        playing,
+        "пробел утёк в хоткеи мимо открытого поля"
+    );
+
+    // --- «0.05» + Enter
+    h.event(egui::Event::Text("0.05".into()));
+    h.step();
+    h.key_press(egui::Key::Enter);
+    h.step();
+    assert!(h.state().speed_entry.is_none(), "Enter не закрыл поле");
+    let base = h.state().base_rate;
+    assert!((base - 0.05).abs() < 1e-6, "база не стала 0.05, а {base}");
+    let live = h.state().player.playback_rate();
+    assert!((live - 0.05).abs() < 1e-6, "плеер не получил 0.05, а {live}");
+    assert_eq!(format_rate(base), "+0.05×", "показ скорости врёт");
+    assert!(
+        !h.ctx.egui_wants_keyboard_input(),
+        "поле закрылось, но фокус не отдан — хоткеи мертвы (правило 14)"
+    );
+
+    // --- второй вход: Ctrl+клик, и минус доезжает до модели
+    ctrl_click_at(&mut h, on_bar);
+    assert!(h.state().speed_entry.is_some(), "Ctrl+клик не открыл ввод скорости");
+    h.event(egui::Event::Text("\u{2212}0,03".into()));
+    h.step();
+    h.key_press(egui::Key::Enter);
+    h.step();
+    let base = h.state().base_rate;
+    assert!((base + 0.03).abs() < 1e-6, "типографский минус и запятая не доехали: {base}");
+
+    // --- нечитаемое значение НЕ закрывает поле (правило 16: это ошибка)
+    right_click_at(&mut h, on_bar);
+    h.event(egui::Event::Text("-".into()));
+    h.step();
+    h.key_press(egui::Key::Enter);
+    h.step();
+    assert!(
+        h.state().speed_entry.as_ref().is_some_and(|e| e.bad),
+        "нечитаемое значение молча закрыло поле"
+    );
+    assert!((h.state().base_rate + 0.03).abs() < 1e-6, "нечитаемое значение испортило базу");
+
+    // --- Esc закрывает без правки, и ПОСЛЕ него всё живо (правило 14)
+    h.key_press(egui::Key::Escape);
+    h.step();
+    h.step();
+    assert!(h.state().speed_entry.is_none(), "Esc не закрыл поле");
+    assert!((h.state().base_rate + 0.03).abs() < 1e-6, "Esc изменил скорость");
+    assert!(!h.ctx.egui_wants_keyboard_input(), "после Esc фокус остался на поле");
+    let playing = h.state().player.transport.is_playing();
+    h.key_press(egui::Key::Space);
+    h.step();
+    h.step();
+    assert_ne!(
+        h.state().player.transport.is_playing(),
+        playing,
+        "после закрытия поля пробел перестал переключать воспроизведение"
+    );
+    // и поле открывается ПОВТОРНО
+    right_click_at(&mut h, on_bar);
+    assert!(h.state().speed_entry.is_some(), "второй правый клик не открыл поле");
+}
+
+/// Тест 628 (Р.57): драг полосы даёт МАЛЫЕ скорости, Shift — точную
+/// подстройку, центр — стоп, двойной клик — 1×.
+#[test]
+fn t628_speed_drag_reaches_small_rates() {
+    use crate::app::{RATE_KNEE, SPEED_FINE_DIV, format_rate, slider_to_rate};
+
+    // Общий путь указателя: захват слева от центра, порог драга берётся
+    // ЯВНЫМ шагом (egui признаёт драг после ~6 px, и позиция ИМЕННО того
+    // кадра становится якорем виртуального курсора).
+    fn drag_upper(shift: bool, extra: f32) -> (f32, f32) {
+        let mut h = harness();
+        let rect = speed_rect(&h);
+        let y = rect.top() + 4.0;
+        let x0 = rect.center().x - 40.0;
+        let x1 = rect.center().x - 20.0; // якорь: тут жест признаётся драгом
+        h.hover_at(egui::pos2(x0, y));
+        h.step();
+        h.drag_at(egui::pos2(x0, y));
+        h.step();
+        if shift {
+            h.event(egui::Event::ModifiersChanged(egui::Modifiers::SHIFT));
+        }
+        h.hover_at(egui::pos2(x1, y));
+        h.step();
+        h.hover_at(egui::pos2(x1 + extra, y));
+        h.step();
+        let got = h.state().base_rate;
+        h.drop_at(egui::pos2(x1 + extra, y));
+        h.step();
+        h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+        (got, x1 - rect.left())
+    }
+
+    // --- 6 px вправо от центра — это 0.05×, а НЕ 0.25× и не стоп
+    {
+        let mut h = harness();
+        let rect = speed_rect(&h);
+        let y = rect.top() + 4.0;
+        let x0 = rect.center().x - 40.0;
+        h.hover_at(egui::pos2(x0, y));
+        h.step();
+        h.drag_at(egui::pos2(x0, y));
+        h.step();
+        h.hover_at(egui::pos2(rect.center().x - 20.0, y));
+        h.step();
+        h.hover_at(egui::pos2(rect.center().x + 6.0, y));
+        h.step();
+        let got = h.state().base_rate;
+        h.drop_at(egui::pos2(rect.center().x + 6.0, y));
+        h.step();
+        assert!(
+            got > 0.02 && got < RATE_KNEE,
+            "6 px от центра обязаны дать десятые доли процента скорости, а дали {got}"
+        );
+        assert!((got - 0.055).abs() < 0.02, "6 px от центра дали {got}, ждали около 0.055");
+        // --- отпуск в 1 px от центра — РОВНО стоп
+        let mut h = harness();
+        let rect = speed_rect(&h);
+        h.hover_at(egui::pos2(x0, y));
+        h.step();
+        h.drag_at(egui::pos2(x0, y));
+        h.step();
+        h.hover_at(egui::pos2(rect.center().x - 20.0, y));
+        h.step();
+        h.hover_at(egui::pos2(rect.center().x + 1.0, y));
+        h.step();
+        let got = h.state().base_rate;
+        h.drop_at(egui::pos2(rect.center().x + 1.0, y));
+        h.step();
+        assert_eq!(got, 0.0, "1 px от центра обязан быть стопом");
+        assert_eq!(format_rate(0.0), tr(k::perf::RATE_STOP));
+    }
+
+    // --- Shift: тот же путь указателя проходит в SPEED_FINE_DIV раз меньше
+    let travel = 48.0f32;
+    let (plain, anchor) = drag_upper(false, travel);
+    let (fine, anchor2) = drag_upper(true, travel);
+    assert_eq!(anchor, anchor2, "харнесс разошёлся: якоря жестов разные");
+    let w = 170.0f32;
+    let t_of = |vx: f32| vx / w * 2.0 - 1.0;
+    let want_plain = slider_to_rate(t_of(anchor + travel));
+    let want_fine = slider_to_rate(t_of(anchor + travel / SPEED_FINE_DIV));
+    assert!((plain - want_plain).abs() < 1e-4, "обычный драг: {plain}, ждали {want_plain}");
+    assert!(
+        (fine - want_fine).abs() < 1e-4,
+        "Shift не поделил ХОД на {SPEED_FINE_DIV}: {fine}, ждали {want_fine}"
+    );
+    assert!(fine < plain, "Shift обязан идти медленнее обычного драга");
+
+    // --- двойной клик возвращает 1×
+    let mut h = harness_lang_dt(crate::i18n::Lang::Ru, Some(0.02));
+    let rect = speed_rect(&h);
+    h.state_mut().base_rate = 0.05;
+    h.step();
+    double_click_at(&mut h, egui::pos2(rect.center().x, rect.top() + 4.0));
+    assert_eq!(h.state().base_rate, 1.0, "двойной клик не вернул 1×");
+}
+
+/// Тест 629 (Р.57): разгон удержанием пробела работает и от МАЛОЙ базы.
+///
+/// Прежний гистерезис был абсолютным (0.02): на базе 0.05 это 40 % базы,
+/// и разогнанная скорость физически не доезжала до плеера — виджет
+/// показывал разгон, а программа играла как стояла.
+#[test]
+fn t629_space_boost_from_small_base() {
+    use crate::app::SPACE_BOOST_MAX;
+    let mut h = harness();
+    h.state_mut().base_rate = 0.05;
+    h.state_mut().player.set_playback_rate(0.05);
+    h.step();
+    h.key_down(egui::Key::Space);
+    h.step();
+    std::thread::sleep(std::time::Duration::from_millis(260));
+    // СРАЗУ после старта разгона: показанное множителем и то, что играет,
+    // обязаны совпадать. Прежний АБСОЛЮТНЫЙ порог 0.02 держал плеер на
+    // 0.05, пока множитель не дорастал до 1.4 — программа играла как
+    // стояла, а виджет уже показывал разгон.
+    let mut worst = 0.0f32;
+    for _ in 0..12 {
+        h.step();
+        let b = h.state().space_boost.unwrap_or(1.0);
+        let want = h.state().base_rate * b;
+        let live = h.state().player.playback_rate();
+        worst = worst.max((want - live).abs() / h.state().base_rate.abs());
+    }
+    assert!(
+        worst < 0.10,
+        "разгон от малой базы отстаёт от показанного на {:.0} % базы",
+        worst * 100.0
+    );
+    for _ in 0..60 {
+        h.step();
+    }
+    let boosted = h.state().player.playback_rate();
+    assert!(boosted > 0.075, "от базы 0.05 разгон не доехал до плеера: {boosted}");
+    assert!(
+        boosted <= 0.05 * SPACE_BOOST_MAX + 1e-3,
+        "разгон от малой базы перелетел потолок: {boosted}"
+    );
+    // и виджет это ПОКАЗЫВАЕТ
+    let shown = h.state().speed_temp_slider().expect("разгон не виден на контроле скорости");
+    assert!(
+        shown > crate::app::rate_to_slider(0.05) + 0.001,
+        "полоса скорости не показывает разгон от малой базы: {shown}"
+    );
+    h.key_up(egui::Key::Space);
+    h.step();
+    assert!(
+        (h.state().player.playback_rate() - 0.05).abs() < 1e-4,
+        "после отпускания скорость не вернулась к малой базе: {}",
+        h.state().player.playback_rate()
+    );
+}
+
+/// Тест 630 (Р.57, п.456): ось графика для ЗНАКОВОЙ скорости —
+/// логарифм по модулю, и обычная кривая перестаёт быть прямой.
+///
+/// Жалоба Р.34 дословно: «График Slowed обрезан по оси rate на 2.0, а
+/// числовое поле пускает до 4.0». С диапазоном −32…32 линейная ось
+/// повторила бы ту же беду с другой стороны: кривая 0.66…1.0 заняла бы
+/// 0.5 % высоты и выглядела прямой.
+#[test]
+fn t630_signed_ratio_axis_is_log_by_modulus() {
+    use crate::automation::{Axis, axis_of};
+    use kt_model::{FxInstance, HasParams, ParamUnit};
+
+    let slowed = FxInstance::slowed_reverb(1.0, 0.0, 85.0);
+    let rate = slowed.param_specs().iter().find(|s| s.name == "rate").unwrap();
+    assert_eq!(rate.unit, ParamUnit::Ratio);
+    let ax = axis_of(rate);
+    assert!(matches!(ax, Axis::SymLog { .. }), "у знакового отношения ось обязана быть лог");
+
+    // нечётность, ноль в нуле, монотонность и обратимость
+    assert_eq!(ax.map(0.0), 0.0);
+    for v in [0.01f64, 0.05, 0.25, 0.66, 1.0, 4.0, 32.0] {
+        assert!((ax.map(-v) + ax.map(v)).abs() < 1e-12, "ось не нечётна на {v}");
+        assert!((ax.unmap(ax.map(v)) - v).abs() < 1e-9, "круг оси разошёлся на {v}");
+        assert!((ax.unmap(ax.map(-v)) + v).abs() < 1e-9);
+    }
+    let mut prev = f64::MIN;
+    for i in -320..=320 {
+        let g = ax.map(i as f64 / 10.0);
+        assert!(g > prev, "ось не монотонна около {}", i as f64 / 10.0);
+        prev = g;
+    }
+    // непрерывность в колене
+    assert!((ax.map(0.2499) - ax.map(0.2501)).abs() < 1e-3);
+
+    // СЛЕДСТВИЕ: кривая 0.66…1.0 занимает заметную долю шкалы, а не
+    // полпроцента, как было бы на линейной оси
+    let g = (ax.map(1.0) - ax.map(0.66)) / (ax.map(32.0) - ax.map(-32.0));
+    let lin = (1.0 - 0.66) / 64.0;
+    assert!(g > lin * 5.0, "лог-ось не растянула окрестность единицы: {g} против {lin}");
+
+    // у беззнакового отношения ось прежняя — правило по КЛАССУ, а не по имени
+    let blur = FxInstance::blur(8);
+    for s in blur.param_specs() {
+        assert!(matches!(axis_of(s), Axis::Linear), "{}: ось поехала", s.name);
+    }
 }

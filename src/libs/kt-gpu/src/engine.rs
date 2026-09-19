@@ -1909,7 +1909,10 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
             kt_engine::video_plan::LayerInput::Nest(n) => {
                 h.update(&[2u8]);
                 h.update(&n.seq.0.to_le_bytes());
-
+                // режим кадров содержимого (Р.56, п.448): та же лента на
+                // том же времени в «смешивании» и в «ближайшем» — РАЗНЫЕ
+                // картинки, и различить их обязан ключ, а не удача
+                h.update(&[n.blend as u8]);
                 h.update(&n.content_hash.to_le_bytes());
                 h.update(&n.inner_t.0.to_le_bytes());
                 put_plan(h, &n.plan);

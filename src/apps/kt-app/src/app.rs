@@ -135,12 +135,26 @@ pub struct DuckDialog {
 pub struct PasteNamesDialog {
     /// Позиция вставки, замороженная на момент Ctrl+V.
     pub at: kt_time::Tick,
+    /// И СТРОКА вставки — по той же причине: под окном человек может
+    /// увести и курсор, и мышь (Р.56, п.450).
+    pub row: Option<(LaneKind, u32)>,
     /// Слово-приставка и сторона (Р.38 п.19: умолчание — СУФФИКС).
     pub affix: String,
     pub before: bool,
     /// Забрать фокус в поле на первом кадре — и ОТДАТЬ при закрытии
     /// (правило 14: фича обязана работать повторно).
     pub focus: bool,
+}
+
+/// Что делает Enter по выделенному вложению (Р.56, п.451).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnterOnNest {
+    /// Свёрнутое — раскрыть НА МЕСТЕ (режим по умолчанию).
+    Expand,
+    /// Уже раскрытое — ПОЛНЫЙ ВХОД: лента играет со своего нуля.
+    Enter,
+    /// Не лента — клавише тут делать нечего.
+    NotANest,
 }
 
 /// Рамка выделения в домене модели: [начало, конец) и задетые дорожки.
@@ -210,6 +224,14 @@ pub struct KtApp {
     /// Какая полоса спид-контрола схвачена драгом: Some(true)=верхняя
     /// (постоянная), Some(false)=нижняя (shuttle). Пп.18-19 р.7.
     pub speed_drag_upper: Option<bool>,
+    /// Виртуальный курсор полосы скорости в пикселях от её левого края
+    /// (Р.57): драг копит ПРИРАЩЕНИЯ, поэтому Shift замедляет ход, а не
+    /// телепортирует значение (`drag_advance`).
+    pub speed_drag_vx: f32,
+    /// Открытое поле ввода скорости — НА МЕСТЕ полосы, не окном (Р.57).
+    pub speed_entry: Option<SpeedEntry>,
+    /// Прямоугольник контрола скорости последнего кадра (живой `rate.py`).
+    pub speed_rect: egui::Rect,
     /// Отложенный одиночный клик по превью (п.11 р.7): ждём окно
     /// double-click, потом play/pause.
     pub preview_click_at: Option<std::time::Instant>,
@@ -402,6 +424,9 @@ pub struct KtApp {
     /// Строка таймлайна под правым кликом (п.5 р.16): новая дорожка из
     /// контекстного меню встаёт СРАЗУ ПОД ней, а не в самый низ.
     pub ctx_row: Option<(LaneKind, u32)>,
+    /// ВРЕМЯ правого клика (Р.56, п.450): «Вставить» из меню кладёт блок
+    /// туда, куда человек ткнул, а не туда, где стоит курсор.
+    pub ctx_at: Option<kt_time::Tick>,
     /// Live-громкость volume rail до отпускания (id, dB).
     pub live_gain: Option<(ClipId, f32)>,
     /// Живое превью уровня видео при драге линии (Р.28, п.12).
@@ -470,6 +495,10 @@ pub struct KtApp {
     /// Окно префикса вставки (Р.35 п.4). Неблокирующее, с ЗАМОРОЖЕННОЙ
     /// позицией вставки: курсор под окном её не уводит.
     pub paste_names: Option<PasteNamesDialog>,
+    /// Строка таймлайна ПОД МЫШЬЮ (Р.56, п.450) — только пока указатель
+    /// над таймлайном. Ctrl+V кладёт блок сюда: клавиатурная вставка
+    /// обязана попадать туда же, куда попала бы вставка из меню.
+    pub tl_hover_row: Option<(LaneKind, u32)>,
     pub duck: Option<DuckDialog>,
     pub preset_save: Option<PresetSaveDialog>,
     /// Окно переименования вложенной ленты (Р.50).
@@ -551,6 +580,14 @@ pub struct KtApp {
     /// строить профиль на каждый пиксельный столбец — аллокация в
     /// draw-пути (инвариант №12), поэтому раз на ревизию.
     pub warp_cache: WarpCache,
+    /// Превью вложенных лент: кадры и огибающая (Р.56, п.452).
+    pub reel_previews: crate::reel_preview::ReelPreviews,
+    /// Текстуры кадров полосы: (ключ ленты, индекс кадра).
+    pub reel_textures: HashMap<(crate::reel_preview::ReelKey, usize), egui::TextureHandle>,
+    /// Редакции ЛЕНТ на текущей модели (ключ превью). Считается по
+    /// `model_rev`, как карты варпа: `content_hash` обходит содержимое
+    /// ленты, и делать это на каждый UI-кадр незачем.
+    pub reel_hash_cache: (Option<u64>, Arc<HashMap<MediaId, u64>>),
 }
 
 impl KtApp {
@@ -660,6 +697,9 @@ impl KtApp {
             base_rate: 1.0,
             shuttle_override: None,
             speed_drag_upper: None,
+            speed_drag_vx: 0.0,
+            speed_entry: None,
+            speed_rect: egui::Rect::NOTHING,
             preview_click_at: None,
             dnd_hover: None,
             tl_geom: None,
@@ -741,6 +781,7 @@ impl KtApp {
             ui_passthrough: None,
             ctx_target: None,
             ctx_row: None,
+            ctx_at: None,
             live_gain: None,
             live_opacity: None,
             status: error.map(|e| (e, std::time::Instant::now())),
@@ -779,6 +820,7 @@ impl KtApp {
             blocked: None,
             last_band: None,
             paste_names: None,
+            tl_hover_row: None,
             duck: None,
             preset_save: None,
             seq_name: None,
@@ -807,6 +849,9 @@ impl KtApp {
             names_cache: Default::default(),
             uses_cache: Default::default(),
             warp_cache: Default::default(),
+            reel_previews: Default::default(),
+            reel_textures: HashMap::new(),
+            reel_hash_cache: (None, Arc::new(HashMap::new())),
         }
     }
 
@@ -851,6 +896,9 @@ impl KtApp {
             base_rate: 1.0,
             shuttle_override: None,
             speed_drag_upper: None,
+            speed_drag_vx: 0.0,
+            speed_entry: None,
+            speed_rect: egui::Rect::NOTHING,
             preview_click_at: None,
             dnd_hover: None,
             tl_geom: None,
@@ -932,6 +980,7 @@ impl KtApp {
             ui_passthrough: None,
             ctx_target: None,
             ctx_row: None,
+            ctx_at: None,
             live_gain: None,
             live_opacity: None,
             status: None,
@@ -970,6 +1019,7 @@ impl KtApp {
             blocked: None,
             last_band: None,
             paste_names: None,
+            tl_hover_row: None,
             duck: None,
             preset_save: None,
             seq_name: None,
@@ -998,6 +1048,9 @@ impl KtApp {
             names_cache: Default::default(),
             uses_cache: Default::default(),
             warp_cache: Default::default(),
+            reel_previews: Default::default(),
+            reel_textures: HashMap::new(),
+            reel_hash_cache: (None, Arc::new(HashMap::new())),
         };
         // loop-регион загруженного проекта — в плеер сразу (раньше
         // синхронизация была только в on_region_changed, т.е. только при
@@ -1487,6 +1540,21 @@ impl KtApp {
         if self.analysis.is_running() {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
         }
+        // Превью лент (Р.56, п.452). Пауза — не вежливость: офлайн-рендер
+        // ленты декодирует файлы, и во время игры он отнимал бы процессор
+        // у реального времени (инвариант 6).
+        self.reel_previews.set_paused(self.player.transport.is_playing() || self.render_job.is_some());
+        if self.reel_previews.poll() {
+            self.dirty_ui = true;
+            // текстуры живут ровно столько, сколько их полоса: лента,
+            // вытесненная из LRU или устаревшая после правки, не имеет
+            // права держать десятки мегабайт в видеопамяти
+            let live = &self.reel_previews;
+            self.reel_textures.retain(|(k, _), _| live.get(k).is_some());
+        }
+        if self.reel_previews.is_running() {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+        }
         // Ошибки индекса — ВСЛУХ (Р.49, п.368). Четыре `let _ =` молчали о
         // том, что индекс не построился, и человек видел плейсхолдеры
         // вместо волноформ без единого слова о причине. Один раз на адрес:
@@ -1903,7 +1971,7 @@ impl KtApp {
             self.status = None;
         }
         let col = match kind {
-            HintKind::Error => egui::Color32::from_rgb(255, 105, 97),
+            HintKind::Error => HINT_ERROR,
             HintKind::Status => egui::Color32::from_rgb(255, 210, 120),
             HintKind::Mode => egui::Color32::from_rgb(150, 215, 175),
             HintKind::Hover => egui::Color32::from_gray(205),
@@ -2190,7 +2258,7 @@ impl KtApp {
         // экстраполяции часов показа (п.14 р.14) — дёргать его на каждую
         // сотую нельзя
         let want = self.base_rate * b;
-        if (want - self.player.playback_rate()).abs() > 0.02 {
+        if boost_needs_update(want, self.player.playback_rate(), self.base_rate) {
             self.player.set_playback_rate(want);
         }
         ctx.request_repaint();
@@ -2313,6 +2381,12 @@ impl KtApp {
 
     /// Esc-каскад (п.11): окна → активный драг → регион+выделение.
     pub fn escape_action(&mut self) {
+        // 0) ввод скорости числом (Р.57) — он живёт НА МЕСТЕ полосы, и
+        // закрыть его надо раньше всего остального; фокус отдаёт
+        // `draw_speed_control` следующим кадром
+        if self.speed_entry.take().is_some() {
+            return;
+        }
         if self.search_open {
             self.search_open = false;
             return;
@@ -2387,29 +2461,61 @@ impl KtApp {
         }
     }
 
-    /// Перестановка display-строк дорожек (п.6 v1.4): между строками
-    /// одного КЛИП-вида содержимое перекладывается существующим
-    /// reorder_lane (z-order видео соответствует экрану, аудио-шины — как
-    /// раньше, вектор не меняется — лейблы V1..Vn остаются по порядку);
-    /// в остальных случаях (перемешивание видов, morph) — чисто
-    /// визуальный сдвиг элемента вектора.
+    /// Перестановка display-строк дорожек — ОДНА команда на любые виды
+    /// (Р.56, п.449).
+    ///
+    /// До Р.56 их было две: между видео-строками перекладывалось
+    /// СОДЕРЖИМОЕ (`reorder_lane`, батч `MoveClip`), а любой другой случай
+    /// был «чисто визуальным сдвигом вектора». Из-за второй ветки
+    /// видео-строка, перетащенная к морф- или камерной строке, меняла
+    /// место на экране и НЕ меняла номер — то есть оставалась тем же
+    /// слоем композита. Теперь номер дорожки = ранг строки, и
+    /// перенумеровывает содержимое сама модель: перетащил дорожку —
+    /// изменил монтаж (решение владельца Р.35), и пустая строка двигается
+    /// наравне с полной.
     pub fn reorder_rows(&mut self, from: usize, to: usize) {
         let mut rows = self.model.project().rows();
         if from == to || from >= rows.len() || to >= rows.len() {
             return;
         }
+        // Строки адресуются КЛЮЧОМ, а не индексом: свёртка полосы
+        // (ниже) меняет их число, и индексы жеста после неё врали бы.
         let (a, b) = (rows[from], rows[to]);
-        match (a.0, b.0) {
-            (LaneKind::Video, LaneKind::Video) => self.reorder_lane(ClipKind::Video, a.1, b.1),
-            (LaneKind::Audio, LaneKind::Audio) => self.reorder_lane(ClipKind::Audio, a.1, b.1),
-            _ => {
-                // с Р.35 перестановка строк — правка СОДЕРЖИМОГО: морфер
-                // действует «на всё, что ниже», значит порядок меняет
-                // картинку и обязан ходить через undo
-                let e = rows.remove(from);
-                rows.insert(to, e);
-                self.apply(Command::SetLaneOrder { order: rows });
-            }
+        self.collapse_bands_for_rows();
+        rows = self.model.project().rows();
+        let (Some(from), Some(to)) =
+            (rows.iter().position(|&k| k == a), rows.iter().position(|&k| k == b))
+        else {
+            // строка принадлежала свёрнутой полосе — переставлять уже
+            // нечего, и это честнее, чем переставить не ту
+            return;
+        };
+        let e = rows.remove(from);
+        rows.insert(to, e);
+        let perm = kt_model::LanePerm::from_rows(
+            &rows,
+            kt_model::LaneBases::of_root(self.model.project()),
+        );
+        if self.apply(Command::SetLaneOrder { order: rows }) {
+            // имена и высоты живут ВНЕ undo и адресуются парой (вид,
+            // номер) — значит едут тем же отображением, что содержимое
+            perm.remap_keyed(&mut self.lane_names);
+            perm.remap_keyed(&mut self.lane_heights);
+            self.dirty_ui = true;
+        }
+    }
+
+    /// Свернуть раскрытие перед правкой СТРОК и сказать об этом
+    /// (Р.56, п.449).
+    ///
+    /// Порядок и число строк при открытой полосе модель не принимает
+    /// (`CommandError::BandsOpen`): полоса живёт в хвосте числового
+    /// пространства, и перенумерация разложила бы её события не по тем
+    /// лентам. Молча свернуть было бы тоже неверно — человек ищет своё
+    /// раскрытие там, где оставил (правило 16).
+    pub fn collapse_bands_for_rows(&mut self) {
+        if self.collapse_all_in_place() {
+            self.note(tr(k::msg::ROWS_COLLAPSED_BAND));
         }
     }
 
@@ -2437,80 +2543,55 @@ impl KtApp {
 
     /// Добавить дорожку СРАЗУ ПОД кликнутой строкой (п.5 р.16: «чтобы
     /// добавление происходило не в самый низ, а после той дорожки по
-    /// которой кликнули»). Строка другого вида ставится в display-порядке
-    /// сразу за кликнутой — номер внутри своего вида при этом свой.
+    /// которой кликнули»).
+    ///
+    /// Номер новой дорожки — её РАНГ среди строк своего вида (Р.56,
+    /// п.449). До Р.56 строка другого вида давала `at = tail`, то есть
+    /// САМЫЙ БОЛЬШОЙ номер: дорожка вставала под потолок на экране и
+    /// оказывалась НИЖНИМ слоем композита — «закинул туда видео, и его
+    /// не видно» (претензия владельца п.2). Порядок и номер ставятся
+    /// ОДНИМ батчем, то есть одним шагом undo: их было два.
     pub fn insert_lane_after_row(&mut self, kind: LaneKind, after: Option<(LaneKind, u32)>) {
-        let p = self.model.project();
-        let tail = match kind {
-            LaneKind::Video => p.video_lanes,
-            LaneKind::Audio => p.audio_lanes,
-            LaneKind::Morph => p.morph_lanes,
-            LaneKind::Camera => p.camera_lanes,
+        self.collapse_bands_for_rows();
+        let rows = self.model.project().rows();
+        // ранг = сколько строк этого вида стоит НЕ НИЖЕ кликнутой
+        let at = match after.and_then(|row| rows.iter().position(|&x| x == row)) {
+            Some(pos) => rows[..=pos].iter().filter(|e| e.0 == kind).count() as u32,
+            None => rows.iter().filter(|e| e.0 == kind).count() as u32,
         };
-        let at = match after {
-            Some((k, l)) if k == kind => l + 1,
-            _ => tail,
+        let insert = match kind {
+            LaneKind::Video => Command::InsertLane { kind: ClipKind::Video, at },
+            LaneKind::Audio => Command::InsertLane { kind: ClipKind::Audio, at },
+            LaneKind::Morph => Command::InsertMorphLane { at },
+            LaneKind::Camera => Command::InsertCameraLane { at },
         };
-        if !self.insert_lane_at(kind, at) {
-            return;
+        // Порядок считаем САМИ и кладём в тот же батч: `lane_order_insert`
+        // ставит строку перед следующей дорожкой СВОЕГО вида, а если такой
+        // нет — в самый конец списка. Живая проверка: клик по V2 при
+        // порядке V1,V2,A1,A2 давал V1,V2,A1,A2,V3 — то самое «в самый
+        // низ», на которое жаловались.
+        let mut order = rows;
+        kt_model::lane_order_insert(&mut order, kind, at);
+        if let Some(row) = after
+            && let Some(f) = order.iter().position(|&e| e == (kind, at))
+        {
+            let e = order.remove(f);
+            let to = order.iter().position(|&x| x == row).map(|i| i + 1).unwrap_or(order.len());
+            order.insert(to, e);
         }
-        // Ставим новую строку РОВНО под кликнутой. Одного
-        // `lane_order_insert` мало: он кладёт строку перед следующей
-        // дорожкой СВОЕГО вида, а если такой нет — в самый конец списка.
-        // Живая проверка: клик по V2 при порядке V1,V2,A1,A2 давал
-        // V1,V2,A1,A2,V3 — то самое «в самый низ», на которое жаловались.
-        if let Some(row) = after {
-            let mut rows = self.model.project().rows();
-            if let Some(f) = rows.iter().position(|&e| e == (kind, at)) {
-                let e = rows.remove(f);
-                let to = rows.iter().position(|&x| x == row).map(|i| i + 1).unwrap_or(rows.len());
-                rows.insert(to, e);
-                self.apply(Command::SetLaneOrder { order: rows });
-            }
+        if self.apply_batch(vec![insert, Command::SetLaneOrder { order }]) {
+            kt_model::lane_names_insert(&mut self.lane_names, kind, at);
+            kt_model::lane_keyed_insert(&mut self.lane_heights, kind, at);
+            self.dirty_ui = true;
         }
-    }
-
-    /// Реордер дорожки (п.7): батч MoveClip перекладывает клипы между
-    /// lane `from` и `to` (сдвигом), один undo-шаг.
-    pub fn reorder_lane(&mut self, kind: ClipKind, from: u32, to: u32) {
-        if from == to {
-            return;
-        }
-        let mut cmds = Vec::new();
-        for c in &self.model.project().clips {
-            if c.kind != kind {
-                continue;
-            }
-            let new_lane = if c.lane == from {
-                to
-            } else if from < to && c.lane > from && c.lane <= to {
-                c.lane - 1
-            } else if from > to && c.lane >= to && c.lane < from {
-                c.lane + 1
-            } else {
-                continue;
-            };
-            cmds.push(Command::MoveClip { id: c.id, new_start: c.start, new_lane });
-        }
-        if cmds.is_empty() {
-            self.note(tr(k::msg::EMPTY_LANES));
-            return;
-        }
-        // имена едут ТЕМ ЖЕ сдвигом, что и содержимое (п.5 р.16): раньше
-        // они оставались на месте и подпись «Голос» приклеивалась к чужой
-        // дорожке
-        let lk = match kind {
-            ClipKind::Video => LaneKind::Video,
-            ClipKind::Audio => LaneKind::Audio,
-        };
-        kt_model::lane_names_rotate(&mut self.lane_names, lk, from, to);
-        self.dirty_ui = true;
-        self.apply_batch(cmds);
     }
 
     /// Удаление дорожки (п.8, решение пользователя: вместе с событиями,
     /// один undo-шаг): RemoveClip событий + сдвиг верхних + SetLanes−1.
     pub fn delete_lane(&mut self, kind: ClipKind, lane: u32) {
+        // `SetLanes` при открытой полосе модель не принимает (Р.56): её
+        // граница осталась бы там, где события уже не лежат
+        self.collapse_bands_for_rows();
         let p = self.model.project();
         let (v, a) = (p.video_lanes.max(1), p.audio_lanes.max(1));
         let lanes_of_kind = match kind {
@@ -2544,6 +2625,7 @@ impl KtApp {
             ClipKind::Audio => LaneKind::Audio,
         };
         kt_model::lane_names_remove(&mut self.lane_names, lk, lane);
+        kt_model::lane_keyed_remove(&mut self.lane_heights, lk, lane);
         self.dirty_ui = true;
         self.apply_batch(cmds);
     }
@@ -2919,14 +3001,15 @@ impl KtApp {
         if had {
             self.note(tr(k::msg::NEST_ONE_BAND));
         }
-        self.after_bands_changed();
+        // экземпляр остаётся ВЫДЕЛЕННЫМ: следующий Enter обязан найти цель
+        self.after_bands_changed(Some(id));
     }
 
     /// Свернуть раскрытие обратно. Ни шага истории, ни следа в файле:
     /// раскрытие — рабочее место, а не работа.
     pub fn collapse_in_place(&mut self, id: ClipId) {
         if self.model.collapse_band(id) {
-            self.after_bands_changed();
+            self.after_bands_changed(Some(id));
         }
     }
 
@@ -2935,20 +3018,43 @@ impl KtApp {
             return false;
         }
         self.model.collapse_all_bands();
-        self.after_bands_changed();
+        self.after_bands_changed(None);
         true
     }
 
     /// Общее на раскрытие и свёртку: проект НЕ изменился (в плеер и в файл
     /// уходит тот же документ), а вот вид, выделение и кэши строк — да.
-    fn after_bands_changed(&mut self) {
+    ///
+    /// `keep` — экземпляр, выделение которого переживает смену строк. Он
+    /// событие КОРНЯ, а правило «выделение живёт ровно в одной ленте»
+    /// защищает от адресов ПОЛОСЫ; удерживать его законно и нужно: без
+    /// этого второй Enter не находил цели и бил в пустоту (Р.56, п.451).
+    fn after_bands_changed(&mut self, keep: Option<ClipId>) {
         // выделение живёт РОВНО В ОДНОЙ ленте: после смены набора строк
         // держать в нём чужие адреса значит обещать жест, которого не будет
-        self.selected.clear();
+        self.selected.retain(|id| Some(*id) == keep);
         self.selected_morph.clear();
         self.selected_camera.clear();
         self.model_rev += 1;
         self.dirty_ui = true;
+    }
+
+    /// Что делает Enter по выделенному вложению (Р.56, п.451).
+    ///
+    /// Решение владельца: быстрый жест даёт СЛЕДУЮЩИЙ режим, а не тумблер.
+    /// Первый Enter раскрывает на месте (режим по умолчанию), второй по уже
+    /// раскрытому — полный вход. Сворачивает по-прежнему повторный двойной
+    /// клик и Esc: у клавиши одно направление, у мыши — другое, и оба
+    /// названы в меню.
+    pub fn enter_pressed_on_nest(&self, id: ClipId) -> EnterOnNest {
+        if !self.is_nest(id) {
+            return EnterOnNest::NotANest;
+        }
+        if self.model.editing().is_some() || self.model.bands().iter().any(|b| b.inst == id) {
+            EnterOnNest::Enter
+        } else {
+            EnterOnNest::Expand
+        }
     }
 
     /// Войти в ленту события `id` (Р.50, В1).
@@ -4008,11 +4114,35 @@ impl KtApp {
     }
 
     pub fn copy_selection(&mut self) {
-        let block = match self.model.project().region {
+        let mut block = match self.model.project().region {
             Some(r) => kt_model::ops::copy_region_block(self.model.project(), r),
             // без региона — всё выделенное (каждое со своей link-группой)
             None => kt_model::ops::copy_clips(self.model.project(), &self.selected_with_groups()),
         };
+        // КЛИПБОРД ЖИВЁТ В КООРДИНАТАХ ЛЕНТЫ-ВЛАДЕЛЬЦА (Р.56, п.450).
+        // Копируем мы из РАБОЧЕГО вида, а в нём полоса раскрытия лежит со
+        // смещением `base[вид]`, и смещения у видео, аудио и морф-строк
+        // РАЗНЫЕ. Повтори вставка эти номера как есть — видео встало бы у
+        // потолка, аудио внизу, а морфер в самом низу, где под него
+        // завелась бы новая строка. Ровно на это и жаловался владелец.
+        // Лента блока решается по ПЕРВОМУ событию, а не «нашлась хоть
+        // одна полоса»: регион, задевший и корень, и полосу, иначе
+        // локализовался бы в ленту и выбросил бы корневое большинство.
+        let band = block
+            .clips
+            .first()
+            .and_then(|c| self.model.band_of_row(kt_model::lane_key(c).0, c.lane))
+            .map(|b| (b.base, b.len));
+        let root = kt_model::LaneBases::default();
+        let (base, len) = band.unwrap_or((
+            root,
+            // корень: «своё» — всё, что НИЖЕ начала любой полосы
+            kt_model::LaneBases::of_root(self.model.project()),
+        ));
+        let dropped = block.localize(base, len);
+        if dropped > 0 {
+            self.note(crate::tf!(k::msg::COPY_ONE_REEL, dropped));
+        }
         if block.clips.is_empty() {
             self.note(tr(k::msg::NOTHING_TO_COPY));
         } else {
@@ -4102,9 +4232,9 @@ impl KtApp {
             cancel = true;
         }
         if go {
-            let (at, affix, before) = (d.at, d.affix.trim().to_string(), d.before);
+            let (at, row, affix, before) = (d.at, d.row, d.affix.trim().to_string(), d.before);
             ctx.memory_mut(|m| m.surrender_focus(egui::Id::new("paste_names")));
-            self.paste_here(at, affix, before);
+            self.paste_here(at, row, affix, before);
             return;
         }
         if cancel || !open {
@@ -4494,33 +4624,96 @@ impl KtApp {
             || self.clipboard.markers.iter().any(|m| !m.name.is_empty())
     }
 
+    /// Ctrl+V: время — КУРСОР, строка — под мышью, если мышь над
+    /// таймлайном (Р.56, п.450).
     pub fn paste_at_cursor(&mut self) {
+        let (at, row) = (self.player.transport.playhead(), self.tl_hover_row);
+        self.paste_at(at, row)
+    }
+
+    /// Пункт «Вставить» правого меню: ВРЕМЯ И СТРОКА КЛИКА (Р.56, п.450,
+    /// решение владельца). Кликнув в конкретное место, человек называет
+    /// место — искать курсор ему не нужно.
+    pub fn paste_at_click(&mut self) {
+        let at = self.ctx_at.unwrap_or_else(|| self.player.transport.playhead());
+        let row = self.ctx_row;
+        self.paste_at(at, row)
+    }
+
+    /// Вставка в НАЗВАННОЕ место: время и строка клика (пункт «Вставить»
+    /// правого меню) или курсор и строка под мышью (Ctrl+V).
+    pub fn paste_at(&mut self, at: Tick, row: Option<(LaneKind, u32)>) {
         if self.clipboard.clips.is_empty() {
             self.note(tr(k::msg::CLIPBOARD_EMPTY));
             return;
         }
         // именованное в буфере — спрашиваем префикс окном (Р.35 п.4);
-        // позиция вставки ЗАМОРАЖИВАЕТСЯ, чтобы курсор под окном её не
-        // увёл
+        // МЕСТО вставки ЗАМОРАЖИВАЕТСЯ, чтобы курсор и мышь под окном его
+        // не увели
         if self.clipboard_has_names() && self.paste_names.is_none() {
-            let at = self.player.transport.playhead();
             self.paste_names = Some(crate::app::PasteNamesDialog {
                 at,
+                row,
                 affix: tr(k::msg::PASTE_AFFIX_DEFAULT).to_string(),
                 before: false,
                 focus: true,
             });
             return;
         }
-        let at = match self.paste_names.take() {
-            Some(d) => d.at,
-            None => self.player.transport.playhead(),
+        let (at, row) = match self.paste_names.take() {
+            Some(d) => (d.at, d.row),
+            None => (at, row),
         };
-        self.paste_here(at, String::new(), false)
+        self.paste_here(at, row, String::new(), false)
     }
 
     /// Собственно вставка: ОДИН `paste_block` → ОДИН `apply_batch`.
-    pub(crate) fn paste_here(&mut self, at: Tick, affix: String, before: bool) {
+    ///
+    /// `row` — строка РАБОЧЕГО ВИДА, по которой кликнули. Блок хранится в
+    /// координатах своей ленты (см. `copy_selection`), поэтому здесь он
+    /// сначала приводится к строке, а потом, если целевая строка
+    /// принадлежит раскрытой полосе, переводится в её координаты.
+    pub(crate) fn paste_here(
+        &mut self,
+        at: Tick,
+        row: Option<(LaneKind, u32)>,
+        affix: String,
+        before: bool,
+    ) {
+        let target = row.and_then(|(k, l)| self.model.band_of_row(k, l)).map(|b| (b.base, b.len));
+        let local_row = row.map(|(k, l)| (k, l - target.map_or(0, |(b, _)| b.get(k))));
+        let (block, clamped) = self.clipboard.clone().shifted_to_row(local_row);
+        if !clamped.is_empty() {
+            self.note(tr(k::msg::PASTE_LANES_CLAMPED));
+        }
+        let mut block = block;
+        // Дорожки под блок заводятся ЯВНО. Молчаливый рост в `AddClip`
+        // при раскрытой полосе положил бы событие не в ту ленту: номер
+        // `base` принадлежит полосе, а `base + len` — уже никому.
+        let need = block.lanes_needed();
+        let mut grow = Vec::new();
+        let have = match target {
+            Some((_, len)) => len,
+            None => kt_model::LaneBases::of_root(self.model.project()),
+        };
+        for k in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
+            let tail = match target {
+                Some((base, len)) => base.get(k) + len.get(k),
+                None => have.get(k),
+            };
+            for i in have.get(k)..need.get(k) {
+                let at = tail + (i - have.get(k));
+                grow.push(match k {
+                    LaneKind::Video => Command::InsertLane { kind: ClipKind::Video, at },
+                    LaneKind::Audio => Command::InsertLane { kind: ClipKind::Audio, at },
+                    LaneKind::Morph => Command::InsertMorphLane { at },
+                    LaneKind::Camera => Command::InsertCameraLane { at },
+                });
+            }
+        }
+        if let Some((base, _)) = target {
+            block.offset_lanes(base);
+        }
         let mut next_clip = self.next_clip_id();
         let mut next_group = self.next_group_id();
         let mut next_transition = self.next_transition_id();
@@ -4529,7 +4722,7 @@ impl KtApp {
         let names =
             kt_model::ops::PasteNames { affix, before, taken: self.model.project().taken_names() };
         let (cmds, end, skipped) = kt_model::ops::paste_block(
-            &self.clipboard,
+            &block,
             at,
             kt_model::ops::PasteIds {
                 clip: &mut next_clip,
@@ -4550,6 +4743,9 @@ impl KtApp {
             Command::AddClip(ev) => Some(ev.id),
             _ => None,
         });
+        // дорожки заводятся ПЕРЕД содержимым и в том же батче — один шаг
+        // истории на всю вставку
+        let cmds = grow.into_iter().chain(cmds).collect::<Vec<_>>();
         if self.apply_batch(cmds) {
             match first {
                 Some(id) => self.select_only(id),
@@ -5834,6 +6030,19 @@ impl KtApp {
     pub(crate) fn draw_speed_control(&mut self, ui: &mut egui::Ui) {
         let (rect, resp) =
             ui.allocate_exact_size(egui::vec2(170.0, 20.0), egui::Sense::click_and_drag());
+        self.speed_rect = rect;
+        crate::widgets::field_probe::note("speed", rect);
+        // Ввод числом живёт В ТОМ ЖЕ прямоугольнике (Р.57): ни окна, ни
+        // лишней полосы — правила 3, 8 и 13.
+        if self.speed_entry.is_some() {
+            self.draw_speed_entry(ui, rect, resp);
+            return;
+        }
+        // поле закрыли СНАРУЖИ (Esc-каскад) — фокус всё равно обязан
+        // вернуться, иначе горячие клавиши мертвы до клика мимо (правило 14)
+        if resp.has_focus() {
+            ui.memory_mut(|m| m.surrender_focus(resp.id));
+        }
         let p = ui.painter_at(rect);
         // временная скорость на нижней полосе — это shuttle ИЛИ разгон
         // удержанием пробела: без этого при разгоне виджет врал «1×»
@@ -5871,11 +6080,17 @@ impl KtApp {
             && let Some(pos) = resp.interact_pointer_pos()
         {
             self.speed_drag_upper = Some(pos.y < mid);
+            self.speed_drag_vx = pos.x - rect.left();
+        } else if resp.dragged() {
+            // Shift — ТОЧНАЯ подстройка (Р.57): копим ПРИРАЩЕНИЯ в свой
+            // виртуальный курсор. Делить абсолютную позицию указателя
+            // нельзя — Shift, нажатый посреди жеста, утащил бы значение
+            // к центру скачком.
+            let fine = ui.input(|i| i.modifiers.shift);
+            self.speed_drag_vx = drag_advance(self.speed_drag_vx, resp.drag_delta().x, fine);
         }
-        if (resp.dragged() || resp.drag_started())
-            && let Some(pos) = resp.interact_pointer_pos()
-        {
-            let raw = (pos.x - rect.left()) / rect.width() * 2.0 - 1.0;
+        if resp.dragged() || resp.drag_started() {
+            let raw = self.speed_drag_vx / rect.width() * 2.0 - 1.0;
             let t = raw.clamp(-1.0, 1.0);
             // ушли за пределы виджета — «второе дыхание» (п.4 р.8)
             let over_px = ((raw.abs() - 1.0) * rect.width() * 0.5).max(0.0);
@@ -5955,7 +6170,125 @@ impl KtApp {
                     });
                 });
         }
+        // ВВОД ЧИСЛОМ (Р.57, просьба владельца «должен иметь возможность
+        // выставить 0,05»): правый клик или Ctrl+клик по полосе. Оба входа
+        // ведут в одно тело (правило 17).
+        if resp.secondary_clicked() || (resp.clicked() && ui.input(|i| i.modifiers.command)) {
+            self.speed_entry = Some(SpeedEntry { text: String::new(), focus: true, bad: false });
+        }
         self.hint(resp, tr(k::hint::SPEED));
+    }
+
+    /// Поле ввода скорости НА МЕСТЕ полосы (Р.57). Форма — та же, что у
+    /// маски таймкода в тулбаре (`toolbar.rs`): тот же прямоугольник, тот
+    /// же моноширинный шрифт, подчёркивание акцентом; события съедаются,
+    /// чтобы цифры и Enter не утекли в хоткеи. «Тупо воткнутый
+    /// `TextEdit`» тут запрещён правилом 8.
+    fn draw_speed_entry(&mut self, ui: &mut egui::Ui, rect: egui::Rect, resp: egui::Response) {
+        let Some(mut st) = self.speed_entry.clone() else { return };
+        if st.focus {
+            resp.request_focus();
+            st.focus = false;
+        }
+        // стрелки/Tab не должны уводить фокус из поля
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(
+                resp.id,
+                egui::EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: false,
+                },
+            )
+        });
+        let mut apply = false;
+        let mut cancel = false;
+        ui.input_mut(|i| {
+            i.events.retain(|e| match e {
+                egui::Event::Text(t)
+                    if t.chars().all(|c| {
+                        c.is_ascii_digit()
+                            || matches!(c, '.' | ',' | '-' | '+' | '\u{2212}' | 'x' | '\u{00d7}')
+                    }) =>
+                {
+                    st.text.push_str(t);
+                    st.bad = false;
+                    false
+                }
+                egui::Event::Key { key: egui::Key::Backspace, pressed: true, .. } => {
+                    st.text.pop();
+                    st.bad = false;
+                    false
+                }
+                egui::Event::Key { key: egui::Key::Enter, pressed: true, .. } => {
+                    apply = true;
+                    false
+                }
+                egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } => {
+                    cancel = true;
+                    false
+                }
+                _ => true,
+            })
+        });
+        let font = egui::FontId::monospace(13.0);
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 2.0, egui::Color32::from_rgb(22, 24, 28));
+        painter.line_segment(
+            [
+                egui::pos2(rect.left() + 2.0, rect.bottom() - 1.0),
+                egui::pos2(rect.right() - 2.0, rect.bottom() - 1.0),
+            ],
+            egui::Stroke::new(
+                1.0,
+                // правило 16: нечитаемое значение — ОШИБКА, а не блёклая
+                // подсказка; поле при этом остаётся открытым
+                if st.bad { HINT_ERROR } else { crate::theme::ACCENT },
+            ),
+        );
+        // пусто — показываем текущую скорость приглушённо: первая цифра
+        // заменяет её целиком (то же, что «открылось с выделенным всем»)
+        let (txt, col) = if st.text.is_empty() {
+            (format_rate(self.base_rate), egui::Color32::from_gray(120))
+        } else {
+            (st.text.clone(), egui::Color32::from_rgb(235, 235, 240))
+        };
+        painter.text(
+            egui::pos2(rect.left() + 5.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            txt,
+            font,
+            col,
+        );
+        if apply {
+            match parse_rate_text(&st.text).map(normalize_rate) {
+                Some(r) => {
+                    self.base_rate = r;
+                    if self.shuttle_override.is_none() {
+                        self.player.set_playback_rate(r);
+                    }
+                    self.speed_entry = None;
+                }
+                None => {
+                    st.bad = true;
+                    self.speed_entry = Some(st);
+                }
+            }
+        } else if cancel || (resp.lost_focus() && !resp.has_focus()) {
+            self.speed_entry = None;
+        } else {
+            self.speed_entry = Some(st);
+        }
+        // ФОКУС ОБЯЗАН ВЕРНУТЬСЯ (правило 14). Гард стоит на КАЖДОМ пути
+        // закрытия сразу — включая внешний (Esc-каскад гасит `speed_entry`
+        // без нашего ведома): виджет живёт каждый кадр с тем же id, и
+        // «просто закрыть» мало — egui считал бы его сфокусированным, а
+        // `handle_keys` гейтится `egui_wants_keyboard_input()`.
+        if self.speed_entry.is_none() {
+            ui.memory_mut(|m| m.surrender_focus(resp.id));
+        }
+        self.hint(resp, tr(k::hint::SPEED_ENTRY));
     }
 
     /// Контролы превью (п.17 р.7: без очевидных надписей — значения
@@ -6414,14 +6747,19 @@ impl KtApp {
         if k.esc {
             self.escape_action();
         }
-        // Enter — РАСКРЫТЬ выделенное вложение на месте: клавиатурный
-        // близнец двойного клика, и вести себя обязан так же (правило 17).
-        // Полный вход — названный пункт меню «Войти в ленту»: быстрый жест
-        // даёт режим по умолчанию, названный пункт — названный режим.
+        // Enter — КАСКАД по выделенному вложению (Р.56, п.451): первый
+        // раскрывает на месте (режим по умолчанию, клавиатурный близнец
+        // двойного клика), второй по уже раскрытому — ПОЛНЫЙ ВХОД.
+        // Быстрый жест ведёт ВГЛУБЬ, а не переключает: назад — Esc,
+        // который и так идёт каскадом в обратную сторону.
         if k.enter_nest
             && let Some(id) = self.selected.iter().copied().find(|id| self.is_nest(*id))
         {
-            self.expand_in_place(id);
+            match self.enter_pressed_on_nest(id) {
+                EnterOnNest::Expand => self.expand_in_place(id),
+                EnterOnNest::Enter => self.enter_nest(id),
+                EnterOnNest::NotANest => {}
+            }
         }
         if k.copy {
             self.copy_selection();
@@ -6605,6 +6943,42 @@ impl KtApp {
             self.warp_cache.maps = Arc::new(maps);
         }
         self.warp_cache.maps.clone()
+    }
+
+    /// Редакции ЛЕНТ документа: `MediaId` → `content_hash` (Р.56, п.452).
+    ///
+    /// Считается по `model_rev`, как карты варпа: хэш обходит всё
+    /// содержимое ленты, и делать это на каждый UI-кадр незачем. Правка
+    /// внутри ленты меняет хэш — старое превью тут же становится ненужным
+    /// и выбрасывается вместе с незаконченной работой по нему.
+    pub fn reel_hashes(&mut self) -> Arc<HashMap<MediaId, u64>> {
+        if self.reel_hash_cache.0 != Some(self.model_rev) {
+            let doc = self.model.document();
+            let mut map = HashMap::new();
+            for s in &doc.sequences {
+                map.insert(s.id, kt_engine::content_hash(&doc, s.id));
+            }
+            for (id, h) in &map {
+                self.reel_previews.invalidate_seq(*id, *h);
+            }
+            self.reel_hash_cache = (Some(self.model_rev), Arc::new(map));
+        }
+        self.reel_hash_cache.1.clone()
+    }
+
+    /// Заявка на превью ленты — ЕДИНСТВЕННЫЙ вход (зовётся из отрисовки).
+    ///
+    /// Ключ не зависит ни от зума, ни от прокрутки, поэтому скролл и зум
+    /// заказов не порождают (инвариант 8): повторная заявка по тому же
+    /// ключу отбрасывается дедупом.
+    pub fn request_reel_preview(&mut self, key: crate::reel_preview::ReelKey) {
+        if self.reel_previews.get(&key).is_some() {
+            return;
+        }
+        let Some(p) = self.model.document().reel_as_root(key.seq) else { return };
+        let base = self.project_path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf());
+        let db = self.index_db_path();
+        self.reel_previews.request(key, p, db, base);
     }
 
     /// Runs покрытия per-clip; пересчёт только при смене epoch кэша,
@@ -6997,11 +7371,46 @@ pub fn preview_detached_next(detached: bool, toggle: bool, close_requested: bool
     }
 }
 
-/// Мёртвая зона слайдера скорости вокруг нуля (доля хода).
-const RATE_DEAD: f32 = 0.07;
-/// |rate| на краю мёртвой зоны и на краю слайдера.
-const RATE_MIN: f32 = 0.25;
-const RATE_MAX: f32 = 2.0;
+// ---- шкала скорости транспорта (Р.57, п.455) ----------------------------
+// ТРИ разных «0.25» жили в программе и совпадение чисел приняли за правило:
+// край мёртвой зоны слайдера, `RATE_MIN` тут же и `RATE_CLAMP` карты варпа.
+// Решения владельца за пределом 0.25 нет — есть только предел ДВИЖКА
+// (|rate| >= 0.001 в callback_step). Поэтому шкала идёт до 0.01, а ровно
+// нулём отдаёт лишь узкая зона в 1.5 px вокруг центра.
+/// Доля хода слайдера вокруг центра, отдающая РОВНО 0 (стоп-кадр).
+/// 0.018 · 85 px ≈ 1.5 px — «узкая зона» из решения владельца.
+pub const RATE_STOP: f32 = 0.018;
+/// Наименьшая представимая скорость: ниже неё звук уже не тянется
+/// (`kt_model::warp::RATE_AUDIO_FLOOR`), и шкале незачем идти дальше.
+pub const RATE_FLOOR: f32 = 0.01;
+/// Колено: до него ход ЛИНЕЕН по скорости (иначе 0.01…0.25 сжимается в
+/// пиксель), после — логарифмичен по модулю.
+pub const RATE_KNEE: f32 = 0.25;
+/// Доля хода до колена.
+pub const RATE_KNEE_T: f32 = 0.30;
+/// |rate| на краю слайдера (дальше — только «второе дыхание» overshoot'а).
+pub const RATE_MAX: f32 = 2.0;
+/// Во сколько раз Shift замедляет ход при драге полосы.
+pub const SPEED_FINE_DIV: f32 = 8.0;
+
+/// Цвет «сделать нельзя» (правило 16): строка состояния и подчёркивание
+/// поля ввода с нечитаемым значением обязаны говорить об ошибке ОДИНАКОВО.
+pub const HINT_ERROR: egui::Color32 = egui::Color32::from_rgb(255, 105, 97);
+
+/// Ввод скорости числом (Р.57). Живёт В ТОМ ЖЕ прямоугольнике 170×20, что
+/// и полоса, — высота виджета поставлена просьбой владельца (п.18 р.7) и не
+/// меняется; своего окна у ввода нет (правило 3 «ничего не скачет»).
+#[derive(Debug, Clone, Default)]
+pub struct SpeedEntry {
+    /// Напечатанное. Пусто — показываем текущую скорость приглушённо:
+    /// первая же цифра заменяет её целиком (то же «выделено всё»).
+    pub text: String,
+    /// Взять фокус на ближайшем кадре.
+    pub focus: bool,
+    /// Напечатанное не читается — подчёркивание в ошибочном стиле
+    /// (правило 16: невозможность показывается ОШИБКОЙ), поле открыто.
+    pub bad: bool,
+}
 
 /// Иконка окна (п.6 р.9): без неё таскбар показывал заглушку. Растр —
 /// тот же силуэт, что рисуется в шапке и лежит в packaging/.
@@ -7248,27 +7657,91 @@ pub const ENGINE_RATE_MAX: f32 = kt_engine::player::ENGINE_RATE_MAX;
 /// Пикселей ухода за виджет на удвоение скорости.
 pub const OVERSHOOT_PX_PER_DOUBLE: f32 = 60.0;
 
-/// Слайдер [−1..1] → скорость [−2..2]: лог по модулю, мёртвая зона у нуля
-/// отдаёт ровно 0 (пп.4-5 v1.4, тест 46). Симметрично для реверса.
+/// Слайдер [−1..1] → скорость [−2..2] (Р.57, тест 46).
+///
+/// Линейно `RATE_FLOOR → RATE_KNEE` на первых `RATE_KNEE_T` хода, дальше
+/// логарифм `RATE_KNEE → RATE_MAX`. Ровно 0 отдаёт только `|t| < RATE_STOP`.
+/// До Р.57 край мёртвой зоны в 7 % хода сразу равнялся 0.25×, и интервал
+/// (0, 0.25) был непредставим ПО ПОСТРОЕНИЮ — жалоба владельца «должен
+/// иметь возможность выставить 0,05». Симметрично для реверса.
 pub fn slider_to_rate(t: f32) -> f32 {
     let a = t.abs();
-    if a < RATE_DEAD {
-        // строгое: край зоны — уже RATE_MIN (round-trip, тест 46)
+    if a < RATE_STOP {
         return 0.0;
     }
-    let x = ((a - RATE_DEAD) / (1.0 - RATE_DEAD)).clamp(0.0, 1.0);
-    let r = RATE_MIN * (RATE_MAX / RATE_MIN).powf(x);
+    let r = if a < RATE_KNEE_T {
+        RATE_FLOOR + (RATE_KNEE - RATE_FLOOR) * (a - RATE_STOP) / (RATE_KNEE_T - RATE_STOP)
+    } else {
+        let x = ((a - RATE_KNEE_T) / (1.0 - RATE_KNEE_T)).clamp(0.0, 1.0);
+        RATE_KNEE * (RATE_MAX / RATE_KNEE).powf(x)
+    };
     r.copysign(t)
 }
 
-/// Обратное отображение (тест 46): rate → позиция слайдера.
+/// Обратное отображение (тест 46): rate → позиция слайдера. |rate| > 2
+/// садится на край шкалы — метка остаётся видимой (как и до Р.57).
 pub fn rate_to_slider(rate: f32) -> f32 {
     let a = rate.abs();
-    if a < RATE_MIN * 0.999 {
+    if a < RATE_FLOOR * 0.5 {
         return 0.0;
     }
-    let x = (a.clamp(RATE_MIN, RATE_MAX) / RATE_MIN).ln() / (RATE_MAX / RATE_MIN).ln();
-    (RATE_DEAD + x * (1.0 - RATE_DEAD)).copysign(rate)
+    let t = if a < RATE_KNEE {
+        RATE_STOP
+            + (a.max(RATE_FLOOR) - RATE_FLOOR) / (RATE_KNEE - RATE_FLOOR)
+                * (RATE_KNEE_T - RATE_STOP)
+    } else {
+        let x = (a.min(RATE_MAX) / RATE_KNEE).ln() / (RATE_MAX / RATE_KNEE).ln();
+        RATE_KNEE_T + x * (1.0 - RATE_KNEE_T)
+    };
+    t.copysign(rate)
+}
+
+/// Напечатанное (или пришедшее из кода) значение скорости → то, что имеет
+/// право уехать в плеер: почти-ноль становится СТОП-кадром, остальное
+/// клампится полом шкалы и потолком движка со знаком.
+pub fn normalize_rate(v: f32) -> f32 {
+    if !v.is_finite() || v.abs() < 0.005 {
+        return 0.0;
+    }
+    v.abs().clamp(RATE_FLOOR, ENGINE_RATE_MAX).copysign(v)
+}
+
+/// Разбор напечатанной скорости. Терпит то, что человек реально печатает:
+/// минус типографский («−»), запятую вместо точки, хвост «×»/«x»,
+/// ведущий «+». Ничего не клампит — это делает `normalize_rate`.
+pub fn parse_rate_text(s: &str) -> Option<f32> {
+    let cleaned: String = s
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| match c {
+            '\u{2212}' | '\u{2013}' | '\u{2014}' => '-',
+            ',' => '.',
+            c => c,
+        })
+        .collect();
+    let body = cleaned.trim_end_matches(['\u{00d7}', 'x', 'X']).trim_start_matches('+');
+    if body.is_empty() {
+        return None;
+    }
+    body.parse::<f32>().ok().filter(|v| v.is_finite())
+}
+
+/// Ход виртуального курсора полосы скорости за кадр драга.
+///
+/// Копится именно ПРИРАЩЕНИЕ: делить абсолютную позиции указателя на
+/// `SPEED_FINE_DIV` нельзя — Shift, нажатый посреди драга, мгновенно
+/// утащил бы значение к центру.
+pub fn drag_advance(vx: f32, dx: f32, fine: bool) -> f32 {
+    vx + if fine { dx / SPEED_FINE_DIV } else { dx }
+}
+
+/// Пора ли донести разогнанную пробелом скорость до плеера. Гистерезис
+/// ОТНОСИТЕЛЬНЫЙ: прежние абсолютные 0.02 при базе 0.05 — это 40 % базы,
+/// то есть разгон не доезжал до движка вовсе. Каждый `set_playback_rate`
+/// сбрасывает окно экстраполяции часов показа (п.14 р.14), поэтому порог
+/// всё же нужен; нижний пол держит его от нуля на базе 0.01.
+pub fn boost_needs_update(want: f32, cur: f32, base: f32) -> bool {
+    (want - cur).abs() > (base.abs() * 0.02).max(0.0005)
 }
 
 pub fn format_rate(r: f32) -> String {
@@ -8079,29 +8552,132 @@ mod repaint_tests {
         assert_eq!(shown, 30, "V-fps считает кадры проекта, а не ui-кадры");
     }
 
-    /// Тест 46 (пп.4-5 v1.4): маппинг слайдера скорости — симметрия по
-    /// знаку, мёртвая зона отдаёт ровно 0, границы ±2, round-trip.
+    /// Тест 46 (пп.4-5 v1.4, ПЕРЕПИСАН в Р.57 п.455): маппинг полосы
+    /// скорости.
+    ///
+    /// Претензия владельца: «диапазон −0.25…0…0.25 превращается в 0, а я
+    /// должен иметь возможность выставить 0,05 или −0,03». Причина была
+    /// ровно тут: мёртвая зона в 7 % хода отдавала 0, а её КРАЙ уже равнялся
+    /// 0.25× — интервал (0, 0.25) был непредставим по построению. Поэтому
+    /// тест теперь утверждает не «мёртвая зона широкая», а обратное:
+    /// нулём отдаёт только узкая зона, у пола нет обрыва, и 0.05 с 0.03
+    /// разнесены так, что в них можно попасть мышью.
     #[test]
     fn t46_rate_slider_mapping() {
-        use super::{rate_to_slider, slider_to_rate};
-        // мёртвая зона: ровно 0 (стоп), не крошечная скорость
-        for t in [0.0f32, 0.03, -0.05, 0.069, -0.069] {
-            assert_eq!(slider_to_rate(t), 0.0, "t={t} в мёртвой зоне");
+        use super::{RATE_FLOOR, RATE_MAX, RATE_STOP, rate_to_slider, slider_to_rate};
+        // --- стоп: ТОЛЬКО |t| < RATE_STOP
+        for t in [0.0f32, 0.01, -0.01, 0.0179, -0.0179] {
+            assert_eq!(slider_to_rate(t), 0.0, "t={t} обязан быть стопом");
         }
-        // границы и опорные точки
-        assert!((slider_to_rate(1.0) - 2.0).abs() < 1e-5);
-        assert!((slider_to_rate(-1.0) + 2.0).abs() < 1e-5);
-        // симметрия знака
-        for t in [0.1f32, 0.3, 0.7, 1.0] {
-            assert_eq!(slider_to_rate(t), -slider_to_rate(-t));
+        for t in [RATE_STOP, -RATE_STOP, 0.02, -0.02, 0.05] {
+            assert_ne!(slider_to_rate(t), 0.0, "t={t} за зоной стопа, а отдаёт 0");
         }
-        // round-trip на представимых скоростях
-        for r in [0.25f32, 0.5, 1.0, 1.5, 2.0, -0.25, -1.0, -2.0] {
+        // --- непрерывность у пола: обрыв на краю зоны — не больше RATE_FLOOR
+        // (до Р.57 он был 0.25× — это и есть дефект)
+        let edge = slider_to_rate(RATE_STOP);
+        assert!(
+            (edge - RATE_FLOOR).abs() < 1e-6,
+            "край зоны стопа обязан давать пол {RATE_FLOOR}, а даёт {edge}"
+        );
+        // --- нечётность
+        for t in [0.02f32, 0.1, 0.3, 0.7, 1.0] {
+            assert_eq!(slider_to_rate(t), -slider_to_rate(-t), "нечётность нарушена в t={t}");
+        }
+        // --- строгая монотонность шагом 0.001 (нет полок и провалов)
+        let mut prev = 0.0f32;
+        let mut t = RATE_STOP;
+        while t <= 1.0 {
+            let r = slider_to_rate(t);
+            assert!(r > prev, "не растёт: t={t} даёт {r} после {prev}");
+            prev = r;
+            t += 0.001;
+        }
+        // --- границы
+        assert!((slider_to_rate(1.0) - RATE_MAX).abs() < 1e-5);
+        assert!((slider_to_rate(-1.0) + RATE_MAX).abs() < 1e-5);
+        // --- round-trip, включая ТО, ЧТО ПРОСИЛ ВЛАДЕЛЕЦ
+        for r in [0.01f32, 0.03, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, -0.03, -0.25, -1.0, -2.0] {
             let back = slider_to_rate(rate_to_slider(r));
             assert!((back - r).abs() < 1e-4, "round-trip {r} → {back}");
         }
-        // rate=0 маппится в центр слайдера
-        assert_eq!(rate_to_slider(0.0), 0.0);
+        assert_eq!(rate_to_slider(0.0), 0.0, "стоп — центр полосы");
+        // |r| > 2 садится на край: метка остаётся видимой
+        assert_eq!(rate_to_slider(8.0), 1.0);
+        assert_eq!(rate_to_slider(-8.0), -1.0);
+        // --- 1× стоит в [0.65, 0.80] хода: справа обязано остаться место
+        // под ускорение, слева — весь медленный участок
+        let one = rate_to_slider(1.0);
+        assert!((0.65..=0.80).contains(&one), "1× уехал на {one} хода");
+        // --- 0.05 и 0.03 разнесены на ~2 px (половина полосы 85 px):
+        // «попал мышью с первого раза» — правило 1. До Р.57 обе величины
+        // лежали в мёртвой зоне и были неотличимы от нуля ВООБЩЕ.
+        let px = |r: f32| rate_to_slider(r) * 85.0;
+        assert!(
+            px(0.05) - px(0.03) >= 1.9,
+            "0.03 и 0.05 слиплись: {} px против {} px",
+            px(0.03),
+            px(0.05)
+        );
+    }
+
+    /// Тест 626 (Р.57): арифметика ввода и точной подстройки.
+    #[test]
+    fn t626_rate_entry_arithmetic() {
+        use super::{
+            ENGINE_RATE_MAX, RATE_FLOOR, SPEED_FINE_DIV, boost_needs_update, drag_advance,
+            normalize_rate, parse_rate_text,
+        };
+        // --- normalize_rate: почти-ноль = стоп, иначе пол и потолок со знаком
+        assert_eq!(normalize_rate(0.0), 0.0);
+        assert_eq!(normalize_rate(0.004), 0.0);
+        assert_eq!(normalize_rate(-0.004), 0.0);
+        assert_eq!(normalize_rate(0.006), RATE_FLOOR, "выше порога — не ноль, а пол");
+        assert_eq!(normalize_rate(0.05), 0.05);
+        assert_eq!(normalize_rate(-0.03), -0.03);
+        assert_eq!(normalize_rate(99.0), ENGINE_RATE_MAX);
+        assert_eq!(normalize_rate(-99.0), -ENGINE_RATE_MAX);
+        assert_eq!(normalize_rate(f32::NAN), 0.0);
+        // --- parse_rate_text: то, что человек реально печатает
+        for (s, want) in [
+            ("0.05", 0.05f32),
+            ("0,05", 0.05),
+            ("-0.03", -0.03),
+            ("\u{2212}0,03", -0.03), // типографский минус
+            ("+1.5", 1.5),
+            ("2×", 2.0),
+            ("2x", 2.0),
+            (" 0.5 ", 0.5),
+        ] {
+            let got = parse_rate_text(s).unwrap_or_else(|| panic!("«{s}» не разобрано"));
+            assert!((got - want).abs() < 1e-6, "«{s}» → {got}, ждали {want}");
+        }
+        for s in ["", "×", "--1", "быстро", "1.2.3"] {
+            assert!(parse_rate_text(s).is_none(), "«{s}» разобралось, а не должно");
+        }
+        // --- drag_advance: Shift делит ПРИРАЩЕНИЕ, а не позицию
+        assert_eq!(drag_advance(85.0, 6.0, false), 91.0);
+        assert_eq!(drag_advance(85.0, 6.0, true), 85.0 + 6.0 / SPEED_FINE_DIV);
+        // цепочка с Shift посреди жеста не телепортирует значение: она
+        // продолжается с того же места, где была
+        let mut vx = 85.0f32;
+        for _ in 0..4 {
+            vx = drag_advance(vx, 8.0, false);
+        }
+        let plain = vx;
+        vx = drag_advance(vx, 8.0, true);
+        assert!(
+            vx > plain && vx - plain < 8.0,
+            "Shift обязан замедлить ход, а не прыгнуть: {plain} → {vx}"
+        );
+        // --- гистерезис разгона ОТНОСИТЕЛЬНЫЙ
+        assert!(boost_needs_update(1.05, 1.0, 1.0), "на базе 1× 5 % обязаны доехать");
+        assert!(!boost_needs_update(1.005, 1.0, 1.0), "на базе 1× 0.5 % — шум");
+        // прежний абсолютный порог 0.02 на базе 0.05 — это 40 % базы:
+        // разгон физически не доезжал до движка
+        assert!(
+            boost_needs_update(0.06, 0.05, 0.05),
+            "на базе 0.05 разгон вдвое обязан доехать до плеера"
+        );
     }
 
     /// Тест 47 (дополнение, регресс п.2 раунда 5): dnd-позиция живёт при

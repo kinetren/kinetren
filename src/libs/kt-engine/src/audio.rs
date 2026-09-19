@@ -36,6 +36,10 @@ struct AudioClip {
     /// процессора и для расчёта окна источника.
     auto: kt_fx::AutoProfiles,
     reversed: bool,
+    /// АДРЕСНАЯ карта знаковой скорости (Р.57): по какому адресу лежит
+    /// материал, съеденный к моменту `a`. `None` — карта монотонна, адрес
+    /// равен потреблению, и весь прежний путь дословен.
+    addr: Option<std::sync::Arc<Vec<kt_fx::AddrKnot>>>,
     /// Окна кроссфейда из переходов (Р.24, п.136), [w0, w1) в кадрах:
     /// клип — incoming (нарастает √t) / outgoing (затухает √(1−t)).
     /// Дизъюнктны по валидации модели.
@@ -471,6 +475,8 @@ impl AudioRenderer {
                     lane: c.lane,
                     gain: db_to_linear(c.gain_db),
                     media: c.media,
+                    addr: kt_fx::chain_addr_knots(&active, &auto, (end - start).max(1))
+                        .map(std::sync::Arc::new),
                     fx: active,
                     auto,
                     reversed: c.reversed,
@@ -1010,8 +1016,11 @@ impl AudioRenderer {
         // зеркальный якорь источника завязан на window_end.
         let clip_len = clip.end - clip.start;
         let material = -clip.head_ext..clip_len + clip.tail_ext;
+        // Граница — ПОТРЕБЛЕНИЕ (Р.57): курсор ресемплера живёт на нём, а
+        // адреса под знаковой кривой уходят и влево, и вправо. У
+        // монотонной цепочки это то же число, что раньше.
         let src_window_end = clip.source_in
-            + kt_fx::chain_source_window_ext(
+            + kt_fx::chain_consumption_window_ext(
                 &clip.fx,
                 &clip.auto,
                 clip_len,
@@ -1042,6 +1051,7 @@ impl AudioRenderer {
                 start: clip.source_in,
                 end: src_window_end,
                 mirror_end: src_mirror_end,
+                addr: clip.addr.as_deref().map(|v| v.as_slice()),
             };
             let mut pull = |kind: kt_fx::PullKind, src_frame: i64, dst: &mut [f32]| -> bool {
                 // промахи пре-ролла считаются отдельно: их не слышно
@@ -1207,7 +1217,10 @@ impl AudioRenderer {
                 // Правило ОДНО на рендер и на префетч: разойдись они, и
                 // это был бы тот же класс дефекта.
                 let (preroll, block) = self.nest_preroll(c.media);
-                let w = nest_read_window(preroll, block, c.reversed, s0..s1);
+                // ГЕЙТ ПО НЕМОНОТОННОСТИ (Р.57): назад читает и зеркальный
+                // экземпляр, и знаковая скорость — продюсеру всё равно,
+                // что именно развернуло чтение.
+                let w = nest_read_window(preroll, block, c.reversed || c.addr.is_some(), s0..s1);
                 out.extend(sub.wanted_audio_bursts_for(w, raw));
                 continue;
             }
@@ -1226,10 +1239,12 @@ impl AudioRenderer {
 /// в двух местах», а одна функция: разойдись они, получился бы вечный
 /// промах кэша (п.13, t17, t247d).
 ///
-/// `blocks` — читаем ли НАЗАД. Гейт именно по реверсу, а не по варпу:
-/// варп монотонен (`fill_source` идёт по `virt` вперёд, а скорость снизу
-/// ограничена `RATE_CLAMP`), и в блоках он не нуждается — на прямом пути
-/// заказ не двигается НИ НА БЁРСТ, и «цена линейна» (t436) остаётся верным.
+/// `blocks` — читаем ли НАЗАД. Гейт по НЕМОНОТОННОСТИ, а не по варпу:
+/// варп с положительной скоростью монотонен (`fill_source` идёт по `virt`
+/// вперёд), и в блоках не нуждается — на прямом пути заказ не двигается НИ
+/// НА БЁРСТ, и «цена линейна» (t436) остаётся верным. Назад читают ровно
+/// двое: зеркальный экземпляр и ЗНАКОВАЯ скорость (Р.57), у которой адрес
+/// уходит по материалу обратно.
 fn nest_read_window(
     preroll: u32,
     block: u32,
@@ -1284,10 +1299,34 @@ pub fn db_to_linear(db: f32) -> f32 {
 /// запаса. До Р.43 это была одна величина, и зеркало уезжало на 170.7 мс
 /// (п.292).
 #[derive(Debug, Clone, Copy)]
-struct SrcWindow {
+struct SrcWindow<'a> {
     start: i64,
+    /// Граница ПОТРЕБЛЕНИЯ: дальше цепочка не ест (Р.57). У монотонной
+    /// карты это же и граница адресов — прежнее число.
     end: i64,
     mirror_end: i64,
+    /// Адресная карта знаковой скорости; `None` — адрес == потребление.
+    addr: Option<&'a [kt_fx::AddrKnot]>,
+}
+
+/// Ран адреса, накрывающий потребление `a`: (адрес первого кадра,
+/// направление, конец рана по потреблению).
+fn addr_run_at(knots: &[kt_fx::AddrKnot], a: i64) -> (i64, i64, i64) {
+    let i = match knots.binary_search_by_key(&a, |k| k.a) {
+        Ok(i) => i,
+        Err(0) => 0,
+        Err(i) => i - 1,
+    };
+    let k = knots[i];
+    let end = knots.get(i + 1).map(|n| n.a).unwrap_or(i64::MAX);
+    let off = a - k.a;
+    match k.dir {
+        // назад: первый кадр ПОСЛЕ разворота — тот, что лежит перед
+        // точкой разворота, иначе кадр развернулся бы дважды (палиндром)
+        -1 => (k.p - 1 - off, -1, end),
+        0 => (k.p, 0, end),
+        _ => (k.p + off, 1, end),
+    }
 }
 
 /// Заполнить `dst` кадрами источника [src_frame, +len): читает burst'ы через
@@ -1303,8 +1342,27 @@ fn fill_source(
     dst: &mut [f32],
     underruns: &mut u64,
 ) -> bool {
+    match window.addr {
+        None => fill_source_linear(fetcher, media, src_frame, window, reversed, dst, underruns),
+        Some(knots) => {
+            fill_source_signed(fetcher, media, src_frame, window, knots, reversed, dst, underruns)
+        }
+    }
+}
+
+/// Прежний путь ДОСЛОВНО: адрес равен потреблению, реверс — статическое
+/// зеркало окна. На нём стоит GOLDEN_AUDIO.
+fn fill_source_linear(
+    fetcher: &mut dyn AudioFetcher,
+    media: kt_model::MediaId,
+    src_frame: i64,
+    window: SrcWindow,
+    reversed: bool,
+    dst: &mut [f32],
+    underruns: &mut u64,
+) -> bool {
     dst.fill(0.0);
-    let SrcWindow { start: win_start, end: window_end, mirror_end } = window;
+    let SrcWindow { start: win_start, end: window_end, mirror_end, .. } = window;
     let frames = (dst.len() / AUDIO_CHANNELS) as i64;
     let mut f = 0i64;
     while f < frames {
@@ -1346,6 +1404,85 @@ fn fill_source(
             }
             // единица — КАДРЫ, как у пути без FX (Р.43, п.289): «1 за
             // промах бёрста» давало 1024-кратное расхождение счётчиков
+            None => *underruns += take.max(0) as u64,
+        }
+        f += take;
+    }
+    true
+}
+
+/// Знаковая скорость (Р.57): виртуальный поток — ПОТРЕБЛЕНИЕ, а адрес
+/// материала берётся из адресной карты ранами постоянного направления.
+///
+/// Цепочка (варп, реверб) по-прежнему видит обычный форвард-поток и о
+/// направлении не знает — как и при реверсе. Флаг «Реверс» зеркалит
+/// готовый адрес поверх карты: «варп, потом зеркало» (Р.37 п.247).
+#[allow(clippy::too_many_arguments)]
+fn fill_source_signed(
+    fetcher: &mut dyn AudioFetcher,
+    media: kt_model::MediaId,
+    src_frame: i64,
+    window: SrcWindow,
+    knots: &[kt_fx::AddrKnot],
+    reversed: bool,
+    dst: &mut [f32],
+    underruns: &mut u64,
+) -> bool {
+    dst.fill(0.0);
+    let SrcWindow { start: win_start, end: window_end, mirror_end, .. } = window;
+    let frames = (dst.len() / AUDIO_CHANNELS) as i64;
+    let mut f = 0i64;
+    while f < frames {
+        let virt = src_frame + f;
+        if virt >= window_end {
+            break; // дальше только тишина
+        }
+        if virt < 0 {
+            f += 1;
+            continue;
+        }
+        let (addr, dir, run_end) = addr_run_at(knots, virt - win_start);
+        if dir == 0 {
+            // удержание: сюда доходить не должно (чанк гасится в
+            // процессоре), но молча читать чужой адрес — хуже тишины
+            f += (run_end - (virt - win_start)).clamp(1, frames - f);
+            continue;
+        }
+        // зеркало события — ПОВЕРХ карты
+        let (src, dir) = if reversed {
+            (win_start + (mirror_end - win_start) - 1 - addr, -dir)
+        } else {
+            (win_start + addr, dir)
+        };
+        if src < 0 {
+            f += 1;
+            continue;
+        }
+        let bidx = src.div_euclid(AUDIO_BURST_FRAMES as i64);
+        let within = src.rem_euclid(AUDIO_BURST_FRAMES as i64);
+        let room = if dir < 0 { within + 1 } else { AUDIO_BURST_FRAMES as i64 - within };
+        let take = room
+            .min(frames - f)
+            .min(window_end - virt)
+            .min(run_end - (virt - win_start))
+            .max(1);
+        match fetcher.audio_burst(media, bidx) {
+            Some(b) => {
+                let d0 = (f as usize) * AUDIO_CHANNELS;
+                if dir < 0 {
+                    for k in 0..take as usize {
+                        let si = (within as usize - k) * AUDIO_CHANNELS;
+                        for ch in 0..AUDIO_CHANNELS {
+                            dst[d0 + k * AUDIO_CHANNELS + ch] = b.data[si + ch];
+                        }
+                    }
+                } else {
+                    let s0 = (within as usize) * AUDIO_CHANNELS;
+                    let n = (take as usize) * AUDIO_CHANNELS;
+                    dst[d0..d0 + n].copy_from_slice(&b.data[s0..s0 + n]);
+                }
+            }
+            // единица — КАДРЫ, как у остальных путей (Р.43, п.289)
             None => *underruns += take.max(0) as u64,
         }
         f += take;

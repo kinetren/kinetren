@@ -339,3 +339,173 @@ fn t283_source_in_change_is_heard_with_the_same_chain() {
          и разница была ≈0)"
     );
 }
+
+// ---- Р.57: знаковая скорость в аудио ------------------------------------------
+
+/// Клип с произвольной точкой входа и знаковой скоростью.
+fn signed_clip(rate: f64, source_in_frames: i64, reversed: bool) -> Project {
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 640,
+        height: 360,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
+    p.media.push(MediaRef { id: MediaId(1), path: "synth:1".into() });
+    p.clips.push(ClipEvent {
+        id: ClipId(1),
+        link_group: None,
+        kind: ClipKind::Audio,
+        lane: 0,
+        start: Tick::from_audio_frames(48_000),
+        duration: Tick::from_audio_frames(48_000),
+        source_in: Tick::from_audio_frames(source_in_frames),
+        media: MediaId(1),
+        gain_db: 0.0,
+        reversed,
+        fx_bypass: vec![],
+        fx_auto: vec![],
+        fx: vec![FxInstance::slowed_reverb(rate, 0.0, 85.0)],
+        opacity: 1.0,
+        fx_off: false,
+    });
+    p.validate().unwrap();
+    p
+}
+
+fn render(p: &Project, frames: usize) -> Vec<f32> {
+    let mut buf = vec![0f32; frames * CH];
+    AudioRenderer::new(p).render_frames(&mut direct(), 48_000, &mut buf);
+    buf
+}
+
+/// Тест 616 (Р.57): скорость −1 — ТО ЖЕ САМОЕ, что флаг «Реверс» при +1,
+/// со сдвинутой на длину события точкой входа. Байт-в-байт.
+///
+/// Это ОПРЕДЕЛЕНИЕ, а не приближение, и заодно — следствие, о котором надо
+/// помнить: постоянная −1 идёт в материал ДО точки входа (семантика
+/// velocity-огибающей Vegas). Совпадать с «Реверсом» она может только со
+/// сдвигом.
+#[test]
+fn t616_negative_one_equals_reverse_with_a_shifted_in_point() {
+    let n = 48_000usize;
+    // «Реверс» на +1 от точки входа 9600: играет [9600, 57600) задом наперёд
+    let rev = render(&signed_clip(1.0, 9_600, true), n);
+    // скорость −1 от точки входа 57600: идёт назад по тому же материалу
+    let neg = render(&signed_clip(-1.0, 9_600 + 48_000, false), n);
+    for k in [0usize, 1, 1023, 1024, 4097, n / 2, n - 2, n - 1] {
+        for ch in 0..CH {
+            assert_eq!(
+                neg[k * CH + ch],
+                rev[k * CH + ch],
+                "кадр {k} канал {ch}: −1 обязана быть тем же зеркалом"
+            );
+        }
+    }
+    assert!(neg.iter().any(|s| *s != 0.0), "не тишина");
+}
+
+/// Тест 617 (Р.57): реверб при знаковой скорости звучит ВПЕРЁД по своему
+/// времени — цепочка видит обычный форвард-поток и о направлении не знает.
+#[test]
+fn t617_reverb_runs_forward_over_a_backward_read() {
+    let n = 48_000usize;
+    let with_fx = |rate: f64, src: i64, reversed: bool| {
+        let mut p = signed_clip(rate, src, reversed);
+        p.clips[0].fx = vec![FxInstance::slowed_reverb(rate, 0.35, 85.0)];
+        let mut buf = vec![0f32; n * CH];
+        AudioRenderer::new(&p).render_frames(&mut direct(), 48_000, &mut buf);
+        buf
+    };
+    let neg = with_fx(-1.0, 9_600 + 48_000, false);
+    let rev = with_fx(1.0, 9_600, true);
+    // с ревербом обе стороны читают материал одинаково, значит и звучат
+    // одинаково: состояние цепочки зависит от ВХОДА, а не от того, чем
+    // вход развернули
+    for k in [0usize, 1024, n / 2, n - 1] {
+        for ch in 0..CH {
+            assert!(
+                (neg[k * CH + ch] - rev[k * CH + ch]).abs() < 1e-6,
+                "кадр {k}: цепочка увидела разный вход"
+            );
+        }
+    }
+    // и это НЕ то же самое, что развернуть готовый прямой рендер: реверб
+    // тогда звучал бы задом наперёд
+    let fwd = with_fx(1.0, 9_600, false);
+    let mut mirrored = vec![0f32; n * CH];
+    for k in 0..n {
+        for ch in 0..CH {
+            mirrored[k * CH + ch] = fwd[(n - 1 - k) * CH + ch];
+        }
+    }
+    let diff = (0..n * CH).map(|i| (neg[i] - mirrored[i]).abs()).fold(0.0f32, f32::max);
+    assert!(diff > 1e-4, "зеркало готового рендера совпало — реверба не слышно");
+}
+
+/// Тест 618 (Р.57): вокруг точки разворота выход — ПАЛИНДРОМ, без
+/// пропущенного и без сдвоенного кадра.
+#[test]
+fn t618_turning_point_is_a_palindrome() {
+    let n = 48_000usize;
+    let mut p = signed_clip(1.0, 9_600, false);
+    // 1 → −1: разворот ровно посередине события
+    p.clips[0].fx_auto = vec![vec![ParamCurve {
+        param: "rate".into(),
+        ease: false,
+        keys: vec![
+            AutoKey { t: Tick::from_audio_frames(9_600), v: 1.0 },
+            AutoKey { t: Tick::from_audio_frames(9_600 + 48_000), v: -1.0 },
+        ],
+    }]];
+    let out = render(&p, n);
+    // вершина: материал дальше всего от точки входа. Ищем её по выходу —
+    // Ramp кодирует позицию в амплитуде, значит максимум и есть разворот
+    let top = (0..n).max_by(|a, b| out[a * CH].partial_cmp(&out[b * CH]).unwrap()).unwrap();
+    assert!(
+        (n / 4..3 * n / 4).contains(&top),
+        "сцена выродилась: разворот не посередине ({top} из {n})"
+    );
+    for j in [1usize, 2, 16, 1023] {
+        if top + j >= n || top < j {
+            continue;
+        }
+        assert!(
+            (out[(top + j) * CH] - out[(top + 1 - j.min(top + 1)) * CH]).abs() < 0.2,
+            "кадр {j} от вершины: палиндром разошёлся"
+        );
+    }
+    assert!(out.iter().any(|s| *s != 0.0), "не тишина");
+}
+
+/// Тест 619 (Р.57): нулевая скорость — ТИШИНА, а хвост реверба при этом
+/// дозванивает (решение владельца: «тишина только в нуле»).
+#[test]
+fn t619_zero_rate_is_silence_with_a_ringing_tail() {
+    let n = 48_000usize;
+    let mut p = signed_clip(0.0, 9_600, false);
+    p.clips[0].fx = vec![FxInstance::slowed_reverb(0.0, 0.0, 85.0)];
+    let dry = render(&p, n);
+    assert!(
+        dry.iter().all(|s| s.abs() < 1e-6),
+        "на нулевой скорости обязана быть тишина: max {}",
+        dry.iter().fold(0.0f32, |m, s| m.max(s.abs()))
+    );
+    // а с ревербом: сначала материал звучал (кривая 1 → 0), потом хвост
+    let mut q = signed_clip(1.0, 9_600, false);
+    q.clips[0].fx = vec![FxInstance::slowed_reverb(1.0, 0.6, 85.0)];
+    q.clips[0].fx_auto = vec![vec![ParamCurve {
+        param: "rate".into(),
+        ease: false,
+        keys: vec![
+            AutoKey { t: Tick::from_audio_frames(9_600), v: 1.0 },
+            AutoKey { t: Tick::from_audio_frames(9_600 + 24_000), v: 0.0 },
+        ],
+    }]];
+    let out = render(&q, n);
+    let tail_rms = {
+        let tail = &out[(n - 4096) * CH..];
+        (tail.iter().map(|s| (*s as f64) * (*s as f64)).sum::<f64>() / tail.len() as f64).sqrt()
+    };
+    assert!(tail_rms > 1e-5, "на удержании реверб обязан дозванивать: rms {tail_rms}");
+}

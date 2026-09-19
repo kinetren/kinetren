@@ -345,9 +345,6 @@ impl KtApp {
             .show(ctx, |ui| {
                 for (n, id) in members.iter().enumerate() {
                     let Some(clip) = self.model.clip(*id).cloned() else { continue };
-                    // вложение или файл: у вложения смешивание кадров
-                    // на собранной картинке не считается (Р.55, С4)
-                    let on_nest = self.model.project().sequence(clip.media).is_some();
                     let mut fx = clip.fx.clone();
                     let mut bypass = clip.fx_bypass.clone();
                     bypass.resize(fx.len(), false);
@@ -440,7 +437,6 @@ impl KtApp {
                                     bind.as_mut(),
                                     &cameras,
                                     clip.kind == ClipKind::Video,
-                                    on_nest,
                                     &mut hover_out,
                                 );
                                 let mut auto_ch = false;
@@ -875,10 +871,6 @@ pub(crate) fn draw_video_fx_params(
     mut bind: Option<&mut crate::widgets::CurveBind<'_>>,
     cameras: &[(u64, String)],
     on_video: bool,
-    // Эффект стоит на ВЛОЖЕНИИ (Р.55, С4). Смешивание кадров на собранной
-    // картинке не считается — вместо молчаливого игнорирования режим
-    // гасится и объясняется (правило 16, «невозможность действия видна»).
-    on_nest: bool,
     // накопитель подсказок кадра (Р.48: у графика АЧХ своя подсказка)
     hover: &mut Option<String>,
 ) -> crate::widgets::ParamsChanged {
@@ -971,28 +963,18 @@ pub(crate) fn draw_video_fx_params(
                         kt_model::FrameMode::Blend => k::fx::FRAMES_BLEND,
                     }))
                     .show_ui(ui, |ui| {
+                        // Р.56 (п.448): «смешивание» законно и на ВЛОЖЕНИИ —
+                        // режим наследуется содержимому, и пару смешивают
+                        // его листья. Гасить тут больше нечего.
                         for (m, key) in [
                             (kt_model::FrameMode::Nearest, k::fx::FRAMES_NEAREST),
                             (kt_model::FrameMode::Blend, k::fx::FRAMES_BLEND),
                         ] {
-                            let blocked = on_nest && m == kt_model::FrameMode::Blend;
-                            let r = ui
-                                .add_enabled_ui(!blocked, |ui| {
-                                    ui.selectable_value(frames, m, tr(key))
-                                })
-                                .inner;
-                            if blocked {
-                                r.on_hover_text(tr(k::fx::FRAMES_NO_NEST));
-                            } else {
-                                ch.base |= r.changed();
-                            }
+                            ch.base |= ui.selectable_value(frames, m, tr(key)).changed();
                         }
                     });
             });
             ui.label(egui::RichText::new(tr(k::fx::RATE_LINKED)).weak().small());
-            if on_nest {
-                ui.label(egui::RichText::new(tr(k::fx::FRAMES_NO_NEST)).weak().small());
-            }
         }
         FxInstance::Mirror { horizontal, vertical } => {
             ui.horizontal(|ui| {

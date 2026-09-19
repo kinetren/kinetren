@@ -853,6 +853,9 @@ impl TransitionEvent {
 pub trait Reel {
     fn clips(&self) -> &[ClipEvent];
     fn transitions(&self) -> &[TransitionEvent];
+    /// Строки сверху вниз. Единственный способ узнать, что «ниже», и —
+    /// с Р.56 — то, чему обязан соответствовать НОМЕР дорожки.
+    fn rows(&self) -> Vec<(LaneKind, u32)>;
     /// Остальное содержимое ленты. Умолчания — пустота: реализующий
     /// обязан переопределить только то, что у него есть.
     fn morphers(&self) -> &[MorpherEvent] {
@@ -933,7 +936,7 @@ impl LaneBases {
         }
     }
 
-    fn of_root(p: &Project) -> LaneBases {
+    pub fn of_root(p: &Project) -> LaneBases {
         LaneBases {
             video: p.video_lanes,
             audio: p.audio_lanes,
@@ -942,7 +945,7 @@ impl LaneBases {
         }
     }
 
-    fn of_seq(s: &Sequence) -> LaneBases {
+    pub fn of_seq(s: &Sequence) -> LaneBases {
         LaneBases {
             video: s.video_lanes,
             audio: s.audio_lanes,
@@ -1317,11 +1320,38 @@ impl Sequence {
     pub fn end(&self) -> Tick {
         self.clips.iter().map(|c| c.start + c.duration).max().unwrap_or(Tick::ZERO)
     }
+
+    /// Перенумеровать содержимое так, чтобы номер дорожки стал её рангом
+    /// среди строк своего вида (Р.56, п.449). То же правило, что у корня.
+    pub fn canonicalize_lanes(&mut self) -> LanePerm {
+        let n = LaneBases::of_seq(self);
+        let mut rows = self.rows();
+        let perm = LanePerm::from_rows(&rows, n);
+        if perm.is_identity() {
+            self.lane_order = canon_order(rows, n);
+            return perm;
+        }
+        for c in &mut self.clips {
+            c.lane = perm.map_clip(c.kind, c.lane);
+        }
+        for m in &mut self.morphers {
+            m.lane = perm.map(LaneKind::Morph, m.lane);
+        }
+        for c in &mut self.cameras {
+            c.lane = perm.map(LaneKind::Camera, c.lane);
+        }
+        perm.remap_keys(&mut rows);
+        self.lane_order = canon_order(rows, n);
+        perm
+    }
 }
 
 impl Reel for Project {
     fn clips(&self) -> &[ClipEvent] {
         &self.clips
+    }
+    fn rows(&self) -> Vec<(LaneKind, u32)> {
+        Project::rows(self)
     }
     fn transitions(&self) -> &[TransitionEvent] {
         &self.transitions
@@ -1343,6 +1373,9 @@ impl Reel for Project {
 impl Reel for Sequence {
     fn clips(&self) -> &[ClipEvent] {
         &self.clips
+    }
+    fn rows(&self) -> Vec<(LaneKind, u32)> {
+        Sequence::rows(self)
     }
     fn transitions(&self) -> &[TransitionEvent] {
         &self.transitions
@@ -2443,6 +2476,12 @@ pub fn trim_min_start(c: &ClipEvent) -> Tick {
     // сколько ВЫХОДНОГО времени соответствует материалу, лежащему левее
     // точки входа: s < 0, карта экстраполирует скоростью в нуле
     let span = c.duration.0.max(1) as f64;
+    // Скорость в нуле ≤ 0 (Р.57): материал слева НЕ потребляется этим
+    // событием вовсе — ни назад, ни на удержании. Экстраполяция делила бы
+    // на ноль и давала `i64::MIN` (переполнение в debug).
+    if crate::eff_rate(warp.base(), warp.prof(), 0.0) <= 0.0 {
+        return Tick(0);
+    }
     let s = -(c.source_in.0 as f64) / span;
     let dt = crate::output_time_for_source(warp.base(), warp.prof(), s) * span;
     Tick((c.start.0 + dt.round() as i64).max(0))
@@ -2458,6 +2497,9 @@ pub fn trim_max_end(c: &ClipEvent) -> Tick {
         return c.start + c.duration + c.source_in;
     };
     let span = c.duration.0.max(1) as f64;
+    if crate::eff_rate(warp.base(), warp.prof(), 0.0) <= 0.0 {
+        return Tick(i64::MAX / 4);
+    }
     let s = -(c.source_in.0 as f64) / span;
     let dt = crate::output_time_for_source(warp.base(), warp.prof(), s) * span;
     Tick(c.start.0 + c.duration.0 - dt.round() as i64)
@@ -2537,10 +2579,14 @@ pub fn stretch_auto_span(s: &mut ClipEvent, old_anchor: Tick, span_old: i64, spa
     }
 }
 
-/// Сколько МАТЕРИАЛА событие реально проходит: у растянутого — интеграл
-/// скорости, у обычного — своя длина.
+/// Сколько МАТЕРИАЛА событие реально занимает: у растянутого — ПРОЛЁТ
+/// позиции (Р.57), у обычного — своя длина.
+///
+/// Именно пролёт, а не «сколько съедено»: кривая со знаком может уйти
+/// назад и вернуться, съев вдвое больше, чем заняла. На положительных
+/// кривых пролёт равен прежнему `used`.
 pub fn clip_material_span(c: &ClipEvent) -> i64 {
-    crate::clip_warp(c).map(|w| w.used()).unwrap_or(c.duration.0).max(1)
+    crate::clip_warp(c).map(|w| w.span_len()).unwrap_or(c.duration.0).max(1)
 }
 
 /// Морфер из файла ДО Р.35: прежняя семантика — патч действует на цели
@@ -2810,6 +2856,122 @@ pub fn normalize_lane_order(
     out
 }
 
+/// Строки идут по возрастанию номера ВНУТРИ КАЖДОГО ВИДА — инвариант
+/// Р.56 (п.449). Порядок видов между собой произволен: `lane_order`
+/// кодирует только чередование.
+pub fn rows_are_canonical(rows: &[(LaneKind, u32)]) -> bool {
+    for kind in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
+        let mut prev: Option<u32> = None;
+        for &(_k, l) in rows.iter().filter(|e| e.0 == kind) {
+            if prev.is_some_and(|p| l <= p) {
+                return false;
+            }
+            prev = Some(l);
+        }
+    }
+    true
+}
+
+/// Перенумерация дорожек по видам: `map(вид, старый) = новый` (Р.56, п.449).
+///
+/// **Номер дорожки внутри вида = ЕЁ РАНГ среди строк этого вида.** До Р.56
+/// номер и строка жили отдельно: движок складывал видео по НОМЕРУ
+/// (`(Reverse(lane), start)` в `VideoRenderer::build_reel`), а экран
+/// показывал по `lane_order`. Дорожка, добавленная из меню морф-строки,
+/// получала самый большой номер — то есть НИЖНИЙ слой, — и рисовалась
+/// третьей сверху: «положил видео под потолок, а его не видно» (претензия
+/// владельца п.2 Р.56). Правило снимает расхождение в модели, не трогая
+/// движок; п.50 обещал «z-order == экран» и был нарушен в двух местах UI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanePerm {
+    pub video: Vec<u32>,
+    pub audio: Vec<u32>,
+    pub morph: Vec<u32>,
+    pub camera: Vec<u32>,
+}
+
+impl LanePerm {
+    /// Ранг каждой дорожки среди строк своего вида. `rows` обязан быть
+    /// НОРМАЛИЗОВАННЫМ (каждая дорожка ровно раз) — иначе ранги врут.
+    pub fn from_rows(rows: &[(LaneKind, u32)], n: LaneBases) -> LanePerm {
+        let mut p = LanePerm::identity(n);
+        for kind in [LaneKind::Video, LaneKind::Audio, LaneKind::Morph, LaneKind::Camera] {
+            let v = p.of_mut(kind);
+            for (rank, &(_, old)) in rows.iter().filter(|e| e.0 == kind).enumerate() {
+                if let Some(slot) = v.get_mut(old as usize) {
+                    *slot = rank as u32;
+                }
+            }
+        }
+        p
+    }
+
+    pub fn identity(n: LaneBases) -> LanePerm {
+        let id = |k: u32| (0..k).collect::<Vec<u32>>();
+        LanePerm {
+            video: id(n.video),
+            audio: id(n.audio),
+            morph: id(n.morph),
+            camera: id(n.camera),
+        }
+    }
+
+    pub fn is_identity(&self) -> bool {
+        [&self.video, &self.audio, &self.morph, &self.camera]
+            .iter()
+            .all(|v| v.iter().enumerate().all(|(i, &l)| i as u32 == l))
+    }
+
+    fn of(&self, k: LaneKind) -> &[u32] {
+        match k {
+            LaneKind::Video => &self.video,
+            LaneKind::Audio => &self.audio,
+            LaneKind::Morph => &self.morph,
+            LaneKind::Camera => &self.camera,
+        }
+    }
+
+    fn of_mut(&mut self, k: LaneKind) -> &mut Vec<u32> {
+        match k {
+            LaneKind::Video => &mut self.video,
+            LaneKind::Audio => &mut self.audio,
+            LaneKind::Morph => &mut self.morph,
+            LaneKind::Camera => &mut self.camera,
+        }
+    }
+
+    /// Новый номер дорожки. Номер вне счётчика остаётся собой: перенумеровать
+    /// нечего, а паниковать на чужом мусоре читатель формата не должен.
+    pub fn map(&self, k: LaneKind, lane: u32) -> u32 {
+        self.of(k).get(lane as usize).copied().unwrap_or(lane)
+    }
+
+    /// Переставить ключи `(вид, дорожка)` — области, строки порядка.
+    pub fn remap_keys(&self, keys: &mut [(LaneKind, u32)]) {
+        for e in keys.iter_mut() {
+            e.1 = self.map(e.0, e.1);
+        }
+    }
+
+    /// Переставить таблицы с нагрузкой: имена и высоты дорожек.
+    pub fn remap_keyed<T>(&self, items: &mut [(LaneKind, u32, T)]) {
+        for e in items.iter_mut() {
+            e.1 = self.map(e.0, e.1);
+        }
+    }
+
+    /// Ключ `(ClipKind, lane)` — так адресуются чужие OTIO-треки.
+    pub fn map_clip(&self, k: ClipKind, lane: u32) -> u32 {
+        self.map(
+            match k {
+                ClipKind::Video => LaneKind::Video,
+                ClipKind::Audio => LaneKind::Audio,
+            },
+            lane,
+        )
+    }
+}
+
 /// Синхронизация display-вектора при ВСТАВКЕ дорожки (lane >= at у этого
 /// вида сдвинулись на +1): новая строка встаёт прямо над бывшей `at`
 /// (теперь at+1), при её отсутствии — в конец (тест 49).
@@ -2835,9 +2997,26 @@ pub fn lane_order_remove(rows: &mut Vec<(LaneKind, u32)>, kind: LaneKind, at: u3
 
 /// Синхронизация имён дорожек при ВСТАВКЕ дорожки (п.2 р.10).
 pub fn lane_names_insert(names: &mut [(LaneKind, u32, String)], kind: LaneKind, at: u32) {
-    for e in names.iter_mut() {
+    lane_keyed_insert(names, kind, at)
+}
+
+/// Сдвиг ЛЮБОЙ таблицы, адресованной парой (вид, дорожка), при вставке
+/// дорожки: имена, высоты строк. Р.56: высоты раньше не сдвигались вовсе —
+/// после вставки дорожки заданная человеком высота оказывалась у соседа.
+pub fn lane_keyed_insert<T>(items: &mut [(LaneKind, u32, T)], kind: LaneKind, at: u32) {
+    for e in items.iter_mut() {
         if e.0 == kind && e.1 >= at {
             e.1 += 1;
+        }
+    }
+}
+
+/// То же при УДАЛЕНИИ дорожки: запись удалённой уходит, остальные съезжают.
+pub fn lane_keyed_remove<T>(items: &mut Vec<(LaneKind, u32, T)>, kind: LaneKind, at: u32) {
+    items.retain(|(k, l, _)| !(*k == kind && *l == at));
+    for e in items.iter_mut() {
+        if e.0 == kind && e.1 > at {
+            e.1 -= 1;
         }
     }
 }
@@ -4590,9 +4769,11 @@ params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
         amount: f64, 0.0, 1.0, 1.0, 0.01, Norm, Smooth;
     },
     SlowedReverb {
-        // потолок скорости — RATE_CLAMP карты варпа (warp.rs, Р.39:
-        // раньше он жил в kt-fx и был обещанием через границу крейта)
-        rate: f64, 0.25, 32.0, 1.0, 0.01, Ratio, Smooth;
+        // диапазон скорости — RATE_CLAMP карты варпа (warp.rs, Р.39:
+        // раньше он жил в kt-fx и был обещанием через границу крейта).
+        // Со знаком и с нулём (Р.57, решение владельца): минус идёт по
+        // материалу НАЗАД, ноль — стоп-кадр.
+        rate: f64, -32.0, 32.0, 1.0, 0.01, Ratio, Smooth;
         mix: f32, 0.0, 1.0, 0.0, 0.01, Norm, Smooth;
         // смена длины comb-линий пересоздаёт реверб — не автоматизируется
         reverb_delay_ms: f32, 1.0, 500.0, 60.0, 1.0, Ms, Structural;
@@ -5586,6 +5767,9 @@ pub enum ProjectError {
     // --- раскрытие ленты на месте (Р.55, С5) ---
     #[error("clip {0:?} crossed the expanded band boundary: an event cannot change reels")]
     BandEscape(ClipId),
+    // --- номер дорожки = ранг строки (Р.56, п.449) ---
+    #[error("reel {0:?}: lane numbers must follow row order within each kind")]
+    LaneOrderNotCanonical(Option<MediaId>),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,
@@ -5772,8 +5956,13 @@ impl Project {
         self.rows().iter().position(|&k| k == key)
     }
 
-    /// Записать порядок строк, схлопнув естественный в пусто (инвариант
-    /// поля `lane_order`).
+    /// Записать порядок строк и привести номера к рангам — ЕДИНСТВЕННАЯ
+    /// дверь к `lane_order` (Р.56, п.449).
+    ///
+    /// `order` называет строки ТЕКУЩИМИ номерами; после записи содержимое
+    /// перенумеровано так, что номер дорожки внутри вида равен её рангу
+    /// среди строк этого вида. Естественный порядок схлопывается в пустой
+    /// вектор (инвариант поля, Р.55 С5).
     pub fn set_lane_order(&mut self, order: &[(LaneKind, u32)]) {
         let norm = normalize_lane_order(
             order,
@@ -5782,14 +5971,49 @@ impl Project {
             self.morph_lanes,
             self.camera_lanes,
         );
-        let natural = normalize_lane_order(
-            &[],
-            self.video_lanes,
-            self.audio_lanes,
-            self.morph_lanes,
-            self.camera_lanes,
-        );
-        self.lane_order = if norm == natural { Vec::new() } else { norm };
+        self.lane_order = canon_order(norm, LaneBases::of_root(self));
+        self.canonicalize_lanes();
+    }
+
+    /// Перенумеровать содержимое КОРНЯ и всех лент под инвариант «номер
+    /// дорожки = ранг строки» (Р.56, п.449). Возвращает перестановку
+    /// КОРНЯ: читателю формата она нужна, чтобы переставить свои
+    /// побочные таблицы (чужие OTIO-треки в kt-otio).
+    pub fn canonicalize_lanes(&mut self) -> LanePerm {
+        for s in &mut self.sequences {
+            s.canonicalize_lanes();
+        }
+        let n = LaneBases::of_root(self);
+        let mut rows = self.rows();
+        let perm = LanePerm::from_rows(&rows, n);
+        if perm.is_identity() {
+            self.lane_order = canon_order(rows, n);
+            return perm;
+        }
+        for c in &mut self.clips {
+            c.lane = perm.map_clip(c.kind, c.lane);
+        }
+        for m in &mut self.morphers {
+            m.lane = perm.map(LaneKind::Morph, m.lane);
+        }
+        for c in &mut self.cameras {
+            c.lane = perm.map(LaneKind::Camera, c.lane);
+        }
+        for f in &mut self.foreign {
+            f.lane = perm.map_clip(f.kind, f.lane);
+        }
+        // область адресуется СЕМАНТИЧЕСКИМИ ключами дорожек — значит едет
+        // с перенумерацией, иначе «слой на этих дорожках» уехал бы на чужие
+        for a in &mut self.areas {
+            perm.remap_keys(&mut a.lanes);
+        }
+        if let Some(ui) = &mut self.ui {
+            perm.remap_keyed(&mut ui.lane_names);
+            perm.remap_keyed(&mut ui.lane_heights);
+        }
+        perm.remap_keys(&mut rows);
+        self.lane_order = canon_order(rows, n);
+        perm
     }
 
     /// Клипы после применения morpher'ов — ЕДИНСТВЕННАЯ точка выдачи клипов
@@ -5908,6 +6132,25 @@ impl Project {
         std::mem::swap(&mut self.overlap_layers, &mut s.overlap_layers);
     }
 
+    /// Документ, в котором ЛЕНТА `seq` стоит КОРНЕМ (Р.56, п.452).
+    ///
+    /// Нужен офлайн-счёту по ленте: превью её содержимого считается тем же
+    /// кодом композиции, что и всё остальное (инвариант 7), а этому коду
+    /// нужен проект с лентой на месте корня. Приём тот же, что у
+    /// `reel_document`, только лента называется явно, а не берётся из
+    /// «где стоит человек»: службе превью человек не указ.
+    ///
+    /// Сама лента из списка убирается — иначе она ссылалась бы на себя и
+    /// `validate` увидел бы цикл. Остальные ленты остаются: внутри могут
+    /// стоять их экземпляры.
+    pub fn reel_as_root(&self, seq: MediaId) -> Option<Project> {
+        self.sequences.iter().find(|s| s.id == seq)?;
+        let mut p = self.clone();
+        p.swap_reel(seq);
+        p.sequences.retain(|s| s.id != seq);
+        Some(p)
+    }
+
     /// Клипы ОДНОЙ ленты после морфер-слоёв, БЕЗ раскрытия вложений
     /// (Р.50, волна Б). `None` — корень.
     ///
@@ -6020,7 +6263,7 @@ impl Project {
     /// соседом; у аудио `overlap_weight` считает рампу из геометрии клипов.
     /// Нормализация после загрузки: число дорожек подтягивается вверх до
     /// фактических lane клипов (файлы, писанные до появления полей).
-    pub fn normalize(&mut self) {
+    pub fn normalize(&mut self) -> LanePerm {
         for c in &self.clips {
             match c.kind {
                 ClipKind::Video => self.video_lanes = self.video_lanes.max(c.lane + 1),
@@ -6040,6 +6283,11 @@ impl Project {
         // порядок и сломал байт-стабильность проекта (тест 12)
         self.markers.sort_by_key(|m| m.t);
         self.markers.dedup_by_key(|m| m.t);
+        // номер дорожки = ранг строки (Р.56, п.449): чинится на ЧТЕНИИ,
+        // потому что старые файлы (и чужие импорты) знают только номера.
+        // Перестановка отдаётся наружу — читателю формата она нужна для
+        // своих побочных карт (чужие треки в kt-otio).
+        self.canonicalize_lanes()
     }
 
     /// Полная проверка инвариантов. Ошибки загрузки ЯВНЫЕ — никаких
@@ -6104,6 +6352,13 @@ impl Project {
         // МОЛЧА обменялись бы материалом, стартовым таймкодом и эффектами.
         let mut clip_ids = std::collections::HashSet::new();
         for (seq, reel) in self.reels() {
+            // НОМЕР ДОРОЖКИ = РАНГ СТРОКИ (Р.56, п.449). Проверка стоит на
+            // КАНОНЕ; бенч (`merge_reel`) её не видит и не обязан: полоса
+            // раскрытия намеренно лежит в ХВОСТЕ числового пространства, а
+            // `simulate` валидирует уже после `unmerge_reel`.
+            if !rows_are_canonical(&reel.rows()) {
+                return Err(ProjectError::LaneOrderNotCanonical(seq));
+            }
             self.validate_reel(reel, seq.is_none(), &sources, &media_ids, &mut clip_ids)?;
         }
         Ok(())

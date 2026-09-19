@@ -206,20 +206,20 @@ pub fn render_raw_video_range_with(
     let mut stats = ExportStats::default();
     let mut src: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
         sources.into_iter().collect();
-    // нативные размеры (Р.46, п.321): ступень декода считается по запасу
-    // файла над Quality экспорта
-    let natives: std::collections::HashMap<MediaId, (u32, u32)> = src
-        .iter()
-        .filter(|(_, s)| s.info().has_video)
-        .map(|(m, s)| (*m, (s.info().width, s.info().height)))
-        .collect();
+    // факты источников: натив для ступени декода (Р.46, п.321) и
+    // процедурность для непрерывного времени (Р.56, п.448). Экспорт обязан
+    // спрашивать ТО ЖЕ, что превью, — иначе превью и файл разойдутся.
+    let mut facts = crate::video::SourceFacts::default();
+    for (m, s) in src.iter() {
+        facts.observe(*m, s.info());
+    }
     // Кэш на пару кадров: композит читает из кэша (тот же код, что превью),
     // экспорт лишь наполняет его блокирующим декодом.
     let cache = BurstCache::new(CacheConfig {
         max_audio_bytes: 1,
         max_video_bytes: EXPORT_VIDEO_CACHE_BYTES,
     });
-    let mut video = VideoRenderer::new_with_natives(project, &natives);
+    let mut video = VideoRenderer::new_with_facts(project, &facts);
     let (mut t, end) = match range {
         Some((a, b)) => (video.grid.align_floor(a), b),
         None => (Tick(0), project_range(project)),

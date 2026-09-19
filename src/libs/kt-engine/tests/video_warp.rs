@@ -423,3 +423,158 @@ fn t272b_video_curves_use_the_linear_axis() {
         "радиус обязан быть взят по ЛИНЕЙНОЙ оси (конец кривой), а не по варп-позиции"
     );
 }
+
+// ---- Р.57: знаковая скорость -------------------------------------------------
+
+/// Тест 604a (Р.57): видео идёт по материалу НАЗАД, когда скорость
+/// отрицательна, и разворачивается там, где кривая меняет знак.
+///
+/// Претензия владельца дословно: «реверсивное проигрывание в slowed-эффекте
+/// (отрицательный rate)».
+#[test]
+fn t604a_video_follows_a_signed_curve() {
+    let dur = 4 * SEC;
+    // 1 → −1: позиция поднимается к середине события и возвращается
+    let curve = vec![vec![ParamCurve {
+        param: "rate".into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(SEC), v: 1.0 }, AutoKey { t: Tick(SEC + dur), v: -1.0 }],
+    }]];
+    let track = pts_track(&project(
+        vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)],
+        curve,
+        false,
+    ));
+    let top = track.iter().enumerate().max_by_key(|(_, v)| **v).unwrap().0;
+    assert!(
+        (55..65).contains(&top),
+        "вершина не посередине события: кадр {top}, дорожка {:?}",
+        &track[..5]
+    );
+    assert!(track[top] > track[0] + SEC / 2, "материал не продвинулся вперёд вовсе");
+    // и ВЕРНУЛСЯ туда, откуда вышел: ∫rate по всему событию равен нулю
+    assert!(
+        (track[119] - track[0]).abs() <= 2 * STEP,
+        "кривая не вернулась в старт: {} против {}",
+        track[119],
+        track[0]
+    );
+    // вторая половина строго убывает — это и есть ход назад
+    for i in (top + 2)..118 {
+        assert!(track[i] >= track[i + 1], "кадр {i}: материал не идёт назад");
+    }
+}
+
+/// Тест 604b (Р.57): нулевая скорость — СТОП-КАДР, а не «очень медленно».
+#[test]
+fn t604b_zero_rate_is_a_freeze() {
+    let track = pts_track(&project(
+        vec![FxInstance::slowed_reverb(0.0, 0.0, 85.0)],
+        vec![],
+        false,
+    ));
+    assert!(track.iter().all(|&t| t == track[0]), "стоп-кадр поехал: {:?}", &track[..6]);
+    assert_eq!(track[0], SEC, "стоп держит кадр точки входа");
+    // и заказ на такой клип — ОДИН ключ на всё событие
+    let p = project(vec![FxInstance::slowed_reverb(0.0, 0.0, 85.0)], vec![], false);
+    let vr = VideoRenderer::new(&p);
+    let keys = vr.wanted_frames(TickRange::new(Tick(0), Tick(4 * SEC)), Q);
+    assert_eq!(keys.len(), 1, "стоп-кадр заказал больше одного кадра: {keys:?}");
+}
+
+/// Тест 604c (Р.57): у начала материала кадр ДЕРЖИТСЯ, а не уходит в минус.
+#[test]
+fn t604c_edge_holds_at_the_material_start() {
+    // source_in = 1 c, скорость −1: через секунду упрёмся в ноль файла
+    let track = pts_track(&project(
+        vec![FxInstance::slowed_reverb(-1.0, 0.0, 85.0)],
+        vec![],
+        false,
+    ));
+    assert!(track.iter().all(|&t| t >= 0), "кадр ушёл за начало файла: {:?}", &track[28..34]);
+    assert_eq!(track[0], SEC);
+    assert_eq!(track[119], 0, "к концу события мы у начала файла и держимся");
+    assert!(track[35] == 0 && track[60] == 0, "край не держится");
+}
+
+/// Тест 604d (Р.57): под отрицательной скоростью пара «смешивания» берётся
+/// с ТОЙ ЖЕ стороны, что у положительной, — дробная часть меряется вперёд.
+#[test]
+fn t604d_blend_pair_under_negative_rate() {
+    let mut fx = FxInstance::slowed_reverb(-0.5, 0.0, 85.0);
+    if let FxInstance::SlowedReverb { frames, .. } = &mut fx {
+        *frames = FrameMode::Blend;
+    }
+    let p = project(vec![fx], vec![], false);
+    let vr = VideoRenderer::new(&p);
+    // на полукадре пара обязана быть (a, a+STEP) и вес ровно половина
+    for i in [1i64, 3, 5, 7] {
+        let keys = vr.layers_at(Tick(i * STEP), Q);
+        assert_eq!(keys.len(), 2, "кадр {i}: пары нет — {keys:?}");
+        let (a, b) = (keys[0].1.0, keys[1].1.0);
+        assert_eq!(b - a, STEP, "кадр {i}: сосед взят не вперёд: {a} и {b}");
+    }
+}
+
+/// Тест 604e (Р.57): заказ == чтение под сменой знака (класс t247d).
+///
+/// Окно по двум концам пропустило бы экскурсию: кривая уходит вперёд и
+/// возвращается, и максимум лежит ВНУТРИ окна, а не на его краю.
+#[test]
+fn t604e_prefetch_matches_reads_under_a_sign_change() {
+    let dur = 4 * SEC;
+    let curve = vec![vec![ParamCurve {
+        param: "rate".into(),
+        ease: false,
+        keys: vec![AutoKey { t: Tick(SEC), v: 2.0 }, AutoKey { t: Tick(SEC + dur), v: -2.0 }],
+    }]];
+    let p = project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], curve, false);
+    let vr = VideoRenderer::new(&p);
+    let wanted: std::collections::BTreeSet<i64> = vr
+        .wanted_frames(TickRange::new(Tick(0), Tick(dur)), Q)
+        .into_iter()
+        .map(|(_, s, _)| s.0)
+        .collect();
+    let read: std::collections::BTreeSet<i64> = (0..4 * 30)
+        .flat_map(|i| vr.layers_at(Tick(i * STEP), Q).into_iter().map(|(_, s, _)| s.0))
+        .collect();
+    assert!(!read.is_empty());
+    assert!(
+        read.is_subset(&wanted),
+        "читается то, чего не заказывали: {:?}",
+        read.difference(&wanted).collect::<Vec<_>>()
+    );
+    // СТОРОЖ СЦЕНЫ: экскурсия обязана быть — иначе тест ничего не ловит
+    let first = vr.layers_at(Tick(0), Q)[0].1.0;
+    let last = vr.layers_at(Tick(119 * STEP), Q)[0].1.0;
+    let top = *read.iter().max().unwrap();
+    assert!(top > first.max(last) + STEP, "сцена выродилась: экскурсии нет");
+}
+
+/// Тест 604g (Р.57): «Реверс» поверх отрицательной скорости даёт ход
+/// ВПЕРЁД — зеркало берётся вокруг пролёта, а не вокруг съеденного.
+#[test]
+fn t604g_reverse_over_negative_rate_goes_forward() {
+    let rev = pts_track(&project(
+        vec![FxInstance::slowed_reverb(-0.5, 0.0, 85.0)],
+        vec![],
+        true,
+    ));
+    // без зеркала −0.5 идёт назад; с зеркалом — вперёд, от нижнего края
+    // пролёта к верхнему
+    assert!(rev[0] < rev[119], "зеркало не развернуло ход: {} → {}", rev[0], rev[119]);
+    for i in 0..118 {
+        assert!(rev[i] <= rev[i + 1] + STEP, "кадр {i}: ход не монотонен");
+    }
+    // пролёт −0.5 на 4 c — это 2 c назад: зеркало кладёт нас в −1 c от
+    // точки входа и ведёт к ней
+    assert_eq!(rev[0], 0, "зеркало начинает с нижнего края пролёта");
+    // допуск в два кадра: зеркало вычитает шаг сетки (первый выходной
+    // кадр зеркального клипа — ПОСЛЕДНИЙ настоящий), и последний кадр
+    // события лежит ещё на шаг раньше конца
+    assert!(
+        (rev[119] - SEC).abs() <= 2 * STEP,
+        "зеркало не доходит до точки входа: {}",
+        rev[119]
+    );
+}

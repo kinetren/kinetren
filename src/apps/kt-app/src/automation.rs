@@ -108,6 +108,54 @@ impl AutoView {
     }
 }
 
+/// Вертикальная ось графика: как значение кладётся на высоту (Р.57, п.456).
+///
+/// Правило КЛАССА, а не имени параметра: знаковое ОТНОШЕНИЕ — это
+/// скорость, и её −32…32 на линейной оси делают обычную кривую 0.66…1.0
+/// прямой у самого края (та самая жалоба Р.34 про старый график slowed).
+/// Логарифм по модулю растягивает окрестность единицы и оставляет ноль
+/// нулём; внутри полосы ±knee ось линейна, иначе логарифм ушёл бы в −∞.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Axis {
+    Linear,
+    SymLog { knee: f64 },
+}
+
+/// Ось параметра по его СПЕКЕ.
+pub fn axis_of(spec: &ParamSpec) -> Axis {
+    if spec.unit == kt_model::ParamUnit::Ratio && spec.min < 0.0 {
+        Axis::SymLog { knee: 0.25 }
+    } else {
+        Axis::Linear
+    }
+}
+
+impl Axis {
+    /// Значение → координата оси (нечётная, монотонная, непрерывная).
+    pub fn map(self, v: f64) -> f64 {
+        match self {
+            Axis::Linear => v,
+            Axis::SymLog { knee } => {
+                let a = v.abs();
+                let g = if a <= knee { a / knee } else { 1.0 + (a / knee).log2() };
+                g.copysign(v)
+            }
+        }
+    }
+
+    /// Обратно: координата оси → значение.
+    pub fn unmap(self, g: f64) -> f64 {
+        match self {
+            Axis::Linear => g,
+            Axis::SymLog { knee } => {
+                let a = g.abs();
+                let v = if a <= 1.0 { a * knee } else { knee * (a - 1.0).exp2() };
+                v.copysign(g)
+            }
+        }
+    }
+}
+
 /// Окно значений кривой: замороженное на время драга или посчитанное по
 /// её ключам.
 fn win_of(c: &ParamCurve, spec: &ParamSpec, view: &AutoView, ci: usize) -> (f64, f64) {
@@ -244,18 +292,24 @@ pub fn curve_color(i: usize) -> egui::Color32 {
 /// запасом, а не по всему диапазону спеки: у скорости spec — 0.25..32, и
 /// на полном диапазоне обычная кривая 0.7..1.0 вырождается в прямую у
 /// нижнего края (ровно та жалоба, что была про старый график slowed).
+/// Окно считается В КООРДИНАТАХ ОСИ (Р.57): на знаковой скорости
+/// линейное окно прижимало бы обычную кривую 0.66…1.0 к самому краю
+/// −32…32 и рисовало прямую (жалоба Р.34).
 fn value_window(c: &ParamCurve, spec: &ParamSpec) -> (f64, f64) {
+    let ax = axis_of(spec);
     let (mut lo, mut hi) = (f64::MAX, f64::MIN);
     for k in &c.keys {
-        lo = lo.min(k.v);
-        hi = hi.max(k.v);
+        let g = ax.map(k.v);
+        lo = lo.min(g);
+        hi = hi.max(g);
     }
+    let (gmin, gmax) = (ax.map(spec.min), ax.map(spec.max));
     if !lo.is_finite() || !hi.is_finite() {
-        return (spec.min, spec.max);
+        return (gmin, gmax);
     }
-    let span = (hi - lo).max((spec.max - spec.min) * 0.02);
+    let span = (hi - lo).max((gmax - gmin) * 0.02);
     let pad = span * 0.15;
-    ((lo - pad).max(spec.min), (hi + pad).min(spec.max))
+    ((lo - pad).max(gmin), (hi + pad).min(gmax))
 }
 
 /// Виджет целиком: переключатель вида + график или таблица.
@@ -584,10 +638,29 @@ fn graph(
     for (ci, c) in curves.iter().enumerate() {
         let Some(spec) = ctx.spec(&c.param) else { continue };
         let (lo, hi) = win_of(c, spec, view, ci);
+        // окно уже В КООРДИНАТАХ ОСИ (Р.57): значение переводится в них
+        let ax = axis_of(spec);
         let y_of = |v: f64| -> f32 {
-            let u = ((v - lo) / (hi - lo).max(1e-9)).clamp(0.0, 1.0) as f32;
+            let u = ((ax.map(v) - lo) / (hi - lo).max(1e-9)).clamp(0.0, 1.0) as f32;
             plot.bottom() - 6.0 - u * (plot.height() - 12.0)
         };
+        // НУЛЕВАЯ ЛИНИЯ (Р.57, п.456): окно пересекает ноль — значит
+        // «вперёд» и «назад» обязаны различаться не только подписью. Это
+        // класс, а не случай скорости: панорама и dB тоже знаковые.
+        if lo < 0.0 && hi > 0.0 {
+            let y0 = y_of(0.0);
+            p.add(egui::Shape::line_segment(
+                [egui::pos2(plot.left(), y0), egui::pos2(plot.right(), y0)],
+                egui::Stroke::new(1.0, crate::theme::AXIS_ZERO),
+            ));
+            p.text(
+                egui::pos2(plot.left() + 2.0, y0),
+                egui::Align2::LEFT_CENTER,
+                "0",
+                egui::FontId::proportional(9.0),
+                crate::theme::AXIS_ZERO,
+            );
+        }
         let col = curve_color(ci);
         if c.keys.len() > 1 {
             let pts: Vec<egui::Pos2> =
@@ -675,6 +748,7 @@ fn graph(
         && let Some(spec) = ctx.spec(&c.param)
     {
         let (lo, hi) = win_of(c, spec, view, view.active);
+        let ax = axis_of(spec);
         let col = curve_color(view.active);
         p.text(
             egui::pos2(rect.right() - 6.0, plot.top() + 2.0),
@@ -685,7 +759,8 @@ fn graph(
         );
         // границы шкалы значений: без них непонятно, «насколько» кривая
         // поднимается — а шкала у каждой кривой своя
-        for (v, y) in [(hi, plot.top() + 2.0), (lo, plot.bottom() - 12.0)] {
+        for (g, y) in [(hi, plot.top() + 2.0), (lo, plot.bottom() - 12.0)] {
+            let v = ax.unmap(g);
             p.text(
                 egui::pos2(rect.left() + 4.0, y),
                 egui::Align2::LEFT_TOP,
@@ -730,7 +805,7 @@ fn graph(
                 let c = &mut curves[view.active];
                 let t = Tick(t_of(pos.x).clamp(m0, m1));
                 let u = ((plot.bottom() - 6.0 - pos.y) / (plot.height() - 12.0)).clamp(0.0, 1.0);
-                let v = (lo + (hi - lo) * u as f64).clamp(spec.min, spec.max);
+                let v = axis_of(&spec).unmap(lo + (hi - lo) * u as f64).clamp(spec.min, spec.max);
                 c.keys.retain(|k| k.t != t);
                 c.keys.push(kt_model::AutoKey { t, v });
                 c.keys.sort_by_key(|k| k.t.0);
@@ -751,7 +826,7 @@ fn graph(
         let t = Tick(raw - raw.rem_euclid(step));
         let (lo, hi) = win_of(&curves[ci], &spec, view, ci);
         let u = ((plot.bottom() - 6.0 - pos.y) / (plot.height() - 12.0)).clamp(0.0, 1.0);
-        let v = (lo + (hi - lo) * u as f64).clamp(spec.min, spec.max);
+        let v = axis_of(&spec).unmap(lo + (hi - lo) * u as f64).clamp(spec.min, spec.max);
         curves[ci].keys[ki] = kt_model::AutoKey { t, v };
         // порядок восстанавливаем сразу, но выбор следует за СВОИМ ключом
         curves[ci].keys.sort_by_key(|k| k.t.0);

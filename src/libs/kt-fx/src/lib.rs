@@ -197,8 +197,9 @@ pub mod audio;
 
 pub use audio::{ChainOpts, ClipProcessor, Freeverb, SmoothedParam, Warp, eq_mag_db};
 pub use audio::{
-    WARP_SOURCE_MARGIN_FRAMES, chain_fingerprint, chain_lookahead, chain_source_used,
-    chain_source_window, chain_source_window_ext, chain_tail,
+    AddrKnot, WARP_SOURCE_MARGIN_FRAMES, chain_addr_knots, chain_consumption_window_ext,
+    chain_fingerprint, chain_lookahead, chain_source_used, chain_source_window,
+    chain_source_window_ext, chain_tail,
 };
 
 /// Карта растяжения времени ПЕРЕЕХАЛА В kt-model (Р.39): её обязан звать
@@ -206,7 +207,8 @@ pub use audio::{
 /// может. Здесь только реэкспорт: у формулы по-прежнему ОДИН дом, а движок
 /// и тесты продолжают звать `kt_fx::…`, и ни один вызов не тронут.
 pub use kt_model::{
-    AutoProfiles, ParamPoints, RATE_CLAMP, avg_rate, chain_avg_rate, chain_rate, eff_rate,
-    output_time_for_source, param_at, param_integral, rate_at, source_progress,
-    warp_material_ticks,
+    AutoProfiles, ParamPoints, RATE_AUDIO_FLOOR, RATE_CLAMP, SignKnot, avg_rate, chain_avg_rate,
+    chain_rate, consumed_abs, eff_rate, output_time_for_consumption, output_time_for_source,
+    param_at, param_integral, rate_at, rate_reach, rate_signed, sign_knots, source_progress,
+    span_over, warp_material_ticks, warp_span_ticks,
 };

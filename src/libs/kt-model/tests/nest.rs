@@ -1233,3 +1233,104 @@ fn t575_imported_addresses_never_collide() {
     assert_eq!(mids.len(), mt, "адреса медиа и лент столкнулись после вставки");
     p.validate().expect("документ после вставки законен");
 }
+
+// ---- Р.56, п.449: порядок строк и раскрытая полоса ---------------------------
+
+/// Тест 591 (Р.56, п.449). Бенч раскрытия ВЫВЕДЕН из-под инварианта
+/// «номер дорожки = ранг строки», а команды, которые этот инвариант
+/// применяют, при открытой полосе отвергаются целиком.
+///
+/// Полоса намеренно занимает ХВОСТ числового пространства дорожек, а её
+/// видимое место задаёт только `lane_order` — то есть в рабочем виде
+/// номера и строки расходятся ПО ПОСТРОЕНИЮ. Перенумеруй мы бенч, и
+/// `unmerge_reel` разложил бы события не по тем лентам, причём молча.
+#[test]
+fn t591_the_bench_is_exempt_and_row_commands_are_refused() {
+    let mut m = TimelineModel::new(expandable());
+    assert!(m.expand_band(ClipId(20)), "полоса не раскрылась");
+
+    // рабочий вид НЕ канонический — и это законно
+    assert!(
+        !rows_are_canonical(&m.project().rows()),
+        "сцена выродилась: в бенче строки и так по возрастанию, тест ничего не утверждает"
+    );
+    // а канон — канонический, и валидация его принимает
+    assert!(rows_are_canonical(&m.document().rows()));
+    m.document().validate().expect("канон обязан оставаться валидным при открытой полосе");
+
+    // обычная правка в полосе проходит
+    let inner = m.project().clips.iter().find(|c| c.id == ClipId(11)).unwrap().clone();
+    m.apply(Command::MoveClip {
+        id: ClipId(11),
+        new_start: inner.start + Tick(1_000),
+        new_lane: inner.lane,
+    })
+    .expect("правка в полосе обязана проходить");
+
+    // а команды строк — нет, и отказ ИМЕННОЙ
+    let rows = m.project().rows();
+    assert!(
+        matches!(m.apply(Command::SetLaneOrder { order: rows }), Err(CommandError::BandsOpen)),
+        "порядок строк при открытой полосе обязан быть отвергнут"
+    );
+    assert!(
+        matches!(
+            m.apply(Command::SetLanes { video: 2, audio: 1 }),
+            Err(CommandError::BandsOpen)
+        ),
+        "число дорожек при открытой полосе обязано быть отвергнуто"
+    );
+    assert_eq!(m.bands().len(), 1, "отказ не имеет права свернуть раскрытие сам");
+}
+
+/// Тест 592 (Р.56, п.449). Вставка дорожки В ХВОСТ полосы достаётся
+/// ПОЛОСЕ: за ней ничего не лежит по построению, а такая вставка — это
+/// «ленте нужна ещё одна дорожка» (вставка событий в раскрытии).
+///
+/// До Р.56 хвостовая дорожка не доставалась никому: `base + len` не
+/// попадало ни в одну ветку, и событие на ней молча уезжало в корень.
+#[test]
+fn t592_a_lane_at_the_band_tail_belongs_to_the_band() {
+    let mut m = TimelineModel::new(expandable());
+    assert!(m.expand_band(ClipId(20)));
+    let base = m.bands()[0].base.video;
+    let len = m.bands()[0].len.video;
+
+    m.apply(Command::InsertLane { kind: ClipKind::Video, at: base + len })
+        .expect("вставка в хвост полосы обязана проходить");
+    assert_eq!(m.bands()[0].len.video, len + 1, "хвостовая дорожка не досталась полосе");
+
+    // СЛЕДСТВИЕ: событие на новой дорожке уезжает В ЛЕНТУ, а не в корень
+    let mut c = clip(31, 1, Tick(LEN.0 / 2), LEN);
+    c.lane = base + len;
+    m.apply(Command::AddClip(c)).expect("событие на новой дорожке");
+    let doc = m.document();
+    let s = doc.sequence(MediaId(100)).expect("лента");
+    assert!(s.clips.iter().any(|c| c.id == ClipId(31)), "событие не доехало в ленту");
+    assert!(!doc.clips.iter().any(|c| c.id == ClipId(31)), "событие осталось в корне");
+}
+
+/// Тест 598 (Р.56, п.452): лента КОРНЕМ — документ, который можно считать
+/// офлайн.
+///
+/// Службе превью ленты нужен проект, где лента стоит на месте корня: код
+/// композиции один на всю программу (инвариант 7), и другого входа у него
+/// нет. Утверждается СЛЕДСТВИЕ: содержимое то же, документ законен, а
+/// самой ленты в списке больше нет — иначе она ссылалась бы на себя.
+#[test]
+fn t598_reel_as_root_is_a_valid_document() {
+    let p = expandable();
+    let seq = MediaId(100);
+    let inner = p.sequence(seq).unwrap().clips.iter().map(|c| c.id).collect::<Vec<_>>();
+    let n_morph = p.sequence(seq).unwrap().morphers.len();
+
+    let root = p.reel_as_root(seq).expect("лента есть");
+    assert_eq!(root.clips.iter().map(|c| c.id).collect::<Vec<_>>(), inner, "содержимое не то");
+    assert_eq!(root.morphers.len(), n_morph, "слой ленты не поехал корнем");
+    assert!(!root.sequences.iter().any(|s| s.id == seq), "лента осталась ссылкой на себя");
+    root.validate().expect("лента корнем обязана быть законным документом");
+
+    // исходный проект не тронут — служба считает по КОПИИ
+    assert_eq!(p.sequence(seq).unwrap().clips.len(), inner.len());
+    assert!(p.reel_as_root(MediaId(999)).is_none(), "несуществующая лента");
+}

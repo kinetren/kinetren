@@ -210,12 +210,9 @@ impl Player {
         let mut workers = HashMap::new();
         // нативные размеры источников (Р.46, п.321): ступень декода живёт
         // в рендерере, а узнать натив можно только у открытого источника
-        let mut nat: HashMap<MediaId, (u32, u32)> = HashMap::new();
+        let mut nat = crate::video::SourceFacts::default();
         for (media, src) in sources {
-            let i = src.info();
-            if i.has_video {
-                nat.insert(media, (i.width, i.height));
-            }
+            nat.observe(media, src.info());
             workers.insert(
                 media,
                 MediaWorker::spawn_with_stats(media, src, cache.clone(), decode_stats.clone()),
@@ -223,7 +220,7 @@ impl Player {
         }
         let workers: Workers = Arc::new(std::sync::RwLock::new(workers));
         let natives: Natives = Arc::new(std::sync::RwLock::new(nat));
-        let video = Mutex::new(VideoRenderer::new_with_natives(&project, &natives.read().unwrap()));
+        let video = Mutex::new(VideoRenderer::new_with_facts(&project, &natives.read().unwrap()));
         let video_gpu = Mutex::new(VideoGpuState::default());
         let project = Arc::new(Mutex::new(project));
         let model_dirty = Arc::new(AtomicBool::new(true));
@@ -341,7 +338,7 @@ impl Player {
 
     fn wake_after_project_swap(&self, p: Project) {
         *self.video.lock().unwrap() =
-            VideoRenderer::new_with_natives(&p, &self.natives.read().unwrap());
+            VideoRenderer::new_with_facts(&p, &self.natives.read().unwrap());
         *self.project.lock().unwrap() = p;
         self.model_dirty.store(true, Ordering::Release);
         self.wake.notify();
@@ -585,7 +582,7 @@ impl Player {
         if let Some(w) = self.workers.write().unwrap().remove(&media) {
             w.shutdown();
         }
-        self.natives.write().unwrap().remove(&media);
+        self.natives.write().unwrap().forget(media);
     }
 
     /// Пересобрать рендерер превью под текущие нативы (Р.46, п.321):
@@ -595,19 +592,13 @@ impl Player {
     fn rebuild_video_renderer(&self) {
         let p = self.project.lock().unwrap().clone();
         *self.video.lock().unwrap() =
-            VideoRenderer::new_with_natives(&p, &self.natives.read().unwrap());
+            VideoRenderer::new_with_facts(&p, &self.natives.read().unwrap());
     }
 
-    /// Запомнить нативный размер источника (Р.46, п.321). Источник без
-    /// видео ступени не получает вовсе.
+    /// Запомнить факты источника (Р.46 п.321 — натив, Р.56 п.448 —
+    /// процедурность). Источник без видео не получает ни того, ни другого.
     fn remember_native(&self, media: kt_model::MediaId, src: &dyn kt_media::MediaSource) {
-        let i = src.info();
-        let mut nat = self.natives.write().unwrap();
-        if i.has_video {
-            nat.insert(media, (i.width, i.height));
-        } else {
-            nat.remove(&media);
-        }
+        self.natives.write().unwrap().observe(media, src.info());
     }
 
     /// Качества декода видео-клипов при текущем Quality превью (Р.46,
@@ -783,9 +774,10 @@ struct RenderCtx {
 /// регрессия п.27: раньше добавление файла пересоздавало Player и сбрасывало
 /// весь прогретый кэш). Пишущие захваты — только короткие, из UI-потока.
 type Workers = Arc<std::sync::RwLock<HashMap<MediaId, MediaWorker>>>;
-/// Нативные размеры видео-источников (Р.46, п.321): их знает только
-/// открытый источник, а нужны они рендереру на каждой пересборке.
-type Natives = Arc<std::sync::RwLock<HashMap<MediaId, (u32, u32)>>>;
+/// Факты об открытых источниках (Р.46 п.321 — натив, Р.56 п.448 —
+/// процедурность): их знает только открытый источник, а нужны они
+/// рендереру на каждой пересборке.
+type Natives = Arc<std::sync::RwLock<crate::video::SourceFacts>>;
 
 fn audio_render_loop(ctx: RenderCtx) {
     let RenderCtx {
@@ -1268,7 +1260,7 @@ fn prefetch_loop(
         if cached.as_ref().map(|(v, _, _)| *v) != Some(version) {
             let p = project.lock().unwrap().clone();
             loop_stats.prefetch_rebuilds.fetch_add(1, Ordering::Relaxed);
-            let vr = VideoRenderer::new_with_natives(&p, &natives.read().unwrap());
+            let vr = VideoRenderer::new_with_facts(&p, &natives.read().unwrap());
             cached = Some((version, AudioRenderer::new(&p), vr));
         }
         let (_, renderer, video) = cached.as_ref().unwrap();
@@ -1750,7 +1742,9 @@ mod varispeed_tests {
     #[test]
     fn t114_display_key_never_goes_back_at_slow_rates() {
         let fps_step = 90_000 / 30; // ячейка 30 fps в тиках
-        for &rate in &[0.25f32, 0.5, 1.0, 2.0, 8.0] {
+        // 0.01 и 0.05 — с Р.57: полоса транспорта теперь доходит до них
+        // (прежний её край, 0.25, был тут ЕДИНСТВЕННЫМ нижним случаем)
+        for &rate in &[0.01f32, 0.05, 0.25, 0.5, 1.0, 2.0, 8.0] {
             for &dir in &[1i64, -1] {
                 let quantum = 2048i64; // кадров устройства на колбэк
                 let step = (quantum as f64 * rate as f64) as i64; // ход head

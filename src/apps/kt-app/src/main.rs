@@ -31,6 +31,7 @@ mod morpher_editor;
 mod project_lock;
 #[cfg(test)]
 mod reach_tests;
+mod reel_preview;
 mod render_dialog;
 mod theme;
 mod thumbs;

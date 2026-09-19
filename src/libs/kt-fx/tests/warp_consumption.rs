@@ -5,7 +5,7 @@ use kt_fx::{CH, Warp};
 
 #[test]
 fn warp_consumption_tracks_rate_changes() {
-    let mut w = Warp::new(1.0, 0);
+    let mut w = Warp::new(1.0, 0, (1.0, 1.0));
     let mut out = vec![0f32; 1024 * CH];
     let rates = [1.0f64, 0.35, 0.6, 1.0];
     for &r in &rates {

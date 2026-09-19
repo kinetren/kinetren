@@ -1647,3 +1647,128 @@ fn t494_smpte_alias_import() {
     let b2 = load_project(&text2, None).unwrap();
     assert_eq!(text2, save_project(&b2.project, &b2.retained, None), "идемпотентность");
 }
+
+/// Тест 593 (Р.56, п.449): файл в форме проекта владельца — видеодорожка
+/// «под потолком» — читается КАНОНИЧЕСКИ, и сырьё чужого трека едет
+/// вместе со своей дорожкой.
+///
+/// В `untitled_v26.09.19.otio` порядок строк был
+/// `[morph0, morph1, morph2, video8, camera1, camera0, video0, …]`: строка
+/// стояла третьей сверху, а номер `8` делал её НИЖНИМ слоем композита —
+/// «закинул туда видео, и оно не отображается вообще». На чтении номера
+/// становятся рангами строк; обратной совместимости владелец не просил.
+///
+/// Вторая половина — про `Retained.tracks`: чужая metadata трека
+/// адресуется парой (вид, номер), и без перестановки карты она молча
+/// уехала бы на СОСЕДНИЙ трек.
+#[test]
+fn t593_owner_shaped_file_loads_canonically() {
+    let mut p = rich_project();
+    p.video_lanes = 3;
+    p.morph_lanes = 1;
+    // «под потолком»: самая НИЖНЯЯ по номеру видео-дорожка стоит второй
+    // строкой сверху, сразу под морф-строкой
+    p.clips.push(clip(3, ClipKind::Video, 2, 0, 90_000, 3));
+    p.lane_order = vec![
+        (LaneKind::Morph, 0),
+        (LaneKind::Video, 2),
+        (LaneKind::Video, 0),
+        (LaneKind::Video, 1),
+        (LaneKind::Audio, 0),
+    ];
+    let text = save_project(&p, &Retained::default(), None);
+
+    // чужая metadata на треке бывшей video2 — вписываем прямо в документ
+    let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+    {
+        let tracks = v["tracks"]["children"].as_array_mut().unwrap();
+        // писатель гонит видео снизу вверх: (V,2) — ПЕРВЫЙ трек
+        let t = &mut tracks[0];
+        t["metadata"]["alien"] = serde_json::json!({"note": "верхняя строка"});
+    }
+    let text = serde_json::to_string_pretty(&v).unwrap();
+
+    let b = load_project(&text, None).expect("файл владельца обязан читаться");
+    let lp = &b.project;
+    // строки НЕ переставились — переставились НОМЕРА: морф-строка как
+    // стояла сверху, так и стоит, а видео под ней идёт 0,1,2
+    assert!(rows_are_canonical(&lp.rows()), "после чтения номера обязаны совпасть с рангами");
+    assert_eq!(
+        lp.rows(),
+        vec![
+            (LaneKind::Morph, 0),
+            (LaneKind::Video, 0),
+            (LaneKind::Video, 1),
+            (LaneKind::Video, 2),
+            (LaneKind::Audio, 0)
+        ],
+        "порядок строк на экране изменился, а обязан был остаться"
+    );
+    assert_eq!(
+        lp.clips.iter().find(|c| c.id == ClipId(3)).unwrap().lane,
+        0,
+        "событие «под потолком» не стало ВЕРХНИМ слоем"
+    );
+    assert_eq!(lp.clips.iter().find(|c| c.id == ClipId(1)).unwrap().lane, 1);
+    assert_eq!(lp.clips.iter().find(|c| c.id == ClipId(2)).unwrap().lane, 2);
+
+    // СЛЕДСТВИЕ для чужого сырья: оно на дорожке 0, а не на бывшей 2
+    let extra = b.retained.tracks.get(&(ClipKind::Video, 0)).expect("чужой трек потерялся");
+    assert!(
+        format!("{:?}", extra).contains("верхняя строка"),
+        "сырьё чужого трека не поехало за дорожкой: {extra:?}"
+    );
+
+    // круг: сохранение кладёт бывшую «video8» первым видео-треком, и
+    // повторное чтение уже ничего не меняет
+    let text2 = save_project(lp, &b.retained, None);
+    let v2: serde_json::Value = serde_json::from_str(&text2).unwrap();
+    // трек с чужим сырьём обязан быть ТЕМ ЖЕ, на котором лежит событие:
+    // адресация по (вид, номер) пережила перенумерацию
+    let alien = v2["tracks"]["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["metadata"]["alien"]["note"].as_str() == Some("верхняя строка"))
+        .expect("чужая metadata трека пропала при записи");
+    let ids: Vec<u64> = alien["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["metadata"]["kt"]["id"].as_u64())
+        .collect();
+    assert_eq!(ids, vec![3], "чужое сырьё уехало на трек чужого события: {ids:?}");
+    let b2 = load_project(&text2, None).expect("круг");
+    assert_eq!(b2.project, *lp, "второй круг что-то менял");
+    assert_eq!(text2, save_project(&b2.project, &b2.retained, None), "идемпотентность");
+}
+
+/// Тест 606 (Р.57): знаковая скорость переживает круг — и база, и ключ.
+///
+/// Отрицательный `rate` и ноль — законные значения (velocity-огибающая
+/// Vegas). Читатель не имеет права ни отвергнуть их, ни подтянуть к
+/// прежнему минимуму 0.25: обратной совместимости владелец не просил, а
+/// молчаливый кламп как раз и был претензией.
+#[test]
+fn t606_signed_rate_survives_the_round_trip() {
+    let mut p = rich_project();
+    p.clips[0].fx = vec![FxInstance::slowed_reverb(-0.5, 0.0, 85.0)];
+    p.clips[0].fx_auto = vec![vec![ParamCurve {
+        param: "rate".into(),
+        ease: false,
+        keys: vec![
+            AutoKey { t: Tick(0), v: 1.0 },
+            AutoKey { t: Tick(45_000), v: 0.0 },
+            AutoKey { t: Tick(90_000), v: -2.0 },
+        ],
+    }]];
+    p.validate().unwrap();
+    let text = save_project(&p, &Retained::default(), None);
+    let b = load_project(&text, None).expect("файл со знаковой скоростью читается");
+    let c = b.project.clips.iter().find(|c| c.id == ClipId(1)).unwrap();
+    assert_eq!(c.fx, p.clips[0].fx, "база скорости поехала");
+    assert_eq!(c.fx_auto, p.clips[0].fx_auto, "ключи скорости поехали");
+    let keys: Vec<f64> = c.fx_auto[0][0].keys.iter().map(|k| k.v).collect();
+    assert_eq!(keys, vec![1.0, 0.0, -2.0], "ноль и минус не дожили до модели");
+    assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность");
+}
