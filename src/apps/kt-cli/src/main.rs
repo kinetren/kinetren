@@ -125,9 +125,8 @@ fn probe_range(
         // а жалоба «играет не то» разбирается именно этими числами.
         if let Some(w) = kt_model::clip_warp(c) {
             let (lo, hi) = w.span();
-            let rates: Vec<f64> = (0..=10)
-                .map(|i| kt_model::eff_rate(w.base(), w.prof(), i as f64 / 10.0))
-                .collect();
+            let rates: Vec<f64> =
+                (0..=10).map(|i| kt_model::eff_rate(w.base(), w.prof(), i as f64 / 10.0)).collect();
             let rmin = rates.iter().cloned().fold(f64::INFINITY, f64::min);
             let rmax = rates.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
             println!(

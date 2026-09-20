@@ -110,9 +110,8 @@ impl ClipBlock {
     /// морфер — в самом низу, где под него заводилась новая строка
     /// (претензия владельца п.4 Р.56).
     pub fn localize(&mut self, base: LaneBases, len: LaneBases) -> usize {
-        let owns = |k: LaneKind, lane: u32| {
-            lane >= base.get(k) && lane < base.get(k) + len.get(k).max(1)
-        };
+        let owns =
+            |k: LaneKind, lane: u32| lane >= base.get(k) && lane < base.get(k) + len.get(k).max(1);
         let before = self.clips.len() + self.morphers.len() + self.cameras.len();
         self.clips.retain(|c| owns(lane_key(c).0, c.lane));
         self.morphers.retain(|m| owns(LaneKind::Morph, m.lane));

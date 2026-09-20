@@ -1585,3 +1585,199 @@ fn t585_procedural_sources_run_on_the_continuous_tick() {
         warm[0].1
     );
 }
+
+// ---- 631-633 (Р.58, п.459): ступень ЛЕНТЫ ≠ вход цепочки экземпляра -------
+//
+// Ступень ленты одна на всех её экземпляров (t450: у внутреннего листа обязан
+// быть ОДИН ключ кэша). Входом цепочки её отдавать каждому экземпляру нельзя:
+// пустая цепочка, одна сила слоя, ведущий стоп (морфер-слой) и цепочка без
+// ресемпла ступени не потребляют. До Р.58 такой экземпляр получал суб-композит
+// в S×Quality — debug падал, release МОЛЧА выбрасывал вложение из кадра.
+
+/// Фактура, на которой вписывание ВИДНО: у `SyntheticSource` заливка плоская,
+/// и разница между «вписали крупный» и «собрали мелкий» на ней неразличима.
+fn checker_sources() -> Vec<(MediaId, Box<dyn MediaSource>)> {
+    (1u64..=3)
+        .map(|id| {
+            (
+                MediaId(id),
+                // натив ЧУТЬ крупнее Quality: на 512 фактура усредняется в
+                // ровную серость на обоих путях, и сторож слепнет
+                Box::new(kt_media::synthetic::CheckerSource::new(Tick(90_000 * 60), 128, 72))
+                    as Box<dyn MediaSource>,
+            )
+        })
+        .collect()
+}
+
+fn render_checker(p: &Project, t: Tick, q: Quality) -> (Vec<u8>, bool) {
+    let mut video = VideoRenderer::new(p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        checker_sources().into_iter().collect();
+    for (media, src_pts, dq) in video.layers_at(t, q) {
+        let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+        cache.insert_video(
+            kt_engine::source_id(media),
+            Some(dq),
+            kt_engine::video::video_cache_idx(src_pts),
+            frame.into(),
+        );
+    }
+    video.compose_from_cache(&cache, t, q)
+}
+
+/// Лента с ДВУМЯ экземплярами: зумящий в нуле и близнец со своей цепочкой в
+/// `10·PART` — ровно конструкция t450, но её ещё и рендерят.
+fn twin_reel(zoom: f64, twin_fx: Vec<FxInstance>) -> Project {
+    let mut p = zooming_nest(zoom);
+    let mut twin = p.clips[0].clone();
+    twin.id = ClipId(11);
+    twin.start = Tick(10 * PART.0);
+    twin.fx = twin_fx;
+    p.clips.push(twin);
+    p.validate().expect("лента с двумя экземплярами законна");
+    p
+}
+
+/// Одинокий экземпляр ленты со своей цепочкой — тот же кадр, но ступень
+/// ленты некому поднимать.
+fn lone_reel(fx: Vec<FxInstance>) -> Project {
+    let mut p = zooming_nest(1.0);
+    p.clips[0].id = ClipId(11);
+    p.clips[0].start = Tick(10 * PART.0);
+    p.clips[0].fx = fx;
+    p.validate().expect("одинокий экземпляр законен");
+    p
+}
+
+fn pan(zoom: f64) -> FxInstance {
+    FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom }
+}
+
+const T_TWIN: Tick = Tick(10 * PART.0 + FRAME * 5);
+
+#[test]
+fn t631_every_instance_of_a_reel_renders() {
+    let q = Quality { width: 64, height: 36 };
+    let t_zoom = Tick(FRAME * 5);
+    // пустая цепочка; только барьер без ресемпла; ведущая сила слоя —
+    // ровно то, что кладёт морфер-слой на экземпляр с пустой цепочкой
+    let chains: Vec<(&str, Vec<FxInstance>)> = vec![
+        ("empty", vec![]),
+        ("blur", vec![FxInstance::Blur { radius: 2, radius_y: 2 }]),
+        ("leading mix", vec![pan(2.0), FxInstance::LayerMix { amount: 0.5, from: 0 }]),
+    ];
+    for (name, fx) in chains {
+        let p = twin_reel(3.0, fx);
+        let (twin, complete) = render_checker(&p, T_TWIN, q);
+        assert!(complete, "{name}: кадр объявлен неполным");
+        assert!(
+            twin.chunks(4).any(|px| px[3] > 0 && px[0] > 0),
+            "{name}: вложение ВЫПАЛО из кадра — суб-композит собран крупнее, \
+             чем цепочка экземпляра умеет потребить, и слой молча выброшен"
+        );
+        // соседний экземпляр той же ленты не пострадал
+        let (zooming, complete_z) = render_checker(&p, t_zoom, q);
+        assert!(complete_z, "{name}: зумящий экземпляр объявлен неполным");
+        assert!(zooming.chunks(4).any(|px| px[3] > 0), "{name}: зумящий экземпляр пуст");
+        // и заказ у обоих ОДИН (t450 держится)
+        let v = VideoRenderer::new(&p);
+        let a: Vec<Quality> = v.layers_at(t_zoom, q).into_iter().map(|(_, _, dq)| dq).collect();
+        let b: Vec<Quality> = v.layers_at(T_TWIN, q).into_iter().map(|(_, _, dq)| dq).collect();
+        assert_eq!(a, b, "{name}: экземпляры одной ленты заказали разные размеры");
+    }
+}
+
+#[test]
+fn t631b_chain_input_is_the_instances_own() {
+    let q = Quality { width: 64, height: 36 };
+    let t_zoom = Tick(FRAME * 5);
+
+    // (а) ВХОД РАВЕН СТУПЕНИ — путь прежний, байт-в-байт. Цепочка близнеца
+    // просит столько же, сколько лента даёт: вписывания нет.
+    let both = render_checker(&twin_reel(3.0, vec![pan(3.0)]), T_TWIN, q).0;
+    let lone = render_checker(&lone_reel(vec![pan(3.0)]), T_TWIN, q).0;
+    assert_eq!(
+        both, lone,
+        "экземпляр, который сам просит ступень ленты, обязан считаться ТЕМ ЖЕ \
+         путём, что и в одиночку: лишний ресемпл на ровном месте"
+    );
+    // и сам зумящий экземпляр не сдвинулся от появления соседа
+    assert_eq!(
+        render_checker(&twin_reel(3.0, vec![]), t_zoom, q).0,
+        render_checker(&zooming_nest(3.0), t_zoom, q).0,
+        "зумящий экземпляр поехал от того, что рядом появился близнец"
+    );
+
+    // (б) ВХОД НИЖЕ СТУПЕНИ — кадр равен ВПИСАННОМУ суб-композиту. Оракул
+    // считается независимо: содержимое ленты рендерится корнем в 3×Quality
+    // и вписывается той же билинейкой.
+    let fitted = render_checker(&twin_reel(3.0, vec![]), T_TWIN, q).0;
+    let big = Quality { width: q.width * 3, height: q.height * 3 };
+    let mut content = base();
+    content.clips = vec![ev(2, ClipKind::Video, 0, Tick(0), PART, 1)];
+    content.video_lanes = 1;
+    content.validate().unwrap();
+    let sub = render_checker(&content, Tick(FRAME * 5), big).0;
+    let src = kt_fx::video::Frame { w: big.width, h: big.height, rgba: sub, has_alpha: false };
+    let mut oracle = vec![0u8; (q.width * q.height * 4) as usize];
+    kt_fx::video::fit_into(&src, q.width, q.height, &mut oracle);
+    assert_eq!(
+        fitted, oracle,
+        "вписанный суб-композит разошёлся с независимой формулой: вписывание \
+         обязано быть ТОЙ ЖЕ билинейкой, что у сухой стороны смешивания"
+    );
+    // сторож самой фикстуры: на ровной заливке равенство выше ничего не
+    // значило бы — фактура обязана быть В КАДРЕ
+    assert!(
+        fitted.chunks(4).any(|px| px[0] < 64) && fitted.chunks(4).any(|px| px[0] > 192),
+        "в кадре нет фактуры — оракул сверяет две одинаковые заливки"
+    );
+    // ВПИСЫВАНИЕ вообще случилось: вход цепочки у близнеца ниже ступени
+    assert_eq!(
+        VideoRenderer::new(&twin_reel(3.0, vec![])).layers_at(T_TWIN, q)[0].2,
+        Quality { width: q.width * 3, height: q.height * 3 },
+        "содержимое ленты заказано НЕ в ступени — вписывать было бы нечего"
+    );
+}
+
+#[test]
+fn t631c_reel_stage_rides_in_the_postfx_key() {
+    let q = Quality { width: 64, height: 36 };
+    // ОДИН кэш на оба рендера: сначала лента без зумящего близнеца (ступень
+    // 1), потом с ним (ступень 3). Вход цепочки у близнеца в обоих случаях
+    // 1×, `fx_hash` тот же — различить кадры обязан ключ.
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    let mut srcs: std::collections::HashMap<MediaId, Box<dyn MediaSource>> =
+        checker_sources().into_iter().collect();
+    let mut warm = |p: &Project, v: &VideoRenderer, t: Tick| {
+        for (media, src_pts, dq) in v.layers_at(t, q) {
+            let _ = p;
+            let frame = srcs.get_mut(&media).unwrap().read_video_frame(src_pts, Some(dq)).unwrap();
+            cache.insert_video(
+                kt_engine::source_id(media),
+                Some(dq),
+                kt_engine::video::video_cache_idx(src_pts),
+                frame.into(),
+            );
+        }
+    };
+    let fx = vec![FxInstance::Blur { radius: 2, radius_y: 2 }];
+    let flat = lone_reel(fx.clone());
+    let mut v1 = VideoRenderer::new(&flat);
+    warm(&flat, &v1, T_TWIN);
+    let _ = v1.compose_from_cache(&cache, T_TWIN, q);
+
+    let staged = twin_reel(3.0, fx);
+    let mut v2 = VideoRenderer::new(&staged);
+    warm(&staged, &v2, T_TWIN);
+    let (dirty, _) = v2.compose_from_cache(&cache, T_TWIN, q);
+
+    let fresh = render_checker(&staged, T_TWIN, q).0;
+    assert_eq!(
+        dirty, fresh,
+        "пост-FX кэш отдал кадр ПРОШЛОЙ ступени ленты: вход цепочки и хэш \
+         цепочки те же, а байты разные — ступень обязана быть в ключе"
+    );
+}

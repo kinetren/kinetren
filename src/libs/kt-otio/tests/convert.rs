@@ -1772,3 +1772,74 @@ fn t606_signed_rate_survives_the_round_trip() {
     assert_eq!(keys, vec![1.0, 0.0, -2.0], "ноль и минус не дожили до модели");
     assert_eq!(text, save_project(&b.project, &b.retained, None), "идемпотентность");
 }
+
+/// Тест 638 (Р.58, п.462): событие ЛЕВЕЕ НУЛЯ внутри ленты переживает
+/// круг save→load→save байт-в-байт.
+///
+/// Трек OTIO последовательный и начинается с нуля: событие с `start < 0`
+/// позицией в нём не выразить, а всё, что идёт за ним, легло бы на курсор
+/// трека не в своё время. До Р.58 такой монтаж молча «приезжал» сдвинутым.
+/// Истинное время едет в конверте (`kt.start`) ТОЛЬКО там, где трек его
+/// не выразил, — обычный монтаж поля не несёт, и прежние файлы
+/// байт-стабильны (t433b, golden). Это контракт: будущий сторож
+/// `validate` не имеет права запрещать `start < 0` в ленте — файлы
+/// владельца уже его содержат.
+#[test]
+fn t638_negative_start_inside_a_reel_survives_the_round_trip() {
+    let mut p = Project::new(ProjectSettings {
+        fps: 30,
+        width: 1280,
+        height: 720,
+        sample_rate: 48000,
+        pitch_engine: Default::default(),
+    });
+    p.media.push(MediaRef { id: MediaId(1), path: "media/m1.mp4".into() });
+    let mut s = Sequence::new(MediaId(100), "Заставка");
+    // первое событие начинается ДО нуля ленты; второе стоит в своём
+    // времени, но в треке OTIO легло бы на курсор (0 + 50 000 > 45 000)
+    s.clips.push(clip(11, ClipKind::Video, 0, -10_000, 50_000, 1));
+    s.clips.push(clip(12, ClipKind::Video, 0, 45_000, 30_000, 1));
+    p.sequences.push(s);
+    p.clips.push(clip(1, ClipKind::Video, 0, 0, 60_000, 100));
+    p.validate().expect("start < 0 inside a reel is legal");
+
+    // сколько событий (Clip/Stack) несут `kt.start` — по дереву, а не по
+    // тексту: у морфер-слоёв в сайдкаре есть свой `start`
+    fn kt_starts(kids: &[kt_otio::Composable]) -> usize {
+        use kt_otio::Composable;
+        let has = |m: &serde_json::Map<String, serde_json::Value>| {
+            m.get("kt").and_then(|k| k.get("start")).is_some() as usize
+        };
+        kids.iter()
+            .map(|k| match k {
+                Composable::Clip(c) => has(&c.metadata),
+                Composable::Stack(s) => has(&s.metadata) + kt_starts(&s.children),
+                Composable::Track(t) => kt_starts(&t.children),
+                _ => 0,
+            })
+            .sum()
+    }
+    let text = save_project(&p, &Retained::default(), None);
+    // конверт несёт истинное время у ОБОИХ смещённых событий и больше ни у кого
+    let tl = parse_document(&text).unwrap();
+    assert_eq!(kt_starts(&tl.tracks.children), 2, "kt.start written where it is not needed");
+    assert_eq!(
+        kt_otio::kt_version(&parse_document(&text).unwrap()),
+        Some(kt_otio::KT_META_V8),
+        "a reel with an event before zero must bump the file to v8"
+    );
+
+    let bundle = load_project(&text, None).unwrap();
+    let q = &bundle.project;
+    let s = q.sequence(MediaId(100)).expect("reel");
+    assert_eq!(s.clips, p.sequences[0].clips, "reel content field by field, incl. start < 0");
+    assert_eq!(q.clips, p.clips, "instance field by field");
+
+    let text2 = save_project(q, &bundle.retained, None);
+    assert_eq!(text2, text, "save→load→save with a negative start is not byte-stable");
+
+    // обычный монтаж поля не несёт — байт-стабильность прежних файлов
+    let plain = save_project(&nested_project(), &Retained::default(), None);
+    let tl = parse_document(&plain).unwrap();
+    assert_eq!(kt_starts(&tl.tracks.children), 0, "kt.start leaked into ordinary files");
+}

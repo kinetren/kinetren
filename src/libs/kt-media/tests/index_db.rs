@@ -281,3 +281,93 @@ fn t401b_build_observed_sees_every_burst_and_keeps_the_pyramid() {
     );
     assert_eq!(frames, seen * AUDIO_BURST_FRAMES);
 }
+
+/// Тест 639 (Р.58, п.463): превью ЛЕНТЫ на диске — таблицы `reel_*`.
+///
+/// Претензия владельца: «У композиций превью на таймлайне, кажется, не
+/// кешируется и каждое открытие проекта строится заново». У ленты нет
+/// файла, и `media(path, size, mtime, xxhash)` ей не дом — ключ на диске
+/// это СОДЕРЖИМОЕ: (лента, редакция, отпечаток медиа). Чужая редакция или
+/// чужой отпечаток обязаны давать `None`: редакция подмену файла не видит,
+/// и без отпечатка подменённый исходник показывал бы старую полосу.
+#[test]
+fn t639_reel_preview_tables_round_trip_and_key_strictly() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("p.ktindex.db");
+
+    // пирамида — настоящая, от PeakAcc: формат блоба тот же, что у файлов
+    let mut src = synth(2, AudioPattern::Sine { hz: 440.0 });
+    let peaks = PeakPyramid::build(&mut src);
+    assert!(peaks.levels.len() > 1, "pyramid has one level only, the test would prove nothing");
+    let frames: Vec<Option<&[u8]>> = vec![Some(b"jpeg-0"), None, Some(b"jpeg-2")];
+
+    {
+        let mut db = MediaIndexDb::open(&path).unwrap();
+        assert!(db.reel_preview(7, 0xABCD, 0x1234).unwrap().is_none(), "empty db knows a reel");
+        db.put_reel_preview(7, 0xABCD, 0x1234, 90_000, 250_000, &frames, &peaks).unwrap();
+
+        // круг байт-в-байт: шаг, конец, дырка в кадрах, пирамида целиком
+        let row = db.reel_preview(7, 0xABCD, 0x1234).unwrap().expect("stored reel is missing");
+        assert_eq!(row.step, 90_000);
+        assert_eq!(row.end_ticks, 250_000);
+        assert_eq!(row.frames.len(), 3, "frame count is not the stored n");
+        assert_eq!(row.frames[0].as_deref(), Some(&b"jpeg-0"[..]));
+        assert_eq!(row.frames[1], None, "a missing frame came back as something");
+        assert_eq!(row.frames[2].as_deref(), Some(&b"jpeg-2"[..]));
+        assert_eq!(row.peaks, peaks, "peak pyramid did not survive the round trip");
+
+        // ключ строгий: чужая редакция / чужой отпечаток / чужая лента
+        assert!(db.reel_preview(7, 0xABCD ^ 1, 0x1234).unwrap().is_none(), "wrong hash hit");
+        assert!(db.reel_preview(7, 0xABCD, 0x1234 ^ 1).unwrap().is_none(), "wrong media_fp hit");
+        assert!(db.reel_preview(8, 0xABCD, 0x1234).unwrap().is_none(), "wrong seq hit");
+
+        // отрицательные значения после побитового i64 — тоже ключ
+        let big_hash = u64::MAX - 5;
+        db.put_reel_preview(9, big_hash, u64::MAX, 45_000, 1, &[None], &peaks).unwrap();
+        assert!(db.reel_preview(9, big_hash, u64::MAX).unwrap().is_some(), "high-bit key lost");
+
+        // новая версия ТОЙ ЖЕ ленты вытесняет прежнюю целиком — включая
+        // кадры за пределами нового n и старые уровни пиков
+        let short: Vec<Option<&[u8]>> = vec![Some(b"v2")];
+        let flat = PeakPyramid { levels: vec![vec![vec![(0, 0)], vec![(0, 0)]]] };
+        db.put_reel_preview(7, 0xABCD, 0x1234, 180_000, 300_000, &short, &flat).unwrap();
+        let row = db.reel_preview(7, 0xABCD, 0x1234).unwrap().expect("re-put lost the reel");
+        assert_eq!(row.step, 180_000, "old step survived the re-put");
+        assert_eq!(row.frames, vec![Some(b"v2".to_vec())], "old frames leaked into the new strip");
+        assert_eq!(row.peaks, flat, "old peak levels leaked into the new pyramid");
+        // новая РЕДАКЦИЯ той же ленты — прежняя редакция больше не находится
+        db.put_reel_preview(7, 0xBEEF, 0x1234, 180_000, 300_000, &short, &flat).unwrap();
+        assert!(db.reel_preview(7, 0xABCD, 0x1234).unwrap().is_none(), "old edition survived");
+        assert!(db.reel_preview(7, 0xBEEF, 0x1234).unwrap().is_some());
+    }
+
+    // повторное открытие — строки на месте (это и есть «не строится заново»)
+    {
+        let mut db = MediaIndexDb::open(&path).unwrap();
+        let row = db.reel_preview(7, 0xBEEF, 0x1234).unwrap().expect("reel gone after reopen");
+        assert_eq!(row.frames, vec![Some(b"v2".to_vec())]);
+        assert_eq!(row.peaks.levels, vec![vec![vec![(0, 0)], vec![(0, 0)]]]);
+        assert!(db.reel_preview(9, u64::MAX - 5, u64::MAX).unwrap().is_some());
+
+        // уборка: ленты, которых в проекте нет, уходят; названные остаются
+        assert_eq!(db.prune_reels(&[7]).unwrap(), 1, "prune removed a wrong number of reels");
+        assert!(db.reel_preview(7, 0xBEEF, 0x1234).unwrap().is_some(), "kept reel was pruned");
+        assert!(
+            db.reel_preview(9, u64::MAX - 5, u64::MAX).unwrap().is_none(),
+            "unlisted reel kept"
+        );
+        assert_eq!(db.prune_reels(&[7]).unwrap(), 0);
+
+        // и файловые таблицы этого не касается: purge медиа лент не трогает
+        let media_file = dir.path().join("v.bin");
+        std::fs::write(&media_file, b"fake video").unwrap();
+        let (id, _) = db.ensure_media(&media_file).unwrap();
+        std::fs::write(&media_file, b"fake video, changed").unwrap();
+        let (id2, st) = db.ensure_media(&media_file).unwrap();
+        assert_eq!((id2, st), (id, MediaEntryStatus::Rebuilt));
+        assert!(
+            db.reel_preview(7, 0xBEEF, 0x1234).unwrap().is_some(),
+            "rebuilding a media purged reel tables: they are keyed by content, not by media_id"
+        );
+    }
+}

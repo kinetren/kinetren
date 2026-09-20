@@ -113,6 +113,15 @@ pub struct NestStep {
     /// работает повторно» ломалось на морф-слое и камере.
     pub selected_morph: std::collections::BTreeSet<MorphId>,
     pub selected_camera: std::collections::BTreeSet<kt_model::CameraId>,
+    /// Экземпляр, РАСКРЫТЫЙ в покидаемом контексте на момент входа (Р.58,
+    /// п.461) — в том числе сам `inst`, если входили через его полосу
+    /// вторым Enter. Решение владельца Р.58 (пересмотр Р.56 п.5):
+    /// восстанавливать ВСЁ, включая входную полосу, — каскад Enter/Esc
+    /// симметричен. Хранится id, а не `Band`: на возврате полоса
+    /// ПЕРЕсчитывается `expand_band` (содержимое ленты могло измениться
+    /// внутри — базы и длина другие); исчез экземпляр или перестал быть
+    /// вложением — молча без полосы.
+    pub band: Option<ClipId>,
 }
 
 /// Окно имени ленты (Р.50). Та же форма, что у окна имени пресета: живой
@@ -505,6 +514,11 @@ pub struct KtApp {
     pub seq_name: Option<SeqNameDialog>,
     /// Путь внутрь вложений: по уровню на каждый вход (Р.50, В1).
     pub nest_path: Vec<NestStep>,
+    /// Полоса, раскрытая ВНУТРИ ленты на момент выхода из неё (Р.58,
+    /// п.461): вернулся в ту же ленту — раскрытие на месте. Пара к
+    /// `NestStep::band` (тот помнит полосу ПОКИДАЕМОГО контекста при
+    /// входе, этот — при выходе). Хранится id: полоса пересчитывается.
+    pub reel_bands: std::collections::HashMap<kt_model::MediaId, ClipId>,
     /// Ленты, про которые уже сказано «стоит в N местах» (Р.55, С5).
     /// По ЛЕНТЕ, а не на сессию целиком: две разные общие ленты — два
     /// разных предупреждения, и это честно. В файл не пишется.
@@ -825,6 +839,7 @@ impl KtApp {
             preset_save: None,
             seq_name: None,
             nest_path: Vec::new(),
+            reel_bands: std::collections::HashMap::new(),
             shared_warned: Default::default(),
             pending_drop: None,
             presets: Default::default(),
@@ -1024,6 +1039,7 @@ impl KtApp {
             preset_save: None,
             seq_name: None,
             nest_path: Vec::new(),
+            reel_bands: std::collections::HashMap::new(),
             shared_warned: Default::default(),
             pending_drop: None,
             presets: Default::default(),
@@ -1543,7 +1559,8 @@ impl KtApp {
         // Превью лент (Р.56, п.452). Пауза — не вежливость: офлайн-рендер
         // ленты декодирует файлы, и во время игры он отнимал бы процессор
         // у реального времени (инвариант 6).
-        self.reel_previews.set_paused(self.player.transport.is_playing() || self.render_job.is_some());
+        self.reel_previews
+            .set_paused(self.player.transport.is_playing() || self.render_job.is_some());
         if self.reel_previews.poll() {
             self.dirty_ui = true;
             // текстуры живут ровно столько, сколько их полоса: лента,
@@ -2934,7 +2951,30 @@ impl KtApp {
     /// прокрутки в местах вызова не заводим).
     fn center_view_on(&mut self, t: Tick) {
         let half = self.timeline_rect.width().max(1.0) as f64 * self.ticks_per_px / 2.0;
-        self.view_start = (t.0 as f64 - half).max(0.0);
+        self.view_start = (t.0 as f64 - half).max(self.view_floor(self.ticks_per_px));
+    }
+
+    /// НИЖНЯЯ ГРАНИЦА ВРЕМЕНИ ЖЕСТОВ над событиями (Р.58, п.462; решение
+    /// владельца): в корне ноль — стена, внутри полного входа ось экрана =
+    /// ось ленты, и её ноль стеной НЕ является — событие законно уезжает
+    /// левее нуля (там его окно экземпляра всё равно не играет). Курсор и
+    /// воспроизведение сюда не ходят: у них свой пол,
+    /// `timeline::CURSOR_FLOOR`. Одна функция на все жесты; сторож по
+    /// корпусу — t637c.
+    pub fn time_floor(&self) -> i64 {
+        if self.model.editing().is_some() { -(i64::MAX / 4) } else { 0 }
+    }
+
+    /// Нижняя граница ПРОКРУТКИ (`view_start`), в тиках: в корне прежние
+    /// −40 px, внутри ленты — до самого раннего события содержимого (оно
+    /// может стоять левее нуля), и те же −40 px запаса.
+    pub fn view_floor(&self, tpp: f64) -> f64 {
+        let earliest = if self.model.editing().is_some() {
+            self.model.project().clips.iter().map(|c| c.start.0).min().unwrap_or(0).min(0)
+        } else {
+            0
+        };
+        earliest as f64 - 40.0 * tpp
     }
 
     /// Завести ПУСТУЮ ленту (Р.55, С6).
@@ -2973,13 +3013,12 @@ impl KtApp {
     /// «и по основному таймлайну даст проигрывание и по композиции
     /// одновременно». Плата — что на экране две системы координат, и
     /// строки полосы обязаны быть видно отличимы.
+    ///
+    /// Работает и ВНУТРИ полного входа (Р.58, п.460): полоса считается от
+    /// канона, а каноном после `swap_reel` стоит текущая лента — базы у
+    /// неё свои, и приложению здесь делать нечего. Прежний сторож
+    /// «раскрыть можно только в корне» был ошибкой в голове, не в модели.
     pub fn expand_in_place(&mut self, id: ClipId) {
-        if self.model.editing().is_some() {
-            // внутри полного входа раскрытие бессмысленно: полоса
-            // считается от КОРНЯ, а корнем сейчас стоит другая лента
-            self.warn(tr(k::msg::NEST_EXPAND_NOT_HERE));
-            return;
-        }
         if self.model.bands().iter().any(|b| b.inst == id) {
             self.collapse_in_place(id);
             return; // жест работает ПОВТОРНО (правило 14): второй раз сворачивает
@@ -3050,7 +3089,9 @@ impl KtApp {
         if !self.is_nest(id) {
             return EnterOnNest::NotANest;
         }
-        if self.model.editing().is_some() || self.model.bands().iter().any(|b| b.inst == id) {
+        // решение ТОЛЬКО по полосе, контекст не при чём (Р.58, п.460):
+        // внутри ленты каскад тот же — первый Enter раскрывает, второй входит
+        if self.model.bands().iter().any(|b| b.inst == id) {
             EnterOnNest::Enter
         } else {
             EnterOnNest::Expand
@@ -3075,6 +3116,10 @@ impl KtApp {
             return;
         }
         let here = self.player.transport.playhead();
+        // полоса покидаемого контекста запоминается ДО `set_editing`: тот
+        // чистит полосы безусловно (инвариант модели), а вернуть её на
+        // выходе — дело приложения (Р.58, п.461)
+        let band = self.model.bands().first().map(|b| b.inst);
         self.nest_path.push(NestStep {
             parent: self.model.editing(),
             inst: id,
@@ -3087,8 +3132,13 @@ impl KtApp {
             selected: std::mem::take(&mut self.selected),
             selected_morph: std::mem::take(&mut self.selected_morph),
             selected_camera: std::mem::take(&mut self.selected_camera),
+            band,
         });
         self.model.set_editing(Some(seq.0));
+        // вернулись в ленту, где раскрытие уже было, — оно на месте (Р.58)
+        if let Some(inst) = self.reel_bands.get(&seq.0).copied() {
+            self.model.expand_band(inst);
+        }
         // регион живёт в ОСИ ВРЕМЕНИ ленты, а снаружи он был в оси корня:
         // унести его внутрь значило бы накрыть не то место
         self.model.set_region(None);
@@ -3126,6 +3176,18 @@ impl KtApp {
     pub fn leave_nest(&mut self) {
         let Some(step) = self.nest_path.pop() else { return };
         let inner = self.player.transport.playhead();
+        // раскрытие ЭТОЙ ленты запоминается до выхода: `set_editing` его
+        // сотрёт, а вернуться сюда человек может (Р.58, п.461)
+        if let Some(cur) = self.model.editing() {
+            match self.model.bands().first().map(|b| b.inst) {
+                Some(inst) => {
+                    self.reel_bands.insert(cur, inst);
+                }
+                None => {
+                    self.reel_bands.remove(&cur);
+                }
+            }
+        }
         self.model.set_editing(step.parent);
         self.model.set_region(step.region);
         self.view_start = step.view_start;
@@ -3142,6 +3204,19 @@ impl KtApp {
             None => step.cursor,
         };
         self.on_context_changed(back);
+        // ПОЛОСА ВОЗВРАЩАЕТСЯ (Р.58, п.461; решение владельца — пересмотр
+        // Р.56 п.5): раскрытие — рабочее место, и выход из ленты его не
+        // отнимает, включая полосу, через которую входили вторым Enter.
+        // Пересчитывается заново: содержимое могло измениться внутри.
+        // Исчез экземпляр или перестал быть вложением — молча без полосы.
+        // Выделение уже вернулось из снимка — `after_bands_changed`
+        // удерживает ровно его, если оно одно (экземпляр).
+        if let Some(inst) = step.band
+            && self.model.expand_band(inst)
+        {
+            let keep = (self.selected.len() == 1).then(|| *self.selected.iter().next().unwrap());
+            self.after_bands_changed(keep);
+        }
     }
 
     /// Общее на вход и выход: кэши кадра пересобираются, курсор встаёт на
@@ -5187,8 +5262,8 @@ impl KtApp {
             let w = (b.0 - a.0).max(1) as f64;
             // ширина полосы дорожек — из геометрии кадра, своей не заводим
             let px = self.tl_geom.as_ref().map(|g| g.rect.width() as f64).unwrap_or(800.0).max(1.0);
-            self.view_start = a.0.max(0) as f64;
             self.ticks_per_px = (w / px).clamp(crate::timeline::TPP_MIN, crate::timeline::TPP_MAX);
+            self.view_start = (a.0 as f64).max(self.view_floor(self.ticks_per_px));
             self.dirty_ui = true;
         }
     }

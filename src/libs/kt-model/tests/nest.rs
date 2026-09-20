@@ -1274,10 +1274,7 @@ fn t591_the_bench_is_exempt_and_row_commands_are_refused() {
         "порядок строк при открытой полосе обязан быть отвергнут"
     );
     assert!(
-        matches!(
-            m.apply(Command::SetLanes { video: 2, audio: 1 }),
-            Err(CommandError::BandsOpen)
-        ),
+        matches!(m.apply(Command::SetLanes { video: 2, audio: 1 }), Err(CommandError::BandsOpen)),
         "число дорожек при открытой полосе обязано быть отвергнуто"
     );
     assert_eq!(m.bands().len(), 1, "отказ не имеет права свернуть раскрытие сам");
@@ -1333,4 +1330,88 @@ fn t598_reel_as_root_is_a_valid_document() {
     // исходный проект не тронут — служба считает по КОПИИ
     assert_eq!(p.sequence(seq).unwrap().clips.len(), inner.len());
     assert!(p.reel_as_root(MediaId(999)).is_none(), "несуществующая лента");
+}
+
+// ---- Р.58: полоса ВНУТРИ полного входа -------------------------------------
+
+/// Тест 635 (Р.58, п.460): раскрытие на месте работает внутри полного входа.
+///
+/// Претензия владельца дословно: «открывая композицию не могу раскрыть в ней
+/// вложенную композицию». Модель этого никогда не запрещала: после
+/// `swap_reel` канон — это текущая лента корнем, `Band::of` считает базы от
+/// НЕЁ, а не от документа. Сторожа стояли в приложении с неверным
+/// комментарием «полоса считается от корня». Тест прибивает три вещи: базы
+/// полосы — от дорожек ленты, в которой стоим; раскрыть и свернуть —
+/// тождество рабочего вида; undo-снимок несёт и контекст, и полосу.
+#[test]
+fn t635_a_band_inside_an_entered_reel_counts_from_that_reel() {
+    let mut p = base();
+    p.video_lanes = 1;
+    p.audio_lanes = 1;
+    // Y — лента-внучка
+    let mut y = Sequence::new(MediaId(101), "Внучка");
+    y.clips = vec![clip(31, 1, Tick::ZERO, LEN), clip(32, 1, LEN, LEN)];
+    y.video_lanes = 1;
+    y.audio_lanes = 1;
+    // X — лента с экземпляром Y на ВТОРОЙ дорожке: базы обязаны выйти
+    // равными числу дорожек X, а не корня
+    let mut x = Sequence::new(MediaId(100), "Дочка");
+    x.clips.push(clip(21, 1, Tick::ZERO, LEN));
+    let mut yi = clip(22, 101, LEN, Tick(2 * LEN.0));
+    yi.lane = 1;
+    x.clips.push(yi);
+    x.video_lanes = 2;
+    x.audio_lanes = 2;
+    p.sequences.push(y);
+    p.sequences.push(x);
+    p.clips.push(clip(1, 1, Tick::ZERO, LEN));
+    p.clips.push(clip(10, 100, LEN, Tick(3 * LEN.0)));
+    p.validate().expect("fixture is legal");
+
+    let mut m = TimelineModel::new(p);
+    m.set_editing(Some(MediaId(100)));
+    let canon_before = m.document();
+    let view_before = m.project().clone();
+
+    assert!(m.expand_band(ClipId(22)), "a band inside an entered reel must open");
+    let b = &m.bands()[0];
+    assert_eq!(
+        (b.base.video, b.base.audio),
+        (2, 2),
+        "band bases must count the lanes of the reel we stand in, not the root"
+    );
+    assert_eq!(b.dt, LEN, "band time offset is the instance start minus source_in");
+    let inner = m.project().clips.iter().find(|c| c.id == ClipId(31)).expect("band content");
+    assert_eq!((inner.lane, inner.start), (2, LEN), "band content sits after X's lanes, shifted");
+    assert_eq!(m.document(), canon_before, "expanding changed the DOCUMENT");
+
+    // правка в полосе доезжает до Y — не до X и не до корня
+    m.apply(Command::MoveClip { id: ClipId(31), new_start: LEN + Tick(1_000), new_lane: 2 })
+        .expect("an edit inside the band must pass");
+    let doc = m.document();
+    assert_eq!(doc.sequence(MediaId(101)).unwrap().clips[0].start, Tick(1_000), "edit missed Y");
+    assert!(
+        !doc.sequence(MediaId(100)).unwrap().clips.iter().any(|c| c.id == ClipId(31))
+            && !doc.clips.iter().any(|c| c.id == ClipId(31)),
+        "the event of Y leaked into X or into the root"
+    );
+
+    // undo-снимок несёт КОНТЕКСТ и ПОЛОСУ: выйти в корень (полосы чистит
+    // модель — это её инвариант, восстановление — дело приложения), Ctrl+Z
+    // — и мы снова внутри X с раскрытой Y
+    m.set_editing(None);
+    assert!(m.bands().is_empty(), "set_editing must clear bands (model invariant)");
+    m.undo().expect("undo");
+    assert_eq!(m.editing(), Some(MediaId(100)), "undo did not bring the context back");
+    assert_eq!(
+        m.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
+        vec![ClipId(22)],
+        "undo did not bring the band back"
+    );
+    assert_eq!(m.document(), canon_before, "undo did not revert the edit");
+
+    // свернуть — ПОБАЙТОВОЕ тождество рабочего вида (как t566 в корне)
+    assert!(m.collapse_band(ClipId(22)));
+    assert_eq!(m.project(), &view_before, "expand + collapse inside a reel is not identity");
+    assert_eq!(m.document(), canon_before);
 }

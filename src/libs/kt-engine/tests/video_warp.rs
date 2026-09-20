@@ -440,11 +440,7 @@ fn t604a_video_follows_a_signed_curve() {
         ease: false,
         keys: vec![AutoKey { t: Tick(SEC), v: 1.0 }, AutoKey { t: Tick(SEC + dur), v: -1.0 }],
     }]];
-    let track = pts_track(&project(
-        vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)],
-        curve,
-        false,
-    ));
+    let track = pts_track(&project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], curve, false));
     let top = track.iter().enumerate().max_by_key(|(_, v)| **v).unwrap().0;
     assert!(
         (55..65).contains(&top),
@@ -468,11 +464,7 @@ fn t604a_video_follows_a_signed_curve() {
 /// Тест 604b (Р.57): нулевая скорость — СТОП-КАДР, а не «очень медленно».
 #[test]
 fn t604b_zero_rate_is_a_freeze() {
-    let track = pts_track(&project(
-        vec![FxInstance::slowed_reverb(0.0, 0.0, 85.0)],
-        vec![],
-        false,
-    ));
+    let track = pts_track(&project(vec![FxInstance::slowed_reverb(0.0, 0.0, 85.0)], vec![], false));
     assert!(track.iter().all(|&t| t == track[0]), "стоп-кадр поехал: {:?}", &track[..6]);
     assert_eq!(track[0], SEC, "стоп держит кадр точки входа");
     // и заказ на такой клип — ОДИН ключ на всё событие
@@ -486,11 +478,8 @@ fn t604b_zero_rate_is_a_freeze() {
 #[test]
 fn t604c_edge_holds_at_the_material_start() {
     // source_in = 1 c, скорость −1: через секунду упрёмся в ноль файла
-    let track = pts_track(&project(
-        vec![FxInstance::slowed_reverb(-1.0, 0.0, 85.0)],
-        vec![],
-        false,
-    ));
+    let track =
+        pts_track(&project(vec![FxInstance::slowed_reverb(-1.0, 0.0, 85.0)], vec![], false));
     assert!(track.iter().all(|&t| t >= 0), "кадр ушёл за начало файла: {:?}", &track[28..34]);
     assert_eq!(track[0], SEC);
     assert_eq!(track[119], 0, "к концу события мы у начала файла и держимся");
@@ -555,11 +544,7 @@ fn t604e_prefetch_matches_reads_under_a_sign_change() {
 /// ВПЕРЁД — зеркало берётся вокруг пролёта, а не вокруг съеденного.
 #[test]
 fn t604g_reverse_over_negative_rate_goes_forward() {
-    let rev = pts_track(&project(
-        vec![FxInstance::slowed_reverb(-0.5, 0.0, 85.0)],
-        vec![],
-        true,
-    ));
+    let rev = pts_track(&project(vec![FxInstance::slowed_reverb(-0.5, 0.0, 85.0)], vec![], true));
     // без зеркала −0.5 идёт назад; с зеркалом — вперёд, от нижнего края
     // пролёта к верхнему
     assert!(rev[0] < rev[119], "зеркало не развернуло ход: {} → {}", rev[0], rev[119]);
@@ -572,9 +557,5 @@ fn t604g_reverse_over_negative_rate_goes_forward() {
     // допуск в два кадра: зеркало вычитает шаг сетки (первый выходной
     // кадр зеркального клипа — ПОСЛЕДНИЙ настоящий), и последний кадр
     // события лежит ещё на шаг раньше конца
-    assert!(
-        (rev[119] - SEC).abs() <= 2 * STEP,
-        "зеркало не доходит до точки входа: {}",
-        rev[119]
-    );
+    assert!((rev[119] - SEC).abs() <= 2 * STEP, "зеркало не доходит до точки входа: {}", rev[119]);
 }

@@ -1231,7 +1231,18 @@ impl Inner {
                                     scale: *scale_alpha,
                                     fade: *fade,
                                 });
-                            } // чужой размер — молча пропускается
+                            } else {
+                                // Р.58, п.459: чужой размер БОЛЬШЕ не
+                                // проходит молча. У ленты он — наша
+                                // арифметика (`NestSrc::fit_to`), у файла
+                                // — сообщение декодера; и там и там кадр
+                                // не полон.
+                                debug_assert!(
+                                    src.input.nest().is_none(),
+                                    "nest chain ends at a foreign size, plan is {ow}x{oh}"
+                                );
+                                complete = false;
+                            }
                         }
                     }
                 }
@@ -1277,9 +1288,22 @@ impl Inner {
         if let Some(n) = src.input.nest() {
             let (jobs, sub_ok) = self.resolve_plan(&n.plan)?;
             let (sw, sh) = (n.plan.out_w, n.plan.out_h);
-            let (ops, (fw, fh), ha, ha_known, (mw, mh)) =
+            // Ступень ЛЕНТЫ выше входа цепочки (Р.58, п.459): суб-композит
+            // собран крупнее, чем цепочка этого экземпляра умеет
+            // потребить. Вписываем его ПЕРЕД цепочкой — `Resample` во весь
+            // кадр это зеркало CPU-шной `fit_into` (та же билинейка, что у
+            // сухой стороны `FxOp::Mix`).
+            let fit = n.fit_to(src.src_scale, ow, oh);
+            let (cw, ch) = fit.unwrap_or((sw, sh));
+            let (mut ops, (fw, fh), ha, ha_known, (mw, mh)) =
                 // суб-композит всегда с альфой (см. ниже)
-                chain_ops(&src.fx, sw, sh, src.src_scale, ow, oh, src.u, t, src.cam3d, true);
+                chain_ops(&src.fx, cw, ch, src.src_scale, ow, oh, src.u, t, src.cam3d, true);
+            if fit.is_some() {
+                ops.insert(
+                    0,
+                    FxOp::Resample { tw: cw, th: ch, frame: (0.0, 0.0, sw as f64, sh as f64) },
+                );
+            }
             if mw > self.max_dim || mh > self.max_dim {
                 return Err(GpuExecError::TooLarge { w: mw, h: mh });
             }
@@ -1913,6 +1937,9 @@ fn plan_key(plan: &FramePlan<'_>) -> u64 {
                 // том же времени в «смешивании» и в «ближайшем» — РАЗНЫЕ
                 // картинки, и различить их обязан ключ, а не удача
                 h.update(&[n.blend as u8]);
+                // ступень ЛЕНТЫ (Р.58, п.459): при ней выше входа цепочки
+                // перед цепочкой встаёт вписывание, и байты другие
+                h.update(&n.nest_scale.to_le_bytes());
                 h.update(&n.content_hash.to_le_bytes());
                 h.update(&n.inner_t.0.to_le_bytes());
                 put_plan(h, &n.plan);

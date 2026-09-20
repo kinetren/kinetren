@@ -586,3 +586,66 @@ fn t587_blend_on_a_nest_differs_from_nearest_on_gpu() {
     let (_, again) = cpu_and_gpu(&e, &mut vb, &cache, q, t);
     assert_eq!(gpu_b, again, "повторный прогон смешанного плана дал другой кадр");
 }
+
+// ---- 632 (Р.58, п.459): ступень ЛЕНТЫ ≠ вход цепочки экземпляра --------------
+
+/// Тот же проект, но у ленты ДВА экземпляра: зумящий (он и поднимает
+/// ступень ленты) и близнец со своей цепочкой. Ступень одна на ленту, а
+/// потребить её умеет не всякая цепочка — второму экземпляру суб-композит
+/// ВПИСЫВАЕТСЯ (`NestSrc::fit_to`, на GPU это `Resample` во весь кадр).
+fn twin_nest_project(twin_fx: Vec<FxInstance>) -> Project {
+    let sec = 90_000i64;
+    let mut p = nested_project(
+        vec![FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom: 3.0 }],
+        1.0,
+    );
+    let mut twin = p.clips[0].clone();
+    twin.id = ClipId(11);
+    twin.start = Tick(10 * sec);
+    twin.fx = twin_fx;
+    p.clips.push(twin);
+    p.validate().unwrap();
+    p
+}
+
+#[test]
+fn t632_reel_stage_and_chain_input_conform_gpu_to_cpu() {
+    use kt_engine::VideoGpuExec;
+    let Some(e) = test_engine() else { return };
+    let q = Quality { width: 128, height: 72 };
+    let sec = 90_000i64;
+    let t_twin = Tick(10 * sec + 20 * 3000);
+    let cases: Vec<(&str, Vec<FxInstance>)> = vec![
+        // вписывание: цепочка ступени не потребляет
+        ("empty", vec![]),
+        ("glow", vec![FxInstance::glow(1.0)]),
+        (
+            "leading mix",
+            vec![
+                FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom: 2.0 },
+                FxInstance::LayerMix { amount: 0.5, from: 0 },
+            ],
+        ),
+        // без вписывания: экземпляр сам просит ступень ленты
+        (
+            "same zoom",
+            vec![FxInstance::Pan { mode: Default::default(), pan_x: 0.0, pan_y: 0.0, zoom: 3.0 }],
+        ),
+    ];
+    for (name, fx) in cases {
+        let p = twin_nest_project(fx);
+        let (mut video, cache) = warm_cache(&p, q, t_twin);
+        let plan = video.frame_plan(&cache, t_twin, q);
+        let mut gpu = Vec::new();
+        let complete = e.execute_into(&plan, &mut gpu).expect("GPU обязан УМЕТЬ поддерево");
+        assert!(complete, "{name}: прогретый композит объявлен неполным");
+        drop(plan);
+        let (cpu, cpu_complete) = video.compose_from_cache(&cache, t_twin, q);
+        assert!(cpu_complete, "{name}: CPU-композит объявлен неполным");
+        // допуск BILINEAR: вписывание — ресемпл, а `resample.wgsl` считает
+        // в f32 и округляет к чётному, `fit_into` — в f64 и от нуля
+        assert_frames_close(&cpu, &gpu, q.width, q.height, FrameTol::BILINEAR, name);
+        assert!(gpu.iter().any(|&x| x != 0), "{name}: GPU-композит чёрный — вложение выпало");
+        assert!(cpu.iter().any(|&x| x != 0), "{name}: CPU-композит чёрный — вложение выпало");
+    }
+}

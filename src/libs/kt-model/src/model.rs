@@ -733,8 +733,17 @@ impl TimelineModel {
             return false;
         }
         // полоса считается от КАНОНА: `base` обязан быть числом корневых
-        // дорожек, а не «сколько их сейчас на экране вместе с чужой полосой»
+        // дорожек, а не «сколько их сейчас на экране вместе с чужой полосой».
+        // ВНУТРИ полного входа (Р.58, п.460) канон — это текущая лента
+        // корнем (`swap_reel`), и `Band::of` считает базы от неё же; ни
+        // одной особой ветки не нужно. Раскрыть саму ленту, в которой
+        // стоим, невозможно по циклам (`validate`), сторож — на случай
+        // ручной сборки проекта в обход валидации.
         let Some(b) = Band::of(&self.project, inst) else { return false };
+        debug_assert!(
+            Some(b.seq) != self.editing,
+            "expanding the reel being edited inside itself: a cycle escaped validation"
+        );
         self.bands.push(b);
         self.rebuild_bench();
         true

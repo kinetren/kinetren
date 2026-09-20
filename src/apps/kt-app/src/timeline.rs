@@ -821,6 +821,10 @@ pub fn ruler_pinned_label(left_tick: i64, label_step: i64) -> i64 {
 /// подписи одного масштаба обязаны быть одной формы, иначе они прыгают в
 /// ширине при прокрутке (правило 3 чек-листа).
 pub fn format_ruler_time_step(ticks: i64, step: i64) -> String {
+    // левее нуля (зона до нуля внутри ленты, Р.58) — знак и поля от |t|
+    if ticks < 0 {
+        return format!("-{}", format_ruler_time_step(-ticks, step));
+    }
     let s = ticks / 90_000;
     let head = if s < 3600 {
         format!("{}:{:02}", s / 60, s % 60)
@@ -840,6 +844,13 @@ pub fn format_ruler_time_step(ticks: i64, step: i64) -> String {
     let frac = (ticks % 90_000).abs() as f64 / 90_000.0;
     format!("{head}{}", format!("{frac:.digits$}", digits = digits).trim_start_matches('0'))
 }
+
+/// ПОЛ КУРСОРА, региона, меток и областей — ноль всегда (Р.58, п.462,
+/// решение владельца: «воспроизводить зону до нуля мне не надо»). Жесты
+/// над СОБЫТИЯМИ клампятся не им, а `KtApp::time_floor()`: внутри ленты
+/// событие законно уезжает левее нуля. Голых `.max(0)` над тиками жестов в
+/// этом файле не бывает — сторож t637c.
+pub const CURSOR_FLOOR: i64 = 0;
 
 /// Порог снапа, тики (п.17 р.6, тест 60): пропорционален зуму БЕЗ верхнего
 /// клампа — прежний потолок 9000 тиков (0.1 c) на глубоком зум-ауте делал
@@ -1845,7 +1856,9 @@ impl KtApp {
         ) {
             view_start = vs;
         }
-        view_start = view_start.max(-(tpp * 40.0));
+        // пол прокрутки: в корне −40 px, внутри ленты — до самого раннего
+        // события (зона до нуля показывается, Р.58 п.462)
+        view_start = view_start.max(self.view_floor(tpp));
         self.view_start = view_start;
         self.ticks_per_px = tpp;
         let x_to_tick =
@@ -1948,7 +1961,9 @@ impl KtApp {
         let (minor_step, label_step) = ruler_steps(tpp);
         let mut ruler_mesh = egui::Mesh::default();
         let tick_col = egui::Color32::from_gray(70);
-        let t0 = (x_to_tick(rect.left()).max(0) / minor_step) * minor_step;
+        // левее нуля риски и подписи есть только внутри ленты (пол вида
+        // там ниже нуля); `div_euclid` — чтобы сетка не сбивалась на минусе
+        let t0 = x_to_tick(rect.left()).max(self.time_floor()).div_euclid(minor_step) * minor_step;
         let t1 = x_to_tick(rect.right()) + minor_step;
         let mut t = t0;
         while t <= t1 {
@@ -2737,7 +2752,7 @@ impl KtApp {
             // дорожку» из меню встаёт СРАЗУ ПОД ней (п.5 р.16)
             self.ctx_row = geom.key_at_y(pos.y);
             // и ВРЕМЯ клика: «Вставить» кладёт блок сюда (Р.56, п.450)
-            self.ctx_at = Some(kt_time::Tick(geom.x_to_tick(pos.x).max(0)));
+            self.ctx_at = Some(kt_time::Tick(geom.x_to_tick(pos.x).max(self.time_floor())));
             // цели гасят друг друга: меню на экране одно (п.363)
             self.ctx_panel = None;
             self.ctx_target = Some(if let Some(m) = marker_at(self, pos) {
@@ -2860,11 +2875,11 @@ impl KtApp {
                     self.drag = Some(Drag::Scrub);
                 } else if response.drag_started() {
                     // снап и при СОЗДАНИИ региона (п.13 р.6, тест 59)
-                    let anchor = self.snap(x_to_tick(pos.x).max(0), None);
+                    let anchor = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
                     self.drag = Some(Drag::Region { anchor });
                 } else {
-                    let t = self.snap(x_to_tick(pos.x).max(0), None);
-                    self.player.seek(Tick(t.max(0)));
+                    let t = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
+                    self.player.seek(Tick(t.max(CURSOR_FLOOR)));
                 }
             } else if let Some((inst, left)) =
                 band_edge_at(self, pos).filter(|_| !response.double_clicked())
@@ -2971,8 +2986,8 @@ impl KtApp {
                         }
                     }
                 } else if response.clicked() {
-                    let t = self.snap(x_to_tick(pos.x).max(0), None);
-                    self.player.seek(Tick(t.max(0)));
+                    let t = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
+                    self.player.seek(Tick(t.max(CURSOR_FLOOR)));
                 }
             } else if let Some((id, zone)) = clip_at(self, pos) {
                 self.selected_morph.clear();
@@ -2984,8 +2999,8 @@ impl KtApp {
                 } else if response.clicked() {
                     self.select_only(id);
                     // клик по СОБЫТИЮ тоже ставит курсор (v1, п.7)
-                    let t = self.snap(x_to_tick(pos.x).max(0), None);
-                    self.player.seek(Tick(t.max(0)));
+                    let t = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
+                    self.player.seek(Tick(t.max(CURSOR_FLOOR)));
                 } else if !self.is_selected(id) {
                     // драг по чужому событию берёт его одно; драг по члену
                     // пачки тащит всю пачку (выделение не рушим)
@@ -3083,13 +3098,13 @@ impl KtApp {
             } else if response.clicked() && edge_heat(pos.x) != 0.0 {
                 // клик в зоне прыжка: курсор СТАВИТСЯ (по позиции до сдвига),
                 // и вью прыгает — «и то и то» (решение пользователя, п.10)
-                let t = self.snap(x_to_tick(pos.x).max(0), None);
-                self.player.seek(Tick(t.max(0)));
+                let t = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
+                self.player.seek(Tick(t.max(CURSOR_FLOOR)));
                 let heat = edge_heat(pos.x);
                 let vis = rect.width() as f64 * tpp;
                 self.view_start = (self.view_start
                     + heat.signum() as f64 * (heat.abs() as f64).powi(2) * vis * 0.6)
-                    .max(-(tpp * 40.0));
+                    .max(self.view_floor(tpp));
             } else if response.drag_started() {
                 if ctrl_held || self.sel_tool {
                     // рамка выделения (Р.33 п.7): Ctrl+драг всегда, а в
@@ -3100,13 +3115,13 @@ impl KtApp {
                 } else {
                     // пустое место: выделение региона (порт RegionSelect)
                     // снап и при создании региона с пустого места (п.13 р.6)
-                    let anchor = self.snap(x_to_tick(pos.x).max(0), None);
+                    let anchor = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
                     self.drag = Some(Drag::Region { anchor });
                 }
             } else {
                 self.selected.clear();
-                let t = self.snap(x_to_tick(pos.x).max(0), None);
-                self.player.seek(Tick(t.max(0)));
+                let t = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
+                self.player.seek(Tick(t.max(CURSOR_FLOOR)));
             }
         }
 
@@ -3140,7 +3155,7 @@ impl KtApp {
                                 let targets = self.snap_targets(Some(d.id));
                                 snap_move(raw, dur, &targets, snap_threshold(self.ticks_per_px))
                             };
-                            d.cur_start = snapped.max(0);
+                            d.cur_start = snapped.max(self.time_floor());
                             // упор в ноль ломает примагничивание — линию гасим
                             self.snap_line = if d.cur_start == snapped { line } else { None };
                             d.cur_end = d.cur_start + dur;
@@ -3221,18 +3236,18 @@ impl KtApp {
                     self.drag = Some(Drag::Clip(d));
                 }
                 Some(Drag::Scrub) => {
-                    let t = self.snap(x_to_tick(pos.x).max(0), None);
-                    self.player.seek(Tick(t.max(0)));
+                    let t = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
+                    self.player.seek(Tick(t.max(CURSOR_FLOOR)));
                     self.drag = Some(Drag::Scrub);
                 }
                 Some(Drag::Region { anchor }) => {
-                    let cur = self.snap(x_to_tick(pos.x).max(0), None);
+                    let cur = self.snap(x_to_tick(pos.x).max(CURSOR_FLOOR), None);
                     self.model.set_region(Region::normalized(Tick(anchor), Tick(cur)));
                     self.drag = Some(Drag::Region { anchor });
                 }
                 Some(Drag::RegionEdge { start_edge }) => {
                     if let Some(r) = self.model.project().region {
-                        let raw = x_to_tick(pos.x).max(0);
+                        let raw = x_to_tick(pos.x).max(CURSOR_FLOOR);
                         let snapped = self.snap(raw, None);
                         let newr = if start_edge {
                             Region::normalized(Tick(snapped), r.end)
@@ -3244,12 +3259,12 @@ impl KtApp {
                     self.drag = Some(Drag::RegionEdge { start_edge });
                 }
                 Some(Drag::Marker { orig, .. }) => {
-                    let raw = x_to_tick(pos.x).max(0);
+                    let raw = x_to_tick(pos.x).max(CURSOR_FLOOR);
                     let cur = self.snap(raw, None);
                     self.drag = Some(Drag::Marker { orig, cur });
                 }
                 Some(Drag::MarkerEdge { start, left, .. }) => {
-                    let raw = x_to_tick(pos.x).max(0);
+                    let raw = x_to_tick(pos.x).max(CURSOR_FLOOR);
                     let cur = self.snap(raw, None).max(if left { 0 } else { start });
                     self.drag = Some(Drag::MarkerEdge { start, left, cur });
                 }
@@ -3305,22 +3320,22 @@ impl KtApp {
                     self.drag = Some(Drag::TransitionBody { id, orig_at, cur_at });
                 }
                 Some(Drag::CameraEdge { id, left, .. }) => {
-                    let cur = x_to_tick(pos.x).max(0);
+                    let cur = x_to_tick(pos.x).max(self.time_floor());
                     self.drag = Some(Drag::CameraEdge { id, left, cur });
                 }
                 Some(Drag::NestWindow { inst, left, .. }) => {
                     // снап тот же, что у тримов: окно обязано садиться на
                     // те же места, что и любой другой край
-                    let cur = self.snap(x_to_tick(pos.x).max(0), Some(inst));
+                    let cur = self.snap(x_to_tick(pos.x).max(self.time_floor()), Some(inst));
                     self.drag = Some(Drag::NestWindow { inst, left, cur });
                 }
                 Some(Drag::MorphEdge { id, left, .. }) => {
-                    let cur = x_to_tick(pos.x).max(0);
+                    let cur = x_to_tick(pos.x).max(self.time_floor());
                     self.drag = Some(Drag::MorphEdge { id, left, cur });
                 }
                 Some(Drag::Morph { id, grab_dt, .. }) => {
                     let raw = x_to_tick(pos.x) - grab_dt;
-                    let cur_start = self.snap(raw, None).max(0);
+                    let cur_start = self.snap(raw, None).max(self.time_floor());
                     // строка под курсором — тем же правилом, что у клипа
                     let row = geom.row_at_y_unbounded(pos.y).max(0);
                     let cur_lane = geom.nearest_lane_of(LaneKind::Morph, row);
@@ -3328,7 +3343,7 @@ impl KtApp {
                 }
                 Some(Drag::Camera { id, grab_dt, .. }) => {
                     let raw = x_to_tick(pos.x) - grab_dt;
-                    let cur_start = self.snap(raw, None).max(0);
+                    let cur_start = self.snap(raw, None).max(self.time_floor());
                     let row = geom.row_at_y_unbounded(pos.y).max(0);
                     let cur_lane = geom.nearest_lane_of(LaneKind::Camera, row);
                     self.drag =
@@ -3558,8 +3573,8 @@ impl KtApp {
                     // (Р.35 п.2) — пунктом меню или кнопкой, уже после
                     // того, как пользователь отпустил мышь
                     self.last_band = Some((
-                        Tick(x_to_tick(band.left()).max(0)),
-                        Tick(x_to_tick(band.right()).max(0)),
+                        Tick(x_to_tick(band.left()).max(CURSOR_FLOOR)),
+                        Tick(x_to_tick(band.right()).max(CURSOR_FLOOR)),
                         geom.rows_in_band(band.top(), band.bottom()),
                     ));
                     let hits = rubber_hits(&geom, self.model.project(), band);
@@ -3612,7 +3627,7 @@ impl KtApp {
                         let (s0, e0) = (ev.start.0, (ev.start + ev.duration).0);
                         let min = kt_model::MIN_CLIP_DURATION.0;
                         if left {
-                            let ns = cur.min(e0 - min).max(0);
+                            let ns = cur.min(e0 - min).max(self.time_floor());
                             ev.start = Tick(ns);
                             ev.duration = Tick(e0 - ns);
                         } else {
@@ -3628,7 +3643,7 @@ impl KtApp {
                         let (s0, e0) = (ev.start.0, (ev.start + ev.duration).0);
                         let min = kt_model::MIN_CLIP_DURATION.0;
                         if left {
-                            let ns = cur.min(e0 - min).max(0);
+                            let ns = cur.min(e0 - min).max(self.time_floor());
                             ev.start = Tick(ns);
                             ev.duration = Tick(e0 - ns);
                         } else {
@@ -4204,6 +4219,34 @@ impl KtApp {
             }
         }
 
+        // ---- ЗОНА ДО НУЛЯ внутри ленты (Р.58, п.462) ------------------------
+        //
+        // Решение владельца: показывать с вуалью, курсор и воспроизведение
+        // туда не заходят. Та же вуаль и тот же приём, что у хвостов полосы
+        // ниже, и рисуется она ПОСЛЕ событий — событие, утащенное за ноль,
+        // обязано выглядеть «за окном», а не как обычное. Только внутри
+        // полного входа: в корне ноль — стена, и левее него ничего нет.
+        if self.model.editing().is_some() {
+            let x0 = tick_to_x(0);
+            if x0 > rect.left() && !geom.rows.is_empty() {
+                let last = geom.rows.len() - 1;
+                let (y0, y1) = (geom.row_top(0), geom.row_top(last) + geom.row_h(last));
+                let mut veil = egui::Mesh::default();
+                veil.add_colored_rect(
+                    egui::Rect::from_min_max(
+                        egui::pos2(rect.left(), y0),
+                        egui::pos2(x0.min(rect.right()), y1),
+                    ),
+                    crate::theme::BAND_TAIL_VEIL,
+                );
+                painter.add(egui::Shape::mesh(veil));
+                painter.line_segment(
+                    [egui::pos2(x0, y0), egui::pos2(x0, y1)],
+                    egui::Stroke::new(2.0, crate::theme::BAND_EDGE),
+                );
+            }
+        }
+
         // ---- РАСКРЫТАЯ ПОЛОСА: хвосты и граница окна (Р.55, С5) ------------
         //
         // Рисуется ПОСЛЕ событий, поверх них: вуаль обязана лечь и на
@@ -4294,7 +4337,7 @@ impl KtApp {
                     let min = kt_model::MIN_CLIP_DURATION.0;
                     let (s0, e0) = (m.start.0, (m.start + m.duration).0);
                     if *left {
-                        ((*cur).min(e0 - min).max(0), e0)
+                        ((*cur).min(e0 - min).max(self.time_floor()), e0)
                     } else {
                         (s0, (*cur).max(s0 + min))
                     }
@@ -4387,7 +4430,7 @@ impl KtApp {
                     let min = kt_model::MIN_CLIP_DURATION.0;
                     let (s0, e0) = (c.start.0, (c.start + c.duration).0);
                     if *left {
-                        ((*cur).min(e0 - min).max(0), e0)
+                        ((*cur).min(e0 - min).max(self.time_floor()), e0)
                     } else {
                         (s0, (*cur).max(s0 + min))
                     }
@@ -4447,7 +4490,7 @@ impl KtApp {
             self.dnd_hover = Some(pos);
             if ui.input(|i| i.pointer.any_released()) {
                 let _ = egui::DragAndDrop::take_payload::<crate::bin_panel::BinDrag>(ui.ctx());
-                let at = self.snap(x_to_tick(pos.x).max(0), None);
+                let at = self.snap(x_to_tick(pos.x).max(self.time_floor()), None);
                 self.place_media_at(media, Tick(at), Some((kind, lane)));
                 self.dnd_hover = None;
             }
@@ -4470,7 +4513,7 @@ impl KtApp {
                 egui::Stroke::new(1.0, egui::Color32::from_rgba_unmultiplied(140, 235, 170, 160)),
                 egui::StrokeKind::Inside,
             );
-            let at = self.snap(g.x_to_tick(pos.x).max(0), None);
+            let at = self.snap(g.x_to_tick(pos.x).max(self.time_floor()), None);
             let x0 = g.tick_to_x(at);
             let ghost_w = (((90_000.0 * 3.0) / self.ticks_per_px) as f32).max(3.0); // ~3 c, мин 3 px
             let ghost = egui::Rect::from_min_max(
@@ -5326,8 +5369,7 @@ impl KtApp {
                     } else {
                         tr(k::tl::menu::NEST_EXPAND_HERE_ACCEL)
                     };
-                    let (hit, rect) =
-                        crate::widgets::menu_item_probed(ui, tr(label), Some(accel));
+                    let (hit, rect) = crate::widgets::menu_item_probed(ui, tr(label), Some(accel));
                     crate::widgets::field_probe::note("nest.expand_here", rect);
                     if hit {
                         if open {

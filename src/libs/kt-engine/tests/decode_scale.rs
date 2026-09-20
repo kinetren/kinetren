@@ -326,3 +326,33 @@ fn t484b_generator_native_feeds_decode_stage() {
     assert_eq!(dq(&plain, Some((GEN_NATIVE, GEN_NATIVE)), q), q, "без FX ступени не бывает");
     assert_eq!(dq(&zoomed, None, q), q, "натив неизвестен — ступень 1");
 }
+
+/// Тест 633 (Р.58, п.459): слой ЧУЖОГО РАЗМЕРА никогда не проходит молча.
+///
+/// До Р.58 композит, встретив кадр не того размера, просто пропускал слой —
+/// и объявлял кадр ПОЛНЫМ. Экспорт писал такой кадр как годный, а вложение
+/// из него исчезало. Правило: не сошёлся размер — кадр не полон, и его
+/// пере-закажут.
+#[test]
+fn t633_a_layer_of_a_foreign_size_is_never_silent() {
+    let q = Quality { width: 128, height: 72 };
+    let p = project(128, 72, vec![], vec![]);
+    let mut vr = VideoRenderer::new(&p);
+    let cache = kt_cache::BurstCache::new(kt_cache::CacheConfig::default());
+    // кладём кадр ПОЛОВИННОГО размера под ключ полного качества: ровно то,
+    // что делает рассогласование ступени внутри программы
+    let mut src = CheckerSource::new(Tick(10 * SEC), 512, 288);
+    let half = Quality { width: q.width / 2, height: q.height / 2 };
+    for (media, pts, dq) in vr.layers_at(Tick(0), q) {
+        assert_eq!(dq, q, "фикстура: у клипа без цепочки ступень 1");
+        let f = src.read_video_frame(pts, Some(half)).unwrap();
+        cache.insert_video(kt_engine::source_id(media), Some(dq), video_cache_idx(pts), f.into());
+    }
+    let (out, complete) = vr.compose_from_cache(&cache, Tick(0), q);
+    assert!(
+        !complete,
+        "композит объявил кадр полным, выбросив слой чужого размера: такой кадр \
+         уходит в экспорт как годный, и события в нём просто нет"
+    );
+    assert!(out.chunks(4).all(|px| px[3] == 0), "слой чужого размера всё-таки попал в кадр");
+}

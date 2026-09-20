@@ -745,6 +745,15 @@ fn t98_timecode_mask() {
         ),
         "010203"
     );
+    // ОТРИЦАТЕЛЬНОЕ время (зона до нуля внутри ленты, Р.58 п.462) — знак и
+    // поля от |t|, а не набор отрицательных полей
+    assert_eq!(
+        crate::util::format_timecode(kt_time::Tick(-90_000 - 3_000), 30),
+        "-00:00:01.033 F01"
+    );
+    assert_eq!(crate::util::format_timecode(kt_time::Tick(90_000 + 3_000), 30), "00:00:01.033 F01");
+    assert_eq!(crate::timeline::format_ruler_time_step(-45_000, 9_000), "-0:00.5");
+    assert_eq!(crate::timeline::format_ruler_time_step(-60 * 90_000, 90_000), "-1:00");
 
     // --- ширина тулбара не меняется при открытии маски
     let mut h = harness();
@@ -9039,11 +9048,17 @@ fn t457_four_ways_in_one_way_out() {
     assert_eq!(h3.state().model.editing(), Some(seq3), "второй Enter не завёл ВНУТРЬ ленты");
     assert!(h3.state().model.bands().is_empty(), "полный вход обязан свернуть полосу");
 
-    // выход — в КОРЕНЬ И БЕЗ ПОЛОСЫ (решение владельца)
+    // выход — в КОРЕНЬ, И ПОЛОСА ВОЗВРАЩАЕТСЯ (решение владельца Р.58,
+    // пересмотр Р.56 п.5: «сбрасывают состояние раскрытости, а хотелось бы
+    // чтобы оставляли»; каскад Enter/Esc симметричен — t636)
     h3.state_mut().escape_action();
     h3.step();
     assert_eq!(h3.state().model.editing(), None, "Esc не вывел наружу");
-    assert!(h3.state().model.bands().is_empty(), "выход вернул полосу, а его не просили");
+    assert_eq!(
+        h3.state().model.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
+        vec![inst3],
+        "выход обязан ВЕРНУТЬ полосу, через которую вошли (решение владельца Р.58)"
+    );
     assert_eq!(
         (h3.state().view_start, h3.state().ticks_per_px),
         (vs, tpp),
@@ -10371,14 +10386,14 @@ fn t596_paste_from_a_band_lands_as_a_pair_at_the_click() {
         seqs_before,
         "вставка в КОРЕНЬ дописала событий в ленту"
     );
-    let fresh: Vec<&kt_model::ClipEvent> = doc
-        .clips
-        .iter()
-        .filter(|c| !matches!(c.id.0, 1..=3) && c.media != seq)
-        .collect();
+    let fresh: Vec<&kt_model::ClipEvent> =
+        doc.clips.iter().filter(|c| !matches!(c.id.0, 1..=3) && c.media != seq).collect();
     assert_eq!(doc.clips.len(), root_before + fresh.len(), "счёт не сошёлся");
     let pasted = fresh.iter().find(|c| c.start == Tick(700_000)).unwrap_or_else(|| {
-        panic!("вставка легла не в точку клика: {:?}", fresh.iter().map(|c| c.start).collect::<Vec<_>>())
+        panic!(
+            "вставка легла не в точку клика: {:?}",
+            fresh.iter().map(|c| c.start).collect::<Vec<_>>()
+        )
     });
     assert_eq!(pasted.lane, 0, "вставка не попала в кликнутую строку");
     assert_eq!(pasted.kind, ClipKind::Video);
@@ -10456,7 +10471,6 @@ fn t597_enter_cascade_decision_and_selection() {
 #[test]
 fn t599_reel_preview_service_rules() {
     use crate::reel_preview::{MAX_FRAMES_PER_REEL, ReelKey, ReelPreviews};
-    use kt_model::MediaId;
     use kt_time::Tick;
 
     // ШАГ ПОЛОСЫ — ступень лестницы тумб, и кадров не больше потолка
@@ -10468,7 +10482,8 @@ fn t599_reel_preview_service_rules() {
         );
         let n = (len.0 + step - 1) / step;
         assert!(
-            n <= MAX_FRAMES_PER_REEL as i64 || step == *crate::thumbs::THUMB_STEP_LADDER.last().unwrap(),
+            n <= MAX_FRAMES_PER_REEL as i64
+                || step == *crate::thumbs::THUMB_STEP_LADDER.last().unwrap(),
             "у ленты {len:?} вышло {n} кадров при потолке {MAX_FRAMES_PER_REEL}"
         );
     }
@@ -10606,6 +10621,138 @@ fn t601_scrolling_does_not_order_reel_work() {
         h.state().thumb_textures.keys().all(|k| k.media != seq),
         "тумба по ленте заказана: у ленты нет файла, и служба индекса полезла бы ffmpeg'ом"
     );
+}
+
+/// Тест 640 (Р.58, п.463): превью ленты переживает открытие проекта.
+///
+/// Претензия владельца: «У композиций превью на таймлайне, кажется, не
+/// кешируется и каждое открытие проекта строится заново». Утверждается
+/// следствие: второй `KtApp::open` того же файла получает кадры и
+/// огибающую ленты при НУЛЕ настоящих рендеров — из sidecar
+/// `<project>.ktindex.db`. А подмена исходника (mtime) — промах и
+/// перерендер: редакция ленты подмену файла не видит, её ловит отпечаток
+/// медиа в ключе.
+#[test]
+fn t640_reel_preview_survives_reopen_from_sidecar() {
+    use crate::reel_preview::{MAX_REELS_READY, ReelKey, ReelPreviews};
+    use kt_model::*;
+
+    let dir = std::env::temp_dir().join(format!("kt-t640-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("t640.otio");
+    // файл-исходник, чтобы отпечатку медиа было что нюхать: содержимое
+    // роли не играет (открыть его нельзя — клип честно пуст), важны путь,
+    // размер и mtime
+    let extra = dir.join("extra.bin");
+    std::fs::write(&extra, b"not a media file").unwrap();
+
+    // документ с лентой — из готовой сцены, плюс клип ПО ФАЙЛУ внутри ленты
+    let seq = {
+        let (h, _g, seq) = harness_with_nest();
+        let mut p = h.state().model.document().clone();
+        // адреса медиа и лент — одно пространство (t425): свежий id над обоими
+        let file_id = MediaId(
+            p.media.iter().map(|m| m.id.0).chain(p.sequences.iter().map(|s| s.id.0)).max().unwrap()
+                + 1,
+        );
+        p.media.push(MediaRef { id: file_id, path: "extra.bin".into() });
+        let next_id = p
+            .clips
+            .iter()
+            .chain(p.sequences.iter().flat_map(|s| s.clips.iter()))
+            .map(|c| c.id.0)
+            .max()
+            .unwrap_or(0)
+            + 500;
+        let s = p.sequences.iter_mut().find(|s| s.id == seq).expect("reel");
+        let mut a = s.clips[0].clone();
+        a.id = ClipId(next_id);
+        a.kind = ClipKind::Audio;
+        a.lane = 0;
+        a.link_group = None;
+        a.media = file_id;
+        s.clips.push(a);
+        p.validate().expect("document with a file clip inside the reel");
+        std::fs::write(&path, kt_otio::save_project(&p, &Default::default(), path.parent()))
+            .unwrap();
+        seq
+    };
+
+    // открыть файл и дождаться превью ленты (как t600)
+    let open_and_wait = || -> (Harness<'static, KtApp>, ReelKey) {
+        let mut app = KtApp::open(&path).expect("project opens");
+        app.recovery_on_drop = false;
+        app.workspace_file = Some(dir.join(format!("ws-{:p}.json", &app)));
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(W, H))
+            .build_ui_state(|ui, app: &mut KtApp| app.draw_all(ui), app);
+        crate::icons::install_fonts(&h.ctx);
+        h.step();
+        let hash = *h.state_mut().reel_hashes().get(&seq).expect("reel hash");
+        let key = ReelKey { seq, hash };
+        let deadline = std::time::Instant::now() + WAIT_BG;
+        while h.state().reel_previews.get(&key).map(|p| p.peaks.is_none()).unwrap_or(true)
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            h.step();
+        }
+        (h, key)
+    };
+    let check_preview = |h: &Harness<'static, KtApp>, key: &ReelKey, what: &str| {
+        let prev = h.state().reel_previews.get(key).unwrap_or_else(|| panic!("{what}: no preview"));
+        let strip = prev.strip.as_ref().unwrap_or_else(|| panic!("{what}: no strip"));
+        assert!(strip.frames.iter().any(|f| f.is_some()), "{what}: strip has no frames");
+        assert!(strip.step > 0, "{what}: strip step is zero");
+        assert!(prev.peaks.as_ref().is_some_and(|p| !p.is_empty()), "{what}: no peaks");
+    };
+
+    // 1) первое открытие: рендер настоящий — и ровно один
+    let (h1, key1) = open_and_wait();
+    check_preview(&h1, &key1, "first open");
+    assert_eq!(h1.state().reel_previews.renders(), 1, "first open must render the reel once");
+    drop(h1);
+
+    // 2) второе открытие того же файла: всё есть, рендеров НОЛЬ
+    let (h2, key2) = open_and_wait();
+    assert_eq!(key2, key1, "reel key changed across save/load — the disk key could never hit");
+    check_preview(&h2, &key2, "second open");
+    assert_eq!(
+        h2.state().reel_previews.renders(),
+        0,
+        "second open rendered the reel again: the sidecar tier did not serve it"
+    );
+    drop(h2);
+
+    // 3) подменённый исходник: mtime вперёд — промах, перерендер
+    {
+        let f = std::fs::File::options().write(true).open(&extra).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+    }
+    let (h3, key3) = open_and_wait();
+    assert_eq!(key3, key1, "content hash saw the file change — media_fp would be redundant");
+    check_preview(&h3, &key3, "open after media change");
+    assert_eq!(
+        h3.state().reel_previews.renders(),
+        1,
+        "media file changed under the reel, yet the stale disk preview was served"
+    );
+    drop(h3);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // ---- попутные дыры службы (Р.58): честный LRU, а не очередь вставки ----
+    let mut svc = ReelPreviews::default();
+    let k = |i: u64| ReelKey { seq: MediaId(1000 + i), hash: i };
+    for i in 0..MAX_REELS_READY as u64 {
+        svc.put(k(i), Default::default());
+    }
+    assert!(svc.get(&k(0)).is_some(), "just-put reel is missing");
+    svc.put(k(MAX_REELS_READY as u64), Default::default());
+    assert!(svc.get(&k(0)).is_some(), "recently used reel was evicted: the LRU is a FIFO");
+    assert!(svc.get(&k(1)).is_none(), "least recently used reel survived eviction");
+    assert_eq!(svc.ready_keys().len(), MAX_REELS_READY);
+    assert_eq!(svc.failed_len(), 0);
 }
 
 // ===================== скорость транспорта (Р.57, п.455) =====================
@@ -10914,7 +11061,7 @@ fn t629_space_boost_from_small_base() {
 #[test]
 fn t630_signed_ratio_axis_is_log_by_modulus() {
     use crate::automation::{Axis, axis_of};
-    use kt_model::{FxInstance, HasParams, ParamUnit};
+    use kt_model::{FxInstance, ParamUnit};
 
     let slowed = FxInstance::slowed_reverb(1.0, 0.0, 85.0);
     let rate = slowed.param_specs().iter().find(|s| s.name == "rate").unwrap();
@@ -10948,5 +11095,387 @@ fn t630_signed_ratio_axis_is_log_by_modulus() {
     let blur = FxInstance::blur(8);
     for s in blur.param_specs() {
         assert!(matches!(axis_of(s), Axis::Linear), "{}: ось поехала", s.name);
+    }
+}
+
+// ---- Р.58: полоса внутри ленты, полосы через контексты, зона до нуля --------
+
+/// Двухуровневый харнесс: корень → X → Y. Внутри X событие свёрнуто в
+/// ленту Y тем же жестом, что и в корне. Возвращает геометрию ВНУТРИ X,
+/// адреса обеих лент и экземпляр Y (в оси X).
+#[cfg(test)]
+fn harness_two_level() -> (
+    Harness<'static, KtApp>,
+    crate::timeline::TlGeom,
+    kt_model::MediaId,
+    kt_model::MediaId,
+    kt_model::ClipId,
+) {
+    let (mut h, _g, x) = harness_with_nest();
+    let x_inst = h.state().model.project().clips.iter().find(|c| c.media == x).unwrap().id;
+    h.state_mut().enter_nest(x_inst);
+    h.step();
+    assert_eq!(h.state().model.editing(), Some(x), "harness: entering X failed");
+    let inner = h.state().model.project().clips[0].id;
+    h.state_mut().select_only(inner);
+    h.step();
+    h.state_mut().collapse_selection();
+    h.step();
+    h.step();
+    let y = h
+        .state()
+        .model
+        .document()
+        .sequences
+        .iter()
+        .map(|s| s.id)
+        .find(|id| *id != x)
+        .expect("harness: reel Y was not created inside X");
+    let y_inst = h.state().model.project().clips.iter().find(|c| c.media == y).unwrap().id;
+    let g = h.state().tl_geom.clone().expect("geometry inside X");
+    (h, g, x, y, y_inst)
+}
+
+/// Тест 634 (Р.58, п.460): полоса раскрывается ВНУТРИ полного входа.
+///
+/// **Претензия владельца дословно:** «открывая композицию не могу раскрыть
+/// в ней вложенную композицию (я именно открываю композицию на весь
+/// таймлайн и не могу в ней раскрыть вложенную не залезая уже в неё)».
+///
+/// Каскад Enter внутри X — тот же, что в корне: первый раскрывает, второй
+/// входит. Документ от раскрытия не меняется, правка в полосе доезжает до
+/// ленты Y (не до X и не до корня), Esc сворачивает полосу РАНЬШЕ выхода
+/// из X.
+#[test]
+fn t634_a_band_opens_inside_an_entered_reel() {
+    use crate::app::EnterOnNest;
+    use kt_time::Tick;
+    let (mut h, _g, x, y, y_inst) = harness_two_level();
+    let doc_before = h.state().model.document();
+    let rows_before = h.state().tl_geom.clone().map(|g| g.rows.len()).unwrap_or(0);
+
+    // 1-й Enter — РАСКРЫТЬ, и решение не зависит от контекста
+    assert_eq!(h.state().enter_pressed_on_nest(y_inst), EnterOnNest::Expand);
+    h.state_mut().select_only(y_inst);
+    h.state_mut().expand_in_place(y_inst);
+    h.step();
+    assert_eq!(h.state().model.editing(), Some(x), "expanding a band left reel X");
+    assert_eq!(
+        h.state().model.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
+        vec![y_inst],
+        "the band did not open inside an entered reel"
+    );
+    assert!(
+        h.state().is_selected(y_inst),
+        "the instance lost its selection — the 2nd Enter would miss"
+    );
+    let g = h.state().tl_geom.clone().expect("geometry");
+    assert!(g.rows.len() > rows_before, "band rows are not on screen inside X: {:?}", g.rows);
+    assert_eq!(h.state().model.document(), doc_before, "expanding inside X changed the DOCUMENT");
+    // 2-й Enter — ВОЙТИ
+    assert_eq!(h.state().enter_pressed_on_nest(y_inst), EnterOnNest::Enter);
+
+    // правка в полосе доезжает до Y
+    let (id, was, lane) = h
+        .state()
+        .model
+        .project()
+        .clips
+        .iter()
+        .filter(|c| c.id != y_inst && h.state().reel_of_clip(c.id) == Some(y))
+        .map(|c| (c.id, c.start, c.lane))
+        .next()
+        .expect("a band event");
+    assert!(h.state_mut().apply(kt_model::Command::MoveClip {
+        id,
+        new_start: was + Tick(1_000),
+        new_lane: lane,
+    }));
+    h.step();
+    let doc = h.state().model.document();
+    assert!(doc.sequence(y).unwrap().clips.iter().any(|c| c.id == id), "the edit missed reel Y");
+    assert!(
+        !doc.sequence(x).unwrap().clips.iter().any(|c| c.id == id)
+            && !doc.clips.iter().any(|c| c.id == id),
+        "the event of Y leaked into X or into the root"
+    );
+    assert_eq!(h.state().model.bands().len(), 1, "the edit collapsed the band");
+
+    // Esc: снять выделение → свернуть полосу → и только потом выйти из X
+    h.state_mut().escape_action();
+    assert_eq!(h.state().model.bands().len(), 1, "Esc collapsed the band instead of deselecting");
+    h.state_mut().escape_action();
+    assert!(h.state().model.bands().is_empty(), "the 2nd Esc must collapse the band");
+    assert_eq!(h.state().model.editing(), Some(x), "Esc left X before collapsing the band");
+    h.state_mut().escape_action();
+    assert_eq!(h.state().model.editing(), None, "the 3rd Esc must leave X");
+}
+
+/// Тест 636 (Р.58, п.461): полосы ПЕРЕЖИВАЮТ смену контекста.
+///
+/// **Претензия владельца дословно:** «при переходе между композициями/
+/// root-таймлайном они сбрасывают состояние раскрытости, а хотелось бы
+/// чтобы оставляли чтобы не путаться». Решение владельца (пересмотр Р.56
+/// п.5): восстанавливать ВСЁ, включая полосу, через которую вошли вторым
+/// Enter, — каскад Enter/Esc симметричен.
+#[test]
+fn t636_bands_survive_context_switches() {
+    use egui_kittest::kittest::Queryable;
+    use kt_model::*;
+    use kt_time::Tick;
+
+    // (а) корень: полоса на A, вход в B через ДРУГОЙ экземпляр (пункт меню
+    // «Открыть»), возврат — A раскрыта, вид и курсор те же (t456)
+    let (mut h, g, a) = harness_with_nest();
+    let a_inst = h.state().model.project().clips.iter().find(|c| c.media == a).unwrap().id;
+    // второй экземпляр: третье событие сворачивается в ленту B
+    h.state_mut().select_only(ClipId(3));
+    h.step();
+    h.state_mut().collapse_selection();
+    h.step();
+    h.step();
+    let b = h.state().model.document().sequences.iter().map(|s| s.id).find(|id| *id != a).unwrap();
+    let b_inst = h.state().model.project().clips.iter().find(|c| c.media == b).unwrap().id;
+    h.state_mut().expand_in_place(a_inst);
+    // курсор — В ТЕЛЕ экземпляра B (200 000 … 250 000): вход переводит
+    // время, а не телепортирует, и возврат обязан попасть в ту же точку
+    // (снаружи тела курсор клампится к материалу — правило п.447)
+    h.state_mut().player.seek(Tick(220_000));
+    h.state_mut().view_start = 5_000.0;
+    h.state_mut().ticks_per_px = 900.0;
+    h.step();
+    let g = h.state().tl_geom.clone().unwrap_or(g);
+    let (vs, tpp) = (h.state().view_start, h.state().ticks_per_px);
+    let cursor = h.state().player.transport.playhead();
+    let row = g.row_of((LaneKind::Video, 0)).expect("video row");
+    let x = {
+        let c = h.state().model.project().clips.iter().find(|c| c.id == b_inst).unwrap().clone();
+        g.tick_to_x(c.start.0 + c.duration.0 / 2)
+    };
+    right_click_at(&mut h, egui::pos2(x, g.row_center_y(row)));
+    h.get_by_label_contains(tr(k::tl::menu::NEST_ENTER)).click();
+    h.step();
+    h.step();
+    assert_eq!(h.state().model.editing(), Some(b), "the menu did not enter B");
+    assert!(h.state().model.bands().is_empty(), "entering must clear bands (model invariant)");
+    h.state_mut().leave_nest();
+    h.step();
+    assert_eq!(h.state().model.editing(), None);
+    assert_eq!(
+        h.state().model.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
+        vec![a_inst],
+        "(a) the band on A was not restored after returning from B"
+    );
+    assert_eq!((h.state().view_start, h.state().ticks_per_px), (vs, tpp), "(a) view not restored");
+    // точность — квант транспорта (аудиокадр 48 кГц ≈ 1.875 тика), как в t456
+    let back = h.state().player.transport.playhead();
+    assert!((back.0 - cursor.0).abs() <= 4, "(a) cursor not restored: {back:?} vs {cursor:?}");
+    assert!(h.state().selected.contains(&b_inst), "(a) selection not restored");
+
+    // (б) вход через 2-й Enter по раскрытой A, Esc-каскад до выхода — A
+    // снова раскрыта и выделена, третий Enter входит снова
+    h.state_mut().select_only(a_inst);
+    h.step();
+    h.key_press(egui::Key::Enter);
+    h.step();
+    assert_eq!(
+        h.state().model.editing(),
+        Some(a),
+        "(b) the 2nd Enter on an expanded band must enter"
+    );
+    let mut guard = 0;
+    while h.state().model.editing().is_some() {
+        h.state_mut().escape_action();
+        guard += 1;
+        assert!(guard < 6, "(b) the Esc cascade does not lead out");
+    }
+    assert_eq!(
+        h.state().model.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
+        vec![a_inst],
+        "(b) the band we entered through was not restored (owner's decision, Р.58)"
+    );
+    assert!(h.state().is_selected(a_inst), "(b) the instance is not selected after the return");
+    h.key_press(egui::Key::Enter);
+    h.step();
+    assert_eq!(h.state().model.editing(), Some(a), "(b) the gesture does not repeat");
+    h.state_mut().leave_nest();
+    h.step();
+
+    // (г, часть 1) экземпляр из снимка исчез или перестал быть вложением —
+    // молча без полосы, без паники
+    h.state_mut().enter_nest(b_inst);
+    h.step();
+    h.state_mut().nest_path.last_mut().unwrap().band = Some(ClipId(999_999));
+    h.state_mut().leave_nest();
+    h.step();
+    assert_eq!(h.state().model.editing(), None);
+    assert!(h.state().model.bands().is_empty(), "(d) a vanished instance must not leave a band");
+
+    // (в) внутри X полоса на Y, выход в корень и вход обратно в X — Y
+    // раскрыта; (г, часть 2) удалили экземпляр внутри — полосы нет
+    let (mut h2, _g2, x, _y, y_inst) = harness_two_level();
+    let x_inst = h2.state().model.document().clips.iter().find(|c| c.media == x).unwrap().id;
+    h2.state_mut().expand_in_place(y_inst);
+    h2.step();
+    h2.state_mut().leave_nest();
+    h2.step();
+    assert_eq!(h2.state().model.editing(), None);
+    h2.state_mut().enter_nest(x_inst);
+    h2.step();
+    assert_eq!(
+        h2.state().model.bands().iter().map(|b| b.inst).collect::<Vec<_>>(),
+        vec![y_inst],
+        "(c) re-entering X did not bring the band on Y back"
+    );
+    assert!(h2.state_mut().apply(Command::RemoveClip { id: y_inst }));
+    h2.step();
+    assert!(h2.state().model.bands().is_empty(), "removing the instance must drop its band");
+    h2.state_mut().leave_nest();
+    h2.step();
+    h2.state_mut().enter_nest(x_inst);
+    h2.step();
+    assert!(h2.state().model.bands().is_empty(), "(d) a removed instance came back as a band");
+}
+
+/// Драг события: навести → нажать → сдвинуть чуть → вести → отпустить.
+#[cfg(test)]
+fn drag_clip(h: &mut Harness<'_, KtApp>, from: egui::Pos2, to: egui::Pos2) {
+    h.hover_at(from);
+    h.step();
+    h.drag_at(from);
+    h.step();
+    h.hover_at(from + egui::vec2(8.0, 0.0));
+    h.step();
+    h.hover_at(to);
+    h.step();
+    h.drop_at(to);
+    h.step();
+}
+
+/// Тест 637 (Р.58, п.462): внутри ленты событие уезжает ЗА НОЛЬ, в корне
+/// ноль — стена.
+///
+/// **Претензия владельца дословно:** «При редактировании полностью открытой
+/// композиции я не могу закинуть событие за ее пределы, а при раскрытой
+/// композиции в root — могу. Воспроизводить в полностью открытой композиции
+/// зону до 0 мне не надо». Стена была только в UI (`.max(0)` над тиком
+/// жеста); формат и модель отрицательный `start` допускают, окно экземпляра
+/// такое не играет.
+#[test]
+fn t637_inside_a_reel_an_event_may_cross_zero() {
+    use kt_model::*;
+    use kt_time::Tick;
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    let inst_ev = h.state().model.document().clips.iter().find(|c| c.id == inst).unwrap().clone();
+    h.state_mut().enter_nest(inst);
+    h.state_mut().ticks_per_px = 1000.0;
+    h.state_mut().view_start = -1.0e6;
+    h.step();
+    let g = h.state().tl_geom.clone().expect("geometry inside the reel");
+    let inner = h.state().model.project().clips[0].clone();
+    assert_eq!(inner.start, Tick::ZERO, "scene: the reel content must start at zero");
+    let y = g.lane_y(ClipKind::Video, inner.lane, 0.6);
+    let grab = egui::pos2(g.tick_to_x(inner.start.0 + 25_000), y);
+    let to = egui::pos2(g.tick_to_x(inner.start.0 - 5_000), y);
+    assert!(to.x > g.rect.left(), "scene: the drop point is off screen ({:?})", to);
+    drag_clip(&mut h, grab, to);
+    let moved = h.state().model.project().clips.iter().find(|c| c.id == inner.id).unwrap().clone();
+    assert_eq!(moved.start, Tick(-30_000), "the event did not cross zero inside the reel");
+
+    // ДОКУМЕНТ ленты хранит отрицательный start
+    let doc = h.state().model.document();
+    assert_eq!(
+        doc.sequence(seq).unwrap().clips.iter().find(|c| c.id == inner.id).map(|c| c.start),
+        Some(Tick(-30_000)),
+        "the reel's sequence does not store the negative start"
+    );
+    // и НЕ ИГРАЕТ его: окно экземпляра отсекает всё до нуля ленты —
+    // в корне остаётся кусок [inst.start, +20 000) и ничего левее
+    let eff = doc.effective_clips();
+    assert!(eff.iter().all(|c| c.start >= Tick::ZERO), "played content went before zero: {eff:?}");
+    assert!(
+        eff.iter().any(|c| c.start == inst_ev.start && c.duration == Tick(20_000)),
+        "the instance window did not cut the pre-zero part: {eff:?}"
+    );
+    // Esc/выход/вход — событие на месте
+    h.state_mut().leave_nest();
+    h.step();
+    h.state_mut().enter_nest(inst);
+    h.step();
+    assert_eq!(
+        h.state().model.project().clips.iter().find(|c| c.id == inner.id).map(|c| c.start),
+        Some(Tick(-30_000)),
+        "leave + re-enter lost the negative start"
+    );
+
+    // в КОРНЕ тот же жест упирается в ноль
+    let (mut h2, g2) = harness_three_clips();
+    let y2 = g2.lane_y(ClipKind::Video, 0, 0.6);
+    let grab2 = egui::pos2(g2.tick_to_x(25_000), y2);
+    let to2 = egui::pos2(g2.tick_to_x(-5_000).max(g2.rect.left() + 1.0), y2);
+    drag_clip(&mut h2, grab2, to2);
+    let c1 = h2.state().model.project().clips.iter().find(|c| c.id == ClipId(1)).unwrap().start;
+    assert_eq!(c1, Tick::ZERO, "in the root zero must remain a wall");
+}
+
+/// Тест 637b (Р.58, п.462): вид уходит левее нуля ТОЛЬКО внутри ленты, а
+/// курсор ниже нуля не уходит нигде.
+#[test]
+fn t637b_view_before_zero_only_inside_a_reel_and_the_cursor_never() {
+    use kt_model::*;
+    use kt_time::Tick;
+    // корень: прежние −40 px и ни тиком больше
+    let (mut h, _g) = harness_three_clips();
+    h.state_mut().view_start = -1.0e6;
+    h.step();
+    let tpp = h.state().ticks_per_px;
+    assert_eq!(h.state().view_start, -40.0 * tpp, "the root view went past −40 px");
+
+    // внутри ленты: пол — самое раннее событие (оно левее нуля) и те же −40 px
+    let (mut h, _g, seq) = harness_with_nest();
+    let inst = h.state().model.project().clips.iter().find(|c| c.media == seq).unwrap().id;
+    h.state_mut().enter_nest(inst);
+    h.step();
+    let inner = h.state().model.project().clips[0].id;
+    assert!(h.state_mut().apply(Command::MoveClip {
+        id: inner,
+        new_start: Tick(-30_000),
+        new_lane: 0
+    }));
+    h.state_mut().ticks_per_px = 1000.0;
+    h.state_mut().view_start = -1.0e6;
+    h.step();
+    assert_eq!(
+        h.state().view_start,
+        -30_000.0 - 40_000.0,
+        "inside a reel the view floor is the earliest event"
+    );
+
+    // курсор: клик по дорожке и по линейке ЛЕВЕЕ нуля ставит его в 0
+    let g = h.state().tl_geom.clone().expect("geometry");
+    let x = g.tick_to_x(-20_000);
+    assert!(x > g.rect.left(), "scene: the pre-zero zone is not on screen");
+    for y in [g.lane_y(ClipKind::Video, 0, 0.6), g.rect.top() + crate::timeline::TIME_TOP + 11.0] {
+        h.state_mut().player.seek(Tick(40_000));
+        h.step();
+        let pos = egui::pos2(x, y);
+        h.hover_at(pos);
+        h.step();
+        for pressed in [true, false] {
+            h.event(egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        h.step();
+        h.step();
+        assert_eq!(
+            h.state().player.transport.playhead(),
+            Tick::ZERO,
+            "a click before zero at y={y} must put the cursor at 0, not before"
+        );
     }
 }

@@ -373,6 +373,27 @@ fn clip_decode_scale(clip: &VideoClip, quality: Quality) -> u32 {
     want.min(spare).min(cap)
 }
 
+/// ВХОД ЦЕПОЧКИ клипа (Р.58, п.459) — ступень, которую цепочка ЭТОГО
+/// экземпляра способна потребить.
+///
+/// У листа равен ступени декода: она и выведена из его собственной
+/// цепочки. У ЛЕНТЫ ступень — свойство ленты (максимум по экземплярам,
+/// чтобы у внутреннего листа был один ключ кэша, t450), и отдавать её
+/// входом цепочки КАЖДОМУ экземпляру нельзя: пустая цепочка, одна сила
+/// слоя, ведущий стоп (морфер-слой) и цепочка без ресемпла (Blur/Glow)
+/// ступени не потребляют — S×-кадр никто не вернул бы в Quality. До Р.58
+/// это роняло debug-сборку и МОЛЧА выбрасывало вложение из кадра в
+/// релизной.
+fn clip_chain_scale(clip: &VideoClip, quality: Quality) -> u32 {
+    let stage = clip_decode_scale(clip, quality);
+    if clip.nest.is_none() {
+        return stage;
+    }
+    // тот же квант, которым считал `nest_scales` — иначе «равно» никогда
+    // не совпало бы и лишний ресемпл появлялся бы на ровном месте
+    stage.min(kt_fx::geom::ss_taps(clip.head_zoom).max(1))
+}
+
 /// Ступень суб-композита каждой ленты: МАКСИМУМ запроса по всем её
 /// экземплярам в ДЕРЕВЕ (Р.50, Б5).
 ///
@@ -636,6 +657,15 @@ impl VideoRenderer {
         // НЕ раскрываются — у каждого свой узел плана (Р.50, волна Б)
         let effective = project.effective_reel(seq);
         let grid = FpsGrid::new(project.settings.fps);
+        // Камеры — СВОИ у каждой ленты, и `head_zoom` обязан считаться по
+        // ним же: `nest_scales` выбирает камеры именно так, а ступень
+        // ленты и вход цепочки экземпляра сравниваются между собой
+        // (`clip_chain_scale`). Разные наборы камер разводили бы их сами
+        // по себе на Pan3d внутри ленты со своими камерами.
+        let cams = match seq.and_then(|id| project.sequence(id)) {
+            Some(s) => &s.cameras,
+            None => &project.cameras,
+        };
         let mut clips: Vec<VideoClip> = effective
             .iter()
             .filter(|c| c.kind == ClipKind::Video)
@@ -665,7 +695,7 @@ impl VideoRenderer {
                     c.source_in,
                     c.reversed,
                     &grid,
-                    &project.cameras,
+                    cams,
                     (project.settings.width, project.settings.height),
                 );
                 VideoClip {
@@ -1231,8 +1261,11 @@ fn layer_src<'a>(
         None => SourceId(clip.media.0),
     };
     // Р.46 (п.318): слой читает кадр СВОЕГО качества декода — того же,
-    // которое заказал префетч через layers_at.
-    let src_scale = clip_decode_scale(clip, quality);
+    // которое заказал префетч через layers_at. У ЛЕНТЫ это ступень
+    // СУБ-ПЛАНА (одна на ленту), а вход цепочки экземпляра считается
+    // отдельно (Р.58, п.459) — см. `clip_chain_scale`.
+    let stage = clip_decode_scale(clip, quality);
+    let src_scale = clip_chain_scale(clip, quality);
     let dq = clip_decode_quality(clip, quality);
     // Кадр берётся ВМЕСТЕ с серийным номером содержимого (Р.53, п.409):
     // адрес `(source, cache_idx, размер)` у нового кадра генератора тот
@@ -1292,7 +1325,7 @@ fn layer_src<'a>(
     let cam3d = resolve_cam3d(&clip.fx, ctx.cameras, t, quality.width, ctx.project_size.0);
     debug_assert!(
         src_scale == 1 || kt_fx::video::has_video_fx(&fx),
-        "a clip without video fx never gets a decode stage"
+        "a clip without video fx never gets a chain input above 1x"
     );
     // ВХОД слоя. У вложения это не кадр из кэша, а СУБ-КОМПОЗИТ: план
     // ленты, собранный на ВНУТРЕННЕМ времени экземпляра. Внутреннее время
@@ -1320,7 +1353,7 @@ fn layer_src<'a>(
                 &sub_ctx,
                 cache,
                 src_pts,
-                scaled(quality, src_scale),
+                scaled(quality, stage),
                 ctx.memoize,
             );
             crate::video_plan::LayerInput::Nest(Box::new(crate::video_plan::NestSrc {
@@ -1328,6 +1361,7 @@ fn layer_src<'a>(
                 content_hash: clip.content,
                 inner_t: src_pts,
                 blend,
+                nest_scale: stage,
                 plan,
             }))
         }
@@ -1480,7 +1514,20 @@ fn execute_plan_cpu(
                             alpha_over(out, &f.rgba, f.has_alpha, w * h);
                         }
                     }
-                    Some(_) => {}
+                    Some(f) => {
+                        // Размер суб-композита ленты — НАША арифметика
+                        // (`NestSrc::fit_to`): разойдись он с планом,
+                        // слой молча исчезал бы из кадра — до Р.58 так и
+                        // было (п.459). У файла чужой размер — сообщение
+                        // декодера, и ответ на него один: кадр не полон.
+                        debug_assert!(
+                            src.input.nest().is_none(),
+                            "nest sub-composite {}x{} does not fit the plan {w}x{h}",
+                            f.width,
+                            f.height
+                        );
+                        complete = false;
+                    }
                     None => complete = false,
                 }
             }
@@ -1535,7 +1582,19 @@ fn execute_plan_cpu(
                         }
                         complete = false;
                     }
-                    _ => complete = false,
+                    (fa, fb) => {
+                        for (side, f) in [(a, &fa), (b, &fb)] {
+                            if let Some(f) = f {
+                                debug_assert!(
+                                    side.input.nest().is_none() || fits(f),
+                                    "nest sub-composite {}x{} does not fit the plan {w}x{h}",
+                                    f.width,
+                                    f.height
+                                );
+                            }
+                        }
+                        complete = false;
+                    }
                 }
             }
         }
@@ -1591,6 +1650,28 @@ fn nest_frame_cpu(
         cache.insert_postfx_video(source, q_key, key, n.inner_t.0, frame.clone());
     }
     Some(frame)
+}
+
+/// Вписать суб-композит ленты во вход цепочки (Р.58, п.459).
+///
+/// Билинейка ОДНА на программу — `kt_fx::video::fit_into` (у неё же
+/// AVX2-близнец и зеркало в WGSL), своей арифметики здесь не заводим:
+/// разойдись она с GPU — превью и экспорт показали бы разное.
+fn fit_frame_cpu(
+    f: &Arc<VideoFrame>,
+    ow: u32,
+    oh: u32,
+    scratch: &mut kt_fx::video::FxScratch,
+) -> Arc<VideoFrame> {
+    let mut src = scratch.take(f.rgba.len());
+    src.copy_from_slice(&f.rgba);
+    let src = kt_fx::video::Frame { w: f.width, h: f.height, rgba: src, has_alpha: f.has_alpha };
+    let mut out = scratch.take(ow as usize * oh as usize * 4);
+    kt_fx::video::fit_into(&src, ow, oh, &mut out);
+    scratch.put(src.rgba);
+    let rgba: Box<[u8]> = out[..].into();
+    scratch.put(out);
+    Arc::new(VideoFrame { pts: f.pts, width: ow, height: oh, rgba, has_alpha: f.has_alpha })
 }
 
 /// Ключ мемоизации суб-композита (Р.56, п.448): редакция ленты + режим
@@ -1654,7 +1735,8 @@ fn layer_frame_cpu(
     // одном Quality даёт РАЗНЫЕ пост-FX байты при разном размере входа
     // (натив появился/исчез, сменилась кривая зума) — без неё кэш отдал бы
     // стейл (t313).
-    let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d, src.src_scale);
+    let nest_scale = src.input.nest().map_or(0, |n| n.nest_scale);
+    let key_hash = postfx_key_hash(src.fx_hash, &src.cam3d, src.src_scale, nest_scale);
     if has_fx && let Some(f) = cache.get_postfx_video(src.source, q_key, key_hash, t.0) {
         return Some(f);
     }
@@ -1663,7 +1745,15 @@ fn layer_frame_cpu(
     let frame = match &src.input {
         crate::video_plan::LayerInput::Frame(f) => f.as_ref(),
         crate::video_plan::LayerInput::Nest(n) => {
-            resolved = nest_frame_cpu(n, cache, scratch, blend, memoize, complete);
+            let sub = nest_frame_cpu(n, cache, scratch, blend, memoize, complete);
+            // Ступень ленты выше входа цепочки (Р.58, п.459): суб-композит
+            // собран КРУПНЕЕ, чем эта цепочка умеет потребить — вписываем
+            // его ТОЙ ЖЕ билинейкой, что и сухую сторону смешивания
+            // (`fit_into`, зеркало на GPU — `Resample` во весь кадр).
+            resolved = match (sub, n.fit_to(src.src_scale, q_key.0, q_key.1)) {
+                (Some(f), Some((fw, fh))) => Some(fit_frame_cpu(&f, fw, fh, scratch)),
+                (f, _) => f,
+            };
             resolved.as_ref()
         }
     };
@@ -1709,11 +1799,17 @@ fn layer_frame_cpu(
 /// Ключ пост-FX мемоизации: статический хэш цепочки + разрешённая камера
 /// момента (Р.44, t66d). None — константное слагаемое: 2D-цепочки
 /// по-прежнему различаются только fx_hash.
-fn postfx_key_hash(fx_hash: u64, cam3d: &Option<Cam3d>, src_scale: u32) -> u64 {
+fn postfx_key_hash(fx_hash: u64, cam3d: &Option<Cam3d>, src_scale: u32, nest_scale: u32) -> u64 {
     use xxhash_rust::xxh3::Xxh3;
     let mut h = Xxh3::new();
     h.update(&fx_hash.to_le_bytes());
     h.update(&src_scale.to_le_bytes());
+    // Ступень ЛЕНТЫ — тоже в ключ (Р.58, п.459). У экземпляра без зума
+    // вход цепочки равен 1 и при ступени 1, и при ступени 3 (её поднял
+    // зумящий БЛИЗНЕЦ), а байты разные: во втором случае цепочка получает
+    // вписанный суб-композит. Без этого слагаемого кэш отдавал бы стейл —
+    // тот же класс, что t313 по оси размера.
+    h.update(&nest_scale.to_le_bytes());
     match cam3d {
         None => h.update(&[0u8]),
         Some(c) => {

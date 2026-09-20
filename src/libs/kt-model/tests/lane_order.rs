@@ -304,6 +304,10 @@ fn t590_load_canonicalizes_root_and_reels() {
         "в корне верхняя строка не стала дорожкой 0"
     );
     let s = &loaded.sequences[0];
-    assert_eq!(s.clips.iter().find(|c| c.id == ClipId(11)).unwrap().lane, 0, "лента не канонизирована");
+    assert_eq!(
+        s.clips.iter().find(|c| c.id == ClipId(11)).unwrap().lane,
+        0,
+        "лента не канонизирована"
+    );
     assert!(s.lane_order.is_empty(), "у ленты остался явный порядок");
 }

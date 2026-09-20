@@ -37,6 +37,11 @@ if [ "$RELEASE" = 1 ]; then
     scripts/release-build.sh
 fi
 
+# Лог одной стадии: вердикт читаем из кода возврата cargo, а короткий
+# хвост печатаем человеку (Р.58).
+STAGE_LOG="$(mktemp -t kt-finish-stage.XXXXXX)"
+trap 'rm -f "$STAGE_LOG"' EXIT
+
 # Живая проверка в виртуальном экране (Р.27): настоящий бинарь, настоящий X,
 # настоящие XTest-жесты. Без Xvfb — просто пропускаем, ничего не ломая;
 # NO_LIVE=1 выключает явно (например когда гоняешь finish.sh в цикле).
@@ -56,10 +61,19 @@ fi
 # машины (дискретная карта/железный драйвер, а не только lavapipe из CI).
 # Без адаптера тесты скипаются сами с печатью причины.
 echo "== GPU-конформанс (kt-gpu) =="
-if cargo test -p kt-gpu -q 2>&1 | tail -4; then
+# Итог стадии берётся у CARGO, а не у `tail` (Р.58): в конвейере статус
+# отдаёт ПОСЛЕДНЯЯ команда, поэтому `if cargo test | tail` был зелёным
+# ВСЕГДА — стадия не могла сообщить о красном в принципе. Тот же класс,
+# что §443 (скрипт называл красное чужим именем) и §458 (вывод не
+# фильтруется), только здесь терялся сам вердикт.
+cargo test -p kt-gpu -q > "$STAGE_LOG" 2>&1 && GPU_RC=0 || GPU_RC=$?
+tail -4 "$STAGE_LOG"
+if [ "$GPU_RC" = 0 ]; then
     echo "kt-gpu: ok"
 else
-    echo "KT-GPU ТЕСТЫ ПРОВАЛИЛИСЬ" >&2
+    grep -E "^(test .* FAILED|failures:|error)" "$STAGE_LOG" | head -20 >&2
+    cp "$STAGE_LOG" target/finish-gpu-fail.log 2>/dev/null || true
+    echo "KT-GPU ТЕСТЫ ПРОВАЛИЛИСЬ (полный лог: target/finish-gpu-fail.log)" >&2
     GPU_FAILED=1
 fi
 
@@ -67,10 +81,23 @@ fi
 # KT_REQUIRE_SIMD=1 запрещает вакуумный skip там, где AVX2 есть (урок
 # т.194). Плюс golden'ы на ПРИНУДИТЕЛЬНОМ скаляре: он остаётся эталоном.
 echo "== SIMD-конформанс (t198) =="
-if KT_REQUIRE_SIMD=1 cargo test -p kt-fx --test simd_parity -q 2>&1 | tail -3 \
-    && KT_REQUIRE_SIMD=1 cargo test -p kt-engine --test simd_parity -q 2>&1 | tail -3 \
-    && KT_SIMD=0 cargo test -p kt-fx --test video_fx -q 2>&1 | tail -2 \
-    && KT_SIMD=0 cargo test -p kt-engine --test golden_export -q 2>&1 | tail -2; then
+# та же правка, что у GPU-стадии: вердикт у cargo, не у `tail`
+simd_stage() {
+    local name="$1"; shift
+    if "$@" > "$STAGE_LOG" 2>&1; then
+        tail -3 "$STAGE_LOG"
+        return 0
+    fi
+    tail -3 "$STAGE_LOG"
+    grep -E "^(test .* FAILED|failures:|error)" "$STAGE_LOG" | head -20 >&2
+    cp "$STAGE_LOG" target/finish-simd-fail.log 2>/dev/null || true
+    echo "SIMD: красная стадия $name (полный лог: target/finish-simd-fail.log)" >&2
+    return 1
+}
+if simd_stage "kt-fx simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-fx --test simd_parity -q \
+    && simd_stage "kt-engine simd_parity" env KT_REQUIRE_SIMD=1 cargo test -p kt-engine --test simd_parity -q \
+    && simd_stage "kt-fx video_fx (скаляр)" env KT_SIMD=0 cargo test -p kt-fx --test video_fx -q \
+    && simd_stage "kt-engine golden_export (скаляр)" env KT_SIMD=0 cargo test -p kt-engine --test golden_export -q; then
     echo "simd: ok (AVX2 == скаляр, golden'ы зелены обоими путями)"
 else
     echo "SIMD-КОНФОРМАНС ПРОВАЛИЛСЯ" >&2

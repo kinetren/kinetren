@@ -85,9 +85,8 @@ pub fn chain_source_window_ext(
     } else {
         (source_progress(rate, automation, t0), source_progress(rate, automation, t1))
     };
-    let s0 = ((len as f64 * p0).floor() as i64)
-        .saturating_sub(WARP_SOURCE_MARGIN_FRAMES)
-        .max(s_floor);
+    let s0 =
+        ((len as f64 * p0).floor() as i64).saturating_sub(WARP_SOURCE_MARGIN_FRAMES).max(s_floor);
     let s1 = (len as f64 * p1).ceil() as i64 + WARP_SOURCE_MARGIN_FRAMES;
     s0..s1.max(s0)
 }

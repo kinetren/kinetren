@@ -610,7 +610,12 @@ fn t182_composite_parity_byte_exact() {
             false,
         ),
         ("missing-layer", vec![one(&bg, 4096, false), one(&missing, 4096, false)], false),
-        ("misfit-skipped", vec![one(&bg, 4096, false), one(&misfit, 4096, false)], true),
+        // Р.58, п.459: слой ЧУЖОГО РАЗМЕРА больше не проходит молча. До
+        // этого раунда кадр объявлялся ПОЛНЫМ без него — так вложение
+        // исчезало из готового кадра, а экспорт писал его как годный.
+        // Байты по-прежнему сходятся у обоих исполнителей: оба слой не
+        // рисуют, — а вот «полон» стало общим и честным `false`.
+        ("misfit-not-silent", vec![one(&bg, 4096, false), one(&misfit, 4096, false)], false),
         ("empty", vec![one(&missing, 4096, false)], false),
     ];
     for (name, layers, want_complete) in cases {

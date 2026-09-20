@@ -150,6 +150,22 @@ impl MediaIndexDb {
                ticks    INTEGER NOT NULL,
                conf_x100 INTEGER NOT NULL,
                PRIMARY KEY (a_media, b_media)
+             );
+             CREATE TABLE IF NOT EXISTS reel_strip (
+               seq       INTEGER PRIMARY KEY,
+               hash      INTEGER NOT NULL,
+               media_fp  INTEGER NOT NULL,
+               step      INTEGER NOT NULL,
+               end_ticks INTEGER NOT NULL,
+               n         INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS reel_frame (
+               seq INTEGER, idx INTEGER, jpeg BLOB,
+               PRIMARY KEY (seq, idx)
+             );
+             CREATE TABLE IF NOT EXISTS reel_peaks (
+               seq INTEGER, level INTEGER, channel INTEGER, data BLOB,
+               PRIMARY KEY (seq, level, channel)
              );",
         )?;
         Ok(MediaIndexDb { conn, path: path.to_path_buf() })
@@ -203,6 +219,9 @@ impl MediaIndexDb {
         Ok((self.conn.last_insert_rowid(), MediaEntryStatus::Rebuilt))
     }
 
+    /// Таблицы ЛЕНТ (`reel_*`, Р.58) здесь НЕ трогаются намеренно: они
+    /// ключуются содержимым (лента, редакция, отпечаток медиа), а не
+    /// `media_id`, и подмену файла ловит сам отпечаток — см. `reel_preview`.
     fn purge_media(&self, media_id: i64) -> Result<(), IndexError> {
         for table in ["packet_index", "audio_peaks", "thumbnails", "poster", "loudness"] {
             self.conn
@@ -333,19 +352,133 @@ impl MediaIndexDb {
         tx.execute("DELETE FROM audio_peaks WHERE media_id=?1", params![media_id])?;
         for (level, channels) in pyramid.levels.iter().enumerate() {
             for (ch, blocks) in channels.iter().enumerate() {
-                let mut blob = Vec::with_capacity(blocks.len() * 4);
-                for &(mn, mx) in blocks {
-                    blob.extend_from_slice(&mn.to_le_bytes());
-                    blob.extend_from_slice(&mx.to_le_bytes());
-                }
                 tx.execute(
                     "INSERT INTO audio_peaks(media_id, level, channel, data) VALUES(?1,?2,?3,?4)",
-                    params![media_id, level as i64, ch as i64, blob],
+                    params![media_id, level as i64, ch as i64, peaks_blob(blocks)],
                 )?;
             }
         }
         tx.commit()?;
         Ok(())
+    }
+
+    // ---- превью ЛЕНТЫ на диске (Р.58, п.463) --------------------------------
+    //
+    // У ленты нет файла, и `media(path, size, mtime, xxhash)` ей не дом:
+    // ключ — СОДЕРЖИМОЕ. `seq` — id ленты (переживает save→load, t431),
+    // `hash` — редакция (`kt_engine::content_hash`), `media_fp` — отпечаток
+    // файлов дерева ленты (путь, размер, mtime): редакция файла не видит,
+    // и без отпечатка подменённый исходник показывал бы старую полосу.
+    // Одна версия на ленту: новая запись вытесняет прежнюю целиком.
+
+    /// Сохранить полосу кадров и пирамиду пиков ленты одной транзакцией.
+    /// `frames[i]` — JPEG кадра `i * step`, `None` — кадра не было (строки
+    /// нет). `hash`/`media_fp` кладутся как i64 побитово.
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_reel_preview(
+        &mut self,
+        seq: i64,
+        hash: u64,
+        media_fp: u64,
+        step: i64,
+        end_ticks: i64,
+        frames: &[Option<&[u8]>],
+        peaks: &PeakPyramid,
+    ) -> Result<(), IndexError> {
+        let tx = self.conn.transaction()?;
+        for table in ["reel_strip", "reel_frame", "reel_peaks"] {
+            tx.execute(&format!("DELETE FROM {table} WHERE seq=?1"), params![seq])?;
+        }
+        tx.execute(
+            "INSERT INTO reel_strip(seq, hash, media_fp, step, end_ticks, n) \
+             VALUES(?1,?2,?3,?4,?5,?6)",
+            params![seq, hash as i64, media_fp as i64, step, end_ticks, frames.len() as i64],
+        )?;
+        for (idx, jpeg) in frames.iter().enumerate() {
+            if let Some(j) = jpeg {
+                tx.execute(
+                    "INSERT INTO reel_frame(seq, idx, jpeg) VALUES(?1,?2,?3)",
+                    params![seq, idx as i64, *j],
+                )?;
+            }
+        }
+        for (level, channels) in peaks.levels.iter().enumerate() {
+            for (ch, blocks) in channels.iter().enumerate() {
+                tx.execute(
+                    "INSERT INTO reel_peaks(seq, level, channel, data) VALUES(?1,?2,?3,?4)",
+                    params![seq, level as i64, ch as i64, peaks_blob(blocks)],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Превью ленты, если на диске лежит ИМЕННО эта редакция с ТЕМИ ЖЕ
+    /// файлами; любое расхождение — `None`, и ленту рендерят заново.
+    pub fn reel_preview(
+        &self,
+        seq: i64,
+        hash: u64,
+        media_fp: u64,
+    ) -> Result<Option<ReelPreviewRow>, IndexError> {
+        let head: Option<(i64, i64, i64)> = self
+            .conn
+            .query_row(
+                "SELECT step, end_ticks, n FROM reel_strip WHERE seq=?1 AND hash=?2 AND media_fp=?3",
+                params![seq, hash as i64, media_fp as i64],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((step, end_ticks, n)) = head else { return Ok(None) };
+        let mut frames: Vec<Option<Vec<u8>>> = vec![None; n.max(0) as usize];
+        let mut st = self.conn.prepare("SELECT idx, jpeg FROM reel_frame WHERE seq=?1")?;
+        let mut rows = st.query(params![seq])?;
+        while let Some(r) = rows.next()? {
+            let idx: i64 = r.get(0)?;
+            if let Some(slot) = usize::try_from(idx).ok().and_then(|i| frames.get_mut(i)) {
+                *slot = Some(r.get(1)?);
+            }
+        }
+        let mut levels: Vec<Vec<Vec<(i16, i16)>>> = Vec::new();
+        let mut st = self
+            .conn
+            .prepare("SELECT data FROM reel_peaks WHERE seq=?1 AND level=?2 AND channel=?3")?;
+        'levels: for level in 0i64.. {
+            let mut channels = Vec::with_capacity(AUDIO_CHANNELS);
+            for ch in 0..AUDIO_CHANNELS as i64 {
+                let blob: Option<Vec<u8>> =
+                    st.query_row(params![seq, level, ch], |r| r.get(0)).optional()?;
+                match blob {
+                    Some(b) => channels.push(peaks_from_blob(&b)),
+                    None => break 'levels,
+                }
+            }
+            levels.push(channels);
+        }
+        Ok(Some(ReelPreviewRow { step, end_ticks, frames, peaks: PeakPyramid { levels } }))
+    }
+
+    /// Убрать превью лент, которых в проекте больше нет. Возвращает число
+    /// убранных лент.
+    pub fn prune_reels(&mut self, keep: &[i64]) -> Result<usize, IndexError> {
+        let stored: Vec<i64> = {
+            let mut st = self.conn.prepare("SELECT seq FROM reel_strip")?;
+            let rows = st.query_map([], |r| r.get::<_, i64>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let gone: Vec<i64> = stored.into_iter().filter(|s| !keep.contains(s)).collect();
+        if gone.is_empty() {
+            return Ok(0);
+        }
+        let tx = self.conn.transaction()?;
+        for seq in &gone {
+            for table in ["reel_strip", "reel_frame", "reel_peaks"] {
+                tx.execute(&format!("DELETE FROM {table} WHERE seq=?1"), params![seq])?;
+            }
+        }
+        tx.commit()?;
+        Ok(gone.len())
     }
 
     /// Сохранить пакетный индекс потока (`stream` = "audio" | "video");
@@ -470,15 +603,40 @@ impl MediaIndexDb {
                 |r| r.get(0),
             )
             .optional()?;
-        Ok(blob.map(|b| {
-            b.chunks_exact(4)
-                .map(|c| (i16::from_le_bytes([c[0], c[1]]), i16::from_le_bytes([c[2], c[3]])))
-                .collect()
-        }))
+        Ok(blob.map(|b| peaks_from_blob(&b)))
     }
 }
 
+/// Блоб уровня пирамиды: interleaved (min:i16, max:i16) LE на блок — один
+/// формат у `audio_peaks` и `reel_peaks`.
+fn peaks_blob(blocks: &[(i16, i16)]) -> Vec<u8> {
+    let mut blob = Vec::with_capacity(blocks.len() * 4);
+    for &(mn, mx) in blocks {
+        blob.extend_from_slice(&mn.to_le_bytes());
+        blob.extend_from_slice(&mx.to_le_bytes());
+    }
+    blob
+}
+
+fn peaks_from_blob(b: &[u8]) -> Vec<(i16, i16)> {
+    b.chunks_exact(4)
+        .map(|c| (i16::from_le_bytes([c[0], c[1]]), i16::from_le_bytes([c[2], c[3]])))
+        .collect()
+}
+
+/// Превью ленты с диска (Р.58): полоса JPEG-кадров по шагу `step` и
+/// пирамида пиков в том же виде, в каком её строит `PeakAcc::finish`.
+#[derive(Debug)]
+pub struct ReelPreviewRow {
+    pub step: i64,
+    pub end_ticks: i64,
+    /// `frames[i]` — JPEG кадра `i * step`; `None` — кадра не было.
+    pub frames: Vec<Option<Vec<u8>>>,
+    pub peaks: PeakPyramid,
+}
+
 /// Peak-пирамида в памяти (тест 15 сравнивает её с пересчётом в лоб).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeakPyramid {
     /// levels[level][channel][block] = (min, max)
     pub levels: Vec<Vec<Vec<(i16, i16)>>>,

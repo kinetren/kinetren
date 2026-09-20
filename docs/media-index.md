@@ -35,12 +35,50 @@ CREATE TABLE audio_peaks (         -- peak-пирамида: level 0 = блок 
   PRIMARY KEY (media_id, level, channel)
 );
 
-CREATE TABLE thumbnails (          -- полоса ~1–2 c по keyframes
+CREATE TABLE thumbnails (          -- полоса по лестнице шагов THUMB_STEP_LADDER
   media_id INTEGER, t_ticks INTEGER,
-  jpeg BLOB,                       -- ~160px по ширине
+  jpeg BLOB,                       -- 320×180, JPEG q80 (THUMB_W/THUMB_H/THUMB_JPEG_QUALITY)
   PRIMARY KEY (media_id, t_ticks)
 );
 ```
+
+### Аддитивные таблицы (создаются `IF NOT EXISTS` при каждом открытии)
+
+Бамп `schema_version` сносит пакетный индекс, пики и тумбы всех медиа проекта —
+слишком дорого ради одной таблицы, поэтому новые таблицы добавляются
+аддитивно и появляются и в уже существующих БД.
+
+```sql
+CREATE TABLE poster (media_id INTEGER PRIMARY KEY, t_ticks INTEGER, score INTEGER);
+CREATE TABLE loudness (media_id INTEGER PRIMARY KEY, lufs_x100, dbtp_x100, lra_x100);
+CREATE TABLE sync_offset (a_media, b_media, ticks, conf_x100, PRIMARY KEY (a_media, b_media));
+
+-- Превью ВЛОЖЕННОЙ ЛЕНТЫ (Р.58, п.463). У ленты нет файла, и `media` ей не
+-- дом: ключ — СОДЕРЖИМОЕ. seq — id ленты (переживает save→load), hash —
+-- редакция (kt_engine::content_hash), media_fp — отпечаток файлов дерева
+-- ленты (путь, размер, mtime; генераторы — по строке пути). Оба u64 лежат
+-- как i64 побитово. Одна версия на ленту: новая запись вытесняет прежнюю.
+CREATE TABLE reel_strip (
+  seq INTEGER PRIMARY KEY, hash INTEGER NOT NULL, media_fp INTEGER NOT NULL,
+  step INTEGER NOT NULL,           -- шаг кадров полосы (тики), ступень THUMB_STEP_LADDER
+  end_ticks INTEGER NOT NULL,      -- длина ленты
+  n INTEGER NOT NULL               -- число слотов полосы (кадры ≤ MAX_FRAMES_PER_REEL)
+);
+CREATE TABLE reel_frame (          -- кадр i*step; отсутствующая строка = кадра не было
+  seq INTEGER, idx INTEGER, jpeg BLOB,   -- 320×180, JPEG q80 — как thumbnails
+  PRIMARY KEY (seq, idx)
+);
+CREATE TABLE reel_peaks (          -- та же пирамида и тот же блоб, что audio_peaks
+  seq INTEGER, level INTEGER, channel INTEGER, data BLOB,
+  PRIMARY KEY (seq, level, channel)
+);
+```
+
+`purge_media` таблицы `reel_*` НЕ трогает: подмену файла ловит `media_fp`
+(строка с другим отпечатком просто не находится, `reel_preview(seq, hash,
+media_fp)` → `None`, и лента рендерится заново). Ленты, которых в документе
+больше нет, убирает `prune_reels(keep)` — задача превью зовёт её после
+записи. Тест 639.
 
 ## Правила инвалидации (тест 16)
 
@@ -53,5 +91,10 @@ CREATE TABLE thumbnails (          -- полоса ~1–2 c по keyframes
 ## Кто пишет
 
 Один фоновый index-воркер на проект; декодирует собственным короткоживущим FfmpegSource (никогда — декодерами воспроизведения). Пишет секциями в транзакциях (probe → seek-индексы → peaks → thumbnails), UI показывает плейсхолдеры до готовности секции. Blob'ы — по-уровнево (peaks) и по-кадрово (thumbnails), не одним куском.
+
+`reel_*` пишет задача превью ленты (`kt-app::reel_preview`, поток
+`reel-preview`) — после офлайн-рендера, одной транзакцией, ПОСЛЕ пиков (отменённая
+на аудио задача полосы без огибающей не оставляет). Читает её она же, до любого
+декода. UI-поток БД не трогает (инвариант 8/12).
 
 `packet_index` дополнительно пишет **любой** `FfmpegSource::open_indexed` после свежего скана (первое открытие файла в проекте) — поэтому уже второе открытие того же файла (перезапуск, добавление в плеер, тумбы) обходится без скан-прохода. Соединения короткоживущие, WAL + busy_timeout 5 с покрывают конкуренцию потоков.

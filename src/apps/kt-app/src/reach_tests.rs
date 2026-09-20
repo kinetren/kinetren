@@ -1894,3 +1894,38 @@ fn t602_reel_rendering_lives_in_one_place() {
          запрет выше перестал что-либо значить"
     );
 }
+
+/// Тест 637c (Р.58, п.462): ПОЛ ВРЕМЕНИ у жестов — одно правило на файл.
+///
+/// В `timeline.rs` ПОЗИЦИЯ ВО ВРЕМЕНИ голым `.max(0)` не клампится: у
+/// жестов над СОБЫТИЯМИ пол — `self.time_floor()` (внутри ленты ноль не
+/// стена), у курсора/региона/меток/областей — `CURSOR_FLOOR` по имени
+/// (ноль всегда, решение владельца). Литерал `0` в этом месте — это
+/// второе правило, записанное числом, и ровно так до Р.58 внутри ленты
+/// «нельзя было закинуть событие за её пределы». Нулём законно клампятся
+/// только НЕ-позиции: индекс строки, ДЛИНА (фейд, диапазон метки) и
+/// смещение в материале (`source_in`).
+#[test]
+fn t637c_gesture_time_floor_is_never_a_bare_zero() {
+    let root = workspace_root();
+    let rel = "apps/kt-app/src/timeline.rs";
+    let src = strip_comments(&std::fs::read_to_string(root.join(rel)).expect(rel));
+    // что нулём клампить можно: строки, длины, материал
+    const NOT_A_POSITION: [&str; 5] =
+        ["row_at_y", "len.max(0)", "- start).max(0)", "- m.t.0).max(0)", "src_in"];
+    let bad: Vec<String> = src
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(".max(0)") && !NOT_A_POSITION.iter().any(|p| l.contains(p)))
+        .map(|(n, l)| format!("{rel}:{}: {}", n + 1, l.trim()))
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "a bare `.max(0)` over a time position: use `self.time_floor()` for events or \
+         `CURSOR_FLOOR` for the cursor/region/markers:\n  {}",
+        bad.join("\n  ")
+    );
+    // и оба правила в файле действительно есть
+    assert!(src.contains("time_floor()"), "events lost their time floor");
+    assert!(src.contains("CURSOR_FLOOR"), "the cursor floor lost its name");
+}

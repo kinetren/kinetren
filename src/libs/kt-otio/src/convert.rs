@@ -163,11 +163,8 @@ impl Retained {
         if perm.is_identity() {
             return;
         }
-        self.tracks = self
-            .tracks
-            .drain()
-            .map(|((k, l), v)| ((k, perm.map_clip(k, l)), v))
-            .collect();
+        self.tracks =
+            self.tracks.drain().map(|((k, l), v)| ((k, perm.map_clip(k, l)), v)).collect();
     }
 }
 
@@ -317,10 +314,19 @@ pub fn project_to_timeline(p: &Project, retained: &Retained, base_dir: Option<&P
             };
             let has_v7 =
                 v7_reel(p) || p.sequences.iter().any(|s| v7_reel(s as &dyn kt_model::Reel));
+            // событие левее нуля (Р.58, п.462): старая сборка положила бы
+            // его в ноль и сдвинула бы за ним всё содержимое ленты — молча
+            let has_v8 = p
+                .clips
+                .iter()
+                .chain(p.sequences.iter().flat_map(|s| s.clips.iter()))
+                .any(|c| c.start < Tick::ZERO);
             // вложенные ленты (Р.50): старая сборка прочла бы вложение
             // серым плейсхолдером (п.158) и при первой перезаписи вернула
             // бы живой монтаж в файл мёртвым сырьём
-            if has_v7 {
+            if has_v8 {
+                crate::meta::KT_META_V8
+            } else if has_v7 {
                 crate::meta::KT_META_V7
             } else if !p.sequences.is_empty() {
                 crate::meta::KT_META_V6
@@ -709,6 +715,12 @@ fn reel_children(
             .collect();
         items.sort_by_key(|(s, e, _)| (s.0, e.0));
         let mut kids: Vec<Composable> = Vec::new();
+        // `cursor` — позиция В ТРЕКЕ OTIO (последовательном), а не время
+        // модели. Обычно они совпадают: зазор дописывается ровно до
+        // `start`. Расходятся они у события ЛЕВЕЕ НУЛЯ внутри ленты (Р.58,
+        // п.462) и у всего, что идёт за ним и легло бы на курсор трека:
+        // такое событие пишется НА курсоре, а истинный `start` уезжает в
+        // конверт (`kt.start`), откуда его берёт наш ридер.
         let mut cursor = Tick::ZERO;
         let mut gap_ordinal = 0usize;
         for (start, end, item) in items {
@@ -805,14 +817,15 @@ fn reel_children(
                     // делают Premiere и FCP. Тело инлайнится в КАЖДЫЙ
                     // экземпляр: объектной идентичности в JSON OTIO нет,
                     // и чужой редактор обязан увидеть монтаж, а не ссылку.
+                    let at = cursor.max(start);
                     match p.sequence(c.media) {
-                        Some(seq) => {
-                            kids.push(Composable::Stack(nest_to_otio(c, seq, p, base_dir, depth)))
-                        }
+                        Some(seq) => kids
+                            .push(Composable::Stack(nest_to_otio(c, seq, p, base_dir, depth, at))),
                         None => kids.push(Composable::Clip(clip_to_otio(
                             c,
                             r.retained,
                             &url_of(&media_path(c.media)),
+                            at,
                         ))),
                     }
                     if let Some(t) = trans_after.get(&c.id) {
@@ -825,7 +838,9 @@ fn reel_children(
                     }
                 }
             }
-            cursor = end;
+            // трек OTIO продвигается на ДЛИНУ элемента от его места в
+            // треке; при совпадении с моделью это прежнее `cursor = end`
+            cursor = cursor.max(start) + (end - start);
         }
         if r.timeline_end > cursor {
             kids.push(Composable::Gap(Gap {
@@ -903,6 +918,7 @@ fn nest_to_otio(
     p: &Project,
     base_dir: Option<&Path>,
     depth: usize,
+    at: Tick,
 ) -> Stack {
     let empty = Retained::default();
     let children = if depth + 1 > kt_model::MAX_NEST_DEPTH {
@@ -938,6 +954,7 @@ fn nest_to_otio(
             gain: c.gain_db,
             opacity: c.opacity,
             fx_off: c.fx_off,
+            start: displaced_start(c, at),
             extra: Map::new(),
         },
     );
@@ -980,7 +997,14 @@ fn generator_parameters(kind: &kt_model::GeneratorKind) -> Map<String, Value> {
     fields
 }
 
-fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
+/// `kt.start` пишется ТОЛЬКО когда место в треке (`at`) не равно времени
+/// модели (Р.58, п.462). Обычный монтаж — `None`, и файлы без поля
+/// байт-стабильны; сторож — t638 и golden-фикстуры.
+fn displaced_start(c: &ClipEvent, at: Tick) -> Option<i64> {
+    (c.start != at).then_some(c.start.0)
+}
+
+fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str, at: Tick) -> Clip {
     let mut ex = retained.clips.get(&c.id).cloned().unwrap_or_default();
     // Клип, рождённый в редакторе, конверта не имеет — ссылки на материал
     // берём у МЕДИА (п.356). Иначе потерялся бы `available_range`, а вместе
@@ -1066,6 +1090,7 @@ fn clip_to_otio(c: &ClipEvent, retained: &Retained, target_url: &str) -> Clip {
             gain: c.gain_db,
             opacity: c.opacity,
             fx_off: c.fx_off,
+            start: displaced_start(c, at),
             extra: ex.kt_extra.clone(),
         },
     );
@@ -2114,6 +2139,8 @@ fn read_nest(
     };
     *cx.next_clip_id = (*cx.next_clip_id).max(id.0 + 1);
     let (fx, fx_bypass, fx_auto, reversed) = nest_effects(st, cx);
+    // истинное время — из конверта, если трек его выразить не смог (Р.58)
+    let start = meta.as_ref().and_then(|m| m.start).map(Tick).unwrap_or(start);
     Ok(ClipEvent {
         id,
         link_group: meta.as_ref().and_then(|m| m.link_group).map(GroupId),
@@ -2296,6 +2323,12 @@ fn clip_from_otio(
     while fx_auto.last().is_some_and(|v| v.is_empty()) {
         fx_auto.pop(); // хвост без кривых не сериализуем (форма модели)
     }
+    // истинное время события — из конверта, если трек его выразить не смог
+    // (Р.58, п.462); чужому файлу верим только позиции в треке
+    let start = match &meta {
+        Some(m) if is_ours => m.start.map(Tick).unwrap_or(start),
+        _ => start,
+    };
     let mut ev = ClipEvent {
         id,
         link_group: meta.as_ref().and_then(|m| m.link_group).map(GroupId),

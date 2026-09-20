@@ -17,6 +17,31 @@ use std::sync::{Arc, Mutex};
 
 pub const THUMB_W: u32 = 320;
 pub const THUMB_H: u32 = 180;
+/// Качество JPEG в sidecar — одно на тумбы файлов и кадры полос лент
+/// (`reel_frame`, Р.58): рисуются они рядом и одним кодом.
+pub const THUMB_JPEG_QUALITY: u8 = 80;
+
+/// RGBA → JPEG sidecar-качества. `None` — размер не сходится с буфером
+/// или энкодер отказал.
+pub(crate) fn encode_thumb_jpeg(width: u32, height: u32, rgba: Vec<u8>) -> Option<Vec<u8>> {
+    let mut buf = Vec::new();
+    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, THUMB_JPEG_QUALITY);
+    let img = image::RgbaImage::from_raw(width, height, rgba)?;
+    image::DynamicImage::ImageRgba8(img).write_with_encoder(enc).ok()?;
+    Some(buf)
+}
+
+/// JPEG из sidecar → картинка для текстуры. Тумбы и кадры лент проходят
+/// через это и на СВЕЖЕМ рендере тоже: показ не зависит от того, откуда
+/// кадр пришёл — с диска или из-под энкодера.
+pub(crate) fn decode_thumb_jpeg(jpeg: &[u8]) -> Option<egui::ColorImage> {
+    let img = image::load_from_memory_with_format(jpeg, image::ImageFormat::Jpeg).ok()?;
+    let rgba = img.to_rgba8();
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [rgba.width() as usize, rgba.height() as usize],
+        rgba.as_raw(),
+    ))
+}
 /// LRU готовых текстур (порт kMaxPreviewCacheEntries=384).
 pub const MAX_READY: usize = 384;
 
@@ -492,20 +517,15 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
             let mut ok = false;
             if let Ok(frame) =
                 src.read_video_frame(Tick(key.t), Some(Quality { width: THUMB_W, height: THUMB_H }))
+                && let Some(buf) = encode_thumb_jpeg(frame.width, frame.height, frame.rgba.into())
             {
-                let mut buf = Vec::new();
-                let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 80);
-                let img = image::RgbaImage::from_raw(frame.width, frame.height, frame.rgba.into())
-                    .unwrap();
-                if image::DynamicImage::ImageRgba8(img).write_with_encoder(enc).is_ok() {
-                    if let (Some(db), Some(&db_id)) = (&db, db_ids.get(&key.media))
-                        && db_id >= 0
-                    {
-                        let _ = db.put_thumbnail(db_id, key.t, &buf);
-                    }
-                    jpeg = Some(buf);
-                    ok = true;
+                if let (Some(db), Some(&db_id)) = (&db, db_ids.get(&key.media))
+                    && db_id >= 0
+                {
+                    let _ = db.put_thumbnail(db_id, key.t, &buf);
                 }
+                jpeg = Some(buf);
+                ok = true;
             }
             if !ok {
                 fail(&shared, key); // негативный кэш: без вечного seek+reopen
@@ -514,13 +534,8 @@ fn worker(shared: Arc<Shared>, db_path: Option<PathBuf>) {
         }
         // 3) jpeg -> ColorImage в ready (+LRU)
         if let Some(j) = jpeg
-            && let Ok(img) = image::load_from_memory_with_format(&j, image::ImageFormat::Jpeg)
+            && let Some(ci) = decode_thumb_jpeg(&j)
         {
-            let rgba = img.to_rgba8();
-            let ci = egui::ColorImage::from_rgba_unmultiplied(
-                [rgba.width() as usize, rgba.height() as usize],
-                rgba.as_raw(),
-            );
             let mut ready = shared.ready.lock().unwrap();
             let mut order = shared.order.lock().unwrap();
             ready.insert(key, Arc::new(ci));

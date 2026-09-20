@@ -1461,11 +1461,8 @@ fn fill_source_signed(
         let bidx = src.div_euclid(AUDIO_BURST_FRAMES as i64);
         let within = src.rem_euclid(AUDIO_BURST_FRAMES as i64);
         let room = if dir < 0 { within + 1 } else { AUDIO_BURST_FRAMES as i64 - within };
-        let take = room
-            .min(frames - f)
-            .min(window_end - virt)
-            .min(run_end - (virt - win_start))
-            .max(1);
+        let take =
+            room.min(frames - f).min(window_end - virt).min(run_end - (virt - win_start)).max(1);
         match fetcher.audio_burst(media, bidx) {
             Some(b) => {
                 let d0 = (f as usize) * AUDIO_CHANNELS;

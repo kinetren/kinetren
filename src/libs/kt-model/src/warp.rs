@@ -353,10 +353,7 @@ pub fn span_over(base: f64, points: &ParamPoints, t0: f64, t1: f64) -> (f64, f64
 /// Пролёт позиции за ВСЁ событие, в тиках. `span_ticks` — длина события.
 pub fn warp_span_ticks(base: f64, points: &ParamPoints, span_ticks: i64) -> (i64, i64) {
     let (lo, hi) = span_over(base, points, 0.0, 1.0);
-    (
-        (span_ticks as f64 * lo).round() as i64,
-        (span_ticks as f64 * hi).round() as i64,
-    )
+    ((span_ticks as f64 * lo).round() as i64, (span_ticks as f64 * hi).round() as i64)
 }
 
 /// Пределы МОДУЛЯ скорости по всему профилю (для ресемплера: он должен
@@ -442,12 +439,7 @@ pub fn sign_knots(base: f64, points: &ParamPoints) -> Vec<SignKnot> {
         }
     }
     if out.is_empty() {
-        out.push(SignKnot {
-            tau: 0.0,
-            a: 0.0,
-            p: 0.0,
-            dir_after: dir_of(base),
-        });
+        out.push(SignKnot { tau: 0.0, a: 0.0, p: 0.0, dir_after: dir_of(base) });
     }
     out
 }
@@ -1189,8 +1181,8 @@ mod signed_tests {
                 let span = 360_000i64;
                 let (lo, hi) = warp_span_ticks(base, prof, span);
                 assert_eq!(lo, 0, "у положительной кривой пролёт начинается в нуле");
-                let old_used = (span as f64 * frozen::source_progress(base, prof, 1.0)).round()
-                    as i64;
+                let old_used =
+                    (span as f64 * frozen::source_progress(base, prof, 1.0)).round() as i64;
                 assert_eq!(hi, old_used, "максимум пролёта обязан равняться прежнему used");
             }
         }
