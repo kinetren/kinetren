@@ -72,6 +72,7 @@ fn t212_keys_stick_to_material_through_edits() {
             param: "radius".into(),
             ease: false,
             keys: vec![key(0, 1.0), key(45_000, 40.0), key(90_000, 10.0)],
+            source: Default::default(),
         }]],
         opacity: 1.0,
         fx_off: false,
@@ -200,9 +201,15 @@ fn t190_apply_fx_auto() {
             param: "radius".into(),
             ease: false,
             keys: vec![key(0, 1.0), key(90_000, 47.0)],
+            source: Default::default(),
         },
-        ParamCurve { param: "orphan".into(), ease: false, keys: vec![key(0, 5.0)] },
-        ParamCurve { param: "empty".into(), ease: false, keys: vec![] },
+        ParamCurve {
+            param: "orphan".into(),
+            ease: false,
+            keys: vec![key(0, 5.0)],
+            source: Default::default(),
+        },
+        ParamCurve { param: "empty".into(), ease: false, keys: vec![], source: Default::default() },
     ];
     assert_eq!(apply_fx_auto(&mut f, &curves, Tick(45_000)), 1, "сироты и пустые не считаются");
     assert_eq!(f.get_param("radius"), Some(24.0), "лерп 1..47 в середине");
@@ -250,11 +257,13 @@ fn t190_commands_undo_and_truncation() {
             param: "radius".into(),
             ease: false,
             keys: vec![key(0, 1.0), key(90_000, 48.0)],
+            source: Default::default(),
         }],
         vec![ParamCurve {
             param: "strength".into(),
             ease: true,
             keys: vec![key(0, 0.0), key(90_000, 2.0)],
+            source: Default::default(),
         }],
     ];
     assert!(m.apply(Command::SetFxAuto { id: ClipId(1), auto: auto.clone() }).is_ok());
@@ -264,7 +273,12 @@ fn t190_commands_undo_and_truncation() {
     for bad_keys in
         [vec![key(90_000, 1.0), key(10_000, 2.0)], vec![key(-1, 1.0)], vec![key(45_000, f64::NAN)]]
     {
-        let bad = vec![vec![ParamCurve { param: "radius".into(), ease: false, keys: bad_keys }]];
+        let bad = vec![vec![ParamCurve {
+            param: "radius".into(),
+            ease: false,
+            keys: bad_keys,
+            source: Default::default(),
+        }]];
         assert!(
             m.apply(Command::SetFxAuto { id: ClipId(1), auto: bad }).is_err(),
             "битая кривая обязана отклоняться"
@@ -288,8 +302,18 @@ fn t190_files_without_auto_are_byte_stable() {
     // active_fx_auto выравнивается с active_fx при bypass
     let mut c = clip_with_fx();
     c.fx_auto = vec![
-        vec![ParamCurve { param: "radius".into(), ease: false, keys: vec![key(0, 1.0)] }],
-        vec![ParamCurve { param: "strength".into(), ease: false, keys: vec![key(0, 1.0)] }],
+        vec![ParamCurve {
+            param: "radius".into(),
+            ease: false,
+            keys: vec![key(0, 1.0)],
+            source: Default::default(),
+        }],
+        vec![ParamCurve {
+            param: "strength".into(),
+            ease: false,
+            keys: vec![key(0, 1.0)],
+            source: Default::default(),
+        }],
     ];
     c.fx_bypass = vec![true]; // первый слот выключен
     let fx = c.active_fx();
@@ -310,6 +334,7 @@ fn t214_master_switch_disables_chain_without_losing_it() {
         param: "radius".into(),
         ease: false,
         keys: vec![key(0, 1.0), key(90_000, 48.0)],
+        source: Default::default(),
     }]];
     m.apply(Command::SetFxAuto { id: ClipId(1), auto: auto.clone() }).unwrap();
     m.apply(Command::SetFxBypass { id: ClipId(1), bypass: vec![false, true] }).unwrap();
@@ -378,11 +403,13 @@ fn t215_fx_clipboard_slot_chain_and_envelope() {
             param: "radius".into(),
             ease: false,
             keys: vec![key(0, 1.0), key(90_000, 48.0)],
+            source: Default::default(),
         }],
         vec![ParamCurve {
             param: "strength".into(),
             ease: true,
             keys: vec![key(0, 0.0), key(90_000, 2.0)],
+            source: Default::default(),
         }],
     ];
     m.apply(Command::SetFxAuto { id: ClipId(1), auto }).unwrap();
@@ -548,9 +575,18 @@ fn t248_warp_rate_is_shared_by_the_link_group() {
     assert!(matches!(m.clip(ClipId(2)).unwrap().fx[0], FxInstance::Gain { .. }));
 
     // кривая rate тоже синхронна, а кривые ДРУГИХ параметров — нет
-    let curve =
-        ParamCurve { param: "rate".into(), ease: false, keys: vec![key(0, 1.0), key(90_000, 2.0)] };
-    let mix = ParamCurve { param: "mix".into(), ease: false, keys: vec![key(0, 0.9)] };
+    let curve = ParamCurve {
+        param: "rate".into(),
+        ease: false,
+        keys: vec![key(0, 1.0), key(90_000, 2.0)],
+        source: Default::default(),
+    };
+    let mix = ParamCurve {
+        param: "mix".into(),
+        ease: false,
+        keys: vec![key(0, 0.9)],
+        source: Default::default(),
+    };
     m.apply(Command::SetFxAuto { id: ClipId(2), auto: vec![vec![], vec![curve, mix]] }).unwrap();
     let va = &m.clip(ClipId(1)).unwrap().fx_auto[0];
     assert_eq!(va.len(), 1, "к партнёру едет ТОЛЬКО кривая скорости: {va:?}");
@@ -606,6 +642,7 @@ fn t342_append_chain_block_is_one_truth() {
         param: "radius".into(),
         ease: false,
         keys: vec![key(45_000, 1.0), key(135_000, 48.0)],
+        source: Default::default(),
     }];
     let block = ops::FxChainBlock {
         slots: vec![ops::FxSlotBlock {

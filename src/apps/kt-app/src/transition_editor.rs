@@ -337,6 +337,7 @@ impl KtApp {
                                     param: name.into(),
                                     ease: true,
                                     keys: vec![kt_model::AutoKey { t: kt_time::Tick::ZERO, v }],
+                                    source: Default::default(),
                                 });
                                 changed = true;
                             }

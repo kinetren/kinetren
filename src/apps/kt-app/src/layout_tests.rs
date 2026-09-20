@@ -3171,6 +3171,7 @@ fn t221_automation_widget_maps_material_and_keeps_input_stable() {
         param: "radius".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(45_000), v: 1.0 }, AutoKey { t: Tick(135_000), v: 48.0 }],
+        source: Default::default(),
     }];
     // пользователь начал править время ВТОРОГО ключа на значение МЕНЬШЕ
     // первого: пока правка не закоммичена, порядок ключей не меняется
@@ -3479,6 +3480,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
                 AutoKey { t: kt_time::Tick(0), v: 1.0 },
                 AutoKey { t: kt_time::Tick(90_000), v: 48.0 },
             ],
+            source: Default::default(),
         }]],
         opacity: 1.0,
         fx_off: false,
@@ -3499,6 +3501,7 @@ fn t193_fx_editor_automation_coalesces_into_one_undo() {
             param: "radius".into(),
             ease: false,
             keys: vec![AutoKey { t: kt_time::Tick(0), v: 2.0 }],
+            source: Default::default(),
         }],
         vec![],
     ];
@@ -6488,6 +6491,7 @@ fn t231_camera_editor_opens_and_edits() {
             param: "pos_z".into(),
             ease: true,
             keys: vec![AutoKey { t: Tick(0), v: -900.0 }, AutoKey { t: Tick(120_000), v: -300.0 }],
+            source: Default::default(),
         }];
         assert!(app.apply_coalesced(Command::SetCamera(c), gesture));
     }
@@ -7443,6 +7447,7 @@ fn t265_automation_axis_and_field_bind() {
         param: "db".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(90_000), v: 6.0 }],
+        source: Default::default(),
     };
     // выбран ключ — поле показывает и правит ЕГО
     assert_eq!(bound_value(&c, Some(1), Tick(45_000)), 6.0);
@@ -8003,6 +8008,7 @@ fn t279_axis_lock_and_keys_that_stay() {
             param: "radius".into(),
             ease: false,
             keys: vec![AutoKey { t: Tick(10_000), v: 1.0 }, AutoKey { t: Tick(40_000), v: 9.0 }],
+            source: Default::default(),
         }]];
         let mut p = app.model.project().clone();
         p.clips[0] = c;
@@ -8096,6 +8102,7 @@ fn t281_typed_key_value_reaches_the_model() {
                 AutoKey { t: kt_time::Tick(0), v: 1.0 },
                 AutoKey { t: kt_time::Tick(90_000), v: 2.0 },
             ],
+            source: Default::default(),
         }]],
         opacity: 1.0,
         fx_off: false,
@@ -8340,6 +8347,7 @@ fn t343_paste_chain_into_morpher_carries_curves() {
                     AutoKey { t: kt_time::Tick(45_000), v: 1.0 },
                     AutoKey { t: kt_time::Tick(135_000), v: 48.0 },
                 ],
+                source: Default::default(),
             }],
         }],
         src_in: kt_time::Tick(45_000),
@@ -8395,6 +8403,7 @@ fn harness_with_fx_window() -> egui_kittest::Harness<'static, crate::app::KtApp>
                 AutoKey { t: kt_time::Tick(30_000), v: 1.0 },
                 AutoKey { t: kt_time::Tick(120_000), v: 48.0 },
             ],
+            source: Default::default(),
         }]],
         opacity: 1.0,
         fx_off: false,
@@ -8487,6 +8496,7 @@ fn t346_preset_insert_appends_chain_with_curves() {
                     AutoKey { t: kt_time::Tick(0), v: 0.2 },
                     AutoKey { t: kt_time::Tick(90_000), v: 1.5 },
                 ],
+                source: Default::default(),
             }],
         }],
         src_in: kt_time::Tick(0),
@@ -9155,6 +9165,7 @@ fn t460_fade_handle_redrag_keeps_kind() {
                 param: "angle".into(),
                 ease: false,
                 keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(30_000), v: 45.0 }],
+                source: Default::default(),
             }],
             invert: false,
         });

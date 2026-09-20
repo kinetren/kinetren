@@ -85,11 +85,13 @@ fn t191_animated_equals_static_at_each_moment() {
             param: "radius".into(),
             ease: false,
             keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(SPAN), v: 47.0 }],
+            source: Default::default(),
         }],
         vec![ParamCurve {
             param: "strength".into(),
             ease: false,
             keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(SPAN), v: 2.0 }],
+            source: Default::default(),
         }],
     ];
     let animated = project(base.clone(), auto);
@@ -121,6 +123,7 @@ fn t191_postfx_cache_no_stale_across_time_and_curve_edits() {
             param: "radius".into(),
             ease: false,
             keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(SPAN), v: v1 }],
+            source: Default::default(),
         }]]
     };
     let p = project(base.clone(), curve(47.0));
@@ -211,6 +214,7 @@ fn t230_cammotion_migrates_to_pan_curves() {
         param: "zoom".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(0), v: 4.0 }],
+        source: Default::default(),
     }]];
     kt_model::migrate_legacy_cammotion(&mut c);
     let zoom = c.fx_auto[0].iter().find(|c| c.param == "zoom").unwrap();

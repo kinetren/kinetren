@@ -940,6 +940,7 @@ fn demo_project(synth: bool) -> Project {
                     key(0.84, 0.9),
                     key(1.0, 0.66),
                 ],
+                source: Default::default(),
             },
             ParamCurve {
                 param: "mix".into(),
@@ -951,6 +952,7 @@ fn demo_project(synth: bool) -> Project {
                     key(0.84, 0.3),
                     key(1.0, 0.62),
                 ],
+                source: Default::default(),
             },
         ]]
     };
@@ -1047,16 +1049,19 @@ fn demo_project(synth: bool) -> Project {
                 param: "pan_x".into(),
                 ease: true,
                 keys: vec![key(0.0, -0.12), key(0.55, 0.0), key(1.0, 0.14)],
+                source: Default::default(),
             },
             ParamCurve {
                 param: "pan_y".into(),
                 ease: true,
                 keys: vec![key(0.0, 0.05), key(0.55, 0.0), key(1.0, -0.06)],
+                source: Default::default(),
             },
             ParamCurve {
                 param: "zoom".into(),
                 ease: true,
                 keys: vec![key(0.0, 1.05), key(0.55, 1.28), key(1.0, 1.45)],
+                source: Default::default(),
             },
         ]];
     }

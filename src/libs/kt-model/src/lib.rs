@@ -7,12 +7,14 @@
 //!
 //! Реализация — этап M1 (см. docs/porting-notes.md).
 
+pub mod autoplan;
 pub mod genmedia;
 pub mod model;
 pub mod ops;
 pub mod project;
 pub mod warp;
 
+pub use autoplan::*;
 pub use genmedia::*;
 pub use model::*;
 pub use project::*;

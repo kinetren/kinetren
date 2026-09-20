@@ -495,6 +495,7 @@ fn project_3d() -> Project {
         param: "rot_y".into(),
         ease: true,
         keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(90_000), v: 90.0 }],
+        source: Default::default(),
     }]];
     // две камеры на двух дорожках, с перекрытием по времени и кейфреймами
     p.camera_lanes = 2;
@@ -516,6 +517,7 @@ fn project_3d() -> Project {
                         AutoKey { t: Tick(0), v: 0.0 },
                         AutoKey { t: Tick(90_000), v: 60.0 },
                     ],
+                    source: Default::default(),
                 },
                 ParamCurve {
                     param: "fov_deg".into(),
@@ -524,6 +526,7 @@ fn project_3d() -> Project {
                         AutoKey { t: Tick(0), v: 39.6 },
                         AutoKey { t: Tick(90_000), v: 30.0 },
                     ],
+                    source: Default::default(),
                 },
             ],
             ease: true,
@@ -640,6 +643,7 @@ fn t192_fx_auto_roundtrip_and_v3() {
         param: "radius".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(90_000), v: 48.0 }],
+        source: Default::default(),
     }]];
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);
@@ -679,6 +683,7 @@ fn t212_pre_v3_curves_migrate_to_material_ticks() {
         param: "radius".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(0), v: 1.0 }, AutoKey { t: Tick(90_000), v: 48.0 }],
+        source: Default::default(),
     }]];
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);
@@ -770,6 +775,7 @@ fn t222_transition_kind_roundtrip_and_version() {
         param: "angle".into(),
         ease: true,
         keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(13_500), v: 45.0 }],
+        source: Default::default(),
     }];
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);
@@ -1761,6 +1767,7 @@ fn t606_signed_rate_survives_the_round_trip() {
             AutoKey { t: Tick(45_000), v: 0.0 },
             AutoKey { t: Tick(90_000), v: -2.0 },
         ],
+        source: Default::default(),
     }]];
     p.validate().unwrap();
     let text = save_project(&p, &Retained::default(), None);

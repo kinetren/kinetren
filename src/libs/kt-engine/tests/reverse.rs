@@ -457,6 +457,7 @@ fn t618_turning_point_is_a_palindrome() {
             AutoKey { t: Tick::from_audio_frames(9_600), v: 1.0 },
             AutoKey { t: Tick::from_audio_frames(9_600 + 48_000), v: -1.0 },
         ],
+        source: Default::default(),
     }]];
     let out = render(&p, n);
     // вершина: материал дальше всего от точки входа. Ищем её по выходу —
@@ -501,6 +502,7 @@ fn t619_zero_rate_is_silence_with_a_ringing_tail() {
             AutoKey { t: Tick::from_audio_frames(9_600), v: 1.0 },
             AutoKey { t: Tick::from_audio_frames(9_600 + 24_000), v: 0.0 },
         ],
+        source: Default::default(),
     }]];
     let out = render(&q, n);
     let tail_rms = {

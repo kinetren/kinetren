@@ -675,6 +675,7 @@ pub(crate) fn draw_auto_for(
                                     kt_model::AutoKey { t: src_in, v: v0 },
                                     kt_model::AutoKey { t: kt_time::Tick(mat_end), v: v0 },
                                 ],
+                                source: Default::default(),
                             });
                             // новый параметр становится АКТИВНЫМ (Р.38
                             // п.17: «добавил второй параметр — но

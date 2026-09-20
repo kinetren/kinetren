@@ -274,6 +274,7 @@ mod tests {
                         kt_model::AutoKey { t: kt_time::Tick(45_000), v: 1.0 },
                         kt_model::AutoKey { t: kt_time::Tick(135_000), v: 48.0 },
                     ],
+                    source: Default::default(),
                 }],
             }],
             src_in: kt_time::Tick(45_000),

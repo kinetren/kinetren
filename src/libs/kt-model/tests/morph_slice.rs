@@ -796,6 +796,7 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
                 param: "radius".into(),
                 ease: false,
                 keys: vec![AutoKey { t: Tick(0), v: 2.0 }, AutoKey { t: Tick(90_000 * 2), v: 9.0 }],
+                source: Default::default(),
             }]],
             ..Default::default()
         },
@@ -838,6 +839,7 @@ fn t266_morph_layer_curves_rebase_to_target_material() {
         param: "radius".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(0), v: 1.0 }],
+        source: Default::default(),
     }]];
     assert!(!only.is_empty(), "патч с кривыми обязан сериализоваться");
 }
@@ -863,7 +865,12 @@ fn warped(rate: f64, keys: Vec<AutoKey>, reversed: bool) -> ClipEvent {
         fx_auto: if keys.is_empty() {
             vec![vec![]]
         } else {
-            vec![vec![ParamCurve { param: "rate".into(), ease: false, keys }]]
+            vec![vec![ParamCurve {
+                param: "rate".into(),
+                ease: false,
+                keys,
+                source: Default::default(),
+            }]]
         },
         opacity: 1.0,
         fx_off: false,
@@ -1149,6 +1156,7 @@ fn t291_source_replacement_carries_the_clips_own_curves() {
                 AutoKey { t: peak, v: 30.0 },
                 AutoKey { t: Tick(3_000 + LEN.0), v: 0.0 },
             ],
+            source: Default::default(),
         }]];
         let mut m = layer(Tick(0), LEN);
         m.patch = MorphPatch {

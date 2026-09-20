@@ -93,6 +93,7 @@ fn t247_video_follows_the_rate_curve() {
         ease: false,
         // ключи — в тиках МАТЕРИАЛА от source_in (домен Р.37: ось линейна)
         keys: vec![AutoKey { t: Tick(SEC), v: 1.0 }, AutoKey { t: Tick(SEC + dur), v: 2.0 }],
+        source: Default::default(),
     }]];
     let p = project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], curve, false);
     let track = pts_track(&p);
@@ -333,6 +334,7 @@ fn t272_split_renders_the_same_frames() {
                     AutoKey { t: Tick(SEC), v: 1.0 },
                     AutoKey { t: Tick(SEC + 4 * SEC), v: 2.0 },
                 ],
+                source: Default::default(),
             }]],
             false,
         ),
@@ -387,6 +389,7 @@ fn t272b_video_curves_use_the_linear_axis() {
                     AutoKey { t: Tick(SEC), v: 1.0 },
                     AutoKey { t: Tick(SEC + 2 * SEC), v: 48.0 },
                 ],
+                source: Default::default(),
             }],
         ],
         false,
@@ -439,6 +442,7 @@ fn t604a_video_follows_a_signed_curve() {
         param: "rate".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(SEC), v: 1.0 }, AutoKey { t: Tick(SEC + dur), v: -1.0 }],
+        source: Default::default(),
     }]];
     let track = pts_track(&project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], curve, false));
     let top = track.iter().enumerate().max_by_key(|(_, v)| **v).unwrap().0;
@@ -516,6 +520,7 @@ fn t604e_prefetch_matches_reads_under_a_sign_change() {
         param: "rate".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(SEC), v: 2.0 }, AutoKey { t: Tick(SEC + dur), v: -2.0 }],
+        source: Default::default(),
     }]];
     let p = project(vec![FxInstance::slowed_reverb(1.0, 0.0, 85.0)], curve, false);
     let vr = VideoRenderer::new(&p);

@@ -1056,6 +1056,7 @@ pub fn rebase_curves(curves: &[ParamCurve], from: Tick, to: Tick) -> Vec<ParamCu
             param: c.param.clone(),
             ease: c.ease,
             keys: c.keys.iter().map(|k| AutoKey { t: Tick((k.t.0 + d).max(0)), v: k.v }).collect(),
+            source: Default::default(),
         })
         .collect()
 }
@@ -1163,7 +1164,12 @@ pub fn duck_curve_commands(
         let mut auto = c.fx_auto.clone();
         auto.resize(fx.len(), Vec::new());
         auto[slot].retain(|cur| cur.param != "db");
-        auto[slot].push(ParamCurve { param: "db".into(), ease: true, keys });
+        auto[slot].push(ParamCurve {
+            param: "db".into(),
+            ease: true,
+            keys,
+            source: Default::default(),
+        });
         if fx.len() != c.fx.len() {
             out.push(Command::SetFx { id: *id, fx });
         }

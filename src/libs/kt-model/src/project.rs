@@ -2103,7 +2103,12 @@ impl MorpherEvent {
         }
         keys.sort_by_key(|k| k.t.0);
         keys.dedup_by_key(|k| k.t.0);
-        (!keys.is_empty()).then(|| ParamCurve { param: "amount".into(), ease: false, keys })
+        (!keys.is_empty()).then(|| ParamCurve {
+            param: "amount".into(),
+            ease: false,
+            keys,
+            source: Default::default(),
+        })
     }
 
     /// Кривая силы в домене БЛОКА: 0 на самом краю, `strength` на плато.
@@ -2127,7 +2132,7 @@ impl MorpherEvent {
             keys.push(AutoKey { t: Tick(d), v: 0.0 });
         }
         keys.dedup_by_key(|k| k.t.0);
-        Some(ParamCurve { param: "amount".into(), ease: false, keys })
+        Some(ParamCurve { param: "amount".into(), ease: false, keys, source: Default::default() })
     }
 
     /// Наложить слой на кусок цели: патч плюс слот СИЛЫ (Р.38 п.12).
@@ -3522,6 +3527,36 @@ pub struct ParamCurve {
     #[serde(default = "default_true")]
     pub ease: bool,
     pub keys: Vec<AutoKey>,
+    /// ОТКУДА берутся значения (Р.59, п.466). Сегодня — только ключи;
+    /// формула и связь с другим свойством занимают место в схеме, но
+    /// отвергаются валидацией: место под них заведено ЗАРАНЕЕ, чтобы
+    /// будущий вычислитель не потребовал ломать формат, а файл с
+    /// невычислимой кривой падал громко, а не рисовал не то.
+    ///
+    /// Поле не пишется, пока источник — ключи: байты прежних файлов не
+    /// двигаются ни на один символ.
+    #[serde(default, skip_serializing_if = "CurveSource::is_keys")]
+    pub source: CurveSource,
+}
+
+/// Источник значений кривой (Р.59, п.466).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CurveSource {
+    /// Ключи, расставленные человеком, — единственный работающий сегодня.
+    #[default]
+    Keys,
+    /// Своя детерминированная мини-формула от времени и соседних
+    /// свойств. Вычислитель — отдельный раунд (F-AUT-007).
+    Formula { expr: String },
+    /// Значение ведёт другое свойство (F-AUT-008).
+    Link { path: String },
+}
+
+impl CurveSource {
+    pub fn is_keys(&self) -> bool {
+        matches!(self, CurveSource::Keys)
+    }
 }
 
 /// Структурная проверка кривых автоматизации клипа: ключи отсортированы
@@ -3533,6 +3568,13 @@ pub struct ParamCurve {
 pub fn check_fx_auto(id: ClipId, auto: &[Vec<ParamCurve>]) -> Result<(), ProjectError> {
     for curves in auto {
         for c in curves {
+            // Источник, которого мы ещё не умеем считать, — ГРОМКИЙ
+            // отказ (Р.59, п.466). Молчаливое «нарисуем по ключам»
+            // показало бы не то, что записано в файле, а это худший
+            // сорт расхождения: человек видит картинку и верит ей.
+            if !c.source.is_keys() {
+                return Err(ProjectError::CurveSourceUnsupported(id));
+            }
             let sorted = c.keys.windows(2).all(|w| w[0].t <= w[1].t);
             let ok = c.keys.iter().all(|k| k.t.0 >= 0 && k.v.is_finite());
             if !sorted || !ok {
@@ -3659,6 +3701,7 @@ pub fn migrate_legacy_slowed(c: &mut ClipEvent) -> bool {
                 param: param.into(),
                 ease: false,
                 keys: legacy.iter().map(|k| key(k.t, pick(k))).collect(),
+                source: Default::default(),
             });
         }
         touched = true;
@@ -3712,6 +3755,7 @@ pub fn migrate_legacy_camera(c: &mut CameraEvent) -> bool {
                     v: *v,
                 })
                 .collect(),
+            source: Default::default(),
         });
     }
     true
@@ -3768,6 +3812,7 @@ pub fn migrate_legacy_cammotion(c: &mut ClipEvent) -> bool {
                         v: pick(k),
                     })
                     .collect(),
+                source: Default::default(),
             });
         }
         touched = true;
@@ -4839,11 +4884,17 @@ macro_rules! params_for {
             }
         }
 
+        /// Запись по имени. КЛАМП ЖИВЁТ ЗДЕСЬ (Р.59): до этого раунда
+        /// он стоял в обёртках `FxInstance::set_param` и
+        /// `TransitionKind::set_param`, а у генераторов обёртки не было
+        /// вовсе — кегль титра принимал любое число из файла и из
+        /// команды. Теперь предел один на всех владельцев и на оба пути
+        /// адресации, именной и индексный (t642).
         fn $set(fx: &mut $enum, name: &str, v: f64) -> bool {
             match fx {
                 $( $enum::$variant { $($field,)+ .. } => {
                     $( if name == stringify!($field) {
-                        *$field = fx_cast!($ty, v);
+                        *$field = fx_cast!($ty, v.clamp($lo, $hi));
                         return true;
                     } )+
                     false
@@ -5928,6 +5979,11 @@ pub enum ProjectError {
     // --- номер дорожки = ранг строки (Р.56, п.449) ---
     #[error("reel {0:?}: lane numbers must follow row order within each kind")]
     LaneOrderNotCanonical(Option<MediaId>),
+    // --- источник значений кривой (Р.59, п.466) ---
+    #[error(
+        "clip {0:?}: this curve is driven by a formula or a link, and nothing evaluates those yet"
+    )]
+    CurveSourceUnsupported(ClipId),
 }
 
 /// Полная проверка перехода против проекта: стык, умещаемость, минимум,

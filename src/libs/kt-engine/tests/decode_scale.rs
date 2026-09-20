@@ -117,8 +117,12 @@ fn t311_head_zoom_samples_the_whole_clip() {
     let nat = Some((1280, 720));
     let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
     // зум 1 → 4 к концу клипа: на первом кадре цепочка ещё тождественна
-    let curve =
-        ParamCurve { param: "zoom".into(), ease: true, keys: vec![key(0.0, 1.0), key(2.0, 4.0)] };
+    let curve = ParamCurve {
+        param: "zoom".into(),
+        ease: true,
+        keys: vec![key(0.0, 1.0), key(2.0, 4.0)],
+        source: Default::default(),
+    };
     let p = project(320, 180, vec![zoom(1.0)], vec![vec![curve]]);
     assert_eq!(
         dq(&p, nat, q),
@@ -126,8 +130,12 @@ fn t311_head_zoom_samples_the_whole_clip() {
         "ступень берётся по максимуму кривой, а не по первому кадру"
     );
     // обратная кривая (зум в начале) — тот же максимум
-    let back =
-        ParamCurve { param: "zoom".into(), ease: true, keys: vec![key(0.0, 4.0), key(2.0, 1.0)] };
+    let back = ParamCurve {
+        param: "zoom".into(),
+        ease: true,
+        keys: vec![key(0.0, 4.0), key(2.0, 1.0)],
+        source: Default::default(),
+    };
     let pb = project(320, 180, vec![zoom(1.0)], vec![vec![back]]);
     assert_eq!(dq(&pb, nat, q), Quality { width: 1280, height: 720 });
     // стоп силы слоя в нуле обнуляет зум префикса: ступени нет
@@ -143,6 +151,7 @@ fn t311_head_zoom_samples_the_whole_clip() {
             param: "zoom".into(),
             ease: true,
             keys: vec![key(0.0, 1.0), key(2.0, 4.0)],
+            source: Default::default(),
         }]],
     );
     pr.clips[0].reversed = true;

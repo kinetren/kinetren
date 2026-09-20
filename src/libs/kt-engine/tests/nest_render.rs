@@ -1208,6 +1208,7 @@ fn grade_curve() -> Vec<Vec<ParamCurve>> {
         // 0.9 на PART материала — это 3.8 уровня яркости на ПОЛУКАДР:
         // видно в байтах и не упирается в потолок на заливке 20
         keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: PART, v: 0.9 }],
+        source: Default::default(),
     }]]
 }
 

@@ -123,6 +123,7 @@ fn golden_project() -> Project {
                         AutoKey { t: Tick(2 * sec * 3 / 10), v: 1.0 },
                         AutoKey { t: Tick(2 * sec * 7 / 10), v: 0.5 },
                     ],
+                    source: Default::default(),
                 },
                 ParamCurve {
                     param: "mix".into(),
@@ -131,6 +132,7 @@ fn golden_project() -> Project {
                         AutoKey { t: Tick(2 * sec * 3 / 10), v: 0.4 },
                         AutoKey { t: Tick(2 * sec * 7 / 10), v: 0.1 },
                     ],
+                    source: Default::default(),
                 },
             ]],
             fx: vec![FxInstance::SlowedReverb {

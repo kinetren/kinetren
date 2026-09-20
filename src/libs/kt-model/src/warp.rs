@@ -991,6 +991,7 @@ mod reversed_tests {
                 AutoKey { t: kt_time::Tick(90_000 / 4), v: 10.0 },
                 AutoKey { t: kt_time::Tick(90_000), v: 0.0 },
             ],
+            source: Default::default(),
         }]];
 
         let fwd = AutoProfiles::from_curves_rev(&curves, 0, len, false);

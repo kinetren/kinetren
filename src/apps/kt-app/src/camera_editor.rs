@@ -140,6 +140,7 @@ impl KtApp {
                             param: name.into(),
                             ease: true,
                             keys: vec![kt_model::AutoKey { t: Tick(0), v }],
+                            source: Default::default(),
                         });
                         changed = true;
                     }

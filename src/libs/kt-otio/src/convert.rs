@@ -1488,6 +1488,7 @@ fn curves_from_progress(
                     v: k.v,
                 })
                 .collect(),
+            source: Default::default(),
         })
         .collect()
 }

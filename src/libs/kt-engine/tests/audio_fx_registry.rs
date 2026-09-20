@@ -92,6 +92,7 @@ fn curve_for(spec: &ParamSpec, probe: f64) -> Vec<Vec<ParamCurve>> {
             AutoKey { t: Tick(0), v: spec.default },
             AutoKey { t: Tick::from_audio_frames(DUR), v: probe },
         ],
+        source: Default::default(),
     }]]
 }
 
@@ -261,6 +262,7 @@ fn t322_audio_registry_contract() {
                     kt_model::AutoKey { t: Tick(0), v: sp.min },
                     kt_model::AutoKey { t: Tick(DUR), v: sp.max },
                 ],
+                source: Default::default(),
             }]];
             let auto_c = AutoProfiles::from_curves_rev(&curve, 0, DUR, false);
             let proc_c = kt_fx::ClipProcessor::new(&fx, &auto_c, 0, DUR);
@@ -338,6 +340,7 @@ fn t325_lfo_phase_is_a_function_of_position() {
             AutoKey { t: Tick(0), v: 2.0 },
             AutoKey { t: Tick::from_audio_frames(DUR), v: 8.0 },
         ],
+        source: Default::default(),
     }]];
     let swept = sine_render(curve);
     // огибающая по окнам 4 мс; минимумы = провалы тремоло

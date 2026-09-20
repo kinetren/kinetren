@@ -19,6 +19,7 @@ fn profiles(points: &[(f64, f64)], len_frames: i64) -> kt_fx::AutoProfiles {
                 v: *r,
             })
             .collect(),
+        source: Default::default(),
     }]];
     kt_fx::AutoProfiles::from_curves(&curves, 0, len_frames)
 }

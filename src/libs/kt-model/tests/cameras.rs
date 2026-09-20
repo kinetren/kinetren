@@ -168,6 +168,7 @@ fn t231_camera_curves_replace_keyframes() {
         param: "pos_x".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(0), v: 7.0 }],
+        source: Default::default(),
     }];
     assert!(!kt_model::migrate_legacy_camera(&mut both), "миграция не трогает готовые кривые");
     assert!((both.params_at(Tick(135_000)).pos_x - 7.0).abs() < 1e-9);

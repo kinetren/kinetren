@@ -508,6 +508,7 @@ fn t232_transition_params_animate() {
         param: "angle".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(18_000), v: 80.0 }],
+        source: Default::default(),
     }];
     let t = Tick(96_000); // ближе к концу окна — угол уже большой
     let plain = render(vec![], t);
@@ -529,6 +530,7 @@ fn t232_transition_params_animate() {
         param: "angle".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(900_000), v: 80.0 }],
+        source: Default::default(),
     }];
     p.validate().expect("ключ за краем окна — законный спрятанный ключ");
 

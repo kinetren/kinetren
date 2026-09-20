@@ -90,8 +90,12 @@ fn gen_demo_concat() {
     let mut p = project();
     let mut c = clip(1, 0, 8, 1, vec![grid2(), pan3d(1.0), grid2(), pan3d(1.0)]);
     let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
-    let curve =
-        |param: &str, keys: Vec<AutoKey>| ParamCurve { param: param.into(), ease: true, keys };
+    let curve = |param: &str, keys: Vec<AutoKey>| ParamCurve {
+        param: param.into(),
+        ease: true,
+        keys,
+        source: Default::default(),
+    };
     c.fx_auto = vec![
         vec![],
         // первый pan3d: параллакс (поворот+сдвиг) уходит в норму к 4 c
@@ -234,8 +238,12 @@ fn gen_demo_concat() {
     // «устанавливается» на место).
     let mut p = project();
     let key = |t_s: f64, v: f64| AutoKey { t: Tick((t_s * SEC as f64) as i64), v };
-    let curve =
-        |param: &str, keys: Vec<AutoKey>| ParamCurve { param: param.into(), ease: true, keys };
+    let curve = |param: &str, keys: Vec<AutoKey>| ParamCurve {
+        param: param.into(),
+        ease: true,
+        keys,
+        source: Default::default(),
+    };
     let mut ripple =
         clip(1, 0, 4, 1, vec![FxInstance::Ripple { amount: 0.12, freq: 12.0, phase: 0.0 }]);
     ripple.fx_auto = vec![vec![curve("phase", vec![key(0.0, 0.0), key(4.0, 1080.0)])]];

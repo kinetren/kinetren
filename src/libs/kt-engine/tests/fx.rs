@@ -66,6 +66,7 @@ fn rate_curve(points: &[(f64, f64)], dur_frames: i64) -> Vec<Vec<ParamCurve>> {
                 v: *r,
             })
             .collect(),
+        source: Default::default(),
     }]]
 }
 
@@ -529,6 +530,7 @@ fn t213_audio_gain_follows_its_curve() {
             AutoKey { t: Tick::from_audio_frames(dur / 2), v: 0.0 },
             AutoKey { t: Tick::from_audio_frames(dur), v: -60.0 },
         ],
+        source: Default::default(),
     }]];
     let p = fx_project_auto(fx, auto, "synth:sine:440", dur);
     let r = AudioRenderer::new(&p);
@@ -679,6 +681,7 @@ fn t229_new_audio_params() {
             AutoKey { t: Tick(0), v: -1.0 },
             AutoKey { t: Tick::from_audio_frames(dur), v: 1.0 },
         ],
+        source: Default::default(),
     }]];
     let swept = render(vec![FxInstance::Gain { db: 0.0, pan: 0.0 }], curve);
     let half_len = swept.len() / 2;
@@ -794,6 +797,7 @@ fn t246_gain_curve_peaks_at_event_middle_under_warp() {
                 AutoKey { t: t(0.5), v: 0.0 },
                 AutoKey { t: t(1.0), v: -60.0 },
             ],
+            source: Default::default(),
         }],
     ];
     let p = fx_project_auto(fx, auto, "synth:sine:440", dur);
@@ -858,6 +862,7 @@ fn t320_slot_order_is_honest_gain_before_reverb_fades_the_input() {
                     AutoKey { t: Tick(0), v: 0.0 },
                     AutoKey { t: Tick::from_audio_frames(dur / 4), v: -60.0 },
                 ],
+                source: Default::default(),
             }],
             vec![],
         ],

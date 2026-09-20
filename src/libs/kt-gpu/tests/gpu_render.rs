@@ -474,6 +474,7 @@ fn animated_nested_project(outer_fx: Vec<FxInstance>) -> Project {
         param: "brightness".into(),
         ease: false,
         keys: vec![AutoKey { t: Tick(0), v: 0.0 }, AutoKey { t: Tick(60_000), v: 0.9 }],
+        source: Default::default(),
     }]];
     p.validate().unwrap();
     p

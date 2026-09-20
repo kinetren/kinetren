@@ -157,6 +157,7 @@ fn t337_neutral_pitch_is_byte_passthrough() {
             AutoKey { t: Tick(0), v: 0.0 },
             AutoKey { t: Tick::from_audio_frames(DUR), v: 7.0 },
         ],
+        source: Default::default(),
     }]];
     let auto_c = kt_fx::AutoProfiles::from_curves_rev(&curve, 0, DUR, false);
     assert!(

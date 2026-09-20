@@ -28,9 +28,12 @@ struct VideoClip {
     media: MediaId,
     reversed: bool,
     fx: Vec<kt_model::FxInstance>,
-    /// Кривые автоматизации по слотам (Р.30), выровнены с fx (bypass уже
-    /// отфильтрован вместе — active_fx_auto).
-    auto: Vec<Vec<kt_model::ParamCurve>>,
+    /// Компилированная автоматизация цепочки (Р.30; компиляция — Р.59,
+    /// п.467). `None` — живых кривых нет, и тогда цепочка слоя
+    /// ЗАИМСТВУЕТСЯ: клип без кривых не платит ни аллокации, ни одного
+    /// сравнения строк. Хэш пост-FX по-прежнему считается от СЫРЫХ
+    /// кривых, поэтому ключи кэша не сдвинулись.
+    auto_plan: Option<kt_model::AutoPlan>,
     /// Ключ пост-FX кэша (п.2 р.7): параметры цепочки + геометрия клипа +
     /// шаг сетки. Любая правка модели пересоздаёт VideoRenderer → хэш
     /// пересчитывается, стейл-кадры не читаются (их ключ не совпадёт).
@@ -417,9 +420,10 @@ fn nest_scales(project: &Project) -> std::collections::HashMap<MediaId, u32> {
             }
             let fx = c.active_fx();
             let auto = c.active_fx_auto();
+            let plan = kt_model::AutoPlan::compile(&fx, &auto);
             let zoom = clip_head_zoom(
                 &fx,
-                &auto,
+                plan.as_ref(),
                 c.start,
                 c.start + c.duration,
                 c.source_in,
@@ -492,7 +496,7 @@ fn clip_decode_quality(clip: &VideoClip, quality: Quality) -> Quality {
 #[allow(clippy::too_many_arguments)]
 fn clip_head_zoom(
     fx: &[kt_model::FxInstance],
-    auto: &[Vec<kt_model::ParamCurve>],
+    plan: Option<&kt_model::AutoPlan>,
     start: Tick,
     end: Tick,
     source_in: Tick,
@@ -506,7 +510,7 @@ fn clip_head_zoom(
     }
     let (pw, ph) = (project_size.0.max(2), project_size.1.max(2));
     let has_3d = fx.iter().any(|f| matches!(f, kt_model::FxInstance::Pan3d { .. }));
-    let live = auto.iter().any(|c| c.iter().any(|p| !p.keys.is_empty()));
+    let live = plan.is_some();
     let span = (end.0 - start.0).max(1);
     let mut probes: Vec<Tick> = Vec::new();
     if live || has_3d || !cameras.is_empty() {
@@ -514,22 +518,20 @@ fn clip_head_zoom(
         for i in 0..=GRID {
             probes.push(Tick(start.0 + span * i / GRID));
         }
-        for curves in auto {
-            for c in curves {
-                for k in &c.keys {
-                    // ключ живёт в МАТЕРИАЛЬНОЙ оси — переводим в таймлайн
-                    let t = kt_model::clip_timeline_at(
-                        source_in,
-                        start,
-                        Tick(span),
-                        reversed,
-                        grid.frame_step(),
-                        k.t,
-                    );
-                    if start.0 <= t.0 && t.0 <= end.0 {
-                        probes.push(t);
-                    }
-                }
+        // изломы кривых — тоже пробы: между двумя ключами максимум зума
+        // может стоять ровно на ключе
+        for k_t in plan.into_iter().flat_map(|p| p.key_ticks()) {
+            // ключ живёт в МАТЕРИАЛЬНОЙ оси — переводим в таймлайн
+            let t = kt_model::clip_timeline_at(
+                source_in,
+                start,
+                Tick(span),
+                reversed,
+                grid.frame_step(),
+                k_t,
+            );
+            if start.0 <= t.0 && t.0 <= end.0 {
+                probes.push(t);
             }
         }
         for cam in cameras {
@@ -554,13 +556,9 @@ fn clip_head_zoom(
             grid.frame_step(),
             t,
         );
-        if live {
+        if let Some(plan) = plan {
             owned.clone_from_slice(fx);
-            for (i, f) in owned.iter_mut().enumerate() {
-                if let Some(curves) = auto.get(i) {
-                    kt_model::apply_fx_auto(f, curves, mat);
-                }
-            }
+            plan.apply(&mut owned, mat);
         }
         let cam3d = has_3d.then(|| {
             let ev = kt_model::active_camera_in(cameras, t);
@@ -687,9 +685,14 @@ impl VideoRenderer {
                 );
                 // ступень декода — свойство клипа (Р.46): максимум зума по
                 // всей длительности, считается до перемещения цепочки
+                // План компилируется ОДИН раз на сборку рендерера —
+                // дальше ни одного поиска параметра по имени (Р.59).
+                // Хэш выше посчитан от СЫРЫХ кривых: ключи кэша не
+                // двигаются от смены способа адресации.
+                let auto_plan = kt_model::AutoPlan::compile(&fx, &auto);
                 let head_zoom = clip_head_zoom(
                     &fx,
-                    &auto,
+                    auto_plan.as_ref(),
                     c.start,
                     c.start + c.duration,
                     c.source_in,
@@ -707,7 +710,7 @@ impl VideoRenderer {
                     media: c.media,
                     reversed: c.reversed,
                     fx,
-                    auto,
+                    auto_plan,
                     fx_hash,
                     fade_in: None,
                     fade_out: None,
@@ -1310,18 +1313,15 @@ fn layer_src<'a>(
     // автоматизация (Р.30): кривые разрешаются ЗДЕСЬ, один раз на кадр —
     // CPU и GPU получают уже вычисленные параметры (клон цепочки только
     // при живых кривых)
-    let fx: std::borrow::Cow<'_, [kt_model::FxInstance]> =
-        if clip.auto.iter().any(|c| c.iter().any(|p| !p.keys.is_empty())) {
+    let fx: std::borrow::Cow<'_, [kt_model::FxInstance]> = match &clip.auto_plan {
+        Some(plan) => {
             let mut owned = clip.fx.clone();
-            for (i, f) in owned.iter_mut().enumerate() {
-                if let Some(curves) = clip.auto.get(i) {
-                    kt_model::apply_fx_auto(f, curves, mat);
-                }
-            }
+            plan.apply(&mut owned, mat);
             std::borrow::Cow::Owned(owned)
-        } else {
-            std::borrow::Cow::Borrowed(&clip.fx[..])
-        };
+        }
+        // ноль цены: у клипа без кривых цепочка ЗАИМСТВУЕТСЯ
+        None => std::borrow::Cow::Borrowed(&clip.fx[..]),
+    };
     let cam3d = resolve_cam3d(&clip.fx, ctx.cameras, t, quality.width, ctx.project_size.0);
     debug_assert!(
         src_scale == 1 || kt_fx::video::has_video_fx(&fx),
