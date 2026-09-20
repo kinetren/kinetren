@@ -1771,14 +1771,14 @@ fn t508_every_param_has_a_label() {
             // Rgb8-параметр вывалится в сетку сырым именем.
             if spec.unit == kt_model::ParamUnit::Rgb8 {
                 assert!(
-                    covered.contains(&spec.name),
+                    covered.contains(&&*spec.name),
                     "{who}.{}: компонента цвета не попала ни в одну пипетку — \
                      пользователь увидит сырое имя поля",
                     spec.name
                 );
                 continue;
             }
-            let label = crate::widgets::param_label_scoped(scope, spec.name);
+            let label = crate::widgets::param_label_scoped(scope, &spec.name);
             // подпись, равная имени поля, — это и есть «ключа нет»
             if label == spec.name {
                 bad.push(format!("{who}.{}", spec.name));

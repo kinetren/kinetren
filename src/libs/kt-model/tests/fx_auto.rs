@@ -128,7 +128,7 @@ fn t190_set_get_param_all_specs() {
     for mut f in variants {
         for spec in f.param_specs() {
             specs_total += 1;
-            let (name, lo, hi) = (spec.name, spec.min, spec.max);
+            let (name, lo, hi) = (spec.name.clone(), spec.min, spec.max);
             // дефолт спеки обязан лежать в её же диапазоне
             assert!(
                 (lo..=hi).contains(&spec.default),
@@ -139,17 +139,17 @@ fn t190_set_get_param_all_specs() {
             // середина диапазона ставится и читается (с точностью до
             // округления целочисленных полей)
             let mid = (lo + hi) / 2.0;
-            assert!(f.set_param(name, mid), "{name} не установился");
-            let got = f.get_param(name).unwrap();
+            assert!(f.set_param(&name, mid), "{name} не установился");
+            let got = f.get_param(&name).unwrap();
             assert!((got - mid).abs() <= 0.5, "{name}: {got} vs {mid}");
             // выход за диапазон клампится
             // f32-поля возвращают ближайший representable к границе
             // (0.99f32 = 0.99000001) — допуск честного f32-эпсилона
             let eps = 1e-6 * hi.abs().max(1.0);
-            assert!(f.set_param(name, hi + 1e6));
-            assert!(f.get_param(name).unwrap() <= hi + eps, "{name} не клампится");
-            assert!(f.set_param(name, lo - 1e6));
-            assert!(f.get_param(name).unwrap() >= lo - eps);
+            assert!(f.set_param(&name, hi + 1e6));
+            assert!(f.get_param(&name).unwrap() <= hi + eps, "{name} не клампится");
+            assert!(f.set_param(&name, lo - 1e6));
+            assert!(f.get_param(&name).unwrap() >= lo - eps);
         }
         // чужое имя — отказ, значение не тронуто
         assert!(!f.set_param("no_such_param", 1.0));

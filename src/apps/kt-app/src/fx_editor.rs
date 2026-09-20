@@ -664,7 +664,7 @@ pub(crate) fn draw_auto_for(
             ui.menu_button(tr(k::fx::AUTO_ADD), |ui| {
                 {
                     for spec in &free {
-                        let n = spec.name;
+                        let n: &str = &spec.name;
                         if ui.button(crate::widgets::param_label(n)).clicked() {
                             // стартовая кривая — константа текущего значения
                             let v0 = f.get_param(n).unwrap_or(spec.default);

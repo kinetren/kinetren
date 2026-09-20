@@ -680,7 +680,7 @@ impl GeneratorKind {
     }
 }
 
-params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, {
+params_for! { GeneratorKind, gen_specs, gen_set_param, gen_get_param, gen_set_idx, gen_get_idx, {
     Solid {
         color_r: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;
         color_g: u8, 0.0, 255.0, 0.0, 1.0, Rgb8, Smooth;

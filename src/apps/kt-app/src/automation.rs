@@ -800,7 +800,7 @@ fn graph(
             }
         } else if resp.clicked() {
             // клик по пустому месту — новый ключ активной кривой
-            if let Some(spec) = curves.get(view.active).and_then(|c| ctx.spec(&c.param)).copied() {
+            if let Some(spec) = curves.get(view.active).and_then(|c| ctx.spec(&c.param)).cloned() {
                 let (lo, hi) = win_of(&curves[view.active], &spec, view, view.active);
                 let c = &mut curves[view.active];
                 let t = Tick(t_of(pos.x).clamp(m0, m1));
@@ -819,7 +819,7 @@ fn graph(
         && ci < curves.len()
         && ki < curves[ci].keys.len()
     {
-        let Some(spec) = ctx.spec(&curves[ci].param).copied() else { return };
+        let Some(spec) = ctx.spec(&curves[ci].param).cloned() else { return };
         // снап по сетке кадров: ключ садится на кадр, а не «около»
         let raw = t_of(pos.x).clamp(m0, m1);
         let step = ctx.frame_step.max(1);
@@ -890,7 +890,7 @@ fn table(
                 }
                 ui.weak(format!("{:.0}%", ctx.frac(tick) * 100.0));
                 for (ci, c) in curves.iter_mut().enumerate() {
-                    let Some(spec) = ctx.spec(&c.param).copied() else {
+                    let Some(spec) = ctx.spec(&c.param).cloned() else {
                         ui.label("");
                         continue;
                     };

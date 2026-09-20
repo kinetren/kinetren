@@ -495,9 +495,26 @@ pub enum ParamScope {
 }
 
 pub trait HasParams {
-    fn param_specs(&self) -> &'static [ParamSpec];
+    /// Паспорт свойств. Заимствуется у `self` (а не `&'static`), потому
+    /// что у динамических владельцев — публичного параметра композиции и
+    /// плагина — он строится в рантайме (Р.59, п.466).
+    fn param_specs(&self) -> &[ParamSpec];
     fn get_param(&self, name: &str) -> Option<f64>;
     fn set_param(&mut self, name: &str, v: f64) -> bool;
+
+    /// Чтение по ИНДЕКСУ ряда паспорта. Умолчание — через имя (медленно,
+    /// зато верно для любого владельца); встроенные виды генерят прямой
+    /// доступ макросом.
+    fn get_param_idx(&self, idx: usize) -> Option<f64> {
+        let name = self.param_specs().get(idx)?.name.clone();
+        self.get_param(&name)
+    }
+    fn set_param_idx(&mut self, idx: usize, v: f64) -> bool {
+        let Some(name) = self.param_specs().get(idx).map(|s| s.name.clone()) else {
+            return false;
+        };
+        self.set_param(&name, v)
+    }
 
     /// Чьи это параметры — подпись ищется сперва в своей области
     /// (Р.53, п.414).
@@ -518,14 +535,26 @@ pub trait HasParams {
     }
 
     /// Спека параметра по имени (кривая-сирота видна сразу).
-    fn param_spec(&self, name: &str) -> Option<&'static ParamSpec> {
+    fn param_spec(&self, name: &str) -> Option<&ParamSpec> {
         self.param_specs().iter().find(|s| s.name == name)
+    }
+
+    /// Индекс ряда по имени — дверь из именного мира (файл, UI) в
+    /// индексный (компилированный план автоматизации).
+    fn param_idx(&self, name: &str) -> Option<usize> {
+        self.param_specs().iter().position(|s| s.name == name)
     }
 }
 
 impl HasParams for FxInstance {
-    fn param_specs(&self) -> &'static [ParamSpec] {
+    fn param_specs(&self) -> &[ParamSpec] {
         FxInstance::param_specs(self)
+    }
+    fn get_param_idx(&self, idx: usize) -> Option<f64> {
+        fx_get_idx(self, idx)
+    }
+    fn set_param_idx(&mut self, idx: usize, v: f64) -> bool {
+        fx_set_idx(self, idx, v)
     }
     fn get_param(&self, name: &str) -> Option<f64> {
         FxInstance::get_param(self, name)
@@ -536,7 +565,7 @@ impl HasParams for FxInstance {
 }
 
 impl HasParams for TransitionKind {
-    fn param_specs(&self) -> &'static [ParamSpec] {
+    fn param_specs(&self) -> &[ParamSpec] {
         TransitionKind::param_specs(self)
     }
     fn get_param(&self, name: &str) -> Option<f64> {
@@ -4552,10 +4581,10 @@ impl FxInstance {
         }
         let mut out = near.clone();
         for s in self.param_specs() {
-            let (Some(a), Some(b)) = (self.get_param(s.name), other.get_param(s.name)) else {
+            let (Some(a), Some(b)) = (self.get_param(&s.name), other.get_param(&s.name)) else {
                 continue;
             };
-            out.set_param(s.name, a + (b - a) * t);
+            out.set_param(&s.name, a + (b - a) * t);
         }
         out
     }
@@ -4599,11 +4628,59 @@ pub enum ParamUnit {
     Percent,
 }
 
+/// ТИП свойства (Р.59, п.466). До этого раунда свойством было только
+/// ЧИСЛО, а всё остальное — флаги, списки, цвет (лежит тройкой чисел),
+/// текст, ссылка на медиа — рисовалось руками в своём окне и не
+/// участвовало ни в автоматизации, ни в копипасте, ни в пресетах.
+///
+/// Кривыми анимируются `Num` и `Color` (поканально); остальное меняется
+/// СТУПЕНЬКОЙ — промежуточных значений у выбора и у текста не бывает.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ParamType {
+    #[default]
+    Num,
+    Flag,
+    /// Цвет rgba8. Каналы — обычные числовые ряды владельца
+    /// (`<stem>_r/_g/_b/_a`), поэтому кривая цвета это четыре обычные
+    /// кривые, а не новый вид ключа (см. `color_groups`).
+    Color,
+    /// Выбор из вариантов. Хранится КЛЮЧОМ варианта, а не номером:
+    /// номер поехал бы при добавлении варианта в середину, а ключи у нас
+    /// уже несут перечисления в файле.
+    Choice {
+        variants: std::borrow::Cow<'static, [&'static str]>,
+    },
+    Text {
+        multiline: bool,
+    },
+    Media,
+}
+
+impl ParamType {
+    /// Можно ли вешать кривую. Ступенчатым типам нельзя: между «Слева» и
+    /// «Справа» нет половины.
+    pub fn curvable(&self) -> bool {
+        matches!(self, ParamType::Num | ParamType::Color)
+    }
+}
+
+/// Имя свойства: у встроенных видов — статическая строка из объявления,
+/// у публичных параметров композиции и у плагинов — текст, придуманный
+/// АВТОРОМ в рантайме (Р.59).
+pub type ParamName = std::borrow::Cow<'static, str>;
+
 /// Описание одного параметра эффекта.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// `Copy` снят в Р.59: имя стало `Cow` — паспорт обязан строиться в
+/// РАНТАЙМЕ, иначе ни публичный параметр композиции (имя придумывает
+/// автор и переименовывает его), ни плагин (паспорт известен только при
+/// загрузке) выразить нечем. Все места читают спеку по ссылке.
+#[derive(Debug, Clone, PartialEq)]
 pub struct ParamSpec {
     /// Имя поля snake_case — оно же ключ в файле и в `ParamCurve.param`.
-    pub name: &'static str,
+    pub name: ParamName,
+    /// Тип значения. У встроенных рядов — `Num` (их объявляет макрос).
+    pub ty: ParamType,
     pub min: f64,
     pub max: f64,
     pub default: f64,
@@ -4611,6 +4688,36 @@ pub struct ParamSpec {
     pub step: f64,
     pub unit: ParamUnit,
     pub kind: ParamKind,
+    /// Готовая подпись. ПУСТО у встроенных — их подпись берётся из
+    /// каталога переводов по имени; НЕПУСТО у динамических владельцев,
+    /// чьё имя придумал человек и в каталог попасть не может.
+    pub label: ParamName,
+}
+
+impl ParamSpec {
+    /// Числовая спека — форма, которую генерит макрос и которой описаны
+    /// все встроенные ряды.
+    pub const fn num(
+        name: &'static str,
+        min: f64,
+        max: f64,
+        default: f64,
+        step: f64,
+        unit: ParamUnit,
+        kind: ParamKind,
+    ) -> ParamSpec {
+        ParamSpec {
+            name: std::borrow::Cow::Borrowed(name),
+            ty: ParamType::Num,
+            min,
+            max,
+            default,
+            step,
+            unit,
+            kind,
+            label: std::borrow::Cow::Borrowed(""),
+        }
+    }
 }
 
 /// Приведение f64 к типу поля варианта.
@@ -4641,12 +4748,12 @@ pub(crate) use fx_cast;
 macro_rules! params_for_struct {
     ($ty:ident { $( $field:ident : $t:ident, $lo:expr, $hi:expr, $def:expr, $step:expr, $unit:ident, $kind:ident );+ $(;)? }) => {
         impl HasParams for $ty {
-            fn param_specs(&self) -> &'static [ParamSpec] {
-                &[ $( ParamSpec {
-                    name: stringify!($field),
-                    min: $lo, max: $hi, default: $def, step: $step,
-                    unit: ParamUnit::$unit, kind: ParamKind::$kind,
-                } ),+ ]
+            fn param_specs(&self) -> &[ParamSpec] {
+                const S: &[ParamSpec] = &[ $( ParamSpec::num(
+                    stringify!($field), $lo, $hi, $def, $step,
+                    ParamUnit::$unit, ParamKind::$kind,
+                ) ),+ ];
+                S
             }
             fn get_param(&self, name: &str) -> Option<f64> {
                 $( if name == stringify!($field) { return Some(self.$field as f64); } )+
@@ -4659,25 +4766,76 @@ macro_rules! params_for_struct {
                 } )+
                 false
             }
+            fn get_param_idx(&self, idx: usize) -> Option<f64> {
+                let mut i = 0usize;
+                $( if idx == i { return Some(self.$field as f64); } i += 1; )+
+                let _ = i;
+                None
+            }
+            fn set_param_idx(&mut self, idx: usize, v: f64) -> bool {
+                let mut i = 0usize;
+                $( if idx == i {
+                    self.$field = fx_cast!($t, v.clamp($lo, $hi));
+                    return true;
+                } i += 1; )+
+                let _ = i;
+                false
+            }
         }
     };
 }
 
 macro_rules! params_for {
-    ($enum:ident, $specs:ident, $set:ident, $get:ident, {$(
+    ($enum:ident, $specs:ident, $set:ident, $get:ident, $set_idx:ident, $get_idx:ident, {$(
         $variant:ident { $( $field:ident : $ty:ident, $lo:expr, $hi:expr, $def:expr, $step:expr, $unit:ident, $kind:ident );+ $(;)? }
     ),* $(,)?}) => {
         fn $specs(fx: &$enum) -> &'static [ParamSpec] {
             match fx {
-                $( $enum::$variant { .. } => &[
-                    $( ParamSpec {
-                        name: stringify!($field),
-                        min: $lo, max: $hi, default: $def, step: $step,
-                        unit: ParamUnit::$unit, kind: ParamKind::$kind,
-                    } ),+
-                ], )*
+                $( $enum::$variant { .. } => {
+                    const S: &[ParamSpec] = &[
+                        $( ParamSpec::num(
+                            stringify!($field), $lo, $hi, $def, $step,
+                            ParamUnit::$unit, ParamKind::$kind,
+                        ) ),+
+                    ];
+                    S
+                }, )*
                 #[allow(unreachable_patterns)]
                 _ => &[],
+            }
+        }
+
+        /// Запись по ИНДЕКСУ ряда (Р.59): порядок рядов — порядок
+        /// объявления, он же порядок `param_specs()`, поэтому индекс
+        /// стабилен по построению. Нужен компилированному плану
+        /// автоматизации: он не ищет параметр сравнением строк на каждый
+        /// кадр.
+        fn $set_idx(fx: &mut $enum, idx: usize, v: f64) -> bool {
+            match fx {
+                $( $enum::$variant { $($field,)+ .. } => {
+                    let mut i = 0usize;
+                    $( if idx == i {
+                        *$field = fx_cast!($ty, v.clamp($lo, $hi));
+                        return true;
+                    } i += 1; )+
+                    let _ = i;
+                    false
+                } )*
+                #[allow(unreachable_patterns)]
+                _ => false,
+            }
+        }
+
+        fn $get_idx(fx: &$enum, idx: usize) -> Option<f64> {
+            match fx {
+                $( $enum::$variant { $($field,)+ .. } => {
+                    let mut i = 0usize;
+                    $( if idx == i { return Some(*$field as f64); } i += 1; )+
+                    let _ = i;
+                    None
+                } )*
+                #[allow(unreachable_patterns)]
+                _ => None,
             }
         }
 
@@ -4759,7 +4917,7 @@ macro_rules! flags_for {
 }
 pub(crate) use flags_for;
 
-params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, {
+params_for! { FxInstance, fx_specs, fx_set_param, fx_get_param, fx_set_idx, fx_get_idx, {
     // ---- аудио (Р.33: автоматизируются общим механизмом) ----------------
     Gain {
         db: f32, -60.0, 12.0, 0.0, 0.1, Db, Smooth;
@@ -5029,7 +5187,7 @@ params_for_struct! { CameraParams {
     fov_deg: f64, 1.0, 179.0, 39.6, 0.5, Deg, Smooth;
 }}
 
-params_for! { TransitionKind, transition_specs, transition_set_param, transition_get_param, {
+params_for! { TransitionKind, transition_specs, transition_set_param, transition_get_param, transition_set_idx, transition_get_idx, {
     Wipe {
         angle: f64, -180.0, 180.0, 0.0, 1.0, Deg, Smooth;
         softness: f64, 0.0, 1.0, 0.15, 0.01, Norm, Smooth;

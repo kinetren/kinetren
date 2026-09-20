@@ -1257,7 +1257,7 @@ mod tests {
                 // предела: упёрся в границу — отойди от неё, а не ослабляй
                 // тест допуском.
                 for s in v.fx.param_specs() {
-                    let x = v.fx.get_param(s.name).unwrap_or(f64::NAN);
+                    let x = v.fx.get_param(&s.name).unwrap_or(f64::NAN);
                     assert!(
                         x.is_finite() && x >= s.min && x <= s.max,
                         "{} / {}: {} = {x} out of [{}, {}]",

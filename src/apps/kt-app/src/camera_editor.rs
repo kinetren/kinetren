@@ -121,7 +121,7 @@ impl KtApp {
                 // ---- автоматизация: ТОТ ЖЕ виджет, что у эффектов -------
                 ui.horizontal(|ui| {
                     let specs = c.cam.param_specs();
-                    let mut add: Option<&str> = None;
+                    let mut add: Option<String> = None;
                     egui::ComboBox::from_id_salt(("camauto", ed.id))
                         .selected_text(tr(k::fx::AUTO_ADD))
                         .show_ui(ui, |ui| {
@@ -129,13 +129,13 @@ impl KtApp {
                                 if c.auto.iter().any(|cu| cu.param == s.name) {
                                     continue;
                                 }
-                                if ui.button(widgets::param_label(s.name)).clicked() {
-                                    add = Some(s.name);
+                                if ui.button(widgets::param_label(&s.name)).clicked() {
+                                    add = Some(s.name.to_string());
                                 }
                             }
                         });
                     if let Some(name) = add {
-                        let v = c.cam.get_param(name).unwrap_or(0.0);
+                        let v = c.cam.get_param(&name).unwrap_or(0.0);
                         c.auto.push(ParamCurve {
                             param: name.into(),
                             ease: true,

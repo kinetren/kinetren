@@ -90,7 +90,7 @@ fn t550d_blend_stays_in_spec_for_every_kind() {
         // сюда значило бы проверять не то.
         let mut hi = f.clone();
         for s in specs {
-            hi.set_param(s.name, s.min + (s.max - s.min) * 0.99);
+            hi.set_param(&s.name, s.min + (s.max - s.min) * 0.99);
         }
         for i in 0..=8 {
             let t = i as f64 / 8.0;
@@ -102,7 +102,7 @@ fn t550d_blend_stays_in_spec_for_every_kind() {
                 f.tag()
             );
             for s in specs {
-                let v = mid.get_param(s.name).unwrap_or(f64::NAN);
+                let v = mid.get_param(&s.name).unwrap_or(f64::NAN);
                 assert!(
                     v.is_finite() && v >= s.min && v <= s.max,
                     "{} / {}: {v} вне [{}, {}] на t = {t}",

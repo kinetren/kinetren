@@ -7492,7 +7492,7 @@ fn t265_automation_axis_and_field_bind() {
     // добавляем ДВА параметра автоматизации подряд
     let names: Vec<String> = {
         let f = h.state().model.project().clips[0].fx[0].clone();
-        f.auto_params().take(2).map(|s| crate::widgets::param_label(s.name)).collect()
+        f.auto_params().take(2).map(|s| crate::widgets::param_label(&s.name)).collect()
     };
     assert_eq!(names.len(), 2, "у slowed+reverb есть хотя бы два автоматизируемых параметра");
 
@@ -9451,7 +9451,7 @@ fn t516_frame_fractions_are_shown_in_percent() {
 
     // объявление: кегль — процент, межстрочный интервал — множитель
     let kind = GeneratorKind::default_text();
-    let spec = |n: &str| *kind.param_specs().iter().find(|s| s.name == n).unwrap();
+    let spec = |n: &str| kind.param_specs().iter().find(|s| s.name == n).unwrap().clone();
     assert_eq!(spec("size").unit, ParamUnit::Percent, "кегль обязан показываться процентом");
     assert_eq!(spec("pos_x").unit, ParamUnit::Percent);
     assert_eq!(spec("line_spacing").unit, ParamUnit::Ratio, "множитель процентом не бывает");

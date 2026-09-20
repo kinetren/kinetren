@@ -135,20 +135,20 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | `color/` | CLR | цветокоррекция, scopes, LUT | 7 / 7 |
 | `masks/` | MSK | маски, кеинг, трекинг, стабилизация | 6 / 6 |
 | `audio/` | AUD | обработка и микширование звука | 12 / 9 |
-| `timeline/` | TL | операции над событиями, структура монтажа | 11 / 5 |
+| `timeline/` | TL | операции над событиями, структура монтажа | 12 / 5 |
 | `titles/` | TXT | титры, генераторы, субтитры | 6 / 4 |
 | `time/` | SPD | скорость, ретайминг, синхронизация | 4 / 4 |
-| `automation/` | AUT | ключи, кривые, пресеты | 6 / 6 |
+| `automation/` | AUT | ключи, кривые, пресеты | 9 / 6 |
 | `media/` | MED | организация медиа, прокси, источники | 6 / 3 |
 | `export/` | EXP | пресеты, очередь, smart render | 4 / 3 |
-| `project/` | PRJ | секвенции, история, версии | 3 / 2 |
+| `project/` | PRJ | секвенции, история, версии | 4 / 2 |
 | `ui/` | UI | вьюер, ввод, раскладки | 5 / 3 |
-| `plugins/` | EXT | OFX/VST-хосты, скриптинг | 2 / 2 |
+| `plugins/` | EXT | OFX/VST-хосты, скриптинг, контракт чужого кода | 3 / 3 |
 | `help/` | HLP | подсказки, справка, обучение, документация | 33 / 33 |
 | `resilience/` | RES | сохранность работы, восстановление, поведение под нагрузкой и на чужом железе | 12 / 12 |
 | `collab/` | COL | работа не в одиночку: занять, свести, сказать про кадр, отдать, раздать материал, передать счёт, зависеть от чужой стороны | 45 / 45 |
 | `compositing/` | CMP | как кадр становится кадром: конкатенация трансформов, качество ресемплинга, разрешение промежуточных стадий, словарь переходов | 2 / 2 |
-| `fx/` | FX | видео-эффекты клипа: стилизация, искажения, размытия, 3D-трансформы | 4 / 4 |
+| `fx/` | FX | видео-эффекты клипа: стилизация, искажения, размытия, 3D-трансформы, симуляции | 6 / 6 |
 
 Подкатегория — стабильная таксономия, объявленная здесь; она не создаётся и не
 удаляется под настроение. Каталоги не нумеруются (`01-timeline/`): добавление
@@ -212,6 +212,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-CMP-001 | Конкатенация трансформов | сделано | A | XL | да | `compositing/transforms/transform-concatenation.md` |
 | F-TL-004 | Вложенные секвенции — монтаж, который ведёт себя как клип | сделано | A | XL | да | `timeline/structure/nested-sequences.md` |
 | F-TL-011 | Раскрытие вложения НА МЕСТЕ | сделано | A | XL | да | `timeline/structure/inline-nest-expansion.md` |
+| F-TL-012 | Публичные параметры композиции | принято | A | XL | нет | `timeline/structure/composition-public-parameters.md` |
 | F-AUD-011 | Distortion / сатурация и Bitcrusher | сделано | B | S | да | `audio/processing/distortion-and-bitcrush.md` |
 | F-AUD-012 | Stereo Width (mid/side-ширина) | сделано | B | S | да | `audio/processing/stereo-width.md` |
 | F-COL-002 | Служебное рядом с проектом — кэш, индекс и замок на общем диске | кандидат | B | S | частично | `collab/assets/sidecar-on-a-share.md` |
@@ -259,7 +260,8 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-AUT-002 | Домен ключа — материал источника или время таймлайна | уже-есть | B | M | да | `automation/keyframes/keyframe-domain-source-vs-timeline.md` |
 | F-AUT-004 | Пресеты эффектов, которые несут анимацию | сделано | B | M | да | `automation/presets/presets-carrying-automation.md` |
 | F-AUT-005 | Ловушки правки ключевых кадров | кандидат | B | M | частично | `automation/keyframes/inserting-and-editing-pitfalls.md` |
-| F-AUT-006 | Галерея превью в пикере — миниатюра эффекта на своём кадре | принято | B | M | нет | `automation/presets/preset-gallery-with-previews.md` |
+| F-AUT-006 | Галерея превью в пикере — миниатюра эффекта на своём кадре | сделано | B | M | да | `automation/presets/preset-gallery-with-previews.md` |
+| F-AUT-009 | Форма отрезка кривой: не только линейно и сглажено | кандидат | B | M | частично | `automation/keyframes/segment-shapes.md` |
 | F-CLR-004 | LUT 1D и 3D (.cube) — технические против творческих | кандидат | B | M | нет | `color/management/lut-1d-and-3d.md` |
 | F-CLR-005 | Приборы — waveform, parade, вектороскоп, гистограмма, false color | кандидат | B | M | нет | `color/scopes/waveform-parade-vectorscope.md` |
 | F-COL-001 | Общий диск вместо облака — сеть как файловая система | исследовано | B | M | частично | `collab/assets/shared-storage-and-the-protocol.md` |
@@ -317,6 +319,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-UI-005 | Цвет клипа как данные и как оформление | кандидат | B | M | частично | `ui/viewer/clip-colors-and-legibility.md` |
 | F-AUD-003 | Шумоподавление и восстановление речи | кандидат | B | L | нет | `audio/processing/noise-reduction.md` |
 | F-AUD-013 | Pitch shift — высота без смены длительности | сделано | B | L | да | `audio/processing/pitch-shift.md` |
+| F-AUT-008 | Связанные параметры: один регулятор двигает пачку | кандидат | B | L | нет | `automation/keyframes/parameter-linking.md` |
 | F-CMP-002 | Словарь переходов: инверсия, узоры, объём | сделано | B | L | да | `compositing/transitions/transition-vocabulary.md` |
 | F-COL-010 | Ручки: сколько лишнего уезжает с монтажом | кандидат | B | L | нет | `collab/handoff/handles.md` |
 | F-COL-016 | Единица занятия — библиотека, бин или секвенция | исследовано | B | L | нет | `collab/claim/lock-granularity.md` |
@@ -331,6 +334,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-MPH-003 | Adjustment Clip: эффект поверх композита | кандидат | B | L | частично | `morpher/analogues/resolve-adjustment-clip.md` |
 | F-MSK-002 | Где живёт маска — у слоя, у эффекта или отдельным объектом | кандидат | B | L | нет | `masks/shapes/mask-scope-per-effect.md` |
 | F-MSK-003 | Track matte — один клип задаёт прозрачность другого | кандидат | B | L | нет | `masks/keying/track-matte.md` |
+| F-PRJ-004 | Пользовательское хранилище между проектами | кандидат | B | L | частично | `project/structure/user-library-outside-the-project.md` |
 | F-SPD-002 | Ретайм-кривая — время как анимируемый параметр | кандидат | B | L | частично | `time/retiming/time-remap-curve.md` |
 | F-TL-006 | Выключатели дорожки — mute, solo, lock и «скрыть» | кандидат | B | L | нет | `timeline/structure/track-solo-mute-lock.md` |
 | F-TXT-004 | Дорожка субтитров, SRT/VTT и текстовый монтаж | кандидат | B | L | нет | `titles/subtitles/subtitle-track-and-srt.md` |
@@ -338,10 +342,13 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-AUD-004 | Шины, дорожечные FX, посылы и solo/mute | кандидат | B | XL | нет | `audio/mixing/buses-and-track-fx.md` |
 | F-AUT-001 | Безье-ручки у ключевых кадров | кандидат | B | XL | частично | `automation/keyframes/bezier-handles.md` |
 | F-AUT-003 | Огибающая на дорожке | исследовано | B | XL | нет | `automation/keyframes/envelope-lane-on-track.md` |
+| F-AUT-007 | Выражения: свойство, ведомое формулой | принято | B | XL | нет | `automation/keyframes/expressions-and-drivers.md` |
 | F-CLR-003 | Вторичная коррекция: HSL-qualifier, окна и трекинг | кандидат | B | XL | нет | `color/primary/hsl-qualifier-secondaries.md` |
 | F-COL-018 | Что отменяет Ctrl+Z, когда правку уже отдали | исследовано | B | XL | частично | `collab/claim/undo-under-shared-ownership.md` |
 | F-COL-036 | Операция против снимка | исследовано | B | XL | частично | `collab/merge/operation-log-vs-snapshot.md` |
-| F-EXT-001 | Хостинг сторонних плагинов — OFX для видео и VST для звука | отвергнуто | B | XL | нет | `plugins/hosts/ofx-host.md` |
+| F-EXT-001 | Хостинг сторонних плагинов — OFX для видео и VST для звука | кандидат | B | XL | нет | `plugins/hosts/ofx-host.md` |
+| F-EXT-003 | Контракт плагина: что чужой код обязан объявить | принято | B | XL | нет | `plugins/hosts/plugin-abi-and-sandbox.md` |
+| F-FX-005 | Физика: движение, которого нет в ключах | исследовано | B | XL | нет | `fx/simulate/physics-and-dynamics.md` |
 | F-MPH-004 | Adjustment Layer в Adobe Premiere | исследовано | B | XL | частично | `morpher/analogues/premiere-adjustment-layer.md` |
 | F-MPH-005 | Уровни применения видео-FX в VEGAS и Video Bus Track | кандидат | B | XL | частично | `morpher/analogues/vegas-video-bus-track.md` |
 | F-MPH-007 | Что видит слой на входе — композит снизу или каждый клип | исследовано | B | XL | нет | `morpher/gaps/composite-below-vs-per-clip.md` |
@@ -368,6 +375,7 @@ YAML-frontmatter — единственное место в `docs/` с machine-r
 | F-HLP-028 | Туры, coach marks и интерактивные уроки | отвергнуто | C | L | нет | `help/onboarding/guided-tour-and-coachmarks.md` |
 | F-CLR-006 | Нодовый граф против линейной цепочки эффектов | отвергнуто | C | XL | нет | `color/workflow/node-vs-layer-grading.md` |
 | F-COL-029 | Почему слияния нет ни у кого | отвергнуто | C | XL | нет | `collab/merge/nobody-merges.md` |
+| F-FX-006 | Частицы и эмиттеры | исследовано | C | XL | нет | `fx/simulate/particles-and-emitters.md` |
 | F-TL-005 | Мультикамерный монтаж | исследовано | C | XL | нет | `timeline/structure/multicam.md` |
 | F-TXT-002 | Шаблоны титров с публичными параметрами | исследовано | C | XL | нет | `titles/text/title-styles-and-templates.md` |
 <!-- table:end -->

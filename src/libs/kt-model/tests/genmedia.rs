@@ -140,11 +140,11 @@ fn t470_generator_param_specs_are_complete() {
                 s.name
             );
             let v = k
-                .get_param(s.name)
+                .get_param(&s.name)
                 .unwrap_or_else(|| panic!("{}.{}: get_param не знает своё имя", k.tag(), s.name));
             assert_eq!(v, s.default, "{}.{}: реестр не на умолчании", k.tag(), s.name);
-            assert!(probe.set_param(s.name, s.max), "{}.{}: set_param", k.tag(), s.name);
-            assert_eq!(probe.get_param(s.name), Some(s.max));
+            assert!(probe.set_param(&s.name, s.max), "{}.{}: set_param", k.tag(), s.name);
+            assert_eq!(probe.get_param(&s.name), Some(s.max));
         }
         assert_eq!(k.get_param("no_such_param"), None);
         assert!(!probe.set_param("no_such_param", 1.0));
@@ -308,8 +308,8 @@ fn t524_new_kinds_round_trip_through_the_path() {
 #[test]
 fn t525_kinds_differ_by_their_numbers() {
     use std::collections::BTreeSet;
-    let names = |k: &GeneratorKind| -> BTreeSet<&'static str> {
-        k.param_specs().iter().map(|s| s.name).collect()
+    let names = |k: &GeneratorKind| -> BTreeSet<String> {
+        k.param_specs().iter().map(|s| s.name.to_string()).collect()
     };
     let rect = GeneratorKind::default_for_tag("rect").unwrap();
     let ell = GeneratorKind::default_for_tag("ellipse").unwrap();

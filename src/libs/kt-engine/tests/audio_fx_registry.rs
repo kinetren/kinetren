@@ -86,7 +86,7 @@ fn rms(s: &[f32]) -> f64 {
 /// Кривая одного параметра слота 0: default → пробное значение к концу.
 fn curve_for(spec: &ParamSpec, probe: f64) -> Vec<Vec<ParamCurve>> {
     vec![vec![ParamCurve {
-        param: spec.name.into(),
+        param: spec.name.to_string(),
         ease: false,
         keys: vec![
             AutoKey { t: Tick(0), v: spec.default },
@@ -169,20 +169,20 @@ fn t322_audio_registry_contract() {
                 _ => (*f).clone(),
             }
         };
-        let mut audible_probe: Vec<(&'static str, f64)> = Vec::new();
+        let mut audible_probe: Vec<(String, f64)> = Vec::new();
         for spec in f.auto_params() {
-            let base = base_for(spec.name);
+            let base = base_for(&spec.name);
             let base_out = render_on(vec![base.clone()], vec![], false, 0, stim);
             let heard = probe_values(spec).into_iter().find(|probe| {
                 let mut probed = base.clone();
-                assert!(probed.set_param(spec.name, *probe));
+                assert!(probed.set_param(&spec.name, *probe));
                 let p = render_on(vec![probed], vec![], false, 0, stim);
                 max_delta(&base_out, &p) > 1e-4
             });
             let heard = heard.unwrap_or_else(|| {
                 panic!("{}.{}: no end of the range is audible", f.tag(), spec.name)
             });
-            audible_probe.push((spec.name, heard));
+            audible_probe.push((spec.name.to_string(), heard));
         }
 
         // (в) кривая первого Smooth-параметра отрабатывает: выход не равен
@@ -192,7 +192,7 @@ fn t322_audio_registry_contract() {
                 audible_probe.iter().find(|(n, _)| *n == spec.name).map(|(_, v)| *v).unwrap();
             let curved = render_on(fx.clone(), curve_for(spec, probe), false, 0, stim);
             let mut probed = (*f).clone();
-            probed.set_param(spec.name, probe);
+            probed.set_param(&spec.name, probe);
             let const_probe = render_on(vec![probed], vec![], false, 0, stim);
             let default_on_stim = render_on(fx.clone(), vec![], false, 0, stim);
             assert!(
@@ -255,7 +255,7 @@ fn t322_audio_registry_contract() {
         // нейтраль зависит от кривых (база «ноль» при кривой — не нейтраль)
         if let Some(sp) = f.auto_params().next() {
             let curve = vec![vec![kt_model::ParamCurve {
-                param: sp.name.into(),
+                param: sp.name.to_string(),
                 ease: true,
                 keys: vec![
                     kt_model::AutoKey { t: Tick(0), v: sp.min },

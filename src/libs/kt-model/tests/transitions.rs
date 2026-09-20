@@ -535,7 +535,7 @@ fn t223_transition_kind_specs() {
         let mut k = k.clone();
         for spec in k.param_specs() {
             with_params += 1;
-            let (name, lo, hi) = (spec.name, spec.min, spec.max);
+            let (name, lo, hi) = (spec.name.clone(), spec.min, spec.max);
             assert!(
                 (lo..=hi).contains(&spec.default),
                 "{}.{name}: дефолт {} вне [{lo}, {hi}]",
@@ -546,7 +546,7 @@ fn t223_transition_kind_specs() {
             // умолчание вида == умолчание спеки: иначе «сбросить» в UI
             // даёт не то, что даёт создание перехода
             let fresh = TransitionKind::ALL.iter().find(|x| x.tag() == k.tag()).unwrap().clone();
-            let got = fresh.get_param(name).unwrap();
+            let got = fresh.get_param(&name).unwrap();
             assert!(
                 (got - spec.default).abs() <= 1e-9,
                 "{}.{name}: конструктор даёт {got}, спека — {}",
@@ -554,13 +554,13 @@ fn t223_transition_kind_specs() {
                 spec.default
             );
             let mid = (lo + hi) / 2.0;
-            assert!(k.set_param(name, mid), "{}.{name} не установился", k.tag());
-            let got = k.get_param(name).unwrap();
+            assert!(k.set_param(&name, mid), "{}.{name} не установился", k.tag());
+            let got = k.get_param(&name).unwrap();
             assert!((got - mid).abs() <= 0.5, "{}.{name}: {got} vs {mid}", k.tag());
-            assert!(k.set_param(name, hi + 1e6));
-            assert!(k.get_param(name).unwrap() <= hi + 1e-9, "{}.{name} не клампится", k.tag());
-            assert!(k.set_param(name, lo - 1e6));
-            assert!(k.get_param(name).unwrap() >= lo - 1e-9);
+            assert!(k.set_param(&name, hi + 1e6));
+            assert!(k.get_param(&name).unwrap() <= hi + 1e-9, "{}.{name} не клампится", k.tag());
+            assert!(k.set_param(&name, lo - 1e6));
+            assert!(k.get_param(&name).unwrap() >= lo - 1e-9);
         }
         assert!(!k.set_param("no_such_param", 1.0), "{}: чужое имя — отказ", k.tag());
     }

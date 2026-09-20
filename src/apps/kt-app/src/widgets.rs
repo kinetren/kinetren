@@ -285,7 +285,7 @@ pub fn flags_row<P: HasParams + ?Sized>(
         for spec in specs {
             let mut v = f.get_flag(spec.name).unwrap_or(spec.default);
             let r = ui.checkbox(&mut v, flag_label(spec.name));
-            field_probe::note(spec.name, r.rect);
+            field_probe::note(&spec.name, r.rect);
             if r.changed() {
                 f.set_flag(spec.name, v);
                 changed = true;
@@ -665,28 +665,28 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     bind: Option<&mut CurveBind<'_>>,
 ) -> ParamsChanged {
     let none = ParamsChanged::default();
-    let Some(base) = f.get_param(spec.name) else { return none };
+    let Some(base) = f.get_param(&spec.name) else { return none };
     // подпись — СВОЕЙ области носителя (Р.53, п.414): «size» у титра это
     // кегль, а не зерно эффекта Noise
-    let label = param_label_scoped(f.params_scope(), spec.name);
+    let label = param_label_scoped(f.params_scope(), &spec.name);
     let Some(bind) = bind else {
         let reset = param_label_widget(ui, label);
         let mut v = if reset { spec.default } else { base };
         let r = param_value(ui, spec, &mut v);
-        field_probe::note(spec.name, r.rect);
+        field_probe::note(&spec.name, r.rect);
         if r.changed() || reset {
-            f.set_param(spec.name, v);
+            f.set_param(&spec.name, v);
             return ParamsChanged::base();
         }
         return none;
     };
-    let Some(ci) = bind.index_of(spec.name) else {
+    let Some(ci) = bind.index_of(&spec.name) else {
         let reset = param_label_widget(ui, label);
         let mut v = if reset { spec.default } else { base };
         let r = param_value(ui, spec, &mut v);
-        field_probe::note(spec.name, r.rect);
+        field_probe::note(&spec.name, r.rect);
         if r.changed() || reset {
-            f.set_param(spec.name, v);
+            f.set_param(&spec.name, v);
             return ParamsChanged::base();
         }
         return none;
@@ -704,7 +704,7 @@ pub fn param_row_bound<P: HasParams + ?Sized>(
     let c = &mut bind.curves[ci];
     let mut v = if reset { spec.default } else { bound_value(c, key, bind.at) };
     let r = param_value(ui, spec, &mut v);
-    field_probe::note(spec.name, r.rect);
+    field_probe::note(&spec.name, r.rect);
     if r.changed() || reset {
         bound_apply(c, key, bind.at, v);
         // правка ушла в КРИВУЮ — значит и команда обязана быть SetFxAuto
@@ -757,8 +757,13 @@ pub fn params_grid_bound<P: HasParams + ?Sized>(
     skip: &[&str],
     mut bind: Option<&mut CurveBind<'_>>,
 ) -> ParamsChanged {
-    let specs: Vec<&ParamSpec> =
-        f.param_specs().iter().filter(|s| !skip.contains(&s.name)).collect();
+    // Паспорт КОПИРУЕТСЯ, а не заимствуется у владельца (Р.59): он
+    // заимствуется у `self`, и живой заём не дал бы писать в него в том
+    // же цикле. Клон дешёвый — у встроенных рядов имя и подпись это
+    // `Cow::Borrowed`, аллокаций не возникает вовсе, а сам Vec один на
+    // отрисовку окна (не на кадр таймлайна — правило 12 не задето).
+    let specs: Vec<ParamSpec> =
+        f.param_specs().iter().filter(|s| !skip.contains(&&*s.name)).cloned().collect();
     if specs.is_empty() {
         return ParamsChanged::default();
     }

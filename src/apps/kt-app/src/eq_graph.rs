@@ -77,9 +77,13 @@ pub fn draw(
 
     // Диапазон оси значений — из спеки усиления, а не из литерала: у
     // параметров один источник правды (kt-model).
-    let specs = kt_model::HasParams::param_specs(f);
-    let gspec = specs.iter().find(|s| s.name == "low_gain_db").expect("eq has gain specs");
-    let (lo, hi) = (gspec.min, gspec.max);
+    // ЧИСЛА копируются, а не держатся ссылкой: паспорт заимствован у
+    // владельца (Р.59), и живой заём не дал бы писать в него ниже.
+    let (lo, hi) = {
+        let specs = kt_model::HasParams::param_specs(f);
+        let g = specs.iter().find(|s| s.name == "low_gain_db").expect("eq has gain specs");
+        (g.min, g.max)
+    };
     let plot = rect.shrink2(egui::vec2(2.0, 6.0));
     let x_of = |hz: f64| plot.left() + hz_to_u(hz) * plot.width();
     let y_of = |db: f64| plot.top() + ((hi - db) / (hi - lo)) as f32 * plot.height();
@@ -200,9 +204,13 @@ pub fn draw(
         && let Some(pos) = resp.interact_pointer_pos()
     {
         let (fname, gname) = BANDS[i];
-        let fspec = specs.iter().find(|s| s.name == fname).expect("freq spec");
-        let hz = u_to_hz((pos.x - plot.left()) / plot.width()).clamp(fspec.min, fspec.max);
-        let db = db_of(pos.y).clamp(gspec.min, gspec.max);
+        let (f_lo, f_hi) = {
+            let specs = kt_model::HasParams::param_specs(f);
+            let s = specs.iter().find(|s| s.name == fname).expect("freq spec");
+            (s.min, s.max)
+        };
+        let hz = u_to_hz((pos.x - plot.left()) / plot.width()).clamp(f_lo, f_hi);
+        let db = db_of(pos.y).clamp(lo, hi);
         // писать ТОЛЬКО при реальном изменении: иначе ревизия модели
         // растёт каждый кадр жеста и зря сбрасывает кэши кадра
         let (fi, gi) = IDX[i];
@@ -251,8 +259,12 @@ pub fn draw(
             }
         });
         if delta != 0.0 {
-            let qspec = specs.iter().find(|s| s.name == "mid_q").expect("q spec");
-            let q = (vals[4] as f64 + delta as f64 * 0.1).clamp(qspec.min, qspec.max);
+            let (q_lo, q_hi) = {
+                let specs = kt_model::HasParams::param_specs(f);
+                let s = specs.iter().find(|s| s.name == "mid_q").expect("q spec");
+                (s.min, s.max)
+            };
+            let q = (vals[4] as f64 + delta as f64 * 0.1).clamp(q_lo, q_hi);
             if (q - vals[4] as f64).abs() > 1e-9 {
                 ch |= write(f, &mut bind, "mid_q", q);
             }

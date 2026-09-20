@@ -318,7 +318,7 @@ impl KtApp {
                     if !t.kind.param_specs().is_empty() {
                         ui.horizontal(|ui| {
                             let specs = t.kind.param_specs();
-                            let mut add: Option<&str> = None;
+                            let mut add: Option<String> = None;
                             egui::ComboBox::from_id_salt(("trauto", ed.id))
                                 .selected_text(tr(k::fx::AUTO_ADD))
                                 .show_ui(ui, |ui| {
@@ -326,13 +326,13 @@ impl KtApp {
                                         if t.auto.iter().any(|c| c.param == s.name) {
                                             continue;
                                         }
-                                        if ui.button(widgets::param_label(s.name)).clicked() {
-                                            add = Some(s.name);
+                                        if ui.button(widgets::param_label(&s.name)).clicked() {
+                                            add = Some(s.name.to_string());
                                         }
                                     }
                                 });
                             if let Some(name) = add {
-                                let v = t.kind.get_param(name).unwrap_or(0.0);
+                                let v = t.kind.get_param(&name).unwrap_or(0.0);
                                 t.auto.push(kt_model::ParamCurve {
                                     param: name.into(),
                                     ease: true,
